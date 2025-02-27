@@ -706,3 +706,19 @@ GRANT USAGE ON *.* TO 'u1'@'%'
 GRANT 'aa@bb'@'%' TO 'u1'@'%'
 drop user u1;
 drop role 'aa@bb';
+create user u59677 identified by '123456';
+alter user u59677 identified with 'native_password';
+Error 1227 (42000): Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation
+alter user test password expire never;
+Error 1227 (42000): Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation
+alter user test failed_login_attempts 10;
+Error 1227 (42000): Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation
+alter user test comment 'some comment';
+Error 1227 (42000): Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation
+alter user test attribute '{"foo": "bar"}';
+Error 1227 (42000): Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation
+alter user test with max_user_connections 5;
+Error 1227 (42000): Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation
+alter user test account unlock;
+Error 1227 (42000): Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation
+alter user u59677 identified by 'abcde';

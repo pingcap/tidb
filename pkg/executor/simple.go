@@ -1808,7 +1808,14 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 
 	for _, spec := range s.Specs {
 		user := e.Ctx().GetSessionVars().User
-		if spec.User.CurrentUser || ((user != nil) && (user.Username == spec.User.Username) && (user.AuthHostname == spec.User.Hostname)) {
+		alterCurrentUser := spec.User.CurrentUser || ((user != nil) && (user.Username == spec.User.Username) && (user.AuthHostname == spec.User.Hostname))
+		alterPassword := false
+		if spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin == "" {
+			if len(s.AuthTokenOrTLSOptions) == 0 && len(s.ResourceOptions) == 0 && len(s.PasswordOrLockOptions) == 0 {
+				alterPassword = true
+			}
+		}
+		if alterCurrentUser && alterPassword {
 			spec.User.Username = user.Username
 			spec.User.Hostname = user.AuthHostname
 		} else {
