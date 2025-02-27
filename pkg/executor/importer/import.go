@@ -512,7 +512,7 @@ func (e *LoadDataController) checkFieldParams() error {
 		return exeerrors.ErrLoadDataEmptyPath
 	}
 	if e.InImportInto {
-		if e.Format != DataFormatCSV && e.Format != DataFormatParquet && e.Format != DataFormatSQL {
+		if e.Format != DataFormatCSV && e.Format != DataFormatParquet && e.Format != DataFormatSQL && e.Format != DataFormatNone {
 			return exeerrors.ErrLoadDataUnsupportedFormat.GenWithStackByArgs(e.Format)
 		}
 	} else {
