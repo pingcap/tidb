@@ -1184,7 +1184,9 @@ func (e *LoadDataController) getFileRealSize(ctx context.Context,
 func (e *LoadDataController) updateFormat(path string) {
 	if e.Format == DataFormatNone {
 		e.Format = parseFileType(path)
-		e.Parameters.Format = e.Format
+		if e.Parameters != nil {
+			e.Parameters.Format = e.Format
+		}
 	}
 }
 
