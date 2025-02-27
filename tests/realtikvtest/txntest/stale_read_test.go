@@ -140,16 +140,14 @@ func TestSelectAsOf(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	if !*realtikvtest.WithRealTiKV {
-		// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
-		safePointName := "tikv_gc_safe_point"
-		safePointValue := "20160102-15:04:05 -0700"
-		safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
-		updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
 	ON DUPLICATE KEY
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
-		tk.MustExec(updateSafePoint)
-	}
+	tk.MustExec(updateSafePoint)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`drop table if exists b`)
 	tk.MustExec("create table t (id int primary key);")
@@ -295,15 +293,13 @@ func TestSelectAsOf(t *testing.T) {
 func TestStaleReadKVRequest(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	if !*realtikvtest.WithRealTiKV {
-		safePointName := "tikv_gc_safe_point"
-		safePointValue := "20160102-15:04:05 -0700"
-		safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
-		updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
 	ON DUPLICATE KEY
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
-		tk.MustExec(updateSafePoint)
-	}
+	tk.MustExec(updateSafePoint)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`drop table if exists t1`)
@@ -393,15 +389,13 @@ func TestStalenessAndHistoryRead(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	if !*realtikvtest.WithRealTiKV {
-		safePointName := "tikv_gc_safe_point"
-		safePointValue := "20160102-15:04:05 -0700"
-		safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
-		updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
 	ON DUPLICATE KEY
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
-		tk.MustExec(updateSafePoint)
-	}
+	tk.MustExec(updateSafePoint)
 	time1 := time.Now()
 	time1TS := oracle.GoTimeToTS(time1)
 	schemaVer1 := tk.Session().GetInfoSchema().SchemaMetaVersion()
@@ -877,15 +871,13 @@ func TestSpecialSQLInStalenessTxn(t *testing.T) {
 func TestAsOfTimestampCompatibility(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	if !*realtikvtest.WithRealTiKV {
-		safePointName := "tikv_gc_safe_point"
-		safePointValue := "20160102-15:04:05 -0700"
-		safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
-		updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
 	ON DUPLICATE KEY
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
-		tk.MustExec(updateSafePoint)
-	}
+	tk.MustExec(updateSafePoint)
 	tk.MustExec("use test")
 	tk.MustExec("create table t5(id int);")
 	defer tk.MustExec("drop table if exists t5;")
@@ -936,15 +928,13 @@ func TestAsOfTimestampCompatibility(t *testing.T) {
 func TestSetTransactionInfoSchema(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	if !*realtikvtest.WithRealTiKV {
-		safePointName := "tikv_gc_safe_point"
-		safePointValue := "20160102-15:04:05 -0700"
-		safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
-		updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
 	ON DUPLICATE KEY
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
-		tk.MustExec(updateSafePoint)
-	}
+	tk.MustExec(updateSafePoint)
 
 	for _, cacheSize := range []int{units.GiB, 0} {
 		tk.MustExec("set @@global.tidb_schema_cache_size = ?", cacheSize)
@@ -1229,15 +1219,13 @@ func TestStmtCtxStaleFlag(t *testing.T) {
 func TestStaleSessionQuery(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	if !*realtikvtest.WithRealTiKV {
-		safePointName := "tikv_gc_safe_point"
-		safePointValue := "20160102-15:04:05 -0700"
-		safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
-		updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
 	ON DUPLICATE KEY
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
-		tk.MustExec(updateSafePoint)
-	}
+	tk.MustExec(updateSafePoint)
 	tk.MustExec("use test")
 	tk.MustExec("create table t10 (id int);")
 	tk.MustExec("insert into t10 (id) values (1)")
@@ -1314,15 +1302,13 @@ func TestStaleReadCompatibility(t *testing.T) {
 func TestStaleReadNoExtraTSORequest(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	if !*realtikvtest.WithRealTiKV {
-		safePointName := "tikv_gc_safe_point"
-		safePointValue := "20160102-15:04:05 -0700"
-		safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
-		updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
 	ON DUPLICATE KEY
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
-		tk.MustExec(updateSafePoint)
-	}
+	tk.MustExec(updateSafePoint)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int);")
@@ -1515,15 +1501,13 @@ func TestStaleReadAllCombinations(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 
-	if !*realtikvtest.WithRealTiKV {
-		safePointName := "tikv_gc_safe_point"
-		safePointValue := "20160102-15:04:05 -0700"
-		safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
-		updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
 	ON DUPLICATE KEY
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
-		tk.MustExec(updateSafePoint)
-	}
+	tk.MustExec(updateSafePoint)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
