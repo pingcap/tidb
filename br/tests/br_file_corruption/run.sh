@@ -68,7 +68,7 @@ for filename in $(find $TEST_DIR/$DB -name "*.sst_bak"); do
     mv "$filename" "${filename%_bak}"
 done
 
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/restore/snap_client/full-restore-validate-checksum=return(true)"
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/restore/full-restore-validate-checksum=return(true)"
 restore_fail=0
 run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB" --checksum=true || restore_fail=1
 export GO_FAILPOINTS=""
