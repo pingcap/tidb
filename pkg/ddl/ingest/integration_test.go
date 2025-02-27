@@ -522,3 +522,17 @@ func TestAddGlobalIndexInIngestWithUpdate(t *testing.T) {
 	rsTable := tk.MustQuery("select *,_tidb_rowid from t use index()").Sort()
 	require.Equal(t, rsGlobalIndex.String(), rsTable.String())
 }
+
+func TestAddIndexValidateRangesFailed(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int primary key, b int);")
+	tk.MustExec("insert into t values (1, 1);")
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/loadTableRangesNoRetry", "return")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/validateAndFillRangesErr", "2*return")
+	tk.MustExec("alter table t add index idx(b);")
+	tk.MustExec("admin check table t;")
+}
