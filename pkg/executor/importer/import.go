@@ -74,6 +74,8 @@ const (
 	DataFormatSQL = "sql"
 	// DataFormatParquet represents the data source file of IMPORT INTO is parquet.
 	DataFormatParquet = "parquet"
+	// DataFormatNone represents do not set format in IMPORT INTO stmt, will be update in InitDataFiles.
+	DataFormatNone = "none"
 
 	// DefaultDiskQuota is the default disk quota for IMPORT INTO
 	DefaultDiskQuota = config.ByteSize(50 << 30) // 50GiB
@@ -128,6 +130,7 @@ var (
 		disablePrecheckOption:       false,
 	}
 
+	// need update check options in checkeCSVOnlyOptions
 	csvOnlyOptions = map[string]struct{}{
 		characterSetOption:        {},
 		fieldsTerminatedByOption:  {},
@@ -386,8 +389,8 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 	if plan.Format != nil {
 		format = strings.ToLower(*plan.Format)
 	} else {
-		// without FORMAT 'xxx' clause, default to CSV
-		format = DataFormatCSV
+		// without FORMAT 'xxx' clause, default to none and will detect type in InitDataFiles
+		format = DataFormatNone
 	}
 	restrictive := userSctx.GetSessionVars().SQLMode.HasStrictMode()
 	// those are the default values for lightning CSV format too
@@ -576,7 +579,8 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		specifiedOptions[opt.Name] = opt
 	}
 
-	if p.Format != DataFormatCSV {
+	// DataFormatNone means format is unspecified from stmt, will validate below CSV options in InitDataFiles.
+	if p.Format != DataFormatCSV && p.Format != DataFormatNone {
 		for k := range csvOnlyOptions {
 			if _, ok := specifiedOptions[k]; ok {
 				return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(k, "non-CSV format")
@@ -1084,7 +1088,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		if err3 != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "failed to read file size by seek")
 		}
-		e.Format = parseFileType(fileNameKey)
+		e.updateFormat(fileNameKey)
 		sourceType := e.getSourceType()
 		compressTp := mydump.ParseCompressionOnFileExtension(fileNameKey)
 		fileMeta := mydump.SourceFileMeta{
@@ -1116,7 +1120,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					return nil
 				}
 				// pick arbitrary one file to detect the format.
-				e.Format = parseFileType(remotePath)
+				e.updateFormat(remotePath)
 				sourceType := e.getSourceType()
 				compressTp := mydump.ParseCompressionOnFileExtension(remotePath)
 				fileMeta := mydump.SourceFileMeta{
@@ -1133,6 +1137,9 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		if err != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err), "failed to walk dir")
 		}
+	}
+	if err2 = e.checkeCSVOnlyOptions(); err2 != nil {
+		return err2
 	}
 
 	e.dataFiles = dataFiles
@@ -1153,7 +1160,14 @@ func (e *LoadDataController) getFileRealSize(ctx context.Context,
 	return int64(compressRatio * float64(fileMeta.FileSize))
 }
 
-// parse format of the validated file by its extension.
+// update format of the validated file by its extension.
+func (e *LoadDataController) updateFormat(path string) {
+	if e.Format == DataFormatNone {
+		e.Format = parseFileType(path)
+		e.Parameters.Format = e.Format
+	}
+}
+
 func parseFileType(path string) string {
 	path = strings.ToLower(path)
 	ext := filepath.Ext(path)
@@ -1168,7 +1182,7 @@ func parseFileType(path string) string {
 	case ".parquet":
 		return DataFormatParquet
 	default:
-		// ".csv"
+		// if file do not contain file extension, use ".csv" as default format
 		return DataFormatCSV
 	}
 }
@@ -1313,6 +1327,38 @@ func (p *Plan) IsLocalSort() bool {
 // IsGlobalSort returns true if we sort data on global storage.
 func (p *Plan) IsGlobalSort() bool {
 	return !p.IsLocalSort()
+}
+
+// check options in csvOnlyOptions is default or not when format is not csv.
+func (p *Plan) checkeCSVOnlyOptions() error {
+	if p.Format == DataFormatCSV {
+		return nil
+	}
+	if p.Charset != nil {
+		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(characterSetOption, "non-CSV format")
+	}
+	if p.FieldsTerminatedBy != "" {
+		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(fieldsTerminatedByOption, "non-CSV format")
+	}
+	if p.FieldsEnclosedBy != "" {
+		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(fieldsEnclosedByOption, "non-CSV format")
+	}
+	if p.FieldsEscapedBy != "" {
+		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(fieldsEscapedByOption, "non-CSV format")
+	}
+	if len(p.FieldNullDef) != 0 {
+		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(fieldsDefinedNullByOption, "non-CSV format")
+	}
+	if p.LinesTerminatedBy != "" {
+		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(linesTerminatedByOption, "non-CSV format")
+	}
+	if p.IgnoreLines != 0 {
+		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(skipRowsOption, "non-CSV format")
+	}
+	if !p.SplitFile {
+		return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(splitFileOption, "non-CSV format")
+	}
+	return nil
 }
 
 // CreateColAssignExprs creates the column assignment expressions using session context.
