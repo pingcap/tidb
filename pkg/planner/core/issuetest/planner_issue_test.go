@@ -153,7 +153,6 @@ func TestIssue58476(t *testing.T) {
 			`      └─TableRowIDScan(Probe) 9990.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
 }
 
-<<<<<<< HEAD
 func TestIssues57583(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -177,7 +176,8 @@ func TestIssues57583(t *testing.T) {
 		"    └─TableReader_21(Probe) 9990.00 root  data:Selection_20",
 		"      └─Selection_20 9990.00 cop[tikv]  not(isnull(test.t1.v1))",
 		"        └─TableFullScan_19 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
-=======
+}
+
 func TestIssue59643(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -230,5 +230,4 @@ INNER JOIN
 ON base.c1 <=> base2.c1;`).Sort().Check(testkit.Rows(
 		"1 Alice 1 100",
 		"<nil> Bob <nil> <nil>"))
->>>>>>> fea442b13ce (planner: fix the wrong transform in the join reorder (#59773))
 }
