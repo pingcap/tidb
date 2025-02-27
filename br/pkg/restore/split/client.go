@@ -157,7 +157,7 @@ func NewClient(
 	opts ...ClientOptionalParameter,
 ) SplitClient {
 	cli := &pdClient{
-		client:           client.WithCallerComponent(caller.GetComponent(1)).(pd.Client),
+		client:           client.WithCallerComponent(caller.GetComponent(1)),
 		httpCli:          httpCli,
 		tlsConf:          tlsConf,
 		storeCache:       make(map[uint64]*metapb.Store),

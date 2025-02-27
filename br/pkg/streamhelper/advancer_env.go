@@ -138,7 +138,7 @@ func CliEnv(cli *utils.StoreManager, tikvStore tikv.Storage, etcdCli *clientv3.C
 	return clusterEnv{
 		clis:                 cli,
 		AdvancerExt:          &AdvancerExt{MetaDataClient: *NewMetaDataClient(etcdCli)},
-		PDRegionScanner:      PDRegionScanner{cli.PDClient().WithCallerComponent("pitr").(pd.Client)},
+		PDRegionScanner:      PDRegionScanner{cli.PDClient().WithCallerComponent("pitr")},
 		AdvancerLockResolver: newAdvancerLockResolver(tikvStore),
 	}
 }
@@ -155,7 +155,7 @@ func TiDBEnv(tikvStore tikv.Storage, pdCli pd.Client, etcdCli *clientv3.Client, 
 			Timeout: time.Duration(conf.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
 		}, tconf),
 		AdvancerExt:          &AdvancerExt{MetaDataClient: *NewMetaDataClient(etcdCli)},
-		PDRegionScanner:      PDRegionScanner{Client: pdCli.WithCallerComponent("pitr").(pd.Client)},
+		PDRegionScanner:      PDRegionScanner{Client: pdCli.WithCallerComponent("pitr")},
 		AdvancerLockResolver: newAdvancerLockResolver(tikvStore),
 	}, nil
 }
