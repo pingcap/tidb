@@ -2295,6 +2295,14 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 					extractor: v.Extractor.(*plannercore.TikvRegionPeersExtractor),
 				},
 			}
+		case strings.ToLower(infoschema.TableRegionsDistribution):
+			return &MemTableReaderExec{
+				BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+				table:        v.Table,
+				retriever: &regionsDistributionRetriver{
+					extractor: v.Extractor.(*plannercore.RegionsDistributionExtractor),
+				},
+			}
 		case strings.ToLower(infoschema.TableSchemata),
 			strings.ToLower(infoschema.TableStatistics),
 			strings.ToLower(infoschema.TableTiDBIndexes),

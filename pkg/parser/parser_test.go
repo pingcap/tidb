@@ -1059,6 +1059,12 @@ AAAAAAAAAAAA5gm5Mg==
 		{"show table t1 index idx1 regions where a=2", true, "SHOW TABLE `t1` INDEX `idx1` REGIONS WHERE `a`=2"},
 		{"show table t1 index idx1", false, ""},
 
+		// for show table distribution.
+		{"show table t1 distributions ", true, "SHOW TABLE `t1` PARTITION(`p0`, `p1`) DISTRIBUTIONS"},
+		{"show table t1 distributions where a=1", true, "SHOW TABLE `t1` DISTRIBUTIONS WHERE `a`=1"},
+		{"show table t1 partition (p0) distributions", true, "SHOW TABLE `t1` INDEX `idx1` DISTRIBUTIONS"},
+		{"show table t1 partition (p0,p1) distributions where a=2", true, "SHOW TABLE `t1` INDEX `idx1` DISTRIBUTIONS WHERE `a`=2"},
+
 		// for show table partition regions.
 		{"show table t1 partition (p0,p1) regions", true, "SHOW TABLE `t1` PARTITION(`p0`, `p1`) REGIONS"},
 		{"show table t1 partition (p0) regions where a=1", true, "SHOW TABLE `t1` PARTITION(`p0`) REGIONS WHERE `a`=1"},
