@@ -448,9 +448,9 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 	}
 	if rc.cfg.IsRemoteBackend() {
 		idxEngineCfg.Remote = backend.RemoteEngineConfig{
-			EngineID:              common.IndexEngineID,
-			EstimatedDataSize:     remote.EstimateEngineDataSize(tr.tableMeta, tr.tableInfo, true, tr.logger),
-			RecoverFromCheckpoint: remote.RecoverFromEngineCp(indexEngineCp),
+			EngineID:                     common.IndexEngineID,
+			EstimatedDataSize:            remote.EstimateEngineDataSize(tr.tableMeta, tr.tableInfo, true, tr.logger),
+			HasRecoverableEngineProgress: remote.HasRecoverableEngineProgress(indexEngineCp),
 		}
 	}
 	if indexEngineCp.Status < checkpoints.CheckpointStatusClosed {
@@ -644,8 +644,8 @@ func (tr *TableImporter) preprocessEngine(
 		}
 		if rc.cfg.IsRemoteBackend() {
 			engineCfg.Remote = backend.RemoteEngineConfig{
-				EngineID:              engineID,
-				RecoverFromCheckpoint: remote.RecoverFromEngineCp(cp),
+				EngineID:                     engineID,
+				HasRecoverableEngineProgress: remote.HasRecoverableEngineProgress(cp),
 			}
 		}
 		closedEngine, err := rc.engineMgr.UnsafeCloseEngine(ctx, engineCfg, tr.tableName, engineID)
@@ -689,9 +689,9 @@ func (tr *TableImporter) preprocessEngine(
 	}
 	if rc.cfg.IsRemoteBackend() {
 		dataEngineCfg.Remote = backend.RemoteEngineConfig{
-			EngineID:              common.IndexEngineID,
-			EstimatedDataSize:     remote.EstimateEngineDataSize(tr.tableMeta, tr.tableInfo, false, tr.logger),
-			RecoverFromCheckpoint: remote.RecoverFromEngineCp(cp),
+			EngineID:                     common.IndexEngineID,
+			EstimatedDataSize:            remote.EstimateEngineDataSize(tr.tableMeta, tr.tableInfo, false, tr.logger),
+			HasRecoverableEngineProgress: remote.HasRecoverableEngineProgress(cp),
 		}
 	}
 	dataEngine, err := rc.engineMgr.OpenEngine(ctx, dataEngineCfg, tr.tableName, engineID)

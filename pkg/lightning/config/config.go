@@ -1127,9 +1127,8 @@ type TikvImporter struct {
 	PausePDSchedulerScope PausePDSchedulerScope `toml:"pause-pd-scheduler-scope" json:"pause-pd-scheduler-scope"`
 	BlockSize             ByteSize              `toml:"block-size" json:"block-size"`
 
-	ChunkSize       int    `toml:"chunk-size" json:"chunk-size"`
-	ChunkCacheDir   string `toml:"chunk-cache-dir" json:"chunk-cache-dir"`
-	ChunkCacheInMem bool   `toml:"chunk-cache-in-mem" json:"chunk-cache-in-mem"`
+	ChunkSize     int    `toml:"chunk-size" json:"chunk-size"`
+	ChunkCacheDir string `toml:"chunk-cache-dir" json:"chunk-cache-dir"`
 }
 
 func (t *TikvImporter) adjust() error {

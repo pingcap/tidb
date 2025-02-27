@@ -15,20 +15,22 @@
 package remote
 
 import (
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
 func TestChunksCache(t *testing.T) {
-	testChunksCache(t, false)
-	testChunksCache(t, true)
+	testChunksCache(t, "")
+	basePath := os.TempDir()
+	testChunksCache(t, basePath)
 }
 
-func testChunksCache(t *testing.T, usingMem bool) {
+func testChunksCache(t *testing.T, basePath string) {
 	// Create a new cache
 	taskID := "test-task"
-	chunksCache, err := newChunksCache(taskID, 1, "", usingMem)
+	chunksCache, err := newChunksCache(taskID, 1, basePath)
 	require.NoError(t, err)
 
 	chunk0 := []byte("chunk0")

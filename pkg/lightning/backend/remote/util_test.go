@@ -110,14 +110,14 @@ func TestRecoverFromEngineCp(t *testing.T) {
 		cp := &checkpoints.EngineCheckpoint{
 			Status: checkpoints.CheckpointStatusMaxInvalid,
 		}
-		require.False(t, RecoverFromEngineCp(cp))
+		require.False(t, HasRecoverableEngineProgress(cp))
 	})
 
 	t.Run("imported status returns false", func(t *testing.T) {
 		cp := &checkpoints.EngineCheckpoint{
 			Status: checkpoints.CheckpointStatusImported,
 		}
-		require.False(t, RecoverFromEngineCp(cp))
+		require.False(t, HasRecoverableEngineProgress(cp))
 	})
 
 	t.Run("no finished chunks returns false", func(t *testing.T) {
@@ -129,7 +129,7 @@ func TestRecoverFromEngineCp(t *testing.T) {
 				},
 			},
 		}
-		require.False(t, RecoverFromEngineCp(cp))
+		require.False(t, HasRecoverableEngineProgress(cp))
 	})
 
 	t.Run("has finished chunks returns true", func(t *testing.T) {
@@ -146,7 +146,7 @@ func TestRecoverFromEngineCp(t *testing.T) {
 				},
 			},
 		}
-		require.True(t, RecoverFromEngineCp(cp))
+		require.True(t, HasRecoverableEngineProgress(cp))
 	})
 }
 
