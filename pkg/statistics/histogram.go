@@ -1082,11 +1082,8 @@ func (hg *Histogram) OutOfRangeRowCount(
 	addedRows := float64(realtimeRowCount) - hg.TotalRowCount()
 	addedPct := addedRows / float64(realtimeRowCount)
 	if addedPct > totalPercent {
-		// Conservatively - use the larger of the left or right percent - since we are working with
-		// changes to the table since last Analyze - any out of range estimate is unreliable.
 		// if the histogram range is invalid (too small/large - histInvalid) - totalPercent is zero
-		// So we need a final max to include upperBound
-		if totalPercent == 0 {
+		if histInvalid {
 			totalPercent = min(addedPct, 0.5)
 		}
 		outOfRangeAdded := addedRows * totalPercent
