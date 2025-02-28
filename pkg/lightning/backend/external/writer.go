@@ -52,7 +52,7 @@ var (
 
 	// MergeSortOverlapThreshold is the threshold of overlap between sorted kv files.
 	// if the overlap ratio is greater than this threshold, we will merge the files.
-	MergeSortOverlapThreshold int64 = 5000
+	MergeSortOverlapThreshold int64 = 4000
 	// MergeSortFileCountStep is the step of file count when we split the sorted kv files.
 	MergeSortFileCountStep = 4000
 )
