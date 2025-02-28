@@ -30,6 +30,7 @@ import (
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -2172,6 +2173,7 @@ func (h *Handle) UpdateAllActive() error {
 		userList = append(userList, key.(string))
 		return true
 	})
+	metrics.ActiveUser.Set(float64(len(userList)))
 	return h.updateUsers(userList)
 }
 
