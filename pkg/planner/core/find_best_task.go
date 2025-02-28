@@ -188,6 +188,7 @@ func enumeratePhysicalPlans4Task(
 		iteration = iterateChildPlan4LogicalSequence
 	}
 	var fd *fd.FDSet
+	// while for join's both child, anyway and currently we should keep exchanger within the MPP for now
 	if !prop.IsParentPhyscicalHashJoin {
 		if joinP, ok := p.Self().(*logicalop.LogicalJoin); ok {
 			if joinP.JoinType == logicalop.InnerJoin {
