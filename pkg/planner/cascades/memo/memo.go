@@ -122,9 +122,7 @@ func (mm *Memo) CopyIn(target *Group, lp base.LogicalPlan) (*GroupExpression, er
 		// target group and the group it owns are different, we may need to merge them, get op.
 		lp = ge.LogicalPlan
 		// the binder may not bind the GE belows, get the child groups from the GE.inputs directly.
-		for _, child := range ge.Inputs {
-			childGroups = append(childGroups, child)
-		}
+		childGroups = append(childGroups, ge.Inputs...)
 	} else {
 		for _, child := range lp.Children() {
 			var currentChildG *Group
