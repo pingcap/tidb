@@ -247,15 +247,12 @@ func NewMgr(
 		}
 	}
 
-	if !needDomain {
-		// If we don't need domain, we should close the storage now. It is created
-		// in `CreateSession`. Othersie, the domain will not be closed. Because
-		// we don't assign it to the mgr.
-		dom2, err := g.GetDomain(storage)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		dom2.Close()
+	// If we don't need domain, we should close the storage that is created
+	// in `CreateSession`. Othersie, the domain will not be closed. Thus,
+	// we need to assign it to the mgr.
+	dom, err = g.GetDomain(storage)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	mgr := &Mgr{
