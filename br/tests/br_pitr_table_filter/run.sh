@@ -1244,7 +1244,7 @@ test_log_compaction() {
     echo "Verified no SST files exist before compaction"
     
     # Step 1: Get the Base64 encoded storage URL
-    echo "Step 1: Encoding storage URL to Base64..."
+    echo "Encoding storage URL to Base64"
 
     # Run the base64ify command and capture its output, redirecting stderr to stdout
     base64_output=$(run_br operator base64ify --storage "local://$TEST_DIR/$TASK_NAME/log" 2>&1)
@@ -1261,20 +1261,16 @@ test_log_compaction() {
 
     echo "Extracted Base64 encoded storage URL: $storage_base64"
     
-    # Get current timestamp and a timestamp from 1 hour ago for compaction range using Python
-    # This is more consistent across different operating systems
-    echo "Step 2: Generating timestamps using Python..."
+    # Get current timestamp and a timestamp from 1 hour ago for compaction range
     one_hour_ago_ts=$(python3 -c "import time; print(int((time.time() - 3600) * 1000) << 18)")
     
     echo "Current timestamp: $current_ts"
     echo "One hour ago timestamp: $one_hour_ago_ts"
     
-    # Step 3: Perform actual log compaction using tikv-ctl
-    echo "Step 3: Performing log compaction using tikv-ctl..."
     echo "Compacting logs from $one_hour_ago_ts to $current_ts"
     
     # Run tikv-ctl to perform compaction
-    tikv-ctl --log-level=info compact-log-backup --from "$one_hour_ago_ts" --until "$current_ts" -s "$storage_base64" -N 4
+    tikv-ctl --log-level=info compact-log-backup --from "$one_hour_ago_ts" --until "$current_ts" -s "$storage_base64" -N 4 --min-compaction-size 0
 
     # Verify SST files exist after compaction
     post_compaction_files=$(find "$TEST_DIR/$TASK_NAME/log" -name "*.sst" | wc -l)
