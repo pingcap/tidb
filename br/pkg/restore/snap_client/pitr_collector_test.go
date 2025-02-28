@@ -85,9 +85,7 @@ func (p *pitrCollectorT) Reopen() {
 	}
 	p.success.Store(false)
 	p.coll = newColl
-
-	p.coll.resetCommitting()
-	p.coll.goPersister()
+	p.coll.init()
 }
 
 func (p pitrCollectorT) RequireCopied(extBk backuppb.IngestedSSTs, files ...string) {
