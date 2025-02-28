@@ -1269,7 +1269,7 @@ func DisableRunBootstrapSQLFileInTest() {
 }
 
 var (
-	bootstrapVersion = []func(sessiontypes.Session, int64){
+	bootstrapVersion = []func(sessiontypes.Session, int64) {
 		upgradeToVer2,
 		upgradeToVer3,
 		upgradeToVer4,
@@ -1427,17 +1427,12 @@ var (
 		upgradeToVer216,
 		upgradeToVer217,
 		upgradeToVer218,
-<<<<<<< HEAD
 		upgradeToVer219,
 		upgradeToVer220,
 		upgradeToVer221,
 		upgradeToVer222,
 		upgradeToVer223,
-=======
-		upgradeToVer239,
-		upgradeToVer240,
-		upgradeToVer241,
->>>>>>> 8e1a47dddb (session: add index on 'user' field for mysql tables (#57470))
+		upgradeToVer224,
 	}
 )
 
@@ -3282,7 +3277,6 @@ func upgradeToVer219(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, addAnalyzeJobsSchemaTablePartitionStateIndex, dbterror.ErrDupKeyName)
 }
 
-<<<<<<< HEAD
 func upgradeToVer220(s sessiontypes.Session, ver int64) {
 	if ver >= version220 {
 		return

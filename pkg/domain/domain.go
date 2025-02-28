@@ -1926,10 +1926,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 	if err != nil {
 		return err
 	}
-	do.privHandle = privileges.NewHandle(sctx.GetRestrictedSQLExecutor())
-	if err := do.privHandle.Update(nil); err != nil {
-		return errors.Trace(err)
-	}
+	do.privHandle = privileges.NewHandle(do.SysSessionPool(), sctx.GetSessionVars().GlobalVarsAccessor)
 
 	var watchCh clientv3.WatchChan
 	duration := 5 * time.Minute
@@ -1981,7 +1978,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 
 func privReloadEvent(h *privileges.Handle, event *PrivilegeEvent) (err error) {
 	switch {
-	case !vardef.AccelerateUserCreationUpdate.Load():
+	case !variable.AccelerateUserCreationUpdate.Load():
 		err = h.UpdateAll()
 	case event.All:
 		err = h.UpdateAllActive()

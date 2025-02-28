@@ -30,6 +30,7 @@ import (
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -248,7 +249,7 @@ type defaultRoleRecord struct {
 
 // roleGraphEdgesTable is used to cache relationship between and role.
 type roleGraphEdgesTable struct {
-	roleList map[string]*auth.RoleIdentity
+	roleList map[auth.RoleIdentity]*auth.RoleIdentity
 }
 
 // Find method is used to find role from table
@@ -256,7 +257,7 @@ func (g roleGraphEdgesTable) Find(user, host string) bool {
 	if host == "" {
 		host = "%"
 	}
-	key := user + "@" + host
+    key := auth.RoleIdentity{user, host}
 	if g.roleList == nil {
 		return false
 	}
@@ -373,7 +374,7 @@ type MySQLPrivilege struct {
 
 	globalPriv  bTree[itemGlobalPriv]
 	dynamicPriv bTree[itemDynamicPriv]
-	roleGraph   map[string]roleGraphEdgesTable
+	roleGraph   map[auth.RoleIdentity]roleGraphEdgesTable
 }
 
 func newMySQLPrivilege() *MySQLPrivilege {
@@ -411,7 +412,7 @@ func (p *MySQLPrivilege) FindAllRole(activeRoles []*auth.RoleIdentity) []*auth.R
 		if _, ok := visited[role.String()]; !ok {
 			visited[role.String()] = true
 			ret = append(ret, role)
-			key := role.Username + "@" + role.Hostname
+            key := auth.RoleIdentity{role.Username, role.Hostname}
 			if edgeTable, ok := p.roleGraph[key]; ok {
 				for _, v := range edgeTable.roleList {
 					if _, ok := visited[v.String()]; !ok {
@@ -430,7 +431,7 @@ func (p *MySQLPrivilege) FindRole(user string, host string, role *auth.RoleIdent
 	rec := p.matchUser(user, host)
 	r := p.matchUser(role.Username, role.Hostname)
 	if rec != nil && r != nil {
-		key := rec.User + "@" + rec.Host
+        key := auth.RoleIdentity{rec.User, rec.Host}
 		return p.roleGraph[key].Find(role.Username, role.Hostname)
 	}
 	return false
@@ -986,7 +987,7 @@ func (p *MySQLPrivilege) decodeUserTableRow(userList map[string]struct{}) func(c
 		var value UserRecord
 		defaultAuthPlugin := ""
 		if p.globalVars != nil {
-			val, err := p.globalVars.GetGlobalSysVar(vardef.DefaultAuthPlugin)
+			val, err := p.globalVars.GetGlobalSysVar(variable.DefaultAuthPlugin)
 			if err == nil {
 				defaultAuthPlugin = val
 			}
@@ -1063,8 +1064,6 @@ func (p *MySQLPrivilege) decodeUserTableRow(userList map[string]struct{}) func(c
 					continue
 				}
 				value.PasswordLifeTime = row.GetInt64(i)
-			case f.ColumnAsName.L == "max_user_connections":
-				value.MaxUserConnections = row.GetInt64(i)
 			case f.Column.GetType() == mysql.TypeEnum:
 				if row.GetEnum(i).String() != "Y" {
 					continue
@@ -1248,11 +1247,11 @@ func (p *MySQLPrivilege) decodeRoleEdgesTable(row chunk.Row, fs []*resolve.Resul
 			toUser = row.GetString(i)
 		}
 	}
-	fromKey := fromUser + "@" + fromHost
-	toKey := toUser + "@" + toHost
+    fromKey := auth.RoleIdentity{fromUser, fromHost}
+    toKey := auth.RoleIdentity{toUser, toHost}
 	roleGraph, ok := p.roleGraph[toKey]
 	if !ok {
-		roleGraph = roleGraphEdgesTable{roleList: make(map[string]*auth.RoleIdentity)}
+		roleGraph = roleGraphEdgesTable{roleList: make(map[auth.RoleIdentity]*auth.RoleIdentity)}
 		p.roleGraph[toKey] = roleGraph
 	}
 	roleGraph.roleList[fromKey] = &auth.RoleIdentity{Username: fromUser, Hostname: fromHost}
@@ -1831,15 +1830,13 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	slices.Sort(gs[sortFromIdx:])
 
 	// Show role grants.
-	graphKey := user + "@" + host
+    graphKey := auth.RoleIdentity{user, host}
 	edgeTable, ok := p.roleGraph[graphKey]
 	g = ""
 	if ok {
 		sortedRes := make([]string, 0, 10)
 		for k := range edgeTable.roleList {
-			role := strings.Split(k, "@")
-			roleName, roleHost := role[0], role[1]
-			tmp := fmt.Sprintf("'%s'@'%s'", roleName, roleHost)
+			tmp := fmt.Sprintf("'%s'@'%s'", k.Username, k.Hostname)
 			sortedRes = append(sortedRes, tmp)
 		}
 		slices.Sort(sortedRes)
@@ -2066,7 +2063,7 @@ func (p *MySQLPrivilege) getDefaultRoles(user, host string) []*auth.RoleIdentity
 }
 
 func (p *MySQLPrivilege) getAllRoles(user, host string) []*auth.RoleIdentity {
-	key := user + "@" + host
+    key := auth.RoleIdentity{user, host}
 	edgeTable, ok := p.roleGraph[key]
 	ret := make([]*auth.RoleIdentity, 0, len(edgeTable.roleList))
 	if ok {
@@ -2099,11 +2096,7 @@ func NewHandle(sctx util.SessionPool, globalVars variable.GlobalVarAccessor) *Ha
 }
 
 // ensureActiveUser ensure that the specific user data is loaded in-memory.
-func (h *Handle) ensureActiveUser(ctx context.Context, user string) error {
-	if p := ctx.Value("mock"); p != nil {
-		visited := p.(*bool)
-		*visited = true
-	}
+func (h *Handle) ensureActiveUser(user string) error {
 	if h.fullData.Load() {
 		// All users data are in-memory, nothing to do
 		return nil
@@ -2161,6 +2154,7 @@ func (h *Handle) UpdateAllActive() error {
 		userList = append(userList, key.(string))
 		return true
 	})
+	metrics.ActiveUser.Set(float64(len(userList)))
 	return h.updateUsers(userList)
 }
 
