@@ -5,6 +5,7 @@ package restore
 import (
 	"context"
 	"crypto/tls"
+	"sort"
 	"sync"
 	"time"
 
@@ -15,7 +16,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -198,6 +202,88 @@ func RestorePreWork(
 	}
 
 	return mgr.RemoveSchedulersWithConfig(ctx)
+}
+
+func FineGrainedRestorePreWork(
+	ctx context.Context,
+	mgr *conn.Mgr,
+	switcher *ImportModeSwitcher,
+	tableIDs []int64,
+	isOnline bool,
+	switchToImport bool,
+) (pdutil.UndoFunc, *pdutil.ClusterConfig, error) {
+	if isOnline {
+		return pdutil.Nop, nil, nil
+	}
+
+	if switchToImport {
+		// Switch TiKV cluster to import mode (adjust rocksdb configuration).
+		err := switcher.GoSwitchToImportMode(ctx)
+		if err != nil {
+			return pdutil.Nop, nil, err
+		}
+	}
+
+	// pause config
+	originCfg, _, err := mgr.RemoveSchedulersConfig(ctx)
+	if err != nil {
+		return pdutil.Nop, nil, err
+	}
+
+	// pause scheduler
+	keyRange := calSortedKeyRanges(tableIDs)
+	ruleID, resumeScheduler, err := mgr.RemoveSchedulersOnRegion(ctx, keyRange)
+	if err != nil {
+		return pdutil.Nop, nil, err
+	}
+
+	// handle undo
+	undo := mgr.MakeFineGrainedUndoFunction(pdutil.ClusterConfig{Schedulers: []string{}, ScheduleCfg: originCfg.ScheduleCfg, RuleID: ruleID}, resumeScheduler)
+	return undo, &originCfg, errors.Trace(err)
+}
+
+func calSortedKeyRanges(ids []int64) [][]kv.Key {
+	idRanges := calSortedTableIds(ids)
+	if len(idRanges) == 0 {
+		return [][]kv.Key{}
+	}
+	var keyRanges [][]kv.Key
+	for i := 0; i < len(idRanges); i++ {
+		startKey := tablecodec.EncodeTablePrefix(idRanges[i][0])
+		startKey = codec.EncodeBytes([]byte{}, startKey)
+		endKey := tablecodec.EncodeTablePrefix(idRanges[i][1])
+		endKey = codec.EncodeBytes([]byte{}, endKey)
+		keyRanges = append(keyRanges, []kv.Key{startKey, endKey})
+	}
+	return keyRanges
+}
+
+func calSortedTableIds(ids []int64) [][]int64 {
+	if len(ids) == 0 {
+		return [][]int64{}
+	}
+
+	sort.Slice(ids, func(i, j int) bool {
+		return ids[i] < ids[j]
+	})
+
+	var idRanges [][]int64
+
+	start := ids[0]
+	end := start + 1
+
+	for i := 1; i < len(ids); i++ {
+		if ids[i] == ids[i-1]+1 {
+			end = ids[i] + 1
+		} else {
+			idRanges = append(idRanges, []int64{start, end})
+			start = ids[i]
+			end = start + 1
+		}
+	}
+	idRanges = append(idRanges, []int64{start, end})
+
+	return idRanges
 }
 
 // RestorePostWork executes some post work after restore.
