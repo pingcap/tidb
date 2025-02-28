@@ -248,6 +248,10 @@ func TestMaxUserConnections(t *testing.T) {
 	tk.MustExec(`set global max_user_connections = 0;`)
 	tk.MustQuery(`show variables like 'max_user_connections'`).Check(testkit.Rows("max_user_connections 0"))
 
+	// check field `max_user_connections` in mysql.user
+	result = tk.MustQuery(`SHOW FIELDS FROM mysql.user LIKE 'max\_%';`)
+	result.Check(testkit.Rows("max_user_connections int(10) unsigned NO  0 "))
+
 	// create user with the default max_user_connections 0
 	createUserSQL := `CREATE USER 'test'@'localhost';`
 	tk.MustExec(createUserSQL)
