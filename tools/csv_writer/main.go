@@ -432,7 +432,7 @@ func generateVarbinary(num, len int, res []string, unique bool) {
 				res[i] = "\\N"
 			} else {
 				// todo: remove 1024
-				res[i] = generateLetterWithNum(128, true)
+				res[i] = generateLetterWithNum(256, true)
 			}
 		}
 	}
