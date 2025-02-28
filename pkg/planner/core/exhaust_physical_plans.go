@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	h "github.com/pingcap/tidb/pkg/util/hint"
@@ -142,6 +143,9 @@ func checkJoinKeyCollation(leftKeys, rightKeys []*expression.Column) bool {
 
 // GetMergeJoin convert the logical join to physical merge join based on the physical property.
 func GetMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, schema *expression.Schema, statsInfo *property.StatsInfo, leftStatsInfo *property.StatsInfo, rightStatsInfo *property.StatsInfo) []base.PhysicalPlan {
+	if !p.SCtx().GetSessionVars().InRestrictedSQL && !vardef.EnableMergeJoin.Load() {
+		return nil
+	}
 	joins := make([]base.PhysicalPlan, 0, len(p.LeftProperties)+1)
 	// The LeftProperties caches all the possible properties that are provided by its children.
 	leftJoinKeys, rightJoinKeys, isNullEQ, hasNullEQ := p.GetJoinKeys()
@@ -424,8 +428,11 @@ func canUseHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.Co
 	}
 }
 
-func getHashJoins(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (joins []base.PhysicalPlan, forced bool) {
+func getHashJoins(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, ignoreEnableHashJoin bool) (joins []base.PhysicalPlan, forced bool) {
 	if !prop.IsSortItemEmpty() { // hash join doesn't promise any orders
+		return
+	}
+	if !p.SCtx().GetSessionVars().InRestrictedSQL && !ignoreEnableHashJoin && !vardef.EnableHashJoin.Load() {
 		return
 	}
 
@@ -1559,6 +1566,10 @@ func getIndexJoinSideAndMethod(join base.PhysicalPlan) (innerSide, joinMethod in
 
 // tryToGetIndexJoin returns all available index join plans, and the second returned value indicates whether this plan is enforced by hints.
 func tryToGetIndexJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (indexJoins []base.PhysicalPlan, canForced bool) {
+	if !p.SCtx().GetSessionVars().InRestrictedSQL && !vardef.EnableNestLoop.Load() {
+		return
+	}
+
 	// supportLeftOuter and supportRightOuter indicates whether this type of join
 	// supports the left side or right side to be the outer side.
 	var supportLeftOuter, supportRightOuter bool
@@ -2105,11 +2116,16 @@ func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.Physic
 		joins = append(joins, indexJoins...)
 	}
 
-	hashJoins, forced := getHashJoins(p, prop)
+	hashJoins, forced := getHashJoins(p, prop, false)
 	if forced && len(hashJoins) > 0 {
 		return hashJoins, true, nil
 	}
 	joins = append(joins, hashJoins...)
+
+	if len(joins) == 0 {
+		hashJoins, _ := getHashJoins(p, prop, true)
+		joins = append(joins, hashJoins...)
+	}
 
 	if p.PreferJoinType > 0 {
 		// If we reach here, it means we have a hint that doesn't work.
