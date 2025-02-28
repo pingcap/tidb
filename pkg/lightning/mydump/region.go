@@ -239,9 +239,7 @@ func MakeTableRegions(
 			)
 			dataFileSize := info.FileMeta.FileSize
 			if info.FileMeta.Type == SourceTypeParquet {
-				failpoint.Inject("mockMakeParquetFileRegion", func() {
-					time.Sleep(time.Second * 3)
-				})
+				failpoint.Inject("mockMakeParquetFileRegion", func() {})
 				regions, sizes, err = makeParquetFileRegion(egCtx, cfg, info)
 			} else if info.FileMeta.Type == SourceTypeCSV && cfg.StrictFormat &&
 				info.FileMeta.Compression == CompressionNone &&

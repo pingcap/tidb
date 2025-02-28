@@ -22,11 +22,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	. "github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -106,9 +106,9 @@ func TestCancelMakeTabelRegoin(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	store, err := storage.NewLocalStorage(".")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/mydump/mockMakeParquetFileRegion", "return()"))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/mydump/MakeParquetFileRegion", "sleep(3000)")
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -123,7 +123,7 @@ func TestCancelMakeTabelRegoin(t *testing.T) {
 	wg.Wait()
 
 	// task should be cancelled
-	require.Error(t, err, "context canceled")
+	require.ErrorContains(t, err, "context canceled")
 }
 
 func TestAllocateEngineIDs(t *testing.T) {
