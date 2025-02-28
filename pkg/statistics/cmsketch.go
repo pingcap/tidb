@@ -622,6 +622,16 @@ func (c *TopN) MinCount() uint64 {
 	return minCount
 }
 
+// ForEachImmutable iterates the TopN and calls the given function without any modification.
+// The bool return value of f is used to control the iteration. If f returns true, the iteration will be stopped.
+func (c *TopN) ForEachImmutable(f func([]byte, uint64) bool) {
+	for _, t := range c.TopN {
+		if f(t.Encoded, t.Count) {
+			break
+		}
+	}
+}
+
 // TopNMeta stores the unit of the TopN.
 type TopNMeta struct {
 	Encoded []byte

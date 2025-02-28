@@ -15,19 +15,22 @@
 package statistics
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/asyncload"
+	"github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
 // Column represents a column histogram.
 type Column struct {
-	CMSketch *CMSketch
-	TopN     *TopN
+	cmSketch *CMSketch
+	topN     *TopN
 	FMSketch *FMSketch
 	Info     *model.ColumnInfo
 	Histogram
@@ -43,6 +46,28 @@ type Column struct {
 	IsHandle bool
 }
 
+func NewColumn(
+	colInfo *model.ColumnInfo,
+	physicalID int64,
+	isHandle bool,
+	cms *CMSketch,
+	topn *TopN,
+	fms *FMSketch,
+	hg Histogram,
+	statsVer int64,
+) *Column {
+	return &Column{
+		Info:       colInfo,
+		PhysicalID: physicalID,
+		IsHandle:   isHandle,
+		cmSketch:   cms,
+		topN:       topn,
+		FMSketch:   fms,
+		Histogram:  hg,
+		StatsVer:   statsVer,
+	}
+}
+
 // Copy copies the column.
 func (c *Column) Copy() *Column {
 	if c == nil {
@@ -53,11 +78,11 @@ func (c *Column) Copy() *Column {
 		StatsVer:   c.StatsVer,
 		IsHandle:   c.IsHandle,
 	}
-	if c.CMSketch != nil {
-		nc.CMSketch = c.CMSketch.Copy()
+	if c.cmSketch != nil {
+		nc.cmSketch = c.cmSketch.Copy()
 	}
-	if c.TopN != nil {
-		nc.TopN = c.TopN.Copy()
+	if c.topN != nil {
+		nc.topN = c.topN.Copy()
 	}
 	if c.FMSketch != nil {
 		nc.FMSketch = c.FMSketch.Copy()
@@ -77,7 +102,7 @@ func (c *Column) String() string {
 // TotalRowCount returns the total count of this column.
 func (c *Column) TotalRowCount() float64 {
 	if c.StatsVer >= Version2 {
-		return c.Histogram.TotalRowCount() + float64(c.TopN.TotalCount())
+		return c.Histogram.TotalRowCount() + float64(c.topN.TotalCount())
 	}
 	return c.Histogram.TotalRowCount()
 }
@@ -85,7 +110,7 @@ func (c *Column) TotalRowCount() float64 {
 // NotNullCount returns the count of this column which is not null.
 func (c *Column) NotNullCount() float64 {
 	if c.StatsVer >= Version2 {
-		return c.Histogram.NotNullCount() + float64(c.TopN.TotalCount())
+		return c.Histogram.NotNullCount() + float64(c.topN.TotalCount())
 	}
 	return c.Histogram.NotNullCount()
 }
@@ -110,13 +135,13 @@ func (c *Column) MemoryUsage() CacheItemMemoryUsage {
 	histogramMemUsage := c.Histogram.MemoryUsage()
 	columnMemUsage.HistogramMemUsage = histogramMemUsage
 	sum = histogramMemUsage
-	if c.CMSketch != nil {
-		cmSketchMemUsage := c.CMSketch.MemoryUsage()
+	if c.cmSketch != nil {
+		cmSketchMemUsage := c.cmSketch.MemoryUsage()
 		columnMemUsage.CMSketchMemUsage = cmSketchMemUsage
 		sum += cmSketchMemUsage
 	}
-	if c.TopN != nil {
-		topnMemUsage := c.TopN.MemoryUsage()
+	if c.topN != nil {
+		topnMemUsage := c.topN.MemoryUsage()
 		columnMemUsage.TopNMemUsage = topnMemUsage
 		sum += topnMemUsage
 	}
@@ -127,6 +152,104 @@ func (c *Column) MemoryUsage() CacheItemMemoryUsage {
 	}
 	columnMemUsage.TotalMemUsage = sum
 	return columnMemUsage
+}
+
+// SelfNDV returns the NDV of the column itself.
+func (c *Column) SelfNDV() int64 {
+	return c.NDV
+}
+
+// BetweenRowCount estimates the row count for the given range.
+func (c *Column) BetweenRowCount(sctx planctx.PlanContext, l, r types.Datum, lowEncoded, highEncoded []byte) float64 {
+	histBetweenCnt := c.Histogram.BetweenRowCount(sctx, l, r)
+	if c.StatsVer <= Version1 {
+		return histBetweenCnt
+	}
+	return float64(c.topN.BetweenCount(sctx, lowEncoded, highEncoded)) + histBetweenCnt
+}
+
+// NotNullCountInHist returns the count of the column which is not null in histogram.
+func (c *Column) NotNullCountInHist() float64 {
+	return c.Histogram.NotNullCount()
+}
+
+// HistBucketNum returns the number of buckets in histogram.
+func (c *Column) HistBucketNum() int {
+	return c.Histogram.Len()
+}
+
+// EqualRowCountInHist returns the count of the column which equals to value in histogram.
+func (c *Column) EqualRowCountInHist(sctx planctx.PlanContext, value types.Datum, hasBucketNDV bool) (float64, bool) {
+	return c.Histogram.EqualRowCount(sctx, value, hasBucketNDV)
+}
+
+// OutOfRangeRowCountInHist returns the count of the column which out of the range in histogram.
+func (c *Column) OutOfRangeRowCountInHist(
+	sctx planctx.PlanContext,
+	lDatum, rDatum *types.Datum,
+	realtimeRowCount, modifyCount, histNDV int64,
+) (result float64) {
+	return c.Histogram.OutOfRangeRowCount(sctx, lDatum, rDatum, realtimeRowCount, modifyCount, histNDV)
+}
+
+// HasTopN returns whether the column has TopN.
+func (c *Column) HasTopN() bool {
+	return c.topN != nil
+}
+
+// TopNSum returns the total count of TopN elements.
+func (c *Column) TopNSum() uint64 {
+	if c.topN == nil {
+		return 0
+	}
+	return c.topN.TotalCount()
+}
+
+// TopNNum returns the number of TopN elements.
+func (c *Column) TopNNum() int {
+	if c.topN == nil {
+		return 0
+	}
+	return c.topN.Num()
+}
+
+// MinCountInTopN returns the minimum count in TopN.
+func (c *Column) MinCountInTopN() uint64 {
+	if c.topN == nil {
+		return 0
+	}
+	return c.topN.MinCount()
+}
+
+// BetweenCountInTopN returns the count of the column which is in the range in TopN.
+func (c *Column) BetweenCountInTopN(pctx planctx.PlanContext, lower, upper []byte) uint64 {
+	if c.topN == nil {
+		return 0
+	}
+	return c.topN.BetweenCount(pctx, lower, upper)
+}
+
+// QueryTopN queries the TopN for the value.
+func (c *Column) QueryTopN(pctx planctx.PlanContext, val []byte) (uint64, bool) {
+	if c.topN == nil {
+		return 0, false
+	}
+	return c.topN.QueryTopN(pctx, val)
+}
+
+// GetHistogramImmutable gets the histogram of the column. DO NOT modify the histogram.
+func (c *Column) GetHistogramImmutable() *Histogram {
+	return &c.Histogram
+}
+
+// GetCMSketchImmutable gets the CMSketch of the column. DO NOT modify the CMSketch.
+func (c *Column) GetCMSketchImmutable() *CMSketch {
+	return c.cmSketch
+}
+
+// GetTopNImmutable gets the TopN of the column. DO NOT modify the TopN.
+func (c *Column) GetTopNImmutable() *TopN {
+	return c.topN
 }
 
 // ColumnStatsIsInvalid checks if this column is invalid.
@@ -189,9 +312,9 @@ func (c *Column) ItemID() int64 {
 // DropUnnecessaryData drops the unnecessary data for the column.
 func (c *Column) DropUnnecessaryData() {
 	if c.StatsVer < Version2 {
-		c.CMSketch = nil
+		c.cmSketch = nil
 	}
-	c.TopN = nil
+	c.topN = nil
 	c.Histogram.Bounds = chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, 0)
 	c.Histogram.Buckets = make([]Bucket, 0)
 	c.Histogram.Scalars = make([]scalar, 0)
@@ -220,7 +343,7 @@ func (c *Column) GetStatsVer() int64 {
 
 // IsCMSExist indicates whether CMSketch exists
 func (c *Column) IsCMSExist() bool {
-	return c.CMSketch != nil
+	return c.cmSketch != nil
 }
 
 // StatusToString gets the string info of StatsLoadedStatus
@@ -265,4 +388,30 @@ func EmptyColumn(tid int64, pkIsHandle bool, colInfo *model.ColumnInfo) *Column 
 		Histogram:  *NewHistogram(colInfo.ID, 0, 0, 0, &colInfo.FieldType, 0, 0),
 		IsHandle:   pkIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 	}
+}
+
+// DumpJSON converts the column statistics into a JSONColumn representation.
+func (c *Column) DumpJSON(sctx sessionctx.Context) (*util.JSONColumn, error) {
+	hist, err := c.ConvertTo(UTCWithAllowInvalidDateCtx, types.NewFieldType(mysql.TypeBlob))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	jsonCol := &util.JSONColumn{
+		Histogram:         HistogramToProto(&c.Histogram),
+		NullCount:         c.NullCount,
+		TotColSize:        c.TotColSize,
+		LastUpdateVersion: c.LastUpdateVersion,
+		Correlation:       c.Correlation,
+		StatsVer:          &c.StatsVer,
+	}
+	if c.cmSketch != nil || c.topN != nil {
+		jsonCol.CMSketch = CMSketchToProto(c.cmSketch, c.topN)
+	}
+	if c.FMSketch != nil {
+		jsonCol.FMSketch = FMSketchToProto(c.FMSketch)
+		c.FMSketch.DestroyAndPutToPool()
+		c.FMSketch = nil
+	}
+	hist.DestroyAndPutToPool()
+	return jsonCol, nil
 }

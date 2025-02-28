@@ -110,20 +110,17 @@ func GenJSONTableFromStats(
 	}
 	var outerErr error
 	tbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
-		hist, err := col.ConvertTo(statistics.UTCWithAllowInvalidDateCtx, types.NewFieldType(mysql.TypeBlob))
+		proto, err := col.DumpJSON(sctx)
 		if err != nil {
-			outerErr = errors.Trace(err)
+			outerErr = err
 			return true
 		}
-		proto := dumpJSONCol(hist, col.CMSketch, col.TopN, col.FMSketch, &col.StatsVer)
 		tracker.Consume(proto.TotalMemoryUsage())
 		if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			outerErr = err
 			return true
 		}
 		jsonTbl.Columns[col.Info.Name.L] = proto
-		col.FMSketch.DestroyAndPutToPool()
-		hist.DestroyAndPutToPool()
 		return false
 	})
 	if outerErr != nil {
@@ -240,17 +237,17 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *s
 				// we set it to 1.
 				statsVer = int64(statistics.Version1)
 			}
-			col := &statistics.Column{
-				PhysicalID:        physicalID,
-				Histogram:         *hist,
-				CMSketch:          cm,
-				TopN:              topN,
-				FMSketch:          fms,
-				Info:              colInfo,
-				IsHandle:          tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
-				StatsVer:          statsVer,
-				StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
-			}
+			col := statistics.NewColumn(
+				colInfo,
+				physicalID,
+				tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
+				cm,
+				topN,
+				fms,
+				*hist,
+				statsVer,
+			)
+			col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 			// All the objects in the table shares the same stats version.
 			if statsVer != statistics.Version0 {
 				tbl.StatsVer = int(statsVer)
