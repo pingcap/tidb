@@ -52,6 +52,7 @@ var (
 	s3SecretKey = flag.String("s3SecretKey", "", "S3 secret key")
 	s3Region    = flag.String("s3Region", "", "S3 region")
 	s3Provider  = flag.String("s3Provider", "", "S3 provider")
+	s3Endpoint  = flag.String("s3Endpoint", "", "S3 endpoint")
 )
 
 const (
@@ -548,6 +549,7 @@ func deleteFile(credentialPath, fileName string) {
 		AccessKey:       *s3AccessKey,
 		SecretAccessKey: *s3SecretKey,
 		Provider:        *s3Provider,
+		Endpoint:        *s3Endpoint,
 	}}
 	s, err := storage.ParseBackend(*gcsDir, &op)
 	if err != nil {
@@ -572,7 +574,7 @@ func showFiles(credentialPath string) {
 		AccessKey:       *s3AccessKey,
 		SecretAccessKey: *s3SecretKey,
 		Provider:        *s3Provider,
-		Endpoint:        "http://ks3-cn-beijing-internal.ksyuncs.com",
+		Endpoint:        *s3Endpoint,
 	}}
 	s, err := storage.ParseBackend(*gcsDir, &op)
 	if err != nil {
@@ -1114,6 +1116,7 @@ func main() {
 		AccessKey:       *s3AccessKey,
 		SecretAccessKey: *s3SecretKey,
 		Provider:        *s3Provider,
+		Endpoint:        *s3Endpoint,
 	}}
 	s, err := storage.ParseBackend(*gcsDir, &op)
 	if err != nil {
