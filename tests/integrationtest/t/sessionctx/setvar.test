@@ -720,6 +720,10 @@ select @@max_execution_time;
 explain select * from t where a = 1 and sleep(0.1);
 select @@last_plan_from_binding;
 select @@max_execution_time;
+# execute the binded sql with extra setvar hint should not change the session var after execution finished
+select /*+ SET_VAR(max_execution_time=1234) */ * from t where a = 1 and sleep(0.1);
+select @@last_plan_from_binding;
+select @@max_execution_time;
 drop global binding for select * from t where a = 2 and sleep(0.1);
 
 # set one var multiple times, only the first time takes effect
