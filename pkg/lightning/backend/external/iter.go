@@ -19,6 +19,7 @@ import (
 	"container/heap"
 	"context"
 	"io"
+	"sort"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -793,6 +794,12 @@ func NewMergePropIter(
 	multiStat []MultipleFilesStat,
 	exStorage storage.ExternalStorage,
 ) (*MergePropIter, error) {
+	// sort the multiStat by minKey
+	// otherwise, if the number of readers is less than the weight, the kv may not in order
+	sort.Slice(multiStat, func(i, j int) bool {
+		return bytes.Compare(multiStat[i].MinKey, multiStat[j].MinKey) < 0
+	})
+
 	closeReaderFlag := false
 	readerOpeners := make([]readerOpenerFn[*rangeProperty, mergePropBaseIter], 0, len(multiStat))
 	for _, m := range multiStat {
