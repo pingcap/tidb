@@ -357,3 +357,21 @@ HashAgg_8	1.00	root		group by:executor__prepared.t.id, executor__prepared.t.k, f
 └─TableReader_15	0.01	root		data:Selection_14
   └─Selection_14	0.01	cop[tikv]		eq(1, executor__prepared.t.id), eq(1, executor__prepared.t.k)
     └─TableFullScan_13	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+PREPARE stmt FROM 'VALUES ( ("foo"), ROW("bar") )';
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 8 near "( ("foo"), ROW("bar") )" 
+SHOW ERRORS;
+Level	Code	Message
+Error	1105	line 1 column 8 near "( ("foo"), ROW("bar") )" 
+Error	1064	You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 8 near "( ("foo"), ROW("bar") )" 
+PREPARE stmt FROM 'VALUES ( ("foo"), ROW("bar") )';
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 8 near "( ("foo"), ROW("bar") )" 
+SHOW ERRORS;
+Level	Code	Message
+Error	1105	line 1 column 8 near "( ("foo"), ROW("bar") )" 
+Error	1064	You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 8 near "( ("foo"), ROW("bar") )" 
+PREPARE stmt FROM 'VALUES ( ("foo"), ROW("bar") )';
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 8 near "( ("foo"), ROW("bar") )" 
+SHOW ERRORS;
+Level	Code	Message
+Error	1105	line 1 column 8 near "( ("foo"), ROW("bar") )" 
+Error	1064	You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 8 near "( ("foo"), ROW("bar") )" 
