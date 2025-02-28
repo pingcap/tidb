@@ -114,8 +114,5 @@ func (*outerJoinEliminator) isInnerJoinKeysContainUniqueKey(innerGE corebase.Log
 	for _, key := range joinKeys.Columns {
 		ids.Insert(int(key.UniqueID))
 	}
-	if fds.StrictKeyCovered(ids) {
-		return true
-	}
-	return false
+	return fds.StrictKeyCovered(ids)
 }
