@@ -1756,7 +1756,7 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
         Password_reuse_history, Password_reuse_time, Password_expired, Password_lifetime,
         user_attributes->>'$.Password_locking.failed_login_attempts',
         user_attributes->>'$.Password_locking.password_lock_time_days', authentication_string,
-        Max_user_connections
+        max_user_connections
 		FROM %n.%n WHERE User=%? AND Host=%?`,
 		mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
 	if err != nil {

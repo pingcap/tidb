@@ -120,7 +120,7 @@ const (
 		Password_expired		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Password_last_changed	TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
 		Password_lifetime		SMALLINT UNSIGNED DEFAULT NULL,
-		Max_user_connections 	INT UNSIGNED NOT NULL DEFAULT 0,
+		max_user_connections 	INT UNSIGNED NOT NULL DEFAULT 0,
 		PRIMARY KEY (Host, User),
 		KEY i_user (User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
@@ -1270,7 +1270,7 @@ const (
 	// Add extra_params to tidb_global_task and tidb_global_task_history.
 	version243 = 243
 
-	// version242 add Max_user_connections into mysql.user.
+	// version242 add max_user_connections into mysql.user.
 	version244 = 244
 )
 
@@ -3390,7 +3390,7 @@ func upgradeToVer244(s sessiontypes.Session, ver int64) {
 		return
 	}
 
-	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Max_user_connections` INT UNSIGNED NOT NULL DEFAULT 0 AFTER `Password_lifetime`")
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `max_user_connections` INT UNSIGNED NOT NULL DEFAULT 0 AFTER `Password_lifetime`")
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
