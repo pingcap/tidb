@@ -29,6 +29,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -1862,10 +1863,84 @@ func (h *Handle) Get() *MySQLPrivilege {
 	return h.priv.Load()
 }
 
+<<<<<<< HEAD
 // Update loads all the privilege info from kv storage.
 func (h *Handle) Update() error {
 	var priv MySQLPrivilege
 	err := priv.LoadAll(h.sctx)
+=======
+// UpdateAll loads all the users' privilege info from kv storage.
+func (h *Handle) UpdateAll() error {
+	priv := newMySQLPrivilege()
+	res, err := h.sctx.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer h.sctx.Put(res)
+	exec := res.(sqlexec.SQLExecutor)
+
+	err = priv.LoadAll(exec)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	h.priv.Store(priv)
+	h.fullData.Store(true)
+	return nil
+}
+
+// UpdateAllActive loads all the active users' privilege info from kv storage.
+func (h *Handle) UpdateAllActive() error {
+	h.fullData.Store(false)
+	userList := make([]string, 0, 20)
+	h.activeUsers.Range(func(key, _ any) bool {
+		userList = append(userList, key.(string))
+		return true
+	})
+	metrics.ActiveUser.Set(float64(len(userList)))
+	return h.updateUsers(userList)
+}
+
+// Update loads the privilege info from kv storage for the list of users.
+func (h *Handle) Update(userList []string) error {
+	h.fullData.Store(false)
+	if len(userList) > 100 {
+		logutil.BgLogger().Warn("update user list is long", zap.Int("len", len(userList)))
+	}
+	needReload := false
+	for _, user := range userList {
+		if _, ok := h.activeUsers.Load(user); ok {
+			needReload = true
+			break
+		}
+	}
+	if !needReload {
+		return nil
+	}
+
+	return h.updateUsers(userList)
+}
+
+func (h *Handle) updateUsers(userList []string) error {
+	res, err := h.sctx.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer h.sctx.Put(res)
+	exec := res.(sqlexec.SQLExecutor)
+
+	p := newMySQLPrivilege()
+	p.globalVars = h.globalVars
+	// Load the full role edge table first.
+	p.roleGraph = make(map[auth.RoleIdentity]roleGraphEdgesTable)
+	err = loadTable(exec, sqlLoadRoleGraph, p.decodeRoleEdgesTable)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Including the user and also their roles
+	userAndRoles := findUserAndAllRoles(userList, p.roleGraph)
+	err = p.loadSomeUsers(exec, userAndRoles)
+>>>>>>> 949fc53e97b (metrics: add metrics for active users count (#59533))
 	if err != nil {
 		return err
 	}
