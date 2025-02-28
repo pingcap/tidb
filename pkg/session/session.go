@@ -3653,15 +3653,16 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		}
 	}
 
+	err = dom.InitDistTaskLoop()
+	if err != nil {
+		return nil, err
+	}
+
 	// This only happens in testing, since the failure of loading or parsing sql file
 	// would panic the bootstrapping.
 	if intest.InTest && failToLoadOrParseSQLFile {
 		dom.Close()
 		return nil, errors.New("Fail to load or parse sql file")
-	}
-	err = dom.InitDistTaskLoop()
-	if err != nil {
-		return nil, err
 	}
 	return dom, err
 }
