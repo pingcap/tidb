@@ -2212,3 +2212,13 @@ INSERT IGNORE INTO t1 VALUES (65536);
 show warnings;
 Level	Code	Message
 Warning	1062	Duplicate entry '\x01\x00\x00' for key 't1.id'
+INSERT IGNORE INTO t1 VALUES (35);
+INSERT IGNORE INTO t1 VALUES (35);
+show warnings;
+Level	Code	Message
+Warning	1062	Duplicate entry '\x00\x00#' for key 't1.id'
+INSERT IGNORE INTO t1 VALUES (127);
+INSERT IGNORE INTO t1 VALUES (127);
+show warnings;
+Level	Code	Message
+Warning	1062	Duplicate entry '\x00\x00\x7F' for key 't1.id'
