@@ -1987,6 +1987,7 @@ func checkPiTRRequirements(mgr *conn.Mgr) error {
 
 type PiTRTaskInfo struct {
 	CheckpointInfo      *checkpoint.CheckpointTaskInfoForLogRestore
+	RestoreTS           uint64
 	NeedFullRestore     bool
 	FullRestoreCheckErr error
 }
@@ -2049,6 +2050,7 @@ func generatePiTRTaskInfo(
 	}
 	checkInfo.CheckpointInfo = curTaskInfo
 	checkInfo.NeedFullRestore = doFullRestore
+	checkInfo.RestoreTS = cfg.RestoreTS
 	// restore full snapshot precheck.
 	if doFullRestore {
 		if !(cfg.UseCheckpoint && (curTaskInfo.Metadata != nil || curTaskInfo.HasSnapshotMetadata)) {
