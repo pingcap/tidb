@@ -44,10 +44,10 @@ import (
 
 // The keys for the mocked data that stored in context. They are only used for test.
 type tiproxyAddrKeyType struct{}
-type trafficPathKeyType struct{}
+type trafficStoreKeyType struct{}
 
 var tiproxyAddrKey tiproxyAddrKeyType
-var trafficPathKey trafficPathKeyType
+var trafficStoreKey trafficStoreKeyType
 
 type trafficJob struct {
 	Instance  string `json:"-"` // not passed from TiProxy
@@ -344,11 +344,11 @@ func formReader4Replay(ctx context.Context, args map[string]string, tiproxyNum i
 	if !ok || len(input) == 0 {
 		return nil, errors.New("the input path for replay must be specified")
 	}
-	u, err := storage.ParseRawURL(input)
+	backend, err := storage.ParseBackend(input, nil)
 	if err != nil {
 		return nil, errors.Wrapf(err, "parse input path failed")
 	}
-	if storage.IsLocal(u) {
+	if backend.GetLocal() != nil {
 		readers := make([]io.Reader, tiproxyNum)
 		form := getForm(args)
 		for i := 0; i < tiproxyNum; i++ {
@@ -357,34 +357,38 @@ func formReader4Replay(ctx context.Context, args map[string]string, tiproxyNum i
 		return readers, nil
 	}
 
-	names := make([]string, 0, tiproxyNum)
-	if mockNames := ctx.Value(trafficPathKey); mockNames != nil {
-		names = mockNames.([]string)
+	var store storage.ExternalStorage
+	if mockStore := ctx.Value(trafficStoreKey); mockStore != nil {
+		store = mockStore.(storage.ExternalStorage)
 	} else {
-		backend, err := storage.ParseBackendFromURL(u, nil)
-		if err != nil {
-			return nil, errors.Wrapf(err, "parse backend from the input path failed")
-		}
-		store, err := storage.NewWithDefaultOpt(ctx, backend)
+		store, err = storage.NewWithDefaultOpt(ctx, backend)
 		if err != nil {
 			return nil, errors.Wrapf(err, "create storage for input failed")
 		}
 		defer store.Close()
-		err = store.WalkDir(ctx, &storage.WalkOption{
-			ObjPrefix: filePrefix,
-		}, func(name string, _ int64) error {
-			names = append(names, name)
-			return nil
-		})
-		if err != nil {
-			return nil, errors.Wrapf(err, "walk input path failed")
+	}
+	names := make(map[string]struct{}, tiproxyNum)
+	err = store.WalkDir(ctx, &storage.WalkOption{
+		ObjPrefix: filePrefix,
+	}, func(name string, _ int64) error {
+		if idx := strings.Index(name, "/"); idx >= 0 {
+			names[name[:idx]] = struct{}{}
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Wrapf(err, "walk input path failed")
 	}
 	if len(names) == 0 {
 		return nil, errors.New("no replay files found in the input path")
 	}
 	readers := make([]io.Reader, 0, len(names))
-	for _, name := range names {
+	// ParseBackendFromURL clears URL.RawQuery, so no need to reuse the *url.URL.
+	u, err := storage.ParseRawURL(input)
+	if err != nil {
+		return nil, errors.Wrapf(err, "parse input path failed")
+	}
+	for name := range names {
 		m := maps.Clone(args)
 		m[inputKey] = u.JoinPath(name).String()
 		form := getForm(m)
