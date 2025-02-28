@@ -36,6 +36,7 @@ go_library(
         "//pkg/session",
         "//pkg/util",
         "//pkg/util/logutil",
+        "//pkg/util/memory",
         "//pkg/util/metricsutil",
         "@com_github_gogo_protobuf//proto",
         "@com_github_pingcap_errors//:errors",
