@@ -5,11 +5,7 @@ go_test(
     timeout = "short",
     srcs = [
         "db_partition_test.go",
-<<<<<<< HEAD
-=======
-        "error_injection_test.go",
         "exchange_partition_test.go",
->>>>>>> d39268519f7 (ddl: Add checks for all partitioning columns during EXCHANGE PARTITION for RANGE COLUMNS (#59612))
         "main_test.go",
         "multi_domain_test.go",
     ],

@@ -3662,22 +3662,7 @@ func buildCheckSQLConditionForRangeExprPartition(pi *model.PartitionInfo, index 
 	return buf.String(), paramList
 }
 
-<<<<<<< HEAD
 func buildCheckSQLConditionForRangeColumnsPartition(pi *model.PartitionInfo, index int) (string, []interface{}) {
-	paramList := make([]interface{}, 0, 2)
-	colName := pi.Columns[0].L
-	if index == 0 {
-		paramList = append(paramList, colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index].LessThan[0]))
-		return "%n >= %?", paramList
-	} else if index == len(pi.Definitions)-1 && strings.EqualFold(pi.Definitions[index].LessThan[0], partitionMaxValue) {
-		paramList = append(paramList, colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index-1].LessThan[0]))
-		return "%n < %?", paramList
-	} else {
-		paramList = append(paramList, colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index-1].LessThan[0]), colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index].LessThan[0]))
-		return "%n < %? or %n >= %?", paramList
-	}
-=======
-func buildCheckSQLConditionForRangeColumnsPartition(pi *model.PartitionInfo, index int) (string, []any) {
 	var buf strings.Builder
 	paramList := make([]any, 0, len(pi.Columns)*2)
 
@@ -3758,7 +3743,6 @@ func buildCheckSQLConditionForRangeColumnsPartition(pi *model.PartitionInfo, ind
 	}
 
 	return buf.String(), paramList
->>>>>>> d39268519f7 (ddl: Add checks for all partitioning columns during EXCHANGE PARTITION for RANGE COLUMNS (#59612))
 }
 
 func buildCheckSQLConditionForListPartition(pi *model.PartitionInfo, index int) string {
