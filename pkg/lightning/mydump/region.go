@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -227,7 +228,7 @@ func MakeTableRegions(
 		eg.Go(func() error {
 			select {
 			case <-egCtx.Done():
-				return nil
+				return egCtx.Err()
 			default:
 			}
 
@@ -238,6 +239,9 @@ func MakeTableRegions(
 			)
 			dataFileSize := info.FileMeta.FileSize
 			if info.FileMeta.Type == SourceTypeParquet {
+				failpoint.Inject("mockMakeParquetFileRegion", func() {
+					time.Sleep(time.Second * 3)
+				})
 				regions, sizes, err = makeParquetFileRegion(egCtx, cfg, info)
 			} else if info.FileMeta.Type == SourceTypeCSV && cfg.StrictFormat &&
 				info.FileMeta.Compression == CompressionNone &&
