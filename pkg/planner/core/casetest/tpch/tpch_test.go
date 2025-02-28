@@ -82,6 +82,8 @@ where c_mktsegment = 'AUTOMOBILE' and c_custkey = o_custkey and l_orderkey = o_o
 group by l_orderkey, o_orderdate, o_shippriority
 order by revenue desc, o_orderdate
 limit 10;`).Check(testkit.Rows(
+		// https://github.com/pingcap/tidb/issues/38610 is original case,
+		// the exchanger under hashagg is eliminated
 		"Projection_14 10.00 root  test.lineitem.l_orderkey, Column#34, test.orders.o_orderdate, test.orders.o_shippriority",
 		"└─TopN_18 10.00 root  Column#34:desc, test.orders.o_orderdate, offset:0, count:10",
 		"  └─TableReader_142 10.00 root  MppVersion: 3, data:ExchangeSender_141",
