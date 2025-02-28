@@ -568,10 +568,10 @@ func showFiles(credentialPath string) {
 	//op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: credentialPath}}
 	// aws
 	op := storage.BackendOptions{S3: storage.S3BackendOptions{
-		Region:          "us-west-2",
-		AccessKey:       id,
-		SecretAccessKey: key,
-		Provider:        "AWS",
+		Region:          *s3Region,
+		AccessKey:       *s3AccessKey,
+		SecretAccessKey: *s3SecretKey,
+		Provider:        *s3Provider,
 	}}
 	s, err := storage.ParseBackend(*gcsDir, &op)
 	if err != nil {
