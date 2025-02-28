@@ -434,6 +434,10 @@ func makeDBPool(size uint, dbFactory func() (*tidallocdb.DB, error)) ([]*tidallo
 }
 
 func (rc *SnapClient) InstallPiTRSupport(ctx context.Context, deps PiTRCollDep) error {
+	if err := deps.LoadMaxCopyConcurrency(ctx, rc.concurrencyPerStore); err != nil {
+		return errors.Trace(err)
+	}
+
 	collector, err := newPiTRColl(ctx, deps)
 	if err != nil {
 		return errors.Trace(err)
