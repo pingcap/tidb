@@ -1394,3 +1394,24 @@ func TestAdjustBlockSize(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 16384, cfg.TikvImporter.BlockSize)
 }
+
+func TestCSVEncodedBy(t *testing.T) {
+	ctx := context.Background()
+	cfg := NewConfig()
+	assignMinimalLegalValue(cfg)
+	require.NoError(t, cfg.Adjust(ctx))
+	cfg.Mydumper.CSV.FieldsEncodedBy = "gzip"
+	require.ErrorContains(t, cfg.Adjust(ctx), "unsupported `encoded-by` value")
+	cfg.Mydumper.CSV.FieldsEncodedBy = FieldEncodeBase64
+	require.ErrorContains(t, cfg.Adjust(ctx), "header` must be false")
+	cfg.Mydumper.CSV.Header = false
+	require.ErrorContains(t, cfg.Adjust(ctx), "delimiter` must be empty")
+	cfg.Mydumper.CSV.Delimiter = ""
+	require.ErrorContains(t, cfg.Adjust(ctx), "escaped-by` must be empty")
+	cfg.Mydumper.CSV.BackslashEscape = false
+	cfg.Mydumper.CSV.EscapedBy = ""
+	cfg.Mydumper.DataCharacterSet = "utf8"
+	require.ErrorContains(t, cfg.Adjust(ctx), "`mydumper.data-character-set` must be 'binary'")
+	cfg.Mydumper.DataCharacterSet = ""
+	require.NoError(t, cfg.Adjust(ctx))
+}

@@ -60,6 +60,7 @@ type importStepExecutor struct {
 
 	dataKVMemSizePerCon     uint64
 	perIndexKVMemSizePerCon uint64
+	indexBlockSize          int
 
 	importCtx    context.Context
 	importCancel context.CancelFunc
@@ -112,9 +113,11 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 		}()
 	}
 	s.dataKVMemSizePerCon, s.perIndexKVMemSizePerCon = getWriterMemorySizeLimit(s.GetResource(), s.tableImporter.Plan)
-	s.logger.Info("KV writer memory size limit per concurrency",
-		zap.String("data", units.BytesSize(float64(s.dataKVMemSizePerCon))),
-		zap.String("per-index", units.BytesSize(float64(s.perIndexKVMemSizePerCon))))
+	s.indexBlockSize = getAdjustedIndexBlockSize(s.perIndexKVMemSizePerCon)
+	s.logger.Info("KV writer memory buf info",
+		zap.String("data-buf-limit", units.BytesSize(float64(s.dataKVMemSizePerCon))),
+		zap.String("per-index-buf-limit", units.BytesSize(float64(s.perIndexKVMemSizePerCon))),
+		zap.String("index-buf-block-size", units.BytesSize(float64(s.indexBlockSize))))
 	return nil
 }
 

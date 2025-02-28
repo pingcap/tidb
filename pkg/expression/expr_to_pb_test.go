@@ -1538,6 +1538,7 @@ func TestExprPushDownToTiKV(t *testing.T) {
 	//datetimeColumn := genColumn(mysql.TypeDatetime, 6)
 	binaryStringColumn := genColumn(mysql.TypeString, 7)
 	dateColumn := genColumn(mysql.TypeDate, 8)
+	byteColumn := genColumn(mysql.TypeBit, 9)
 	binaryStringColumn.RetType.SetCollate(charset.CollationBin)
 
 	// Test exprs that cannot be pushed.
@@ -1576,6 +1577,30 @@ func TestExprPushDownToTiKV(t *testing.T) {
 	ctx := mock.NewContext()
 	pushDownCtx := NewPushDownContextFromSessionVars(ctx, ctx.GetSessionVars(), client)
 	pushed, remained := PushDownExprs(pushDownCtx, exprs, kv.TiKV)
+	require.Len(t, pushed, 0)
+	require.Len(t, remained, len(exprs))
+
+	// Test Conv function, `conv` function for a BIT column should not be pushed down for its special behavior which
+	// is only handled in TiDB currently.
+	// see issue: https://github.com/pingcap/tidb/issues/51877
+	exprs = exprs[:0]
+	function, err = NewFunction(mock.NewContext(), ast.Conv, types.NewFieldType(mysql.TypeString), stringColumn, intColumn, intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	pushed, remained = PushDownExprs(pushDownCtx, exprs, kv.TiKV)
+	require.Len(t, pushed, len(exprs))
+	require.Len(t, remained, 0)
+	exprs = exprs[:0]
+	// when conv a column with type BIT, a cast function will be used to cast bit to a binary string
+	castTp := types.NewFieldType(mysql.TypeString)
+	castTp.SetCharset(charset.CharsetBin)
+	castTp.SetCollate(charset.CollationBin)
+	castByteAsStringFunc, err := NewFunction(mock.NewContext(), ast.Cast, castTp, byteColumn)
+	require.NoError(t, err)
+	function, err = NewFunction(mock.NewContext(), ast.Conv, types.NewFieldType(mysql.TypeString), castByteAsStringFunc, intColumn, intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	pushed, remained = PushDownExprs(pushDownCtx, exprs, kv.TiKV)
 	require.Len(t, pushed, 0)
 	require.Len(t, remained, len(exprs))
 

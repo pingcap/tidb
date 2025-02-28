@@ -27,6 +27,7 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/types",
         "//pkg/util/filter",
+        "//pkg/util/intest",
         "//pkg/util/regexpr-router",
         "//pkg/util/slice",
         "//pkg/util/table-filter",

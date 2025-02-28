@@ -243,7 +243,7 @@ func (b *txnBackfillScheduler) adjustWorkerSize() error {
 		)
 		switch b.tp {
 		case typeAddIndexWorker:
-			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, job.SchemaName, b.tbl, jc, "add_idx_rate", false)
+			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, reorgInfo, job.SchemaName, b.tbl, jc, metrics.LblAddIdxRate, false)
 			idxWorker, err := newAddIndexTxnWorker(b.decodeColMap, b.tbl, backfillCtx,
 				job.ID, reorgInfo.elements, reorgInfo.currElement.TypeKey)
 			if err != nil {
@@ -252,7 +252,7 @@ func (b *txnBackfillScheduler) adjustWorkerSize() error {
 			runner = newBackfillWorker(jc.ddlJobCtx, idxWorker)
 			worker = idxWorker
 		case typeAddIndexMergeTmpWorker:
-			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, job.SchemaName, b.tbl, jc, "merge_tmp_idx_rate", false)
+			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, reorgInfo, job.SchemaName, b.tbl, jc, metrics.LblMergeTmpIdxRate, false)
 			tmpIdxWorker := newMergeTempIndexWorker(backfillCtx, b.tbl, reorgInfo.elements)
 			runner = newBackfillWorker(jc.ddlJobCtx, tmpIdxWorker)
 			worker = tmpIdxWorker
