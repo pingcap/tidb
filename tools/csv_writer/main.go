@@ -572,7 +572,7 @@ func showFiles(credentialPath string) {
 		AccessKey:       *s3AccessKey,
 		SecretAccessKey: *s3SecretKey,
 		Provider:        *s3Provider,
-		Endpoint:        "http%3a%2f%2fks3-cn-beijing-internal.ksyuncs.com",
+		Endpoint:        "http://ks3-cn-beijing-internal.ksyuncs.com",
 	}}
 	s, err := storage.ParseBackend(*gcsDir, &op)
 	if err != nil {
