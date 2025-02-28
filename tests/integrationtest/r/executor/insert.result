@@ -2183,3 +2183,32 @@ id	col1
 4	
 5	
 6	
+drop table if exists t1;
+create table t1 (id binary(20) unique);
+INSERT IGNORE INTO t1 VALUES (X'0e6b4234fd0b08d4c4ec656529d94df02b37c472');
+INSERT IGNORE INTO t1 VALUES (X'0e6b4234fd0b08d4c4ec656529d94df02b37c472');
+show warnings;
+Level	Code	Message
+Warning	1062	Duplicate entry '\x0EkB4\xFD\x0B\x08\xD4\xC4\xECee)\xD9M\xF0+7\xC4r' for key 't1.id'
+INSERT IGNORE INTO t1 VALUES (X'');
+INSERT IGNORE INTO t1 VALUES (X'');
+show warnings;
+Level	Code	Message
+Warning	1062	Duplicate entry '\x00' for key 't1.id'
+INSERT IGNORE INTO t1 VALUES (X'7f000000');
+INSERT IGNORE INTO t1 VALUES (X'7f000000');
+show warnings;
+Level	Code	Message
+Warning	1062	Duplicate entry '\x7F' for key 't1.id'
+drop table if exists t1;
+create table t1 (id bit(20) unique);
+INSERT IGNORE INTO t1 VALUES (10);
+INSERT IGNORE INTO t1 VALUES (10);
+show warnings;
+Level	Code	Message
+Warning	1062	Duplicate entry '\x00\x00\x0A' for key 't1.id'
+INSERT IGNORE INTO t1 VALUES (65536);
+INSERT IGNORE INTO t1 VALUES (65536);
+show warnings;
+Level	Code	Message
+Warning	1062	Duplicate entry '\x01\x00\x00' for key 't1.id'
