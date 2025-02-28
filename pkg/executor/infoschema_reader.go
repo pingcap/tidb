@@ -682,7 +682,9 @@ func (e *memtableRetriever) setDataFromOneTable(
 
 		var rowCount, avgRowLength, dataLength, indexLength uint64
 		if useStatsCache {
-			// Even if the table is a partition table, we still need to update the stats cache for the table itself.
+			// Even for partitioned tables, we must update the stats cache for the main table itself.
+			// This is necessary because the global index length from the table also needs to be included.
+			// For further details, see: https://github.com/pingcap/tidb/issues/54173
 			err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
 			if err != nil {
 				return rows, err
