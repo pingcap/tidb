@@ -1270,7 +1270,7 @@ test_log_compaction() {
     echo "Compacting logs from $one_hour_ago_ts to $current_ts"
     
     # Run tikv-ctl to perform compaction
-    tikv-ctl --log-level=info compact-log-backup --from "$one_hour_ago_ts" --until "$current_ts" -s "$storage_base64" -N 4 --min-compaction-size 0
+    tikv-ctl --log-level=info compact-log-backup --from "$one_hour_ago_ts" --until "$current_ts" -s "$storage_base64" -N 4 --minimal-compaction-size 0
 
     # Verify SST files exist after compaction
     post_compaction_files=$(find "$TEST_DIR/$TASK_NAME/log" -name "*.sst" | wc -l)
