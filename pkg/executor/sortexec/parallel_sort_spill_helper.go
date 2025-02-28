@@ -243,9 +243,9 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) (err error) 
 		case row, ok = <-spilledRowChannel:
 			if !ok {
 				if p.tmpSpillChunk.NumRows() > 0 {
-					err = p.spillTmpSpillChunk(inDisk)
-					if err != nil {
-						return
+					retErr := p.spillTmpSpillChunk(inDisk)
+					if retErr != nil {
+						return retErr
 					}
 				}
 
@@ -261,9 +261,9 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) (err error) 
 
 		p.tmpSpillChunk.AppendRow(row)
 		if p.tmpSpillChunk.IsFull() {
-			err = p.spillTmpSpillChunk(inDisk)
-			if err != nil {
-				return
+			retErr := p.spillTmpSpillChunk(inDisk)
+			if retErr != nil {
+				return retErr
 			}
 		}
 	}
