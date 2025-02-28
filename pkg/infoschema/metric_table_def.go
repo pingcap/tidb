@@ -299,8 +299,8 @@ var MetricTableMap = map[string]MetricTableDef{
 		Comment:  "The quantile of distsql partial numbers per query",
 	},
 	"tidb_cop_duration": {
-		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_tikvclient_cop_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le, instance))",
-		Labels:   []string{"instance"},
+		PromQL: "histogram_quantile($QUANTILE, sum(rate(tidb_tikvclient_request_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,instance))",
+		Labels:   []string{"instance", "type", "store"},
 		Quantile: 0.95,
 		Comment:  "The quantile of kv storage coprocessor processing durations",
 	},
