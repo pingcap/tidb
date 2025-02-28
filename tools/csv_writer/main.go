@@ -47,6 +47,11 @@ var (
 	base64Encode        = flag.Bool("base64Encode", false, "Base64 encode the CSV file")
 	fetchFile           = flag.String("fetchFile", "", "Fetch a specific file from GCS and write to local disk")
 	checkColUniqueness  = flag.Int("checkCol", -1, "Check the uniqueness of a specific column in a CSV file")
+
+	s3AccessKey = flag.String("s3AccessKey", "", "S3 access key")
+	s3SecretKey = flag.String("s3SecretKey", "", "S3 secret key")
+	s3Region    = flag.String("s3Region", "", "S3 region")
+	s3Provider  = flag.String("s3Provider", "", "S3 provider")
 )
 
 const (
@@ -539,10 +544,10 @@ func deleteFile(credentialPath, fileName string) {
 	//op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: credentialPath}}
 	// aws
 	op := storage.BackendOptions{S3: storage.S3BackendOptions{
-		Region:          "us-west-2",
-		AccessKey:       id,
-		SecretAccessKey: key,
-		Provider:        "AWS",
+		Region:          *s3Region,
+		AccessKey:       *s3AccessKey,
+		SecretAccessKey: *s3SecretKey,
+		Provider:        *s3Provider,
 	}}
 	s, err := storage.ParseBackend(*gcsDir, &op)
 	if err != nil {
@@ -1104,10 +1109,10 @@ func main() {
 	//op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: *credentialPath}}
 	// aws
 	op := storage.BackendOptions{S3: storage.S3BackendOptions{
-		Region:          "us-west-2",
-		AccessKey:       id,
-		SecretAccessKey: key,
-		Provider:        "AWS",
+		Region:          *s3Region,
+		AccessKey:       *s3AccessKey,
+		SecretAccessKey: *s3SecretKey,
+		Provider:        *s3Provider,
 	}}
 	s, err := storage.ParseBackend(*gcsDir, &op)
 	if err != nil {
