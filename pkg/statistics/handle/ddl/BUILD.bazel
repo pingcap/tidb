@@ -31,7 +31,11 @@ go_test(
     timeout = "short",
     srcs = ["ddl_test.go"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 28,
+=======
+    shard_count = 20,
+>>>>>>> b273109b9a6 (statistics: gc the statistics correctly after drop the database (#57309))
     deps = [
         ":ddl",
         "//pkg/parser/model",
