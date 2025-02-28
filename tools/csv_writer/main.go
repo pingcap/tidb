@@ -62,8 +62,6 @@ const (
 	totalOrdered   = "TOTAL ORDERED"
 	partialOrdered = "PARTIAL ORDERED"
 	totalRandom    = "TOTAL RANDOM"
-	id             = ""
-	key            = ""
 )
 
 var faker *gofakeit.Faker
