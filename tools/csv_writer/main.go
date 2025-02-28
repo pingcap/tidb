@@ -422,7 +422,7 @@ func generateVarbinary(num, len int, res []string, unique bool) {
 			uuid := faker.UUID()
 			res[i] = uuid + generateLetterWithNum(len-uuidLen, true)
 		} else {
-			if faker.Number(1, 10) <= 8 {
+			if faker.Number(1, 10) <= 9 {
 				// 80% null value
 				res[i] = "\\N"
 			} else {
@@ -470,7 +470,8 @@ func escapeJSONString(jsonStr string) string {
 
 func generateJSONObject(num int, res []string) {
 	for i := 0; i < num; i++ {
-		r := generateJSON()
+		//r := generateJSON()
+		r := "\\N"
 		if *localPath == "" {
 			res[i] = escapeJSONString(r)
 		} else {
