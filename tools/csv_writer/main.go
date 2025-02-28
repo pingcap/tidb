@@ -304,7 +304,7 @@ func generateLetterWithNum(len int, randomLen bool) string {
 
 func generateDecimal(num int, res []string) {
 	for i := 0; i < num; i++ {
-		if faker.Number(1, 10) <= 8 {
+		if faker.Number(1, 10) <= 9 {
 			// 80% null value
 			res[i] = "\\N"
 		} else {
@@ -317,7 +317,7 @@ func generateDecimal(num int, res []string) {
 
 func generateBigintWithNoLimit(num int, res []string, colName string) {
 	for i := 0; i < num; i++ {
-		if strings.Contains(colName, "datetime") && faker.Number(1, 10) <= 8 {
+		if strings.Contains(colName, "datetime") && faker.Number(1, 10) <= 9 {
 			// 80% null value
 			res[i] = "\\N"
 		} else {
@@ -427,12 +427,12 @@ func generateVarbinary(num, len int, res []string, unique bool) {
 			uuid := faker.UUID()
 			res[i] = uuid + generateLetterWithNum(len-uuidLen, true)
 		} else {
-			if faker.Number(1, 10) <= 8 {
+			if faker.Number(1, 10) <= 9 {
 				// 80% null value
 				res[i] = "\\N"
 			} else {
 				// todo: remove 1024
-				res[i] = generateLetterWithNum(128, true)
+				res[i] = generateLetterWithNum(192, true)
 			}
 		}
 	}
