@@ -206,6 +206,13 @@ func (mp *MetaKVInfoProcessor) ProcessBatch(
 
 				// add to table rename history
 				mp.tableHistoryManager.AddTableHistory(tableInfo.ID, tableInfo.Name.String(), dbID)
+
+				// track partitions if this is a partitioned table
+				if tableInfo.Partition != nil {
+					for _, def := range tableInfo.Partition.Definitions {
+						mp.tableHistoryManager.AddPartitionHistory(def.ID, tableInfo.Name.String(), dbID, tableInfo.ID)
+					}
+				}
 			}
 		}
 	}

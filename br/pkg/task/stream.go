@@ -1981,7 +1981,10 @@ func buildPauseSafePointName(taskName string) string {
 	return fmt.Sprintf("%s_pause_safepoint", taskName)
 }
 
-func checkPiTRRequirements(mgr *conn.Mgr) error {
+func checkPiTRRequirements(mgr *conn.Mgr, hasExplicitFilter bool) error {
+	if hasExplicitFilter {
+		return nil
+	}
 	return restore.AssertUserDBsEmpty(mgr.GetDomain())
 }
 
@@ -2057,7 +2060,7 @@ func generatePiTRTaskInfo(
 			// Only when use checkpoint and not the first execution,
 			// skip checking requirements.
 			log.Info("check pitr requirements for the first execution")
-			if err := checkPiTRRequirements(mgr); err != nil {
+			if err := checkPiTRRequirements(mgr, cfg.ExplicitFilter); err != nil {
 				// delay cluster checks after we get the backupmeta.
 				// for the case that the restore inc + log backup,
 				// we can still restore them.
