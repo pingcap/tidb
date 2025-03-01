@@ -984,7 +984,7 @@ func (s *indexWriteResultSink) flush() error {
 			res := s.resource
 			memSizePerCon := res.Mem.Capacity() / res.CPU.Capacity()
 			partSize := max(external.MinUploadPartSize, memSizePerCon*int64(external.MaxMergingFilesPerThread)/10000)
-			cs, ok := s.readSummaryMap.Load(s.subtaskID)
+			cs, ok := s.readSummaryMap.LoadAndDelete(s.subtaskID)
 			if !ok {
 				return errors.Errorf("cannot load read summary")
 			}
