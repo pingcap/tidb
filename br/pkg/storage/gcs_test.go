@@ -10,8 +10,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+<<<<<<< HEAD
 	"net/http"
 	"net/http/httptest"
+=======
+>>>>>>> ec185120478 (objstore: retry on GCS EOF error (#59851))
 	"net/url"
 	"os"
 	"testing"
@@ -575,6 +578,7 @@ func TestSpeedReadManyFiles(t *testing.T) {
 	t.Logf("read %d large files cost %v", len(testFiles), time.Since(now))
 }
 
+<<<<<<< HEAD
 func TestCtxUsage(t *testing.T) {
 	httpSvr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer httpSvr.Close()
@@ -605,4 +609,9 @@ func TestCtxUsage(t *testing.T) {
 func TestGCSShouldRetry(t *testing.T) {
 	require.True(t, shouldRetry(&url.Error{Err: goerrors.New("http2: server sent GOAWAY and closed the connectiont"), Op: "Get", URL: "https://storage.googleapis.com/storage/v1/"}))
 	require.True(t, shouldRetry(&url.Error{Err: goerrors.New("http2: client connection lost"), Op: "Get", URL: "https://storage.googleapis.com/storage/v1/"}))
+=======
+func TestGCSShouldRetry(t *testing.T) {
+	require.True(t, shouldRetry(&url.Error{Err: goerrors.New("http2: client connection lost"), Op: "Get", URL: "https://storage.googleapis.com/storage/v1/"}))
+	require.True(t, shouldRetry(&url.Error{Err: io.EOF, Op: "Get", URL: "https://storage.googleapis.com/storage/v1/"}))
+>>>>>>> ec185120478 (objstore: retry on GCS EOF error (#59851))
 }
