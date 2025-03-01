@@ -174,9 +174,6 @@ func equalRowCountOnColumn(sctx sessionctx.Context, c *statistics.Column, val ty
 	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
 	histNDV := float64(c.Histogram.NDV - int64(c.TopN.Num()))
 	if histNDV <= 0 {
-<<<<<<< HEAD
-		return 0, nil
-=======
 		// If histNDV is zero - we have all NDV's in TopN - and no histograms. This function uses
 		// c.NotNullCount rather than c.Histogram.NotNullCount() since the histograms are empty.
 		//
@@ -196,7 +193,6 @@ func equalRowCountOnColumn(sctx sessionctx.Context, c *statistics.Column, val ty
 		// "realtimeRowCount - original count" is a better measure of inserts than modifyCount
 		totalRowCount := min(c.NotNullCount(), float64(realtimeRowCount)-c.NotNullCount())
 		return max(1, totalRowCount/histNDV), nil
->>>>>>> cec48bb1649 (planner: Use realtimeRowCount when all topN collected (#56848))
 	}
 	// return the average histogram rows (which excludes topN) and NDV that excluded topN
 	return c.Histogram.NotNullCount() / histNDV, nil
