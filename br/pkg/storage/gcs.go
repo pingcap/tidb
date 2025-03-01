@@ -7,6 +7,7 @@ import (
 	"context"
 	goerrors "errors"
 	"io"
+	"net/url"
 	"os"
 	"path"
 	"strings"
@@ -355,6 +356,39 @@ func shouldRetry(err error) bool {
 		}
 	}
 
+<<<<<<< HEAD
+=======
+	// workaround for https://github.com/googleapis/google-cloud-go/issues/7090
+	// seems it's a bug of golang net/http: https://github.com/golang/go/issues/53472
+	if e := (&url.Error{}); goerrors.As(err, &e) {
+		if goerrors.Is(e.Err, io.EOF) {
+			return true
+		}
+	}
+
+	errMsg := err.Error()
+	// workaround for strange unknown errors
+	retryableErrMsg := []string{
+		"http2: client connection force closed via ClientConn.Close",
+		"broken pipe",
+		"http2: client connection lost",
+	}
+
+	for _, msg := range retryableErrMsg {
+		if strings.Contains(errMsg, msg) {
+			log.Warn("retrying gcs request", zap.Error(err))
+			return true
+		}
+	}
+
+	// just log the new unknown error, in case we can add it to this function
+	if !goerrors.Is(err, context.Canceled) {
+		log.Warn("other error when requesting gcs",
+			zap.Error(err),
+			zap.String("info", fmt.Sprintf("type: %T, value: %#v", err, err)))
+	}
+
+>>>>>>> ec185120478 (objstore: retry on GCS EOF error (#59851))
 	return false
 }
 
