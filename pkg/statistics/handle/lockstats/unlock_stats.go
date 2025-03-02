@@ -17,7 +17,6 @@ package lockstats
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -159,7 +158,6 @@ func updateStatsAndUnlockTable(sctx sessionctx.Context, tid int64) error {
 	if err := updateDelta(sctx, count, modifyCount, version, tid); err != nil {
 		return err
 	}
-	cache.TableRowStatsCache.Invalidate(tid)
 
 	_, _, err = util.ExecRows(
 		sctx,
@@ -178,11 +176,14 @@ func updateStatsAndUnlockPartition(sctx sessionctx.Context, partitionID int64, t
 	if err := updateDelta(sctx, count, modifyCount, version, partitionID); err != nil {
 		return err
 	}
+<<<<<<< HEAD
 	cache.TableRowStatsCache.Invalidate(partitionID)
 	if err := updateDelta(sctx, count, modifyCount, version, tid); err != nil {
+=======
+	if err := updateDelta(sctx, count, modifyCount, tid); err != nil {
+>>>>>>> 2214bd07fc6 (statistics: Remove the ineffective dirty IDs from the row count cache (#56287))
 		return err
 	}
-	cache.TableRowStatsCache.Invalidate(tid)
 
 	_, _, err = util.ExecRows(
 		sctx,
