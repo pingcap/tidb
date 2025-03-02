@@ -307,7 +307,7 @@ func (pf *parquetFileWrapper) Open(name string) (parquet.ReaderAtSeeker, error) 
 	if len(name) == 0 {
 		name = pf.path
 	}
-	reader, err := pf.store.Open(pf.ctx, name, nil)
+	reader, err := pf.store.Open(pf.ctx, name, &storage.ReaderOption{PrefetchSize: 1 << 20})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -802,7 +802,7 @@ func OpenParquetReader(
 	store storage.ExternalStorage,
 	path string,
 ) (storage.ReadSeekCloser, error) {
-	r, err := store.Open(ctx, path, nil)
+	r, err := store.Open(ctx, path, &storage.ReaderOption{PrefetchSize: 1 << 20})
 	if err != nil {
 		return nil, err
 	}
@@ -1005,7 +1005,7 @@ func SampleStatisticsFromParquet(
 	store storage.ExternalStorage,
 ) (
 	avgRowSize float64,
-	memoryUsage int,
+	memoryUsageStream int,
 	memoryUsageFull int,
 	err error,
 ) {
@@ -1111,7 +1111,9 @@ func SampleStatisticsFromParquet(
 
 	avgRowSize = float64(rowSize) / float64(rowCount)
 
-	memoryUsageStream, memoryUsageFull := 0, 0
+	memoryUsageStream = len(columnMetas) << 20
+	memoryUsageFull = len(columnMetas) << 20
+
 	for _, alloc := range allSampleAllocators {
 		memoryUsageFull += alloc.maxDataPage
 		memoryUsageFull += alloc.totalDictPage
