@@ -100,7 +100,7 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 
 	if s.taskMeta.Plan.Format == importer.DataFormatParquet {
 		// For `IMPORT INTO format "parquet"`, we set the memory usage for parquet reader to 40%.
-		mydump.SetMemoryLimitForParquet(40)
+		mydump.ConfigureReaderLimitForParquet(40)
 	}
 
 	tableImporter, err := getTableImporter(ctx, s.taskID, s.taskMeta, s.store)
@@ -280,7 +280,7 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 
 func (s *importStepExecutor) Cleanup(_ context.Context) (err error) {
 	if s.taskMeta.Plan.Format == importer.DataFormatParquet {
-		mydump.FreeMemoryForParquet()
+		mydump.ReleaseMemoryForParquet()
 	}
 
 	s.logger.Info("cleanup subtask env")

@@ -98,6 +98,7 @@ type Chunk struct {
 	Type         mydump.SourceType
 	Compression  mydump.Compression
 	Timestamp    int64
+	ParquetMeta  mydump.ParquetFileMeta
 }
 
 // prepareSortDir creates a new directory for import, remove previous sort directory if exists.

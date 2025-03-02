@@ -41,6 +41,10 @@ const (
 	// defaultBatchSize is the number of rows fetched each time in the parquet reader
 	defaultBatchSize = 128
 
+	// readerPrefetchSize is the prefetch size for each reader.
+	// 1M is sufficient for most small Parquet files.
+	readerPrefetchSize = 1 << 20
+
 	// defaultBufSize specifies the default size of skip buffer.
 	// Skip buffer is used when reading data from the cloud. If there is a gap between the current
 	// read position and the last read position, these data is stored in this buffer to avoid
@@ -307,7 +311,7 @@ func (pf *parquetFileWrapper) Open(name string) (parquet.ReaderAtSeeker, error) 
 	if len(name) == 0 {
 		name = pf.path
 	}
-	reader, err := pf.store.Open(pf.ctx, name, &storage.ReaderOption{PrefetchSize: 1 << 20})
+	reader, err := pf.store.Open(pf.ctx, name, &storage.ReaderOption{PrefetchSize: readerPrefetchSize})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -802,7 +806,7 @@ func OpenParquetReader(
 	store storage.ExternalStorage,
 	path string,
 ) (storage.ReadSeekCloser, error) {
-	r, err := store.Open(ctx, path, &storage.ReaderOption{PrefetchSize: 1 << 20})
+	r, err := store.Open(ctx, path, &storage.ReaderOption{PrefetchSize: readerPrefetchSize})
 	if err != nil {
 		return nil, err
 	}
@@ -1029,6 +1033,9 @@ func SampleStatisticsFromParquet(
 		return 0, 0, 0, errors.Trace(err)
 	}
 
+	//nolint: errcheck
+	defer reader.Close()
+
 	fileSchema := reader.MetaData().Schema
 	columnMetas := make([]convertedType, fileSchema.NumColumns())
 	columnNames := make([]string, 0, fileSchema.NumColumns())
@@ -1111,8 +1118,8 @@ func SampleStatisticsFromParquet(
 
 	avgRowSize = float64(rowSize) / float64(rowCount)
 
-	memoryUsageStream = len(columnMetas) << 20
-	memoryUsageFull = len(columnMetas) << 20
+	memoryUsageStream = len(columnMetas) * readerPrefetchSize
+	memoryUsageFull = readerPrefetchSize
 
 	for _, alloc := range allSampleAllocators {
 		memoryUsageFull += alloc.maxDataPage

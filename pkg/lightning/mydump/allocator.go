@@ -16,6 +16,7 @@ package mydump
 
 import (
 	"math"
+	"runtime"
 	"runtime/debug"
 	"sync"
 	"unsafe"
@@ -48,9 +49,9 @@ var (
 	GetArena func(*membuf.Buffer) arena
 )
 
-// SetMemoryLimitForParquet set the memory limit for parquet reader.
-// Remember to call FreeMemoryForParquet to free the memory.
-func SetMemoryLimitForParquet(percent int) {
+// ConfigureReaderLimitForParquet set the memory limit for parquet reader.
+// Remember to call ReleaseMemoryForParquet to free the memory.
+func ConfigureReaderLimitForParquet(percent int) {
 	lk.Lock()
 	defer lk.Unlock()
 
@@ -65,7 +66,7 @@ func SetMemoryLimitForParquet(percent int) {
 		// Set limit to int max, which means no limiter
 		memTotal = math.MaxInt32
 	}
-	readerMemoryLimit = int(memTotal) * min(percent, 90) / 100
+	readerMemoryLimit = int(memTotal) * min(percent, 75) / 100
 	readerMemoryLimiter = membuf.NewLimiter(readerMemoryLimit)
 
 	gcPercent := (10000/percent - 100) / 10 * 10
@@ -85,7 +86,8 @@ func SetMemoryLimitForParquet(percent int) {
 	)
 }
 
-func FreeMemoryForParquet() {
+// ReleaseMemoryForParquet releases memory allocated for parquet readers.
+func ReleaseMemoryForParquet() {
 	lk.Lock()
 	defer lk.Unlock()
 
@@ -93,6 +95,8 @@ func FreeMemoryForParquet() {
 	if importCount == 0 {
 		globalPool.Destroy()
 		debug.SetGCPercent(100)
+		//nolint: all_revive,revive
+		runtime.GC()
 	}
 }
 
