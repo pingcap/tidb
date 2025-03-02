@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
@@ -66,6 +67,7 @@ type TestDXFContext struct {
 		nodeIndices  map[string]int
 		nodes        []*tidbNode
 	}
+	mockCPUNum int
 }
 
 // NewDXFContextWithRandomNodes creates a new TestDXFContext with random number
@@ -107,6 +109,7 @@ func (c *TestDXFContext) init(nodeNum, cpuCount int, reduceCheckInterval bool) {
 		ReduceCheckInterval(c.T)
 	}
 	// all nodes are isometric
+	c.mockCPUNum = cpuCount
 	term := fmt.Sprintf("return(%d)", cpuCount)
 	testfailpoint.Enable(c.T, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", term)
 	testfailpoint.Enable(c.T, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
@@ -166,13 +169,13 @@ func (c *TestDXFContext) ScaleOut(nodeNum int) {
 // ScaleOutBy scales out a tidb node by id, and set it as owner if required.
 func (c *TestDXFContext) ScaleOutBy(id string, owner bool) {
 	c.T.Logf("scale out node of id = %s, owner = %t", id, owner)
-	exeMgr, err := taskexecutor.NewManager(c.Ctx, id, c.TaskMgr)
+	exeMgr, err := taskexecutor.NewManager(c.Ctx, id, c.TaskMgr, proto.NewNodeResource(c.mockCPUNum, 32*units.GB, 100*units.GB))
 	require.NoError(c.T, err)
 	require.NoError(c.T, exeMgr.InitMeta())
 	require.NoError(c.T, exeMgr.Start())
 	var schMgr *scheduler.Manager
 	if owner {
-		schMgr = scheduler.NewManager(c.Ctx, c.TaskMgr, id)
+		schMgr = scheduler.NewManager(c.Ctx, c.TaskMgr, id, proto.NewNodeResource(c.mockCPUNum, 32*units.GB, 100*units.GB))
 		schMgr.Start()
 	}
 	node := &tidbNode{
@@ -354,7 +357,8 @@ func (c *TestDXFContext) electIfNeeded() {
 	newOwnerIdx := int(rand.Int31n(int32(len(c.mu.nodes))))
 	ownerNode := c.mu.nodes[newOwnerIdx]
 	c.mu.ownerIndices[ownerNode.id] = newOwnerIdx
-	ownerNode.schMgr = scheduler.NewManager(c.Ctx, c.TaskMgr, ownerNode.id)
+	nodeRes := proto.NewNodeResource(c.mockCPUNum, 32*units.GB, 100*units.GB)
+	ownerNode.schMgr = scheduler.NewManager(c.Ctx, c.TaskMgr, ownerNode.id, nodeRes)
 	ownerNode.schMgr.Start()
 	ownerNode.owner = true
 	c.mu.Unlock()
@@ -424,14 +428,17 @@ func ReduceCheckInterval(t testing.TB) {
 	taskCheckIntervalBak := taskexecutor.TaskCheckInterval
 	checkIntervalBak := taskexecutor.SubtaskCheckInterval
 	maxIntervalBak := taskexecutor.MaxSubtaskCheckInterval
+	detectModifyIntBak := taskexecutor.DetectParamModifyInterval
 	t.Cleanup(func() {
 		scheduler.CheckTaskRunningInterval = schedulerMgrCheckIntervalBak
 		scheduler.CheckTaskFinishedInterval = schedulerCheckIntervalBak
 		taskexecutor.TaskCheckInterval = taskCheckIntervalBak
 		taskexecutor.SubtaskCheckInterval = checkIntervalBak
 		taskexecutor.MaxSubtaskCheckInterval = maxIntervalBak
+		taskexecutor.DetectParamModifyInterval = detectModifyIntBak
 	})
 	scheduler.CheckTaskRunningInterval, scheduler.CheckTaskFinishedInterval = 100*time.Millisecond, 100*time.Millisecond
 	taskexecutor.TaskCheckInterval, taskexecutor.MaxSubtaskCheckInterval, taskexecutor.SubtaskCheckInterval =
 		10*time.Millisecond, 10*time.Millisecond, 10*time.Millisecond
+	taskexecutor.DetectParamModifyInterval = 10 * time.Millisecond
 }

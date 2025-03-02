@@ -601,6 +601,7 @@ const (
 		error BLOB,
 		modify_params json,
 		max_node_count INT DEFAULT 0,
+		extra_params json,
 		key(state),
 		UNIQUE KEY task_key(task_key)
 	);`
@@ -624,6 +625,7 @@ const (
 		error BLOB,
 		modify_params json,
 		max_node_count INT DEFAULT 0,
+		extra_params json,
 		key(state),
 		UNIQUE KEY task_key(task_key)
 	);`
@@ -761,7 +763,7 @@ const (
        extra json,                -- for the cloud env to save more info like RU, cost_saving, ...
        index idx_create(created_at),
        index idx_update(updated_at),
-       unique index idx(schema_name, table_name, index_columns))`
+       unique index idx(schema_name, table_name, index_columns));`
 
 	// CreateKernelOptionsTable is a table to store kernel options for tidb.
 	CreateKernelOptionsTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_kernel_options (
@@ -771,7 +773,18 @@ const (
         updated_at datetime,
         status varchar(128),
         description text,
-        primary key(module, name))`
+        primary key(module, name));`
+
+	// CreateTiDBWorkloadValuesTable is a table to store workload-based learning values for tidb.
+	CreateTiDBWorkloadValuesTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_workload_values (
+		id bigint(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		version bigint(20) NOT NULL,
+		category varchar(64) NOT NULL,
+		type varchar(64) NOT NULL,
+		table_id bigint(20) NOT NULL,
+		value json NOT NULL,
+		index idx_version_category_type (version, category, type),
+		index idx_table_id (table_id));`
 )
 
 // CreateTimers is a table to store all timers for tidb
@@ -1249,9 +1262,11 @@ const (
 
 	// version 242
 	//   insert `cluster_id` into the `mysql.tidb` table.
+	//   Add workload-based learning system tables
 	version242 = 242
 
 	// Add max_node_count column to tidb_global_task and tidb_global_task_history.
+	// Add extra_params to tidb_global_task and tidb_global_task_history.
 	version243 = 243
 )
 
@@ -3351,8 +3366,8 @@ func upgradeToVer242(s sessiontypes.Session, ver int64) {
 	if ver >= version242 {
 		return
 	}
-
 	writeClusterID(s)
+	mustExecute(s, CreateTiDBWorkloadValuesTable)
 }
 
 func upgradeToVer243(s sessiontypes.Session, ver int64) {
@@ -3361,6 +3376,8 @@ func upgradeToVer243(s sessiontypes.Session, ver int64) {
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN extra_params json AFTER max_node_count;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN extra_params json AFTER max_node_count;", infoschema.ErrColumnExists)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
@@ -3517,6 +3534,8 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateIndexAdvisorTable)
 	// create mysql.tidb_kernel_options
 	mustExecute(s, CreateKernelOptionsTable)
+	// create mysql.tidb_workload_values
+	mustExecute(s, CreateTiDBWorkloadValuesTable)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
