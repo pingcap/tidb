@@ -683,6 +683,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 
 			createOptions := ""
 
+<<<<<<< HEAD:executor/infoschema_reader.go
 			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
@@ -697,6 +698,52 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 				hasAutoIncID, _ := infoschema.HasAutoIncrementColumn(table)
 				if hasAutoIncID {
 					autoIncID, err = getAutoIncrementID(sctx, schema, table)
+=======
+	if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.AllPrivMask) {
+		return rows, nil
+	}
+	pkType := "NONCLUSTERED"
+	if !table.IsView() {
+		if table.GetPartitionInfo() != nil {
+			createOptions = "partitioned"
+		} else if table.TableCacheStatusType == model.TableCacheStatusEnable {
+			createOptions = "cached=on"
+		}
+		var autoIncID any
+		hasAutoIncID, _ := infoschema.HasAutoIncrementColumn(table)
+		if hasAutoIncID {
+			autoIncID = getAutoIncrementID(e.is, sctx, table)
+		}
+		tableType := "BASE TABLE"
+		if util.IsSystemView(schema.L) {
+			tableType = "SYSTEM VIEW"
+		}
+		if table.IsSequence() {
+			tableType = "SEQUENCE"
+		}
+		if table.HasClusteredIndex() {
+			pkType = "CLUSTERED"
+		}
+		shardingInfo := infoschema.GetShardingInfo(schema, table)
+		var policyName any
+		if table.PlacementPolicyRef != nil {
+			policyName = table.PlacementPolicyRef.Name.O
+		}
+
+		var rowCount, avgRowLength, dataLength, indexLength uint64
+		if useStatsCache {
+			// Even for partitioned tables, we must update the stats cache for the main table itself.
+			// This is necessary because the global index length from the table also needs to be included.
+			// For further details, see: https://github.com/pingcap/tidb/issues/54173
+			err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
+			if err != nil {
+				return rows, err
+			}
+			if table.GetPartitionInfo() != nil {
+				// needs to update all partitions for partition table.
+				for _, pi := range table.GetPartitionInfo().Definitions {
+					err := cache.TableRowStatsCache.UpdateByID(sctx, pi.ID)
+>>>>>>> 2214bd07fc6 (statistics: Remove the ineffective dirty IDs from the row count cache (#56287)):pkg/executor/infoschema_reader.go
 					if err != nil {
 						return err
 					}
