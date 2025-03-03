@@ -304,10 +304,11 @@ const (
 		charset TEXT NOT NULL,
 		collation TEXT NOT NULL,
 		source VARCHAR(10) NOT NULL DEFAULT 'unknown',
-		sql_digest varchar(64),
-		plan_digest varchar(64),
+		sql_digest varchar(64) DEFAULT NULL,
+		plan_digest varchar(64) DEFAULT NULL,
 		INDEX sql_index(original_sql(700),default_db(68)) COMMENT "accelerate the speed when add global binding query",
-		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
+		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time",
+		UNIQUE INDEX plan_index(plan_digest)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateRoleEdgesTable stores the role and user relationship information.
@@ -3373,6 +3374,7 @@ func upgradeToVer242(s sessiontypes.Session, ver int64) {
 	}
 	writeClusterID(s)
 	mustExecute(s, CreateTiDBWorkloadValuesTable)
+	doReentrantDDL(s, `alter table mysql.bind_info add unique index plan_index (plan_digest)`, dbterror.ErrDupKeyName)
 }
 
 func upgradeToVer243(s sessiontypes.Session, ver int64) {

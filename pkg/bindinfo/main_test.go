@@ -31,6 +31,7 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		goleak.IgnoreTopFunction("github.com/dgraph-io/ristretto.(*defaultPolicy).processItems"),
 		goleak.IgnoreTopFunction("github.com/dgraph-io/ristretto.(*Cache).processItems"),
+		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
 	}
 	goleak.VerifyTestMain(m, opts...)
 }

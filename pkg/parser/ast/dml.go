@@ -3050,6 +3050,7 @@ const (
 	ShowCreateProcedure
 	ShowBinlogStatus
 	ShowReplicaStatus
+	ShowBindingPlan
 )
 
 const (
@@ -3086,6 +3087,7 @@ type ShowStmt struct {
 	IfNotExists       bool                 // Used for `show create database if not exists`
 	Extended          bool                 // Used for `show extended columns from ...`
 	Limit             *Limit               // Used for partial Show STMTs to limit Result Set row numbers.
+	SQLOrDigest       string
 
 	CountWarningsOrErrors bool // Used for showing count(*) warnings | errors
 

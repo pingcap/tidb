@@ -60,7 +60,7 @@ type GlobalBindingHandle interface {
 	DropGlobalBinding(sqlDigests []string) (deletedRows uint64, err error)
 
 	// SetGlobalBindingStatus set a Bindings's status to the storage and bind cache.
-	SetGlobalBindingStatus(newStatus, sqlDigest string) (ok bool, err error)
+	SetGlobalBindingStatus(newStatus, planDigest string) (ok bool, err error)
 
 	// Methods for load and clear global sql bindings.
 
@@ -69,6 +69,10 @@ type GlobalBindingHandle interface {
 
 	// GCGlobalBinding physically removes the deleted bind records in mysql.bind_info.
 	GCGlobalBinding() (err error)
+
+	AutoRecordBindings(lastTime time.Time) error
+
+	AutoBindingsForSQL(sqlDigest string) ([]*AutoBindingInfo, error)
 
 	// Methods for memory control.
 
@@ -88,6 +92,8 @@ type GlobalBindingHandle interface {
 type globalBindingHandle struct {
 	sPool        util.DestroyableSessionPool
 	bindingCache BindingCache
+
+	autoBindingDigests map[string]struct{}
 
 	// lastTaskTime records the last update time for the global sql bind cache.
 	// This value is used to avoid reload duplicated bindings from storage.
@@ -309,7 +315,7 @@ func (h *globalBindingHandle) DropGlobalBinding(sqlDigests []string) (deletedRow
 }
 
 // SetGlobalBindingStatus set a Bindings's status to the storage and bind cache.
-func (h *globalBindingHandle) SetGlobalBindingStatus(newStatus, sqlDigest string) (ok bool, err error) {
+func (h *globalBindingHandle) SetGlobalBindingStatus(newStatus, planDigest string) (ok bool, err error) {
 	var (
 		updateTs               types.Time
 		oldStatus0, oldStatus1 string
@@ -340,8 +346,8 @@ func (h *globalBindingHandle) SetGlobalBindingStatus(newStatus, sqlDigest string
 		updateTs = types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
 		updateTsStr := updateTs.String()
 
-		_, err = exec(sctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE sql_digest = %? AND update_time < %? AND status IN (%?, %?)`,
-			newStatus, updateTsStr, sqlDigest, updateTsStr, oldStatus0, oldStatus1)
+		_, err = exec(sctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE plan_digest = %? AND update_time < %? AND status IN (%?, %?)`,
+			newStatus, updateTsStr, planDigest, updateTsStr, oldStatus0, oldStatus1)
 		return err
 	})
 	return

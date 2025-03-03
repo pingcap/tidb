@@ -81,9 +81,23 @@ func GenHintsFromPhysicalPlan(p base.Plan) []*ast.TableOptimizerHint {
 func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.StoreType, res []*ast.TableOptimizerHint) []*ast.TableOptimizerHint {
 	qbName, err := h.GenerateQBName(nodeType, p.QueryBlockOffset())
 	if err != nil {
-		return res
+		//return res
 	}
 	switch pp := p.(type) {
+	case *PointGetPlan:
+		res = append(res, &ast.TableOptimizerHint{
+			QBName:   qbName,
+			HintName: ast.NewCIStr(h.HintUseIndex),
+			Tables:   []ast.HintTable{{DBName: ast.NewCIStr(pp.dbName), TableName: pp.TblInfo.Name}},
+			Indexes:  []ast.CIStr{ast.NewCIStr("primary")},
+		})
+	case *BatchPointGetPlan:
+		res = append(res, &ast.TableOptimizerHint{
+			QBName:   qbName,
+			HintName: ast.NewCIStr(h.HintUseIndex),
+			Tables:   []ast.HintTable{{DBName: ast.NewCIStr(pp.dbName), TableName: pp.TblInfo.Name}},
+			Indexes:  []ast.CIStr{ast.NewCIStr("primary")},
+		})
 	case *PhysicalLimit, *PhysicalTopN:
 		if storeType == kv.TiKV {
 			res = append(res, &ast.TableOptimizerHint{

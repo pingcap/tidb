@@ -116,6 +116,7 @@ type ShowExec struct {
 	Extended    bool // Used for `show extended columns from ...`
 
 	ImportJobID *int64
+	SQLOrDigest string
 }
 
 type showTableRegionRowItem struct {
@@ -259,6 +260,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowBind()
 	case ast.ShowBindingCacheStatus:
 		return e.fetchShowBindingCacheStatus(ctx)
+	case ast.ShowBindingPlan:
+		return e.fetchBindingPlans()
 	case ast.ShowAnalyzeStatus:
 		return e.fetchShowAnalyzeStatus(ctx)
 	case ast.ShowRegions:
@@ -316,6 +319,39 @@ func (v *visibleChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 
 func (*visibleChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
+}
+
+func (e *ShowExec) fetchBindingPlans() error {
+	bindings, err := domain.GetDomain(e.Ctx()).BindHandle().AutoBindingsForSQL(e.SQLOrDigest)
+	if err != nil {
+		return err
+	}
+
+	for _, binding := range bindings {
+		// names = []string{"statement", "binding_hint", "plan", "avg_latency", "exec_times", "avg_scan_rows",
+		// "avg_returned_rows", "latency_per_returned_row", "scan_rows_per_returned_row", "recommend", "reason"}
+
+		hintStr, err := binding.Binding.Hint.Restore()
+		if err != nil {
+			return err
+		}
+
+		e.appendRow([]any{
+			binding.Binding.OriginalSQL,
+			hintStr,
+			binding.Plan,
+			binding.PlanDigest,
+			binding.AvgLatency,
+			float64(binding.ExecTimes),
+			binding.AvgScanRows,
+			binding.AvgReturnedRows,
+			binding.LatencyPerReturnRow,
+			binding.ScanRowsPerReturnRow,
+			binding.Recommend,
+			binding.Reason})
+	}
+
+	return nil
 }
 
 func (e *ShowExec) fetchShowBind() error {

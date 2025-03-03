@@ -11726,6 +11726,13 @@ ShowStmt:
 			Procedure: $4.(*ast.TableName),
 		}
 	}
+|	"SHOW" "PLAN" "FOR" stringLit
+	{
+		$$ = &ast.ShowStmt{
+			Tp:          ast.ShowBindingPlan,
+			SQLOrDigest: $4,
+		}
+	}
 
 ShowPlacementTarget:
 	DatabaseSym DBName
@@ -13801,7 +13808,7 @@ ConnectionOptions:
 		for _, option := range $2.([]*ast.ResourceOption) {
 			switch option.Type {
 			case ast.MaxUserConnections:
-				// do nothing.
+			// do nothing.
 			default:
 				needWarning = true
 			}
@@ -14333,6 +14340,15 @@ SetBindingStmt:
 		x := &ast.SetBindingStmt{
 			BindingStatusType: $3.(ast.BindingStatusType),
 			SQLDigest:         $7,
+		}
+
+		$$ = x
+	}
+|	"SET" "BINDING" BindingStatusType "FOR" "PLAN" "DIGEST" stringLit
+	{
+		x := &ast.SetBindingStmt{
+			BindingStatusType: $3.(ast.BindingStatusType),
+			PlanDigest:        $7,
 		}
 
 		$$ = x
