@@ -15,7 +15,6 @@
 package bindinfo
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -23,13 +22,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -37,8 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hint"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -175,7 +169,7 @@ func (h *globalBindingHandle) readBindingsFromStorage(condition string) (binding
        update_time, charset, collation, source, sql_digest, plan_digest FROM mysql.bind_info
        %s`, condition)
 
-	err = h.callWithSCtx(false, func(sctx sessionctx.Context) error {
+	err = callWithSCtx(h.sPool, false, func(sctx sessionctx.Context) error {
 		rows, _, err := execRows(sctx, selectStmt)
 		if err != nil {
 			return err
@@ -212,7 +206,7 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, bindi
 		}
 	}()
 
-	return h.callWithSCtx(true, func(sctx sessionctx.Context) error {
+	return callWithSCtx(h.sPool, true, func(sctx sessionctx.Context) error {
 		// Lock mysql.bind_info to synchronize with CreateBinding / AddBinding / DropBinding on other tidb instances.
 		if err = lockBindInfoTable(sctx); err != nil {
 			return err
@@ -278,7 +272,7 @@ func (h *globalBindingHandle) DropGlobalBinding(sqlDigests []string) (deletedRow
 		}
 	}()
 
-	err = h.callWithSCtx(true, func(sctx sessionctx.Context) error {
+	err = callWithSCtx(h.sPool, true, func(sctx sessionctx.Context) error {
 		// Lock mysql.bind_info to synchronize with CreateBinding / AddBinding / DropBinding on other tidb instances.
 		if err = lockBindInfoTable(sctx); err != nil {
 			return err
@@ -331,7 +325,7 @@ func (h *globalBindingHandle) SetGlobalBindingStatus(newStatus, sqlDigest string
 		}
 	}()
 
-	err = h.callWithSCtx(true, func(sctx sessionctx.Context) error {
+	err = callWithSCtx(h.sPool, true, func(sctx sessionctx.Context) error {
 		// Lock mysql.bind_info to synchronize with SetBindingStatus on other tidb instances.
 		if err = lockBindInfoTable(sctx); err != nil {
 			return err
@@ -349,7 +343,7 @@ func (h *globalBindingHandle) SetGlobalBindingStatus(newStatus, sqlDigest string
 
 // GCGlobalBinding physically removes the deleted bind records in mysql.bind_info.
 func (h *globalBindingHandle) GCGlobalBinding() (err error) {
-	return h.callWithSCtx(true, func(sctx sessionctx.Context) error {
+	return callWithSCtx(h.sPool, true, func(sctx sessionctx.Context) error {
 		// Lock mysql.bind_info to synchronize with CreateBinding / AddBinding / DropBinding on other tidb instances.
 		if err = lockBindInfoTable(sctx); err != nil {
 			return err
@@ -476,38 +470,6 @@ func GenerateBindingSQL(stmtNode ast.StmtNode, planHint string, defaultDB string
 	return ""
 }
 
-func (h *globalBindingHandle) callWithSCtx(wrapTxn bool, f func(sctx sessionctx.Context) error) (err error) {
-	resource, err := h.sPool.Get()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err == nil { // only recycle when no error
-			h.sPool.Put(resource)
-		} else {
-			// Note: Otherwise, the session will be leaked.
-			h.sPool.Destroy(resource)
-		}
-	}()
-	sctx := resource.(sessionctx.Context)
-	if wrapTxn {
-		if _, err = exec(sctx, "BEGIN PESSIMISTIC"); err != nil {
-			return
-		}
-		defer func() {
-			if err == nil {
-				_, err = exec(sctx, "COMMIT")
-			} else {
-				_, err1 := exec(sctx, "ROLLBACK")
-				terror.Log(errors.Trace(err1))
-			}
-		}()
-	}
-
-	err = f(sctx)
-	return
-}
-
 var (
 	lastPlanBindingUpdateTime = "last_plan_binding_update_time"
 )
@@ -528,22 +490,4 @@ func (h *globalBindingHandle) Stats(_ *variable.SessionVars) (map[string]any, er
 func (h *globalBindingHandle) Close() {
 	h.bindingCache.Close()
 	h.sPool.Close()
-}
-
-// exec is a helper function to execute sql and return RecordSet.
-func exec(sctx sessionctx.Context, sql string, args ...any) (sqlexec.RecordSet, error) {
-	sqlExec := sctx.GetSQLExecutor()
-	return sqlExec.ExecuteInternal(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo), sql, args...)
-}
-
-// execRows is a helper function to execute sql and return rows and fields.
-func execRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Row, fields []*resolve.ResultField, err error) {
-	sqlExec := sctx.GetRestrictedSQLExecutor()
-	return sqlExec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo),
-		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql, args...)
-}
-
-// bindingLogger with category "sql-bind" is used to log statistic related messages.
-func bindingLogger() *zap.Logger {
-	return logutil.BgLogger().With(zap.String("category", "sql-bind"))
 }
