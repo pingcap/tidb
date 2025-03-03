@@ -177,7 +177,7 @@ type StreamMeta interface {
 	GetGlobalCheckpointForTask(ctx context.Context, taskName string) (uint64, error)
 	// ClearV3GlobalCheckpointForTask clears the global checkpoint to the meta store.
 	ClearV3GlobalCheckpointForTask(ctx context.Context, taskName string) error
-	PauseTask(ctx context.Context, taskName string) error
+	PauseTask(ctx context.Context, taskName string, opts ...PauseTaskOption) error
 }
 
 var _ tikv.RegionLockResolver = &AdvancerLockResolver{}

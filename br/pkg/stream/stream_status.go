@@ -46,11 +46,20 @@ type TaskStatus struct {
 	QPS float64
 	// Last error reported by the store.
 	LastErrors map[uint64]backuppb.StreamBackupError
+	// PauseV2 is the extra information attached to the pause key.
+	PauseV2 *PauseV2
 }
 
 type TaskPrinter interface {
 	AddTask(t TaskStatus)
 	PrintTasks()
+}
+
+func TeeTaskPrinter(p TaskPrinter, output *[]TaskStatus) TaskPrinter {
+	return &teeTaskPrinter{
+		output: output,
+		inner:  p,
+	}
 }
 
 // PrintTaskByTable make a TaskPrinter,
@@ -65,6 +74,20 @@ func PrintTaskWithJSON(c glue.ConsoleOperations) TaskPrinter {
 	return &printByJSON{
 		console: c,
 	}
+}
+
+type teeTaskPrinter struct {
+	output *[]TaskStatus
+	inner  TaskPrinter
+}
+
+func (t *teeTaskPrinter) AddTask(task TaskStatus) {
+	*t.output = append(*t.output, task)
+	t.inner.AddTask(task)
+}
+
+func (t *teeTaskPrinter) PrintTasks() {
+	t.inner.PrintTasks()
 }
 
 type printByTable struct {
@@ -87,10 +110,12 @@ func statusBlock(message string) string {
 	return color.YellowString("●") + color.New(color.Bold).Sprintf(" %s", message)
 }
 
+func (t *TaskStatus) onError() bool {
+	return t.paused && (len(t.LastErrors) > 0 || (t.PauseV2 != nil && t.PauseV2.Severity == SeverityError))
+}
+
 func (t *TaskStatus) colorfulStatusString() string {
-	// Maybe we need 3 kinds of status: ERROR/NORMAL/PAUSE.
-	// And should return "ERROR" when find error information in PD.
-	if t.paused && len(t.LastErrors) > 0 {
+	if t.onError() {
 		return statusErr("ERROR")
 	}
 	if t.paused {
@@ -99,8 +124,8 @@ func (t *TaskStatus) colorfulStatusString() string {
 	return statusOK("NORMAL")
 }
 
-func (t *TaskStatus) statusString() string {
-	if t.paused && len(t.LastErrors) > 0 {
+func (t *TaskStatus) StatusString() string {
+	if t.onError() {
 		return "ERROR"
 	}
 	if t.paused {
@@ -152,6 +177,11 @@ func (p *printByTable) AddTask(task TaskStatus) {
 	}
 	table.Add("checkpoint[global]", formatTS(task.globalCheckpoint))
 	p.addCheckpoints(&task, table, formatTS)
+
+	if task.PauseV2 != nil {
+		task.PauseV2.DisplayTable(table.Add)
+	}
+
 	for store, e := range task.LastErrors {
 		table.Add(fmt.Sprintf("error[store=%d]", store), e.ErrorCode)
 		table.Add(fmt.Sprintf("error-happen-at[store=%d]", store), formatTS(oracle.ComposeTS(int64(e.HappenAt), 0)))
@@ -203,16 +233,17 @@ func (p *printByJSON) PrintTasks() {
 		LastError backuppb.StreamBackupError `json:"last_error"`
 	}
 	type jsonTask struct {
-		Name         string           `json:"name"`
-		StartTS      uint64           `json:"start_ts,omitempty"`
-		EndTS        uint64           `json:"end_ts,omitempty"`
-		Status       string           `json:"status"`
-		TableFilter  []string         `json:"table_filter"`
-		Progress     []storeProgress  `json:"progress"`
-		Storage      string           `json:"storage"`
-		CheckpointTS uint64           `json:"checkpoint"`
-		EstQPS       float64          `json:"estimate_qps"`
-		LastErrors   []storeLastError `json:"last_errors"`
+		Name                  string           `json:"name"`
+		StartTS               uint64           `json:"start_ts,omitempty"`
+		EndTS                 uint64           `json:"end_ts,omitempty"`
+		Status                string           `json:"status"`
+		TableFilter           []string         `json:"table_filter"`
+		Progress              []storeProgress  `json:"progress"`
+		Storage               string           `json:"storage"`
+		CheckpointTS          uint64           `json:"checkpoint"`
+		EstQPS                float64          `json:"estimate_qps"`
+		LastErrors            []storeLastError `json:"last_errors"`
+		ExtraPauseInformation *PauseV2         `json:"extra_pause_information,omitempty"`
 	}
 	taskToJSON := func(t TaskStatus) jsonTask {
 		s := storage.FormatBackendURL(t.Info.GetStorage())
@@ -233,16 +264,17 @@ func (p *printByJSON) PrintTasks() {
 			})
 		}
 		return jsonTask{
-			Name:         t.Info.GetName(),
-			StartTS:      t.Info.GetStartTs(),
-			EndTS:        t.Info.GetEndTs(),
-			Status:       t.statusString(),
-			TableFilter:  t.Info.GetTableFilter(),
-			Progress:     sp,
-			Storage:      s.String(),
-			CheckpointTS: t.globalCheckpoint,
-			EstQPS:       t.QPS,
-			LastErrors:   se,
+			Name:                  t.Info.GetName(),
+			StartTS:               t.Info.GetStartTs(),
+			EndTS:                 t.Info.GetEndTs(),
+			Status:                t.StatusString(),
+			TableFilter:           t.Info.GetTableFilter(),
+			Progress:              sp,
+			Storage:               s.String(),
+			CheckpointTS:          t.globalCheckpoint,
+			EstQPS:                t.QPS,
+			LastErrors:            se,
+			ExtraPauseInformation: t.PauseV2,
 		}
 	}
 	mustMarshal := func(i any) string {
@@ -348,7 +380,7 @@ type StatusController struct {
 	view TaskPrinter
 }
 
-// NewStatusContorller make a status controller via some resource accessors.
+// NewStatusController makes a status controller via some resource accessors.
 func NewStatusController(meta *MetaDataClient, mgr PDInfoProvider, view TaskPrinter) *StatusController {
 	return &StatusController{
 		meta: meta,
@@ -375,6 +407,10 @@ func (ctl *StatusController) fillTask(ctx context.Context, task Task, client *ht
 
 	if s.paused, err = task.IsPaused(ctx); err != nil {
 		return s, errors.Annotatef(err, "failed to get pause status of task %s", s.Info.Name)
+	}
+
+	if s.PauseV2, err = task.GetPauseV2(ctx); err != nil {
+		return s, errors.Annotatef(err, "failed to get pause v2 of task %s", s.Info.Name)
 	}
 
 	if s.Checkpoints, err = task.NextBackupTSList(ctx); err != nil {
