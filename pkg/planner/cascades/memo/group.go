@@ -66,6 +66,9 @@ type Group struct {
 
 	// explored indicates whether this group has been explored.
 	explored bool
+
+	// cleared is used to mark the group is cleared after group merge.
+	cleared bool
 }
 
 // GroupPair is a pair of *Group
@@ -220,6 +223,9 @@ func (g *Group) ForEachGE(f func(ge *GroupExpression) bool) {
 func (g *Group) removeParentGEs(parent *GroupExpression) {
 	addr := unsafe.Pointer(parent)
 	_, ok := g.hash2ParentGroupExpr.Get(addr)
+	if !ok {
+		fmt.Println(1)
+	}
 	intest.Assert(ok)
 	g.hash2ParentGroupExpr.Remove(addr)
 }
@@ -283,6 +289,7 @@ func (g *Group) Clear() {
 	g.hash2ParentGroupExpr.Clear()
 	clear(g.Operand2FirstExpr)
 	g.logicalProp = nil
+	g.cleared = true
 }
 
 // Check is used in test for self check.

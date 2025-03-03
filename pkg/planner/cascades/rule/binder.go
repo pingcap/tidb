@@ -199,6 +199,11 @@ func match(p *pattern.Pattern, gE *memo.GroupExpression) bool {
 // a concrete expression: Join(G1, Join(G3, G4)), then we can apply the join associativity rule to transform
 // the expression to Join(Join(G1, G3), G4) or other forms.
 func (b *Binder) Next() base.LogicalPlan {
+	// once the ge is abandoned it means group merge happened from last rule applied, the
+	// elements linked through old list is not valid anymore. we should return nil directly.
+	if b.holder.(*memo.GroupExpression).IsAbandoned() {
+		return nil
+	}
 	var ok bool
 	for {
 		// when non-first time loop here, we should reset traceID back to -1.
@@ -208,7 +213,16 @@ func (b *Binder) Next() base.LogicalPlan {
 			continueGroup := len(b.stackInfo) - 1
 			continueGroupElement := b.stackInfo[continueGroup]
 			// auto inc gE offset inside group to make sure the next iteration will start from the next group expression.
-			b.stackInfo[continueGroup] = continueGroupElement.Next()
+			if continueGroupElement != nil {
+				b.stackInfo[continueGroup] = continueGroupElement.Next()
+			} else {
+				// there is a case that, we forward the pointer to nil in last round.
+				// while there is a pattern mismatch like children count in last round,
+				// then return nil back to outer loop, in that, continueGroupElement
+				// in this round will be nil. so we should manually maintain the element pop.
+				b.stackInfo = b.stackInfo[:continueGroup]
+				continue
+			}
 		}
 		ok = b.dfsMatch(b.p, b.holder)
 		if b.bsw != nil {

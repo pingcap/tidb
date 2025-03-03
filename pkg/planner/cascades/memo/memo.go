@@ -165,7 +165,7 @@ func (mm *Memo) RemoveOut(target *Group, lp base.LogicalPlan) {
 	ge := lp.(*GroupExpression)
 	intest.Assert(ge != nil)
 	if ge.abandoned {
-		// group merge has happened, the GE has been abandoned.
+		// group merge has happened, the GE has been tagged as abandoned.
 		return
 	}
 	// delete from group
@@ -174,8 +174,15 @@ func (mm *Memo) RemoveOut(target *Group, lp base.LogicalPlan) {
 	mm.hash2GlobalGroupExpr.Remove(ge)
 	// maintain the parentGERef.
 	for _, childG := range ge.Inputs {
+		// for projection elimination case, the child group may be cleared.
+		// search: cascades case of "explain format="brief" select a from t where a * 3 + 1 > 9 and a < 5"
+		if childG.cleared {
+			continue
+		}
 		childG.removeParentGEs(ge)
 	}
+	ge.Inputs = ge.Inputs[:0]
+	ge.group = nil
 	// mark current ge as abandoned in case of it has been used in pushed task.
 	ge.SetAbandoned()
 }
