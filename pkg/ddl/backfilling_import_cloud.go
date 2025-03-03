@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -80,7 +81,7 @@ func (m *cloudImportExecutor) Init(ctx context.Context) error {
 func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("cloud import executor run subtask")
 
-	sm, err := decodeBackfillSubTaskMeta(subtask.Meta)
+	sm, err := decodeBackfillSubtaskMeta(subtask.Meta)
 	if err != nil {
 		return err
 	}
@@ -172,5 +173,22 @@ func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
 		m.backendCtx.Close()
 	}
 	m.backend.Close()
+	return nil
+}
+
+// TaskMetaModified changes the max write speed for ingest
+func (m *cloudImportExecutor) TaskMetaModified(_ context.Context, newMeta []byte) error {
+	newTaskMeta := &BackfillTaskMeta{}
+	if err := json.Unmarshal(newMeta, newTaskMeta); err != nil {
+		return errors.Trace(err)
+	}
+
+	newMaxWriteSpeed := newTaskMeta.Job.ReorgMeta.GetMaxWriteSpeed()
+	if newMaxWriteSpeed != m.job.ReorgMeta.GetMaxWriteSpeed() {
+		m.job.ReorgMeta.SetMaxWriteSpeed(newMaxWriteSpeed)
+		if m.backend != nil {
+			m.backend.UpdateWriteSpeedLimit(newMaxWriteSpeed)
+		}
+	}
 	return nil
 }

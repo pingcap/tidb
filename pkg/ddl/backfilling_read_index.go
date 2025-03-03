@@ -111,7 +111,7 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		metaGroups: make([]*external.SortedKVMeta, len(r.indexes)),
 	})
 
-	sm, err := decodeBackfillSubTaskMeta(subtask.Meta)
+	sm, err := decodeBackfillSubtaskMeta(subtask.Meta)
 	if err != nil {
 		return err
 	}
@@ -180,9 +180,6 @@ func (r *readIndexStepExecutor) Cleanup(ctx context.Context) error {
 }
 
 func (r *readIndexStepExecutor) TaskMetaModified(_ context.Context, newMeta []byte) error {
-	if r.isGlobalSort() {
-		return goerrors.New("not support modify task meta for global sort")
-	}
 	newTaskMeta := &BackfillTaskMeta{}
 	if err := json.Unmarshal(newMeta, newTaskMeta); err != nil {
 		return errors.Trace(err)
@@ -191,30 +188,31 @@ func (r *readIndexStepExecutor) TaskMetaModified(_ context.Context, newMeta []by
 	if newBatchSize != r.job.ReorgMeta.GetBatchSize() {
 		r.job.ReorgMeta.SetBatchSize(newBatchSize)
 	}
-	newMaxWriteSpeed := newTaskMeta.Job.ReorgMeta.GetMaxWriteSpeed()
-	if newMaxWriteSpeed != r.job.ReorgMeta.GetMaxWriteSpeed() {
-		r.job.ReorgMeta.SetMaxWriteSpeed(newMaxWriteSpeed)
-		if r.backend != nil {
-			r.backend.UpdateWriteSpeedLimit(newMaxWriteSpeed)
+
+	// Only local sort need modify write speed in this step.
+	if !r.isGlobalSort() {
+		newMaxWriteSpeed := newTaskMeta.Job.ReorgMeta.GetMaxWriteSpeed()
+		if newMaxWriteSpeed != r.job.ReorgMeta.GetMaxWriteSpeed() {
+			r.job.ReorgMeta.SetMaxWriteSpeed(newMaxWriteSpeed)
+			if r.backend != nil {
+				r.backend.UpdateWriteSpeedLimit(newMaxWriteSpeed)
+			}
 		}
 	}
+
 	return nil
 }
 
 func (r *readIndexStepExecutor) ResourceModified(_ context.Context, newResource *proto.StepResource) error {
-	if r.isGlobalSort() {
-		return goerrors.New("not support modify resource for global sort")
-	}
 	pipe := r.currPipe.Load()
 	// Tune of work pool can only be called after start.
 	if pipe == nil || !pipe.IsStarted() {
 		// let framework retry
 		return goerrors.New("no subtask running")
 	}
-	opR, opW := pipe.GetLocalIngestModeReaderAndWriter()
-	reader := opR.(*TableScanOperator)
-	writer := opW.(*IndexIngestOperator)
+
 	targetReaderCnt, targetWriterCnt := expectedIngestWorkerCnt(int(newResource.CPU.Capacity()), r.avgRowSize)
+	reader, writer := pipe.GetIngestModeReaderAndWriter()
 	currentReaderCnt, currentWriterCnt := reader.GetWorkerPoolSize(), writer.GetWorkerPoolSize()
 	if int32(targetReaderCnt) != currentReaderCnt {
 		reader.TuneWorkerPoolSize(int32(targetReaderCnt), true)
@@ -231,7 +229,7 @@ func (r *readIndexStepExecutor) onFinished(ctx context.Context, subtask *proto.S
 		return nil
 	}
 	// Rewrite the subtask meta to record statistics.
-	sm, err := decodeBackfillSubTaskMeta(subtask.Meta)
+	sm, err := decodeBackfillSubtaskMeta(subtask.Meta)
 	if err != nil {
 		return err
 	}

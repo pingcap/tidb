@@ -172,17 +172,12 @@ func NewAddIndexIngestPipeline(
 	}
 	srcChkPool := createChunkPool(copCtx, reorgMeta)
 	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
-	rm := reorgMeta
-	if rm.UseCloudStorage {
-		// param cannot be modified at runtime for global sort right now.
-		rm = nil
-	}
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, backendCtx)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt,
-		reorgMeta.GetBatchSize(), rm, backendCtx)
-	ingestOp := NewIndexIngestOperator(ctx, copCtx, sessPool,
-		tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta)
+		reorgMeta.GetBatchSize(), reorgMeta, backendCtx)
+	ingestOp := NewIndexIngestOperator(ctx, copCtx, backendCtx, sessPool,
+		tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta, rowCntListener)
 	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, rowCntListener)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
