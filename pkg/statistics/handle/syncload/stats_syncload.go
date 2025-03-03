@@ -67,7 +67,7 @@ type statsSyncLoad struct {
 	// This mutex protects the statsCache from concurrent modifications by multiple workers.
 	// Since multiple workers may update the statsCache for the same table simultaneously,
 	// the mutex ensures thread-safety during these updates.
-	mu sync.Mutex
+	mutexForStatsCache sync.Mutex
 }
 
 var globalStatsSyncLoadSingleFlight singleflight.Group
@@ -569,8 +569,8 @@ func (*statsSyncLoad) writeToResultChan(resultCh chan stmtctx.StatsLoadResult, r
 
 // updateCachedItem updates the column/index hist to global statsCache.
 func (s *statsSyncLoad) updateCachedItem(tblInfo *model.TableInfo, item model.TableItemID, colHist *statistics.Column, idxHist *statistics.Index, fullLoaded bool) (updated bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mutexForStatsCache.Lock()
+	defer s.mutexForStatsCache.Unlock()
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
 	tbl, ok := s.statsHandle.Get(item.TableID)
