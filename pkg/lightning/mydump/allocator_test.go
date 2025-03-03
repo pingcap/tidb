@@ -24,9 +24,8 @@ import (
 )
 
 func TestSimpleAllocator(t *testing.T) {
-	totalSize := 16 << 20
-	a := simpleAllocator{}
-	a.init(totalSize)
+	defaultArenaSize = 16 << 20
+	a := getSimpleAllocator(nil)
 
 	var (
 		lk sync.Mutex
