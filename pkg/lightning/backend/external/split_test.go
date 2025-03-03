@@ -521,56 +521,48 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 }
 
 func TestCalRangeSize(t *testing.T) {
-	var19 := 1.9
-	var38 := 3.8
+	var17 := 1.7
+	var35 := 3.5
+	commonUsedRegionSizeSettings := [][2]int64{
+		{96 * units.MiB, 960_000},
+		{256 * units.MiB, 2_560_000},
+		{512 * units.MiB, 5_120_000},
+		{units.GiB, 10_240_000},
+	}
 	cases := []struct {
-		memPerCore      int64
-		regionSplitSize int64
-		regionSplitKeys int64
-		rangeSize       int64
-		rangeKeys       int64
-		sstFiles        int
+		memPerCore int64
+		rangeInfos [][3]int64
 	}{
-		// cpu:mem ~= 1:2
-		{memPerCore: int64(var19 * float64(units.GiB)),
-			regionSplitSize: 96 * units.MiB, regionSplitKeys: 960_000,
-			rangeSize: 2 * 96 * units.MiB, rangeKeys: 2 * 960_000, sstFiles: 1},
-		{memPerCore: int64(var19 * float64(units.GiB)),
-			regionSplitSize: 256 * units.MiB, regionSplitKeys: 2_560_000,
-			rangeSize: 128*units.MiB + 1, rangeKeys: 1_280_000, sstFiles: 2},
-		{memPerCore: int64(var19 * float64(units.GiB)),
-			regionSplitSize: 512 * units.MiB, regionSplitKeys: 5_120_000,
-			rangeSize: 178_956_971, rangeKeys: 1_706_666, sstFiles: 3},
-		{memPerCore: int64(var19 * float64(units.GiB)),
-			regionSplitSize: units.GiB, regionSplitKeys: 10_240_000,
-			rangeSize: 214_748_365, rangeKeys: 2_048_000, sstFiles: 5},
-		// cpu:mem ~= 1:4
-		{memPerCore: int64(var38 * float64(units.GiB)),
-			regionSplitSize: 96 * units.MiB, regionSplitKeys: 960_000,
-			rangeSize: 5 * 96 * units.MiB, rangeKeys: 4_800_000, sstFiles: 1},
-		{memPerCore: int64(var38 * float64(units.GiB)),
-			regionSplitSize: 256 * units.MiB, regionSplitKeys: 2_560_000,
-			rangeSize: 256 * units.MiB, rangeKeys: 2_560_000, sstFiles: 1},
-		{memPerCore: int64(var38 * float64(units.GiB)),
-			regionSplitSize: 512 * units.MiB, regionSplitKeys: 5_120_000,
-			rangeSize: 256*units.MiB + 1, rangeKeys: 2_560_000, sstFiles: 2},
-		{memPerCore: int64(var38 * float64(units.GiB)),
-			regionSplitSize: units.GiB, regionSplitKeys: 10_240_000,
-			rangeSize: 357_913_942, rangeKeys: 3_413_333, sstFiles: 3},
+		{memPerCore: int64(var17 * float64(units.GiB)), rangeInfos: [][3]int64{
+			{2 * 96 * units.MiB, 2 * 960_000, 1},
+			{256 * units.MiB, 2_560_000, 1},
+			{256*units.MiB + 1, 2_560_000, 2},
+			{256*units.MiB + 1, 2_560_000, 4},
+		}},
+		{memPerCore: int64(var35 * float64(units.GiB)), rangeInfos: [][3]int64{
+			{5 * 96 * units.MiB, 5 * 960_000, 1},
+			{512 * units.MiB, 5_120_000, 1},
+			{512 * units.MiB, 5_120_000, 1},
+			{512*units.MiB + 1, 5_120_000, 2},
+		}},
 	}
 
 	for i, c := range cases {
-		t.Run(fmt.Sprintf("%d", i), func(t *testing.T) {
-			rangeSize, rangeKeys := CalRangeSize(c.memPerCore, c.regionSplitSize, c.regionSplitKeys)
-			require.Equal(t, c.rangeSize, rangeSize)
-			require.Equal(t, c.rangeKeys, rangeKeys)
-			fmt.Println(rangeSize, rangeKeys)
-			if c.rangeSize >= c.regionSplitSize {
-				require.EqualValues(t, 1, c.sstFiles)
-				require.Zero(t, rangeSize%c.regionSplitSize)
-			} else {
-				require.Equal(t, c.sstFiles, int(math.Ceil(float64(c.regionSplitSize)/float64(rangeSize))))
-			}
-		})
+		for j, rs := range commonUsedRegionSizeSettings {
+			t.Run(fmt.Sprintf("%d-%d", i, j), func(t *testing.T) {
+				regionSplitSize, regionSplitKeys := rs[0], rs[1]
+				rangeSize, rangeKeys := CalRangeSize(c.memPerCore, regionSplitSize, regionSplitKeys)
+				expectedRangeSize, expectedRangeKey, expectedFileNum := c.rangeInfos[j][0], c.rangeInfos[j][1], c.rangeInfos[j][2]
+				require.EqualValues(t, expectedRangeSize, rangeSize)
+				require.EqualValues(t, expectedRangeKey, rangeKeys)
+				fmt.Println(rangeSize, rangeKeys)
+				if expectedRangeSize >= regionSplitSize {
+					require.EqualValues(t, 1, expectedFileNum)
+					require.Zero(t, rangeSize%regionSplitSize)
+				} else {
+					require.EqualValues(t, expectedFileNum, int(math.Ceil(float64(regionSplitSize)/float64(rangeSize))))
+				}
+			})
+		}
 	}
 }

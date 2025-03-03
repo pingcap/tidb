@@ -41,14 +41,12 @@ import (
 // For each job worker, the memory it can use is determined by cpu:mem ratio, say
 // a 16c32G machine, each worker can use 2G memory.
 // And for the memory corresponding to each job worker, we divide into below and
-// total 8 shares:
-//   - one share used by HTTP buf inside loadBatchRegionData
+// total 6.5 shares:
+//   - one share used by HTTP and GRPC buf, such as loadBatchRegionData, write TiKV
 //   - one share used by loadBatchRegionData to store loaded data batch A
 //   - one share used by generateAndSendJob for handle loaded data batch B
 //   - one share used by the active job on job worker
-//   - one share used by job worker sending GRPC data for active job
-//   - two share used by other stuff, such as other bg routines
-//   - one share for burst allocation to avoid OOM
+//   - 2.5 share for others, and burst allocation to avoid OOM
 //
 // the share size 'SS' determines the max range data size 'RangeS' for a range job.
 // Each range job corresponding to one ingested SST on TiKV, we want to load as
@@ -60,15 +58,16 @@ import (
 //     trailing 1 is for RS divided by odd number.
 //   - else RangeS = floor(TempRangeS / RS) * RS.
 //
-// for example, if the cpu:mem ratio is 1:1.9, so we have 1.9G memory per core,
-// the share size is 243M:
+// RangeS for different region size and cpu:mem ratio, the number in parentheses
+// is the number of SST files per region:
 //
-//	|   RS  | RangeS |
-//	|-------|--------|
-//	|   96M |   192M |
-//	|  256M |   128M |
-//	|  512M |   170M |
-const writeStepMemShareCount = 8
+//	|   RS  | RangeS        | RangeS        |
+//	|       | cpu:mem=1:1.7 | cpu:mem=1:3.5 |
+//	|-------|---------------|---------------|
+//	|   96M |       192M(1) |       480M(1) |
+//	|  256M |       256M(1) |       512M(1) |
+//	|  512M |       256M(2) |       512M(1) |
+const writeStepMemShareCount = 6.5
 
 // during test on ks3, we found that we can open about 8000 connections to ks3,
 // bigger than that, we might receive "connection reset by peer" error, and
@@ -158,12 +157,12 @@ type Engine struct {
 
 	importedKVSize  *atomic.Int64
 	importedKVCount *atomic.Int64
+	memLimit        int
 }
 
 var _ common.Engine = (*Engine)(nil)
 
 const (
-	memLimit       = 12 * units.GiB
 	smallBlockSize = units.MiB
 )
 
@@ -185,7 +184,10 @@ func NewExternalEngine(
 	totalKVSize int64,
 	totalKVCount int64,
 	checkHotspot bool,
+	memCapacity int64,
 ) common.Engine {
+	// at most 3 batches can be loaded in memory, see writeStepMemShareCount.
+	memLimit := int(float64(memCapacity) / writeStepMemShareCount * 3)
 	memLimiter := membuf.NewLimiter(memLimit)
 	return &Engine{
 		storage:    storage,
@@ -216,6 +218,7 @@ func NewExternalEngine(
 		totalKVCount:       totalKVCount,
 		importedKVSize:     atomic.NewInt64(0),
 		importedKVCount:    atomic.NewInt64(0),
+		memLimit:           memLimit,
 	}
 }
 
@@ -537,7 +540,7 @@ func (e *Engine) Close() error {
 
 // Reset resets the memory buffer pool.
 func (e *Engine) Reset() error {
-	memLimiter := membuf.NewLimiter(memLimit)
+	memLimiter := membuf.NewLimiter(e.memLimit)
 	if e.smallBlockBufPool != nil {
 		e.smallBlockBufPool.Destroy()
 		e.smallBlockBufPool = membuf.NewPool(

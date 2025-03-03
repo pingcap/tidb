@@ -61,7 +61,7 @@ func (h *exhaustedHeap) Pop() any {
 // CalRangeSize calculates the range size and range keys.
 // see writeStepMemShareCount for more info.
 func CalRangeSize(memPerCore int64, regionSplitSize, regionSplitKeys int64) (int64, int64) {
-	ss := memPerCore / writeStepMemShareCount
+	ss := int64(float64(memPerCore) / writeStepMemShareCount)
 	var rangeSize int64
 	if ss < regionSplitSize {
 		rangeCnt := int64(math.Ceil(float64(regionSplitSize) / float64(ss)))
