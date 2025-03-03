@@ -223,9 +223,6 @@ func (g *Group) ForEachGE(f func(ge *GroupExpression) bool) {
 func (g *Group) removeParentGEs(parent *GroupExpression) {
 	addr := unsafe.Pointer(parent)
 	_, ok := g.hash2ParentGroupExpr.Get(addr)
-	if !ok {
-		fmt.Println(1)
-	}
 	intest.Assert(ok)
 	g.hash2ParentGroupExpr.Remove(addr)
 }
