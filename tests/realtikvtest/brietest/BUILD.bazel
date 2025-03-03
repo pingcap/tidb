@@ -19,6 +19,11 @@ go_test(
         "//pkg/executor",
         "//pkg/parser/mysql",
         "//pkg/session",
+<<<<<<< HEAD
+=======
+        "//pkg/sessionctx/binloginfo",
+        "//pkg/store/mockstore/mockcopr",
+>>>>>>> f47130249bb (br: Add pre-check of duplicate table in the downstream (#55044))
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "//tests/realtikvtest",
