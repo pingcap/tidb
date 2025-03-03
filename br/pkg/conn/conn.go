@@ -231,27 +231,13 @@ func NewMgr(
 		}
 	}
 
-	// CreateSession must be called after domain created. Otherwise, stats handler
-	// can not be created inside `GetDomain`.
-	if se, err := g.CreateSession(storage); err != nil {
-		return nil, errors.Trace(err)
-	} else if se != nil {
+	if err = g.UseOneShotSession(storage, !needDomain, func(se glue.Session) error {
 		enableFollowerHandleRegion, err := se.GetGlobalSysVar(vardef.PDEnableFollowerHandleRegion)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return err
 		}
-		se.Close()
-		err = controller.SetFollowerHandle(variable.TiDBOptOn(enableFollowerHandleRegion))
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-
-	// If we don't need domain, we should close the storage that is created
-	// in `CreateSession`. Othersie, the domain will not be closed. Thus,
-	// we need to assign it to the mgr.
-	dom, err = g.GetDomain(storage)
-	if err != nil {
+		return controller.SetFollowerHandle(variable.TiDBOptOn(enableFollowerHandleRegion))
+	}); err != nil {
 		return nil, errors.Trace(err)
 	}
 
