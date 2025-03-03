@@ -547,8 +547,8 @@ func getRangeSplitter(
 		store,
 		int64(config.DefaultBatchSize),
 		int64(math.MaxInt64),
-		int64(config.SplitRegionSize),
-		int64(config.SplitRegionKeys),
+		regionSplitSize,
+		regionSplitKeys,
 		regionSplitSize,
 		regionSplitKeys,
 	)
