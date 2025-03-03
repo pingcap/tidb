@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -92,7 +93,7 @@ func (w *worker) getSnapID(ctx context.Context) (uint64, error) {
 func upsertHistSnapshot(ctx context.Context, sctx sessionctx.Context, snapID uint64) error {
 	// TODO: fill DB_VER, WR_VER
 	snapshotsInsert := sqlescape.MustEscapeSQL("INSERT INTO %n.%n (`BEGIN_TIME`, `SNAP_ID`) VALUES (now(), %%?) ON DUPLICATE KEY UPDATE `BEGIN_TIME` = now()",
-		WorkloadSchema, histSnapshotsTable)
+		mysql.WorkloadSchema, histSnapshotsTable)
 	_, err := runQuery(ctx, sctx, snapshotsInsert, snapID)
 	return err
 }
@@ -107,7 +108,7 @@ func (w *worker) updateHistSnapshot(ctx context.Context, snapID uint64, errs []e
 		nerr = err.Error()
 	}
 
-	snapshotsUpdate := sqlescape.MustEscapeSQL("UPDATE %n.%n SET `END_TIME` = now(), `ERROR` = COALESCE(CONCAT(ERROR, %%?), ERROR, %%?) WHERE `SNAP_ID` = %%?", WorkloadSchema, histSnapshotsTable)
+	snapshotsUpdate := sqlescape.MustEscapeSQL("UPDATE %n.%n SET `END_TIME` = now(), `ERROR` = COALESCE(CONCAT(ERROR, %%?), ERROR, %%?) WHERE `SNAP_ID` = %%?", mysql.WorkloadSchema, histSnapshotsTable)
 	_, err := runQuery(ctx, sctx, snapshotsUpdate, nerr, nerr, snapID)
 	return err
 }
