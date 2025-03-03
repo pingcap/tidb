@@ -951,7 +951,7 @@ func (rc *SnapClient) createTablesBatch(ctx context.Context, tables []*metautil.
 
 	for lastSent := 0; lastSent < numOfTables; lastSent += int(rc.batchDdlSize) {
 		end := min(lastSent+int(rc.batchDdlSize), len(tables))
-		log.Info("create tables", zap.Int("table start", lastSent), zap.Int("table end", end))
+		log.Info("create tables", zap.Int("table start index", lastSent), zap.Int("table end index", end))
 
 		tableSlice := tables[lastSent:end]
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {

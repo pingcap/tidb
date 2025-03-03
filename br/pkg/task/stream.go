@@ -331,7 +331,7 @@ type streamMgr struct {
 	httpCli *http.Client
 }
 
-func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamStart bool) (*streamMgr, error) {
+func newStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamStart bool) (*streamMgr, error) {
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
 		cfg.CheckRequirements, false, conn.StreamVersionChecker)
 	if err != nil {
@@ -565,7 +565,7 @@ func RunStreamStart(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	streamMgr, err := NewStreamMgr(ctx, cfg, g, true)
+	streamMgr, err := newStreamMgr(ctx, cfg, g, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -758,7 +758,7 @@ func RunStreamStop(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	streamMgr, err := NewStreamMgr(ctx, cfg, g, false)
+	streamMgr, err := newStreamMgr(ctx, cfg, g, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -817,7 +817,7 @@ func RunStreamPause(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	streamMgr, err := NewStreamMgr(ctx, cfg, g, false)
+	streamMgr, err := newStreamMgr(ctx, cfg, g, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -891,7 +891,7 @@ func RunStreamResume(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	streamMgr, err := NewStreamMgr(ctx, cfg, g, false)
+	streamMgr, err := newStreamMgr(ctx, cfg, g, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1365,11 +1365,12 @@ func RunStreamRestore(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// TODO: pitr filtered restore doesn't support restore system table yet
-	if cfg.ExplicitFilter {
-		if cfg.TableFilter.MatchSchema(mysql.SystemDB) {
+	// TODO: pitr online or filtered restore doesn't support restore system table yet
+	if cfg.ExplicitFilter || cfg.Online {
+		if cfg.TableFilter.MatchSchema(mysql.SystemDB) || cfg.TableFilter.MatchSchema(mysql.SysDB) {
 			return errors.Annotatef(berrors.ErrInvalidArgument,
-				"PiTR doesn't support custom filter to include system db, consider to exclude system db")
+				"PiTR doesn't support custom filter or online restore to include system db, "+
+					"consider to exclude system db")
 		}
 	}
 	metaInfoProcessor := logclient.NewMetaKVInfoProcessor(logClient)
@@ -1578,31 +1579,9 @@ func restoreStream(
 	var rp *logclient.RestoreMetaKVProcessor
 	if err = glue.WithProgress(ctx, g, "Restore Meta Files", int64(len(ddlFiles)), !cfg.LogProgress, func(p glue.Progress) error {
 		rp = logclient.NewRestoreMetaKVProcessor(client, schemasReplace, updateStats, p.Inc)
-		return rp.RestoreAndRewriteMetaKVFiles(ctx, cfg.Online, ddlFiles, schemasReplace)
+		return rp.RestoreAndRewriteMetaKVFiles(ctx, cfg.Online, ddlFiles)
 	}); err != nil {
 		return errors.Annotate(err, "failed to restore meta files")
-	}
-
-	if cfg.Online {
-		// set tables back to normal mode after online restore
-		for _, dbReplace := range schemasReplace.DbReplaceMap {
-			if dbReplace.FilteredOut {
-				continue
-			}
-			for _, tableReplace := range dbReplace.TableMap {
-				if tableReplace.FilteredOut {
-					continue
-				}
-				log.Info("setting table back to normal mode",
-					zap.String("db", dbReplace.Name),
-					zap.String("table", tableReplace.Name),
-					zap.Int64("db_id", dbReplace.DbID),
-					zap.Int64("table_id", tableReplace.TableID))
-				if err := client.SetTableModeToNormal(ctx, dbReplace.DbID, tableReplace.TableID); err != nil {
-					return errors.Annotatef(err, "failed to set table %s.%s back to normal mode", dbReplace.Name, tableReplace.Name)
-				}
-			}
-		}
 	}
 
 	rewriteRules := buildRewriteRules(schemasReplace)
@@ -1681,6 +1660,16 @@ func restoreStream(
 	})
 	if err != nil {
 		return errors.Annotate(err, "failed to restore kv files")
+	}
+
+	if cfg.Online {
+		failpoint.Inject("before-set-table-mode-to-normal", func(_ failpoint.Value) {
+			failpoint.Return(errors.New("fail before setting table mode to normal"))
+		})
+		err = client.SetTableModeToNormal(ctx, schemasReplace)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	// failpoint to stop for a while after restoring kvs
@@ -2164,7 +2153,6 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 		LoadSavedIDMap:          saved,
 		PiTRTableTracker:        cfg.PiTRTableTracker,
 		FullBackupStorageConfig: fullBackupStorageConfig,
-		CipherInfo:              &cfg.Config.CipherInfo,
 	})
 	if err != nil {
 		return errors.Trace(err)
@@ -2181,9 +2169,6 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 			tableMappingManager.ApplyFilterToDBReplaceMap(cfg.PiTRTableTracker)
 		} else {
 			log.Warn("pitr table tracker is nil, base map is not from full backup")
-		}
-		if cfg.Online {
-			err = tableMappingManager.UpdateTempIDsFromInfoSchema(ctx, client.GetDomain())
 		}
 		err = tableMappingManager.ReplaceTemporaryIDs(ctx, client.GenGlobalIDs)
 		if err != nil {

@@ -10,8 +10,10 @@ func TestPiTRTableTracker(t *testing.T) {
 	t.Run("test new tracker", func(t *testing.T) {
 		tracker := NewPiTRIdTracker()
 		require.NotNil(t, tracker)
-		require.NotNil(t, tracker.DBIdToTableId)
-		require.Empty(t, tracker.DBIdToTableId)
+		require.NotNil(t, tracker.DBIds)
+		require.NotNil(t, tracker.TableIdToDBId)
+		require.Empty(t, tracker.DBIds)
+		require.Empty(t, tracker.TableIdToDBId)
 	})
 
 	t.Run("test update and contains table", func(t *testing.T) {
@@ -35,5 +37,19 @@ func TestPiTRTableTracker(t *testing.T) {
 		tracker.TrackTableId(3, 300)
 		require.True(t, tracker.ContainsDB(3))
 		require.True(t, tracker.ContainsTableId(3, 300))
+
+		// Test GetDBIdForTable
+		dbID, exists := tracker.GetDBIdForTable(100)
+		require.True(t, exists)
+		require.Equal(t, int64(1), dbID)
+
+		// Test RemoveTableId
+		tracker.RemoveTableId(100)
+		require.False(t, tracker.ContainsTableId(1, 100))
+		require.True(t, tracker.ContainsDB(1))           // DB should still exist
+		require.True(t, tracker.ContainsTableId(1, 101)) // Other table should still exist
+
+		_, exists = tracker.GetDBIdForTable(100)
+		require.False(t, exists)
 	})
 }

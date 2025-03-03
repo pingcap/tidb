@@ -24,79 +24,104 @@ import (
 
 // PiTRIdTracker tracks all the DB and tables ids that need to restore in a PiTR
 type PiTRIdTracker struct {
-	DBIdToTableId map[int64]map[int64]struct{}
+	DBIds         map[int64]struct{}
+	TableIdToDBId map[int64]int64
 }
 
 func NewPiTRIdTracker() *PiTRIdTracker {
 	return &PiTRIdTracker{
-		DBIdToTableId: make(map[int64]map[int64]struct{}),
+		DBIds:         make(map[int64]struct{}),
+		TableIdToDBId: make(map[int64]int64),
 	}
 }
 
 // TrackTableId adds a physical ID to the filter for the given database ID
-func (t *PiTRIdTracker) TrackTableId(dbID, physicalId int64) {
-	if t.DBIdToTableId == nil {
-		t.DBIdToTableId = make(map[int64]map[int64]struct{})
+func (t *PiTRIdTracker) TrackTableId(dbID, tableId int64) {
+	if t.DBIds == nil {
+		t.DBIds = make(map[int64]struct{})
+	}
+	if t.TableIdToDBId == nil {
+		t.TableIdToDBId = make(map[int64]int64)
 	}
 
-	if _, ok := t.DBIdToTableId[dbID]; !ok {
-		t.DBIdToTableId[dbID] = make(map[int64]struct{})
-	}
-
-	t.DBIdToTableId[dbID][physicalId] = struct{}{}
+	t.DBIds[dbID] = struct{}{}
+	t.TableIdToDBId[tableId] = dbID
 }
 
 // AddDB adds the database id
 func (t *PiTRIdTracker) AddDB(dbID int64) {
-	if t.DBIdToTableId == nil {
-		t.DBIdToTableId = make(map[int64]map[int64]struct{})
+	if t.DBIds == nil {
+		t.DBIds = make(map[int64]struct{})
 	}
 
-	if _, ok := t.DBIdToTableId[dbID]; !ok {
-		t.DBIdToTableId[dbID] = make(map[int64]struct{})
+	t.DBIds[dbID] = struct{}{}
+}
+
+// RemoveTableId removes a table ID from the tracker
+func (t *PiTRIdTracker) RemoveTableId(tableID int64) {
+	if t.TableIdToDBId == nil {
+		return
 	}
+	delete(t.TableIdToDBId, tableID)
 }
 
 // ContainsTableId checks if the given database ID and table ID combination exists in the filter
 func (t *PiTRIdTracker) ContainsTableId(dbID, tableID int64) bool {
-	if tables, ok := t.DBIdToTableId[dbID]; ok {
-		_, exists := tables[tableID]
-		return exists
+	if t.TableIdToDBId == nil {
+		return false
 	}
-	return false
+
+	storedDBID, exists := t.TableIdToDBId[tableID]
+	return exists && storedDBID == dbID
 }
 
 // ContainsDB checks if the given database ID exists in the filter
 func (t *PiTRIdTracker) ContainsDB(dbID int64) bool {
-	_, ok := t.DBIdToTableId[dbID]
+	if t.DBIds == nil {
+		return false
+	}
+	_, ok := t.DBIds[dbID]
 	return ok
 }
 
 // String returns a string representation of the PiTRIdTracker for debugging
 func (t *PiTRIdTracker) String() string {
-	if t == nil || t.DBIdToTableId == nil {
+	if t == nil || t.DBIds == nil || t.TableIdToDBId == nil {
 		return "PiTRIdTracker{nil}"
 	}
 
 	var result strings.Builder
 	result.WriteString("PiTRIdTracker{\n")
-	result.WriteString("  DBToTables: {\n")
-	for dbID, tables := range t.DBIdToTableId {
-		result.WriteString(fmt.Sprintf("  DB[%d]: {", dbID))
-		tableIDs := make([]int64, 0, len(tables))
-		for tableID := range tables {
-			tableIDs = append(tableIDs, tableID)
-		}
-		// Sort for consistent output
-		sort.Slice(tableIDs, func(i, j int) bool { return tableIDs[i] < tableIDs[j] })
-		for i, tableID := range tableIDs {
-			if i > 0 {
-				result.WriteString(", ")
-			}
-			result.WriteString(fmt.Sprintf("%d", tableID))
-		}
-		result.WriteString("}\n")
+
+	// Print database IDs
+	result.WriteString("  DBIds: {")
+	dbIDs := make([]int64, 0, len(t.DBIds))
+	for dbID := range t.DBIds {
+		dbIDs = append(dbIDs, dbID)
 	}
+	// Sort for consistent output
+	sort.Slice(dbIDs, func(i, j int) bool { return dbIDs[i] < dbIDs[j] })
+	for i, dbID := range dbIDs {
+		if i > 0 {
+			result.WriteString(", ")
+		}
+		result.WriteString(fmt.Sprintf("%d", dbID))
+	}
+	result.WriteString("}\n")
+
+	// Print table ID to DB ID mappings
+	result.WriteString("  TableIdToDBId: {\n")
+	tableIDs := make([]int64, 0, len(t.TableIdToDBId))
+	for tableID := range t.TableIdToDBId {
+		tableIDs = append(tableIDs, tableID)
+	}
+	// Sort for consistent output
+	sort.Slice(tableIDs, func(i, j int) bool { return tableIDs[i] < tableIDs[j] })
+	for _, tableID := range tableIDs {
+		dbID := t.TableIdToDBId[tableID]
+		result.WriteString(fmt.Sprintf("    Table[%d] -> DB[%d]\n", tableID, dbID))
+	}
+	result.WriteString("  }\n")
 	result.WriteString("}")
 	return result.String()
 }

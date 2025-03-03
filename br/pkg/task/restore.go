@@ -769,7 +769,7 @@ type SnapshotRestoreConfig struct {
 	tableMappingManager    *stream.TableMappingManager
 }
 
-func (s *SnapshotRestoreConfig) isPartOfPiTR() (bool, error) {
+func (s *SnapshotRestoreConfig) isPiTR() (bool, error) {
 	components := []struct {
 		name string
 		val  any
@@ -780,16 +780,16 @@ func (s *SnapshotRestoreConfig) isPartOfPiTR() (bool, error) {
 	}
 
 	// check if first component exists
-	isPartOfPiTR := components[0].val != nil
+	isPiTR := components[0].val != nil
 
 	// verify all components are consistent
 	for _, c := range components[1:] {
-		if (c.val != nil) != isPartOfPiTR {
+		if (c.val != nil) != isPiTR {
 			return false, errors.Errorf("invalid SnapshotRestoreConfig: %s existence is inconsistent with other PiTR components", c.name)
 		}
 	}
 
-	return isPartOfPiTR, nil
+	return isPiTR, nil
 }
 
 func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName string, cfg *SnapshotRestoreConfig) error {
@@ -806,7 +806,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// check if this is part of the PiTR operation
-	isPartOfPiTR, err := cfg.isPartOfPiTR()
+	isPiTR, err := cfg.isPiTR()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -876,6 +876,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		cfg.UseCheckpoint = false
 	}
 	cpEnabledAndExists := checkpointEnabledAndExists(cfg, mgr.GetDomain())
+
 	if err := checkMandatoryClusterRequirements(client, cfg, cpEnabledAndExists, cmdName); err != nil {
 		return errors.Trace(err)
 	}
@@ -891,7 +892,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		zap.Int("db", len(dbMap)))
 
 	// only run when this full restore is part of the PiTR
-	if isPartOfPiTR {
+	if isPiTR {
 		// adjust tables to restore in the snapshot restore phase since it will later be renamed during
 		// log restore and will fall into or out of the filter range.
 		err = AdjustTablesToRestoreAndCreateTableTracker(
@@ -915,7 +916,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	tables := utils.Values(tableMap)
 	dbs := utils.Values(dbMap)
 
-	setTablesRestoreModeIfNeeded(tables, cfg, isPartOfPiTR)
+	// set tables to be restoreMode for online PiTR restore.
+	if cfg.Online && isPiTR {
+		setTablesRestoreMode(tables)
+	}
 
 	// some more checks once we get tables and files information
 	if err := checkOptionalClusterRequirements(ctx, client, cfg, cpEnabledAndExists, mgr, files, tables); err != nil {
@@ -959,8 +963,11 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// preallocate the table id, because any ddl job or database creation(include checkpoint) also allocates the global ID
-	if err = client.AllocTableIDs(ctx, tables); err != nil {
-		return errors.Trace(err)
+	// don't allocate/reuse original table id if it's online restore since don't want to mess up with existing tables
+	if !cfg.Online {
+		if err = client.AllocTableIDs(ctx, tables); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	// reload or register the checkpoint
@@ -1077,7 +1084,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		// even nothing to restore, we show a success message since there is no failure.
 	}
 
-	createdTables, err := createDBsAndTables(ctx, client, cfg, mgr, dbs, tables)
+	createdTables, err := createDBsAndTables(ctx, client, cfg, mgr, dbs, tables, isPiTR)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1438,35 +1445,62 @@ func handleTableRenames(
 		if endMatches {
 			pitrIdTracker.TrackTableId(end.DbID, tableId)
 			if cfg.Online {
-				buildDummyTableIfNotExist(existingTableMap, existingDBMap, end.DbID, endDBName, tableId, end.TableName)
+				// create restoreMode tables for tables created during log backup
+				buildCoveringTableIfNeeded(existingTableMap, existingDBMap, end.DbID, endDBName, tableId, end.TableName)
 			}
 		}
 
 		// skip if both match or not match, no need to adjust tables
 		// it should handle most of the cases
 		if startMatches == endMatches {
-			continue
+			// if db id changed we can just point the table to the new db
+			if start.DbID == end.DbID {
+				continue
+			}
 		}
 
 		// If end matches but start doesn't -> need to restore (add)
 		// If start matches but end doesn't -> need to remove
 		if startDB, exists := snapshotDBMap[start.DbID]; exists {
-			// always add DB to map - we want to track it even if it has no tables
-			existingDBMap[startDB.Info.ID] = startDB
-
 			for _, table := range startDB.Tables {
 				if table.Info != nil && table.Info.ID == tableId {
 					if endMatches {
-						// need to restore this table
-						// track start as well as it might be in different db
-						pitrIdTracker.TrackTableId(start.DbID, tableId)
-						// create a deep copy of the table and update its name to the end name
+						// for cross-database renames, directly point to the end database
+						var endDB *metautil.Database
+						if db, exists := existingDBMap[end.DbID]; exists {
+							endDB = db
+						} else if endDB, exists = snapshotDBMap[end.DbID]; exists {
+							existingDBMap[end.DbID] = endDB
+						} else {
+							// create the end database if it doesn't exist
+							endDB = &metautil.Database{
+								Info: &model.DBInfo{
+									ID:   end.DbID,
+									Name: ast.NewCIStr(endDBName),
+								},
+							}
+							existingDBMap[end.DbID] = endDB
+						}
+
+						// create a deep copy of the table and update its metadata to point to the end DB
 						tableCopy := *table
+						tableCopy.DB = endDB.Info
 						tableCopy.Info = table.Info.Clone()
 						tableCopy.Info.Name = ast.NewCIStr(end.TableName)
-						existingTableMap[table.Info.ID] = &tableCopy
-						existingFileMap[table.Info.ID] = table.Files
-					} else {
+						tableCopy.Info.DBID = end.DbID
+
+						existingTableMap[tableId] = &tableCopy
+						existingFileMap[tableId] = table.Files
+
+						log.Info("handled cross-database rename by pointing table to end database",
+							zap.Int64("original_db_id", start.DbID),
+							zap.String("original_db_name", startDBName),
+							zap.Int64("end_db_id", end.DbID),
+							zap.String("end_db_name", endDBName),
+							zap.Int64("table_id", tableId),
+							zap.String("original_table_name", start.TableName),
+							zap.String("end_table_name", end.TableName))
+					} else if startMatches {
 						// need to remove this table
 						delete(existingTableMap, table.Info.ID)
 						delete(existingFileMap, table.Info.ID)
@@ -1582,6 +1616,14 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 	// handle partition exchange after all tables are tracked
 	if err := handlePartitionExchanges(logBackupTableHistory, snapshotDBMap, cfg); err != nil {
 		return err
+	}
+
+	// handle deleted tables
+	for tableId := range logBackupTableHistory.GetDeletedTables() {
+		delete(tableMap, tableId)
+		delete(fileMap, tableId)
+		// stop tracking it, so it won't be restored in log restore
+		piTRIdTracker.RemoveTableId(tableId)
 	}
 
 	// track all snapshot tables that's going to restore in PiTR tracker
@@ -1832,16 +1874,24 @@ func checkpointEnabledAndExists(cfg *SnapshotRestoreConfig, domain *domain.Domai
 		// checks pitr checkpoint
 		if cfg.piTRTaskInfo != nil && cfg.piTRTaskInfo.CheckpointInfo != nil &&
 			cfg.piTRTaskInfo.CheckpointInfo.HasCheckpointMetadata() {
+			log.Info("log restore with pitr checkpoint info")
 			return true
 		}
 		// checks snapshot restore only checkpoint
 		if checkpoint.ExistsSstRestoreCheckpoint(domain, checkpoint.SnapshotRestoreCheckpointDatabaseName) {
+			log.Info("restore with checkpoint info")
 			return true
 		}
+		log.Info("restore with no existing checkpoint info")
 	}
 	return false
 }
 
+// checkMandatoryClusterRequirements checks
+// 1. kv mode
+// 2. if db and tables are in backup if it's restore db or restore table command
+// 3. check if cluster is empty if it's a full cluster restore without filter and checkpoints
+// it's mandatory since it cannot be turned off
 func checkMandatoryClusterRequirements(client *snapclient.SnapClient, cfg *SnapshotRestoreConfig,
 	checkpointEnabledAndExists bool, cmdName string) error {
 	// verify not raw kv mode
@@ -1864,6 +1914,8 @@ func checkMandatoryClusterRequirements(client *snapclient.SnapClient, cfg *Snaps
 	return nil
 }
 
+// checkOptionalClusterRequirements checks disk space and table existence. It's optional since it can be turned off by
+// config cfg.CheckRequirements
 func checkOptionalClusterRequirements(
 	ctx context.Context,
 	client *snapclient.SnapClient,
@@ -1891,7 +1943,8 @@ func createDBsAndTables(
 	cfg *SnapshotRestoreConfig,
 	mgr *conn.Mgr,
 	dbs []*metautil.Database,
-	tables []*metautil.Table) ([]*snapclient.CreatedTable, error) {
+	tables []*metautil.Table,
+	isPiTR bool) ([]*snapclient.CreatedTable, error) {
 	var newTS uint64
 	if client.IsIncremental() {
 		if !cfg.AllowPITRFromIncremental {
@@ -1917,36 +1970,25 @@ func createDBsAndTables(
 		return nil, errors.Trace(err)
 	}
 
-	// update table mapping manager with new table ids if online restore is enabled
-	if cfg.Online && cfg.tableMappingManager != nil {
-		for _, createdTable := range createdTables {
-			oldTableID := createdTable.OldTable.Info.ID
-			newTableID := createdTable.Table.ID
-			if oldTableID != newTableID {
-				cfg.tableMappingManager.UpdateDownstreamId(oldTableID, newTableID)
-				log.Info("updated table mapping manager with new table id",
-					zap.Int64("old_table_id", oldTableID),
-					zap.Int64("new_table_id", newTableID))
-			}
-		}
+	if isPiTR {
+		// update table mapping manager with new table ids
+		cfg.tableMappingManager.UpdateDownstreamIds(dbs, tables, client.GetDomain())
+		log.Info("updated table mapping manager with new table id")
 	}
-
 	return createdTables, nil
 }
 
-func setTablesRestoreModeIfNeeded(tables []*metautil.Table, cfg *SnapshotRestoreConfig, isPiTR bool) {
-	if cfg.Online && isPiTR {
-		for i, table := range tables {
-			tableCopy := *table
-			tableCopy.Info = table.Info.Clone()
-			tableCopy.Info.TableMode = model.TableModeRestore
-			tables[i] = &tableCopy
-		}
-		log.Info("set tables to restore mode for online PITR restore", zap.Int("table count", len(tables)))
+func setTablesRestoreMode(tables []*metautil.Table) {
+	for i, table := range tables {
+		tableCopy := *table
+		tableCopy.Info = table.Info.Clone()
+		tableCopy.Info.TableMode = model.TableModeRestore
+		tables[i] = &tableCopy
 	}
+	log.Info("set tables to restore mode for online PiTR restore", zap.Int("table count", len(tables)))
 }
 
-func buildDummyTableIfNotExist(
+func buildCoveringTableIfNeeded(
 	existingTableMap map[int64]*metautil.Table,
 	existingDBMap map[int64]*metautil.Database,
 	dbID int64,
@@ -1958,25 +2000,32 @@ func buildDummyTableIfNotExist(
 		return
 	}
 
-	var dummyDB *metautil.Database
+	var coveringDB *metautil.Database
 	if db, exists := existingDBMap[dbID]; exists {
-		dummyDB = db
+		coveringDB = db
 	} else {
-		dummyDB = &metautil.Database{
+		coveringDB = &metautil.Database{
 			Info: &model.DBInfo{
 				ID:   dbID,
 				Name: ast.NewCIStr(dbName),
 			},
 		}
-		existingDBMap[dbID] = dummyDB
+		existingDBMap[dbID] = coveringDB
 	}
 
-	dummyTable := &metautil.Table{
-		DB: dummyDB.Info,
+	coveringTable := &metautil.Table{
+		DB: coveringDB.Info,
 		Info: &model.TableInfo{
 			ID:   tableId,
 			Name: ast.NewCIStr(tableName),
+			DBID: dbID,
 		},
 	}
-	existingTableMap[tableId] = dummyTable
+	existingTableMap[tableId] = coveringTable
+
+	log.Info("created covering table for table that's not in snapshot",
+		zap.Int64("db_id", dbID),
+		zap.String("db_name", dbName),
+		zap.Int64("table_id", tableId),
+		zap.String("table_name", tableName))
 }
