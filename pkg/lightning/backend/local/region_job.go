@@ -271,9 +271,7 @@ func (j *regionJob) convertStageTo(stage jobStageTp) {
 
 // ref means that the ingestData of job will be accessed soon.
 func (j *regionJob) ref(wg *sync.WaitGroup) {
-	if wg != nil {
-		wg.Add(1)
-	}
+	wg.Add(1)
 	if j.ingestData != nil {
 		j.ingestData.IncRef()
 	}
@@ -285,9 +283,7 @@ func (j *regionJob) done(wg *sync.WaitGroup) {
 	if j.ingestData != nil {
 		j.ingestData.DecRef()
 	}
-	if wg != nil {
-		wg.Done()
-	}
+	wg.Done()
 }
 
 // writeToTiKV writes the data to TiKV and mark this job as wrote stage.

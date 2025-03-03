@@ -37,6 +37,36 @@ import (
 	"go.uber.org/zap"
 )
 
+// WriteStepMemShare defines the number of shares of memory used by the write step.
+// during write step, for the memory corresponding to each job worker, we divide
+// into below and total 8 shares:
+//   - one share used by HTTP buf inside loadBatchRegionData
+//   - one share used by loadBatchRegionData to store loaded data
+//   - one share used by generateAndSendJob
+//   - one share used by the active job on job worker
+//   - one share used by job worker sending GRPC data for active job
+//   - two share used by other stuff, such as other bg routines
+//   - one share for burst allocation to avoid OOM
+//
+// the share size 'SS' determines the max range data size 'RangeS' for a region job.
+// RangeS is also <= the region size RS of the cluster. And as each range job
+// corresponding to one ingested SST on TiKV, we also want the SST size be more
+// even, so we calculate Ranges by:
+//   - let TempRangeS = min(SS, RS)
+//   - if TempRangeS < RS, RangeS = RS / ceil(RS/TempRangeS) + 1,
+//     trailing 1 is for RS divided by odd number.
+//   - else RangeS = TempRangeS.
+//
+// The total memory used by write step is:
+//
+//	WC * 8 * RangeS = TC * CM-ratio
+//
+// we will set workerConcurrency(WC) = DXF task concurrency, so
+// // ∑(workerConcurrency) on each node will <= CPU core. and
+// for example, if the cpu:mem ratio is 1:2, so we have 2G memory per core, the
+// share size is 256M.
+const WriteStepMemShare = 8
+
 // during test on ks3, we found that we can open about 8000 connections to ks3,
 // bigger than that, we might receive "connection reset by peer" error, and
 // the read speed will be very slow, still investigating the reason.
