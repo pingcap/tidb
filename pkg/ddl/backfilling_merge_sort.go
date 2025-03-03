@@ -63,7 +63,7 @@ func (*mergeSortExecutor) Init(ctx context.Context) error {
 func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("merge sort executor run subtask")
 
-	sm, err := decodeBackfillSubTaskMeta(subtask.Meta)
+	sm, err := decodeBackfillSubtaskMeta(subtask.Meta)
 	if err != nil {
 		return err
 	}
@@ -113,7 +113,7 @@ func (*mergeSortExecutor) Cleanup(ctx context.Context) error {
 
 func (m *mergeSortExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("merge sort finish subtask")
-	sm, err := decodeBackfillSubTaskMeta(subtask.Meta)
+	sm, err := decodeBackfillSubtaskMeta(subtask.Meta)
 	if err != nil {
 		return err
 	}
