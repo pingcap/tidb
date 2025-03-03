@@ -439,6 +439,7 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (chunksMap map[
 			Type:         region.FileMeta.Type,
 			Compression:  region.FileMeta.Compression,
 			Timestamp:    timestamp,
+			ParquetMeta:  region.FileMeta.ParquetMeta,
 		})
 	}
 
