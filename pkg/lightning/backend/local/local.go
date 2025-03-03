@@ -1450,6 +1450,7 @@ func (local *Backend) doImport(
 		failpoint.Goto("afterStartWorker")
 	})
 
+	log.FromContext(ctx).Info("do import", zap.Int("workerConcurrency", local.WorkerConcurrency))
 	for i := 0; i < local.WorkerConcurrency; i++ {
 		workGroup.Go(func() error {
 			return local.startWorker(workerCtx, jobToWorkerCh, jobFromWorkerCh, &jobWg)
