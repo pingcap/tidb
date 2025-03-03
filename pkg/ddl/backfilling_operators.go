@@ -188,7 +188,7 @@ func NewAddIndexIngestPipeline(
 		reorgMeta.GetBatchSize(), rm, backendCtx)
 	ingestOp := NewIndexIngestOperator(ctx, copCtx, sessPool,
 		tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta)
-	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, rowCntListener, jobID, subtaskID, nil, nil, nil, nil, nil)
+	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, rowCntListener, jobID, subtaskID, nil, nil, nil, nil)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, ingestOp)
@@ -279,7 +279,7 @@ func NewWriteIndexToExternalStoragePipeline(
 		onClose, memSizePerIndex, reorgMeta,
 	)
 	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, rowCntListener,
-		jobID, subtaskID, destStore, extStore, readSummaryMap, onClose, resource)
+		jobID, subtaskID, destStore, extStore, readSummaryMap, resource)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, writeOp)
@@ -904,7 +904,6 @@ type indexWriteResultSink struct {
 	resource       *proto.StepResource
 	extStore       storage.ExternalStorage
 	readSummaryMap *sync.Map
-	onClose        external.OnCloseFunc
 }
 
 func newIndexWriteResultSink(
@@ -917,7 +916,6 @@ func newIndexWriteResultSink(
 	localStore storage.ExternalStorage,
 	extStore storage.ExternalStorage,
 	readSummaryMap *sync.Map,
-	onClose external.OnCloseFunc,
 	resoure *proto.StepResource,
 ) *indexWriteResultSink {
 	return &indexWriteResultSink{
@@ -933,7 +931,6 @@ func newIndexWriteResultSink(
 		resource:       resoure,
 		extStore:       extStore,
 		readSummaryMap: readSummaryMap,
-		onClose:        onClose,
 	}
 }
 
@@ -980,48 +977,7 @@ func (s *indexWriteResultSink) collectResult() error {
 func (s *indexWriteResultSink) flush() error {
 	if s.backendCtx == nil {
 		if s.localStore != nil {
-			prefix := path.Join(strconv.Itoa(int(s.jobID)), strconv.Itoa(int(s.subtaskID)))
-			res := s.resource
-			memSizePerCon := res.Mem.Capacity() / res.CPU.Capacity()
-			partSize := max(external.MinUploadPartSize, memSizePerCon*int64(external.MaxMergingFilesPerThread)/10000)
-			cs, ok := s.readSummaryMap.LoadAndDelete(s.subtaskID)
-			if !ok {
-				return errors.Errorf("cannot load read summary")
-			}
-			curSum := cs.(*readIndexSummary)
-			s.readSummaryMap.Store(s.subtaskID, &readIndexSummary{
-				metaGroups: make([]*external.SortedKVMeta, len(s.indexes)),
-			})
-			for _, metaGroup := range curSum.metaGroups {
-				err := external.MergeOverlappingFiles(
-					s.ctx,
-					metaGroup.GetDataFiles(),
-					s.localStore, s.extStore,
-					partSize,
-					prefix,
-					external.DefaultBlockSize,
-					s.onClose,
-					4,
-					false,
-				)
-				if err != nil {
-					return err
-				}
-				// Remove uploaded temporary files.
-				tempPathPrefix := ingest.GetIngestTempDataDir()
-				for _, stat := range metaGroup.MultipleFilesStats {
-					for _, f := range stat.Filenames {
-						err = os.RemoveAll(path.Join(tempPathPrefix, f[0]))
-						if err != nil {
-							logutil.BgLogger().Warn("remove temp file failed", zap.Error(err))
-						}
-						err = os.RemoveAll(path.Join(tempPathPrefix, f[1]))
-						if err != nil {
-							logutil.BgLogger().Warn("remove temp file failed", zap.Error(err))
-						}
-					}
-				}
-			}
+			return s.mergeLocalOverlappingFilesAndUpload()
 		}
 		return nil
 	}
@@ -1031,14 +987,68 @@ func (s *indexWriteResultSink) flush() error {
 	return s.backendCtx.Ingest(s.ctx)
 }
 
+func (s *indexWriteResultSink) mergeLocalOverlappingFilesAndUpload() error {
+	prefix := path.Join(strconv.Itoa(int(s.jobID)), strconv.Itoa(int(s.subtaskID)))
+	res := s.resource
+	memSizePerCon := res.Mem.Capacity() / res.CPU.Capacity()
+	partSize := max(external.MinUploadPartSize, memSizePerCon*int64(external.MaxMergingFilesPerThread)/10000)
+
+	cs, ok := s.readSummaryMap.Load(s.subtaskID)
+	if !ok {
+		return errors.Errorf("cannot load read summary")
+	}
+
+	afterMerged := &external.SortedKVMeta{}
+	afterMergedMu := sync.Mutex{}
+	mergeSortOnClose := func(summary *external.WriterSummary) {
+		afterMergedMu.Lock()
+		afterMerged.MergeSummary(summary)
+		afterMergedMu.Unlock()
+	}
+
+	var allDataFiles []string
+	var allStatFiles []string
+	for _, metaGroup := range cs.(*readIndexSummary).metaGroups {
+		allDataFiles = append(allDataFiles, metaGroup.GetDataFiles()...)
+		allStatFiles = append(allStatFiles, metaGroup.GetStatFiles()...)
+	}
+
+	err := external.MergeOverlappingFiles(
+		s.ctx,
+		allDataFiles,
+		s.localStore, s.extStore,
+		partSize,
+		prefix,
+		external.DefaultBlockSize,
+		mergeSortOnClose,
+		int(res.CPU.Capacity()),
+		false,
+	)
+	if err != nil {
+		return err
+	}
+	// Remove uploaded temporary files.
+	tempPathPrefix := ingest.GetIngestTempDataDir()
+	for i := range allDataFiles {
+		err = os.RemoveAll(path.Join(tempPathPrefix, allDataFiles[i]))
+		if err != nil {
+			logutil.BgLogger().Warn("remove temp file failed", zap.Error(err))
+		}
+		err = os.RemoveAll(path.Join(tempPathPrefix, allStatFiles[i]))
+		if err != nil {
+			logutil.BgLogger().Warn("remove temp file failed", zap.Error(err))
+		}
+	}
+	s.readSummaryMap.Store(s.subtaskID, &readIndexSummary{
+		metaGroups: []*external.SortedKVMeta{afterMerged},
+	})
+	return nil
+}
+
 func (s *indexWriteResultSink) Close() error {
 	return s.errGroup.Wait()
 }
 
 func (*indexWriteResultSink) String() string {
 	return "indexWriteResultSink"
-}
-
-func cleanupUploadedFiles() {
-
 }
