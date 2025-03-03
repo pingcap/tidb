@@ -76,6 +76,7 @@ const (
 	flagStreamStartTS      = "start-ts"
 	flagStreamEndTS        = "end-ts"
 	flagGCSafePointTTS     = "gc-ttl"
+	flagMessage            = "message"
 
 	truncateLockPath   = "truncating.lock"
 	hintOnTruncateLock = "There might be another truncate task running, or a truncate task that didn't exit properly. " +
@@ -137,9 +138,15 @@ type StreamConfig struct {
 
 	// Spec for the command `status`.
 	JSONOutput bool `json:"json-output" toml:"json-output"`
+	// DumpStatusTo here if not `nil`. Used for test cases.
+	DumpStatusTo *[]stream.TaskStatus `json:"-" toml:"-"`
 
 	// Spec for the command `advancer`.
 	AdvancerCfg advancercfg.Config `json:"advancer-config" toml:"advancer-config"`
+
+	// Spec for the command `pause`.
+	Message string `json:"message" toml:"message"`
+	AsError bool   `json:"as-error" toml:"as-error"`
 }
 
 func DefaultStreamConfig(flagsDef func(*pflag.FlagSet)) StreamConfig {
@@ -187,6 +194,7 @@ func DefineStreamPauseFlags(flags *pflag.FlagSet) {
 	DefineStreamCommonFlags(flags)
 	flags.Int64(flagGCSafePointTTS, utils.DefaultStreamPauseSafePointTTL,
 		"the TTL (in seconds) that PD holds for BR's GC safepoint")
+	flags.String(flagMessage, "", "The message for the pause task.")
 }
 
 // DefineStreamCommonFlags define common flags for `stream task`
@@ -285,6 +293,10 @@ func (cfg *StreamConfig) ParseStreamStartFromFlags(flags *pflag.FlagSet) error {
 func (cfg *StreamConfig) ParseStreamPauseFromFlags(flags *pflag.FlagSet) error {
 	err := cfg.ParseStreamCommonFromFlags(flags)
 	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if cfg.Message, err = flags.GetString(flagMessage); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -844,7 +856,14 @@ func RunStreamPause(
 		return errors.Trace(err)
 	}
 
-	err = cli.PauseTask(ctx, cfg.TaskName)
+	opts := []streamhelper.PauseTaskOption{}
+	if len(cfg.Message) > 0 {
+		opts = append(opts, streamhelper.PauseWithMessage(cfg.Message))
+	}
+	if cfg.AsError {
+		opts = append(opts, streamhelper.PauseWithErrorSeverity)
+	}
+	err = cli.PauseTask(ctx, cfg.TaskName, opts...)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1028,7 +1047,11 @@ func makeStatusController(ctx context.Context, cfg *StreamConfig, g glue.Glue) (
 	if err != nil {
 		return nil, err
 	}
-	return stream.NewStatusController(cli, mgr, printer), nil
+	if cfg.DumpStatusTo != nil {
+		printer = stream.TeeTaskPrinter(printer, cfg.DumpStatusTo)
+	}
+	ctl := stream.NewStatusController(cli, mgr, printer)
+	return ctl, nil
 }
 
 // RunStreamStatus get status for a specific stream task
@@ -1981,12 +2004,16 @@ func buildPauseSafePointName(taskName string) string {
 	return fmt.Sprintf("%s_pause_safepoint", taskName)
 }
 
-func checkPiTRRequirements(mgr *conn.Mgr) error {
+func checkPiTRRequirements(mgr *conn.Mgr, hasExplicitFilter bool) error {
+	if hasExplicitFilter {
+		return nil
+	}
 	return restore.AssertUserDBsEmpty(mgr.GetDomain())
 }
 
 type PiTRTaskInfo struct {
 	CheckpointInfo      *checkpoint.CheckpointTaskInfoForLogRestore
+	RestoreTS           uint64
 	NeedFullRestore     bool
 	FullRestoreCheckErr error
 }
@@ -2049,13 +2076,14 @@ func generatePiTRTaskInfo(
 	}
 	checkInfo.CheckpointInfo = curTaskInfo
 	checkInfo.NeedFullRestore = doFullRestore
+	checkInfo.RestoreTS = cfg.RestoreTS
 	// restore full snapshot precheck.
 	if doFullRestore {
 		if !(cfg.UseCheckpoint && (curTaskInfo.Metadata != nil || curTaskInfo.HasSnapshotMetadata)) {
 			// Only when use checkpoint and not the first execution,
 			// skip checking requirements.
 			log.Info("check pitr requirements for the first execution")
-			if err := checkPiTRRequirements(mgr); err != nil {
+			if err := checkPiTRRequirements(mgr, cfg.ExplicitFilter); err != nil {
 				// delay cluster checks after we get the backupmeta.
 				// for the case that the restore inc + log backup,
 				// we can still restore them.
