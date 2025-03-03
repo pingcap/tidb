@@ -130,7 +130,6 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 		if tblInfo.Partition != nil {
 			return generatePartitionPlan(ctx, storeWithPD, tblInfo)
 		}
-		// TODO(tangenta): use available disk during adding index.
 		availableDisk := sch.nodeRes.GetTaskDiskResource(task.Concurrency, vardef.DDLDiskQuota.Load())
 		logger.Info("available local disk space resource", zap.String("size", units.BytesSize(float64(availableDisk))))
 		return generateNonPartitionPlan(ctx, sch.d, tblInfo, job, sch.GlobalSort, len(execIDs), availableDisk)
@@ -381,6 +380,7 @@ func CalculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool
 		// For cloud storage, each subtask should contain no more than 4000 regions.
 		regionBatch = min(4000, avgTasksPerInstance)
 		if vardef.EnableGlobalSortLocalStore.Load() && availableDiskUsage > 0 {
+			// TODO(tangenta): use a better estimate solution.
 			approxMaxRegions := availableDiskUsage / (96 * units.MiB)
 			logutil.DDLLogger().Info("calculate region batch", zap.Uint64("max region count", approxMaxRegions))
 			regionBatch = min(int(approxMaxRegions), avgTasksPerInstance)
