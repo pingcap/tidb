@@ -32,9 +32,13 @@ import (
 type PutChunkResult struct {
 	FlushedChunkID uint64 `json:"flushed-chunk-id"`
 	HandledChunkID uint64 `json:"handled-chunk-id"`
-	Canceled       bool   `json:"canceled"`
-	Finished       bool   `json:"finished"`
-	Error          string `json:"error"`
+	// When the remote worker terminates with an error, or the client sends a
+	// cleanup request, the `Canceled` will be set to true.
+	Canceled bool `json:"canceled"`
+	// When the remote worker successfully ingests the data into tikv, the `Finished`
+	// will be set to true.
+	Finished bool   `json:"finished"`
+	Error    string `json:"error"`
 }
 
 // FlushResult is json data that returned by remote server POST API.
@@ -53,12 +57,13 @@ type chunk struct {
 
 type chunksState struct {
 	FlushedChunkID uint64 `json:"flushed-chunk-id"`
-	HandledChunkID uint64 `json:"handled-chunk-id"`
 }
 
 type chunkTask struct {
 	// For flush, resp is used to notify the completion of the flush.
-	// For put chunk, resp is used to receive chunkID allocated by chunkSenderLoop.
+	// For put chunk, resp is used to receive chunkID allocated by chunkSenderLoop,
+	// but receiving a chunkID does not mean that the chunk has been sent to the
+	// remote worker.
 	resp  chan uint64
 	flush bool
 	data  []byte
@@ -322,7 +327,6 @@ func (c *chunkSender) handlePutChunkResult(ctx context.Context, result *PutChunk
 
 	c.state.Store(&chunksState{
 		FlushedChunkID: result.FlushedChunkID,
-		HandledChunkID: result.HandledChunkID,
 	})
 	return nil
 }

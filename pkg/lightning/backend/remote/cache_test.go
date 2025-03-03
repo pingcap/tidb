@@ -34,10 +34,12 @@ func testChunksCache(t *testing.T, basePath string) {
 	require.NoError(t, err)
 
 	chunk0 := []byte("chunk0")
-	chunksCache.put(0, chunk0)
+	err = chunksCache.put(0, chunk0)
+	require.NoError(t, err)
 
 	chunk1 := []byte("chunk1")
-	chunksCache.put(1, chunk1)
+	err = chunksCache.put(1, chunk1)
+	require.NoError(t, err)
 
 	// Get the chunks
 	chunk0Got, err := chunksCache.get(0)
