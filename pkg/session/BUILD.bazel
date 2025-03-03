@@ -75,7 +75,6 @@ go_library(
         "//pkg/sessionctx",
         "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/stmtctx",
-        "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",
         "//pkg/sessiontxn/isolation",

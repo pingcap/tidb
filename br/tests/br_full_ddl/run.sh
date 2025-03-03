@@ -136,10 +136,10 @@ fi
 
 # when we have backup stats during backup, we cannot close domain during one shot session.
 # so we can check the log count of `one shot domain closed`.
-# we will call UseOneShotSession once to get the value global variable.
+# we will call UseOneShotSession twice to get the value global variable.
 one_shot_session_count=$(cat $LOG | grep "one shot session closed" | wc -l | xargs)
 one_shot_domain_count=$(cat $LOG | grep "one shot domain closed" | wc -l | xargs)
-if [ "${one_shot_session_count}" -ne "1" ] || [ "$one_shot_domain_count" -ne "0" ];then
+if [ "${one_shot_session_count}" -ne "2" ] || [ "$one_shot_domain_count" -ne "0" ];then
     echo "TEST: [$TEST_NAME] fail on one shot session check, $one_shot_session_count, $one_shot_domain_count"
     exit 1
 fi
