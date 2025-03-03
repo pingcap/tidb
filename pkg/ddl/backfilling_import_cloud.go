@@ -106,7 +106,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if err != nil {
 		return err
 	}
-	local.WorkerConcurrency = subtask.Concurrency * 2
+	local.WorkerConcurrency = subtask.Concurrency
 	err = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	if common.ErrFoundDuplicateKeys.Equal(err) {
 		err = convertToKeyExistsErr(err, m.index, m.ptbl.Meta())

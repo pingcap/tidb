@@ -598,7 +598,7 @@ func getRangeSplitter(
 	// no matter region split size and keys, we always split range jobs by 96MB
 	return external.NewRangeSplitter(ctx, multiFileStat, extStore,
 		rangeGroupSize, rangeGroupKeys,
-		int64(config.SplitRegionSize), int64(config.SplitRegionKeys),
+		regionSplitSize, regionSplitKeys,
 		regionSplitSize, regionSplitKeys)
 }
 

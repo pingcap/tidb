@@ -319,11 +319,11 @@ func TestGetBackendWorkerConcurrency(t *testing.T) {
 			ThreadCnt: 3,
 		},
 	}
-	require.Equal(t, 6, c.getBackendWorkerConcurrency())
+	require.Equal(t, 3, c.getBackendWorkerConcurrency())
 	c.Plan.CloudStorageURI = "xxx"
-	require.Equal(t, 6, c.getBackendWorkerConcurrency())
+	require.Equal(t, 3, c.getBackendWorkerConcurrency())
 	c.Plan.ThreadCnt = 123
-	require.Equal(t, 246, c.getBackendWorkerConcurrency())
+	require.Equal(t, 123, c.getBackendWorkerConcurrency())
 }
 
 func TestSupportedSuffixForServerDisk(t *testing.T) {
