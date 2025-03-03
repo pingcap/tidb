@@ -63,11 +63,11 @@ func (h *exhaustedHeap) Pop() any {
 func CalRangeSize(memPerCore int64, regionSplitSize, regionSplitKeys int64) (int64, int64) {
 	ss := memPerCore / writeStepMemShareCount
 	var rangeSize int64
-	regionShareRatio := float64(regionSplitSize) / float64(ss)
 	if ss < regionSplitSize {
-		rangeSize = regionSplitSize/int64(math.Ceil(regionShareRatio)) + 1
+		rangeCnt := int64(math.Ceil(float64(regionSplitSize) / float64(ss)))
+		rangeSize = regionSplitSize/rangeCnt + 1
 	} else {
-		rangeSize = int64(math.Floor(regionShareRatio)) * regionSplitSize
+		rangeSize = (ss / regionSplitSize) * regionSplitSize
 	}
 	avgKeySize := float64(regionSplitSize) / float64(regionSplitKeys)
 	return rangeSize, int64(float64(rangeSize) / avgKeySize)

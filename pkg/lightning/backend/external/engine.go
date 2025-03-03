@@ -58,7 +58,7 @@ import (
 //   - let TempRangeS = SS
 //   - if TempRangeS < RS, RangeS = RS / ceil(RS / TempRangeS) + 1,
 //     trailing 1 is for RS divided by odd number.
-//   - else RangeS = floor(RS / TempRangeS) * RS.
+//   - else RangeS = floor(TempRangeS / RS) * RS.
 //
 // for example, if the cpu:mem ratio is 1:1.9, so we have 1.9G memory per core,
 // the share size is 243M:
