@@ -18,7 +18,6 @@ import (
 	"context"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -29,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
@@ -45,6 +43,11 @@ import (
 const initStatsStep = int64(500)
 
 var maxTidRecord MaxTidRecord
+
+// GetMaxTidRecordForTest gets the max tid record for test.
+func GetMaxTidRecordForTest() int64 {
+	return maxTidRecord.tid.Load()
+}
 
 // MaxTidRecord is to record the max tid.
 type MaxTidRecord struct {
@@ -81,7 +84,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache util.StatsC
 	maxTidRecord.mu.Lock()
 	defer maxTidRecord.mu.Unlock()
 	if maxTidRecord.tid.Load() < maxPhysicalID {
-		maxTidRecord.tid.Store(physicalID)
+		maxTidRecord.tid.Store(maxPhysicalID)
 	}
 }
 
@@ -112,6 +115,16 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (util.StatsCache, error
 	return tables, nil
 }
 
+// genInitStatsHistogramsSQL generates the SQL to load all stats_histograms records.
+func genInitStatsHistogramsSQL(isPaging bool) string {
+	selectPrefix := "select /*+ ORDER_INDEX(mysql.stats_histograms,tbl) */ HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms"
+	orderSuffix := " order by table_id"
+	if !isPaging {
+		return selectPrefix + orderSuffix
+	}
+	return selectPrefix + " where table_id >= %? and table_id < %?" + orderSuffix
+}
+
 func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache util.StatsCache, iter *chunk.Iterator4Chunk) {
 	var table *statistics.Table
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
@@ -132,9 +145,9 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache u
 		ndv := row.GetInt64(3)
 		version := row.GetUint64(4)
 		nullCount := row.GetInt64(5)
-		statsVer := row.GetInt64(7)
-		flag := row.GetInt64(9)
-		lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
+		statsVer := row.GetInt64(8)
+		flag := row.GetInt64(10)
+		lastAnalyzePos := row.GetDatum(11, types.NewFieldType(mysql.TypeBlob))
 		tbl, _ := h.TableInfoByID(is, table.PhysicalID)
 		if isIndex > 0 {
 			var idxInfo *model.IndexInfo
@@ -171,7 +184,7 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache u
 			if colInfo == nil {
 				continue
 			}
-			hist := statistics.NewHistogram(id, ndv, nullCount, version, &colInfo.FieldType, 0, row.GetInt64(6))
+			hist := statistics.NewHistogram(id, ndv, nullCount, version, &colInfo.FieldType, 0, row.GetInt64(7))
 			hist.Correlation = row.GetFloat64(8)
 			col := &statistics.Column{
 				Histogram:  *hist,
@@ -194,6 +207,12 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache u
 }
 
 func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache util.StatsCache, iter *chunk.Iterator4Chunk, isCacheFull bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Error("panic when initStatsHistograms4Chunk", zap.Any("r", r),
+				zap.Stack("stack"))
+		}
+	}()
 	var table *statistics.Table
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID, statsVer := row.GetInt64(0), row.GetInt64(8)
@@ -210,7 +229,12 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache util.
 		}
 		id, ndv, nullCount, version, totColSize := row.GetInt64(2), row.GetInt64(3), row.GetInt64(5), row.GetUint64(4), row.GetInt64(7)
 		lastAnalyzePos := row.GetDatum(11, types.NewFieldType(mysql.TypeBlob))
-		tbl, _ := h.TableInfoByID(is, table.PhysicalID)
+		tbl, ok := h.TableInfoByID(is, table.PhysicalID)
+		if !ok {
+			// this table has been dropped. but stats meta still exists and wait for being deleted.
+			logutil.BgLogger().Warn("cannot find this table when to init stats", zap.Int64("tableID", table.PhysicalID))
+			continue
+		}
 		if row.GetInt64(1) > 0 {
 			var idxInfo *model.IndexInfo
 			for _, idx := range tbl.Meta().Indices {
@@ -272,7 +296,9 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache util.
 				StatsVer:   statsVer,
 			}
 			// primary key column has no stats info, because primary key's is_index is false. so it cannot load the topn
-			col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
+			if col.StatsAvailable() {
+				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
+			}
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			table.Columns[hist.ID] = col
 		}
@@ -283,7 +309,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache util.
 }
 
 func (h *Handle) initStatsHistogramsLite(is infoschema.InfoSchema, cache util.StatsCache) error {
-	sql := "select /*+ ORDER_INDEX(mysql.stats_histograms,tbl)*/ HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms order by table_id"
+	sql := genInitStatsHistogramsSQL(false)
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -306,7 +332,7 @@ func (h *Handle) initStatsHistogramsLite(is infoschema.InfoSchema, cache util.St
 }
 
 func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache util.StatsCache) error {
-	sql := "select  /*+ ORDER_INDEX(mysql.stats_histograms,tbl)*/ HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms order by table_id"
+	sql := genInitStatsHistogramsSQL(false)
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return errors.Trace(err)
@@ -336,14 +362,14 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache uti
 	defer func() {
 		if err == nil { // only recycle when no error
 			h.SPool().Put(se)
+		} else {
+			// Note: Otherwise, the session will be leaked.
+			h.SPool().Destroy(se)
 		}
 	}()
 
 	sctx := se.(sessionctx.Context)
-	// Why do we need to add `is_index=1` in the SQL?
-	// because it is aligned to the `initStatsTopN` function, which only loads the topn of the index too.
-	// the other will be loaded by sync load.
-	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms where table_id >= %? and table_id < %? and is_index=1"
+	sql := genInitStatsHistogramsSQL(true)
 	rc, err := util.Exec(sctx, sql, task.StartTid, task.EndTid)
 	if err != nil {
 		return errors.Trace(err)
@@ -453,6 +479,9 @@ func (h *Handle) initStatsTopNByPaging(cache util.StatsCache, task initstats.Tas
 	defer func() {
 		if err == nil { // only recycle when no error
 			h.SPool().Put(se)
+		} else {
+			// Note: Otherwise, the session will be leaked.
+			h.SPool().Destroy(se)
 		}
 	}()
 	sctx := se.(sessionctx.Context)
@@ -554,14 +583,13 @@ func (h *Handle) initStatsFMSketch(cache util.StatsCache) error {
 
 func (*Handle) initStatsBuckets4Chunk(cache util.StatsCache, iter *chunk.Iterator4Chunk) {
 	var table *statistics.Table
-	unspecifiedLengthTp := types.NewFieldType(mysql.TypeBlob)
 	var (
 		hasErr        bool
 		failedTableID int64
 		failedHistID  int64
 	)
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
+		tableID, histID := row.GetInt64(0), row.GetInt64(1)
 		if table == nil || table.PhysicalID != tableID {
 			if table != nil {
 				for _, index := range table.Indices {
@@ -578,63 +606,13 @@ func (*Handle) initStatsBuckets4Chunk(cache util.StatsCache, iter *chunk.Iterato
 		}
 		var lower, upper types.Datum
 		var hist *statistics.Histogram
-		if isIndex > 0 {
-			index, ok := table.Indices[histID]
-			if !ok {
-				continue
-			}
-			hist = &index.Histogram
-			lower, upper = types.NewBytesDatum(row.GetBytes(5)), types.NewBytesDatum(row.GetBytes(6))
-		} else {
-			column, ok := table.Columns[histID]
-			if !ok {
-				continue
-			}
-			if !mysql.HasPriKeyFlag(column.Info.GetFlag()) {
-				continue
-			}
-			hist = &column.Histogram
-			d := types.NewBytesDatum(row.GetBytes(5))
-			// Setting TimeZone to time.UTC aligns with HistogramFromStorage and can fix #41938. However, #41985 still exist.
-			// TODO: do the correct time zone conversion for timestamp-type columns' upper/lower bounds.
-			sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-			sc.AllowInvalidDate = true
-			sc.IgnoreZeroInDate = true
-			var err error
-			if column.Info.FieldType.EvalType() == types.ETString && column.Info.FieldType.GetType() != mysql.TypeEnum && column.Info.FieldType.GetType() != mysql.TypeSet {
-				// For new collation data, when storing the bounds of the histogram, we store the collate key instead of the
-				// original value.
-				// But there's additional conversion logic for new collation data, and the collate key might be longer than
-				// the FieldType.flen.
-				// If we use the original FieldType here, there might be errors like "Invalid utf8mb4 character string"
-				// or "Data too long".
-				// So we change it to TypeBlob to bypass those logics here.
-				lower, err = d.ConvertTo(sc, unspecifiedLengthTp)
-			} else {
-				lower, err = d.ConvertTo(sc, &column.Info.FieldType)
-			}
-			if err != nil {
-				hasErr = true
-				failedTableID = tableID
-				failedHistID = histID
-				delete(table.Columns, histID)
-				continue
-			}
-			d = types.NewBytesDatum(row.GetBytes(6))
-			if column.Info.FieldType.EvalType() == types.ETString && column.Info.FieldType.GetType() != mysql.TypeEnum && column.Info.FieldType.GetType() != mysql.TypeSet {
-				upper, err = d.ConvertTo(sc, unspecifiedLengthTp)
-			} else {
-				upper, err = d.ConvertTo(sc, &column.Info.FieldType)
-			}
-			if err != nil {
-				hasErr = true
-				failedTableID = tableID
-				failedHistID = histID
-				delete(table.Columns, histID)
-				continue
-			}
+		index, ok := table.Indices[histID]
+		if !ok {
+			continue
 		}
-		hist.AppendBucketWithNDV(&lower, &upper, row.GetInt64(3), row.GetInt64(4), row.GetInt64(7))
+		hist = &index.Histogram
+		lower, upper = types.NewBytesDatum(row.GetBytes(4) /*lower_bound*/), types.NewBytesDatum(row.GetBytes(5) /*upper_bound*/)
+		hist.AppendBucketWithNDV(&lower, &upper, row.GetInt64(2) /*count*/, row.GetInt64(3) /*repeats*/, row.GetInt64(6) /*ndv*/)
 	}
 	if table != nil {
 		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
@@ -654,7 +632,7 @@ func (h *Handle) initStatsBuckets(cache util.StatsCache, totalMemory uint64) err
 			return errors.Trace(err)
 		}
 	} else {
-		sql := "select /*+ ORDER_INDEX(mysql.stats_buckets,tbl)*/ HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets order by table_id, is_index, hist_id, bucket_id"
+		sql := "select /*+ ORDER_INDEX(mysql.stats_buckets,tbl)*/ HIGH_PRIORITY table_id, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where is_index=1 order by table_id, is_index, hist_id, bucket_id"
 		rc, err := util.Exec(h.initStatsCtx, sql)
 		if err != nil {
 			return errors.Trace(err)
@@ -701,10 +679,13 @@ func (h *Handle) initStatsBucketsByPaging(cache util.StatsCache, task initstats.
 	defer func() {
 		if err == nil { // only recycle when no error
 			h.SPool().Put(se)
+		} else {
+			// Note: Otherwise, the session will be leaked.
+			h.SPool().Destroy(se)
 		}
 	}()
 	sctx := se.(sessionctx.Context)
-	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id >= %? and table_id < %? order by table_id, is_index, hist_id, bucket_id"
+	sql := "select HIGH_PRIORITY table_id, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where is_index = 1 and table_id >= %? and table_id < %? order by table_id, is_index, hist_id, bucket_id"
 	rc, err := util.Exec(sctx, sql, task.StartTid, task.EndTid)
 	if err != nil {
 		return errors.Trace(err)

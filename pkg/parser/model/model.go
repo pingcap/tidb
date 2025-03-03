@@ -2231,3 +2231,18 @@ type TraceInfo struct {
 	// SessionAlias is the alias of session
 	SessionAlias string `json:"session_alias"`
 }
+
+// JobW is a wrapper of model.Job, it contains the job and the binary representation
+// of the job.
+type JobW struct {
+	*Job
+	Bytes []byte
+}
+
+// NewJobW creates a new JobW.
+func NewJobW(job *Job, bytes []byte) *JobW {
+	return &JobW{
+		Job:   job,
+		Bytes: bytes,
+	}
+}

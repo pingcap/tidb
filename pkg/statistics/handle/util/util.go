@@ -23,10 +23,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -63,6 +65,7 @@ var (
 type SessionPool interface {
 	Get() (pools.Resource, error)
 	Put(pools.Resource)
+	Destroy(pools.Resource)
 }
 
 // finishTransaction will execute `commit` when error is nil, otherwise `rollback`.
@@ -83,18 +86,22 @@ var (
 
 // CallWithSCtx allocates a sctx from the pool and call the f().
 func CallWithSCtx(pool SessionPool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
+	defer util.Recover(metrics.LabelStats, "CallWithSCtx", nil, false)
 	se, err := pool.Get()
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	defer func() {
 		if err == nil { // only recycle when no error
 			pool.Put(se)
+		} else {
+			// Note: Otherwise, the session will be leaked.
+			pool.Destroy(se)
 		}
 	}()
 	sctx := se.(sessionctx.Context)
 	if err := UpdateSCtxVarsForStats(sctx); err != nil { // update stats variables automatically
-		return err
+		return errors.Trace(err)
 	}
 
 	wrapTxn := false
@@ -108,7 +115,7 @@ func CallWithSCtx(pool SessionPool, f func(sctx sessionctx.Context) error, flags
 	} else {
 		err = f(sctx)
 	}
-	return err
+	return errors.Trace(err)
 }
 
 // UpdateSCtxVarsForStats updates all necessary variables that may affect the behavior of statistics.

@@ -259,7 +259,7 @@ func getIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, 
 					}
 					continue
 				}
-				count = equalRowCountOnIndex(sctx, idx, lb, realtimeRowCount)
+				count = equalRowCountOnIndex(sctx, idx, lb, realtimeRowCount, modifyCount)
 				// If the current table row count has changed, we should scale the row count accordingly.
 				count *= idx.GetIncreaseFactor(realtimeRowCount)
 				if debugTrace {
@@ -350,7 +350,7 @@ func getIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, 
 
 var nullKeyBytes, _ = codec.EncodeKey(nil, nil, types.NewDatum(nil))
 
-func equalRowCountOnIndex(sctx sessionctx.Context, idx *statistics.Index, b []byte, realtimeRowCount int64) (result float64) {
+func equalRowCountOnIndex(sctx sessionctx.Context, idx *statistics.Index, b []byte, realtimeRowCount, modifyCount int64) (result float64) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		debugtrace.RecordAnyValuesWithNames(sctx, "Encoded Value", b)

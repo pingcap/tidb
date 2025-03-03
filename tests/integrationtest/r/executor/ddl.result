@@ -296,3 +296,99 @@ ALTER TABLE t_1 ADD FOREIGN KEY fk_t_id(t_id) references t(id);
 Error 8152 (HY000): Set TTL for a table referenced by foreign key is not allowed
 drop table t,t_1;
 set global tidb_enable_foreign_key=default;
+drop table if exists source_table, t1, t2, test_v_nested;
+drop view if exists view_t, v, v1, v2, v3, v4, v5, v6, v7, v_nested, v_nested2;
+CREATE TABLE source_table (id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));
+CREATE VIEW view_t AS select id , name from source_table;
+CREATE VIEW view_t AS select id , name from source_table;
+Error 1050 (42S01): Table 'executor__ddl.view_t' already exists
+create view v1 (c,d) as select a,b from t1;
+Error 1146 (42S02): Table 'executor__ddl.t1' doesn't exist
+create table t1 (a int ,b int);
+insert into t1 values (1,2), (1,3), (2,4), (2,5), (3,10);
+create view v1 (c) as select b+1 from t1;
+create view v2 as select b+1 from t1;
+create view v3 as select b+1 as c from t1;
+create view v4 (c) as select b+1 as d from t1;
+create view v5 as select * from t1;
+create view v6 (c,d) as select * from t1;
+create view v7 (c,d,e) as select * from t1;
+Error 1353 (HY000): In definition of view, derived table or common table expression, SELECT list and column names list have different column counts
+drop view v1,v2,v3,v4,v5,v6;
+create view v1 (c,d) as select a,b+@@global.max_user_connections from t1;
+Error 1351 (HY000): View's SELECT contains a variable or parameter
+create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections;
+Error 1351 (HY000): View's SELECT contains a variable or parameter
+create view v1 (c,d,e) as select a,b from t1 ;
+Error 1353 (HY000): In definition of view, derived table or common table expression, SELECT list and column names list have different column counts
+create view v1 (c) as select a,b from t1 ;
+Error 1353 (HY000): In definition of view, derived table or common table expression, SELECT list and column names list have different column counts
+drop view if exists v1;
+create view v1 (c,d) as select a,b from t1;
+create or replace view v1 (c,d) as select a,b from t1 ;
+create table if not exists t1 (a int ,b int);
+create or replace view t1 as select * from t1;
+Error 1347 (HY000): 'executor__ddl.t1' is not VIEW
+prepare stmt from "create view v10 (x) as select 1";
+execute stmt;
+
+drop table if exists t1, t2;
+drop view if exists v;
+create view v as select * from t1 union select * from t2;
+Error 1146 (42S02): Table 'executor__ddl.t1' doesn't exist
+create table t1(a int, b int);
+create table t2(a int, b int);
+insert into t1 values(1,2), (1,1), (1,2);
+insert into t2 values(1,1),(1,3);
+create definer='root'@'localhost' view v as select * from t1 union select * from t2;
+select * from v;
+a	b
+1	1
+1	2
+1	3
+alter table t1 drop column a;
+select * from v;
+Error 1356 (HY000): View 'executor__ddl.v' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+alter table t1 add column a int;
+select * from v;
+a	b
+NULL	1
+NULL	2
+1	1
+1	3
+alter table t1 drop column a;
+alter table t2 drop column b;
+select * from v;
+Error 1356 (HY000): View 'executor__ddl.v' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+drop view v;
+create view v as (select * from t1);
+drop view v;
+create view v as (select * from t1 union select * from t2);
+drop view v;
+drop view if exists v_if_exists;
+show warnings;
+Level	Code	Message
+Note	1051	Unknown table 'executor__ddl.v_if_exists'
+create view v1_if_exists as (select * from t1);
+drop view if exists v1_if_exists,v2_if_exists,v3_if_exists;
+show warnings;
+Level	Code	Message
+Note	1051	Unknown table 'executor__ddl.v2_if_exists'
+Note	1051	Unknown table 'executor__ddl.v3_if_exists'
+create table test_v_nested(a int);
+create definer='root'@'localhost' view v_nested as select * from test_v_nested;
+create definer='root'@'localhost' view v_nested2 as select * from v_nested;
+create or replace definer='root'@'localhost' view v_nested as select * from v_nested2;
+Error 1146 (42S02): Table 'executor__ddl.v_nested' doesn't exist
+drop table test_v_nested;
+drop view v_nested, v_nested2;
+create view v_stale as select * from source_table as of timestamp current_timestamp(3);
+Error 1356 (HY000): View 'executor__ddl.v_stale' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+drop view if exists v1,v2;
+drop table if exists t1;
+CREATE TABLE t1(a INT, b INT);
+CREATE DEFINER=1234567890abcdefGHIKL1234567890abcdefGHIKL@localhost VIEW v1 AS SELECT a FROM t1;
+Error 1470 (HY000): String '1234567890abcdefGHIKL1234567890abcdefGHIKL' is too long for user name (should be no longer than 32)
+CREATE DEFINER=some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890X VIEW v2 AS SELECT b FROM t1;
+Error 1470 (HY000): String 'host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij12345' is too long for host name (should be no longer than 255)
+DROP VIEW IF EXISTS view_t;

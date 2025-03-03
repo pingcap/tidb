@@ -3,12 +3,17 @@
 package prealloctableid_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/mock"
 	prealloctableid "github.com/pingcap/tidb/br/pkg/restore/prealloc_table_id"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,7 +42,7 @@ func TestAllocator(t *testing.T) {
 		{
 			tableIDs:              []int64{1, 2, 5, 6, 7},
 			hasAllocatedTo:        6,
-			successfullyAllocated: []int64{6, 7},
+			successfullyAllocated: []int64{7},
 			shouldAllocatedTo:     8,
 		},
 		{
@@ -61,7 +66,7 @@ func TestAllocator(t *testing.T) {
 		{
 			tableIDs:              []int64{1, 2, 5, 6, 7},
 			hasAllocatedTo:        6,
-			successfullyAllocated: []int64{6, 7},
+			successfullyAllocated: []int64{7},
 			shouldAllocatedTo:     13,
 			partitions: map[int64][]int64{
 				7: {8, 9, 10, 11, 12},
@@ -114,4 +119,46 @@ func TestAllocator(t *testing.T) {
 			run(t, c)
 		})
 	}
+}
+
+func TestAllocatorBound(t *testing.T) {
+	mock, err := mock.NewCluster()
+	require.NoError(t, err)
+	require.NoError(t, mock.Start())
+	defer mock.Stop()
+
+	tk := testkit.NewTestKit(t, mock.Storage)
+	tk.MustExec("CREATE TABLE test.t1 (id int);")
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBR)
+	currentGlobalID := int64(0)
+	err = kv.RunInNewTxn(ctx, mock.Store(), true, func(_ context.Context, txn kv.Transaction) (err error) {
+		allocator := meta.NewMeta(txn)
+		currentGlobalID, err = allocator.GetGlobalID()
+		return err
+	})
+	require.NoError(t, err)
+	rows := tk.MustQuery("ADMIN SHOW DDL JOBS WHERE JOB_ID = ?", currentGlobalID).Rows()
+	// The current global ID is used, so it cannot use anymore.
+	require.Len(t, rows, 1)
+	tableInfos := []*metautil.Table{
+		{Info: &model.TableInfo{ID: currentGlobalID}},
+		{Info: &model.TableInfo{ID: currentGlobalID + 2}},
+		{Info: &model.TableInfo{ID: currentGlobalID + 4}},
+	}
+	ids := prealloctableid.New(tableInfos)
+	lastGlobalID := currentGlobalID
+	err = kv.RunInNewTxn(ctx, mock.Store(), true, func(_ context.Context, txn kv.Transaction) error {
+		allocator := meta.NewMeta(txn)
+		if err := ids.Alloc(allocator); err != nil {
+			return err
+		}
+		currentGlobalID, err = allocator.GetGlobalID()
+		return err
+	})
+	require.NoError(t, err)
+	require.Equal(t, fmt.Sprintf("ID:[%d,%d)", lastGlobalID+1, currentGlobalID), ids.String())
+	require.False(t, ids.Prealloced(tableInfos[0].Info.ID))
+	require.True(t, ids.Prealloced(tableInfos[1].Info.ID))
+	require.True(t, ids.Prealloced(tableInfos[2].Info.ID))
+	require.True(t, ids.Prealloced(currentGlobalID-1))
 }

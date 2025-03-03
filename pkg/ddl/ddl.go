@@ -854,6 +854,7 @@ func (d *ddl) close() {
 
 	startTime := time.Now()
 	d.cancel()
+	failpoint.InjectCall("afterDDLCloseCancel")
 	d.wg.Wait()
 	d.ownerManager.Cancel()
 	d.schemaSyncer.Close()
@@ -1030,7 +1031,7 @@ func setDDLJobQuery(ctx sessionctx.Context, job *model.Job) {
 // - nil: found in history DDL job and no job error
 // - context.Cancel: job has been sent to worker, but not found in history DDL job before cancel
 // - other: found in history DDL job and return that job error
-func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
+func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) (err error) {
 	job.TraceInfo = &model.TraceInfo{
 		ConnectionID: ctx.GetSessionVars().ConnectionID,
 		SessionAlias: ctx.GetSessionVars().SessionAlias,
@@ -1058,10 +1059,14 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	})
 
 	// worker should restart to continue handling tasks in limitJobCh, and send back through task.err
-	err := <-task.err
-	if err != nil {
-		// The transaction of enqueuing job is failed.
-		return errors.Trace(err)
+	select {
+	case err := <-task.err:
+		if err != nil {
+			// The transaction of enqueuing job is failed.
+			return errors.Trace(err)
+		}
+	case <-d.ctx.Done():
+		return d.ctx.Err()
 	}
 
 	sessVars := ctx.GetSessionVars()

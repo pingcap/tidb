@@ -169,6 +169,11 @@ func (d *DistExecutionContext) GetDomain(idx int) *domain.Domain {
 
 // NewDistExecutionContext create DistExecutionContext for testing.
 func NewDistExecutionContext(t testing.TB, serverNum int) *DistExecutionContext {
+	return NewDistExecutionContextWithLease(t, serverNum, 500*time.Millisecond)
+}
+
+// NewDistExecutionContextWithLease create DistExecutionContext for testing.
+func NewDistExecutionContextWithLease(t testing.TB, serverNum int, lease time.Duration) *DistExecutionContext {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	gctuner.GlobalMemoryLimitTuner.Stop()
@@ -177,7 +182,7 @@ func NewDistExecutionContext(t testing.TB, serverNum int) *DistExecutionContext 
 
 	var domInfo []string
 	for i := 0; i < serverNum; i++ {
-		dom := bootstrap4DistExecution(t, store, 500*time.Millisecond)
+		dom := bootstrap4DistExecution(t, store, lease)
 		if i != serverNum-1 {
 			dom.SetOnClose(func() { /* don't delete the store in domain map */ })
 		}

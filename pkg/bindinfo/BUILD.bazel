@@ -37,6 +37,7 @@ go_library(
         "//pkg/util/stmtsummary/v2:stmtsummary",
         "//pkg/util/table-filter",
         "//pkg/util/timeutil",
+        "@com_github_pkg_errors//:errors",
         "@org_golang_x_exp//maps",
         "@org_uber_go_zap//:zap",
     ],

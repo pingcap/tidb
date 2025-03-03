@@ -166,19 +166,19 @@ func TestSimpleStmtSummaryByDigestEvicted(t *testing.T) {
 	require.Equal(t, "{begin: 1, end: 2, count: 1}", getAllEvicted(ssbde))
 	// test insert same *kind* of digest
 	ssbde.AddEvicted(evictedKey, evictedValue, 1)
-	require.Equal(t, "{begin: 1, end: 2, count: 1}", getAllEvicted(ssbde))
+	require.Equal(t, "{begin: 1, end: 2, count: 2}", getAllEvicted(ssbde))
 
 	evictedKey, evictedValue = generateStmtSummaryByDigestKeyValue("b", 1, 2)
 	ssbde.AddEvicted(evictedKey, evictedValue, 1)
-	require.Equal(t, "{begin: 1, end: 2, count: 2}", getAllEvicted(ssbde))
+	require.Equal(t, "{begin: 1, end: 2, count: 3}", getAllEvicted(ssbde))
 
 	evictedKey, evictedValue = generateStmtSummaryByDigestKeyValue("b", 5, 6)
 	ssbde.AddEvicted(evictedKey, evictedValue, 2)
-	require.Equal(t, "{begin: 5, end: 6, count: 1}, {begin: 1, end: 2, count: 2}", getAllEvicted(ssbde))
+	require.Equal(t, "{begin: 5, end: 6, count: 1}, {begin: 1, end: 2, count: 3}", getAllEvicted(ssbde))
 
 	evictedKey, evictedValue = generateStmtSummaryByDigestKeyValue("b", 3, 4)
 	ssbde.AddEvicted(evictedKey, evictedValue, 3)
-	require.Equal(t, "{begin: 5, end: 6, count: 1}, {begin: 3, end: 4, count: 1}, {begin: 1, end: 2, count: 2}", getAllEvicted(ssbde))
+	require.Equal(t, "{begin: 5, end: 6, count: 1}, {begin: 3, end: 4, count: 1}, {begin: 1, end: 2, count: 3}", getAllEvicted(ssbde))
 
 	// test evicted element with multi-time range value.
 	ssbde = newStmtSummaryByDigestEvicted()
@@ -235,13 +235,13 @@ func TestStmtSummaryByDigestEvictedElement(t *testing.T) {
 
 	// test add same *kind* of values.
 	record.addEvicted(evictedKey, digestValue)
-	require.Equal(t, "{begin: 0, end: 1, count: 1}", getEvicted(record))
+	require.Equal(t, "{begin: 0, end: 1, count: 2}", getEvicted(record))
 
 	// test add different *kind* of values.
 	evictedKey, evictedValue = generateStmtSummaryByDigestKeyValue("bravo", 0, 1)
 	digestValue = evictedValue.history.Back().Value.(*stmtSummaryByDigestElement)
 	record.addEvicted(evictedKey, digestValue)
-	require.Equal(t, "{begin: 0, end: 1, count: 2}", getEvicted(record))
+	require.Equal(t, "{begin: 0, end: 1, count: 3}", getEvicted(record))
 }
 
 // test stmtSummaryByDigestEvicted.addEvicted
@@ -315,7 +315,7 @@ func TestNewStmtSummaryByDigestEvictedElement(t *testing.T) {
 	stmtEvictedElement := newStmtSummaryByDigestEvictedElement(now, end)
 	require.Equal(t, now, stmtEvictedElement.beginTime)
 	require.Equal(t, end, stmtEvictedElement.endTime)
-	require.Equal(t, 0, len(stmtEvictedElement.digestKeyMap))
+	require.Equal(t, int64(0), stmtEvictedElement.count)
 }
 
 func TestStmtSummaryByDigestEvicted(t *testing.T) {
@@ -624,13 +624,13 @@ func getAllEvicted(ssdbe *stmtSummaryByDigestEvicted) string {
 			buf.WriteString(", ")
 		}
 		val := e.Value.(*stmtSummaryByDigestEvictedElement)
-		buf.WriteString(fmt.Sprintf("{begin: %v, end: %v, count: %v}", val.beginTime, val.endTime, len(val.digestKeyMap)))
+		buf.WriteString(fmt.Sprintf("{begin: %v, end: %v, count: %v}", val.beginTime, val.endTime, val.count))
 	}
 	return buf.String()
 }
 
 func getEvicted(ssbdee *stmtSummaryByDigestEvictedElement) string {
 	buf := bytes.NewBuffer(nil)
-	buf.WriteString(fmt.Sprintf("{begin: %v, end: %v, count: %v}", ssbdee.beginTime, ssbdee.endTime, len(ssbdee.digestKeyMap)))
+	buf.WriteString(fmt.Sprintf("{begin: %v, end: %v, count: %v}", ssbdee.beginTime, ssbdee.endTime, ssbdee.count))
 	return buf.String()
 }

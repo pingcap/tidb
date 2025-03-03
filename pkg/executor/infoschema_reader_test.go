@@ -849,11 +849,15 @@ func TestShowColumnsWithSubQueryView(t *testing.T) {
 	tk.MustExec("create view temp_view as (select * from `added` where id > (select max(id) from `incremental`));")
 	// Show columns should not send coprocessor request to the storage.
 	require.NoError(t, failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("timeout")`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/BuildDataSourceFailed", "panic"))
+
 	tk.MustQuery("show columns from temp_view;").Check(testkit.Rows(
 		"id int(11) YES  <nil> ",
 		"name text YES  <nil> ",
 		"some_date timestamp YES  <nil> "))
+	tk.MustQuery("select COLUMN_NAME from information_schema.columns where table_name = 'temp_view';").Check(testkit.Rows("id", "name", "some_date"))
 	require.NoError(t, failpoint.Disable("tikvclient/tikvStoreSendReqResult"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/BuildDataSourceFailed"))
 }
 
 func TestNullColumns(t *testing.T) {

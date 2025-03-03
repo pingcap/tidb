@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/spf13/cobra"
@@ -146,6 +147,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(FlagPDConcurrency)
 	_ = flags.MarkHidden(FlagBatchFlushInterval)
 	_ = flags.MarkHidden(FlagDdlBatchSize)
+	_ = flags.MarkHidden(flagUseFSR)
 }
 
 // ParseFromFlags parses the config from the flag set.
@@ -291,16 +293,21 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 }
 
 // ParseFromFlags parses the restore-related flags from the flag set.
-func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
+func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig bool) error {
 	var err error
 	cfg.NoSchema, err = flags.GetBool(flagNoSchema)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = cfg.Config.ParseFromFlags(flags)
-	if err != nil {
-		return errors.Trace(err)
+
+	// parse common config if needed
+	if !skipCommonConfig {
+		err = cfg.Config.ParseFromFlags(flags)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
+
 	err = cfg.RestoreCommonConfig.ParseFromFlags(flags)
 	if err != nil {
 		return errors.Trace(err)
@@ -573,20 +580,16 @@ func removeCheckpointDataForLogRestore(ctx context.Context, storageName string, 
 	return errors.Trace(checkpoint.RemoveCheckpointDataForLogRestore(ctx, s, taskName, clusterID))
 }
 
-func DefaultRestoreConfig() RestoreConfig {
+func DefaultRestoreConfig(commonConfig Config) RestoreConfig {
 	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
-	DefineCommonFlags(fs)
 	DefineRestoreFlags(fs)
 	cfg := RestoreConfig{}
-	err := multierr.Combine(
-		cfg.ParseFromFlags(fs),
-		cfg.RestoreCommonConfig.ParseFromFlags(fs),
-		cfg.Config.ParseFromFlags(fs),
-	)
+	err := cfg.ParseFromFlags(fs, true)
 	if err != nil {
-		log.Panic("infallible failed.", zap.Error(err))
+		log.Panic("failed to parse restore flags to config", zap.Error(err))
 	}
 
+	cfg.Config = commonConfig
 	return cfg
 }
 
@@ -727,7 +730,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Annotate(berrors.ErrRestoreInvalidBackup, "contain tables but no databases")
 	}
 
-	archiveSize := reader.ArchiveSize(ctx, files)
+	archiveSize := metautil.ArchiveSize(files)
 	g.Record(summary.RestoreDataSize, archiveSize)
 	//restore from tidb will fetch a general Size issue https://github.com/pingcap/tidb/issues/27247
 	g.Record("Size", archiveSize)
@@ -786,6 +789,11 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		// if it's point restore and reached here, then cmdName=FullRestoreCmd and len(cfg.FullBackupStorage) > 0
 		if cfg.WithSysTable {
 			client.InitFullClusterRestore(cfg.ExplicitFilter)
+		}
+	} else if client.IsFull() && checkpointFirstRun && cfg.CheckRequirements {
+		if err := checkTableExistence(ctx, mgr, tables, g); err != nil {
+			schedulersRemovable = true
+			return errors.Trace(err)
 		}
 	}
 
@@ -858,7 +866,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	// pre-set TiDB config for restore
-	restoreDBConfig := enableTiDBConfig()
+	restoreDBConfig := tweakLocalConfForRestore()
 	defer restoreDBConfig()
 
 	if client.GetSupportPolicy() {
@@ -1014,7 +1022,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	postHandleCh := afterTableRestoredCh
 
 	// pipeline checksum and load stats
-	if cfg.Checksum {
+	if cfg.Checksum && !client.IsIncremental() {
 		afterTableCheckesumedCh := client.GoValidateChecksum(
 			ctx, afterTableRestoredCh, mgr.GetStorage().GetClient(), errCh, updateCh, cfg.ChecksumConcurrency)
 		afterTableLoadStatsCh := client.GoUpdateMetaAndLoadStats(ctx, afterTableCheckesumedCh, errCh)
@@ -1066,6 +1074,24 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	// Set task summary to success status.
 	summary.SetSuccessStatus(true)
+	return nil
+}
+
+func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.Table, g glue.Glue) error {
+	message := "table already exists: "
+	allUnique := true
+	for _, table := range tables {
+		_, err := mgr.GetDomain().InfoSchema().TableByName(table.DB.Name, table.Info.Name)
+		if err == nil {
+			message += fmt.Sprintf("%s.%s ", table.DB.Name, table.Info.Name)
+			allUnique = false
+		} else if !infoschema.ErrTableNotExists.Equal(err) {
+			return errors.Trace(err)
+		}
+	}
+	if !allUnique {
+		return errors.Annotate(berrors.ErrTablesAlreadyExisted, message)
+	}
 	return nil
 }
 
@@ -1158,8 +1184,9 @@ func restorePostWork(
 }
 
 // enableTiDBConfig tweaks some of configs of TiDB to make the restore progress go well.
+// tweakLocalConfForRestore tweaks some of configs of TiDB to make the restore progress go well.
 // return a function that could restore the config to origin.
-func enableTiDBConfig() func() {
+func tweakLocalConfForRestore() func() {
 	restoreConfig := config.RestoreFunc()
 	config.UpdateGlobal(func(conf *config.Config) {
 		// set max-index-length before execute DDLs and create tables

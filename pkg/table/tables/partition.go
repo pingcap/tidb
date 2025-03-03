@@ -1518,7 +1518,9 @@ func GetReorganizedPartitionedTable(t table.Table) (table.PartitionedTable, erro
 	pi.Type = pi.DDLType
 	pi.Expr = pi.DDLExpr
 	pi.Columns = pi.DDLColumns
-	tblInfo.ID = pi.NewTableID
+	if pi.NewTableID != 0 {
+		tblInfo.ID = pi.NewTableID
+	}
 
 	constraints, err := table.LoadCheckConstraint(tblInfo)
 	if err != nil {
@@ -1627,6 +1629,10 @@ func partitionedTableAddRecord(ctx sessionctx.Context, t *partitionedTable, r []
 			return nil, errors.Trace(err)
 		}
 		tbl = t.GetPartition(pid)
+		if !tbl.Meta().PKIsHandle && !tbl.Meta().IsCommonHandle {
+			// Preserve the _tidb_rowid also in the new partition!
+			r = append(r, types.NewIntDatum(recordID.IntValue()))
+		}
 		recordID, err = tbl.AddRecord(ctx, r, opts...)
 		if err != nil {
 			return

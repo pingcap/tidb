@@ -15,7 +15,7 @@
 package handle
 
 import (
-	"fmt"
+	stderrors "errors"
 	"math/rand"
 	"sync"
 	"time"
@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -80,7 +79,6 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems 
 			}
 		}
 	})
-
 	if len(remainedItems) <= 0 {
 		return nil
 	}
@@ -179,7 +177,7 @@ func (h *Handle) removeHistLoadedColumns(neededItems []model.TableItemID) []mode
 			continue
 		}
 		colHist, ok := tbl.Columns[item.ID]
-		if (ok && colHist.IsStatsInitialized() && !colHist.IsFullLoad()) || !ok {
+		if ok && colHist.IsStatsInitialized() && !colHist.IsFullLoad() {
 			remainedItems = append(remainedItems, item)
 		}
 	}
@@ -284,6 +282,9 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask) (err error) {
 		if err == nil { // only recycle when no error
 			sctx.GetSessionVars().StmtCtx.Priority = mysql.NoPriority
 			h.SPool().Put(se)
+		} else {
+			// Note: Otherwise, the session will be leaked.
+			h.SPool().Destroy(se)
 		}
 	}()
 	var skipTypes map[string]struct{}
@@ -324,6 +325,10 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask) (err error) {
 	t := time.Now()
 	needUpdate := false
 	wrapper, err = h.readStatsForOneItem(sctx, item, wrapper)
+	if stderrors.Is(err, errGetHistMeta) {
+		metrics.ReadStatsHistogram.Observe(float64(time.Since(t).Milliseconds()))
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -343,8 +348,10 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask) (err error) {
 	return nil
 }
 
+var errGetHistMeta = errors.New("fail to get stats version for this histogram")
+
 // readStatsForOneItem reads hist for one column/index, TODO load data via kv-get asynchronously
-func (h *Handle) readStatsForOneItem(sctx sessionctx.Context, item model.TableItemID, w *statsWrapper) (*statsWrapper, error) {
+func (*Handle) readStatsForOneItem(sctx sessionctx.Context, item model.TableItemID, w *statsWrapper) (*statsWrapper, error) {
 	failpoint.Inject("mockReadStatsForOnePanic", nil)
 	failpoint.Inject("mockReadStatsForOneFail", func(val failpoint.Value) {
 		if val.(bool) {
@@ -366,41 +373,9 @@ func (h *Handle) readStatsForOneItem(sctx sessionctx.Context, item model.TableIt
 			return nil, errors.Trace(err)
 		}
 	} else {
-		if c == nil {
-			is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-			tbl, ok := h.TableInfoByID(is, item.TableID)
-			if !ok {
-				return nil, errors.New("no table")
-			}
-			var colInfo *model.ColumnInfo
-			for _, col := range tbl.Meta().Columns {
-				if col.ID == item.ID {
-					colInfo = col
-					break
-				}
-			}
-			if colInfo == nil {
-				return nil, errors.New("no column")
-			}
-			hg, _, _, _, err = storage.HistMetaFromStorageWithHighPriority(sctx, &item, colInfo)
-			if err != nil {
-				return nil, err
-			}
-			if hg != nil {
-				hg, err = storage.HistogramFromStorage(sctx, item.TableID, item.ID, &colInfo.FieldType, hg.NDV, int(isIndexFlag), hg.LastUpdateVersion, hg.NullCount, hg.TotColSize, hg.Correlation)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-			}
-			c = &statistics.Column{
-				Info:     colInfo,
-				IsHandle: tbl.Meta().PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
-			}
-		} else {
-			hg, err = storage.HistogramFromStorage(sctx, item.TableID, item.ID, &c.Info.FieldType, c.Histogram.NDV, int(isIndexFlag), c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
+		hg, err = storage.HistogramFromStorage(sctx, item.TableID, item.ID, &c.Info.FieldType, c.Histogram.NDV, int(isIndexFlag), c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
+		if err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 	var cms *statistics.CMSketch
@@ -421,9 +396,11 @@ func (h *Handle) readStatsForOneItem(sctx sessionctx.Context, item model.TableIt
 		return nil, errors.Trace(err)
 	}
 	if len(rows) == 0 {
-		logutil.BgLogger().Error("fail to get stats version for this histogram, normally this wouldn't happen, please check if this column or index has a histogram record in `mysql.stats_histogram`", zap.Int64("table_id", item.TableID),
-			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex))
-		return nil, errors.Trace(fmt.Errorf("fail to get stats version for this histogram, normally this wouldn't happen, please check if this column or index has a histogram record in `mysql.stats_histogram`, table_id:%v, hist_id:%v, is_index:%v", item.TableID, item.ID, item.IsIndex))
+		logutil.BgLogger().Error("fail to get stats version for this histogram, normally this wouldn't happen, please check if this column or index has a histogram record in `mysql.stats_histogram`",
+			zap.Int64("table_id", item.TableID),
+			zap.Int64("hist_id", item.ID),
+			zap.Bool("is_index", item.IsIndex))
+		return nil, errGetHistMeta
 	}
 	statsVer := rows[0].GetInt64(0)
 	if item.IsIndex {
