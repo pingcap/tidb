@@ -149,7 +149,7 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 		if cachedBinding != nil {
 			err = h.bindingCache.SetBinding(binding.SQLDigest, cachedBinding)
 			if err != nil {
-				bindingLogger().Warn("BindHandle.Update", zap.Error(err))
+				bindingLogger().Warn("BindingHandle.Update", zap.Error(err))
 			}
 		} else {
 			h.bindingCache.RemoveBinding(binding.SQLDigest)
