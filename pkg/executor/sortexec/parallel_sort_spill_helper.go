@@ -242,18 +242,17 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 		err error
 	)
 
-	breakLoop := false
+OuterLoop:
 	for {
 		select {
 		case <-p.finishCh:
-			breakLoop = true
+			break OuterLoop
 		case row, ok = <-spilledRowChannel:
 			if !ok {
-				breakLoop = true
 				if p.tmpSpillChunk.NumRows() > 0 {
 					err = p.spillTmpSpillChunk(inDisk)
 					if err != nil {
-						break
+						break OuterLoop
 					}
 				}
 
@@ -263,11 +262,8 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 					p.sortedRowsInDisk = append(p.sortedRowsInDisk, inDisk)
 					p.releaseMemory()
 				}
+				break OuterLoop
 			}
-		}
-
-		if breakLoop {
-			break
 		}
 
 		p.tmpSpillChunk.AppendRow(row)
