@@ -565,11 +565,14 @@ func (b *builtinJSONSearchSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, 
 				return errIncorrectArgs.GenWithStackByArgs("ESCAPE")
 			}
 		}
+
+		var isNull bool
 		var pathExprs []types.JSONPathExpression
 		if pathBufs != nil {
 			pathExprs = make([]types.JSONPathExpression, 0, len(b.args)-4)
 			for j := 0; j < len(b.args)-4; j++ {
 				if pathBufs[j].IsNull(i) {
+					isNull = true
 					break
 				}
 				pathExpr, err := types.ParseJSONPathExpr(pathBufs[j].GetString(i))
@@ -579,6 +582,11 @@ func (b *builtinJSONSearchSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, 
 				pathExprs = append(pathExprs, pathExpr)
 			}
 		}
+		if isNull {
+			result.AppendNull()
+			continue
+		}
+
 		bj, isNull, err := jsonBuf.GetJSON(i).Search(containType, searchBuf.GetString(i), escape, pathExprs)
 		if err != nil {
 			return err
@@ -796,11 +804,6 @@ func (b *builtinJSONKeys2ArgsSig) vecEvalJSON(ctx EvalContext, input *chunk.Chun
 		}
 
 		jsonItem := jsonBuf.GetJSON(i)
-		if jsonItem.TypeCode != types.JSONTypeCodeObject {
-			result.AppendNull()
-			continue
-		}
-
 		res, exists := jsonItem.Extract([]types.JSONPathExpression{pathExpr})
 		if !exists || res.TypeCode != types.JSONTypeCodeObject {
 			result.AppendNull()

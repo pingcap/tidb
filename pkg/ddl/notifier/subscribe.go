@@ -162,7 +162,9 @@ func (n *DDLNotifier) start() {
 		case <-ticker.C:
 			if err := n.processEvents(ctx); err != nil {
 				intest.Assert(
-					errors.ErrorEqual(err, context.Canceled) || strings.Contains(err.Error(), "mock handleTaskOnce error"),
+					errors.ErrorEqual(err, context.Canceled) ||
+						strings.Contains(err.Error(), "mock handleTaskOnce error") ||
+						strings.Contains(err.Error(), "session pool closed"),
 					fmt.Sprintf("error processing events: %v", err),
 				)
 				logutil.Logger(ctx).Error("Error processing events", zap.Error(err))

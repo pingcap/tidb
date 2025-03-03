@@ -1054,6 +1054,8 @@ const (
 	TiDBAutoAnalyzeConcurrency = "tidb_auto_analyze_concurrency"
 	// TiDBEnableDistTask indicates whether to enable the distributed execute background tasks(For example DDL, Import etc).
 	TiDBEnableDistTask = "tidb_enable_dist_task"
+	// TiDBMaxDistTaskNodes indicates the max node count that could be used by distributed execution framework.
+	TiDBMaxDistTaskNodes = "tidb_max_dist_task_nodes"
 	// TiDBEnableFastCreateTable indicates whether to enable the fast create table feature.
 	TiDBEnableFastCreateTable = "tidb_enable_fast_create_table"
 	// TiDBGenerateBinaryPlan indicates whether binary plan should be generated in slow log and statements summary.
@@ -1446,6 +1448,7 @@ const (
 	DefTiDBEnableWorkloadBasedLearning                = false
 	DefTiDBWorkloadBasedLearningInterval              = 24 * time.Hour
 	DefTiDBEnableDistTask                             = true
+	DefTiDBMaxDistTaskNodes                           = -1
 	DefTiDBEnableFastCreateTable                      = true
 	DefTiDBSimplifiedMetrics                          = false
 	DefTiDBEnablePaging                               = true
@@ -1512,6 +1515,7 @@ const (
 	DefTiDBTTLRunningTasks                            = -1
 	DefPasswordReuseHistory                           = 0
 	DefPasswordReuseTime                              = 0
+	DefMaxUserConnections                             = 0
 	DefTiDBStoreBatchSize                             = 4
 	DefTiDBHistoricalStatsDuration                    = 7 * 24 * time.Hour
 	DefTiDBEnableHistoricalStatsForCapture            = false
@@ -1677,6 +1681,7 @@ var (
 	PasswordHistory                 = atomic.NewInt64(DefPasswordReuseHistory)
 	PasswordReuseInterval           = atomic.NewInt64(DefPasswordReuseTime)
 	IsSandBoxModeEnabled            = atomic.NewBool(false)
+	MaxUserConnectionsValue         = atomic.NewUint32(DefMaxUserConnections)
 	MaxPreparedStmtCountValue       = atomic.NewInt64(DefMaxPreparedStmtCount)
 	HistoricalStatsDuration         = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
 	EnableHistoricalStatsForCapture = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)

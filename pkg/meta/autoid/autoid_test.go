@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 type mockRequirement struct {
@@ -666,4 +667,19 @@ func TestIssue40584(t *testing.T) {
 	atomic.AddInt32(&done, 1)
 	<-finishAlloc
 	<-finishBase
+}
+
+func TestGetAutoIDServiceLeaderEtcdPath(t *testing.T) {
+	// keyspaceID = tikv.NullspaceID means tidb not set keyspace.
+	keyspaceID := tikv.NullspaceID
+	path := autoid.GetAutoIDServiceLeaderEtcdPath(uint32(keyspaceID))
+	require.Equal(t, autoid.AutoIDLeaderPath, path)
+
+	// In keyspace scenario, assume the keyspaceID=1, the actually etcd key like /keyspaces/tidb/1/tidb/autoid/leader,
+	// The keyspace prefix `/keyspaces/tidb/1` is already in the domain
+	// when initializing etcdclient by setting the etcd namespace. Is added to the top of the key.
+	// So we need to put a forward slash at the beginning of the path.
+	keyspaceID = 1
+	path = autoid.GetAutoIDServiceLeaderEtcdPath(uint32(keyspaceID))
+	require.Equal(t, "/"+autoid.AutoIDLeaderPath, path)
 }

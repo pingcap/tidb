@@ -104,6 +104,7 @@ func AppendRangesForRestore(
 type CheckpointMetadataForSnapshotRestore struct {
 	UpstreamClusterID uint64                `json:"upstream-cluster-id"`
 	RestoredTS        uint64                `json:"restored-ts"`
+	LogRestoredTS     uint64                `json:"log-restored-ts"`
 	SchedulersConfig  *pdutil.ClusterConfig `json:"schedulers-config"`
 
 	RestoreUUID uuid.UUID `json:"restore-uuid"`

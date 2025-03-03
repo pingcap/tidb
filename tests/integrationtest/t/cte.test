@@ -234,7 +234,8 @@ select * from t1 where c1 > all(with cte1 as (select c1 from t2 where t2.c2 = t1
 
 --echo // Test semi apply.
 insert into t1 values(2, 3);
-explain select * from t1 where exists(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
+explain select /*+ set_var(tidb_hash_join_version=legacy) */ * from t1 where exists(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
+explain select /*+ set_var(tidb_hash_join_version=optimized) */ * from t1 where exists(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
 select * from t1 where exists(with cte1 as (select c1 from t2 where t2.c2 = t1.c2) select c1 from cte1);
 
 --echo // Same as above, but test recursive cte.
@@ -592,7 +593,78 @@ product_detail AS (
      AND a.col_1 = dt.date3
 )
 
-SELECT col_4
+SELECT /*+ set_var(tidb_hash_join_version=legacy) */ col_4
+  FROM (
+        SELECT col_4
+          FROM product_detail
+        UNION ALL
+        SELECT col_4
+          FROM product_detail
+) a;
+
+desc WITH date_table AS (
+  SELECT
+        d.col_1 AS date,
+        (SELECT MAX(col_1)
+            FROM table_c a
+           WHERE col_1 <=
+                 CONCAT(YEAR(DATE_SUB(d.col_1, INTERVAL 1 YEAR)),
+                        '1231')
+             AND EXISTS (SELECT 1
+                    FROM table_d d
+                   WHERE a.col_1 = d.col_1
+                     AND d.col_2 = 1)) AS date1,
+        (SELECT MAX(col_1)
+            FROM table_a a
+           WHERE col_1 <= CONCAT(YEAR(DATE_SUB(d.col_1, INTERVAL 1 YEAR)),
+                                '1231')
+             AND EXISTS (SELECT 1
+                    FROM table_d d
+                   WHERE a.col_1 = d.col_1
+                     AND d.col_2 = 1)) AS date2,
+        (SELECT MAX(col_1)
+            FROM table_c
+           WHERE col_1 <= d.col_1) AS date3,
+        (SELECT MAX(col_1)
+            FROM table_a
+           WHERE col_1 <= d.col_1) AS date4
+    FROM table_d d
+   WHERE d.col_1 = '20240628'
+),
+rm_am_champs_ex_risk_portfolio_seed_money_1 AS (
+  SELECT b.col_2
+    FROM table_a b
+    LEFT JOIN table_e rb
+      ON rb.col_1 = b.col_19
+     AND b.col_6 = rb.col_3
+   WHERE b.col_2 = (SELECT date4 FROM date_table)
+),
+
+rm_am_champs_ex_risk_portfolio_seed_money_2 AS (
+  SELECT b.col_2
+  FROM table_a b
+  LEFT JOIN table_e rb
+      ON rb.col_1 = b.col_19
+     AND b.col_6 = rb.col_3
+),
+
+product_base AS (
+  SELECT DISTINCT t.col_3, col_4, 'ML' AS is_do
+    FROM table_c t
+),
+
+product_detail AS (
+  SELECT t.col_4,
+        "3集合" AS nature_investment
+    FROM product_base t
+    LEFT JOIN date_table dt
+      ON 1 = 1
+    LEFT JOIN table_c a
+      ON t.col_4 = a.col_4
+     AND a.col_1 = dt.date3
+)
+
+SELECT /*+ set_var(tidb_hash_join_version=optimized) */ col_4
   FROM (
         SELECT col_4
           FROM product_detail

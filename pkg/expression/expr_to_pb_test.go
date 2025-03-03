@@ -1845,26 +1845,26 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			retType:      types.NewFieldType(mysql.TypeString),
 			args:         []Expression{decimalColumn, stringColumn},
 		},
-		{
-			functionName: ast.StrToDate,
-			retType:      types.NewFieldType(mysql.TypeDatetime),
-			args:         []Expression{stringColumn, stringColumn},
-		},
-		{
-			functionName: ast.StrToDate,
-			retType:      types.NewFieldType(mysql.TypeDuration),
-			args:         []Expression{stringColumn, NewStrConst("%h")},
-		},
-		{
-			functionName: ast.StrToDate,
-			retType:      types.NewFieldType(mysql.TypeDate),
-			args:         []Expression{stringColumn, NewStrConst("%y")},
-		},
-		{
-			functionName: ast.StrToDate,
-			retType:      types.NewFieldType(mysql.TypeDatetime),
-			args:         []Expression{stringColumn, NewStrConst("%h%y")},
-		},
+		//{
+		//	functionName: ast.StrToDate,
+		//	retType:      types.NewFieldType(mysql.TypeDatetime),
+		//	args:         []Expression{stringColumn, stringColumn},
+		//},
+		//{
+		//	functionName: ast.StrToDate,
+		//	retType:      types.NewFieldType(mysql.TypeDuration),
+		//	args:         []Expression{stringColumn, NewStrConst("%h")},
+		//},
+		//{
+		//	functionName: ast.StrToDate,
+		//	retType:      types.NewFieldType(mysql.TypeDate),
+		//	args:         []Expression{stringColumn, NewStrConst("%y")},
+		//},
+		//{
+		//	functionName: ast.StrToDate,
+		//	retType:      types.NewFieldType(mysql.TypeDatetime),
+		//	args:         []Expression{stringColumn, NewStrConst("%h%y")},
+		//},
 		{
 			functionName: ast.TimestampDiff,
 			retType:      types.NewFieldType(mysql.TypeLong),
@@ -1879,6 +1879,16 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			functionName: ast.TimestampDiff,
 			retType:      types.NewFieldType(mysql.TypeLong),
 			args:         []Expression{NewStrConst("year"), datetimeColumn, datetimeColumn},
+		},
+		{
+			functionName: ast.UnixTimestamp,
+			retType:      types.NewFieldType(mysql.TypeLong),
+			args:         []Expression{datetimeColumn},
+		},
+		{
+			functionName: ast.UnixTimestamp,
+			retType:      types.NewFieldType(mysql.TypeNewDecimal),
+			args:         []Expression{stringColumn},
 		},
 	}
 

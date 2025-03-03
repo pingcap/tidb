@@ -321,6 +321,7 @@ func (rc *SnapClient) InitCheckpoint(
 	ctx context.Context,
 	snapshotCheckpointMetaManager checkpoint.SnapshotMetaManagerT,
 	config *pdutil.ClusterConfig,
+	logRestoredTS uint64,
 	checkpointFirstRun bool,
 ) (checkpointSetWithTableID map[int64]map[string]struct{}, checkpointClusterConfig *pdutil.ClusterConfig, err error) {
 	// checkpoint sets distinguished by range key
@@ -348,6 +349,19 @@ func (rc *SnapClient) InitCheckpoint(
 					"Perhaps you should specify the last full backup storage instead, "+
 					"or just clean the checkpoint %s if the cluster has been cleaned up.",
 				rc.backupMeta.EndVersion, meta.RestoredTS, snapshotCheckpointMetaManager.RootPath(),
+			)
+		}
+
+		// The filter feature is determined by the PITR restored ts, so the snapshot
+		// restore checkpoint should check whether the PITR restored ts is changed.
+		// Notice that if log restore checkpoint metadata is not stored, BR always enters
+		// snapshot restore.
+		if meta.LogRestoredTS != logRestoredTS {
+			return checkpointSetWithTableID, nil, errors.Errorf(
+				"The current PITR want to restore cluster to the log restored ts[%d], which is different from that[%d] recorded in checkpoint. "+
+					"Perhaps you shoud specify the log restored ts instead, "+
+					"or just clean the checkpoint database[%s] if the cluster has been cleaned up.",
+				logRestoredTS, meta.LogRestoredTS, checkpoint.LogRestoreCheckpointDatabaseName,
 			)
 		}
 
@@ -388,6 +402,7 @@ func (rc *SnapClient) InitCheckpoint(
 		meta := &checkpoint.CheckpointMetadataForSnapshotRestore{
 			UpstreamClusterID: rc.backupMeta.ClusterId,
 			RestoredTS:        rc.backupMeta.EndVersion,
+			LogRestoredTS:     logRestoredTS,
 			RestoreUUID:       restoreID,
 		}
 		rc.restoreUUID = restoreID
@@ -429,6 +444,10 @@ func makeDBPool(size uint, dbFactory func() (*tidallocdb.DB, error)) ([]*tidallo
 }
 
 func (rc *SnapClient) InstallPiTRSupport(ctx context.Context, deps PiTRCollDep) error {
+	if err := deps.LoadMaxCopyConcurrency(ctx, rc.concurrencyPerStore); err != nil {
+		return errors.Trace(err)
+	}
+
 	collector, err := newPiTRColl(ctx, deps)
 	if err != nil {
 		return errors.Trace(err)

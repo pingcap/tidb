@@ -36,7 +36,7 @@ import (
 type LogicalProjection struct {
 	LogicalSchemaProducer `hash64-equals:"true"`
 
-	Exprs []expression.Expression `hash64-equals:"true"`
+	Exprs []expression.Expression `hash64-equals:"true" shallow-ref:"true"`
 
 	// CalculateNoDelay indicates this Projection is the root Plan and should be
 	// calculated without delay and will not return any result to client.
