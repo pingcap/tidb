@@ -262,10 +262,11 @@ func (c *chunkSender) putChunkToRemote(ctx context.Context, chunk *chunk) error 
 
 // handlePutChunkResult handles the result of put chunk request.
 //
-// Chunks are sent to remote workers in sequence according to chunk id.
-// If the remote worker restarts, the chunk id handled by the remote worker
-// may be less than the expected chunk id, and remote worker will reject the chunk.
-// In this case, we need to retry sending chunks from the handled chunk id to the expected chunk id.
+// Chunks are sent to remote workers in sequence according to chunk id. The remote
+// worker should return the `FlushedChunkID` and `HandledChunkID`. If the remote worker
+// restarts, the `FlushedChunkID` may be less than the `expectedChunkID`, and remote
+// worker will reject the new chunk. In this case, we need to retry sending chunks
+// from the `FlushedChunkID` to the `expectedChunkID`.
 func (c *chunkSender) handlePutChunkResult(ctx context.Context, result *PutChunkResult, expectedChunkID uint64) error {
 	if result.Canceled {
 		c.logger.Error("failed to put chunk, task is canceled", zap.String("error", result.Error))
@@ -307,7 +308,7 @@ func (c *chunkSender) handlePutChunkResult(ctx context.Context, result *PutChunk
 	}
 
 	state := c.state.Load()
-	// We can clean the cache of chunks that the remote worker has handled.
+	// We can clean the cache of chunks that the remote worker has flushed.
 	lastFlushedChunkID := state.FlushedChunkID + 1
 	for lastFlushedChunkID <= result.FlushedChunkID {
 		err := c.chunksCache.clean(lastFlushedChunkID)
@@ -326,6 +327,11 @@ func (c *chunkSender) handlePutChunkResult(ctx context.Context, result *PutChunk
 	return nil
 }
 
+// sendFlushToRemote send flush requst to remote worker.
+//
+// The remote worker should return `FlushedChunkID`, which should be equal to `LastChunkID`.
+// If not, it means that the remote worker has restarted and we should resend the chunk from
+// `FlushedChunkID` to the `LastChunkID`.
 func (c *chunkSender) sendFlushToRemote(ctx context.Context) error {
 	for {
 		url := fmt.Sprintf(flushURL, c.e.addr, c.e.clusterID, c.e.loadDataTaskID, c.id)
