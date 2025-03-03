@@ -1511,7 +1511,6 @@ func TestPITRIDMap(t *testing.T) {
 	}
 }
 
-
 func TestRepairIngestIndex(t *testing.T) {
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
