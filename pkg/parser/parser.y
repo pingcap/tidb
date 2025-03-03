@@ -7181,6 +7181,7 @@ TiDBKeyword:
 |	"DDL"
 |	"DEPENDENCY"
 |	"DEPTH"
+|	"DISTRIBUTIONS"
 |	"JOBS"
 |	"JOB"
 |	"NODE_ID"
@@ -7206,7 +7207,6 @@ TiDBKeyword:
 |	"PESSIMISTIC"
 |	"WIDTH"
 |	"REGIONS"
-|	"DISTRIBUTIONS"
 |	"REGION"
 |	"RESET"
 |	"DRY"
@@ -11592,18 +11592,6 @@ ShowStmt:
 			User: $4.(*auth.UserIdentity),
 		}
 	}
-|	"SHOW" "TABLE" TableName PartitionNameListOpt "DISTRIBUTIONS" WhereClauseOptional
-	{
-		stmt := &ast.ShowStmt{
-			Tp:    ast.ShowDistributions,
-			Table: $3.(*ast.TableName),
-		}
-		stmt.Table.PartitionNames = $4.([]ast.CIStr)
-		if $6 != nil {
-			stmt.Where = $6.(ast.ExprNode)
-		}
-		$$ = stmt
-	}
 |	"SHOW" "TABLE" TableName PartitionNameListOpt "REGIONS" WhereClauseOptional
 	{
 		stmt := &ast.ShowStmt{
@@ -11739,6 +11727,18 @@ ShowStmt:
 			Tp:        ast.ShowCreateProcedure,
 			Procedure: $4.(*ast.TableName),
 		}
+	}
+|	"SHOW" "TABLE" TableName PartitionNameListOpt "DISTRIBUTIONS" WhereClauseOptional
+	{
+		stmt := &ast.ShowStmt{
+			Tp:    ast.ShowDistributions,
+			Table: $3.(*ast.TableName),
+		}
+		stmt.Table.PartitionNames = $4.([]ast.CIStr)
+		if $6 != nil {
+			stmt.Where = $6.(ast.ExprNode)
+		}
+		$$ = stmt
 	}
 
 ShowPlacementTarget:
