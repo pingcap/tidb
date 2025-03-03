@@ -108,7 +108,11 @@ var (
 
 // LoadDataStates is json data that returned by remote server GET API.
 type LoadDataStates struct {
-	Canceled        bool   `json:"canceled"`
+	// When the remote worker terminates with an error, or the client sends a
+	// cleanup request, the `Canceled` will be set to true.
+	Canceled bool `json:"canceled"`
+	// When the remote worker successfully ingests the data into tikv, the `Finished`
+	// will be set to true.
 	Finished        bool   `json:"finished"`
 	Error           string `json:"error"`
 	CreatedFiles    int    `json:"created-files"`
