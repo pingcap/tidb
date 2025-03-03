@@ -216,3 +216,23 @@ func StartExitSingleListener(ctx context.Context) (context.Context, context.Canc
 	}()
 	return cx, cancel
 }
+
+func Values[K comparable, V any](m map[K]V) []V {
+	values := make([]V, 0, len(m))
+	for _, v := range m {
+		values = append(values, v)
+	}
+	return values
+}
+
+func FlattenValues[K comparable, V any](m map[K][]V) []V {
+	total := 0
+	for _, v := range m {
+		total += len(v)
+	}
+	result := make([]V, 0, total)
+	for _, v := range m {
+		result = append(result, v...)
+	}
+	return result
+}

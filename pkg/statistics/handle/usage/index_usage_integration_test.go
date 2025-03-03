@@ -20,7 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -52,7 +52,7 @@ func TestGCIndexUsage(t *testing.T) {
 
 	c := dom.StatsHandle().NewSessionIndexUsageCollector()
 	is := tk.Session().GetDomainInfoSchema()
-	db, ok := is.SchemaByName(pmodel.NewCIStr("test"))
+	db, ok := is.SchemaByName(ast.NewCIStr("test"))
 	require.True(t, ok)
 
 	tblInfos, err := is.SchemaTableInfos(context.Background(), db.Name)

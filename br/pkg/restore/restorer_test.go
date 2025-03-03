@@ -3,6 +3,7 @@ package restore_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -65,8 +66,11 @@ func TestSimpleRestorerImportAndProgress(t *testing.T) {
 		{SSTFiles: files},
 	}
 	progressCount = int64(0)
+	var mu sync.Mutex
 	err = restorer.GoRestore(func(progress int64) {
+		mu.Lock()
 		progressCount += progress
+		mu.Unlock()
 	}, batchFileSet)
 	require.NoError(t, err)
 	err = restorer.WaitUntilFinish()
@@ -144,14 +148,20 @@ func TestMultiTablesRestorerRestoreSuccess(t *testing.T) {
 
 	var progress int64
 	fileSets := createSampleBatchFileSets()
+	fileSets2 := createSampleBatchFileSets()
 
-	restorer.GoRestore(func(p int64) { progress += p }, fileSets)
+	var mu sync.Mutex
+	restorer.GoRestore(func(p int64) {
+		mu.Lock()
+		progress += p
+		mu.Unlock()
+	}, fileSets, fileSets2)
 	err := restorer.WaitUntilFinish()
 	require.NoError(t, err)
 
 	// Ensure progress was tracked correctly
 	require.Equal(t, int64(2), progress) // Total files group: 2
-	require.Equal(t, 1, importer.unblockCount)
+	require.Equal(t, 2, importer.unblockCount)
 }
 
 func TestMultiTablesRestorerRestoreWithImportError(t *testing.T) {

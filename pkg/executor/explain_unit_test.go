@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -65,8 +65,8 @@ func getColumns() []*expression.Column {
 // close() must be called after next() to avoid goroutines leak
 func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
-	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().InitChunkSize = vardef.DefInitChunkSize
+	ctx.GetSessionVars().MaxChunkSize = vardef.DefMaxChunkSize
 	schema := expression.NewSchema(getColumns()...)
 	baseExec := exec.NewBaseExecutor(ctx, schema, 0)
 	explainExec := &ExplainExec{

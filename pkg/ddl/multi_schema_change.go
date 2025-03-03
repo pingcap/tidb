@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -205,7 +204,7 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 		col, pos := args.Col, args.Pos
 		info.AddColumns = append(info.AddColumns, col.Name)
 		for colName := range col.Dependences {
-			info.RelativeColumns = append(info.RelativeColumns, pmodel.CIStr{L: colName, O: colName})
+			info.RelativeColumns = append(info.RelativeColumns, ast.CIStr{L: colName, O: colName})
 		}
 		if pos != nil && pos.Tp == ast.ColumnPositionAfter {
 			info.PositionColumns = append(info.PositionColumns, pos.RelativeColumn.Name)
@@ -227,7 +226,7 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 		}
 		for _, c := range indexArg.HiddenCols {
 			for depColName := range c.Dependences {
-				info.RelativeColumns = append(info.RelativeColumns, pmodel.NewCIStr(depColName))
+				info.RelativeColumns = append(info.RelativeColumns, ast.NewCIStr(depColName))
 			}
 		}
 	case model.ActionRenameIndex:
@@ -273,7 +272,7 @@ func checkOperateSameColAndIdx(info *model.MultiSchemaInfo) error {
 	modifyCols := make(map[string]struct{})
 	modifyIdx := make(map[string]struct{})
 
-	checkColumns := func(colNames []pmodel.CIStr, addToModifyCols bool) error {
+	checkColumns := func(colNames []ast.CIStr, addToModifyCols bool) error {
 		for _, colName := range colNames {
 			name := colName.L
 			if _, ok := modifyCols[name]; ok {
@@ -286,7 +285,7 @@ func checkOperateSameColAndIdx(info *model.MultiSchemaInfo) error {
 		return nil
 	}
 
-	checkIndexes := func(idxNames []pmodel.CIStr, addToModifyIdx bool) error {
+	checkIndexes := func(idxNames []ast.CIStr, addToModifyIdx bool) error {
 		for _, idxName := range idxNames {
 			name := idxName.L
 			if _, ok := modifyIdx[name]; ok {

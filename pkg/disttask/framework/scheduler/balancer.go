@@ -16,13 +16,15 @@ package scheduler
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	llog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -48,9 +50,9 @@ type balancer struct {
 }
 
 func newBalancer(param Param) *balancer {
-	logger := log.L()
+	logger := logutil.ErrVerboseLogger()
 	if intest.InTest {
-		logger = log.L().With(zap.String("server-id", param.serverID))
+		logger = logger.With(zap.String("server-id", param.serverID))
 	}
 	return &balancer{
 		Param:         param,
@@ -73,7 +75,7 @@ func (b *balancer) balanceLoop(ctx context.Context, sm *Manager) {
 func (b *balancer) balance(ctx context.Context, sm *Manager) {
 	// we will use currUsedSlots to calculate adjusted eligible nodes during balance,
 	// it's initial value depends on the managed nodes, to have a consistent view,
-	// DO NOT call getManagedNodes twice during 1 balance.
+	// DO NOT call getNodes twice during 1 balance.
 	managedNodes := b.nodeMgr.getNodes()
 	b.currUsedSlots = make(map[string]int, len(managedNodes))
 	for _, n := range managedNodes {
@@ -100,11 +102,26 @@ func (b *balancer) balanceSubtasks(ctx context.Context, sch Scheduler, managedNo
 	if len(eligibleNodes) == 0 {
 		return errors.New("no eligible nodes to balance subtasks")
 	}
-	return b.doBalanceSubtasks(ctx, task.ID, eligibleNodes)
+	return b.doBalanceSubtasks(ctx, task, eligibleNodes)
 }
 
-func (b *balancer) doBalanceSubtasks(ctx context.Context, taskID int64, eligibleNodes []string) (err error) {
-	subtasks, err := b.taskMgr.GetActiveSubtasks(ctx, taskID)
+func filterNodesByMaxNodeCnt(nodes []string, subtasks []*proto.SubtaskBase, maxNodeCnt int) []string {
+	if maxNodeCnt == 0 || len(nodes) <= maxNodeCnt {
+		return nodes
+	}
+	// Order nodes by subtask count.
+	nodeSubtaskCnt := make(map[string]int, len(nodes))
+	for _, st := range subtasks {
+		nodeSubtaskCnt[st.ExecID]++
+	}
+	sort.SliceStable(nodes, func(i, j int) bool {
+		return nodeSubtaskCnt[nodes[i]] > nodeSubtaskCnt[nodes[j]]
+	})
+	return nodes[:maxNodeCnt]
+}
+
+func (b *balancer) doBalanceSubtasks(ctx context.Context, task *proto.Task, eligibleNodes []string) (err error) {
+	subtasks, err := b.taskMgr.GetActiveSubtasks(ctx, task.ID)
 	if err != nil {
 		return err
 	}
@@ -116,6 +133,10 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, taskID int64, eligible
 	// managed nodes, subtasks of task might not be balanced.
 	adjustedNodes := filterNodesWithEnoughSlots(b.currUsedSlots, b.slotMgr.getCapacity(),
 		eligibleNodes, subtasks[0].Concurrency)
+	failpoint.Inject("mockNoEnoughSlots", func(_ failpoint.Value) {
+		adjustedNodes = []string{}
+	})
+	adjustedNodes = filterNodesByMaxNodeCnt(adjustedNodes, subtasks, task.MaxNodeCount)
 	if len(adjustedNodes) == 0 {
 		// no node has enough slots to run the subtasks, skip balance and skip
 		// update used slots.
@@ -157,7 +178,7 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, taskID int64, eligible
 	for node, sts := range executorSubtasks {
 		if _, ok := adjustedNodeMap[node]; !ok {
 			b.logger.Info("dead node or not have enough slots, schedule subtasks away",
-				zap.Int64("task-id", taskID),
+				zap.Int64("task-id", task.ID),
 				zap.String("node", node),
 				zap.Int("slot-capacity", b.slotMgr.getCapacity()),
 				zap.Int("used-slots", b.currUsedSlots[node]))

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/mock"
@@ -188,10 +189,10 @@ func TestAuthPlugin(t *testing.T) {
 		extension.WithCustomAuthPlugins(authChecks),
 		extension.WithCustomSysVariables([]*variable.SysVar{
 			{
-				Scope:          variable.ScopeGlobal,
+				Scope:          vardef.ScopeGlobal,
 				Name:           "extension_authentication_plugin",
 				Value:          mysql.AuthNativePassword,
-				Type:           variable.TypeEnum,
+				Type:           vardef.TypeEnum,
 				PossibleValues: []string{p.Name()},
 			},
 		}),
@@ -235,7 +236,7 @@ func TestAuthPlugin(t *testing.T) {
 	// Should authenticate using plugin impl.
 	p.AssertNumberOfCalls(t, "AuthenticateUser", 2)
 	p.AssertCalled(t, "ValidateAuthString", "encodedpassword")
-	p.AssertNumberOfCalls(t, "ValidateAuthString", 4)
+	p.AssertNumberOfCalls(t, "ValidateAuthString", 3)
 
 	// Change password should work using ALTER USER statement.
 	tk.MustExec("alter user 'u2'@'localhost' identified with 'authentication_test_plugin' by 'anotherrawpassword'")
@@ -343,10 +344,10 @@ func TestAuthPluginSwitchPlugins(t *testing.T) {
 		extension.WithCustomAuthPlugins(authChecks),
 		extension.WithCustomSysVariables([]*variable.SysVar{
 			{
-				Scope:          variable.ScopeGlobal,
+				Scope:          vardef.ScopeGlobal,
 				Name:           "extension_authentication_plugin",
 				Value:          mysql.AuthNativePassword,
-				Type:           variable.TypeEnum,
+				Type:           vardef.TypeEnum,
 				PossibleValues: []string{p.Name()},
 			},
 		}),
@@ -452,10 +453,10 @@ func TestCreateUserWhenGrant(t *testing.T) {
 		extension.WithCustomAuthPlugins(authChecks),
 		extension.WithCustomSysVariables([]*variable.SysVar{
 			{
-				Scope:          variable.ScopeGlobal,
+				Scope:          vardef.ScopeGlobal,
 				Name:           "extension_authentication_plugin",
 				Value:          mysql.AuthNativePassword,
-				Type:           variable.TypeEnum,
+				Type:           vardef.TypeEnum,
 				PossibleValues: []string{p.Name()},
 			},
 		}),
@@ -526,10 +527,10 @@ func TestCreateViewWithPluginUser(t *testing.T) {
 		extension.WithCustomAuthPlugins(authChecks),
 		extension.WithCustomSysVariables([]*variable.SysVar{
 			{
-				Scope:          variable.ScopeGlobal,
+				Scope:          vardef.ScopeGlobal,
 				Name:           "extension_authentication_plugin",
 				Value:          mysql.AuthNativePassword,
-				Type:           variable.TypeEnum,
+				Type:           vardef.TypeEnum,
 				PossibleValues: []string{p.Name()},
 			},
 		}),
@@ -623,10 +624,10 @@ func TestPluginUserModification(t *testing.T) {
 		extension.WithCustomAuthPlugins(authChecks),
 		extension.WithCustomSysVariables([]*variable.SysVar{
 			{
-				Scope:          variable.ScopeGlobal,
+				Scope:          vardef.ScopeGlobal,
 				Name:           "extension_authentication_plugin",
 				Value:          mysql.AuthNativePassword,
-				Type:           variable.TypeEnum,
+				Type:           vardef.TypeEnum,
 				PossibleValues: []string{p.Name()},
 			},
 		}),

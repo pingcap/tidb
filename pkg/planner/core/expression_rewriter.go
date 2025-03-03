@@ -29,13 +29,13 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -1257,7 +1257,8 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 		}
 		planCtx.plan = join
 	} else {
-		planCtx.plan, er.err = planCtx.builder.buildSemiApply(planCtx.plan, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not, false, noDecorrelate)
+		semiRewrite := hintFlags&hint.HintFlagSemiJoinRewrite > 0
+		planCtx.plan, er.err = planCtx.builder.buildSemiApply(planCtx.plan, np, expression.SplitCNFItems(checkCondition), asScalar, v.Not, semiRewrite, noDecorrelate)
 		if er.err != nil {
 			return v, true
 		}
@@ -1718,7 +1719,7 @@ func (er *expressionRewriter) rewriteSystemVariable(planCtx *exprRewriterPlanCtx
 		}
 		return
 	}
-	if sysVar.IsNoop && !variable.EnableNoopVariables.Load() {
+	if sysVar.IsNoop && !vardef.EnableNoopVariables.Load() {
 		// The variable does nothing, append a warning to the statement output.
 		sessionVars.StmtCtx.AppendWarning(plannererrors.ErrGettingNoopVariable.FastGenByArgs(sysVar.Name))
 	}
@@ -1753,9 +1754,9 @@ func (er *expressionRewriter) rewriteSystemVariable(planCtx *exprRewriterPlanCtx
 	e := expression.DatumToConstant(nativeVal, nativeType, nativeFlag)
 	switch nativeType {
 	case mysql.TypeVarString:
-		charset, _ := sessionVars.GetSystemVar(variable.CharacterSetConnection)
+		charset, _ := sessionVars.GetSystemVar(vardef.CharacterSetConnection)
 		e.GetType(er.sctx.GetEvalCtx()).SetCharset(charset)
-		collate, _ := sessionVars.GetSystemVar(variable.CollationConnection)
+		collate, _ := sessionVars.GetSystemVar(vardef.CollationConnection)
 		e.GetType(er.sctx.GetEvalCtx()).SetCollate(collate)
 	case mysql.TypeLong, mysql.TypeLonglong:
 		e.GetType(er.sctx.GetEvalCtx()).SetCharset(charset.CharsetBin)
@@ -2160,7 +2161,10 @@ func (er *expressionRewriter) wrapExpWithCast() (expr, lexp, rexp expression.Exp
 	var castFunc func(expression.BuildContext, expression.Expression) expression.Expression
 	switch expression.ResolveType4Between(er.sctx.GetEvalCtx(), [3]expression.Expression{expr, lexp, rexp}) {
 	case types.ETInt:
-		castFunc = expression.WrapWithCastAsInt
+		expr = expression.WrapWithCastAsInt(er.sctx, expr, nil)
+		lexp = expression.WrapWithCastAsInt(er.sctx, lexp, nil)
+		rexp = expression.WrapWithCastAsInt(er.sctx, rexp, nil)
+		return
 	case types.ETReal:
 		castFunc = expression.WrapWithCastAsReal
 	case types.ETDecimal:
@@ -2574,7 +2578,7 @@ func (er *expressionRewriter) evalDefaultExprWithPlanCtx(planCtx *exprRewriterPl
 	dbName := name.DBName
 	if dbName.O == "" {
 		// if database name is not specified, use current database name
-		dbName = pmodel.NewCIStr(planCtx.builder.ctx.GetSessionVars().CurrentDB)
+		dbName = ast.NewCIStr(planCtx.builder.ctx.GetSessionVars().CurrentDB)
 	}
 	if name.OrigTblName.O == "" {
 		// column is evaluated by some expressions, for example:

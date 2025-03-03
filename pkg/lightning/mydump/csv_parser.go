@@ -77,7 +77,7 @@ type CSVParser struct {
 	recordBuffer []byte
 
 	// fieldIndexes is an index of fields inside recordBuffer.
-	// The i'th field ends at offset fieldIndexes[i] in recordBuffer.
+	// The i-th field ends at offset fieldIndexes[i] in recordBuffer.
 	fieldIndexes  []int
 	fieldIsQuoted []bool
 
@@ -109,50 +109,50 @@ func NewCSVParser(
 	charsetConvertor *CharsetConvertor,
 ) (*CSVParser, error) {
 	var err error
-	var separator, delimiter, terminator string
+	var fieldTerminator, delimiter, lineTerminator string
 	// Do not do the conversion if the charsetConvertor is nil.
 	if charsetConvertor == nil {
-		separator = cfg.Separator
-		delimiter = cfg.Delimiter
-		terminator = cfg.Terminator
+		fieldTerminator = cfg.FieldsTerminatedBy
+		delimiter = cfg.FieldsEnclosedBy
+		lineTerminator = cfg.LinesTerminatedBy
 	} else {
-		separator, delimiter, terminator, err = encodeSpecialSymbols(cfg, charsetConvertor)
+		fieldTerminator, delimiter, lineTerminator, err = encodeSpecialSymbols(cfg, charsetConvertor)
 		if err != nil {
 			return nil, err
 		}
 	}
 
 	var quoteStopSet, newLineStopSet []byte
-	unquoteStopSet := []byte{separator[0]}
-	if len(cfg.Delimiter) > 0 {
+	unquoteStopSet := []byte{fieldTerminator[0]}
+	if len(cfg.FieldsEnclosedBy) > 0 {
 		quoteStopSet = []byte{delimiter[0]}
 		unquoteStopSet = append(unquoteStopSet, delimiter[0])
 	}
-	if len(terminator) > 0 {
-		newLineStopSet = []byte{terminator[0]}
+	if len(lineTerminator) > 0 {
+		newLineStopSet = []byte{lineTerminator[0]}
 	} else {
 		// The character set encoding of '\r' and '\n' is the same in UTF-8 and GBK.
 		newLineStopSet = []byte{'\r', '\n'}
 	}
 	unquoteStopSet = append(unquoteStopSet, newLineStopSet...)
 
-	if len(cfg.StartingBy) > 0 {
-		if strings.Contains(cfg.StartingBy, terminator) {
-			return nil, errors.Errorf("STARTING BY '%s' cannot contain LINES TERMINATED BY '%s'", cfg.StartingBy, terminator)
+	if len(cfg.LinesStartingBy) > 0 {
+		if strings.Contains(cfg.LinesStartingBy, lineTerminator) {
+			return nil, errors.Errorf("STARTING BY '%s' cannot contain LINES TERMINATED BY '%s'", cfg.LinesStartingBy, lineTerminator)
 		}
 	}
 
 	escFlavor := escapeFlavorNone
 	var r *regexp.Regexp
-	if len(cfg.EscapedBy) > 0 {
+	if len(cfg.FieldsEscapedBy) > 0 {
 		escFlavor = escapeFlavorMySQL
-		quoteStopSet = append(quoteStopSet, cfg.EscapedBy[0])
-		unquoteStopSet = append(unquoteStopSet, cfg.EscapedBy[0])
+		quoteStopSet = append(quoteStopSet, cfg.FieldsEscapedBy[0])
+		unquoteStopSet = append(unquoteStopSet, cfg.FieldsEscapedBy[0])
 		// we need special treatment of the NULL value \N, used by MySQL.
-		if !cfg.NotNull && slices.Contains(cfg.Null, cfg.EscapedBy+`N`) {
+		if !cfg.NotNull && slices.Contains(cfg.FieldNullDefinedBy, cfg.FieldsEscapedBy+`N`) {
 			escFlavor = escapeFlavorMySQLWithNull
 		}
-		r, err = regexp.Compile(`(?s)` + regexp.QuoteMeta(cfg.EscapedBy) + `.`)
+		r, err = regexp.Compile(`(?s)` + regexp.QuoteMeta(cfg.FieldsEscapedBy) + `.`)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -162,11 +162,11 @@ func NewCSVParser(
 		blockParser:       makeBlockParser(reader, blockBufSize, ioWorkers, metrics, log.FromContext(ctx)),
 		cfg:               cfg,
 		charsetConvertor:  charsetConvertor,
-		comma:             []byte(separator),
+		comma:             []byte(fieldTerminator),
 		quote:             []byte(delimiter),
-		newLine:           []byte(terminator),
-		startingBy:        []byte(cfg.StartingBy),
-		escapedBy:         cfg.EscapedBy,
+		newLine:           []byte(lineTerminator),
+		startingBy:        []byte(cfg.LinesStartingBy),
+		escapedBy:         cfg.FieldsEscapedBy,
 		unescapeRegexp:    r,
 		escFlavor:         escFlavor,
 		quoteByteSet:      makeByteSet(quoteStopSet),
@@ -182,18 +182,18 @@ func NewCSVParser(
 // encodeSpecialSymbols will encode the special symbols, e,g, separator, delimiter and terminator
 // with the given charset according to the charset convertor.
 func encodeSpecialSymbols(cfg *config.CSVConfig, cc *CharsetConvertor) (separator, delimiter, terminator string, err error) {
-	// Separator
-	separator, err = cc.Encode(cfg.Separator)
+	// FieldsTerminatedBy
+	separator, err = cc.Encode(cfg.FieldsTerminatedBy)
 	if err != nil {
 		return
 	}
-	// Delimiter
-	delimiter, err = cc.Encode(cfg.Delimiter)
+	// FieldsEnclosedBy
+	delimiter, err = cc.Encode(cfg.FieldsEnclosedBy)
 	if err != nil {
 		return
 	}
-	// Terminator
-	terminator, err = cc.Encode(cfg.Terminator)
+	// LinesTerminatedBy
+	terminator, err = cc.Encode(cfg.LinesTerminatedBy)
 	if err != nil {
 		return
 	}
@@ -215,7 +215,7 @@ func (parser *CSVParser) unescapeString(input field) (unescaped string, isNull b
 		// this branch represents "quote is not configured" or "quoted null is null" or "this field has no quote"
 		// we check null for them
 		isNull = !parser.cfg.NotNull &&
-			slices.Contains(parser.cfg.Null, unescaped)
+			slices.Contains(parser.cfg.FieldNullDefinedBy, unescaped)
 		// avoid \\N becomes NULL
 		if parser.escFlavor == escapeFlavorMySQLWithNull && unescaped == parser.escapedBy+`N` {
 			isNull = false
@@ -398,7 +398,7 @@ func (parser *CSVParser) readUntil(chars *byteSet) ([]byte, byte, error) {
 	var buf []byte
 	for {
 		buf = append(buf, parser.buf...)
-		if len(buf) > LargestEntryLimit {
+		if parser.checkRowLen && parser.pos-parser.rowStartPos+int64(len(buf)) > int64(LargestEntryLimit) {
 			return buf, 0, errors.New("size of row cannot exceed the max value of txn-entry-size-limit")
 		}
 		parser.buf = nil
@@ -442,7 +442,7 @@ outside:
 		// end of a line, the substring can still be dropped by rule 2.
 		if len(parser.startingBy) > 0 && !foundStartingByThisLine {
 			oldPos := parser.pos
-			content, _, err := parser.ReadUntilTerminator()
+			content, _, err := parser.readUntilTerminator()
 			if err != nil {
 				if !(errors.Cause(err) == io.EOF) {
 					return nil, err
@@ -629,6 +629,8 @@ func (parser *CSVParser) replaceEOF(err error, replaced error) error {
 
 // ReadRow reads a row from the datafile.
 func (parser *CSVParser) ReadRow() error {
+	parser.beginRowLenCheck()
+	defer parser.endRowLenCheck()
 	row := &parser.lastRow
 	row.Length = 0
 	row.RowID++
@@ -642,28 +644,28 @@ func (parser *CSVParser) ReadRow() error {
 		parser.shouldParseHeader = false
 	}
 
-	records, err := parser.readRecord(parser.lastRecord)
+	fields, err := parser.readRecord(parser.lastRecord)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	parser.lastRecord = records
+	parser.lastRecord = fields
 	// remove the last empty value
-	if parser.cfg.TrimLastSep {
-		i := len(records) - 1
-		if i >= 0 && len(records[i].content) == 0 {
-			records = records[:i]
+	if parser.cfg.TrimLastEmptyField {
+		i := len(fields) - 1
+		if i >= 0 && len(fields[i].content) == 0 {
+			fields = fields[:i]
 		}
 	}
 
 	row.Row = parser.acquireDatumSlice()
-	if cap(row.Row) >= len(records) {
-		row.Row = row.Row[:len(records)]
+	if cap(row.Row) >= len(fields) {
+		row.Row = row.Row[:len(fields)]
 	} else {
-		row.Row = make([]types.Datum, len(records))
+		row.Row = make([]types.Datum, len(fields))
 	}
-	for i, record := range records {
-		row.Length += len(record.content)
-		unescaped, isNull, err := parser.unescapeString(record)
+	for i, f := range fields {
+		row.Length += len(f.content)
+		unescaped, isNull, err := parser.unescapeString(f)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -679,6 +681,8 @@ func (parser *CSVParser) ReadRow() error {
 
 // ReadColumns reads the columns of this CSV file.
 func (parser *CSVParser) ReadColumns() error {
+	parser.beginRowLenCheck()
+	defer parser.endRowLenCheck()
 	columns, err := parser.readRecord(nil)
 	if err != nil {
 		return errors.Trace(err)
@@ -705,6 +709,12 @@ func (parser *CSVParser) ReadColumns() error {
 // Note that the terminator string pattern may be the content of a field, which
 // means it's inside quotes. Caller should make sure to handle this case.
 func (parser *CSVParser) ReadUntilTerminator() ([]byte, int64, error) {
+	parser.beginRowLenCheck()
+	defer parser.endRowLenCheck()
+	return parser.readUntilTerminator()
+}
+
+func (parser *CSVParser) readUntilTerminator() ([]byte, int64, error) {
 	var ret []byte
 	for {
 		content, firstByte, err := parser.readUntil(&parser.newLineByteSet)

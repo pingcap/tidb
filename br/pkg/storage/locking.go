@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/rand"
 	"os"
 	"path"
@@ -18,6 +19,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
@@ -63,6 +65,12 @@ func (cx *VerifyWriteContext) IntentFileName() string {
 // - There shouldn't be any other intention files.
 // - Verify() returns no error. (If there is one.)
 func (w conditionalPut) CommitTo(ctx context.Context, s ExternalStorage) (uuid.UUID, error) {
+	if _, ok := s.(StrongConsisency); !ok {
+		log.Warn("The external storage implementation doesn't provide a strong consistency guarantee. "+
+			"Please avoid concurrently accessing it if possible.",
+			zap.String("type", fmt.Sprintf("%T", s)))
+	}
+
 	txnID := uuid.New()
 	cx := VerifyWriteContext{
 		Context: ctx,
@@ -82,7 +90,7 @@ func (w conditionalPut) CommitTo(ctx context.Context, s ExternalStorage) (uuid.U
 	if err := checkConflict(); err != nil {
 		return uuid.UUID{}, errors.Annotate(err, "during initial check")
 	}
-	failpoint.Inject("exclusive-write-commit-to-1", func() {})
+	failpoint.InjectCall("exclusive-write-commit-to-1")
 
 	if err := s.WriteFile(cx, intentFileName, []byte{}); err != nil {
 		return uuid.UUID{}, errors.Annotate(err, "during writing intention file")
@@ -97,7 +105,7 @@ func (w conditionalPut) CommitTo(ctx context.Context, s ExternalStorage) (uuid.U
 	if err := checkConflict(); err != nil {
 		return uuid.UUID{}, errors.Annotate(err, "during checking whether there are other intentions")
 	}
-	failpoint.Inject("exclusive-write-commit-to-2", func() {})
+	failpoint.InjectCall("exclusive-write-commit-to-2")
 
 	return txnID, s.WriteFile(cx, w.Target, w.Content(txnID))
 }
@@ -106,9 +114,12 @@ func (w conditionalPut) CommitTo(ctx context.Context, s ExternalStorage) (uuid.U
 func (cx VerifyWriteContext) assertNoOtherOfPrefixExpect(pfx string, expect string) error {
 	fileName := path.Base(pfx)
 	dirName := path.Dir(pfx)
+
 	return cx.Storage.WalkDir(cx, &WalkOption{
 		SubDir:    dirName,
 		ObjPrefix: fileName,
+		// We'd better read a deleted intention...
+		IncludeTombstone: true,
 	}, func(path string, size int64) error {
 		if path != expect {
 			return fmt.Errorf("there is conflict file %s", path)
@@ -181,6 +192,10 @@ type RemoteLock struct {
 	path    string
 }
 
+func (l *RemoteLock) String() string {
+	return fmt.Sprintf("{path=%s,uuid=%s,storage_uri=%s}", l.path, l.txnID, l.storage.URI())
+}
+
 func tryFetchRemoteLock(ctx context.Context, storage ExternalStorage, path string) error {
 	meta, err := readLockMeta(ctx, storage, path)
 	if err != nil {
@@ -244,6 +259,23 @@ func (l RemoteLock) Unlock(ctx context.Context) error {
 	return nil
 }
 
+func (l RemoteLock) UnlockOnCleanUp(ctx context.Context) {
+	const cleanUpContextTimeOut = 30 * time.Second
+
+	if ctx.Err() != nil {
+		logutil.CL(ctx).Warn("Unlocking but the context was done. Use the background context with a deadline.",
+			logutil.AShortError("ctx-err", ctx.Err()))
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), cleanUpContextTimeOut)
+		defer cancel()
+	}
+
+	if err := l.Unlock(ctx); err != nil {
+		logutil.CL(ctx).Warn("Failed to unlock a lock, you may need to manually delete it.",
+			zap.Stringer("lock", &l), zap.Int("pid", os.Getpid()), logutil.ShortError(err))
+	}
+}
+
 func writeLockName(path string) string {
 	return fmt.Sprintf("%s.WRIT", path)
 }
@@ -251,6 +283,35 @@ func writeLockName(path string) string {
 func newReadLockName(path string) string {
 	readID := rand.Int63()
 	return fmt.Sprintf("%s.READ.%016x", path, readID)
+}
+
+type Locker = func(ctx context.Context, storage ExternalStorage, path, hint string) (lock RemoteLock, err error)
+
+func LockWith(ctx context.Context, locker Locker, storage ExternalStorage, path, hint string) (lock RemoteLock, err error) {
+	const JitterMs = 5000
+
+	retry := utils.InitialRetryState(math.MaxInt, 1*time.Second, 60*time.Second)
+	jitter := time.Duration(rand.Uint32()%JitterMs+(JitterMs/2)) * time.Millisecond
+	for {
+		lock, err = locker(ctx, storage, path, hint)
+		if err == nil {
+			return lock, nil
+		}
+		retryAfter := retry.ExponentialBackoff() + jitter
+		log.Info(
+			"Encountered lock, will retry then.",
+			logutil.ShortError(err),
+			zap.String("path", path),
+			zap.Duration("retry-after", retryAfter),
+		)
+
+		select {
+		case <-ctx.Done():
+			err = ctx.Err()
+			return
+		case <-time.After(retryAfter):
+		}
+	}
 }
 
 func TryLockRemoteWrite(ctx context.Context, storage ExternalStorage, path, hint string) (lock RemoteLock, err error) {

@@ -15,6 +15,8 @@
 package exec
 
 import (
+	"math"
+
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -70,18 +72,13 @@ func (e *IndexUsageReporter) ReportCopIndexUsageForTable(tbl table.Table, indexI
 func (e *IndexUsageReporter) ReportCopIndexUsage(tableID int64, physicalTableID int64, indexID int64, planID int) {
 	tableRowCount, ok := e.getTableRowCount(physicalTableID)
 	if !ok {
-		// skip if the table is empty or the stats is not valid
 		return
 	}
 
-	copStats := e.runtimeStatsColl.GetCopStats(planID)
-	if copStats == nil {
+	kvReq, accessRows := e.runtimeStatsColl.GetCopCountAndRows(planID)
+	if kvReq == 0 && accessRows == 0 {
 		return
 	}
-	copStats.Lock()
-	defer copStats.Unlock()
-	kvReq := copStats.GetTasks()
-	accessRows := copStats.GetActRows()
 
 	sample := indexusage.NewSample(0, uint64(kvReq), uint64(accessRows), uint64(tableRowCount))
 	e.reporter.Update(tableID, indexID, sample)
@@ -89,35 +86,35 @@ func (e *IndexUsageReporter) ReportCopIndexUsage(tableID int64, physicalTableID 
 
 // ReportPointGetIndexUsageForHandle wraps around `ReportPointGetIndexUsage` to get the `indexID` automatically
 // from the `table.Table` if the table has a clustered index or integer primary key.
-func (e *IndexUsageReporter) ReportPointGetIndexUsageForHandle(tblInfo *model.TableInfo, physicalTableID int64, planID int, kvRequestTotal int64) {
+func (e *IndexUsageReporter) ReportPointGetIndexUsageForHandle(tblInfo *model.TableInfo, physicalTableID int64, kvRequestTotal, rows int64) {
 	idxID, ok := getClusterIndexID(tblInfo)
 	if !ok {
 		return
 	}
 
-	e.ReportPointGetIndexUsage(tblInfo.ID, physicalTableID, idxID, planID, kvRequestTotal)
+	e.ReportPointGetIndexUsage(tblInfo.ID, physicalTableID, idxID, kvRequestTotal, rows)
 }
 
 // ReportPointGetIndexUsage reports the index usage of a point get or batch point get
-func (e *IndexUsageReporter) ReportPointGetIndexUsage(tableID int64, physicalTableID int64, indexID int64, planID int, kvRequestTotal int64) {
+func (e *IndexUsageReporter) ReportPointGetIndexUsage(tableID int64, physicalTableID int64, indexID int64, kvRequestTotal, rows int64) {
 	tableRowCount, ok := e.getTableRowCount(physicalTableID)
 	if !ok {
-		// skip if the table is empty or the stats is not valid
-		return
+		// it's possible that the point get doesn't have the table stats. In this case, we always
+		// report the tableRowCount as `math.MaxInt32`, so that it'll be recorded in the smallest
+		// non-zero bucket if the rows is greater than 0.
+		tableRowCount = math.MaxInt32
 	}
 
-	basic := e.runtimeStatsColl.GetBasicRuntimeStats(planID)
-	if basic == nil {
-		return
-	}
-	accessRows := basic.GetActRows()
-
-	sample := indexusage.NewSample(0, uint64(kvRequestTotal), uint64(accessRows), uint64(tableRowCount))
+	sample := indexusage.NewSample(0, uint64(kvRequestTotal), uint64(rows), uint64(tableRowCount))
 	e.reporter.Update(tableID, indexID, sample)
 }
 
 // getTableRowCount returns the `RealtimeCount` of a table
 func (e *IndexUsageReporter) getTableRowCount(tableID int64) (int64, bool) {
+	if e.statsMap == nil {
+		return 0, false
+	}
+
 	stats := e.statsMap.GetUsedInfo(tableID)
 	if stats == nil {
 		return 0, false

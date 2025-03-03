@@ -441,4 +441,11 @@ insert into t_54271 values('2020-03-01 00:00:00');
 select * from t_54271;
 select * from t_54271 partition (p0);
 select * from t_54271 partition (p1);
+set @@sql_mode=default;
+
+# Issue57675
+drop table if exists tb;
+create table tb (s char(10), b bit(48), bb blob(6)) partition by hash (b) partitions 16;
+insert into tb values ('\0\b\n\r\t\Z', _binary '\0\b\n\r\t\Z', unhex('00080A0D091A'));
+select hex(b) from tb;
 

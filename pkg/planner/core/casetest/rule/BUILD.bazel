@@ -4,6 +4,7 @@ go_test(
     name = "rule_test",
     timeout = "short",
     srcs = [
+        "dual_test.go",
         "main_test.go",
         "rule_derive_topn_from_window_test.go",
         "rule_inject_extra_projection_test.go",
@@ -13,7 +14,7 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-    shard_count = 8,
+    shard_count = 9,
     deps = [
         "//pkg/domain",
         "//pkg/expression",

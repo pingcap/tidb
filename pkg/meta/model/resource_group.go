@@ -19,18 +19,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
 // ResourceGroupRunawaySettings is the runaway settings of the resource group
 type ResourceGroupRunawaySettings struct {
-	ExecElapsedTimeMs uint64                  `json:"exec_elapsed_time_ms"`
-	ProcessedKeys     int64                   `json:"processed_keys"`
-	RequestUnit       int64                   `json:"request_unit"`
-	Action            model.RunawayActionType `json:"action"`
-	SwitchGroupName   string                  `json:"switch_group_name"`
-	WatchType         model.RunawayWatchType  `json:"watch_type"`
-	WatchDurationMs   int64                   `json:"watch_duration_ms"`
+	ExecElapsedTimeMs uint64                `json:"exec_elapsed_time_ms"`
+	ProcessedKeys     int64                 `json:"processed_keys"`
+	RequestUnit       int64                 `json:"request_unit"`
+	Action            ast.RunawayActionType `json:"action"`
+	SwitchGroupName   string                `json:"switch_group_name"`
+	WatchType         ast.RunawayWatchType  `json:"watch_type"`
+	WatchDurationMs   int64                 `json:"watch_duration_ms"`
 }
 
 // ResourceGroupBackgroundSettings is the background settings of the resource group.
@@ -55,7 +55,7 @@ type ResourceGroupSettings struct {
 func NewResourceGroupSettings() *ResourceGroupSettings {
 	return &ResourceGroupSettings{
 		RURate:           0,
-		Priority:         model.MediumPriorityValue,
+		Priority:         ast.MediumPriorityValue,
 		CPULimiter:       "",
 		IOReadBandwidth:  "",
 		IOWriteBandwidth: "",
@@ -72,7 +72,7 @@ func (p *ResourceGroupSettings) String() string {
 	if p.RURate != 0 {
 		writeSettingIntegerToBuilder(sb, "RU_PER_SEC", p.RURate, separatorFn)
 	}
-	writeSettingItemToBuilder(sb, "PRIORITY="+model.PriorityValueToName(p.Priority), separatorFn)
+	writeSettingItemToBuilder(sb, "PRIORITY="+ast.PriorityValueToName(p.Priority), separatorFn)
 	if len(p.CPULimiter) > 0 {
 		writeSettingStringToBuilder(sb, "CPU", p.CPULimiter, separatorFn)
 	}
@@ -108,12 +108,12 @@ func (p *ResourceGroupSettings) String() string {
 			fmt.Fprintf(sb, "RU=%d", p.Runaway.RequestUnit)
 		}
 		// action settings
-		if p.Runaway.Action == model.RunawayActionSwitchGroup {
+		if p.Runaway.Action == ast.RunawayActionSwitchGroup {
 			writeSettingItemToBuilder(sb, fmt.Sprintf("ACTION=%s(%s)", p.Runaway.Action.String(), p.Runaway.SwitchGroupName))
 		} else {
 			writeSettingItemToBuilder(sb, "ACTION="+p.Runaway.Action.String())
 		}
-		if p.Runaway.WatchType != model.WatchNone {
+		if p.Runaway.WatchType != ast.WatchNone {
 			writeSettingItemToBuilder(sb, "WATCH="+p.Runaway.WatchType.String())
 			if p.Runaway.WatchDurationMs > 0 {
 				writeSettingDurationToBuilder(sb, "DURATION", time.Duration(p.Runaway.WatchDurationMs)*time.Millisecond)
@@ -160,7 +160,7 @@ func (p *ResourceGroupSettings) Clone() *ResourceGroupSettings {
 type ResourceGroupInfo struct {
 	*ResourceGroupSettings
 	ID    int64       `json:"id"`
-	Name  model.CIStr `json:"name"`
+	Name  ast.CIStr   `json:"name"`
 	State SchemaState `json:"state"`
 }
 

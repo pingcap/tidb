@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -273,7 +274,7 @@ func (p *PhysicalTableScan) ToPB(ctx *base.BuildPBContext, storeType kv.StoreTyp
 		tsExec.PushedDownFilterConditions = conditions
 	}
 
-	if p.AnnIndexExtra != nil && p.AnnIndexExtra.PushDownQueryInfo != nil {
+	if p.AnnIndexExtra != nil && p.AnnIndexExtra.PushDownQueryInfo != nil && p.AnnIndexExtra.PushDownQueryInfo.TopK != math.MaxUint32 {
 		annQueryCopy := *p.AnnIndexExtra.PushDownQueryInfo
 		tsExec.AnnQuery = &annQueryCopy
 	}
@@ -318,7 +319,7 @@ func (p *PhysicalTableScan) partitionTableScanToPBForFlash(ctx *base.BuildPBCont
 
 	ptsExec.Desc = p.Desc
 
-	if p.AnnIndexExtra != nil && p.AnnIndexExtra.PushDownQueryInfo != nil {
+	if p.AnnIndexExtra != nil && p.AnnIndexExtra.PushDownQueryInfo != nil && p.AnnIndexExtra.PushDownQueryInfo.TopK != math.MaxUint32 {
 		annQueryCopy := *p.AnnIndexExtra.PushDownQueryInfo
 		ptsExec.AnnQuery = &annQueryCopy
 	}

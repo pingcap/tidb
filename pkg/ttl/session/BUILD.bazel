@@ -10,7 +10,7 @@ go_library(
         "//pkg/kv",
         "//pkg/parser/terror",
         "//pkg/sessionctx",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessiontxn",
         "//pkg/ttl/metrics",
         "//pkg/util/chunk",
@@ -33,7 +33,7 @@ go_test(
     shard_count = 7,
     deps = [
         ":session",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "//pkg/util",

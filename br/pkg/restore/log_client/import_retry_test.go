@@ -93,33 +93,33 @@ func TestScanSuccess(t *testing.T) {
 	ctx := context.Background()
 
 	// make exclusive to inclusive.
-	ctl := logclient.OverRegionsInRange([]byte("aa"), []byte("aay"), cli, &rs)
+	ctl := logclient.CreateRangeController([]byte("aa"), []byte("aay"), cli, &rs)
 	collectedRegions := []*split.RegionInfo{}
-	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
+	ctl.ApplyFuncToRange(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
 		collectedRegions = append(collectedRegions, r)
 		return logclient.RPCResultOK()
 	})
 	assertRegions(t, collectedRegions, "", "aay", "bba")
 
-	ctl = logclient.OverRegionsInRange([]byte("aaz"), []byte("bb"), cli, &rs)
+	ctl = logclient.CreateRangeController([]byte("aaz"), []byte("bb"), cli, &rs)
 	collectedRegions = []*split.RegionInfo{}
-	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
+	ctl.ApplyFuncToRange(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
 		collectedRegions = append(collectedRegions, r)
 		return logclient.RPCResultOK()
 	})
 	assertRegions(t, collectedRegions, "aay", "bba", "bbh", "cca")
 
-	ctl = logclient.OverRegionsInRange([]byte("aa"), []byte("cc"), cli, &rs)
+	ctl = logclient.CreateRangeController([]byte("aa"), []byte("cc"), cli, &rs)
 	collectedRegions = []*split.RegionInfo{}
-	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
+	ctl.ApplyFuncToRange(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
 		collectedRegions = append(collectedRegions, r)
 		return logclient.RPCResultOK()
 	})
 	assertRegions(t, collectedRegions, "", "aay", "bba", "bbh", "cca", "")
 
-	ctl = logclient.OverRegionsInRange([]byte("aa"), []byte(""), cli, &rs)
+	ctl = logclient.CreateRangeController([]byte("aa"), []byte(""), cli, &rs)
 	collectedRegions = []*split.RegionInfo{}
-	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
+	ctl.ApplyFuncToRange(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
 		collectedRegions = append(collectedRegions, r)
 		return logclient.RPCResultOK()
 	})
@@ -130,7 +130,7 @@ func TestNotLeader(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient(false)
 	rs := utils.InitialRetryState(1, 0, 0)
-	ctl := logclient.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
+	ctl := logclient.CreateRangeController([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
 	notLeader := errorpb.Error{
@@ -144,7 +144,7 @@ func TestNotLeader(t *testing.T) {
 	meetRegions := []*split.RegionInfo{}
 	// record all regions we meet with id == 2.
 	idEqualsTo2Regions := []*split.RegionInfo{}
-	err := ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
+	err := ctl.ApplyFuncToRange(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
 		if r.Region.Id == 2 {
 			idEqualsTo2Regions = append(idEqualsTo2Regions, r)
 		}
@@ -170,7 +170,7 @@ func TestServerIsBusy(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, 0, 0)
-	ctl := logclient.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
+	ctl := logclient.CreateRangeController([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
 	serverIsBusy := errorpb.Error{
@@ -184,7 +184,7 @@ func TestServerIsBusy(t *testing.T) {
 	// record all regions we meet with id == 2.
 	idEqualsTo2Regions := []*split.RegionInfo{}
 	theFirstRun := true
-	err := ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
+	err := ctl.ApplyFuncToRange(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
 		if theFirstRun && r.Region.Id == 2 {
 			idEqualsTo2Regions = append(idEqualsTo2Regions, r)
 			theFirstRun = false
@@ -199,7 +199,7 @@ func TestServerIsBusy(t *testing.T) {
 	require.NoError(t, err)
 	assertRegions(t, idEqualsTo2Regions, "aay", "bba")
 	assertRegions(t, meetRegions, "", "aay", "bba", "bbh", "cca", "")
-	require.Equal(t, rs.Attempt(), 1)
+	require.Equal(t, rs.RemainingAttempts(), 1)
 }
 
 func TestServerIsBusyWithMemoryIsLimited(t *testing.T) {
@@ -211,7 +211,7 @@ func TestServerIsBusyWithMemoryIsLimited(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, 0, 0)
-	ctl := logclient.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
+	ctl := logclient.CreateRangeController([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
 	serverIsBusy := errorpb.Error{
@@ -225,7 +225,7 @@ func TestServerIsBusyWithMemoryIsLimited(t *testing.T) {
 	// record all regions we meet with id == 2.
 	idEqualsTo2Regions := []*split.RegionInfo{}
 	theFirstRun := true
-	err := ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
+	err := ctl.ApplyFuncToRange(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
 		if theFirstRun && r.Region.Id == 2 {
 			idEqualsTo2Regions = append(idEqualsTo2Regions, r)
 			theFirstRun = false
@@ -240,7 +240,7 @@ func TestServerIsBusyWithMemoryIsLimited(t *testing.T) {
 	require.NoError(t, err)
 	assertRegions(t, idEqualsTo2Regions, "aay", "bba")
 	assertRegions(t, meetRegions, "", "aay", "bba", "bbh", "cca", "")
-	require.Equal(t, rs.Attempt(), 2)
+	require.Equal(t, rs.RemainingAttempts(), 2)
 }
 
 func printRegion(name string, infos []*split.RegionInfo) {
@@ -263,7 +263,7 @@ func TestEpochNotMatch(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, 0, 0)
-	ctl := logclient.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
+	ctl := logclient.CreateRangeController([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
 	printPDRegion("cli", cli.RegionsInfo.Regions)
@@ -297,7 +297,7 @@ func TestEpochNotMatch(t *testing.T) {
 	firstRunRegions := []*split.RegionInfo{}
 	secondRunRegions := []*split.RegionInfo{}
 	isSecondRun := false
-	err = ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
+	err = ctl.ApplyFuncToRange(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
 		if !isSecondRun && r.Region.Id == left.Region.Id {
 			mergeRegion()
 			isSecondRun = true
@@ -322,7 +322,7 @@ func TestRegionSplit(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, 0, 0)
-	ctl := logclient.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
+	ctl := logclient.CreateRangeController([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
 	printPDRegion("cli", cli.RegionsInfo.Regions)
@@ -375,7 +375,7 @@ func TestRegionSplit(t *testing.T) {
 	firstRunRegions := []*split.RegionInfo{}
 	secondRunRegions := []*split.RegionInfo{}
 	isSecondRun := false
-	err = ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
+	err = ctl.ApplyFuncToRange(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
 		if !isSecondRun && r.Region.Id == target.Region.Id {
 			splitRegion()
 			isSecondRun = true
@@ -400,7 +400,7 @@ func TestRetryBackoff(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, time.Millisecond, 10*time.Millisecond)
-	ctl := logclient.OverRegionsInRange([]byte(""), []byte(""), cli, &rs)
+	ctl := logclient.CreateRangeController([]byte(""), []byte(""), cli, &rs)
 	ctx := context.Background()
 
 	printPDRegion("cli", cli.RegionsInfo.Regions)
@@ -417,7 +417,7 @@ func TestRetryBackoff(t *testing.T) {
 			},
 		}}
 	isSecondRun := false
-	err = ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
+	err = ctl.ApplyFuncToRange(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
 		if !isSecondRun && r.Region.Id == left.Region.Id {
 			isSecondRun = true
 			return logclient.RPCResultFromPBError(epochNotLeader)
@@ -425,7 +425,7 @@ func TestRetryBackoff(t *testing.T) {
 		return logclient.RPCResultOK()
 	})
 	printPDRegion("cli", cli.RegionsInfo.Regions)
-	require.Equal(t, 1, rs.Attempt())
+	require.Equal(t, 1, rs.RemainingAttempts())
 	// we retried leader not found error. so the next backoff should be 2 * initical backoff.
 	require.Equal(t, 2*time.Millisecond, rs.ExponentialBackoff())
 	require.NoError(t, err)
@@ -451,13 +451,13 @@ func TestPaginateScanLeader(t *testing.T) {
 	// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
 	cli := initTestClient(false)
 	rs := utils.InitialRetryState(2, time.Millisecond, 10*time.Millisecond)
-	ctl := logclient.OverRegionsInRange([]byte("aa"), []byte("aaz"), cli, &rs)
+	ctl := logclient.CreateRangeController([]byte("aa"), []byte("aaz"), cli, &rs)
 	ctx := context.Background()
 
 	cli.InjectErr = true
 	cli.InjectTimes = int32(envInt("PAGINATE_SCAN_LEADER_FAILURE_COUNT", 2))
 	collectedRegions := []*split.RegionInfo{}
-	ctl.Run(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
+	ctl.ApplyFuncToRange(ctx, func(ctx context.Context, r *split.RegionInfo) logclient.RPCResult {
 		collectedRegions = append(collectedRegions, r)
 		return logclient.RPCResultOK()
 	})
@@ -470,7 +470,7 @@ func TestRetryRecognizeErrCode(t *testing.T) {
 	ctx := context.Background()
 	inner := 0
 	outer := 0
-	utils.WithRetry(ctx, func() error {
+	_ = utils.WithRetry(ctx, func() error {
 		e := utils.WithRetry(ctx, func() error {
 			inner++
 			e := status.Error(codes.Unavailable, "the connection to TiKV has been cut by a neko, meow :3")
@@ -478,10 +478,10 @@ func TestRetryRecognizeErrCode(t *testing.T) {
 				return errors.Trace(e)
 			}
 			return nil
-		}, utils.NewBackoffer(10, waitTime, maxWaitTime, utils.NewErrorContext("download sst", 3)))
+		}, utils.NewBackoffRetryAllErrorStrategy(10, waitTime, maxWaitTime))
 		outer++
 		return errors.Trace(e)
-	}, utils.NewBackoffer(10, waitTime, maxWaitTime, utils.NewErrorContext("import sst", 3)))
+	}, utils.NewBackoffRetryAllErrorStrategy(10, waitTime, maxWaitTime))
 	require.Equal(t, 10, outer)
 	require.Equal(t, 100, inner)
 }

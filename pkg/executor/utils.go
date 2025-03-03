@@ -15,10 +15,14 @@
 package executor
 
 import (
+	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 )
 
 var (
@@ -101,8 +105,8 @@ func (b *batchRetrieverHelper) nextBatch(retrieveRange func(start, end int) erro
 	return nil
 }
 
-// encodePassword encodes the password for the user. It invokes the auth plugin if it is available.
-func encodePassword(u *ast.UserSpec, authPlugin *extension.AuthPlugin) (string, bool) {
+// encodePasswordWithPlugin encodes the password for the user. It invokes the auth plugin if it is available.
+func encodePasswordWithPlugin(u ast.UserSpec, authPlugin *extension.AuthPlugin, defaultPlugin string) (string, bool) {
 	if u.AuthOpt == nil {
 		return "", true
 	}
@@ -117,5 +121,132 @@ func encodePassword(u *ast.UserSpec, authPlugin *extension.AuthPlugin) (string, 
 		}
 		return "", false
 	}
-	return u.EncodedPassword()
+	return encodedPassword(&u, defaultPlugin)
+}
+
+// encodedPassword returns the encoded password (which is the real data mysql.user).
+// The boolean value indicates input's password format is legal or not.
+func encodedPassword(n *ast.UserSpec, defaultPlugin string) (string, bool) {
+	if n.AuthOpt == nil {
+		return "", true
+	}
+
+	opt := n.AuthOpt
+	authPlugin := opt.AuthPlugin
+	if authPlugin == "" {
+		authPlugin = defaultPlugin
+	}
+	if opt.ByAuthString {
+		switch authPlugin {
+		case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
+			return auth.NewHashPassword(opt.AuthString, authPlugin), true
+		case mysql.AuthSocket:
+			return "", true
+		default:
+			return auth.EncodePassword(opt.AuthString), true
+		}
+	}
+
+	// store the LDAP dn directly in the password field
+	switch authPlugin {
+	case mysql.AuthLDAPSimple, mysql.AuthLDAPSASL:
+		// TODO: validate the HashString to be a `dn` for LDAP
+		// It seems fine to not validate here, and LDAP server will give an error when the client'll try to login this user.
+		// The percona server implementation doesn't have a validation for this HashString.
+		// However, returning an error for obvious wrong format is more friendly.
+		return opt.HashString, true
+	}
+
+	// In case we have 'IDENTIFIED WITH <plugin>' but no 'BY <password>' to set an empty password.
+	if opt.HashString == "" {
+		return opt.HashString, true
+	}
+
+	// Not a legal password string.
+	switch authPlugin {
+	case mysql.AuthCachingSha2Password:
+		if len(opt.HashString) != mysql.SHAPWDHashLen {
+			return "", false
+		}
+	case mysql.AuthTiDBSM3Password:
+		if len(opt.HashString) != mysql.SM3PWDHashLen {
+			return "", false
+		}
+	case "", mysql.AuthNativePassword:
+		if len(opt.HashString) != (mysql.PWDHashLen+1) || !strings.HasPrefix(opt.HashString, "*") {
+			return "", false
+		}
+	case mysql.AuthSocket:
+	default:
+		return "", false
+	}
+	return opt.HashString, true
+}
+
+var globalTaskPool = sync.Pool{
+	New: func() any { return &workerTask{} },
+}
+
+type workerTask struct {
+	f    func()
+	next *workerTask
+}
+
+type workerPool struct {
+	lock sync.Mutex
+	head *workerTask
+	tail *workerTask
+
+	tasks     uint32
+	workers   uint32
+	needSpawn func(workers, tasks uint32) bool
+}
+
+func (p *workerPool) submit(f func()) {
+	task := globalTaskPool.Get().(*workerTask)
+	task.f, task.next = f, nil
+
+	spawn := false
+	p.lock.Lock()
+	if p.head == nil {
+		p.head = task
+	} else {
+		p.tail.next = task
+	}
+	p.tail = task
+	p.tasks++
+	if p.workers == 0 || p.needSpawn == nil || p.needSpawn(p.workers, p.tasks) {
+		p.workers++
+		spawn = true
+	}
+	p.lock.Unlock()
+
+	if spawn {
+		go p.run()
+	}
+}
+
+func (p *workerPool) run() {
+	for {
+		var task *workerTask
+
+		p.lock.Lock()
+		if p.head == nil {
+			p.workers--
+			p.lock.Unlock()
+			return
+		}
+		task, p.head = p.head, p.head.next
+		p.tasks--
+		p.lock.Unlock()
+
+		task.f()
+		globalTaskPool.Put(task)
+	}
+}
+
+//go:noinline
+func growWorkerStack16K() {
+	var data [8192]byte
+	runtime.KeepAlive(&data)
 }

@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -57,7 +57,7 @@ type BatchPointGetExec struct {
 	planPhysIDs []int64
 	// If != 0 then it is a single partition under Static Prune mode.
 	singlePartID   int64
-	partitionNames []pmodel.CIStr
+	partitionNames []ast.CIStr
 	idxVals        [][]types.Datum
 	txn            kv.Transaction
 	lock           bool
@@ -109,7 +109,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		lock := e.tblInfo.Lock
 		if e.lock {
 			batchGetter = driver.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, e.snapshot)
-		} else if lock != nil && (lock.Tp == pmodel.TableLockRead || lock.Tp == pmodel.TableLockReadOnly) && e.Ctx().GetSessionVars().EnablePointGetCache {
+		} else if lock != nil && (lock.Tp == ast.TableLockRead || lock.Tp == ast.TableLockReadOnly) && e.Ctx().GetSessionVars().EnablePointGetCache {
 			batchGetter = newCacheBatchGetter(e.Ctx(), e.tblInfo.ID, e.snapshot)
 		} else {
 			batchGetter = driver.NewBufferBatchGetter(txn.GetMemBuffer(), nil, e.snapshot)
@@ -177,14 +177,15 @@ func (e *BatchPointGetExec) Close() error {
 	if e.RuntimeStats() != nil && e.snapshot != nil {
 		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)
 	}
-	if e.indexUsageReporter != nil {
+	if e.indexUsageReporter != nil && e.stats != nil {
 		kvReqTotal := e.stats.GetCmdRPCCount(tikvrpc.CmdBatchGet)
 		// We cannot distinguish how many rows are coming from each partition. Here, we calculate all index usages
 		// percentage according to the row counts for the whole table.
+		rows := e.RuntimeStats().GetActRows()
 		if e.idxInfo != nil {
-			e.indexUsageReporter.ReportPointGetIndexUsage(e.tblInfo.ID, e.tblInfo.ID, e.idxInfo.ID, e.ID(), kvReqTotal)
+			e.indexUsageReporter.ReportPointGetIndexUsage(e.tblInfo.ID, e.tblInfo.ID, e.idxInfo.ID, kvReqTotal, rows)
 		} else {
-			e.indexUsageReporter.ReportPointGetIndexUsageForHandle(e.tblInfo, e.tblInfo.ID, e.ID(), kvReqTotal)
+			e.indexUsageReporter.ReportPointGetIndexUsageForHandle(e.tblInfo, e.tblInfo.ID, kvReqTotal, rows)
 		}
 	}
 	e.inited = 0

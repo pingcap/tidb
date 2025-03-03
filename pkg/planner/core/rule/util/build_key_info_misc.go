@@ -28,9 +28,9 @@ func CheckMaxOneRowCond(eqColIDs map[int64]struct{}, childSchema *expression.Sch
 		return false
 	}
 	// We check `UniqueKeys` as well since the condition is `col = con | corr`, not `col <=> con | corr`.
-	keys := make([]expression.KeyInfo, 0, len(childSchema.Keys)+len(childSchema.UniqueKeys))
-	keys = append(keys, childSchema.Keys...)
-	keys = append(keys, childSchema.UniqueKeys...)
+	keys := make([]expression.KeyInfo, 0, len(childSchema.PKOrUK)+len(childSchema.NullableUK))
+	keys = append(keys, childSchema.PKOrUK...)
+	keys = append(keys, childSchema.NullableUK...)
 	var maxOneRow bool
 	for _, cols := range keys {
 		maxOneRow = true

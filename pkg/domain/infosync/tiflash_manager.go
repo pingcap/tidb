@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/pd/client/clients/router"
 	pd "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
@@ -294,7 +295,7 @@ func (m *TiFlashReplicaManagerCtx) PostAccelerateScheduleBatch(ctx context.Conte
 	if len(tableIDs) == 0 {
 		return nil
 	}
-	input := make([]*pd.KeyRange, 0, len(tableIDs))
+	input := make([]*router.KeyRange, 0, len(tableIDs))
 	for _, tableID := range tableIDs {
 		startKey := tablecodec.GenTableRecordPrefix(tableID)
 		endKey := tablecodec.EncodeTablePrefix(tableID + 1)

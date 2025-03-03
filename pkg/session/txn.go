@@ -70,6 +70,9 @@ type LazyTxn struct {
 
 	// mark the txn enables lazy uniqueness check in pessimistic transactions.
 	lazyUniquenessCheckEnabled bool
+
+	// commit ts of the last successful transaction, to ensure ordering of TS
+	lastCommitTS uint64
 }
 
 // GetTableInfo returns the cached index name.
@@ -431,7 +434,16 @@ func (txn *LazyTxn) Commit(ctx context.Context) error {
 		}
 	})
 
-	return txn.Transaction.Commit(ctx)
+	err := txn.Transaction.Commit(ctx)
+	if err == nil {
+		txn.lastCommitTS = txn.Transaction.CommitTS()
+		failpoint.Inject("mockFutureCommitTS", func(val failpoint.Value) {
+			if ts, ok := val.(int); ok {
+				txn.lastCommitTS = uint64(ts)
+			}
+		})
+	}
+	return err
 }
 
 // Rollback overrides the Transaction interface.
@@ -665,23 +677,23 @@ type txnFuture struct {
 }
 
 func (tf *txnFuture) wait() (kv.Transaction, error) {
+	options := []tikv.TxnOption{tikv.WithTxnScope(tf.txnScope)}
 	startTS, err := tf.future.Wait()
 	failpoint.Inject("txnFutureWait", func() {})
 	if err == nil {
-		if tf.pipelined {
-			return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithStartTS(startTS), tikv.WithPipelinedMemDB())
+		options = append(options, tikv.WithStartTS(startTS))
+	} else {
+		if config.GetGlobalConfig().Store == config.StoreTypeUniStore {
+			return nil, err
 		}
-		return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithStartTS(startTS))
-	} else if config.GetGlobalConfig().Store == config.StoreTypeUniStore {
-		return nil, err
+		logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
 	}
 
-	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
-	// It would retry get timestamp.
 	if tf.pipelined {
-		return tf.store.Begin(tikv.WithTxnScope(tf.txnScope), tikv.WithPipelinedMemDB())
+		options = append(options, tikv.WithDefaultPipelinedTxn())
 	}
-	return tf.store.Begin(tikv.WithTxnScope(tf.txnScope))
+
+	return tf.store.Begin(options...)
 }
 
 // HasDirtyContent checks whether there's dirty update on the given table.

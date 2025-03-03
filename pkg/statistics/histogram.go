@@ -26,6 +26,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -33,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -263,9 +265,6 @@ const (
 	Version2 = 2
 )
 
-// AnalyzeFlag is set when the statistics comes from analyze.
-const AnalyzeFlag = 1
-
 // ValueToString converts a possible encoded value to a formatted string. If the value is encoded, then
 // idxCols equals to number of origin values, else idxCols is 0.
 func ValueToString(vars *variable.SessionVars, value *types.Datum, idxCols int, idxColumnTypes []byte) (string, error) {
@@ -297,15 +296,14 @@ func (hg *Histogram) BucketToString(bktID, idxCols int) string {
 }
 
 // BinarySearchRemoveVal removes the value from the TopN using binary search.
-func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
+func (hg *Histogram) BinarySearchRemoveVal(val *types.Datum, count int64) {
 	lowIdx, highIdx := 0, hg.Len()-1
-	column := hg.Bounds.Column(0)
 	// if hg is too small, we don't need to check the branch. because the cost is more than binary search.
 	if hg.Len() > 4 {
-		if cmpResult := bytes.Compare(column.GetRaw(highIdx*2+1), valCntPairs.Encoded); cmpResult < 0 {
+		if cmpResult := chunk.Compare(hg.Bounds.GetRow(highIdx*2+1), 0, val); cmpResult < 0 {
 			return
 		}
-		if cmpResult := bytes.Compare(column.GetRaw(lowIdx), valCntPairs.Encoded); cmpResult > 0 {
+		if cmpResult := chunk.Compare(hg.Bounds.GetRow(lowIdx), 0, val); cmpResult > 0 {
 			return
 		}
 	}
@@ -313,12 +311,12 @@ func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
 	var found bool
 	for lowIdx <= highIdx {
 		midIdx = (lowIdx + highIdx) / 2
-		cmpResult := bytes.Compare(column.GetRaw(midIdx*2), valCntPairs.Encoded)
+		cmpResult := chunk.Compare(hg.Bounds.GetRow(midIdx*2), 0, val)
 		if cmpResult > 0 {
 			highIdx = midIdx - 1
 			continue
 		}
-		cmpResult = bytes.Compare(column.GetRaw(midIdx*2+1), valCntPairs.Encoded)
+		cmpResult = chunk.Compare(hg.Bounds.GetRow(midIdx*2+1), 0, val)
 		if cmpResult < 0 {
 			lowIdx = midIdx + 1
 			continue
@@ -331,7 +329,7 @@ func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
 		if cmpResult == 0 {
 			midbucket.Repeat = 0
 		}
-		midbucket.Count -= int64(valCntPairs.Count)
+		midbucket.Count -= count
 		if midbucket.Count < 0 {
 			midbucket.Count = 0
 		}
@@ -340,7 +338,7 @@ func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
 	}
 	if found {
 		for midIdx++; midIdx <= hg.Len()-1; midIdx++ {
-			hg.Buckets[midIdx].Count -= int64(valCntPairs.Count)
+			hg.Buckets[midIdx].Count -= count
 			if hg.Buckets[midIdx].Count < 0 {
 				hg.Buckets[midIdx].Count = 0
 			}
@@ -921,7 +919,7 @@ func (hg *Histogram) OutOfRange(val types.Datum) bool {
 func (hg *Histogram) OutOfRangeRowCount(
 	sctx planctx.PlanContext,
 	lDatum, rDatum *types.Datum,
-	modifyCount, histNDV int64, increaseFactor float64,
+	realtimeRowCount, modifyCount, histNDV int64,
 ) (result float64) {
 	debugTrace := sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace
 	if debugTrace {
@@ -930,6 +928,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 			"lDatum", lDatum.String(),
 			"rDatum", rDatum.String(),
 			"modifyCount", modifyCount,
+			"realtimeRowCount", realtimeRowCount,
 		)
 		defer func() {
 			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result)
@@ -937,6 +936,14 @@ func (hg *Histogram) OutOfRangeRowCount(
 		}()
 	}
 	if hg.Len() == 0 {
+		return 0
+	}
+
+	// If there are no modifications to the table, return 0 - since all of this logic is
+	// redundant if we get to the end and return the min - which includes zero,
+	// TODO: The execution here is if we are out of range due to sampling of the histograms - which
+	// may miss the lowest/highest values - and we are out of range without any modifications.
+	if modifyCount == 0 {
 		return 0
 	}
 
@@ -980,16 +987,28 @@ func (hg *Histogram) OutOfRangeRowCount(
 	if l >= r {
 		return 0
 	}
+
+	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != vardef.OptObjectiveDeterminate
+
 	// Convert the lower and upper bound of the histogram to scalar value(float64)
 	histL := convertDatumToScalar(hg.GetLower(0), commonPrefix)
 	histR := convertDatumToScalar(hg.GetUpper(hg.Len()-1), commonPrefix)
 	histWidth := histR - histL
+	// If we find that the histogram width is too small or too large - we still may need to consider
+	// the impact of modifications to the table
+	histInvalid := false
 	if histWidth <= 0 {
-		return 0
+		if !allowUseModifyCount {
+			return 0
+		}
+		histInvalid = true
 	}
 	if math.IsInf(histWidth, 1) {
-		// The histogram is too wide. As a quick fix, we return 0 to indicate that the overlap percentage is near 0.
-		return 0
+		if !allowUseModifyCount {
+			// The histogram is too wide. As a quick fix, we return 0 to indicate that the overlap percentage is near 0.
+			return 0
+		}
+		histInvalid = true
 	}
 	boundL := histL - histWidth
 	boundR := histR + histWidth
@@ -1012,32 +1031,35 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// keep l and r unchanged, use actualL and actualR to calculate.
 	actualL := l
 	actualR := r
-	// If the range overlaps with (boundL,histL), we need to handle the out-of-range part on the left of the histogram range
-	if actualL < histL && actualR > boundL {
-		// make sure boundL <= actualL < actualR <= histL
-		if actualL < boundL {
-			actualL = boundL
+	// Only attempt to calculate the ranges if the histogram is valid
+	if !histInvalid {
+		// If the range overlaps with (boundL,histL), we need to handle the out-of-range part on the left of the histogram range
+		if actualL < histL && actualR > boundL {
+			// make sure boundL <= actualL < actualR <= histL
+			if actualL < boundL {
+				actualL = boundL
+			}
+			if actualR > histL {
+				actualR = histL
+			}
+			// Calculate the percentage of "the shaded area" on the left side.
+			leftPercent = (math.Pow(actualR-boundL, 2) - math.Pow(actualL-boundL, 2)) / math.Pow(histWidth, 2)
 		}
-		if actualR > histL {
-			actualR = histL
-		}
-		// Calculate the percentage of "the shaded area" on the left side.
-		leftPercent = (math.Pow(actualR-boundL, 2) - math.Pow(actualL-boundL, 2)) / math.Pow(histWidth, 2)
-	}
 
-	actualL = l
-	actualR = r
-	// If the range overlaps with (histR,boundR), we need to handle the out-of-range part on the right of the histogram range
-	if actualL < boundR && actualR > histR {
-		// make sure histR <= actualL < actualR <= boundR
-		if actualL < histR {
-			actualL = histR
+		actualL = l
+		actualR = r
+		// If the range overlaps with (histR,boundR), we need to handle the out-of-range part on the right of the histogram range
+		if actualL < boundR && actualR > histR {
+			// make sure histR <= actualL < actualR <= boundR
+			if actualL < histR {
+				actualL = histR
+			}
+			if actualR > boundR {
+				actualR = boundR
+			}
+			// Calculate the percentage of "the shaded area" on the right side.
+			rightPercent = (math.Pow(boundR-actualL, 2) - math.Pow(boundR-actualR, 2)) / math.Pow(histWidth, 2)
 		}
-		if actualR > boundR {
-			actualR = boundR
-		}
-		// Calculate the percentage of "the shaded area" on the right side.
-		rightPercent = (math.Pow(boundR-actualL, 2) - math.Pow(boundR-actualR, 2)) / math.Pow(histWidth, 2)
 	}
 
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
@@ -1049,8 +1071,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 		upperBound = hg.NotNullCount() / float64(histNDV)
 	}
 
-	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate
-
 	if !allowUseModifyCount {
 		// In OptObjectiveDeterminate mode, we can't rely on the modify count anymore.
 		// An upper bound is necessary to make the estimation make sense for predicates with bound on only one end, like a > 1.
@@ -1058,13 +1078,19 @@ func (hg *Histogram) OutOfRangeRowCount(
 		return min(rowCount, upperBound)
 	}
 
-	// If the modifyCount is large (compared to original table rows), then any out of range estimate is unreliable.
+	// If the realtimeRowCount is larger than the original table rows, then any out of range estimate is unreliable.
 	// Assume at least 1/NDV is returned
-	if float64(modifyCount) > hg.NotNullCount() && rowCount < upperBound {
-		rowCount = upperBound
-	} else if rowCount < upperBound {
-		// Adjust by increaseFactor if our estimate is low
-		rowCount *= increaseFactor
+	addedRows := float64(realtimeRowCount) - hg.TotalRowCount()
+	if addedRows > 1 {
+		// Conservatively - use the larger of the left or right percent - since we are working with
+		// changes to the table since last Analyze - any out of range estimate is unreliable.
+		// if the histogram range is invalid (too small/large - histInvalid) - totalPercent is zero
+		// and we will set rowCount to min of upperbound and added rows
+		totalPercent = min(0.5, max(leftPercent, rightPercent))
+		rowCount += totalPercent * addedRows
+		if rowCount < upperBound {
+			rowCount = min(upperBound, addedRows)
+		}
 	}
 
 	// Use modifyCount as a final bound
@@ -1235,10 +1261,10 @@ func (b *bucket4Merging) Clone() bucket4Merging {
 // Before merging, you need to make sure that when using (upper, lower) as the comparison key, `right` is greater than `left`
 func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *bucket4Merging) (*bucket4Merging, error) {
 	res := right.Clone()
-	if left.NDV == 0 {
+	if left.Count == 0 {
 		return &res, nil
 	}
-	if right.NDV == 0 {
+	if right.Count == 0 {
 		left.lower.Copy(res.lower)
 		left.upper.Copy(res.upper)
 		res.NDV = left.NDV
@@ -1394,46 +1420,45 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 	return res, nil
 }
 
-func (t *TopNMeta) buildBucket4Merging(d *types.Datum) *bucket4Merging {
+func (t *TopNMeta) buildBucket4Merging(d *types.Datum, analyzeVer int) *bucket4Merging {
 	res := newbucket4MergingForRecycle()
 	d.Copy(res.lower)
 	d.Copy(res.upper)
 	res.Count = int64(t.Count)
 	res.Repeat = int64(t.Count)
-	res.NDV = int64(1)
+	if analyzeVer <= Version2 {
+		res.NDV = 0
+	}
+	failpoint.Inject("github.com/pingcap/pkg/statistics/enableTopNNDV", func(_ failpoint.Value) {
+		res.NDV = 1
+	})
+	intest.Assert(analyzeVer <= Version2)
 	return res
 }
 
 // MergePartitionHist2GlobalHist merges hists (partition-level Histogram) to a global-level Histogram
-func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, popedTopN []TopNMeta, expBucketNumber int64, isIndex bool) (*Histogram, error) {
-	var totCount, totNull, bucketNumber, totColSize int64
+func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histogram, popedTopN []TopNMeta, expBucketNumber int64, isIndex bool, analyzeVer int) (*Histogram, error) {
+	var totCount, totNull, totColSize int64
+	var bucketNumber int
 	if expBucketNumber == 0 {
 		return nil, errors.Errorf("expBucketNumber can not be zero")
 	}
-	// minValue is used to calc the bucket lower.
-	var minValue *types.Datum
 	for _, hist := range hists {
 		totColSize += hist.TotColSize
 		totNull += hist.NullCount
-		bucketNumber += int64(hist.Len())
-		if hist.Len() > 0 {
+		histLen := hist.Len()
+		if histLen > 0 {
+			bucketNumber += histLen
 			totCount += hist.Buckets[hist.Len()-1].Count
-			if minValue == nil {
-				minValue = hist.GetLower(0).Clone()
-				continue
-			}
-			tmpValue := hist.GetLower(0)
-			res, err := tmpValue.Compare(sc.TypeCtx(), minValue, collate.GetBinaryCollator())
-			if err != nil {
-				return nil, err
-			}
-			if res < 0 {
-				minValue = tmpValue.Clone()
-			}
 		}
 	}
 
-	bucketNumber += int64(len(popedTopN))
+	// If all the hist and the topn is empty, return a empty hist.
+	if bucketNumber+len(popedTopN) == 0 {
+		return NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, 0, totColSize), nil
+	}
+
+	bucketNumber += len(popedTopN)
 	buckets := make([]*bucket4Merging, 0, bucketNumber)
 	globalBuckets := make([]*bucket4Merging, 0, expBucketNumber)
 
@@ -1448,18 +1473,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		if err != nil {
 			return nil, err
 		}
-		if minValue == nil {
-			minValue = d.Clone()
-			continue
-		}
-		res, err := d.Compare(sc.TypeCtx(), minValue, collate.GetBinaryCollator())
-		if err != nil {
-			return nil, err
-		}
-		if res < 0 {
-			minValue = d.Clone()
-		}
-		buckets = append(buckets, meta.buildBucket4Merging(&d))
+		buckets = append(buckets, meta.buildBucket4Merging(&d, analyzeVer))
 	}
 
 	// Remove empty buckets
@@ -1477,35 +1491,37 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	}
 	buckets = buckets[:tail]
 
-	var sortError error
-	slices.SortFunc(buckets, func(i, j *bucket4Merging) int {
-		res, err := i.upper.Compare(sc.TypeCtx(), j.upper, collate.GetBinaryCollator())
-		if err != nil {
-			sortError = err
-		}
-		if res != 0 {
-			return res
-		}
-		res, err = i.lower.Compare(sc.TypeCtx(), j.lower, collate.GetBinaryCollator())
-		if err != nil {
-			sortError = err
-		}
-		return res
-	})
-	if sortError != nil {
-		return nil, sortError
+	err := sortBucketsByUpperBound(sc.TypeCtx(), buckets)
+	if err != nil {
+		return nil, err
 	}
 
 	var sum, prevSum int64
-	r, prevR := len(buckets), 0
+	r := len(buckets)
 	bucketCount := int64(1)
 	gBucketCountThreshold := (totCount / expBucketNumber) * 80 / 100 // expectedBucketSize * 0.8
-	var bucketNDV int64
+	mergeBuffer := make([]*bucket4Merging, 0, (len(buckets)+int(expBucketNumber)-1)/int(expBucketNumber))
+	cutAndFixBuffer := make([]*bucket4Merging, 0, (len(buckets)+int(expBucketNumber))/int(expBucketNumber))
+	var currentLeftMost *types.Datum
 	for i := len(buckets) - 1; i >= 0; i-- {
+		if currentLeftMost == nil {
+			currentLeftMost = buckets[i].lower
+		} else {
+			res, err := currentLeftMost.Compare(sc.TypeCtx(), buckets[i].lower, collate.GetBinaryCollator())
+			if err != nil {
+				return nil, err
+			}
+			if res > 0 {
+				currentLeftMost = buckets[i].lower
+			}
+		}
 		sum += buckets[i].Count
-		bucketNDV += buckets[i].NDV
 		if sum >= totCount*bucketCount/expBucketNumber && sum-prevSum >= gBucketCountThreshold {
-			for ; i > 0; i-- { // if the buckets have the same upper, we merge them into the same new buckets.
+			// If the buckets have the same upper, we merge them into the same new buckets.
+			// We don't need to update the currentLeftMost in the for loop because the leftmost bucket's lower
+			// will be the smallest when their upper is the same.
+			// We just need to update it after the for loop.
+			for ; i > 0; i-- {
 				res, err := buckets[i-1].upper.Compare(sc.TypeCtx(), buckets[i].upper, collate.GetBinaryCollator())
 				if err != nil {
 					return nil, err
@@ -1514,56 +1530,149 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 					break
 				}
 				sum += buckets[i-1].Count
-				bucketNDV += buckets[i-1].NDV
 			}
-			merged, err := mergePartitionBuckets(sc, buckets[i:r])
+			res, err := currentLeftMost.Compare(sc.TypeCtx(), buckets[i].lower, collate.GetBinaryCollator())
 			if err != nil {
 				return nil, err
 			}
+			if res > 0 {
+				currentLeftMost = buckets[i].lower
+			}
+
+			// Iterate possible overlapped ones.
+			// We need to re-sort this part.
+			mergeBuffer = mergeBuffer[:0]
+			cutAndFixBuffer = cutAndFixBuffer[:0]
+			leftMostValidPosForNonOverlapping := i
+			for ; i > 0; i-- {
+				res, err := buckets[i-1].upper.Compare(sc.TypeCtx(), currentLeftMost, collate.GetBinaryCollator())
+				if err != nil {
+					return nil, err
+				}
+				// If buckets[i-1].upper < currentLeftMost, this bucket has no overlap with current merging one. Break it.
+				if res < 0 {
+					break
+				}
+				// Now the bucket[i-1].upper >= currentLeftMost, they are overlapped.
+				res, err = buckets[i-1].lower.Compare(sc.TypeCtx(), currentLeftMost, collate.GetBinaryCollator())
+				if err != nil {
+					return nil, err
+				}
+				// If buckets[i-1].lower >= currentLeftMost, this bucket is totally inside. So it can be totally merged.
+				if res >= 0 {
+					sum += buckets[i-1].Count
+					mergeBuffer = append(mergeBuffer, buckets[i-1])
+					continue
+				}
+				// Now buckets[i-1].lower < currentLeftMost < buckets[i-1].upper
+				// calcFraction4Datums calc the value: (currentLeftMost - lower_bound) / (upper_bound - lower_bound)
+				overlapping := 1 - calcFraction4Datums(buckets[i-1].lower, buckets[i-1].upper, currentLeftMost)
+				overlappedCount := int64(float64(buckets[i-1].Count) * overlapping)
+				overlappedNDV := int64(float64(buckets[i-1].NDV) * overlapping)
+				sum += overlappedCount
+				buckets[i-1].Count -= overlappedCount
+				buckets[i-1].NDV -= overlappedNDV
+				buckets[i-1].Repeat = 0
+				if buckets[i-1].NDV < 0 {
+					buckets[i-1].NDV = 0
+				}
+				if buckets[i-1].Count < 0 {
+					buckets[i-1].Count = 0
+				}
+
+				// Cut it.
+				cutBkt := newbucket4MergingForRecycle()
+				buckets[i-1].upper.Copy(cutBkt.upper)
+				currentLeftMost.Copy(cutBkt.lower)
+				currentLeftMost.Copy(buckets[i-1].upper)
+				cutBkt.Count = overlappedCount
+				cutBkt.NDV = overlappedNDV
+				mergeBuffer = append(mergeBuffer, cutBkt)
+				cutAndFixBuffer = append(cutAndFixBuffer, cutBkt)
+			}
+			var merged *bucket4Merging
+			if len(cutAndFixBuffer) == 0 {
+				merged, err = mergePartitionBuckets(sc, buckets[i:r])
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				// mergedBuffer is in reverse order, we need to reverse it.
+				slices.Reverse(mergeBuffer)
+				// The content in the merge buffer don't need a re-sort since we just fix some lower bound for them.
+				mergeBuffer = append(mergeBuffer, buckets[leftMostValidPosForNonOverlapping:r]...)
+				checkBucket4MergingIsSorted(sc.TypeCtx(), mergeBuffer)
+				merged, err = mergePartitionBuckets(sc, mergeBuffer)
+				if err != nil {
+					return nil, err
+				}
+				for _, bkt := range cutAndFixBuffer {
+					releasebucket4MergingForRecycle(bkt)
+				}
+				// The buckets in buckets[i:origI] needs a re-sort.
+				err = sortBucketsByUpperBound(sc.TypeCtx(), buckets[i:leftMostValidPosForNonOverlapping])
+				if err != nil {
+					return nil, err
+				}
+				// After the operation, the buckets in buckets[i:origI] contains two kinds of buckets:
+				// 1. The buckets that are totally inside the merged bucket. => lower_bound >= currentLeftMost
+				//    It's not changed. [lower_bound_i, upper_bound_i] with lower_bound_i >= currentLeftMost
+				// 2. The buckets that are overlapped with the merged bucket. lower_bound < currentLeftMost < upper_bound
+				//    After cutting, the remained part is [lower_bound_i, currentLeftMost]
+				// To do the next round of merging, we need to kick out the 1st kind of buckets.
+				// And after the re-sort, the 2nd kind of buckets will be in the front.
+				leftMostInvalidPosForNextRound := leftMostValidPosForNonOverlapping
+				for ; leftMostInvalidPosForNextRound > i; leftMostInvalidPosForNextRound-- {
+					res, err := buckets[leftMostInvalidPosForNextRound-1].lower.Compare(sc.TypeCtx(), currentLeftMost, collate.GetBinaryCollator())
+					if err != nil {
+						return nil, err
+					}
+					// Once the lower bound < currentLeftMost, we've skipped all the 1st kind of bucket.
+					// We can break here.
+					if res < 0 {
+						break
+					}
+				}
+				checkBucket4MergingIsSorted(sc.TypeCtx(), buckets[i:leftMostInvalidPosForNextRound])
+				i = leftMostInvalidPosForNextRound
+			}
+			currentLeftMost.Copy(merged.lower)
+			currentLeftMost = nil
 			globalBuckets = append(globalBuckets, merged)
-			prevR = r
 			r = i
 			bucketCount++
 			prevSum = sum
-			bucketNDV = 0
 		}
 	}
 	if r > 0 {
-		bucketSum := int64(0)
-		for _, b := range buckets[:r] {
-			bucketSum += b.Count
-		}
-
-		if len(globalBuckets) > 0 && bucketSum < gBucketCountThreshold { // merge them into the previous global bucket
-			r = prevR
-			globalBuckets = globalBuckets[:len(globalBuckets)-1]
+		leftMost := buckets[0].lower
+		for i, b := range buckets[:r] {
+			if i == 0 {
+				continue
+			}
+			res, err := leftMost.Compare(sc.TypeCtx(), b.lower, collate.GetBinaryCollator())
+			if err != nil {
+				return nil, err
+			}
+			if res > 0 {
+				leftMost = b.lower
+			}
 		}
 
 		merged, err := mergePartitionBuckets(sc, buckets[:r])
 		if err != nil {
 			return nil, err
 		}
+		leftMost.Copy(merged.lower)
 		globalBuckets = append(globalBuckets, merged)
 	}
 	for i := 0; i < len(buckets); i++ {
 		releasebucket4MergingForRecycle(buckets[i])
 	}
 	// Because we merge backwards, we need to flip the slices.
-	for i, j := 0, len(globalBuckets)-1; i < j; i, j = i+1, j-1 {
-		globalBuckets[i], globalBuckets[j] = globalBuckets[j], globalBuckets[i]
-	}
+	slices.Reverse(globalBuckets)
 
-	// Calc the bucket lower.
-	if minValue == nil || len(globalBuckets) == 0 { // both hists and popedTopN are empty, returns an empty hist in this case
-		return NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, len(globalBuckets), totColSize), nil
-	}
-	minValue.Copy(globalBuckets[0].lower)
 	for i := 1; i < len(globalBuckets); i++ {
-		if globalBuckets[i].NDV == 1 { // there is only 1 value so lower = upper
-			globalBuckets[i].upper.Copy(globalBuckets[i].lower)
-		} else {
-			globalBuckets[i-1].upper.Copy(globalBuckets[i].lower)
-		}
 		globalBuckets[i].Count = globalBuckets[i].Count + globalBuckets[i-1].Count
 	}
 
@@ -1588,6 +1697,50 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		globalHist.AppendBucketWithNDV(bucket.lower, bucket.upper, bucket.Count, bucket.Repeat, bucket.NDV)
 	}
 	return globalHist, nil
+}
+
+// sortBucketsByUpperBound the bucket by upper bound first, then by lower bound.
+// If bkt[i].upper = bkt[i+1].upper, then we'll get bkt[i].lower < bkt[i+1].lower.
+func sortBucketsByUpperBound(ctx types.Context, buckets []*bucket4Merging) error {
+	var sortError error
+	slices.SortFunc(buckets, func(i, j *bucket4Merging) int {
+		res, err := i.upper.Compare(ctx, j.upper, collate.GetBinaryCollator())
+		if err != nil {
+			sortError = err
+		}
+		if res != 0 {
+			return res
+		}
+		res, err = i.lower.Compare(ctx, j.lower, collate.GetBinaryCollator())
+		if err != nil {
+			sortError = err
+		}
+		return res
+	})
+	return sortError
+}
+
+// checkBucket4MergingIsSorted checks whether the buckets are sorted by upper bound first, then by lower bound.
+// using intest.AssertFunc to avoid the check in production.
+func checkBucket4MergingIsSorted(ctx types.Context, buckets []*bucket4Merging) {
+	intest.AssertFunc(func() bool {
+		var sortErr error
+		isOrdered := slices.IsSortedFunc(buckets, func(i, j *bucket4Merging) int {
+			res, err := i.upper.Compare(ctx, j.upper, collate.GetBinaryCollator())
+			if err != nil {
+				sortErr = err
+			}
+			if res != 0 {
+				return res
+			}
+			res, err = i.lower.Compare(ctx, j.lower, collate.GetBinaryCollator())
+			if err != nil {
+				sortErr = err
+			}
+			return res
+		})
+		return isOrdered && sortErr == nil
+	}, "the buckets are not sorted actually")
 }
 
 const (

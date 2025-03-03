@@ -16,6 +16,7 @@ package isolation
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/internal"
@@ -34,11 +36,14 @@ import (
 	"github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/table/temptable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
+	"go.uber.org/zap"
 )
 
 // baseTxnContextProvider is a base class for the transaction context providers that implement `TxnContextProvider` in different isolation.
@@ -128,7 +133,7 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	sessVars.TxnCtxMu.Lock()
 	sessVars.TxnCtx = txnCtx
 	sessVars.TxnCtxMu.Unlock()
-	if variable.EnableMDL.Load() {
+	if vardef.EnableMDL.Load() {
 		sessVars.TxnCtx.EnableMDL = true
 	}
 
@@ -268,6 +273,12 @@ func (p *baseTxnContextProvider) getTxnStartTS() (uint64, error) {
 	return txn.StartTS(), nil
 }
 
+// TODO: replace usePresetStartTS with a new method StartTSFromPD to make it clear that
+// the timestamp is not allocated by TSO.
+func (p *baseTxnContextProvider) usePresetStartTS() bool {
+	return p.constStartTS != 0 || p.sctx.GetSessionVars().SnapshotTS != 0
+}
+
 // ActivateTxn activates the transaction and set the relevant context variables.
 func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 	if p.txn != nil {
@@ -302,6 +313,17 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 
 	if p.enterNewTxnType == sessiontxn.EnterNewTxnBeforeStmt && !sessVars.IsAutocommit() && sessVars.SnapshotTS == 0 {
 		sessVars.SetInTxn(true)
+	}
+
+	// verify start_ts is later than any previous commit_ts in the session
+	if !p.usePresetStartTS() && sessVars.LastCommitTS > 0 && sessVars.LastCommitTS > sessVars.TxnCtx.StartTS {
+		logutil.BgLogger().Error("check session lastCommitTS failed",
+			zap.Uint64("lastCommitTS", sessVars.LastCommitTS),
+			zap.Uint64("startTS", sessVars.TxnCtx.StartTS),
+			zap.String("sql", redact.String(sessVars.EnableRedactLog, sessVars.StmtCtx.OriginalSQL)),
+		)
+		return nil, fmt.Errorf("txn start_ts:%d is before session last_commit_ts:%d",
+			sessVars.TxnCtx.StartTS, sessVars.LastCommitTS)
 	}
 
 	txn.SetVars(sessVars.KVVars)
@@ -613,6 +635,21 @@ func (p *baseTxnContextProvider) SetOptionsBeforeCommit(
 	if commitTSChecker != nil {
 		txn.SetOption(kv.CommitTSUpperBoundCheck, commitTSChecker)
 	}
+
+	// Optimization:
+	// If an auto-commit optimistic transaction can retry in pessimistic mode,
+	// do not resolve locks when prewrite.
+	// 1. safety: The locks can be resolved later when it retries in pessimistic mode.
+	// 2. benefit: In high-contention scenarios, pessimistic transactions perform better.
+	prewriteEncounterLockPolicy := transaction.TryResolvePolicy
+	if sessVars.TxnCtx.CouldRetry &&
+		sessVars.IsAutocommit() &&
+		!sessVars.InTxn() &&
+		!sessVars.TxnCtx.IsPessimistic {
+		prewriteEncounterLockPolicy = transaction.NoResolvePolicy
+	}
+	txn.SetOption(kv.PrewriteEncounterLockPolicy, prewriteEncounterLockPolicy)
+
 	return nil
 }
 

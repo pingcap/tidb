@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 )
 
@@ -65,7 +65,7 @@ func newFileCheckpointsDB(t *testing.T, addIndexBySQL bool) *checkpoints.FileChe
 				"t3": {
 					Name: "t3",
 					Desired: &model.TableInfo{
-						Name: pmodel.NewCIStr("t3"),
+						Name: ast.NewCIStr("t3"),
 					},
 				},
 			},
@@ -223,7 +223,7 @@ func TestGet(t *testing.T) {
 			},
 		},
 		TableInfo: &model.TableInfo{
-			Name: pmodel.NewCIStr("t3"),
+			Name: ast.NewCIStr("t3"),
 		},
 	}
 

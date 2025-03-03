@@ -53,3 +53,84 @@ func TestNeedReportExecutionSummary(t *testing.T) {
 	limitTIDB2.SetChildren(join)
 	require.True(t, needReportExecutionSummary(limitTIDB2, 10, false))
 }
+
+func mockTaskZoneInfoHelper(isRoot bool, taskZone string, tidbZone string, storeZoneMpp map[string]string, exchangeZoneInfo map[string][]string) taskZoneInfoHelper {
+	helper := taskZoneInfoHelper{
+		tidbZone:           tidbZone,
+		currentTaskZone:    taskZone,
+		isRoot:             isRoot,
+		allTiFlashZoneInfo: storeZoneMpp,
+		exchangeZoneInfo:   exchangeZoneInfo,
+	}
+	return helper
+}
+
+func TestZoneHelperTryQuickFill(t *testing.T) {
+	slots := 3
+	allTiflashZoneInfo := make(map[string]string, slots)
+	exchangeZoneInfo := make(map[string][]string, 2)
+	helper := mockTaskZoneInfoHelper(false, "", "east", allTiflashZoneInfo, exchangeZoneInfo)
+	exchangeSenderID := "ExchangeSender_1"
+	sender := &tipb.Executor{
+		ExecutorId: &exchangeSenderID,
+		Tp:         tipb.ExecType_TypeExchangeSender,
+		ExchangeSender: &tipb.ExchangeSender{
+			UpstreamCteTaskMeta: nil,
+		},
+	}
+	sameZoneFlags := make([]bool, 0, slots)
+	quickFill := false
+	// When task zone is empty, then the function returns true, and all sameZoneFlags are true
+	quickFill, sameZoneFlags = helper.tryQuickFillWithUncertainZones(sender, slots, sameZoneFlags)
+	require.True(t, quickFill)
+	require.Equal(t, slots, len(sameZoneFlags))
+	for i := 0; i < slots; i++ {
+		require.True(t, sameZoneFlags[i])
+	}
+
+	// When task is root task, and executor is exchangeSender then the function compares tidbZone with currentTaskZone
+	helper.isRoot = true
+	helper.currentTaskZone = "west"
+	slots = 1
+	sameZoneFlags = make([]bool, 0, slots)
+	quickFill, sameZoneFlags = helper.tryQuickFillWithUncertainZones(sender, slots, sameZoneFlags)
+	require.True(t, quickFill)
+	require.Equal(t, slots, len(sameZoneFlags))
+	for i := 0; i < slots; i++ {
+		require.False(t, sameZoneFlags[i])
+	}
+
+	helper.currentTaskZone = "east"
+	sameZoneFlags = make([]bool, 0, slots)
+	quickFill, sameZoneFlags = helper.tryQuickFillWithUncertainZones(sender, slots, sameZoneFlags)
+	require.True(t, quickFill)
+	require.Equal(t, slots, len(sameZoneFlags))
+	for i := 0; i < slots; i++ {
+		require.True(t, sameZoneFlags[i])
+	}
+
+	// When task is neither root exchange sender nor current task zone is empty, return false, and empty sameZoneFlags
+	helper.isRoot = false
+	helper.currentTaskZone = "west"
+	slots = 3
+	sameZoneFlags = make([]bool, 0, slots)
+	quickFill, sameZoneFlags = helper.tryQuickFillWithUncertainZones(sender, slots, sameZoneFlags)
+	require.False(t, quickFill)
+	require.Equal(t, 0, len(sameZoneFlags))
+
+	helper.isRoot = true
+	helper.currentTaskZone = "west"
+	slots = 3
+	sameZoneFlags = make([]bool, 0, slots)
+	exchangeReceiverID := "ExchangeReceiver_2"
+	receiver := &tipb.Executor{
+		ExecutorId: &exchangeReceiverID,
+		Tp:         tipb.ExecType_TypeExchangeReceiver,
+		ExchangeReceiver: &tipb.ExchangeReceiver{
+			OriginalCtePrdocuerTaskMeta: nil,
+		},
+	}
+	quickFill, sameZoneFlags = helper.tryQuickFillWithUncertainZones(receiver, slots, sameZoneFlags)
+	require.False(t, quickFill)
+	require.Equal(t, 0, len(sameZoneFlags))
+}

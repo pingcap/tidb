@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -93,7 +93,7 @@ func TestLengthAndOctetLength(t *testing.T) {
 	}
 	for _, lengthMethod := range lengthMethods {
 		for _, c := range tbl {
-			err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs)
+			err := ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CharacterSetConnection, c.chs)
 			require.NoError(t, err)
 			f, err := newFunctionForTest(ctx, lengthMethod, primitiveValsToConstants(ctx, []any{c.input})...)
 			require.NoError(t, err)
@@ -154,7 +154,7 @@ func TestASCII(t *testing.T) {
 	}
 
 	for _, c := range tbl {
-		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs)
+		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CharacterSetConnection, c.chs)
 		require.NoError(t, err)
 		f, err := newFunctionForTest(ctx, ast.ASCII, primitiveValsToConstants(ctx, []any{c.input})...)
 		require.NoError(t, err)
@@ -615,7 +615,7 @@ func TestLower(t *testing.T) {
 		{"àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ", "", "àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅺⅻ"},
 	}
 	for _, c := range tbl {
-		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs)
+		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CharacterSetConnection, c.chs)
 		require.NoError(t, err)
 		f, err := newFunctionForTest(ctx, ast.Lower, primitiveValsToConstants(ctx, []any{c.input})...)
 		require.NoError(t, err)
@@ -674,7 +674,7 @@ func TestUpper(t *testing.T) {
 		{"àáèéêìíòóùúüāēěīńňōūǎǐǒǔǖǘǚǜⅪⅫ", "", "ÀÁÈÉÊÌÍÒÓÙÚÜĀĒĚĪŃŇŌŪǍǏǑǓǕǗǙǛⅪⅫ"},
 	}
 	for _, c := range tbl {
-		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs)
+		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CharacterSetConnection, c.chs)
 		require.NoError(t, err)
 		f, err := newFunctionForTest(ctx, ast.Upper, primitiveValsToConstants(ctx, []any{c.input})...)
 		require.NoError(t, err)
@@ -1284,7 +1284,7 @@ func TestHexFunc(t *testing.T) {
 		{"一忒(๑•ㅂ•)و✧", "gbk", "", errno.ErrInvalidCharacterString},
 	}
 	for _, c := range strCases {
-		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs)
+		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CharacterSetConnection, c.chs)
 		require.NoError(t, err)
 		f, err := newFunctionForTest(ctx, ast.Hex, primitiveValsToConstants(ctx, []any{c.arg})...)
 		require.NoError(t, err)
@@ -1365,7 +1365,7 @@ func TestBitLength(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs)
+		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CharacterSetConnection, c.chs)
 		require.NoError(t, err)
 		f, err := newFunctionForTest(ctx, ast.BitLength, primitiveValsToConstants(ctx, []any{c.args})...)
 		require.NoError(t, err)
@@ -2215,7 +2215,7 @@ func TestOrd(t *testing.T) {
 		{"数据库", 51965, "gbk", false, false},
 	}
 	for _, c := range cases {
-		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs)
+		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CharacterSetConnection, c.chs)
 		require.NoError(t, err)
 		f, err := newFunctionForTest(ctx, ast.Ord, primitiveValsToConstants(ctx, []any{c.args})...)
 		require.NoError(t, err)
@@ -2432,7 +2432,7 @@ func TestToBase64(t *testing.T) {
 		{"一二三!", "", "5LiA5LqM5LiJIQ=="},
 	}
 	for _, c := range tbl {
-		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.chs)
+		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CharacterSetConnection, c.chs)
 		require.NoError(t, err)
 		f, err := newFunctionForTest(ctx, ast.ToBase64, primitiveValsToConstants(ctx, []any{c.input})...)
 		require.NoError(t, err)

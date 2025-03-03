@@ -350,7 +350,6 @@ func (b *builtinAddStringAndDurationSig) vecEvalString(ctx EvalContext, input *c
 				return err
 			}
 			if isNull {
-				tc.AppendWarning(err)
 				result.AppendNull() // fixed: false
 				continue
 			}
@@ -448,7 +447,6 @@ func (b *builtinAddStringAndStringSig) vecEvalString(ctx EvalContext, input *chu
 				return err
 			}
 			if isNull {
-				tc.AppendWarning(err)
 				result.AppendNull() // fixed: false
 				continue
 			}
@@ -991,7 +989,6 @@ func (b *builtinSubStringAndDurationSig) vecEvalString(ctx EvalContext, input *c
 				return err
 			}
 			if isNull {
-				tc.AppendWarning(err)
 				result.AppendNull() // fixed: false
 				continue
 			}
@@ -1089,7 +1086,6 @@ func (b *builtinSubStringAndStringSig) vecEvalString(ctx EvalContext, input *chu
 				return err
 			}
 			if isNull {
-				tc.AppendWarning(err)
 				result.AppendNull() // fixed: false
 				continue
 			}

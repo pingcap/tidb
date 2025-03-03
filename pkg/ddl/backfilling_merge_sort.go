@@ -31,7 +31,7 @@ import (
 )
 
 type mergeSortExecutor struct {
-	taskexecutor.EmptyStepExecutor
+	taskexecutor.BaseStepExecutor
 	jobID         int64
 	idxNum        int
 	ptbl          table.PhysicalTable
@@ -86,10 +86,10 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 
 	prefix := path.Join(strconv.Itoa(int(m.jobID)), strconv.Itoa(int(subtask.ID)))
 	res := m.GetResource()
-	memSizePerCon := res.Mem.Capacity() / int64(subtask.Concurrency)
+	memSizePerCon := res.Mem.Capacity() / res.CPU.Capacity()
 	partSize := max(external.MinUploadPartSize, memSizePerCon*int64(external.MaxMergingFilesPerThread)/10000)
 
-	return external.MergeOverlappingFiles(
+	err = external.MergeOverlappingFiles(
 		ctx,
 		sm.DataFiles,
 		store,
@@ -97,9 +97,13 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		prefix,
 		external.DefaultBlockSize,
 		onClose,
-		subtask.Concurrency,
+		int(res.CPU.Capacity()),
 		true,
 	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return m.onFinished(ctx, subtask)
 }
 
 func (*mergeSortExecutor) Cleanup(ctx context.Context) error {
@@ -107,7 +111,7 @@ func (*mergeSortExecutor) Cleanup(ctx context.Context) error {
 	return nil
 }
 
-func (m *mergeSortExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
+func (m *mergeSortExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("merge sort finish subtask")
 	sm, err := decodeBackfillSubTaskMeta(subtask.Meta)
 	if err != nil {

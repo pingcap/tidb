@@ -220,7 +220,7 @@ insert into t1 values(1, 100), (2, 100), (3, 100), (4, 100), (5, 100);
 insert into t2 select a*100, b*100 from t1;
 explain format = 'brief' select /*+ TIDB_SMJ(t2) */ * from t1 left outer join t2 on t1.a=t2.a and t1.a!=3 order by t1.a;
 id	estRows	task	access object	operator info
-MergeJoin	10000.00	root		left outer join, left key:executor__jointest__join.t1.a, right key:executor__jointest__join.t2.a, left cond:ne(executor__jointest__join.t1.a, 3)
+MergeJoin	10000.00	root		left outer join, left side:TableReader, left key:executor__jointest__join.t1.a, right key:executor__jointest__join.t2.a, left cond:ne(executor__jointest__join.t1.a, 3)
 ├─TableReader(Build)	6666.67	root		data:TableRangeScan
 │ └─TableRangeScan	6666.67	cop[tikv]	table:t2	range:[-inf,3), (3,+inf], keep order:true, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -733,7 +733,7 @@ a	b	c
 explain format = 'brief' select * from t1 natural left join t2 order by a;
 id	estRows	task	access object	operator info
 Sort	12487.50	root		executor__jointest__join.t1.a
-└─HashJoin	12487.50	root		left outer join, equal:[eq(executor__jointest__join.t1.a, executor__jointest__join.t2.a)]
+└─HashJoin	12487.50	root		left outer join, left side:TableReader, equal:[eq(executor__jointest__join.t1.a, executor__jointest__join.t2.a)]
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(executor__jointest__join.t2.a))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -748,7 +748,7 @@ explain format = 'brief' select * from t1 natural right join t2 order by a;
 id	estRows	task	access object	operator info
 Sort	12487.50	root		executor__jointest__join.t2.a
 └─Projection	12487.50	root		executor__jointest__join.t2.a, executor__jointest__join.t2.c, executor__jointest__join.t1.b
-  └─HashJoin	12487.50	root		right outer join, equal:[eq(executor__jointest__join.t1.a, executor__jointest__join.t2.a)]
+  └─HashJoin	12487.50	root		right outer join, left side:TableReader, equal:[eq(executor__jointest__join.t1.a, executor__jointest__join.t2.a)]
     ├─TableReader(Build)	9990.00	root		data:Selection
     │ └─Selection	9990.00	cop[tikv]		not(isnull(executor__jointest__join.t1.a))
     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -763,7 +763,7 @@ explain format = 'brief' SELECT * FROM t1 NATURAL LEFT JOIN t2 WHERE not(t1.a <=
 id	estRows	task	access object	operator info
 Projection	9990.00	root		executor__jointest__join.t1.a, executor__jointest__join.t1.b, executor__jointest__join.t2.c
 └─Selection	9990.00	root		not(nulleq(executor__jointest__join.t1.a, executor__jointest__join.t2.a))
-  └─HashJoin	12487.50	root		left outer join, equal:[eq(executor__jointest__join.t1.a, executor__jointest__join.t2.a)]
+  └─HashJoin	12487.50	root		left outer join, left side:TableReader, equal:[eq(executor__jointest__join.t1.a, executor__jointest__join.t2.a)]
     ├─TableReader(Build)	9990.00	root		data:Selection
     │ └─Selection	9990.00	cop[tikv]		not(isnull(executor__jointest__join.t2.a))
     │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo

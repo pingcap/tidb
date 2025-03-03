@@ -88,7 +88,7 @@ func (pc *instancePlanCache) Get(key string, paramTypes any) (value any, ok bool
 
 func (pc *instancePlanCache) getPlanFromList(headNode *instancePCNode, paramTypes any) (any, bool) {
 	for node := headNode.next.Load(); node != nil; node = node.next.Load() {
-		if checkTypesCompatibility4PC(node.value.paramTypes, paramTypes) { // v.Plan is read-only, no need to lock
+		if checkTypesCompatibility4PC(node.value.ParamTypes, paramTypes) { // v.Plan is read-only, no need to lock
 			if !pc.inEvict.Load() {
 				node.lastUsed.Store(time.Now()) // atomically update the lastUsed field
 			}
@@ -127,6 +127,17 @@ func (pc *instancePlanCache) Put(key string, value, paramTypes any) (succ bool) 
 		pc.totPlan.Add(1)
 		succ = true
 	}
+	return
+}
+
+// All returns all cached values.
+// All returned values are read-only, don't modify them.
+func (pc *instancePlanCache) All() (values []any) {
+	values = make([]any, 0, pc.Size())
+	pc.foreach(func(_, this *instancePCNode) bool {
+		values = append(values, this.value)
+		return false
+	})
 	return
 }
 

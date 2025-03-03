@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -83,7 +83,7 @@ func TestCopClientSend(t *testing.T) {
 
 	// Get table ID for split.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("copclient"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("copclient"))
 	require.NoError(t, err)
 	tblID := tbl.Meta().ID
 
@@ -161,7 +161,7 @@ func TestInconsistentIndex(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx_a(a))")
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	idx := tbl.Meta().FindIndexByName("idx_a")
 	idxOp := tables.NewIndex(tbl.Meta().ID, tbl.Meta(), idx)

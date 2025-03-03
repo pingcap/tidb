@@ -15,7 +15,7 @@ go_test(
         "//pkg/config",
         "//pkg/kv",
         "//pkg/session",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/testkit",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",

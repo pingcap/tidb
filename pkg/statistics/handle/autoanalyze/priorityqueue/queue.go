@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
@@ -203,7 +204,7 @@ func (pq *AnalysisPriorityQueue) rebuildWithoutLock() error {
 func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs() error {
 	return statsutil.CallWithSCtx(pq.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		parameters := exec.GetAutoAnalyzeParameters(sctx)
-		autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
+		autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[vardef.TiDBAutoAnalyzeRatio])
 		pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 		// Query locked tables once to minimize overhead.
@@ -394,7 +395,7 @@ func (pq *AnalysisPriorityQueue) processTableStats(
 		return nil
 	}
 
-	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
+	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[vardef.TiDBAutoAnalyzeRatio])
 	// Get current timestamp from the session context.
 	currentTs, err := statsutil.GetStartTS(sctx)
 	if err != nil {
@@ -644,7 +645,8 @@ func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 					zap.Int64("tableID", job.GetTableID()),
 					zap.String("job", job.String()),
 				)
-				// TODO: Remove this after handling the DDL event.
+				// Delete the job from the queue since its table is missing. This is a safeguard -
+				// DDL events should have already cleaned up jobs for dropped tables.
 				err := pq.syncFields.inner.delete(job)
 				if err != nil {
 					statslogutil.StatsLogger().Error("Failed to delete job from priority queue",
@@ -652,6 +654,7 @@ func (pq *AnalysisPriorityQueue) RefreshLastAnalysisDuration() {
 						zap.String("job", job.String()),
 					)
 				}
+				continue
 			}
 			indicators.LastAnalysisDuration = jobFactory.GetTableLastAnalyzeDuration(tableStats)
 			job.SetIndicators(indicators)
@@ -752,11 +755,24 @@ func (pq *AnalysisPriorityQueue) Pop() (AnalysisJob, error) {
 	job.RegisterSuccessHook(func(j AnalysisJob) {
 		pq.syncFields.mu.Lock()
 		defer pq.syncFields.mu.Unlock()
+		// During owner switch, the priority queue is closed and its fields are reset to nil.
+		// We allow running jobs to complete normally rather than stopping them, so this nil
+		// check is expected when the job finishes after the switch.
+		if pq.syncFields.runningJobs == nil {
+			return
+		}
 		delete(pq.syncFields.runningJobs, j.GetTableID())
 	})
 	job.RegisterFailureHook(func(j AnalysisJob, needRetry bool) {
 		pq.syncFields.mu.Lock()
 		defer pq.syncFields.mu.Unlock()
+		// During owner switch, the priority queue is closed and its fields are reset to nil.
+		// We allow running jobs to complete normally rather than stopping them, so this nil check
+		// is expected when jobs finish after the switch. Failed jobs will be handled by the next
+		// initialization, so we can safely ignore them here.
+		if pq.syncFields.runningJobs == nil || pq.syncFields.mustRetryJobs == nil {
+			return
+		}
 		// Mark the job as failed and remove it from the running jobs.
 		delete(pq.syncFields.runningJobs, j.GetTableID())
 		if needRetry {

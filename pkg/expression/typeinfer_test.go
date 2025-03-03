@@ -26,7 +26,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -112,8 +112,8 @@ func TestInferType(t *testing.T) {
 	tests = append(tests, s.createTestCase4GetVarFunc()...)
 
 	sctx := testKit.Session()
-	require.NoError(t, sctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, mysql.DefaultCharset))
-	require.NoError(t, sctx.GetSessionVars().SetSystemVar(variable.CollationConnection, mysql.DefaultCollationName))
+	require.NoError(t, sctx.GetSessionVars().SetSystemVar(vardef.CharacterSetConnection, mysql.DefaultCharset))
+	require.NoError(t, sctx.GetSessionVars().SetSystemVar(vardef.CollationConnection, mysql.DefaultCollationName))
 
 	ctx := context.Background()
 	par := parser.New()

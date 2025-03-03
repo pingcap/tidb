@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit/ddlhelper"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -187,7 +186,7 @@ func prepareBenchCtx(createTable string, partitionExpr string) *testCtx {
 	if err != nil {
 		return nil
 	}
-	columns, names, err := expression.ColumnInfos2ColumnsAndNames(sctx, model.NewCIStr("t"), tblInfo.Name, tblInfo.Cols(), tblInfo)
+	columns, names, err := expression.ColumnInfos2ColumnsAndNames(sctx, ast.NewCIStr("t"), tblInfo.Name, tblInfo.Cols(), tblInfo)
 	if err != nil {
 		return nil
 	}
@@ -215,7 +214,7 @@ func prepareTestCtx(t *testing.T, createTable string, partitionExpr string) *tes
 	sctx := mock.NewContext()
 	tblInfo, err := ddlhelper.BuildTableInfoFromASTForTest(stmt.(*ast.CreateTableStmt))
 	require.NoError(t, err)
-	columns, names, err := expression.ColumnInfos2ColumnsAndNames(sctx, model.NewCIStr("t"), tblInfo.Name, tblInfo.Cols(), tblInfo)
+	columns, names, err := expression.ColumnInfos2ColumnsAndNames(sctx, ast.NewCIStr("t"), tblInfo.Name, tblInfo.Cols(), tblInfo)
 	require.NoError(t, err)
 	schema := expression.NewSchema(columns...)
 

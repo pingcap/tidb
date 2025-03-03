@@ -1,1 +1,1 @@
-create table `defaultlist` (a int, b varchar(16), c int, KEY key_b (`b`), unique index key_c(`c`) global) partition by list(a) (partition p1 values in (1,4,8),partition p2 values in (32,default), partition p3 values in (262144,65536));
+create table `defaultlist` (a int, b varchar(16), c int, KEY key_b (`b`), unique index key_c(`c`) global, index key_a(`a`) global) partition by list(a) (partition p1 values in (1,4,8),partition p2 values in (32,default), partition p3 values in (262144,65536));

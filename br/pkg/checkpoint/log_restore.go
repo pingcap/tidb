@@ -17,15 +17,13 @@ package checkpoint
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
@@ -39,20 +37,11 @@ type LogRestoreValueType struct {
 	Foff int
 }
 
-func (l LogRestoreValueType) IdentKey() []byte {
-	return []byte(fmt.Sprint(l.Goff, '.', l.Foff, '.', l.TableID))
-}
-
 type LogRestoreValueMarshaled struct {
 	// group index in the metadata
 	Goff int `json:"goff"`
 	// downstream table id -> file indexes in the group
 	Foffs map[int64][]int `json:"foffs"`
-}
-
-func (l LogRestoreValueMarshaled) IdentKey() []byte {
-	log.Fatal("unimplement!")
-	return nil
 }
 
 // valueMarshalerForLogRestore convert the checkpoint data‘s format to an smaller space-used format
@@ -202,17 +191,17 @@ func ExistsLogRestoreCheckpointMetadata(
 	dom *domain.Domain,
 ) bool {
 	return dom.InfoSchema().
-		TableExists(pmodel.NewCIStr(LogRestoreCheckpointDatabaseName), pmodel.NewCIStr(checkpointMetaTableName))
+		TableExists(ast.NewCIStr(LogRestoreCheckpointDatabaseName), ast.NewCIStr(checkpointMetaTableName))
 }
 
-// A progress type for snapshot + log restore.
+// RestoreProgress is a progress type for snapshot + log restore.
 //
-// Before the id-maps is persist into external storage, the snapshot restore and
-// id-maps constructure can be repeated. So if the progress is in `InSnapshotRestore`,
+// Before the id-maps is persisted into external storage, the snapshot restore and
+// id-maps building can be retried. So if the progress is in `InSnapshotRestore`,
 // it can retry from snapshot restore.
 //
-// After the id-maps is persist into external storage, there are some meta-kvs has
-// been restored into the cluster, such as `rename ddl`. Where would be a situation:
+// After the id-maps is persisted into external storage, there are some meta-kvs has
+// been restored into the cluster, such as `rename ddl`. A situation could be:
 //
 // the first execution:
 //
@@ -220,7 +209,7 @@ func ExistsLogRestoreCheckpointMetadata(
 //	     table A (id 80)       -------------->        table B (id 80)
 //	  ( snapshot restore )                            ( log restore )
 //
-// the second execution if don't skip snasphot restore:
+// the second execution if don't skip snapshot restore:
 //
 //	table A is created again in snapshot restore, because there is no table named A
 //	     table A (id 81)       -------------->   [not in id-maps, so ignored]
@@ -232,8 +221,8 @@ type RestoreProgress int
 
 const (
 	InSnapshotRestore RestoreProgress = iota
-	// Only when the id-maps is persist, status turns into it.
-	InLogRestoreAndIdMapPersist
+	// Only when the id-maps is persisted, status turns into it.
+	InLogRestoreAndIdMapPersisted
 )
 
 type CheckpointProgress struct {
@@ -262,11 +251,11 @@ func ExistsCheckpointProgress(
 	dom *domain.Domain,
 ) bool {
 	return dom.InfoSchema().
-		TableExists(pmodel.NewCIStr(LogRestoreCheckpointDatabaseName), pmodel.NewCIStr(checkpointProgressTableName))
+		TableExists(ast.NewCIStr(LogRestoreCheckpointDatabaseName), ast.NewCIStr(checkpointProgressTableName))
 }
 
-// CheckpointTaskInfo is unique information within the same cluster id. It represents the last
-// restore task executed for this cluster.
+// CheckpointTaskInfoForLogRestore is tied to a specific cluster.
+// It represents the last restore task executed in this cluster.
 type CheckpointTaskInfoForLogRestore struct {
 	Metadata            *CheckpointMetadataForLogRestore
 	HasSnapshotMetadata bool
@@ -299,7 +288,7 @@ func TryToGetCheckpointTaskInfo(
 			return nil, errors.Trace(err)
 		}
 	}
-	hasSnapshotMetadata := ExistsSnapshotRestoreCheckpoint(ctx, dom)
+	hasSnapshotMetadata := ExistsSstRestoreCheckpoint(ctx, dom, SnapshotRestoreCheckpointDatabaseName)
 
 	return &CheckpointTaskInfoForLogRestore{
 		Metadata:            metadata,
@@ -309,12 +298,15 @@ func TryToGetCheckpointTaskInfo(
 }
 
 type CheckpointIngestIndexRepairSQL struct {
-	IndexID    int64        `json:"index-id"`
-	SchemaName pmodel.CIStr `json:"schema-name"`
-	TableName  pmodel.CIStr `json:"table-name"`
-	IndexName  string       `json:"index-name"`
-	AddSQL     string       `json:"add-sql"`
-	AddArgs    []any        `json:"add-args"`
+	IndexID    int64     `json:"index-id"`
+	SchemaName ast.CIStr `json:"schema-name"`
+	TableName  ast.CIStr `json:"table-name"`
+	IndexName  string    `json:"index-name"`
+	AddSQL     string    `json:"add-sql"`
+	AddArgs    []any     `json:"add-args"`
+
+	OldIndexIDFound bool `json:"-"`
+	IndexRepaired   bool `json:"-"`
 }
 
 type CheckpointIngestIndexRepairSQLs struct {
@@ -332,7 +324,7 @@ func LoadCheckpointIngestIndexRepairSQLs(
 
 func ExistsCheckpointIngestIndexRepairSQLs(ctx context.Context, dom *domain.Domain) bool {
 	return dom.InfoSchema().
-		TableExists(pmodel.NewCIStr(LogRestoreCheckpointDatabaseName), pmodel.NewCIStr(checkpointIngestTableName))
+		TableExists(ast.NewCIStr(LogRestoreCheckpointDatabaseName), ast.NewCIStr(checkpointIngestTableName))
 }
 
 func SaveCheckpointIngestIndexRepairSQLs(

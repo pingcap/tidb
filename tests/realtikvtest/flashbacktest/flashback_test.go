@@ -556,7 +556,7 @@ func TestFlashbackInProcessErrorMsg(t *testing.T) {
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
 			fmt.Sprintf("return(%v)", injectSafeTS)))
 
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 			if job.Type == model.ActionFlashbackCluster && job.SchemaState == model.StateWriteReorganization {
 				txn, err := store.Begin()
 				assert.NoError(t, err)
@@ -570,7 +570,7 @@ func TestFlashbackInProcessErrorMsg(t *testing.T) {
 			}
 		})
 		tk.Exec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
-		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+		testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS"))
 	}

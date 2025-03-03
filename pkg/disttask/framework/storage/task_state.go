@@ -16,7 +16,10 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -28,8 +31,9 @@ func (mgr *TaskManager) CancelTask(ctx context.Context, taskID int64) error {
 		`update mysql.tidb_global_task
 		 set state = %?,
 			 state_update_time = CURRENT_TIMESTAMP()
-		 where id = %? and state in (%?, %?)`,
+		 where id = %? and state in (%?, %?, %?)`,
 		proto.TaskStateCancelling, taskID, proto.TaskStatePending, proto.TaskStateRunning,
+		proto.TaskStateAwaitingResolution,
 	)
 	return err
 }
@@ -40,8 +44,10 @@ func (*TaskManager) CancelTaskByKeySession(ctx context.Context, se sessionctx.Co
 		`update mysql.tidb_global_task
 		 set state = %?,
 			 state_update_time = CURRENT_TIMESTAMP()
-		 where task_key = %? and state in (%?, %?)`,
-		proto.TaskStateCancelling, taskKey, proto.TaskStatePending, proto.TaskStateRunning)
+		 where task_key = %? and state in (%?, %?, %?)`,
+		proto.TaskStateCancelling, taskKey, proto.TaskStatePending, proto.TaskStateRunning,
+		proto.TaskStateAwaitingResolution,
+	)
 	return err
 }
 
@@ -61,15 +67,24 @@ func (mgr *TaskManager) FailTask(ctx context.Context, taskID int64, currentState
 
 // RevertTask implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) RevertTask(ctx context.Context, taskID int64, taskState proto.TaskState, taskErr error) error {
+	return mgr.transitTaskStateOnErr(ctx, taskID, taskState, proto.TaskStateReverting, taskErr)
+}
+
+func (mgr *TaskManager) transitTaskStateOnErr(ctx context.Context, taskID int64, currState, targetState proto.TaskState, taskErr error) error {
 	_, err := mgr.ExecuteSQLWithNewSession(ctx, `
 		update mysql.tidb_global_task
 		set state = %?,
 			error = %?,
 			state_update_time = CURRENT_TIMESTAMP()
 		where id = %? and state = %?`,
-		proto.TaskStateReverting, serializeErr(taskErr), taskID, taskState,
+		targetState, serializeErr(taskErr), taskID, currState,
 	)
 	return err
+}
+
+// AwaitingResolveTask implements the scheduler.TaskManager interface.
+func (mgr *TaskManager) AwaitingResolveTask(ctx context.Context, taskID int64, taskState proto.TaskState, taskErr error) error {
+	return mgr.transitTaskStateOnErr(ctx, taskID, taskState, proto.TaskStateAwaitingResolution, taskErr)
 }
 
 // RevertedTask implements the scheduler.TaskManager interface.
@@ -157,6 +172,78 @@ func (mgr *TaskManager) ResumedTask(ctx context.Context, taskID int64) error {
 		proto.TaskStateRunning, taskID, proto.TaskStateResuming,
 	)
 	return err
+}
+
+// ModifyTaskByID modifies the task by the task ID.
+func (mgr *TaskManager) ModifyTaskByID(ctx context.Context, taskID int64, param *proto.ModifyParam) error {
+	if !param.PrevState.CanMoveToModifying() {
+		return ErrTaskStateNotAllow
+	}
+	bytes, err := json.Marshal(param)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		task, err2 := mgr.getTaskBaseByID(ctx, se.GetSQLExecutor(), taskID)
+		if err2 != nil {
+			return err2
+		}
+		if task.State != param.PrevState {
+			return ErrTaskChanged
+		}
+		failpoint.InjectCall("beforeMoveToModifying")
+		_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
+			update mysql.tidb_global_task
+			set state = %?, modify_params = %?, state_update_time = CURRENT_TIMESTAMP()
+			where id = %? and state = %?`,
+			proto.TaskStateModifying, json.RawMessage(bytes), taskID, param.PrevState,
+		)
+		if err != nil {
+			return err
+		}
+		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
+			// the txn is pessimistic, it's possible that another txn has
+			// changed the task state before this txn commits and there is no
+			// write-conflict.
+			return ErrTaskChanged
+		}
+		return nil
+	})
+}
+
+// ModifiedTask implements the scheduler.TaskManager interface.
+func (mgr *TaskManager) ModifiedTask(ctx context.Context, task *proto.Task) error {
+	prevState := task.ModifyParam.PrevState
+	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		failpoint.InjectCall("beforeModifiedTask")
+		_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
+			update mysql.tidb_global_task
+			set state = %?,
+			    concurrency = %?,
+				meta = %?,
+			    modify_params = null,
+				state_update_time = CURRENT_TIMESTAMP()
+			where id = %? and state = %?`,
+			prevState, task.Concurrency, task.Meta, task.ID, proto.TaskStateModifying,
+		)
+		if err != nil {
+			return err
+		}
+		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
+			// might be handled by other owner nodes, skip.
+			return nil
+		}
+		// subtask in final state are not changed.
+		// subtask might have different concurrency later, see TaskExecInfo, we
+		// need to handle it too, but ok for now.
+		_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
+			update mysql.tidb_background_subtask
+			set concurrency = %?, state_update_time = unix_timestamp()
+			where task_key = %? and state in (%?, %?, %?)`,
+			task.Concurrency, task.ID,
+			proto.SubtaskStatePending, proto.SubtaskStateRunning, proto.SubtaskStatePaused)
+		return err
+	})
 }
 
 // SucceedTask update task state from running to succeed.

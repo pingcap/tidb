@@ -19,9 +19,9 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/pattern"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 )

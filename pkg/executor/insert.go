@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -193,7 +194,16 @@ func (e *InsertValues) prefetchDataCache(ctx context.Context, txn kv.Transaction
 }
 
 // updateDupRow updates a duplicate row to a new row.
-func (e *InsertExec) updateDupRow(ctx context.Context, idxInBatch int, txn kv.Transaction, row toBeCheckedRow, handle kv.Handle, _ []*expression.Assignment, dupKeyCheck table.DupKeyCheckMode, autoColIdx int) error {
+func (e *InsertExec) updateDupRow(
+	ctx context.Context,
+	idxInBatch int,
+	txn kv.Transaction,
+	row toBeCheckedRow,
+	handle kv.Handle,
+	_ []*expression.Assignment,
+	dupKeyCheck table.DupKeyCheckMode,
+	autoColIdx int,
+) error {
 	oldRow, err := getOldRow(ctx, e.Ctx(), txn, row.t, handle, e.GenExprs)
 	if err != nil {
 		return err
@@ -430,8 +440,15 @@ func (e *InsertExec) initEvalBuffer4Dup() {
 }
 
 // doDupRowUpdate updates the duplicate row.
-func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRow []types.Datum, newRow []types.Datum,
-	extraCols []types.Datum, cols []*expression.Assignment, idxInBatch int, dupKeyMode table.DupKeyCheckMode, autoColIdx int) error {
+func (e *InsertExec) doDupRowUpdate(
+	ctx context.Context,
+	handle kv.Handle,
+	oldRow, newRow, extraCols []types.Datum,
+	assigns []*expression.Assignment,
+	idxInBatch int,
+	dupKeyMode table.DupKeyCheckMode,
+	autoColIdx int,
+) error {
 	assignFlag := make([]bool, len(e.Table.WritableCols()))
 	// See http://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 	e.curInsertVals.SetDatums(newRow...)
@@ -445,53 +462,77 @@ func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRo
 	e.row4Update = append(e.row4Update, extraCols...)
 	e.row4Update = append(e.row4Update, newRow...)
 
-	// Update old row when the key is duplicated.
-	e.evalBuffer4Dup.SetDatums(e.row4Update...)
-	sctx := e.Ctx()
-	evalCtx := sctx.GetExprCtx().GetEvalCtx()
-	sc := sctx.GetSessionVars().StmtCtx
-	warnCnt := int(sc.WarningCount())
-	for _, col := range cols {
-		if col.LazyErr != nil {
-			return col.LazyErr
+	// Only evaluate non-generated columns here,
+	// other fields will be evaluated in updateRecord.
+	var generated, nonGenerated []*expression.Assignment
+	cols := e.Table.Cols()
+	for _, assign := range assigns {
+		if cols[assign.Col.Index].IsGenerated() {
+			generated = append(generated, assign)
+		} else {
+			nonGenerated = append(nonGenerated, assign)
 		}
-		val, err1 := col.Expr.Eval(evalCtx, e.evalBuffer4Dup.ToRow())
-		if err1 != nil {
-			return err1
-		}
-		c := col.Col.ToInfo()
-		c.Name = col.ColName
-		e.row4Update[col.Col.Index], err1 = table.CastValue(sctx, val, c, false, false)
-		if err1 != nil {
-			return err1
-		}
+	}
+
+	warnCnt := int(e.Ctx().GetSessionVars().StmtCtx.WarningCount())
+	errorHandler := func(sctx sessionctx.Context, assign *expression.Assignment, val *types.Datum, err error) error {
+		c := assign.Col.ToInfo()
+		c.Name = assign.ColName
+		sc := sctx.GetSessionVars().StmtCtx
+
 		if newWarnings := sc.TruncateWarnings(warnCnt); len(newWarnings) > 0 {
 			for k := range newWarnings {
 				// Use `idxInBatch` here for simplicity, since the offset of the batch is unknown under the current context.
-				newWarnings[k].Err = completeInsertErr(c, &val, idxInBatch, newWarnings[k].Err)
+				newWarnings[k].Err = completeInsertErr(c, val, idxInBatch, newWarnings[k].Err)
 			}
 			sc.AppendWarnings(newWarnings)
 			warnCnt += len(newWarnings)
 		}
-		e.evalBuffer4Dup.SetDatum(col.Col.Index, e.row4Update[col.Col.Index])
-		assignFlag[col.Col.Index] = true
+		return err
 	}
 
-	newData := e.row4Update[:len(oldRow)]
-	if e.ignoreErr {
-		ignored, err := checkFKIgnoreErr(ctx, e.Ctx(), e.fkChecks, newData)
+	// Update old row when the key is duplicated.
+	e.evalBuffer4Dup.SetDatums(e.row4Update...)
+	sctx := e.Ctx()
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
+	for _, assign := range nonGenerated {
+		var val types.Datum
+		if assign.LazyErr != nil {
+			return assign.LazyErr
+		}
+		val, err := assign.Expr.Eval(evalCtx, e.evalBuffer4Dup.ToRow())
 		if err != nil {
 			return err
 		}
 
-		// meets an error, skip this row.
-		if ignored {
-			return nil
+		c := assign.Col.ToInfo()
+		idx := assign.Col.Index
+		c.Name = assign.ColName
+		val, err = table.CastValue(sctx, val, c, false, false)
+		if err != nil {
+			return err
 		}
+
+		_ = errorHandler(sctx, assign, &val, nil)
+		e.evalBuffer4Dup.SetDatum(idx, val)
+		e.row4Update[assign.Col.Index] = val
+		assignFlag[assign.Col.Index] = true
 	}
-	_, err := updateRecord(ctx, e.Ctx(), handle, oldRow, newData, assignFlag, e.Table, true, e.memTracker, e.fkChecks, e.fkCascades, dupKeyMode, e.ignoreErr)
+
+	newData := e.row4Update[:len(oldRow)]
+	_, ignored, err := updateRecord(
+		ctx, e.Ctx(),
+		handle, oldRow, newData,
+		0, generated, e.evalBuffer4Dup, errorHandler,
+		assignFlag, e.Table,
+		true, e.memTracker, e.fkChecks, e.fkCascades, dupKeyMode, e.ignoreErr)
+
+	if ignored {
+		return nil
+	}
+
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 
 	if autoColIdx >= 0 {

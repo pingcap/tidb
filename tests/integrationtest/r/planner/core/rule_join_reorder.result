@@ -37,7 +37,7 @@ id	estRows	task	access object	operator info
 Sort	2.50	root		planner__core__rule_join_reorder.queries_identifier.id
 └─Projection	2.50	root		planner__core__rule_join_reorder.queries_identifier.id, planner__core__rule_join_reorder.queries_identifier.name
   └─Selection	2.50	root		or(and(eq(planner__core__rule_join_reorder.queries_channel.id, 5), eq(planner__core__rule_join_reorder.queries_program.id, 9)), eq(planner__core__rule_join_reorder.queries_program.id, 8))
-    └─IndexJoin	3.12	root		left outer join, inner:IndexReader, outer key:planner__core__rule_join_reorder.queries_identifier.id, inner key:planner__core__rule_join_reorder.queries_channel.identifier_id, equal cond:eq(planner__core__rule_join_reorder.queries_identifier.id, planner__core__rule_join_reorder.queries_channel.identifier_id)
+    └─IndexJoin	3.12	root		left outer join, inner:IndexReader, left side:IndexHashJoin, outer key:planner__core__rule_join_reorder.queries_identifier.id, inner key:planner__core__rule_join_reorder.queries_channel.identifier_id, equal cond:eq(planner__core__rule_join_reorder.queries_identifier.id, planner__core__rule_join_reorder.queries_channel.identifier_id)
       ├─IndexHashJoin(Build)	2.50	root		inner join, inner:TableReader, outer key:planner__core__rule_join_reorder.queries_program.identifier_id, inner key:planner__core__rule_join_reorder.queries_identifier.id, equal cond:eq(planner__core__rule_join_reorder.queries_program.identifier_id, planner__core__rule_join_reorder.queries_identifier.id)
       │ ├─Batch_Point_Get(Build)	2.00	root	table:queries_program	handle:[8 9], keep order:false, desc:false
       │ └─TableReader(Probe)	2.00	root		data:TableRangeScan
@@ -48,10 +48,10 @@ explain format='brief' select * from t left join t1 on t.a=t1.a inner join t2 on
 id	estRows	task	access object	operator info
 Projection	19.51	root		planner__core__rule_join_reorder.t.a, planner__core__rule_join_reorder.t1.a, planner__core__rule_join_reorder.t1.b, planner__core__rule_join_reorder.t2.a, planner__core__rule_join_reorder.t2.b, planner__core__rule_join_reorder.t2.c, planner__core__rule_join_reorder.t3.a, planner__core__rule_join_reorder.t3.b, planner__core__rule_join_reorder.t4.a, planner__core__rule_join_reorder.t4.b
 └─Selection	19.51	root		or(gt(planner__core__rule_join_reorder.t2.b, 100), or(gt(planner__core__rule_join_reorder.t.a, 10), lt(planner__core__rule_join_reorder.t1.b, 10))), or(gt(planner__core__rule_join_reorder.t2.b, 100), or(gt(planner__core__rule_join_reorder.t2.a, 10), lt(planner__core__rule_join_reorder.t1.b, 10)))
-  └─HashJoin	24.39	root		left outer join, equal:[eq(planner__core__rule_join_reorder.t2.a, planner__core__rule_join_reorder.t4.a)]
-    ├─HashJoin(Build)	19.51	root		left outer join, equal:[eq(planner__core__rule_join_reorder.t.a, planner__core__rule_join_reorder.t1.a)]
+  └─HashJoin	24.39	root		left outer join, left side:HashJoin, equal:[eq(planner__core__rule_join_reorder.t2.a, planner__core__rule_join_reorder.t4.a)]
+    ├─HashJoin(Build)	19.51	root		left outer join, left side:HashJoin, equal:[eq(planner__core__rule_join_reorder.t.a, planner__core__rule_join_reorder.t1.a)]
     │ ├─HashJoin(Build)	15.61	root		inner join, equal:[eq(planner__core__rule_join_reorder.t2.a, planner__core__rule_join_reorder.t.a)]
-    │ │ ├─HashJoin(Build)	12.49	root		left outer join, equal:[eq(planner__core__rule_join_reorder.t2.a, planner__core__rule_join_reorder.t3.a)]
+    │ │ ├─HashJoin(Build)	12.49	root		left outer join, left side:TableReader, equal:[eq(planner__core__rule_join_reorder.t2.a, planner__core__rule_join_reorder.t3.a)]
     │ │ │ ├─TableReader(Build)	9.99	root		data:Selection
     │ │ │ │ └─Selection	9.99	cop[tikv]		eq(planner__core__rule_join_reorder.t2.c, 100), not(isnull(planner__core__rule_join_reorder.t2.a))
     │ │ │ │   └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -112,7 +112,7 @@ AND tt.offer_pbu_id = o.offer_pbu_id
 AND tt.te_partition = o.partition_no;
 id	estRows	task	access object	operator info
 Projection	155781.72	root		planner__core__rule_join_reorder.t3.market_id, planner__core__rule_join_reorder.t3.offer_pbu_id
-└─HashJoin	155781.72	root		right outer join, equal:[eq(planner__core__rule_join_reorder.t3.market_id, planner__core__rule_join_reorder.t3.market_id) eq(planner__core__rule_join_reorder.t3.offer_pbu_id, planner__core__rule_join_reorder.t3.offer_pbu_id) eq(planner__core__rule_join_reorder.t3.te_partition, planner__core__rule_join_reorder.t1.part)]
+└─HashJoin	155781.72	root		right outer join, left side:IndexReader, equal:[eq(planner__core__rule_join_reorder.t3.market_id, planner__core__rule_join_reorder.t3.market_id) eq(planner__core__rule_join_reorder.t3.offer_pbu_id, planner__core__rule_join_reorder.t3.offer_pbu_id) eq(planner__core__rule_join_reorder.t3.te_partition, planner__core__rule_join_reorder.t1.part)]
   ├─IndexReader(Build)	9970.03	root		index:Selection
   │ └─Selection	9970.03	cop[tikv]		not(isnull(planner__core__rule_join_reorder.t3.market_id)), not(isnull(planner__core__rule_join_reorder.t3.te_partition))
   │   └─IndexFullScan	9990.00	cop[tikv]	table:tt, index:t_pbu_partition_id(offer_pbu_id, market_id, te_partition)	keep order:false, stats:pseudo

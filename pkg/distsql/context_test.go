@@ -17,7 +17,7 @@ package distsql
 import (
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 )
 
@@ -25,16 +25,16 @@ import (
 func NewDistSQLContextForTest() *distsqlctx.DistSQLContext {
 	return &distsqlctx.DistSQLContext{
 		WarnHandler:                          contextutil.NewFuncWarnAppenderForTest(func(level string, err error) {}),
-		TiFlashMaxThreads:                    variable.DefTiFlashMaxThreads,
-		TiFlashMaxBytesBeforeExternalJoin:    variable.DefTiFlashMaxBytesBeforeExternalJoin,
-		TiFlashMaxBytesBeforeExternalGroupBy: variable.DefTiFlashMaxBytesBeforeExternalGroupBy,
-		TiFlashMaxBytesBeforeExternalSort:    variable.DefTiFlashMaxBytesBeforeExternalSort,
-		TiFlashMaxQueryMemoryPerNode:         variable.DefTiFlashMemQuotaQueryPerNode,
-		TiFlashQuerySpillRatio:               variable.DefTiFlashQuerySpillRatio,
+		TiFlashMaxThreads:                    vardef.DefTiFlashMaxThreads,
+		TiFlashMaxBytesBeforeExternalJoin:    vardef.DefTiFlashMaxBytesBeforeExternalJoin,
+		TiFlashMaxBytesBeforeExternalGroupBy: vardef.DefTiFlashMaxBytesBeforeExternalGroupBy,
+		TiFlashMaxBytesBeforeExternalSort:    vardef.DefTiFlashMaxBytesBeforeExternalSort,
+		TiFlashMaxQueryMemoryPerNode:         vardef.DefTiFlashMemQuotaQueryPerNode,
+		TiFlashQuerySpillRatio:               vardef.DefTiFlashQuerySpillRatio,
 
-		DistSQLConcurrency: variable.DefDistSQLScanConcurrency,
-		MinPagingSize:      variable.DefMinPagingSize,
-		MaxPagingSize:      variable.DefMaxPagingSize,
+		DistSQLConcurrency: vardef.DefDistSQLScanConcurrency,
+		MinPagingSize:      vardef.DefMinPagingSize,
+		MaxPagingSize:      vardef.DefMaxPagingSize,
 		ResourceGroupName:  "default",
 
 		ErrCtx: errctx.NewContext(contextutil.IgnoreWarn),

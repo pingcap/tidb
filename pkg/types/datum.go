@@ -15,6 +15,7 @@
 package types
 
 import (
+	"bytes"
 	"cmp"
 	gjson "encoding/json"
 	"fmt"
@@ -22,7 +23,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 	"unsafe"
@@ -556,31 +556,37 @@ func (d *Datum) GetValue() any {
 // but truncated (for example, for strings, only first 64 bytes is printed).
 // This function is useful in contexts like EXPLAIN.
 func (d *Datum) TruncatedStringify() string {
-	const maxLen = 64
-
 	switch d.k {
 	case KindString, KindBytes:
-		str := d.GetString()
-		if len(str) > maxLen {
-			// This efficiently returns the truncated string without
-			// less possible allocations.
-			return fmt.Sprintf("%s...(len:%d)", str[:maxLen], len(str))
-		}
-		return str
+		return truncateStringIfNeeded(d.GetString())
 	case KindMysqlJSON:
-		// For now we can only stringify then truncate.
-		str := d.GetMysqlJSON().String()
-		if len(str) > maxLen {
-			return fmt.Sprintf("%s...(len:%d)", str[:maxLen], len(str))
-		}
-		return str
+		return truncateStringIfNeeded(d.GetMysqlJSON().String())
 	case KindVectorFloat32:
 		// Vector supports native efficient truncation.
 		return d.GetVectorFloat32().TruncatedString()
+	case KindInt64:
+		return strconv.FormatInt(d.GetInt64(), 10)
+	case KindUint64:
+		return strconv.FormatUint(d.GetUint64(), 10)
 	default:
 		// For other types, no truncation is needed.
 		return fmt.Sprintf("%v", d.GetValue())
 	}
+}
+
+func truncateStringIfNeeded(str string) string {
+	const maxLen = 64
+	if len(str) > maxLen {
+		const suffix = "...(len:"
+		lenStr := strconv.Itoa(len(str))
+		buf := bytes.NewBuffer(make([]byte, 0, maxLen+len(suffix)+len(lenStr)+1))
+		buf.WriteString(str[:maxLen])
+		buf.WriteString(suffix)
+		buf.WriteString(lenStr)
+		buf.WriteByte(')')
+		return buf.String()
+	}
+	return str
 }
 
 // SetValueWithDefaultCollation sets any kind of value.
@@ -2424,16 +2430,11 @@ func (ds *datumsSorter) Swap(i, j int) {
 	ds.datums[i], ds.datums[j] = ds.datums[j], ds.datums[i]
 }
 
-var strBuilderPool = sync.Pool{New: func() any { return &strings.Builder{} }}
-
 // DatumsToString converts several datums to formatted string.
 func DatumsToString(datums []Datum, handleSpecialValue bool) (string, error) {
 	n := len(datums)
-	builder := strBuilderPool.Get().(*strings.Builder)
-	defer func() {
-		builder.Reset()
-		strBuilderPool.Put(builder)
-	}()
+	builder := &strings.Builder{}
+	builder.Grow(8 * n)
 	if n > 1 {
 		builder.WriteString("(")
 	}

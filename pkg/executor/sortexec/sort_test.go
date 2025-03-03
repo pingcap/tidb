@@ -23,7 +23,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
@@ -103,9 +103,9 @@ func TestIssue16696(t *testing.T) {
 		conf.TempStoragePath = t.TempDir()
 		conf.Performance.EnableStatsCacheMemQuota = true
 	})
-	alarmRatio := variable.MemoryUsageAlarmRatio.Load()
-	variable.MemoryUsageAlarmRatio.Store(0.0)
-	defer variable.MemoryUsageAlarmRatio.Store(alarmRatio)
+	alarmRatio := vardef.MemoryUsageAlarmRatio.Load()
+	vardef.MemoryUsageAlarmRatio.Store(0.0)
+	defer vardef.MemoryUsageAlarmRatio.Store(alarmRatio)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/testSortedRowContainerSpill", "return(true)"))
 	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/testSortedRowContainerSpill"))

@@ -332,7 +332,7 @@ func TestFilterTemporaryTableKeys(t *testing.T) {
 
 func TestErrLevelsForResetStmtContext(t *testing.T) {
 	ctx := mock.NewContext()
-	domain.BindDomain(ctx, &domain.Domain{})
+	ctx.BindDomain(&domain.Domain{})
 
 	cases := []struct {
 		name    string

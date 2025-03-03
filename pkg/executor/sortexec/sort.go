@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/channel"
@@ -155,7 +155,7 @@ func (e *SortExec) Close() error {
 func (e *SortExec) Open(ctx context.Context) error {
 	e.fetched = &atomic.Bool{}
 	e.fetched.Store(false)
-	e.enableTmpStorageOnOOM = variable.EnableTmpStorageOnOOM.Load()
+	e.enableTmpStorageOnOOM = vardef.EnableTmpStorageOnOOM.Load()
 	e.finishCh = make(chan struct{}, 1)
 
 	// To avoid duplicated initialization for TopNExec.

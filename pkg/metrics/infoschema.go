@@ -23,6 +23,8 @@ var (
 	InfoSchemaV2CacheCounter *prometheus.CounterVec
 	// InfoSchemaV2CacheMemUsage records the memory size of infoschema v2 cache.
 	InfoSchemaV2CacheMemUsage prometheus.Gauge
+	// InfoSchemaV2CacheObjCnt records the table count of infoschema v2 cache.
+	InfoSchemaV2CacheObjCnt prometheus.Gauge
 	// InfoSchemaV2CacheMemLimit records the memory limit of infoschema v2 cache.
 	InfoSchemaV2CacheMemLimit prometheus.Gauge
 	// TableByNameDuration records the duration of TableByName API for infoschema v2.
@@ -42,6 +44,13 @@ func InitInfoSchemaV2Metrics() {
 			Name:      "infoschema_v2_cache",
 			Help:      "infoschema cache v2 hit, evict and miss number",
 		}, []string{LblType})
+	InfoSchemaV2CacheObjCnt = NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "domain",
+			Name:      "infoschema_v2_cache_count",
+			Help:      "infoschema cache v2 table count",
+		})
 	InfoSchemaV2CacheMemUsage = NewGauge(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",

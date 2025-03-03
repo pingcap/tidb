@@ -18,8 +18,8 @@ import (
 	"strings"
 	"unsafe"
 
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
 )
@@ -48,13 +48,13 @@ type ChangeStateInfo struct {
 
 // ColumnInfo provides meta data describing of a table column.
 type ColumnInfo struct {
-	ID                    int64       `json:"id"`
-	Name                  model.CIStr `json:"name"`
-	Offset                int         `json:"offset"`
-	OriginDefaultValue    any         `json:"origin_default"`
-	OriginDefaultValueBit []byte      `json:"origin_default_bit"`
-	DefaultValue          any         `json:"default"`
-	DefaultValueBit       []byte      `json:"default_bit"`
+	ID                    int64     `json:"id"`
+	Name                  ast.CIStr `json:"name"`
+	Offset                int       `json:"offset"`
+	OriginDefaultValue    any       `json:"origin_default"`
+	OriginDefaultValueBit []byte    `json:"origin_default_bit"`
+	DefaultValue          any       `json:"default"`
+	DefaultValueBit       []byte    `json:"default_bit"`
 	// DefaultIsExpr is indicates the default value string is expr.
 	DefaultIsExpr       bool                `json:"default_is_expr"`
 	GeneratedExprString string              `json:"generated_expr_string"`

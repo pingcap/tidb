@@ -35,10 +35,10 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
@@ -120,7 +120,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
 	tk.MustQuery("select * from t2").Check(testkit.Rows("1 12"))
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	tbl1, err := is.TableByName(context.Background(), pmodel.NewCIStr("ctwl_db"), pmodel.NewCIStr("t1"))
+	tbl1, err := is.TableByName(context.Background(), ast.NewCIStr("ctwl_db"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	tbl1Info := tbl1.Meta()
 	require.Nil(t, tbl1Info.ForeignKeys)
@@ -128,7 +128,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	col := tbl1Info.Columns[0]
 	hasNotNull := mysql.HasNotNullFlag(col.GetFlag())
 	require.True(t, hasNotNull)
-	tbl2, err := is.TableByName(context.Background(), pmodel.NewCIStr("ctwl_db"), pmodel.NewCIStr("t2"))
+	tbl2, err := is.TableByName(context.Background(), ast.NewCIStr("ctwl_db"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 	tbl2Info := tbl2.Meta()
 	require.Nil(t, tbl2Info.ForeignKeys)
@@ -142,7 +142,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	tk.MustExec("insert into t1 set c2=11")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
 	is = domain.GetDomain(tk.Session()).InfoSchema()
-	tbl1, err = is.TableByName(context.Background(), pmodel.NewCIStr("ctwl_db1"), pmodel.NewCIStr("t1"))
+	tbl1, err = is.TableByName(context.Background(), ast.NewCIStr("ctwl_db1"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	require.Nil(t, tbl1.Meta().ForeignKeys)
 
@@ -278,7 +278,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	tk.MustExec(`create global temporary table test_gv_ddl_temp like test_gv_ddl on commit delete rows;`)
 	defer tk.MustExec("drop table if exists test_gv_ddl_temp, test_gv_ddl")
 	is := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	table, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("test_gv_ddl"))
+	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("test_gv_ddl"))
 	require.NoError(t, err)
 	testCases := []struct {
 		generatedExprString string
@@ -307,7 +307,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	defer tk.MustExec("drop table if exists test_foreign_key, t1")
 	tk.MustExec("create global temporary table test_foreign_key_temp like test_foreign_key on commit delete rows")
 	is = sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	table, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("test_foreign_key_temp"))
+	table, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("test_foreign_key_temp"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	require.Equal(t, 0, len(tableInfo.ForeignKeys))
@@ -391,7 +391,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	tk.MustExec("create table foreign_key_table2 (c int,d int,foreign key (d) references foreign_key_table1 (b))")
 	tk.MustExec("create temporary table foreign_key_tmp like foreign_key_table2")
 	is = sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	table, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("foreign_key_tmp"))
+	table, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("foreign_key_tmp"))
 	require.NoError(t, err)
 	tableInfo = table.Meta()
 	require.Equal(t, 0, len(tableInfo.ForeignKeys))
@@ -446,7 +446,7 @@ func TestCancelAddIndexPanic(t *testing.T) {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
 			tkCancel.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 		}
@@ -500,20 +500,20 @@ func TestRecoverTableWithTTL(t *testing.T) {
 	tk.MustExec("create table t_recover1 (t timestamp) TTL=`t`+INTERVAL 1 DAY")
 	tk.MustExec("drop table t_recover1")
 	tk.MustExec("recover table t_recover1")
-	tk.MustQuery("show create table t_recover1").Check(testkit.Rows("t_recover1 CREATE TABLE `t_recover1` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+	tk.MustQuery("show create table t_recover1").Check(testkit.Rows("t_recover1 CREATE TABLE `t_recover1` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='24h' */"))
 
 	// recover table with job id
 	tk.MustExec("create table t_recover2 (t timestamp) TTL=`t`+INTERVAL 1 DAY")
 	tk.MustExec("drop table t_recover2")
 	jobID := getDDLJobID("t_recover2", "drop table")
 	tk.MustExec(fmt.Sprintf("recover table BY JOB %d", jobID))
-	tk.MustQuery("show create table t_recover2").Check(testkit.Rows("t_recover2 CREATE TABLE `t_recover2` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+	tk.MustQuery("show create table t_recover2").Check(testkit.Rows("t_recover2 CREATE TABLE `t_recover2` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='24h' */"))
 
 	// flashback table
 	tk.MustExec("create table t_recover3 (t timestamp) TTL=`t`+INTERVAL 1 DAY")
 	tk.MustExec("drop table t_recover3")
 	tk.MustExec("flashback table t_recover3")
-	tk.MustQuery("show create table t_recover3").Check(testkit.Rows("t_recover3 CREATE TABLE `t_recover3` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+	tk.MustQuery("show create table t_recover3").Check(testkit.Rows("t_recover3 CREATE TABLE `t_recover3` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='24h' */"))
 
 	// flashback database
 	tk.MustExec("create database if not exists test_recover2")
@@ -521,8 +521,8 @@ func TestRecoverTableWithTTL(t *testing.T) {
 	tk.MustExec("create table test_recover2.t2 (t timestamp) TTL=`t`+INTERVAL 1 DAY")
 	tk.MustExec("drop database test_recover2")
 	tk.MustExec("flashback database test_recover2")
-	tk.MustQuery("show create table test_recover2.t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
-	tk.MustQuery("show create table test_recover2.t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+	tk.MustQuery("show create table test_recover2.t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='24h' */"))
+	tk.MustQuery("show create table test_recover2.t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='24h' */"))
 }
 
 func TestRecoverTableByJobID(t *testing.T) {
@@ -683,7 +683,7 @@ func TestRecoverTableByJobIDFail(t *testing.T) {
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	// set hook
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type == model.ActionRecoverTable {
 			require.NoError(t, failpoint.Enable("tikvclient/mockCommitError", `return(true)`))
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockRecoverTableCommitErr", `return(true)`))
@@ -740,7 +740,7 @@ func TestRecoverTableByTableNameFail(t *testing.T) {
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	// set hook
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if job.Type == model.ActionRecoverTable {
 			require.NoError(t, failpoint.Enable("tikvclient/mockCommitError", `return(true)`))
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockRecoverTableCommitErr", `return(true)`))
@@ -774,7 +774,7 @@ func TestCancelJobByErrorCountLimit(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 
-	limit := variable.GetDDLErrorCountLimit()
+	limit := vardef.GetDDLErrorCountLimit()
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 16")
 	err := util.LoadDDLVars(tk.Session())
 	require.NoError(t, err)
@@ -791,7 +791,7 @@ func TestTruncateTableUpdateSchemaVersionErr(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 
-	limit := variable.GetDDLErrorCountLimit()
+	limit := vardef.GetDDLErrorCountLimit()
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 5")
 	err := util.LoadDDLVars(tk.Session())
 	require.NoError(t, err)
@@ -812,7 +812,7 @@ func TestCanceledJobTakeTime(t *testing.T) {
 	tk.MustExec("create table t_cjtt(a int)")
 
 	once := sync.Once{}
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		once.Do(func() {
 			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 			err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
@@ -1177,7 +1177,7 @@ func TestCreateTableNoBlock(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/checkOwnerCheckAllVersionsWaitTime"))
 	}()
-	save := variable.GetDDLErrorCountLimit()
+	save := vardef.GetDDLErrorCountLimit()
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 1")
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %v", save))
@@ -1238,7 +1238,7 @@ func TestGetReverseKey(t *testing.T) {
 
 	// Get table ID for split.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("db_get"), pmodel.NewCIStr("test_get"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("db_get"), ast.NewCIStr("test_get"))
 	require.NoError(t, err)
 	// Split the table.
 	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)

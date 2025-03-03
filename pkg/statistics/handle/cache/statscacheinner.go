@@ -19,12 +19,13 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/lfu"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/mapcache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/metrics"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -33,7 +34,7 @@ import (
 func NewStatsCache() (*StatsCache, error) {
 	enableQuota := config.GetGlobalConfig().Performance.EnableStatsCacheMemQuota
 	if enableQuota {
-		capacity := variable.StatsCacheMemQuota.Load()
+		capacity := vardef.StatsCacheMemQuota.Load()
 		stats, err := lfu.NewLFU(capacity)
 		if err != nil {
 			return nil, err
@@ -82,6 +83,7 @@ func (sc *StatsCache) Put(id int64, t *statistics.Table) {
 
 func (sc *StatsCache) putCache(id int64, t *statistics.Table) bool {
 	metrics.UpdateCounter.Inc()
+	intest.Assert(t.ColAndIdxExistenceMap != nil, "ColAndIdxExistenceMap should not be nil")
 	ok := sc.c.Put(id, t)
 	if ok {
 		return ok
@@ -163,7 +165,7 @@ func (sc *StatsCache) CopyAndUpdate(tables []*statistics.Table, deletedIDs []int
 }
 
 // Update updates the new statistics table cache.
-func (sc *StatsCache) Update(tables []*statistics.Table, deletedIDs []int64) {
+func (sc *StatsCache) Update(tables []*statistics.Table, deletedIDs []int64, skipMoveForwardStatsCache bool) {
 	for _, tbl := range tables {
 		id := tbl.PhysicalID
 		metrics.UpdateCounter.Inc()
@@ -174,10 +176,17 @@ func (sc *StatsCache) Update(tables []*statistics.Table, deletedIDs []int64) {
 		sc.c.Del(id)
 	}
 
-	// update the maxTblStatsVer
-	for _, t := range tables {
-		if oldVersion := sc.maxTblStatsVer.Load(); t.Version > oldVersion {
-			sc.maxTblStatsVer.CompareAndSwap(oldVersion, t.Version)
+	if !skipMoveForwardStatsCache {
+		// update the maxTblStatsVer
+		for _, t := range tables {
+			if oldVersion := sc.maxTblStatsVer.Load(); t.Version > oldVersion {
+				sc.maxTblStatsVer.CompareAndSwap(oldVersion, t.Version)
+			}
 		}
 	}
+}
+
+// TriggerEvict triggers the cache to evict some items.
+func (sc *StatsCache) TriggerEvict() {
+	sc.c.TriggerEvict()
 }

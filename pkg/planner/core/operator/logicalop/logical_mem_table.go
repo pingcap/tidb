@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -43,7 +43,7 @@ type LogicalMemTable struct {
 	LogicalSchemaProducer `hash64-equals:"true"`
 
 	Extractor base.MemTablePredicateExtractor
-	DBName    pmodel.CIStr     `hash64-equals:"true"`
+	DBName    ast.CIStr        `hash64-equals:"true"`
 	TableInfo *model.TableInfo `hash64-equals:"true"`
 	Columns   []*model.ColumnInfo
 	// QueryTimeRange is used to specify the time range for metrics summary tables and inspection tables
@@ -80,9 +80,11 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column, opt 
 	switch p.TableInfo.Name.O {
 	case infoschema.TableStatementsSummary,
 		infoschema.TableStatementsSummaryHistory,
+		infoschema.TableTiDBStatementsStats,
 		infoschema.TableSlowQuery,
 		infoschema.ClusterTableStatementsSummary,
 		infoschema.ClusterTableStatementsSummaryHistory,
+		infoschema.ClusterTableTiDBStatementsStats,
 		infoschema.ClusterTableSlowLog,
 		infoschema.TableTiDBTrx,
 		infoschema.ClusterTableTiDBTrx,
@@ -127,9 +129,13 @@ func (p *LogicalMemTable) FindBestTask(prop *property.PhysicalProperty, planCoun
 // RecursiveDeriveStats inherits BaseLogicalPlan.<10th> implementation.
 
 // DeriveStats implements base.LogicalPlan.<11th> interface.
-func (p *LogicalMemTable) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
-	if p.StatsInfo() != nil {
-		return p.StatsInfo(), nil
+func (p *LogicalMemTable) DeriveStats(_ []*property.StatsInfo, selfSchema *expression.Schema, _ []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
+	var reload bool
+	if len(reloads) == 1 {
+		reload = reloads[0]
+	}
+	if !reload && p.StatsInfo() != nil {
+		return p.StatsInfo(), false, nil
 	}
 	statsTable := statistics.PseudoTable(p.TableInfo, false, false)
 	stats := &property.StatsInfo{
@@ -142,7 +148,7 @@ func (p *LogicalMemTable) DeriveStats(_ []*property.StatsInfo, selfSchema *expre
 		stats.ColNDVs[col.UniqueID] = float64(statsTable.RealtimeCount)
 	}
 	p.SetStats(stats)
-	return p.StatsInfo(), nil
+	return p.StatsInfo(), true, nil
 }
 
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.

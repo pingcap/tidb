@@ -301,7 +301,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 			resultTypes[len(resultTypes)-1].DelFlag(mysql.NotNullFlag)
 		}
 	}
-	if joinType == logicalop.LeftOuterSemiJoin {
+	if joinType == logicalop.LeftOuterSemiJoin || joinType == logicalop.AntiLeftOuterSemiJoin {
 		resultTypes = append(resultTypes, types.NewFieldType(mysql.TypeTiny))
 	}
 
@@ -463,7 +463,19 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 		checkChunksEqual(t, expectedChunks, resultChunks, resultTypes)
 	case logicalop.LeftOuterSemiJoin:
 		expectedChunks := genLeftOuterSemiJoinResult(t, hashJoinCtx.SessCtx, leftFilter, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes,
-			rightTypes, leftKeyTypes, rightKeyTypes, leftUsed, rightUsed, otherCondition, resultTypes)
+			rightTypes, leftKeyTypes, rightKeyTypes, leftUsed, otherCondition, resultTypes)
+		checkChunksEqual(t, expectedChunks, resultChunks, resultTypes)
+	case logicalop.SemiJoin:
+		expectedChunks := genSemiJoinResult(t, hashJoinCtx.SessCtx, leftFilter, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes,
+			rightTypes, leftKeyTypes, rightKeyTypes, leftUsed, otherCondition, resultTypes)
+		checkChunksEqual(t, expectedChunks, resultChunks, resultTypes)
+	case logicalop.AntiSemiJoin:
+		expectedChunks := genAntiSemiJoinResult(t, hashJoinCtx.SessCtx, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes,
+			rightTypes, leftKeyTypes, rightKeyTypes, leftUsed, otherCondition, resultTypes)
+		checkChunksEqual(t, expectedChunks, resultChunks, resultTypes)
+	case logicalop.AntiLeftOuterSemiJoin:
+		expectedChunks := genLeftOuterAntiSemiJoinResult(t, hashJoinCtx.SessCtx, leftFilter, leftChunks, rightChunks, leftKeyIndex, rightKeyIndex, leftTypes,
+			rightTypes, leftKeyTypes, rightKeyTypes, leftUsed, otherCondition, resultTypes)
 		checkChunksEqual(t, expectedChunks, resultChunks, resultTypes)
 	default:
 		require.NoError(t, errors.New("not supported join type"))

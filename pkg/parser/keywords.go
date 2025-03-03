@@ -363,6 +363,7 @@ var Keywords = []KeywordsType{
 	{"ENFORCED", false, "unreserved"},
 	{"ENGINE", false, "unreserved"},
 	{"ENGINES", false, "unreserved"},
+	{"ENGINE_ATTRIBUTE", false, "unreserved"},
 	{"ENUM", false, "unreserved"},
 	{"ERROR", false, "unreserved"},
 	{"ERRORS", false, "unreserved"},

@@ -28,13 +28,14 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -135,7 +136,8 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index iab(a, b), index ib(b))")
-	require.NoError(t, statsHandle.HandleDDLEvent(<-statsHandle.DDLEventCh()))
+	err := statstestutil.HandleNextDDLEventWithTxn(statsHandle)
+	require.NoError(t, err)
 
 	// Prepare the data.
 
@@ -188,11 +190,11 @@ func TestTraceDebugSelectivity(t *testing.T) {
 		sql := "explain " + tt
 		tk.MustExec(sql)
 	}
-	err := statsHandle.LoadNeededHistograms(dom.InfoSchema())
+	err = statsHandle.LoadNeededHistograms(dom.InfoSchema())
 	require.NoError(t, err)
 
 	sctx := tk.Session().(sessionctx.Context)
-	tb, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tb.Meta()
 	statsTbl := statsHandle.GetTableStats(tblInfo)

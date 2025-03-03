@@ -165,9 +165,13 @@ func decodeEscapedUnicode(s []byte) (char [4]byte, size int, err error) {
 	return
 }
 
-// quoteJSONString escapes interior quote and other characters for JSON_QUOTE
-// https://dev.mysql.com/doc/refman/5.7/en/json-creation-functions.html#function_json-quote
-// TODO: add JSON_QUOTE builtin
+// quoteJSONString escapes interior quote and other characters for json functions.
+//
+// The implementation of `JSON_QUOTE` doesn't use this function. The `JSON_QUOTE` used `goJSON` to encode the string
+// directly. Therefore, this function is not compatible with `JSON_QUOTE` function for the convience of internal usage.
+//
+// This function will add extra quotes to the string if it contains special characters which needs to escape, or it's not
+// a valid ECMAScript identifier.
 func quoteJSONString(s string) string {
 	var escapeByteMap = map[byte]string{
 		'\\': "\\\\",
@@ -273,13 +277,13 @@ func (bj BinaryJSON) extractTo(buf []BinaryJSON, pathExpr JSONPathExpression, du
 	if currentLeg.typ == jsonPathLegArraySelection {
 		if bj.TypeCode != JSONTypeCodeArray {
 			// If the current object is not an array, still append them if the selection includes
-			// 0. But for asterisk, it still returns NULL.
+			// 0 or last. But for asterisk, it still returns NULL.
 			//
 			// don't call `getIndexRange` or `getIndexFromStart`, they will panic if the argument
 			// is not array.
 			switch selection := currentLeg.arraySelection.(type) {
 			case jsonPathArraySelectionIndex:
-				if selection.index == 0 {
+				if selection.index == 0 || selection.index == -1 {
 					buf = bj.extractTo(buf, subPathExpr, dup, one)
 				}
 			case jsonPathArraySelectionRange:

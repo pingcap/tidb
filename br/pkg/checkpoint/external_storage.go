@@ -85,7 +85,7 @@ func (s *externalCheckpointStorage) getTS(ctx context.Context) (int64, int64, er
 		}
 
 		return nil
-	}, utils.NewPDReqBackoffer())
+	}, utils.NewAggressivePDBackoffStrategy())
 
 	return p, l, errors.Trace(errRetry)
 }
@@ -186,13 +186,4 @@ func (s *externalCheckpointStorage) updateLock(ctx context.Context) error {
 	})
 
 	return nil
-}
-
-func (s *externalCheckpointStorage) deleteLock(ctx context.Context) {
-	if s.lockId > 0 {
-		err := s.storage.DeleteFile(ctx, s.CheckpointLockPath)
-		if err != nil {
-			log.Warn("failed to remove the checkpoint lock", zap.Error(err))
-		}
-	}
 }

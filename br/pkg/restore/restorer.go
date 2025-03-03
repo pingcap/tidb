@@ -203,7 +203,16 @@ func (s *SimpleRestorer) GoRestore(onProgress func(int64), batchFileSets ...Batc
 					if err != nil {
 						return errors.Trace(err)
 					}
-					// TODO handle checkpoint
+					if s.checkpointRunner != nil {
+						// The checkpoint shows this ranges of files has been restored into
+						// the table corresponding to the table-id.
+						for _, f := range set.SSTFiles {
+							if err := checkpoint.AppendRangesForRestore(s.ectx, s.checkpointRunner,
+								checkpoint.NewCheckpointFileItem(set.TableID, f.GetName())); err != nil {
+								return errors.Trace(err)
+							}
+						}
+					}
 					return nil
 				})
 		}
@@ -217,6 +226,9 @@ type MultiTablesRestorer struct {
 	workerPool       *util.WorkerPool
 	fileImporter     BalancedFileImporter
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
+
+	fileCount int
+	start     time.Time
 }
 
 func NewMultiTablesRestorer(
@@ -245,29 +257,23 @@ func (m *MultiTablesRestorer) WaitUntilFinish() error {
 		log.Error("restore files failed", zap.Error(err))
 		return errors.Trace(err)
 	}
+	elapsed := time.Since(m.start)
+	log.Info("Restore Stage Duration", zap.String("stage", "restore files"), zap.Duration("take", elapsed))
+	summary.CollectDuration("restore files", elapsed)
+	summary.CollectSuccessUnit("files", m.fileCount, elapsed)
 	return nil
 }
 
-func (m *MultiTablesRestorer) GoRestore(onProgress func(int64), batchFileSets ...BatchBackupFileSet) (err error) {
-	start := time.Now()
-	fileCount := 0
-	defer func() {
-		elapsed := time.Since(start)
-		if err == nil {
-			log.Info("Restore files", zap.Duration("take", elapsed))
-			summary.CollectSuccessUnit("files", fileCount, elapsed)
-		}
-	}()
-
-	log.Debug("start to restore files", zap.Int("files", fileCount))
-
+func (m *MultiTablesRestorer) GoRestore(onProgress func(int64), batchFileSets ...BatchBackupFileSet) error {
+	m.start = time.Now()
+	m.fileCount = 0
 	if span := opentracing.SpanFromContext(m.ectx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("Client.RestoreSSTFiles", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		m.ectx = opentracing.ContextWithSpan(m.ectx, span1)
 	}
 
-	for _, batchFileSet := range batchFileSets {
+	for i, batchFileSet := range batchFileSets {
 		if m.ectx.Err() != nil {
 			log.Warn("Restoring encountered error and already stopped, give up remained files.",
 				logutil.ShortError(m.ectx.Err()))
@@ -276,17 +282,21 @@ func (m *MultiTablesRestorer) GoRestore(onProgress func(int64), batchFileSets ..
 			// breaking here directly is also a reasonable behavior.
 			break
 		}
+		for _, fileSet := range batchFileSet {
+			m.fileCount += len(fileSet.SSTFiles)
+		}
 		filesReplica := batchFileSet
 		m.fileImporter.PauseForBackpressure()
+		cx := logutil.ContextWithField(m.ectx, zap.Int("sn", i))
 		m.workerPool.ApplyOnErrorGroup(m.eg, func() (restoreErr error) {
 			fileStart := time.Now()
 			defer func() {
 				if restoreErr == nil {
-					log.Info("import files done", zap.Duration("take", time.Since(fileStart)))
-					onProgress(int64(len(filesReplica)))
+					logutil.CL(cx).Info("import files done", zap.Duration("take", time.Since(fileStart)))
+					onProgress(1)
 				}
 			}()
-			if importErr := m.fileImporter.Import(m.ectx, filesReplica...); importErr != nil {
+			if importErr := m.fileImporter.Import(cx, filesReplica...); importErr != nil {
 				return errors.Trace(importErr)
 			}
 
@@ -302,7 +312,8 @@ func (m *MultiTablesRestorer) GoRestore(onProgress func(int64), batchFileSets ..
 					for rangeKey := range rangeKeySet {
 						// The checkpoint range shows this ranges of kvs has been restored into
 						// the table corresponding to the table-id.
-						if err := checkpoint.AppendRangesForRestore(m.ectx, m.checkpointRunner, filesGroup.TableID, rangeKey); err != nil {
+						if err := checkpoint.AppendRangesForRestore(m.ectx, m.checkpointRunner,
+							checkpoint.NewCheckpointRangeKeyItem(filesGroup.TableID, rangeKey)); err != nil {
 							return errors.Trace(err)
 						}
 					}
@@ -317,9 +328,11 @@ func (m *MultiTablesRestorer) GoRestore(onProgress func(int64), batchFileSets ..
 	return m.ectx.Err()
 }
 
+// GetFileRangeKey is used to reduce the checkpoint number, because we combine the write cf/default cf into one restore file group.
+// during full restore, so we can reduce the checkpoint number with the common prefix of the file.
 func GetFileRangeKey(f string) string {
 	// the backup date file pattern is `{store_id}_{region_id}_{epoch_version}_{key}_{ts}_{cf}.sst`
-	// so we need to compare with out the `_{cf}.sst` suffix
+	// so we need to compare without the `_{cf}.sst` suffix
 	idx := strings.LastIndex(f, "_")
 	if idx < 0 {
 		panic(fmt.Sprintf("invalid backup data file name: '%s'", f))
@@ -347,7 +360,6 @@ func (p *PipelineRestorerWrapper[T]) WithSplit(ctx context.Context, i iter.TryNe
 
 			// Check if the accumulated items meet the criteria for splitting.
 			if strategy.ShouldSplit() {
-				log.Info("Trying to start region split with accumulations")
 				startTime := time.Now()
 
 				// Execute the split operation on the accumulated items.

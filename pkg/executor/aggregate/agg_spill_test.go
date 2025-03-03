@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -150,6 +150,7 @@ func generateResult(t *testing.T, ctx *mock.Context, dataSource *testutil.MockDa
 			resultRows = append(resultRows, chk.GetRow(i))
 		}
 	}
+	require.False(t, aggExec.IsInvalidMemoryUsageTrackingForTest())
 	aggExec.Close()
 
 	require.False(t, aggExec.IsSpillTriggeredForTest())
@@ -190,10 +191,10 @@ func getMockDataSourceParameters(ctx sessionctx.Context) testutil.MockDataSource
 }
 
 func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Executor) *aggregate.HashAggExec {
-	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", 5)); err != nil {
+	if err := ctx.GetSessionVars().SetSystemVar(vardef.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", 5)); err != nil {
 		t.Fatal(err)
 	}
-	if err := ctx.GetSessionVars().SetSystemVar(variable.TiDBHashAggPartialConcurrency, fmt.Sprintf("%v", 5)); err != nil {
+	if err := ctx.GetSessionVars().SetSystemVar(vardef.TiDBHashAggPartialConcurrency, fmt.Sprintf("%v", 5)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -315,6 +316,7 @@ func executeCorrecResultTest(t *testing.T, ctx *mock.Context, aggExec *aggregate
 			resultRows = append(resultRows, chk.GetRow(i))
 		}
 	}
+	require.False(t, aggExec.IsInvalidMemoryUsageTrackingForTest())
 	aggExec.Close()
 
 	require.True(t, aggExec.IsSpillTriggeredForTest())
@@ -351,6 +353,7 @@ func fallBackActionTest(t *testing.T) {
 		}
 		chk.Reset()
 	}
+	require.False(t, aggExec.IsInvalidMemoryUsageTrackingForTest())
 	aggExec.Close()
 	require.Less(t, 0, newRootExceedAction.GetTriggeredNum())
 }
@@ -373,6 +376,7 @@ func randomFailTest(t *testing.T, ctx *mock.Context, aggExec *aggregate.HashAggE
 	go func() {
 		time.Sleep(time.Duration(rand.Int31n(300)) * time.Millisecond)
 		once.Do(func() {
+			require.False(t, aggExec.IsInvalidMemoryUsageTrackingForTest())
 			aggExec.Close()
 		})
 		goRoutineWaiter.Done()
@@ -382,6 +386,7 @@ func randomFailTest(t *testing.T, ctx *mock.Context, aggExec *aggregate.HashAggE
 		err := aggExec.Next(tmpCtx, chk)
 		if err != nil {
 			once.Do(func() {
+				require.False(t, aggExec.IsInvalidMemoryUsageTrackingForTest())
 				err = aggExec.Close()
 				require.Equal(t, nil, err)
 			})
@@ -393,6 +398,7 @@ func randomFailTest(t *testing.T, ctx *mock.Context, aggExec *aggregate.HashAggE
 		chk.Reset()
 	}
 	once.Do(func() {
+		require.False(t, aggExec.IsInvalidMemoryUsageTrackingForTest())
 		aggExec.Close()
 	})
 }

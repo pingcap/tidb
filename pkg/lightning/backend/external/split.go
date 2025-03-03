@@ -156,14 +156,15 @@ func (r *RangeSplitter) Close() error {
 // but it will be nil when the group is the last one. `dataFiles` and `statFiles`
 // are all the files that have overlapping key ranges in this group.
 // `interiorRangeJobKeys` are the interior boundary keys of the range jobs, the
-// range can be constructed with start/end key at caller. `regionSplitKeys` are
-// the split keys that will be used later to split regions.
+// range can be constructed with start/end key at caller.
+// `interiorRegionSplitKeys` are the split keys that will be used later to split
+// regions.
 func (r *RangeSplitter) SplitOneRangesGroup() (
 	endKeyOfGroup []byte,
 	dataFiles []string,
 	statFiles []string,
 	interiorRangeJobKeys [][]byte,
-	regionSplitKeys [][]byte,
+	interiorRegionSplitKeys [][]byte,
 	err error,
 ) {
 	var (

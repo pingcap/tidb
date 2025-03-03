@@ -102,3 +102,11 @@ func (od *OwnerDaemon) Begin(ctx context.Context) (func(), error) {
 	}
 	return loop, nil
 }
+
+func (od *OwnerDaemon) ForceToBeOwner(ctx context.Context) error {
+	return od.manager.ForceToBeOwner(ctx)
+}
+
+func (od *OwnerDaemon) RetireIfOwner() {
+	od.manager.RetireOwner()
+}

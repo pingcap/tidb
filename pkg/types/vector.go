@@ -233,6 +233,11 @@ func ParseVectorFloat32(s string) (VectorFloat32, error) {
 			valueError = errors.Errorf("infinite value not allowed in vector")
 			return false
 		}
+		// Check if the value can be safely converted to float32
+		if v < -math.MaxFloat32 || v > math.MaxFloat32 {
+			valueError = errors.Errorf("value %v out of range for float32", v)
+			return false
+		}
 		values = append(values, float32(v))
 		return true
 	})

@@ -86,6 +86,7 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/sessionctx/stmtctx",
+        "//pkg/sessionctx/vardef",
         "//pkg/testkit/testsetup",
         "//pkg/testkit/testutil",
         "//pkg/types",

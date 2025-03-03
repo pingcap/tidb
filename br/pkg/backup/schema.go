@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/statistics/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"

@@ -7,7 +7,7 @@ set session tidb_hashagg_partial_concurrency = 1;
 set session tidb_hashagg_final_concurrency = 1;
 explain format = 'brief' select * from t1 where t1.a in (select t1.b + t2.b from t2);
 id	estRows	task	access object	operator info
-HashJoin	8000.00	root		CARTESIAN semi join, other cond:eq(subquery.t1.a, plus(subquery.t1.b, subquery.t2.b))
+HashJoin	8000.00	root		CARTESIAN semi join, left side:TableReader, other cond:eq(subquery.t1.a, plus(subquery.t1.b, subquery.t2.b))
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -19,7 +19,7 @@ analyze table t;
 explain format = 'brief' select t.c in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c = 1 and s.d = t.a and s.a = t1.a) from t;
 id	estRows	task	access object	operator info
 Projection	5.00	root		Column#22
-└─Apply	5.00	root		CARTESIAN left outer semi join, other cond:eq(subquery.t.c, Column#21)
+└─Apply	5.00	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(subquery.t.c, Column#21)
   ├─TableReader(Build)	5.00	root		data:TableFullScan
   │ └─TableFullScan	5.00	cop[tikv]	table:t	keep order:false
   └─StreamAgg(Probe)	5.00	root		funcs:count(1)->Column#21
@@ -56,7 +56,7 @@ insert into exam values(1, 'math', 100);
 set names utf8 collate utf8_general_ci;
 explain format = 'brief' select * from stu where stu.name not in (select 'guo' from exam where exam.stu_id = stu.id);
 id	estRows	task	access object	operator info
-HashJoin	8000.00	root		anti semi join, equal:[eq(subquery.stu.id, subquery.exam.stu_id)], other cond:eq(subquery.stu.name, "guo")
+HashJoin	8000.00	root		anti semi join, left side:TableReader, equal:[eq(subquery.stu.id, subquery.exam.stu_id)], other cond:eq(subquery.stu.name, "guo")
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:exam	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -66,7 +66,7 @@ id	name
 set names utf8mb4;
 explain format = 'brief' select * from stu where stu.name not in (select 'guo' from exam where exam.stu_id = stu.id);
 id	estRows	task	access object	operator info
-HashJoin	8000.00	root		anti semi join, equal:[eq(subquery.stu.id, subquery.exam.stu_id)], other cond:eq(subquery.stu.name, "guo")
+HashJoin	8000.00	root		anti semi join, left side:TableReader, equal:[eq(subquery.stu.id, subquery.exam.stu_id)], other cond:eq(subquery.stu.name, "guo")
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
 │ └─TableFullScan	10000.00	cop[tikv]	table:exam	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan

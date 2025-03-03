@@ -308,7 +308,6 @@ func TestDDLColumnDefRestore(t *testing.T) {
 		{"id text charset UTF8", "`id` TEXT CHARACTER SET UTF8"},
 		{"id varchar(50) collate UTF8MB4_CZECH_CI", "`id` VARCHAR(50) COLLATE utf8mb4_czech_ci"},
 		{"id varchar(50) collate utf8_bin", "`id` VARCHAR(50) COLLATE utf8_bin"},
-		{"id varchar(50) collate utf8_unicode_ci collate utf8mb4_bin", "`id` VARCHAR(50) COLLATE utf8_unicode_ci COLLATE utf8mb4_bin"},
 		{"c1 char(10) character set LATIN1 collate latin1_german1_ci", "`c1` CHAR(10) CHARACTER SET LATIN1 COLLATE latin1_german1_ci"},
 
 		{"id int(11) PRIMARY KEY", "`id` INT(11) PRIMARY KEY"},
@@ -320,7 +319,6 @@ func TestDDLColumnDefRestore(t *testing.T) {
 		{"id INT(11) DEFAULT 1.1", "`id` INT(11) DEFAULT 1.1"},
 		{"id INT(11) UNIQUE KEY", "`id` INT(11) UNIQUE KEY"},
 		{"id INT(11) COLLATE ascii_bin", "`id` INT(11) COLLATE ascii_bin"},
-		{"id INT(11) collate ascii_bin collate utf8_bin", "`id` INT(11) COLLATE ascii_bin COLLATE utf8_bin"},
 		{"id INT(11) on update CURRENT_TIMESTAMP", "`id` INT(11) ON UPDATE CURRENT_TIMESTAMP()"},
 		{"id INT(11) comment 'hello'", "`id` INT(11) COMMENT 'hello'"},
 		{"id INT(11) generated always as(id + 1)", "`id` INT(11) GENERATED ALWAYS AS(`id`+1) VIRTUAL"},
@@ -931,6 +929,34 @@ func TestTableOptionTTLRestoreWithTTLEnableOffFlag(t *testing.T) {
 			{ca.sourceSQL, ca.expectSQL},
 		}
 		runNodeRestoreTestWithFlagsStmtChange(t, testCases, "%s", extractNodeFunc, ca.flags)
+	}
+}
+
+func TestPresplitIndexSpecialComments(t *testing.T) {
+	specialCmtFlag := format.DefaultRestoreFlags | format.RestoreTiDBSpecialComment
+	cases := []struct {
+		sourceSQL string
+		flags     format.RestoreFlags
+		expectSQL string
+	}{
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = 4", specialCmtFlag, "ALTER TABLE `t` ADD INDEX(`a`) /*T![pre_split] PRE_SPLIT_REGIONS = 4 */"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS 4", specialCmtFlag, "ALTER TABLE `t` ADD INDEX(`a`) /*T![pre_split] PRE_SPLIT_REGIONS = 4 */"},
+		{"ALTER TABLE t ADD PRIMARY KEY (a) CLUSTERED PRE_SPLIT_REGIONS = 4", specialCmtFlag, "ALTER TABLE `t` ADD PRIMARY KEY(`a`) /*T![clustered_index] CLUSTERED */ /*T![pre_split] PRE_SPLIT_REGIONS = 4 */"},
+		{"ALTER TABLE t ADD PRIMARY KEY (a) PRE_SPLIT_REGIONS = 4 NONCLUSTERED", specialCmtFlag, "ALTER TABLE `t` ADD PRIMARY KEY(`a`) /*T![clustered_index] NONCLUSTERED */ /*T![pre_split] PRE_SPLIT_REGIONS = 4 */"},
+		{"ALTER TABLE t ADD INDEX (a) PRE_SPLIT_REGIONS = (between (1, 'a') and (2, 'b') regions 4);", specialCmtFlag, "ALTER TABLE `t` ADD INDEX(`a`) /*T![pre_split] PRE_SPLIT_REGIONS = (BETWEEN (1,_UTF8MB4'a') AND (2,_UTF8MB4'b') REGIONS 4) */"},
+		{"ALTER TABLE t ADD INDEX idx(a) pre_split_regions = 100, ADD INDEX idx2(b) pre_split_regions = (by(1),(2),(3))", specialCmtFlag, "ALTER TABLE `t` ADD INDEX `idx`(`a`) /*T![pre_split] PRE_SPLIT_REGIONS = 100 */, ADD INDEX `idx2`(`b`) /*T![pre_split] PRE_SPLIT_REGIONS = (BY (1),(2),(3)) */"},
+		{"ALTER TABLE t ADD INDEX (a) comment 'a' PRE_SPLIT_REGIONS = (between (1, 'a') and (2, 'b') regions 4);", specialCmtFlag, "ALTER TABLE `t` ADD INDEX(`a`) COMMENT 'a' /*T![pre_split] PRE_SPLIT_REGIONS = (BETWEEN (1,_UTF8MB4'a') AND (2,_UTF8MB4'b') REGIONS 4) */"},
+	}
+
+	extractNodeFunc := func(node Node) Node {
+		return node
+	}
+
+	for _, ca := range cases {
+		testCases := []NodeRestoreTestCase{
+			{ca.sourceSQL, ca.expectSQL},
+		}
+		runNodeRestoreTestWithFlags(t, testCases, "%s", extractNodeFunc, ca.flags)
 	}
 }
 

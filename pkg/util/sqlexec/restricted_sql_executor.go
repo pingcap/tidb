@@ -165,6 +165,9 @@ type Statement interface {
 	// OriginText gets the origin SQL text.
 	OriginText() string
 
+	// Text gets the utf8 encoded SQL text.
+	Text() string
+
 	// GetTextToLog gets the desensitization SQL text for logging.
 	GetTextToLog(keepHint bool) string
 

@@ -17,7 +17,7 @@ package model
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 )
 
@@ -76,12 +76,12 @@ func TestPlacementPolicyClone(t *testing.T) {
 	}
 	clonedPolicy := policy.Clone()
 	clonedPolicy.ID = 100
-	clonedPolicy.Name = model.NewCIStr("p2")
+	clonedPolicy.Name = ast.NewCIStr("p2")
 	clonedPolicy.State = StateDeleteOnly
 	clonedPolicy.PlacementSettings.Followers = 10
 
 	require.Equal(t, int64(0), policy.ID)
-	require.Equal(t, model.NewCIStr(""), policy.Name)
+	require.Equal(t, ast.NewCIStr(""), policy.Name)
 	require.Equal(t, StateNone, policy.State)
 	require.Equal(t, PlacementSettings{}, *(policy.PlacementSettings))
 }

@@ -66,7 +66,7 @@ func (sg *TiKVSingleGather) ExplainInfo() string {
 
 // BuildKeyInfo implements base.LogicalPlan.<4th> interface.
 func (*TiKVSingleGather) BuildKeyInfo(selfSchema *expression.Schema, childSchema []*expression.Schema) {
-	selfSchema.Keys = childSchema[0].Keys
+	selfSchema.PKOrUK = childSchema[0].PKOrUK
 }
 
 // PushDownTopN inherits BaseLogicalPlan.LogicalPlan.<5th> implementation.

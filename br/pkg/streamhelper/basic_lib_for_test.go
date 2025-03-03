@@ -34,6 +34,8 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/clients/router"
+	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -175,6 +177,11 @@ func (t trivialFlushStream) SendMsg(m any) error {
 
 func (t trivialFlushStream) RecvMsg(m any) error {
 	return nil
+}
+
+func (f *fakeStore) FlushNow(ctx context.Context, in *logbackup.FlushNowRequest, opts ...grpc.CallOption) (*logbackup.FlushNowResponse, error) {
+	f.flush()
+	return &logbackup.FlushNowResponse{Results: []*logbackup.FlushResult{{TaskName: "Universe", Success: true}}}, nil
 }
 
 func (f *fakeStore) GetID() uint64 {
@@ -687,7 +694,12 @@ func (t *testEnv) UploadV3GlobalCheckpointForTask(ctx context.Context, _ string,
 	defer t.mu.Unlock()
 
 	if checkpoint < t.checkpoint {
-		t.testCtx.Fatalf("checkpoint rolling back (from %d to %d)", t.checkpoint, checkpoint)
+		log.Error("checkpoint rolling back",
+			zap.Uint64("from", t.checkpoint),
+			zap.Uint64("to", checkpoint),
+			zap.Stack("stack"))
+		// t.testCtx.Fatalf("checkpoint rolling back (from %d to %d)", t.checkpoint, checkpoint)
+		return errors.New("checkpoint rolling back")
 	}
 	t.checkpoint = checkpoint
 	return nil
@@ -747,6 +759,8 @@ func (t *testEnv) advanceCheckpointBy(duration time.Duration) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	log.Info("advance checkpoint", zap.Duration("duration", duration), zap.Uint64("from", t.checkpoint))
+
 	t.checkpoint = oracle.GoTimeToTS(oracle.GetTimeFromTS(t.checkpoint).Add(duration))
 }
 
@@ -766,7 +780,8 @@ func (t *testEnv) putTask() {
 		Type: streamhelper.EventAdd,
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
-			Name: "whole",
+			Name:    "whole",
+			StartTs: 5,
 		},
 		Ranges: rngs,
 	}
@@ -847,12 +862,12 @@ type mockPDClient struct {
 	fakeRegions []*region
 }
 
-func (p *mockPDClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int, _ ...pd.GetRegionOption) ([]*pd.Region, error) {
+func (p *mockPDClient) ScanRegions(ctx context.Context, key, endKey []byte, limit int, _ ...opt.GetRegionOption) ([]*router.Region, error) {
 	sort.Slice(p.fakeRegions, func(i, j int) bool {
 		return bytes.Compare(p.fakeRegions[i].rng.StartKey, p.fakeRegions[j].rng.StartKey) < 0
 	})
 
-	result := make([]*pd.Region, 0, len(p.fakeRegions))
+	result := make([]*router.Region, 0, len(p.fakeRegions))
 	for _, region := range p.fakeRegions {
 		if spans.Overlaps(kv.KeyRange{StartKey: key, EndKey: endKey}, region.rng) && len(result) < limit {
 			regionInfo := newMockRegion(region.id, region.rng.StartKey, region.rng.EndKey)
@@ -871,7 +886,7 @@ func (p *mockPDClient) GetStore(_ context.Context, storeID uint64) (*metapb.Stor
 	}, nil
 }
 
-func (p *mockPDClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {
+func (p *mockPDClient) GetAllStores(ctx context.Context, opts ...opt.GetStoreOption) ([]*metapb.Store, error) {
 	// only used for GetRegionCache once in resolve lock
 	return []*metapb.Store{
 		{
@@ -885,14 +900,14 @@ func (p *mockPDClient) GetClusterID(ctx context.Context) uint64 {
 	return 1
 }
 
-func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *pd.Region {
+func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *router.Region {
 	leader := &metapb.Peer{
 		Id:      regionID,
 		StoreId: 1,
 		Role:    metapb.PeerRole_Voter,
 	}
 
-	return &pd.Region{
+	return &router.Region{
 		Meta: &metapb.Region{
 			Id:       regionID,
 			StartKey: startKey,

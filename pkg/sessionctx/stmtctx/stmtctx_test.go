@@ -62,10 +62,12 @@ func TestCopTasksDetails(t *testing.T) {
 	d := ctx.CopTasksDetails()
 	require.Equal(t, 100, d.NumCopTasks)
 	require.Equal(t, time.Second*101/2, d.AvgProcessTime)
+	require.Equal(t, time.Second*101/2*100, d.TotProcessTime)
 	require.Equal(t, time.Second*91, d.P90ProcessTime)
 	require.Equal(t, time.Second*100, d.MaxProcessTime)
 	require.Equal(t, "100", d.MaxProcessAddress)
 	require.Equal(t, time.Millisecond*101/2, d.AvgWaitTime)
+	require.Equal(t, time.Millisecond*101/2*100, d.TotWaitTime)
 	require.Equal(t, time.Millisecond*91, d.P90WaitTime)
 	require.Equal(t, time.Millisecond*100, d.MaxWaitTime)
 	require.Equal(t, "100", d.MaxWaitAddress)
@@ -261,6 +263,7 @@ func TestApproxRuntimeInfo(t *testing.T) {
 	for _, detail := range details {
 		timeSum += detail.TimeDetail.ProcessTime
 	}
+	require.Equal(t, d.TotProcessTime, timeSum)
 	require.Equal(t, d.AvgProcessTime, timeSum/time.Duration(n))
 	require.InEpsilon(t, d.P90ProcessTime.Nanoseconds(), details[n*9/10].TimeDetail.ProcessTime.Nanoseconds(), 0.05)
 	require.Equal(t, d.MaxProcessTime, details[n-1].TimeDetail.ProcessTime)
@@ -273,6 +276,7 @@ func TestApproxRuntimeInfo(t *testing.T) {
 	for _, detail := range details {
 		timeSum += detail.TimeDetail.WaitTime
 	}
+	require.Equal(t, d.TotWaitTime, timeSum)
 	require.Equal(t, d.AvgWaitTime, timeSum/time.Duration(n))
 	require.InEpsilon(t, d.P90WaitTime.Nanoseconds(), details[n*9/10].TimeDetail.WaitTime.Nanoseconds(), 0.05)
 	require.Equal(t, d.MaxWaitTime, details[n-1].TimeDetail.WaitTime)

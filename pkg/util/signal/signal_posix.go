@@ -32,7 +32,7 @@ func SetupSignalHandler(shutdownFunc func()) {
 
 	signal.Notify(usrDefSignalChan, syscall.SIGUSR1)
 	go func() {
-		buf := make([]byte, 1<<16)
+		buf := make([]byte, 1<<17)
 		for {
 			sig := <-usrDefSignalChan
 			if sig == syscall.SIGUSR1 {

@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -148,7 +148,7 @@ func TestPartitionInfoDisable(t *testing.T) {
   PARTITION p202011 VALUES LESS THAN ("2020-12-01")
 )`)
 	is := tk.Session().GetInfoSchema().(infoschema.InfoSchema)
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t_info_null"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_info_null"))
 	require.NoError(t, err)
 
 	tbInfo := tbl.Meta()

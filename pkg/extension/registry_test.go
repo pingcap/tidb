@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/sem"
@@ -133,17 +134,17 @@ func TestRegisterExtensionWithSysVars(t *testing.T) {
 	defer extension.Reset()
 
 	sysVar1 := &variable.SysVar{
-		Scope: variable.ScopeGlobal | variable.ScopeSession,
+		Scope: vardef.ScopeGlobal | vardef.ScopeSession,
 		Name:  "var1",
-		Value: variable.On,
-		Type:  variable.TypeBool,
+		Value: vardef.On,
+		Type:  vardef.TypeBool,
 	}
 
 	sysVar2 := &variable.SysVar{
-		Scope: variable.ScopeSession,
+		Scope: vardef.ScopeSession,
 		Name:  "var2",
 		Value: "val2",
-		Type:  variable.TypeStr,
+		Type:  vardef.TypeStr,
 	}
 
 	// normal register
@@ -156,7 +157,7 @@ func TestRegisterExtensionWithSysVars(t *testing.T) {
 	// test for empty name
 	extension.Reset()
 	require.NoError(t, extension.Register("test", extension.WithCustomSysVariables([]*variable.SysVar{
-		{Scope: variable.ScopeGlobal, Name: "", Value: "val3"},
+		{Scope: vardef.ScopeGlobal, Name: "", Value: "val3"},
 	})))
 	require.EqualError(t, extension.Setup(), "system var name should not be empty")
 	require.Nil(t, variable.GetSysVar(""))
@@ -165,12 +166,12 @@ func TestRegisterExtensionWithSysVars(t *testing.T) {
 	extension.Reset()
 	require.NoError(t, extension.Register("test", extension.WithCustomSysVariables([]*variable.SysVar{
 		sysVar1,
-		{Scope: variable.ScopeGlobal, Name: variable.TiDBSnapshot, Value: "val3"},
+		{Scope: vardef.ScopeGlobal, Name: vardef.TiDBSnapshot, Value: "val3"},
 	})))
 	require.EqualError(t, extension.Setup(), "system var 'tidb_snapshot' has already registered")
 	require.Nil(t, variable.GetSysVar("var1"))
-	require.Equal(t, "", variable.GetSysVar(variable.TiDBSnapshot).Value)
-	require.Equal(t, variable.ScopeSession, variable.GetSysVar(variable.TiDBSnapshot).Scope)
+	require.Equal(t, "", variable.GetSysVar(vardef.TiDBSnapshot).Value)
+	require.Equal(t, vardef.ScopeSession, variable.GetSysVar(vardef.TiDBSnapshot).Scope)
 
 	// test for duplicate name with other extension
 	extension.Reset()
@@ -185,12 +186,12 @@ func TestSetVariablePrivilege(t *testing.T) {
 	defer extension.Reset()
 
 	sysVar1 := &variable.SysVar{
-		Scope:    variable.ScopeGlobal | variable.ScopeSession,
+		Scope:    vardef.ScopeGlobal | vardef.ScopeSession,
 		Name:     "var1",
 		Value:    "1",
 		MinValue: 0,
 		MaxValue: 100,
-		Type:     variable.TypeInt,
+		Type:     vardef.TypeInt,
 		RequireDynamicPrivileges: func(isGlobal bool, sem bool) []string {
 			privs := []string{"priv1"}
 			if isGlobal {

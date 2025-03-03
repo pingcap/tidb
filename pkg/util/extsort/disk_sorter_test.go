@@ -398,7 +398,7 @@ func TestSSTReaderPoolParallel(t *testing.T) {
 	pool := newSSTReaderPool(fs, dirname, cache)
 
 	var wg sync.WaitGroup
-	for i := 0; i <= 16; i++ {
+	for i := range 17 {
 		wg.Add(1)
 		go func(fileNum int) {
 			defer wg.Done()

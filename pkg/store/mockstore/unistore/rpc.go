@@ -62,6 +62,8 @@ var UnistoreRPCClientSendHook atomic.Pointer[func(*tikvrpc.Request)]
 
 // SendRequest sends a request to mock cluster.
 func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	tikvrpc.AttachContext(req, req.Context)
+
 	failpoint.Inject("rpcServerBusy", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(tikvrpc.GenRegionErrorResp(req, &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}))
@@ -96,6 +98,11 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	failpoint.Inject("unistoreRPCSlowByInjestSleep", func(val failpoint.Value) {
 		time.Sleep(time.Duration(val.(int) * int(time.Millisecond)))
 		failpoint.Return(tikvrpc.GenRegionErrorResp(req, &errorpb.Error{Message: "Deadline is exceeded"}))
+	})
+	failpoint.Inject("unistoreRPCSlowCop", func(val failpoint.Value) {
+		if req.Type == tikvrpc.CmdCop {
+			time.Sleep(time.Duration(val.(int) * int(time.Millisecond)))
+		}
 	})
 
 	select {

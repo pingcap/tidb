@@ -250,7 +250,7 @@ type PhysicalProperty struct {
 	CTEProducerStatus cteProducerStatus
 
 	VectorProp struct {
-		*expression.VectorHelper
+		*expression.VSInfo
 		TopK uint32
 	}
 }
@@ -381,7 +381,7 @@ func (p *PhysicalProperty) HashCode() []byte {
 		for _, col := range p.MPPPartitionCols {
 			p.hashcode = append(p.hashcode, col.hashCode()...)
 		}
-		if p.VectorProp.VectorHelper != nil {
+		if p.VectorProp.VSInfo != nil {
 			// We only accpect the vector information from the TopN which is directly above the DataSource.
 			// So it's safe to not hash the vector constant.
 			p.hashcode = append(p.hashcode, p.VectorProp.Column.HashCode()...)

@@ -16,9 +16,11 @@ package workerpool
 
 import (
 	"context"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -47,7 +49,7 @@ func (w *MyWorker[T, R]) HandleTask(task int64Task, _ func(struct{})) {
 }
 
 func (w *MyWorker[T, R]) Close() {
-	logutil.BgLogger().Info("Close worker", zap.Any("id", w.id))
+	logutil.BgLogger().Info("Close worker", zap.Int("id", w.id))
 }
 
 func createMyWorker() Worker[int64Task, struct{}] {
@@ -82,7 +84,7 @@ func TestWorkerPool(t *testing.T) {
 	require.Equal(t, int64(45), globalCnt.Load())
 
 	// Enlarge the pool to 5 workers.
-	pool.Tune(5)
+	pool.Tune(5, false)
 
 	// Add some more tasks to the pool.
 	cntWg.Add(10)
@@ -95,7 +97,7 @@ func TestWorkerPool(t *testing.T) {
 	require.Equal(t, int64(90), globalCnt.Load())
 
 	// Decrease the pool to 2 workers.
-	pool.Tune(2)
+	pool.Tune(2, false)
 
 	// Add some more tasks to the pool.
 	cntWg.Add(10)
@@ -109,6 +111,35 @@ func TestWorkerPool(t *testing.T) {
 
 	// Wait for the tasks to be completed.
 	pool.ReleaseAndWait()
+}
+
+func TestTunePoolSize(t *testing.T) {
+	t.Run("random tune pool size", func(t *testing.T) {
+		pool := NewWorkerPool[int64Task]("test", util.UNKNOWN, 3, createMyWorker)
+		pool.Start(context.Background())
+		seed := time.Now().UnixNano()
+		rnd := rand.New(rand.NewSource(seed))
+		t.Logf("seed: %d", seed)
+		for i := 0; i < 100; i++ {
+			wait := rnd.Intn(2) == 0
+			larger := pool.Cap() + rnd.Int31n(10) + 2
+			pool.Tune(larger, wait)
+			require.Equal(t, larger, pool.Cap())
+			smaller := pool.Cap() / 2
+			pool.Tune(smaller, wait)
+			require.Equal(t, smaller, pool.Cap())
+		}
+		pool.Release()
+		pool.Wait()
+	})
+
+	t.Run("context done when reduce pool size and wait", func(t *testing.T) {
+		pool := NewWorkerPool[int64Task]("test", util.UNKNOWN, 10, createMyWorker)
+		pool.Start(context.Background())
+		pool.Release()
+		pool.Tune(5, true)
+		pool.Wait()
+	})
 }
 
 type dummyWorker[T, R any] struct {

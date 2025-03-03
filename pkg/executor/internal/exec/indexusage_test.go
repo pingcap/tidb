@@ -23,7 +23,8 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
@@ -52,9 +53,7 @@ func TestIndexUsageReporter(t *testing.T) {
 	runtimeStatsColl := sc.RuntimeStatsColl
 
 	// For PointGet and BatchPointGet
-	planID := 3
-	runtimeStatsColl.GetBasicRuntimeStats(planID).Record(time.Second, 2024)
-	reporter.ReportPointGetIndexUsage(tableID, tableID, indexID, planID, 1)
+	reporter.ReportPointGetIndexUsage(tableID, tableID, indexID, 1, 2024)
 
 	require.Eventually(t, func() bool {
 		tk.Session().ReportUsageStats()
@@ -63,11 +62,11 @@ func TestIndexUsageReporter(t *testing.T) {
 	}, time.Second*5, time.Millisecond)
 
 	// For Index Scan
-	planID = 4
+	planID := 4
 	rows := uint64(2024)
 	zero := uint64(0)
 	executorID := "test-executor"
-	runtimeStatsColl.GetOrCreateCopStats(planID, "test-store").RecordOneCopTask("1", &tipb.ExecutorExecutionSummary{
+	runtimeStatsColl.RecordOneCopTask(planID, kv.TiKV, &tipb.ExecutorExecutionSummary{
 		TimeProcessedNs: &zero,
 		NumProducedRows: &rows,
 		NumIterations:   &zero,
@@ -87,9 +86,7 @@ func TestIndexUsageReporter(t *testing.T) {
 		Version:       statistics.PseudoVersion,
 		RealtimeCount: 100,
 	})
-	planID = 4
-	runtimeStatsColl.GetBasicRuntimeStats(planID).Record(time.Second, 2024)
-	reporter.ReportPointGetIndexUsage(tableID, tableID, indexID, planID, 1)
+	reporter.ReportPointGetIndexUsage(tableID, tableID, indexID, 1, 2024)
 
 	require.Eventually(t, func() bool {
 		tk.Session().ReportUsageStats()
@@ -223,7 +220,7 @@ func TestIndexUsageReporterWithRealData(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id_1 int, id_2 int, unique key idx_1(id_1), unique key idx_2(id_2))")
 
-	table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableID := table.Meta().ID
 	idx1ID := int64(0)
@@ -272,7 +269,8 @@ func TestIndexUsageReporterWithRealData(t *testing.T) {
 			"select * from t where id_1 = 1",
 			"Point_Get",
 			[]indexStatsExpect{
-				{tableID, idx1ID, []indexusage.Sample{indexusage.NewSample(1, 1, 1, 100)}},
+				// The point get will always use smallest bucket.
+				{tableID, idx1ID, []indexusage.Sample{indexusage.NewSample(1, 1, 1, 1000)}},
 			},
 		},
 		{
@@ -298,7 +296,7 @@ partition p1 values less than (20),
 partition p2 values less than (50),
 partition p3 values less than MAXVALUE)`)
 
-	table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	idx1ID := int64(0)
 	for _, idx := range table.Indices() {
@@ -342,7 +340,7 @@ partition p3 values less than MAXVALUE)`)
 			"select * from t where id_1 = 1",
 			"Point_Get",
 			[]indexStatsExpect{
-				{table.Meta().ID, idx1ID, []indexusage.Sample{indexusage.NewSample(1, 1, 1, 10)}},
+				{table.Meta().ID, idx1ID, []indexusage.Sample{indexusage.NewSample(1, 1, 1, 1000)}},
 			},
 		},
 		// BatchPointGet in a partition
@@ -369,7 +367,7 @@ partition p1 values less than (20),
 partition p2 values less than (50),
 partition p3 values less than MAXVALUE)`)
 
-	table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	idx1ID := int64(0)
 	for _, idx := range table.Indices() {
@@ -392,7 +390,7 @@ partition p3 values less than MAXVALUE)`)
 			"select * from t use index(idx_1) where id_1 = 1",
 			"Point_Get",
 			[]indexStatsExpect{
-				{table.Meta().ID, idx1ID, []indexusage.Sample{indexusage.NewSample(1, 1, 1, 100)}},
+				{table.Meta().ID, idx1ID, []indexusage.Sample{indexusage.NewSample(1, 1, 1, 1000)}},
 			},
 		},
 		// BatchPointGet on global index
@@ -414,7 +412,7 @@ func TestDisableIndexUsageReporter(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id_1 int, id_2 int, unique key idx_1(id_1), unique key idx_2(id_2))")
 
-	table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableID := table.Meta().ID
 	idx1ID := int64(0)
@@ -462,7 +460,7 @@ func TestIndexUsageReporterWithClusterIndex(t *testing.T) {
 	}
 	testTableInfos := []testTableInfo{}
 	for i := 0; i < 4; i++ {
-		table, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(fmt.Sprintf("t%d", i)))
+		table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(fmt.Sprintf("t%d", i)))
 		require.NoError(t, err)
 		tableID := table.Meta().ID
 		pkID := int64(0)
@@ -522,13 +520,15 @@ func TestIndexUsageReporterWithClusterIndex(t *testing.T) {
 		{
 			"select * from t0 where id = 1",
 			"Point_Get",
-			[]indexStatsExpect{{testTableInfos[0].tableID, testTableInfos[0].pkID, []indexusage.Sample{indexusage.NewSample(1, 1, 1, 100)}}},
+			// The point get will always use smallest bucket.
+			[]indexStatsExpect{{testTableInfos[0].tableID, testTableInfos[0].pkID, []indexusage.Sample{indexusage.NewSample(1, 1, 1, 1000)}}},
 		},
 		// PointGet on CommonHandle
 		{
 			"select * from t1 where id = \"1\"",
 			"Point_Get",
-			[]indexStatsExpect{{testTableInfos[1].tableID, testTableInfos[1].pkID, []indexusage.Sample{indexusage.NewSample(1, 1, 1, 100)}}},
+			// The point get will always use smallest bucket.
+			[]indexStatsExpect{{testTableInfos[1].tableID, testTableInfos[1].pkID, []indexusage.Sample{indexusage.NewSample(1, 1, 1, 1000)}}},
 		},
 		// BatchPointGet on PKAsHandle
 		{

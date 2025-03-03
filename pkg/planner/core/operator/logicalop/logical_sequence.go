@@ -34,7 +34,8 @@ import (
 //
 // We use this property to do complex optimizations for CTEs.
 type LogicalSequence struct {
-	BaseLogicalPlan
+	// logical sequence doesn't have any other attribute to distinguish, use plan id inside.
+	BaseLogicalPlan `hash64-equals:"true"`
 }
 
 // Init initializes LogicalSequence
@@ -92,9 +93,14 @@ func (p *LogicalSequence) PruneColumns(parentUsedCols []*expression.Column, opt 
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implements the base.LogicalPlan.<11th> interface.
-func (p *LogicalSequence) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalSequence) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
 	p.SetStats(childStats[len(childStats)-1])
-	return p.StatsInfo(), nil
+	reload := true
+	if reloads != nil && !reloads[len(reloads)-1] {
+		// sequence only care about the last child stats is changed or not.
+		reload = false
+	}
+	return p.StatsInfo(), reload, nil
 }
 
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.

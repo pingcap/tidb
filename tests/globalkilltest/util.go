@@ -92,7 +92,7 @@ func checkTiKVStatus() error {
 			return nil, errors.Trace(err)
 		}
 
-		log.Info("TiKV status", zap.Any("status", resp.StatusCode))
+		log.Info("TiKV status", zap.Int("status", resp.StatusCode))
 		if resp.StatusCode != http.StatusOK {
 			return nil, fmt.Errorf("TiKV status code %d", resp.StatusCode)
 		}

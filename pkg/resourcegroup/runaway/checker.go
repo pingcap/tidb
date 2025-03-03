@@ -44,18 +44,20 @@ type Checker struct {
 	deadline               time.Time
 	ruThreshold            int64
 	processedKeysThreshold int64
-	// using total processed_keys to accumulate all coprocessor tasks.
-	totalProcessedKeys int64
 	// From the group runaway settings, which will be applied when a query lacks a specified watch rule.
 	settings *rmpb.RunawaySettings
 
+	// watchAction is the specified watch action for the runaway query.
+	// If it's not given, the action defined in `settings` will be used.
+	watchAction rmpb.RunawayAction
+
+	// mutable fields below
+	// using total processed_keys to accumulate all coprocessor tasks.
+	totalProcessedKeys int64
 	// markedByIdentifyInRunawaySettings is set to true when the query matches the group runaway settings.
 	markedByIdentifyInRunawaySettings atomic.Bool
 	// markedByQueryWatchRule is set to true when the query matches the specified watch rules.
 	markedByQueryWatchRule bool
-	// watchAction is the specified watch action for the runaway query.
-	// If it's not given, the action defined in `settings` will be used.
-	watchAction rmpb.RunawayAction
 }
 
 // NewChecker creates a new RunawayChecker.
@@ -328,8 +330,9 @@ func (r *Checker) CheckThresholds(ruDetail *util.RUDetails, processKeys int64, e
 		checkTime = now
 	}
 	// add the processed keys to the total processed keys.
-	r.totalProcessedKeys += processKeys
-	exceedCause := r.exceedsThresholds(checkTime, ruDetail, r.totalProcessedKeys)
+	atomic.AddInt64(&r.totalProcessedKeys, processKeys)
+	totalProcessedKeys := atomic.LoadInt64(&r.totalProcessedKeys)
+	exceedCause := r.exceedsThresholds(checkTime, ruDetail, totalProcessedKeys)
 	if !r.markedByIdentifyInRunawaySettings.Load() {
 		if exceedCause != "" && r.markRunawayByIdentifyInRunawaySettings(&now, exceedCause) {
 			if r.markRunawayByIdentifyInRunawaySettings(&now, exceedCause) {
@@ -405,5 +408,5 @@ func (r *Checker) ResetTotalProcessedKeys() {
 	if r == nil {
 		return
 	}
-	r.totalProcessedKeys = 0
+	atomic.StoreInt64(&r.totalProcessedKeys, 0)
 }

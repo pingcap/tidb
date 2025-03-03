@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
-	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"golang.org/x/sync/errgroup"
 )

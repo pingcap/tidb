@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -212,11 +212,11 @@ func (w *extractWorker) handleTableNames(tableNames string, record *stmtSummaryH
 		case util.PerformanceSchemaName.L, util.InformationSchemaName.L, util.MetricSchemaName.L, "mysql":
 			return false, nil
 		}
-		exists := is.TableExists(model.NewCIStr(dbName), model.NewCIStr(tblName))
+		exists := is.TableExists(ast.NewCIStr(dbName), ast.NewCIStr(tblName))
 		if !exists {
 			return false, nil
 		}
-		t, err := is.TableByName(w.ctx, model.NewCIStr(dbName), model.NewCIStr(tblName))
+		t, err := is.TableByName(w.ctx, ast.NewCIStr(dbName), ast.NewCIStr(tblName))
 		if err != nil {
 			return false, err
 		}
@@ -269,13 +269,13 @@ func (w *extractWorker) handleIsView(ctx context.Context, p *extractPlanPackage)
 		ctx:      ctx,
 		executor: w.sctx.GetRestrictedSQLExecutor(),
 		is:       is,
-		curDB:    model.NewCIStr(""),
+		curDB:    ast.NewCIStr(""),
 		names:    make(map[tableNamePair]struct{}),
 		cteNames: make(map[string]struct{}),
 	}
 	for v := range p.tables {
 		if v.IsView {
-			v, err := is.TableByName(w.ctx, model.NewCIStr(v.DBName), model.NewCIStr(v.TableName))
+			v, err := is.TableByName(w.ctx, ast.NewCIStr(v.DBName), ast.NewCIStr(v.TableName))
 			if err != nil {
 				return err
 			}

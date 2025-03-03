@@ -70,18 +70,18 @@ type sqlCrypt struct {
 func (sc *sqlCrypt) init(password []byte, length int) {
 	sc.rand.randomInit(password, length)
 
-	for i := 0; i <= 255; i++ {
+	for i := range 256 {
 		sc.decodeBuff[i] = byte(i)
 	}
 
-	for i := 0; i <= 255; i++ {
+	for i := range 256 {
 		idx := uint32(sc.rand.myRand() * 255.0)
 		a := sc.decodeBuff[idx]
 		sc.decodeBuff[idx] = sc.decodeBuff[i]
 		sc.decodeBuff[i] = a
 	}
 
-	for i := 0; i <= 255; i++ {
+	for i := range 256 {
 		sc.encodeBuff[sc.decodeBuff[i]] = byte(i)
 	}
 

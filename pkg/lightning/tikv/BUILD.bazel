@@ -64,6 +64,7 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_pd_client//:client",
         "@com_github_tikv_pd_client//http",
+        "@com_github_tikv_pd_client//pkg/caller",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//credentials/insecure",
     ],

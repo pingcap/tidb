@@ -30,6 +30,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -52,15 +53,15 @@ func TestSetSystemVariable(t *testing.T) {
 		value string
 		err   bool
 	}{
-		{variable.TxnIsolation, "SERIALIZABLE", true},
-		{variable.TimeZone, "xyz", true},
-		{variable.TiDBOptAggPushDown, "1", false},
-		{variable.TiDBOptDeriveTopN, "1", false},
-		{variable.TiDBOptDistinctAggPushDown, "1", false},
-		{variable.TiDBMemQuotaQuery, "1024", false},
-		{variable.TiDBMemQuotaApplyCache, "1024", false},
-		{variable.TiDBEnableStmtSummary, "1", true}, // now global only
-		{variable.TiDBEnableRowLevelChecksum, "1", true},
+		{vardef.TxnIsolation, "SERIALIZABLE", true},
+		{vardef.TimeZone, "xyz", true},
+		{vardef.TiDBOptAggPushDown, "1", false},
+		{vardef.TiDBOptDeriveTopN, "1", false},
+		{vardef.TiDBOptDistinctAggPushDown, "1", false},
+		{vardef.TiDBMemQuotaQuery, "1024", false},
+		{vardef.TiDBMemQuotaApplyCache, "1024", false},
+		{vardef.TiDBEnableStmtSummary, "1", true}, // now global only
+		{vardef.TiDBEnableRowLevelChecksum, "1", true},
 	}
 
 	for _, tc := range testCases {
@@ -252,6 +253,14 @@ func TestSlowLogFormat(t *testing.T) {
 # KV_total: 10
 # PD_total: 11
 # Backoff_total: 12
+# Unpacked_bytes_sent_tikv_total: 0
+# Unpacked_bytes_received_tikv_total: 0
+# Unpacked_bytes_sent_tikv_cross_zone: 0
+# Unpacked_bytes_received_tikv_cross_zone: 0
+# Unpacked_bytes_sent_tiflash_total: 0
+# Unpacked_bytes_received_tiflash_total: 0
+# Unpacked_bytes_sent_tiflash_cross_zone: 0
+# Unpacked_bytes_received_tiflash_cross_zone: 0
 # Write_sql_response_total: 1
 # Result_rows: 12345
 # Succ: true
@@ -264,6 +273,11 @@ func TestSlowLogFormat(t *testing.T) {
 # Time_queued_by_rc: 0.134`
 	sql := "select * from t;"
 	_, digest := parser.NormalizeDigest(sql)
+	tikvExecDetail := util.ExecDetails{
+		WaitKVRespDuration: (10 * time.Second).Nanoseconds(),
+		WaitPDRespDuration: (11 * time.Second).Nanoseconds(),
+		BackoffDuration:    (12 * time.Second).Nanoseconds(),
+	}
 	logItems := &variable.SlowQueryLogItems{
 		TxnTS:             txnTS,
 		KeyspaceName:      "keyspace_a",
@@ -284,9 +298,7 @@ func TestSlowLogFormat(t *testing.T) {
 		PlanFromCache:     true,
 		PlanFromBinding:   true,
 		HasMoreResults:    true,
-		KVTotal:           10 * time.Second,
-		PDTotal:           11 * time.Second,
-		BackoffTotal:      12 * time.Second,
+		KVExecDetail:      &tikvExecDetail,
 		WriteSQLRespTotal: 1 * time.Second,
 		ResultRows:        12345,
 		Succ:              true,
@@ -334,14 +346,11 @@ func TestTableDeltaClone(t *testing.T) {
 	td0 := variable.TableDelta{
 		Delta:    1,
 		Count:    2,
-		ColSize:  map[int64]int64{1: 1, 2: 2},
 		InitTime: time.Now(),
 		TableID:  5,
 	}
 	td1 := td0.Clone()
 	require.Equal(t, td0, td1)
-	td0.ColSize[3] = 3
-	require.NotEqual(t, td0, td1)
 
 	td2 := td0.Clone()
 	require.Equal(t, td0, td2)
@@ -356,7 +365,6 @@ func TestTransactionContextSavepoint(t *testing.T) {
 				1: {
 					Delta:    1,
 					Count:    2,
-					ColSize:  map[int64]int64{1: 1},
 					InitTime: time.Now(),
 					TableID:  5,
 				},
@@ -375,11 +383,9 @@ func TestTransactionContextSavepoint(t *testing.T) {
 	require.False(t, succ)
 	require.Equal(t, 1, len(tc.Savepoints))
 
-	tc.TableDeltaMap[1].ColSize[2] = 2
 	tc.TableDeltaMap[2] = variable.TableDelta{
 		Delta:    6,
 		Count:    7,
-		ColSize:  map[int64]int64{8: 8},
 		InitTime: time.Now(),
 		TableID:  9,
 	}
@@ -389,7 +395,6 @@ func TestTransactionContextSavepoint(t *testing.T) {
 	tc.AddSavepoint("S2", nil)
 	require.Equal(t, 2, len(tc.Savepoints))
 	require.Equal(t, 1, len(tc.Savepoints[0].TxnCtxSavepoint.TableDeltaMap))
-	require.Equal(t, 1, len(tc.Savepoints[0].TxnCtxSavepoint.TableDeltaMap[1].ColSize))
 	require.Equal(t, "s1", tc.Savepoints[0].Name)
 	require.Equal(t, 2, len(tc.Savepoints[1].TxnCtxSavepoint.TableDeltaMap))
 	require.Equal(t, "s2", tc.Savepoints[1].Name)
@@ -397,7 +402,6 @@ func TestTransactionContextSavepoint(t *testing.T) {
 	tc.TableDeltaMap[3] = variable.TableDelta{
 		Delta:    10,
 		Count:    11,
-		ColSize:  map[int64]int64{12: 12},
 		InitTime: time.Now(),
 		TableID:  13,
 	}
@@ -446,7 +450,7 @@ func TestHookContext(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	ctx := mock.NewContext()
 	ctx.Store = store
-	sv := variable.SysVar{Scope: variable.ScopeGlobal | variable.ScopeSession, Name: "testhooksysvar", Value: variable.On, Type: variable.TypeBool, SetSession: func(s *variable.SessionVars, val string) error {
+	sv := variable.SysVar{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: "testhooksysvar", Value: vardef.On, Type: vardef.TypeBool, SetSession: func(s *variable.SessionVars, val string) error {
 		require.Equal(t, s.GetStore(), store)
 		return nil
 	}}
@@ -557,49 +561,6 @@ func TestSetStatus(t *testing.T) {
 	require.True(t, sv.HasStatusFlag(mysql.ServerStatusCursorExists))
 	require.False(t, sv.InTxn())
 	require.Equal(t, mysql.ServerStatusAutocommit|mysql.ServerStatusCursorExists, sv.Status())
-}
-
-func TestMapDeltaCols(t *testing.T) {
-	for _, c := range []struct {
-		m    map[int64]int64
-		cols variable.DeltaColsMap
-		r    map[int64]int64
-	}{
-		{},
-		{
-			cols: map[int64]int64{1: 2},
-			r:    map[int64]int64{1: 2},
-		},
-		{
-			m: map[int64]int64{1: 2},
-			r: map[int64]int64{1: 2},
-		},
-		{
-			m:    map[int64]int64{1: 3, 3: 5, 5: 7},
-			cols: map[int64]int64{1: 2, 3: -4, 6: 8},
-			r:    map[int64]int64{1: 5, 3: 1, 5: 7, 6: 8},
-		},
-	} {
-		originalCols := make(map[int64]int64)
-		for k, v := range c.cols {
-			originalCols[k] = v
-		}
-
-		m2 := c.cols.UpdateColSizeMap(c.m)
-		require.Equal(t, c.r, m2)
-		if c.m == nil {
-			if len(c.cols) == 0 {
-				require.Nil(t, m2)
-			}
-		} else {
-			require.Equal(t, m2, c.m)
-		}
-
-		if c.cols != nil {
-			// deltaCols not change
-			require.Equal(t, originalCols, map[int64]int64(c.cols))
-		}
-	}
 }
 
 func TestRowIDShardGenerator(t *testing.T) {

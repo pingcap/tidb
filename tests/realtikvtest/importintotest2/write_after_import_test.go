@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/lightning/common"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 )
 
@@ -228,9 +228,9 @@ func (s *mockGCSSuite) testWriteAfterImport(importSQL string, sourceType importe
 			s.tk.MustQuery(querySQL).Check(testkit.Rows(allData...))
 
 			is := s.tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema)
-			dbInfo, ok := is.SchemaByName(model.NewCIStr("write_after_import"))
+			dbInfo, ok := is.SchemaByName(ast.NewCIStr("write_after_import"))
 			s.True(ok)
-			tableObj, err := is.TableByName(context.Background(), model.NewCIStr("write_after_import"), model.NewCIStr("t"))
+			tableObj, err := is.TableByName(context.Background(), ast.NewCIStr("write_after_import"), ast.NewCIStr("t"))
 			s.NoError(err)
 			if common.TableHasAutoID(tableObj.Meta()) {
 				allocators, err := common.GetGlobalAutoIDAlloc(domain.GetDomain(s.tk.Session()), dbInfo.ID, tableObj.Meta())

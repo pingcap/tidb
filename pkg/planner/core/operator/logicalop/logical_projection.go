@@ -36,7 +36,7 @@ import (
 type LogicalProjection struct {
 	LogicalSchemaProducer `hash64-equals:"true"`
 
-	Exprs []expression.Expression `hash64-equals:"true"`
+	Exprs []expression.Expression `hash64-equals:"true" shallow-ref:"true"`
 
 	// CalculateNoDelay indicates this Projection is the root Plan and should be
 	// calculated without delay and will not return any result to client.
@@ -171,9 +171,9 @@ func (p *LogicalProjection) BuildKeyInfo(selfSchema *expression.Schema, childSch
 	// `LogicalProjection` use schema from `Exprs` to build key info. See `buildSchemaByExprs`.
 	// So call `baseLogicalPlan.BuildKeyInfo` here to avoid duplicated building key info.
 	p.BaseLogicalPlan.BuildKeyInfo(selfSchema, childSchema)
-	selfSchema.Keys = nil
+	selfSchema.PKOrUK = nil
 	schema := p.buildSchemaByExprs(selfSchema)
-	for _, key := range childSchema[0].Keys {
+	for _, key := range childSchema[0].PKOrUK {
 		indices := schema.ColumnsIndices(key)
 		if indices == nil {
 			continue
@@ -182,7 +182,7 @@ func (p *LogicalProjection) BuildKeyInfo(selfSchema *expression.Schema, childSch
 		for _, i := range indices {
 			newKey = append(newKey, selfSchema.Columns[i])
 		}
-		selfSchema.Keys = append(selfSchema.Keys, newKey)
+		selfSchema.PKOrUK = append(selfSchema.PKOrUK, newKey)
 	}
 }
 
@@ -283,12 +283,16 @@ func (p *LogicalProjection) PullUpConstantPredicates() []expression.Expression {
 // RecursiveDeriveStats inherits BaseLogicalPlan.<10th> implementation.
 
 // DeriveStats implement base.LogicalPlan.<11th> interface.
-func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
 	childProfile := childStats[0]
-	if p.StatsInfo() != nil {
+	var reload bool
+	if len(reloads) == 1 {
+		reload = reloads[0]
+	}
+	if !reload && p.StatsInfo() != nil {
 		// Reload GroupNDVs since colGroups may have changed.
-		p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childProfile, selfSchema)
-		return p.StatsInfo(), nil
+		p.StatsInfo().GroupNDVs = p.getGroupNDVs(childProfile, selfSchema)
+		return p.StatsInfo(), false, nil
 	}
 	p.SetStats(&property.StatsInfo{
 		RowCount: childProfile.RowCount,
@@ -298,8 +302,8 @@ func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSc
 		cols := expression.ExtractColumns(expr)
 		p.StatsInfo().ColNDVs[selfSchema.Columns[i].UniqueID], _ = cardinality.EstimateColsNDVWithMatchedLen(cols, childSchema[0], childProfile)
 	}
-	p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childProfile, selfSchema)
-	return p.StatsInfo(), nil
+	p.StatsInfo().GroupNDVs = p.getGroupNDVs(childProfile, selfSchema)
+	return p.StatsInfo(), true, nil
 }
 
 // ExtractColGroups implements base.LogicalPlan.<12th> interface.
@@ -403,6 +407,10 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 	for idx, expr := range p.Exprs {
 		switch x := expr.(type) {
 		case *expression.Column:
+			//  column projected as a new column again.
+			if int(x.UniqueID) != outputColsUniqueIDsArray[idx] {
+				fds.AddEquivalence(intset.NewFastIntSet(int(x.UniqueID)), intset.NewFastIntSet(outputColsUniqueIDsArray[idx]))
+			}
 			continue
 		case *expression.CorrelatedColumn:
 			// t1(a,b,c), t2(m,n)
@@ -457,7 +465,7 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 				// the dependent columns in scalar function should be also considered as output columns as well.
 				outputColsUniqueIDs.Insert(int(one.UniqueID))
 			}
-			notnull := util.IsNullRejected(p.SCtx(), p.Schema(), x)
+			notnull := util.IsNullRejected(p.SCtx(), p.Schema(), x, true)
 			if notnull || determinants.SubsetOf(fds.NotNullCols) {
 				notnullColsUniqueIDs.Insert(scalarUniqueID)
 			}
@@ -535,8 +543,8 @@ func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (
 	return newProp, true
 }
 
-func (p *LogicalProjection) getGroupNDVs(colGroups [][]*expression.Column, childProfile *property.StatsInfo, selfSchema *expression.Schema) []property.GroupNDV {
-	if len(colGroups) == 0 || len(childProfile.GroupNDVs) == 0 {
+func (p *LogicalProjection) getGroupNDVs(childProfile *property.StatsInfo, selfSchema *expression.Schema) []property.GroupNDV {
+	if len(childProfile.GroupNDVs) == 0 {
 		return nil
 	}
 	exprCol2ProjCol := make(map[int64]int64)

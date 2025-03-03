@@ -71,6 +71,11 @@ func (tp JoinType) IsSemiJoin() bool {
 		tp == LeftOuterSemiJoin || tp == AntiLeftOuterSemiJoin
 }
 
+// IsInnerJoin returns if this joiner is a inner joiner
+func (tp JoinType) IsInnerJoin() bool {
+	return tp == InnerJoin
+}
+
 func (tp JoinType) String() string {
 	switch tp {
 	case InnerJoin:
@@ -107,12 +112,12 @@ type LogicalJoin struct {
 	LeftPreferJoinType  uint
 	RightPreferJoinType uint
 
-	EqualConditions []*expression.ScalarFunction `hash64-equals:"true"`
+	EqualConditions []*expression.ScalarFunction `hash64-equals:"true" shallow-ref:"true"`
 	// NAEQConditions means null aware equal conditions, which is used for null aware semi joins.
-	NAEQConditions  []*expression.ScalarFunction `hash64-equals:"true"`
-	LeftConditions  expression.CNFExprs          `hash64-equals:"true"`
-	RightConditions expression.CNFExprs          `hash64-equals:"true"`
-	OtherConditions expression.CNFExprs          `hash64-equals:"true"`
+	NAEQConditions  []*expression.ScalarFunction `hash64-equals:"true" shallow-ref:"true"`
+	LeftConditions  expression.CNFExprs          `hash64-equals:"true" shallow-ref:"true"`
+	RightConditions expression.CNFExprs          `hash64-equals:"true" shallow-ref:"true"`
+	OtherConditions expression.CNFExprs          `hash64-equals:"true" shallow-ref:"true"`
 
 	LeftProperties  [][]*expression.Column
 	RightProperties [][]*expression.Column
@@ -322,7 +327,7 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 	p.LogicalSchemaProducer.BuildKeyInfo(selfSchema, childSchema)
 	switch p.JoinType {
 	case SemiJoin, LeftOuterSemiJoin, AntiSemiJoin, AntiLeftOuterSemiJoin:
-		selfSchema.Keys = childSchema[0].Clone().Keys
+		selfSchema.PKOrUK = childSchema[0].Clone().PKOrUK
 	case InnerJoin, LeftOuterJoin, RightOuterJoin:
 		// If there is no equal conditions, then cartesian product can't be prevented and unique key information will destroy.
 		if len(p.EqualConditions) == 0 {
@@ -338,13 +343,13 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 		for _, expr := range p.EqualConditions {
 			ln := expr.GetArgs()[0].(*expression.Column)
 			rn := expr.GetArgs()[1].(*expression.Column)
-			for _, key := range childSchema[0].Keys {
+			for _, key := range childSchema[0].PKOrUK {
 				if len(key) == 1 && key[0].Equal(evalCtx, ln) {
 					lOk = true
 					break
 				}
 			}
-			for _, key := range childSchema[1].Keys {
+			for _, key := range childSchema[1].PKOrUK {
 				if len(key) == 1 && key[0].Equal(evalCtx, rn) {
 					rOk = true
 					break
@@ -355,10 +360,10 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 		// another side's unique key information will all be reserved.
 		// If it's an outer join, NULL value will fill some position, which will destroy the unique key information.
 		if lOk && p.JoinType != LeftOuterJoin {
-			selfSchema.Keys = append(selfSchema.Keys, childSchema[1].Keys...)
+			selfSchema.PKOrUK = append(selfSchema.PKOrUK, childSchema[1].PKOrUK...)
 		}
 		if rOk && p.JoinType != RightOuterJoin {
-			selfSchema.Keys = append(selfSchema.Keys, childSchema[0].Keys...)
+			selfSchema.PKOrUK = append(selfSchema.PKOrUK, childSchema[0].PKOrUK...)
 		}
 	}
 }
@@ -491,11 +496,15 @@ func (p *LogicalJoin) ConstantPropagation(parentPlan base.LogicalPlan, currentCh
 // N(s) stands for the number of rows in relation s. V(s.key) means the NDV of join key in s.
 // This is a quite simple strategy: We assume every bucket of relation which will participate join has the same number of rows, and apply cross join for
 // every matched bucket.
-func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
-	if p.StatsInfo() != nil {
+func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
+	var reload bool
+	for _, one := range reloads {
+		reload = reload || one
+	}
+	if !reload && p.StatsInfo() != nil {
 		// Reload GroupNDVs since colGroups may have changed.
-		p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childStats)
-		return p.StatsInfo(), nil
+		p.StatsInfo().GroupNDVs = p.getGroupNDVs(childStats)
+		return p.StatsInfo(), false, nil
 	}
 	leftProfile, rightProfile := childStats[0], childStats[1]
 	leftJoinKeys, rightJoinKeys, _, _ := p.GetJoinKeys()
@@ -513,7 +522,7 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		for id, c := range leftProfile.ColNDVs {
 			p.StatsInfo().ColNDVs[id] = c * cost.SelectionFactor
 		}
-		return p.StatsInfo(), nil
+		return p.StatsInfo(), true, nil
 	}
 	if p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
 		p.SetStats(&property.StatsInfo{
@@ -524,8 +533,8 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 			p.StatsInfo().ColNDVs[id] = c
 		}
 		p.StatsInfo().ColNDVs[selfSchema.Columns[selfSchema.Len()-1].UniqueID] = 2.0
-		p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childStats)
-		return p.StatsInfo(), nil
+		p.StatsInfo().GroupNDVs = p.getGroupNDVs(childStats)
+		return p.StatsInfo(), true, nil
 	}
 	count := p.EqualCondOutCnt
 	if p.JoinType == LeftOuterJoin {
@@ -544,8 +553,8 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		RowCount: count,
 		ColNDVs:  colNDVs,
 	})
-	p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childStats)
-	return p.StatsInfo(), nil
+	p.StatsInfo().GroupNDVs = p.getGroupNDVs(childStats)
+	return p.StatsInfo(), true, nil
 }
 
 // ExtractColGroups implements the base.LogicalPlan.<12th> interface.
@@ -669,7 +678,7 @@ func (p *LogicalJoin) ConvertOuterToInnerJoin(predicates []expression.Expression
 	if p.JoinType == LeftOuterJoin || p.JoinType == RightOuterJoin {
 		canBeSimplified := false
 		for _, expr := range predicates {
-			isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr)
+			isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr, true)
 			if isOk {
 				canBeSimplified = true
 				break
@@ -1185,14 +1194,15 @@ func addCandidateSelection(currentPlan base.LogicalPlan, currentChildIdx int, pa
 	return nil
 }
 
-func (p *LogicalJoin) getGroupNDVs(colGroups [][]*expression.Column, childStats []*property.StatsInfo) []property.GroupNDV {
+// logical join group ndv is just to output the corresponding child's groupNDV is asked previously and only outer side is cared.
+func (p *LogicalJoin) getGroupNDVs(childStats []*property.StatsInfo) []property.GroupNDV {
 	outerIdx := int(-1)
 	if p.JoinType == LeftOuterJoin || p.JoinType == LeftOuterSemiJoin || p.JoinType == AntiLeftOuterSemiJoin {
 		outerIdx = 0
 	} else if p.JoinType == RightOuterJoin {
 		outerIdx = 1
 	}
-	if outerIdx >= 0 && len(colGroups) > 0 {
+	if outerIdx >= 0 {
 		return childStats[outerIdx].GroupNDVs
 	}
 	return nil
@@ -1243,19 +1253,20 @@ func (p *LogicalJoin) ExtractOnCondition(
 				}
 				if leftCol != nil && rightCol != nil {
 					if deriveLeft {
-						if util.IsNullRejected(ctx, leftSchema, expr) && !mysql.HasNotNullFlag(leftCol.RetType.GetFlag()) {
+						if util.IsNullRejected(ctx, leftSchema, expr, true) && !mysql.HasNotNullFlag(leftCol.RetType.GetFlag()) {
 							notNullExpr := expression.BuildNotNullExpr(ctx.GetExprCtx(), leftCol)
 							leftCond = append(leftCond, notNullExpr)
 						}
 					}
 					if deriveRight {
-						if util.IsNullRejected(ctx, rightSchema, expr) && !mysql.HasNotNullFlag(rightCol.RetType.GetFlag()) {
+						if util.IsNullRejected(ctx, rightSchema, expr, true) && !mysql.HasNotNullFlag(rightCol.RetType.GetFlag()) {
 							notNullExpr := expression.BuildNotNullExpr(ctx.GetExprCtx(), rightCol)
 							rightCond = append(rightCond, notNullExpr)
 						}
 					}
-					if binop.FuncName.L == ast.EQ {
-						cond := expression.NewFunctionInternal(ctx.GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), arg0, arg1)
+					switch binop.FuncName.L {
+					case ast.EQ, ast.NullEQ:
+						cond := expression.NewFunctionInternal(ctx.GetExprCtx(), binop.FuncName.L, types.NewFieldType(mysql.TypeTiny), arg0, arg1)
 						eqCond = append(eqCond, cond.(*expression.ScalarFunction))
 						continue
 					}
@@ -1341,7 +1352,10 @@ func (p *LogicalJoin) pushDownConstExpr(expr expression.Expression, leftCond []e
 func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, deriveLeft bool,
 	deriveRight bool) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
 	rightCond []expression.Expression, otherCond []expression.Expression) {
-	return p.ExtractOnCondition(conditions, p.Children()[0].Schema(), p.Children()[1].Schema(), deriveLeft, deriveRight)
+	child := p.Children()
+	rightSchema := child[1].Schema()
+	leftSchema := child[0].Schema()
+	return p.ExtractOnCondition(conditions, leftSchema, rightSchema, deriveLeft, deriveRight)
 }
 
 // SetPreferredJoinTypeAndOrder sets the preferred join type and order for the LogicalJoin.
@@ -1851,29 +1865,8 @@ func deriveNotNullExpr(ctx base.PlanContext, expr expression.Expression, schema 
 	if childCol == nil {
 		childCol = schema.RetrieveColumn(arg1)
 	}
-	if util.IsNullRejected(ctx, schema, expr) && !mysql.HasNotNullFlag(childCol.RetType.GetFlag()) {
+	if util.IsNullRejected(ctx, schema, expr, true) && !mysql.HasNotNullFlag(childCol.RetType.GetFlag()) {
 		return expression.BuildNotNullExpr(ctx.GetExprCtx(), childCol)
-	}
-	return nil
-}
-
-// Conds2TableDual builds a LogicalTableDual if cond is constant false or null.
-func Conds2TableDual(p base.LogicalPlan, conds []expression.Expression) base.LogicalPlan {
-	if len(conds) != 1 {
-		return nil
-	}
-	con, ok := conds[0].(*expression.Constant)
-	if !ok {
-		return nil
-	}
-	sc := p.SCtx().GetSessionVars().StmtCtx
-	if expression.MaybeOverOptimized4PlanCache(p.SCtx().GetExprCtx(), []expression.Expression{con}) {
-		return nil
-	}
-	if isTrue, err := con.Value.ToBool(sc.TypeCtxOrDefault()); (err == nil && isTrue == 0) || con.Value.IsNull() {
-		dual := LogicalTableDual{}.Init(p.SCtx(), p.QueryBlockOffset())
-		dual.SetSchema(p.Schema())
-		return dual
 	}
 	return nil
 }

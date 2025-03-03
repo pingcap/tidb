@@ -16,13 +16,13 @@ package context
 
 import (
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
 // TableLockReadContext is the interface to get table lock information.
 type TableLockReadContext interface {
 	// CheckTableLocked checks the table lock.
-	CheckTableLocked(tblID int64) (bool, pmodel.TableLockType)
+	CheckTableLocked(tblID int64) (bool, ast.TableLockType)
 	// GetAllTableLocks gets all table locks table id and db id hold by the session.
 	GetAllTableLocks() []model.TableLockTpInfo
 	// HasLockedTables uses to check whether this session locked any tables.

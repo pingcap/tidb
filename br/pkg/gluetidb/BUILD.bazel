@@ -15,7 +15,7 @@ go_library(
         "//pkg/executor",
         "//pkg/kv",
         "//pkg/meta/model",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/session",
         "//pkg/session/types",
         "//pkg/sessionctx",
@@ -35,7 +35,7 @@ go_test(
     deps = [
         "//br/pkg/glue",
         "//pkg/meta/model",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/session",
         "//pkg/testkit",
         "//pkg/types",

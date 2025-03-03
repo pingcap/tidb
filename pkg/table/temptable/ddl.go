@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -37,8 +36,8 @@ import (
 // TemporaryTableDDL is an interface providing ddl operations for temporary table
 type TemporaryTableDDL interface {
 	CreateLocalTemporaryTable(db *model.DBInfo, info *model.TableInfo) error
-	DropLocalTemporaryTable(schema pmodel.CIStr, tblName pmodel.CIStr) error
-	TruncateLocalTemporaryTable(schema pmodel.CIStr, tblName pmodel.CIStr) error
+	DropLocalTemporaryTable(schema ast.CIStr, tblName ast.CIStr) error
+	TruncateLocalTemporaryTable(schema ast.CIStr, tblName ast.CIStr) error
 }
 
 // temporaryTableDDL implements temptable.TemporaryTableDDL
@@ -59,7 +58,7 @@ func (d *temporaryTableDDL) CreateLocalTemporaryTable(db *model.DBInfo, info *mo
 	return ensureLocalTemporaryTables(d.sctx).AddTable(db, tbl)
 }
 
-func (d *temporaryTableDDL) DropLocalTemporaryTable(schema pmodel.CIStr, tblName pmodel.CIStr) error {
+func (d *temporaryTableDDL) DropLocalTemporaryTable(schema ast.CIStr, tblName ast.CIStr) error {
 	tbl, err := checkLocalTemporaryExistsAndReturn(d.sctx, schema, tblName)
 	if err != nil {
 		return err
@@ -69,7 +68,7 @@ func (d *temporaryTableDDL) DropLocalTemporaryTable(schema pmodel.CIStr, tblName
 	return d.clearTemporaryTableRecords(tbl.Meta().ID)
 }
 
-func (d *temporaryTableDDL) TruncateLocalTemporaryTable(schema pmodel.CIStr, tblName pmodel.CIStr) error {
+func (d *temporaryTableDDL) TruncateLocalTemporaryTable(schema ast.CIStr, tblName ast.CIStr) error {
 	oldTbl, err := checkLocalTemporaryExistsAndReturn(d.sctx, schema, tblName)
 	if err != nil {
 		return err
@@ -124,7 +123,7 @@ func (d *temporaryTableDDL) clearTemporaryTableRecords(tblID int64) error {
 	return nil
 }
 
-func checkLocalTemporaryExistsAndReturn(sctx sessionctx.Context, schema pmodel.CIStr, tblName pmodel.CIStr) (table.Table, error) {
+func checkLocalTemporaryExistsAndReturn(sctx sessionctx.Context, schema ast.CIStr, tblName ast.CIStr) (table.Table, error) {
 	ident := ast.Ident{Schema: schema, Name: tblName}
 	localTemporaryTables := getLocalTemporaryTables(sctx)
 	if localTemporaryTables == nil {

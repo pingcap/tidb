@@ -1,0 +1,25 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "pointget_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "point_get_plan_test.go",
+    ],
+    flaky = True,
+    shard_count = 6,
+    deps = [
+        "//pkg/metrics",
+        "//pkg/planner",
+        "//pkg/planner/core",
+        "//pkg/planner/core/resolve",
+        "//pkg/session",
+        "//pkg/sessionctx",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "@com_github_prometheus_client_model//go",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

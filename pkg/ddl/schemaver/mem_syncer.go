@@ -22,7 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
@@ -68,7 +68,7 @@ func (s *MemSyncer) UpdateSelfVersion(_ context.Context, jobID int64, version in
 			failpoint.Return(errors.New("mock update mdl to etcd error"))
 		}
 	})
-	if variable.EnableMDL.Load() {
+	if vardef.EnableMDL.Load() {
 		s.mdlSchemaVersions.Store(jobID, version)
 	} else {
 		atomic.StoreInt64(&s.selfSchemaVersion, version)
@@ -117,7 +117,7 @@ func (s *MemSyncer) WaitVersionSynced(ctx context.Context, jobID int64, latestVe
 		case <-ctx.Done():
 			return errors.Trace(ctx.Err())
 		case <-ticker.C:
-			if variable.EnableMDL.Load() {
+			if vardef.EnableMDL.Load() {
 				ver, ok := s.mdlSchemaVersions.Load(jobID)
 				if ok && ver.(int64) >= latestVer {
 					return nil

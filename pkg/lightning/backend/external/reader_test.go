@@ -23,10 +23,10 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"

@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -41,7 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -118,7 +117,7 @@ func createPlannerSuite() (s *plannerSuite) {
 	if err := do.CreateStatsHandle(ctx, initStatsCtx); err != nil {
 		panic(fmt.Sprintf("create mock context panic: %+v", err))
 	}
-	domain.BindDomain(ctx, do)
+	ctx.BindDomain(do)
 	ctx.SetInfoSchema(s.is)
 	s.ctx = ctx
 	s.sctx = ctx
@@ -331,7 +330,7 @@ func TestAntiSemiJoinConstFalse(t *testing.T) {
 	}{
 		{
 			sql:      "select a from t t1 where not exists (select a from t t2 where t1.a = t2.a and t2.b = 1 and t2.b = 2)",
-			best:     "Join{DataScan(t1)->DataScan(t2)}(test.t.a,test.t.a)->Projection",
+			best:     "Join{DataScan(t1)->Dual}(test.t.a,test.t.a)->Projection",
 			joinType: "anti semi join",
 		},
 	}
@@ -508,31 +507,31 @@ func TestDupRandJoinCondsPushDown(t *testing.T) {
 }
 
 func TestTablePartition(t *testing.T) {
-	variable.EnableMDL.Store(false)
+	vardef.EnableMDL.Store(false)
 	definitions := []model.PartitionDefinition{
 		{
 			ID:       41,
-			Name:     pmodel.NewCIStr("p1"),
+			Name:     ast.NewCIStr("p1"),
 			LessThan: []string{"16"},
 		},
 		{
 			ID:       42,
-			Name:     pmodel.NewCIStr("p2"),
+			Name:     ast.NewCIStr("p2"),
 			LessThan: []string{"32"},
 		},
 		{
 			ID:       43,
-			Name:     pmodel.NewCIStr("p3"),
+			Name:     ast.NewCIStr("p3"),
 			LessThan: []string{"64"},
 		},
 		{
 			ID:       44,
-			Name:     pmodel.NewCIStr("p4"),
+			Name:     ast.NewCIStr("p4"),
 			LessThan: []string{"128"},
 		},
 		{
 			ID:       45,
-			Name:     pmodel.NewCIStr("p5"),
+			Name:     ast.NewCIStr("p5"),
 			LessThan: []string{"maxvalue"},
 		},
 	}
@@ -1048,21 +1047,21 @@ func TestValidate(t *testing.T) {
 func checkUniqueKeys(p base.LogicalPlan, t *testing.T, ans map[int][][]string, sql string) {
 	ectx := p.SCtx().GetExprCtx().GetEvalCtx()
 	testdata.OnRecord(func() {
-		ans[p.ID()] = make([][]string, len(p.Schema().Keys))
+		ans[p.ID()] = make([][]string, len(p.Schema().PKOrUK))
 	})
 	keyList, ok := ans[p.ID()]
 	require.True(t, ok, fmt.Sprintf("for %s, %v not found", sql, p.ID()))
-	require.Equal(t, len(keyList), len(p.Schema().Keys), fmt.Sprintf("for %s, %v, the number of key doesn't match, the schema is %s", sql, p.ID(), p.Schema()))
+	require.Equal(t, len(keyList), len(p.Schema().PKOrUK), fmt.Sprintf("for %s, %v, the number of key doesn't match, the schema is %s", sql, p.ID(), p.Schema()))
 	for i := range keyList {
 		testdata.OnRecord(func() {
-			keyList[i] = make([]string, len(p.Schema().Keys[i]))
+			keyList[i] = make([]string, len(p.Schema().PKOrUK[i]))
 		})
-		require.Equal(t, len(keyList[i]), len(p.Schema().Keys[i]), fmt.Sprintf("for %s, %v %v, the number of column doesn't match", sql, p.ID(), keyList[i]))
+		require.Equal(t, len(keyList[i]), len(p.Schema().PKOrUK[i]), fmt.Sprintf("for %s, %v %v, the number of column doesn't match", sql, p.ID(), keyList[i]))
 		for j := range keyList[i] {
 			testdata.OnRecord(func() {
-				keyList[i][j] = p.Schema().Keys[i][j].StringWithCtx(ectx, errors.RedactLogDisable)
+				keyList[i][j] = p.Schema().PKOrUK[i][j].StringWithCtx(ectx, errors.RedactLogDisable)
 			})
-			require.Equal(t, keyList[i][j], p.Schema().Keys[i][j].StringWithCtx(ectx, errors.RedactLogDisable), fmt.Sprintf("for %s, %v %v, column dosen't match", sql, p.ID(), keyList[i]))
+			require.Equal(t, keyList[i][j], p.Schema().PKOrUK[i][j].StringWithCtx(ectx, errors.RedactLogDisable), fmt.Sprintf("for %s, %v %v, column dosen't match", sql, p.ID(), keyList[i]))
 		}
 	}
 	testdata.OnRecord(func() {
@@ -1128,7 +1127,7 @@ func TestAggPrune(t *testing.T) {
 }
 
 func TestVisitInfo(t *testing.T) {
-	variable.EnableMDL.Store(false)
+	vardef.EnableMDL.Store(false)
 	tests := []struct {
 		sql string
 		ans []visitInfo
@@ -1828,8 +1827,8 @@ func TestWindowFunction(t *testing.T) {
 	defer s.plannerSuite.Close()
 
 	s.optimizeVars = map[string]string{
-		variable.TiDBWindowConcurrency: "1",
-		variable.TiDBCostModelVersion:  "1",
+		vardef.TiDBWindowConcurrency: "1",
+		vardef.TiDBCostModelVersion:  "1",
 	}
 	defer func() {
 		s.optimizeVars = nil
@@ -1850,8 +1849,8 @@ func TestWindowParallelFunction(t *testing.T) {
 	s.plannerSuite = createPlannerSuite()
 	defer s.plannerSuite.Close()
 	s.optimizeVars = map[string]string{
-		variable.TiDBWindowConcurrency: "4",
-		variable.TiDBCostModelVersion:  "1",
+		vardef.TiDBWindowConcurrency: "4",
+		vardef.TiDBCostModelVersion:  "1",
 	}
 	defer func() {
 		s.optimizeVars = nil
@@ -2020,7 +2019,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 order by b",
-			result: "b_global,b_c_global",
+			result: "PRIMARY_KEY,b_global,b_c_global",
 		},
 		{
 			sql:    "select b from pt2_global_index where b > 1 order by b",
@@ -2032,7 +2031,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1",
-			result: "b_c_global", // will prune `b_c`
+			result: "PRIMARY_KEY,c_d_e,b_c_global", // will prune `b_c`
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1 and d > 1",
@@ -2068,7 +2067,7 @@ func TestSkylinePruning(t *testing.T) {
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(base.LogicalPlan))
 		require.NoError(t, err, comment)
 		lp := p.(base.LogicalPlan)
-		_, err = lp.RecursiveDeriveStats(nil)
+		_, _, err = lp.RecursiveDeriveStats(nil)
 		require.NoError(t, err, comment)
 		var ds *logicalop.DataSource
 		var byItems []*util.ByItems
@@ -2538,7 +2537,7 @@ func TestPruneColumnsForDelete(t *testing.T) {
 			ret := make([][]string, 0, len(deletePlan.TblColPosInfos))
 			for _, colsLayout := range deletePlan.TblColPosInfos {
 				innerRet := make([]string, 0, len(colsLayout.IndexesRowLayout)*2+2)
-				if colsLayout.ExtraPartialRowOption.IndexesRowLayout == nil {
+				if colsLayout.IndexesRowLayout == nil {
 					sb.Reset()
 					fmt.Fprintf(&sb, "no column-pruning happened")
 					innerRet = append(innerRet, sb.String())

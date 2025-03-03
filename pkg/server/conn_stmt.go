@@ -54,7 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal/dump"
 	"github.com/pingcap/tidb/pkg/server/internal/parse"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -375,7 +375,7 @@ func (cc *clientConn) executeWithCursor(ctx context.Context, stmt PreparedStatem
 	rowContainer.GetMemTracker().SetLabel(memory.LabelForCursorFetch)
 	rowContainer.GetDiskTracker().AttachTo(vars.DiskTracker)
 	rowContainer.GetDiskTracker().SetLabel(memory.LabelForCursorFetch)
-	if variable.EnableTmpStorageOnOOM.Load() {
+	if vardef.EnableTmpStorageOnOOM.Load() {
 		failpoint.Inject("testCursorFetchSpill", func(val failpoint.Value) {
 			if val, ok := val.(bool); val && ok {
 				actionSpill := rowContainer.ActionSpillForTest()

@@ -531,7 +531,7 @@ func TestMPPRightSemiJoin(t *testing.T) {
 	}
 	tk.MustExec("analyze table t1 all columns")
 	tk.MustExec("analyze table t2 all columns")
-	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
+	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1; set @@tidb_hash_join_version=optimized;")
 	{
 		var input []string
 		var output []struct {

@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -45,7 +45,7 @@ func TestTheSessionIsoation(t *testing.T) {
 	})
 
 	require.NoError(t, glueSe.CreateDatabase(ctx, &model.DBInfo{
-		Name: pmodel.NewCIStr("test_db"),
+		Name: ast.NewCIStr("test_db"),
 	}))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test_db")
@@ -54,27 +54,27 @@ func TestTheSessionIsoation(t *testing.T) {
 	req.NoError(glueSe.ExecuteInternal(ctx, "use test;"))
 	infos := []*model.TableInfo{}
 	infos = append(infos, &model.TableInfo{
-		Name: pmodel.NewCIStr("tables_1"),
+		Name: ast.NewCIStr("tables_1"),
 		Columns: []*model.ColumnInfo{
-			{Name: pmodel.NewCIStr("foo"), FieldType: *types.NewFieldType(types.KindBinaryLiteral), State: model.StatePublic},
+			{Name: ast.NewCIStr("foo"), FieldType: *types.NewFieldType(types.KindBinaryLiteral), State: model.StatePublic},
 		},
 	})
 	infos = append(infos, &model.TableInfo{
-		Name: pmodel.NewCIStr("tables_2"),
+		Name: ast.NewCIStr("tables_2"),
 		PlacementPolicyRef: &model.PolicyRefInfo{
-			Name: pmodel.NewCIStr("threereplication"),
+			Name: ast.NewCIStr("threereplication"),
 		},
 		Columns: []*model.ColumnInfo{
-			{Name: pmodel.NewCIStr("foo"), FieldType: *types.NewFieldType(types.KindBinaryLiteral), State: model.StatePublic},
+			{Name: ast.NewCIStr("foo"), FieldType: *types.NewFieldType(types.KindBinaryLiteral), State: model.StatePublic},
 		},
 	})
 	infos = append(infos, &model.TableInfo{
-		Name: pmodel.NewCIStr("tables_3"),
+		Name: ast.NewCIStr("tables_3"),
 		PlacementPolicyRef: &model.PolicyRefInfo{
-			Name: pmodel.NewCIStr("fivereplication"),
+			Name: ast.NewCIStr("fivereplication"),
 		},
 		Columns: []*model.ColumnInfo{
-			{Name: pmodel.NewCIStr("foo"), FieldType: *types.NewFieldType(types.KindBinaryLiteral), State: model.StatePublic},
+			{Name: ast.NewCIStr("foo"), FieldType: *types.NewFieldType(types.KindBinaryLiteral), State: model.StatePublic},
 		},
 	})
 	polices := []*model.PolicyInfo{
@@ -82,13 +82,13 @@ func TestTheSessionIsoation(t *testing.T) {
 			PlacementSettings: &model.PlacementSettings{
 				Followers: 4,
 			},
-			Name: pmodel.NewCIStr("fivereplication"),
+			Name: ast.NewCIStr("fivereplication"),
 		},
 		{
 			PlacementSettings: &model.PlacementSettings{
 				Followers: 2,
 			},
-			Name: pmodel.NewCIStr("threereplication"),
+			Name: ast.NewCIStr("threereplication"),
 		},
 	}
 	for _, pinfo := range polices {

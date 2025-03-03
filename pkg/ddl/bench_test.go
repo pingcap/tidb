@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -41,7 +41,7 @@ func BenchmarkExtractDatumByOffsets(b *testing.B) {
 	for i := 0; i < 8; i++ {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(b, err)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("idx")
@@ -81,7 +81,7 @@ func BenchmarkGenerateIndexKV(b *testing.B) {
 	for i := 0; i < 8; i++ {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(b, err)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.FindIndexByName("idx")

@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -59,9 +60,9 @@ func TestCostModelVer2ScanRowSize(t *testing.T) {
 		{"select a, b from t use index(abc) where a=1 and b=1", "scan(1*logrowsize(48)*tikv_scan_factor(40.7))"},
 		{"select a, b, c from t use index(abc) where a=1 and b=1 and c=1", "scan(1*logrowsize(48)*tikv_scan_factor(40.7))"},
 		// table scan row-size is always equal to row-size(*)
-		{"select a from t use index(primary) where a=1", "(scan(1*logrowsize(80)*tikv_scan_factor(40.7))) + (scan(10000*logrowsize(80)*tikv_scan_factor(40.7)))"},
-		{"select a, d from t use index(primary) where a=1", "(scan(1*logrowsize(80)*tikv_scan_factor(40.7))) + (scan(10000*logrowsize(80)*tikv_scan_factor(40.7)))"},
-		{"select * from t use index(primary) where a=1", "(scan(1*logrowsize(80)*tikv_scan_factor(40.7))) + (scan(10000*logrowsize(80)*tikv_scan_factor(40.7)))"},
+		{"select a from t use index(primary) where a=1", "(scan(1*logrowsize(80)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(80)*tikv_scan_factor(40.7)))"},
+		{"select a, d from t use index(primary) where a=1", "(scan(1*logrowsize(80)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(80)*tikv_scan_factor(40.7)))"},
+		{"select * from t use index(primary) where a=1", "(scan(1*logrowsize(80)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(80)*tikv_scan_factor(40.7)))"},
 	}
 	for _, c := range cases {
 		rs := tk.MustQuery("explain analyze format=true_card_cost " + c.query).Rows()
@@ -161,4 +162,43 @@ func BenchmarkGetPlanCost(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		_, _ = core.GetPlanCost(phyPlan, property.RootTaskType, optimizetrace.NewDefaultPlanCostOption().WithCostFlag(costusage.CostFlagRecalculate))
 	}
+}
+
+func TestTableScanCostWithForce(t *testing.T) {
+	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	defer func() {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		dom.StatsHandle().Clear()
+	}()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, primary key (a))")
+
+	// Insert some data
+	tk.MustExec("insert into t values (1,1),(2,2),(3,3),(4,4),(5,5)")
+
+	// Analyze table to update statistics
+	tk.MustExec("analyze table t")
+
+	// Test TableFullScan with and without FORCE INDEX
+	rs := tk.MustQuery("explain analyze format=verbose select * from t").Rows()
+	planCost1 := rs[0][2].(string)
+	rs = tk.MustQuery("explain analyze format=verbose select * from t force index(PRIMARY)").Rows()
+	planCost2 := rs[0][2].(string)
+
+	// Query with FORCE should be more expensive than query without
+	require.Less(t, planCost1, planCost2)
+
+	// Test TableRangeScan with and without FORCE INDEX
+	rs = tk.MustQuery("explain analyze format=verbose select * from t where a > 1").Rows()
+	planCost1 = rs[0][2].(string)
+	rs = tk.MustQuery("explain analyze format=verbose select * from t force index(PRIMARY) where a > 1").Rows()
+	planCost2 = rs[0][2].(string)
+
+	// Query costs should be equal since FORCE cost penalty does not apply to range scan
+	require.Equal(t, planCost1, planCost2)
 }

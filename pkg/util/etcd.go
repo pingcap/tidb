@@ -76,7 +76,7 @@ func NewSession(ctx context.Context, logPrefix string, etcdCli *clientv3.Client,
 			break
 		}
 		if failedCnt%logIntervalCnt == 0 {
-			logutil.BgLogger().Warn("failed to new session to etcd", zap.String("ownerInfo", logPrefix), zap.Error(err))
+			logutil.BgLogger().Warn("failed to establish new session to etcd", zap.String("ownerInfo", logPrefix), zap.Error(err))
 		}
 
 		time.Sleep(newSessionRetryInterval)

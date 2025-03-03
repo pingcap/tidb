@@ -25,7 +25,10 @@ import (
 
 type RegionFunc func(ctx context.Context, r *split.RegionInfo) RPCResult
 
-type OverRegionsInRangeController struct {
+// RangeController manages the execution of operations over a range of regions.
+// It provides functionality to scan regions within a specified key range and
+// apply a given function to each region, handling errors and retries automatically.
+type RangeController struct {
 	start      []byte
 	end        []byte
 	metaClient split.SplitClient
@@ -34,10 +37,10 @@ type OverRegionsInRangeController struct {
 	rs     *utils.RetryState
 }
 
-// OverRegionsInRange creates a controller that cloud be used to scan regions in a range and
+// CreateRangeController creates a controller that cloud be used to scan regions in a range and
 // apply a function over these regions.
 // You can then call the `Run` method for applying some functions.
-func OverRegionsInRange(start, end []byte, metaClient split.SplitClient, retryStatus *utils.RetryState) OverRegionsInRangeController {
+func CreateRangeController(start, end []byte, metaClient split.SplitClient, retryStatus *utils.RetryState) RangeController {
 	// IMPORTANT: we record the start/end key with TimeStamp.
 	// but scanRegion will drop the TimeStamp and the end key is exclusive.
 	// if we do not use PrefixNextKey. we might scan fewer regions than we expected.
@@ -45,7 +48,7 @@ func OverRegionsInRange(start, end []byte, metaClient split.SplitClient, retrySt
 	end = restoreutils.TruncateTS(end)
 	end = kv.PrefixNextKey(end)
 
-	return OverRegionsInRangeController{
+	return RangeController{
 		start:      start,
 		end:        end,
 		metaClient: metaClient,
@@ -53,41 +56,30 @@ func OverRegionsInRange(start, end []byte, metaClient split.SplitClient, retrySt
 	}
 }
 
-func (o *OverRegionsInRangeController) onError(_ context.Context, result RPCResult, region *split.RegionInfo) {
+func (o *RangeController) onError(_ context.Context, result RPCResult, region *split.RegionInfo) {
 	o.errors = multierr.Append(o.errors, errors.Annotatef(&result, "execute over region %v failed", region.Region))
 	// TODO: Maybe handle some of region errors like `epoch not match`?
 }
 
-func (o *OverRegionsInRangeController) tryFindLeader(ctx context.Context, region *split.RegionInfo) (*metapb.Peer, error) {
-	var leader *metapb.Peer
-	failed := false
-	leaderRs := utils.InitialRetryState(4, 5*time.Second, 10*time.Second)
-	err := utils.WithRetry(ctx, func() error {
+func (o *RangeController) tryFindLeader(ctx context.Context, region *split.RegionInfo) (*metapb.Peer, error) {
+	backoffStrategy := utils.NewBackoffRetryAllErrorStrategy(4, 2*time.Second, 10*time.Second)
+	return utils.WithRetryV2(ctx, backoffStrategy, func(ctx context.Context) (*metapb.Peer, error) {
 		r, err := o.metaClient.GetRegionByID(ctx, region.Region.Id)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if !split.CheckRegionEpoch(r, region) {
-			failed = true
-			return nil
+			return nil, errors.Annotatef(berrors.ErrKVEpochNotMatch, "the current epoch of %s has changed", region)
 		}
 		if r.Leader != nil {
-			leader = r.Leader
-			return nil
+			return r.Leader, nil
 		}
-		return errors.Annotatef(berrors.ErrPDLeaderNotFound, "there is no leader for region %d", region.Region.Id)
-	}, &leaderRs)
-	if failed {
-		return nil, errors.Annotatef(berrors.ErrKVEpochNotMatch, "the current epoch of %s is changed", region)
-	}
-	if err != nil {
-		return nil, err
-	}
-	return leader, nil
+		return nil, errors.Annotatef(berrors.ErrPDLeaderNotFound, "there is no leader for region %d", region.Region.Id)
+	})
 }
 
-// handleInRegionError handles the error happens internal in the region. Update the region info, and perform a suitable backoff.
-func (o *OverRegionsInRangeController) handleInRegionError(ctx context.Context, result RPCResult, region *split.RegionInfo) (cont bool) {
+// handleRegionError handles the error happens internal in the region. Update the region info, and perform a suitable backoff.
+func (o *RangeController) handleRegionError(ctx context.Context, result RPCResult, region *split.RegionInfo) (cont bool) {
 	if result.StoreError.GetServerIsBusy() != nil {
 		if strings.Contains(result.StoreError.GetMessage(), "memory is limited") {
 			sleepDuration := 15 * time.Second
@@ -126,35 +118,32 @@ func (o *OverRegionsInRangeController) handleInRegionError(ctx context.Context, 
 	return true
 }
 
-func (o *OverRegionsInRangeController) prepareLogCtx(ctx context.Context) context.Context {
-	lctx := logutil.ContextWithField(
+func (o *RangeController) prepareLogCtx(ctx context.Context) context.Context {
+	return logutil.ContextWithField(
 		ctx,
 		logutil.Key("startKey", o.start),
 		logutil.Key("endKey", o.end),
 	)
-	return lctx
 }
 
-// Run executes the `regionFunc` over the regions in `o.start` and `o.end`.
-// It would retry the errors according to the `rpcResponse`.
-func (o *OverRegionsInRangeController) Run(ctx context.Context, f RegionFunc) error {
-	return o.runOverRegions(o.prepareLogCtx(ctx), f)
-}
+// ApplyFuncToRange apples the `regionFunc` for all regions in `o.start` and `o.end`.
+// It would retry errors according to the `rpcResponse`.
+func (o *RangeController) ApplyFuncToRange(ctx context.Context, f RegionFunc) error {
+	adjustedCtx := o.prepareLogCtx(ctx)
 
-func (o *OverRegionsInRangeController) runOverRegions(ctx context.Context, f RegionFunc) error {
 	if !o.rs.ShouldRetry() {
 		return o.errors
 	}
 
 	// Scan regions covered by the file range
 	regionInfos, errScanRegion := split.PaginateScanRegion(
-		ctx, o.metaClient, o.start, o.end, split.ScanRegionPaginationLimit)
+		adjustedCtx, o.metaClient, o.start, o.end, split.ScanRegionPaginationLimit)
 	if errScanRegion != nil {
 		return errors.Trace(errScanRegion)
 	}
 
 	for _, region := range regionInfos {
-		cont, err := o.runInRegion(ctx, f, region)
+		cont, err := o.applyFuncToRegion(adjustedCtx, f, region)
 		if err != nil {
 			return err
 		}
@@ -165,8 +154,8 @@ func (o *OverRegionsInRangeController) runOverRegions(ctx context.Context, f Reg
 	return nil
 }
 
-// runInRegion executes the function in the region, and returns `cont = false` if no need for trying for next region.
-func (o *OverRegionsInRangeController) runInRegion(ctx context.Context, f RegionFunc, region *split.RegionInfo) (cont bool, err error) {
+// applyFuncToRegion executes the function in the region, and returns `cont = false` if no need for trying for next region.
+func (o *RangeController) applyFuncToRegion(ctx context.Context, f RegionFunc, region *split.RegionInfo) (cont bool, err error) {
 	if !o.rs.ShouldRetry() {
 		return false, o.errors
 	}
@@ -180,16 +169,16 @@ func (o *OverRegionsInRangeController) runInRegion(ctx context.Context, f Region
 			return false, o.errors
 		case StrategyFromThisRegion:
 			logutil.CL(ctx).Warn("retry for region", logutil.Region(region.Region), logutil.ShortError(&result))
-			if !o.handleInRegionError(ctx, result, region) {
-				return false, o.runOverRegions(ctx, f)
+			if !o.handleRegionError(ctx, result, region) {
+				return false, o.ApplyFuncToRange(ctx, f)
 			}
-			return o.runInRegion(ctx, f, region)
+			return o.applyFuncToRegion(ctx, f, region)
 		case StrategyFromStart:
 			logutil.CL(ctx).Warn("retry for execution over regions", logutil.ShortError(&result))
 			// TODO: make a backoffer considering more about the error info,
 			//       instead of ingore the result and retry.
 			time.Sleep(o.rs.ExponentialBackoff())
-			return false, o.runOverRegions(ctx, f)
+			return false, o.ApplyFuncToRange(ctx, f)
 		}
 	}
 	return true, nil
@@ -251,10 +240,6 @@ func (r *RPCResult) StrategyForRetryStoreError() RetryStrategy {
 }
 
 func (r *RPCResult) StrategyForRetryGoError() RetryStrategy {
-	if r.Err == nil {
-		return StrategyGiveUp
-	}
-
 	// we should unwrap the error or we cannot get the write gRPC status.
 	if gRPCErr, ok := status.FromError(errors.Cause(r.Err)); ok {
 		switch gRPCErr.Code() {
