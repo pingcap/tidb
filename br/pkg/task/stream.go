@@ -961,6 +961,7 @@ func RunStreamAdvancer(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	if err != nil {
 		return err
 	}
+	defer mgr.Close()
 
 	etcdCLI, err := dialEtcdWithCfg(ctx, cfg.Config)
 	if err != nil {
