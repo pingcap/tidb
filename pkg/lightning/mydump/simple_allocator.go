@@ -48,7 +48,7 @@ func readInt(buf []byte) int {
 
 // Because there may have memory fragment problems, we will over estimate the allocation size here.
 func simpleGetAllocationSize(size int) int {
-	return roundUp(size+metaSize, alignSize) * 3 / 2
+	return roundUp(size+metaSize, alignSize) * 2
 }
 
 /*
