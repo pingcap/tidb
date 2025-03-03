@@ -3611,14 +3611,12 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 			failToLoadOrParseSQLFile = true
 		}
 	}
-	// A sub context for update table stats, and other contexts for concurrent stats loading.
-	cnt := 1 + concurrency
-	syncStatsCtxs, err := createSessions(store, cnt)
+	syncStatsCtxs, err := createSessions(store, concurrency)
 	if err != nil {
 		return nil, err
 	}
-	subCtxs := make([]sessionctx.Context, cnt)
-	for i := 0; i < cnt; i++ {
+	subCtxs := make([]sessionctx.Context, concurrency)
+	for i := 0; i < concurrency; i++ {
 		subCtxs[i] = sessionctx.Context(syncStatsCtxs[i])
 	}
 
