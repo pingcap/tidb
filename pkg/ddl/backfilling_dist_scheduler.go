@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	diststorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
@@ -595,7 +594,7 @@ func getRangeSplitter(
 			logger.Warn("fail to get region split keys and size", zap.Error(err))
 		}
 	}
-	nodeRc := domain.GetNodeResource()
+	nodeRc := handle.GetNodeResource()
 	rangeSize, rangeKeys := external.CalRangeSize(nodeRc.TotalMem/int64(nodeRc.TotalCPU), regionSplitSize, regionSplitKeys)
 	logutil.DDLIngestLogger().Info("split kv range with split size and keys",
 		zap.Int64("region-split-size", regionSplitSize),

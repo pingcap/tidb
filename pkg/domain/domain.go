@@ -26,7 +26,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/docker/go-units"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -41,7 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	disthandle "github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
@@ -75,8 +74,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/cgroup"
-	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
@@ -112,14 +109,7 @@ var (
 
 	// LoadSchemaDiffVersionGapThreshold is the threshold for version gap to reload domain by loading schema diffs
 	LoadSchemaDiffVersionGapThreshold int64 = 100
-
-	nodeResource atomic.Pointer[proto.NodeResource]
 )
-
-// GetNodeResource gets the node resource.
-func GetNodeResource() *proto.NodeResource {
-	return nodeResource.Load()
-}
 
 const (
 	indexUsageGCDuration = 30 * time.Minute
@@ -130,9 +120,6 @@ func init() {
 		// In test we can set duration lower to make test faster.
 		mdlCheckLookDuration = 2 * time.Millisecond
 	}
-	// domain will init this var at runtime, we store it here for test, as some
-	// test might not start domain.
-	nodeResource.Store(proto.NewNodeResource(8, 16*units.GiB))
 }
 
 // NewMockDomain is only used for test
@@ -1521,11 +1508,11 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 
 // InitDistTaskLoop initializes the distributed task framework.
 func (do *Domain) InitDistTaskLoop() error {
-	rc, err := CalculateNodeResource()
+	rc, err := disthandle.CalculateNodeResource()
 	if err != nil {
 		return err
 	}
-	nodeResource.Store(rc)
+	disthandle.SetNodeResource(rc)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 	failpoint.Inject("MockDisableDistTask", func(val failpoint.Value) {
 		if val.(bool) {
@@ -1566,41 +1553,6 @@ func (do *Domain) InitDistTaskLoop() error {
 		do.distTaskFrameworkLoop(ctx, taskManager, executorManager, serverID)
 	}, "distTaskFrameworkLoop")
 	return nil
-}
-
-// CalculateNodeResource calculates the node resource.
-func CalculateNodeResource() (*proto.NodeResource, error) {
-	logger := logutil.BgLogger()
-	totalMem, err := memory.MemTotal()
-	if err != nil {
-		// should not happen normally, as in main function of tidb-server, we assert
-		// that memory.MemTotal() will not fail.
-		return nil, err
-	}
-	totalCPU := cpu.GetCPUCount()
-	if totalCPU <= 0 || totalMem <= 0 {
-		return nil, errors.Errorf("invalid cpu or memory, cpu: %d, memory: %d", totalCPU, totalMem)
-	}
-	cgroupLimit, version, err := cgroup.GetCgroupMemLimit()
-	// ignore the error of cgroup.GetCgroupMemLimit, as it's not a must-success step.
-	if err == nil && version == cgroup.V2 {
-		// see cgroup.detectMemLimitInV2 for more details.
-		// below are some real memory limits tested on GCP:
-		// node-spec  real-limit  percent
-		// 16c32g        27.83Gi    87%
-		// 32c64g        57.36Gi    89.6%
-		// we use 'limit', not totalMem for adjust, as totalMem = min(physical-mem, 'limit')
-		// content of 'memory.max' might be 'max', so we use the min of them.
-		adjustedMem := min(totalMem, uint64(float64(cgroupLimit)*0.88))
-		logger.Info("adjust memory limit for cgroup v2",
-			zap.String("before", units.BytesSize(float64(totalMem))),
-			zap.String("after", units.BytesSize(float64(adjustedMem))))
-		totalMem = adjustedMem
-	}
-	logger.Info("initialize node resource",
-		zap.Int("total-cpu", totalCPU),
-		zap.String("total-mem", units.BytesSize(float64(totalMem))))
-	return proto.NewNodeResource(totalCPU, int64(totalMem)), nil
 }
 
 func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, executorManager *taskexecutor.Manager, serverID string) {

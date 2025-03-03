@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
@@ -537,7 +537,7 @@ func getRangeSplitter(
 	}
 	regionSplitSize = max(regionSplitSize, int64(config.SplitRegionSize))
 	regionSplitKeys = max(regionSplitKeys, int64(config.SplitRegionKeys))
-	nodeRc := domain.GetNodeResource()
+	nodeRc := handle.GetNodeResource()
 	rangeSize, rangeKeys := external.CalRangeSize(nodeRc.TotalMem/int64(nodeRc.TotalCPU), regionSplitSize, regionSplitKeys)
 	logutil.Logger(ctx).Info("split kv range with split size and keys",
 		zap.Int64("region-split-size", regionSplitSize),
