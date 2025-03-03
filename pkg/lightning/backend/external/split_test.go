@@ -519,3 +519,35 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 	err = splitter.Close()
 	require.NoError(t, err)
 }
+
+func TestCalRangeSize(t *testing.T) {
+	cases := []struct {
+		memPerCore      int64
+		regionSplitSize int64
+		regionSplitKeys int64
+		rangeSize       int64
+		rangeKeys       int64
+		sstFiles        int
+	}{
+		{memPerCore: int64(1.9 * float64(units.GiB)),
+			regionSplitSize: int64(config.SplitRegionSize), regionSplitKeys: int64(config.SplitRegionKeys),
+			rangeSize: int64(config.SplitRegionSize), rangeKeys: int64(config.SplitRegionKeys), sstFiles: 1},
+		{memPerCore: int64(1.9 * float64(units.GiB)),
+			regionSplitSize: int64(256 * units.MiB), regionSplitKeys: int64(2560000),
+			rangeSize: int64(config.SplitRegionSize), rangeKeys: int64(config.SplitRegionKeys), sstFiles: 2},
+		{memPerCore: int64(1.9 * float64(units.GiB)),
+			regionSplitSize: int64(256 * units.MiB), regionSplitKeys: int64(2560000),
+			rangeSize: int64(config.SplitRegionSize), rangeKeys: int64(config.SplitRegionKeys), sstFiles: 3},
+		{memPerCore: int64(3.8 * float64(units.GiB)),
+			regionSplitSize: int64(256 * units.MiB), regionSplitKeys: int64(2560000),
+			rangeSize: int64(config.SplitRegionSize), rangeKeys: int64(config.SplitRegionKeys), sstFiles: 1},
+		{memPerCore: int64(3.8 * float64(units.GiB)),
+			regionSplitSize: int64(256 * units.MiB), regionSplitKeys: int64(2560000),
+			rangeSize: int64(config.SplitRegionSize), rangeKeys: int64(config.SplitRegionKeys), sstFiles: 2},
+	}
+
+	for _, c := range cases {
+		caseName := fmt.Sprintf("memPerCore=%d, regionSplitSize=%d, regionSplitKeys=%d", c.memPerCore, c.regionSplitSize, c.regionSplitKeys)
+		t.Run(caseName, func(t *testing.T) {
+	}
+}

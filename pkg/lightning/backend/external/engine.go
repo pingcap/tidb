@@ -37,35 +37,38 @@ import (
 	"go.uber.org/zap"
 )
 
-// WriteStepMemShare defines the number of shares of memory used by the write step.
-// during write step, for the memory corresponding to each job worker, we divide
-// into below and total 8 shares:
+// writeStepMemShareCount defines the number of shares of memory per job worker.
+// For each job worker, the memory it can use is determined by cpu:mem ratio, say
+// a 16c32G machine, each worker can use 2G memory.
+// And for the memory corresponding to each job worker, we divide into below and
+// total 8 shares:
 //   - one share used by HTTP buf inside loadBatchRegionData
-//   - one share used by loadBatchRegionData to store loaded data
-//   - one share used by generateAndSendJob
+//   - one share used by loadBatchRegionData to store loaded data batch A
+//   - one share used by generateAndSendJob for handle loaded data batch B
 //   - one share used by the active job on job worker
 //   - one share used by job worker sending GRPC data for active job
 //   - two share used by other stuff, such as other bg routines
 //   - one share for burst allocation to avoid OOM
 //
-// the share size 'SS' determines the max range data size 'RangeS' for a region job.
-// RangeS is also <= the region size RS of the cluster. And as each range job
-// corresponding to one ingested SST on TiKV, we also want the SST size be more
-// even, so we calculate Ranges by:
-//   - let TempRangeS = min(SS, RS)
-//   - if TempRangeS < RS, RangeS = RS / ceil(RS/TempRangeS) + 1,
+// the share size 'SS' determines the max range data size 'RangeS' for a range job.
+// Each range job corresponding to one ingested SST on TiKV, we want to load as
+// many data as possible, while minimizing the number of SSTs (too many SST file,
+// say 500K, will cause TiKV slow down when ingest), and make the SST be more even,
+// so we calculate RangeS by:
+//   - let TempRangeS = SS
+//   - if TempRangeS < RS, RangeS = RS / ceil(RS / TempRangeS) + 1,
 //     trailing 1 is for RS divided by odd number.
-//   - else RangeS = TempRangeS.
+//   - else RangeS = floor(RS / TempRangeS) * RS.
 //
-// The total memory used by write step is:
+// for example, if the cpu:mem ratio is 1:1.9, so we have 1.9G memory per core,
+// the share size is 243M:
 //
-//	WC * 8 * RangeS = TC * CM-ratio
-//
-// we will set workerConcurrency(WC) = DXF task concurrency, so
-// // ∑(workerConcurrency) on each node will <= CPU core. and
-// for example, if the cpu:mem ratio is 1:2, so we have 2G memory per core, the
-// share size is 256M.
-const WriteStepMemShare = 8
+//	|   RS  | RangeS |
+//	|-------|--------|
+//	|   96M |   192M |
+//	|  256M |   128M |
+//	|  512M |   170M |
+const writeStepMemShareCount = 8
 
 // during test on ks3, we found that we can open about 8000 connections to ks3,
 // bigger than that, we might receive "connection reset by peer" error, and

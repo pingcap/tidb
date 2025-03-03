@@ -1333,20 +1333,13 @@ func (e *LoadDataController) CreateColAssignExprs(sctx sessionctx.Context) ([]ex
 	return res, allWarnings, nil
 }
 
-func (e *LoadDataController) getBackendWorkerConcurrency() int {
-	// suppose cpu:mem ratio 1:2(true in most case), and we assign 1G per concurrency,
-	// so we can use 2 * threadCnt as concurrency. write&ingest step is mostly
-	// IO intensive, so CPU usage is below ThreadCnt in our tests.
-	return e.ThreadCnt * 2
-}
-
 func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.BackendConfig {
 	backendConfig := local.BackendConfig{
 		PDAddr:                 pdAddr,
 		LocalStoreDir:          dataDir,
 		MaxConnPerStore:        config.DefaultRangeConcurrency,
 		ConnCompressType:       config.CompressionNone,
-		WorkerConcurrency:      e.getBackendWorkerConcurrency(),
+		WorkerConcurrency:      e.ThreadCnt,
 		KVWriteBatchSize:       config.KVWriteBatchSize,
 		RegionSplitBatchSize:   config.DefaultRegionSplitBatchSize,
 		RegionSplitConcurrency: runtime.GOMAXPROCS(0),
