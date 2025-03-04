@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "binding.go",
         "binding_cache.go",
+        "binding_operator.go",
         "global_handle.go",
         "session_handle.go",
         "utils.go",
@@ -46,7 +47,7 @@ go_test(
     timeout = "moderate",
     srcs = [
         "binding_cache_test.go",
-        "global_handle_test.go",
+        "binding_operator_test.go",
         "main_test.go",
         "session_handle_test.go",
     ],
