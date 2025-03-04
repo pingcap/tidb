@@ -2711,25 +2711,22 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 }
 
 // SetSystemVarWithOldValAsRet is wrapper of SetSystemVar. Return the old value for later use.
-func (s *SessionVars) SetSystemVarWithOldValAsRet(name string, val string) (string, bool, error) {
-	if _, ok := s.StmtCtx.SetVarHintRestore[name]; ok {
-		return "", true, nil
-	}
+func (s *SessionVars) SetSystemVarWithOldValAsRet(name string, val string) (string, error) {
 	sv := GetSysVar(name)
 	if sv == nil {
-		return "", false, ErrUnknownSystemVar.GenWithStackByArgs(name)
+		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 	val, err := sv.Validate(s, val, vardef.ScopeSession)
 	if err != nil {
-		return "", false, err
+		return "", err
 	}
 	// The map s.systems[sv.Name] is lazy initialized. If we directly read it, we might read empty result.
 	// Since this code path is not a hot path, we directly call GetSessionOrGlobalSystemVar to get the value safely.
 	oldV, err := s.GetSessionOrGlobalSystemVar(context.Background(), sv.Name)
 	if err != nil {
-		return "", false, err
+		return "", err
 	}
-	return oldV, false, sv.SetSessionFromHook(s, val)
+	return oldV, sv.SetSessionFromHook(s, val)
 }
 
 // SetSystemVarWithoutValidation sets the value of a system variable for session scope.
