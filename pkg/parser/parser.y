@@ -833,6 +833,7 @@ import (
 	builtinBitOr
 	builtinBitXor
 	builtinCast
+	builtinJSONSum
 	builtinCount
 	builtinCurDate
 	builtinCurTime
@@ -6655,17 +6656,17 @@ IndexOption:
 			Global: false,
 		}
 	}
-|   "PRE_SPLIT_REGIONS" EqOpt '(' SplitOption ')'
-    {
+|	"PRE_SPLIT_REGIONS" EqOpt '(' SplitOption ')'
+	{
 		$$ = &ast.IndexOption{
 			SplitOpt: $4.(*ast.SplitOption),
 		}
 	}
-|   "PRE_SPLIT_REGIONS" EqOpt Int64Num
+|	"PRE_SPLIT_REGIONS" EqOpt Int64Num
 	{
 		$$ = &ast.IndexOption{
-			SplitOpt:  &ast.SplitOption{
-				Num:   $3.(int64),
+			SplitOpt: &ast.SplitOption{
+				Num: $3.(int64),
 			},
 		}
 	}
@@ -7975,6 +7976,32 @@ SimpleExpr:
 		}
 		parser.explicitCharset = false
 		$$ = &ast.FuncCastExpr{
+			Expr:            $3,
+			Tp:              tp,
+			FunctionType:    ast.CastFunction,
+			ExplicitCharSet: explicitCharset,
+		}
+	}
+|	builtinJSONSum '(' Expression "AS" CastType ArrayKwdOpt ')'
+	{
+		/* See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_cast */
+		tp := $5.(*types.FieldType)
+		defaultFlen, defaultDecimal := mysql.GetDefaultFieldLengthAndDecimalForCast(tp.GetType())
+		if tp.GetFlen() == types.UnspecifiedLength {
+			tp.SetFlen(defaultFlen)
+		}
+		if tp.GetDecimal() == types.UnspecifiedLength {
+			tp.SetDecimal(defaultDecimal)
+		}
+		isArray := $6.(bool)
+		tp.SetArray(isArray)
+		explicitCharset := parser.explicitCharset
+		if isArray && !explicitCharset && tp.GetCharset() != charset.CharsetBin {
+			tp.SetCharset(charset.CharsetUTF8MB4)
+			tp.SetCollate(charset.CollationUTF8MB4)
+		}
+		parser.explicitCharset = false
+		$$ = &ast.JSONSumExpr{
 			Expr:            $3,
 			Tp:              tp,
 			FunctionType:    ast.CastFunction,

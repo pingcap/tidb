@@ -937,6 +937,7 @@ var btFuncTokenMap = map[string]int{
 	"BIT_OR":                builtinBitOr,
 	"BIT_XOR":               builtinBitXor,
 	"CAST":                  builtinCast,
+	"JSON_SUM":              builtinJSONSum,
 	"COUNT":                 builtinCount,
 	"APPROX_COUNT_DISTINCT": builtinApproxCountDistinct,
 	"APPROX_PERCENTILE":     builtinApproxPercentile,

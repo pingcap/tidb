@@ -3679,21 +3679,28 @@ func (b *PlanBuilder) TableHints() *h.PlanHints {
 
 type unfoldOption struct{}
 
-var unfoldOptionKey unfoldOption
+var jsonOptionKey unfoldOption
 
-// WithUnfoldOption controls the rewriter unfold operation.
+type JSONArrayOption int64
+
+const (
+	JSONArraytNone JSONArrayOption = 0
+	JSONArraySplit JSONArrayOption = 1
+)
+
+// WithJSONOption controls the rewriter unfold operation.
 // If it's true, it indicated we want to unfold cast(... as ... array).
 // NOTE!!! It should only be used in restricted SQL (admin check table).
-func WithUnfoldOption(ctx context.Context, unfold bool) context.Context {
-	return context.WithValue(ctx, unfoldOptionKey, unfold)
+func WithJSONOption(ctx context.Context, opt JSONArrayOption) context.Context {
+	return context.WithValue(ctx, jsonOptionKey, opt)
 }
 
-func GetUnfoldValue(ctx context.Context) bool {
-	unfold := false
-	if opt := ctx.Value(unfoldOptionKey); opt != nil {
-		unfold = opt.(bool)
+func GetJSONOption(ctx context.Context) JSONArrayOption {
+	jsonOpt := JSONArraytNone
+	if opt := ctx.Value(jsonOptionKey); opt != nil {
+		jsonOpt = opt.(JSONArrayOption)
 	}
-	return unfold
+	return jsonOpt
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p base.LogicalPlan, err error) {
@@ -3701,7 +3708,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	// Otherwise, we can only execute SQL like:
 	// CREATE TABLE t1(a INT, j JSON, INDEX mvi((CAST(j->'$.path' AS UNSIGNED ARRAY))));
 	// select CAST(j->'$.path' AS UNSIGNED ARRAY) from t1 use index(mvi);
-	ctx = WithUnfoldOption(ctx, true)
+	ctx = WithJSONOption(ctx, JSONArraySplit)
 
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
@@ -4619,7 +4626,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			}
 		}
 	}
-	unfold := GetUnfoldValue(ctx)
+	splitJSONArray := GetJSONOption(ctx) == JSONArraySplit
 	ds := logicalop.DataSource{
 		DBName:              dbName,
 		TableAsName:         asName,
@@ -4636,14 +4643,15 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		PreferPartitions:    make(map[int][]pmodel.CIStr),
 		IS:                  b.is,
 		IsForUpdateRead:     b.isForUpdateRead,
-		EnableMVIndexScan:   unfold,
+		EnableMVIndexScan:   splitJSONArray,
 	}.Init(b.ctx, b.getSelectOffset())
 	var handleCols util.HandleCols
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
 	names := make([]*types.FieldName, 0, len(columns))
 	for i, col := range columns {
 		retType := col.FieldType.Clone()
-		if unfold {
+		// TODO(joechenrh): we must discard array type when building DataSource, which is a bit ugly...
+		if splitJSONArray {
 			retType.SetArray(false)
 		}
 

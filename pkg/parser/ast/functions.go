@@ -36,6 +36,7 @@ var (
 const (
 	LogicAnd           = "and"
 	Cast               = "cast"
+	JSONSum            = "json_sum"
 	LeftShift          = "leftshift"
 	RightShift         = "rightshift"
 	LogicOr            = "or"
@@ -600,6 +601,86 @@ const (
 	CastConvertFunction
 	CastBinaryOperator
 )
+
+// JSONSumExpr is the cast function converting value to another type, e.g, cast(expr AS signed).
+// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html
+type JSONSumExpr struct {
+	funcNode
+	// Expr is the expression to be converted.
+	Expr ExprNode
+	// Tp is the conversion type.
+	Tp *types.FieldType
+	// FunctionType is either Cast, Convert or Binary.
+	FunctionType CastFunctionType
+	// ExplicitCharSet is true when charset is explicit indicated.
+	ExplicitCharSet bool
+}
+
+// Restore implements Node interface.
+func (n *JSONSumExpr) Restore(ctx *format.RestoreCtx) error {
+	switch n.FunctionType {
+	case CastFunction:
+		ctx.WriteKeyWord("JSONSum")
+		ctx.WritePlain("(")
+		if err := n.Expr.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore JSONSumExpr.Expr")
+		}
+		ctx.WriteKeyWord(" AS ")
+		n.Tp.RestoreAsCastType(ctx, n.ExplicitCharSet)
+		ctx.WritePlain(")")
+	case CastConvertFunction:
+		ctx.WriteKeyWord("CONVERT")
+		ctx.WritePlain("(")
+		if err := n.Expr.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore JSONSumExpr.Expr")
+		}
+		ctx.WritePlain(", ")
+		n.Tp.RestoreAsCastType(ctx, n.ExplicitCharSet)
+		ctx.WritePlain(")")
+	case CastBinaryOperator:
+		ctx.WriteKeyWord("BINARY ")
+		if err := n.Expr.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore JSONSumExpr.Expr")
+		}
+	}
+	return nil
+}
+
+// Format the ExprNode into a Writer.
+func (n *JSONSumExpr) Format(w io.Writer) {
+	switch n.FunctionType {
+	case CastFunction:
+		fmt.Fprint(w, "JSONSum(")
+		n.Expr.Format(w)
+		fmt.Fprint(w, " AS ")
+		n.Tp.FormatAsCastType(w, n.ExplicitCharSet)
+		fmt.Fprint(w, ")")
+	case CastConvertFunction:
+		fmt.Fprint(w, "CONVERT(")
+		n.Expr.Format(w)
+		fmt.Fprint(w, ", ")
+		n.Tp.FormatAsCastType(w, n.ExplicitCharSet)
+		fmt.Fprint(w, ")")
+	case CastBinaryOperator:
+		fmt.Fprint(w, "BINARY ")
+		n.Expr.Format(w)
+	}
+}
+
+// Accept implements Node Accept interface.
+func (n *JSONSumExpr) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*JSONSumExpr)
+	node, ok := n.Expr.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Expr = node.(ExprNode)
+	return v.Leave(n)
+}
 
 // FuncCastExpr is the cast function converting value to another type, e.g, cast(expr AS signed).
 // See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html

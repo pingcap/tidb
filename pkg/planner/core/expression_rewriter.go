@@ -1498,8 +1498,8 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			er.disableFoldCounter--
 		}
 	case *ast.FuncCastExpr:
-		unfoldCastArray := GetUnfoldValue(er.ctx)
-		if v.Tp.IsArray() && !er.allowBuildCastArray && !unfoldCastArray {
+		jsonOpt := GetJSONOption(er.ctx)
+		if v.Tp.IsArray() && !er.allowBuildCastArray && jsonOpt == JSONArraytNone {
 			er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions")
 			return retNode, false
 		}
@@ -1534,9 +1534,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 
 		// Rewrite cast(col as UNSIGNED ARRAY) / cast(col->path as UNSIGNED ARRAY) as virtual(col)
 		// The logic is copied from generateMVIndexMergePartialPaths4And.
-		// TODO(joechenrh): we must discard array type when building DataSource, which is a bit ugly...
-		// TODO(joechenrh):
-		if v.Tp.IsArray() && unfoldCastArray {
+		if jsonOpt == JSONArraySplit {
 			sf, _ := castFunction.(*expression.ScalarFunction)
 			if ds, ok := er.planCtx.plan.(*logicalop.DataSource); ok {
 				evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
@@ -1567,6 +1565,18 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		}
 	OUTER:
 		er.ctxStack[len(er.ctxStack)-1] = castFunction
+		er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
+	case *ast.JSONSumExpr:
+		arg := er.ctxStack[len(er.ctxStack)-1]
+		jsonSumFunction, err := expression.BuildJSONSumFunctionWithCheck(er.sctx, arg, v.Tp, false, v.ExplicitCharSet)
+		if err != nil {
+			er.err = err
+			return retNode, false
+		}
+
+		jsonSumFunction.SetCoercibility(expression.CoercibilityNumeric)
+		jsonSumFunction.SetRepertoire(expression.ASCII)
+		er.ctxStack[len(er.ctxStack)-1] = jsonSumFunction
 		er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
 	case *ast.PatternLikeOrIlikeExpr:
 		er.patternLikeOrIlikeToExpression(v)
