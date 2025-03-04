@@ -491,7 +491,8 @@ func (f *fakeCluster) advanceCheckpoints() uint64 {
 		f.updateRegion(r.id, func(r *region) {
 			// The current implementation assumes that the server never returns checkpoint with value 0.
 			// This assumption is true for the TiKV implementation, simulating it here.
-			cp := r.checkpoint.Add(rand.Uint64()%256 + 1)
+			// The start ts of task is 5.
+			cp := r.checkpoint.Add(rand.Uint64()%256 + 6)
 			if cp < minCheckpoint {
 				minCheckpoint = cp
 			}
