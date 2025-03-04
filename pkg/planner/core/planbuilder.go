@@ -3339,7 +3339,7 @@ func buildAddQueryWatchSchema() (*expression.Schema, types.NameSlice) {
 }
 
 func buildShowTrafficJobsSchema() (*expression.Schema, types.NameSlice) {
-	schema := newColumnsWithNames(7)
+	schema := newColumnsWithNames(8)
 	schema.Append(buildColumnWithName("", "START_TIME", mysql.TypeDatetime, 19))
 	schema.Append(buildColumnWithName("", "END_TIME", mysql.TypeDatetime, 19))
 	schema.Append(buildColumnWithName("", "INSTANCE", mysql.TypeVarchar, 256))
@@ -3347,6 +3347,7 @@ func buildShowTrafficJobsSchema() (*expression.Schema, types.NameSlice) {
 	schema.Append(buildColumnWithName("", "PROGRESS", mysql.TypeVarchar, 32))
 	schema.Append(buildColumnWithName("", "STATUS", mysql.TypeVarchar, 32))
 	schema.Append(buildColumnWithName("", "FAIL_REASON", mysql.TypeVarchar, 256))
+	schema.Append(buildColumnWithName("", "PARAMS", mysql.TypeVarchar, 4096))
 
 	return schema.col2Schema(), schema.names
 }

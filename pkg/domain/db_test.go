@@ -57,7 +57,7 @@ func TestDomainSession(t *testing.T) {
 	_, err = se.Execute(context.Background(), createRoleSQL)
 	require.NoError(t, err)
 
-	// for BindHandle
+	// for BindingHandle
 	_, err = se.Execute(context.Background(), "use test")
 	require.NoError(t, err)
 	_, err = se.Execute(context.Background(), "drop table if exists t")

@@ -72,6 +72,15 @@ func checkFileCleaned(t *testing.T, jobID int64, sortStorageURI string) {
 	require.Equal(t, 0, len(statFiles))
 }
 
+func checkDataAndShowJobs(t *testing.T, tk *testkit.TestKit, count int) {
+	tk.MustExec("admin check table t;")
+	rs := tk.MustQuery("admin show ddl jobs 1;").Rows()
+	require.Len(t, rs, 1)
+	require.Contains(t, rs[0][12], "ingest")
+	require.Contains(t, rs[0][12], "cloud")
+	require.Equal(t, rs[0][7], strconv.Itoa(count))
+}
+
 func TestGlobalSortBasic(t *testing.T) {
 	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
 	opt := fakestorage.Options{
@@ -120,18 +129,18 @@ func TestGlobalSortBasic(t *testing.T) {
 	})
 
 	tk.MustExec("alter table t add index idx(a);")
-	tk.MustExec("admin check table t;")
+	checkDataAndShowJobs(t, tk, size)
 	<-ch
 	checkFileCleaned(t, jobID, cloudStorageURI)
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()")
 	tk.MustExec("alter table t add index idx1(a);")
-	tk.MustExec("admin check table t;")
+	checkDataAndShowJobs(t, tk, size)
 	<-ch
 	checkFileCleaned(t, jobID, cloudStorageURI)
 
 	tk.MustExec("alter table t add unique index idx2(a);")
-	tk.MustExec("admin check table t;")
+	checkDataAndShowJobs(t, tk, size)
 	<-ch
 	checkFileCleaned(t, jobID, cloudStorageURI)
 }

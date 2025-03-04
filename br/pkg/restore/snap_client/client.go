@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -755,7 +756,7 @@ func (rc *SnapClient) GetDatabaseMap() map[int64]*metautil.Database {
 // HasBackedUpSysDB whether we have backed up system tables
 // br backs system tables up since 5.1.0
 func (rc *SnapClient) HasBackedUpSysDB() bool {
-	sysDBs := []string{"mysql", "sys"}
+	sysDBs := []string{mysql.SystemDB, mysql.SysDB, mysql.WorkloadSchema}
 	for _, db := range sysDBs {
 		temporaryDB := utils.TemporaryDBName(db)
 		_, backedUp := rc.databases[temporaryDB.O]
