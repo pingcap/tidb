@@ -83,7 +83,7 @@ var PartitionAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
 
 // HasSpecialAttributes checks if a table has any special attributes.
 func HasSpecialAttributes(t *model.TableInfo) bool {
-	return TTLAttribute(t) || TiFlashAttribute(t) || PlacementPolicyAttribute(t) || PartitionAttribute(t) || TableLockAttribute(t) || ForeignKeysAttribute(t)
+	return TTLAttribute(t) || TiFlashAttribute(t) || PlacementPolicyAttribute(t) || PartitionAttribute(t) || TableLockAttribute(t)
 }
 
 // AllSpecialAttribute marks a model.TableInfo with any special attributes.
