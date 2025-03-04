@@ -1011,8 +1011,12 @@ func (s *indexWriteResultSink) mergeLocalOverlappingFilesAndUpload() error {
 		afterMergedMu.Unlock()
 	}
 
-	var allDataFiles []string
-	var allStatFiles []string
+	fileLen := 0
+	for _, metaGroup := range cs.(*readIndexSummary).metaGroups {
+		fileLen += len(metaGroup.MultipleFilesStats)
+	}
+	allDataFiles := make([]string, 0, fileLen)
+	allStatFiles := make([]string, 0, fileLen)
 	for _, metaGroup := range cs.(*readIndexSummary).metaGroups {
 		allDataFiles = append(allDataFiles, metaGroup.GetDataFiles()...)
 		allStatFiles = append(allStatFiles, metaGroup.GetStatFiles()...)
