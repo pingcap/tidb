@@ -852,3 +852,24 @@ json_extract("{\"\\b\":\"\"}", "$")
 select json_extract("{\"\\f\":\"\"}", "$");
 json_extract("{\"\\f\":\"\"}", "$")
 {"\f": ""}
+select json_extract('{"a":"b"}', '$[0]');
+json_extract('{"a":"b"}', '$[0]')
+{"a": "b"}
+select json_extract('{"a":"b"}', '$[last]');
+json_extract('{"a":"b"}', '$[last]')
+{"a": "b"}
+select json_set('{"a":"b"}', '$[last]', 1);
+json_set('{"a":"b"}', '$[last]', 1)
+1
+SELECT JSON_ARRAY_APPEND('[1]', '$', JSON_ARRAY(2, 3));
+JSON_ARRAY_APPEND('[1]', '$', JSON_ARRAY(2, 3))
+[1, [2, 3]]
+set tidb_enable_vectorized_expression = 'ON';
+select json_search('{"h": "i"}', 'all', 'i', '\\', NULL);
+json_search('{"h": "i"}', 'all', 'i', '\\', NULL)
+NULL
+set tidb_enable_vectorized_expression = 'OFF';
+select json_search('{"h": "i"}', 'all', 'i', '\\', NULL);
+json_search('{"h": "i"}', 'all', 'i', '\\', NULL)
+NULL
+set tidb_enable_vectorized_expression = default;

@@ -367,6 +367,11 @@ func pickCachedBinding(cachedBinding *Binding, bindingsFromStorage ...*Binding) 
 	return bindings[0]
 }
 
+// RestoreDBForBinding restores the DB name for the binding.
+func RestoreDBForBinding(node ast.StmtNode, defaultDB string) string {
+	return utilparser.RestoreWithDefaultDB(node, defaultDB, node.Text())
+}
+
 // NormalizeStmtForBinding normalizes a statement for binding.
 // This function skips Explain automatically, and literals in in-lists will be normalized as '...'.
 // For normal bindings, DB name will be completed automatically:

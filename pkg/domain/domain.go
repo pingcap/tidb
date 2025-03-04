@@ -1304,7 +1304,7 @@ func (do *Domain) Close() {
 	}
 
 	do.sysSessionPool.Close()
-	variable.UnregisterStatistics(do.BindHandle())
+	variable.UnregisterStatistics(do.BindingHandle())
 	if do.onClose != nil {
 		do.onClose()
 	}
@@ -1374,7 +1374,8 @@ func NewDomainWithEtcdClient(store kv.Storage, schemaLease time.Duration, statsL
 	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, config.GetGlobalConfig().TiDBEnableExitCheck)
 	do.SchemaValidator = NewSchemaValidator(schemaLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
-	do.memoryUsageAlarmHandle = memoryusagealarm.NewMemoryUsageAlarmHandle(do.exit)
+	do.memoryUsageAlarmHandle = memoryusagealarm.NewMemoryUsageAlarmHandle(do.exit,
+		&memoryusagealarm.TiDBConfigProvider{})
 	do.serverMemoryLimitHandle = servermemorylimit.NewServerMemoryLimitHandle(do.exit)
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sysproctrack.TrackProc)}
 	do.initDomainSysVars()
@@ -1952,7 +1953,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 	if err != nil {
 		return err
 	}
-	do.privHandle = privileges.NewHandle(sctx.GetRestrictedSQLExecutor(), sctx.GetSessionVars().GlobalVarsAccessor)
+	do.privHandle = privileges.NewHandle(do.SysSessionPool(), sctx.GetSessionVars().GlobalVarsAccessor)
 
 	var watchCh clientv3.WatchChan
 	duration := 5 * time.Minute
@@ -2138,8 +2139,8 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 	return do.privHandle
 }
 
-// BindHandle returns domain's bindHandle.
-func (do *Domain) BindHandle() bindinfo.GlobalBindingHandle {
+// BindingHandle returns domain's bindHandle.
+func (do *Domain) BindingHandle() bindinfo.GlobalBindingHandle {
 	v := do.bindHandle.Load()
 	if v == nil {
 		return nil
@@ -2151,7 +2152,7 @@ func (do *Domain) BindHandle() bindinfo.GlobalBindingHandle {
 // be called only once in BootstrapSession.
 func (do *Domain) InitBindingHandle() error {
 	do.bindHandle.Store(bindinfo.NewGlobalBindingHandle(do.sysSessionPool))
-	err := do.BindHandle().LoadFromStorageToCache(true)
+	err := do.BindingHandle().LoadFromStorageToCache(true)
 	if err != nil || bindinfo.Lease == 0 {
 		return err
 	}
@@ -2182,11 +2183,11 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 		for {
 			select {
 			case <-do.exit:
-				do.BindHandle().Close()
+				do.BindingHandle().Close()
 				owner.Close()
 				return
 			case <-bindWorkerTicker.C:
-				bindHandle := do.BindHandle()
+				bindHandle := do.BindingHandle()
 				err := bindHandle.LoadFromStorageToCache(false)
 				if err != nil {
 					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
@@ -2195,7 +2196,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				if !owner.IsOwner() {
 					continue
 				}
-				err := do.BindHandle().GCGlobalBinding()
+				err := do.BindingHandle().GCGlobalBinding()
 				if err != nil {
 					logutil.BgLogger().Error("GC bind record failed", zap.Error(err))
 				}

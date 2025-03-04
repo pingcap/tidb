@@ -682,12 +682,14 @@ func (e *memtableRetriever) setDataFromOneTable(
 
 		var rowCount, avgRowLength, dataLength, indexLength uint64
 		if useStatsCache {
-			if table.GetPartitionInfo() == nil {
-				err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
-				if err != nil {
-					return rows, err
-				}
-			} else {
+			// Even for partitioned tables, we must update the stats cache for the main table itself.
+			// This is necessary because the global index length from the table also needs to be included.
+			// For further details, see: https://github.com/pingcap/tidb/issues/54173
+			err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
+			if err != nil {
+				return rows, err
+			}
+			if table.GetPartitionInfo() != nil {
 				// needs to update all partitions for partition table.
 				for _, pi := range table.GetPartitionInfo().Definitions {
 					err := cache.TableRowStatsCache.UpdateByID(sctx, pi.ID)
@@ -1219,6 +1221,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(
 			strings.ToLower(privileges.PrivToString(priv, mysql.AllColumnPrivs, mysql.Priv2Str)), // PRIVILEGES
 			columnDesc.Comment,      // COLUMN_COMMENT
 			col.GeneratedExprString, // GENERATION_EXPRESSION
+			nil,                     // SRS_ID
 		)
 		e.rows = append(e.rows, record)
 	}

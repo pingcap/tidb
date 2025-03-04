@@ -8,6 +8,7 @@ import (
 	goerrors "errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path"
 	"strings"
@@ -504,11 +505,20 @@ func shouldRetry(err error) bool {
 		}
 	}
 
+	// workaround for https://github.com/googleapis/google-cloud-go/issues/7090
+	// seems it's a bug of golang net/http: https://github.com/golang/go/issues/53472
+	if e := (&url.Error{}); goerrors.As(err, &e) {
+		if goerrors.Is(e.Err, io.EOF) {
+			return true
+		}
+	}
+
 	errMsg := err.Error()
 	// workaround for strange unknown errors
 	retryableErrMsg := []string{
 		"http2: client connection force closed via ClientConn.Close",
 		"broken pipe",
+		"http2: client connection lost",
 	}
 
 	for _, msg := range retryableErrMsg {
