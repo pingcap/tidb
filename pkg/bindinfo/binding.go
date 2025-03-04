@@ -151,7 +151,7 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *Bindi
 	if globalHandle == nil {
 		return
 	}
-	binding, matched = globalHandle.MatchGlobalBinding(sctx, noDBDigest, tableNames)
+	binding, matched = globalHandle.MatchingBinding(sctx, noDBDigest, tableNames)
 	if matched {
 		return binding, matched, metrics.ScopeGlobal
 	}

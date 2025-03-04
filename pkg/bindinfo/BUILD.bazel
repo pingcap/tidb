@@ -7,6 +7,7 @@ go_library(
         "binding_cache.go",
         "global_handle.go",
         "session_handle.go",
+        "utils.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/bindinfo",
     visibility = ["//visibility:public"],

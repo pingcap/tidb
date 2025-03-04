@@ -864,3 +864,12 @@ json_set('{"a":"b"}', '$[last]', 1)
 SELECT JSON_ARRAY_APPEND('[1]', '$', JSON_ARRAY(2, 3));
 JSON_ARRAY_APPEND('[1]', '$', JSON_ARRAY(2, 3))
 [1, [2, 3]]
+set tidb_enable_vectorized_expression = 'ON';
+select json_search('{"h": "i"}', 'all', 'i', '\\', NULL);
+json_search('{"h": "i"}', 'all', 'i', '\\', NULL)
+NULL
+set tidb_enable_vectorized_expression = 'OFF';
+select json_search('{"h": "i"}', 'all', 'i', '\\', NULL);
+json_search('{"h": "i"}', 'all', 'i', '\\', NULL)
+NULL
+set tidb_enable_vectorized_expression = default;

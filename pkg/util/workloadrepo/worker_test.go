@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -141,7 +142,7 @@ func waitForTables(ctx context.Context, t *testing.T, wrk *worker, now time.Time
 func TestRaceToCreateTablesWorker(t *testing.T) {
 	ctx, store, dom, addr := setupDomainAndContext(t)
 
-	_, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("workload_schema"))
+	_, ok := dom.InfoSchema().SchemaByName(workloadSchemaCIStr)
 	require.False(t, ok)
 
 	wrk1 := setupWorker(ctx, t, addr, dom, "worker1", true)
@@ -240,7 +241,6 @@ func TestMultipleWorker(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return wrk1.owner.IsOwner()
 	}, time.Minute, time.Second)
-
 	// start worker 2 again
 	require.NoError(t, wrk2.setRepositoryDest(ctx, "table"))
 	eventuallyWithLock(t, wrk2, func() bool { return wrk2.owner != nil })
@@ -256,7 +256,7 @@ func TestGlobalWorker(t *testing.T) {
 	ctx, store, dom, addr := setupDomainAndContext(t)
 	tk := testkit.NewTestKit(t, store)
 
-	_, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("workload_schema"))
+	_, ok := dom.InfoSchema().SchemaByName(workloadSchemaCIStr)
 	require.False(t, ok)
 
 	wrk := setupWorker(ctx, t, addr, dom, "worker", false)
@@ -276,7 +276,7 @@ func TestAdminWorkloadRepo(t *testing.T) {
 	ctx, store, dom, addr := setupDomainAndContext(t)
 	tk := testkit.NewTestKit(t, store)
 
-	_, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("workload_schema"))
+	_, ok := dom.InfoSchema().SchemaByName(workloadSchemaCIStr)
 	require.False(t, ok)
 
 	wrk := setupWorker(ctx, t, addr, dom, "worker", false)
@@ -320,7 +320,7 @@ func validateDate(t *testing.T, row []any, idx int, lastRowTs time.Time, maxSecs
 }
 
 func SamplingTimingWorker(t *testing.T, tk *testkit.TestKit, lastRowTs time.Time, cnt int, maxSecs int) time.Time {
-	rows := getRows(t, tk, cnt, maxSecs, "select instance_id, ts from "+WorkloadSchema+".hist_memory_usage where ts > '"+lastRowTs.Format("2006-01-02 15:04:05")+"' order by ts asc")
+	rows := getRows(t, tk, cnt, maxSecs, "select instance_id, ts from "+mysql.WorkloadSchema+".hist_memory_usage where ts > '"+lastRowTs.Format("2006-01-02 15:04:05")+"' order by ts asc")
 
 	for _, row := range rows {
 		// check that the instance_id is correct
@@ -362,7 +362,7 @@ func findMatchingRowForSnapshot(t *testing.T, rowidx int, snapRows [][]any, row 
 }
 
 func SnapshotTimingWorker(t *testing.T, tk *testkit.TestKit, lastRowTs time.Time, lastSnapID int, cnt int, maxSecs int) (time.Time, int) {
-	rows := getRows(t, tk, cnt, maxSecs, "select snap_id, begin_time from "+WorkloadSchema+"."+histSnapshotsTable+" where begin_time > '"+lastRowTs.Format("2006-01-02 15:04:05")+"' order by begin_time asc")
+	rows := getRows(t, tk, cnt, maxSecs, "select snap_id, begin_time from "+mysql.WorkloadSchema+"."+histSnapshotsTable+" where begin_time > '"+lastRowTs.Format("2006-01-02 15:04:05")+"' order by begin_time asc")
 
 	// We want to get all rows if we are starting from 0.
 	snapWhere := ""
