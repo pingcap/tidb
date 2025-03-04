@@ -128,6 +128,7 @@ func (u *bindingCacheUpdater) readBindingsFromStorage(condition string) (binding
 	return
 }
 
+// NewBindingCacheUpdater creates a new BindingCacheUpdater.
 func NewBindingCacheUpdater(sPool util.DestroyableSessionPool) BindingCacheUpdater {
 	u := new(bindingCacheUpdater)
 	u.lastUpdateTime.Store(types.ZeroTimestamp)
