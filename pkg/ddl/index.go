@@ -1673,7 +1673,7 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 				return ver, errors.Trace(err)
 			}
 			dropArgs.IndexArgs[0].IndexID = indexIDs[0]
-			dropArgs.IndexArgs[0].IsVector = allIndexInfos[0].IsTiFlashLocalIndex()
+			dropArgs.IndexArgs[0].IsColumnar = allIndexInfos[0].IsTiFlashLocalIndex()
 			if !allIndexInfos[0].Global {
 				dropArgs.PartitionIDs = getPartitionIDs(tblInfo)
 			}

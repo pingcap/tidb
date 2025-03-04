@@ -4773,7 +4773,7 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 			IndexPartSpecifications: indexPartSpecifications,
 			IndexOption:             indexOption,
 			FuncExpr:                funcExpr,
-			IsVector:                true,
+			IsColumnar:              true,
 		}},
 		OpType: model.OpAddIndex,
 	}
