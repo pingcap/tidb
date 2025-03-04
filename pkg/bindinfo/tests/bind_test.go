@@ -397,7 +397,7 @@ func TestGCBindRecord(t *testing.T) {
 		bindinfo.StatusEnabled,
 	))
 
-	h := dom.BindHandle()
+	h := dom.BindingHandle()
 	// bindinfo.Lease is set to 0 for test env in SetUpSuite.
 	require.NoError(t, h.GCGlobalBinding())
 	rows = tk.MustQuery("show global bindings").Rows()
@@ -554,7 +554,7 @@ func TestDropBindBySQLDigest(t *testing.T) {
 		{"select t1.a, t1.b from t t1 where t1.a in (select t2.a from t t2)", "select /*+ use_toja(true) */ t1.a, t1.b from t t1 where t1.a in (select t2.a from t t2)"},
 	}
 
-	h := dom.BindHandle()
+	h := dom.BindingHandle()
 	// global scope
 	for _, c := range cases {
 		utilCleanBindingEnv(tk)
