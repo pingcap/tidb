@@ -138,6 +138,13 @@ func (m *MPPCoordinatorManager) Unregister(coordID CoordinatorUniqueID) {
 	}
 }
 
+// GetCoordCount returns the coordinatorMap size
+func (m *MPPCoordinatorManager) GetCoordCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.coordinatorMap)
+}
+
 // ReportStatus reports mpp task execution status to specific coordinator
 func (m *MPPCoordinatorManager) ReportStatus(request *mpp.ReportTaskStatusRequest) *mpp.ReportTaskStatusResponse {
 	mppQueryID := kv.MPPQueryID{

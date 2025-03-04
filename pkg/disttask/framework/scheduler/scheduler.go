@@ -16,6 +16,7 @@ package scheduler
 
 import (
 	"context"
+	goerrors "errors"
 	"math/rand"
 	"strings"
 	"sync/atomic"
@@ -177,7 +178,7 @@ func (s *BaseScheduler) scheduleTask() {
 		failpoint.InjectCall("beforeRefreshTask", s.GetTask())
 		err := s.refreshTaskIfNeeded()
 		if err != nil {
-			if errors.Cause(err) == storage.ErrTaskNotFound {
+			if goerrors.Is(err, storage.ErrTaskNotFound) {
 				// this can happen when task is reverted/succeed, but before
 				// we reach here, cleanup routine move it to history.
 				s.logger.Debug("task not found, might be reverted/succeed/failed")
@@ -387,7 +388,7 @@ func (s *BaseScheduler) onRunning() error {
 		if len(subTaskErrs) > 0 {
 			s.logger.Warn("subtasks encounter errors", zap.Errors("subtask-errs", subTaskErrs))
 			// we only store the first error as task error.
-			return s.revertTask(subTaskErrs[0])
+			return s.revertTaskOrManualRecover(subTaskErrs[0])
 		}
 	} else if s.isStepSucceed(cntByStates) {
 		return s.switch2NextStep()
@@ -467,6 +468,12 @@ func (s *BaseScheduler) switch2NextStep() error {
 	eligibleNodes, err := getEligibleNodes(s.ctx, s, nodeIDs)
 	if err != nil {
 		return err
+	}
+	if task.MaxNodeCount > 0 && len(eligibleNodes) > task.MaxNodeCount {
+		// OnNextSubtasksBatch may use len(eligibleNodes) as a hint to
+		// calculate the number of subtasks, so we need to do this before
+		// filtering nodes by available slots in scheduleSubtask.
+		eligibleNodes = eligibleNodes[:task.MaxNodeCount]
 	}
 
 	s.logger.Info("eligible instances", zap.Int("num", len(eligibleNodes)))
@@ -551,7 +558,7 @@ func (s *BaseScheduler) scheduleSubTask(
 	return handle.RunWithRetry(s.ctx, RetrySQLTimes, backoffer, s.logger,
 		func(context.Context) (bool, error) {
 			err := fn(s.ctx, task, proto.TaskStateRunning, subtaskStep, subTasks)
-			if errors.Cause(err) == storage.ErrUnstableSubtasks {
+			if goerrors.Is(err, storage.ErrUnstableSubtasks) {
 				return false, err
 			}
 			return true, err
@@ -577,6 +584,20 @@ func (s *BaseScheduler) revertTask(taskErr error) error {
 	task.Error = taskErr
 	s.task.Store(task)
 	return nil
+}
+
+func (s *BaseScheduler) revertTaskOrManualRecover(taskErr error) error {
+	task := s.getTaskClone()
+	if task.ManualRecovery {
+		if err := s.taskMgr.AwaitingResolveTask(s.ctx, task.ID, task.State, taskErr); err != nil {
+			return err
+		}
+		task.State = proto.TaskStateAwaitingResolution
+		task.Error = taskErr
+		s.task.Store(task)
+		return nil
+	}
+	return s.revertTask(taskErr)
 }
 
 // MockServerInfo exported for scheduler_test.go

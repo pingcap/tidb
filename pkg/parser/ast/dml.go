@@ -3311,12 +3311,15 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(" PARTITION ")
 		ctx.WriteName(n.Partition.String())
 	case ShowDistributions:
-		ctx.WriteKeyWord("DISTRIBUTION FOR TABLE ")
+		ctx.WriteKeyWord("TABLE ")
 		if err := n.Table.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore ShowStmt.Table")
 		}
-		ctx.WriteKeyWord(" PARTITION ")
-		ctx.WriteName(n.Partition.String())
+		ctx.WriteKeyWord(" DISTRIBUTIONS")
+		if err := restoreShowLikeOrWhereOpt(); err != nil {
+			return err
+		}
+		return nil
 	case ShowImportJobs:
 		if n.ImportJobID != nil {
 			ctx.WriteKeyWord("IMPORT JOB ")
@@ -3402,6 +3405,16 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("BINDING_CACHE STATUS")
 		case ShowAnalyzeStatus:
 			ctx.WriteKeyWord("ANALYZE STATUS")
+		case ShowDistributions:
+			ctx.WriteKeyWord("TABLE ")
+			if err := n.Table.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore ShowStmt.Table")
+			}
+			ctx.WriteKeyWord(" DISTRIBUTIONS")
+			if err := restoreShowLikeOrWhereOpt(); err != nil {
+				return err
+			}
+			return nil
 		case ShowRegions:
 			ctx.WriteKeyWord("TABLE ")
 			if err := n.Table.Restore(ctx); err != nil {
@@ -3412,20 +3425,6 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 				ctx.WriteName(n.IndexName.String())
 			}
 			ctx.WriteKeyWord(" REGIONS")
-			if err := restoreShowLikeOrWhereOpt(); err != nil {
-				return err
-			}
-			return nil
-		case ShowDistributions:
-			ctx.WriteKeyWord("TABLE ")
-			if err := n.Table.Restore(ctx); err != nil {
-				return errors.Annotate(err, "An error occurred while restore ShowStmt.Table")
-			}
-			if len(n.IndexName.L) > 0 {
-				ctx.WriteKeyWord(" INDEX ")
-				ctx.WriteName(n.IndexName.String())
-			}
-			ctx.WriteKeyWord(" DISTRIBUTIONS")
 			if err := restoreShowLikeOrWhereOpt(); err != nil {
 				return err
 			}
