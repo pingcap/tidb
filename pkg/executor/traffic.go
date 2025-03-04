@@ -50,13 +50,21 @@ var tiproxyAddrKey tiproxyAddrKeyType
 var trafficStoreKey trafficStoreKeyType
 
 type trafficJob struct {
-	Instance  string `json:"-"` // not passed from TiProxy
-	Type      string `json:"type"`
-	Status    string `json:"status"`
-	StartTime string `json:"start_time"`
-	EndTime   string `json:"end_time,omitempty"`
-	Progress  string `json:"progress"`
-	Err       string `json:"error,omitempty"`
+	Instance         string  `json:"-"` // not passed from TiProxy
+	Type             string  `json:"type"`
+	Status           string  `json:"status"`
+	StartTime        string  `json:"start_time"`
+	EndTime          string  `json:"end_time,omitempty"`
+	Progress         string  `json:"progress"`
+	Err              string  `json:"error,omitempty"`
+	Output           string  `json:"output,omitempty"`
+	Duration         string  `json:"duration,omitempty"`
+	Compress         bool    `json:"compress,omitempty"`
+	EncryptionMethod string  `json:"encryption-method,omitempty"`
+	Input            string  `json:"input,omitempty"`
+	Username         string  `json:"username,omitempty"`
+	Speed            float64 `json:"speed,omitempty"`
+	ReadOnly         bool    `json:"readonly,omitempty"`
 }
 
 const (
@@ -222,11 +230,18 @@ func (e *TrafficShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		} else {
 			req.AppendTime(1, parseTime(ctx, e.BaseExecutor, job.EndTime))
 		}
+		var params string
+		if job.Type == "capture" {
+			params = fmt.Sprintf("OUTPUT=\"%s\", DURATION=\"%s\", COMPRESS=%t, ENCRYPTION_METHOD=\"%s\"", job.Output, job.Duration, job.Compress, job.EncryptionMethod)
+		} else {
+			params = fmt.Sprintf("INPUT=\"%s\", USER=\"%s\", SPEED=%f, READ_ONLY=%t", job.Input, job.Username, job.Speed, job.ReadOnly)
+		}
 		req.AppendString(2, job.Instance)
 		req.AppendString(3, job.Type)
 		req.AppendString(4, job.Progress)
 		req.AppendString(5, job.Status)
 		req.AppendString(6, job.Err)
+		req.AppendString(7, params)
 	}
 	return nil
 }
