@@ -609,8 +609,8 @@ func (mgr *TaskManager) SwitchTaskStep(
 		vars := se.GetSessionVars()
 		// in most cases the def memory quota is enough, but when importing 200TiB
 		// data using global sort, when transiting to write&ingest step, the txn
-		// might be cancelled, so we double it.
-		targetQuota := 2 * variable.DefTiDBMemQuotaQuery
+		// might be cancelled, so we quadruple it.
+		targetQuota := 4 * variable.DefTiDBMemQuotaQuery
 		if int(vars.MemQuotaQuery) < targetQuota {
 			bak := vars.MemQuotaQuery
 			if err := vars.SetSystemVar(variable.TiDBMemQuotaQuery,
