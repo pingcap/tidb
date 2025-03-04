@@ -137,8 +137,10 @@ func DeleteTableStatsFromKV(sctx sessionctx.Context, statsIDs []int64) (err erro
 		return errors.Trace(err)
 	}
 	for _, statsID := range statsIDs {
-		// We only update the version so that other tidb will know that this table is deleted.
-		if _, err = util.Exec(sctx, "update mysql.stats_meta set version = %? where table_id = %? ", startTS, statsID); err != nil {
+		// We update the version so that other tidb will know that this table is deleted.
+		// And we also update the last_stats_histograms_version to tell other tidb that the stats histogram is deleted
+		// and they should update their memory cache. It's mainly for soft delete triggered by DROP STATS.
+		if _, err = util.Exec(sctx, "update mysql.stats_meta set version = %?, last_stats_histograms_version = %? where table_id = %? ", startTS, startTS, statsID); err != nil {
 			return err
 		}
 		if _, err = util.Exec(sctx, "delete from mysql.stats_histograms where table_id = %?", statsID); err != nil {

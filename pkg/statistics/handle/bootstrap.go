@@ -68,21 +68,31 @@ func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 		physicalID = row.GetInt64(1)
 		maxPhysicalID = max(physicalID, maxPhysicalID)
 		newHistColl := *statistics.NewHistColl(physicalID, true, row.GetInt64(3), row.GetInt64(2), 4, 4)
+		// During the initialization phase, we need to initialize LastAnalyzeVersion with the snapshot,
+		// which ensures that we don't duplicate the auto-analyze of a particular type of table.
+		// When the predicate columns feature is turned on, if a table has neither predicate columns nor indexes,
+		// then auto-analyze will only analyze the _row_id and refresh stats_meta,
+		// but since we don't have any histograms or topn's created for _row_id at the moment.
+		// So if we don't initialize LastAnalyzeVersion with the snapshot here,
+		// it will stay at 0 and auto-analyze won't be able to detect that the table has been analyzed.
+		// But in the future, we maybe will create some records for _row_id, see:
+		// https://github.com/pingcap/tidb/issues/51098
 		snapshot := row.GetUint64(4)
+		lastAnalyzeVersion, lastStatsHistUpdateVersion := snapshot, snapshot
+		if !row.IsNull(5) {
+			lastAnalyzeVersion = max(lastAnalyzeVersion, row.GetUint64(5))
+			// To deal with old cluster before v8.5.2 and some edge cases, we need this update.
+			lastStatsHistUpdateVersion = max(lastStatsHistUpdateVersion, row.GetUint64(5))
+		}
+		if !row.IsNull(6) {
+			lastStatsHistUpdateVersion = max(lastStatsHistUpdateVersion, row.GetUint64(6))
+		}
 		tbl := &statistics.Table{
 			HistColl:              newHistColl,
 			Version:               row.GetUint64(0),
 			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMapWithoutSize(),
-			// During the initialization phase, we need to initialize LastAnalyzeVersion with the snapshot,
-			// which ensures that we don't duplicate the auto-analyze of a particular type of table.
-			// When the predicate columns feature is turned on, if a table has neither predicate columns nor indexes,
-			// then auto-analyze will only analyze the _row_id and refresh stats_meta,
-			// but since we don't have any histograms or topn's created for _row_id at the moment.
-			// So if we don't initialize LastAnalyzeVersion with the snapshot here,
-			// it will stay at 0 and auto-analyze won't be able to detect that the table has been analyzed.
-			// But in the future, we maybe will create some records for _row_id, see:
-			// https://github.com/pingcap/tidb/issues/51098
-			LastAnalyzeVersion: snapshot,
+			LastAnalyzeVersion:    lastAnalyzeVersion,
+			LastStatsHistVersion:  lastStatsHistUpdateVersion,
 		}
 		cache.Put(physicalID, tbl) // put this table again since it is updated
 	}
@@ -95,7 +105,7 @@ func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 
 func (h *Handle) initStatsMeta(ctx context.Context) (statstypes.StatsCache, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
-	sql := "select HIGH_PRIORITY version, table_id, modify_count, count, snapshot from mysql.stats_meta"
+	sql := "select HIGH_PRIORITY version, table_id, modify_count, count, snapshot, last_analyze_version, last_stats_histograms_version from mysql.stats_meta"
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -146,17 +156,15 @@ func (*Handle) initStatsHistograms4ChunkLite(cache statstypes.StatsCache, iter *
 		}
 		if isIndex > 0 {
 			table.ColAndIdxExistenceMap.InsertIndex(id, statsVer != statistics.Version0)
-			if statsVer != statistics.Version0 {
-				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
-				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, row.GetUint64(4))
-			}
 		} else {
 			table.ColAndIdxExistenceMap.InsertCol(id, statsVer != statistics.Version0 || ndv > 0 || nullCount > 0)
-			if statsVer != statistics.Version0 {
-				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
-				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, row.GetUint64(4))
-			}
 		}
+		// The LastXXXVersion can be added by ALTER table so its value might be 0, so we also need to update its memory value by the column/index's.
+		if statsVer != statistics.Version0 {
+			table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, row.GetUint64(4))
+		}
+		// For cluster older than v8.5.2, it's needed that we should use the value from histogram to update the LastStatsHistVersion in memory.
+		table.LastStatsHistVersion = max(table.LastStatsHistVersion, row.GetUint64(4))
 	}
 	if table != nil {
 		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
@@ -230,13 +238,16 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				Flag:       row.GetInt64(10),
 				PhysicalID: tblID,
 			}
+			// The LastXXXVersion can be added by ALTER table so its value might be 0, so we also need to update its memory value by the column/index's.
 			if statsVer != statistics.Version0 {
 				// We first set the StatsLoadedStatus as AllEvicted. when completing to load bucket, we will set it as ALlLoad.
 				index.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
-				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
 				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, version)
 			}
 			lastAnalyzePos.Copy(&index.LastAnalyzePos)
+			// For cluster older than v8.5.2, it's needed that we should use the value from histogram to update the LastStatsHistVersion in memory.
+			table.LastStatsHistVersion = max(table.LastStatsHistVersion, version)
+
 			table.SetIdx(idxInfo.ID, index)
 			table.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, statsVer != statistics.Version0)
 		} else {
@@ -263,8 +274,8 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			lastAnalyzePos.Copy(&col.LastAnalyzePos)
 			table.SetCol(hist.ID, col)
 			table.ColAndIdxExistenceMap.InsertCol(colInfo.ID, statsVer != statistics.Version0 || ndv > 0 || nullCount > 0)
+			// The LastXXXVersion can be added by ALTER table so its value might be 0, so we also need to update its memory value by the column/index's.
 			if statsVer != statistics.Version0 {
-				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
 				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, version)
 				// We will also set int primary key's loaded status to evicted.
 				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
@@ -274,6 +285,8 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 			}
 			// Otherwise the column's stats is not initialized.
+			// For cluster older than v8.5.2, it's needed that we should use the value from histogram to update the LastStatsHistVersion in memory.
+			table.LastStatsHistVersion = max(table.LastStatsHistVersion, version)
 		}
 	}
 	if table != nil {
