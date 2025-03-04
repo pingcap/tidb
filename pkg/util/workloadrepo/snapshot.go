@@ -79,7 +79,7 @@ func (w *worker) etcdCAS(ctx context.Context, key, oval, nval string) error {
 }
 
 func queryMaxSnapID(ctx context.Context, sctx sessionctx.Context) (uint64, error) {
-	query := sqlescape.MustEscapeSQL("SELECT MAX(`SNAP_ID`) FROM %n.%n", WorkloadSchema, histSnapshotsTable)
+	query := sqlescape.MustEscapeSQL("SELECT MAX(`SNAP_ID`) FROM %n.%n", mysql.WorkloadSchema, histSnapshotsTable)
 	rs, err := runQuery(ctx, sctx, query)
 	if err != nil {
 		return 0, err
