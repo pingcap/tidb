@@ -16,8 +16,10 @@ package storage_test
 
 import (
 	"context"
+	"strconv"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -80,4 +82,50 @@ func TestUpdateStatsMetaVersionForGC(t *testing.T) {
 		version,
 	).Rows()
 	require.Equal(t, 1, len(rows))
+}
+
+func TestSlowStatsSaving(t *testing.T) {
+	err := failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/storage/slowStatsSaving", "return(true)")
+	require.NoError(t, err)
+	defer func() {
+		err = failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/storage/slowStatsSaving")
+		require.NoError(t, err)
+	}()
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t (a int, b int, index idx(a))")
+	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
+	testKit.MustExec("analyze table t with 0 topn")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(context.Background(),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
+	)
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	statsTbl := h.GetTableStats(tableInfo)
+	require.False(t, statsTbl.Pseudo)
+
+	// Get stats version from mysql.stats_meta.
+	rows := testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id = ?",
+		tableInfo.ID,
+	).Rows()
+	require.Equal(t, 1, len(rows))
+	version := rows[0][0].(string)
+	versionUint64, err := strconv.ParseUint(version, 10, 64)
+	require.NoError(t, err)
+	// Get stats version from mysql.stats_histograms.
+	rows = testKit.MustQuery(
+		"select version from mysql.stats_histograms where table_id = ?",
+		tableInfo.ID,
+	).Rows()
+	require.Equal(t, 2, len(rows))
+	histVersion := rows[0][0].(string)
+	histVersionUint64, err := strconv.ParseUint(histVersion, 10, 64)
+	require.NoError(t, err)
+	require.NotEqual(t, versionUint64, histVersionUint64, "The version in stats_meta and stats_histograms should be different.")
+	require.True(t, versionUint64 > histVersionUint64, "The version in stats_meta should be greater than stats_histograms.")
 }
