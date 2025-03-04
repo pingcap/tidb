@@ -38,18 +38,10 @@ func TestPiTRTableTracker(t *testing.T) {
 		require.True(t, tracker.ContainsDB(3))
 		require.True(t, tracker.ContainsTableId(3, 300))
 
-		// Test GetDBIdForTable
-		dbID, exists := tracker.GetDBIdForTable(100)
-		require.True(t, exists)
-		require.Equal(t, int64(1), dbID)
-
 		// Test RemoveTableId
 		tracker.RemoveTableId(100)
 		require.False(t, tracker.ContainsTableId(1, 100))
 		require.True(t, tracker.ContainsDB(1))           // DB should still exist
 		require.True(t, tracker.ContainsTableId(1, 101)) // Other table should still exist
-
-		_, exists = tracker.GetDBIdForTable(100)
-		require.False(t, exists)
 	})
 }

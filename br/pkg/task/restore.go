@@ -770,26 +770,21 @@ type SnapshotRestoreConfig struct {
 }
 
 func (s *SnapshotRestoreConfig) isPiTR() (bool, error) {
-	components := []struct {
-		name string
-		val  any
-	}{
-		{"piTRTaskInfo", s.piTRTaskInfo},
-		{"logTableHistoryManager", s.logTableHistoryManager},
-		{"tableMappingManager", s.tableMappingManager},
+	if s.piTRTaskInfo != nil && s.logTableHistoryManager != nil && s.tableMappingManager != nil {
+		return true, nil
 	}
 
-	// check if first component exists
-	isPiTR := components[0].val != nil
-
-	// verify all components are consistent
-	for _, c := range components[1:] {
-		if (c.val != nil) != isPiTR {
-			return false, errors.Errorf("invalid SnapshotRestoreConfig: %s existence is inconsistent with other PiTR components", c.name)
-		}
+	if s.piTRTaskInfo == nil && s.logTableHistoryManager == nil && s.tableMappingManager == nil {
+		return false, nil
 	}
 
-	return isPiTR, nil
+	errMsg := "inconsistent PiTR components detected"
+	log.Error(errMsg,
+		zap.Any("piTRTaskInfo", s.piTRTaskInfo),
+		zap.Any("logTableHistoryManager", s.logTableHistoryManager),
+		zap.Any("tableMappingManager", s.tableMappingManager))
+
+	return false, errors.New(errMsg)
 }
 
 func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName string, cfg *SnapshotRestoreConfig) error {
