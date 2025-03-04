@@ -1276,8 +1276,6 @@ func TestGetAllTableInfos(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
-	//tk.MustExec("create table test.t1 (a int)")
-
 	for i := 0; i < 213; i++ {
 		tk.MustExec(fmt.Sprintf("create database test%d", i))
 		tk.MustExec(fmt.Sprintf("use test%d", i))
@@ -1289,23 +1287,19 @@ func TestGetAllTableInfos(t *testing.T) {
 	tblInfos1 := make([]*model.TableInfo, 0)
 	tblInfos2 := make([]*model.TableInfo, 0)
 	dbs := dom.InfoSchema().AllSchemas()
-	maxDBID := int64(0)
 	for _, db := range dbs {
 		if infoschema.IsSpecialDB(db.Name.L) {
 			continue
-		}
-		if db.ID > maxDBID {
-			maxDBID = db.ID
 		}
 		info, err := dom.InfoSchema().SchemaTableInfos(context.Background(), db.Name)
 		require.NoError(t, err)
 		tblInfos1 = append(tblInfos1, info...)
 	}
 
-	err := meta.IterAllTables(context.Background(), store, oracle.GoTimeToTS(time.Now()), 10, func(tblInfo *model.TableInfo) error {
+	err := meta.IterAllTables(context.Background(), store, oracle.GoTimeToTS(time.Now()), 13, func(tblInfo *model.TableInfo) error {
 		tblInfos2 = append(tblInfos2, tblInfo)
 		return nil
-	}, maxDBID)
+	})
 	require.NoError(t, err)
 
 	slices.SortFunc(tblInfos1, func(i, j *model.TableInfo) int {

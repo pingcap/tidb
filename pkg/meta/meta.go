@@ -20,8 +20,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/zap"
 	"math"
 	"regexp"
 	"strconv"
@@ -1000,21 +998,40 @@ func (m *Mutator) IterTables(dbID int64, fn func(info *model.TableInfo) error) e
 	return errors.Trace(err)
 }
 
+func splitRangeInt64Max(n int64) [][]string {
+	const N uint64 = 9999999999999999999
+
+	ranges := make([][]string, n)
+
+	batch := N / uint64(n)
+
+	for k := int64(0); k < n; k++ {
+		start := batch * uint64(k)
+		end := batch * uint64(k+1)
+
+		startStr := fmt.Sprintf("%019d", start)
+		if k == 0 {
+			startStr = "0"
+		}
+		endStr := fmt.Sprintf("%019d", end)
+
+		ranges[k] = []string{startStr, endStr}
+	}
+
+	return ranges
+}
+
 // IterAllTables iterates all the table at once, in order to avoid oom.
-func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concurrency int, fn func(info *model.TableInfo) error, hintMaxDBID int64) error {
+func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concurrency int, fn func(info *model.TableInfo) error) error {
 	cancelCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	workGroup, _ := util.NewErrorGroupWithRecoverWithCtx(cancelCtx)
 
-	idBatch := math.MaxInt64
-	if concurrency >= 10 {
-		concurrency = 10
+	if concurrency >= 15 {
+		concurrency = 15
 	}
-	if hintMaxDBID == 0 {
-		concurrency = 1
-	} else {
-		idBatch = max(int(9999999999999)/concurrency+1, 1)
-	}
+
+	kvRanges := splitRangeInt64Max(int64(concurrency))
 
 	mu := sync.Mutex{}
 	for i := 0; i < concurrency; i++ {
@@ -1024,22 +1041,12 @@ func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concur
 		t := structure.NewStructure(snapshot, nil, mMetaPrefix)
 		workGroup.Go(func() error {
 			startKey := []byte(fmt.Sprintf("%s:", mDBPrefix))
-			startKey = codec.EncodeBytes(startKey, []byte(strconv.Itoa(i*idBatch)))
+			i := i
+			startKey = codec.EncodeBytes(startKey, []byte(kvRanges[i][0]))
 			endKey := []byte(fmt.Sprintf("%s:", mDBPrefix))
-			if i == concurrency-1 {
-				endKey = codec.EncodeBytes(endKey, []byte("9999999999999"))
-			} else {
-				endKey = codec.EncodeBytes(endKey, []byte(strconv.Itoa((i+1)*idBatch)))
-			}
-			endKey = kv.Key(endKey).PrefixNext()
-			c := 0
-			defer func() {
-				logutil.Logger(ctx).Info("iterate all tables", zap.Int("count", c), zap.Int("concurrency", concurrency), zap.Int("idBatch", int(idBatch)), zap.Int("i", i))
-			}()
-			if i == 0 {
-				i = 0
-			}
-			j := i
+			endKey = codec.EncodeBytes(endKey, []byte(kvRanges[i][1]))
+			println("startKey", kvRanges[i][0], kvRanges[i][1])
+
 			return t.IterateHashWithBoundedKey(startKey, endKey, func(key []byte, field []byte, value []byte) error {
 				// only handle table meta
 				tableKey := string(field)
@@ -1056,17 +1063,11 @@ func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concur
 				if err != nil {
 					return errors.Trace(err)
 				}
-				if int(dbID) < j*idBatch || int(dbID) >= (j+1)*idBatch {
-					dbID = dbID
-					println("aaa")
-				}
 				tbInfo.DBID = dbID
 
 				mu.Lock()
-				logutil.BgLogger().Warn("put table info", zap.Int("dbID", int(dbID)), zap.Int64("tableID", tbInfo.ID), zap.Int("j", j), zap.Any("startKey", kv.Key(startKey)), zap.Any("endKey", kv.Key(endKey)), zap.Any("decodekey", kv.Key(key)))
 				err = fn(tbInfo)
 				mu.Unlock()
-				c++
 				return errors.Trace(err)
 			})
 		})
