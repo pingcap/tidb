@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -1776,12 +1777,12 @@ func TestUnion2(t *testing.T) {
 	err := tk.ExecToErr("select 1 from (select a from t limit 1 union all select a from t limit 1) tmp")
 	require.Error(t, err)
 	terr := errors.Cause(err).(*terror.Error)
-	require.Equal(t, errors.ErrCode(mysql.ErrWrongUsage), terr.Code())
+	require.Equal(t, errors.ErrCode(errno.ErrWrongUsage), terr.Code())
 
 	err = tk.ExecToErr("select 1 from (select a from t order by a union all select a from t limit 1) tmp")
 	require.Error(t, err)
 	terr = errors.Cause(err).(*terror.Error)
-	require.Equal(t, errors.ErrCode(mysql.ErrWrongUsage), terr.Code())
+	require.Equal(t, errors.ErrCode(errno.ErrWrongUsage), terr.Code())
 
 	tk.MustGetDBError("(select a from t order by a) union all select a from t limit 1 union all select a from t limit 1", plannererrors.ErrWrongUsage)
 
