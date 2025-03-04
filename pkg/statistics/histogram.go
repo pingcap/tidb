@@ -1078,9 +1078,10 @@ func (hg *Histogram) OutOfRangeRowCount(
 		return min(rowCount, upperBound)
 	}
 
-	// If the realtimeRowCount is larger than the original table rows, then we may be searching those new rows.
 	addedRows := float64(realtimeRowCount) - hg.TotalRowCount()
 	addedPct := addedRows / float64(realtimeRowCount)
+	// If the newly added rows is larger than the percentage that we've estimated that we're
+	// searching for out of the range, rowCount may need to be adjusted.
 	if addedPct > totalPercent {
 		// if the histogram range is invalid (too small/large - histInvalid) - totalPercent is zero
 		if histInvalid {
