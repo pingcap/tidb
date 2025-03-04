@@ -213,9 +213,7 @@ func (b *Binder) Next() base.LogicalPlan {
 			continueGroup := len(b.stackInfo) - 1
 			continueGroupElement := b.stackInfo[continueGroup]
 			// auto inc gE offset inside group to make sure the next iteration will start from the next group expression.
-			if continueGroupElement != nil {
-				b.stackInfo[continueGroup] = continueGroupElement.Next()
-			} else {
+			if continueGroupElement == nil {
 				// there is a case that, we forward the pointer to nil in last round.
 				// while there is a pattern mismatch like children count in last round,
 				// then return nil back to outer loop, in that, continueGroupElement
@@ -223,6 +221,7 @@ func (b *Binder) Next() base.LogicalPlan {
 				b.stackInfo = b.stackInfo[:continueGroup]
 				continue
 			}
+			b.stackInfo[continueGroup] = continueGroupElement.Next()
 		}
 		ok = b.dfsMatch(b.p, b.holder)
 		if b.bsw != nil {
