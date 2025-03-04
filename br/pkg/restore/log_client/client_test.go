@@ -1554,6 +1554,8 @@ func TestLogSplitStrategy(t *testing.T) {
 	for i := helper.TryNext(ctx); !i.Finished; i = helper.TryNext(ctx) {
 		require.NoError(t, i.Err)
 		if mockStrategy.AccumulateCount == expectSplitCount-1 {
+			// only split once
+			require.GreaterOrEqual(t, count, len(smallFiles))
 			// Verify that no split occurs initially due to insufficient data.
 			regions, err := mockPDCli.ScanRegions(ctx, []byte{}, []byte{}, 0)
 			require.NoError(t, err)
@@ -1568,7 +1570,7 @@ func TestLogSplitStrategy(t *testing.T) {
 	}
 
 	// iterate 20 small files + 4 valid files
-	require.Equal(t, 24, count)
+	require.Equal(t, len(smallFiles)+4, count)
 
 	// Verify that a split occurs on the second region due to excess data.
 	regions, err := mockPDCli.ScanRegions(ctx, []byte{}, []byte{}, 0)
