@@ -1326,7 +1326,7 @@ type IndexArg struct {
 
 	// For vector index
 	FuncExpr string `json:"func_expr,omitempty"`
-	IsVector bool   `json:"is_vector,omitempty"`
+	IsVector bool   `json:"is_vector,omitempty"` // FIXME:
 
 	// For PK
 	IsPK    bool          `json:"is_pk,omitempty"`

@@ -4704,7 +4704,7 @@ func checkIndexNameAndColumns(ctx *metabuild.Context, t table.Table, indexName a
 	return indexName, hiddenCols, nil
 }
 
-func checkTableTypeForVectorIndex(tblInfo *model.TableInfo) error {
+func checkTableTypeForColumnarIndex(tblInfo *model.TableInfo) error {
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Vector Index")
 	}
@@ -4712,10 +4712,10 @@ func checkTableTypeForVectorIndex(tblInfo *model.TableInfo) error {
 		return dbterror.ErrOptOnTemporaryTable.FastGenByArgs("vector index")
 	}
 	if tblInfo.GetPartitionInfo() != nil {
-		return dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("unsupported partition table")
+		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported partition table")
 	}
 	if tblInfo.TiFlashReplica == nil || tblInfo.TiFlashReplica.Count == 0 {
-		return dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("unsupported empty TiFlash replica, the replica is nil")
+		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported empty TiFlash replica, the replica is nil")
 	}
 
 	return nil
@@ -4729,7 +4729,7 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 	}
 
 	tblInfo := t.Meta()
-	if err := checkTableTypeForVectorIndex(tblInfo); err != nil {
+	if err := checkTableTypeForColumnarIndex(tblInfo); err != nil {
 		return errors.Trace(err)
 	}
 
