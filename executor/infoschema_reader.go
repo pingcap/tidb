@@ -843,11 +843,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(ctx context.Context, sctx 
 			// Build plan is not thread safe, there will be concurrency on sessionctx.
 			if err := runWithSystemSession(internalCtx, sctx, func(s sessionctx.Context) error {
 				is := sessiontxn.GetTxnManager(s).GetTxnInfoSchema()
-<<<<<<< HEAD:executor/infoschema_reader.go
-				planBuilder, _ := plannercore.NewPlanBuilder().Init(s, is, &hint.BlockHintProcessor{})
-=======
-				planBuilder, _ := plannercore.NewPlanBuilder(plannercore.PlanBuilderOptNoExecution{}).Init(s.GetPlanCtx(), is, hint.NewQBHintHandler(nil))
->>>>>>> 3ccd7e6ae6f (executor: skip execution when build query for VIEW in I_S (#58203)):pkg/executor/infoschema_reader.go
+				planBuilder, _ := plannercore.NewPlanBuilder(plannercore.PlanBuilderOptNoExecution{}).Init(s, is, &hint.BlockHintProcessor{})
 				var err error
 				viewLogicalPlan, err = planBuilder.BuildDataSourceFromView(ctx, schema.Name, tbl, nil, nil)
 				return errors.Trace(err)
@@ -1008,27 +1004,27 @@ ForColumnsTag:
 			}
 		}
 		record := types.MakeDatums(
-			infoschema.CatalogVal, // TABLE_CATALOG
-			schema.Name.O,         // TABLE_SCHEMA
-			tbl.Name.O,            // TABLE_NAME
-			col.Name.O,            // COLUMN_NAME
-			i,                     // ORDINAL_POSITION
-			columnDefault,         // COLUMN_DEFAULT
-			columnDesc.Null,       // IS_NULLABLE
-			types.TypeToStr(ft.GetType(), ft.GetCharset()), // DATA_TYPE
-			charMaxLen,           // CHARACTER_MAXIMUM_LENGTH
-			charOctLen,           // CHARACTER_OCTET_LENGTH
-			numericPrecision,     // NUMERIC_PRECISION
-			numericScale,         // NUMERIC_SCALE
-			datetimePrecision,    // DATETIME_PRECISION
-			columnDesc.Charset,   // CHARACTER_SET_NAME
-			columnDesc.Collation, // COLLATION_NAME
-			columnType,           // COLUMN_TYPE
-			columnDesc.Key,       // COLUMN_KEY
-			columnDesc.Extra,     // EXTRA
+			infoschema.CatalogVal,                                                                // TABLE_CATALOG
+			schema.Name.O,                                                                        // TABLE_SCHEMA
+			tbl.Name.O,                                                                           // TABLE_NAME
+			col.Name.O,                                                                           // COLUMN_NAME
+			i,                                                                                    // ORDINAL_POSITION
+			columnDefault,                                                                        // COLUMN_DEFAULT
+			columnDesc.Null,                                                                      // IS_NULLABLE
+			types.TypeToStr(ft.GetType(), ft.GetCharset()),                                       // DATA_TYPE
+			charMaxLen,                                                                           // CHARACTER_MAXIMUM_LENGTH
+			charOctLen,                                                                           // CHARACTER_OCTET_LENGTH
+			numericPrecision,                                                                     // NUMERIC_PRECISION
+			numericScale,                                                                         // NUMERIC_SCALE
+			datetimePrecision,                                                                    // DATETIME_PRECISION
+			columnDesc.Charset,                                                                   // CHARACTER_SET_NAME
+			columnDesc.Collation,                                                                 // COLLATION_NAME
+			columnType,                                                                           // COLUMN_TYPE
+			columnDesc.Key,                                                                       // COLUMN_KEY
+			columnDesc.Extra,                                                                     // EXTRA
 			strings.ToLower(privileges.PrivToString(priv, mysql.AllColumnPrivs, mysql.Priv2Str)), // PRIVILEGES
-			columnDesc.Comment,      // COLUMN_COMMENT
-			col.GeneratedExprString, // GENERATION_EXPRESSION
+			columnDesc.Comment,                                                                   // COLUMN_COMMENT
+			col.GeneratedExprString,                                                              // GENERATION_EXPRESSION
 		)
 		e.rows = append(e.rows, record)
 		i++
@@ -1473,12 +1469,12 @@ func (e *memtableRetriever) setDataFromEngines() {
 	var rows [][]types.Datum
 	rows = append(rows,
 		types.MakeDatums(
-			"InnoDB",  // Engine
-			"DEFAULT", // Support
+			"InnoDB",                                                     // Engine
+			"DEFAULT",                                                    // Support
 			"Supports transactions, row-level locking, and foreign keys", // Comment
-			"YES", // Transactions
-			"YES", // XA
-			"YES", // Savepoints
+			"YES",                                                        // Transactions
+			"YES",                                                        // XA
+			"YES",                                                        // Savepoints
 		),
 	)
 	e.rows = rows
@@ -2246,14 +2242,14 @@ func (e *memtableRetriever) setDataForServersInfo(ctx sessionctx.Context) error 
 	rows := make([][]types.Datum, 0, len(serversInfo))
 	for _, info := range serversInfo {
 		row := types.MakeDatums(
-			info.ID,              // DDL_ID
-			info.IP,              // IP
-			int(info.Port),       // PORT
-			int(info.StatusPort), // STATUS_PORT
-			info.Lease,           // LEASE
-			info.Version,         // VERSION
-			info.GitHash,         // GIT_HASH
-			info.BinlogStatus,    // BINLOG_STATUS
+			info.ID,                                       // DDL_ID
+			info.IP,                                       // IP
+			int(info.Port),                                // PORT
+			int(info.StatusPort),                          // STATUS_PORT
+			info.Lease,                                    // LEASE
+			info.Version,                                  // VERSION
+			info.GitHash,                                  // GIT_HASH
+			info.BinlogStatus,                             // BINLOG_STATUS
 			stringutil.BuildStringFromLabels(info.Labels), // LABELS
 		)
 		if sem.IsEnabled() {
@@ -2331,10 +2327,10 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 			progressString := types.TruncateFloatToString(progress, 2)
 			progress, _ = strconv.ParseFloat(progressString, 64)
 			record := types.MakeDatums(
-				schema.Name.O,                   // TABLE_SCHEMA
-				tbl.Name.O,                      // TABLE_NAME
-				tbl.ID,                          // TABLE_ID
-				int64(tbl.TiFlashReplica.Count), // REPLICA_COUNT
+				schema.Name.O,                                        // TABLE_SCHEMA
+				tbl.Name.O,                                           // TABLE_NAME
+				tbl.ID,                                               // TABLE_ID
+				int64(tbl.TiFlashReplica.Count),                      // REPLICA_COUNT
 				strings.Join(tbl.TiFlashReplica.LocationLabels, ","), // LOCATION_LABELS
 				tbl.TiFlashReplica.Available,                         // AVAILABLE
 				progress,                                             // PROGRESS
