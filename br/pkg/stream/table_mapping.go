@@ -548,9 +548,9 @@ func (tm *TableMappingManager) UpdateDownstreamIds(dbs []*metautil.Database,
 			continue
 		}
 
-		dbReplace, exist := dbReplaces[db.Info.ID]
+		_, exist = dbReplaces[db.Info.ID]
 		if !exist {
-			dbReplace = NewDBReplace(db.Info.Name.O, newDBInfo.ID)
+			dbReplace := NewDBReplace(db.Info.Name.O, newDBInfo.ID)
 			dbReplaces[db.Info.ID] = dbReplace
 		}
 	}

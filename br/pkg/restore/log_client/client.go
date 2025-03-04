@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"math"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -996,6 +997,8 @@ type GetIDMapConfig struct {
 	PiTRTableTracker *utils.PiTRIdTracker
 }
 
+const UnsafePITRLogRestoreStartBeforeAnyUpstreamUserDDL = "UNSAFE_PITR_LOG_RESTORE_START_BEFORE_ANY_UPSTREAM_USER_DDL"
+
 // GetBaseIDMap get the id map from following ways
 // 1. from previously saved id map if the same task has been running and built/saved id map already but failed later
 // 2. from previous different task. A PiTR job might be split into multiple runs/tasks and each task only restores
@@ -1035,7 +1038,15 @@ func (rc *LogClient) GetBaseIDMap(
 	}
 
 	if len(dbMaps) <= 0 {
-		log.Warn("no id maps found")
+		log.Info("no id maps, checking if table replace has been built from full backup storage")
+		if cfg.FullBackupStorageConfig == nil {
+			envVal, ok := os.LookupEnv(UnsafePITRLogRestoreStartBeforeAnyUpstreamUserDDL)
+			if ok && len(envVal) > 0 {
+				log.Info(fmt.Sprintf("the environment variable %s is active, skip loading the base schemas.", UnsafePITRLogRestoreStartBeforeAnyUpstreamUserDDL))
+				return dbReplaces, nil
+			}
+			return nil, errors.Errorf("miss upstream table information at `start-ts`(%d) but the full backup path is not specified", rc.startTS)
+		}
 	} else {
 		dbReplaces = stream.FromDBMapProto(dbMaps)
 	}
