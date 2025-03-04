@@ -100,7 +100,6 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			TotalFileSize: int64(all.TotalKVSize),
 			TotalKVCount:  0,
 			CheckHotspot:  true,
-			MemCapacity:   m.GetResource().Mem.Capacity(),
 		},
 		TS: sm.TS,
 	}, engineUUID)

@@ -423,7 +423,6 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 			TotalFileSize: int64(sm.TotalKVSize),
 			TotalKVCount:  0,
 			CheckHotspot:  false,
-			MemCapacity:   e.GetResource().Mem.Capacity(),
 		},
 		TS: sm.TS,
 	}, engineUUID)

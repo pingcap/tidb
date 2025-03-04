@@ -2329,7 +2329,6 @@ func TestExternalEngine(t *testing.T) {
 		SplitKeys:     [][]byte{keys[0], keys[50], endKey},
 		TotalFileSize: int64(config.SplitRegionSize) + 1,
 		TotalKVCount:  int64(config.SplitRegionKeys) + 1,
-		MemCapacity:   8 * units.GiB,
 	}
 	engineUUID := uuid.New()
 	hook := &recordScanRegionsHook{}
