@@ -999,11 +999,9 @@ func (m *Mutator) IterTables(dbID int64, fn func(info *model.TableInfo) error) e
 }
 
 func splitRangeInt64Max(n int64) [][]string {
-	const N uint64 = 9999999999999999999
-
 	ranges := make([][]string, n)
 
-	batch := N / uint64(n)
+	batch := 9999999999999999999 / uint64(n)
 
 	for k := int64(0); k < n; k++ {
 		start := batch * uint64(k)
@@ -1045,7 +1043,6 @@ func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concur
 			startKey = codec.EncodeBytes(startKey, []byte(kvRanges[i][0]))
 			endKey := []byte(fmt.Sprintf("%s:", mDBPrefix))
 			endKey = codec.EncodeBytes(endKey, []byte(kvRanges[i][1]))
-			println("startKey", kvRanges[i][0], kvRanges[i][1])
 
 			return t.IterateHashWithBoundedKey(startKey, endKey, func(key []byte, field []byte, value []byte) error {
 				// only handle table meta
