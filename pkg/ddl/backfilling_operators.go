@@ -698,7 +698,6 @@ func (o *WriteExternalStoreOperator) Close() error {
 type IndexWriteResult struct {
 	ID    int
 	Added int
-	Total int
 }
 
 // IndexIngestOperator writes index records to ingest engine.
@@ -910,7 +909,7 @@ func (s *indexWriteResultSink) collectResult() error {
 				if err != nil {
 					s.ctx.onError(err)
 				}
-				if s.backendCtx != nil {
+				if s.backendCtx != nil { // for local sort only
 					total := s.backendCtx.TotalKeyCount()
 					if total > 0 {
 						s.rowCntListener.SetTotal(total)
@@ -919,7 +918,7 @@ func (s *indexWriteResultSink) collectResult() error {
 				return err
 			}
 			s.rowCntListener.Written(rs.Added)
-			if s.backendCtx != nil {
+			if s.backendCtx != nil { // for local sort only
 				err := s.backendCtx.IngestIfQuotaExceeded(s.ctx, rs.ID, rs.Added)
 				if err != nil {
 					s.ctx.onError(err)
