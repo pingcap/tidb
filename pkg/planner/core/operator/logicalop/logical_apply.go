@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -203,25 +204,23 @@ func (la *LogicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 // ExtractFD implements the base.LogicalPlan.<22nd> interface.
 func (la *LogicalApply) ExtractFD() *fd.FDSet {
 	innerPlan := la.Children()[1]
-	eqCond := make([]expression.Expression, 0, 4)
+	equivs := make([][]intset.FastIntSet, 0, 4)
 	// for case like select (select t1.a from t2) from t1. <t1.a> will be assigned with new UniqueID after sub query projection is built.
 	// we should distinguish them out, building the equivalence relationship from inner <t1.a> == outer <t1.a> in the apply-join for FD derivation.
 	// for every correlated column, find the connection with the inner newly built column.
 	for _, col := range innerPlan.Schema().Columns {
 		if col.CorrelatedColUniqueID != 0 {
 			// the correlated column has been projected again in inner.
-			tmp := &expression.Column{UniqueID: col.CorrelatedColUniqueID}
-			cond := expression.NewFunctionInternal(la.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), tmp, col)
-			eqCond = append(eqCond, cond.(*expression.ScalarFunction))
+			equivs = append(equivs, []intset.FastIntSet{intset.NewFastIntSet(int(col.CorrelatedColUniqueID)), intset.NewFastIntSet(int(col.UniqueID))})
 		}
 	}
 	switch la.JoinType {
 	case InnerJoin:
-		return la.ExtractFDForInnerJoin(eqCond)
+		return la.ExtractFDForInnerJoin(equivs)
 	case LeftOuterJoin, RightOuterJoin:
-		return la.ExtractFDForOuterJoin(eqCond)
+		return la.ExtractFDForOuterJoin(equivs)
 	case SemiJoin:
-		return la.ExtractFDForSemiJoin(eqCond)
+		return la.ExtractFDForSemiJoin(equivs)
 	default:
 		return &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
 	}
