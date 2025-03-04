@@ -35,7 +35,6 @@ var (
 	glanceFile       = flag.String("glanceFile", "", "Glance the first 128*1024 bytes of a specific file from GCS")
 	fileNamePrefix   = flag.String("fileNamePrefix", "testCSVWriter", "Base file name")
 	deletePrefixFile = flag.String("deletePrefixFile", "", "Delete all files with prefix")
-	gcsDir           = flag.String("gcsDir", "gcs://global-sort-dir/testGenerateCSV", "GCS directory")
 
 	batchSize           = flag.Int("batchSize", 10, "Number of rows to generate in each batch")
 	generatorNum        = flag.Int("generatorNum", 1, "Number of generator goroutines")
@@ -47,6 +46,7 @@ var (
 	fetchFile           = flag.String("fetchFile", "", "Fetch a specific file from GCS and write to local disk")
 	checkColUniqueness  = flag.Int("checkCol", -1, "Check the uniqueness of a specific column in a CSV file")
 
+	s3Path      = flag.String("s3Path", "gcs://global-sort-dir/testGenerateCSV", "S3 path")
 	s3AccessKey = flag.String("s3AccessKey", "", "S3 access key")
 	s3SecretKey = flag.String("s3SecretKey", "", "S3 secret key")
 	s3Region    = flag.String("s3Region", "", "S3 region")
@@ -531,7 +531,7 @@ func createExternalStorage() storage.ExternalStorage {
 		Provider:        *s3Provider,
 		Endpoint:        *s3Endpoint,
 	}}
-	s, err := storage.ParseBackend(*gcsDir, &op)
+	s, err := storage.ParseBackend(*s3Path, &op)
 	if err != nil {
 		panic(err)
 	}
@@ -582,7 +582,7 @@ func deleteFile(credentialPath, fileName string) {
 		Provider:        *s3Provider,
 		Endpoint:        *s3Endpoint,
 	}}
-	s, err := storage.ParseBackend(*gcsDir, &op)
+	s, err := storage.ParseBackend(*s3Path, &op)
 	if err != nil {
 		panic(err)
 	}
@@ -607,7 +607,7 @@ func showFiles(credentialPath string) {
 		Provider:        *s3Provider,
 		Endpoint:        *s3Endpoint,
 	}}
-	s, err := storage.ParseBackend(*gcsDir, &op)
+	s, err := storage.ParseBackend(*s3Path, &op)
 	if err != nil {
 		panic(err)
 	}
@@ -629,7 +629,7 @@ func showFiles(credentialPath string) {
 
 func glanceFiles(credentialPath, fileName string) {
 	op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: credentialPath}}
-	s, err := storage.ParseBackend(*gcsDir, &op)
+	s, err := storage.ParseBackend(*s3Path, &op)
 	if err != nil {
 		panic(err)
 	}
@@ -645,7 +645,7 @@ func glanceFiles(credentialPath, fileName string) {
 
 func fetchFileFromGCS(credentialPath, fileName string) {
 	op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: credentialPath}}
-	s, err := storage.ParseBackend(*gcsDir, &op)
+	s, err := storage.ParseBackend(*s3Path, &op)
 	if err != nil {
 		panic(err)
 	}
@@ -694,7 +694,7 @@ func fetchFileFromGCS(credentialPath, fileName string) {
 func checkCSVUniqueness(credentialPath, f string) {
 	m := map[uint32]string{}
 	op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: credentialPath}}
-	s, err := storage.ParseBackend(*gcsDir, &op)
+	s, err := storage.ParseBackend(*s3Path, &op)
 	if err != nil {
 		panic(err)
 	}
@@ -767,7 +767,7 @@ func writeCSVToLocalDisk(filename string, columns []Column, data [][]string) err
 func showWriteSpeed(ctx context.Context, wg sync.WaitGroup) {
 	defer wg.Done()
 	op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: *credentialPath}}
-	s, err := storage.ParseBackend(*gcsDir, &op)
+	s, err := storage.ParseBackend(*s3Path, &op)
 	if err != nil {
 		panic(err)
 	}
@@ -805,7 +805,7 @@ func showWriteSpeed(ctx context.Context, wg sync.WaitGroup) {
 func deleteAllFilesByPrefix(prefix string) {
 	var fileNames []string
 	op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: *credentialPath}}
-	s, err := storage.ParseBackend(*gcsDir, &op)
+	s, err := storage.ParseBackend(*s3Path, &op)
 	if err != nil {
 		panic(err)
 	}
@@ -1052,7 +1052,7 @@ func main() {
 		Provider:        *s3Provider,
 		Endpoint:        *s3Endpoint,
 	}}
-	s, err := storage.ParseBackend(*gcsDir, &op)
+	s, err := storage.ParseBackend(*s3Path, &op)
 	if err != nil {
 		panic(err)
 	}
