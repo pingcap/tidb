@@ -30,6 +30,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// BindingCacheUpdater maintains the binding cache and provide update APIs.
 type BindingCacheUpdater interface {
 	BindingCache
 
