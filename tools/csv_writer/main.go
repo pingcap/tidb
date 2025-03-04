@@ -75,6 +75,7 @@ func init() {
 	log.Printf("Faker seed: %d", seed)
 }
 
+// Column fields is read only
 type Column struct {
 	Name     string
 	Type     string
@@ -98,9 +99,9 @@ func readSQLFile(filename string) (string, error) {
 }
 
 // Parse SQL schema and extract columns
-func parseSQLSchema(schema string) []Column {
+func parseSQLSchema(schema string) []*Column {
 	lines := strings.Split(schema, "\n")
-	columns := []Column{}
+	columns := []*Column{}
 
 	//hasPk := false
 	for _, line := range lines {
@@ -161,7 +162,7 @@ func parseSQLSchema(schema string) []Column {
 		if strings.Contains(strings.ToUpper(line), "NOT NULL") {
 			col.NotNull = true
 		}
-		columns = append(columns, col)
+		columns = append(columns, &col)
 	}
 	return columns
 }
@@ -250,36 +251,36 @@ func extractStdMeanFromSQL(col *Column, s string) {
 }
 
 // Generate data for each column
-func (t *Task) generateValueByCol(col Column, num int, res []string) {
+func (t *Task) generateValueByCol(col *Column, num int, res []string) {
 	switch {
 	case strings.HasPrefix(col.Type, "INT"): // int32
-		generateInt32(num, res, col.StdDev)
+		col.generateInt32(num, res, col.StdDev)
 	case strings.HasPrefix(col.Type, "BIGINT"): // int64
 		if col.IsUnique {
-			generateBigint(res, col.Order, t.begin, t.end)
+			col.generateBigint(res, col.Order, t.begin, t.end)
 		} else {
-			generateBigintWithNoLimit(num, res, col.Name)
+			col.generateBigintWithNoLimit(num, res, col.Name)
 		}
 	case strings.HasPrefix(col.Type, "TINYINT"):
-		generateTinyint1(num, res)
+		col.generateTinyint1(num, res)
 	case strings.HasPrefix(col.Type, "BOOLEAN"):
-		generateTinyint1(num, res)
+		col.generateTinyint1(num, res)
 	case strings.HasPrefix(col.Type, "TIMESTAMP"):
-		generateTimestamp(num, res)
+		col.generateTimestamp(num, res)
 	case strings.HasPrefix(col.Type, "VARBINARY"):
-		generateVarbinary(num, col.Len, res, col.IsUnique)
+		col.generateVarbinary(num, col.Len, res, col.IsUnique)
 	case strings.HasPrefix(col.Type, "VARCHAR"):
-		generateVarbinary(num, col.Len, res, col.IsUnique)
+		col.generateVarbinary(num, col.Len, res, col.IsUnique)
 	case strings.HasPrefix(col.Type, "MEDIUMBLOB"):
-		generateMediumblob(num, res)
+		col.generateMediumblob(num, res)
 	case strings.HasPrefix(col.Type, "JSON"):
-		generateJSONObject(num, res)
+		col.generateJSONObject(num, res)
 	case strings.HasPrefix(col.Type, "TEXT"):
-		generateVarbinary(num, col.Len, res, col.IsUnique)
+		col.generateVarbinary(num, col.Len, res, col.IsUnique)
 	case strings.HasPrefix(col.Type, "CHAR"):
-		generateChar(num, res, col.Len)
+		col.generateChar(num, res, col.Len)
 	case strings.HasPrefix(col.Type, "DECIMAL"):
-		generateDecimal(num, res)
+		col.generateDecimal(num, res)
 	default:
 		log.Printf("Unsupported type: %s", col.Type)
 	}
@@ -310,7 +311,7 @@ func generateLetterWithNum(len int, randomLen bool) string {
 	return builder.String()
 }
 
-func generateDecimal(num int, res []string) {
+func (c *Column) generateDecimal(num int, res []string) {
 	for i := 0; i < num; i++ {
 		if faker.Number(1, 10) <= nullRatio {
 			// 80% null value
@@ -323,7 +324,7 @@ func generateDecimal(num int, res []string) {
 	}
 }
 
-func generateBigintWithNoLimit(num int, res []string, colName string) {
+func (c *Column) generateBigintWithNoLimit(num int, res []string, colName string) {
 	for i := 0; i < num; i++ {
 		if strings.Contains(colName, "datetime") &&
 			faker.Number(1, 10) <= nullRatio {
@@ -335,7 +336,7 @@ func generateBigintWithNoLimit(num int, res []string, colName string) {
 	}
 }
 
-func generateBigint(res []string, order string, begin, end int) {
+func (c *Column) generateBigint(res []string, order string, begin, end int) {
 	// WARN: total row num should less than 12 digits, 1000 Billion!
 	switch order {
 	case totalOrdered:
@@ -390,7 +391,7 @@ func generateNormalFloat(num int, res []string) {
 	}
 }
 
-func generateInt32(num int, res []string, stdDev float64) {
+func (c *Column) generateInt32(num int, res []string, stdDev float64) {
 	if stdDev == 0 {
 		generateInt32WithNoLimit(num, res)
 	} else {
@@ -419,13 +420,13 @@ func generateNormalDistributeInt32(num int, res []string, stdDev, mean float64) 
 	}
 }
 
-func generateTinyint1(num int, res []string) {
+func (c *Column) generateTinyint1(num int, res []string) {
 	for i := 0; i < num; i++ {
 		res[i] = strconv.Itoa(faker.Number(0, 1))
 	}
 }
 
-func generateVarbinary(num, len int, res []string, unique bool) {
+func (c *Column) generateVarbinary(num, len int, res []string, unique bool) {
 	if len <= 0 {
 		log.Printf("Invalid length: %d", len)
 		return
@@ -447,17 +448,17 @@ func generateVarbinary(num, len int, res []string, unique bool) {
 	}
 }
 
-func generateMediumblob(num int, res []string) {
-	generateVarbinary(num, 73312, res, false)
+func (c *Column) generateMediumblob(num int, res []string) {
+	c.generateVarbinary(num, 73312, res, false)
 }
 
-func generateChar(num int, res []string, charLen int) {
+func (c *Column) generateChar(num int, res []string, charLen int) {
 	for i := 0; i < num; i++ {
 		res[i] = generateLetterWithNum(charLen, false)
 	}
 }
 
-func generateTimestamp(num int, res []string) {
+func (c *Column) generateTimestamp(num int, res []string) {
 	start := time.Date(1971, 1, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Now()
 	for i := 0; i < num; i++ {
@@ -482,7 +483,7 @@ func escapeJSONString(jsonStr string) string {
 	return `"` + strings.ReplaceAll(jsonStr, `"`, `""`) + `"`
 }
 
-func generateJSONObject(num int, res []string) {
+func (c *Column) generateJSONObject(num int, res []string) {
 	for i := 0; i < num; i++ {
 		r := generateJSON()
 		if *localPath == "" {
@@ -910,7 +911,7 @@ type Task struct {
 	id       int
 	begin    int
 	end      int
-	cols     []Column
+	cols     []*Column
 	fileName string
 }
 
