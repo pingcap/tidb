@@ -62,6 +62,8 @@ const (
 	totalOrdered   = "TOTAL ORDERED"
 	partialOrdered = "PARTIAL ORDERED"
 	totalRandom    = "TOTAL RANDOM"
+	nullRatio      = 0 // [0, 10],
+	nullVal        = "\\N"
 )
 
 var faker *gofakeit.Faker
@@ -304,9 +306,9 @@ func generateLetterWithNum(len int, randomLen bool) string {
 
 func generateDecimal(num int, res []string) {
 	for i := 0; i < num; i++ {
-		if faker.Number(1, 10) <= 9 {
+		if faker.Number(1, 10) <= nullRatio {
 			// 80% null value
-			res[i] = "\\N"
+			res[i] = nullVal
 		} else {
 			intPart := rand.Int63n(1_000_000_000_000_000_000)
 			decimalPart := rand.Intn(1_000_000_000)
@@ -317,9 +319,9 @@ func generateDecimal(num int, res []string) {
 
 func generateBigintWithNoLimit(num int, res []string, colName string) {
 	for i := 0; i < num; i++ {
-		if strings.Contains(colName, "datetime") && faker.Number(1, 10) <= 9 {
+		if strings.Contains(colName, "datetime") && faker.Number(1, 10) <= nullRatio {
 			// 80% null value
-			res[i] = "\\N"
+			res[i] = nullVal
 		} else {
 			res[i] = strconv.Itoa(faker.Number(math.MinInt64, math.MaxInt64)) // https://docs.pingcap.com/zh/tidb/stable/data-type-numeric#bigint-%E7%B1%BB%E5%9E%8B)
 		}
@@ -427,9 +429,9 @@ func generateVarbinary(num, len int, res []string, unique bool) {
 			uuid := faker.UUID()
 			res[i] = uuid + generateLetterWithNum(len-uuidLen, true)
 		} else {
-			if faker.Number(1, 10) <= 9 {
+			if faker.Number(1, 10) <= nullRatio {
 				// 80% null value
-				res[i] = "\\N"
+				res[i] = nullVal
 			} else {
 				// todo: remove 1024
 				res[i] = generateLetterWithNum(160, true)
@@ -475,8 +477,7 @@ func escapeJSONString(jsonStr string) string {
 
 func generateJSONObject(num int, res []string) {
 	for i := 0; i < num; i++ {
-		//r := generateJSON()
-		r := "\\N"
+		r := generateJSON()
 		if *localPath == "" {
 			res[i] = escapeJSONString(r)
 		} else {
