@@ -1281,11 +1281,7 @@ func multiColumnRangeColumnsPruner(sctx PlanContext, exprs []expression.Expressi
 		lens = append(lens, columnsPruner.partCols[i].RetType.GetFlen())
 	}
 
-<<<<<<< HEAD
-	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, exprs, columnsPruner.partCols, lens, sctx.GetSessionVars().RangeMaxSize)
-=======
-	res, err := ranger.DetachCondAndBuildRangeForPartition(sctx.GetRangerCtx(), exprs, columnsPruner.partCols, lens, sctx.GetSessionVars().RangeMaxSize)
->>>>>>> 3c70a289b27 (planner: fix RANGE COLUMNS partition prune gives wrong result with special collation (#57344))
+	res, err := ranger.DetachCondAndBuildRangeForPartition(sctx, exprs, columnsPruner.partCols, lens, sctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return fullRange(len(columnsPruner.lessThan))
 	}
