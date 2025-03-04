@@ -452,15 +452,15 @@ func TestIssue52023(t *testing.T) {
 	tk.MustQuery(`select * from t where a IN (0x5,55)`).Check(testkit.Rows("\u0005"))
 	tk.MustQuery(`explain select * from t where a = 0x5`).Check(testkit.Rows("Point_Get_1 1.00 root table:t, partition:P4, clustered index:PRIMARY(a) "))
 	tk.MustQuery(`explain format='brief' select * from t where a = 5`).Check(testkit.Rows(""+
-		"TableReader 0.80 root partition:all data:Selection",
+		"TableReader 0.80 root partition:P4 data:Selection",
 		"└─Selection 0.80 cop[tikv]  eq(cast(test.t.a, double BINARY), 5)",
 		"  └─TableFullScan 1.00 cop[tikv] table:t keep order:false"))
 	tk.MustQuery(`explain format='brief' select * from t where a IN (5,55)`).Check(testkit.Rows(""+
-		"TableReader 0.96 root partition:all data:Selection",
+		"TableReader 0.96 root partition:P4 data:Selection",
 		"└─Selection 0.96 cop[tikv]  or(eq(cast(test.t.a, double BINARY), 5), eq(cast(test.t.a, double BINARY), 55))",
 		"  └─TableFullScan 1.00 cop[tikv] table:t keep order:false"))
 	tk.MustQuery(`explain format='brief' select * from t where a IN (0x5,55)`).Check(testkit.Rows(""+
-		"TableReader 1.00 root partition:all data:Selection",
+		"TableReader 1.00 root partition:P4 data:Selection",
 		"└─Selection 1.00 cop[tikv]  or(eq(test.t.a, \"0x05\"), eq(cast(test.t.a, double BINARY), 55))",
 		"  └─TableFullScan 1.00 cop[tikv] table:t keep order:false"))
 }

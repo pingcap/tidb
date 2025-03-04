@@ -269,6 +269,11 @@ func (gs *tidbSession) GetGlobalVariable(name string) (string, error) {
 	return gs.se.GetSessionVars().GlobalVarsAccessor.GetTiDBTableValue(name)
 }
 
+// GetGlobalSysVar gets the global system variable value for name.
+func (gs *tidbSession) GetGlobalSysVar(name string) (string, error) {
+	return gs.se.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(name)
+}
+
 func (gs *tidbSession) showCreatePlacementPolicy(policy *model.PolicyInfo) string {
 	return executor.ConstructResultOfShowCreatePlacementPolicy(policy)
 }

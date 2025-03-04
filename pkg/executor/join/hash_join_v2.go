@@ -179,7 +179,7 @@ func (*hashTableContext) calculateHashTableMemoryUsage(rowTables []*rowTable) (i
 	totalMemoryUsage := int64(0)
 	partitionsMemoryUsage := make([]int64, 0)
 	for _, table := range rowTables {
-		hashTableLength := getHashTableLength(table)
+		hashTableLength := getHashTableLengthByRowTable(table)
 		memoryUsage := getHashTableMemoryUsage(hashTableLength)
 		partitionsMemoryUsage = append(partitionsMemoryUsage, memoryUsage)
 		totalMemoryUsage += memoryUsage
@@ -356,8 +356,9 @@ type ProbeWorkerV2 struct {
 func (w *ProbeWorkerV2) updateProbeStatistic(start time.Time, probeTime int64) {
 	t := time.Since(start)
 	atomic.AddInt64(&w.HashJoinCtx.stats.probe, probeTime)
+	atomic.AddInt64(&w.HashJoinCtx.stats.workerFetchAndProbe, int64(t))
 	setMaxValue(&w.HashJoinCtx.stats.maxProbeForCurrentRound, probeTime)
-	setMaxValue(&w.HashJoinCtx.stats.maxFetchAndProbeForCurrentRound, int64(t))
+	setMaxValue(&w.HashJoinCtx.stats.maxWorkerFetchAndProbeForCurrentRound, int64(t))
 }
 
 func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks, start time.Time) {
@@ -634,6 +635,8 @@ type HashJoinV2Exec struct {
 	prepared  bool
 	inRestore bool
 
+	IsGA bool
+
 	isMemoryClearedForTest bool
 }
 
@@ -747,6 +750,8 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 
 	if e.stats != nil {
 		e.stats.reset()
+		e.stats.spill.partitionNum = int(e.partitionNumber)
+		e.stats.isHashJoinGA = e.IsGA
 	}
 	return nil
 }
@@ -1047,6 +1052,30 @@ func (e *HashJoinV2Exec) reset() {
 	}
 }
 
+func (e *HashJoinV2Exec) collectSpillStats() {
+	if e.stats == nil || !e.spillHelper.isSpillTriggered() {
+		return
+	}
+
+	round := e.spillHelper.round
+	if len(e.stats.spill.totalSpillBytesPerRound) < round+1 {
+		e.stats.spill.totalSpillBytesPerRound = append(e.stats.spill.totalSpillBytesPerRound, 0)
+		e.stats.spill.spillBuildRowTableBytesPerRound = append(e.stats.spill.spillBuildRowTableBytesPerRound, 0)
+		e.stats.spill.spillBuildHashTableBytesPerRound = append(e.stats.spill.spillBuildHashTableBytesPerRound, 0)
+		e.stats.spill.spilledPartitionNumPerRound = append(e.stats.spill.spilledPartitionNumPerRound, 0)
+	}
+
+	buildRowTableSpillBytes := e.spillHelper.getBuildSpillBytes()
+	buildHashTableSpillBytes := getHashTableMemoryUsage(getHashTableLengthByRowLen(e.spillHelper.spilledValidRowNum))
+	probeSpillBytes := e.spillHelper.getProbeSpillBytes()
+	spilledPartitionNum := e.spillHelper.getSpilledPartitionsNum()
+
+	e.stats.spill.spillBuildRowTableBytesPerRound[round] += buildRowTableSpillBytes
+	e.stats.spill.spillBuildHashTableBytesPerRound[round] += buildHashTableSpillBytes
+	e.stats.spill.totalSpillBytesPerRound[round] += buildRowTableSpillBytes + probeSpillBytes
+	e.stats.spill.spilledPartitionNumPerRound[round] += spilledPartitionNum
+}
+
 func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -1067,6 +1096,7 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 		e.fetchAndProbeHashTable(ctx)
 
 		e.waiterWg.Wait()
+		e.collectSpillStats()
 		e.reset()
 
 		e.spillHelper.spillRoundForTest = max(e.spillHelper.spillRoundForTest, lastRound)
@@ -1081,6 +1111,7 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 			// No more data to restore
 			return
 		}
+		e.spillHelper.round = restoredPartition.round
 
 		if e.memTracker.BytesConsumed() != 0 {
 			e.isMemoryClearedForTest = false
@@ -1089,6 +1120,10 @@ func (e *HashJoinV2Exec) startBuildAndProbe(ctx context.Context) {
 		lastRound = restoredPartition.round
 		e.restoredBuildInDisk = restoredPartition.buildSideChunks
 		e.restoredProbeInDisk = restoredPartition.probeSideChunks
+
+		if e.stats != nil && e.stats.spill.round < lastRound {
+			e.stats.spill.round = lastRound
+		}
 
 		e.inRestore = true
 	}
@@ -1473,6 +1508,12 @@ func rehash(oldHashValue uint64, rehashBuf []byte, hash hash.Hash64) uint64 {
 	hash.Reset()
 	hash.Write(rehashBuf)
 	return hash.Sum64()
+}
+
+func issue59377Intest(err *error) {
+	failpoint.Inject("Issue59377", func() {
+		*err = errors.New("Random failpoint error is triggered")
+	})
 }
 
 func triggerIntest(errProbability int) error {

@@ -16,7 +16,6 @@ package types
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -469,7 +468,6 @@ type NeededItemTask struct {
 type StatsLoad struct {
 	NeededItemsCh  chan *NeededItemTask
 	TimeoutItemsCh chan *NeededItemTask
-	sync.Mutex
 }
 
 // StatsSyncLoad implement the sync-load feature.
@@ -539,6 +537,9 @@ type StatsHandle interface {
 
 	// GetPartitionStats retrieves the partition stats from cache.
 	GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table
+
+	// GetPartitionStatsByID retrieves the partition stats from cache by partition ID.
+	GetPartitionStatsByID(is infoschema.InfoSchema, pid int64) *statistics.Table
 
 	// GetPartitionStatsForAutoAnalyze retrieves the partition stats from cache, but it will not return pseudo.
 	GetPartitionStatsForAutoAnalyze(tblInfo *model.TableInfo, pid int64) *statistics.Table

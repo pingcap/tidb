@@ -120,6 +120,7 @@ const (
 		Password_expired		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Password_last_changed	TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
 		Password_lifetime		SMALLINT UNSIGNED DEFAULT NULL,
+		Max_user_connections 	INT UNSIGNED NOT NULL DEFAULT 0,
 		PRIMARY KEY (Host, User),
 		KEY i_user (User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
@@ -604,6 +605,8 @@ const (
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
 		modify_params json,
+		max_node_count INT DEFAULT 0,
+		extra_params json,
 		key(state),
 		UNIQUE KEY task_key(task_key)
 	);`
@@ -626,6 +629,8 @@ const (
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
 		modify_params json,
+		max_node_count INT DEFAULT 0,
+		extra_params json,
 		key(state),
 		UNIQUE KEY task_key(task_key)
 	);`
@@ -763,7 +768,7 @@ const (
        extra json,                -- for the cloud env to save more info like RU, cost_saving, ...
        index idx_create(created_at),
        index idx_update(updated_at),
-       unique index idx(schema_name, table_name, index_columns))`
+       unique index idx(schema_name, table_name, index_columns));`
 
 	// CreateKernelOptionsTable is a table to store kernel options for tidb.
 	CreateKernelOptionsTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_kernel_options (
@@ -773,7 +778,18 @@ const (
         updated_at datetime,
         status varchar(128),
         description text,
-        primary key(module, name))`
+        primary key(module, name));`
+
+	// CreateTiDBWorkloadValuesTable is a table to store workload-based learning values for tidb.
+	CreateTiDBWorkloadValuesTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_workload_values (
+		id bigint(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		version bigint(20) NOT NULL,
+		category varchar(64) NOT NULL,
+		type varchar(64) NOT NULL,
+		table_id bigint(20) NOT NULL,
+		value json NOT NULL,
+		index idx_version_category_type (version, category, type),
+		index idx_table_id (table_id));`
 )
 
 // CreateTimers is a table to store all timers for tidb
@@ -863,6 +879,8 @@ const (
 	tidbDefOOMAction = "default_oom_action"
 	// The variable name in mysql.tidb table and it records the current DDLTableVersion
 	tidbDDLTableVersion = "ddl_table_version"
+	// The variable name in mysql.tidb table and it records the cluster id of this cluster
+	tidbClusterID = "cluster_id"
 	// Const for TiDB server version 2.
 	version2  = 2
 	version3  = 3
@@ -1247,14 +1265,26 @@ const (
 	// Add index on user field for some mysql tables.
 	version241 = 241
 
-	// version 241
-	// Add last_stats_histograms_version to mysql.stats_meta.
+	// version 242
+	//   insert `cluster_id` into the `mysql.tidb` table.
+	//   Add workload-based learning system tables
 	version242 = 242
+
+	// Add max_node_count column to tidb_global_task and tidb_global_task_history.
+	// Add extra_params to tidb_global_task and tidb_global_task_history.
+	version243 = 243
+
+	// version243 add Max_user_connections into mysql.user.
+	version244 = 244
+
+	// version 245
+	// Add last_stats_histograms_version to mysql.stats_meta.
+	version245 = 245
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version242
+var currentBootstrapVersion int64 = version245
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1432,6 +1462,9 @@ var (
 		upgradeToVer240,
 		upgradeToVer241,
 		upgradeToVer242,
+		upgradeToVer243,
+		upgradeToVer244,
+		upgradeToVer245,
 	}
 )
 
@@ -3327,8 +3360,50 @@ func upgradeToVer241(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.default_roles ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
 }
 
+// writeClusterID writes cluster id into mysql.tidb
+func writeClusterID(s sessiontypes.Session) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
+	defer cancel()
+
+	clusterID := s.GetDomain().(*domain.Domain).GetPDClient().GetClusterID(ctx)
+
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, "TiDB Cluster ID.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
+		mysql.SystemDB,
+		mysql.TiDBTable,
+		tidbClusterID,
+		clusterID,
+		clusterID,
+	)
+}
+
 func upgradeToVer242(s sessiontypes.Session, ver int64) {
 	if ver >= version242 {
+		return
+	}
+	writeClusterID(s)
+	mustExecute(s, CreateTiDBWorkloadValuesTable)
+}
+
+func upgradeToVer243(s sessiontypes.Session, ver int64) {
+	if ver >= version243 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN extra_params json AFTER max_node_count;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN extra_params json AFTER max_node_count;", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer244(s sessiontypes.Session, ver int64) {
+	if ver >= version244 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Max_user_connections` INT UNSIGNED NOT NULL DEFAULT 0 AFTER `Password_lifetime`")
+}
+
+func upgradeToVer245(s sessiontypes.Session, ver int64) {
+	if ver >= version245 {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN last_analyze_version bigint(20) unsigned DEFAULT NULL", infoschema.ErrColumnExists)
@@ -3489,6 +3564,8 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateIndexAdvisorTable)
 	// create mysql.tidb_kernel_options
 	mustExecute(s, CreateKernelOptionsTable)
+	// create mysql.tidb_workload_values
+	mustExecute(s, CreateTiDBWorkloadValuesTable)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
@@ -3587,6 +3664,8 @@ func doDMLWorks(s sessiontypes.Session) {
 	writeStmtSummaryVars(s)
 
 	writeDDLTableVersion(s)
+
+	writeClusterID(s)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err := s.ExecuteInternal(ctx, "COMMIT")

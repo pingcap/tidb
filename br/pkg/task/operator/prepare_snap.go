@@ -153,7 +153,7 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 	defer cx.Close()
 
 	initChan := make(chan struct{})
-	cx.run(func() error { return pauseGCKeeper(cx) })
+	cx.run(func() error { return pauseGCKeeper(cx, cfg.SafePointID) })
 	cx.run(func() error {
 		log.Info("Pause scheduler waiting all connections established.")
 		select {
@@ -217,10 +217,10 @@ func pauseAdminAndWaitApply(cx *AdaptEnvForSnapshotBackupContext, afterConnectio
 	return nil
 }
 
-func pauseGCKeeper(cx *AdaptEnvForSnapshotBackupContext) (err error) {
+func pauseGCKeeper(cx *AdaptEnvForSnapshotBackupContext, spID string) (err error) {
 	// Note: should we remove the service safepoint as soon as this exits?
 	sp := utils.BRServiceSafePoint{
-		ID:       utils.MakeSafePointID(),
+		ID:       spID,
 		TTL:      int64(cx.cfg.TTL.Seconds()),
 		BackupTS: cx.cfg.SafePoint,
 	}

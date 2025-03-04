@@ -19,6 +19,7 @@ go_library(
         "//pkg/resourcegroup",
         "//pkg/store/helper",
         "//pkg/structure",
+        "//pkg/util",
         "//pkg/util/codec",
         "//pkg/util/dbterror",
         "//pkg/util/hack",

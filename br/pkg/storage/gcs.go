@@ -8,6 +8,7 @@ import (
 	goerrors "errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path"
 	"strings"
@@ -111,6 +112,33 @@ type GCSStorage struct {
 
 	handles []*storage.BucketHandle
 	clients []*storage.Client
+}
+
+// CopyFrom implements Copier.
+func (s *GCSStorage) CopyFrom(ctx context.Context, e ExternalStorage, spec CopySpec) error {
+	es, ok := e.(*GCSStorage)
+	if !ok {
+		return errors.Annotatef(berrors.ErrStorageInvalidConfig, "GCSStorage.CopyFrom supports only GCSStorage, get %T", e)
+	}
+	dstName := s.objectName(spec.To)
+	srcName := es.objectName(spec.From)
+	// A note here:
+	// https://cloud.google.com/storage/docs/json_api/v1/objects/rewrite
+	// It seems extra configuration is needed when doing cross-region copying.
+	copier := s.GetBucketHandle().Object(dstName).CopierFrom(es.GetBucketHandle().Object(srcName))
+	_, err := copier.Run(ctx)
+	if err != nil {
+		return errors.Annotatef(
+			err,
+			"failed to copy %s/%s to %s/%s",
+			es.gcs.Bucket,
+			srcName,
+			s.gcs.Bucket,
+			dstName,
+		)
+	}
+
+	return nil
 }
 
 func (s *GCSStorage) MarkStrongConsistency() {
@@ -363,12 +391,12 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 					clientOps = append(clientOps, option.WithoutAuthentication())
 					goto skipHandleCred
 				}
-				return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "%v Or you should provide '--gcs.credentials_file'", err)
+				return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "%v Or you should provide '--%s'", gcsCredentialsFile, err)
 			}
 			if opts.SendCredentials {
 				if len(creds.JSON) <= 0 {
-					return nil, errors.Annotate(berrors.ErrStorageInvalidConfig,
-						"You should provide '--gcs.credentials_file' when '--send-credentials-to-tikv' is true")
+					return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig,
+						"You should provide '--%s' when '--send-credentials-to-tikv' is true", gcsCredentialsFile)
 				}
 				gcs.CredentialsBlob = string(creds.JSON)
 			}
@@ -477,11 +505,20 @@ func shouldRetry(err error) bool {
 		}
 	}
 
+	// workaround for https://github.com/googleapis/google-cloud-go/issues/7090
+	// seems it's a bug of golang net/http: https://github.com/golang/go/issues/53472
+	if e := (&url.Error{}); goerrors.As(err, &e) {
+		if goerrors.Is(e.Err, io.EOF) {
+			return true
+		}
+	}
+
 	errMsg := err.Error()
 	// workaround for strange unknown errors
 	retryableErrMsg := []string{
 		"http2: client connection force closed via ClientConn.Close",
 		"broken pipe",
+		"http2: client connection lost",
 	}
 
 	for _, msg := range retryableErrMsg {
