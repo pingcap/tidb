@@ -219,3 +219,15 @@ func (op *bindingOperator) GCGlobalBinding() (err error) {
 		return err
 	})
 }
+
+// lockBindInfoTable simulates `LOCK TABLE mysql.bind_info WRITE` by acquiring a pessimistic lock on a
+// special builtin row of mysql.bind_info. Note that this function must be called with h.sctx.Lock() held.
+// We can replace this implementation to normal `LOCK TABLE mysql.bind_info WRITE` if that feature is
+// generally available later.
+// This lock would enforce the CREATE / DROP GLOBAL BINDING statements to be executed sequentially,
+// even if they come from different tidb instances.
+func lockBindInfoTable(sctx sessionctx.Context) error {
+	// h.sctx already locked.
+	_, err := exec(sctx, LockBindInfoSQL)
+	return err
+}
