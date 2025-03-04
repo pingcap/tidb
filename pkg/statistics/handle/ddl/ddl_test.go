@@ -313,7 +313,7 @@ func TestDDLHistogram(t *testing.T) {
 
 	// Check that the last_stats_histograms_version has been updated.
 	is = do.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	require.Nil(t, h.Update(context.Background(), is))

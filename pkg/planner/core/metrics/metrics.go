@@ -23,6 +23,7 @@ import (
 var (
 	PseudoEstimationNotAvailable            prometheus.Counter
 	PseudoEstimationOutdate                 prometheus.Counter
+	PseudoEstimationWithMemAlloc            prometheus.Counter
 	preparedPlanCacheHitCounter             prometheus.Counter
 	nonPreparedPlanCacheHitCounter          prometheus.Counter
 	preparedPlanCacheMissCounter            prometheus.Counter
@@ -43,6 +44,7 @@ func init() {
 func InitMetricsVars() {
 	PseudoEstimationNotAvailable = metrics.PseudoEstimation.WithLabelValues("nodata")
 	PseudoEstimationOutdate = metrics.PseudoEstimation.WithLabelValues("outdate")
+	PseudoEstimationWithMemAlloc = metrics.PseudoEstimation.WithLabelValues("with-mem-alloc")
 	// plan cache metrics
 	preparedPlanCacheHitCounter = metrics.PlanCacheCounter.WithLabelValues("prepared")
 	nonPreparedPlanCacheHitCounter = metrics.PlanCacheCounter.WithLabelValues("non-prepared")

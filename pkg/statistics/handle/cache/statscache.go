@@ -102,6 +102,8 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 
 	tables := make([]*statistics.Table, 0, len(rows))
 	deletedTableIDs := make([]int64, 0, len(rows))
+	onlyMetaUpdate := 0
+	fullUpdate := 0
 
 	for _, row := range rows {
 		version := row.GetUint64(0)
@@ -145,9 +147,10 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		// If the column/index stats has not been updated, we can reuse the old table stats.
 		// Only need to update the count and modify count.
 		if ok && latestHistUpdateVersion > 0 && oldTbl.LastStatsHistVersion >= latestHistUpdateVersion {
-			tbl = oldTbl.Copy()
+			tbl = oldTbl.ShallowCopy()
 			// count and modify count is updated in finalProcess
 			needLoadColAndIdxStats = false
+			onlyMetaUpdate++
 		}
 		if needLoadColAndIdxStats {
 			tbl, err = s.statsHandle.TableStatsFromStorage(
@@ -169,6 +172,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 				deletedTableIDs = append(deletedTableIDs, physicalID)
 				continue
 			}
+			fullUpdate++
 		}
 		tbl.Version = version
 		tbl.RealtimeCount = count
@@ -195,6 +199,13 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		},
 	})
 	dur := time.Since(start)
+	if dur > 30*time.Second {
+		logutil.BgLogger().Info("update stats cache",
+			zap.Duration("cost time", dur),
+			zap.Int("full update", fullUpdate),
+			zap.Int("only meta update", onlyMetaUpdate),
+		)
+	}
 	tidbmetrics.StatsDeltaLoadHistogram.Observe(dur.Seconds())
 	return nil
 }

@@ -4119,6 +4119,7 @@ func getStatsTable(ctx base.PlanContext, tblInfo *model.TableInfo, pid int64) *s
 	if statsTbl.RealtimeCount == 0 {
 		countIs0 = true
 		core_metrics.PseudoEstimationNotAvailable.Inc()
+		core_metrics.PseudoEstimationWithMemAlloc.Inc()
 		return statistics.PseudoTable(tblInfo, allowPseudoTblTriggerLoading, true)
 	}
 

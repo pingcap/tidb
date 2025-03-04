@@ -25,6 +25,7 @@ var (
 
 	DumpHistoricalStatsSuccessCounter prometheus.Counter
 	DumpHistoricalStatsFailedCounter  prometheus.Counter
+	PseudoEstimationWithMemAlloc      prometheus.Counter
 )
 
 func init() {
@@ -47,4 +48,5 @@ func InitMetricsVars() {
 
 	DumpHistoricalStatsSuccessCounter = metrics.HistoricalStatsCounter.WithLabelValues("dump", "success")
 	DumpHistoricalStatsFailedCounter = metrics.HistoricalStatsCounter.WithLabelValues("dump", "fail")
+	PseudoEstimationWithMemAlloc = metrics.PseudoEstimation.WithLabelValues("with-mem-alloc")
 }
