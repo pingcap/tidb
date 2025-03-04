@@ -62,7 +62,7 @@ const (
 	totalOrdered   = "TOTAL ORDERED"
 	partialOrdered = "PARTIAL ORDERED"
 	totalRandom    = "TOTAL RANDOM"
-	nullRatio      = 0 // [0, 10],
+	nullRatio      = 0 // [0, 10], 0 means no null value
 	nullVal        = "\\N"
 )
 
@@ -85,6 +85,7 @@ type Column struct {
 	Len      int     // varchar(999)
 	StdDev   float64 // stdDev=1.0, mean=0.0
 	Mean     float64
+	NotNull  bool
 }
 
 // Read SQL schema file
@@ -140,7 +141,7 @@ func parseSQLSchema(schema string) []Column {
 		}
 		extractLenFromSQL(&col, line)
 		extractStdMeanFromSQL(&col, line)
-
+		// check unique key
 		if strings.Contains(strings.ToUpper(line), "UNIQUE KEY") &&
 			(strings.HasPrefix(col.Type, "VARBINARY") || strings.HasPrefix(col.Type, "VARCHAR")) &&
 			col.Len > uuidLen && col.Len < maxIndexLen {
@@ -148,12 +149,17 @@ func parseSQLSchema(schema string) []Column {
 		} else if strings.Contains(strings.ToUpper(line), "UNIQUE KEY") && strings.HasPrefix(col.Type, "BIGINT") {
 			col.IsUnique = true
 		}
+		// check unique bigint type ordered or random
 		if strings.Contains(strings.ToUpper(line), totalOrdered) {
 			col.Order = totalOrdered
 		} else if strings.Contains(strings.ToUpper(line), partialOrdered) {
 			col.Order = partialOrdered
 		} else if strings.Contains(strings.ToUpper(line), totalRandom) {
 			col.Order = totalRandom
+		}
+		// check if not null
+		if strings.Contains(strings.ToUpper(line), "NOT NULL") {
+			col.NotNull = true
 		}
 		columns = append(columns, col)
 	}
@@ -319,7 +325,8 @@ func generateDecimal(num int, res []string) {
 
 func generateBigintWithNoLimit(num int, res []string, colName string) {
 	for i := 0; i < num; i++ {
-		if strings.Contains(colName, "datetime") && faker.Number(1, 10) <= nullRatio {
+		if strings.Contains(colName, "datetime") &&
+			faker.Number(1, 10) <= nullRatio {
 			// 80% null value
 			res[i] = nullVal
 		} else {
