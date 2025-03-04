@@ -127,7 +127,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		err                       error
 	)
 	if err := util.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		query := "SELECT version, table_id, modify_count, count, snapshot, last_analyze_version, last_stats_histograms_version from mysql.stats_meta where version > %? "
+		query := "SELECT version, table_id, modify_count, count, snapshot, last_stats_histograms_version from mysql.stats_meta where version > %? "
 		args := []any{lastVersion}
 
 		if len(tableAndPartitionIDs) > 0 {
@@ -170,10 +170,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		snapshot := row.GetUint64(4)
 		var latestHistUpdateVersion uint64
 		if !row.IsNull(5) {
-			latestHistUpdateVersion = row.GetUint64(5)
-		}
-		if !row.IsNull(6) {
-			latestHistUpdateVersion = max(latestHistUpdateVersion, row.GetUint64(6))
+			latestHistUpdateVersion = max(latestHistUpdateVersion, row.GetUint64(5))
 		}
 
 		// Detect the context cancel signal, since it may take a long time for the loop.

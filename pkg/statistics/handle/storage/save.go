@@ -171,12 +171,11 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 			count = 0
 		}
 		if _, err = util.Exec(sctx,
-			"replace into mysql.stats_meta (version, table_id, count, snapshot, last_analyze_version, last_stats_histograms_version) values (%?, %?, %?, %?, %?, %?)",
+			"replace into mysql.stats_meta (version, table_id, count, snapshot, last_stats_histograms_version) values (%?, %?, %?, %?, %?)",
 			version,
 			tableID,
 			count,
 			snapShot,
-			version,
 			version,
 		); err != nil {
 			return 0, err
@@ -186,8 +185,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 		// 1-2. There's already an existing record for this table, and we are handling stats for mv index now.
 		// In this case, we only update the version. See comments for AnalyzeResults.ForMVIndex for more details.
 		if _, err = util.Exec(sctx,
-			"update mysql.stats_meta set version=%?, last_analyze_version=%?, last_stats_histograms_version=%? where table_id=%?",
-			version,
+			"update mysql.stats_meta set version=%?, last_stats_histograms_version=%? where table_id=%?",
 			version,
 			version,
 			tableID,
@@ -228,12 +226,11 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 				zap.Int64("count", cnt))
 		}
 		if _, err = util.Exec(sctx,
-			"update mysql.stats_meta set version=%?, modify_count=%?, count=%?, snapshot=%?, last_analyze_version=%?, last_stats_histograms_version=%? where table_id=%?",
+			"update mysql.stats_meta set version=%?, modify_count=%?, count=%?, snapshot=%?, last_stats_histograms_version=%? where table_id=%?",
 			version,
 			modifyCnt,
 			cnt,
 			results.Snapshot,
-			version,
 			version,
 			tableID,
 		); err != nil {
@@ -341,7 +338,7 @@ func SaveStatsToStorage(
 
 	// If the count is less than 0, then we do not want to update the modify count and count.
 	if count >= 0 {
-		_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count, last_stats_histograms_version) values (%?, %?, %?, %?)", version, tableID, count, modifyCount, version)
+		_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count, last_stats_histograms_version) values (%?, %?, %?, %?, %?)", version, tableID, count, modifyCount, version)
 	} else {
 		_, err = util.Exec(sctx, "update mysql.stats_meta set version = %? and last_stats_histograms_version = %? where table_id = %?", version, version, tableID)
 	}

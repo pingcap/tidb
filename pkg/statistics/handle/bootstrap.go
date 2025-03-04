@@ -80,12 +80,7 @@ func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 		snapshot := row.GetUint64(4)
 		lastAnalyzeVersion, lastStatsHistUpdateVersion := snapshot, snapshot
 		if !row.IsNull(5) {
-			lastAnalyzeVersion = max(lastAnalyzeVersion, row.GetUint64(5))
-			// To deal with old cluster before v8.5.2 and some edge cases, we need this update.
 			lastStatsHistUpdateVersion = max(lastStatsHistUpdateVersion, row.GetUint64(5))
-		}
-		if !row.IsNull(6) {
-			lastStatsHistUpdateVersion = max(lastStatsHistUpdateVersion, row.GetUint64(6))
 		}
 		tbl := &statistics.Table{
 			HistColl:              newHistColl,
@@ -105,7 +100,7 @@ func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 
 func (h *Handle) initStatsMeta(ctx context.Context) (statstypes.StatsCache, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
-	sql := "select HIGH_PRIORITY version, table_id, modify_count, count, snapshot, last_analyze_version, last_stats_histograms_version from mysql.stats_meta"
+	sql := "select HIGH_PRIORITY version, table_id, modify_count, count, snapshot, last_stats_histograms_version from mysql.stats_meta"
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return nil, errors.Trace(err)

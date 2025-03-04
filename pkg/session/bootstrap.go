@@ -227,10 +227,8 @@ const (
 		modify_count				BIGINT(64) NOT NULL DEFAULT 0,
 		count 						BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
 		snapshot        			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
-		last_analyze_version		BIGINT(64) UNSIGNED DEFAULT NULL,
 		last_stats_histograms_version 	BIGINT(64) UNSIGNED DEFAULT NULL,
 		INDEX idx_ver(version),
-		INDEX idx_analyze_version(last_analyze_version),
 		INDEX idx_last_stats_histograms_version(last_stats_histograms_version),
 		UNIQUE INDEX tbl(table_id)
 	);`
@@ -1274,7 +1272,7 @@ const (
 	// Add extra_params to tidb_global_task and tidb_global_task_history.
 	version243 = 243
 
-	// version243 add Max_user_connections into mysql.user.
+	// version244 add Max_user_connections into mysql.user.
 	version244 = 244
 
 	// version 245
@@ -3406,7 +3404,6 @@ func upgradeToVer245(s sessiontypes.Session, ver int64) {
 	if ver >= version245 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN last_analyze_version bigint(20) unsigned DEFAULT NULL", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN last_stats_histograms_version bigint(20) unsigned DEFAULT NULL", infoschema.ErrColumnExists)
 }
 
