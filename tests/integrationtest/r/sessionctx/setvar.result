@@ -1746,7 +1746,7 @@ select @@last_plan_from_binding;
 1
 select @@max_execution_time;
 @@max_execution_time
-500
+2000
 select /*+ SET_VAR(max_execution_time=1234) */ * from t where a = 1 and sleep(0.1);
 a
 select @@last_plan_from_binding;
@@ -1754,7 +1754,19 @@ select @@last_plan_from_binding;
 1
 select @@max_execution_time;
 @@max_execution_time
-1234
+2000
+insert into t values(1);
+set @@max_execution_time=0;
+select /*+ SET_VAR(max_execution_time=4000) */ * from t where a = 1 and sleep(1);
+Error 3024 (HY000): Query execution was interrupted, maximum statement execution time exceeded
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+explain analyze select /*+ SET_VAR(max_execution_time=4000) */ * from t where a = 1 and sleep(1);
+Error 3024 (HY000): Query execution was interrupted, maximum statement execution time exceeded
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
 drop global binding for select * from t where a = 2 and sleep(0.1);
 select /*+ set_var(max_execution_time=500), set_var(max_execution_time=1000) */ @@max_execution_time;
 @@max_execution_time

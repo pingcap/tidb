@@ -724,6 +724,17 @@ select @@max_execution_time;
 select /*+ SET_VAR(max_execution_time=1234) */ * from t where a = 1 and sleep(0.1);
 select @@last_plan_from_binding;
 select @@max_execution_time;
+# insert one row and make the hinted max_execution_time=500 can terminate the sql
+# but the hint written in sql directly will not terminate the sql
+# the sql should failed. i.e. the hint worked should be the hint written in binding.
+insert into t values(1);
+set @@max_execution_time=0;
+-- error 3024
+select /*+ SET_VAR(max_execution_time=4000) */ * from t where a = 1 and sleep(1);
+select @@last_plan_from_binding;
+-- error 3024
+explain analyze select /*+ SET_VAR(max_execution_time=4000) */ * from t where a = 1 and sleep(1);
+select @@last_plan_from_binding;
 drop global binding for select * from t where a = 2 and sleep(0.1);
 
 # set one var multiple times, only the first time takes effect

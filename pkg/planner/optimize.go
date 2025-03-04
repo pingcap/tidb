@@ -211,16 +211,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 	}()
 
 	warns = warns[:0]
-	for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
-		oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
-		if err != nil {
-			sessVars.StmtCtx.AppendWarning(err)
-		}
-		sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
-	}
-	if len(sessVars.StmtCtx.StmtHints.SetVars) > 0 {
-		sessVars.StmtCtx.SetSkipPlanCache("SET_VAR is used in the SQL")
-	}
 
 	if _, isolationReadContainTiKV := sessVars.IsolationReadEngines[kv.TiKV]; isolationReadContainTiKV {
 		var fp base.Plan
@@ -280,13 +270,15 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 				setVarHintChecker, hypoIndexChecker(ctx, is),
 				sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
 			sessVars.StmtCtx.StmtHints = curStmtHints
-			// update session var by hint /set_var/
-			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
-				oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
-				if err != nil {
-					sessVars.StmtCtx.AppendWarning(err)
+			if len(sessVars.StmtCtx.SetVarHintRestore) == 0 {
+				// update session var by hint /set_var/
+				for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
+					oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
+					if err != nil {
+						sessVars.StmtCtx.AppendWarning(err)
+					}
+					sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
 				}
-				sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
 			}
 			plan, curNames, _, err := optimize(ctx, pctx, node, is)
 			if err != nil {
@@ -323,6 +315,18 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 	// No plan found from the bindings, or the bindings are ignored.
 	if bestPlan == nil {
 		sessVars.StmtCtx.StmtHints = originStmtHints
+		if len(sessVars.StmtCtx.SetVarHintRestore) == 0 {
+			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
+				oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
+				if err != nil {
+					sessVars.StmtCtx.AppendWarning(err)
+				}
+				sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
+			}
+			if len(sessVars.StmtCtx.StmtHints.SetVars) > 0 {
+				sessVars.StmtCtx.SetSkipPlanCache("SET_VAR is used in the SQL")
+			}
+		}
 		bestPlan, names, _, err = optimize(ctx, pctx, node, is)
 		if err != nil {
 			return nil, nil, err
