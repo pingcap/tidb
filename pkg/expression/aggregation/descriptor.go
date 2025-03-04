@@ -57,7 +57,7 @@ func NewAggFuncDescForWindowFunc(ctx expression.BuildContext, desc *WindowFuncDe
 	if desc.RetTp == nil { // safety check
 		return NewAggFuncDesc(ctx, desc.Name, desc.Args, hasDistinct)
 	}
-	return &AggFuncDesc{baseFuncDesc: baseFuncDesc{desc.Name, desc.Args, desc.RetTp}, HasDistinct: hasDistinct}, nil
+	return &AggFuncDesc{baseFuncDesc: baseFuncDesc{desc.Name, desc.Args, desc.RetTp}, OrderByItems: desc.OrderByItems, HasDistinct: hasDistinct}, nil
 }
 
 // Hash64 returns the hash64 for the aggregation function signature.
@@ -332,7 +332,7 @@ func (a *AggFuncDesc) evalNullValueInOuterJoin4BitOr(ctx expression.BuildContext
 func (a *AggFuncDesc) UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow bool) error {
 	var removeNotNull bool
 	switch a.Name {
-	case ast.AggFuncCount, ast.AggFuncApproxCountDistinct, ast.AggFuncApproxPercentile,
+	case ast.AggFuncCount, ast.AggFuncApproxCountDistinct, ast.AggFuncApproxPercentile, ast.AggFuncPercentileCont,
 		ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor,
 		ast.WindowFuncFirstValue, ast.WindowFuncLastValue, ast.WindowFuncNthValue, ast.WindowFuncRowNumber,
 		ast.WindowFuncRank, ast.WindowFuncDenseRank, ast.WindowFuncCumeDist, ast.WindowFuncNtile, ast.WindowFuncPercentRank,
