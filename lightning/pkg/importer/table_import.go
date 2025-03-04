@@ -689,7 +689,7 @@ func (tr *TableImporter) preprocessEngine(
 	}
 	if rc.cfg.IsRemoteBackend() {
 		dataEngineCfg.Remote = backend.RemoteEngineConfig{
-			EngineID:                     common.IndexEngineID,
+			EngineID:                     engineID,
 			EstimatedDataSize:            remote.EstimateEngineDataSize(tr.tableMeta, tr.tableInfo, false, tr.logger),
 			HasRecoverableEngineProgress: remote.HasRecoverableEngineProgress(cp),
 		}
