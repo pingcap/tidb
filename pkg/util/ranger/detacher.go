@@ -894,7 +894,7 @@ func DetachCondAndBuildRangeForIndex(sctx planctx.PlanContext, conditions []expr
 
 // detachCondAndBuildRange detaches the index filters from table filters and uses them to build ranges.
 func detachCondAndBuildRange(sctx planctx.PlanContext, conditions []expression.Expression, cols []*expression.Column,
-	lengths []int, rangeMaxSize int64, convertToSortKey bool) (*DetachRangeResult, error) {
+	lengths []int, rangeMaxSize int64, convertToSortKey bool, mergeConsecutive bool) (*DetachRangeResult, error) {
 	d := &rangeDetacher{
 		sctx:             sctx,
 		allConds:         conditions,
