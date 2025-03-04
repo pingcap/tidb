@@ -523,6 +523,25 @@ func generateJSON() string {
 	return string(jsonData)
 }
 
+func createExternalStorage() storage.ExternalStorage {
+	op := storage.BackendOptions{S3: storage.S3BackendOptions{
+		Region:          *s3Region,
+		AccessKey:       *s3AccessKey,
+		SecretAccessKey: *s3SecretKey,
+		Provider:        *s3Provider,
+		Endpoint:        *s3Endpoint,
+	}}
+	s, err := storage.ParseBackend(*gcsDir, &op)
+	if err != nil {
+		panic(err)
+	}
+	store, err := storage.NewWithDefaultOpt(context.Background(), s)
+	if err != nil {
+		panic(err)
+	}
+	return store
+}
+
 // Write data to GCS with retry (column-oriented)
 func writeDataToGCS(store storage.ExternalStorage, fileName string, data [][]string) error {
 	writer, err := store.Create(context.Background(), fileName, nil)
