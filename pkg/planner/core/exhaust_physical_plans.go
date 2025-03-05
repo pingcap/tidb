@@ -179,7 +179,8 @@ func GetMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, sch
 		}
 
 		prefixLen := findMaxPrefixLen(p.RightProperties, rightKeys)
-		if prefixLen == 0 {
+		// right side should also be full match.
+		if prefixLen < len(offsets) {
 			continue
 		}
 
