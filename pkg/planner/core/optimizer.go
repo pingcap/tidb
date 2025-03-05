@@ -276,6 +276,7 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
+	logic.ExtractFD()
 
 	var cas *cascades.Optimizer
 	if cas, err = cascades.NewOptimizer(logic); err == nil {

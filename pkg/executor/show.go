@@ -76,11 +76,13 @@ import (
 	"github.com/pingcap/tidb/pkg/util/format"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"go.uber.org/zap"
 )
 
 var etcdDialTimeout = 5 * time.Second
@@ -322,7 +324,7 @@ func (e *ShowExec) fetchShowBind() error {
 		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
 		bindings = handle.GetAllSessionBindings()
 	} else {
-		bindings = domain.GetDomain(e.Ctx()).BindHandle().GetAllGlobalBindings()
+		bindings = domain.GetDomain(e.Ctx()).BindingHandle().GetAllBindings()
 	}
 	// Remove the invalid bindings.
 	parser := parser.New()
@@ -372,14 +374,16 @@ func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 	exec := e.Ctx().GetRestrictedSQLExecutor()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBindInfo)
 
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, fmt.Sprintf("SELECT count(*) FROM mysql.bind_info where status = '%s' or status = '%s';", bindinfo.Enabled, bindinfo.Using))
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil,
+		fmt.Sprintf("SELECT count(*) FROM mysql.bind_info where status = '%s' or status = '%s';",
+			bindinfo.StatusEnabled, bindinfo.StatusUsing))
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	handle := domain.GetDomain(e.Ctx()).BindHandle()
+	handle := domain.GetDomain(e.Ctx()).BindingHandle()
 
-	bindings := handle.GetAllGlobalBindings()
+	bindings := handle.GetAllBindings()
 	numBindings := 0
 	for _, binding := range bindings {
 		if binding.IsBindingEnabled() {
@@ -1751,7 +1755,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		`SELECT plugin, Account_locked, user_attributes->>'$.metadata', Token_issuer,
         Password_reuse_history, Password_reuse_time, Password_expired, Password_lifetime,
         user_attributes->>'$.Password_locking.failed_login_attempts',
-        user_attributes->>'$.Password_locking.password_lock_time_days', authentication_string
+        user_attributes->>'$.Password_locking.password_lock_time_days', authentication_string,
+        Max_user_connections
 		FROM %n.%n WHERE User=%? AND Host=%?`,
 		mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
 	if err != nil {
@@ -1831,6 +1836,12 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	}
 	authData := rows[0].GetString(10)
 
+	maxUserConnections := rows[0].GetInt64(11)
+	maxUserConnectionsStr := ""
+	if maxUserConnections > 0 {
+		maxUserConnectionsStr = fmt.Sprintf(" WITH MAX_USER_CONNECTIONS %d", maxUserConnections)
+	}
+
 	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
 	if err != nil {
 		return errors.Trace(err)
@@ -1853,8 +1864,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	}
 
 	// FIXME: the returned string is not escaped safely
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s %s ACCOUNT %s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s%s%s%s",
-		e.User.Username, e.User.Hostname, authPlugin, authStr, require, tokenIssuer, passwordExpiredStr, accountLocked, passwordHistory, passwordReuseInterval, failedLoginAttempts, passwordLockTimeDays, userAttributes)
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s%s %s ACCOUNT %s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s%s%s%s",
+		e.User.Username, e.User.Hostname, authPlugin, authStr, require, tokenIssuer, maxUserConnectionsStr, passwordExpiredStr, accountLocked, passwordHistory, passwordReuseInterval, failedLoginAttempts, passwordLockTimeDays, userAttributes)
 	e.appendRow([]any{showStr})
 	return nil
 }
@@ -2283,18 +2294,25 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 		// The token may be leaked without secure transport, but the cloud can ensure security in some situations,
 		// so we don't enforce secure connections.
 		if token, err = sessionstates.CreateSessionToken(user.Username); err != nil {
-			return err
+			// Some users deploy TiProxy after the cluster is running and configuring signing certs will restart TiDB.
+			// The users may don't need connection migration, e.g. they only want traffic replay, which requires session states
+			// but not session tokens. So we don't return errors, just log it.
+			logutil.Logger(ctx).Warn("create session token failed", zap.Error(err))
 		}
 	}
-	tokenBytes, err := gjson.Marshal(token)
-	if err != nil {
-		return errors.Trace(err)
+	if token != nil {
+		tokenBytes, err := gjson.Marshal(token)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		tokenJSON := types.BinaryJSON{}
+		if err = tokenJSON.UnmarshalJSON(tokenBytes); err != nil {
+			return err
+		}
+		e.appendRow([]any{stateJSON, tokenJSON})
+	} else {
+		e.appendRow([]any{stateJSON, nil})
 	}
-	tokenJSON := types.BinaryJSON{}
-	if err = tokenJSON.UnmarshalJSON(tokenBytes); err != nil {
-		return err
-	}
-	e.appendRow([]any{stateJSON, tokenJSON})
 	return nil
 }
 

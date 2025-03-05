@@ -564,7 +564,7 @@ func TestSetTimeRangeFilter(t *testing.T) {
 				RestoredTs:   200,
 			},
 			cfName:      "default",
-			expectError: true,
+			expectError: false,
 		},
 		{
 			name: "write cf valid shift start ts (greater than start ts)",
@@ -610,7 +610,6 @@ func TestSetTimeRangeFilter(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			err := tc.rules.SetTimeRangeFilter(tc.cfName)
-
 			if tc.expectError {
 				require.Error(t, err)
 				return
@@ -631,8 +630,11 @@ func TestSetTimeRangeFilter(t *testing.T) {
 				require.Equal(t, tc.rules.RestoredTs, rule.IgnoreAfterTimestamp)
 
 				if strings.Contains(tc.cfName, "default") {
-					require.Equal(t, tc.rules.ShiftStartTs, rule.IgnoreBeforeTimestamp)
-					require.Less(t, tc.rules.ShiftStartTs, tc.rules.StartTs)
+					if tc.rules.ShiftStartTs < tc.rules.StartTs {
+						require.Equal(t, tc.rules.ShiftStartTs, rule.IgnoreBeforeTimestamp)
+					} else {
+						require.Equal(t, tc.rules.StartTs, rule.IgnoreBeforeTimestamp)
+					}
 				} else if strings.Contains(tc.cfName, "write") {
 					require.Equal(t, tc.rules.StartTs, rule.IgnoreBeforeTimestamp)
 				}

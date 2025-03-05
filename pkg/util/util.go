@@ -36,6 +36,14 @@ import (
 	"google.golang.org/protobuf/protoadapt"
 )
 
+// ByteNumOneGiB shows how many bytes one GiB contains
+const ByteNumOneGiB int64 = 1024 * 1024 * 1024
+
+// ByteToGiB converts Byte to GiB
+func ByteToGiB(bytes float64) float64 {
+	return bytes / float64(ByteNumOneGiB)
+}
+
 // SliceToMap converts slice to map
 // nolint:unused
 func SliceToMap(slice []string) map[string]any {
@@ -172,7 +180,8 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL boo
 // PrintableASCII detects if b is a printable ASCII character.
 // Ref to:http://facweb.cs.depaul.edu/sjost/it212/documents/ascii-pr.htm
 func PrintableASCII(b byte) bool {
-	if b < 32 || b > 127 {
+	// MySQL think 127(0x7f) is not printalbe.
+	if b < 32 || b >= 127 {
 		return false
 	}
 
@@ -180,12 +189,23 @@ func PrintableASCII(b byte) bool {
 }
 
 // FmtNonASCIIPrintableCharToHex turns non-printable-ASCII characters into Hex
-func FmtNonASCIIPrintableCharToHex(str string) string {
+func FmtNonASCIIPrintableCharToHex(str string, maxBytesToShow int, displayDeleteCharater bool) string {
 	var b bytes.Buffer
-	b.Grow(len(str) * 2)
+	b.Grow(maxBytesToShow * 2)
 	for i := range len(str) {
+		if i >= maxBytesToShow {
+			b.WriteString("...")
+			break
+		}
+
 		if PrintableASCII(str[i]) {
 			b.WriteByte(str[i])
+			continue
+		}
+
+		// In MySQL, 0x7f will not display in `Cannot convert string` error msg.
+		// But it will displayed in `duplicate entry` error msg.
+		if str[i] == 0x7f && !displayDeleteCharater {
 			continue
 		}
 

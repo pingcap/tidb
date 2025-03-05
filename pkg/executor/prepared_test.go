@@ -55,7 +55,7 @@ func TestPreparedNullParam(t *testing.T) {
 		ps := []*util.ProcessInfo{tkProcess}
 		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 		tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
-			"TableDual_5 0.00 root  rows:0"))
+			"TableDual_6 0.00 root  rows:0"))
 	}
 }
 

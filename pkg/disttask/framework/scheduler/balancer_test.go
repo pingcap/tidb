@@ -30,6 +30,7 @@ import (
 type balanceTestCase struct {
 	subtasks          []*proto.SubtaskBase
 	eligibleNodes     []string
+	maxNodeCount      int
 	initUsedSlots     map[string]int
 	expectedSubtasks  []*proto.SubtaskBase
 	expectedUsedSlots map[string]int
@@ -224,6 +225,44 @@ func TestBalanceOneTask(t *testing.T) {
 			},
 			expectedUsedSlots: map[string]int{"tidb2": 16, "tidb3": 16},
 		},
+		// balanced, but max node count is limited.
+		{
+			subtasks: []*proto.SubtaskBase{
+				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 3, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStatePending},
+			},
+			maxNodeCount:  1,
+			eligibleNodes: []string{"tidb1", "tidb2"},
+			initUsedSlots: map[string]int{"tidb1": 0, "tidb2": 0},
+			expectedSubtasks: []*proto.SubtaskBase{
+				{ID: 1, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 3, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStatePending},
+			},
+			expectedUsedSlots: map[string]int{"tidb1": 0, "tidb2": 16},
+		},
+		// scale out, but max node count is limited.
+		{
+			subtasks: []*proto.SubtaskBase{
+				{ID: 1, ExecID: "tidb3", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb3", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 3, ExecID: "tidb3", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 4, ExecID: "tidb3", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 5, ExecID: "tidb3", Concurrency: 16, State: proto.SubtaskStatePending},
+			},
+			eligibleNodes: []string{"tidb1", "tidb2", "tidb3"},
+			maxNodeCount:  2,
+			initUsedSlots: map[string]int{"tidb1": 0, "tidb2": 0, "tidb3": 0},
+			expectedSubtasks: []*proto.SubtaskBase{
+				{ID: 1, ExecID: "tidb3", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb3", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 3, ExecID: "tidb3", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 4, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 5, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStatePending},
+			},
+			expectedUsedSlots: map[string]int{"tidb1": 16, "tidb2": 0, "tidb3": 16},
+		},
 	}
 
 	ctx := context.Background()
@@ -235,7 +274,7 @@ func TestBalanceOneTask(t *testing.T) {
 				mockTaskMgr.EXPECT().UpdateSubtasksExecIDs(gomock.Any(), gomock.Any()).Return(nil)
 			}
 			mockScheduler := mock.NewMockScheduler(ctrl)
-			mockScheduler.EXPECT().GetTask().Return(&proto.Task{TaskBase: proto.TaskBase{ID: 1}}).Times(2)
+			mockScheduler.EXPECT().GetTask().Return(&proto.Task{TaskBase: proto.TaskBase{ID: 1, MaxNodeCount: c.maxNodeCount}}).Times(2)
 			mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil)
 
 			slotMgr := newSlotManager()
@@ -368,7 +407,7 @@ func TestBalanceMultipleTasks(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	manager := NewManager(ctx, mockTaskMgr, "1")
+	manager := NewManager(ctx, mockTaskMgr, "1", proto.NodeResourceForTest)
 	manager.slotMgr.updateCapacity(16)
 	manager.nodeMgr.nodes.Store(&[]proto.ManagedNode{{ID: "tidb1", Role: ""}, {ID: "tidb2", Role: ""}, {ID: "tidb3", Role: ""}})
 	b := newBalancer(Param{

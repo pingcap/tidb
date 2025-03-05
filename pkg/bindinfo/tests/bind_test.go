@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
-	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/stretchr/testify/require"
 )
@@ -393,20 +392,20 @@ func TestGCBindRecord(t *testing.T) {
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `test` . `t` where `a` = ?", rows[0][0])
-	require.Equal(t, bindinfo.Enabled, rows[0][3])
+	require.Equal(t, bindinfo.StatusEnabled, rows[0][3])
 	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows(
-		bindinfo.Enabled,
+		bindinfo.StatusEnabled,
 	))
 
-	h := dom.BindHandle()
+	h := dom.BindingHandle()
 	// bindinfo.Lease is set to 0 for test env in SetUpSuite.
 	require.NoError(t, h.GCGlobalBinding())
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `test` . `t` where `a` = ?", rows[0][0])
-	require.Equal(t, bindinfo.Enabled, rows[0][3])
+	require.Equal(t, bindinfo.StatusEnabled, rows[0][3])
 	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows(
-		bindinfo.Enabled,
+		bindinfo.StatusEnabled,
 	))
 
 	tk.MustExec("drop global binding for select * from t where a = 1")
@@ -476,7 +475,7 @@ func TestBindSQLDigest(t *testing.T) {
 		parser4binding := parser.New()
 		originNode, err := parser4binding.ParseOneStmt(c.origin, "utf8mb4", "utf8mb4_general_ci")
 		require.NoError(t, err)
-		_, sqlDigestWithDB := parser.NormalizeDigestForBinding(utilparser.RestoreWithDefaultDB(originNode, "test", c.origin))
+		_, sqlDigestWithDB := parser.NormalizeDigestForBinding(bindinfo.RestoreDBForBinding(originNode, "test"))
 		require.Equal(t, res[0][9], sqlDigestWithDB.String())
 	}
 }
@@ -555,7 +554,7 @@ func TestDropBindBySQLDigest(t *testing.T) {
 		{"select t1.a, t1.b from t t1 where t1.a in (select t2.a from t t2)", "select /*+ use_toja(true) */ t1.a, t1.b from t t1 where t1.a in (select t2.a from t t2)"},
 	}
 
-	h := dom.BindHandle()
+	h := dom.BindingHandle()
 	// global scope
 	for _, c := range cases {
 		utilCleanBindingEnv(tk)

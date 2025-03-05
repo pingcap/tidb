@@ -1752,18 +1752,18 @@ func TestTiDBEncodeKey(t *testing.T) {
 	err := tk.QueryToErr("select tidb_encode_record_key('test', 't1', 0);")
 	require.ErrorContains(t, err, "doesn't exist")
 	tk.MustQuery("select tidb_encode_record_key('test', 't', 1);").
-		Check(testkit.Rows("74800000000000006e5f728000000000000001"))
+		Check(testkit.Rows("7480000000000000705f728000000000000001"))
 
 	tk.MustExec("alter table t add index i(b);")
 	err = tk.QueryToErr("select tidb_encode_index_key('test', 't', 'i1', 1);")
 	require.ErrorContains(t, err, "index not found")
 	tk.MustQuery("select tidb_encode_index_key('test', 't', 'i', 1, 1);").
-		Check(testkit.Rows("74800000000000006e5f698000000000000001038000000000000001038000000000000001"))
+		Check(testkit.Rows("7480000000000000705f698000000000000001038000000000000001038000000000000001"))
 
 	tk.MustExec("create table t1 (a int primary key, b int) partition by hash(a) partitions 4;")
 	tk.MustExec("insert into t1 values (1, 1);")
-	tk.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000735f728000000000000001"))
-	rs := tk.MustQuery("select tidb_mvcc_info('74800000000000006f5f728000000000000001');")
+	tk.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000755f728000000000000001"))
+	rs := tk.MustQuery("select tidb_mvcc_info('74800000000000007f5f728000000000000001');")
 	mvccInfo := rs.Rows()[0][0].(string)
 	require.NotEqual(t, mvccInfo, `{"info":{}}`)
 
@@ -1772,14 +1772,14 @@ func TestTiDBEncodeKey(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	err = tk2.Session().Auth(&auth.UserIdentity{Username: "alice", Hostname: "localhost"}, nil, nil, nil)
 	require.NoError(t, err)
-	err = tk2.QueryToErr("select tidb_mvcc_info('74800000000000006f5f728000000000000001');")
+	err = tk2.QueryToErr("select tidb_mvcc_info('74800000000000007f5f728000000000000001');")
 	require.ErrorContains(t, err, "Access denied")
 	err = tk2.QueryToErr("select tidb_encode_record_key('test', 't1(p1)', 1);")
 	require.ErrorContains(t, err, "SELECT command denied")
 	err = tk2.QueryToErr("select tidb_encode_index_key('test', 't', 'i1', 1);")
 	require.ErrorContains(t, err, "SELECT command denied")
 	tk.MustExec("grant select on test.t1 to 'alice'@'%';")
-	tk2.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000735f728000000000000001"))
+	tk2.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000755f728000000000000001"))
 }
 
 func TestIssue9710(t *testing.T) {
@@ -3960,132 +3960,6 @@ func TestIssue16205(t *testing.T) {
 	rows2 := tk.MustQuery("execute stmt").Rows()
 	require.Len(t, rows2, 1)
 	require.NotEqual(t, rows1[0][0].(string), rows2[0][0].(string))
-}
-
-func TestCrossDCQuery(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("drop placement policy if exists p1")
-	tk.MustExec("drop placement policy if exists p2")
-	tk.MustExec("create placement policy p1 leader_constraints='[+zone=sh]'")
-	tk.MustExec("create placement policy p2 leader_constraints='[+zone=bj]'")
-	tk.MustExec(`create table t1 (c int primary key, d int,e int,index idx_d(d),index idx_e(e))
-PARTITION BY RANGE (c) (
-	PARTITION p0 VALUES LESS THAN (6) placement policy p1,
-	PARTITION p1 VALUES LESS THAN (11) placement policy p2
-);`)
-	defer func() {
-		tk.MustExec("drop table if exists t1")
-		tk.MustExec("drop placement policy if exists p1")
-		tk.MustExec("drop placement policy if exists p2")
-	}()
-
-	tk.MustExec(`insert into t1 (c,d,e) values (1,1,1);`)
-	tk.MustExec(`insert into t1 (c,d,e) values (2,3,5);`)
-	tk.MustExec(`insert into t1 (c,d,e) values (3,5,7);`)
-
-	testcases := []struct {
-		name      string
-		txnScope  string
-		zone      string
-		sql       string
-		expectErr error
-	}{
-		// FIXME: block by https://github.com/pingcap/tidb/issues/21872
-		//{
-		//	name:      "cross dc read to sh by holding bj, IndexReader",
-		//	txnScope:  "bj",
-		//	sql:       "select /*+ USE_INDEX(t1, idx_d) */ d from t1 where c < 5 and d < 1;",
-		//	expectErr: fmt.Errorf(".*can not be read by.*"),
-		//},
-		// FIXME: block by https://github.com/pingcap/tidb/issues/21847
-		//{
-		//	name:      "cross dc read to sh by holding bj, BatchPointGet",
-		//	txnScope:  "bj",
-		//	sql:       "select * from t1 where c in (1,2,3,4);",
-		//	expectErr: fmt.Errorf(".*can not be read by.*"),
-		//},
-		{
-			name:      "cross dc read to sh by holding bj, PointGet",
-			txnScope:  "local",
-			zone:      "bj",
-			sql:       "select * from t1 where c = 1",
-			expectErr: fmt.Errorf(".*can not be read by.*"),
-		},
-		{
-			name:      "cross dc read to sh by holding bj, IndexLookUp",
-			txnScope:  "local",
-			zone:      "bj",
-			sql:       "select * from t1 use index (idx_d) where c < 5 and d < 5;",
-			expectErr: fmt.Errorf(".*can not be read by.*"),
-		},
-		{
-			name:      "cross dc read to sh by holding bj, IndexMerge",
-			txnScope:  "local",
-			zone:      "bj",
-			sql:       "select /*+ USE_INDEX_MERGE(t1, idx_d, idx_e) */ * from t1 where c <5 and (d =5 or e=5);",
-			expectErr: fmt.Errorf(".*can not be read by.*"),
-		},
-		{
-			name:      "cross dc read to sh by holding bj, TableReader",
-			txnScope:  "local",
-			zone:      "bj",
-			sql:       "select * from t1 where c < 6",
-			expectErr: fmt.Errorf(".*can not be read by.*"),
-		},
-		{
-			name:      "cross dc read to global by holding bj",
-			txnScope:  "local",
-			zone:      "bj",
-			sql:       "select * from t1",
-			expectErr: fmt.Errorf(".*can not be read by.*"),
-		},
-		{
-			name:      "read sh dc by holding sh",
-			txnScope:  "local",
-			zone:      "sh",
-			sql:       "select * from t1 where c < 6",
-			expectErr: nil,
-		},
-		{
-			name:      "read sh dc by holding global",
-			txnScope:  "global",
-			zone:      "",
-			sql:       "select * from t1 where c < 6",
-			expectErr: nil,
-		},
-	}
-	tk.MustExec("set global tidb_enable_local_txn = on;")
-	for _, testcase := range testcases {
-		t.Log(testcase.name)
-		require.NoError(t, failpoint.Enable("tikvclient/injectTxnScope",
-			fmt.Sprintf(`return("%v")`, testcase.zone)))
-		tk.MustExec(fmt.Sprintf("set @@txn_scope='%v'", testcase.txnScope))
-		tk.Exec("begin")
-		res, err := tk.Exec(testcase.sql)
-		_, resErr := session.GetRows4Test(context.Background(), tk.Session(), res)
-		var checkErr error
-		if err != nil {
-			checkErr = err
-		} else {
-			checkErr = resErr
-		}
-		if testcase.expectErr != nil {
-			require.Error(t, checkErr)
-			require.Regexp(t, ".*can not be read by.*", checkErr.Error())
-		} else {
-			require.NoError(t, checkErr)
-		}
-		if res != nil {
-			res.Close()
-		}
-		tk.Exec("commit")
-	}
-	require.NoError(t, failpoint.Disable("tikvclient/injectTxnScope"))
-	tk.MustExec("set global tidb_enable_local_txn = off;")
 }
 
 func calculateChecksum(cols ...any) string {
