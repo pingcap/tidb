@@ -129,3 +129,23 @@ func TestSlowStatsSaving(t *testing.T) {
 	require.NotEqual(t, versionUint64, histVersionUint64, "The version in stats_meta and stats_histograms should be different.")
 	require.True(t, versionUint64 > histVersionUint64, "The version in stats_meta should be greater than stats_histograms.")
 }
+
+func TestFailedToHandleSlowStatsSaving(t *testing.T) {
+	err := failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/storage/slowStatsSaving", "return(true)")
+	require.NoError(t, err)
+	err = failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/storage/failToSaveStats", "return(true)")
+	require.NoError(t, err)
+	defer func() {
+		err = failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/storage/slowStatsSaving")
+		require.NoError(t, err)
+		err = failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/storage/failToSaveStats")
+		require.NoError(t, err)
+	}()
+	store := testkit.CreateMockStore(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t (a int, b int, index idx(a))")
+	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
+	testKit.MustGetErrMsg("analyze table t with 0 topn", "failed to update stats meta version when saving analyze result, please retry the analyze operation")
+}
