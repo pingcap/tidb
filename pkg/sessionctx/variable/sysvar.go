@@ -3449,7 +3449,7 @@ var defaultSysVars = []*SysVar{
 		Type:       vardef.TypeStr,
 		SetSession: setPipelinedDmlResourcePolicy,
 		// because the special character in custom syntax cannot be correctly handled in set_var hint
-		IsHintUpdatableVerified: false,
+		IsHintUpdatableVerified: true,
 	},
 }
 

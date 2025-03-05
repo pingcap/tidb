@@ -126,6 +126,14 @@ func TestVariable(t *testing.T) {
 	tk.MustExec("set global tidb_pipelined_dml_resource_policy = 'custom{concurrency=64,write_throttle_ratio=0.4}'")
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustQuery("select @@global.tidb_pipelined_dml_resource_policy").Check(testkit.Rows("custom{concurrency=64,write_throttle_ratio=0.4}"))
+
+	// Test hint
+	tk.MustExec("create table t(id int)")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("set @@tidb_dml_type=bulk")
+	tk.MustExec("delete /*+ SET_VAR(tidb_pipelined_dml_resource_policy=\"custom{resolve_concurrency=333}\") */ from t")
+	tk.MustQuery("select @@tidb_last_txn_info").CheckContain("\"pipelined\":true")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
 }
 
 // We limit this feature only for cases meet all the following conditions:

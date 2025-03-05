@@ -1693,6 +1693,9 @@ type SessionVars struct {
 
 	// CacheStmtExecInfo is a cache for the statement execution information, used to reduce the overhead of memory allocation.
 	CacheStmtExecInfo *stmtsummary.StmtExecInfo
+
+	// BulkDMLEnabled indicates whether to enable bulk DML in pipelined mode.
+	BulkDMLEnabled bool
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.
@@ -3158,9 +3161,6 @@ type BatchSize struct {
 
 // PipelinedDMLConfig defines the configuration for pipelined DML.
 type PipelinedDMLConfig struct {
-	// BulkDMLEnabled indicates whether to enable bulk DML in pipelined mode.
-	BulkDMLEnabled bool
-
 	// PipelinedFLushConcurrency indicates the number of concurrent worker for pipelined flush.
 	PipelinedFlushConcurrency int
 
