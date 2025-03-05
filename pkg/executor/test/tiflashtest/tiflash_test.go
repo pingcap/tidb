@@ -2032,3 +2032,205 @@ func TestMppAggShouldAlignFinalMode(t *testing.T) {
 	err = failpoint.Disable("github.com/pingcap/tidb/pkg/expression/aggregation/show-agg-mode")
 	require.Nil(t, err)
 }
+<<<<<<< HEAD
+=======
+
+func TestMppTableReaderCacheForSingleSQL(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(1))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, primary key(a))")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+
+	tk.MustExec("create table t2(a int, b int) partition by hash(b) partitions 4")
+	tk.MustExec("alter table t2 set tiflash replica 1")
+	tb = external.GetTableByName(t, tk, "test", "t2")
+	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("insert into t values(1, 1)")
+	tk.MustExec("insert into t values(2, 2)")
+	tk.MustExec("insert into t values(3, 3)")
+	tk.MustExec("insert into t values(4, 4)")
+	tk.MustExec("insert into t values(5, 5)")
+
+	tk.MustExec("insert into t2 values(1, 1)")
+	tk.MustExec("insert into t2 values(2, 2)")
+	tk.MustExec("insert into t2 values(3, 3)")
+	tk.MustExec("insert into t2 values(4, 4)")
+	tk.MustExec("insert into t2 values(5, 5)")
+
+	// unistore does not support later materialization
+	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
+	tk.MustExec("set @@session.tidb_max_chunk_size=32")
+
+	// Test TableReader cache for single SQL.
+	type testCase struct {
+		sql           string
+		expectHitNum  int32
+		expectMissNum int32
+	}
+
+	testCases := []testCase{
+		// Non-Partition
+		// Cache hit
+		{"select * from t", 0, 1},
+		{"select * from t union select * from t", 1, 1},
+		{"select * from t union select * from t t1 union select * from t t2", 2, 1},
+		{"select * from t where b <= 3 union select * from t where b > 3", 1, 1},  // both full range
+		{"select * from t where a <= 3 union select * from t where a <= 3", 1, 1}, // same range
+		{"select * from t t1 join t t2 on t1.b=t2.b", 1, 1},
+
+		// Cache miss
+		{"select * from t union all select * from t", 0, 2},                      // different mpp task root
+		{"select * from t where a <= 3 union select * from t where a > 3", 0, 2}, // different range
+
+		// Partition
+		// Cache hit
+		{"select * from t2 union select * from t2", 1, 1},
+		{"select * from t2 where b = 1 union select * from t2 where b = 5", 1, 1},                     // same partition, full range
+		{"select * from t2 where b = 1 and a < 3 union select * from t2 where b = 5 and a < 3", 1, 1}, // same partition, same range
+		{"select * from t2 t1 join t2 t2 on t1.b=t2.b", 1, 1},
+		{"select * from t2 t1 join t2 t2 on t1.b=t2.b where t1.a = 2 and t2.a = 2", 1, 1},
+
+		// Cache miss
+		{"select * from t2 union select * from t2 where b = 1", 0, 2},             // different partition
+		{"select * from t2 where b = 2 union select * from t2 where b = 1", 0, 2}, // different partition
+	}
+
+	var hitNum, missNum atomic.Int32
+	hitFunc := func() {
+		hitNum.Add(1)
+	}
+	missFunc := func() {
+		missNum.Add(1)
+	}
+	failpoint.EnableCall("github.com/pingcap/tidb/pkg/planner/core/mppTaskGeneratorTableReaderCacheHit", hitFunc)
+	failpoint.EnableCall("github.com/pingcap/tidb/pkg/planner/core/mppTaskGeneratorTableReaderCacheMiss", missFunc)
+	for _, tc := range testCases {
+		hitNum.Store(0)
+		missNum.Store(0)
+		tk.MustQuery(tc.sql)
+		require.Equal(t, tc.expectHitNum, hitNum.Load())
+		require.Equal(t, tc.expectMissNum, missNum.Load())
+	}
+}
+
+func TestIndexMergeCarePreferTiflash(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(1))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"`i` bigint(20) NOT NULL, " +
+		"`w` varchar(32) NOT NULL," +
+		"`l` varchar(32) NOT NULL," +
+		"`a` tinyint(4) NOT NULL DEFAULT '0'," +
+		"`m` int(11) NOT NULL DEFAULT '0'," +
+		"`s` int(11) NOT NULL DEFAULT '0'," +
+		"PRIMARY KEY (`i`) /*T![clustered_index] NONCLUSTERED */," +
+		"KEY `idx_win_user_site_code` (`w`,`m`)," +
+		"KEY `idx_lose_user_site_code` (`l`,`m`)," +
+		"KEY `idx_win_site_code_status` (`w`,`a`)," +
+		"KEY `idx_lose_site_code_status` (`l`,`a`)" +
+		")")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustQuery("explain format=\"brief\" SELECT" +
+		"      /*+ read_from_storage(tiflash[a]) */ a.i FROM t a WHERE a.s = 0 AND a.a NOT IN (-1, 0) AND m >= 1726910326 AND m <= 1726910391 AND ( a.w IN ('1123') OR a.l IN ('1123'))").Check(
+		testkit.Rows("TableReader 0.00 root  MppVersion: 3, data:ExchangeSender",
+			"└─ExchangeSender 0.00 mpp[tiflash]  ExchangeType: PassThrough",
+			"  └─Projection 0.00 mpp[tiflash]  test.t.i",
+			"    └─Selection 0.00 mpp[tiflash]  ge(test.t.m, 1726910326), le(test.t.m, 1726910391), not(in(test.t.a, -1, 0)), or(eq(test.t.w, \"1123\"), eq(test.t.l, \"1123\"))",
+			"      └─TableFullScan 10.00 mpp[tiflash] table:a pushed down filter:eq(test.t.s, 0), keep order:false, stats:pseudo"))
+}
+
+func TestIssue59703(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(1))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null primary key, b int not null)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("insert into t values(1,0)")
+	tk.MustExec("insert into t values(2,0)")
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	// unistore does not support later materialization
+	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_coordinator_execute_err", "return()")
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_coordinator_execute_err")
+
+	err = tk.ExecToErr("select count(*) from t")
+	require.Contains(t, err.Error(), "mock mpp error")
+	require.Equal(t, mppcoordmanager.InstanceMPPCoordinatorManager.GetCoordCount(), 0)
+}
+
+func TestIssue59877(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(1))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec("create table t1(id bigint, v1 int)")
+	tk.MustExec("alter table t1 set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t1")
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("create table t2(id bigint unsigned, v1 int)")
+	tk.MustExec("alter table t2 set tiflash replica 1")
+	tb = external.GetTableByName(t, tk, "test", "t2")
+	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("create table t3(id bigint, v1 int)")
+	tk.MustExec("alter table t3 set tiflash replica 1")
+	tb = external.GetTableByName(t, tk, "test", "t3")
+	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	// unistore does not support later materialization
+	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
+	tk.MustExec("set tidb_broadcast_join_threshold_size=0")
+	tk.MustExec("set tidb_broadcast_join_threshold_count=0")
+	tk.MustExec("set tiflash_fine_grained_shuffle_stream_count=8")
+	tk.MustExec("set tidb_enforce_mpp=1")
+	tk.MustQuery("explain format=\"brief\" select /*+ hash_join_build(t3) */ count(*) from t1 straight_join t2 on t1.id = t2.id straight_join t3 on t1.id = t3.id").Check(
+		testkit.Rows("HashAgg 1.00 root  funcs:count(Column#18)->Column#10",
+			"└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+			"  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+			"    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#18",
+			"      └─Projection 15609.38 mpp[tiflash]  test.t1.id, Column#14",
+			"        └─HashJoin 15609.38 mpp[tiflash]  inner join, equal:[eq(test.t1.id, test.t3.id)]",
+			"          ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+			"          │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#17, collate: binary]",
+			"          │   └─Projection 9990.00 mpp[tiflash]  test.t3.id, cast(test.t3.id, decimal(20,0))->Column#17",
+			"          │     └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t3.id))",
+			"          │       └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
+			"          └─Projection(Probe) 12487.50 mpp[tiflash]  test.t1.id, Column#14",
+			"            └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t1.id, test.t2.id)]",
+			"              ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+			"              │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#13, collate: binary]",
+			"              │   └─Projection 9990.00 mpp[tiflash]  test.t1.id, cast(test.t1.id, decimal(20,0))->Column#13",
+			"              │     └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t1.id))",
+			"              │       └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+			"              └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
+			"                └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#14, collate: binary]",
+			"                  └─Projection 9990.00 mpp[tiflash]  test.t2.id, cast(test.t2.id, decimal(20,0) UNSIGNED)->Column#14",
+			"                    └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t2.id))",
+			"                      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"))
+}
+>>>>>>> b2a9059b5e1 (planner: Limit fine grained shuffle usage for mpp join operators to ensure shuffle keys are the same with actual join keys (#59884))
