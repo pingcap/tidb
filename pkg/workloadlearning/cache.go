@@ -62,7 +62,7 @@ func (cw *WLCacheWorker) UpdateTableCostCache() error {
 	// Whether to update table cost metrics
 	// Get the latest latestVersionInStorage in the storage
 	sql := `SELECT version FROM mysql.tidb_workload_values
-            WHERE category = ? AND type = ?
+            WHERE category = %? AND type = %?
             ORDER BY version DESC LIMIT 1`
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql, feedbackCategory, tableCostType)
 	if err != nil {
@@ -80,7 +80,7 @@ func (cw *WLCacheWorker) UpdateTableCostCache() error {
 
 	// Get the latest table cost of metrics
 	sql = `SELECT table_id, value FROM mysql.tidb_workload_values
-            WHERE category = ? AND type = ? AND version = ?`
+            WHERE category = %? AND type = %? AND version = %?`
 	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, sql, feedbackCategory, tableCostType, latestVersionInStorage)
 	if err != nil {
 		return err
