@@ -1020,7 +1020,7 @@ func splitRangeInt64Max(n int64) [][]string {
 	return ranges
 }
 
-// IterAllTables iterates all the table at once, in order to avoid oom. It can use at most 15 goroutines to iterate.
+// IterAllTables iterates all the table at once, in order to avoid oom. It can use at most 15 concurrency to iterate.
 func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concurrency int, fn func(info *model.TableInfo) error) error {
 	cancelCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
