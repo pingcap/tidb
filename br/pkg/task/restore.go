@@ -1393,10 +1393,20 @@ func getDBNameFromIDInBackup(
 ) (dbName string, exists bool) {
 	// check in snapshot
 	if snapDb, exists := snapshotDBMap[dbID]; exists {
+		if snapDb.Info.Name.O == "" {
+			log.Error("found empty database name in snapshot",
+				zap.Int64("dbID", dbID))
+			return "", false
+		}
 		return snapDb.Info.Name.O, true
 	}
 	// check during log backup
 	if name, exists := logBackupTableHistory.GetDBNameByID(dbID); exists {
+		if name == "" {
+			log.Error("found empty database name in log backup history",
+				zap.Int64("dbID", dbID))
+			return "", false
+		}
 		return name, true
 	}
 	log.Warn("did not find db id in full/log backup, "+

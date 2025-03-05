@@ -329,9 +329,11 @@ func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBRepl
 					// merge partition mappings for existing tables
 					existingTableReplace := existingDBReplace.TableMap[tableUpID]
 					for partUpID, partDownID := range baseTableReplace.PartitionMap {
-						if _, exists := existingTableReplace.PartitionMap[partUpID]; !exists {
-							existingTableReplace.PartitionMap[partUpID] = partDownID
-						}
+						existingTableReplace.PartitionMap[partUpID] = partDownID
+					}
+
+					for indexUpID, indexDownID := range baseTableReplace.IndexMap {
+						existingTableReplace.IndexMap[indexUpID] = indexDownID
 					}
 				}
 			}

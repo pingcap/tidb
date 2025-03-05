@@ -19,7 +19,9 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/pingcap/log"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
+	"go.uber.org/zap"
 )
 
 // PiTRIdTracker tracks all the DB and tables ids that need to restore in a PiTR
@@ -37,6 +39,8 @@ func NewPiTRIdTracker() *PiTRIdTracker {
 
 // TrackTableId adds a physical ID to the filter for the given database ID
 func (t *PiTRIdTracker) TrackTableId(dbID, tableId int64) {
+	log.Info("tracking table id", zap.Int64("dbID", dbID), zap.Int64("tableID", tableId))
+
 	if t.DBIds == nil {
 		t.DBIds = make(map[int64]struct{})
 	}
@@ -50,6 +54,7 @@ func (t *PiTRIdTracker) TrackTableId(dbID, tableId int64) {
 
 // AddDB adds the database id
 func (t *PiTRIdTracker) AddDB(dbID int64) {
+	log.Info("tracking db id", zap.Int64("dbID", dbID))
 	if t.DBIds == nil {
 		t.DBIds = make(map[int64]struct{})
 	}
@@ -59,6 +64,7 @@ func (t *PiTRIdTracker) AddDB(dbID int64) {
 
 // RemoveTableId removes a table ID from the tracker
 func (t *PiTRIdTracker) RemoveTableId(tableID int64) {
+	log.Info("remove tracking table id", zap.Int64("tableID", tableID))
 	if t.TableIdToDBId == nil {
 		return
 	}
