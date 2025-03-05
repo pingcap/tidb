@@ -146,11 +146,6 @@ func GetMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, sch
 	// The LeftProperties caches all the possible properties that are provided by its children.
 	leftJoinKeys, rightJoinKeys, isNullEQ, hasNullEQ := p.GetJoinKeys()
 
-	// if there's no join keys, normally we don't need merge by default.
-	if len(leftJoinKeys) == 0 {
-		return nil
-	}
-
 	// EnumType/SetType Unsupported: merge join conflicts with index order.
 	// ref: https://github.com/pingcap/tidb/issues/24473, https://github.com/pingcap/tidb/issues/25669
 	for _, leftKey := range leftJoinKeys {
@@ -172,7 +167,8 @@ func GetMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, sch
 		offsets := util.GetMaxSortPrefix(lhsChildProperty, leftJoinKeys)
 		// If not all equal conditions hit properties. We ban merge join heuristically. Because in this case, merge join
 		// may get a very low performance. In executor, executes join results before other conditions filter it.
-		if len(offsets) < len(leftJoinKeys) {
+		// And skip the cartesian join case, unless we force to use merge join.
+		if len(offsets) < len(leftJoinKeys) || len(leftJoinKeys) == 0 {
 			continue
 		}
 
@@ -185,7 +181,7 @@ func GetMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, sch
 
 		prefixLen := findMaxPrefixLen(p.RightProperties, rightKeys)
 		// right side should also be full match.
-		if prefixLen < len(offsets) {
+		if prefixLen < len(offsets) || prefixLen == 0 {
 			continue
 		}
 
