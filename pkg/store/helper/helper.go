@@ -42,7 +42,9 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
-	pd "github.com/tikv/pd/client/http"
+	pd "github.com/tikv/pd/client"
+	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/zap"
 )
 
@@ -75,7 +77,7 @@ type Storage interface {
 	GetMinSafeTS(txnScope string) uint64
 	GetLockWaits() ([]*deadlockpb.WaitForEntry, error)
 	GetCodec() tikv.Codec
-	GetPDHTTPClient() pd.Client
+	GetPDHTTPClient() pdhttp.Client
 	GetOption(any) (any, bool)
 	SetOption(any, any)
 }
@@ -87,7 +89,8 @@ type Helper struct {
 	// pdHTTPCli is used to send http request to PD.
 	// This field is lazy initialized in `TryGetPDHTTPClient`,
 	// and should be tagged with the caller ID before using.
-	pdHTTPCli pd.Client
+	pdHTTPCli pdhttp.Client
+	PDClient  pd.Client
 }
 
 // NewHelper gets a Helper from Storage
@@ -95,11 +98,12 @@ func NewHelper(store Storage) *Helper {
 	return &Helper{
 		Store:       store,
 		RegionCache: store.GetRegionCache(),
+		PDClient:    store.GetRegionCache().PDClient().WithCallerComponent(caller.GetComponent(1)),
 	}
 }
 
 // TryGetPDHTTPClient tries to get a PD HTTP client if it's available.
-func (h *Helper) TryGetPDHTTPClient() (pd.Client, error) {
+func (h *Helper) TryGetPDHTTPClient() (pdhttp.Client, error) {
 	if h.pdHTTPCli != nil {
 		return h.pdHTTPCli, nil
 	}
@@ -319,7 +323,7 @@ func (h *Helper) FetchHotRegion(ctx context.Context, rw string) (map[uint64]Regi
 	if err != nil {
 		return nil, err
 	}
-	var regionResp *pd.StoreHotPeersInfos
+	var regionResp *pdhttp.StoreHotPeersInfos
 	switch rw {
 	case HotRead:
 		regionResp, err = pdCli.GetHotReadRegions(ctx)
@@ -680,10 +684,10 @@ func (*Helper) FilterMemDBs(oldSchemas []*model.DBInfo) (schemas []*model.DBInfo
 // GetRegionsTableInfo returns a map maps region id to its tables or indices.
 // Assuming tables or indices key ranges never intersect.
 // Regions key ranges can intersect.
-func (h *Helper) GetRegionsTableInfo(regionsInfo *pd.RegionsInfo, is infoschema.SchemaAndTable, filter func([]*model.DBInfo) []*model.DBInfo) map[int64][]TableInfo {
+func (h *Helper) GetRegionsTableInfo(regionsInfo *pdhttp.RegionsInfo, is infoschema.SchemaAndTable, filter func([]*model.DBInfo) []*model.DBInfo) map[int64][]TableInfo {
 	tables := h.GetTablesInfoWithKeyRange(is, filter)
 
-	regions := make([]*pd.RegionInfo, 0, len(regionsInfo.Regions))
+	regions := make([]*pdhttp.RegionInfo, 0, len(regionsInfo.Regions))
 	for i := 0; i < len(regionsInfo.Regions); i++ {
 		regions = append(regions, &regionsInfo.Regions[i])
 	}
@@ -754,14 +758,14 @@ func (*Helper) GetTablesInfoWithKeyRange(is infoschema.SchemaAndTable, filter fu
 }
 
 // ParseRegionsTableInfos parses the tables or indices in regions according to key range.
-func (*Helper) ParseRegionsTableInfos(regionsInfo []*pd.RegionInfo, tables []TableInfoWithKeyRange) map[int64][]TableInfo {
+func (*Helper) ParseRegionsTableInfos(regionsInfo []*pdhttp.RegionInfo, tables []TableInfoWithKeyRange) map[int64][]TableInfo {
 	tableInfos := make(map[int64][]TableInfo, len(regionsInfo))
 
 	if len(tables) == 0 || len(regionsInfo) == 0 {
 		return tableInfos
 	}
 	// tables is sorted in GetTablesInfoWithKeyRange func
-	slices.SortFunc(regionsInfo, func(i, j *pd.RegionInfo) int {
+	slices.SortFunc(regionsInfo, func(i, j *pdhttp.RegionInfo) int {
 		return cmp.Compare(i.StartKey, j.StartKey)
 	})
 
@@ -805,7 +809,7 @@ func (h *Helper) GetPDAddr() ([]string, error) {
 }
 
 // GetPDRegionStats get the RegionStats by tableID from PD by HTTP API.
-func (h *Helper) GetPDRegionStats(ctx context.Context, tableID int64, noIndexStats bool) (*pd.RegionStats, error) {
+func (h *Helper) GetPDRegionStats(ctx context.Context, tableID int64, noIndexStats bool) (*pdhttp.RegionStats, error) {
 	pdCli, err := h.TryGetPDHTTPClient()
 	if err != nil {
 		return nil, err
@@ -822,7 +826,7 @@ func (h *Helper) GetPDRegionStats(ctx context.Context, tableID int64, noIndexSta
 	startKey = codec.EncodeBytes([]byte{}, startKey)
 	endKey = codec.EncodeBytes([]byte{}, endKey)
 
-	return pdCli.GetRegionStatusByKeyRange(ctx, pd.NewKeyRange(startKey, endKey), false)
+	return pdCli.GetRegionStatusByKeyRange(ctx, pdhttp.NewKeyRange(startKey, endKey), false)
 }
 
 // GetTiFlashTableIDFromEndKey computes tableID from pd rule's endKey.
