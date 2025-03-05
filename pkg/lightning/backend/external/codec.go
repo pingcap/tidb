@@ -24,6 +24,7 @@ import (
 // - size: the size of the range.
 // - keys: the number of keys in the range.
 type rangeProperty struct {
+	// [firstKey, lastKey]
 	firstKey []byte
 	lastKey  []byte
 	offset   uint64

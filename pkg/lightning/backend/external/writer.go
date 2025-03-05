@@ -253,6 +253,7 @@ func (b *WriterBuilder) BuildOneFile(
 // every 500 files). It is used to estimate the data overlapping, and per-file
 // statistic information maybe too big to loaded into memory.
 type MultipleFilesStat struct {
+	// both are inclusive: [MinKey, MaxKey]
 	MinKey tidbkv.Key `json:"min-key"`
 	MaxKey tidbkv.Key `json:"max-key"`
 	// Filenames is a list of [dataFile, statFile] paris, and it's sorted by the
@@ -307,9 +308,7 @@ func (m *MultipleFilesStat) build(startKeys, endKeys []tidbkv.Key) {
 	m.MaxOverlappingNum = GetMaxOverlapping(points)
 }
 
-// GetMaxOverlappingTotal assume the most overlapping case from given stats and
-// returns the overlapping level.
-func GetMaxOverlappingTotal(stats []MultipleFilesStat) int64 {
+func multipleFilesStats2EndPoints(stats []MultipleFilesStat) []Endpoint {
 	points := make([]Endpoint, 0, len(stats)*2)
 	for _, stat := range stats {
 		points = append(points, Endpoint{Key: stat.MinKey, Tp: InclusiveStart, Weight: stat.MaxOverlappingNum})
@@ -317,7 +316,13 @@ func GetMaxOverlappingTotal(stats []MultipleFilesStat) int64 {
 	for _, stat := range stats {
 		points = append(points, Endpoint{Key: stat.MaxKey, Tp: InclusiveEnd, Weight: stat.MaxOverlappingNum})
 	}
+	return points
+}
 
+// GetMaxOverlappingTotal assume the most overlapping case from given stats and
+// returns the overlapping level.
+func GetMaxOverlappingTotal(stats []MultipleFilesStat) int64 {
+	points := multipleFilesStats2EndPoints(stats)
 	return GetMaxOverlapping(points)
 }
 

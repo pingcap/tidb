@@ -16,6 +16,7 @@ package external
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -262,6 +263,37 @@ func TestGetMaxOverlapping(t *testing.T) {
 		{Key: []byte{5}, Tp: InclusiveEnd, Weight: 1},
 	}
 	require.EqualValues(t, 3, GetMaxOverlapping(points))
+}
+
+func TestOverlapCalculator(t *testing.T) {
+	cal := &overlapCalculator{}
+	require.EqualValues(t, 223, cal.getWeightAfterPoint(100, Endpoint{Tp: InclusiveStart, Weight: 123}))
+	require.EqualValues(t, 70, cal.getWeightAfterPoint(100, Endpoint{Tp: ExclusiveEnd, Weight: 30}))
+	require.EqualValues(t, 70, cal.getWeightAfterPoint(100, Endpoint{Tp: InclusiveEnd, Weight: 30}))
+
+	getPointsFromRange := func(ranges [][2][]byte) []Endpoint {
+		points := make([]Endpoint, 0, len(ranges)*2)
+		for _, r := range ranges {
+			points = append(points, Endpoint{Key: r[0], Tp: InclusiveStart, Weight: 1})
+			points = append(points, Endpoint{Key: r[1], Tp: InclusiveEnd, Weight: 1})
+		}
+		return points
+	}
+	// 1   3
+	//   2       7
+	//     3       8
+	//         6      9
+	cal = newOverlapCalculator(getPointsFromRange([][2][]byte{
+		{{1}, {3}}, {{2}, {7}}, {{3}, {8}}, {{6}, {8}},
+	}))
+	for i, c := range [][2]int{
+		{0, 0}, {1, 1}, {2, 2},
+		{3, 2}, // Note: the first range is not included, it's expected
+		{4, 2}, {5, 3},
+		{6, 2}, {7, 0}, {8, 0},
+	} {
+		require.EqualValues(t, c[1], cal.getOverlapOfNextSortedKey([]byte{byte(c[0])}), fmt.Sprintf("case-%d", i))
+	}
 }
 
 func TestSortedKVMeta(t *testing.T) {

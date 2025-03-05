@@ -230,26 +230,61 @@ type Endpoint struct {
 // `points` as endpoints of intervals. `points` are not required to be sorted,
 // and will be sorted in-place in this function.
 func GetMaxOverlapping(points []Endpoint) int64 {
+	cal := newOverlapCalculator(points)
+	return int64(cal.getMaxOverlapping())
+}
+
+type overlapCalculator struct {
+	points     []Endpoint
+	currIdx    int
+	currWeight int
+}
+
+// newOverlapCalculator creates a calculator for calculating the overlap weight.
+// input points can be any order.
+func newOverlapCalculator(points []Endpoint) *overlapCalculator {
 	slices.SortFunc(points, func(i, j Endpoint) int {
 		if cmp := bytes.Compare(i.Key, j.Key); cmp != 0 {
 			return cmp
 		}
 		return int(i.Tp) - int(j.Tp)
 	})
-	var maxWeight int64
-	var curWeight int64
-	for _, p := range points {
-		switch p.Tp {
-		case InclusiveStart:
-			curWeight += p.Weight
-		case ExclusiveEnd, InclusiveEnd:
-			curWeight -= p.Weight
-		}
+	return &overlapCalculator{points: points}
+}
+
+// getOverlapOfNextSortedKey returns the overlap weight after the key k.
+// the args of continuous calls of this function must be ordered.
+func (c *overlapCalculator) getOverlapOfNextSortedKey(k []byte) int {
+	if c.currIdx >= len(c.points) {
+		return 0
+	}
+	for c.currIdx < len(c.points) && bytes.Compare(k, c.points[c.currIdx].Key) >= 0 {
+		c.currWeight = c.getWeightAfterPoint(c.currWeight, c.points[c.currIdx])
+		c.currIdx++
+	}
+	return c.currWeight
+}
+
+func (c *overlapCalculator) getWeightAfterPoint(currWeight int, p Endpoint) int {
+	switch p.Tp {
+	case InclusiveStart:
+		currWeight += int(p.Weight)
+	case ExclusiveEnd, InclusiveEnd:
+		currWeight -= int(p.Weight)
+	}
+	return currWeight
+}
+
+func (c *overlapCalculator) getMaxOverlapping() int {
+	var maxWeight int
+	var curWeight int
+	for _, p := range c.points {
+		curWeight = c.getWeightAfterPoint(curWeight, p)
 		if curWeight > maxWeight {
 			maxWeight = curWeight
 		}
 	}
-	return maxWeight
+	return int(maxWeight)
 }
 
 // SortedKVMeta is the meta of sorted kv.

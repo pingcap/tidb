@@ -89,6 +89,7 @@ type RangeSplitter struct {
 
 	propIter      *MergePropIter
 	multiFileStat []MultipleFilesStat
+	overlapCal    *overlapCalculator
 
 	// filename -> 2 level index in dataFiles/statFiles
 	activeDataFiles                map[string][2]int
@@ -134,17 +135,20 @@ func NewRangeSplitter(
 		zap.Int64("rangeJobKeyCnt", rangeJobKeyCnt),
 		zap.Int64("regionSplitSize", regionSplitSize),
 		zap.Int64("regionSplitKeyCnt", regionSplitKeyCnt),
+		zap.Int("multiFileStatLen", len(multiFileStat)),
 	)
 	propIter, err := NewMergePropIter(ctx, multiFileStat, externalStorage)
 	if err != nil {
 		return nil, err
 	}
 
+	points := multipleFilesStats2EndPoints(multiFileStat)
 	return &RangeSplitter{
 		rangesGroupSize: rangesGroupSize,
 		rangesGroupKeys: rangesGroupKeyCnt,
 		propIter:        propIter,
 		multiFileStat:   multiFileStat,
+		overlapCal:      newOverlapCalculator(points),
 		activeDataFiles: make(map[string][2]int),
 		activeStatFiles: make(map[string][2]int),
 
@@ -194,12 +198,20 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 			return nil, nil, nil, nil, nil, err
 		}
 		prop := r.propIter.prop()
-		r.curGroupSize += int64(prop.size)
-		r.curRangeJobSize += int64(prop.size)
-		r.curRegionSplitSize += int64(prop.size)
-		r.curGroupKeyCnt += int64(prop.keys)
-		r.curRangeJobKeyCnt += int64(prop.keys)
-		r.curRegionSplitKeyCnt += int64(prop.keys)
+		// prop are sorted by firstKey, see rangeProperty.sortKey
+		overlap := max(r.overlapCal.getOverlapOfNextSortedKey(prop.firstKey), 1)
+		// we only have the max overlap of multiple-file-stat, current key may not
+		// overlap with all of them, so we use 1/2 for a rough estimate.
+		// the 1 represents the file where the prop belongs to.
+		factor := 1 + float64(overlap-1)*0.5
+		adjustedSize := int64(float64(prop.size) * factor)
+		adjustedKeys := int64(float64(prop.keys) * factor)
+		r.curGroupSize += adjustedSize
+		r.curRangeJobSize += adjustedSize
+		r.curRegionSplitSize += adjustedSize
+		r.curGroupKeyCnt += adjustedKeys
+		r.curRangeJobKeyCnt += adjustedKeys
+		r.curRegionSplitKeyCnt += adjustedKeys
 
 		// if this Next call will close the last reader
 		if *r.propIter.baseCloseReaderFlag {
