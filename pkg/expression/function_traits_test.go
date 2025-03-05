@@ -194,6 +194,7 @@ func TestIllegalFunctions4GeneratedColumns(t *testing.T) {
 		"month",
 		"monthname",
 		"mul",
+		"mysql_query_attribute_string",
 		"ne",
 		"nextval",
 		"not",
