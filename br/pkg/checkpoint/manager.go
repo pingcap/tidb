@@ -1,4 +1,4 @@
-// Copyright 2023 PingCAP, Inc.
+// Copyright 2025 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@ import (
 type SnapshotMetaManagerT = MetaManager[
 	RestoreKeyType, RestoreValueType, RestoreValueType, CheckpointMetadataForSnapshotRestore,
 ]
-type LogMetaManagerT = MetaManager[
+type LogMetaManagerT = LogMetaManager[
 	LogRestoreKeyType, LogRestoreValueType, LogRestoreValueMarshaled, CheckpointMetadataForLogRestore,
 ]
 
@@ -49,7 +49,7 @@ func DefaultTickDurationConfig() tickDurationConfig {
 }
 
 type MetaManager[K KeyType, SV, LV ValueType, M any] interface {
-	RootPath() string
+	fmt.Stringer
 
 	LoadCheckpointData(context.Context, func(K, LV)) (time.Duration, error)
 	LoadCheckpointChecksum(context.Context) (map[int64]*ChecksumItem, time.Duration, error)
@@ -58,15 +58,6 @@ type MetaManager[K KeyType, SV, LV ValueType, M any] interface {
 	ExistsCheckpointMetadata(context.Context) (bool, error)
 	RemoveCheckpointData(context.Context) error
 
-	// only for log restore
-	LoadCheckpointProgress(context.Context) (*CheckpointProgress, error)
-	SaveCheckpointProgress(context.Context, *CheckpointProgress) error
-	ExistsCheckpointProgress(context.Context) (bool, error)
-
-	LoadCheckpointIngestIndexRepairSQLs(context.Context) (*CheckpointIngestIndexRepairSQLs, error)
-	SaveCheckpointIngestIndexRepairSQLs(context.Context, *CheckpointIngestIndexRepairSQLs) error
-	ExistsCheckpointIngestIndexRepairSQLs(context.Context) (bool, error)
-
 	// start checkpoint runner
 	StartCheckpointRunner(
 		context.Context, tickDurationConfig, func(*RangeGroup[K, SV]) ([]byte, error),
@@ -74,6 +65,18 @@ type MetaManager[K KeyType, SV, LV ValueType, M any] interface {
 
 	// close session
 	Close()
+}
+
+type LogMetaManager[K KeyType, SV, LV ValueType, M any] interface {
+	MetaManager[K, SV, LV, M]
+
+	LoadCheckpointProgress(context.Context) (*CheckpointProgress, error)
+	SaveCheckpointProgress(context.Context, *CheckpointProgress) error
+	ExistsCheckpointProgress(context.Context) (bool, error)
+
+	LoadCheckpointIngestIndexRepairSQLs(context.Context) (*CheckpointIngestIndexRepairSQLs, error)
+	SaveCheckpointIngestIndexRepairSQLs(context.Context, *CheckpointIngestIndexRepairSQLs) error
+	ExistsCheckpointIngestIndexRepairSQLs(context.Context) (bool, error)
 }
 
 type TableMetaManager[K KeyType, SV, LV ValueType, M any] struct {
@@ -129,7 +132,7 @@ func NewSnapshotTableMetaManager(
 	}, nil
 }
 
-func (manager *TableMetaManager[K, SV, LV, M]) RootPath() string {
+func (manager *TableMetaManager[K, SV, LV, M]) String() string {
 	return fmt.Sprintf("databases[such as %s]", manager.dbName)
 }
 
@@ -305,7 +308,7 @@ func NewLogStorageMetaManager(
 	}
 }
 
-func (manager *StorageMetaManager[K, SV, LV, M]) RootPath() string {
+func (manager *StorageMetaManager[K, SV, LV, M]) String() string {
 	return fmt.Sprintf("path[%s]", fmt.Sprintf(CheckpointRestoreDirFormat, manager.clusterID))
 }
 
@@ -400,7 +403,7 @@ func (manager *StorageMetaManager[K, SV, LV, M]) StartCheckpointRunner(
 	valueMarshaler func(*RangeGroup[K, SV]) ([]byte, error),
 ) (*CheckpointRunner[K, SV], error) {
 	checkpointStorage, err := newExternalCheckpointStorage(
-		ctx, manager.storage, nil, flushPositionForRestore(manager.taskName))
+		ctx, manager.storage, nil, flushPathForRestore(manager.taskName))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
