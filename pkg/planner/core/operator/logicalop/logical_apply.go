@@ -211,6 +211,7 @@ func (la *LogicalApply) ExtractFD() *fd.FDSet {
 	for _, col := range innerPlan.Schema().Columns {
 		if col.CorrelatedColUniqueID != 0 {
 			// the correlated column has been projected again in inner.
+			// put the CorrelatedColUniqueID in the first of the pair.
 			equivs = append(equivs, []intset.FastIntSet{intset.NewFastIntSet(int(col.CorrelatedColUniqueID)), intset.NewFastIntSet(int(col.UniqueID))})
 		}
 	}
