@@ -1419,14 +1419,6 @@ func (rc *LogClient) SetTableModeToNormal(ctx context.Context, schemaReplace *st
 		if dbReplace.FilteredOut {
 			continue
 		}
-		dbName := dbReplace.Name
-		if dbName == "" {
-			dbInfo, exist := rc.dom.InfoSchema().SchemaByID(dbReplace.DbID)
-			if !exist {
-				return errors.New("unable to find db name")
-			}
-			dbName = dbInfo.Name.O
-		}
 		for _, tableReplace := range dbReplace.TableMap {
 			if tableReplace.FilteredOut {
 				continue

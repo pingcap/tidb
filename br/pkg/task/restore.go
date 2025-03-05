@@ -1496,6 +1496,9 @@ func handleTableRenames(
 							zap.String("original_table_name", start.TableName),
 							zap.String("end_table_name", end.TableName))
 					} else if startMatches {
+						log.Info("table renamed out of filter, removing this table",
+							zap.Int64("table_id", tableId),
+							zap.String("table_name", table.Info.Name.O))
 						// need to remove this table
 						delete(existingTableMap, table.Info.ID)
 						delete(existingFileMap, table.Info.ID)
@@ -1602,6 +1605,7 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 	for dbId, dbName := range newlyCreatedDBs {
 		if utils.MatchSchema(cfg.TableFilter, dbName, cfg.WithSysTable) {
 			piTRIdTracker.AddDB(dbId)
+			buildCoveringDBIfNeeded(dbMap, dbId, dbName)
 		}
 	}
 
@@ -1626,7 +1630,7 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 		piTRIdTracker.TrackTableId(table.DB.ID, tableID)
 	}
 
-	log.Info("pitr table tracker", zap.String("map", piTRIdTracker.String()))
+	log.Debug("pitr table tracker", zap.String("map", piTRIdTracker.String()))
 	return nil
 }
 
@@ -1995,18 +1999,7 @@ func buildCoveringTableIfNeeded(
 		return
 	}
 
-	var coveringDB *metautil.Database
-	if db, exists := existingDBMap[dbID]; exists {
-		coveringDB = db
-	} else {
-		coveringDB = &metautil.Database{
-			Info: &model.DBInfo{
-				ID:   dbID,
-				Name: ast.NewCIStr(dbName),
-			},
-		}
-		existingDBMap[dbID] = coveringDB
-	}
+	coveringDB := buildCoveringDBIfNeeded(existingDBMap, dbID, dbName)
 
 	coveringTable := &metautil.Table{
 		DB: coveringDB.Info,
@@ -2019,8 +2012,30 @@ func buildCoveringTableIfNeeded(
 	existingTableMap[tableId] = coveringTable
 
 	log.Info("created covering table for table that's not in snapshot",
-		zap.Int64("db_id", dbID),
-		zap.String("db_name", dbName),
 		zap.Int64("table_id", tableId),
 		zap.String("table_name", tableName))
+}
+
+// buildCoveringDBIfNeeded creates a covering database entry if it doesn't exist in the dbMap
+func buildCoveringDBIfNeeded(
+	dbMap map[int64]*metautil.Database,
+	dbID int64,
+	dbName string,
+) *metautil.Database {
+	if db, exists := dbMap[dbID]; exists {
+		return db
+	}
+
+	coveringDB := &metautil.Database{
+		Info: &model.DBInfo{
+			ID:   dbID,
+			Name: ast.NewCIStr(dbName),
+		},
+	}
+	dbMap[dbID] = coveringDB
+
+	log.Info("created covering database for database that's not in snapshot",
+		zap.Int64("db_id", dbID),
+		zap.String("db_name", dbName))
+	return coveringDB
 }

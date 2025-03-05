@@ -1583,7 +1583,7 @@ func restoreStream(
 	}); err != nil {
 		return errors.Annotate(err, "failed to restore meta files")
 	}
-
+	stream.LogDBReplaceMap("built db replace map, start to build rewrite rules", schemasReplace.DbReplaceMap)
 	rewriteRules := buildRewriteRules(schemasReplace)
 
 	ingestRecorder := schemasReplace.GetIngestRecorder()
