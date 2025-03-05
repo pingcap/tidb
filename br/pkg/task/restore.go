@@ -1642,8 +1642,6 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 	for tableID, table := range tableMap {
 		piTRIdTracker.TrackTableId(table.DB.ID, tableID)
 	}
-
-	log.Debug("pitr table tracker", zap.String("map", piTRIdTracker.String()))
 	return nil
 }
 

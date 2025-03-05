@@ -26,14 +26,16 @@ import (
 
 // PiTRIdTracker tracks all the DB and tables ids that need to restore in a PiTR
 type PiTRIdTracker struct {
-	DBIds         map[int64]struct{}
-	TableIdToDBId map[int64]int64
+	DBIds map[int64]struct{}
+	// TableIdToDBIds maps a table ID to a set of database IDs it belongs to
+	// This handles the case where a table can be renamed across databases
+	TableIdToDBIds map[int64]map[int64]struct{}
 }
 
 func NewPiTRIdTracker() *PiTRIdTracker {
 	return &PiTRIdTracker{
-		DBIds:         make(map[int64]struct{}),
-		TableIdToDBId: make(map[int64]int64),
+		DBIds:          make(map[int64]struct{}),
+		TableIdToDBIds: make(map[int64]map[int64]struct{}),
 	}
 }
 
@@ -44,12 +46,19 @@ func (t *PiTRIdTracker) TrackTableId(dbID, tableId int64) {
 	if t.DBIds == nil {
 		t.DBIds = make(map[int64]struct{})
 	}
-	if t.TableIdToDBId == nil {
-		t.TableIdToDBId = make(map[int64]int64)
+	if t.TableIdToDBIds == nil {
+		t.TableIdToDBIds = make(map[int64]map[int64]struct{})
 	}
 
 	t.DBIds[dbID] = struct{}{}
-	t.TableIdToDBId[tableId] = dbID
+
+	// Initialize the map for this table ID if it doesn't exist
+	if _, exists := t.TableIdToDBIds[tableId]; !exists {
+		t.TableIdToDBIds[tableId] = make(map[int64]struct{})
+	}
+
+	// Add this database ID to the set of databases for this table
+	t.TableIdToDBIds[tableId][dbID] = struct{}{}
 }
 
 // AddDB adds the database id
@@ -65,20 +74,26 @@ func (t *PiTRIdTracker) AddDB(dbID int64) {
 // RemoveTableId removes a table ID from the tracker
 func (t *PiTRIdTracker) RemoveTableId(tableID int64) {
 	log.Info("remove tracking table id", zap.Int64("tableID", tableID))
-	if t.TableIdToDBId == nil {
+	if t.TableIdToDBIds == nil {
 		return
 	}
-	delete(t.TableIdToDBId, tableID)
+	delete(t.TableIdToDBIds, tableID)
 }
 
 // ContainsTableId checks if the given database ID and table ID combination exists in the filter
 func (t *PiTRIdTracker) ContainsTableId(dbID, tableID int64) bool {
-	if t.TableIdToDBId == nil {
+	if t.TableIdToDBIds == nil {
 		return false
 	}
 
-	storedDBID, exists := t.TableIdToDBId[tableID]
-	return exists && storedDBID == dbID
+	dbIDs, exists := t.TableIdToDBIds[tableID]
+	if !exists {
+		return false
+	}
+
+	// Check if this specific database ID is in the set of databases for this table
+	_, hasDB := dbIDs[dbID]
+	return hasDB
 }
 
 // ContainsDB checks if the given database ID exists in the filter
@@ -88,48 +103,6 @@ func (t *PiTRIdTracker) ContainsDB(dbID int64) bool {
 	}
 	_, ok := t.DBIds[dbID]
 	return ok
-}
-
-// String returns a string representation of the PiTRIdTracker for debugging
-func (t *PiTRIdTracker) String() string {
-	if t == nil || t.DBIds == nil || t.TableIdToDBId == nil {
-		return "PiTRIdTracker{nil}"
-	}
-
-	var result strings.Builder
-	result.WriteString("PiTRIdTracker{\n")
-
-	// Print database IDs
-	result.WriteString("  DBIds: {")
-	dbIDs := make([]int64, 0, len(t.DBIds))
-	for dbID := range t.DBIds {
-		dbIDs = append(dbIDs, dbID)
-	}
-	// Sort for consistent output
-	sort.Slice(dbIDs, func(i, j int) bool { return dbIDs[i] < dbIDs[j] })
-	for i, dbID := range dbIDs {
-		if i > 0 {
-			result.WriteString(", ")
-		}
-		result.WriteString(fmt.Sprintf("%d", dbID))
-	}
-	result.WriteString("}\n")
-
-	// Print table ID to DB ID mappings
-	result.WriteString("  TableIdToDBId: {\n")
-	tableIDs := make([]int64, 0, len(t.TableIdToDBId))
-	for tableID := range t.TableIdToDBId {
-		tableIDs = append(tableIDs, tableID)
-	}
-	// Sort for consistent output
-	sort.Slice(tableIDs, func(i, j int) bool { return tableIDs[i] < tableIDs[j] })
-	for _, tableID := range tableIDs {
-		dbID := t.TableIdToDBId[tableID]
-		result.WriteString(fmt.Sprintf("    Table[%d] -> DB[%d]\n", tableID, dbID))
-	}
-	result.WriteString("  }\n")
-	result.WriteString("}")
-	return result.String()
 }
 
 func MatchSchema(filter filter.Filter, schema string, withSys bool) bool {
