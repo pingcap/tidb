@@ -1042,7 +1042,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx sessionctx.Contex
 				// actual join hash code due to type cast
 				applyFlag := true
 				for i, joinKey := range helper.joinKeys {
-					if !x.HashCols[i].Col.EqualColumn(joinKey) {
+					if !x.HashCols[i].Col.Equal(nil, joinKey) {
 						applyFlag = false
 						break
 					}
