@@ -71,16 +71,16 @@
             "name": "HashAgg_8",
             "children": [
               {
-                "name": "Projection_22",
+                "name": "Projection_20",
                 "children": [
                   {
-                    "name": "MergeJoin_10",
+                    "name": "HashJoin_10",
                     "children": [
                       {
-                        "name": "IndexReader_16",
+                        "name": "IndexReader_15",
                         "children": [
                           {
-                            "name": "IndexFullScan_15",
+                            "name": "IndexFullScan_14",
                             "cost": 1628000,
                             "est_rows": 10000,
                             "act_rows": 2,
@@ -97,13 +97,13 @@
                         "act_rows": 2,
                         "task_type": 1,
                         "store_type": 1,
-                        "operator_info": "index:IndexFullScan_15"
+                        "operator_info": "index:IndexFullScan_14"
                       },
                       {
-                        "name": "TableReader_18",
+                        "name": "TableReader_17",
                         "children": [
                           {
-                            "name": "TableFullScan_17",
+                            "name": "TableFullScan_16",
                             "cost": 4546159.475587022,
                             "est_rows": 10000,
                             "act_rows": 4,
@@ -120,18 +120,18 @@
                         "act_rows": 4,
                         "task_type": 1,
                         "store_type": 1,
-                        "operator_info": "data:TableFullScan_17"
+                        "operator_info": "data:TableFullScan_16"
                       }
                     ],
-                    "cost": 496090.63170580147,
+                    "cost": 1128387.6317058015,
                     "est_rows": 100000000,
                     "act_rows": 8,
                     "task_type": 1,
                     "store_type": 1,
-                    "operator_info": "inner join"
+                    "operator_info": "CARTESIAN inner join"
                   }
                 ],
-                "cost": 998496090.6317058,
+                "cost": 999128387.6317058,
                 "est_rows": 100000000,
                 "act_rows": 8,
                 "task_type": 1,
@@ -139,7 +139,7 @@
                 "operator_info": "cast(test.t.a, decimal(10,0) BINARY)->Column#8"
               }
             ],
-            "cost": 1996497599.2117057,
+            "cost": 1997129896.2117057,
             "est_rows": 1,
             "act_rows": 1,
             "task_type": 1,
