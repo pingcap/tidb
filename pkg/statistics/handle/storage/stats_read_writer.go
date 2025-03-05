@@ -96,7 +96,7 @@ func (s *statsReadWriter) UpdateStatsVersion() error {
 // Also, we need to update the stats meta with a more recent version to avoid other nodes missing the delta update.
 // Combined with the stats meta version update, we can ensure the stats cache on other TiDB nodes is consistent.
 // See more at stats cache's Update function.
-func (s *statsReadWriter) handleSlowStatsSaving(results *statistics.AnalyzeResults, start time.Time) uint64 {
+func (s *statsReadWriter) handleSlowStatsSaving(results *statistics.AnalyzeResults, start time.Time) (uint64, error) {
 	dur := time.Since(start)
 	// Note: In unit tests, the lease is set to a value less than 0, which means the lease is disabled.
 	// This is why we need to explicitly check the lease here. Without this check,
@@ -110,8 +110,9 @@ func (s *statsReadWriter) handleSlowStatsSaving(results *statistics.AnalyzeResul
 	})
 
 	if !isLoadIntervalExceeded {
-		return 0
+		return 0, nil
 	}
+
 	statslogutil.StatsLogger().Warn("Update stats cache is too slow",
 		zap.Duration("duration", dur),
 		zap.String("DB", results.Job.DBName),
@@ -129,6 +130,11 @@ func (s *statsReadWriter) handleSlowStatsSaving(results *statistics.AnalyzeResul
 	statsVer := uint64(0)
 	err := util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		startTS, err := UpdateStatsMetaVersion(util.StatsCtx, sctx, tableID)
+		failpoint.Inject("failToSaveStats", func(val failpoint.Value) {
+			if val.(bool) {
+				err = errors.New("mock update stats meta version failed")
+			}
+		})
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -144,7 +150,7 @@ func (s *statsReadWriter) handleSlowStatsSaving(results *statistics.AnalyzeResul
 			zap.String("jobInfo", results.Job.JobInfo),
 			zap.Error(err),
 		)
-		return 0
+		return 0, errors.Errorf("failed to update stats meta version when saving analyze result, please retry the analyze operation")
 	}
 
 	statslogutil.StatsLogger().Info("Successfully updated stats meta version for slow saving",
@@ -155,7 +161,7 @@ func (s *statsReadWriter) handleSlowStatsSaving(results *statistics.AnalyzeResul
 		zap.String("partitionName", results.Job.PartitionName),
 		zap.String("jobInfo", results.Job.JobInfo),
 	)
-	return statsVer
+	return statsVer, nil
 }
 
 // SaveTableStatsToStorage saves the stats of a table to storage.
@@ -168,9 +174,14 @@ func (s *statsReadWriter) SaveTableStatsToStorage(results *statistics.AnalyzeRes
 	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
 		// Check if saving was slow and update stats version if needed
-		if version := s.handleSlowStatsSaving(results, start); version != 0 {
+		version, err2 := s.handleSlowStatsSaving(results, start)
+		if err2 != nil {
+			return err2
+		}
+		if version != 0 {
 			statsVer = version
 		}
+
 		tableID := results.TableID.GetStatisticsID()
 		s.statsHandler.RecordHistoricalStatsMeta(statsVer, source, true, tableID)
 	}
