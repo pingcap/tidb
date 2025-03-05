@@ -2991,6 +2991,11 @@ func TestDDL(t *testing.T) {
 		{"create table t (j json default (json_array(1,2,3)))", true, "CREATE TABLE `t` (`j` JSON DEFAULT (JSON_ARRAY(1, 2, 3)))"},
 		{"create table t (j json default (json_quote('foobar')))", true, "CREATE TABLE `t` (`j` JSON DEFAULT (JSON_QUOTE(_UTF8MB4'foobar')))"},
 
+		{"create table t (a int default(1))", true, "CREATE TABLE `t` (`a` INT DEFAULT 1)"},
+		{"create table t (a int default((1)))", true, "CREATE TABLE `t` (`a` INT DEFAULT 1)"},
+		{"create table t (a int default(\"1\"))", true, "CREATE TABLE `t` (`a` INT DEFAULT _UTF8MB4'1')"},
+		{"create table t (a int default (_utf8mb4'1'))", true, "CREATE TABLE `t` (`a` INT DEFAULT _UTF8MB4'1')"},
+
 		// For table option `ENCRYPTION`
 		{"create table t (a int) encryption = 'n';", true, "CREATE TABLE `t` (`a` INT) ENCRYPTION = 'n'"},
 		{"create table t (a int) encryption 'n';", true, "CREATE TABLE `t` (`a` INT) ENCRYPTION = 'n'"},

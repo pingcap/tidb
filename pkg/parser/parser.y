@@ -947,6 +947,7 @@ import (
 	StringLiteral                   "text literal"
 	ExpressionOpt                   "Optional expression"
 	SignedLiteral                   "Literal or NumLiteral with sign"
+	SignedLiteralParentheses        "SignedLiteral or SignedLiteral with Parentheses"
 	DefaultValueExpr                "DefaultValueExpr(Now or Signed Literal)"
 	NowSymOptionFraction            "NowSym with optional fraction part"
 	NowSymOptionFractionParentheses "NowSym with optional fraction part within potential parentheses"
@@ -4037,9 +4038,16 @@ ReferOpt:
  */
 DefaultValueExpr:
 	NowSymOptionFractionParentheses
-|	SignedLiteral
+|	SignedLiteralParentheses
 |	NextValueForSequenceParentheses
 |	BuiltinFunction
+
+SignedLiteralParentheses:
+	'(' SignedLiteralParentheses ')'
+	{
+		$$ = $2
+	}
+|	SignedLiteral
 
 BuiltinFunction:
 	'(' BuiltinFunction ')'
@@ -13801,7 +13809,7 @@ ConnectionOptions:
 		for _, option := range $2.([]*ast.ResourceOption) {
 			switch option.Type {
 			case ast.MaxUserConnections:
-				// do nothing.
+			// do nothing.
 			default:
 				needWarning = true
 			}
