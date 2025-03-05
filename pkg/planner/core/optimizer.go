@@ -784,8 +784,13 @@ const (
 
 type fineGrainedShuffleHelper struct {
 	shuffleTarget shuffleTarget
+<<<<<<< HEAD
 	plans         []*basePhysicalPlan
 	joinKeysCount int
+=======
+	plans         []*physicalop.BasePhysicalPlan
+	joinKeys      []*expression.Column
+>>>>>>> b2a9059b5e1 (planner: Limit fine grained shuffle usage for mpp join operators to ensure shuffle keys are the same with actual join keys (#59884))
 }
 
 type tiflashClusterInfoStatus uint8
@@ -804,7 +809,7 @@ type tiflashClusterInfo struct {
 func (h *fineGrainedShuffleHelper) clear() {
 	h.shuffleTarget = unknown
 	h.plans = h.plans[:0]
-	h.joinKeysCount = 0
+	h.joinKeys = nil
 }
 
 func (h *fineGrainedShuffleHelper) updateTarget(t shuffleTarget, p *basePhysicalPlan) {
@@ -1003,9 +1008,15 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx sessionctx.Contex
 			probChild = child0
 		}
 		if len(joinKeys) > 0 { // Not cross join
+<<<<<<< HEAD
 			buildHelper := fineGrainedShuffleHelper{shuffleTarget: joinBuild, plans: []*basePhysicalPlan{}}
 			buildHelper.plans = append(buildHelper.plans, &x.basePhysicalPlan)
 			buildHelper.joinKeysCount = len(joinKeys)
+=======
+			buildHelper := fineGrainedShuffleHelper{shuffleTarget: joinBuild, plans: []*physicalop.BasePhysicalPlan{}}
+			buildHelper.plans = append(buildHelper.plans, &x.BasePhysicalPlan)
+			buildHelper.joinKeys = joinKeys
+>>>>>>> b2a9059b5e1 (planner: Limit fine grained shuffle usage for mpp join operators to ensure shuffle keys are the same with actual join keys (#59884))
 			setupFineGrainedShuffleInternal(ctx, sctx, buildChild, &buildHelper, streamCountInfo, tiflashServerCountInfo)
 		} else {
 			buildHelper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: []*basePhysicalPlan{}}
@@ -1035,7 +1046,19 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx sessionctx.Contex
 				}
 			case joinBuild:
 				// Support hashJoin only when shuffle hash keys equals to join keys due to tiflash implementations
-				if len(x.HashCols) != helper.joinKeysCount {
+				if len(x.HashCols) != len(helper.joinKeys) {
+					break
+				}
+				// Check the shuffle key should be equal to joinKey, otherwise the shuffle hash code may not be equal to
+				// actual join hash code due to type cast
+				applyFlag := true
+				for i, joinKey := range helper.joinKeys {
+					if !x.HashCols[i].Col.EqualColumn(joinKey) {
+						applyFlag = false
+						break
+					}
+				}
+				if !applyFlag {
 					break
 				}
 				applyFlag, streamCount := checkFineGrainedShuffleForJoinAgg(ctx, sctx, streamCountInfo, tiflashServerCountInfo, exchangeColCount, 600) // 600: performance test result
