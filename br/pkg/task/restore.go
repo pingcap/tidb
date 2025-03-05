@@ -1445,9 +1445,12 @@ func handleTableRenames(
 			}
 		}
 
-		// skip if both match or not match, no need to adjust tables
-		// it should handle most of the cases
 		if startMatches == endMatches {
+			// no need to handle if both not match
+			if !startMatches {
+				continue
+			}
+
 			// if db id changed we can just point the table to the new db
 			if start.DbID == end.DbID {
 				continue
@@ -1972,7 +1975,6 @@ func createDBsAndTables(
 	if isPiTR {
 		// update table mapping manager with new table ids
 		cfg.tableMappingManager.UpdateDownstreamIds(dbs, tables, client.GetDomain())
-		log.Info("updated table mapping manager with new table id")
 	}
 	return createdTables, nil
 }

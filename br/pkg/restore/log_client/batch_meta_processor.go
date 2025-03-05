@@ -204,7 +204,11 @@ func (mp *MetaKVInfoProcessor) ProcessBatch(
 					return nil, errors.Trace(err)
 				}
 				// collect db id -> name mapping during log backup, it will contain information about newly created db
+				if dbInfo.Name.O == "" {
+					log.Warn("db info doesn't contain db name", zap.Int64("dbID", dbInfo.ID))
+				}
 				mp.tableHistoryManager.RecordDBIdToName(dbInfo.ID, dbInfo.Name.O)
+
 			} else if !meta.IsDBkey(rawKey.Key) {
 				// also see RewriteMetaKvEntry
 				continue
@@ -221,7 +225,10 @@ func (mp *MetaKVInfoProcessor) ProcessBatch(
 				}
 
 				// add to table rename history
-				mp.tableHistoryManager.AddTableHistory(tableInfo.ID, tableInfo.Name.String(), dbID)
+				if tableInfo.Name.O == "" {
+					log.Warn("table info doesn't contain table name", zap.Int64("tableID", tableInfo.ID))
+				}
+				mp.tableHistoryManager.AddTableHistory(tableInfo.ID, tableInfo.Name.O, dbID)
 
 				// track partitions if this is a partitioned table
 				if tableInfo.Partition != nil {

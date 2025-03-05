@@ -186,7 +186,9 @@ func (tm *TableMappingManager) parseDBValueAndUpdateIdMapping(value []byte) erro
 	if err != nil {
 		return errors.Trace(err)
 	}
-	dbReplace.Name = dbInfo.Name.O
+	if dbInfo.Name.O != "" {
+		dbReplace.Name = dbInfo.Name.O
+	}
 	return nil
 }
 
@@ -258,7 +260,9 @@ func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(dbID int64, val
 	if err != nil {
 		return errors.Trace(err)
 	}
-	tableReplace.Name = tableInfo.Name.O
+	if tableInfo.Name.O != "" {
+		tableReplace.Name = tableInfo.Name.O
+	}
 
 	// update table ID and partition ID.
 	partitions := tableInfo.GetPartitionInfo()
@@ -586,5 +590,6 @@ func (tm *TableMappingManager) UpdateDownstreamIds(dbs []*metautil.Database,
 			IndexMap:     restoreutils.GetIndexIDMap(newTableInfo, t.Info),
 		}
 	}
+	LogDBReplaceMap("updated id mapping after creating tables during snapshot restore", dbReplaces)
 	tm.MergeBaseDBReplace(dbReplaces)
 }
