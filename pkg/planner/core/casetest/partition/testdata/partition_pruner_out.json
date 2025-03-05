@@ -502,12 +502,12 @@
           "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
-          "MergeJoin 0.03 root  inner join",
-          "├─IndexReader(Build) 3.00 root partition:p1 index:IndexRangeScan",
-          "│ └─IndexRangeScan 3.00 cop[tikv] table:t2, index:a(a, b, id) range:[6 7 7,6 7 7], [7 7 7,7 7 7], [8 7 7,8 7 7], keep order:false, stats:pseudo",
-          "└─IndexReader(Probe) 0.01 root partition:p0 index:Selection",
-          "  └─Selection 0.01 cop[tikv]  eq(test_partition_1.t1.id, 7)",
-          "    └─IndexRangeScan 10.20 cop[tikv] table:t1, index:a(a, b, id) range:[1,1], [3 3,3 3], [3 5,3 5], keep order:false, stats:pseudo"
+          "HashJoin 0.03 root  CARTESIAN inner join",
+          "├─IndexReader(Build) 0.01 root partition:p0 index:Selection",
+          "│ └─Selection 0.01 cop[tikv]  eq(test_partition_1.t1.id, 7)",
+          "│   └─IndexRangeScan 10.20 cop[tikv] table:t1, index:a(a, b, id) range:[1,1], [3 3,3 3], [3 5,3 5], keep order:false, stats:pseudo",
+          "└─IndexReader(Probe) 3.00 root partition:p1 index:IndexRangeScan",
+          "  └─IndexRangeScan 3.00 cop[tikv] table:t2, index:a(a, b, id) range:[6 7 7,6 7 7], [7 7 7,7 7 7], [8 7 7,8 7 7], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -530,11 +530,11 @@
         "IndexPlan": [
           "Sort 30.60 root  test_partition_1.t1.id, test_partition_1.t1.a",
           "└─Projection 30.60 root  test_partition_1.t1.id, test_partition_1.t1.a, test_partition_1.t1.b, test_partition_1.t2.id, test_partition_1.t2.a, test_partition_1.t2.b",
-          "  └─MergeJoin 30.60 root  inner join",
-          "    ├─IndexReader(Build) 10.20 root partition:p0 index:IndexRangeScan",
-          "    │ └─IndexRangeScan 10.20 cop[tikv] table:t1, index:a(a, b, id) range:[1,1], [3 3,3 3], [3 5,3 5], keep order:false, stats:pseudo",
-          "    └─IndexReader(Probe) 3.00 root partition:p1 index:IndexRangeScan",
-          "      └─IndexRangeScan 3.00 cop[tikv] table:t2, index:a(a, b, id) range:[6 7 7,6 7 7], [7 7 7,7 7 7], [8 7 7,8 7 7], keep order:false, stats:pseudo"
+          "  └─HashJoin 30.60 root  CARTESIAN inner join",
+          "    ├─IndexReader(Build) 3.00 root partition:p1 index:IndexRangeScan",
+          "    │ └─IndexRangeScan 3.00 cop[tikv] table:t2, index:a(a, b, id) range:[6 7 7,6 7 7], [7 7 7,7 7 7], [8 7 7,8 7 7], keep order:false, stats:pseudo",
+          "    └─IndexReader(Probe) 10.20 root partition:p0 index:IndexRangeScan",
+          "      └─IndexRangeScan 10.20 cop[tikv] table:t1, index:a(a, b, id) range:[1,1], [3 3,3 3], [3 5,3 5], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1131,11 +1131,11 @@
         ],
         "IndexPlan": [
           "Projection 3.00 root  test_partition_1.t1.id, test_partition_1.t1.a, test_partition_1.t1.b, test_partition_1.t2.id, test_partition_1.t2.a, test_partition_1.t2.b",
-          "└─MergeJoin 3.00 root  inner join",
-          "  ├─IndexReader(Build) 10.00 root partition:p0 index:IndexRangeScan",
-          "  │ └─IndexRangeScan 10.00 cop[tikv] table:t1, index:a(a, b, id) range:[5,5], keep order:false, stats:pseudo",
-          "  └─IndexReader(Probe) 0.30 root partition:p1 index:IndexRangeScan",
-          "    └─IndexRangeScan 0.30 cop[tikv] table:t2, index:a(a, b, id) range:[6 6,6 6], [7 6,7 6], [8 6,8 6], keep order:false, stats:pseudo"
+          "└─HashJoin 3.00 root  CARTESIAN inner join",
+          "  ├─IndexReader(Build) 0.30 root partition:p1 index:IndexRangeScan",
+          "  │ └─IndexRangeScan 0.30 cop[tikv] table:t2, index:a(a, b, id) range:[6 6,6 6], [7 6,7 6], [8 6,8 6], keep order:false, stats:pseudo",
+          "  └─IndexReader(Probe) 10.00 root partition:p0 index:IndexRangeScan",
+          "    └─IndexRangeScan 10.00 cop[tikv] table:t1, index:a(a, b, id) range:[5,5], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1526,13 +1526,13 @@
         "IndexPlan": [
           "Sort 73851.85 root  test_partition_1.t1.id, test_partition_1.t1.a",
           "└─Projection 73851.85 root  test_partition_1.t1.id, test_partition_1.t1.a, test_partition_1.t1.b, test_partition_1.t2.id, test_partition_1.t2.a, test_partition_1.t2.b",
-          "  └─MergeJoin 73851.85 root  inner join",
-          "    ├─IndexReader(Build) 2658.67 root partition:p0 index:Selection",
-          "    │ └─Selection 2658.67 cop[tikv]  or(le(test_partition_1.t1.a, 1), and(le(test_partition_1.t1.a, 3), and(ge(test_partition_1.t1.b, 3), le(test_partition_1.t1.b, 5))))",
-          "    │   └─IndexRangeScan 3323.33 cop[tikv] table:t1, index:a(a, b, id) range:[-inf,3], keep order:false, stats:pseudo",
-          "    └─IndexReader(Probe) 27.78 root partition:p1 index:Selection",
-          "      └─Selection 27.78 cop[tikv]  ge(test_partition_1.t2.b, 7), ge(test_partition_1.t2.id, 7)",
-          "        └─IndexRangeScan 250.00 cop[tikv] table:t2, index:a(a, b, id) range:[6,8], keep order:false, stats:pseudo"
+          "  └─HashJoin 73851.85 root  CARTESIAN inner join",
+          "    ├─IndexReader(Build) 27.78 root partition:p1 index:Selection",
+          "    │ └─Selection 27.78 cop[tikv]  ge(test_partition_1.t2.b, 7), ge(test_partition_1.t2.id, 7)",
+          "    │   └─IndexRangeScan 250.00 cop[tikv] table:t2, index:a(a, b, id) range:[6,8], keep order:false, stats:pseudo",
+          "    └─IndexReader(Probe) 2658.67 root partition:p0 index:Selection",
+          "      └─Selection 2658.67 cop[tikv]  or(le(test_partition_1.t1.a, 1), and(le(test_partition_1.t1.a, 3), and(ge(test_partition_1.t1.b, 3), le(test_partition_1.t1.b, 5))))",
+          "        └─IndexRangeScan 3323.33 cop[tikv] table:t1, index:a(a, b, id) range:[-inf,3], keep order:false, stats:pseudo"
         ]
       },
       {
@@ -2155,12 +2155,12 @@
           "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
-          "MergeJoin 833.33 root  inner join",
-          "├─IndexReader(Build) 83.33 root partition:p1 index:Selection",
-          "│ └─Selection 83.33 cop[tikv]  ge(test_partition_1.t2.b, 6)",
-          "│   └─IndexRangeScan 250.00 cop[tikv] table:t2, index:a(a, b, id) range:[6,8], keep order:false, stats:pseudo",
-          "└─IndexReader(Probe) 10.00 root partition:p0 index:IndexRangeScan",
-          "  └─IndexRangeScan 10.00 cop[tikv] table:t1, index:a(a, b, id) range:[5,5], keep order:false, stats:pseudo"
+          "HashJoin 833.33 root  CARTESIAN inner join",
+          "├─IndexReader(Build) 10.00 root partition:p0 index:IndexRangeScan",
+          "│ └─IndexRangeScan 10.00 cop[tikv] table:t1, index:a(a, b, id) range:[5,5], keep order:false, stats:pseudo",
+          "└─IndexReader(Probe) 83.33 root partition:p1 index:Selection",
+          "  └─Selection 83.33 cop[tikv]  ge(test_partition_1.t2.b, 6)",
+          "    └─IndexRangeScan 250.00 cop[tikv] table:t2, index:a(a, b, id) range:[6,8], keep order:false, stats:pseudo"
         ]
       },
       {
