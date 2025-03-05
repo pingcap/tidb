@@ -2341,11 +2341,15 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 
 	if !p.isNAAJ() {
 		// naaj refuse merge join and index join.
-		mergeJoins := p.GetMergeJoin(prop, p.schema, p.StatsInfo(), p.children[0].StatsInfo(), p.children[1].StatsInfo())
-		if (p.preferJoinType&preferMergeJoin) > 0 && len(mergeJoins) > 0 {
-			return mergeJoins, true, nil
+
+		// skip merge join unless we use hint to force to use merge join.
+		if p.preferJoinType&preferMergeJoin > 0 {
+			mergeJoins := p.GetMergeJoin(prop, p.schema, p.StatsInfo(), p.children[0].StatsInfo(), p.children[1].StatsInfo())
+			if (p.preferJoinType&preferMergeJoin) > 0 && len(mergeJoins) > 0 {
+				return mergeJoins, true, nil
+			}
+			joins = append(joins, mergeJoins...)
 		}
-		joins = append(joins, mergeJoins...)
 
 		indexJoins, forced := p.tryToGetIndexJoin(prop)
 		if forced {
