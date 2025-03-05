@@ -46,16 +46,16 @@ func TestVariable(t *testing.T) {
 	tk.MustExecToErr("set session tidb_dml_type = bulk(10)")
 
 	// Basic policy tests
-	tk.MustExec("set tidb_pipelined_dml_resource_policy = 'PERFORMANCE'")
-	tk.MustQuery("select @@tidb_pipelined_dml_resource_policy").Check(testkit.Rows("PERFORMANCE"))
+	tk.MustExec("set tidb_pipelined_dml_resource_policy = 'STANDARD'")
+	tk.MustQuery("select @@tidb_pipelined_dml_resource_policy").Check(testkit.Rows("STANDARD"))
 	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, 128)
 	require.Equal(t, tk.Session().GetSessionVars().PipelinedResolveLockConcurrency, 8)
 	tk.MustExec("set @@tidb_pipelined_dml_resource_policy = 'conserVation'")
 	tk.MustQuery("select @@tidb_pipelined_dml_resource_policy").Check(testkit.Rows("conserVation"))
 	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, 2)
 	require.Equal(t, tk.Session().GetSessionVars().PipelinedResolveLockConcurrency, 2)
-	tk.MustExec("set @@tidb_pipelined_dml_resource_policy = 'Performance'")
-	tk.MustQuery("select @@tidb_pipelined_dml_resource_policy").Check(testkit.Rows("Performance"))
+	tk.MustExec("set @@tidb_pipelined_dml_resource_policy = 'Standard'")
+	tk.MustQuery("select @@tidb_pipelined_dml_resource_policy").Check(testkit.Rows("Standard"))
 	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, 128)
 	require.Equal(t, tk.Session().GetSessionVars().PipelinedResolveLockConcurrency, 8)
 

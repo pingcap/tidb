@@ -3448,6 +3448,8 @@ var defaultSysVars = []*SysVar{
 		Value:      vardef.DefTiDBPipelinedDmlResourcePolicy,
 		Type:       vardef.TypeStr,
 		SetSession: setPipelinedDmlResourcePolicy,
+		// because the special character in custom syntax cannot be correctly handled in set_var hint
+		IsHintUpdatableVerified: false,
 	},
 }
 
@@ -3496,7 +3498,7 @@ func setPipelinedDmlResourcePolicy(s *SessionVars, val string) error {
 	val = strings.TrimSpace(val)
 	lowVal := strings.ToLower(val)
 	switch lowVal {
-	case vardef.StrategyPerformance:
+	case vardef.StrategyStandard:
 		s.PipelinedDMLConfig.PipelinedFlushConcurrency = vardef.DefaultFlushConcurrency
 		s.PipelinedDMLConfig.PipelinedResolveLockConcurrency = vardef.DefaultResolveConcurrency
 		s.PipelinedDMLConfig.PipelinedWriteThrottleRatio = 0

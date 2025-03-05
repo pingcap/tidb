@@ -1453,7 +1453,7 @@ const (
 	DefTiDBQueryLogMaxLen                             = 4096
 	DefRequireSecureTransport                         = false
 	DefTiDBCommitterConcurrency                       = 128
-	DefTiDBPipelinedDmlResourcePolicy                 = StrategyPerformance
+	DefTiDBPipelinedDmlResourcePolicy                 = StrategyStandard
 	DefTiDBBatchDMLIgnoreError                        = false
 	DefTiDBMemQuotaAnalyze                            = -1
 	DefTiDBEnableAutoAnalyze                          = true
@@ -1910,9 +1910,9 @@ const (
 	// by 3/4, at the expense of about 4 times the amount of TSO RPC calls.
 	TSOClientRPCModeParallelFast = "PARALLEL-FAST"
 
-	// StrategyPerformance is a choice of variable TiDBPipelinedDmlResourcePolicy,
+	// StrategyStandard is a choice of variable TiDBPipelinedDmlResourcePolicy,
 	// the best performance policy
-	StrategyPerformance = "performance"
+	StrategyStandard = "standard"
 	// StrategyConservation is a choice of variable TiDBPipelinedDmlResourcePolicy,
 	// a rather conservative policy
 	StrategyConservation = "conservation"
