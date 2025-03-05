@@ -337,6 +337,7 @@ func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBRepl
 			}
 		}
 	}
+	LogDBReplaceMap("after merging dbReplace", tm.DBReplaceMap)
 }
 
 func (tm *TableMappingManager) IsEmpty() bool {
