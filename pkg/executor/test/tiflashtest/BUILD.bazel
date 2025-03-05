@@ -9,11 +9,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 43,
-=======
-    shard_count = 48,
->>>>>>> b2a9059b5e1 (planner: Limit fine grained shuffle usage for mpp join operators to ensure shuffle keys are the same with actual join keys (#59884))
+    shard_count = 44,
     deps = [
         "//pkg/config",
         "//pkg/domain",
