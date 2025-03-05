@@ -1061,6 +1061,9 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 		}
 		er.ctxStackAppend(planCtx.plan.Schema().Columns[planCtx.plan.Schema().Len()-1], planCtx.plan.OutputNames()[planCtx.plan.Schema().Len()-1])
 	} else {
+		if !er.planCtx.plan.SCtx().GetSessionVars().InRestrictedSQL {
+			fmt.Println("wwz")
+		}
 		// We don't want nth_plan hint to affect separately executed subqueries here, so disable nth_plan temporarily.
 		nthPlanBackup := b.ctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan
 		b.ctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = -1
