@@ -160,6 +160,10 @@ func pruneRedundantApply(p base.LogicalPlan) (base.LogicalPlan, bool) {
 	if apply.JoinType != logicalop.LeftOuterJoin && apply.JoinType != logicalop.LeftOuterSemiJoin {
 		return nil, false
 	}
+	apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.Children()[1], apply.Children()[0].Schema())
+	if len(apply.CorCols) == 0 {
+		return nil, false
+	}
 
 	// Simplify predicates from the LogicalSelection
 	simplifiedPredicates := applyPredicateSimplification(p.SCtx(), logicalSelection.Conditions)
