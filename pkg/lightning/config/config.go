@@ -1137,6 +1137,9 @@ func (t *TikvImporter) adjust() error {
 	}
 
 	t.Backend = strings.ToLower(t.Backend)
+	if t.Backend == BackendRemote {
+		return common.ErrInvalidConfig.GenWithStack(`tikv-importer.backend = "remote" is not supported`)
+	}
 	// only need to assign t.IncrementalImport to t.ParallelImport when t.ParallelImport is false and t.IncrementalImport is true
 	if !t.ParallelImport && t.IncrementalImport {
 		t.ParallelImport = t.IncrementalImport
