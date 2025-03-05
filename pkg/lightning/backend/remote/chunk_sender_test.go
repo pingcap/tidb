@@ -22,12 +22,9 @@ import (
 	"net"
 	"net/http"
 	"strconv"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/stretchr/testify/require"
 )
@@ -155,18 +152,12 @@ func (h *mockHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func genMockEngine(ctx context.Context, clusterID uint64, loadDataTaskID, addr string) *engine {
 	return &engine{
-		ctx:            ctx,
 		logger:         log.L(),
 		loadDataTaskID: loadDataTaskID,
-		ts:             1,
-		tbl:            &checkpoints.TidbTableInfo{},
-		writers:        sync.Map{},
 		addr:           fmt.Sprintf("http://%s", addr),
 		clusterID:      clusterID,
 
-		httpClient:  &http.Client{},
-		backend:     &Backend{},
-		importedKVs: atomic.Int64{},
+		httpClient: &http.Client{},
 	}
 }
 
