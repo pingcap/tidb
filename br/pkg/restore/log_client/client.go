@@ -67,6 +67,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/importswitch"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/config"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -305,7 +306,7 @@ func (rc *LogClient) RestoreSSTFiles(
 	ctx context.Context,
 	compactionsIter iter.TryNextor[SSTs],
 	rules map[int64]*restoreutils.RewriteRules,
-	importModeSwitcher *restore.ImportModeSwitcher,
+	importModeSwitcher *importswitch.ImportModeSwitcher,
 	onProgress func(int64),
 ) error {
 	begin := time.Now()

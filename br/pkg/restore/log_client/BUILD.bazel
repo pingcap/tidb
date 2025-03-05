@@ -49,6 +49,7 @@ go_library(
         "//pkg/tablecodec",
         "//pkg/util",
         "//pkg/util/codec",
+        "//pkg/util/importswitch",
         "//pkg/util/redact",
         "//pkg/util/sqlexec",
         "@com_github_docker_go_units//:go-units",

@@ -15,6 +15,7 @@ import (
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	"github.com/pingcap/tidb/pkg/util/importswitch"
 	"go.uber.org/zap"
 )
 
@@ -95,7 +96,7 @@ func RunRestoreTxn(c context.Context, g glue.Glue, cmdName string, cfg *Config) 
 		return errors.Trace(err)
 	}
 
-	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.SwitchModeInterval, mgr.GetTLSConfig())
+	importModeSwitcher := importswitch.NewImportModeSwitcher(mgr.GetPDClient(), cfg.SwitchModeInterval, mgr.GetTLSConfig())
 	restoreSchedulers, _, err := restore.RestorePreWork(ctx, mgr, importModeSwitcher, false, true)
 	if err != nil {
 		return errors.Trace(err)

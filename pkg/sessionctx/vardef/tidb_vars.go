@@ -986,6 +986,9 @@ const (
 
 	// TiDBAccelerateUserCreationUpdate decides whether tidb will load & update the whole user's data in-memory.
 	TiDBAccelerateUserCreationUpdate = "tidb_accelerate_user_creation_update"
+
+	// TiDBEnableImportMode indicates whether to enable import mode.
+	TiDBEnableImportMode = "tidb_enable_import_mode"
 )
 
 // TiDB vars that have only global scope
@@ -1576,6 +1579,7 @@ const (
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
 	DefTiDBCircuitBreakerPDMetaErrorRatePct           = 0
 	DefTiDBAccelerateUserCreationUpdate               = false
+	DefTiDBEnableImportMode                           = false
 )
 
 // Process global variables.

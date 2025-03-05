@@ -56,6 +56,8 @@ var (
 	DisableStatsOwner func() error = nil
 	// ChangePDMetadataCircuitBreakerErrorRateThresholdPct changes the error rate threshold of the PD metadata circuit breaker.
 	ChangePDMetadataCircuitBreakerErrorRateThresholdPct func(uint32) = nil
+	// SwitchImportMode is the func registered by domain to switch import mode.
+	SwitchImportMode func(on bool) = nil
 )
 
 // Hooks functions for Cluster Resource Control.

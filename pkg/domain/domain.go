@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -56,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema/perfschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	lcom "github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -94,6 +96,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/expensivequery"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/globalconn"
+	"github.com/pingcap/tidb/pkg/util/importswitch"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -225,6 +228,8 @@ type Domain struct {
 	mdlCheckCh        chan struct{}
 	stopAutoAnalyze   atomicutil.Bool
 	minJobIDRefresher *systable.MinJobIDRefresher
+	tls               *common.TLS
+	importMode        atomic.Bool
 
 	instancePlanCache sessionctx.InstancePlanCache // the instance level plan cache
 
@@ -1131,6 +1136,37 @@ func (do *Domain) mdlCheckLoop() {
 	}
 }
 
+func (do *Domain) detectImportModeLoop() {
+	switcher := importswitch.NewImportModeSwitcher(do.GetPDClient(), 1*time.Minute, do.tls.TLSConfig())
+	for {
+		originImportMode := do.importMode.Load()
+		select {
+		case <-do.exit:
+			return
+		case <-time.After(time.Second):
+			importMode := do.importMode.Load()
+			if importMode == originImportMode {
+				continue
+			}
+			if importMode {
+				err := switcher.GoSwitchToImportMode(do.ctx)
+				if err != nil {
+					log.Warn("switch to import mode failed", zap.Error(err))
+					continue
+				}
+				originImportMode = importMode
+			} else {
+				err := switcher.SwitchToNormalMode(do.ctx)
+				if err != nil {
+					log.Warn("switch to normal mode failed", zap.Error(err))
+					continue
+				}
+				originImportMode = importMode
+			}
+		}
+	}
+}
+
 func (do *Domain) loadSchemaInLoop(ctx context.Context) {
 	defer util.Recover(metrics.LabelDomain, "loadSchemaInLoop", nil, true)
 	// Lease renewal can run at any frequency.
@@ -1444,6 +1480,10 @@ func (do *Domain) Init(
 		ddl.WithEventPublishStore(ddlNotifierStore),
 	)
 
+	variable.SwitchImportMode = func(on bool) {
+		do.importMode.Store(on)
+	}
+
 	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
 		if val.(bool) {
 			do.ddl = d
@@ -1531,6 +1571,18 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 		return err
 	}
 	do.minJobIDRefresher = do.ddl.GetMinJobIDRefresher()
+	tls, err := common.NewTLS(
+		gCfg.Security.ClusterSSLCA,
+		gCfg.Security.ClusterSSLCert,
+		gCfg.Security.ClusterSSLKey,
+		net.JoinHostPort("127.0.0.1", strconv.Itoa(int(gCfg.Status.StatusPort))),
+		nil, nil, nil,
+	)
+	if err != nil {
+		log.Error("unable to initialize TLS", zap.Error(err))
+		return err
+	}
+	do.tls = tls
 
 	// Local store needs to get the change information for every DDL state in each session.
 	do.wg.Run(func() {
@@ -1542,6 +1594,7 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 	do.wg.Run(do.globalConfigSyncerKeeper, "globalConfigSyncerKeeper")
 	do.wg.Run(do.runawayStartLoop, "runawayStartLoop")
 	do.wg.Run(do.requestUnitsWriterLoop, "requestUnitsWriterLoop")
+	do.wg.Run(do.detectImportModeLoop, "detectImportModeLoop")
 	skipRegisterToDashboard := gCfg.SkipRegisterToDashboard
 	if !skipRegisterToDashboard {
 		do.wg.Run(do.topologySyncerKeeper, "topologySyncerKeeper")

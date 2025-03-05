@@ -4968,11 +4968,15 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 		m.IsDistReorg = vardef.EnableDistTask.Load()
 		m.IsFastReorg = vardef.EnableFastReorg.Load()
 		m.TargetScope = vardef.ServiceScope.Load()
-		if sv, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
+		sessVars := sctx.GetSessionVars()
+		if sv, ok := sessVars.GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
 			m.MaxNodeCount = variable.TidbOptInt(sv, 0)
 			if m.MaxNodeCount == -1 { // -1 means calculate automatically
 				m.MaxNodeCount = GetDXFDefaultMaxNodeCntAuto(sctx.GetStore())
 			}
+		}
+		if sv, err := sessVars.GetGlobalSystemVar(context.Background(), vardef.TiDBEnableImportMode); err == nil {
+			m.EnableImportMode = variable.TiDBOptOn(sv)
 		}
 		if hasSysDB(job) {
 			if m.IsDistReorg {

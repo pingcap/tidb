@@ -133,9 +133,11 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	}
 
 	// TODO(tangenta): support checkpoint manager that interact with subtask table.
-	bCtx, err := ingest.NewBackendCtxBuilder(ctx, r.d.store, r.job).
-		WithImportDistributedLock(r.d.etcdCli, sm.TS).
-		Build(r.backendCfg, r.backend)
+	builder := ingest.NewBackendCtxBuilder(ctx, r.d.store, r.job)
+	if r.job.ReorgMeta == nil || !r.job.ReorgMeta.EnableImportMode {
+		builder.WithImportDistributedLock(r.d.etcdCli, sm.TS)
+	}
+	bCtx, err := builder.Build(r.backendCfg, r.backend)
 	if err != nil {
 		return err
 	}
