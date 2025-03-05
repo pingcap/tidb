@@ -77,12 +77,6 @@ func (m *MockBackendCtx) FinishAndUnregisterEngines(_ UnregisterOpt) error {
 	return nil
 }
 
-// CollectRemoteDuplicateRows implements BackendCtx.CollectRemoteDuplicateRows interface.
-func (*MockBackendCtx) CollectRemoteDuplicateRows(indexID int64, _ table.Table) error {
-	logutil.DDLIngestLogger().Info("mock backend ctx collect remote duplicate rows", zap.Int64("indexID", indexID))
-	return nil
-}
-
 // IngestIfQuotaExceeded implements BackendCtx.IngestIfQuotaExceeded interface.
 func (m *MockBackendCtx) IngestIfQuotaExceeded(_ context.Context, taskID, cnt int) error {
 	if m.checkpointMgr != nil {
