@@ -157,15 +157,12 @@ type Engine struct {
 
 	importedKVSize  *atomic.Int64
 	importedKVCount *atomic.Int64
+	memLimit        int
 }
 
 var _ common.Engine = (*Engine)(nil)
 
 const (
-	// TODO: this hardcode value violates the resource control inside DXF, if many
-	// tasks with small concurrency are running, it will cause OOM.
-	// we plan to offload those data to disk later, and read them back when needed.
-	memLimit       = 12 * units.GiB
 	smallBlockSize = units.MiB
 )
 
@@ -187,7 +184,10 @@ func NewExternalEngine(
 	totalKVSize int64,
 	totalKVCount int64,
 	checkHotspot bool,
+	memCapacity int64,
 ) common.Engine {
+	// at most 3 batches can be loaded in memory, see writeStepMemShareCount.
+	memLimit := int(float64(memCapacity) / writeStepMemShareCount * 3)
 	memLimiter := membuf.NewLimiter(memLimit)
 	return &Engine{
 		storage:    storage,
@@ -218,6 +218,7 @@ func NewExternalEngine(
 		totalKVCount:       totalKVCount,
 		importedKVSize:     atomic.NewInt64(0),
 		importedKVCount:    atomic.NewInt64(0),
+		memLimit:           memLimit,
 	}
 }
 
@@ -539,7 +540,7 @@ func (e *Engine) Close() error {
 
 // Reset resets the memory buffer pool.
 func (e *Engine) Reset() error {
-	memLimiter := membuf.NewLimiter(memLimit)
+	memLimiter := membuf.NewLimiter(e.memLimit)
 	if e.smallBlockBufPool != nil {
 		e.smallBlockBufPool.Destroy()
 		e.smallBlockBufPool = membuf.NewPool(
