@@ -195,6 +195,8 @@ func TryToGetCheckpointTaskInfo(
 	var (
 		metadata *CheckpointMetadataForLogRestore
 		progress RestoreProgress
+
+		hasSnapshotMetadata bool = false
 	)
 	// get the progress
 	if exists, err := logManager.ExistsCheckpointProgress(ctx); err != nil {
@@ -215,9 +217,13 @@ func TryToGetCheckpointTaskInfo(
 			return nil, errors.Trace(err)
 		}
 	}
-	hasSnapshotMetadata, err := snapshotManager.ExistsCheckpointMetadata(ctx)
-	if err != nil {
-		return nil, errors.Trace(err)
+	// exists the snapshot checkpoint metadata
+	if snapshotManager != nil {
+		existsSnapshotMetadata, err := snapshotManager.ExistsCheckpointMetadata(ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		hasSnapshotMetadata = existsSnapshotMetadata
 	}
 
 	return &TaskInfoForLogRestore{
