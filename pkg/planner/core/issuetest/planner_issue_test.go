@@ -231,3 +231,32 @@ ON base.c1 <=> base2.c1;`).Sort().Check(testkit.Rows(
 		"1 Alice 1 100",
 		"<nil> Bob <nil> <nil>"))
 }
+
+func TestIssue58451(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t1 (a1 int, b1 int);")
+	tk.MustExec("insert into t1 values(1,1);")
+	tk.MustQuery(`explain
+SELECT (4,5) IN (SELECT 8,0 UNION SELECT 8, 8) AS field1
+FROM t1 AS table1
+WHERE (EXISTS (SELECT SUBQUERY2_t1.a1 AS SUBQUERY2_field1 FROM t1 AS SUBQUERY2_t1)) OR table1.b1 >= 55
+GROUP BY field1;`).Check(testkit.Rows("HashJoin_34 2.00 root  CARTESIAN left outer semi join, left side:HashAgg_35",
+		"├─HashAgg_59(Build) 2.00 root  group by:Column#18, Column#19, funcs:firstrow(1)->Column#45",
+		"│ └─Union_63 0.00 root  ",
+		"│   ├─Projection_65 0.00 root  8->Column#18, 0->Column#19",
+		"│   │ └─TableDual_66 0.00 root  rows:0",
+		"│   └─Projection_67 0.00 root  8->Column#18, 8->Column#19",
+		"│     └─TableDual_68 0.00 root  rows:0",
+		"└─HashAgg_35(Probe) 2.00 root  group by:Column#10, funcs:firstrow(1)->Column#42",
+		"  └─HashJoin_36 10000.00 root  CARTESIAN left outer semi join, left side:TableReader_38",
+		"    ├─HashAgg_41(Build) 2.00 root  group by:Column#8, Column#9, funcs:firstrow(1)->Column#44",
+		"    │ └─Union_45 0.00 root  ",
+		"    │   ├─Projection_47 0.00 root  8->Column#8, 0->Column#9",
+		"    │   │ └─TableDual_48 0.00 root  rows:0",
+		"    │   └─Projection_49 0.00 root  8->Column#8, 8->Column#9",
+		"    │     └─TableDual_50 0.00 root  rows:0",
+		"    └─TableReader_38(Probe) 10000.00 root  data:TableFullScan_37",
+		"      └─TableFullScan_37 10000.00 cop[tikv] table:table1 keep order:false, stats:pseudo"))
+}
