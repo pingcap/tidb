@@ -93,7 +93,7 @@ func (r *readIndexStepExecutor) Init(ctx context.Context) error {
 	logutil.DDLLogger().Info("read index executor init subtask exec env")
 	cfg := config.GetGlobalConfig()
 	if cfg.Store == config.StoreTypeTiKV {
-		cfg, bd, err := ingest.CreateLocalBackend(ctx, r.d.store, r.job, false)
+		cfg, bd, err := ingest.CreateLocalBackend(ctx, r.d.pdCli, r.job, false)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -133,7 +133,7 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	}
 
 	// TODO(tangenta): support checkpoint manager that interact with subtask table.
-	bCtx, err := ingest.NewBackendCtxBuilder(ctx, r.d.store, r.job).
+	bCtx, err := ingest.NewBackendCtxBuilder(ctx, r.d.pdCli, r.job).
 		WithImportDistributedLock(r.d.etcdCli, sm.TS).
 		Build(r.backendCfg, r.backend)
 	if err != nil {

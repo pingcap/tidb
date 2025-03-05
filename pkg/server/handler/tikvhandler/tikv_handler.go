@@ -66,8 +66,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/clients/router"
-	pd "github.com/tikv/pd/client/http"
+	pdhttp "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
 )
@@ -136,12 +137,17 @@ func NewRegionHandler(tool *handler.TikvHandlerTool) *RegionHandler {
 // TableHandler is the handler for list table's regions.
 type TableHandler struct {
 	*handler.TikvHandlerTool
-	op string
+	pdClient pd.Client
+	op       string
 }
 
 // NewTableHandler creates a new TableHandler.
 func NewTableHandler(tool *handler.TikvHandlerTool, op string) *TableHandler {
-	return &TableHandler{tool, op}
+	return &TableHandler{
+		TikvHandlerTool: tool,
+		pdClient:        tool.RegionCache.PDClient().WithCallerComponent("tikv-handler"),
+		op:              op,
+	}
 }
 
 // DDLHistoryJobHandler is the handler for list job history.
@@ -1198,7 +1204,7 @@ func (h *TableHandler) addScatterSchedule(startKey, endKey []byte, name string) 
 	if err != nil {
 		return err
 	}
-	scheduleURL := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), pdAddrs[0], pd.Schedulers)
+	scheduleURL := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), pdAddrs[0], pdhttp.Schedulers)
 	resp, err := util.InternalHTTPClient().Post(scheduleURL, "application/json", bytes.NewBuffer(v))
 	if err != nil {
 		return err
@@ -1214,7 +1220,7 @@ func (h *TableHandler) deleteScatterSchedule(name string) error {
 	if err != nil {
 		return err
 	}
-	scheduleURL := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), pdAddrs[0], pd.ScatterRangeSchedulerWithName(name))
+	scheduleURL := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), pdAddrs[0], pdhttp.ScatterRangeSchedulerWithName(name))
 	req, err := http.NewRequest(http.MethodDelete, scheduleURL, nil)
 	if err != nil {
 		return err
@@ -1350,7 +1356,7 @@ func (h *TableHandler) getRegionsByID(tbl table.Table, id int64, name string) (*
 	// for record
 	startKey, endKey := tablecodec.GetTableHandleKeyRange(id)
 	ctx := context.Background()
-	pdCli := h.PDClient
+	pdCli := h.pdClient
 	regions, err := pdCli.BatchScanRegions(ctx, []router.KeyRange{{StartKey: startKey, EndKey: endKey}}, -1, opt.WithAllowFollowerHandle())
 	if err != nil {
 		return nil, err

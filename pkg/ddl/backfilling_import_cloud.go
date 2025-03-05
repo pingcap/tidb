@@ -31,12 +31,13 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	pd "github.com/tikv/pd/client"
 )
 
 type cloudImportExecutor struct {
 	taskexecutor.BaseStepExecutor
 	job           *model.Job
-	store         kv.Storage
+	pdCli         pd.Client
 	indexes       []*model.IndexInfo
 	ptbl          table.PhysicalTable
 	cloudStoreURI string
@@ -46,14 +47,14 @@ type cloudImportExecutor struct {
 
 func newCloudImportExecutor(
 	job *model.Job,
-	store kv.Storage,
+	pdCli pd.Client,
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
 	cloudStoreURI string,
 ) (*cloudImportExecutor, error) {
 	return &cloudImportExecutor{
 		job:           job,
-		store:         store,
+		pdCli:         pdCli,
 		indexes:       indexes,
 		ptbl:          ptbl,
 		cloudStoreURI: cloudStoreURI,
@@ -62,11 +63,11 @@ func newCloudImportExecutor(
 
 func (m *cloudImportExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor init subtask exec env")
-	cfg, bd, err := ingest.CreateLocalBackend(ctx, m.store, m.job, false)
+	cfg, bd, err := ingest.CreateLocalBackend(ctx, m.pdCli, m.job, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	bCtx, err := ingest.NewBackendCtxBuilder(ctx, m.store, m.job).Build(cfg, bd)
+	bCtx, err := ingest.NewBackendCtxBuilder(ctx, m.pdCli, m.job).Build(cfg, bd)
 	if err != nil {
 		bd.Close()
 		return err

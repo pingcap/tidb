@@ -42,9 +42,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
-	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
-	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/zap"
 )
 
@@ -90,7 +88,6 @@ type Helper struct {
 	// This field is lazy initialized in `TryGetPDHTTPClient`,
 	// and should be tagged with the caller ID before using.
 	pdHTTPCli pdhttp.Client
-	PDClient  pd.Client
 }
 
 // NewHelper gets a Helper from Storage
@@ -98,7 +95,6 @@ func NewHelper(store Storage) *Helper {
 	return &Helper{
 		Store:       store,
 		RegionCache: store.GetRegionCache(),
-		PDClient:    store.GetRegionCache().PDClient().WithCallerComponent(caller.GetComponent(1)),
 	}
 }
 

@@ -42,10 +42,7 @@ func adaptiveAnlayzeDistSQLConcurrency(ctx context.Context, sctx sessionctx.Cont
 		logutil.BgLogger().Warn("Information about TiKV store status can be gotten only when the storage is TiKV")
 		return vardef.DefAnalyzeDistSQLScanConcurrency
 	}
-	tikvHelper := &helper.Helper{
-		Store:       tikvStore,
-		RegionCache: tikvStore.GetRegionCache(),
-	}
+	tikvHelper := helper.NewHelper(tikvStore)
 	pdCli, err := tikvHelper.TryGetPDHTTPClient()
 	if err != nil {
 		logutil.BgLogger().Warn("fail to TryGetPDHTTPClient", zap.Error(err))

@@ -81,6 +81,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
+	pd "github.com/tikv/pd/client"
 	pdHttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -2412,7 +2413,7 @@ func (w *worker) addTableIndex(
 			if err != nil {
 				return err
 			}
-			return checkDuplicateForUniqueIndex(ctx, t, reorgInfo, w.store)
+			return checkDuplicateForUniqueIndex(ctx, t, reorgInfo, w.pdCli)
 		}
 	}
 
@@ -2455,7 +2456,7 @@ func (w *worker) addTableIndex(
 	return errors.Trace(err)
 }
 
-func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo *reorgInfo, store kv.Storage) (err error) {
+func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo *reorgInfo, pdCli pd.Client) (err error) {
 	var (
 		backendCtx ingest.BackendCtx
 		cfg        *local.BackendConfig
@@ -2478,12 +2479,12 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 			ctx := tidblogutil.WithCategory(ctx, "ddl-ingest")
 			if backendCtx == nil {
 				if config.GetGlobalConfig().Store == config.StoreTypeTiKV {
-					cfg, backend, err = ingest.CreateLocalBackend(ctx, store, reorgInfo.Job, true)
+					cfg, backend, err = ingest.CreateLocalBackend(ctx, pdCli, reorgInfo.Job, true)
 					if err != nil {
 						return errors.Trace(err)
 					}
 				}
-				backendCtx, err = ingest.NewBackendCtxBuilder(ctx, store, reorgInfo.Job).
+				backendCtx, err = ingest.NewBackendCtxBuilder(ctx, pdCli, reorgInfo.Job).
 					ForDuplicateCheck().
 					Build(cfg, backend)
 				if err != nil {
@@ -2821,10 +2822,7 @@ func estimateRowSizeFromRegion(ctx context.Context, store kv.Storage, tbl table.
 	if !ok {
 		return 0, fmt.Errorf("not a helper.Storage")
 	}
-	h := &helper.Helper{
-		Store:       hStore,
-		RegionCache: hStore.GetRegionCache(),
-	}
+	h := helper.NewHelper(hStore)
 	pdCli, err := h.TryGetPDHTTPClient()
 	if err != nil {
 		return 0, err
