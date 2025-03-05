@@ -146,6 +146,11 @@ func GetMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, sch
 	// The LeftProperties caches all the possible properties that are provided by its children.
 	leftJoinKeys, rightJoinKeys, isNullEQ, hasNullEQ := p.GetJoinKeys()
 
+	// if there's no join keys, normally we don't need merge by default.
+	if len(leftJoinKeys) == 0 {
+		return nil
+	}
+
 	// EnumType/SetType Unsupported: merge join conflicts with index order.
 	// ref: https://github.com/pingcap/tidb/issues/24473, https://github.com/pingcap/tidb/issues/25669
 	for _, leftKey := range leftJoinKeys {
