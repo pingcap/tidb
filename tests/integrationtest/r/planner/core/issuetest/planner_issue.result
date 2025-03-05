@@ -791,3 +791,9 @@ Projection_9	12.50	root		test.t.a, test.t1.a, test.t1.b
 select /*+ inl_join(t1), use_index(t1, idx) */ * from t join t1 on t.a = t1.a and t1.b = 123;
 a	a	b
 2	2	123
+drop table if exists t;
+create table t(a int, primary key (a));
+insert into t values(1), (2);
+select * from t t1 left join t t2 on t1.a=t2.a limit 1, 1;
+a	a
+2	2
