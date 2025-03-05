@@ -572,7 +572,7 @@ func generateTableMap(snapshotDBMap map[int64]*metautil.Database) map[int64]*met
 				DB:   tableInfo.DB.Clone(),
 				Info: tableInfo.Info.Clone(),
 				Files: []*backuppb.File{
-					{Name: fmt.Sprintf("%s", tableInfo.Info.Name.O)},
+					{Name: tableInfo.Info.Name.O},
 				},
 			}
 		}
@@ -585,7 +585,7 @@ func generateFiles(snapshotDBMap map[int64]*metautil.Database) map[int64][]*back
 	for _, dbinfo := range snapshotDBMap {
 		for _, tableInfo := range dbinfo.Tables {
 			m[tableInfo.Info.ID] = []*backuppb.File{
-				{Name: fmt.Sprintf("%s", tableInfo.Info.Name.O)},
+				{Name: tableInfo.Info.Name.O},
 			}
 		}
 	}
