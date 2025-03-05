@@ -742,13 +742,8 @@ const (
 
 type fineGrainedShuffleHelper struct {
 	shuffleTarget shuffleTarget
-<<<<<<< HEAD:planner/core/optimizer.go
 	plans         []*basePhysicalPlan
-	joinKeysCount int
-=======
-	plans         []*physicalop.BasePhysicalPlan
 	joinKeys      []*expression.Column
->>>>>>> b2a9059b5e1 (planner: Limit fine grained shuffle usage for mpp join operators to ensure shuffle keys are the same with actual join keys (#59884)):pkg/planner/core/optimizer.go
 }
 
 type tiflashClusterInfoStatus uint8
@@ -964,15 +959,9 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx sessionctx.Contex
 			probChild = child0
 		}
 		if len(joinKeys) > 0 { // Not cross join
-<<<<<<< HEAD:planner/core/optimizer.go
 			buildHelper := fineGrainedShuffleHelper{shuffleTarget: joinBuild, plans: []*basePhysicalPlan{}}
 			buildHelper.plans = append(buildHelper.plans, &x.basePhysicalPlan)
-			buildHelper.joinKeysCount = len(joinKeys)
-=======
-			buildHelper := fineGrainedShuffleHelper{shuffleTarget: joinBuild, plans: []*physicalop.BasePhysicalPlan{}}
-			buildHelper.plans = append(buildHelper.plans, &x.BasePhysicalPlan)
 			buildHelper.joinKeys = joinKeys
->>>>>>> b2a9059b5e1 (planner: Limit fine grained shuffle usage for mpp join operators to ensure shuffle keys are the same with actual join keys (#59884)):pkg/planner/core/optimizer.go
 			setupFineGrainedShuffleInternal(ctx, sctx, buildChild, &buildHelper, streamCountInfo, tiflashServerCountInfo)
 		} else {
 			buildHelper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: []*basePhysicalPlan{}}
@@ -1009,7 +998,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx sessionctx.Contex
 				// actual join hash code due to type cast
 				applyFlag := true
 				for i, joinKey := range helper.joinKeys {
-					if !x.HashCols[i].Col.EqualColumn(joinKey) {
+					if !x.HashCols[i].Col.Equal(nil, joinKey) {
 						applyFlag = false
 						break
 					}
