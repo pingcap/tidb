@@ -3502,9 +3502,9 @@ func setPipelinedDmlResourcePolicy(s *SessionVars, val string) error {
 		s.PipelinedDMLConfig.PipelinedFlushConcurrency = vardef.DefaultFlushConcurrency
 		s.PipelinedDMLConfig.PipelinedResolveLockConcurrency = vardef.DefaultResolveConcurrency
 		s.PipelinedDMLConfig.PipelinedWriteThrottleRatio = 0
-	case vardef.StrategyConservation:
-		s.PipelinedDMLConfig.PipelinedFlushConcurrency = vardef.ConservationFlushConcurrency
-		s.PipelinedDMLConfig.PipelinedResolveLockConcurrency = vardef.ConservationResolveConcurrency
+	case vardef.StrategyConservative:
+		s.PipelinedDMLConfig.PipelinedFlushConcurrency = vardef.ConservativeFlushConcurrency
+		s.PipelinedDMLConfig.PipelinedResolveLockConcurrency = vardef.ConservativeResolveConcurrency
 		s.PipelinedDMLConfig.PipelinedWriteThrottleRatio = 0
 	default:
 		// Create a temporary config to hold new values to avoid partial application

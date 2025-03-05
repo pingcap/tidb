@@ -1251,10 +1251,10 @@ const (
 	// DefaultResolveConcurrency is the default resolve_lock concurrency
 	DefaultResolveConcurrency = 8
 
-	// ConservationFlushConcurrency is the flush concurrency in conservation mode
-	ConservationFlushConcurrency = 2
-	// ConservationResolveConcurrency is the resolve_lock concurrency in conservation mode
-	ConservationResolveConcurrency = 2
+	// ConservativeFlushConcurrency is the flush concurrency in conservative mode
+	ConservativeFlushConcurrency = 2
+	// ConservativeResolveConcurrency is the resolve_lock concurrency in conservative mode
+	ConservativeResolveConcurrency = 2
 )
 
 // Default TiDB system variable values.
@@ -1913,9 +1913,9 @@ const (
 	// StrategyStandard is a choice of variable TiDBPipelinedDmlResourcePolicy,
 	// the best performance policy
 	StrategyStandard = "standard"
-	// StrategyConservation is a choice of variable TiDBPipelinedDmlResourcePolicy,
+	// StrategyConservative is a choice of variable TiDBPipelinedDmlResourcePolicy,
 	// a rather conservative policy
-	StrategyConservation = "conservation"
+	StrategyConservative = "conservative"
 	// StrategyCustom is a choice of variable TiDBPipelinedDmlResourcePolicy,
 	StrategyCustom = "custom"
 )
