@@ -3821,9 +3821,10 @@ func (e *memtableRetriever) setDataFromRunawayWatches(sctx sessionctx.Context) e
 
 // used in resource_groups
 const (
-	burstableStr      = "YES"
-	burstdisableStr   = "NO"
-	unlimitedFillRate = "UNLIMITED"
+	burstableModeratedStr = "YES(MODERATED)"
+	burstableUnlimitedStr = "YES(UNLIMITED)"
+	burstdisableStr       = "NO"
+	unlimitedFillRate     = "UNLIMITED"
 )
 
 func (e *memtableRetriever) setDataFromResourceGroups() error {
@@ -3906,8 +3907,12 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 
 		switch group.Mode {
 		case rmpb.GroupMode_RUMode:
-			if group.RUSettings.RU.Settings.BurstLimit < 0 {
-				burstable = burstableStr
+			// When the burst limit is less than 0, it means burstable or unlimited.
+			switch group.RUSettings.RU.Settings.BurstLimit {
+			case -1:
+				burstable = burstableUnlimitedStr
+			case -2:
+				burstable = burstableModeratedStr
 			}
 			row := types.MakeDatums(
 				group.Name,
