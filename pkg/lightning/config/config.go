@@ -104,7 +104,7 @@ const (
 
 	defaultCSVDataCharacterSet       = "binary"
 	defaultCSVDataInvalidCharReplace = utf8.RuneError
-	defaultRemoteBackendChunkSize    = 8 * 1024 * 104
+	defaultRemoteBackendChunkSize    = 8 * units.MiB
 
 	DefaultSwitchTiKVModeInterval = 5 * time.Minute
 )
@@ -1137,9 +1137,6 @@ func (t *TikvImporter) adjust() error {
 	}
 
 	t.Backend = strings.ToLower(t.Backend)
-	if t.Backend == BackendRemote {
-		return common.ErrInvalidConfig.GenWithStack(`tikv-importer.backend = "remote" is not supported`)
-	}
 	// only need to assign t.IncrementalImport to t.ParallelImport when t.ParallelImport is false and t.IncrementalImport is true
 	if !t.ParallelImport && t.IncrementalImport {
 		t.ParallelImport = t.IncrementalImport
@@ -1214,6 +1211,8 @@ func (t *TikvImporter) adjust() error {
 		if len(t.SortedKVDir) == 0 {
 			return common.ErrInvalidConfig.GenWithStack("tikv-importer.sorted-kv-dir must not be empty!")
 		}
+		// Remote backend doesn't store the kv data in the local, but remote backend
+		// will store the duplicate entries to local using pebble.
 		storageSizeDir := filepath.Clean(t.SortedKVDir)
 		sortedKVDirInfo, err := os.Stat(storageSizeDir)
 

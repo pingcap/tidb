@@ -55,10 +55,6 @@ type chunk struct {
 	data []byte
 }
 
-type chunksState struct {
-	FlushedChunkID uint64 `json:"flushed-chunk-id"`
-}
-
 type chunkTask struct {
 	// For flush, resp is used to notify the completion of the flush.
 	// For put chunk, resp is used to receive chunkID allocated by chunkSenderLoop,
@@ -90,14 +86,13 @@ type chunkSender struct {
 	chunksCache *chunksCache
 	logger      log.Logger
 
-	// state is used to record the state of the chunks in remote worker.
-	state       atomic.Pointer[chunksState]
-	nextChunkID atomic.Uint64
+	// the chunk id that remote worker has flushed
+	flushedChunkID atomic.Uint64
+	nextChunkID    atomic.Uint64
 
 	// the following channels should be closed by chunkSenderLoop
 	loopDoneChan chan struct{} // notify chunkSenderLoop is done
 
-	// the following channels should be closed by closed method
 	taskChan chan *chunkTask
 	cancel   context.CancelFunc
 
@@ -115,14 +110,13 @@ func newChunkSender(ctx context.Context, id uint64, engine *engine, chunksCache 
 		chunksCache: chunksCache,
 		logger:      engine.logger.With(zap.Uint64("sender", id)),
 
-		state:       atomic.Pointer[chunksState]{},
-		nextChunkID: atomic.Uint64{},
+		flushedChunkID: atomic.Uint64{},
+		nextChunkID:    atomic.Uint64{},
 
 		loopDoneChan: make(chan struct{}),
 		taskChan:     make(chan *chunkTask),
 		cancel:       cancel,
 	}
-	c.state.Store(&chunksState{})
 
 	go c.chunkSenderLoop(ctx)
 
@@ -172,7 +166,7 @@ func (c *chunkSender) getLastChunkID() uint64 {
 }
 
 func (c *chunkSender) getFlushedChunkID() uint64 {
-	return c.state.Load().FlushedChunkID
+	return c.flushedChunkID.Load()
 }
 
 func (c *chunkSender) chunkSenderLoop(ctx context.Context) {
@@ -312,9 +306,9 @@ func (c *chunkSender) handlePutChunkResult(ctx context.Context, result *PutChunk
 		}
 	}
 
-	state := c.state.Load()
+	flushedChunkID := c.flushedChunkID.Load()
 	// We can clean the cache of chunks that the remote worker has flushed.
-	lastFlushedChunkID := state.FlushedChunkID + 1
+	lastFlushedChunkID := flushedChunkID + 1
 	for lastFlushedChunkID <= result.FlushedChunkID {
 		err := c.chunksCache.clean(lastFlushedChunkID)
 		if err != nil {
@@ -325,9 +319,7 @@ func (c *chunkSender) handlePutChunkResult(ctx context.Context, result *PutChunk
 		lastFlushedChunkID++
 	}
 
-	c.state.Store(&chunksState{
-		FlushedChunkID: result.FlushedChunkID,
-	})
+	c.flushedChunkID.Store(result.FlushedChunkID)
 	return nil
 }
 
@@ -367,8 +359,8 @@ func (c *chunkSender) sendFlushToRemote(ctx context.Context) error {
 		// Make sure all chunks are flushed in remote worker.
 		if result.FlushedChunkID == c.getLastChunkID() {
 			// Clean the cache of chunks that have been flushed and update the state.
-			state := c.state.Load()
-			lastFlushedChunkID := state.FlushedChunkID + 1
+			flushedChunkID := c.flushedChunkID.Load()
+			lastFlushedChunkID := flushedChunkID + 1
 			for lastFlushedChunkID <= result.FlushedChunkID {
 				err := c.chunksCache.clean(lastFlushedChunkID)
 				if err != nil {
@@ -376,9 +368,7 @@ func (c *chunkSender) sendFlushToRemote(ctx context.Context) error {
 				}
 				lastFlushedChunkID++
 			}
-			state.FlushedChunkID = result.FlushedChunkID
-
-			c.state.Store(state)
+			c.flushedChunkID.Store(result.FlushedChunkID)
 			return nil
 		}
 
