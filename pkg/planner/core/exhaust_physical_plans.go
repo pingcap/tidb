@@ -195,7 +195,7 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 		}
 
 		prefixLen := findMaxPrefixLen(p.rightProperties, rightKeys)
-		if prefixLen == 0 {
+		if prefixLen < len(rightKeys) {
 			continue
 		}
 
