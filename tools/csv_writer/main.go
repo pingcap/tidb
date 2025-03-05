@@ -441,7 +441,7 @@ func (c *Column) generateVarbinary(num, len int, res []string, unique bool) {
 				res[i] = nullVal
 			} else {
 				// todo: remove 1024
-				res[i] = generateLetterWithNum(160, true)
+				res[i] = generateLetterWithNum(len, true)
 			}
 		}
 	}
