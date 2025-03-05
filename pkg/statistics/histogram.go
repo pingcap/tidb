@@ -1090,7 +1090,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 		// Attempt to account for the added rows - but not more than the totalPercent
 		outOfRangeAdded := addedRows * totalPercent
 		// Return the max of each estimate - with a minimum of one value.
-		return max(rowCount, outOfRangeAdded, oneValue)
+		rowCount = max(rowCount, outOfRangeAdded, oneValue)
 	}
 
 	// Use modifyCount as a final bound
