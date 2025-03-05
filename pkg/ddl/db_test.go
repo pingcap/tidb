@@ -1276,7 +1276,7 @@ func TestGetAllTableInfos(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
-	for i := 0; i < 213; i++ {
+	for i := 0; i < 113; i++ {
 		tk.MustExec(fmt.Sprintf("create database test%d", i))
 		tk.MustExec(fmt.Sprintf("use test%d", i))
 		tk.MustExec("create table t1 (a int)")

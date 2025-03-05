@@ -1001,6 +1001,7 @@ func (m *Mutator) IterTables(dbID int64, fn func(info *model.TableInfo) error) e
 func splitRangeInt64Max(n int64) [][]string {
 	ranges := make([][]string, n)
 
+	// 9999999999999999999 is the max number than maxInt64 in string format.
 	batch := 9999999999999999999 / uint64(n)
 
 	for k := int64(0); k < n; k++ {
@@ -1019,7 +1020,7 @@ func splitRangeInt64Max(n int64) [][]string {
 	return ranges
 }
 
-// IterAllTables iterates all the table at once, in order to avoid oom.
+// IterAllTables iterates all the table at once, in order to avoid oom. It can use at most 15 goroutines to iterate.
 func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concurrency int, fn func(info *model.TableInfo) error) error {
 	cancelCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -1039,7 +1040,6 @@ func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concur
 		t := structure.NewStructure(snapshot, nil, mMetaPrefix)
 		workGroup.Go(func() error {
 			startKey := []byte(fmt.Sprintf("%s:", mDBPrefix))
-			i := i
 			startKey = codec.EncodeBytes(startKey, []byte(kvRanges[i][0]))
 			endKey := []byte(fmt.Sprintf("%s:", mDBPrefix))
 			endKey = codec.EncodeBytes(endKey, []byte(kvRanges[i][1]))
