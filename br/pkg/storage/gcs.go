@@ -240,7 +240,7 @@ func (s *GCSStorage) Open(ctx context.Context, path string, o *ReaderOption) (Ex
 
 	attrs, err := handle.Attrs(ctx)
 	if err != nil {
-		if errors.Cause(err) == storage.ErrObjectNotExist { // nolint:errorlint
+		if goerrors.Is(err, storage.ErrObjectNotExist) {
 			return nil, errors.Annotatef(err,
 				"the object doesn't exist, file info: input.bucket='%s', input.key='%s'",
 				s.gcs.Bucket, path)
@@ -257,7 +257,7 @@ func (s *GCSStorage) Open(ctx context.Context, path string, o *ReaderOption) (Ex
 			pos = *o.StartOffset
 		}
 		if o.EndOffset != nil {
-			endPos = *o.EndOffset
+			endPos = min(endPos, *o.EndOffset)
 		}
 		prefetchSize = o.PrefetchSize
 	}
@@ -544,6 +544,7 @@ type gcsObjectReader struct {
 	name      string
 	objHandle *storage.ObjectHandle
 	reader    io.ReadCloser
+	// [pos, endPos) is the range of the file to read.
 	pos       int64
 	endPos    int64
 	totalSize int64
@@ -558,10 +559,7 @@ type gcsObjectReader struct {
 // Read implement the io.Reader interface.
 func (r *gcsObjectReader) Read(p []byte) (n int, err error) {
 	if r.reader == nil {
-		length := int64(-1)
-		if r.endPos != r.totalSize {
-			length = r.endPos - r.pos
-		}
+		length := r.endPos - r.pos
 		rc, err := r.objHandle.NewRangeReader(r.ctx, r.pos, length)
 		if err != nil {
 			return 0, errors.Annotatef(err,
@@ -570,7 +568,7 @@ func (r *gcsObjectReader) Read(p []byte) (n int, err error) {
 		}
 		r.reader = rc
 		if r.prefetchSize > 0 {
-			r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+			r.reader = prefetch.NewReader(r.reader, length, r.prefetchSize)
 		}
 	}
 	n, err = r.reader.Read(p)
@@ -630,7 +628,7 @@ func (r *gcsObjectReader) Seek(offset int64, whence int) (int64, error) {
 	}
 	r.reader = rc
 	if r.prefetchSize > 0 {
-		r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+		r.reader = prefetch.NewReader(r.reader, r.endPos-r.pos, r.prefetchSize)
 	}
 
 	return realOffset, nil

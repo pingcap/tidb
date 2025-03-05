@@ -17,6 +17,7 @@ package external
 import (
 	"bytes"
 	"context"
+	goerrors "errors"
 	"io"
 	"slices"
 	"sort"
@@ -64,7 +65,7 @@ func seekPropsOffsets(
 		eg.Go(func() error {
 			r, err2 := newStatsReader(egCtx, exStorage, paths[i], 250*1024)
 			if err2 != nil {
-				if err2 == io.EOF {
+				if goerrors.Is(err2, io.EOF) {
 					return nil
 				}
 				return errors.Trace(err2)
@@ -76,16 +77,15 @@ func seekPropsOffsets(
 
 			p, err3 := r.nextProp()
 			for {
-				switch err3 {
-				case nil:
-				case io.EOF:
-					// fill the rest of the offsets with the last offset
-					currOffset := offsetsPerFile[i][keyIdx]
-					for keyIdx++; keyIdx < len(starts); keyIdx++ {
-						offsetsPerFile[i][keyIdx] = currOffset
+				if err3 != nil {
+					if goerrors.Is(err3, io.EOF) {
+						// fill the rest of the offsets with the last offset
+						currOffset := offsetsPerFile[i][keyIdx]
+						for keyIdx++; keyIdx < len(starts); keyIdx++ {
+							offsetsPerFile[i][keyIdx] = currOffset
+						}
+						return nil
 					}
-					return nil
-				default:
 					return errors.Trace(err3)
 				}
 				propKey := kv.Key(p.firstKey)

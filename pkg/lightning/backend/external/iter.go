@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
+	goerrors "errors"
 	"io"
 	"sync"
 
@@ -128,12 +129,11 @@ func openAndGetFirstElem[
 	for i, f := range openers {
 		wg.Go(func() error {
 			rd, err := f()
-			switch err {
-			case nil:
-			case io.EOF:
-				// will leave a nil reader in `mayNilReaders`
-				return nil
-			default:
+			if err != nil {
+				if goerrors.Is(err, io.EOF) {
+					// will leave a nil reader in `mayNilReaders`
+					return nil
+				}
 				return err
 			}
 			mayNilReaders[i] = rd
@@ -152,7 +152,7 @@ func openAndGetFirstElem[
 		}
 		rd := *rp
 		e, err := rd.next()
-		if err == io.EOF {
+		if goerrors.Is(err, io.EOF) {
 			_ = rd.close()
 			mayNilReaders[j] = nil
 			continue
@@ -297,13 +297,13 @@ func (i *mergeIter[T, R]) next() (closeReaderIdx int, ok bool) {
 		rd := *i.readers[i.lastReaderIdx]
 		e, err := rd.next()
 
-		switch err {
-		case nil:
+		switch {
+		case err == nil:
 			if i.checkHotspot && i.lastReaderIdx == i.lastHotspotIdx {
 				i.elemFromHotspot = &e
 			}
 			heap.Push(&i.h, mergeHeapElem[T]{elem: e, readerIdx: i.lastReaderIdx})
-		case io.EOF:
+		case goerrors.Is(err, io.EOF):
 			closeErr := rd.close()
 			if closeErr != nil {
 				i.logger.Warn("failed to close reader",
