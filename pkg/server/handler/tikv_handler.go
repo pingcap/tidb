@@ -256,7 +256,7 @@ type RegionMeta struct {
 func (t *TikvHandlerTool) GetRegionsMeta(regionIDs []uint64) ([]RegionMeta, error) {
 	regions := make([]RegionMeta, len(regionIDs))
 	for i, regionID := range regionIDs {
-		region, err := t.PDClient.GetRegionByID(context.TODO(), regionID, opt.WithAllowFollowerHandle())
+		region, err := t.RegionCache.PDClient().GetRegionByID(context.TODO(), regionID, opt.WithAllowFollowerHandle())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

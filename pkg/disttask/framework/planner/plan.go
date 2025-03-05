@@ -18,8 +18,8 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	pd "github.com/tikv/pd/client"
 )
 
 // PlanCtx is the context for planning.
@@ -41,7 +41,7 @@ type PlanCtx struct {
 	NextTaskStep         proto.Step
 	ExecuteNodesCnt      int
 
-	Store kv.StorageWithPD
+	PDCli pd.Client
 }
 
 // LogicalPlan represents a logical plan in distribute framework.
