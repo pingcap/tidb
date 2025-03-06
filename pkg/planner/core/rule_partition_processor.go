@@ -1803,7 +1803,7 @@ func (*PartitionProcessor) resolveAccessPaths(ds *logicalop.DataSource) error {
 		return err
 	}
 	// partition processor path pruning should affect the all paths.
-	allPaths := make([]*util.AccessPath, 0, len(possiblePaths))
+	allPaths := make([]*util.AccessPath, len(possiblePaths))
 	copy(allPaths, possiblePaths)
 	ds.AllPossibleAccessPaths = allPaths
 	ds.PossibleAccessPaths = possiblePaths
