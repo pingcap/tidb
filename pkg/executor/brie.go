@@ -821,7 +821,7 @@ func (gs *tidbGlueSession) Close() {
 	CloseSession(gs.se)
 }
 
-// GetGlobalVariables implements glue.Session.
+// GetGlobalVariable implements glue.Session.
 func (gs *tidbGlueSession) GetGlobalVariable(name string) (string, error) {
 	return gs.se.GetSessionVars().GlobalVarsAccessor.GetTiDBTableValue(name)
 }
@@ -834,6 +834,21 @@ func (gs *tidbGlueSession) GetGlobalSysVar(name string) (string, error) {
 // GetSessionCtx implements glue.Glue
 func (gs *tidbGlueSession) GetSessionCtx() sessionctx.Context {
 	return gs.se
+}
+
+// AlterTableMode implements glue.Session.
+func (gs *tidbGlueSession) AlterTableMode(
+	_ context.Context,
+	schemaID int64,
+	tableID int64,
+	tableMode model.TableModeState) error {
+	d := domain.GetDomain(gs.se).DDLExecutor()
+	args := &model.AlterTableModeArgs{
+		SchemaID:  schemaID,
+		TableID:   tableID,
+		TableMode: tableMode,
+	}
+	return d.AlterTableMode(gs.se, args)
 }
 
 func restoreQuery(stmt *ast.BRIEStmt) string {

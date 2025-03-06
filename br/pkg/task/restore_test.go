@@ -526,43 +526,30 @@ func TestCheckTikvSpace(t *testing.T) {
 	require.NoError(t, task.CheckStoreSpace(400*pb, &store))
 }
 
-type testCase struct {
-	name             string
-	filterPattern    []string
-	logBackupHistory []struct {
-		tableID   int64
-		tableName string
-		dbID      int64
-	}
-	dbIDToName       map[int64]string
-	expectedTableIDs map[int64][]int64 // dbID -> []tableID
-	expectedDBs      []int64
-	expectedTables   []int64
-}
-
 func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
-	// Setup common test database and table maps
-	dbInfo1 := model.DBInfo{
-		ID:   1,
-		Name: ast.NewCIStr("test_db_1"),
-	}
-	dbInfo2 := model.DBInfo{
-		ID:   2,
-		Name: ast.NewCIStr("test_db_2"),
-	}
+	// Create a mock snapshot database map
 	snapshotDBMap := map[int64]*metautil.Database{
 		1: {
-			Info: &dbInfo1,
+			Info: &model.DBInfo{
+				ID:   1,
+				Name: ast.NewCIStr("test_db_1"),
+			},
 			Tables: []*metautil.Table{
 				{
-					DB: &dbInfo1,
+					DB: &model.DBInfo{
+						ID:   1,
+						Name: ast.NewCIStr("test_db_1"),
+					},
 					Info: &model.TableInfo{
 						ID:   11,
 						Name: ast.NewCIStr("test_table_11"),
 					},
 				},
 				{
-					DB: &dbInfo1,
+					DB: &model.DBInfo{
+						ID:   1,
+						Name: ast.NewCIStr("test_db_1"),
+					},
 					Info: &model.TableInfo{
 						ID:   12,
 						Name: ast.NewCIStr("test_table_12"),
@@ -571,10 +558,16 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 			},
 		},
 		2: {
-			Info: &dbInfo2,
+			Info: &model.DBInfo{
+				ID:   2,
+				Name: ast.NewCIStr("test_db_2"),
+			},
 			Tables: []*metautil.Table{
 				{
-					DB: &dbInfo2,
+					DB: &model.DBInfo{
+						ID:   2,
+						Name: ast.NewCIStr("test_db_2"),
+					},
 					Info: &model.TableInfo{
 						ID:   21,
 						Name: ast.NewCIStr("test_table_21"),
@@ -584,10 +577,23 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 		},
 	}
 
-	tests := []testCase{
+	tests := []struct {
+		name             string
+		filterPattern    []string
+		logBackupHistory []struct {
+			tableID   int64
+			tableName string
+			dbID      int64
+		}
+		dbIDToName       map[int64]string
+		deletedTableIDs  []int64
+		expectedTableIDs map[int64][]int64
+		expectedDBs      []int64
+		expectedTables   []int64
+	}{
 		{
-			name:          "Basic table tracking",
-			filterPattern: []string{"test_db*.*"},
+			name:          "No filter",
+			filterPattern: []string{"*.*"},
 			logBackupHistory: []struct {
 				tableID   int64
 				tableName string
@@ -605,8 +611,8 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 			expectedTables: []int64{11, 12, 21},
 		},
 		{
-			name:          "Table not in filter",
-			filterPattern: []string{"other_db.other_table"},
+			name:          "Filter by database",
+			filterPattern: []string{"test_db_1.*"},
 			logBackupHistory: []struct {
 				tableID   int64
 				tableName string
@@ -615,49 +621,70 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 				{11, "test_table_11", 1},
 				{12, "test_table_12", 1},
 				{21, "test_table_21", 2},
-			},
-			expectedTableIDs: map[int64][]int64{},
-			expectedDBs:      []int64{},
-			expectedTables:   []int64{},
-		},
-		{
-			name:          "New table created during log backup",
-			filterPattern: []string{"test_db*.*"},
-			logBackupHistory: []struct {
-				tableID   int64
-				tableName string
-				dbID      int64
-			}{
-				{11, "test_table_11", 1},
-				{12, "test_table_12", 1},
-				{21, "test_table_21", 2},
-				{13, "new_table", 1},
 			},
 			expectedTableIDs: map[int64][]int64{
-				1: {11, 12, 13},
+				1: {11, 12},
+			},
+			expectedDBs:    []int64{1},
+			expectedTables: []int64{11, 12},
+		},
+		{
+			name:          "Filter by table",
+			filterPattern: []string{"*.test_table_11"},
+			logBackupHistory: []struct {
+				tableID   int64
+				tableName string
+				dbID      int64
+			}{
+				{11, "test_table_11", 1},
+				{12, "test_table_12", 1},
+				{21, "test_table_21", 2},
+			},
+			expectedTableIDs: map[int64][]int64{
+				1: {11},
+			},
+			expectedDBs:    []int64{1},
+			expectedTables: []int64{11},
+		},
+		{
+			name:          "Table renamed during log backup",
+			filterPattern: []string{"*.*"},
+			logBackupHistory: []struct {
+				tableID   int64
+				tableName string
+				dbID      int64
+			}{
+				{11, "test_table_11", 1},
+				{11, "renamed_table", 1},
+				{12, "test_table_12", 1},
+				{21, "test_table_21", 2},
+			},
+			expectedTableIDs: map[int64][]int64{
+				1: {11, 12},
 				2: {21},
 			},
 			expectedDBs:    []int64{1, 2},
-			expectedTables: []int64{11, 12, 21}, // 13 not in full backup
+			expectedTables: []int64{11, 12, 21},
 		},
 		{
-			name:          "Table renamed into filter during log backup",
-			filterPattern: []string{"test_db_2.*"},
+			name:          "Table renamed to different database during log backup",
+			filterPattern: []string{"*.*"},
 			logBackupHistory: []struct {
 				tableID   int64
 				tableName string
 				dbID      int64
 			}{
-				{11, "test_table_11", 1}, // drop
-				{11, "renamed_table", 2}, // create
+				{11, "test_table_11", 1},
+				{11, "renamed_table", 2},
 				{12, "test_table_12", 1},
 				{21, "test_table_21", 2},
 			},
 			expectedTableIDs: map[int64][]int64{
+				1: {12},
 				2: {11, 21},
 			},
-			expectedDBs:    []int64{1, 2}, // need original db for restore
-			expectedTables: []int64{11, 21},
+			expectedDBs:    []int64{1, 2},
+			expectedTables: []int64{11, 12, 21},
 		},
 		{
 			name:          "Table renamed out of filter during log backup",
@@ -713,6 +740,24 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 			expectedDBs:    []int64{}, // not in full backup
 			expectedTables: []int64{}, // not in full backup
 		},
+		{
+			name:          "Table deleted during log backup",
+			filterPattern: []string{"test_db_1.*"},
+			logBackupHistory: []struct {
+				tableID   int64
+				tableName string
+				dbID      int64
+			}{
+				{11, "test_table_11", 1},
+				{12, "test_table_12", 1},
+			},
+			deletedTableIDs: []int64{11}, // Table 11 was deleted
+			expectedTableIDs: map[int64][]int64{
+				1: {12}, // Only table 12 should remain
+			},
+			expectedDBs:    []int64{1},
+			expectedTables: []int64{12}, // Table 11 should be removed
+		},
 	}
 
 	for _, tc := range tests {
@@ -734,6 +779,13 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 
 			for dbID, dbName := range tc.dbIDToName {
 				logBackupTableHistory.RecordDBIdToName(dbID, dbName)
+			}
+
+			// Mark tables as deleted
+			if len(tc.deletedTableIDs) > 0 {
+				for _, id := range tc.deletedTableIDs {
+					logBackupTableHistory.MarkTableDeleted(id)
+				}
 			}
 
 			testFilter, err := filter.Parse(tc.filterPattern)

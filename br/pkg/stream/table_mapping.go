@@ -22,12 +22,18 @@ import (
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/restore"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"go.uber.org/zap"
 )
 
 const InitialTempId int64 = 0
@@ -180,7 +186,9 @@ func (tm *TableMappingManager) parseDBValueAndUpdateIdMapping(value []byte) erro
 	if err != nil {
 		return errors.Trace(err)
 	}
-	dbReplace.Name = dbInfo.Name.O
+	if dbInfo.Name.O != "" {
+		dbReplace.Name = dbInfo.Name.O
+	}
 	return nil
 }
 
@@ -252,7 +260,9 @@ func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(dbID int64, val
 	if err != nil {
 		return errors.Trace(err)
 	}
-	tableReplace.Name = tableInfo.Name.O
+	if tableInfo.Name.O != "" {
+		tableReplace.Name = tableInfo.Name.O
+	}
 
 	// update table ID and partition ID.
 	partitions := tableInfo.GetPartitionInfo()
@@ -319,14 +329,17 @@ func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBRepl
 					// merge partition mappings for existing tables
 					existingTableReplace := existingDBReplace.TableMap[tableUpID]
 					for partUpID, partDownID := range baseTableReplace.PartitionMap {
-						if _, exists := existingTableReplace.PartitionMap[partUpID]; !exists {
-							existingTableReplace.PartitionMap[partUpID] = partDownID
-						}
+						existingTableReplace.PartitionMap[partUpID] = partDownID
+					}
+
+					for indexUpID, indexDownID := range baseTableReplace.IndexMap {
+						existingTableReplace.IndexMap[indexUpID] = indexDownID
 					}
 				}
 			}
 		}
 	}
+	LogDBReplaceMap("after merging dbReplace", tm.DBReplaceMap)
 }
 
 func (tm *TableMappingManager) IsEmpty() bool {
@@ -527,4 +540,59 @@ func ExtractValue(e *kv.Entry, cf string) ([]byte, error) {
 func (tm *TableMappingManager) generateTempID() DownstreamID {
 	tm.tempIDCounter--
 	return tm.tempIDCounter
+}
+
+// UpdateDownstreamIds updates the mapping from old table ID to new table ID.
+func (tm *TableMappingManager) UpdateDownstreamIds(dbs []*metautil.Database,
+	tables []*metautil.Table, domain *domain.Domain) {
+	dbReplaces := make(map[UpstreamID]*DBReplace)
+
+	for _, db := range dbs {
+		dbName, _ := utils.GetSysDBCIStrName(db.Info.Name)
+		newDBInfo, exist := domain.InfoSchema().SchemaByName(dbName)
+		if !exist {
+			log.Error("db does not exist", zap.String("dbName", dbName.String()))
+			continue
+		}
+
+		_, exist = dbReplaces[db.Info.ID]
+		if !exist {
+			dbReplace := NewDBReplace(db.Info.Name.O, newDBInfo.ID)
+			dbReplaces[db.Info.ID] = dbReplace
+		}
+	}
+
+	for _, t := range tables {
+		dbName, _ := utils.GetSysDBCIStrName(t.DB.Name)
+		newDBInfo, exist := domain.InfoSchema().SchemaByName(dbName)
+		if !exist {
+			log.Error("db does not exist", zap.String("dbName", dbName.String()))
+			continue
+		}
+
+		dbReplace, exist := dbReplaces[t.DB.ID]
+		if !exist {
+			dbReplace = NewDBReplace(t.DB.Name.O, newDBInfo.ID)
+			dbReplaces[t.DB.ID] = dbReplace
+		}
+
+		if t.Info == nil {
+			// If the db is empty, skip it.
+			continue
+		}
+		newTableInfo, err := restore.GetTableSchema(domain, dbName, t.Info.Name)
+		if err != nil {
+			log.Error("table doesn't exist", zap.String("tableName", dbName.String()+"."+t.Info.Name.String()))
+			continue
+		}
+
+		dbReplace.TableMap[t.Info.ID] = &TableReplace{
+			Name:         newTableInfo.Name.O,
+			TableID:      newTableInfo.ID,
+			PartitionMap: restoreutils.GetPartitionIDMap(newTableInfo, t.Info),
+			IndexMap:     restoreutils.GetIndexIDMap(newTableInfo, t.Info),
+		}
+	}
+	LogDBReplaceMap("updated id mapping after creating tables during snapshot restore", dbReplaces)
+	tm.MergeBaseDBReplace(dbReplaces)
 }

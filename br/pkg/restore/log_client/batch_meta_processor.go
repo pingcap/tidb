@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"go.uber.org/zap"
@@ -62,6 +63,7 @@ func NewRestoreMetaKVProcessor(client *LogClient, schemasReplace *stream.Schemas
 // RestoreAndRewriteMetaKVFiles tries to restore files about meta kv-event from stream-backup.
 func (rp *RestoreMetaKVProcessor) RestoreAndRewriteMetaKVFiles(
 	ctx context.Context,
+	isOnline bool,
 	files []*backuppb.DataFileInfo,
 ) error {
 	// starts gc row collector
@@ -84,10 +86,16 @@ func (rp *RestoreMetaKVProcessor) RestoreAndRewriteMetaKVFiles(
 		return errors.Trace(err)
 	}
 
-	// global schema version to trigger a full reload so every TiDB node in the cluster will get synced with
-	// the latest schema update.
-	if err := rp.client.UpdateSchemaVersionFullReload(ctx); err != nil {
-		return errors.Trace(err)
+	if !isOnline {
+		// TODO, use same technique to update schema as online
+		// global schema version to trigger a full reload so every TiDB node in the cluster will get synced with
+		// the latest schema update.
+		log.Info("updating schema version to do full reload")
+		if err := rp.client.UpdateSchemaVersionFullReload(ctx); err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		log.Info("skip doing full reload for online restore")
 	}
 	return nil
 }
@@ -164,6 +172,14 @@ func (mp *MetaKVInfoProcessor) ProcessBatch(
 			return nil, errors.Trace(err)
 		}
 
+		// Process DDL job history keys (for deleted tables)
+		if utils.IsMetaDDLJobHistoryKey(entry.E.Key) && cf == consts.DefaultCF {
+			if err := mp.processDeletedTablesFromDDLJob(entry.E.Value); err != nil {
+				return nil, errors.Trace(err)
+			}
+			continue
+		}
+
 		// collect rename/partition exchange history
 		// get value from default cf and get the short value if possible from write cf
 		value, err := stream.ExtractValue(&entry.E, cf)
@@ -188,7 +204,11 @@ func (mp *MetaKVInfoProcessor) ProcessBatch(
 					return nil, errors.Trace(err)
 				}
 				// collect db id -> name mapping during log backup, it will contain information about newly created db
+				if dbInfo.Name.O == "" {
+					log.Warn("db info doesn't contain db name", zap.Int64("dbID", dbInfo.ID))
+				}
 				mp.tableHistoryManager.RecordDBIdToName(dbInfo.ID, dbInfo.Name.O)
+
 			} else if !meta.IsDBkey(rawKey.Key) {
 				// also see RewriteMetaKvEntry
 				continue
@@ -205,7 +225,10 @@ func (mp *MetaKVInfoProcessor) ProcessBatch(
 				}
 
 				// add to table rename history
-				mp.tableHistoryManager.AddTableHistory(tableInfo.ID, tableInfo.Name.String(), dbID)
+				if tableInfo.Name.O == "" {
+					log.Warn("table info doesn't contain table name", zap.Int64("tableID", tableInfo.ID))
+				}
+				mp.tableHistoryManager.AddTableHistory(tableInfo.ID, tableInfo.Name.O, dbID)
 
 				// track partitions if this is a partitioned table
 				if tableInfo.Partition != nil {
@@ -217,6 +240,73 @@ func (mp *MetaKVInfoProcessor) ProcessBatch(
 		}
 	}
 	return filteredEntries, nil
+}
+
+// processDeletedTablesFromDDLJob processes a DDL job and marks tables as deleted when appropriate
+func (mp *MetaKVInfoProcessor) processDeletedTablesFromDDLJob(value []byte) error {
+	// Check if this is a DDL job that deletes tables
+	var job model.Job
+	if err := json.Unmarshal(value, &job); err != nil {
+		return errors.Trace(err)
+	}
+
+	// Handle multi-schema jobs
+	if job.MultiSchemaInfo != nil {
+		for i, sub := range job.MultiSchemaInfo.SubJobs {
+			proxyJob := sub.ToProxyJob(&job, i)
+			if err := mp.processDeletedTablesFromSingleJob(&proxyJob); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
+	}
+
+	// Process single job
+	return mp.processDeletedTablesFromSingleJob(&job)
+}
+
+// processDeletedTablesFromSingleJob processes a single DDL job and marks tables as deleted when appropriate
+func (mp *MetaKVInfoProcessor) processDeletedTablesFromSingleJob(job *model.Job) error {
+	// Process DDL jobs that delete tables
+	switch job.Type {
+	case model.ActionDropTable:
+		// Mark the table as deleted
+		mp.tableHistoryManager.MarkTableDeleted(job.TableID)
+
+		// Check for partitions that might be dropped
+		args, err := model.GetDropTableArgs(job)
+		if err == nil && len(args.OldPartitionIDs) > 0 {
+			mp.tableHistoryManager.MarkTablesDeleted(args.OldPartitionIDs)
+		}
+	case model.ActionDropSchema:
+		// When dropping a schema, all tables in it are dropped
+		args, err := model.GetDropSchemaArgs(job)
+		if err == nil && len(args.AllDroppedTableIDs) > 0 {
+			mp.tableHistoryManager.MarkTablesDeleted(args.AllDroppedTableIDs)
+		}
+	case model.ActionTruncateTable:
+		// Truncate table creates a new table with a new ID, so the old one is effectively dropped
+		args, err := model.GetTruncateTableArgs(job)
+		if err == nil {
+			mp.tableHistoryManager.MarkTableDeleted(job.TableID)
+			if len(args.OldPartitionIDs) > 0 {
+				mp.tableHistoryManager.MarkTablesDeleted(args.OldPartitionIDs)
+			}
+		}
+	case model.ActionDropTablePartition:
+		// When dropping a partition, mark the partition IDs as deleted
+		args, err := model.GetTablePartitionArgs(job)
+		if err == nil && len(args.OldPhysicalTblIDs) > 0 {
+			mp.tableHistoryManager.MarkTablesDeleted(args.OldPhysicalTblIDs)
+		}
+	case model.ActionReorganizePartition, model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
+		// These actions can delete partitions
+		args, err := model.GetTablePartitionArgs(job)
+		if err == nil && len(args.OldPhysicalTblIDs) > 0 {
+			mp.tableHistoryManager.MarkTablesDeleted(args.OldPhysicalTblIDs)
+		}
+	}
+	return nil
 }
 
 func (mp *MetaKVInfoProcessor) GetTableMappingManager() *stream.TableMappingManager {
