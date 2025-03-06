@@ -542,6 +542,10 @@ func TestIssue59827(t *testing.T) {
 		"PARTITION `p2` VALUES IN ('2'))")
 
 	tk.MustExec("insert into t values ('a','1',1),('b','1',1),('b', '2', 2)")
+	tk.MustQuery("select * from t where a = 'b' and b IN('1','2')").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
+	tk.MustQuery("select * from t where a = 'b' and (b IN ('1','2'))").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
+	tk.MustQuery("select * from t where a = 'b' and (b = '2' or b = '1')").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
+
 	tk.MustQuery("select * from t where a = 'b' and b = '2'").Check(testkit.Rows("b 2 2"))
 	tk.MustQuery("select * from t where a = 'b' and b = '1'").Check(testkit.Rows("b 1 1"))
 	tk.MustQuery("select * from t where a = 'b' and (b = '2')").Check(testkit.Rows("b 2 2"))
