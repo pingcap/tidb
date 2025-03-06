@@ -28,6 +28,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const ImportIntoReaderUsage = 40
+
 var (
 	// size of each arena
 	defaultArenaSize = 256 << 20
@@ -110,14 +112,14 @@ func GetMemoryQuota(concurrency int) int {
 }
 
 // AdjustEncodeThreadCnt adjust the concurrency in encode&sort step for parquet file.
-// TODO(joechenrh): remove hardcoded numbers.
 func AdjustEncodeThreadCnt(memoryUsage, threadCnt int) int {
 	memTotal, err := tidbmemory.MemTotal()
 	if err != nil {
 		return threadCnt
 	}
 
-	return max(min(int(memTotal)*2/5/memoryUsage, threadCnt), 1)
+	adjustedThreadCnt := int(memTotal) * ImportIntoReaderUsage / 100 / memoryUsage
+	return max(min(adjustedThreadCnt, threadCnt), 1)
 }
 
 func init() {

@@ -561,7 +561,6 @@ func (p *Plan) initDefaultOptions(targetNodeCPUCnt int) {
 
 	p.Checksum = config.OpLevelRequired
 	p.ThreadCnt = threadCnt
-	p.EncodeThreadCnt = threadCnt
 	p.MaxWriteSpeed = unlimitedWriteSpeed
 	p.SplitFile = false
 	p.MaxRecordedErrors = 100
@@ -1187,7 +1186,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			}
 		}
 
-		// Adjust thread count for parquet here, because we may not be able to open ThreadCnt parquet files concurrently.
+		// Because we may not be able to open ThreadCnt files concurrently,
+		// we can adjust thread count for parquet here.
 		e.Plan.EncodeThreadCnt = mydump.AdjustEncodeThreadCnt(memoryUsage, e.Plan.ThreadCnt)
 	}
 

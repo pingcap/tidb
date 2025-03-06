@@ -105,10 +105,9 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 	s.tableImporter = tableImporter
 
 	if s.taskMeta.Plan.Format == importer.DataFormatParquet {
-		// For `IMPORT INTO format "parquet"`, we set the memory usage for parquet reader to 40%.
-		mydump.ConfigureReaderLimitForParquet(40)
+		mydump.ConfigureReaderLimitForParquet(mydump.ImportIntoReaderUsage)
 		if s.tableImporter.EncodeThreadCnt > 0 {
-			s.tableImporter.Plan.ThreadCnt = min(s.tableImporter.EncodeThreadCnt, s.tableImporter.Plan.ThreadCnt)
+			s.tableImporter.Plan.ThreadCnt = s.tableImporter.EncodeThreadCnt
 		}
 	}
 
