@@ -845,18 +845,11 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 			)
 			require.NoError(t, err)
 
-			/*
-				require.Len(t, cfg.PiTRTableTracker.DBIdToTableId, len(tc.expectedTableIDs))
-				for dbID, tableIDs := range cfg.PiTRTableTracker.DBIdToTableId {
-					tableIDs2, exists := tc.expectedTableIDs[dbID]
-					require.True(t, exists)
-					require.Len(t, tableIDs, len(tableIDs2))
-					for _, tableID2 := range tableIDs2 {
-						_, exists := tableIDs[tableID2]
-						require.True(t, exists)
-					}
+			for dbID, tableIDs := range tc.expectedTableIDs {
+				for _, tableID := range tableIDs {
+					require.True(t, cfg.PiTRTableTracker.ContainsTableId(dbID, tableID))
 				}
-			*/
+			}
 
 			require.Len(t, dbMap, len(tc.expectedDBs))
 			for _, dbID := range tc.expectedDBs {
