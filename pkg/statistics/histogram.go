@@ -1065,32 +1065,32 @@ func (hg *Histogram) OutOfRangeRowCount(
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
 	rowCount = totalPercent * hg.NotNullCount()
 
-	// Upper & lower bound logic.
-	upperBound := rowCount
+	// oneValue assumes "one value qualies", and is used as either an Upper & lower bound.
+	oneValue := rowCount
 	if histNDV > 0 {
-		upperBound = hg.NotNullCount() / float64(histNDV)
+		oneValue = hg.NotNullCount() / float64(histNDV)
 	}
 
 	if !allowUseModifyCount {
 		// In OptObjectiveDeterminate mode, we can't rely on the modify count anymore.
 		// An upper bound is necessary to make the estimation make sense for predicates with bound on only one end, like a > 1.
-		// We use 1/NDV here (only the Histogram part is considered) and it seems reasonable and good enough for now.
-		return min(rowCount, upperBound)
+		// We use 1/NDV here to assume that at most 1 value qualifies.
+		return min(rowCount, oneValue)
 	}
 
-	// If the realtimeRowCount is larger than the original table rows, then any out of range estimate is unreliable.
-	// Assume at least 1/NDV is returned
 	addedRows := float64(realtimeRowCount) - hg.TotalRowCount()
-	if addedRows > 1 {
-		// Conservatively - use the larger of the left or right percent - since we are working with
-		// changes to the table since last Analyze - any out of range estimate is unreliable.
+	addedPct := addedRows / float64(realtimeRowCount)
+	// If the newly added rows is larger than the percentage that we've estimated that we're
+	// searching for out of the range, rowCount may need to be adjusted.
+	if addedPct > totalPercent {
 		// if the histogram range is invalid (too small/large - histInvalid) - totalPercent is zero
-		// and we will set rowCount to min of upperbound and added rows
-		totalPercent = min(0.5, max(leftPercent, rightPercent))
-		rowCount += totalPercent * addedRows
-		if rowCount < upperBound {
-			rowCount = min(upperBound, addedRows)
+		if histInvalid {
+			totalPercent = min(addedPct, 0.5)
 		}
+		// Attempt to account for the added rows - but not more than the totalPercent
+		outOfRangeAdded := addedRows * totalPercent
+		// Return the max of each estimate - with a minimum of one value.
+		rowCount = max(rowCount, outOfRangeAdded, oneValue)
 	}
 
 	// Use modifyCount as a final bound
