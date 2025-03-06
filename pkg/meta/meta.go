@@ -1021,6 +1021,7 @@ func splitRangeInt64Max(n int64) [][]string {
 }
 
 // IterAllTables iterates all the table at once, in order to avoid oom. It can use at most 15 concurrency to iterate.
+// This function is optimized for 'many databases' scenario. Only 1 concurrency can work for 'many tables in one database' scenario.
 func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concurrency int, fn func(info *model.TableInfo) error) error {
 	cancelCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
