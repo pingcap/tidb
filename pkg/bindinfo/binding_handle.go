@@ -15,29 +15,12 @@
 package bindinfo
 
 import (
-	"strings"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 )
-
-// GlobalBindingHandle is used to handle all global sql bind operations.
-type GlobalBindingHandle interface {
-	BindingCacheUpdater
-
-	BindingOperator
-
-	variable.Statistics
-}
-
-// globalBindingHandle is used to handle all global sql bind operations.
-type globalBindingHandle struct {
-	BindingCacheUpdater
-	BindingOperator
-}
 
 // Lease influences the duration of loading bind info and handling invalid bind.
 var Lease = 3 * time.Second
@@ -62,35 +45,28 @@ const (
          SELECT _tidb_rowid FROM mysql.bind_info WHERE original_sql='builtin_pseudo_sql_for_bind_lock' limit 1)`
 )
 
-// NewGlobalBindingHandle creates a new GlobalBindingHandle.
-func NewGlobalBindingHandle(sPool util.DestroyableSessionPool) GlobalBindingHandle {
-	cache := NewBindingCacheUpdater(sPool)
-	op := newBindingOperator(sPool, cache)
-	h := &globalBindingHandle{BindingOperator: op, BindingCacheUpdater: cache}
-	variable.RegisterStatistics(h)
-	return h
+// BindingHandle is used to handle all sql bind operations.
+type BindingHandle interface {
+	BindingCacheUpdater
+
+	BindingOperator
+
+	variable.Statistics
 }
 
-// newBindingFromStorage builds Bindings from a tuple in storage.
-func newBindingFromStorage(row chunk.Row) *Binding {
-	status := row.GetString(3)
-	// For compatibility, the 'Using' status binding will be converted to the 'Enabled' status binding.
-	if status == StatusUsing {
-		status = StatusEnabled
-	}
-	return &Binding{
-		OriginalSQL: row.GetString(0),
-		Db:          strings.ToLower(row.GetString(2)),
-		BindSQL:     row.GetString(1),
-		Status:      status,
-		CreateTime:  row.GetTime(4),
-		UpdateTime:  row.GetTime(5),
-		Charset:     row.GetString(6),
-		Collation:   row.GetString(7),
-		Source:      row.GetString(8),
-		SQLDigest:   row.GetString(9),
-		PlanDigest:  row.GetString(10),
-	}
+// bindingHandle is used to handle all sql bind operations.
+type bindingHandle struct {
+	BindingCacheUpdater
+	BindingOperator
+}
+
+// NewBindingHandle creates a new BindingHandle.
+func NewBindingHandle(sPool util.DestroyableSessionPool) BindingHandle {
+	cache := NewBindingCacheUpdater(sPool)
+	op := newBindingOperator(sPool, cache)
+	h := &bindingHandle{BindingOperator: op, BindingCacheUpdater: cache}
+	variable.RegisterStatistics(h)
+	return h
 }
 
 var (
@@ -98,12 +74,12 @@ var (
 )
 
 // GetScope gets the status variables scope.
-func (*globalBindingHandle) GetScope(_ string) vardef.ScopeFlag {
+func (*bindingHandle) GetScope(_ string) vardef.ScopeFlag {
 	return vardef.ScopeSession
 }
 
 // Stats returns the server statistics.
-func (h *globalBindingHandle) Stats(_ *variable.SessionVars) (map[string]any, error) {
+func (h *bindingHandle) Stats(_ *variable.SessionVars) (map[string]any, error) {
 	m := make(map[string]any)
 	m[lastPlanBindingUpdateTime] = h.LastUpdateTime().String()
 	return m, nil
