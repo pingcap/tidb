@@ -577,3 +577,20 @@ func TestIssue59827(t *testing.T) {
 	tk.MustQuery("EXECUTE stmt USING @b").Check(testkit.Rows("b 1 1"))
 	tk.MustExec("DEALLOCATE PREPARE stmt")
 }
+
+func TestIssue59827tmp(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a varchar(255), b int primary key nonclustered, key (a)) partition by key(b) partitions 3`)
+	tk.MustExec(`insert into t values ('Ab', 1),('abc',2),('BC',3),('AC',4),('BA',5),('cda',6)`)
+	tk.MustExec(`analyze table t`)
+	//# non Fast Plan works!
+	//tk.MustQuery(`select * from t where b = 2 and a like 'abc'`).Check(testkit.Rows("abc 2"))
+	//tk.MustQuery(`select * from t where b = (2)`).Check(testkit.Rows("abc 2"))
+	//tk.MustQuery(`select * from t where (b = 2)`).Check(testkit.Rows("abc 2"))
+	//tk.MustQuery(`select * from t where b = (1+1)`).Check(testkit.Rows("abc 2"))
+	//# Fast plan had a bug
+	tk.MustQuery(`select * from t where b = 2`).Check(testkit.Rows("abc 2"))
+	tk.MustExec(`drop table t`)
+}
