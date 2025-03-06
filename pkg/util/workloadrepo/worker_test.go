@@ -60,21 +60,7 @@ func setupWorkerForTest(ctx context.Context, etcdCli *clientv3.Client, dom *doma
 	return wrk
 }
 
-func setupDomainAndContext(t *testing.T) (context.Context, kv.Storage, *domain.Domain, string) {
-	ctx := context.Background()
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
-	var cancel context.CancelFunc = nil
-	if ddl, ok := t.Deadline(); ok {
-		ctx, cancel = context.WithDeadline(ctx, ddl)
-	}
-	t.Cleanup(func() {
-		if cancel != nil {
-			cancel()
-		}
-	})
-
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
+func setupEtcd(t *testing.T) string {
 	cfg := embed.NewConfig()
 	cfg.Dir = t.TempDir()
 
@@ -98,7 +84,25 @@ func setupDomainAndContext(t *testing.T) (context.Context, kv.Storage, *domain.D
 		require.False(t, true, "server took too long to start")
 	}
 
-	return ctx, store, dom, embedEtcd.Clients[0].Addr().String()
+	return embedEtcd.Clients[0].Addr().String()
+}
+
+func setupDomainAndContext(t *testing.T) (context.Context, kv.Storage, *domain.Domain, string) {
+	ctx := context.Background()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	var cancel context.CancelFunc = nil
+	if ddl, ok := t.Deadline(); ok {
+		ctx, cancel = context.WithDeadline(ctx, ddl)
+	}
+	t.Cleanup(func() {
+		if cancel != nil {
+			cancel()
+		}
+	})
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	etcdAddr := setupEtcd(t)
+	return ctx, store, dom, etcdAddr
 }
 
 func setupWorker(ctx context.Context, t *testing.T, addr string, dom *domain.Domain, id string, testWorker bool) *worker {
@@ -856,4 +860,64 @@ func TestCalcNextTick(t *testing.T) {
 	require.True(t, calcNextTick(time.Date(2024, 12, 7, 0, 0, 0, 0, loc)) == time.Hour*2)
 	require.True(t, calcNextTick(time.Date(2024, 12, 7, 2, 0, 0, 1, loc)) == time.Hour*24-time.Nanosecond)
 	require.True(t, calcNextTick(time.Date(2024, 12, 7, 1, 59, 59, 999999999, loc)) == time.Nanosecond)
+}
+
+func TestRecoverSnapID(t *testing.T) {
+	ctx, store, dom, addr := setupDomainAndContext(t)
+	worker := setupWorker(ctx, t, addr, dom, "worker1", true)
+	worker.snapshotInterval = 600
+	worker.samplingInterval = 600
+
+	require.NoError(t, worker.setRepositoryDest(ctx, "table"))
+	now := time.Now()
+
+	require.Eventually(t, func() bool {
+		return worker.checkTablesExists(ctx, now)
+	}, time.Minute, 100*time.Millisecond)
+
+	// it is zero
+	newSnapID, err := queryMaxSnapID(ctx, worker.getSessionWithRetry().(sessionctx.Context))
+	require.Nil(t, err)
+	require.Equal(t, uint64(0), newSnapID)
+
+	// start the worker
+	tk := testkit.NewTestKit(t, store)
+	worker.changeSnapshotInterval(context.TODO(), "1")
+	prevSnapID := uint64(0)
+	require.Eventually(t, func() bool {
+		res := tk.MustQuery("select max(snap_id) from workload_schema.hist_snapshots").Rows()
+		if len(res) == 0 || len(res[0]) == 0 {
+			return false
+		}
+		snapID, err := strconv.ParseUint(res[0][0].(string), 10, 64)
+		prevSnapID = snapID
+		return err == nil && snapID > 0
+	}, time.Minute, 100*time.Millisecond)
+
+	// wait for worker to stop
+	worker.stop()
+	require.Eventually(t, func() bool {
+		return worker.cancel == nil
+	}, time.Second*10, time.Millisecond*100)
+
+	// setup a new etcd cluster and a new worker
+	etcd2 := setupEtcd(t)
+	worker2 := setupWorker(ctx, t, etcd2, dom, "worker2", true)
+	// new cluster, so not found
+	snapIDStr, err := worker2.etcdGet(ctx, snapIDKey)
+	require.Nil(t, err)
+	require.Equal(t, "", snapIDStr)
+	_, err = worker2.getSnapID(ctx)
+	require.EqualError(t, errKeyNotFound, err.Error())
+	// it is equal to the previous maximum snap id
+	newSnapID, err = queryMaxSnapID(ctx, worker2.getSessionWithRetry().(sessionctx.Context))
+	require.Nil(t, err)
+	require.Equal(t, newSnapID, prevSnapID)
+
+	// start the new worker and snapID is recovered
+	require.NoError(t, worker2.setRepositoryDest(ctx, "table"))
+	require.Eventually(t, func() bool {
+		newSnapID, err = worker2.getSnapID(ctx)
+		return err == nil && newSnapID >= prevSnapID
+	}, time.Minute, 100*time.Millisecond)
 }
