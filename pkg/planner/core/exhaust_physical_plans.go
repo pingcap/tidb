@@ -195,14 +195,9 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 			newIsNullEQ = append(newIsNullEQ, isNullEQ[offset])
 		}
 
-<<<<<<< HEAD
 		prefixLen := findMaxPrefixLen(p.rightProperties, rightKeys)
-		if prefixLen == 0 {
-=======
-		prefixLen := findMaxPrefixLen(p.RightProperties, rightKeys)
 		// right side should also be full match.
 		if prefixLen < len(offsets) || prefixLen == 0 {
->>>>>>> 163c4bed8fa (planner: don't choose merge join unless there's hint or join key fully matched (#59933))
 			continue
 		}
 
