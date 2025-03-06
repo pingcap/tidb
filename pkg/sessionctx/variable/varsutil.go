@@ -434,6 +434,12 @@ func switchStats(on bool) error {
 	return nil
 }
 
+func switchImportMode(on bool) {
+	if on && SwitchImportMode != nil {
+		SwitchImportMode(on)
+	}
+}
+
 func collectAllowFuncName4ExpressionIndex() string {
 	str := make([]string, 0, len(GAFunction4ExpressionIndex))
 	for funcName := range GAFunction4ExpressionIndex {

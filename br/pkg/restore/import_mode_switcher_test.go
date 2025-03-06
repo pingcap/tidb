@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/pkg/util/importswitch"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
@@ -86,7 +87,7 @@ func TestRestorePreWork(t *testing.T) {
 			pdClient, pdHTTPCli, &semver.Version{Major: 4, Minor: 0, Patch: 9}),
 	}
 	mgr.PdController.SchedulerPauseTTL = 3 * time.Second
-	switcher := restore.NewImportModeSwitcher(pdClient, time.Millisecond*200, nil)
+	switcher := importswitch.NewImportModeSwitcher(pdClient, time.Millisecond*200, nil)
 	undo, cfg, err := restore.RestorePreWork(ctx, mgr, switcher, false, true)
 	require.NoError(t, err)
 	// check the cfg
