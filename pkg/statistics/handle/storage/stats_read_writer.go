@@ -142,7 +142,7 @@ func (s *statsReadWriter) handleSlowStatsSaving(results *statistics.AnalyzeResul
 			zap.String("jobInfo", results.Job.JobInfo),
 			zap.Error(err),
 		)
-		return 0, errors.Errorf("failed to update stats meta version when saving analyze result, please retry the analyze operation")
+		return 0, errors.Errorf("failed to update stats meta version during analyze result save. The system may be too busy. Please retry the operation later")
 	}
 
 	statslogutil.StatsLogger().Info("Successfully updated stats meta version for slow saving",

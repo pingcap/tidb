@@ -147,5 +147,5 @@ func TestFailedToHandleSlowStatsSaving(t *testing.T) {
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t (a int, b int, index idx(a))")
 	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
-	testKit.MustGetErrMsg("analyze table t with 0 topn", "failed to update stats meta version when saving analyze result, please retry the analyze operation")
+	testKit.MustGetErrMsg("analyze table t with 0 topn", "failed to update stats meta version during analyze result save. The system may be too busy. Please retry the operation later")
 }
