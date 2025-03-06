@@ -9,11 +9,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-<<<<<<< HEAD:executor/tiflashtest/BUILD.bazel
-    shard_count = 28,
-=======
-    shard_count = 48,
->>>>>>> b2a9059b5e1 (planner: Limit fine grained shuffle usage for mpp join operators to ensure shuffle keys are the same with actual join keys (#59884)):pkg/executor/test/tiflashtest/BUILD.bazel
+    shard_count = 29,
     deps = [
         "//config",
         "//domain",
