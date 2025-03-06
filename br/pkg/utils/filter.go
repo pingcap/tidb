@@ -15,10 +15,6 @@
 package utils
 
 import (
-	"fmt"
-	"sort"
-	"strings"
-
 	"github.com/pingcap/log"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"go.uber.org/zap"
