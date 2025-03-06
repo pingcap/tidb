@@ -41,10 +41,6 @@ const (
 	// defaultBatchSize is the number of rows fetched each time in the parquet reader
 	defaultBatchSize = 128
 
-	// readerPrefetchSize is the prefetch size for each reader.
-	// 1M is sufficient for most small Parquet files.
-	readerPrefetchSize = 1 << 20
-
 	// defaultBufSize specifies the default size of skip buffer.
 	// Skip buffer is used when reading data from the cloud. If there is a gap between the current
 	// read position and the last read position, these data is stored in this buffer to avoid
@@ -311,7 +307,7 @@ func (pf *parquetFileWrapper) Open(name string) (parquet.ReaderAtSeeker, error) 
 	if len(name) == 0 {
 		name = pf.path
 	}
-	reader, err := pf.store.Open(pf.ctx, name, &storage.ReaderOption{PrefetchSize: readerPrefetchSize})
+	reader, err := pf.store.Open(pf.ctx, name, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -703,6 +699,7 @@ func (pp *ParquetParser) Close() error {
 		openedParser.Add(-1)
 	}()
 
+	log.FromContext(context.Background()).Info("[parquet parser test] Close parquet parser")
 	pp.resetReader()
 	for _, r := range pp.readers {
 		if err := r.Close(); err != nil {
@@ -806,7 +803,7 @@ func OpenParquetReader(
 	store storage.ExternalStorage,
 	path string,
 ) (storage.ReadSeekCloser, error) {
-	r, err := store.Open(ctx, path, &storage.ReaderOption{PrefetchSize: readerPrefetchSize})
+	r, err := store.Open(ctx, path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -840,51 +837,13 @@ func ReadParquetFileRowCountByFile(
 	return reader.MetaData().NumRows, nil
 }
 
-// sampleAllocator is used to collection memory usage in parquet reader.
-type sampleAllocator struct {
-	maxCompressedLength int
-	maxDataPage         int
-	totalDictPage       int
-	otherAllocated      int
-}
-
-func (sa *sampleAllocator) Allocate(size int, tp memory.BufferType) []byte {
-	allocSize := AllocSize(size)
-	switch tp {
-	case memory.BufferCompressed:
-		sa.maxCompressedLength = max(sa.maxCompressedLength, allocSize)
-	case memory.BufferDataPage:
-		sa.maxDataPage = max(sa.maxDataPage, allocSize)
-	case memory.BufferDictionary:
-		// For each row group, we need to store all dictionary pages to decode data page.
-		sa.totalDictPage += allocSize
-	default:
-		sa.otherAllocated += allocSize
-	}
-	return make([]byte, size)
-}
-
-func (*sampleAllocator) Free([]byte) {}
-
-func (sa *sampleAllocator) Reallocate(size int, _ []byte, tp memory.BufferType) []byte {
-	return sa.Allocate(size, tp)
-}
-
-func (sa *sampleAllocator) reset() {
-	sa.maxCompressedLength = 0
-	sa.maxDataPage = 0
-	sa.totalDictPage = 0
-	sa.otherAllocated = 0
-}
-
 // GetDefaultParquetMeta return a default file meta
 func GetDefaultParquetMeta() ParquetFileMeta {
 	return ParquetFileMeta{
-		MemoryUsageStream:  0,
-		MemoryUsageFull:    math.MaxInt32,
-		MemoryQuota:        0,
-		UseSampleAllocator: true,
-		UseStreaming:       true,
+		MemoryUsageStream: 0,
+		MemoryUsageFull:   math.MaxInt32,
+		MemoryQuota:       0,
+		UseStreaming:      true,
 	}
 }
 
@@ -898,10 +857,7 @@ func NewParquetParser(
 ) (*ParquetParser, error) {
 	// Acquire memory limiter first
 	var memoryUsage int
-	if meta.UseSampleAllocator {
-		memoryUsage = 0
-		meta.UseStreaming = true
-	} else if meta.MemoryUsageFull <= meta.MemoryQuota || meta.MemoryUsageFull == meta.MemoryUsageStream {
+	if meta.MemoryUsageFull <= meta.MemoryQuota {
 		memoryUsage = meta.MemoryUsageFull
 		meta.UseStreaming = false
 	} else {
@@ -909,7 +865,9 @@ func NewParquetParser(
 		meta.UseStreaming = true
 	}
 	memoryUsage = min(memoryUsage, readerMemoryLimit)
-	readerMemoryLimiter.Acquire(memoryUsage)
+	if readerMemoryLimiter != nil {
+		readerMemoryLimiter.Acquire(memoryUsage)
+	}
 	log.FromContext(ctx).Info("Get memory usage of parquet reader",
 		zap.String("file", path),
 		zap.String("memory usage", fmt.Sprintf("%d MB", memoryUsage>>20)),
@@ -918,7 +876,6 @@ func NewParquetParser(
 		zap.String("memory limit", fmt.Sprintf("%d MB", readerMemoryLimit>>20)),
 		zap.Int32("opened parser", openedParser.Add(1)),
 		zap.Bool("streaming mode", meta.UseStreaming),
-		zap.Bool("use sample allocator", meta.UseSampleAllocator),
 	)
 
 	wrapper, ok := r.(*parquetFileWrapper)
@@ -932,14 +889,7 @@ func NewParquetParser(
 		wrapper.Init(defaultBufSize)
 	}
 
-	var allocator memory.Allocator
-	if meta.UseSampleAllocator {
-		allocator = &sampleAllocator{}
-	} else {
-		alloc := GetAllocator()
-		allocator = alloc
-	}
-
+	allocator := GetAllocator()
 	prop := parquet.NewReaderProperties(allocator)
 	prop.BufferedStreamEnabled = meta.UseStreaming
 
@@ -1018,75 +968,13 @@ func SampleStatisticsFromParquet(
 		return 0, 0, 0, err
 	}
 
-	wrapper := &parquetFileWrapper{
-		ReadSeekCloser: r,
-		store:          store,
-		ctx:            ctx,
-		path:           fileMeta.Path,
-	}
-	wrapper.Init(defaultBufSize)
-
-	prop := parquet.NewReaderProperties(nil)
-	prop.BufferedStreamEnabled = true
-	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop))
+	parser, err := NewParquetParser(ctx, store, r, fileMeta.Path, ParquetFileMeta{
+		MemoryUsageStream: 0,
+		MemoryUsageFull:   math.MaxInt,
+		MemoryQuota:       0,
+	})
 	if err != nil {
-		return 0, 0, 0, errors.Trace(err)
-	}
-
-	//nolint: errcheck
-	defer reader.Close()
-
-	fileSchema := reader.MetaData().Schema
-	columnMetas := make([]convertedType, fileSchema.NumColumns())
-	columnNames := make([]string, 0, fileSchema.NumColumns())
-
-	for i := range columnMetas {
-		desc := reader.MetaData().Schema.Column(i)
-		columnNames = append(columnNames, strings.ToLower(desc.Name()))
-
-		logicalType := desc.LogicalType()
-		if logicalType.IsValid() {
-			columnMetas[i].converted, columnMetas[i].decimalMeta = logicalType.ToConvertedType()
-		} else {
-			columnMetas[i].converted = desc.ConvertedType()
-			pnode, _ := desc.SchemaNode().(*schema.PrimitiveNode)
-			columnMetas[i].decimalMeta = pnode.DecimalMetadata()
-		}
-	}
-
-	subreaders := make([]*file.Reader, 0, fileSchema.NumColumns())
-	allSampleAllocators := make([]*sampleAllocator, 0, fileSchema.NumColumns())
-	for i := 0; i < fileSchema.NumColumns(); i++ {
-		newWrapper, err := wrapper.Open("")
-		if err != nil {
-			return 0, 0, 0, errors.Trace(err)
-		}
-
-		alloc := &sampleAllocator{}
-		prop := parquet.NewReaderProperties(alloc)
-		prop.BufferedStreamEnabled = true
-		allSampleAllocators = append(allSampleAllocators, alloc)
-
-		reader, err := file.NewParquetReader(
-			newWrapper,
-			file.WithReadProps(prop),
-			file.WithMetadata(reader.MetaData()),
-		)
-
-		if err != nil {
-			return 0, 0, 0, errors.Trace(err)
-		}
-		subreaders = append(subreaders, reader)
-	}
-
-	parser := &ParquetParser{
-		readers:     subreaders,
-		colMetas:    columnMetas,
-		columnNames: columnNames,
-		logger:      log.FromContext(ctx),
-	}
-	if err := parser.Init(); err != nil {
-		return 0, 0, 0, errors.Trace(err)
+		return 0, 0, 0, err
 	}
 
 	//nolint: errcheck
@@ -1097,6 +985,7 @@ func SampleStatisticsFromParquet(
 		rowCount int64
 	)
 
+	reader := parser.readers[0]
 	if reader.NumRowGroups() == 0 || reader.MetaData().RowGroups[0].NumRows == 0 {
 		return 0, 0, 0, nil
 	}
@@ -1118,28 +1007,28 @@ func SampleStatisticsFromParquet(
 
 	avgRowSize = float64(rowSize) / float64(rowCount)
 
-	memoryUsageStream = len(columnMetas) * readerPrefetchSize
-	memoryUsageFull = readerPrefetchSize
+	alloc := parser.alloc
+	defaultAlloc, _ := alloc.(*defaultAllocator)
 
-	for _, alloc := range allSampleAllocators {
-		memoryUsageFull += alloc.maxDataPage
-		memoryUsageFull += alloc.totalDictPage
-		memoryUsageStream += alloc.otherAllocated
-		memoryUsageStream += alloc.maxDataPage
-		memoryUsageStream += alloc.totalDictPage
-	}
+	// Here we add a defaultArenaSize to avoid differences in data between different files, as we only sample one file.
+	memoryUsageStream = defaultAlloc.Allocated() + defaultArenaSize
+	memoryUsageFull = defaultAlloc.Allocated()
 
 	pageBufferFull := 0
 	for _, rg := range parser.readers[0].MetaData().RowGroups {
 		totalUsage := 0
 		for _, c := range rg.Columns {
-			totalUsage += AllocSize(int(c.MetaData.GetTotalCompressedSize()))
+			bufSize := int(c.MetaData.GetTotalCompressedSize())
+			// If single buffer size larger than arena size, non-stream mode will be disabled.
+			if bufSize > defaultArenaSize {
+				totalUsage = 32 << 30
+				break
+			}
+			totalUsage += roundUp(bufSize, alignSize)
 		}
 		pageBufferFull = max(pageBufferFull, totalUsage)
 	}
 	memoryUsageFull += pageBufferFull
 
-	memoryUsageStream = roundUp(memoryUsageStream, defaultArenaSize)
-	memoryUsageFull = roundUp(memoryUsageFull, defaultArenaSize)
-	return avgRowSize, memoryUsageStream, memoryUsageFull, nil
+	return avgRowSize, memoryUsageStream, roundUp(memoryUsageFull, defaultArenaSize), nil
 }

@@ -235,6 +235,7 @@ type Plan struct {
 	DiskQuota             config.ByteSize
 	Checksum              config.PostOpLevel
 	ThreadCnt             int
+	EncodeThreadCnt       int
 	MaxNodeCnt            int
 	MaxWriteSpeed         config.ByteSize
 	SplitFile             bool
@@ -560,6 +561,7 @@ func (p *Plan) initDefaultOptions(targetNodeCPUCnt int) {
 
 	p.Checksum = config.OpLevelRequired
 	p.ThreadCnt = threadCnt
+	p.EncodeThreadCnt = threadCnt
 	p.MaxWriteSpeed = unlimitedWriteSpeed
 	p.SplitFile = false
 	p.MaxRecordedErrors = 100
@@ -1178,16 +1180,15 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		for _, dataFile := range dataFiles {
 			// To reduce the memory usage, we only use streaming mode to read file.
 			dataFile.ParquetMeta = mydump.ParquetFileMeta{
-				MemoryUsageStream:  memoryUsage,
-				MemoryUsageFull:    memoryUsageFull,
-				MemoryQuota:        mydump.GetMemoryQuota(e.ThreadCnt),
-				UseStreaming:       true,
-				UseSampleAllocator: false,
+				MemoryUsageStream: memoryUsage,
+				MemoryUsageFull:   memoryUsageFull,
+				MemoryQuota:       mydump.GetMemoryQuota(e.ThreadCnt),
+				UseStreaming:      true,
 			}
 		}
 
-		// TODO(joechnerh): Maybe we can adjust thread count for parquet here,
-		// when we support global sort using thread < 8.
+		// Adjust thread count for parquet here, because we may not be able to open ThreadCnt parquet files concurrently.
+		e.Plan.EncodeThreadCnt = mydump.AdjustEncodeThreadCnt(memoryUsage, e.Plan.ThreadCnt)
 	}
 
 	e.dataFiles = dataFiles

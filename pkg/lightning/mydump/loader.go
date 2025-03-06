@@ -88,12 +88,11 @@ type MDTableMeta struct {
 
 // ParquetFileMeta contains some analyzed metadata for a parquet file by MyDumper Loader.
 type ParquetFileMeta struct {
-	Rows               int64 // row count
-	MemoryUsageStream  int   // memory usage for streaming mode
-	MemoryUsageFull    int   // memory usage for non-streaming mode
-	MemoryQuota        int   // memory quota for current file reader to use non-streaming mode
-	UseStreaming       bool  // whether use streaming mode
-	UseSampleAllocator bool  // whether use sample allocator
+	Rows              int64 // row count
+	MemoryUsageStream int   // memory usage for streaming mode
+	MemoryUsageFull   int   // memory usage for non-streaming mode
+	MemoryQuota       int   // memory quota for current file reader to use non-streaming mode
+	UseStreaming      bool  // whether use streaming mode
 }
 
 // SourceFileMeta contains some analyzed metadata for a source file by MyDumper Loader.
@@ -582,7 +581,6 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 			info.FileMeta.ParquetMeta.MemoryUsageStream = s.sampledParquetMemoryUsage[tableName]
 			info.FileMeta.ParquetMeta.MemoryUsageFull = s.sampledParquetMemoryUsageFull[tableName]
 			info.FileMeta.ParquetMeta.UseStreaming = true
-			info.FileMeta.ParquetMeta.UseSampleAllocator = false
 		}
 		s.tableDatas = append(s.tableDatas, info)
 	}

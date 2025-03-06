@@ -98,16 +98,19 @@ func getTableImporter(
 func (s *importStepExecutor) Init(ctx context.Context) error {
 	s.logger.Info("init subtask env")
 
-	if s.taskMeta.Plan.Format == importer.DataFormatParquet {
-		// For `IMPORT INTO format "parquet"`, we set the memory usage for parquet reader to 40%.
-		mydump.ConfigureReaderLimitForParquet(40)
-	}
-
 	tableImporter, err := getTableImporter(ctx, s.taskID, s.taskMeta, s.store)
 	if err != nil {
 		return err
 	}
 	s.tableImporter = tableImporter
+
+	if s.taskMeta.Plan.Format == importer.DataFormatParquet {
+		// For `IMPORT INTO format "parquet"`, we set the memory usage for parquet reader to 40%.
+		mydump.ConfigureReaderLimitForParquet(40)
+		if s.tableImporter.EncodeThreadCnt > 0 {
+			s.tableImporter.Plan.ThreadCnt = min(s.tableImporter.EncodeThreadCnt, s.tableImporter.Plan.ThreadCnt)
+		}
+	}
 
 	// we need this sub context since Cleanup which wait on this routine is called
 	// before parent context is canceled in normal flow.

@@ -42,9 +42,6 @@ var (
 	globalPool  *membuf.Pool
 	importCount int
 
-	// AllocSize returns actual allocated size from arena
-	AllocSize func(int) int
-
 	// GetArena creates a new arena
 	GetArena func(*membuf.Buffer) arena
 )
@@ -94,6 +91,7 @@ func ReleaseMemoryForParquet() {
 	importCount--
 	if importCount == 0 {
 		globalPool.Destroy()
+		globalPool = nil
 		debug.SetGCPercent(100)
 		//nolint: all_revive,revive
 		runtime.GC()
@@ -111,8 +109,18 @@ func GetMemoryQuota(concurrency int) int {
 	return quotaPerReader
 }
 
+// AdjustEncodeThreadCnt adjust the concurrency in encode&sort step for parquet file.
+// TODO(joechenrh): remove hardcoded numbers.
+func AdjustEncodeThreadCnt(memoryUsage, threadCnt int) int {
+	memTotal, err := tidbmemory.MemTotal()
+	if err != nil {
+		return threadCnt
+	}
+
+	return max(min(int(memTotal)*2/5/memoryUsage, threadCnt), 1)
+}
+
 func init() {
-	AllocSize = simpleGetAllocationSize
 	GetArena = getSimpleAllocator
 }
 
@@ -139,15 +147,19 @@ type defaultAllocator struct {
 	allocatedBuf map[uintptr]int
 }
 
-func (alloc *defaultAllocator) Allocate(size int, _ memory.BufferType) []byte {
+func (alloc *defaultAllocator) Allocate(size int) []byte {
 	for i, a := range alloc.arenas {
 		if buf := a.allocate(size); buf != nil {
 			alloc.allocatedBuf[addressOf(buf)] = i
 			return buf
 		}
 	}
-	mbuf := globalPool.NewBuffer()
-	alloc.mbufs = append(alloc.mbufs, mbuf)
+
+	var mbuf *membuf.Buffer
+	if globalPool != nil {
+		mbuf = globalPool.NewBuffer()
+		alloc.mbufs = append(alloc.mbufs, mbuf)
+	}
 
 	na := GetArena(mbuf)
 	buf := na.allocate(size)
@@ -164,9 +176,9 @@ func (alloc *defaultAllocator) Free(buf []byte) {
 	}
 }
 
-func (alloc *defaultAllocator) Reallocate(size int, buf []byte, tp memory.BufferType) []byte {
+func (alloc *defaultAllocator) Reallocate(size int, buf []byte) []byte {
 	alloc.Free(buf)
-	return alloc.Allocate(size, tp)
+	return alloc.Allocate(size)
 }
 
 func (alloc *defaultAllocator) Close() {
@@ -177,6 +189,10 @@ func (alloc *defaultAllocator) Close() {
 		mbuf.Destroy()
 	}
 	alloc.arenas = nil
+}
+
+func (alloc *defaultAllocator) Allocated() int {
+	return defaultArenaSize * len(alloc.arenas)
 }
 
 // GetAllocator get a default allocator

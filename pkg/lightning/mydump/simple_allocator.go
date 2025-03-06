@@ -46,11 +46,6 @@ func readInt(buf []byte) int {
 	return int(buf[0])<<24 | int(buf[1])<<16 | int(buf[2])<<8 | int(buf[3])
 }
 
-// Because there may have memory fragment problems, we will over estimate the allocation size here.
-func simpleGetAllocationSize(size int) int {
-	return roundUp(size+metaSize, alignSize) * 2
-}
-
 /*
 simpleAllocator is a very simple allocator with low allocation efficiency
 which manages allocated memory using a linked list structure.

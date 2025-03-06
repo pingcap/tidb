@@ -234,6 +234,7 @@ func getWriterMemorySizeLimit(resource *proto.StepResource, plan *importer.Plan)
 	memPerCon := resource.Mem.Capacity() / int64(plan.ThreadCnt)
 
 	// For parquet file format, we allocate 40% of the memory to file reader.
+	// TODO(joechenrh): remove these hardcoded numbers.
 	if plan.Format == importer.DataFormatParquet {
 		memPerCon = memPerCon * 3 / 5
 	}
