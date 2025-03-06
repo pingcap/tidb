@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/metrics"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -284,8 +283,6 @@ func (sm *Manager) startSchedulers(schedulableTasks []*proto.TaskBase) error {
 			sm.logger.Info("start scheduler without allocating slots",
 				zap.Int64("task-id", task.ID), zap.Stringer("state", task.State))
 		}
-
-		metrics.UpdateMetricsForScheduleTask(task)
 		sm.startScheduler(task, allocateSlots, reservedExecID)
 	}
 	return nil
@@ -357,7 +354,6 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 			handle.NotifyTaskChange()
 			sm.logger.Info("task scheduler exit", zap.Int64("task-id", task.ID))
 		}()
-		metrics.UpdateMetricsForRunTask(task)
 		scheduler.ScheduleTask()
 		sm.finishCh <- struct{}{}
 	})
@@ -426,7 +422,6 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 			// if task doesn't register cleanup function, mark it as cleaned.
 			cleanedTasks = append(cleanedTasks, task)
 		}
-		metrics.UpdateMetricsForFinishTask(task)
 	}
 	if firstErr != nil {
 		sm.logger.Warn("cleanup routine failed", zap.Error(errors.Trace(firstErr)))
@@ -455,13 +450,17 @@ func (sm *Manager) collectLoop() {
 }
 
 func (sm *Manager) collect() {
+	tasks, err := sm.taskMgr.GetAllTasks(sm.ctx)
+	if err != nil {
+		sm.logger.Warn("get all tasks failed", zap.Error(err))
+	}
 	subtasks, err := sm.taskMgr.GetAllSubtasks(sm.ctx)
 	if err != nil {
 		sm.logger.Warn("get all subtasks failed", zap.Error(err))
 		return
 	}
-
-	subtaskCollector.subtaskInfo.Store(&subtasks)
+	disttaskCollector.taskInfo.Store(&tasks)
+	disttaskCollector.subtaskInfo.Store(&subtasks)
 }
 
 // MockScheduler mock one scheduler for one task, only used for tests.
