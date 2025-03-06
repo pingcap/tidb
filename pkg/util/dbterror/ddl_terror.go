@@ -50,6 +50,8 @@ var (
 	// ErrRepairTableFail is used to repair tableInfo in repair mode.
 	ErrRepairTableFail = ClassDDL.NewStd(mysql.ErrRepairTable)
 
+	// ErrUnsupportedAddColumnarIndex means add columnar index is unsupported
+	ErrUnsupportedAddColumnarIndex = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "add columnar index: %s"), nil))
 	// ErrUnsupportedAddVectorIndex means add vector index is unsupported
 	ErrUnsupportedAddVectorIndex = ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUnsupportedDDLOperation].Raw, "add vector index: %s"), nil))
 	// ErrCantDropColWithIndex means can't drop the column with index. We don't support dropping column with index covered now.
