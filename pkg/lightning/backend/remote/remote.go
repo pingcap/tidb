@@ -122,7 +122,7 @@ type Backend struct {
 }
 
 // Close the connection to the backend.
-func (b *Backend) Close() {
+func (*Backend) Close() {
 }
 
 // RetryImportDelay returns the duration to sleep when retrying an import
@@ -137,27 +137,27 @@ func (*Backend) ShouldPostProcess() bool {
 }
 
 // OpenEngine opens an engine for writing.
-func (b *Backend) OpenEngine(_ context.Context, _ *backend.EngineConfig, _ uuid.UUID) error {
+func (*Backend) OpenEngine(_ context.Context, _ *backend.EngineConfig, _ uuid.UUID) error {
 	return nil
 }
 
 // CloseEngine closes backend engine by uuid.
-func (b *Backend) CloseEngine(_ context.Context, _ *backend.EngineConfig, _ uuid.UUID) error {
+func (*Backend) CloseEngine(_ context.Context, _ *backend.EngineConfig, _ uuid.UUID) error {
 	return nil
 }
 
 // ImportEngine imports an engine to TiKV.
-func (b *Backend) ImportEngine(_ context.Context, _ uuid.UUID, _, _ int64) error {
+func (*Backend) ImportEngine(_ context.Context, _ uuid.UUID, _, _ int64) error {
 	return nil
 }
 
 // GetImportedKVCount returns the number of imported KV pairs of some engine.
-func (b *Backend) GetImportedKVCount(_ uuid.UUID) int64 {
+func (*Backend) GetImportedKVCount(_ uuid.UUID) int64 {
 	return 0
 }
 
 // CleanupEngine cleanup the engine and reclaim the space.
-func (b *Backend) CleanupEngine(_ context.Context, _ uuid.UUID) error {
+func (*Backend) CleanupEngine(_ context.Context, _ uuid.UUID) error {
 	return nil
 }
 
@@ -167,7 +167,7 @@ func (b *Backend) CleanupEngine(_ context.Context, _ uuid.UUID) error {
 //
 // This method is only relevant for local backend, and is no-op for all
 // other backends.
-func (b *Backend) FlushEngine(_ context.Context, _ uuid.UUID) error {
+func (*Backend) FlushEngine(_ context.Context, _ uuid.UUID) error {
 	return nil
 }
 
@@ -192,7 +192,7 @@ func (*Backend) ResetEngine(_ context.Context, _ uuid.UUID) error {
 }
 
 // LocalWriter obtains a thread-local EngineWriter for writing rows into the given engine.
-func (b *Backend) LocalWriter(_ context.Context, _ *backend.LocalWriterConfig, _ uuid.UUID) (backend.EngineWriter, error) {
+func (*Backend) LocalWriter(_ context.Context, _ *backend.LocalWriterConfig, _ uuid.UUID) (backend.EngineWriter, error) {
 	return &writer{}, nil
 }
 
@@ -210,7 +210,7 @@ type engine struct {
 type writer struct {
 }
 
-func (w *writer) AppendRows(
+func (*writer) AppendRows(
 	_ context.Context,
 	_ []string,
 	_ encode.Rows,
@@ -218,7 +218,7 @@ func (w *writer) AppendRows(
 	return nil
 }
 
-func (w *writer) IsSynced() bool {
+func (*writer) IsSynced() bool {
 	return true
 }
 
@@ -226,11 +226,11 @@ func (w *writer) Close(_ context.Context) (backend.ChunkFlushStatus, error) {
 	return w, nil
 }
 
-func (w *writer) Flushed() bool {
+func (*writer) Flushed() bool {
 	return false
 }
 
 // GetDupeController returns a new dupe controller.
-func (b *Backend) GetDupeController(dupeConcurrency int, errorMgr *errormanager.ErrorManager) *local.DupeController {
+func (*Backend) GetDupeController(dupeConcurrency int, errorMgr *errormanager.ErrorManager) *local.DupeController {
 	return local.NewDupeController(dupeConcurrency, errorMgr, nil, nil, nil, nil, nil, nil, "", "", false)
 }
