@@ -1944,22 +1944,11 @@ func decodePrivilegeEvent(resp clientv3.WatchResponse) PrivilegeEvent {
 	return msg
 }
 
-func ignoreBatchData(ch clientv3.WatchChan) {
-	ticker := time.NewTicker(5 * time.Millisecond)
-	defer ticker.Stop()
-	for i := 0; i < 1024; i++ {
-		select {
-		case <-ch:
-		case <-ticker.C:
-			return
-		}
-	}
-}
-
 func batchReadMoreData(ch clientv3.WatchChan, event PrivilegeEvent) PrivilegeEvent {
-	ticker := time.NewTicker(5 * time.Millisecond)
-	defer ticker.Stop()
-	for i := 0; i < 128; i++ {
+	timer := time.NewTimer(5 * time.Millisecond)
+	defer timer.Stop()
+	const maxBatchSize = 128
+	for i := 0; i < maxBatchSize; i++ {
 		select {
 		case resp, ok := <-ch:
 			if !ok {
@@ -1973,7 +1962,11 @@ func batchReadMoreData(ch clientv3.WatchChan, event PrivilegeEvent) PrivilegeEve
 					event.UserList = append(event.UserList, tmp.UserList...)
 				}
 			}
-		case <-ticker.C:
+			succ := timer.Reset(5 * time.Millisecond)
+			if !succ {
+				break
+			}
+		case <-timer.C:
 			return event
 		}
 	}
@@ -2027,8 +2020,8 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 					}
 				}
 			case <-time.After(duration):
-				ignoreBatchData(watchCh)
 				event.All = true
+				event = batchReadMoreData(watchCh, event)
 			}
 
 			err := privReloadEvent(do.privHandle, &event)
