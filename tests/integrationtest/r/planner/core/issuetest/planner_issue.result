@@ -582,7 +582,6 @@ CREATE TABLE t0(c0 int);
 CREATE TABLE t1(c0 int);
 SELECT t0.c0, t1.c0 FROM t0 NATURAL JOIN t1 WHERE '1' AND (t0.c0 IN (SELECT c0 FROM t0));
 c0	c0
-<<<<<<< HEAD
 drop table if exists t;
 create table t (id int unique key, c int);
 insert into t values (1, 10);
@@ -620,7 +619,6 @@ NULL	NULL	2	2	4	2
 show warnings;
 Level	Code	Message
 drop table if exists t1, t2, t3, t4;
-=======
 drop table if exists t1, t2;
 create table t1(a int, b int, index idx(a, b));
 create table t2(a int, b int, index idx(a));
@@ -644,4 +642,3 @@ MergeJoin_8	12475.01	root		inner join, left key:test.t1.a, test.t1.b, right key:
 └─IndexReader_39(Probe)	9980.01	root		index:Selection_38
   └─Selection_38	9980.01	cop[tikv]		not(isnull(test.t1.b))
     └─IndexFullScan_37	9990.00	cop[tikv]	table:t1, index:idx(a, b)	keep order:true, stats:pseudo
->>>>>>> ebd28688fbc (planner: don't choose merge join unless there's hint or join key fully matched (#59936))
