@@ -474,7 +474,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 	wg.Wait()
 	close(errCh)
 	if len(errCh) > 0 {
-		errSet := make(map[string]struct{})
+		errSet := make(map[string]struct{}, len(errCh))
 		for err1 := range errCh {
 			errSet[err1.Error()] = struct{}{}
 		}
