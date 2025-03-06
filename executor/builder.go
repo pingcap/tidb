@@ -1241,7 +1241,7 @@ func (b *executorBuilder) buildExplain(v *plannercore.Explain) Executor {
 		}
 		// If the resource group name is not empty, we could collect and display the RU
 		// runtime stats for analyze executor.
-		resourceGroupName := b.ctx.GetSessionVars().ResourceGroupName
+		resourceGroupName := b.ctx.GetSessionVars().StmtCtx.ResourceGroupName
 		// Try to register the RU runtime stats for analyze executor.
 		if store, ok := b.ctx.GetStore().(interface {
 			CreateRURuntimeStats(uint64) *clientutil.RURuntimeStats
@@ -5148,7 +5148,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 	if e.ctx.GetSessionVars().IsReplicaReadClosestAdaptive() {
 		e.snapshot.SetOption(kv.ReplicaReadAdjuster, newReplicaReadAdjuster(e.ctx, plan.GetAvgRowSize()))
 	}
-	e.snapshot.SetOption(kv.ResourceGroupName, b.ctx.GetSessionVars().ResourceGroupName)
+	e.snapshot.SetOption(kv.ResourceGroupName, b.ctx.GetSessionVars().StmtCtx.ResourceGroupName)
 	if e.runtimeStats != nil {
 		snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
 		e.stats = &runtimeStatsWithSnapshot{
