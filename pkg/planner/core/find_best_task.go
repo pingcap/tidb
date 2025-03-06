@@ -2773,6 +2773,7 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 		pointGetPlan.PartitionIdx = ds.PartitionDefIdx
 	}
 	pointGetPlan.PartitionNames = ds.PartitionNames
+	pointGetPlan.IsConvertedToPointGet = true
 	rTsk := &RootTask{}
 	rTsk.SetPlan(pointGetPlan)
 	if candidate.path.IsIntHandlePath {

@@ -113,6 +113,8 @@ type PointGetPlan struct {
 	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
 	accessCols []*expression.Column
 
+	// Flag if created in convertToPointGet, which will already have the IndexValues converted by SortKey
+	IsConvertedToPointGet bool
 	// NOTE: please update FastClonePointGetForPlanCache accordingly if you add new fields here.
 }
 
@@ -389,59 +391,50 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 	if p.HandleConstant == nil && len(p.IndexValues) > 0 {
 		partColsNames := pt.Meta().Partition.Columns
 		for i := range p.IndexInfo.Columns {
-			// TODO: Are there any other cases where partitioning can be done on column with collation?
-			// Other than KEY (columns), LIST COLUMNS or RANGE COLUMNS?
-			// TODO: Test all of them!?!
-			if len(partColsNames) > 0 &&
-				p.IndexValues[i].Kind() == types.KindBytes {
-				tblCol := p.TblInfo.Columns[p.IndexInfo.Columns[i].Offset]
-				tblColType := tblCol.FieldType.GetType()
-				if (tblColType == mysql.TypeVarString ||
-					tblColType == mysql.TypeVarchar ||
-					tblColType == mysql.TypeString) &&
-					p.IndexValues[i].Collation() != tblCol.GetCollate() {
-					// convertToPointGet will have the IndexValues already converted to SortKey,
-					// which will be converted again by GetPartitionIdxByRow, so we need to re-run the pruner
-					// with the conditions.
+			if p.IsConvertedToPointGet &&
+				len(partColsNames) > 0 &&
+				types.EvalType(p.TblInfo.Columns[p.IndexInfo.Columns[i].Offset].GetType()) == types.ETString &&
+				p.IndexValues[i].Collation() != p.TblInfo.Columns[p.IndexInfo.Columns[i].Offset].GetCollate() {
+				// convertToPointGet will have the IndexValues already converted to SortKey,
+				// which will be converted again by GetPartitionIdxByRow, so we need to re-run the pruner
+				// with the conditions.
 
-					// TODO: Is there a simpler way, or existing function for this?!?
-					tblCols := make([]*expression.Column, 0, len(p.IdxCols))
-					var partNameSlice types.NameSlice
-					for _, tblCol := range p.TblInfo.Columns {
-						found := false
-						for _, idxCol := range p.IdxCols {
-							if idxCol.ID == tblCol.ID {
-								//partColIDs = append(partColIDs, col.ID)
-								tblCols = append(tblCols, idxCol)
-								found = true
-								break
-							}
+				// TODO: Is there a simpler way, or existing function for this?!?
+				tblCols := make([]*expression.Column, 0, len(p.IdxCols))
+				var partNameSlice types.NameSlice
+				for _, tblCol := range p.TblInfo.Columns {
+					found := false
+					for _, idxCol := range p.IdxCols {
+						if idxCol.ID == tblCol.ID {
+							tblCols = append(tblCols, idxCol)
+							found = true
+							break
 						}
-						partNameSlice = append(partNameSlice, &types.FieldName{
-							ColName:     tblCol.Name,
-							TblName:     p.TblInfo.Name,
-							DBName:      ast.NewCIStr(p.dbName),
-							OrigTblName: p.TblInfo.Name,
-							OrigColName: tblCol.Name,
+					}
+					partNameSlice = append(partNameSlice, &types.FieldName{
+						ColName:     tblCol.Name,
+						TblName:     p.TblInfo.Name,
+						DBName:      ast.NewCIStr(p.dbName),
+						OrigTblName: p.TblInfo.Name,
+						OrigColName: tblCol.Name,
+					})
+					if !found {
+						tblCols = append(tblCols, &expression.Column{
+							ID:       tblCol.ID,
+							OrigName: tblCol.Name.O,
+							RetType:  tblCol.FieldType.Clone(),
 						})
-						if !found {
-							tblCols = append(tblCols, &expression.Column{
-								ID:       tblCol.ID,
-								OrigName: tblCol.Name.O,
-								RetType:  tblCol.FieldType.Clone(),
-							})
-						}
 					}
-
-					partIdx, err := PartitionPruning(sctx.GetPlanCtx(), pt, p.AccessConditions, p.PartitionNames, tblCols, partNameSlice)
-					if err != nil || len(partIdx) != 1 {
-						idx := -1
-						p.PartitionIdx = &idx
-						return true
-					}
-					p.PartitionIdx = &partIdx[0]
-					return false
 				}
+
+				partIdx, err := PartitionPruning(sctx.GetPlanCtx(), pt, p.AccessConditions, p.PartitionNames, tblCols, partNameSlice)
+				if err != nil || len(partIdx) != 1 {
+					idx := -1
+					p.PartitionIdx = &idx
+					return true
+				}
+				p.PartitionIdx = &partIdx[0]
+				return false
 			}
 			// TODO: Skip copying non-partitioning columns?
 			p.IndexValues[i].Copy(&row[p.IndexInfo.Columns[i].Offset])
