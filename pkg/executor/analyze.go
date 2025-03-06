@@ -474,11 +474,17 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 	wg.Wait()
 	close(errCh)
 	if len(errCh) > 0 {
-		errMsg := make([]string, 0)
+		errSet := make(map[string]struct{})
 		for err1 := range errCh {
-			errMsg = append(errMsg, err1.Error())
+			errSet[err1.Error()] = struct{}{}
 		}
-		err = errors.New(strings.Join(errMsg, ","))
+		if len(errSet) > 0 {
+			errMsg := make([]string, 0, len(errSet))
+			for msg := range errSet {
+				errMsg = append(errMsg, msg)
+			}
+			err = errors.New(strings.Join(errMsg, ","))
+		}
 	}
 	for tableID := range tableIDs {
 		// Dump stats to historical storage.
