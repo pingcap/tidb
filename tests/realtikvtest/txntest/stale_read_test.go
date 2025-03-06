@@ -1581,8 +1581,8 @@ func TestStaleReadAllCombinations(t *testing.T) {
 			name: "external ts read",
 			setup: func() {
 				tk.MustExec("set @@tidb_enable_external_ts_read=1")
-				// ignore the failure when setting external_ts, as it reports error if not set to a larger value
-				_, _ = tk.Exec(fmt.Sprintf("set @@global.tidb_external_ts=%d", externalTS))
+				tk.MustExec(fmt.Sprintf("set @@global.tidb_external_ts=%d", externalTS))
+				externalTS++
 			},
 			query: "select * from t",
 			clean: func() {
