@@ -20,8 +20,7 @@ const (
 	UnspecifiedSize = math.MaxUint64
 )
 
-// IsReadOnly checks whether the input ast is readOnly.
-func IsReadOnly(node Node) bool {
+func IsReadOnly(node Node, checkVariables bool) bool {
 	switch st := node.(type) {
 	case *SelectStmt:
 		if st.LockInfo != nil {
@@ -32,6 +31,10 @@ func IsReadOnly(node Node) bool {
 			}
 		}
 
+		if !checkVariables {
+			return true
+		}
+
 		checker := readOnlyChecker{
 			readOnly: true,
 		}
@@ -39,19 +42,19 @@ func IsReadOnly(node Node) bool {
 		node.Accept(&checker)
 		return checker.readOnly
 	case *ExplainStmt:
-		return !st.Analyze || IsReadOnly(st.Stmt)
+		return !st.Analyze || IsReadOnly(st.Stmt, checkVariables)
 	case *DoStmt, *ShowStmt:
 		return true
 	case *SetOprStmt:
 		for _, sel := range node.(*SetOprStmt).SelectList.Selects {
-			if !IsReadOnly(sel) {
+			if !IsReadOnly(sel, checkVariables) {
 				return false
 			}
 		}
 		return true
 	case *SetOprSelectList:
 		for _, sel := range node.(*SetOprSelectList).Selects {
-			if !IsReadOnly(sel) {
+			if !IsReadOnly(sel, checkVariables) {
 				return false
 			}
 		}
@@ -82,7 +85,7 @@ type readOnlyChecker struct {
 func (checker *readOnlyChecker) Enter(in Node) (out Node, skipChildren bool) {
 	if node, ok := in.(*VariableExpr); ok {
 		// like func rewriteVariable(), this stands for SetVar.
-		if !node.IsSystem && node.Value != nil {
+		if node.IsSystem && node.Value != nil {
 			checker.readOnly = false
 			return in, true
 		}
