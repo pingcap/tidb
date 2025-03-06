@@ -242,7 +242,6 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 	// there's no imported dataKVCount on this stage when using global sort.
 
 	sharedVars.mu.Lock()
-	defer sharedVars.mu.Unlock()
 	subtaskMeta.Checksum = map[int64]Checksum{}
 	for id, c := range sharedVars.Checksum.GetInnerChecksums() {
 		subtaskMeta.Checksum[id] = Checksum{
@@ -262,6 +261,62 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 	}
 	subtaskMeta.SortedDataMeta = sharedVars.SortedDataMeta
 	subtaskMeta.SortedIndexMetas = sharedVars.SortedIndexMetas
+	sharedVars.mu.Unlock()
+
+	if s.tableImporter.IsGlobalSort() && s.tableImporter.GlobalSortLocalStore != nil {
+		sharedVars.mu.Lock()
+		dataFiles := sharedVars.SortedDataMeta.GetDataFiles()
+		sharedVars.SortedDataMeta = &external.SortedKVMeta{}
+		sharedVars.mu.Unlock()
+		dataKVMemSizePerCon, perIndexKVMemSizePerCon := getWriterMemorySizeLimit(s.GetResource(), &s.taskMeta.Plan)
+		dataKVPartSize := max(external.MinUploadPartSize, int64(dataKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/10000))
+		indexKVPartSize := max(external.MinUploadPartSize, int64(perIndexKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/10000))
+		prefix := subtaskPrefix(s.taskID, subtask.ID)
+		err := external.MergeOverlappingFiles(
+			ctx,
+			dataFiles,
+			s.tableImporter.GlobalSortLocalStore,
+			s.tableImporter.GlobalSortStore,
+			dataKVPartSize,
+			prefix,
+			getKVGroupBlockSize(dataKVGroup),
+			sharedVars.mergeDataSummary,
+			int(s.GetResource().CPU.Capacity()),
+			false)
+		if err != nil {
+			return err
+		}
+		sharedVars.mu.Lock()
+		sortedIndexMetas := sharedVars.SortedIndexMetas
+		sharedVars.mu.Unlock()
+		for idxID, idxKVGroup := range sortedIndexMetas {
+			dataFiles := idxKVGroup.GetDataFiles()
+			sharedVars.mu.Lock()
+			sharedVars.SortedIndexMetas[idxID] = &external.SortedKVMeta{}
+			sharedVars.mu.Unlock()
+			err = external.MergeOverlappingFiles(
+				ctx,
+				dataFiles,
+				s.tableImporter.GlobalSortLocalStore,
+				s.tableImporter.GlobalSortStore,
+				indexKVPartSize,
+				prefix,
+				getKVGroupBlockSize(strconv.Itoa(int(idxID))),
+				func(summary *external.WriterSummary) {
+					sharedVars.mergeIndexSummary(idxID, summary)
+				},
+				int(s.GetResource().CPU.Capacity()),
+				false)
+			if err != nil {
+				return err
+			}
+		}
+		sharedVars.mu.Lock()
+		subtaskMeta.SortedDataMeta = sharedVars.SortedDataMeta
+		subtaskMeta.SortedIndexMetas = sharedVars.SortedIndexMetas
+		sharedVars.mu.Unlock()
+	}
+
 	s.sharedVars.Delete(subtaskMeta.ID)
 	newMeta, err := json.Marshal(subtaskMeta)
 	if err != nil {
@@ -344,6 +399,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	err = external.MergeOverlappingFiles(
 		logutil.WithFields(ctx, zap.String("kv-group", sm.KVGroup), zap.Int64("subtask-id", subtask.ID)),
 		sm.DataFiles,
+		m.controller.GlobalSortStore,
 		m.controller.GlobalSortStore,
 		partSize,
 		prefix,
