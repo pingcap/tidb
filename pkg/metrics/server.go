@@ -27,28 +27,14 @@ var (
 
 // Metrics
 var (
-<<<<<<< HEAD
 	PacketIOCounter        *prometheus.CounterVec
 	QueryDurationHistogram *prometheus.HistogramVec
 	QueryTotalCounter      *prometheus.CounterVec
-	AffectedRowsCounter    *prometheus.CounterVec
 	ConnGauge              *prometheus.GaugeVec
 	DisconnectionCounter   *prometheus.CounterVec
 	PreparedStmtGauge      prometheus.Gauge
 	ExecuteErrorCounter    *prometheus.CounterVec
 	CriticalErrorCounter   prometheus.Counter
-=======
-	PacketIOCounter            *prometheus.CounterVec
-	QueryDurationHistogram     *prometheus.HistogramVec
-	QueryRPCHistogram          *prometheus.HistogramVec
-	QueryProcessedKeyHistogram *prometheus.HistogramVec
-	QueryTotalCounter          *prometheus.CounterVec
-	ConnGauge                  *prometheus.GaugeVec
-	DisconnectionCounter       *prometheus.CounterVec
-	PreparedStmtGauge          prometheus.Gauge
-	ExecuteErrorCounter        *prometheus.CounterVec
-	CriticalErrorCounter       prometheus.Counter
->>>>>>> 2a86d34c720 (*: fix affected rows metrics to make it compatiable with multi-queries (#55877))
 
 	ServerStart = "server-start"
 	ServerStop  = "server-stop"
