@@ -137,27 +137,27 @@ func (*Backend) ShouldPostProcess() bool {
 }
 
 // OpenEngine opens an engine for writing.
-func (b *Backend) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
+func (b *Backend) OpenEngine(_ context.Context, _ *backend.EngineConfig, _ uuid.UUID) error {
 	return nil
 }
 
 // CloseEngine closes backend engine by uuid.
-func (b *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
+func (b *Backend) CloseEngine(_ context.Context, _ *backend.EngineConfig, _ uuid.UUID) error {
 	return nil
 }
 
 // ImportEngine imports an engine to TiKV.
-func (b *Backend) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regionSplitSize, regionSplitKeys int64) error {
+func (b *Backend) ImportEngine(_ context.Context, _ uuid.UUID, _, _ int64) error {
 	return nil
 }
 
 // GetImportedKVCount returns the number of imported KV pairs of some engine.
-func (b *Backend) GetImportedKVCount(engineUUID uuid.UUID) int64 {
+func (b *Backend) GetImportedKVCount(_ uuid.UUID) int64 {
 	return 0
 }
 
 // CleanupEngine cleanup the engine and reclaim the space.
-func (b *Backend) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error {
+func (b *Backend) CleanupEngine(_ context.Context, _ uuid.UUID) error {
 	return nil
 }
 
@@ -167,7 +167,7 @@ func (b *Backend) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) error
 //
 // This method is only relevant for local backend, and is no-op for all
 // other backends.
-func (b *Backend) FlushEngine(ctx context.Context, engineUUID uuid.UUID) error {
+func (b *Backend) FlushEngine(_ context.Context, _ uuid.UUID) error {
 	return nil
 }
 
@@ -192,7 +192,7 @@ func (*Backend) ResetEngine(_ context.Context, _ uuid.UUID) error {
 }
 
 // LocalWriter obtains a thread-local EngineWriter for writing rows into the given engine.
-func (b *Backend) LocalWriter(ctx context.Context, _ *backend.LocalWriterConfig, engineUUID uuid.UUID) (backend.EngineWriter, error) {
+func (b *Backend) LocalWriter(_ context.Context, _ *backend.LocalWriterConfig, _ uuid.UUID) (backend.EngineWriter, error) {
 	return &writer{}, nil
 }
 
@@ -211,9 +211,9 @@ type writer struct {
 }
 
 func (w *writer) AppendRows(
-	ctx context.Context,
+	_ context.Context,
 	_ []string,
-	rows encode.Rows,
+	_ encode.Rows,
 ) error {
 	return nil
 }
@@ -222,7 +222,7 @@ func (w *writer) IsSynced() bool {
 	return true
 }
 
-func (w *writer) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
+func (w *writer) Close(_ context.Context) (backend.ChunkFlushStatus, error) {
 	return w, nil
 }
 
