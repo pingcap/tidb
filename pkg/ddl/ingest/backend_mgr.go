@@ -27,13 +27,12 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -43,10 +42,10 @@ import (
 var ResignOwnerForTest = atomic.NewBool(false)
 
 // NewBackendCtxBuilder creates a BackendCtxBuilder.
-func NewBackendCtxBuilder(ctx context.Context, store kv.Storage, job *model.Job) *BackendCtxBuilder {
+func NewBackendCtxBuilder(ctx context.Context, pdCli pd.Client, job *model.Job) *BackendCtxBuilder {
 	return &BackendCtxBuilder{
 		ctx:   ctx,
-		store: store,
+		pdCli: pdCli,
 		job:   job,
 	}
 }
@@ -54,7 +53,7 @@ func NewBackendCtxBuilder(ctx context.Context, store kv.Storage, job *model.Job)
 // BackendCtxBuilder is the builder of BackendCtx.
 type BackendCtxBuilder struct {
 	ctx   context.Context
-	store kv.Storage
+	pdCli pd.Client
 	job   *model.Job
 
 	etcdClient *clientv3.Client
@@ -94,7 +93,7 @@ var BackendCounterForTest = atomic.Int64{}
 
 // Build builds a BackendCtx.
 func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (BackendCtx, error) {
-	ctx, store, job := b.ctx, b.store, b.job
+	ctx, pdCli, job := b.ctx, b.pdCli, b.job
 	jobSortPath, err := genJobSortPath(job.ID, b.checkDup)
 	if err != nil {
 		return nil, err
@@ -107,8 +106,6 @@ func (b *BackendCtxBuilder) Build(cfg *local.BackendConfig, bd *local.Backend) (
 		ResignOwnerForTest.Store(true)
 	})
 
-	//nolint: forcetypeassert
-	pdCli := store.(tikv.Storage).GetRegionCache().PDClient()
 	var cpMgr *CheckpointManager
 	if b.sessPool != nil {
 		cpMgr, err = NewCheckpointManager(ctx, b.sessPool, b.physicalID, job.ID, jobSortPath, pdCli)
@@ -144,7 +141,7 @@ func genJobSortPath(jobID int64, checkDup bool) (string, error) {
 }
 
 // CreateLocalBackend creates a local backend for adding index.
-func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, checkDup bool) (*local.BackendConfig, *local.Backend, error) {
+func CreateLocalBackend(ctx context.Context, pdCli pd.Client, job *model.Job, checkDup bool) (*local.BackendConfig, *local.Backend, error) {
 	jobSortPath, err := genJobSortPath(job.ID, checkDup)
 	if err != nil {
 		return nil, nil, err
@@ -183,8 +180,6 @@ func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, c
 		zap.Int64("max memory quota", LitMemRoot.MaxMemoryQuota()),
 		zap.Bool("has unique index", hasUnique))
 
-	//nolint: forcetypeassert
-	pdCli := store.(tikv.Storage).GetRegionCache().PDClient()
 	be, err := local.NewBackend(ctx, tls, *cfg, pdCli.GetServiceDiscovery())
 	return cfg, be, err
 }
