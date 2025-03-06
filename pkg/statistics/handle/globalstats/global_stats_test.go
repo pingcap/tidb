@@ -806,11 +806,11 @@ func TestGlobalStats(t *testing.T) {
 	require.Equal(t, "2", result.Rows()[0][5])
 	require.Equal(t, "3", result.Rows()[1][5])
 	tk.MustQuery("explain format = 'brief' select a from t where a > 3;").Check(testkit.Rows(
-		"PartitionUnion 2.00 root  ",
+		"PartitionUnion 2.50 root  ",
 		"├─IndexReader 1.00 root  index:IndexRangeScan",
 		"│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p0, index:a(a) range:(3,+inf], keep order:false",
-		"└─IndexReader 1.00 root  index:IndexRangeScan",
-		"  └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p1, index:a(a) range:(3,+inf], keep order:false"))
+		"└─IndexReader 1.50 root  index:IndexRangeScan",
+		"  └─IndexRangeScan 1.50 cop[tikv] table:t, partition:p1, index:a(a) range:(3,+inf], keep order:false"))
 
 	// When we turned on the switch, we found that pseudo-stats will be used in the plan instead of `Union`.
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
@@ -838,15 +838,15 @@ func TestGlobalStats(t *testing.T) {
 	tk.MustExec("analyze table t;")
 	// test the indexScan
 	tk.MustQuery("explain format = 'brief' select b from t where a > 5 and b > 10;").Check(testkit.Rows(
-		"IndexReader 2.67 root partition:all index:Projection",
-		"└─Projection 2.67 cop[tikv]  test.t.b",
-		"  └─Selection 2.67 cop[tikv]  gt(test.t.b, 10)",
+		"IndexReader 2.00 root partition:all index:Projection",
+		"└─Projection 2.00 cop[tikv]  test.t.b",
+		"  └─Selection 2.00 cop[tikv]  gt(test.t.b, 10)",
 		"    └─IndexRangeScan 4.00 cop[tikv] table:t, index:idx_ab(a, b) range:(5,+inf], keep order:false"))
 	// test the indexLookUp
 	tk.MustQuery("explain format = 'brief' select * from t use index(idx_ab) where a > 1;").Check(testkit.Rows(
-		"IndexLookUp 5.00 root partition:all ",
-		"├─IndexRangeScan(Build) 5.00 cop[tikv] table:t, index:idx_ab(a, b) range:(1,+inf], keep order:false",
-		"└─TableRowIDScan(Probe) 5.00 cop[tikv] table:t keep order:false"))
+		"IndexLookUp 5.75 root partition:all ",
+		"├─IndexRangeScan(Build) 5.75 cop[tikv] table:t, index:idx_ab(a, b) range:(1,+inf], keep order:false",
+		"└─TableRowIDScan(Probe) 5.75 cop[tikv] table:t keep order:false"))
 	// test the tableScan
 	tk.MustQuery("explain format = 'brief' select * from t;").Check(testkit.Rows(
 		"TableReader 6.00 root partition:all data:TableFullScan",
