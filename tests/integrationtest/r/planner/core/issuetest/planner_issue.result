@@ -582,6 +582,7 @@ CREATE TABLE t0(c0 int);
 CREATE TABLE t1(c0 int);
 SELECT t0.c0, t1.c0 FROM t0 NATURAL JOIN t1 WHERE '1' AND (t0.c0 IN (SELECT c0 FROM t0));
 c0	c0
+<<<<<<< HEAD
 drop table if exists t;
 create table t (id int unique key, c int);
 insert into t values (1, 10);
@@ -619,3 +620,28 @@ NULL	NULL	2	2	4	2
 show warnings;
 Level	Code	Message
 drop table if exists t1, t2, t3, t4;
+=======
+drop table if exists t1, t2;
+create table t1(a int, b int, index idx(a, b));
+create table t2(a int, b int, index idx(a));
+explain select /*+ merge_join(t1) */ * from t1 join t2 on t1.a=t2.a and t2.b=t1.b;
+id	estRows	task	access object	operator info
+MergeJoin_8	12475.01	root		inner join, left key:test.t1.a, test.t1.b, right key:test.t2.a, test.t2.b
+├─Sort_19(Build)	9980.01	root		test.t2.a, test.t2.b
+│ └─TableReader_14	9980.01	root		data:Selection_13
+│   └─Selection_13	9980.01	cop[tikv]		not(isnull(test.t2.a)), not(isnull(test.t2.b))
+│     └─TableFullScan_12	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─IndexReader_11(Probe)	9980.01	root		index:Selection_10
+  └─Selection_10	9980.01	cop[tikv]		not(isnull(test.t1.b))
+    └─IndexFullScan_9	9990.00	cop[tikv]	table:t1, index:idx(a, b)	keep order:true, stats:pseudo
+explain select /*+ no_hash_join(t1), no_index_join(t1,t2), no_index_hash_join(t1,t2) */ * from t1 join t2 on t1.a=t2.a and t2.b=t1.b;
+id	estRows	task	access object	operator info
+MergeJoin_8	12475.01	root		inner join, left key:test.t1.a, test.t1.b, right key:test.t2.a, test.t2.b
+├─Sort_47(Build)	9980.01	root		test.t2.a, test.t2.b
+│ └─TableReader_42	9980.01	root		data:Selection_41
+│   └─Selection_41	9980.01	cop[tikv]		not(isnull(test.t2.a)), not(isnull(test.t2.b))
+│     └─TableFullScan_40	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─IndexReader_39(Probe)	9980.01	root		index:Selection_38
+  └─Selection_38	9980.01	cop[tikv]		not(isnull(test.t1.b))
+    └─IndexFullScan_37	9990.00	cop[tikv]	table:t1, index:idx(a, b)	keep order:true, stats:pseudo
+>>>>>>> ebd28688fbc (planner: don't choose merge join unless there's hint or join key fully matched (#59936))
