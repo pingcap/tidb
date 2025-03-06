@@ -826,6 +826,11 @@ func (gs *tidbGlueSession) GetGlobalVariable(name string) (string, error) {
 	return gs.se.GetSessionVars().GlobalVarsAccessor.GetTiDBTableValue(name)
 }
 
+// GetGlobalSysVar gets the global system variable value for name.
+func (gs *tidbGlueSession) GetGlobalSysVar(name string) (string, error) {
+	return gs.se.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(name)
+}
+
 // GetSessionCtx implements glue.Glue
 func (gs *tidbGlueSession) GetSessionCtx() sessionctx.Context {
 	return gs.se

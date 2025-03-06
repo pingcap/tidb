@@ -16,7 +16,6 @@ package types
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -469,7 +468,6 @@ type NeededItemTask struct {
 type StatsLoad struct {
 	NeededItemsCh  chan *NeededItemTask
 	TimeoutItemsCh chan *NeededItemTask
-	sync.Mutex
 }
 
 // StatsSyncLoad implement the sync-load feature.

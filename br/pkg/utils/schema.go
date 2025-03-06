@@ -38,10 +38,8 @@ func IsTemplateSysDB(dbname ast.CIStr) bool {
 
 // IsSysDB tests whether the database is system DB.
 // Currently, both `mysql` and `sys` are system DB.
-func IsSysDB(dbName string) bool {
-	// just in case
-	dbLowerName := strings.ToLower(dbName)
-	return dbLowerName == mysql.SystemDB || dbLowerName == mysql.SysDB
+func IsSysDB(dbLowerName string) bool {
+	return dbLowerName == mysql.SystemDB || dbLowerName == mysql.SysDB || dbLowerName == mysql.WorkloadSchema
 }
 
 // TemporaryDBName makes a 'private' database name.

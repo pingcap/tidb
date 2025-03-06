@@ -168,7 +168,7 @@ func (p *PhysicalTableScan) ExplainID() fmt.Stringer {
 
 // TP overrides the TP in order to match different range.
 func (p *PhysicalTableScan) TP() string {
-	if infoschema.IsClusterTableByName(p.DBName.O, p.Table.Name.O) {
+	if infoschema.IsClusterTableByName(p.DBName.L, p.Table.Name.L) {
 		return plancodec.TypeMemTableScan
 	} else if p.isChildOfIndexLookUp {
 		return plancodec.TypeTableRowIDScan
@@ -190,7 +190,7 @@ func (p *PhysicalTableScan) ExplainNormalizedInfo() string {
 
 // OperatorInfo implements dataAccesser interface.
 func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
-	if infoschema.IsClusterTableByName(p.DBName.O, p.Table.Name.O) {
+	if infoschema.IsClusterTableByName(p.DBName.L, p.Table.Name.L) {
 		return ""
 	}
 

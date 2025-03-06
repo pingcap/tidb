@@ -708,6 +708,28 @@ func compareGlobalIndex(lhs, rhs *candidatePath) int {
 	return compareBool(lhs.path.Index.Global, rhs.path.Index.Global)
 }
 
+func compareCorrRatio(lhs, rhs *candidatePath) (int, float64) {
+	lhsCorrRatio, rhsCorrRatio := 0.0, 0.0
+	// CorrCountAfterAccess tracks the "CountAfterAccess" only including the most selective index column, thus
+	// lhs/rhsCorrRatio represents the "risk" of the CountAfterAccess value - lower value means less risk that
+	// we do NOT know about actual correlation between indexed columns
+	// TODO - corrCountAfterAccess is only currently used to compete 2 indexes - since they are the only paths
+	// that potentially go through expBackOffEstimation
+	if lhs.path.CorrCountAfterAccess > 0 && rhs.path.CorrCountAfterAccess > 0 {
+		lhsCorrRatio = lhs.path.CorrCountAfterAccess / lhs.path.CountAfterAccess
+		rhsCorrRatio = rhs.path.CorrCountAfterAccess / rhs.path.CountAfterAccess
+	}
+	// lhs has lower risk
+	if lhsCorrRatio < rhsCorrRatio && lhs.path.CountAfterAccess < rhs.path.CountAfterAccess {
+		return 1, lhsCorrRatio
+	}
+	// rhs has lower risk
+	if rhsCorrRatio < lhsCorrRatio && rhs.path.CountAfterAccess < lhs.path.CountAfterAccess {
+		return -1, rhsCorrRatio
+	}
+	return 0, 0
+}
+
 // compareCandidates is the core of skyline pruning, which is used to decide which candidate path is better.
 // The first return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
 // The 2nd return value indicates whether the "better path" is missing statistics or not.
@@ -752,6 +774,8 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	matchResult, globalResult := compareBool(lhs.isMatchProp, rhs.isMatchProp), compareGlobalIndex(lhs, rhs)
 	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
 	scanResult, comparable2 := compareIndexBack(lhs, rhs)
+	// TODO: corrResult is not added to sum to limit change to existing logic. Further testing required.
+	corrResult, _ := compareCorrRatio(lhs, rhs)
 	sum := accessResult + scanResult + matchResult + globalResult
 
 	// First rules apply when an index doesn't have statistics and another object (index or table) has statistics
@@ -788,10 +812,12 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		prop.ExpectedCnt == math.MaxFloat64 { // Limit may affect access row count
 		threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix45132, 1000))
 		if threshold > 0 { // set it to 0 to disable this rule
-			if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold {
+			// corrResult is included to ensure we don't preference to a higher risk plan given that
+			// this rule does not check the other criteria included below.
+			if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold && corrResult <= 0 {
 				return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 			}
-			if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold {
+			if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold && corrResult >= 0 {
 				return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 			}
 		}
