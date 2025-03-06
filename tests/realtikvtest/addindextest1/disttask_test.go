@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -461,4 +462,39 @@ func TestAddIndexScheduleAway(t *testing.T) {
 	)
 	tk.MustExec("alter table t add index idx(b);")
 	require.NotEqual(t, int64(0), jobID.Load())
+}
+
+func TestAddIndexDistCleanUpBlock(t *testing.T) {
+	proto.MaxConcurrentTask = 1
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(1)`))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
+	})
+	ch := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/doCleanupTask", func() {
+		<-ch
+	})
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	if store.Name() != "TiKV" {
+		t.Skip("TiKV store only")
+	}
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists test;")
+	tk.MustExec("create database test;")
+	tk.MustExec("use test;")
+	tk.MustExec(`set global tidb_enable_dist_task=1;`)
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec(fmt.Sprintf("create table test.t%d (a int, b int);", i))
+			tk.MustExec(fmt.Sprintf("insert into test.t%d values (1, 1);", i))
+			tk.MustExec(fmt.Sprintf("alter table test.t%d add index idx(b);", i))
+		}()
+	}
+	wg.Wait()
+	close(ch)
 }
