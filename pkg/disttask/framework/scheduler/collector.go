@@ -73,6 +73,11 @@ func (c *collector) Describe(ch chan<- *prometheus.Desc) {
 
 // Collect implements the prometheus.Collector interface.
 func (c *collector) Collect(ch chan<- prometheus.Metric) {
+	c.collectTasks(ch)
+	c.collectSubtasks(ch)
+}
+
+func (c *collector) collectTasks(ch chan<- prometheus.Metric) {
 	p := c.taskInfo.Load()
 	if p == nil {
 		return
