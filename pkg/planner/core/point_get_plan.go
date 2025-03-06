@@ -113,8 +113,6 @@ type PointGetPlan struct {
 	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
 	accessCols []*expression.Column
 
-	// Flag if created in convertToPointGet, which will already have the IndexValues converted by SortKey
-	IsConvertedToPointGet bool
 	// NOTE: please update FastClonePointGetForPlanCache accordingly if you add new fields here.
 }
 
@@ -391,9 +389,8 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 	if p.HandleConstant == nil && len(p.IndexValues) > 0 {
 		partColsNames := pt.Meta().Partition.Columns
 		for i := range p.IndexInfo.Columns {
-			if p.IsConvertedToPointGet &&
-				len(partColsNames) > 0 &&
-				types.EvalType(p.TblInfo.Columns[p.IndexInfo.Columns[i].Offset].GetType()) == types.ETString &&
+			if len(partColsNames) > 0 &&
+				p.TblInfo.Columns[p.IndexInfo.Columns[i].Offset].FieldType.EvalType() == types.ETString &&
 				p.IndexValues[i].Collation() != p.TblInfo.Columns[p.IndexInfo.Columns[i].Offset].GetCollate() {
 				// convertToPointGet will have the IndexValues already converted to SortKey,
 				// which will be converted again by GetPartitionIdxByRow, so we need to re-run the pruner
