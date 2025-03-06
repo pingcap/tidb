@@ -329,10 +329,10 @@ func BuildHistAndTopN(
 	allowPruning := true
 	if numTopN != 100 {
 		allowPruning = false
-	} else {
-		// Reduce the number of topN collected for smaller tables, with the original value as the upper limit.
-		numTopN = min(int(math.Sqrt(float64(count))), numTopN)
-	}
+	} //else {
+	// Reduce the number of topN collected for smaller tables, with the original value as the upper limit.
+	//numTopN = min(int(math.Sqrt(float64(count))), numTopN)
+	//}
 
 	// Step1: collect topn from samples
 
