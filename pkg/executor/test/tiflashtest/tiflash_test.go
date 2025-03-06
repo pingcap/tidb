@@ -2182,7 +2182,7 @@ func TestIssue59877(t *testing.T) {
 	tk.MustExec("set tidb_enforce_mpp=1")
 	tk.MustQuery("explain format=\"brief\" select /*+ hash_join_build(t3) */ count(*) from t1 straight_join t2 on t1.id = t2.id straight_join t3 on t1.id = t3.id").Check(
 		testkit.Rows("HashAgg 1.00 root  funcs:count(Column#18)->Column#10",
-			"└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+			"└─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
 			"  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
 			"    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#18",
 			"      └─Projection 15609.38 mpp[tiflash]  test.t1.id, Column#14",
