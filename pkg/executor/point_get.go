@@ -55,8 +55,12 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 		return nil
 	}
 
-	if p.PrunePartitions(b.ctx) {
-		// no matching partitions
+	noPartitionsMatch, err := p.PrunePartitions(b.ctx)
+	if err != nil {
+		b.err = err
+		return nil
+	}
+	if noPartitionsMatch {
 		return &TableDualExec{
 			BaseExecutorV2: exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), p.Schema(), p.ID()),
 			numDualRows:    0,
