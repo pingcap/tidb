@@ -63,7 +63,7 @@ func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad bool) (err error) 
 		timeCondition = fmt.Sprintf("WHERE update_time>'%s'", lastUpdateTime.String())
 	}
 	condition := fmt.Sprintf(`%s ORDER BY update_time, create_time`, timeCondition)
-	bindings, err := u.readBindingsFromStorage(condition)
+	bindings, err := readBindingsFromStorage(u.sPool, condition)
 	if err != nil {
 		return err
 	}
@@ -98,34 +98,6 @@ func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad bool) (err error) 
 // LastUpdateTime returns the last update time.
 func (u *bindingCacheUpdater) LastUpdateTime() types.Time {
 	return u.lastUpdateTime.Load().(types.Time)
-}
-
-func (u *bindingCacheUpdater) readBindingsFromStorage(condition string) (bindings []*Binding, err error) {
-	selectStmt := fmt.Sprintf(`SELECT original_sql, bind_sql, default_db, status, create_time,
-       update_time, charset, collation, source, sql_digest, plan_digest FROM mysql.bind_info
-       %s`, condition)
-
-	err = callWithSCtx(u.sPool, false, func(sctx sessionctx.Context) error {
-		rows, _, err := execRows(sctx, selectStmt)
-		if err != nil {
-			return err
-		}
-		bindings = make([]*Binding, 0, len(rows))
-		for _, row := range rows {
-			// Skip the builtin record which is designed for binding synchronization.
-			if row.GetString(0) == BuiltinPseudoSQL4BindLock {
-				continue
-			}
-			binding := newBindingFromStorage(row)
-			if hErr := prepareHints(sctx, binding); hErr != nil {
-				bindingLogger().Warn("failed to generate bind record from data row", zap.Error(hErr))
-				continue
-			}
-			bindings = append(bindings, binding)
-		}
-		return nil
-	})
-	return
 }
 
 // NewBindingCacheUpdater creates a new BindingCacheUpdater.

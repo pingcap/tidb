@@ -28,18 +28,18 @@ import (
 
 // BindingOperator is used to operate (create/drop/update/GC) bindings.
 type BindingOperator interface {
-	// CreateGlobalBinding creates a Bindings to the storage and the cache.
+	// CreateBinding creates a Bindings to the storage and the cache.
 	// It replaces all the exists bindings for the same normalized SQL.
-	CreateGlobalBinding(sctx sessionctx.Context, bindings []*Binding) (err error)
+	CreateBinding(sctx sessionctx.Context, bindings []*Binding) (err error)
 
-	// DropGlobalBinding drop Bindings to the storage and Bindings int the cache.
-	DropGlobalBinding(sqlDigests []string) (deletedRows uint64, err error)
+	// DropBinding drop Bindings to the storage and Bindings int the cache.
+	DropBinding(sqlDigests []string) (deletedRows uint64, err error)
 
-	// SetGlobalBindingStatus set a Bindings's status to the storage and bind cache.
-	SetGlobalBindingStatus(newStatus, sqlDigest string) (ok bool, err error)
+	// SetBindingStatus set a Bindings's status to the storage and bind cache.
+	SetBindingStatus(newStatus, sqlDigest string) (ok bool, err error)
 
-	// GCGlobalBinding physically removes the deleted bind records in mysql.bind_info.
-	GCGlobalBinding() (err error)
+	// GCBinding physically removes the deleted bind records in mysql.bind_info.
+	GCBinding() (err error)
 }
 
 type bindingOperator struct {
@@ -54,9 +54,9 @@ func newBindingOperator(sPool util.DestroyableSessionPool, cache BindingCacheUpd
 	}
 }
 
-// CreateGlobalBinding creates a Bindings to the storage and the cache.
+// CreateBinding creates a Bindings to the storage and the cache.
 // It replaces all the exists bindings for the same normalized SQL.
-func (op *bindingOperator) CreateGlobalBinding(sctx sessionctx.Context, bindings []*Binding) (err error) {
+func (op *bindingOperator) CreateBinding(sctx sessionctx.Context, bindings []*Binding) (err error) {
 	for _, binding := range bindings {
 		if err := prepareHints(sctx, binding); err != nil {
 			return err
@@ -123,8 +123,8 @@ func (op *bindingOperator) CreateGlobalBinding(sctx sessionctx.Context, bindings
 	})
 }
 
-// DropGlobalBinding drop Bindings to the storage and Bindings int the cache.
-func (op *bindingOperator) DropGlobalBinding(sqlDigests []string) (deletedRows uint64, err error) {
+// DropBinding drop Bindings to the storage and Bindings int the cache.
+func (op *bindingOperator) DropBinding(sqlDigests []string) (deletedRows uint64, err error) {
 	if len(sqlDigests) == 0 {
 		return 0, errors.New("sql digest is empty")
 	}
@@ -164,8 +164,8 @@ func (op *bindingOperator) DropGlobalBinding(sqlDigests []string) (deletedRows u
 	return deletedRows, err
 }
 
-// SetGlobalBindingStatus set a Bindings's status to the storage and bind cache.
-func (op *bindingOperator) SetGlobalBindingStatus(newStatus, sqlDigest string) (ok bool, err error) {
+// SetBindingStatus set a Bindings's status to the storage and bind cache.
+func (op *bindingOperator) SetBindingStatus(newStatus, sqlDigest string) (ok bool, err error) {
 	var (
 		updateTs               types.Time
 		oldStatus0, oldStatus1 string
@@ -203,8 +203,8 @@ func (op *bindingOperator) SetGlobalBindingStatus(newStatus, sqlDigest string) (
 	return
 }
 
-// GCGlobalBinding physically removes the deleted bind records in mysql.bind_info.
-func (op *bindingOperator) GCGlobalBinding() (err error) {
+// GCBinding physically removes the deleted bind records in mysql.bind_info.
+func (op *bindingOperator) GCBinding() (err error) {
 	return callWithSCtx(op.sPool, true, func(sctx sessionctx.Context) error {
 		// Lock mysql.bind_info to synchronize with CreateBinding / AddBinding / DropBinding on other tidb instances.
 		if err = lockBindInfoTable(sctx); err != nil {

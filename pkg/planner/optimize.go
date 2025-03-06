@@ -590,7 +590,7 @@ func init() {
 	core.OptimizeAstNode = Optimize
 	core.IsReadOnly = IsReadOnly
 	indexadvisor.QueryPlanCostHook = queryPlanCost
-	bindinfo.GetGlobalBindingHandle = func(sctx sessionctx.Context) bindinfo.GlobalBindingHandle {
+	bindinfo.GetBindingHandle = func(sctx sessionctx.Context) bindinfo.BindingHandle {
 		return domain.GetDomain(sctx).BindingHandle()
 	}
 }

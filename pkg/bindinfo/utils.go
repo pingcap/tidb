@@ -141,3 +141,53 @@ func GenerateBindingSQL(stmtNode ast.StmtNode, planHint string, defaultDB string
 	bindingLogger().Debug("unexpected statement type when generating bind SQL", zap.Any("statement", stmtNode))
 	return ""
 }
+
+func readBindingsFromStorage(sPool util.DestroyableSessionPool, condition string) (bindings []*Binding, err error) {
+	selectStmt := fmt.Sprintf(`SELECT original_sql, bind_sql, default_db, status, create_time,
+       update_time, charset, collation, source, sql_digest, plan_digest FROM mysql.bind_info
+       %s`, condition)
+
+	err = callWithSCtx(sPool, false, func(sctx sessionctx.Context) error {
+		rows, _, err := execRows(sctx, selectStmt)
+		if err != nil {
+			return err
+		}
+		bindings = make([]*Binding, 0, len(rows))
+		for _, row := range rows {
+			// Skip the builtin record which is designed for binding synchronization.
+			if row.GetString(0) == BuiltinPseudoSQL4BindLock {
+				continue
+			}
+			binding := newBindingFromStorage(row)
+			if hErr := prepareHints(sctx, binding); hErr != nil {
+				bindingLogger().Warn("failed to generate bind record from data row", zap.Error(hErr))
+				continue
+			}
+			bindings = append(bindings, binding)
+		}
+		return nil
+	})
+	return
+}
+
+// newBindingFromStorage builds Bindings from a tuple in storage.
+func newBindingFromStorage(row chunk.Row) *Binding {
+	status := row.GetString(3)
+	// For compatibility, the 'Using' status binding will be converted to the 'Enabled' status binding.
+	if status == StatusUsing {
+		status = StatusEnabled
+	}
+	return &Binding{
+		OriginalSQL: row.GetString(0),
+		Db:          strings.ToLower(row.GetString(2)),
+		BindSQL:     row.GetString(1),
+		Status:      status,
+		CreateTime:  row.GetTime(4),
+		UpdateTime:  row.GetTime(5),
+		Charset:     row.GetString(6),
+		Collation:   row.GetString(7),
+		Source:      row.GetString(8),
+		SQLDigest:   row.GetString(9),
+		PlanDigest:  row.GetString(10),
+	}
+}
