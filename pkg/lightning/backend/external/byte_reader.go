@@ -16,9 +16,11 @@ package external
 
 import (
 	"context"
+	goerrors "errors"
 	"fmt"
 	"io"
 
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -74,11 +76,10 @@ func openStoreReaderAndSeek(
 	initFileOffset uint64,
 	prefetchSize int,
 ) (storage.ExternalFileReader, error) {
-	storageReader, err := store.Open(ctx, name, &storage.ReaderOption{PrefetchSize: prefetchSize})
-	if err != nil {
-		return nil, err
-	}
-	_, err = storageReader.Seek(int64(initFileOffset), io.SeekStart)
+	storageReader, err := store.Open(ctx, name, &storage.ReaderOption{
+		StartOffset:  aws.Int64(int64(initFileOffset)),
+		PrefetchSize: prefetchSize,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +158,7 @@ func (r *byteReader) switchConcurrentMode(useConcurrent bool) error {
 		return err
 	}
 	err := r.reload()
-	if err != nil && err == io.EOF {
+	if goerrors.Is(err, io.EOF) {
 		// ignore EOF error, let readNBytes handle it
 		return nil
 	}
@@ -228,16 +229,12 @@ func (r *byteReader) readNBytes(n int) ([]byte, error) {
 	hasRead := readLen > 0
 	for n > 0 {
 		err := r.reload()
-		switch err {
-		case nil:
-		case io.EOF:
-			// EOF is only allowed when we have not read any data
-			if hasRead {
-				return nil, io.ErrUnexpectedEOF
+		if err != nil {
+			if goerrors.Is(err, io.EOF) && hasRead {
+				// EOF is only allowed when we have not read any data
+				return nil, errors.Annotatef(io.ErrUnexpectedEOF, "file: %s", r.concurrentReader.filename)
 			}
-			return nil, err
-		default:
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		readLen, bs = r.next(n)
 		hasRead = hasRead || readLen > 0
@@ -301,15 +298,15 @@ func (r *byteReader) reload() error {
 	// when not using concurrentReader, len(curBuf) == 1
 	n, err := io.ReadFull(r.storageReader, r.curBuf[0][0:])
 	if err != nil {
-		switch err {
-		case io.EOF:
+		switch {
+		case goerrors.Is(err, io.EOF):
 			// move curBufIdx so following read will also find EOF
 			r.curBufIdx = len(r.curBuf)
 			return err
-		case io.ErrUnexpectedEOF:
+		case goerrors.Is(err, io.ErrUnexpectedEOF):
 			// The last batch.
 			r.curBuf[0] = r.curBuf[0][:n]
-		case context.Canceled:
+		case goerrors.Is(err, context.Canceled):
 			return err
 		default:
 			r.logger.Warn("other error during read", zap.Error(err))

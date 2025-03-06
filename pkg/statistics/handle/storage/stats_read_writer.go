@@ -79,14 +79,6 @@ func (s *statsReadWriter) UpdateStatsMetaVersionForGC(physicalID int64) (err err
 	}, util.FlagWrapTxn)
 }
 
-// UpdateStatsVersion will set statistics version to the newest TS,
-// then tidb-server will reload automatic.
-func (s *statsReadWriter) UpdateStatsVersion() error {
-	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		return UpdateStatsVersion(util.StatsCtx, sctx)
-	}, util.FlagWrapTxn)
-}
-
 // SaveTableStatsToStorage saves the stats of a table to storage.
 func (s *statsReadWriter) SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error) {
 	var statsVer uint64

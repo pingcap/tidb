@@ -559,3 +559,10 @@ create table t(a int, primary key (a));
 insert into t values(1), (2);
 # safe to directly compare the output since the data is stored in one region. so the output is ordered in fact
 select * from t t1 left join t t2 on t1.a=t2.a limit 1, 1;
+
+# TestIssue20710
+drop table if exists t1, t2;
+create table t1(a int, b int, index idx(a, b));
+create table t2(a int, b int, index idx(a));
+explain select /*+ merge_join(t1) */ * from t1 join t2 on t1.a=t2.a and t2.b=t1.b;
+explain select /*+ no_hash_join(t1), no_index_join(t1,t2), no_index_hash_join(t1,t2) */ * from t1 join t2 on t1.a=t2.a and t2.b=t1.b;

@@ -2140,18 +2140,18 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 }
 
 // BindingHandle returns domain's bindHandle.
-func (do *Domain) BindingHandle() bindinfo.GlobalBindingHandle {
+func (do *Domain) BindingHandle() bindinfo.BindingHandle {
 	v := do.bindHandle.Load()
 	if v == nil {
 		return nil
 	}
-	return v.(bindinfo.GlobalBindingHandle)
+	return v.(bindinfo.BindingHandle)
 }
 
 // InitBindingHandle create a goroutine loads BindInfo in a loop, it should
 // be called only once in BootstrapSession.
 func (do *Domain) InitBindingHandle() error {
-	do.bindHandle.Store(bindinfo.NewGlobalBindingHandle(do.sysSessionPool))
+	do.bindHandle.Store(bindinfo.NewBindingHandle(do.sysSessionPool))
 	err := do.BindingHandle().LoadFromStorageToCache(true)
 	if err != nil || bindinfo.Lease == 0 {
 		return err
@@ -2196,7 +2196,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				if !owner.IsOwner() {
 					continue
 				}
-				err := do.BindingHandle().GCGlobalBinding()
+				err := do.BindingHandle().GCBinding()
 				if err != nil {
 					logutil.BgLogger().Error("GC bind record failed", zap.Error(err))
 				}

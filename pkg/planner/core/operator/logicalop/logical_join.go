@@ -735,7 +735,7 @@ func (p *LogicalJoin) Shallow() *LogicalJoin {
 }
 
 // ExtractFDForSemiJoin extracts FD for semi join.
-func (p *LogicalJoin) ExtractFDForSemiJoin(filtersFromApply []expression.Expression) *funcdep.FDSet {
+func (p *LogicalJoin) ExtractFDForSemiJoin(equivFromApply [][]intset.FastIntSet) *funcdep.FDSet {
 	// 1: since semi join will keep the part or all rows of the outer table, it's outer FD can be saved.
 	// 2: the un-projected column will be left for the upper layer projection or already be pruned from bottom up.
 	outerFD, _ := p.Children()[0].ExtractFD(), p.Children()[1].ExtractFD()
@@ -743,10 +743,13 @@ func (p *LogicalJoin) ExtractFDForSemiJoin(filtersFromApply []expression.Express
 
 	eqCondSlice := expression.ScalarFuncs2Exprs(p.EqualConditions)
 	allConds := append(eqCondSlice, p.OtherConditions...)
-	allConds = append(allConds, filtersFromApply...)
 	notNullColsFromFilters := util.ExtractNotNullFromConds(allConds, p)
 
 	constUniqueIDs := util.ExtractConstantCols(p.LeftConditions, p.SCtx(), fds)
+
+	for _, equiv := range equivFromApply {
+		fds.AddEquivalence(equiv[0], equiv[1])
+	}
 
 	fds.MakeNotNull(notNullColsFromFilters)
 	fds.AddConstants(constUniqueIDs)
@@ -755,7 +758,7 @@ func (p *LogicalJoin) ExtractFDForSemiJoin(filtersFromApply []expression.Express
 }
 
 // ExtractFDForInnerJoin extracts FD for inner join.
-func (p *LogicalJoin) ExtractFDForInnerJoin(filtersFromApply []expression.Expression) *funcdep.FDSet {
+func (p *LogicalJoin) ExtractFDForInnerJoin(equivFromApply [][]intset.FastIntSet) *funcdep.FDSet {
 	leftFD, rightFD := p.Children()[0].ExtractFD(), p.Children()[1].ExtractFD()
 	fds := leftFD
 	fds.MakeCartesianProduct(rightFD)
@@ -763,7 +766,6 @@ func (p *LogicalJoin) ExtractFDForInnerJoin(filtersFromApply []expression.Expres
 	eqCondSlice := expression.ScalarFuncs2Exprs(p.EqualConditions)
 	// some join eq conditions are stored in the OtherConditions.
 	allConds := append(eqCondSlice, p.OtherConditions...)
-	allConds = append(allConds, filtersFromApply...)
 	notNullColsFromFilters := util.ExtractNotNullFromConds(allConds, p)
 
 	constUniqueIDs := util.ExtractConstantCols(allConds, p.SCtx(), fds)
@@ -773,6 +775,9 @@ func (p *LogicalJoin) ExtractFDForInnerJoin(filtersFromApply []expression.Expres
 	fds.MakeNotNull(notNullColsFromFilters)
 	fds.AddConstants(constUniqueIDs)
 	for _, equiv := range equivUniqueIDs {
+		fds.AddEquivalence(equiv[0], equiv[1])
+	}
+	for _, equiv := range equivFromApply {
 		fds.AddEquivalence(equiv[0], equiv[1])
 	}
 	// merge the not-null-cols/registered-map from both side together.
@@ -797,7 +802,7 @@ func (p *LogicalJoin) ExtractFDForInnerJoin(filtersFromApply []expression.Expres
 }
 
 // ExtractFDForOuterJoin extracts FD for outer join.
-func (p *LogicalJoin) ExtractFDForOuterJoin(filtersFromApply []expression.Expression) *funcdep.FDSet {
+func (p *LogicalJoin) ExtractFDForOuterJoin(equivFromApply [][]intset.FastIntSet) *funcdep.FDSet {
 	outerFD, innerFD := p.Children()[0].ExtractFD(), p.Children()[1].ExtractFD()
 	innerCondition := p.RightConditions
 	outerCondition := p.LeftConditions
@@ -819,7 +824,6 @@ func (p *LogicalJoin) ExtractFDForOuterJoin(filtersFromApply []expression.Expres
 	allConds := append(eqCondSlice, p.OtherConditions...)
 	allConds = append(allConds, innerCondition...)
 	allConds = append(allConds, outerCondition...)
-	allConds = append(allConds, filtersFromApply...)
 	notNullColsFromFilters := util.ExtractNotNullFromConds(allConds, p)
 
 	filterFD := &funcdep.FDSet{HashCodeToUniqueID: make(map[string]int)}
@@ -831,6 +835,14 @@ func (p *LogicalJoin) ExtractFDForOuterJoin(filtersFromApply []expression.Expres
 	filterFD.AddConstants(constUniqueIDs)
 	equivOuterUniqueIDs := intset.NewFastIntSet()
 	equivAcrossNum := 0
+	// apply (left join)
+	//   +--- child0 [t1.a]
+	//   +--- project [correlated col{t1.a} --> col#9]
+	// since project correlated col{t1.a} is equivalent to t1.a, we should maintain t1.a == col#9. since apply is
+	// a left join, the probe side will append null value for the non-matched row, so we should maintain the equivalence
+	// before the fds.MakeOuterJoin(). Even correlated col{t1.a} is not from outer side here, we could also maintain
+	// the equivalence before the fds.MakeOuterJoin().
+	equivUniqueIDs = append(equivUniqueIDs, equivFromApply...)
 	for _, equiv := range equivUniqueIDs {
 		filterFD.AddEquivalence(equiv[0], equiv[1])
 		if equiv[0].SubsetOf(outerCols) && equiv[1].SubsetOf(innerCols) {

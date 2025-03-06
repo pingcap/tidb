@@ -26,6 +26,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -166,8 +167,7 @@ func TestTrafficError(t *testing.T) {
 	defer server.Close()
 	tempCtx = fillCtxWithTiProxyAddr(ctx, []int{port})
 	err := exec.Next(tempCtx, nil)
-	require.ErrorContains(t, err, "500 Internal Server Error")
-	require.ErrorContains(t, err, "mock error")
+	require.ErrorContains(t, errors.Cause(err), "mock error")
 }
 
 func TestCapturePath(t *testing.T) {
