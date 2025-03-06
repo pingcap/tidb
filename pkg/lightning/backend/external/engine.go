@@ -268,8 +268,13 @@ func getFilesReadConcurrency(
 		return nil, nil, err
 	}
 	startOffs, endOffs := offsets[0], offsets[1]
+	totalFileSize := uint64(0)
+	sizePerFile := make([]uint64, 0, len(startOffs))
 	for i := range statsFiles {
-		expectedConc := (endOffs[i] - startOffs[i]) / uint64(ConcurrentReaderBufferSizePerConc)
+		size := endOffs[i] - startOffs[i]
+		totalFileSize += size
+		sizePerFile = append(sizePerFile, size)
+		expectedConc := size / uint64(ConcurrentReaderBufferSizePerConc)
 		// let the stat internals cover the [startKey, endKey) since seekPropsOffsets
 		// always return an offset that is less than or equal to the key.
 		expectedConc += 1
@@ -292,6 +297,8 @@ func getFilesReadConcurrency(
 			)
 		}
 	}
+	logutil.Logger(ctx).Info("estimated file size of this range group",
+		zap.Uint64("totalSize", totalFileSize), zap.Uint64s("sizePerFile", sizePerFile))
 	return result, startOffs, nil
 }
 
@@ -306,6 +313,8 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	startKey := jobKeys[0]
 	endKey := jobKeys[len(jobKeys)-1]
 	readStart := time.Now()
+	logutil.Logger(ctx).Info("load range group data", zap.Int("ranges", len(jobKeys)-1))
+	// read all data in range [startKey, endKey)
 	err := readAllData(
 		ctx,
 		e.storage,
