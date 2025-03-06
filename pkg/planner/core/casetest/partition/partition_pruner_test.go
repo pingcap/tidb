@@ -524,3 +524,56 @@ func TestRangeTimePruningExtract(t *testing.T) {
 		runExtractTestCases(t, colType, extractTestCases)
 	}
 }
+
+func TestIssue59827(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"`a` varchar(150) NOT NULL," +
+		"`b` varchar(100) NOT NULL," +
+		"`c` int NOT NULL DEFAULT '0'" +
+		",PRIMARY KEY (`a`,`b`) /*T![clustered_index] CLUSTERED */" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci" +
+		//"")
+		" PARTITION BY LIST COLUMNS(`b`)" +
+		"(PARTITION `p0` VALUES IN ('0')," +
+		"PARTITION `p1` VALUES IN ('1')," +
+		"PARTITION `p2` VALUES IN ('2'))")
+
+	tk.MustExec("insert into t values ('a','1',1),('b','1',1),('b', '2', 2)")
+	tk.MustQuery("select * from t where a = 'b' and b = '2'").Check(testkit.Rows("b 2 2"))
+	tk.MustQuery("select * from t where a = 'b' and b = '1'").Check(testkit.Rows("b 1 1"))
+	tk.MustQuery("select * from t where a = 'b' and (b = '2')").Check(testkit.Rows("b 2 2"))
+	tk.MustQuery("select * from t where a = 'b' and (b = '1')").Check(testkit.Rows("b 1 1"))
+	tk.MustQuery("select * from t where a = 'b' and b = ('2')").Check(testkit.Rows("b 2 2"))
+	tk.MustQuery("select * from t where a = 'b' and b = ('1')").Check(testkit.Rows("b 1 1"))
+	tk.MustQuery("explain select * from t where a = 'b' and b = '2'").CheckContain("partition:p2")
+	tk.MustQuery("explain select * from t where a = 'b' and (b = '2')").CheckContain("partition:p2")
+
+	tk.MustExec("PREPARE stmt FROM 'select * from t where a = ? and b = ?'")
+	tk.MustExec("SET @a = 'b', @b = '2'")
+	tk.MustQuery("EXECUTE stmt USING @a, @b").Check(testkit.Rows("b 2 2"))
+	tk.MustExec("SET @a = 'a', @b = '1'")
+	tk.MustQuery("EXECUTE stmt USING @a, @b").Check(testkit.Rows("a 1 1"))
+	tk.MustExec("DEALLOCATE PREPARE stmt")
+	tk.MustExec(`PREPARE stmt FROM "select * from t where a = 'b' and b = ?"`)
+	tk.MustExec("SET @b = '2'")
+	tk.MustQuery("EXECUTE stmt USING @b").Check(testkit.Rows("b 2 2"))
+	tk.MustExec("SET @b = '1'")
+	tk.MustQuery("EXECUTE stmt USING @b").Check(testkit.Rows("b 1 1"))
+	tk.MustExec("DEALLOCATE PREPARE stmt")
+
+	tk.MustExec("PREPARE stmt FROM 'select * from t where a = ? and (b = ?)'")
+	tk.MustExec("SET @a = 'b', @b = '2'")
+	tk.MustQuery("EXECUTE stmt USING @a, @b").Check(testkit.Rows("b 2 2"))
+	tk.MustExec("SET @a = 'a', @b = '1'")
+	tk.MustQuery("EXECUTE stmt USING @a, @b").Check(testkit.Rows("a 1 1"))
+	tk.MustExec("DEALLOCATE PREPARE stmt")
+	tk.MustExec(`PREPARE stmt FROM "select * from t where a = 'b' and b = (?)"`)
+	tk.MustExec("SET @b = '2'")
+	tk.MustQuery("EXECUTE stmt USING @b").Check(testkit.Rows("b 2 2"))
+	tk.MustExec("SET @b = '1'")
+	tk.MustQuery("EXECUTE stmt USING @b").Check(testkit.Rows("b 1 1"))
+	tk.MustExec("DEALLOCATE PREPARE stmt")
+}

@@ -388,6 +388,19 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 	row := make([]types.Datum, len(p.TblInfo.Columns))
 	if p.HandleConstant == nil && len(p.IndexValues) > 0 {
 		for i := range p.IndexInfo.Columns {
+			if p.IndexValues[i].Collation() != p.TblInfo.Columns[p.IndexInfo.Columns[i].Offset].GetCollate() {
+				// convertToPointGet will have the IndexValues already converted to SortKey,
+				// which will be converted again by GetPartitionIdxByRow, so we need to re-run the pruner
+				// with the conditions.
+				partIdx, err := PartitionPruning(sctx.GetPlanCtx(), pt, p.AccessConditions, p.PartitionNames, p.IdxCols, p.OutputNames())
+				if err != nil || len(partIdx) != 1 {
+					idx := -1
+					p.PartitionIdx = &idx
+					return true
+				}
+				p.PartitionIdx = &partIdx[0]
+				return false
+			}
 			// TODO: Skip copying non-partitioning columns?
 			p.IndexValues[i].Copy(&row[p.IndexInfo.Columns[i].Offset])
 		}
