@@ -1513,3 +1513,25 @@ func TestStatsCacheUpdateTimeout(t *testing.T) {
 	require.Equal(t, 6, int(globalStats2.RealtimeCount))
 	require.Equal(t, 2, int(globalStats2.ModifyCount))
 }
+
+func TestLoadStatsForBitColumn(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a bit(1));")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+
+	tk.MustExec("insert into t value (1),(0);")
+	tk.MustExec("analyze table t all columns with 0 topn;")
+
+	h := dom.StatsHandle()
+	_, err = h.TableStatsFromStorage(tbl.Meta(), tbl.Meta().ID, true, 0)
+	require.NoError(t, err)
+
+	tk.MustQuery("SELECT hex(lower_bound), hex(upper_bound) FROM mysql.stats_buckets ORDER BY lower_bound").Check(testkit.Rows(
+		"30 30",
+		"31 31",
+	))
+}
