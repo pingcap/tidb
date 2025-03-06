@@ -2799,7 +2799,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 		if len(colInfo) > 0 || handleCols != nil {
 			for i, id := range physicalIDs {
 				if id == tnW.TableInfo.ID {
-					id = -1
+					id = statistics.NonPartitionTableID
 				}
 				info := AnalyzeInfo{
 					DBName:        tbl.Schema.O,
@@ -2848,7 +2848,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 			if handleCols != nil && handleCols.IsInt() {
 				for i, id := range physicalIDs {
 					if id == tblInfo.ID {
-						id = -1
+						id = statistics.NonPartitionTableID
 					}
 					info := AnalyzeInfo{
 						DBName:        as.TableNames[0].Schema.O,
@@ -2915,7 +2915,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 	if handleCols != nil {
 		for i, id := range physicalIDs {
 			if id == tblInfo.ID {
-				id = -1
+				id = statistics.NonPartitionTableID
 			}
 			info := AnalyzeInfo{
 				DBName:        as.TableNames[0].Schema.O,
@@ -2936,7 +2936,7 @@ func generateIndexTasks(idx *model.IndexInfo, as *ast.AnalyzeTableStmt, tblInfo 
 			DBName:        as.TableNames[0].Schema.O,
 			TableName:     as.TableNames[0].Name.O,
 			PartitionName: "",
-			TableID:       statistics.AnalyzeTableID{TableID: tblInfo.ID, PartitionID: -1},
+			TableID:       statistics.AnalyzeTableID{TableID: tblInfo.ID, PartitionID: statistics.NonPartitionTableID},
 			StatsVersion:  version,
 		}
 		return []AnalyzeIndexTask{{IndexInfo: idx, AnalyzeInfo: info, TblInfo: tblInfo}}
@@ -2945,7 +2945,7 @@ func generateIndexTasks(idx *model.IndexInfo, as *ast.AnalyzeTableStmt, tblInfo 
 	indexTasks := make([]AnalyzeIndexTask, 0, len(physicalIDs))
 	for i, id := range physicalIDs {
 		if id == tblInfo.ID {
-			id = -1
+			id = statistics.NonPartitionTableID
 		}
 		info := AnalyzeInfo{
 			DBName:        as.TableNames[0].Schema.O,
