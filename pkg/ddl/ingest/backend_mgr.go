@@ -52,6 +52,7 @@ type BackendCtxMgr interface {
 		etcdClient *clientv3.Client,
 		pdSvcDiscovery pd.ServiceDiscovery,
 		resourceGroupName string,
+		adjustedWorkerConcurrency int,
 	) (BackendCtx, error)
 	Unregister(jobID int64)
 	// Load returns the registered BackendCtx with the given jobID.
@@ -123,6 +124,7 @@ func (m *litBackendCtxMgr) Register(
 	etcdClient *clientv3.Client,
 	pdSvcDiscovery pd.ServiceDiscovery,
 	resourceGroupName string,
+	adjustedWorkerConcurrency int,
 ) (BackendCtx, error) {
 	bc, exist := m.Load(jobID)
 	if exist {
@@ -146,7 +148,7 @@ func (m *litBackendCtxMgr) Register(
 	// folder, which may cause cleanupSortPath wrongly delete the sort folder if only
 	// checking the existence of the entry in backends.
 	m.backends.mu.Lock()
-	bd, err := createLocalBackend(ctx, cfg, pdSvcDiscovery)
+	bd, err := createLocalBackend(ctx, cfg, pdSvcDiscovery, adjustedWorkerConcurrency)
 	if err != nil {
 		m.backends.mu.Unlock()
 		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Int64("job ID", jobID), zap.Error(err))
@@ -234,11 +236,7 @@ func (m *litBackendCtxMgr) cleanupSortPath(ctx context.Context) {
 	})
 }
 
-func createLocalBackend(
-	ctx context.Context,
-	cfg *litConfig,
-	pdSvcDiscovery pd.ServiceDiscovery,
-) (*local.Backend, error) {
+func createLocalBackend(ctx context.Context, cfg *litConfig, pdSvcDiscovery pd.ServiceDiscovery, adjustedWorkerConcurrency int) (*local.Backend, error) {
 	tls, err := cfg.lightning.ToTLS()
 	if err != nil {
 		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Error(err))
@@ -252,6 +250,9 @@ func createLocalBackend(
 	// because the impact is not fully tested.
 	var raftKV2SwitchModeDuration time.Duration
 	backendConfig := local.NewBackendConfig(cfg.lightning, int(litRLimit), cfg.keyspaceName, cfg.resourceGroup, kvutil.ExplicitTypeDDL, raftKV2SwitchModeDuration)
+	if adjustedWorkerConcurrency > 0 {
+		backendConfig.WorkerConcurrency = adjustedWorkerConcurrency
+	}
 	return local.NewBackend(ctx, tls, backendConfig, pdSvcDiscovery)
 }
 

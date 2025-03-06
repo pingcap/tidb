@@ -88,7 +88,6 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if jobKeys == nil {
 		jobKeys = sm.RangeSplitKeys
 	}
-	local.WorkerConcurrency = subtask.Concurrency
 	err = local.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
 			StorageURI:    m.cloudStoreURI,
