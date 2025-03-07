@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
+	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
@@ -64,8 +65,9 @@ func (m *PhysicalWithMigrations) Physical() *backuppb.DataFileGroup {
 func (rc *LogClient) TEST_saveIDMap(
 	ctx context.Context,
 	m *stream.TableMappingManager,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 ) error {
-	return rc.SaveIdMapWithFailPoints(ctx, m)
+	return rc.SaveIdMapWithFailPoints(ctx, m, logCheckpointMetaManager)
 }
 
 func (rc *LogClient) TEST_initSchemasMap(
