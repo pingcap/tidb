@@ -1422,6 +1422,9 @@ func (t *partitionedTable) locatePartitionCommon(ctx expression.EvalContext, tp 
 			idx, err = t.locateRangePartition(ctx, partitionExpr, r)
 		}
 		if err != nil {
+			if table.ErrNoPartitionForGivenValue.Equal(err) {
+				return -1, nil
+			}
 			return -1, err
 		}
 		pi := t.Meta().Partition
@@ -1449,6 +1452,9 @@ func (t *partitionedTable) locatePartitionCommon(ctx expression.EvalContext, tp 
 		idx = 0
 	}
 	if err != nil {
+		if table.ErrNoPartitionForGivenValue.Equal(err) {
+			return -1, nil
+		}
 		return -1, errors.Trace(err)
 	}
 	return idx, nil
