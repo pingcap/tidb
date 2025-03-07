@@ -1172,23 +1172,35 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 	// Fill memory usage info
 	if sourceType == mydump.SourceTypeParquet && len(dataFiles) > 0 {
-		_, memoryUsage, memoryUsageFull, err := mydump.SampleStatisticsFromParquet(ctx, *dataFiles[0], e.dataStore)
+		_, memoryUsageStream, memoryUsageFull, err := mydump.SampleStatisticsFromParquet(ctx, *dataFiles[0], e.dataStore)
+		streamThreadCnt := mydump.AdjustEncodeThreadCnt(memoryUsageStream, e.Plan.ThreadCnt)
+		nonstreamThreadCnt := mydump.AdjustEncodeThreadCnt(memoryUsageFull, e.Plan.ThreadCnt)
+
+		encodeThreadCnt := streamThreadCnt
+		memoryUsage := memoryUsageStream
+		useStream := true
+
+		// TODO(joechenrh): use a more proper way to choose mode.
+		if nonstreamThreadCnt > 1 && nonstreamThreadCnt >= streamThreadCnt/2 {
+			encodeThreadCnt = nonstreamThreadCnt
+			memoryUsage = memoryUsageFull
+			useStream = false
+		}
+
 		if err != nil {
 			return errors.Trace(err)
 		}
 		for _, dataFile := range dataFiles {
 			// To reduce the memory usage, we only use streaming mode to read file.
 			dataFile.ParquetMeta = mydump.ParquetFileMeta{
-				MemoryUsageStream: memoryUsage,
-				MemoryUsageFull:   memoryUsageFull,
-				MemoryQuota:       mydump.GetMemoryQuota(e.ThreadCnt),
-				UseStreaming:      true,
+				MemoryUsage:  memoryUsage,
+				UseStreaming: useStream,
 			}
 		}
 
 		// Because we may not be able to open ThreadCnt files concurrently,
 		// we can adjust thread count for parquet here.
-		e.Plan.EncodeThreadCnt = mydump.AdjustEncodeThreadCnt(memoryUsage, e.Plan.ThreadCnt)
+		e.Plan.EncodeThreadCnt = encodeThreadCnt
 	}
 
 	e.dataFiles = dataFiles

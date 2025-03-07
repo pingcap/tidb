@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math"
 	"math/big"
 	"reflect"
 	"strings"
@@ -34,7 +33,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/zeropool"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -334,7 +335,8 @@ type ParquetParser struct {
 	dumpers []*columnDumper
 
 	// rows stores the actual data after parsing.
-	rows [][]types.Datum
+	rows    [][]types.Datum
+	rowPool *zeropool.Pool[[]types.Datum]
 
 	// curIdx and avail is the current index and total number of rows in rows buffer
 	curIdx int
@@ -348,6 +350,7 @@ type ParquetParser struct {
 	curRows          int // number of rows read in total
 	totalRows        int // total rows in this file
 	totalBytesRead   int // total bytes read, estimated by all the read datum.
+	firstAfterReset  bool
 
 	lastRow Row
 	logger  log.Logger
@@ -531,6 +534,10 @@ func (pp *ParquetParser) ReadRows(num int) (int, error) {
 		return 0, nil
 	}
 
+	for i := range readNum {
+		pp.rows[i] = pp.rowPool.Get()
+	}
+
 	read := 0
 	for read < readNum {
 		// Move to next row group
@@ -539,6 +546,7 @@ func (pp *ParquetParser) ReadRows(num int) (int, error) {
 				pp.resetReader()
 			}
 			pp.curRowGroup++
+			pp.firstAfterReset = true
 			for c := 0; c < len(pp.dumpers); c++ {
 				rowGroupReader := pp.readers[c].RowGroup(pp.curRowGroup)
 				colReader, err := rowGroupReader.Column(c)
@@ -577,6 +585,24 @@ func (pp *ParquetParser) readInGroup(num, storeOffset int) (int, error) {
 		err   error
 		total int
 	)
+
+	// After moving to the next row group, we have to read several pages,
+	// so we do this concurrently.
+	if pp.firstAfterReset {
+		pp.firstAfterReset = false
+		var eg errgroup.Group
+		eg.SetLimit(2)
+		for i := range len(pp.dumpers) {
+			dumper := pp.dumpers[i]
+			eg.Go(func() error {
+				dumper.readNextBatch()
+				return nil
+			})
+		}
+		if err := eg.Wait(); err != nil {
+			return 0, err
+		}
+	}
 
 	// Read data into buffers first
 	for col, dumper := range pp.dumpers {
@@ -630,7 +656,7 @@ func (pp *ParquetParser) readInGroup(num, storeOffset int) (int, error) {
 			}
 		}
 
-		for i := 0; i < num; i++ {
+		for i := range num {
 			val, ok := dumper.Next()
 			if !ok {
 				break
@@ -771,7 +797,8 @@ func (pp *ParquetParser) LastRow() Row {
 }
 
 // RecycleRow implements the Parser interface.
-func (*ParquetParser) RecycleRow(_ Row) {
+func (pp *ParquetParser) RecycleRow(row Row) {
+	pp.rowPool.Put(row.Row)
 }
 
 // Columns returns the _lower-case_ column names corresponding to values in
@@ -840,10 +867,8 @@ func ReadParquetFileRowCountByFile(
 // GetDefaultParquetMeta return a default file meta
 func GetDefaultParquetMeta() ParquetFileMeta {
 	return ParquetFileMeta{
-		MemoryUsageStream: 0,
-		MemoryUsageFull:   math.MaxInt32,
-		MemoryQuota:       0,
-		UseStreaming:      true,
+		MemoryUsage:  0,
+		UseStreaming: true,
 	}
 }
 
@@ -857,22 +882,13 @@ func NewParquetParser(
 ) (*ParquetParser, error) {
 	// Acquire memory limiter first
 	var memoryUsage int
-	if meta.MemoryUsageFull <= meta.MemoryQuota {
-		memoryUsage = meta.MemoryUsageFull
-		meta.UseStreaming = false
-	} else {
-		memoryUsage = meta.MemoryUsageStream
-		meta.UseStreaming = true
-	}
-	memoryUsage = min(memoryUsage, readerMemoryLimit)
+	memoryUsage = min(meta.MemoryUsage, readerMemoryLimit)
 	if readerMemoryLimiter != nil {
 		readerMemoryLimiter.Acquire(memoryUsage)
 	}
 	log.FromContext(ctx).Info("Get memory usage of parquet reader",
 		zap.String("file", path),
 		zap.String("memory usage", fmt.Sprintf("%d MB", memoryUsage>>20)),
-		zap.String("memory usage full", fmt.Sprintf("%d MB", meta.MemoryUsageFull>>20)),
-		zap.String("memory quota", fmt.Sprintf("%d MB", meta.MemoryQuota>>20)),
 		zap.String("memory limit", fmt.Sprintf("%d MB", readerMemoryLimit>>20)),
 		zap.Int32("opened parser", openedParser.Add(1)),
 		zap.Bool("streaming mode", meta.UseStreaming),
@@ -936,6 +952,11 @@ func NewParquetParser(
 		subreaders = append(subreaders, reader)
 	}
 
+	numColumns := len(columnMetas)
+	pool := zeropool.New(func() []types.Datum {
+		return make([]types.Datum, numColumns)
+	})
+
 	parser := &ParquetParser{
 		readers:     subreaders,
 		colMetas:    columnMetas,
@@ -944,12 +965,52 @@ func NewParquetParser(
 		logger:      log.FromContext(ctx),
 		memoryUsage: memoryUsage,
 		memLimiter:  readerMemoryLimiter,
+		rowPool:     &pool,
 	}
 	if err := parser.Init(); err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	return parser, nil
+}
+
+func estimateNonStreamMemory(
+	ctx context.Context,
+	fileMeta SourceFileMeta,
+	store storage.ExternalStorage,
+) (int, error) {
+	r, err := store.Open(ctx, fileMeta.Path, nil)
+	if err != nil {
+		return 0, err
+	}
+
+	parser, err := NewParquetParser(ctx, store, r, fileMeta.Path, ParquetFileMeta{
+		MemoryUsage:  0,
+		UseStreaming: false,
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	//nolint: errcheck
+	defer parser.Close()
+
+	reader := parser.readers[0]
+	totalReadRows := reader.MetaData().RowGroups[0].NumRows
+	for i := 0; i < int(totalReadRows); i++ {
+		err = parser.ReadRow()
+		if err != nil {
+			if errors.Cause(err) == io.EOF {
+				break
+			}
+			return 0, err
+		}
+		lastRow := parser.LastRow()
+		parser.RecycleRow(lastRow)
+	}
+
+	defaultAlloc, _ := parser.alloc.(*defaultAllocator)
+	return defaultAlloc.Allocated() + defaultArenaSize, nil
 }
 
 // SampleStatisticsFromParquet samples row size and memory usage of the parquet file.
@@ -969,9 +1030,8 @@ func SampleStatisticsFromParquet(
 	}
 
 	parser, err := NewParquetParser(ctx, store, r, fileMeta.Path, ParquetFileMeta{
-		MemoryUsageStream: 0,
-		MemoryUsageFull:   math.MaxInt,
-		MemoryQuota:       0,
+		MemoryUsage:  0,
+		UseStreaming: true,
 	})
 	if err != nil {
 		return 0, 0, 0, err
@@ -1012,9 +1072,9 @@ func SampleStatisticsFromParquet(
 
 	// Here we add a defaultArenaSize to avoid differences in data between different files, as we only sample one file.
 	memoryUsageStream = defaultAlloc.Allocated() + defaultArenaSize
-	memoryUsageFull = defaultAlloc.Allocated()
 
 	pageBufferFull := 0
+	memoryUsageFull = defaultAlloc.Allocated()
 	for _, rg := range parser.readers[0].MetaData().RowGroups {
 		totalUsage := 0
 		for _, c := range rg.Columns {
@@ -1028,7 +1088,17 @@ func SampleStatisticsFromParquet(
 		}
 		pageBufferFull = max(pageBufferFull, totalUsage)
 	}
-	memoryUsageFull += pageBufferFull
 
-	return avgRowSize, memoryUsageStream, roundUp(memoryUsageFull, defaultArenaSize), nil
+	// Do some precheck, to prevent OOM during estimate memory usage.
+	memoryUsageFull = roundUp(memoryUsageFull+pageBufferFull, defaultArenaSize)
+	if memoryUsageFull < (6 << 30) {
+		memoryUsageFull, err = estimateNonStreamMemory(ctx, fileMeta, store)
+	}
+
+	log.FromContext(ctx).Info("Get memory usage of parquet reader",
+		zap.String("memory usage full", fmt.Sprintf("%d MB", memoryUsageFull>>20)),
+		zap.String("memory usage stream", fmt.Sprintf("%d MB", memoryUsageStream>>20)),
+	)
+
+	return avgRowSize, memoryUsageStream, memoryUsageFull, err
 }

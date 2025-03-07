@@ -112,6 +112,8 @@ func GetMemoryQuota(concurrency int) int {
 }
 
 // AdjustEncodeThreadCnt adjust the concurrency in encode&sort step for parquet file.
+// It's used for IMPORT INTO.
+// TODO(joechenrh): let lightning make use of it.
 func AdjustEncodeThreadCnt(memoryUsage, threadCnt int) int {
 	memTotal, err := tidbmemory.MemTotal()
 	if err != nil {
@@ -143,6 +145,7 @@ type arena interface {
 }
 
 type defaultAllocator struct {
+	mu     sync.Mutex
 	arenas []arena
 	mbufs  []*membuf.Buffer
 
@@ -150,6 +153,8 @@ type defaultAllocator struct {
 }
 
 func (alloc *defaultAllocator) Allocate(size int) []byte {
+	alloc.mu.Lock()
+	defer alloc.mu.Unlock()
 	for i, a := range alloc.arenas {
 		if buf := a.allocate(size); buf != nil {
 			alloc.allocatedBuf[addressOf(buf)] = i
@@ -171,6 +176,8 @@ func (alloc *defaultAllocator) Allocate(size int) []byte {
 }
 
 func (alloc *defaultAllocator) Free(buf []byte) {
+	alloc.mu.Lock()
+	defer alloc.mu.Unlock()
 	addr := addressOf(buf)
 	if arenaID, ok := alloc.allocatedBuf[addr]; ok {
 		alloc.arenas[arenaID].free(buf)

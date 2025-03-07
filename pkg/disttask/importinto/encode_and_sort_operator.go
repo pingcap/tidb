@@ -232,7 +232,13 @@ func subtaskPrefix(taskID, subtaskID int64) string {
 func getWriterMemorySizeLimit(resource *proto.StepResource, plan *importer.Plan) (
 	dataKVMemSizePerCon, perIndexKVMemSizePerCon uint64) {
 	indexKVGroupCnt := getNumOfIndexGenKV(plan.DesiredTableInfo)
-	memPerCon := resource.Mem.Capacity() / int64(plan.ThreadCnt)
+
+	threadCnt := plan.ThreadCnt
+	if plan.EncodeThreadCnt > 0 {
+		threadCnt = plan.EncodeThreadCnt
+	}
+
+	memPerCon := resource.Mem.Capacity() / int64(threadCnt)
 
 	// For parquet format, we allocate 40% of the memory to file reader.
 	if plan.Format == importer.DataFormatParquet {
