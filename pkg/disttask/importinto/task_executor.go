@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/zeropool"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -63,6 +64,7 @@ type importStepExecutor struct {
 	dataKVMemSizePerCon     uint64
 	perIndexKVMemSizePerCon uint64
 	indexBlockSize          int
+	bufPool                 *zeropool.Pool[[]byte]
 
 	importCtx    context.Context
 	importCancel context.CancelFunc
@@ -122,6 +124,12 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 			s.tableImporter.CheckDiskQuota(s.importCtx)
 		}()
 	}
+
+	p := zeropool.New(func() []byte {
+		return make([]byte, 0, external.MinUploadPartSize)
+	})
+	s.bufPool = &p
+
 	s.dataKVMemSizePerCon, s.perIndexKVMemSizePerCon = getWriterMemorySizeLimit(s.GetResource(), s.tableImporter.Plan)
 	s.indexBlockSize = getAdjustedIndexBlockSize(s.perIndexKVMemSizePerCon)
 	s.logger.Info("KV writer memory buf info",
