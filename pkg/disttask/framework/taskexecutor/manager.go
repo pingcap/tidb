@@ -96,7 +96,7 @@ func NewManager(ctx context.Context, id string, taskTable TaskTable) (*Manager, 
 		logger:      logger,
 		slotManager: newSlotManager(totalCPU),
 		totalCPU:    totalCPU,
-		totalMem:    int64(totalMem),
+		totalMem:    totalMem,
 	}
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.mu.taskExecutors = make(map[int64]TaskExecutor)
