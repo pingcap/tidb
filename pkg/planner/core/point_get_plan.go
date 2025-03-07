@@ -444,6 +444,10 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) (bool, error) {
 		partColsNames := pt.Meta().Partition.Columns
 		if len(partColsNames) > 0 {
 			partIdx, done, err := needsPartitionPruning(sctx, p.TblInfo, pt, p.dbName, p.IndexInfo, p.IdxCols, p.IndexValues, p.AccessConditions, p.PartitionNames)
+			if table.ErrNoPartitionForGivenValue.Equal(err) {
+				err = nil
+				partIdx = nil
+			}
 			if err != nil {
 				return false, err
 			}
@@ -849,10 +853,12 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 				d.Copy(&r[p.HandleColOffset])
 				pIdx, err := pTbl.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), r)
 				pIdx, err = pi.ReplaceWithOverlappingPartitionIdx(pIdx, err)
-				if err != nil {
+				if table.ErrNoPartitionForGivenValue.Equal(err) {
+					err = nil
+					pIdx = -1
+				} else if err != nil {
 					return nil, false, err
-				}
-				if !isInExplicitPartitions(pi, pIdx, p.PartitionNames) ||
+				} else if !isInExplicitPartitions(pi, pIdx, p.PartitionNames) ||
 					(p.SinglePartition &&
 						p.PartitionIdxs[0] != pIdx) {
 					{
