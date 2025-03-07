@@ -21,7 +21,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -65,34 +64,23 @@ func valueMarshalerForRestore(group *RangeGroup[RestoreKeyType, RestoreValueType
 // only for test
 func StartCheckpointRestoreRunnerForTest(
 	ctx context.Context,
-	se glue.Session,
-	dbName string,
 	tick time.Duration,
 	retryDuration time.Duration,
+	manager SnapshotMetaManagerT,
 ) (*CheckpointRunner[RestoreKeyType, RestoreValueType], error) {
-	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](
-		newTableCheckpointStorage(se, dbName),
-		nil, valueMarshalerForRestore)
-
-	runner.startCheckpointMainLoop(ctx, tick, tick, 0, retryDuration)
-	return runner, nil
+	cfg := DefaultTickDurationConfig()
+	cfg.tickDurationForChecksum = tick
+	cfg.tickDurationForFlush = tick
+	cfg.retryDuration = retryDuration
+	return manager.StartCheckpointRunner(ctx, cfg, valueMarshalerForRestore)
 }
 
 // Notice that the session is owned by the checkpoint runner, and it will be also closed by it.
 func StartCheckpointRunnerForRestore(
 	ctx context.Context,
-	se glue.Session,
-	dbName string,
+	manager SnapshotMetaManagerT,
 ) (*CheckpointRunner[RestoreKeyType, RestoreValueType], error) {
-	runner := newCheckpointRunner[RestoreKeyType, RestoreValueType](
-		newTableCheckpointStorage(se, dbName),
-		nil, valueMarshalerForRestore)
-
-	// for restore, no need to set lock
-	runner.startCheckpointMainLoop(
-		ctx,
-		defaultTickDurationForFlush, defaultTickDurationForChecksum, 0, defaultRetryDuration)
-	return runner, nil
+	return manager.StartCheckpointRunner(ctx, DefaultTickDurationConfig(), valueMarshalerForRestore)
 }
 
 func AppendRangesForRestore(
@@ -114,24 +102,6 @@ func AppendRangesForRestore(
 			group,
 		},
 	})
-}
-
-// load the whole checkpoint range data and retrieve the metadata of restored ranges
-// and return the total time cost in the past executions
-func LoadCheckpointDataForSstRestore[K KeyType, V ValueType](
-	ctx context.Context,
-	execCtx sqlexec.RestrictedSQLExecutor,
-	dbName string,
-	fn func(K, V),
-) (time.Duration, error) {
-	return selectCheckpointData(ctx, execCtx, dbName, fn)
-}
-
-func LoadCheckpointChecksumForRestore(
-	ctx context.Context,
-	execCtx sqlexec.RestrictedSQLExecutor,
-) (map[int64]*ChecksumItem, time.Duration, error) {
-	return selectCheckpointChecksum(ctx, execCtx, SnapshotRestoreCheckpointDatabaseName)
 }
 
 type CheckpointMetadataForSnapshotRestore struct {
