@@ -294,15 +294,19 @@ select * from t where b = 2;
 
 # Test issue 59827, BatchPointGet
 # Fast plan:
+--sorted_result
 select * from t where b in (1,2);
 explain select * from t where b in (1,2);
 # Non-fast plan:
+--sorted_result
 select * from t where b in (1,2) and a like '%a%';
 explain select * from t where b in (1,2) and a like '%a%';
 set @@tidb_partition_prune_mode=Default;
 # Fast plan:
+--sorted_result
 select * from t where b in (1,2);
 explain select * from t where b in (1,2);
 # Non-fast plan:
+--sorted_result
 select * from t where b in (1,2) and a like '%a%';
 explain select * from t where b in (1,2) and a like '%a%';
