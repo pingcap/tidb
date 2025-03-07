@@ -5945,7 +5945,7 @@ func (e *executor) AlterTableAttributes(ctx sessionctx.Context, ident ast.Ident,
 		return dbterror.ErrInvalidAttributesSpec.GenWithStackByArgs(err)
 	}
 	ids := getIDs([]*model.TableInfo{meta})
-	rule.Reset(schema.Name.L, meta.Name.L, "", ids...)
+	rule.Reset(e.store.GetCodec(), schema.Name.L, meta.Name.L, "", ids...)
 
 	job := &model.Job{
 		Version:        model.GetJobVerInUse(),
@@ -5990,7 +5990,7 @@ func (e *executor) AlterTablePartitionAttributes(ctx sessionctx.Context, ident a
 	if err != nil {
 		return dbterror.ErrInvalidAttributesSpec.GenWithStackByArgs(err)
 	}
-	rule.Reset(schema.Name.L, meta.Name.L, spec.PartitionNames[0].L, partitionID)
+	rule.Reset(e.store.GetCodec(), schema.Name.L, meta.Name.L, spec.PartitionNames[0].L, partitionID)
 
 	pdLabelRule := (*pdhttp.LabelRule)(rule)
 	job := &model.Job{

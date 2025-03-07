@@ -22,6 +22,7 @@ import (
 )
 
 const (
+	keyspaceKey  = "keyspace"
 	dbKey        = "db"
 	tableKey     = "table"
 	partitionKey = "partition"
@@ -101,7 +102,7 @@ func RestoreRegionLabels(labels *[]pd.RegionLabel) string {
 	var sb strings.Builder
 	for i, label := range *labels {
 		switch label.Key {
-		case dbKey, tableKey, partitionKey:
+		case keyspaceKey, dbKey, tableKey, partitionKey:
 			continue
 		default:
 		}

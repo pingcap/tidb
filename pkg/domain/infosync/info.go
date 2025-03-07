@@ -127,6 +127,7 @@ type InfoSyncer struct {
 	tiflashReplicaManager TiFlashReplicaManager
 	resourceManagerClient pd.ResourceManagerClient
 	infoCache             infoschemaMinTS
+	tikvCodec             tikv.Codec
 }
 
 // ServerInfo is server static information.
@@ -231,6 +232,7 @@ func GlobalInfoSyncerInit(
 		serverInfoPath:    fmt.Sprintf("%s/%s", ServerInformationPath, id),
 		minStartTSPath:    fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
 		infoCache:         infoCache,
+		tikvCodec:         codec,
 	}
 	err := is.init(ctx, skipRegisterToDashBoard)
 	if err != nil {
@@ -1104,7 +1106,7 @@ func GetAllLabelRules(ctx context.Context) ([]*label.Rule, error) {
 	if is.labelRuleManager == nil {
 		return nil, nil
 	}
-	return is.labelRuleManager.GetAllLabelRules(ctx)
+	return is.labelRuleManager.GetAllLabelRules(ctx, is.tikvCodec)
 }
 
 // GetLabelRules gets the label rules according to the given IDs from PD.
