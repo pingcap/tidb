@@ -64,11 +64,14 @@ func (a *baseFuncDesc) Hash64(h base.Hasher) {
 
 // Equals implements the base.Equals interface.
 func (a *baseFuncDesc) Equals(other any) bool {
-	if other == nil {
-		return false
-	}
 	a2, ok := other.(*baseFuncDesc)
 	if !ok {
+		return false
+	}
+	if a == nil {
+		return a2 == nil
+	}
+	if a2 == nil {
 		return false
 	}
 	ok = a.Name == a2.Name && len(a.Args) == len(a2.Args) && ((a.RetTp == nil && a2.RetTp == nil) || (a.RetTp != nil && a2.RetTp != nil && a.RetTp.Equals(a2.RetTp)))
@@ -329,7 +332,7 @@ func (a *baseFuncDesc) typeInfer4BitFuncs(ctx expression.BuildContext) {
 	a.RetTp.SetFlen(21)
 	types.SetBinChsClnFlag(a.RetTp)
 	a.RetTp.AddFlag(mysql.UnsignedFlag | mysql.NotNullFlag)
-	a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0])
+	a.Args[0] = expression.WrapWithCastAsInt(ctx, a.Args[0], nil)
 }
 
 func (a *baseFuncDesc) typeInfer4JsonArrayAgg() {
@@ -444,7 +447,9 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx expression.BuildContext) {
 	var castFunc func(ctx expression.BuildContext, expr expression.Expression) expression.Expression
 	switch retTp := a.RetTp; retTp.EvalType() {
 	case types.ETInt:
-		castFunc = expression.WrapWithCastAsInt
+		castFunc = func(ctx expression.BuildContext, expr expression.Expression) expression.Expression {
+			return expression.WrapWithCastAsInt(ctx, expr, retTp)
+		}
 	case types.ETReal:
 		castFunc = expression.WrapWithCastAsReal
 	case types.ETString:

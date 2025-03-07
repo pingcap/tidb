@@ -116,28 +116,28 @@ show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `created_at` datetime DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 100 YEAR */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 100 YEAR */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='24h' */
 drop table if exists t;
 create table t(created_at datetime) ttl = `created_at` + INTERVAL 100 YEAR ttl_enable = 'OFF';
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `created_at` datetime DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 100 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 100 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='24h' */
 drop table if exists t;
 create table t (created_at datetime) TTL = created_at + INTERVAL 3.14159 HOUR_MINUTE;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `created_at` datetime DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 3.14159 HOUR_MINUTE */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 3.14159 HOUR_MINUTE */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='24h' */
 drop table if exists t;
 create table t (created_at datetime) TTL = created_at + INTERVAL "15:20" HOUR_MINUTE;
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `created_at` datetime DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL _utf8mb4'15:20' HOUR_MINUTE */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL _utf8mb4'15:20' HOUR_MINUTE */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='24h' */
 drop table if exists t;
 create table t (created_at datetime) TTL = created_at + INTERVAL 100 YEAR TTL_JOB_INTERVAL = '1d';
 show create table t;
@@ -552,10 +552,10 @@ select 1;
 1
 1
 create invalid;
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 14 near "invalid;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 14 near "invalid" 
 show errors;
 Level	Code	Message
-Error	1064	You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 14 near "invalid;" 
+Error	1064	You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 14 near "invalid" 
 show tables;
 Error 1046 (3D000): No database selected
 show tables;
@@ -652,12 +652,9 @@ dayofyear
 decode
 default_func
 degrees
-des_decrypt
-des_encrypt
 div
 elt
 encode
-encrypt
 eq
 exp
 export_set
@@ -774,10 +771,9 @@ now
 nulleq
 oct
 octet_length
-old_password
 or
 ord
-password_func
+password
 period_add
 period_diff
 pi

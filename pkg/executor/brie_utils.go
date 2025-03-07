@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"go.uber.org/zap"
@@ -88,7 +88,7 @@ func showRestoredCreateTable(sctx sessionctx.Context, tbl *model.TableInfo, brCo
 // BRIECreateTable creates the table with OnExistIgnore option
 func BRIECreateTable(
 	sctx sessionctx.Context,
-	dbName pmodel.CIStr,
+	dbName ast.CIStr,
 	table *model.TableInfo,
 	brComment string,
 	cs ...ddl.CreateTableOption,
@@ -129,7 +129,7 @@ func BRIECreateTables(
 		sctx.GetSessionVars().ForeignKeyChecks = originForeignKeyChecks
 	}()
 	for db, tablesInDB := range tables {
-		dbName := pmodel.NewCIStr(db)
+		dbName := ast.NewCIStr(db)
 		queryBuilder := strings.Builder{}
 		cloneTables := make([]*model.TableInfo, 0, len(tablesInDB))
 		for _, table := range tablesInDB {
@@ -159,7 +159,7 @@ func BRIECreateTables(
 // splitBatchCreateTable provide a way to split batch into small batch when batch size is large than 6 MB.
 // The raft entry has limit size of 6 MB, a batch of CreateTables may hit this limitation
 // TODO: shall query string be set for each split batch create, it looks does not matter if we set once for all.
-func splitBatchCreateTable(sctx sessionctx.Context, schema pmodel.CIStr,
+func splitBatchCreateTable(sctx sessionctx.Context, schema ast.CIStr,
 	infos []*model.TableInfo, cs ...ddl.CreateTableOption) error {
 	var err error
 	d := domain.GetDomain(sctx).DDLExecutor()

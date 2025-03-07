@@ -17,18 +17,23 @@ package variable
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func TestForbidSettingBothTSVariable(t *testing.T) {
@@ -192,10 +197,10 @@ func TestCorrectScopeError(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeNone, Name: "sv_none", Value: "acdc"})
-	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeGlobal, Name: "sv_global", Value: "acdc"})
-	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeSession, Name: "sv_session", Value: "acdc"})
-	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeGlobal | variable.ScopeSession, Name: "sv_both", Value: "acdc"})
+	variable.RegisterSysVar(&variable.SysVar{Scope: vardef.ScopeNone, Name: "sv_none", Value: "acdc"})
+	variable.RegisterSysVar(&variable.SysVar{Scope: vardef.ScopeGlobal, Name: "sv_global", Value: "acdc"})
+	variable.RegisterSysVar(&variable.SysVar{Scope: vardef.ScopeSession, Name: "sv_session", Value: "acdc"})
+	variable.RegisterSysVar(&variable.SysVar{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: "sv_both", Value: "acdc"})
 
 	// check set behavior
 
@@ -368,4 +373,111 @@ func TestLastQueryInfo(t *testing.T) {
 	tk.MustExec("select a from t where a = 1")
 	tk.MustQuery("select @@tidb_last_query_info;").CheckWithFunc(testkit.Rows(`"ru_consumption":27`), checkMatch)
 	tk.MustQuery("select @@tidb_last_query_info;").CheckWithFunc(testkit.Rows(`"ru_consumption":30`), checkMatch)
+}
+
+type mockZapCore struct {
+	zapcore.Core
+	fields []map[string]zapcore.Field
+}
+
+func (mzc *mockZapCore) Enabled(zapcore.Level) bool { return true }
+
+func (mzc *mockZapCore) Check(ent zapcore.Entry, ce *zapcore.CheckedEntry) *zapcore.CheckedEntry {
+	return ce.AddCore(ent, mzc)
+}
+
+func (mzc *mockZapCore) Write(ent zapcore.Entry, fields []zapcore.Field) error {
+	if ent.Message == "GENERAL_LOG" {
+		m := make(map[string]zapcore.Field)
+		for _, field := range fields {
+			m[field.Key] = field
+		}
+		mzc.fields = append(mzc.fields, m)
+	}
+	return nil
+}
+
+func TestMockZapCore(t *testing.T) {
+	mzc := mockZapCore{Core: zapcore.NewNopCore()}
+	zl := zap.New(&mzc)
+	zl.Info("First", zap.String("name", "foo")) // ignored
+	zl.Info("GENERAL_LOG")                      // no fields
+	sql := zap.String("sql", "select 1111")     // 1 field
+	zl.Info("GENERAL_LOG", sql)
+	require.Len(t, mzc.fields, 2)
+	require.Len(t, mzc.fields[0], 0)
+	require.Len(t, mzc.fields[1], 1)
+	require.True(t, sql.Equals(mzc.fields[1]["sql"]))
+}
+
+func TestGeneralLogNonzeroTxnStartTS(t *testing.T) {
+	// mock logutil.GeneralLogger
+	oldGL := logutil.GeneralLogger
+	mzc := mockZapCore{Core: zapcore.NewNopCore()}
+	logutil.GeneralLogger = zap.New(&mzc)
+	defer func() { logutil.GeneralLogger = oldGL }()
+
+	// enable general log
+	oldVar := vardef.ProcessGeneralLog.Swap(true)
+	defer vardef.ProcessGeneralLog.Store(oldVar)
+
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id BIGINT PRIMARY KEY NOT NULL)")
+	sqlField := zap.String("sql", "insert t values (100)")
+	tk.MustExec(sqlField.String)
+
+	getTxnStartTS := func() (int64, bool) {
+		for _, fields := range mzc.fields {
+			if sql, ok := fields["sql"]; ok && sql.Equals(sqlField) {
+				return fields["txnStartTS"].Integer, true
+			}
+		}
+		return 0, false
+	}
+
+	ts, ok := getTxnStartTS()
+	require.True(t, ts > 0)
+	require.True(t, ok)
+}
+
+func TestGeneralLogBinaryText(t *testing.T) {
+	oldGL := logutil.GeneralLogger
+	mzc := mockZapCore{Core: zapcore.NewNopCore()}
+	logutil.GeneralLogger = zap.New(&mzc)
+	defer func() { logutil.GeneralLogger = oldGL }()
+
+	store := testkit.CreateMockStore(t)
+
+	b := []byte{0x41, 0xf6, 0xec, 0x9a}
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set session tidb_general_log = 1")
+	tk.MustExec("select * /*+ no_quoted */ from mysql.user")
+	sqlBinary := fmt.Sprintf("select * /*+ yes_quoted */ from mysql.user where User = _binary '%s'", b)
+	tk.MustExec(sqlBinary)
+
+	getSQLFields := func(s string) (sql zapcore.Field, originText zapcore.Field, ok bool) {
+		for _, fields := range mzc.fields {
+			if sql, ok := fields["sql"]; ok && strings.Contains(sql.String, s) {
+				return sql, fields["originText"], true
+			}
+		}
+		return zapcore.Field{}, zapcore.Field{}, false
+	}
+
+	sql, originText, ok := getSQLFields("no_quoted")
+	require.True(t, ok)
+	require.NotEmpty(t, sql.String)
+	require.Empty(t, originText.String)
+
+	sql, originText, ok = getSQLFields("yes_quote")
+	require.True(t, ok)
+	require.NotEmpty(t, sql.String)
+	require.NotEmpty(t, originText.String)
+	ot, err := strconv.Unquote(originText.String)
+	require.NoError(t, err)
+	require.Equal(t, sqlBinary, ot)
 }

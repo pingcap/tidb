@@ -236,10 +236,12 @@ func (c *Chunk) MakeRefTo(dstColIdx int, src *Chunk, srcColIdx int) error {
 	return nil
 }
 
-// SwapColumn swaps Column "c.columns[colIdx]" with Column
+// swapColumn swaps Column "c.columns[colIdx]" with Column
 // "other.columns[otherIdx]". If there exists columns refer to the Column to be
 // swapped, we need to re-build the reference.
-func (c *Chunk) SwapColumn(colIdx int, other *Chunk, otherIdx int) error {
+// this function should not be used directly, if you wants to swap columns between two chunks,
+// use ColumnSwapHelper.SwapColumns instead.
+func (c *Chunk) swapColumn(colIdx int, other *Chunk, otherIdx int) error {
 	if c.sel != nil || other.sel != nil {
 		return errors.New(msgErrSelNotNil)
 	}
@@ -419,6 +421,30 @@ func (c *Chunk) AppendPartialRow(colOff int, row Row) {
 	}
 }
 
+// AppendRowsByColIdxs appends multiple rows by its colIdxs to the chunk.
+// 1. every columns are used if colIdxs is nil.
+// 2. no columns are used if colIdxs is not nil but the size of colIdxs is 0.
+func (c *Chunk) AppendRowsByColIdxs(rows []Row, colIdxs []int) (wide int) {
+	if colIdxs == nil {
+		if len(rows) == 0 {
+			wide = 0
+			return
+		}
+		c.AppendRows(rows)
+		wide = rows[0].Len() * len(rows)
+		return
+	}
+	for _, srcRow := range rows {
+		c.appendSel(0)
+		for i, colIdx := range colIdxs {
+			appendCellByCell(c.columns[i], srcRow.c.columns[colIdx], srcRow.idx)
+		}
+	}
+	c.numVirtualRows += len(rows)
+	wide = len(colIdxs) * len(rows)
+	return
+}
+
 // AppendRowByColIdxs appends a row to the chunk, using the row's columns specified by colIdxs.
 // 1. every columns are used if colIdxs is nil.
 // 2. no columns are used if colIdxs is not nil but the size of colIdxs is 0.
@@ -469,12 +495,12 @@ func AppendCellFromRawData(dst *Column, rowData unsafe.Pointer, currentOffset in
 		dst.data = append(dst.data, hack.GetBytesFromPtr(unsafe.Add(rowData, currentOffset), elemLen)...)
 		currentOffset += elemLen
 	} else {
-		elemLen := *(*uint64)(unsafe.Add(rowData, currentOffset))
+		elemLen := *(*uint32)(unsafe.Add(rowData, currentOffset))
 		if elemLen > 0 {
-			dst.data = append(dst.data, hack.GetBytesFromPtr(unsafe.Add(rowData, currentOffset+8), int(elemLen))...)
+			dst.data = append(dst.data, hack.GetBytesFromPtr(unsafe.Add(rowData, currentOffset+sizeUint32), int(elemLen))...)
 		}
 		dst.offsets = append(dst.offsets, int64(len(dst.data)))
-		currentOffset += int(elemLen + 8)
+		currentOffset += int(elemLen + uint32(sizeUint32))
 	}
 	dst.length++
 	return currentOffset

@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/benchdaily"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -1541,7 +1541,7 @@ func testVectorizedBuiltinFunc(t *testing.T, vecExprCases vecExprBenchCases) {
 			if testCase.aesModes == "" {
 				testCase.aesModes = "aes-128-ecb"
 			}
-			err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, testCase.aesModes)
+			err := ctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, testCase.aesModes)
 			require.NoError(t, err)
 			if funcName == ast.CurrentUser || funcName == ast.User {
 				ctx.GetSessionVars().User = &auth.UserIdentity{
@@ -1782,7 +1782,7 @@ func benchmarkVectorizedBuiltinFunc(b *testing.B, vecExprCases vecExprBenchCases
 			if testCase.aesModes == "" {
 				testCase.aesModes = "aes-128-ecb"
 			}
-			err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, testCase.aesModes)
+			err := ctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, testCase.aesModes)
 			if err != nil {
 				panic(err)
 			}

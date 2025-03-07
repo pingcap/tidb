@@ -14,7 +14,7 @@ import (
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -44,7 +44,7 @@ func NewExecutorBuilder(table *model.TableInfo, ts uint64) *ExecutorBuilder {
 		table: table,
 		ts:    ts,
 
-		concurrency: variable.DefDistSQLScanConcurrency,
+		concurrency: vardef.DefDistSQLScanConcurrency,
 	}
 }
 
@@ -369,8 +369,6 @@ func (exec *Executor) Execute(
 	updateFn func(),
 ) (*tipb.ChecksumResponse, error) {
 	checksumResp := &tipb.ChecksumResponse{}
-	checksumBackoffer := utils.InitialRetryState(utils.ChecksumRetryTime,
-		utils.ChecksumWaitInterval, utils.ChecksumMaxWaitInterval)
 	for _, req := range exec.reqs {
 		// Pointer to SessionVars.Killed
 		// Killed is a flag to indicate that this query is killed.
@@ -397,7 +395,7 @@ func (exec *Executor) Execute(
 				return errors.Trace(err)
 			}
 			return nil
-		}, &checksumBackoffer)
+		}, utils.NewChecksumBackoffStrategy())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

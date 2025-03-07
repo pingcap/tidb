@@ -285,7 +285,7 @@
                "thresholds": [ ],
                "timeFrom": null,
                "timeShift": null,
-               "title": "RU Max (Max Cost During 20s Period)",
+               "title": "RU Max(Max Cost During 20s Period)",
                "tooltip": {
                   "shared": true,
                   "sort": 0,
@@ -2512,7 +2512,7 @@
                "thresholds": [ ],
                "timeFrom": null,
                "timeShift": null,
-               "title": "CPU Time by Priority",
+               "title": "CPU Time By Priority",
                "tooltip": {
                   "shared": true,
                   "sort": 0,
@@ -2598,7 +2598,7 @@
                "thresholds": [ ],
                "timeFrom": null,
                "timeShift": null,
-               "title": "CPU Quota Limit by Priority",
+               "title": "CPU Quota Limit By Priority",
                "tooltip": {
                   "shared": true,
                   "sort": 0,
@@ -2684,7 +2684,7 @@
                "thresholds": [ ],
                "timeFrom": null,
                "timeShift": null,
-               "title": "Tasks Wait QPS by Priority",
+               "title": "Tasks Wait QPS By Priority",
                "tooltip": {
                   "shared": true,
                   "sort": 0,

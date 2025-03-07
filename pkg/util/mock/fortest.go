@@ -21,6 +21,8 @@ package mock
 
 // NewContext creates a new mocked sessionctx.Context.
 // This function should only be used for testing.
+// Avoid using this when you are in a context with a `kv.Storage` instance, especially when you are going to access
+// the data in it. Consider using testkit.NewSession(t, store) instead when possible.
 func NewContext() *Context {
 	return newContext()
 }

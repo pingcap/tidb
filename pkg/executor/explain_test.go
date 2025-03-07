@@ -322,7 +322,8 @@ func TestIssue35911(t *testing.T) {
 	timeStr1 := extractTime.FindStringSubmatch(rows[4][5].(string))[1]
 	time1, err := time.ParseDuration(timeStr1)
 	require.NoError(t, err)
-	timeStr2 := extractTime.FindStringSubmatch(rows[5][5].(string))[1]
+	extractTime2, _ := regexp.Compile("^total_time:(.*?),")
+	timeStr2 := extractTime2.FindStringSubmatch(rows[5][5].(string))[1]
 	time2, err := time.ParseDuration(timeStr2)
 	require.NoError(t, err)
 	// The duration of IndexLookUp should be longer than its build side child
@@ -339,6 +340,48 @@ func TestIssue35911(t *testing.T) {
 	require.NoError(t, err)
 	// To be consistent with other operators, we should not aggregate the concurrency in the runtime stats.
 	require.EqualValues(t, 5, concurrency)
+}
+
+func TestTotalTimeCases(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1 (c1 bigint, c2 int, c3 int, c4 int, primary key(c1, c2), index (c3));")
+	lineNum := 1000
+	for i := 0; i < lineNum; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t1 values(%d, %d, %d, %d);", i, i+1, i+2, i+3))
+	}
+	tk.MustExec("analyze table t1")
+	tk.MustExec("set @@tidb_executor_concurrency = 5;")
+
+	tk.MustExec("set @@tidb_enable_parallel_apply = 0;")
+	rows := tk.MustQuery("explain analyze select (select /*+ NO_DECORRELATE() */ sum(c4) from t1 where t1.c3 = alias.c3) from t1 alias where alias.c1 = 1;").Rows()
+	require.True(t, len(rows) == 11)
+
+	// Line3 is tikv_task, others should be all walltime
+	for i := 0; i < 11; i++ {
+		if i != 3 {
+			require.True(t, strings.HasPrefix(rows[i][5].(string), "time:"))
+		}
+	}
+
+	// use parallel_apply
+	tk.MustExec("set @@tidb_enable_parallel_apply = 1;")
+	rows = tk.MustQuery("explain analyze select (select /*+ NO_DECORRELATE() */ sum(c4) from t1 where t1.c3 = alias.c3) from t1 alias where alias.c1 = 1;").Rows()
+	require.True(t, len(rows) == 11)
+	// Line0-2 is walltime, Line3 is tikv_task, Line9 Line10 are special, they are total time in integration environment, while
+	// walltime in uts due to only one IndexLookUp executor is actually open, others should be all total_time.
+	for i := 0; i < 11; i++ {
+		if i == 9 || i == 10 {
+			continue
+		}
+		if i < 3 {
+			require.True(t, strings.HasPrefix(rows[i][5].(string), "time:"))
+		} else if i > 3 {
+			require.True(t, strings.HasPrefix(rows[i][5].(string), "total_time:"))
+		}
+	}
 }
 
 func flatJSONPlan(j *plannercore.ExplainInfoForEncode) (res []*plannercore.ExplainInfoForEncode) {

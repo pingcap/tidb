@@ -232,11 +232,11 @@
      If the handle is clustered, specify the primary key column values in the query string
 
      ```shell
-     $curl http://{TiDBIP}:10080/mvcc/key/{db}/{table}?${c1}={v1}&${c2}=${v2}
+     $curl "http://{TiDBIP}:10080/mvcc/key/{db}/{table}?${c1}={v1}&${c2}=${v2}"
      ```
 
      ```shell
-     $curl http://127.0.0.1:10080/mvcc/key/test/t\?a\=aaa\&b\=2020-01-01
+     $curl "http://127.0.0.1:10080/mvcc/key/test/t?a=aaa&b=2020-01-01"
      {
          "key": "7480000000000000365F72016161610000000000FA0419A5420000000000",
          "region_id": 52,
@@ -387,14 +387,14 @@
 14. Get MVCC Information of a specified index key, argument example: column_name_1=column_value_1&column_name_2=column_value2...
 
      ```shell
-     curl http://{TiDBIP}:10080/mvcc/index/{db}/{table}/{index}/{handle}?${c1}={v1}&${c2}=${v2}
+     curl "http://{TiDBIP}:10080/mvcc/index/{db}/{table}/{index}/{handle}?${c1}={v1}&${c2}=${v2}"
      ```
 
      *Hint: For the index column which column type is timezone dependent, e.g. `timestamp`, convert its value to UTC
 timezone.*
 
      ```shell
-     $curl http://127.0.0.1:10080/mvcc/index/test/t1/idx/1\?a\=A
+     $curl "http://127.0.0.1:10080/mvcc/index/test/t1/idx/1?a=A"
      {
          "info": {
              "writes": [
@@ -411,17 +411,17 @@ timezone.*
      *Hint: On a partitioned table, use the `table(partition)` pattern as the table name, `t1(p1)` for example:*
 
      ```shell
-     $curl http://127.0.0.1:10080/mvcc/index/test/t1(p1)/idx/1\?a\=A
+     $curl "http://127.0.0.1:10080/mvcc/index/test/t1(p1)/idx/1?a=A"
      ```
 
     If the handle is clustered, also specify the primary key column values in the query string
 
     ```shell
-    $curl http://{TiDBIP}:10080/mvcc/index/{db}/{table}/{index}?${c1}={v1}&${c2}=${v2}
+    $curl "http://{TiDBIP}:10080/mvcc/index/{db}/{table}/{index}?${c1}={v1}&${c2}=${v2}"
     ```
 
     ```shell
-    $curl http://127.0.0.1:10080/mvcc/index/test/t/idx\?a\=1.1\&b\=111\&c\=1
+    $curl "http://127.0.0.1:10080/mvcc/index/test/t/idx?a=1.1&b=111&c=1"
     {
         "key": "74800000000000003B5F69800000000000000203800000000000000105BFF199999999999A013131310000000000FA",
         "region_id": 59,
@@ -582,7 +582,7 @@ timezone.*
 27. Get count {number} TiDB DDL job history information, start with job {id}
 
      ```shell
-     curl http://{TIDBIP}:10080/ddl/history?start_job_id={id}&limit={number}
+     curl "http://{TIDBIP}:10080/ddl/history?start_job_id={id}&limit={number}"
      ```
 
 28. Download TiDB debug info

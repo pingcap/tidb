@@ -35,10 +35,10 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
-	util2 "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	util2 "github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/replayer"
@@ -308,7 +308,7 @@ func loadSchemaMeta(z *zip.Reader, is infoschema.InfoSchema) (map[int64]*tblInfo
 				s := strings.Split(row, ";")
 				databaseName := s[0]
 				tableName := s[1]
-				t, err := is.TableByName(context.Background(), pmodel.NewCIStr(databaseName), pmodel.NewCIStr(tableName))
+				t, err := is.TableByName(context.Background(), ast.NewCIStr(databaseName), ast.NewCIStr(tableName))
 				if err != nil {
 					return nil, err
 				}

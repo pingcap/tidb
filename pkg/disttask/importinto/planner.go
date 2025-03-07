@@ -54,7 +54,7 @@ type LogicalPlan struct {
 	Plan              importer.Plan
 	Stmt              string
 	EligibleInstances []*infosync.ServerInfo
-	ChunkMap          map[int32][]Chunk
+	ChunkMap          map[int32][]importer.Chunk
 }
 
 // ToTaskMeta converts the logical plan to task meta.
@@ -156,7 +156,7 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 type ImportSpec struct {
 	ID     int32
 	Plan   importer.Plan
-	Chunks []Chunk
+	Chunks []importer.Chunk
 }
 
 // ToSubtaskMeta converts the import spec to subtask meta.
@@ -239,7 +239,7 @@ func buildControllerForPlan(p *LogicalPlan) (*importer.LoadDataController, error
 }
 
 func buildController(plan *importer.Plan, stmt string) (*importer.LoadDataController, error) {
-	idAlloc := kv.NewPanickingAllocators(plan.TableInfo.SepAutoInc(), 0)
+	idAlloc := kv.NewPanickingAllocators(plan.TableInfo.SepAutoInc())
 	tbl, err := tables.TableFromMeta(idAlloc, plan.TableInfo)
 	if err != nil {
 		return nil, err
@@ -257,7 +257,7 @@ func buildController(plan *importer.Plan, stmt string) (*importer.LoadDataContro
 }
 
 func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {
-	var chunkMap map[int32][]Chunk
+	var chunkMap map[int32][]importer.Chunk
 	if len(p.ChunkMap) > 0 {
 		chunkMap = p.ChunkMap
 	} else {
@@ -270,21 +270,21 @@ func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.Pipeli
 		}
 
 		controller.SetExecuteNodeCnt(pCtx.ExecuteNodesCnt)
-		engineCheckpoints, err2 := controller.PopulateChunks(pCtx.Ctx)
+		chunkMap, err2 = controller.PopulateChunks(pCtx.Ctx)
 		if err2 != nil {
 			return nil, err2
 		}
-		chunkMap = toChunkMap(engineCheckpoints)
 	}
+
 	importSpecs := make([]planner.PipelineSpec, 0, len(chunkMap))
-	for id := range chunkMap {
+	for id, chunks := range chunkMap {
 		if id == common.IndexEngineID {
 			continue
 		}
 		importSpec := &ImportSpec{
 			ID:     id,
 			Plan:   p.Plan,
-			Chunks: chunkMap[id],
+			Chunks: chunks,
 		}
 		importSpecs = append(importSpecs, importSpec)
 	}
@@ -372,71 +372,88 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 
 	specs := make([]planner.PipelineSpec, 0, 16)
 	for kvGroup, kvMeta := range kvMetas {
-		splitter, err1 := getRangeSplitter(ctx, controller.GlobalSortStore, kvMeta)
-		if err1 != nil {
-			return nil, err1
+		specsForOneSubtask, err3 := splitForOneSubtask(ctx, controller.GlobalSortStore, kvGroup, kvMeta, ts)
+		if err3 != nil {
+			return nil, err3
 		}
-
-		err1 = func() error {
-			defer func() {
-				err2 := splitter.Close()
-				if err2 != nil {
-					logutil.Logger(ctx).Warn("close range splitter failed", zap.Error(err2))
-				}
-			}()
-			startKey := tidbkv.Key(kvMeta.StartKey)
-			var endKey tidbkv.Key
-			for {
-				endKeyOfGroup, dataFiles, statFiles, interiorRangeJobKeys, regionSplitKeys, err2 := splitter.SplitOneRangesGroup()
-				if err2 != nil {
-					return err2
-				}
-				if len(endKeyOfGroup) == 0 {
-					endKey = kvMeta.EndKey
-				} else {
-					endKey = tidbkv.Key(endKeyOfGroup).Clone()
-				}
-				logutil.Logger(ctx).Info("kv range as subtask",
-					zap.String("startKey", hex.EncodeToString(startKey)),
-					zap.String("endKey", hex.EncodeToString(endKey)),
-					zap.Int("dataFiles", len(dataFiles)))
-				if startKey.Cmp(endKey) >= 0 {
-					return errors.Errorf("invalid kv range, startKey: %s, endKey: %s",
-						hex.EncodeToString(startKey), hex.EncodeToString(endKey))
-				}
-				rangeJobKeys := make([][]byte, 0, len(interiorRangeJobKeys)+2)
-				rangeJobKeys = append(rangeJobKeys, startKey)
-				rangeJobKeys = append(rangeJobKeys, interiorRangeJobKeys...)
-				rangeJobKeys = append(rangeJobKeys, endKey)
-				// each subtask will write and ingest one range group
-				m := &WriteIngestStepMeta{
-					KVGroup: kvGroup,
-					SortedKVMeta: external.SortedKVMeta{
-						StartKey: startKey,
-						EndKey:   endKey,
-						// this is actually an estimate, we don't know the exact size of the data
-						TotalKVSize: uint64(config.DefaultBatchSize),
-					},
-					DataFiles:      dataFiles,
-					StatFiles:      statFiles,
-					RangeJobKeys:   rangeJobKeys,
-					RangeSplitKeys: regionSplitKeys,
-					TS:             ts,
-				}
-				specs = append(specs, &WriteIngestSpec{m})
-
-				startKey = endKey
-				if len(endKeyOfGroup) == 0 {
-					break
-				}
-			}
-			return nil
-		}()
-		if err1 != nil {
-			return nil, err1
-		}
+		specs = append(specs, specsForOneSubtask...)
 	}
 	return specs, nil
+}
+
+func splitForOneSubtask(
+	ctx context.Context,
+	extStorage storage.ExternalStorage,
+	kvGroup string,
+	kvMeta *external.SortedKVMeta,
+	ts uint64,
+) ([]planner.PipelineSpec, error) {
+	splitter, err := getRangeSplitter(ctx, extStorage, kvMeta)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		err3 := splitter.Close()
+		if err3 != nil {
+			logutil.Logger(ctx).Warn("close range splitter failed", zap.Error(err3))
+		}
+	}()
+
+	ret := make([]planner.PipelineSpec, 0, 16)
+
+	startKey := tidbkv.Key(kvMeta.StartKey)
+	var endKey tidbkv.Key
+	for {
+		endKeyOfGroup, dataFiles, statFiles, interiorRangeJobKeys, interiorRegionSplitKeys, err2 := splitter.SplitOneRangesGroup()
+		if err2 != nil {
+			return nil, err2
+		}
+		if len(endKeyOfGroup) == 0 {
+			endKey = kvMeta.EndKey
+		} else {
+			endKey = tidbkv.Key(endKeyOfGroup).Clone()
+		}
+		logutil.Logger(ctx).Info("kv range as subtask",
+			zap.String("startKey", hex.EncodeToString(startKey)),
+			zap.String("endKey", hex.EncodeToString(endKey)),
+			zap.Int("dataFiles", len(dataFiles)))
+		if startKey.Cmp(endKey) >= 0 {
+			return nil, errors.Errorf("invalid kv range, startKey: %s, endKey: %s",
+				hex.EncodeToString(startKey), hex.EncodeToString(endKey))
+		}
+		rangeJobKeys := make([][]byte, 0, len(interiorRangeJobKeys)+2)
+		rangeJobKeys = append(rangeJobKeys, startKey)
+		rangeJobKeys = append(rangeJobKeys, interiorRangeJobKeys...)
+		rangeJobKeys = append(rangeJobKeys, endKey)
+
+		regionSplitKeys := make([][]byte, 0, len(interiorRegionSplitKeys)+2)
+		regionSplitKeys = append(regionSplitKeys, startKey)
+		regionSplitKeys = append(regionSplitKeys, interiorRegionSplitKeys...)
+		regionSplitKeys = append(regionSplitKeys, endKey)
+		// each subtask will write and ingest one range group
+		m := &WriteIngestStepMeta{
+			KVGroup: kvGroup,
+			SortedKVMeta: external.SortedKVMeta{
+				StartKey: startKey,
+				EndKey:   endKey,
+				// this is actually an estimate, we don't know the exact size of the data
+				TotalKVSize: uint64(config.DefaultBatchSize),
+			},
+			DataFiles:      dataFiles,
+			StatFiles:      statFiles,
+			RangeJobKeys:   rangeJobKeys,
+			RangeSplitKeys: regionSplitKeys,
+			TS:             ts,
+		}
+		ret = append(ret, &WriteIngestSpec{m})
+
+		startKey = endKey
+		if len(endKeyOfGroup) == 0 {
+			break
+		}
+	}
+
+	return ret, nil
 }
 
 func getSortedKVMetasOfEncodeStep(subTaskMetas [][]byte) (map[string]*external.SortedKVMeta, error) {
@@ -508,8 +525,11 @@ func getSortedKVMetasForIngest(planCtx planner.PlanCtx, p *LogicalPlan) (map[str
 	return kvMetasOfMergeSort, nil
 }
 
-func getRangeSplitter(ctx context.Context, store storage.ExternalStorage, kvMeta *external.SortedKVMeta) (
-	*external.RangeSplitter, error) {
+func getRangeSplitter(
+	ctx context.Context,
+	store storage.ExternalStorage,
+	kvMeta *external.SortedKVMeta,
+) (*external.RangeSplitter, error) {
 	regionSplitSize, regionSplitKeys, err := importer.GetRegionSplitSizeKeys(ctx)
 	if err != nil {
 		logutil.Logger(ctx).Warn("fail to get region split size and keys", zap.Error(err))

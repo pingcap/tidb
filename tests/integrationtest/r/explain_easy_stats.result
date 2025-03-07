@@ -15,7 +15,7 @@ set @@session.tidb_hashagg_partial_concurrency = 1;
 set @@session.tidb_hashagg_final_concurrency = 1;
 explain format = 'brief' select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
 id	estRows	task	access object	operator info
-HashJoin	1600.00	root		semi join, equal:[eq(Column#13, Column#11)]
+HashJoin	1600.00	root		semi join, left side:Projection, equal:[eq(Column#13, Column#11)]
 ├─StreamAgg(Build)	1.00	root		funcs:sum(Column#16)->Column#11
 │ └─TableReader	1.00	root		data:StreamAgg
 │   └─StreamAgg	1.00	cop[tikv]		funcs:sum(explain_easy_stats.t3.a)->Column#16
@@ -47,7 +47,7 @@ IndexReader	0.00	root		index:IndexRangeScan
 └─IndexRangeScan	0.00	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:partial[c2:missing]
 explain format = 'brief' select * from t1 left join t2 on t1.c2 = t2.c1 where t1.c1 > 1;
 id	estRows	task	access object	operator info
-HashJoin	2481.25	root		left outer join, equal:[eq(explain_easy_stats.t1.c2, explain_easy_stats.t2.c1)]
+HashJoin	2481.25	root		left outer join, left side:TableReader, equal:[eq(explain_easy_stats.t1.c2, explain_easy_stats.t2.c1)]
 ├─TableReader(Build)	1985.00	root		data:Selection
 │ └─Selection	1985.00	cop[tikv]		not(isnull(explain_easy_stats.t2.c1))
 │   └─TableFullScan	1985.00	cop[tikv]	table:t2	keep order:false, stats:partial[c1:missing]
@@ -103,7 +103,7 @@ MemTableScan	10000.00	root	table:COLUMNS
 explain format = 'brief' select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 id	estRows	task	access object	operator info
 Projection	1999.00	root		eq(explain_easy_stats.t1.c2, explain_easy_stats.t2.c2)->Column#11
-└─Apply	1999.00	root		CARTESIAN left outer join
+└─Apply	1999.00	root		CARTESIAN left outer join, left side:TableReader
   ├─TableReader(Build)	1999.00	root		data:TableFullScan
   │ └─TableFullScan	1999.00	cop[tikv]	table:t1	keep order:false
   └─TopN(Probe)	1999.00	root		explain_easy_stats.t2.c1, offset:0, count:1
@@ -120,7 +120,7 @@ Limit	1.00	root		offset:0, count:1
 set @@session.tidb_opt_insubq_to_join_and_agg=0;
 explain format = 'brief' select 1 in (select c2 from t2) from t1;
 id	estRows	task	access object	operator info
-HashJoin	1999.00	root		CARTESIAN left outer semi join, other cond:eq(1, explain_easy_stats.t2.c2)
+HashJoin	1999.00	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(1, explain_easy_stats.t2.c2)
 ├─TableReader(Build)	1985.00	root		data:TableFullScan
 │ └─TableFullScan	1985.00	cop[tikv]	table:t2	keep order:false
 └─TableReader(Probe)	1999.00	root		data:TableFullScan

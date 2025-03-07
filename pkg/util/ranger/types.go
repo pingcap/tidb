@@ -17,6 +17,7 @@ package ranger
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 	"unsafe"
@@ -307,7 +308,8 @@ func formatDatum(d types.Datum, isLeftSide bool) string {
 	case types.KindMaxValue:
 		return "+inf"
 	case types.KindInt64:
-		switch d.GetInt64() {
+		v := d.GetInt64()
+		switch v {
 		case math.MinInt64:
 			if isLeftSide {
 				return "-inf"
@@ -317,10 +319,13 @@ func formatDatum(d types.Datum, isLeftSide bool) string {
 				return "+inf"
 			}
 		}
+		return strconv.FormatInt(v, 10)
 	case types.KindUint64:
-		if d.GetUint64() == math.MaxUint64 && !isLeftSide {
+		v := d.GetUint64()
+		if v == math.MaxUint64 && !isLeftSide {
 			return "+inf"
 		}
+		return strconv.FormatUint(v, 10)
 	case types.KindBytes:
 		return fmt.Sprintf("%q", d.GetValue())
 	case types.KindString:

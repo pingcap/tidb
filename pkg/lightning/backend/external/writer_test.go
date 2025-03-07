@@ -17,6 +17,7 @@ package external
 import (
 	"bytes"
 	"context"
+	goerrors "errors"
 	"fmt"
 	"io"
 	"path"
@@ -28,12 +29,12 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/jfcg/sorty/v2"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
@@ -144,7 +145,7 @@ func TestWriter(t *testing.T) {
 		require.Equal(t, kvs[i].Val, value)
 	}
 	_, _, err = kvReader.nextKV()
-	require.Equal(t, io.EOF, err)
+	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, kvReader.Close())
 
 	statReader, err := newStatsReader(ctx, memStore, "/test/0_stat/0", bufSize)
@@ -153,7 +154,7 @@ func TestWriter(t *testing.T) {
 	var keyCnt uint64 = 0
 	for {
 		p, err := statReader.nextProp()
-		if err == io.EOF {
+		if goerrors.Is(err, io.EOF) {
 			break
 		}
 		require.NoError(t, err)
@@ -269,7 +270,7 @@ func TestWriterDuplicateDetect(t *testing.T) {
 		values = append(values, clonedVal)
 	}
 	_, _, err = kvReader.nextKV()
-	require.Equal(t, io.EOF, err)
+	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, kvReader.Close())
 
 	dir := t.TempDir()
@@ -590,7 +591,7 @@ func TestFlushKVsRetry(t *testing.T) {
 	require.NoError(t, err)
 	p, err := r.nextProp()
 	lastKey := []byte{}
-	for err != io.EOF {
+	for !goerrors.Is(err, io.EOF) {
 		require.NoError(t, err)
 		require.True(t, bytes.Compare(lastKey, p.firstKey) < 0)
 		lastKey = append(lastKey[:0], p.firstKey...)

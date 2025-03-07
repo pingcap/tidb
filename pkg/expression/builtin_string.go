@@ -1703,21 +1703,28 @@ func (c *hexFunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 	switch argTp {
 	case types.ETString, types.ETDatetime, types.ETTimestamp, types.ETDuration, types.ETJson:
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
+		bf.tp.SetFlen(types.UnspecifiedLength)
 		if err != nil {
 			return nil, err
 		}
-		argFieldTp := args[0].GetType(ctx.GetEvalCtx())
+		argLen := args[0].GetType(ctx.GetEvalCtx()).GetFlen()
 		// Use UTF8MB4 as default.
-		bf.tp.SetFlen(argFieldTp.GetFlen() * 4 * 2)
+		if argLen != types.UnspecifiedLength {
+			bf.tp.SetFlen(argLen * 4 * 2)
+		}
 		sig := &builtinHexStrArgSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_HexStrArg)
 		return sig, nil
 	case types.ETInt, types.ETReal, types.ETDecimal:
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETInt)
+		bf.tp.SetFlen(types.UnspecifiedLength)
 		if err != nil {
 			return nil, err
 		}
-		bf.tp.SetFlen(args[0].GetType(ctx.GetEvalCtx()).GetFlen() * 2)
+		argLen := args[0].GetType(ctx.GetEvalCtx()).GetFlen()
+		if argLen != types.UnspecifiedLength {
+			bf.tp.SetFlen(argLen * 2)
+		}
 		charset, collate := ctx.GetCharsetInfo()
 		bf.tp.SetCharset(charset)
 		bf.tp.SetCollate(collate)
@@ -3072,7 +3079,12 @@ func (c *quoteFunctionClass) getFunction(ctx BuildContext, args []Expression) (b
 		return nil, err
 	}
 	SetBinFlagOrBinStr(args[0].GetType(ctx.GetEvalCtx()), bf.tp)
-	bf.tp.SetFlen(2*args[0].GetType(ctx.GetEvalCtx()).GetFlen() + 2)
+	flen := args[0].GetType(ctx.GetEvalCtx()).GetFlen()
+	newFlen := 2*flen + 2
+	if flen == types.UnspecifiedLength {
+		newFlen = types.UnspecifiedLength
+	}
+	bf.tp.SetFlen(newFlen)
 	if bf.tp.GetFlen() > mysql.MaxBlobWidth {
 		bf.tp.SetFlen(mysql.MaxBlobWidth)
 	}
@@ -3201,7 +3213,8 @@ func (c *eltFunctionClass) getFunction(ctx BuildContext, args []Expression) (bui
 		if types.IsBinaryStr(argType) {
 			types.SetBinChsClnFlag(bf.tp)
 		}
-		if argType.GetFlen() > bf.tp.GetFlen() {
+		flen := argType.GetFlen()
+		if flen == types.UnspecifiedLength || flen > bf.tp.GetFlen() {
 			bf.tp.SetFlen(argType.GetFlen())
 		}
 	}

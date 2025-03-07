@@ -926,6 +926,9 @@ type tidbMVCCInfoFunctionClass struct {
 }
 
 func (c *tidbMVCCInfoFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err

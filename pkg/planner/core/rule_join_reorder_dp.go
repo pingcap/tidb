@@ -43,7 +43,7 @@ type joinGroupNonEqEdge struct {
 func (s *joinReorderDPSolver) solve(joinGroup []base.LogicalPlan, tracer *joinReorderTrace) (base.LogicalPlan, error) {
 	eqConds := expression.ScalarFuncs2Exprs(s.eqEdges)
 	for _, node := range joinGroup {
-		_, err := node.RecursiveDeriveStats(nil)
+		_, _, err := node.RecursiveDeriveStats(nil)
 		if err != nil {
 			return nil, err
 		}
@@ -216,11 +216,7 @@ func (s *joinReorderDPSolver) dpGraph(visitID2NodeID, nodeID2VisitID []int, _ []
 
 func (*joinReorderDPSolver) nodesAreConnected(leftMask, rightMask uint, oldPos2NewPos []int,
 	totalEqEdges []joinGroupEqEdge, totalNonEqEdges []joinGroupNonEqEdge) ([]joinGroupEqEdge, []expression.Expression) {
-	//nolint: prealloc
 	var usedEqEdges []joinGroupEqEdge
-	//nolint: prealloc
-	var otherConds []expression.Expression
-
 	for _, edge := range totalEqEdges {
 		lIdx := uint(oldPos2NewPos[edge.nodeIDs[0]])
 		rIdx := uint(oldPos2NewPos[edge.nodeIDs[1]])
@@ -228,6 +224,7 @@ func (*joinReorderDPSolver) nodesAreConnected(leftMask, rightMask uint, oldPos2N
 			usedEqEdges = append(usedEqEdges, edge)
 		}
 	}
+	otherConds := make([]expression.Expression, 0, len(totalNonEqEdges))
 	for _, edge := range totalNonEqEdges {
 		// If the result is false, means that the current group hasn't covered the columns involved in the expression.
 		if edge.nodeIDMask&(leftMask|rightMask) != edge.nodeIDMask {
@@ -255,7 +252,7 @@ func (s *joinReorderDPSolver) newJoinWithEdge(leftPlan, rightPlan base.LogicalPl
 		}
 	}
 	join := s.newJoin(leftPlan, rightPlan, eqConds, otherConds, nil, nil, logicalop.InnerJoin)
-	_, err := join.RecursiveDeriveStats(nil)
+	_, _, err := join.RecursiveDeriveStats(nil)
 	return join, err
 }
 

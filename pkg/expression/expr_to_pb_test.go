@@ -687,6 +687,19 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// truncate
+	function, err = NewFunction(mock.NewContext(), ast.Truncate, types.NewFieldType(mysql.TypeNewDecimal), decimalColumn, intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.Truncate, types.NewFieldType(mysql.TypeDouble), float32Column, intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	function, err = NewFunction(mock.NewContext(), ast.Truncate, types.NewFieldType(mysql.TypeLong), intColumn, intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	// rpad
 	function, err = NewFunction(mock.NewContext(), ast.Rpad, types.NewFieldType(mysql.TypeString), stringColumn, int32Column, stringColumn)
 	require.NoError(t, err)
@@ -1581,7 +1594,9 @@ func TestExprPushDownToTiKV(t *testing.T) {
 	require.Len(t, pushed, 0)
 	require.Len(t, remained, len(exprs))
 
-	// Test Conv function
+	// Test Conv function, `conv` function for a BIT column should not be pushed down for its special behavior which
+	// is only handled in TiDB currently.
+	// see issue: https://github.com/pingcap/tidb/issues/51877
 	exprs = exprs[:0]
 	function, err = NewFunction(mock.NewContext(), ast.Conv, types.NewFieldType(mysql.TypeString), stringColumn, intColumn, intColumn)
 	require.NoError(t, err)
@@ -1590,7 +1605,11 @@ func TestExprPushDownToTiKV(t *testing.T) {
 	require.Len(t, pushed, len(exprs))
 	require.Len(t, remained, 0)
 	exprs = exprs[:0]
-	castByteAsStringFunc, err := NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeString), byteColumn)
+	// when conv a column with type BIT, a cast function will be used to cast bit to a binary string
+	castTp := types.NewFieldType(mysql.TypeString)
+	castTp.SetCharset(charset.CharsetBin)
+	castTp.SetCollate(charset.CollationBin)
+	castByteAsStringFunc, err := NewFunction(mock.NewContext(), ast.Cast, castTp, byteColumn)
 	require.NoError(t, err)
 	function, err = NewFunction(mock.NewContext(), ast.Conv, types.NewFieldType(mysql.TypeString), castByteAsStringFunc, intColumn, intColumn)
 	require.NoError(t, err)
@@ -1815,6 +1834,61 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			functionName: ast.SubDate,
 			retType:      types.NewFieldType(mysql.TypeString),
 			args:         []Expression{stringColumn, intColumn, NewStrConst("hour")},
+		},
+		{
+			functionName: ast.FromUnixTime,
+			retType:      types.NewFieldType(mysql.TypeDatetime),
+			args:         []Expression{decimalColumn},
+		},
+		{
+			functionName: ast.FromUnixTime,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{decimalColumn, stringColumn},
+		},
+		//{
+		//	functionName: ast.StrToDate,
+		//	retType:      types.NewFieldType(mysql.TypeDatetime),
+		//	args:         []Expression{stringColumn, stringColumn},
+		//},
+		//{
+		//	functionName: ast.StrToDate,
+		//	retType:      types.NewFieldType(mysql.TypeDuration),
+		//	args:         []Expression{stringColumn, NewStrConst("%h")},
+		//},
+		//{
+		//	functionName: ast.StrToDate,
+		//	retType:      types.NewFieldType(mysql.TypeDate),
+		//	args:         []Expression{stringColumn, NewStrConst("%y")},
+		//},
+		//{
+		//	functionName: ast.StrToDate,
+		//	retType:      types.NewFieldType(mysql.TypeDatetime),
+		//	args:         []Expression{stringColumn, NewStrConst("%h%y")},
+		//},
+		{
+			functionName: ast.TimestampDiff,
+			retType:      types.NewFieldType(mysql.TypeLong),
+			args:         []Expression{NewStrConst("Second"), datetimeColumn, datetimeColumn},
+		},
+		{
+			functionName: ast.TimestampDiff,
+			retType:      types.NewFieldType(mysql.TypeLong),
+			args:         []Expression{NewStrConst("DAY"), datetimeColumn, datetimeColumn},
+		},
+		{
+			functionName: ast.TimestampDiff,
+			retType:      types.NewFieldType(mysql.TypeLong),
+			args:         []Expression{NewStrConst("year"), datetimeColumn, datetimeColumn},
+		},
+		{
+			functionName: ast.UnixTimestamp,
+			retType:      types.NewFieldType(mysql.TypeLong),
+			args:         []Expression{datetimeColumn},
+		},
+		{
+			functionName: ast.UnixTimestamp,
+			retType:      types.NewFieldType(mysql.TypeNewDecimal),
+			args:         []Expression{stringColumn},
 		},
 	}
 

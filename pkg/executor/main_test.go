@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/testkit/testmain"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
@@ -46,7 +46,7 @@ func TestMain(m *testing.M) {
 		conf.Experimental.AllowsExpressionIndex = true
 	})
 	tikv.EnableFailpoints()
-	variable.StatsCacheMemQuota.Store(5000)
+	vardef.StatsCacheMemQuota.Store(5000)
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
@@ -59,6 +59,8 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/ttl/ttlworker.(*ttlScanWorker).loop"),
 		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/ttl/client.(*mockClient).WatchCommand.func1"),
 		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/ttl/ttlworker.(*JobManager).jobLoop"),
+		// backoff function will lead to sleep, so there is a high probability of goroutine leak while it's doing backoff.
+		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/config/retry.(*Config).createBackoffFn.newBackoffFn.func2"),
 	}
 	callback := func(i int) int {
 		testDataMap.GenerateOutputIfNeeded()

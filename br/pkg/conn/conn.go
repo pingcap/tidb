@@ -29,8 +29,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
@@ -115,7 +118,7 @@ func GetAllTiKVStoresWithRetry(ctx context.Context,
 
 			return errors.Trace(err)
 		},
-		utils.NewPDReqBackoffer(),
+		utils.NewAggressivePDBackoffStrategy(),
 	)
 
 	return stores, errors.Trace(errRetry)
@@ -194,6 +197,9 @@ func NewMgr(
 		return nil, errors.Trace(err)
 	}
 
+	if config.GetGlobalConfig().Store != config.StoreTypeTiKV {
+		config.GetGlobalConfig().Store = config.StoreTypeTiKV
+	}
 	// Disable GC because TiDB enables GC already.
 	path := fmt.Sprintf(
 		"tikv://%s?disableGC=true&keyspaceName=%s",
@@ -223,6 +229,16 @@ func NewMgr(
 		if err != nil {
 			return nil, errors.Annotate(err, "unable to check cluster version for ddl")
 		}
+	}
+
+	if err = g.UseOneShotSession(storage, !needDomain, func(se glue.Session) error {
+		enableFollowerHandleRegion, err := se.GetGlobalSysVar(vardef.PDEnableFollowerHandleRegion)
+		if err != nil {
+			return err
+		}
+		return controller.SetFollowerHandle(variable.TiDBOptOn(enableFollowerHandleRegion))
+	}); err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	mgr := &Mgr{
@@ -292,6 +308,7 @@ func (mgr *Mgr) Close() {
 		if mgr.dom != nil {
 			mgr.dom.Close()
 		}
+		ddl.CloseOwnerManager()
 		tikv.StoreShuttingDown(1)
 		_ = mgr.storage.Close()
 	}
@@ -415,7 +432,7 @@ func (mgr *Mgr) GetConfigFromTiKV(ctx context.Context, cli *http.Client, fn func
 				return err
 			}
 			return nil
-		}, utils.NewPDReqBackoffer())
+		}, utils.NewAggressivePDBackoffStrategy())
 		if err != nil {
 			// if one store failed, break and return error
 			return err

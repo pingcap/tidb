@@ -30,10 +30,11 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 type mockRequirement struct {
@@ -64,17 +65,17 @@ func TestSignedAutoid(t *testing.T) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
-		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: pmodel.NewCIStr("a")})
+		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("a")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: pmodel.NewCIStr("t")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: ast.NewCIStr("t")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: pmodel.NewCIStr("t1")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: ast.NewCIStr("t1")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 3, Name: pmodel.NewCIStr("t1")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 3, Name: ast.NewCIStr("t1")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 4, Name: pmodel.NewCIStr("t2")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 4, Name: ast.NewCIStr("t2")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 5, Name: pmodel.NewCIStr("t3")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 5, Name: ast.NewCIStr("t3")})
 		require.NoError(t, err)
 		return nil
 	})
@@ -269,17 +270,17 @@ func TestUnsignedAutoid(t *testing.T) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
-		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: pmodel.NewCIStr("a")})
+		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("a")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: pmodel.NewCIStr("t")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: ast.NewCIStr("t")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: pmodel.NewCIStr("t1")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: ast.NewCIStr("t1")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 3, Name: pmodel.NewCIStr("t1")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 3, Name: ast.NewCIStr("t1")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 4, Name: pmodel.NewCIStr("t2")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 4, Name: ast.NewCIStr("t2")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 5, Name: pmodel.NewCIStr("t3")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 5, Name: ast.NewCIStr("t3")})
 		require.NoError(t, err)
 		return nil
 	})
@@ -355,6 +356,11 @@ func TestUnsignedAutoid(t *testing.T) {
 	require.Equal(t, int64(6544), id)
 
 	// Test the MaxUint64 is the upper bound of `alloc` func but not `rebase`.
+	// This looks weird, but it's the mysql behaviour.
+	// For example, in MySQL, CREATE TABLE t1 (pk BIGINT UNSIGNED AUTO_INCREMENT, PRIMARY KEY (pk));
+	// 	INSERT INTO t1 VALUES (18446744073709551615-1);   -- rebase to maxinum-1 success
+	// 	INSERT INTO t1 VALUES ();  -- the next alloc fail, cannot allocate 18446744073709551615
+	// 	INSERT INTO t1 VALUES (18446744073709551615);   -- but directly rebase to maxinum success
 	var n uint64 = math.MaxUint64 - 1
 	un := int64(n)
 	err = alloc.Rebase(context.Background(), un, true)
@@ -433,9 +439,9 @@ func TestConcurrentAlloc(t *testing.T) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
-		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: pmodel.NewCIStr("a")})
+		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: ast.NewCIStr("a")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: pmodel.NewCIStr("t")})
+		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: ast.NewCIStr("t")})
 		require.NoError(t, err)
 		return nil
 	})
@@ -519,9 +525,9 @@ func TestRollbackAlloc(t *testing.T) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
-		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: pmodel.NewCIStr("a")})
+		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: ast.NewCIStr("a")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: pmodel.NewCIStr("t")})
+		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: ast.NewCIStr("t")})
 		require.NoError(t, err)
 		return nil
 	})
@@ -569,11 +575,11 @@ func TestAllocComputationIssue(t *testing.T) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
-		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: pmodel.NewCIStr("a")})
+		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("a")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: pmodel.NewCIStr("t")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: ast.NewCIStr("t")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: pmodel.NewCIStr("t1")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: ast.NewCIStr("t1")})
 		require.NoError(t, err)
 		return nil
 	})
@@ -620,9 +626,9 @@ func TestIssue40584(t *testing.T) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
-		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: pmodel.NewCIStr("a")})
+		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("a")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: pmodel.NewCIStr("t")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: ast.NewCIStr("t")})
 		require.NoError(t, err)
 		return nil
 	})
@@ -661,4 +667,19 @@ func TestIssue40584(t *testing.T) {
 	atomic.AddInt32(&done, 1)
 	<-finishAlloc
 	<-finishBase
+}
+
+func TestGetAutoIDServiceLeaderEtcdPath(t *testing.T) {
+	// keyspaceID = tikv.NullspaceID means tidb not set keyspace.
+	keyspaceID := tikv.NullspaceID
+	path := autoid.GetAutoIDServiceLeaderEtcdPath(uint32(keyspaceID))
+	require.Equal(t, autoid.AutoIDLeaderPath, path)
+
+	// In keyspace scenario, assume the keyspaceID=1, the actually etcd key like /keyspaces/tidb/1/tidb/autoid/leader,
+	// The keyspace prefix `/keyspaces/tidb/1` is already in the domain
+	// when initializing etcdclient by setting the etcd namespace. Is added to the top of the key.
+	// So we need to put a forward slash at the beginning of the path.
+	keyspaceID = 1
+	path = autoid.GetAutoIDServiceLeaderEtcdPath(uint32(keyspaceID))
+	require.Equal(t, "/"+autoid.AutoIDLeaderPath, path)
 }

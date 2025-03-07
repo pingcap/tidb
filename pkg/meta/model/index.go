@@ -16,8 +16,8 @@ package model
 
 import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 )
 
 // DistanceMetric is the distance metric used by the vector index.
@@ -63,19 +63,40 @@ type VectorIndexInfo struct {
 // See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
 type IndexInfo struct {
 	ID            int64            `json:"id"`
-	Name          model.CIStr      `json:"idx_name"` // Index name.
-	Table         model.CIStr      `json:"tbl_name"` // Table name.
+	Name          ast.CIStr        `json:"idx_name"` // Index name.
+	Table         ast.CIStr        `json:"tbl_name"` // Table name.
 	Columns       []*IndexColumn   `json:"idx_cols"` // Index columns.
 	State         SchemaState      `json:"state"`
 	BackfillState BackfillState    `json:"backfill_state"`
 	Comment       string           `json:"comment"`      // Comment
-	Tp            model.IndexType  `json:"index_type"`   // Index type: Btree, Hash, Rtree or HNSW
+	Tp            ast.IndexType    `json:"index_type"`   // Index type: Btree, Hash, Rtree or HNSW
 	Unique        bool             `json:"is_unique"`    // Whether the index is unique.
 	Primary       bool             `json:"is_primary"`   // Whether the index is primary key.
 	Invisible     bool             `json:"is_invisible"` // Whether the index is invisible.
 	Global        bool             `json:"is_global"`    // Whether the index is global.
 	MVIndex       bool             `json:"mv_index"`     // Whether the index is multivalued index.
 	VectorInfo    *VectorIndexInfo `json:"vector_index"` // VectorInfo is the vector index information.
+}
+
+// Hash64 implement HashEquals interface.
+func (index *IndexInfo) Hash64(h base.Hasher) {
+	h.HashInt64(index.ID)
+}
+
+// Equals implements HashEquals interface.
+func (index *IndexInfo) Equals(other any) bool {
+	// any(nil) can still be converted as (*IndexInfo)(nil)
+	index2, ok := other.(*IndexInfo)
+	if !ok {
+		return false
+	}
+	if index == nil {
+		return index2 == nil
+	}
+	if index2 == nil {
+		return false
+	}
+	return index.ID == index2.ID
 }
 
 // Clone clones IndexInfo.
@@ -122,8 +143,14 @@ func (index *IndexInfo) IsPublic() bool {
 	return index.State == StatePublic
 }
 
+// IsTiFlashLocalIndex checks whether the index is a TiFlash local index.
+// For a TiFlash local index, no actual index data need to be written to KV layer.
+func (index *IndexInfo) IsTiFlashLocalIndex() bool {
+	return index.VectorInfo != nil
+}
+
 // FindIndexByColumns find IndexInfo in indices which is cover the specified columns.
-func FindIndexByColumns(tbInfo *TableInfo, indices []*IndexInfo, cols ...model.CIStr) *IndexInfo {
+func FindIndexByColumns(tbInfo *TableInfo, indices []*IndexInfo, cols ...ast.CIStr) *IndexInfo {
 	for _, index := range indices {
 		if IsIndexPrefixCovered(tbInfo, index, cols...) {
 			return index
@@ -133,7 +160,7 @@ func FindIndexByColumns(tbInfo *TableInfo, indices []*IndexInfo, cols ...model.C
 }
 
 // IsIndexPrefixCovered checks the index's columns beginning with the cols.
-func IsIndexPrefixCovered(tbInfo *TableInfo, index *IndexInfo, cols ...model.CIStr) bool {
+func IsIndexPrefixCovered(tbInfo *TableInfo, index *IndexInfo, cols ...ast.CIStr) bool {
 	if len(index.Columns) < len(cols) {
 		return false
 	}
@@ -162,8 +189,8 @@ func FindIndexInfoByID(indices []*IndexInfo, id int64) *IndexInfo {
 
 // IndexColumn provides index column info.
 type IndexColumn struct {
-	Name   model.CIStr `json:"name"`   // Index name
-	Offset int         `json:"offset"` // Index offset
+	Name   ast.CIStr `json:"name"`   // Index name
+	Offset int       `json:"offset"` // Index offset
 	// Length of prefix when using column prefix
 	// for indexing;
 	// UnspecifedLength if not using prefix indexing

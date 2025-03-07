@@ -44,6 +44,9 @@ type Engine interface {
 	// keys that can be used as region split keys. If the duplicate detection is
 	// enabled, the keys stored in engine are encoded by duplicate detection but the
 	// returned keys should not be encoded.
+	//
+	// Currently, the start/end key of this import should also be included in the
+	// returned split keys.
 	GetRegionSplitKeys() ([][]byte, error)
 	Close() error
 }

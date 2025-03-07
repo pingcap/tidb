@@ -9,6 +9,7 @@ import (
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	kvconfig "github.com/pingcap/tidb/br/pkg/config"
+	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/config"
@@ -32,18 +33,74 @@ func (f fakeValue) Type() string {
 }
 
 func TestUrlNoQuery(t *testing.T) {
-	flag := &pflag.Flag{
-		Name:  flagStorage,
-		Value: fakeValue("s3://some/what?secret=a123456789&key=987654321"),
+	testCases := []struct {
+		inputName     string
+		expectedName  string
+		inputValue    string
+		expectedValue string
+	}{
+		{
+			inputName:     flagSendCreds,
+			expectedName:  "send-credentials-to-tikv",
+			inputValue:    "true",
+			expectedValue: "true",
+		},
+		{
+			inputName:     flagStorage,
+			expectedName:  "storage",
+			inputValue:    "s3://some/what?secret=a123456789&key=987654321",
+			expectedValue: "s3://some/what",
+		},
+		{
+			inputName:     FlagStreamFullBackupStorage,
+			expectedName:  "full-backup-storage",
+			inputValue:    "s3://bucket/prefix/?access-key=1&secret-key=2",
+			expectedValue: "s3://bucket/prefix/",
+		},
+		{
+			inputName:     flagFullBackupCipherKey,
+			expectedName:  "crypter.key",
+			inputValue:    "537570657253656372657456616C7565",
+			expectedValue: "<redacted>",
+		},
+		{
+			inputName:     flagLogBackupCipherKey,
+			expectedName:  "log.crypter.key",
+			inputValue:    "537570657253656372657456616C7565",
+			expectedValue: "<redacted>",
+		},
+		{
+			inputName:     "azblob.encryption-key",
+			expectedName:  "azblob.encryption-key",
+			inputValue:    "SUPERSECRET_AZURE_ENCRYPTION_KEY",
+			expectedValue: "<redacted>",
+		},
+		{
+			inputName:     flagMasterKeyConfig,
+			expectedName:  "master-key",
+			inputValue:    "local:///path/abcd,aws-kms:///abcd?AWS_ACCESS_KEY_ID=SECRET1&AWS_SECRET_ACCESS_KEY=SECRET2&REGION=us-east-1,azure-kms:///abcd/v1?AZURE_TENANT_ID=tenant-id&AZURE_CLIENT_ID=client-id&AZURE_CLIENT_SECRET=client-secret&AZURE_VAULT_NAME=vault-name",
+			expectedValue: "<redacted>",
+			// expectedValue: "local:///path/abcd,aws-kms:///abcd,azure-kms:///abcd/v1"
+		},
 	}
-	field := flagToZapField(flag)
-	require.Equal(t, flagStorage, field.Key)
-	require.Equal(t, "s3://some/what", field.Interface.(fmt.Stringer).String())
+
+	for _, tc := range testCases {
+		flag := pflag.Flag{
+			Name:  tc.inputName,
+			Value: fakeValue(tc.inputValue),
+		}
+		field := flagToZapField(&flag)
+		require.Equal(t, tc.expectedName, field.Key, `test-case [%s="%s"]`, tc.expectedName, tc.expectedValue)
+		if stringer, ok := field.Interface.(fmt.Stringer); ok {
+			field.String = stringer.String()
+		}
+		require.Equal(t, tc.expectedValue, field.String, `test-case [%s="%s"]`, tc.expectedName, tc.expectedValue)
+	}
 }
 
 func TestTiDBConfigUnchanged(t *testing.T) {
 	cfg := config.GetGlobalConfig()
-	restoreConfig := enableTiDBConfig()
+	restoreConfig := tweakLocalConfForRestore()
 	require.NotEqual(t, config.GetGlobalConfig(), cfg)
 	restoreConfig()
 	require.Equal(t, config.GetGlobalConfig(), cfg)
@@ -229,37 +286,43 @@ func expectedDefaultConfig() Config {
 }
 
 func expectedDefaultBackupConfig() BackupConfig {
+	defaultConfig := expectedDefaultConfig()
+	defaultConfig.Checksum = false
 	return BackupConfig{
-		Config: expectedDefaultConfig(),
+		Config: defaultConfig,
 		GCTTL:  utils.DefaultBRGCSafePointTTL,
 		CompressionConfig: CompressionConfig{
 			CompressionType: backup.CompressionType_ZSTD,
 		},
-		IgnoreStats:     true,
-		UseBackupMetaV2: true,
-		UseCheckpoint:   true,
+		IgnoreStats:      true,
+		UseBackupMetaV2:  true,
+		UseCheckpoint:    true,
+		TableConcurrency: 64,
 	}
 }
 
 func expectedDefaultRestoreConfig() RestoreConfig {
 	defaultConfig := expectedDefaultConfig()
-	defaultConfig.Concurrency = defaultRestoreConcurrency
 	return RestoreConfig{
 		Config: defaultConfig,
-		RestoreCommonConfig: RestoreCommonConfig{Online: false,
-			Granularity:               "fine-grained",
+		RestoreCommonConfig: RestoreCommonConfig{
+			Online:                    false,
+			Granularity:               "coarse-grained",
+			ConcurrencyPerStore:       kvconfig.ConfigTerm[uint]{Value: conn.DefaultImportNumGoroutines},
 			MergeSmallRegionSizeBytes: kvconfig.ConfigTerm[uint64]{Value: 0x6000000},
 			MergeSmallRegionKeyCount:  kvconfig.ConfigTerm[uint64]{Value: 0xea600},
 			WithSysTable:              true,
-			ResetSysUsers:             []string{"cloud_admin", "root"}},
-		NoSchema:            false,
-		LoadStats:           true,
-		PDConcurrency:       0x1,
-		StatsConcurrency:    0xc,
-		BatchFlushInterval:  16000000000,
-		DdlBatchSize:        0x80,
-		WithPlacementPolicy: "STRICT",
-		UseCheckpoint:       true,
+			ResetSysUsers:             []string{"cloud_admin", "root"},
+		},
+		NoSchema:                 false,
+		LoadStats:                true,
+		PDConcurrency:            0x1,
+		StatsConcurrency:         0xc,
+		BatchFlushInterval:       16000000000,
+		DdlBatchSize:             0x80,
+		WithPlacementPolicy:      "STRICT",
+		UseCheckpoint:            true,
+		AllowPITRFromIncremental: true,
 	}
 }
 
@@ -270,13 +333,16 @@ func TestDefault(t *testing.T) {
 }
 
 func TestDefaultBackup(t *testing.T) {
-	def := DefaultBackupConfig()
+	commonConfig := DefaultConfig()
+	commonConfig.OverrideDefaultForBackup()
+	def := DefaultBackupConfig(commonConfig)
 	defaultConfig := expectedDefaultBackupConfig()
 	require.Equal(t, defaultConfig, def)
 }
 
 func TestDefaultRestore(t *testing.T) {
-	def := DefaultRestoreConfig()
+	commonConfig := DefaultConfig()
+	def := DefaultRestoreConfig(commonConfig)
 	defaultConfig := expectedDefaultRestoreConfig()
 	require.Equal(t, defaultConfig, def)
 }
@@ -316,6 +382,10 @@ func TestParseAndValidateMasterKeyInfo(t *testing.T) {
 							Vendor: "aws",
 							KeyId:  "key-id",
 							Region: "us-west-2",
+							AwsKms: &encryptionpb.AwsKms{
+								AccessKey:       "AKIAIOSFODNN7EXAMPLE",
+								SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+							},
 						},
 					},
 				},
@@ -377,6 +447,10 @@ func TestParseAndValidateMasterKeyInfo(t *testing.T) {
 							Vendor: "aws",
 							KeyId:  "key-id",
 							Region: "us-west-2",
+							AwsKms: &encryptionpb.AwsKms{
+								AccessKey:       "AKIAIOSFODNN7EXAMPLE",
+								SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+							},
 						},
 					},
 				},

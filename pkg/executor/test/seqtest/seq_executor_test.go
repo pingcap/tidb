@@ -40,10 +40,11 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -79,7 +80,7 @@ func TestEarlyClose(t *testing.T) {
 
 	// Get table ID for split.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("earlyclose"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("earlyclose"))
 	require.NoError(t, err)
 	tblID := tbl.Meta().ID
 
@@ -114,7 +115,7 @@ func TestEarlyClose(t *testing.T) {
 type stats struct {
 }
 
-func (s stats) GetScope(_ string) variable.ScopeFlag { return variable.DefaultStatusVarScopeFlag }
+func (s stats) GetScope(_ string) vardef.ScopeFlag { return variable.DefaultStatusVarScopeFlag }
 
 func (s stats) Stats(_ *variable.SessionVars) (map[string]any, error) {
 	m := make(map[string]any)
@@ -796,30 +797,34 @@ func HelperTestAdminShowNextID(t *testing.T, store kv.Storage, str string) {
 	tk.MustExec("create table tt(id int primary key auto_increment, c int)")
 	// Start handle is 1.
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test tt id 1 _TIDB_ROWID", "test tt id 1 AUTO_INCREMENT"))
+	r.Check(testkit.Rows("test tt id 1 _TIDB_ROWID"))
 	// After rebasing auto ID, row ID is 20 + step + 1.
 	tk.MustExec("insert into tt values(20, 1)")
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test tt id 31 _TIDB_ROWID", "test tt id 1 AUTO_INCREMENT"))
+	r.Check(testkit.Rows("test tt id 31 _TIDB_ROWID"))
 	// test for renaming the table
 	tk.MustExec("drop database if exists test1")
 	tk.MustExec("create database test1")
 	tk.MustExec("rename table test.tt to test1.tt")
 	tk.MustExec("use test1")
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test1 tt id 31 _TIDB_ROWID", "test1 tt id 1 AUTO_INCREMENT"))
+	r.Check(testkit.Rows("test1 tt id 31 _TIDB_ROWID"))
 	tk.MustQuery(`select * from tt`).Sort().Check(testkit.Rows("20 1"))
 	tk.MustExec("insert test1.tt values ()")
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test1 tt id 31 _TIDB_ROWID", "test1 tt id 1 AUTO_INCREMENT"))
+	r.Check(testkit.Rows("test1 tt id 31 _TIDB_ROWID"))
 	tk.MustQuery(`select * from tt`).Sort().Check(testkit.Rows("20 1", "21 <nil>"))
+	tk.MustExec("drop table tt")
+
+	tk.MustExec("create table tt(id int primary key auto_increment, c int) auto_id_cache = 1;")
+	r = tk.MustQuery(str + " tt next_row_id")
+	r.Check(testkit.Rows("test1 tt id 1 AUTO_INCREMENT"))
 	tk.MustExec("drop table tt")
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int auto_increment primary key nonclustered, b int);")
 	tk.MustQuery("show table t next_row_id;").Check(testkit.Rows(
-		"test1 t _tidb_rowid 1 _TIDB_ROWID",
-		"test1 t _tidb_rowid 1 AUTO_INCREMENT"))
+		"test1 t _tidb_rowid 1 _TIDB_ROWID"))
 
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 

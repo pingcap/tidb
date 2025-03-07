@@ -13,7 +13,6 @@ go_library(
         "//pkg/executor/internal/exec",
         "//pkg/infoschema",
         "//pkg/parser/ast",
-        "//pkg/parser/model",
         "//pkg/statistics/handle/types",
         "//pkg/table/tables",
         "//pkg/util/chunk",
@@ -31,7 +30,6 @@ go_test(
         "//pkg/infoschema",
         "//pkg/meta/model",
         "//pkg/parser/ast",
-        "//pkg/parser/model",
         "@com_github_stretchr_testify//require",
     ],
 )

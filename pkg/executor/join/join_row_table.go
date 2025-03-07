@@ -21,7 +21,7 @@ import (
 )
 
 const sizeOfNextPtr = int(unsafe.Sizeof(uintptr(0)))
-const sizeOfLengthField = int(unsafe.Sizeof(uint64(1)))
+const sizeOfElementSize = int(unsafe.Sizeof(uint32(1)))
 const sizeOfUnsafePointer = int(unsafe.Sizeof(unsafe.Pointer(nil)))
 const sizeOfUintptr = int(unsafe.Sizeof(uintptr(0)))
 

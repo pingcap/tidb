@@ -101,6 +101,11 @@ func ToTiDBErr(err error) error {
 		return kv.ErrEntryTooLarge.GenWithStackByArgs(entryTooLarge.Limit, entryTooLarge.Size)
 	}
 
+	var keyTooLarge *tikverr.ErrKeyTooLarge
+	if stderrs.As(err, &keyTooLarge) {
+		return kv.ErrKeyTooLarge.GenWithStackByArgs(keyTooLarge.KeySize)
+	}
+
 	if stderrs.Is(err, tikverr.ErrInvalidTxn) {
 		return kv.ErrInvalidTxn
 	}

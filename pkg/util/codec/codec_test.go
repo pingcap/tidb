@@ -1297,23 +1297,26 @@ func TestHashChunkColumns(t *testing.T) {
 
 func TestDatumHashEquals(t *testing.T) {
 	now := time.Now()
+	newDatumPtr := func(d types.Datum) *types.Datum {
+		return &d
+	}
 	tests := []struct {
-		d1 types.Datum
-		d2 types.Datum
+		d1 *types.Datum
+		d2 *types.Datum
 	}{
-		{types.NewIntDatum(1), types.NewIntDatum(1)},
-		{types.NewUintDatum(1), types.NewUintDatum(1)},
-		{types.NewFloat64Datum(1.1), types.NewFloat64Datum(1.1)},
-		{types.NewStringDatum("abc"), types.NewStringDatum("abc")},
-		{types.NewBytesDatum([]byte("abc")), types.NewBytesDatum([]byte("abc"))},
-		{types.NewMysqlEnumDatum(types.Enum{Name: "a", Value: 1}), types.NewMysqlEnumDatum(types.Enum{Name: "a", Value: 1})},
-		{types.NewMysqlSetDatum(types.Set{Name: "a", Value: 1}, "a"), types.NewMysqlSetDatum(types.Set{Name: "a", Value: 1}, "a")},
-		{types.NewBinaryLiteralDatum([]byte{0x01}), types.NewBinaryLiteralDatum([]byte{0x01})},
-		{types.NewMysqlBitDatum(types.NewBinaryLiteralFromUint(1, -1)), types.NewMysqlBitDatum(types.NewBinaryLiteralFromUint(1, -1))},
-		{types.NewTimeDatum(types.NewTime(types.FromGoTime(now), mysql.TypeDatetime, 6)), types.NewTimeDatum(types.NewTime(types.FromGoTime(now), mysql.TypeDatetime, 6))},
-		{types.NewDurationDatum(types.Duration{Duration: time.Second}), types.NewDurationDatum(types.Duration{Duration: time.Second})},
-		{types.NewJSONDatum(types.CreateBinaryJSON("a")), types.NewJSONDatum(types.CreateBinaryJSON("a"))},
-		{types.NewTimeDatum(types.NewTime(types.FromGoTime(now), mysql.TypeDatetime, 6)), types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 6))},
+		{newDatumPtr(types.NewIntDatum(1)), newDatumPtr(types.NewIntDatum(1))},
+		{newDatumPtr(types.NewUintDatum(1)), newDatumPtr(types.NewUintDatum(1))},
+		{newDatumPtr(types.NewFloat64Datum(1.1)), newDatumPtr(types.NewFloat64Datum(1.1))},
+		{newDatumPtr(types.NewStringDatum("abc")), newDatumPtr(types.NewStringDatum("abc"))},
+		{newDatumPtr(types.NewBytesDatum([]byte("abc"))), newDatumPtr(types.NewBytesDatum([]byte("abc")))},
+		{newDatumPtr(types.NewMysqlEnumDatum(types.Enum{Name: "a", Value: 1})), newDatumPtr(types.NewMysqlEnumDatum(types.Enum{Name: "a", Value: 1}))},
+		{newDatumPtr(types.NewMysqlSetDatum(types.Set{Name: "a", Value: 1}, "a")), newDatumPtr(types.NewMysqlSetDatum(types.Set{Name: "a", Value: 1}, "a"))},
+		{newDatumPtr(types.NewBinaryLiteralDatum([]byte{0x01})), newDatumPtr(types.NewBinaryLiteralDatum([]byte{0x01}))},
+		{newDatumPtr(types.NewMysqlBitDatum(types.NewBinaryLiteralFromUint(1, -1))), newDatumPtr(types.NewMysqlBitDatum(types.NewBinaryLiteralFromUint(1, -1)))},
+		{newDatumPtr(types.NewTimeDatum(types.NewTime(types.FromGoTime(now), mysql.TypeDatetime, 6))), newDatumPtr(types.NewTimeDatum(types.NewTime(types.FromGoTime(now), mysql.TypeDatetime, 6)))},
+		{newDatumPtr(types.NewDurationDatum(types.Duration{Duration: time.Second})), newDatumPtr(types.NewDurationDatum(types.Duration{Duration: time.Second}))},
+		{newDatumPtr(types.NewJSONDatum(types.CreateBinaryJSON("a"))), newDatumPtr(types.NewJSONDatum(types.CreateBinaryJSON("a")))},
+		{newDatumPtr(types.NewTimeDatum(types.NewTime(types.FromGoTime(now), mysql.TypeDatetime, 6))), newDatumPtr(types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 6)))},
 	}
 	hasher1 := base.NewHashEqualer()
 	hasher2 := base.NewHashEqualer()

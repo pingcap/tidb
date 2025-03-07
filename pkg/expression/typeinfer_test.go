@@ -26,7 +26,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -112,8 +112,8 @@ func TestInferType(t *testing.T) {
 	tests = append(tests, s.createTestCase4GetVarFunc()...)
 
 	sctx := testKit.Session()
-	require.NoError(t, sctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, mysql.DefaultCharset))
-	require.NoError(t, sctx.GetSessionVars().SetSystemVar(variable.CollationConnection, mysql.DefaultCollationName))
+	require.NoError(t, sctx.GetSessionVars().SetSystemVar(vardef.CharacterSetConnection, mysql.DefaultCharset))
+	require.NoError(t, sctx.GetSessionVars().SetSystemVar(vardef.CollationConnection, mysql.DefaultCollationName))
 
 	ctx := context.Background()
 	par := parser.New()
@@ -483,8 +483,8 @@ func (s *InferTypeSuite) createTestCase4StrFuncs() []typeInferTestCase {
 
 		{"quote(c_int_d      )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 42, types.UnspecifiedLength},
 		{"quote(c_bigint_d   )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 42, types.UnspecifiedLength},
-		{"quote(c_float_d    )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 0, types.UnspecifiedLength},
-		{"quote(c_double_d   )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, 0, types.UnspecifiedLength},
+		{"quote(c_float_d    )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, types.UnspecifiedLength, types.UnspecifiedLength},
+		{"quote(c_double_d   )", mysql.TypeVarString, charset.CharsetUTF8MB4, 0, types.UnspecifiedLength, types.UnspecifiedLength},
 
 		{"convert(c_double_d using utf8mb4)", mysql.TypeLongBlob, charset.CharsetUTF8MB4, 0, mysql.MaxBlobWidth, types.UnspecifiedLength},
 		{"convert(c_binary using utf8mb4)", mysql.TypeLongBlob, charset.CharsetUTF8MB4, 0, mysql.MaxBlobWidth, types.UnspecifiedLength},

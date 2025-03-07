@@ -81,12 +81,13 @@ func (e *RecommendIndexExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		req.AppendString(3, strings.Join(r.IndexColumns, ","))
 		req.AppendString(4, fmt.Sprintf("%v", r.IndexDetail.IndexSize))
 		req.AppendString(5, r.IndexDetail.Reason)
-
 		jData, err := json.Marshal(r.TopImpactedQueries)
 		if err != nil {
 			return err
 		}
 		req.AppendString(6, string(jData))
+		req.AppendString(7, fmt.Sprintf("CREATE INDEX %s ON %s(%s);",
+			r.IndexName, r.Table, strings.Join(r.IndexColumns, ",")))
 	}
 	return err
 }

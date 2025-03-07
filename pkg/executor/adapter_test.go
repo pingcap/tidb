@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -31,10 +31,10 @@ import (
 func TestFormatSQL(t *testing.T) {
 	val := executor.FormatSQL("aaaa")
 	require.Equal(t, "aaaa", val.String())
-	variable.QueryLogMaxLen.Store(0)
+	vardef.QueryLogMaxLen.Store(0)
 	val = executor.FormatSQL("aaaaaaaaaaaaaaaaaaaa")
 	require.Equal(t, "aaaaaaaaaaaaaaaaaaaa", val.String())
-	variable.QueryLogMaxLen.Store(5)
+	vardef.QueryLogMaxLen.Store(5)
 	val = executor.FormatSQL("aaaaaaaaaaaaaaaaaaaa")
 	require.Equal(t, "aaaaa(len:20)", val.String())
 }

@@ -54,7 +54,6 @@ go_test(
         "//pkg/expression",
         "//pkg/expression/exprstatic",
         "//pkg/parser/ast",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/planner/core",
         "//pkg/planner/core/base",

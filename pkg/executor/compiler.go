@@ -122,7 +122,6 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		InfoSchema:    is,
 		Plan:          finalPlan,
 		LowerPriority: lowerPriority,
-		Text:          stmtNode.Text(),
 		StmtNode:      stmtNode,
 		Ctx:           c.Ctx,
 		OutputNames:   names,

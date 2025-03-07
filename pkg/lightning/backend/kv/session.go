@@ -363,11 +363,6 @@ func (s *Session) UnsetUserVar(varName string) {
 	s.exprCtx.unsetUserVar(varName)
 }
 
-// GetColumnSize returns the size of each column.
-func (s *Session) GetColumnSize(tblID int64) (ret map[int64]int64) {
-	return s.tblCtx.GetColumnSize(tblID)
-}
-
 // Close closes the session
 func (s *Session) Close() {
 	memBuf := &s.txn.MemBuf

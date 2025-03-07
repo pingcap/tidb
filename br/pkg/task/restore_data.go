@@ -127,7 +127,7 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 			}
 			return nil
 		},
-		utils.NewPDReqBackofferExt(),
+		utils.NewConservativePDBackoffStrategy(),
 	)
 	restoreNumStores := len(allStores)
 	if restoreNumStores != numStores {
@@ -214,10 +214,7 @@ func resetTiFlashReplicas(ctx context.Context, g glue.Glue, storage kv.Storage, 
 			return errors.New("tiflash store count is less than expected")
 		}
 		return nil
-	}, &waitTiFlashBackoffer{
-		Attempts:    30,
-		BaseBackoff: 4 * time.Second,
-	})
+	}, utils.NewBackoffRetryAllErrorStrategy(30, 4*time.Second, 32*time.Second))
 	if err != nil {
 		return err
 	}
@@ -237,28 +234,4 @@ func resetTiFlashReplicas(ctx context.Context, g glue.Glue, storage kv.Storage, 
 		}
 		return nil
 	})
-}
-
-type waitTiFlashBackoffer struct {
-	Attempts    int
-	BaseBackoff time.Duration
-}
-
-// NextBackoff returns a duration to wait before retrying again
-func (b *waitTiFlashBackoffer) NextBackoff(error) time.Duration {
-	bo := b.BaseBackoff
-	b.Attempts--
-	if b.Attempts == 0 {
-		return 0
-	}
-	b.BaseBackoff *= 2
-	if b.BaseBackoff > 32*time.Second {
-		b.BaseBackoff = 32 * time.Second
-	}
-	return bo
-}
-
-// Attempt returns the remain attempt times
-func (b *waitTiFlashBackoffer) Attempt() int {
-	return b.Attempts
 }

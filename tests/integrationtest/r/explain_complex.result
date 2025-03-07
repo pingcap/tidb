@@ -250,11 +250,11 @@ id	estRows	task	access object	operator info
 Sort	1.00	root		explain_complex.org_department.left_value
 └─HashAgg	1.00	root		group by:explain_complex.org_department.id, funcs:firstrow(explain_complex.org_department.id)->explain_complex.org_department.id, funcs:firstrow(explain_complex.org_department.ctx)->explain_complex.org_department.ctx, funcs:firstrow(explain_complex.org_department.name)->explain_complex.org_department.name, funcs:firstrow(explain_complex.org_department.left_value)->explain_complex.org_department.left_value, funcs:firstrow(explain_complex.org_department.right_value)->explain_complex.org_department.right_value, funcs:firstrow(explain_complex.org_department.depth)->explain_complex.org_department.depth, funcs:firstrow(explain_complex.org_department.leader_id)->explain_complex.org_department.leader_id, funcs:firstrow(explain_complex.org_department.status)->explain_complex.org_department.status, funcs:firstrow(explain_complex.org_department.created_on)->explain_complex.org_department.created_on, funcs:firstrow(explain_complex.org_department.updated_on)->explain_complex.org_department.updated_on
   └─Selection	0.01	root		or(eq(explain_complex.org_employee_position.user_id, 62), or(eq(explain_complex.org_department.id, 20), eq(explain_complex.org_department.id, 20)))
-    └─HashJoin	0.02	root		left outer join, equal:[eq(explain_complex.org_position.id, explain_complex.org_employee_position.position_id)]
+    └─HashJoin	0.02	root		left outer join, left side:IndexJoin, equal:[eq(explain_complex.org_position.id, explain_complex.org_employee_position.position_id)]
       ├─TableReader(Build)	9.99	root		data:Selection
       │ └─Selection	9.99	cop[tikv]		eq(explain_complex.org_employee_position.status, 1000), not(isnull(explain_complex.org_employee_position.position_id))
       │   └─TableFullScan	10000.00	cop[tikv]	table:ep	keep order:false, stats:pseudo
-      └─IndexJoin(Probe)	0.01	root		left outer join, inner:IndexLookUp, outer key:explain_complex.org_department.id, inner key:explain_complex.org_position.department_id, equal cond:eq(explain_complex.org_department.id, explain_complex.org_position.department_id)
+      └─IndexJoin(Probe)	0.01	root		left outer join, inner:IndexLookUp, left side:IndexLookUp, outer key:explain_complex.org_department.id, inner key:explain_complex.org_position.department_id, equal cond:eq(explain_complex.org_department.id, explain_complex.org_position.department_id)
         ├─IndexLookUp(Build)	0.01	root		
         │ ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:d, index:org_department_ctx_index(ctx)	range:[1,1], keep order:false, stats:pseudo
         │ └─Selection(Probe)	0.01	cop[tikv]		eq(explain_complex.org_department.status, 1000)
@@ -277,8 +277,8 @@ insert into Tab_C values(4,'C01',5);
 explain select Tab_A.name AAA,Tab_B.name BBB,Tab_A.amt Aamt, Tab_C.amt Bamt,IFNULL(Tab_C.amt, 0) FROM Tab_A left join Tab_B on Tab_A.bid=Tab_B.id left join Tab_C on Tab_A.cid=Tab_C.id and Tab_A.type='01' where Tab_A.num=112;
 id	estRows	task	access object	operator info
 Projection_11	15.62	root		explain_complex.tab_a.name, explain_complex.tab_b.name, explain_complex.tab_a.amt, explain_complex.tab_c.amt, ifnull(explain_complex.tab_c.amt, 0.00)->Column#13
-└─IndexJoin_16	15.62	root		left outer join, inner:TableReader_13, outer key:explain_complex.tab_a.cid, inner key:explain_complex.tab_c.id, equal cond:eq(explain_complex.tab_a.cid, explain_complex.tab_c.id), left cond:eq(explain_complex.tab_a.type, "01")
-  ├─IndexJoin_27(Build)	12.50	root		left outer join, inner:TableReader_24, outer key:explain_complex.tab_a.bid, inner key:explain_complex.tab_b.id, equal cond:eq(explain_complex.tab_a.bid, explain_complex.tab_b.id)
+└─IndexJoin_16	15.62	root		left outer join, inner:TableReader_13, left side:IndexJoin_27, outer key:explain_complex.tab_a.cid, inner key:explain_complex.tab_c.id, equal cond:eq(explain_complex.tab_a.cid, explain_complex.tab_c.id), left cond:eq(explain_complex.tab_a.type, "01")
+  ├─IndexJoin_27(Build)	12.50	root		left outer join, inner:TableReader_24, left side:TableReader_36, outer key:explain_complex.tab_a.bid, inner key:explain_complex.tab_b.id, equal cond:eq(explain_complex.tab_a.bid, explain_complex.tab_b.id)
   │ ├─TableReader_36(Build)	10.00	root		data:Selection_35
   │ │ └─Selection_35	10.00	cop[tikv]		eq(explain_complex.tab_a.num, 112)
   │ │   └─TableFullScan_34	10000.00	cop[tikv]	table:Tab_A	keep order:false, stats:pseudo

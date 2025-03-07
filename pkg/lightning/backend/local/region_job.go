@@ -43,6 +43,7 @@ import (
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -314,6 +315,21 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	return err
 }
 
+func newWriteRequest(meta *sst.SSTMeta, resourceGroupName, taskType string) *sst.WriteRequest {
+	return &sst.WriteRequest{
+		Chunk: &sst.WriteRequest_Meta{
+			Meta: meta,
+		},
+		Context: &kvrpcpb.Context{
+			ResourceControlContext: &kvrpcpb.ResourceControlContext{
+				ResourceGroupName: resourceGroupName,
+			},
+			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, taskType),
+			TxnSource:     kv.LightningPhysicalImportTxnSource,
+		},
+	}
+}
+
 func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	if j.stage != regionScanned {
 		return nil
@@ -396,19 +412,9 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	leaderID := j.region.Leader.GetId()
 	clients := make([]sst.ImportSST_WriteClient, 0, len(region.GetPeers()))
 	allPeers := make([]*metapb.Peer, 0, len(region.GetPeers()))
-	req := &sst.WriteRequest{
-		Chunk: &sst.WriteRequest_Meta{
-			Meta: meta,
-		},
-		Context: &kvrpcpb.Context{
-			ResourceControlContext: &kvrpcpb.ResourceControlContext{
-				ResourceGroupName: local.ResourceGroupName,
-			},
-			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, local.TaskType),
-		},
-	}
+	req := newWriteRequest(meta, local.ResourceGroupName, local.TaskType)
 	for _, peer := range region.GetPeers() {
-		cli, err := clientFactory.Create(ctx, peer.StoreId)
+		cli, err := clientFactory.create(ctx, peer.StoreId)
 		if err != nil {
 			return annotateErr(err, peer, "when create client")
 		}
@@ -431,6 +437,20 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		allPeers = append(allPeers, peer)
 	}
 	dataCommitTS := j.ingestData.GetTS()
+	intest.AssertFunc(func() bool {
+		timeOfTS := oracle.GetTimeFromTS(dataCommitTS)
+		now := time.Now()
+		if timeOfTS.Sub(now) > time.Hour {
+			return false
+		}
+		if now.Sub(timeOfTS) > 24*time.Hour {
+			return false
+		}
+		return true
+	}, "TS used in import should in [now-1d, now+1h], but got %d", dataCommitTS)
+	if dataCommitTS == 0 {
+		return errors.New("data commitTS is 0")
+	}
 	req.Chunk = &sst.WriteRequest_Batch{
 		Batch: &sst.WriteBatch{
 			CommitTs: dataCommitTS,
@@ -664,7 +684,7 @@ func (local *Backend) checkWriteStall(
 ) (bool, *sst.IngestResponse, error) {
 	clientFactory := local.importClientFactory
 	for _, peer := range region.Region.GetPeers() {
-		cli, err := clientFactory.Create(ctx, peer.StoreId)
+		cli, err := clientFactory.create(ctx, peer.StoreId)
 		if err != nil {
 			return false, nil, errors.Trace(err)
 		}
@@ -744,7 +764,7 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 				"region id %d has no leader", j.region.Region.Id)
 		}
 
-		cli, err := clientFactory.Create(ctx, leader.StoreId)
+		cli, err := clientFactory.create(ctx, leader.StoreId)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -778,6 +798,16 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 		}
 	}
 	return resp, nil
+}
+
+// UpdateWriteSpeedLimit updates the write limiter of the backend.
+func (local *Backend) UpdateWriteSpeedLimit(limit int) {
+	local.writeLimiter.UpdateLimit(limit)
+}
+
+// GetWriteSpeedLimit returns the speed of the write limiter.
+func (local *Backend) GetWriteSpeedLimit() int {
+	return local.writeLimiter.Limit()
 }
 
 // convertStageOnIngestError will try to fix the error contained in ingest response.
@@ -1154,6 +1184,9 @@ func (b *storeBalancer) runSendToWorker(workerCtx context.Context) {
 			select {
 			case <-workerCtx.Done():
 				j.done(b.jobWg)
+				if j.region != nil && j.region.Region != nil {
+					b.releaseStoreLoad(j.region.Region.Peers)
+				}
 				return
 			case b.innerJobToWorkerCh <- j:
 			}

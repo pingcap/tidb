@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
@@ -71,6 +72,8 @@ func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionc
 		err = pq.handleAlterTablePartitioningEvent(sctx, event)
 	case model.ActionRemovePartitioning:
 		err = pq.handleRemovePartitioningEvent(sctx, event)
+	case model.ActionDropSchema:
+		err = pq.handleDropSchemaEvent(sctx, event)
 	default:
 		// Ignore other DDL events.
 	}
@@ -112,7 +115,7 @@ func (pq *AnalysisPriorityQueue) recreateAndPushJob(
 	stats *statistics.Table,
 ) error {
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
-	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
+	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[vardef.TiDBAutoAnalyzeRatio])
 	currentTs, err := statsutil.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -156,9 +159,9 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 	tableInfo, idxes := event.GetAddIndexInfo()
 
 	intest.AssertFunc(func() bool {
-		// Vector index has a separate job type. We should not see vector index here.
+		// Columnar index has a separate job type. We should not see columnar index here.
 		for _, idx := range idxes {
-			if idx.VectorInfo != nil {
+			if idx.IsTiFlashLocalIndex() {
 				return false
 			}
 		}
@@ -166,7 +169,7 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 	})
 
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
-	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
+	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[vardef.TiDBAutoAnalyzeRatio])
 	// Get current timestamp from the session context.
 	currentTs, err := statsutil.GetStartTS(sctx)
 	if err != nil {
@@ -405,4 +408,37 @@ func (pq *AnalysisPriorityQueue) handleRemovePartitioningEvent(sctx sessionctx.C
 	// Currently, the stats meta for the new single table is not updated.
 	// This might be improved in the future.
 	return pq.recreateAndPushJobForTable(sctx, newSingleTableInfo)
+}
+
+func (pq *AnalysisPriorityQueue) handleDropSchemaEvent(_ sessionctx.Context, event *notifier.SchemaChangeEvent) error {
+	miniDBInfo := event.GetDropSchemaInfo()
+	for _, tbl := range miniDBInfo.Tables {
+		// For static partitioned tables.
+		for _, partition := range tbl.Partitions {
+			if err := pq.getAndDeleteJob(partition.ID); err != nil {
+				// Try best to delete as many tables as possible.
+				statslogutil.StatsLogger().Error(
+					"Failed to delete table from priority queue",
+					zap.Error(err),
+					zap.String("db", miniDBInfo.Name.O),
+					zap.Int64("tableID", tbl.ID),
+					zap.String("tableName", tbl.Name.O),
+					zap.Int64("partitionID", partition.ID),
+					zap.String("partitionName", partition.Name.O),
+				)
+			}
+		}
+		// For non-partitioned tables or dynamic partitioned tables.
+		if err := pq.getAndDeleteJob(tbl.ID); err != nil {
+			// Try best to delete as many tables as possible.
+			statslogutil.StatsLogger().Error(
+				"Failed to delete table from priority queue",
+				zap.Error(err),
+				zap.String("db", miniDBInfo.Name.O),
+				zap.Int64("tableID", tbl.ID),
+				zap.String("tableName", tbl.Name.O),
+			)
+		}
+	}
+	return nil
 }

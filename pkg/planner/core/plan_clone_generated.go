@@ -22,144 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 )
 
-func clonePhysicalPlansForPlanCache(newCtx base.PlanContext, plans []base.PhysicalPlan) ([]base.PhysicalPlan, bool) {
-	clonedPlans := make([]base.PhysicalPlan, len(plans))
-	for i, plan := range plans {
-		cloned, ok := plan.CloneForPlanCache(newCtx)
-		if !ok {
-			return nil, false
-		}
-		clonedPlans[i] = cloned.(base.PhysicalPlan)
-	}
-	return clonedPlans, true
-}
-
-func cloneExpressionsForPlanCache(exprs []expression.Expression) []expression.Expression {
-	if exprs == nil {
-		return nil
-	}
-	allSafe := true
-	for _, e := range exprs {
-		if !e.SafeToShareAcrossSession() {
-			allSafe = false
-			break
-		}
-	}
-	if allSafe {
-		return exprs
-	}
-	cloned := make([]expression.Expression, 0, len(exprs))
-	for _, e := range exprs {
-		if e.SafeToShareAcrossSession() {
-			cloned = append(cloned, e)
-		} else {
-			cloned = append(cloned, e.Clone())
-		}
-	}
-	return cloned
-}
-
-func cloneExpression2DForPlanCache(exprs [][]expression.Expression) [][]expression.Expression {
-	if exprs == nil {
-		return nil
-	}
-	cloned := make([][]expression.Expression, 0, len(exprs))
-	for _, e := range exprs {
-		cloned = append(cloned, cloneExpressionsForPlanCache(e))
-	}
-	return cloned
-}
-
-func cloneScalarFunctionsForPlanCache(scalarFuncs []*expression.ScalarFunction) []*expression.ScalarFunction {
-	if scalarFuncs == nil {
-		return nil
-	}
-	allSafe := true
-	for _, f := range scalarFuncs {
-		if !f.SafeToShareAcrossSession() {
-			allSafe = false
-			break
-		}
-	}
-	if allSafe {
-		return scalarFuncs
-	}
-	cloned := make([]*expression.ScalarFunction, 0, len(scalarFuncs))
-	for _, f := range scalarFuncs {
-		if f.SafeToShareAcrossSession() {
-			cloned = append(cloned, f)
-		} else {
-			cloned = append(cloned, f.Clone().(*expression.ScalarFunction))
-		}
-	}
-	return cloned
-}
-
-func cloneColumnsForPlanCache(cols []*expression.Column) []*expression.Column {
-	if cols == nil {
-		return nil
-	}
-	allSafe := true
-	for _, c := range cols {
-		if !c.SafeToShareAcrossSession() {
-			allSafe = false
-			break
-		}
-	}
-	if allSafe {
-		return cols
-	}
-	cloned := make([]*expression.Column, 0, len(cols))
-	for _, c := range cols {
-		if c == nil {
-			cloned = append(cloned, nil)
-			continue
-		}
-		if c.SafeToShareAcrossSession() {
-			cloned = append(cloned, c)
-		} else {
-			cloned = append(cloned, c.Clone().(*expression.Column))
-		}
-	}
-	return cloned
-}
-
-func cloneConstantsForPlanCache(constants []*expression.Constant) []*expression.Constant {
-	if constants == nil {
-		return nil
-	}
-	allSafe := true
-	for _, c := range constants {
-		if !c.SafeToShareAcrossSession() {
-			allSafe = false
-			break
-		}
-	}
-	if allSafe {
-		return constants
-	}
-	cloned := make([]*expression.Constant, 0, len(constants))
-	for _, c := range constants {
-		if c.SafeToShareAcrossSession() {
-			cloned = append(cloned, c)
-		} else {
-			cloned = append(cloned, c.Clone().(*expression.Constant))
-		}
-	}
-	return cloned
-}
-
-func cloneConstant2DForPlanCache(constants [][]*expression.Constant) [][]*expression.Constant {
-	if constants == nil {
-		return nil
-	}
-	cloned := make([][]*expression.Constant, 0, len(constants))
-	for _, c := range constants {
-		cloned = append(cloned, cloneConstantsForPlanCache(c))
-	}
-	return cloned
-}
-
 // CloneForPlanCache implements the base.Plan interface.
 func (op *PhysicalTableScan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalTableScan)
@@ -169,17 +31,16 @@ func (op *PhysicalTableScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 		return nil, false
 	}
 	cloned.physicalSchemaProducer = *basePlan
-	cloned.AccessCondition = cloneExpressionsForPlanCache(op.AccessCondition)
-	cloned.filterCondition = cloneExpressionsForPlanCache(op.filterCondition)
-	cloned.LateMaterializationFilterCondition = cloneExpressionsForPlanCache(op.LateMaterializationFilterCondition)
-	cloned.Ranges = util.CloneRanges(op.Ranges)
+	cloned.AccessCondition = cloneExpressionsForPlanCache(op.AccessCondition, nil)
+	cloned.filterCondition = cloneExpressionsForPlanCache(op.filterCondition, nil)
+	cloned.LateMaterializationFilterCondition = cloneExpressionsForPlanCache(op.LateMaterializationFilterCondition, nil)
 	cloned.HandleIdx = make([]int, len(op.HandleIdx))
 	copy(cloned.HandleIdx, op.HandleIdx)
 	if op.HandleCols != nil {
 		cloned.HandleCols = op.HandleCols.Clone(newCtx.GetSessionVars().StmtCtx)
 	}
 	cloned.ByItems = util.CloneByItemss(op.ByItems)
-	cloned.PlanPartInfo = op.PlanPartInfo.Clone()
+	cloned.PlanPartInfo = op.PlanPartInfo.cloneForPlanCache()
 	if op.SampleInfo != nil {
 		return nil, false
 	}
@@ -203,17 +64,20 @@ func (op *PhysicalIndexScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 		return nil, false
 	}
 	cloned.physicalSchemaProducer = *basePlan
-	cloned.AccessCondition = cloneExpressionsForPlanCache(op.AccessCondition)
-	cloned.IdxCols = cloneColumnsForPlanCache(op.IdxCols)
+	cloned.AccessCondition = cloneExpressionsForPlanCache(op.AccessCondition, nil)
+	cloned.IdxCols = cloneColumnsForPlanCache(op.IdxCols, nil)
 	cloned.IdxColLens = make([]int, len(op.IdxColLens))
 	copy(cloned.IdxColLens, op.IdxColLens)
-	cloned.Ranges = util.CloneRanges(op.Ranges)
 	if op.GenExprs != nil {
 		return nil, false
 	}
 	cloned.ByItems = util.CloneByItemss(op.ByItems)
 	if op.pkIsHandleCol != nil {
-		cloned.pkIsHandleCol = op.pkIsHandleCol.Clone().(*expression.Column)
+		if op.pkIsHandleCol.SafeToShareAcrossSession() {
+			cloned.pkIsHandleCol = op.pkIsHandleCol
+		} else {
+			cloned.pkIsHandleCol = op.pkIsHandleCol.Clone().(*expression.Column)
+		}
 	}
 	cloned.constColsByCond = make([]bool, len(op.constColsByCond))
 	copy(cloned.constColsByCond, op.constColsByCond)
@@ -229,7 +93,7 @@ func (op *PhysicalSelection) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 		return nil, false
 	}
 	cloned.BasePhysicalPlan = *basePlan
-	cloned.Conditions = cloneExpressionsForPlanCache(op.Conditions)
+	cloned.Conditions = cloneExpressionsForPlanCache(op.Conditions, nil)
 	return cloned, true
 }
 
@@ -242,7 +106,7 @@ func (op *PhysicalProjection) CloneForPlanCache(newCtx base.PlanContext) (base.P
 		return nil, false
 	}
 	cloned.physicalSchemaProducer = *basePlan
-	cloned.Exprs = cloneExpressionsForPlanCache(op.Exprs)
+	cloned.Exprs = cloneExpressionsForPlanCache(op.Exprs, nil)
 	return cloned, true
 }
 
@@ -263,11 +127,11 @@ func (op *PhysicalSort) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, b
 func (op *PhysicalTopN) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(PhysicalTopN)
 	*cloned = *op
-	basePlan, baseOK := op.BasePhysicalPlan.CloneForPlanCacheWithSelf(newCtx, cloned)
+	basePlan, baseOK := op.physicalSchemaProducer.cloneForPlanCacheWithSelf(newCtx, cloned)
 	if !baseOK {
 		return nil, false
 	}
-	cloned.BasePhysicalPlan = *basePlan
+	cloned.physicalSchemaProducer = *basePlan
 	cloned.ByItems = util.CloneByItemss(op.ByItems)
 	cloned.PartitionBy = util.CloneSortItems(op.PartitionBy)
 	return cloned, true
@@ -306,8 +170,8 @@ func (op *PhysicalHashJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Pla
 		return nil, false
 	}
 	cloned.basePhysicalJoin = *basePlan
-	cloned.EqualConditions = cloneScalarFunctionsForPlanCache(op.EqualConditions)
-	cloned.NAEqualConditions = cloneScalarFunctionsForPlanCache(op.NAEqualConditions)
+	cloned.EqualConditions = cloneScalarFunctionsForPlanCache(op.EqualConditions, nil)
+	cloned.NAEqualConditions = cloneScalarFunctionsForPlanCache(op.NAEqualConditions, nil)
 	if op.runtimeFilterList != nil {
 		return nil, false
 	}
@@ -343,7 +207,7 @@ func (op *PhysicalTableReader) CloneForPlanCache(newCtx base.PlanContext) (base.
 		cloned.tablePlan = tablePlan.(base.PhysicalPlan)
 	}
 	cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)
-	cloned.PlanPartInfo = op.PlanPartInfo.Clone()
+	cloned.PlanPartInfo = op.PlanPartInfo.cloneForPlanCache()
 	if op.TableScanAndPartitionInfos != nil {
 		return nil, false
 	}
@@ -367,8 +231,8 @@ func (op *PhysicalIndexReader) CloneForPlanCache(newCtx base.PlanContext) (base.
 		cloned.indexPlan = indexPlan.(base.PhysicalPlan)
 	}
 	cloned.IndexPlans = flattenPushDownPlan(cloned.indexPlan)
-	cloned.OutputColumns = cloneColumnsForPlanCache(op.OutputColumns)
-	cloned.PlanPartInfo = op.PlanPartInfo.Clone()
+	cloned.OutputColumns = cloneColumnsForPlanCache(op.OutputColumns, nil)
+	cloned.PlanPartInfo = op.PlanPartInfo.cloneForPlanCache()
 	return cloned, true
 }
 
@@ -377,13 +241,6 @@ func (op *PointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, b
 	cloned := new(PointGetPlan)
 	*cloned = *op
 	cloned.Plan = *op.Plan.CloneWithNewCtx(newCtx)
-	probeParents, ok := clonePhysicalPlansForPlanCache(newCtx, op.probeParents)
-	if !ok {
-		return nil, false
-	}
-	cloned.probeParents = probeParents
-	cloned.PartitionNames = util.CloneCIStrs(op.PartitionNames)
-	cloned.schema = op.schema.Clone()
 	if op.PartitionIdx != nil {
 		cloned.PartitionIdx = new(int)
 		*cloned.PartitionIdx = *op.PartitionIdx
@@ -392,16 +249,19 @@ func (op *PointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, b
 		cloned.Handle = op.Handle.Copy()
 	}
 	if op.HandleConstant != nil {
-		cloned.HandleConstant = op.HandleConstant.Clone().(*expression.Constant)
+		if op.HandleConstant.SafeToShareAcrossSession() {
+			cloned.HandleConstant = op.HandleConstant
+		} else {
+			cloned.HandleConstant = op.HandleConstant.Clone().(*expression.Constant)
+		}
 	}
 	cloned.IndexValues = util.CloneDatums(op.IndexValues)
-	cloned.IndexConstants = cloneConstantsForPlanCache(op.IndexConstants)
-	cloned.IdxCols = cloneColumnsForPlanCache(op.IdxCols)
+	cloned.IndexConstants = cloneConstantsForPlanCache(op.IndexConstants, nil)
+	cloned.IdxCols = cloneColumnsForPlanCache(op.IdxCols, nil)
 	cloned.IdxColLens = make([]int, len(op.IdxColLens))
 	copy(cloned.IdxColLens, op.IdxColLens)
-	cloned.AccessConditions = cloneExpressionsForPlanCache(op.AccessConditions)
-	cloned.ctx = newCtx
-	cloned.accessCols = cloneColumnsForPlanCache(op.accessCols)
+	cloned.AccessConditions = cloneExpressionsForPlanCache(op.AccessConditions, nil)
+	cloned.accessCols = cloneColumnsForPlanCache(op.accessCols, nil)
 	return cloned, true
 }
 
@@ -409,25 +269,24 @@ func (op *PointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, b
 func (op *BatchPointGetPlan) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(BatchPointGetPlan)
 	*cloned = *op
-	cloned.baseSchemaProducer = *op.baseSchemaProducer.CloneWithNewCtx(newCtx)
+	cloned.baseSchemaProducer = *op.baseSchemaProducer.cloneForPlanCache(newCtx)
 	probeParents, ok := clonePhysicalPlansForPlanCache(newCtx, op.probeParents)
 	if !ok {
 		return nil, false
 	}
 	cloned.probeParents = probeParents
-	cloned.PartitionNames = util.CloneCIStrs(op.PartitionNames)
 	cloned.ctx = newCtx
 	cloned.Handles = util.CloneHandles(op.Handles)
-	cloned.HandleParams = cloneConstantsForPlanCache(op.HandleParams)
+	cloned.HandleParams = cloneConstantsForPlanCache(op.HandleParams, nil)
 	cloned.IndexValues = util.CloneDatum2D(op.IndexValues)
 	cloned.IndexValueParams = cloneConstant2DForPlanCache(op.IndexValueParams)
-	cloned.AccessConditions = cloneExpressionsForPlanCache(op.AccessConditions)
-	cloned.IdxCols = cloneColumnsForPlanCache(op.IdxCols)
+	cloned.AccessConditions = cloneExpressionsForPlanCache(op.AccessConditions, nil)
+	cloned.IdxCols = cloneColumnsForPlanCache(op.IdxCols, nil)
 	cloned.IdxColLens = make([]int, len(op.IdxColLens))
 	copy(cloned.IdxColLens, op.IdxColLens)
 	cloned.PartitionIdxs = make([]int, len(op.PartitionIdxs))
 	copy(cloned.PartitionIdxs, op.PartitionIdxs)
-	cloned.accessCols = cloneColumnsForPlanCache(op.accessCols)
+	cloned.accessCols = cloneColumnsForPlanCache(op.accessCols, nil)
 	return cloned, true
 }
 
@@ -465,9 +324,9 @@ func (op *PhysicalIndexJoin) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 	copy(cloned.KeyOff2IdxOff, op.KeyOff2IdxOff)
 	cloned.IdxColLens = make([]int, len(op.IdxColLens))
 	copy(cloned.IdxColLens, op.IdxColLens)
-	cloned.CompareFilters = op.CompareFilters.Copy()
-	cloned.OuterHashKeys = cloneColumnsForPlanCache(op.OuterHashKeys)
-	cloned.InnerHashKeys = cloneColumnsForPlanCache(op.InnerHashKeys)
+	cloned.CompareFilters = op.CompareFilters.cloneForPlanCache()
+	cloned.OuterHashKeys = cloneColumnsForPlanCache(op.OuterHashKeys, nil)
+	cloned.InnerHashKeys = cloneColumnsForPlanCache(op.InnerHashKeys, nil)
 	return cloned, true
 }
 
@@ -510,11 +369,15 @@ func (op *PhysicalIndexLookUpReader) CloneForPlanCache(newCtx base.PlanContext) 
 	cloned.IndexPlans = flattenPushDownPlan(cloned.indexPlan)
 	cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)
 	if op.ExtraHandleCol != nil {
-		cloned.ExtraHandleCol = op.ExtraHandleCol.Clone().(*expression.Column)
+		if op.ExtraHandleCol.SafeToShareAcrossSession() {
+			cloned.ExtraHandleCol = op.ExtraHandleCol
+		} else {
+			cloned.ExtraHandleCol = op.ExtraHandleCol.Clone().(*expression.Column)
+		}
 	}
 	cloned.PushedLimit = op.PushedLimit.Clone()
-	cloned.CommonHandleCols = cloneColumnsForPlanCache(op.CommonHandleCols)
-	cloned.PlanPartInfo = op.PlanPartInfo.Clone()
+	cloned.CommonHandleCols = cloneColumnsForPlanCache(op.CommonHandleCols, nil)
+	cloned.PlanPartInfo = op.PlanPartInfo.cloneForPlanCache()
 	return cloned, true
 }
 
@@ -546,7 +409,7 @@ func (op *PhysicalIndexMergeReader) CloneForPlanCache(newCtx base.PlanContext) (
 		cloned.PartialPlans[i] = flattenPushDownPlan(plan)
 	}
 	cloned.TablePlans = flattenPushDownPlan(cloned.tablePlan)
-	cloned.PlanPartInfo = op.PlanPartInfo.Clone()
+	cloned.PlanPartInfo = op.PlanPartInfo.cloneForPlanCache()
 	if op.HandleCols != nil {
 		cloned.HandleCols = op.HandleCols.Clone(newCtx.GetSessionVars().StmtCtx)
 	}
@@ -557,7 +420,7 @@ func (op *PhysicalIndexMergeReader) CloneForPlanCache(newCtx base.PlanContext) (
 func (op *Update) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(Update)
 	*cloned = *op
-	cloned.baseSchemaProducer = *op.baseSchemaProducer.CloneWithNewCtx(newCtx)
+	cloned.baseSchemaProducer = *op.baseSchemaProducer.cloneForPlanCache(newCtx)
 	cloned.OrderedList = util.CloneAssignments(op.OrderedList)
 	if op.SelectPlan != nil {
 		SelectPlan, ok := op.SelectPlan.CloneForPlanCache(newCtx)
@@ -565,9 +428,6 @@ func (op *Update) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 			return nil, false
 		}
 		cloned.SelectPlan = SelectPlan.(base.PhysicalPlan)
-	}
-	if op.PartitionedTable != nil {
-		return nil, false
 	}
 	if op.FKChecks != nil {
 		return nil, false
@@ -582,7 +442,7 @@ func (op *Update) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 func (op *Delete) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(Delete)
 	*cloned = *op
-	cloned.baseSchemaProducer = *op.baseSchemaProducer.CloneWithNewCtx(newCtx)
+	cloned.baseSchemaProducer = *op.baseSchemaProducer.cloneForPlanCache(newCtx)
 	if op.SelectPlan != nil {
 		SelectPlan, ok := op.SelectPlan.CloneForPlanCache(newCtx)
 		if !ok {
@@ -603,10 +463,10 @@ func (op *Delete) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 func (op *Insert) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned := new(Insert)
 	*cloned = *op
-	cloned.baseSchemaProducer = *op.baseSchemaProducer.CloneWithNewCtx(newCtx)
+	cloned.baseSchemaProducer = *op.baseSchemaProducer.cloneForPlanCache(newCtx)
 	cloned.Lists = cloneExpression2DForPlanCache(op.Lists)
 	cloned.OnDuplicate = util.CloneAssignments(op.OnDuplicate)
-	cloned.GenCols = op.GenCols.Copy()
+	cloned.GenCols = op.GenCols.cloneForPlanCache()
 	if op.SelectPlan != nil {
 		SelectPlan, ok := op.SelectPlan.CloneForPlanCache(newCtx)
 		if !ok {
@@ -656,7 +516,7 @@ func (op *PhysicalUnionScan) CloneForPlanCache(newCtx base.PlanContext) (base.Pl
 		return nil, false
 	}
 	cloned.BasePhysicalPlan = *basePlan
-	cloned.Conditions = cloneExpressionsForPlanCache(op.Conditions)
+	cloned.Conditions = cloneExpressionsForPlanCache(op.Conditions, nil)
 	if op.HandleCols != nil {
 		cloned.HandleCols = op.HandleCols.Clone(newCtx.GetSessionVars().StmtCtx)
 	}

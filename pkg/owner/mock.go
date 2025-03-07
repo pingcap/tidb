@@ -106,8 +106,8 @@ func (m *mockManager) RetireOwner() {
 	}
 }
 
-// Cancel implements Manager.Cancel interface.
-func (m *mockManager) Cancel() {
+// Close implements Manager.Close interface.
+func (m *mockManager) Close() {
 	m.cancel()
 	m.wg.Wait()
 	logutil.BgLogger().Info("owner manager is canceled",
@@ -171,11 +171,6 @@ func (m *mockManager) ResignOwner(_ context.Context) error {
 	return nil
 }
 
-// RequireOwner implements Manager.RequireOwner interface.
-func (*mockManager) RequireOwner(context.Context) error {
-	return nil
-}
-
 // SetListener implements Manager.SetListener interface.
 func (m *mockManager) SetListener(listener Listener) {
 	m.listener = listener
@@ -188,6 +183,13 @@ func (*mockManager) ForceToBeOwner(context.Context) error {
 // CampaignCancel implements Manager.CampaignCancel interface
 func (m *mockManager) CampaignCancel() {
 	m.campaignDone <- struct{}{}
+}
+
+func (m *mockManager) BreakCampaignLoop() {
+	// in uni-store which mostly used in test, there is no need to make sure the
+	// campaign session is created once, so we can just call Close, but it DOES violate
+	// the contract of Manager interface.
+	m.Close()
 }
 
 func mockDelOwnerKey(mockCal, ownerKey string, m *ownerManager) error {

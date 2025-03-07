@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
-	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
@@ -78,7 +77,7 @@ func TestPlanStatsLoad(t *testing.T) {
 				switch pp := p.(type) {
 				case *plannercore.PhysicalTableReader:
 					stats := pp.StatsInfo().HistColl
-					require.Equal(t, 0, countFullStats(stats, tableInfo.Columns[1].ID))
+					require.Equal(t, -1, countFullStats(stats, tableInfo.Columns[1].ID))
 					require.Greater(t, countFullStats(stats, tableInfo.Columns[2].ID), 0)
 				default:
 					t.Error("unexpected plan:", pp)
@@ -204,7 +203,7 @@ func TestPlanStatsLoad(t *testing.T) {
 		nodeW := resolve.NewNodeW(stmt)
 		p, _, err := planner.Optimize(context.TODO(), ctx, nodeW, is)
 		require.NoError(t, err)
-		tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 		require.NoError(t, err)
 		tableInfo := tbl.Meta()
 		testCase.check(p, tableInfo)
@@ -297,7 +296,7 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	tk.MustExec("analyze table t all columns")
 	is := dom.InfoSchema()
 	require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	neededColumn := model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[0].ID, IsIndex: false}, FullLoad: true}
@@ -391,12 +390,12 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 	is := dom.InfoSchema()
 	tableNames := []string{"t", "t1"}
 	tblName2TblID := make(map[string]int64)
-	tblID2Tbl := make(map[int64]table.Table)
+	tblID2Tbl := make(map[int64]*model.TableInfo)
 	for _, tblName := range tableNames {
-		tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr(tblName))
+		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(tblName))
 		require.NoError(t, err)
 		tblName2TblID[tblName] = tbl.Meta().ID
-		tblID2Tbl[tbl.Meta().ID] = tbl
+		tblID2Tbl[tbl.Meta().ID] = tbl.Meta()
 	}
 
 	var input []struct {
@@ -417,9 +416,9 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 		require.NotNil(t, tbl)
 		neededItems := make([]model.StatsLoadItem, 0, len(testCase.InputColNames))
 		for _, colName := range testCase.InputColNames {
-			col := tbl.Meta().FindPublicColumnByName(colName)
+			col := tbl.FindPublicColumnByName(colName)
 			require.NotNil(t, col)
-			neededItems = append(neededItems, model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tbl.Meta().ID, ID: col.ID}, FullLoad: true})
+			neededItems = append(neededItems, model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tbl.ID, ID: col.ID}, FullLoad: true})
 		}
 
 		// call the function
@@ -428,7 +427,7 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 		// record and check the output
 		cols := make([]string, 0, len(res))
 		for _, tblColID := range res {
-			colName := tbl.Meta().FindColumnNameByID(tblColID.ID)
+			colName := tbl.FindColumnNameByID(tblColID.ID)
 			require.NotEmpty(t, colName)
 			cols = append(cols, colName)
 		}
@@ -484,5 +483,6 @@ func TestPartialStatsInExplain(t *testing.T) {
 			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(sql).Rows())
 		})
 		tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
+		require.NoError(t, dom.StatsHandle().LoadNeededHistograms(dom.InfoSchema()))
 	}
 }

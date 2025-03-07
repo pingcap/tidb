@@ -666,6 +666,7 @@ func (e *exchSenderExec) next() (*chunk.Chunk, error) {
 		} else if !(chk != nil && chk.NumRows() != 0) {
 			return nil, nil
 		}
+		e.execSummary.updateOnlyRows(chk.NumRows())
 		if e.exchangeTp == tipb.ExchangeType_Hash {
 			rows := chk.NumRows()
 			targetChunks := make([]*chunk.Chunk, 0, len(e.tunnels))
@@ -766,6 +767,9 @@ func (e *exchRecvExec) next() (*chunk.Chunk, error) {
 		defer func() {
 			e.chk = nil
 		}()
+	}
+	if e.chk != nil {
+		e.execSummary.updateOnlyRows(e.chk.NumRows())
 	}
 	return e.chk, nil
 }
@@ -984,6 +988,7 @@ func (e *joinExec) next() (*chunk.Chunk, error) {
 		if e.idx < len(e.reservedRows) {
 			idx := e.idx
 			e.idx++
+			e.execSummary.updateOnlyRows(e.reservedRows[idx].Chunk().NumRows())
 			return e.reservedRows[idx].Chunk(), nil
 		}
 		eof, err := e.fetchRows()

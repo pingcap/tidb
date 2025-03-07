@@ -35,8 +35,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -65,11 +65,11 @@ func createMysqlSuite(t *testing.T) *mysqlSuite {
 	}
 	cols := make([]*model.ColumnInfo, 0, len(tys))
 	for i, ty := range tys {
-		col := &model.ColumnInfo{ID: int64(i + 1), Name: pmodel.NewCIStr(fmt.Sprintf("c%d", i)), State: model.StatePublic, Offset: i, FieldType: *types.NewFieldType(ty)}
+		col := &model.ColumnInfo{ID: int64(i + 1), Name: ast.NewCIStr(fmt.Sprintf("c%d", i)), State: model.StatePublic, Offset: i, FieldType: *types.NewFieldType(ty)}
 		cols = append(cols, col)
 	}
 	tblInfo := &model.TableInfo{ID: 1, Columns: cols, PKIsHandle: false, State: model.StatePublic}
-	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
+	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 	require.NoError(t, err)
 	cfg := config.NewConfig()
 	cfg.Conflict.Strategy = config.ReplaceOnDup
@@ -289,12 +289,12 @@ func testStrictMode(t *testing.T) {
 	defer s.TearDownTest(t)
 	ft := *types.NewFieldType(mysql.TypeVarchar)
 	ft.SetCharset(charset.CharsetUTF8MB4)
-	col0 := &model.ColumnInfo{ID: 1, Name: pmodel.NewCIStr("s0"), State: model.StatePublic, Offset: 0, FieldType: ft}
+	col0 := &model.ColumnInfo{ID: 1, Name: ast.NewCIStr("s0"), State: model.StatePublic, Offset: 0, FieldType: ft}
 	ft = *types.NewFieldType(mysql.TypeString)
 	ft.SetCharset(charset.CharsetASCII)
-	col1 := &model.ColumnInfo{ID: 2, Name: pmodel.NewCIStr("s1"), State: model.StatePublic, Offset: 1, FieldType: ft}
+	col1 := &model.ColumnInfo{ID: 2, Name: ast.NewCIStr("s1"), State: model.StatePublic, Offset: 1, FieldType: ft}
 	tblInfo := &model.TableInfo{ID: 1, Columns: []*model.ColumnInfo{col0, col1}, PKIsHandle: false, State: model.StatePublic}
-	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(tblInfo.SepAutoInc(), 0), tblInfo)
+	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -354,12 +354,12 @@ func TestFetchRemoteTableModels_4_0(t *testing.T) {
 	ft.SetFlag(mysql.AutoIncrementFlag | mysql.UnsignedFlag)
 	require.Equal(t, map[string]*model.TableInfo{
 		"t": {
-			Name:       pmodel.NewCIStr("t"),
+			Name:       ast.NewCIStr("t"),
 			State:      model.StatePublic,
 			PKIsHandle: true,
 			Columns: []*model.ColumnInfo{
 				{
-					Name:      pmodel.NewCIStr("id"),
+					Name:      ast.NewCIStr("id"),
 					Offset:    0,
 					State:     model.StatePublic,
 					FieldType: ft,
@@ -389,12 +389,12 @@ func TestFetchRemoteTableModels_4_x_auto_increment(t *testing.T) {
 	ft.SetFlag(mysql.AutoIncrementFlag)
 	require.Equal(t, map[string]*model.TableInfo{
 		"t": {
-			Name:       pmodel.NewCIStr("t"),
+			Name:       ast.NewCIStr("t"),
 			State:      model.StatePublic,
 			PKIsHandle: true,
 			Columns: []*model.ColumnInfo{
 				{
-					Name:      pmodel.NewCIStr("id"),
+					Name:      ast.NewCIStr("id"),
 					Offset:    0,
 					State:     model.StatePublic,
 					FieldType: ft,
@@ -424,13 +424,13 @@ func TestFetchRemoteTableModels_4_x_auto_random(t *testing.T) {
 	ft.SetFlag(mysql.PriKeyFlag)
 	require.Equal(t, map[string]*model.TableInfo{
 		"t": {
-			Name:           pmodel.NewCIStr("t"),
+			Name:           ast.NewCIStr("t"),
 			State:          model.StatePublic,
 			PKIsHandle:     true,
 			AutoRandomBits: 1,
 			Columns: []*model.ColumnInfo{
 				{
-					Name:                pmodel.NewCIStr("id"),
+					Name:                ast.NewCIStr("id"),
 					Offset:              0,
 					State:               model.StatePublic,
 					FieldType:           ft,
@@ -471,18 +471,18 @@ func TestFetchRemoteTableModelsDropTableHalfway(t *testing.T) {
 	ft.SetFlag(mysql.AutoIncrementFlag)
 	require.Equal(t, map[string]*model.TableInfo{
 		"tbl01": {
-			Name:       pmodel.NewCIStr("tbl01"),
+			Name:       ast.NewCIStr("tbl01"),
 			State:      model.StatePublic,
 			PKIsHandle: true,
 			Columns: []*model.ColumnInfo{
 				{
-					Name:      pmodel.NewCIStr("id"),
+					Name:      ast.NewCIStr("id"),
 					Offset:    0,
 					State:     model.StatePublic,
 					FieldType: ft,
 				},
 				{
-					Name:   pmodel.NewCIStr("val"),
+					Name:   ast.NewCIStr("val"),
 					Offset: 1,
 					State:  model.StatePublic,
 				},
@@ -606,35 +606,35 @@ func TestWriteRowsErrorDowngradingAll(t *testing.T) {
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(1)\\E").
 		WillReturnError(nonRetryableError)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v2.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "7.csv", int64(0), nonRetryableError.Error(), "(1)").
 		WillReturnResult(driver.ResultNoRows)
 	s.mockDB.
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(2)\\E").
 		WillReturnError(nonRetryableError)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v2.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "8.csv", int64(0), nonRetryableError.Error(), "(2)").
 		WillReturnResult(driver.ResultNoRows)
 	s.mockDB.
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(3)\\E").
 		WillReturnError(nonRetryableError)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v2.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "9.csv", int64(0), nonRetryableError.Error(), "(3)").
 		WillReturnResult(driver.ResultNoRows)
 	s.mockDB.
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(4)\\E").
 		WillReturnError(nonRetryableError)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v2.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "10.csv", int64(0), nonRetryableError.Error(), "(4)").
 		WillReturnResult(driver.ResultNoRows)
 	s.mockDB.
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(5)\\E").
 		WillReturnError(nonRetryableError)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v2.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "11.csv", int64(0), nonRetryableError.Error(), "(5)").
 		WillReturnResult(driver.ResultNoRows)
 
@@ -671,21 +671,21 @@ func TestWriteRowsErrorDowngradingExceedThreshold(t *testing.T) {
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(1)\\E").
 		WillReturnError(nonRetryableError)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v2.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "7.csv", int64(0), nonRetryableError.Error(), "(1)").
 		WillReturnResult(driver.ResultNoRows)
 	s.mockDB.
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(2)\\E").
 		WillReturnError(nonRetryableError)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v2.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "8.csv", int64(0), nonRetryableError.Error(), "(2)").
 		WillReturnResult(driver.ResultNoRows)
 	s.mockDB.
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(3)\\E").
 		WillReturnError(nonRetryableError)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v1.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.type_error_v2.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "9.csv", int64(0), nonRetryableError.Error(), "(3)").
 		WillReturnResult(driver.ResultNoRows)
 	// the forth row will exceed the error threshold, won't record this error
@@ -732,7 +732,7 @@ func TestWriteRowsRecordOneError(t *testing.T) {
 		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(2)\\E").
 		WillReturnError(dupErr)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.conflict_records.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.conflict_records_v2.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "8.csv", int64(0), dupErr.Error(), 0, "(2)").
 		WillReturnResult(driver.ResultNoRows)
 
@@ -1045,7 +1045,7 @@ func TestLogicalImportBatchPrepStmt(t *testing.T) {
 
 // TestWriteRowsRecordOneErrorPrepStmt tests that when LogicalImportPrepStmt is true and the batch insert fails,
 // it will fallback to a single row insert,
-// the error will be recorded in tidb_lightning_errors.conflict_records.
+// the error will be recorded in tidb_lightning_errors.conflict_records_v2.
 func TestWriteRowsRecordOneErrorPrepStmt(t *testing.T) {
 	dupErr := &gmysql.MySQLError{Number: errno.ErrDupEntry, Message: "Duplicate entry '2' for key 'PRIMARY'"}
 	s := createMysqlSuite(t)
@@ -1068,7 +1068,7 @@ func TestWriteRowsRecordOneErrorPrepStmt(t *testing.T) {
 		WithArgs(2).
 		WillReturnError(dupErr)
 	s.mockDB.
-		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.conflict_records.*").
+		ExpectExec("INSERT INTO `tidb_lightning_errors`\\.conflict_records_v2.*").
 		WithArgs(sqlmock.AnyArg(), "`foo`.`bar`", "8.csv", int64(0), dupErr.Error(), 0, "(2)").
 		WillReturnResult(driver.ResultNoRows)
 

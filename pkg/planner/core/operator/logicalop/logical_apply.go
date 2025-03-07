@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -120,11 +121,15 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column, opt *o
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implements base.LogicalPlan.<11th> interface.
-func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
-	if la.StatsInfo() != nil {
+func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
+	var reload bool
+	for _, one := range reloads {
+		reload = reload || one
+	}
+	if !reload && la.StatsInfo() != nil {
 		// Reload GroupNDVs since colGroups may have changed.
-		la.StatsInfo().GroupNDVs = la.getGroupNDVs(colGroups, childStats)
-		return la.StatsInfo(), nil
+		la.StatsInfo().GroupNDVs = la.getGroupNDVs(childStats)
+		return la.StatsInfo(), false, nil
 	}
 	leftProfile := childStats[0]
 	la.SetStats(&property.StatsInfo{
@@ -141,8 +146,8 @@ func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema
 			la.StatsInfo().ColNDVs[selfSchema.Columns[i].UniqueID] = leftProfile.RowCount
 		}
 	}
-	la.StatsInfo().GroupNDVs = la.getGroupNDVs(colGroups, childStats)
-	return la.StatsInfo(), nil
+	la.StatsInfo().GroupNDVs = la.getGroupNDVs(childStats)
+	return la.StatsInfo(), true, nil
 }
 
 // ExtractColGroups implements base.LogicalPlan.<12th> interface.
@@ -199,34 +204,24 @@ func (la *LogicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 // ExtractFD implements the base.LogicalPlan.<22nd> interface.
 func (la *LogicalApply) ExtractFD() *fd.FDSet {
 	innerPlan := la.Children()[1]
-	// build the join correlated equal condition for apply join, this equal condition is used for deriving the transitive FD between outer and inner side.
-	correlatedCols := coreusage.ExtractCorrelatedCols4LogicalPlan(innerPlan)
-	deduplicateCorrelatedCols := make(map[int64]*expression.CorrelatedColumn)
-	for _, cc := range correlatedCols {
-		if _, ok := deduplicateCorrelatedCols[cc.UniqueID]; !ok {
-			deduplicateCorrelatedCols[cc.UniqueID] = cc
-		}
-	}
-	eqCond := make([]expression.Expression, 0, 4)
+	equivs := make([][]intset.FastIntSet, 0, 4)
 	// for case like select (select t1.a from t2) from t1. <t1.a> will be assigned with new UniqueID after sub query projection is built.
 	// we should distinguish them out, building the equivalence relationship from inner <t1.a> == outer <t1.a> in the apply-join for FD derivation.
-	for _, cc := range deduplicateCorrelatedCols {
-		// for every correlated column, find the connection with the inner newly built column.
-		for _, col := range innerPlan.Schema().Columns {
-			if cc.UniqueID == col.CorrelatedColUniqueID {
-				ccc := &cc.Column
-				cond := expression.NewFunctionInternal(la.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), ccc, col)
-				eqCond = append(eqCond, cond.(*expression.ScalarFunction))
-			}
+	// for every correlated column, find the connection with the inner newly built column.
+	for _, col := range innerPlan.Schema().Columns {
+		if col.CorrelatedColUniqueID != 0 {
+			// the correlated column has been projected again in inner.
+			// put the CorrelatedColUniqueID in the first of the pair.
+			equivs = append(equivs, []intset.FastIntSet{intset.NewFastIntSet(int(col.CorrelatedColUniqueID)), intset.NewFastIntSet(int(col.UniqueID))})
 		}
 	}
 	switch la.JoinType {
 	case InnerJoin:
-		return la.ExtractFDForInnerJoin(eqCond)
+		return la.ExtractFDForInnerJoin(equivs)
 	case LeftOuterJoin, RightOuterJoin:
-		return la.ExtractFDForOuterJoin(eqCond)
+		return la.ExtractFDForOuterJoin(equivs)
 	case SemiJoin:
-		return la.ExtractFDForSemiJoin(eqCond)
+		return la.ExtractFDForSemiJoin(equivs)
 	default:
 		return &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
 	}
@@ -246,7 +241,7 @@ func (la *LogicalApply) CanPullUpAgg() bool {
 	if len(la.EqualConditions)+len(la.LeftConditions)+len(la.RightConditions)+len(la.OtherConditions) > 0 {
 		return false
 	}
-	return len(la.Children()[0].Schema().Keys) > 0
+	return len(la.Children()[0].Schema().PKOrUK) > 0
 }
 
 // DeCorColFromEqExpr checks whether it's an equal condition of form `col = correlated col`. If so we will change the decorrelated
@@ -279,8 +274,8 @@ func (la *LogicalApply) DeCorColFromEqExpr(expr expression.Expression) expressio
 	return nil
 }
 
-func (la *LogicalApply) getGroupNDVs(colGroups [][]*expression.Column, childStats []*property.StatsInfo) []property.GroupNDV {
-	if len(colGroups) > 0 && (la.JoinType == LeftOuterSemiJoin || la.JoinType == AntiLeftOuterSemiJoin || la.JoinType == LeftOuterJoin) {
+func (la *LogicalApply) getGroupNDVs(childStats []*property.StatsInfo) []property.GroupNDV {
+	if la.JoinType == LeftOuterSemiJoin || la.JoinType == AntiLeftOuterSemiJoin || la.JoinType == LeftOuterJoin {
 		return childStats[0].GroupNDVs
 	}
 	return nil

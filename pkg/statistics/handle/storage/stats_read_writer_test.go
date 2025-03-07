@@ -18,7 +18,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -47,7 +47,7 @@ func TestUpdateStatsMetaVersionForGC(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(),
-		model.NewCIStr("test"), model.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()

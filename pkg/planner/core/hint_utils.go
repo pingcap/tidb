@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	h "github.com/pingcap/tidb/pkg/util/hint"
@@ -89,7 +88,7 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 		if storeType == kv.TiKV {
 			res = append(res, &ast.TableOptimizerHint{
 				QBName:   qbName,
-				HintName: model.NewCIStr(h.HintLimitToCop),
+				HintName: ast.NewCIStr(h.HintLimitToCop),
 			})
 		}
 	case *PhysicalTableReader:
@@ -100,14 +99,14 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 		if tbl.StoreType == kv.TiFlash {
 			res = append(res, &ast.TableOptimizerHint{
 				QBName:   qbName,
-				HintName: model.NewCIStr(h.HintReadFromStorage),
-				HintData: model.NewCIStr(kv.TiFlash.Name()),
+				HintName: ast.NewCIStr(h.HintReadFromStorage),
+				HintData: ast.NewCIStr(kv.TiFlash.Name()),
 				Tables:   []ast.HintTable{{DBName: tbl.DBName, TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
 			})
 		} else {
 			res = append(res, &ast.TableOptimizerHint{
 				QBName:   qbName,
-				HintName: model.NewCIStr(h.HintUseIndex),
+				HintName: ast.NewCIStr(h.HintUseIndex),
 				Tables:   []ast.HintTable{{DBName: tbl.DBName, TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
 			})
 			if tbl.Table.PKIsHandle || tbl.Table.IsCommonHandle { // it's a primary key
@@ -117,9 +116,9 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 				}
 				res = append(res, &ast.TableOptimizerHint{
 					QBName:   qbName,
-					HintName: model.NewCIStr(orderHint),
+					HintName: ast.NewCIStr(orderHint),
 					Tables:   []ast.HintTable{{DBName: tbl.DBName, TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
-					Indexes:  []model.CIStr{model.NewCIStr("primary")},
+					Indexes:  []ast.CIStr{ast.NewCIStr("primary")},
 				})
 			}
 		}
@@ -127,9 +126,9 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 		index := pp.IndexPlans[0].(*PhysicalIndexScan)
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   qbName,
-			HintName: model.NewCIStr(h.HintUseIndex),
+			HintName: ast.NewCIStr(h.HintUseIndex),
 			Tables:   []ast.HintTable{{DBName: index.DBName, TableName: getTableName(index.Table.Name, index.TableAsName)}},
-			Indexes:  []model.CIStr{index.Index.Name},
+			Indexes:  []ast.CIStr{index.Index.Name},
 		})
 		orderHint := h.HintOrderIndex
 		if !index.KeepOrder {
@@ -137,17 +136,17 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 		}
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   qbName,
-			HintName: model.NewCIStr(orderHint),
+			HintName: ast.NewCIStr(orderHint),
 			Tables:   []ast.HintTable{{DBName: index.DBName, TableName: getTableName(index.Table.Name, index.TableAsName)}},
-			Indexes:  []model.CIStr{index.Index.Name},
+			Indexes:  []ast.CIStr{index.Index.Name},
 		})
 	case *PhysicalIndexReader:
 		index := pp.IndexPlans[0].(*PhysicalIndexScan)
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   qbName,
-			HintName: model.NewCIStr(h.HintUseIndex),
+			HintName: ast.NewCIStr(h.HintUseIndex),
 			Tables:   []ast.HintTable{{DBName: index.DBName, TableName: getTableName(index.Table.Name, index.TableAsName)}},
-			Indexes:  []model.CIStr{index.Index.Name},
+			Indexes:  []ast.CIStr{index.Index.Name},
 		})
 		orderHint := h.HintOrderIndex
 		if !index.KeepOrder {
@@ -155,50 +154,50 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 		}
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   qbName,
-			HintName: model.NewCIStr(orderHint),
+			HintName: ast.NewCIStr(orderHint),
 			Tables:   []ast.HintTable{{DBName: index.DBName, TableName: getTableName(index.Table.Name, index.TableAsName)}},
-			Indexes:  []model.CIStr{index.Index.Name},
+			Indexes:  []ast.CIStr{index.Index.Name},
 		})
 	case *PhysicalIndexMergeReader:
-		indexs := make([]model.CIStr, 0, 2)
-		var tableName model.CIStr
-		var tableAsName *model.CIStr
+		indexs := make([]ast.CIStr, 0, 2)
+		var tableName ast.CIStr
+		var tableAsName *ast.CIStr
 		for _, partialPlan := range pp.PartialPlans {
 			if index, ok := partialPlan[0].(*PhysicalIndexScan); ok {
 				indexs = append(indexs, index.Index.Name)
 				tableName = index.Table.Name
 				tableAsName = index.TableAsName
 			} else {
-				indexName := model.NewCIStr("PRIMARY")
+				indexName := ast.NewCIStr("PRIMARY")
 				indexs = append(indexs, indexName)
 			}
 		}
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   qbName,
-			HintName: model.NewCIStr(h.HintIndexMerge),
+			HintName: ast.NewCIStr(h.HintIndexMerge),
 			Tables:   []ast.HintTable{{TableName: getTableName(tableName, tableAsName)}},
 			Indexes:  indexs,
 		})
 	case *PhysicalHashAgg:
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   qbName,
-			HintName: model.NewCIStr(h.HintHashAgg),
+			HintName: ast.NewCIStr(h.HintHashAgg),
 		})
 		if storeType == kv.TiKV {
 			res = append(res, &ast.TableOptimizerHint{
 				QBName:   qbName,
-				HintName: model.NewCIStr(h.HintAggToCop),
+				HintName: ast.NewCIStr(h.HintAggToCop),
 			})
 		}
 	case *PhysicalStreamAgg:
 		res = append(res, &ast.TableOptimizerHint{
 			QBName:   qbName,
-			HintName: model.NewCIStr(h.HintStreamAgg),
+			HintName: ast.NewCIStr(h.HintStreamAgg),
 		})
 		if storeType == kv.TiKV {
 			res = append(res, &ast.TableOptimizerHint{
 				QBName:   qbName,
-				HintName: model.NewCIStr(h.HintAggToCop),
+				HintName: ast.NewCIStr(h.HintAggToCop),
 			})
 		}
 	case *PhysicalMergeJoin:
@@ -306,7 +305,7 @@ func genHintsFromSingle(p base.PhysicalPlan, nodeType h.NodeType, storeType kv.S
 	return res
 }
 
-func getTableName(tblName model.CIStr, asName *model.CIStr) model.CIStr {
+func getTableName(tblName ast.CIStr, asName *ast.CIStr) ast.CIStr {
 	if asName != nil && asName.L != "" {
 		return *asName
 	}
@@ -345,7 +344,7 @@ func genJoinMethodHintForSinglePhysicalJoin(
 	}
 
 	newHint := &ast.TableOptimizerHint{
-		HintName: model.NewCIStr(joinType),
+		HintName: ast.NewCIStr(joinType),
 		Tables:   []ast.HintTable{*effectiveHintTbls[0]},
 	}
 
@@ -366,7 +365,7 @@ func genHintTblForJoinNodes(
 	joinedNodes []base.PhysicalPlan,
 	parentQBOffset int,
 	nodeType h.NodeType,
-) (hintTbls []*ast.HintTable, hintQBNamePtr *model.CIStr) {
+) (hintTbls []*ast.HintTable, hintQBNamePtr *ast.CIStr) {
 	// 1. Use genHintTblForSingleJoinNode() to generate QB offset and table name for each join node.
 
 	// Note that if we failed to generate valid information for one element in joinedNodes, we append -1 and nil instead
@@ -462,7 +461,7 @@ func genHintTblForSingleJoinNode(
 		return -1, false, nil
 	}
 	guessQBOffset = false
-	var dbName, tableName *model.CIStr
+	var dbName, tableName *ast.CIStr
 	// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
 	if qbOffset != parentOffset {
 		var blockAsNames []ast.HintTable
@@ -495,7 +494,7 @@ func genHintTblForSingleJoinNode(
 	return qbOffset, guessQBOffset, &ast.HintTable{DBName: *dbName, TableName: *tableName}
 }
 
-func extractTableAsName(p base.PhysicalPlan) (*model.CIStr, *model.CIStr) {
+func extractTableAsName(p base.PhysicalPlan) (*ast.CIStr, *ast.CIStr) {
 	if len(p.Children()) > 1 {
 		return nil, nil
 	}
@@ -555,7 +554,7 @@ func genJoinOrderHintFromRootPhysicalJoin(
 		hintTblVals = append(hintTblVals, *ht)
 	}
 	res := &ast.TableOptimizerHint{
-		HintName: model.NewCIStr(h.HintLeading),
+		HintName: ast.NewCIStr(h.HintLeading),
 		Tables:   hintTblVals,
 	}
 	if hintQBName != nil {

@@ -263,16 +263,14 @@ func (col *CorrelatedColumn) Hash64(h base.Hasher) {
 
 // Equals implements HashEquals.<1st> interface.
 func (col *CorrelatedColumn) Equals(other any) bool {
-	if other == nil {
+	col2, ok := other.(*CorrelatedColumn)
+	if !ok {
 		return false
 	}
-	var col2 *CorrelatedColumn
-	switch x := other.(type) {
-	case CorrelatedColumn:
-		col2 = &x
-	case *CorrelatedColumn:
-		col2 = x
-	default:
+	if col == nil {
+		return col2 == nil
+	}
+	if col2 == nil {
 		return false
 	}
 	return col.Column.Equals(&col2.Column)
@@ -511,21 +509,19 @@ func (col *Column) Hash64(h base.Hasher) {
 
 // Equals implements HashEquals.<1st> interface.
 func (col *Column) Equals(other any) bool {
-	if other == nil {
+	col2, ok := other.(*Column)
+	if !ok {
 		return false
 	}
-	var col2 *Column
-	switch x := other.(type) {
-	case Column:
-		col2 = &x
-	case *Column:
-		col2 = x
-	default:
+	if col == nil {
+		return col2 == nil
+	}
+	if col2 == nil {
 		return false
 	}
 	// when step into here, we could ensure that col1.RetType and col2.RetType are same type.
 	// and we should ensure col1.RetType and col2.RetType is not nil ourselves.
-	ok := col.RetType == nil && col2.RetType == nil || col.RetType != nil && col2.RetType != nil && col.RetType.Equal(col2.RetType)
+	ok = col.RetType == nil && col2.RetType == nil || col.RetType != nil && col2.RetType != nil && col.RetType.Equal(col2.RetType)
 	ok = ok && (col.VirtualExpr == nil && col2.VirtualExpr == nil || col.VirtualExpr != nil && col2.VirtualExpr != nil && col.VirtualExpr.Equals(col2.VirtualExpr))
 	return ok &&
 		col.ID == col2.ID &&

@@ -3,6 +3,7 @@ package data
 
 import (
 	"context"
+	stdErr "errors"
 	"io"
 	"time"
 
@@ -62,40 +63,27 @@ type recoveryError struct {
 	atStage RecoveryStage
 }
 
-func FailedAt(err error) RecoveryStage {
-	if rerr, ok := err.(recoveryError); ok {
-		return rerr.atStage
+func atStage(err error) RecoveryStage {
+	var recoveryErr recoveryError
+	if stdErr.As(err, &recoveryErr) {
+		return recoveryErr.atStage
 	}
 	return StageUnknown
 }
 
-type recoveryBackoffer struct {
-	state utils.RetryState
-}
-
-func newRecoveryBackoffer() *recoveryBackoffer {
-	return &recoveryBackoffer{
-		state: utils.InitialRetryState(16, 30*time.Second, 4*time.Minute),
-	}
-}
-
-func (bo *recoveryBackoffer) NextBackoff(err error) time.Duration {
-	s := FailedAt(err)
-	switch s {
+func isRetryErr(err error) bool {
+	stage := atStage(err)
+	switch stage {
 	case StageCollectingMeta, StageMakingRecoveryPlan, StageResetPDAllocateID, StageRecovering:
-		log.Info("Recovery data retrying.", zap.Error(err), zap.Stringer("stage", s))
-		return bo.state.ExponentialBackoff()
+		log.Info("Recovery data retrying.", zap.Error(err), zap.Stringer("stage", stage))
+		return true
 	case StageFlashback:
-		log.Info("Giving up retry for flashback stage.", zap.Error(err), zap.Stringer("stage", s))
-		bo.state.GiveUp()
-		return 0
+		log.Info("Giving up retry for flashback stage.", zap.Error(err), zap.Stringer("stage", stage))
+		return false
+	default:
+		log.Warn("unknown stage of recovery for backoff.", zap.Int("val", int(stage)))
+		return false
 	}
-	log.Warn("unknown stage of backing off.", zap.Int("val", int(s)))
-	return bo.state.ExponentialBackoff()
-}
-
-func (bo *recoveryBackoffer) Attempt() int {
-	return bo.state.Attempt()
 }
 
 // RecoverData recover the tikv cluster
@@ -109,7 +97,7 @@ func RecoverData(ctx context.Context, resolveTS uint64, allStores []*metapb.Stor
 	// Roughly handle the case that some TiKVs are rebooted during making plan.
 	// Generally, retry the whole procedure will be fine for most cases. But perhaps we can do finer-grained retry,
 	// say, we may reuse the recovery plan, and probably no need to rebase PD allocation ID once we have done it.
-	return utils.WithRetryV2(ctx, newRecoveryBackoffer(), func(ctx context.Context) (int, error) {
+	return utils.WithRetryV2(ctx, utils.NewRecoveryBackoffStrategy(isRetryErr), func(ctx context.Context) (int, error) {
 		return doRecoveryData(ctx, resolveTS, allStores, mgr, progress, restoreTS, concurrency)
 	})
 }
@@ -395,7 +383,6 @@ func (recovery *Recovery) SpawnTiKVShutDownWatchers(ctx context.Context) {
 
 // prepare the region for flashback the data, the purpose is to stop region service, put region in flashback state
 func (recovery *Recovery) PrepareFlashbackToVersion(ctx context.Context, resolveTS uint64, startTS uint64) (err error) {
-	retryState := utils.InitialRetryState(utils.FlashbackRetryTime, utils.FlashbackWaitInterval, utils.FlashbackMaxWaitInterval)
 	retryErr := utils.WithRetry(
 		ctx,
 		func() error {
@@ -416,7 +403,7 @@ func (recovery *Recovery) PrepareFlashbackToVersion(ctx context.Context, resolve
 			}
 			log.Info("region flashback prepare complete", zap.Int("regions", runner.CompletedRegions()))
 			return nil
-		}, &retryState)
+		}, utils.NewFlashBackBackoffStrategy())
 
 	recovery.progress.Inc()
 	return retryErr

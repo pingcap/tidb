@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -237,11 +237,11 @@ func (s *rpcServer) createSession() (sessiontypes.Session, error) {
 	vars.SetHashAggFinalConcurrency(1)
 	vars.StmtCtx.InitMemTracker(memory.LabelForSQLText, -1)
 	vars.StmtCtx.MemTracker.AttachTo(vars.MemTracker)
-	if variable.OOMAction.Load() == variable.OOMActionCancel {
+	if vardef.OOMAction.Load() == vardef.OOMActionCancel {
 		action := &memory.PanicOnExceed{Killer: &vars.SQLKiller}
 		vars.MemTracker.SetActionOnExceed(action)
 	}
-	if err = vars.SetSystemVar(variable.MaxAllowedPacket, strconv.FormatUint(variable.DefMaxAllowedPacket, 10)); err != nil {
+	if err = vars.SetSystemVar(vardef.MaxAllowedPacket, strconv.FormatUint(vardef.DefMaxAllowedPacket, 10)); err != nil {
 		return nil, err
 	}
 	se.SetExtensions(extensions.NewSessionExtensions())

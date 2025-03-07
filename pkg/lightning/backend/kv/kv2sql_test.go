@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -37,12 +37,12 @@ func TestIterRawIndexKeysClusteredPK(t *testing.T) {
 	node, _, err := p.ParseSQL("create table t (a varchar(10) primary key, b int, index idx(b));")
 	require.NoError(t, err)
 	mockSctx := mock.NewContext()
-	mockSctx.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	mockSctx.GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 	info, err := ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 1)
 	require.NoError(t, err)
 	info.State = model.StatePublic
 	require.True(t, info.IsCommonHandle)
-	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(info.SepAutoInc(), 0), info)
+	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(info.SepAutoInc()), info)
 	require.NoError(t, err)
 
 	sessionOpts := &encode.SessionOptions{
@@ -78,12 +78,12 @@ func TestIterRawIndexKeysIntPK(t *testing.T) {
 	node, _, err := p.ParseSQL("create table t (a int primary key, b int, index idx(b));")
 	require.NoError(t, err)
 	mockSctx := mock.NewContext()
-	mockSctx.GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	mockSctx.GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 	info, err := ddl.MockTableInfo(mockSctx, node[0].(*ast.CreateTableStmt), 1)
 	require.NoError(t, err)
 	info.State = model.StatePublic
 	require.True(t, info.PKIsHandle)
-	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(info.SepAutoInc(), 0), info)
+	tbl, err := tables.TableFromMeta(kv.NewPanickingAllocators(info.SepAutoInc()), info)
 	require.NoError(t, err)
 
 	sessionOpts := &encode.SessionOptions{

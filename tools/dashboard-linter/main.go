@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strings"
+	"unicode"
 )
 
 type basicDashboard struct {
@@ -27,9 +29,18 @@ type basicDashboard struct {
 }
 
 type panel struct {
-	ID     int     `json:"id"`
-	Panels []panel `json:"panels"`
+	ID         int     `json:"id"`
+	Panels     []panel `json:"panels"`
+	Type       string  `json:"type"`
+	Title      string  `json:"title"`
+	Collapsed  bool    `json:"collapsed"`
+	Datasource string  `json:"datasource"`
+	GridPos    struct {
+		H int `json:"h"`
+	} `json:"gridPos"`
 }
+
+const rowType = "row"
 
 // a small linter to check if there are duplicate panel IDs in a dashboard json file.
 // grafana do have one linter https://github.com/grafana/dashboard-linter, but seems
@@ -48,6 +59,7 @@ func main() {
 	if err = json.Unmarshal(content, &board); err != nil {
 		panic(err)
 	}
+	checkDashboardPanelFields(board)
 	allIDs := make(map[int]int, 1024)
 	for _, p := range board.Panels {
 		allIDs[p.ID]++
@@ -100,4 +112,64 @@ func indexOfAny(content []byte, substrs []string) int {
 		}
 	}
 	return -1
+}
+
+func checkDashboardPanelFields(board basicDashboard) {
+	errors := make([]error, 0, 8)
+	for _, p := range board.Panels {
+		if errs := checkPanel(p); len(errs) > 0 {
+			errors = append(errors, errs...)
+		}
+	}
+	if len(errors) == 0 {
+		return
+	}
+
+	for _, e := range errors {
+		fmt.Println(e)
+	}
+	os.Exit(1)
+}
+
+func checkPanel(p panel) []error {
+	errors := make([]error, 0, 8)
+	if p.Type == rowType {
+		if !p.Collapsed {
+			errors = append(errors, fmt.Errorf("row panel %d should be collapsed", p.ID))
+		}
+		// panel can be nested once(as a row panel)
+		for _, sub := range p.Panels {
+			if errs := checkPanel(sub); len(errs) > 0 {
+				errors = append(errors, errs...)
+			}
+		}
+		return errors
+	}
+	// tools like TiUP use our grafana dashboard json files as templates.
+	if p.Datasource != "${DS_TEST-CLUSTER}" {
+		errors = append(errors, fmt.Errorf("panel %d has datasource %s, which is not ${DS_TEST-CLUSTER}", p.ID, p.Datasource))
+	}
+	if p.GridPos.H != 7 {
+		errors = append(errors, fmt.Errorf("we uses 7 as panel height to uniform UI appearance, panel %d has height %d", p.ID, p.GridPos.H))
+	}
+	if p.Title == "" {
+		errors = append(errors, fmt.Errorf("panel %d has empty title", p.ID))
+	}
+	// we capitalize every word in title, it doesn't follow english grammar, but
+	// we already use it in many places, so we follow the existing style, and
+	// check it here.
+	splits := strings.Split(p.Title, " ")
+	for _, w := range splits {
+		// ignore some punctuations, like '-'
+		if len(w) <= 1 {
+			continue
+		}
+		for _, c := range w {
+			if !unicode.IsUpper(c) && !unicode.IsDigit(c) {
+				errors = append(errors, fmt.Errorf("panel %d first char of words in title %s should be all be upper case or digit", p.ID, p.Title))
+			}
+			break
+		}
+	}
+	return errors
 }

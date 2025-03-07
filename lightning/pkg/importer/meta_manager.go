@@ -93,7 +93,7 @@ func (b *dbMetaMgrBuilder) TableMetaMgr(tr *TableImporter) tableMetaMgr {
 
 type tableMetaMgr interface {
 	InitTableMeta(ctx context.Context) error
-	AllocTableRowIDs(ctx context.Context, rawRowIDMax int64) (*verify.KVChecksum, int64, error)
+	AllocTableRowIDs(ctx context.Context, requiredRowIDCnt int64) (*verify.KVChecksum, int64, error)
 	UpdateTableStatus(ctx context.Context, status metaStatus) error
 	UpdateTableBaseChecksum(ctx context.Context, checksum *verify.KVChecksum) error
 	CheckAndUpdateLocalChecksum(ctx context.Context, checksum *verify.KVChecksum, hasLocalDupes bool) (
@@ -177,7 +177,7 @@ func parseMetaStatus(s string) (metaStatus, error) {
 	}
 }
 
-func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64) (*verify.KVChecksum, int64, error) {
+func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, requiredRowIDCnt int64) (*verify.KVChecksum, int64, error) {
 	conn, err := m.session.Conn(ctx)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
@@ -188,8 +188,10 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 		DB:     conn,
 		Logger: m.tr.logger,
 	}
-	var newRowIDBase, newRowIDMax int64
-	curStatus := metaStatusInitial
+	// (myStartRowID, myEndRowID] is the range of row_id that current instance
+	// can use to encode the table.
+	var myStartRowID, myEndRowID int64
+	myStatus := metaStatusInitial
 	newStatus := metaStatusRowIDAllocated
 	var baseTotalKvs, baseTotalBytes, baseChecksum uint64
 	err = exec.Exec(ctx, "enable pessimistic transaction", "SET SESSION tidb_txn_mode = 'pessimistic';")
@@ -197,13 +199,20 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 		return nil, 0, errors.Annotate(err, "enable pessimistic transaction failed")
 	}
 
-	needAutoID := common.TableHasAutoID(m.tr.tableInfo.Core)
+	hasAutoID := common.TableHasAutoID(m.tr.tableInfo.Core)
 	tableChecksumingMsg := "Target table is calculating checksum. Please wait until the checksum is finished and try again."
 	doAllocTableRowIDsFn := func() error {
 		return exec.Transact(ctx, "init table allocator base", func(ctx context.Context, tx *sql.Tx) error {
+			// lightning follows below calling sequence, so at most one client
+			// can execute the code after the FOR UPDATE part for some table,
+			// even though FOR UPDATE only lock rows that matches the condition:
+			// - insert into table_meta with key (table_id, task_id)
+			// - try lock with FOR UPDATE
 			rows, err := tx.QueryContext(
 				ctx,
-				common.SprintfWithIdentifiers("SELECT task_id, row_id_base, row_id_max, total_kvs_base, total_bytes_base, checksum_base, status FROM %s.%s WHERE table_id = ? FOR UPDATE", m.schemaName, m.tableName),
+				common.SprintfWithIdentifiers(`
+SELECT task_id, row_id_base, row_id_max, total_kvs_base, total_bytes_base, checksum_base, status
+FROM %s.%s WHERE table_id = ? FOR UPDATE`, m.schemaName, m.tableName),
 				m.tr.tableInfo.ID,
 			)
 			if err != nil {
@@ -234,16 +243,16 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 				}
 
 				if metaTaskID == m.taskID {
-					curStatus = status
+					myStatus = status
 					baseChecksum = checksum
 					baseTotalKvs = totalKvs
 					baseTotalBytes = totalBytes
 					if status >= metaStatusRowIDAllocated {
-						if rowIDMax-rowIDBase != rawRowIDMax {
-							return common.ErrAllocTableRowIDs.GenWithStack("verify allocator base failed. local: '%d', meta: '%d'", rawRowIDMax, rowIDMax-rowIDBase)
+						if rowIDMax-rowIDBase != requiredRowIDCnt {
+							return common.ErrAllocTableRowIDs.GenWithStack("verify allocator base failed. local: '%d', meta: '%d'", requiredRowIDCnt, rowIDMax-rowIDBase)
 						}
-						newRowIDBase = rowIDBase
-						newRowIDMax = rowIDMax
+						myStartRowID = rowIDBase
+						myEndRowID = rowIDMax
 						break
 					}
 					continue
@@ -263,36 +272,43 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 			}
 
 			// no enough info are available, fetch row_id max for table
-			if curStatus == metaStatusInitial {
-				if needAutoID {
-					// maxRowIDMax is the max row_id that other tasks has allocated, we need to rebase the global autoid base first.
-					// TODO this is not right when AUTO_ID_CACHE=1 and have auto row id,
-					// the id allocators are separated in this case.
-					if err := common.RebaseGlobalAutoID(ctx, maxRowIDMax, m.tr, m.tr.dbInfo.ID, m.tr.tableInfo.Core); err != nil {
-						return errors.Trace(err)
-					}
-					newRowIDBase, newRowIDMax, err = common.AllocGlobalAutoID(ctx, rawRowIDMax, m.tr, m.tr.dbInfo.ID, m.tr.tableInfo.Core)
+			if myStatus == metaStatusInitial {
+				// if the table don't have auto id, we still guarantee that the
+				// row ID is unique across all lightning instances.
+				// or if someone have already allocated the auto id, we can continue
+				// allocating from previous maxRowIDMax.
+				if !hasAutoID || maxRowIDMax > 0 {
+					myStartRowID = maxRowIDMax
+				} else {
+					// we are the first one to allocate the auto id, we need to
+					// fetch the max auto id base from the table, and allocate
+					// from there.
+					// as we only have one estimated requiredRowIDCount, but the
+					// table might have multiple allocators, so we use the max
+					// of them.
+					maxAutoIDBase, err := common.GetMaxAutoIDBase(m.tr, m.tr.dbInfo.ID, m.tr.tableInfo.Core)
 					if err != nil {
 						return errors.Trace(err)
 					}
-				} else {
-					// Though we don't need auto ID, we still guarantee that the row ID is unique across all lightning instances.
-					newRowIDBase = maxRowIDMax
-					newRowIDMax = newRowIDBase + rawRowIDMax
+					myStartRowID = maxAutoIDBase
 				}
+				myEndRowID = myStartRowID + requiredRowIDCnt
 
-				// table contains no data, can skip checksum
-				if needAutoID && newRowIDBase == 0 && newStatus < metaStatusRestoreStarted {
+				// if we are the first one to allocate, the table has auto-id,
+				// and our start is 0, it means the table is empty, so we move
+				// the state to next one directly without going through below
+				// checksum branch.
+				if hasAutoID && myStartRowID == 0 && newStatus < metaStatusRestoreStarted {
 					newStatus = metaStatusRestoreStarted
 				}
 
 				query := common.SprintfWithIdentifiers("UPDATE %s.%s SET row_id_base = ?, row_id_max = ?, status = ? WHERE table_id = ? AND task_id = ?", m.schemaName, m.tableName)
-				_, err := tx.ExecContext(ctx, query, newRowIDBase, newRowIDMax, newStatus.String(), m.tr.tableInfo.ID, m.taskID)
+				_, err := tx.ExecContext(ctx, query, myStartRowID, myEndRowID, newStatus.String(), m.tr.tableInfo.ID, m.taskID)
 				if err != nil {
 					return errors.Trace(err)
 				}
 
-				curStatus = newStatus
+				myStatus = newStatus
 			}
 			return nil
 		})
@@ -325,9 +341,12 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 
 	var checksum *verify.KVChecksum
 	// need to do checksum and update checksum meta since we are the first one.
-	if curStatus < metaStatusRestoreStarted {
-		// table contains data but haven't do checksum yet
-		if (newRowIDBase > 0 || !needAutoID) && m.needChecksum && baseTotalKvs == 0 {
+	if myStatus < metaStatusRestoreStarted {
+		// the table might have data if our StartRowID is not 0, or if the table
+		// don't have any auto id.
+		if (myStartRowID > 0 || !hasAutoID) && m.needChecksum && baseTotalKvs == 0 {
+			// if another instance finished import before below checksum logic,
+			// it will cause checksum mismatch, but it's very rare.
 			remoteCk, err := DoChecksum(ctx, m.tr.tableInfo)
 			if err != nil {
 				return nil, 0, errors.Trace(err)
@@ -354,11 +373,11 @@ func (m *dbTableMetaMgr) AllocTableRowIDs(ctx context.Context, rawRowIDMax int64
 		checksum = &ck
 	}
 	log.FromContext(ctx).Info("allocate table row_id base", zap.String("table", m.tr.tableName),
-		zap.Int64("row_id_base", newRowIDBase))
+		zap.Int64("startRowID", myStartRowID), zap.Int64("endRowID", myEndRowID))
 	if checksum != nil {
 		log.FromContext(ctx).Info("checksum base", zap.Any("checksum", checksum))
 	}
-	return checksum, newRowIDBase, nil
+	return checksum, myStartRowID, nil
 }
 
 func (m *dbTableMetaMgr) UpdateTableBaseChecksum(ctx context.Context, checksum *verify.KVChecksum) error {

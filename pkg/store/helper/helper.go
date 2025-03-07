@@ -76,6 +76,8 @@ type Storage interface {
 	GetLockWaits() ([]*deadlockpb.WaitForEntry, error)
 	GetCodec() tikv.Codec
 	GetPDHTTPClient() pd.Client
+	GetOption(any) (any, bool)
+	SetOption(any, any)
 }
 
 // Helper is a middleware to get some information from tikv/pd. It can be used for TiDB's http api or mem table.

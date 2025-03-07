@@ -22,7 +22,6 @@ import (
 	"strconv"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 )
 
 type yyhintSymType struct {
@@ -33,7 +32,7 @@ type yyhintSymType struct {
 	hint        *ast.TableOptimizerHint
 	hints       []*ast.TableOptimizerHint
 	table       ast.HintTable
-	modelIdents []model.CIStr
+	modelIdents []ast.CIStr
 }
 
 type yyhintXError struct {
@@ -1279,7 +1278,7 @@ yynewstate:
 	case 9:
 		{
 			h := yyS[yypt-1].hint
-			h.HintName = model.NewCIStr(yyS[yypt-3].ident)
+			h.HintName = ast.NewCIStr(yyS[yypt-3].ident)
 			parser.yyVAL.hint = h
 		}
 	case 10:
@@ -1290,7 +1289,7 @@ yynewstate:
 	case 11:
 		{
 			h := yyS[yypt-1].hint
-			h.HintName = model.NewCIStr(yyS[yypt-3].ident)
+			h.HintName = ast.NewCIStr(yyS[yypt-3].ident)
 			parser.yyVAL.hint = h
 		}
 	case 12:
@@ -1301,23 +1300,23 @@ yynewstate:
 	case 13:
 		{
 			parser.yyVAL.hint = &ast.TableOptimizerHint{
-				HintName: model.NewCIStr(yyS[yypt-4].ident),
-				QBName:   model.NewCIStr(yyS[yypt-2].ident),
+				HintName: ast.NewCIStr(yyS[yypt-4].ident),
+				QBName:   ast.NewCIStr(yyS[yypt-2].ident),
 				HintData: yyS[yypt-1].number,
 			}
 		}
 	case 14:
 		{
 			parser.yyVAL.hint = &ast.TableOptimizerHint{
-				HintName: model.NewCIStr(yyS[yypt-4].ident),
-				QBName:   model.NewCIStr(yyS[yypt-2].ident),
+				HintName: ast.NewCIStr(yyS[yypt-4].ident),
+				QBName:   ast.NewCIStr(yyS[yypt-2].ident),
 				HintData: int64(yyS[yypt-1].number),
 			}
 		}
 	case 15:
 		{
 			parser.yyVAL.hint = &ast.TableOptimizerHint{
-				HintName: model.NewCIStr(yyS[yypt-5].ident),
+				HintName: ast.NewCIStr(yyS[yypt-5].ident),
 				HintData: ast.HintSetVar{
 					VarName: yyS[yypt-3].ident,
 					Value:   yyS[yypt-1].ident,
@@ -1327,22 +1326,22 @@ yynewstate:
 	case 16:
 		{
 			parser.yyVAL.hint = &ast.TableOptimizerHint{
-				HintName: model.NewCIStr(yyS[yypt-3].ident),
+				HintName: ast.NewCIStr(yyS[yypt-3].ident),
 				HintData: yyS[yypt-1].ident,
 			}
 		}
 	case 17:
 		{
 			parser.yyVAL.hint = &ast.TableOptimizerHint{
-				HintName: model.NewCIStr(yyS[yypt-3].ident),
-				QBName:   model.NewCIStr(yyS[yypt-1].ident),
+				HintName: ast.NewCIStr(yyS[yypt-3].ident),
+				QBName:   ast.NewCIStr(yyS[yypt-1].ident),
 			}
 		}
 	case 18:
 		{
 			parser.yyVAL.hint = &ast.TableOptimizerHint{
-				HintName: model.NewCIStr(yyS[yypt-5].ident),
-				QBName:   model.NewCIStr(yyS[yypt-3].ident),
+				HintName: ast.NewCIStr(yyS[yypt-5].ident),
+				QBName:   ast.NewCIStr(yyS[yypt-3].ident),
 				Tables:   yyS[yypt-1].hint.Tables,
 			}
 		}
@@ -1351,9 +1350,9 @@ yynewstate:
 			maxValue := uint64(math.MaxInt64) / yyS[yypt-1].number
 			if yyS[yypt-2].number <= maxValue {
 				parser.yyVAL.hint = &ast.TableOptimizerHint{
-					HintName: model.NewCIStr(yyS[yypt-5].ident),
+					HintName: ast.NewCIStr(yyS[yypt-5].ident),
 					HintData: int64(yyS[yypt-2].number * yyS[yypt-1].number),
-					QBName:   model.NewCIStr(yyS[yypt-3].ident),
+					QBName:   ast.NewCIStr(yyS[yypt-3].ident),
 				}
 			} else {
 				yylex.AppendError(ErrWarnMemoryQuotaOverflow.GenWithStackByArgs(math.MaxInt64))
@@ -1364,7 +1363,7 @@ yynewstate:
 	case 20:
 		{
 			parser.yyVAL.hint = &ast.TableOptimizerHint{
-				HintName: model.NewCIStr(yyS[yypt-5].ident),
+				HintName: ast.NewCIStr(yyS[yypt-5].ident),
 				HintData: ast.HintTimeRange{
 					From: yyS[yypt-3].ident,
 					To:   yyS[yypt-1].ident,
@@ -1374,23 +1373,23 @@ yynewstate:
 	case 21:
 		{
 			h := yyS[yypt-1].hint
-			h.HintName = model.NewCIStr(yyS[yypt-4].ident)
-			h.QBName = model.NewCIStr(yyS[yypt-2].ident)
+			h.HintName = ast.NewCIStr(yyS[yypt-4].ident)
+			h.QBName = ast.NewCIStr(yyS[yypt-2].ident)
 			parser.yyVAL.hint = h
 		}
 	case 22:
 		{
 			parser.yyVAL.hint = &ast.TableOptimizerHint{
-				HintName: model.NewCIStr(yyS[yypt-3].ident),
-				QBName:   model.NewCIStr(yyS[yypt-1].ident),
+				HintName: ast.NewCIStr(yyS[yypt-3].ident),
+				QBName:   ast.NewCIStr(yyS[yypt-1].ident),
 			}
 		}
 	case 23:
 		{
 			parser.yyVAL.hint = &ast.TableOptimizerHint{
-				HintName: model.NewCIStr(yyS[yypt-4].ident),
-				QBName:   model.NewCIStr(yyS[yypt-2].ident),
-				HintData: model.NewCIStr(yyS[yypt-1].ident),
+				HintName: ast.NewCIStr(yyS[yypt-4].ident),
+				QBName:   ast.NewCIStr(yyS[yypt-2].ident),
+				HintData: ast.NewCIStr(yyS[yypt-1].ident),
 			}
 		}
 	case 24:
@@ -1416,8 +1415,8 @@ yynewstate:
 	case 28:
 		{
 			hs := yyS[yypt-1].hints
-			name := model.NewCIStr(yyS[yypt-4].ident)
-			qb := model.NewCIStr(yyS[yypt-2].ident)
+			name := ast.NewCIStr(yyS[yypt-4].ident)
+			qb := ast.NewCIStr(yyS[yypt-2].ident)
 			for _, h := range hs {
 				h.HintName = name
 				h.QBName = qb
@@ -1435,7 +1434,7 @@ yynewstate:
 	case 31:
 		{
 			h := yyS[yypt-1].hint
-			h.HintData = model.NewCIStr(yyS[yypt-3].ident)
+			h.HintData = ast.NewCIStr(yyS[yypt-3].ident)
 			parser.yyVAL.hint = h
 		}
 	case 32:
@@ -1452,23 +1451,23 @@ yynewstate:
 		}
 	case 38:
 		{
-			parser.yyVAL.modelIdents = []model.CIStr{model.NewCIStr(yyS[yypt-0].ident)}
+			parser.yyVAL.modelIdents = []ast.CIStr{ast.NewCIStr(yyS[yypt-0].ident)}
 		}
 	case 39:
 		{
-			parser.yyVAL.modelIdents = append(yyS[yypt-2].modelIdents, model.NewCIStr(yyS[yypt-0].ident))
+			parser.yyVAL.modelIdents = append(yyS[yypt-2].modelIdents, ast.NewCIStr(yyS[yypt-0].ident))
 		}
 	case 41:
 		{
 			parser.yyVAL.hint = &ast.TableOptimizerHint{
-				QBName: model.NewCIStr(yyS[yypt-0].ident),
+				QBName: ast.NewCIStr(yyS[yypt-0].ident),
 			}
 		}
 	case 42:
 		{
 			parser.yyVAL.hint = &ast.TableOptimizerHint{
 				Tables: []ast.HintTable{yyS[yypt-0].table},
-				QBName: model.NewCIStr(yyS[yypt-1].ident),
+				QBName: ast.NewCIStr(yyS[yypt-1].ident),
 			}
 		}
 	case 43:
@@ -1480,17 +1479,17 @@ yynewstate:
 	case 44:
 		{
 			parser.yyVAL.table = ast.HintTable{
-				TableName:     model.NewCIStr(yyS[yypt-2].ident),
-				QBName:        model.NewCIStr(yyS[yypt-1].ident),
+				TableName:     ast.NewCIStr(yyS[yypt-2].ident),
+				QBName:        ast.NewCIStr(yyS[yypt-1].ident),
 				PartitionList: yyS[yypt-0].modelIdents,
 			}
 		}
 	case 45:
 		{
 			parser.yyVAL.table = ast.HintTable{
-				DBName:        model.NewCIStr(yyS[yypt-4].ident),
-				TableName:     model.NewCIStr(yyS[yypt-2].ident),
-				QBName:        model.NewCIStr(yyS[yypt-1].ident),
+				DBName:        ast.NewCIStr(yyS[yypt-4].ident),
+				TableName:     ast.NewCIStr(yyS[yypt-2].ident),
+				QBName:        ast.NewCIStr(yyS[yypt-1].ident),
 				PartitionList: yyS[yypt-0].modelIdents,
 			}
 		}
@@ -1509,21 +1508,21 @@ yynewstate:
 	case 48:
 		{
 			parser.yyVAL.table = ast.HintTable{
-				TableName: model.NewCIStr(yyS[yypt-1].ident),
-				QBName:    model.NewCIStr(yyS[yypt-0].ident),
+				TableName: ast.NewCIStr(yyS[yypt-1].ident),
+				QBName:    ast.NewCIStr(yyS[yypt-0].ident),
 			}
 		}
 	case 49:
 		{
 			parser.yyVAL.table = ast.HintTable{
-				QBName: model.NewCIStr(yyS[yypt-0].ident),
+				QBName: ast.NewCIStr(yyS[yypt-0].ident),
 			}
 		}
 	case 50:
 		{
 			h := yyS[yypt-0].hint
 			h.Tables = []ast.HintTable{yyS[yypt-2].table}
-			h.QBName = model.NewCIStr(yyS[yypt-3].ident)
+			h.QBName = ast.NewCIStr(yyS[yypt-3].ident)
 			parser.yyVAL.hint = h
 		}
 	case 51:
@@ -1533,13 +1532,13 @@ yynewstate:
 	case 53:
 		{
 			parser.yyVAL.hint = &ast.TableOptimizerHint{
-				Indexes: []model.CIStr{model.NewCIStr(yyS[yypt-0].ident)},
+				Indexes: []ast.CIStr{ast.NewCIStr(yyS[yypt-0].ident)},
 			}
 		}
 	case 54:
 		{
 			h := yyS[yypt-2].hint
-			h.Indexes = append(h.Indexes, model.NewCIStr(yyS[yypt-0].ident))
+			h.Indexes = append(h.Indexes, ast.NewCIStr(yyS[yypt-0].ident))
 			parser.yyVAL.hint = h
 		}
 	case 61:

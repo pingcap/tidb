@@ -45,22 +45,9 @@ type tableHistID struct {
 
 // StatsTableRowCache is used to cache the count of table rows.
 type StatsTableRowCache struct {
-	modifyTime time.Time
-	tableRows  map[int64]uint64
-	colLength  map[tableHistID]uint64
-	dirtyIDs   []int64
-	mu         syncutil.RWMutex
-}
-
-// Invalidate invalidates the cache of the table with id.
-func (c *StatsTableRowCache) Invalidate(tblID int64) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	// To prevent the cache from becoming too large,
-	// we only record the latest 100 dirty tables that have been modified.
-	if len(c.dirtyIDs) < 100 {
-		c.dirtyIDs = append(c.dirtyIDs, tblID)
-	}
+	tableRows map[int64]uint64
+	colLength map[tableHistID]uint64
+	mu        syncutil.RWMutex
 }
 
 // GetTableRows gets the count of table rows.
@@ -77,34 +64,8 @@ func (c *StatsTableRowCache) GetColLength(id tableHistID) uint64 {
 	return c.colLength[id]
 }
 
-func (c *StatsTableRowCache) updateDirtyIDs(sctx sessionctx.Context) error {
-	if len(c.dirtyIDs) > 0 {
-		tableRows, err := getRowCountTables(sctx, c.dirtyIDs...)
-		if err != nil {
-			return err
-		}
-		for id, tr := range tableRows {
-			c.tableRows[id] = tr
-		}
-		colLength, err := getColLengthTables(sctx, c.dirtyIDs...)
-		if err != nil {
-			return err
-		}
-		for id, cl := range colLength {
-			c.colLength[id] = cl
-		}
-		c.dirtyIDs = c.dirtyIDs[:0]
-	}
-	return nil
-}
-
 // UpdateByID tries to update the cache by table ID.
 func (c *StatsTableRowCache) UpdateByID(sctx sessionctx.Context, id int64) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if time.Since(c.modifyTime) < tableStatsCacheExpiry {
-		return c.updateDirtyIDs(sctx)
-	}
 	tableRows, err := getRowCountTables(sctx, id)
 	if err != nil {
 		return err
@@ -113,33 +74,12 @@ func (c *StatsTableRowCache) UpdateByID(sctx sessionctx.Context, id int64) error
 	if err != nil {
 		return err
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.tableRows[id] = tableRows[id]
 	for k, v := range colLength {
 		c.colLength[k] = v
 	}
-	c.modifyTime = time.Now()
-	return nil
-}
-
-// Update tries to update the cache.
-func (c *StatsTableRowCache) Update(sctx sessionctx.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if time.Since(c.modifyTime) < tableStatsCacheExpiry {
-		return c.updateDirtyIDs(sctx)
-	}
-	tableRows, err := getRowCountTables(sctx)
-	if err != nil {
-		return err
-	}
-	colLength, err := getColLengthTables(sctx)
-	if err != nil {
-		return err
-	}
-	c.tableRows = tableRows
-	c.colLength = colLength
-	c.modifyTime = time.Now()
-	c.dirtyIDs = c.dirtyIDs[:0]
 	return nil
 }
 
@@ -239,28 +179,27 @@ func getColLengthTables(sctx sessionctx.Context, tableIDs ...int64) (map[tableHi
 
 // GetDataAndIndexLength gets the data and index length of the table.
 func (c *StatsTableRowCache) GetDataAndIndexLength(info *model.TableInfo, physicalID int64, rowCount uint64) (dataLength, indexLength uint64) {
-	columnLength := make(map[string]uint64, len(info.Columns))
-	for _, col := range info.Columns {
+	columnLength := make([]uint64, len(info.Columns))
+	for i, col := range info.Columns {
 		if col.State != model.StatePublic {
 			continue
 		}
-		length := col.FieldType.StorageLength()
-		if length != types.VarStorageLen {
-			columnLength[col.Name.L] = rowCount * uint64(length)
+		var length uint64
+		if storageLen := col.FieldType.StorageLength(); storageLen != types.VarStorageLen {
+			length = rowCount * uint64(storageLen)
 		} else {
-			length := c.GetColLength(tableHistID{tableID: physicalID, histID: col.ID})
-			columnLength[col.Name.L] = length
+			length = c.GetColLength(tableHistID{tableID: physicalID, histID: col.ID})
 		}
-	}
-	for _, length := range columnLength {
 		dataLength += length
+		columnLength[i] = length
 	}
+
 	for _, idx := range info.Indices {
 		if idx.State != model.StatePublic {
 			continue
 		}
 		if info.GetPartitionInfo() != nil {
-			// Global indexes calcuated in table level.
+			// Global indexes calculated in table level.
 			if idx.Global && info.ID != physicalID {
 				continue
 			}
@@ -271,7 +210,7 @@ func (c *StatsTableRowCache) GetDataAndIndexLength(info *model.TableInfo, physic
 		}
 		for _, col := range idx.Columns {
 			if col.Length == types.UnspecifiedLength {
-				indexLength += columnLength[col.Name.L]
+				indexLength += columnLength[col.Offset]
 			} else {
 				indexLength += rowCount * uint64(col.Length)
 			}

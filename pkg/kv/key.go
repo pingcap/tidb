@@ -98,10 +98,6 @@ func (k Key) String() string {
 type KeyRange struct {
 	StartKey Key
 	EndKey   Key
-
-	XXXNoUnkeyedLiteral struct{}
-	XXXunrecognized     []byte
-	XXXsizecache        int32
 }
 
 // KeyRangeSliceMemUsage return the memory usage of []KeyRange
@@ -110,7 +106,7 @@ func KeyRangeSliceMemUsage(k []KeyRange) int64 {
 
 	res := sizeofKeyRange * int64(cap(k))
 	for _, m := range k {
-		res += int64(cap(m.StartKey)) + int64(cap(m.EndKey)) + int64(cap(m.XXXunrecognized))
+		res += int64(cap(m.StartKey)) + int64(cap(m.EndKey))
 	}
 
 	return res
@@ -723,10 +719,13 @@ func (ph PartitionHandle) Copy() Handle {
 
 // Equal implements the Handle interface.
 func (ph PartitionHandle) Equal(h Handle) bool {
+	// Compare pid and handle if both sides are `PartitionHandle`.
 	if ph2, ok := h.(PartitionHandle); ok {
 		return ph.PartitionID == ph2.PartitionID && ph.Handle.Equal(ph2.Handle)
 	}
-	return false
+
+	// Otherwise, use underlying handle to do comparation.
+	return ph.Handle.Equal(h)
 }
 
 // Compare implements the Handle interface.

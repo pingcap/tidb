@@ -49,7 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/util"
+	"github.com/tikv/pd/client/pkg/caller"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -85,6 +86,19 @@ var (
 	// it might not be the optimal value for other cases.
 	defaultMaxEngineSize = int64(5 * config.DefaultBatchSize)
 )
+
+// Chunk records the chunk information.
+type Chunk struct {
+	Path         string
+	FileSize     int64
+	Offset       int64
+	EndOffset    int64
+	PrevRowIDMax int64
+	RowIDMax     int64
+	Type         mydump.SourceType
+	Compression  mydump.Compression
+	Timestamp    int64
+}
 
 // prepareSortDir creates a new directory for import, remove previous sort directory if exists.
 func prepareSortDir(e *LoadDataController, id string, tidbCfg *tidb.Config) (string, error) {
@@ -139,7 +153,7 @@ func GetRegionSplitSizeKeys(ctx context.Context) (regionSplitSize int64, regionS
 	}
 	tlsOpt := tls.ToPDSecurityOption()
 	addrs := strings.Split(tidbCfg.Path, ",")
-	pdCli, err := NewClientWithContext(ctx, addrs, tlsOpt)
+	pdCli, err := NewClientWithContext(ctx, caller.Component("tidb-table-importer"), addrs, tlsOpt)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
@@ -154,7 +168,7 @@ func NewTableImporter(
 	id string,
 	kvStore tidbkv.Storage,
 ) (ti *TableImporter, err error) {
-	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc(), 0)
+	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc())
 	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)
@@ -234,7 +248,7 @@ type TableImporter struct {
 
 // NewTableImporterForTest creates a new table importer for test.
 func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id string, helper local.StoreHelper) (*TableImporter, error) {
-	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc(), 0)
+	idAlloc := kv.NewPanickingAllocators(e.Table.Meta().SepAutoInc())
 	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", e.Table.Meta().Name)
@@ -368,7 +382,7 @@ func (e *LoadDataController) SetExecuteNodeCnt(cnt int) {
 // PopulateChunks populates chunks from table regions.
 // in dist framework, this should be done in the tidb node which is responsible for splitting job into subtasks
 // then table-importer handles data belongs to the subtask.
-func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]*checkpoints.EngineCheckpoint, err error) {
+func (e *LoadDataController) PopulateChunks(ctx context.Context) (chunksMap map[int32][]Chunk, err error) {
 	task := log.BeginTask(e.logger, "populate chunks")
 	defer func() {
 		task.End(zap.ErrorLevel, err)
@@ -399,44 +413,37 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]
 	}
 	makeEngineCtx := log.NewContext(ctx, log.Logger{Logger: e.logger})
 	tableRegions, err2 := mydump.MakeTableRegions(makeEngineCtx, dataDivideCfg)
-
 	if err2 != nil {
 		e.logger.Error("populate chunks failed", zap.Error(err2))
 		return nil, err2
 	}
 
-	var maxRowID int64
 	timestamp := time.Now().Unix()
-	tableCp := &checkpoints.TableCheckpoint{
-		Engines: map[int32]*checkpoints.EngineCheckpoint{},
-	}
+	// engineChunks indicates the map that contains the k-v: the engineID -> []chunk.
+	engineChunks := make(map[int32][]Chunk, 0)
+
 	for _, region := range tableRegions {
-		engine, found := tableCp.Engines[region.EngineID]
+		chunks, found := engineChunks[region.EngineID]
 		if !found {
-			engine = &checkpoints.EngineCheckpoint{
-				Status: checkpoints.CheckpointStatusLoaded,
-			}
-			tableCp.Engines[region.EngineID] = engine
+			chunks = make([]Chunk, 0)
 		}
-		ccp := &checkpoints.ChunkCheckpoint{
-			Key: checkpoints.ChunkCheckpointKey{
-				Path:   region.FileMeta.Path,
-				Offset: region.Chunk.Offset,
-			},
-			FileMeta:          region.FileMeta,
-			ColumnPermutation: nil,
-			Chunk:             region.Chunk,
-			Timestamp:         timestamp,
-		}
-		engine.Chunks = append(engine.Chunks, ccp)
-		if region.Chunk.RowIDMax > maxRowID {
-			maxRowID = region.Chunk.RowIDMax
-		}
+
+		engineChunks[region.EngineID] = append(chunks, Chunk{
+			Path:         region.FileMeta.Path,
+			FileSize:     region.FileMeta.FileSize,
+			Offset:       region.Chunk.Offset,
+			EndOffset:    region.Chunk.EndOffset,
+			PrevRowIDMax: region.Chunk.PrevRowIDMax,
+			RowIDMax:     region.Chunk.RowIDMax,
+			Type:         region.FileMeta.Type,
+			Compression:  region.FileMeta.Compression,
+			Timestamp:    timestamp,
+		})
 	}
 
 	// Add index engine checkpoint
-	tableCp.Engines[common.IndexEngineID] = &checkpoints.EngineCheckpoint{Status: checkpoints.CheckpointStatusLoaded}
-	return tableCp.Engines, nil
+	engineChunks[common.IndexEngineID] = make([]Chunk, 0)
+	return engineChunks, nil
 }
 
 // a simplified version of EstimateCompactionThreshold
@@ -654,25 +661,20 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 	}
 
 	var (
-		mu         sync.Mutex
-		checksum   = verify.NewKVGroupChecksumWithKeyspace(ti.keyspace)
-		colSizeMap = make(map[int64]int64)
+		mu       sync.Mutex
+		checksum = verify.NewKVGroupChecksumWithKeyspace(ti.keyspace)
 	)
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
 	for i := 0; i < ti.ThreadCnt; i++ {
 		eg.Go(func() error {
 			chunkCheckpoint := checkpoints.ChunkCheckpoint{}
 			chunkChecksum := verify.NewKVGroupChecksumWithKeyspace(ti.keyspace)
-			progress := NewProgress()
 			defer func() {
 				mu.Lock()
 				defer mu.Unlock()
 				checksum.Add(chunkChecksum)
-				for k, v := range progress.GetColSize() {
-					colSizeMap[k] += v
-				}
 			}()
-			return ProcessChunk(egCtx, &chunkCheckpoint, ti, dataEngine, indexEngine, progress, ti.logger, chunkChecksum)
+			return ProcessChunk(egCtx, &chunkCheckpoint, ti, dataEngine, indexEngine, ti.logger, chunkChecksum)
 		})
 	}
 	if err = eg.Wait(); err != nil {
@@ -716,8 +718,7 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 	}
 
 	return &JobImportResult{
-		Affected:   uint64(dataKVCount),
-		ColSizeMap: colSizeMap,
+		Affected: uint64(dataKVCount),
 	}, nil
 }
 
@@ -941,13 +942,13 @@ func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logge
 
 func setBackoffWeight(se sessionctx.Context, plan *Plan, logger *zap.Logger) error {
 	backoffWeight := local.DefaultBackoffWeight
-	if val, ok := plan.ImportantSysVars[variable.TiDBBackOffWeight]; ok {
+	if val, ok := plan.ImportantSysVars[vardef.TiDBBackOffWeight]; ok {
 		if weight, err := strconv.Atoi(val); err == nil && weight > backoffWeight {
 			backoffWeight = weight
 		}
 	}
 	logger.Info("set backoff weight", zap.Int("weight", backoffWeight))
-	return se.GetSessionVars().SetSystemVar(variable.TiDBBackOffWeight, strconv.Itoa(backoffWeight))
+	return se.GetSessionVars().SetSystemVar(vardef.TiDBBackOffWeight, strconv.Itoa(backoffWeight))
 }
 
 // GetImportRootDir returns the root directory for import.
@@ -976,7 +977,7 @@ func FlushTableStats(ctx context.Context, se sessionctx.Context, tableID int64, 
 	sessionVars := se.GetSessionVars()
 	sessionVars.TxnCtxMu.Lock()
 	defer sessionVars.TxnCtxMu.Unlock()
-	sessionVars.TxnCtx.UpdateDeltaForTable(tableID, int64(result.Affected), int64(result.Affected), result.ColSizeMap)
+	sessionVars.TxnCtx.UpdateDeltaForTable(tableID, int64(result.Affected), int64(result.Affected))
 	se.StmtCommit(ctx)
 	return se.CommitTxn(ctx)
 }

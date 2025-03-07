@@ -63,7 +63,7 @@ func SyncUpgradeState(s sessionctx.Context, timeout time.Duration) error {
 
 		var op owner.OpType
 		childCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-		op, err = owner.GetOwnerOpValue(childCtx, dom.EtcdClient(), ddl.DDLOwnerKey, "upgrade bootstrap")
+		op, err = owner.GetOwnerOpValue(childCtx, dom.EtcdClient(), ddl.DDLOwnerKey)
 		cancel()
 		if err == nil && op.IsSyncedUpgradingState() {
 			break

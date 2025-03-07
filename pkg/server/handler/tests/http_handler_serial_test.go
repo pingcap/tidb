@@ -36,12 +36,13 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/server/handler/tikvhandler"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
@@ -72,13 +73,13 @@ func TestPostSettings(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, zap.ErrorLevel, log.GetLevel())
 	require.Equal(t, "error", config.GetGlobalConfig().Log.Level)
-	require.True(t, variable.ProcessGeneralLog.Load())
-	val, err := se.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnableAsyncCommit)
+	require.True(t, vardef.ProcessGeneralLog.Load())
+	val, err := se.GetSessionVars().GetGlobalSystemVar(context.Background(), vardef.TiDBEnableAsyncCommit)
 	require.NoError(t, err)
-	require.Equal(t, variable.On, val)
-	val, err = se.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnable1PC)
+	require.Equal(t, vardef.On, val)
+	val, err = se.GetSessionVars().GetGlobalSystemVar(context.Background(), vardef.TiDBEnable1PC)
 	require.NoError(t, err)
-	require.Equal(t, variable.On, val)
+	require.Equal(t, vardef.On, val)
 
 	form = make(url.Values)
 	form.Set("log_level", "fatal")
@@ -89,15 +90,15 @@ func TestPostSettings(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
-	require.False(t, variable.ProcessGeneralLog.Load())
+	require.False(t, vardef.ProcessGeneralLog.Load())
 	require.Equal(t, zap.FatalLevel, log.GetLevel())
 	require.Equal(t, "fatal", config.GetGlobalConfig().Log.Level)
-	val, err = se.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnableAsyncCommit)
+	val, err = se.GetSessionVars().GetGlobalSystemVar(context.Background(), vardef.TiDBEnableAsyncCommit)
 	require.NoError(t, err)
-	require.Equal(t, variable.Off, val)
-	val, err = se.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnable1PC)
+	require.Equal(t, vardef.Off, val)
+	val, err = se.GetSessionVars().GetGlobalSystemVar(context.Background(), vardef.TiDBEnable1PC)
 	require.NoError(t, err)
-	require.Equal(t, variable.Off, val)
+	require.Equal(t, vardef.Off, val)
 	form.Set("log_level", os.Getenv("log_level"))
 
 	// test ddl_slow_threshold
@@ -107,7 +108,7 @@ func TestPostSettings(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
-	require.Equal(t, uint32(200), atomic.LoadUint32(&variable.DDLSlowOprThreshold))
+	require.Equal(t, uint32(200), atomic.LoadUint32(&vardef.DDLSlowOprThreshold))
 
 	// test check_mb4_value_in_utf8
 	db, err := sql.Open("mysql", ts.GetDSN())
@@ -327,7 +328,7 @@ func TestTiFlashReplica(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, "[schema:1146]Table which ID = 184 does not exist.", string(body))
 
-	tbl, err := ts.domain.InfoSchema().TableByName(context.Background(), model.NewCIStr("tidb"), model.NewCIStr("test"))
+	tbl, err := ts.domain.InfoSchema().TableByName(context.Background(), ast.NewCIStr("tidb"), ast.NewCIStr("test"))
 	require.NoError(t, err)
 	req := fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, tbl.Meta().ID)
 	resp, err = ts.PostStatus("/tiflash/replica-deprecated", "application/json", bytes.NewBuffer([]byte(req)))
@@ -592,6 +593,7 @@ func TestGetSchemaStorage(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int, e char(5), index idx(e))")
+	testutil.HandleNextDDLEventWithTxn(h)
 	tk.MustExec(`insert into t(c, d, e) values(1, 2, "c"), (2, 3, "d"), (3, 4, "e")`)
 	h.FlushStats()
 
@@ -611,7 +613,7 @@ func TestGetSchemaStorage(t *testing.T) {
 
 	sort.Strings(names)
 	require.Equal(t, expects, names)
-	require.Equal(t, []int64{3, 18, 54, 0, 6, 0}, []int64{
+	require.Equal(t, []int64{3, 16, 48, 0, 0, 0}, []int64{
 		tables[0].TableRows,
 		tables[0].AvgRowLength,
 		tables[0].DataLength,

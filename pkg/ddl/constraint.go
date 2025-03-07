@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -302,8 +301,8 @@ func allocateConstraintID(tblInfo *model.TableInfo) int64 {
 	return tblInfo.MaxConstraintID
 }
 
-func buildConstraintInfo(tblInfo *model.TableInfo, dependedCols []pmodel.CIStr, constr *ast.Constraint, state model.SchemaState) (*model.ConstraintInfo, error) {
-	constraintName := pmodel.NewCIStr(constr.Name)
+func buildConstraintInfo(tblInfo *model.TableInfo, dependedCols []ast.CIStr, constr *ast.Constraint, state model.SchemaState) (*model.ConstraintInfo, error) {
+	constraintName := ast.NewCIStr(constr.Name)
 	if err := checkTooLongConstraint(constraintName); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -334,7 +333,7 @@ func buildConstraintInfo(tblInfo *model.TableInfo, dependedCols []pmodel.CIStr, 
 	return constraintInfo, nil
 }
 
-func checkTooLongConstraint(constr pmodel.CIStr) error {
+func checkTooLongConstraint(constr ast.CIStr) error {
 	if len(constr.L) > mysql.MaxConstraintIdentifierLen {
 		return dbterror.ErrTooLongIdent.GenWithStackByArgs(constr)
 	}
@@ -404,13 +403,13 @@ func setNameForConstraintInfo(tableLowerName string, namesMap map[string]bool, i
 				cnt++
 				constrName = fmt.Sprintf("%s%d", constraintPrefix, cnt)
 			}
-			constrInfo.Name = pmodel.NewCIStr(constrName)
+			constrInfo.Name = ast.NewCIStr(constrName)
 		}
 	}
 }
 
 // IsColumnDroppableWithCheckConstraint check whether the column in check-constraint whose dependent col is more than 1
-func IsColumnDroppableWithCheckConstraint(col pmodel.CIStr, tblInfo *model.TableInfo) error {
+func IsColumnDroppableWithCheckConstraint(col ast.CIStr, tblInfo *model.TableInfo) error {
 	for _, cons := range tblInfo.Constraints {
 		if len(cons.ConstraintCols) > 1 {
 			for _, colName := range cons.ConstraintCols {
@@ -424,7 +423,7 @@ func IsColumnDroppableWithCheckConstraint(col pmodel.CIStr, tblInfo *model.Table
 }
 
 // IsColumnRenameableWithCheckConstraint check whether the column is referenced in check-constraint
-func IsColumnRenameableWithCheckConstraint(col pmodel.CIStr, tblInfo *model.TableInfo) error {
+func IsColumnRenameableWithCheckConstraint(col ast.CIStr, tblInfo *model.TableInfo) error {
 	for _, cons := range tblInfo.Constraints {
 		for _, colName := range cons.ConstraintCols {
 			if colName.L == col.L {

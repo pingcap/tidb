@@ -191,6 +191,9 @@ func (us *UnionScanExec) Close() error {
 	us.cursor4AddRows = nil
 	us.cursor4SnapshotRows = 0
 	us.snapshotRows = us.snapshotRows[:0]
+	if us.addedRowsIter != nil {
+		us.addedRowsIter.Close()
+	}
 	return exec.Close(us.Children(0))
 }
 

@@ -196,6 +196,8 @@ const (
 	ErrGroupDupKey
 	// ErrGroupBadNull is the group of bad null errors
 	ErrGroupBadNull
+	// ErrGroupNoDefault is the group of no default value errors
+	ErrGroupNoDefault
 	// ErrGroupDividedByZero is the group of divided by zero errors
 	ErrGroupDividedByZero
 	// ErrGroupAutoIncReadFailed is the group of auto increment read failed errors
@@ -223,6 +225,8 @@ func init() {
 		ErrGroupBadNull: {
 			errno.ErrBadNull,
 			errno.ErrWarnNullToNotnull,
+		},
+		ErrGroupNoDefault: {
 			errno.ErrNoDefaultForField,
 		},
 		ErrGroupDividedByZero: {

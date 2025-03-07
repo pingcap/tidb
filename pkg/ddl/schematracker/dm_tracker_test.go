@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -105,7 +104,7 @@ func execAlter(t *testing.T, tracker schematracker.SchemaTracker, sql string) {
 }
 
 func mustTableByName(t *testing.T, tracker schematracker.SchemaTracker, schema, table string) *model.TableInfo {
-	tblInfo, err := tracker.TableByName(context.Background(), pmodel.NewCIStr(schema), pmodel.NewCIStr(table))
+	tblInfo, err := tracker.TableByName(context.Background(), ast.NewCIStr(schema), ast.NewCIStr(table))
 	require.NoError(t, err)
 	return tblInfo
 }
@@ -202,7 +201,7 @@ func TestIndexLength(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
 	checkShowCreateTable(t, tblInfo, expected)
 
-	err := tracker.DeleteTable(pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	err := tracker.DeleteTable(ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
 	sql = "create table test.t(a text, b text charset ascii, c blob);"

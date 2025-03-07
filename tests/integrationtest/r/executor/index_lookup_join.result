@@ -135,7 +135,7 @@ create table t2 (a int, key(a));
 explain select /*+ tidb_inlj(bb) */ aa.* from (select * from t1) as aa left join
 (select t2.a, t2.a*2 as a2 from t2) as bb on aa.a=bb.a;
 id	estRows	task	access object	operator info
-IndexJoin_13	12487.50	root		left outer join, inner:IndexReader_12, outer key:executor__index_lookup_join.t1.a, inner key:executor__index_lookup_join.t2.a, equal cond:eq(executor__index_lookup_join.t1.a, executor__index_lookup_join.t2.a)
+IndexJoin_13	12487.50	root		left outer join, inner:IndexReader_12, left side:IndexReader_24, outer key:executor__index_lookup_join.t1.a, inner key:executor__index_lookup_join.t2.a, equal cond:eq(executor__index_lookup_join.t1.a, executor__index_lookup_join.t2.a)
 ├─IndexReader_24(Build)	10000.00	root		index:IndexFullScan_23
 │ └─IndexFullScan_23	10000.00	cop[tikv]	table:t1, index:a(a)	keep order:false, stats:pseudo
 └─IndexReader_12(Probe)	12487.50	root		index:Selection_11

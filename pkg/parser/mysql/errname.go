@@ -907,6 +907,7 @@ var MySQLErrName = map[uint16]*ErrMessage{
 	ErrInvalidJSONText:                                       Message("Invalid JSON text: %-.192s", nil),
 	ErrInvalidJSONTextInParam:                                Message("Invalid JSON text in argument %d to function %s: \"%s\" at position %d.", nil),
 	ErrInvalidJSONPath:                                       Message("Invalid JSON path expression %s.", nil),
+	ErrInvalidJSONCharset:                                    Message("Cannot create a JSON value from a string with CHARACTER SET '%s'.", nil),
 	ErrInvalidTypeForJSON:                                    Message("Invalid data type for JSON data in argument %d to function %s; a JSON string or JSON type is required.", nil),
 	ErrInvalidJSONPathWildcard:                               Message("In this situation, path expressions may not contain the * and ** tokens or an array range.", nil),
 	ErrInvalidJSONContainsPathType:                           Message("The second argument can only be either 'one' or 'all'.", nil),

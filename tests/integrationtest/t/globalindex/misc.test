@@ -139,13 +139,13 @@ CREATE TABLE `t` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`a`) PARTITIONS 3;
 show create table t;
---error 8200
 alter table t partition by key (b) partitions 3;
+alter table t partition by key (b) partitions 3 update indexes (idx_b GLOBAL);
+alter table t partition by key (b) partitions 3 update indexes (idx_b LOCAL);
 --error 8264
 alter table t partition by hash (a) partitions 3 update indexes (idx_b LOCAL);
 alter table t partition by hash (a) partitions 3 update indexes (idx_b GLOBAL);
 show create table t;
---error 8200
 alter table t partition by hash (b) partitions 3 update indexes(idx_b global);
 alter table t partition by hash (b) partitions 3 update indexes(idx_b local);
 show create table t;

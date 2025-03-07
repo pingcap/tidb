@@ -39,7 +39,7 @@ func TestSwitchFastCreateTable(t *testing.T) {
 	conn := server.CreateMockConn(t, sv)
 	tk := testkit.NewTestKitWithSession(t, store, conn.Context().Session)
 
-	tk.MustQuery("show global variables like 'tidb_enable_fast_create_table'").Check(testkit.Rows("tidb_enable_fast_create_table OFF"))
+	tk.MustQuery("show global variables like 'tidb_enable_fast_create_table'").Check(testkit.Rows("tidb_enable_fast_create_table ON"))
 
 	tk.MustExec("create database db1;")
 	tk.MustExec("create database db2;")

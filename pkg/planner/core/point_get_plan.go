@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -80,14 +79,14 @@ type PointGetPlan struct {
 
 	// probeParents records the IndexJoins and Applys with this operator in their inner children.
 	// Please see comments in PhysicalPlan for details.
-	probeParents []base.PhysicalPlan
+	probeParents []base.PhysicalPlan `plan-cache-clone:"shallow"`
 	// explicit partition selection
-	PartitionNames []pmodel.CIStr
+	PartitionNames []ast.CIStr `plan-cache-clone:"shallow"`
 
 	dbName           string
-	schema           *expression.Schema
-	TblInfo          *model.TableInfo `plan-cache-clone:"shallow"`
-	IndexInfo        *model.IndexInfo `plan-cache-clone:"shallow"`
+	schema           *expression.Schema `plan-cache-clone:"shallow"`
+	TblInfo          *model.TableInfo   `plan-cache-clone:"shallow"`
+	IndexInfo        *model.IndexInfo   `plan-cache-clone:"shallow"`
 	PartitionIdx     *int
 	Handle           kv.Handle
 	HandleConstant   *expression.Constant
@@ -99,21 +98,22 @@ type PointGetPlan struct {
 	IdxCols          []*expression.Column
 	IdxColLens       []int
 	AccessConditions []expression.Expression
-	ctx              base.PlanContext
 	UnsignedHandle   bool
 	IsTableDual      bool
 	Lock             bool
 	outputNames      []*types.FieldName `plan-cache-clone:"shallow"`
 	LockWaitTime     int64
 	Columns          []*model.ColumnInfo `plan-cache-clone:"shallow"`
-	cost             float64
 
 	// required by cost model
+	cost         float64
 	planCostInit bool
 	planCost     float64
 	planCostVer2 costusage.CostVer2 `plan-cache-clone:"shallow"`
 	// accessCols represents actual columns the PointGet will access, which are used to calculate row-size
 	accessCols []*expression.Column
+
+	// NOTE: please update FastClonePointGetForPlanCache accordingly if you add new fields here.
 }
 
 // GetEstRowCountForDisplay implements PhysicalPlan interface.
@@ -420,7 +420,7 @@ type BatchPointGetPlan struct {
 	// Please see comments in PhysicalPlan for details.
 	probeParents []base.PhysicalPlan
 	// explicit partition selection
-	PartitionNames []pmodel.CIStr
+	PartitionNames []ast.CIStr `plan-cache-clone:"shallow"`
 
 	ctx              base.PlanContext
 	dbName           string
@@ -641,7 +641,7 @@ func (p *BatchPointGetPlan) LoadTableStats(ctx sessionctx.Context) {
 	loadTableStats(ctx, p.TblInfo, p.TblInfo.ID)
 }
 
-func isInExplicitPartitions(pi *model.PartitionInfo, idx int, names []pmodel.CIStr) bool {
+func isInExplicitPartitions(pi *model.PartitionInfo, idx int, names []ast.CIStr) bool {
 	if len(names) == 0 {
 		return true
 	}
@@ -1394,6 +1394,7 @@ func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW
 		if idxInfo.Global {
 			if tblName.TableInfo == nil ||
 				len(tbl.GetPartitionInfo().AddingDefinitions) > 0 ||
+				len(tbl.GetPartitionInfo().NewPartitionIDs) > 0 ||
 				len(tbl.GetPartitionInfo().DroppingDefinitions) > 0 {
 				continue
 			}
@@ -1448,7 +1449,7 @@ func indexIsAvailableByHints(idxInfo *model.IndexInfo, idxHints []*ast.IndexHint
 	if len(idxHints) == 0 {
 		return true
 	}
-	match := func(name pmodel.CIStr) bool {
+	match := func(name ast.CIStr) bool {
 		if idxInfo == nil {
 			return name.L == "primary"
 		}
@@ -1517,9 +1518,9 @@ func checkFastPlanPrivilege(ctx base.PlanContext, dbName, tableName string, chec
 }
 
 func buildSchemaFromFields(
-	dbName pmodel.CIStr,
+	dbName ast.CIStr,
 	tbl *model.TableInfo,
-	tblName pmodel.CIStr,
+	tblName ast.CIStr,
 	fields []*ast.SelectField,
 ) (
 	*expression.Schema,
@@ -1625,7 +1626,7 @@ func tryExtractRowChecksumColumn(field *ast.SelectField, idx int) (*types.FieldN
 // getSingleTableNameAndAlias return the ast node of queried table name and the alias string.
 // `tblName` is `nil` if there are multiple tables in the query.
 // `tblAlias` will be the real table name if there is no table alias in the query.
-func getSingleTableNameAndAlias(tableRefs *ast.TableRefsClause) (tblName *ast.TableName, tblAlias pmodel.CIStr) {
+func getSingleTableNameAndAlias(tableRefs *ast.TableRefsClause) (tblName *ast.TableName, tblAlias ast.CIStr) {
 	if tableRefs == nil || tableRefs.TableRefs == nil || tableRefs.TableRefs.Right != nil {
 		return nil, tblAlias
 	}
@@ -1645,7 +1646,7 @@ func getSingleTableNameAndAlias(tableRefs *ast.TableRefsClause) (tblName *ast.Ta
 }
 
 // getNameValuePairs extracts `column = constant/paramMarker` conditions from expr as name value pairs.
-func getNameValuePairs(ctx expression.BuildContext, tbl *model.TableInfo, tblName pmodel.CIStr, nvPairs []nameValuePair, expr ast.ExprNode) (
+func getNameValuePairs(ctx expression.BuildContext, tbl *model.TableInfo, tblName ast.CIStr, nvPairs []nameValuePair, expr ast.ExprNode) (
 	pairs []nameValuePair, isTableDual bool) {
 	evalCtx := ctx.GetEvalCtx()
 	binOp, ok := expr.(*ast.BinaryOperationExpr)
@@ -2005,7 +2006,11 @@ func buildOrderedList(ctx base.PlanContext, plan base.Plan, list []*ast.Assignme
 		if err != nil {
 			return nil, true
 		}
-		expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, col.GetStaticType())
+		castToTP := col.GetStaticType()
+		if castToTP.GetType() == mysql.TypeEnum && assign.Expr.GetType().EvalType() == types.ETInt {
+			castToTP.AddFlag(mysql.EnumSetAsIntFlag)
+		}
+		expr = expression.BuildCastFunction(ctx.GetExprCtx(), expr, castToTP)
 		if allAssignmentsAreConstant {
 			_, isConst := expr.(*expression.Constant)
 			allAssignmentsAreConstant = isConst
@@ -2129,7 +2134,7 @@ func buildHandleCols(ctx base.PlanContext, dbName string, tbl *model.TableInfo, 
 		tableAliasName = pointget.OutputNames()[0].TblName
 	}
 	newOutputNames = append(newOutputNames, &types.FieldName{
-		DBName:      pmodel.NewCIStr(dbName),
+		DBName:      ast.NewCIStr(dbName),
 		TblName:     tableAliasName,
 		OrigTblName: tbl.Name,
 		ColName:     model.ExtraHandleName,
@@ -2140,12 +2145,12 @@ func buildHandleCols(ctx base.PlanContext, dbName string, tbl *model.TableInfo, 
 
 // TODO: Remove this, by enabling all types of partitioning
 // and update/add tests
-func getHashOrKeyPartitionColumnName(ctx base.PlanContext, tbl *model.TableInfo) *pmodel.CIStr {
+func getHashOrKeyPartitionColumnName(ctx base.PlanContext, tbl *model.TableInfo) *ast.CIStr {
 	pi := tbl.GetPartitionInfo()
 	if pi == nil {
 		return nil
 	}
-	if pi.Type != pmodel.PartitionTypeHash && pi.Type != pmodel.PartitionTypeKey {
+	if pi.Type != ast.PartitionTypeHash && pi.Type != ast.PartitionTypeKey {
 		return nil
 	}
 	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
@@ -2155,7 +2160,7 @@ func getHashOrKeyPartitionColumnName(ctx base.PlanContext, tbl *model.TableInfo)
 	}
 	// PartitionExpr don't need columns and names for hash partition.
 	partitionExpr := table.(partitionTable).PartitionExpr()
-	if pi.Type == pmodel.PartitionTypeKey {
+	if pi.Type == ast.PartitionTypeKey {
 		// used to judge whether the key partition contains only one field
 		if len(pi.Columns) != 1 {
 			return nil

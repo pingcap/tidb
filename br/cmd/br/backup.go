@@ -22,10 +22,11 @@ import (
 
 func runBackupCommand(command *cobra.Command, cmdName string) error {
 	cfg := task.BackupConfig{Config: task.Config{LogProgress: HasLogFile()}}
-	if err := cfg.ParseFromFlags(command.Flags()); err != nil {
+	if err := cfg.ParseFromFlags(command.Flags(), false); err != nil {
 		command.SilenceUsage = false
 		return errors.Trace(err)
 	}
+	overrideDefaultBackupConfigIfNeeded(&cfg, command)
 
 	if err := metricsutil.RegisterMetricsForBR(cfg.PD, cfg.KeyspaceName); err != nil {
 		return errors.Trace(err)
@@ -215,4 +216,11 @@ func newTxnBackupCommand() *cobra.Command {
 
 	task.DefineTxnBackupFlags(command)
 	return command
+}
+
+func overrideDefaultBackupConfigIfNeeded(config *task.BackupConfig, cmd *cobra.Command) {
+	// override only if flag not set by user
+	if !cmd.Flags().Changed(task.FlagChecksum) {
+		config.Checksum = false
+	}
 }

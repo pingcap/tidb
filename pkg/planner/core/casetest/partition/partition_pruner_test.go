@@ -24,7 +24,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
@@ -38,7 +38,7 @@ func TestHashPartitionPruner(t *testing.T) {
 	tk.MustExec("create database test_partition")
 	tk.MustExec("use test_partition")
 	tk.MustExec("drop table if exists t1, t2;")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
 	tk.MustExec("create table t2(id int, a int, b int, primary key(id, a)) partition by hash(id + a) partitions 10;")
 	tk.MustExec("create table t1(id int primary key, a int, b int) partition by hash(id) partitions 10;")
 	tk.MustExec("create table t3(id int, a int, b int, primary key(id, a)) partition by hash(id) partitions 10;")
@@ -49,6 +49,7 @@ func TestHashPartitionPruner(t *testing.T) {
 	tk.MustExec("create table t8(a int, b int) partition by hash(a) partitions 6;")
 	tk.MustExec("create table t9(a bit(1) default null, b int(11) default null) partition by hash(a) partitions 3;") //issue #22619
 	tk.MustExec("create table t10(a bigint unsigned) partition BY hash (a);")
+	tk.MustExec("create table t11(a int, b int) partition by hash(a + a + a + b) partitions 5")
 
 	var input []string
 	var output []struct {

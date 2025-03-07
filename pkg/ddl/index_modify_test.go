@@ -34,11 +34,11 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table"
@@ -197,7 +197,7 @@ func testAddIndex(t *testing.T, tp testAddIndexType, createTableSQL, idxTp strin
 		}()
 	}
 	if (testClusteredIndex & tp) > 0 {
-		tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+		tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 	}
 	tk.MustExec("drop table if exists test_add_index")
 	tk.MustExec(createTableSQL)
@@ -642,15 +642,15 @@ func TestAddIndexWithPK(t *testing.T) {
 
 	tests := []struct {
 		name string
-		mode variable.ClusteredIndexDefMode
+		mode vardef.ClusteredIndexDefMode
 	}{
 		{
 			"ClusteredIndexDefModeIntOnly",
-			variable.ClusteredIndexDefModeIntOnly,
+			vardef.ClusteredIndexDefModeIntOnly,
 		},
 		{
 			"ClusteredIndexDefModeOn",
-			variable.ClusteredIndexDefModeOn,
+			vardef.ClusteredIndexDefModeOn,
 		},
 	}
 
@@ -749,6 +749,39 @@ func TestAddGlobalIndex(t *testing.T) {
 
 	require.NoError(t, txn.Commit(context.Background()))
 
+	// Test add non-unqiue global index
+	tk.MustExec("drop table if exists test_t2")
+	tk.MustExec("create table test_t2 (a int, b int) partition by range (b)" +
+		" (partition p0 values less than (10), " +
+		"  partition p1 values less than (maxvalue));")
+	tk.MustExec("insert test_t2 values (2, 1)")
+	tk.MustExec("alter table test_t2 add key p_a (a) global")
+	tk.MustExec("insert test_t2 values (1, 11)")
+	tbl = external.GetTableByName(t, tk, "test", "test_t2")
+	tblInfo = tbl.Meta()
+	indexInfo = tblInfo.FindIndexByName("p_a")
+	require.NotNil(t, indexInfo)
+	require.True(t, indexInfo.Global)
+	require.False(t, indexInfo.Unique)
+
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
+	txn, err = tk.Session().Txn(true)
+	require.NoError(t, err)
+
+	// check row 1
+	pid = tblInfo.Partition.Definitions[0].ID
+	idxVals = []types.Datum{types.NewDatum(2)}
+	rowVals = []types.Datum{types.NewDatum(2), types.NewDatum(1)}
+	checkGlobalIndexRow(t, tk.Session(), tblInfo, indexInfo, pid, idxVals, rowVals)
+
+	// check row 2
+	pid = tblInfo.Partition.Definitions[1].ID
+	idxVals = []types.Datum{types.NewDatum(1)}
+	rowVals = []types.Datum{types.NewDatum(1), types.NewDatum(11)}
+	checkGlobalIndexRow(t, tk.Session(), tblInfo, indexInfo, pid, idxVals, rowVals)
+
+	require.NoError(t, txn.Commit(context.Background()))
+
 	// `sanity_check.go` will check the del_range numbers are correct or not.
 	// normal index
 	tk.MustExec("drop table if exists t")
@@ -801,7 +834,17 @@ func checkGlobalIndexRow(
 	require.NoError(t, err)
 	key := tablecodec.EncodeIndexSeekKey(tblInfo.ID, indexInfo.ID, encodedValue)
 	require.NoError(t, err)
-	value, err := txn.Get(context.Background(), key)
+	var value []byte
+	if indexInfo.Unique {
+		value, err = txn.Get(context.Background(), key)
+	} else {
+		var iter kv.Iterator
+		iter, err = txn.Iter(key, key.PrefixNext())
+		require.NoError(t, err)
+		require.True(t, iter.Valid())
+		key = iter.Key()
+		value = iter.Value()
+	}
 	require.NoError(t, err)
 	idxColInfos := tables.BuildRowcodecColInfoForIndexColumns(indexInfo, tblInfo)
 	colVals, err := tablecodec.DecodeIndexKV(key, value, len(indexInfo.Columns), tablecodec.HandleDefault, idxColInfos)
@@ -1096,12 +1139,12 @@ func TestCreateTableWithVectorIndex(t *testing.T) {
 
 	checkCreateTableWithVectorIdx := func(replicaCnt uint64) {
 		tk.MustExec("create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW, vector index((VEC_L2_DISTANCE(b))));")
-		tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 		require.NoError(t, err)
 		require.Equal(t, replicaCnt, tbl.Meta().TiFlashReplica.Count)
 		indexes := tbl.Meta().Indices
 		require.Equal(t, 2, len(indexes))
-		require.Equal(t, pmodel.IndexTypeHNSW, indexes[0].Tp)
+		require.Equal(t, ast.IndexTypeHNSW, indexes[0].Tp)
 		require.Equal(t, model.DistanceMetricCosine, indexes[0].VectorInfo.DistanceMetric)
 		require.Equal(t, "vector_index", tbl.Meta().Indices[0].Name.O)
 		require.Equal(t, "vector_index_2", tbl.Meta().Indices[1].Name.O)
@@ -1117,7 +1160,7 @@ func TestCreateTableWithVectorIndex(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(0), replicas)
 	tk.MustContainErrMsg("create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW);",
-		"Unsupported add vector index: unsupported TiFlash store count is 0")
+		"Unsupported add columnar index: unsupported TiFlash store count is 0")
 
 	// test TiFlash store count is 2
 	mockTiflashStoreCnt := uint64(2)
@@ -1134,7 +1177,7 @@ func TestCreateTableWithVectorIndex(t *testing.T) {
 		"`set TiFlash replica` is unsupported on temporary tables.")
 	tk.MustContainErrMsg("create table pt(id bigint, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW) "+
 		"partition by range(id) (partition p0 values less than (20), partition p1 values less than (100));",
-		"Unsupported add vector index: unsupported partition table")
+		"Unsupported add columnar index: unsupported partition table")
 	tk.MustContainErrMsg("create table t(a int, b vector(3), c char(210) CHARACTER SET gbk COLLATE gbk_bin, vector index((VEC_COSINE_DISTANCE(b))));",
 		"Unsupported `set TiFlash replica` settings for table contains gbk charset")
 	tk.MustContainErrMsg("create table mysql.t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))));",
@@ -1173,7 +1216,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 		PARTITION p2 VALUES LESS THAN (21)
 	 );`)
 	tk.MustContainErrMsg("alter table pt add vector index idx((vec_cosine_distance(b))) USING HNSW;",
-		"Unsupported add vector index: unsupported partition table")
+		"Unsupported add columnar index: unsupported partition table")
 	// for TiFlash replica
 	tk.MustExec("create table t (a int, b vector, c vector(3), d vector(4));")
 	tk.MustContainErrMsg("alter table t add vector index idx((VEC_COSINE_DISTANCE(b))) USING HNSW COMMENT 'b comment';",
@@ -1220,16 +1263,16 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	tk.MustExec("insert into t values (1, '[1,2.1,3.3]');")
 	tk.MustQuery("SELECT * FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE table_name = 't'").Check(testkit.Rows())
 
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	indexes := tbl.Meta().Indices
 	require.Equal(t, 0, len(indexes))
 	tk.MustExec("alter table t add vector index idx((VEC_COSINE_DISTANCE(b))) USING HNSW COMMENT 'b comment';")
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	indexes = tbl.Meta().Indices
 	require.Equal(t, 1, len(indexes))
-	require.Equal(t, pmodel.IndexTypeHNSW, indexes[0].Tp)
+	require.Equal(t, ast.IndexTypeHNSW, indexes[0].Tp)
 	require.Equal(t, model.DistanceMetricCosine, indexes[0].VectorInfo.DistanceMetric)
 	// test row count
 	jobs, err := getJobsBySQL(tk.Session(), "tidb_ddl_history", "order by job_id desc limit 1")
@@ -1241,7 +1284,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 [1,2.1,3.3]"))
 	tk.MustExec("admin check table t")
 	tk.MustExec("admin check index t idx")
-	tk.MustContainErrMsg("admin cleanup index t idx", "vector index `idx` is not supported for cleanup index")
+	tk.MustContainErrMsg("admin cleanup index t idx", "columnar index `idx` is not supported for cleanup index")
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
 		"  `b` vector(3) DEFAULT NULL,\n" +
@@ -1250,7 +1293,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 
 	// test multi-schema change for unsupported operations
 	tk.MustContainErrMsg("alter table t drop column b;",
-		"can't drop column b with Vector Key covered now")
+		"can't drop column b with Columnar Index covered now")
 	tk.MustContainErrMsg("alter table t add index idx2(a), add vector index idx3((vec_l2_distance(b))) USING HNSW COMMENT 'b comment'",
 		"Unsupported multi schema change for add vector index")
 
@@ -1266,7 +1309,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 
 	// test rename index
 	tk.MustExec("alter table t rename index idx to vecIdx")
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	indexes1 := tbl.Meta().Indices
 	require.Equal(t, 1, len(indexes1))
@@ -1275,7 +1318,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 
 	// test drop a vector index
 	tk.MustExec("alter table t drop index vecIdx;")
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	indexes = tbl.Meta().Indices
 	require.Equal(t, 0, len(indexes))
@@ -1289,11 +1332,11 @@ func TestAddVectorIndexSimple(t *testing.T) {
 
 	// test create a vector index with same name
 	tk.MustExec("create vector index idx on t ((VEC_COSINE_DISTANCE(b))) USING HNSW COMMENT 'b comment';")
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	indexes = tbl.Meta().Indices
 	require.Equal(t, 1, len(indexes))
-	require.Equal(t, pmodel.IndexTypeHNSW, indexes[0].Tp)
+	require.Equal(t, ast.IndexTypeHNSW, indexes[0].Tp)
 	require.Equal(t, model.DistanceMetricCosine, indexes[0].VectorInfo.DistanceMetric)
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 [1,2.1,3.3]"))
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
@@ -1314,16 +1357,16 @@ func TestAddVectorIndexSimple(t *testing.T) {
 
 	// test anonymous index
 	tk.MustExec("alter table t add vector index ((vec_l2_distance(b))) USING HNSW;")
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Equal(t, 1, len(tbl.Meta().Indices))
 	idx := tbl.Meta().Indices[0]
 	require.Equal(t, "vector_index", idx.Name.O)
-	require.Equal(t, pmodel.IndexTypeHNSW, idx.Tp)
+	require.Equal(t, ast.IndexTypeHNSW, idx.Tp)
 	require.Equal(t, model.DistanceMetricL2, idx.VectorInfo.DistanceMetric)
 	tk.MustExec("alter table t add key vector_index_2(a);")
 	tk.MustExec("alter table t add vector index ((VEC_COSINE_DISTANCE(b))) USING HNSW;")
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Equal(t, 3, len(tbl.Meta().Indices))
 	require.Equal(t, "vector_index_2", tbl.Meta().Indices[1].Name.O)
@@ -1337,10 +1380,10 @@ func TestAddVectorIndexRollback(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t;")
-	limit := variable.GetDDLErrorCountLimit()
-	variable.SetDDLErrorCountLimit(5)
+	limit := vardef.GetDDLErrorCountLimit()
+	vardef.SetDDLErrorCountLimit(5)
 	defer func() {
-		variable.SetDDLErrorCountLimit(limit)
+		vardef.SetDDLErrorCountLimit(limit)
 	}()
 
 	// mock TiFlash replicas
@@ -1400,7 +1443,7 @@ func TestAddVectorIndexRollback(t *testing.T) {
 			times++
 		}
 	}
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", onJobUpdatedExportedFunc)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", onJobUpdatedExportedFunc)
 
 	tk.MustGetErrMsg(addIdxSQL, "[ddl:8214]Cancelled DDL job")
 	require.NoError(t, checkErr)
@@ -1408,7 +1451,7 @@ func TestAddVectorIndexRollback(t *testing.T) {
 	checkRollbackInfo(model.JobStateRollbackDone)
 
 	// Case3: test get error message from tiflash
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(-1)`)
 	tk.MustContainErrMsg(addIdxSQL, "[ddl:9014]TiFlash backfill index failed: mock a check error")
 	checkRollbackInfo(model.JobStateRollbackDone)
@@ -1421,4 +1464,30 @@ func TestAddVectorIndexRollback(t *testing.T) {
 	// tk.MustQuery("select count(1) from t1 use index(v_idx);").Check(testkit.Rows("4"))
 
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess")
+}
+
+func TestInsertDuplicateBeforeIndexMerge(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1")
+	tk2.MustExec("set @@global.tidb_enable_dist_task=0")
+
+	tk.MustExec("use test")
+	tk2.MustExec("use test")
+
+	// Test issue 57414.
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/BeforeBackfillMerge", func() {
+		tk2.MustExec("insert ignore into t values (1, 2), (1, 2) on duplicate key update col1 = 0, col2 = 0")
+	})
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (col1 int, col2 int, unique index i1(col2) /*T![global_index] GLOBAL */) PARTITION BY HASH (col1) PARTITIONS 2")
+	tk.MustExec("alter table t add unique index i2(col1, col2)")
+	tk.MustExec("admin check table t")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (col1 int, col2 int, unique index i1(col1, col2)) PARTITION BY HASH (col1) PARTITIONS 2")
+	tk.MustExec("alter table t add unique index i2(col2) /*T![global_index] GLOBAL */")
+	tk.MustExec("admin check table t")
 }

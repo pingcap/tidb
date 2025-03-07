@@ -37,7 +37,7 @@ var (
 	tidbGlue        = gluetidb.New()
 	envLogToTermKey = "BR_LOG_TO_TERM"
 
-	filterOutSysAndMemTables = []string{
+	filterOutSysAndMemKeepAuthAndBind = []string{
 		"*.*",
 		fmt.Sprintf("!%s.*", utils.TemporaryDBName("*")),
 		"!mysql.*",
@@ -79,14 +79,25 @@ const (
 
 	flagVersion      = "version"
 	flagVersionShort = "V"
+
+	// Memory management related constants
+	quarterGiB uint64 = 256 * size.MB
+	halfGiB    uint64 = 512 * size.MB
+	fourGiB    uint64 = 4 * size.GB
+
+	// Environment variables
+	envBRHeapDumpDir = "BR_HEAP_DUMP_DIR"
+
+	// Default heap dump paths
+	defaultHeapDumpDir = "/tmp/br_heap_dumps"
 )
 
 func timestampLogFileName() string {
 	return filepath.Join(os.TempDir(), time.Now().Format("br.log.2006-01-02T15.04.05Z0700"))
 }
 
-// AddFlags adds flags to the given cmd.
-func AddFlags(cmd *cobra.Command) {
+// DefineCommonFlags defines the common flags for all BR cmd operation.
+func DefineCommonFlags(cmd *cobra.Command) {
 	cmd.Version = build.Info()
 	cmd.Flags().BoolP(flagVersion, flagVersionShort, false, "Display version information about BR")
 	cmd.SetVersionTemplate("{{printf \"%s\" .Version}}\n")
@@ -103,6 +114,8 @@ func AddFlags(cmd *cobra.Command) {
 		"Set whether to redact sensitive info in log")
 	cmd.PersistentFlags().String(FlagStatusAddr, "",
 		"Set the HTTP listening address for the status report service. Set to empty string to disable")
+
+	// defines BR task common flags, this is shared by cmd and sql(brie)
 	task.DefineCommonFlags(cmd.PersistentFlags())
 
 	cmd.PersistentFlags().StringP(FlagSlowLogFile, "", "",
@@ -110,10 +123,6 @@ func AddFlags(cmd *cobra.Command) {
 	_ = cmd.PersistentFlags().MarkHidden(FlagSlowLogFile)
 	_ = cmd.PersistentFlags().MarkHidden(FlagRedactLog)
 }
-
-const quarterGiB uint64 = 256 * size.MB
-const halfGiB uint64 = 512 * size.MB
-const fourGiB uint64 = 4 * size.GB
 
 func calculateMemoryLimit(memleft uint64) uint64 {
 	// memreserved = f(memleft) = 512MB * memleft / (memleft + 4GB)
@@ -128,6 +137,47 @@ func calculateMemoryLimit(memleft uint64) uint64 {
 	//             GOMEMLIMIT range
 	memlimit := memleft - memreserved
 	return memlimit
+}
+
+// setupMemoryMonitoring configures memory limits and starts the memory monitor.
+// It returns an error if the setup fails.
+func setupMemoryMonitoring(ctx context.Context, memTotal, memUsed uint64) error {
+	if memUsed >= memTotal {
+		log.Warn("failed to obtain memory size, skip setting memory limit",
+			zap.Uint64("memused", memUsed), zap.Uint64("memtotal", memTotal))
+		return nil
+	}
+
+	memleft := memTotal - memUsed
+	memlimit := calculateMemoryLimit(memleft)
+	// BR command needs 256 MiB at least, if the left memory is less than 256 MiB,
+	// the memory limit cannot limit anyway and then finally OOM.
+	memlimit = max(memlimit, quarterGiB)
+
+	log.Info("calculate the rest memory",
+		zap.Uint64("memtotal", memTotal),
+		zap.Uint64("memused", memUsed),
+		zap.Uint64("memlimit", memlimit))
+
+	// No need to set memory limit because the left memory is sufficient.
+	if memlimit >= uint64(math.MaxInt64) {
+		return nil
+	}
+
+	debug.SetMemoryLimit(int64(memlimit))
+
+	// Configure and start memory monitoring
+	dumpDir := os.Getenv(envBRHeapDumpDir)
+	if dumpDir == "" {
+		dumpDir = defaultHeapDumpDir
+	}
+
+	if err := utils.RunMemoryMonitor(ctx, dumpDir, memlimit); err != nil {
+		log.Warn("Failed to start memory monitor", zap.Error(err))
+		return err
+	}
+
+	return nil
 }
 
 // Init initializes BR cli.
@@ -196,21 +246,10 @@ func Init(cmd *cobra.Command) (err error) {
 				err = e
 				return
 			}
-			if memused >= memtotal {
-				log.Warn("failed to obtain memory size, skip setting memory limit",
-					zap.Uint64("memused", memused), zap.Uint64("memtotal", memtotal))
-			} else {
-				memleft := memtotal - memused
-				memlimit := calculateMemoryLimit(memleft)
-				// BR command needs 256 MiB at least, if the left memory is less than 256 MiB,
-				// the memory limit cannot limit anyway and then finally OOM.
-				memlimit = max(memlimit, quarterGiB)
-				log.Info("calculate the rest memory",
-					zap.Uint64("memtotal", memtotal), zap.Uint64("memused", memused), zap.Uint64("memlimit", memlimit))
-				// No need to set memory limit because the left memory is sufficient.
-				if memlimit < uint64(math.MaxInt64) {
-					debug.SetMemoryLimit(int64(memlimit))
-				}
+
+			if e := setupMemoryMonitoring(GetDefaultContext(), memtotal, memused); e != nil {
+				// only log the error, don't fail initialization
+				log.Error("Failed to setup memory monitoring", zap.Error(e))
 			}
 		}
 

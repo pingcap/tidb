@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -300,10 +299,20 @@ func (c *castAsStringFunctionClass) getFunction(ctx BuildContext, args []Express
 	if err != nil {
 		return nil, err
 	}
-	if args[0].GetType(ctx.GetEvalCtx()).Hybrid() {
-		sig = &builtinCastStringAsStringSig{bf}
-		sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
-		return sig, nil
+	if ft := args[0].GetType(ctx.GetEvalCtx()); ft.Hybrid() {
+		castBitAsUnBinary := ft.GetType() == mysql.TypeBit && c.tp.GetCharset() != charset.CharsetBin
+		if !castBitAsUnBinary {
+			sig = &builtinCastStringAsStringSig{bf}
+			sig.setPbCode(tipb.ScalarFuncSig_CastStringAsString)
+			return sig, nil
+		}
+		// for type BIT, it maybe an invalid value for the specified charset, we need to convert it to binary first,
+		// and then convert it to the specified charset with `HandleBinaryLiteral` in the following code.
+		tp := types.NewFieldType(mysql.TypeString)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		tp.AddFlag(mysql.BinaryFlag)
+		args[0] = BuildCastFunction(ctx, args[0], tp)
 	}
 	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
 	switch argTp {
@@ -2508,7 +2517,7 @@ func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.Fie
 	}
 	f, err := fc.getFunction(ctx, []Expression{expr})
 	res = &ScalarFunction{
-		FuncName: model.NewCIStr(ast.Cast),
+		FuncName: ast.NewCIStr(ast.Cast),
 		RetType:  tp,
 		Function: f,
 	}
@@ -2523,7 +2532,7 @@ func BuildCastFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.Fie
 
 // WrapWithCastAsInt wraps `expr` with `cast` if the return type of expr is not
 // type int, otherwise, returns `expr` directly.
-func WrapWithCastAsInt(ctx BuildContext, expr Expression) Expression {
+func WrapWithCastAsInt(ctx BuildContext, expr Expression, targetType *types.FieldType) Expression {
 	if expr.GetType(ctx.GetEvalCtx()).GetType() == mysql.TypeEnum {
 		if col, ok := expr.(*Column); ok {
 			col = col.Clone().(*Column)
@@ -2539,7 +2548,15 @@ func WrapWithCastAsInt(ctx BuildContext, expr Expression) Expression {
 	tp.SetFlen(expr.GetType(ctx.GetEvalCtx()).GetFlen())
 	tp.SetDecimal(0)
 	types.SetBinChsClnFlag(tp)
-	tp.AddFlag(expr.GetType(ctx.GetEvalCtx()).GetFlag() & (mysql.UnsignedFlag | mysql.NotNullFlag))
+	// inherit NotNullFlag from source type
+	tp.AddFlag(expr.GetType(ctx.GetEvalCtx()).GetFlag() & mysql.NotNullFlag)
+	if targetType == nil {
+		// inherit UnsignedFlag from source type if targetType is nil
+		tp.AddFlag(expr.GetType(ctx.GetEvalCtx()).GetFlag() & mysql.UnsignedFlag)
+	} else {
+		// otherwise set UnsignedFlag based on targetType
+		tp.AddFlag(targetType.GetFlag() & mysql.UnsignedFlag)
+	}
 	return BuildCastFunction(ctx, expr, tp)
 }
 
@@ -2749,7 +2766,9 @@ func TryPushCastIntoControlFunctionForHybridType(ctx BuildContext, expr Expressi
 	var wrapCastFunc func(ctx BuildContext, expr Expression) Expression
 	switch tp.EvalType() {
 	case types.ETInt:
-		wrapCastFunc = WrapWithCastAsInt
+		wrapCastFunc = func(ctx BuildContext, expr Expression) Expression {
+			return WrapWithCastAsInt(ctx, expr, tp)
+		}
 	case types.ETReal:
 		wrapCastFunc = WrapWithCastAsReal
 	default:

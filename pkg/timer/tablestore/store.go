@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -117,7 +117,7 @@ func (s *tableTimerStoreCore) List(ctx context.Context, cond api.Cond) ([]*api.T
 	}
 	defer back()
 
-	if sessVars := sctx.GetSessionVars(); sessVars.GetEnableIndexMerge() {
+	if sessVars := sctx.GetSessionVars(); !sessVars.GetEnableIndexMerge() {
 		// Enable index merge is used to make sure filtering timers with tags quickly.
 		// Currently, we are using multi-value index to index tags for timers which requires index merge enabled.
 		// see: https://docs.pingcap.com/tidb/dev/choose-index#use-a-multi-valued-index
@@ -137,7 +137,7 @@ func (s *tableTimerStoreCore) List(ctx context.Context, cond api.Cond) ([]*api.T
 		return nil, err
 	}
 
-	tidbTimeZone, err := sctx.GetSessionVars().GetGlobalSystemVar(ctx, variable.TimeZone)
+	tidbTimeZone, err := sctx.GetSessionVars().GetGlobalSystemVar(ctx, vardef.TimeZone)
 	if err != nil {
 		return nil, err
 	}

@@ -26,7 +26,6 @@ import (
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -63,7 +62,10 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	s.tk.MustExec(`create table t (a bigint primary key, b varchar(100), c varchar(100), d int,
 		key(a), key(c,d), key(d));`)
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/parser/ast/forceRedactURL", "return(true)")
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "return()")
+	ch := make(chan struct{}, 1)
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", func() {
+		ch <- struct{}{}
+	})
 
 	sortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s'
@@ -78,7 +80,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	))
 
 	// check all sorted data cleaned up
-	<-scheduler.WaitCleanUpFinished
+	<-ch
 
 	_, files, err := s.server.ListObjectsWithOptions("sorted", fakestorage.ListOptions{Prefix: "import"})
 	s.NoError(err)
@@ -106,7 +108,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 		"1 foo1 bar1 123", "2 foo2 bar2 456", "3 foo3 bar3 789",
 		"4 foo4 bar4 123", "5 foo5 bar5 223", "6 foo6 bar6 323",
 	))
-	<-scheduler.WaitCleanUpFinished
+	<-ch
 
 	// failed task, should clean up all sorted data too.
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/failWhenDispatchWriteIngestSubtask", "return(true)")
@@ -121,7 +123,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 		return task.State == proto.TaskStateReverted
 	}, 30*time.Second, 300*time.Millisecond)
 	// check all sorted data cleaned up
-	<-scheduler.WaitCleanUpFinished
+	<-ch
 
 	_, files, err = s.server.ListObjectsWithOptions("sorted", fakestorage.ListOptions{Prefix: "import"})
 	s.NoError(err)
@@ -153,4 +155,37 @@ func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
 		with cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
 	s.tk.MustQuery(importSQL)
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))
+}
+
+func (s *mockGCSSuite) TestGlobalSortUniqueKeyConflict() {
+	var allData []string
+	for i := 0; i < 10; i++ {
+		var content []byte
+		keyCnt := 1000
+		for j := 0; j < keyCnt; j++ {
+			idx := i*keyCnt + j
+			content = append(content, []byte(fmt.Sprintf("%d,test-%d\n", idx, idx))...)
+		}
+		if i == 9 {
+			// add a duplicate key "test-123"
+			content = append(content, []byte("99999999,test-123\n")...)
+		}
+		s.server.CreateObject(fakestorage.Object{
+			ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-multi-files-uk", Name: fmt.Sprintf("t.%d.csv", i)},
+			Content:     content,
+		})
+	}
+	slices.Sort(allData)
+	s.prepareAndUseDB("gs_multi_files")
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+	s.tk.MustExec("create table t (a bigint primary key , b varchar(100) unique key);")
+	// 1 subtask, encoding 10 files using 4 threads.
+	sortStorageURI := fmt.Sprintf("gs://sorted/gs_multi_files?endpoint=%s", gcsEndpoint)
+	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-multi-files-uk/t.*.csv?endpoint=%s'
+		with cloud_storage_uri='%s', __max_engine_size='1', thread=8`, gcsEndpoint, sortStorageURI)
+	err := s.tk.QueryToErr(importSQL)
+	require.ErrorContains(s.T(), err, "duplicate key found")
+	// this is the encoded value of "test-123". Because the table ID/ index ID may vary, we can't check the exact key
+	// TODO: decode the key to use readable value in the error message.
+	require.ErrorContains(s.T(), err, "746573742d313233")
 }

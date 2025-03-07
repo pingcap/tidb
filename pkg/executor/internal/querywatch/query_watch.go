@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
@@ -89,14 +88,14 @@ func setWatchOption(ctx context.Context,
 			}
 			sql := stmts[0].Text()
 			switch watchType {
-			case model.WatchNone:
+			case ast.WatchNone:
 				return errors.Errorf("watch type must be specified")
-			case model.WatchExact:
+			case ast.WatchExact:
 				record.WatchText = sql
-			case model.WatchSimilar:
+			case ast.WatchSimilar:
 				_, digest := parser.NormalizeDigest(sql)
 				record.WatchText = digest.String()
-			case model.WatchPlan:
+			case ast.WatchPlan:
 				sqlExecutor := newSctx.GetSQLExecutor()
 				if _, err := sqlExecutor.ExecuteInternal(ctx, fmt.Sprintf("explain %s", stmts[0].Text())); err != nil {
 					return err

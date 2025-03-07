@@ -23,6 +23,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -46,31 +48,59 @@ import (
 	"go.uber.org/zap"
 )
 
-// BackfillingSchedulerExt is an extension of litBackfillScheduler, exported for test.
-type BackfillingSchedulerExt struct {
+// LitBackfillScheduler wraps BaseScheduler.
+type LitBackfillScheduler struct {
+	*scheduler.BaseScheduler
 	d          *ddl
 	GlobalSort bool
+	nodeRes    *proto.NodeResource
 }
 
-// NewBackfillingSchedulerExt creates a new backfillingSchedulerExt, only used for test now.
-func NewBackfillingSchedulerExt(d DDL) (scheduler.Extension, error) {
+var _ scheduler.Extension = (*LitBackfillScheduler)(nil)
+
+func newLitBackfillScheduler(ctx context.Context, d *ddl, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
+	sch := LitBackfillScheduler{
+		d:             d,
+		BaseScheduler: scheduler.NewBaseScheduler(ctx, task, param),
+		nodeRes:       param.GetNodeResource(),
+	}
+	return &sch
+}
+
+// NewBackfillingSchedulerForTest creates a new backfillingSchedulerExt, only used for test now.
+func NewBackfillingSchedulerForTest(d DDL) (scheduler.Extension, error) {
 	ddl, ok := d.(*ddl)
 	if !ok {
 		return nil, errors.New("The getDDL result should be the type of *ddl")
 	}
-	return &BackfillingSchedulerExt{
-		d: ddl,
+	return &LitBackfillScheduler{
+		d:       ddl,
+		nodeRes: &proto.NodeResource{TotalCPU: 4, TotalMem: 16 * units.GiB, TotalDisk: 100 * units.GiB},
 	}, nil
 }
 
-var _ scheduler.Extension = (*BackfillingSchedulerExt)(nil)
+// Init implements BaseScheduler interface.
+func (sch *LitBackfillScheduler) Init() (err error) {
+	taskMeta := &BackfillTaskMeta{}
+	if err = json.Unmarshal(sch.BaseScheduler.GetTask().Meta, taskMeta); err != nil {
+		return errors.Annotate(err, "unmarshal task meta failed")
+	}
+	sch.GlobalSort = len(taskMeta.CloudStorageURI) > 0
+	sch.BaseScheduler.Extension = sch
+	return sch.BaseScheduler.Init()
+}
+
+// Close implements BaseScheduler interface.
+func (sch *LitBackfillScheduler) Close() {
+	sch.BaseScheduler.Close()
+}
 
 // OnTick implements scheduler.Extension interface.
-func (*BackfillingSchedulerExt) OnTick(_ context.Context, _ *proto.Task) {
+func (*LitBackfillScheduler) OnTick(_ context.Context, _ *proto.Task) {
 }
 
 // OnNextSubtasksBatch generate batch of next step's plan.
-func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
+func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 	ctx context.Context,
 	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
@@ -93,13 +123,16 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 		return nil, err
 	}
 	logger.Info("on next subtasks batch")
-
+	storeWithPD := sch.d.store.(kv.StorageWithPD)
 	// TODO: use planner.
 	switch nextStep {
 	case proto.BackfillStepReadIndex:
 		if tblInfo.Partition != nil {
-			return generatePartitionPlan(tblInfo)
+			return generatePartitionPlan(ctx, storeWithPD, tblInfo)
 		}
+		// TODO(tangenta): use available disk during adding index.
+		availableDisk := sch.nodeRes.GetTaskDiskResource(task.Concurrency, vardef.DDLDiskQuota.Load())
+		logger.Info("available local disk space resource", zap.String("size", units.BytesSize(float64(availableDisk))))
 		return generateNonPartitionPlan(ctx, sch.d, tblInfo, job, sch.GlobalSort, len(execIDs))
 	case proto.BackfillStepMergeSort:
 		return generateMergePlan(taskHandle, task, logger)
@@ -116,7 +149,7 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 			})
 			return generateGlobalSortIngestPlan(
 				ctx,
-				sch.d.store.(kv.StorageWithPD),
+				storeWithPD,
 				taskHandle,
 				task,
 				backfillMeta.CloudStorageURI,
@@ -129,7 +162,7 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 }
 
 // GetNextStep implements scheduler.Extension interface.
-func (sch *BackfillingSchedulerExt) GetNextStep(task *proto.TaskBase) proto.Step {
+func (sch *LitBackfillScheduler) GetNextStep(task *proto.TaskBase) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
 		return proto.BackfillStepReadIndex
@@ -155,49 +188,38 @@ func skipMergeSort(stats []external.MultipleFilesStat) bool {
 }
 
 // OnDone implements scheduler.Extension interface.
-func (*BackfillingSchedulerExt) OnDone(_ context.Context, _ diststorage.TaskHandle, _ *proto.Task) error {
+func (*LitBackfillScheduler) OnDone(_ context.Context, _ diststorage.TaskHandle, _ *proto.Task) error {
 	return nil
 }
 
 // GetEligibleInstances implements scheduler.Extension interface.
-func (*BackfillingSchedulerExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]string, error) {
+func (*LitBackfillScheduler) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]string, error) {
 	return nil, nil
 }
 
-// IsRetryableErr implements scheduler.Extension.IsRetryableErr interface.
-func (*BackfillingSchedulerExt) IsRetryableErr(error) bool {
+// IsRetryableErr implements scheduler.Extension interface.
+func (*LitBackfillScheduler) IsRetryableErr(error) bool {
 	return true
 }
 
-// LitBackfillScheduler wraps BaseScheduler.
-type LitBackfillScheduler struct {
-	*scheduler.BaseScheduler
-	d *ddl
-}
-
-func newLitBackfillScheduler(ctx context.Context, d *ddl, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
-	sch := LitBackfillScheduler{
-		d:             d,
-		BaseScheduler: scheduler.NewBaseScheduler(ctx, task, param),
-	}
-	return &sch
-}
-
-// Init implements BaseScheduler interface.
-func (sch *LitBackfillScheduler) Init() (err error) {
+// ModifyMeta implements scheduler.Extension interface.
+func (sch *LitBackfillScheduler) ModifyMeta(oldMeta []byte, modifies []proto.Modification) ([]byte, error) {
 	taskMeta := &BackfillTaskMeta{}
-	if err = json.Unmarshal(sch.BaseScheduler.GetTask().Meta, taskMeta); err != nil {
-		return errors.Annotate(err, "unmarshal task meta failed")
+	if err := json.Unmarshal(oldMeta, taskMeta); err != nil {
+		return nil, errors.Trace(err)
 	}
-	sch.BaseScheduler.Extension = &BackfillingSchedulerExt{
-		d:          sch.d,
-		GlobalSort: len(taskMeta.CloudStorageURI) > 0}
-	return sch.BaseScheduler.Init()
-}
-
-// Close implements BaseScheduler interface.
-func (sch *LitBackfillScheduler) Close() {
-	sch.BaseScheduler.Close()
+	for _, m := range modifies {
+		switch m.Type {
+		case proto.ModifyBatchSize:
+			taskMeta.Job.ReorgMeta.SetBatchSize(int(m.To))
+		case proto.ModifyMaxWriteSpeed:
+			taskMeta.Job.ReorgMeta.SetMaxWriteSpeed(int(m.To))
+		default:
+			logutil.DDLLogger().Warn("invalid modify type",
+				zap.Int64("taskId", sch.GetTask().ID), zap.Stringer("modify", m))
+		}
+	}
+	return json.Marshal(taskMeta)
 }
 
 func getTblInfo(ctx context.Context, d *ddl, job *model.Job) (tblInfo *model.TableInfo, err error) {
@@ -212,7 +234,11 @@ func getTblInfo(ctx context.Context, d *ddl, job *model.Job) (tblInfo *model.Tab
 	return tblInfo, nil
 }
 
-func generatePartitionPlan(tblInfo *model.TableInfo) (metas [][]byte, err error) {
+func generatePartitionPlan(
+	ctx context.Context,
+	store kv.StorageWithPD,
+	tblInfo *model.TableInfo,
+) (metas [][]byte, err error) {
 	defs := tblInfo.Partition.Definitions
 	physicalIDs := make([]int64, len(defs))
 	for i := range defs {
@@ -221,8 +247,14 @@ func generatePartitionPlan(tblInfo *model.TableInfo) (metas [][]byte, err error)
 
 	subTaskMetas := make([][]byte, 0, len(physicalIDs))
 	for _, physicalID := range physicalIDs {
+		// It should be different for each subtask to determine if there are duplicate entries.
+		importTS, err := allocNewTS(ctx, store)
+		if err != nil {
+			return nil, err
+		}
 		subTaskMeta := &BackfillSubTaskMeta{
 			PhysicalTableID: physicalID,
+			TS:              importTS,
 		}
 
 		metaBytes, err := json.Marshal(subTaskMeta)
@@ -297,6 +329,11 @@ func generateNonPartitionPlan(
 		regionBatch := CalculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud)
 
 		for i := 0; i < len(recordRegionMetas); i += regionBatch {
+			// It should be different for each subtask to determine if there are duplicate entries.
+			importTS, err := allocNewTS(ctx, d.store.(kv.StorageWithPD))
+			if err != nil {
+				return true, nil
+			}
 			end := i + regionBatch
 			if end > len(recordRegionMetas) {
 				end = len(recordRegionMetas)
@@ -305,6 +342,7 @@ func generateNonPartitionPlan(
 			subTaskMeta := &BackfillSubTaskMeta{
 				RowStart: batch[0].StartKey(),
 				RowEnd:   batch[len(batch)-1].EndKey(),
+				TS:       importTS,
 			}
 			if i == 0 {
 				subTaskMeta.RowStart = startKey
@@ -409,6 +447,16 @@ func generateGlobalSortIngestPlan(
 	return metaArr, nil
 }
 
+func allocNewTS(ctx context.Context, store kv.StorageWithPD) (uint64, error) {
+	pdCli := store.GetPDClient()
+	p, l, err := pdCli.GetTS(ctx)
+	if err != nil {
+		return 0, err
+	}
+	ts := oracle.ComposeTS(p, l)
+	return ts, nil
+}
+
 func splitSubtaskMetaForOneKVMetaGroup(
 	ctx context.Context,
 	store kv.StorageWithPD,
@@ -422,15 +470,13 @@ func splitSubtaskMetaForOneKVMetaGroup(
 		// Skip global sort for empty table.
 		return nil, nil
 	}
-	pdCli := store.GetPDClient()
-	p, l, err := pdCli.GetTS(ctx)
+	importTS, err := allocNewTS(ctx, store)
 	if err != nil {
 		return nil, err
 	}
-	ts := oracle.ComposeTS(p, l)
 	failpoint.Inject("mockTSForGlobalSort", func(val failpoint.Value) {
 		i := val.(int)
-		ts = uint64(i)
+		importTS = uint64(i)
 	})
 	splitter, err := getRangeSplitter(
 		ctx, store, cloudStorageURI, int64(kvMeta.TotalKVSize), instanceCnt, kvMeta.MultipleFilesStats, logger)
@@ -447,7 +493,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 	startKey := kvMeta.StartKey
 	var endKey kv.Key
 	for {
-		endKeyOfGroup, dataFiles, statFiles, interiorRangeJobKeys, regionSplitKeys, err := splitter.SplitOneRangesGroup()
+		endKeyOfGroup, dataFiles, statFiles, interiorRangeJobKeys, interiorRegionSplitKeys, err := splitter.SplitOneRangesGroup()
 		if err != nil {
 			return nil, err
 		}
@@ -468,6 +514,10 @@ func splitSubtaskMetaForOneKVMetaGroup(
 		rangeJobKeys = append(rangeJobKeys, startKey)
 		rangeJobKeys = append(rangeJobKeys, interiorRangeJobKeys...)
 		rangeJobKeys = append(rangeJobKeys, endKey)
+		regionSplitKeys := make([][]byte, 0, len(interiorRegionSplitKeys)+2)
+		regionSplitKeys = append(regionSplitKeys, startKey)
+		regionSplitKeys = append(regionSplitKeys, interiorRegionSplitKeys...)
+		regionSplitKeys = append(regionSplitKeys, endKey)
 		m := &BackfillSubTaskMeta{
 			MetaGroups: []*external.SortedKVMeta{{
 				StartKey:    startKey,
@@ -478,7 +528,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 			StatFiles:      statFiles,
 			RangeJobKeys:   rangeJobKeys,
 			RangeSplitKeys: regionSplitKeys,
-			TS:             ts,
+			TS:             importTS,
 		}
 		if eleID > 0 {
 			m.EleIDs = []int64{eleID}

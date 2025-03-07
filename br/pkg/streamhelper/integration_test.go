@@ -146,6 +146,7 @@ func TestIntegration(t *testing.T) {
 	t.Run("TestStreamCheckpoint", func(t *testing.T) { testStreamCheckpoint(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
 	t.Run("testStoptask", func(t *testing.T) { testStoptask(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
 	t.Run("TestStreamClose", func(t *testing.T) { testStreamClose(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
+	t.Run("TestPauseTaskWithErr", func(t *testing.T) { testPauseTaskWithErr(t, streamhelper.AdvancerExt{MetaDataClient: metaCli}) })
 }
 
 func TestChecking(t *testing.T) {
@@ -317,7 +318,7 @@ func testStreamListening(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	fifth, ok := <-ch
 	require.True(t, ok)
 	require.Equal(t, fifth.Type, streamhelper.EventErr)
-	require.Error(t, fifth.Err, context.Canceled)
+	require.ErrorIs(t, fifth.Err, context.Canceled)
 	item, ok := <-ch
 	require.False(t, ok, "%v", item)
 }
@@ -349,7 +350,7 @@ func testStreamClose(t *testing.T, metaCli streamhelper.AdvancerExt) {
 
 	third := <-ch
 	require.Equal(t, third.Type, streamhelper.EventErr)
-	require.Error(t, third.Err, io.EOF)
+	require.ErrorIs(t, third.Err, io.EOF)
 	item, ok := <-ch
 	require.False(t, ok, "%#v", item)
 }
@@ -440,4 +441,40 @@ func testStoptask(t *testing.T, metaCli streamhelper.AdvancerExt) {
 	resp, err = metaCli.KV.Get(ctx, streamhelper.Pause(taskName))
 	req.NoError(err)
 	req.EqualValues(0, len(resp.Kvs))
+}
+
+func testPauseTaskWithErr(t *testing.T, metaCli streamhelper.AdvancerExt) {
+	var (
+		ctx      = context.Background()
+		taskName = "pause_task"
+		req      = require.New(t)
+		taskInfo = streamhelper.TaskInfo{
+			PBInfo: backuppb.StreamBackupTaskInfo{
+				Name:    taskName,
+				StartTs: 0,
+			},
+		}
+	)
+
+	req.NoError(metaCli.PutTask(ctx, taskInfo))
+	t2, err := metaCli.GetTask(ctx, taskName)
+	req.NoError(err)
+	req.EqualValues(taskInfo.PBInfo.Name, t2.Info.Name)
+
+	bError := &backuppb.StreamBackupError{
+		HappenAt:     42,
+		ErrorCode:    "[BR:Nothing]",
+		ErrorMessage: "nothing",
+		StoreId:      5,
+	}
+	metaCli.PauseTask(ctx, taskName, func(pv *streamhelper.PauseV2) { req.NoError(pv.SetBakcupStreamError(bError)) })
+	task, err := metaCli.GetTask(ctx, taskName)
+	req.NoError(err)
+	p, err := task.GetPauseV2(ctx)
+	req.NoError(err)
+	pl, err := p.GetPayload()
+	req.NoError(err)
+	bErrorUploaded, ok := pl.(*backuppb.StreamBackupError)
+	req.True(ok)
+	req.EqualValues(bError, bErrorUploaded)
 }

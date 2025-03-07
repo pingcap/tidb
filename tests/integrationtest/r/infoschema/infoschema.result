@@ -314,14 +314,17 @@ TABLE_SCHEMA	TABLE_NAME	INDEX_NAME
 indexusage	idt1	idx_1
 indexusage	idt1	idx_2
 indexusage	idt1	idx_3
+indexusage	idt1	primary
 indexusage	idt2	idx_1
 indexusage	idt2	idx_2
 indexusage	idt2	idx_4
+indexusage	idt2	primary
 select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_NAME = 'idt1';
 TABLE_SCHEMA	TABLE_NAME	INDEX_NAME
 indexusage	idt1	idx_1
 indexusage	idt1	idx_2
 indexusage	idt1	idx_3
+indexusage	idt1	primary
 select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where INDEX_NAME = 'IDX_3';
 TABLE_SCHEMA	TABLE_NAME	INDEX_NAME
 indexusage	idt1	idx_3
@@ -330,6 +333,7 @@ TABLE_SCHEMA	TABLE_NAME	INDEX_NAME
 indexusage	idt1	idx_1
 indexusage	idt1	idx_2
 indexusage	idt1	idx_3
+indexusage	idt1	primary
 select TABLE_SCHEMA, TABLE_NAME, INDEX_NAME from information_schema.tidb_index_usage where TABLE_SCHEMA = 'indexusage' and INDEX_NAME = 'idx_2';
 TABLE_SCHEMA	TABLE_NAME	INDEX_NAME
 indexusage	idt1	idx_2

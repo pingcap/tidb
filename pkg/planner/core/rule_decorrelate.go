@@ -133,20 +133,85 @@ func (*DecorrelateSolver) aggDefaultValueMap(agg *logicalop.LogicalAggregation) 
 	return defaultValueMap
 }
 
+// pruneRedundantApply: Removes the Apply operator if the parent SELECT clause does not filter any rows from the source.
+// Example: SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1))
+// In this case, the subquery can be removed entirely since the WHERE clause always evaluates to True.
+// This results in a SELECT node with a True condition and an Apply operator as its child.
+// If this pattern is detected, we remove both the SELECT and Apply nodes, returning the left child of the Apply operator as the result.
+// For the example above, the result would be a table scan on t1.
+func pruneRedundantApply(p base.LogicalPlan) (base.LogicalPlan, bool) {
+	// Check if the current plan is a LogicalSelection
+	logicalSelection, ok := p.(*logicalop.LogicalSelection)
+	if !ok {
+		return nil, false
+	}
+
+	// Retrieve the child of LogicalSelection
+	selectSource := logicalSelection.Children()[0]
+
+	// Check if the child is a LogicalApply
+	apply, ok := selectSource.(*logicalop.LogicalApply)
+	if !ok {
+		return nil, false
+	}
+
+	// Ensure the Apply operator is of a suitable join type to match the required pattern.
+	// Only LeftOuterJoin or LeftOuterSemiJoin are considered valid here.
+	if apply.JoinType != logicalop.LeftOuterJoin && apply.JoinType != logicalop.LeftOuterSemiJoin {
+		return nil, false
+	}
+
+	// Simplify predicates from the LogicalSelection
+	simplifiedPredicates := applyPredicateSimplification(p.SCtx(), logicalSelection.Conditions)
+
+	// Determine if this is a "true selection"
+	trueSelection := false
+	if len(simplifiedPredicates) == 0 {
+		trueSelection = true
+	} else if len(simplifiedPredicates) == 1 {
+		_, simplifiedPredicatesType := FindPredicateType(p.SCtx(), simplifiedPredicates[0])
+		if simplifiedPredicatesType == truePredicate {
+			trueSelection = true
+		}
+	}
+
+	if trueSelection {
+		finalResult := apply
+
+		// Traverse through LogicalApply nodes to find the last one
+		for {
+			child := finalResult.Children()[0]
+			nextApply, ok := child.(*logicalop.LogicalApply)
+			if !ok {
+				return child, true // Return the child of the last LogicalApply
+			}
+			finalResult = nextApply
+		}
+	}
+
+	return nil, false
+}
+
 // Optimize implements base.LogicalOptRule.<0th> interface.
 func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
+	if optimizedPlan, planChanged := pruneRedundantApply(p); planChanged {
+		return optimizedPlan, planChanged, nil
+	}
+
 	planChanged := false
 	if apply, ok := p.(*logicalop.LogicalApply); ok {
 		outerPlan := apply.Children()[0]
 		innerPlan := apply.Children()[1]
 		apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.Children()[1], apply.Children()[0].Schema())
 		if len(apply.CorCols) == 0 {
-			// If the inner plan is non-correlated, the apply will be simplified to join.
-			join := &apply.LogicalJoin
-			join.SetSelf(join)
-			join.SetTP(plancodec.TypeJoin)
-			p = join
-			appendApplySimplifiedTraceStep(apply, join, opt)
+			if !p.SCtx().GetSessionVars().EnableCascadesPlanner {
+				// If the inner plan is non-correlated, the apply will be simplified to join.
+				join := &apply.LogicalJoin
+				join.SetSelf(join)
+				join.SetTP(plancodec.TypeJoin)
+				p = join
+				appendApplySimplifiedTraceStep(apply, join, opt)
+			}
 		} else if apply.NoDecorrelate {
 			goto NoOptimize
 		} else if sel, ok := innerPlan.(*logicalop.LogicalSelection); ok {
@@ -248,7 +313,7 @@ func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, op
 				apply.JoinType = logicalop.LeftOuterJoin
 				apply.SetChildren(outerPlan, innerPlan)
 				agg.SetSchema(apply.Schema())
-				agg.GroupByItems = expression.Column2Exprs(outerPlan.Schema().Keys[0])
+				agg.GroupByItems = expression.Column2Exprs(outerPlan.Schema().PKOrUK[0])
 				newAggFuncs := make([]*aggregation.AggFuncDesc, 0, apply.Schema().Len())
 
 				outerColsInSchema := make([]*expression.Column, 0, outerPlan.Schema().Len())
