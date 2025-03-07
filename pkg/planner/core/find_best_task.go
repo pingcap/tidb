@@ -188,11 +188,9 @@ func enumeratePhysicalPlans4Task(
 		iteration = iterateChildPlan4LogicalSequence
 	}
 	var fd *fd.FDSet
-	if !prop.IsParentPhyscicalHashJoin {
-		if joinP, ok := p.Self().(*logicalop.LogicalJoin); ok {
-			if joinP.JoinType == logicalop.InnerJoin {
-				fd = joinP.ExtractFD()
-			}
+	if joinP, ok := p.Self().(*logicalop.LogicalJoin); ok {
+		if joinP.JoinType == logicalop.InnerJoin {
+			fd = joinP.ExtractFD()
 		}
 	}
 
@@ -273,16 +271,8 @@ func iteratePhysicalPlan4BaseLogical(
 	childTasks = childTasks[:0]
 	// The curCntPlan records the number of possible plans for selfPhysicalPlan
 	curCntPlan := int64(1)
-	var isParentPhyscicalHashJoin bool
-	if _, ok := selfPhysicalPlan.(*PhysicalHashJoin); ok {
-		isParentPhyscicalHashJoin = true
-	}
 	for j, child := range p.Children() {
 		childProp := selfPhysicalPlan.GetChildReqProps(j)
-		if childProp != nil {
-			childProp.IsParentPhyscicalHashJoin = isParentPhyscicalHashJoin
-		}
-
 		childTask, cnt, err := child.FindBestTask(childProp, &PlanCounterDisabled, opt)
 		childCnts[j] = cnt
 		if err != nil {

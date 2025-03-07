@@ -255,9 +255,6 @@ type PhysicalProperty struct {
 		*expression.VSInfo
 		TopK uint32
 	}
-
-	// IsParentPhyscicalHashJoin indicates whether the parent of the current operator is a physical join.
-	IsParentPhyscicalHashJoin bool
 }
 
 // NewPhysicalProperty builds property from columns.
