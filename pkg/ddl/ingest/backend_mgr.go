@@ -236,7 +236,12 @@ func (m *litBackendCtxMgr) cleanupSortPath(ctx context.Context) {
 	})
 }
 
-func createLocalBackend(ctx context.Context, cfg *litConfig, pdSvcDiscovery pd.ServiceDiscovery, adjustedWorkerConcurrency int) (*local.Backend, error) {
+func createLocalBackend(
+	ctx context.Context,
+	cfg *litConfig,
+	pdSvcDiscovery pd.ServiceDiscovery,
+	adjustedWorkerConcurrency int,
+) (*local.Backend, error) {
 	tls, err := cfg.lightning.ToTLS()
 	if err != nil {
 		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Error(err))

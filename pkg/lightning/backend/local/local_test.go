@@ -1809,6 +1809,7 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 		456,
 		789,
 		true,
+		16*units.GiB,
 	)
 
 	jobCh := make(chan *regionJob, 9)

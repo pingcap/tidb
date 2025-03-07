@@ -271,11 +271,9 @@ func getFilesReadConcurrency(
 	}
 	startOffs, endOffs := offsets[0], offsets[1]
 	totalFileSize := uint64(0)
-	sizePerFile := make([]uint64, 0, len(startOffs))
 	for i := range statsFiles {
 		size := endOffs[i] - startOffs[i]
 		totalFileSize += size
-		sizePerFile = append(sizePerFile, size)
 		expectedConc := size / uint64(ConcurrentReaderBufferSizePerConc)
 		// let the stat internals cover the [startKey, endKey) since seekPropsOffsets
 		// always return an offset that is less than or equal to the key.

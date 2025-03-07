@@ -531,7 +531,7 @@ func TestCalRangeSize(t *testing.T) {
 	}
 	cases := []struct {
 		memPerCore int64
-		rangeInfos [][3]int64
+		rangeInfos [][3]int64 // [range-size, range-keys, sst-file-num]
 	}{
 		{memPerCore: int64(var17 * float64(units.GiB)), rangeInfos: [][3]int64{
 			{2 * 96 * units.MiB, 2 * 960_000, 1},
