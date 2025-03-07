@@ -188,6 +188,8 @@ func NewExternalEngine(
 ) common.Engine {
 	// at most 3 batches can be loaded in memory, see writeStepMemShareCount.
 	memLimit := int(float64(memCapacity) / writeStepMemShareCount * 3)
+	logutil.BgLogger().Info("create external engine",
+		zap.String("memLimitForLoadRange", units.BytesSize(float64(memLimit))))
 	memLimiter := membuf.NewLimiter(memLimit)
 	return &Engine{
 		storage:    storage,
@@ -298,7 +300,7 @@ func getFilesReadConcurrency(
 		}
 	}
 	logutil.Logger(ctx).Info("estimated file size of this range group",
-		zap.Uint64("totalSize", totalFileSize), zap.Uint64s("sizePerFile", sizePerFile))
+		zap.Uint64("totalSize", totalFileSize))
 	return result, startOffs, nil
 }
 
@@ -313,7 +315,6 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	startKey := jobKeys[0]
 	endKey := jobKeys[len(jobKeys)-1]
 	readStart := time.Now()
-	logutil.Logger(ctx).Info("load range group data", zap.Int("ranges", len(jobKeys)-1))
 	// read all data in range [startKey, endKey)
 	err := readAllData(
 		ctx,
@@ -423,13 +424,14 @@ func (e *Engine) LoadIngestData(
 	outCh chan<- common.DataAndRanges,
 ) error {
 	// try to make every worker busy for each batch
-	regionBatchSize := e.workerConcurrency
+	rangeBatchSize := e.workerConcurrency
 	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
-		regionBatchSize = val.(int)
+		rangeBatchSize = val.(int)
 	})
-	for start := 0; start < len(e.jobKeys)-1; start += regionBatchSize {
+	logutil.Logger(ctx).Info("load ingest data", zap.Int("batchSize", rangeBatchSize))
+	for start := 0; start < len(e.jobKeys)-1; start += rangeBatchSize {
 		// want to generate N ranges, so we need N+1 keys
-		end := min(1+start+regionBatchSize, len(e.jobKeys))
+		end := min(1+start+rangeBatchSize, len(e.jobKeys))
 		err := e.loadBatchRegionData(ctx, e.jobKeys[start:end], outCh)
 		if err != nil {
 			return err
