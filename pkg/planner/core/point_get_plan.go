@@ -475,9 +475,14 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) (bool, error) {
 	}
 	partIdx, err := pt.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), row)
 	partIdx, err = pt.Meta().Partition.ReplaceWithOverlappingPartitionIdx(partIdx, err)
-	if err != nil || !isInExplicitPartitions(pi, partIdx, p.PartitionNames) {
+	noMatch := !isInExplicitPartitions(pi, partIdx, p.PartitionNames)
+	if err != nil || noMatch || partIdx < 0 {
+		// TODO: check BatchPointGet as well!
 		partIdx = -1
 		p.PartitionIdx = &partIdx
+		if table.ErrNoPartitionForGivenValue.Equal(err) || noMatch {
+			return true, nil
+		}
 		return true, err
 	}
 	p.PartitionIdx = &partIdx
@@ -745,6 +750,7 @@ func (p *BatchPointGetPlan) getPartitionIdxs(sctx sessionctx.Context) []int {
 		pIdx, err := pTbl.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), r)
 		pIdx, err = pTbl.Meta().Partition.ReplaceWithOverlappingPartitionIdx(pIdx, err)
 		if err != nil {
+			// TODO: return errors others than No Matching Partition.
 			// Skip on any error, like:
 			// No matching partition, overflow etc.
 			idxs = append(idxs, -1)
@@ -852,7 +858,7 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 					{
 						pIdx = -1
 					}
-				} else {
+				} else if pIdx >= 0 {
 					partitionsFound++
 				}
 				partIdxs = append(partIdxs, pIdx)
