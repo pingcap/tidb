@@ -1313,7 +1313,7 @@ const (
 //	Adding PK: Unique, IndexName, IndexPartSpecifications, IndexOptions, HiddelCols, Global
 //	Adding vector index: IndexName, IndexPartSpecifications, IndexOption, FuncExpr
 //	Drop index: IndexName, IfExist, IndexID
-//	Rollback add index: IndexName, IfExist, IsVector
+//	Rollback add index: IndexName, IfExist, IsTiFlashIndex
 //	Rename index: IndexName
 type IndexArg struct {
 	// Global is never used, we only use Global in IndexOption. Can be deprecated later.
@@ -1326,7 +1326,10 @@ type IndexArg struct {
 
 	// For vector index
 	FuncExpr string `json:"func_expr,omitempty"`
-	IsVector bool   `json:"is_vector,omitempty"`
+	// IsTiFlashIndex is used to distinguish TiFlash index and normal index.
+	// It used to be `IsVector`, after adding Columnar index, we extend it to `IsTiFlashIndex`.
+	// But we keep the json field name as `is_vector` for compatibility.
+	IsTiFlashIndex bool `json:"is_vector,omitempty"`
 
 	// For PK
 	IsPK    bool          `json:"is_pk,omitempty"`
@@ -1388,6 +1391,12 @@ func (a *ModifyIndexArgs) getArgsV1(job *Job) []any {
 		return []any{arg.IndexName, arg.IndexPartSpecifications[0], arg.IndexOption, arg.FuncExpr}
 	}
 
+	// Add columnar index
+	if job.Type == ActionAddColumnarIndex {
+		arg := a.IndexArgs[0]
+		return []any{arg.IndexName, arg.IndexPartSpecifications[0], arg.IndexOption}
+	}
+
 	// Add primary key
 	if job.Type == ActionAddPrimaryKey {
 		arg := a.IndexArgs[0]
@@ -1435,6 +1444,8 @@ func (a *ModifyIndexArgs) decodeV1(job *Job) error {
 		err = a.decodeAddIndexV1(job)
 	case ActionAddVectorIndex:
 		err = a.decodeAddVectorIndexV1(job)
+	case ActionAddColumnarIndex:
+		err = a.decodeAddColumnarIndexV1(job)
 	case ActionAddPrimaryKey:
 		err = a.decodeAddPrimaryKeyV1(job)
 	default:
@@ -1535,7 +1546,28 @@ func (a *ModifyIndexArgs) decodeAddVectorIndexV1(job *Job) error {
 		IndexPartSpecifications: []*ast.IndexPartSpecification{indexPartSpecification},
 		IndexOption:             indexOption,
 		FuncExpr:                funcExpr,
-		IsVector:                true,
+		IsTiFlashIndex:          true,
+	}}
+	return nil
+}
+
+func (a *ModifyIndexArgs) decodeAddColumnarIndexV1(job *Job) error {
+	var (
+		indexName              ast.CIStr
+		indexPartSpecification *ast.IndexPartSpecification
+		indexOption            *ast.IndexOption
+	)
+
+	if err := job.decodeArgs(
+		&indexName, &indexPartSpecification, &indexOption); err != nil {
+		return errors.Trace(err)
+	}
+
+	a.IndexArgs = []*IndexArg{{
+		IndexName:               indexName,
+		IndexPartSpecifications: []*ast.IndexPartSpecification{indexPartSpecification},
+		IndexOption:             indexOption,
+		IsTiFlashIndex:          true,
 	}}
 	return nil
 }
@@ -1543,7 +1575,7 @@ func (a *ModifyIndexArgs) decodeAddVectorIndexV1(job *Job) error {
 func (a *ModifyIndexArgs) getFinishedArgsV1(job *Job) []any {
 	// Add index
 	if a.OpType == OpAddIndex {
-		if job.Type == ActionAddVectorIndex {
+		if job.Type == ActionAddVectorIndex || job.Type == ActionAddColumnarIndex {
 			return []any{a.IndexArgs[0].IndexID, a.IndexArgs[0].IfExist, a.PartitionIDs, a.IndexArgs[0].IsGlobal}
 		}
 
@@ -1573,7 +1605,7 @@ func (a *ModifyIndexArgs) getFinishedArgsV1(job *Job) []any {
 	}
 
 	idxArg := a.IndexArgs[0]
-	return []any{idxArg.IndexName, idxArg.IfExist, idxArg.IndexID, a.PartitionIDs, idxArg.IsVector}
+	return []any{idxArg.IndexName, idxArg.IfExist, idxArg.IndexID, a.PartitionIDs, idxArg.IsTiFlashIndex}
 }
 
 // GetRenameIndexes get name of renamed index.
@@ -1617,15 +1649,15 @@ func GetFinishedModifyIndexArgs(job *Job) (*ModifyIndexArgs, error) {
 		ifExists := make([]bool, 1)
 		indexIDs := make([]int64, 1)
 		var partitionIDs []int64
-		isVector := false
+		isTiFlashIndex := false
 		var err error
 
 		if job.IsRollingback() {
 			// Rollback add indexes
-			err = job.decodeArgs(&indexNames, &ifExists, &partitionIDs, &isVector)
+			err = job.decodeArgs(&indexNames, &ifExists, &partitionIDs, &isTiFlashIndex)
 		} else {
 			// Finish drop index
-			err = job.decodeArgs(&indexNames[0], &ifExists[0], &indexIDs[0], &partitionIDs, &isVector)
+			err = job.decodeArgs(&indexNames[0], &ifExists[0], &indexIDs[0], &partitionIDs, &isTiFlashIndex)
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1637,9 +1669,9 @@ func GetFinishedModifyIndexArgs(job *Job) (*ModifyIndexArgs, error) {
 		a.IndexArgs = make([]*IndexArg, len(indexNames))
 		for i, indexName := range indexNames {
 			a.IndexArgs[i] = &IndexArg{
-				IndexName: indexName,
-				IfExist:   ifExists[i],
-				IsVector:  isVector,
+				IndexName:      indexName,
+				IfExist:        ifExists[i],
+				IsTiFlashIndex: isTiFlashIndex,
 			}
 		}
 		// For drop index, store index id in IndexArgs, no impact on other situations.

@@ -113,6 +113,7 @@ const (
 	ActionRemovePartitioning     ActionType = 72
 	ActionAddVectorIndex         ActionType = 73
 	ActionModifyEngineAttribute  ActionType = 74
+	ActionAddColumnarIndex       ActionType = 75
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -186,6 +187,7 @@ var ActionMap = map[ActionType]string{
 	ActionRemovePartitioning:            "alter table remove partitioning",
 	ActionAddVectorIndex:                "add vector index",
 	ActionModifyEngineAttribute:         "modify engine attribute",
+	ActionAddColumnarIndex:              "add columnar index",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -635,7 +637,7 @@ func (job *Job) IsPausing() bool {
 // IsPausable checks whether we can pause the job.
 func (job *Job) IsPausable() bool {
 	// TODO: We can remove it after TiFlash supports the pause operation.
-	if job.Type == ActionAddVectorIndex && job.SchemaState == StateWriteReorganization {
+	if (job.Type == ActionAddVectorIndex || job.Type == ActionAddColumnarIndex) && job.SchemaState == StateWriteReorganization {
 		return false
 	}
 	return job.NotStarted() || (job.IsRunning() && job.IsRollbackable())
