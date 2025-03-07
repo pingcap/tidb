@@ -19,11 +19,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"go.uber.org/zap"
 )
@@ -94,20 +93,12 @@ func convertAddIdxJob2RollbackJob(
 	job.State = model.JobStateRollingback
 	// TODO(tangenta): get duplicate column and match index.
 	err = completeErr(err, allIndexInfos[0])
-	if ingest.LitBackCtxMgr != nil {
-		ingest.LitBackCtxMgr.Unregister(job.ID)
-	}
 	return ver, errors.Trace(err)
 }
 
 // convertNotReorgAddIdxJob2RollbackJob converts the add index job that are not started workers to rollingbackJob,
 // to rollback add index operations. job.SnapshotVer == 0 indicates the workers are not started.
 func convertNotReorgAddIdxJob2RollbackJob(jobCtx *jobContext, job *model.Job, occuredErr error) (ver int64, err error) {
-	defer func() {
-		if ingest.LitBackCtxMgr != nil {
-			ingest.LitBackCtxMgr.Unregister(job.ID)
-		}
-	}()
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, schemaID)
 	if err != nil {
@@ -680,7 +671,7 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 			if err1 := loadDDLVars(w); err1 != nil {
 				logger.Error("load DDL global variable failed", zap.Error(err1))
 			}
-			errorCount := variable.GetDDLErrorCountLimit()
+			errorCount := vardef.GetDDLErrorCountLimit()
 			if job.ErrorCount > errorCount {
 				logger.Warn("rollback DDL job error count exceed the limit, cancelled it now", zap.Int64("errorCountLimit", errorCount))
 				job.Error = toTError(errors.Errorf("rollback DDL job error count exceed the limit %d, cancelled it now", errorCount))

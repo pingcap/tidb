@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -73,7 +73,7 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 
 	e := &PointGetExecutor{
 		BaseExecutor:       exec.NewBaseExecutor(b.ctx, p.Schema(), p.ID()),
-		indexUsageReporter: b.buildIndexUsageReporter(p),
+		indexUsageReporter: b.buildIndexUsageReporter(p, false),
 		txnScope:           b.txnScope,
 		readReplicaScope:   b.readReplicaScope,
 		isStaleness:        b.isStaleness,
@@ -139,7 +139,7 @@ type PointGetExecutor struct {
 	handle           kv.Handle
 	idxInfo          *model.IndexInfo
 	partitionDefIdx  *int
-	partitionNames   []pmodel.CIStr
+	partitionNames   []ast.CIStr
 	idxKey           kv.Key
 	handleVal        []byte
 	idxVals          []types.Datum
@@ -178,7 +178,7 @@ func GetPhysID(tblInfo *model.TableInfo, idx *int) int64 {
 	return tblInfo.ID
 }
 
-func matchPartitionNames(pid int64, partitionNames []pmodel.CIStr, pi *model.PartitionInfo) bool {
+func matchPartitionNames(pid int64, partitionNames []ast.CIStr, pi *model.PartitionInfo) bool {
 	if len(partitionNames) == 0 {
 		return true
 	}
@@ -204,7 +204,7 @@ func (e *PointGetExecutor) Recreated(p *plannercore.PointGetPlan) {
 	// It's necessary to at least reset the `runtimeStats` of the `BaseExecutor`.
 	// As the `StmtCtx` may have changed, a new index usage reporter should also be created.
 	e.BaseExecutor = exec.NewBaseExecutor(e.Ctx(), p.Schema(), p.ID())
-	e.indexUsageReporter = buildIndexUsageReporter(e.Ctx(), p)
+	e.indexUsageReporter = buildIndexUsageReporter(e.Ctx(), p, false)
 }
 
 // Init set fields needed for PointGetExecutor reuse, this does NOT change baseExecutor field
@@ -667,7 +667,7 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 	}
 
 	lock := e.tblInfo.Lock
-	if lock != nil && (lock.Tp == pmodel.TableLockRead || lock.Tp == pmodel.TableLockReadOnly) {
+	if lock != nil && (lock.Tp == ast.TableLockRead || lock.Tp == ast.TableLockReadOnly) {
 		if e.Ctx().GetSessionVars().EnablePointGetCache {
 			cacheDB := e.Ctx().GetStore().GetMemCache()
 			val, err = cacheDB.UnionGet(ctx, e.tblInfo.ID, e.snapshot, key)

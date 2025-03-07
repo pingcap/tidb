@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/internal"
@@ -449,7 +448,7 @@ func TestSnapshotInterceptor(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create temporary table test.tmp1 (id int primary key)")
-	tbl, err := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema).TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("tmp1"))
+	tbl, err := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema).TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tmp1"))
 	require.NoError(t, err)
 	require.Equal(t, model.TempTableLocal, tbl.Meta().TempTableType)
 	tblID := tbl.Meta().ID

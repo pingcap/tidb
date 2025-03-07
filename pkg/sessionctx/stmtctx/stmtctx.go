@@ -436,6 +436,9 @@ type StatementContext struct {
 	// and the `for share` execution is enabled by `tidb_enable_noop_functions`, no locks should be
 	// acquired in this case.
 	ForShareLockEnabledByNoop bool
+
+	// OperatorNum is used to record the number of operators in the current logical plan.
+	OperatorNum uint64
 }
 
 // DefaultStmtErrLevels is the default error levels for statement

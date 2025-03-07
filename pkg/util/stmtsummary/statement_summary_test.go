@@ -24,8 +24,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -150,6 +150,16 @@ func TestAddStatement(t *testing.T) {
 				MaxRUWaitDuration: stmtExecInfo1.RUDetail.RUWaitDuration(),
 			},
 			resourceGroupName: stmtExecInfo1.ResourceGroupName,
+			StmtNetworkTrafficSummary: StmtNetworkTrafficSummary{
+				UnpackedBytesSentTiKVTotal:            stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentKVTotal,
+				UnpackedBytesReceivedTiKVTotal:        stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedKVTotal,
+				UnpackedBytesSentTiKVCrossZone:        stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentKVCrossZone,
+				UnpackedBytesReceivedTiKVCrossZone:    stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedKVCrossZone,
+				UnpackedBytesSentTiFlashTotal:         stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentMPPTotal,
+				UnpackedBytesReceivedTiFlashTotal:     stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedMPPTotal,
+				UnpackedBytesSentTiFlashCrossZone:     stmtExecInfo1.TiKVExecDetails.UnpackedBytesSentMPPCrossZone,
+				UnpackedBytesReceivedTiFlashCrossZone: stmtExecInfo1.TiKVExecDetails.UnpackedBytesReceivedMPPCrossZone,
+			},
 		},
 	}
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.Unlock()
@@ -235,12 +245,18 @@ func TestAddStatement(t *testing.T) {
 				}, CalleeAddress: "202",
 			},
 		},
-		StmtCtx:           sc,
-		MemMax:            20000,
-		DiskMax:           20000,
-		StartTime:         time.Date(2019, 1, 1, 10, 10, 20, 10, time.UTC),
-		Succeed:           true,
-		RUDetail:          util.NewRUDetailsWith(123.0, 45.6, 2*time.Second),
+		StmtCtx:   sc,
+		MemMax:    20000,
+		DiskMax:   20000,
+		StartTime: time.Date(2019, 1, 1, 10, 10, 20, 10, time.UTC),
+		Succeed:   true,
+		RUDetail:  util.NewRUDetailsWith(123.0, 45.6, 2*time.Second),
+		TiKVExecDetails: &util.ExecDetails{
+			TrafficDetails: util.TrafficDetails{
+				UnpackedBytesSentKVTotal:     100,
+				UnpackedBytesReceivedKVTotal: 200,
+			},
+		},
 		ResourceGroupName: "rg1",
 		LazyInfo: &mockLazyInfo{
 			originalSQL: "original_sql2",
@@ -311,6 +327,7 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.MaxWRU = stmtExecInfo2.RUDetail.WRU()
 	expectedSummaryElement.SumRUWaitDuration += stmtExecInfo2.RUDetail.RUWaitDuration()
 	expectedSummaryElement.MaxRUWaitDuration = stmtExecInfo2.RUDetail.RUWaitDuration()
+	expectedSummaryElement.StmtNetworkTrafficSummary.Add(stmtExecInfo2.TiKVExecDetails)
 
 	ssMap.AddStatement(stmtExecInfo2)
 	summary, ok = ssMap.summaryMap.Get(key)
@@ -391,6 +408,14 @@ func TestAddStatement(t *testing.T) {
 		Succeed:           true,
 		RUDetail:          util.NewRUDetailsWith(0.12, 0.34, 5*time.Microsecond),
 		ResourceGroupName: "rg1",
+		TiKVExecDetails: &util.ExecDetails{
+			TrafficDetails: util.TrafficDetails{
+				UnpackedBytesSentKVTotal:      1,
+				UnpackedBytesReceivedKVTotal:  300,
+				UnpackedBytesSentMPPTotal:     1,
+				UnpackedBytesReceivedMPPTotal: 300,
+			},
+		},
 		LazyInfo: &mockLazyInfo{
 			originalSQL: "original_sql3",
 			plan:        "",
@@ -434,6 +459,7 @@ func TestAddStatement(t *testing.T) {
 	expectedSummaryElement.SumRRU += stmtExecInfo3.RUDetail.RRU()
 	expectedSummaryElement.SumWRU += stmtExecInfo3.RUDetail.WRU()
 	expectedSummaryElement.SumRUWaitDuration += stmtExecInfo3.RUDetail.RUWaitDuration()
+	expectedSummaryElement.StmtNetworkTrafficSummary.Add(stmtExecInfo3.TiKVExecDetails)
 
 	ssMap.AddStatement(stmtExecInfo3)
 	summary, ok = ssMap.summaryMap.Get(key)
@@ -579,7 +605,8 @@ func matchStmtSummaryByDigest(first, second *stmtSummaryByDigest) bool {
 			!ssElement1.firstSeen.Equal(ssElement2.firstSeen) ||
 			!ssElement1.lastSeen.Equal(ssElement2.lastSeen) ||
 			ssElement1.resourceGroupName != ssElement2.resourceGroupName ||
-			ssElement1.StmtRUSummary != ssElement2.StmtRUSummary {
+			ssElement1.StmtRUSummary != ssElement2.StmtRUSummary ||
+			ssElement1.StmtNetworkTrafficSummary != ssElement2.StmtNetworkTrafficSummary {
 			return false
 		}
 		if len(ssElement1.backoffTypes) != len(ssElement2.backoffTypes) {
@@ -695,6 +722,14 @@ func generateAnyExecInfo() *StmtExecInfo {
 		ResourceGroupName: "rg1",
 		RUDetail:          util.NewRUDetailsWith(1.1, 2.5, 2*time.Millisecond),
 		CPUUsages:         ppcpuusage.CPUUsages{TidbCPUTime: time.Duration(20), TikvCPUTime: time.Duration(100)},
+		TiKVExecDetails: &util.ExecDetails{
+			TrafficDetails: util.TrafficDetails{
+				UnpackedBytesSentKVTotal:         10,
+				UnpackedBytesReceivedKVTotal:     1000,
+				UnpackedBytesReceivedKVCrossZone: 1,
+				UnpackedBytesSentKVCrossZone:     100,
+			},
+		},
 		LazyInfo: &mockLazyInfo{
 			originalSQL: "original_sql1",
 			plan:        "",
@@ -838,7 +873,7 @@ func newStmtSummaryReaderForTest(ssMap *stmtSummaryByDigestMap) *stmtSummaryRead
 	for i := range columnNames {
 		cols[i] = &model.ColumnInfo{
 			ID:     int64(i),
-			Name:   pmodel.NewCIStr(columnNames[i]),
+			Name:   ast.NewCIStr(columnNames[i]),
 			Offset: i,
 		}
 	}
@@ -1220,30 +1255,6 @@ func TestEnableSummaryParallel(t *testing.T) {
 	require.True(t, ssMap.Enabled())
 }
 
-// Test GetMoreThanCntBindableStmt.
-func TestGetMoreThanCntBindableStmt(t *testing.T) {
-	ssMap := newStmtSummaryByDigestMap()
-
-	stmtExecInfo1 := generateAnyExecInfo()
-	stmtExecInfo1.LazyInfo.(*mockLazyInfo).originalSQL = "insert 1"
-	stmtExecInfo1.NormalizedSQL = "insert ?"
-	stmtExecInfo1.StmtCtx.StmtType = "Insert"
-	ssMap.AddStatement(stmtExecInfo1)
-	stmts := ssMap.GetMoreThanCntBindableStmt(1)
-	require.Equal(t, 0, len(stmts))
-
-	stmtExecInfo1.NormalizedSQL = "select ?"
-	stmtExecInfo1.Digest = "digest1"
-	stmtExecInfo1.StmtCtx.StmtType = "Select"
-	ssMap.AddStatement(stmtExecInfo1)
-	stmts = ssMap.GetMoreThanCntBindableStmt(1)
-	require.Equal(t, 0, len(stmts))
-
-	ssMap.AddStatement(stmtExecInfo1)
-	stmts = ssMap.GetMoreThanCntBindableStmt(1)
-	require.Equal(t, 1, len(stmts))
-}
-
 // Test `formatBackoffTypes`.
 func TestFormatBackoffTypes(t *testing.T) {
 	backoffMap := make(map[string]int)
@@ -1504,5 +1515,33 @@ func TestAccessPrivilege(t *testing.T) {
 	require.Len(t, datums, 0)
 	reader.hasProcessPriv = true
 	datums = reader.GetStmtSummaryHistoryRows()
+	require.Len(t, datums, loops)
+
+	// Test the same query digests, but run as a different user in a new statement
+	// summary interval. The old user should not be able to access the rows generated
+	// for the new user.
+	ssMap.beginTimeForCurInterval = time.Now().Unix()
+	stmtExecInfo2 := generateAnyExecInfo()
+	stmtExecInfo2.User = "new_user"
+
+	for i := range loops {
+		stmtExecInfo2.Digest = fmt.Sprintf("digest%d", i)
+		ssMap.AddStatement(stmtExecInfo2)
+	}
+
+	oldUser := user
+	newUser := &auth.UserIdentity{Username: "new_user"}
+
+	reader.user = newUser
+	reader.hasProcessPriv = false
+	datums = reader.GetStmtSummaryCurrentRows()
+	require.Len(t, datums, loops)
+	reader.user = oldUser
+	reader.hasProcessPriv = false
+	datums = reader.GetStmtSummaryCurrentRows()
+	require.Len(t, datums, 0)
+	reader.user = oldUser
+	reader.hasProcessPriv = true
+	datums = reader.GetStmtSummaryCurrentRows()
 	require.Len(t, datums, loops)
 }

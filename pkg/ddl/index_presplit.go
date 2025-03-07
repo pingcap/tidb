@@ -412,18 +412,11 @@ func waitScatterRegionFinish(
 		if err == nil {
 			finishScatterNum++
 		} else {
-			if len(indexName) == 0 {
-				logutil.DDLLogger().Warn("wait scatter region failed",
-					zap.Uint64("regionID", regionID),
-					zap.String("table", tableName),
-					zap.Error(err))
-			} else {
-				logutil.DDLLogger().Warn("wait scatter region failed",
-					zap.Uint64("regionID", regionID),
-					zap.String("table", tableName),
-					zap.String("index", indexName),
-					zap.Error(err))
-			}
+			logutil.DDLLogger().Warn("wait scatter region failed",
+				zap.Uint64("regionID", regionID),
+				zap.String("table", tableName),
+				zap.String("index", indexName),
+				zap.Error(err))
 		}
 	}
 	return finishScatterNum

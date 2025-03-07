@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -79,7 +78,7 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 		ds, ok = p.(*logicalop.DataSource)
 	}
 	cnfs := ds.AllConds
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	idxCols, ok := core.PrepareIdxColsAndUnwrapArrayType(
 		tbl.Meta(),
@@ -457,7 +456,7 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 	}()
 	tk.MustExec(`create table t(a int, b vector(2), c vector(3), j json, index(a))`)
 	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
-	tblInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tblInfo, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tblInfo.Meta().ID, true)
 	require.NoError(t, err)
@@ -471,28 +470,28 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
-		"Warning 1105 analyzing vector index is not supported, skip idx",
-		"Warning 1105 analyzing vector index is not supported, skip idx2"))
+		"Warning 1105 analyzing columnar index is not supported, skip idx",
+		"Warning 1105 analyzing columnar index is not supported, skip idx2"))
 	tk.MustExec("analyze table t index idx")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"TiDB assumes that the table is empty, use sample-rate=1\"",
 		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
-		"Warning 1105 analyzing vector index is not supported, skip idx",
-		"Warning 1105 analyzing vector index is not supported, skip idx2"))
+		"Warning 1105 analyzing columnar index is not supported, skip idx",
+		"Warning 1105 analyzing columnar index is not supported, skip idx2"))
 
 	tk.MustExec("set tidb_analyze_version=1")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Warning 1105 analyzing vector index is not supported, skip idx",
-		"Warning 1105 analyzing vector index is not supported, skip idx2"))
+		"Warning 1105 analyzing columnar index is not supported, skip idx",
+		"Warning 1105 analyzing columnar index is not supported, skip idx2"))
 	tk.MustExec("analyze table t index idx")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Warning 1105 analyzing vector index is not supported, skip idx"))
+		"Warning 1105 analyzing columnar index is not supported, skip idx"))
 	tk.MustExec("analyze table t index a")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
 	tk.MustExec("analyze table t index a, idx, idx2")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Warning 1105 analyzing vector index is not supported, skip idx",
-		"Warning 1105 analyzing vector index is not supported, skip idx2"))
+		"Warning 1105 analyzing columnar index is not supported, skip idx",
+		"Warning 1105 analyzing columnar index is not supported, skip idx2"))
 }

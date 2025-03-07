@@ -19,7 +19,6 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
-	"maps"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -387,6 +386,9 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 		if r.selectResp == nil {
 			return nil
 		}
+		failpoint.Inject("mockConsumeSelectRespSlow", func(val failpoint.Value) {
+			time.Sleep(time.Duration(val.(int) * int(time.Millisecond)))
+		})
 	}
 	// TODO(Shenghui Wu): add metrics
 	encodeType := r.selectResp.GetEncodeType()
@@ -500,7 +502,6 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 	if r.rootPlanID <= 0 || r.ctx.RuntimeStatsColl == nil || (callee == "" && (copStats.ReqStats == nil || copStats.ReqStats.GetRPCStatsCount() == 0)) {
 		return
 	}
-
 	if copStats.ScanDetail.ProcessedKeys > 0 || copStats.TimeDetail.KvReadWallTime > 0 {
 		readKeys := copStats.ScanDetail.ProcessedKeys
 		readTime := copStats.TimeDetail.KvReadWallTime.Seconds()
@@ -655,7 +656,9 @@ func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntim
 		if s.backoffSleep == nil {
 			s.backoffSleep = make(map[string]time.Duration)
 		}
-		maps.Copy(s.backoffSleep, copStats.BackoffSleep)
+		for k, v := range copStats.BackoffSleep {
+			s.backoffSleep[k] += v
+		}
 	}
 	s.totalProcessTime += copStats.TimeDetail.ProcessTime
 	s.totalWaitTime += copStats.TimeDetail.WaitTime

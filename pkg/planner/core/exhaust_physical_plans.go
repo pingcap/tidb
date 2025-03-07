@@ -167,7 +167,8 @@ func GetMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, sch
 		offsets := util.GetMaxSortPrefix(lhsChildProperty, leftJoinKeys)
 		// If not all equal conditions hit properties. We ban merge join heuristically. Because in this case, merge join
 		// may get a very low performance. In executor, executes join results before other conditions filter it.
-		if len(offsets) < len(leftJoinKeys) {
+		// And skip the cartesian join case, unless we force to use merge join.
+		if len(offsets) < len(leftJoinKeys) || len(leftJoinKeys) == 0 {
 			continue
 		}
 
@@ -179,7 +180,8 @@ func GetMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, sch
 		}
 
 		prefixLen := findMaxPrefixLen(p.RightProperties, rightKeys)
-		if prefixLen == 0 {
+		// right side should also be full match.
+		if prefixLen < len(offsets) || prefixLen == 0 {
 			continue
 		}
 
@@ -372,7 +374,8 @@ func shouldSkipHashJoin(p *logicalop.LogicalJoin) bool {
 	return (p.PreferJoinType&h.PreferNoHashJoin) > 0 || (p.SCtx().GetSessionVars().DisableHashJoin)
 }
 
-func isGAForHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.Column, isNullEQ []bool, leftNAJoinKeys []*expression.Column) bool {
+// IsGAForHashJoinV2 judges if this hash join is GA
+func IsGAForHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.Column, isNullEQ []bool, leftNAJoinKeys []*expression.Column) bool {
 	// nullaware join
 	if len(leftNAJoinKeys) > 0 {
 		return false
@@ -388,7 +391,7 @@ func isGAForHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.C
 		}
 	}
 	switch joinType {
-	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin:
+	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin, logicalop.AntiSemiJoin, logicalop.SemiJoin:
 		return true
 	default:
 		return false
@@ -397,11 +400,12 @@ func isGAForHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.C
 
 // CanUseHashJoinV2 returns true if current join is supported by hash join v2
 func canUseHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.Column, isNullEQ []bool, leftNAJoinKeys []*expression.Column) bool {
-	if !isGAForHashJoinV2(joinType, leftJoinKeys, isNullEQ, leftNAJoinKeys) && !joinversion.UseHashJoinV2ForNonGAJoin {
+	if !IsGAForHashJoinV2(joinType, leftJoinKeys, isNullEQ, leftNAJoinKeys) && !joinversion.UseHashJoinV2ForNonGAJoin {
 		return false
 	}
 	switch joinType {
-	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin, logicalop.LeftOuterSemiJoin, logicalop.SemiJoin, logicalop.AntiSemiJoin:
+	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin, logicalop.LeftOuterSemiJoin,
+		logicalop.SemiJoin, logicalop.AntiSemiJoin, logicalop.AntiLeftOuterSemiJoin:
 		// null aware join is not supported yet
 		if len(leftNAJoinKeys) > 0 {
 			return false
@@ -430,7 +434,8 @@ func getHashJoins(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (jo
 	forceLeftToBuild := ((p.PreferJoinType & h.PreferLeftAsHJBuild) > 0) || ((p.PreferJoinType & h.PreferRightAsHJProbe) > 0)
 	forceRightToBuild := ((p.PreferJoinType & h.PreferRightAsHJBuild) > 0) || ((p.PreferJoinType & h.PreferLeftAsHJProbe) > 0)
 	if forceLeftToBuild && forceRightToBuild {
-		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning("Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are conflicts, please check the hints")
+		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning("Conflicting HASH_JOIN_BUILD and HASH_JOIN_PROBE hints detected. " +
+			"Both sides cannot be specified to use the same table. Please review the hints")
 		forceLeftToBuild = false
 		forceRightToBuild = false
 	}
@@ -442,17 +447,17 @@ func getHashJoins(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (jo
 		if p.SCtx().GetSessionVars().UseHashJoinV2 && joinversion.IsHashJoinV2Supported() && canUseHashJoinV2(p.JoinType, leftJoinKeys, isNullEQ, leftNAJoinKeys) {
 			if !forceLeftToBuild {
 				joins = append(joins, getHashJoin(p, prop, 1, false))
-			} else if !forceRightToBuild {
-				joins = append(joins, getHashJoin(p, prop, 1, true))
-			} else {
-				joins = append(joins, getHashJoin(p, prop, 1, false))
+			}
+			if !forceRightToBuild {
 				joins = append(joins, getHashJoin(p, prop, 1, true))
 			}
 		} else {
 			joins = append(joins, getHashJoin(p, prop, 1, false))
 			if forceLeftToBuild || forceRightToBuild {
-				// Do not support specifying the build and probe side for semi join.
-				p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for %s, please check the hint", p.JoinType))
+				p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf(
+					"The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for %s with hash join version 1. "+
+						"Please remove these hints",
+					p.JoinType))
 				forceLeftToBuild = false
 				forceRightToBuild = false
 			}
@@ -460,8 +465,10 @@ func getHashJoins(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (jo
 	case logicalop.LeftOuterSemiJoin, logicalop.AntiLeftOuterSemiJoin:
 		joins = append(joins, getHashJoin(p, prop, 1, false))
 		if forceLeftToBuild || forceRightToBuild {
-			// Do not support specifying the build and probe side for semi join.
-			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for %s, please check the hint", p.JoinType))
+			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf(
+				"HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for %s because the build side is fixed. "+
+					"Please remove these hints",
+				p.JoinType))
 			forceLeftToBuild = false
 			forceRightToBuild = false
 		}
@@ -1348,10 +1355,11 @@ func constructInnerIndexScanTask(
 		rowCount = math.Min(rowCount, 1.0)
 	}
 	tmpPath := &util.AccessPath{
-		IndexFilters:     indexConds,
-		TableFilters:     tblConds,
-		CountAfterIndex:  rowCount,
-		CountAfterAccess: rowCount,
+		IndexFilters:         indexConds,
+		TableFilters:         tblConds,
+		CountAfterIndex:      rowCount,
+		CountAfterAccess:     rowCount,
+		CorrCountAfterAccess: 0,
 	}
 	// Assume equal conditions used by index join and other conditions are independent.
 	if len(tblConds) > 0 {
@@ -2252,6 +2260,7 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 			Count:       lt.Count,
 			Offset:      lt.Offset,
 		}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
+		topN.SetSchema(lt.Schema())
 		ret = append(ret, topN)
 	}
 	// If we can generate MPP task and there's vector distance function in the order by column.
@@ -2290,6 +2299,7 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 			Count:       lt.Count,
 			Offset:      lt.Offset,
 		}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
+		topN.SetSchema(lt.Schema())
 		ret = append(ret, topN)
 	}
 	return ret

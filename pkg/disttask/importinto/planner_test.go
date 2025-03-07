@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/opt"
@@ -44,7 +44,7 @@ func TestLogicalPlan(t *testing.T) {
 		Plan:              importer.Plan{},
 		Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
 		EligibleInstances: []*infosync.ServerInfo{{ID: "1"}},
-		ChunkMap:          map[int32][]Chunk{1: {{Path: "gs://test-load/1.csv"}}},
+		ChunkMap:          map[int32][]importer.Chunk{1: {{Path: "gs://test-load/1.csv"}}},
 	}
 	bs, err := logicalPlan.ToTaskMeta()
 	require.NoError(t, err)
@@ -60,12 +60,12 @@ func TestToPhysicalPlan(t *testing.T) {
 		Plan: importer.Plan{
 			DBName: "db",
 			TableInfo: &model.TableInfo{
-				Name: pmodel.NewCIStr("tb"),
+				Name: ast.NewCIStr("tb"),
 			},
 		},
 		Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
 		EligibleInstances: []*infosync.ServerInfo{{ID: "1"}},
-		ChunkMap:          map[int32][]Chunk{chunkID: {{Path: "gs://test-load/1.csv"}}},
+		ChunkMap:          map[int32][]importer.Chunk{chunkID: {{Path: "gs://test-load/1.csv"}}},
 	}
 	planCtx := planner.PlanCtx{
 		NextTaskStep: proto.ImportStepImport,

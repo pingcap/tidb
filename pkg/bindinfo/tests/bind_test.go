@@ -26,10 +26,9 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
-	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/stretchr/testify/require"
 )
@@ -325,7 +324,7 @@ func TestBindingWithIsolationRead(t *testing.T) {
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -348,12 +347,11 @@ func TestInvisibleIndex(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, unique idx_a(a), index idx_b(b) invisible)")
-	tk.MustGetErrMsg(
-		"create global binding for select * from t using select * from t use index(idx_b) ",
+	tk.MustContainErrMsg("create global binding for select * from t using select * from t use index(idx_b)",
 		"[planner:1176]Key 'idx_b' doesn't exist in table 't'")
 
 	// Create bind using index
-	tk.MustExec("create global binding for select * from t using select * from t use index(idx_a) ")
+	tk.MustExec("create global binding for select * from t using select * from t use index(idx_a)")
 
 	tk.MustQuery("select * from t")
 	require.Equal(t, "t:idx_a", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
@@ -394,20 +392,20 @@ func TestGCBindRecord(t *testing.T) {
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `test` . `t` where `a` = ?", rows[0][0])
-	require.Equal(t, bindinfo.Enabled, rows[0][3])
+	require.Equal(t, bindinfo.StatusEnabled, rows[0][3])
 	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows(
-		bindinfo.Enabled,
+		bindinfo.StatusEnabled,
 	))
 
-	h := dom.BindHandle()
+	h := dom.BindingHandle()
 	// bindinfo.Lease is set to 0 for test env in SetUpSuite.
-	require.NoError(t, h.GCGlobalBinding())
+	require.NoError(t, h.GCBinding())
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `test` . `t` where `a` = ?", rows[0][0])
-	require.Equal(t, bindinfo.Enabled, rows[0][3])
+	require.Equal(t, bindinfo.StatusEnabled, rows[0][3])
 	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows(
-		bindinfo.Enabled,
+		bindinfo.StatusEnabled,
 	))
 
 	tk.MustExec("drop global binding for select * from t where a = 1")
@@ -415,7 +413,7 @@ func TestGCBindRecord(t *testing.T) {
 	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows(
 		"deleted",
 	))
-	require.NoError(t, h.GCGlobalBinding())
+	require.NoError(t, h.GCBinding())
 	tk.MustQuery("show global bindings").Check(testkit.Rows())
 	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows())
 }
@@ -477,7 +475,7 @@ func TestBindSQLDigest(t *testing.T) {
 		parser4binding := parser.New()
 		originNode, err := parser4binding.ParseOneStmt(c.origin, "utf8mb4", "utf8mb4_general_ci")
 		require.NoError(t, err)
-		_, sqlDigestWithDB := parser.NormalizeDigestForBinding(utilparser.RestoreWithDefaultDB(originNode, "test", c.origin))
+		_, sqlDigestWithDB := parser.NormalizeDigestForBinding(bindinfo.RestoreDBForBinding(originNode, "test"))
 		require.Equal(t, res[0][9], sqlDigestWithDB.String())
 	}
 }
@@ -556,7 +554,7 @@ func TestDropBindBySQLDigest(t *testing.T) {
 		{"select t1.a, t1.b from t t1 where t1.a in (select t2.a from t t2)", "select /*+ use_toja(true) */ t1.a, t1.b from t t1 where t1.a in (select t2.a from t t2)"},
 	}
 
-	h := dom.BindHandle()
+	h := dom.BindingHandle()
 	// global scope
 	for _, c := range cases {
 		utilCleanBindingEnv(tk)
@@ -569,7 +567,7 @@ func TestDropBindBySQLDigest(t *testing.T) {
 		require.Equal(t, len(res[0]), 11)
 		drop := fmt.Sprintf("drop global binding for sql digest '%s'", res[0][9])
 		tk.MustExec(drop)
-		require.NoError(t, h.GCGlobalBinding())
+		require.NoError(t, h.GCBinding())
 		h.LoadFromStorageToCache(true)
 		tk.MustQuery("show global bindings").Check(testkit.Rows())
 	}
@@ -585,7 +583,7 @@ func TestDropBindBySQLDigest(t *testing.T) {
 		require.Equal(t, len(res[0]), 11)
 		drop := fmt.Sprintf("drop binding for sql digest '%s'", res[0][9])
 		tk.MustExec(drop)
-		require.NoError(t, h.GCGlobalBinding())
+		require.NoError(t, h.GCBinding())
 		tk.MustQuery("show bindings").Check(testkit.Rows())
 	}
 
@@ -852,4 +850,35 @@ func TestBatchDropBindings(t *testing.T) {
 	tk.MustExec(`create session binding for select * from t2 where a = 1 and b = 2 and c = 3 using select * from t2 use index (b) where a = 1 and b = 2 and c = 3`)
 	removeAllBindings(tk, true)
 	removeAllBindings(tk, false)
+}
+
+func TestInvalidBindingCheck(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int)`)
+
+	cases := []struct {
+		SQL string
+		Err string
+	}{
+		{"select * from t where c=1", "[planner:1054]Unknown column 'c' in 'where clause'"},
+		{"select * from t where a=1 and c=1", "[planner:1054]Unknown column 'c' in 'where clause'"},
+		{"select * from dbx.t", "[schema:1146]Table 'dbx.t' doesn't exist"},
+		{"select * from t1", "[schema:1146]Table 'test.t1' doesn't exist"},
+		{"select * from t1, t", "[schema:1146]Table 'test.t1' doesn't exist"},
+		{"select * from t use index(c)", "[planner:1176]Key 'c' doesn't exist in table 't'"},
+	}
+
+	for _, c := range cases {
+		for _, scope := range []string{"session", "global"} {
+			sql := fmt.Sprintf("create %v binding using %v", scope, c.SQL)
+			tk.MustGetErrMsg(sql, c.Err)
+		}
+	}
+
+	// cross-db bindings or bindings with parameters can bypass the check, which is expected.
+	// We'll optimize this check further in the future.
+	tk.MustExec("create binding using select * from *.t where c=1")
+	tk.MustExec("create binding using select * from t where c=?")
 }

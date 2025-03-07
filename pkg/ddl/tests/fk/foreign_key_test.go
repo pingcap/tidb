@@ -26,8 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -52,21 +52,21 @@ func TestCreateTableWithForeignKeyMetaInfo(t *testing.T) {
 	tb1ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test", "t1")
 	require.Equal(t, 1, len(tb1ReferredFKs))
 	require.Equal(t, model.ReferredFKInfo{
-		Cols:        []pmodel.CIStr{pmodel.NewCIStr("id")},
-		ChildSchema: pmodel.NewCIStr("test2"),
-		ChildTable:  pmodel.NewCIStr("t2"),
-		ChildFKName: pmodel.NewCIStr("fk_b"),
+		Cols:        []ast.CIStr{ast.NewCIStr("id")},
+		ChildSchema: ast.NewCIStr("test2"),
+		ChildTable:  ast.NewCIStr("t2"),
+		ChildFKName: ast.NewCIStr("fk_b"),
 	}, *tb1ReferredFKs[0])
 	tb2ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test2", "t2")
 	require.Equal(t, 0, len(tb2ReferredFKs))
 	require.Equal(t, 1, len(tb2Info.ForeignKeys))
 	require.Equal(t, model.FKInfo{
 		ID:        1,
-		Name:      pmodel.NewCIStr("fk_b"),
-		RefSchema: pmodel.NewCIStr("test"),
-		RefTable:  pmodel.NewCIStr("t1"),
-		RefCols:   []pmodel.CIStr{pmodel.NewCIStr("id")},
-		Cols:      []pmodel.CIStr{pmodel.NewCIStr("b")},
+		Name:      ast.NewCIStr("fk_b"),
+		RefSchema: ast.NewCIStr("test"),
+		RefTable:  ast.NewCIStr("t1"),
+		RefCols:   []ast.CIStr{ast.NewCIStr("id")},
+		Cols:      []ast.CIStr{ast.NewCIStr("b")},
 		OnDelete:  2,
 		OnUpdate:  1,
 		State:     model.StatePublic,
@@ -86,21 +86,21 @@ func TestCreateTableWithForeignKeyMetaInfo(t *testing.T) {
 	tb2ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test2", "t2")
 	require.Equal(t, 1, len(tb2ReferredFKs))
 	require.Equal(t, model.ReferredFKInfo{
-		Cols:        []pmodel.CIStr{pmodel.NewCIStr("id")},
-		ChildSchema: pmodel.NewCIStr("test2"),
-		ChildTable:  pmodel.NewCIStr("t3"),
-		ChildFKName: pmodel.NewCIStr("fk_b"),
+		Cols:        []ast.CIStr{ast.NewCIStr("id")},
+		ChildSchema: ast.NewCIStr("test2"),
+		ChildTable:  ast.NewCIStr("t3"),
+		ChildFKName: ast.NewCIStr("fk_b"),
 	}, *tb2ReferredFKs[0])
 	tb3ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test2", "t3")
 	require.Equal(t, 0, len(tb3ReferredFKs))
 	require.Equal(t, 1, len(tb3Info.ForeignKeys))
 	require.Equal(t, model.FKInfo{
 		ID:        1,
-		Name:      pmodel.NewCIStr("fk_b"),
-		RefSchema: pmodel.NewCIStr("test2"),
-		RefTable:  pmodel.NewCIStr("t2"),
-		RefCols:   []pmodel.CIStr{pmodel.NewCIStr("id")},
-		Cols:      []pmodel.CIStr{pmodel.NewCIStr("b")},
+		Name:      ast.NewCIStr("fk_b"),
+		RefSchema: ast.NewCIStr("test2"),
+		RefTable:  ast.NewCIStr("t2"),
+		RefCols:   []ast.CIStr{ast.NewCIStr("id")},
+		Cols:      []ast.CIStr{ast.NewCIStr("b")},
 		OnDelete:  4,
 		OnUpdate:  3,
 		State:     model.StatePublic,
@@ -117,18 +117,18 @@ func TestCreateTableWithForeignKeyMetaInfo(t *testing.T) {
 	tb5ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test2", "t5")
 	require.Equal(t, 1, len(tb5ReferredFKs))
 	require.Equal(t, model.ReferredFKInfo{
-		Cols:        []pmodel.CIStr{pmodel.NewCIStr("id")},
-		ChildSchema: pmodel.NewCIStr("test2"),
-		ChildTable:  pmodel.NewCIStr("t5"),
-		ChildFKName: pmodel.NewCIStr("fk_1"),
+		Cols:        []ast.CIStr{ast.NewCIStr("id")},
+		ChildSchema: ast.NewCIStr("test2"),
+		ChildTable:  ast.NewCIStr("t5"),
+		ChildFKName: ast.NewCIStr("fk_1"),
 	}, *tb5ReferredFKs[0])
 	require.Equal(t, model.FKInfo{
 		ID:        1,
-		Name:      pmodel.NewCIStr("fk_1"),
-		RefSchema: pmodel.NewCIStr("test2"),
-		RefTable:  pmodel.NewCIStr("t5"),
-		RefCols:   []pmodel.CIStr{pmodel.NewCIStr("id")},
-		Cols:      []pmodel.CIStr{pmodel.NewCIStr("a")},
+		Name:      ast.NewCIStr("fk_1"),
+		RefSchema: ast.NewCIStr("test2"),
+		RefTable:  ast.NewCIStr("t5"),
+		RefCols:   []ast.CIStr{ast.NewCIStr("id")},
+		Cols:      []ast.CIStr{ast.NewCIStr("a")},
 		State:     model.StatePublic,
 		Version:   1,
 	}, *tb5Info.ForeignKeys[0])
@@ -162,21 +162,21 @@ func TestCreateTableWithForeignKeyMetaInfo2(t *testing.T) {
 	tb1ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test", "t1")
 	require.Equal(t, 1, len(tb1ReferredFKs))
 	require.Equal(t, model.ReferredFKInfo{
-		Cols:        []pmodel.CIStr{pmodel.NewCIStr("id")},
-		ChildSchema: pmodel.NewCIStr("test2"),
-		ChildTable:  pmodel.NewCIStr("t2"),
-		ChildFKName: pmodel.NewCIStr("fk_b"),
+		Cols:        []ast.CIStr{ast.NewCIStr("id")},
+		ChildSchema: ast.NewCIStr("test2"),
+		ChildTable:  ast.NewCIStr("t2"),
+		ChildFKName: ast.NewCIStr("fk_b"),
 	}, *tb1ReferredFKs[0])
 	tb2ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test2", "t2")
 	require.Equal(t, 0, len(tb2ReferredFKs))
 	require.Equal(t, 1, len(tb2Info.ForeignKeys))
 	require.Equal(t, model.FKInfo{
 		ID:        1,
-		Name:      pmodel.NewCIStr("fk_b"),
-		RefSchema: pmodel.NewCIStr("test"),
-		RefTable:  pmodel.NewCIStr("t1"),
-		RefCols:   []pmodel.CIStr{pmodel.NewCIStr("id")},
-		Cols:      []pmodel.CIStr{pmodel.NewCIStr("b")},
+		Name:      ast.NewCIStr("fk_b"),
+		RefSchema: ast.NewCIStr("test"),
+		RefTable:  ast.NewCIStr("t1"),
+		RefCols:   []ast.CIStr{ast.NewCIStr("id")},
+		Cols:      []ast.CIStr{ast.NewCIStr("b")},
 		OnDelete:  2,
 		OnUpdate:  1,
 		State:     model.StatePublic,
@@ -194,27 +194,27 @@ func TestCreateTableWithForeignKeyMetaInfo2(t *testing.T) {
 	tb1ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test", "t1")
 	require.Equal(t, 2, len(tb1ReferredFKs))
 	require.Equal(t, model.ReferredFKInfo{
-		Cols:        []pmodel.CIStr{pmodel.NewCIStr("id")},
-		ChildSchema: pmodel.NewCIStr("test"),
-		ChildTable:  pmodel.NewCIStr("t3"),
-		ChildFKName: pmodel.NewCIStr("fk_a"),
+		Cols:        []ast.CIStr{ast.NewCIStr("id")},
+		ChildSchema: ast.NewCIStr("test"),
+		ChildTable:  ast.NewCIStr("t3"),
+		ChildFKName: ast.NewCIStr("fk_a"),
 	}, *tb1ReferredFKs[0])
 	require.Equal(t, model.ReferredFKInfo{
-		Cols:        []pmodel.CIStr{pmodel.NewCIStr("id")},
-		ChildSchema: pmodel.NewCIStr("test2"),
-		ChildTable:  pmodel.NewCIStr("t2"),
-		ChildFKName: pmodel.NewCIStr("fk_b"),
+		Cols:        []ast.CIStr{ast.NewCIStr("id")},
+		ChildSchema: ast.NewCIStr("test2"),
+		ChildTable:  ast.NewCIStr("t2"),
+		ChildFKName: ast.NewCIStr("fk_b"),
 	}, *tb1ReferredFKs[1])
 	tb3ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test", "t3")
 	require.Equal(t, 0, len(tb3ReferredFKs))
 	require.Equal(t, 2, len(tb3Info.ForeignKeys))
 	require.Equal(t, model.FKInfo{
 		ID:        1,
-		Name:      pmodel.NewCIStr("fk_a"),
-		RefSchema: pmodel.NewCIStr("test"),
-		RefTable:  pmodel.NewCIStr("t1"),
-		RefCols:   []pmodel.CIStr{pmodel.NewCIStr("id")},
-		Cols:      []pmodel.CIStr{pmodel.NewCIStr("a")},
+		Name:      ast.NewCIStr("fk_a"),
+		RefSchema: ast.NewCIStr("test"),
+		RefTable:  ast.NewCIStr("t1"),
+		RefCols:   []ast.CIStr{ast.NewCIStr("id")},
+		Cols:      []ast.CIStr{ast.NewCIStr("a")},
 		OnDelete:  2,
 		OnUpdate:  1,
 		State:     model.StatePublic,
@@ -222,11 +222,11 @@ func TestCreateTableWithForeignKeyMetaInfo2(t *testing.T) {
 	}, *tb3Info.ForeignKeys[0])
 	require.Equal(t, model.FKInfo{
 		ID:        2,
-		Name:      pmodel.NewCIStr("fk_a2"),
-		RefSchema: pmodel.NewCIStr("test2"),
-		RefTable:  pmodel.NewCIStr("t2"),
-		RefCols:   []pmodel.CIStr{pmodel.NewCIStr("id")},
-		Cols:      []pmodel.CIStr{pmodel.NewCIStr("a")},
+		Name:      ast.NewCIStr("fk_a2"),
+		RefSchema: ast.NewCIStr("test2"),
+		RefTable:  ast.NewCIStr("t2"),
+		RefCols:   []ast.CIStr{ast.NewCIStr("id")},
+		Cols:      []ast.CIStr{ast.NewCIStr("a")},
 		State:     model.StatePublic,
 		Version:   1,
 	}, *tb3Info.ForeignKeys[1])
@@ -244,21 +244,21 @@ func TestCreateTableWithForeignKeyMetaInfo2(t *testing.T) {
 	tb1ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test", "t1")
 	require.Equal(t, 1, len(tb1ReferredFKs))
 	require.Equal(t, model.ReferredFKInfo{
-		Cols:        []pmodel.CIStr{pmodel.NewCIStr("id")},
-		ChildSchema: pmodel.NewCIStr("test"),
-		ChildTable:  pmodel.NewCIStr("t3"),
-		ChildFKName: pmodel.NewCIStr("fk_a"),
+		Cols:        []ast.CIStr{ast.NewCIStr("id")},
+		ChildSchema: ast.NewCIStr("test"),
+		ChildTable:  ast.NewCIStr("t3"),
+		ChildFKName: ast.NewCIStr("fk_a"),
 	}, *tb1ReferredFKs[0])
 	tb3ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test", "t3")
 	require.Equal(t, 0, len(tb3ReferredFKs))
 	require.Equal(t, 2, len(tb3Info.ForeignKeys))
 	require.Equal(t, model.FKInfo{
 		ID:        1,
-		Name:      pmodel.NewCIStr("fk_a"),
-		RefSchema: pmodel.NewCIStr("test"),
-		RefTable:  pmodel.NewCIStr("t1"),
-		RefCols:   []pmodel.CIStr{pmodel.NewCIStr("id")},
-		Cols:      []pmodel.CIStr{pmodel.NewCIStr("a")},
+		Name:      ast.NewCIStr("fk_a"),
+		RefSchema: ast.NewCIStr("test"),
+		RefTable:  ast.NewCIStr("t1"),
+		RefCols:   []ast.CIStr{ast.NewCIStr("id")},
+		Cols:      []ast.CIStr{ast.NewCIStr("a")},
 		OnDelete:  2,
 		OnUpdate:  1,
 		State:     model.StatePublic,
@@ -266,11 +266,11 @@ func TestCreateTableWithForeignKeyMetaInfo2(t *testing.T) {
 	}, *tb3Info.ForeignKeys[0])
 	require.Equal(t, model.FKInfo{
 		ID:        2,
-		Name:      pmodel.NewCIStr("fk_a2"),
-		RefSchema: pmodel.NewCIStr("test2"),
-		RefTable:  pmodel.NewCIStr("t2"),
-		RefCols:   []pmodel.CIStr{pmodel.NewCIStr("id")},
-		Cols:      []pmodel.CIStr{pmodel.NewCIStr("a")},
+		Name:      ast.NewCIStr("fk_a2"),
+		RefSchema: ast.NewCIStr("test2"),
+		RefTable:  ast.NewCIStr("t2"),
+		RefCols:   []ast.CIStr{ast.NewCIStr("id")},
+		Cols:      []ast.CIStr{ast.NewCIStr("a")},
 		State:     model.StatePublic,
 		Version:   1,
 	}, *tb3Info.ForeignKeys[1])
@@ -366,18 +366,18 @@ func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 	require.Equal(t, 1, len(tblInfo.ForeignKeys))
 	require.Equal(t, 1, len(tbReferredFKs))
 	require.Equal(t, model.ReferredFKInfo{
-		Cols:        []pmodel.CIStr{pmodel.NewCIStr("id")},
-		ChildSchema: pmodel.NewCIStr("test2"),
-		ChildTable:  pmodel.NewCIStr("t2"),
-		ChildFKName: pmodel.NewCIStr("fk"),
+		Cols:        []ast.CIStr{ast.NewCIStr("id")},
+		ChildSchema: ast.NewCIStr("test2"),
+		ChildTable:  ast.NewCIStr("t2"),
+		ChildFKName: ast.NewCIStr("fk"),
 	}, *tbReferredFKs[0])
 	require.Equal(t, model.FKInfo{
 		ID:        1,
-		Name:      pmodel.NewCIStr("fk"),
-		RefSchema: pmodel.NewCIStr("test2"),
-		RefTable:  pmodel.NewCIStr("t2"),
-		RefCols:   []pmodel.CIStr{pmodel.NewCIStr("id")},
-		Cols:      []pmodel.CIStr{pmodel.NewCIStr("a")},
+		Name:      ast.NewCIStr("fk"),
+		RefSchema: ast.NewCIStr("test2"),
+		RefTable:  ast.NewCIStr("t2"),
+		RefCols:   []ast.CIStr{ast.NewCIStr("id")},
+		Cols:      []ast.CIStr{ast.NewCIStr("a")},
 		State:     model.StatePublic,
 		Version:   1,
 	}, *tblInfo.ForeignKeys[0])
@@ -398,21 +398,21 @@ func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 	tb1ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test", "t1")
 	require.Equal(t, 1, len(tb1ReferredFKs))
 	require.Equal(t, model.ReferredFKInfo{
-		Cols:        []pmodel.CIStr{pmodel.NewCIStr("id")},
-		ChildSchema: pmodel.NewCIStr("test2"),
-		ChildTable:  pmodel.NewCIStr("tt2"),
-		ChildFKName: pmodel.NewCIStr("fk_b"),
+		Cols:        []ast.CIStr{ast.NewCIStr("id")},
+		ChildSchema: ast.NewCIStr("test2"),
+		ChildTable:  ast.NewCIStr("tt2"),
+		ChildFKName: ast.NewCIStr("fk_b"),
 	}, *tb1ReferredFKs[0])
 	tb2ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test2", "tt2")
 	require.Equal(t, 0, len(tb2ReferredFKs))
 	require.Equal(t, 1, len(tb2Info.ForeignKeys))
 	require.Equal(t, model.FKInfo{
 		ID:        1,
-		Name:      pmodel.NewCIStr("fk_b"),
-		RefSchema: pmodel.NewCIStr("test"),
-		RefTable:  pmodel.NewCIStr("t1"),
-		RefCols:   []pmodel.CIStr{pmodel.NewCIStr("id")},
-		Cols:      []pmodel.CIStr{pmodel.NewCIStr("b")},
+		Name:      ast.NewCIStr("fk_b"),
+		RefSchema: ast.NewCIStr("test"),
+		RefTable:  ast.NewCIStr("t1"),
+		RefCols:   []ast.CIStr{ast.NewCIStr("id")},
+		Cols:      []ast.CIStr{ast.NewCIStr("b")},
 		State:     model.StatePublic,
 		Version:   1,
 	}, *tb2Info.ForeignKeys[0])
@@ -430,10 +430,10 @@ func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 	require.Equal(t, model.ActionRenameTable, diff.Type)
 	require.Equal(t, 0, len(diff.AffectedOpts))
 	require.Equal(t, model.ReferredFKInfo{
-		Cols:        []pmodel.CIStr{pmodel.NewCIStr("id")},
-		ChildSchema: pmodel.NewCIStr("test2"),
-		ChildTable:  pmodel.NewCIStr("tt2"),
-		ChildFKName: pmodel.NewCIStr("fk_b"),
+		Cols:        []ast.CIStr{ast.NewCIStr("id")},
+		ChildSchema: ast.NewCIStr("test2"),
+		ChildTable:  ast.NewCIStr("tt2"),
+		ChildFKName: ast.NewCIStr("fk_b"),
 	}, *tb1ReferredFKs[0])
 	tbl2Info := getTableInfo(t, dom, "test2", "tt2")
 	tb2ReferredFKs = getTableInfoReferredForeignKeys(t, dom, "test2", "tt2")
@@ -441,11 +441,11 @@ func TestRenameTableWithForeignKeyMetaInfo(t *testing.T) {
 	require.Equal(t, 1, len(tbl2Info.ForeignKeys))
 	require.Equal(t, model.FKInfo{
 		ID:        1,
-		Name:      pmodel.NewCIStr("fk_b"),
-		RefSchema: pmodel.NewCIStr("test3"),
-		RefTable:  pmodel.NewCIStr("tt1"),
-		RefCols:   []pmodel.CIStr{pmodel.NewCIStr("id")},
-		Cols:      []pmodel.CIStr{pmodel.NewCIStr("b")},
+		Name:      ast.NewCIStr("fk_b"),
+		RefSchema: ast.NewCIStr("test3"),
+		RefTable:  ast.NewCIStr("tt1"),
+		RefCols:   []ast.CIStr{ast.NewCIStr("id")},
+		Cols:      []ast.CIStr{ast.NewCIStr("b")},
 		State:     model.StatePublic,
 		Version:   1,
 	}, *tbl2Info.ForeignKeys[0])
@@ -959,7 +959,7 @@ func getTableInfo(t *testing.T, dom *domain.Domain, db, tb string) *model.TableI
 	err := dom.Reload()
 	require.NoError(t, err)
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr(db), pmodel.NewCIStr(tb))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr(db), ast.NewCIStr(tb))
 	require.NoError(t, err)
 	_, exist := is.TableByID(context.Background(), tbl.Meta().ID)
 	require.True(t, exist)
@@ -1465,16 +1465,16 @@ func TestRenameTablesWithForeignKey(t *testing.T) {
 	require.Equal(t, 1, len(tt1ReferredFKs))
 	require.Equal(t, 1, len(tt2ReferredFKs))
 	require.Equal(t, model.ReferredFKInfo{
-		Cols:        []pmodel.CIStr{pmodel.NewCIStr("id")},
-		ChildSchema: pmodel.NewCIStr("test2"),
-		ChildTable:  pmodel.NewCIStr("tt2"),
-		ChildFKName: pmodel.NewCIStr("fk"),
+		Cols:        []ast.CIStr{ast.NewCIStr("id")},
+		ChildSchema: ast.NewCIStr("test2"),
+		ChildTable:  ast.NewCIStr("tt2"),
+		ChildFKName: ast.NewCIStr("fk"),
 	}, *tt1ReferredFKs[0])
 	require.Equal(t, model.ReferredFKInfo{
-		Cols:        []pmodel.CIStr{pmodel.NewCIStr("id")},
-		ChildSchema: pmodel.NewCIStr("test1"),
-		ChildTable:  pmodel.NewCIStr("tt1"),
-		ChildFKName: pmodel.NewCIStr("fk"),
+		Cols:        []ast.CIStr{ast.NewCIStr("id")},
+		ChildSchema: ast.NewCIStr("test1"),
+		ChildTable:  ast.NewCIStr("tt1"),
+		ChildFKName: ast.NewCIStr("fk"),
 	}, *tt2ReferredFKs[0])
 
 	// check show create table information

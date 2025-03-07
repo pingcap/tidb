@@ -27,13 +27,13 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -463,7 +463,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	var dataFile, statFile string
 	for i := 0; i < flushKVsRetryTimes; i++ {
 		dataFile, statFile, err = w.flushSortedKVs(ctx)
-		if err == nil {
+		if err == nil || ctx.Err() != nil {
 			break
 		}
 		logger.Warn("flush sorted kv failed",

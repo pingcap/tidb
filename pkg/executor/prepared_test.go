@@ -23,10 +23,11 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -54,7 +55,7 @@ func TestPreparedNullParam(t *testing.T) {
 		ps := []*util.ProcessInfo{tkProcess}
 		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 		tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
-			"TableDual_5 0.00 root  rows:0"))
+			"TableDual_6 0.00 root  rows:0"))
 	}
 }
 
@@ -244,7 +245,7 @@ func TestPlanCacheClusterIndex(t *testing.T) {
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tk.MustExec("create table t1(a varchar(20), b varchar(20), c varchar(20), primary key(a, b))")
 	tk.MustExec("insert into t1 values('1','1','111'),('2','2','222'),('3','3','333')")
@@ -329,7 +330,7 @@ func TestPlanCacheClusterIndex(t *testing.T) {
 	tk.MustQuery(`execute stmt2 using @v2, @v2, @v3, @v3`).Check(testkit.Rows("b b 2 2 2", "c c 3 3 3"))
 
 	// For issue 19002
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 	tk.MustExec(`drop table if exists t1`)
 	tk.MustExec(`create table t1(a int, b int, c int, primary key(a, b))`)
 	tk.MustExec(`insert into t1 values(1,1,111),(2,2,222),(3,3,333)`)
@@ -1040,7 +1041,7 @@ func TestPrepareStmtAfterIsolationReadChange(t *testing.T) {
 
 	// create virtual tiflash replica.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
 		Count:     1,
@@ -1192,4 +1193,27 @@ func TestExecuteWithWrongType(t *testing.T) {
 	tk.MustExecToErr(`execute p2 using @i0, @i1`)
 	tk.MustExec(`set @i0 = 0.0, @i1 = 0.0`)
 	tk.MustExec(`execute p2 using @i0, @i1`)
+}
+
+func TestIssue58870(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set names GBK")
+	tk.MustExec(`CREATE TABLE tsecurity  (
+  security_id int(11) NOT NULL DEFAULT 0,
+  mkt_id smallint(6) NOT NULL DEFAULT 0,
+  security_code varchar(64) CHARACTER SET gbk COLLATE gbk_bin NOT NULL DEFAULT ' ',
+  security_name varchar(128) CHARACTER SET gbk COLLATE gbk_bin NOT NULL DEFAULT ' ',
+  PRIMARY KEY (security_id) USING BTREE
+) ENGINE = InnoDB CHARACTER SET = gbk COLLATE = gbk_bin ROW_FORMAT = Compact;`)
+	tk.MustExec("INSERT INTO tsecurity (security_id, security_code, mkt_id, security_name) VALUES (1, '1', 1 ,'\xB2\xE2')")
+	tk.MustExec("PREPARE a FROM 'INSERT INTO tsecurity (security_id, security_code, mkt_id, security_name) VALUES (2, 2, 2 ,\"\xB2\xE2\")'")
+	tk.MustExec("EXECUTE a")
+	stmt, _, _, err := tk.Session().PrepareStmt("INSERT INTO tsecurity (security_id, security_code, mkt_id, security_name) VALUES (3, 3, 3 ,\"\xB2\xE2\")")
+	require.Nil(t, err)
+	rs, err := tk.Session().ExecutePreparedStmt(context.TODO(), stmt, nil)
+	require.Nil(t, err)
+	require.Nil(t, rs)
 }

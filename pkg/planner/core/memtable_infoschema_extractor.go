@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -115,11 +115,11 @@ func (e *InfoSchemaBaseExtractor) GetBase() *InfoSchemaBaseExtractor {
 
 // ListSchemas lists all schemas from predicate. If no schema is specified, it lists
 // all schemas in the storage.
-func (e *InfoSchemaBaseExtractor) ListSchemas(is infoschema.InfoSchema) []pmodel.CIStr {
+func (e *InfoSchemaBaseExtractor) ListSchemas(is infoschema.InfoSchema) []ast.CIStr {
 	extractedSchemas, unspecified := e.listPredicateSchemas(is)
 	if unspecified {
 		ret := is.AllSchemaNames()
-		slices.SortFunc(ret, func(a, b pmodel.CIStr) int {
+		slices.SortFunc(ret, func(a, b ast.CIStr) int {
 			return strings.Compare(a.L, b.L)
 		})
 		return filterSchemaObjectByRegexp(e, e.extractableColumns.schema, ret, extractStrCIStr)
@@ -131,7 +131,7 @@ func (e *InfoSchemaBaseExtractor) ListSchemas(is infoschema.InfoSchema) []pmodel
 // If no schema is specified in predicates, return `unspecified` as true.
 func (e *InfoSchemaBaseExtractor) listPredicateSchemas(
 	is infoschema.InfoSchema,
-) (schemas []pmodel.CIStr, unspecified bool) {
+) (schemas []ast.CIStr, unspecified bool) {
 	ec := e.extractableColumns
 	schemas = e.getSchemaObjectNames(ec.schema)
 	if len(schemas) == 0 {
@@ -151,13 +151,13 @@ func (e *InfoSchemaBaseExtractor) listPredicateSchemas(
 func (e *InfoSchemaBaseExtractor) ListSchemasAndTables(
 	ctx context.Context,
 	is infoschema.InfoSchema,
-) ([]pmodel.CIStr, []*model.TableInfo, error) {
+) ([]ast.CIStr, []*model.TableInfo, error) {
 	ec := e.extractableColumns
-	var tableNames []pmodel.CIStr
+	var tableNames []ast.CIStr
 	if ec.table != "" {
 		tableNames = e.getSchemaObjectNames(ec.table)
 	}
-	var tableIDs []pmodel.CIStr
+	var tableIDs []ast.CIStr
 	if ec.tableID != "" {
 		tableIDs = e.getSchemaObjectNames(ec.tableID)
 		if len(tableIDs) > 0 {
@@ -610,8 +610,8 @@ func NewInfoSchemaSequenceExtractor() *InfoSchemaSequenceExtractor {
 // findTablesByID finds tables by table IDs and append them to table map.
 func findTablesByID(
 	is infoschema.InfoSchema,
-	tableIDs []pmodel.CIStr,
-	tableNames []pmodel.CIStr,
+	tableIDs []ast.CIStr,
+	tableNames []ast.CIStr,
 	tables map[int64]*model.TableInfo,
 ) {
 	tblNameMap := make(map[string]struct{}, len(tableNames))
@@ -640,8 +640,8 @@ func findTablesByID(
 // findTablesByPartID finds tables by partition IDs and append them to table map.
 func findTablesByPartID(
 	is infoschema.InfoSchema,
-	partIDs []pmodel.CIStr,
-	tableNames []pmodel.CIStr,
+	partIDs []ast.CIStr,
+	tableNames []ast.CIStr,
 	tables map[int64]*model.TableInfo,
 ) {
 	tblNameMap := make(map[string]struct{}, len(tableNames))
@@ -667,11 +667,11 @@ func findTablesByPartID(
 func findTableAndSchemaByName(
 	ctx context.Context,
 	is infoschema.InfoSchema,
-	schemas []pmodel.CIStr,
-	tableNames []pmodel.CIStr,
-) ([]pmodel.CIStr, []*model.TableInfo, error) {
+	schemas []ast.CIStr,
+	tableNames []ast.CIStr,
+) ([]ast.CIStr, []*model.TableInfo, error) {
 	type schemaAndTable struct {
-		schema pmodel.CIStr
+		schema ast.CIStr
 		table  *model.TableInfo
 	}
 	tableMap := make(map[int64]schemaAndTable, len(tableNames))
@@ -692,7 +692,7 @@ func findTableAndSchemaByName(
 			tableMap[tblInfo.ID] = schemaAndTable{s, tblInfo}
 		}
 	}
-	schemaSlice := make([]pmodel.CIStr, 0, len(tableMap))
+	schemaSlice := make([]ast.CIStr, 0, len(tableMap))
 	tableSlice := make([]*model.TableInfo, 0, len(tableMap))
 	for _, st := range tableMap {
 		schemaSlice = append(schemaSlice, st.schema)
@@ -714,10 +714,10 @@ func listTablesForEachSchema(
 	ctx context.Context,
 	e *InfoSchemaBaseExtractor,
 	is infoschema.InfoSchema,
-	schemas []pmodel.CIStr,
-) ([]pmodel.CIStr, []*model.TableInfo, error) {
+	schemas []ast.CIStr,
+) ([]ast.CIStr, []*model.TableInfo, error) {
 	ec := e.extractableColumns
-	schemaSlice := make([]pmodel.CIStr, 0, 8)
+	schemaSlice := make([]ast.CIStr, 0, 8)
 	tableSlice := make([]*model.TableInfo, 0, 8)
 	for _, s := range schemas {
 		tables, err := is.SchemaTableInfos(ctx, s)
@@ -743,9 +743,9 @@ func findSchemasForTables(
 	e *InfoSchemaBaseExtractor,
 	is infoschema.InfoSchema,
 	tableSlice []*model.TableInfo,
-) ([]pmodel.CIStr, []*model.TableInfo, error) {
+) ([]ast.CIStr, []*model.TableInfo, error) {
 	schemas, unspecified := e.listPredicateSchemas(is)
-	schemaSlice := make([]pmodel.CIStr, 0, len(tableSlice))
+	schemaSlice := make([]ast.CIStr, 0, len(tableSlice))
 	for i, tbl := range tableSlice {
 		dbInfo, ok := is.SchemaByID(tbl.DBID)
 		intest.Assert(ok)
@@ -790,7 +790,7 @@ func findSchemasForTables(
 	return schemaSlice, remains, nil
 }
 
-func parseIDs(ids []pmodel.CIStr) []int64 {
+func parseIDs(ids []ast.CIStr) []int64 {
 	tableIDs := make([]int64, 0, len(ids))
 	for _, s := range ids {
 		v, err := strconv.ParseInt(s.L, 10, 64)
@@ -804,14 +804,14 @@ func parseIDs(ids []pmodel.CIStr) []int64 {
 }
 
 // getSchemaObjectNames gets the schema object names specified in predicate of given column name.
-func (e *InfoSchemaBaseExtractor) getSchemaObjectNames(colName string) []pmodel.CIStr {
+func (e *InfoSchemaBaseExtractor) getSchemaObjectNames(colName string) []ast.CIStr {
 	predVals, ok := e.ColPredicates[colName]
 	if ok && len(predVals) > 0 {
-		objNames := make([]pmodel.CIStr, 0, len(predVals))
+		objNames := make([]ast.CIStr, 0, len(predVals))
 		predVals.IterateWith(func(n string) {
-			objNames = append(objNames, pmodel.NewCIStr(n))
+			objNames = append(objNames, ast.NewCIStr(n))
 		})
-		slices.SortFunc(objNames, func(a, b pmodel.CIStr) int {
+		slices.SortFunc(objNames, func(a, b ast.CIStr) int {
 			return strings.Compare(a.L, b.L)
 		})
 		return objNames
@@ -819,7 +819,7 @@ func (e *InfoSchemaBaseExtractor) getSchemaObjectNames(colName string) []pmodel.
 	return nil
 }
 
-func extractStrCIStr(str pmodel.CIStr) string {
+func extractStrCIStr(str ast.CIStr) string {
 	return str.O
 }
 
@@ -874,13 +874,13 @@ func NewInfoSchemaColumnsExtractor() *InfoSchemaColumnsExtractor {
 // TODO(tangenta): remove this after streaming interface is supported.
 func (e *InfoSchemaColumnsExtractor) ListTables(
 	ctx context.Context,
-	s pmodel.CIStr,
+	s ast.CIStr,
 	is infoschema.InfoSchema,
 ) ([]*model.TableInfo, error) {
 	ec := e.extractableColumns
 	base := e.GetBase()
-	schemas := []pmodel.CIStr{s}
-	var tableNames []pmodel.CIStr
+	schemas := []ast.CIStr{s}
+	var tableNames []ast.CIStr
 	if ec.table != "" {
 		tableNames = e.getSchemaObjectNames(ec.table)
 	}

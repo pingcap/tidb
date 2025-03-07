@@ -29,8 +29,8 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -105,8 +105,8 @@ func TestResourceGroupBasic(t *testing.T) {
 	re.Equal(uint64(2000), g.RURate)
 	re.Equal(int64(-1), g.BurstLimit)
 	re.Equal(uint64(time.Second*15/time.Millisecond), g.Runaway.ExecElapsedTimeMs)
-	re.Equal(pmodel.RunawayActionDryRun, g.Runaway.Action)
-	re.Equal(pmodel.WatchSimilar, g.Runaway.WatchType)
+	re.Equal(ast.RunawayActionDryRun, g.Runaway.Action)
+	re.Equal(ast.WatchSimilar, g.Runaway.WatchType)
 	re.Equal(int64(time.Minute*10/time.Millisecond), g.Runaway.WatchDurationMs)
 
 	tk.MustExec("alter resource group x QUERY_LIMIT=(EXEC_ELAPSED='20s' ACTION DRYRUN WATCH SIMILAR) BURSTABLE=FALSE")
@@ -114,8 +114,8 @@ func TestResourceGroupBasic(t *testing.T) {
 	re.Equal(uint64(2000), g.RURate)
 	re.Equal(int64(2000), g.BurstLimit)
 	re.Equal(uint64(time.Second*20/time.Millisecond), g.Runaway.ExecElapsedTimeMs)
-	re.Equal(pmodel.RunawayActionDryRun, g.Runaway.Action)
-	re.Equal(pmodel.WatchSimilar, g.Runaway.WatchType)
+	re.Equal(ast.RunawayActionDryRun, g.Runaway.Action)
+	re.Equal(ast.WatchSimilar, g.Runaway.WatchType)
 	re.Equal(int64(0), g.Runaway.WatchDurationMs)
 
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x 2000 MEDIUM NO EXEC_ELAPSED='20s', ACTION=DRYRUN, WATCH=SIMILAR DURATION=UNLIMITED <nil>"))
@@ -125,9 +125,9 @@ func TestResourceGroupBasic(t *testing.T) {
 	re.Equal(uint64(math.MaxInt32), g.RURate)
 	re.Equal(int64(-1), g.BurstLimit)
 	re.Equal(uint64(time.Second*15/time.Millisecond), g.Runaway.ExecElapsedTimeMs)
-	re.Equal(pmodel.RunawayActionSwitchGroup, g.Runaway.Action)
+	re.Equal(ast.RunawayActionSwitchGroup, g.Runaway.Action)
 	re.Equal("y", g.Runaway.SwitchGroupName)
-	re.Equal(pmodel.WatchSimilar, g.Runaway.WatchType)
+	re.Equal(ast.WatchSimilar, g.Runaway.WatchType)
 	re.Equal(int64(time.Minute*10/time.Millisecond), g.Runaway.WatchDurationMs)
 
 	tk.MustQuery("select * from information_schema.resource_groups where name = 'x'").Check(testkit.Rows("x UNLIMITED MEDIUM YES EXEC_ELAPSED='15s', ACTION=SWITCH_GROUP(y), WATCH=SIMILAR DURATION='10m0s' <nil>"))
@@ -181,7 +181,7 @@ func TestResourceGroupBasic(t *testing.T) {
 		re.Equal(uint64(5000), groupInfo.RURate)
 		re.Equal(int64(-1), groupInfo.BurstLimit)
 		re.Equal(uint64(time.Second*15/time.Millisecond), groupInfo.Runaway.ExecElapsedTimeMs)
-		re.Equal(pmodel.RunawayActionKill, groupInfo.Runaway.Action)
+		re.Equal(ast.RunawayActionKill, groupInfo.Runaway.Action)
 		re.Equal(int64(0), groupInfo.Runaway.WatchDurationMs)
 	}
 	g = testResourceGroupNameFromIS(t, tk.Session(), "y")
@@ -299,7 +299,7 @@ func testResourceGroupNameFromIS(t *testing.T, ctx sessionctx.Context, name stri
 	// Make sure the table schema is the new schema.
 	err := dom.Reload()
 	require.NoError(t, err)
-	g, _ := dom.InfoSchema().ResourceGroupByName(pmodel.NewCIStr(name))
+	g, _ := dom.InfoSchema().ResourceGroupByName(ast.NewCIStr(name))
 	return g
 }
 
@@ -608,7 +608,7 @@ func TestNewResourceGroupFromOptions(t *testing.T) {
 		input: &model.ResourceGroupSettings{
 			Runaway: &model.ResourceGroupRunawaySettings{
 				ExecElapsedTimeMs: 1000,
-				Action:            pmodel.RunawayActionSwitchGroup,
+				Action:            ast.RunawayActionSwitchGroup,
 				SwitchGroupName:   "",
 			},
 		},

@@ -75,7 +75,7 @@ func (c PDRegionScanner) FetchCurrentTS(ctx context.Context) (uint64, error) {
 // Limit limits the maximum number of regions returned.
 func (c PDRegionScanner) RegionScan(ctx context.Context, key, endKey []byte, limit int) ([]RegionWithLeader, error) {
 	//nolint:staticcheck
-	rs, err := c.Client.ScanRegions(ctx, key, endKey, limit)
+	rs, err := c.Client.ScanRegions(ctx, key, endKey, limit, opt.WithAllowFollowerHandle())
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +178,7 @@ type StreamMeta interface {
 	GetGlobalCheckpointForTask(ctx context.Context, taskName string) (uint64, error)
 	// ClearV3GlobalCheckpointForTask clears the global checkpoint to the meta store.
 	ClearV3GlobalCheckpointForTask(ctx context.Context, taskName string) error
-	PauseTask(ctx context.Context, taskName string) error
+	PauseTask(ctx context.Context, taskName string, opts ...PauseTaskOption) error
 }
 
 var _ tikv.RegionLockResolver = &AdvancerLockResolver{}

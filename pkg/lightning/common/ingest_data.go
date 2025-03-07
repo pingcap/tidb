@@ -17,7 +17,7 @@ package common
 import (
 	"context"
 
-	"github.com/pingcap/tidb/br/pkg/membuf"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 )
 
 // IngestData describes a common interface that is needed by TiKV write +

@@ -19,7 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
@@ -30,12 +30,12 @@ func TestLeftoverWhenUnmarshal(t *testing.T) {
 	changesReused := []*SchemaChange{
 		{event: &SchemaChangeEvent{inner: &jsonSchemaChangeEvent{
 			TableInfo: &model.TableInfo{
-				Name:    pmodel.NewCIStr("old"),
-				Columns: []*model.ColumnInfo{{Name: pmodel.NewCIStr("c1")}},
+				Name:    ast.NewCIStr("old"),
+				Columns: []*model.ColumnInfo{{Name: ast.NewCIStr("c1")}},
 				Indices: []*model.IndexInfo{
-					{Name: pmodel.NewCIStr("i1")},
-					{Name: pmodel.NewCIStr("i2")},
-					{Name: pmodel.NewCIStr("i3")},
+					{Name: ast.NewCIStr("i1")},
+					{Name: ast.NewCIStr("i2")},
+					{Name: ast.NewCIStr("i3")},
 				},
 			},
 		}}},
@@ -46,16 +46,16 @@ func TestLeftoverWhenUnmarshal(t *testing.T) {
 	}
 
 	newTableInfo := &model.TableInfo{
-		Name: pmodel.NewCIStr("new"),
+		Name: ast.NewCIStr("new"),
 		Columns: []*model.ColumnInfo{
-			{Name: pmodel.NewCIStr("c2")},
-			{Name: pmodel.NewCIStr("c3")},
+			{Name: ast.NewCIStr("c2")},
+			{Name: ast.NewCIStr("c3")},
 		},
 		Indices: []*model.IndexInfo{
-			{Name: pmodel.NewCIStr("i4")},
+			{Name: ast.NewCIStr("i4")},
 		},
 		Constraints: []*model.ConstraintInfo{
-			{Name: pmodel.NewCIStr("c1")},
+			{Name: ast.NewCIStr("c1")},
 		},
 	}
 

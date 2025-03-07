@@ -19,7 +19,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 )
 
@@ -274,11 +273,11 @@ func (n *Join) Accept(v Visitor) (Node, bool) {
 type TableName struct {
 	node
 
-	Schema model.CIStr
-	Name   model.CIStr
+	Schema CIStr
+	Name   CIStr
 
 	IndexHints     []*IndexHint
-	PartitionNames []model.CIStr
+	PartitionNames []CIStr
 	TableSample    *TableSample
 	// AS OF is used to see the data as it was at a specific point in time.
 	AsOf *AsOfClause
@@ -380,7 +379,7 @@ const (
 
 // IndexHint represents a hint for optimizer to use/ignore/force for join/order by/group by.
 type IndexHint struct {
-	IndexNames []model.CIStr
+	IndexNames []CIStr
 	HintType   IndexHintType
 	HintScope  IndexHintScope
 }
@@ -532,7 +531,7 @@ type TableSource struct {
 	Source ResultSetNode
 
 	// AsName is the alias name of the table source.
-	AsName model.CIStr
+	AsName CIStr
 }
 
 func (*TableSource) resultSet() {}
@@ -659,8 +658,8 @@ func (n SelectLockType) String() string {
 type WildCardField struct {
 	node
 
-	Table  model.CIStr
-	Schema model.CIStr
+	Table  CIStr
+	Schema CIStr
 }
 
 // Restore implements Node interface.
@@ -700,7 +699,7 @@ type SelectField struct {
 	// Expr is not nil, WildCard will be nil.
 	Expr ExprNode
 	// AsName is alias name for Expr.
-	AsName model.CIStr
+	AsName CIStr
 	// Auxiliary stands for if this field is auxiliary.
 	// When we add a Field into SelectField list which is used for having/orderby clause but the field is not in select clause,
 	// we should set its Auxiliary to true. Then the TrimExec will trim the field.
@@ -1084,9 +1083,9 @@ func (s *SelectStmtKind) String() string {
 type CommonTableExpression struct {
 	node
 
-	Name        model.CIStr
+	Name        CIStr
 	Query       *SubqueryExpr
-	ColNameList []model.CIStr
+	ColNameList []CIStr
 	IsRecursive bool
 
 	// Record how many consumers the current cte has
@@ -2303,7 +2302,7 @@ type InsertStmt struct {
 	Select      ResultSetNode
 	// TableHints represents the table level Optimizer Hint for join type.
 	TableHints     []*TableOptimizerHint
-	PartitionNames []model.CIStr
+	PartitionNames []CIStr
 }
 
 // Restore implements Node interface.
@@ -3076,9 +3075,9 @@ type ShowStmt struct {
 	Table  *TableName // Used for showing columns.
 	// Procedure's naming method is consistent with the table name
 	Procedure         *TableName
-	Partition         model.CIStr // Used for showing partition.
+	Partition         CIStr       // Used for showing partition.
 	Column            *ColumnName // Used for `desc table column`.
-	IndexName         model.CIStr
+	IndexName         CIStr
 	ResourceGroupName string // used for showing resource group
 	Flag              int    // Some flag parsed from sql, such as FULL.
 	Full              bool
@@ -3520,10 +3519,10 @@ func (n *ShowStmt) NeedLimitRSRow() bool {
 type WindowSpec struct {
 	node
 
-	Name model.CIStr
+	Name CIStr
 	// Ref is the reference window of this specification. For example, in `w2 as (w1 order by a)`,
 	// the definition of `w2` references `w1`.
-	Ref model.CIStr
+	Ref CIStr
 
 	PartitionBy *PartitionByClause
 	OrderBy     *OrderByClause
@@ -3831,8 +3830,8 @@ type SplitRegionStmt struct {
 	dmlNode
 
 	Table          *TableName
-	IndexName      model.CIStr
-	PartitionNames []model.CIStr
+	IndexName      CIStr
+	PartitionNames []CIStr
 
 	SplitSyntaxOpt *SplitSyntaxOption
 

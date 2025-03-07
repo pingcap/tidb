@@ -18,6 +18,7 @@ import (
 	stderrors "errors"
 	"math/rand"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
@@ -62,6 +64,10 @@ type statsSyncLoad struct {
 	statsHandle statstypes.StatsHandle
 	is          infoschema.InfoSchema
 	StatsLoad   statstypes.StatsLoad
+	// This mutex protects the statsCache from concurrent modifications by multiple workers.
+	// Since multiple workers may update the statsCache for the same table simultaneously,
+	// the mutex ensures thread-safety during these updates.
+	mutexForStatsCache sync.Mutex
 }
 
 var globalStatsSyncLoadSingleFlight singleflight.Group
@@ -302,10 +308,13 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 		if err == nil { // only recycle when no error
 			sctx.GetSessionVars().StmtCtx.Priority = mysql.NoPriority
 			s.statsHandle.SPool().Put(se)
+		} else {
+			// Note: Otherwise, the session will be leaked.
+			s.statsHandle.SPool().Destroy(se)
 		}
 	}()
 	var skipTypes map[string]struct{}
-	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeSkipColumnTypes)
+	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzeSkipColumnTypes)
 	if err != nil {
 		logutil.BgLogger().Warn("failed to get global variable", zap.Error(err))
 	} else {
@@ -404,7 +413,7 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 	var hg *statistics.Histogram
 	var err error
 	isIndexFlag := int64(0)
-	hg, lastAnalyzePos, statsVer, flag, err := storage.HistMetaFromStorageWithHighPriority(sctx, &item, w.colInfo)
+	hg, statsVer, err := storage.HistMetaFromStorageWithHighPriority(sctx, &item, w.colInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -451,7 +460,6 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 			FMSketch:   fms,
 			Info:       w.idxInfo,
 			StatsVer:   statsVer,
-			Flag:       flag,
 			PhysicalID: item.TableID,
 		}
 		if statsVer != statistics.Version0 {
@@ -461,7 +469,6 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 				idxHist.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 			}
 		}
-		lastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
 		w.idx = idxHist
 	} else {
 		colHist := &statistics.Column{
@@ -562,8 +569,8 @@ func (*statsSyncLoad) writeToResultChan(resultCh chan stmtctx.StatsLoadResult, r
 
 // updateCachedItem updates the column/index hist to global statsCache.
 func (s *statsSyncLoad) updateCachedItem(tblInfo *model.TableInfo, item model.TableItemID, colHist *statistics.Column, idxHist *statistics.Index, fullLoaded bool) (updated bool) {
-	s.StatsLoad.Lock()
-	defer s.StatsLoad.Unlock()
+	s.mutexForStatsCache.Lock()
+	defer s.mutexForStatsCache.Unlock()
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
 	tbl, ok := s.statsHandle.Get(item.TableID)
@@ -574,14 +581,12 @@ func (s *statsSyncLoad) updateCachedItem(tblInfo *model.TableInfo, item model.Ta
 		tbl = tbl.Copy()
 		for _, col := range tbl.HistColl.GetColSlice() {
 			if tblInfo.FindColumnByID(col.ID) == nil {
-				tbl.HistColl.DelCol(col.ID)
-				tbl.ColAndIdxExistenceMap.DeleteColAnalyzed(col.ID)
+				tbl.DelCol(col.ID)
 			}
 		}
 		for _, idx := range tbl.HistColl.GetIdxSlice() {
 			if tblInfo.FindIndexByID(idx.ID) == nil {
-				tbl.HistColl.DelIdx(idx.ID)
-				tbl.ColAndIdxExistenceMap.DeleteIdxAnalyzed(idx.ID)
+				tbl.DelIdx(idx.ID)
 			}
 		}
 		tbl.ColAndIdxExistenceMap.SetChecked()

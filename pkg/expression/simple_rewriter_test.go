@@ -19,7 +19,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -51,15 +50,15 @@ func generateTestData(size int) (types.NameSlice, *ast.ColumnName) {
 	names := make(types.NameSlice, size)
 	for i := 0; i < size; i++ {
 		names[i] = &types.FieldName{
-			DBName:  model.NewCIStr("db"),
-			TblName: model.NewCIStr("tbl"),
-			ColName: model.NewCIStr("col" + string(rune('A'+i))),
+			DBName:  ast.NewCIStr("db"),
+			TblName: ast.NewCIStr("tbl"),
+			ColName: ast.NewCIStr("col" + string(rune('A'+i))),
 		}
 	}
 	astCol := &ast.ColumnName{
-		Schema: model.NewCIStr("db"),
-		Table:  model.NewCIStr("tbl"),
-		Name:   model.NewCIStr("colZ"),
+		Schema: ast.NewCIStr("db"),
+		Table:  ast.NewCIStr("tbl"),
+		Name:   ast.NewCIStr("colZ"),
 	}
 	return names, astCol
 }
@@ -75,89 +74,89 @@ func TestFindFieldName(t *testing.T) {
 		{
 			name: "Simple match",
 			names: types.NameSlice{
-				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col")},
+				{DBName: ast.NewCIStr("db"), TblName: ast.NewCIStr("tbl"), ColName: ast.NewCIStr("col")},
 			},
-			astCol:   &ast.ColumnName{Schema: model.NewCIStr("db"), Table: model.NewCIStr("tbl"), Name: model.NewCIStr("col")},
+			astCol:   &ast.ColumnName{Schema: ast.NewCIStr("db"), Table: ast.NewCIStr("tbl"), Name: ast.NewCIStr("col")},
 			expected: 0,
 		},
 		{
 			name: "Match with empty schema and table",
 			names: types.NameSlice{
-				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col")},
+				{DBName: ast.NewCIStr("db"), TblName: ast.NewCIStr("tbl"), ColName: ast.NewCIStr("col")},
 			},
-			astCol:   &ast.ColumnName{Schema: model.NewCIStr(""), Table: model.NewCIStr(""), Name: model.NewCIStr("col")},
+			astCol:   &ast.ColumnName{Schema: ast.NewCIStr(""), Table: ast.NewCIStr(""), Name: ast.NewCIStr("col")},
 			expected: 0,
 		},
 		{
 			name: "Match with empty schema, non-empty table",
 			names: types.NameSlice{
-				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col")},
+				{DBName: ast.NewCIStr("db"), TblName: ast.NewCIStr("tbl"), ColName: ast.NewCIStr("col")},
 			},
-			astCol:   &ast.ColumnName{Schema: model.NewCIStr(""), Table: model.NewCIStr("tbl"), Name: model.NewCIStr("col")},
+			astCol:   &ast.ColumnName{Schema: ast.NewCIStr(""), Table: ast.NewCIStr("tbl"), Name: ast.NewCIStr("col")},
 			expected: 0,
 		},
 		{
 			name: "Match with non-empty schema, empty table",
 			names: types.NameSlice{
-				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col")},
+				{DBName: ast.NewCIStr("db"), TblName: ast.NewCIStr("tbl"), ColName: ast.NewCIStr("col")},
 			},
-			astCol:   &ast.ColumnName{Schema: model.NewCIStr("db"), Table: model.NewCIStr(""), Name: model.NewCIStr("col")},
+			astCol:   &ast.ColumnName{Schema: ast.NewCIStr("db"), Table: ast.NewCIStr(""), Name: ast.NewCIStr("col")},
 			expected: 0,
 		},
 		{
 			name: "No match",
 			names: types.NameSlice{
-				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col1")},
+				{DBName: ast.NewCIStr("db"), TblName: ast.NewCIStr("tbl"), ColName: ast.NewCIStr("col1")},
 			},
-			astCol:   &ast.ColumnName{Schema: model.NewCIStr("db"), Table: model.NewCIStr("tbl"), Name: model.NewCIStr("col2")},
+			astCol:   &ast.ColumnName{Schema: ast.NewCIStr("db"), Table: ast.NewCIStr("tbl"), Name: ast.NewCIStr("col2")},
 			expected: -1,
 		},
 		{
 			name: "Match with redundant field",
 			names: types.NameSlice{
-				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col"), Redundant: true},
-				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col"), Redundant: true},
-				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col")},
+				{DBName: ast.NewCIStr("db"), TblName: ast.NewCIStr("tbl"), ColName: ast.NewCIStr("col"), Redundant: true},
+				{DBName: ast.NewCIStr("db"), TblName: ast.NewCIStr("tbl"), ColName: ast.NewCIStr("col"), Redundant: true},
+				{DBName: ast.NewCIStr("db"), TblName: ast.NewCIStr("tbl"), ColName: ast.NewCIStr("col")},
 			},
-			astCol:   &ast.ColumnName{Schema: model.NewCIStr("db"), Table: model.NewCIStr("tbl"), Name: model.NewCIStr("col")},
+			astCol:   &ast.ColumnName{Schema: ast.NewCIStr("db"), Table: ast.NewCIStr("tbl"), Name: ast.NewCIStr("col")},
 			expected: 2,
 		},
 		{
 			name: "Non-unique match",
 			names: types.NameSlice{
-				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col")},
-				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col")},
+				{DBName: ast.NewCIStr("db"), TblName: ast.NewCIStr("tbl"), ColName: ast.NewCIStr("col")},
+				{DBName: ast.NewCIStr("db"), TblName: ast.NewCIStr("tbl"), ColName: ast.NewCIStr("col")},
 			},
-			astCol: &ast.ColumnName{Schema: model.NewCIStr("db"), Table: model.NewCIStr("tbl"), Name: model.NewCIStr("col")},
+			astCol: &ast.ColumnName{Schema: ast.NewCIStr("db"), Table: ast.NewCIStr("tbl"), Name: ast.NewCIStr("col")},
 			err:    errNonUniq.GenWithStackByArgs("db.tbl.col", "field list"),
 		},
 		{
 			name: "Match with empty schema and table and redundant",
 			names: types.NameSlice{
-				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col"), Redundant: true},
-				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col")},
+				{DBName: ast.NewCIStr("db"), TblName: ast.NewCIStr("tbl"), ColName: ast.NewCIStr("col"), Redundant: true},
+				{DBName: ast.NewCIStr("db"), TblName: ast.NewCIStr("tbl"), ColName: ast.NewCIStr("col")},
 			},
-			astCol:   &ast.ColumnName{Schema: model.NewCIStr(""), Table: model.NewCIStr(""), Name: model.NewCIStr("col")},
+			astCol:   &ast.ColumnName{Schema: ast.NewCIStr(""), Table: ast.NewCIStr(""), Name: ast.NewCIStr("col")},
 			expected: 1,
 		},
 		{
 			name: "Non-unique match with a redundant",
 			names: types.NameSlice{
-				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col"), Redundant: true},
-				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col")},
-				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col")},
+				{DBName: ast.NewCIStr("db"), TblName: ast.NewCIStr("tbl"), ColName: ast.NewCIStr("col"), Redundant: true},
+				{DBName: ast.NewCIStr("db"), TblName: ast.NewCIStr("tbl"), ColName: ast.NewCIStr("col")},
+				{DBName: ast.NewCIStr("db"), TblName: ast.NewCIStr("tbl"), ColName: ast.NewCIStr("col")},
 			},
-			astCol: &ast.ColumnName{Schema: model.NewCIStr("db"), Table: model.NewCIStr("tbl"), Name: model.NewCIStr("col")},
+			astCol: &ast.ColumnName{Schema: ast.NewCIStr("db"), Table: ast.NewCIStr("tbl"), Name: ast.NewCIStr("col")},
 			err:    errNonUniq.GenWithStackByArgs("db.tbl.col", "field list"),
 		},
 		{
 			name: "Match with multiple redundant",
 			names: types.NameSlice{
-				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col"), Redundant: true},
-				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col"), Redundant: true},
-				{DBName: model.NewCIStr("db"), TblName: model.NewCIStr("tbl"), ColName: model.NewCIStr("col"), Redundant: true},
+				{DBName: ast.NewCIStr("db"), TblName: ast.NewCIStr("tbl"), ColName: ast.NewCIStr("col"), Redundant: true},
+				{DBName: ast.NewCIStr("db"), TblName: ast.NewCIStr("tbl"), ColName: ast.NewCIStr("col"), Redundant: true},
+				{DBName: ast.NewCIStr("db"), TblName: ast.NewCIStr("tbl"), ColName: ast.NewCIStr("col"), Redundant: true},
 			},
-			astCol:   &ast.ColumnName{Schema: model.NewCIStr("db"), Table: model.NewCIStr("tbl"), Name: model.NewCIStr("col")},
+			astCol:   &ast.ColumnName{Schema: ast.NewCIStr("db"), Table: ast.NewCIStr("tbl"), Name: ast.NewCIStr("col")},
 			expected: 0,
 		},
 	}

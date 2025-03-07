@@ -22,7 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -285,7 +285,7 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 	tk.MustExec(`create table t(a int, b vector(2), c vector(3), j json, index(a))`)
 	tk.MustExec("insert into t values(1, '[1, 0]', '[1, 0, 0]', '{\"a\": 1}')")
 	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tblInfo.ID, true)
@@ -305,15 +305,15 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
-		"Warning 1105 analyzing vector index is not supported, skip idx",
-		"Warning 1105 analyzing vector index is not supported, skip idx2"))
+		"Warning 1105 analyzing columnar index is not supported, skip idx",
+		"Warning 1105 analyzing columnar index is not supported, skip idx2"))
 	tk.MustExec("analyze table t index idx")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/1) as the sample-rate=1\"",
 		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
-		"Warning 1105 analyzing vector index is not supported, skip idx",
-		"Warning 1105 analyzing vector index is not supported, skip idx2"))
+		"Warning 1105 analyzing columnar index is not supported, skip idx",
+		"Warning 1105 analyzing columnar index is not supported, skip idx2"))
 
 	statsHandle := dom.StatsHandle()
 	statsTbl := statsHandle.GetTableStats(tblInfo)
@@ -332,15 +332,15 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 	tk.MustExec("set tidb_analyze_version=1")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Warning 1105 analyzing vector index is not supported, skip idx",
-		"Warning 1105 analyzing vector index is not supported, skip idx2"))
+		"Warning 1105 analyzing columnar index is not supported, skip idx",
+		"Warning 1105 analyzing columnar index is not supported, skip idx2"))
 	tk.MustExec("analyze table t index idx")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Warning 1105 analyzing vector index is not supported, skip idx"))
+		"Warning 1105 analyzing columnar index is not supported, skip idx"))
 	tk.MustExec("analyze table t index a")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
 	tk.MustExec("analyze table t index a, idx, idx2")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Warning 1105 analyzing vector index is not supported, skip idx",
-		"Warning 1105 analyzing vector index is not supported, skip idx2"))
+		"Warning 1105 analyzing columnar index is not supported, skip idx",
+		"Warning 1105 analyzing columnar index is not supported, skip idx2"))
 }

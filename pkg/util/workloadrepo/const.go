@@ -17,7 +17,10 @@ package workloadrepo
 import (
 	"time"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
 const (
@@ -25,18 +28,22 @@ const (
 	promptKey = "workloadrepo"
 	snapIDKey = "/tidb/workloadrepo/snap_id"
 
-	etcdOpTimeout = 5 * time.Second
+	etcdOpTimeout   = 5 * time.Second
+	snapshotRetries = 5
 
 	defSamplingInterval = 5
 	defSnapshotInterval = 3600
 	defRententionDays   = 7
 
-	// WorkloadSchema is the name of database for workloadrepo worker.
-	WorkloadSchema     = "WORKLOAD_SCHEMA"
 	histSnapshotsTable = "HIST_SNAPSHOTS"
 )
 
 var (
-	workloadSchemaCIStr = model.NewCIStr(WorkloadSchema)
+	workloadSchemaCIStr = ast.NewCIStr(mysql.WorkloadSchema)
 	zeroTime            = time.Time{}
+
+	errWrongValueForVar        = dbterror.ClassUtil.NewStd(errno.ErrWrongValueForVar)
+	errUnsupportedEtcdRequired = dbterror.ClassUtil.NewStdErr(errno.ErrNotSupportedYet, mysql.Message("etcd client required for workload repository", nil))
+	errWorkloadNotStarted      = dbterror.ClassUtil.NewStdErr(errno.ErrNotSupportedYet, mysql.Message("Workload repository is not enabled", nil))
+	errCouldNotStartSnapshot   = dbterror.ClassUtil.NewStdErr(errno.ErrUnknown, mysql.Message("Snapshot initiation failed", nil))
 )

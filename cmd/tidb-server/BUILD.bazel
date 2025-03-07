@@ -27,6 +27,7 @@ go_library(
         "//pkg/server",
         "//pkg/session",
         "//pkg/session/txninfo",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
         "//pkg/store",
@@ -104,6 +105,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/parser/mysql",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/testkit/testsetup",
         "@com_github_stretchr_testify//require",

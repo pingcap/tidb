@@ -22,7 +22,7 @@
           "├─IndexLookUp 10000.00 root  ",
           "│ ├─IndexFullScan(Build) 10000.00 cop[tikv] table:t, partition:p1, index:b(b) keep order:false, stats:pseudo",
           "│ └─TableRowIDScan(Probe) 10000.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TableFullScan 10000.00 mpp[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
         ],
@@ -34,10 +34,10 @@
         "SQL": "select /*+ use_index(t partition(p_non_exist)) */ * from t partition(p1,p2)",
         "Plan": [
           "PartitionUnion 20000.00 root  ",
-          "├─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "├─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "│ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│   └─TableFullScan 10000.00 mpp[tiflash] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TableFullScan 10000.00 mpp[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
         ],
@@ -55,7 +55,7 @@
           "├─IndexLookUp 10000.00 root  ",
           "│ ├─IndexFullScan(Build) 10000.00 cop[tikv] table:t, partition:p1, index:b(b) keep order:false, stats:pseudo",
           "│ └─TableRowIDScan(Probe) 10000.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TableFullScan 10000.00 mpp[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
         ],
@@ -65,13 +65,13 @@
         "SQL": "select /*+ ignore_index(t partition(p0, p1) b, c) */ * from t",
         "Plan": [
           "PartitionUnion 30000.00 root  ",
-          "├─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "├─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "│ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│   └─TableFullScan 10000.00 mpp[tiflash] table:t, partition:p0 keep order:false, stats:pseudo",
-          "├─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "├─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "│ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│   └─TableFullScan 10000.00 mpp[tiflash] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TableFullScan 10000.00 mpp[tiflash] table:t, partition:p2 keep order:false, stats:pseudo"
         ],
@@ -82,23 +82,23 @@
         "Plan": [
           "HashJoin 37500.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
           "├─PartitionUnion(Build) 30000.00 root  ",
-          "│ ├─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "│ ├─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "│ │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│ │   └─TableFullScan 10000.00 mpp[tiflash] table:t2, partition:p0 keep order:false, stats:pseudo",
-          "│ ├─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "│ ├─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "│ │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│ │   └─TableFullScan 10000.00 mpp[tiflash] table:t2, partition:p1 keep order:false, stats:pseudo",
-          "│ └─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "│ └─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "│   └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│     └─TableFullScan 10000.00 mpp[tiflash] table:t2, partition:p2 keep order:false, stats:pseudo",
           "└─PartitionUnion(Probe) 30000.00 root  ",
-          "  ├─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "  ├─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─TableFullScan 10000.00 mpp[tiflash] table:t1, partition:p0 keep order:false, stats:pseudo",
-          "  ├─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "  ├─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─TableFullScan 10000.00 mpp[tiflash] table:t1, partition:p1 keep order:false, stats:pseudo",
-          "  └─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "  └─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "    └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t1, partition:p2 keep order:false, stats:pseudo"
         ],
@@ -114,10 +114,10 @@
           "│ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p0, index:b(b) range:[1,1], keep order:false, stats:pseudo",
           "│ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p0, index:c(c) range:[\"8\",\"8\"], keep order:false, stats:pseudo",
           "│ └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-          "├─TableReader 19.99 root  MppVersion: 2, data:ExchangeSender",
+          "├─TableReader 19.99 root  MppVersion: 3, data:ExchangeSender",
           "│ └─ExchangeSender 19.99 mpp[tiflash]  ExchangeType: PassThrough",
           "│   └─TableFullScan 19.99 mpp[tiflash] table:t, partition:p1 pushed down filter:or(eq(test.t.b, 1), eq(test.t.c, \"8\")), keep order:false, stats:pseudo",
-          "└─TableReader 19.99 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader 19.99 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 19.99 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TableFullScan 19.99 mpp[tiflash] table:t, partition:p2 pushed down filter:or(eq(test.t.b, 1), eq(test.t.c, \"8\")), keep order:false, stats:pseudo"
         ],
@@ -135,7 +135,7 @@
           "│ ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, partition:p1, index:b(b) range:[2,2], keep order:false, stats:pseudo",
           "│ ├─TableRangeScan(Build) 1.00 cop[tikv] table:t, partition:p1 range:[1,1], keep order:false, stats:pseudo",
           "│ └─TableRowIDScan(Probe) 11.00 cop[tikv] table:t, partition:p1 keep order:false, stats:pseudo",
-          "└─TableReader 11.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader 11.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 11.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TableFullScan 11.00 mpp[tiflash] table:t, partition:p2 pushed down filter:or(eq(test.t.a, 1), eq(test.t.b, 2)), keep order:false, stats:pseudo"
         ],
@@ -148,7 +148,7 @@
           "├─IndexLookUp 10000.00 root  ",
           "│ ├─IndexFullScan(Build) 10000.00 cop[tikv] table:t, partition:p0, index:b(b) keep order:false, stats:pseudo",
           "│ └─TableRowIDScan(Probe) 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo",
-          "└─TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TableFullScan 10000.00 mpp[tiflash] table:t, partition:p1 keep order:false, stats:pseudo"
         ],
@@ -313,7 +313,7 @@
           "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
           "└─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t3.a, test.t.a)]",
-          "  ├─TableReader(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "  ├─TableReader(Build) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
@@ -335,7 +335,7 @@
           "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
           "└─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t3.a, test.t.a)]",
-          "  ├─TableReader(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "  ├─TableReader(Build) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
@@ -357,7 +357,7 @@
           "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
           "└─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t3.a, test.t.a)]",
-          "  ├─TableReader(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "  ├─TableReader(Build) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
@@ -377,7 +377,7 @@
           "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
           "└─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t3.a, test.t.a)]",
-          "  ├─TableReader(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "  ├─TableReader(Build) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
@@ -397,7 +397,7 @@
           "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
           "└─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t3.a, test.t.a)]",
-          "  ├─TableReader(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "  ├─TableReader(Build) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
@@ -438,7 +438,7 @@
           "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
           "└─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t3.a, test.t.a)]",
-          "  ├─TableReader(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "  ├─TableReader(Build) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
@@ -477,7 +477,7 @@
           "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
           "└─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t3.a, test.t.a)]",
-          "  ├─TableReader(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "  ├─TableReader(Build) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
@@ -516,7 +516,7 @@
           "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
           "└─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t3.a, test.t.a)]",
-          "  ├─TableReader(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "  ├─TableReader(Build) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t3.b, test.t2.b)]",
@@ -555,7 +555,7 @@
           "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
           "└─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t3.a, test.t.a)]",
-          "  ├─TableReader(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "  ├─TableReader(Build) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "  └─MergeJoin(Probe) 12475.01 root  inner join, left key:test.t3.b, right key:test.t2.b",
@@ -603,7 +603,7 @@
           "│   ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│   │ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
           "│   └─HashJoin(Probe) 19492.21 root  inner join, equal:[eq(test.t3.a, test.t.a)]",
-          "│     ├─TableReader(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "│     ├─TableReader(Build) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "│     │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│     │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "│     └─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t2.b, test.t1.b)]",
@@ -617,7 +617,7 @@
           "│         └─TableReader(Probe) 9990.00 root  data:Selection",
           "│           └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
           "│             └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader(Probe) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
@@ -633,7 +633,7 @@
           "│     ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│     │ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
           "│     └─HashJoin(Probe) 19492.21 root  inner join, equal:[eq(test.t3.a, test.t.a)]",
-          "│       ├─TableReader(Build) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "│       ├─TableReader(Build) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "│       │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "│       │   └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
           "│       └─HashJoin(Probe) 15593.77 root  inner join, equal:[eq(test.t2.b, test.t1.b)]",
@@ -647,7 +647,7 @@
           "│           └─TableReader(Probe) 9990.00 root  data:Selection",
           "│             └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
           "│               └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader(Probe) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
@@ -737,7 +737,7 @@
           "HashJoin 12500.00 root  inner join, equal:[eq(test.t.a, test.t1.a)]",
           "├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
           "│ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader(Probe) 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
@@ -752,7 +752,7 @@
           "│   └─HashAgg 7992.00 cop[tikv]  group by:test.t1.b, ",
           "│     └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
           "│       └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 9990.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader(Probe) 9990.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t.b))",
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t pushed down filter:empty, keep order:false, stats:pseudo"
@@ -778,7 +778,7 @@
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb_v7, v7), merge(@qb_v7) */ * from v7;",
         "Plan": [
-          "TableReader 3544.89 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 3544.89 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 3544.89 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 3544.89 mpp[tiflash]  Column#14, Column#15",
           "    └─HashAgg 3544.89 mpp[tiflash]  group by:Column#14, Column#15, funcs:firstrow(Column#14)->Column#14, funcs:firstrow(Column#15)->Column#15",
@@ -821,7 +821,7 @@
         "SQL": "explain format = 'brief' select /*+ qb_name(qb_v9, v9), AGG_TO_COP(@qb_v9) */ * from v9;",
         "Plan": [
           "HashAgg 1.00 root  funcs:sum(Column#6)->Column#4",
-          "└─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg 1.00 mpp[tiflash]  funcs:sum(Column#9)->Column#6",
           "      └─Projection 10000.00 mpp[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#9",
@@ -833,7 +833,7 @@
         "SQL": "explain format = 'brief' select /*+ qb_name(qb_v10, v10), LIMIT_TO_COP(@qb_v10) */ * from v10;",
         "Plan": [
           "TopN 1.00 root  test.t.b, offset:0, count:1",
-          "└─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender",
+          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TopN 1.00 mpp[tiflash]  test.t.b, offset:0, count:1",
           "      └─Selection 3333.33 mpp[tiflash]  gt(test.t.a, 10)",
@@ -844,7 +844,7 @@
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb, v11) read_from_storage(tiflash[t@qb]), MPP_1PHASE_AGG(@qb) */ * from v11;",
         "Plan": [
-          "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.t.a, Column#4",
           "    └─Projection 8000.00 mpp[tiflash]  Column#4, test.t.a",
@@ -859,7 +859,7 @@
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb, v11) read_from_storage(tiflash[t@qb]), MPP_2PHASE_AGG(@qb) */ * from v11;",
         "Plan": [
-          "TableReader 8000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 8000.00 mpp[tiflash]  test.t.a, Column#4",
           "    └─Projection 8000.00 mpp[tiflash]  Column#4, test.t.a",
@@ -875,7 +875,7 @@
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb, v12) read_from_storage(tiflash[t1@qb, t@qb]), shuffle_join(t1@qb, t@qb) */ * from v12;",
         "Plan": [
-          "TableReader 12500.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12500.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 12500.00 mpp[tiflash]  test.t.a, test.t.b",
           "    └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
@@ -891,7 +891,7 @@
       {
         "SQL": "explain format = 'brief' select /*+ qb_name(qb, v12) read_from_storage(tiflash[t1@qb, t@qb]), broadcast_join(t1@qb, t@qb) */ * from v12;",
         "Plan": [
-          "TableReader 12500.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 12500.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 12500.00 mpp[tiflash]  test.t.a, test.t.b",
           "    └─HashJoin 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
@@ -1087,7 +1087,7 @@
       {
         "SQL": "explain format = 'brief' select /*+ leading(t6), shuffle_join(t4) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
         "Plan": [
-          "TableReader 15593.77 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 15593.77 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 15593.77 mpp[tiflash]  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
           "    └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t5.a, test.t4.a)]",
@@ -1110,7 +1110,7 @@
       {
         "SQL": "explain format = 'brief' select /*+ leading(t5), shuffle_join(t5) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
         "Plan": [
-          "TableReader 15593.77 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 15593.77 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 15593.77 mpp[tiflash]  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
           "    └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t5.b, test.t6.b)]",
@@ -1133,7 +1133,7 @@
       {
         "SQL": "explain format = 'brief' select /*+ leading(t6), broadcast_join(t4) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
         "Plan": [
-          "TableReader 15593.77 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 15593.77 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 15593.77 mpp[tiflash]  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
           "    └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t5.a, test.t4.a)]",
@@ -1154,7 +1154,7 @@
       {
         "SQL": "explain format = 'brief' select /*+ leading(t5), broadcast_join(t5) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
         "Plan": [
-          "TableReader 15593.77 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 15593.77 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 15593.77 mpp[tiflash]  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
           "    └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t5.b, test.t6.b)]",
@@ -1690,7 +1690,7 @@
           "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
           "  │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
           "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t6.b, test.t5.b)]",
-          "    ├─TableReader(Build) 9980.01 root  MppVersion: 2, data:ExchangeSender",
+          "    ├─TableReader(Build) 9980.01 root  MppVersion: 3, data:ExchangeSender",
           "    │ └─ExchangeSender 9980.01 mpp[tiflash]  ExchangeType: PassThrough",
           "    │   └─Selection 9980.01 mpp[tiflash]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
           "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t5 pushed down filter:empty, keep order:false, stats:pseudo",
@@ -1705,12 +1705,12 @@
         "Plan": [
           "Projection 15593.77 root  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
           "└─HashJoin 15593.77 root  inner join, equal:[eq(test.t5.b, test.t6.b)]",
-          "  ├─TableReader(Build) 9990.00 root  MppVersion: 2, data:ExchangeSender",
+          "  ├─TableReader(Build) 9990.00 root  MppVersion: 3, data:ExchangeSender",
           "  │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t6.b))",
           "  │     └─TableFullScan 10000.00 mpp[tiflash] table:t6 pushed down filter:empty, keep order:false, stats:pseudo",
           "  └─HashJoin(Probe) 12475.01 root  inner join, equal:[eq(test.t5.a, test.t4.a)]",
-          "    ├─TableReader(Build) 9990.00 root  MppVersion: 2, data:ExchangeSender",
+          "    ├─TableReader(Build) 9990.00 root  MppVersion: 3, data:ExchangeSender",
           "    │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    │   └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t4.a))",
           "    │     └─TableFullScan 10000.00 mpp[tiflash] table:t4 pushed down filter:empty, keep order:false, stats:pseudo",
@@ -1723,7 +1723,7 @@
       {
         "SQL": "explain format = 'brief' select /*+ read_from_storage(tiflash[t4, t6]), leading(t6), hash_join_build(t4) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
         "Plan": [
-          "TableReader 15593.77 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 15593.77 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 15593.77 mpp[tiflash]  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
           "    └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t5.a, test.t4.a)]",
@@ -1744,7 +1744,7 @@
       {
         "SQL": "explain format = 'brief' select /*+ read_from_storage(tiflash[t5]), leading(t5), hash_join_probe(t5) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
         "Plan": [
-          "TableReader 15593.77 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 15593.77 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 15593.77 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection 15593.77 mpp[tiflash]  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
           "    └─HashJoin 15593.77 mpp[tiflash]  inner join, equal:[eq(test.t5.b, test.t6.b)]",
@@ -1809,7 +1809,7 @@
       {
         "SQL": "explain format = 'brief' select * from t",
         "Plan": [
-          "TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
@@ -1818,7 +1818,7 @@
       {
         "SQL": "explain format = 'brief' select * from t use index();",
         "Plan": [
-          "TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
@@ -1827,7 +1827,7 @@
       {
         "SQL": "explain format = 'brief' select /*+ use_index(t, idx)*/ * from t",
         "Plan": [
-          "TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
@@ -1838,7 +1838,7 @@
       {
         "SQL": "explain format = 'brief' select /*+ use_index(t)*/ * from t",
         "Plan": [
-          "TableReader 10000.00 root  MppVersion: 2, data:ExchangeSender",
+          "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],

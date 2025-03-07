@@ -14,6 +14,7 @@ go_test(
         "//pkg/domain",
         "//pkg/kv",
         "//pkg/parser/terror",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",
         "//pkg/testkit/testmain",

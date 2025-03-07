@@ -19,7 +19,6 @@ go_library(
         "//pkg/meta/model",
         "//pkg/parser",
         "//pkg/parser/ast",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/opcode",
         "//pkg/planner/util/fixcontrol",

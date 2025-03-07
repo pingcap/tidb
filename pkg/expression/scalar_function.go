@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
@@ -39,7 +38,7 @@ var _ base.HashEquals = &ScalarFunction{}
 
 // ScalarFunction is the function that returns a value.
 type ScalarFunction struct {
-	FuncName model.CIStr
+	FuncName ast.CIStr
 	// RetType is the type that ScalarFunction returns.
 	// TODO: Implement type inference here, now we use ast's return type temporarily.
 	RetType           *types.FieldType `plan-cache-clone:"shallow"`
@@ -270,7 +269,7 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 		retType = builtinRetTp
 	}
 	sf := &ScalarFunction{
-		FuncName: model.NewCIStr(funcName),
+		FuncName: ast.NewCIStr(funcName),
 		RetType:  retType,
 		Function: f,
 	}

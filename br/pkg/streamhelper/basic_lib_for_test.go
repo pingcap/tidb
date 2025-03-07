@@ -179,6 +179,11 @@ func (t trivialFlushStream) RecvMsg(m any) error {
 	return nil
 }
 
+func (f *fakeStore) FlushNow(ctx context.Context, in *logbackup.FlushNowRequest, opts ...grpc.CallOption) (*logbackup.FlushNowResponse, error) {
+	f.flush()
+	return &logbackup.FlushNowResponse{Results: []*logbackup.FlushResult{{TaskName: "Universe", Success: true}}}, nil
+}
+
 func (f *fakeStore) GetID() uint64 {
 	return f.id
 }
@@ -727,7 +732,7 @@ func (t *testEnv) ClearV3GlobalCheckpointForTask(ctx context.Context, taskName s
 	return nil
 }
 
-func (t *testEnv) PauseTask(ctx context.Context, taskName string) error {
+func (t *testEnv) PauseTask(ctx context.Context, taskName string, _ ...streamhelper.PauseTaskOption) error {
 	t.taskCh <- streamhelper.TaskEvent{
 		Type: streamhelper.EventPause,
 		Name: taskName,

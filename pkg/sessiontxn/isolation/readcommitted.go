@@ -26,6 +26,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	isolation_metrics "github.com/pingcap/tidb/pkg/sessiontxn/isolation/metrics"
@@ -106,7 +107,7 @@ func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context, node 
 // NeedSetRCCheckTSFlag checks whether it's needed to set `RCCheckTS` flag in current stmtctx.
 func NeedSetRCCheckTSFlag(ctx sessionctx.Context, node ast.Node) bool {
 	sessionVars := ctx.GetSessionVars()
-	if sessionVars.ConnectionID > 0 && variable.EnableRCReadCheckTS.Load() &&
+	if sessionVars.ConnectionID > 0 && vardef.EnableRCReadCheckTS.Load() &&
 		sessionVars.InTxn() && !sessionVars.RetryInfo.Retrying &&
 		plannercore.IsReadOnly(node, sessionVars) {
 		return true

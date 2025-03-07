@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -168,7 +167,7 @@ func TestFieldCase(t *testing.T) {
 	colObjects := make([]*model.ColumnInfo, len(fields))
 	for i, name := range fields {
 		colObjects[i] = &model.ColumnInfo{
-			Name: pmodel.NewCIStr(name),
+			Name: ast.NewCIStr(name),
 		}
 	}
 	err := checkDuplicateColumn(colObjects)

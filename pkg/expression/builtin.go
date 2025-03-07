@@ -200,7 +200,7 @@ func newBaseBuiltinFuncWithTp(ctx BuildContext, funcName string, args []Expressi
 	for i := range args {
 		switch argTps[i] {
 		case types.ETInt:
-			args[i] = WrapWithCastAsInt(ctx, args[i])
+			args[i] = WrapWithCastAsInt(ctx, args[i], nil)
 		case types.ETReal:
 			args[i] = WrapWithCastAsReal(ctx, args[i])
 		case types.ETDecimal:
@@ -266,7 +266,7 @@ func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []
 	for i := range args {
 		switch argTps[i].EvalType() {
 		case types.ETInt:
-			args[i] = WrapWithCastAsInt(ctx, args[i])
+			args[i] = WrapWithCastAsInt(ctx, args[i], argTps[i])
 		case types.ETReal:
 			args[i] = WrapWithCastAsReal(ctx, args[i])
 		case types.ETString:
@@ -431,7 +431,7 @@ func (b *baseBuiltinFunc) equal(ctx EvalContext, fun builtinFunc) bool {
 }
 
 func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
-	b.args = make([]Expression, 0, len(b.args))
+	b.args = make([]Expression, 0, len(from.args))
 	for _, arg := range from.args {
 		b.args = append(b.args, arg.Clone())
 	}

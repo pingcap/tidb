@@ -172,6 +172,12 @@ ut: tools/bin/ut tools/bin/xprog failpoint-enable
 	@$(FAILPOINT_DISABLE)
 	@$(CLEAN_UT_BINARY)
 
+.PHONY: ut-long
+ut-long: tools/bin/ut tools/bin/xprog failpoint-enable
+	tools/bin/ut --long --race || { $(FAILPOINT_DISABLE); exit 1; }
+	@$(FAILPOINT_DISABLE)
+	@$(CLEAN_UT_BINARY)
+
 .PHONY: gotest_in_verify_ci
 gotest_in_verify_ci: tools/bin/xprog tools/bin/ut failpoint-enable
 	@echo "Running gotest_in_verify_ci"
@@ -297,9 +303,9 @@ failpoint-disable: tools/bin/failpoint-ctl
 	@$(FAILPOINT_DISABLE)
 
 .PHONY: tools/bin/ut
-tools/bin/ut: tools/check/ut.go
+tools/bin/ut: tools/check/ut.go tools/check/longtests.go
 	cd tools/check; \
-	$(GO) build -o ../bin/ut ut.go
+	$(GO) build -o ../bin/ut ut.go longtests.go
 
 .PHONY: tools/bin/xprog
 tools/bin/xprog: tools/check/xprog/xprog.go
@@ -495,6 +501,7 @@ gen_mock: mockgen
 	tools/bin/mockgen -embed -package mockexecute github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute StepExecutor > pkg/disttask/framework/mock/execute/execute_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/importinto MiniTaskExecutor > pkg/disttask/importinto/mock/import_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/planner LogicalPlan,PipelineSpec > pkg/disttask/framework/mock/plan_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/storage Manager > pkg/disttask/framework/mock/storage_manager_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/util/sqlexec RestrictedSQLExecutor > pkg/util/sqlexec/mock/restricted_sql_executor_mock.go
 	tools/bin/mockgen -package mockstorage github.com/pingcap/tidb/br/pkg/storage ExternalStorage > br/pkg/mock/storage/storage.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/ddl SchemaLoader > pkg/ddl/mock/schema_loader_mock.go
@@ -624,21 +631,21 @@ bazel_test: failpoint-enable bazel_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) test $(BAZEL_CMD_CONFIG) --build_tests_only --test_keep_going=false \
 		--define gotags=deadlock,intest \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
-		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
 
 .PHONY: bazel_coverage_test
 bazel_coverage_test: failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=35 --build_tests_only --test_keep_going=false \
 		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=deadlock,intest \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
-		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
 
 .PHONY: bazel_coverage_test_ddlargsv1
 bazel_coverage_test_ddlargsv1: failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) --nohome_rc coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --jobs=35 --build_tests_only --test_keep_going=false \
 		--@io_bazel_rules_go//go/config:cover_format=go_cover --define gotags=deadlock,intest,ddlargsv1 \
 		-- //... -//cmd/... -//tests/graceshutdown/... \
-		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
+		-//tests/globalkilltest/... -//tests/readonlytest/... -//tests/realtikvtest/...
 
 .PHONY: bazel_build
 bazel_build:

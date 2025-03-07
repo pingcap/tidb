@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics/util"
@@ -386,7 +387,7 @@ func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
 					logutil.BgLogger().Warn(fmt.Sprintf("skip set variable %s:%s", name, value), zap.Error(err))
 					continue
 				}
-				sVal, err := sysVar.Validate(vars, value, variable.ScopeSession)
+				sVal, err := sysVar.Validate(vars, value, vardef.ScopeSession)
 				if err != nil {
 					unLoadVars = append(unLoadVars, name)
 					logutil.BgLogger().Warn(fmt.Sprintf("skip variable %s:%s", name, value), zap.Error(err))
@@ -529,7 +530,7 @@ func (e *PlanReplayerLoadInfo) createTable(z *zip.Reader) error {
 	// We need to disable foreign key check when we create schema and tables.
 	// because the order of creating schema and tables is not guaranteed.
 	e.Ctx.GetSessionVars().ForeignKeyChecks = false
-	e.Ctx.GetSessionVars().PlacementMode = variable.PlacementModeIgnore
+	e.Ctx.GetSessionVars().PlacementMode = vardef.PlacementModeIgnore
 	defer func() {
 		e.Ctx.GetSessionVars().ForeignKeyChecks = originForeignKeyChecks
 		e.Ctx.GetSessionVars().PlacementMode = originPlacementMode

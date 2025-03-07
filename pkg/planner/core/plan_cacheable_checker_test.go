@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -123,7 +122,7 @@ func TestCacheable(t *testing.T) {
 	tk.MustExec("create table t1(a int, b int) partition by range(a) ( partition p0 values less than (6), partition p1 values less than (11) )")
 	tk.MustExec("create table t2(a int, b int) partition by hash(a) partitions 11")
 	tk.MustExec("create table t3(a int, b int)")
-	tbl := &ast.TableName{Schema: model.NewCIStr("test"), Name: model.NewCIStr("t3")}
+	tbl := &ast.TableName{Schema: ast.NewCIStr("test"), Name: ast.NewCIStr("t3")}
 	is := tk.Session().GetInfoSchema().(infoschema.InfoSchema)
 	// test non-SelectStmt/-InsertStmt/-DeleteStmt/-UpdateStmt/-SetOprStmt
 	var stmt ast.Node = &ast.ShowStmt{}
@@ -155,11 +154,11 @@ func TestCacheable(t *testing.T) {
 	require.True(t, core.Cacheable(stmt, is))
 
 	for funcName := range expression.UnCacheableFunctions {
-		whereExpr.FnName = model.NewCIStr(funcName)
+		whereExpr.FnName = ast.NewCIStr(funcName)
 		require.False(t, core.Cacheable(stmt, is))
 	}
 
-	whereExpr.FnName = model.NewCIStr(ast.Rand)
+	whereExpr.FnName = ast.NewCIStr(ast.Rand)
 	require.True(t, core.Cacheable(stmt, is))
 
 	stmt = &ast.DeleteStmt{
@@ -198,7 +197,7 @@ func TestCacheable(t *testing.T) {
 	require.True(t, c)
 
 	stmt.(*ast.DeleteStmt).TableHints = append(stmt.(*ast.DeleteStmt).TableHints, &ast.TableOptimizerHint{
-		HintName: model.NewCIStr(hint.HintIgnorePlanCache),
+		HintName: ast.NewCIStr(hint.HintIgnorePlanCache),
 	})
 	require.False(t, core.Cacheable(stmt, is))
 
@@ -211,11 +210,11 @@ func TestCacheable(t *testing.T) {
 	require.True(t, core.Cacheable(stmt, is))
 
 	for funcName := range expression.UnCacheableFunctions {
-		whereExpr.FnName = model.NewCIStr(funcName)
+		whereExpr.FnName = ast.NewCIStr(funcName)
 		require.False(t, core.Cacheable(stmt, is))
 	}
 
-	whereExpr.FnName = model.NewCIStr(ast.Rand)
+	whereExpr.FnName = ast.NewCIStr(ast.Rand)
 	require.True(t, core.Cacheable(stmt, is))
 
 	stmt = &ast.UpdateStmt{
@@ -254,7 +253,7 @@ func TestCacheable(t *testing.T) {
 	require.True(t, c)
 
 	stmt.(*ast.UpdateStmt).TableHints = append(stmt.(*ast.UpdateStmt).TableHints, &ast.TableOptimizerHint{
-		HintName: model.NewCIStr(hint.HintIgnorePlanCache),
+		HintName: ast.NewCIStr(hint.HintIgnorePlanCache),
 	})
 	require.False(t, core.Cacheable(stmt, is))
 
@@ -266,11 +265,11 @@ func TestCacheable(t *testing.T) {
 	require.True(t, core.Cacheable(stmt, is))
 
 	for funcName := range expression.UnCacheableFunctions {
-		whereExpr.FnName = model.NewCIStr(funcName)
+		whereExpr.FnName = ast.NewCIStr(funcName)
 		require.False(t, core.Cacheable(stmt, is))
 	}
 
-	whereExpr.FnName = model.NewCIStr(ast.Rand)
+	whereExpr.FnName = ast.NewCIStr(ast.Rand)
 	require.True(t, core.Cacheable(stmt, is))
 
 	stmt = &ast.SelectStmt{
@@ -319,7 +318,7 @@ func TestCacheable(t *testing.T) {
 	require.True(t, core.Cacheable(stmt, is))
 
 	stmt.(*ast.SelectStmt).TableHints = append(stmt.(*ast.SelectStmt).TableHints, &ast.TableOptimizerHint{
-		HintName: model.NewCIStr(hint.HintIgnorePlanCache),
+		HintName: ast.NewCIStr(hint.HintIgnorePlanCache),
 	})
 	require.False(t, core.Cacheable(stmt, is))
 
@@ -328,8 +327,8 @@ func TestCacheable(t *testing.T) {
 
 	// Partition table can not be cached.
 	join := &ast.Join{
-		Left:  &ast.TableName{Schema: model.NewCIStr("test"), Name: model.NewCIStr("t1")},
-		Right: &ast.TableName{Schema: model.NewCIStr("test"), Name: model.NewCIStr("t2")},
+		Left:  &ast.TableName{Schema: ast.NewCIStr("test"), Name: ast.NewCIStr("t1")},
+		Right: &ast.TableName{Schema: ast.NewCIStr("test"), Name: ast.NewCIStr("t2")},
 	}
 	stmt = &ast.SelectStmt{
 		From: &ast.TableRefsClause{
@@ -339,7 +338,7 @@ func TestCacheable(t *testing.T) {
 	require.False(t, core.Cacheable(stmt, is))
 
 	join = &ast.Join{
-		Left: &ast.TableName{Schema: model.NewCIStr("test"), Name: model.NewCIStr("t3")},
+		Left: &ast.TableName{Schema: ast.NewCIStr("test"), Name: ast.NewCIStr("t3")},
 	}
 	stmt = &ast.SelectStmt{
 		From: &ast.TableRefsClause{

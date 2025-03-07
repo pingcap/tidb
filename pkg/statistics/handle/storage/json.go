@@ -169,7 +169,7 @@ func GenJSONTableFromStats(
 
 // TableStatsFromJSON loads statistic from JSONTable and return the Table of statistic.
 func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *statsutil.JSONTable) (*statistics.Table, error) {
-	newHistColl := *statistics.NewHistColl(physicalID, true, jsonTbl.Count, jsonTbl.ModifyCount, len(jsonTbl.Columns), len(jsonTbl.Indices))
+	newHistColl := *statistics.NewHistColl(physicalID, jsonTbl.Count, jsonTbl.ModifyCount, len(jsonTbl.Columns), len(jsonTbl.Indices))
 	tbl := &statistics.Table{
 		HistColl:              newHistColl,
 		ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(len(tableInfo.Columns), len(tableInfo.Indices)),

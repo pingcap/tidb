@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
@@ -95,12 +94,12 @@ func TestNewTTLTable(t *testing.T) {
 
 	for _, c := range cases {
 		is := do.InfoSchema()
-		tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr(c.db), pmodel.NewCIStr(c.tbl))
+		tbl, err := is.TableByName(context.Background(), ast.NewCIStr(c.db), ast.NewCIStr(c.tbl))
 		require.NoError(t, err)
 		tblInfo := tbl.Meta()
 		var physicalTbls []*cache.PhysicalTable
 		if tblInfo.Partition == nil {
-			ttlTbl, err := cache.NewPhysicalTable(pmodel.NewCIStr(c.db), tblInfo, pmodel.NewCIStr(""))
+			ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr(c.db), tblInfo, ast.NewCIStr(""))
 			if c.timeCol == "" {
 				require.Error(t, err)
 				continue
@@ -109,7 +108,7 @@ func TestNewTTLTable(t *testing.T) {
 			physicalTbls = append(physicalTbls, ttlTbl)
 		} else {
 			for _, partition := range tblInfo.Partition.Definitions {
-				ttlTbl, err := cache.NewPhysicalTable(pmodel.NewCIStr(c.db), tblInfo, partition.Name)
+				ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr(c.db), tblInfo, partition.Name)
 				if c.timeCol == "" {
 					require.Error(t, err)
 					continue
@@ -170,10 +169,10 @@ func TestTableEvalTTLExpireTime(t *testing.T) {
 	tk.MustExec("set @@time_zone='Asia/Tokyo'")
 
 	tk.MustExec("create table test.t(a int, t datetime) ttl = `t` + interval 1 month")
-	tb, err := do.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tb, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tb.Meta()
-	ttlTbl, err := cache.NewPhysicalTable(pmodel.NewCIStr("test"), tblInfo, pmodel.NewCIStr(""))
+	ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tblInfo, ast.NewCIStr(""))
 	require.NoError(t, err)
 
 	se := session.NewSession(tk.Session(), tk.Session(), nil)
@@ -194,10 +193,10 @@ func TestTableEvalTTLExpireTime(t *testing.T) {
 
 	// should support a string format interval
 	tk.MustExec("create table test.t2(a int, t datetime) ttl = `t` + interval '1:3' hour_minute")
-	tb2, err := do.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"))
+	tb2, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 	tblInfo2 := tb2.Meta()
-	ttlTbl2, err := cache.NewPhysicalTable(pmodel.NewCIStr("test"), tblInfo2, pmodel.NewCIStr(""))
+	ttlTbl2, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tblInfo2, ast.NewCIStr(""))
 	require.NoError(t, err)
 	now, err = time.ParseInLocation(time.DateTime, "2020-01-01 15:00:00", tz1)
 	require.NoError(t, err)
