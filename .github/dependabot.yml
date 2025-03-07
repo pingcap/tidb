@@ -5,7 +5,7 @@ updates:
     schedule:
       interval: "weekly"
       day: "friday"
-      time: "12:00"
+      time: "13:00"
       timezone: "Asia/Shanghai"
     allow:
       - dependency-name: "golang.org/*"
