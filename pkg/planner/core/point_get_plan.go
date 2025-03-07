@@ -854,7 +854,6 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 				pIdx, err := pTbl.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), r)
 				pIdx, err = pi.ReplaceWithOverlappingPartitionIdx(pIdx, err)
 				if table.ErrNoPartitionForGivenValue.Equal(err) {
-					err = nil
 					pIdx = -1
 				} else if err != nil {
 					return nil, false, err

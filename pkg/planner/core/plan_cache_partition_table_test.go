@@ -342,7 +342,6 @@ func testPartitionFullCover(t *testing.T, tableDefSQL []partCoverStruct, partiti
 		var lc any
 		createNew := true
 		for createNew {
-			//for createNew := true; createNew; _, createNew = rowData[id] {
 			if useStringPK {
 				id = randString(seededRand, 1, 20)
 			} else {
