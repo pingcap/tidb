@@ -1181,8 +1181,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		useStream := true
 
 		// TODO(joechenrh): use a more proper way to choose mode.
-		if nonstreamThreadCnt > 1 && nonstreamThreadCnt >= streamThreadCnt/2 {
-			encodeThreadCnt = nonstreamThreadCnt
+		if nonstreamThreadCnt == streamThreadCnt {
 			memoryUsage = memoryUsageFull
 			useStream = false
 		}
