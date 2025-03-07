@@ -827,6 +827,7 @@ func loadCloudStorageURI(w *worker, job *model.Job) {
 // there maybe some stale files in the sort path if TiDB is killed during the backfill process.
 func cleanupSortPath(ctx context.Context, currentJobID int64) error {
 	sortPath := ingest.ConfigSortPath()
+	logutil.BgLogger().Warn("[issue58437] cleanupSortPath()", zap.Int64("currentJobID", currentJobID))
 	err := os.MkdirAll(sortPath, 0700)
 	if err != nil {
 		return errors.Trace(err)
@@ -853,7 +854,7 @@ func cleanupSortPath(ctx context.Context, currentJobID int64) error {
 		}
 		// Remove all the temp data of the previous done jobs.
 		if jobID < currentJobID {
-			logutil.Logger(ctx).Info("remove stale temp index data",
+			logutil.Logger(ctx).Info("[issue58437] remove stale temp index data",
 				zap.Int64("jobID", jobID), zap.Int64("currentJobID", currentJobID))
 			err := os.RemoveAll(filepath.Join(sortPath, entry.Name()))
 			if err != nil {
