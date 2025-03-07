@@ -874,8 +874,8 @@ a	b
 abc	2
 select * from t where b in (1,2);
 a	b
-abc	2
 Ab	1
+abc	2
 explain select * from t where b in (1,2);
 id	estRows	task	access object	operator info
 PartitionUnion_8	3.00	root		
@@ -894,8 +894,8 @@ PartitionUnion_8	2.40	root
 set @@tidb_partition_prune_mode=Default;
 select * from t where b in (1,2);
 a	b
-abc	2
 Ab	1
+abc	2
 explain select * from t where b in (1,2);
 id	estRows	task	access object	operator info
 IndexLookUp_7	2.00	root	partition:p1,p2	
