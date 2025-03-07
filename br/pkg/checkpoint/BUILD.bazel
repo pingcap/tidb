@@ -7,6 +7,7 @@ go_library(
         "checkpoint.go",
         "external_storage.go",
         "log_restore.go",
+        "manager.go",
         "restore.go",
         "storage.go",
         "ticker.go",
@@ -45,7 +46,7 @@ go_test(
     srcs = ["checkpoint_test.go"],
     flaky = True,
     race = "on",
-    shard_count = 9,
+    shard_count = 13,
     deps = [
         ":checkpoint",
         "//br/pkg/gluetidb",
