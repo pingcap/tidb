@@ -1173,19 +1173,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	// Fill memory usage info
 	if sourceType == mydump.SourceTypeParquet && len(dataFiles) > 0 {
 		_, memoryUsageStream, memoryUsageFull, err := mydump.SampleStatisticsFromParquet(ctx, *dataFiles[0], e.dataStore)
-		streamThreadCnt := mydump.AdjustEncodeThreadCnt(memoryUsageStream, e.Plan.ThreadCnt)
-		nonstreamThreadCnt := mydump.AdjustEncodeThreadCnt(memoryUsageFull, e.Plan.ThreadCnt)
-
-		encodeThreadCnt := streamThreadCnt
-		memoryUsage := memoryUsageStream
-		useStream := true
-
-		// TODO(joechenrh): use a more proper way to choose mode.
-		if nonstreamThreadCnt > 1 && nonstreamThreadCnt >= streamThreadCnt/2 {
-			encodeThreadCnt = nonstreamThreadCnt
-			memoryUsage = memoryUsageFull
-			useStream = false
-		}
+		memoryUsage, encodeThreadCnt, useStream := mydump.AdjustEncodeThreadCnt(memoryUsageStream, memoryUsageFull, e.Plan.ThreadCnt)
 
 		if err != nil {
 			return errors.Trace(err)

@@ -335,6 +335,7 @@ type ParquetParser struct {
 	dumpers []*columnDumper
 
 	// rows stores the actual data after parsing.
+	// rows will be fetched from rowPool and reclaimed after recycle.
 	rows    [][]types.Datum
 	rowPool *zeropool.Pool[[]types.Datum]
 
@@ -351,6 +352,7 @@ type ParquetParser struct {
 	totalRows        int // total rows in this file
 	totalBytesRead   int // total bytes read, estimated by all the read datum.
 	firstAfterReset  bool
+	parallelRead     bool
 
 	lastRow Row
 	logger  log.Logger
@@ -507,7 +509,7 @@ func (pp *ParquetParser) Init() error {
 	}
 
 	pp.dumpers = make([]*columnDumper, numCols)
-	for i := 0; i < numCols; i++ {
+	for i := range numCols {
 		pp.dumpers[i] = createDumper(meta.Schema.Column(i).PhysicalType())
 	}
 
@@ -547,7 +549,7 @@ func (pp *ParquetParser) ReadRows(num int) (int, error) {
 			}
 			pp.curRowGroup++
 			pp.firstAfterReset = true
-			for c := 0; c < len(pp.dumpers); c++ {
+			for c := range len(pp.dumpers) {
 				rowGroupReader := pp.readers[c].RowGroup(pp.curRowGroup)
 				colReader, err := rowGroupReader.Column(c)
 				if err != nil {
@@ -568,7 +570,7 @@ func (pp *ParquetParser) ReadRows(num int) (int, error) {
 		pp.curRowInGroup += curRead
 	}
 
-	for i := 0; i < readNum; i++ {
+	for i := range readNum {
 		pp.totalBytesRead += estimateRowSize(pp.rows[i])
 	}
 
@@ -586,12 +588,14 @@ func (pp *ParquetParser) readInGroup(num, storeOffset int) (int, error) {
 		total int
 	)
 
-	// After moving to the next row group, we have to read several pages,
-	// so we do this concurrently.
-	if pp.firstAfterReset {
+	// After moving to the next row group, we need to read one dict page and
+	// at least one data page for each column.
+	// Since it's an I/O intensive operation, so we perform it in parallel.
+	// TODO(joechen): 4 is a experimental value and can be changed later.
+	if pp.firstAfterReset && pp.parallelRead {
 		pp.firstAfterReset = false
 		var eg errgroup.Group
-		eg.SetLimit(2)
+		eg.SetLimit(4)
 		for i := range len(pp.dumpers) {
 			dumper := pp.dumpers[i]
 			eg.Go(func() error {
@@ -958,14 +962,15 @@ func NewParquetParser(
 	})
 
 	parser := &ParquetParser{
-		readers:     subreaders,
-		colMetas:    columnMetas,
-		columnNames: columnNames,
-		alloc:       allocator,
-		logger:      log.FromContext(ctx),
-		memoryUsage: memoryUsage,
-		memLimiter:  readerMemoryLimiter,
-		rowPool:     &pool,
+		readers:      subreaders,
+		colMetas:     columnMetas,
+		columnNames:  columnNames,
+		alloc:        allocator,
+		logger:       log.FromContext(ctx),
+		memoryUsage:  memoryUsage,
+		memLimiter:   readerMemoryLimiter,
+		rowPool:      &pool,
+		parallelRead: !strings.HasPrefix(store.URI(), storage.LocalURIPrefix) && meta.UseStreaming,
 	}
 	if err := parser.Init(); err != nil {
 		return nil, errors.Trace(err)
@@ -1089,7 +1094,7 @@ func SampleStatisticsFromParquet(
 		pageBufferFull = max(pageBufferFull, totalUsage)
 	}
 
-	// Do some precheck, to prevent OOM during estimate memory usage.
+	// Do some precheck, to prevent OOM during estimate memory usage due to large row group.
 	memoryUsageFull = roundUp(memoryUsageFull+pageBufferFull, defaultArenaSize)
 	if memoryUsageFull < (6 << 30) {
 		memoryUsageFull, err = estimateNonStreamMemory(ctx, fileMeta, store)
