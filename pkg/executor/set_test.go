@@ -671,7 +671,7 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@pd_enable_follower_handle_region").Check(testkit.Rows("0"))
 	require.Error(t, tk.ExecToErr("set pd_enable_follower_handle_region = 1"))
 
-	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("0"))
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
 	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_enable_historical_stats = 0")
