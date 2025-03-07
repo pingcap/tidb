@@ -1426,7 +1426,7 @@ func RunStreamRestore(
 
 type LogRestoreConfig struct {
 	*RestoreConfig
-	checkpointTaskInfo  *checkpoint.CheckpointTaskInfoForLogRestore
+	checkpointTaskInfo  *checkpoint.TaskInfoForLogRestore
 	tableMappingManager *stream.TableMappingManager
 	logClient           *logclient.LogClient
 	ddlFiles            []logclient.Log
@@ -1546,12 +1546,13 @@ func restoreStream(
 
 	var sstCheckpointSets map[string]struct{}
 	if cfg.UseCheckpoint {
-		gcRatioFromCheckpoint, err := client.LoadOrCreateCheckpointMetadataForLogRestore(ctx, cfg.StartTS, cfg.RestoreTS, oldGCRatio, cfg.tiflashRecorder)
+		gcRatioFromCheckpoint, err := client.LoadOrCreateCheckpointMetadataForLogRestore(
+			ctx, cfg.StartTS, cfg.RestoreTS, oldGCRatio, cfg.tiflashRecorder, cfg.logCheckpointMetaManager)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		oldGCRatio = gcRatioFromCheckpoint
-		sstCheckpointSets, err = client.InitCheckpointMetadataForCompactedSstRestore(ctx)
+		sstCheckpointSets, err = client.InitCheckpointMetadataForCompactedSstRestore(ctx, cfg.sstCheckpointMetaManager)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1638,7 +1639,7 @@ func restoreStream(
 			return errors.Trace(err)
 		}
 
-		logFilesIterWithSplit, err := client.WrapLogFilesIterWithSplitHelper(ctx, logFilesIter, execCtx, rewriteRules, updateStatsWithCheckpoint, splitSize, splitKeys)
+		logFilesIterWithSplit, err := client.WrapLogFilesIterWithSplitHelper(ctx, logFilesIter, cfg.logCheckpointMetaManager, rewriteRules, updateStatsWithCheckpoint, splitSize, splitKeys)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1684,7 +1685,7 @@ func restoreStream(
 	}
 
 	// index ingestion is not captured by regular log backup, so we need to manually ingest again
-	if err = client.RepairIngestIndex(ctx, ingestRecorder, g); err != nil {
+	if err = client.RepairIngestIndex(ctx, ingestRecorder, cfg.logCheckpointMetaManager, g); err != nil {
 		return errors.Annotate(err, "failed to repair ingest index")
 	}
 
@@ -1747,16 +1748,7 @@ func createLogClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetUpstreamClusterID(cfg.upstreamClusterID)
 
-	createCheckpointSessionFn := func() (glue.Session, error) {
-		// always create a new session for checkpoint runner
-		// because session is not thread safe
-		if cfg.UseCheckpoint {
-			return g.CreateSession(mgr.GetStorage())
-		}
-		return nil, nil
-	}
-
-	err = client.InitClients(ctx, u, createCheckpointSessionFn, uint(cfg.PitrConcurrency), cfg.ConcurrencyPerStore.Value)
+	err = client.InitClients(ctx, u, cfg.logCheckpointMetaManager, cfg.sstCheckpointMetaManager, uint(cfg.PitrConcurrency), cfg.ConcurrencyPerStore.Value)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2013,7 +2005,7 @@ func checkPiTRRequirements(mgr *conn.Mgr, hasExplicitFilter bool) error {
 }
 
 type PiTRTaskInfo struct {
-	CheckpointInfo      *checkpoint.CheckpointTaskInfoForLogRestore
+	CheckpointInfo      *checkpoint.TaskInfoForLogRestore
 	RestoreTS           uint64
 	NeedFullRestore     bool
 	FullRestoreCheckErr error
@@ -2031,18 +2023,23 @@ func generatePiTRTaskInfo(
 ) (*PiTRTaskInfo, error) {
 	var (
 		doFullRestore = len(cfg.FullBackupStorage) > 0
-		curTaskInfo   *checkpoint.CheckpointTaskInfoForLogRestore
+		curTaskInfo   *checkpoint.TaskInfoForLogRestore
+		err           error
 	)
 	checkInfo := &PiTRTaskInfo{}
 
 	if cfg.UseCheckpoint {
-		se, err := g.CreateSession(mgr.GetStorage())
-		if err != nil {
-			return nil, errors.Trace(err)
+		if len(cfg.CheckpointStorage) > 0 {
+			clusterID := mgr.GetPDClient().GetClusterID(ctx)
+			if err = cfg.newStorageCheckpointMetaManagerPITR(ctx, clusterID); err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else {
+			if err = cfg.newTableCheckpointMetaManagerPITR(g, mgr.GetDomain()); err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
-
-		execCtx := se.GetSessionCtx().GetRestrictedSQLExecutor()
-		curTaskInfo, err = checkpoint.TryToGetCheckpointTaskInfo(ctx, mgr.GetDomain(), execCtx)
+		curTaskInfo, err = checkpoint.TryToGetCheckpointTaskInfo(ctx, cfg.snapshotCheckpointMetaManager, cfg.logCheckpointMetaManager)
 		if err != nil {
 			return checkInfo, errors.Trace(err)
 		}
@@ -2055,8 +2052,8 @@ func generatePiTRTaskInfo(
 				return checkInfo, errors.Errorf(
 					"The upstream cluster id[%d] of the current log restore does not match that[%d] recorded in checkpoint. "+
 						"Perhaps you should specify the last log backup storage instead, "+
-						"or just clean the checkpoint database[%s] if the cluster has been cleaned up.",
-					cfg.upstreamClusterID, curTaskInfo.Metadata.UpstreamClusterID, checkpoint.LogRestoreCheckpointDatabaseName)
+						"or just clean the checkpoint %s if the cluster has been cleaned up.",
+					cfg.upstreamClusterID, curTaskInfo.Metadata.UpstreamClusterID, cfg.logCheckpointMetaManager)
 			}
 
 			if curTaskInfo.Metadata.StartTS != cfg.StartTS || curTaskInfo.Metadata.RestoredTS != cfg.RestoreTS {
@@ -2065,8 +2062,8 @@ func generatePiTRTaskInfo(
 						"which is different from that from %d to %d recorded in checkpoint. "+
 						"Perhaps you should specify the last full backup storage to match the start-ts and "+
 						"the parameter --restored-ts to match the restored-ts. "+
-						"or just clean the checkpoint database[%s] if the cluster has been cleaned up.",
-					cfg.StartTS, cfg.RestoreTS, curTaskInfo.Metadata.StartTS, curTaskInfo.Metadata.RestoredTS, checkpoint.LogRestoreCheckpointDatabaseName,
+						"or just clean the checkpoint %s if the cluster has been cleaned up.",
+					cfg.StartTS, cfg.RestoreTS, curTaskInfo.Metadata.StartTS, curTaskInfo.Metadata.RestoredTS, cfg.logCheckpointMetaManager,
 				)
 			}
 
@@ -2119,7 +2116,7 @@ func waitUntilSchemaReload(ctx context.Context, client *logclient.LogClient) err
 	return nil
 }
 
-func isCurrentIdMapSaved(checkpointTaskInfo *checkpoint.CheckpointTaskInfoForLogRestore) bool {
+func isCurrentIdMapSaved(checkpointTaskInfo *checkpoint.TaskInfoForLogRestore) bool {
 	return checkpointTaskInfo != nil && checkpointTaskInfo.Progress == checkpoint.InLogRestoreAndIdMapPersisted
 }
 
@@ -2179,7 +2176,7 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if err = client.SaveIdMapWithFailPoints(ctx, tableMappingManager); err != nil {
+		if err = client.SaveIdMapWithFailPoints(ctx, tableMappingManager, cfg.logCheckpointMetaManager); err != nil {
 			return errors.Trace(err)
 		}
 	}
