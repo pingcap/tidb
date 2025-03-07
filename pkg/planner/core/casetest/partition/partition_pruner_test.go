@@ -612,3 +612,25 @@ func TestIssue59827KeyPartitioning(t *testing.T) {
 	tk.MustQuery("select * from t where b = '2' or b = '1'").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
 	tk.MustQuery("select * from t where (b = '2' or b = '1')").Sort().Check(testkit.Rows("b 1 1", "b 2 2"))
 }
+
+func TestIssue59827RangeColumns(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `t` (" +
+		"`a` varchar(150) COLLATE utf8mb4_general_ci NOT NULL," +
+		"`b` varchar(100) COLLATE utf8mb4_general_ci NOT NULL," +
+		"`c` int NOT NULL DEFAULT '0'," +
+		"PRIMARY KEY (`a`,`b`) /*T![clustered_index] CLUSTERED */" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci" +
+		" PARTITION BY RANGE COLUMNS(`b`)" +
+		"(PARTITION `p0` VALUES LESS THAN ('1')," +
+		"PARTITION `p1` VALUES LESS THAN ('2')," +
+		"PARTITION `p2` VALUES LESS THAN ('3'))")
+
+	tk.MustExec("insert into t values ('a','1',1),('b','1',1),('b', '2', 2)")
+	tk.MustQuery("select * from t where a = 'b' and b = '2'").Check(testkit.Rows("b 2 2"))
+	tk.MustQuery("select * from t where a = 'b' and (b = '2')").Check(testkit.Rows("b 2 2"))
+	tk.MustQuery("explain select * from t where a = 'a' and b = '2'").CheckContain("partition:p2")
+	tk.MustQuery("explain select * from t where a = 'a' and (b = '2')").CheckContain("partition:p2")
+}
