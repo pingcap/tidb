@@ -335,6 +335,7 @@ type ParquetParser struct {
 	dumpers []*columnDumper
 
 	// rows stores the actual data after parsing.
+	// rows will be fetched from rowPool and reclaimed after recycle.
 	rows    [][]types.Datum
 	rowPool *zeropool.Pool[[]types.Datum]
 
@@ -507,7 +508,7 @@ func (pp *ParquetParser) Init() error {
 	}
 
 	pp.dumpers = make([]*columnDumper, numCols)
-	for i := 0; i < numCols; i++ {
+	for i := range numCols {
 		pp.dumpers[i] = createDumper(meta.Schema.Column(i).PhysicalType())
 	}
 
@@ -547,7 +548,7 @@ func (pp *ParquetParser) ReadRows(num int) (int, error) {
 			}
 			pp.curRowGroup++
 			pp.firstAfterReset = true
-			for c := 0; c < len(pp.dumpers); c++ {
+			for c := range len(pp.dumpers) {
 				rowGroupReader := pp.readers[c].RowGroup(pp.curRowGroup)
 				colReader, err := rowGroupReader.Column(c)
 				if err != nil {
@@ -568,7 +569,7 @@ func (pp *ParquetParser) ReadRows(num int) (int, error) {
 		pp.curRowInGroup += curRead
 	}
 
-	for i := 0; i < readNum; i++ {
+	for i := range readNum {
 		pp.totalBytesRead += estimateRowSize(pp.rows[i])
 	}
 
@@ -586,8 +587,9 @@ func (pp *ParquetParser) readInGroup(num, storeOffset int) (int, error) {
 		total int
 	)
 
-	// After moving to the next row group, we have to read several pages,
-	// so we do this concurrently.
+	// After moving to the next row group, we need to read several data/dict pages.
+	// This is an I/O intensive operation, so we perform it in parallel.
+	// The ideal situation is that one goroutine is reading while another is parsing.
 	if pp.firstAfterReset {
 		pp.firstAfterReset = false
 		var eg errgroup.Group
@@ -1089,7 +1091,7 @@ func SampleStatisticsFromParquet(
 		pageBufferFull = max(pageBufferFull, totalUsage)
 	}
 
-	// Do some precheck, to prevent OOM during estimate memory usage.
+	// Do some precheck, to prevent OOM during estimate memory usage due to large row group.
 	memoryUsageFull = roundUp(memoryUsageFull+pageBufferFull, defaultArenaSize)
 	if memoryUsageFull < (6 << 30) {
 		memoryUsageFull, err = estimateNonStreamMemory(ctx, fileMeta, store)

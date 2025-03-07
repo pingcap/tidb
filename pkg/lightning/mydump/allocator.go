@@ -114,14 +114,22 @@ func GetMemoryQuota(concurrency int) int {
 // AdjustEncodeThreadCnt adjust the concurrency in encode&sort step for parquet file.
 // It's used for IMPORT INTO.
 // TODO(joechenrh): let lightning make use of it.
-func AdjustEncodeThreadCnt(memoryUsage, threadCnt int) int {
+func AdjustEncodeThreadCnt(memoryUsageStream, memoryUsageFull, threadCnt int,
+) (memoryUsage, adjustCnt int, useStream bool) {
 	memTotal, err := tidbmemory.MemTotal()
 	if err != nil {
-		return threadCnt
+		return memoryUsage, threadCnt, true
 	}
 
-	adjustedThreadCnt := int(memTotal) * ImportIntoReaderUsage / 100 / memoryUsage
-	return max(min(adjustedThreadCnt, threadCnt), 1)
+	streamThreadCnt := max(min(int(memTotal)*ImportIntoReaderUsage/100/memoryUsageStream, threadCnt), 1)
+	fullThreadCnt := max(min(int(memTotal)*ImportIntoReaderUsage/100/memoryUsageFull, threadCnt), 1)
+
+	// TODO(joechenrh): use a more proper way to choose mode.
+	if streamThreadCnt == fullThreadCnt {
+		return memoryUsageFull, fullThreadCnt, false
+	}
+
+	return memoryUsageStream, streamThreadCnt, true
 }
 
 func init() {
