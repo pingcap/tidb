@@ -73,7 +73,6 @@ func TestTick(t *testing.T) {
 }
 
 func TestWithFailure(t *testing.T) {
-	log.SetLevel(zapcore.DebugLevel)
 	c := createFakeCluster(t, 4, true)
 	defer func() {
 		fmt.Println(c)

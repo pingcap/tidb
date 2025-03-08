@@ -129,7 +129,6 @@ go_test(
         "//br/pkg/mock/mocklocal",
         "//br/pkg/restore/split",
         "//br/pkg/storage",
-        "//br/pkg/utiltest",
         "//pkg/ddl",
         "//pkg/errno",
         "//pkg/keyspace",
