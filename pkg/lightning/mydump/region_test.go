@@ -18,12 +18,15 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	. "github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -82,6 +85,45 @@ func TestTableRegion(t *testing.T) {
 			preReg = reg
 		}
 	}
+}
+
+func TestCancelMakeTabelRegoin(t *testing.T) {
+	dataFiles := make([]FileInfo, 0, 4)
+	for range 4 {
+		dataFiles = append(dataFiles, FileInfo{
+			FileMeta: SourceFileMeta{
+				Path: "./parquet/000000_0.parquet",
+				Type: SourceTypeParquet,
+			},
+		})
+	}
+
+	meta := &MDTableMeta{
+		DB:        "parquet",
+		Name:      "many_parquet_files",
+		DataFiles: dataFiles,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	store, err := storage.NewLocalStorage(".")
+	require.NoError(t, err)
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/mydump/MakeParquetFileRegion", "sleep(3000)")
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		divideConfig := NewDataDivideConfig(&config.Config{}, 3, nil, store, meta)
+		_, err = MakeTableRegions(ctx, divideConfig)
+	}()
+
+	time.Sleep(time.Second * 1)
+	cancel()
+	wg.Wait()
+
+	// task should be cancelled
+	require.ErrorContains(t, err, "context canceled")
 }
 
 func TestAllocateEngineIDs(t *testing.T) {
