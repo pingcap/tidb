@@ -63,8 +63,8 @@ func GetRowCountByColumnRanges(sctx planctx.PlanContext, coll *statistics.HistCo
 	}
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.RecordAnyValuesWithNames(sctx,
-			"Histogram NotNull Count", c.Histogram.NotNullCount(),
-			"TopN total count", c.TopN.TotalCount(),
+			"Histogram NotNull Count", c.NotNullCountInHist(),
+			"TopN total count", c.TopNSum(),
 			"Increase Factor", c.GetIncreaseFactor(coll.RealtimeCount),
 		)
 	}
@@ -112,8 +112,8 @@ func GetRowCountByIntColumnRanges(sctx planctx.PlanContext, coll *statistics.His
 	}
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.RecordAnyValuesWithNames(sctx,
-			"Histogram NotNull Count", c.Histogram.NotNullCount(),
-			"TopN total count", c.TopN.TotalCount(),
+			"Histogram NotNull Count", c.NotNullCountInHist(),
+			"TopN total count", c.TopNSum(),
 			"Increase Factor", c.GetIncreaseFactor(coll.RealtimeCount),
 		)
 	}
@@ -139,34 +139,34 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 	}
 	if c.StatsVer < statistics.Version2 {
 		// All the values are null.
-		if c.Histogram.Bounds.NumRows() == 0 {
+		if c.HistBucketNum() == 0 {
 			return 0.0, nil
 		}
-		if c.Histogram.NDV > 0 && c.OutOfRange(val) {
-			return outOfRangeEQSelectivity(sctx, c.Histogram.NDV, realtimeRowCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
+		if c.SelfNDV() > 0 && c.OutOfRange(val) {
+			return outOfRangeEQSelectivity(sctx, c.SelfNDV(), realtimeRowCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
 		}
-		if c.CMSketch != nil {
-			count, err := statistics.QueryValue(sctx, c.CMSketch, c.TopN, val)
+		if c.GetCMSketchImmutable() != nil {
+			count, err := statistics.QueryValue(sctx, c.GetCMSketchImmutable(), c.GetTopNImmutable(), val)
 			return float64(count), errors.Trace(err)
 		}
-		histRowCount, _ := c.Histogram.EqualRowCount(sctx, val, false)
+		histRowCount, _ := c.EqualRowCountInHist(sctx, val, false)
 		return histRowCount, nil
 	}
 
 	// Stats version == 2
 	// All the values are null.
-	if c.Histogram.Bounds.NumRows() == 0 && c.TopN.Num() == 0 {
+	if c.HistBucketNum() == 0 && c.TopNNum() == 0 {
 		return 0, nil
 	}
 	// 1. try to find this value in TopN
-	if c.TopN != nil {
-		rowcount, ok := c.TopN.QueryTopN(sctx, encodedVal)
+	if c.HasTopN() {
+		rowcount, ok := c.QueryTopN(sctx, encodedVal)
 		if ok {
 			return float64(rowcount), nil
 		}
 	}
 	// 2. try to find this value in bucket.Repeat(the last value in every bucket)
-	histCnt, matched := c.Histogram.EqualRowCount(sctx, val, true)
+	histCnt, matched := c.EqualRowCountInHist(sctx, val, true)
 	if matched {
 		return histCnt, nil
 	}
@@ -175,21 +175,21 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 	// branch2: histDNA > 0 basically means while there is still a case, c.Histogram.NDV >
 	// c.TopN.Num() a little bit, but the histogram is still empty. In this case, we should use the branch1 and for the diff
 	// in NDV, it's mainly comes from the NDV is conducted and calculated ahead of sampling.
-	histNDV := float64(c.Histogram.NDV - int64(c.TopN.Num()))
-	if histNDV <= 0 || (c.IsFullLoad() && c.Histogram.NotNullCount() == 0) {
+	histNDV := float64(c.SelfNDV() - int64(c.TopNNum()))
+	if histNDV <= 0 || (c.IsFullLoad() && c.NotNullCountInHist() == 0) {
 		// branch 1: all NDV's are in TopN, and no histograms
 		// If histNDV is zero - we have all NDV's in TopN - and no histograms. This function uses
 		// c.NotNullCount rather than c.Histogram.NotNullCount() since the histograms are empty.
 		// c.Histogram.NDV stores the full NDV regardless of histograms empty or populated.
 		if histNDV > 0 && modifyCount == 0 {
-			return max(float64(c.TopN.MinCount()-1), 1), nil
+			return max(float64(c.MinCountInTopN()-1), 1), nil
 		}
 		increaseFactor := c.GetIncreaseFactor(realtimeRowCount)
-		return outOfRangeFullNDV(float64(c.Histogram.NDV), c.TotalRowCount(), c.NotNullCount(), float64(realtimeRowCount), increaseFactor, modifyCount), nil
+		return outOfRangeFullNDV(float64(c.SelfNDV()), c.TotalRowCount(), c.NotNullCount(), float64(realtimeRowCount), increaseFactor, modifyCount), nil
 	}
 	// branch 2: some NDV's are in histograms
 	// return the average histogram rows (which excludes topN) and NDV that excluded topN
-	return c.Histogram.NotNullCount() / histNDV, nil
+	return c.NotNullCountInHist() / histNDV, nil
 }
 
 // GetColumnRowCount estimates the row count by a slice of Range.
@@ -277,7 +277,7 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 		}
 
 		// case 3: it's an interval
-		cnt := betweenRowCountOnColumn(sctx, c, lowVal, highVal, lowEncoded, highEncoded)
+		cnt := c.BetweenRowCount(sctx, lowVal, highVal, lowEncoded, highEncoded)
 		// `betweenRowCount` returns count for [l, h) range, we adjust cnt for boundaries here.
 		// Note that, `cnt` does not include null values, we need specially handle cases
 		//   where null is the lower bound.
@@ -313,9 +313,9 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 			histNDV := c.NDV
 			// Exclude the TopN
 			if c.StatsVer == statistics.Version2 {
-				histNDV -= int64(c.TopN.Num())
+				histNDV -= int64(c.TopNNum())
 			}
-			cnt += c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, realtimeRowCount, modifyCount, histNDV)
+			cnt += c.OutOfRangeRowCountInHist(sctx, &lowVal, &highVal, realtimeRowCount, modifyCount, histNDV)
 		}
 
 		if debugTrace {
@@ -335,15 +335,6 @@ func GetColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 		rowCount = mathutil.Clamp(rowCount, 1, float64(realtimeRowCount))
 	}
 	return rowCount, nil
-}
-
-// betweenRowCountOnColumn estimates the row count for interval [l, r).
-func betweenRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, l, r types.Datum, lowEncoded, highEncoded []byte) float64 {
-	histBetweenCnt := c.Histogram.BetweenRowCount(sctx, l, r)
-	if c.StatsVer <= statistics.Version1 {
-		return histBetweenCnt
-	}
-	return float64(c.TopN.BetweenCount(sctx, lowEncoded, highEncoded)) + histBetweenCnt
 }
 
 // functions below are mainly for testing.
@@ -383,7 +374,7 @@ func columnBetweenRowCount(sctx planctx.PlanContext, t *statistics.Table, a, b t
 	if err != nil {
 		return 0, err
 	}
-	count := betweenRowCountOnColumn(sctx, c, a, b, aEncoded, bEncoded)
+	count := c.BetweenRowCount(sctx, a, b, aEncoded, bEncoded)
 	if a.IsNull() {
 		count += float64(c.NullCount)
 	}

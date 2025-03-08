@@ -82,7 +82,7 @@ PARTITION BY RANGE ( a ) (
 			require.Equal(t, statsTbl.ColNum(), 3)
 			require.Equal(t, statsTbl.IdxNum(), 1)
 			statsTbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
-				require.Greater(t, col.Len()+col.TopN.Num(), 0)
+				require.Greater(t, col.Len()+col.TopNNum(), 0)
 				return false
 			})
 			statsTbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
@@ -161,8 +161,8 @@ func TestAnalyzeParameters(t *testing.T) {
 	tbl := dom.StatsHandle().GetTableStats(tableInfo)
 	col := tbl.GetCol(1)
 	require.Equal(t, 20, col.Len())
-	require.Len(t, col.TopN.TopN, 1)
-	width, depth := col.CMSketch.GetWidthAndDepth()
+	require.Len(t, col.TopNNum(), 1)
+	width, depth := col.GetCMSketchImmutable().GetWidthAndDepth()
 	require.Equal(t, int32(5), depth)
 	require.Equal(t, int32(2048), width)
 
@@ -170,8 +170,8 @@ func TestAnalyzeParameters(t *testing.T) {
 	tbl = dom.StatsHandle().GetTableStats(tableInfo)
 	col = tbl.GetCol(1)
 	require.Equal(t, 4, col.Len())
-	require.Nil(t, col.TopN)
-	width, depth = col.CMSketch.GetWidthAndDepth()
+	require.False(t, col.HasTopN())
+	width, depth = col.GetCMSketchImmutable().GetWidthAndDepth()
 	require.Equal(t, int32(4), depth)
 	require.Equal(t, int32(4), width)
 
@@ -181,8 +181,8 @@ func TestAnalyzeParameters(t *testing.T) {
 	col = tbl.GetCol(1)
 	require.Equal(t, 20, col.Len())
 
-	require.Len(t, col.TopN.TopN, 1)
-	width, depth = col.CMSketch.GetWidthAndDepth()
+	require.Len(t, col.TopNNum(), 1)
+	width, depth = col.GetCMSketchImmutable().GetWidthAndDepth()
 	require.Equal(t, int32(1), depth)
 	require.Equal(t, int32(core.CMSketchSizeLimit), width)
 
@@ -191,8 +191,8 @@ func TestAnalyzeParameters(t *testing.T) {
 	tbl = dom.StatsHandle().GetTableStats(tableInfo)
 	col = tbl.GetCol(1)
 	require.Equal(t, 20, col.Len())
-	require.Len(t, col.TopN.TopN, 1)
-	width, depth = col.CMSketch.GetWidthAndDepth()
+	require.Len(t, col.TopNNum(), 1)
+	width, depth = col.GetCMSketchImmutable().GetWidthAndDepth()
 	require.Equal(t, int32(50), depth)
 	require.Equal(t, int32(20480), width)
 }
@@ -217,7 +217,7 @@ func TestAnalyzeTooLongColumns(t *testing.T) {
 	tbl := dom.StatsHandle().GetTableStats(tableInfo)
 	col1 := tbl.GetCol(1)
 	require.Equal(t, 0, col1.Len())
-	require.Equal(t, 0, col1.TopN.Num())
+	require.Equal(t, 0, col1.TopNNum())
 	require.Equal(t, int64(65559), col1.TotColSize)
 }
 
@@ -258,8 +258,8 @@ func TestExtractTopN(t *testing.T) {
 	tblInfo := table.Meta()
 	tblStats := dom.StatsHandle().GetTableStats(tblInfo)
 	colStats := tblStats.GetCol(tblInfo.Columns[1].ID)
-	require.Len(t, colStats.TopN.TopN, 10)
-	item := colStats.TopN.TopN[0]
+	require.Len(t, colStats.TopNNum(), 10)
+	item := colStats.GetTopNImmutable().TopN[0]
 	require.Equal(t, uint64(11), item.Count)
 	idxStats := tblStats.GetIdx(tblInfo.Indices[0].ID)
 	require.Len(t, idxStats.TopN.TopN, 10)
@@ -736,7 +736,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	col0 := tbl.GetCol(tableInfo.Columns[0].ID)
 	require.Equal(t, 2, len(col0.Buckets))
 	col1 := tbl.GetCol(tableInfo.Columns[1].ID)
-	require.Equal(t, 1, len(col1.TopN.TopN))
+	require.Equal(t, 1, col1.TopNNum())
 	require.Equal(t, 2, len(col1.Buckets))
 	col2 := tbl.GetCol(tableInfo.Columns[2].ID)
 	require.Equal(t, 2, len(col2.Buckets))
@@ -766,7 +766,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	tk.MustQuery("select * from t where b > 1 and c > 1")
 	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
 	col1 = tbl.GetCol(tableInfo.Columns[1].ID)
-	require.Equal(t, 1, len(col1.TopN.TopN))
+	require.Equal(t, 1, col1.TopNNum())
 	col2 = tbl.GetCol(tableInfo.Columns[2].ID)
 	require.Less(t, col2.LastUpdateVersion, col0.LastUpdateVersion) // not updated since removed from list
 	rs = tk.MustQuery("select sample_rate,buckets,topn,column_choice,column_ids from mysql.analyze_options where table_id=" + strconv.FormatInt(tbl.PhysicalID, 10))
@@ -2239,9 +2239,9 @@ PARTITION BY RANGE ( a ) (
 	lastVersion := tbl.Version
 	// both globalStats and partition stats generated and options saved for column a,c
 	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets))
-	require.Equal(t, 1, len(tbl.GetCol(tableInfo.Columns[0].ID).TopN.TopN))
+	require.Equal(t, 1, tbl.GetCol(tableInfo.Columns[0].ID).TopNNum())
 	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets))
-	require.Equal(t, 1, len(tbl.GetCol(tableInfo.Columns[2].ID).TopN.TopN))
+	require.Equal(t, 1, tbl.GetCol(tableInfo.Columns[2].ID).TopNNum())
 	rs := tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[0].ID, 10))
 	require.Equal(t, 0, len(rs.Rows()))
 	rs = tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[1].ID, 10))
@@ -2259,9 +2259,9 @@ PARTITION BY RANGE ( a ) (
 	require.Greater(t, tbl.Version, lastVersion)
 	lastVersion = tbl.Version
 	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets))
-	require.Equal(t, 1, len(tbl.GetCol(tableInfo.Columns[0].ID).TopN.TopN))
+	require.Equal(t, 1, tbl.GetCol(tableInfo.Columns[0].ID).TopNNum())
 	require.Equal(t, 3, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets))
-	require.Equal(t, 1, len(tbl.GetCol(tableInfo.Columns[2].ID).TopN.TopN))
+	require.Equal(t, 1, tbl.GetCol(tableInfo.Columns[2].ID).TopNNum())
 	rs = tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[0].ID, 10))
 	require.Equal(t, 0, len(rs.Rows()))
 	rs = tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[1].ID, 10))
@@ -2278,9 +2278,9 @@ PARTITION BY RANGE ( a ) (
 	tbl = h.GetTableStats(tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[0].ID).Buckets))
-	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[0].ID).TopN.TopN))
+	require.Equal(t, 2, tbl.GetCol(tableInfo.Columns[0].ID).TopNNum())
 	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[2].ID).Buckets))
-	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[2].ID).TopN.TopN))
+	require.Equal(t, 2, tbl.GetCol(tableInfo.Columns[2].ID).TopNNum())
 	rs = tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[0].ID, 10))
 	require.Equal(t, 0, len(rs.Rows()))
 	rs = tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[1].ID, 10))
@@ -2402,7 +2402,7 @@ PARTITION BY RANGE ( a ) (
 	require.Greater(t, tbl.Version, lastVersion)
 	lastVersion = tbl.Version
 	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[3].ID).Buckets))
-	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[3].ID).TopN.TopN))
+	require.Equal(t, 2, tbl.GetCol(tableInfo.Columns[3].ID).TopNNum())
 
 	// analyze table under dynamic mode with specified options with old table-level & partition-level options
 	tk.MustExec("analyze table t with 1 topn")
@@ -2412,8 +2412,8 @@ PARTITION BY RANGE ( a ) (
 	require.Greater(t, tbl.Version, lastVersion)
 	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[1].ID).Buckets))
 	require.Equal(t, 2, len(tbl.GetCol(tableInfo.Columns[3].ID).Buckets))
-	require.Equal(t, 1, len(tbl.GetCol(tableInfo.Columns[1].ID).TopN.TopN))
-	require.Equal(t, 1, len(tbl.GetCol(tableInfo.Columns[3].ID).TopN.TopN))
+	require.Equal(t, 1, tbl.GetCol(tableInfo.Columns[1].ID).TopNNum())
+	require.Equal(t, 1, tbl.GetCol(tableInfo.Columns[3].ID).TopNNum())
 	rs = tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[0].ID, 10))
 	require.Equal(t, 1, len(rs.Rows()))
 	require.Equal(t, "3", rs.Rows()[0][0])
@@ -2721,7 +2721,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t partition p0")
 	tbl, err := h.TableStatsFromStorage(table.Meta(), table.Meta().ID, true, 0)
 	require.NoError(t, err)
-	require.Equal(t, int64(6), tbl.GetCol(tableInfo.Columns[0].ID).Histogram.NDV)
+	require.Equal(t, int64(6), tbl.GetCol(tableInfo.Columns[0].ID).SelfNDV())
 }
 
 func TestAutoAnalyzeAwareGlobalVariableChange(t *testing.T) {
