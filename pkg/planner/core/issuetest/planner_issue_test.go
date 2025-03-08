@@ -231,3 +231,9 @@ ON base.c1 <=> base2.c1;`).Sort().Check(testkit.Rows(
 		"1 Alice 1 100",
 		"<nil> Bob <nil> <nil>"))
 }
+
+func TestIssue45956(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("show databases WHERE TRUE IN (SELECT TRUE) < ALL (SELECT TRUE);").Check(testkit.Rows("INFORMATION_SCHEMA"))
+}
