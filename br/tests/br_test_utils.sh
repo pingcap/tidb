@@ -25,7 +25,7 @@ wait_log_checkpoint_advance() {
     i=0
     while true; do
         # extract the checkpoint ts of the log backup task. If there is some error, the checkpoint ts should be empty
-        log_backup_status=$(unset BR_LOG_TO_TERM && run_br --skip-goleak --pd $PD_ADDR log status --task-name $task_name --json 2>br.log)
+        log_backup_status=$(unset BR_LOG_TO_TERM && run_br --pd $PD_ADDR log status --task-name $task_name --json 2>br.log)
         echo "log backup status: $log_backup_status"
         local checkpoint_ts=$(echo "$log_backup_status" | head -n 1 | jq 'if .[0].last_errors | length  == 0 then .[0].checkpoint else empty end')
         echo "checkpoint ts: $checkpoint_ts"
