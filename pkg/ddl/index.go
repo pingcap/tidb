@@ -1678,6 +1678,7 @@ func newAddIndexIngestWorker(
 	checkpointMgr *ingest.CheckpointManager,
 ) (*addIndexIngestWorker, error) {
 	indexes := make([]table.Index, 0, len(indexIDs))
+	var indexNames strings.Builder
 	writers := make([]ingest.Writer, 0, len(indexIDs))
 	for i, indexID := range indexIDs {
 		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, indexID)
@@ -1688,14 +1689,17 @@ func newAddIndexIngestWorker(
 		}
 		indexes = append(indexes, index)
 		writers = append(writers, lw)
+		if i > 0 {
+			indexNames.WriteString("+")
+		}
+		indexNames.WriteString(index.Meta().Name.O)
 	}
 
 	return &addIndexIngestWorker{
-		ctx:     ctx,
-		d:       d,
-		sessCtx: sessCtx,
-		metricCounter: metrics.BackfillTotalCounter.WithLabelValues(
-			metrics.GenerateReorgLabel("add_idx_rate", schemaName, t.Meta().Name.O)),
+		ctx:              ctx,
+		d:                d,
+		sessCtx:          sessCtx,
+		metricCounter:    metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, schemaName, t.Meta().Name.O, indexNames.String()),
 		tbl:              t,
 		indexes:          indexes,
 		writers:          writers,
@@ -2427,7 +2431,7 @@ func newCleanUpIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 	}
 	return &cleanUpIndexWorker{
 		baseIndexWorker: baseIndexWorker{
-			backfillCtx: newBackfillCtx(reorgInfo.d, id, sessCtx, reorgInfo.SchemaName, t, jc, "cleanup_idx_rate", false),
+			backfillCtx: newBackfillCtx(reorgInfo.d, id, sessCtx, reorgInfo, reorgInfo.SchemaName, t, jc, metrics.LblCleanupIdxRate, false),
 			indexes:     indexes,
 			rowDecoder:  rowDecoder,
 			defaultVals: make([]types.Datum, len(t.WritableCols())),

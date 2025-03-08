@@ -23,7 +23,7 @@ go_test(
     ],
     embed = [":membuf"],
     flaky = True,
-    shard_count = 6,
+    shard_count = 7,
     deps = [
         "@com_github_stretchr_testify//require",
         "@org_uber_go_atomic//:atomic",

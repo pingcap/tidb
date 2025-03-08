@@ -31,6 +31,7 @@ go_library(
         "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/disk",
+        "//pkg/util/logutil",
         "//pkg/util/memory",
         "//pkg/util/sli",
         "//pkg/util/sqlexec",
