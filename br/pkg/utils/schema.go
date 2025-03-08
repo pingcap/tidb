@@ -13,6 +13,7 @@ import (
 
 // temporaryDBNamePrefix is the prefix name of system db, e.g. mysql system db will be rename to __TiDB_BR_Temporary_mysql
 const temporaryDBNamePrefix = "__TiDB_BR_Temporary_"
+const temporaryTableNamePrefix = "__TiDB_BR_Temporary_Table_"
 
 // NeedAutoID checks whether the table needs backing up with an autoid.
 func NeedAutoID(tblInfo *model.TableInfo) bool {
@@ -63,4 +64,9 @@ func GetSysDBCIStrName(tempDB ast.CIStr) (ast.CIStr, bool) {
 	tempDB.O = tempDB.O[len(temporaryDBNamePrefix):]
 	tempDB.L = tempDB.L[len(temporaryDBNamePrefix):]
 	return tempDB, true
+}
+
+// TemporaryTableName makes a 'private' table name.
+func TemporaryTableName(db string) ast.CIStr {
+	return ast.NewCIStr(temporaryTableNamePrefix + db)
 }

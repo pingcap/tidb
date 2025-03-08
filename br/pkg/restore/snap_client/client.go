@@ -47,6 +47,7 @@ import (
 	tidalloc "github.com/pingcap/tidb/br/pkg/restore/internal/prealloc_table_id"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
+	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
@@ -755,6 +756,62 @@ func (rc *SnapClient) GetDatabaseMap() map[int64]*metautil.Database {
 	return dbMap
 }
 
+// GetTableMap returns all tables in a map indexed by table id
+func (rc *SnapClient) GetTableMap() map[int64]*metautil.Table {
+	tableMap := make(map[int64]*metautil.Table)
+	for _, db := range rc.databases {
+		for _, table := range db.Tables {
+			if table.Info == nil {
+				continue
+			}
+			tableMap[table.Info.ID] = table
+		}
+	}
+	return tableMap
+}
+
+// PartitionInfo contains information about a partition including its parent table and database
+type PartitionInfo struct {
+	Partition       *metautil.Table
+	PartitionID     int64
+	ParentTableID   int64
+	ParentTableName string
+	DBID            int64
+	DBName          string
+}
+
+// GetPartitionMap returns all partitions with their related information indexed by partition ID
+func (rc *SnapClient) GetPartitionMap() map[int64]*stream.TableLocationInfo {
+	partitionMap := make(map[int64]*stream.TableLocationInfo)
+	for _, db := range rc.databases {
+		for _, table := range db.Tables {
+			if table.Info == nil {
+				continue
+			}
+
+			// Skip if the table doesn't have partition info
+			if table.Info.Partition == nil || table.Info.Partition.Definitions == nil {
+				continue
+			}
+
+			// Iterate through all partitions in the table
+			for _, part := range table.Info.Partition.Definitions {
+				// Create the partition info with all required details
+				partInfo := &stream.TableLocationInfo{
+					ParentTableID: table.Info.ID,
+					TableName:     table.Info.Name.O,
+					DbID:          db.Info.ID,
+					IsPartition:   true,
+				}
+
+				// Add to the map with partition ID as key
+				partitionMap[part.ID] = partInfo
+			}
+		}
+	}
+	return partitionMap
+}
+
 // HasBackedUpSysDB whether we have backed up system tables
 // br backs system tables up since 5.1.0
 func (rc *SnapClient) HasBackedUpSysDB() bool {
@@ -914,6 +971,7 @@ func (rc *SnapClient) createTables(
 			return nil, errors.Trace(err)
 		}
 		if newTableInfo.IsCommonHandle != table.Info.IsCommonHandle {
+			log.Error("Clustered index option mismatch", zap.String("schemaName", table.DB.Name.O), zap.String("tableName", table.Info.Name.O))
 			return nil, errors.Annotatef(berrors.ErrRestoreModeMismatch,
 				"Clustered index option mismatch. Restored cluster's @@tidb_enable_clustered_index should be %v (backup table = %v, created table = %v).",
 				restore.TransferBoolToValue(table.Info.IsCommonHandle),
@@ -946,7 +1004,7 @@ func (rc *SnapClient) createTablesBatch(ctx context.Context, tables []*metautil.
 
 	for lastSent := 0; lastSent < numOfTables; lastSent += int(rc.batchDdlSize) {
 		end := min(lastSent+int(rc.batchDdlSize), len(tables))
-		log.Info("create tables", zap.Int("table start", lastSent), zap.Int("table end", end))
+		log.Info("create tables", zap.Int("table start index", lastSent), zap.Int("table end index", end))
 
 		tableSlice := tables[lastSent:end]
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
@@ -995,6 +1053,7 @@ func (rc *SnapClient) createTable(
 		return nil, errors.Trace(err)
 	}
 	if newTableInfo.IsCommonHandle != table.Info.IsCommonHandle {
+		log.Error("Clustered index option mismatch", zap.String("schemaName", table.DB.Name.O), zap.String("tableName", table.Info.Name.O))
 		return nil, errors.Annotatef(berrors.ErrRestoreModeMismatch,
 			"Clustered index option mismatch. Restored cluster's @@tidb_enable_clustered_index should be %v (backup table = %v, created table = %v).",
 			restore.TransferBoolToValue(table.Info.IsCommonHandle),

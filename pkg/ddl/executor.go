@@ -5692,17 +5692,17 @@ func (e *executor) UnlockTables(ctx sessionctx.Context, unlockTables []model.Tab
 }
 
 func (e *executor) AlterTableMode(ctx sessionctx.Context, args *model.AlterTableModeArgs) error {
-	is := e.infoCache.GetLatest()
-
-	schema, ok := is.SchemaByID(args.SchemaID)
-	if !ok {
-		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("SchemaID: %v", args.SchemaID))
-	}
-
-	_, ok = is.TableByID(e.ctx, args.TableID)
-	if !ok {
-		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema.Name, args.TableID)
-	}
+	//is := e.infoCache.GetLatest()
+	//
+	//schema, ok := is.SchemaByID(args.SchemaID)
+	//if !ok {
+	//	return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("SchemaID: %v", args.SchemaID))
+	//}
+	//
+	//_, ok = is.TableByID(e.ctx, args.TableID)
+	//if !ok {
+	//	return infoschema.ErrTableNotExists.GenWithStackByArgs(schema.Name, args.TableID)
+	//}
 
 	job := &model.Job{
 		Version:        model.JobVersion2,

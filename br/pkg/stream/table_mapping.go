@@ -24,13 +24,15 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/restore"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"go.uber.org/zap"
 )
 
@@ -82,11 +84,19 @@ func (tm *TableMappingManager) FromDBReplaceMap(dbReplaceMap map[UpstreamID]*DBR
 	return nil
 }
 
+// MetaInfoCollector is an interface for collecting metadata information during parsing
+type MetaInfoCollector interface {
+	// OnDatabaseInfo is called when database information is found in a value
+	OnDatabaseInfo(dbInfo *model.DBInfo)
+	// OnTableInfo is called when table information is found in a value
+	OnTableInfo(dbID int64, tableInfo *model.TableInfo)
+}
+
 // ParseMetaKvAndUpdateIdMapping collect table information
 // the keys and values that are selected to parse here follows the implementation in rewrite_meta_rawkv. Maybe
 // parsing a subset of these keys/values would suffice, but to make it safe we decide to parse exactly same as
 // in rewrite_meta_rawkv.
-func (tm *TableMappingManager) ParseMetaKvAndUpdateIdMapping(e *kv.Entry, cf string) error {
+func (tm *TableMappingManager) ParseMetaKvAndUpdateIdMapping(e *kv.Entry, cf string, collector MetaInfoCollector) error {
 	if !utils.IsMetaDBKey(e.Key) {
 		return nil
 	}
@@ -109,7 +119,7 @@ func (tm *TableMappingManager) ParseMetaKvAndUpdateIdMapping(e *kv.Entry, cf str
 			return errors.Trace(err)
 		}
 		if value != nil {
-			return tm.parseDBValueAndUpdateIdMapping(value)
+			return tm.parseDBValueAndUpdateIdMapping(value, collector)
 		}
 	} else if !meta.IsDBkey(rawKey.Key) {
 		return nil
@@ -133,7 +143,7 @@ func (tm *TableMappingManager) ParseMetaKvAndUpdateIdMapping(e *kv.Entry, cf str
 			return errors.Trace(err)
 		}
 		if value != nil {
-			return tm.parseTableValueAndUpdateIdMapping(dbID, value)
+			return tm.parseTableValueAndUpdateIdMapping(dbID, value, collector)
 		}
 	} else if meta.IsAutoIncrementIDKey(rawKey.Field) {
 		// parse auto increment key and update
@@ -174,7 +184,7 @@ func (tm *TableMappingManager) parseDBKeyAndUpdateIdMapping(field []byte) error 
 	return errors.Trace(err)
 }
 
-func (tm *TableMappingManager) parseDBValueAndUpdateIdMapping(value []byte) error {
+func (tm *TableMappingManager) parseDBValueAndUpdateIdMapping(value []byte, collector MetaInfoCollector) error {
 	dbInfo := new(model.DBInfo)
 	if err := json.Unmarshal(value, dbInfo); err != nil {
 		return errors.Trace(err)
@@ -184,7 +194,10 @@ func (tm *TableMappingManager) parseDBValueAndUpdateIdMapping(value []byte) erro
 	if err != nil {
 		return errors.Trace(err)
 	}
-	dbReplace.Name = dbInfo.Name.O
+	if dbInfo.Name.O != "" {
+		dbReplace.Name = dbInfo.Name.O
+	}
+	collector.OnDatabaseInfo(dbInfo)
 	return nil
 }
 
@@ -241,7 +254,8 @@ func (tm *TableMappingManager) parseTableIdAndUpdateIdMapping(
 	return nil
 }
 
-func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(dbID int64, value []byte) error {
+func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(dbID int64, value []byte,
+	collector MetaInfoCollector) error {
 	var tableInfo model.TableInfo
 	if err := json.Unmarshal(value, &tableInfo); err != nil {
 		return errors.Trace(err)
@@ -256,7 +270,9 @@ func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(dbID int64, val
 	if err != nil {
 		return errors.Trace(err)
 	}
-	tableReplace.Name = tableInfo.Name.O
+	if tableInfo.Name.O != "" {
+		tableReplace.Name = tableInfo.Name.O
+	}
 
 	// update table ID and partition ID.
 	partitions := tableInfo.GetPartitionInfo()
@@ -273,6 +289,7 @@ func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(dbID int64, val
 			}
 		}
 	}
+	collector.OnTableInfo(dbID, &tableInfo)
 	return nil
 }
 
@@ -323,14 +340,17 @@ func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBRepl
 					// merge partition mappings for existing tables
 					existingTableReplace := existingDBReplace.TableMap[tableUpID]
 					for partUpID, partDownID := range baseTableReplace.PartitionMap {
-						if _, exists := existingTableReplace.PartitionMap[partUpID]; !exists {
-							existingTableReplace.PartitionMap[partUpID] = partDownID
-						}
+						existingTableReplace.PartitionMap[partUpID] = partDownID
+					}
+
+					for indexUpID, indexDownID := range baseTableReplace.IndexMap {
+						existingTableReplace.IndexMap[indexUpID] = indexDownID
 					}
 				}
 			}
 		}
 	}
+	LogDBReplaceMap("after merging dbReplace", tm.DBReplaceMap)
 }
 
 func (tm *TableMappingManager) IsEmpty() bool {
@@ -443,7 +463,7 @@ func (tm *TableMappingManager) ApplyFilterToDBReplaceMap(tracker *utils.PiTRIdTr
 
 		// filter tables in this database
 		for tableID, tableReplace := range dbReplace.TableMap {
-			if !tracker.ContainsTableId(dbID, tableID) {
+			if !tracker.ContainsDBAndTableId(dbID, tableID) {
 				tableReplace.FilteredOut = true
 			}
 		}
@@ -519,6 +539,9 @@ func ExtractValue(e *kv.Entry, cf string) ([]byte, error) {
 		if err := rawWriteCFValue.ParseFrom(e.Value); err != nil {
 			return nil, errors.Trace(err)
 		}
+		if rawWriteCFValue.IsDelete() {
+			log.Info("####### get delete key")
+		}
 		if rawWriteCFValue.HasShortValue() {
 			return rawWriteCFValue.shortValue, nil
 		}
@@ -533,93 +556,42 @@ func (tm *TableMappingManager) generateTempID() DownstreamID {
 	return tm.tempIDCounter
 }
 
-// UpdateTempIDsFromInfoSchema updates all temporary IDs (IDs < 0) in DBReplaceMap with real downstream IDs from InfoSchema.
-// It returns error if any object cannot be found in InfoSchema or if tables are not in restore mode.
-func (tm *TableMappingManager) UpdateTempIDsFromInfoSchema(ctx context.Context, dom *domain.Domain) error {
-	is := dom.InfoSchema()
+// UpdateDownstreamIds updates the mapping from old table ID to new table ID.
+func (tm *TableMappingManager) UpdateDownstreamIds(oldTables []*metautil.Table, domain *domain.Domain) error {
+	dbReplaces := make(map[UpstreamID]*DBReplace)
 
-	// list all schemas and tables for debugging
-	allSchemas := is.AllSchemas()
-	log.Info("current schemas in InfoSchema")
-	for _, schema := range allSchemas {
-		log.Info("schema", zap.String("name", schema.Name.O), zap.Int64("id", schema.ID))
-		tables, err := is.SchemaTableInfos(ctx, schema.Name)
+	for _, t := range oldTables {
+		dbName, _ := utils.GetSysDBCIStrName(t.DB.Name)
+		newDBInfo, exist := domain.InfoSchema().SchemaByName(dbName)
+		if !exist {
+			log.Error("db does not exist in UpdateDownstreamIds", zap.String("dbName", dbName.String()))
+			return errors.New("db does not exist when updating downstream ids at snapshot restore")
+		}
+
+		dbReplace, exist := dbReplaces[t.DB.ID]
+		if !exist {
+			dbReplace = NewDBReplace(t.DB.Name.O, newDBInfo.ID)
+			dbReplaces[t.DB.ID] = dbReplace
+		}
+
+		if t.Info == nil {
+			// If the db is empty, skip it.
+			continue
+		}
+		newTableInfo, err := restore.GetTableSchema(domain, dbName, t.Info.Name)
 		if err != nil {
-			log.Warn("failed to get tables",
-				zap.String("schema", schema.Name.O),
-				zap.Error(err))
-			continue
+			log.Error("table doesn't exist in UpdateDownstreamIds", zap.String("tableName", dbName.String()+"."+t.Info.Name.String()))
+			return errors.New("db does not exist when updating downstream ids at snapshot restore")
 		}
-		for _, table := range tables {
-			log.Info("table",
-				zap.String("schema", schema.Name.O),
-				zap.String("table", table.Name.O),
-				zap.Int64("id", table.ID),
-				zap.String("mode", string(table.TableMode)))
+
+		dbReplace.TableMap[t.Info.ID] = &TableReplace{
+			Name:         newTableInfo.Name.O,
+			TableID:      newTableInfo.ID,
+			PartitionMap: restoreutils.GetPartitionIDMap(newTableInfo, t.Info),
+			IndexMap:     restoreutils.GetIndexIDMap(newTableInfo, t.Info),
 		}
 	}
-
-	// update database IDs
-	for upstreamID, dbReplace := range tm.DBReplaceMap {
-		log.Info("######### db", zap.Any("up", upstreamID))
-		if dbReplace.FilteredOut {
-			log.Info("######### db out", zap.Any("up", upstreamID))
-			continue
-		}
-		if dbReplace.DbID < 0 {
-			dbInfo, exists := is.SchemaByName(ast.NewCIStr(dbReplace.Name))
-			if !exists {
-				return errors.Errorf("database %s not found in InfoSchema", dbReplace.Name)
-			}
-			dbReplace.DbID = dbInfo.ID
-			tm.globalIdMap[upstreamID] = dbReplace.DbID
-		}
-
-		// update table IDs
-		for upstreamID, tableReplace := range dbReplace.TableMap {
-			log.Info("######### table", zap.Any("up", upstreamID), zap.Any("down", tableReplace.TableID), zap.Any("down", tableReplace.Name))
-			if tableReplace.FilteredOut {
-				log.Info("######### table out", zap.Any("up", upstreamID))
-				continue
-			}
-
-			if tableReplace.TableID < 0 {
-				tbl, err := is.TableByName(ctx, ast.NewCIStr(dbReplace.Name), ast.NewCIStr(tableReplace.Name))
-				if err != nil {
-					return errors.Errorf("table %s.%s not found in InfoSchema", dbReplace.Name, tableReplace.Name)
-				}
-
-				// verify table mode
-				if tbl.Meta().TableMode != model.TableModeRestore {
-					return errors.Errorf("table %s.%s is not in restore mode, current mode: %s",
-						dbReplace.Name, tableReplace.Name, tbl.Meta().TableMode)
-				}
-
-				tableReplace.TableID = tbl.Meta().ID
-				tm.globalIdMap[upstreamID] = tableReplace.TableID
-
-				log.Info("found restore mode table",
-					zap.String("db", dbReplace.Name),
-					zap.String("table", tableReplace.Name),
-					zap.Int64("upstream", tableReplace.TableID),
-					zap.Int64("downstream", tbl.Meta().ID))
-			}
-		}
-	}
+	LogDBReplaceMap("updated id mapping after creating tables during snapshot restore", dbReplaces)
+	tm.MergeBaseDBReplace(dbReplaces)
 	return nil
-}
-
-// UpdateDownstreamId updates the mapping from old table ID to new table ID.
-// It updates both the globalIdMap and the corresponding table in DBReplaceMap.
-func (tm *TableMappingManager) UpdateDownstreamId(oldTableID, newTableID int64) {
-	// update global id map
-	tm.globalIdMap[oldTableID] = newTableID
-
-	// find and update the table in DBReplaceMap
-	for _, dbReplace := range tm.DBReplaceMap {
-		if tableReplace, exists := dbReplace.TableMap[oldTableID]; exists {
-			tableReplace.TableID = newTableID
-			return
-		}
-	}
 }
