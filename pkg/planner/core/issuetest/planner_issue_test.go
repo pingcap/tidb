@@ -231,3 +231,142 @@ ON base.c1 <=> base2.c1;`).Sort().Check(testkit.Rows(
 		"1 Alice 1 100",
 		"<nil> Bob <nil> <nil>"))
 }
+
+func TestIssue55203(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec(`CREATE TABLE a (
+    id INT NOT NULL,
+    pk INT PRIMARY KEY,
+    col1 VARCHAR(255),
+    col2 VARCHAR(255),
+    col3 VARCHAR(255)
+);`)
+	tk.MustExec(`CREATE TABLE b (
+    id INT NOT NULL,
+    col4 VARCHAR(255),
+    col5 VARCHAR(255),
+    PRIMARY KEY (id)
+);`)
+	tk.MustExec("analyze table a all columns")
+	tk.MustExec("analyze table b all columns")
+	tk.MustQuery(`EXPLAIN format='brief' SELECT
+    a.pk,
+    a.col1,
+    a.col2,
+    a.col3,
+    COUNT(*)
+FROM
+    a
+JOIN
+    b
+ON
+    a.id = b.id
+GROUP BY
+    a.pk,
+    a.col1,
+    a.col2,
+    a.col3;`).Check(testkit.Rows())
+}
+
+func TestQ3(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE customer (
+    C_CUSTKEY bigint NOT NULL,
+    C_NAME varchar(25) NOT NULL,
+    C_ADDRESS varchar(40) NOT NULL,
+    C_NATIONKEY bigint NOT NULL,
+    C_PHONE char(15) NOT NULL,
+    C_ACCTBAL decimal(15,2) NOT NULL,
+    C_MKTSEGMENT char(10) NOT NULL,
+    C_COMMENT varchar(117) NOT NULL,
+    PRIMARY KEY (C_CUSTKEY) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`
+CREATE TABLE orders (
+    O_ORDERKEY bigint NOT NULL,
+    O_CUSTKEY bigint NOT NULL,
+    O_ORDERSTATUS char(1) NOT NULL,
+    O_TOTALPRICE decimal(15,2) NOT NULL,
+    O_ORDERDATE date NOT NULL,
+    O_ORDERPRIORITY char(15) NOT NULL,
+    O_CLERK char(15) NOT NULL,
+    O_SHIPPRIORITY bigint NOT NULL,
+    O_COMMENT varchar(79) NOT NULL,
+    PRIMARY KEY (O_ORDERKEY) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`
+CREATE TABLE lineitem (
+    L_ORDERKEY bigint NOT NULL,
+    L_PARTKEY bigint NOT NULL,
+    L_SUPPKEY bigint NOT NULL,
+    L_LINENUMBER bigint NOT NULL,
+    L_QUANTITY decimal(15,2) NOT NULL,
+    L_EXTENDEDPRICE decimal(15,2) NOT NULL,
+    L_DISCOUNT decimal(15,2) NOT NULL,
+    L_TAX decimal(15,2) NOT NULL,
+    L_RETURNFLAG char(1) NOT NULL,
+    L_LINESTATUS char(1) NOT NULL,
+    L_SHIPDATE date NOT NULL,
+    L_COMMITDATE date NOT NULL,
+    L_RECEIPTDATE date NOT NULL,
+    L_SHIPINSTRUCT char(25) NOT NULL,
+    L_SHIPMODE char(10) NOT NULL,
+    L_COMMENT varchar(44) NOT NULL,
+    PRIMARY KEY (L_ORDERKEY, L_LINENUMBER) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+`)
+	tk.MustQuery(`explain select
+	c_name,
+	c_custkey,
+	o_orderkey,
+	o_orderdate,
+	o_totalprice,
+	sum(l_quantity)
+from
+	customer,
+	orders,
+	lineitem
+where
+	o_orderkey in (
+		select
+			l_orderkey
+		from
+			lineitem
+		group by
+			l_orderkey having
+				sum(l_quantity) > 314
+	)
+	and c_custkey = o_custkey
+	and o_orderkey = l_orderkey
+group by
+	c_name,
+	c_custkey,
+	o_orderkey,
+	o_orderdate,
+	o_totalprice
+order by
+	o_totalprice desc,
+	o_orderdate
+limit 100;`).Check(testkit.Rows(
+		"Projection_24 100.00 root  test.customer.c_name, test.customer.c_custkey, test.orders.o_orderkey, test.orders.o_orderdate, test.orders.o_totalprice, Column#52",
+		"└─TopN_27 100.00 root  test.orders.o_totalprice:desc, test.orders.o_orderdate, offset:0, count:100",
+		"  └─HashAgg_32 8000.00 root  group by:test.customer.c_custkey, test.customer.c_name, test.orders.o_orderdate, test.orders.o_orderkey, test.orders.o_totalprice, funcs:sum(test.lineitem.l_quantity)->Column#52, funcs:firstrow(test.customer.c_custkey)->test.customer.c_custkey, funcs:firstrow(test.customer.c_name)->test.customer.c_name, funcs:firstrow(test.orders.o_orderkey)->test.orders.o_orderkey, funcs:firstrow(test.orders.o_totalprice)->test.orders.o_totalprice, funcs:firstrow(test.orders.o_orderdate)->test.orders.o_orderdate",
+		"    └─HashJoin_49 12500.00 root  inner join, equal:[eq(test.orders.o_orderkey, test.lineitem.l_orderkey)]",
+		"      ├─Selection_110(Build) 6400.00 root  gt(Column#50, 314)",
+		"      │ └─HashAgg_117 8000.00 root  group by:test.lineitem.l_orderkey, funcs:sum(Column#59)->Column#50, funcs:firstrow(test.lineitem.l_orderkey)->test.lineitem.l_orderkey",
+		"      │   └─TableReader_118 8000.00 root  data:HashAgg_111",
+		"      │     └─HashAgg_111 8000.00 cop[tikv]  group by:test.lineitem.l_orderkey, funcs:sum(test.lineitem.l_quantity)->Column#59",
+		"      │       └─TableFullScan_116 10000.00 cop[tikv] table:lineitem keep order:false, stats:pseudo",
+		"      └─HashJoin_91(Probe) 15625.00 root  inner join, equal:[eq(test.orders.o_orderkey, test.lineitem.l_orderkey)]",
+		"        ├─TableReader_109(Build) 10000.00 root  data:TableFullScan_108",
+		"        │ └─TableFullScan_108 10000.00 cop[tikv] table:lineitem keep order:false, stats:pseudo",
+		"        └─HashJoin_103(Probe) 12500.00 root  inner join, equal:[eq(test.customer.c_custkey, test.orders.o_custkey)]",
+		"          ├─TableReader_107(Build) 10000.00 root  data:TableFullScan_106",
+		"          │ └─TableFullScan_106 10000.00 cop[tikv] table:customer keep order:false, stats:pseudo",
+		"          └─TableReader_105(Probe) 10000.00 root  data:TableFullScan_104]",
+		"            └─TableFullScan_104 10000.00 cop[tikv] table:orders keep order:false, stats:pseudo]"))
+}
