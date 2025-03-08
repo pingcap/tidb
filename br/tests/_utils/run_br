@@ -16,8 +16,13 @@
 
 set -eux
 
+<<<<<<< HEAD
 bin/br.test -test.coverprofile="$TEST_DIR/cov.$TEST_NAME.$$.out.log" DEVEL "$@" \
     -L "debug" \
+=======
+br.test -test.coverprofile="$TEST_DIR/cov.$TEST_NAME.$$.out.log" DEVEL "$@" \
+    -L "info" \
+>>>>>>> 8c5ca7b2008 (restore: precheck cluster is empty when first time full restore (#45014))
     --ca "$TEST_DIR/certs/ca.pem" \
     --cert "$TEST_DIR/certs/br.pem" \
     --key "$TEST_DIR/certs/br.key"
