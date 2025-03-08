@@ -40,6 +40,11 @@ var (
 	// ExplainFormatPlanCache prints the reason why can't use non-prepared plan cache by warning
 	ExplainFormatPlanCache = "plan_cache"
 
+	ExplainFormatUnityMCV      = "unity_mcv"
+	ExplainFormatUnityOnline   = "unity_online"
+	ExplainFormatUnityOffline  = "unity_offline"
+	ExplainFormatUnityOffline_ = "unity_offline_"
+
 	// ExplainFormats stores the valid formats for explain statement, used by validator.
 	ExplainFormats = []string{
 		ExplainFormatBrief,
@@ -54,5 +59,9 @@ var (
 		ExplainFormatTiDBJSON,
 		ExplainFormatCostTrace,
 		ExplainFormatPlanCache,
+		ExplainFormatUnityOffline_,
+		ExplainFormatUnityOffline,
+		ExplainFormatUnityOnline,
+		ExplainFormatUnityMCV,
 	}
 )
