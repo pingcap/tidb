@@ -1944,6 +1944,35 @@ func decodePrivilegeEvent(resp clientv3.WatchResponse) PrivilegeEvent {
 	return msg
 }
 
+func batchReadMoreData(ch clientv3.WatchChan, event PrivilegeEvent) PrivilegeEvent {
+	timer := time.NewTimer(5 * time.Millisecond)
+	defer timer.Stop()
+	const maxBatchSize = 128
+	for i := 0; i < maxBatchSize; i++ {
+		select {
+		case resp, ok := <-ch:
+			if !ok {
+				return event
+			}
+			tmp := decodePrivilegeEvent(resp)
+			if tmp.All {
+				event.All = true
+			} else {
+				if !event.All {
+					event.UserList = append(event.UserList, tmp.UserList...)
+				}
+			}
+			succ := timer.Reset(5 * time.Millisecond)
+			if !succ {
+				break
+			}
+		case <-timer.C:
+			return event
+		}
+	}
+	return event
+}
+
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
 // should be called only once in BootstrapSession.
 func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
@@ -1978,6 +2007,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 				if ok {
 					count = 0
 					event = decodePrivilegeEvent(resp)
+					event = batchReadMoreData(watchCh, event)
 				} else {
 					if do.ctx.Err() == nil {
 						logutil.BgLogger().Error("load privilege loop watch channel closed")
@@ -1991,6 +2021,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 				}
 			case <-time.After(duration):
 				event.All = true
+				event = batchReadMoreData(watchCh, event)
 			}
 
 			err := privReloadEvent(do.privHandle, &event)
