@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -175,10 +176,10 @@ var mockTerrorMap = make(map[string]*terror.Error)
 
 func init() {
 	// Since terror new action will cause data race with other test suite (getTerrorCode) in parallel, we init it all here.
-	mockTerrorMap[model.StateNone.String()] = dbterror.ClassDDL.NewStdErr(1, mysql.Message("MockRollingBackInCallBack-"+model.StateNone.String(), nil))
-	mockTerrorMap[model.StateDeleteOnly.String()] = dbterror.ClassDDL.NewStdErr(1, mysql.Message("MockRollingBackInCallBack-"+model.StateDeleteOnly.String(), nil))
-	mockTerrorMap[model.StateWriteOnly.String()] = dbterror.ClassDDL.NewStdErr(1, mysql.Message("MockRollingBackInCallBack-"+model.StateWriteOnly.String(), nil))
-	mockTerrorMap[model.StateWriteReorganization.String()] = dbterror.ClassDDL.NewStdErr(1, mysql.Message("MockRollingBackInCallBack-"+model.StateWriteReorganization.String(), nil))
+	mockTerrorMap[model.StateNone.String()] = dbterror.ClassDDL.NewStdErr(1, errno.Message("MockRollingBackInCallBack-"+model.StateNone.String(), nil))
+	mockTerrorMap[model.StateDeleteOnly.String()] = dbterror.ClassDDL.NewStdErr(1, errno.Message("MockRollingBackInCallBack-"+model.StateDeleteOnly.String(), nil))
+	mockTerrorMap[model.StateWriteOnly.String()] = dbterror.ClassDDL.NewStdErr(1, errno.Message("MockRollingBackInCallBack-"+model.StateWriteOnly.String(), nil))
+	mockTerrorMap[model.StateWriteReorganization.String()] = dbterror.ClassDDL.NewStdErr(1, errno.Message("MockRollingBackInCallBack-"+model.StateWriteReorganization.String(), nil))
 }
 
 // Test issue #20529.

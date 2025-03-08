@@ -78,7 +78,7 @@ func NewTableKVEncoder(
 func (en *tableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, error) {
 	// we ignore warnings when encoding rows now, but warnings uses the same memory as parser, since the input
 	// row []types.Datum share the same underlying buf, and when doing CastValue, we're using hack.String/hack.Slice.
-	// when generating error such as mysql.ErrDataOutOfRange, the data will be part of the error, causing the buf
+	// when generating error such as errno.ErrDataOutOfRange, the data will be part of the error, causing the buf
 	// unable to release. So we truncate the warnings here.
 	defer en.TruncateWarns()
 	record, err := en.parserData2TableData(row, rowID)

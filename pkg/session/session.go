@@ -1706,7 +1706,7 @@ func (s *session) IsUsedAdvisoryLock(lockName string) uint64 {
 	err = lock.IsUsedLock(lockName)
 	if err != nil {
 		// TODO: Return actual owner pid
-		// TODO: Check for mysql.ErrLockWaitTimeout and DeadLock
+		// TODO: Check for errno.ErrLockWaitTimeout and DeadLock
 		return 1
 	}
 	return 0

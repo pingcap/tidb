@@ -21,6 +21,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/parser",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/errno",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
         "//pkg/parser/charset",
