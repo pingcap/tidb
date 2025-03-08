@@ -96,7 +96,7 @@ func NewGCWorker(store kv.Storage, pdClient pd.Client) (*GCWorker, error) {
 		desc:               fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
 		store:              store,
 		tikvStore:          tikvStore,
-		pdClient:           pdClient,
+		pdClient:           pdClient.WithCallerComponent("gc-worker"),
 		gcIsRunning:        false,
 		lastFinish:         time.Now(),
 		regionLockResolver: tikv.NewRegionLockResolver(resolverIdentifier, tikvStore),
@@ -1753,7 +1753,7 @@ func RunGCJob(ctx context.Context, regionLockResolver tikv.RegionLockResolver, s
 	gcWorker := &GCWorker{
 		tikvStore:          s,
 		uuid:               identifier,
-		pdClient:           pd,
+		pdClient:           pd.WithCallerComponent("gc-job"),
 		regionLockResolver: regionLockResolver,
 	}
 
@@ -1791,7 +1791,7 @@ func RunDistributedGCJob(ctx context.Context, regionLockResolver tikv.RegionLock
 	gcWorker := &GCWorker{
 		tikvStore:          s,
 		uuid:               identifier,
-		pdClient:           pd,
+		pdClient:           pd.WithCallerComponent("distributed-gc-job"),
 		regionLockResolver: regionLockResolver,
 	}
 
