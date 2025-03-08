@@ -63,6 +63,8 @@ type ImportStepMeta struct {
 	SortedDataMeta *external.SortedKVMeta
 	// SortedIndexMetas is a map from index id to its sorted kv meta.
 	SortedIndexMetas map[int64]*external.SortedKVMeta
+
+	SortedMetaPath string `json:"sorted-meta-path,omitempty"`
 }
 
 const (
@@ -77,6 +79,8 @@ type MergeSortStepMeta struct {
 	KVGroup               string   `json:"kv-group"`
 	DataFiles             []string `json:"data-files"`
 	external.SortedKVMeta `json:"sorted-kv-meta"`
+
+	SortedMetaPath string `json:"sorted-meta-path,omitempty"`
 }
 
 // WriteIngestStepMeta is the meta of write and ingest step.

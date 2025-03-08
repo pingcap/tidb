@@ -17,6 +17,8 @@ package importinto
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"path"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -260,8 +262,17 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 		autoid.AutoIncrementType: allocators.Get(autoid.AutoIncrementType).Base(),
 		autoid.AutoRandomType:    allocators.Get(autoid.AutoRandomType).Base(),
 	}
-	subtaskMeta.SortedDataMeta = sharedVars.SortedDataMeta
-	subtaskMeta.SortedIndexMetas = sharedVars.SortedIndexMetas
+	// if using globalsort, write the sorted data/index meta to external storage.
+	if s.tableImporter.IsGlobalSort() {
+		subtaskMeta.SortedMetaPath = sortedMetaPath(s.taskID, subtask.ID)
+		if err := external.WriteSortedMetaToExternalStorage(ctx, s.tableImporter.GlobalSortStore, subtaskMeta.SortedMetaPath, sharedVars.SortedDataMeta, sharedVars.SortedIndexMetas); err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		subtaskMeta.SortedDataMeta = sharedVars.SortedDataMeta
+		subtaskMeta.SortedIndexMetas = sharedVars.SortedIndexMetas
+	}
+
 	s.sharedVars.Delete(subtaskMeta.ID)
 	newMeta, err := json.Marshal(subtaskMeta)
 	if err != nil {
@@ -361,15 +372,19 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return m.onFinished(subtask)
+	return m.onFinished(ctx, subtask)
 }
 
-func (m *mergeSortStepExecutor) onFinished(subtask *proto.Subtask) error {
+func (m *mergeSortStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
 	var subtaskMeta MergeSortStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)
 	}
-	subtaskMeta.SortedKVMeta = *m.subtaskSortedKVMeta
+	subtaskMeta.SortedMetaPath = sortedMetaPath(m.taskID, subtask.ID)
+	if err := external.WriteSortedMetaToExternalStorage(ctx, m.controller.GlobalSortStore, subtaskMeta.SortedMetaPath, m.subtaskSortedKVMeta, nil); err != nil {
+		return errors.Trace(err)
+	}
+
 	m.subtaskSortedKVMeta = nil
 	newMeta, err := json.Marshal(subtaskMeta)
 	if err != nil {
@@ -595,4 +610,10 @@ func (e *importExecutor) Close() {
 	task := e.GetTaskBase()
 	metricsManager.unregister(task.ID)
 	e.BaseTaskExecutor.Close()
+}
+
+func sortedMetaPath(taskID int64, subtaskID int64) string {
+	// generate a unique file name for the sorted data meta.
+	prefix := path.Join(strconv.Itoa(int(taskID)), strconv.Itoa(int(subtaskID)))
+	return path.Join(prefix, fmt.Sprintf("%d.sortedmeta", time.Now().UnixNano()))
 }

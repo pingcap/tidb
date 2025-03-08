@@ -17,6 +17,7 @@ package external
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	goerrors "errors"
 	"io"
 	"slices"
@@ -318,6 +319,38 @@ func (m *SortedKVMeta) GetStatFiles() []string {
 		}
 	}
 	return ret
+}
+
+type combined struct {
+	DataMeta   *SortedKVMeta           `json:"data_meta"`
+	IndexMetas map[int64]*SortedKVMeta `json:"index_metas"`
+}
+
+// WriteSortedMetaToExternalStorage writes the metas to the external storage.
+func WriteSortedMetaToExternalStorage(ctx context.Context, store storage.ExternalStorage, path string, dataMeta *SortedKVMeta, indexMetas map[int64]*SortedKVMeta) error {
+	c := combined{
+		DataMeta:   dataMeta,
+		IndexMetas: indexMetas,
+	}
+	data, err := json.Marshal(c)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return store.WriteFile(ctx, path, data)
+}
+
+// ReadSortedMetaFromExternalStorage reads the meta from the external storage.
+func ReadSortedMetaFromExternalStorage(ctx context.Context, store storage.ExternalStorage, path string) (*SortedKVMeta, map[int64]*SortedKVMeta, error) {
+	data, err := store.ReadFile(ctx, path)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	var c combined
+	err = json.Unmarshal(data, &c)
+	if err != nil {
+		return nil, nil, errors.Trace(err)
+	}
+	return c.DataMeta, c.IndexMetas, nil
 }
 
 // BytesMin returns the smallest of byte slice a and b.
