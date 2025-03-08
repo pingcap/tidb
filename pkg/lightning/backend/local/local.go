@@ -550,16 +550,70 @@ func NewBackend(
 	config BackendConfig,
 	pdSvcDiscovery sd.ServiceDiscovery,
 ) (b *Backend, err error) {
-	var (
-		pdCli                pd.Client
-		spkv                 *tikvclient.EtcdSafePointKV
-		pdCliForTiKV         *tikvclient.CodecPDClient
-		rpcCli               tikvclient.Client
-		tikvCli              *tikvclient.KVStore
-		pdHTTPCli            pdhttp.Client
-		importClientFactory  *importClientFactoryImpl
-		multiIngestSupported bool
-	)
+	pdCli, pdCliForTiKV, tikvCli, pdHTTPCli, splitCli,
+		importClientFactory, err := createClients(ctx, tls, config, pdSvcDiscovery)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err == nil {
+			return
+		}
+		importClientFactory.close()
+		pdHTTPCli.Close()
+		_ = tikvCli.Close()
+	}()
+	tikvCodec := pdCliForTiKV.GetCodec()
+	var multiIngestSupported bool
+	multiIngestSupported, err = checkMultiIngestSupport(ctx, pdCli, importClientFactory)
+	if err != nil {
+		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
+	}
+
+	writeLimiter := newStoreWriteLimiter(config.StoreWriteBWLimit)
+	local := &Backend{
+		pdCli:     pdCli,
+		pdHTTPCli: pdHTTPCli,
+		splitCli:  splitCli,
+		tikvCli:   tikvCli,
+		tls:       tls,
+		tikvCodec: tikvCodec,
+
+		BackendConfig: config,
+
+		supportMultiIngest:  multiIngestSupported,
+		importClientFactory: importClientFactory,
+		writeLimiter:        writeLimiter,
+		logger:              log.FromContext(ctx),
+	}
+	local.engineMgr, err = newEngineManager(config, local, local.logger)
+	if err != nil {
+		return nil, err
+	}
+	if m, ok := metric.GetCommonMetric(ctx); ok {
+		local.metrics = m
+	}
+	local.tikvSideCheckFreeSpace(ctx)
+
+	return local, nil
+}
+
+func createClients(
+	ctx context.Context,
+	tls *common.TLS,
+	config BackendConfig,
+	pdSvcDiscovery sd.ServiceDiscovery,
+) (
+	pdCli pd.Client,
+	pdCliForTiKV *tikvclient.CodecPDClient,
+	tikvCli *tikvclient.KVStore,
+	pdHTTPCli pdhttp.Client,
+	splitCli split.SplitClient,
+	importClientFactory *importClientFactoryImpl,
+	err error,
+) {
+	var spkv *tikvclient.EtcdSafePointKV
+	var rpcCli tikvclient.Client
 	defer func() {
 		if err == nil {
 			return
@@ -604,13 +658,15 @@ func NewBackend(
 		opt.WithCustomTimeoutOption(60*time.Second),
 	)
 	if err != nil {
-		return nil, common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
+		return pdCli, nil, nil, nil, nil, nil,
+			common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
 	}
 
 	// The following copies tikv.NewTxnClient without creating yet another pdClient.
 	spkv, err = tikvclient.NewEtcdSafePointKV(strings.Split(config.PDAddr, ","), tls.TLSConfig())
 	if err != nil {
-		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
+		return pdCli, nil, nil, nil, nil, nil,
+			common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
 
 	if config.KeyspaceName == "" {
@@ -618,7 +674,8 @@ func NewBackend(
 	} else {
 		pdCliForTiKV, err = tikvclient.NewCodecPDClientWithKeyspace(tikvclient.ModeTxn, pdCli, config.KeyspaceName)
 		if err != nil {
-			return nil, common.ErrCreatePDClient.Wrap(err).GenWithStackByArgs()
+			return pdCli, pdCliForTiKV, nil, nil, nil, nil,
+				common.ErrCreatePDClient.Wrap(err).GenWithStackByArgs()
 		}
 	}
 
@@ -626,47 +683,17 @@ func NewBackend(
 	rpcCli = tikvclient.NewRPCClient(tikvclient.WithSecurity(tls.ToTiKVSecurityConfig()), tikvclient.WithCodec(tikvCodec))
 	tikvCli, err = tikvclient.NewKVStore("lightning-local-backend", pdCliForTiKV, spkv, rpcCli)
 	if err != nil {
-		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
+		return pdCli, pdCliForTiKV, tikvCli, nil, nil, nil,
+			common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
 	pdHTTPCli = pdhttp.NewClientWithServiceDiscovery(
 		"lightning",
 		pdCli.GetServiceDiscovery(),
 		pdhttp.WithTLSConfig(tls.TLSConfig()),
 	).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
-	splitCli := split.NewClient(pdCli, pdHTTPCli, tls.TLSConfig(), config.RegionSplitBatchSize, config.RegionSplitConcurrency)
+	splitCli = split.NewClient(pdCli, pdHTTPCli, tls.TLSConfig(), config.RegionSplitBatchSize, config.RegionSplitConcurrency)
 	importClientFactory = newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
-
-	multiIngestSupported, err = checkMultiIngestSupport(ctx, pdCli, importClientFactory)
-	if err != nil {
-		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
-	}
-
-	writeLimiter := newStoreWriteLimiter(config.StoreWriteBWLimit)
-	local := &Backend{
-		pdCli:     pdCli,
-		pdHTTPCli: pdHTTPCli,
-		splitCli:  splitCli,
-		tikvCli:   tikvCli,
-		tls:       tls,
-		tikvCodec: tikvCodec,
-
-		BackendConfig: config,
-
-		supportMultiIngest:  multiIngestSupported,
-		importClientFactory: importClientFactory,
-		writeLimiter:        writeLimiter,
-		logger:              log.FromContext(ctx),
-	}
-	local.engineMgr, err = newEngineManager(config, local, local.logger)
-	if err != nil {
-		return nil, err
-	}
-	if m, ok := metric.GetCommonMetric(ctx); ok {
-		local.metrics = m
-	}
-	local.tikvSideCheckFreeSpace(ctx)
-
-	return local, nil
+	return pdCli, pdCliForTiKV, tikvCli, pdHTTPCli, splitCli, importClientFactory, nil
 }
 
 // NewBackendForTest creates a new Backend for test.
@@ -1654,6 +1681,39 @@ func (local *Backend) GetDupeController(dupeConcurrency int, errorMgr *errormana
 		resourceGroupName:   local.ResourceGroupName,
 		taskType:            local.TaskType,
 	}
+}
+
+// NewRemoteDupeController creates a duplicate controller for remote detection.
+func NewRemoteDupeController(
+	ctx context.Context,
+	tls *common.TLS,
+	config BackendConfig,
+	pdSvcDiscovery sd.ServiceDiscovery,
+) (dupCtrl *DupeController, cleanup func(), err error) {
+	_, pdCliForTiKV, tikvCli, pdHTTPCli, splitCli,
+		importClientFactory, err := createClients(ctx, tls, config, pdSvcDiscovery)
+	if err != nil {
+		return nil, nil, err
+	}
+	cleanup = func() {
+		importClientFactory.close()
+		pdHTTPCli.Close()
+		_ = tikvCli.Close()
+	}
+	tikvCodec := pdCliForTiKV.GetCodec()
+
+	return &DupeController{
+		splitCli:            splitCli,
+		tikvCli:             tikvCli,
+		tikvCodec:           tikvCodec,
+		errorMgr:            nil, // Report error instead of record conflict to somewhere.
+		dupeConcurrency:     config.WorkerConcurrency,
+		duplicateDB:         nil, // Only used for local.
+		keyAdapter:          nil, // Only used for local.
+		importClientFactory: importClientFactory,
+		resourceGroupName:   config.ResourceGroupName,
+		taskType:            config.TaskType,
+	}, cleanup, nil
 }
 
 // UnsafeImportAndReset forces the backend to import the content of an engine
