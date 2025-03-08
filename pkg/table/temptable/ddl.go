@@ -103,18 +103,22 @@ func (d *temporaryTableDDL) clearTemporaryTableRecords(tblID int64) error {
 		return err
 	}
 
+	keys := make([][]byte, 0, 16)
 	for iter.Valid() {
 		key := iter.Key()
 		if !bytes.HasPrefix(key, tblPrefix) {
 			break
 		}
+		keys = append(keys, key)
 
-		err = sessionData.DeleteTableKey(tblID, key)
+		err = iter.Next()
 		if err != nil {
 			return err
 		}
+	}
 
-		err = iter.Next()
+	for _, key := range keys {
+		err = sessionData.DeleteTableKey(tblID, key)
 		if err != nil {
 			return err
 		}
