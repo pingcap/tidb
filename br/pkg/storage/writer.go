@@ -10,6 +10,7 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/util/zeropool"
 	"go.uber.org/zap"
 )
 
@@ -69,9 +70,9 @@ func createSuffixString(compressType CompressType) string {
 	return txtSuffix
 }
 
-func newInterceptBuffer(chunkSize int, compressType CompressType) interceptBuffer {
+func newInterceptBuffer(chunkSize int, compressType CompressType, bufPool *zeropool.Pool[[]byte]) interceptBuffer {
 	if compressType == NoCompression {
-		return newNoCompressionBuffer(chunkSize)
+		return newNoCompressionBuffer(chunkSize, bufPool)
 	}
 	return newSimpleCompressBuffer(chunkSize, compressType)
 }
@@ -111,6 +112,8 @@ func newCompressReader(compressType CompressType, cfg DecompressConfig, r io.Rea
 }
 
 type noCompressionBuffer struct {
+	chunkSize int
+	bufPool   *zeropool.Pool[[]byte]
 	*bytes.Buffer
 }
 
@@ -126,8 +129,24 @@ func (*noCompressionBuffer) Compressed() bool {
 	return false
 }
 
-func newNoCompressionBuffer(chunkSize int) *noCompressionBuffer {
-	return &noCompressionBuffer{bytes.NewBuffer(make([]byte, 0, chunkSize))}
+func newNoCompressionBuffer(chunkSize int, bufPool *zeropool.Pool[[]byte]) *noCompressionBuffer {
+	b := &noCompressionBuffer{
+		chunkSize,
+		bufPool,
+		nil,
+	}
+	b.Reset()
+	return b
+}
+
+func (b *noCompressionBuffer) Reset() {
+	buf := b.bufPool.Get()
+	if cap(buf) != b.chunkSize {
+		buf = make([]byte, 0, b.chunkSize)
+	} else {
+		buf = buf[:0]
+	}
+	b.Buffer = bytes.NewBuffer(buf)
 }
 
 type simpleCompressWriter interface {
@@ -244,7 +263,15 @@ func NewUploaderWriter(writer ExternalFileWriter, chunkSize int, compressType Co
 func newBufferedWriter(writer ExternalFileWriter, chunkSize int, compressType CompressType) *bufferedWriter {
 	return &bufferedWriter{
 		writer: writer,
-		buf:    newInterceptBuffer(chunkSize, compressType),
+		buf:    newInterceptBuffer(chunkSize, compressType, nil),
+	}
+}
+
+// newBufferedWriter is used to build a buffered writer.
+func newNonCompressBufferedWriterWithPool(writer ExternalFileWriter, chunkSize int, bufPool *zeropool.Pool[[]byte]) *bufferedWriter {
+	return &bufferedWriter{
+		writer: writer,
+		buf:    newNoCompressionBuffer(chunkSize, bufPool),
 	}
 }
 
