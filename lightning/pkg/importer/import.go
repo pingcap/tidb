@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/backend/remote"
 	"github.com/pingcap/tidb/pkg/lightning/backend/tidb"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -376,7 +377,7 @@ func NewImportControllerWithPauser(
 			pdhttp.WithTLSConfig(tls.TLSConfig()),
 		).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
 
-		if isLocalBackend(cfg) && cfg.Conflict.Strategy != config.NoneOnDup {
+		if cfg.Conflict.Strategy != config.NoneOnDup {
 			if err := tikv.CheckTiKVVersion(ctx, pdHTTPCli, minTiKVVersionForConflictStrategy, maxTiKVVersionForConflictStrategy); err != nil {
 				if !berrors.Is(err, berrors.ErrVersionMismatch) {
 					return nil, common.ErrCheckKVVersion.Wrap(err).GenWithStackByArgs()
@@ -433,13 +434,31 @@ func NewImportControllerWithPauser(
 		if err != nil {
 			return nil, err
 		}
+	case config.BackendRemote:
+		addrs := strings.Split(cfg.TiDB.PdAddr, ",")
+		pdCli, err = pd.NewClientWithContext(ctx, componentName, addrs, tls.ToPDSecurityOption())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		pdHTTPCli = pdhttp.NewClientWithServiceDiscovery(
+			"lightning",
+			pdCli.GetServiceDiscovery(),
+			pdhttp.WithTLSConfig(tls.TLSConfig()),
+		).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
+
+		encodingBuilder = local.NewEncodingBuilder(ctx)
+		backendConfig := remote.NewBackendConfig(cfg, p.KeyspaceName, p.ResourceGroupName, p.TaskType)
+		backendObj, err = remote.NewBackend(ctx, tls, backendConfig, pdCli.GetServiceDiscovery())
+		if err != nil {
+			return nil, common.NormalizeOrWrapErr(common.ErrUnknown, err)
+		}
 	default:
 		return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
 	}
 	p.Status.backend = cfg.TikvImporter.Backend
 
 	var metaBuilder metaMgrBuilder
-	isSSTImport := cfg.TikvImporter.Backend == config.BackendLocal
+	isSSTImport := cfg.IsPhysicalBackend()
 	switch {
 	case isSSTImport && cfg.TikvImporter.ParallelImport:
 		metaBuilder = &dbMetaMgrBuilder{
@@ -457,7 +476,7 @@ func NewImportControllerWithPauser(
 	}
 
 	var wrapper backend.TargetInfoGetter
-	if cfg.TikvImporter.Backend == config.BackendLocal {
+	if cfg.IsPhysicalBackend() {
 		wrapper = local.NewTargetInfoGetter(tls, db, pdHTTPCli)
 	} else {
 		wrapper = tidb.NewTargetInfoGetter(db)
@@ -614,8 +633,8 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// For local backend, we need DBInfo.ID to operate the global autoid allocator.
-	if isLocalBackend(rc.cfg) {
+	// For physical backend, we need DBInfo.ID to operate the global autoid allocator.
+	if rc.cfg.IsPhysicalBackend() {
 		dbs, err := tikv.FetchRemoteDBModelsFromTLS(ctx, rc.tls)
 		if err != nil {
 			return errors.Trace(err)
@@ -970,7 +989,7 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 
 	var switchModeChan <-chan time.Time
 	// tidb backend don't need to switch tikv to import mode
-	if isLocalBackend(rc.cfg) && rc.cfg.Cron.SwitchMode.Duration > 0 {
+	if rc.cfg.IsPhysicalBackend() && rc.cfg.Cron.SwitchMode.Duration > 0 {
 		switchModeTicker := time.NewTicker(rc.cfg.Cron.SwitchMode.Duration)
 		cancelFuncs = append(cancelFuncs, func(bool) { switchModeTicker.Stop() })
 		cancelFuncs = append(cancelFuncs, func(do bool) {
@@ -995,7 +1014,7 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 					f()
 				}
 			}()
-			if rc.cfg.Cron.SwitchMode.Duration > 0 && isLocalBackend(rc.cfg) {
+			if rc.cfg.Cron.SwitchMode.Duration > 0 && rc.cfg.IsPhysicalBackend() {
 				rc.tikvModeSwitcher.ToImportMode(ctx)
 			}
 			start := time.Now()
@@ -1265,7 +1284,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 	// output error summary
 	defer rc.outputErrorSummary()
 
-	if isLocalBackend(rc.cfg) && rc.cfg.Conflict.Strategy != config.NoneOnDup {
+	if rc.cfg.IsLocalBackend() && rc.cfg.Conflict.Strategy != config.NoneOnDup {
 		subCtx, cancel := context.WithCancel(ctx)
 		exitCh, err := rc.keepPauseGCForDupeRes(subCtx)
 		if err != nil {
@@ -1303,7 +1322,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 	var kvStore tidbkv.Storage
 	var etcdCli *clientv3.Client
 
-	if isLocalBackend(rc.cfg) {
+	if rc.cfg.IsPhysicalBackend() {
 		var (
 			restoreFn pdutil.UndoFunc
 			err       error
@@ -1761,7 +1780,7 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 
 func (rc *Controller) setGlobalVariables(ctx context.Context) error {
 	// skip for tidb backend to be compatible with MySQL
-	if isTiDBBackend(rc.cfg) {
+	if rc.cfg.IsTiDBBackend() {
 		return nil
 	}
 	// set new collation flag base on tidb config
@@ -1810,14 +1829,6 @@ func (rc *Controller) cleanCheckpoints(ctx context.Context) error {
 	return nil
 }
 
-func isLocalBackend(cfg *config.Config) bool {
-	return cfg.TikvImporter.Backend == config.BackendLocal
-}
-
-func isTiDBBackend(cfg *config.Config) bool {
-	return cfg.TikvImporter.Backend == config.BackendTiDB
-}
-
 // preCheckRequirements checks
 // 1. Cluster resource
 // 2. Local node resource
@@ -1864,7 +1875,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 	if rc.status != nil {
 		rc.status.TotalFileSize.Store(estimatedSizeResult.SizeWithoutIndex)
 	}
-	if isLocalBackend(rc.cfg) {
+	if rc.cfg.IsPhysicalBackend() {
 		pdAddrs := rc.pdCli.GetServiceDiscovery().GetServiceURLs()
 		pdController, err := pdutil.NewPdController(
 			ctx, pdAddrs, rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption(),
@@ -1909,9 +1920,11 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 				needCheck = taskCheckpoints == nil
 			}
 			if needCheck {
-				err = rc.localResource(ctx)
-				if err != nil {
-					return common.ErrCheckLocalResource.Wrap(err).GenWithStackByArgs()
+				if rc.cfg.IsLocalBackend() {
+					err = rc.localResource(ctx)
+					if err != nil {
+						return common.ErrCheckLocalResource.Wrap(err).GenWithStackByArgs()
+					}
 				}
 				if err := rc.clusterResource(ctx); err != nil {
 					if err1 := rc.taskMgr.CleanupTask(ctx); err1 != nil {
