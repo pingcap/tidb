@@ -53,6 +53,10 @@ var (
 	_ AggFunc = (*percentileOriginal4Real)(nil)
 	_ AggFunc = (*percentileOriginal4Decimal)(nil)
 
+	// All the AggFunc implementations for "PERCENTILE_CONT" are listed here.
+	_ AggFunc = (*percentileCont4Int)(nil)
+	_ AggFunc = (*percentileCont4Real)(nil)
+
 	// All the AggFunc implementations for "FIRSTROW" are listed here.
 	_ AggFunc = (*firstRow4Decimal)(nil)
 	_ AggFunc = (*firstRow4Int)(nil)

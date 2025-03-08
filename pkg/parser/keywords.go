@@ -253,6 +253,7 @@ var Keywords = []KeywordsType{
 	{"WHILE", true, "reserved"},
 	{"WINDOW", true, "reserved"},
 	{"WITH", true, "reserved"},
+	{"WITHIN", true, "reserved"},
 	{"WRITE", true, "reserved"},
 	{"XOR", true, "reserved"},
 	{"YEAR_MONTH", true, "reserved"},
