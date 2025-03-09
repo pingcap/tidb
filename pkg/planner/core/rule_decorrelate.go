@@ -160,7 +160,13 @@ func pruneRedundantApply(p base.LogicalPlan) (base.LogicalPlan, bool) {
 	if apply.JoinType != logicalop.LeftOuterJoin && apply.JoinType != logicalop.LeftOuterSemiJoin {
 		return nil, false
 	}
-
+	// add a strong limit for fix the https://github.com/pingcap/tidb/issues/58451. we can remove it when to have better implememnt.
+	// But this problem has affected tiflash CI.
+	usedCols := make([]*expression.Column, 0, 5)
+	l, r := apply.ExtractUsedCols(usedCols)
+	if len(l) != 0 || len(r) != 0 {
+		fmt.Println("wwz")
+	}
 	// Simplify predicates from the LogicalSelection
 	simplifiedPredicates := applyPredicateSimplification(p.SCtx(), logicalSelection.Conditions)
 
@@ -183,6 +189,9 @@ func pruneRedundantApply(p base.LogicalPlan) (base.LogicalPlan, bool) {
 			child := finalResult.Children()[0]
 			nextApply, ok := child.(*logicalop.LogicalApply)
 			if !ok {
+				if len(finalResult.Children()) > 1 {
+					return nil, false
+				}
 				return child, true // Return the child of the last LogicalApply
 			}
 			finalResult = nextApply
