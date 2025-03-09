@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Copyright 2024 PingCAP, Inc.
+# Copyright 2025 PingCAP, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -37,7 +37,7 @@ verify_no_unexpected_tables() {
     return 0
 }
 
-test_overlapping_db() {
+test_online_filter_restore() {
     restart_services || { echo "Failed to restart services"; exit 1; }
 
     echo "start testing overlapping database restore"
@@ -81,7 +81,7 @@ test_overlapping_db() {
     run_sql "CREATE TABLE $DB.new_table (id INT PRIMARY KEY, value INT);"
     run_sql "INSERT INTO $DB.new_table VALUES (1, -100);"
 
-    # Test case 1: Full restore should fail
+    echo "case 1: Full restore should fail"
     echo "Testing full restore with overlapping database"
     restore_fail=0
     run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" --online || restore_fail=1
@@ -101,7 +101,7 @@ test_overlapping_db() {
         exit 1
     }
 
-    # Test case 2: Filtered restore should succeed since tables are not overlapped
+    echo "case 2: Filtered restore should succeed since tables are not overlapped"
     echo "Testing filtered restore with non overlapping table"
     run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.table*" --online
 
@@ -115,7 +115,7 @@ test_overlapping_db() {
         exit 1
     }
 
-    # Test case 3: Filtered restore should fail when tables overlapped
+    echo "case 3: Filtered restore should fail when tables overlapped"
     run_sql "DROP DATABASE $DB;"
     echo "Testing filtered restore with overlapping table"
     run_sql "CREATE DATABASE $DB;"
@@ -138,22 +138,61 @@ test_overlapping_db() {
     fi
     
     run_sql "DROP DATABASE $DB;"
-      verify_no_unexpected_tables 0 "$DB" || {
-          echo "Found unexpected number of tables after failed restore attempts"
-          exit 1
-      }
-    # Test case 3: During online Pitr user should not able to modify tables that are in restore (make sure table mode set to restore)
-    # Test case 4: After online Pitr user should be able to modify tables (make sure table mode set back to normal)
-    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.table*" --online
+    verify_no_unexpected_tables 0 "$DB" || {
+        echo "Found unexpected number of tables after failed restore attempts"
+        exit 1
+    }
 
-    run_sql "INSERT INTO $DB.table1 VALUES (4, 400);"
+    echo "case 4: During online pitr user should not able to modify tables that are in restore (make sure table mode set to restore)"
+    export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/before-set-table-mode-to-normal=return(true)"
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.table*" --online || restore_fail=1
+    
+    if [ $restore_fail -ne 1 ]; then
+        echo "Expected restore to fail due to failpoint"
+    fi
+
+    # verify tables are in restore mode by attempting to drop them
+    drop_fail=0
+    run_sql "DROP TABLE IF EXISTS $DB.table1" || drop_fail=$((drop_fail + 1))
+    run_sql "DROP TABLE IF EXISTS $DB.table2" || drop_fail=$((drop_fail + 1))
+    run_sql "DROP TABLE IF EXISTS $DB.table3" || drop_fail=$((drop_fail + 1))
+
+    if [ $drop_fail -ne 3 ]; then
+        echo "Expected all 3 tables to be protected in restore mode, but some tables could be dropped"
+        exit 1
+    fi
+    echo "Verified all tables are protected in restore mode"
+
+    export GO_FAILPOINTS=""
+
+    echo "case 5: After online pitr user should be able to modify tables (make sure table mode set back to normal)"
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.table*" --online
+    run_sql "INSERT INTO $DB.table1 VALUES (4, 400, 'after restore', 30);"
+    
+    # verify table2 is working correctly with its modified structure (BIGINT value and index)
+    run_sql "INSERT INTO $DB.table2 VALUES (4, 4000);" || {
+        echo "Failed to insert into table2 after restore"
+        exit 1
+    }
+    
+    # verify we can query table2 with its index
+    run_sql "SELECT * FROM $DB.table2 WHERE value = 4000" || {
+        echo "Failed to query table2 using index after restore"
+        exit 1
+    }
+    
+    # verify table3 is working correctly
+    run_sql "INSERT INTO $DB.table3 VALUES (3, 30000);" || {
+        echo "Failed to insert into table3 after restore"
+        exit 1
+    }
 
     # cleanup
     rm -rf "$TEST_DIR/$TASK_NAME"
 
-    echo "overlapping database test passed"
+    echo "online filter pitr restore test passed"
 }
 
-test_overlapping_db
+test_online_filter_restore
 
 echo "br pitr online table filter all tests passed"
