@@ -14,6 +14,12 @@
 
 package stream
 
+import (
+	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"go.uber.org/zap"
+)
+
 // TableLocationInfo stores the table name, db id, and parent table id if is a partition
 type TableLocationInfo struct {
 	DbID          int64
@@ -26,12 +32,15 @@ type LogBackupTableHistoryManager struct {
 	// maps table/partition ID to [original, current] location info
 	tableNameHistory map[int64][2]TableLocationInfo
 	dbIdToName       map[int64]string
+	// tracks tables that have been deleted during log backup
+	deletedTables map[int64]struct{}
 }
 
 func NewTableHistoryManager() *LogBackupTableHistoryManager {
 	return &LogBackupTableHistoryManager{
 		tableNameHistory: make(map[int64][2]TableLocationInfo),
 		dbIdToName:       make(map[int64]string),
+		deletedTables:    make(map[int64]struct{}),
 	}
 }
 
@@ -65,8 +74,19 @@ func (info *LogBackupTableHistoryManager) addHistory(id int64, locationInfo Tabl
 		// first occurrence - store as both original and current
 		info.tableNameHistory[id] = [2]TableLocationInfo{locationInfo, locationInfo}
 	} else {
-		// update current while preserving original
 		info.tableNameHistory[id] = [2]TableLocationInfo{existing[0], locationInfo}
+	}
+}
+
+// MarkTableDeleted marks a table as deleted
+func (info *LogBackupTableHistoryManager) MarkTableDeleted(tableId int64) {
+	info.deletedTables[tableId] = struct{}{}
+}
+
+// MarkTablesDeleted marks multiple tables as deleted
+func (info *LogBackupTableHistoryManager) MarkTablesDeleted(tableIds []int64) {
+	for _, tableId := range tableIds {
+		info.MarkTableDeleted(tableId)
 	}
 }
 
@@ -80,6 +100,11 @@ func (info *LogBackupTableHistoryManager) GetTableHistory() map[int64][2]TableLo
 	return info.tableNameHistory
 }
 
+// GetDeletedTables returns a set of table IDs that have been deleted
+func (info *LogBackupTableHistoryManager) GetDeletedTables() map[int64]struct{} {
+	return info.deletedTables
+}
+
 func (info *LogBackupTableHistoryManager) GetDBNameByID(dbId int64) (string, bool) {
 	name, ok := info.dbIdToName[dbId]
 	return name, ok
@@ -87,4 +112,22 @@ func (info *LogBackupTableHistoryManager) GetDBNameByID(dbId int64) (string, boo
 
 func (info *LogBackupTableHistoryManager) GetNewlyCreatedDBHistory() map[int64]string {
 	return info.dbIdToName
+}
+
+// OnDatabaseInfo implements MetaInfoCollector.OnDatabaseInfo
+func (info *LogBackupTableHistoryManager) OnDatabaseInfo(dbInfo *model.DBInfo) {
+	info.RecordDBIdToName(dbInfo.ID, dbInfo.Name.O)
+}
+
+// OnTableInfo implements MetaInfoCollector.OnTableInfo
+func (info *LogBackupTableHistoryManager) OnTableInfo(dbID int64, tableInfo *model.TableInfo) {
+	info.AddTableHistory(tableInfo.ID, tableInfo.Name.O, dbID)
+	log.Info("##### on table info", zap.Int64("dbID", dbID), zap.Int64("tableID", tableInfo.ID), zap.String("name", tableInfo.Name.O))
+
+	// add history for all partitions if this is a partitioned table
+	if tableInfo.Partition != nil && tableInfo.Partition.Definitions != nil {
+		for _, partition := range tableInfo.Partition.Definitions {
+			info.AddPartitionHistory(partition.ID, tableInfo.Name.O, dbID, tableInfo.ID)
+		}
+	}
 }
