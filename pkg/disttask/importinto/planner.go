@@ -270,6 +270,7 @@ func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.Pipeli
 		}
 
 		controller.SetExecuteNodeCnt(pCtx.ExecuteNodesCnt)
+		controller.SetTaskIDForGlobalSort(pCtx.TaskID)
 		chunkMap, err2 = controller.PopulateChunks(pCtx.Ctx)
 		if err2 != nil {
 			return nil, err2
