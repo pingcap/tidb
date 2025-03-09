@@ -253,7 +253,7 @@ func genMergeStepMetas(t *testing.T, cnt int) [][]byte {
 
 func TestGetSortedKVMetas(t *testing.T) {
 	encodeStepMetaBytes := genEncodeStepMetas(t, 3)
-	kvMetas, err := getSortedKVMetasOfEncodeStep(encodeStepMetaBytes)
+	kvMetas, err := getSortedKVMetasOfEncodeStep(encodeStepMetaBytes, nil)
 	require.NoError(t, err)
 	require.Len(t, kvMetas, 2)
 	require.Contains(t, kvMetas, "data")
@@ -265,7 +265,7 @@ func TestGetSortedKVMetas(t *testing.T) {
 	require.Equal(t, []byte("i1_2_c"), kvMetas["1"].EndKey)
 
 	mergeStepMetas := genMergeStepMetas(t, 3)
-	kvMetas2, err := getSortedKVMetasOfMergeStep(mergeStepMetas)
+	kvMetas2, err := getSortedKVMetasOfMergeStep(mergeStepMetas, nil)
 	require.NoError(t, err)
 	require.Len(t, kvMetas2, 1)
 	require.Equal(t, []byte("x_0_a"), kvMetas2["data"].StartKey)
@@ -281,7 +281,7 @@ func TestGetSortedKVMetas(t *testing.T) {
 			proto.ImportStepEncodeAndSort: encodeStepMetaBytes,
 			proto.ImportStepMergeSort:     mergeStepMetas,
 		},
-	}, &LogicalPlan{})
+	}, &LogicalPlan{}, nil)
 	require.NoError(t, err)
 	require.Len(t, allKVMetas, 2)
 	require.Equal(t, []byte("x_0_a"), allKVMetas["data"].StartKey)
