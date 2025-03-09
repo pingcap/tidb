@@ -1043,10 +1043,10 @@ func (hg *Histogram) OutOfRangeRowCount(
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
 	rowCount = totalPercent * hg.NotNullCount()
 
-	// Upper & lower bound logic.
-	upperBound := rowCount
+	// oneValue assumes "one value qualies", and is used as either an Upper & lower bound.
+	oneValue := rowCount
 	if histNDV > 0 {
-		upperBound = hg.NotNullCount() / float64(histNDV)
+		oneValue = hg.NotNullCount() / float64(histNDV)
 	}
 
 	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate
@@ -1054,10 +1054,11 @@ func (hg *Histogram) OutOfRangeRowCount(
 	if !allowUseModifyCount {
 		// In OptObjectiveDeterminate mode, we can't rely on the modify count anymore.
 		// An upper bound is necessary to make the estimation make sense for predicates with bound on only one end, like a > 1.
-		// We use 1/NDV here (only the Histogram part is considered) and it seems reasonable and good enough for now.
-		return min(rowCount, upperBound)
+		// We use 1/NDV here to assume that at most 1 value qualifies.
+		return min(rowCount, oneValue)
 	}
 
+<<<<<<< HEAD
 	// If the modifyCount is large (compared to original table rows), then any out of range estimate is unreliable.
 	// Assume at least 1/NDV is returned
 	if float64(modifyCount) > hg.NotNullCount() && rowCount < upperBound {
@@ -1065,6 +1066,21 @@ func (hg *Histogram) OutOfRangeRowCount(
 	} else if rowCount < upperBound {
 		// Adjust by increaseFactor if our estimate is low
 		rowCount *= increaseFactor
+=======
+	addedRows := float64(realtimeRowCount) - hg.TotalRowCount()
+	addedPct := addedRows / float64(realtimeRowCount)
+	// If the newly added rows is larger than the percentage that we've estimated that we're
+	// searching for out of the range, rowCount may need to be adjusted.
+	if addedPct > totalPercent {
+		// if the histogram range is invalid (too small/large - histInvalid) - totalPercent is zero
+		if histInvalid {
+			totalPercent = min(addedPct, 0.5)
+		}
+		// Attempt to account for the added rows - but not more than the totalPercent
+		outOfRangeAdded := addedRows * totalPercent
+		// Return the max of each estimate - with a minimum of one value.
+		rowCount = max(rowCount, outOfRangeAdded, oneValue)
+>>>>>>> ae830dc9af4 (planner: Adjust out of range for added rows (#59724))
 	}
 
 	// Use modifyCount as a final bound
