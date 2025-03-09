@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"go.uber.org/zap"
 )
@@ -62,6 +62,7 @@ func NewRestoreMetaKVProcessor(client *LogClient, schemasReplace *stream.Schemas
 // RestoreAndRewriteMetaKVFiles tries to restore files about meta kv-event from stream-backup.
 func (rp *RestoreMetaKVProcessor) RestoreAndRewriteMetaKVFiles(
 	ctx context.Context,
+	hasExplicitFilter bool,
 	files []*backuppb.DataFileInfo,
 ) error {
 	// starts gc row collector
@@ -84,10 +85,16 @@ func (rp *RestoreMetaKVProcessor) RestoreAndRewriteMetaKVFiles(
 		return errors.Trace(err)
 	}
 
-	// global schema version to trigger a full reload so every TiDB node in the cluster will get synced with
-	// the latest schema update.
-	if err := rp.client.UpdateSchemaVersionFullReload(ctx); err != nil {
-		return errors.Trace(err)
+	if !hasExplicitFilter {
+		// TODO, use same technique to update schema as online
+		// global schema version to trigger a full reload so every TiDB node in the cluster will get synced with
+		// the latest schema update.
+		log.Info("updating schema version to do full reload")
+		if err := rp.client.UpdateSchemaVersionFullReload(ctx); err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		log.Info("skip doing full reload filtered PiTR")
 	}
 	return nil
 }
@@ -159,64 +166,87 @@ func (mp *MetaKVInfoProcessor) ProcessBatch(
 
 	// process entries to collect table IDs
 	for _, entry := range curSortedEntries {
-		// parse entry and do the table mapping
-		if err = mp.tableMappingManager.ParseMetaKvAndUpdateIdMapping(&entry.E, cf); err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		// collect rename/partition exchange history
-		// get value from default cf and get the short value if possible from write cf
-		value, err := stream.ExtractValue(&entry.E, cf)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		// write cf doesn't have short value in it
-		if value == nil {
+		// Process DDL job history keys (for deleted tables)
+		if utils.IsMetaDDLJobHistoryKey(entry.E.Key) && cf == consts.DefaultCF {
+			if err := mp.processDeletedTablesFromDDLJob(entry.E.Value); err != nil {
+				return nil, errors.Trace(err)
+			}
 			continue
 		}
 
-		if utils.IsMetaDBKey(entry.E.Key) {
-			rawKey, err := stream.ParseTxnMetaKeyFrom(entry.E.Key)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-
-			if meta.IsDBkey(rawKey.Field) {
-				var dbInfo model.DBInfo
-				if err := json.Unmarshal(value, &dbInfo); err != nil {
-					return nil, errors.Trace(err)
-				}
-				// collect db id -> name mapping during log backup, it will contain information about newly created db
-				mp.tableHistoryManager.RecordDBIdToName(dbInfo.ID, dbInfo.Name.O)
-			} else if !meta.IsDBkey(rawKey.Key) {
-				// also see RewriteMetaKvEntry
-				continue
-			} else if meta.IsTableKey(rawKey.Field) {
-				// collect table history indexed by table id, same id may have different table names in history
-				var tableInfo model.TableInfo
-				if err := json.Unmarshal(value, &tableInfo); err != nil {
-					return nil, errors.Trace(err)
-				}
-				// cannot use dbib in the parsed table info cuz it might not set so default to 0
-				dbID, err := meta.ParseDBKey(rawKey.Key)
-				if err != nil {
-					return nil, errors.Trace(err)
-				}
-
-				// add to table rename history
-				mp.tableHistoryManager.AddTableHistory(tableInfo.ID, tableInfo.Name.String(), dbID)
-
-				// track partitions if this is a partitioned table
-				if tableInfo.Partition != nil {
-					for _, def := range tableInfo.Partition.Definitions {
-						mp.tableHistoryManager.AddPartitionHistory(def.ID, tableInfo.Name.String(), dbID, tableInfo.ID)
-					}
-				}
-			}
+		// parse entry and do the table mapping, using tableHistoryManager as the collector
+		if err = mp.tableMappingManager.ParseMetaKvAndUpdateIdMapping(&entry.E, cf, mp.tableHistoryManager); err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 	return filteredEntries, nil
+}
+
+// processDeletedTablesFromDDLJob processes a DDL job and marks tables as deleted when appropriate
+func (mp *MetaKVInfoProcessor) processDeletedTablesFromDDLJob(value []byte) error {
+	// Check if this is a DDL job that deletes tables
+	var job model.Job
+	if err := json.Unmarshal(value, &job); err != nil {
+		return errors.Trace(err)
+	}
+
+	// Handle multi-schema jobs
+	if job.MultiSchemaInfo != nil {
+		for i, sub := range job.MultiSchemaInfo.SubJobs {
+			proxyJob := sub.ToProxyJob(&job, i)
+			if err := mp.processDeletedTablesFromSingleJob(&proxyJob); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
+	}
+
+	// Process single job
+	return mp.processDeletedTablesFromSingleJob(&job)
+}
+
+// processDeletedTablesFromSingleJob processes a single DDL job and marks tables as deleted when appropriate
+func (mp *MetaKVInfoProcessor) processDeletedTablesFromSingleJob(job *model.Job) error {
+	// Process DDL jobs that delete tables
+	switch job.Type {
+	case model.ActionDropTable:
+		// Mark the table as deleted
+		mp.tableHistoryManager.MarkTableDeleted(job.TableID)
+
+		// Check for partitions that might be dropped
+		args, err := model.GetDropTableArgs(job)
+		if err == nil && len(args.OldPartitionIDs) > 0 {
+			mp.tableHistoryManager.MarkTablesDeleted(args.OldPartitionIDs)
+		}
+	case model.ActionDropSchema:
+		// When dropping a schema, all tables in it are dropped
+		args, err := model.GetDropSchemaArgs(job)
+		if err == nil && len(args.AllDroppedTableIDs) > 0 {
+			mp.tableHistoryManager.MarkTablesDeleted(args.AllDroppedTableIDs)
+		}
+	case model.ActionTruncateTable:
+		// Truncate table creates a new table with a new ID, so the old one is effectively dropped
+		args, err := model.GetTruncateTableArgs(job)
+		if err == nil {
+			mp.tableHistoryManager.MarkTableDeleted(job.TableID)
+			if len(args.OldPartitionIDs) > 0 {
+				mp.tableHistoryManager.MarkTablesDeleted(args.OldPartitionIDs)
+			}
+		}
+	case model.ActionDropTablePartition:
+		// When dropping a partition, mark the partition IDs as deleted
+		args, err := model.GetTablePartitionArgs(job)
+		if err == nil && len(args.OldPhysicalTblIDs) > 0 {
+			mp.tableHistoryManager.MarkTablesDeleted(args.OldPhysicalTblIDs)
+		}
+	case model.ActionReorganizePartition, model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
+		// These actions can delete partitions
+		args, err := model.GetTablePartitionArgs(job)
+		if err == nil && len(args.OldPhysicalTblIDs) > 0 {
+			mp.tableHistoryManager.MarkTablesDeleted(args.OldPhysicalTblIDs)
+		}
+	}
+	return nil
 }
 
 func (mp *MetaKVInfoProcessor) GetTableMappingManager() *stream.TableMappingManager {

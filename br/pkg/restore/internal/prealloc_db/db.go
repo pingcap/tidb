@@ -56,7 +56,7 @@ func NewDB(g glue.Glue, store kv.Storage, policyMode string) (*DB, bool, error) 
 			// not support placement policy, just ignore it
 			log.Warn("target tidb not support tidb_placement_mode, ignore create policies", zap.Error(err))
 		} else {
-			log.Info("set tidb_placement_mode success", zap.String("mode", policyMode))
+			log.Debug("set tidb_placement_mode success", zap.String("mode", policyMode))
 			supportPolicy = true
 		}
 	}
@@ -329,6 +329,7 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 			}
 		}
 
+		// adjust existing tables only for incremental restore
 		for _, table := range tables {
 			err := db.CreateTablePostRestore(ctx, table, ddlTables)
 			if err != nil {
@@ -366,6 +367,7 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
 		return errors.Trace(err)
 	}
 
+	// adjust existing tables only for incremental restore
 	err = db.CreateTablePostRestore(ctx, table, ddlTables)
 	if err != nil {
 		return errors.Trace(err)
