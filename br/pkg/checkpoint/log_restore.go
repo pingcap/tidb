@@ -187,10 +187,6 @@ type TaskInfoForLogRestore struct {
 	Progress RestoreProgress
 }
 
-func (c *CheckpointTaskInfoForLogRestore) HasCheckpointMetadata() bool {
-	return c.HasSnapshotMetadata || c.Metadata != nil
-}
-
 func TryToGetCheckpointTaskInfo(
 	ctx context.Context,
 	snapshotManager SnapshotMetaManagerT,

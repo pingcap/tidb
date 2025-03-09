@@ -858,27 +858,22 @@ type SnapshotRestoreConfig struct {
 	tableMappingManager    *stream.TableMappingManager
 }
 
-func (s *SnapshotRestoreConfig) isPartOfPiTR() (bool, error) {
-	components := []struct {
-		name string
-		val  any
-	}{
-		{"piTRTaskInfo", s.piTRTaskInfo},
-		{"logTableHistoryManager", s.logTableHistoryManager},
-		{"tableMappingManager", s.tableMappingManager},
+func (s *SnapshotRestoreConfig) isPiTR() (bool, error) {
+	if s.piTRTaskInfo != nil && s.logTableHistoryManager != nil && s.tableMappingManager != nil {
+		return true, nil
 	}
 
-	// check if first component exists
-	isPartOfPiTR := components[0].val != nil
-
-	// verify all components are consistent
-	for _, c := range components[1:] {
-		if (c.val != nil) != isPartOfPiTR {
-			return false, errors.Errorf("invalid SnapshotRestoreConfig: %s existence is inconsistent with other PiTR components", c.name)
-		}
+	if s.piTRTaskInfo == nil && s.logTableHistoryManager == nil && s.tableMappingManager == nil {
+		return false, nil
 	}
 
-	return isPartOfPiTR, nil
+	errMsg := "inconsistent PiTR components detected"
+	log.Error(errMsg,
+		zap.Any("piTRTaskInfo", s.piTRTaskInfo),
+		zap.Any("logTableHistoryManager", s.logTableHistoryManager),
+		zap.Any("tableMappingManager", s.tableMappingManager))
+
+	return false, errors.New(errMsg)
 }
 
 func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName string, cfg *SnapshotRestoreConfig) error {
@@ -895,7 +890,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	}
 
 	// check if this is part of the PiTR operation
-	isPartOfPiTR, err := cfg.isPartOfPiTR()
+	isPiTR, err := cfg.isPiTR()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -986,13 +981,15 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		zap.Int("db", len(dbMap)))
 
 	// only run when this full restore is part of the PiTR
-	if isPartOfPiTR {
+	if isPiTR {
 		// adjust tables to restore in the snapshot restore phase since it will later be renamed during
 		// log restore and will fall into or out of the filter range.
 		err = AdjustTablesToRestoreAndCreateTableTracker(
 			cfg.logTableHistoryManager,
 			cfg.RestoreConfig,
 			client.GetDatabaseMap(),
+			client.GetTableMap(),
+			client.GetPartitionMap(),
 			fileMap,
 			tableMap,
 			dbMap,
@@ -1010,7 +1007,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	tables := utils.Values(tableMap)
 	dbs := utils.Values(dbMap)
 
-	setTablesRestoreModeIfNeeded(tables, cfg, isPartOfPiTR)
+	setTablesRestoreModeIfNeeded(tables, cfg, isPiTR)
 
 	// some more checks once we get tables and files information
 	if err := checkOptionalClusterRequirements(ctx, client, cfg, cpEnabledAndExists, mgr, files, tables); err != nil {
@@ -1172,7 +1169,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		// even nothing to restore, we show a success message since there is no failure.
 	}
 
-	createdTables, err := createDBsAndTables(ctx, client, cfg, mgr, dbs, tables)
+	createdTables, err := createDBsAndTables(ctx, client, cfg, mgr, dbs, tables, isPiTR)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1478,8 +1475,8 @@ func filterRestoreFiles(
 	return
 }
 
-// getDBNameFromIDInBackup gets database name from either snapshot or log backup history
-func getDBNameFromIDInBackup(
+// getDBNameFromBackup gets database name from either snapshot or log backup history
+func getDBNameFromBackup(
 	dbID int64,
 	snapshotDBMap map[int64]*metautil.Database,
 	logBackupTableHistory *stream.LogBackupTableHistoryManager,
@@ -1502,6 +1499,8 @@ func getDBNameFromIDInBackup(
 func handleTableRenames(
 	history *stream.LogBackupTableHistoryManager,
 	snapshotDBMap map[int64]*metautil.Database,
+	snapshotTableMap map[int64]*metautil.Table,
+	partitionMap map[int64]*stream.TableLocationInfo,
 	cfg *RestoreConfig,
 	existingTableMap map[int64]*metautil.Table,
 	existingDBMap map[int64]*metautil.Database,
@@ -1509,59 +1508,112 @@ func handleTableRenames(
 	pitrIdTracker *utils.PiTRIdTracker,
 ) {
 	for tableId, dbIDAndTableName := range history.GetTableHistory() {
-		start := dbIDAndTableName[0]
-		end := dbIDAndTableName[1]
+		start := buildStartTableLocationInfo(tableId, &dbIDAndTableName[0], snapshotTableMap, partitionMap)
+		end := &dbIDAndTableName[1]
 
-		// skip if it contains partition
-		if start.IsPartition || end.IsPartition {
-			continue
-		}
-
-		startDBName, exists := getDBNameFromIDInBackup(start.DbID, snapshotDBMap, history)
-		if !exists {
-			continue
-		}
-		endDBName, exists := getDBNameFromIDInBackup(end.DbID, snapshotDBMap, history)
+		endDBName, exists := getDBNameFromBackup(end.DbID, snapshotDBMap, history)
 		if !exists {
 			continue
 		}
 
-		startMatches := utils.MatchTable(cfg.TableFilter, startDBName, start.TableName, cfg.WithSysTable)
 		endMatches := utils.MatchTable(cfg.TableFilter, endDBName, end.TableName, cfg.WithSysTable)
 
 		// if end matches, add to tracker
 		if endMatches {
-			pitrIdTracker.TrackTableId(end.DbID, tableId)
-			if cfg.Online {
-				buildDummyTableIfNotExist(existingTableMap, existingDBMap, end.DbID, endDBName, tableId, end.TableName)
+			if !end.IsPartition {
+				pitrIdTracker.TrackTableId(end.DbID, tableId)
+			} else {
+				// only used for partition violation checking later
+				pitrIdTracker.TrackPartitionId(tableId)
 			}
 		}
 
-		// skip if both match or not match, no need to adjust tables
-		// it should handle most of the cases
-		if startMatches == endMatches {
+		// skip if partition
+		if start.IsPartition || end.IsPartition {
 			continue
 		}
 
-		// If end matches but start doesn't -> need to restore (add)
-		// If start matches but end doesn't -> need to remove
-		if startDB, exists := snapshotDBMap[start.DbID]; exists {
-			// always add DB to map - we want to track it even if it has no tables
-			existingDBMap[startDB.Info.ID] = startDB
+		_, isStartInSnap := snapshotTableMap[tableId]
+		startDBName, exists := getDBNameFromBackup(start.DbID, snapshotDBMap, history)
+		if !exists {
+			continue
+		}
+		startMatches := utils.MatchTable(cfg.TableFilter, startDBName, start.TableName, cfg.WithSysTable)
 
+		// skip if both not match
+		if !startMatches && !endMatches {
+			continue
+		}
+
+		if startMatches && endMatches {
+			// skip if both match and nothing changes
+			if start.DbID == end.DbID && start.TableName == end.TableName {
+				continue
+			}
+		}
+
+		// no need to adjust tables if start is not in snapshot
+		if !isStartInSnap {
+			continue
+		}
+
+		// at here only three cases left
+		// 1. both match but start and end are not identical
+		// 2. end matches but start doesn't -> need to restore (add)
+		// 3. start matches but end doesn't -> need to remove
+		log.Info("handling rename",
+			zap.Int64("original_db_id", start.DbID),
+			zap.String("original_db_name", startDBName),
+			zap.Int64("end_db_id", end.DbID),
+			zap.String("end_db_name", endDBName),
+			zap.Int64("table_id", tableId),
+			zap.String("original_table_name", start.TableName),
+			zap.String("end_table_name", end.TableName),
+			zap.Bool("start_match_filter", startMatches),
+			zap.Bool("end_matches_filter", endMatches))
+		if startDB, exists := snapshotDBMap[start.DbID]; exists {
 			for _, table := range startDB.Tables {
 				if table.Info != nil && table.Info.ID == tableId {
 					if endMatches {
-						// need to restore this table
-						// track start as well as it might be in different db
-						pitrIdTracker.TrackTableId(start.DbID, tableId)
-						// create a deep copy of the table and update its name to the end name
+						// for renames, directly point to the end database
+						var endDB *metautil.Database
+						if db, exists := existingDBMap[end.DbID]; exists {
+							endDB = db
+						} else if endDB, exists = snapshotDBMap[end.DbID]; exists {
+							existingDBMap[end.DbID] = endDB
+						} else {
+							// create the end database if it doesn't exist
+							endDB = &metautil.Database{
+								Info: &model.DBInfo{
+									ID:   end.DbID,
+									Name: ast.NewCIStr(endDBName),
+								},
+							}
+							existingDBMap[end.DbID] = endDB
+						}
+
+						// create a deep copy of the table and update its metadata to point to the end DB
 						tableCopy := *table
+						tableCopy.DB = endDB.Info
 						tableCopy.Info = table.Info.Clone()
 						tableCopy.Info.Name = ast.NewCIStr(end.TableName)
-						existingTableMap[table.Info.ID] = &tableCopy
-						existingFileMap[table.Info.ID] = table.Files
-					} else {
+						tableCopy.Info.DBID = end.DbID
+
+						existingTableMap[tableId] = &tableCopy
+						existingFileMap[tableId] = table.Files
+
+						log.Info("handled rename by pointing table to end database",
+							zap.Int64("original_db_id", start.DbID),
+							zap.String("original_db_name", startDBName),
+							zap.Int64("end_db_id", end.DbID),
+							zap.String("end_db_name", endDBName),
+							zap.Int64("table_id", tableId),
+							zap.String("original_table_name", start.TableName),
+							zap.String("end_table_name", end.TableName))
+					} else if startMatches {
+						log.Info("table renamed out of filter, removing this table",
+							zap.Int64("table_id", tableId),
+							zap.String("table_name", table.Info.Name.O))
 						// need to remove this table
 						delete(existingTableMap, table.Info.ID)
 						delete(existingFileMap, table.Info.ID)
@@ -1575,36 +1627,56 @@ func handleTableRenames(
 
 // shouldRestoreTable checks if a table or partition is being tracked for restore
 func shouldRestoreTable(
-	dbID int64,
-	tableName string,
-	isPartition bool,
-	parentTableID int64,
-	snapshotDBMap map[int64]*metautil.Database,
-	history *stream.LogBackupTableHistoryManager,
+	physicalId int64,
+	locationInfo *stream.TableLocationInfo,
 	cfg *RestoreConfig,
 ) bool {
-	if isPartition {
-		return cfg.PiTRTableTracker.ContainsTableId(dbID, parentTableID)
+	// if is a partition, check whether its parent table is included to restore
+	if locationInfo.IsPartition {
+		return cfg.PiTRTableTracker.ContainsTableId(locationInfo.ParentTableID) ||
+			cfg.PiTRTableTracker.ContainsPartitionId(locationInfo.ParentTableID)
 	}
-	dbName, exists := getDBNameFromIDInBackup(dbID, snapshotDBMap, history)
-	if !exists {
-		return false
-	}
-	return utils.MatchTable(cfg.TableFilter, dbName, tableName, cfg.WithSysTable)
+
+	// if is tabla, check if will be restored
+	return cfg.PiTRTableTracker.ContainsTableId(physicalId) || cfg.PiTRTableTracker.ContainsPartitionId(physicalId)
 }
 
-// handlePartitionExchanges checks for partition exchanges and returns an error if a partition
+func buildStartTableLocationInfo(
+	physicalID int64,
+	start *stream.TableLocationInfo,
+	snapshotTableMap map[int64]*metautil.Table,
+	partitionMap map[int64]*stream.TableLocationInfo) *stream.TableLocationInfo {
+	if partitionInfo, exist := partitionMap[physicalID]; exist {
+		return partitionInfo
+	}
+	if tableInfo, exist := snapshotTableMap[physicalID]; exist {
+		return &stream.TableLocationInfo{
+			DbID:          tableInfo.DB.ID,
+			TableName:     tableInfo.Info.Name.O,
+			IsPartition:   false,
+			ParentTableID: 0,
+		}
+	}
+	return start
+}
+
+// checkPartitionExchangesViolations checks for partition exchanges and returns an error if a partition
 // was exchanged between tables where one is in the filter and one is not
-func handlePartitionExchanges(
+func checkPartitionExchangesViolations(
 	history *stream.LogBackupTableHistoryManager,
 	snapshotDBMap map[int64]*metautil.Database,
+	snapshotTableMap map[int64]*metautil.Table,
+	partitionMap map[int64]*stream.TableLocationInfo,
 	cfg *RestoreConfig,
 ) error {
 	for tableId, dbIDAndTableName := range history.GetTableHistory() {
-		start := dbIDAndTableName[0]
-		end := dbIDAndTableName[1]
+		start := &dbIDAndTableName[0]
+		end := &dbIDAndTableName[1]
 
-		// skip if both are not partition
+		// need to use snapshot start if exists
+		start = buildStartTableLocationInfo(tableId, start, snapshotTableMap, partitionMap)
+
+		// skip if none are partition, tables are handled in the previous step
 		if !start.IsPartition && !end.IsPartition {
 			continue
 		}
@@ -1614,38 +1686,25 @@ func handlePartitionExchanges(
 			continue
 		}
 
-		restoreStart := shouldRestoreTable(start.DbID, start.TableName, start.IsPartition, start.ParentTableID,
-			snapshotDBMap, history, cfg)
-		restoreEnd := shouldRestoreTable(end.DbID, end.TableName, end.IsPartition, end.ParentTableID,
-			snapshotDBMap, history, cfg)
+		restoreStart := shouldRestoreTable(tableId, start, cfg)
+		restoreEnd := shouldRestoreTable(tableId, end, cfg)
 
 		// error out if partition is exchanged between tables where one should restore and one shouldn't
 		if restoreStart != restoreEnd {
-			startDBName, exists := getDBNameFromIDInBackup(start.DbID, snapshotDBMap, history)
+			startDBName, exists := getDBNameFromBackup(start.DbID, snapshotDBMap, history)
 			if !exists {
 				startDBName = fmt.Sprintf("(unknown db name %d)", start.DbID)
 			}
-			endDBName, exists := getDBNameFromIDInBackup(end.DbID, snapshotDBMap, history)
+			endDBName, exists := getDBNameFromBackup(end.DbID, snapshotDBMap, history)
 			if !exists {
 				endDBName = fmt.Sprintf("(unknown db name %d)", end.DbID)
 			}
 
 			return errors.Annotatef(berrors.ErrRestoreModeMismatch,
-				"partition exchange detected: partition ID %d was exchanged from table '%s.%s' (ID: %d) "+
-					"eventually to table '%s.%s' (ID: %d), which is not supported in table filter",
+				"partition exchange detected: partition ID %d was exchanged between table '%s.%s' (ID: %d) "+
+					" and table '%s.%s' (ID: %d), but only one table will be restored (restoreStart=%v, restoreEnd=%v).",
 				tableId, startDBName, start.TableName, start.ParentTableID,
-				endDBName, end.TableName, end.ParentTableID)
-		}
-
-		// if we reach here, it will only be both are restore or not restore,
-		// if it's table, need to add to table tracker, this is for table created during log backup.
-		// if it's table and exist in snapshot, the actual table and files should already been added
-		// since matches filter.
-		if restoreStart && !start.IsPartition {
-			cfg.PiTRTableTracker.TrackTableId(start.DbID, tableId)
-		}
-		if restoreEnd && !end.IsPartition {
-			cfg.PiTRTableTracker.TrackTableId(end.DbID, tableId)
+				endDBName, end.TableName, end.ParentTableID, restoreStart, restoreEnd)
 		}
 	}
 	return nil
@@ -1655,6 +1714,8 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 	logBackupTableHistory *stream.LogBackupTableHistoryManager,
 	cfg *RestoreConfig,
 	snapshotDBMap map[int64]*metautil.Database,
+	snapshotTableMap map[int64]*metautil.Table,
+	partitionMap map[int64]*stream.TableLocationInfo,
 	fileMap map[int64][]*backuppb.File,
 	tableMap map[int64]*metautil.Table,
 	dbMap map[int64]*metautil.Database,
@@ -1672,19 +1733,17 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 	}
 
 	// first handle table renames to determine which tables we need
-	handleTableRenames(logBackupTableHistory, snapshotDBMap, cfg, tableMap, dbMap, fileMap, piTRIdTracker)
-
-	// handle partition exchange after all tables are tracked
-	if err := handlePartitionExchanges(logBackupTableHistory, snapshotDBMap, cfg); err != nil {
-		return err
-	}
+	handleTableRenames(logBackupTableHistory, snapshotDBMap, snapshotTableMap, partitionMap, cfg, tableMap, dbMap, fileMap, piTRIdTracker)
 
 	// track all snapshot tables that's going to restore in PiTR tracker
 	for tableID, table := range tableMap {
 		piTRIdTracker.TrackTableId(table.DB.ID, tableID)
 	}
 
-	log.Info("pitr table tracker", zap.String("map", piTRIdTracker.String()))
+	// handle partition exchange after all tables are tracked
+	if err := checkPartitionExchangesViolations(logBackupTableHistory, snapshotDBMap, snapshotTableMap, partitionMap, cfg); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -1767,6 +1826,7 @@ func PreCheckTableClusterIndex(
 		// table exists in database
 		if err == nil {
 			if table.Info.IsCommonHandle != oldTableInfo.IsCommonHandle {
+				log.Error("Clustered index option mismatch", zap.String("schemaName", table.DB.Name.O), zap.String("tableName", table.Info.Name.O))
 				return errors.Annotatef(berrors.ErrRestoreModeMismatch,
 					"Clustered index option mismatch. Restored cluster's @@tidb_enable_clustered_index should be %v (backup table = %v, created table = %v).",
 					restore.TransferBoolToValue(table.Info.IsCommonHandle),
@@ -1783,6 +1843,7 @@ func PreCheckTableClusterIndex(
 				// table exists in database
 				if err == nil {
 					if tableInfo.IsCommonHandle != oldTableInfo.IsCommonHandle {
+						log.Error("Clustered index option mismatch", zap.String("schemaName", job.SchemaName), zap.String("tableName", tableInfo.Name.O))
 						return errors.Annotatef(berrors.ErrRestoreModeMismatch,
 							"Clustered index option mismatch. Restored cluster's @@tidb_enable_clustered_index should be %v (backup table = %v, created table = %v).",
 							restore.TransferBoolToValue(tableInfo.IsCommonHandle),
@@ -1951,6 +2012,11 @@ func checkpointEnabledAndExists(
 	return checkpointEnabledAndExist, nil
 }
 
+// checkMandatoryClusterRequirements checks
+// 1. kv mode
+// 2. if db and tables are in backup if it's restore db or restore table command
+// 3. check if cluster is empty if it's a full cluster restore without filter and checkpoints
+// it's mandatory since it cannot be turned off
 func checkMandatoryClusterRequirements(client *snapclient.SnapClient, cfg *SnapshotRestoreConfig,
 	checkpointEnabledAndExists bool, cmdName string) error {
 	// verify not raw kv mode
@@ -1973,6 +2039,8 @@ func checkMandatoryClusterRequirements(client *snapclient.SnapClient, cfg *Snaps
 	return nil
 }
 
+// checkOptionalClusterRequirements checks disk space and table existence. It's optional since it can be turned off by
+// config cfg.CheckRequirements
 func checkOptionalClusterRequirements(
 	ctx context.Context,
 	client *snapclient.SnapClient,
@@ -2000,7 +2068,8 @@ func createDBsAndTables(
 	cfg *SnapshotRestoreConfig,
 	mgr *conn.Mgr,
 	dbs []*metautil.Database,
-	tables []*metautil.Table) ([]*snapclient.CreatedTable, error) {
+	tables []*metautil.Table,
+	isPiTR bool) ([]*snapclient.CreatedTable, error) {
 	var newTS uint64
 	if client.IsIncremental() {
 		if !cfg.AllowPITRFromIncremental {
@@ -2027,65 +2096,22 @@ func createDBsAndTables(
 	}
 
 	// update table mapping manager with new table ids if online restore is enabled
-	if cfg.Online && cfg.tableMappingManager != nil {
-		for _, createdTable := range createdTables {
-			oldTableID := createdTable.OldTable.Info.ID
-			newTableID := createdTable.Table.ID
-			if oldTableID != newTableID {
-				cfg.tableMappingManager.UpdateDownstreamId(oldTableID, newTableID)
-				log.Info("updated table mapping manager with new table id",
-					zap.Int64("old_table_id", oldTableID),
-					zap.Int64("new_table_id", newTableID))
-			}
-		}
+	if isPiTR {
+		cfg.tableMappingManager.UpdateDownstreamIds(tables, client.GetDomain())
+		log.Info("updated table mapping manager after creating tables")
 	}
 
 	return createdTables, nil
 }
 
 func setTablesRestoreModeIfNeeded(tables []*metautil.Table, cfg *SnapshotRestoreConfig, isPiTR bool) {
-	if cfg.Online && isPiTR {
+	if cfg.ExplicitFilter && isPiTR {
 		for i, table := range tables {
 			tableCopy := *table
 			tableCopy.Info = table.Info.Clone()
 			tableCopy.Info.TableMode = model.TableModeRestore
 			tables[i] = &tableCopy
 		}
-		log.Info("set tables to restore mode for online PITR restore", zap.Int("table count", len(tables)))
+		log.Info("set tables to restore mode for filtered PITR restore", zap.Int("table count", len(tables)))
 	}
-}
-
-func buildDummyTableIfNotExist(
-	existingTableMap map[int64]*metautil.Table,
-	existingDBMap map[int64]*metautil.Database,
-	dbID int64,
-	dbName string,
-	tableId int64,
-	tableName string,
-) {
-	if _, exists := existingTableMap[tableId]; exists {
-		return
-	}
-
-	var dummyDB *metautil.Database
-	if db, exists := existingDBMap[dbID]; exists {
-		dummyDB = db
-	} else {
-		dummyDB = &metautil.Database{
-			Info: &model.DBInfo{
-				ID:   dbID,
-				Name: ast.NewCIStr(dbName),
-			},
-		}
-		existingDBMap[dbID] = dummyDB
-	}
-
-	dummyTable := &metautil.Table{
-		DB: dummyDB.Info,
-		Info: &model.TableInfo{
-			ID:   tableId,
-			Name: ast.NewCIStr(tableName),
-		},
-	}
-	existingTableMap[tableId] = dummyTable
 }
