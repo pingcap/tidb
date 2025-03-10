@@ -319,6 +319,12 @@ id	estRows	task	access object	operator info
 Projection	0.00	root		1->Column#5
 └─TableDual	0.00	root		rows:0
 explain format=brief
+SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 )) ;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		1->Column#10
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:tab	keep order:false, stats:pseudo
+explain format=brief
 SELECT 1 FROM t1 AS tab WHERE 1 = 1 ;
 id	estRows	task	access object	operator info
 Projection	10000.00	root		1->Column#5
@@ -344,6 +350,21 @@ Projection	8000.00	root		1->Column#10
     │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
     └─TableReader(Probe)	10000.00	root		data:TableFullScan
       └─TableFullScan	10000.00	cop[tikv]	table:tab	keep order:false, stats:pseudo
+explain format=brief
+SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR a1 in (select a2 from t2);
+id	estRows	task	access object	operator info
+Projection	10000.00	root		1->Column#9
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:tab	keep order:false, stats:pseudo
+explain format=brief
+SELECT 1 FROM t1
+WHERE
+(1 OR (1 OR (1 OR EXISTS(SELECT 1 FROM t2 WHERE b2 = b1) OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)))) OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) AND EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ))
+;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		1->Column#25
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format=brief
 SELECT 1 FROM t1
 WHERE

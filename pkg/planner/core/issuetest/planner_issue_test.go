@@ -273,29 +273,4 @@ GROUP BY field1;`).Check(testkit.Rows("0"))
 			"    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
 			"    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
 			"      └─TableFullScan 10000.00 cop[tikv] table:tab keep order:false, stats:pseudo"))
-
-	tk.MustQuery(`explain format=brief SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR a1 in (select a2 from t2);`).
-		Check(testkit.Rows(
-			"Projection 10000.00 root  1->Column#8",
-			"└─TableReader 10000.00 root  data:TableFullScan",
-			"  └─TableFullScan 10000.00 cop[tikv] table:tab keep order:false, stats:pseudo"))
-	tk.MustQuery(` explain format=brief SELECT 1 FROM t1 WHERE (1 OR (1 OR (1 OR EXISTS(SELECT 1 FROM t2 WHERE b2 = b1) OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)))) OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) AND EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 )) ;`).
-		Check(testkit.Rows(
-			"Projection 6400.00 root  1->Column#24",
-			"└─Selection 6400.00 root  or(or(1, Column#8), or(Column#13, and(Column#18, Column#23)))",
-			"  └─HashJoin 8000.00 root  left outer semi join, left side:Selection, equal:[eq(test.t1.a1, test.t2.a2)]",
-			"    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-			"    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-			"    └─Selection(Probe) 8000.00 root  or(or(1, Column#8), or(Column#13, Column#18))",
-			"      └─HashJoin 10000.00 root  left outer semi join, left side:HashJoin, equal:[eq(test.t1.a1, test.t2.a2)]",
-			"        ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-			"        │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-			"        └─HashJoin(Probe) 10000.00 root  left outer semi join, left side:HashJoin, equal:[eq(test.t1.a1, test.t2.a2)]",
-			"          ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-			"          │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-			"          └─HashJoin(Probe) 10000.00 root  left outer semi join, left side:TableReader, equal:[eq(test.t1.b1, test.t2.b2)]",
-			"            ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-			"            │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-			"            └─TableReader(Probe) 10000.00 root  data:TableFullScan",
-			"              └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
 }
