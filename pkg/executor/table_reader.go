@@ -152,6 +152,7 @@ type TableReaderExecutor struct {
 	kvRanges         []kv.KeyRange
 	dagPB            *tipb.DAGRequest
 	startTS          uint64
+	getStartTS       func(bool) (uint64, error)
 	txnScope         string
 	readReplicaScope string
 	isStaleness      bool
@@ -361,6 +362,13 @@ func (e *TableReaderExecutor) Close() error {
 // to fetch all results.
 func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
 	if e.storeType == kv.TiFlash && e.kvRangeBuilder != nil {
+		if e.startTS == 0 && e.getStartTS != nil {
+			var err error
+			e.startTS, err = e.getStartTS(false)
+			if err != nil {
+				return nil, err
+			}
+		}
 		if !e.batchCop {
 			// TiFlash cannot support to access multiple tables/partitions within one KVReq, so we have to build KVReq for each partition separately.
 			kvReqs, err := e.buildKVReqSeparately(ctx, ranges)
@@ -391,6 +399,13 @@ func (e *TableReaderExecutor) buildResp(ctx context.Context, ranges []*ranger.Ra
 
 	// use sortedSelectResults here when pushDown limit for partition table.
 	if e.kvRangeBuilder != nil && e.byItems != nil {
+		if e.startTS == 0 && e.getStartTS != nil {
+			var err error
+			e.startTS, err = e.getStartTS(false)
+			if err != nil {
+				return nil, err
+			}
+		}
 		kvReqs, err := e.buildKVReqSeparately(ctx, ranges)
 		if err != nil {
 			return nil, err
@@ -527,6 +542,7 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 	reqBuilder.
 		SetDAGRequest(e.dagPB).
 		SetStartTS(e.startTS).
+		SetLazyStartTs(e.getStartTS).
 		SetDesc(e.desc).
 		SetKeepOrder(e.keepOrder).
 		SetTxnScope(e.txnScope).
