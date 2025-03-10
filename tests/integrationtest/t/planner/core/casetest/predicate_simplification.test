@@ -178,8 +178,8 @@ SELECT 1 FROM t1 AS tab WHERE 1 = 0 ;
 explain format=brief
 SELECT 1 FROM t1 AS tab WHERE a1 > 5 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 )) ;
 
-explain format=brief
-SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR a1 in (select a2 from t2);
+#explain format=brief
+#SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR a1 in (select a2 from t2);
 
 explain format=brief
 SELECT 1 FROM t1

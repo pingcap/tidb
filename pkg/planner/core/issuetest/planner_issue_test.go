@@ -273,4 +273,10 @@ GROUP BY field1;`).Check(testkit.Rows("0"))
 			"    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
 			"    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
 			"      └─TableFullScan 10000.00 cop[tikv] table:tab keep order:false, stats:pseudo"))
+
+	tk.MustQuery(`explain format=brief SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR a1 in (select a2 from t2);`).
+		Check(testkit.Rows(
+			"Projection 10000.00 root  1->Column#8",
+			"└─TableReader 10000.00 root  data:TableFullScan",
+			"  └─TableFullScan 10000.00 cop[tikv] table:tab keep order:false, stats:pseudo"))
 }
