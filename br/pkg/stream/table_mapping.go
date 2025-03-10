@@ -539,10 +539,12 @@ func ExtractValue(e *kv.Entry, cf string) ([]byte, error) {
 		if err := rawWriteCFValue.ParseFrom(e.Value); err != nil {
 			return nil, errors.Trace(err)
 		}
-		if rawWriteCFValue.HasShortValue() {
-			return rawWriteCFValue.shortValue, nil
+		// consistent with rewrite_meta_rawkv.go
+		if rawWriteCFValue.IsDelete() || rawWriteCFValue.IsRollback() || !rawWriteCFValue.HasShortValue() {
+			return nil, nil
 		}
-		return nil, nil
+
+		return rawWriteCFValue.GetShortValue(), nil
 	default:
 		return nil, errors.Errorf("unsupported column family: %s", cf)
 	}
@@ -554,6 +556,8 @@ func (tm *TableMappingManager) generateTempID() DownstreamID {
 }
 
 // UpdateDownstreamIds updates the mapping from old table ID to new table ID.
+// this is necessary since we override the table name during full restore directly to its end name, so we need to
+// figure out the id mapping upfront.
 func (tm *TableMappingManager) UpdateDownstreamIds(oldTables []*metautil.Table, domain *domain.Domain) error {
 	dbReplaces := make(map[UpstreamID]*DBReplace)
 

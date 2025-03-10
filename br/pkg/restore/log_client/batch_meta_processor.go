@@ -90,7 +90,7 @@ func (rp *RestoreMetaKVProcessor) RestoreAndRewriteMetaKVFiles(
 			return errors.Trace(err)
 		}
 	} else {
-		log.Info("skip doing full reload filtered PiTR")
+		log.Info("skip doing full reload for filtered PiTR")
 	}
 	return nil
 }
