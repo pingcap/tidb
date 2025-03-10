@@ -223,16 +223,8 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 		jobFactory := NewAnalysisJobFactory(sctx, autoAnalyzeRatio, currentTs)
 
 		// Get all schemas except the memory and system database.
-		dbs := is.AllSchemas()
-		maxDBID := int64(0)
-		for _, db := range dbs {
-			if util.IsMemOrSysDB(db.Name.L) {
-				continue
-			}
-			maxDBID = max(db.ID, maxDBID)
-		}
 		var mutex sync.Mutex
-		tbls := make([]*model.TableInfo, 0, 1024)
+		tbls := make([]*model.TableInfo, 0, 512)
 		// This only occurs during priority queue initialization which is infrequent.
 		halfCPUNum := runtime.NumCPU() / 2
 		start := time.Now()
@@ -252,10 +244,28 @@ func (pq *AnalysisPriorityQueue) fetchAllTablesAndBuildAnalysisJobs(ctx context.
 				tbls = append(tbls, info)
 				mutex.Unlock()
 				return nil
-			}, maxDBID); err != nil {
+			}); err != nil {
 			return errors.Trace(err)
 		}
 		statslogutil.StatsLogger().Info("Fetched all tables", zap.Int("tableCount", len(tbls)), zap.Duration("duration", time.Since(start)))
+		// Make sure the table list is complete.
+		intest.AssertFunc(func() bool {
+			dbs := is.AllSchemaNames()
+			verifyTbls := make([]*model.TableInfo, 0, 512)
+			for _, db := range dbs {
+				// Ignore the memory and system database.
+				if util.IsMemOrSysDB(db.L) {
+					continue
+				}
+
+				tbls, err := is.SchemaTableInfos(context.Background(), db)
+				if err != nil {
+					panic(err)
+				}
+				verifyTbls = append(verifyTbls, tbls...)
+			}
+			return len(verifyTbls) == len(tbls)
+		})
 
 		// We need to check every partition of every table to see if it needs to be analyzed.
 		for _, tblInfo := range tbls {
