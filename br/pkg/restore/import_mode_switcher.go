@@ -247,7 +247,7 @@ func calSortedKeyRanges(ids []int64) [][2]kv.Key {
 	if len(idRanges) == 0 {
 		return [][2]kv.Key{}
 	}
-	var keyRanges [][2]kv.Key
+	keyRanges := [][2]kv.Key{}
 	for i := range idRanges {
 		startKey := tablecodec.EncodeTablePrefix(idRanges[i][0])
 		startKey = codec.EncodeBytes([]byte{}, startKey)
