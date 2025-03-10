@@ -5,7 +5,7 @@ package restore
 import (
 	"context"
 	"crypto/tls"
-	"sort"
+	"slices"
 	"sync"
 	"time"
 
@@ -242,18 +242,18 @@ func FineGrainedRestorePreWork(
 	return undo, &originCfg, errors.Trace(err)
 }
 
-func calSortedKeyRanges(ids []int64) [][]kv.Key {
+func calSortedKeyRanges(ids []int64) [][2]kv.Key {
 	idRanges := calSortedTableIds(ids)
 	if len(idRanges) == 0 {
-		return [][]kv.Key{}
+		return [][2]kv.Key{}
 	}
-	var keyRanges [][]kv.Key
+	var keyRanges [][2]kv.Key
 	for i := range idRanges {
 		startKey := tablecodec.EncodeTablePrefix(idRanges[i][0])
 		startKey = codec.EncodeBytes([]byte{}, startKey)
 		endKey := tablecodec.EncodeTablePrefix(idRanges[i][1])
 		endKey = codec.EncodeBytes([]byte{}, endKey)
-		keyRanges = append(keyRanges, []kv.Key{startKey, endKey})
+		keyRanges = append(keyRanges, [2]kv.Key{startKey, endKey})
 	}
 	return keyRanges
 }
@@ -263,9 +263,7 @@ func calSortedTableIds(ids []int64) [][]int64 {
 		return [][]int64{}
 	}
 
-	sort.Slice(ids, func(i, j int) bool {
-		return ids[i] < ids[j]
-	})
+	slices.Sort(ids)
 
 	var idRanges [][]int64
 
