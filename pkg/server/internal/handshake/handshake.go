@@ -23,5 +23,5 @@ type Response41 struct {
 	Auth       []byte
 	ZstdLevel  int
 	Capability uint32
-	Collation  uint8
+	Collation  uint16
 }
