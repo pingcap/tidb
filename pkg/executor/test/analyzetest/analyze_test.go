@@ -1065,7 +1065,7 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 
 	h := dom.StatsHandle()
 	oriLease := h.Lease()
-	h.SetLease(1)
+	h.SetLease(3 * time.Second)
 	defer func() {
 		h.SetLease(oriLease)
 	}()
