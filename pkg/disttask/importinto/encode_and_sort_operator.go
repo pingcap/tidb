@@ -28,10 +28,12 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/zeropool"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -92,7 +94,7 @@ func newEncodeAndSortOperator(
 		concurrency,
 		func() workerpool.Worker[*importStepMinimalTask, workerpool.None] {
 			return newChunkWorker(ctx, op, executor.dataKVMemSizePerCon,
-				executor.perIndexKVMemSizePerCon, executor.indexBlockSize)
+				executor.perIndexKVMemSizePerCon, executor.indexBlockSize, executor.bufPool)
 		},
 	)
 	op.AsyncOperator = operator.NewAsyncOperator(subCtx, pool)
@@ -151,7 +153,7 @@ type chunkWorker struct {
 }
 
 func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSizePerCon,
-	perIndexKVMemSizePerCon uint64, indexBlockSize int) *chunkWorker {
+	perIndexKVMemSizePerCon uint64, indexBlockSize int, bufPool *zeropool.Pool[[]byte]) *chunkWorker {
 	w := &chunkWorker{
 		ctx: ctx,
 		op:  op,
@@ -166,7 +168,8 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 					op.sharedVars.mergeIndexSummary(indexID, summary)
 				}).
 				SetMemorySizeLimit(perIndexKVMemSizePerCon).
-				SetBlockSize(indexBlockSize)
+				SetBlockSize(indexBlockSize).
+				SetBufferPool(bufPool)
 			prefix := subtaskPrefix(op.taskID, op.subtaskID)
 			// writer id for index: index/{indexID}/{workerID}
 			writerID := path.Join("index", strconv.Itoa(int(indexID)), workerUUID)
@@ -178,7 +181,8 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 		builder := external.NewWriterBuilder().
 			SetOnCloseFunc(op.sharedVars.mergeDataSummary).
 			SetMemorySizeLimit(dataKVMemSizePerCon).
-			SetBlockSize(getKVGroupBlockSize(dataKVGroup))
+			SetBlockSize(getKVGroupBlockSize(dataKVGroup)).
+			SetBufferPool(bufPool)
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for data: data/{workerID}
 		writerID := path.Join("data", workerUUID)
@@ -231,7 +235,19 @@ func subtaskPrefix(taskID, subtaskID int64) string {
 func getWriterMemorySizeLimit(resource *proto.StepResource, plan *importer.Plan) (
 	dataKVMemSizePerCon, perIndexKVMemSizePerCon uint64) {
 	indexKVGroupCnt := getNumOfIndexGenKV(plan.DesiredTableInfo)
-	memPerCon := resource.Mem.Capacity() / int64(plan.ThreadCnt)
+
+	threadCnt := plan.ThreadCnt
+	if plan.EncodeThreadCnt > 0 {
+		threadCnt = plan.EncodeThreadCnt
+	}
+
+	memPerCon := resource.Mem.Capacity() / int64(threadCnt)
+
+	// For parquet format, we allocate 40% of the memory to file reader.
+	if plan.Format == importer.DataFormatParquet {
+		memPerCon = memPerCon * (100 - mydump.ImportIntoReaderUsage) / 100
+	}
+
 	// we use half of the total available memory for data writer, and the other half
 	// for encoding and other stuffs, it's an experience value, might not optimal.
 	// Then we divide those memory into indexKVGroupCnt + 3 shares, data KV writer

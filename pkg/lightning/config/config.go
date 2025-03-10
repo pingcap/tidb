@@ -69,6 +69,11 @@ const (
 	KVWriteBatchSize        = 16 * units.KiB
 	DefaultRangeConcurrency = 16
 
+	// For TiDB mode, inserting record to table may consume many memory,
+	// so we set a lower memory limit.
+	defaultMemoryUsageTiDB  = 40
+	defaultMemoryUsageLocal = 80
+
 	defaultDistSQLScanConcurrency     = 15
 	defaultBuildStatsConcurrency      = 20
 	defaultIndexSerialScanConcurrency = 20
@@ -333,6 +338,9 @@ type Lightning struct {
 	CheckRequirements bool   `toml:"check-requirements" json:"check-requirements"`
 	MetaSchemaName    string `toml:"meta-schema-name" json:"meta-schema-name"`
 
+	// max memory used for memory arena used for parquet file
+	MaxMemoryUsage int `toml:"max-memory-usage" json:"max-memory-usage"`
+
 	MaxError MaxError `toml:"max-error" json:"max-error"`
 	// deprecated, use Conflict.MaxRecordRows instead
 	MaxErrorRecords    int64  `toml:"max-error-records" json:"max-error-records"`
@@ -350,6 +358,9 @@ func (l *Lightning) adjust(i *TikvImporter) {
 		if l.IndexConcurrency == 0 {
 			l.IndexConcurrency = l.RegionConcurrency
 		}
+		if l.MaxMemoryUsage == 0 {
+			l.MaxMemoryUsage = defaultMemoryUsageTiDB
+		}
 	case BackendLocal:
 		if l.IndexConcurrency == 0 {
 			l.IndexConcurrency = defaultIndexConcurrency
@@ -357,7 +368,9 @@ func (l *Lightning) adjust(i *TikvImporter) {
 		if l.TableConcurrency == 0 {
 			l.TableConcurrency = DefaultTableConcurrency
 		}
-
+		if l.MaxMemoryUsage == 0 {
+			l.MaxMemoryUsage = defaultMemoryUsageLocal
+		}
 		if len(l.MetaSchemaName) == 0 {
 			l.MetaSchemaName = defaultMetaSchemaName
 		}
@@ -801,6 +814,17 @@ func (s *StringOrStringSlice) UnmarshalTOML(in any) error {
 	return nil
 }
 
+// FieldEncodeType is the type of encoding for a CSV field.
+type FieldEncodeType string
+
+const (
+	// FieldEncodeNone means no special encoding.
+	FieldEncodeNone FieldEncodeType = ""
+	// FieldEncodeBase64 means the field is encoded in base64.
+	// this encoding also implies some constraints on other parameters
+	FieldEncodeBase64 FieldEncodeType = "base64"
+)
+
 // CSVConfig is the config for CSV files.
 type CSVConfig struct {
 	// FieldsTerminatedBy, FieldsEnclosedBy and LinesTerminatedBy should all be in utf8mb4 encoding.
@@ -815,7 +839,8 @@ type CSVConfig struct {
 	// deprecated, use `escaped-by` instead.
 	BackslashEscape bool `toml:"backslash-escape" json:"backslash-escape"`
 	// FieldsEscapedBy has higher priority than BackslashEscape, currently it must be a single character if set.
-	FieldsEscapedBy string `toml:"escaped-by" json:"escaped-by"`
+	FieldsEscapedBy string          `toml:"escaped-by" json:"escaped-by"`
+	FieldsEncodedBy FieldEncodeType `toml:"encoded-by" json:"encoded-by"`
 
 	// hide these options for lightning configuration file, they can only be used by LOAD DATA
 	// https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-field-line-handling
@@ -870,6 +895,21 @@ func (csv *CSVConfig) adjust() error {
 		if csv.LinesTerminatedBy == csv.FieldsEscapedBy {
 			return common.ErrInvalidConfig.GenWithStack("cannot use '%s' both as CSV terminator and `mydumper.csv.escaped-by`", csv.FieldsEscapedBy)
 		}
+	}
+
+	csv.FieldsEncodedBy = FieldEncodeType(strings.ToLower(string(csv.FieldsEncodedBy)))
+	if csv.FieldsEncodedBy == FieldEncodeBase64 {
+		if csv.Header {
+			return common.ErrInvalidConfig.GenWithStack("`mydumper.csv.header` must be false when `encoded-by` is 'base64'")
+		}
+		if csv.FieldsEnclosedBy != "" {
+			return common.ErrInvalidConfig.GenWithStack("`mydumper.csv.delimiter` must be empty when `encoded-by` is 'base64'")
+		}
+		if csv.FieldsEscapedBy != "" {
+			return common.ErrInvalidConfig.GenWithStack("`mydumper.csv.escaped-by` must be empty when `encoded-by` is 'base64'")
+		}
+	} else if csv.FieldsEncodedBy != FieldEncodeNone {
+		return common.ErrInvalidConfig.GenWithStack("unsupported `encoded-by` value '%s'", csv.FieldsEncodedBy)
 	}
 	return nil
 }
@@ -937,6 +977,11 @@ func (m *MydumperRuntime) adjust() error {
 
 	if len(m.DataCharacterSet) == 0 {
 		m.DataCharacterSet = defaultCSVDataCharacterSet
+	}
+	if m.CSV.FieldsEncodedBy == FieldEncodeBase64 {
+		if m.DataCharacterSet != "binary" {
+			return common.ErrInvalidConfig.GenWithStack("`mydumper.data-character-set` must be 'binary' when `mydumper.csv.encoded-by` is 'base64'")
+		}
 	}
 	charset, err1 := ParseCharset(m.DataCharacterSet)
 	if err1 != nil {
@@ -1456,6 +1501,7 @@ func NewConfig() *Config {
 			RegionConcurrency:  runtime.NumCPU(),
 			TableConcurrency:   0,
 			IndexConcurrency:   0,
+			MaxMemoryUsage:     0,
 			IOConcurrency:      5,
 			CheckRequirements:  true,
 			TaskInfoSchemaName: defaultTaskInfoSchemaName,
