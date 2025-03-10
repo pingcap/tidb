@@ -963,6 +963,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err != nil {
 		return errors.Trace(err)
 	}
+	log.Info("checkpoint status in restore", zap.Bool("enabled", cfg.UseCheckpoint), zap.Bool("exists", cpEnabledAndExists))
 	if err := checkMandatoryClusterRequirements(client, cfg, cpEnabledAndExists, cmdName); err != nil {
 		return errors.Trace(err)
 	}
@@ -1010,7 +1011,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	setTablesRestoreModeIfNeeded(tables, cfg, isPiTR)
 
 	// some more checks once we get tables and files information
-	if err := checkOptionalClusterRequirements(ctx, client, cfg, cpEnabledAndExists, mgr, files, tables); err != nil {
+	if err := checkOptionalClusterRequirements(ctx, client, cfg, cpEnabledAndExists, mgr, files, tables, isPiTR); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1495,8 +1496,8 @@ func getDBNameFromBackup(
 	return "", false
 }
 
-// handleTableRenames processes table-level operations (renames) and determines which tables need to be restored
-func handleTableRenames(
+// processLogBackupTableHistory processes table-level operations (renames) and determines which tables need to be restored
+func processLogBackupTableHistory(
 	history *stream.LogBackupTableHistoryManager,
 	snapshotDBMap map[int64]*metautil.Database,
 	snapshotTableMap map[int64]*metautil.Table,
@@ -1522,6 +1523,8 @@ func handleTableRenames(
 		if endMatches {
 			if !end.IsPartition {
 				pitrIdTracker.TrackTableId(end.DbID, tableId)
+				// used to check if existing cluster has same table already so can error out
+				pitrIdTracker.TrackTableName(endDBName, end.TableName)
 			} else {
 				// only used for partition violation checking later
 				pitrIdTracker.TrackPartitionId(tableId)
@@ -1733,7 +1736,7 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 	}
 
 	// first handle table renames to determine which tables we need
-	handleTableRenames(logBackupTableHistory, snapshotDBMap, snapshotTableMap, partitionMap, cfg, tableMap, dbMap, fileMap, piTRIdTracker)
+	processLogBackupTableHistory(logBackupTableHistory, snapshotDBMap, snapshotTableMap, partitionMap, cfg, tableMap, dbMap, fileMap, piTRIdTracker)
 
 	// track all snapshot tables that's going to restore in PiTR tracker
 	for tableID, table := range tableMap {
@@ -1742,7 +1745,7 @@ func AdjustTablesToRestoreAndCreateTableTracker(
 
 	// handle partition exchange after all tables are tracked
 	if err := checkPartitionExchangesViolations(logBackupTableHistory, snapshotDBMap, snapshotTableMap, partitionMap, cfg); err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	return nil
 }
@@ -2048,7 +2051,8 @@ func checkOptionalClusterRequirements(
 	checkpointEnabledAndExists bool,
 	mgr *conn.Mgr,
 	files []*backuppb.File,
-	tables []*metautil.Table) error {
+	tables []*metautil.Table,
+	isPitr bool) error {
 	if cfg.CheckRequirements && !checkpointEnabledAndExists {
 		if err := checkDiskSpace(ctx, mgr, files, tables); err != nil {
 			return errors.Trace(err)
@@ -2058,8 +2062,32 @@ func checkOptionalClusterRequirements(
 				return errors.Trace(err)
 			}
 		}
+		if isPitr {
+			if err := checkTableExistence(ctx, mgr, buildLogBackupMetaTables(cfg.PiTRTableTracker.DBNameToTableNames)); err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 	return nil
+}
+
+func buildLogBackupMetaTables(dbNameToTableNames map[string]map[string]struct{}) []*metautil.Table {
+	tables := make([]*metautil.Table, 0)
+
+	for dbName, tableNames := range dbNameToTableNames {
+		for tableName := range tableNames {
+			table := &metautil.Table{
+				DB: &model.DBInfo{
+					Name: ast.NewCIStr(dbName),
+				},
+				Info: &model.TableInfo{
+					Name: ast.NewCIStr(tableName),
+				},
+			}
+			tables = append(tables, table)
+		}
+	}
+	return tables
 }
 
 func createDBsAndTables(
@@ -2095,7 +2123,7 @@ func createDBsAndTables(
 		return nil, errors.Trace(err)
 	}
 
-	// update table mapping manager with new table ids if online restore is enabled
+	// update table mapping manager with new table ids if pitr
 	if isPiTR {
 		cfg.tableMappingManager.UpdateDownstreamIds(tables, client.GetDomain())
 		log.Info("updated table mapping manager after creating tables")

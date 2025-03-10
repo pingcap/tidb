@@ -84,7 +84,7 @@ test_online_filter_restore() {
     echo "case 1: Full restore should fail"
     echo "Testing full restore with overlapping database"
     restore_fail=0
-    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" --online || restore_fail=1
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" || restore_fail=1
 
     if [ $restore_fail -ne 1 ]; then
         echo "Expected restore to fail due to overlapping database but it succeeded"
@@ -123,7 +123,7 @@ test_online_filter_restore() {
     run_sql "INSERT INTO $DB.table1 VALUES (1, -100);"
 
     restore_fail=0
-    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.table*" --online || restore_fail=1
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.table*" || restore_fail=1
         if [ $restore_fail -ne 1 ]; then
         echo "Expected restore to fail due to overlapping tables but it succeeded"
         exit 1
@@ -131,7 +131,7 @@ test_online_filter_restore() {
 
     run_sql "CREATE TABLE $DB.table3 (id INT PRIMARY KEY, value INT);"
     restore_fail=0
-    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.table3*" --online || restore_fail=1
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.table3*" || restore_fail=1
     if [ $restore_fail -ne 1 ]; then
         echo "Expected restore to fail due to overlapping tables during log backup but it succeeded"
         exit 1
@@ -145,7 +145,7 @@ test_online_filter_restore() {
 
     echo "case 4: During online pitr user should not able to modify tables that are in restore (make sure table mode set to restore)"
     export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/before-set-table-mode-to-normal=return(true)"
-    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.table*" --online || restore_fail=1
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.table*" || restore_fail=1
     
     if [ $restore_fail -ne 1 ]; then
         echo "Expected restore to fail due to failpoint"
@@ -166,7 +166,7 @@ test_online_filter_restore() {
     export GO_FAILPOINTS=""
 
     echo "case 5: After online pitr user should be able to modify tables (make sure table mode set back to normal)"
-    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.table*" --online
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" -f "$DB.table*"
     run_sql "INSERT INTO $DB.table1 VALUES (4, 400, 'after restore', 30);"
     
     # verify table2 is working correctly with its modified structure (BIGINT value and index)

@@ -539,9 +539,6 @@ func ExtractValue(e *kv.Entry, cf string) ([]byte, error) {
 		if err := rawWriteCFValue.ParseFrom(e.Value); err != nil {
 			return nil, errors.Trace(err)
 		}
-		if rawWriteCFValue.IsDelete() {
-			log.Info("####### get delete key")
-		}
 		if rawWriteCFValue.HasShortValue() {
 			return rawWriteCFValue.shortValue, nil
 		}

@@ -37,11 +37,5 @@ func TestPiTRTableTracker(t *testing.T) {
 		tracker.TrackTableId(3, 300)
 		require.True(t, tracker.ContainsDB(3))
 		require.True(t, tracker.ContainsDBAndTableId(3, 300))
-
-		// Test RemoveTableId
-		tracker.RemoveTableId(100)
-		require.False(t, tracker.ContainsDBAndTableId(1, 100))
-		require.True(t, tracker.ContainsDB(1))                // DB should still exist
-		require.True(t, tracker.ContainsDBAndTableId(1, 101)) // Other table should still exist
 	})
 }
