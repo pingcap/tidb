@@ -79,11 +79,11 @@ func (c constantRegions) Stores(ctx context.Context) ([]streamhelper.Store, erro
 // Updates the service GC safe point for the cluster.
 // Returns the latest service GC safe point.
 // If the arguments is `0`, this would remove the service safe point.
-func (c constantRegions) BlockGCUntil(ctx context.Context, at uint64) (uint64, error) {
+func (c constantRegions) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
 	return 0, status.Error(codes.Unimplemented, "Unsupported operation")
 }
 
-func (c constantRegions) UnblockGC(ctx context.Context) error {
+func (c constantRegions) UnblockGC(ctx context.Context, serviceID string) error {
 	return status.Error(codes.Unimplemented, "Unsupported operation")
 }
 
