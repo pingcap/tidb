@@ -142,7 +142,7 @@ require (
 	golang.org/x/time v0.10.0
 	golang.org/x/tools v0.30.0
 	google.golang.org/api v0.169.0
-	google.golang.org/grpc v1.63.2
+	google.golang.org/grpc v1.64.0
 	gopkg.in/yaml.v2 v2.4.0
 	gorm.io/driver/mysql v1.5.7
 	gorm.io/gorm v1.25.11
@@ -337,4 +337,4 @@ replace (
 	sourcegraph.com/sourcegraph/appdash-data => github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
 
-replace github.com/tikv/client-go/v2 => github.com/yibin87/client-go/v2 v2.0.0-20250304061434-3a625aae1880
+replace github.com/tikv/client-go/v2 => github.com/yibin87/client-go/v2 v2.0.0-20250310062019-b80d825a023f
