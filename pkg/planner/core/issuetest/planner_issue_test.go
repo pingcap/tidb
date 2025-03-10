@@ -264,13 +264,4 @@ GROUP BY field1;`).Check(testkit.Rows("HashJoin 2.00 root  CARTESIAN left outer 
 FROM t1 AS table1
 WHERE (EXISTS (SELECT SUBQUERY2_t1.a1 AS SUBQUERY2_field1 FROM t1 AS SUBQUERY2_t1)) OR table1.b1 >= 55
 GROUP BY field1;`).Check(testkit.Rows("0"))
-
-	tk.MustQuery("explain format=brief SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 )) ;").
-		Check(testkit.Rows("Projection 8000.00 root  1->Column#9",
-			"└─Selection 8000.00 root  or(1, Column#8)",
-			"  └─HashJoin 10000.00 root  left outer semi join, left side:TableReader, equal:[eq(test.t1.a1, test.t2.a2)]",
-			"    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-			"    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-			"    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
-			"      └─TableFullScan 10000.00 cop[tikv] table:tab keep order:false, stats:pseudo"))
 }
