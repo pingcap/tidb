@@ -192,7 +192,7 @@ func (s *DecorrelateSolver) pruneRedundantApply(p base.LogicalPlan) (base.Logica
 				}
 				for col := range s.groupByColumn {
 					if apply.Schema().Contains(col) && !child.Schema().Contains(col) {
-						child.Schema().Append(col)
+						return nil, false
 					}
 				}
 				return child, true // Return the child of the last LogicalApply
