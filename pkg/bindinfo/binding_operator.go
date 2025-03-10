@@ -118,6 +118,14 @@ func (op *bindingOperator) CreateBinding(sctx sessionctx.Context, bindings []*Bi
 			if err != nil {
 				return err
 			}
+
+			warnings, _, err := execRows(sctx, "show warnings")
+			if err != nil {
+				return err
+			}
+			if len(warnings) != 0 {
+				return errors.New(warnings[0].GetString(2))
+			}
 		}
 		return nil
 	})
