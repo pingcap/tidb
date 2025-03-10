@@ -1068,7 +1068,7 @@ func (e *executor) createTableWithInfoJob(
 				oldTableMode := oldTable.Meta().TableMode
 				if oldTableMode != model.TableModeRestore {
 					// Indeed this is not a conversion problem but an inconsistency problem.
-					return nil, infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(oldTableMode, tbInfo.TableMode)
+					return nil, infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(oldTableMode, tbInfo.TableMode, tbInfo.Name)
 				}
 			}
 			// Currently, target TableMode will NEVER be ModeImport because ImportInto does not use this function
