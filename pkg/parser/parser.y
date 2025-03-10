@@ -1375,6 +1375,7 @@ import (
 	TransactionChar                        "Transaction characteristic"
 	TransactionChars                       "Transaction characteristic list"
 	TrimDirection                          "Trim string direction"
+	TruncatePartitionOpt                   "optional truncate partition"
 	SetOprOpt                              "Union/Except/Intersect Option(empty/ALL/DISTINCT)"
 	UpdateIndexElem                        "IndexName {GLOBAL|LOCAL}"
 	UpdateIndexesList                      "UpdateIndexElem[,...]"
@@ -1409,7 +1410,7 @@ import (
 	WithReadLockOpt                        "With Read Lock opt"
 	WithGrantOptionOpt                     "With Grant Option opt"
 	WithValidation                         "with validation"
-	WithValidationOpt                      "optional with validation"
+	WithExchangeOpt                        "optional with validation"
 	Writeable                              "Table writeable status"
 	ElseOpt                                "Optional else clause"
 	Type                                   "Types"
@@ -2426,9 +2427,12 @@ AlterTableSpec:
 			Statistics: statsSpec,
 		}
 	}
-|	"CONVERT" "PARTITION" Identifier "TO" "TABLE" TableName
+|	"CONVERT" "PARTITION" Identifier "TO" "TABLE" TableName TruncatePartitionOpt
 	{
-		to := &ast.TableOption{TableNames: []*ast.TableName{$6.(*ast.TableName)}}
+		to := &ast.TableOption{
+			TableNames: []*ast.TableName{$6.(*ast.TableName)},
+			Default:    $7.(bool),
+		}
 		$$ = &ast.AlterTableSpec{
 			Tp:             ast.AlterTableConvertPartitionToTable,
 			PartitionNames: []model.CIStr{model.NewCIStr($3)},
@@ -2436,7 +2440,7 @@ AlterTableSpec:
 			Options: []*ast.TableOption{to},
 		}
 	}
-|	"CONVERT" "TABLE" TableName "TO" PartitionDefinitionWithoutSubPartition WithValidationOpt
+|	"CONVERT" "TABLE" TableName "TO" PartitionDefinitionWithoutSubPartition WithExchangeOpt
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp:              ast.AlterTableConvertTableToPartition,
@@ -2445,7 +2449,7 @@ AlterTableSpec:
 			WithValidation:  $6.(bool),
 		}
 	}
-|	"EXCHANGE" "PARTITION" Identifier "WITH" "TABLE" TableName WithValidationOpt
+|	"EXCHANGE" "PARTITION" Identifier "WITH" "TABLE" TableName WithExchangeOpt
 	{
 		$$ = &ast.AlterTableSpec{
 			Tp:             ast.AlterTableExchangePartition,
@@ -2811,7 +2815,16 @@ AllOrPartitionNameList:
 	}
 |	PartitionNameList %prec lowerThanComma
 
-WithValidationOpt:
+TruncatePartitionOpt:
+	{
+		$$ = false
+	}
+|	"TRUNCATE" "PARTITION"
+	{
+		$$ = true
+	}
+
+WithExchangeOpt:
 	{
 		$$ = true
 	}
