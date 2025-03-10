@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 
@@ -123,12 +124,11 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 		return nil, err
 	}
 	logger.Info("on next subtasks batch")
-	storeWithPD := sch.d.store.(kv.StorageWithPD)
 	// TODO: use planner.
 	switch nextStep {
 	case proto.BackfillStepReadIndex:
 		if tblInfo.Partition != nil {
-			return generatePartitionPlan(ctx, storeWithPD, tblInfo)
+			return generatePartitionPlan(ctx, sch.d.pdCli, tblInfo)
 		}
 		// TODO(tangenta): use available disk during adding index.
 		availableDisk := sch.nodeRes.GetTaskDiskResource(task.Concurrency, vardef.DDLDiskQuota.Load())
@@ -149,7 +149,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 			})
 			return generateGlobalSortIngestPlan(
 				ctx,
-				storeWithPD,
+				sch.d.pdCli,
 				taskHandle,
 				task,
 				backfillMeta.CloudStorageURI,
@@ -236,7 +236,7 @@ func getTblInfo(ctx context.Context, d *ddl, job *model.Job) (tblInfo *model.Tab
 
 func generatePartitionPlan(
 	ctx context.Context,
-	store kv.StorageWithPD,
+	pdCli pd.Client,
 	tblInfo *model.TableInfo,
 ) (metas [][]byte, err error) {
 	defs := tblInfo.Partition.Definitions
@@ -248,7 +248,7 @@ func generatePartitionPlan(
 	subTaskMetas := make([][]byte, 0, len(physicalIDs))
 	for _, physicalID := range physicalIDs {
 		// It should be different for each subtask to determine if there are duplicate entries.
-		importTS, err := allocNewTS(ctx, store)
+		importTS, err := allocNewTS(ctx, pdCli)
 		if err != nil {
 			return nil, err
 		}
@@ -330,7 +330,7 @@ func generateNonPartitionPlan(
 
 		for i := 0; i < len(recordRegionMetas); i += regionBatch {
 			// It should be different for each subtask to determine if there are duplicate entries.
-			importTS, err := allocNewTS(ctx, d.store.(kv.StorageWithPD))
+			importTS, err := allocNewTS(ctx, d.pdCli)
 			if err != nil {
 				return true, nil
 			}
@@ -386,7 +386,7 @@ func CalculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool
 
 func generateGlobalSortIngestPlan(
 	ctx context.Context,
-	store kv.StorageWithPD,
+	pdCli pd.Client,
 	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
 	cloudStorageURI string,
@@ -438,7 +438,7 @@ func generateGlobalSortIngestPlan(
 		if i < len(eleIDs) {
 			eleID = eleIDs[i]
 		}
-		newMeta, err := splitSubtaskMetaForOneKVMetaGroup(ctx, store, g, eleID, cloudStorageURI, iCnt, logger)
+		newMeta, err := splitSubtaskMetaForOneKVMetaGroup(ctx, pdCli, g, eleID, cloudStorageURI, iCnt, logger)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -447,8 +447,7 @@ func generateGlobalSortIngestPlan(
 	return metaArr, nil
 }
 
-func allocNewTS(ctx context.Context, store kv.StorageWithPD) (uint64, error) {
-	pdCli := store.GetPDClient()
+func allocNewTS(ctx context.Context, pdCli pd.Client) (uint64, error) {
 	p, l, err := pdCli.GetTS(ctx)
 	if err != nil {
 		return 0, err
@@ -459,7 +458,7 @@ func allocNewTS(ctx context.Context, store kv.StorageWithPD) (uint64, error) {
 
 func splitSubtaskMetaForOneKVMetaGroup(
 	ctx context.Context,
-	store kv.StorageWithPD,
+	pdCli pd.Client,
 	kvMeta *external.SortedKVMeta,
 	eleID int64,
 	cloudStorageURI string,
@@ -470,7 +469,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 		// Skip global sort for empty table.
 		return nil, nil
 	}
-	importTS, err := allocNewTS(ctx, store)
+	importTS, err := allocNewTS(ctx, pdCli)
 	if err != nil {
 		return nil, err
 	}
@@ -479,7 +478,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 		importTS = uint64(i)
 	})
 	splitter, err := getRangeSplitter(
-		ctx, store, cloudStorageURI, int64(kvMeta.TotalKVSize), instanceCnt, kvMeta.MultipleFilesStats, logger)
+		ctx, pdCli, cloudStorageURI, int64(kvMeta.TotalKVSize), instanceCnt, kvMeta.MultipleFilesStats, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -632,7 +631,7 @@ func generateMergePlan(
 
 func getRangeSplitter(
 	ctx context.Context,
-	store kv.StorageWithPD,
+	pdCli pd.Client,
 	cloudStorageURI string,
 	totalSize int64,
 	instanceCnt int64,
@@ -653,8 +652,7 @@ func getRangeSplitter(
 
 	var regionSplitSize = int64(config.SplitRegionSize)
 	var regionSplitKeys = int64(config.SplitRegionKeys)
-	if store != nil {
-		pdCli := store.GetPDClient()
+	if pdCli != nil {
 		tls, err := ingest.NewDDLTLS()
 		if err == nil {
 			size, keys, err := local.GetRegionSplitSizeKeys(ctx, pdCli, tls)

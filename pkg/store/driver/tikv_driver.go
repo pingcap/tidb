@@ -156,7 +156,7 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 		}
 	}()
 
-	pdCli, err = pd.NewClient(caller.Component("tidb-tikv-driver"), etcdAddrs, pd.SecurityOption{
+	pdCli, err = pd.NewClient(caller.Component("tikv-driver"), etcdAddrs, pd.SecurityOption{
 		CAPath:   d.security.ClusterSSLCA,
 		CertPath: d.security.ClusterSSLCert,
 		KeyPath:  d.security.ClusterSSLKey,
