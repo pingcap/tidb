@@ -241,11 +241,18 @@ func (s *statsSyncLoad) SubLoadWorker(sctx sessionctx.Context, exit chan struct{
 				logutil.BgLogger().Info("SubLoadWorker: exits now because the domain is closed.")
 				return
 			default:
-				logutil.ErrVerboseLogger().Warn("SubLoadWorker: failed to handle one task",
-					zap.Error(err),
-					zap.String("task", task.Item.Key()),
-					zap.Int("retry", task.Retry),
-				)
+				const msg = "SubLoadWorker: failed to handle one task"
+				if task != nil {
+					logutil.ErrVerboseLogger().Warn(msg,
+						zap.Error(err),
+						zap.String("task", task.Item.Key()),
+						zap.Int("retry", task.Retry),
+					)
+				} else {
+					logutil.ErrVerboseLogger().Warn(msg,
+						zap.Error(err),
+					)
+				}
 				// To avoid the thundering herd effect
 				// thundering herd effect: Everyone tries to retry a large number of requests simultaneously when a problem occurs.
 				r := rand.Intn(500)
