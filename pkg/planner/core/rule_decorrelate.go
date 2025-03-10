@@ -118,7 +118,10 @@ func extractOuterApplyCorrelatedColsHelper(p base.PhysicalPlan) ([]*expression.C
 }
 
 // DecorrelateSolver tries to convert apply plan to join plan.
-type DecorrelateSolver struct{}
+type DecorrelateSolver struct {
+	// groupByColumn is to pretend the group by columns in aggregation and keep their schema information for later use.
+	groupByColumn map[*expression.Column]struct{}
+}
 
 func (*DecorrelateSolver) aggDefaultValueMap(agg *logicalop.LogicalAggregation) map[int]*expression.Constant {
 	defaultValueMap := make(map[int]*expression.Constant, len(agg.AggFuncs))
@@ -139,7 +142,7 @@ func (*DecorrelateSolver) aggDefaultValueMap(agg *logicalop.LogicalAggregation) 
 // This results in a SELECT node with a True condition and an Apply operator as its child.
 // If this pattern is detected, we remove both the SELECT and Apply nodes, returning the left child of the Apply operator as the result.
 // For the example above, the result would be a table scan on t1.
-func pruneRedundantApply(p base.LogicalPlan) (base.LogicalPlan, bool) {
+func (s *DecorrelateSolver) pruneRedundantApply(p base.LogicalPlan) (base.LogicalPlan, bool) {
 	// Check if the current plan is a LogicalSelection
 	logicalSelection, ok := p.(*logicalop.LogicalSelection)
 	if !ok {
@@ -160,7 +163,8 @@ func pruneRedundantApply(p base.LogicalPlan) (base.LogicalPlan, bool) {
 	if apply.JoinType != logicalop.LeftOuterJoin && apply.JoinType != logicalop.LeftOuterSemiJoin {
 		return nil, false
 	}
-
+	// add a strong limit for fix the https://github.com/pingcap/tidb/issues/58451. we can remove it when to have better implememnt.
+	// But this problem has affected tiflash CI.
 	// Simplify predicates from the LogicalSelection
 	simplifiedPredicates := applyPredicateSimplification(p.SCtx(), logicalSelection.Conditions)
 
@@ -183,6 +187,14 @@ func pruneRedundantApply(p base.LogicalPlan) (base.LogicalPlan, bool) {
 			child := finalResult.Children()[0]
 			nextApply, ok := child.(*logicalop.LogicalApply)
 			if !ok {
+				if len(s.groupByColumn) == 0 {
+					return child, true
+				}
+				for col := range s.groupByColumn {
+					if apply.Schema().Contains(col) && !child.Schema().Contains(col) {
+						return nil, false
+					}
+				}
 				return child, true // Return the child of the last LogicalApply
 			}
 			finalResult = nextApply
@@ -194,10 +206,20 @@ func pruneRedundantApply(p base.LogicalPlan) (base.LogicalPlan, bool) {
 
 // Optimize implements base.LogicalOptRule.<0th> interface.
 func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
-	if optimizedPlan, planChanged := pruneRedundantApply(p); planChanged {
-		return optimizedPlan, planChanged, nil
+	if s.groupByColumn == nil {
+		s.groupByColumn = make(map[*expression.Column]struct{})
+	}
+	if agg, ok := p.(*logicalop.LogicalAggregation); ok {
+		for _, groupByItems := range agg.GroupByItems {
+			for _, column := range expression.ExtractColumns(groupByItems) {
+				s.groupByColumn[column] = struct{}{}
+			}
+		}
 	}
 
+	if optimizedPlan, planChanged := s.pruneRedundantApply(p); planChanged {
+		return optimizedPlan, planChanged, nil
+	}
 	planChanged := false
 	if apply, ok := p.(*logicalop.LogicalApply); ok {
 		outerPlan := apply.Children()[0]
