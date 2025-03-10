@@ -255,3 +255,8 @@ func UpdateDelayMetrics(records map[int64]*DelayMetricsRecord) {
 		metrics.TTLWatermarkDelay.With(prometheus.Labels{metrics.LblType: "schedule", metrics.LblName: delay}).Set(v)
 	}
 }
+
+// ClearDelayMetrics clears the metrics of TTL delay
+func ClearDelayMetrics() {
+	metrics.TTLWatermarkDelay.Reset()
+}
