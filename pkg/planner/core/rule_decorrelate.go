@@ -119,7 +119,8 @@ func extractOuterApplyCorrelatedColsHelper(p base.PhysicalPlan) ([]*expression.C
 
 // DecorrelateSolver tries to convert apply plan to join plan.
 type DecorrelateSolver struct {
-	keepUniqueID map[*expression.Column]struct{}
+	// groupByColumn is to pretend the group by columns in aggregation and keep their schema information for later use.
+	groupByColumn map[*expression.Column]struct{}
 }
 
 func (*DecorrelateSolver) aggDefaultValueMap(agg *logicalop.LogicalAggregation) map[int]*expression.Constant {
@@ -186,15 +187,14 @@ func (s *DecorrelateSolver) pruneRedundantApply(p base.LogicalPlan) (base.Logica
 			child := finalResult.Children()[0]
 			nextApply, ok := child.(*logicalop.LogicalApply)
 			if !ok {
-				if len(s.keepUniqueID) == 0 {
+				if len(s.groupByColumn) == 0 {
 					return child, true
 				}
-				for col, _ := range s.keepUniqueID {
+				for col := range s.groupByColumn {
 					if apply.Schema().Contains(col) {
 						child.Schema().Append(col)
 					}
 				}
-
 				return child, true // Return the child of the last LogicalApply
 			}
 			finalResult = nextApply
@@ -206,13 +206,13 @@ func (s *DecorrelateSolver) pruneRedundantApply(p base.LogicalPlan) (base.Logica
 
 // Optimize implements base.LogicalOptRule.<0th> interface.
 func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
-	if s.keepUniqueID == nil {
-		s.keepUniqueID = make(map[*expression.Column]struct{})
+	if s.groupByColumn == nil {
+		s.groupByColumn = make(map[*expression.Column]struct{})
 	}
 	if agg, ok := p.(*logicalop.LogicalAggregation); ok {
 		for _, groupByItems := range agg.GroupByItems {
 			for _, column := range expression.ExtractColumns(groupByItems) {
-				s.keepUniqueID[column] = struct{}{}
+				s.groupByColumn[column] = struct{}{}
 			}
 		}
 	}
@@ -222,10 +222,6 @@ func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, op
 	}
 	planChanged := false
 	if apply, ok := p.(*logicalop.LogicalApply); ok {
-		if !p.SCtx().GetSessionVars().InRestrictedSQL {
-			fmt.Println("wwz fuck1")
-		}
-
 		outerPlan := apply.Children()[0]
 		innerPlan := apply.Children()[1]
 		apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.Children()[1], apply.Children()[0].Schema())
@@ -241,9 +237,6 @@ func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, op
 		} else if apply.NoDecorrelate {
 			goto NoOptimize
 		} else if sel, ok := innerPlan.(*logicalop.LogicalSelection); ok {
-			if !p.SCtx().GetSessionVars().InRestrictedSQL {
-				fmt.Println("wwz fuck2")
-			}
 			// If the inner plan is a selection, we add this condition to join predicates.
 			// Notice that no matter what kind of join is, it's always right.
 			newConds := make([]expression.Expression, 0, len(sel.Conditions))
@@ -263,9 +256,6 @@ func (s *DecorrelateSolver) Optimize(ctx context.Context, p base.LogicalPlan, op
 				return s.Optimize(ctx, p, opt)
 			}
 		} else if proj, ok := innerPlan.(*logicalop.LogicalProjection); ok {
-			if !p.SCtx().GetSessionVars().InRestrictedSQL {
-				fmt.Println("wwz fuck3")
-			}
 			// After the column pruning, some expressions in the projection operator may be pruned.
 			// In this situation, we can decorrelate the apply operator.
 			allConst := len(proj.Exprs) > 0
