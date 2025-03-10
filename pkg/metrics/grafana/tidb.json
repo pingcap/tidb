@@ -22772,7 +22772,7 @@
           "yaxes": [
             {
               "$$hashKey": "object:394",
-              "format": "binBps",
+              "format": "KiBs",
               "label": "",
               "logBase": 1,
               "max": null,
@@ -22899,7 +22899,7 @@
           "yaxes": [
             {
               "$$hashKey": "object:394",
-              "format": "bytes",
+              "format": "kbytes",
               "label": "",
               "logBase": 1,
               "max": null,
