@@ -291,6 +291,44 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 	tk.MustGetErrMsg("alter table t add unique index idx(b);", "[kv:1062]Duplicate entry '1' for key 't.idx'")
 }
 
+func TestGlobalSortAddIndexRecoverOnDuplicateCheck(t *testing.T) {
+	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
+	opt := fakestorage.Options{
+		Scheme:     "http",
+		Host:       gcsHost,
+		Port:       gcsPort,
+		PublicHost: gcsHost,
+	}
+	server, err := fakestorage.NewServerWithOptions(opt)
+	require.NoError(t, err)
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
+	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
+	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
+	defer func() {
+		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
+		vardef.CloudStorageURI.Store("")
+	}()
+	failpoints := []string{
+		"github.com/pingcap/tidb/pkg/ddl/mockCheckDuplicateForUniqueIndexError",
+	}
+
+	for _, fp := range failpoints {
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a int);")
+		tk.MustExec("insert into t values (1), (2), (3);")
+		failpoint.Enable(fp, "1*return")
+		tk.MustExec("alter table t add unique index idx(a);")
+		failpoint.Disable(fp)
+	}
+}
+
 func TestIngestUseGivenTS(t *testing.T) {
 	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
 	opt := fakestorage.Options{
