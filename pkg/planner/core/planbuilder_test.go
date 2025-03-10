@@ -897,7 +897,7 @@ func TestTraffic(t *testing.T) {
 		{
 			sql:   "show traffic jobs",
 			privs: []string{"TRAFFIC_CAPTURE_ADMIN", "TRAFFIC_REPLAY_ADMIN"},
-			cols:  7,
+			cols:  8,
 		},
 		{
 			sql:   "cancel traffic jobs",

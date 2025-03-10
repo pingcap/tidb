@@ -1510,6 +1510,10 @@ func jsonUnquoteFunctionBenefitsFromPushedDown(sf *ScalarFunction) bool {
 // Projections are not pushed down to tikv by default, thus we need to check strictly here to avoid potential performance degradation.
 // Note: virtual column is not considered here, since this function cares performance instead of functionality
 func ProjectionBenefitsFromPushedDown(exprs []Expression, inputSchemaLen int) bool {
+	// In debug usage, we need to force push down projections to tikv to check tikv expression behavior.
+	failpoint.Inject("forcePushDownTiKV", func() {
+		failpoint.Return(true)
+	})
 	allColRef := true
 	colRefCount := 0
 	for _, expr := range exprs {

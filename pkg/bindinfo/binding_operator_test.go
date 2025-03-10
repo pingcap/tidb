@@ -17,6 +17,7 @@ package bindinfo_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/testkit"
-	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,14 +46,14 @@ func TestBindingCache(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx);")
 
-	require.Nil(t, dom.BindHandle().LoadFromStorageToCache(false))
-	require.Nil(t, dom.BindHandle().LoadFromStorageToCache(false))
+	require.Nil(t, dom.BindingHandle().LoadFromStorageToCache(false))
+	require.Nil(t, dom.BindingHandle().LoadFromStorageToCache(false))
 	res := tk.MustQuery("show global bindings")
 	require.Equal(t, 2, len(res.Rows()))
 
 	tk.MustExec("drop global binding for select * from t;")
-	require.Nil(t, dom.BindHandle().LoadFromStorageToCache(false))
-	require.Equal(t, 1, len(dom.BindHandle().GetAllGlobalBindings()))
+	require.Nil(t, dom.BindingHandle().LoadFromStorageToCache(false))
+	require.Equal(t, 1, len(dom.BindingHandle().GetAllBindings()))
 }
 
 func TestBindingLastUpdateTime(t *testing.T) {
@@ -67,14 +67,14 @@ func TestBindingLastUpdateTime(t *testing.T) {
 	tk.MustExec("create global binding for select * from t0 using select * from t0 use index(a);")
 	tk.MustExec("admin reload bindings;")
 
-	bindHandle := bindinfo.NewGlobalBindingHandle(&mockSessionPool{tk.Session()})
+	bindHandle := bindinfo.NewBindingHandle(&mockSessionPool{tk.Session()})
 	err := bindHandle.LoadFromStorageToCache(true)
 	require.NoError(t, err)
 	stmt, err := parser.New().ParseOneStmt("select * from test . t0", "", "")
 	require.NoError(t, err)
 
-	_, noDBDigest := bindinfo.NormalizeStmtForBinding(stmt, bindinfo.WithoutDB(true))
-	binding, matched := bindHandle.MatchGlobalBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
+	_, noDBDigest := bindinfo.NormalizeStmtForBinding(stmt, "", true)
+	binding, matched := bindHandle.MatchingBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
 	require.True(t, matched)
 	updateTime := binding.UpdateTime.String()
 
@@ -103,10 +103,6 @@ func TestBindingLastUpdateTimeWithInvalidBind(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("admin reload bindings;")
 
-	rows1 := tk.MustQuery("show status like 'last_plan_binding_update_time';").Rows()
-	updateTime1 := rows1[0][1]
-	require.Equal(t, updateTime1, "2000-01-01 09:00:00.000")
-
 	rows2 := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows2, 0)
 }
@@ -132,15 +128,15 @@ func TestBindParse(t *testing.T) {
 	sql := fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation,source, sql_digest, plan_digest) VALUES ('%s', '%s', '%s', '%s', NOW(), NOW(),'%s', '%s', '%s', '%s', '%s')`,
 		originSQL, bindSQL, defaultDb, status, charset, collation, source, mockDigest, mockDigest)
 	tk.MustExec(sql)
-	bindHandle := bindinfo.NewGlobalBindingHandle(&mockSessionPool{tk.Session()})
+	bindHandle := bindinfo.NewBindingHandle(&mockSessionPool{tk.Session()})
 	err := bindHandle.LoadFromStorageToCache(true)
 	require.NoError(t, err)
-	require.Equal(t, 1, len(bindHandle.GetAllGlobalBindings()))
+	require.Equal(t, 1, len(bindHandle.GetAllBindings()))
 
 	stmt, err := parser.New().ParseOneStmt("select * from test . t", "", "")
 	require.NoError(t, err)
-	_, noDBDigest := bindinfo.NormalizeStmtForBinding(stmt, bindinfo.WithoutDB(true))
-	binding, matched := bindHandle.MatchGlobalBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
+	_, noDBDigest := bindinfo.NormalizeStmtForBinding(stmt, "", true)
+	binding, matched := bindHandle.MatchingBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
 	require.True(t, matched)
 	require.Equal(t, "select * from `test` . `t`", binding.OriginalSQL)
 	require.Equal(t, "select * from `test` . `t` use index(index_t)", binding.BindSQL)
@@ -435,8 +431,8 @@ func TestGlobalBinding(t *testing.T) {
 
 		stmt, _, _ := utilNormalizeWithDefaultDB(t, testSQL.querySQL)
 
-		_, noDBDigest := bindinfo.NormalizeStmtForBinding(stmt, bindinfo.WithoutDB(true))
-		binding, matched := dom.BindHandle().MatchGlobalBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
+		_, noDBDigest := bindinfo.NormalizeStmtForBinding(stmt, "", true)
+		binding, matched := dom.BindingHandle().MatchingBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
 		require.True(t, matched)
 		require.Equal(t, testSQL.originSQL, binding.OriginalSQL)
 		require.Equal(t, testSQL.bindSQL, binding.BindSQL)
@@ -463,13 +459,13 @@ func TestGlobalBinding(t *testing.T) {
 		require.NotNil(t, row.GetString(6))
 		require.NotNil(t, row.GetString(7))
 
-		bindHandle := bindinfo.NewGlobalBindingHandle(&mockSessionPool{tk.Session()})
+		bindHandle := bindinfo.NewBindingHandle(&mockSessionPool{tk.Session()})
 		err = bindHandle.LoadFromStorageToCache(true)
 		require.NoError(t, err)
-		require.Equal(t, 1, len(bindHandle.GetAllGlobalBindings()))
+		require.Equal(t, 1, len(bindHandle.GetAllBindings()))
 
-		_, noDBDigest = bindinfo.NormalizeStmtForBinding(stmt, bindinfo.WithoutDB(true))
-		binding, matched = dom.BindHandle().MatchGlobalBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
+		_, noDBDigest = bindinfo.NormalizeStmtForBinding(stmt, "", true)
+		binding, matched = dom.BindingHandle().MatchingBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
 		require.True(t, matched)
 		require.Equal(t, testSQL.originSQL, binding.OriginalSQL)
 		require.Equal(t, testSQL.bindSQL, binding.BindSQL)
@@ -483,16 +479,16 @@ func TestGlobalBinding(t *testing.T) {
 		_, err = tk.Exec("drop global " + testSQL.dropSQL)
 		require.Equal(t, uint64(1), tk.Session().AffectedRows())
 		require.NoError(t, err)
-		_, noDBDigest = bindinfo.NormalizeStmtForBinding(stmt, bindinfo.WithoutDB(true))
-		_, matched = dom.BindHandle().MatchGlobalBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
+		_, noDBDigest = bindinfo.NormalizeStmtForBinding(stmt, "", true)
+		_, matched = dom.BindingHandle().MatchingBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
 		require.False(t, matched) // dropped
-		bindHandle = bindinfo.NewGlobalBindingHandle(&mockSessionPool{tk.Session()})
+		bindHandle = bindinfo.NewBindingHandle(&mockSessionPool{tk.Session()})
 		err = bindHandle.LoadFromStorageToCache(true)
 		require.NoError(t, err)
-		require.Equal(t, 0, len(bindHandle.GetAllGlobalBindings()))
+		require.Equal(t, 0, len(bindHandle.GetAllBindings()))
 
-		_, noDBDigest = bindinfo.NormalizeStmtForBinding(stmt, bindinfo.WithoutDB(true))
-		_, matched = dom.BindHandle().MatchGlobalBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
+		_, noDBDigest = bindinfo.NormalizeStmtForBinding(stmt, "", true)
+		_, matched = dom.BindingHandle().MatchingBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
 		require.False(t, matched) // dropped
 
 		rs, err = tk.Exec("show global bindings")
@@ -516,7 +512,7 @@ func TestOutdatedInfoSchema(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
-	require.Nil(t, dom.BindHandle().LoadFromStorageToCache(false))
+	require.Nil(t, dom.BindingHandle().LoadFromStorageToCache(false))
 	utilCleanBindingEnv(tk)
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
 }
@@ -679,7 +675,7 @@ func TestNormalizeStmtForBinding(t *testing.T) {
 	}
 	for _, test := range tests {
 		stmt, _, _ := utilNormalizeWithDefaultDB(t, test.sql)
-		n, digest := bindinfo.NormalizeStmtForBinding(stmt, bindinfo.WithoutDB(true))
+		n, digest := bindinfo.NormalizeStmtForBinding(stmt, "", true)
 		require.Equal(t, test.normalized, n)
 		require.Equal(t, test.digest, digest)
 	}
@@ -696,40 +692,40 @@ func TestHintsSetID(t *testing.T) {
 	// Verify the added Binding contains ID with restored query block.
 	stmt, err := parser.New().ParseOneStmt("select * from t where a > ?", "", "")
 	require.NoError(t, err)
-	_, noDBDigest := bindinfo.NormalizeStmtForBinding(stmt, bindinfo.WithoutDB(true))
-	binding, matched := dom.BindHandle().MatchGlobalBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
+	_, noDBDigest := bindinfo.NormalizeStmtForBinding(stmt, "", true)
+	binding, matched := dom.BindingHandle().MatchingBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
 	require.True(t, matched)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", binding.OriginalSQL)
 	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", binding.ID)
 
 	utilCleanBindingEnv(tk)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(t, idx_a) */ * from t where a > 10")
-	_, noDBDigest = bindinfo.NormalizeStmtForBinding(stmt, bindinfo.WithoutDB(true))
-	binding, matched = dom.BindHandle().MatchGlobalBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
+	_, noDBDigest = bindinfo.NormalizeStmtForBinding(stmt, "", true)
+	binding, matched = dom.BindingHandle().MatchingBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
 	require.True(t, matched)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", binding.OriginalSQL)
 	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", binding.ID)
 
 	utilCleanBindingEnv(tk)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(@sel_1 t, idx_a) */ * from t where a > 10")
-	_, noDBDigest = bindinfo.NormalizeStmtForBinding(stmt, bindinfo.WithoutDB(true))
-	binding, matched = dom.BindHandle().MatchGlobalBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
+	_, noDBDigest = bindinfo.NormalizeStmtForBinding(stmt, "", true)
+	binding, matched = dom.BindingHandle().MatchingBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
 	require.True(t, matched)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", binding.OriginalSQL)
 	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", binding.ID)
 
 	utilCleanBindingEnv(tk)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(@qb1 t, idx_a) qb_name(qb1) */ * from t where a > 10")
-	_, noDBDigest = bindinfo.NormalizeStmtForBinding(stmt, bindinfo.WithoutDB(true))
-	binding, matched = dom.BindHandle().MatchGlobalBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
+	_, noDBDigest = bindinfo.NormalizeStmtForBinding(stmt, "", true)
+	binding, matched = dom.BindingHandle().MatchingBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
 	require.True(t, matched)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", binding.OriginalSQL)
 	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", binding.ID)
 
 	utilCleanBindingEnv(tk)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(T, IDX_A) */ * from t where a > 10")
-	_, noDBDigest = bindinfo.NormalizeStmtForBinding(stmt, bindinfo.WithoutDB(true))
-	binding, matched = dom.BindHandle().MatchGlobalBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
+	_, noDBDigest = bindinfo.NormalizeStmtForBinding(stmt, "", true)
+	binding, matched = dom.BindingHandle().MatchingBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
 	require.True(t, matched)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", binding.OriginalSQL)
 	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", binding.ID)
@@ -738,8 +734,8 @@ func TestHintsSetID(t *testing.T) {
 	err = tk.ExecToErr("create global binding for select * from t using select /*+ non_exist_hint() */ * from t")
 	require.True(t, terror.ErrorEqual(err, parser.ErrParse))
 	tk.MustExec("create global binding for select * from t where a > 10 using select * from t where a > 10")
-	_, noDBDigest = bindinfo.NormalizeStmtForBinding(stmt, bindinfo.WithoutDB(true))
-	binding, matched = dom.BindHandle().MatchGlobalBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
+	_, noDBDigest = bindinfo.NormalizeStmtForBinding(stmt, "", true)
+	binding, matched = dom.BindingHandle().MatchingBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
 	require.True(t, matched)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", binding.OriginalSQL)
 }
@@ -761,8 +757,8 @@ func TestErrorBind(t *testing.T) {
 
 	stmt, err := parser.New().ParseOneStmt("select * from test . t where i > ?", "", "")
 	require.NoError(t, err)
-	_, noDBDigest := bindinfo.NormalizeStmtForBinding(stmt, bindinfo.WithoutDB(true))
-	binding, matched := dom.BindHandle().MatchGlobalBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
+	_, noDBDigest := bindinfo.NormalizeStmtForBinding(stmt, "", true)
+	binding, matched := dom.BindingHandle().MatchingBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
 	require.True(t, matched)
 	require.Equal(t, "select * from `test` . `t` where `i` > ?", binding.OriginalSQL)
 	require.Equal(t, "SELECT * FROM `test`.`t` USE INDEX (`index_t`) WHERE `i` > 100", binding.BindSQL)
@@ -801,8 +797,8 @@ func TestBestPlanInBaselines(t *testing.T) {
 
 	stmt, _, _ := utilNormalizeWithDefaultDB(t, "select a, b from t where a = 1 limit 0, 1")
 
-	_, noDBDigest := bindinfo.NormalizeStmtForBinding(stmt, bindinfo.WithoutDB(true))
-	binding, matched := dom.BindHandle().MatchGlobalBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
+	_, noDBDigest := bindinfo.NormalizeStmtForBinding(stmt, "", true)
+	binding, matched := dom.BindingHandle().MatchingBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
 	require.True(t, matched)
 	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` = ? limit ...", binding.OriginalSQL)
 	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `ia`)*/ `a`,`b` FROM `test`.`t` WHERE `a` = 1 LIMIT 0,1", binding.BindSQL)
@@ -844,8 +840,8 @@ func TestBindingSymbolList(t *testing.T) {
 	stmt, err := parser.New().ParseOneStmt("select a, b from test . t where a = 1 limit 0, 1", "", "")
 	require.NoError(t, err)
 
-	_, noDBDigest := bindinfo.NormalizeStmtForBinding(stmt, bindinfo.WithoutDB(true))
-	binding, matched := dom.BindHandle().MatchGlobalBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
+	_, noDBDigest := bindinfo.NormalizeStmtForBinding(stmt, "", true)
+	binding, matched := dom.BindingHandle().MatchingBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
 	require.True(t, matched)
 	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` = ? limit ...", binding.OriginalSQL)
 	require.Equal(t, "SELECT `a`,`b` FROM `test`.`t` USE INDEX (`ib`) WHERE `a` = 1 LIMIT 0,1", binding.BindSQL)
@@ -855,6 +851,44 @@ func TestBindingSymbolList(t *testing.T) {
 	require.NotNil(t, binding.Collation)
 	require.NotNil(t, binding.CreateTime)
 	require.NotNil(t, binding.UpdateTime)
+}
+
+func TestBindingQueryInList(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int)`)
+
+	inList := []string{"(1)", "(1, 2)", "(1, 2, 3)"}
+	for _, bindingInList := range inList {
+		tk.MustExec(`create global binding using select * from t where a in ` + bindingInList)
+		require.NoError(t, dom.BindingHandle().LoadFromStorageToCache(true))
+		require.Equal(t, len(tk.MustQuery(`show global bindings`).Rows()), 1)
+
+		for _, queryInList := range inList {
+			tk.MustQuery(`select * from t where a in ` + queryInList)
+			tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+		}
+
+		tk.MustExec(`drop global binding for select * from t where a in ` + bindingInList)
+		require.NoError(t, dom.BindingHandle().LoadFromStorageToCache(true))
+		require.Equal(t, len(tk.MustQuery(`show global bindings`).Rows()), 0)
+	}
+}
+
+func TestTooLongBinding(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int)`)
+	predicates := make([]string, 0, 65535)
+	for i := 0; i < cap(predicates); i++ {
+		predicates = append(predicates, fmt.Sprintf("t.a=%d", i))
+	}
+	bindingSQL := fmt.Sprintf("create global binding using select * from t where %s", strings.Join(predicates, " or "))
+	err := tk.ExecToErr(bindingSQL)
+	require.ErrorContains(t, err, "Data too long")
 }
 
 // TestBindingInListWithSingleLiteral tests sql with "IN (Lit)", fixes #44298
@@ -889,8 +923,8 @@ func TestBindingInListWithSingleLiteral(t *testing.T) {
 	stmt, err := parser.New().ParseOneStmt("select a, b from test . t where a in (1)", "", "")
 	require.NoError(t, err)
 
-	_, noDBDigest := bindinfo.NormalizeStmtForBinding(stmt, bindinfo.WithoutDB(true))
-	binding, matched := dom.BindHandle().MatchGlobalBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
+	_, noDBDigest := bindinfo.NormalizeStmtForBinding(stmt, "", true)
+	binding, matched := dom.BindingHandle().MatchingBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
 	require.True(t, matched)
 	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` in ( ... )", binding.OriginalSQL)
 	require.Equal(t, "SELECT `a`,`b` FROM `test`.`t` USE INDEX (`ib`) WHERE `a` IN (1,2,3)", binding.BindSQL)
@@ -913,6 +947,6 @@ func utilNormalizeWithDefaultDB(t *testing.T, sql string) (stmt ast.StmtNode, no
 	testParser := parser.New()
 	stmt, err := testParser.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
-	normalized, digestResult := parser.NormalizeDigestForBinding(utilparser.RestoreWithDefaultDB(stmt, "test", ""))
+	normalized, digestResult := parser.NormalizeDigestForBinding(bindinfo.RestoreDBForBinding(stmt, "test"))
 	return stmt, normalized, digestResult.String()
 }

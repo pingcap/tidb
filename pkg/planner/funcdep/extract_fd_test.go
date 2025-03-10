@@ -208,6 +208,11 @@ func TestFDSet_ExtractFD(t *testing.T) {
 			// 2: c and d are equivalent.
 			fd: "{(1)-->(2-4), (2,3)~~>(1,4), (2,4)-->(1,3)} >>> {(1)-->(2-4), (2,3)-->(1,4), (2,4)-->(1,3), (3,4)==(3,4)} >>> {(1)-->(2-4), (2,3)-->(1,4), (2,4)-->(1,3), (3,4)==(3,4)}",
 		},
+		{
+			sql:  "select (select t1.a from t2) from t1",
+			best: "Apply{DataScan(t1)->DataScan(t2)->Projection->MaxOneRow}->Projection",
+			fd:   "{(1)-->(2,3,10), (2,3)~~>(1), (10)~~>(1)} >>> {}",
+		},
 	}
 
 	ctx := context.TODO()

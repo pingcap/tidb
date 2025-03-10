@@ -209,8 +209,8 @@ func (p *PhysicalHashJoin) Attach2Task(tasks ...base.Task) base.Task {
 	if p.storeTp == kv.TiFlash {
 		return p.attach2TaskForTiFlash(tasks...)
 	}
-	lTask := tasks[0].ConvertToRootTask(p.SCtx())
 	rTask := tasks[1].ConvertToRootTask(p.SCtx())
+	lTask := tasks[0].ConvertToRootTask(p.SCtx())
 	p.SetChildren(lTask.Plan(), rTask.Plan())
 	task := &RootTask{}
 	task.SetPlan(p)
@@ -391,8 +391,8 @@ func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *MppTask) (*M
 }
 
 func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
-	lTask, lok := tasks[0].(*MppTask)
 	rTask, rok := tasks[1].(*MppTask)
+	lTask, lok := tasks[0].(*MppTask)
 	if !lok || !rok {
 		return base.InvalidTask
 	}
@@ -499,8 +499,8 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 }
 
 func (p *PhysicalHashJoin) attach2TaskForTiFlash(tasks ...base.Task) base.Task {
-	lTask, lok := tasks[0].(*CopTask)
 	rTask, rok := tasks[1].(*CopTask)
+	lTask, lok := tasks[0].(*CopTask)
 	if !lok || !rok {
 		return p.attach2TaskForMpp(tasks...)
 	}
@@ -2647,7 +2647,15 @@ func (t *MppTask) needEnforceExchanger(prop *property.PhysicalProperty) bool {
 		}
 		// TODO: consider equalivant class
 		// for example, if already partitioned by hash(B,C), then same (A,B,C) must distribute on a same node.
-		return !prop.IsSubset(t.hashCols)
+		if len(prop.MPPPartitionCols) != len(t.hashCols) {
+			return true
+		}
+		for i, col := range prop.MPPPartitionCols {
+			if !col.Equal(t.hashCols[i]) {
+				return true
+			}
+		}
+		return false
 	}
 }
 

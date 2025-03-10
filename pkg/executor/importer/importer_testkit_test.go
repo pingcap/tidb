@@ -345,7 +345,7 @@ func TestProcessChunkWith(t *testing.T) {
 		require.NoError(t, err)
 		checksumMap := checksum.GetInnerChecksums()
 		require.Len(t, checksumMap, 1)
-		require.Equal(t, verify.MakeKVChecksum(111, 3, 14585065391351463171), *checksumMap[verify.DataKVGroupID])
+		require.Equal(t, verify.MakeKVChecksum(111, 3, 17951921359894607752), *checksumMap[verify.DataKVGroupID])
 	})
 }
 
@@ -370,6 +370,7 @@ func TestPopulateChunks(t *testing.T) {
 	engines, err := ti.PopulateChunks(ctx)
 	require.NoError(t, err)
 	require.Len(t, engines, 3)
-	require.Len(t, engines[0].Chunks, 2)
-	require.Len(t, engines[1].Chunks, 1)
+	require.Len(t, engines[0], 2)
+	require.Len(t, engines[1], 1)
+	require.Len(t, engines[common.IndexEngineID], 0)
 }

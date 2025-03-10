@@ -996,6 +996,14 @@ var defaultSysVars = []*SysVar{
 			return normalizedValue, nil
 		},
 	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.MaxUserConnections, Value: strconv.FormatUint(vardef.DefMaxUserConnections, 10), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: 100000,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			vardef.MaxUserConnectionsValue.Store(uint32(TidbOptInt64(val, vardef.DefMaxUserConnections)))
+			return nil
+		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return strconv.FormatUint(uint64(vardef.MaxUserConnectionsValue.Load()), 10), nil
+		},
+	},
 	// variable for top SQL feature.
 	// TopSQL enable only be controlled by TopSQL pub/sub sinker.
 	// This global variable only uses to update the global config which store in PD(ETCD).
@@ -3422,7 +3430,15 @@ var defaultSysVars = []*SysVar{
 		s.SharedLockPromotion = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMaxDistTaskNodes, Value: strconv.Itoa(vardef.DefTiDBMaxDistTaskNodes), Type: vardef.TypeInt, MinValue: -1, MaxValue: 128},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMaxDistTaskNodes, Value: strconv.Itoa(vardef.DefTiDBMaxDistTaskNodes), Type: vardef.TypeInt, MinValue: -1, MaxValue: 128,
+		Validation: func(s *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+			maxNodes := TidbOptInt(normalizedValue, vardef.DefTiDBMaxDistTaskNodes)
+			if maxNodes == 0 {
+				return normalizedValue, errors.New("max_dist_task_nodes should be -1 or [1, 128]")
+			}
+			return normalizedValue, nil
+		},
+	},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBTSOClientRPCMode, Value: vardef.DefTiDBTSOClientRPCMode, Type: vardef.TypeEnum, PossibleValues: []string{vardef.TSOClientRPCModeDefault, vardef.TSOClientRPCModeParallel, vardef.TSOClientRPCModeParallelFast},
 		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 			return (*SetPDClientDynamicOption.Load())(vardef.TiDBTSOClientRPCMode, val)
@@ -3441,6 +3457,15 @@ var defaultSysVars = []*SysVar{
 			vardef.AccelerateUserCreationUpdate.Store(TiDBOptOn(val))
 			return nil
 		},
+	},
+	{
+		Scope:      vardef.ScopeGlobal | vardef.ScopeSession,
+		Name:       vardef.TiDBPipelinedDmlResourcePolicy,
+		Value:      vardef.DefTiDBPipelinedDmlResourcePolicy,
+		Type:       vardef.TypeStr,
+		SetSession: setPipelinedDmlResourcePolicy,
+		// because the special character in custom syntax cannot be correctly handled in set_var hint
+		IsHintUpdatableVerified: true,
 	},
 }
 
@@ -3481,5 +3506,111 @@ func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {
 		return err
 	}
 	s.TiFlashComputeDispatchPolicy = p
+	return nil
+}
+
+func setPipelinedDmlResourcePolicy(s *SessionVars, val string) error {
+	// ensure the value is trimmed and lowercased
+	val = strings.TrimSpace(val)
+	lowVal := strings.ToLower(val)
+	switch lowVal {
+	case vardef.StrategyStandard:
+		s.PipelinedDMLConfig.PipelinedFlushConcurrency = vardef.DefaultFlushConcurrency
+		s.PipelinedDMLConfig.PipelinedResolveLockConcurrency = vardef.DefaultResolveConcurrency
+		s.PipelinedDMLConfig.PipelinedWriteThrottleRatio = 0
+	case vardef.StrategyConservative:
+		s.PipelinedDMLConfig.PipelinedFlushConcurrency = vardef.ConservativeFlushConcurrency
+		s.PipelinedDMLConfig.PipelinedResolveLockConcurrency = vardef.ConservativeResolveConcurrency
+		s.PipelinedDMLConfig.PipelinedWriteThrottleRatio = 0
+	default:
+		// Create a temporary config to hold new values to avoid partial application
+		newConfig := PipelinedDMLConfig{
+			PipelinedFlushConcurrency:       vardef.DefaultFlushConcurrency,
+			PipelinedResolveLockConcurrency: vardef.DefaultResolveConcurrency,
+			PipelinedWriteThrottleRatio:     0,
+		}
+
+		// More flexible custom format validation
+		if !strings.HasPrefix(lowVal, vardef.StrategyCustom) {
+			return ErrWrongValueForVar.FastGenByArgs(vardef.TiDBPipelinedDmlResourcePolicy, val)
+		}
+
+		// Extract everything after "custom"
+		remaining := strings.TrimSpace(lowVal[len(vardef.StrategyCustom):])
+		if len(remaining) < 2 || !strings.HasPrefix(remaining, "{") || !strings.HasSuffix(remaining, "}") {
+			return ErrWrongValueForVar.FastGenByArgs(vardef.TiDBPipelinedDmlResourcePolicy, val)
+		}
+
+		// Extract and trim content between brackets
+		content := strings.TrimSpace(remaining[1 : len(remaining)-1])
+		if content == "" {
+			return ErrWrongValueForVar.FastGenByArgs(vardef.TiDBPipelinedDmlResourcePolicy, val)
+		}
+
+		// Split parameters
+		rawParams := strings.Split(content, ",")
+		for _, rawParam := range rawParams {
+			param := strings.TrimSpace(rawParam)
+			if param == "" {
+				return ErrWrongValueForVar.FastGenByArgs(vardef.TiDBPipelinedDmlResourcePolicy, val)
+			}
+
+			// Split key-values
+			parts := strings.FieldsFunc(param, func(r rune) bool {
+				return r == '=' || r == ':'
+			})
+
+			if len(parts) != 2 {
+				return ErrWrongValueForVar.FastGenByArgs(vardef.TiDBPipelinedDmlResourcePolicy, val)
+			}
+
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+
+			switch key {
+			case "concurrency":
+				concurrency, err := strconv.ParseInt(value, 10, 64)
+				if err != nil || concurrency < vardef.MinPipelinedDMLConcurrency || concurrency > vardef.MaxPipelinedDMLConcurrency {
+					logutil.BgLogger().Warn(
+						"invalid concurrency value in pipelined DML resource policy",
+						zap.String("value", val),
+						zap.String("concurrency", value),
+						zap.Error(err),
+					)
+					return ErrWrongValueForVar.FastGenByArgs(vardef.TiDBPipelinedDmlResourcePolicy, val)
+				}
+				newConfig.PipelinedFlushConcurrency = int(concurrency)
+			case "resolve_concurrency":
+				concurrency, err := strconv.ParseInt(value, 10, 64)
+				if err != nil || concurrency < vardef.MinPipelinedDMLConcurrency || concurrency > vardef.MaxPipelinedDMLConcurrency {
+					logutil.BgLogger().Warn(
+						"invalid resolve_concurrency value in pipelined DML resource policy",
+						zap.String("value", val),
+						zap.String("resolve_concurrency", value),
+						zap.Error(err),
+					)
+					return ErrWrongValueForVar.FastGenByArgs(vardef.TiDBPipelinedDmlResourcePolicy, val)
+				}
+				newConfig.PipelinedResolveLockConcurrency = int(concurrency)
+			case "write_throttle_ratio":
+				ratio, err := strconv.ParseFloat(value, 64)
+				if err != nil || ratio < 0 || ratio >= 1 {
+					logutil.BgLogger().Warn(
+						"invalid write_throttle_ratio value in pipelined DML resource policy",
+						zap.String("value", val),
+						zap.String("write_throttle_ratio", value),
+						zap.Error(err),
+					)
+					return ErrWrongValueForVar.FastGenByArgs(vardef.TiDBPipelinedDmlResourcePolicy, val)
+				}
+				newConfig.PipelinedWriteThrottleRatio = ratio
+			default:
+				return ErrWrongValueForVar.FastGenByArgs(vardef.TiDBPipelinedDmlResourcePolicy, val)
+			}
+		}
+
+		// Only apply changes after all validation passed
+		s.PipelinedDMLConfig = newConfig
+	}
 	return nil
 }

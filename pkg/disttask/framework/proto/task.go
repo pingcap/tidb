@@ -22,17 +22,18 @@ import (
 
 // see doc.go for more details.
 const (
-	TaskStatePending    TaskState = "pending"
-	TaskStateRunning    TaskState = "running"
-	TaskStateSucceed    TaskState = "succeed"
-	TaskStateFailed     TaskState = "failed"
-	TaskStateReverting  TaskState = "reverting"
-	TaskStateReverted   TaskState = "reverted"
-	TaskStateCancelling TaskState = "cancelling"
-	TaskStatePausing    TaskState = "pausing"
-	TaskStatePaused     TaskState = "paused"
-	TaskStateResuming   TaskState = "resuming"
-	TaskStateModifying  TaskState = "modifying"
+	TaskStatePending            TaskState = "pending"
+	TaskStateRunning            TaskState = "running"
+	TaskStateSucceed            TaskState = "succeed"
+	TaskStateFailed             TaskState = "failed"
+	TaskStateReverting          TaskState = "reverting"
+	TaskStateAwaitingResolution TaskState = "awaiting-resolution"
+	TaskStateReverted           TaskState = "reverted"
+	TaskStateCancelling         TaskState = "cancelling"
+	TaskStatePausing            TaskState = "pausing"
+	TaskStatePaused             TaskState = "paused"
+	TaskStateResuming           TaskState = "resuming"
+	TaskStateModifying          TaskState = "modifying"
 )
 
 type (
@@ -66,6 +67,15 @@ const (
 // TODO: remove this limit later.
 var MaxConcurrentTask = 16
 
+// ExtraParams is the extra params of task.
+// Note: only store params that's not used for filter or sort in this struct.
+type ExtraParams struct {
+	// ManualRecovery indicates whether the task can be recovered manually.
+	// if enabled, the task will enter 'awaiting-resolution' state when it failed,
+	// then the user can recover the task manually or fail it if it's not recoverable.
+	ManualRecovery bool `json:"manual_recovery"`
+}
+
 // TaskBase contains the basic information of a task.
 // we define this to avoid load task meta which might be very large into memory.
 type TaskBase struct {
@@ -87,6 +97,7 @@ type TaskBase struct {
 	TargetScope  string
 	CreateTime   time.Time
 	MaxNodeCount int
+	ExtraParams
 }
 
 // IsDone checks if the task is done.

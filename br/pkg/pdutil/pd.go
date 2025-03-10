@@ -885,3 +885,13 @@ func FetchPDVersion(ctx context.Context, pdHTTPCli pdhttp.Client) (*semver.Versi
 
 	return parseVersion(ver), nil
 }
+
+// SetFollowerHandle set the follower handle option of pd client.
+func (p *PdController) SetFollowerHandle(val bool) error {
+	err := p.pdClient.UpdateOption(opt.EnableFollowerHandle, val)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	log.Info("set follower handle", zap.Bool("enable", val))
+	return nil
+}

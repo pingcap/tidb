@@ -1065,32 +1065,32 @@ func (hg *Histogram) OutOfRangeRowCount(
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
 	rowCount = totalPercent * hg.NotNullCount()
 
-	// Upper & lower bound logic.
-	upperBound := rowCount
+	// oneValue assumes "one value qualies", and is used as either an Upper & lower bound.
+	oneValue := rowCount
 	if histNDV > 0 {
-		upperBound = hg.NotNullCount() / float64(histNDV)
+		oneValue = hg.NotNullCount() / float64(histNDV)
 	}
 
 	if !allowUseModifyCount {
 		// In OptObjectiveDeterminate mode, we can't rely on the modify count anymore.
 		// An upper bound is necessary to make the estimation make sense for predicates with bound on only one end, like a > 1.
-		// We use 1/NDV here (only the Histogram part is considered) and it seems reasonable and good enough for now.
-		return min(rowCount, upperBound)
+		// We use 1/NDV here to assume that at most 1 value qualifies.
+		return min(rowCount, oneValue)
 	}
 
-	// If the realtimeRowCount is larger than the original table rows, then any out of range estimate is unreliable.
-	// Assume at least 1/NDV is returned
 	addedRows := float64(realtimeRowCount) - hg.TotalRowCount()
-	if addedRows > 1 {
-		// Conservatively - use the larger of the left or right percent - since we are working with
-		// changes to the table since last Analyze - any out of range estimate is unreliable.
+	addedPct := addedRows / float64(realtimeRowCount)
+	// If the newly added rows is larger than the percentage that we've estimated that we're
+	// searching for out of the range, rowCount may need to be adjusted.
+	if addedPct > totalPercent {
 		// if the histogram range is invalid (too small/large - histInvalid) - totalPercent is zero
-		// and we will set rowCount to min of upperbound and added rows
-		totalPercent = min(0.5, max(leftPercent, rightPercent))
-		rowCount += totalPercent * addedRows
-		if rowCount < upperBound {
-			rowCount = min(upperBound, addedRows)
+		if histInvalid {
+			totalPercent = min(addedPct, 0.5)
 		}
+		// Attempt to account for the added rows - but not more than the totalPercent
+		outOfRangeAdded := addedRows * totalPercent
+		// Return the max of each estimate - with a minimum of one value.
+		rowCount = max(rowCount, outOfRangeAdded, oneValue)
 	}
 
 	// Use modifyCount as a final bound
@@ -1597,8 +1597,11 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 					return nil, err
 				}
 			} else {
+				// mergedBuffer is in reverse order, we need to reverse it.
+				slices.Reverse(mergeBuffer)
 				// The content in the merge buffer don't need a re-sort since we just fix some lower bound for them.
 				mergeBuffer = append(mergeBuffer, buckets[leftMostValidPosForNonOverlapping:r]...)
+				checkBucket4MergingIsSorted(sc.TypeCtx(), mergeBuffer)
 				merged, err = mergePartitionBuckets(sc, mergeBuffer)
 				if err != nil {
 					return nil, err
@@ -1630,18 +1633,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 						break
 					}
 				}
-				intest.AssertFunc(func() bool {
-					for j := i; j < leftMostInvalidPosForNextRound; j++ {
-						res, err := buckets[j].upper.Compare(sc.TypeCtx(), currentLeftMost, collate.GetBinaryCollator())
-						if err != nil {
-							return false
-						}
-						if res != 0 {
-							return false
-						}
-					}
-					return true
-				}, "the buckets are not sorted actually")
+				checkBucket4MergingIsSorted(sc.TypeCtx(), buckets[i:leftMostInvalidPosForNextRound])
 				i = leftMostInvalidPosForNextRound
 			}
 			currentLeftMost.Copy(merged.lower)
@@ -1726,6 +1718,29 @@ func sortBucketsByUpperBound(ctx types.Context, buckets []*bucket4Merging) error
 		return res
 	})
 	return sortError
+}
+
+// checkBucket4MergingIsSorted checks whether the buckets are sorted by upper bound first, then by lower bound.
+// using intest.AssertFunc to avoid the check in production.
+func checkBucket4MergingIsSorted(ctx types.Context, buckets []*bucket4Merging) {
+	intest.AssertFunc(func() bool {
+		var sortErr error
+		isOrdered := slices.IsSortedFunc(buckets, func(i, j *bucket4Merging) int {
+			res, err := i.upper.Compare(ctx, j.upper, collate.GetBinaryCollator())
+			if err != nil {
+				sortErr = err
+			}
+			if res != 0 {
+				return res
+			}
+			res, err = i.lower.Compare(ctx, j.lower, collate.GetBinaryCollator())
+			if err != nil {
+				sortErr = err
+			}
+			return res
+		})
+		return isOrdered && sortErr == nil
+	}, "the buckets are not sorted actually")
 }
 
 const (

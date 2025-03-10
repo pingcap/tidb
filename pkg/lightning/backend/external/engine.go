@@ -17,6 +17,7 @@ package external
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"sort"
 	"sync"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/docker/go-units"
 	"github.com/jfcg/sorty/v2"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -31,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -98,7 +101,6 @@ type Engine struct {
 	endKey            []byte
 	jobKeys           [][]byte
 	splitKeys         [][]byte
-	regionSplitSize   int64
 	smallBlockBufPool *membuf.Pool
 	largeBlockBufPool *membuf.Pool
 
@@ -110,8 +112,7 @@ type Engine struct {
 	// this flag also affects the strategy of loading data, either:
 	// 	less load routine + check and read hotspot file concurrently (add-index uses this one)
 	// 	more load routine + read each file using 1 reader (import-into uses this one)
-	checkHotspot          bool
-	mergerIterConcurrency int
+	checkHotspot bool
 
 	keyAdapter         common.KeyAdapter
 	duplicateDetection bool
@@ -295,13 +296,19 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	sortStart := time.Now()
 	oldSortyGor := sorty.MaxGor
 	sorty.MaxGor = uint64(e.workerConcurrency * 2)
+	var dupKey atomic.Pointer[[]byte]
 	sorty.Sort(len(e.memKVsAndBuffers.keys), func(i, k, r, s int) bool {
-		if bytes.Compare(e.memKVsAndBuffers.keys[i], e.memKVsAndBuffers.keys[k]) < 0 { // strict comparator like < or >
+		cmp := bytes.Compare(e.memKVsAndBuffers.keys[i], e.memKVsAndBuffers.keys[k])
+		if cmp < 0 { // strict comparator like < or >
 			if r != s {
 				e.memKVsAndBuffers.keys[r], e.memKVsAndBuffers.keys[s] = e.memKVsAndBuffers.keys[s], e.memKVsAndBuffers.keys[r]
 				e.memKVsAndBuffers.values[r], e.memKVsAndBuffers.values[s] = e.memKVsAndBuffers.values[s], e.memKVsAndBuffers.values[r]
 			}
 			return true
+		}
+		if cmp == 0 && i != k {
+			cloned := append([]byte(nil), e.memKVsAndBuffers.keys[i]...)
+			dupKey.Store(&cloned)
 		}
 		return false
 	})
@@ -311,6 +318,9 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	logutil.Logger(ctx).Info("sorting in loadBatchRegionData",
 		zap.Duration("cost time", time.Since(sortStart)))
 
+	if k := dupKey.Load(); k != nil {
+		return errors.Errorf("duplicate key found: %s", hex.EncodeToString(*k))
+	}
 	readAndSortSecond := time.Since(readStart).Seconds()
 	readAndSortDurHist.Observe(readAndSortSecond)
 
@@ -348,18 +358,10 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 		prev = cur
 	}
 	// last range key may be a nextKey so we should try to remove the trailing 0 if decoding failed
-	nextKey := false
 	lastKey := jobKeys[len(jobKeys)-1]
-	cur, err4 := e.keyAdapter.Decode(nil, lastKey)
-	if err4 != nil && lastKey[len(lastKey)-1] == 0 {
-		nextKey = true
-		cur, err4 = e.keyAdapter.Decode(nil, lastKey[:len(lastKey)-1])
-	}
+	cur, err4 := e.tryDecodeEndKey(lastKey)
 	if err4 != nil {
 		return err4
-	}
-	if nextKey {
-		cur = kv.Key(cur).Next()
 	}
 	ranges = append(ranges, common.Range{
 		Start: prev,
@@ -438,41 +440,62 @@ func (e *Engine) GetKeyRange() (startKey []byte, endKey []byte, err error) {
 		return e.startKey, e.endKey, nil
 	}
 
-	// when duplicate detection feature is enabled, the end key comes from
-	// DupDetectKeyAdapter.Encode or Key.Next(). We try to decode it and check the
-	// error.
-
-	start, err := e.keyAdapter.Decode(nil, e.startKey)
+	startKey, err = e.keyAdapter.Decode(nil, e.startKey)
 	if err != nil {
 		return nil, nil, err
 	}
-	end, err := e.keyAdapter.Decode(nil, e.endKey)
-	if err == nil {
-		return start, end, nil
-	}
-	// handle the case that end key is from Key.Next()
-	if e.endKey[len(e.endKey)-1] != 0 {
-		return nil, nil, err
-	}
-	endEncoded := e.endKey[:len(e.endKey)-1]
-	end, err = e.keyAdapter.Decode(nil, endEncoded)
+	endKey, err = e.tryDecodeEndKey(e.endKey)
 	if err != nil {
 		return nil, nil, err
 	}
-	return start, kv.Key(end).Next(), nil
+	return startKey, endKey, nil
 }
 
 // GetRegionSplitKeys implements common.Engine.
 func (e *Engine) GetRegionSplitKeys() ([][]byte, error) {
 	splitKeys := make([][]byte, len(e.splitKeys))
+	var (
+		err      error
+		splitKey []byte
+	)
 	for i, k := range e.splitKeys {
-		var err error
-		splitKeys[i], err = e.keyAdapter.Decode(nil, k)
+		if i < len(e.splitKeys)-1 {
+			splitKey, err = e.keyAdapter.Decode(nil, k)
+		} else {
+			splitKey, err = e.tryDecodeEndKey(k)
+		}
 		if err != nil {
 			return nil, err
 		}
+		splitKeys[i] = splitKey
 	}
 	return splitKeys, nil
+}
+
+// tryDecodeEndKey tries to decode the key from two sources.
+// When duplicate detection feature is enabled, the **end key** comes from
+// DupDetectKeyAdapter.Encode or Key.Next(). We try to decode it and check the
+// error.
+func (e Engine) tryDecodeEndKey(key []byte) (decoded []byte, err error) {
+	decoded, err = e.keyAdapter.Decode(nil, key)
+	if err == nil {
+		return
+	}
+	if _, ok := e.keyAdapter.(common.NoopKeyAdapter); ok {
+		// NoopKeyAdapter.Decode always return nil error
+		intest.Assert(false, "Unreachable code path")
+		return nil, err
+	}
+	// handle the case that end key is from Key.Next()
+	if key[len(key)-1] != 0 {
+		return nil, err
+	}
+	key = key[:len(key)-1]
+	decoded, err = e.keyAdapter.Decode(nil, key)
+	if err != nil {
+		return nil, err
+	}
+	return kv.Key(decoded).Next(), nil
 }
 
 // Close implements common.Engine.
