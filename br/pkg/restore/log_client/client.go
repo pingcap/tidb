@@ -1413,7 +1413,7 @@ func (rc *LogClient) restoreAndRewriteMetaKvEntries(
 		} else if newEntry == nil {
 			continue
 		}
-		// sanity check key will never to nil, otherwise will write invalid format data to TiKV
+		// sanity check key will never be nil, otherwise will write invalid format data to TiKV
 		if newEntry.Key == nil {
 			log.Error("invalid nil key during rewrite")
 			return 0, 0, errors.Trace(err)

@@ -30,15 +30,12 @@ type LogBackupTableHistoryManager struct {
 	// maps table/partition ID to [original, current] location info
 	tableNameHistory map[int64][2]TableLocationInfo
 	dbIdToName       map[int64]string
-	// tracks tables that have been deleted during log backup
-	deletedTables map[int64]struct{}
 }
 
 func NewTableHistoryManager() *LogBackupTableHistoryManager {
 	return &LogBackupTableHistoryManager{
 		tableNameHistory: make(map[int64][2]TableLocationInfo),
 		dbIdToName:       make(map[int64]string),
-		deletedTables:    make(map[int64]struct{}),
 	}
 }
 
@@ -76,18 +73,6 @@ func (info *LogBackupTableHistoryManager) addHistory(id int64, locationInfo Tabl
 	}
 }
 
-// MarkTableDeleted marks a table as deleted
-func (info *LogBackupTableHistoryManager) MarkTableDeleted(tableId int64) {
-	info.deletedTables[tableId] = struct{}{}
-}
-
-// MarkTablesDeleted marks multiple tables as deleted
-func (info *LogBackupTableHistoryManager) MarkTablesDeleted(tableIds []int64) {
-	for _, tableId := range tableIds {
-		info.MarkTableDeleted(tableId)
-	}
-}
-
 func (info *LogBackupTableHistoryManager) RecordDBIdToName(dbId int64, dbName string) {
 	info.dbIdToName[dbId] = dbName
 }
@@ -96,11 +81,6 @@ func (info *LogBackupTableHistoryManager) RecordDBIdToName(dbId int64, dbName st
 // Returns a map of table IDs to their original and current locations
 func (info *LogBackupTableHistoryManager) GetTableHistory() map[int64][2]TableLocationInfo {
 	return info.tableNameHistory
-}
-
-// GetDeletedTables returns a set of table IDs that have been deleted
-func (info *LogBackupTableHistoryManager) GetDeletedTables() map[int64]struct{} {
-	return info.deletedTables
 }
 
 func (info *LogBackupTableHistoryManager) GetDBNameByID(dbId int64) (string, bool) {
