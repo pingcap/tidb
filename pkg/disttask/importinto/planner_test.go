@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/opt"
@@ -186,7 +187,21 @@ func TestGenerateMergeSortSpecs(t *testing.T) {
 			proto.ImportStepEncodeAndSort: encodeStepMetaBytes,
 		},
 	}
-	specs, err := generateMergeSortSpecs(planCtx, &LogicalPlan{})
+	p := &LogicalPlan{
+		Plan: importer.Plan{
+			DBName: "db",
+			TableInfo: &model.TableInfo{
+				Name:  ast.NewCIStr("tb"),
+				State: model.StatePublic,
+			},
+			LineFieldsInfo: core.LineFieldsInfo{
+				FieldsTerminatedBy: "\t",
+				LinesTerminatedBy:  "\n",
+			},
+		},
+		Stmt: `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
+	}
+	specs, err := generateMergeSortSpecs(planCtx, p)
 	require.NoError(t, err)
 	require.Len(t, specs, 2)
 	require.Len(t, specs[0].(*MergeSortSpec).DataFiles, 2)
@@ -199,7 +214,8 @@ func TestGenerateMergeSortSpecs(t *testing.T) {
 
 	// force merge sort for all kv groups
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort"))
-	specs, err = generateMergeSortSpecs(planCtx, &LogicalPlan{Plan: importer.Plan{ForceMergeStep: true}})
+	p.Plan.ForceMergeStep = true
+	specs, err = generateMergeSortSpecs(planCtx, p)
 	require.NoError(t, err)
 	require.Len(t, specs, 4)
 	data0, data1 := specs[0].(*MergeSortSpec), specs[1].(*MergeSortSpec)
