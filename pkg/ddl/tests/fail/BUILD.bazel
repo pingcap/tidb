@@ -29,7 +29,7 @@ go_test(
         "//pkg/testkit/testsetup",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//testutils",
+        "@com_github_tikv_client_go_v2//testutils:go_default_library",
         "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",
     ],

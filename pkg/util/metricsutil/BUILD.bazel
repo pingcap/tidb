@@ -25,7 +25,7 @@ go_library(
         "//pkg/util",
         "//pkg/util/topsql/reporter/metrics",
         "@com_github_pingcap_kvproto//pkg/keyspacepb",
-        "@com_github_tikv_client_go_v2//config",
+        "@com_github_tikv_client_go_v2//config:go_default_library",
         "@com_github_tikv_pd_client//:client",
         "@com_github_tikv_pd_client//opt",
         "@com_github_tikv_pd_client//pkg/caller",

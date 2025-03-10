@@ -13,7 +13,7 @@ go_library(
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/sqlkiller",
         "@com_github_pingcap_errors//:errors",
-        "@com_github_tikv_client_go_v2//error",
+        "@com_github_tikv_client_go_v2//error:go_default_library",
         "@com_github_tikv_pd_client//errs",
     ],
 )
@@ -29,7 +29,7 @@ go_test(
         "//pkg/testkit/testsetup",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//assert",
-        "@com_github_tikv_client_go_v2//error",
+        "@com_github_tikv_client_go_v2//error:go_default_library",
         "@org_uber_go_goleak//:goleak",
     ],
 )

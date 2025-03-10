@@ -12,7 +12,7 @@ go_library(
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "@com_github_pingcap_errors//:errors",
-        "@com_github_tikv_client_go_v2//oracle",
-        "@com_github_tikv_client_go_v2//util",
+        "@com_github_tikv_client_go_v2//oracle:go_default_library",
+        "@com_github_tikv_client_go_v2//util:go_default_library",
     ],
 )

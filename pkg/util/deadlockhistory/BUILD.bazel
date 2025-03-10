@@ -10,7 +10,7 @@ go_library(
         "//pkg/types",
         "//pkg/util/logutil",
         "//pkg/util/resourcegrouptag",
-        "@com_github_tikv_client_go_v2//error",
+        "@com_github_tikv_client_go_v2//error:go_default_library",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -34,7 +34,7 @@ go_test(
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//assert",
-        "@com_github_tikv_client_go_v2//error",
+        "@com_github_tikv_client_go_v2//error:go_default_library",
         "@org_uber_go_goleak//:goleak",
     ],
 )

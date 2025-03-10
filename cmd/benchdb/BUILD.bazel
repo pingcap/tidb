@@ -15,7 +15,7 @@ go_library(
         "//pkg/store/driver",
         "//pkg/util/logutil",
         "@com_github_pingcap_log//:log",
-        "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_client_go_v2//tikv:go_default_library",
         "@org_uber_go_zap//:zap",
     ],
 )

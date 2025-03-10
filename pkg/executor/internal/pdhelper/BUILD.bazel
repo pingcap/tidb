@@ -32,7 +32,7 @@ go_test(
         "//pkg/testkit/testsetup",
         "@com_github_jellydator_ttlcache_v3//:ttlcache",
         "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_client_go_v2//tikv:go_default_library",
         "@org_uber_go_goleak//:goleak",
     ],
 )
