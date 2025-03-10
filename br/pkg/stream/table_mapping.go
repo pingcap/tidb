@@ -556,6 +556,8 @@ func (tm *TableMappingManager) generateTempID() DownstreamID {
 }
 
 // UpdateDownstreamIds updates the mapping from old table ID to new table ID.
+// this is necessary since we override the table name during full restore directly to its end name, so we need to
+// figure out the id mapping upfront.
 func (tm *TableMappingManager) UpdateDownstreamIds(oldTables []*metautil.Table, domain *domain.Domain) error {
 	dbReplaces := make(map[UpstreamID]*DBReplace)
 
