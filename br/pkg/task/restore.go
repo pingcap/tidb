@@ -1228,6 +1228,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	// reload or register the checkpoint
 	var checkpointSetWithTableID map[int64]map[string]struct{}
 	if cfg.UseCheckpoint {
+		logRestoredTS := uint64(0)
+		if cfg.piTRTaskInfo != nil {
+			logRestoredTS = cfg.piTRTaskInfo.RestoreTS
+		}
 		sets, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(
 			ctx, cfg.snapshotCheckpointMetaManager, schedulersConfig, logRestoredTS, checkpointFirstRun)
 		if err != nil {
@@ -1494,7 +1498,7 @@ func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.
 	message := "table already exists: "
 	allUnique := true
 	for _, table := range tables {
-		_, err := mgr.GetDomain().InfoSchema().TableByName(ctx, table.DB.Name)
+		_, err := mgr.GetDomain().InfoSchema().TableByName(ctx, table.DB.Name, table.Info.Name)
 		if err == nil {
 			message += fmt.Sprintf("%s.%s ", table.DB.Name, table.Info.Name)
 			allUnique = false
