@@ -1165,14 +1165,13 @@ func (rc *LogClient) GetBaseIDMap(
 	}
 
 	if len(dbMaps) <= 0 {
-		log.Info("no id maps, build the table replaces from cluster and full backup schemas")
-		dbReplaces, err = rc.generateDBReplacesFromFullBackupStorage(ctx, cfg)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	} else {
-		dbReplaces = stream.FromDBMapProto(dbMaps)
+		log.Info("no id maps found, continue with existing db replace")
+		//dbReplaces, err = rc.generateDBReplacesFromFullBackupStorage(ctx, cfg)
+		//if err != nil {
+		//	return nil, errors.Trace(err)
+		//}
 	}
+	dbReplaces = stream.FromDBMapProto(dbMaps)
 
 	stream.LogDBReplaceMap("base db replace info", dbReplaces)
 

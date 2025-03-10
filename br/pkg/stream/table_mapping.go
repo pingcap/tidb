@@ -22,10 +22,9 @@ import (
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/restore"
+	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
@@ -33,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"go.uber.org/zap"
 )
 
 const InitialTempId int64 = 0
@@ -370,7 +368,6 @@ func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBRepl
 			}
 		}
 	}
-	LogDBReplaceMap("after merging dbReplace", tm.DBReplaceMap)
 }
 
 func (tm *TableMappingManager) IsEmpty() bool {
@@ -578,38 +575,36 @@ func (tm *TableMappingManager) generateTempID() DownstreamID {
 // UpdateDownstreamIds updates the mapping from old table ID to new table ID.
 // this is necessary since we override the table name during full restore directly to its end name, so we need to
 // figure out the id mapping upfront.
-func (tm *TableMappingManager) UpdateDownstreamIds(oldTables []*metautil.Table, domain *domain.Domain) error {
+func (tm *TableMappingManager) UpdateDownstreamIds(dbs []*metautil.Database, tables []*snapclient.CreatedTable,
+	dom *domain.Domain) error {
 	dbReplaces := make(map[UpstreamID]*DBReplace)
 
-	for _, t := range oldTables {
-		dbName, _ := utils.GetSysDBCIStrName(t.DB.Name)
-		newDBInfo, exist := domain.InfoSchema().SchemaByName(dbName)
+	for _, oldDB := range dbs {
+		newDBInfo, exists := dom.InfoSchema().SchemaByName(oldDB.Info.Name)
+		if !exists {
+			return errors.New("db not exist in snapshot stage UpdateDownstreamIds")
+		}
+		dbReplace, exist := dbReplaces[oldDB.Info.ID]
 		if !exist {
-			log.Error("db does not exist in UpdateDownstreamIds", zap.String("dbName", dbName.String()))
-			return errors.New("db does not exist when updating downstream ids at snapshot restore")
+			dbReplace = NewDBReplace(newDBInfo.Name.O, newDBInfo.ID)
+			dbReplaces[oldDB.Info.ID] = dbReplace
 		}
+	}
 
-		dbReplace, exist := dbReplaces[t.DB.ID]
+	for _, t := range tables {
+		oldTable := t.OldTable
+		newTable := t.Table
+
+		dbReplace, exist := dbReplaces[newTable.DBID]
 		if !exist {
-			dbReplace = NewDBReplace(t.DB.Name.O, newDBInfo.ID)
-			dbReplaces[t.DB.ID] = dbReplace
+			return errors.New("table exists but db not exist in UpdateDownstreamIds")
 		}
 
-		if t.Info == nil {
-			// If the db is empty, skip it.
-			continue
-		}
-		newTableInfo, err := restore.GetTableSchema(domain, dbName, t.Info.Name)
-		if err != nil {
-			log.Error("table doesn't exist in UpdateDownstreamIds", zap.String("tableName", dbName.String()+"."+t.Info.Name.String()))
-			return errors.New("db does not exist when updating downstream ids at snapshot restore")
-		}
-
-		dbReplace.TableMap[t.Info.ID] = &TableReplace{
-			Name:         newTableInfo.Name.O,
-			TableID:      newTableInfo.ID,
-			PartitionMap: restoreutils.GetPartitionIDMap(newTableInfo, t.Info),
-			IndexMap:     restoreutils.GetIndexIDMap(newTableInfo, t.Info),
+		dbReplace.TableMap[oldTable.Info.ID] = &TableReplace{
+			Name:         newTable.Name.O,
+			TableID:      newTable.ID,
+			PartitionMap: restoreutils.GetPartitionIDMap(newTable, oldTable.Info),
+			IndexMap:     restoreutils.GetIndexIDMap(newTable, oldTable.Info),
 		}
 	}
 	LogDBReplaceMap("updated id mapping after creating tables during snapshot restore", dbReplaces)
