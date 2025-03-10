@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
+	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/stream"
@@ -856,6 +857,7 @@ type SnapshotRestoreConfig struct {
 	piTRTaskInfo           *PiTRTaskInfo
 	logTableHistoryManager *stream.LogBackupTableHistoryManager
 	tableMappingManager    *stream.TableMappingManager
+	logClient              *logclient.LogClient
 }
 
 func (s *SnapshotRestoreConfig) isPiTR() (bool, error) {
@@ -1173,6 +1175,19 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	createdTables, err := createDBsAndTables(ctx, client, cfg, mgr, dbs, tables, isPiTR)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	// update table mapping manager with new table ids if pitr
+	if isPiTR {
+		if err = cfg.tableMappingManager.UpdateDownstreamIds(dbs, createdTables, client.GetDomain()); err != nil {
+			return errors.Trace(err)
+		}
+		log.Info("updated table mapping manager after creating tables")
+
+		//if err = cfg.logClient.SaveIdMapWithFailPoints(ctx, cfg.tableMappingManager, cfg.logCheckpointMetaManager); err != nil {
+		//	return errors.Trace(err)
+		//}
+		//log.Info("saved table replace map at full snapshot stage")
 	}
 
 	codec := mgr.GetStorage().GetCodec()
@@ -2121,12 +2136,6 @@ func createDBsAndTables(
 	createdTables, err := client.CreateTables(ctx, tables, newTS)
 	if err != nil {
 		return nil, errors.Trace(err)
-	}
-
-	// update table mapping manager with new table ids if pitr
-	if isPiTR {
-		cfg.tableMappingManager.UpdateDownstreamIds(tables, client.GetDomain())
-		log.Info("updated table mapping manager after creating tables")
 	}
 
 	return createdTables, nil
