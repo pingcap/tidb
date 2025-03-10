@@ -1,0 +1,58 @@
+package workloadlearning_test
+
+import (
+	"strconv"
+	"testing"
+	"time"
+
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/workloadlearning"
+	"github.com/stretchr/testify/require"
+)
+
+func TestUpdateTableCostCache(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// Create test table and insert test metrics
+	tk.MustExec(`use test`)
+	tk.MustExec("create table test (a int, b int, index idx(a))")
+
+	// Create a workload learning handle to save metrics
+	handle := workloadlearning.NewWorkloadLearningHandle(dom.SysSessionPool())
+
+	// Create test metrics
+	readTableCostMetrics := &workloadlearning.ReadTableCostMetrics{
+		DbName:        ast.CIStr{O: "test", L: "test"},
+		TableName:     ast.CIStr{O: "test", L: "test"},
+		TableScanTime: 10.0,
+		TableMemUsage: 10.0,
+		ReadFrequency: 10,
+		TableCost:     1.0,
+	}
+	tableCostMetrics := map[ast.CIStr]*workloadlearning.ReadTableCostMetrics{
+		{O: "test", L: "test"}: readTableCostMetrics,
+	}
+
+	// Save metrics to storage
+	handle.SaveReadTableCostMetrics(tableCostMetrics, time.Now(), time.Now(), dom.InfoSchema())
+
+	// Create cache worker and test UpdateTableCostCache
+	worker := workloadlearning.NewWLCacheWorker(dom.SysSessionPool())
+	err := worker.UpdateTableCostCache()
+	require.NoError(t, err)
+
+	// Get table ID for verification
+	rs := tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'test'")
+	tableIDi, _ := strconv.Atoi(rs.Rows()[0][0].(string))
+	tableID := int64(tableIDi)
+
+	// Verify cached metrics
+	metrics := worker.GetTableCostMetrics(tableID)
+	require.NotNil(t, metrics)
+	require.Equal(t, 10.0, metrics.TableScanTime)
+	require.Equal(t, 10.0, metrics.TableMemUsage)
+	require.Equal(t, int64(10), metrics.ReadFrequency)
+	require.Equal(t, 1.0, metrics.TableCost)
+}
