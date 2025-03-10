@@ -271,7 +271,12 @@ func (b *builtinDegreesSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, res
 		if result.IsNull(i) {
 			continue
 		}
-		f64s[i] = f64s[i] * 180 / math.Pi
+		res := f64s[i] * 180 / math.Pi
+		if math.IsInf(res, 0) {
+			s := fmt.Sprintf("degrees(%s)", b.args[0])
+			return types.ErrOverflow.GenWithStackByArgs("DOUBLE", s)
+		}
+		f64s[i] = res
 	}
 	return nil
 }
