@@ -57,6 +57,13 @@ type LogicalPlan struct {
 	ChunkMap          map[int32][]importer.Chunk
 }
 
+// GetTaskExtraParams implements the planner.LogicalPlan interface.
+func (p *LogicalPlan) GetTaskExtraParams() proto.ExtraParams {
+	return proto.ExtraParams{
+		ManualRecovery: p.Plan.ManualRecovery,
+	}
+}
+
 // ToTaskMeta converts the logical plan to task meta.
 func (p *LogicalPlan) ToTaskMeta() ([]byte, error) {
 	taskMeta := TaskMeta{
