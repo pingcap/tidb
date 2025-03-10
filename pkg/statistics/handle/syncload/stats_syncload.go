@@ -241,7 +241,7 @@ func (s *statsSyncLoad) SubLoadWorker(sctx sessionctx.Context, exit chan struct{
 				logutil.BgLogger().Info("SubLoadWorker: exits now because the domain is closed.")
 				return
 			default:
-				logutil.ErrVerboseLogger().Error("SubLoadWorker: failed to handle one task",
+				logutil.ErrVerboseLogger().Warn("SubLoadWorker: failed to handle one task",
 					zap.Error(err),
 					zap.String("task", task.Item.Key()),
 					zap.Int("retry", task.Retry),
