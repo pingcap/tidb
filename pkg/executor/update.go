@@ -21,6 +21,7 @@ import (
 	"runtime/trace"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -566,7 +567,7 @@ func (e *UpdateExec) setMessage() {
 	numMatched := e.matched
 	numChanged := stmtCtx.UpdatedRows()
 	numWarnings := stmtCtx.WarningCount()
-	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrUpdateInfo].Raw, numMatched, numChanged, numWarnings)
+	msg := fmt.Sprintf(errno.MySQLErrName[errno.ErrUpdateInfo].Raw, numMatched, numChanged, numWarnings)
 	stmtCtx.SetMessage(msg)
 }
 

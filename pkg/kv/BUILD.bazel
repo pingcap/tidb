@@ -26,7 +26,6 @@ go_library(
         "//pkg/errno",
         "//pkg/meta/model",
         "//pkg/parser",
-        "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/resourcegroup",
         "//pkg/types",
@@ -82,8 +81,8 @@ go_test(
     flaky = True,
     shard_count = 23,
     deps = [
+        "//pkg/errno",
         "//pkg/meta/model",
-        "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/vardef",

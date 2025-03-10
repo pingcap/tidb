@@ -37,6 +37,7 @@ go_test(
     flaky = True,
     shard_count = 23,
     deps = [
+        "//pkg/errno",
         "//pkg/kv",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
