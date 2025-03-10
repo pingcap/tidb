@@ -1031,7 +1031,7 @@ func readFilteredFullBackupTables(
 				tableAdded = true
 				continue
 			}
-			if !piTRIdTracker.ContainsTableId(db.Info.ID, table.Info.ID) {
+			if !piTRIdTracker.ContainsTableId(table.Info.ID) {
 				continue
 			}
 			tables[table.Info.ID] = table
@@ -1413,6 +1413,11 @@ func (rc *LogClient) restoreAndRewriteMetaKvEntries(
 		} else if newEntry == nil {
 			continue
 		}
+		// sanity check key will never be nil, otherwise will write invalid format data to TiKV
+		if newEntry.Key == nil {
+			log.Error("invalid nil key during rewrite")
+			return 0, 0, errors.Trace(err)
+		}
 		log.Debug("after rewrite entry", zap.Int("new-key-len", len(newEntry.Key)),
 			zap.Int("new-value-len", len(entry.E.Value)), zap.ByteString("new-key", newEntry.Key))
 
@@ -1523,7 +1528,58 @@ func (rc *LogClient) UpdateSchemaVersionFullReload(ctx context.Context) error {
 	return nil
 }
 
-// WrapCompactedFilesIteratorWithSplit applies a splitting strategy to the compacted files iterator.
+// SetTableModeToNormal sets the table mode back to normal from restore mode if needed.
+func (rc *LogClient) SetTableModeToNormal(ctx context.Context, schemaReplace *stream.SchemasReplace) error {
+	const batchSize = 8
+
+	var tables []struct {
+		schemaID int64
+		tableID  int64
+	}
+
+	// collect all tables that need to be set to normal mode
+	for _, dbReplace := range schemaReplace.DbReplaceMap {
+		if dbReplace.FilteredOut {
+			continue
+		}
+		for _, tableReplace := range dbReplace.TableMap {
+			if tableReplace.FilteredOut {
+				continue
+			}
+			tables = append(tables, struct {
+				schemaID int64
+				tableID  int64
+			}{
+				schemaID: dbReplace.DbID,
+				tableID:  tableReplace.TableID,
+			})
+		}
+	}
+
+	log.Info("going to alter table mode", zap.Int("num", len(tables)))
+
+	// process tables in batches
+	// TODO: Need batch support from DDL
+	for i := 0; i < len(tables); i += batchSize {
+		end := i + batchSize
+		if end > len(tables) {
+			end = len(tables)
+		}
+
+		for _, table := range tables[i:end] {
+			log.Info("altering table mode", zap.Int64("schemaID", table.schemaID), zap.Any("table id", table.tableID))
+			if err := rc.unsafeSession.AlterTableMode(ctx, table.schemaID, table.tableID, model.TableModeNormal); err != nil {
+				log.Warn("failed to alter table mode, continuing with other tables",
+					zap.Int64("schemaID", table.schemaID),
+					zap.Any("tableID", table.tableID),
+					zap.Error(err))
+			}
+		}
+	}
+	return nil
+}
+
+// WrapCompactedFilesIterWithSplitHelper applies a splitting strategy to the compacted files iterator.
 // It uses a region splitter to handle the splitting logic based on the provided rules and checkpoint sets.
 func (rc *LogClient) WrapCompactedFilesIterWithSplitHelper(
 	ctx context.Context,
