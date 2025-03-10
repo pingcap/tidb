@@ -1443,6 +1443,7 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 				v2 := dom.InfoSchema().SchemaMetaVersion()
 				if v2 > v1 {
 					// Also wait for the new infoschema loading
+					v1 = v2
 					break
 				}
 			}
@@ -1454,7 +1455,7 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	tkTmp.MustExec(`begin`)
 	tkTmp.MustExec("use test")
 	tkTmp.MustQuery(`select count(*) from test_global`).Check(testkit.Rows("5"))
-	// use mdl to block ddl job state.
+	// Begin txn before tx2 rollbcak to let mdl block ddl job state.
 	tk4.MustExec(`begin`)
 	tk2.MustExec(`rollback`)
 	tk4.MustExec(`insert into test_global values (5,5,5)`)
