@@ -62,7 +62,7 @@ func newCloudImportExecutor(
 
 func (m *cloudImportExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor init subtask exec env")
-	cfg, bd, err := ingest.CreateLocalBackend(ctx, m.store, m.job, false)
+	cfg, bd, err := ingest.CreateLocalBackend(ctx, m.store, m.job)
 	if err != nil {
 		return errors.Trace(err)
 	}
