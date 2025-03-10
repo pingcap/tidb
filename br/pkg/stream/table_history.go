@@ -15,9 +15,7 @@
 package stream
 
 import (
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"go.uber.org/zap"
 )
 
 // TableLocationInfo stores the table name, db id, and parent table id if is a partition
@@ -122,7 +120,6 @@ func (info *LogBackupTableHistoryManager) OnDatabaseInfo(dbInfo *model.DBInfo) {
 // OnTableInfo implements MetaInfoCollector.OnTableInfo
 func (info *LogBackupTableHistoryManager) OnTableInfo(dbID int64, tableInfo *model.TableInfo) {
 	info.AddTableHistory(tableInfo.ID, tableInfo.Name.O, dbID)
-	log.Info("##### on table info", zap.Int64("dbID", dbID), zap.Int64("tableID", tableInfo.ID), zap.String("name", tableInfo.Name.O))
 
 	// add history for all partitions if this is a partitioned table
 	if tableInfo.Partition != nil && tableInfo.Partition.Definitions != nil {

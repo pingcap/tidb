@@ -27,13 +27,16 @@ type PiTRIdTracker struct {
 	// This handles the case where a table can be renamed across databases
 	TableIdToDBIds map[int64]map[int64]struct{}
 	PartitionIds   map[int64]struct{}
+	// DBNameToTableNames maps a database name to a set of table names it contains
+	DBNameToTableNames map[string]map[string]struct{}
 }
 
 func NewPiTRIdTracker() *PiTRIdTracker {
 	return &PiTRIdTracker{
-		DBIds:          make(map[int64]struct{}),
-		TableIdToDBIds: make(map[int64]map[int64]struct{}),
-		PartitionIds:   make(map[int64]struct{}),
+		DBIds:              make(map[int64]struct{}),
+		TableIdToDBIds:     make(map[int64]map[int64]struct{}),
+		PartitionIds:       make(map[int64]struct{}),
+		DBNameToTableNames: make(map[string]map[string]struct{}),
 	}
 }
 
@@ -74,15 +77,6 @@ func (t *PiTRIdTracker) AddDB(dbID int64) {
 	}
 
 	t.DBIds[dbID] = struct{}{}
-}
-
-// RemoveTableId removes a table ID from the tracker
-func (t *PiTRIdTracker) RemoveTableId(tableID int64) {
-	log.Info("remove tracking table id", zap.Int64("tableID", tableID))
-	if t.TableIdToDBIds == nil {
-		return
-	}
-	delete(t.TableIdToDBIds, tableID)
 }
 
 // ContainsDBAndTableId checks if the given database ID and table ID combination is tracked
@@ -150,4 +144,19 @@ func MatchTable(filter filter.Filter, schema, table string, withSys bool) bool {
 		schema = name
 	}
 	return filter.MatchTable(schema, table)
+}
+
+// TrackTableName adds a table name for the given database name
+func (t *PiTRIdTracker) TrackTableName(dbName, tableName string) {
+	log.Info("tracking table name", zap.String("dbName", dbName), zap.String("tableName", tableName))
+
+	if t.DBNameToTableNames == nil {
+		t.DBNameToTableNames = make(map[string]map[string]struct{})
+	}
+
+	if _, ok := t.DBNameToTableNames[dbName]; !ok {
+		t.DBNameToTableNames[dbName] = make(map[string]struct{})
+	}
+
+	t.DBNameToTableNames[dbName][tableName] = struct{}{}
 }
