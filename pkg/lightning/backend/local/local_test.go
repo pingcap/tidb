@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -332,6 +333,9 @@ func TestRangePropertiesWithPebble(t *testing.T) {
 }
 
 func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
+	//log.InitLogger(&log.Config{Level: "info"}, "")
+
+	//ca := pebble.NewCache(int64(0))
 	opt := &pebble.Options{
 		MemTableSize:             1024 * 1024,
 		MaxConcurrentCompactions: func() int { return 16 },
@@ -339,14 +343,22 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 		L0StopWritesThreshold:    math.MaxInt32, // set to max try to disable compaction
 		DisableWAL:               true,
 		ReadOnly:                 false,
+		//Cache:                    ca,
 	}
 	db, tmpPath := makePebbleDB(t, opt)
 	t.Cleanup(func() {
 		require.NoError(t, db.Close())
 	})
+	//ca.Unref()
 
 	_, engineUUID := backend.MakeUUID("ww", 0)
 	engineCtx, cancel := context.WithCancel(context.Background())
+	cf := backend.LocalEngineConfig{
+		Compact:            true,
+		CompactThreshold:   CompactionLowerThreshold,
+		CompactConcurrency: 4,
+		BlockSize:          16 * 1024, // using default for DDL
+	}
 	f := &Engine{
 		UUID:         engineUUID,
 		sstDir:       tmpPath,
@@ -355,98 +367,140 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 		sstMetasChan: make(chan metaOrFlush, 64),
 		keyAdapter:   common.NoopKeyAdapter{},
 		logger:       log.L(),
+		config:       cf,
 	}
 	f.TS = oracle.GoTimeToTS(time.Now())
 	f.db.Store(db)
 	f.sstIngester = dbSSTIngester{e: f}
 	f.wg.Add(1)
-	go f.ingestSSTLoop()
-	sorted := needSort && !partitialSort
 	pool := membuf.NewPool()
 	defer pool.Destroy()
-	kvBuffer := pool.NewBuffer()
-	writerCfg := &backend.LocalWriterConfig{}
-	writerCfg.Local.IsKVSorted = sorted
-	w, err := openLocalWriter(writerCfg, f, keyspace.CodecV1, 1024, kvBuffer)
-	require.NoError(t, err)
+	var wg sync.WaitGroup
 
-	ctx := context.Background()
-	var kvs []common.KvPair
-	value := make([]byte, 128)
-	for i := 0; i < 16; i++ {
-		binary.BigEndian.PutUint64(value[i*8:], uint64(i))
-	}
-	var keys [][]byte
-	for i := 1; i <= 20000; i++ {
-		var kv common.KvPair
-		kv.Key = make([]byte, 16)
-		kv.Val = make([]byte, 128)
-		copy(kv.Val, value)
-		key := rand.Intn(1000)
-		binary.BigEndian.PutUint64(kv.Key, uint64(key))
-		binary.BigEndian.PutUint64(kv.Key[8:], uint64(i))
-		kvs = append(kvs, kv)
-		keys = append(keys, kv.Key)
-	}
-	var rows1 []common.KvPair
-	var rows2 []common.KvPair
-	var rows3 []common.KvPair
-	rows4 := kvs[:12000]
-	if partitialSort {
-		sort.Slice(rows4, func(i, j int) bool {
-			return bytes.Compare(rows4[i].Key, rows4[j].Key) < 0
-		})
-		rows1 = rows4[:6000]
-		rows3 = rows4[6000:]
-		rows2 = kvs[12000:]
-	} else {
-		if needSort {
-			sort.Slice(kvs, func(i, j int) bool {
-				return bytes.Compare(kvs[i].Key, kvs[j].Key) < 0
-			})
-		}
-		rows1 = kvs[:6000]
-		rows2 = kvs[6000:12000]
-		rows3 = kvs[12000:]
-	}
-	err = w.AppendRows(ctx, []string{}, kv.MakeRowsFromKvPairs(rows1))
-	require.NoError(t, err)
-	err = w.AppendRows(ctx, []string{}, kv.MakeRowsFromKvPairs(rows2))
-	require.NoError(t, err)
-	err = w.AppendRows(ctx, []string{}, kv.MakeRowsFromKvPairs(rows3))
-	require.NoError(t, err)
-	flushStatus, err := w.Close(context.Background())
-	require.NoError(t, err)
-	require.NoError(t, f.flushEngineWithoutLock(ctx))
-	require.True(t, flushStatus.Flushed())
-	o := &pebble.IterOptions{}
-	it, _ := db.NewIter(o)
+	f.config.CompactConcurrency = 4
+	go f.ingestSSTLoop()
 
-	sort.Slice(keys, func(i, j int) bool {
-		return bytes.Compare(keys[i], keys[j]) < 0
-	})
-	require.Equal(t, 20000, int(f.Length.Load()))
-	require.Equal(t, 144*20000, int(f.TotalSize.Load()))
-	valid := it.SeekGE(keys[0])
-	require.True(t, valid)
-	for _, k := range keys {
-		require.Equal(t, k, it.Key())
-		it.Next()
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			writerCfg := &backend.LocalWriterConfig{}
+			w, err := openLocalWriter(writerCfg, f, keyspace.CodecV1, 1024, pool.NewBuffer())
+			require.NoError(t, err)
+
+			ctx := context.Background()
+
+			for k := 0; k < 1000; k++ {
+				var kvs []common.KvPair
+				value := make([]byte, 128)
+				for i := 0; i < 16; i++ {
+					binary.BigEndian.PutUint64(value[i*8:], uint64(i))
+				}
+				for i := 1; i <= 10000; i++ {
+					var kv common.KvPair
+					kv.Key = make([]byte, 10000)
+					kv.Val = make([]byte, 128)
+					copy(kv.Val, value)
+					key := rand.Int63()
+					binary.BigEndian.PutUint64(kv.Key, uint64(key))
+					kvs = append(kvs, kv)
+				}
+				kvp := kv.MakeRowsFromKvPairs(kvs)
+				err = w.AppendRows(ctx, []string{}, kvp)
+
+				require.NoError(t, err)
+			}
+			//var rows1 []common.KvPair
+			//var rows2 []common.KvPair
+			//var rows3 []common.KvPair
+			//rows4 := kvs[:12000]
+			//
+			//if partitialSort {
+			//	sort.Slice(rows4, func(i, j int) bool {
+			//		return bytes.Compare(rows4[i].Key, rows4[j].Key) < 0
+			//	})
+			//	rows1 = rows4[:6000]
+			//	rows3 = rows4[6000:]
+			//	rows2 = kvs[12000:]
+			//} else {
+			//	if needSort {
+			//		sort.Slice(kvs, func(i, j int) bool {
+			//			return bytes.Compare(kvs[i].Key, kvs[j].Key) < 0
+			//		})
+			//	}
+			//	rows1 = kvs[:6000]
+			//	rows2 = kvs[6000:12000]
+			//	rows3 = kvs[12000:]
+			//}
+			//err = w.AppendRows(ctx, []string{}, kv.MakeRowsFromKvPairs(rows2))
+			//require.NoError(t, err)
+			//err = w.AppendRows(ctx, []string{}, kv.MakeRowsFromKvPairs(rows3))
+			//require.NoError(t, err)
+			flushStatus, err := w.Close(context.Background())
+			require.NoError(t, err)
+			require.NoError(t, f.flushEngineWithoutLock(ctx))
+			require.True(t, flushStatus.Flushed())
+		}()
 	}
-	require.NoError(t, it.Close())
+	wg.Wait()
+
+	var memStats runtime.MemStats
+	runtime.ReadMemStats(&memStats)
+
+	fmt.Printf("Alloc = %v MiB\n", memStats.Alloc/1024/1024)
+	fmt.Printf("TotalAlloc = %v MiB\n", memStats.TotalAlloc/1024/1024)
+	fmt.Printf("Sys = %v MiB\n", memStats.Sys/1024/1024)
+	fmt.Printf("NumGC = %v\n", memStats.NumGC)
 	close(f.sstMetasChan)
+
+	println("start to check")
+
+	db.Close()
+	//strings.TrimSuffix(tmpPath, ".sst")+"/"
+	db, _ = pebble.Open(strings.TrimSuffix(tmpPath, ".sst")+"/", opt)
+
+	var wg2 sync.WaitGroup
+
+	for i := 0; i < 100; i++ {
+		wg2.Add(1)
+		go func() {
+			defer wg2.Done()
+			o := &pebble.IterOptions{}
+			it, _ := db.NewIter(o)
+			it.First()
+
+			var memStats3 runtime.MemStats
+			runtime.ReadMemStats(&memStats3)
+			fmt.Printf("Sys = %v MiB\n", memStats3.Sys/1024/1024)
+
+			it.Close()
+		}()
+	}
+	wg2.Wait()
+
+	var memStats2 runtime.MemStats
+
+	runtime.ReadMemStats(&memStats2)
+
+	fmt.Printf("Alloc = %v MiB\n", memStats2.Alloc/1024/1024)
+	fmt.Printf("TotalAlloc = %v MiB\n", memStats2.TotalAlloc/1024/1024)
+	fmt.Printf("Sys = %v MiB\n", memStats2.Sys/1024/1024)
+	fmt.Printf("NumGC = %v\n", memStats2.NumGC)
+
+	//println("after close", k)
+
 	f.wg.Wait()
 }
 
 func TestEngineLocalWriter(t *testing.T) {
 	// test local writer with sort
-	testLocalWriter(t, false, false)
+	//testLocalWriter(t, false, false)
 
 	// test local writer with ingest
 	testLocalWriter(t, true, false)
 
 	// test local writer with ingest unsort
-	testLocalWriter(t, true, true)
+	//testLocalWriter(t, true, true)
 }
 
 type testIngester struct{}

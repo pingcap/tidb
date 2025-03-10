@@ -1741,7 +1741,7 @@ func openLocalWriter(cfg *backend.LocalWriterConfig, engine *Engine, tikvCodec t
 		memtableSizeLimit:  cacheSize,
 		kvBuffer:           kvBuffer,
 		isKVSorted:         cfg.Local.IsKVSorted,
-		isWriteBatchSorted: true,
+		isWriteBatchSorted: false,
 		tikvCodec:          tikvCodec,
 		writeBatch:         preAllocWriteBatch,
 	}

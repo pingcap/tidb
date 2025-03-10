@@ -10,7 +10,6 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/util/israce",
         "//pkg/util/logutil",
-        "//pkg/util/versioninfo",
         "@org_uber_go_zap//:zap",
     ],
 )

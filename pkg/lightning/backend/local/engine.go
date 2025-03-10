@@ -1273,9 +1273,9 @@ func (w *Writer) AppendRows(ctx context.Context, columnNames []string, rows enco
 		}
 	}
 
-	if w.isKVSorted {
-		return w.appendRowsSorted(kvs)
-	}
+	//if w.isKVSorted {
+	//	return w.appendRowsSorted(kvs)
+	//}
 	return w.appendRowsUnsorted(ctx, kvs)
 }
 
@@ -1351,12 +1351,9 @@ func (w *Writer) flushKVs(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if !w.isWriteBatchSorted {
-		slices.SortFunc(w.writeBatch[:w.batchCount], func(i, j common.KvPair) int {
-			return bytes.Compare(i.Key, j.Key)
-		})
-		w.isWriteBatchSorted = true
-	}
+	slices.SortFunc(w.writeBatch[:w.batchCount], func(i, j common.KvPair) int {
+		return bytes.Compare(i.Key, j.Key)
+	})
 
 	err = writer.writeKVs(w.writeBatch[:w.batchCount])
 	if err != nil {
@@ -1428,7 +1425,7 @@ func newSSTWriter(path string, blockSize int) (*sstable.Writer, error) {
 		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
 			newRangePropertiesCollector,
 		},
-		BlockSize: blockSize,
+		BlockSize: 1 * 1024 * 1024,
 	})
 	return writer, nil
 }

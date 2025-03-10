@@ -200,6 +200,8 @@ func (em *engineManager) flushAllEngines(parentCtx context.Context) (err error) 
 }
 
 func (em *engineManager) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.DB, error) {
+	ca := pebble.NewCache(int64(0))
+	defer ca.Unref()
 	opt := &pebble.Options{
 		MemTableSize: uint64(em.MemTableSize),
 		// the default threshold value may cause write stall.
@@ -216,6 +218,7 @@ func (em *engineManager) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*peb
 			newRangePropertiesCollector,
 		},
 		DisableAutomaticCompactions: em.DisableAutomaticCompactions,
+		Cache:                       ca,
 	}
 	// set level target file size to avoid pebble auto triggering compaction that split ingest SST files into small SST.
 	opt.Levels = []pebble.LevelOptions{
