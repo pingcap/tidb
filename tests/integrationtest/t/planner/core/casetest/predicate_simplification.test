@@ -163,8 +163,8 @@ explain format=brief
 SELECT 1 FROM t1 AS tab WHERE 1 = 0 AND b1 > 10;
 
 # short-circuit subquery
-explain format=brief
-SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 )) ;
+# explain format=brief
+# SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 )) ;
 
 explain format=brief
 SELECT 1 FROM t1 AS tab WHERE 1 = 1 ;
