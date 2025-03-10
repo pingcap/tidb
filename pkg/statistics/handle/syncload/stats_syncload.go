@@ -34,12 +34,12 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 )
@@ -144,7 +144,7 @@ func (*statsSyncLoad) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 	var errorMsgs []string
 	defer func() {
 		if len(errorMsgs) > 0 {
-			logutil.BgLogger().Warn("SyncWaitStatsLoad meets error",
+			statslogutil.StatsLogger().Warn("SyncWaitStatsLoad meets error",
 				zap.Strings("errors", errorMsgs))
 		}
 		sc.StatsLoad.NeededItems = nil
@@ -228,7 +228,7 @@ var errExit = errors.New("Stop loading since domain is closed")
 func (s *statsSyncLoad) SubLoadWorker(sctx sessionctx.Context, exit chan struct{}, exitWg *util.WaitGroupEnhancedWrapper) {
 	defer func() {
 		exitWg.Done()
-		logutil.BgLogger().Info("SubLoadWorker: exited.")
+		statslogutil.StatsLogger().Info("SubLoadWorker: exited.")
 	}()
 	// if the last task is not successfully handled in last round for error or panic, pass it to this round to retry
 	var lastTask *statstypes.NeededItemTask
@@ -238,18 +238,18 @@ func (s *statsSyncLoad) SubLoadWorker(sctx sessionctx.Context, exit chan struct{
 		if err != nil {
 			switch err {
 			case errExit:
-				logutil.BgLogger().Info("SubLoadWorker: exits now because the domain is closed.")
+				statslogutil.StatsLogger().Info("SubLoadWorker: exits now because the domain is closed.")
 				return
 			default:
 				const msg = "SubLoadWorker: failed to handle one task"
 				if task != nil {
-					logutil.ErrVerboseLogger().Warn(msg,
+					statslogutil.SingletonStatsErrVerboseSamplerLogger().Warn(msg,
 						zap.Error(err),
 						zap.String("task", task.Item.Key()),
 						zap.Int("retry", task.Retry),
 					)
 				} else {
-					logutil.ErrVerboseLogger().Warn(msg,
+					statslogutil.SingletonStatsErrVerboseSamplerLogger().Warn(msg,
 						zap.Error(err),
 					)
 				}
@@ -271,7 +271,7 @@ func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask *statsty
 	defer func() {
 		// recover for each task, worker keeps working
 		if r := recover(); r != nil {
-			logutil.BgLogger().Error("stats loading panicked", zap.Any("error", r), zap.Stack("stack"))
+			statslogutil.StatsLogger().Error("stats loading panicked", zap.Any("error", r), zap.Stack("stack"))
 			err = errors.Errorf("stats loading panicked: %v", r)
 		}
 	}()
@@ -279,7 +279,7 @@ func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask *statsty
 		task, err = s.drainColTask(sctx, exit)
 		if err != nil {
 			if err != errExit {
-				logutil.BgLogger().Error("Fail to drain task for stats loading.", zap.Error(err))
+				statslogutil.StatsLogger().Error("Fail to drain task for stats loading.", zap.Error(err))
 			}
 			return task, err
 		}
@@ -315,7 +315,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 	defer func() {
 		// recover for each task, worker keeps working
 		if r := recover(); r != nil {
-			logutil.BgLogger().Error("handleOneItemTask panicked", zap.Any("recover", r), zap.Stack("stack"))
+			statslogutil.StatsLogger().Error("handleOneItemTask panicked", zap.Any("recover", r), zap.Stack("stack"))
 			err = errors.Errorf("stats loading panicked: %v", r)
 		}
 		if err == nil { // only recycle when no error
@@ -329,7 +329,7 @@ func (s *statsSyncLoad) handleOneItemTask(task *statstypes.NeededItemTask) (err 
 	var skipTypes map[string]struct{}
 	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBAnalyzeSkipColumnTypes)
 	if err != nil {
-		logutil.BgLogger().Warn("failed to get global variable", zap.Error(err))
+		statslogutil.StatsLogger().Warn("failed to get global variable", zap.Error(err))
 	} else {
 		skipTypes = variable.ParseAnalyzeSkipColumnTypes(val)
 	}
@@ -431,7 +431,7 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 		return nil, err
 	}
 	if hg == nil {
-		logutil.BgLogger().Warn("fail to get hist meta for this histogram, possibly a deleted one", zap.Int64("table_id", item.TableID),
+		statslogutil.StatsLogger().Warn("fail to get hist meta for this histogram, possibly a deleted one", zap.Int64("table_id", item.TableID),
 			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex),
 		)
 		return nil, errGetHistMeta
