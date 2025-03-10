@@ -228,7 +228,7 @@ var errExit = errors.New("Stop loading since domain is closed")
 func (s *statsSyncLoad) SubLoadWorker(sctx sessionctx.Context, exit chan struct{}, exitWg *util.WaitGroupEnhancedWrapper) {
 	defer func() {
 		exitWg.Done()
-		logutil.BgLogger().Info("SubLoadWorker exited.")
+		logutil.BgLogger().Info("SubLoadWorker: exited.")
 	}()
 	// if the last task is not successfully handled in last round for error or panic, pass it to this round to retry
 	var lastTask *statstypes.NeededItemTask
@@ -238,8 +238,14 @@ func (s *statsSyncLoad) SubLoadWorker(sctx sessionctx.Context, exit chan struct{
 		if err != nil {
 			switch err {
 			case errExit:
+				logutil.BgLogger().Info("SubLoadWorker: exits now because the domain is closed.")
 				return
 			default:
+				logutil.ErrVerboseLogger().Error("SubLoadWorker: failed to handle one task",
+					zap.Error(err),
+					zap.String("task", task.Item.Key()),
+					zap.Int("retry", task.Retry),
+				)
 				// To avoid the thundering herd effect
 				// thundering herd effect: Everyone tries to retry a large number of requests simultaneously when a problem occurs.
 				r := rand.Intn(500)
@@ -538,31 +544,6 @@ func (s *statsSyncLoad) drainColTask(sctx sessionctx.Context, exit chan struct{}
 func (*statsSyncLoad) writeToTimeoutChan(taskCh chan *statstypes.NeededItemTask, task *statstypes.NeededItemTask) {
 	select {
 	case taskCh <- task:
-	default:
-	}
-}
-
-// writeToChanWithTimeout writes a task to a channel and blocks until timeout.
-func (*statsSyncLoad) writeToChanWithTimeout(taskCh chan *statstypes.NeededItemTask, task *statstypes.NeededItemTask, timeout time.Duration) error {
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	select {
-	case taskCh <- task:
-	case <-timer.C:
-		return errors.New("Channel is full and timeout writing to channel")
-	}
-	return nil
-}
-
-// writeToResultChan safe-writes with panic-recover so one write-fail will not have big impact.
-func (*statsSyncLoad) writeToResultChan(resultCh chan stmtctx.StatsLoadResult, rs stmtctx.StatsLoadResult) {
-	defer func() {
-		if r := recover(); r != nil {
-			logutil.BgLogger().Error("writeToResultChan panicked", zap.Any("error", r), zap.Stack("stack"))
-		}
-	}()
-	select {
-	case resultCh <- rs:
 	default:
 	}
 }
