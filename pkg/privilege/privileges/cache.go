@@ -779,14 +779,22 @@ func addUserFilterCondition(sql string, userList []string) string {
 	return b.String()
 }
 
+<<<<<<< HEAD
 func (p *immutable) loadTable(sctx sqlexec.RestrictedSQLExecutor, sql string,
 	decodeTableRow func(chunk.Row, []*resolve.ResultField) error, userList ...string) error {
+=======
+// loadTable loads the table data by executing the sql and decoding the result data.
+// NOTE: the chunk Row passed to decodeTableRow function is reused, so decodeTableRow should clone when necessary.
+func loadTable(exec sqlexec.SQLExecutor, sql string,
+	decodeTableRow func(chunk.Row, []*resolve.ResultField) error) error {
+>>>>>>> b72ff3b659d (privilege: reuse chunk in loadTable function (#59821))
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	sql = addUserFilterCondition(sql, userList)
 	rows, fs, err := sctx.ExecRestrictedSQL(ctx, nil, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
+<<<<<<< HEAD
 	for _, row := range rows {
 		// NOTE: decodeTableRow decodes data from a chunk Row, that is a shallow copy.
 		// The result will reference memory in the chunk, so the chunk must not be reused
@@ -795,6 +803,27 @@ func (p *immutable) loadTable(sctx sqlexec.RestrictedSQLExecutor, sql string,
 		if err != nil {
 			return errors.Trace(err)
 		}
+=======
+	defer terror.Call(rs.Close)
+	fs := rs.Fields()
+	req := rs.NewChunk(nil)
+	for {
+		err = rs.Next(ctx, req)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if req.NumRows() == 0 {
+			return nil
+		}
+		it := chunk.NewIterator4Chunk(req)
+		for row := it.Begin(); row != it.End(); row = it.Next() {
+			err = decodeTableRow(row, fs)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		req.GrowAndReset(1024)
+>>>>>>> b72ff3b659d (privilege: reuse chunk in loadTable function (#59821))
 	}
 	return nil
 }
@@ -962,6 +991,7 @@ func (p *immutable) decodeGlobalPrivTableRow(row chunk.Row, fs []*resolve.Result
 	return nil
 }
 
+<<<<<<< HEAD
 func (p *immutable) decodeGlobalGrantsTableRow(row chunk.Row, fs []*resolve.ResultField) error {
 	var value dynamicPrivRecord
 	for i, f := range fs {
@@ -972,12 +1002,30 @@ func (p *immutable) decodeGlobalGrantsTableRow(row chunk.Row, fs []*resolve.Resu
 			value.GrantOption = row.GetEnum(i).String() == "Y"
 		default:
 			value.assignUserOrHost(row, i, f)
+=======
+func (p *MySQLPrivilege) decodeGlobalGrantsTableRow(userList map[string]struct{}) func(chunk.Row, []*resolve.ResultField) error {
+	return func(row chunk.Row, fs []*resolve.ResultField) error {
+		var value dynamicPrivRecord
+		for i, f := range fs {
+			switch f.ColumnAsName.L {
+			case "priv":
+				// When all characters are upper, strings.ToUpper returns a reference instead of a new copy.
+				// so strings.Clone is required here.
+				tmp := strings.Clone(row.GetString(i))
+				value.PrivilegeName = strings.ToUpper(tmp)
+			case "with_grant_option":
+				value.GrantOption = row.GetEnum(i).String() == "Y"
+			default:
+				value.assignUserOrHost(row, i, f)
+			}
+>>>>>>> b72ff3b659d (privilege: reuse chunk in loadTable function (#59821))
 		}
 	}
 	p.dynamicPriv = append(p.dynamicPriv, value)
 	return nil
 }
 
+<<<<<<< HEAD
 func (p *immutable) decodeDBTableRow(row chunk.Row, fs []*resolve.ResultField) error {
 	var value dbRecord
 	for i, f := range fs {
@@ -988,6 +1036,27 @@ func (p *immutable) decodeDBTableRow(row chunk.Row, fs []*resolve.ResultField) e
 		case f.Column.GetType() == mysql.TypeEnum:
 			if row.GetEnum(i).String() != "Y" {
 				continue
+=======
+func (p *MySQLPrivilege) decodeDBTableRow(userList map[string]struct{}) func(chunk.Row, []*resolve.ResultField) error {
+	return func(row chunk.Row, fs []*resolve.ResultField) error {
+		var value dbRecord
+		for i, f := range fs {
+			switch {
+			case f.ColumnAsName.L == "db":
+				value.DB = strings.Clone(row.GetString(i))
+				value.dbPatChars, value.dbPatTypes = stringutil.CompilePatternBinary(strings.ToUpper(value.DB), '\\')
+			case f.Column.GetType() == mysql.TypeEnum:
+				if row.GetEnum(i).String() != "Y" {
+					continue
+				}
+				priv, ok := mysql.Col2PrivType[f.ColumnAsName.O]
+				if !ok {
+					return errInvalidPrivilegeType.GenWithStack("Unknown Privilege Type!")
+				}
+				value.Privileges |= priv
+			default:
+				value.assignUserOrHost(row, i, f)
+>>>>>>> b72ff3b659d (privilege: reuse chunk in loadTable function (#59821))
 			}
 			priv, ok := mysql.Col2PrivType[f.ColumnAsName.O]
 			if !ok {
@@ -1002,6 +1071,7 @@ func (p *immutable) decodeDBTableRow(row chunk.Row, fs []*resolve.ResultField) e
 	return nil
 }
 
+<<<<<<< HEAD
 func (p *immutable) decodeTablesPrivTableRow(row chunk.Row, fs []*resolve.ResultField) error {
 	var value tablesPrivRecord
 	for i, f := range fs {
@@ -1016,6 +1086,24 @@ func (p *immutable) decodeTablesPrivTableRow(row chunk.Row, fs []*resolve.Result
 			value.ColumnPriv = decodeSetToPrivilege(row.GetSet(i))
 		default:
 			value.assignUserOrHost(row, i, f)
+=======
+func (p *MySQLPrivilege) decodeTablesPrivTableRow(userList map[string]struct{}) func(chunk.Row, []*resolve.ResultField) error {
+	return func(row chunk.Row, fs []*resolve.ResultField) error {
+		var value tablesPrivRecord
+		for i, f := range fs {
+			switch f.ColumnAsName.L {
+			case "db":
+				value.DB = strings.Clone(row.GetString(i))
+			case "table_name":
+				value.TableName = strings.Clone(row.GetString(i))
+			case "table_priv":
+				value.TablePriv = decodeSetToPrivilege(row.GetSet(i))
+			case "column_priv":
+				value.ColumnPriv = decodeSetToPrivilege(row.GetSet(i))
+			default:
+				value.assignUserOrHost(row, i, f)
+			}
+>>>>>>> b72ff3b659d (privilege: reuse chunk in loadTable function (#59821))
 		}
 	}
 	p.tablesPriv = append(p.tablesPriv, value)
@@ -1027,13 +1115,13 @@ func (p *immutable) decodeRoleEdgesTable(row chunk.Row, fs []*resolve.ResultFiel
 	for i, f := range fs {
 		switch f.ColumnAsName.L {
 		case "from_host":
-			fromHost = row.GetString(i)
+			fromHost = strings.Clone(row.GetString(i))
 		case "from_user":
-			fromUser = row.GetString(i)
+			fromUser = strings.Clone(row.GetString(i))
 		case "to_host":
-			toHost = row.GetString(i)
+			toHost = strings.Clone(row.GetString(i))
 		case "to_user":
-			toUser = row.GetString(i)
+			toUser = strings.Clone(row.GetString(i))
 		}
 	}
 	fromKey := fromUser + "@" + fromHost
@@ -1047,6 +1135,7 @@ func (p *immutable) decodeRoleEdgesTable(row chunk.Row, fs []*resolve.ResultFiel
 	return nil
 }
 
+<<<<<<< HEAD
 func (p *immutable) decodeDefaultRoleTableRow(row chunk.Row, fs []*resolve.ResultField) error {
 	var value defaultRoleRecord
 	for i, f := range fs {
@@ -1057,12 +1146,27 @@ func (p *immutable) decodeDefaultRoleTableRow(row chunk.Row, fs []*resolve.Resul
 			value.DefaultRoleUser = row.GetString(i)
 		default:
 			value.assignUserOrHost(row, i, f)
+=======
+func (p *MySQLPrivilege) decodeDefaultRoleTableRow(userList map[string]struct{}) func(chunk.Row, []*resolve.ResultField) error {
+	return func(row chunk.Row, fs []*resolve.ResultField) error {
+		var value defaultRoleRecord
+		for i, f := range fs {
+			switch f.ColumnAsName.L {
+			case "default_role_host":
+				value.DefaultRoleHost = strings.Clone(row.GetString(i))
+			case "default_role_user":
+				value.DefaultRoleUser = strings.Clone(row.GetString(i))
+			default:
+				value.assignUserOrHost(row, i, f)
+			}
+>>>>>>> b72ff3b659d (privilege: reuse chunk in loadTable function (#59821))
 		}
 	}
 	p.defaultRoles = append(p.defaultRoles, value)
 	return nil
 }
 
+<<<<<<< HEAD
 func (p *immutable) decodeColumnsPrivTableRow(row chunk.Row, fs []*resolve.ResultField) error {
 	var value columnsPrivRecord
 	for i, f := range fs {
@@ -1078,6 +1182,29 @@ func (p *immutable) decodeColumnsPrivTableRow(row chunk.Row, fs []*resolve.Resul
 			value.Timestamp, err = row.GetTime(i).GoTime(time.Local)
 			if err != nil {
 				return errors.Trace(err)
+=======
+func (p *MySQLPrivilege) decodeColumnsPrivTableRow(userList map[string]struct{}) func(chunk.Row, []*resolve.ResultField) error {
+	return func(row chunk.Row, fs []*resolve.ResultField) error {
+		var value columnsPrivRecord
+		for i, f := range fs {
+			switch f.ColumnAsName.L {
+			case "db":
+				value.DB = strings.Clone(row.GetString(i))
+			case "table_name":
+				value.TableName = strings.Clone(row.GetString(i))
+			case "column_name":
+				value.ColumnName = strings.Clone(row.GetString(i))
+			case "timestamp":
+				var err error
+				value.Timestamp, err = row.GetTime(i).GoTime(time.Local)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			case "column_priv":
+				value.ColumnPriv = decodeSetToPrivilege(row.GetSet(i))
+			default:
+				value.assignUserOrHost(row, i, f)
+>>>>>>> b72ff3b659d (privilege: reuse chunk in loadTable function (#59821))
 			}
 		case "column_priv":
 			value.ColumnPriv = decodeSetToPrivilege(row.GetSet(i))
