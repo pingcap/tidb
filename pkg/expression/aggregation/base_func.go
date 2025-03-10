@@ -246,10 +246,22 @@ func (a *baseFuncDesc) typeInfer4Sum(ctx expression.EvalContext) {
 
 // TypeInfer4AvgSum infers the type of sum from avg, which should extend the precision of decimal
 // compatible with mysql.
-func (a *baseFuncDesc) TypeInfer4AvgSum(avgRetType *types.FieldType) {
-	if avgRetType.GetType() == mysql.TypeNewDecimal {
-		a.RetTp.SetFlen(min(mysql.MaxDecimalWidth, a.RetTp.GetFlen()+22))
+func (a *baseFuncDesc) TypeInfer4AvgSum(ctx expression.EvalContext, avgRetType *types.FieldType) error {
+	if a.Name != ast.AggFuncSum {
+		return errors.Errorf("expect sum func, but got %s", a.Name)
 	}
+	// Handling column and scalar function differently to avoid breaking a MySQL compatible issue.
+	// Check: https://github.com/pingcap/tidb/blob/67edd7d8f73de399bd72490d449d1dede1ee637b/pkg/executor/test/tiflashtest/tiflash_test.go#L887
+	// For avg(div(col1, col2)), the scale of div result should be same as the scale of avg, which has been increased by 4, to make sure the result is compatible with MySQL.
+	// But for avg(col1), there is no need to increase the result scale of partial sum, because there is no complex scale upgrade for a simple column.
+	if _, ok := a.Args[0].(*expression.Column); ok {
+		a.typeInfer4Sum(ctx)
+	} else {
+		if avgRetType.GetType() == mysql.TypeNewDecimal {
+			a.RetTp.SetFlen(min(mysql.MaxDecimalWidth, a.RetTp.GetFlen()+22))
+		}
+	}
+	return nil
 }
 
 // TypeInfer4FinalCount infers the type of sum agg which is rewritten from final count agg run on MPP mode.
