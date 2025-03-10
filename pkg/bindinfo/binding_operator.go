@@ -93,6 +93,9 @@ func (op *bindingOperator) CreateBinding(sctx sessionctx.Context, bindings []*Bi
 			binding.CreateTime = now
 			binding.UpdateTime = now
 
+			// TODO: update the sql_mode or sctx.types.Flag to let execution engine returns errors like dataTooLong,
+			// overflow directly.
+
 			// Insert the Bindings to the storage.
 			_, err = exec(
 				sctx,
