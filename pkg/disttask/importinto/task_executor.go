@@ -17,7 +17,6 @@ package importinto
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"path"
 	"strconv"
 	"sync"
@@ -615,6 +614,6 @@ func (e *importExecutor) Close() {
 func sortedMetaPath(taskID int64, subtaskID int64) string {
 	// generate a unique file name for the sorted data meta.
 	prefix := path.Join(strconv.Itoa(int(taskID)), strconv.Itoa(int(subtaskID)), "sortedmeta")
-	// taskID/subtaskID/sortedmeta/
+	// taskID/subtaskID/sortedmeta/sortedmeta.json
 	return path.Join(prefix, "sortedmeta.json")
 }
