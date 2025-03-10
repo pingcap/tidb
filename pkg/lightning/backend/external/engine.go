@@ -53,6 +53,7 @@ import (
 // many data as possible, while minimizing the number of SSTs (too many SST file,
 // say 500K, will cause TiKV slow down when ingest), and make the SST be more even,
 // so we calculate RangeS by:
+//   - RS = region size
 //   - let TempRangeS = SS
 //   - if TempRangeS < RS, RangeS = RS / ceil(RS / TempRangeS) + 1,
 //     trailing 1 is for RS divided by odd number.
