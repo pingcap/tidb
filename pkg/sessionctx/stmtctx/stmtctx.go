@@ -132,6 +132,34 @@ func (r *ReservedRowIDAlloc) Exhausted() bool {
 	return r.base >= r.max
 }
 
+type stmtCtxMu struct {
+	sync.Mutex
+
+	affectedRows uint64
+	foundRows    uint64
+
+	/*
+		following variables are ported from 'COPY_INFO' struct of MySQL server source,
+		they are used to count rows for INSERT/REPLACE/UPDATE queries:
+		  If a row is inserted then the copied variable is incremented.
+		  If a row is updated by the INSERT ... ON DUPLICATE KEY UPDATE and the
+		     new data differs from the old one then the copied and the updated
+		     variables are incremented.
+		  The touched variable is incremented if a row was touched by the update part
+		     of the INSERT ... ON DUPLICATE KEY UPDATE no matter whether the row
+		     was actually changed or not.
+
+		see https://github.com/mysql/mysql-server/blob/d2029238d6d9f648077664e4cdd611e231a6dc14/sql/sql_data_change.h#L60 for more details
+	*/
+	records uint64
+	deleted uint64
+	updated uint64
+	copied  uint64
+	touched uint64
+
+	message string
+}
+
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {
@@ -203,33 +231,8 @@ type StatementContext struct {
 	InRestrictedSQL bool
 	ViewDepth       int32
 	// mu struct holds variables that change during execution.
-	mu struct {
-		sync.Mutex
+	mu *stmtCtxMu
 
-		affectedRows uint64
-		foundRows    uint64
-
-		/*
-			following variables are ported from 'COPY_INFO' struct of MySQL server source,
-			they are used to count rows for INSERT/REPLACE/UPDATE queries:
-			  If a row is inserted then the copied variable is incremented.
-			  If a row is updated by the INSERT ... ON DUPLICATE KEY UPDATE and the
-			     new data differs from the old one then the copied and the updated
-			     variables are incremented.
-			  The touched variable is incremented if a row was touched by the update part
-			     of the INSERT ... ON DUPLICATE KEY UPDATE no matter whether the row
-			     was actually changed or not.
-
-			see https://github.com/mysql/mysql-server/blob/d2029238d6d9f648077664e4cdd611e231a6dc14/sql/sql_data_change.h#L60 for more details
-		*/
-		records uint64
-		deleted uint64
-		updated uint64
-		copied  uint64
-		touched uint64
-
-		message string
-	}
 	WarnHandler contextutil.WarnHandlerExt
 	// ExtraWarnHandler record the extra warnings and are only used by the slow log only now.
 	// If a warning is expected to be output only under some conditions (like in EXPLAIN or EXPLAIN VERBOSE) but it's
@@ -458,6 +461,7 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	intest.AssertNotNil(tz)
 	sc := &StatementContext{
 		ctxID: contextutil.GenContextID(),
+		mu:    &stmtCtxMu{},
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
@@ -474,7 +478,7 @@ func (sc *StatementContext) Reset() bool {
 	if !sc.mu.TryLock() {
 		return false
 	}
-	mu := &sc.mu
+	defer sc.mu.Unlock()
 	*sc = StatementContext{
 		ctxID:               contextutil.GenContextID(),
 		CTEStorageMap:       sc.CTEStorageMap,
@@ -485,8 +489,8 @@ func (sc *StatementContext) Reset() bool {
 		WarnHandler:         sc.WarnHandler,
 		ExtraWarnHandler:    sc.ExtraWarnHandler,
 		IndexUsageCollector: sc.IndexUsageCollector,
+		mu:                  sc.mu,
 	}
-	mu.Unlock()
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
 	sc.PlanCacheTracker = contextutil.NewPlanCacheTracker(sc)
@@ -501,6 +505,13 @@ func (sc *StatementContext) Reset() bool {
 	} else {
 		sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
 	}
+	sc.mu.copied = 0
+	sc.mu.deleted = 0
+	sc.mu.foundRows = 0
+	sc.mu.message = ""
+	sc.mu.records = 0
+	sc.mu.touched = 0
+	sc.mu.updated = 0
 	return true
 }
 
