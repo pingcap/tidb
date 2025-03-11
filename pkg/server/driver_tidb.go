@@ -235,14 +235,14 @@ func (ts *TiDBStatement) GetRowContainer() *chunk.RowContainer {
 }
 
 // OpenCtx implements IDriver.
-func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8, _ string,
+func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint16, _ string,
 	tlsState *tls.ConnectionState, extensions *extension.SessionExtensions) (*TiDBContext, error) {
 	se, err := session.CreateSession(qd.store)
 	if err != nil {
 		return nil, err
 	}
 	se.SetTLSState(tlsState)
-	err = se.SetCollation(int(collation))
+	err = se.SetCollation(collation)
 	if err != nil {
 		return nil, err
 	}

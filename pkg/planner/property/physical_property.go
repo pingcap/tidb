@@ -192,7 +192,7 @@ func GetCollateIDByNameForPartition(coll string) int32 {
 // GetCollateNameByIDForPartition returns collate id by collation name
 func GetCollateNameByIDForPartition(collateID int32) string {
 	collateID = collate.RestoreCollationIDIfNeeded(collateID)
-	return collate.CollationID2Name(collateID)
+	return collate.CollationID2Name(uint16(collateID))
 }
 
 // cteProducerStatus indicates whether we can let the current CTE consumer/reader be executed on the MPP nodes.

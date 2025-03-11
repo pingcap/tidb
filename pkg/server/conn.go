@@ -184,7 +184,7 @@ type clientConn struct {
 	peerPort      string                // peer port
 	status        int32                 // dispatching/reading/shutdown/waitshutdown
 	lastCode      uint16                // last error code
-	collation     uint8                 // collation used by client, may be different from the collation used by database.
+	collation     uint16                // collation used by client, may be different from the collation used by database.
 	lastActive    time.Time             // last active time
 	authPlugin    string                // default authentication plugin
 	isUnixSocket  bool                  // connection is Unix Socket file
@@ -225,7 +225,7 @@ func (cc *clientConn) String() string {
 	// MySQL converts a collation from u32 to char in the protocol, so the value could be wrong. It works fine for the
 	// default parameters (and libmysql seems not to provide any way to specify the collation other than the default
 	// one), so it's not a big problem.
-	collationStr := mysql.Collations[uint16(cc.collation)]
+	collationStr := mysql.Collations[cc.collation]
 	return fmt.Sprintf("id:%d, addr:%s status:%b, collation:%s, user:%s",
 		cc.connectionID, cc.bufReadConn.RemoteAddr(), cc.ctx.Status(), collationStr, cc.user,
 	)
@@ -444,9 +444,9 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 	data = append(data, byte(cc.server.capability), byte(cc.server.capability>>8))
 	// charset
 	if cc.collation == 0 {
-		cc.collation = uint8(mysql.DefaultCollationID)
+		cc.collation = mysql.DefaultCollationID
 	}
-	data = append(data, cc.collation)
+	data = append(data, byte(cc.collation))
 	// status
 	data = dump.Uint16(data, mysql.ServerStatusAutocommit)
 	// below 13 byte may not be used

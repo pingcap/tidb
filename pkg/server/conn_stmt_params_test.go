@@ -327,7 +327,7 @@ func expectedDatetimeExecuteResult(t *testing.T, c *mockConn, time types.Time, w
 			Name:         "t",
 			Table:        "",
 			Type:         mysql.TypeDatetime,
-			Charset:      uint16(mysql.CharsetNameToID(charset.CharsetBin)),
+			Charset:      mysql.CharsetNameToID(charset.CharsetBin),
 			Flag:         uint16(mysql.NotNullFlag | mysql.BinaryFlag),
 			Decimal:      6,
 			ColumnLength: 26,

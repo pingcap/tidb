@@ -29,7 +29,7 @@ func ConvertColumnInfo(fld *resolve.ResultField) (ci *Info) {
 		Table:        fld.TableAsName.O,
 		Schema:       fld.DBName.O,
 		Flag:         uint16(fld.Column.GetFlag()),
-		Charset:      uint16(mysql.CharsetNameToID(fld.Column.GetCharset())),
+		Charset:      mysql.CharsetNameToID(fld.Column.GetCharset()),
 		Type:         fld.Column.GetType(),
 		DefaultValue: fld.Column.GetDefaultValue(),
 	}

@@ -31,7 +31,7 @@ import (
 
 var (
 	newCollatorMap      map[string]Collator
-	newCollatorIDMap    map[int]Collator
+	newCollatorIDMap    map[uint16]Collator
 	newCollationEnabled int32
 
 	// binCollatorInstance is a singleton used for all collations when newCollationEnabled is false.
@@ -174,13 +174,13 @@ func GetBinaryCollatorSlice(n int) []Collator {
 }
 
 // GetCollatorByID get the collator according to id, it will return the binary collator if the corresponding collator doesn't exist.
-func GetCollatorByID(id int) Collator {
+func GetCollatorByID(id uint16) Collator {
 	if atomic.LoadInt32(&newCollationEnabled) == 1 {
 		ctor, ok := newCollatorIDMap[id]
 		if !ok {
 			logutil.BgLogger().Warn(
 				"Unable to get collator by ID, use binCollator instead.",
-				zap.Int("ID", id),
+				zap.Uint16("ID", id),
 				zap.Stack("stack"))
 			return newCollatorMap["utf8mb4_bin"]
 		}
@@ -191,8 +191,8 @@ func GetCollatorByID(id int) Collator {
 
 // CollationID2Name return the collation name by the given id.
 // If the id is not found in the map, the default collation is returned.
-func CollationID2Name(id int32) string {
-	collation, err := charset.GetCollationByID(int(id))
+func CollationID2Name(id uint16) string {
+	collation, err := charset.GetCollationByID(id)
 	if err != nil {
 		// TODO(bb7133): fix repeating logs when the following code is uncommented.
 		// logutil.BgLogger().Warn(
@@ -206,7 +206,7 @@ func CollationID2Name(id int32) string {
 
 // CollationName2ID return the collation id by the given name.
 // If the name is not found in the map, the default collation id is returned
-func CollationName2ID(name string) int {
+func CollationName2ID(name string) uint16 {
 	if coll, err := charset.GetCollationByName(name); err == nil {
 		return coll.ID
 	}
@@ -405,14 +405,14 @@ func CanUseRawMemAsKey(c Collator) bool {
 
 // ProtoToCollation converts collation from int32(used by protocol) to string.
 func ProtoToCollation(c int32) string {
-	coll, err := charset.GetCollationByID(int(RestoreCollationIDIfNeeded(c)))
+	coll, err := charset.GetCollationByID(uint16(RestoreCollationIDIfNeeded(c)))
 	if err == nil {
 		return coll.Name
 	}
 	logutil.BgLogger().Warn(
 		"Unable to get collation name from ID, use name of the default collation instead",
 		zap.Int32("id", c),
-		zap.Int("default collation ID", mysql.DefaultCollationID),
+		zap.Uint16("default collation ID", mysql.DefaultCollationID),
 		zap.String("default collation", mysql.DefaultCollationName),
 	)
 	return mysql.DefaultCollationName
@@ -423,7 +423,7 @@ func init() {
 	newCollationEnabled = 1
 
 	newCollatorMap = make(map[string]Collator)
-	newCollatorIDMap = make(map[int]Collator)
+	newCollatorIDMap = make(map[uint16]Collator)
 
 	newCollatorMap["binary"] = &binCollator{}
 	newCollatorIDMap[CollationName2ID("binary")] = &binCollator{}

@@ -384,7 +384,7 @@ func (s *session) SetCommandValue(command byte) {
 	atomic.StoreUint32(&s.sessionVars.CommandValue, uint32(command))
 }
 
-func (s *session) SetCollation(coID int) error {
+func (s *session) SetCollation(coID uint16) error {
 	cs, co, err := charset.GetCharsetInfoByID(coID)
 	if err != nil {
 		return err

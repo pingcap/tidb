@@ -80,7 +80,7 @@ func (d *ResultEncoder) Clean() {
 
 // UpdateDataEncoding updates the data encoding.
 func (d *ResultEncoder) UpdateDataEncoding(chsID uint16) {
-	chs, _, err := charset.GetCharsetInfoByID(int(chsID))
+	chs, _, err := charset.GetCharsetInfoByID(chsID)
 	if err != nil {
 		logutil.BgLogger().Warn("unknown charset ID", zap.Error(err))
 	}
@@ -99,7 +99,7 @@ func (d *ResultEncoder) ColumnTypeInfoCharsetID(info *Info) uint16 {
 	if charset == mysql.BinaryDefaultCollationID {
 		return mysql.BinaryDefaultCollationID
 	}
-	return uint16(mysql.CharsetNameToID(d.chsName))
+	return mysql.CharsetNameToID(d.chsName)
 }
 
 // EncodeMeta encodes bytes for meta info like column names.

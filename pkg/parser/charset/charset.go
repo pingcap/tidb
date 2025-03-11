@@ -51,7 +51,7 @@ type Charset struct {
 // Collation is a collation.
 // Now we only support MySQL.
 type Collation struct {
-	ID           int
+	ID           uint16
 	CharsetName  string
 	Name         string
 	IsDefault    bool
@@ -59,7 +59,7 @@ type Collation struct {
 	PadAttribute string
 }
 
-var collationsIDMap = make(map[int]*Collation)
+var collationsIDMap = make(map[uint16]*Collation)
 var collationsNameMap = make(map[string]*Collation)
 var supportedCollations = make([]*Collation, 0, len(supportedCollationNames))
 
@@ -175,7 +175,7 @@ func GetCharsetInfo(cs string) (*Charset, error) {
 }
 
 // GetCharsetInfoByID returns charset and collation for id as cs_number.
-func GetCharsetInfoByID(coID int) (charsetStr string, collateStr string, err error) {
+func GetCharsetInfoByID(coID uint16) (charsetStr string, collateStr string, err error) {
 	if coID == mysql.DefaultCollationID {
 		return mysql.DefaultCharset, mysql.DefaultCollationName, nil
 	}
@@ -185,7 +185,7 @@ func GetCharsetInfoByID(coID int) (charsetStr string, collateStr string, err err
 
 	log.Warn(
 		"unable to get collation name from collation ID, return default charset and collation instead",
-		zap.Int("ID", coID),
+		zap.Uint16("ID", coID),
 		zap.Stack("stack"))
 	return mysql.DefaultCharset, mysql.DefaultCollationName, errors.Errorf("Unknown collation id %d", coID)
 }
@@ -214,7 +214,7 @@ func GetCollationByName(name string) (*Collation, error) {
 }
 
 // GetCollationByID returns collations by given id.
-func GetCollationByID(id int) (*Collation, error) {
+func GetCollationByID(id uint16) (*Collation, error) {
 	collation, ok := collationsIDMap[id]
 	if !ok {
 		return nil, errors.Errorf("Unknown collation id %d", id)

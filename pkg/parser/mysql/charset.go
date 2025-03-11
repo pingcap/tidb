@@ -16,7 +16,7 @@ package mysql
 import "unicode"
 
 // CharsetNameToID maps charset name to its default collation ID.
-func CharsetNameToID(charset string) uint8 {
+func CharsetNameToID(charset string) uint16 {
 	// Use quick path for TiDB to avoid access CharsetIDs map
 	// "SHOW CHARACTER SET;" to see all the supported character sets.
 	if charset == "utf8mb4" {
@@ -34,7 +34,7 @@ func CharsetNameToID(charset string) uint8 {
 }
 
 // CharsetIDs maps charset name to its default collation ID.
-var CharsetIDs = map[string]uint8{
+var CharsetIDs = map[string]uint16{
 	"big5":     1,
 	"dec8":     3,
 	"cp850":    4,
@@ -533,12 +533,12 @@ const (
 	UTF8MB4Charset = "utf8mb4"
 	DefaultCharset = UTF8MB4Charset
 	// DefaultCollationID is utf8mb4_bin(46)
-	DefaultCollationID        = 46
-	Latin1DefaultCollationID  = 47
-	ASCIIDefaultCollationID   = 65
-	UTF8DefaultCollationID    = 83
-	UTF8MB4DefaultCollationID = 46
-	BinaryDefaultCollationID  = 63
+	DefaultCollationID        = uint16(46)
+	Latin1DefaultCollationID  = uint16(47)
+	ASCIIDefaultCollationID   = uint16(65)
+	UTF8DefaultCollationID    = uint16(83)
+	UTF8MB4DefaultCollationID = uint16(46)
+	BinaryDefaultCollationID  = uint16(63)
 	UTF8MB4DefaultCollation   = "utf8mb4_bin"
 	DefaultCollationName      = UTF8MB4DefaultCollation
 	UTF8MB4GeneralCICollation = "utf8mb4_general_ci"

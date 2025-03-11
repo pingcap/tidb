@@ -62,10 +62,10 @@ func HandshakeResponseHeader(ctx context.Context, packet *handshake.Response41, 
 	// skip max packet size
 	offset += 4
 	// charset, skip, if you want to use another charset, use set names
-	packet.Collation = data[offset]
-	offset++
-	// skip reserved 23[00]
-	offset += 23
+	packet.Collation = binary.LittleEndian.Uint16(data[offset : offset+2])
+	offset += 2
+	// skip reserved 22[00]
+	offset += 22
 
 	return offset, nil
 }

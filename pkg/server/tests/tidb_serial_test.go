@@ -108,7 +108,7 @@ func TestLoadDataListPartition(t *testing.T) {
 func TestPrepareExecute(t *testing.T) {
 	ts := servertestkit.CreateTidbTestSuite(t)
 
-	qctx, err := ts.Tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, nil)
+	qctx, err := ts.Tidbdrv.OpenCtx(uint64(0), 0, tmysql.DefaultCollationID, "test", nil, nil)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -150,7 +150,7 @@ func TestDefaultCharacterAndCollation(t *testing.T) {
 
 	// issue #21194
 	// 255 is the collation id of mysql client 8 default collation_connection
-	qctx, err := ts.Tidbdrv.OpenCtx(uint64(0), 0, uint8(255), "test", nil, nil)
+	qctx, err := ts.Tidbdrv.OpenCtx(uint64(0), 0, uint16(255), "test", nil, nil)
 	require.NoError(t, err)
 	testCase := []struct {
 		variable string

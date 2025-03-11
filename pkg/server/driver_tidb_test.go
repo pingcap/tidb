@@ -35,7 +35,7 @@ func createColumnByTypeAndLen(tp byte, cl uint32) *column.Info {
 		Name:         "a",
 		OrgName:      "a",
 		ColumnLength: cl,
-		Charset:      uint16(mysql.CharsetNameToID(charset.CharsetUTF8)),
+		Charset:      mysql.CharsetNameToID(charset.CharsetUTF8),
 		Flag:         uint16(mysql.UnsignedFlag),
 		Decimal:      uint8(0),
 		Type:         tp,

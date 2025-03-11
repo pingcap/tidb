@@ -647,7 +647,7 @@ func appendRow(chunks []tipb.Chunk, data []byte, rowCnt int) []tipb.Chunk {
 
 // fieldTypeFromPBColumn creates a types.FieldType from tipb.ColumnInfo.
 func fieldTypeFromPBColumn(col *tipb.ColumnInfo) *types.FieldType {
-	charsetStr, collationStr, _ := charset.GetCharsetInfoByID(int(collate.RestoreCollationIDIfNeeded(col.GetCollation())))
+	charsetStr, collationStr, _ := charset.GetCharsetInfoByID(uint16(collate.RestoreCollationIDIfNeeded(col.GetCollation())))
 	ft := &types.FieldType{}
 	ft.SetType(byte(col.GetTp()))
 	ft.SetFlag(uint(col.GetFlag()))

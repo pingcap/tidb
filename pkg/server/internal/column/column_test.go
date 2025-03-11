@@ -173,7 +173,7 @@ func TestDumpTextValue(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []byte{0xd2, 0xbb}, []byte(mustDecodeStr(t, bs)))
 
-	columns[0].Charset = uint16(mysql.CharsetNameToID("gbk"))
+	columns[0].Charset = mysql.CharsetNameToID("gbk")
 	dp = NewResultEncoder("binary")
 	bs, err = DumpTextRow(nil, columns, chunk.MutRowFromDatums(dt).ToRow(), dp)
 	require.NoError(t, err)
