@@ -28,7 +28,9 @@ func StatsLogger() *zap.Logger {
 }
 
 var (
-	sampleLoggerFactory           = logutil.SampleLoggerFactory(5*time.Minute, 1, zap.String(logutil.LogFieldCategory, "stats"))
+	sampleLoggerFactory = logutil.SampleLoggerFactory(5*time.Minute, 1, zap.String(logutil.LogFieldCategory, "stats"))
+	// sampleErrVerboseLoggerFactory creates a logger for error messages with a higher
+	// sampling rate (once per 10 minutes) since error logs tend to be more verbose.
 	sampleErrVerboseLoggerFactory = logutil.SampleLoggerFactory(10*time.Minute, 1, zap.String(logutil.LogFieldCategory, "stats"))
 )
 
@@ -39,7 +41,7 @@ func SingletonStatsSamplerLogger() *zap.Logger {
 	return sampleLoggerFactory()
 }
 
-// SingletonStatsErrVerboseSamplerLogger with category "stats" is used to log statistic related messages.
+// SingletonStatsErrVerboseSamplerLogger with category "stats" is used to log statistics-related messages with verbose error details.
 // It is used to sample the log to avoid too many logs.
 // Do not use it to log the message that is not related to statistics.
 func SingletonStatsErrVerboseSamplerLogger() *zap.Logger {
