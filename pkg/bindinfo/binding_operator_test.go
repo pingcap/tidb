@@ -17,6 +17,7 @@ package bindinfo_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -873,6 +874,21 @@ func TestBindingQueryInList(t *testing.T) {
 		require.NoError(t, dom.BindingHandle().LoadFromStorageToCache(true))
 		require.Equal(t, len(tk.MustQuery(`show global bindings`).Rows()), 0)
 	}
+}
+
+func TestTooLongBinding(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int)`)
+	predicates := make([]string, 0, 65535)
+	for i := 0; i < cap(predicates); i++ {
+		predicates = append(predicates, fmt.Sprintf("t.a=%d", i))
+	}
+	bindingSQL := fmt.Sprintf("create global binding using select * from t where %s", strings.Join(predicates, " or "))
+	err := tk.ExecToErr(bindingSQL)
+	require.ErrorContains(t, err, "Data too long")
 }
 
 // TestBindingInListWithSingleLiteral tests sql with "IN (Lit)", fixes #44298
