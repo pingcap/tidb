@@ -183,7 +183,7 @@ type staleTSOProvider struct {
 
 func (s *staleTSOProvider) reset() *staleTSOProvider {
 	if s == nil {
-		return &staleTSOProvider{sync.Mutex{}, nil, nil}
+		return &staleTSOProvider{}
 	}
 	s.value = nil
 	s.eval = nil
@@ -197,7 +197,7 @@ type stmtCache struct {
 
 func (s *stmtCache) reset() *stmtCache {
 	if s == nil {
-		return &stmtCache{sync.Mutex{}, nil}
+		return &stmtCache{}
 	}
 	s.data = nil
 	return s
@@ -498,8 +498,8 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	sc := &StatementContext{
 		ctxID:            contextutil.GenContextID(),
 		mu:               &stmtCtxMu{},
-		stmtCache:        &stmtCache{sync.Mutex{}, nil},
-		StaleTSOProvider: &staleTSOProvider{sync.Mutex{}, nil, nil},
+		stmtCache:        &stmtCache{},
+		StaleTSOProvider: &staleTSOProvider{},
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
