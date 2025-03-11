@@ -6922,6 +6922,7 @@ UnReservedKeyword:
 |	"OLTP_READ_ONLY"
 |	"OLTP_WRITE_ONLY"
 |	"TPCH_10"
+|	"NO_NULL_INDEX"
 
 TiDBKeyword:
 	"ADMIN"
