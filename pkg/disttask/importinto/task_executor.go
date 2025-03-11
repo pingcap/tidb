@@ -272,7 +272,7 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 			return errors.Trace(err)
 		}
 	} else {
-		subtaskMeta.ImportStepExternalMeta = importStepExternalMeta
+	  subtaskMeta.ImportStepExternalMeta = importStepExternalMeta
 	}
 
 	s.sharedVars.Delete(subtaskMeta.ID)
@@ -456,6 +456,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 			StorageURI:    e.taskMeta.Plan.CloudStorageURI,
 			DataFiles:     sm.DataFiles,
 			StatFiles:     sm.StatFiles,
+			StartKey:      sm.StartKey,
 			EndKey:        sm.EndKey,
 			JobKeys:       jobKeys,
 			SplitKeys:     sm.RangeSplitKeys,
