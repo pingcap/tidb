@@ -1804,8 +1804,11 @@ func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
 		sc = &s.cachedStmtCtx[1]
 	}
 	if s.RefCountOfStmtCtx.TryFreeze() {
-		sc.Reset()
+		succ := sc.Reset()
 		s.RefCountOfStmtCtx.UnFreeze()
+		if !succ {
+			sc = stmtctx.NewStmtCtx()
+		}
 	} else {
 		sc = stmtctx.NewStmtCtx()
 	}
