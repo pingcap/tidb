@@ -272,7 +272,7 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 			return errors.Trace(err)
 		}
 	} else {
-	  subtaskMeta.ImportStepExternalMeta = importStepExternalMeta
+		subtaskMeta.ImportStepExternalMeta = importStepExternalMeta
 	}
 
 	s.sharedVars.Delete(subtaskMeta.ID)
