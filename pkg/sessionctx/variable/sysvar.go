@@ -750,6 +750,11 @@ var defaultSysVars = []*SysVar{
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		return (*SetPDClientDynamicOption.Load())(PDEnableFollowerHandleRegion, val)
 	}},
+	{Scope: ScopeGlobal, Name: TiDBEnableBatchQueryRegion, Value: BoolToOnOff(DefTiDBEnableBatchQueryRegion), Type: TypeBool, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
+		return BoolToOnOff(EnableBatchQueryRegion.Load()), nil
+	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		return (*SetPDClientDynamicOption.Load())(TiDBEnableBatchQueryRegion, val)
+	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableLocalTxn, Value: BoolToOnOff(DefTiDBEnableLocalTxn), Hidden: true, Type: TypeBool, Depended: true, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
 		return BoolToOnOff(EnableLocalTxn.Load()), nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
