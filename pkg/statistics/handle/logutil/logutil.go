@@ -31,7 +31,7 @@ var (
 	sampleLoggerFactory = logutil.SampleLoggerFactory(5*time.Minute, 1, zap.String(logutil.LogFieldCategory, "stats"))
 	// sampleErrVerboseLoggerFactory creates a logger for error messages with a higher
 	// sampling rate (once per 10 minutes) since error logs tend to be more verbose.
-	sampleErrVerboseLoggerFactory = logutil.SampleLoggerFactory(10*time.Minute, 1, zap.String(logutil.LogFieldCategory, "stats"))
+	sampleErrVerboseLoggerFactory = logutil.SampleErrVerboseLoggerFactory(10*time.Minute, 1, zap.String(logutil.LogFieldCategory, "stats"))
 )
 
 // SingletonStatsSamplerLogger with category "stats" is used to log statistic related messages.
