@@ -330,7 +330,7 @@ func WriteJSONToExternalStorage(ctx context.Context, store storage.ExternalStora
 	return store.WriteFile(ctx, path, data)
 }
 
-// ReadJSONToExternalStorage to read and unmarshal JSON from external storage into v.
+// ReadJSONFromExternalStorage to read and unmarshal JSON from external storage into v.
 func ReadJSONFromExternalStorage(ctx context.Context, store storage.ExternalStorage, path string, v any) error {
 	data, err := store.ReadFile(ctx, path)
 	if err != nil {
