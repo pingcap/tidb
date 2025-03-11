@@ -321,36 +321,27 @@ func (m *SortedKVMeta) GetStatFiles() []string {
 	return ret
 }
 
-type combined struct {
-	DataMeta   *SortedKVMeta           `json:"data_meta"`
-	IndexMetas map[int64]*SortedKVMeta `json:"index_metas"`
-}
-
-// WriteSortedMetaToExternalStorage writes the metas to the external storage.
-func WriteSortedMetaToExternalStorage(ctx context.Context, store storage.ExternalStorage, path string, dataMeta *SortedKVMeta, indexMetas map[int64]*SortedKVMeta) error {
-	c := combined{
-		DataMeta:   dataMeta,
-		IndexMetas: indexMetas,
-	}
-	data, err := json.Marshal(c)
+// WriteJSONToExternalStorage to write any struct as JSON to external storage.
+func WriteJSONToExternalStorage(ctx context.Context, store storage.ExternalStorage, path string, v any) error {
+	data, err := json.Marshal(v)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	return store.WriteFile(ctx, path, data)
 }
 
-// ReadSortedMetaFromExternalStorage reads the meta from the external storage.
-func ReadSortedMetaFromExternalStorage(ctx context.Context, store storage.ExternalStorage, path string) (*SortedKVMeta, map[int64]*SortedKVMeta, error) {
+// ReadJSONToExternalStorage to read and unmarshal JSON from external storage into v.
+func ReadJSONFromExternalStorage(ctx context.Context, store storage.ExternalStorage, path string, v any) error {
 	data, err := store.ReadFile(ctx, path)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
-	var c combined
-	err = json.Unmarshal(data, &c)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	return c.DataMeta, c.IndexMetas, nil
+	return errors.Trace(json.Unmarshal(data, v))
+}
+
+type combined struct {
+	DataMeta   *SortedKVMeta           `json:"data_meta"`
+	IndexMetas map[int64]*SortedKVMeta `json:"index_metas"`
 }
 
 // BytesMin returns the smallest of byte slice a and b.

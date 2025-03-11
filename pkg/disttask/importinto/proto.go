@@ -46,6 +46,15 @@ type TaskMeta struct {
 	ChunkMap map[int32][]importer.Chunk
 }
 
+// ImportStepExternalMeta is the external meta of import step.
+type ImportStepExternalMeta struct {
+	SortedDataMeta *external.SortedKVMeta
+	// SortedIndexMetas is a map from index id to its sorted kv meta.
+	SortedIndexMetas map[int64]*external.SortedKVMeta
+
+	ExternalPath string `json:"path,omitempty"`
+}
+
 // ImportStepMeta is the meta of import step.
 // Scheduler will split the task into subtasks(FileInfos -> Chunks)
 // All the field should be serializable.
@@ -60,11 +69,7 @@ type ImportStepMeta struct {
 	// NewPanickingAllocators for more info.
 	MaxIDs map[autoid.AllocatorType]int64
 
-	SortedDataMeta *external.SortedKVMeta
-	// SortedIndexMetas is a map from index id to its sorted kv meta.
-	SortedIndexMetas map[int64]*external.SortedKVMeta
-
-	SortedMetaPath string `json:"sorted-meta-path,omitempty"`
+	ImportStepExternalMeta
 }
 
 const (
@@ -73,26 +78,39 @@ const (
 	dataKVGroup = "data"
 )
 
+// MergeSortStepExternalMeta is the external meta of merge sort step.
+type MergeSortStepExternalMeta struct {
+	SortedKVMeta external.SortedKVMeta
+
+	ExternalPath string `json:"path,omitempty"`
+}
+
 // MergeSortStepMeta is the meta of merge sort step.
 type MergeSortStepMeta struct {
 	// KVGroup is the group name of the sorted kv, either dataKVGroup or index-id.
-	KVGroup               string   `json:"kv-group"`
-	DataFiles             []string `json:"data-files"`
-	external.SortedKVMeta `json:"sorted-kv-meta"`
+	KVGroup   string   `json:"kv-group"`
+	DataFiles []string `json:"data-files"`
 
-	SortedMetaPath string `json:"sorted-meta-path,omitempty"`
+	MergeSortStepExternalMeta
 }
 
-// WriteIngestStepMeta is the meta of write and ingest step.
-// only used when global sort is enabled.
-type WriteIngestStepMeta struct {
-	KVGroup               string `json:"kv-group"`
+// WriteIngestStepExternalMeta is the external meta of write and ingest step.
+type WriteIngestStepExternalMeta struct {
 	external.SortedKVMeta `json:"sorted-kv-meta"`
 	DataFiles             []string `json:"data-files"`
 	StatFiles             []string `json:"stat-files"`
 	RangeJobKeys          [][]byte `json:"range-job-keys"`
 	RangeSplitKeys        [][]byte `json:"range-split-keys"`
-	TS                    uint64   `json:"ts"`
+
+	ExternalPath string `json:"path,omitempty"`
+}
+
+// WriteIngestStepMeta is the meta of write and ingest step.
+// only used when global sort is enabled.
+type WriteIngestStepMeta struct {
+	KVGroup string `json:"kv-group"`
+	WriteIngestStepExternalMeta
+	TS uint64 `json:"ts"`
 
 	Result Result
 }

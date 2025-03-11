@@ -258,27 +258,29 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	gotSubtasks, err := manager.GetSubtasksWithHistory(ctx, taskID, task.Step)
 	require.NoError(t, err)
 	sortStepMeta := &importinto.ImportStepMeta{
-		SortedDataMeta: &external.SortedKVMeta{
-			StartKey:    []byte("ta"),
-			EndKey:      []byte("tc"),
-			TotalKVSize: 12,
-			MultipleFilesStats: []external.MultipleFilesStat{
-				{
-					Filenames: [][2]string{
-						{"gs://sort-bucket/data/1", "gs://sort-bucket/data/1.stat"},
-					},
-				},
-			},
-		},
-		SortedIndexMetas: map[int64]*external.SortedKVMeta{
-			1: {
-				StartKey:    []byte("ia"),
-				EndKey:      []byte("ic"),
+		ImportStepExternalMeta: importinto.ImportStepExternalMeta{
+			SortedDataMeta: &external.SortedKVMeta{
+				StartKey:    []byte("ta"),
+				EndKey:      []byte("tc"),
 				TotalKVSize: 12,
 				MultipleFilesStats: []external.MultipleFilesStat{
 					{
 						Filenames: [][2]string{
-							{"gs://sort-bucket/index/1", "gs://sort-bucket/index/1.stat"},
+							{"gs://sort-bucket/data/1", "gs://sort-bucket/data/1.stat"},
+						},
+					},
+				},
+			},
+			SortedIndexMetas: map[int64]*external.SortedKVMeta{
+				1: {
+					StartKey:    []byte("ia"),
+					EndKey:      []byte("ic"),
+					TotalKVSize: 12,
+					MultipleFilesStats: []external.MultipleFilesStat{
+						{
+							Filenames: [][2]string{
+								{"gs://sort-bucket/index/1", "gs://sort-bucket/index/1.stat"},
+							},
 						},
 					},
 				},
@@ -314,10 +316,12 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	require.NoError(t, err)
 	mergeSortStepMeta := &importinto.MergeSortStepMeta{
 		KVGroup: "data",
-		SortedKVMeta: external.SortedKVMeta{
-			StartKey:    []byte("ta"),
-			EndKey:      []byte("tc"),
-			TotalKVSize: 12,
+		MergeSortStepExternalMeta: importinto.MergeSortStepExternalMeta{
+			SortedKVMeta: external.SortedKVMeta{
+				StartKey:    []byte("ta"),
+				EndKey:      []byte("tc"),
+				TotalKVSize: 12,
+			},
 		},
 		DataFiles: []string{"gs://sort-bucket/data/1"},
 	}

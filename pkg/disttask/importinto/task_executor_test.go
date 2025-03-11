@@ -55,6 +55,6 @@ func TestImportTaskExecutor(t *testing.T) {
 }
 
 func TestSortedMetaPath(t *testing.T) {
-	require.Equal(t, "1/1/sortedmeta/sortedmeta.json", sortedMetaPath(1, 1))
-	require.Equal(t, "2/3/sortedmeta/sortedmeta.json", sortedMetaPath(2, 3))
+	require.Equal(t, "1/1/meta.json", externalMetaPath(1, 1))
+	require.Equal(t, "2/3/meta.json", externalMetaPath(2, 3))
 }

@@ -261,15 +261,18 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 		autoid.AutoIncrementType: allocators.Get(autoid.AutoIncrementType).Base(),
 		autoid.AutoRandomType:    allocators.Get(autoid.AutoRandomType).Base(),
 	}
-	// if using globalsort, write the sorted data/index meta to external storage.
+	importStepExternalMeta := ImportStepExternalMeta{
+		SortedDataMeta:   sharedVars.SortedDataMeta,
+		SortedIndexMetas: sharedVars.SortedIndexMetas,
+	}
+	// if using globalsort, write the external meta to external storage.
 	if s.tableImporter.IsGlobalSort() {
-		subtaskMeta.SortedMetaPath = sortedMetaPath(s.taskID, subtask.ID)
-		if err := external.WriteSortedMetaToExternalStorage(ctx, s.tableImporter.GlobalSortStore, subtaskMeta.SortedMetaPath, sharedVars.SortedDataMeta, sharedVars.SortedIndexMetas); err != nil {
+		subtaskMeta.ExternalPath = externalMetaPath(s.taskID, subtask.ID)
+		if err := external.WriteJSONToExternalStorage(ctx, s.tableImporter.GlobalSortStore, subtaskMeta.ExternalPath, importStepExternalMeta); err != nil {
 			return errors.Trace(err)
 		}
 	} else {
-		subtaskMeta.SortedDataMeta = sharedVars.SortedDataMeta
-		subtaskMeta.SortedIndexMetas = sharedVars.SortedIndexMetas
+		subtaskMeta.ImportStepExternalMeta = importStepExternalMeta
 	}
 
 	s.sharedVars.Delete(subtaskMeta.ID)
@@ -379,8 +382,11 @@ func (m *mergeSortStepExecutor) onFinished(ctx context.Context, subtask *proto.S
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)
 	}
-	subtaskMeta.SortedMetaPath = sortedMetaPath(m.taskID, subtask.ID)
-	if err := external.WriteSortedMetaToExternalStorage(ctx, m.controller.GlobalSortStore, subtaskMeta.SortedMetaPath, m.subtaskSortedKVMeta, nil); err != nil {
+	subtaskMeta.ExternalPath = externalMetaPath(m.taskID, subtask.ID)
+	mergeSortStepExternalMeta := MergeSortStepExternalMeta{
+		SortedKVMeta: *m.subtaskSortedKVMeta,
+	}
+	if err := external.WriteJSONToExternalStorage(ctx, m.controller.GlobalSortStore, subtaskMeta.ExternalPath, mergeSortStepExternalMeta); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -441,7 +447,6 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 			StorageURI:    e.taskMeta.Plan.CloudStorageURI,
 			DataFiles:     sm.DataFiles,
 			StatFiles:     sm.StatFiles,
-			StartKey:      sm.StartKey,
 			EndKey:        sm.EndKey,
 			JobKeys:       jobKeys,
 			SplitKeys:     sm.RangeSplitKeys,
@@ -611,9 +616,9 @@ func (e *importExecutor) Close() {
 	e.BaseTaskExecutor.Close()
 }
 
-func sortedMetaPath(taskID int64, subtaskID int64) string {
-	// generate a unique file name for the sorted data meta.
-	prefix := path.Join(strconv.Itoa(int(taskID)), strconv.Itoa(int(subtaskID)), "sortedmeta")
-	// taskID/subtaskID/sortedmeta/sortedmeta.json
-	return path.Join(prefix, "sortedmeta.json")
+func externalMetaPath(taskID int64, subtaskID int64) string {
+	// generate a unique file name for the meta.
+	prefix := path.Join(strconv.FormatInt(taskID, 10), strconv.FormatInt(subtaskID, 10))
+	// taskID/subtaskID/meta.json
+	return path.Join(prefix, "meta.json")
 }

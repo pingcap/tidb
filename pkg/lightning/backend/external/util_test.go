@@ -325,10 +325,10 @@ func TestKeyMinMax(t *testing.T) {
 	require.Equal(t, []byte("b"), BytesMax([]byte("b"), []byte("a")))
 }
 
-func TestWriteAndReadSortedMeta(t *testing.T) {
+func TestWriteAndReadExternalJson(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemStorage()
-	path := "/1/1/sortedmeta/sortedmeta.json"
+	path := "/1/1/meta.json"
 
 	dummyMeta := &SortedKVMeta{
 		StartKey:    []byte("a"),
@@ -351,22 +351,36 @@ func TestWriteAndReadSortedMeta(t *testing.T) {
 		},
 	}
 
-	err := WriteSortedMetaToExternalStorage(ctx, store, path, dummyMeta, indexMetas)
+	type importStepMeta struct {
+		SortedDataMeta   *SortedKVMeta
+		SortedIndexMetas map[int64]*SortedKVMeta
+	}
+	meta := importStepMeta{
+		SortedDataMeta:   dummyMeta,
+		SortedIndexMetas: indexMetas,
+	}
+
+	err := WriteJSONToExternalStorage(ctx, store, path, meta)
 	require.NoError(t, err)
 
-	readMeta, readIndexMetas, err := ReadSortedMetaFromExternalStorage(ctx, store, path)
+	var newMeta importStepMeta
+	err = ReadJSONFromExternalStorage(ctx, store, path, &newMeta)
 	require.NoError(t, err)
 
-	require.Equal(t, dummyMeta, readMeta)
-	require.Equal(t, indexMetas, readIndexMetas)
+	require.Equal(t, meta, newMeta)
 
-	// Test non-index meta
-	err = WriteSortedMetaToExternalStorage(ctx, store, path, dummyMeta, nil)
+	type mergeStepMeta struct {
+		SortedKVMeta *SortedKVMeta
+	}
+	mergeMeta := mergeStepMeta{
+		SortedKVMeta: dummyMeta,
+	}
+	err = WriteJSONToExternalStorage(ctx, store, path, mergeMeta)
 	require.NoError(t, err)
 
-	readMeta, readIndexMetas, err = ReadSortedMetaFromExternalStorage(ctx, store, path)
+	var newMergeMeta mergeStepMeta
+	err = ReadJSONFromExternalStorage(ctx, store, path, &newMergeMeta)
 	require.NoError(t, err)
 
-	require.Equal(t, dummyMeta, readMeta)
-	require.Nil(t, readIndexMetas)
+	require.Equal(t, mergeMeta, newMergeMeta)
 }

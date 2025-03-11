@@ -134,27 +134,29 @@ func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
 		prefix := fmt.Sprintf("d_%d_", i)
 		idxPrefix := fmt.Sprintf("i1_%d_", i)
 		meta := &ImportStepMeta{
-			SortedDataMeta: &external.SortedKVMeta{
-				StartKey:    []byte(prefix + "a"),
-				EndKey:      []byte(prefix + "c"),
-				TotalKVSize: 12,
-				MultipleFilesStats: []external.MultipleFilesStat{
-					{
-						Filenames: [][2]string{
-							{prefix + "/1", prefix + "/1.stat"},
-						},
-					},
-				},
-			},
-			SortedIndexMetas: map[int64]*external.SortedKVMeta{
-				1: {
-					StartKey:    []byte(idxPrefix + "a"),
-					EndKey:      []byte(idxPrefix + "c"),
+			ImportStepExternalMeta: ImportStepExternalMeta{
+				SortedDataMeta: &external.SortedKVMeta{
+					StartKey:    []byte(prefix + "a"),
+					EndKey:      []byte(prefix + "c"),
 					TotalKVSize: 12,
 					MultipleFilesStats: []external.MultipleFilesStat{
 						{
 							Filenames: [][2]string{
-								{idxPrefix + "/1", idxPrefix + "/1.stat"},
+								{prefix + "/1", prefix + "/1.stat"},
+							},
+						},
+					},
+				},
+				SortedIndexMetas: map[int64]*external.SortedKVMeta{
+					1: {
+						StartKey:    []byte(idxPrefix + "a"),
+						EndKey:      []byte(idxPrefix + "c"),
+						TotalKVSize: 12,
+						MultipleFilesStats: []external.MultipleFilesStat{
+							{
+								Filenames: [][2]string{
+									{idxPrefix + "/1", idxPrefix + "/1.stat"},
+								},
 							},
 						},
 					},
@@ -247,14 +249,16 @@ func genMergeStepMetas(t *testing.T, cnt int) [][]byte {
 		prefix := fmt.Sprintf("x_%d_", i)
 		meta := &MergeSortStepMeta{
 			KVGroup: "data",
-			SortedKVMeta: external.SortedKVMeta{
-				StartKey:    []byte(prefix + "a"),
-				EndKey:      []byte(prefix + "c"),
-				TotalKVSize: 12,
-				MultipleFilesStats: []external.MultipleFilesStat{
-					{
-						Filenames: [][2]string{
-							{prefix + "/1", prefix + "/1.stat"},
+			MergeSortStepExternalMeta: MergeSortStepExternalMeta{
+				SortedKVMeta: external.SortedKVMeta{
+					StartKey:    []byte(prefix + "a"),
+					EndKey:      []byte(prefix + "c"),
+					TotalKVSize: 12,
+					MultipleFilesStats: []external.MultipleFilesStat{
+						{
+							Filenames: [][2]string{
+								{prefix + "/1", prefix + "/1.stat"},
+							},
 						},
 					},
 				},
@@ -269,7 +273,7 @@ func genMergeStepMetas(t *testing.T, cnt int) [][]byte {
 
 func TestGetSortedKVMetas(t *testing.T) {
 	encodeStepMetaBytes := genEncodeStepMetas(t, 3)
-	kvMetas, err := getSortedKVMetasOfEncodeStep(encodeStepMetaBytes, nil)
+	kvMetas, err := getSortedKVMetasOfEncodeStep(context.Background(), encodeStepMetaBytes, nil)
 	require.NoError(t, err)
 	require.Len(t, kvMetas, 2)
 	require.Contains(t, kvMetas, "data")
@@ -281,7 +285,7 @@ func TestGetSortedKVMetas(t *testing.T) {
 	require.Equal(t, []byte("i1_2_c"), kvMetas["1"].EndKey)
 
 	mergeStepMetas := genMergeStepMetas(t, 3)
-	kvMetas2, err := getSortedKVMetasOfMergeStep(mergeStepMetas, nil)
+	kvMetas2, err := getSortedKVMetasOfMergeStep(context.Background(), mergeStepMetas, nil)
 	require.NoError(t, err)
 	require.Len(t, kvMetas2, 1)
 	require.Equal(t, []byte("x_0_a"), kvMetas2["data"].StartKey)
@@ -349,7 +353,7 @@ func TestSplitForOneSubtask(t *testing.T) {
 		return nil, errors.New("mock error")
 	}
 
-	spec, err := splitForOneSubtask(ctx, store, "test-group", kvMeta, 123)
+	spec, err := splitForOneSubtask(planner.PlanCtx{Ctx: ctx}, store, "test-group", kvMeta, 123)
 	require.NoError(t, err)
 
 	require.Len(t, spec, 1)
