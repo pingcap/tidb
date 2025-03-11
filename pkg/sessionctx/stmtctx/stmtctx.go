@@ -313,7 +313,7 @@ type StatementContext struct {
 	// stmtCache is used to store some statement-related values.
 	// add mutex to protect stmtCache concurrent access
 	// https://github.com/pingcap/tidb/issues/36159
-	stmtCache struct {
+	stmtCache *struct {
 		mu   sync.Mutex
 		data map[StmtCacheKey]any
 	}
@@ -425,7 +425,7 @@ type StatementContext struct {
 	// Check if TiFlash read engine is removed due to strict sql mode.
 	TiFlashEngineRemovedDueToStrictSQLMode bool
 	// StaleTSOProvider is used to provide stale timestamp oracle for read-only transactions.
-	StaleTSOProvider struct {
+	StaleTSOProvider *struct {
 		sync.Mutex
 		value *uint64
 		eval  func() (uint64, error)
@@ -457,6 +457,15 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	sc := &StatementContext{
 		ctxID: contextutil.GenContextID(),
 		mu:    &stmtCtxMu{},
+		stmtCache: &struct {
+			mu   sync.Mutex
+			data map[StmtCacheKey]any
+		}{mu: sync.Mutex{}, data: nil},
+		StaleTSOProvider: &struct {
+			sync.Mutex
+			value *uint64
+			eval  func() (uint64, error)
+		}{sync.Mutex{}, nil, nil},
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
@@ -474,6 +483,14 @@ func (sc *StatementContext) Reset() bool {
 		return false
 	}
 	defer sc.mu.Unlock()
+	if !sc.stmtCache.mu.TryLock() {
+		return false
+	}
+	defer sc.stmtCache.mu.Unlock()
+	if !sc.StaleTSOProvider.TryLock() {
+		return false
+	}
+	defer sc.StaleTSOProvider.Unlock()
 	*sc = StatementContext{
 		ctxID:               contextutil.GenContextID(),
 		CTEStorageMap:       sc.CTEStorageMap,
@@ -485,6 +502,8 @@ func (sc *StatementContext) Reset() bool {
 		ExtraWarnHandler:    sc.ExtraWarnHandler,
 		IndexUsageCollector: sc.IndexUsageCollector,
 		mu:                  sc.mu,
+		stmtCache:           sc.stmtCache,
+		StaleTSOProvider:    sc.StaleTSOProvider,
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
@@ -507,6 +526,9 @@ func (sc *StatementContext) Reset() bool {
 	sc.mu.records = 0
 	sc.mu.touched = 0
 	sc.mu.updated = 0
+	sc.stmtCache.data = nil
+	sc.StaleTSOProvider.eval = nil
+	sc.StaleTSOProvider.value = nil
 	return true
 }
 
