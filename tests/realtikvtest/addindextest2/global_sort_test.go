@@ -315,7 +315,7 @@ func TestGlobalSortAddIndexRecoverFromRetryableError(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()")
 	defer func() {
 		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
-		vardef.CloudStorageURI.Store("")
+		tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
 	}()
 	failpoints := []string{
 		"github.com/pingcap/tidb/pkg/ddl/mockCheckDuplicateForUniqueIndexError",
@@ -327,9 +327,9 @@ func TestGlobalSortAddIndexRecoverFromRetryableError(t *testing.T) {
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t (a int);")
 		tk.MustExec("insert into t values (1), (2), (3);")
-		failpoint.Enable(fp, "1*return")
+		require.NoError(t, failpoint.Enable(fp, "1*return"))
 		tk.MustExec("alter table t add unique index idx(a);")
-		failpoint.Disable(fp)
+		require.NoError(t, failpoint.Disable(fp))
 	}
 }
 

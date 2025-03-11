@@ -51,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	litconfig "github.com/pingcap/tidb/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -2493,7 +2492,6 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 			}
 			err = backendCtx.CollectRemoteDuplicateRows(indexInfo.ID, t)
 			failpoint.Inject("mockCheckDuplicateForUniqueIndexError", func(_ failpoint.Value) {
-				log.FromContext(ctx).Info("mockCheckDuplicateForUniqueIndexError")
 				err = context.DeadlineExceeded
 			})
 			if err != nil {

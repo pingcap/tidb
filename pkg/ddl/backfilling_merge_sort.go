@@ -102,7 +102,6 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		true,
 	)
 	failpoint.Inject("mockMergeSortRunSubtaskError", func(_ failpoint.Value) {
-		logutil.Logger(ctx).Info("mockMergeSortRunSubtaskError")
 		err = context.DeadlineExceeded
 	})
 	if err != nil {
