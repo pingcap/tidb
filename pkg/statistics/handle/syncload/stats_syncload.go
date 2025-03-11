@@ -60,10 +60,27 @@ func GetSyncLoadConcurrencyByCPU() int {
 	return 10
 }
 
+// statsSyncLoad is used to load statistics synchronously when needed by SQL queries.
+//
+// It maintains two channels for handling statistics load tasks:
+// - NeededItemsCh: High priority channel for tasks that haven't timed out yet (Higher priority)
+// - TimeoutItemsCh: Lower priority channel for tasks that exceeded their timeout (Lower priority)
+//
+// The main workflow:
+// 1. collect_column_stats_usage rule requests statistics via SendLoadRequests
+// 2. Tasks are created and placed in channels
+// 3. Worker goroutines pick up tasks from channels
+// 4. Statistics are loaded from storage
+// 5. Loaded statistics are cached via updateCachedItem for future use
+// 6. Results are checked and stats are used in the SQL query
+//
+// It uses singleflight pattern to deduplicate concurrent requests for the same statistics.
+// Requests that exceed their timeout are moved to a lower priority channel to be processed
+// when there are no urgent requests.
 type statsSyncLoad struct {
-	statsHandle statstypes.StatsHandle
-	is          infoschema.InfoSchema
-	StatsLoad   statstypes.StatsLoad
+	statsHandle    statstypes.StatsHandle
+	NeededItemsCh  chan *statstypes.NeededItemTask
+	TimeoutItemsCh chan *statstypes.NeededItemTask
 	// This mutex protects the statsCache from concurrent modifications by multiple workers.
 	// Since multiple workers may update the statsCache for the same table simultaneously,
 	// the mutex ensures thread-safety during these updates.
@@ -73,11 +90,11 @@ type statsSyncLoad struct {
 var globalStatsSyncLoadSingleFlight singleflight.Group
 
 // NewStatsSyncLoad creates a new StatsSyncLoad.
-func NewStatsSyncLoad(is infoschema.InfoSchema, statsHandle statstypes.StatsHandle) statstypes.StatsSyncLoad {
-	s := &statsSyncLoad{statsHandle: statsHandle, is: is}
+func NewStatsSyncLoad(statsHandle statstypes.StatsHandle) statstypes.StatsSyncLoad {
+	s := &statsSyncLoad{statsHandle: statsHandle}
 	cfg := config.GetGlobalConfig()
-	s.StatsLoad.NeededItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
-	s.StatsLoad.TimeoutItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
+	s.NeededItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
+	s.TimeoutItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	return s
 }
 
@@ -117,7 +134,7 @@ func (s *statsSyncLoad) SendLoadRequests(sc *stmtctx.StatementContext, neededHis
 				ResultCh:  make(chan stmtctx.StatsLoadResult, 1),
 			}
 			select {
-			case s.StatsLoad.NeededItemsCh <- task:
+			case s.NeededItemsCh <- task:
 				metrics.SyncLoadDedupCounter.Inc()
 				select {
 				case <-timer.C:
@@ -215,7 +232,7 @@ func (s *statsSyncLoad) AppendNeededItem(task *statstypes.NeededItemTask, timeou
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
-	case s.StatsLoad.NeededItemsCh <- task:
+	case s.NeededItemsCh <- task:
 	case <-timer.C:
 		return errors.New("Channel is full and timeout writing to channel")
 	}
@@ -500,27 +517,27 @@ func (s *statsSyncLoad) drainColTask(sctx sessionctx.Context, exit chan struct{}
 		select {
 		case <-exit:
 			return nil, errExit
-		case task, ok := <-s.StatsLoad.NeededItemsCh:
+		case task, ok := <-s.NeededItemsCh:
 			if !ok {
 				return nil, errors.New("drainColTask: cannot read from NeededColumnsCh, maybe the chan is closed")
 			}
 			// if the task has already timeout, no sql is sync-waiting for it,
 			// so do not handle it just now, put it to another channel with lower priority
 			if time.Now().After(task.ToTimeout) {
-				s.writeToTimeoutChan(s.StatsLoad.TimeoutItemsCh, task)
+				s.writeToTimeoutChan(s.TimeoutItemsCh, task)
 				continue
 			}
 			return task, nil
-		case task, ok := <-s.StatsLoad.TimeoutItemsCh:
+		case task, ok := <-s.TimeoutItemsCh:
 			select {
 			case <-exit:
 				return nil, errExit
-			case task0, ok0 := <-s.StatsLoad.NeededItemsCh:
+			case task0, ok0 := <-s.NeededItemsCh:
 				if !ok0 {
 					return nil, errors.New("drainColTask: cannot read from NeededColumnsCh, maybe the chan is closed")
 				}
 				// send task back to TimeoutColumnsCh and return the task drained from NeededColumnsCh
-				s.writeToTimeoutChan(s.StatsLoad.TimeoutItemsCh, task)
+				s.writeToTimeoutChan(s.TimeoutItemsCh, task)
 				return task0, nil
 			default:
 				if !ok {

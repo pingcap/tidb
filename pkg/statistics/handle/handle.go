@@ -141,7 +141,7 @@ func NewHandle(
 	handle.StatsHistory = history.NewStatsHistory(handle)
 	handle.StatsUsage = usage.NewStatsUsageImpl(handle)
 	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(handle, tracker, ddlNotifier)
-	handle.StatsSyncLoad = syncload.NewStatsSyncLoad(is, handle)
+	handle.StatsSyncLoad = syncload.NewStatsSyncLoad(handle)
 	handle.StatsGlobal = globalstats.NewStatsGlobal(handle)
 	handle.DDL = ddl.NewDDLHandler(
 		handle.StatsReadWriter,
