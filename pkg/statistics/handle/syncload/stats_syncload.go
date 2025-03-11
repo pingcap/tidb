@@ -544,7 +544,7 @@ func (s *statsSyncLoad) drainColTask(sctx sessionctx.Context, exit chan struct{}
 				if !ok {
 					return nil, errors.New("drainColTask: cannot read from TimeoutItemsCh, maybe the chan is closed")
 				}
-				// NeededColumnsCh is empty now, handle task from TimeoutItemsCh
+				// NeededItemsCh is empty now, handle task from TimeoutItemsCh
 				return task, nil
 			}
 		}
