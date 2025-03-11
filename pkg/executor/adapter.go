@@ -949,8 +949,11 @@ func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e exec.
 	}()
 
 	isFirstAttempt := true
-
+	txn, _ := a.Ctx.Txn(false)
 	for {
+		if txn != nil && !txn.IsReadOnly() {
+			a.Ctx.GetSessionVars().TxnCtx.MemBufferSnapshot = txn.GetMemBuffer().GetSnapshot()
+		}
 		startTime := time.Now()
 		rs, err := a.runPessimisticSelectForUpdate(ctx, e)
 
