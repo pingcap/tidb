@@ -271,7 +271,9 @@ func (s *statsSyncLoad) SubLoadWorker(sctx sessionctx.Context, exit chan struct{
 //   - If the task is handled successfully, return nil, nil.
 //   - If the task is timeout, return the task and nil. The caller should retry the timeout task without sleep.
 //   - If the task is failed, return the task, error. The caller should retry the timeout task with sleep.
-func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask *statstypes.NeededItemTask, exit chan struct{}) (task *statstypes.NeededItemTask, err error) {
+//
+// TODO: remove this session context, it's not necessary.
+func (s *statsSyncLoad) HandleOneTask(_ sessionctx.Context, lastTask *statstypes.NeededItemTask, exit chan struct{}) (task *statstypes.NeededItemTask, err error) {
 	defer func() {
 		// recover for each task, worker keeps working
 		if r := recover(); r != nil {
@@ -280,7 +282,7 @@ func (s *statsSyncLoad) HandleOneTask(sctx sessionctx.Context, lastTask *statsty
 		}
 	}()
 	if lastTask == nil {
-		task, err = s.drainColTask(sctx, exit)
+		task, err = s.drainColTask(exit)
 		if err != nil {
 			if err != errExit {
 				logutil.BgLogger().Error("Fail to drain task for stats loading.", zap.Error(err))
@@ -512,7 +514,7 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 
 // drainColTask will hang until a task can return, and either task or error will be returned.
 // The task will be drained from NeededItemsCh first, if no task, then TimeoutItemsCh.
-func (s *statsSyncLoad) drainColTask(sctx sessionctx.Context, exit chan struct{}) (*statstypes.NeededItemTask, error) {
+func (s *statsSyncLoad) drainColTask(exit chan struct{}) (*statstypes.NeededItemTask, error) {
 	// select NeededItemsCh firstly, if no task, then select TimeoutColumnsCh
 	for {
 		select {
