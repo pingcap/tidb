@@ -446,9 +446,9 @@ func SampleLoggerFactory(tick time.Duration, first int, fields ...zap.Field) fun
 	}
 }
 
-// SampleErrVerboseLoggerFactory returns a factory function that creates a sample logger with error verbose.
-// Very similar to SampleLoggerFactory, but this logger will always output error verbose regardless
-// of the log config.
+// SampleErrVerboseLoggerFactory returns a factory function that creates a sample logger with error verbose logging.
+// It works similarly to SampleLoggerFactory but ensures that error details are always logged,
+// regardless of the logging configuration.
 func SampleErrVerboseLoggerFactory(tick time.Duration, first int, fields ...zap.Field) func() *zap.Logger {
 	var (
 		once   sync.Once
