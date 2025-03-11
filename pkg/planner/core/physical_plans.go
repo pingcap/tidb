@@ -1686,6 +1686,7 @@ type PhysicalIndexHashJoin struct {
 	KeepOuterOrder bool
 }
 
+// Clone implements op.PhysicalPlan interface.
 func (p *PhysicalIndexHashJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
 	cloned := new(PhysicalIndexHashJoin)
 	cloned.SetSCtx(newCtx)
