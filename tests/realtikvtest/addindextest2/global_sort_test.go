@@ -291,7 +291,8 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 	tk.MustGetErrMsg("alter table t add unique index idx(b);", "[kv:1062]Duplicate entry '1' for key 't.idx'")
 }
 
-func TestGlobalSortAddIndexRecoverOnDuplicateCheck(t *testing.T) {
+// When meeting a retryable error, the subtask/job should be idempotent.
+func TestGlobalSortAddIndexRecoverFromRetryableError(t *testing.T) {
 	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
 	opt := fakestorage.Options{
 		Scheme:     "http",
@@ -311,12 +312,15 @@ func TestGlobalSortAddIndexRecoverOnDuplicateCheck(t *testing.T) {
 	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
 	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
 	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()")
 	defer func() {
 		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 		vardef.CloudStorageURI.Store("")
 	}()
 	failpoints := []string{
 		"github.com/pingcap/tidb/pkg/ddl/mockCheckDuplicateForUniqueIndexError",
+		"github.com/pingcap/tidb/pkg/ddl/mockCloudImportRunSubtaskError",
+		"github.com/pingcap/tidb/pkg/ddl/mockMergeSortRunSubtaskError",
 	}
 
 	for _, fp := range failpoints {
