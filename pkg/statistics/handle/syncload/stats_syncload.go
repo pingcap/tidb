@@ -510,16 +510,17 @@ func (*statsSyncLoad) readStatsForOneItem(sctx sessionctx.Context, item model.Ta
 	return w, nil
 }
 
-// drainColTask will hang until a column task can return, and either task or error will be returned.
+// drainColTask will hang until a task can return, and either task or error will be returned.
+// The task will be drained from NeededItemsCh first, if no task, then TimeoutItemsCh.
 func (s *statsSyncLoad) drainColTask(sctx sessionctx.Context, exit chan struct{}) (*statstypes.NeededItemTask, error) {
-	// select NeededColumnsCh firstly, if no task, then select TimeoutColumnsCh
+	// select NeededItemsCh firstly, if no task, then select TimeoutColumnsCh
 	for {
 		select {
 		case <-exit:
 			return nil, errExit
 		case task, ok := <-s.NeededItemsCh:
 			if !ok {
-				return nil, errors.New("drainColTask: cannot read from NeededColumnsCh, maybe the chan is closed")
+				return nil, errors.New("drainColTask: cannot read from NeededItemsCh, maybe the chan is closed")
 			}
 			// if the task has already timeout, no sql is sync-waiting for it,
 			// so do not handle it just now, put it to another channel with lower priority
@@ -534,16 +535,16 @@ func (s *statsSyncLoad) drainColTask(sctx sessionctx.Context, exit chan struct{}
 				return nil, errExit
 			case task0, ok0 := <-s.NeededItemsCh:
 				if !ok0 {
-					return nil, errors.New("drainColTask: cannot read from NeededColumnsCh, maybe the chan is closed")
+					return nil, errors.New("drainColTask: cannot read from NeededItemsCh, maybe the chan is closed")
 				}
-				// send task back to TimeoutColumnsCh and return the task drained from NeededColumnsCh
+				// send task back to TimeoutItemsCh and return the task drained from NeededItemsCh
 				s.writeToTimeoutChan(s.TimeoutItemsCh, task)
 				return task0, nil
 			default:
 				if !ok {
-					return nil, errors.New("drainColTask: cannot read from TimeoutColumnsCh, maybe the chan is closed")
+					return nil, errors.New("drainColTask: cannot read from TimeoutItemsCh, maybe the chan is closed")
 				}
-				// NeededColumnsCh is empty now, handle task from TimeoutColumnsCh
+				// NeededColumnsCh is empty now, handle task from TimeoutItemsCh
 				return task, nil
 			}
 		}
