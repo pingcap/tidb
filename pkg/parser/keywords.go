@@ -311,6 +311,7 @@ var Keywords = []KeywordsType{
 	{"CLUSTERED", false, "unreserved"},
 	{"COALESCE", false, "unreserved"},
 	{"COLLATION", false, "unreserved"},
+	{"COLUMNAR", false, "unreserved"},
 	{"COLUMNS", false, "unreserved"},
 	{"COLUMN_FORMAT", false, "unreserved"},
 	{"COMMENT", false, "unreserved"},
