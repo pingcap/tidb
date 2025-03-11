@@ -20,7 +20,10 @@ const (
 	UnspecifiedSize = math.MaxUint64
 )
 
-func IsReadOnly(node Node, checkVariables bool) bool {
+// IsReadOnly checks that the ast is readonly.  If checkGlobalVars is set to
+// true, then updates to global variables are counted as writes. Otherwise, if
+// this flag is false, they are ignored.
+func IsReadOnly(node Node, checkGlobalVars bool) bool {
 	switch st := node.(type) {
 	case *SelectStmt:
 		if st.LockInfo != nil {
@@ -31,7 +34,7 @@ func IsReadOnly(node Node, checkVariables bool) bool {
 			}
 		}
 
-		if !checkVariables {
+		if !checkGlobalVars {
 			return true
 		}
 
@@ -42,19 +45,19 @@ func IsReadOnly(node Node, checkVariables bool) bool {
 		node.Accept(&checker)
 		return checker.readOnly
 	case *ExplainStmt:
-		return !st.Analyze || IsReadOnly(st.Stmt, checkVariables)
+		return !st.Analyze || IsReadOnly(st.Stmt, checkGlobalVars)
 	case *DoStmt, *ShowStmt:
 		return true
 	case *SetOprStmt:
 		for _, sel := range node.(*SetOprStmt).SelectList.Selects {
-			if !IsReadOnly(sel, checkVariables) {
+			if !IsReadOnly(sel, checkGlobalVars) {
 				return false
 			}
 		}
 		return true
 	case *SetOprSelectList:
 		for _, sel := range node.(*SetOprSelectList).Selects {
-			if !IsReadOnly(sel, checkVariables) {
+			if !IsReadOnly(sel, checkGlobalVars) {
 				return false
 			}
 		}

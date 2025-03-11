@@ -55,17 +55,17 @@ func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
 	return isReadOnlyInternal(node, vars, true)
 }
 
-// IsReadOnly check whether the ast.Node is a read only statement.
-func isReadOnlyInternal(node ast.Node, vars *variable.SessionVars, checkVariables bool) bool {
+// If checkGlobalVars is true, false will be returned when there are updates to global variables.
+func isReadOnlyInternal(node ast.Node, vars *variable.SessionVars, checkGlobalVars bool) bool {
 	if execStmt, isExecStmt := node.(*ast.ExecuteStmt); isExecStmt {
 		prepareStmt, err := core.GetPreparedStmt(execStmt, vars)
 		if err != nil {
 			logutil.BgLogger().Warn("GetPreparedStmt failed", zap.Error(err))
 			return false
 		}
-		return ast.IsReadOnly(prepareStmt.PreparedAst.Stmt, checkVariables)
+		return ast.IsReadOnly(prepareStmt.PreparedAst.Stmt, checkGlobalVars)
 	}
-	return ast.IsReadOnly(node, checkVariables)
+	return ast.IsReadOnly(node, checkGlobalVars)
 }
 
 // getPlanFromNonPreparedPlanCache tries to get an available cached plan from the NonPrepared Plan Cache for this stmt.
@@ -421,6 +421,7 @@ func allowInReadOnlyMode(sctx planctx.PlanContext, node ast.Node) (bool, error) 
 	}
 
 	vars := sctx.GetSessionVars()
+	// Passing false allows global variables updates in read-only mode.
 	return isReadOnlyInternal(node, vars, false), nil
 }
 
