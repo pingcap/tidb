@@ -114,7 +114,6 @@ func NewHandle(
 	_, /* ctx, keep it for feature usage */
 	initStatsCtx sessionctx.Context,
 	lease time.Duration,
-	is infoschema.InfoSchema,
 	pool pkgutil.DestroyableSessionPool,
 	tracker sysproctrack.Tracker,
 	ddlNotifier *notifier.DDLNotifier,
