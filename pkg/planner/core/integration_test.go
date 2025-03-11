@@ -2318,20 +2318,6 @@ func TestNestedVirtualGeneratedColumnUpdate(t *testing.T) {
 	tk.MustExec("UPDATE test1 SET col7 = '{\"col10\":\"DDDDD\",\"col9\":[\"abcdefg\"]}';\n")
 	tk.MustExec("DELETE FROM test1 WHERE col1 < 0;\n")
 }
-<<<<<<< HEAD
-=======
-
-func TestIssue58829(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec(`create table t1 (id varchar(64) not null,  key(id))`)
-	tk.MustExec(`create table t2 (id bigint(20), k int)`)
-
-	// the semi_join_rewrite hint can convert the semi-join to inner-join and finally allow the optimizer to choose the IndexJoin
-	tk.MustHavePlan(`delete from t1 where t1.id in (select /*+ semi_join_rewrite() */ cast(id as char) from t2 where k=1)`, "IndexHashJoin")
-}
 
 func TestAggregationInWindowFunctionPushDownToTiFlash(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -2365,4 +2351,3 @@ func TestAggregationInWindowFunctionPushDownToTiFlash(t *testing.T) {
 	}
 	tk.MustQuery("explain select sum(v) over w as res1, count(v) over w as res2, avg(v) over w as res3, min(v) over w as res4, max(v) over w as res5 from t window w as (partition by p order by o);").CheckAt([]int{0, 2, 4}, rows)
 }
->>>>>>> 1596775be1d (expression: Support aggregation in window function pushdown to TiFlash (#59510))
