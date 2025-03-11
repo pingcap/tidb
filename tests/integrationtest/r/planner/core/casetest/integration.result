@@ -127,27 +127,19 @@ id	estRows	task	access object	operator info
 HashJoin	1.00	root		CARTESIAN inner join
 ├─StreamAgg(Build)	1.00	root		funcs:max(planner__core__casetest__integration.cluster_index_t.a)->Column#5
 │ └─Limit	1.00	root		offset:0, count:1
-│   └─TableReader	1.00	root		data:Limit
-│     └─Limit	1.00	cop[tikv]		offset:0, count:1
-│       └─TableFullScan	1.00	cop[tikv]	table:cluster_index_t	keep order:true, desc, stats:pseudo
+│   └─TableDual	10000.00	root		rows:0
 └─StreamAgg(Probe)	1.00	root		funcs:min(planner__core__casetest__integration.cluster_index_t.a)->Column#4
   └─Limit	1.00	root		offset:0, count:1
-    └─TableReader	1.00	root		data:Limit
-      └─Limit	1.00	cop[tikv]		offset:0, count:1
-        └─TableFullScan	1.00	cop[tikv]	table:cluster_index_t	keep order:true, stats:pseudo
+    └─TableDual	10000.00	root		rows:0
 explain format = 'brief' select min(b), max(b) from cluster_index_t where a = 1;
 id	estRows	task	access object	operator info
 HashJoin	1.00	root		CARTESIAN inner join
 ├─StreamAgg(Build)	1.00	root		funcs:max(planner__core__casetest__integration.cluster_index_t.b)->Column#5
 │ └─Limit	1.00	root		offset:0, count:1
-│   └─TableReader	1.00	root		data:Limit
-│     └─Limit	1.00	cop[tikv]		offset:0, count:1
-│       └─TableRangeScan	1.00	cop[tikv]	table:cluster_index_t	range:[1,1], keep order:true, desc, stats:pseudo
+│   └─TableDual	10.00	root		rows:0
 └─StreamAgg(Probe)	1.00	root		funcs:min(planner__core__casetest__integration.cluster_index_t.b)->Column#4
   └─Limit	1.00	root		offset:0, count:1
-    └─TableReader	1.00	root		data:Limit
-      └─Limit	1.00	cop[tikv]		offset:0, count:1
-        └─TableRangeScan	1.00	cop[tikv]	table:cluster_index_t	range:[1,1], keep order:true, stats:pseudo
+    └─TableDual	10.00	root		rows:0
 explain format = 'brief' select min(a), max(a) from cluster_index_t where b = 1;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:min(Column#8)->Column#4, funcs:max(Column#9)->Column#5
