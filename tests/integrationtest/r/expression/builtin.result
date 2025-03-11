@@ -713,7 +713,7 @@ create table tb5(a json, b bigint unsigned);
 insert into tb5 (a, b) values ('184467440737095516160', 18446744073709551615);
 select * from tb5 where cast(a as unsigned int)=b;
 a	b
-184467440737095500000	18446744073709551615
+1.844674407370955e20	18446744073709551615
 select * from tb5 where cast(b as unsigned int)=0;
 a	b
 drop table tb5;

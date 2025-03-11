@@ -381,6 +381,10 @@ func (s *FDSet) addEquivalence(eqs intset.FastIntSet) {
 		// {} --> {a} + {a,b,c} --> {a,b,c} leading to extension {} --> {a,b,c}
 		s.AddConstants(eqClosure)
 	}
+	// the new equiv closure should share the same not-null attribute with the existed ones.
+	if s.NotNullCols.Intersects(eqClosure) {
+		s.MakeNotNull(eqClosure)
+	}
 }
 
 // AddEquivalence take two column id as parameters, establish a strict equivalence between
@@ -400,6 +404,12 @@ func (s *FDSet) AddEquivalence(from, to intset.FastIntSet) {
 		return
 	}
 	s.addEquivalence(from.Union(to))
+}
+
+// AddEquivalenceUnion add an equivalence union to fdSet.
+func (s *FDSet) AddEquivalenceUnion(union intset.FastIntSet) {
+	// no check for trivial equivalence, since it's a union of multiple equivalent columns.
+	s.addEquivalence(union)
 }
 
 // AddConstants adds a strict FD to the source which indicates that each of the given column
@@ -1173,7 +1183,6 @@ func (s *FDSet) makeEquivMap(detCols, projectedCols intset.FastIntSet) map[int]i
 // String returns format string of this FDSet.
 func (s *FDSet) String() string {
 	var builder strings.Builder
-
 	for i := range s.fdEdges {
 		if i != 0 {
 			builder.WriteString(", ")
@@ -1223,4 +1232,53 @@ func (s *FDSet) IsHashCodeRegistered(hashCode string) (int, bool) {
 		return uniqueID, true
 	}
 	return -1, false
+}
+
+// FindCommonEquivClasses find the common equivalences between multi fds.
+func FindCommonEquivClasses(fdSets []*FDSet) []intset.FastIntSet {
+	if len(fdSets) == 0 {
+		return nil
+	}
+	var result []intset.FastIntSet
+	for _, edge := range fdSets[0].fdEdges {
+		if edge.equiv {
+			// clone one for later mutable intersection.
+			set := intset.NewFastIntSet()
+			set.CopyFrom(edge.from)
+			result = append(result, set)
+		}
+	}
+	// iterate intersection with later all fdSets.
+	for i := 1; i < len(fdSets); i++ {
+		newResult := make([]intset.FastIntSet, 0, len(result))
+		currFDSet := fdSets[i]
+		// iterate all equivalence classes in the current fdSet.
+		for _, equivClass := range result {
+			// iterate all equivalence FDs in the current fdSet.
+			for _, edge := range currFDSet.fdEdges {
+				if !edge.equiv {
+					continue
+				}
+				// find the intersection between the current equivalence class and the current equivalence FD.
+				intersection := intset.NewFastIntSet()
+				intersection.CopyFrom(equivClass)
+				intersection.IntersectionWith(edge.from)
+				// * if the intersection has changed and not empty. (become a subset)
+				// * if the intersection is still the same (it means two equivalence classes are the same)
+				// * intersection with the single point is meaningless in bi-relation of equivalence.
+				if intersection.Len() > 1 {
+					// put the intersection one as the new result into the newResult.
+					newResult = append(newResult, intersection)
+					continue
+				}
+			}
+		}
+		// update the result with the newResult.
+		result = newResult
+		// if the result is empty, no need to continue. (intersection with empty set continuously is meaningless)
+		if len(result) == 0 {
+			return nil
+		}
+	}
+	return result
 }

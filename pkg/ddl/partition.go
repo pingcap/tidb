@@ -48,7 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -2562,7 +2562,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		preSplitAndScatter(w.sess.Context, jobCtx.store, tblInfo, newDefinitions)
 		failpoint.Inject("truncatePartFail1", func(val failpoint.Value) {
 			if val.(bool) {
-				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
+				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
 				err = errors.New("Injected error by truncatePartFail1")
 				failpoint.Return(ver, err)
 			}
@@ -2596,7 +2596,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		}
 		failpoint.Inject("truncatePartFail2", func(val failpoint.Value) {
 			if val.(bool) {
-				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
+				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
 				err = errors.New("Injected error by truncatePartFail2")
 				failpoint.Return(ver, err)
 			}
@@ -2617,7 +2617,7 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 
 		failpoint.Inject("truncatePartFail3", func(val failpoint.Value) {
 			if val.(bool) {
-				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
+				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
 				err = errors.New("Injected error by truncatePartFail3")
 				failpoint.Return(ver, err)
 			}
@@ -3312,7 +3312,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		if s, ok := jobCtx.store.(kv.SplittableStore); ok && s != nil {
 			// 1. partInfo only contains the AddingPartitions
 			// 2. ScatterTable control all new split region need waiting for scatter region finish at table level.
-			splitPartitionTableRegion(w.sess.Context, s, tblInfo, partInfo.Definitions, variable.ScatterTable)
+			splitPartitionTableRegion(w.sess.Context, s, tblInfo, partInfo.Definitions, vardef.ScatterTable)
 		}
 
 		if job.Type == model.ActionReorganizePartition {
@@ -3416,7 +3416,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		failpoint.Inject("reorgPartFail1", func(val failpoint.Value) {
 			// Failures will retry, then do rollback
 			if val.(bool) {
-				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
+				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
 				failpoint.Return(ver, errors.New("Injected error by reorgPartFail1"))
 			}
 		})
@@ -3472,7 +3472,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 
 		failpoint.Inject("reorgPartFail2", func(val failpoint.Value) {
 			if val.(bool) {
-				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
+				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
 				failpoint.Return(ver, errors.New("Injected error by reorgPartFail2"))
 			}
 		})
@@ -3507,7 +3507,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		}
 		failpoint.Inject("reorgPartFail3", func(val failpoint.Value) {
 			if val.(bool) {
-				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
+				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
 				failpoint.Return(ver, errors.New("Injected error by reorgPartFail3"))
 			}
 		})
@@ -3558,7 +3558,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 		}
 		failpoint.Inject("reorgPartFail4", func(val failpoint.Value) {
 			if val.(bool) {
-				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
+				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
 				failpoint.Return(ver, errors.New("Injected error by reorgPartFail4"))
 			}
 		})
@@ -3610,7 +3610,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 
 		failpoint.Inject("reorgPartFail5", func(val failpoint.Value) {
 			if val.(bool) {
-				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
+				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
 				failpoint.Return(ver, errors.New("Injected error by reorgPartFail5"))
 			}
 		})
@@ -3721,7 +3721,7 @@ func doPartitionReorgWork(w *worker, jobCtx *jobContext, job *model.Job, tbl tab
 			func() {
 				reorgErr = dbterror.ErrCancelledDDLJob.GenWithStack("reorganize partition for table `%v` panic", tbl.Meta().Name)
 			}, false)
-		return w.reorgPartitionDataAndIndex(jobCtx.stepCtx, reorgTbl, reorgInfo)
+		return w.reorgPartitionDataAndIndex(jobCtx, reorgTbl, reorgInfo)
 	})
 	if err != nil {
 		if dbterror.ErrPausedDDLJob.Equal(err) {
@@ -3972,7 +3972,7 @@ func (w *reorgPartitionWorker) GetCtx() *backfillCtx {
 }
 
 func (w *worker) reorgPartitionDataAndIndex(
-	ctx context.Context,
+	jobCtx *jobContext,
 	t table.Table,
 	reorgInfo *reorgInfo,
 ) (err error) {
@@ -3987,7 +3987,7 @@ func (w *worker) reorgPartitionDataAndIndex(
 
 	// Copy the data from the DroppingDefinitions to the AddingDefinitions
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
-		err = w.updatePhysicalTableRow(ctx, t, reorgInfo)
+		err = w.updatePhysicalTableRow(jobCtx.stepCtx, t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -4046,7 +4046,7 @@ func (w *worker) reorgPartitionDataAndIndex(
 	pi := t.Meta().GetPartitionInfo()
 	if _, err = findNextPartitionID(reorgInfo.PhysicalTableID, pi.AddingDefinitions); err == nil {
 		// Now build all the indexes in the new partitions.
-		err = w.addTableIndex(ctx, t, reorgInfo)
+		err = w.addTableIndex(jobCtx, t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -4110,7 +4110,7 @@ func (w *worker) reorgPartitionDataAndIndex(
 		}
 	}
 	if _, err = findNextNonTouchedPartitionID(reorgInfo.PhysicalTableID, pi); err == nil {
-		err = w.addTableIndex(ctx, t, reorgInfo)
+		err = w.addTableIndex(jobCtx, t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -4271,7 +4271,7 @@ func checkExchangePartitionRecordValidation(
 		return dbterror.ErrUnsupportedPartitionType.GenWithStackByArgs(pt.Name.O)
 	}
 
-	if variable.EnableCheckConstraint.Load() {
+	if vardef.EnableCheckConstraint.Load() {
 		pcc, ok := ptbl.(CheckConstraintTable)
 		if !ok {
 			return errors.Errorf("exchange partition process assert table partition failed")
@@ -4296,7 +4296,7 @@ func checkExchangePartitionRecordValidation(
 	}
 
 	// Check partition table records.
-	if variable.EnableCheckConstraint.Load() {
+	if vardef.EnableCheckConstraint.Load() {
 		ncc, ok := ntbl.(CheckConstraintTable)
 		if !ok {
 			return errors.Errorf("exchange partition process assert table partition failed")
@@ -4350,6 +4350,7 @@ func buildCheckSQLConditionForRangeExprPartition(pi *model.PartitionInfo, index 
 	// Since the pi.Expr string may contain the identifier, which couldn't be escaped in our ParseWithParams(...)
 	// So we write it to the origin sql string here.
 	if index == 0 {
+		// TODO: Handle MAXVALUE in first partition
 		buf.WriteString(pi.Expr)
 		buf.WriteString(" >= %?")
 		paramList = append(paramList, driver.UnwrapFromSingleQuotes(pi.Definitions[index].LessThan[0]))
@@ -4372,21 +4373,91 @@ func buildCheckSQLConditionForRangeExprPartition(pi *model.PartitionInfo, index 
 }
 
 func buildCheckSQLConditionForRangeColumnsPartition(pi *model.PartitionInfo, index int) (string, []any) {
-	paramList := make([]any, 0, 2)
-	colName := pi.Columns[0].L
-	if index == 0 {
-		paramList = append(paramList, colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index].LessThan[0]))
-		return "%n >= %?", paramList
-	} else if index == len(pi.Definitions)-1 && strings.EqualFold(pi.Definitions[index].LessThan[0], partitionMaxValue) {
-		paramList = append(paramList, colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index-1].LessThan[0]))
-		return "%n < %?", paramList
+	var buf strings.Builder
+	paramList := make([]any, 0, len(pi.Columns)*2)
+
+	hasLowerBound := index > 0
+	needOR := false
+
+	// Lower bound check (for all partitions except first)
+	if hasLowerBound {
+		currVals := pi.Definitions[index-1].LessThan
+		for i := 0; i < len(pi.Columns); i++ {
+			nextIsMax := false
+			if i < (len(pi.Columns)-1) && strings.EqualFold(currVals[i+1], partitionMaxValue) {
+				nextIsMax = true
+			}
+			if needOR {
+				buf.WriteString(" OR ")
+			}
+			if i > 0 {
+				buf.WriteString("(")
+				// All previous columns must be equal and non-NULL
+				for j := 0; j < i; j++ {
+					if j > 0 {
+						buf.WriteString(" AND ")
+					}
+					buf.WriteString("(%n = %?)")
+					paramList = append(paramList, pi.Columns[j].L, driver.UnwrapFromSingleQuotes(currVals[j]))
+				}
+				buf.WriteString(" AND ")
+			}
+			paramList = append(paramList, pi.Columns[i].L, driver.UnwrapFromSingleQuotes(currVals[i]), pi.Columns[i].L)
+			if nextIsMax {
+				buf.WriteString("(%n <= %? OR %n IS NULL)")
+			} else {
+				buf.WriteString("(%n < %? OR %n IS NULL)")
+			}
+			if i > 0 {
+				buf.WriteString(")")
+			}
+			needOR = true
+			if nextIsMax {
+				break
+			}
+		}
 	}
-	paramList = append(paramList, colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index-1].LessThan[0]), colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index].LessThan[0]))
-	return "%n < %? or %n >= %?", paramList
+
+	currVals := pi.Definitions[index].LessThan
+	// Upper bound check (for all partitions)
+	for i := 0; i < len(pi.Columns); i++ {
+		if strings.EqualFold(currVals[i], partitionMaxValue) {
+			break
+		}
+		if needOR {
+			buf.WriteString(" OR ")
+		}
+		if i > 0 {
+			buf.WriteString("(")
+			// All previous columns must be equal
+			for j := 0; j < i; j++ {
+				if j > 0 {
+					buf.WriteString(" AND ")
+				}
+				paramList = append(paramList, pi.Columns[j].L, driver.UnwrapFromSingleQuotes(currVals[j]))
+				buf.WriteString("(%n = %?)")
+			}
+			buf.WriteString(" AND ")
+		}
+		isLast := i == len(pi.Columns)-1
+		if isLast {
+			buf.WriteString("(%n >= %?)")
+		} else {
+			buf.WriteString("(%n > %?)")
+		}
+		paramList = append(paramList, pi.Columns[i].L, driver.UnwrapFromSingleQuotes(currVals[i]))
+		if i > 0 {
+			buf.WriteString(")")
+		}
+		needOR = true
+	}
+
+	return buf.String(), paramList
 }
 
 func buildCheckSQLConditionForListPartition(pi *model.PartitionInfo, index int) string {
 	var buf strings.Builder
+	// TODO: Handle DEFAULT partition
 	buf.WriteString("not (")
 	for i, inValue := range pi.Definitions[index].InValues {
 		if i != 0 {
@@ -4408,6 +4479,9 @@ func buildCheckSQLConditionForListPartition(pi *model.PartitionInfo, index int) 
 
 func buildCheckSQLConditionForListColumnsPartition(pi *model.PartitionInfo, index int) string {
 	var buf strings.Builder
+	// TODO: Verify if this is correct!!!
+	// TODO: Handle DEFAULT partition!
+	// TODO: use paramList with column names, instead of quoting.
 	// How to find a match?
 	// (row <=> vals1) OR (row <=> vals2)
 	// How to find a non-matching row:
@@ -4415,7 +4489,9 @@ func buildCheckSQLConditionForListColumnsPartition(pi *model.PartitionInfo, inde
 	buf.WriteString("not (")
 	colNames := make([]string, 0, len(pi.Columns))
 	for i := range pi.Columns {
+		// TODO: Add test for this!
 		// TODO: check if there are no proper quoting function for this?
+		// TODO: Maybe Sprintf("%#q", str) ?
 		n := "`" + strings.ReplaceAll(pi.Columns[i].O, "`", "``") + "`"
 		colNames = append(colNames, n)
 	}

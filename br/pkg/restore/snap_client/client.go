@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -53,6 +54,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	kvutil "github.com/tikv/client-go/v2/util"
@@ -76,6 +79,7 @@ const minBatchDdlSize = 1
 
 type SnapClient struct {
 	restorer restore.SstRestorer
+	importer *SnapFileImporter
 	// Use a closure to lazy load checkpoint runner
 	getRestorerFn func(*checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]) restore.SstRestorer
 	// Tool clients used by SnapClient
@@ -153,6 +157,10 @@ type SnapClient struct {
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 
 	checkpointChecksum map[int64]*checkpoint.ChecksumItem
+
+	// restoreUUID is the UUID of this restore.
+	// restore from a checkpoint inherits the same restoreUUID.
+	restoreUUID uuid.UUID
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -312,35 +320,49 @@ func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Tabl
 // storage.
 func (rc *SnapClient) InitCheckpoint(
 	ctx context.Context,
-	g glue.Glue, store kv.Storage,
+	snapshotCheckpointMetaManager checkpoint.SnapshotMetaManagerT,
 	config *pdutil.ClusterConfig,
+	logRestoredTS uint64,
 	checkpointFirstRun bool,
 ) (checkpointSetWithTableID map[int64]map[string]struct{}, checkpointClusterConfig *pdutil.ClusterConfig, err error) {
 	// checkpoint sets distinguished by range key
 	checkpointSetWithTableID = make(map[int64]map[string]struct{})
 
 	if !checkpointFirstRun {
-		execCtx := rc.db.Session().GetSessionCtx().GetRestrictedSQLExecutor()
 		// load the checkpoint since this is not the first time to restore
-		meta, err := checkpoint.LoadCheckpointMetadataForSnapshotRestore(ctx, execCtx)
+		meta, err := snapshotCheckpointMetaManager.LoadCheckpointMetadata(ctx)
 		if err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
+		rc.restoreUUID = meta.RestoreUUID
 
 		if meta.UpstreamClusterID != rc.backupMeta.ClusterId {
 			return checkpointSetWithTableID, nil, errors.Errorf(
 				"The upstream cluster id[%d] of the current snapshot restore does not match that[%d] recorded in checkpoint. "+
 					"Perhaps you should specify the last full backup storage instead, "+
-					"or just clean the checkpoint database[%s] if the cluster has been cleaned up.",
-				rc.backupMeta.ClusterId, meta.UpstreamClusterID, checkpoint.SnapshotRestoreCheckpointDatabaseName)
+					"or just clean the checkpoint %s if the cluster has been cleaned up.",
+				rc.backupMeta.ClusterId, meta.UpstreamClusterID, snapshotCheckpointMetaManager)
 		}
 
 		if meta.RestoredTS != rc.backupMeta.EndVersion {
 			return checkpointSetWithTableID, nil, errors.Errorf(
 				"The current snapshot restore want to restore cluster to the BackupTS[%d], which is different from that[%d] recorded in checkpoint. "+
 					"Perhaps you should specify the last full backup storage instead, "+
+					"or just clean the checkpoint %s if the cluster has been cleaned up.",
+				rc.backupMeta.EndVersion, meta.RestoredTS, snapshotCheckpointMetaManager,
+			)
+		}
+
+		// The filter feature is determined by the PITR restored ts, so the snapshot
+		// restore checkpoint should check whether the PITR restored ts is changed.
+		// Notice that if log restore checkpoint metadata is not stored, BR always enters
+		// snapshot restore.
+		if meta.LogRestoredTS != logRestoredTS {
+			return checkpointSetWithTableID, nil, errors.Errorf(
+				"The current PITR want to restore cluster to the log restored ts[%d], which is different from that[%d] recorded in checkpoint. "+
+					"Perhaps you shoud specify the log restored ts instead, "+
 					"or just clean the checkpoint database[%s] if the cluster has been cleaned up.",
-				rc.backupMeta.EndVersion, meta.RestoredTS, checkpoint.SnapshotRestoreCheckpointDatabaseName,
+				logRestoredTS, meta.LogRestoredTS, snapshotCheckpointMetaManager,
 			)
 		}
 
@@ -352,7 +374,7 @@ func (rc *SnapClient) InitCheckpoint(
 		}
 
 		// t1 is the latest time the checkpoint ranges persisted to the external storage.
-		t1, err := checkpoint.LoadCheckpointDataForSstRestore(ctx, execCtx, checkpoint.SnapshotRestoreCheckpointDatabaseName, func(tableID int64, v checkpoint.RestoreValueType) {
+		t1, err := snapshotCheckpointMetaManager.LoadCheckpointData(ctx, func(tableID int64, v checkpoint.RestoreValueType) {
 			checkpointSet, exists := checkpointSetWithTableID[tableID]
 			if !exists {
 				checkpointSet = make(map[string]struct{})
@@ -363,8 +385,8 @@ func (rc *SnapClient) InitCheckpoint(
 		if err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
-
-		checkpointChecksum, t2, err := checkpoint.LoadCheckpointChecksumForRestore(ctx, execCtx)
+		// t2 is the latest time the checkpoint checksum persisted to the external storage.
+		checkpointChecksum, t2, err := snapshotCheckpointMetaManager.LoadCheckpointChecksum(ctx)
 		if err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
@@ -377,24 +399,24 @@ func (rc *SnapClient) InitCheckpoint(
 		}
 	} else {
 		// initialize the checkpoint metadata since it is the first time to restore.
+		restoreID := uuid.New()
 		meta := &checkpoint.CheckpointMetadataForSnapshotRestore{
 			UpstreamClusterID: rc.backupMeta.ClusterId,
 			RestoredTS:        rc.backupMeta.EndVersion,
+			LogRestoredTS:     logRestoredTS,
+			RestoreUUID:       restoreID,
 		}
+		rc.restoreUUID = restoreID
 		// a nil config means undo function
 		if config != nil {
 			meta.SchedulersConfig = &pdutil.ClusterConfig{Schedulers: config.Schedulers, ScheduleCfg: config.ScheduleCfg}
 		}
-		if err := checkpoint.SaveCheckpointMetadataForSstRestore(ctx, rc.db.Session(), checkpoint.SnapshotRestoreCheckpointDatabaseName, meta); err != nil {
+		if err := snapshotCheckpointMetaManager.SaveCheckpointMetadata(ctx, meta); err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
 	}
 
-	se, err := g.CreateSession(store)
-	if err != nil {
-		return checkpointSetWithTableID, nil, errors.Trace(err)
-	}
-	rc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, se, checkpoint.SnapshotRestoreCheckpointDatabaseName)
+	rc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, snapshotCheckpointMetaManager)
 	if err != nil {
 		return checkpointSetWithTableID, nil, errors.Trace(err)
 	}
@@ -422,8 +444,41 @@ func makeDBPool(size uint, dbFactory func() (*tidallocdb.DB, error)) ([]*tidallo
 	return dbPool, nil
 }
 
-// Init create db connection and domain for storage.
-func (rc *SnapClient) Init(g glue.Glue, store kv.Storage) error {
+func (rc *SnapClient) InstallPiTRSupport(ctx context.Context, deps PiTRCollDep) error {
+	if err := deps.LoadMaxCopyConcurrency(ctx, rc.concurrencyPerStore); err != nil {
+		return errors.Trace(err)
+	}
+
+	collector, err := newPiTRColl(ctx, deps)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !collector.enabled {
+		return nil
+	}
+	if rc.IsIncremental() {
+		// Even there were an error, don't return it to confuse the user...
+		_ = collector.close()
+		return errors.Annotatef(berrors.ErrStreamLogTaskExist, "it seems there is a log backup task exists, "+
+			"if an incremental restore were performed to such cluster, log backup cannot properly handle this, "+
+			"the restore will be aborted, you may stop the log backup task, then restore, finally restart the task")
+	}
+
+	collector.restoreUUID = rc.restoreUUID
+	if collector.restoreUUID == (uuid.UUID{}) {
+		collector.restoreUUID = uuid.New()
+		log.Warn("UUID not found(checkpoint not enabled?), generating a new UUID for backup.",
+			zap.Stringer("uuid", collector.restoreUUID))
+	}
+	rc.importer.beforeIngestCallbacks = append(rc.importer.beforeIngestCallbacks, collector.onBatch)
+	rc.importer.closeCallbacks = append(rc.importer.closeCallbacks, func(sfi *SnapFileImporter) error {
+		return collector.close()
+	})
+	return nil
+}
+
+// InitConnections create db connection and domain for storage.
+func (rc *SnapClient) InitConnections(g glue.Glue, store kv.Storage) error {
 	// setDB must happen after set PolicyMode.
 	// we will use policyMode to set session variables.
 	var err error
@@ -532,7 +587,6 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 	metaClient := split.NewClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, maxSplitKeysOnce, rc.storeCount+1, splitClientOpts...)
 	importCli := importclient.NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
 
-	var fileImporter *SnapFileImporter
 	opt := NewSnapFileImporterOptions(
 		rc.cipher, metaClient, importCli, backend,
 		rc.rewriteMode, stores, rc.concurrencyPerStore, createCallBacks, closeCallBacks,
@@ -543,29 +597,29 @@ func (rc *SnapClient) initClients(ctx context.Context, backend *backuppb.Storage
 			mode = Txn
 		}
 		// for raw/txn mode. use backupMeta.ApiVersion to create fileImporter
-		fileImporter, err = NewSnapFileImporter(ctx, rc.backupMeta.ApiVersion, mode, opt)
+		rc.importer, err = NewSnapFileImporter(ctx, rc.backupMeta.ApiVersion, mode, opt)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		// Raw/Txn restore are not support checkpoint for now
 		rc.getRestorerFn = func(checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]) restore.SstRestorer {
-			return restore.NewSimpleSstRestorer(ctx, fileImporter, rc.workerPool, nil)
+			return restore.NewSimpleSstRestorer(ctx, rc.importer, rc.workerPool, nil)
 		}
 	} else {
 		// or create a fileImporter with the cluster API version
-		fileImporter, err = NewSnapFileImporter(
+		rc.importer, err = NewSnapFileImporter(
 			ctx, rc.dom.Store().GetCodec().GetAPIVersion(), TiDBFull, opt)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		rc.getRestorerFn = func(checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]) restore.SstRestorer {
-			return restore.NewMultiTablesRestorer(ctx, fileImporter, rc.workerPool, checkpointRunner)
+			return restore.NewMultiTablesRestorer(ctx, rc.importer, rc.workerPool, checkpointRunner)
 		}
 	}
 	return nil
 }
 
-func (rc *SnapClient) needLoadSchemas(backupMeta *backuppb.BackupMeta) bool {
+func needLoadSchemas(backupMeta *backuppb.BackupMeta) bool {
 	return !(backupMeta.IsRawKv || backupMeta.IsTxnKv)
 }
 
@@ -579,7 +633,7 @@ func (rc *SnapClient) LoadSchemaIfNeededAndInitClient(
 	RawStartKey []byte,
 	RawEndKey []byte,
 ) error {
-	if rc.needLoadSchemas(backupMeta) {
+	if needLoadSchemas(backupMeta) {
 		databases, err := metautil.LoadBackupTables(c, reader, loadStats)
 		if err != nil {
 			return errors.Trace(err)
@@ -685,10 +739,19 @@ func (rc *SnapClient) GetDatabases() []*metautil.Database {
 	return dbs
 }
 
+// GetDatabaseMap returns all databases in a map indexed by db id
+func (rc *SnapClient) GetDatabaseMap() map[int64]*metautil.Database {
+	dbMap := make(map[int64]*metautil.Database)
+	for _, db := range rc.databases {
+		dbMap[db.Info.ID] = db
+	}
+	return dbMap
+}
+
 // HasBackedUpSysDB whether we have backed up system tables
 // br backs system tables up since 5.1.0
 func (rc *SnapClient) HasBackedUpSysDB() bool {
-	sysDBs := []string{"mysql", "sys"}
+	sysDBs := []string{mysql.SystemDB, mysql.SysDB, mysql.WorkloadSchema}
 	for _, db := range sysDBs {
 		temporaryDB := utils.TemporaryDBName(db)
 		_, backedUp := rc.databases[temporaryDB.O]
@@ -864,7 +927,7 @@ func (rc *SnapClient) createTables(
 
 func (rc *SnapClient) createTablesBatch(ctx context.Context, tables []*metautil.Table, newTS uint64) ([]*CreatedTable, error) {
 	eg, ectx := errgroup.WithContext(ctx)
-	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
+	rater := logutil.TraceRateOver(metrics.RestoreTableCreatedCount)
 	workers := tidbutil.NewWorkerPool(uint(len(rc.dbPool)), "Create Tables Worker")
 	numOfTables := len(tables)
 	createdTables := struct {
@@ -948,7 +1011,7 @@ func (rc *SnapClient) createTablesSingle(
 ) ([]*CreatedTable, error) {
 	eg, ectx := errgroup.WithContext(ctx)
 	workers := tidbutil.NewWorkerPool(uint(len(dbPool)), "DDL workers")
-	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
+	rater := logutil.TraceRateOver(metrics.RestoreTableCreatedCount)
 	createdTables := struct {
 		sync.Mutex
 		tables []*CreatedTable

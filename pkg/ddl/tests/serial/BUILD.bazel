@@ -25,7 +25,7 @@ go_test(
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/session",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessiontxn",
         "//pkg/store/mockstore",
         "//pkg/table",

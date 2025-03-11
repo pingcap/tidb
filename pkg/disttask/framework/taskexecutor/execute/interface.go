@@ -53,7 +53,14 @@ type StepExecutor interface {
 	// TaskMetaModified is called when the task meta is modified, if any error
 	// happen, framework might recreate the step executor, so don't put code
 	// that's prone to error in it.
-	TaskMetaModified(newTask *proto.Task) error
+	TaskMetaModified(ctx context.Context, newMeta []byte) error
+	// ResourceModified is called when the resource allowed to be used is modified
+	// and there is a subtask running. Note: if no subtask running, framework will
+	// call SetResource directly.
+	// application must make sure the resource in use conforms to the new resource
+	// before returning. When reducing resources, the framework depends on this
+	// to make sure current instance won't OOM.
+	ResourceModified(ctx context.Context, newResource *proto.StepResource) error
 }
 
 // SubtaskSummary contains the summary of a subtask.

@@ -239,6 +239,8 @@ const (
 	RestoreWithoutSchemaName
 	RestoreWithoutTableName
 	RestoreForNonPrepPlanCache
+
+	RestoreBracketAroundBetweenExpr
 )
 
 const (
@@ -321,6 +323,12 @@ func (rf RestoreFlags) HasRestoreBracketAroundBinaryOperation() bool {
 // whether `rf` has `RestoreStringWithoutDefaultCharset` flag.
 func (rf RestoreFlags) HasStringWithoutDefaultCharset() bool {
 	return rf.has(RestoreStringWithoutDefaultCharset)
+}
+
+// HasRestoreBracketAroundBetweenExpr returns a boolean indicating
+// whether `rf` has `RestoreBracketAroundBetweenExpr` flag.
+func (rf RestoreFlags) HasRestoreBracketAroundBetweenExpr() bool {
+	return rf.has(RestoreBracketAroundBetweenExpr)
 }
 
 // HasStringWithoutCharset returns a boolean indicating whether `rf` has `RestoreStringWithoutCharset` flag.

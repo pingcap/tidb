@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
@@ -74,7 +73,7 @@ func saveTopNToStorage(sctx sessionctx.Context, tableID int64, isIndex int, hist
 	return nil
 }
 
-func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, hg *statistics.Histogram) (lastAnalyzePos []byte, err error) {
+func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, hg *statistics.Histogram) (err error) {
 	if hg == nil {
 		return
 	}
@@ -96,9 +95,6 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 			upperBound, err = hg.GetUpper(j).ConvertTo(sc.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
 			if err != nil {
 				return
-			}
-			if j == len(hg.Buckets)-1 {
-				lastAnalyzePos = upperBound.GetBytes()
 			}
 			var lowerBound types.Datum
 			lowerBound, err = hg.GetLower(j).ConvertTo(sc.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
@@ -239,7 +235,6 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 		}
 		statsVer = version
 	}
-	cache.TableRowStatsCache.Invalidate(tableID)
 	// 2. Save histograms.
 	for _, result := range results.Ars {
 		for i, hg := range result.Hist {
@@ -281,15 +276,9 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 			if _, err = util.Exec(sctx, "delete from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %?", tableID, result.IsIndex, hg.ID); err != nil {
 				return 0, err
 			}
-			var lastAnalyzePos []byte
-			lastAnalyzePos, err = saveBucketsToStorage(sctx, tableID, result.IsIndex, hg)
+			err = saveBucketsToStorage(sctx, tableID, result.IsIndex, hg)
 			if err != nil {
 				return 0, err
-			}
-			if len(lastAnalyzePos) > 0 {
-				if _, err = util.Exec(sctx, "update mysql.stats_histograms set last_analyze_pos = %? where table_id = %? and is_index = %? and hist_id = %?", lastAnalyzePos, tableID, result.IsIndex, hg.ID); err != nil {
-					return 0, err
-				}
 			}
 			if result.IsIndex == 0 {
 				if _, err = util.Exec(sctx, "insert into mysql.column_stats_usage (table_id, column_id, last_analyzed_at) values(%?, %?, current_timestamp()) on duplicate key update last_analyzed_at = values(last_analyzed_at)", tableID, hg.ID); err != nil {
@@ -347,7 +336,6 @@ func SaveStatsToStorage(
 	// If the count is less than 0, then we do not want to update the modify count and count.
 	if count >= 0 {
 		_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
-		cache.TableRowStatsCache.Invalidate(tableID)
 	} else {
 		_, err = util.Exec(sctx, "update mysql.stats_meta set version = %? where table_id = %?", version, tableID)
 	}
@@ -376,15 +364,9 @@ func SaveStatsToStorage(
 	if _, err = util.Exec(sctx, "delete from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
 		return 0, err
 	}
-	var lastAnalyzePos []byte
-	lastAnalyzePos, err = saveBucketsToStorage(sctx, tableID, isIndex, hg)
+	err = saveBucketsToStorage(sctx, tableID, isIndex, hg)
 	if err != nil {
 		return 0, err
-	}
-	if len(lastAnalyzePos) > 0 {
-		if _, err = util.Exec(sctx, "update mysql.stats_histograms set last_analyze_pos = %? where table_id = %? and is_index = %? and hist_id = %?", lastAnalyzePos, tableID, isIndex, hg.ID); err != nil {
-			return 0, err
-		}
 	}
 	if updateAnalyzeTime && isIndex == 0 {
 		if _, err = util.Exec(sctx, "insert into mysql.column_stats_usage (table_id, column_id, last_analyzed_at) values(%?, %?, current_timestamp()) on duplicate key update last_analyzed_at = current_timestamp()", tableID, hg.ID); err != nil {
@@ -404,7 +386,6 @@ func SaveMetaToStorage(
 	}
 	_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
 	statsVer = version
-	cache.TableRowStatsCache.Invalidate(tableID)
 	return
 }
 
@@ -473,7 +454,7 @@ func InsertColStats2KV(
 			continue
 		}
 
-		// If this stats exists, we insert histogram meta first, the distinct_count will always be one.
+		// If this stats doest not exist, we insert histogram meta first, the distinct_count will always be one.
 		if _, err = util.ExecWithCtx(
 			ctx, sctx,
 			`insert into mysql.stats_histograms
@@ -516,7 +497,7 @@ func InsertTableStats2KV(
 	}
 	if _, err = util.ExecWithCtx(
 		ctx, sctx,
-		"insert into mysql.stats_meta (version, table_id) values(%?, %?)",
+		"insert ignore into mysql.stats_meta (version, table_id) values(%?, %?)",
 		startTS, physicalID,
 	); err != nil {
 		return 0, errors.Trace(err)
@@ -524,7 +505,7 @@ func InsertTableStats2KV(
 	for _, col := range info.Columns {
 		if _, err = util.ExecWithCtx(
 			ctx, sctx,
-			`insert into mysql.stats_histograms
+			`insert ignore into mysql.stats_histograms
 				(table_id, is_index, hist_id, distinct_count, version)
 			values (%?, 0, %?, 0, %?)`,
 			physicalID, col.ID, startTS,
@@ -535,7 +516,7 @@ func InsertTableStats2KV(
 	for _, idx := range info.Indices {
 		if _, err = util.ExecWithCtx(
 			ctx, sctx,
-			`insert into mysql.stats_histograms
+			`insert ignore into mysql.stats_histograms
 				(table_id, is_index, hist_id, distinct_count, version)
 			values(%?, 1, %?, 0, %?)`,
 			physicalID, idx.ID, startTS,

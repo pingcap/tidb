@@ -81,6 +81,7 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/planner/core",
         "//pkg/sessionctx/stmtctx",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/table",
         "//pkg/table/tables",

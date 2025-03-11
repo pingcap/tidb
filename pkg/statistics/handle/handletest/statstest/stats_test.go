@@ -301,7 +301,6 @@ func TestInitStats(t *testing.T) {
 	h.Clear()
 	require.NoError(t, h.InitStats(context.Background(), is))
 	table0 := h.GetTableStats(tbl.Meta())
-	require.Equal(t, uint8(0x3), table0.GetIdx(1).LastAnalyzePos.GetBytes()[0])
 	h.Clear()
 	require.NoError(t, h.Update(context.Background(), is))
 	// Index and pk are loaded.
@@ -414,8 +413,6 @@ func initStatsVer2(t *testing.T) {
 	require.True(t, !table0.GetCol(4).IsStatsInitialized())
 	require.True(t, table0.GetCol(5).IsStatsInitialized())
 	require.Equal(t, 2, table0.IdxNum())
-	require.Equal(t, uint8(0x3), table0.GetIdx(1).LastAnalyzePos.GetBytes()[0])
-	require.Equal(t, uint8(0x3), table0.GetIdx(2).LastAnalyzePos.GetBytes()[0])
 	h.Clear()
 	require.NoError(t, h.InitStats(context.Background(), is))
 	table1 := h.GetTableStats(tbl.Meta())
@@ -438,4 +435,33 @@ func TestInitStatsIssue41938(t *testing.T) {
 	h.Clear()
 	require.NoError(t, h.InitStats(context.Background(), dom.InfoSchema()))
 	h.SetLease(0)
+}
+
+func TestDumpStatsDeltaInBatch(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t1 (c1 int, c2 int)")
+	testKit.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3)")
+	testKit.MustExec("create table t2 (c1 int, c2 int)")
+	testKit.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3)")
+
+	// Dump stats delta in one batch.
+	handle := dom.StatsHandle()
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+
+	// Check the mysql.stats_meta table.
+	rows := testKit.MustQuery("select modify_count, count, version from mysql.stats_meta order by table_id").Rows()
+	require.Len(t, rows, 2)
+
+	require.Equal(t, "3", rows[0][0])
+	require.Equal(t, "3", rows[0][1])
+	require.Equal(t, "3", rows[1][0])
+	require.Equal(t, "3", rows[1][1])
+	require.Equal(
+		t,
+		rows[0][2],
+		rows[1][2],
+		"The version of two tables should be the same because they are dumped in the same transaction.",
+	)
 }

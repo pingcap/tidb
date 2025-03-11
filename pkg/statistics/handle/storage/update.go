@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 )
@@ -74,6 +73,7 @@ func NewDeltaUpdate(tableID int64, delta variable.TableDelta, isLocked bool) *De
 
 // UpdateStatsMeta updates the stats meta for multiple tables.
 // It uses the INSERT INTO ... ON DUPLICATE KEY UPDATE syntax to fill the missing records.
+// Note: Make sure call this function in a transaction.
 func UpdateStatsMeta(
 	ctx context.Context,
 	sctx sessionctx.Context,
@@ -85,14 +85,22 @@ func UpdateStatsMeta(
 	}
 
 	// Separate locked and unlocked updates
-	var lockedValues, unlockedPosValues, unlockedNegValues []string
-	var cacheInvalidateIDs []int64
+	// In most cases, the number of locked tables is small.
+	lockedTableIDs := make([]string, 0, 20)
+	lockedValues := make([]string, 0, 20)
+	// In most cases, the number of unlocked tables is large.
+	unlockedTableIDs := make([]string, 0, len(updates))
+	unlockedPosValues := make([]string, 0, max(len(updates)/2, 1))
+	unlockedNegValues := make([]string, 0, max(len(updates)/2, 1))
+	cacheInvalidateIDs := make([]int64, 0, len(updates))
 
 	for _, update := range updates {
 		if update.IsLocked {
+			lockedTableIDs = append(lockedTableIDs, fmt.Sprintf("%d", update.TableID))
 			lockedValues = append(lockedValues, fmt.Sprintf("(%d, %d, %d, %d)",
 				startTS, update.TableID, update.Delta.Count, update.Delta.Delta))
 		} else {
+			unlockedTableIDs = append(unlockedTableIDs, fmt.Sprintf("%d", update.TableID))
 			if update.Delta.Delta < 0 {
 				unlockedNegValues = append(unlockedNegValues, fmt.Sprintf("(%d, %d, %d, %d)",
 					startTS, update.TableID, update.Delta.Count, -update.Delta.Delta))
@@ -104,6 +112,22 @@ func UpdateStatsMeta(
 		}
 	}
 
+	// Lock the stats_meta and stats_table_locked tables using SELECT FOR UPDATE to prevent write conflicts.
+	// This ensures that we acquire the necessary locks before attempting to update the tables, reducing the likelihood
+	// of encountering lock conflicts during the update process.
+	lockedTableIDsStr := strings.Join(lockedTableIDs, ",")
+	if lockedTableIDsStr != "" {
+		if _, err = statsutil.ExecWithCtx(ctx, sctx, fmt.Sprintf("select * from mysql.stats_table_locked where table_id in (%s) for update", lockedTableIDsStr)); err != nil {
+			return err
+		}
+	}
+
+	unlockedTableIDsStr := strings.Join(unlockedTableIDs, ",")
+	if unlockedTableIDsStr != "" {
+		if _, err = statsutil.ExecWithCtx(ctx, sctx, fmt.Sprintf("select * from mysql.stats_meta where table_id in (%s) for update", unlockedTableIDsStr)); err != nil {
+			return err
+		}
+	}
 	// Execute locked updates
 	if len(lockedValues) > 0 {
 		sql := fmt.Sprintf("insert into mysql.stats_table_locked (version, table_id, modify_count, count) values %s "+
@@ -132,11 +156,6 @@ func UpdateStatsMeta(
 		if _, err = statsutil.ExecWithCtx(ctx, sctx, sql); err != nil {
 			return err
 		}
-	}
-
-	// Invalidate cache for all unlocked tables
-	for _, id := range cacheInvalidateIDs {
-		cache.TableRowStatsCache.Invalidate(id)
 	}
 
 	return nil

@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/store/gcworker"
@@ -1615,9 +1615,9 @@ func TestGenerateColPointGet(t *testing.T) {
 	tk.MustExec("use test")
 
 	defer func() {
-		tk.MustExec(fmt.Sprintf("set global tidb_row_format_version = %d", variable.DefTiDBRowFormatV2))
+		tk.MustExec(fmt.Sprintf("set global tidb_row_format_version = %d", vardef.DefTiDBRowFormatV2))
 	}()
-	tests2 := []int{variable.DefTiDBRowFormatV1, variable.DefTiDBRowFormatV2}
+	tests2 := []int{vardef.DefTiDBRowFormatV1, vardef.DefTiDBRowFormatV2}
 	for _, rowFormat := range tests2 {
 		tk.MustExec(fmt.Sprintf("set global tidb_row_format_version = %d", rowFormat))
 		tk.MustExec("drop table if exists tu")

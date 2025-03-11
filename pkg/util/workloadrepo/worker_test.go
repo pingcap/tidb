@@ -23,12 +23,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -139,7 +142,7 @@ func waitForTables(ctx context.Context, t *testing.T, wrk *worker, now time.Time
 func TestRaceToCreateTablesWorker(t *testing.T) {
 	ctx, store, dom, addr := setupDomainAndContext(t)
 
-	_, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("workload_schema"))
+	_, ok := dom.InfoSchema().SchemaByName(workloadSchemaCIStr)
 	require.False(t, ok)
 
 	wrk1 := setupWorker(ctx, t, addr, dom, "worker1", true)
@@ -167,13 +170,13 @@ func TestRaceToCreateTablesWorker(t *testing.T) {
 	require.Len(t, res, 0)
 
 	// manually trigger snapshot by sending a tick to all workers
-	wrk1.snapshotChan <- struct{}{}
+	wrk1.takeSnapshot(ctx)
 	require.Eventually(t, func() bool {
 		res := tk.MustQuery("select snap_id, count(*) from workload_schema.hist_snapshots group by snap_id").Rows()
 		return len(res) == 1
 	}, time.Minute, time.Second)
 
-	wrk2.snapshotChan <- struct{}{}
+	wrk2.takeSnapshot(ctx)
 	require.Eventually(t, func() bool {
 		res := tk.MustQuery("select snap_id, count(*) from workload_schema.hist_snapshots group by snap_id").Rows()
 		return len(res) == 2
@@ -238,7 +241,6 @@ func TestMultipleWorker(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return wrk1.owner.IsOwner()
 	}, time.Minute, time.Second)
-
 	// start worker 2 again
 	require.NoError(t, wrk2.setRepositoryDest(ctx, "table"))
 	eventuallyWithLock(t, wrk2, func() bool { return wrk2.owner != nil })
@@ -254,7 +256,7 @@ func TestGlobalWorker(t *testing.T) {
 	ctx, store, dom, addr := setupDomainAndContext(t)
 	tk := testkit.NewTestKit(t, store)
 
-	_, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("workload_schema"))
+	_, ok := dom.InfoSchema().SchemaByName(workloadSchemaCIStr)
 	require.False(t, ok)
 
 	wrk := setupWorker(ctx, t, addr, dom, "worker", false)
@@ -274,7 +276,7 @@ func TestAdminWorkloadRepo(t *testing.T) {
 	ctx, store, dom, addr := setupDomainAndContext(t)
 	tk := testkit.NewTestKit(t, store)
 
-	_, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("workload_schema"))
+	_, ok := dom.InfoSchema().SchemaByName(workloadSchemaCIStr)
 	require.False(t, ok)
 
 	wrk := setupWorker(ctx, t, addr, dom, "worker", false)
@@ -318,7 +320,7 @@ func validateDate(t *testing.T, row []any, idx int, lastRowTs time.Time, maxSecs
 }
 
 func SamplingTimingWorker(t *testing.T, tk *testkit.TestKit, lastRowTs time.Time, cnt int, maxSecs int) time.Time {
-	rows := getRows(t, tk, cnt, maxSecs, "select instance_id, ts from "+WorkloadSchema+".hist_memory_usage where ts > '"+lastRowTs.Format("2006-01-02 15:04:05")+"' order by ts asc")
+	rows := getRows(t, tk, cnt, maxSecs, "select instance_id, ts from "+mysql.WorkloadSchema+".hist_memory_usage where ts > '"+lastRowTs.Format("2006-01-02 15:04:05")+"' order by ts asc")
 
 	for _, row := range rows {
 		// check that the instance_id is correct
@@ -360,7 +362,7 @@ func findMatchingRowForSnapshot(t *testing.T, rowidx int, snapRows [][]any, row 
 }
 
 func SnapshotTimingWorker(t *testing.T, tk *testkit.TestKit, lastRowTs time.Time, lastSnapID int, cnt int, maxSecs int) (time.Time, int) {
-	rows := getRows(t, tk, cnt, maxSecs, "select snap_id, begin_time from "+WorkloadSchema+"."+histSnapshotsTable+" where begin_time > '"+lastRowTs.Format("2006-01-02 15:04:05")+"' order by begin_time asc")
+	rows := getRows(t, tk, cnt, maxSecs, "select snap_id, begin_time from "+mysql.WorkloadSchema+"."+histSnapshotsTable+" where begin_time > '"+lastRowTs.Format("2006-01-02 15:04:05")+"' order by begin_time asc")
 
 	// We want to get all rows if we are starting from 0.
 	snapWhere := ""
@@ -504,18 +506,16 @@ func TestSettingSQLVariables(t *testing.T) {
 	eventuallyWithLock(t, wrk, func() bool { return int32(7200) == wrk.snapshotInterval })
 	eventuallyWithLock(t, wrk, func() bool { return int32(365) == wrk.retentionDays })
 
-	// Test invalid value for sampling interval
-	err := tk.ExecToErr("set @@global." + repositorySamplingInterval + " = 'invalid'")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "Incorrect argument type")
+	// Test invalid values for intervals
+	tk.MustGetDBError("set @@global."+repositorySamplingInterval+" = 'invalid'", variable.ErrWrongTypeForVar)
+	tk.MustGetDBError("set @@global."+repositorySnapshotInterval+" = 'invalid'", variable.ErrWrongTypeForVar)
+	tk.MustGetDBError("set @@global."+repositoryRetentionDays+" = 'invalid'", variable.ErrWrongTypeForVar)
 
-	err = tk.ExecToErr("set @@global." + repositorySnapshotInterval + " = 'invalid'")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "Incorrect argument type")
-
-	err = tk.ExecToErr("set @@global." + repositoryRetentionDays + " = 'invalid'")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "Incorrect argument type")
+	// Test that if the strconv.Atoi call fails that the error is correctly handled.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/workloadrepo/FastRunawayGC", `return(true)`))
+	tk.MustGetDBError("set @@global."+repositorySamplingInterval+" = 10", errWrongValueForVar)
+	tk.MustGetDBError("set @@global."+repositorySnapshotInterval+" = 901", errWrongValueForVar)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/workloadrepo/FastRunawayGC"))
 
 	trueWithLock(t, wrk, func() bool { return int32(600) == wrk.samplingInterval })
 	trueWithLock(t, wrk, func() bool { return int32(7200) == wrk.snapshotInterval })
@@ -530,9 +530,7 @@ func TestSettingSQLVariables(t *testing.T) {
 	eventuallyWithLock(t, wrk, func() bool { return !wrk.enabled })
 
 	// Test invalid value for repository destination
-	err = tk.ExecToErr("set @@global." + repositoryDest + " = 'invalid'")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "invalid repository destination")
+	tk.MustGetDBError("set @@global."+repositoryDest+" = 'invalid'", errWrongValueForVar)
 }
 
 func getTable(t *testing.T, tableName string, wrk *worker) *repositoryTable {
@@ -672,16 +670,16 @@ func TestCreatePartition(t *testing.T) {
 	// Should not create any partitions on a table with a partition for the day after tomorrow.
 	partitions = []time.Time{now.AddDate(0, 0, 2)}
 	expectedParts = []time.Time{now.AddDate(0, 0, 2)}
-	validatePartitionCreation(ctx, now, t, sess, tk, wrk, false, "CLUSTER_LOAD", partitions, expectedParts)
+	validatePartitionCreation(ctx, now, t, sess, tk, wrk, false, "DEADLOCKS", partitions, expectedParts)
 
 	// Should not fill in missing partitions on a table with a partition for dates beyond tomorrow.
 	partitions = []time.Time{now, now.AddDate(0, 0, 3)}
 	expectedParts = []time.Time{now, now.AddDate(0, 0, 3)}
-	validatePartitionCreation(ctx, now, t, sess, tk, wrk, false, "TIDB_HOT_REGIONS", partitions, expectedParts)
+	validatePartitionCreation(ctx, now, t, sess, tk, wrk, false, "TIDB_INDEX_USAGE", partitions, expectedParts)
 
 	// this table should be updated when the repository is enabled
 	partitions = []time.Time{now}
-	createTableWithParts(ctx, t, tk, getTable(t, "DEADLOCKS", wrk), sess, partitions)
+	createTableWithParts(ctx, t, tk, getTable(t, "TIDB_STATEMENTS_STATS", wrk), sess, partitions)
 
 	// turn on the repository and see if it creates the remaining tables
 	now = time.Now()
@@ -750,17 +748,17 @@ func TestDropOldPartitions(t *testing.T) {
 	// should trim one partition
 	partitions = []time.Time{now.AddDate(0, 0, -3), now.AddDate(0, 0, -2), now.AddDate(0, 0, 1)}
 	expectedParts = []time.Time{now.AddDate(0, 0, -2), now.AddDate(0, 0, 1)}
-	validatePartitionDrop(ctx, now, t, sess, tk, wrk, "CLUSTER_LOAD", partitions, 2, false, expectedParts)
+	validatePartitionDrop(ctx, now, t, sess, tk, wrk, "DEADLOCKS", partitions, 2, false, expectedParts)
 
 	// validate that it works when not dropping any partitions
 	partitions = []time.Time{now.AddDate(0, 0, -1)}
 	expectedParts = []time.Time{now.AddDate(0, 0, -1)}
-	validatePartitionDrop(ctx, now, t, sess, tk, wrk, "TIDB_HOT_REGIONS", partitions, 2, false, expectedParts)
+	validatePartitionDrop(ctx, now, t, sess, tk, wrk, "TIDB_INDEX_USAGE", partitions, 2, false, expectedParts)
 
 	// there must be partitions, so this should error
 	partitions = []time.Time{now.AddDate(0, 0, -2)}
 	expectedParts = []time.Time{now.AddDate(0, 0, -2)}
-	validatePartitionDrop(ctx, now, t, sess, tk, wrk, "TIKV_STORE_STATUS", partitions, 1, true, expectedParts)
+	validatePartitionDrop(ctx, now, t, sess, tk, wrk, "TIDB_STATEMENTS_STATS", partitions, 1, true, expectedParts)
 }
 
 func TestAddNewPartitionsOnStart(t *testing.T) {

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 // TestAutocommit . See https://dev.mysql.com/doc/internals/en/status-flags.html
@@ -340,97 +341,6 @@ func TestTxnRetryErrMsg(t *testing.T) {
 	require.True(t, strings.Contains(err.Error(), kv.TxnRetryableMark), "error: %s", err)
 }
 
-func TestSetTxnScope(t *testing.T) {
-	// Check the default value of @@tidb_enable_local_txn and @@txn_scope without configuring the zone label.
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustQuery("select @@global.tidb_enable_local_txn;").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
-	require.Equal(t, kv.GlobalTxnScope, tk.Session().GetSessionVars().CheckAndGetTxnScope())
-	// Check the default value of @@tidb_enable_local_txn and @@txn_scope with configuring the zone label.
-	require.NoError(t, failpoint.Enable("tikvclient/injectTxnScope", `return("bj")`))
-	tk = testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustQuery("select @@global.tidb_enable_local_txn;").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
-	require.Equal(t, kv.GlobalTxnScope, tk.Session().GetSessionVars().CheckAndGetTxnScope())
-	require.NoError(t, failpoint.Disable("tikvclient/injectTxnScope"))
-
-	// @@tidb_enable_local_txn is off without configuring the zone label.
-	tk = testkit.NewTestKit(t, store)
-	tk.MustQuery("select @@global.tidb_enable_local_txn;").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
-	require.Equal(t, kv.GlobalTxnScope, tk.Session().GetSessionVars().CheckAndGetTxnScope())
-	// Set @@txn_scope to local.
-	err := tk.ExecToErr("set @@txn_scope = 'local';")
-	require.Error(t, err)
-	require.Regexp(t, `.*txn_scope can not be set to local when tidb_enable_local_txn is off.*`, err)
-	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
-	require.Equal(t, kv.GlobalTxnScope, tk.Session().GetSessionVars().CheckAndGetTxnScope())
-	// Set @@txn_scope to global.
-	tk.MustExec("set @@txn_scope = 'global';")
-	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
-	require.Equal(t, kv.GlobalTxnScope, tk.Session().GetSessionVars().CheckAndGetTxnScope())
-
-	// @@tidb_enable_local_txn is off with configuring the zone label.
-	require.NoError(t, failpoint.Enable("tikvclient/injectTxnScope", `return("bj")`))
-	tk = testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustQuery("select @@global.tidb_enable_local_txn;").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
-	require.Equal(t, kv.GlobalTxnScope, tk.Session().GetSessionVars().CheckAndGetTxnScope())
-	// Set @@txn_scope to local.
-	err = tk.ExecToErr("set @@txn_scope = 'local';")
-	require.Error(t, err)
-	require.Regexp(t, `.*txn_scope can not be set to local when tidb_enable_local_txn is off.*`, err)
-	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
-	require.Equal(t, kv.GlobalTxnScope, tk.Session().GetSessionVars().CheckAndGetTxnScope())
-	// Set @@txn_scope to global.
-	tk.MustExec("set @@txn_scope = 'global';")
-	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
-	require.Equal(t, kv.GlobalTxnScope, tk.Session().GetSessionVars().CheckAndGetTxnScope())
-	require.NoError(t, failpoint.Disable("tikvclient/injectTxnScope"))
-
-	// @@tidb_enable_local_txn is on without configuring the zone label.
-	tk = testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set global tidb_enable_local_txn = on;")
-	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
-	require.Equal(t, kv.GlobalTxnScope, tk.Session().GetSessionVars().CheckAndGetTxnScope())
-	// Set @@txn_scope to local.
-	err = tk.ExecToErr("set @@txn_scope = 'local';")
-	require.Error(t, err)
-	require.Regexp(t, `.*txn_scope can not be set to local when zone label is empty or "global".*`, err)
-	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
-	require.Equal(t, kv.GlobalTxnScope, tk.Session().GetSessionVars().CheckAndGetTxnScope())
-	// Set @@txn_scope to global.
-	tk.MustExec("set @@txn_scope = 'global';")
-	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
-	require.Equal(t, kv.GlobalTxnScope, tk.Session().GetSessionVars().CheckAndGetTxnScope())
-
-	// @@tidb_enable_local_txn is on with configuring the zone label.
-	require.NoError(t, failpoint.Enable("tikvclient/injectTxnScope", `return("bj")`))
-	tk = testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set global tidb_enable_local_txn = on;")
-	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.LocalTxnScope))
-	require.Equal(t, "bj", tk.Session().GetSessionVars().CheckAndGetTxnScope())
-	// Set @@txn_scope to global.
-	tk.MustExec("set @@txn_scope = 'global';")
-	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.GlobalTxnScope))
-	require.Equal(t, kv.GlobalTxnScope, tk.Session().GetSessionVars().CheckAndGetTxnScope())
-	// Set @@txn_scope to local.
-	tk.MustExec("set @@txn_scope = 'local';")
-	tk.MustQuery("select @@txn_scope;").Check(testkit.Rows(kv.LocalTxnScope))
-	require.Equal(t, "bj", tk.Session().GetSessionVars().CheckAndGetTxnScope())
-	// Try to set @@txn_scope to an invalid value.
-	err = tk.ExecToErr("set @@txn_scope='foo'")
-	require.Error(t, err)
-	require.Regexp(t, `.*txn_scope value should be global or local.*`, err)
-	require.NoError(t, failpoint.Disable("tikvclient/injectTxnScope"))
-}
-
 func TestErrorRollback(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -507,6 +417,20 @@ func TestInTrans(t *testing.T) {
 	require.True(t, txn.Valid())
 	tk.MustExec("rollback")
 	require.False(t, txn.Valid())
+}
+
+func TestCommitTSOrderCheck(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int)")
+	currentTS, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{TxnScope: oracle.GlobalTxnScope})
+	require.NoError(t, err)
+	ts := oracle.GoTimeToTS(oracle.GetTimeFromTS(currentTS).Add(time.Minute))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockFutureCommitTS", fmt.Sprintf("return(%d)", ts)))
+	tk.MustExec("insert into t values(123)")
+	_, err = tk.Exec("select * from t")
+	require.Regexp(t, fmt.Sprintf(`start_ts:\d+ is before session last_commit_ts:%d`, ts), err.Error())
 }
 
 func TestMemBufferSnapshotRead(t *testing.T) {

@@ -904,7 +904,16 @@ func TestDropColumnArgs(t *testing.T) {
 		args, err := GetTableColumnArgs(j2)
 		require.NoError(t, err)
 		require.Equal(t, inArgs, args)
+		if v == JobVersion1 {
+			require.Len(t, j2.args, 4)
+		}
 	}
+
+	j2 := &Job{}
+	require.NoError(t, j2.Decode(getJobBytes(t, &TableColumnArgs{Col: &ColumnInfo{}}, JobVersion1, ActionDropColumn)))
+	var rawArgs []json.RawMessage
+	require.NoError(t, json.Unmarshal(j2.RawArgs, &rawArgs))
+	require.Len(t, rawArgs, 2)
 }
 
 func TestAddColumnArgs(t *testing.T) {
@@ -983,7 +992,7 @@ func TestAddIndexArgs(t *testing.T) {
 	}
 
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
-		inArgs.IndexArgs[0].IsVector = false
+		inArgs.IndexArgs[0].IsColumnar = false
 		inArgs.IndexArgs[0].IsPK = false
 		j2 := &Job{}
 		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddIndex)))
@@ -1001,7 +1010,7 @@ func TestAddIndexArgs(t *testing.T) {
 	}
 
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
-		inArgs.IndexArgs[0].IsVector = false
+		inArgs.IndexArgs[0].IsColumnar = false
 		inArgs.IndexArgs[0].IsPK = true
 		j2 := &Job{}
 		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddPrimaryKey)))
@@ -1019,7 +1028,7 @@ func TestAddIndexArgs(t *testing.T) {
 	}
 
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
-		inArgs.IndexArgs[0].IsVector = true
+		inArgs.IndexArgs[0].IsColumnar = true
 		inArgs.IndexArgs[0].IsPK = false
 		j2 := &Job{}
 		require.NoError(t, j2.Decode(getJobBytes(t, inArgs, v, ActionAddVectorIndex)))
@@ -1073,10 +1082,10 @@ func TestDropIndexArguements(t *testing.T) {
 	inArgs := &ModifyIndexArgs{
 		IndexArgs: []*IndexArg{
 			{
-				IndexName: ast.NewCIStr("i2"),
-				IfExist:   true,
-				IsVector:  true,
-				IndexID:   1,
+				IndexName:  ast.NewCIStr("i2"),
+				IfExist:    true,
+				IsColumnar: true,
+				IndexID:    1,
 			},
 		},
 		PartitionIDs: []int64{100, 101, 102, 103},
@@ -1129,6 +1138,12 @@ func TestModifyColumnsArgs(t *testing.T) {
 		require.Equal(t, *inArgs.ChangingColumn, *args.ChangingColumn)
 		require.Equal(t, inArgs.ChangingIdxs, args.ChangingIdxs)
 		require.Equal(t, inArgs.RedundantIdxs, args.RedundantIdxs)
+
+		if v == JobVersion1 {
+			var rawArgs []json.RawMessage
+			require.NoError(t, json.Unmarshal(j2.RawArgs, &rawArgs))
+			require.Len(t, rawArgs, 8)
+		}
 	}
 
 	for _, v := range []JobVersion{JobVersion1, JobVersion2} {
@@ -1140,4 +1155,10 @@ func TestModifyColumnsArgs(t *testing.T) {
 		require.Equal(t, inArgs.IndexIDs, args.IndexIDs)
 		require.Equal(t, inArgs.PartitionIDs, args.PartitionIDs)
 	}
+
+	j2 := &Job{}
+	require.NoError(t, j2.Decode(getJobBytes(t, &ModifyColumnArgs{}, JobVersion1, ActionModifyColumn)))
+	var rawArgs []json.RawMessage
+	require.NoError(t, json.Unmarshal(j2.RawArgs, &rawArgs))
+	require.Len(t, rawArgs, 5)
 }

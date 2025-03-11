@@ -20,7 +20,6 @@ import (
 
 	"github.com/opentracing/basictracer-go"
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
 // TiDBTrace is set as Baggage on traces which are used for tidb tracing.
@@ -36,6 +35,14 @@ type CallbackRecorder func(sp basictracer.RawSpan)
 // RecordSpan implements basictracer.SpanRecorder.
 func (cr CallbackRecorder) RecordSpan(sp basictracer.RawSpan) {
 	cr(sp)
+}
+
+// TraceInfo is the information for trace.
+type TraceInfo struct {
+	// SessionAlias is the alias of session
+	SessionAlias string `json:"session_alias"`
+	// ConnectionID is the id of the connection
+	ConnectionID uint64 `json:"connection_id"`
 }
 
 // NewRecordedTrace returns a Span which records directly via the specified
@@ -129,16 +136,16 @@ func (r Region) End() {
 }
 
 // TraceInfoFromContext returns the `model.TraceInfo` in context
-func TraceInfoFromContext(ctx context.Context) *model.TraceInfo {
+func TraceInfoFromContext(ctx context.Context) *TraceInfo {
 	val := ctx.Value(sqlTracingCtxKey)
-	if info, ok := val.(*model.TraceInfo); ok {
+	if info, ok := val.(*TraceInfo); ok {
 		return info
 	}
 	return nil
 }
 
 // ContextWithTraceInfo creates a new `model.TraceInfo` for context
-func ContextWithTraceInfo(ctx context.Context, info *model.TraceInfo) context.Context {
+func ContextWithTraceInfo(ctx context.Context, info *TraceInfo) context.Context {
 	if info == nil {
 		return ctx
 	}

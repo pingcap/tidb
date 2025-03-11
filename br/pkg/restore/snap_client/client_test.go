@@ -49,7 +49,7 @@ func TestCreateTables(t *testing.T) {
 	m := mc
 	g := gluetidb.New()
 	client := snapclient.NewRestoreClient(m.PDClient, m.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
-	err := client.Init(g, m.Storage)
+	err := client.InitConnections(g, m.Storage)
 	require.NoError(t, err)
 
 	info, err := m.Domain.GetSnapshotInfoSchema(math.MaxUint64)
@@ -120,7 +120,7 @@ func TestNeedCheckTargetClusterFresh(t *testing.T) {
 
 	g := gluetidb.New()
 	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
-	err := client.Init(g, cluster.Storage)
+	err := client.InitConnections(g, cluster.Storage)
 	require.NoError(t, err)
 
 	// not set filter and first run with checkpoint
@@ -150,7 +150,7 @@ func TestCheckTargetClusterFresh(t *testing.T) {
 
 	g := gluetidb.New()
 	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
-	err := client.Init(g, cluster.Storage)
+	err := client.InitConnections(g, cluster.Storage)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -167,7 +167,7 @@ func TestCheckTargetClusterFreshWithTable(t *testing.T) {
 
 	g := gluetidb.New()
 	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
-	err := client.Init(g, cluster.Storage)
+	err := client.InitConnections(g, cluster.Storage)
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -202,7 +202,7 @@ func TestInitFullClusterRestore(t *testing.T) {
 	cluster := mc
 	g := gluetidb.New()
 	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
-	err := client.Init(g, cluster.Storage)
+	err := client.InitConnections(g, cluster.Storage)
 	require.NoError(t, err)
 
 	// explicit filter

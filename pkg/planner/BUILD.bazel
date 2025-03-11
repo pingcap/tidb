@@ -21,6 +21,7 @@ go_library(
         "//pkg/planner/util/optimizetrace",
         "//pkg/privilege",
         "//pkg/sessionctx",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/types",
         "//pkg/util/dbterror/plannererrors",

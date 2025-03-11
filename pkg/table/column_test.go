@@ -325,10 +325,10 @@ func TestCastValue(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "utf8mb4_general_ci", val.Collation())
 	val, err = CastValue(ctx, types.NewBinaryLiteralDatum([]byte{0xE5, 0xA5, 0xBD, 0x81}), &colInfoS, false, false)
-	require.Error(t, err, "[table:1366]Incorrect string value '\\x81' for column ''")
+	require.ErrorContains(t, err, "[table:1366]Incorrect string value '\\x81' for column ''")
 	require.Equal(t, "utf8mb4_general_ci", val.Collation())
 	val, err = CastValue(ctx, types.NewDatum([]byte{0xE5, 0xA5, 0xBD, 0x81}), &colInfoS, false, false)
-	require.Error(t, err, "[table:1366]Incorrect string value '\\x81' for column ''")
+	require.ErrorContains(t, err, "[table:1366]Incorrect string value '\\x81' for column ''")
 	require.Equal(t, "utf8mb4_general_ci", val.Collation())
 }
 

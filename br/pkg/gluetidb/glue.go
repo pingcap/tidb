@@ -55,6 +55,10 @@ type Glue struct {
 	startDomainMu *sync.Mutex
 }
 
+func WrapSession(se sessiontypes.Session) glue.Session {
+	return &tidbSession{se: se}
+}
+
 type tidbSession struct {
 	se sessiontypes.Session
 }
@@ -263,6 +267,11 @@ func (gs *tidbSession) Close() {
 // GetGlobalVariables implements glue.Session.
 func (gs *tidbSession) GetGlobalVariable(name string) (string, error) {
 	return gs.se.GetSessionVars().GlobalVarsAccessor.GetTiDBTableValue(name)
+}
+
+// GetGlobalSysVar gets the global system variable value for name.
+func (gs *tidbSession) GetGlobalSysVar(name string) (string, error) {
+	return gs.se.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(name)
 }
 
 func (gs *tidbSession) showCreatePlacementPolicy(policy *model.PolicyInfo) string {

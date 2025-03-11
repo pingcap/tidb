@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -1232,11 +1232,11 @@ func TestAlterTableTruncatePartitionPreSplitRegion(t *testing.T) {
 		PARTITION p3 VALUES LESS THAN (MAXVALUE))`)
 	re = tk.MustQuery("show table t2 regions")
 	rows = re.Rows()
-	require.Len(t, rows, 24)
+	require.Len(t, rows, 27)
 	tk.MustExec(`alter table t2 truncate partition p3`)
 	re = tk.MustQuery("show table t2 regions")
 	rows = re.Rows()
-	require.Len(t, rows, 24)
+	require.Len(t, rows, 27)
 }
 
 func TestCreateTableWithKeyPartition(t *testing.T) {
@@ -1422,7 +1422,9 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	tk.MustExec(`INSERT INTO test_global VALUES (1, 1, 1), (2, 2, 2), (11, 3, 3), (12, 4, 4), (15, 15, 15)`)
 
 	tk2 := testkit.NewTestKit(t, store)
+	tk4 := testkit.NewTestKit(t, store)
 	tk2.MustExec(`use test`)
+	tk4.MustExec(`use test`)
 	tk2.MustExec(`begin`)
 	tk2.MustExec(`insert into test_global values (5,5,5)`)
 
@@ -1441,6 +1443,7 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 				v2 := dom.InfoSchema().SchemaMetaVersion()
 				if v2 > v1 {
 					// Also wait for the new infoschema loading
+					v1 = v2
 					break
 				}
 			}
@@ -1452,9 +1455,10 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	tkTmp.MustExec(`begin`)
 	tkTmp.MustExec("use test")
 	tkTmp.MustQuery(`select count(*) from test_global`).Check(testkit.Rows("5"))
+	// Begin txn before tx2 rollbcak to let mdl block ddl job state.
+	tk4.MustExec(`begin`)
 	tk2.MustExec(`rollback`)
-	tk2.MustExec(`begin`)
-	tk2.MustExec(`insert into test_global values (5,5,5)`)
+	tk4.MustExec(`insert into test_global values (5,5,5)`)
 	tkTmp.MustExec(`rollback`)
 	waitFor(4, "delete only")
 	tk3 := testkit.NewTestKit(t, store)
@@ -1467,13 +1471,12 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	err := tk3.ExecToErr(`insert into test_global values (15,15,15)`)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "[kv:1062]Duplicate entry '15' for key 'test_global.idx_b'")
-	tk2.MustExec(`commit`)
+	tk4.MustExec(`commit`)
 	waitFor(4, "delete reorganization")
 	tk2.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows())
 	tk2.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
 	err = tk2.ExecToErr(`insert into test_global values (15,15,15)`)
 	require.NoError(t, err)
-	tk2.MustExec(`begin`)
 	tk3.MustExec(`commit`)
 	tk.MustExec(`commit`)
 	<-syncChan
@@ -2753,7 +2756,7 @@ func TestAddPartitionReplicaBiggerThanTiFlashStores(t *testing.T) {
 	require.Error(t, err)
 	require.EqualError(t, err, "[ddl:-1][ddl] the tiflash replica count: 1 should be less than the total tiflash server count: 0")
 	// Test `add partition` waiting TiFlash replica can exit when its retry count is beyond the limitation.
-	originErrCountLimit := variable.GetDDLErrorCountLimit()
+	originErrCountLimit := vardef.GetDDLErrorCountLimit()
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 3")
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %v", originErrCountLimit))

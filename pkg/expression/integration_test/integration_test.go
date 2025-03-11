@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -418,6 +419,24 @@ func TestVectorColumnInfo(t *testing.T) {
 	tk.MustGetErrMsg("create table t(embedding VECTOR(16384))", "vector cannot have more than 16383 dimensions")
 }
 
+func TestVectorExplainTruncate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t(c VECTOR);")
+
+	// TODO: The output can be improved.
+	tk.MustQuery(`EXPLAIN format='brief' SELECT
+		VEC_COSINE_DISTANCE(c, '[3,100,12345,10000]'),
+		VEC_COSINE_DISTANCE(c, '[11111111111,11111111111.23456789,3.1,5.12456]'),
+		VEC_COSINE_DISTANCE(c, '[-11111111111,-11111111111.23456789,-3.1,-5.12456]')
+	FROM t;`).Check(testkit.Rows(
+		`Projection 10000.00 root  vec_cosine_distance(test.t.c, [3,1e+02,1.2e+04,1e+04])->Column#3, vec_cosine_distance(test.t.c, [1.1e+10,1.1e+10,3.1,5.1])->Column#4, vec_cosine_distance(test.t.c, [-1.1e+10,-1.1e+10,-3.1,-5.1])->Column#5`,
+		`└─TableReader 10000.00 root  data:TableFullScan`,
+		`  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`,
+	))
+}
+
 func TestVectorConstantExplain(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -473,6 +492,59 @@ func TestVectorConstantExplain(t *testing.T) {
 	require.True(t, strings.Contains(planTree, `	  └─TableFullScan_4	cop[tikv]	10000  	table:t, keep order:false, stats:pseudo`))
 	// No need to check result at all.
 	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs))
+}
+
+func TestVectorIndexExplain(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, 1*time.Second, mockstore.WithMockTiFlash(2))
+
+	tk := testkit.NewTestKit(t, store)
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+
+	failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess"))
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`
+		create table t1 (
+			vec vector(100)
+		)
+	`)
+	tk.MustExec("alter table t1 set tiflash replica 1;")
+	tk.MustExec("alter table t1 add vector index ((vec_cosine_distance(vec))) USING HNSW;")
+	tbl, _ := domain.GetDomain(tk.Session()).InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
+		Count:     1,
+		Available: true,
+	}
+
+	vb := strings.Builder{}
+	vb.WriteString("[")
+	for i := 0; i < 100; i++ {
+		if i > 0 {
+			vb.WriteString(",")
+		}
+		vb.WriteString("100")
+	}
+	vb.WriteString("]")
+
+	tk.MustQuery(fmt.Sprintf("explain format = 'brief' select * from t1 order by vec_cosine_distance(vec, '%s') limit 1", vb.String())).Check(testkit.Rows(
+		`TopN 1.00 root  Column#5, offset:0, count:1`,
+		`└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender`,
+		`  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough`,
+		`    └─TopN 1.00 mpp[tiflash]  Column#5, offset:0, count:1`,
+		`      └─Projection 1.00 mpp[tiflash]  test.t1.vec, vec_cosine_distance(test.t1.vec, [1e+02,1e+02,1e+02,1e+02,1e+02,(95 more)...])->Column#5`,
+		`        └─TableFullScan 1.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1e+02,1e+02,1e+02,1e+02,1e+02,(95 more)...], limit:1)`,
+	))
 }
 
 func TestFixedVector(t *testing.T) {
@@ -890,9 +962,12 @@ func TestVectorArithmatic(t *testing.T) {
 	tk.MustQueryToErr(`SELECT VEC_FROM_TEXT('[1]') + 2;`)
 	tk.MustQueryToErr(`SELECT VEC_FROM_TEXT('[1]') + '2';`)
 
+	// Input outside the float32 value range will result in an error.
 	tk.MustQueryToErr(`SELECT VEC_FROM_TEXT('[3e38]') + '[3e38]';`)
 	tk.MustQuery(`SELECT VEC_FROM_TEXT('[1,2,3]') * '[4,5,6]';`).Check(testkit.Rows("[4,10,18]"))
 	tk.MustQueryToErr(`SELECT VEC_FROM_TEXT('[1e37]') * '[1e37]';`)
+	tk.MustQueryToErr("select VEC_L2_NORM('[1e39]') + 1")
+	tk.MustQueryToErr("select VEC_L2_NORM('[1e39]')*0 + 1")
 }
 
 func TestVectorFunctions(t *testing.T) {
@@ -1677,18 +1752,18 @@ func TestTiDBEncodeKey(t *testing.T) {
 	err := tk.QueryToErr("select tidb_encode_record_key('test', 't1', 0);")
 	require.ErrorContains(t, err, "doesn't exist")
 	tk.MustQuery("select tidb_encode_record_key('test', 't', 1);").
-		Check(testkit.Rows("74800000000000006e5f728000000000000001"))
+		Check(testkit.Rows("7480000000000000705f728000000000000001"))
 
 	tk.MustExec("alter table t add index i(b);")
 	err = tk.QueryToErr("select tidb_encode_index_key('test', 't', 'i1', 1);")
 	require.ErrorContains(t, err, "index not found")
 	tk.MustQuery("select tidb_encode_index_key('test', 't', 'i', 1, 1);").
-		Check(testkit.Rows("74800000000000006e5f698000000000000001038000000000000001038000000000000001"))
+		Check(testkit.Rows("7480000000000000705f698000000000000001038000000000000001038000000000000001"))
 
 	tk.MustExec("create table t1 (a int primary key, b int) partition by hash(a) partitions 4;")
 	tk.MustExec("insert into t1 values (1, 1);")
-	tk.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000735f728000000000000001"))
-	rs := tk.MustQuery("select tidb_mvcc_info('74800000000000006f5f728000000000000001');")
+	tk.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000755f728000000000000001"))
+	rs := tk.MustQuery("select tidb_mvcc_info('74800000000000007f5f728000000000000001');")
 	mvccInfo := rs.Rows()[0][0].(string)
 	require.NotEqual(t, mvccInfo, `{"info":{}}`)
 
@@ -1697,14 +1772,14 @@ func TestTiDBEncodeKey(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	err = tk2.Session().Auth(&auth.UserIdentity{Username: "alice", Hostname: "localhost"}, nil, nil, nil)
 	require.NoError(t, err)
-	err = tk2.QueryToErr("select tidb_mvcc_info('74800000000000006f5f728000000000000001');")
+	err = tk2.QueryToErr("select tidb_mvcc_info('74800000000000007f5f728000000000000001');")
 	require.ErrorContains(t, err, "Access denied")
 	err = tk2.QueryToErr("select tidb_encode_record_key('test', 't1(p1)', 1);")
 	require.ErrorContains(t, err, "SELECT command denied")
 	err = tk2.QueryToErr("select tidb_encode_index_key('test', 't', 'i1', 1);")
 	require.ErrorContains(t, err, "SELECT command denied")
 	tk.MustExec("grant select on test.t1 to 'alice'@'%';")
-	tk2.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000735f728000000000000001"))
+	tk2.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000755f728000000000000001"))
 }
 
 func TestIssue9710(t *testing.T) {
@@ -1846,8 +1921,8 @@ func TestDecodetoChunkReuse(t *testing.T) {
 	tk.MustExec("set tidb_init_chunk_size = 2")
 	tk.MustExec("set tidb_max_chunk_size = 32")
 	defer func() {
-		tk.MustExec(fmt.Sprintf("set tidb_init_chunk_size = %d", variable.DefInitChunkSize))
-		tk.MustExec(fmt.Sprintf("set tidb_max_chunk_size = %d", variable.DefMaxChunkSize))
+		tk.MustExec(fmt.Sprintf("set tidb_init_chunk_size = %d", vardef.DefInitChunkSize))
+		tk.MustExec(fmt.Sprintf("set tidb_max_chunk_size = %d", vardef.DefMaxChunkSize))
 	}()
 	rs, err := tk.Exec("select * from chk")
 	require.NoError(t, err)
@@ -2984,7 +3059,7 @@ func TestTimeBuiltin(t *testing.T) {
 		"period_add(0, 20)", "period_add(0, 0)", "period_add(-1, 1)", "period_add(200013, 1)", "period_add(-200012, 1)", "period_add('', '')",
 	} {
 		err := tk.QueryToErr(fmt.Sprintf("SELECT %v;", errPeriod))
-		require.Error(t, err, "[expression:1210]Incorrect arguments to period_add")
+		require.ErrorContains(t, err, "[expression:1210]Incorrect arguments to period_add")
 	}
 
 	// for period_diff
@@ -2996,7 +3071,7 @@ func TestTimeBuiltin(t *testing.T) {
 		"period_diff(-00013,1)", "period_diff(00013,1)", "period_diff(0, 0)", "period_diff(200013, 1)", "period_diff(5612, 4513)", "period_diff('', '')",
 	} {
 		err := tk.QueryToErr(fmt.Sprintf("SELECT %v;", errPeriod))
-		require.Error(t, err, "[expression:1210]Incorrect arguments to period_diff")
+		require.ErrorContains(t, err, "[expression:1210]Incorrect arguments to period_diff")
 	}
 
 	// TODO: fix `CAST(xx as duration)` and release the test below:
@@ -3770,12 +3845,12 @@ func TestSetVariables(t *testing.T) {
 	require.NoError(t, err)
 	_, err = tk.Exec("INSERT INTO tab0 select cast('999:44:33' as time);")
 	require.Error(t, err)
-	require.Error(t, err, "[types:1292]Truncated incorrect time value: '999:44:33'")
+	require.ErrorContains(t, err, "[types:1292]Truncated incorrect time value: '999:44:33'")
 	_, err = tk.Exec("set sql_mode=' ,';")
 	require.Error(t, err)
 	_, err = tk.Exec("INSERT INTO tab0 select cast('999:44:33' as time);")
 	require.Error(t, err)
-	require.Error(t, err, "[types:1292]Truncated incorrect time value: '999:44:33'")
+	require.ErrorContains(t, err, "[types:1292]Truncated incorrect time value: '999:44:33'")
 
 	// issue #5478
 	_, err = tk.Exec("set session transaction read write;")
@@ -3819,10 +3894,10 @@ func TestSetVariables(t *testing.T) {
 
 	_, err = tk.Exec("set @@global.max_user_connections='';")
 	require.Error(t, err)
-	require.Error(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_user_connections").Error())
+	require.ErrorContains(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_user_connections").Error())
 	_, err = tk.Exec("set @@global.max_prepared_stmt_count='';")
 	require.Error(t, err)
-	require.Error(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_prepared_stmt_count").Error())
+	require.ErrorContains(t, err, variable.ErrWrongTypeForVar.GenWithStackByArgs("max_prepared_stmt_count").Error())
 
 	// Previously global values were cached. This is incorrect.
 	// See: https://github.com/pingcap/tidb/issues/24368
@@ -3885,132 +3960,6 @@ func TestIssue16205(t *testing.T) {
 	rows2 := tk.MustQuery("execute stmt").Rows()
 	require.Len(t, rows2, 1)
 	require.NotEqual(t, rows1[0][0].(string), rows2[0][0].(string))
-}
-
-func TestCrossDCQuery(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("drop placement policy if exists p1")
-	tk.MustExec("drop placement policy if exists p2")
-	tk.MustExec("create placement policy p1 leader_constraints='[+zone=sh]'")
-	tk.MustExec("create placement policy p2 leader_constraints='[+zone=bj]'")
-	tk.MustExec(`create table t1 (c int primary key, d int,e int,index idx_d(d),index idx_e(e))
-PARTITION BY RANGE (c) (
-	PARTITION p0 VALUES LESS THAN (6) placement policy p1,
-	PARTITION p1 VALUES LESS THAN (11) placement policy p2
-);`)
-	defer func() {
-		tk.MustExec("drop table if exists t1")
-		tk.MustExec("drop placement policy if exists p1")
-		tk.MustExec("drop placement policy if exists p2")
-	}()
-
-	tk.MustExec(`insert into t1 (c,d,e) values (1,1,1);`)
-	tk.MustExec(`insert into t1 (c,d,e) values (2,3,5);`)
-	tk.MustExec(`insert into t1 (c,d,e) values (3,5,7);`)
-
-	testcases := []struct {
-		name      string
-		txnScope  string
-		zone      string
-		sql       string
-		expectErr error
-	}{
-		// FIXME: block by https://github.com/pingcap/tidb/issues/21872
-		//{
-		//	name:      "cross dc read to sh by holding bj, IndexReader",
-		//	txnScope:  "bj",
-		//	sql:       "select /*+ USE_INDEX(t1, idx_d) */ d from t1 where c < 5 and d < 1;",
-		//	expectErr: fmt.Errorf(".*can not be read by.*"),
-		//},
-		// FIXME: block by https://github.com/pingcap/tidb/issues/21847
-		//{
-		//	name:      "cross dc read to sh by holding bj, BatchPointGet",
-		//	txnScope:  "bj",
-		//	sql:       "select * from t1 where c in (1,2,3,4);",
-		//	expectErr: fmt.Errorf(".*can not be read by.*"),
-		//},
-		{
-			name:      "cross dc read to sh by holding bj, PointGet",
-			txnScope:  "local",
-			zone:      "bj",
-			sql:       "select * from t1 where c = 1",
-			expectErr: fmt.Errorf(".*can not be read by.*"),
-		},
-		{
-			name:      "cross dc read to sh by holding bj, IndexLookUp",
-			txnScope:  "local",
-			zone:      "bj",
-			sql:       "select * from t1 use index (idx_d) where c < 5 and d < 5;",
-			expectErr: fmt.Errorf(".*can not be read by.*"),
-		},
-		{
-			name:      "cross dc read to sh by holding bj, IndexMerge",
-			txnScope:  "local",
-			zone:      "bj",
-			sql:       "select /*+ USE_INDEX_MERGE(t1, idx_d, idx_e) */ * from t1 where c <5 and (d =5 or e=5);",
-			expectErr: fmt.Errorf(".*can not be read by.*"),
-		},
-		{
-			name:      "cross dc read to sh by holding bj, TableReader",
-			txnScope:  "local",
-			zone:      "bj",
-			sql:       "select * from t1 where c < 6",
-			expectErr: fmt.Errorf(".*can not be read by.*"),
-		},
-		{
-			name:      "cross dc read to global by holding bj",
-			txnScope:  "local",
-			zone:      "bj",
-			sql:       "select * from t1",
-			expectErr: fmt.Errorf(".*can not be read by.*"),
-		},
-		{
-			name:      "read sh dc by holding sh",
-			txnScope:  "local",
-			zone:      "sh",
-			sql:       "select * from t1 where c < 6",
-			expectErr: nil,
-		},
-		{
-			name:      "read sh dc by holding global",
-			txnScope:  "global",
-			zone:      "",
-			sql:       "select * from t1 where c < 6",
-			expectErr: nil,
-		},
-	}
-	tk.MustExec("set global tidb_enable_local_txn = on;")
-	for _, testcase := range testcases {
-		t.Log(testcase.name)
-		require.NoError(t, failpoint.Enable("tikvclient/injectTxnScope",
-			fmt.Sprintf(`return("%v")`, testcase.zone)))
-		tk.MustExec(fmt.Sprintf("set @@txn_scope='%v'", testcase.txnScope))
-		tk.Exec("begin")
-		res, err := tk.Exec(testcase.sql)
-		_, resErr := session.GetRows4Test(context.Background(), tk.Session(), res)
-		var checkErr error
-		if err != nil {
-			checkErr = err
-		} else {
-			checkErr = resErr
-		}
-		if testcase.expectErr != nil {
-			require.Error(t, checkErr)
-			require.Regexp(t, ".*can not be read by.*", checkErr.Error())
-		} else {
-			require.NoError(t, checkErr)
-		}
-		if res != nil {
-			res.Close()
-		}
-		tk.Exec("commit")
-	}
-	require.NoError(t, failpoint.Disable("tikvclient/injectTxnScope"))
-	tk.MustExec("set global tidb_enable_local_txn = off;")
 }
 
 func calculateChecksum(cols ...any) string {

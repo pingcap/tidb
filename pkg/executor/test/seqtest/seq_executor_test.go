@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -114,7 +115,7 @@ func TestEarlyClose(t *testing.T) {
 type stats struct {
 }
 
-func (s stats) GetScope(_ string) variable.ScopeFlag { return variable.DefaultStatusVarScopeFlag }
+func (s stats) GetScope(_ string) vardef.ScopeFlag { return variable.DefaultStatusVarScopeFlag }
 
 func (s stats) Stats(_ *variable.SessionVars) (map[string]any, error) {
 	m := make(map[string]any)

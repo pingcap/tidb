@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/util"
@@ -322,7 +323,7 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	// For continuous capture task, we dump stats in storage only if EnableHistoricalStatsForCapture is disabled.
 	// For manual plan replayer dump command or capture, we directly dump stats in storage
 	if task.IsCapture && task.IsContinuesCapture {
-		if !variable.EnableHistoricalStatsForCapture.Load() {
+		if !vardef.EnableHistoricalStatsForCapture.Load() {
 			// Dump stats
 			fallbackMsg, err := dumpStats(zw, pairs, do, 0)
 			if err != nil {
@@ -431,7 +432,7 @@ func dumpSQLMeta(zw *zip.Writer, task *PlanReplayerDumpTask) error {
 	varMap[PlanReplayerTaskMetaIsContinues] = strconv.FormatBool(task.IsContinuesCapture)
 	varMap[PlanReplayerTaskMetaSQLDigest] = task.SQLDigest
 	varMap[PlanReplayerTaskMetaPlanDigest] = task.PlanDigest
-	varMap[PlanReplayerTaskEnableHistoricalStats] = strconv.FormatBool(variable.EnableHistoricalStatsForCapture.Load())
+	varMap[PlanReplayerTaskEnableHistoricalStats] = strconv.FormatBool(vardef.EnableHistoricalStatsForCapture.Load())
 	if task.HistoricalStatsTS > 0 {
 		varMap[PlanReplayerHistoricalStatsTS] = strconv.FormatUint(task.HistoricalStatsTS, 10)
 	}
@@ -600,7 +601,7 @@ func dumpSQLs(execStmts []ast.StmtNode, zw *zip.Writer) error {
 func dumpVariables(sctx sessionctx.Context, sessionVars *variable.SessionVars, zw *zip.Writer) error {
 	varMap := make(map[string]string)
 	for _, v := range variable.GetSysVars() {
-		if v.IsNoop && !variable.EnableNoopVariables.Load() {
+		if v.IsNoop && !vardef.EnableNoopVariables.Load() {
 			continue
 		}
 		if infoschema.SysVarHiddenForSem(sctx, v.Name) {

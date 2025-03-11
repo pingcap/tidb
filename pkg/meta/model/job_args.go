@@ -766,14 +766,21 @@ type TableColumnArgs struct {
 	IgnoreExistenceErr bool `json:"ignore_existence_err,omitempty"`
 
 	// for drop column.
-	// below 2 fields are filled during running.
+	// below 2 fields are filled during running, and PartitionIDs is only effective
+	// when len(IndexIDs) > 0.
 	IndexIDs     []int64 `json:"index_ids,omitempty"`
 	PartitionIDs []int64 `json:"partition_ids,omitempty"`
 }
 
 func (a *TableColumnArgs) getArgsV1(job *Job) []any {
 	if job.Type == ActionDropColumn {
-		return []any{a.Col.Name, a.IgnoreExistenceErr, a.IndexIDs, a.PartitionIDs}
+		// if this job is submitted by new version node, but run with older version
+		// node, older node will try to append args at runtime, so we check it here
+		// to make sure the appended args can be decoded.
+		if len(a.IndexIDs) > 0 {
+			return []any{a.Col.Name, a.IgnoreExistenceErr, a.IndexIDs, a.PartitionIDs}
+		}
+		return []any{a.Col.Name, a.IgnoreExistenceErr}
 	}
 	return []any{a.Col, a.Pos, a.Offset, a.IgnoreExistenceErr}
 }
@@ -1306,7 +1313,7 @@ const (
 //	Adding PK: Unique, IndexName, IndexPartSpecifications, IndexOptions, HiddelCols, Global
 //	Adding vector index: IndexName, IndexPartSpecifications, IndexOption, FuncExpr
 //	Drop index: IndexName, IfExist, IndexID
-//	Rollback add index: IndexName, IfExist, IsVector
+//	Rollback add index: IndexName, IfExist, IsColumnar
 //	Rename index: IndexName
 type IndexArg struct {
 	// Global is never used, we only use Global in IndexOption. Can be deprecated later.
@@ -1319,7 +1326,10 @@ type IndexArg struct {
 
 	// For vector index
 	FuncExpr string `json:"func_expr,omitempty"`
-	IsVector bool   `json:"is_vector,omitempty"`
+	// IsColumnar is used to distinguish columnar index and normal index.
+	// It used to be `IsVector`, after adding columnar index, we extend it to `IsColumnar`.
+	// But we keep the json field name as `is_vector` for compatibility.
+	IsColumnar bool `json:"is_vector,omitempty"`
 
 	// For PK
 	IsPK    bool          `json:"is_pk,omitempty"`
@@ -1528,7 +1538,7 @@ func (a *ModifyIndexArgs) decodeAddVectorIndexV1(job *Job) error {
 		IndexPartSpecifications: []*ast.IndexPartSpecification{indexPartSpecification},
 		IndexOption:             indexOption,
 		FuncExpr:                funcExpr,
-		IsVector:                true,
+		IsColumnar:              true,
 	}}
 	return nil
 }
@@ -1566,7 +1576,7 @@ func (a *ModifyIndexArgs) getFinishedArgsV1(job *Job) []any {
 	}
 
 	idxArg := a.IndexArgs[0]
-	return []any{idxArg.IndexName, idxArg.IfExist, idxArg.IndexID, a.PartitionIDs, idxArg.IsVector}
+	return []any{idxArg.IndexName, idxArg.IfExist, idxArg.IndexID, a.PartitionIDs, idxArg.IsColumnar}
 }
 
 // GetRenameIndexes get name of renamed index.
@@ -1610,15 +1620,15 @@ func GetFinishedModifyIndexArgs(job *Job) (*ModifyIndexArgs, error) {
 		ifExists := make([]bool, 1)
 		indexIDs := make([]int64, 1)
 		var partitionIDs []int64
-		isVector := false
+		isColumnar := false
 		var err error
 
 		if job.IsRollingback() {
 			// Rollback add indexes
-			err = job.decodeArgs(&indexNames, &ifExists, &partitionIDs, &isVector)
+			err = job.decodeArgs(&indexNames, &ifExists, &partitionIDs, &isColumnar)
 		} else {
 			// Finish drop index
-			err = job.decodeArgs(&indexNames[0], &ifExists[0], &indexIDs[0], &partitionIDs, &isVector)
+			err = job.decodeArgs(&indexNames[0], &ifExists[0], &indexIDs[0], &partitionIDs, &isColumnar)
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1630,9 +1640,9 @@ func GetFinishedModifyIndexArgs(job *Job) (*ModifyIndexArgs, error) {
 		a.IndexArgs = make([]*IndexArg, len(indexNames))
 		for i, indexName := range indexNames {
 			a.IndexArgs[i] = &IndexArg{
-				IndexName: indexName,
-				IfExist:   ifExists[i],
-				IsVector:  isVector,
+				IndexName:  indexName,
+				IfExist:    ifExists[i],
+				IsColumnar: isColumnar,
 			}
 		}
 		// For drop index, store index id in IndexArgs, no impact on other situations.
@@ -1688,6 +1698,12 @@ type ModifyColumnArgs struct {
 }
 
 func (a *ModifyColumnArgs) getArgsV1(*Job) []any {
+	// during upgrade, if https://github.com/pingcap/tidb/issues/54689 triggered,
+	// older node might run the job submitted by new version, but it expects 5
+	// args initially, and append the later 3 at runtime.
+	if a.ChangingColumn == nil {
+		return []any{a.Column, a.OldColumnName, a.Position, a.ModifyColumnType, a.NewShardBits}
+	}
 	return []any{
 		a.Column, a.OldColumnName, a.Position, a.ModifyColumnType,
 		a.NewShardBits, a.ChangingColumn, a.ChangingIdxs, a.RedundantIdxs,

@@ -26,11 +26,10 @@ import (
 
 // Column represents a column histogram.
 type Column struct {
-	LastAnalyzePos types.Datum
-	CMSketch       *CMSketch
-	TopN           *TopN
-	FMSketch       *FMSketch
-	Info           *model.ColumnInfo
+	CMSketch *CMSketch
+	TopN     *TopN
+	FMSketch *FMSketch
+	Info     *model.ColumnInfo
 	Histogram
 
 	// StatsLoadedStatus indicates the status of column statistics
@@ -54,7 +53,6 @@ func (c *Column) Copy() *Column {
 		StatsVer:   c.StatsVer,
 		IsHandle:   c.IsHandle,
 	}
-	c.LastAnalyzePos.Copy(&nc.LastAnalyzePos)
 	if c.CMSketch != nil {
 		nc.CMSketch = c.CMSketch.Copy()
 	}
