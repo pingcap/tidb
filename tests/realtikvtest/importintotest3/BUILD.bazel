@@ -24,6 +24,6 @@ go_test(
         "@com_github_klauspost_compress//zstd",
         "@com_github_stretchr_testify//require",
         "@com_github_stretchr_testify//suite",
-        "@com_github_tikv_client_go_v2//util:go_default_library",
+        "@com_github_tikv_client_go_v2//util",
     ],
 )

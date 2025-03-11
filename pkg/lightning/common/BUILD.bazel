@@ -44,7 +44,7 @@ go_library(
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_tikv_client_go_v2//config:go_default_library",
+        "@com_github_tikv_client_go_v2//config",
         "@com_github_tikv_pd_client//:client",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//codes",

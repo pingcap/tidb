@@ -7,7 +7,7 @@ go_library(
     visibility = ["//visibility:private"],
     deps = [
         "@com_github_pingcap_log//:log",
-        "@com_github_tikv_client_go_v2//oracle:go_default_library",
+        "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_pd_client//:client",
         "@com_github_tikv_pd_client//pkg/caller",
         "@org_uber_go_zap//:zap",

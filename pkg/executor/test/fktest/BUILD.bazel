@@ -27,7 +27,7 @@ go_test(
         "//pkg/util/dbterror/plannererrors",
         "//tests/realtikvtest",
         "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//tikv:go_default_library",
+        "@com_github_tikv_client_go_v2//tikv",
         "@org_uber_go_goleak//:goleak",
     ],
 )

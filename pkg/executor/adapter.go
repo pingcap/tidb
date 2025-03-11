@@ -1080,6 +1080,11 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 		if !isFirstAttempt {
 			failpoint.Inject("pessimisticDMLRetry", nil)
 		}
+		if !isFirstAttempt {
+			if !txn.IsReadOnly() {
+				a.Ctx.GetSessionVars().TxnCtx.MemBufferSnapshot = txn.GetMemBuffer().GetSnapshot()
+			}
+		}
 
 		startTime := time.Now()
 		_, err = a.handleNoDelayExecutor(ctx, e)

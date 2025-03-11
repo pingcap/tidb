@@ -56,7 +56,7 @@ go_test(
         "//pkg/util/hint",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//util:go_default_library",
+        "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_goleak//:goleak",
     ],
 )

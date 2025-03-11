@@ -50,7 +50,7 @@ go_library(
         "@com_github_pingcap_kvproto//pkg/tikvpb",
         "@com_github_pingcap_log//:log",
         "@com_github_pingcap_tipb//go-tipb",
-        "@com_github_tikv_client_go_v2//oracle:go_default_library",
+        "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_pd_client//clients/router",
         "@com_github_tikv_pd_client//opt",
         "@org_golang_google_grpc//:grpc",

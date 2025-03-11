@@ -14,7 +14,7 @@ go_library(
         "//pkg/types",
         "//pkg/util/logutil",
         "@com_github_prometheus_client_golang//prometheus",
-        "@com_github_tikv_client_go_v2//oracle:go_default_library",
+        "@com_github_tikv_client_go_v2//oracle",
         "@org_uber_go_zap//:zap",
     ],
 )

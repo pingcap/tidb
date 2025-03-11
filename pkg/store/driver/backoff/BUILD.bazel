@@ -8,6 +8,6 @@ go_library(
     deps = [
         "//pkg/kv",
         "//pkg/store/driver/error",
-        "@com_github_tikv_client_go_v2//tikv:go_default_library",
+        "@com_github_tikv_client_go_v2//tikv",
     ],
 )

@@ -7,7 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "@com_github_pingcap_kvproto//pkg/resource_manager",
-        "@com_github_tikv_client_go_v2//tikvrpc:go_default_library",
-        "@com_github_tikv_client_go_v2//util:go_default_library",
+        "@com_github_tikv_client_go_v2//tikvrpc",
+        "@com_github_tikv_client_go_v2//util",
     ],
 )

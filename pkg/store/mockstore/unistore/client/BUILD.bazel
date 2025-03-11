@@ -5,5 +5,5 @@ go_library(
     srcs = ["client.go"],
     importpath = "github.com/pingcap/tidb/pkg/store/mockstore/unistore/client",
     visibility = ["//visibility:public"],
-    deps = ["@com_github_tikv_client_go_v2//tikvrpc:go_default_library"],
+    deps = ["@com_github_tikv_client_go_v2//tikvrpc"],
 )

@@ -24,7 +24,7 @@ go_library(
         "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_tikv_client_go_v2//tikvrpc:go_default_library",
+        "@com_github_tikv_client_go_v2//tikvrpc",
         "@io_etcd_go_etcd_client_v3//:client",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
