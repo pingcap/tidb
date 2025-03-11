@@ -324,3 +324,49 @@ func TestKeyMinMax(t *testing.T) {
 	require.Equal(t, []byte("b"), BytesMax([]byte("a"), []byte("b")))
 	require.Equal(t, []byte("b"), BytesMax([]byte("b"), []byte("a")))
 }
+
+func TestWriteAndReadSortedMeta(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemStorage()
+	path := "/1/1/sortedmeta/sortedmeta.json"
+
+	dummyMeta := &SortedKVMeta{
+		StartKey:    []byte("a"),
+		EndKey:      []byte("z"),
+		TotalKVSize: 100,
+		TotalKVCnt:  1,
+		MultipleFilesStats: []MultipleFilesStat{
+			{Filenames: [][2]string{{"data1", "stat1"}}},
+		},
+	}
+	indexMetas := map[int64]*SortedKVMeta{
+		1: {
+			StartKey:    []byte("b"),
+			EndKey:      []byte("y"),
+			TotalKVSize: 50,
+			TotalKVCnt:  2,
+			MultipleFilesStats: []MultipleFilesStat{
+				{Filenames: [][2]string{{"data2", "stat2"}}},
+			},
+		},
+	}
+
+	err := WriteSortedMetaToExternalStorage(ctx, store, path, dummyMeta, indexMetas)
+	require.NoError(t, err)
+
+	readMeta, readIndexMetas, err := ReadSortedMetaFromExternalStorage(ctx, store, path)
+	require.NoError(t, err)
+
+	require.Equal(t, dummyMeta, readMeta)
+	require.Equal(t, indexMetas, readIndexMetas)
+
+	// Test non-index meta
+	err = WriteSortedMetaToExternalStorage(ctx, store, path, dummyMeta, nil)
+	require.NoError(t, err)
+
+	readMeta, readIndexMetas, err = ReadSortedMetaFromExternalStorage(ctx, store, path)
+	require.NoError(t, err)
+
+	require.Equal(t, dummyMeta, readMeta)
+	require.Nil(t, readIndexMetas)
+}
