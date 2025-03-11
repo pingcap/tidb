@@ -511,7 +511,7 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 
 // Reset resets a statement context
 func (sc *StatementContext) Reset() bool {
-	// make sure no other goroutines still locked it.
+	// make sure no other goroutines still get locks.
 	if sc.mu != nil {
 		if !sc.mu.TryLock() {
 			return false
