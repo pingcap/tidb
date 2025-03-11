@@ -164,6 +164,7 @@ func (mu *stmtCtxMu) reset() *stmtCtxMu {
 	if mu == nil {
 		return &stmtCtxMu{}
 	}
+	mu.affectedRows = 0
 	mu.copied = 0
 	mu.deleted = 0
 	mu.foundRows = 0
