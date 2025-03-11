@@ -887,8 +887,10 @@ func TestTooLongBinding(t *testing.T) {
 		predicates = append(predicates, fmt.Sprintf("t.a=%d", i))
 	}
 	bindingSQL := fmt.Sprintf("create global binding using select * from t where %s", strings.Join(predicates, " or "))
-	err := tk.ExecToErr(bindingSQL)
-	require.ErrorContains(t, err, "Data too long")
+	// we've updated bind_info column types from TEXT to LONGTEXT, so no error now.
+	tk.MustExec(bindingSQL)
+	rs := tk.MustQuery(`show global bindings`).Rows()
+	require.True(t, len(rs) == 1)
 }
 
 // TestBindingInListWithSingleLiteral tests sql with "IN (Lit)", fixes #44298
