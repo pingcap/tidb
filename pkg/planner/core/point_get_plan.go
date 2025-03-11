@@ -358,12 +358,35 @@ func needsPartitionPruning(sctx sessionctx.Context, tblInfo *model.TableInfo, pt
 	// which will be converted again by GetPartitionIdxByRow, so we need to re-run the pruner
 	// with the conditions.
 
-	exprCols, nameSlice, err := expression.ColumnInfos2ColumnsAndNames(sctx.GetExprCtx(), ast.NewCIStr(dbName), tblInfo.Name, tblInfo.Columns, tblInfo)
-	if err != nil {
-		return nil, false, err
+	// TODO: Is there a simpler way, or existing function for this?!?
+	tblCols := make([]*expression.Column, 0, len(indexInfo.Columns))
+	var partNameSlice types.NameSlice
+	for _, tblCol := range tblInfo.Columns {
+		found := false
+		for _, idxCol := range indexCols {
+			if idxCol.ID == tblCol.ID {
+				tblCols = append(tblCols, idxCol)
+				found = true
+				break
+			}
+		}
+		partNameSlice = append(partNameSlice, &types.FieldName{
+			ColName:     tblCol.Name,
+			TblName:     tblInfo.Name,
+			DBName:      ast.NewCIStr(dbName),
+			OrigTblName: tblInfo.Name,
+			OrigColName: tblCol.Name,
+		})
+		if !found {
+			tblCols = append(tblCols, &expression.Column{
+				ID:       tblCol.ID,
+				OrigName: tblCol.Name.O,
+				RetType:  tblCol.FieldType.Clone(),
+			})
+		}
 	}
 
-	partIdx, err := PartitionPruning(sctx.GetPlanCtx(), pt, conds, partitionNames, exprCols, nameSlice)
+	partIdx, err := PartitionPruning(sctx.GetPlanCtx(), pt, conds, partitionNames, tblCols, partNameSlice)
 	if err != nil || len(partIdx) != 1 {
 		return nil, true, err
 	}
