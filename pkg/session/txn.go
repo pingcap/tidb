@@ -733,7 +733,6 @@ func (s *session) StmtCommit(ctx context.Context) {
 
 	st := &s.txn
 	st.flushStmtBuf()
-	s.GetSessionVars().TxnCtx.MemBufferSnapshot = st.GetMemBuffer().GetSnapshot()
 }
 
 // StmtRollback implements the sessionctx.Context interface.
