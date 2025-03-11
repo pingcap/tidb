@@ -160,6 +160,48 @@ type stmtCtxMu struct {
 	message string
 }
 
+func (mu *stmtCtxMu) reset() *stmtCtxMu {
+	if mu == nil {
+		return &stmtCtxMu{}
+	}
+	mu.copied = 0
+	mu.deleted = 0
+	mu.foundRows = 0
+	mu.message = ""
+	mu.records = 0
+	mu.touched = 0
+	mu.updated = 0
+	return mu
+}
+
+type staleTSOProvider struct {
+	sync.Mutex
+	value *uint64
+	eval  func() (uint64, error)
+}
+
+func (s *staleTSOProvider) reset() *staleTSOProvider {
+	if s == nil {
+		return &staleTSOProvider{sync.Mutex{}, nil, nil}
+	}
+	s.value = nil
+	s.eval = nil
+	return s
+}
+
+type stmtCache struct {
+	mu   sync.Mutex
+	data map[StmtCacheKey]any
+}
+
+func (s *stmtCache) reset() *stmtCache {
+	if s == nil {
+		return &stmtCache{sync.Mutex{}, nil}
+	}
+	s.data = nil
+	return s
+}
+
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {
@@ -315,10 +357,7 @@ type StatementContext struct {
 	// stmtCache is used to store some statement-related values.
 	// add mutex to protect stmtCache concurrent access
 	// https://github.com/pingcap/tidb/issues/36159
-	stmtCache *struct {
-		mu   sync.Mutex
-		data map[StmtCacheKey]any
-	}
+	stmtCache *stmtCache
 
 	// Map to store all CTE storages of current SQL.
 	// Will clean up at the end of the execution.
@@ -427,11 +466,7 @@ type StatementContext struct {
 	// Check if TiFlash read engine is removed due to strict sql mode.
 	TiFlashEngineRemovedDueToStrictSQLMode bool
 	// StaleTSOProvider is used to provide stale timestamp oracle for read-only transactions.
-	StaleTSOProvider *struct {
-		sync.Mutex
-		value *uint64
-		eval  func() (uint64, error)
-	}
+	StaleTSOProvider *staleTSOProvider
 
 	// MDLRelatedTableIDs is used to store the table IDs that are related to the current MDL lock.
 	MDLRelatedTableIDs map[int64]struct{}
@@ -460,17 +495,10 @@ func NewStmtCtx() *StatementContext {
 func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	intest.AssertNotNil(tz)
 	sc := &StatementContext{
-		ctxID: contextutil.GenContextID(),
-		mu:    &stmtCtxMu{},
-		stmtCache: &struct {
-			mu   sync.Mutex
-			data map[StmtCacheKey]any
-		}{mu: sync.Mutex{}, data: nil},
-		StaleTSOProvider: &struct {
-			sync.Mutex
-			value *uint64
-			eval  func() (uint64, error)
-		}{sync.Mutex{}, nil, nil},
+		ctxID:            contextutil.GenContextID(),
+		mu:               &stmtCtxMu{},
+		stmtCache:        &stmtCache{sync.Mutex{}, nil},
+		StaleTSOProvider: &staleTSOProvider{sync.Mutex{}, nil, nil},
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
@@ -484,18 +512,24 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 // Reset resets a statement context
 func (sc *StatementContext) Reset() bool {
 	// make sure no other goroutines still locked it.
-	if !sc.mu.TryLock() {
-		return false
+	if sc.mu != nil {
+		if !sc.mu.TryLock() {
+			return false
+		}
+		defer sc.mu.Unlock()
 	}
-	defer sc.mu.Unlock()
-	if !sc.stmtCache.mu.TryLock() {
-		return false
+	if sc.stmtCache != nil {
+		if !sc.stmtCache.mu.TryLock() {
+			return false
+		}
+		defer sc.stmtCache.mu.Unlock()
 	}
-	defer sc.stmtCache.mu.Unlock()
-	if !sc.StaleTSOProvider.TryLock() {
-		return false
+	if sc.StaleTSOProvider != nil {
+		if !sc.StaleTSOProvider.TryLock() {
+			return false
+		}
+		defer sc.StaleTSOProvider.Unlock()
 	}
-	defer sc.StaleTSOProvider.Unlock()
 	*sc = StatementContext{
 		ctxID:               contextutil.GenContextID(),
 		CTEStorageMap:       sc.CTEStorageMap,
@@ -510,6 +544,9 @@ func (sc *StatementContext) Reset() bool {
 		stmtCache:           sc.stmtCache,
 		StaleTSOProvider:    sc.StaleTSOProvider,
 	}
+	sc.mu = sc.mu.reset()
+	sc.stmtCache = sc.stmtCache.reset()
+	sc.StaleTSOProvider = sc.StaleTSOProvider.reset()
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
 	sc.PlanCacheTracker = contextutil.NewPlanCacheTracker(sc)
@@ -524,16 +561,6 @@ func (sc *StatementContext) Reset() bool {
 	} else {
 		sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
 	}
-	sc.mu.copied = 0
-	sc.mu.deleted = 0
-	sc.mu.foundRows = 0
-	sc.mu.message = ""
-	sc.mu.records = 0
-	sc.mu.touched = 0
-	sc.mu.updated = 0
-	sc.stmtCache.data = nil
-	sc.StaleTSOProvider.eval = nil
-	sc.StaleTSOProvider.value = nil
 	return true
 }
 
