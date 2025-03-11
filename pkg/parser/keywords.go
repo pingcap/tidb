@@ -463,6 +463,7 @@ var Keywords = []KeywordsType{
 	{"NONCLUSTERED", false, "unreserved"},
 	{"NONE", false, "unreserved"},
 	{"NOWAIT", false, "unreserved"},
+	{"NO_NULL_INDEX", false, "unreserved"},
 	{"NULLS", false, "unreserved"},
 	{"NVARCHAR", false, "unreserved"},
 	{"OFF", false, "unreserved"},
