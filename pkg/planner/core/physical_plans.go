@@ -1686,6 +1686,18 @@ type PhysicalIndexHashJoin struct {
 	KeepOuterOrder bool
 }
 
+func (p *PhysicalIndexHashJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
+	cloned := new(PhysicalIndexHashJoin)
+	cloned.SetSCtx(newCtx)
+	base, err := p.basePhysicalJoin.cloneWithSelf(newCtx, cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalJoin = *base
+	cloned.KeepOuterOrder = p.KeepOuterOrder
+	return cloned, nil
+}
+
 // MemoryUsage return the memory usage of PhysicalIndexHashJoin
 func (p *PhysicalIndexHashJoin) MemoryUsage() (sum int64) {
 	if p == nil {
