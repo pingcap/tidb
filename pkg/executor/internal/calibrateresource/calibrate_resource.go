@@ -38,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/duration"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -251,7 +251,7 @@ func (e *Executor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	e.done = true
-	if !variable.EnableResourceControl.Load() {
+	if !vardef.EnableResourceControl.Load() {
 		return infoschema.ErrResourceGroupSupportDisabled
 	}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)

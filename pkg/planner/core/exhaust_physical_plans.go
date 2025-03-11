@@ -167,7 +167,8 @@ func GetMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, sch
 		offsets := util.GetMaxSortPrefix(lhsChildProperty, leftJoinKeys)
 		// If not all equal conditions hit properties. We ban merge join heuristically. Because in this case, merge join
 		// may get a very low performance. In executor, executes join results before other conditions filter it.
-		if len(offsets) < len(leftJoinKeys) {
+		// And skip the cartesian join case, unless we force to use merge join.
+		if len(offsets) < len(leftJoinKeys) || len(leftJoinKeys) == 0 {
 			continue
 		}
 
@@ -179,7 +180,8 @@ func GetMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, sch
 		}
 
 		prefixLen := findMaxPrefixLen(p.RightProperties, rightKeys)
-		if prefixLen == 0 {
+		// right side should also be full match.
+		if prefixLen < len(offsets) || prefixLen == 0 {
 			continue
 		}
 
@@ -372,7 +374,8 @@ func shouldSkipHashJoin(p *logicalop.LogicalJoin) bool {
 	return (p.PreferJoinType&h.PreferNoHashJoin) > 0 || (p.SCtx().GetSessionVars().DisableHashJoin)
 }
 
-func isGAForHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.Column, isNullEQ []bool, leftNAJoinKeys []*expression.Column) bool {
+// IsGAForHashJoinV2 judges if this hash join is GA
+func IsGAForHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.Column, isNullEQ []bool, leftNAJoinKeys []*expression.Column) bool {
 	// nullaware join
 	if len(leftNAJoinKeys) > 0 {
 		return false
@@ -388,7 +391,7 @@ func isGAForHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.C
 		}
 	}
 	switch joinType {
-	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin:
+	case logicalop.LeftOuterJoin, logicalop.RightOuterJoin, logicalop.InnerJoin, logicalop.AntiSemiJoin, logicalop.SemiJoin:
 		return true
 	default:
 		return false
@@ -397,7 +400,7 @@ func isGAForHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.C
 
 // CanUseHashJoinV2 returns true if current join is supported by hash join v2
 func canUseHashJoinV2(joinType logicalop.JoinType, leftJoinKeys []*expression.Column, isNullEQ []bool, leftNAJoinKeys []*expression.Column) bool {
-	if !isGAForHashJoinV2(joinType, leftJoinKeys, isNullEQ, leftNAJoinKeys) && !joinversion.UseHashJoinV2ForNonGAJoin {
+	if !IsGAForHashJoinV2(joinType, leftJoinKeys, isNullEQ, leftNAJoinKeys) && !joinversion.UseHashJoinV2ForNonGAJoin {
 		return false
 	}
 	switch joinType {
@@ -1352,10 +1355,11 @@ func constructInnerIndexScanTask(
 		rowCount = math.Min(rowCount, 1.0)
 	}
 	tmpPath := &util.AccessPath{
-		IndexFilters:     indexConds,
-		TableFilters:     tblConds,
-		CountAfterIndex:  rowCount,
-		CountAfterAccess: rowCount,
+		IndexFilters:         indexConds,
+		TableFilters:         tblConds,
+		CountAfterIndex:      rowCount,
+		CountAfterAccess:     rowCount,
+		CorrCountAfterAccess: 0,
 	}
 	// Assume equal conditions used by index join and other conditions are independent.
 	if len(tblConds) > 0 {

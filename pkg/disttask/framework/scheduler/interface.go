@@ -45,6 +45,8 @@ type TaskManager interface {
 	FailTask(ctx context.Context, taskID int64, currentState proto.TaskState, taskErr error) error
 	// RevertTask updates task state to reverting, and task error.
 	RevertTask(ctx context.Context, taskID int64, taskState proto.TaskState, taskErr error) error
+	// AwaitingResolveTask updates task state to awaiting-resolve, also set task err.
+	AwaitingResolveTask(ctx context.Context, taskID int64, taskState proto.TaskState, taskErr error) error
 	// RevertedTask updates task state to reverted.
 	RevertedTask(ctx context.Context, taskID int64) error
 	// PauseTask updated task state to pausing.
@@ -131,6 +133,12 @@ type Extension interface {
 	// NOTE: don't depend on task meta to decide the next step, if it's really needed,
 	// initialize required fields on scheduler.Init
 	GetNextStep(task *proto.TaskBase) proto.Step
+	// ModifyMeta is used to modify the task meta when the task is in modifying
+	// state, it should return new meta after applying the modifications to the
+	// old meta.
+	// Note: the application side only need to modify meta, no need to do notify,
+	// task executor will do it later.
+	ModifyMeta(oldMeta []byte, modifies []proto.Modification) ([]byte, error)
 }
 
 // Param is used to pass parameters when creating scheduler.
@@ -140,6 +148,12 @@ type Param struct {
 	slotMgr        *SlotManager
 	serverID       string
 	allocatedSlots bool
+	nodeRes        *proto.NodeResource
+}
+
+// GetNodeResource returns the node resource.
+func (p *Param) GetNodeResource() *proto.NodeResource {
+	return p.nodeRes
 }
 
 // schedulerFactoryFn is used to create a scheduler.

@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -48,9 +49,10 @@ func createPartition(ctx context.Context, is infoschema.InfoSchema, tbl *reposit
 	tbInfo := tbSchema.Meta()
 
 	sb := &strings.Builder{}
-	sqlescape.MustFormatSQL(sb, "ALTER TABLE %n.%n ADD PARTITION (", WorkloadSchema, tbl.destTable)
+	sqlescape.MustFormatSQL(sb, "ALTER TABLE %n.%n ADD PARTITION (", mysql.WorkloadSchema, tbl.destTable)
 	skip, err := generatePartitionRanges(sb, tbInfo, now)
 	if err != nil {
+		logutil.BgLogger().Info("workload repository cannot generate partition definitions", zap.String("table", tbl.destTable), zap.NamedError("err", err))
 		return err
 	}
 	if !skip {
@@ -97,7 +99,7 @@ func dropOldPartition(ctx context.Context, is infoschema.InfoSchema,
 		}
 		sb := &strings.Builder{}
 		sqlescape.MustFormatSQL(sb, "ALTER TABLE %n.%n DROP PARTITION %n",
-			WorkloadSchema, tbl.destTable, pt.Name.L)
+			mysql.WorkloadSchema, tbl.destTable, pt.Name.L)
 		_, err = execRetry(ctx, sess, sb.String())
 		if err != nil {
 			return fmt.Errorf("workload repository cannot drop partition (%s) on '%s': %v", pt.Name.L, tbl.destTable, err)

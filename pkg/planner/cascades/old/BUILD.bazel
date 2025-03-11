@@ -30,8 +30,8 @@ go_library(
         "//pkg/planner/util/coreusage",
         "//pkg/types",
         "//pkg/util/dbterror/plannererrors",
+        "//pkg/util/intset",
         "//pkg/util/ranger",
-        "//pkg/util/set",
         "@com_github_pingcap_errors//:errors",
     ],
 )

@@ -90,14 +90,16 @@ func TestBackendCtxConcurrentUnregister(t *testing.T) {
 	tk.MustExec("create table t (a int);")
 	var realJob *model.Job
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
-		if job.Type == model.ActionAddIndex {
+		if job.State == model.JobStateDone && job.Type == model.ActionAddIndex {
 			realJob = job.Clone()
 		}
 	})
 	tk.MustExec("alter table t add index idx(a);")
 	require.NotNil(t, realJob)
 
-	bCtx, err := ingest.NewBackendCtxBuilder(context.Background(), store, realJob).Build()
+	cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false)
+	require.NoError(t, err)
+	bCtx, err := ingest.NewBackendCtxBuilder(context.Background(), store, realJob).Build(cfg, bd)
 	require.NoError(t, err)
 	idxIDs := []int64{1, 2, 3, 4, 5, 6, 7}
 	uniques := make([]bool, 0, len(idxIDs))
@@ -118,6 +120,7 @@ func TestBackendCtxConcurrentUnregister(t *testing.T) {
 	}
 	wg.Wait()
 	bCtx.Close()
+	bd.Close()
 }
 
 func TestMockMemoryUsedUp(t *testing.T) {

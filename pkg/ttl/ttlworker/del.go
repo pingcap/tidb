@@ -22,7 +22,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/session"
@@ -71,7 +71,7 @@ var beforeWaitLimiterForTest = &beforeWaitLimiterForTestType{}
 
 func (l *defaultDelRateLimiter) WaitDelToken(ctx context.Context) error {
 	limit := l.limit.Load()
-	if variable.TTLDeleteRateLimit.Load() != limit {
+	if vardef.TTLDeleteRateLimit.Load() != limit {
 		limit = l.reset()
 	}
 
@@ -93,7 +93,7 @@ func (l *defaultDelRateLimiter) WaitDelToken(ctx context.Context) error {
 func (l *defaultDelRateLimiter) reset() (newLimit int64) {
 	l.Lock()
 	defer l.Unlock()
-	newLimit = variable.TTLDeleteRateLimit.Load()
+	newLimit = vardef.TTLDeleteRateLimit.Load()
 	if newLimit != l.limit.Load() {
 		l.limit.Store(newLimit)
 		rateLimit := rate.Inf
@@ -139,7 +139,7 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 
 	se := newTableSession(rawSe, t.tbl, t.expire)
 	for len(leftRows) > 0 && ctx.Err() == nil {
-		maxBatch := variable.TTLDeleteBatchSize.Load()
+		maxBatch := vardef.TTLDeleteBatchSize.Load()
 		var delBatch [][]types.Datum
 		if int64(len(leftRows)) < maxBatch {
 			delBatch = leftRows

@@ -440,6 +440,8 @@ const (
 	TrafficOptionReadOnly
 )
 
+var _ SensitiveStmtNode = (*TrafficStmt)(nil)
+
 // TrafficStmt is traffic operation statement.
 type TrafficStmt struct {
 	stmtNode
@@ -509,6 +511,34 @@ func (n *TrafficStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("CANCEL TRAFFIC JOBS")
 	}
 	return nil
+}
+
+// SecureText implements SensitiveStatement interface.
+func (n *TrafficStmt) SecureText() string {
+	trafficStmt := n
+	opts := n.Options
+	switch n.OpType {
+	case TrafficOpReplay:
+		opts = make([]*TrafficOption, 0, len(n.Options))
+		for _, opt := range n.Options {
+			if opt.OptionType == TrafficOptionPassword {
+				newOpt := *opt
+				newOpt.StrValue = "xxxxxx"
+				opt = &newOpt
+			}
+			opts = append(opts, opt)
+		}
+		fallthrough
+	case TrafficOpCapture:
+		trafficStmt = &TrafficStmt{
+			OpType:  n.OpType,
+			Options: opts,
+			Dir:     RedactURL(n.Dir),
+		}
+	}
+	var sb strings.Builder
+	_ = trafficStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
+	return sb.String()
 }
 
 // Accept implements Node Accept interface.

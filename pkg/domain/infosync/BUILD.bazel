@@ -28,7 +28,7 @@ go_library(
         "//pkg/parser/terror",
         "//pkg/resourcegroup",
         "//pkg/session/cursor",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/store/helper",
         "//pkg/tablecodec",
         "//pkg/util",

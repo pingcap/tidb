@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -529,9 +530,9 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 	if err != nil {
 		return nil, err
 	}
-	// Check deleted table.
+	// Check table has no index/column stats.
 	if len(rows) == 0 {
-		return nil, nil
+		return table, nil
 	}
 	for _, row := range rows {
 		if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
@@ -544,6 +545,27 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 		}
 		if err != nil {
 			return nil, err
+		}
+	}
+	// If DROP STATS executes, we need to reset the stats version to 0.
+	if table.StatsVer != statistics.Version0 {
+		allZero := true
+		table.ForEachColumnImmutable(func(_ int64, c *statistics.Column) bool {
+			if c.StatsVer != statistics.Version0 {
+				allZero = false
+				return true
+			}
+			return false
+		})
+		table.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
+			if idx.StatsVer != statistics.Version0 {
+				allZero = false
+				return true
+			}
+			return false
+		})
+		if allZero {
+			table.StatsVer = statistics.Version0
 		}
 	}
 	table.ColAndIdxExistenceMap.SetChecked()
@@ -588,7 +610,16 @@ func LoadNeededHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, sta
 			err = loadNeededIndexHistograms(sctx, is, statsHandle, item.TableItemID, loadFMSketch)
 		}
 		if err != nil {
-			return err
+			statslogutil.StatsLogger().Error("load needed histogram failed",
+				zap.Error(err),
+				zap.Int64("tableID", item.TableID),
+				zap.Int64("histID", item.ID),
+				zap.Bool("isIndex", item.IsIndex),
+				zap.Bool("IsSyncLoadFailed", item.IsSyncLoadFailed),
+				zap.Bool("fullLoad", item.FullLoad),
+			)
+			intest.Assert(false, "load needed histogram failed")
+			return errors.Trace(err)
 		}
 	}
 	return nil

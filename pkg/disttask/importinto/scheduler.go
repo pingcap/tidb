@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
@@ -466,6 +465,11 @@ func (sch *importScheduler) updateCurrentTask(task *proto.Task) {
 	}
 }
 
+// ModifyMeta implements scheduler.Extension interface.
+func (*importScheduler) ModifyMeta(oldMeta []byte, _ []proto.Modification) ([]byte, error) {
+	return oldMeta, nil
+}
+
 // nolint:deadcode
 func dropTableIndexes(ctx context.Context, handle storage.TaskHandle, taskMeta *TaskMeta, logger *zap.Logger) error {
 	tblInfo := taskMeta.Plan.TableInfo
@@ -541,18 +545,6 @@ func updateMeta(task *proto.Task, taskMeta *TaskMeta) error {
 	task.Meta = bs
 
 	return nil
-}
-
-// todo: converting back and forth, we should unify struct and remove this function later.
-func toChunkMap(engineCheckpoints map[int32]*checkpoints.EngineCheckpoint) map[int32][]Chunk {
-	chunkMap := make(map[int32][]Chunk, len(engineCheckpoints))
-	for id, ecp := range engineCheckpoints {
-		chunkMap[id] = make([]Chunk, 0, len(ecp.Chunks))
-		for _, chunkCheckpoint := range ecp.Chunks {
-			chunkMap[id] = append(chunkMap[id], toChunk(*chunkCheckpoint))
-		}
-	}
-	return chunkMap
 }
 
 func getStepOfEncode(globalSort bool) proto.Step {

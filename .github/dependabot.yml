@@ -3,9 +3,8 @@ updates:
   - package-ecosystem: "gomod"
     directory: "/"
     schedule:
-      interval: "weekly"
-      day: "friday"
-      time: "12:00"
+      interval: "daily"
+      time: "15:00"
       timezone: "Asia/Shanghai"
     allow:
       - dependency-name: "golang.org/*"
@@ -13,6 +12,7 @@ updates:
       - dependency-name: "github.com/mgechev/revive"
       - dependency-name: "github.com/prometheus/*"
       - dependency-name: "go.uber.org/*"
+      - dependency-name: "github.com/grafana/pyroscope-go"
     open-pull-requests-limit: 2
   - package-ecosystem: "gomod"
     directory: "/parser"

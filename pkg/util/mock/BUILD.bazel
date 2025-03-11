@@ -27,6 +27,7 @@ go_library(
         "//pkg/session/cursor",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sessionstates",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/statistics/handle/usage/indexusage",
         "//pkg/table/tblctx",

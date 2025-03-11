@@ -32,6 +32,7 @@ import (
 	parsertypes "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -995,7 +996,7 @@ func TestShowVar(t *testing.T) {
 	sessionVars := make([]string, 0, len(variable.GetSysVars()))
 	globalVars := make([]string, 0, len(variable.GetSysVars()))
 	for _, v := range variable.GetSysVars() {
-		if v.Scope == variable.ScopeSession {
+		if v.Scope == vardef.ScopeSession {
 			sessionVars = append(sessionVars, v.Name)
 		} else {
 			globalVars = append(globalVars, v.Name)
@@ -1026,7 +1027,7 @@ func TestShowVar(t *testing.T) {
 		if strings.HasPrefix(line, "version ") {
 			require.Equal(t, mysql.ServerVersion, line[len("version "):])
 		} else if strings.HasPrefix(line, "version_comment ") {
-			require.Equal(t, variable.GetSysVar(variable.VersionComment), line[len("version_comment "):])
+			require.Equal(t, variable.GetSysVar(vardef.VersionComment), line[len("version_comment "):])
 		}
 	}
 

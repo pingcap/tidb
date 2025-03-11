@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -250,7 +250,7 @@ func TestTiDBSchemaCacheSizeVariable(t *testing.T) {
 	is := dom.InfoSchema()
 	ok, raw := infoschema.IsV2(is)
 	if ok {
-		val := variable.SchemaCacheSize.Load()
+		val := vardef.SchemaCacheSize.Load()
 		tk.MustQuery("select @@global.tidb_schema_cache_size").CheckContain(strconv.FormatUint(val, 10))
 
 		// On start, the capacity might not be set correctly because infoschema have not load global variable yet.
@@ -260,7 +260,7 @@ func TestTiDBSchemaCacheSizeVariable(t *testing.T) {
 
 	tk.MustExec("set @@global.tidb_schema_cache_size = 1024 * 1024 * 1024")
 	tk.MustQuery("select @@global.tidb_schema_cache_size").CheckContain("1073741824")
-	require.Equal(t, variable.SchemaCacheSize.Load(), uint64(1073741824))
+	require.Equal(t, vardef.SchemaCacheSize.Load(), uint64(1073741824))
 	tk.MustExec("create table trigger_reload (id int)") // need to trigger infoschema rebuild to reset capacity
 	is = dom.InfoSchema()
 	ok, raw = infoschema.IsV2(is)

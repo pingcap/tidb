@@ -20,7 +20,7 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/session",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessiontxn",
         "//pkg/store/driver/error",
         "//pkg/store/gcworker",

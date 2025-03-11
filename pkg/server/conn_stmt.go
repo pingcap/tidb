@@ -54,7 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal/dump"
 	"github.com/pingcap/tidb/pkg/server/internal/parse"
 	"github.com/pingcap/tidb/pkg/server/internal/resultset"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -375,7 +375,7 @@ func (cc *clientConn) executeWithCursor(ctx context.Context, stmt PreparedStatem
 	rowContainer.GetMemTracker().SetLabel(memory.LabelForCursorFetch)
 	rowContainer.GetDiskTracker().AttachTo(vars.DiskTracker)
 	rowContainer.GetDiskTracker().SetLabel(memory.LabelForCursorFetch)
-	if variable.EnableTmpStorageOnOOM.Load() {
+	if vardef.EnableTmpStorageOnOOM.Load() {
 		failpoint.Inject("testCursorFetchSpill", func(val failpoint.Value) {
 			if val, ok := val.(bool); val && ok {
 				actionSpill := rowContainer.ActionSpillForTest()
@@ -385,8 +385,14 @@ func (cc *clientConn) executeWithCursor(ctx context.Context, stmt PreparedStatem
 		action := memory.NewActionWithPriority(rowContainer.ActionSpill(), memory.DefCursorFetchSpillPriority)
 		vars.MemTracker.FallbackOldAndSetNewAction(action)
 	}
+	// store the rowContainer in the statement right after it's created, so that even if the logic in defer is not triggered,
+	// the rowContainer will be released when the statement is closed.
+	stmt.StoreRowContainer(rowContainer)
 	defer func() {
 		if err != nil {
+			// if the execution panic, it'll not reach this branch. The `rowContainer` will be released in the `stmt.Close`.
+			stmt.StoreRowContainer(nil)
+
 			rowContainer.GetMemTracker().Detach()
 			rowContainer.GetDiskTracker().Detach()
 			errCloseRowContainer := rowContainer.Close()
@@ -424,7 +430,6 @@ func (cc *clientConn) executeWithCursor(ctx context.Context, stmt PreparedStatem
 	if cl, ok := crs.(resultset.FetchNotifier); ok {
 		cl.OnFetchReturned()
 	}
-	stmt.StoreRowContainer(rowContainer)
 
 	err = cc.writeExecuteResultWithCursor(ctx, stmt, crs)
 	return false, err
@@ -448,16 +453,13 @@ func (cc *clientConn) executeWithLazyCursor(ctx context.Context, stmt PreparedSt
 
 // writeExecuteResultWithCursor will store the `ResultSet` in `stmt` and send the column info to the client. The logic is shared between
 // lazy cursor fetch and normal(eager) cursor fetch.
-func (cc *clientConn) writeExecuteResultWithCursor(ctx context.Context, stmt PreparedStatement, rs resultset.CursorResultSet) error {
-	var err error
-
+func (cc *clientConn) writeExecuteResultWithCursor(ctx context.Context, stmt PreparedStatement, rs resultset.CursorResultSet) (err error) {
 	stmt.StoreResultSet(rs)
 	stmt.SetCursorActive(true)
 	defer func() {
 		if err != nil {
 			// the resultSet and rowContainer have been closed in former "defer" statement.
 			stmt.StoreResultSet(nil)
-			stmt.StoreRowContainer(nil)
 			stmt.SetCursorActive(false)
 		}
 	}()

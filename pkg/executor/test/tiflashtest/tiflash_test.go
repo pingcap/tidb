@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -884,7 +885,6 @@ func TestAvgOverflow(t *testing.T) {
 	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
 	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=OFF")
 	tk.MustQuery(" SELECT AVG( col_bigint / col_smallint) AS field1 FROM td;").Sort().Check(testkit.Rows("25769363061037.62077260"))
-	tk.MustQuery(" SELECT AVG(col_bigint) OVER (PARTITION BY col_smallint) as field2 FROM td where col_smallint = -23828;").Sort().Check(testkit.Rows("4.0000"))
 	tk.MustExec("drop table if exists td;")
 }
 
@@ -1409,7 +1409,7 @@ func TestDisaggregatedTiFlash(t *testing.T) {
 		conf.DisaggregatedTiFlash = false
 		conf.UseAutoScaler = false
 	})
-	err := tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.TestASStr, "tmpAddr", "tmpClusterID", false)
+	err := tiflashcompute.InitGlobalTopoFetcher(config.TestASStr, "tmpAddr", "tmpClusterID", false)
 	require.NoError(t, err)
 
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
@@ -1429,7 +1429,7 @@ func TestDisaggregatedTiFlash(t *testing.T) {
 	// Expect error, because TestAutoScaler return empty topo.
 	require.Contains(t, err.Error(), "Cannot find proper topo to dispatch MPPTask: topo from AutoScaler is empty")
 
-	err = tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.AWSASStr, "tmpAddr", "tmpClusterID", false)
+	err = tiflashcompute.InitGlobalTopoFetcher(config.AWSASStr, "tmpAddr", "tmpClusterID", false)
 	require.NoError(t, err)
 	err = tk.ExecToErr("select * from t;")
 	// Expect error, because AWSAutoScaler is not setup, so http request will fail.
@@ -1448,7 +1448,7 @@ func TestDisaggregatedTiFlashNonAutoScaler(t *testing.T) {
 	})
 
 	// Setting globalTopoFetcher to nil to can make sure cannot fetch topo from AutoScaler.
-	err := tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.InvalidASStr, "tmpAddr", "tmpClusterID", false)
+	err := tiflashcompute.InitGlobalTopoFetcher(config.InvalidASStr, "tmpAddr", "tmpClusterID", false)
 	require.Contains(t, err.Error(), "unexpected topo fetch type. expect: mock or aws or gcp, got invalid")
 
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
@@ -1589,7 +1589,7 @@ func TestTiFlashComputeDispatchPolicy(t *testing.T) {
 	// unistore does not support later materialization
 	tk.MustExec("set tidb_opt_enable_late_materialization=0")
 
-	err = tiflashcompute.InitGlobalTopoFetcher(tiflashcompute.TestASStr, "tmpAddr", "tmpClusterID", false)
+	err = tiflashcompute.InitGlobalTopoFetcher(config.TestASStr, "tmpAddr", "tmpClusterID", false)
 	require.NoError(t, err)
 
 	useASs := []bool{true, false}
@@ -2220,4 +2220,85 @@ func TestIndexMergeCarePreferTiflash(t *testing.T) {
 			"  └─Projection 0.00 mpp[tiflash]  test.t.i",
 			"    └─Selection 0.00 mpp[tiflash]  ge(test.t.m, 1726910326), le(test.t.m, 1726910391), not(in(test.t.a, -1, 0)), or(eq(test.t.w, \"1123\"), eq(test.t.l, \"1123\"))",
 			"      └─TableFullScan 10.00 mpp[tiflash] table:a pushed down filter:eq(test.t.s, 0), keep order:false, stats:pseudo"))
+}
+
+func TestIssue59703(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(1))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null primary key, b int not null)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("insert into t values(1,0)")
+	tk.MustExec("insert into t values(2,0)")
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	// unistore does not support later materialization
+	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_coordinator_execute_err", "return()")
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/internal/mpp/mpp_coordinator_execute_err")
+
+	err = tk.ExecToErr("select count(*) from t")
+	require.Contains(t, err.Error(), "mock mpp error")
+	require.Equal(t, mppcoordmanager.InstanceMPPCoordinatorManager.GetCoordCount(), 0)
+}
+
+func TestIssue59877(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(1))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec("create table t1(id bigint, v1 int)")
+	tk.MustExec("alter table t1 set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t1")
+	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("create table t2(id bigint unsigned, v1 int)")
+	tk.MustExec("alter table t2 set tiflash replica 1")
+	tb = external.GetTableByName(t, tk, "test", "t2")
+	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("create table t3(id bigint, v1 int)")
+	tk.MustExec("alter table t3 set tiflash replica 1")
+	tb = external.GetTableByName(t, tk, "test", "t3")
+	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	// unistore does not support later materialization
+	tk.MustExec("set tidb_opt_enable_late_materialization=0")
+	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+	tk.MustExec("set @@session.tidb_enforce_mpp=ON")
+	tk.MustExec("set tidb_broadcast_join_threshold_size=0")
+	tk.MustExec("set tidb_broadcast_join_threshold_count=0")
+	tk.MustExec("set tiflash_fine_grained_shuffle_stream_count=8")
+	tk.MustExec("set tidb_enforce_mpp=1")
+	tk.MustQuery("explain format=\"brief\" select /*+ hash_join_build(t3) */ count(*) from t1 straight_join t2 on t1.id = t2.id straight_join t3 on t1.id = t3.id").Check(
+		testkit.Rows("HashAgg 1.00 root  funcs:count(Column#18)->Column#10",
+			"└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
+			"  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
+			"    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#18",
+			"      └─Projection 15609.38 mpp[tiflash]  test.t1.id, Column#14",
+			"        └─HashJoin 15609.38 mpp[tiflash]  inner join, equal:[eq(test.t1.id, test.t3.id)]",
+			"          ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+			"          │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#17, collate: binary]",
+			"          │   └─Projection 9990.00 mpp[tiflash]  test.t3.id, cast(test.t3.id, decimal(20,0))->Column#17",
+			"          │     └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t3.id))",
+			"          │       └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
+			"          └─Projection(Probe) 12487.50 mpp[tiflash]  test.t1.id, Column#14",
+			"            └─HashJoin 12487.50 mpp[tiflash]  inner join, equal:[eq(test.t1.id, test.t2.id)]",
+			"              ├─ExchangeReceiver(Build) 9990.00 mpp[tiflash]  ",
+			"              │ └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#13, collate: binary]",
+			"              │   └─Projection 9990.00 mpp[tiflash]  test.t1.id, cast(test.t1.id, decimal(20,0))->Column#13",
+			"              │     └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t1.id))",
+			"              │       └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+			"              └─ExchangeReceiver(Probe) 9990.00 mpp[tiflash]  ",
+			"                └─ExchangeSender 9990.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#14, collate: binary]",
+			"                  └─Projection 9990.00 mpp[tiflash]  test.t2.id, cast(test.t2.id, decimal(20,0) UNSIGNED)->Column#14",
+			"                    └─Selection 9990.00 mpp[tiflash]  not(isnull(test.t2.id))",
+			"                      └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"))
 }

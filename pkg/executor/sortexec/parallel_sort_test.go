@@ -21,7 +21,6 @@ import (
 	"sort"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -40,20 +39,7 @@ func executeInFailpoint(t *testing.T, exe *sortexec.SortExec, hardLimit int64, t
 	err := exe.Open(tmpCtx)
 	require.NoError(t, err)
 
-	goRoutineWaiter := sync.WaitGroup{}
-	goRoutineWaiter.Add(1)
-	defer goRoutineWaiter.Wait()
-
 	once := sync.Once{}
-
-	go func() {
-		time.Sleep(time.Duration(rand.Int31n(300)) * time.Millisecond)
-		once.Do(func() {
-			exe.Close()
-		})
-		goRoutineWaiter.Done()
-	}()
-
 	chk := exec.NewFirstChunk(exe)
 	for i := 0; i >= 0; i++ {
 		err := exe.Next(tmpCtx, chk)
@@ -132,6 +118,7 @@ func TestParallelSort(t *testing.T) {
 
 func TestFailpoint(t *testing.T) {
 	ctx := mock.NewContext()
+	ctx.GetSessionVars().ExecutorConcurrency = sortexec.ResultChannelCapacity * 2
 	rowNum := 65536
 	sortCase := &testutil.SortCase{Rows: rowNum, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
 	schema := expression.NewSchema(sortCase.Columns()...)

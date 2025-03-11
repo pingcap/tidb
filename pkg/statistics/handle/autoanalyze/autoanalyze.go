@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
@@ -332,7 +333,7 @@ func (sa *statsAnalyze) handleAutoAnalyze(sctx sessionctx.Context) bool {
 			)
 		}
 	}()
-	if variable.EnableAutoAnalyzePriorityQueue.Load() {
+	if vardef.EnableAutoAnalyzePriorityQueue.Load() {
 		// During the test, we need to fetch all DML changes before analyzing the highest priority tables.
 		if intest.InTest {
 			sa.refresher.ProcessDMLChangesForTest()
@@ -347,7 +348,7 @@ func (sa *statsAnalyze) handleAutoAnalyze(sctx sessionctx.Context) bool {
 	}
 
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
-	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
+	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[vardef.TiDBAutoAnalyzeRatio])
 	start, end, ok := checkAutoAnalyzeWindow(parameters)
 	if !ok {
 		return false
@@ -381,8 +382,8 @@ func CheckAutoAnalyzeWindow(sctx sessionctx.Context) bool {
 
 func checkAutoAnalyzeWindow(parameters map[string]string) (time.Time, time.Time, bool) {
 	start, end, err := exec.ParseAutoAnalysisWindow(
-		parameters[variable.TiDBAutoAnalyzeStartTime],
-		parameters[variable.TiDBAutoAnalyzeEndTime],
+		parameters[vardef.TiDBAutoAnalyzeStartTime],
+		parameters[vardef.TiDBAutoAnalyzeEndTime],
 	)
 	if err != nil {
 		statslogutil.StatsLogger().Error(
@@ -571,8 +572,8 @@ func tryAutoAnalyzeTable(
 	// Whether the table needs to analyze or not, we need to check the indices of the table.
 	for _, idx := range tblInfo.Indices {
 		if idxStats := statsTbl.GetIdx(idx.ID); idxStats == nil && !statsTbl.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) && idx.State == model.StatePublic {
-			// Vector index doesn't need stats yet.
-			if idx.VectorInfo != nil {
+			// Columnar index doesn't need stats yet.
+			if idx.IsTiFlashLocalIndex() {
 				continue
 			}
 			sqlWithIdx := sql + " index %n"
@@ -634,7 +635,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 	ratio float64,
 ) bool {
 	tableStatsVer := sctx.GetSessionVars().AnalyzeVersion
-	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
+	analyzePartitionBatchSize := int(vardef.AutoAnalyzePartitionBatchSize.Load())
 	needAnalyzePartitionNames := make([]any, 0, len(partitionDefs))
 
 	for _, def := range partitionDefs {
@@ -712,8 +713,8 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 		if idx.State != model.StatePublic || statsutil.IsSpecialGlobalIndex(idx, tblInfo) {
 			continue
 		}
-		// Vector index doesn't need stats yet.
-		if idx.VectorInfo != nil {
+		// Columnar index doesn't need stats yet.
+		if idx.IsTiFlashLocalIndex() {
 			continue
 		}
 		// Collect all the partition names that need to analyze.

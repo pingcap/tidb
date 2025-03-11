@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
-	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
@@ -260,57 +259,4 @@ func (req *MPPBuildTasksRequest) ToString() string {
 		}
 	}
 	return sb.String()
-}
-
-// ExchangeCompressionMode means the compress method used in exchange operator
-type ExchangeCompressionMode int
-
-const (
-	// ExchangeCompressionModeNONE indicates no compression
-	ExchangeCompressionModeNONE ExchangeCompressionMode = iota
-	// ExchangeCompressionModeFast indicates fast compression/decompression speed, compression ratio is lower than HC mode
-	ExchangeCompressionModeFast
-	// ExchangeCompressionModeHC indicates high compression (HC) ratio mode
-	ExchangeCompressionModeHC
-	// ExchangeCompressionModeUnspecified indicates unspecified compress method, let TiDB choose one
-	ExchangeCompressionModeUnspecified
-
-	// RecommendedExchangeCompressionMode indicates recommended compression mode
-	RecommendedExchangeCompressionMode ExchangeCompressionMode = ExchangeCompressionModeFast
-
-	exchangeCompressionModeUnspecifiedName string = "UNSPECIFIED"
-)
-
-// Name returns the name of ExchangeCompressionMode
-func (t ExchangeCompressionMode) Name() string {
-	if t == ExchangeCompressionModeUnspecified {
-		return exchangeCompressionModeUnspecifiedName
-	}
-	return t.ToTipbCompressionMode().String()
-}
-
-// ToExchangeCompressionMode returns the ExchangeCompressionMode from name
-func ToExchangeCompressionMode(name string) (ExchangeCompressionMode, bool) {
-	name = strings.ToUpper(name)
-	if name == exchangeCompressionModeUnspecifiedName {
-		return ExchangeCompressionModeUnspecified, true
-	}
-	value, ok := tipb.CompressionMode_value[name]
-	if ok {
-		return ExchangeCompressionMode(value), true
-	}
-	return ExchangeCompressionModeNONE, false
-}
-
-// ToTipbCompressionMode returns tipb.CompressionMode from kv.ExchangeCompressionMode
-func (t ExchangeCompressionMode) ToTipbCompressionMode() tipb.CompressionMode {
-	switch t {
-	case ExchangeCompressionModeNONE:
-		return tipb.CompressionMode_NONE
-	case ExchangeCompressionModeFast:
-		return tipb.CompressionMode_FAST
-	case ExchangeCompressionModeHC:
-		return tipb.CompressionMode_HIGH_COMPRESSION
-	}
-	return tipb.CompressionMode_NONE
 }

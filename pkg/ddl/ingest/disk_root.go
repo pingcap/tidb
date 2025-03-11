@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	lcom "github.com/pingcap/tidb/pkg/lightning/common"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"go.uber.org/zap"
 )
@@ -122,9 +122,9 @@ func (d *diskRootImpl) UpdateUsage() {
 func (d *diskRootImpl) ShouldImport() bool {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	if d.bcUsed > variable.DDLDiskQuota.Load() {
+	if d.bcUsed > vardef.DDLDiskQuota.Load() {
 		logutil.DDLIngestLogger().Info("disk usage is over quota",
-			zap.Uint64("quota", variable.DDLDiskQuota.Load()),
+			zap.Uint64("quota", vardef.DDLDiskQuota.Load()),
 			zap.String("usage", d.usageInfo()))
 		return true
 	}
@@ -181,7 +181,7 @@ func (d *diskRootImpl) StartupCheck() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	quota := variable.DDLDiskQuota.Load()
+	quota := vardef.DDLDiskQuota.Load()
 	if sz.Available < quota {
 		return errors.Errorf("the available disk space(%d) in %s should be greater than @@tidb_ddl_disk_quota(%d)",
 			sz.Available, d.path, quota)

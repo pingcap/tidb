@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -36,11 +37,12 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
@@ -211,7 +213,7 @@ func newBackfillCtx(id int, rInfo *reorgInfo,
 		}
 	}
 
-	batchCnt := rInfo.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
+	batchCnt := rInfo.ReorgMeta.GetBatchSize()
 	return &backfillCtx{
 		id:            id,
 		ddlCtx:        rInfo.jobCtx.oldDDLCtx,
@@ -239,7 +241,7 @@ func getIdxNamesFromArgs(args *model.ModifyIndexArgs) string {
 }
 
 func updateTxnEntrySizeLimitIfNeeded(txn kv.Transaction) {
-	if entrySizeLimit := variable.TxnEntrySizeLimit.Load(); entrySizeLimit > 0 {
+	if entrySizeLimit := vardef.TxnEntrySizeLimit.Load(); entrySizeLimit > 0 {
 		txn.SetOption(kv.SizeLimits, kv.TxnSizeLimits{
 			Entry: entrySizeLimit,
 			Total: kv.TxnTotalSizeLimit.Load(),
@@ -458,7 +460,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 
 		// Change the batch size dynamically.
 		currentBatchCnt := w.GetCtx().batchCnt
-		targetBatchSize := job.ReorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize()))
+		targetBatchSize := job.ReorgMeta.GetBatchSize()
 		if targetBatchSize != currentBatchCnt {
 			w.GetCtx().batchCnt = targetBatchSize
 			logger.Info("adjust ddl job config success",
@@ -509,7 +511,11 @@ func loadTableRanges(
 	maxSleep := 10000 // ms
 	bo := tikv.NewBackofferWithVars(ctx, maxSleep, nil)
 	var ranges []kv.KeyRange
-	err := util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (bool, error) {
+	maxRetryTimes := util.DefaultMaxRetries
+	failpoint.Inject("loadTableRangesNoRetry", func() {
+		maxRetryTimes = 1
+	})
+	err := util.RunWithRetry(maxRetryTimes, util.RetryInterval, func() (bool, error) {
 		logutil.DDLLogger().Info("load table ranges from PD",
 			zap.Int64("physicalTableID", t.GetPhysicalID()),
 			zap.String("start key", hex.EncodeToString(startKey)),
@@ -547,6 +553,9 @@ func loadTableRanges(
 }
 
 func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error {
+	failpoint.Inject("validateAndFillRangesErr", func() {
+		failpoint.Return(dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs("mock"))
+	})
 	if len(ranges) == 0 {
 		errMsg := fmt.Sprintf("cannot find region in range [%s, %s]",
 			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
@@ -557,6 +566,10 @@ func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error 
 			s := r.StartKey
 			if len(s) == 0 || bytes.Compare(s, startKey) < 0 {
 				ranges[i].StartKey = startKey
+			} else if bytes.Compare(s, startKey) > 0 {
+				errMsg := fmt.Sprintf("get empty range at the beginning of ranges, expected %s, but got %s",
+					hex.EncodeToString(startKey), hex.EncodeToString(s))
+				return dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 			}
 		}
 		if i == len(ranges)-1 {
@@ -564,12 +577,15 @@ func validateAndFillRanges(ranges []kv.KeyRange, startKey, endKey []byte) error 
 			if len(e) == 0 || bytes.Compare(e, endKey) > 0 {
 				ranges[i].EndKey = endKey
 			}
+			// We don't need to check the end key because a limit may set before scanning regions.
 		}
 		if len(ranges[i].StartKey) == 0 || len(ranges[i].EndKey) == 0 {
-			return errors.Errorf("get empty start/end key in the middle of ranges")
+			return dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs("get empty start/end key in the middle of ranges")
 		}
 		if i > 0 && !bytes.Equal(ranges[i-1].EndKey, ranges[i].StartKey) {
-			return errors.Errorf("ranges are not continuous")
+			errMsg := fmt.Sprintf("ranges are not continuous, last end key %s, next start key %s",
+				hex.EncodeToString(ranges[i-1].EndKey), hex.EncodeToString(ranges[i].StartKey))
+			return dbterror.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
 		}
 	}
 	return nil
@@ -664,7 +680,7 @@ var (
 	// TestCheckWorkerNumCh use for test adjust backfill worker.
 	TestCheckWorkerNumCh = make(chan *sync.WaitGroup)
 	// TestCheckWorkerNumber use for test adjust backfill worker.
-	TestCheckWorkerNumber = int32(variable.DefTiDBDDLReorgWorkerCount)
+	TestCheckWorkerNumber = int32(vardef.DefTiDBDDLReorgWorkerCount)
 	// TestCheckReorgTimeout is used to mock timeout when reorg data.
 	TestCheckReorgTimeout = int32(0)
 )
@@ -735,9 +751,21 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 		hasUnique = hasUnique || indexInfo.Unique
 	}
 
+	var (
+		cfg *local.BackendConfig
+		bd  *local.Backend
+		err error
+	)
+	if config.GetGlobalConfig().Store == config.StoreTypeTiKV {
+		cfg, bd, err = ingest.CreateLocalBackend(ctx, dc.store, job, false)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer bd.Close()
+	}
 	bcCtx, err := ingest.NewBackendCtxBuilder(ctx, dc.store, job).
 		WithCheckpointManagerParam(sessPool, reorgInfo.PhysicalTableID).
-		Build()
+		Build(cfg, bd)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -765,7 +793,7 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 			zap.Int64s("index IDs", indexIDs))
 		return errors.Trace(err)
 	}
-	importConc := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+	importConc := job.ReorgMeta.GetConcurrency()
 	pipe, err := NewAddIndexIngestPipeline(
 		opCtx,
 		dc.store,
@@ -823,7 +851,8 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault()
+			failpoint.InjectCall("onUpdateJobParam")
+			maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeed()
 			if maxWriteSpeed != bcCtx.GetLocalBackend().GetWriteSpeedLimit() {
 				bcCtx.GetLocalBackend().UpdateWriteSpeedLimit(maxWriteSpeed)
 				logutil.DDLIngestLogger().Info("adjust ddl job config success",
@@ -831,12 +860,12 @@ func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPi
 					zap.Int("max write speed", bcCtx.GetLocalBackend().GetWriteSpeedLimit()))
 			}
 
-			concurrency := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+			concurrency := job.ReorgMeta.GetConcurrency()
 			targetReaderCnt, targetWriterCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
 			currentReaderCnt, currentWriterCnt := reader.GetWorkerPoolSize(), writer.GetWorkerPoolSize()
 			if int32(targetReaderCnt) != currentReaderCnt || int32(targetWriterCnt) != currentWriterCnt {
-				reader.TuneWorkerPoolSize(int32(targetReaderCnt))
-				writer.TuneWorkerPoolSize(int32(targetWriterCnt))
+				reader.TuneWorkerPoolSize(int32(targetReaderCnt), false)
+				writer.TuneWorkerPoolSize(int32(targetWriterCnt), false)
 				logutil.DDLIngestLogger().Info("adjust ddl job config success",
 					zap.Int64("jobID", job.ID),
 					zap.Int32("table scan operator count", reader.GetWorkerPoolSize()),
@@ -856,15 +885,13 @@ func executeAndClosePipeline(ctx *OperatorCtx, pipe *operator.AsyncPipeline, job
 	var wg util.WaitGroupWrapper
 	adjustCtx, cancel := context.WithCancel(ctx)
 	if job != nil {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.RunWithLog(func() {
 			adjustWorkerCntAndMaxWriteSpeed(adjustCtx, pipe, job, bcCtx, avgRowSize)
-		}()
+		})
 	}
 
 	err = pipe.Close()
-
+	failpoint.InjectCall("afterPipeLineClose", pipe)
 	cancel()
 	wg.Wait() // wait for adjustWorkerCntAndMaxWriteSpeed to exit
 	if opErr := ctx.OperatorErr(); opErr != nil {
@@ -900,7 +927,7 @@ func (s *localRowCntListener) SetTotal(total int) {
 }
 
 // UpdateDDLJobReorgCfgInterval is the interval to check and update reorg configuration.
-const UpdateDDLJobReorgCfgInterval = 2 * time.Second
+var UpdateDDLJobReorgCfgInterval = 2 * time.Second
 
 // writePhysicalTableRecord handles the "add index" or "modify/change column" reorganization state for a non-partitioned table or a partition.
 // For a partitioned table, it should be handled partition by partition.
@@ -1013,6 +1040,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 	})
 
 	// generate task goroutine
+	doneCh := make(chan struct{})
 	eg.Go(func() error {
 		// we will modify the startKey in this goroutine, so copy them to avoid race.
 		start, end := startKey, endKey
@@ -1044,20 +1072,24 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 		}
 
 		exec.close(false)
+		close(doneCh)
 		return nil
 	})
 
 	// update the worker cnt goroutine
-	go func() {
+	eg.Go(func() error {
 		ticker := time.NewTicker(UpdateDDLJobReorgCfgInterval)
 		defer ticker.Stop()
+	outer:
 		for {
 			select {
-			case <-ctx.Done():
-				return
+			case <-egCtx.Done():
+				return egCtx.Err()
+			case <-doneCh:
+				break outer
 			case <-ticker.C:
 				currentWorkerCnt := exec.currentWorkerSize()
-				targetWorkerCnt := reorgInfo.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
+				targetWorkerCnt := reorgInfo.ReorgMeta.GetConcurrency()
 				if currentWorkerCnt != targetWorkerCnt {
 					err := exec.adjustWorkerSize()
 					if err != nil {
@@ -1070,7 +1102,8 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 				}
 			}
 		}
-	}()
+		return nil
+	})
 
 	return eg.Wait()
 }
@@ -1205,7 +1238,7 @@ func mergeWarningsAndWarningsCount(partWarnings, totalWarnings map[errors.ErrorI
 
 func logSlowOperations(elapsed time.Duration, slowMsg string, threshold uint32) {
 	if threshold == 0 {
-		threshold = atomic.LoadUint32(&variable.DDLSlowOprThreshold)
+		threshold = atomic.LoadUint32(&vardef.DDLSlowOprThreshold)
 	}
 
 	if elapsed >= time.Duration(threshold)*time.Millisecond {

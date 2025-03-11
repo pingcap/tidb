@@ -25,6 +25,7 @@ go_test(
         "//pkg/planner/core",
         "//pkg/session",
         "//pkg/sessionctx",
+        "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
         "//pkg/statistics/handle/ddl/testutil",

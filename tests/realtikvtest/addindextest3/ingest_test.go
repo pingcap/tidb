@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -72,7 +72,7 @@ func TestAddIndexIngestMemoryUsage(t *testing.T) {
 	tk.MustExec("alter table t add unique index idx1(b);")
 	tk.MustExec("admin check table t;")
 	require.Equal(t, int64(0), ingest.LitMemRoot.CurrentUsage())
-	require.NoError(t, local.LastAlloc.CheckRefCnt())
+	require.NoError(t, local.LastAlloc.Load().CheckRefCnt())
 }
 
 func TestAddIndexIngestLimitOneBackend(t *testing.T) {
@@ -213,7 +213,7 @@ func TestIngestMVIndexOnPartitionTable(t *testing.T) {
 }
 
 func TestAddIndexIngestAdjustBackfillWorker(t *testing.T) {
-	if variable.EnableDistTask.Load() {
+	if vardef.EnableDistTask.Load() {
 		t.Skip("dist reorg didn't support checkBackfillWorkerNum, skip this test")
 	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
@@ -470,9 +470,9 @@ func testAddIndexDiskQuotaTS(tk *testkit.TestKit) {
 	tk.MustExec("insert into t values(1, 1, 1);")
 	tk.MustExec("insert into t values(100000, 1, 1);")
 
-	ingest.ForceSyncFlagForTest = true
+	ingest.ForceSyncFlagForTest.Store(true)
 	tk.MustExec("alter table t add index idx_test(b);")
-	ingest.ForceSyncFlagForTest = false
+	ingest.ForceSyncFlagForTest.Store(false)
 	tk.MustExec("update t set b = b + 1;")
 }
 
@@ -488,7 +488,7 @@ func TestAddIndexAdvanceWatermarkFailed(t *testing.T) {
 	tk.MustQuery("split table t by (30000);").Check(testkit.Rows("1 1"))
 	tk.MustExec("insert into t values(1, 1, 1);")
 	tk.MustExec("insert into t values(100000, 1, 2);")
-	ingest.ForceSyncFlagForTest = true
+	ingest.ForceSyncFlagForTest.Store(true)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockAfterImportAllocTSFailed", "2*return")
 	tk.MustExec("alter table t add index idx(b);")
 	tk.MustExec("admin check table t;")
@@ -526,9 +526,9 @@ func TestAddIndexRemoteDuplicateCheck(t *testing.T) {
 	tk.MustExec("insert into t values(1, 1, 1);")
 	tk.MustExec("insert into t values(100000, 1, 1);")
 
-	ingest.ForceSyncFlagForTest = true
+	ingest.ForceSyncFlagForTest.Store(true)
 	tk.MustGetErrMsg("alter table t add unique index idx(b);", "[kv:1062]Duplicate entry '1' for key 't.idx'")
-	ingest.ForceSyncFlagForTest = false
+	ingest.ForceSyncFlagForTest.Store(false)
 }
 
 func TestAddIndexRecoverOnDuplicateCheck(t *testing.T) {

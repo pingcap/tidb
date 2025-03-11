@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -47,7 +47,7 @@ func BenchmarkAddRecordInPipelinedDML(b *testing.B) {
 	tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(b, err)
 
-	variable.EnableMDL.Store(true)
+	vardef.EnableMDL.Store(true)
 
 	// Pre-create data to be inserted
 	records := make([][]types.Datum, batchSize)
@@ -101,7 +101,7 @@ func BenchmarkRemoveRecordInPipelinedDML(b *testing.B) {
 	tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(b, err)
 
-	variable.EnableMDL.Store(true)
+	vardef.EnableMDL.Store(true)
 
 	// Pre-create and add initial records
 	records := make([][]types.Datum, batchSize)

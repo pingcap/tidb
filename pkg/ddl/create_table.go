@@ -42,7 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -530,15 +530,15 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName ast.CIStr, tableNam
 	return nil
 }
 
-func checkVectorIndexIfNeedTiFlashReplica(store kv.Storage, dbName ast.CIStr, tblInfo *model.TableInfo) error {
-	var hasVectorIndex bool
+func checkColumnarIndexIfNeedTiFlashReplica(store kv.Storage, dbName ast.CIStr, tblInfo *model.TableInfo) error {
+	var hasColumnarIndex bool
 	for _, idx := range tblInfo.Indices {
-		if idx.VectorInfo != nil {
-			hasVectorIndex = true
+		if idx.IsTiFlashLocalIndex() {
+			hasColumnarIndex = true
 			break
 		}
 	}
-	if !hasVectorIndex {
+	if !hasColumnarIndex {
 		return nil
 	}
 	if store == nil {
@@ -554,7 +554,7 @@ func checkVectorIndexIfNeedTiFlashReplica(store kv.Storage, dbName ast.CIStr, tb
 			return errors.Trace(err)
 		}
 		if replicas == 0 {
-			return errors.Trace(dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("unsupported TiFlash store count is 0"))
+			return errors.Trace(dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported TiFlash store count is 0"))
 		}
 
 		// Always try to set to 1 as the default replica count.
@@ -565,7 +565,7 @@ func checkVectorIndexIfNeedTiFlashReplica(store kv.Storage, dbName ast.CIStr, tb
 		}
 	}
 
-	return errors.Trace(checkTableTypeForVectorIndex(tblInfo))
+	return errors.Trace(checkTableTypeForColumnarIndex(tblInfo))
 }
 
 // checkTableInfoValidExtra is like checkTableInfoValid, but also assumes the
@@ -596,7 +596,7 @@ func checkTableInfoValidExtra(ec errctx.Context, store kv.Storage, dbName ast.CI
 	if err := checkGlobalIndexes(ec, tbInfo); err != nil {
 		return errors.Trace(err)
 	}
-	if err := checkVectorIndexIfNeedTiFlashReplica(store, dbName, tbInfo); err != nil {
+	if err := checkColumnarIndexIfNeedTiFlashReplica(store, dbName, tbInfo); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -874,8 +874,8 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 				return dbterror.ErrUnsupportedShardRowIDBits
 			}
 			tbInfo.ShardRowIDBits = op.UintValue
-			if tbInfo.ShardRowIDBits > variable.MaxShardRowIDBits {
-				tbInfo.ShardRowIDBits = variable.MaxShardRowIDBits
+			if tbInfo.ShardRowIDBits > vardef.MaxShardRowIDBits {
+				tbInfo.ShardRowIDBits = vardef.MaxShardRowIDBits
 			}
 			tbInfo.MaxShardRowIDBits = tbInfo.ShardRowIDBits
 		case ast.TableOptionPreSplitRegion:
@@ -911,6 +911,8 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 
 			tbInfo.TTLInfo = ttlInfo
 			ttlOptionsHandled = true
+		case ast.TableOptionEngineAttribute:
+			return errors.Trace(dbterror.ErrUnsupportedEngineAttribute)
 		}
 	}
 	shardingBits := shardingBits(tbInfo)
@@ -1326,7 +1328,7 @@ func BuildTableInfo(
 
 		// check constraint
 		if constr.Tp == ast.ConstraintCheck {
-			if !variable.EnableCheckConstraint.Load() {
+			if !vardef.EnableCheckConstraint.Load() {
 				ctx.AppendWarning(errCheckConstraintIsOff)
 				continue
 			}
@@ -1582,12 +1584,12 @@ func isSingleIntPK(constr *ast.Constraint, lastCol *model.ColumnInfo) bool {
 }
 
 // ShouldBuildClusteredIndex is used to determine whether the CREATE TABLE statement should build a clustered index table.
-func ShouldBuildClusteredIndex(mode variable.ClusteredIndexDefMode, opt *ast.IndexOption, isSingleIntPK bool) bool {
+func ShouldBuildClusteredIndex(mode vardef.ClusteredIndexDefMode, opt *ast.IndexOption, isSingleIntPK bool) bool {
 	if opt == nil || opt.PrimaryKeyTp == ast.PrimaryKeyTypeDefault {
 		switch mode {
-		case variable.ClusteredIndexDefModeOn:
+		case vardef.ClusteredIndexDefModeOn:
 			return true
-		case variable.ClusteredIndexDefModeIntOnly:
+		case vardef.ClusteredIndexDefModeIntOnly:
 			return !config.GetGlobalConfig().AlterPrimaryKey && isSingleIntPK
 		default:
 			return false
