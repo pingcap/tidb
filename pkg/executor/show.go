@@ -20,13 +20,6 @@ import (
 	gjson "encoding/json"
 	"fmt"
 
-	"math"
-	"slices"
-	"sort"
-	"strconv"
-	"strings"
-	"time"
-
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -86,9 +79,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	pdHttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
+	"math"
+	"slices"
+	"sort"
+	"strconv"
+	"strings"
 )
-
-var etcdDialTimeout = 5 * time.Second
 
 // ShowExec represents a show executor.
 type ShowExec struct {
@@ -2084,12 +2080,6 @@ func (e *ShowExec) appendRow(row []any) {
 }
 
 func (e *ShowExec) fetchShowDistribution(ctx context.Context) error {
-	store := e.Ctx().GetStore()
-	tikvStore, ok := store.(helper.Storage)
-	if !ok {
-		return nil
-	}
-
 	tb, err := e.getTable()
 	if err != nil {
 		return errors.Trace(err)
@@ -2115,12 +2105,11 @@ func (e *ShowExec) fetchShowDistribution(ctx context.Context) error {
 		physicalIDs = append(physicalIDs, tb.Meta().ID)
 	}
 	distributions := make([]*pdHttp.RegionDistribution, 0)
-
-	cli := tikvStore.GetPDHTTPClient()
 	var resp *pdHttp.RegionDistributions
 	for _, pid := range physicalIDs {
 		startKey, endKey := tablecodec.GetTableHandleKeyRange(pid)
-		resp, err = cli.GetRegionDistribution(ctx, pdHttp.NewKeyRange(startKey, endKey), "")
+		// todo： support engine type
+		resp, err = infosync.GetRegionDistributions(ctx, startKey, endKey, "")
 		if err != nil {
 			return err
 		}
