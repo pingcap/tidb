@@ -427,6 +427,15 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 		return errors.Trace(err)
 	}
 
+	// read write and ingest step meta from external storage when using global sort.
+	if sm.ExternalPath != "" && e.tableImporter.IsGlobalSort() {
+		var externalMeta WriteIngestStepExternalMeta
+		if err := external.ReadJSONFromExternalStorage(ctx, e.tableImporter.GlobalSortStore, sm.ExternalPath, &externalMeta); err != nil {
+			return errors.Trace(err)
+		}
+		sm.WriteIngestStepExternalMeta = externalMeta
+	}
+
 	logger := e.logger.With(zap.Int64("subtask-id", subtask.ID),
 		zap.String("kv-group", sm.KVGroup))
 	task := log.BeginTask(logger, "run subtask")

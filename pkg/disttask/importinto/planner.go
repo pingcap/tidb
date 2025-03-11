@@ -390,6 +390,20 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 		}
 		specs = append(specs, specsForOneSubtask...)
 	}
+	// write external meta to storage when using global sort
+	if planCtx.GlobalSort {
+		for i, spec := range specs {
+			if w, ok := spec.(*WriteIngestSpec); ok {
+				externalPath := writeIngestStepExternalMetaPath(planCtx.TaskID, i+1)
+				if err := external.WriteJSONToExternalStorage(planCtx.Ctx, controller.GlobalSortStore, externalPath, w.WriteIngestStepExternalMeta); err != nil {
+					return nil, errors.Trace(err)
+				}
+				w.WriteIngestStepExternalMeta = WriteIngestStepExternalMeta{
+					ExternalPath: externalPath,
+				}
+			}
+		}
+	}
 	return specs, nil
 }
 
@@ -446,26 +460,18 @@ func splitForOneSubtask(
 		m := &WriteIngestStepMeta{
 			KVGroup: kvGroup,
 			TS:      ts,
-		}
-		writeIngestStepExternalMeta := WriteIngestStepExternalMeta{
-			SortedKVMeta: external.SortedKVMeta{
-				StartKey: startKey,
-				EndKey:   endKey,
-				// this is actually an estimate, we don't know the exact size of the data
-				TotalKVSize: uint64(config.DefaultBatchSize),
+			WriteIngestStepExternalMeta: WriteIngestStepExternalMeta{
+				SortedKVMeta: external.SortedKVMeta{
+					StartKey: startKey,
+					EndKey:   endKey,
+					// this is actually an estimate, we don't know the exact size of the data
+					TotalKVSize: uint64(config.DefaultBatchSize),
+				},
+				DataFiles:      dataFiles,
+				StatFiles:      statFiles,
+				RangeJobKeys:   rangeJobKeys,
+				RangeSplitKeys: regionSplitKeys,
 			},
-			DataFiles:      dataFiles,
-			StatFiles:      statFiles,
-			RangeJobKeys:   rangeJobKeys,
-			RangeSplitKeys: regionSplitKeys,
-		}
-		if planCtx.GlobalSort {
-			m.ExternalPath = writeIngestStepExternalMetaPath(planCtx.TaskID, len(ret)+1)
-			if err := external.WriteJSONToExternalStorage(planCtx.Ctx, extStorage, m.ExternalPath, writeIngestStepExternalMeta); err != nil {
-				return nil, errors.Trace(err)
-			}
-		} else {
-			m.WriteIngestStepExternalMeta = writeIngestStepExternalMeta
 		}
 
 		ret = append(ret, &WriteIngestSpec{m})
