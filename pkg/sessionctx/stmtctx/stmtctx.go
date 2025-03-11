@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -468,7 +469,12 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 }
 
 // Reset resets a statement context
-func (sc *StatementContext) Reset() {
+func (sc *StatementContext) Reset() bool {
+	// make sure no other goroutines still locked it.
+	if !sc.mu.TryLock() {
+		return false
+	}
+	mu := &sc.mu
 	*sc = StatementContext{
 		ctxID:               contextutil.GenContextID(),
 		CTEStorageMap:       sc.CTEStorageMap,
@@ -480,6 +486,7 @@ func (sc *StatementContext) Reset() {
 		ExtraWarnHandler:    sc.ExtraWarnHandler,
 		IndexUsageCollector: sc.IndexUsageCollector,
 	}
+	mu.Unlock()
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
 	sc.PlanCacheTracker = contextutil.NewPlanCacheTracker(sc)
@@ -494,6 +501,7 @@ func (sc *StatementContext) Reset() {
 	} else {
 		sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
 	}
+	return true
 }
 
 // CtxID returns the context id of the statement
@@ -817,6 +825,7 @@ func (sc *StatementContext) SetAffectedRows(rows uint64) {
 func (sc *StatementContext) AffectedRows() uint64 {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
+	failpoint.InjectCall("afterAffectedRowsLocked", sc)
 	return sc.mu.affectedRows
 }
 
