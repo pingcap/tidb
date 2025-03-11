@@ -339,11 +339,6 @@ func ReadJSONFromExternalStorage(ctx context.Context, store storage.ExternalStor
 	return errors.Trace(json.Unmarshal(data, v))
 }
 
-type combined struct {
-	DataMeta   *SortedKVMeta           `json:"data_meta"`
-	IndexMetas map[int64]*SortedKVMeta `json:"index_metas"`
-}
-
 // BytesMin returns the smallest of byte slice a and b.
 func BytesMin(a, b []byte) []byte {
 	if bytes.Compare(a, b) < 0 {
