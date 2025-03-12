@@ -19,6 +19,7 @@ import "github.com/pingcap/tidb/pkg/parser/ast"
 // TableReadCostMetrics is used to indicate the intermediate status and results analyzed through table read workload
 // for function "HandleTableReadCost".
 type TableReadCostMetrics struct {
+	// TODO(Elsa): Add the json tag for the field
 	DbName    ast.CIStr
 	TableName ast.CIStr
 	// TableScanTime[t] = sum(scan-time * readFrequency) of all records in statement_summary where table-name = t
