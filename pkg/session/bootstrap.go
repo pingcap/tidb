@@ -786,6 +786,16 @@ const (
 		value json NOT NULL,
 		index idx_version_category_type (version, category, type),
 		index idx_table_id (table_id));`
+
+	// CreatePipelinedDMLProgressTable is a table to store the progress of pipelined DML.
+	CreatePipelinedDMLProgressTable = `CREATE TABLE IF NOT EXISTS mysql.pipelined_dml_progress (
+		start_ts BIGINT UNSIGNED NOT NULL PRIMARY KEY,
+		involved_tables VARCHAR(256) NOT NULL,
+		status VARCHAR(64) NOT NULL,
+		resolved_regions BIGINT NOT NULL,
+		create_time TIMESTAMP NOT NULL,
+		update_time TIMESTAMP NOT NULL
+	);`
 )
 
 // CreateTimers is a table to store all timers for tidb
@@ -1272,11 +1282,15 @@ const (
 
 	// version242 add Max_user_connections into mysql.user.
 	version244 = 244
+
+	// version 245
+	// create `mysql.pipelined_dml_progress` table
+	version245 = 245
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version244
+var currentBootstrapVersion int64 = version245
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1456,6 +1470,7 @@ var (
 		upgradeToVer242,
 		upgradeToVer243,
 		upgradeToVer244,
+		upgradeToVer245,
 	}
 )
 
@@ -3393,6 +3408,13 @@ func upgradeToVer244(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Max_user_connections` INT UNSIGNED NOT NULL DEFAULT 0 AFTER `Password_lifetime`")
 }
 
+func upgradeToVer245(s sessiontypes.Session, ver int64) {
+	if ver >= version245 {
+		return
+	}
+	mustExecute(s, CreatePipelinedDMLProgressTable)
+}
+
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
 func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
@@ -3549,6 +3571,8 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateKernelOptionsTable)
 	// create mysql.tidb_workload_values
 	mustExecute(s, CreateTiDBWorkloadValuesTable)
+	// create mysql.pipelined_dml_progress
+	mustExecute(s, CreatePipelinedDMLProgressTable)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.

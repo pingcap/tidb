@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/txnkv/transaction"
 	"go.uber.org/zap"
 )
 
@@ -324,6 +326,25 @@ func (txn *LazyTxn) changePendingToValid(ctx context.Context, sctx sessionctx.Co
 			Entry: entrySizeLimit,
 			Total: kv.TxnTotalSizeLimit.Load(),
 		})
+	}
+
+	if future.pipelined {
+		var callback transaction.PipelinedProgressCallbackType = func(
+			startTS uint64,
+			status transaction.PipelinedDMLStatus,
+			completedRegions int64,
+			done bool,
+		) {
+			if err := executor.UpdatePipelinedDMLProgress(sctx, startTS, status, completedRegions, done); err != nil {
+				logutil.Logger(ctx).Error("failed to update pipelined DML progress",
+					zap.Uint64("startTS", startTS),
+					zap.String("status", status.String()),
+					zap.Int64("completedRegions", completedRegions),
+					zap.Bool("done", done),
+					zap.Error(err))
+			}
+		}
+		txn.Transaction.SetOption(kv.PipelinedDMLResolveLockCallback, callback)
 	}
 
 	return nil

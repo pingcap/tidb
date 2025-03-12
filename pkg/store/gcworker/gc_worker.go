@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -1229,6 +1230,16 @@ func (w *GCWorker) resolveLocks(
 		zap.Uint64("safePoint", safePoint),
 		zap.Int("regions", runner.CompletedRegions()))
 	metrics.GCHistogram.WithLabelValues("resolve_locks").Observe(time.Since(startTime).Seconds())
+
+	se := createSession(w.store)
+	defer se.Close()
+	err = executor.CleanupPipelinedDMLProgressBySafePoint(se, safePoint)
+	if err != nil {
+		logutil.Logger(ctx).Error("failed to cleanup pipelined DML progress", zap.String("category", "gc worker"),
+			zap.String("uuid", w.uuid),
+			zap.Uint64("safePoint", safePoint),
+			zap.Error(err))
+	}
 	return nil
 }
 

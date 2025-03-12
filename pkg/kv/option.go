@@ -118,6 +118,8 @@ const (
 	BackgroundGoroutineLifecycleHooks
 	// PrewriteEncounterLockPolicy is the policy to handle lock conflict during prewrite
 	PrewriteEncounterLockPolicy
+	// PipelinedDMLResolveLockCallback is the callback function for pipelined DML resolve lock progress
+	PipelinedDMLResolveLockCallback
 )
 
 // TxnSizeLimits is the argument type for `SizeLimits` option
