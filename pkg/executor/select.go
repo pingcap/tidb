@@ -1124,6 +1124,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.InShowWarning = true
 			sc.SetWarnings(vars.StmtCtx.GetWarnings())
 		}
+	case *ast.DistributeTableStmt:
+		sc.SetTypeFlags(sc.TypeFlags().
+			WithIgnoreTruncateErr(false).
+			WithIgnoreZeroInDate(true).
+			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()))
 	case *ast.SplitRegionStmt:
 		sc.SetTypeFlags(sc.TypeFlags().
 			WithIgnoreTruncateErr(false).
