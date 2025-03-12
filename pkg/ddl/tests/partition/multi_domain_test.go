@@ -911,7 +911,7 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 	<-hookChan
 	hookChan <- struct{}{}
 	verCurr := verStart + 1
-	i := 0
+	state := 0
 	for {
 		// Waiting for the next State change to be done (i.e. blocking the state after)
 		releaseHook := true
@@ -935,8 +935,8 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 		}
 		logutil.BgLogger().Info("XXXXXXXXXXX states loop", zap.Int64("verCurr", verCurr), zap.Int64("NonOwner ver", domNonOwner.InfoSchema().SchemaMetaVersion()), zap.Int64("Owner ver", domOwner.InfoSchema().SchemaMetaVersion()))
 		domOwner.Reload()
-		//require.Equal(t, verCurr-1, domNonOwner.InfoSchema().SchemaMetaVersion())
-		//require.Equal(t, verCurr, domOwner.InfoSchema().SchemaMetaVersion())
+		require.Equal(t, verCurr-1, domNonOwner.InfoSchema().SchemaMetaVersion())
+		require.Equal(t, verCurr, domOwner.InfoSchema().SchemaMetaVersion())
 		loopFn(tkO, tkNO)
 		domNonOwner.Reload()
 		if !releaseHook {
@@ -945,9 +945,10 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 		}
 		// Continue to next state
 		verCurr++
-		i++
+		state++
 		hookChan <- struct{}{}
 	}
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep")
 	logutil.BgLogger().Info("XXXXXXXXXXX states loop done")
 	if !tbl.Meta().IsCommonHandle && !tbl.Meta().PKIsHandle {
 		// Debug prints, so it is possible to verify possible newly generated _tidb_rowid's
@@ -1021,6 +1022,20 @@ PartitionLoop:
 	if postFn != nil {
 		postFn(tkO, store)
 	}
+	/*
+		// TODO: Enable this!
+		// Check that all DMLs would have give the same result without ALTER and on a non-partitioned table!
+		res := tkO.MustQuery(`select * from t`).Sort()
+		tkO.MustExec("drop table t")
+		tkO.MustExec(createSQL)
+		tkO.MustExec("alter table t remove partitioning")
+		domOwner.Reload()
+		domNonOwner.Reload()
+		for i := 0; i <= state; i++ {
+			loopFn(tkO, tkNO)
+		}
+		tkO.MustQuery(`select * from t`).Sort().Check(res.Rows())
+	*/
 	// NOT deferring this, since it might hang on test failures...
 	domOwner.Close()
 	domNonOwner.Close()
@@ -1802,8 +1817,20 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 	//   for x in range IDs[s][Current][Delete]
 	//   for x in range IDs[s][Previous][InsertODKU]
 	//   for x in range IDs[s][Current][InsertODKU]
+	hasUniqueKey := false
 	initFn := func(tkO *testkit.TestKit) {
 		logutil.BgLogger().Info("initFn start")
+		ctx := tkO.Session()
+		dom := domain.GetDomain(ctx)
+		is := dom.InfoSchema()
+		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+		require.NoError(t, err)
+		hasUniqueKey = tbl.Meta().PKIsHandle || tbl.Meta().IsCommonHandle
+		for _, idx := range tbl.Meta().Indices {
+			if idx.Unique {
+				hasUniqueKey = true
+			}
+		}
 		for s := range IDs {
 			for _, id := range IDs[s][Original][Insert] {
 				//if id != 53 {
@@ -1816,10 +1843,6 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 		}
 		// make all partitions to be EXCHANGED, so they have duplicated _tidb_rowid's between
 		// the partitions
-		ctx := tkO.Session()
-		dom := domain.GetDomain(ctx)
-		is := dom.InfoSchema()
-		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 		require.NoError(t, err)
 		if tbl.Meta().Partition != nil &&
 			!tbl.Meta().IsCommonHandle &&
@@ -1844,6 +1867,10 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 	state := 1
 	loopFn := func(tkO, tkNO *testkit.TestKit) {
 		logutil.BgLogger().Info("loopFn start", zap.Int("state", state))
+		if state >= len(IDs) {
+			// Reset state for validation against non-partitioned table
+			state = 1
+		}
 		for _, op := range []int{Insert, Update, Delete, InsertODKU} {
 			for _, from := range []int{Previous, Current} {
 				tk := tkO
@@ -1883,20 +1910,10 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 		// Just to check for duplicates or missing rows
 		// TODO: Fix this for non-PK tests
 		//tkO.MustQuery(`select count(*) from t`).Check(testkit.Rows("61"))
-		ctx := tkO.Session()
-		dom := domain.GetDomain(ctx)
-		is := dom.InfoSchema()
-		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-		require.NoError(t, err)
-		hasUniqueKey := tbl.Meta().PKIsHandle || tbl.Meta().IsCommonHandle
-		for _, idx := range tbl.Meta().Indices {
-			if idx.Unique {
-				hasUniqueKey = true
-			}
-		}
+		res := tkO.MustQuery(`select * from t`).Sort()
 		if hasUniqueKey {
 			tkO.MustQuery(`select a from t group by a having count(*) > 1`).Check(testkit.Rows())
-			tkO.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
+			res.Check(testkit.Rows(""+
 				"10 113 10 Insert s:6 f:2 Update s:6 f:2",
 				"100 203 100 Insert s:1 f:2 ODKU s:1 f:1",
 				"101 101 101 Insert s:1 f:2",
@@ -1963,7 +1980,7 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 				"96 199 96 Insert s:1 f:2 ODKU s:1 f:2",
 				"99 202 99 Insert s:1 f:2 Update s:1 f:1"))
 		} else {
-			tkO.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
+			res.Sort().Check(testkit.Rows(""+
 				"10 113 10 Insert s:6 f:2 Update s:6 f:2",
 				"100 100 100 Insert s:1 f:2",
 				"100 100 100 InsertODKU s:1 f:1",
