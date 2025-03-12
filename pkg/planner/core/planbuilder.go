@@ -572,6 +572,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildChange(x)
 	case *ast.SplitRegionStmt:
 		return b.buildSplitRegion(x)
+	case *ast.DistributeTableStmt:
+		return b.buildDistributeTable(x)
 	case *ast.CompactTableStmt:
 		return b.buildCompactTable(x)
 	case *ast.RecommendIndexStmt:
@@ -4725,6 +4727,28 @@ func (b *PlanBuilder) requireInsertAndSelectPriv(tables []*ast.TableName) {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tbl.Schema.O, tbl.Name.O, "", insertErr)
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tbl.Schema.O, tbl.Name.O, "", selectErr)
 	}
+}
+
+func (b *PlanBuilder) buildDistributeTable(node *ast.DistributeTableStmt) (base.Plan, error) {
+	tnW := b.resolveCtx.GetTableName(node.Table)
+	if tnW.TableInfo.TempTableType != model.TempTableNone {
+		return nil, plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("distribute table")
+	}
+	tblInfo := tnW.TableInfo
+	mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), node.Table.Schema, tblInfo)
+	if err != nil {
+		return nil, err
+	}
+	mockTablePlan.SetSchema(schema)
+	mockTablePlan.SetOutputNames(names)
+	p := &DistributeTable{
+		TableInfo:      tblInfo,
+		PartitionNames: node.PartitionNames,
+		Rule:           node.Rule,
+		Engine:         node.Engine,
+	}
+	return p, nil
 }
 
 func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (base.Plan, error) {

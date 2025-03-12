@@ -553,6 +553,18 @@ func TestAdminStmt(t *testing.T) {
 	RunTest(t, table, false)
 }
 
+func TestDistributeTable(t *testing.T) {
+	table := []testCase{
+		{"distribute table t1", false, "DISTRIBUTE TABLE `t1` "},
+		{"distribute table t1 partition(p0)", false, "DISTRIBUTE TABLE `t1` PARTITION(`p0`) "},
+		{"distribute table t1 partition(p0,p1)", false, "DISTRIBUTE TABLE `t1` PARTITION(`p0`, `p1`) "},
+		{"distribute table t1 partition(p0,p1) engine = tikv", false, "DISTRIBUTE TABLE `t1` PARTITION(`p0`, `p1`) RULE = `leader` ENGINE = `tikv`"},
+		{"distribute table t1 partition(p0,p1) rule = leader engine = tikv", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`, `p1`) RULE = `leader` ENGINE = `tikv`"},
+		{"distribute table t1 partition(p0) rule = leader engine = tikv", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`) RULE = `leader` ENGINE = `tikv`"},
+	}
+	RunTest(t, table, false)
+}
+
 func TestDMLStmt(t *testing.T) {
 	table := []testCase{
 		{"", true, ""},
@@ -1050,6 +1062,9 @@ AAAAAAAAAAAA5gm5Mg==
 		{"split region for table t1 between (1) and (1000) regions 10", true, "SPLIT REGION FOR TABLE `t1` BETWEEN (1) AND (1000) REGIONS 10"},
 		{"split partition table t1 between (1) and (1000) regions 10", true, "SPLIT PARTITION TABLE `t1` BETWEEN (1) AND (1000) REGIONS 10"},
 		{"split region for partition table t1 between (1) and (1000) regions 10", true, "SPLIT REGION FOR PARTITION TABLE `t1` BETWEEN (1) AND (1000) REGIONS 10"},
+
+		// distribute table
+		{"distribute table t1", true, "DISTRIBUTE TABLE `t1`"},
 
 		// for show table regions.
 		{"show table t1 regions", true, "SHOW TABLE `t1` REGIONS"},
