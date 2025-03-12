@@ -96,11 +96,7 @@ check_region_label_rule_exists() {
 # otherwise returns 1 (for use in if-statements).
 #######################################
 ensure_region_label_rule_exists() {
-  if check_region_label_rule_exists; then
-    return 0
-  else
-    return 1
-  fi
+  check_region_label_rule_exists
 }
 
 #######################################
