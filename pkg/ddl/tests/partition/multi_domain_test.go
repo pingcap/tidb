@@ -1172,19 +1172,19 @@ func TestMultiSchemaReorganizeNoPK(t *testing.T) {
 	postFn := func(tkO *testkit.TestKit, _ kv.Storage) {
 		require.Equal(t, int(7*2+1), i)
 		tkO.MustQuery(`select c1,_tidb_rowid,c2 from t`).Sort().Check(testkit.Rows(""+
-			"1 60001 init O",
+			"1 1 init O",
 			"10 30004 delete reorganization NO",
 			"11 7 public O",
 			"12 30005 public NO",
 			"13 8 none O",
 			"14 30006 none NO",
-			"2 60002 init O",
-			"3 60003 delete only O",
-			"4 60004 delete only NO",
+			"2 2 init O",
+			"3 3 delete only O",
+			"4 30001 delete only NO",
 			"5 4 write only O",
 			// Before, there were a DUPLICATE ROW here!!!
 			//"5 60004 write only O",
-			"6 60005 write only NO",
+			"6 30002 write only NO",
 			"7 5 write reorganization O",
 			"8 30003 write reorganization NO",
 			"9 6 delete reorganization O"))
@@ -1904,7 +1904,7 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 	}
 	postFn := func(tkO *testkit.TestKit, _ kv.Storage) {
 		// TODO: Enable this and fix issues!!!
-		//tkO.MustExec(`admin check table t`)
+		tkO.MustExec(`admin check table t`)
 		// Total number of rows after above operations.
 		// Just to check for duplicates or missing rows
 		// TODO: Fix this for non-PK tests
@@ -1944,13 +1944,8 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 				"49 152 49 Insert s:4 f:2 ODKU s:4 f:1",
 				"50 50 50 Insert s:4 f:2",
 				"51 51 51 InsertODKU s:4 f:2",
-				"52 52 52 Original s:3",
-				// TODO: FIXME: Why duplicate here?!?
 				"53 156 53 Original s:3 Update s:3 f:2",
-				"53 53 53 Original s:3",
-				// TODO: FIXME: Why duplicate here?!?
 				"54 157 54 Original s:3 ODKU s:3 f:2",
-				"54 54 54 Original s:3",
 				"57 160 57 Insert s:3 f:1 Update s:3 f:2",
 				"58 161 58 Insert s:3 f:1 ODKU s:3 f:2",
 				"6 109 6 Insert s:6 f:1 Update s:6 f:2",
@@ -1982,6 +1977,7 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 			res.Sort().Check(testkit.Rows(""+
 				"10 113 10 Insert s:6 f:2 Update s:6 f:2",
 				"100 100 100 Insert s:1 f:2",
+				// TODO: FIXME!!! Why this duplicate of InsertODKU?
 				"100 100 100 InsertODKU s:1 f:1",
 				"101 101 101 Insert s:1 f:2",
 				"102 102 102 InsertODKU s:1 f:2",
@@ -2023,9 +2019,7 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 				"49 49 49 InsertODKU s:4 f:1",
 				"50 50 50 Insert s:4 f:2",
 				"51 51 51 InsertODKU s:4 f:2",
-				"52 52 52 Original s:3",
 				"53 156 53 Original s:3 Update s:3 f:2",
-				"53 53 53 Original s:3",
 				"54 54 54 InsertODKU s:3 f:2",
 				"54 54 54 Original s:3",
 				"57 160 57 Insert s:3 f:1 Update s:3 f:2",
@@ -2120,8 +2114,10 @@ func TestDuplicateRowsNoPK(t *testing.T) {
 		tk2.MustExec("update t set b = 2 where b = 1")
 	})
 	tk.MustExec("alter table t remove partitioning")
-	// TODO: FIXME!
-	tk.MustContainErrMsg(`admin check table t`, "[admin:8223]data inconsistency in table: t, index: idx, handle: 1, index-values:")
+	tk.MustExec(`admin check table t`)
+	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 2"))
+	tk.MustQuery("select a from t").Check(testkit.Rows("1"))
+	tk.MustQuery("select *, _tidb_rowid from t").Sort().Check(testkit.Rows("1 2 1"))
 }
 
 func TestDuplicateRowsPK59680(t *testing.T) {
@@ -2142,6 +2138,8 @@ func TestDuplicateRowsPK59680(t *testing.T) {
 		tk2.MustExec("update t set b = 2 where b = 1")
 	})
 	tk.MustExec("alter table t remove partitioning")
-	// TODO: FIXME!
-	tk.MustContainErrMsg(`admin check table t`, "[admin:8223]data inconsistency in table: t, index: PRIMARY, handle: ")
+	tk.MustExec(`admin check table t`)
+	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 2"))
+	tk.MustQuery("select a from t").Check(testkit.Rows("1"))
+	tk.MustQuery("select *, _tidb_rowid from t").Sort().Check(testkit.Rows("1 2 1"))
 }

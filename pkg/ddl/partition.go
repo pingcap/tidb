@@ -3843,9 +3843,15 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 
 			// w.oldKeys is only set for non-clustered tables, in w.fetchRowColVals().
 			if len(w.oldKeys) > 0 {
-				if _, ok := found[string(w.oldKeys[i])]; ok {
-					// Already filled, i.e. double written earlier by concurrent DML
-					continue
+				genNewID := false
+				if vals, ok := found[string(w.oldKeys[i])]; ok {
+					// Is this already filled, or a duplicate from another partition?
+					if len(vals) == len(prr.vals) && bytes.Equal(vals, prr.vals) {
+						// Already filled, i.e. double written earlier by concurrent DML
+						continue
+					}
+					// Not same row, probably due to earlier EXCHANGE PARTITION.
+					genNewID = true
 				}
 
 				// Check if we can lock the old key, since there can still be concurrent update
@@ -3858,15 +3864,17 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 					return errors.Trace(err)
 				}
 
-				// Due to EXCHANGE PARTITION, the existing _tidb_rowid may collide between partitions!
-				// Generate new _tidb_rowid.
-				recordID, err := tables.AllocHandle(w.ctx, w.tblCtx, w.reorgedTbl)
-				if err != nil {
-					return errors.Trace(err)
-				}
+				if genNewID {
+					// Due to EXCHANGE PARTITION,
+					// the existing _tidb_rowid may collide between partitions!
+					recordID, err := tables.AllocHandle(w.ctx, w.tblCtx, w.reorgedTbl)
+					if err != nil {
+						return errors.Trace(err)
+					}
 
-				// tablecodec.prefixLen is not exported, but is just TableSplitKeyLen + 2
-				key = tablecodec.EncodeRecordKey(key[:tablecodec.TableSplitKeyLen+2], recordID)
+					// tablecodec.prefixLen is not exported, but is just TableSplitKeyLen + 2
+					key = tablecodec.EncodeRecordKey(key[:tablecodec.TableSplitKeyLen+2], recordID)
+				}
 			}
 			err = txn.Set(key, prr.vals)
 			if err != nil {
