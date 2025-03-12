@@ -144,6 +144,9 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 			return nil, false, err
 		}
 	}
+	if strings.HasPrefix(ds.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "explain select max(a), min(a) from t") {
+		fmt.Println(1)
+	}
 	// TODO: Can we move ds.deriveStatsByFilter after pruning by heuristics? In this way some computation can be avoided
 	// when ds.PossibleAccessPaths are pruned.
 	ds.SetStats(deriveStatsByFilter(ds, ds.PushedDownConds, ds.AllPossibleAccessPaths))

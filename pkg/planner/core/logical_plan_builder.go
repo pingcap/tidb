@@ -4467,6 +4467,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, plannererrors.ErrPartitionClauseOnNonpartitioned
 	}
 
+	if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "explain select max(a), min(a) from t") {
+		fmt.Println(1)
+	}
+
 	possiblePaths, err := getPossibleAccessPaths(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName, b.isForUpdateRead, b.optFlag&rule.FlagPartitionProcessor > 0)
 	if err != nil {
 		return nil, err
