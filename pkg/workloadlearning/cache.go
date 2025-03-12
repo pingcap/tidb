@@ -43,7 +43,12 @@ type WLCacheWorker struct {
 // NewWLCacheWorker Create a new workload learning cache worker to cache all workload-related metrics
 // from storage mysql.tidb_workload_values to memory
 func NewWLCacheWorker(pool util.DestroyableSessionPool) *WLCacheWorker {
-	return &WLCacheWorker{pool, &TableReadCostCache{}, sync.RWMutex{}}
+	cache := &TableReadCostCache{
+		TableReadCostMetrics: make(map[int64]*TableReadCostMetrics),
+		Version:              0,
+	}
+	return &WLCacheWorker{
+		pool, cache, sync.RWMutex{}}
 }
 
 // UpdateTableReadCostCache refreshes the cached workload learning metrics
