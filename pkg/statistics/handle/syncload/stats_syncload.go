@@ -18,6 +18,7 @@ import (
 	stderrors "errors"
 	"math/rand"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -44,7 +45,11 @@ import (
 )
 
 // RetryCount is the max retry count for a sync load task.
-const RetryCount = 2
+// TODO(hawkingrei): There is no point in retrying sync load,
+// because there will be other tasks requesting this task at the same time.
+// As long as the subsequent tasks are normal, it will be fine. Too many retries
+// will only cause congestion and delays
+const RetryCount = 1
 
 // GetSyncLoadConcurrencyByCPU returns the concurrency of sync load by CPU.
 func GetSyncLoadConcurrencyByCPU() int {
@@ -63,6 +68,10 @@ type statsSyncLoad struct {
 	statsHandle statstypes.StatsHandle
 	is          infoschema.InfoSchema
 	StatsLoad   statstypes.StatsLoad
+	// This mutex protects the statsCache from concurrent modifications by multiple workers.
+	// Since multiple workers may update the statsCache for the same table simultaneously,
+	// the mutex ensures thread-safety during these updates.
+	mutexForStatsCache sync.Mutex
 }
 
 var globalStatsSyncLoadSingleFlight singleflight.Group
@@ -564,8 +573,8 @@ func (*statsSyncLoad) writeToResultChan(resultCh chan stmtctx.StatsLoadResult, r
 
 // updateCachedItem updates the column/index hist to global statsCache.
 func (s *statsSyncLoad) updateCachedItem(tblInfo *model.TableInfo, item model.TableItemID, colHist *statistics.Column, idxHist *statistics.Index, fullLoaded bool) (updated bool) {
-	s.StatsLoad.Lock()
-	defer s.StatsLoad.Unlock()
+	s.mutexForStatsCache.Lock()
+	defer s.mutexForStatsCache.Unlock()
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
 	tbl, ok := s.statsHandle.Get(item.TableID)

@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -308,7 +307,6 @@ func gcTableStats(sctx sessionctx.Context,
 		if err != nil {
 			return errors.Trace(err)
 		}
-		cache.TableRowStatsCache.Invalidate(physicalID)
 		return nil
 	}
 

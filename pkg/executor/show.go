@@ -325,7 +325,7 @@ func (e *ShowExec) fetchShowBind() error {
 		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
 		bindings = handle.GetAllSessionBindings()
 	} else {
-		bindings = domain.GetDomain(e.Ctx()).BindHandle().GetAllGlobalBindings()
+		bindings = domain.GetDomain(e.Ctx()).BindingHandle().GetAllBindings()
 	}
 	// Remove the invalid bindings.
 	parser := parser.New()
@@ -382,9 +382,9 @@ func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	handle := domain.GetDomain(e.Ctx()).BindHandle()
+	handle := domain.GetDomain(e.Ctx()).BindingHandle()
 
-	bindings := handle.GetAllGlobalBindings()
+	bindings := handle.GetAllBindings()
 	numBindings := 0
 	for _, binding := range bindings {
 		if binding.IsBindingEnabled() {

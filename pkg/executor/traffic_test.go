@@ -26,6 +26,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -166,8 +167,7 @@ func TestTrafficError(t *testing.T) {
 	defer server.Close()
 	tempCtx = fillCtxWithTiProxyAddr(ctx, []int{port})
 	err := exec.Next(tempCtx, nil)
-	require.ErrorContains(t, err, "500 Internal Server Error")
-	require.ErrorContains(t, err, "mock error")
+	require.ErrorContains(t, errors.Cause(err), "mock error")
 }
 
 func TestCapturePath(t *testing.T) {
@@ -327,16 +327,31 @@ func TestTrafficShow(t *testing.T) {
 	ctx = fillCtxWithTiProxyAddr(ctx, ports)
 
 	marshaledTime1, marshaledTime2 := "2020-01-01T00:00:00Z", "2020-01-01T01:00:00Z"
-	marshaledJob := `{
+	marshaledCaptureJob := `{
 		"type": "capture",
 		"status": "canceled",
 		"start_time": "%s",
 		"end_time": "2020-01-01T02:01:01Z",
 		"progress": "50%%",
-		"error": "mock error"
+		"error": "mock error",
+		"output": "/tmp/traffic",
+		"duration": "1m",
+		"compress": true,
+		"encryption_method": ""
+	}`
+	marshaledReplayJob := `{
+		"type": "replay",
+		"status": "running",
+		"start_time": "%s",
+		"progress": "50%%",
+		"input": "s3://bucket/tmp&access-key=xxx&secret-access-key=xxx",
+		"username": "root",
+		"speed": 1,
+		"read_only": true
 	}`
 	showTime1, showTime2 := "2020-01-01 00:00:00.000000", "2020-01-01 01:00:00.000000"
-	showResult := "%s, 2020-01-01 02:01:01.000000, 127.0.0.1:%d, capture, 50%%, canceled, mock error\n"
+	showCaptureResult := "%s, 2020-01-01 02:01:01.000000, 127.0.0.1:%d, capture, 50%%, canceled, mock error, OUTPUT=\"/tmp/traffic\", DURATION=\"1m\", COMPRESS=true, ENCRYPTION_METHOD=\"\"\n"
+	showReplayResult := "%s, NULL, 127.0.0.1:%d, replay, 50%%, running, , INPUT=\"s3://bucket/tmp&access-key=xxx&secret-access-key=xxx\", USER=\"root\", SPEED=1.000000, READ_ONLY=false\n"
 	tests := []struct {
 		resp []string
 		chks []string
@@ -346,34 +361,38 @@ func TestTrafficShow(t *testing.T) {
 			chks: []string{},
 		},
 		{
-			resp: []string{fmt.Sprintf("[%s]", fmt.Sprintf(marshaledJob, marshaledTime1)), "[]"},
-			chks: []string{fmt.Sprintf(showResult, showTime1, ports[0])},
+			resp: []string{fmt.Sprintf("[%s]", fmt.Sprintf(marshaledCaptureJob, marshaledTime1)), "[]"},
+			chks: []string{fmt.Sprintf(showCaptureResult, showTime1, ports[0])},
 		},
 		{
-			resp: []string{fmt.Sprintf("[%s]", fmt.Sprintf(marshaledJob, marshaledTime1)), fmt.Sprintf("[%s]", fmt.Sprintf(marshaledJob, marshaledTime1))},
-			chks: []string{fmt.Sprintf("%s%s", fmt.Sprintf(showResult, showTime1, ports[0]), fmt.Sprintf(showResult, showTime1, ports[1]))},
+			resp: []string{fmt.Sprintf("[%s]", fmt.Sprintf(marshaledReplayJob, marshaledTime1)), "[]"},
+			chks: []string{fmt.Sprintf(showReplayResult, showTime1, ports[0])},
 		},
 		{
-			resp: []string{fmt.Sprintf("[%s,%s]", fmt.Sprintf(marshaledJob, marshaledTime1), fmt.Sprintf(marshaledJob, marshaledTime2)),
-				fmt.Sprintf("[%s,%s]", fmt.Sprintf(marshaledJob, marshaledTime1), fmt.Sprintf(marshaledJob, marshaledTime2))},
-			chks: []string{fmt.Sprintf("%s%s", fmt.Sprintf(showResult, showTime2, ports[0]), fmt.Sprintf(showResult, showTime2, ports[1])),
-				fmt.Sprintf("%s%s", fmt.Sprintf(showResult, showTime1, ports[0]), fmt.Sprintf(showResult, showTime1, ports[1]))},
+			resp: []string{fmt.Sprintf("[%s]", fmt.Sprintf(marshaledCaptureJob, marshaledTime1)), fmt.Sprintf("[%s]", fmt.Sprintf(marshaledCaptureJob, marshaledTime1))},
+			chks: []string{fmt.Sprintf("%s%s", fmt.Sprintf(showCaptureResult, showTime1, ports[0]), fmt.Sprintf(showCaptureResult, showTime1, ports[1]))},
+		},
+		{
+			resp: []string{fmt.Sprintf("[%s,%s]", fmt.Sprintf(marshaledCaptureJob, marshaledTime1), fmt.Sprintf(marshaledReplayJob, marshaledTime2)),
+				fmt.Sprintf("[%s,%s]", fmt.Sprintf(marshaledCaptureJob, marshaledTime1), fmt.Sprintf(marshaledReplayJob, marshaledTime2))},
+			chks: []string{fmt.Sprintf("%s%s", fmt.Sprintf(showReplayResult, showTime2, ports[0]), fmt.Sprintf(showReplayResult, showTime2, ports[1])),
+				fmt.Sprintf("%s%s", fmt.Sprintf(showCaptureResult, showTime1, ports[0]), fmt.Sprintf(showCaptureResult, showTime1, ports[1]))},
 		},
 	}
 
-	for _, test := range tests {
+	for i, test := range tests {
 		for j := range test.resp {
 			handlers[j].setResponse(test.resp[j])
 		}
 		executor := suite.build(ctx, "show traffic jobs")
-		require.NoError(t, executor.Open(ctx))
+		require.NoError(t, executor.Open(ctx), "case %d", i)
 		chk := chunk.New(fields, 2, 2)
 		for j := 0; j < len(test.chks); j++ {
-			require.NoError(t, executor.Next(ctx, chk))
-			require.Equal(t, test.chks[j], chk.ToString(fields))
+			require.NoError(t, executor.Next(ctx, chk), "case %d, %d", i, j)
+			require.Equal(t, test.chks[j], chk.ToString(fields), "case %d, %d", i, j)
 		}
-		require.NoError(t, executor.Next(ctx, chk))
-		require.Equal(t, 0, chk.NumRows())
+		require.NoError(t, executor.Next(ctx, chk), "case %d", i)
+		require.Equal(t, 0, chk.NumRows(), "case %d", i)
 	}
 }
 
@@ -572,13 +591,14 @@ func fillCtxWithTiProxyAddr(ctx context.Context, ports []int) context.Context {
 
 func trafficJobFields() []*types.FieldType {
 	return []*types.FieldType{
+		types.NewFieldType(mysql.TypeDatetime),
 		types.NewFieldType(mysql.TypeDate),
-		types.NewFieldType(mysql.TypeDate),
-		types.NewFieldType(mysql.TypeString),
-		types.NewFieldType(mysql.TypeString),
-		types.NewFieldType(mysql.TypeString),
-		types.NewFieldType(mysql.TypeString),
-		types.NewFieldType(mysql.TypeString),
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeVarchar),
+		types.NewFieldType(mysql.TypeVarchar),
 	}
 }
 

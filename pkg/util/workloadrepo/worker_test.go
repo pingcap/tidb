@@ -29,9 +29,11 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/slice"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/embed"
@@ -141,7 +143,7 @@ func waitForTables(ctx context.Context, t *testing.T, wrk *worker, now time.Time
 func TestRaceToCreateTablesWorker(t *testing.T) {
 	ctx, store, dom, addr := setupDomainAndContext(t)
 
-	_, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("workload_schema"))
+	_, ok := dom.InfoSchema().SchemaByName(workloadSchemaCIStr)
 	require.False(t, ok)
 
 	wrk1 := setupWorker(ctx, t, addr, dom, "worker1", true)
@@ -240,7 +242,6 @@ func TestMultipleWorker(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return wrk1.owner.IsOwner()
 	}, time.Minute, time.Second)
-
 	// start worker 2 again
 	require.NoError(t, wrk2.setRepositoryDest(ctx, "table"))
 	eventuallyWithLock(t, wrk2, func() bool { return wrk2.owner != nil })
@@ -256,7 +257,7 @@ func TestGlobalWorker(t *testing.T) {
 	ctx, store, dom, addr := setupDomainAndContext(t)
 	tk := testkit.NewTestKit(t, store)
 
-	_, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("workload_schema"))
+	_, ok := dom.InfoSchema().SchemaByName(workloadSchemaCIStr)
 	require.False(t, ok)
 
 	wrk := setupWorker(ctx, t, addr, dom, "worker", false)
@@ -276,7 +277,7 @@ func TestAdminWorkloadRepo(t *testing.T) {
 	ctx, store, dom, addr := setupDomainAndContext(t)
 	tk := testkit.NewTestKit(t, store)
 
-	_, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("workload_schema"))
+	_, ok := dom.InfoSchema().SchemaByName(workloadSchemaCIStr)
 	require.False(t, ok)
 
 	wrk := setupWorker(ctx, t, addr, dom, "worker", false)
@@ -320,7 +321,7 @@ func validateDate(t *testing.T, row []any, idx int, lastRowTs time.Time, maxSecs
 }
 
 func SamplingTimingWorker(t *testing.T, tk *testkit.TestKit, lastRowTs time.Time, cnt int, maxSecs int) time.Time {
-	rows := getRows(t, tk, cnt, maxSecs, "select instance_id, ts from "+WorkloadSchema+".hist_memory_usage where ts > '"+lastRowTs.Format("2006-01-02 15:04:05")+"' order by ts asc")
+	rows := getRows(t, tk, cnt, maxSecs, "select instance_id, ts from "+mysql.WorkloadSchema+".hist_memory_usage where ts > '"+lastRowTs.Format("2006-01-02 15:04:05")+"' order by ts asc")
 
 	for _, row := range rows {
 		// check that the instance_id is correct
@@ -362,7 +363,7 @@ func findMatchingRowForSnapshot(t *testing.T, rowidx int, snapRows [][]any, row 
 }
 
 func SnapshotTimingWorker(t *testing.T, tk *testkit.TestKit, lastRowTs time.Time, lastSnapID int, cnt int, maxSecs int) (time.Time, int) {
-	rows := getRows(t, tk, cnt, maxSecs, "select snap_id, begin_time from "+WorkloadSchema+"."+histSnapshotsTable+" where begin_time > '"+lastRowTs.Format("2006-01-02 15:04:05")+"' order by begin_time asc")
+	rows := getRows(t, tk, cnt, maxSecs, "select snap_id, begin_time from "+mysql.WorkloadSchema+"."+histSnapshotsTable+" where begin_time > '"+lastRowTs.Format("2006-01-02 15:04:05")+"' order by begin_time asc")
 
 	// We want to get all rows if we are starting from 0.
 	snapWhere := ""
@@ -856,4 +857,104 @@ func TestCalcNextTick(t *testing.T) {
 	require.True(t, calcNextTick(time.Date(2024, 12, 7, 0, 0, 0, 0, loc)) == time.Hour*2)
 	require.True(t, calcNextTick(time.Date(2024, 12, 7, 2, 0, 0, 1, loc)) == time.Hour*24-time.Nanosecond)
 	require.True(t, calcNextTick(time.Date(2024, 12, 7, 1, 59, 59, 999999999, loc)) == time.Nanosecond)
+}
+
+func TestOwnerRandomDown(t *testing.T) {
+	workerNum := 3
+	testNum := 9
+
+	ctx, _, dom, addr := setupDomainAndContext(t)
+	var workers []*worker
+	for i := 0; i < workerNum; i++ {
+		wrk := setupWorker(ctx, t, addr, dom, fmt.Sprintf("worker%d", i), true)
+		wrk.samplingInterval = 6000
+		workers = append(workers, wrk)
+	}
+
+	now := time.Now()
+	for _, wrk := range workers {
+		require.NoError(t, wrk.setRepositoryDest(ctx, "table"))
+	}
+
+	require.Eventually(t, func() bool {
+		return workers[0].checkTablesExists(ctx, now)
+	}, time.Minute, 100*time.Millisecond)
+
+	// let us randomly stop the owner
+	for j := 0; j < testNum; j++ {
+		var err error
+		prevSnapID := uint64(0)
+		breakOwnerIdx := -1
+		oldOwnerIdx := -1
+
+		// stop the current owner
+		for idx, wrk := range workers {
+			if wrk.owner.IsOwner() {
+				prevSnapID, err = wrk.getSnapID(ctx)
+				require.Nil(t, err)
+
+				if j%3 == 0 {
+					// tidb is shutdown somehow
+					wrk.stop()
+
+					require.Eventually(t, func() bool {
+						return wrk.cancel == nil
+					}, time.Minute, 100*time.Millisecond)
+				} else if j%3 == 1 {
+					// immediate unexpected owner down due to bad network or crash
+					wrk.owner.CampaignCancel()
+					require.False(t, wrk.owner.IsOwner())
+					breakOwnerIdx = idx
+				} else {
+					// normal owner switch triggered somehow
+					wrk.owner.ResignOwner(ctx)
+					require.Eventually(t, func() bool {
+						return !wrk.owner.IsOwner()
+					}, 15*time.Second, 100*time.Millisecond)
+					// it is very unlikely, but let us just fail if that happened
+					if wrk.owner.IsOwner() {
+						require.FailNow(t, "fail to resign owner to other nodes")
+					}
+				}
+
+				oldOwnerIdx = idx
+				break
+			}
+		}
+
+		// new owner elected
+		require.Eventually(t, func() bool {
+			return slice.AnyOf(workers, func(i int) bool {
+				return workers[i].cancel != nil &&
+					workers[i].owner.IsOwner() && i != oldOwnerIdx
+			})
+		}, time.Minute, 100*time.Millisecond)
+
+		// new snapshot taken
+		require.Eventually(t, func() bool {
+			return slice.AnyOf(workers, func(i int) bool {
+				if workers[i].cancel == nil {
+					return false
+				}
+				newSnapID, err := workers[i].getSnapID(ctx)
+				return err == nil && newSnapID > prevSnapID
+			})
+		}, time.Minute, 100*time.Millisecond)
+
+		// recover stopped owner
+		for idx, wrk := range workers {
+			if wrk.cancel == nil {
+				require.NoError(t, wrk.setRepositoryDest(ctx, "table"))
+			}
+			if idx == breakOwnerIdx {
+				require.Nil(t, wrk.owner.CampaignOwner(3))
+			}
+		}
+		require.Eventually(t, func() bool {
+			return slice.AllOf(workers, func(i int) bool {
+				return workers[i].cancel != nil &&
+					workers[i].owner != nil
+			})
+		}, time.Minute, 100*time.Millisecond)
+	}
 }
