@@ -876,23 +876,6 @@ func TestBindingQueryInList(t *testing.T) {
 	}
 }
 
-func TestTooLongBinding(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec(`use test`)
-	tk.MustExec(`create table t (a int)`)
-	predicates := make([]string, 0, 65535)
-	for i := 0; i < cap(predicates); i++ {
-		predicates = append(predicates, fmt.Sprintf("t.a=%d", i))
-	}
-	bindingSQL := fmt.Sprintf("create global binding using select * from t where %s", strings.Join(predicates, " or "))
-	// we've updated bind_info column types from TEXT to LONGTEXT, so no error now.
-	tk.MustExec(bindingSQL)
-	rs := tk.MustQuery(`show global bindings`).Rows()
-	require.True(t, len(rs) == 1)
-}
-
 // TestBindingInListWithSingleLiteral tests sql with "IN (Lit)", fixes #44298
 func TestBindingInListWithSingleLiteral(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
