@@ -32,6 +32,11 @@ var (
 	nodesCheckInterval = 2 * CheckTaskFinishedInterval
 )
 
+const (
+	// targetScopeBackground is the node scope of `background`.
+	targetScopeBackground = "background"
+)
+
 // NodeManager maintains live TiDB nodes in the cluster, and maintains the nodes
 // managed by the framework.
 type NodeManager struct {
@@ -164,14 +169,15 @@ func filterByScope(nodes []proto.ManagedNode, targetScope string) []string {
 	var nodeIDs []string
 	haveBackground := false
 	for _, node := range nodes {
-		if node.Role == "background" {
+		if node.Role == targetScopeBackground {
 			haveBackground = true
+			break
 		}
 	}
 	// prefer to use "background" node instead of "" node.
 	if targetScope == "" && haveBackground {
 		for _, node := range nodes {
-			if node.Role == "background" {
+			if node.Role == targetScopeBackground {
 				nodeIDs = append(nodeIDs, node.ID)
 			}
 		}
