@@ -236,7 +236,8 @@ func NewMgr(
 		if err = g.UseOneShotSession(storage, !needDomain, func(se glue.Session) error {
 			enableFollowerHandleRegion, err := se.GetGlobalSysVar(vardef.PDEnableFollowerHandleRegion)
 			if err != nil {
-				return err
+				log.Warn("failed to get enable follower handle region, maybe the cluster version is old", zap.Error(err))
+				return nil
 			}
 			return controller.SetFollowerHandle(variable.TiDBOptOn(enableFollowerHandleRegion))
 		}); err != nil {
