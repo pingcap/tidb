@@ -424,6 +424,140 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 	return false, nil
 }
 
+<<<<<<< HEAD
+=======
+func (cc *clientConn) executeWithCursor(ctx context.Context, stmt PreparedStatement, rs resultset.ResultSet) (lazy bool, err error) {
+	vars := (&cc.ctx).GetSessionVars()
+	if vars.EnableLazyCursorFetch {
+		// try to execute with lazy cursor fetch
+		ok, err := cc.executeWithLazyCursor(ctx, stmt, rs)
+
+		// if `ok` is false, should try to execute without lazy cursor fetch
+		if ok {
+			return true, err
+		}
+	}
+
+	failpoint.Inject("avoidEagerCursorFetch", func() {
+		failpoint.Return(false, errors.New("failpoint avoids eager cursor fetch"))
+	})
+	cc.initResultEncoder(ctx)
+	defer cc.rsEncoder.Clean()
+	// fetch all results of the resultSet, and stored them locally, so that the future `FETCH` command can read
+	// the rows directly to avoid running executor and accessing shared params/variables in the session
+	// NOTE: chunk should not be allocated from the connection allocator, which will reset after executing this command
+	// but the rows are still needed in the following FETCH command.
+
+	// create the row container to manage spill
+	// this `rowContainer` will be released when the statement (or the connection) is closed.
+	rowContainer := chunk.NewRowContainer(rs.FieldTypes(), vars.MaxChunkSize)
+	rowContainer.GetMemTracker().AttachTo(vars.MemTracker)
+	rowContainer.GetMemTracker().SetLabel(memory.LabelForCursorFetch)
+	rowContainer.GetDiskTracker().AttachTo(vars.DiskTracker)
+	rowContainer.GetDiskTracker().SetLabel(memory.LabelForCursorFetch)
+	if vardef.EnableTmpStorageOnOOM.Load() {
+		failpoint.Inject("testCursorFetchSpill", func(val failpoint.Value) {
+			if val, ok := val.(bool); val && ok {
+				actionSpill := rowContainer.ActionSpillForTest()
+				defer actionSpill.WaitForTest()
+			}
+		})
+		action := memory.NewActionWithPriority(rowContainer.ActionSpill(), memory.DefCursorFetchSpillPriority)
+		vars.MemTracker.FallbackOldAndSetNewAction(action)
+	}
+	// store the rowContainer in the statement right after it's created, so that even if the logic in defer is not triggered,
+	// the rowContainer will be released when the statement is closed.
+	stmt.StoreRowContainer(rowContainer)
+	defer func() {
+		if err != nil {
+			// if the execution panic, it'll not reach this branch. The `rowContainer` will be released in the `stmt.Close`.
+			stmt.StoreRowContainer(nil)
+
+			rowContainer.GetMemTracker().Detach()
+			rowContainer.GetDiskTracker().Detach()
+			errCloseRowContainer := rowContainer.Close()
+			if errCloseRowContainer != nil {
+				logutil.Logger(ctx).Error("Fail to close rowContainer in error handler. May cause resource leak",
+					zap.NamedError("original-error", err), zap.NamedError("close-error", errCloseRowContainer))
+			}
+		}
+	}()
+
+	for {
+		chk := rs.NewChunk(nil)
+
+		if err = rs.Next(ctx, chk); err != nil {
+			return false, err
+		}
+		rowCount := chk.NumRows()
+		if rowCount == 0 {
+			break
+		}
+
+		err = rowContainer.Add(chk)
+		if err != nil {
+			return false, err
+		}
+	}
+
+	reader := chunk.NewRowContainerReader(rowContainer)
+	defer func() {
+		if err != nil {
+			reader.Close()
+		}
+	}()
+	crs := resultset.WrapWithRowContainerCursor(rs, reader)
+	if cl, ok := crs.(resultset.FetchNotifier); ok {
+		cl.OnFetchReturned()
+	}
+
+	err = cc.writeExecuteResultWithCursor(ctx, stmt, crs)
+	return false, err
+}
+
+// executeWithLazyCursor tries to detach the `ResultSet` and make it suitable to execute lazily.
+// Be careful that the return value `(bool, error)` has different meaning with other similar functions. The first `bool` represent whether
+// the `ResultSet` is suitable for lazy execution. If the return value is `(false, _)`, the `rs` in argument can still be used. If the
+// first return value is `true` and `err` is not nil, the `rs` cannot be used anymore and should return the error to the upper layer.
+func (cc *clientConn) executeWithLazyCursor(ctx context.Context, stmt PreparedStatement, rs resultset.ResultSet) (ok bool, err error) {
+	drs, ok, err := rs.TryDetach()
+	if !ok || err != nil {
+		return false, err
+	}
+
+	vars := (&cc.ctx).GetSessionVars()
+	crs := resultset.WrapWithLazyCursor(drs, vars.InitChunkSize, vars.MaxChunkSize)
+	err = cc.writeExecuteResultWithCursor(ctx, stmt, crs)
+	return true, err
+}
+
+// writeExecuteResultWithCursor will store the `ResultSet` in `stmt` and send the column info to the client. The logic is shared between
+// lazy cursor fetch and normal(eager) cursor fetch.
+func (cc *clientConn) writeExecuteResultWithCursor(ctx context.Context, stmt PreparedStatement, rs resultset.CursorResultSet) (err error) {
+	stmt.StoreResultSet(rs)
+	stmt.SetCursorActive(true)
+	defer func() {
+		if err != nil {
+			// the resultSet and rowContainer have been closed in former "defer" statement.
+			stmt.StoreResultSet(nil)
+			stmt.SetCursorActive(false)
+		}
+	}()
+
+	if err = cc.writeColumnInfo(rs.Columns()); err != nil {
+		return err
+	}
+
+	// explicitly flush columnInfo to client.
+	err = cc.writeEOF(ctx, cc.ctx.Status())
+	if err != nil {
+		return err
+	}
+
+	return cc.flush(ctx)
+}
+
+>>>>>>> dbf6a6e838b (stmt: clean `rowContainer` if the execution paniced (#59985))
 func (cc *clientConn) handleStmtFetch(ctx context.Context, data []byte) (err error) {
 	cc.ctx.GetSessionVars().StartTime = time.Now()
 	cc.ctx.GetSessionVars().ClearAlloc(nil, false)
