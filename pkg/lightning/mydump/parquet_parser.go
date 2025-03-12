@@ -593,7 +593,7 @@ func (pp *ParquetParser) readInGroup(num, storeOffset int) (int, error) {
 	if pp.firstAfterReset {
 		pp.firstAfterReset = false
 		var eg errgroup.Group
-		eg.SetLimit(2)
+		eg.SetLimit(4)
 		for i := range len(pp.dumpers) {
 			dumper := pp.dumpers[i]
 			eg.Go(func() error {
