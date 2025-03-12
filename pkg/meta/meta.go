@@ -997,6 +997,85 @@ func (m *Mutator) IterTables(dbID int64, fn func(info *model.TableInfo) error) e
 	return errors.Trace(err)
 }
 
+<<<<<<< HEAD
+=======
+func splitRangeInt64Max(n int64) [][]string {
+	ranges := make([][]string, n)
+
+	// 9999999999999999999 is the max number than maxInt64 in string format.
+	batch := 9999999999999999999 / uint64(n)
+
+	for k := int64(0); k < n; k++ {
+		start := batch * uint64(k)
+		end := batch * uint64(k+1)
+
+		startStr := fmt.Sprintf("%019d", start)
+		if k == 0 {
+			startStr = "0"
+		}
+		endStr := fmt.Sprintf("%019d", end)
+
+		ranges[k] = []string{startStr, endStr}
+	}
+
+	return ranges
+}
+
+// IterAllTables iterates all the table at once, in order to avoid oom. It can use at most 15 concurrency to iterate.
+// This function is optimized for 'many databases' scenario. Only 1 concurrency can work for 'many tables in one database' scenario.
+func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concurrency int, fn func(info *model.TableInfo) error) error {
+	cancelCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	workGroup, _ := util.NewErrorGroupWithRecoverWithCtx(cancelCtx)
+
+	if concurrency >= 15 {
+		concurrency = 15
+	}
+
+	kvRanges := splitRangeInt64Max(int64(concurrency))
+
+	mu := sync.Mutex{}
+	for i := 0; i < concurrency; i++ {
+		snapshot := store.GetSnapshot(kv.NewVersion(startTs))
+		snapshot.SetOption(kv.RequestSourceInternal, true)
+		snapshot.SetOption(kv.RequestSourceType, kv.InternalTxnMeta)
+		t := structure.NewStructure(snapshot, nil, mMetaPrefix)
+		workGroup.Go(func() error {
+			startKey := []byte(fmt.Sprintf("%s:", mDBPrefix))
+			startKey = codec.EncodeBytes(startKey, []byte(kvRanges[i][0]))
+			endKey := []byte(fmt.Sprintf("%s:", mDBPrefix))
+			endKey = codec.EncodeBytes(endKey, []byte(kvRanges[i][1]))
+
+			return t.IterateHashWithBoundedKey(startKey, endKey, func(key []byte, field []byte, value []byte) error {
+				// only handle table meta
+				tableKey := string(field)
+				if !strings.HasPrefix(tableKey, mTablePrefix) {
+					return nil
+				}
+
+				tbInfo := &model.TableInfo{}
+				err := json.Unmarshal(value, tbInfo)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				dbID, err := ParseDBKey(key)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				tbInfo.DBID = dbID
+
+				mu.Lock()
+				err = fn(tbInfo)
+				mu.Unlock()
+				return errors.Trace(err)
+			})
+		})
+	}
+
+	return errors.Trace(workGroup.Wait())
+}
+
+>>>>>>> 6bdacafe82d (*: fix incorrect handling IterAllTables (#59894))
 // GetMetasByDBID return all meta information of a database.
 // Note(dongmen): This method is used by TiCDC to reduce the time of changefeed initialization.
 // Ref: https://github.com/pingcap/tiflow/issues/11109
