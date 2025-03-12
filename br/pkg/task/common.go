@@ -796,6 +796,7 @@ func NewMgr(ctx context.Context,
 	keepalive keepalive.ClientParameters,
 	checkRequirements bool,
 	needDomain bool,
+	needRegionScan bool,
 	versionCheckerType conn.VersionCheckerType,
 ) (*conn.Mgr, error) {
 	var (
@@ -820,7 +821,7 @@ func NewMgr(ctx context.Context,
 	// Is it necessary to remove `StoreBehavior`?
 	return conn.NewMgr(
 		ctx, g, pds, tlsConf, securityOption, keepalive, util.SkipTiFlash,
-		checkRequirements, needDomain, versionCheckerType,
+		checkRequirements, needDomain, needRegionScan, versionCheckerType,
 	)
 }
 

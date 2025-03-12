@@ -159,6 +159,7 @@ func NewMgr(
 	storeBehavior util.StoreBehavior,
 	checkRequirements bool,
 	needDomain bool,
+	needRegionScan bool,
 	versionCheckerType VersionCheckerType,
 ) (*Mgr, error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
@@ -231,14 +232,16 @@ func NewMgr(
 		}
 	}
 
-	if err = g.UseOneShotSession(storage, !needDomain, func(se glue.Session) error {
-		enableFollowerHandleRegion, err := se.GetGlobalSysVar(vardef.PDEnableFollowerHandleRegion)
-		if err != nil {
-			return err
+	if needRegionScan {
+		if err = g.UseOneShotSession(storage, !needDomain, func(se glue.Session) error {
+			enableFollowerHandleRegion, err := se.GetGlobalSysVar(vardef.PDEnableFollowerHandleRegion)
+			if err != nil {
+				return err
+			}
+			return controller.SetFollowerHandle(variable.TiDBOptOn(enableFollowerHandleRegion))
+		}); err != nil {
+			return nil, errors.Trace(err)
 		}
-		return controller.SetFollowerHandle(variable.TiDBOptOn(enableFollowerHandleRegion))
-	}); err != nil {
-		return nil, errors.Trace(err)
 	}
 
 	mgr := &Mgr{

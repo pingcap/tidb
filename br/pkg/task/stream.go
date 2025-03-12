@@ -333,7 +333,7 @@ type streamMgr struct {
 
 func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamStart bool) (*streamMgr, error) {
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
-		cfg.CheckRequirements, false, conn.StreamVersionChecker)
+		cfg.CheckRequirements, false, false, conn.StreamVersionChecker)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -957,7 +957,7 @@ func RunStreamAdvancer(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	log.Info("starting", zap.String("cmd", cmdName))
 
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
-		cfg.CheckRequirements, false, conn.StreamVersionChecker)
+		cfg.CheckRequirements, false, true, conn.StreamVersionChecker)
 	if err != nil {
 		return err
 	}
@@ -1044,7 +1044,7 @@ func makeStatusController(ctx context.Context, cfg *StreamConfig, g glue.Glue) (
 		printer = stream.PrintTaskWithJSON(console)
 	}
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
-		cfg.CheckRequirements, false, conn.StreamVersionChecker)
+		cfg.CheckRequirements, false, false, conn.StreamVersionChecker)
 	if err != nil {
 		return nil, err
 	}
