@@ -1843,7 +1843,6 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 		}
 		// make all partitions to be EXCHANGED, so they have duplicated _tidb_rowid's between
 		// the partitions
-		require.NoError(t, err)
 		if tbl.Meta().Partition != nil &&
 			!tbl.Meta().IsCommonHandle &&
 			!tbl.Meta().PKIsHandle {
@@ -2101,4 +2100,48 @@ func TestIssue58692(t *testing.T) {
 	rsIndex := tk.MustQuery("select *,_tidb_rowid from t use index(idx)").Sort()
 	rsTable := tk.MustQuery("select *,_tidb_rowid from t use index()").Sort()
 	require.Equal(t, rsIndex.String(), rsTable.String())
+}
+
+func TestDuplicateRowsNoPK(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int, b int, key idx (a)) partition by hash(a) partitions 2")
+	tk.MustExec("insert into t (a, b) values (1, 1)")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+		if job.SchemaState != model.StateDeleteReorganization {
+			return
+		}
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+
+		tk2.MustExec("update t set b = 2 where b = 1")
+	})
+	tk.MustExec("alter table t remove partitioning")
+	// TODO: FIXME!
+	tk.MustContainErrMsg(`admin check table t`, "[admin:8223]data inconsistency in table: t, index: idx, handle: 1, index-values:")
+}
+
+func TestDuplicateRowsPK59680(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int, b int, primary key (a) nonclustered) partition by hash(a) partitions 2")
+	tk.MustExec("insert into t (a, b) values (1, 1)")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+		if job.SchemaState != model.StateDeleteReorganization {
+			return
+		}
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+
+		tk2.MustExec("update t set b = 2 where b = 1")
+	})
+	tk.MustExec("alter table t remove partitioning")
+	// TODO: FIXME!
+	tk.MustContainErrMsg(`admin check table t`, "[admin:8223]data inconsistency in table: t, index: PRIMARY, handle: ")
 }

@@ -134,7 +134,6 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 	logutil.BgLogger().Info("newPartitionedTable", zap.String("pi.DDLState", pi.DDLState.String()))
 	for _, idx := range origIndices {
 		newIdx, ok := pi.DDLChangedIndex[idx.ID]
-		logutil.BgLogger().Info("newPartitionedTable idx", zap.String("idx.State", idx.State.String()), zap.Int64("idx.ID", idx.ID), zap.Bool("newIdx", newIdx), zap.Bool("ok", ok))
 		if !ok {
 			// Untouched index
 			clonedIdx := idx.Clone()
