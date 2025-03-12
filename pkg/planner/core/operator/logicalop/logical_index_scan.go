@@ -94,7 +94,7 @@ func (is *LogicalIndexScan) ExplainInfo() string {
 // BuildKeyInfo implements base.LogicalPlan.<4th> interface.
 func (is *LogicalIndexScan) BuildKeyInfo(selfSchema *expression.Schema, _ []*expression.Schema) {
 	selfSchema.Keys = nil
-	for _, path := range is.Source.PossibleAccessPaths {
+	for _, path := range is.Source.AllPossibleAccessPaths {
 		if path.IsTablePath() {
 			continue
 		}

@@ -69,7 +69,14 @@ type DataSource struct {
 	StatisticTable *statistics.Table
 	TableStats     *property.StatsInfo
 
-	// PossibleAccessPaths stores all the possible access path for physical plan, including table scan.
+	// AllPossibleAccessPaths stores all the possible access path from build datasource phase.
+	AllPossibleAccessPaths []*util.AccessPath
+	// PossibleAccessPaths stores all the possible access path for one specific logical alternative.
+	// because different logical alternative may have different filter condition, so the possible access path may be different.
+	// like:
+	// * special rule XForm will gen additional selection which will be push down to a ds alternative.
+	// * correlate rule XForm will gen additional correlated condition which will be push down to a ds alternative.
+	// No matter whether the newly generated ds is always good or not, we should both derive the stats from the conditions we so far.
 	PossibleAccessPaths []*util.AccessPath
 	// AllPossibleAccessPaths stores all the possible access paths before pruning.
 	AllPossibleAccessPaths []*util.AccessPath
@@ -378,9 +385,8 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
 func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
-	result := make([][]*expression.Column, 0, len(ds.PossibleAccessPaths))
-
-	for _, path := range ds.PossibleAccessPaths {
+	result := make([][]*expression.Column, 0, len(ds.AllPossibleAccessPaths))
+	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsIntHandlePath {
 			col := ds.GetPKIsHandleCol()
 			if col != nil {
