@@ -109,10 +109,11 @@ type WriteIngestStepExternalMeta struct {
 // only used when global sort is enabled.
 type WriteIngestStepMeta struct {
 	KVGroup string `json:"kv-group"`
-	WriteIngestStepExternalMeta
-	TS uint64 `json:"ts"`
+	TS      uint64 `json:"ts"`
 
 	Result Result
+
+	WriteIngestStepExternalMeta
 }
 
 // PostProcessStepMeta is the meta of post process step.

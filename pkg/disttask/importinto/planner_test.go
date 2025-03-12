@@ -353,7 +353,7 @@ func TestSplitForOneSubtask(t *testing.T) {
 		return nil, errors.New("mock error")
 	}
 
-	spec, err := splitForOneSubtask(planner.PlanCtx{Ctx: ctx}, store, "test-group", kvMeta, 123)
+	spec, err := splitForOneSubtask(ctx, store, "test-group", kvMeta, 123)
 	require.NoError(t, err)
 
 	require.Len(t, spec, 1)
@@ -362,4 +362,9 @@ func TestSplitForOneSubtask(t *testing.T) {
 	require.Equal(t, [][]byte{
 		[]byte("00000"), []byte("00096"), []byte("00139\x00"),
 	}, writeSpec.RangeSplitKeys)
+}
+
+func TestWriteIngestStepExternalMetaPath(t *testing.T) {
+	require.Equal(t, "1/write-ingest-meta/1.json", writeIngestStepExternalMetaPath(1, 1))
+	require.Equal(t, "2/write-ingest-meta/3.json", writeIngestStepExternalMetaPath(2, 3))
 }

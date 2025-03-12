@@ -308,12 +308,12 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.
 	result := make([]planner.PipelineSpec, 0, 16)
 
 	ctx := planCtx.Ctx
-	controller, err2 := buildControllerForPlan(p)
-	if err2 != nil {
-		return nil, err2
+	controller, err := buildControllerForPlan(p)
+	if err != nil {
+		return nil, err
 	}
-	if err2 = controller.InitDataStore(ctx); err2 != nil {
-		return nil, err2
+	if err := controller.InitDataStore(ctx); err != nil {
+		return nil, err
 	}
 
 	kvMetas, err := getSortedKVMetasOfEncodeStep(planCtx.Ctx, planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort], controller.GlobalSortStore)
@@ -384,7 +384,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 
 	specs := make([]planner.PipelineSpec, 0, 16)
 	for kvGroup, kvMeta := range kvMetas {
-		specsForOneSubtask, err3 := splitForOneSubtask(planCtx, controller.GlobalSortStore, kvGroup, kvMeta, ts)
+		specsForOneSubtask, err3 := splitForOneSubtask(ctx, controller.GlobalSortStore, kvGroup, kvMeta, ts)
 		if err3 != nil {
 			return nil, err3
 		}
@@ -408,20 +408,20 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 }
 
 func splitForOneSubtask(
-	planCtx planner.PlanCtx,
+	ctx context.Context,
 	extStorage storage.ExternalStorage,
 	kvGroup string,
 	kvMeta *external.SortedKVMeta,
 	ts uint64,
 ) ([]planner.PipelineSpec, error) {
-	splitter, err := getRangeSplitter(planCtx.Ctx, extStorage, kvMeta)
+	splitter, err := getRangeSplitter(ctx, extStorage, kvMeta)
 	if err != nil {
 		return nil, err
 	}
 	defer func() {
 		err3 := splitter.Close()
 		if err3 != nil {
-			logutil.Logger(planCtx.Ctx).Warn("close range splitter failed", zap.Error(err3))
+			logutil.Logger(ctx).Warn("close range splitter failed", zap.Error(err3))
 		}
 	}()
 
@@ -439,7 +439,7 @@ func splitForOneSubtask(
 		} else {
 			endKey = tidbkv.Key(endKeyOfGroup).Clone()
 		}
-		logutil.Logger(planCtx.Ctx).Info("kv range as subtask",
+		logutil.Logger(ctx).Info("kv range as subtask",
 			zap.String("startKey", hex.EncodeToString(startKey)),
 			zap.String("endKey", hex.EncodeToString(endKey)),
 			zap.Int("dataFiles", len(dataFiles)))
