@@ -602,7 +602,6 @@ func getRangeSplitter(
 		zap.Int64("range-size", rangeSize),
 		zap.Int64("range-keys", rangeKeys),
 	)
-	// no matter region split size and keys, we always split range jobs by 96MB
 	return external.NewRangeSplitter(ctx, multiFileStat, extStore,
 		rangeGroupSize, rangeGroupKeys,
 		rangeSize, rangeKeys,
