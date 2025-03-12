@@ -74,19 +74,19 @@ func (cw *WLCacheWorker) UpdateTableReadCostCache() {
 
 	// Whether to update table cost metrics
 	// Get the latest latestVersionInStorage in the storage
+	// TODO(elsa): Add the index of (category, type, version) to mysql.tidb_workload_values
 	sql := `SELECT version FROM mysql.tidb_workload_values
             WHERE category = %? AND type = %?
             ORDER BY version DESC LIMIT 1`
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql, feedbackCategory, tableReadCost)
 	if err != nil {
-		logutil.BgLogger().Warn("Failed to get the latest table cost version", zap.Error(err))
+		logutil.ErrVerboseLogger().Warn("Failed to get the latest table cost version", zap.Error(err))
 		return
 	}
 	// Case: no metrics belongs to this feedback category and type
 	if len(rows) != 1 {
 		logutil.BgLogger().Warn("The result of latest table cost version query is not 1",
-			zap.Int("result_rows", len(rows)),
-			zap.Error(err))
+			zap.Int("result_rows", len(rows)))
 		return
 	}
 	// If the latest latestVersionInStorage is the same as the cached latestVersionInStorage, no need to update
@@ -103,7 +103,7 @@ func (cw *WLCacheWorker) UpdateTableReadCostCache() {
             WHERE category = %? AND type = %? AND version = %?`
 	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, sql, feedbackCategory, tableReadCost, latestVersionInStorage)
 	if err != nil {
-		logutil.BgLogger().Warn("Failed to get the latest table cost metrics",
+		logutil.ErrVerboseLogger().Warn("Failed to get the latest table cost metrics",
 			zap.Error(err))
 		return
 	}
@@ -114,7 +114,7 @@ func (cw *WLCacheWorker) UpdateTableReadCostCache() {
 
 		metric := &TableReadCostMetrics{}
 		if err := json.Unmarshal(value, metric); err != nil {
-			logutil.BgLogger().Warn("Failed to unmarshal table cost metrics",
+			logutil.ErrVerboseLogger().Warn("Failed to unmarshal table cost metrics",
 				zap.Int64("table_id", tableID),
 				zap.Error(err))
 			continue
@@ -129,9 +129,9 @@ func (cw *WLCacheWorker) UpdateTableReadCostCache() {
 func (cw *WLCacheWorker) updateTableReadCostCacheWithMetrics(newMetrics map[int64]*TableReadCostMetrics,
 	latestVersionInStorage uint64) {
 	cw.RWMutex.Lock()
+	defer cw.RWMutex.Unlock()
 	cw.tableReadCostCache.TableReadCostMetrics = newMetrics
 	cw.tableReadCostCache.Version = latestVersionInStorage
-	cw.RWMutex.Unlock()
 }
 
 // GetTableReadCostMetrics returns the cached metrics for a given table ID
