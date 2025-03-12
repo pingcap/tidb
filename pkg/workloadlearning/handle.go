@@ -133,11 +133,10 @@ func (handle *Handle) SaveTableReadCostMetrics(metrics map[ast.CIStr]*TableReadC
 	defer func() {
 		if err == nil { // only recycle when no error
 			handle.sysSessionPool.Put(se)
-		} else if err != nil && se != nil {
+		} else {
 			// Note: Otherwise, the session will be leaked.
 			handle.sysSessionPool.Destroy(se)
 		}
-		// If err != nil && session is nil, which means the session pool is closed, no need to recycle and destroy
 	}()
 	sctx := se.(sessionctx.Context)
 	exec := sctx.GetRestrictedSQLExecutor()
