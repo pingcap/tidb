@@ -2349,7 +2349,7 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-// ResourceGroupRunawayOption is used for parsing resource group runaway Rule option.
+// ResourceGroupRunawayOption is used for parsing resource group runaway rule option.
 type ResourceGroupRunawayOption struct {
 	Tp           RunawayOptionType
 	RuleOption   *ResourceGroupRunawayRuleOption
@@ -2371,7 +2371,7 @@ func (n *ResourceGroupRunawayOption) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-// ResourceGroupRunawayRuleOption is used for parsing the resource group/query watch runaway Rule.
+// ResourceGroupRunawayRuleOption is used for parsing the resource group/query watch runaway rule.
 type ResourceGroupRunawayRuleOption struct {
 	Tp            RunawayRuleOptionType
 	ExecElapsed   string

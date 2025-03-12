@@ -706,14 +706,6 @@ type Traffic struct {
 	Dir     string
 }
 
-type DistributeTable struct {
-	baseSchemaProducer
-	TableInfo      *model.TableInfo
-	PartitionNames []ast.CIStr
-	Engine         ast.CIStr
-	Rule           ast.CIStr
-}
-
 // SplitRegion represents a split regions plan.
 type SplitRegion struct {
 	baseSchemaProducer
