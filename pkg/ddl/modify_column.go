@@ -1134,7 +1134,13 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 		if !modified {
 			return
 		}
-		err = checkIndexInModifiableColumns(columns, indexInfo.Columns, indexInfo.IsTiFlashLocalIndex())
+		columnarIndexType := ColumnarIndexTypeInvalid
+		if indexInfo.VectorInfo != nil {
+			columnarIndexType = ColumnarIndexTypeVector
+		} else if indexInfo.InvertedInfo != nil {
+			columnarIndexType = ColumnarIndexTypeInverted
+		}
+		err = checkIndexInModifiableColumns(columns, indexInfo.Columns, columnarIndexType)
 		if err != nil {
 			return
 		}
@@ -1167,7 +1173,7 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 	return nil
 }
 
-func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn, isColumnarIndex bool) error {
+func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn, columnarIndexType ColumnarIndexType) error {
 	for _, ic := range idxColumns {
 		col := model.FindColumnInfo(columns, ic.Name.L)
 		if col == nil {
@@ -1180,7 +1186,7 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*mo
 			// if the type is still prefixable and larger than old prefix length.
 			prefixLength = ic.Length
 		}
-		if err := checkIndexColumn(col, prefixLength, false, isColumnarIndex); err != nil {
+		if err := checkIndexColumn(col, prefixLength, false, columnarIndexType); err != nil {
 			return err
 		}
 	}
