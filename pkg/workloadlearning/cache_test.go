@@ -23,25 +23,24 @@ func TestUpdateTableCostCache(t *testing.T) {
 	handle := workloadlearning.NewWorkloadLearningHandle(dom.SysSessionPool())
 
 	// Create test metrics
-	readTableCostMetrics := &workloadlearning.ReadTableCostMetrics{
+	readTableCostMetrics := &workloadlearning.TableReadCostMetrics{
 		DbName:        ast.CIStr{O: "test", L: "test"},
 		TableName:     ast.CIStr{O: "test", L: "test"},
 		TableScanTime: 10.0,
 		TableMemUsage: 10.0,
 		ReadFrequency: 10,
-		TableCost:     1.0,
+		TableReadCost: 1.0,
 	}
-	tableCostMetrics := map[ast.CIStr]*workloadlearning.ReadTableCostMetrics{
+	tableCostMetrics := map[ast.CIStr]*workloadlearning.TableReadCostMetrics{
 		{O: "test", L: "test"}: readTableCostMetrics,
 	}
 
 	// Save metrics to storage
-	handle.SaveReadTableCostMetrics(tableCostMetrics, time.Now(), time.Now(), dom.InfoSchema())
+	handle.SaveTableReadCostMetrics(tableCostMetrics, time.Now(), time.Now(), dom.InfoSchema())
 
-	// Create cache worker and test UpdateTableCostCache
+	// Create cache worker and test UpdateTableReadCostCache
 	worker := workloadlearning.NewWLCacheWorker(dom.SysSessionPool())
-	err := worker.UpdateTableCostCache()
-	require.NoError(t, err)
+	worker.UpdateTableReadCostCache()
 
 	// Get table ID for verification
 	rs := tk.MustQuery("select tidb_table_id from information_schema.tables where table_schema = 'test' and table_name = 'test'")
@@ -49,10 +48,18 @@ func TestUpdateTableCostCache(t *testing.T) {
 	tableID := int64(tableIDi)
 
 	// Verify cached metrics
-	metrics := worker.GetTableCostMetrics(tableID)
+	metrics := worker.GetTableReadCostMetrics(tableID)
 	require.NotNil(t, metrics)
 	require.Equal(t, 10.0, metrics.TableScanTime)
 	require.Equal(t, 10.0, metrics.TableMemUsage)
 	require.Equal(t, int64(10), metrics.ReadFrequency)
-	require.Equal(t, 1.0, metrics.TableCost)
+	require.Equal(t, 1.0, metrics.TableReadCost)
+}
+
+func TestGetTableReadCacheMetricsWithNoData(t *testing.T) {
+	_, dom := testkit.CreateMockStoreAndDomain(t)
+	// Create cache worker without saving metrics
+	worker := workloadlearning.NewWLCacheWorker(dom.SysSessionPool())
+	result := worker.GetTableReadCostMetrics(1)
+	require.Nil(t, result)
 }

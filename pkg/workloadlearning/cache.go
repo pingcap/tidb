@@ -26,28 +26,28 @@ import (
 	"go.uber.org/zap"
 )
 
-// ReadTableCostCache stores the cached workload learning metrics
-type ReadTableCostCache struct {
-	TableCostMetrics map[int64]*ReadTableCostMetrics // key: tableID
-	Version          uint64
+// TableReadCostCache stores the cached workload learning metrics
+type TableReadCostCache struct {
+	TableReadCostMetrics map[int64]*TableReadCostMetrics // key: tableID
+	Version              uint64
 }
 
 // WLCacheWorker the worker to cache all workload-related metrics
 // Now it is also used to save the cache data of table cost metrics.
 type WLCacheWorker struct {
 	sysSessionPool     util.DestroyableSessionPool
-	readTableCostCache *ReadTableCostCache
+	tableReadCostCache *TableReadCostCache
 	sync.RWMutex
 }
 
 // NewWLCacheWorker Create a new workload learning cache worker to cache all workload-related metrics
 // from storage mysql.tidb_workload_values to memory
 func NewWLCacheWorker(pool util.DestroyableSessionPool) *WLCacheWorker {
-	return &WLCacheWorker{pool, &ReadTableCostCache{}, sync.RWMutex{}}
+	return &WLCacheWorker{pool, &TableReadCostCache{}, sync.RWMutex{}}
 }
 
-// UpdateTableCostCache refreshes the cached workload learning metrics
-func (cw *WLCacheWorker) UpdateTableCostCache() {
+// UpdateTableReadCostCache refreshes the cached workload learning metrics
+func (cw *WLCacheWorker) UpdateTableReadCostCache() {
 	// Get latest metrics from storage
 	se, err := cw.sysSessionPool.Get()
 	if err != nil {
@@ -73,7 +73,7 @@ func (cw *WLCacheWorker) UpdateTableCostCache() {
 	sql := `SELECT version FROM mysql.tidb_workload_values
             WHERE category = %? AND type = %?
             ORDER BY version DESC LIMIT 1`
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql, feedbackCategory, tableCostType)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql, feedbackCategory, tableReadCost)
 	if err != nil {
 		logutil.BgLogger().Warn("Failed to get the latest table cost version", zap.Error(err))
 		return
@@ -87,28 +87,28 @@ func (cw *WLCacheWorker) UpdateTableCostCache() {
 	}
 	// If the latest latestVersionInStorage is the same as the cached latestVersionInStorage, no need to update
 	latestVersionInStorage := rows[0].GetUint64(0)
-	if latestVersionInStorage <= cw.readTableCostCache.Version {
+	if latestVersionInStorage <= cw.tableReadCostCache.Version {
 		logutil.BgLogger().Info("The latest table cost version in storage is the same as the cached version, no need to update",
 			zap.Uint64("latest_version_in_storage", latestVersionInStorage),
-			zap.Uint64("cached_version", cw.readTableCostCache.Version))
+			zap.Uint64("cached_version", cw.tableReadCostCache.Version))
 		return
 	}
 
 	// Get the latest table cost of metrics
 	sql = `SELECT table_id, value FROM mysql.tidb_workload_values
             WHERE category = %? AND type = %? AND version = %?`
-	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, sql, feedbackCategory, tableCostType, latestVersionInStorage)
+	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, sql, feedbackCategory, tableReadCost, latestVersionInStorage)
 	if err != nil {
 		logutil.BgLogger().Warn("Failed to get the latest table cost metrics",
 			zap.Error(err))
 		return
 	}
-	newMetrics := make(map[int64]*ReadTableCostMetrics)
+	newMetrics := make(map[int64]*TableReadCostMetrics)
 	for _, row := range rows {
 		tableID := row.GetInt64(0)
 		value := row.GetBytes(1)
 
-		metric := &ReadTableCostMetrics{}
+		metric := &TableReadCostMetrics{}
 		if err := json.Unmarshal(value, metric); err != nil {
 			logutil.BgLogger().Warn("Failed to unmarshal table cost metrics",
 				zap.Int64("table_id", tableID),
@@ -119,31 +119,31 @@ func (cw *WLCacheWorker) UpdateTableCostCache() {
 	}
 
 	// Update cache atomically
-	cw.updateTableCostCacheWithMetrics(newMetrics, latestVersionInStorage)
+	cw.updateTableReadCostCacheWithMetrics(newMetrics, latestVersionInStorage)
 }
 
-func (cw *WLCacheWorker) updateTableCostCacheWithMetrics(newMetrics map[int64]*ReadTableCostMetrics,
+func (cw *WLCacheWorker) updateTableReadCostCacheWithMetrics(newMetrics map[int64]*TableReadCostMetrics,
 	latestVersionInStorage uint64) {
 	cw.RWMutex.Lock()
-	cw.readTableCostCache.TableCostMetrics = newMetrics
-	cw.readTableCostCache.Version = latestVersionInStorage
+	cw.tableReadCostCache.TableReadCostMetrics = newMetrics
+	cw.tableReadCostCache.Version = latestVersionInStorage
 	cw.RWMutex.Unlock()
 }
 
-// GetTableCostMetrics returns the cached metrics for a given table ID
-func (cw *WLCacheWorker) GetTableCostMetrics(tableID int64) *ReadTableCostMetrics {
+// GetTableReadCostMetrics returns the cached metrics for a given table ID
+func (cw *WLCacheWorker) GetTableReadCostMetrics(tableID int64) *TableReadCostMetrics {
 	cw.RWMutex.RLock()
 	defer cw.RWMutex.RUnlock()
-	metric, exists := cw.readTableCostCache.TableCostMetrics[tableID]
+	metric, exists := cw.tableReadCostCache.TableReadCostMetrics[tableID]
 	if !exists {
 		return nil
 	}
 	// deep copy for metrics to protect the cache
-	result := &ReadTableCostMetrics{
+	result := &TableReadCostMetrics{
 		TableScanTime: metric.TableScanTime,
 		TableMemUsage: metric.TableMemUsage,
 		ReadFrequency: metric.ReadFrequency,
-		TableCost:     metric.TableCost,
+		TableReadCost: metric.TableReadCost,
 	}
 	return result
 }

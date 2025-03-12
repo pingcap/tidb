@@ -3478,8 +3478,8 @@ func (do *Domain) readTableCostWorker(wbLearningHandle *workloadlearning.Handle,
 		select {
 		case <-readTableCostTicker.C:
 			if vardef.EnableWorkloadBasedLearning.Load() && do.statsOwner.IsOwner() {
-				wbLearningHandle.HandleReadTableCost(do.InfoSchema())
-				wbCacheWorker.UpdateTableCostCache()
+				wbLearningHandle.HandleTableReadCost(do.InfoSchema())
+				wbCacheWorker.UpdateTableReadCostCache()
 			}
 		case <-do.exit:
 			return
