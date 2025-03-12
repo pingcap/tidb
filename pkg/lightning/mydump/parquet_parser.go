@@ -352,6 +352,7 @@ type ParquetParser struct {
 	totalRows        int // total rows in this file
 	totalBytesRead   int // total bytes read, estimated by all the read datum.
 	firstAfterReset  bool
+	parallelRead     bool
 
 	lastRow Row
 	logger  log.Logger
@@ -587,10 +588,11 @@ func (pp *ParquetParser) readInGroup(num, storeOffset int) (int, error) {
 		total int
 	)
 
-	// After moving to the next row group, we need to read several data/dict pages.
-	// This is an I/O intensive operation, so we perform it in parallel.
-	// The ideal situation is that one goroutine is reading while another is parsing.
-	if pp.firstAfterReset {
+	// After moving to the next row group, we need to read one dict page and
+	// at least one data page for each column.
+	// Since it's an I/O intensive operation, so we perform it in parallel.
+	// TODO(joechen): 4 is a experimental value and can be changed later.
+	if pp.firstAfterReset && pp.parallelRead {
 		pp.firstAfterReset = false
 		var eg errgroup.Group
 		eg.SetLimit(4)
@@ -960,14 +962,15 @@ func NewParquetParser(
 	})
 
 	parser := &ParquetParser{
-		readers:     subreaders,
-		colMetas:    columnMetas,
-		columnNames: columnNames,
-		alloc:       allocator,
-		logger:      log.FromContext(ctx),
-		memoryUsage: memoryUsage,
-		memLimiter:  readerMemoryLimiter,
-		rowPool:     &pool,
+		readers:      subreaders,
+		colMetas:     columnMetas,
+		columnNames:  columnNames,
+		alloc:        allocator,
+		logger:       log.FromContext(ctx),
+		memoryUsage:  memoryUsage,
+		memLimiter:   readerMemoryLimiter,
+		rowPool:      &pool,
+		parallelRead: !strings.HasPrefix(store.URI(), storage.LocalURIPrefix) && meta.UseStreaming,
 	}
 	if err := parser.Init(); err != nil {
 		return nil, errors.Trace(err)
