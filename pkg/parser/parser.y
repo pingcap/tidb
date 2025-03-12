@@ -864,6 +864,7 @@ import (
 	ddl                        "DDL"
 	dependency                 "DEPENDENCY"
 	depth                      "DEPTH"
+	distributions              "DISTRIBUTIONS"
 	dry                        "DRY"
 	histogramsInFlight         "HISTOGRAMS_IN_FLIGHT"
 	job                        "JOB"
@@ -7189,6 +7190,7 @@ TiDBKeyword:
 |	"DDL"
 |	"DEPENDENCY"
 |	"DEPTH"
+|	"DISTRIBUTIONS"
 |	"JOBS"
 |	"JOB"
 |	"NODE_ID"
@@ -11735,6 +11737,18 @@ ShowStmt:
 			Tp:        ast.ShowCreateProcedure,
 			Procedure: $4.(*ast.TableName),
 		}
+	}
+|	"SHOW" "TABLE" TableName PartitionNameListOpt "DISTRIBUTIONS" WhereClauseOptional
+	{
+		stmt := &ast.ShowStmt{
+			Tp:    ast.ShowDistributions,
+			Table: $3.(*ast.TableName),
+		}
+		stmt.Table.PartitionNames = $4.([]ast.CIStr)
+		if $6 != nil {
+			stmt.Where = $6.(ast.ExprNode)
+		}
+		$$ = stmt
 	}
 
 ShowPlacementTarget:

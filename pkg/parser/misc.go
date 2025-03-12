@@ -342,6 +342,7 @@ var tokenMap = map[string]int{
 	"DISK":                     disk,
 	"DISTINCT":                 distinct,
 	"DISTINCTROW":              distinct,
+	"DISTRIBUTIONS":            distributions,
 	"DIV":                      div,
 	"DO":                       do,
 	"DOT":                      dotType,

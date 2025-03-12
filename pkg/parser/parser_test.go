@@ -1067,6 +1067,12 @@ AAAAAAAAAAAA5gm5Mg==
 		{"show table t1 partition (p0,p1) index idx1 regions where a=2", true, "SHOW TABLE `t1` PARTITION(`p0`, `p1`) INDEX `idx1` REGIONS WHERE `a`=2"},
 		{"show table t1 partition index idx1", false, ""},
 
+		// for show table partition distributions.
+		{"show table t1 distributions", true, "SHOW TABLE `t1` DISTRIBUTIONS"},
+		{"show table t1 distributions where a=1", true, "SHOW TABLE `t1` DISTRIBUTIONS WHERE `a`=1"},
+		{"show table t1 partition (p0,p1) distributions", true, "SHOW TABLE `t1` PARTITION(`p0`, `p1`) DISTRIBUTIONS"},
+		{"show table t1 partition (p0,p1) distributions where a=1", true, "SHOW TABLE `t1` PARTITION(`p0`, `p1`) DISTRIBUTIONS WHERE `a`=1"},
+
 		// for show table next_row_id.
 		{"show table t1.t1 next_row_id", true, "SHOW TABLE `t1`.`t1` NEXT_ROW_ID"},
 		{"show table t1 next_row_id", true, "SHOW TABLE `t1` NEXT_ROW_ID"},
@@ -7533,6 +7539,54 @@ func TestGBKEncoding(t *testing.T) {
 		{"select '\x65\x5c'", true},
 	} {
 		_, _, err = p.ParseSQL(test.sql, gbkOpt)
+		if test.err {
+			require.Error(t, err, test.sql)
+		} else {
+			require.NoError(t, err, test.sql)
+		}
+	}
+}
+
+func TestGB18030Encoding(t *testing.T) {
+	p := parser.New()
+	gb18030Encoding, _ := charset.Lookup("gb18030")
+	encoder := gb18030Encoding.NewEncoder()
+	sql, err := encoder.String("create table 测试表 (测试列 varchar(255) default 'GB18030测试用例');")
+	require.NoError(t, err)
+
+	stmt, _, err := p.ParseSQL(sql)
+	require.NoError(t, err)
+	checker := &gbkEncodingChecker{}
+	_, _ = stmt[0].Accept(checker)
+	require.NotEqual(t, "测试表", checker.tblName)
+	require.NotEqual(t, "测试列", checker.colName)
+
+	gb18030Opt := parser.CharsetClient("gb18030")
+	stmt, _, err = p.ParseSQL(sql, gb18030Opt)
+	require.NoError(t, err)
+	_, _ = stmt[0].Accept(checker)
+	require.Equal(t, "测试表", checker.tblName)
+	require.Equal(t, "测试列", checker.colName)
+	require.Equal(t, "GB18030测试用例", checker.expr)
+
+	_, _, err = p.ParseSQL("select _gbk '\xc6\x5c' from dual;")
+	require.Error(t, err)
+
+	for _, test := range []struct {
+		sql string
+		err bool
+	}{
+		{"select '\xc6\x5c' from `\xab\x60`;", false},
+		{`prepare p1 from "insert into t values ('中文');";`, false},
+		{"select '啊';", false},
+		{"create table t1(s set('a一','b二','c三'));", false},
+		{"insert into t3 values('一a');", false},
+		{"select '\xa5\x5c'", false},
+		{"select '''\xa5\x5c'", false},
+		{"select ```\xa5\x5c`", false},
+		{"select '\x65\x5c'", true},
+	} {
+		_, _, err = p.ParseSQL(test.sql, gb18030Opt)
 		if test.err {
 			require.Error(t, err, test.sql)
 		} else {

@@ -16,7 +16,6 @@ package types
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -353,10 +352,6 @@ type StatsReadWriter interface {
 	// SaveMetaToStorage saves the stats meta of a table to storage.
 	SaveMetaToStorage(tableID, count, modifyCount int64, source string) (err error)
 
-	// UpdateStatsVersion will set statistics version to the newest TS,
-	// then tidb-server will reload automatic.
-	UpdateStatsVersion() error
-
 	// UpdateStatsMetaVersionForGC updates the version of mysql.stats_meta,
 	// ensuring it is greater than the last garbage collection (GC) time.
 	// The GC worker deletes old stats based on a safe time point,
@@ -469,7 +464,6 @@ type NeededItemTask struct {
 type StatsLoad struct {
 	NeededItemsCh  chan *NeededItemTask
 	TimeoutItemsCh chan *NeededItemTask
-	sync.Mutex
 }
 
 // StatsSyncLoad implement the sync-load feature.
