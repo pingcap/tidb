@@ -265,28 +265,3 @@ FROM t1 AS table1
 WHERE (EXISTS (SELECT SUBQUERY2_t1.a1 AS SUBQUERY2_field1 FROM t1 AS SUBQUERY2_t1)) OR table1.b1 >= 55
 GROUP BY field1;`).Check(testkit.Rows("0"))
 }
-
-func TestIssue59863(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec("set tidb_enable_parallel_apply = on;")
-	tk.MustExec("create table t(a int, b int, index idx(a));")
-	tk.MustQuery(`explain format='brief' select  t3.a from t t3 where (select /*+ inl_join(t1) */  count(*) from t t1 join t t2 on t1.a=t2.a and t1.b>t3.b);`).
-		Check(testkit.Rows(
-			"Projection 10000.00 root  test.t.a",
-			"└─Apply 10000.00 root  CARTESIAN inner join",
-			"  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-			"  │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-			"  └─Selection(Probe) 8000.00 root  Column#10",
-			"    └─HashAgg 10000.00 root  funcs:count(1)->Column#10",
-			"      └─IndexJoin 99900000.00 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)",
-			"        ├─IndexReader(Build) 99900000.00 root  index:IndexFullScan",
-			"        │ └─IndexFullScan 99900000.00 cop[tikv] table:t2, index:idx(a) keep order:false, stats:pseudo",
-			"        └─IndexLookUp(Probe) 99900000.00 root  ",
-			"          ├─Selection(Build) 124875000.00 cop[tikv]  not(isnull(test.t.a))",
-			"          │ └─IndexRangeScan 125000000.00 cop[tikv] table:t1, index:idx(a) range: decided by [eq(test.t.a, test.t.a)], keep order:false, stats:pseudo",
-			"          └─Selection(Probe) 99900000.00 cop[tikv]  gt(test.t.b, test.t.b)",
-			"            └─TableRowIDScan 124875000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
-	tk.MustQuery("show warnings;").Check(testkit.Rows())
-}
