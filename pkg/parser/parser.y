@@ -415,6 +415,7 @@ import (
 	end                   "END"
 	enforced              "ENFORCED"
 	engine                "ENGINE"
+	rule                  "RULE"
 	engines               "ENGINES"
 	engine_attribute      "ENGINE_ATTRIBUTE"
 	enum                  "ENUM"
@@ -880,6 +881,7 @@ import (
 	samples                    "SAMPLES"
 	sessionStates              "SESSION_STATES"
 	split                      "SPLIT"
+	distribute                 "DISTRIBUTE"
 	statistics                 "STATISTICS"
 	stats                      "STATS"
 	statsBuckets               "STATS_BUCKETS"
@@ -1047,6 +1049,7 @@ import (
 	ReleaseSavepointStmt       "RELEASE SAVEPOINT statement"
 	SavepointStmt              "SAVEPOINT statement"
 	SplitRegionStmt            "Split index region statement"
+	DistributeTableStmt        "Distribute table statement"
 	SetStmt                    "Set variable statement"
 	SetBindingStmt             "Set binding statement"
 	SetRoleStmt                "Set active role statement"
@@ -3166,6 +3169,25 @@ FlashbackDatabaseStmt:
 		$$ = &ast.FlashBackDatabaseStmt{
 			DBName:  ast.NewCIStr($3),
 			NewName: $4,
+		}
+	}
+
+/*******************************************************************
+ *
+ *  Distribute Table Statement
+ *
+ *  Example:
+ *      DISTRIBUTE TABLE table_name Partitions(p0,p1) Engine tikv Rule leader;
+ *
+ *******************************************************************/
+DistributeTableStmt:
+	"DISTRIBUTE" "TABLE" TableName PartitionNameListOpt "RULE" EqOrAssignmentEq Identifier "ENGINE" EqOrAssignmentEq Identifier
+	{
+		$$ = &ast.DistributeTableStmt{
+			Table:          $3.(*ast.TableName),
+			PartitionNames: $4.([]ast.CIStr),
+			Rule:           ast.NewCIStr($7),
+			Engine:         ast.NewCIStr($10),
 		}
 	}
 
@@ -6835,6 +6857,7 @@ UnReservedKeyword:
 |	"END"
 |	"ENFORCED"
 |	"ENGINE"
+|	"RULE"
 |	"ENGINES"
 |	"ENGINE_ATTRIBUTE"
 |	"ENUM"
@@ -7203,6 +7226,7 @@ TiDBKeyword:
 |	"TIFLASH"
 |	"TOPN"
 |	"SPLIT"
+|	"DISTRIBUTE"
 |	"OPTIMISTIC"
 |	"PESSIMISTIC"
 |	"WIDTH"
@@ -12365,6 +12389,7 @@ Statement:
 |	SetRoleStmt
 |	SetDefaultRoleStmt
 |	SplitRegionStmt
+|	DistributeTableStmt
 |	ShowStmt
 |	TraceStmt
 |	TruncateTableStmt
