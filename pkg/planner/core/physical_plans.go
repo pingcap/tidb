@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -1626,6 +1627,30 @@ type PhysicalIndexJoin struct {
 	InnerHashKeys []*expression.Column
 }
 
+// Clone implements op.PhysicalPlan interface.
+func (p *PhysicalIndexJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
+	cloned := new(PhysicalIndexJoin)
+	cloned.SetSCtx(newCtx)
+	base, err := p.basePhysicalJoin.cloneWithSelf(newCtx, cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalJoin = *base
+	cloned.innerPlan, err = p.innerPlan.Clone(newCtx)
+	if err != nil {
+		return nil, err
+	}
+	cloned.Ranges = p.Ranges.CloneForPlanCache() // this clone is deep copy
+	cloned.KeyOff2IdxOff = make([]int, len(p.KeyOff2IdxOff))
+	copy(cloned.KeyOff2IdxOff, p.KeyOff2IdxOff)
+	cloned.IdxColLens = make([]int, len(p.IdxColLens))
+	copy(cloned.IdxColLens, p.IdxColLens)
+	cloned.CompareFilters = p.CompareFilters.cloneForPlanCache()
+	cloned.OuterHashKeys = util.CloneCols(p.OuterHashKeys)
+	cloned.InnerHashKeys = util.CloneCols(p.InnerHashKeys)
+	return cloned, nil
+}
+
 // MemoryUsage return the memory usage of PhysicalIndexJoin
 func (p *PhysicalIndexJoin) MemoryUsage() (sum int64) {
 	if p == nil {
@@ -1695,6 +1720,13 @@ func (p *PhysicalIndexHashJoin) Clone(newCtx base.PlanContext) (base.PhysicalPla
 		return nil, err
 	}
 	cloned.basePhysicalJoin = *base
+	physicalIndexJoin, err := p.PhysicalIndexJoin.Clone(newCtx)
+	if err != nil {
+		return nil, err
+	}
+	indexJoin, ok := physicalIndexJoin.(*PhysicalIndexJoin)
+	intest.Assert(ok)
+	cloned.PhysicalIndexJoin = *indexJoin
 	cloned.KeepOuterOrder = p.KeepOuterOrder
 	return cloned, nil
 }
