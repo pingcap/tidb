@@ -50,12 +50,12 @@ const (
 
 // Handle The entry point for all workload-based learning related tasks
 type Handle struct {
-	sysSessionPool util.SessionPool
+	sysSessionPool util.DestroyableSessionPool
 }
 
 // NewWorkloadLearningHandle Create a new WorkloadLearningHandle
 // WorkloadLearningHandle is Singleton pattern
-func NewWorkloadLearningHandle(pool util.SessionPool) *Handle {
+func NewWorkloadLearningHandle(pool util.DestroyableSessionPool) *Handle {
 	return &Handle{pool}
 }
 
@@ -130,8 +130,15 @@ func (handle *Handle) SaveReadTableCostMetrics(metrics map[ast.CIStr]*ReadTableC
 		logutil.BgLogger().Warn("get system session failed when saving table cost metrics", zap.Error(err))
 		return
 	}
-	// TODO to destroy the error session instead of put it back to the pool
-	defer handle.sysSessionPool.Put(se)
+	defer func() {
+		if err == nil { // only recycle when no error
+			handle.sysSessionPool.Put(se)
+		} else if err != nil && se != nil {
+			// Note: Otherwise, the session will be leaked.
+			handle.sysSessionPool.Destroy(se)
+		}
+		// If err != nil && session is nil, which means the session pool is closed, no need to recycle and destroy
+	}()
 	sctx := se.(sessionctx.Context)
 	exec := sctx.GetRestrictedSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnWorkloadLearning)

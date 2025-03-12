@@ -35,25 +35,34 @@ type ReadTableCostCache struct {
 // WLCacheWorker the worker to cache all workload-related metrics
 // Now it is also used to save the cache data of table cost metrics.
 type WLCacheWorker struct {
-	sysSessionPool     util.SessionPool
+	sysSessionPool     util.DestroyableSessionPool
 	readTableCostCache *ReadTableCostCache
 	sync.RWMutex
 }
 
 // NewWLCacheWorker Create a new workload learning cache worker to cache all workload-related metrics
 // from storage mysql.tidb_workload_values to memory
-func NewWLCacheWorker(pool util.SessionPool) *WLCacheWorker {
+func NewWLCacheWorker(pool util.DestroyableSessionPool) *WLCacheWorker {
 	return &WLCacheWorker{pool, &ReadTableCostCache{}, sync.RWMutex{}}
 }
 
 // UpdateTableCostCache refreshes the cached workload learning metrics
-func (cw *WLCacheWorker) UpdateTableCostCache() error {
+func (cw *WLCacheWorker) UpdateTableCostCache() {
 	// Get latest metrics from storage
 	se, err := cw.sysSessionPool.Get()
 	if err != nil {
-		return err
+		logutil.BgLogger().Warn("Get system session failed when updating table cost cache", zap.Error(err))
+		return
 	}
-	defer cw.sysSessionPool.Put(se)
+	defer func() {
+		if err == nil { // only recycle when no error
+			cw.sysSessionPool.Put(se)
+		} else if err != nil && se != nil {
+			// Note: Otherwise, the session will be leaked.
+			cw.sysSessionPool.Destroy(se)
+		}
+		// If err != nil && session is nil, which means the session pool is closed, no need to recycle and destroy
+	}()
 
 	sctx := se.(sessionctx.Context)
 	exec := sctx.GetRestrictedSQLExecutor()
@@ -66,16 +75,23 @@ func (cw *WLCacheWorker) UpdateTableCostCache() error {
             ORDER BY version DESC LIMIT 1`
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql, feedbackCategory, tableCostType)
 	if err != nil {
-		return err
+		logutil.BgLogger().Warn("Failed to get the latest table cost version", zap.Error(err))
+		return
 	}
 	// Case: no metrics belongs to this feedback category and type
 	if len(rows) != 1 {
-		return nil
+		logutil.BgLogger().Warn("The result of latest table cost version query is not 1",
+			zap.Int("result_rows", len(rows)),
+			zap.Error(err))
+		return
 	}
 	// If the latest latestVersionInStorage is the same as the cached latestVersionInStorage, no need to update
 	latestVersionInStorage := rows[0].GetUint64(0)
 	if latestVersionInStorage <= cw.readTableCostCache.Version {
-		return nil
+		logutil.BgLogger().Info("The latest table cost version in storage is the same as the cached version, no need to update",
+			zap.Uint64("latest_version_in_storage", latestVersionInStorage),
+			zap.Uint64("cached_version", cw.readTableCostCache.Version))
+		return
 	}
 
 	// Get the latest table cost of metrics
@@ -83,9 +99,10 @@ func (cw *WLCacheWorker) UpdateTableCostCache() error {
             WHERE category = %? AND type = %? AND version = %?`
 	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, sql, feedbackCategory, tableCostType, latestVersionInStorage)
 	if err != nil {
-		return err
+		logutil.BgLogger().Warn("Failed to get the latest table cost metrics",
+			zap.Error(err))
+		return
 	}
-
 	newMetrics := make(map[int64]*ReadTableCostMetrics)
 	for _, row := range rows {
 		tableID := row.GetInt64(0)
@@ -93,7 +110,7 @@ func (cw *WLCacheWorker) UpdateTableCostCache() error {
 
 		metric := &ReadTableCostMetrics{}
 		if err := json.Unmarshal(value, metric); err != nil {
-			logutil.BgLogger().Warn("failed to unmarshal table cost metrics",
+			logutil.BgLogger().Warn("Failed to unmarshal table cost metrics",
 				zap.Int64("table_id", tableID),
 				zap.Error(err))
 			continue
@@ -102,12 +119,15 @@ func (cw *WLCacheWorker) UpdateTableCostCache() error {
 	}
 
 	// Update cache atomically
+	cw.updateTableCostCacheWithMetrics(newMetrics, latestVersionInStorage)
+}
+
+func (cw *WLCacheWorker) updateTableCostCacheWithMetrics(newMetrics map[int64]*ReadTableCostMetrics,
+	latestVersionInStorage uint64) {
 	cw.RWMutex.Lock()
 	cw.readTableCostCache.TableCostMetrics = newMetrics
 	cw.readTableCostCache.Version = latestVersionInStorage
 	cw.RWMutex.Unlock()
-
-	return nil
 }
 
 // GetTableCostMetrics returns the cached metrics for a given table ID
