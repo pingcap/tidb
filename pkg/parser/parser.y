@@ -415,7 +415,6 @@ import (
 	end                   "END"
 	enforced              "ENFORCED"
 	engine                "ENGINE"
-	rule                  "RULE"
 	engines               "ENGINES"
 	engine_attribute      "ENGINE_ATTRIBUTE"
 	enum                  "ENUM"
@@ -590,6 +589,7 @@ import (
 	rowCount              "ROW_COUNT"
 	rowFormat             "ROW_FORMAT"
 	rtree                 "RTREE"
+	rule                  "RULE"
 	san                   "SAN"
 	savepoint             "SAVEPOINT"
 	second                "SECOND"
@@ -1012,6 +1012,7 @@ import (
 	DeleteFromStmt             "DELETE FROM statement"
 	DeleteWithoutUsingStmt     "Normal DELETE statement"
 	DeleteWithUsingStmt        "DELETE USING statement"
+	DistributeTableStmt        "Distribute table statement"
 	EmptyStmt                  "empty statement"
 	ExecuteStmt                "Execute statement"
 	ExplainStmt                "EXPLAIN statement"
@@ -1051,7 +1052,6 @@ import (
 	ReleaseSavepointStmt       "RELEASE SAVEPOINT statement"
 	SavepointStmt              "SAVEPOINT statement"
 	SplitRegionStmt            "Split index region statement"
-	DistributeTableStmt        "Distribute table statement"
 	SetStmt                    "Set variable statement"
 	SetBindingStmt             "Set binding statement"
 	SetRoleStmt                "Set active role statement"
@@ -3187,7 +3187,7 @@ FlashbackDatabaseStmt:
  *  Distribute Table Statement
  *
  *  Example:
- *      DISTRIBUTE TABLE table_name Partitions(p0,p1) Engine tikv Rule leader;
+ *      DISTRIBUTE TABLE table_name Partitions(p0,p1) Engine = tikv Rule=leader;
  *
  *******************************************************************/
 DistributeTableStmt:
@@ -6871,7 +6871,6 @@ UnReservedKeyword:
 |	"END"
 |	"ENFORCED"
 |	"ENGINE"
-|	"RULE"
 |	"ENGINES"
 |	"ENGINE_ATTRIBUTE"
 |	"ENUM"
@@ -6917,6 +6916,7 @@ UnReservedKeyword:
 |	"ROLE"
 |	"ROLLBACK"
 |	"ROLLUP"
+|	"RULE"
 |	"SESSION"
 |	"SIGNED"
 |	"SHARD_ROW_ID_BITS"
@@ -12356,6 +12356,7 @@ Statement:
 |	AddQueryWatchStmt
 |	CreateSequenceStmt
 |	CreateStatisticsStmt
+|	DistributeTableStmt
 |	DoStmt
 |	DropDatabaseStmt
 |	DropIndexStmt
@@ -12418,7 +12419,6 @@ Statement:
 |	SetRoleStmt
 |	SetDefaultRoleStmt
 |	SplitRegionStmt
-|	DistributeTableStmt
 |	ShowStmt
 |	TraceStmt
 |	TruncateTableStmt
