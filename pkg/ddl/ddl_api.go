@@ -1214,6 +1214,8 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 				col.DelFlag(mysql.NotNullFlag)
 				removeOnUpdateNowFlag(col)
 				hasNullFlag = true
+			case ast.ColumnOptionNoNullIndex:
+				col.NoNullIndex = true
 			case ast.ColumnOptionAutoIncrement:
 				col.AddFlag(mysql.AutoIncrementFlag | mysql.NotNullFlag)
 			case ast.ColumnOptionPrimaryKey:
