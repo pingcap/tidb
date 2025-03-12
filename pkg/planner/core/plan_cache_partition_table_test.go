@@ -309,21 +309,58 @@ func testPartitionFullCover(t *testing.T, tableDefSQL []partCoverStruct, partiti
 	t.Logf("seed: %d", seed)
 	seededRand := rand.New(rand.NewSource(seed))
 
+	collation := ""
+	isCaseSensitive := true
+	if useStringPK {
+		switch seededRand.Intn(6) {
+		case 0:
+			collation = " CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+		case 1:
+			collation = " CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+			isCaseSensitive = false
+		case 2:
+			collation = " CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"
+			isCaseSensitive = false
+		case 3:
+			collation = " CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"
+			isCaseSensitive = false
+		case 4:
+			collation = " CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin"
+		default:
+			// no explicit collation
+		}
+	}
+
 	rows := 1000
 	rowData := make(map[any]string, rows)
+	rowDataLC := make(map[any]string, rows)
 	ids := make([]any, 0, rows)
 	maxRange := 2000000
 	maxID := maxRange + 500000
 	for i := 0; i < rows; i++ {
 		var id any
-		for createNew := true; createNew; _, createNew = rowData[id] {
+		var lc any
+		createNew := true
+		for createNew {
 			if useStringPK {
 				id = randString(seededRand, 1, 20)
 			} else {
 				id = seededRand.Intn(maxID)
 			}
+			lc = id
+			if !isCaseSensitive {
+				lc = strings.ToLower(id.(string))
+				if _, ok := rowDataLC[lc]; !ok {
+					createNew = false
+				}
+				continue
+			}
+			_, createNew = rowData[id]
 		}
 		rowData[id] = randString(seededRand, 1, 20)
+		if !isCaseSensitive {
+			rowDataLC[lc] = rowData[id]
+		}
 		ids = append(ids, id)
 	}
 	filler := strings.Repeat("Filler", 1024/6)
@@ -338,7 +375,7 @@ func testPartitionFullCover(t *testing.T, tableDefSQL []partCoverStruct, partiti
 		if len(keys) > 0 {
 			tblDef += ",\n" + strings.Join(keys, ",\n")
 		}
-		tblDef += ")"
+		tblDef += ")" + collation
 
 		tk.MustExec("CREATE TABLE tNorm " + tblDef)
 		batchSize := 10
@@ -346,8 +383,15 @@ func testPartitionFullCover(t *testing.T, tableDefSQL []partCoverStruct, partiti
 			sql := "INSERT INTO tNorm (a, b, c) VALUES "
 			for j := 0; i+j < len(rowData) && j < batchSize; j++ {
 				if useStringPK {
-					if ids[i+j].(string) >= "t" {
-						continue
+					if isCaseSensitive {
+						if ids[i+j].(string) >= "x" {
+							continue
+						}
+					} else {
+						lc := strings.ToLower(ids[i+j].(string))
+						if lc >= "x" {
+							continue
+						}
 					}
 					if sql[len(sql)-1] == ')' {
 						sql += ","
@@ -378,10 +422,10 @@ func testPartitionFullCover(t *testing.T, tableDefSQL []partCoverStruct, partiti
 			// Possible variations:
 			// - static/dynamic tidb_partition_prune_mode
 
-			preparedStmtPointGet(t, ids, tk, testTbl, seededRand, rowData, filler, currTest)
-			nonPreparedStmtPointGet(t, ids, tk, testTbl, seededRand, rowData, filler, currTest)
-			preparedStmtBatchPointGet(t, ids, tk, testTbl.pointGetExplain, seededRand, rowData, filler, currTest, part.canUseBatchPointGet)
-			nonpreparedStmtBatchPointGet(t, ids, tk, testTbl.pointGetExplain, seededRand, rowData, filler, currTest, part.canUseBatchPointGet && testTbl.pointGetExplain != nil)
+			preparedStmtPointGet(t, ids, tk, testTbl, seededRand, rowData, filler, currTest, isCaseSensitive)
+			nonPreparedStmtPointGet(t, ids, tk, testTbl, seededRand, rowData, filler, currTest, isCaseSensitive)
+			preparedStmtBatchPointGet(t, ids, tk, testTbl.pointGetExplain, seededRand, rowData, filler, currTest, part.canUseBatchPointGet, isCaseSensitive)
+			nonpreparedStmtBatchPointGet(t, ids, tk, testTbl.pointGetExplain, seededRand, rowData, filler, currTest, part.canUseBatchPointGet && testTbl.pointGetExplain != nil, isCaseSensitive)
 
 			tk.MustExec("drop table t")
 		}
@@ -511,7 +555,7 @@ func getIDStr(id any) string {
 	}
 }
 
-func preparedStmtPointGet(t *testing.T, ids []any, tk *testkit.TestKit, testTbl partCoverStruct, seededRand *rand.Rand, rowData map[any]string, filler, currTest string) {
+func preparedStmtPointGet(t *testing.T, ids []any, tk *testkit.TestKit, testTbl partCoverStruct, seededRand *rand.Rand, rowData map[any]string, filler, currTest string, isCaseSensitive bool) {
 	allCols := []string{"a", "b", "c", "space(1)"}
 	seededRand.Shuffle(len(allCols), func(i, j int) {
 		allCols[i], allCols[j] = allCols[j], allCols[i]
@@ -539,13 +583,13 @@ func preparedStmtPointGet(t *testing.T, ids []any, tk *testkit.TestKit, testTbl 
 		}
 		tk.MustExec(`prepare stmt from '` + q + `' ` + comment)
 		tk.MustExec(`set @a := ` + idStr + " " + comment)
-		expect := getRowData(rowData, filler, cols, id)
+		expect := getRowData(rowData, filler, cols, isCaseSensitive, id)
 		tk.MustQuery(`execute stmt using @a ` + comment).Check(testkit.Rows(expect...))
 		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 		id = ids[seededRand.Intn(len(ids))]
 		idStr = getIDStr(id)
 		tk.MustExec(`set @a := ` + idStr)
-		expect = getRowData(rowData, filler, cols, id)
+		expect = getRowData(rowData, filler, cols, isCaseSensitive, id)
 		tk.MustQuery(`execute stmt using @a ` + comment).Check(testkit.Rows(expect...))
 		require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 		tkProcess := tk.Session().ShowProcess()
@@ -562,7 +606,7 @@ func preparedStmtPointGet(t *testing.T, ids []any, tk *testkit.TestKit, testTbl 
 	}
 }
 
-func getRowData(rowData map[any]string, filler string, cols []string, id ...any) []string {
+func getRowData(rowData map[any]string, filler string, cols []string, isCaseSensitive bool, id ...any) []string {
 	maxRange := 2000000
 	ret := make([]string, 0, len(id))
 	dup := make(map[any]struct{}, len(id))
@@ -574,8 +618,15 @@ func getRowData(rowData map[any]string, filler string, cols []string, id ...any)
 				continue
 			}
 		case string:
-			if x >= "t" {
-				continue
+			if isCaseSensitive {
+				if x >= "x" {
+					continue
+				}
+			} else {
+				lc := strings.ToLower(x)
+				if lc >= "x" {
+					continue
+				}
 			}
 			isStr = true
 		default:
@@ -627,7 +678,7 @@ func getRandCols(seededRand *rand.Rand) ([]string, bool) {
 	return cols, hasSpaceCol
 }
 
-func preparedStmtBatchPointGet(t *testing.T, ids []any, tk *testkit.TestKit, pointGetExplain []string, seededRand *rand.Rand, rowData map[any]string, filler, currTest string, canUseBatchPointGet bool) {
+func preparedStmtBatchPointGet(t *testing.T, ids []any, tk *testkit.TestKit, pointGetExplain []string, seededRand *rand.Rand, rowData map[any]string, filler, currTest string, canUseBatchPointGet, isCaseSensitive bool) {
 	// Test prepared statements
 	cols, hasSpaceCol := getRandCols(seededRand)
 	queries := []struct {
@@ -662,7 +713,7 @@ func preparedStmtBatchPointGet(t *testing.T, ids []any, tk *testkit.TestKit, poi
 		a, b, c := ids[seededRand.Intn(len(ids))], ids[seededRand.Intn(len(ids))], ids[seededRand.Intn(len(ids))]
 		tk.MustExec(`prepare stmt from '` + q.sql + `' ` + comment)
 		tk.MustExec(fmt.Sprintf(`set @a := %s, @b := %s, @c := %s %s`, getIDStr(a), getIDStr(b), getIDStr(c), comment))
-		expect := getRowData(rowData, filler, cols, a, b, c)
+		expect := getRowData(rowData, filler, cols, isCaseSensitive, a, b, c)
 		tk.MustQuery(`execute stmt using @a, @b, @c ` + comment).Sort().Check(testkit.Rows(expect...))
 		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 		tkProcess := tk.Session().ShowProcess()
@@ -680,7 +731,7 @@ func preparedStmtBatchPointGet(t *testing.T, ids []any, tk *testkit.TestKit, poi
 		}
 		a2, b2, c2 := ids[seededRand.Intn(len(ids))], ids[seededRand.Intn(len(ids))], ids[seededRand.Intn(len(ids))]
 		tk.MustExec(fmt.Sprintf(`set @a := %s, @b := %s, @c := %s %s`, getIDStr(a2), getIDStr(b2), getIDStr(c2), comment))
-		expect = getRowData(rowData, filler, cols, a2, b2, c2)
+		expect = getRowData(rowData, filler, cols, isCaseSensitive, a2, b2, c2)
 		tk.MustQuery(`execute stmt using @a, @b, @c ` + comment).Sort().Check(testkit.Rows(expect...))
 		if !tk.Session().GetSessionVars().FoundInPlanCache {
 			warn := tk.MustQuery("show warnings " + comment)
@@ -696,7 +747,7 @@ func preparedStmtBatchPointGet(t *testing.T, ids []any, tk *testkit.TestKit, poi
 	}
 }
 
-func nonPreparedStmtPointGet(t *testing.T, ids []any, tk *testkit.TestKit, testTbl partCoverStruct, seededRand *rand.Rand, rowData map[any]string, filler, comment string) {
+func nonPreparedStmtPointGet(t *testing.T, ids []any, tk *testkit.TestKit, testTbl partCoverStruct, seededRand *rand.Rand, rowData map[any]string, filler, comment string, isCaseSensitive bool) {
 	// Test non-prepared statements
 	// FastPlan will be used instead of checking plan cache!
 	usePlanCache := len(testTbl.pointGetExplain) == 0
@@ -705,35 +756,35 @@ func nonPreparedStmtPointGet(t *testing.T, ids []any, tk *testkit.TestKit, testT
 	idStr := getIDStr(id)
 	cols, hasSpaceCol := getRandCols(seededRand)
 	sql := `select ` + strings.Join(cols, ",") + ` from t where a = `
-	tk.MustQuery(sql + idStr).Check(testkit.Rows(getRowData(rowData, filler, cols, id)...))
+	tk.MustQuery(sql + idStr).Check(testkit.Rows(getRowData(rowData, filler, cols, isCaseSensitive, id)...))
 	prevID := id
 	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	id = ids[seededRand.Intn(len(ids))]
 	idStr = getIDStr(id)
-	tk.MustQuery(sql + idStr).Check(testkit.Rows(getRowData(rowData, filler, cols, id)...))
+	tk.MustQuery(sql + idStr).Check(testkit.Rows(getRowData(rowData, filler, cols, isCaseSensitive, id)...))
 	if usePlanCache != tk.Session().GetSessionVars().FoundInPlanCache {
 		require.Equal(t, usePlanCache || hasSpaceCol, tk.Session().GetSessionVars().FoundInPlanCache, fmt.Sprintf("id: %d, prev id: %d", id, prevID))
 	}
 	id = ids[seededRand.Intn(len(ids))]
 	idStr = getIDStr(id)
-	tk.MustQuery(sql + idStr).Check(testkit.Rows(getRowData(rowData, filler, cols, id)...))
+	tk.MustQuery(sql + idStr).Check(testkit.Rows(getRowData(rowData, filler, cols, isCaseSensitive, id)...))
 	if usePlanCache || hasSpaceCol != tk.Session().GetSessionVars().FoundInPlanCache {
 		require.Equal(t, usePlanCache || hasSpaceCol, tk.Session().GetSessionVars().FoundInPlanCache)
 	}
 	id = ids[seededRand.Intn(len(ids))]
 	idStr = getIDStr(id)
-	tk.MustQuery(sql + idStr).Check(testkit.Rows(getRowData(rowData, filler, cols, id)...))
+	tk.MustQuery(sql + idStr).Check(testkit.Rows(getRowData(rowData, filler, cols, isCaseSensitive, id)...))
 	require.Equal(t, usePlanCache || hasSpaceCol, tk.Session().GetSessionVars().FoundInPlanCache)
 	if usePlanCache {
 		tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=0`)
 		id = ids[seededRand.Intn(len(ids))]
 		idStr = getIDStr(id)
-		tk.MustQuery(sql + idStr).Check(testkit.Rows(getRowData(rowData, filler, cols, id)...))
+		tk.MustQuery(sql + idStr).Check(testkit.Rows(getRowData(rowData, filler, cols, isCaseSensitive, id)...))
 		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	}
 }
 
-func nonpreparedStmtBatchPointGet(t *testing.T, ids []any, tk *testkit.TestKit, pointGetExplain []string, seededRand *rand.Rand, rowData map[any]string, filler, currTest string, canUseBatchPointGet bool) {
+func nonpreparedStmtBatchPointGet(t *testing.T, ids []any, tk *testkit.TestKit, pointGetExplain []string, seededRand *rand.Rand, rowData map[any]string, filler, currTest string, canUseBatchPointGet, isCaseSensitive bool) {
 	// Test prepared statements
 	usePlanCache := len(pointGetExplain) == 0
 	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=1`)
@@ -775,11 +826,11 @@ func nonpreparedStmtBatchPointGet(t *testing.T, ids []any, tk *testkit.TestKit, 
 		// - some values does not match any partition
 		a, b, c := ids[seededRand.Intn(len(ids))], ids[seededRand.Intn(len(ids))], ids[seededRand.Intn(len(ids))]
 		query := fmt.Sprintf(q.sql+" %s", getIDStr(a), getIDStr(b), getIDStr(c), comment)
-		tk.MustQuery(query).Sort().Check(testkit.Rows(getRowData(rowData, filler, cols, a, b, c)...))
+		tk.MustQuery(query).Sort().Check(testkit.Rows(getRowData(rowData, filler, cols, isCaseSensitive, a, b, c)...))
 		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 		a, b, c = ids[seededRand.Intn(len(ids))], ids[seededRand.Intn(len(ids))], ids[seededRand.Intn(len(ids))]
 		query = fmt.Sprintf(q.sql+" %s", getIDStr(a), getIDStr(b), getIDStr(c), comment)
-		tk.MustQuery(query).Sort().Check(testkit.Rows(getRowData(rowData, filler, cols, a, b, c)...))
+		tk.MustQuery(query).Sort().Check(testkit.Rows(getRowData(rowData, filler, cols, isCaseSensitive, a, b, c)...))
 		if q.canUsePlanCache && usePlanCache && !tk.Session().GetSessionVars().FoundInPlanCache {
 			tk.MustQuery("show warnings " + comment).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: Batch/PointGet plans may be over-optimized"))
 		}

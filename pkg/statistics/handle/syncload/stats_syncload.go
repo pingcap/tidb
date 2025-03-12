@@ -45,7 +45,11 @@ import (
 )
 
 // RetryCount is the max retry count for a sync load task.
-const RetryCount = 2
+// TODO(hawkingrei): There is no point in retrying sync load,
+// because there will be other tasks requesting this task at the same time.
+// As long as the subsequent tasks are normal, it will be fine. Too many retries
+// will only cause congestion and delays
+const RetryCount = 1
 
 // GetSyncLoadConcurrencyByCPU returns the concurrency of sync load by CPU.
 func GetSyncLoadConcurrencyByCPU() int {
