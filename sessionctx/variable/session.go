@@ -1974,8 +1974,10 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableLateMaterialization:     DefTiDBOptEnableLateMaterialization,
 		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
 		EnableWindowFunction:          DefEnableWindowFunction,
+		ResourceGroupName:             "default",
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
+	vars.StmtCtx.ResourceGroupName = "default"
 	vars.Concurrency = Concurrency{
 		indexLookupConcurrency:            DefIndexLookupConcurrency,
 		indexSerialScanConcurrency:        DefIndexSerialScanConcurrency,
