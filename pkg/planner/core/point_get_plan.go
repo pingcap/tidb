@@ -339,16 +339,70 @@ func (p *PointGetPlan) LoadTableStats(ctx sessionctx.Context) {
 	loadTableStats(ctx, p.TblInfo, tableID)
 }
 
+// needsPartitionPruning checks if IndexValues can be used by GetPartitionIdxByRow() or if they have already been
+// converted to SortKey and would need GetPartitionIdxByRow() to be refactored to work, since it will unconditionally
+// convert it again.
+// Returns:
+// Matching partition
+// if done Partition pruning (else not needed, can use GetPartitionIdxByRow() instead)
+// error
+// TODO: Also supporting BatchPointGet? Problem is that partition ID must be mapped to handle/IndexValue.
+func needsPartitionPruning(sctx sessionctx.Context, tblInfo *model.TableInfo, pt table.PartitionedTable, dbName string, indexInfo *model.IndexInfo, indexCols []*expression.Column, indexValues []types.Datum, conds []expression.Expression, partitionNames []ast.CIStr) ([]int, bool, error) {
+	for i := range indexValues {
+		if tblInfo.Columns[indexInfo.Columns[i].Offset].FieldType.EvalType() != types.ETString ||
+			indexValues[i].Collation() == tblInfo.Columns[indexInfo.Columns[i].Offset].GetCollate() {
+			return nil, false, nil
+		}
+	}
+	// convertToPointGet will have the IndexValues already converted to SortKey,
+	// which will be converted again by GetPartitionIdxByRow, so we need to re-run the pruner
+	// with the conditions.
+
+	// TODO: Is there a simpler way, or existing function for this?!?
+	tblCols := make([]*expression.Column, 0, len(indexInfo.Columns))
+	var partNameSlice types.NameSlice
+	for _, tblCol := range tblInfo.Columns {
+		found := false
+		for _, idxCol := range indexCols {
+			if idxCol.ID == tblCol.ID {
+				tblCols = append(tblCols, idxCol)
+				found = true
+				break
+			}
+		}
+		partNameSlice = append(partNameSlice, &types.FieldName{
+			ColName:     tblCol.Name,
+			TblName:     tblInfo.Name,
+			DBName:      ast.NewCIStr(dbName),
+			OrigTblName: tblInfo.Name,
+			OrigColName: tblCol.Name,
+		})
+		if !found {
+			tblCols = append(tblCols, &expression.Column{
+				ID:       tblCol.ID,
+				OrigName: tblCol.Name.O,
+				RetType:  tblCol.FieldType.Clone(),
+			})
+		}
+	}
+
+	partIdx, err := PartitionPruning(sctx.GetPlanCtx(), pt, conds, partitionNames, tblCols, partNameSlice)
+	if err != nil || len(partIdx) != 1 {
+		return nil, true, err
+	}
+	return partIdx, true, nil
+}
+
 // PrunePartitions will check which partition to use
 // returns true if no matching partition
-func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
+func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) (bool, error) {
 	pi := p.TblInfo.GetPartitionInfo()
 	if pi == nil {
-		return false
+		return false, nil
 	}
 	if p.IndexInfo != nil && p.IndexInfo.Global {
 		// reading for the Global Index / table id
-		return false
+		return false, nil
 	}
 	// _tidb_rowid + specify a partition
 	if p.IndexInfo == nil && !p.TblInfo.HasClusteredIndex() && len(p.PartitionNames) == 1 {
@@ -359,7 +413,7 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 				break
 			}
 		}
-		return false
+		return false, nil
 	}
 	// If tryPointGetPlan did generate the plan,
 	// then PartitionIdx is not set and needs to be set here!
@@ -370,23 +424,42 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 	//    and it does not have the PartitionIdx set
 	if !p.SCtx().GetSessionVars().StmtCtx.UseCache() &&
 		p.PartitionIdx != nil {
-		return false
+		return false, nil
 	}
 	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 	tbl, ok := is.TableByID(context.Background(), p.TblInfo.ID)
 	if tbl == nil || !ok {
-		// Can this happen?
-		intest.Assert(false)
-		return false
+		return false, errors.Errorf("table %d not found", p.TblInfo.ID)
 	}
 	pt := tbl.GetPartitionedTable()
 	if pt == nil {
-		// Can this happen?
-		intest.Assert(false)
-		return false
+		return false, errors.Errorf("table %d is not partitioned", p.TblInfo.ID)
 	}
 	row := make([]types.Datum, len(p.TblInfo.Columns))
 	if p.HandleConstant == nil && len(p.IndexValues) > 0 {
+		partColsNames := pt.Meta().Partition.Columns
+		if len(partColsNames) > 0 {
+			partIdx, done, err := needsPartitionPruning(sctx, p.TblInfo, pt, p.dbName, p.IndexInfo, p.IdxCols, p.IndexValues, p.AccessConditions, p.PartitionNames)
+			if table.ErrNoPartitionForGivenValue.Equal(err) {
+				err = nil
+				partIdx = nil
+			}
+			if err != nil {
+				return false, err
+			}
+			if done {
+				if len(partIdx) == 1 {
+					p.PartitionIdx = &partIdx[0]
+					return false, nil
+				}
+				if len(partIdx) == 0 {
+					idx := -1
+					p.PartitionIdx = &idx
+					return true, nil
+				}
+				return false, errors.Errorf("too many partitions matching for PointGetPlan")
+			}
+		}
 		for i := range p.IndexInfo.Columns {
 			// TODO: Skip copying non-partitioning columns?
 			p.IndexValues[i].Copy(&row[p.IndexInfo.Columns[i].Offset])
@@ -402,13 +475,18 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 	}
 	partIdx, err := pt.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), row)
 	partIdx, err = pt.Meta().Partition.ReplaceWithOverlappingPartitionIdx(partIdx, err)
-	if err != nil || !isInExplicitPartitions(pi, partIdx, p.PartitionNames) {
+	noMatch := !isInExplicitPartitions(pi, partIdx, p.PartitionNames)
+	if err != nil || noMatch || partIdx < 0 {
+		// TODO: check BatchPointGet as well!
 		partIdx = -1
 		p.PartitionIdx = &partIdx
-		return true
+		if table.ErrNoPartitionForGivenValue.Equal(err) || noMatch {
+			return true, nil
+		}
+		return true, err
 	}
 	p.PartitionIdx = &partIdx
-	return false
+	return false, nil
 }
 
 // BatchPointGetPlan represents a physical plan which contains a bunch of
@@ -672,6 +750,7 @@ func (p *BatchPointGetPlan) getPartitionIdxs(sctx sessionctx.Context) []int {
 		pIdx, err := pTbl.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), r)
 		pIdx, err = pTbl.Meta().Partition.ReplaceWithOverlappingPartitionIdx(pIdx, err)
 		if err != nil {
+			// TODO: return errors others than No Matching Partition.
 			// Skip on any error, like:
 			// No matching partition, overflow etc.
 			idxs = append(idxs, -1)
@@ -686,7 +765,7 @@ func (p *BatchPointGetPlan) getPartitionIdxs(sctx sessionctx.Context) []int {
 // returns:
 // slice of non-duplicated handles (or nil if IndexValues is used)
 // true if no matching partition (TableDual plan can be used)
-func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([]kv.Handle, bool) {
+func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([]kv.Handle, bool, error) {
 	pi := p.TblInfo.GetPartitionInfo()
 	if p.IndexInfo != nil && p.IndexInfo.Global {
 		// Reading from a global index, i.e. base table ID
@@ -722,7 +801,7 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 				}
 			}
 			if partitionsFound == 0 {
-				return nil, true
+				return nil, true, nil
 			}
 			skipped := 0
 			for i, idx := range partIdxs {
@@ -738,7 +817,7 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 			intest.Assert(p.SinglePartition || partitionsFound == len(p.PartitionIdxs))
 			intest.Assert(partitionsFound == len(p.IndexValues))
 		}
-		return nil, false
+		return nil, false, nil
 	}
 	handles := make([]kv.Handle, 0, len(p.Handles))
 	dedup := kv.NewHandleMap()
@@ -770,20 +849,23 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 				d.Copy(&r[p.HandleColOffset])
 				pIdx, err := pTbl.GetPartitionIdxByRow(sctx.GetExprCtx().GetEvalCtx(), r)
 				pIdx, err = pi.ReplaceWithOverlappingPartitionIdx(pIdx, err)
-				if err != nil ||
-					!isInExplicitPartitions(pi, pIdx, p.PartitionNames) ||
+				if table.ErrNoPartitionForGivenValue.Equal(err) {
+					pIdx = -1
+				} else if err != nil {
+					return nil, false, err
+				} else if !isInExplicitPartitions(pi, pIdx, p.PartitionNames) ||
 					(p.SinglePartition &&
 						p.PartitionIdxs[0] != pIdx) {
 					{
 						pIdx = -1
 					}
-				} else {
+				} else if pIdx >= 0 {
 					partitionsFound++
 				}
 				partIdxs = append(partIdxs, pIdx)
 			}
 			if partitionsFound == 0 {
-				return nil, true
+				return nil, true, nil
 			}
 			skipped := 0
 			for i, idx := range partIdxs {
@@ -812,12 +894,12 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 					continue
 				}
 				intest.Assert(false)
-				continue
+				return nil, false, err
 			}
 			handle, err := kv.NewCommonHandle(handleBytes)
 			if err != nil {
 				intest.Assert(false)
-				continue
+				return nil, false, err
 			}
 			if _, found := dedup.Get(handle); found {
 				continue
@@ -854,12 +936,12 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 				partitionsFound++
 			}
 			if partitionsFound == 0 {
-				return nil, true
+				return nil, true, nil
 			}
 			intest.Assert(p.SinglePartition || partitionsFound == len(p.PartitionIdxs))
 		}
 	}
-	return handles, false
+	return handles, false, nil
 }
 
 // PointPlanKey is used to get point plan that is pre-built for multi-statement query.

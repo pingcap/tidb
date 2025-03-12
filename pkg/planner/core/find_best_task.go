@@ -1492,6 +1492,11 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 				canConvertPointGet = false
 			}
 			if canConvertPointGet && len(path.Ranges) > 1 {
+				// if LIST COLUMNS/RANGE COLUMNS partitioned, and any of the partitioning columns are string based
+				// and having non-binary collations, then we currently cannot support BatchPointGet,
+				// since the candidate.path.Ranges already have been converted to SortKey, meaning we cannot use it
+				// for PartitionLookup/PartitionPruning currently.
+
 				// TODO: This is now implemented, but to decrease
 				// the impact of supporting plan cache for patitioning,
 				// this is not yet enabled.
