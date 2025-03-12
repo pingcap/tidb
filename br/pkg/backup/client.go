@@ -1055,6 +1055,9 @@ func (bc *Client) findTargetPeer(ctx context.Context, key []byte, isRawKv bool, 
 	// in order to find the correct region.
 	key = codec.EncodeBytesExt([]byte{}, key, isRawKv)
 	for i := 1; i < 100; i++ {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		// better backoff.
 		region, err := bc.mgr.GetPDClient().GetRegion(ctx, key)
 		if err != nil || region == nil {
