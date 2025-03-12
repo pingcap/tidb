@@ -48,11 +48,14 @@ import (
 //   - one share used by the active job on job worker
 //   - 2.5 share for others, and burst allocation to avoid OOM
 //
-// the share size 'SS' determines the max range data size 'RangeS' for a range job.
-// Each range job corresponding to one ingested SST on TiKV, we want to load as
-// many data as possible, while minimizing the number of SSTs (too many SST file,
-// say 500K, will cause TiKV slow down when ingest), and make the SST be more even,
-// so we calculate RangeS by:
+// the share size 'SS' determines the max data size 'RangeS' for a split-range
+// which is split out by RangeSplitter.
+// split-range is intersected with region to generate range job which is handled
+// by range job worker, and each range job corresponding to one ingested SST on TiKV.
+// our goal here is to load as many data as possible to make all range job workers
+// fully parallelized, while minimizing the number of SSTs (too many SST file, say
+// 500K, will cause TiKV slow down when ingest), i.e. to make RangeS larger, and
+// also try to make the SST be more even, so we calculate RangeS by:
 //   - RS = region size
 //   - let TempRangeS = SS
 //   - if TempRangeS < RS, RangeS = RS / ceil(RS / TempRangeS) + 1,
