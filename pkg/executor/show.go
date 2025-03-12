@@ -19,6 +19,11 @@ import (
 	"context"
 	gjson "encoding/json"
 	"fmt"
+	"math"
+	"slices"
+	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -79,11 +84,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	pdHttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
-	"math"
-	"slices"
-	"sort"
-	"strconv"
-	"strings"
 )
 
 // ShowExec represents a show executor.
