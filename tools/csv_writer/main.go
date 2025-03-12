@@ -35,6 +35,7 @@ var (
 	glanceFile       = flag.String("glanceFile", "", "Glance the first 128*1024 bytes of a specific file from GCS")
 	fileNamePrefix   = flag.String("fileNamePrefix", "testCSVWriter", "Base file name")
 	deletePrefixFile = flag.String("deletePrefixFile", "", "Delete all files with prefix")
+	genMaxSizeVal    = flag.Bool("genMaxSizeVal", false, "Generate max size value")
 
 	batchSize           = flag.Int("batchSize", 10, "Number of rows to generate in each batch")
 	generatorNum        = flag.Int("generatorNum", 1, "Number of generator goroutines")
@@ -55,23 +56,27 @@ var (
 )
 
 const (
-	maxRetries     = 3
-	uuidLen        = 36
-	maxIndexLen    = 3072
-	totalOrdered   = "TOTAL ORDERED"
-	partialOrdered = "PARTIAL ORDERED"
-	totalRandom    = "TOTAL RANDOM"
-	nullRatio      = 0 // [0, 10], 0 means no null value
-	nullVal        = "\\N"
+	maxRetries       = 3
+	uuidLen          = 36
+	maxIndexLen      = 3072
+	totalOrdered     = "TOTAL ORDERED"
+	partialOrdered   = "PARTIAL ORDERED"
+	totalRandom      = "TOTAL RANDOM"
+	defaultNullRatio = 0 // [0, 100], 0 means no null value
+	nullVal          = "\\N"
 )
 
-var faker *gofakeit.Faker
+var (
+	faker        *gofakeit.Faker
+	nullRatioMap = map[string]int{}
+)
 
 // Initialize Faker instance
 func init() {
 	seed := time.Now().UnixNano()
 	faker = gofakeit.New(seed)
 	log.Printf("Faker seed: %d", seed)
+	loadColNullRatio()
 }
 
 // Column fields is read only
@@ -95,6 +100,17 @@ func readSQLFile(filename string) (string, error) {
 		return "", err
 	}
 	return string(data), nil
+}
+
+func getNullRation(colName string) int {
+	if n, ok := nullRatioMap[colName]; ok {
+		return n
+	}
+	return defaultNullRatio
+}
+
+func (c *Column) canThisValNull() bool {
+	return !c.NotNull && faker.Number(1, 100) < getNullRation(c.Name)
 }
 
 // Parse SQL schema and extract columns
@@ -312,8 +328,7 @@ func generateLetterWithNum(len int, randomLen bool) string {
 
 func (c *Column) generateDecimal(num int, res []string) {
 	for i := 0; i < num; i++ {
-		if faker.Number(1, 10) <= nullRatio {
-			// 80% null value
+		if c.canThisValNull() {
 			res[i] = nullVal
 		} else {
 			intPart := rand.Int63n(1_000_000_000_000_000_000)
@@ -325,9 +340,7 @@ func (c *Column) generateDecimal(num int, res []string) {
 
 func (c *Column) generateBigintWithNoLimit(num int, res []string, colName string) {
 	for i := 0; i < num; i++ {
-		if strings.Contains(colName, "datetime") &&
-			faker.Number(1, 10) <= nullRatio {
-			// 80% null value
+		if c.canThisValNull() {
 			res[i] = nullVal
 		} else {
 			res[i] = strconv.Itoa(faker.Number(math.MinInt64, math.MaxInt64)) // https://docs.pingcap.com/zh/tidb/stable/data-type-numeric#bigint-%E7%B1%BB%E5%9E%8B)
@@ -436,8 +449,7 @@ func (c *Column) generateVarbinary(num, len int, res []string, unique bool) {
 			uuid := faker.UUID()
 			res[i] = uuid + generateLetterWithNum(len-uuidLen, true)
 		} else {
-			if faker.Number(1, 10) <= nullRatio {
-				// 80% null value
+			if c.canThisValNull() {
 				res[i] = nullVal
 			} else {
 				// todo: remove 1024
@@ -948,6 +960,95 @@ func generateTotalRandomBigintForPk(num int, path string) {
 	writeCSVToLocalDisk(path+"/normal_bigint_pk.csv", nil, [][]string{res})
 }
 
+func loadColNullRatio() {
+	path := "/Users/fanzhou/tcms/pinterest/gcs/col_null_ratio.csv"
+	_, err := os.Stat(path)
+	if err != nil {
+		if !os.IsExist(err) {
+			log.Fatalf("File %s does not exist", path)
+			return
+		}
+	}
+
+	nr := loadCSVFile(path)
+	for _, row := range nr {
+		n, err := strconv.ParseFloat(row[1], 64)
+		if err != nil {
+			log.Fatal(err)
+		}
+		nullRatioMap[row[0]] = int(n)
+	}
+}
+
+func loadCSVFile(path string) [][]string {
+	file, err := os.Open(path)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+	records, err := reader.ReadAll()
+	if err != nil {
+		log.Fatal(err)
+	}
+	return records
+}
+
+func generateMaxSizeValues() {
+	// load max size csv and convert to map
+	ms := loadCSVFile("/Users/fanzhou/tcms/pinterest/gcs/col_len_detail.csv")
+	maxSizeMap := make(map[string]int)
+	for _, row := range ms {
+		maxL, err := strconv.ParseInt(row[2], 10, 64)
+		if err != nil {
+			log.Fatal(err)
+		}
+		maxSizeMap[row[0]] = int(maxL)
+	}
+	// load schema
+	schema := loadCSVFile("/Users/fanzhou/tcms/pinterest/gcs/schema.csv")
+	colNum := len(schema)
+	repeatNumEveryCol := 2
+	colVals := make([][]string, colNum)
+	for i, col := range schema {
+		colVal := make([]string, colNum*repeatNumEveryCol)
+		for j := 0; j < colNum*repeatNumEveryCol; j++ {
+			if strings.Contains(col[0], "PK") { // pk
+				colVal[j] = strconv.Itoa(*pkBegin + j)
+			} else if strings.Contains(col[0], "unique index") { // uk
+				colVal[j] = faker.UUID()
+			} else {
+				colVal[j] = nullVal
+			}
+		}
+
+		if strings.Contains(col[1], "BINARY") {
+			maxL, ok := maxSizeMap[col[0]]
+			if !ok {
+				maxL = 0 // average length
+			}
+			for j := i * repeatNumEveryCol; j < (i+1)*repeatNumEveryCol; j++ {
+				colVal[j] = generateLetterWithNum(maxL, false)
+			}
+		}
+		colVals[i] = colVal
+	}
+	if *localPath != "" {
+		err := writeCSVToLocalDisk(*localPath+"max_size_values.csv", nil, colVals)
+		if err != nil {
+			log.Fatal(err)
+		}
+	} else {
+		store := createExternalStorage()
+		filePath := ""
+		err := writeDataToGCS(store, filePath, colVals)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+}
+
 func main() {
 	// Parse command-line arguments.
 	flag.Parse()
@@ -989,6 +1090,12 @@ func main() {
 
 	if *checkColUniqueness != -1 {
 		checkCSVUniqueness(*credentialPath, "")
+		return
+	}
+
+	// generate max size values and write into csv
+	if *genMaxSizeVal {
+		generateMaxSizeValues()
 		return
 	}
 
