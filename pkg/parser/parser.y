@@ -864,6 +864,8 @@ import (
 	ddl                        "DDL"
 	dependency                 "DEPENDENCY"
 	depth                      "DEPTH"
+	distribute                 "DISTRIBUTE"
+	distribution               "DISTRIBUTION"
 	distributions              "DISTRIBUTIONS"
 	dry                        "DRY"
 	histogramsInFlight         "HISTOGRAMS_IN_FLIGHT"
@@ -881,7 +883,6 @@ import (
 	samples                    "SAMPLES"
 	sessionStates              "SESSION_STATES"
 	split                      "SPLIT"
-	distribute                 "DISTRIBUTE"
 	statistics                 "STATISTICS"
 	stats                      "STATS"
 	statsBuckets               "STATS_BUCKETS"
@@ -7204,6 +7205,8 @@ TiDBKeyword:
 |	"DDL"
 |	"DEPENDENCY"
 |	"DEPTH"
+|	"DISTRIBUTE"
+|	"DISTRIBUTION"
 |	"DISTRIBUTIONS"
 |	"JOBS"
 |	"JOB"
@@ -7226,7 +7229,6 @@ TiDBKeyword:
 |	"TIFLASH"
 |	"TOPN"
 |	"SPLIT"
-|	"DISTRIBUTE"
 |	"OPTIMISTIC"
 |	"PESSIMISTIC"
 |	"WIDTH"
@@ -11745,6 +11747,11 @@ ShowStmt:
 			ImportJobID: &v,
 		}
 	}
+|	"SHOW" "DISTRIBUTION" "JOB" Int64Num
+	{
+		v := $4.(int64)
+		$$ = &ast.ShowStmt{Tp: ast.ShowDistributionJobs, DistributionJobID: &v}
+	}
 |	"SHOW" "CREATE" "PROCEDURE" TableName
 	{
 		$$ = &ast.ShowStmt{
@@ -12094,6 +12101,10 @@ ShowTargetFilterable:
 |	"IMPORT" "JOBS"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowImportJobs}
+	}
+|	"DISTRIBUTION" "JOBS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowDistributionJobs}
 	}
 
 ShowLikeOrWhereOpt:

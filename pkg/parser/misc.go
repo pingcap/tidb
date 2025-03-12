@@ -344,6 +344,7 @@ var tokenMap = map[string]int{
 	"DISTINCTROW":              distinct,
 	"DISTRIBUTE":               distribute,
 	"RULE":                     rule,
+	"DISTRIBUTION":             distribution,
 	"DISTRIBUTIONS":            distributions,
 	"DIV":                      div,
 	"DO":                       do,
