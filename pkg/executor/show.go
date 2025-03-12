@@ -263,7 +263,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowRegions:
 		return e.fetchShowTableRegions(ctx)
 	case ast.ShowDistributions:
-		return e.fetchShowDistribution(ctx)
+		return e.fetchShowDistributions(ctx)
 	case ast.ShowBuiltins:
 		return e.fetchShowBuiltins()
 	case ast.ShowBackups:
@@ -2079,7 +2079,7 @@ func (e *ShowExec) appendRow(row []any) {
 	}
 }
 
-func (e *ShowExec) fetchShowDistribution(ctx context.Context) error {
+func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 	tb, err := e.getTable()
 	if err != nil {
 		return errors.Trace(err)
