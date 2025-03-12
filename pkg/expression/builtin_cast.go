@@ -1967,7 +1967,7 @@ func (b *builtinCastTimeAsDurationSig) evalDuration(ctx EvalContext, row chunk.R
 	if err != nil {
 		return res, false, err
 	}
-	res, err = res.RoundFrac(b.tp.GetDecimal(), location(ctx))
+	res, err = res.RoundFrac(b.tp.GetDecimal())
 	return res, false, err
 }
 
@@ -1989,7 +1989,7 @@ func (b *builtinCastDurationAsDurationSig) evalDuration(ctx EvalContext, row chu
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	res, err = res.RoundFrac(b.tp.GetDecimal(), location(ctx))
+	res, err = res.RoundFrac(b.tp.GetDecimal())
 	return res, false, err
 }
 
@@ -2016,7 +2016,7 @@ func (b *builtinCastDurationAsIntSig) evalInt(ctx EvalContext, row chunk.Row) (r
 		res, err = val.ConvertToYear(typeCtx(ctx))
 	} else {
 		var dur types.Duration
-		dur, err = val.RoundFrac(types.DefaultFsp, location(ctx))
+		dur, err = val.RoundFrac(types.DefaultFsp)
 		if err != nil {
 			return res, false, err
 		}
@@ -2378,7 +2378,7 @@ func (b *builtinCastJSONAsDurationSig) evalDuration(ctx EvalContext, row chunk.R
 		if err != nil {
 			return res, false, err
 		}
-		res, err = res.RoundFrac(b.tp.GetDecimal(), location(ctx))
+		res, err = res.RoundFrac(b.tp.GetDecimal())
 		return res, isNull, err
 	case types.JSONTypeCodeDuration:
 		res = val.GetDuration()
