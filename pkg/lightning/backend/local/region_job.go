@@ -504,6 +504,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	var remainingStartKey []byte
 	for iter.First(); iter.Valid(); iter.Next() {
 		k, v := iter.Key(), iter.Value()
+		log.L().Info("write next key", logutil.Key("key", k), logutil.Key("val", v))
 		kvSize := int64(len(k) + len(v))
 		// here we reuse the `*sst.Pair`s to optimize object allocation
 		if count < len(pairs) {

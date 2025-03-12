@@ -528,6 +528,7 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 				restoreWorker := rc.tableWorkers.Apply()
 				go func(w *worker.Worker, eid int32, ecp *checkpoints.EngineCheckpoint) {
 					defer wg.Done()
+					time.Sleep(time.Duration(6-2*eid) * time.Second)
 					engineLogTask := tr.logger.With(zap.Int32("engineNumber", eid)).Begin(zap.InfoLevel, "restore engine")
 					dataClosedEngine, err := tr.preprocessEngine(ctx, rc, indexEngine, eid, ecp)
 					engineLogTask.End(zap.ErrorLevel, err)
