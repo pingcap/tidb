@@ -186,7 +186,7 @@ func TestLitBackendCtxMgr(t *testing.T) {
 
 	jobID := int64(102)
 	discovery := store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
-	backendCtx, err := mgr.Register(ctx, jobID, false, nil, discovery, "TestLitBackendCtxMgr")
+	backendCtx, err := mgr.Register(ctx, jobID, false, nil, discovery, "TestLitBackendCtxMgr", 0)
 	require.NoError(t, err)
 	require.NotNil(t, backendCtx)
 
