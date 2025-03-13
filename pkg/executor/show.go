@@ -283,6 +283,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowSessionStates(ctx)
 	case ast.ShowImportJobs:
 		return e.fetchShowImportJobs(ctx)
+	case ast.ShowDistributionJobs:
+		return e.fetchShowDistributionJobs(ctx)
 	}
 	return nil
 }
@@ -2359,6 +2361,11 @@ func handleImportJobInfo(ctx context.Context, info *importer.JobInfo, result *ch
 		importedRowCount = int64(rows)
 	}
 	FillOneImportJobInfo(info, result, importedRowCount)
+	return nil
+}
+
+func (e *ShowExec) fetchShowDistributionJobs(ctx context.Context) error {
+
 	return nil
 }
 
