@@ -25,7 +25,6 @@ go_library(
         "//br/pkg/logutil",
         "//br/pkg/metautil",
         "//br/pkg/restore/ingestrec",
-        "//br/pkg/restore/snap_client",
         "//br/pkg/restore/tiflashrec",
         "//br/pkg/restore/utils",
         "//br/pkg/storage",

@@ -842,7 +842,11 @@ func (gs *tidbGlueSession) AlterTableMode(
 	schemaID int64,
 	tableID int64,
 	tableMode model.TableModeState) error {
+	originQueryString := gs.se.Value(sessionctx.QueryString)
+	defer gs.se.SetValue(sessionctx.QueryString, originQueryString)
 	d := domain.GetDomain(gs.se).DDLExecutor()
+	gs.se.SetValue(sessionctx.QueryString,
+		fmt.Sprintf("ALTER TABLE MODE %d %d TO %s", schemaID, tableID, tableMode.String()))
 	args := &model.AlterTableModeArgs{
 		SchemaID:  schemaID,
 		TableID:   tableID,

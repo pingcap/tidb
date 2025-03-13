@@ -636,6 +636,7 @@ func (rc *SnapClient) LoadSchemaIfNeededAndInitClient(
 	RawEndKey []byte,
 	hasExplicitFilter bool,
 	isFullRestore bool,
+	withSys bool,
 ) error {
 	if needLoadSchemas(backupMeta) {
 		databases, err := metautil.LoadBackupTables(c, reader, loadStats)
@@ -665,7 +666,7 @@ func (rc *SnapClient) LoadSchemaIfNeededAndInitClient(
 		return errors.Trace(err)
 	}
 
-	rc.InitFullClusterRestore(hasExplicitFilter, isFullRestore)
+	rc.InitFullClusterRestore(hasExplicitFilter, isFullRestore, withSys)
 	return nil
 }
 
@@ -926,7 +927,7 @@ func (rc *SnapClient) CreateTables(
 	ctx context.Context,
 	tables []*metautil.Table,
 	newTS uint64,
-) ([]*CreatedTable, error) {
+) ([]*restoreutils.CreatedTable, error) {
 	log.Info("start create tables", zap.Int("total count", len(tables)))
 	rc.generateRebasedTables(tables)
 
@@ -955,7 +956,7 @@ func (rc *SnapClient) createTables(
 	db *tidallocdb.DB,
 	tables []*metautil.Table,
 	newTS uint64,
-) ([]*CreatedTable, error) {
+) ([]*restoreutils.CreatedTable, error) {
 	log.Info("client to create tables")
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID")
@@ -965,7 +966,7 @@ func (rc *SnapClient) createTables(
 			return nil, errors.Trace(err)
 		}
 	}
-	cts := make([]*CreatedTable, 0, len(tables))
+	cts := make([]*restoreutils.CreatedTable, 0, len(tables))
 	for _, table := range tables {
 		newTableInfo, err := restore.GetTableSchema(rc.dom, table.DB.Name, table.Info.Name)
 		if err != nil {
@@ -979,7 +980,7 @@ func (rc *SnapClient) createTables(
 				newTableInfo.IsCommonHandle)
 		}
 		rules := restoreutils.GetRewriteRules(newTableInfo, table.Info, newTS, true)
-		ct := &CreatedTable{
+		ct := &restoreutils.CreatedTable{
 			RewriteRule: rules,
 			Table:       newTableInfo,
 			OldTable:    table,
@@ -1012,7 +1013,8 @@ func SortTablesBySchemaID(tables []*metautil.Table) []*metautil.Table {
 	return orderedTables
 }
 
-func (rc *SnapClient) createTablesBatch(ctx context.Context, tables []*metautil.Table, newTS uint64) ([]*CreatedTable, error) {
+func (rc *SnapClient) createTablesBatch(ctx context.Context, tables []*metautil.Table, newTS uint64) (
+	[]*restoreutils.CreatedTable, error) {
 	eg, ectx := errgroup.WithContext(ctx)
 	rater := logutil.TraceRateOver(metrics.RestoreTableCreatedCount)
 	workers := tidbutil.NewWorkerPool(uint(len(rc.dbPool)), "Create Tables Worker")
@@ -1023,9 +1025,9 @@ func (rc *SnapClient) createTablesBatch(ctx context.Context, tables []*metautil.
 	numOfTables := len(orderedTables)
 	createdTables := struct {
 		sync.Mutex
-		tables []*CreatedTable
+		tables []*restoreutils.CreatedTable
 	}{
-		tables: make([]*CreatedTable, 0, numOfTables),
+		tables: make([]*restoreutils.CreatedTable, 0, numOfTables),
 	}
 
 	for lastSent := 0; lastSent < numOfTables; lastSent += int(rc.batchDdlSize) {
@@ -1065,7 +1067,7 @@ func (rc *SnapClient) createTable(
 	db *tidallocdb.DB,
 	table *metautil.Table,
 	newTS uint64,
-) (*CreatedTable, error) {
+) (*restoreutils.CreatedTable, error) {
 	if rc.IsSkipCreateSQL() {
 		log.Info("skip create table and alter autoIncID", zap.Stringer("table", table.Info.Name))
 	} else {
@@ -1086,7 +1088,7 @@ func (rc *SnapClient) createTable(
 			newTableInfo.IsCommonHandle)
 	}
 	rules := restoreutils.GetRewriteRules(newTableInfo, table.Info, newTS, true)
-	et := &CreatedTable{
+	et := &restoreutils.CreatedTable{
 		RewriteRule: rules,
 		Table:       newTableInfo,
 		OldTable:    table,
@@ -1099,15 +1101,15 @@ func (rc *SnapClient) createTablesSingle(
 	dbPool []*tidallocdb.DB,
 	tables []*metautil.Table,
 	newTS uint64,
-) ([]*CreatedTable, error) {
+) ([]*restoreutils.CreatedTable, error) {
 	eg, ectx := errgroup.WithContext(ctx)
 	workers := tidbutil.NewWorkerPool(uint(len(dbPool)), "DDL workers")
 	rater := logutil.TraceRateOver(metrics.RestoreTableCreatedCount)
 	createdTables := struct {
 		sync.Mutex
-		tables []*CreatedTable
+		tables []*restoreutils.CreatedTable
 	}{
-		tables: make([]*CreatedTable, 0, len(tables)),
+		tables: make([]*restoreutils.CreatedTable, 0, len(tables)),
 	}
 	for _, tbl := range tables {
 		table := tbl
@@ -1140,8 +1142,8 @@ func (rc *SnapClient) createTablesSingle(
 }
 
 // InitFullClusterRestore init fullClusterRestore and set SkipGrantTable as needed
-func (rc *SnapClient) InitFullClusterRestore(explicitFilter bool, isFullRestore bool) {
-	rc.fullClusterRestore = !explicitFilter && !rc.IsIncremental() && isFullRestore
+func (rc *SnapClient) InitFullClusterRestore(explicitFilter bool, isFullRestore bool, withSys bool) {
+	rc.fullClusterRestore = !explicitFilter && !rc.IsIncremental() && isFullRestore && withSys
 
 	log.Info("mark full cluster restore", zap.Bool("value", rc.fullClusterRestore))
 }
@@ -1203,7 +1205,7 @@ func (rc *SnapClient) ExecDDLs(ctx context.Context, ddlJobs []*model.Job) error 
 
 func (rc *SnapClient) execAndValidateChecksum(
 	ctx context.Context,
-	tbl *CreatedTable,
+	tbl *restoreutils.CreatedTable,
 	kvClient kv.Client,
 	concurrency uint,
 ) error {

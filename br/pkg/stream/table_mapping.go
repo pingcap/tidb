@@ -24,7 +24,6 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
@@ -360,10 +359,6 @@ func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBRepl
 					for partUpID, partDownID := range baseTableReplace.PartitionMap {
 						existingTableReplace.PartitionMap[partUpID] = partDownID
 					}
-
-					for indexUpID, indexDownID := range baseTableReplace.IndexMap {
-						existingTableReplace.IndexMap[indexUpID] = indexDownID
-					}
 				}
 			}
 		}
@@ -376,11 +371,6 @@ func (tm *TableMappingManager) IsEmpty() bool {
 
 func (tm *TableMappingManager) ReplaceTemporaryIDs(
 	ctx context.Context, genGenGlobalIDs func(ctx context.Context, n int) ([]int64, error)) error {
-	if tm.tempIDCounter == InitialTempId {
-		// no temporary IDs were allocated
-		return nil
-	}
-
 	// find actually used temporary IDs
 	usedTempIDs := make(map[DownstreamID]UpstreamID)
 
@@ -417,6 +407,11 @@ func (tm *TableMappingManager) ReplaceTemporaryIDs(
 				}
 			}
 		}
+	}
+
+	if len(usedTempIDs) == 0 {
+		// no temp id allocated
+		return nil
 	}
 
 	tempIDs := make([]DownstreamID, 0, len(usedTempIDs))
@@ -575,7 +570,7 @@ func (tm *TableMappingManager) generateTempID() DownstreamID {
 // UpdateDownstreamIds updates the mapping from old table ID to new table ID.
 // this is necessary since we override the table name during full restore directly to its end name, so we need to
 // figure out the id mapping upfront.
-func (tm *TableMappingManager) UpdateDownstreamIds(dbs []*metautil.Database, tables []*snapclient.CreatedTable,
+func (tm *TableMappingManager) UpdateDownstreamIds(dbs []*metautil.Database, tables []*restoreutils.CreatedTable,
 	dom *domain.Domain) error {
 	dbReplaces := make(map[UpstreamID]*DBReplace)
 
@@ -595,7 +590,7 @@ func (tm *TableMappingManager) UpdateDownstreamIds(dbs []*metautil.Database, tab
 		oldTable := t.OldTable
 		newTable := t.Table
 
-		dbReplace, exist := dbReplaces[newTable.DBID]
+		dbReplace, exist := dbReplaces[oldTable.DB.ID]
 		if !exist {
 			return errors.New("table exists but db not exist in UpdateDownstreamIds")
 		}
@@ -604,10 +599,8 @@ func (tm *TableMappingManager) UpdateDownstreamIds(dbs []*metautil.Database, tab
 			Name:         newTable.Name.O,
 			TableID:      newTable.ID,
 			PartitionMap: restoreutils.GetPartitionIDMap(newTable, oldTable.Info),
-			IndexMap:     restoreutils.GetIndexIDMap(newTable, oldTable.Info),
 		}
 	}
-	LogDBReplaceMap("updated id mapping after creating tables during snapshot restore", dbReplaces)
 	tm.MergeBaseDBReplace(dbReplaces)
 	return nil
 }
