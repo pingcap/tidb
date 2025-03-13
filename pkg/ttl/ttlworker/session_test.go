@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
 )
@@ -123,6 +124,7 @@ func (r *mockRows) Rows() []chunk.Row {
 }
 
 type mockSessionPool struct {
+	util.DestroyableSessionPool
 	t           *testing.T
 	se          *mockSession
 	lastSession *mockSession

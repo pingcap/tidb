@@ -2205,21 +2205,20 @@ func (w *worker) rollbackLikeDropPartition(jobCtx *jobContext, job *model.Job) (
 //
 // StateDeleteReorganization
 //
-//		Old partitions are not accessible/used by any sessions.
-//	 Inserts/updates of global index which still have entries pointing to old partitions
-//	 will overwrite those entries
-//	 In the background we are reading all old partitions and deleting their entries from
-//	 the global indexes.
+//	Old partitions are not accessible/used by any sessions.
+//	Inserts/updates of global index which still have entries pointing to old partitions
+//	will overwrite those entries.
+//	In the background we are reading all old partitions and deleting their entries from
+//	the global indexes.
 //
 // StateDeleteOnly
 //
-//	 old partitions are no longer visible, but if there is inserts/updates to the global indexes,
-//	 duplicate key errors will be given, even if the entries are from dropped partitions
-//		Note that overlapping ranges (i.e. a dropped partitions with 'less than (N)' will now .. ?!?
+//	Old partitions are no longer visible, but if there is inserts/updates to the global indexes,
+//	duplicate key errors will be given, even if the entries are from dropped partitions.
 //
 // StateWriteOnly
 //
-//	old partitions are blocked for read and write. But for read we are allowing
+//	Old partitions are blocked for read and write. But for read we are allowing
 //	"overlapping" partition to be read instead. Which means that write can only
 //	happen in the 'overlapping' partitions original range, not into the extended
 //	range open by the dropped partitions.

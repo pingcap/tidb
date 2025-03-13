@@ -1422,7 +1422,9 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	tk.MustExec(`INSERT INTO test_global VALUES (1, 1, 1), (2, 2, 2), (11, 3, 3), (12, 4, 4), (15, 15, 15)`)
 
 	tk2 := testkit.NewTestKit(t, store)
+	tk4 := testkit.NewTestKit(t, store)
 	tk2.MustExec(`use test`)
+	tk4.MustExec(`use test`)
 	tk2.MustExec(`begin`)
 	tk2.MustExec(`insert into test_global values (5,5,5)`)
 
@@ -1441,6 +1443,7 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 				v2 := dom.InfoSchema().SchemaMetaVersion()
 				if v2 > v1 {
 					// Also wait for the new infoschema loading
+					v1 = v2
 					break
 				}
 			}
@@ -1452,9 +1455,10 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	tkTmp.MustExec(`begin`)
 	tkTmp.MustExec("use test")
 	tkTmp.MustQuery(`select count(*) from test_global`).Check(testkit.Rows("5"))
+	// Begin txn before tx2 rollbcak to let mdl block ddl job state.
+	tk4.MustExec(`begin`)
 	tk2.MustExec(`rollback`)
-	tk2.MustExec(`begin`)
-	tk2.MustExec(`insert into test_global values (5,5,5)`)
+	tk4.MustExec(`insert into test_global values (5,5,5)`)
 	tkTmp.MustExec(`rollback`)
 	waitFor(4, "delete only")
 	tk3 := testkit.NewTestKit(t, store)
@@ -1467,13 +1471,12 @@ func TestTruncatePartitionWithGlobalIndex(t *testing.T) {
 	err := tk3.ExecToErr(`insert into test_global values (15,15,15)`)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "[kv:1062]Duplicate entry '15' for key 'test_global.idx_b'")
-	tk2.MustExec(`commit`)
+	tk4.MustExec(`commit`)
 	waitFor(4, "delete reorganization")
 	tk2.MustQuery(`select b from test_global use index(idx_b) where b = 15`).Check(testkit.Rows())
 	tk2.MustQuery(`select c from test_global use index(idx_c) where c = 15`).Check(testkit.Rows())
 	err = tk2.ExecToErr(`insert into test_global values (15,15,15)`)
 	require.NoError(t, err)
-	tk2.MustExec(`begin`)
 	tk3.MustExec(`commit`)
 	tk.MustExec(`commit`)
 	<-syncChan

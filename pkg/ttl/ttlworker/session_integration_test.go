@@ -129,21 +129,21 @@ func (s *sessionWithFault) shouldFault(sql string) bool {
 }
 
 type faultSessionPool struct {
-	util.SessionPool
+	util.DestroyableSessionPool
 
 	fault *atomic.Pointer[fault]
 }
 
-func newFaultSessionPool(sp util.SessionPool) *faultSessionPool {
+func newFaultSessionPool(sp util.DestroyableSessionPool) *faultSessionPool {
 	return &faultSessionPool{
-		SessionPool: sp,
-		fault:       &atomic.Pointer[fault]{},
+		DestroyableSessionPool: sp,
+		fault:                  &atomic.Pointer[fault]{},
 	}
 }
 
 // Get implements util.SessionPool.
 func (f *faultSessionPool) Get() (pools.Resource, error) {
-	resource, err := f.SessionPool.Get()
+	resource, err := f.DestroyableSessionPool.Get()
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +156,12 @@ func (f *faultSessionPool) Get() (pools.Resource, error) {
 
 // Put implements util.SessionPool.
 func (f *faultSessionPool) Put(se pools.Resource) {
-	f.SessionPool.Put(se.(*sessionWithFault).Context.(pools.Resource))
+	f.DestroyableSessionPool.Put(se.(*sessionWithFault).Context.(pools.Resource))
+}
+
+// Destroy implements util.DestroyableSessionPool.
+func (f *faultSessionPool) Destroy(se pools.Resource) {
+	f.DestroyableSessionPool.Destroy(se.(*sessionWithFault).Context.(pools.Resource))
 }
 
 func (f *faultSessionPool) setFault(ft fault) {

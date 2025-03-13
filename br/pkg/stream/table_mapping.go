@@ -531,11 +531,11 @@ func ExtractValue(e *kv.Entry, cf string) ([]byte, error) {
 		if err := rawWriteCFValue.ParseFrom(e.Value); err != nil {
 			return nil, errors.Trace(err)
 		}
-		// consistent with rewrite_meta_rawkv.go
+		// have to be consistent with rewrite_meta_rawkv.go otherwise value like p/xxx/xxx will fall through
+		// and fail to parse
 		if rawWriteCFValue.IsDelete() || rawWriteCFValue.IsRollback() || !rawWriteCFValue.HasShortValue() {
 			return nil, nil
 		}
-
 		return rawWriteCFValue.GetShortValue(), nil
 	default:
 		return nil, errors.Errorf("unsupported column family: %s", cf)

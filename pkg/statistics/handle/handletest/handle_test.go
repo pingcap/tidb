@@ -123,7 +123,6 @@ func TestVersion(t *testing.T) {
 		testKit.Session(),
 		testKit2.Session(),
 		time.Millisecond,
-		is,
 		do.SysSessionPool(),
 		do.SysProcTracker(),
 		do.DDLNotifier(),

@@ -101,7 +101,7 @@ type JobManager struct {
 	// `scanWorkers` and `delWorkers` can be modified by setting variables at any time
 	baseWorker
 
-	sessPool util.SessionPool
+	sessPool util.DestroyableSessionPool
 
 	// id is the ddl id of this instance
 	id string
@@ -129,7 +129,7 @@ type JobManager struct {
 }
 
 // NewJobManager creates a new ttl job manager
-func NewJobManager(id string, sessPool util.SessionPool, store kv.Storage, etcdCli *clientv3.Client, leaderFunc func() bool) (manager *JobManager) {
+func NewJobManager(id string, sessPool util.DestroyableSessionPool, store kv.Storage, etcdCli *clientv3.Client, leaderFunc func() bool) (manager *JobManager) {
 	manager = &JobManager{}
 	manager.id = id
 	manager.store = store

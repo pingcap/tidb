@@ -545,6 +545,8 @@ func TestTaskCancelledAfterHeartbeatTimeout(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	sessionFactory := sessionFactory(t, dom)
 	se := sessionFactory()
+	// make sure tk has the same timezone as the session to ensure the following assertings are correct
+	tk.MustExec("set @@time_zone=?", se.GetSessionVars().TimeZone.String())
 
 	tk.MustExec("set global tidb_ttl_running_tasks = 128")
 	defer tk.MustExec("set global tidb_ttl_running_tasks = -1")

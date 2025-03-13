@@ -107,6 +107,13 @@ func (do *Domain) setPDClientDynamicOption(name, sVal string) error {
 		if err != nil {
 			return err
 		}
+	case vardef.TiDBEnableBatchQueryRegion:
+		val := variable.TiDBOptOn(sVal)
+		err := do.updatePDClient(opt.EnableRouterClient, val)
+		if err != nil {
+			return err
+		}
+		vardef.EnableBatchQueryRegion.Store(val)
 	}
 	return nil
 }
