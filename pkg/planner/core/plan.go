@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
-	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -37,7 +36,7 @@ func AsSctx(pctx base.PlanContext) (sessionctx.Context, error) {
 	return sctx, nil
 }
 
-func enforceProperty(p *property.PhysicalProperty, tsk base.Task, ctx base.PlanContext, funcdep *fd.FDSet) base.Task {
+func enforceProperty(p *property.PhysicalProperty, tsk base.Task, ctx base.PlanContext) base.Task {
 	if p.TaskTp == property.MppTaskType {
 		mpp, ok := tsk.(*MppTask)
 		if !ok || mpp.Invalid() {
@@ -47,7 +46,7 @@ func enforceProperty(p *property.PhysicalProperty, tsk base.Task, ctx base.PlanC
 			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because operator `Sort` is not supported now.")
 			return base.InvalidTask
 		}
-		tsk = mpp.enforceExchanger(p, funcdep)
+		tsk = mpp.enforceExchanger(p)
 	}
 	// when task is double cop task warping a index merge reader, tsk.plan() may be nil when indexPlanFinished is marked
 	// as false, while the real plan is in idxMergePartPlans. tsk.plan()==nil is not right here.
