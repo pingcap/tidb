@@ -87,17 +87,17 @@ func decodeBackfillSubTaskMeta(ctx context.Context, cloudStorageURI string, raw 
 		return nil, errors.Trace(err)
 	}
 
-	// read external meta to storage when using global sort
-	backend, err := storage.ParseBackend(cloudStorageURI, nil)
-	if err != nil {
-		return nil, err
-	}
-	extStore, err := storage.NewWithDefaultOpt(ctx, backend)
-	if err != nil {
-		return nil, err
-	}
-	defer extStore.Close()
-	if subtask.ExternalPath != "" {
+	if cloudStorageURI != "" && subtask.ExternalPath != "" {
+		// read external meta to storage when using global sort
+		backend, err := storage.ParseBackend(cloudStorageURI, nil)
+		if err != nil {
+			return nil, err
+		}
+		extStore, err := storage.NewWithDefaultOpt(ctx, backend)
+		if err != nil {
+			return nil, err
+		}
+		defer extStore.Close()
 		if err := external.ReadJSONFromExternalStorage(ctx, extStore, subtask.ExternalPath, subtask); err != nil {
 			return nil, errors.Trace(err)
 		}
