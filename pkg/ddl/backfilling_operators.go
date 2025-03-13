@@ -187,9 +187,9 @@ func NewAddIndexIngestPipeline(
 		tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta)
 	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, rowCntListener, jobID, subtaskID, nil, nil, nil, nil)
 
-	operator.Compose[TableScanTask](srcOp, scanOp)
-	operator.Compose[IndexRecordChunk](scanOp, ingestOp)
-	operator.Compose[IndexWriteResult](ingestOp, sinkOp)
+	operator.Compose(srcOp, scanOp)
+	operator.Compose(scanOp, ingestOp)
+	operator.Compose(ingestOp, sinkOp)
 
 	logutil.Logger(ctx).Info("build add index local storage operators",
 		zap.Int64("jobID", jobID),
@@ -256,9 +256,9 @@ func NewWriteIndexToExternalStoragePipeline(
 	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, rowCntListener,
 		jobID, subtaskID, writeStore, mergeStore, readSummaryMap, resource)
 
-	operator.Compose[TableScanTask](srcOp, scanOp)
-	operator.Compose[IndexRecordChunk](scanOp, writeOp)
-	operator.Compose[IndexWriteResult](writeOp, sinkOp)
+	operator.Compose(srcOp, scanOp)
+	operator.Compose(scanOp, writeOp)
+	operator.Compose(writeOp, sinkOp)
 
 	logutil.Logger(ctx).Info("build add index cloud storage operators",
 		zap.Int64("jobID", jobID),
@@ -980,8 +980,8 @@ func (s *indexWriteResultSink) collectResult() error {
 }
 
 func (s *indexWriteResultSink) flush() error {
-	if s.backendCtx == nil {
-		if s.writeStore != nil {
+	if s.backendCtx == nil { // use cloud storage
+		if s.writeStore != s.mergeStore { // use local disk
 			return s.mergeLocalOverlappingFilesAndUpload()
 		}
 		return nil
