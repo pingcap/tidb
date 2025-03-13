@@ -11,6 +11,7 @@ go_library(
         "//pkg/ddl/placement",
         "//pkg/ddl/util",
         "//pkg/domain/infosync",
+        "//pkg/executor",
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/metrics",
