@@ -292,8 +292,25 @@ func (p *PhysicalIndexLookUpReader) GetPlanCostVer2(taskType property.TaskType, 
 		indexRows*cpuFactor.Value,
 		func() string { return fmt.Sprintf("double-read-cpu(%v*%v)", doubleReadRows, cpuFactor) })
 	batchSize := float64(p.SCtx().GetSessionVars().IndexLookupSize)
-	taskPerBatch := 32.0 // TODO: remove this magic number
-	doubleReadTasks := doubleReadRows / batchSize * taskPerBatch
+
+	// Calculate an approximate number of regions
+	fullRowSize := cardinality.GetAvgRowSize(p.SCtx(), p.StatsInfo().HistColl, p.Schema().Columns, false, false)
+	realtimeCount := indexRows
+	if p.tablePlan.StatsInfo().HistColl != nil {
+		realtimeCount = float64(p.tablePlan.StatsInfo().HistColl.RealtimeCount)
+	} else if p.indexPlan.StatsInfo().HistColl != nil {
+		realtimeCount = float64(p.indexPlan.StatsInfo().HistColl.RealtimeCount)
+	}
+	numRegions := max(1, fullRowSize*realtimeCount/(256*1024*1024))
+
+	taskPerBatch := 32.0
+	// If we have "preferRangeScan" - scale the taskPefBatch between 16-32
+	if p.SCtx().GetSessionVars().GetAllowPreferRangeScan() && indexRows < realtimeCount {
+		taskPerBatch = min(max(taskPerBatch/2, (math.Log2(realtimeCount)/2)), taskPerBatch)
+	}
+
+	// The number of double-read tasks should not exceed the number of regions
+	doubleReadTasks := min((doubleReadRows/batchSize), numRegions) * taskPerBatch
 	doubleReadRequestCost := doubleReadCostVer2(option, doubleReadTasks, requestFactor)
 	doubleReadCost := costusage.SumCostVer2(doubleReadCPUCost, doubleReadRequestCost)
 

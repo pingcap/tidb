@@ -1257,9 +1257,9 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		fixcontrol.Fix52869,
 		false,
 	)
-	if preferRange {
+	if !preferRange {
 		// Override preferRange with the following limitations to scope
-		preferRange = preferMerge || idxMissingStats || ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1
+		preferRange = preferMerge || idxMissingStats || ds.TableStats.HistColl.Pseudo
 	}
 	if preferRange && len(candidates) > 1 {
 		// If a candidate path is TiFlash-path or forced-path or MV index or global index, we just keep them. For other
