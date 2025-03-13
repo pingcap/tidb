@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -187,13 +186,12 @@ func enumeratePhysicalPlans4Task(
 	if _, ok := p.Self().(*logicalop.LogicalSequence); ok {
 		iteration = iterateChildPlan4LogicalSequence
 	}
-	var fd *fd.FDSet
 	// while for join's both child, anyway and currently we should keep exchanger within the MPP for now
 	if !prop.IsParentPhyscicalHashJoin {
 		if joinP, ok := p.Self().(*logicalop.LogicalJoin); ok {
 			if joinP.JoinType == logicalop.InnerJoin {
 				// TODO(hawkingrei): FD should be maintained as logical prop instead of constructing it in physical phase
-				fd = joinP.ExtractFD()
+				prop.FD = joinP.ExtractFD()
 			}
 		}
 	}
@@ -235,7 +233,7 @@ func enumeratePhysicalPlans4Task(
 
 		// Enforce curTask property
 		if addEnforcer {
-			curTask = enforceProperty(prop, curTask, p.Plan.SCtx(), fd)
+			curTask = enforceProperty(prop, curTask, p.Plan.SCtx())
 		}
 
 		// Optimize by shuffle executor to running in parallel manner.
@@ -648,7 +646,7 @@ func findBestTask4LogicalMemTable(lp base.LogicalPlan, prop *property.PhysicalPr
 		}
 		if prop.CanAddEnforcer {
 			*prop = *oldProp
-			t = enforceProperty(prop, t, p.Plan.SCtx(), nil)
+			t = enforceProperty(prop, t, p.Plan.SCtx())
 			prop.CanAddEnforcer = true
 		}
 	}()
@@ -1440,7 +1438,7 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 		}
 		if prop.CanAddEnforcer {
 			*prop = *oldProp
-			t = enforceProperty(prop, t, ds.Plan.SCtx(), nil)
+			t = enforceProperty(prop, t, ds.Plan.SCtx())
 			prop.CanAddEnforcer = true
 		}
 
@@ -3104,7 +3102,7 @@ func findBestTask4LogicalCTE(lp base.LogicalPlan, prop *property.PhysicalPropert
 		t = rt
 	}
 	if prop.CanAddEnforcer {
-		t = enforceProperty(prop, t, p.Plan.SCtx(), nil)
+		t = enforceProperty(prop, t, p.Plan.SCtx())
 	}
 	return t, 1, nil
 }
