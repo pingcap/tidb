@@ -294,10 +294,11 @@ func (p *PhysicalIndexLookUpReader) GetPlanCostVer2(taskType property.TaskType, 
 	batchSize := float64(p.SCtx().GetSessionVars().IndexLookupSize)
 
 	// Calculate an approximate number of regions
-	fullRowSize := cardinality.GetAvgRowSize(p.SCtx(), p.StatsInfo().HistColl, p.Schema().Columns, false, false)
+	fullRowSize := max(indexRowSize, tableRowSize)
 	realtimeCount := indexRows
 	if p.tablePlan.StatsInfo().HistColl != nil {
 		realtimeCount = float64(p.tablePlan.StatsInfo().HistColl.RealtimeCount)
+		fullRowSize = cardinality.GetAvgRowSize(p.SCtx(), p.StatsInfo().HistColl, p.Schema().Columns, false, false)
 	} else if p.indexPlan.StatsInfo().HistColl != nil {
 		realtimeCount = float64(p.indexPlan.StatsInfo().HistColl.RealtimeCount)
 	}
