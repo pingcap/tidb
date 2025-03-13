@@ -1543,9 +1543,10 @@ select a from v4 where a < 10
 select /*+ qb_name(qb, v4@sel_4) use_index(t4@qb, idx_a)   qb_name(qb2, v4@sel_5) use_index(t4@qb, idx_b) */ * from (select * from d1) as t0 join (select * from d2) as t1;
 id	estRows	task	access object	operator info
 HashJoin_42	6944.44	root		CARTESIAN inner join
-├─TableReader_54(Build)	83.33	root		data:Selection_53
-│ └─Selection_53	83.33	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.a, 2), gt(planner__core__casetest__hint__hint.t4.b, 3), lt(planner__core__casetest__hint__hint.t4.b, 10)
-│   └─TableFullScan_52	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+├─IndexLookUp_62(Build)	83.33	root		
+│ ├─IndexRangeScan_59(Build)	250.00	cop[tikv]	table:t4, index:idx_b(b)	range:(3,10), keep order:false, stats:pseudo
+│ └─Selection_61(Probe)	83.33	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.a, 2)
+│   └─TableRowIDScan_60	250.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
 └─IndexLookUp_47(Probe)	83.33	root		
   ├─IndexRangeScan_44(Build)	250.00	cop[tikv]	table:t4, index:idx_a(a)	range:(2,8), keep order:false, stats:pseudo
   └─Selection_46(Probe)	83.33	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.b, 3)
@@ -1564,9 +1565,10 @@ HashJoin_42	6944.44	root		CARTESIAN inner join
 │ ├─IndexRangeScan_55(Build)	250.00	cop[tikv]	table:t4, index:idx_b(b)	range:(3,10), keep order:false, stats:pseudo
 │ └─Selection_57(Probe)	83.33	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.a, 2)
 │   └─TableRowIDScan_56	250.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
-└─TableReader_46(Probe)	83.33	root		data:Selection_45
-  └─Selection_45	83.33	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.a, 2), gt(planner__core__casetest__hint__hint.t4.b, 3), lt(planner__core__casetest__hint__hint.t4.a, 10), lt(planner__core__casetest__hint__hint.t4.a, 8), lt(planner__core__casetest__hint__hint.t4.a, 9)
-    └─TableFullScan_44	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+└─IndexLookUp_50(Probe)	83.33	root		
+  ├─IndexRangeScan_47(Build)	250.00	cop[tikv]	table:t4, index:idx_a(a)	range:(2,8), keep order:false, stats:pseudo
+  └─Selection_49(Probe)	83.33	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.b, 3)
+    └─TableRowIDScan_48	250.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	The qb_name hint qb is unused, please check whether the table list in the qb_name hint qb is correct
 drop table if exists t;

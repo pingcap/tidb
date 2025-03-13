@@ -1222,6 +1222,9 @@ type SessionVars struct {
 	// preferRangeScan allows optimizer to always prefer range scan over table scan.
 	preferRangeScan bool
 
+	// preferRangeRatio allows optimizer to prefer range scan when selectivity is below this ratio.
+	PreferRangeRatio float64
+
 	// EnableIndexMerge enables the generation of IndexMergePath.
 	enableIndexMerge bool
 

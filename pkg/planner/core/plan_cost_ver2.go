@@ -305,13 +305,16 @@ func (p *PhysicalIndexLookUpReader) GetPlanCostVer2(taskType property.TaskType, 
 	numRegions := max(1, fullRowSize*realtimeCount/(256*1024*1024))
 
 	taskPerBatch := 32.0
+	rowsPerBatch := doubleReadRows / batchSize
 	// If we have "preferRangeScan" - scale the taskPefBatch between 16-32
-	if p.SCtx().GetSessionVars().GetAllowPreferRangeScan() && indexRows < realtimeCount {
+	preferRangeSel := p.SCtx().GetSessionVars().PreferRangeRatio
+	if p.SCtx().GetSessionVars().GetAllowPreferRangeScan() && (indexRows/realtimeCount) < preferRangeSel {
 		taskPerBatch = min(max(taskPerBatch/2, (math.Log2(realtimeCount)/2)), taskPerBatch)
+		// The number of double-read tasks should not exceed the number of regions
+		rowsPerBatch = min(numRegions, rowsPerBatch)
 	}
 
-	// The number of double-read tasks should not exceed the number of regions
-	doubleReadTasks := min((doubleReadRows/batchSize), numRegions) * taskPerBatch
+	doubleReadTasks := rowsPerBatch * taskPerBatch
 	doubleReadRequestCost := doubleReadCostVer2(option, doubleReadTasks, requestFactor)
 	doubleReadCost := costusage.SumCostVer2(doubleReadCPUCost, doubleReadRequestCost)
 

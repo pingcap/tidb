@@ -3393,7 +3393,7 @@ drop table if exists t;
 create table t(a varchar(100), b int, c int, index idx1(a(2), b), index idx2(a));
 explain format = 'verbose' select * from t where a = 'abcdefghijk' and b > 4;
 id	estRows	estCost	task	access object	operator info
-IndexLookUp_8	33.33	65346.12	root		
+IndexLookUp_8	33.33	33346.12	root		
 ├─IndexRangeScan_5(Build)	33.33	9127.55	cop[tikv]	table:t, index:idx1(a, b)	range:("ab" 4,"ab" +inf], keep order:false, stats:pseudo
 └─Selection_7(Probe)	33.33	11066.03	cop[tikv]		eq(planner__core__integration.t.a, "abcdefghijk")
   └─TableRowIDScan_6	33.33	9402.70	cop[tikv]	table:t	keep order:false, stats:pseudo

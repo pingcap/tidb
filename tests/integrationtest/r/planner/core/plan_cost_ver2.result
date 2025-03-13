@@ -63,7 +63,7 @@ TableReader_5	100.00	269046.77	root		data:TableFullScan_4
 └─TableFullScan_4	100.00	250038.77	cop[tikv]	table:t	keep order:false
 explain format='verbose' select /*+ use_index(t, b) */ * from t where b<1;
 id	estRows	estCost	task	access object	operator info
-IndexLookUp_7	1.00	10241.58	root		
+IndexLookUp_7	1.00	5441.58	root		
 ├─IndexRangeScan_5(Build)	1.00	203.50	cop[tikv]	table:t, index:b(b)	range:[-inf,1), keep order:false
 └─TableRowIDScan_6(Probe)	1.00	227.31	cop[tikv]	table:t	keep order:false
 explain format='verbose' select /*+ use_index(t, b) */ * from t where b<10;

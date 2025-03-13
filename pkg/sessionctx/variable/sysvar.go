@@ -1989,6 +1989,10 @@ var defaultSysVars = []*SysVar{
 			s.SetAllowPreferRangeScan(TiDBOptOn(val))
 			return nil
 		}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptPreferRangeRatio, Value: strconv.FormatFloat(vardef.DefOptPreferRangeRatio, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1, SetSession: func(s *SessionVars, val string) error {
+		s.PreferRangeRatio = tidbOptFloat64(val, vardef.DefOptPreferRangeRatio)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptLimitPushDownThreshold, Value: strconv.Itoa(vardef.DefOptLimitPushDownThreshold), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
 		s.LimitPushDownThreshold = TidbOptInt64(val, vardef.DefOptLimitPushDownThreshold)
 		return nil
