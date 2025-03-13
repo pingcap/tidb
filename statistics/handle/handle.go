@@ -759,6 +759,16 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 	}
 
 	skipMissingPartitionStats := sc.GetSessionVars().SkipMissingPartitionStats
+	if sc.GetSessionVars().InRestrictedSQL {
+		// For AutoAnalyze and HandleDDLEvent(ActionDropTablePartition), we need to use @@global.tidb_skip_missing_partition_stats
+		val, err1 := sc.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBSkipMissingPartitionStats)
+		if err1 != nil {
+			logutil.BgLogger().Error("loading tidb_skip_missing_partition_stats failed", zap.Error(err1))
+			err = err1
+			return
+		}
+		skipMissingPartitionStats = variable.TiDBOptOn(val)
+	}
 	for _, def := range globalTableInfo.Partition.Definitions {
 		partitionID := def.ID
 		h.mu.Lock()
