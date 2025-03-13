@@ -245,7 +245,7 @@ func (s *StatsCacheImpl) GetNextCheckVersionWithOffset() uint64 {
 	// and A0 < B0 < B1 < A1. We will first read the stats of B, and update the lastVersion to B0, but we cannot read
 	// the table stats of A0 if we read stats that greater than lastVersion which is B0.
 	// We can read the stats if the diff between commit time and version is less than five lease.
-	offset := util.DurationToTS(5 * s.statsHandle.Lease()) // 5 lease is 15s.
+	offset := util.DurationToTS(LeaseOffset * s.statsHandle.Lease())
 	if lastVersion >= offset {
 		lastVersion = lastVersion - offset
 	} else {
