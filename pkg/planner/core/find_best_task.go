@@ -186,15 +186,6 @@ func enumeratePhysicalPlans4Task(
 	if _, ok := p.Self().(*logicalop.LogicalSequence); ok {
 		iteration = iterateChildPlan4LogicalSequence
 	}
-	// while for join's both child, anyway and currently we should keep exchanger within the MPP for now
-	if !prop.IsParentPhyscicalHashJoin {
-		if joinP, ok := p.Self().(*logicalop.LogicalJoin); ok {
-			if joinP.JoinType == logicalop.InnerJoin {
-				// TODO(hawkingrei): FD should be maintained as logical prop instead of constructing it in physical phase
-				prop.FD = joinP.ExtractFD()
-			}
-		}
-	}
 
 	for _, pp := range physicalPlans {
 		timeStampNow := p.GetLogicalTS4TaskMap()
@@ -584,6 +575,15 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 		newProp = prop
 	}
 
+	// while for join's both child, anyway and currently we should keep exchanger within the MPP for now
+	if !prop.IsParentPhyscicalHashJoin {
+		if joinP, ok := p.Self().(*logicalop.LogicalJoin); ok {
+			if joinP.JoinType == logicalop.InnerJoin {
+				// TODO(hawkingrei): FD should be maintained as logical prop instead of constructing it in physical phase
+				prop.FD = joinP.ExtractFD()
+			}
+		}
+	}
 	var cnt int64
 	var curTask base.Task
 	if bestTask, cnt, err = enumeratePhysicalPlans4Task(p, plansFitsProp, newProp, false, planCounter, opt); err != nil {
