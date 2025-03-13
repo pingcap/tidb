@@ -258,6 +258,9 @@ type PhysicalProperty struct {
 
 	// IsParentPhyscicalHashJoin indicates whether the parent of the current operator is a physical join.
 	IsParentPhyscicalHashJoin bool
+
+	// FD is the functional dependency set of the current operator.
+	FD *funcdep.FDSet
 }
 
 // NewPhysicalProperty builds property from columns.
@@ -303,8 +306,7 @@ func (p *PhysicalProperty) IsSubsetOf(keys []*MPPPartitionColumn) []int {
 }
 
 // NeedEnforceExchangerWithHashByEquivalence checks if the keys can match the needs of partition with equivalence.
-func (p *PhysicalProperty) NeedEnforceExchangerWithHashByEquivalence(keys []*MPPPartitionColumn,
-	fd *funcdep.FDSet) bool {
+func (p *PhysicalProperty) NeedEnforceExchangerWithHashByEquivalence(keys []*MPPPartitionColumn) bool {
 	// keys is the HashCol. If the partition cols are a subset of the hash cols, then need to enforce exchange.
 	if len(p.MPPPartitionCols) < len(keys) {
 		return true
@@ -319,7 +321,7 @@ func (p *PhysicalProperty) NeedEnforceExchangerWithHashByEquivalence(keys []*MPP
 		}
 		hashColUniqueID.Insert(int(hashCol.Col.UniqueID))
 	}
-	equivCal := fd.ClosureOfStrict(hashColUniqueID)
+	equivCal := p.FD.ClosureOfStrict(hashColUniqueID)
 	for _, col := range p.MPPPartitionCols {
 		if !equivCal.Has(int(col.Col.UniqueID)) {
 			return true
