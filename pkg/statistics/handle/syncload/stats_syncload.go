@@ -79,8 +79,8 @@ func GetSyncLoadConcurrencyByCPU() int {
 // when there are no urgent requests.
 type statsSyncLoad struct {
 	statsHandle    statstypes.StatsHandle
-	NeededItemsCh  chan *statstypes.NeededItemTask
-	TimeoutItemsCh chan *statstypes.NeededItemTask
+	neededItemsCh  chan *statstypes.NeededItemTask
+	timeoutItemsCh chan *statstypes.NeededItemTask
 	// This mutex protects the statsCache from concurrent modifications by multiple workers.
 	// Since multiple workers may update the statsCache for the same table simultaneously,
 	// the mutex ensures thread-safety during these updates.
@@ -93,8 +93,8 @@ var globalStatsSyncLoadSingleFlight singleflight.Group
 func NewStatsSyncLoad(statsHandle statstypes.StatsHandle) statstypes.StatsSyncLoad {
 	s := &statsSyncLoad{statsHandle: statsHandle}
 	cfg := config.GetGlobalConfig()
-	s.NeededItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
-	s.TimeoutItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
+	s.neededItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
+	s.timeoutItemsCh = make(chan *statstypes.NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	return s
 }
 
@@ -134,7 +134,7 @@ func (s *statsSyncLoad) SendLoadRequests(sc *stmtctx.StatementContext, neededHis
 				ResultCh:  make(chan stmtctx.StatsLoadResult, 1),
 			}
 			select {
-			case s.NeededItemsCh <- task:
+			case s.neededItemsCh <- task:
 				metrics.SyncLoadDedupCounter.Inc()
 				select {
 				case <-timer.C:
@@ -232,7 +232,7 @@ func (s *statsSyncLoad) AppendNeededItem(task *statstypes.NeededItemTask, timeou
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
-	case s.NeededItemsCh <- task:
+	case s.neededItemsCh <- task:
 	case <-timer.C:
 		return errors.New("Channel is full and timeout writing to channel")
 	}
@@ -520,27 +520,27 @@ func (s *statsSyncLoad) drainColTask(exit chan struct{}) (*statstypes.NeededItem
 		select {
 		case <-exit:
 			return nil, errExit
-		case task, ok := <-s.NeededItemsCh:
+		case task, ok := <-s.neededItemsCh:
 			if !ok {
 				return nil, errors.New("drainColTask: cannot read from NeededItemsCh, maybe the chan is closed")
 			}
 			// if the task has already timeout, no sql is sync-waiting for it,
 			// so do not handle it just now, put it to another channel with lower priority
 			if time.Now().After(task.ToTimeout) {
-				s.writeToTimeoutChan(s.TimeoutItemsCh, task)
+				s.writeToTimeoutChan(s.timeoutItemsCh, task)
 				continue
 			}
 			return task, nil
-		case task, ok := <-s.TimeoutItemsCh:
+		case task, ok := <-s.timeoutItemsCh:
 			select {
 			case <-exit:
 				return nil, errExit
-			case task0, ok0 := <-s.NeededItemsCh:
+			case task0, ok0 := <-s.neededItemsCh:
 				if !ok0 {
 					return nil, errors.New("drainColTask: cannot read from NeededItemsCh, maybe the chan is closed")
 				}
 				// send task back to TimeoutItemsCh and return the task drained from NeededItemsCh
-				s.writeToTimeoutChan(s.TimeoutItemsCh, task)
+				s.writeToTimeoutChan(s.timeoutItemsCh, task)
 				return task0, nil
 			default:
 				if !ok {
