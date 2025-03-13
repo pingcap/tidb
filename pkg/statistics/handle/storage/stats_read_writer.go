@@ -88,7 +88,7 @@ func (s *statsReadWriter) UpdateStatsMetaVersionForGC(physicalID int64) (err err
 // Also, we need to update the stats meta with a more recent version to avoid other nodes missing the delta update.
 // Combined with the stats meta version update, we can ensure the stats cache on other TiDB nodes is consistent.
 // See more at stats cache's Update function.
-func (s *statsReadWriter) handleSlowStatsSaving(results *statistics.AnalyzeResults, start time.Time) (uint64, error) {
+func (s *statsReadWriter) handleSlowStatsSaving(tableID int64, start time.Time) (uint64, error) {
 	dur := time.Since(start)
 	// Note: In unit tests, the lease is set to a value less than 0, which means the lease is disabled.
 	// This is why we need to explicitly check the lease here. Without this check,
@@ -107,18 +107,10 @@ func (s *statsReadWriter) handleSlowStatsSaving(results *statistics.AnalyzeResul
 
 	statslogutil.StatsLogger().Warn("Update stats cache is too slow",
 		zap.Duration("duration", dur),
-		zap.String("DB", results.Job.DBName),
-		zap.String("tableName", results.Job.TableName),
-		zap.String("partitionName", results.Job.PartitionName),
-		zap.String("jobInfo", results.Job.JobInfo),
+		zap.Int64("physicalID", tableID),
 	)
 
 	// Update stats meta to avoid other nodes missing the delta update.
-	tableID := results.TableID.TableID
-	if results.TableID.IsPartitionTable() {
-		tableID = results.TableID.PartitionID
-	}
-
 	statsVer := uint64(0)
 	err := util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		startTS, err := UpdateStatsMetaVersion(util.StatsCtx, sctx, tableID)
@@ -136,10 +128,6 @@ func (s *statsReadWriter) handleSlowStatsSaving(results *statistics.AnalyzeResul
 	if err != nil {
 		statslogutil.StatsLogger().Error("Failed to update stats meta version for slow saving, the stats cache on other TiDB nodes may be inconsistent",
 			zap.Int64("physicalID", tableID),
-			zap.String("DB", results.Job.DBName),
-			zap.String("tableName", results.Job.TableName),
-			zap.String("partitionName", results.Job.PartitionName),
-			zap.String("jobInfo", results.Job.JobInfo),
 			zap.Error(err),
 		)
 		return 0, errors.Errorf("failed to update stats meta version during analyze result save. The system may be too busy. Please retry the operation later")
@@ -148,10 +136,6 @@ func (s *statsReadWriter) handleSlowStatsSaving(results *statistics.AnalyzeResul
 	statslogutil.StatsLogger().Info("Successfully updated stats meta version for slow saving",
 		zap.Uint64("statsVer", statsVer),
 		zap.Int64("physicalID", tableID),
-		zap.String("DB", results.Job.DBName),
-		zap.String("tableName", results.Job.TableName),
-		zap.String("partitionName", results.Job.PartitionName),
-		zap.String("jobInfo", results.Job.JobInfo),
 	)
 	return statsVer, nil
 }
@@ -165,16 +149,23 @@ func (s *statsReadWriter) SaveTableStatsToStorage(results *statistics.AnalyzeRes
 		return err
 	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
+		tableID := results.TableID.GetStatisticsID()
 		// Check if saving was slow and update stats version if needed
-		version, err2 := s.handleSlowStatsSaving(results, start)
+		version, err2 := s.handleSlowStatsSaving(tableID, start)
 		if err2 != nil {
+			statslogutil.StatsLogger().Error("Failed to update stats meta version for slow saving during analyze job execution",
+				zap.Int64("physicalID", tableID),
+				zap.String("database", results.Job.DBName),
+				zap.String("table", results.Job.TableName),
+				zap.String("partition", results.Job.PartitionName),
+				zap.String("jobInfo", results.Job.JobInfo),
+				zap.Error(err2),
+			)
 			return err2
 		}
 		if version != 0 {
 			statsVer = version
 		}
-
-		tableID := results.TableID.GetStatisticsID()
 		s.statsHandler.RecordHistoricalStatsMeta(statsVer, source, true, tableID)
 	}
 	return err
@@ -219,12 +210,21 @@ func (s *statsReadWriter) SaveStatsToStorage(
 	source string,
 ) (err error) {
 	var statsVer uint64
+	start := time.Now()
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		statsVer, err = SaveStatsToStorage(sctx, tableID,
 			count, modifyCount, isIndex, hg, cms, topN, statsVersion, updateAnalyzeTime)
 		return err
 	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
+		// Check if saving was slow and update stats version if needed
+		version, err2 := s.handleSlowStatsSaving(tableID, start)
+		if err2 != nil {
+			return err2
+		}
+		if version != 0 {
+			statsVer = version
+		}
 		s.statsHandler.RecordHistoricalStatsMeta(statsVer, source, false, tableID)
 	}
 	return
