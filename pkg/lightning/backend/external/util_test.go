@@ -16,6 +16,7 @@ package external
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -325,6 +326,17 @@ func TestKeyMinMax(t *testing.T) {
 	require.Equal(t, []byte("b"), BytesMax([]byte("b"), []byte("a")))
 }
 
+type MockMeta struct {
+	BaseMeta
+	SortedDataMeta   *SortedKVMeta           `external:"true"`
+	SortedIndexMetas map[int64]*SortedKVMeta `external:"true"`
+}
+
+func (m MockMeta) MarshalJSON() ([]byte, error) {
+	type alias MockMeta
+	return m.Marshal(alias(m))
+}
+
 func TestWriteAndReadExternalJson(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemStorage()
@@ -351,36 +363,73 @@ func TestWriteAndReadExternalJson(t *testing.T) {
 		},
 	}
 
-	type importStepMeta struct {
-		SortedDataMeta   *SortedKVMeta
-		SortedIndexMetas map[int64]*SortedKVMeta
-	}
-	meta := importStepMeta{
+	meta := MockMeta{
 		SortedDataMeta:   dummyMeta,
 		SortedIndexMetas: indexMetas,
 	}
+	meta.ExternalPath = path
 
 	err := WriteJSONToExternalStorage(ctx, store, path, meta)
 	require.NoError(t, err)
 
-	var newMeta importStepMeta
+	var newMeta MockMeta
 	err = ReadJSONFromExternalStorage(ctx, store, path, &newMeta)
 	require.NoError(t, err)
+	require.Empty(t, newMeta.ExternalPath)
 
-	require.Equal(t, meta, newMeta)
+	var newMeta2 MockMeta
+	newMeta2.ExternalPath = path
+	err = ReadJSONFromExternalStorage(ctx, store, path, &newMeta2)
+	require.NoError(t, err)
+	require.Equal(t, meta, newMeta2)
+}
 
-	type mergeStepMeta struct {
-		SortedKVMeta *SortedKVMeta
+type Dummy struct {
+	Field1 int    `json:"field1"`
+	Field2 string `json:"field2" external:"true"`
+	field3 bool   // unexported field, should be ignored
+	Field4 string `json:"-"`
+	Field5 string `json:"custom_name"`
+}
+
+func TestMarshalFieldsNonExternal(t *testing.T) {
+	// For non-external, only fields without store:"external" are included,
+	// and fields with json:"-" should be skipped.
+	input := Dummy{
+		Field1: 42,
+		Field2: "hello",
+		field3: true,
+		Field4: "skip_me",
+		Field5: "customized",
 	}
-	mergeMeta := mergeStepMeta{
-		SortedKVMeta: dummyMeta,
-	}
-	err = WriteJSONToExternalStorage(ctx, store, path, mergeMeta)
+	data, err := marshalFields(input, false)
 	require.NoError(t, err)
 
-	var newMergeMeta mergeStepMeta
-	err = ReadJSONFromExternalStorage(ctx, store, path, &newMergeMeta)
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(data, &result))
+
+	// Expect "field1" and "custom_name" to be present.
+	require.Len(t, result, 2)
+	require.Equal(t, float64(42), result["field1"])
+	require.Equal(t, "customized", result["custom_name"])
+}
+
+func TestMarshalFieldsExternal(t *testing.T) {
+	// For external, only fields with store:"external" are included.
+	input := Dummy{
+		Field1: 42,
+		Field2: "hello",
+		Field4: "skip_me",
+		Field5: "customized",
+		field3: true,
+	}
+	data, err := marshalFields(input, true)
 	require.NoError(t, err)
 
-	require.Equal(t, mergeMeta, newMergeMeta)
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(data, &result))
+
+	// Expect only "field2" to be present.
+	require.Len(t, result, 1)
+	require.Equal(t, "hello", result["field2"])
 }

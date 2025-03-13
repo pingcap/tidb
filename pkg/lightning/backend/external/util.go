@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	goerrors "errors"
 	"io"
+	"reflect"
 	"slices"
 	"sort"
 	"strconv"
@@ -321,24 +322,6 @@ func (m *SortedKVMeta) GetStatFiles() []string {
 	return ret
 }
 
-// WriteJSONToExternalStorage to write any struct as JSON to external storage.
-func WriteJSONToExternalStorage(ctx context.Context, store storage.ExternalStorage, path string, v any) error {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return store.WriteFile(ctx, path, data)
-}
-
-// ReadJSONFromExternalStorage to read and unmarshal JSON from external storage into v.
-func ReadJSONFromExternalStorage(ctx context.Context, store storage.ExternalStorage, path string, v any) error {
-	data, err := store.ReadFile(ctx, path)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return errors.Trace(json.Unmarshal(data, v))
-}
-
 // BytesMin returns the smallest of byte slice a and b.
 func BytesMin(a, b []byte) []byte {
 	if bytes.Compare(a, b) < 0 {
@@ -363,4 +346,78 @@ func getSpeed(n uint64, dur float64, isBytes bool) string {
 		return units.BytesSize(float64(n) / dur)
 	}
 	return strconv.FormatFloat(float64(n)/dur, 'f', 4, 64)
+}
+
+// Helper function: when external is false, only serialize non-external fields;
+// when true, serialize only external fields.
+// simply handle json:"-", other tags are ignored.
+func marshalFields(m any, external bool) ([]byte, error) {
+	t := reflect.TypeOf(m)
+	v := reflect.ValueOf(m)
+	if t.Kind() == reflect.Ptr {
+		t = t.Elem()
+		v = v.Elem()
+	}
+	result := make(map[string]any)
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		// Skip non-exported fields
+		if field.PkgPath != "" {
+			continue
+		}
+		tag, ok := field.Tag.Lookup("external")
+		if external {
+			// Include only fields with tag external:"true"
+			if !(ok && tag == "true") {
+				continue
+			}
+		} else {
+			// Skip fields with tag external:"true"
+			if ok && tag == "true" {
+				continue
+			}
+		}
+		// Handle json:"-" by skipping such field.
+		jsonTag := field.Tag.Get("json")
+		if jsonTag == "-" {
+			continue
+		}
+		key := field.Name
+		if jsonTag != "" {
+			key = strings.Split(jsonTag, ",")[0]
+		}
+		result[key] = v.Field(i).Interface()
+	}
+	return json.Marshal(result)
+}
+
+// WriteJSONToExternalStorage to write any struct as JSON to external storage.
+func WriteJSONToExternalStorage(ctx context.Context, store storage.ExternalStorage, path string, v any) error {
+	data, err := marshalFields(v, true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return store.WriteFile(ctx, path, data)
+}
+
+// ReadJSONFromExternalStorage to read and unmarshal JSON from external storage into v.
+func ReadJSONFromExternalStorage(ctx context.Context, store storage.ExternalStorage, path string, v any) error {
+	data, err := store.ReadFile(ctx, path)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return errors.Trace(json.Unmarshal(data, v))
+}
+
+// BaseMeta is the base meta struct for external storage.
+type BaseMeta struct {
+	ExternalPath string
+}
+
+// Marshal serializes the meta struct. If ExternalPath is not empty, only serialize non-external fields.
+func (bm BaseMeta) Marshal(meta any) ([]byte, error) {
+	if bm.ExternalPath == "" {
+		return json.Marshal(meta)
+	}
+	return marshalFields(meta, false)
 }

@@ -261,18 +261,14 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 		autoid.AutoIncrementType: allocators.Get(autoid.AutoIncrementType).Base(),
 		autoid.AutoRandomType:    allocators.Get(autoid.AutoRandomType).Base(),
 	}
-	importStepExternalMeta := ImportStepExternalMeta{
-		SortedDataMeta:   sharedVars.SortedDataMeta,
-		SortedIndexMetas: sharedVars.SortedIndexMetas,
-	}
+	subtaskMeta.SortedDataMeta = sharedVars.SortedDataMeta
+	subtaskMeta.SortedIndexMetas = sharedVars.SortedIndexMetas
 	// if using globalsort, write the external meta to external storage.
 	if s.tableImporter.IsGlobalSort() {
 		subtaskMeta.ExternalPath = externalMetaPath(s.taskID, subtask.ID)
-		if err := external.WriteJSONToExternalStorage(ctx, s.tableImporter.GlobalSortStore, subtaskMeta.ExternalPath, importStepExternalMeta); err != nil {
+		if err := external.WriteJSONToExternalStorage(ctx, s.tableImporter.GlobalSortStore, subtaskMeta.ExternalPath, subtaskMeta); err != nil {
 			return errors.Trace(err)
 		}
-	} else {
-		subtaskMeta.ImportStepExternalMeta = importStepExternalMeta
 	}
 
 	s.sharedVars.Delete(subtaskMeta.ID)
@@ -382,11 +378,9 @@ func (m *mergeSortStepExecutor) onFinished(ctx context.Context, subtask *proto.S
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)
 	}
+	subtaskMeta.SortedKVMeta = *m.subtaskSortedKVMeta
 	subtaskMeta.ExternalPath = externalMetaPath(m.taskID, subtask.ID)
-	mergeSortStepExternalMeta := MergeSortStepExternalMeta{
-		SortedKVMeta: *m.subtaskSortedKVMeta,
-	}
-	if err := external.WriteJSONToExternalStorage(ctx, m.controller.GlobalSortStore, subtaskMeta.ExternalPath, mergeSortStepExternalMeta); err != nil {
+	if err := external.WriteJSONToExternalStorage(ctx, m.controller.GlobalSortStore, subtaskMeta.ExternalPath, subtaskMeta); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -429,11 +423,9 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 
 	// read write and ingest step meta from external storage when using global sort.
 	if sm.ExternalPath != "" && e.tableImporter.IsGlobalSort() {
-		var externalMeta WriteIngestStepExternalMeta
-		if err := external.ReadJSONFromExternalStorage(ctx, e.tableImporter.GlobalSortStore, sm.ExternalPath, &externalMeta); err != nil {
+		if err := external.ReadJSONFromExternalStorage(ctx, e.tableImporter.GlobalSortStore, sm.ExternalPath, sm); err != nil {
 			return errors.Trace(err)
 		}
-		sm.WriteIngestStepExternalMeta = externalMeta
 	}
 
 	logger := e.logger.With(zap.Int64("subtask-id", subtask.ID),

@@ -134,29 +134,27 @@ func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
 		prefix := fmt.Sprintf("d_%d_", i)
 		idxPrefix := fmt.Sprintf("i1_%d_", i)
 		meta := &ImportStepMeta{
-			ImportStepExternalMeta: ImportStepExternalMeta{
-				SortedDataMeta: &external.SortedKVMeta{
-					StartKey:    []byte(prefix + "a"),
-					EndKey:      []byte(prefix + "c"),
+			SortedDataMeta: &external.SortedKVMeta{
+				StartKey:    []byte(prefix + "a"),
+				EndKey:      []byte(prefix + "c"),
+				TotalKVSize: 12,
+				MultipleFilesStats: []external.MultipleFilesStat{
+					{
+						Filenames: [][2]string{
+							{prefix + "/1", prefix + "/1.stat"},
+						},
+					},
+				},
+			},
+			SortedIndexMetas: map[int64]*external.SortedKVMeta{
+				1: {
+					StartKey:    []byte(idxPrefix + "a"),
+					EndKey:      []byte(idxPrefix + "c"),
 					TotalKVSize: 12,
 					MultipleFilesStats: []external.MultipleFilesStat{
 						{
 							Filenames: [][2]string{
-								{prefix + "/1", prefix + "/1.stat"},
-							},
-						},
-					},
-				},
-				SortedIndexMetas: map[int64]*external.SortedKVMeta{
-					1: {
-						StartKey:    []byte(idxPrefix + "a"),
-						EndKey:      []byte(idxPrefix + "c"),
-						TotalKVSize: 12,
-						MultipleFilesStats: []external.MultipleFilesStat{
-							{
-								Filenames: [][2]string{
-									{idxPrefix + "/1", idxPrefix + "/1.stat"},
-								},
+								{idxPrefix + "/1", idxPrefix + "/1.stat"},
 							},
 						},
 					},
@@ -249,16 +247,14 @@ func genMergeStepMetas(t *testing.T, cnt int) [][]byte {
 		prefix := fmt.Sprintf("x_%d_", i)
 		meta := &MergeSortStepMeta{
 			KVGroup: "data",
-			MergeSortStepExternalMeta: MergeSortStepExternalMeta{
-				SortedKVMeta: external.SortedKVMeta{
-					StartKey:    []byte(prefix + "a"),
-					EndKey:      []byte(prefix + "c"),
-					TotalKVSize: 12,
-					MultipleFilesStats: []external.MultipleFilesStat{
-						{
-							Filenames: [][2]string{
-								{prefix + "/1", prefix + "/1.stat"},
-							},
+			SortedKVMeta: external.SortedKVMeta{
+				StartKey:    []byte(prefix + "a"),
+				EndKey:      []byte(prefix + "c"),
+				TotalKVSize: 12,
+				MultipleFilesStats: []external.MultipleFilesStat{
+					{
+						Filenames: [][2]string{
+							{prefix + "/1", prefix + "/1.stat"},
 						},
 					},
 				},
@@ -365,6 +361,6 @@ func TestSplitForOneSubtask(t *testing.T) {
 }
 
 func TestWriteIngestStepExternalMetaPath(t *testing.T) {
-	require.Equal(t, "1/write-ingest-meta/1.json", writeIngestStepExternalMetaPath(1, 1))
-	require.Equal(t, "2/write-ingest-meta/3.json", writeIngestStepExternalMetaPath(2, 3))
+	require.Equal(t, "1/write-ingest-meta/1/meta.json", writeIngestStepExternalMetaPath(1, 1))
+	require.Equal(t, "2/write-ingest-meta/3/meta.json", writeIngestStepExternalMetaPath(2, 3))
 }

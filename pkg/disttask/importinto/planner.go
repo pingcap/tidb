@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"math"
 	"path"
 	"strconv"
@@ -394,12 +393,9 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 	if planCtx.GlobalSort {
 		for i, spec := range specs {
 			if w, ok := spec.(*WriteIngestSpec); ok {
-				externalPath := writeIngestStepExternalMetaPath(planCtx.TaskID, i+1)
-				if err := external.WriteJSONToExternalStorage(planCtx.Ctx, controller.GlobalSortStore, externalPath, w.WriteIngestStepExternalMeta); err != nil {
+				w.ExternalPath = writeIngestStepExternalMetaPath(planCtx.TaskID, i+1)
+				if err := external.WriteJSONToExternalStorage(planCtx.Ctx, controller.GlobalSortStore, w.ExternalPath, w); err != nil {
 					return nil, errors.Trace(err)
-				}
-				w.WriteIngestStepExternalMeta = WriteIngestStepExternalMeta{
-					ExternalPath: externalPath,
 				}
 			}
 		}
@@ -459,21 +455,18 @@ func splitForOneSubtask(
 		// each subtask will write and ingest one range group
 		m := &WriteIngestStepMeta{
 			KVGroup: kvGroup,
-			TS:      ts,
-			WriteIngestStepExternalMeta: WriteIngestStepExternalMeta{
-				SortedKVMeta: external.SortedKVMeta{
-					StartKey: startKey,
-					EndKey:   endKey,
-					// this is actually an estimate, we don't know the exact size of the data
-					TotalKVSize: uint64(config.DefaultBatchSize),
-				},
-				DataFiles:      dataFiles,
-				StatFiles:      statFiles,
-				RangeJobKeys:   rangeJobKeys,
-				RangeSplitKeys: regionSplitKeys,
+			SortedKVMeta: external.SortedKVMeta{
+				StartKey: startKey,
+				EndKey:   endKey,
+				// this is actually an estimate, we don't know the exact size of the data
+				TotalKVSize: uint64(config.DefaultBatchSize),
 			},
+			DataFiles:      dataFiles,
+			StatFiles:      statFiles,
+			RangeJobKeys:   rangeJobKeys,
+			RangeSplitKeys: regionSplitKeys,
+			TS:             ts,
 		}
-
 		ret = append(ret, &WriteIngestSpec{m})
 
 		startKey = endKey
@@ -495,11 +488,9 @@ func getSortedKVMetasOfEncodeStep(ctx context.Context, subTaskMetas [][]byte, st
 			return nil, errors.Trace(err)
 		}
 		if stepMeta.ExternalPath != "" && store != nil {
-			var importStepExternalMeta ImportStepExternalMeta
-			if err := external.ReadJSONFromExternalStorage(ctx, store, stepMeta.ExternalPath, &importStepExternalMeta); err != nil {
+			if err := external.ReadJSONFromExternalStorage(ctx, store, stepMeta.ExternalPath, &stepMeta); err != nil {
 				return nil, errors.Trace(err)
 			}
-			stepMeta.ImportStepExternalMeta = importStepExternalMeta
 		}
 		dataKVMeta.Merge(stepMeta.SortedDataMeta)
 		for indexID, sortedIndexMeta := range stepMeta.SortedIndexMetas {
@@ -527,11 +518,9 @@ func getSortedKVMetasOfMergeStep(ctx context.Context, subTaskMetas [][]byte, sto
 			return nil, errors.Trace(err)
 		}
 		if stepMeta.ExternalPath != "" && store != nil {
-			var mergeSortStepExternalMeta MergeSortStepExternalMeta
-			if err := external.ReadJSONFromExternalStorage(ctx, store, stepMeta.ExternalPath, &mergeSortStepExternalMeta); err != nil {
+			if err := external.ReadJSONFromExternalStorage(ctx, store, stepMeta.ExternalPath, &stepMeta); err != nil {
 				return nil, errors.Trace(err)
 			}
-			stepMeta.MergeSortStepExternalMeta = mergeSortStepExternalMeta
 		}
 		meta, ok := result[stepMeta.KVGroup]
 		if !ok {
@@ -598,6 +587,6 @@ func getRangeSplitter(
 }
 
 func writeIngestStepExternalMetaPath(taskID int64, idx int) string {
-	prefix := path.Join(strconv.FormatInt(taskID, 10), "write-ingest-meta")
-	return path.Join(prefix, fmt.Sprintf("%d.json", idx))
+	prefix := path.Join(strconv.FormatInt(taskID, 10), "write-ingest-meta", strconv.Itoa(idx))
+	return path.Join(prefix, "meta.json")
 }
