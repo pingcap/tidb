@@ -1085,9 +1085,9 @@ func GetLockTablesArgs(job *Job) (*LockTablesArgs, error) {
 
 // AlterTableModeArgs is the argument for AlterTableMode.
 type AlterTableModeArgs struct {
-	TableMode TableModeState
-	SchemaID  int64
-	TableID   int64
+	TableMode TableMode `json:"table_mode,omitempty"`
+	SchemaID  int64     `json:"schema_id,omitempty"`
+	TableID   int64     `json:"table_id,omitempty"`
 }
 
 func (a *AlterTableModeArgs) getArgsV1(*Job) []any {

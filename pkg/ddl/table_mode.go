@@ -33,46 +33,58 @@ func onAlterTableMode(jobCtx *jobContext, job *model.Job) (ver int64, err error)
 		return ver, err
 	}
 
-	switch tbInfo.TableMode {
+	switch tbInfo.Mode {
 	case model.TableModeNormal, model.TableModeImport, model.TableModeRestore:
+		// skip updateVersionAndTableInfo when changing table mode from TableModeNormal to TableModeNormal
+		if tbInfo.Mode == model.TableModeNormal && args.TableMode == model.TableModeNormal {
+			job.State = model.JobStateDone
+			return ver, err
+		}
 		// directly change table mode to target mode
 		err = alterTableMode(tbInfo, args)
 		if err != nil {
 			job.State = model.JobStateCancelled
-		} else {
-			// update table info and schema version
-			ver, err = updateVersionAndTableInfo(jobCtx, job, tbInfo, true)
-			job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
+			return ver, err
 		}
+		// update table info and schema version
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tbInfo, true)
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 	default:
 		job.State = model.JobStateCancelled
-		err = infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(tbInfo.TableMode, args.TableMode, tbInfo.Name.O)
+		err = infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(tbInfo.Mode, args.TableMode, tbInfo.Name.O)
 	}
 
 	return ver, err
 }
 
 // alterTableMode first checks if the change is valid and changes table mode to target mode
+// Currently we can assume args.TableMode will NEVER be model.TableModeRestore.
+// Because BR will NOT use this function to set a table into ModeRestore,
+// instead BR will use (batch)CreateTableWithInfo.
 func alterTableMode(tbInfo *model.TableInfo, args *model.AlterTableModeArgs) error {
-	// Currently we can assume args.TableMode will NEVER be model.TableModeRestore.
-	// Because BR will NOT use this function to set a table into ModeRestore,
-	// instead BR will use (batch)CreateTableWithInfo.
+	ok := checkTableMode(tbInfo.Mode, args.TableMode)
+	if !ok {
+		return infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(tbInfo.Mode, args.TableMode, tbInfo.Name.O)
+	}
 
-	if args.TableMode == model.TableModeImport {
+	tbInfo.Mode = args.TableMode
+	return nil
+}
+
+func checkTableMode(origin, target model.TableMode) bool {
+	if target == model.TableModeImport {
 		// only transition from ModeNormal to ModeImport is allowed
-		if tbInfo.TableMode != model.TableModeNormal {
-			return infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(tbInfo.TableMode, args.TableMode, tbInfo.Name.O)
+		if origin != model.TableModeNormal {
+			return false
 		}
 	}
 
-	if args.TableMode == model.TableModeRestore {
+	if target == model.TableModeRestore {
 		// Currently this branch will never be executed except for testing.
 		// only transition from ModeNormal to ModeRestore is allowed
-		if tbInfo.TableMode != model.TableModeNormal {
-			return infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(tbInfo.TableMode, args.TableMode, tbInfo.Name.O)
+		if origin != model.TableModeNormal {
+			return false
 		}
 	}
-
-	tbInfo.TableMode = args.TableMode
-	return nil
+	return true
 }

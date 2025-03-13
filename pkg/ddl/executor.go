@@ -1060,15 +1060,14 @@ func (e *executor) createTableWithInfoJob(
 	if oldTable, err := is.TableByName(e.ctx, schema.Name, tbInfo.Name); err == nil {
 		err = infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schema.Name, Name: tbInfo.Name})
 		switch cfg.OnExist {
-		// If table not exists, we will set tableMode as specified in tbInfo. If table exists:
 		case OnExistIgnore:
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
-			// If table exists, and if target TableMode is ModeRestore, we check if the existing table is consistent
-			if tbInfo.TableMode == model.TableModeRestore {
-				oldTableMode := oldTable.Meta().TableMode
+			// if target TableMode is ModeRestore, we check if the existing mode is consistent the new one
+			if tbInfo.Mode == model.TableModeRestore {
+				oldTableMode := oldTable.Meta().Mode
 				if oldTableMode != model.TableModeRestore {
 					// Indeed this is not a conversion problem but an inconsistency problem.
-					return nil, infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(oldTableMode, tbInfo.TableMode, tbInfo.Name)
+					return nil, infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(oldTableMode, tbInfo.Mode, tbInfo.Name)
 				}
 			}
 			// Currently, target TableMode will NEVER be ModeImport because ImportInto does not use this function
@@ -5661,7 +5660,7 @@ func (e *executor) UnlockTables(ctx sessionctx.Context, unlockTables []model.Tab
 	return errors.Trace(err)
 }
 
-func (e *executor) AlterTableMode(ctx sessionctx.Context, args *model.AlterTableModeArgs) error {
+func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTableModeArgs) error {
 	is := e.infoCache.GetLatest()
 
 	schema, ok := is.SchemaByID(args.SchemaID)
@@ -5669,9 +5668,14 @@ func (e *executor) AlterTableMode(ctx sessionctx.Context, args *model.AlterTable
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("SchemaID: %v", args.SchemaID))
 	}
 
-	_, ok = is.TableByID(e.ctx, args.TableID)
+	table, ok := is.TableByID(e.ctx, args.TableID)
 	if !ok {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema.Name, args.TableID)
+	}
+
+	ok = checkTableMode(table.Meta().Mode, args.TableMode)
+	if !ok {
+		return infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(table.Meta().Mode, args.TableMode, table.Meta().Name.O)
 	}
 
 	job := &model.Job{
@@ -5680,9 +5684,11 @@ func (e *executor) AlterTableMode(ctx sessionctx.Context, args *model.AlterTable
 		TableID:        args.TableID,
 		Type:           model.ActionAlterTableMode,
 		BinlogInfo:     &model.HistoryInfo{},
-		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        sctx.GetSessionVars().SQLMode,
 	}
-	err := e.doDDLJob2(ctx, job, args)
+	sctx.SetValue(sessionctx.QueryString, "skip")
+	err := e.doDDLJob2(sctx, job, args)
 	return errors.Trace(err)
 }
 

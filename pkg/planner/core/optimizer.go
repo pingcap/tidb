@@ -248,29 +248,26 @@ func CheckTableLock(ctx tablelock.TableLockReadContext, is infoschema.InfoSchema
 	return nil
 }
 
-// CheckTableMode checks if the table is accessible by table mode.
-func CheckTableMode(is infoschema.InfoSchema, node ast.Node, vs []visitInfo) error {
+// CheckTableMode checks if the table is accessible by table mode, only TableModeNormal can be accessed.
+func CheckTableMode(node *resolve.NodeW) error {
 	// First make exceptions for stmt that only visit table meta;
 	// For example, `describe <table_name>` and `show create table <table_name>`;
 	// These exceptions can be simply categorized as `ast.ShowStmt`;
-	if _, ok := node.(*ast.ShowStmt); ok {
+	if _, ok := node.Node.(*ast.ShowStmt); ok {
 		return nil
 	}
 
-	for i := range vs {
-		tb, err := is.TableByName(context.Background(), ast.NewCIStr(vs[i].db), ast.NewCIStr(vs[i].table))
-		if infoschema.ErrTableNotExists.Equal(err) {
+	tableList := ExtractTableList(node, false)
+	for i := range tableList {
+		tb := node.GetResolveContext().GetTableName(tableList[i])
+		if tb == nil {
 			return nil
 		}
-		if err != nil {
-			return err
-		}
-		if tb.Meta().TableMode == model.TableModeImport {
-			return infoschema.ErrProtectedTableMode.GenWithStackByArgs(tb.Meta().Name.O, model.TableModeImport)
-		} else if tb.Meta().TableMode == model.TableModeRestore {
-			return infoschema.ErrProtectedTableMode.GenWithStackByArgs(tb.Meta().Name.O, model.TableModeRestore)
+		if tb.TableInfo.Mode == model.TableModeImport || tb.TableInfo.Mode == model.TableModeRestore {
+			return infoschema.ErrProtectedTableMode.GenWithStackByArgs(tb.TableName, tb.TableInfo.Mode)
 		}
 	}
+
 	return nil
 }
 

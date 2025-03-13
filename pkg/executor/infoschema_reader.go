@@ -700,32 +700,32 @@ func (e *memtableRetriever) setDataFromOneTable(
 		}
 
 		record := types.MakeDatums(
-			infoschema.CatalogVal,    // TABLE_CATALOG
-			schema.O,                 // TABLE_SCHEMA
-			table.Name.O,             // TABLE_NAME
-			tableType,                // TABLE_TYPE
-			"InnoDB",                 // ENGINE
-			uint64(10),               // VERSION
-			"Compact",                // ROW_FORMAT
-			rowCount,                 // TABLE_ROWS
-			avgRowLength,             // AVG_ROW_LENGTH
-			dataLength,               // DATA_LENGTH
-			uint64(0),                // MAX_DATA_LENGTH
-			indexLength,              // INDEX_LENGTH
-			uint64(0),                // DATA_FREE
-			autoIncID,                // AUTO_INCREMENT
-			createTime,               // CREATE_TIME
-			nil,                      // UPDATE_TIME
-			nil,                      // CHECK_TIME
-			collation,                // TABLE_COLLATION
-			nil,                      // CHECKSUM
-			createOptions,            // CREATE_OPTIONS
-			table.Comment,            // TABLE_COMMENT
-			table.ID,                 // TIDB_TABLE_ID
-			shardingInfo,             // TIDB_ROW_ID_SHARDING_INFO
-			pkType,                   // TIDB_PK_TYPE
-			policyName,               // TIDB_PLACEMENT_POLICY_NAME
-			table.TableMode.String(), // TIDB_TABLE_MODE
+			infoschema.CatalogVal, // TABLE_CATALOG
+			schema.O,              // TABLE_SCHEMA
+			table.Name.O,          // TABLE_NAME
+			tableType,             // TABLE_TYPE
+			"InnoDB",              // ENGINE
+			uint64(10),            // VERSION
+			"Compact",             // ROW_FORMAT
+			rowCount,              // TABLE_ROWS
+			avgRowLength,          // AVG_ROW_LENGTH
+			dataLength,            // DATA_LENGTH
+			uint64(0),             // MAX_DATA_LENGTH
+			indexLength,           // INDEX_LENGTH
+			uint64(0),             // DATA_FREE
+			autoIncID,             // AUTO_INCREMENT
+			createTime,            // CREATE_TIME
+			nil,                   // UPDATE_TIME
+			nil,                   // CHECK_TIME
+			collation,             // TABLE_COLLATION
+			nil,                   // CHECKSUM
+			createOptions,         // CREATE_OPTIONS
+			table.Comment,         // TABLE_COMMENT
+			table.ID,              // TIDB_TABLE_ID
+			shardingInfo,          // TIDB_ROW_ID_SHARDING_INFO
+			pkType,                // TIDB_PK_TYPE
+			policyName,            // TIDB_PLACEMENT_POLICY_NAME
+			table.Mode.String(),   // TIDB_TABLE_MODE
 		)
 		rows = append(rows, record)
 		e.recordMemoryConsume(record)

@@ -48,52 +48,33 @@ func setTableModeTest(
 	ctx sessionctx.Context,
 	t *testing.T,
 	store kv.Storage,
-	de ddl.ExecutorForTest,
+	de ddl.Executor,
 	dbInfo *model.DBInfo,
 	tblInfo *model.TableInfo,
-	mode model.TableModeState,
+	mode model.TableMode,
 ) error {
 	args := &model.AlterTableModeArgs{
 		TableMode: mode,
 		SchemaID:  dbInfo.ID,
 		TableID:   tblInfo.ID,
 	}
-	job := &model.Job{
-		Version:    model.JobVersion2,
-		SchemaID:   dbInfo.ID,
-		TableID:    tblInfo.ID,
-		Type:       model.ActionAlterTableMode,
-		BinlogInfo: &model.HistoryInfo{},
-		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
-			{
-				Database: dbInfo.Name.L,
-				Table:    tblInfo.Name.L,
-			},
-		},
-	}
-	ctx.SetValue(sessionctx.QueryString, "skip")
-	err := de.DoDDLJobWrapper(ctx, ddl.NewJobWrapperWithArgs(job, args, true))
-
+	err := de.AlterTableMode(ctx, args)
 	if err == nil {
-		v := getSchemaVer(t, ctx)
-		checkHistoryJobArgs(t, ctx, job.ID, &historyJobArgs{ver: v, tbl: tblInfo})
-
 		testCheckTableState(t, store, dbInfo, tblInfo, model.StatePublic)
-		testCheckJobDone(t, store, job.ID, true)
 		checkTableModeTest(t, store, dbInfo, tblInfo, mode)
 	}
 
 	return err
 }
 
-func checkTableModeTest(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, mode model.TableModeState) {
+func checkTableModeTest(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, mode model.TableMode) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		tt := meta.NewMutator(txn)
 		info, err := tt.GetTable(dbInfo.ID, tblInfo.ID)
 		require.NoError(t, err)
 		require.NotNil(t, info)
-		require.Equal(t, mode, info.TableMode)
+		require.Equal(t, mode, info.Mode)
 		return nil
 	})
 	require.NoError(t, err)
@@ -116,53 +97,71 @@ func TestTableModeBasic(t *testing.T) {
 
 	// init test
 	tk.MustExec("use test")
-	tk.MustExec("create table t1(id int)")
+	tk.MustExec("create table t1(id int, c1 int, c2 int, index idx1(c1))")
 
-	// get cloned table info for creating new table t1_restore
+	// get cloned table info for creating new table t1_restore_import
 	tblInfo := getClonedTableInfoFromDomain(t, "test", "t1", domain)
 
 	// For testing create table as ModeRestore
-	tblInfo.Name = ast.NewCIStr("t1_restore")
-	tblInfo.TableMode = model.TableModeRestore
+	tblInfo.Name = ast.NewCIStr("t1_restore_import")
+	tblInfo.Mode = model.TableModeRestore
 	err := de.CreateTableWithInfo(tk.Session(), ast.NewCIStr("test"), tblInfo, nil, ddl.WithOnExist(ddl.OnExistIgnore))
 	require.NoError(t, err)
 	dbInfo, ok := domain.InfoSchema().SchemaByName(ast.NewCIStr("test"))
 	require.True(t, ok)
 	checkTableModeTest(t, store, dbInfo, tblInfo, model.TableModeRestore)
 
-	// For testing select is not allowed when table is in ModeImport
-	tk.MustGetErrCode("select * from t1_restore", errno.ErrProtectedTableMode)
-
-	// For testing insert is not allowed when table is in ModeImport
-	tk.MustGetErrCode("insert into t1_restore values(1)", errno.ErrProtectedTableMode)
-
 	// For testing accessing table metadata is allowed when table is in ModeRestore
-	tk.MustExec("show create table t1_restore")
-	tk.MustExec("describe t1_restore")
+	tk.MustExec("show create table t1_restore_import")
+	tk.MustExec("describe t1_restore_import")
+
+	// For testing below stmt is not allowed when table is in ModeImport/ModeRestore
+	// DMLS: select/insert/update/delete/alter table/drop table/truncate table
+	tk.MustGetErrCode("select * from t1_restore_import", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("insert into t1_restore_import values(1, 1, 1)", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("update t1_restore_import set id = 2 where id = 1", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("delete from t1_restore_import where id = 2", errno.ErrProtectedTableMode)
+	// DDLs: modify column/add column/add index, drop table, truncate table
+	tk.MustGetErrCode("drop table t1_restore_import", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("alter table t1_restore_import modify column c2 bigint", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("alter table t1_restore_import add column c3 int", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("alter table t1_restore_import drop column c2", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("alter table t1_restore_import drop index idx1", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("alter table t1_restore_import add index idx2(c2)", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("truncate table t1_restore_import", errno.ErrProtectedTableMode)
 
 	// For testing AlterTable ModeRestore -> ModeImport is not allowed
-	err = setTableModeTest(ctx, t, store, de.(ddl.ExecutorForTest), dbInfo, tblInfo, model.TableModeImport)
-	checkErrorCode(t, err, errno.ErrInvalidTableModeSet)
+	err = setTableModeTest(ctx, t, store, de, dbInfo, tblInfo, model.TableModeImport)
+	require.ErrorContains(t, err, "Invalid mode set from (or by default) Restore to Import for table t1_restore_import")
 
 	// For testing AlterTableMode ModeRestore -> ModeNormal
-	err = setTableModeTest(ctx, t, store, de.(ddl.ExecutorForTest), dbInfo, tblInfo, model.TableModeNormal)
+	err = setTableModeTest(ctx, t, store, de, dbInfo, tblInfo, model.TableModeNormal)
 	require.NoError(t, err)
 
 	// For testing AlterTableMode ModeNormal -> ModeRestore
-	err = setTableModeTest(ctx, t, store, de.(ddl.ExecutorForTest), dbInfo, tblInfo, model.TableModeRestore)
+	err = setTableModeTest(ctx, t, store, de, dbInfo, tblInfo, model.TableModeRestore)
 	require.NoError(t, err)
+
+	// For testing an exist table with ModeImport is not allowed recreate with ModeRestore from BR
+	err = setTableModeTest(ctx, t, store, de, dbInfo, tblInfo, model.TableModeNormal)
+	require.NoError(t, err)
+	err = setTableModeTest(ctx, t, store, de, dbInfo, tblInfo, model.TableModeImport)
+	require.NoError(t, err)
+	tblInfo.Mode = model.TableModeRestore
+	err = de.CreateTableWithInfo(tk.Session(), ast.NewCIStr("test"), tblInfo, nil, ddl.WithOnExist(ddl.OnExistIgnore))
+	require.ErrorContains(t, err, "Invalid mode set from (or by default) Import to Restore for table t1_restore_import")
 
 	// For testing batch create tables with info
 	var tblInfo1, tblInfo2, tblInfo3 *model.TableInfo
 	tblInfo1 = getClonedTableInfoFromDomain(t, "test", "t1", domain)
 	tblInfo1.Name = ast.NewCIStr("t1_1")
-	tblInfo1.TableMode = model.TableModeNormal
+	tblInfo1.Mode = model.TableModeNormal
 	tblInfo2 = getClonedTableInfoFromDomain(t, "test", "t1", domain)
 	tblInfo2.Name = ast.NewCIStr("t1_2")
-	tblInfo2.TableMode = model.TableModeImport
+	tblInfo2.Mode = model.TableModeImport
 	tblInfo3 = getClonedTableInfoFromDomain(t, "test", "t1", domain)
 	tblInfo3.Name = ast.NewCIStr("t1_3")
-	tblInfo3.TableMode = model.TableModeRestore
+	tblInfo3.Mode = model.TableModeRestore
 	err = de.BatchCreateTableWithInfo(
 		ctx,
 		ast.NewCIStr("test"),
@@ -197,7 +196,7 @@ func TestTableModeConcurrent(t *testing.T) {
 	for _, info := range t1Infos {
 		go func(info *model.TableInfo) {
 			defer wg.Done()
-			errs <- setTableModeTest(ctx, t, store, de.(ddl.ExecutorForTest), dbInfo, info, model.TableModeImport)
+			errs <- setTableModeTest(ctx, t, store, de, dbInfo, info, model.TableModeImport)
 		}(info)
 	}
 	wg.Wait()
@@ -212,8 +211,7 @@ func TestTableModeConcurrent(t *testing.T) {
 		}
 	}
 	require.Equal(t, 1, successCount)
-	require.NotNil(t, failedErr)
-	checkErrorCode(t, failedErr, errno.ErrInvalidTableModeSet)
+	require.ErrorContains(t, failedErr, "Invalid mode set from (or by default) Import to Import for table t1")
 	checkTableModeTest(t, store, dbInfo, t1Infos[0], model.TableModeImport)
 
 	// Concurrency test2: concurrently alter t1 to ModeNormal, expecting both success.
@@ -227,7 +225,8 @@ func TestTableModeConcurrent(t *testing.T) {
 	for _, info := range t1NormalInfos {
 		go func(info *model.TableInfo) {
 			defer wg2.Done()
-			errs2 <- setTableModeTest(ctx, t, store, de.(ddl.ExecutorForTest), dbInfo, info, model.TableModeNormal)
+
+			errs2 <- setTableModeTest(ctx, t, store, de, dbInfo, info, model.TableModeNormal)
 		}(info)
 	}
 	wg2.Wait()
@@ -238,7 +237,7 @@ func TestTableModeConcurrent(t *testing.T) {
 	checkTableModeTest(t, store, dbInfo, t1NormalInfos[0], model.TableModeNormal)
 
 	// Concurrency test3: concurrently alter t1 to ModeRestore and ModeImport, expecting one success, one failure.
-	modes := []model.TableModeState{
+	modes := []model.TableMode{
 		model.TableModeRestore,
 		model.TableModeImport,
 	}
@@ -250,9 +249,9 @@ func TestTableModeConcurrent(t *testing.T) {
 	wg3.Add(len(modes))
 	errs3 := make(chan error, len(modes))
 	for i, mode := range modes {
-		go func(clone *model.TableInfo, m model.TableModeState) {
+		go func(clone *model.TableInfo, m model.TableMode) {
 			defer wg3.Done()
-			errs3 <- setTableModeTest(ctx, t, store, de.(ddl.ExecutorForTest), dbInfo, clone, m)
+			errs3 <- setTableModeTest(ctx, t, store, de, dbInfo, clone, m)
 		}(clones[i], mode)
 	}
 	wg3.Wait()
