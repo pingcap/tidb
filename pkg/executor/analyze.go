@@ -18,8 +18,10 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"maps"
 	"math"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -475,16 +477,11 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 	close(errCh)
 	if len(errCh) > 0 {
 		errSet := make(map[string]struct{}, len(errCh))
-		for err1 := range errCh {
-			errSet[err1.Error()] = struct{}{}
+		for workerError := range errCh {
+			errSet[workerError.Error()] = struct{}{}
 		}
-		if len(errSet) > 0 {
-			errMsg := make([]string, 0, len(errSet))
-			for msg := range errSet {
-				errMsg = append(errMsg, msg)
-			}
-			err = errors.New(strings.Join(errMsg, ","))
-		}
+		errMsg := slices.Collect(maps.Keys(errSet))
+		err = errors.New(strings.Join(errMsg, ","))
 	}
 	for tableID := range tableIDs {
 		// Dump stats to historical storage.
