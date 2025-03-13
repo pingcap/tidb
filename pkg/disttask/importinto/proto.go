@@ -87,6 +87,7 @@ type MergeSortStepMeta struct {
 	external.SortedKVMeta `external:"true"`
 }
 
+// MarshalJSON implements json.Marshaler interface.
 func (m *MergeSortStepMeta) MarshalJSON() ([]byte, error) {
 	type alias MergeSortStepMeta
 	return m.BaseMeta.Marshal(alias(*m))
@@ -107,6 +108,7 @@ type WriteIngestStepMeta struct {
 	Result Result
 }
 
+// MarshalJSON implements json.Marshaler interface.
 func (m *WriteIngestStepMeta) MarshalJSON() ([]byte, error) {
 	type alias WriteIngestStepMeta
 	return m.BaseMeta.Marshal(alias(*m))
