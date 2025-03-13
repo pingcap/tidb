@@ -3,8 +3,10 @@ package executor
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -42,6 +44,17 @@ func UpdatePipelinedDMLProgress(
 	}()
 
 	if done {
+		// Failpoint to skip deleting the record when done=true
+		skip := false
+		failpoint.Inject("skipDeletePipelinedDMLProgress", func() {
+			skip = true
+		})
+		if skip {
+			logutil.Logger(ctx).Info("skipDeletePipelinedDMLProgress failpoint triggered, skipping delete",
+				zap.Uint64("startTS", startTS))
+			return nil
+		}
+
 		// When done, delete the record
 		sql := "DELETE FROM mysql.pipelined_dml_progress WHERE start_ts = %?"
 		_, err := se.GetSQLExecutor().ExecuteInternal(ctx, sql, startTS)
@@ -73,6 +86,17 @@ func UpdatePipelinedDMLProgress(
 		return returnErr
 
 	case transaction.PipelinedDMLResolvingLocks, transaction.PipelinedDMLRollingBack:
+		// Failpoint to pause when updating to ResolvingLocks status
+		if status == transaction.PipelinedDMLResolvingLocks {
+			failpoint.Inject("pauseResolvingLocksPipelinedDML", func() {
+				logutil.Logger(ctx).Info("pauseResolvingLocksPipelinedDML failpoint triggered, pausing",
+					zap.Uint64("startTS", startTS),
+					zap.Int64("resolvedRegions", resolvedRegions))
+				// Sleep for a short while to simulate a pause, but keep tests fast
+				time.Sleep(100 * time.Millisecond)
+			})
+		}
+
 		// The intermediate state only executes UPDATE
 		sql := `UPDATE mysql.pipelined_dml_progress
 				SET resolved_regions = %?, status = %?, update_time = NOW()

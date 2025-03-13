@@ -829,3 +829,124 @@ func TestRejectUnsupportedTables(t *testing.T) {
 	tk.MustExec("insert into cached values(1)")
 	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used on cached tables. Fallback to standard mode")
 }
+
+func TestPipelinedDMlProgressTable(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("delete from mysql.pipelined_dml_progress")
+	defer tk.MustExec("delete from mysql.pipelined_dml_progress")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(a int primary key, b int)")
+	tk.MustExec("insert into t1 values(1, 1), (2, 2), (3, 3)")
+	tk.MustExec("set session tidb_dml_type = bulk")
+
+	// Part 1: Test the "Executing" state before commit
+	// Use beforePipelinedCommit to pause right before the commit phase
+	require.Nil(t, failpoint.Enable("tikvclient/beforePipelinedCommit", `pause`))
+	defer failpoint.Disable("tikvclient/beforePipelinedCommit")
+
+	// Execute a DML statement in a goroutine since it will be paused by the failpoint
+	errCh := make(chan error, 1)
+	go func() {
+		var err error
+		defer func() {
+			errCh <- err
+		}()
+		_, err = tk.Exec("insert into t1 values (4, 4)")
+	}()
+
+	// Wait for the transaction to start and hit the failpoint
+	time.Sleep(500 * time.Millisecond)
+
+	// Check the content of the pipelined_dml_progress table
+	// The transaction should be in "Executing" state before commit
+	tk2 := testkit.NewTestKit(t, store)
+	rows := tk2.MustQuery("select * from mysql.pipelined_dml_progress").Rows()
+	require.GreaterOrEqual(t, len(rows), 1, "Expected at least one row in pipelined_dml_progress table")
+
+	// Check the record
+	foundT1Record := false
+	for _, row := range rows {
+		startTS := row[0]
+		involvedTables := row[1].(string)
+		status := row[2].(string)
+		resolvedRegions := row[3]
+
+		t.Logf("Stage 1 - Before commit: startTS=%v, tables=%s, status=%s, resolvedRegions=%v",
+			startTS, involvedTables, status, resolvedRegions)
+
+		// Look for the record for table t1
+		if involvedTables == "t1" {
+			foundT1Record = true
+			// Before commit, the status should be Executing
+			require.Equal(t, "Executing", status,
+				"Expected status to be 'Executing' before commit")
+		}
+	}
+
+	require.True(t, foundT1Record, "Expected to find a record for table t1")
+
+	// Resume the execution
+	require.Nil(t, failpoint.Disable("tikvclient/beforePipelinedCommit"))
+
+	// Wait for the transaction to complete
+	err := <-errCh
+	require.NoError(t, err)
+
+	// After the transaction completes, the record should be removed from the table
+	// Wait for the resolve lock process to complete
+	require.Eventually(t, func() bool {
+		rows = tk2.MustQuery("select * from mysql.pipelined_dml_progress").Rows()
+		if len(rows) == 0 {
+			return true
+		}
+		// print the rows
+		for _, row := range rows {
+			t.Logf("Stage 2 - After commit: startTS=%v, tables=%s, status=%s, resolvedRegions=%v",
+				row[0], row[1], row[2], row[3])
+		}
+		return false
+	}, 1*time.Second, 200*time.Millisecond, "Expected no rows in pipelined_dml_progress table after transaction completes")
+	t.Log("Stage 2 - After commit: record has been deleted")
+
+	// Part 2: Test with skipDeletePipelinedDMLProgress failpoint
+	// Create a table for testing
+	tk.MustExec("create table t2(a int primary key, b int)")
+	tk.MustExec("insert into t2 values(1, 1), (2, 2), (3, 3)")
+
+	// This will prevent the record from being deleted when the transaction completes
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/skipDeletePipelinedDMLProgress", `return`))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/skipDeletePipelinedDMLProgress")
+
+	// Execute a DML statement
+	_, err = tk.Exec("update t2 set b = b + 1")
+	require.NoError(t, err)
+
+	// With the skipDeletePipelinedDMLProgress failpoint enabled, the record should still be in the table
+	rows = tk2.MustQuery("select * from mysql.pipelined_dml_progress").Rows()
+	require.GreaterOrEqual(t, len(rows), 1, "Expected at least one row in pipelined_dml_progress table after transaction completes with skipDeletePipelinedDMLProgress enabled")
+
+	// Check the record eventually shows ResolvingLocks status
+	require.Eventually(t, func() bool {
+		rows := tk2.MustQuery("select * from mysql.pipelined_dml_progress").Rows()
+		for _, row := range rows {
+			startTS := row[0]
+			involvedTables := row[1].(string)
+			status := row[2].(string)
+			resolvedRegions := row[3]
+
+			t.Logf("Stage 3 - After commit (skip delete): startTS=%v, tables=%s, status=%s, resolvedRegions=%v",
+				startTS, involvedTables, status, resolvedRegions)
+
+			// Look for the record for table t2
+			if involvedTables == "t2" && status == "ResolvingLocks" {
+				return true
+			}
+		}
+		return false
+	}, 1*time.Second, 200*time.Millisecond, "Expected to find record for table t2 with ResolvingLocks status")
+
+	// Verify the data was correctly updated
+	tk.MustQuery("select count(*) from t2 where b = a + 1").Check(testkit.Rows("3"))
+}
