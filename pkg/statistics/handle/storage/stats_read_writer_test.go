@@ -167,7 +167,7 @@ func TestSlowStatsSavingForPartitionedTable(t *testing.T) {
 	require.False(t, statsTbl.Pseudo)
 
 	// Note: We deliberately focus on checking the global stats version here.
-	// For global stats, `SaveStatsToStorage` is used to persist statistics to storage.
+	// For global stats, `SaveColOrIdxStatsToStorage` is used to persist statistics to storage.
 	// We primarily verify the global stats version to confirm successful saving after the slow stats saving process.
 	// Get stats version from mysql.stats_meta.
 	rows := testKit.MustQuery(
