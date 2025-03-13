@@ -1602,6 +1602,7 @@ func NewPhysicalHashJoin(p *logicalop.LogicalJoin, innerIdx int, useOuterToBuild
 }
 
 // PhysicalIndexJoin represents the plan of index look up join.
+// NOTICE: When adding any member variables, remember to modify the Clone method.
 type PhysicalIndexJoin struct {
 	basePhysicalJoin
 
