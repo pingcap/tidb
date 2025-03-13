@@ -401,7 +401,7 @@ func TestAddIndexDistCleanUpBlock(t *testing.T) {
 
 func TestAddIndexDistCleanUpBlock(t *testing.T) {
 	proto.MaxConcurrentTask = 1
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(1)`))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(1)`)
 	ch := make(chan struct{})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/doCleanupTask", func() {
 		<-ch
