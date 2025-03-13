@@ -19,11 +19,15 @@ import (
 	"errors"
 	"io"
 	"sync"
+
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 )
 
 // Reader is a reader that prefetches data from the underlying reader.
 type Reader struct {
 	r            io.ReadCloser
+	path         string
 	curBufReader *bytes.Reader
 	buf          [2][]byte
 	bufIdx       int
@@ -36,9 +40,10 @@ type Reader struct {
 }
 
 // NewReader creates a new Reader.
-func NewReader(r io.ReadCloser, prefetchSize int) io.ReadCloser {
+func NewReader(r io.ReadCloser, path string, prefetchSize int) io.ReadCloser {
 	ret := &Reader{
 		r:        r,
+		path:     path,
 		bufCh:    make(chan []byte),
 		err:      nil,
 		closedCh: make(chan struct{}),
@@ -63,12 +68,19 @@ func (r *Reader) run() {
 		case r.bufCh <- buf:
 		}
 		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				log.Info("get other error during prefetch",
+					zap.Error(err), zap.Int("bytes", n), zap.Int("cap", cap(buf)), zap.String("path", r.path))
+			}
 			if errors.Is(err, io.ErrUnexpectedEOF) {
 				// this is caused by io.ReadFull. Because we are prefetching, the buffer size may
 				// be larger that caller's need. So we return io.EOF instead. Let caller check
 				// its needed size to convert io.EOF to io.ErrUnexpectedEOF.
+				log.Info("get other error during prefetch, not unexpected eof",
+					zap.Error(err), zap.Int("bytes", n), zap.Int("cap", cap(buf)), zap.String("path", r.path))
 				err = io.EOF
 			}
+
 			r.err = err
 			close(r.bufCh)
 			return
@@ -84,6 +96,13 @@ func (r *Reader) Read(data []byte) (int, error) {
 			b, ok := <-r.bufCh
 			if !ok {
 				if total > 0 {
+					if r.err != nil && !errors.Is(r.err, io.EOF) {
+						log.Info("read total > 0 but has internal error",
+							zap.Error(r.err), zap.Int("bytes", total),
+							zap.Int("expected", len(data)),
+							zap.String("path", r.path),
+						)
+					}
 					return total, nil
 				}
 				return 0, r.err
@@ -96,6 +115,10 @@ func (r *Reader) Read(data []byte) (int, error) {
 		n, err := r.curBufReader.Read(data)
 		total += n
 		if n == expected {
+			if r.err != nil && !errors.Is(r.err, io.EOF) {
+				log.Info("read suceess but has internal error",
+					zap.Error(r.err), zap.Int("bytes", n), zap.String("path", r.path))
+			}
 			return total, nil
 		}
 

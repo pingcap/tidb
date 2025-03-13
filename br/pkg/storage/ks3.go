@@ -443,7 +443,7 @@ func (rs *KS3Storage) Open(ctx context.Context, path string, o *ReaderOption) (E
 		return nil, errors.Trace(err)
 	}
 	if prefetchSize > 0 {
-		reader = prefetch.NewReader(reader, prefetchSize)
+		reader = prefetch.NewReader(reader, "", prefetchSize)
 	}
 	return &ks3ObjectReader{
 		ctx:          ctx,
@@ -571,7 +571,7 @@ func (r *ks3ObjectReader) Read(p []byte) (n int, err error) {
 		}
 		r.reader = newReader
 		if r.prefetchSize > 0 {
-			r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+			r.reader = prefetch.NewReader(r.reader, r.name, r.prefetchSize)
 		}
 		retryCnt++
 		n, err = r.reader.Read(p[:maxCnt])
@@ -643,7 +643,7 @@ func (r *ks3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 	}
 	r.reader = newReader
 	if r.prefetchSize > 0 {
-		r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+		r.reader = prefetch.NewReader(r.reader, r.name, r.prefetchSize)
 	}
 	r.rangeInfo = info
 	r.pos = realOffset

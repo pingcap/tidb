@@ -822,7 +822,7 @@ func (rs *S3Storage) Open(ctx context.Context, path string, o *ReaderOption) (Ex
 		return nil, errors.Trace(err)
 	}
 	if prefetchSize > 0 {
-		reader = prefetch.NewReader(reader, o.PrefetchSize)
+		reader = prefetch.NewReader(reader, path, o.PrefetchSize)
 	}
 	return &s3ObjectReader{
 		storage:      rs,
@@ -998,7 +998,7 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 		}
 		r.reader = newReader
 		if r.prefetchSize > 0 {
-			r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+			r.reader = prefetch.NewReader(r.reader, r.name, r.prefetchSize)
 		}
 		retryCnt++
 		n, err = r.reader.Read(p[:maxCnt])
@@ -1070,7 +1070,7 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 	}
 	r.reader = newReader
 	if r.prefetchSize > 0 {
-		r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+		r.reader = prefetch.NewReader(r.reader, r.name, r.prefetchSize)
 	}
 	r.rangeInfo = info
 	r.pos = realOffset

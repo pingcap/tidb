@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"runtime"
 	"strings"
 
 	"cloud.google.com/go/storage"
@@ -479,6 +480,38 @@ func (s *GCSStorage) Reset(ctx context.Context) error {
 	return nil
 }
 
+func printCallStack() string {
+	var (
+		pcs     = make([]uintptr, 32)        // 存储程序计数器的数组
+		n       = runtime.Callers(2, pcs[:]) // 跳过两层（当前函数和调用printCallStack的位置）
+		frames  = runtime.CallersFrames(pcs[:n])
+		callers []string
+	)
+
+	// 遍历调用栈帧
+	for {
+		frame, more := frames.Next()
+		funcName := fmt.Sprintf("%s (%s:%d)", frame.Function, frame.File, frame.Line)
+
+		// 提取短函数名（例如：main.foo -> foo）
+		// if idx := strings.LastIndex(funcName, "."); idx != -1 {
+		// 	funcName = funcName[idx+1:]
+		// }
+
+		callers = append(callers, funcName)
+		if !more {
+			break
+		}
+	}
+
+	// 反转顺序以显示正确调用链
+	for i, j := 0, len(callers)-1; i < j; i, j = i+1, j-1 {
+		callers[i], callers[j] = callers[j], callers[i]
+	}
+
+	return strings.Join(callers, " -> ")
+}
+
 func shouldRetry(err error) bool {
 	if storage.ShouldRetry(err) {
 		return true
@@ -522,7 +555,9 @@ func shouldRetry(err error) bool {
 	if !goerrors.Is(err, context.Canceled) {
 		log.Warn("other error when requesting gcs",
 			zap.Error(err),
-			zap.String("info", fmt.Sprintf("type: %T, value: %#v", err, err)))
+			zap.String("info", fmt.Sprintf("type: %T, value: %#v", err, err)),
+			zap.String("call_stack", printCallStack()),
+		)
 	}
 
 	return false
@@ -560,7 +595,7 @@ func (r *gcsObjectReader) Read(p []byte) (n int, err error) {
 		}
 		r.reader = rc
 		if r.prefetchSize > 0 {
-			r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+			r.reader = prefetch.NewReader(r.reader, r.name, r.prefetchSize)
 		}
 	}
 	n, err = r.reader.Read(p)
@@ -620,7 +655,7 @@ func (r *gcsObjectReader) Seek(offset int64, whence int) (int64, error) {
 	}
 	r.reader = rc
 	if r.prefetchSize > 0 {
-		r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+		r.reader = prefetch.NewReader(r.reader, r.name, r.prefetchSize)
 	}
 
 	return realOffset, nil
