@@ -1498,6 +1498,14 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(vardef.EnableFastCreateTable.Load()), nil
 	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableGlobalSortUseLocalStore, Value: BoolToOnOff(vardef.DefTiDBEnableGlobalSortUseLocalStore), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		if vardef.EnableGlobalSortLocalStore.Load() != TiDBOptOn(val) {
+			vardef.EnableGlobalSortLocalStore.Store(TiDBOptOn(val))
+		}
+		return nil
+	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return BoolToOnOff(vardef.EnableGlobalSortLocalStore.Load()), nil
+	}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableNoopVariables, Value: BoolToOnOff(vardef.DefTiDBEnableNoopVariables), Type: vardef.TypeEnum, PossibleValues: []string{vardef.Off, vardef.On}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		vardef.EnableNoopVariables.Store(TiDBOptOn(val))
 		return nil

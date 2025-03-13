@@ -174,6 +174,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 			ctx,
 			group,
 			memStore,
+			memStore,
 			int64(5*size.MB),
 			"/test2",
 			mergeMemSize,
@@ -267,6 +268,7 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 		require.NoError(t, MergeOverlappingFilesV2(
 			ctx,
 			mockOneMultiFileStat(group, statGroup[i]),
+			memStore,
 			memStore,
 			startKeys[i],
 			endKeys[i],
