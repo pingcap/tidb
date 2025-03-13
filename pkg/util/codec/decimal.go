@@ -46,8 +46,7 @@ func valueSizeOfDecimal(dec *types.MyDecimal, precision, frac int) (int, error) 
 }
 
 // DecodeDecimal decodes bytes to decimal.
-// nolint: revive
-func DecodeDecimal(b []byte) ([]byte, *types.MyDecimal, int, int, error) {
+func DecodeDecimal(b []byte) ([]byte, *types.MyDecimal, int, int, error) { //nolint: revive
 	failpoint.Inject("errorInDecodeDecimal", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(b, nil, 0, 0, errors.New("gofail error"))
