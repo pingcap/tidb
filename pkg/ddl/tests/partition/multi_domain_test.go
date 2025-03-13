@@ -815,9 +815,6 @@ func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn func(*t
 	runMultiSchemaTestWithBackfillDML(t, createSQL, alterSQL, "", initFn, postFn, loopFn)
 }
 func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfillDML string, initFn func(*testkit.TestKit), postFn func(*testkit.TestKit, kv.Storage), loopFn func(tO, tNO *testkit.TestKit)) {
-	// Make debugging easier
-	//bindinfo.Lease = 1 * time.Hour
-
 	// When debugging, increase the lease, so the schema does not auto reload :)
 	distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 15*time.Second)
 	store := distCtx.Store
@@ -2144,4 +2141,29 @@ func TestDuplicateRowsPK59680(t *testing.T) {
 	tk.MustExec("alter table t remove partitioning")
 	// TODO: FIXME!
 	tk.MustContainErrMsg(`admin check table t`, "[admin:8223]data inconsistency in table: t, index: PRIMARY, handle: ")
+}
+
+func TestIssue58864(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int, b int, primary key (a) nonclustered) partition by hash(a) partitions 2")
+	tk.MustExec("insert into t (a, b) values (1, 1)")
+	var i atomic.Int32
+	i.Store(1)
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+		if job.State != model.JobStateDone {
+			return
+		}
+		val := int(i.Add(1))
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+
+		tk2.MustExec("insert into t values (?, ?)", val, val)
+		tk2.MustExec("update t set b = b + 1 where a = ?", val)
+	})
+	tk.MustExec("alter table t remove partitioning")
 }
