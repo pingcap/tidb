@@ -126,7 +126,6 @@ func TestSlowStatsSaving(t *testing.T) {
 	histVersion := rows[0][0].(string)
 	histVersionUint64, err := strconv.ParseUint(histVersion, 10, 64)
 	require.NoError(t, err)
-	require.NotEqual(t, versionUint64, histVersionUint64, "The version in stats_meta and stats_histograms should be different.")
 	require.True(t, versionUint64 > histVersionUint64, "The version in stats_meta should be greater than stats_histograms.")
 }
 

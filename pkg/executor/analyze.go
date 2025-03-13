@@ -480,6 +480,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 		for workerError := range errCh {
 			errSet[workerError.Error()] = struct{}{}
 		}
+		intest.Assert(len(errSet) > 0, "errSet should at least contain one error")
 		errMsg := slices.Collect(maps.Keys(errSet))
 		err = errors.New(strings.Join(errMsg, ","))
 	}
