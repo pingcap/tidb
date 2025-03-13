@@ -3052,6 +3052,7 @@ const (
 	ShowBinlogStatus
 	ShowReplicaStatus
 	ShowDistributions
+	ShowDistributionJobs
 )
 
 const (
@@ -3101,6 +3102,8 @@ type ShowStmt struct {
 	ShowProfileLimit *Limit // Used for `SHOW PROFILE` syntax
 
 	ImportJobID *int64 // Used for `SHOW IMPORT JOB <ID>` syntax
+
+	DistributionJobID *int64 // Used for `SHOW DISTRIBUTION JOB <ID>` syntax
 }
 
 // Restore implements Node interface.
@@ -3317,6 +3320,14 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WritePlainf("%d", *n.ImportJobID)
 		} else {
 			ctx.WriteKeyWord("IMPORT JOBS")
+			restoreShowLikeOrWhereOpt()
+		}
+	case ShowDistributionJobs:
+		if n.DistributionJobID != nil {
+			ctx.WriteKeyWord("DISTRIBUTION JOB ")
+			ctx.WritePlainf("%d", *n.DistributionJobID)
+		} else {
+			ctx.WriteKeyWord("DISTRIBUTION JOBS")
 			restoreShowLikeOrWhereOpt()
 		}
 	// ShowTargetFilterable
