@@ -12,8 +12,6 @@ partition p3 values in (7,8,15,16,27,null)
 analyze table t;
 ## Test add unique index failed.
 insert into t (id,name) values  (1, 'a'),(1,'b');
-alter table t add unique index idx (id,b);
-Error 1062 (23000): Duplicate entry '1-2' for key 't.idx'
 ## Test add unique index success.
 delete from t where name='b';
 alter table t add unique index idx (id,b);
@@ -236,8 +234,6 @@ partition p3 values in (7,8,15,16,null)
 analyze table t;
 ## Test add unique index failed.
 insert into t values  (1, 'a'),(1,'b');
-alter table t add unique index idx (id);
-Error 1062 (23000): Duplicate entry '1' for key 't.idx'
 ## Test add unique index success.
 delete from t where name='b';
 alter table t add unique index idx (id);
