@@ -170,6 +170,7 @@ func EncodeCompactBytes(b []byte, data []byte) []byte {
 }
 
 // DecodeCompactBytes decodes bytes which is encoded by EncodeCompactBytes before.
+// nolint: revive
 func DecodeCompactBytes(b []byte) ([]byte, []byte, error) {
 	b, n, err := DecodeVarint(b)
 	if err != nil {
