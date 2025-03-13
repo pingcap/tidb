@@ -347,7 +347,7 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		GlobalSort:           sch.GlobalSort,
 		NextTaskStep:         nextStep,
 		ExecuteNodesCnt:      len(execIDs),
-		Store:                sch.storeWithPD,
+		PDCli:                sch.storeWithPD.GetPDClient().WithCallerComponent("import-into"),
 	}
 	logicalPlan := &LogicalPlan{}
 	if err := logicalPlan.FromTaskMeta(task.Meta); err != nil {

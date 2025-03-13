@@ -540,6 +540,7 @@ func (s *jobScheduler) getJobRunCtx(jobID int64, traceInfo *tracing.TraceInfo) *
 		schemaVersionManager: s.schemaVerMgr,
 		infoCache:            s.infoCache,
 		autoidCli:            s.autoidCli,
+		pdCli:                s.pdCli,
 		store:                s.store,
 		schemaVerSyncer:      s.schemaVerSyncer,
 		eventPublishStore:    s.eventPublishStore,
