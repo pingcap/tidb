@@ -63,7 +63,7 @@ func (*mergeSortExecutor) Init(ctx context.Context) error {
 func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("merge sort executor run subtask")
 
-	sm, err := decodeBackfillSubTaskMeta(subtask.Meta)
+	sm, err := decodeBackfillSubTaskMeta(ctx, m.cloudStoreURI, subtask.Meta)
 	if err != nil {
 		return err
 	}
@@ -113,16 +113,25 @@ func (*mergeSortExecutor) Cleanup(ctx context.Context) error {
 
 func (m *mergeSortExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("merge sort finish subtask")
-	sm, err := decodeBackfillSubTaskMeta(subtask.Meta)
+	sm, err := decodeBackfillSubTaskMeta(ctx, m.cloudStoreURI, subtask.Meta)
 	if err != nil {
 		return err
 	}
 	sm.MetaGroups = []*external.SortedKVMeta{m.subtaskSortedKVMeta}
 	m.subtaskSortedKVMeta = nil
+	// write external meta to storage when using global sort
+	if err := writeExternalBackfillSubTaskMeta(ctx, m.cloudStoreURI, sm, externalSubtaskMetaPath(subtask.TaskID, subtask.ID)); err != nil {
+		return err
+	}
+
 	newMeta, err := json.Marshal(sm)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	subtask.Meta = newMeta
 	return nil
+}
+
+func externalSubtaskMetaPath(taskID, subtaskID int64) string {
+	return path.Join(strconv.FormatInt(taskID, 10), strconv.FormatInt(subtaskID, 10), "meta.json")
 }

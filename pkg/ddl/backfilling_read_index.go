@@ -111,7 +111,7 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		metaGroups: make([]*external.SortedKVMeta, len(r.indexes)),
 	})
 
-	sm, err := decodeBackfillSubTaskMeta(subtask.Meta)
+	sm, err := decodeBackfillSubTaskMeta(ctx, r.cloudStorageURI, subtask.Meta)
 	if err != nil {
 		return err
 	}
@@ -231,7 +231,7 @@ func (r *readIndexStepExecutor) onFinished(ctx context.Context, subtask *proto.S
 		return nil
 	}
 	// Rewrite the subtask meta to record statistics.
-	sm, err := decodeBackfillSubTaskMeta(subtask.Meta)
+	sm, err := decodeBackfillSubTaskMeta(ctx, r.cloudStorageURI, subtask.Meta)
 	if err != nil {
 		return err
 	}
@@ -252,6 +252,14 @@ func (r *readIndexStepExecutor) onFinished(ctx context.Context, subtask *proto.S
 		zap.String("end", hex.EncodeToString(all.EndKey)),
 		zap.Int("fileCount", len(all.MultipleFilesStats)),
 		zap.Uint64("totalKVSize", all.TotalKVSize))
+
+	// write external meta to storage when using global sort
+	if r.isGlobalSort() {
+		// write external meta to storage when using global sort
+		if err := writeExternalBackfillSubTaskMeta(ctx, r.cloudStorageURI, sm, externalSubtaskMetaPath(subtask.TaskID, subtask.ID)); err != nil {
+			return err
+		}
+	}
 
 	meta, err := json.Marshal(sm)
 	if err != nil {
