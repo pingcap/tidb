@@ -29,9 +29,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
-	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -857,8 +857,12 @@ type SnapshotRestoreConfig struct {
 	piTRTaskInfo           *PiTRTaskInfo
 	logTableHistoryManager *stream.LogBackupTableHistoryManager
 	tableMappingManager    *stream.TableMappingManager
-	logClient              *logclient.LogClient
+	SaveIdMap              saveIdMapFunc
 }
+
+// saveIdMapFunc is a function type for saving ID mapping to avoid cyclic dependencies
+type saveIdMapFunc func(ctx context.Context, tableMappingManager *stream.TableMappingManager,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT) error
 
 func (s *SnapshotRestoreConfig) isPiTR() (bool, error) {
 	if s.piTRTaskInfo != nil && s.logTableHistoryManager != nil && s.tableMappingManager != nil {
@@ -953,7 +957,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 
 	metaReader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
 	if err = client.LoadSchemaIfNeededAndInitClient(ctx, backupMeta, u, metaReader, cfg.LoadStats, nil, nil,
-		cfg.ExplicitFilter, isFullRestore(cmdName)); err != nil {
+		cfg.ExplicitFilter, isFullRestore(cmdName), cfg.WithSysTable); err != nil {
 		return errors.Trace(err)
 	}
 	if client.IsIncremental() {
@@ -961,16 +965,13 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		log.Info("the incremental snapshot restore doesn't support checkpoint mode, disable checkpoint.")
 		cfg.UseCheckpoint = false
 	}
-	cpEnabledAndExists, err := checkpointEnabledAndExists(ctx, g, cfg, mgr.GetDomain(), mgr)
+	cpEnabledAndExists, err := checkpointEnabledAndExists(ctx, g, cfg, mgr)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	log.Info("checkpoint status in restore", zap.Bool("enabled", cfg.UseCheckpoint), zap.Bool("exists", cpEnabledAndExists))
 	if err := checkMandatoryClusterRequirements(client, cfg, cpEnabledAndExists, cmdName); err != nil {
 		return errors.Trace(err)
-	}
-	if err = VerifyDBAndTableInBackup(client.GetDatabases(), cfg.RestoreConfig); err != nil {
-		return err
 	}
 
 	// filters out db/table/files using filter
@@ -1172,22 +1173,33 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		// even nothing to restore, we show a success message since there is no failure.
 	}
 
-	createdTables, err := createDBsAndTables(ctx, client, cfg, mgr, dbs, tables, isPiTR)
+	createdTables, err := createDBsAndTables(ctx, client, cfg, mgr, dbs, tables)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	// update table mapping manager with new table ids if pitr
+	// update table mapping manager with new table ids if PiTR
 	if isPiTR {
 		if err = cfg.tableMappingManager.UpdateDownstreamIds(dbs, createdTables, client.GetDomain()); err != nil {
 			return errors.Trace(err)
 		}
 		log.Info("updated table mapping manager after creating tables")
 
-		//if err = cfg.logClient.SaveIdMapWithFailPoints(ctx, cfg.tableMappingManager, cfg.logCheckpointMetaManager); err != nil {
-		//	return errors.Trace(err)
-		//}
-		//log.Info("saved table replace map at full snapshot stage")
+		// do filter
+		cfg.tableMappingManager.ApplyFilterToDBReplaceMap(cfg.PiTRTableTracker)
+
+		genGlobalIDsFunc := func(ctx context.Context, n int) ([]int64, error) {
+			return utils.GenGlobalIDs(ctx, n, mgr.GetStorage())
+		}
+		err = cfg.tableMappingManager.ReplaceTemporaryIDs(ctx, genGlobalIDsFunc)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if err = cfg.SaveIdMap(ctx, cfg.tableMappingManager, cfg.logCheckpointMetaManager); err != nil {
+			return errors.Trace(err)
+		}
+		log.Info("saved table replace map at full snapshot stage")
 	}
 
 	codec := mgr.GetStorage().GetCodec()
@@ -2005,7 +2017,6 @@ func checkpointEnabledAndExists(
 	ctx context.Context,
 	g glue.Glue,
 	cfg *SnapshotRestoreConfig,
-	domain *domain.Domain,
 	mgr *conn.Mgr) (bool, error) {
 	var checkpointEnabledAndExist = false
 	if cfg.UseCheckpoint {
@@ -2111,8 +2122,7 @@ func createDBsAndTables(
 	cfg *SnapshotRestoreConfig,
 	mgr *conn.Mgr,
 	dbs []*metautil.Database,
-	tables []*metautil.Table,
-	isPiTR bool) ([]*snapclient.CreatedTable, error) {
+	tables []*metautil.Table) ([]*restoreutils.CreatedTable, error) {
 	var newTS uint64
 	if client.IsIncremental() {
 		if !cfg.AllowPITRFromIncremental {

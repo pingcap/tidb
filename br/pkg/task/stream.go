@@ -1379,7 +1379,7 @@ func RunStreamRestore(
 		// we restore additional tables at full snapshot phase when it is renamed into the filter range
 		// later in log backup.
 		// we also ignore the tables that currently in filter range but later renamed out of the filter.
-		log.Info("reading meta kv files to collect table renaming and id mapping information")
+		log.Info("reading meta kv files to collect table info and id mapping information")
 		err = metaInfoProcessor.ReadMetaKVFilesAndBuildInfo(ctx, ddlFiles)
 		if err != nil {
 			return errors.Trace(err)
@@ -1397,7 +1397,10 @@ func RunStreamRestore(
 			piTRTaskInfo:           taskInfo,
 			logTableHistoryManager: metaInfoProcessor.GetTableHistoryManager(),
 			tableMappingManager:    metaInfoProcessor.GetTableMappingManager(),
-			logClient:              logClient,
+			SaveIdMap: func(ctx context.Context, tableMappingManager *stream.TableMappingManager,
+				logCheckpointMetaManager checkpoint.LogMetaManagerT) error {
+				return logClient.SaveIdMapWithFailPoints(ctx, tableMappingManager, logCheckpointMetaManager)
+			},
 		}
 		// TiFlash replica is restored to down-stream on 'pitr' currently.
 		if err = runSnapshotRestore(ctx, mgr, g, FullRestoreCmd, &snapshotRestoreConfig); err != nil {
@@ -1560,10 +1563,13 @@ func restoreStream(
 		}
 	}
 
-	// build and save id map
-	if err := buildAndSaveIDMapIfNeeded(ctx, client, cfg, tableMappingManager); err != nil {
-		return errors.Trace(err)
+	if tableMappingManager.IsEmpty() {
+		// build and save id map
+		if err := buildAndSaveIDMapIfNeeded(ctx, client, cfg, tableMappingManager); err != nil {
+			return errors.Trace(err)
+		}
 	}
+
 	// build schema replace
 	schemasReplace, err := buildSchemaReplace(client, cfg, tableMappingManager)
 	if err != nil {
@@ -2138,19 +2144,11 @@ func buildSchemaReplace(
 
 func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient, cfg *LogRestoreConfig,
 	tableMappingManager *stream.TableMappingManager) error {
-	// get full backup meta storage if needed.
-	fullBackupStorageConfig, err := parseFullBackupTablesStorage(cfg.RestoreConfig)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	// get the schemas ID replace information.
 	saved := isCurrentIdMapSaved(cfg.checkpointTaskInfo)
 	dbReplaces, err := client.GetBaseIDMap(ctx, &logclient.GetIDMapConfig{
-		LoadSavedIDMap:          saved,
-		PiTRTableTracker:        cfg.PiTRTableTracker,
-		FullBackupStorageConfig: fullBackupStorageConfig,
-		CipherInfo:              &cfg.Config.CipherInfo,
+		LoadSavedIDMap:      saved,
+		TableMappingManager: tableMappingManager,
 	})
 	if err != nil {
 		return errors.Trace(err)
@@ -2162,12 +2160,9 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 			return errors.Trace(err)
 		}
 	} else {
+		// if we come down here it must be the case that base map is from last PiTR restore, i.e., multiple continuous
+		// PiTR, which is not explicitly supported yet.
 		tableMappingManager.MergeBaseDBReplace(dbReplaces)
-		if cfg.PiTRTableTracker != nil {
-			tableMappingManager.ApplyFilterToDBReplaceMap(cfg.PiTRTableTracker)
-		} else {
-			log.Warn("pitr table tracker is nil, base map is not from full backup")
-		}
 		err = tableMappingManager.ReplaceTemporaryIDs(ctx, client.GenGlobalIDs)
 		if err != nil {
 			return errors.Trace(err)
