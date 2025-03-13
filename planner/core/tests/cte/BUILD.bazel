@@ -9,8 +9,15 @@ go_test(
     ],
     flaky = True,
     deps = [
+<<<<<<< HEAD:planner/core/tests/cte/BUILD.bazel
         "//testkit",
         "//testkit/testsetup",
+=======
+        "//pkg/statistics",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+>>>>>>> 75d080712a9 (planner: add test cases for auto analyze's tidb_skip_missing_partition_stats (#60038)):pkg/planner/core/tests/analyze/BUILD.bazel
         "@org_uber_go_goleak//:goleak",
     ],
 )
