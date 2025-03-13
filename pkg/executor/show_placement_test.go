@@ -17,7 +17,9 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -484,12 +486,18 @@ func TestShowPlacementForTableAndPartitionPrivilege(t *testing.T) {
 	}
 }
 
-type mockPDCli struct {
+type MockPDCli struct {
 	pdhttp.Client
 	mock.Mock
 }
 
-func (cli *mockPDCli) GetRegionsReplicatedStateByKeyRange(ctx context.Context, r *pdhttp.KeyRange) (string, error) {
+func (cli *MockPDCli) GetSchedulerConfig(ctx context.Context, schedulerName string) (map[string]any, error) {
+	args := cli.Called(ctx, schedulerName)
+	config := args.Get(0).(map[string]any)
+	return config, args.Error(1)
+}
+
+func (cli *MockPDCli) GetRegionsReplicatedStateByKeyRange(ctx context.Context, r *pdhttp.KeyRange) (string, error) {
 	args := cli.Called(ctx, r)
 	return args.String(0), args.Error(1)
 }
@@ -500,7 +508,7 @@ func TestShowPlacementHandleRegionStatus(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create placement policy p1 followers=1")
 
-	cli := &mockPDCli{}
+	cli := &MockPDCli{}
 	recoverCli := infosync.SetPDHttpCliForTest(cli)
 	defer recoverCli()
 
@@ -559,4 +567,36 @@ func TestShowPlacementHandleRegionStatus(t *testing.T) {
 	tk.MustQuery("show placement for table tp1 partition p1").Check(testkit.Rows("TABLE test.tp1 PARTITION p1 FOLLOWERS=1 INPROGRESS"))
 	tk.MustQuery("show placement for table tp1 partition p2").Check(testkit.Rows("TABLE test.tp1 PARTITION p2 FOLLOWERS=1 SCHEDULED"))
 	cli.AssertExpectations(t)
+}
+
+func TestShowDistributionJobs(t *testing.T) {
+	re := require.New(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	cli := &MockPDCli{}
+	recoverCli := infosync.SetPDHttpCliForTest(cli)
+	defer recoverCli()
+	mockGetSchedulerConfig := func(schedulerName string, config map[string]any) *mock.Call {
+		return cli.On("GetSchedulerConfig", mock.Anything, schedulerName).
+			Return(config, nil)
+	}
+	config := map[string]any{}
+	config["job-id"] = uint64(1)
+	config["alias"] = strings.Join([]string{"test", "test", "partition(P0,P1)"}, ".")
+	config["engine"] = "tikv"
+	config["rule"] = "leader"
+	config["create-time"] = time.Now().Add(-time.Minute)
+	config["start-time"] = time.Now().Add(-time.Second * 30)
+	config["finish-time"] = time.Now().Add(-time.Second * 10)
+	config["status"] = "finish"
+	mockGetSchedulerConfig("balance-range-scheduler", config)
+
+	ret := tk.MustQuery("show distribution jobs").Rows()
+	re.Len(ret, 1)
+	re.Len(ret[0], 10)
+
+	re.Len(tk.MustQuery("show distribution jobs where `job_id`=2").Rows(), 0)
+
 }

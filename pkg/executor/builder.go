@@ -2672,8 +2672,8 @@ func (b executorBuilder) buildDistributeTable(v *plannercore.DistributeTable) ex
 		BaseExecutor:   base,
 		tableInfo:      v.TableInfo,
 		partitionNames: v.PartitionNames,
-		Engine:         v.Engine,
-		Rule:           v.Rule,
+		engine:         v.Engine,
+		rule:           v.Rule,
 	}
 }
 

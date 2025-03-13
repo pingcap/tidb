@@ -4468,7 +4468,7 @@ var (
 // schema for show distribution jobs
 var (
 	distributeTableSchemaNames = []string{"Job_ID", "DB_Name", "Table_Name", "Partition_List", "Engine", "Rule",
-		"Status", "Create_Time", "Started_Time", "End_Time"}
+		"Status", "Create_Time", "Start_Time", "Finish_Time"}
 	distributeTableSchemaFTypes = []byte{mysql.TypeLonglong, mysql.TypeString, mysql.TypeString, mysql.TypeString,
 		mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeTimestamp, mysql.TypeTimestamp,
 		mysql.TypeTimestamp}

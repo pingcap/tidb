@@ -72,21 +72,14 @@ func GetReplicationState(ctx context.Context, startKey []byte, endKey []byte) (P
 }
 
 // GetSchedulerConfig is used to get the configuration of the specified scheduler from PD.
-func GetSchedulerConfig(ctx context.Context, scheduler_name string) (any, error) {
+func GetSchedulerConfig(ctx context.Context, schedulerName string) (map[string]any, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return nil, err
 	}
 	if is.pdHTTPCli == nil {
-		return nil, errs.ErrClientGetLeader.FastGenByArgs(scheduler_name)
+		return nil, errs.ErrClientGetLeader.FastGenByArgs(schedulerName)
 	}
-	configs, err := is.pdHTTPCli.GetScheduleConfig(ctx)
-	if err != nil {
-		return nil, err
-	}
-	config, ok := configs[scheduler_name]
-	if !ok {
-		return nil, errs.ErrClientGetServingEndpoint.FastGenByArgs(scheduler_name)
-	}
-	return config, nil
+	config, err := is.pdHTTPCli.GetSchedulerConfig(ctx, schedulerName)
+	return config, err
 }

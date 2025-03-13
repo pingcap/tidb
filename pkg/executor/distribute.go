@@ -17,12 +17,14 @@ package executor
 import (
 	"context"
 
-	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-
+	pdhttp "github.com/tikv/pd/client/http"
 )
 
 // DistributeTableExec represents a distribute table  executor.
@@ -35,13 +37,17 @@ type DistributeTableExec struct {
 	engine         ast.CIStr
 	jobID          uint64
 
-	keyranges      []pdhttp.KeyRange
+	keyRanges []*pdhttp.KeyRange
 }
 
 // Open implements the Executor Open interface.
 func (e *DistributeTableExec) Open(context.Context) error {
-	e.keyranges,err:=e.getKeyrange()
-	return err
+	ranges, err := e.getKeyRanges()
+	if err != nil {
+		return err
+	}
+	e.keyRanges = ranges
+	return nil
 }
 
 // Next implements the Executor Next interface.
@@ -52,43 +58,34 @@ func (e *DistributeTableExec) Next(ctx context.Context, chk *chunk.Chunk) error 
 	if err != nil {
 		return err
 	}
-	chk.AppendInt64(0, jobID)
+	chk.AppendUint64(0, jobID)
 	return nil
 }
 
-func (e *DistributeTableExec) distributeTable(ctx context.Context) (uint64,error) {
-	return 0
+func (e *DistributeTableExec) distributeTable(_ context.Context) (uint64, error) {
+	return uint64(0), nil
 }
 
-func (e *DistributeTableExec) getKeyrange()([]*pdhttp.KeyRange,error){
-	tb, err := e.getTable()
-	if err != nil {
-		return err
-	}
+func (e *DistributeTableExec) getKeyRanges() ([]*pdhttp.KeyRange, error) {
 	physicalIDs := []int64{}
-	if pi := tb.Meta().GetPartitionInfo(); pi != nil {
-		for _, name := range e.Table.PartitionNames {
-			pid, err := tables.FindPartitionByName(tb.Meta(), name.L)
+	pi := e.tableInfo.GetPartitionInfo()
+	if pi == nil {
+		physicalIDs = append(physicalIDs, e.tableInfo.ID)
+	} else {
+		for _, name := range e.partitionNames {
+			pid, err := tables.FindPartitionByName(e.tableInfo, name.L)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			physicalIDs = append(physicalIDs, pid)
 		}
-		if len(physicalIDs) == 0 {
-			for _, p := range pi.Definitions {
-				physicalIDs = append(physicalIDs, p.ID)
-			}
-		}
-	} else {
-		if len(e.Table.PartitionNames) != 0 {
-			return plannererrors.ErrPartitionClauseOnNonpartitioned
-		}
-		physicalIDs = append(physicalIDs, tb.Meta().ID)
 	}
-	ranges:=make([]*pdhttp.KeyRange, len(physicalIDs))
-	for _,id := range physicalIDs {
-		startKey, endKey := tablecodec.GetTableHandleKeyRange(pid)
-		ranges = append(ranges, &pdhttp.NewKeyRange(startKey,endKey))
+
+	ranges := make([]*pdhttp.KeyRange, len(physicalIDs))
+	for _, id := range physicalIDs {
+		startKey, endKey := tablecodec.GetTableHandleKeyRange(id)
+		r := pdhttp.NewKeyRange(startKey, endKey)
+		ranges = append(ranges, r)
 	}
 	return ranges, nil
 }

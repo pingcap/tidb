@@ -82,6 +82,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/tikv/pd/client/errs"
 	"go.uber.org/zap"
 )
 
@@ -2364,8 +2365,29 @@ func handleImportJobInfo(ctx context.Context, info *importer.JobInfo, result *ch
 	return nil
 }
 
-func (e *ShowExec) fetchShowDistributionJobs(ctx context.Context) error {
+const DistributeScheduler = "balance-range-scheduler"
 
+func (e *ShowExec) fetchShowDistributionJobs(ctx context.Context) error {
+	config, err := infosync.GetSchedulerConfig(ctx, DistributeScheduler)
+	if err != nil {
+		return err
+	}
+
+	// alias is combined by db_name,table_name,partition_name
+	alias := strings.Split(config["alias"].(string), ".")
+	if len(alias) != 3 {
+		return errs.ErrClientGetServingEndpoint.FastGenByArgs("alias length is not 3")
+	}
+	e.result.AppendUint64(0, config["job-id"].(uint64))
+	e.result.AppendString(1, alias[0])
+	e.result.AppendString(2, alias[1])
+	e.result.AppendString(3, alias[2])
+	e.result.AppendString(4, config["engine"].(string))
+	e.result.AppendString(5, config["rule"].(string))
+	e.result.AppendString(6, config["status"].(string))
+	e.result.AppendTime(7, types.NewTime(types.FromGoTime(config["create-time"].(time.Time)), mysql.TypeDatetime, types.DefaultFsp))
+	e.result.AppendTime(8, types.NewTime(types.FromGoTime(config["start-time"].(time.Time)), mysql.TypeDatetime, types.DefaultFsp))
+	e.result.AppendTime(9, types.NewTime(types.FromGoTime(config["finish-time"].(time.Time)), mysql.TypeDatetime, types.DefaultFsp))
 	return nil
 }
 
