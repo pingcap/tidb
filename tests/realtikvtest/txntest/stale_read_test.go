@@ -140,16 +140,13 @@ func TestSelectAsOf(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	if !*realtikvtest.WithRealTiKV {
-		// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
-		safePointName := "tikv_gc_safe_point"
-		safePointValue := "20160102-15:04:05 -0700"
-		safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
-		updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
 	ON DUPLICATE KEY
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
-		tk.MustExec(updateSafePoint)
-	}
+	tk.MustExec(updateSafePoint)
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`drop table if exists b`)
 	tk.MustExec("create table t (id int primary key);")
@@ -295,15 +292,13 @@ func TestSelectAsOf(t *testing.T) {
 func TestStaleReadKVRequest(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	if !*realtikvtest.WithRealTiKV {
-		safePointName := "tikv_gc_safe_point"
-		safePointValue := "20160102-15:04:05 -0700"
-		safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
-		updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
 	ON DUPLICATE KEY
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
-		tk.MustExec(updateSafePoint)
-	}
+	tk.MustExec(updateSafePoint)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec(`drop table if exists t1`)
@@ -393,15 +388,13 @@ func TestStalenessAndHistoryRead(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	if !*realtikvtest.WithRealTiKV {
-		safePointName := "tikv_gc_safe_point"
-		safePointValue := "20160102-15:04:05 -0700"
-		safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
-		updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
 	ON DUPLICATE KEY
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
-		tk.MustExec(updateSafePoint)
-	}
+	tk.MustExec(updateSafePoint)
 	time1 := time.Now()
 	time1TS := oracle.GoTimeToTS(time1)
 	schemaVer1 := tk.Session().GetInfoSchema().SchemaMetaVersion()
@@ -544,9 +537,10 @@ func TestStalenessTransactionSchemaVer(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	defer tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key);")
+	time.Sleep(200 * time.Millisecond)
 
 	schemaVer1 := tk.Session().GetInfoSchema().SchemaMetaVersion()
-	time1 := time.Now()
+	time1 := time.Now().Add(-100 * time.Millisecond)
 	tk.MustExec("alter table t add c int")
 
 	// confirm schema changed
@@ -571,7 +565,6 @@ func TestSetTransactionReadOnlyAsOf(t *testing.T) {
 	require.NoError(t, err)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	safePointName := "tikv_gc_safe_point"
 	safePointValue := "20160102-15:04:05 -0700"
 	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
@@ -780,7 +773,6 @@ func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
 	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	// For mocktikv, safe point is not initialized, we manually insert it for snapshot to use.
 	safePointName := "tikv_gc_safe_point"
 	safePointValue := "20160102-15:04:05 -0700"
 	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
@@ -867,7 +859,7 @@ func TestSpecialSQLInStalenessTxn(t *testing.T) {
 	tk.MustExec("CREATE USER IF NOT EXISTS 'newuser' IDENTIFIED BY 'mypassword';")
 	for _, testcase := range testcases {
 		time.Sleep(time.Second)
-		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW();`)
+		tk.MustExec(`START TRANSACTION READ ONLY AS OF TIMESTAMP NOW(3) - INTERVAL 100000 microsecond;`)
 		require.Equal(t, true, tk.Session().GetSessionVars().TxnCtx.IsStaleness, testcase.name)
 		tk.MustExec(testcase.sql)
 		require.Equal(t, testcase.sameSession, tk.Session().GetSessionVars().TxnCtx.IsStaleness, testcase.name)
@@ -877,15 +869,13 @@ func TestSpecialSQLInStalenessTxn(t *testing.T) {
 func TestAsOfTimestampCompatibility(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	if !*realtikvtest.WithRealTiKV {
-		safePointName := "tikv_gc_safe_point"
-		safePointValue := "20160102-15:04:05 -0700"
-		safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
-		updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
 	ON DUPLICATE KEY
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
-		tk.MustExec(updateSafePoint)
-	}
+	tk.MustExec(updateSafePoint)
 	tk.MustExec("use test")
 	tk.MustExec("create table t5(id int);")
 	defer tk.MustExec("drop table if exists t5;")
@@ -936,15 +926,13 @@ func TestAsOfTimestampCompatibility(t *testing.T) {
 func TestSetTransactionInfoSchema(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	if !*realtikvtest.WithRealTiKV {
-		safePointName := "tikv_gc_safe_point"
-		safePointValue := "20160102-15:04:05 -0700"
-		safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
-		updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
 	ON DUPLICATE KEY
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
-		tk.MustExec(updateSafePoint)
-	}
+	tk.MustExec(updateSafePoint)
 
 	for _, cacheSize := range []int{units.GiB, 0} {
 		tk.MustExec("set @@global.tidb_schema_cache_size = ?", cacheSize)
@@ -1229,15 +1217,13 @@ func TestStmtCtxStaleFlag(t *testing.T) {
 func TestStaleSessionQuery(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	if !*realtikvtest.WithRealTiKV {
-		safePointName := "tikv_gc_safe_point"
-		safePointValue := "20160102-15:04:05 -0700"
-		safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
-		updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
 	ON DUPLICATE KEY
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
-		tk.MustExec(updateSafePoint)
-	}
+	tk.MustExec(updateSafePoint)
 	tk.MustExec("use test")
 	tk.MustExec("create table t10 (id int);")
 	tk.MustExec("insert into t10 (id) values (1)")
@@ -1314,15 +1300,13 @@ func TestStaleReadCompatibility(t *testing.T) {
 func TestStaleReadNoExtraTSORequest(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	if !*realtikvtest.WithRealTiKV {
-		safePointName := "tikv_gc_safe_point"
-		safePointValue := "20160102-15:04:05 -0700"
-		safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
-		updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
 	ON DUPLICATE KEY
 	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
-		tk.MustExec(updateSafePoint)
-	}
+	tk.MustExec(updateSafePoint)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int);")
@@ -1505,4 +1489,246 @@ func TestStaleReadNoBackoff(t *testing.T) {
 	explain := resBuff.String()
 	require.Regexp(t, ".*rpc_errors:{data_is_not_ready:1.*", explain)
 	require.NotRegexp(t, ".*dataNotReady_backoff.*", explain)
+}
+
+func TestStaleReadAllCombinations(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	defer config.RestoreFunc()()
+
+	tk := testkit.NewTestKit(t, store)
+
+	safePointName := "tikv_gc_safe_point"
+	safePointValue := "20160102-15:04:05 -0700"
+	safePointComment := "All versions after safe point can be accessed. (DO NOT EDIT)"
+	updateSafePoint := fmt.Sprintf(`INSERT INTO mysql.tidb VALUES ('%[1]s', '%[2]s', '%[3]s')
+	ON DUPLICATE KEY
+	UPDATE variable_value = '%[2]s', comment = '%[3]s'`, safePointName, safePointValue, safePointComment)
+	tk.MustExec(updateSafePoint)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key, v int)")
+
+	// Insert row #1
+	tk.MustExec("insert into t values (1, 10)")
+	time.Sleep(1000 * time.Millisecond)
+	firstTime := time.Now().Add(-500 * time.Millisecond)
+	// Retrieve current TSO from store's Oracle instead of @@tidb_current_ts.
+	externalTS, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	if err != nil {
+		t.Fatalf("failed to get TSO: %v", err)
+	}
+
+	time.Sleep(1000 * time.Millisecond)
+	// Insert row #2
+	tk.MustExec("insert into t values (2, 20)")
+	time.Sleep(1000 * time.Millisecond)
+	secondTime := time.Now().Add(-500 * time.Millisecond)
+
+	staleReadMethods := []struct {
+		name   string
+		setup  func()
+		query  string
+		clean  func()
+		expect []string
+	}{
+		{
+			name: "tidb_read_staleness",
+			setup: func() {
+				tk.MustExec("set @@tidb_read_staleness='-2'")
+			},
+			query: "select * from t",
+			clean: func() {
+				tk.MustExec("set @@tidb_read_staleness=''")
+			},
+			expect: []string{"1 10"},
+		},
+		{
+			name:   "AS OF TIMESTAMP sees only first row",
+			setup:  func() {},
+			query:  fmt.Sprintf("SELECT * FROM t AS OF TIMESTAMP '%s'", firstTime.Format("2006-1-2 15:04:05.000")),
+			clean:  func() {},
+			expect: []string{"1 10"},
+		},
+		{
+			name:   "AS OF TIMESTAMP sees both rows (using secondTime)",
+			setup:  func() {},
+			query:  fmt.Sprintf("SELECT * FROM t AS OF TIMESTAMP '%s'", secondTime.Format("2006-1-2 15:04:05.000")),
+			clean:  func() {},
+			expect: []string{"1 10", "2 20"},
+		},
+		/*
+			We cannot test TIDB_BOUNDED_STALENESS here because it relies
+			on the update of safe ts, which cannot be controlled by the test
+			{
+				name:   "AS OF TIMESTAMP with TIDB_BOUNDED_STALENESS",
+				setup:  func() {},
+				query:  "select * from t as of timestamp tidb_bounded_staleness(TIMESTAMPADD(SECOND, -5, NOW()), TIMESTAMPADD(SECOND, -1, NOW()))",
+				clean:  func() {},
+				expect: []string{"1 10", "2 20"},
+			},
+		*/
+		{
+			name: "SET TRANSACTION",
+			setup: func() {
+				tk.MustExec(fmt.Sprintf("SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'", firstTime.Format("2006-1-2 15:04:05.000")))
+			},
+			query:  "select * from t",
+			clean:  func() {},
+			expect: []string{"1 10"},
+		},
+		{
+			name: "external ts read",
+			setup: func() {
+				tk.MustExec("set @@tidb_enable_external_ts_read=1")
+				tk.MustExec(fmt.Sprintf("set @@global.tidb_external_ts=%d", externalTS))
+				externalTS++
+			},
+			query: "select * from t",
+			clean: func() {
+				tk.MustExec("set @@tidb_enable_external_ts_read=0")
+				// cannot set it
+				// tk.MustExec("set @@global.tidb_external_ts=0")
+			},
+			expect: []string{"1 10"},
+		},
+		{
+			name: "tidb_snapshot",
+			setup: func() {
+				tk.MustExec(fmt.Sprintf("set @@tidb_snapshot='%s'", firstTime.Format("2006-1-2 15:04:05.000")))
+			},
+			query: "select * from t",
+			clean: func() {
+				tk.MustExec("set @@tidb_snapshot=''")
+			},
+			expect: []string{"1 10"},
+		},
+	}
+
+	labelSettings := []struct {
+		name   string
+		labels map[string]string
+	}{
+		{
+			name:   "no labels",
+			labels: map[string]string{},
+		},
+		{
+			name: "with DC label",
+			labels: map[string]string{
+				placement.DCLabelKey: "bj",
+			},
+		},
+		{
+			name: "with Zone label",
+			labels: map[string]string{
+				"dc": "dc1",
+			},
+		},
+		{
+			name: "with Rack label",
+			labels: map[string]string{
+				"rack": "rack1",
+			},
+		},
+		{
+			name: "with multiple labels",
+			labels: map[string]string{
+				placement.DCLabelKey: "bj",
+				"dc":                 "dc1",
+				"rack":               "rack1",
+			},
+		},
+	}
+
+	replicaReadSettings := []string{
+		"leader",
+		"follower",
+		"closest-replicas",
+		"closest-adaptive",
+	}
+
+	transactionModes := []struct {
+		name  string
+		start func()
+		check func()
+	}{
+		{
+			name: "START TRANSACTION READ ONLY AS OF",
+			start: func() {
+				tk.MustExec(fmt.Sprintf("START TRANSACTION READ ONLY AS OF TIMESTAMP '%s'", firstTime.Format("2006-1-2 15:04:05.000")))
+			},
+			check: func() {
+				result := tk.MustQuery("select * from t")
+				result.Check(testkit.Rows("1 10"))
+				tk.MustExec("commit")
+			},
+		},
+		{
+			name: "SET TRANSACTION then BEGIN",
+			start: func() {
+				tk.MustExec(fmt.Sprintf("SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'", firstTime.Format("2006-1-2 15:04:05.000")))
+				tk.MustExec("BEGIN")
+			},
+			check: func() {
+				result := tk.MustQuery("select * from t")
+				result.Check(testkit.Rows("1 10"))
+				tk.MustExec("commit")
+			},
+		},
+		/*
+			    We cannot test TIDB_BOUNDED_STALENESS here because it relies
+				on the update of safe ts, which cannot be controlled by the test
+			{
+				name: "TIDB_BOUNDED_STALENESS TXN",
+				start: func() {
+					tk.MustExec("START TRANSACTION READ ONLY AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(TIMESTAMPADD(SECOND, -5, NOW()), TIMESTAMPADD(SECOND, -1, NOW()))")
+				},
+				check: func() {
+					result := tk.MustQuery("select * from t")
+					result.Check(testkit.Rows("1 10", "2 20"))
+					tk.MustExec("commit")
+				},
+			},
+		*/
+	}
+
+	// Test all combinations
+	for _, label := range labelSettings {
+		t.Run(label.name, func(t *testing.T) {
+			// Update global config with current label setting
+			conf := *config.GetGlobalConfig()
+			conf.Labels = label.labels
+			config.StoreGlobalConfig(&conf)
+
+			for _, replicaRead := range replicaReadSettings {
+				t.Run(replicaRead, func(t *testing.T) {
+					// Set replica read mode
+					tk.MustExec(fmt.Sprintf("set @@tidb_replica_read='%s'", replicaRead))
+
+					for _, method := range staleReadMethods {
+						t.Run(method.name, func(t *testing.T) {
+							// Setup stale read method
+							defer method.clean()
+							method.setup()
+
+							// Execute query and verify results
+							result := tk.MustQuery(method.query)
+							result.Check(testkit.Rows(method.expect...))
+
+							// Cleanup
+						})
+					}
+
+					for _, txnMode := range transactionModes {
+						t.Run(txnMode.name, func(t *testing.T) {
+							tk.MustExec(fmt.Sprintf("set @@tidb_replica_read='%s'", replicaRead))
+							txnMode.start()
+							txnMode.check()
+						})
+					}
+				})
+			}
+		})
+	}
 }

@@ -812,6 +812,7 @@ import (
 	trim                  "TRIM"
 	trueCardCost          "TRUE_CARD_COST"
 	unlimited             "UNLIMITED"
+	moderated             "MODERATED"
 	untilTS               "UNTIL_TS"
 	utilizationLimit      "UTILIZATION_LIMIT"
 	variance              "VARIANCE"
@@ -863,6 +864,7 @@ import (
 	ddl                        "DDL"
 	dependency                 "DEPENDENCY"
 	depth                      "DEPTH"
+	distributions              "DISTRIBUTIONS"
 	dry                        "DRY"
 	histogramsInFlight         "HISTOGRAMS_IN_FLIGHT"
 	job                        "JOB"
@@ -1927,7 +1929,7 @@ DirectResourceGroupOption:
 	}
 |	"RU_PER_SEC" EqOpt "UNLIMITED"
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRURate, BoolValue: true}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRURate, Burstable: ast.BurstableUnlimited}
 	}
 |	"PRIORITY" EqOpt ResourceGroupPriorityOption
 	{
@@ -1935,11 +1937,19 @@ DirectResourceGroupOption:
 	}
 |	"BURSTABLE"
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstable, Burstable: ast.BurstableModerated}
 	}
-|	"BURSTABLE" EqOpt Boolean
+|	"BURSTABLE" EqOpt "MODERATED"
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: $3.(bool)}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstable, Burstable: ast.BurstableModerated}
+	}
+|	"BURSTABLE" EqOpt "UNLIMITED"
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstable, Burstable: ast.BurstableUnlimited}
+	}
+|	"BURSTABLE" EqOpt "OFF"
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstable, Burstable: ast.BurstableDisable}
 	}
 |	"QUERY_LIMIT" EqOpt '(' ResourceGroupRunawayOptionList ')'
 	{
@@ -3451,7 +3461,7 @@ BinlogStmt:
 ColumnDef:
 	ColumnName Type ColumnOptionListOpt
 	{
-		colDef := &ast.ColumnDef{Name: $1.(*ast.ColumnName), Tp: $2.(*types.FieldType), Options: $3.([]*ast.ColumnOption)}
+		colDef := &ast.ColumnDef{Name: $1.(*ast.ColumnName), Tp: $2.(*types.FieldType), Options: $3.(ast.ColumnOptionList).Options}
 		if err := colDef.Validate(); err != nil {
 			yylex.AppendError(err)
 			return 1
@@ -3463,7 +3473,7 @@ ColumnDef:
 		// TODO: check flen 0
 		tp := types.NewFieldType(mysql.TypeLonglong)
 		options := []*ast.ColumnOption{{Tp: ast.ColumnOptionNotNull}, {Tp: ast.ColumnOptionAutoIncrement}, {Tp: ast.ColumnOptionUniqKey}}
-		options = append(options, $3.([]*ast.ColumnOption)...)
+		options = append(options, $3.(ast.ColumnOptionList).Options...)
 		tp.AddFlag(mysql.UnsignedFlag)
 		colDef := &ast.ColumnDef{Name: $1.(*ast.ColumnName), Tp: tp, Options: options}
 		if err := colDef.Validate(); err != nil {
@@ -3665,7 +3675,9 @@ ColumnOption:
 	}
 |	"SERIAL" "DEFAULT" "VALUE"
 	{
-		$$ = []*ast.ColumnOption{{Tp: ast.ColumnOptionNotNull}, {Tp: ast.ColumnOptionAutoIncrement}, {Tp: ast.ColumnOptionUniqKey}}
+		$$ = ast.ColumnOptionList{
+			Options: []*ast.ColumnOption{{Tp: ast.ColumnOptionNotNull}, {Tp: ast.ColumnOptionAutoIncrement}, {Tp: ast.ColumnOptionUniqKey}},
+		}
 	}
 |	"ON" "UPDATE" NowSymOptionFraction
 	{
@@ -3692,7 +3704,9 @@ ColumnOption:
 		}
 		switch $6.(int) {
 		case 0:
-			$$ = []*ast.ColumnOption{optionCheck, {Tp: ast.ColumnOptionNotNull}}
+			$$ = ast.ColumnOptionList{
+				Options: []*ast.ColumnOption{optionCheck, {Tp: ast.ColumnOptionNotNull}},
+			}
 		case 1:
 			optionCheck.Enforced = true
 			$$ = optionCheck
@@ -3794,23 +3808,40 @@ ColumnOptionList:
 	ColumnOption
 	{
 		if columnOption, ok := $1.(*ast.ColumnOption); ok {
-			$$ = []*ast.ColumnOption{columnOption}
+			hasCollateOption := false
+			if columnOption.Tp == ast.ColumnOptionCollate {
+				hasCollateOption = true
+			}
+			$$ = ast.ColumnOptionList{
+				HasCollateOption: hasCollateOption,
+				Options:          []*ast.ColumnOption{columnOption},
+			}
 		} else {
 			$$ = $1
 		}
 	}
 |	ColumnOptionList ColumnOption
 	{
+		columnOptionList := $1.(ast.ColumnOptionList)
 		if columnOption, ok := $2.(*ast.ColumnOption); ok {
-			$$ = append($1.([]*ast.ColumnOption), columnOption)
+			if columnOption.Tp == ast.ColumnOptionCollate && columnOptionList.HasCollateOption {
+				yylex.AppendError(ErrParse.GenWithStackByArgs("Multiple COLLATE clauses", yylex.Errorf("").Error()))
+				return 1
+			}
+			columnOptionList.Options = append(columnOptionList.Options, columnOption)
 		} else {
-			$$ = append($1.([]*ast.ColumnOption), $2.([]*ast.ColumnOption)...)
+			if columnOptionList.HasCollateOption && $2.(ast.ColumnOptionList).HasCollateOption {
+				yylex.AppendError(ErrParse.GenWithStackByArgs("Multiple COLLATE clauses", yylex.Errorf("").Error()))
+				return 1
+			}
+			columnOptionList.Options = append(columnOptionList.Options, $2.(ast.ColumnOptionList).Options...)
 		}
+		$$ = columnOptionList
 	}
 
 ColumnOptionListOpt:
 	{
-		$$ = []*ast.ColumnOption{}
+		$$ = ast.ColumnOptionList{}
 	}
 |	ColumnOptionList
 
@@ -7159,6 +7190,7 @@ TiDBKeyword:
 |	"DDL"
 |	"DEPENDENCY"
 |	"DEPTH"
+|	"DISTRIBUTIONS"
 |	"JOBS"
 |	"JOB"
 |	"NODE_ID"
@@ -7316,6 +7348,7 @@ NotKeywordToken:
 |	"BACKGROUND"
 |	"TASK_TYPES"
 |	"UNLIMITED"
+|	"MODERATED"
 |	"UTILIZATION_LIMIT"
 
 /************************************************************************************
@@ -11705,6 +11738,18 @@ ShowStmt:
 			Procedure: $4.(*ast.TableName),
 		}
 	}
+|	"SHOW" "TABLE" TableName PartitionNameListOpt "DISTRIBUTIONS" WhereClauseOptional
+	{
+		stmt := &ast.ShowStmt{
+			Tp:    ast.ShowDistributions,
+			Table: $3.(*ast.TableName),
+		}
+		stmt.Table.PartitionNames = $4.([]ast.CIStr)
+		if $6 != nil {
+			stmt.Where = $6.(ast.ExprNode)
+		}
+		$$ = stmt
+	}
 
 ShowPlacementTarget:
 	DatabaseSym DBName
@@ -13776,8 +13821,19 @@ ConnectionOptions:
 |	"WITH" ConnectionOptionList
 	{
 		$$ = $2
-		yylex.AppendError(yylex.Errorf("TiDB does not support WITH ConnectionOptions now, they would be parsed but ignored."))
-		parser.lastErrorAsWarn()
+		needWarning := false
+		for _, option := range $2.([]*ast.ResourceOption) {
+			switch option.Type {
+			case ast.MaxUserConnections:
+			// do nothing.
+			default:
+				needWarning = true
+			}
+		}
+		if needWarning {
+			yylex.AppendError(yylex.Errorf("TiDB does not support WITH ConnectionOptions but MAX_USER_CONNECTIONS now, they would be parsed but ignored."))
+			parser.lastErrorAsWarn()
+		}
 	}
 
 ConnectionOptionList:
