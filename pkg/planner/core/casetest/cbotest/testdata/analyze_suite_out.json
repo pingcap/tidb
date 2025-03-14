@@ -500,10 +500,10 @@
         "SQL": "explain format = 'brief' select * from t where a <= 10000 order by b limit 1",
         "Plan": [
           "TopN 1.00 root  test.t.b, offset:0, count:1",
-          "└─TableReader 1.00 root  data:TopN",
-          "  └─TopN 1.00 cop[tikv]  test.t.b, offset:0, count:1",
-          "    └─Selection 10000.00 cop[tikv]  le(test.t.a, 10000)",
-          "      └─TableFullScan 1000000.00 cop[tikv] table:t keep order:false"
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexRangeScan(Build) 10000.00 cop[tikv] table:t, index:idx_a(a) range:[-inf,10000], keep order:false",
+          "  └─TopN(Probe) 1.00 cop[tikv]  test.t.b, offset:0, count:1",
+          "    └─TableRowIDScan 10000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
