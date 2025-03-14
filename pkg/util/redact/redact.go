@@ -245,7 +245,7 @@ func (t TaskInfoRedacted) String() string {
 		return "nil"
 	}
 
-	copy := *t.Info
+	infoCopy := *t.Info
 
 	if t.Info.Storage != nil {
 		// Create a copy of StorageBackend to modify
@@ -283,8 +283,8 @@ func (t TaskInfoRedacted) String() string {
 		default:
 		}
 
-		copy.Storage = &storageCopy
+		infoCopy.Storage = &storageCopy
 	}
 
-	return proto.CompactTextString(&copy)
+	return proto.CompactTextString(&infoCopy)
 }
