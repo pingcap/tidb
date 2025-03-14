@@ -1235,6 +1235,9 @@ func constructInnerIndexScanTask(
 	rowCount float64,
 	maxOneRow bool,
 ) base.Task {
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	ds := wrapper.ds
 	// If `ds.TableInfo.GetPartitionInfo() != nil`,
 	// it means the data source is a partition table reader.
@@ -1313,6 +1316,9 @@ func constructInnerIndexScanTask(
 			cop.originSchema = ds.Schema()
 		}
 		cop.tablePlan = ts
+	}
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
 	}
 	if cop.tablePlan != nil && ds.TableInfo.IsCommonHandle {
 		cop.commonHandleCols = ds.CommonHandleCols
@@ -2895,6 +2901,9 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 				hashAggs = append(hashAggs, mppAggs...)
 			}
 		} else {
+			if !lp.SCtx().GetSessionVars().InRestrictedSQL {
+				fmt.Println("wwz")
+			}
 			agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp, CTEProducerStatus: prop.CTEProducerStatus})
 			agg.SetSchema(la.Schema().Clone())
 			hashAggs = append(hashAggs, agg)
