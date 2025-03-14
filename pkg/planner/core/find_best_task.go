@@ -265,13 +265,13 @@ func iteratePhysicalPlan4BaseLogical(
 	// The curCntPlan records the number of possible plans for selfPhysicalPlan
 	curCntPlan := int64(1)
 	var isParentPhyscicalHashJoin bool
-	if _, ok := selfPhysicalPlan.(*PhysicalHashJoin); ok {
+	if _, ok := selfPhysicalPlan.(*PhysicalHashAgg); ok {
 		isParentPhyscicalHashJoin = true
 	}
 	for j, child := range p.Children() {
 		childProp := selfPhysicalPlan.GetChildReqProps(j)
 		if childProp != nil {
-			childProp.IsParentPhyscicalHashJoin = isParentPhyscicalHashJoin
+			childProp.IsParentPhyscicalHashAgg = isParentPhyscicalHashJoin
 		}
 
 		childTask, cnt, err := child.FindBestTask(childProp, &PlanCounterDisabled, opt)
@@ -576,7 +576,7 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 	}
 
 	// while for join's both child, anyway and currently we should keep exchanger within the MPP for now
-	if !prop.IsParentPhyscicalHashJoin {
+	if prop.IsParentPhyscicalHashAgg {
 		if joinP, ok := p.Self().(*logicalop.LogicalJoin); ok {
 			if joinP.JoinType == logicalop.InnerJoin {
 				// TODO(hawkingrei): FD should be maintained as logical prop instead of constructing it in physical phase
