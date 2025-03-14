@@ -600,12 +600,12 @@ func (h *Handle) initStatsBuckets(cache statstypes.StatsCache, totalMemory uint6
 		return nil
 	}
 	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		err := h.initStatsBucketsConcurrenctly(cache, totalMemory, initstats.GetConcurrency())
+		err := h.initStatsBucketsConcurrently(cache, totalMemory, initstats.GetConcurrency())
 		if err != nil {
 			return errors.Trace(err)
 		}
 	} else {
-		err := h.initStatsBucketsConcurrenctly(cache, totalMemory, 1)
+		err := h.initStatsBucketsConcurrently(cache, totalMemory, 1)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -654,7 +654,7 @@ func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task init
 	return nil
 }
 
-func (h *Handle) initStatsBucketsConcurrenctly(cache statstypes.StatsCache, totalMemory uint64, concurrency int) error {
+func (h *Handle) initStatsBucketsConcurrently(cache statstypes.StatsCache, totalMemory uint64, concurrency int) error {
 	if IsFullCacheFunc(cache, totalMemory) {
 		return nil
 	}
