@@ -114,22 +114,33 @@ func (mm *Memo) GetHasher() base2.Hasher {
 func (mm *Memo) CopyIn(target *Group, lp base.LogicalPlan) (*GroupExpression, error) {
 	// Group the children first.
 	childGroups := make([]*Group, 0, len(lp.Children()))
-	for _, child := range lp.Children() {
-		var currentChildG *Group
-		if ge, ok := child.(*GroupExpression); ok {
-			// which means it's the earliest unchanged GroupExpression from rule XForm.
-			currentChildG = ge.GetGroup()
-		} else {
-			// which means it's a new/changed logical op, downward to get its input group ids to complete it.
-			ge, err := mm.CopyIn(nil, child)
-			if err != nil {
-				return nil, err
-			}
-			currentChildG = ge.GetGroup()
+	if ge, ok := lp.(*GroupExpression); ok {
+		// since the first-in lp itself may be a GE already, judge the target group and the group it owns.
+		if ge.GetGroup() == target {
+			return ge, nil
 		}
-		intest.Assert(currentChildG != nil)
-		intest.Assert(currentChildG != target)
-		childGroups = append(childGroups, currentChildG)
+		// target group and the group it owns are different, we may need to merge them, get op.
+		lp = ge.LogicalPlan
+		// the binder may not bind the GE belows, get the child groups from the GE.inputs directly.
+		childGroups = append(childGroups, ge.Inputs...)
+	} else {
+		for _, child := range lp.Children() {
+			var currentChildG *Group
+			if ge, ok := child.(*GroupExpression); ok {
+				// which means it's the earliest unchanged GroupExpression from rule XForm.
+				currentChildG = ge.GetGroup()
+			} else {
+				// which means it's a new/changed logical op, downward to get its input group ids to complete it.
+				ge, err := mm.CopyIn(nil, child)
+				if err != nil {
+					return nil, err
+				}
+				currentChildG = ge.GetGroup()
+			}
+			intest.Assert(currentChildG != nil)
+			intest.Assert(currentChildG != target)
+			childGroups = append(childGroups, currentChildG)
+		}
 	}
 	var (
 		ok        bool
@@ -153,14 +164,25 @@ func (mm *Memo) RemoveOut(target *Group, lp base.LogicalPlan) {
 	intest.Assert(lp != nil)
 	ge := lp.(*GroupExpression)
 	intest.Assert(ge != nil)
+	if ge.abandoned {
+		// group merge has happened, the GE has been tagged as abandoned.
+		return
+	}
 	// delete from group
 	target.Delete(ge)
 	// delete from global
 	mm.hash2GlobalGroupExpr.Remove(ge)
 	// maintain the parentGERef.
 	for _, childG := range ge.Inputs {
+		// for projection elimination case, the child group may be cleared.
+		// search: cascades case of "explain format="brief" select a from t where a * 3 + 1 > 9 and a < 5"
+		if childG.cleared {
+			continue
+		}
 		childG.removeParentGEs(ge)
 	}
+	ge.Inputs = ge.Inputs[:0]
+	ge.group = nil
 	// mark current ge as abandoned in case of it has been used in pushed task.
 	ge.SetAbandoned()
 }
