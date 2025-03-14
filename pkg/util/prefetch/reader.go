@@ -19,6 +19,9 @@ import (
 	"errors"
 	"io"
 	"sync"
+
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
 )
 
 // Reader is a reader that prefetches data from the underlying reader.
@@ -75,6 +78,9 @@ func (r *Reader) run() {
 				// we need skip this case.
 				err = io.EOF
 			}
+			if !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+				log.Info("get other error during prefetch", zap.Error(err), zap.Int("bytes", n), zap.Int("cap", cap(buf)))
+			}
 			r.err = err
 			close(r.bufCh)
 			return
@@ -90,6 +96,9 @@ func (r *Reader) Read(data []byte) (int, error) {
 			b, ok := <-r.bufCh
 			if !ok {
 				if total > 0 {
+					if r.err != nil && !errors.Is(r.err, io.ErrUnexpectedEOF) && !errors.Is(r.err, io.EOF) {
+						log.Info("read total > 0 but has internal error", zap.Error(r.err), zap.Int("bytes", total), zap.Int("expected", len(data)))
+					}
 					return total, nil
 				}
 				return 0, r.err
@@ -102,6 +111,9 @@ func (r *Reader) Read(data []byte) (int, error) {
 		n, err := r.curBufReader.Read(data)
 		total += n
 		if n == expected {
+			if r.err != nil && !errors.Is(r.err, io.ErrUnexpectedEOF) && !errors.Is(r.err, io.EOF) {
+				log.Info("read suceess but has internal error", zap.Error(r.err), zap.Int("bytes", n))
+			}
 			return total, nil
 		}
 

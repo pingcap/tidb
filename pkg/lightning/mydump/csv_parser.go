@@ -17,6 +17,7 @@ package mydump
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"io"
 	"regexp"
 	"slices"
@@ -55,6 +56,7 @@ type CSVParser struct {
 	startingBy     []byte
 	escapedBy      string
 	unescapeRegexp *regexp.Regexp
+	base64Encoded  bool
 
 	charsetConvertor *CharsetConvertor
 	// These variables are used with IndexAnyByte to search a byte slice for the
@@ -168,6 +170,7 @@ func NewCSVParser(
 		startingBy:        []byte(cfg.LinesStartingBy),
 		escapedBy:         cfg.FieldsEscapedBy,
 		unescapeRegexp:    r,
+		base64Encoded:     cfg.FieldsEncodedBy == config.FieldEncodeBase64,
 		escFlavor:         escFlavor,
 		quoteByteSet:      makeByteSet(quoteStopSet),
 		unquoteByteSet:    makeByteSet(unquoteStopSet),
@@ -201,6 +204,16 @@ func encodeSpecialSymbols(cfg *config.CSVConfig, cc *CharsetConvertor) (separato
 }
 
 func (parser *CSVParser) unescapeString(input field) (unescaped string, isNull bool, err error) {
+	if parser.base64Encoded {
+		var decoded []byte
+		decoded, err = base64.StdEncoding.DecodeString(input.content)
+		if err != nil {
+			return
+		}
+		unescaped = string(decoded)
+		return
+	}
+
 	// Convert the input from another charset to utf8mb4 before we return the string.
 	if unescaped, err = parser.charsetConvertor.Decode(input.content); err != nil {
 		return
