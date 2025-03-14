@@ -303,7 +303,7 @@ func getFilesReadConcurrency(
 		}
 	}
 	logutil.Logger(ctx).Info("estimated file size of this range group",
-		zap.Uint64("totalSize", totalFileSize))
+		zap.String("totalSize", units.BytesSize(float64(totalFileSize))))
 	return result, startOffs, nil
 }
 
