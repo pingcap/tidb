@@ -15,6 +15,7 @@
 package handle
 
 import (
+	"context"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -111,7 +112,7 @@ func (h *Handle) Clear() {
 
 // NewHandle creates a Handle for update stats.
 func NewHandle(
-	_, /* ctx, keep it for feature usage */
+	ctx context.Context,
 	initStatsCtx sessionctx.Context,
 	lease time.Duration,
 	is infoschema.InfoSchema,
@@ -140,7 +141,7 @@ func NewHandle(
 	handle.StatsCache = statsCache
 	handle.StatsHistory = history.NewStatsHistory(handle)
 	handle.StatsUsage = usage.NewStatsUsageImpl(handle)
-	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(handle, tracker, ddlNotifier)
+	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(ctx, handle, tracker, ddlNotifier)
 	handle.StatsSyncLoad = syncload.NewStatsSyncLoad(is, handle)
 	handle.StatsGlobal = globalstats.NewStatsGlobal(handle)
 	handle.DDL = ddl.NewDDLHandler(
