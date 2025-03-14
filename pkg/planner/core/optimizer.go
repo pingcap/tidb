@@ -18,6 +18,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
 	"math"
 	"slices"
 	"strconv"
@@ -1120,6 +1121,72 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 func isLogicalRuleDisabled(r base.LogicalOptRule) bool {
 	disabled := DefaultDisabledLogicalRulesList.Load().(set.StringSet).Exist(r.Name())
 	return disabled
+}
+
+func implementGroupAndCost(group *memo.Group, prop *property.PhysicalProperty, costLimit float64,
+	planCounter *base.PlanCounterTp) (base.PhysicalPlan, float64, error) {
+	// Check whether the child group is already optimized for the physical property.
+	pair := group.GetBestExpression(prop)
+	if pair != nil {
+		if pair.Cost <= costLimit {
+			// the optimized group has a valid cost plan according to this physical prop.
+			return pair.Physical, pair.Cost, nil
+		} else {
+			// the optimized group has no options.
+			return nil, 0, nil
+		}
+	}
+	// the group hasn't been optimized, physical it.
+	var implErr error
+	group.ForEachGE(func(ge *memo.GroupExpression) bool {
+		// for each group expression inside group, we will try to find the best physical plan.
+		task, cnt, err := ge.LogicalPlan.FindBestTask(prop, planCounter, nil)
+		if err != nil {
+			implErr = err
+			return false
+		}
+	})
+}
+
+func implementAndCost(group *memo.Group, planCounter *base.PlanCounterTp) (base.PhysicalPlan, float64, error) {
+	ctx := group.GetLogicalExpressions().Front().Value.(base.LogicalPlan).SCtx()
+	if ctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(ctx)
+		defer debugtrace.LeaveContextCommon(ctx)
+	}
+	// currently, we will derive each node's stats regardless of group logical prop's stats, so we don't
+	// have to prepare logical op's stats each.
+
+	prop := &property.PhysicalProperty{
+		TaskTp:      property.RootTaskType,
+		ExpectedCnt: math.MaxFloat64,
+	}
+
+	var implErr error
+	ctx.GetSessionVars().StmtCtx.TaskMapBakTS = 0
+	group.ForEachGE(func(ge *memo.GroupExpression) bool {
+		// for each group expression inside group, we will try to find the best physical plan.
+		task, cnt, err := ge.LogicalPlan.FindBestTask(prop, planCounter, nil)
+		if err != nil {
+			implErr = err
+			return false
+		}
+	})
+	if *planCounter > 0 {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("The parameter of nth_plan() is out of range"))
+	}
+	if t.Invalid() {
+		errMsg := "Can't find a proper physical plan for this query"
+		if config.GetGlobalConfig().DisaggregatedTiFlash && !logic.SCtx().GetSessionVars().IsMPPAllowed() {
+			errMsg += ": cop and batchCop are not allowed in disaggregated tiflash mode, you should turn on tidb_allow_mpp switch"
+		}
+		return nil, 0, plannererrors.ErrInternal.GenWithStackByArgs(errMsg)
+	}
+	if err = t.Plan().ResolveIndices(); err != nil {
+		return nil, 0, err
+	}
+	cost, err = getPlanCost(t.Plan(), property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
+	return t.Plan(), cost, err
 }
 
 func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (plan base.PhysicalPlan, cost float64, err error) {

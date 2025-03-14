@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/cascades/pattern"
 	"github.com/pingcap/tidb/pkg/planner/cascades/util"
+	corebase "github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/zyedidia/generic/hashmap"
@@ -66,6 +67,14 @@ type Group struct {
 
 	// explored indicates whether this group has been explored.
 	explored bool
+
+	// bestPhysicalMap is used to store the best physical plan for each required physical property.
+	bestPhysicalMap map[string]*CostPair
+}
+
+type CostPair struct {
+	Cost     float64
+	Physical corebase.PhysicalPlan
 }
 
 // GroupPair is a pair of *Group
@@ -335,4 +344,40 @@ func NewGroup(prop *property.LogicalProperty) *Group {
 		),
 	}
 	return g
+}
+
+// SetBestExpression sets the best expression for the given physical property.
+func (g *Group) SetBestExpression(cost float64, physical corebase.PhysicalPlan, prop *property.PhysicalProperty) {
+	key := string(prop.HashCode())
+	costPair, ok := g.bestPhysicalMap[key]
+	if !ok {
+		costPair = &CostPair{Cost: cost, Physical: physical}
+	} else if costPair.Cost > cost {
+		costPair.Cost = cost
+		costPair.Physical = physical
+	}
+	g.bestPhysicalMap[key] = costPair
+}
+
+// GetBestExpression gets the best expression for the given physical property.
+func (g *Group) GetBestExpression(prop *property.PhysicalProperty) *CostPair {
+	key := string(prop.HashCode())
+	costPair, ok := g.bestPhysicalMap[key]
+	if !ok {
+		return nil
+	}
+	return costPair
+}
+
+// ReplaceBestExpression replaces the best expression for the given physical property.
+// todo: this is used in group merge case, when impl and xForm rules is mixed, when the
+// group merge is happened, and there is old GE that substituted by new GE inside one
+// group, we should replace the best expression in the group.
+func (g *Group) ReplaceBestExpression(old, new corebase.PhysicalPlan) {
+	for key, costPair := range g.bestPhysicalMap {
+		if costPair.Physical == old {
+			costPair.Physical = new
+			g.bestPhysicalMap[key] = costPair // update it back to map.
+		}
+	}
 }
