@@ -106,11 +106,11 @@ func (e *ProjectionExec) Open(ctx context.Context) error {
 	if err := e.BaseExecutorV2.Open(ctx); err != nil {
 		return err
 	}
-	failpoint.Inject("mockProjectionExecBaseExecutorOpenReturnedError", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockProjectionExecBaseExecutorOpenReturnedError")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(errors.New("mock ProjectionExec.baseExecutor.Open returned error"))
+			return errors.New("mock ProjectionExec.baseExecutor.Open returned error")
 		}
-	})
+	}
 	return e.open(ctx)
 }
 
@@ -216,7 +216,7 @@ func (e *ProjectionExec) unParallelExecute(ctx context.Context, chk *chunk.Chunk
 	e.childResult.SetRequiredRows(chk.RequiredRows(), e.MaxChunkSize())
 	mSize := e.childResult.MemoryUsage()
 	err := exec.Next(ctx, e.Children(0), e.childResult)
-	failpoint.Inject("ConsumeRandomPanic", nil)
+	failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 	e.memTracker.Consume(e.childResult.MemoryUsage() - mSize)
 	if err != nil {
 		return err
@@ -246,7 +246,7 @@ func (e *ProjectionExec) parallelExecute(ctx context.Context, chk *chunk.Chunk) 
 	}
 	mSize := output.chk.MemoryUsage()
 	chk.SwapColumns(output.chk)
-	failpoint.Inject("ConsumeRandomPanic", nil)
+	failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 	e.memTracker.Consume(output.chk.MemoryUsage() - mSize)
 	e.fetcher.outputCh <- output
 	return nil
@@ -280,7 +280,7 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 		})
 
 		inputChk := exec.NewFirstChunk(e.Children(0))
-		failpoint.Inject("ConsumeRandomPanic", nil)
+		failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 		e.memTracker.Consume(inputChk.MemoryUsage())
 		e.fetcher.inputCh <- &projectionInput{
 			chk:          inputChk,
@@ -408,7 +408,7 @@ func (f *projectionInputFetcher) run(ctx context.Context) {
 		input.chk.SetRequiredRows(int(requiredRows), f.proj.MaxChunkSize())
 		mSize := input.chk.MemoryUsage()
 		err := exec.Next(ctx, f.child, input.chk)
-		failpoint.Inject("ConsumeRandomPanic", nil)
+		failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 		f.proj.memTracker.Consume(input.chk.MemoryUsage() - mSize)
 		if err != nil || input.chk.NumRows() == 0 {
 			output.done <- err
@@ -469,7 +469,7 @@ func (w *projectionWorker) run(ctx context.Context) {
 
 		mSize := output.chk.MemoryUsage() + input.chk.MemoryUsage()
 		err := w.evaluatorSuit.Run(w.ctx.evalCtx, w.ctx.enableVectorizedExpression, input.chk, output.chk)
-		failpoint.Inject("ConsumeRandomPanic", nil)
+		failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 		w.proj.memTracker.Consume(output.chk.MemoryUsage() + input.chk.MemoryUsage() - mSize)
 		output.done <- err
 

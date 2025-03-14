@@ -1302,7 +1302,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Trace(err)
 	}
 
-	failpoint.InjectCall("run-snapshot-restore-about-to-finish", &err)
+	failpoint.Call(_curpkg_("run-snapshot-restore-about-to-finish"), &err)
 	if err != nil {
 		return err
 	}

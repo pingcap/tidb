@@ -316,7 +316,7 @@ func (e *Executor) getTiDBQuota(
 		return 0, err
 	}
 
-	failpoint.Inject("mockMetricsDataFilter", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("mockMetricsDataFilter")); _err_ == nil {
 		ret := make([]*timePointValue, 0)
 		for _, point := range tikvCPUs.vals {
 			if point.tp.After(endTs) || point.tp.Before(startTs) {
@@ -341,7 +341,7 @@ func (e *Executor) getTiDBQuota(
 			ret = append(ret, point)
 		}
 		rus.vals = ret
-	})
+	}
 	quotas := make([]float64, 0)
 	lowCount := 0
 	for {
@@ -504,11 +504,11 @@ func staticCalibrateTpch10(req *chunk.Chunk, clusterInfo []infoschema.ServerInfo
 
 func getTiDBTotalCPUQuota(clusterInfo []infoschema.ServerInfo) (float64, error) {
 	cpuQuota := float64(runtime.GOMAXPROCS(0))
-	failpoint.Inject("mockGOMAXPROCS", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockGOMAXPROCS")); _err_ == nil {
 		if val != nil {
 			cpuQuota = float64(val.(int))
 		}
-	})
+	}
 	instanceNum := count(clusterInfo, serverTypeTiDB)
 	return cpuQuota * float64(instanceNum), nil
 }
@@ -661,7 +661,7 @@ func fetchStoreMetrics(serversInfo []infoschema.ServerInfo, serverType string, o
 			return err
 		}
 		var resp *http.Response
-		failpoint.Inject("mockMetricsResponse", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("mockMetricsResponse")); _err_ == nil {
 			if val != nil {
 				data, _ := base64.StdEncoding.DecodeString(val.(string))
 				resp = &http.Response{
@@ -671,7 +671,7 @@ func fetchStoreMetrics(serversInfo []infoschema.ServerInfo, serverType string, o
 					},
 				}
 			}
-		})
+		}
 		if resp == nil {
 			var err1 error
 			// ignore false positive go line, can't use defer here because it's in a loop.

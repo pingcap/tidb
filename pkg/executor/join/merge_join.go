@@ -103,11 +103,11 @@ func (t *MergeJoinTable) init(executor *MergeJoinExec) {
 		t.rowContainer.GetDiskTracker().SetLabel(memory.LabelForInnerTable)
 		if vardef.EnableTmpStorageOnOOM.Load() {
 			actionSpill := t.rowContainer.ActionSpill()
-			failpoint.Inject("testMergeJoinRowContainerSpill", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("testMergeJoinRowContainerSpill")); _err_ == nil {
 				if val.(bool) {
 					actionSpill = t.rowContainer.ActionSpillForTest()
 				}
-			})
+			}
 			executor.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(actionSpill)
 		}
 		t.memTracker = memory.NewTracker(memory.LabelForInnerTable, -1)
@@ -128,12 +128,12 @@ func (t *MergeJoinTable) finish() error {
 	t.memTracker.Consume(-t.childChunk.MemoryUsage())
 
 	if t.IsInner {
-		failpoint.Inject("testMergeJoinRowContainerSpill", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("testMergeJoinRowContainerSpill")); _err_ == nil {
 			if val.(bool) {
 				actionSpill := t.rowContainer.ActionSpill()
 				actionSpill.WaitForTest()
 			}
-		})
+		}
 		if err := t.rowContainer.Close(); err != nil {
 			return err
 		}
@@ -330,7 +330,7 @@ func (e *MergeJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) 
 	innerIter := e.InnerTable.groupRowsIter
 	outerIter := e.OuterTable.groupRowsIter
 	for !req.IsFull() {
-		failpoint.Inject("ConsumeRandomPanic", nil)
+		failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 		if innerIter.Current() == innerIter.End() {
 			if err := e.InnerTable.fetchNextInnerGroup(ctx, e); err != nil {
 				return err

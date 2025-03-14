@@ -54,11 +54,11 @@ func newImportMinimalTaskExecutor0(t *importStepMinimalTask) MiniTaskExecutor {
 func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWriter backend.EngineWriter) error {
 	logger := logutil.BgLogger().With(zap.Stringer("type", proto.ImportInto), zap.Int64("table-id", e.mTtask.Plan.TableInfo.ID))
 	logger.Info("execute chunk")
-	failpoint.Inject("beforeSortChunk", func() {})
-	failpoint.Inject("errorWhenSortChunk", func() {
-		failpoint.Return(errors.New("occur an error when sort chunk"))
-	})
-	failpoint.InjectCall("syncBeforeSortChunk")
+	failpoint.Eval(_curpkg_("beforeSortChunk"))
+	if _, _err_ := failpoint.Eval(_curpkg_("errorWhenSortChunk")); _err_ == nil {
+		return errors.New("occur an error when sort chunk")
+	}
+	failpoint.Call(_curpkg_("syncBeforeSortChunk"))
 	chunkCheckpoint := toChunkCheckpoint(e.mTtask.Chunk)
 	sharedVars := e.mTtask.SharedVars
 	checksum := verify.NewKVGroupChecksumWithKeyspace(sharedVars.TableImporter.GetKeySpace())
@@ -96,7 +96,7 @@ func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWr
 
 // postProcess does the post-processing for the task.
 func postProcess(ctx context.Context, store kv.Storage, taskMeta *TaskMeta, subtaskMeta *PostProcessStepMeta, logger *zap.Logger) (err error) {
-	failpoint.InjectCall("syncBeforePostProcess", taskMeta.JobID)
+	failpoint.Call(_curpkg_("syncBeforePostProcess"), taskMeta.JobID)
 
 	callLog := log.BeginTask(logger, "post process")
 	defer func() {

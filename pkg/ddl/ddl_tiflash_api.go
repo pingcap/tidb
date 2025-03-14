@@ -353,9 +353,9 @@ func updateTiFlashStores(pollTiFlashContext *TiFlashManagementContext) error {
 // PollAvailableTableProgress will poll and check availability of available tables.
 func PollAvailableTableProgress(schemas infoschema.InfoSchema, _ sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) {
 	pollMaxCount := RefreshProgressMaxTableCount
-	failpoint.Inject("PollAvailableTableProgressMaxCount", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("PollAvailableTableProgressMaxCount")); _err_ == nil {
 		pollMaxCount = uint64(val.(int))
-	})
+	}
 	for element := pollTiFlashContext.UpdatingProgressTables.Front(); element != nil && pollMaxCount > 0; pollMaxCount-- {
 		availableTableID := element.Value.(AvailableTableID)
 		var table table.Table
@@ -432,13 +432,13 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 		}
 	}
 
-	failpoint.Inject("OneTiFlashStoreDown", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("OneTiFlashStoreDown")); _err_ == nil {
 		for storeID, store := range pollTiFlashContext.TiFlashStores {
 			store.Store.StateName = "Down"
 			pollTiFlashContext.TiFlashStores[storeID] = store
 			break
 		}
-	})
+	}
 	pollTiFlashContext.PollCounter++
 
 	// Start to process every table.
@@ -459,7 +459,7 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 		}
 	}
 
-	failpoint.Inject("waitForAddPartition", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("waitForAddPartition")); _err_ == nil {
 		for _, phyTable := range tableList {
 			is := d.infoCache.GetLatest()
 			_, ok := is.TableByID(d.ctx, phyTable.ID)
@@ -472,7 +472,7 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 				}
 			}
 		}
-	})
+	}
 
 	needPushPending := false
 	if pollTiFlashContext.UpdatingProgressTables.Len() == 0 {
@@ -483,9 +483,9 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 		// For every region in each table, if it has one replica, we reckon it ready.
 		// These request can be batched as an optimization.
 		available := tb.Available
-		failpoint.Inject("PollTiFlashReplicaStatusReplacePrevAvailableValue", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("PollTiFlashReplicaStatusReplacePrevAvailableValue")); _err_ == nil {
 			available = val.(bool)
-		})
+		}
 		// We only check unavailable tables here, so doesn't include blocked add partition case.
 		if !available && !tb.LogicalTableAvailable {
 			enabled, inqueue, _ := pollTiFlashContext.Backoff.Tick(tb.ID)
@@ -515,9 +515,9 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 			}
 
 			avail := progress == 1
-			failpoint.Inject("PollTiFlashReplicaStatusReplaceCurAvailableValue", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("PollTiFlashReplicaStatusReplaceCurAvailableValue")); _err_ == nil {
 				avail = val.(bool)
-			})
+			}
 
 			if !avail {
 				logutil.DDLLogger().Info("Tiflash replica is not available", zap.Int64("tableID", tb.ID), zap.Float64("progress", progress))
@@ -526,9 +526,9 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 				logutil.DDLLogger().Info("Tiflash replica is available", zap.Int64("tableID", tb.ID), zap.Float64("progress", progress))
 				pollTiFlashContext.Backoff.Remove(tb.ID)
 			}
-			failpoint.Inject("skipUpdateTableReplicaInfoInLoop", func() {
-				failpoint.Continue()
-			})
+			if _, _err_ := failpoint.Eval(_curpkg_("skipUpdateTableReplicaInfoInLoop")); _err_ == nil {
+				continue
+			}
 			// Will call `onUpdateFlashReplicaStatus` to update `TiFlashReplica`.
 			if err := d.executor.UpdateTableReplicaInfo(ctx, tb.ID, avail); err != nil {
 				if infoschema.ErrTableNotExists.Equal(err) && tb.IsPartition {
@@ -567,9 +567,9 @@ func (d *ddl) PollTiFlashRoutine() {
 				logutil.DDLLogger().Error("failed to get sessionPool for refreshTiFlashTicker")
 				return
 			}
-			failpoint.Inject("BeforeRefreshTiFlashTickeLoop", func() {
-				failpoint.Continue()
-			})
+			if _, _err_ := failpoint.Eval(_curpkg_("BeforeRefreshTiFlashTickeLoop")); _err_ == nil {
+				continue
+			}
 
 			if !hasSetTiFlashGroup && !time.Now().Before(nextSetTiFlashGroupTime) {
 				// We should set tiflash rule group a higher index than other placement groups to forbid override by them.

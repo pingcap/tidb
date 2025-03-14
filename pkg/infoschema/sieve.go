@@ -154,10 +154,10 @@ func (s *Sieve[K, V]) Set(key K, value V) {
 }
 
 func (s *Sieve[K, V]) Get(key K) (value V, ok bool) {
-	failpoint.Inject("skipGet", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("skipGet")); _err_ == nil {
 		var v V
-		failpoint.Return(v, false)
-	})
+		return v, false
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if e, ok := s.items[key]; ok {

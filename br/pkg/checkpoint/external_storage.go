@@ -218,9 +218,9 @@ func (s *externalCheckpointStorage) updateLock(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	failpoint.Inject("failed-after-checkpoint-updates-lock", func(_ failpoint.Value) {
-		failpoint.Return(errors.Errorf("failpoint: failed after checkpoint updates lock"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("failed-after-checkpoint-updates-lock")); _err_ == nil {
+		return errors.Errorf("failpoint: failed after checkpoint updates lock")
+	}
 
 	return nil
 }

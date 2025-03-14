@@ -368,14 +368,14 @@ func waitVersionSynced(
 	job *model.Job,
 	latestSchemaVersion int64,
 ) (err error) {
-	failpoint.Inject("checkDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("checkDownBeforeUpdateGlobalVersion")); _err_ == nil {
 		if val.(bool) {
 			if mockDDLErrOnce > 0 && mockDDLErrOnce != latestSchemaVersion {
 				panic("check down before update global version failed")
 			}
 			mockDDLErrOnce = -1
 		}
-	})
+	}
 	timeStart := time.Now()
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.DDLWaitSchemaSynced, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(timeStart).Seconds())
@@ -414,14 +414,14 @@ func waitVersionSyncedWithoutMDL(ctx context.Context, jobCtx *jobContext, job *m
 		return err
 	}
 
-	failpoint.Inject("checkDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("checkDownBeforeUpdateGlobalVersion")); _err_ == nil {
 		if val.(bool) {
 			if mockDDLErrOnce > 0 && mockDDLErrOnce != latestSchemaVersion {
 				panic("check down before update global version failed")
 			}
 			mockDDLErrOnce = -1
 		}
-	})
+	}
 
 	return updateGlobalVersionAndWaitSynced(ctx, jobCtx, latestSchemaVersion, job)
 }

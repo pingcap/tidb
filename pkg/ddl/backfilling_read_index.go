@@ -226,7 +226,7 @@ func (r *readIndexStepExecutor) ResourceModified(_ context.Context, newResource 
 }
 
 func (r *readIndexStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
-	failpoint.InjectCall("mockDMLExecutionAddIndexSubTaskFinish", r.backend)
+	failpoint.Call(_curpkg_("mockDMLExecutionAddIndexSubTaskFinish"), r.backend)
 	if !r.isGlobalSort() {
 		return nil
 	}

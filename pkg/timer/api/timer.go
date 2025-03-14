@@ -53,9 +53,9 @@ func NewSchedIntervalPolicy(expr string) (*SchedIntervalPolicy, error) {
 	if err != nil {
 		return nil, errors.Wrapf(err, "invalid schedule event expr '%s'", expr)
 	}
-	failpoint.Inject("overwrite-ttl-job-interval", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("overwrite-ttl-job-interval")); _err_ == nil {
 		interval = time.Duration(val.(int))
-	})
+	}
 
 	return &SchedIntervalPolicy{
 		expr:     expr,

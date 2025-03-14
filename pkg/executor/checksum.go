@@ -159,7 +159,7 @@ func (e *ChecksumTableExec) handleChecksumRequest(req *kv.Request) (resp *tipb.C
 		if err1 := res.Close(); err1 != nil {
 			err = err1
 		}
-		failpoint.Inject("afterHandleChecksumRequest", nil)
+		failpoint.Eval(_curpkg_("afterHandleChecksumRequest"))
 	}()
 
 	resp = &tipb.ChecksumResponse{}
