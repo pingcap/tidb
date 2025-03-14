@@ -379,7 +379,7 @@ func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *
 			continue
 		}
 		// fms for global stats doesn't need to dump to kv.
-		err = statsHandle.SaveStatsToStorage(gid,
+		err = statsHandle.SaveColOrIdxStatsToStorage(gid,
 			globalStats.Count,
 			globalStats.ModifyCount,
 			info.IsIndex,
