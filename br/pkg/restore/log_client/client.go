@@ -20,7 +20,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"math"
-	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -985,71 +984,6 @@ func (rc *LogClient) loadSchemasMap(
 	return backupMeta.GetDbMaps(), nil
 }
 
-func readFilteredFullBackupTables(
-	ctx context.Context,
-	s storage.ExternalStorage,
-	piTRIdTracker *utils.PiTRIdTracker,
-	cipherInfo *backuppb.CipherInfo,
-) (map[int64]*metautil.Table, error) {
-	if piTRIdTracker == nil {
-		return nil, errors.Errorf("missing pitr table tracker information")
-	}
-	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	backupMetaBytes, err := metautil.DecryptFullBackupMetaIfNeeded(metaData, cipherInfo)
-	if err != nil {
-		return nil, errors.Annotate(err, "decrypt failed with wrong key")
-	}
-
-	backupMeta := &backuppb.BackupMeta{}
-	if err = backupMeta.Unmarshal(backupMetaBytes); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	// read full backup databases to get map[table]table.Info
-	reader := metautil.NewMetaReader(backupMeta, s, cipherInfo)
-
-	databases, err := metautil.LoadBackupTables(ctx, reader, false)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	tables := make(map[int64]*metautil.Table)
-	for _, db := range databases {
-		if !piTRIdTracker.ContainsDB(db.Info.ID) {
-			continue
-		}
-
-		tableAdded := false
-		for _, table := range db.Tables {
-			// check this db is empty.
-			if table.Info == nil {
-				tables[db.Info.ID] = table
-				tableAdded = true
-				continue
-			}
-			if !piTRIdTracker.ContainsTableId(db.Info.ID, table.Info.ID) {
-				continue
-			}
-			tables[table.Info.ID] = table
-			tableAdded = true
-		}
-		// all tables in this db are filtered out, but we still need to keep this db since it passed the filter check
-		// and tables might get created later during log backup, if not keeping this db, those tables will be mapped to
-		// a new db id and thus will become data corruption.
-		if !tableAdded {
-			tables[db.Info.ID] = &metautil.Table{
-				DB: db.Info,
-			}
-		}
-	}
-
-	return tables, nil
-}
-
 type FullBackupStorageConfig struct {
 	Backend *backuppb.StorageBackend
 	Opts    *storage.ExternalStorageOptions
@@ -1060,70 +994,7 @@ type GetIDMapConfig struct {
 	LoadSavedIDMap bool
 
 	// optional
-	FullBackupStorageConfig *FullBackupStorageConfig
-	CipherInfo              *backuppb.CipherInfo
-	// generated at full restore step that contains all the table ids that need to restore
-	PiTRTableTracker *utils.PiTRIdTracker
-}
-
-const UnsafePITRLogRestoreStartBeforeAnyUpstreamUserDDL = "UNSAFE_PITR_LOG_RESTORE_START_BEFORE_ANY_UPSTREAM_USER_DDL"
-
-// generateDBReplacesFromFullBackupStorage reads the full backup schema and creates the mapping from upstream table id
-// to downstream table id. The downstream tables have been created in the previous snapshot restore step, so we
-// can build the mapping by looking at the table names. The current table information is in domain.InfoSchema.
-func (rc *LogClient) generateDBReplacesFromFullBackupStorage(
-	ctx context.Context,
-	cfg *GetIDMapConfig,
-) (map[stream.UpstreamID]*stream.DBReplace, error) {
-	dbReplaces := make(map[stream.UpstreamID]*stream.DBReplace)
-	if cfg.FullBackupStorageConfig == nil {
-		envVal, ok := os.LookupEnv(UnsafePITRLogRestoreStartBeforeAnyUpstreamUserDDL)
-		if ok && len(envVal) > 0 {
-			log.Info(fmt.Sprintf("the environment variable %s is active, skip loading the base schemas.", UnsafePITRLogRestoreStartBeforeAnyUpstreamUserDDL))
-			return dbReplaces, nil
-		}
-		return nil, errors.Errorf("miss upstream table information at `start-ts`(%d) but the full backup path is not specified", rc.startTS)
-	}
-	s, err := storage.New(ctx, cfg.FullBackupStorageConfig.Backend, cfg.FullBackupStorageConfig.Opts)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	filteredFullBackupTables, err := readFilteredFullBackupTables(ctx, s, cfg.PiTRTableTracker, cfg.CipherInfo)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	for _, t := range filteredFullBackupTables {
-		dbName, _ := utils.GetSysDBCIStrName(t.DB.Name)
-		newDBInfo, exist := rc.dom.InfoSchema().SchemaByName(dbName)
-		if !exist {
-			log.Info("db does not exist", zap.String("dbName", dbName.String()))
-			continue
-		}
-
-		dbReplace, exist := dbReplaces[t.DB.ID]
-		if !exist {
-			dbReplace = stream.NewDBReplace(t.DB.Name.O, newDBInfo.ID)
-			dbReplaces[t.DB.ID] = dbReplace
-		}
-
-		if t.Info == nil {
-			// If the db is empty, skip it.
-			continue
-		}
-		newTableInfo, err := restore.GetTableSchema(rc.GetDomain(), dbName, t.Info.Name)
-		if err != nil {
-			log.Info("table doesn't exist", zap.String("tableName", dbName.String()+"."+t.Info.Name.String()))
-			continue
-		}
-
-		dbReplace.TableMap[t.Info.ID] = &stream.TableReplace{
-			Name:         newTableInfo.Name.O,
-			TableID:      newTableInfo.ID,
-			PartitionMap: restoreutils.GetPartitionIDMap(newTableInfo, t.Info),
-			IndexMap:     restoreutils.GetIndexIDMap(newTableInfo, t.Info),
-		}
-	}
-	return dbReplaces, nil
+	TableMappingManager *stream.TableMappingManager
 }
 
 // GetBaseIDMap get the id map from following ways
@@ -1152,7 +1023,7 @@ func (rc *LogClient) GetBaseIDMap(
 
 	// a new task, but without full snapshot restore, tries to load
 	// schemas map whose `restore-ts`` is the task's `start-ts`.
-	if len(dbMaps) <= 0 && cfg.FullBackupStorageConfig == nil {
+	if len(dbMaps) <= 0 {
 		log.Info("try to load pitr id maps of the previous task", zap.Uint64("start-ts", rc.startTS))
 		dbMaps, err = rc.loadSchemasMap(ctx, rc.startTS)
 		if err != nil {
@@ -1165,14 +1036,10 @@ func (rc *LogClient) GetBaseIDMap(
 	}
 
 	if len(dbMaps) <= 0 {
-		log.Info("no id maps, build the table replaces from cluster and full backup schemas")
-		dbReplaces, err = rc.generateDBReplacesFromFullBackupStorage(ctx, cfg)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	} else {
-		dbReplaces = stream.FromDBMapProto(dbMaps)
+		log.Error("no id maps found")
+		return nil, errors.New("no base id map found from saved id or snapshot restore or last restored PiTR")
 	}
+	dbReplaces = stream.FromDBMapProto(dbMaps)
 
 	stream.LogDBReplaceMap("base db replace info", dbReplaces)
 
@@ -1413,6 +1280,11 @@ func (rc *LogClient) restoreAndRewriteMetaKvEntries(
 		} else if newEntry == nil {
 			continue
 		}
+		// sanity check key will never be nil, otherwise will write invalid format data to TiKV
+		if len(newEntry.Key) == 0 {
+			log.Error("invalid nil key during rewrite")
+			return 0, 0, errors.Trace(err)
+		}
 		log.Debug("after rewrite entry", zap.Int("new-key-len", len(newEntry.Key)),
 			zap.Int("new-value-len", len(entry.E.Value)), zap.ByteString("new-key", newEntry.Key))
 
@@ -1457,22 +1329,7 @@ func (rc *LogClient) GenGlobalID(ctx context.Context) (int64, error) {
 
 // GenGlobalIDs generates several global ids by transaction way.
 func (rc *LogClient) GenGlobalIDs(ctx context.Context, n int) ([]int64, error) {
-	ids := make([]int64, 0)
-	storage := rc.GetDomain().Store()
-
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
-	err := kv.RunInNewTxn(
-		ctx,
-		storage,
-		true,
-		func(ctx context.Context, txn kv.Transaction) error {
-			var e error
-			t := meta.NewMutator(txn)
-			ids, e = t.GenGlobalIDs(n)
-			return e
-		})
-
-	return ids, err
+	return utils.GenGlobalIDs(ctx, n, rc.GetDomain().Store())
 }
 
 // UpdateSchemaVersionFullReload updates schema version to trigger a full reload in transaction way.
@@ -1523,7 +1380,58 @@ func (rc *LogClient) UpdateSchemaVersionFullReload(ctx context.Context) error {
 	return nil
 }
 
-// WrapCompactedFilesIteratorWithSplit applies a splitting strategy to the compacted files iterator.
+// SetTableModeToNormal sets the table mode back to normal from restore mode if needed.
+func (rc *LogClient) SetTableModeToNormal(ctx context.Context, schemaReplace *stream.SchemasReplace) error {
+	const batchSize = 8
+
+	var tables []struct {
+		schemaID int64
+		tableID  int64
+	}
+
+	// collect all tables that need to be set to normal mode
+	for _, dbReplace := range schemaReplace.DbReplaceMap {
+		if dbReplace.FilteredOut {
+			continue
+		}
+		for _, tableReplace := range dbReplace.TableMap {
+			if tableReplace.FilteredOut {
+				continue
+			}
+			tables = append(tables, struct {
+				schemaID int64
+				tableID  int64
+			}{
+				schemaID: dbReplace.DbID,
+				tableID:  tableReplace.TableID,
+			})
+		}
+	}
+
+	log.Info("going to alter table mode", zap.Int("num", len(tables)))
+
+	// process tables in batches
+	// TODO: Need batch support from DDL
+	for i := 0; i < len(tables); i += batchSize {
+		end := i + batchSize
+		if end > len(tables) {
+			end = len(tables)
+		}
+
+		for _, table := range tables[i:end] {
+			log.Info("altering table mode", zap.Int64("schemaID", table.schemaID), zap.Any("table id", table.tableID))
+			if err := rc.unsafeSession.AlterTableMode(ctx, table.schemaID, table.tableID, model.TableModeNormal); err != nil {
+				log.Warn("failed to alter table mode, continuing with other tables",
+					zap.Int64("schemaID", table.schemaID),
+					zap.Any("tableID", table.tableID),
+					zap.Error(err))
+			}
+		}
+	}
+	return nil
+}
+
+// WrapCompactedFilesIterWithSplitHelper applies a splitting strategy to the compacted files iterator.
 // It uses a region splitter to handle the splitting logic based on the provided rules and checkpoint sets.
 func (rc *LogClient) WrapCompactedFilesIterWithSplitHelper(
 	ctx context.Context,
