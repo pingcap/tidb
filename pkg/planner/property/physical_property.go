@@ -307,7 +307,9 @@ func (p *PhysicalProperty) IsSubsetOf(keys []*MPPPartitionColumn) []int {
 
 // NeedEnforceExchangerWithHashByEquivalence checks if the keys can match the needs of partition with equivalence.
 // "Equivalence" refers to the process where we utilize a hash column to obtain equivalent columns,
-// and then use these equivalent columns to compare with the MPP partition column to determine whether an exchange is necessary.
+// and then use these equivalent columns to compare with the MPP partition column to determine whether an exchange is
+// necessary.
+//
 // for example:
 //  1. MPPPartitionCols: [18，13，16]
 //  2. keys: [9]
