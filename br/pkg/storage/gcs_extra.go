@@ -32,6 +32,7 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/go-resty/resty/v2"
+	"github.com/pingcap/tidb/pkg/util/zeropool"
 	"go.uber.org/atomic"
 )
 
@@ -48,6 +49,8 @@ type GCSWriter struct {
 	uploadBase
 	mutex       sync.Mutex
 	xmlMPUParts []*xmlMPUPart
+	bufs        [][]byte
+	bufPool     *zeropool.Pool[[]byte]
 	wg          sync.WaitGroup
 	err         atomic.Error
 	chunkSize   int64
@@ -66,6 +69,7 @@ func NewGCSWriter(
 	partSize int64,
 	parallelCnt int,
 	bucketName string,
+	bufPool *zeropool.Pool[[]byte],
 ) (*GCSWriter, error) {
 	if partSize < gcsMinimumChunkSize || partSize > gcsMaximumChunkSize {
 		return nil, fmt.Errorf(
@@ -84,6 +88,8 @@ func NewGCSWriter(
 			signedURLExpiry: defaultSignedURLExpiry,
 		},
 		chunkSize: partSize,
+		bufs:      make([][]byte, 0, 16),
+		bufPool:   bufPool,
 		workers:   parallelCnt,
 	}
 	if err := w.init(); err != nil {
@@ -179,10 +185,17 @@ func (w *GCSWriter) Write(p []byte) (n int, err error) {
 		}
 		return 0, err
 	}
-	buf := make([]byte, len(p))
-	copy(buf, p)
+
+	if w.bufPool == nil {
+		buf := make([]byte, len(p))
+		copy(buf, p)
+		p = buf
+	} else {
+		w.bufs = append(w.bufs, p)
+	}
+
 	w.chunkCh <- chunk{
-		buf:     buf,
+		buf:     p,
 		num:     w.curPart,
 		cleanup: func() {},
 	}
@@ -192,6 +205,14 @@ func (w *GCSWriter) Write(p []byte) (n int, err error) {
 
 // Close finishes the upload.
 func (w *GCSWriter) Close() error {
+	defer func() {
+		if w.bufPool != nil {
+			for _, b := range w.bufs {
+				w.bufPool.Put(b)
+			}
+		}
+	}()
+
 	close(w.chunkCh)
 	w.wg.Wait()
 
