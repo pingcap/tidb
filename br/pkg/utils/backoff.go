@@ -111,9 +111,9 @@ func (rs *RetryState) ShouldRetry() bool {
 // Get the exponential backoff durion and transform the state.
 func (rs *RetryState) ExponentialBackoff() time.Duration {
 	rs.retryTimes++
-	if _, _err_ := failpoint.Eval(_curpkg_("set-remaining-attempts-to-one")); _err_ == nil {
+	failpoint.Inject("set-remaining-attempts-to-one", func(_ failpoint.Value) {
 		rs.retryTimes = rs.maxRetry
-	}
+	})
 	backoff := rs.nextBackoff
 	rs.nextBackoff *= 2
 	if rs.nextBackoff > rs.maxBackoff {
@@ -417,11 +417,11 @@ func (bo *backoffStrategyImpl) NextBackoff(err error) time.Duration {
 		}
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("set-remaining-attempts-to-one")); _err_ == nil {
+	failpoint.Inject("set-remaining-attempts-to-one", func(_ failpoint.Value) {
 		if bo.remainingAttempts > 1 {
 			bo.remainingAttempts = 1
 		}
-	}
+	})
 
 	if bo.delayTime > bo.maxDelayTime {
 		return bo.maxDelayTime

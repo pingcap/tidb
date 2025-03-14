@@ -312,7 +312,7 @@ func (c *pitrCollector) putSST(ctx context.Context, f *pb.File) error {
 	}
 
 	begin := time.Now()
-	failpoint.Call(_curpkg_("put-sst"))
+	failpoint.InjectCall("put-sst")
 
 	f = util.ProtoV1Clone(f)
 	out := c.sstPath(f.Name)

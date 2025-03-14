@@ -37,11 +37,11 @@ type HistoricalStatsWorker struct {
 // SendTblToDumpHistoricalStats send tableID to worker to dump historical stats
 func (w *HistoricalStatsWorker) SendTblToDumpHistoricalStats(tableID int64) {
 	send := enableDumpHistoricalStats.Load()
-	if val, _err_ := failpoint.Eval(_curpkg_("sendHistoricalStats")); _err_ == nil {
+	failpoint.Inject("sendHistoricalStats", func(val failpoint.Value) {
 		if val.(bool) {
 			send = true
 		}
-	}
+	})
 	if !send {
 		return
 	}

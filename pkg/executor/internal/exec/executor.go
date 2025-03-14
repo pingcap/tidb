@@ -98,9 +98,9 @@ func newExecutorChunkAllocator(vars *variable.SessionVars, retFieldTypes []*type
 
 // InitCap returns the initial capacity for chunk
 func (e *executorChunkAllocator) InitCap() int {
-	if val, _err_ := failpoint.Eval(_curpkg_("initCap")); _err_ == nil {
-		return val.(int)
-	}
+	failpoint.Inject("initCap", func(val failpoint.Value) {
+		failpoint.Return(val.(int))
+	})
 	return e.initCap
 }
 
@@ -111,9 +111,9 @@ func (e *executorChunkAllocator) SetInitCap(c int) {
 
 // MaxChunkSize returns the max chunk size.
 func (e *executorChunkAllocator) MaxChunkSize() int {
-	if val, _err_ := failpoint.Eval(_curpkg_("maxChunkSize")); _err_ == nil {
-		return val.(int)
-	}
+	failpoint.Inject("maxChunkSize", func(val failpoint.Value) {
+		failpoint.Return(val.(int))
+	})
 	return e.maxChunkSize
 }
 

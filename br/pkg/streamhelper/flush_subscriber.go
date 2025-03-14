@@ -102,10 +102,10 @@ func (f *FlushSubscriber) UpdateStoreTopology(ctx context.Context) error {
 // Clear clears all the subscriptions.
 func (f *FlushSubscriber) Clear() {
 	timeout := clearSubscriberTimeOut
-	if v, _err_ := failpoint.Eval(_curpkg_("FlushSubscriber.Clear.timeoutMs")); _err_ == nil {
+	failpoint.Inject("FlushSubscriber.Clear.timeoutMs", func(v failpoint.Value) {
 		//nolint:durationcheck
 		timeout = time.Duration(v.(int)) * time.Millisecond
-	}
+	})
 	log.Info("Clearing.",
 		zap.String("category", "log backup flush subscriber"),
 		zap.Duration("timeout", timeout))
@@ -302,7 +302,7 @@ func (s *subscription) listenOver(ctx context.Context, cli eventStream) {
 					logutil.Key("event", m.EndKey), logutil.ShortError(err))
 				continue
 			}
-			failpoint.Eval(_curpkg_("subscription.listenOver.aboutToSend"))
+			failpoint.Inject("subscription.listenOver.aboutToSend", func() {})
 
 			evt := spans.Valued{
 				Key: spans.Span{

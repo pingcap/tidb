@@ -195,17 +195,17 @@ func (tr *taskRegister) keepaliveLoop(ctx context.Context, ch <-chan *clientv3.L
 	if timeLeftThreshold < minTimeLeftThreshold {
 		timeLeftThreshold = minTimeLeftThreshold
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("brie-task-register-always-grant")); _err_ == nil {
+	failpoint.Inject("brie-task-register-always-grant", func(_ failpoint.Value) {
 		timeLeftThreshold = tr.ttl
-	}
+	})
 	for {
 	CONSUMERESP:
 		for {
-			if _, _err_ := failpoint.Eval(_curpkg_("brie-task-register-keepalive-stop")); _err_ == nil {
+			failpoint.Inject("brie-task-register-keepalive-stop", func(_ failpoint.Value) {
 				if _, err = tr.client.Lease.Revoke(ctx, tr.curLeaseID); err != nil {
 					log.Warn("brie-task-register-keepalive-stop", zap.Error(err))
 				}
-			}
+			})
 			select {
 			case <-ctx.Done():
 				return
@@ -223,9 +223,9 @@ func (tr *taskRegister) keepaliveLoop(ctx context.Context, ch <-chan *clientv3.L
 			timeGap := time.Since(lastUpdateTime)
 			if tr.ttl-timeGap <= timeLeftThreshold {
 				lease, err := tr.grant(ctx)
-				if _, _err_ := failpoint.Eval(_curpkg_("brie-task-register-failed-to-grant")); _err_ == nil {
+				failpoint.Inject("brie-task-register-failed-to-grant", func(_ failpoint.Value) {
 					err = errors.New("failpoint-error")
-				}
+				})
 				if err != nil {
 					select {
 					case <-ctx.Done():
@@ -243,9 +243,9 @@ func (tr *taskRegister) keepaliveLoop(ctx context.Context, ch <-chan *clientv3.L
 			if needReputKV {
 				// if the lease has expired, need to put the key again
 				_, err := tr.client.KV.Put(ctx, tr.key, "", clientv3.WithLease(tr.curLeaseID))
-				if _, _err_ := failpoint.Eval(_curpkg_("brie-task-register-failed-to-reput")); _err_ == nil {
+				failpoint.Inject("brie-task-register-failed-to-reput", func(_ failpoint.Value) {
 					err = errors.New("failpoint-error")
-				}
+				})
 				if err != nil {
 					select {
 					case <-ctx.Done():

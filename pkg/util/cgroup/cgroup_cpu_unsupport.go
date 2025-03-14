@@ -26,12 +26,12 @@ import (
 // GetCgroupCPU returns the CPU usage and quota for the current cgroup.
 func GetCgroupCPU() (CPUUsage, error) {
 	var cpuUsage CPUUsage
-	if val, _err_ := failpoint.Eval(_curpkg_("GetCgroupCPUErr")); _err_ == nil {
+	failpoint.Inject("GetCgroupCPUErr", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
-			return cpuUsage, errors.Errorf("mockAddBatchDDLJobsErr")
+			failpoint.Return(cpuUsage, errors.Errorf("mockAddBatchDDLJobsErr"))
 		}
-	}
+	})
 	cpuUsage.NumCPU = runtime.NumCPU()
 	return cpuUsage, nil
 }

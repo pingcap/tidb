@@ -156,7 +156,7 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context, subtaskCtxCa
 			if subtaskCtxCancel != nil {
 				subtaskCtxCancel()
 			}
-			failpoint.Call(_curpkg_("afterCancelSubtaskExec"))
+			failpoint.InjectCall("afterCancelSubtaskExec")
 			return
 		}
 
@@ -255,7 +255,7 @@ func (e *BaseTaskExecutor) Run() {
 		}
 		skipBackoff = false
 		oldTask := e.task.Load()
-		failpoint.Call(_curpkg_("beforeGetTaskByIDInRun"), oldTask.ID)
+		failpoint.InjectCall("beforeGetTaskByIDInRun", oldTask.ID)
 		newTask, err := e.taskTable.GetTaskByID(e.ctx, oldTask.ID)
 		if err != nil {
 			if goerrors.Is(err, storage.ErrTaskNotFound) {
@@ -460,10 +460,10 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 		return e.stepExec.RunSubtask(subtaskCtx, subtask)
 	}()
 	defer subtaskCancel()
-	failpoint.Call(_curpkg_("afterRunSubtask"), e, &subtaskErr, subtaskCtx)
+	failpoint.InjectCall("afterRunSubtask", e, &subtaskErr, subtaskCtx)
 	logTask.End2(zap.InfoLevel, subtaskErr)
 
-	failpoint.Call(_curpkg_("mockTiDBShutdown"), e, e.execID, e.GetTaskBase())
+	failpoint.InjectCall("mockTiDBShutdown", e, e.execID, e.GetTaskBase())
 
 	if subtaskErr != nil {
 		if err := e.markSubTaskCanceledOrFailed(subtaskCtx, subtask, subtaskErr); err != nil {
@@ -473,7 +473,7 @@ func (e *BaseTaskExecutor) runSubtask(subtask *proto.Subtask) (resErr error) {
 	}
 
 	err := e.finishSubtask(e.stepCtx, subtask)
-	failpoint.Call(_curpkg_("syncAfterSubtaskFinish"))
+	failpoint.InjectCall("syncAfterSubtaskFinish")
 	return err
 }
 
@@ -539,7 +539,7 @@ func (e *BaseTaskExecutor) detectAndHandleParamModify(ctx context.Context) error
 		}
 		e.metaModifyApplied(latestTask.Meta)
 	}
-	failpoint.Call(_curpkg_("afterDetectAndHandleParamModify"))
+	failpoint.InjectCall("afterDetectAndHandleParamModify")
 	return nil
 }
 

@@ -95,13 +95,13 @@ func (param *MySQLConnectParam) ToDriverConfig() *mysql.Config {
 }
 
 func tryConnectMySQL(cfg *mysql.Config) (*sql.DB, error) {
-	if val, _err_ := failpoint.Eval(_curpkg_("MustMySQLPassword")); _err_ == nil {
+	failpoint.Inject("MustMySQLPassword", func(val failpoint.Value) {
 		pwd := val.(string)
 		if cfg.Passwd != pwd {
-			return nil, &mysql.MySQLError{Number: tmysql.ErrAccessDenied, Message: "access denied"}
+			failpoint.Return(nil, &mysql.MySQLError{Number: tmysql.ErrAccessDenied, Message: "access denied"})
 		}
-		return nil, nil
-	}
+		failpoint.Return(nil, nil)
+	})
 	c, err := mysql.NewConnector(cfg)
 	if err != nil {
 		return nil, errors.Trace(err)

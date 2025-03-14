@@ -465,11 +465,11 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 		return nil, errors.New("not leader")
 	}
 
-	if val, _err_ := failpoint.Eval(_curpkg_("mockErr")); _err_ == nil {
+	failpoint.Inject("mockErr", func(val failpoint.Value) {
 		if val.(bool) {
-			return nil, errors.New("mock reload failed")
+			failpoint.Return(nil, errors.New("mock reload failed"))
 		}
-	}
+	})
 
 	val := s.getAlloc(req.DbID, req.TblID, req.IsUnsigned)
 	val.Lock()

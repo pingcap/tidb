@@ -44,9 +44,9 @@ func (l *LocalStorage) Base() string {
 
 // DeleteFile deletes the file.
 func (l *LocalStorage) DeleteFile(_ context.Context, name string) error {
-	if v, _err_ := failpoint.Eval(_curpkg_("local_delete_file_err")); _err_ == nil {
-		return errors.New(v.(string))
-	}
+	failpoint.Inject("local_delete_file_err", func(v failpoint.Value) {
+		failpoint.Return(errors.New(v.(string)))
+	})
 	path := filepath.Join(l.base, name)
 	err := os.Remove(path)
 	if err != nil &&
@@ -70,9 +70,9 @@ func (l *LocalStorage) DeleteFiles(ctx context.Context, names []string) error {
 
 // WriteFile writes data to a file to storage.
 func (l *LocalStorage) WriteFile(_ context.Context, name string, data []byte) error {
-	if v, _err_ := failpoint.Eval(_curpkg_("local_write_file_err")); _err_ == nil {
-		return errors.New(v.(string))
-	}
+	failpoint.Inject("local_write_file_err", func(v failpoint.Value) {
+		failpoint.Return(errors.New(v.(string)))
+	})
 
 	// because `os.WriteFile` is not atomic, directly write into it may reset the file
 	// to an empty file if write is not finished.

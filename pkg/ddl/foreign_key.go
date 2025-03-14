@@ -73,7 +73,7 @@ func (w *worker) onCreateForeignKey(jobCtx *jobContext, job *model.Job) (ver int
 			job.State = model.JobStateRollingback
 			return ver, err
 		}
-		failpoint.Call(_curpkg_("afterCheckForeignKeyConstrain"))
+		failpoint.InjectCall("afterCheckForeignKeyConstrain")
 		tblInfo.ForeignKeys[len(tblInfo.ForeignKeys)-1].State = model.StateWriteReorganization
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, true)
 		if err != nil {
