@@ -179,7 +179,7 @@ func (sch *LitBackfillScheduler) GetNextStep(task *proto.TaskBase) proto.Step {
 	}
 }
 
-func skipMergeSort(stats []external.MultipleFilesStat) bool {
+func skipMergeSort(_ []external.MultipleFilesStat) bool {
 	failpoint.Inject("forceMergeSort", func() {
 		failpoint.Return(false)
 	})
