@@ -46,6 +46,8 @@ type Task struct {
 }
 
 // RangeWorker is used to load stats concurrently by the range of table id.
+//
+//nolint:fieldalignment
 type RangeWorker struct {
 	logger *zap.Logger
 
