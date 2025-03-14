@@ -1019,19 +1019,21 @@ PartitionLoop:
 	if postFn != nil {
 		postFn(tkO, store)
 	}
-	// TODO: Enable this and fix the failures!
-	disabled := domOwner != nil
-	if disabled && retestWithoutPartitions {
+	if retestWithoutPartitions {
 		// Check that all DMLs would have give the same result without ALTER and on a non-partitioned table!
 		res := tkO.MustQuery(`select * from t`).Sort()
 		tkO.MustExec("drop table t")
 		tkO.MustExec(createSQL)
-		tkO.MustExec("alter table t remove partitioning")
+		// Will give error if not already partitioned, just ignore it.
+		_, _ = tkO.Exec("alter table t remove partitioning")
 		initFn(tkO)
 		domOwner.Reload()
 		domNonOwner.Reload()
 		for i := 0; i <= state; i++ {
 			loopFn(tkO, tkNO)
+		}
+		if postFn != nil {
+			postFn(tkO, store)
 		}
 		tkO.MustQuery(`select * from t`).Sort().Check(res.Rows())
 	}
@@ -1902,7 +1904,6 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 		state++
 	}
 	postFn := func(tkO *testkit.TestKit, _ kv.Storage) {
-		// TODO: Enable this and fix issues!!!
 		tkO.MustExec(`admin check table t`)
 		// Total number of rows after above operations.
 		// Just to check for duplicates or missing rows

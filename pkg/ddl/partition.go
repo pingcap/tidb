@@ -3844,29 +3844,17 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 			// w.oldKeys is only set for non-clustered tables, in w.fetchRowColVals().
 			if len(w.oldKeys) > 0 {
 				genNewID := false
-				if vals, ok := found[string(w.oldKeys[i])]; ok {
-					// Is this already filled, or a duplicate from another partition?
+				key = w.oldKeys[i]
+				if vals, ok := found[string(key)]; ok {
 					if len(vals) == len(prr.vals) && bytes.Equal(vals, prr.vals) {
-						// Already filled, i.e. double written earlier by concurrent DML
+						// Already backfilled or double written earlier by concurrent DML
 						continue
 					}
-					// Not same row, probably due to earlier EXCHANGE PARTITION.
+					// Not same row, due to earlier EXCHANGE PARTITION.
 					genNewID = true
 				}
 
-				// Check if we can lock the old key, since there can still be concurrent update
-				// happening on the rows from fetchRowColVals(), if we cannot lock the keys in this
-				// transaction and succeed when committing, then another transaction did update
-				// the same key, and we will fail and retry. When retrying, this key would be found
-				// through BatchGet and skipped.
-				err = txn.LockKeys(context.Background(), new(kv.LockCtx), w.oldKeys[i])
-				if err != nil {
-					return errors.Trace(err)
-				}
-
 				if genNewID {
-					// Due to EXCHANGE PARTITION,
-					// the existing _tidb_rowid may collide between partitions!
 					recordID, err := tables.AllocHandle(w.ctx, w.tblCtx, w.reorgedTbl)
 					if err != nil {
 						return errors.Trace(err)
@@ -3874,8 +3862,21 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 
 					// tablecodec.prefixLen is not exported, but is just TableSplitKeyLen + 2
 					key = tablecodec.EncodeRecordKey(key[:tablecodec.TableSplitKeyLen+2], recordID)
+					// TODO: if genNewID should we skip locking? since it should not be able to be found/used
+					// due to new AllocHandle, which is unique.
+					// TODO: Should we also write a temporary index for old->new as well as new->old?
 				}
 			}
+			// Check if we can lock the key, since there can still be concurrent update
+			// happening on the rows from fetchRowColVals(), if we cannot lock the keys in this
+			// transaction and succeed when committing, then another transaction did update
+			// the same key, and we will fail and retry. When retrying, this key would be found
+			// through BatchGet and skipped.
+			err = txn.LockKeys(context.Background(), new(kv.LockCtx), key)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
 			err = txn.Set(key, prr.vals)
 			if err != nil {
 				return errors.Trace(err)
