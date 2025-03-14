@@ -1543,14 +1543,7 @@ func (e *BasicRuntimeStats) GetActRows() int64 {
 
 // Clone implements the RuntimeStats interface.
 func (e *BasicRuntimeStats) Clone() RuntimeStats {
-	result := &BasicRuntimeStats{}
-	result.executorCount.Store(e.executorCount.Load())
-	result.loop.Store(e.loop.Load())
-	result.consume.Store(e.consume.Load())
-	result.open.Store(e.open.Load())
-	result.close.Store(e.close.Load())
-	result.rows.Store(e.rows.Load())
-	return result
+	panic("BasicRuntimeStats should not implement Clone function")
 }
 
 // Merge implements the RuntimeStats interface.
@@ -1718,7 +1711,7 @@ func (e *RuntimeStatsColl) RegisterStats(planID int, info RuntimeStats) {
 		}
 	}
 	if !found {
-		stats.groupRss = append(stats.groupRss, info)
+		stats.groupRss = append(stats.groupRss, info.Clone())
 	}
 }
 

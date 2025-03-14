@@ -1532,10 +1532,8 @@ func (e *InsertRuntimeStat) Clone() execdetails.RuntimeStats {
 		snapshotStats := e.SnapshotRuntimeStats.Clone()
 		newRs.SnapshotRuntimeStats = snapshotStats
 	}
-	if e.BasicRuntimeStats != nil {
-		basicStats := e.BasicRuntimeStats.Clone()
-		newRs.BasicRuntimeStats = basicStats.(*execdetails.BasicRuntimeStats)
-	}
+	// BasicRuntimeStats is unique for all executor instances mapping to the same plan id
+	newRs.BasicRuntimeStats = e.BasicRuntimeStats
 	if e.AllocatorRuntimeStats != nil {
 		newRs.AllocatorRuntimeStats = e.AllocatorRuntimeStats.Clone()
 	}
@@ -1556,13 +1554,8 @@ func (e *InsertRuntimeStat) Merge(other execdetails.RuntimeStats) {
 			e.SnapshotRuntimeStats.Merge(tmp.SnapshotRuntimeStats)
 		}
 	}
-	if tmp.BasicRuntimeStats != nil {
-		if e.BasicRuntimeStats == nil {
-			basicStats := tmp.BasicRuntimeStats.Clone()
-			e.BasicRuntimeStats = basicStats.(*execdetails.BasicRuntimeStats)
-		} else {
-			e.BasicRuntimeStats.Merge(tmp.BasicRuntimeStats)
-		}
+	if tmp.BasicRuntimeStats != nil && e.BasicRuntimeStats == nil {
+		e.BasicRuntimeStats = tmp.BasicRuntimeStats
 	}
 	if tmp.AllocatorRuntimeStats != nil {
 		if e.AllocatorRuntimeStats == nil {
