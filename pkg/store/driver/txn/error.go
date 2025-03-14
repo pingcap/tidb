@@ -179,7 +179,7 @@ func newWriteConflictError(conflict *kvrpcpb.WriteConflict) error {
 	bufConflictKeyRest.WriteString(", primary=")
 	prettyWriteKey(&bufPrimaryKeyTableID, &bufPrimaryKeyRest, conflict.Primary)
 	bufPrimaryKeyRest.WriteString(", originalPrimaryKey=" + hex.EncodeToString(conflict.Primary))
-	return kv.ErrWriteConflict.GenWithStackByArgs(conflict.StartTs, conflict.ConflictTs, conflict.ConflictCommitTs,
+	return kv.ErrWriteConflict.FastGenByArgs(conflict.StartTs, conflict.ConflictTs, conflict.ConflictCommitTs,
 		bufConflictKeyTableID.String(), bufConflictKeyRest.String(), bufPrimaryKeyTableID.String(),
 		bufPrimaryKeyRest.String(), conflict.Reason.String(),
 	)

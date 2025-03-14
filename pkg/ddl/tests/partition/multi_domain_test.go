@@ -54,7 +54,7 @@ func TestMultiSchemaReorganizePartitionIssue56819(t *testing.T) {
 			tkO.MustQuery(`select * from t where b = "4"`).Sort().Check(testkit.Rows("4 4"))
 		}
 	}
-	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn)
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn, false)
 }
 
 func TestMultiSchemaDropRangePartition(t *testing.T) {
@@ -132,7 +132,7 @@ func TestMultiSchemaDropRangePartition(t *testing.T) {
 			require.Failf(t, "unhandled schema state '%s'", schemaState)
 		}
 	}
-	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn)
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn, false)
 }
 
 func TestMultiSchemaDropListDefaultPartition(t *testing.T) {
@@ -211,7 +211,7 @@ func TestMultiSchemaDropListDefaultPartition(t *testing.T) {
 			require.Failf(t, "unhandled schema state '%s'", schemaState)
 		}
 	}
-	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn)
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn, false)
 }
 
 func TestMultiSchemaDropListColumnsDefaultPartition(t *testing.T) {
@@ -298,7 +298,7 @@ func TestMultiSchemaDropListColumnsDefaultPartition(t *testing.T) {
 			require.Failf(t, "unhandled schema state '%s'", schemaState)
 		}
 	}
-	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn)
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn, false)
 }
 
 func TestMultiSchemaReorganizePartition(t *testing.T) {
@@ -431,7 +431,7 @@ func TestMultiSchemaReorganizePartition(t *testing.T) {
 			" PARTITION `p1` VALUES LESS THAN (200),\n" +
 			" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
 	}
-	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn, false)
 }
 
 // Also tests for conversions of unique indexes
@@ -567,7 +567,7 @@ func TestMultiSchemaPartitionByGlobalIndex(t *testing.T) {
 			"8 8 8",
 			"9 9 9"))
 	}
-	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn, false)
 }
 
 // TestMultiSchemaModifyColumn to show behavior when changing a column
@@ -632,7 +632,7 @@ func TestMultiSchemaModifyColumn(t *testing.T) {
 			require.Failf(t, "unhandled schema state '%s'", schemaState)
 		}
 	}
-	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn)
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn, false)
 }
 
 // TestMultiSchemaDropUniqueIndex to show behavior when
@@ -701,7 +701,7 @@ func TestMultiSchemaDropUniqueIndex(t *testing.T) {
 			require.Failf(t, "unhandled schema state '%s'", schemaState)
 		}
 	}
-	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn)
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn, false)
 }
 
 // TODO: Also add test for REMOVE PARTITIONING!
@@ -811,13 +811,10 @@ func TestMultiSchemaDropUniqueIndex(t *testing.T) {
 //	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
 //}
 
-func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn func(*testkit.TestKit), postFn func(*testkit.TestKit, kv.Storage), loopFn func(tO, tNO *testkit.TestKit)) {
-	runMultiSchemaTestWithBackfillDML(t, createSQL, alterSQL, "", initFn, postFn, loopFn)
+func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn func(*testkit.TestKit), postFn func(*testkit.TestKit, kv.Storage), loopFn func(tO, tNO *testkit.TestKit), retestWithoutPartitions bool) {
+	runMultiSchemaTestWithBackfillDML(t, createSQL, alterSQL, "", initFn, postFn, loopFn, retestWithoutPartitions)
 }
-func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfillDML string, initFn func(*testkit.TestKit), postFn func(*testkit.TestKit, kv.Storage), loopFn func(tO, tNO *testkit.TestKit)) {
-	// Make debugging easier
-	//bindinfo.Lease = 1 * time.Hour
-
+func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfillDML string, initFn func(*testkit.TestKit), postFn func(*testkit.TestKit, kv.Storage), loopFn func(tO, tNO *testkit.TestKit), retestWithoutPartitions bool) {
 	// When debugging, increase the lease, so the schema does not auto reload :)
 	distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 15*time.Second)
 	store := distCtx.Store
@@ -1022,20 +1019,22 @@ PartitionLoop:
 	if postFn != nil {
 		postFn(tkO, store)
 	}
-	/*
-		// TODO: Enable this!
+	// TODO: Enable this and fix the failures!
+	disabled := domOwner != nil
+	if disabled && retestWithoutPartitions {
 		// Check that all DMLs would have give the same result without ALTER and on a non-partitioned table!
 		res := tkO.MustQuery(`select * from t`).Sort()
 		tkO.MustExec("drop table t")
 		tkO.MustExec(createSQL)
 		tkO.MustExec("alter table t remove partitioning")
+		initFn(tkO)
 		domOwner.Reload()
 		domNonOwner.Reload()
 		for i := 0; i <= state; i++ {
 			loopFn(tkO, tkNO)
 		}
 		tkO.MustQuery(`select * from t`).Sort().Check(res.Rows())
-	*/
+	}
 	// NOT deferring this, since it might hang on test failures...
 	domOwner.Close()
 	domNonOwner.Close()
@@ -1110,7 +1109,7 @@ func TestMultiSchemaReorganizePK(t *testing.T) {
 			"8 write reorganization NO",
 			"9 delete reorganization O"))
 	}
-	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn, false)
 }
 
 func TestMultiSchemaReorganizePKBackfillDML(t *testing.T) {
@@ -1148,7 +1147,7 @@ func TestMultiSchemaReorganizePKBackfillDML(t *testing.T) {
 			"8 write reorganization NO Original",
 			"9 delete reorganization O Original"))
 	}
-	runMultiSchemaTestWithBackfillDML(t, createSQL, alterSQL, "update t set c3 = 'updated'", initFn, postFn, loopFn)
+	runMultiSchemaTestWithBackfillDML(t, createSQL, alterSQL, "update t set c3 = 'updated'", initFn, postFn, loopFn, false)
 }
 
 func TestMultiSchemaReorganizeNoPK(t *testing.T) {
@@ -1189,7 +1188,7 @@ func TestMultiSchemaReorganizeNoPK(t *testing.T) {
 			"8 30003 write reorganization NO",
 			"9 6 delete reorganization O"))
 	}
-	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn, false)
 }
 
 func TestMultiSchemaReorganizeNoPKBackfillDML(t *testing.T) {
@@ -1228,7 +1227,7 @@ func TestMultiSchemaReorganizeNoPKBackfillDML(t *testing.T) {
 			"8 30003 write reorganization NO Original",
 			"9 6 delete reorganization O Original"))
 	}
-	runMultiSchemaTestWithBackfillDML(t, createSQL, alterSQL, "update t set c3 = 'updated'", initFn, postFn, loopFn)
+	runMultiSchemaTestWithBackfillDML(t, createSQL, alterSQL, "update t set c3 = 'updated'", initFn, postFn, loopFn, false)
 }
 
 // TestMultiSchemaTruncatePartitionWithGlobalIndex to show behavior when
@@ -1419,7 +1418,7 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 			require.Failf(t, "unhandled schema state '%s'", schemaState)
 		}
 	}
-	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn)
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn, false)
 }
 
 func TestMultiSchemaTruncatePartitionWithPKGlobal(t *testing.T) {
@@ -1611,7 +1610,7 @@ func TestMultiSchemaTruncatePartitionWithPKGlobal(t *testing.T) {
 			require.Fail(t, "Unhandled schema state", "State: '%s'", schemaState)
 		}
 	}
-	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn)
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn, false)
 }
 
 func TestRemovePartitioningNoPKCovering(t *testing.T) {
@@ -2063,7 +2062,7 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 		}
 		logutil.BgLogger().Info("postFn done", zap.Int("state", state))
 	}
-	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn, true)
 }
 
 func TestIssue58692(t *testing.T) {
@@ -2080,20 +2079,20 @@ func TestIssue58692(t *testing.T) {
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		tk2 := testkit.NewTestKit(t, store)
 		tmp := i.Add(1)
-		sql := fmt.Sprintf("insert into test.t values (%d, %d)", tmp, tmp)
-		_, err := tk2.Exec(sql)
-		require.NoError(t, err)
-		logutil.BgLogger().Info("insert into test.t", zap.String("sql", sql))
-
-		sql = fmt.Sprintf("update test.t set b = b + 11, a = b where b = %d", tmp-1)
-		_, err = tk2.Exec(sql)
-		require.NoError(t, err)
-		logutil.BgLogger().Info("update test.t", zap.String("sql", sql))
+		tk2.MustExec(fmt.Sprintf("insert into test.t values (%d, %d)", tmp, tmp))
+		tk2.MustExec(fmt.Sprintf("update test.t set b = b + 11, a = b where b = %d", tmp-1))
 	})
 	tk.MustExec("alter table t remove partitioning")
 	rsIndex := tk.MustQuery("select *,_tidb_rowid from t use index(idx)").Sort()
 	rsTable := tk.MustQuery("select *,_tidb_rowid from t use index()").Sort()
-	require.Equal(t, rsIndex.String(), rsTable.String())
+	tk.MustExec("admin check table t")
+	tk.MustQuery("select * from t where b = 20").Check(testkit.Rows("9 20"))
+	tk.MustQuery("select * from t use index(idx) where a = 9").Check(testkit.Rows("9 20"))
+	// TODO: about 1% of the runs, this can fail with '9 20' from table and '9 9' from index
+	// or an extra "10 10" table row!?!
+	// TODO: Investigate this and FIXME!!!
+	// Must a timing issue, since the following checks passes...
+	require.Equal(t, rsIndex.String(), rsTable.String(), "Expected: from index, Actual: from table")
 }
 
 func TestDuplicateRowsNoPK(t *testing.T) {
@@ -2142,4 +2141,29 @@ func TestDuplicateRowsPK59680(t *testing.T) {
 	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 2"))
 	tk.MustQuery("select a from t").Check(testkit.Rows("1"))
 	tk.MustQuery("select *, _tidb_rowid from t").Sort().Check(testkit.Rows("1 2 1"))
+}
+
+func TestIssue58864(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int, b int, primary key (a) nonclustered) partition by hash(a) partitions 2")
+	tk.MustExec("insert into t (a, b) values (1, 1)")
+	var i atomic.Int32
+	i.Store(1)
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+		if job.State != model.JobStateDone {
+			return
+		}
+		val := int(i.Add(1))
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+
+		tk2.MustExec("insert into t values (?, ?)", val, val)
+		tk2.MustExec("update t set b = b + 1 where a = ?", val)
+	})
+	tk.MustExec("alter table t remove partitioning")
 }
