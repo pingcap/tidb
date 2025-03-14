@@ -10,10 +10,13 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/logutil",
+        "//br/pkg/metautil",
+        "//br/pkg/summary",
         "//pkg/tablecodec",
         "//pkg/util/redact",
         "@com_github_google_btree//:btree",
         "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_log//:log",
         "@com_github_pkg_errors//:errors",
         "@org_uber_go_zap//:zap",

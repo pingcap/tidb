@@ -7,13 +7,11 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"reflect"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/google/btree"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -215,7 +213,6 @@ mainLoop:
 		// Compute the left ranges that not backuped yet
 		start := time.Now()
 
-		var inCompleteRanges []rtree.Range
 		var allTxnLocks []*txnlock.Lock
 		select {
 		case <-ctx.Done():
@@ -224,8 +221,14 @@ mainLoop:
 			mainCancel()
 			return ctx.Err()
 		default:
-			inCompleteRanges = loop.GlobalProgressTree.GetIncompleteRanges()
-			if len(inCompleteRanges) == 0 {
+			var getIncompleteErr error
+			loop.BackupReq.SubRanges, getIncompleteErr = loop.GlobalProgressTree.GetIncompleteRanges()
+			if getIncompleteErr != nil {
+				handleCancel()
+				mainCancel()
+				return getIncompleteErr
+			}
+			if len(loop.BackupReq.SubRanges) == 0 {
 				// all range backuped
 				logutil.CL(ctx).Info("This round finished all backup ranges", zap.Uint64("round", round))
 				handleCancel()
@@ -235,9 +238,7 @@ mainLoop:
 		}
 
 		logutil.CL(mainCtx).Info("backup ranges", zap.Uint64("round", round),
-			zap.Int("incomplete-ranges", len(inCompleteRanges)), zap.Duration("cost", time.Since(start)))
-
-		loop.BackupReq.SubRanges = getBackupRanges(inCompleteRanges)
+			zap.Int("incomplete-ranges", len(loop.BackupReq.SubRanges)), zap.Duration("cost", time.Since(start)))
 
 		allStores, err := bc.getBackupStores(mainCtx, loop.ReplicaReadLabel)
 		if err != nil {
@@ -281,8 +282,12 @@ mainLoop:
 				return ctx.Err()
 			case <-incompleteRangesUpdateTicker.C:
 				startUpdate := time.Now()
-				inCompleteRanges = loop.GlobalProgressTree.GetIncompleteRanges()
-				loop.BackupReq.SubRanges = getBackupRanges(inCompleteRanges)
+				loop.BackupReq.SubRanges, err = loop.GlobalProgressTree.GetIncompleteRanges()
+				if err != nil {
+					handleCancel()
+					mainCancel()
+					return err
+				}
 				elapsed := time.Since(startUpdate)
 				log.Info("update the incomplete ranges", zap.Duration("take", elapsed))
 				incompleteRangesUpdateTicker.Reset(max(5*elapsed, IncompleteRangesUpdateInterval))
@@ -636,7 +641,6 @@ func (bc *Client) getProgressRange(r rtree.Range) *rtree.ProgressRange {
 				Res:      rangeTree,
 				Origin:   r,
 				GroupKey: groupKey,
-				Complete: false,
 			}
 		}
 	}
@@ -647,7 +651,6 @@ func (bc *Client) getProgressRange(r rtree.Range) *rtree.ProgressRange {
 		Res:      rtree.NewRangeTree(),
 		Origin:   r,
 		GroupKey: groupKey,
-		Complete: false,
 	}
 }
 
@@ -1087,10 +1090,10 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.S
 	return nil
 }
 
-func (bc *Client) BuildProgressRangeTree(ranges []rtree.Range) (rtree.ProgressRangeTree, error) {
+func (bc *Client) BuildProgressRangeTree(ranges []rtree.Range, metaWriter *metautil.MetaWriter) (rtree.ProgressRangeTree, error) {
 	// the response from TiKV only contains the region's key, so use the
 	// progress range tree to quickly seek the region's corresponding progress range.
-	progressRangeTree := rtree.NewProgressRangeTree()
+	progressRangeTree := rtree.NewProgressRangeTree(metaWriter)
 	for _, r := range ranges {
 		if err := progressRangeTree.Insert(bc.getProgressRange(r)); err != nil {
 			return progressRangeTree, errors.Trace(err)
@@ -1122,7 +1125,7 @@ func (bc *Client) BackupRanges(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	globalProgressTree, err := bc.BuildProgressRangeTree(ranges)
+	globalProgressTree, err := bc.BuildProgressRangeTree(ranges, metaWriter)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1153,7 +1156,11 @@ func (bc *Client) BackupRanges(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return collectRangeFiles(&globalProgressTree, metaWriter)
+	if globalProgressTree.Len() > 0 {
+		log.Error("backup ranges done but some ranges are in complete", zap.String("global progress tree", globalProgressTree.String()))
+		return errors.Errorf("backup ranges done but some ranges are in complete")
+	}
+	return nil
 }
 
 func (bc *Client) getBackupStores(ctx context.Context, replicaReadLabel map[string]string) ([]*metapb.Store, error) {
@@ -1202,23 +1209,25 @@ func (bc *Client) OnBackupResponse(
 				zap.Reflect("error", err))
 			return nil, err
 		}
-		if bc.checkpointRunner != nil {
-			if err := checkpoint.AppendForBackup(
-				ctx,
-				bc.checkpointRunner,
-				pr.GroupKey,
-				resp.StartKey,
-				resp.EndKey,
-				resp.Files,
-			); err != nil {
-				// flush checkpoint failed,
-				logutil.CL(ctx).Error("failed to flush checkpoint", zap.Error(err))
-				return nil, err
+		if pr != nil {
+			if bc.checkpointRunner != nil {
+				if err := checkpoint.AppendForBackup(
+					ctx,
+					bc.checkpointRunner,
+					pr.GroupKey,
+					resp.StartKey,
+					resp.EndKey,
+					resp.Files,
+				); err != nil {
+					// flush checkpoint failed,
+					logutil.CL(ctx).Error("failed to flush checkpoint", zap.Error(err))
+					return nil, err
+				}
 			}
+			pr.Res.Put(resp.StartKey, resp.EndKey, resp.Files)
+			apiVersion := resp.ApiVersion
+			bc.SetApiVersion(apiVersion)
 		}
-		pr.Res.Put(resp.StartKey, resp.EndKey, resp.Files)
-		apiVersion := resp.ApiVersion
-		bc.SetApiVersion(apiVersion)
 	} else {
 		errPb := resp.GetError()
 		switch v := errPb.Detail.(type) {
@@ -1241,40 +1250,4 @@ func (bc *Client) OnBackupResponse(
 		}
 	}
 	return nil, nil
-}
-
-func collectRangeFiles(progressRangeTree *rtree.ProgressRangeTree, metaWriter *metautil.MetaWriter) error {
-	var progressRangeAscendErr error
-	progressRangeTree.Ascend(func(progressRange *rtree.ProgressRange) bool {
-		var rangeAscendErr error
-		progressRange.Res.Ascend(func(i btree.Item) bool {
-			r := i.(*rtree.Range)
-			cfCount := make(map[string]int)
-			for _, f := range r.Files {
-				cfCount[f.Cf] += 1
-				summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
-				summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
-			}
-			for cf, count := range cfCount {
-				summary.CollectInt(fmt.Sprintf("%s CF files", cf), count)
-			}
-			// we need keep the files in order after we support multi_ingest sst.
-			// default_sst and write_sst need to be together.
-			if err := metaWriter.Send(r.Files, metautil.AppendDataFile); err != nil {
-				rangeAscendErr = err
-				return false
-			}
-			return true
-		})
-		if rangeAscendErr != nil {
-			progressRangeAscendErr = rangeAscendErr
-			return false
-		}
-
-		// Check if there are duplicated files
-		checkDupFiles(&progressRange.Res)
-		return true
-	})
-
-	return errors.Trace(progressRangeAscendErr)
 }

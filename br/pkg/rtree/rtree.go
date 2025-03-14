@@ -4,14 +4,19 @@ package rtree
 
 import (
 	"bytes"
+	"fmt"
 
 	"github.com/google/btree"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
 // Range represents a backup response.
@@ -274,13 +279,13 @@ func (rangeTree *RangeTree) InsertRange(rg Range) *Range {
 // GetIncompleteRange returns missing range covered by startKey and endKey.
 func (rangeTree *RangeTree) GetIncompleteRange(
 	startKey, endKey []byte,
-) []Range {
+) []*kvrpcpb.KeyRange {
 	if len(startKey) != 0 && bytes.Equal(startKey, endKey) {
-		return []Range{}
+		return []*kvrpcpb.KeyRange{}
 	}
 	// Don't use a large buffer, because it will cause memory issue.
 	// And the number of missing ranges is usually small.
-	incomplete := make([]Range, 0, 1)
+	incomplete := make([]*kvrpcpb.KeyRange, 0, 1)
 	requestRange := Range{StartKey: startKey, EndKey: endKey}
 	lastEndKey := startKey
 	pviot := &Range{StartKey: startKey}
@@ -297,7 +302,7 @@ func (rangeTree *RangeTree) GetIncompleteRange(
 			if isIntersect {
 				// There is a gap between the last item and the current item.
 				incomplete =
-					append(incomplete, Range{StartKey: start, EndKey: end})
+					append(incomplete, &kvrpcpb.KeyRange{StartKey: start, EndKey: end})
 			}
 		}
 		lastEndKey = rg.EndKey
@@ -311,7 +316,7 @@ func (rangeTree *RangeTree) GetIncompleteRange(
 		start, end, isIntersect := requestRange.Intersect(lastEndKey, endKey)
 		if isIntersect {
 			incomplete =
-				append(incomplete, Range{StartKey: start, EndKey: end})
+				append(incomplete, &kvrpcpb.KeyRange{StartKey: start, EndKey: end})
 		}
 	}
 	return incomplete
@@ -321,8 +326,6 @@ type ProgressRange struct {
 	Res      RangeTree
 	Origin   Range
 	GroupKey string
-	// only for statistic
-	Complete bool
 }
 
 // Less impls btree.Item.
@@ -336,14 +339,16 @@ func (pr *ProgressRange) Less(than *ProgressRange) bool {
 type ProgressRangeTree struct {
 	*btree.BTreeG[*ProgressRange]
 
+	metaWriter       *metautil.MetaWriter
 	completeCallBack func()
 }
 
 // NewProgressRangeTree returns an empty range tree.
-func NewProgressRangeTree() ProgressRangeTree {
+func NewProgressRangeTree(metaWriter *metautil.MetaWriter) ProgressRangeTree {
 	return ProgressRangeTree{
-		BTreeG: btree.NewG[*ProgressRange](32, (*ProgressRange).Less),
+		BTreeG: btree.NewG(32, (*ProgressRange).Less),
 
+		metaWriter:       metaWriter,
 		completeCallBack: func() {},
 	}
 }
@@ -392,7 +397,8 @@ func (rangeTree *ProgressRangeTree) FindContained(startKey, endKey []byte) (*Pro
 	ret := rangeTree.find(startPr)
 
 	if ret == nil {
-		return nil, errors.Errorf("Cannot find progress range that contains the start key: %s", redact.Key(startKey))
+		log.Warn("Cannot find progress range that contains the start key, maybe the duplicated response", zap.String("key", redact.Key(startKey)))
+		return nil, nil
 	}
 
 	if !ret.Origin.ContainsRange(startKey, endKey) {
@@ -404,23 +410,60 @@ func (rangeTree *ProgressRangeTree) FindContained(startKey, endKey []byte) (*Pro
 	return ret, nil
 }
 
-func (rangeTree *ProgressRangeTree) GetIncompleteRanges() []Range {
-	// about 64 MB memory if there are 1 million ranges
-	incompleteRanges := make([]Range, 0, rangeTree.Len())
+func (rangeTree *ProgressRangeTree) GetIncompleteRanges() ([]*kvrpcpb.KeyRange, error) {
+	var (
+		// about 64 MB memory if there are 1 million ranges
+		incompleteRanges = make([]*kvrpcpb.KeyRange, 0, rangeTree.Len())
+		deletedRanges    = make([]*ProgressRange, 0)
+		rangeAscendErr   error
+	)
 	rangeTree.Ascend(func(item *ProgressRange) bool {
 		// NOTE: maybe there is a late response whose range overlaps with an existing item, which
 		// may cause the complete range tree to become incomplete. Therefore, `item.Complete` is
 		// only for statistic.
 		incomplete := item.Res.GetIncompleteRange(item.Origin.StartKey, item.Origin.EndKey)
 		if len(incomplete) == 0 {
-			if !item.Complete {
-				item.Complete = true
-				rangeTree.completeCallBack()
-			}
+			rangeAscendErr = rangeTree.collectRangeFiles(item)
+			deletedRanges = append(deletedRanges, item)
+			rangeTree.completeCallBack()
 			return true
 		}
 		incompleteRanges = append(incompleteRanges, incomplete...)
 		return true
 	})
-	return incompleteRanges
+	for _, deletedRange := range deletedRanges {
+		rangeTree.Delete(deletedRange)
+	}
+	return incompleteRanges, rangeAscendErr
+}
+
+func (rangeTree *ProgressRangeTree) collectRangeFiles(item *ProgressRange) error {
+	if rangeTree.metaWriter == nil {
+		return nil
+	}
+	var rangeAscendErr error
+	item.Res.Ascend(func(i btree.Item) bool {
+		r := i.(*Range)
+		cfCount := make(map[string]int)
+		for _, f := range r.Files {
+			cfCount[f.Cf] += 1
+			summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
+			summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
+		}
+		for cf, count := range cfCount {
+			summary.CollectInt(fmt.Sprintf("%s CF files", cf), count)
+		}
+		// we need keep the files in order after we support multi_ingest sst.
+		// default_sst and write_sst need to be together.
+		if err := rangeTree.metaWriter.Send(r.Files, metautil.AppendDataFile); err != nil {
+			rangeAscendErr = err
+			return false
+		}
+		return true
+	})
+	return rangeAscendErr
+}
+
+func (rangeTree *ProgressRangeTree) String() string {
+	return ""
 }

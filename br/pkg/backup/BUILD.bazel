@@ -3,7 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "backup",
     srcs = [
-        "check.go",
         "client.go",
         "metrics.go",
         "schema.go",
@@ -35,7 +34,6 @@ go_library(
         "//pkg/statistics/util",
         "//pkg/util",
         "//pkg/util/table-filter",
-        "@com_github_google_btree//:btree",
         "@com_github_opentracing_opentracing_go//:opentracing-go",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

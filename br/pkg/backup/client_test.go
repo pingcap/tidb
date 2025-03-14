@@ -349,7 +349,7 @@ func TestOnBackupResponse(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, lock)
 
-	tree := rtree.NewProgressRangeTree()
+	tree := rtree.NewProgressRangeTree(nil)
 	r := &backup.ResponseAndStore{
 		StoreID: 0,
 		Resp: &backuppb.BackupResponse{
@@ -387,7 +387,8 @@ func TestOnBackupResponse(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, lock)
 
-	incomplete := tree.GetIncompleteRanges()
+	incomplete, err := tree.GetIncompleteRanges()
+	require.NoError(t, err)
 	require.Len(t, incomplete, 1)
 	require.Equal(t, []byte("b"), incomplete[0].StartKey)
 	require.Equal(t, []byte("c"), incomplete[0].EndKey)
@@ -398,7 +399,8 @@ func TestOnBackupResponse(t *testing.T) {
 	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
 	require.NoError(t, err)
 	require.Nil(t, lock)
-	incomplete = tree.GetIncompleteRanges()
+	incomplete, err = tree.GetIncompleteRanges()
+	require.NoError(t, err)
 	require.Len(t, incomplete, 0)
 
 	// case #5: failed case, key is locked
@@ -482,7 +484,7 @@ func TestMainBackupLoop(t *testing.T) {
 			EndKey:   []byte("zzz"),
 		},
 	}
-	tree, err := s.backupClient.BuildProgressRangeTree(ranges)
+	tree, err := s.backupClient.BuildProgressRangeTree(ranges, nil)
 	require.NoError(t, err)
 
 	mockBackupResponses := make(map[uint64][]*backup.ResponseAndStore)
@@ -523,7 +525,7 @@ func TestMainBackupLoop(t *testing.T) {
 			EndKey:   []byte("zzz"),
 		},
 	}
-	tree, err = s.backupClient.BuildProgressRangeTree(ranges)
+	tree, err = s.backupClient.BuildProgressRangeTree(ranges, nil)
 	require.NoError(t, err)
 
 	clear(mockBackupResponses)
@@ -568,7 +570,7 @@ func TestMainBackupLoop(t *testing.T) {
 			EndKey:   []byte("zzz"),
 		},
 	}
-	tree, err = s.backupClient.BuildProgressRangeTree(ranges)
+	tree, err = s.backupClient.BuildProgressRangeTree(ranges, nil)
 	require.NoError(t, err)
 
 	clear(mockBackupResponses)
@@ -627,7 +629,7 @@ func TestMainBackupLoop(t *testing.T) {
 			EndKey:   []byte("zzz"),
 		},
 	}
-	tree, err = s.backupClient.BuildProgressRangeTree(ranges)
+	tree, err = s.backupClient.BuildProgressRangeTree(ranges, nil)
 	require.NoError(t, err)
 
 	clear(mockBackupResponses)
@@ -680,7 +682,7 @@ func TestMainBackupLoop(t *testing.T) {
 			EndKey:   []byte("zzz"),
 		},
 	}
-	tree, err = s.backupClient.BuildProgressRangeTree(ranges)
+	tree, err = s.backupClient.BuildProgressRangeTree(ranges, nil)
 	require.NoError(t, err)
 
 	clear(mockBackupResponses)
@@ -743,7 +745,7 @@ func TestBuildProgressRangeTree(t *testing.T) {
 			EndKey:   []byte("d"),
 		},
 	}
-	tree, err := s.backupClient.BuildProgressRangeTree(ranges)
+	tree, err := s.backupClient.BuildProgressRangeTree(ranges, nil)
 	require.NoError(t, err)
 
 	contained, err := tree.FindContained([]byte("a"), []byte("aa"))
