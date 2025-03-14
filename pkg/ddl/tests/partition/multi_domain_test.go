@@ -1020,7 +1020,7 @@ PartitionLoop:
 		postFn(tkO, store)
 	}
 	// TODO: Enable this and fix the failures!
-	disabled := domOwner != nil
+	disabled := domOwner == nil
 	if disabled && retestWithoutPartitions {
 		// Check that all DMLs would have give the same result without ALTER and on a non-partitioned table!
 		res := tkO.MustQuery(`select * from t`).Sort()
