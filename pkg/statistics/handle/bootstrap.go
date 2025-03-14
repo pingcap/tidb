@@ -348,7 +348,7 @@ func (h *Handle) initStatsHistogramsByPaging(is infoschema.InfoSchema, cache sta
 	return nil
 }
 
-func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache statstypes.StatsCache, totalMemory uint64, concurrency int) error {
+func (h *Handle) initStatsHistogramsConcurrently(is infoschema.InfoSchema, cache statstypes.StatsCache, totalMemory uint64, concurrency int) error {
 	var maxTid = maxTidRecord.tid.Load()
 	tid := int64(0)
 	ls := initstats.NewRangeWorker(
@@ -460,7 +460,7 @@ func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initsta
 	return nil
 }
 
-func (h *Handle) initStatsTopN(cache statstypes.StatsCache, totalMemory uint64, concurrency int) error {
+func (h *Handle) initStatsTopNConcurrently(cache statstypes.StatsCache, totalMemory uint64, concurrency int) error {
 	if IsFullCacheFunc(cache, totalMemory) {
 		return nil
 	}
@@ -600,12 +600,12 @@ func (h *Handle) initStatsBuckets(cache statstypes.StatsCache, totalMemory uint6
 		return nil
 	}
 	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		err := h.initStatsBucketsConcurrency(cache, totalMemory, initstats.GetConcurrency())
+		err := h.initStatsBucketsConcurrenctly(cache, totalMemory, initstats.GetConcurrency())
 		if err != nil {
 			return errors.Trace(err)
 		}
 	} else {
-		err := h.initStatsBucketsConcurrency(cache, totalMemory, 1)
+		err := h.initStatsBucketsConcurrenctly(cache, totalMemory, 1)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -654,7 +654,7 @@ func (h *Handle) initStatsBucketsByPaging(cache statstypes.StatsCache, task init
 	return nil
 }
 
-func (h *Handle) initStatsBucketsConcurrency(cache statstypes.StatsCache, totalMemory uint64, concurrency int) error {
+func (h *Handle) initStatsBucketsConcurrenctly(cache statstypes.StatsCache, totalMemory uint64, concurrency int) error {
 	if IsFullCacheFunc(cache, totalMemory) {
 		return nil
 	}
@@ -751,18 +751,18 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 	statslogutil.StatsLogger().Info("complete to load the meta")
 	initstats.InitStatsPercentage.Store(initStatsPercentageInterval)
 	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		err = h.initStatsHistograms(is, cache, totalMemory, initstats.GetConcurrency())
+		err = h.initStatsHistogramsConcurrently(is, cache, totalMemory, initstats.GetConcurrency())
 	} else {
-		err = h.initStatsHistograms(is, cache, totalMemory, 1)
+		err = h.initStatsHistogramsConcurrently(is, cache, totalMemory, 1)
 	}
 	statslogutil.StatsLogger().Info("complete to load the histogram")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		err = h.initStatsTopN(cache, totalMemory, initstats.GetConcurrency())
+		err = h.initStatsTopNConcurrently(cache, totalMemory, initstats.GetConcurrency())
 	} else {
-		err = h.initStatsTopN(cache, totalMemory, 1)
+		err = h.initStatsTopNConcurrently(cache, totalMemory, 1)
 	}
 	initstats.InitStatsPercentage.Store(initStatsPercentageInterval * 2)
 	statslogutil.StatsLogger().Info("complete to load the topn")
