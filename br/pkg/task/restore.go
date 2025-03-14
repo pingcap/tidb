@@ -1044,6 +1044,11 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	}
 
+	// preallocate the table id, because any ddl job or database creation(include checkpoint) also allocates the global ID
+	if err = client.AllocTableIDs(ctx, tables); err != nil {
+		return errors.Trace(err)
+	}
+
 	err = client.InstallPiTRSupport(ctx, snapclient.PiTRCollDep{
 		PDCli:   mgr.GetPDClient(),
 		EtcdCli: mgr.GetDomain().GetEtcdClient(),
@@ -1219,11 +1224,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
 		log.Info("finish restoring pd scheduler")
 	}()
-
-	// preallocate the table id, because any ddl job or database creation(include checkpoint) also allocates the global ID
-	if err = client.AllocTableIDs(ctx, tables); err != nil {
-		return errors.Trace(err)
-	}
 
 	// reload or register the checkpoint
 	var checkpointSetWithTableID map[int64]map[string]struct{}

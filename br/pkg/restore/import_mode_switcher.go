@@ -236,6 +236,7 @@ func FineGrainedRestorePreWork(
 	if err != nil {
 		return pdutil.Nop, nil, err
 	}
+	originCfg.RuleID = ruleID
 
 	// handle undo
 	undo := mgr.MakeFineGrainedUndoFunction(pdutil.ClusterConfig{Schedulers: []string{}, ScheduleCfg: originCfg.ScheduleCfg, RuleID: ruleID}, resumeScheduler)
