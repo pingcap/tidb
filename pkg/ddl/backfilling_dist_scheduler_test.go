@@ -291,7 +291,6 @@ func createAddIndexTask(t *testing.T,
 	tblName string,
 	taskType proto.TaskType,
 	useGlobalSort bool) (*proto.Task, *fakestorage.Server) {
-
 	var (
 		gcsHost = "127.0.0.1"
 		gcsPort = uint16(4443)
