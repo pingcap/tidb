@@ -19,15 +19,11 @@ import (
 	"math"
 	"strconv"
 	"strings"
-	"time"
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/errctx"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 )
@@ -242,28 +238,6 @@ func (ran *Range) string(redact string) string {
 		r = ")"
 	}
 	return l + strings.Join(lowStrs, " ") + "," + strings.Join(highStrs, " ") + r
-}
-
-// Encode encodes the range to its encoded value.
-func (ran *Range) Encode(ec errctx.Context, loc *time.Location, lowBuffer, highBuffer []byte) ([]byte, []byte, error) { //nolint: revive
-	var err error
-	lowBuffer, err = codec.EncodeKey(loc, lowBuffer[:0], ran.LowVal...)
-	err = ec.HandleError(err)
-	if err != nil {
-		return nil, nil, err
-	}
-	if ran.LowExclude {
-		lowBuffer = kv.Key(lowBuffer).PrefixNext()
-	}
-	highBuffer, err = codec.EncodeKey(loc, highBuffer[:0], ran.HighVal...)
-	err = ec.HandleError(err)
-	if err != nil {
-		return nil, nil, err
-	}
-	if !ran.HighExclude {
-		highBuffer = kv.Key(highBuffer).PrefixNext()
-	}
-	return lowBuffer, highBuffer, nil
 }
 
 // PrefixEqualLen tells you how long the prefix of the range is a point.
