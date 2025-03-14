@@ -407,7 +407,7 @@ func TestDumpCMSketchWithTopN(t *testing.T) {
 	for i := 0; i < 30; i++ {
 		fakeData = append(fakeData, []byte(fmt.Sprintf("%01024d", i)))
 	}
-	cms, _, _, _ := statistics.NewCMSketchAndTopN(5, 2048, fakeData, 20, 100)
+	cms, _ := statistics.NewCMSketchAndTopN(5, 2048, fakeData, 20, 100)
 
 	stat := h.GetTableStats(tableInfo)
 	err = h.SaveColOrIdxStatsToStorage(tableInfo.ID, 1, 0, 0, &stat.GetCol(tableInfo.Columns[0].ID).Histogram, cms, nil, statistics.Version1, false, handleutil.StatsMetaHistorySourceLoadStats)
