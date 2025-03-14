@@ -109,6 +109,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	"github.com/pingcap/tidb/pkg/util/username"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
@@ -831,6 +832,40 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string, z
 	return nil
 }
 
+// checkUserVarintMismatch checks if the username follows the configured naming policy.
+func checkUserVarintMismatch(ctx context.Context, user string) error {
+	if username.GetUsernamePolicy().ValidateUsername(user) != nil &&
+		username.GetUsernamePolicy().ValidateUsernameFormat(user) {
+		logutil.Logger(ctx).Warn("username variants mismatch",
+			zap.String("user", user),
+		)
+		return servererr.ErrUsernameFormat
+	}
+	return nil
+}
+
+func (cc *clientConn) matchIdentityWithVariants(ctx context.Context, host, hasPassword string) (*auth.UserIdentity, error) {
+	for _, variant := range username.GetUsernamePolicy().GetUsernameVariants(cc.user) {
+		identity, err := cc.ctx.MatchIdentity(ctx, variant, host)
+		if err != nil {
+			continue
+		}
+
+		logutil.Logger(ctx).Info("found user identity with variants",
+			zap.String("user", cc.user),
+			zap.String("host", host),
+		)
+		cc.user = variant
+		return identity, nil
+	}
+	// If the username's format is correct but does not match the name policy,
+	// if so, return a special error to hint the user to retry.
+	if mismatchErr := checkUserVarintMismatch(ctx, cc.user); mismatchErr != nil {
+		return nil, mismatchErr
+	}
+	return nil, servererr.ErrAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
+}
+
 // mockOSUserForAuthSocketTest should only be used in test
 var mockOSUserForAuthSocketTest atomic.Pointer[string]
 
@@ -861,7 +896,11 @@ func (cc *clientConn) checkAuthPlugin(ctx context.Context, resp *handshake.Respo
 	// Find the identity of the user based on username and peer host.
 	identity, err := cc.ctx.MatchIdentity(ctx, cc.user, host)
 	if err != nil {
-		return nil, servererr.ErrAccessDenied.FastGenByArgs(cc.user, host, hasPassword)
+		// If can't find the user, retry username variants.
+		identity, err = cc.matchIdentityWithVariants(ctx, host, hasPassword)
+		if err != nil {
+			return nil, err
+		}
 	}
 	// Get the plugin for the identity.
 	userplugin, err := cc.ctx.AuthPluginForUser(ctx, identity)
