@@ -110,12 +110,13 @@ func (cw *WLCacheWorker) UpdateTableReadCostCache() {
 	newMetrics := make(map[int64]*TableReadCostMetrics)
 	for _, row := range rows {
 		tableID := row.GetInt64(0)
-		value := row.GetBytes(1)
+		value := row.GetJSON(1).String()
 
 		metric := &TableReadCostMetrics{}
-		if err := json.Unmarshal(value, metric); err != nil {
+		if err := json.Unmarshal([]byte(value), metric); err != nil {
 			logutil.ErrVerboseLogger().Warn("Failed to unmarshal table cost metrics",
 				zap.Int64("table_id", tableID),
+				zap.String("value", value),
 				zap.Error(err))
 			continue
 		}
