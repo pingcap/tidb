@@ -346,3 +346,48 @@ func getSpeed(n uint64, dur float64, isBytes bool) string {
 	}
 	return strconv.FormatFloat(float64(n)/dur, 'f', 4, 64)
 }
+
+// remove all duplicates inside sorted array in place.
+func removeDuplicates[E any](elements []E, compareValGetter func(E) []byte, record bool) ([]E, []E, int) {
+	if len(elements) <= 1 {
+		return elements, []E{}, 0
+	}
+	pivotIdx, fillIdx := 0, 0
+	pivot := compareValGetter(elements[pivotIdx])
+	var dups []E
+	dupCount := 0
+	if record {
+		dups = make([]E, 0, 2)
+	}
+	for idx := 1; idx < len(elements); idx++ {
+		key := compareValGetter(elements[idx])
+		if bytes.Compare(pivot, key) == 0 {
+			continue
+		}
+		if idx > pivotIdx+1 {
+			if record {
+				dups = append(dups, elements[pivotIdx:idx]...)
+			}
+			dupCount += idx - pivotIdx
+		} else {
+			if pivotIdx != fillIdx {
+				elements[fillIdx] = elements[pivotIdx]
+			}
+			fillIdx++
+		}
+		pivotIdx = idx
+		pivot = key
+	}
+	if len(elements) > pivotIdx+1 {
+		if record {
+			dups = append(dups, elements[pivotIdx:]...)
+		}
+		dupCount += len(elements) - pivotIdx
+	} else {
+		if pivotIdx != fillIdx {
+			elements[fillIdx] = elements[pivotIdx]
+		}
+		fillIdx++
+	}
+	return elements[:fillIdx], dups, dupCount
+}

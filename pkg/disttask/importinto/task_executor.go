@@ -65,6 +65,7 @@ type importStepExecutor struct {
 	importCtx    context.Context
 	importCancel context.CancelFunc
 	wg           sync.WaitGroup
+	indicesGenKV map[int64]genKVIndex
 }
 
 func getTableImporter(
@@ -508,7 +509,8 @@ func (p *postProcessStepExecutor) RunSubtask(ctx context.Context, subtask *proto
 
 type importExecutor struct {
 	*taskexecutor.BaseTaskExecutor
-	store tidbkv.Storage
+	store        tidbkv.Storage
+	indicesGenKV map[int64]genKVIndex
 }
 
 // NewImportExecutor creates a new import task executor.
@@ -549,14 +551,17 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 		zap.Int64("task-id", task.ID),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)),
 	)
+	indicesGenKV := getIndicesGenKV(taskMeta.Plan.TableInfo)
+	logger.Info("got indices that generate kv", zap.Any("indices", indicesGenKV))
 
 	switch task.Step {
 	case proto.ImportStepImport, proto.ImportStepEncodeAndSort:
 		return &importStepExecutor{
-			taskID:   task.ID,
-			taskMeta: &taskMeta,
-			logger:   logger,
-			store:    e.store,
+			taskID:       task.ID,
+			taskMeta:     &taskMeta,
+			logger:       logger,
+			store:        e.store,
+			indicesGenKV: indicesGenKV,
 		}, nil
 	case proto.ImportStepMergeSort:
 		return &mergeSortStepExecutor{

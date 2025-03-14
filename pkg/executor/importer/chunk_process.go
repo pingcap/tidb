@@ -535,17 +535,20 @@ func newQueryChunkProcessor(
 	}
 }
 
+// WriterFactory is a factory function to create a new index KV writer.
+type WriterFactory func(indexID int64) (*external.Writer, error)
+
 // IndexRouteWriter is a writer for index when using global sort.
 // we route kvs of different index to different writer in order to make
 // merge sort easier, else kv data of all subtasks will all be overlapped.
 type IndexRouteWriter struct {
 	writers       map[int64]*external.Writer
 	logger        *zap.Logger
-	writerFactory func(int64) *external.Writer
+	writerFactory WriterFactory
 }
 
 // NewIndexRouteWriter creates a new IndexRouteWriter.
-func NewIndexRouteWriter(logger *zap.Logger, writerFactory func(int64) *external.Writer) *IndexRouteWriter {
+func NewIndexRouteWriter(logger *zap.Logger, writerFactory WriterFactory) *IndexRouteWriter {
 	return &IndexRouteWriter{
 		writers:       make(map[int64]*external.Writer),
 		logger:        logger,
@@ -563,7 +566,11 @@ func (w *IndexRouteWriter) AppendRows(ctx context.Context, _ []string, rows enco
 		for _, item := range kvs {
 			writer, ok := w.writers[indexID]
 			if !ok {
-				writer = w.writerFactory(indexID)
+				var err error
+				writer, err = w.writerFactory(indexID)
+				if err != nil {
+					return errors.Trace(err)
+				}
 				w.writers[indexID] = writer
 			}
 			if err := writer.WriteRow(ctx, item.Key, item.Val, nil); err != nil {

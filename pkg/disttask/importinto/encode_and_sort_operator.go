@@ -62,6 +62,7 @@ type encodeAndSortOperator struct {
 	sharedVars        *SharedVars
 	logger            *zap.Logger
 	errCh             chan error
+	indicesGenKV      map[int64]genKVIndex
 }
 
 var _ operator.Operator = (*encodeAndSortOperator)(nil)
@@ -85,6 +86,7 @@ func newEncodeAndSortOperator(
 		sharedVars:    sharedVars,
 		logger:        executor.logger,
 		errCh:         make(chan error),
+		indicesGenKV:  executor.indicesGenKV,
 	}
 	pool := workerpool.NewWorkerPool(
 		"encodeAndSortOperator",
@@ -160,25 +162,36 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 		// in case on network partition, 2 nodes might run the same subtask.
 		workerUUID := uuid.New().String()
 		// sorted index kv storage path: /{taskID}/{subtaskID}/index/{indexID}/{workerID}
-		indexWriterFn := func(indexID int64) *external.Writer {
+		indexWriterFn := func(indexID int64) (*external.Writer, error) {
+			idx, ok := op.indicesGenKV[indexID]
+			if !ok {
+				// shouldn't happen normally, unless we have bug at getIndicesGenKV
+				return nil, errors.Errorf("unknown index with ID: %d", indexID)
+			}
+			onDup := external.OnDuplicateKeyRemove
+			if idx.unique {
+				onDup = external.OnDuplicateKeyRecord
+			}
 			builder := external.NewWriterBuilder().
 				SetOnCloseFunc(func(summary *external.WriterSummary) {
 					op.sharedVars.mergeIndexSummary(indexID, summary)
 				}).
 				SetMemorySizeLimit(perIndexKVMemSizePerCon).
-				SetBlockSize(indexBlockSize)
+				SetBlockSize(indexBlockSize).
+				SetOnDup(onDup)
 			prefix := subtaskPrefix(op.taskID, op.subtaskID)
 			// writer id for index: index/{indexID}/{workerID}
 			writerID := path.Join("index", strconv.Itoa(int(indexID)), workerUUID)
 			writer := builder.Build(op.tableImporter.GlobalSortStore, prefix, writerID)
-			return writer
+			return writer, nil
 		}
 
 		// sorted data kv storage path: /{taskID}/{subtaskID}/data/{workerID}
 		builder := external.NewWriterBuilder().
 			SetOnCloseFunc(op.sharedVars.mergeDataSummary).
 			SetMemorySizeLimit(dataKVMemSizePerCon).
-			SetBlockSize(getKVGroupBlockSize(dataKVGroup))
+			SetBlockSize(getKVGroupBlockSize(dataKVGroup)).
+			SetOnDup(external.OnDuplicateKeyRecord)
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for data: data/{workerID}
 		writerID := path.Join("data", workerUUID)
@@ -247,9 +260,19 @@ func getWriterMemorySizeLimit(resource *proto.StepResource, plan *importer.Plan)
 	return uint64(memPerShare * 3), uint64(memPerShare)
 }
 
+// getNumOfIndexGenKV returns the number of index generated KVs.
 func getNumOfIndexGenKV(tblInfo *model.TableInfo) int {
-	var count int
-	var nonClusteredPK bool
+	return len(getIndicesGenKV(tblInfo))
+}
+
+type genKVIndex struct {
+	name   string
+	unique bool
+}
+
+func getIndicesGenKV(tblInfo *model.TableInfo) map[int64]genKVIndex {
+	var nonClusteredPK *model.IndexInfo
+	res := make(map[int64]genKVIndex, len(tblInfo.Indices))
 	for _, idxInfo := range tblInfo.Indices {
 		// all public non-primary index generates index KVs
 		if idxInfo.State != model.StatePublic {
@@ -257,16 +280,22 @@ func getNumOfIndexGenKV(tblInfo *model.TableInfo) int {
 		}
 		if idxInfo.Primary {
 			if !tblInfo.HasClusteredIndex() {
-				nonClusteredPK = true
+				nonClusteredPK = idxInfo
 			}
 			continue
 		}
-		count++
+		res[idxInfo.ID] = genKVIndex{
+			name:   idxInfo.Name.L,
+			unique: idxInfo.Unique,
+		}
 	}
-	if nonClusteredPK {
-		count++
+	if nonClusteredPK != nil {
+		res[nonClusteredPK.ID] = genKVIndex{
+			name:   nonClusteredPK.Name.L,
+			unique: nonClusteredPK.Unique,
+		}
 	}
-	return count
+	return res
 }
 
 func getKVGroupBlockSize(group string) int {

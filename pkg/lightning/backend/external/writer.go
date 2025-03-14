@@ -64,6 +64,25 @@ const (
 	DefaultBlockSize = 16 * units.MiB
 )
 
+// OnDuplicateKey is the action when a duplicate key is found during global sort.
+// Note: lightning also have similar concept call OnDup, they have different semantic.
+type OnDuplicateKey int
+
+const (
+	// OnDuplicateKeyIgnore means ignore the duplicate key.
+	// this is the old behavior as add-index check dup by using DupDetectKeyAdapter.
+	OnDuplicateKeyIgnore OnDuplicateKey = iota
+	// OnDuplicateKeyRecord means record all the duplicate keys to external store.
+	// we use this for PK and UK in import-into.
+	OnDuplicateKeyRecord
+	// OnDuplicateKeyRemove means remove the duplicate key silently.
+	// we use this action for non-unique secondary indexes in import-into.
+	OnDuplicateKeyRemove
+	// OnDuplicateKeyError return an error when a duplicate key is found.
+	// may use this for add unique index.
+	OnDuplicateKeyError
+)
+
 // rangePropertiesCollector collects range properties for each range. The zero
 // value of rangePropertiesCollector is not ready to use, should call reset()
 // first.
@@ -115,6 +134,7 @@ type WriterBuilder struct {
 	propKeysDist    uint64
 	onClose         OnCloseFunc
 	keyDupeEncoding bool
+	onDup           OnDuplicateKey
 }
 
 // NewWriterBuilder creates a WriterBuilder.
@@ -179,6 +199,12 @@ func (b *WriterBuilder) SetGroupOffset(offset int) *WriterBuilder {
 	return b
 }
 
+// SetOnDup set the action when checkDup enabled and a duplicate key is found.
+func (b *WriterBuilder) SetOnDup(onDup OnDuplicateKey) *WriterBuilder {
+	b.onDup = onDup
+	return b
+}
+
 // Build builds a new Writer. The files writer will create are under the prefix
 // of "{prefix}/{writerID}".
 func (b *WriterBuilder) Build(
@@ -211,6 +237,7 @@ func (b *WriterBuilder) Build(
 		writerID:       writerID,
 		groupOffset:    b.groupOffset,
 		onClose:        b.onClose,
+		onDup:          b.onDup,
 		closed:         false,
 		multiFileStats: make([]MultipleFilesStat, 1),
 		fileMinKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
@@ -340,6 +367,7 @@ type Writer struct {
 
 	onClose OnCloseFunc
 	closed  bool
+	onDup   OnDuplicateKey
 
 	// Statistic information per batch.
 	batchSize uint64
@@ -452,9 +480,32 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		zap.Int("sequence-number", w.currentSeq),
 	)
 	sortStart := time.Now()
+	var dupFound bool
 	slices.SortFunc(w.kvLocations, func(i, j membuf.SliceLocation) int {
-		return bytes.Compare(w.getKeyByLoc(i), w.getKeyByLoc(j))
+		res := bytes.Compare(w.getKeyByLoc(i), w.getKeyByLoc(j))
+		if res == 0 {
+			dupFound = true
+		}
+		return res
 	})
+	var (
+		dups   []membuf.SliceLocation
+		dupCnt int
+	)
+	if dupFound {
+		switch w.onDup {
+		case OnDuplicateKeyIgnore:
+		case OnDuplicateKeyRecord:
+			w.kvLocations, dups, dupCnt = removeDuplicates(w.kvLocations, w.getKeyByLoc, true)
+		case OnDuplicateKeyRemove:
+			w.kvLocations, _, dupCnt = removeDuplicates(w.kvLocations, w.getKeyByLoc, false)
+		case OnDuplicateKeyError:
+			// not implemented yet, same as ignore.
+			// add-index might need this one
+		}
+	}
+	_ = dupCnt
+	_ = dups
 	sortDuration := time.Since(sortStart)
 	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort").Observe(sortDuration.Seconds())
 	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort").Observe(float64(w.batchSize) / 1024.0 / 1024.0 / sortDuration.Seconds())
