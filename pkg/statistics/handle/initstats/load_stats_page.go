@@ -49,7 +49,7 @@ type Task struct {
 //
 //nolint:fieldalignment
 type RangeWorker struct {
-	logger *zap.Logger
+	progressLogger *zap.Logger
 
 	taskName        string
 	taskChan        chan Task
@@ -86,7 +86,7 @@ func NewRangeWorker(
 		totalPercentage:     InitStatsPercentage.Load(),
 		totalPercentageStep: totalPercentageStep,
 	}
-	worker.logger = singletonStatsSamplerLogger()
+	worker.progressLogger = singletonStatsSamplerLogger()
 	return worker
 }
 
@@ -104,11 +104,11 @@ func (ls *RangeWorker) loadStats() {
 		if err := ls.processTask(task); err != nil {
 			logutil.BgLogger().Error("load stats failed", zap.Error(err))
 		}
-		if ls.logger != nil {
+		if ls.progressLogger != nil {
 			completeTaskCnt := ls.completeTaskCnt.Add(1)
 			taskPercentage := float64(completeTaskCnt)/float64(ls.taskCnt)*ls.totalPercentageStep + ls.totalPercentage
 			InitStatsPercentage.Store(taskPercentage)
-			ls.logger.Info(fmt.Sprintf("load %s [%d/%d]", ls.taskName, completeTaskCnt, ls.taskCnt))
+			ls.progressLogger.Info(fmt.Sprintf("load %s [%d/%d]", ls.taskName, completeTaskCnt, ls.taskCnt))
 		}
 	}
 }
