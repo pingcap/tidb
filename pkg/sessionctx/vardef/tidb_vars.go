@@ -741,7 +741,11 @@ const (
 	TiDBEnableTSOFollowerProxy = "tidb_enable_tso_follower_proxy"
 
 	// PDEnableFollowerHandleRegion indicates whether to enable the PD Follower handle region API.
+	// TODO: deprecated this variable to use a format like `tidb_enable_pd_follower_handle_region`.
 	PDEnableFollowerHandleRegion = "pd_enable_follower_handle_region"
+
+	// TiDBEnableBatchQueryRegion indicates whether to enable the batch query region feature.
+	TiDBEnableBatchQueryRegion = "tidb_enable_batch_query_region"
 
 	// TiDBEnableOrderedResultMode indicates if stabilize query results.
 	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
@@ -1039,6 +1043,9 @@ const (
 	TiDBRCWriteCheckTs = "tidb_rc_write_check_ts"
 	// TiDBCommitterConcurrency controls the number of running concurrent requests in the commit phase.
 	TiDBCommitterConcurrency = "tidb_committer_concurrency"
+	// TiDBPipelinedDmlResourcePolicy controls the number of running concurrent requests in the
+	// pipelined flush action.
+	TiDBPipelinedDmlResourcePolicy = "tidb_pipelined_dml_resource_policy"
 	// TiDBEnableBatchDML enables batch dml.
 	TiDBEnableBatchDML = "tidb_enable_batch_dml"
 	// TiDBStatsCacheMemQuota records stats cache quota
@@ -1244,6 +1251,24 @@ const (
 	MaxPreSplitRegions = 15
 )
 
+// Pipelined-DML related constants
+const (
+	// MinPipelinedDMLConcurrency is the minimum acceptable concurrency
+	MinPipelinedDMLConcurrency = 1
+	// MaxPipelinedDMLConcurrency is the maximum acceptable concurrency
+	MaxPipelinedDMLConcurrency = 8192
+
+	// DefaultFlushConcurrency is the default flush concurrency
+	DefaultFlushConcurrency = 128
+	// DefaultResolveConcurrency is the default resolve_lock concurrency
+	DefaultResolveConcurrency = 8
+
+	// ConservativeFlushConcurrency is the flush concurrency in conservative mode
+	ConservativeFlushConcurrency = 2
+	// ConservativeResolveConcurrency is the resolve_lock concurrency in conservative mode
+	ConservativeResolveConcurrency = 2
+)
+
 // Default TiDB system variable values.
 const (
 	DefHostname                             = "localhost"
@@ -1398,6 +1423,7 @@ const (
 	DefTiDBTSOClientBatchMaxWaitTime                  = 0.0 // 0ms
 	DefTiDBEnableTSOFollowerProxy                     = false
 	DefPDEnableFollowerHandleRegion                   = true
+	DefTiDBEnableBatchQueryRegion                     = false
 	DefTiDBEnableOrderedResultMode                    = false
 	DefTiDBEnablePseudoForOutdatedStats               = false
 	DefTiDBRegardNULLAsPoint                          = true
@@ -1440,6 +1466,7 @@ const (
 	DefTiDBQueryLogMaxLen                             = 4096
 	DefRequireSecureTransport                         = false
 	DefTiDBCommitterConcurrency                       = 128
+	DefTiDBPipelinedDmlResourcePolicy                 = StrategyStandard
 	DefTiDBBatchDMLIgnoreError                        = false
 	DefTiDBMemQuotaAnalyze                            = -1
 	DefTiDBEnableAutoAnalyze                          = true
@@ -1523,6 +1550,7 @@ const (
 	DefTiDBTTLRunningTasks                            = -1
 	DefPasswordReuseHistory                           = 0
 	DefPasswordReuseTime                              = 0
+	DefMaxUserConnections                             = 0
 	DefTiDBStoreBatchSize                             = 4
 	DefTiDBHistoricalStatsDuration                    = 7 * 24 * time.Hour
 	DefTiDBEnableHistoricalStatsForCapture            = false
@@ -1623,6 +1651,7 @@ var (
 	MaxTSOBatchWaitInterval              = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy               = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
 	EnablePDFollowerHandleRegion         = atomic.NewBool(DefPDEnableFollowerHandleRegion)
+	EnableBatchQueryRegion               = atomic.NewBool(DefTiDBEnableBatchQueryRegion)
 	RestrictedReadOnly                   = atomic.NewBool(DefTiDBRestrictedReadOnly)
 	VarTiDBSuperReadOnly                 = atomic.NewBool(DefTiDBSuperReadOnly)
 	PersistAnalyzeOptions                = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
@@ -1697,6 +1726,7 @@ var (
 	PasswordHistory                 = atomic.NewInt64(DefPasswordReuseHistory)
 	PasswordReuseInterval           = atomic.NewInt64(DefPasswordReuseTime)
 	IsSandBoxModeEnabled            = atomic.NewBool(false)
+	MaxUserConnectionsValue         = atomic.NewUint32(DefMaxUserConnections)
 	MaxPreparedStmtCountValue       = atomic.NewInt64(DefMaxPreparedStmtCount)
 	HistoricalStatsDuration         = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
 	EnableHistoricalStatsForCapture = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)
@@ -1904,6 +1934,15 @@ const (
 	// keep approximately 4 batched TSO requests running in parallel. This option tries to reduce the batch-waiting time
 	// by 3/4, at the expense of about 4 times the amount of TSO RPC calls.
 	TSOClientRPCModeParallelFast = "PARALLEL-FAST"
+
+	// StrategyStandard is a choice of variable TiDBPipelinedDmlResourcePolicy,
+	// the best performance policy
+	StrategyStandard = "standard"
+	// StrategyConservative is a choice of variable TiDBPipelinedDmlResourcePolicy,
+	// a rather conservative policy
+	StrategyConservative = "conservative"
+	// StrategyCustom is a choice of variable TiDBPipelinedDmlResourcePolicy,
+	StrategyCustom = "custom"
 )
 
 // Global config name list.

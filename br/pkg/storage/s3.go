@@ -822,20 +822,22 @@ func (rs *S3Storage) Open(ctx context.Context, path string, o *ReaderOption) (Ex
 		return nil, errors.Trace(err)
 	}
 	if prefetchSize > 0 {
-		reader = prefetch.NewReader(reader, o.PrefetchSize)
+		reader = prefetch.NewReader(reader, r.RangeSize(), o.PrefetchSize)
 	}
 	return &s3ObjectReader{
 		storage:      rs,
 		name:         path,
 		reader:       reader,
+		pos:          r.Start,
 		ctx:          ctx,
 		rangeInfo:    r,
 		prefetchSize: prefetchSize,
 	}, nil
 }
 
-// RangeInfo represents the an HTTP Content-Range header value
+// RangeInfo represents the HTTP Content-Range header value
 // of the form `bytes [Start]-[End]/[Size]`.
+// see https://www.rfc-editor.org/rfc/rfc9110.html#section-14.4.
 type RangeInfo struct {
 	// Start is the absolute position of the first byte of the byte range,
 	// starting from 0.
@@ -846,6 +848,11 @@ type RangeInfo struct {
 	End int64
 	// Size is the total size of the original file.
 	Size int64
+}
+
+// RangeSize returns the size of the range.
+func (r *RangeInfo) RangeSize() int64 {
+	return r.End + 1 - r.Start
 }
 
 // if endOffset > startOffset, should return reader for bytes in [startOffset, endOffset).
@@ -976,7 +983,7 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 	n, err = r.reader.Read(p[:maxCnt])
 	// TODO: maybe we should use !errors.Is(err, io.EOF) here to avoid error lint, but currently, pingcap/errors
 	// doesn't implement this method yet.
-	for err != nil && errors.Cause(err) != io.EOF && retryCnt < maxErrorRetries { //nolint:errorlint
+	for err != nil && errors.Cause(err) != io.EOF && r.ctx.Err() == nil && retryCnt < maxErrorRetries { //nolint:errorlint
 		log.L().Warn(
 			"read s3 object failed, will retry",
 			zap.String("file", r.name),
@@ -990,14 +997,14 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 		}
 		_ = r.reader.Close()
 
-		newReader, _, err1 := r.storage.open(r.ctx, r.name, r.pos, end)
+		newReader, rangeInfo, err1 := r.storage.open(r.ctx, r.name, r.pos, end)
 		if err1 != nil {
 			log.Warn("open new s3 reader failed", zap.String("file", r.name), zap.Error(err1))
 			return
 		}
 		r.reader = newReader
 		if r.prefetchSize > 0 {
-			r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+			r.reader = prefetch.NewReader(r.reader, rangeInfo.RangeSize(), r.prefetchSize)
 		}
 		retryCnt++
 		n, err = r.reader.Read(p[:maxCnt])
@@ -1069,7 +1076,7 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 	}
 	r.reader = newReader
 	if r.prefetchSize > 0 {
-		r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+		r.reader = prefetch.NewReader(r.reader, info.RangeSize(), r.prefetchSize)
 	}
 	r.rangeInfo = info
 	r.pos = realOffset

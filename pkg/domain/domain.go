@@ -1304,7 +1304,7 @@ func (do *Domain) Close() {
 	}
 
 	do.sysSessionPool.Close()
-	variable.UnregisterStatistics(do.BindHandle())
+	variable.UnregisterStatistics(do.BindingHandle())
 	if do.onClose != nil {
 		do.onClose()
 	}
@@ -1374,7 +1374,8 @@ func NewDomainWithEtcdClient(store kv.Storage, schemaLease time.Duration, statsL
 	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, config.GetGlobalConfig().TiDBEnableExitCheck)
 	do.SchemaValidator = NewSchemaValidator(schemaLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
-	do.memoryUsageAlarmHandle = memoryusagealarm.NewMemoryUsageAlarmHandle(do.exit)
+	do.memoryUsageAlarmHandle = memoryusagealarm.NewMemoryUsageAlarmHandle(do.exit,
+		&memoryusagealarm.TiDBConfigProvider{})
 	do.serverMemoryLimitHandle = servermemorylimit.NewServerMemoryLimitHandle(do.exit)
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sysproctrack.TrackProc)}
 	do.initDomainSysVars()
@@ -1943,6 +1944,35 @@ func decodePrivilegeEvent(resp clientv3.WatchResponse) PrivilegeEvent {
 	return msg
 }
 
+func batchReadMoreData(ch clientv3.WatchChan, event PrivilegeEvent) PrivilegeEvent {
+	timer := time.NewTimer(5 * time.Millisecond)
+	defer timer.Stop()
+	const maxBatchSize = 128
+	for i := 0; i < maxBatchSize; i++ {
+		select {
+		case resp, ok := <-ch:
+			if !ok {
+				return event
+			}
+			tmp := decodePrivilegeEvent(resp)
+			if tmp.All {
+				event.All = true
+			} else {
+				if !event.All {
+					event.UserList = append(event.UserList, tmp.UserList...)
+				}
+			}
+			succ := timer.Reset(5 * time.Millisecond)
+			if !succ {
+				break
+			}
+		case <-timer.C:
+			return event
+		}
+	}
+	return event
+}
+
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
 // should be called only once in BootstrapSession.
 func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
@@ -1952,7 +1982,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 	if err != nil {
 		return err
 	}
-	do.privHandle = privileges.NewHandle(sctx.GetRestrictedSQLExecutor(), sctx.GetSessionVars().GlobalVarsAccessor)
+	do.privHandle = privileges.NewHandle(do.SysSessionPool(), sctx.GetSessionVars().GlobalVarsAccessor)
 
 	var watchCh clientv3.WatchChan
 	duration := 5 * time.Minute
@@ -1977,6 +2007,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 				if ok {
 					count = 0
 					event = decodePrivilegeEvent(resp)
+					event = batchReadMoreData(watchCh, event)
 				} else {
 					if do.ctx.Err() == nil {
 						logutil.BgLogger().Error("load privilege loop watch channel closed")
@@ -1990,6 +2021,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 				}
 			case <-time.After(duration):
 				event.All = true
+				event = batchReadMoreData(watchCh, event)
 			}
 
 			err := privReloadEvent(do.privHandle, &event)
@@ -2138,20 +2170,20 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 	return do.privHandle
 }
 
-// BindHandle returns domain's bindHandle.
-func (do *Domain) BindHandle() bindinfo.GlobalBindingHandle {
+// BindingHandle returns domain's bindHandle.
+func (do *Domain) BindingHandle() bindinfo.BindingHandle {
 	v := do.bindHandle.Load()
 	if v == nil {
 		return nil
 	}
-	return v.(bindinfo.GlobalBindingHandle)
+	return v.(bindinfo.BindingHandle)
 }
 
 // InitBindingHandle create a goroutine loads BindInfo in a loop, it should
 // be called only once in BootstrapSession.
 func (do *Domain) InitBindingHandle() error {
-	do.bindHandle.Store(bindinfo.NewGlobalBindingHandle(do.sysSessionPool))
-	err := do.BindHandle().LoadFromStorageToCache(true)
+	do.bindHandle.Store(bindinfo.NewBindingHandle(do.sysSessionPool))
+	err := do.BindingHandle().LoadFromStorageToCache(true)
 	if err != nil || bindinfo.Lease == 0 {
 		return err
 	}
@@ -2182,11 +2214,11 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 		for {
 			select {
 			case <-do.exit:
-				do.BindHandle().Close()
+				do.BindingHandle().Close()
 				owner.Close()
 				return
 			case <-bindWorkerTicker.C:
-				bindHandle := do.BindHandle()
+				bindHandle := do.BindingHandle()
 				err := bindHandle.LoadFromStorageToCache(false)
 				if err != nil {
 					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
@@ -2195,7 +2227,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				if !owner.IsOwner() {
 					continue
 				}
-				err := do.BindHandle().GCGlobalBinding()
+				err := do.BindingHandle().GCBinding()
 				if err != nil {
 					logutil.BgLogger().Error("GC bind record failed", zap.Error(err))
 				}
@@ -2413,7 +2445,6 @@ func (do *Domain) CreateStatsHandle(ctx, initStatsCtx sessionctx.Context) error 
 		ctx,
 		initStatsCtx,
 		do.statsLease,
-		do.InfoSchema(),
 		do.sysSessionPool,
 		&do.sysProcesses,
 		do.ddlNotifier,
@@ -2460,7 +2491,6 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 		ctx,
 		initStatsCtx,
 		do.statsLease,
-		do.InfoSchema(),
 		do.sysSessionPool,
 		&do.sysProcesses,
 		do.ddlNotifier,

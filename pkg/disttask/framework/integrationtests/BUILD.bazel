@@ -17,7 +17,7 @@ go_test(
     ],
     flaky = True,
     race = "off",
-    shard_count = 23,
+    shard_count = 22,
     deps = [
         "//pkg/config",
         "//pkg/ddl",

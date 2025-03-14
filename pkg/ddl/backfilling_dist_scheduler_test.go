@@ -52,6 +52,7 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 		"PARTITION p1 VALUES LESS THAN (100),\n" +
 		"PARTITION p2 VALUES LESS THAN (1000),\n" +
 		"PARTITION p3 VALUES LESS THAN MAXVALUE\n);")
+	tk.MustExec("insert into tp1 values (1, 0), (11, 0), (101, 0), (1001, 0);")
 	task := createAddIndexTask(t, dom, "test", "tp1", proto.Backfill, false)
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tp1"))
 	require.NoError(t, err)
@@ -158,7 +159,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	ext.(*ddl.LitBackfillScheduler).GlobalSort = true
 	sch.Extension = ext
 
-	taskID, err := mgr.CreateTask(ctx, task.Key, proto.Backfill, 1, "", 0, task.Meta)
+	taskID, err := mgr.CreateTask(ctx, task.Key, proto.Backfill, 1, "", 0, proto.ExtraParams{}, task.Meta)
 	require.NoError(t, err)
 	task.ID = taskID
 	execIDs := []string{":4000"}

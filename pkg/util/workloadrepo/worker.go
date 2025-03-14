@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -77,7 +78,7 @@ var workloadTables = []repositoryTable{
 			DB_VER JSON NULL COMMENT 'Versions of TiDB, TiKV, PD at the moment',
 			WR_VER int unsigned NULL COMMENT 'Version to identify the compatibility of workload schema between releases.',
 			SOURCE VARCHAR(20) NULL COMMENT 'The program that initializes the snaphost. ',
-			ERROR TEXT DEFAULT NULL COMMENT 'extra messages are written if anything happens to block that snapshots.')`, WorkloadSchema, histSnapshotsTable),
+			ERROR TEXT DEFAULT NULL COMMENT 'extra messages are written if anything happens to block that snapshots.')`, mysql.WorkloadSchema, histSnapshotsTable),
 		"",
 	},
 	{"INFORMATION_SCHEMA", "TIDB_INDEX_USAGE", snapshotTable, "", "", "", ""},
@@ -85,7 +86,6 @@ var workloadTables = []repositoryTable{
 	{"INFORMATION_SCHEMA", "CLIENT_ERRORS_SUMMARY_BY_HOST", snapshotTable, "", "", "", ""},
 	{"INFORMATION_SCHEMA", "CLIENT_ERRORS_SUMMARY_BY_USER", snapshotTable, "", "", "", ""},
 	{"INFORMATION_SCHEMA", "CLIENT_ERRORS_SUMMARY_GLOBAL", snapshotTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "TIKV_REGION_STATUS", snapshotTable, "", "", "", ""},
 
 	{"INFORMATION_SCHEMA", "PROCESSLIST", samplingTable, "", "", "", ""},
 	{"INFORMATION_SCHEMA", "DATA_LOCK_WAITS", samplingTable, "", "", "", ""},
@@ -93,10 +93,12 @@ var workloadTables = []repositoryTable{
 	{"INFORMATION_SCHEMA", "MEMORY_USAGE", samplingTable, "", "", "", ""},
 	{"INFORMATION_SCHEMA", "DEADLOCKS", samplingTable, "", "", "", ""},
 
-	{"INFORMATION_SCHEMA", "CLUSTER_LOAD", samplingTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "TIDB_HOT_REGIONS", samplingTable, "", "", "", ""},
+	// TODO: These tables are excluded for now, because reading from them adds unnecessary load to the PD.
+	//{"INFORMATION_SCHEMA", "TIKV_REGION_STATUS", snapshotTable, "", "", "", ""},
+	//{"INFORMATION_SCHEMA", "CLUSTER_LOAD", samplingTable, "", "", "", ""},
+	//{"INFORMATION_SCHEMA", "TIDB_HOT_REGIONS", samplingTable, "", "", "", ""},
 	//{"INFORMATION_SCHEMA", "TIDB_HOT_REGIONS_HISTORY", samplingTable, "", "", "", ""},
-	{"INFORMATION_SCHEMA", "TIKV_STORE_STATUS", samplingTable, "", "", "", ""},
+	//{"INFORMATION_SCHEMA", "TIKV_STORE_STATUS", samplingTable, "", "", "", ""},
 }
 
 type sessionPool interface {
@@ -137,7 +139,7 @@ func takeSnapshot(ctx context.Context) error {
 	snapID, err := workerCtx.takeSnapshot(ctx)
 	if err != nil {
 		logutil.BgLogger().Info("workload repository manual snapshot failed", zap.String("owner", workerCtx.instanceID), zap.NamedError("err", err))
-		return errCouldNotStartSnapshot.GenWithStackByArgs()
+		return errCouldNotStartSnapshot.GenWithStackByArgs(err)
 	}
 
 	logutil.BgLogger().Info("workload repository ran manual snapshot", zap.String("owner", workerCtx.instanceID), zap.Uint64("snapID", snapID))

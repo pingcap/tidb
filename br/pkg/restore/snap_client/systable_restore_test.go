@@ -114,7 +114,8 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 // - IF it is an system privilege table, please add the table name into `sysPrivilegeTableMap`.
 // - IF it is an statistics table, please add the table name into `statsTables`.
 //
+
 // The above variables are in the file br/pkg/restore/systable_restore.go
 func TestMonitorTheSystemTableIncremental(t *testing.T) {
-	require.Equal(t, int64(243), session.CurrentBootstrapVersion)
+	require.Equal(t, int64(245), session.CurrentBootstrapVersion)
 }

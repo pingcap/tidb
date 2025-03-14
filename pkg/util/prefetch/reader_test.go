@@ -26,7 +26,7 @@ import (
 
 func TestBasic(t *testing.T) {
 	source := bytes.NewReader([]byte("01234567890"))
-	r := NewReader(io.NopCloser(source), 3)
+	r := NewReader(io.NopCloser(source), source.Size(), 3)
 	buf := make([]byte, 1)
 	n, err := r.Read(buf)
 	require.NoError(t, err)
@@ -58,7 +58,7 @@ func TestBasic(t *testing.T) {
 	require.ErrorIs(t, err, io.EOF)
 
 	source = bytes.NewReader([]byte("01234567890"))
-	r = NewReader(io.NopCloser(source), 3)
+	r = NewReader(io.NopCloser(source), source.Size(), 3)
 	buf = make([]byte, 11)
 	n, err = r.Read(buf)
 	require.NoError(t, err)
@@ -67,7 +67,7 @@ func TestBasic(t *testing.T) {
 	require.ErrorIs(t, err, io.EOF)
 
 	source = bytes.NewReader([]byte("01234"))
-	r = NewReader(io.NopCloser(source), 100)
+	r = NewReader(io.NopCloser(source), source.Size(), 100)
 	buf = make([]byte, 11)
 	n, err = r.Read(buf)
 	require.NoError(t, err)
@@ -76,9 +76,25 @@ func TestBasic(t *testing.T) {
 	require.ErrorIs(t, err, io.EOF)
 }
 
+type unexpectedEOFReader struct {
+}
+
+func (u *unexpectedEOFReader) Read(_ []byte) (n int, err error) {
+	return 0, io.ErrUnexpectedEOF
+}
+
+func TestConvertUnexpectedEOF(t *testing.T) {
+	r := NewReader(io.NopCloser(&unexpectedEOFReader{}), 10, 10)
+	buf := make([]byte, 10)
+	_, err := r.Read(buf)
+	// prefetch reader should not convert underlying io.ErrUnexpectedEOF to io.EOF
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+}
+
 func TestCloseBeforeDrainRead(t *testing.T) {
 	data := make([]byte, 1024)
-	r := NewReader(io.NopCloser(bytes.NewReader(data)), 2)
+	source := bytes.NewReader(data)
+	r := NewReader(io.NopCloser(source), source.Size(), 2)
 	err := r.Close()
 	require.NoError(t, err)
 }
@@ -123,7 +139,7 @@ func TestFillPrefetchBuffer(t *testing.T) {
 		fragSize: 3,
 	}
 	// when prefetch is 10B, the two internal ping-pong buffers are 5B
-	prefetchReader := NewReader(io.NopCloser(fragReader), 10)
+	prefetchReader := NewReader(io.NopCloser(fragReader), int64(len(fragReader.data)), 10)
 	// when no read happens, one of ping-pong buffer is fully filled
 	require.Eventually(t, func() bool {
 		return fragReader.i.Load() == 5
