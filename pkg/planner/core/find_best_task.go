@@ -264,14 +264,14 @@ func iteratePhysicalPlan4BaseLogical(
 	childTasks = childTasks[:0]
 	// The curCntPlan records the number of possible plans for selfPhysicalPlan
 	curCntPlan := int64(1)
-	var isParentPhyscicalHashJoin bool
+	var isParentPhyscicalHashAgg bool
 	if _, ok := selfPhysicalPlan.(*PhysicalHashAgg); ok {
-		isParentPhyscicalHashJoin = true
+		isParentPhyscicalHashAgg = true
 	}
 	for j, child := range p.Children() {
 		childProp := selfPhysicalPlan.GetChildReqProps(j)
 		if childProp != nil {
-			childProp.IsParentPhyscicalHashAgg = isParentPhyscicalHashJoin
+			childProp.IsParentPhyscicalHashAgg = isParentPhyscicalHashAgg
 		}
 
 		childTask, cnt, err := child.FindBestTask(childProp, &PlanCounterDisabled, opt)
