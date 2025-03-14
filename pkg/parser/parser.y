@@ -4050,6 +4050,10 @@ DefaultValueExpr:
 |	SignedLiteral
 |	NextValueForSequenceParentheses
 |	BuiltinFunction
+|	'(' SignedLiteral ')'
+	{
+		$$ = $2
+	}
 
 BuiltinFunction:
 	'(' BuiltinFunction ')'
