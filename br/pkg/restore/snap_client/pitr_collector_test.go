@@ -302,9 +302,14 @@ func TestConcurrency(t *testing.T) {
 	}, time.Second, 10*time.Millisecond)
 	close(fence)
 
-	for _, cb := range cbs {
-		require.NoError(t, cb())
-	}
+	func() {
+		l.Lock()
+		defer l.Unlock()
+
+		for _, cb := range cbs {
+			require.NoError(t, cb())
+		}
+	}()
 
 	coll.Done()
 }
