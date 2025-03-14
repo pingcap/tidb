@@ -489,13 +489,14 @@ func BuildColumnRange(
 	return buildColumnRange(conds, sctx, tp, false, colLen, rangeMemQuota)
 }
 
-func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAndInCount int,
-	accessConds []expression.Expression) (Ranges, []expression.Expression, []expression.Expression, error) { //nolint: revive
+func (d *rangeDetacher) buildRangeOnColsByCNFCond(
+	newTp []*types.FieldType,
+	eqAndInCount int,
+	accessConds []expression.Expression,
+) (ranges Ranges, accessCondsRet []expression.Expression, remainingConds []expression.Expression, err error) {
 	rb := builder{sctx: d.sctx}
 	var (
-		ranges        Ranges
 		rangeFallback bool
-		err           error
 	)
 	for i := range eqAndInCount {
 		// Build ranges for equal or in access conditions.
