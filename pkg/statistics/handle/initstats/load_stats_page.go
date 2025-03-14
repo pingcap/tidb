@@ -47,26 +47,38 @@ type Task struct {
 
 // RangeWorker is used to load stats concurrently by the range of table id.
 type RangeWorker struct {
-	dealFunc            func(task Task) error
-	taskChan            chan Task
-	logger              *zap.Logger
-	taskName            string
-	wg                  util.WaitGroupWrapper
-	taskCnt             uint64
-	completeTaskCnt     atomic.Uint64
+	logger *zap.Logger
+
+	taskName        string
+	taskChan        chan Task
+	processTask     func(task Task) error
+	taskCnt         uint64
+	completeTaskCnt atomic.Uint64
+
 	totalPercentage     float64
 	totalPercentageStep float64
+
+	concurrency int
+	wg          util.WaitGroupWrapper
 }
 
 // NewRangeWorker creates a new RangeWorker.
-func NewRangeWorker(taskName string, dealFunc func(task Task) error, maxTid, initStatsStep uint64, totalPercentageStep float64) *RangeWorker {
+func NewRangeWorker(
+	taskName string,
+	processTask func(task Task) error,
+	concurrency int,
+	maxTid,
+	initStatsStep uint64,
+	totalPercentageStep float64,
+) *RangeWorker {
 	taskCnt := uint64(1)
 	if maxTid > initStatsStep*2 {
 		taskCnt = maxTid / initStatsStep
 	}
 	worker := &RangeWorker{
 		taskName:            taskName,
-		dealFunc:            dealFunc,
+		processTask:         processTask,
+		concurrency:         concurrency,
 		taskChan:            make(chan Task, 1),
 		taskCnt:             taskCnt,
 		totalPercentage:     InitStatsPercentage.Load(),
@@ -78,8 +90,8 @@ func NewRangeWorker(taskName string, dealFunc func(task Task) error, maxTid, ini
 
 // LoadStats loads stats concurrently when to init stats
 func (ls *RangeWorker) LoadStats() {
-	concurrency := getConcurrency()
-	for n := 0; n < concurrency; n++ {
+	GetConcurrency()
+	for n := 0; n < ls.concurrency; n++ {
 		ls.wg.Run(func() {
 			ls.loadStats()
 		})
@@ -88,7 +100,7 @@ func (ls *RangeWorker) LoadStats() {
 
 func (ls *RangeWorker) loadStats() {
 	for task := range ls.taskChan {
-		if err := ls.dealFunc(task); err != nil {
+		if err := ls.processTask(task); err != nil {
 			logutil.BgLogger().Error("load stats failed", zap.Error(err))
 		}
 		if ls.logger != nil {
