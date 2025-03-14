@@ -74,7 +74,7 @@ func RunChecksumTable(ctx context.Context, g glue.Glue, cfg ChecksumWithRewriteR
 func (c *checksumTableCtx) init(ctx context.Context, g glue.Glue) error {
 	cfg := c.cfg
 	var err error
-	c.mgr, err = task.NewMgr(ctx, g, cfg.PD, cfg.TLS, task.GetKeepalive(&cfg.Config), cfg.CheckRequirements, true, conn.NormalVersionChecker)
+	c.mgr, err = task.NewMgr(ctx, g, cfg.PD, cfg.TLS, task.GetKeepalive(&cfg.Config), cfg.CheckRequirements, true, true, conn.NormalVersionChecker)
 	if err != nil {
 		return err
 	}
