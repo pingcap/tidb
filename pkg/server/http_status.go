@@ -210,9 +210,9 @@ func (b *Ballast) GenHTTPHandler() func(w http.ResponseWriter, r *http.Request) 
 func (s *Server) startHTTPServer() {
 	router := mux.NewRouter()
 
+	setupCommonPaths(router)
+
 	router.HandleFunc("/status", s.handleStatus).Name("Status")
-	// HTTP path for prometheus.
-	router.Handle("/metrics", promhttp.Handler()).Name("Metrics")
 
 	// HTTP path for dump statistics.
 	router.Handle("/stats/dump/{db}/{table}", s.newStatsHandler()).
@@ -297,13 +297,6 @@ func (s *Server) startHTTPServer() {
 		}
 		router.PathPrefix("/static/").Handler(http.StripPrefix("/static", http.FileServer(static.Data)))
 	}
-
-	router.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	router.HandleFunc("/debug/pprof/profile", cpuprofile.ProfileHTTPHandler)
-	router.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	router.HandleFunc("/debug/pprof/trace", pprof.Trace)
-	// Other /debug/pprof paths not covered above are redirected to pprof.Index.
-	router.PathPrefix("/debug/pprof/").HandlerFunc(pprof.Index)
 
 	ballast := newBallast(s.cfg.MaxBallastObjectSize)
 	{
@@ -638,4 +631,87 @@ func (s *Server) newStatsPriorityQueueHandler() *optimizor.StatsPriorityQueueHan
 	}
 
 	return optimizor.NewStatsPriorityQueueHandler(do)
+}
+
+// setupCommonPaths adds the paths that can be handled by both `*Server` and `initialStatusServer` to the router
+// It should be kept as simple as possible, and only include the tools which are helpful for the developers to debug
+// issues before starting the `*Server`
+func setupCommonPaths(router *mux.Router) {
+	// HTTP path for prometheus.
+	router.Handle("/metrics", promhttp.Handler()).Name("Metrics")
+
+	router.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	router.HandleFunc("/debug/pprof/profile", cpuprofile.ProfileHTTPHandler)
+	router.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	router.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	// Other /debug/pprof paths not covered above are redirected to pprof.Index.
+	router.PathPrefix("/debug/pprof/").HandlerFunc(pprof.Index)
+}
+
+// initialStatusServer is a temporary http server which handles the useful toolkits to debug in the boot stage. It'll be stopped
+// before starting the real status server.
+var initialStatusServer *http.Server
+
+// StartInitialStatusServer starts the initial status server. It should guarantee that when the `err != nil`,
+// the server is not started and it's safe to listen on the same port.
+func StartInitialStatusServer(cfg *config.Config) error {
+	router := mux.NewRouter()
+
+	setupCommonPaths(router)
+	serverMux := http.NewServeMux()
+	serverMux.Handle("/", router)
+
+	statusAddr := net.JoinHostPort(cfg.Status.StatusHost, strconv.Itoa(int(cfg.Status.StatusPort)))
+	clusterSecurity := cfg.Security.ClusterSecurity()
+	tlsConfig, err := clusterSecurity.ToTLSConfig()
+	if err != nil {
+		logutil.BgLogger().Error("invalid TLS config", zap.Error(err))
+		return err
+	}
+
+	initialStatusServer = &http.Server{
+		Addr:      statusAddr,
+		Handler:   util2.NewCorsHandler(serverMux, cfg),
+		TLSConfig: tlsConfig,
+	}
+
+	go func() {
+		var err error
+		if tlsConfig != nil {
+			// the TLS configuration should have been included in `tlsConfig`, it's fine
+			// to path empty strings to `ListenAndServeTLS`
+			err = initialStatusServer.ListenAndServeTLS("", "")
+		} else {
+			err = initialStatusServer.ListenAndServe()
+		}
+		if err != http.ErrServerClosed {
+			logutil.BgLogger().Error("initial status server error", zap.Error(err))
+		} else {
+			logutil.BgLogger().Info("initial status server stopped")
+		}
+	}()
+
+	return nil
+}
+
+const stopInitialStatusServerTimeout = 5 * time.Second
+
+// StopInitialStatusServer tries to stop the initial status server. It should be called before starting the fully functional status server
+func StopInitialStatusServer() {
+	if initialStatusServer == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), stopInitialStatusServerTimeout)
+	defer cancel()
+
+	err := initialStatusServer.Shutdown(ctx)
+	if err != nil {
+		logutil.BgLogger().Error("fail to shutdown the initial status server gracefully, close it directly", zap.Error(err))
+
+		err := initialStatusServer.Close()
+		if err != nil {
+			logutil.BgLogger().Error("fail to close the initial status server", zap.Error(err))
+		}
+	}
 }
