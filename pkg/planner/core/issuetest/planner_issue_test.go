@@ -265,3 +265,14 @@ FROM t1 AS table1
 WHERE (EXISTS (SELECT SUBQUERY2_t1.a1 AS SUBQUERY2_field1 FROM t1 AS SUBQUERY2_t1)) OR table1.b1 >= 55
 GROUP BY field1;`).Check(testkit.Rows("0"))
 }
+
+func TestIssue59902(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t1(a int primary key, b int);")
+	tk.MustExec("create table t2(a int, b int, key idx(a));")
+	tk.MustExec("set tidb_enable_inl_join_inner_multi_pattern=on;")
+	tk.MustQuery("explain select t1.b,(select count(*) from t2 where t2.a=t1.a) as a from t1 where t1.a=1;").
+		Check(testkit.Rows())
+}
