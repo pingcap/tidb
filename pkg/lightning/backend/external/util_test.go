@@ -340,7 +340,7 @@ type InlineInternal struct {
 	J string `json:"j"`
 }
 
-type InlineExternal struct {
+type EmbedExternal struct {
 	S int    `json:"s" external:"true"`
 	T string `json:"t" external:"true"`
 }
@@ -363,7 +363,7 @@ type testStruct struct {
 	*EmbedC        `json:"EmbedC"`
 	*EmbedD        `json:"EmbedD" external:"true"`
 	InlineInternal `json:",inline"`
-	InlineExternal `json:",inline" external:"true"`
+	EmbedExternal  `external:"true"`
 }
 
 func (ts testStruct) MarshalJSON() ([]byte, error) {
@@ -407,7 +407,7 @@ func TestCopyFields(t *testing.T) {
 			I: 111,
 			J: "inline-internal",
 		},
-		InlineExternal: InlineExternal{
+		EmbedExternal: EmbedExternal{
 			S: 222,
 			T: "inline-external",
 		},
@@ -553,7 +553,7 @@ func TestReadWriteJSON(t *testing.T) {
 			I: 111,
 			J: "inline-internal",
 		},
-		InlineExternal: InlineExternal{
+		EmbedExternal: EmbedExternal{
 			S: 222,
 			T: "inline-external",
 		},

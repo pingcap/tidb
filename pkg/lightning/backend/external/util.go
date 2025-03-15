@@ -368,6 +368,65 @@ func copyInternalFields(a any) any {
 	}
 }
 
+// extractFieldKey extracts the field key from field type and value information.
+// Returns an empty string if the field should be skipped (e.g., due to omitempty).
+func extractFieldKey(field reflect.StructField, fieldVal reflect.Value) string {
+	// Skip unexported fields
+	if field.PkgPath != "" {
+		return ""
+	}
+
+	jsonTag := field.Tag.Get("json")
+	if jsonTag == "-" || strings.HasPrefix(jsonTag, "-,") {
+		return ""
+	}
+
+	key := field.Name
+	if jsonTag != "" {
+		parts := strings.Split(jsonTag, ",")
+		if parts[0] != "" && parts[0] != "-" {
+			key = parts[0]
+		}
+
+		// Handle omitempty
+		for _, opt := range parts[1:] {
+			if opt == "omitempty" && fieldVal.IsZero() {
+				return "" // Skip this field
+			}
+		}
+	}
+
+	return key
+}
+
+// copyAllFields copies all fields from the source struct to a map.
+// NOTE: Only handle the first level of fields.
+func copyAllFields(src any) map[string]any {
+	res := make(map[string]any)
+	v := reflect.ValueOf(src)
+	if !v.IsValid() {
+		return res
+	}
+	if v.Kind() == reflect.Ptr {
+		if v.IsNil() {
+			return res
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return res
+	}
+	t := v.Type()
+	for i := 0; i < v.NumField(); i++ {
+		key := extractFieldKey(t.Field(i), v.Field(i))
+		if key == "" {
+			continue
+		}
+		res[key] = v.Field(i).Interface()
+	}
+	return res
+}
+
 // copyExternalFields extracts and returns external fields tagged for inclusion during JSON marshaling.
 // NOTE: Only handle the first level of external tags
 func copyExternalFields(a any) map[string]any {
@@ -387,45 +446,24 @@ func copyExternalFields(a any) map[string]any {
 	}
 	t := v.Type()
 	for i := 0; i < v.NumField(); i++ {
-		f := t.Field(i)
-		jsonTag := f.Tag.Get("json")
-		if f.PkgPath != "" || jsonTag == "-" || strings.HasPrefix(jsonTag, "-,") || f.Tag.Get("external") != "true" {
+		key := extractFieldKey(t.Field(i), v.Field(i))
+		if key == "" {
 			continue
 		}
-		if strings.Contains(jsonTag, "inline") {
-			fieldVal := v.Field(i)
-			if fieldVal.Kind() == reflect.Pointer && fieldVal.IsNil() {
-				continue
-			}
-			for k, val := range copyExternalFields(fieldVal.Interface()) {
+		f := t.Field(i)
+		if f.Tag.Get("external") != "true" {
+			continue
+		}
+		jsonTag := f.Tag.Get("json")
+		// Only inline if the field is anonymous or has inline tag AND doesn't have a specific name in json tag
+		if (f.Anonymous || strings.Contains(jsonTag, "inline")) &&
+			(jsonTag == "" || strings.HasPrefix(jsonTag, ",") || jsonTag == "inline") {
+			for k, val := range copyAllFields(v.Field(i).Interface()) {
 				res[k] = val
 			}
 			continue
 		}
-		key := f.Name
-		var tagOpts []string
-		if jsonTag != "" {
-			parts := strings.Split(jsonTag, ",")
-			if parts[0] != "" {
-				key = parts[0]
-			}
-			if len(parts) > 1 {
-				tagOpts = parts[1:]
-			}
-		}
-		// Handle omitempty: if present and field is zero value, skip this field.
-		fieldVal := v.Field(i)
-		skip := false
-		for _, opt := range tagOpts {
-			if opt == "omitempty" && fieldVal.IsZero() {
-				skip = true
-				break
-			}
-		}
-		if skip {
-			continue
-		}
-		res[key] = fieldVal.Interface()
+		res[key] = v.Field(i).Interface()
 	}
 	return res
 }
