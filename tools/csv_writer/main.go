@@ -961,7 +961,7 @@ func generateTotalRandomBigintForPk(num int, path string) {
 }
 
 func loadColNullRatio() {
-	path := "/Users/fanzhou/tcms/pinterest/gcs/col_null_ratio.csv"
+	path := "/Users/fanzhou/tcms/pinterest/gcs/richpins/col_null_ratio.csv"
 	_, err := os.Stat(path)
 	if err != nil {
 		if !os.IsExist(err) {
@@ -995,38 +995,38 @@ func loadCSVFile(path string) [][]string {
 	return records
 }
 
-func generateMaxSizeValues() {
+func generateMaxSizeValues(cols []*Column) {
 	// load max size csv and convert to map
-	ms := loadCSVFile("/Users/fanzhou/tcms/pinterest/gcs/col_len_detail.csv")
+	ms := loadCSVFile("/Users/fanzhou/tcms/pinterest/gcs/richpins/col_max_len.csv")
 	maxSizeMap := make(map[string]int)
 	for _, row := range ms {
-		maxL, err := strconv.ParseInt(row[2], 10, 64)
+		maxL, err := strconv.ParseInt(row[1], 10, 64)
 		if err != nil {
 			log.Fatal(err)
 		}
 		maxSizeMap[row[0]] = int(maxL)
 	}
-	// load schema
-	schema := loadCSVFile("/Users/fanzhou/tcms/pinterest/gcs/schema.csv")
-	colNum := len(schema)
-	repeatNumEveryCol := 2
+
+	colNum := len(cols)
+	repeatNumEveryCol := 10
 	colVals := make([][]string, colNum)
-	for i, col := range schema {
+	for i, col := range cols {
 		colVal := make([]string, colNum*repeatNumEveryCol)
 		for j := 0; j < colNum*repeatNumEveryCol; j++ {
-			if strings.Contains(col[0], "PK") { // pk
+			if col.IsPK { // pk
 				colVal[j] = strconv.Itoa(*pkBegin + j)
-			} else if strings.Contains(col[0], "unique index") { // uk
+			} else if col.IsUnique { // uk
 				colVal[j] = faker.UUID()
 			} else {
 				colVal[j] = nullVal
 			}
 		}
 
-		if strings.Contains(col[1], "BINARY") {
-			maxL, ok := maxSizeMap[col[0]]
+		if !col.IsUnique && (strings.Contains(col.Type, "BINARY") || strings.Contains(col.Type, "TEXT")) {
+			maxL, ok := maxSizeMap[col.Name]
 			if !ok {
-				maxL = 0 // average length
+				maxL = 100 // average length
+				log.Printf("Column %s not found in max size map, using average length", col.Name)
 			}
 			for j := i * repeatNumEveryCol; j < (i+1)*repeatNumEveryCol; j++ {
 				colVal[j] = generateLetterWithNum(maxL, false)
@@ -1093,12 +1093,6 @@ func main() {
 		return
 	}
 
-	// generate max size values and write into csv
-	if *genMaxSizeVal {
-		generateMaxSizeValues()
-		return
-	}
-
 	rowCount := *pkEnd - *pkBegin
 	log.Printf("Configuration: credential=%s, template=%s, generatorNum=%d, writerNum=%d, rowCount=%d, batchSize=%d",
 		*credentialPath, *templatePath, *generatorNum, *writerNum, rowCount, *batchSize)
@@ -1122,6 +1116,12 @@ func main() {
 	}
 	taskCount := (rowCount + *batchSize - 1) / *batchSize
 	log.Printf("Total tasks: %d, each task generates at most %d rows", taskCount, *batchSize)
+
+	// generate max size values and write into csv
+	if *genMaxSizeVal {
+		generateMaxSizeValues(columns)
+		return
+	}
 
 	// Create tasks and results channels
 	tasksCh := make(chan Task, taskCount)
