@@ -248,6 +248,29 @@ func CheckTableLock(ctx tablelock.TableLockReadContext, is infoschema.InfoSchema
 	return nil
 }
 
+// CheckTableMode checks if the table is accessible by table mode, only TableModeNormal can be accessed.
+func CheckTableMode(node *resolve.NodeW) error {
+	// First make exceptions for stmt that only visit table meta;
+	// For example, `describe <table_name>` and `show create table <table_name>`;
+	// These exceptions can be simply categorized as `ast.ShowStmt`;
+	if _, ok := node.Node.(*ast.ShowStmt); ok {
+		return nil
+	}
+
+	tableList := ExtractTableList(node, false)
+	for i := range tableList {
+		tb := node.GetResolveContext().GetTableName(tableList[i])
+		if tb == nil {
+			return nil
+		}
+		if tb.TableInfo.Mode == model.TableModeImport || tb.TableInfo.Mode == model.TableModeRestore {
+			return infoschema.ErrProtectedTableMode.GenWithStackByArgs(tb.TableName, tb.TableInfo.Mode)
+		}
+	}
+
+	return nil
+}
+
 func checkStableResultMode(sctx base.PlanContext) bool {
 	s := sctx.GetSessionVars()
 	st := s.StmtCtx
