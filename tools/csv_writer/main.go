@@ -110,7 +110,7 @@ func getNullRation(colName string) int {
 }
 
 func (c *Column) canThisValNull() bool {
-	return !c.NotNull && faker.Number(1, 100) < getNullRation(c.Name)
+	return !c.NotNull && faker.Number(1, 100) <= getNullRation(c.Name)
 }
 
 // Parse SQL schema and extract columns
