@@ -490,13 +490,13 @@ func TestCopyFields(t *testing.T) {
 
 	dataInt, err := marshalInternalFields(inst)
 	require.NoError(t, err)
-	expectedJsonInt := `{"ExternalPath":"","A":42,"B":"","c_rename":"internal-c","d_rename":0,"G":{"X":"internal-G-x","Y":123},"H":null,"L":{"X":"","Y":0},"M":{"X":"internal-M-x","Y":999},"EmbedA":{"X":"","Y":0},"EmbedB":{"X":"internal-B","Y":888},"EmbedC":{"X":"internal-C","Y":999},"EmbedD":null,"i":111,"j":"inline-internal","s":0,"t":""}`
-	require.JSONEq(t, expectedJsonInt, string(dataInt))
+	expectedJSONInt := `{"ExternalPath":"","A":42,"B":"","c_rename":"internal-c","d_rename":0,"G":{"X":"internal-G-x","Y":123},"H":null,"L":{"X":"","Y":0},"M":{"X":"internal-M-x","Y":999},"EmbedA":{"X":"","Y":0},"EmbedB":{"X":"internal-B","Y":888},"EmbedC":{"X":"internal-C","Y":999},"EmbedD":null,"i":111,"j":"inline-internal","s":0,"t":""}`
+	require.JSONEq(t, expectedJSONInt, string(dataInt))
 
 	dataExt, err := marshalExternalFields(inst)
 	require.NoError(t, err)
-	expectedJsonExt := `{"B":"external-b","d_rename":314,"EmbedA":{"X":"external-a-x","Y":777},"EmbedD":{"X":"external-d-x","Y":999},"H":{"X":"external-H-x","Y":456},"L":{"X":"external-L-x","Y":999},"s":222,"t":"inline-external"}`
-	require.JSONEq(t, expectedJsonExt, string(dataExt))
+	expectedJSONExt := `{"B":"external-b","d_rename":314,"EmbedA":{"X":"external-a-x","Y":777},"EmbedD":{"X":"external-d-x","Y":999},"H":{"X":"external-H-x","Y":456},"L":{"X":"external-L-x","Y":999},"s":222,"t":"inline-external"}`
+	require.JSONEq(t, expectedJSONExt, string(dataExt))
 
 	var newTestStruct testStruct
 	err = json.Unmarshal(dataInt, &newTestStruct)
