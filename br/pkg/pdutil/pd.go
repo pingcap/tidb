@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -74,6 +75,8 @@ type ClusterConfig struct {
 	Schedulers []string `json:"schedulers"`
 	// Original scheudle configuration
 	ScheduleCfg map[string]any `json:"schedule_cfg"`
+	// The region rule ID registered
+	RuleID string `json:"rule_id"`
 }
 
 type pauseSchedulerBody struct {
@@ -344,7 +347,33 @@ func (p *PdController) ResumeSchedulers(ctx context.Context, schedulers []string
 	return errors.Trace(p.resumeSchedulerWith(ctx, schedulers))
 }
 
+func (p *PdController) ResumeRegionLabelRule(ctx context.Context, ruleID string) error {
+	if ruleID == "" {
+		return nil
+	}
+	ruleRet, err := p.pdHTTPCli.GetRegionLabelRulesByIDs(ctx, []string{ruleID})
+	if err != nil {
+		log.Warn("failed to get the region label rule, the rule may have been removed", zap.String("rule-id", ruleID))
+	}
+	if len(ruleRet) == 0 {
+		log.Warn("failed to get the region label rule, the rule may have been removed", zap.String("rule-id", ruleID))
+		return nil
+	}
+	rule := ruleRet[0]
+	// Set ttl to 0 to remove the rule.
+	rule.Labels[0].TTL = time.Duration(0).String()
+	deleteRule := &pdhttp.LabelRulePatch{DeleteRules: []string{ruleID}}
+	if err := p.pdHTTPCli.PatchRegionLabelRules(ctx, deleteRule); err != nil {
+		log.Warn("failed to delete region label rule, the rule will be removed after ttl expires",
+			zap.String("rule-id", rule.ID), zap.Error(err))
+	}
+	return nil
+}
+
 func (p *PdController) resumeSchedulerWith(ctx context.Context, schedulers []string) (err error) {
+	if len(schedulers) == 0 {
+		return nil
+	}
 	log.Info("resume scheduler", zap.Strings("schedulers", schedulers))
 	p.schedulerPauseCh <- struct{}{}
 
@@ -413,6 +442,9 @@ func restoreSchedulers(ctx context.Context, pd *PdController, clusterCfg Cluster
 	if err := pd.ResumeSchedulers(ctx, clusterCfg.Schedulers); err != nil {
 		return errors.Annotate(err, "fail to add PD schedulers")
 	}
+	if err := pd.ResumeRegionLabelRule(ctx, clusterCfg.RuleID); err != nil {
+		return errors.Annotate(err, "fail to patch region label rule")
+	}
 	log.Info("restoring config", zap.Any("config", clusterCfg.ScheduleCfg))
 	mergeCfg := make(map[string]any)
 	for cfgKey := range configsNeedRestore {
@@ -439,6 +471,14 @@ func restoreSchedulers(ctx context.Context, pd *PdController, clusterCfg Cluster
 // MakeUndoFunctionByConfig return an UndoFunc based on specified ClusterConfig
 func (p *PdController) MakeUndoFunctionByConfig(config ClusterConfig) UndoFunc {
 	return p.GenRestoreSchedulerFunc(config, expectPDCfgGenerators)
+}
+
+func (p *PdController) MakeFineGrainedUndoFunction(config ClusterConfig, undoFunc func()) UndoFunc {
+	restore := func(ctx context.Context) error {
+		undoFunc()
+		return restoreSchedulers(ctx, p, config, expectPDCfgGenerators)
+	}
+	return restore
 }
 
 // GenRestoreSchedulerFunc gen restore func
@@ -477,7 +517,9 @@ func (p *PdController) RemoveSchedulersWithConfig(
 		return
 	}
 
-	undo = p.MakeUndoFunctionByConfig(ClusterConfig{Schedulers: origin.Schedulers, ScheduleCfg: origin.ScheduleCfg})
+	undo = p.MakeUndoFunctionByConfig(
+		ClusterConfig{Schedulers: origin.Schedulers, ScheduleCfg: origin.ScheduleCfg, RuleID: ""},
+	)
 	return undo, &origin, errors.Trace(err)
 }
 
@@ -590,6 +632,63 @@ func (p *PdController) RemoveSchedulersWithConfigGenerator(
 	return originCfg, removedCfg, nil
 }
 
+func (p *PdController) RemoveSchedulersConfig(
+	ctx context.Context,
+) (origin ClusterConfig, modified ClusterConfig, err error) {
+	pdConfigGenerators := expectPDCfgGenerators
+	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
+		span1 := span.Tracer().StartSpan("PdController.RemoveSchedulers",
+			opentracing.ChildOf(span.Context()))
+		defer span1.Finish()
+		ctx = opentracing.ContextWithSpan(ctx, span1)
+	}
+
+	originCfg := ClusterConfig{}
+	removedCfg := ClusterConfig{}
+	stores, err := p.pdClient.GetAllStores(ctx)
+	if err != nil {
+		return originCfg, removedCfg, errors.Trace(err)
+	}
+	scheduleCfg, err := p.GetPDScheduleConfig(ctx)
+	if err != nil {
+		return originCfg, removedCfg, errors.Trace(err)
+	}
+	disablePDCfg := make(map[string]any, len(pdConfigGenerators))
+	originPDCfg := make(map[string]any, len(pdConfigGenerators))
+	for cfgKey, cfgValFunc := range pdConfigGenerators {
+		value, ok := scheduleCfg[cfgKey]
+		if !ok {
+			// Ignore non-exist config.
+			continue
+		}
+		disablePDCfg[cfgKey] = cfgValFunc(len(stores), value)
+		originPDCfg[cfgKey] = value
+	}
+	originCfg.ScheduleCfg = originPDCfg
+	removedCfg.ScheduleCfg = disablePDCfg
+
+	log.Debug("saved PD config", zap.Any("config", scheduleCfg))
+
+	return originCfg, removedCfg, nil
+}
+
+// To resume the schedulers, call the cancel function.
+// wait until done is finished to ensure schedulers all resumed
+func (p *PdController) RemoveSchedulersOnRegion(ctx context.Context, keyRange [][2]kv.Key) (string, func(), error) {
+	done, ruleID, err := pauseSchedulerByKeyRangeWithTTL(ctx, p.pdHTTPCli, keyRange, pauseTimeout)
+	// Wait for the rule to take effect because the PD operator is processed asynchronously.
+	// To synchronize this, checking the operator status may not be enough. For details, see
+	// https://github.com/pingcap/tidb/issues/49477.
+	// Let's use two times default value of `patrol-region-interval` from PD configuration.
+	<-time.After(20 * time.Millisecond)
+
+	resumeScheduler := func() {
+		<-done
+	}
+
+	return ruleID, resumeScheduler, errors.Trace(err)
+}
+
 // RemoveSchedulersWithCfg removes pd schedulers and configs with specified ClusterConfig
 func (p *PdController) RemoveSchedulersWithCfg(ctx context.Context, removeCfg ClusterConfig) error {
 	_, err := p.doRemoveSchedulersWith(ctx, removeCfg.Schedulers, removeCfg.ScheduleCfg)
@@ -678,7 +777,7 @@ func PauseSchedulersByKeyRange(
 	pdHTTPCli pdhttp.Client,
 	startKey, endKey []byte,
 ) (done <-chan struct{}, err error) {
-	done, err = pauseSchedulerByKeyRangeWithTTL(ctx, pdHTTPCli, startKey, endKey, pauseTimeout)
+	done, _, err = pauseSchedulerByKeyRangeWithTTL(ctx, pdHTTPCli, [][2]kv.Key{{startKey, endKey}}, pauseTimeout)
 	// Wait for the rule to take effect because the PD operator is processed asynchronously.
 	// To synchronize this, checking the operator status may not be enough. For details, see
 	// https://github.com/pingcap/tidb/issues/49477.
@@ -690,9 +789,16 @@ func PauseSchedulersByKeyRange(
 func pauseSchedulerByKeyRangeWithTTL(
 	ctx context.Context,
 	pdHTTPCli pdhttp.Client,
-	startKey, endKey []byte,
+	keyRange [][2]kv.Key,
 	ttl time.Duration,
-) (<-chan struct{}, error) {
+) (<-chan struct{}, string, error) {
+	var encodedKeyRangeRule = []KeyRangeRule{}
+	for _, keyPair := range keyRange {
+		var rule KeyRangeRule
+		rule.StartKeyHex = hex.EncodeToString(keyPair[0])
+		rule.EndKeyHex = hex.EncodeToString(keyPair[1])
+		encodedKeyRangeRule = append(encodedKeyRangeRule, rule)
+	}
 	rule := &pdhttp.LabelRule{
 		ID: uuid.New().String(),
 		Labels: []pdhttp.RegionLabel{{
@@ -703,16 +809,13 @@ func pauseSchedulerByKeyRangeWithTTL(
 		RuleType: "key-range",
 		// Data should be a list of KeyRangeRule when rule type is key-range.
 		// See https://github.com/tikv/pd/blob/783d060861cef37c38cbdcab9777fe95c17907fe/server/schedule/labeler/rules.go#L169.
-		Data: []KeyRangeRule{{
-			StartKeyHex: hex.EncodeToString(startKey),
-			EndKeyHex:   hex.EncodeToString(endKey),
-		}},
+		Data: encodedKeyRangeRule,
 	}
 	done := make(chan struct{})
 
 	if err := pdHTTPCli.SetRegionLabelRule(ctx, rule); err != nil {
 		close(done)
-		return nil, errors.Trace(err)
+		return nil, "", errors.Trace(err)
 	}
 
 	go func() {
@@ -745,7 +848,7 @@ func pauseSchedulerByKeyRangeWithTTL(
 				zap.String("rule-id", rule.ID), zap.Duration("ttl", ttl), zap.Error(err))
 		}
 	}()
-	return done, nil
+	return done, rule.ID, nil
 }
 
 // CanPauseSchedulerByKeyRange returns whether the scheduler can be paused by key range.
