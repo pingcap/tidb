@@ -15,6 +15,7 @@
 package workloadrepo
 
 import (
+	"errors"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errno"
@@ -46,4 +47,6 @@ var (
 	errUnsupportedEtcdRequired = dbterror.ClassUtil.NewStdErr(errno.ErrNotSupportedYet, mysql.Message("etcd client required for workload repository", nil))
 	errWorkloadNotStarted      = dbterror.ClassUtil.NewStdErr(errno.ErrNotSupportedYet, mysql.Message("Workload repository is not enabled", nil))
 	errCouldNotStartSnapshot   = dbterror.ClassUtil.NewStdErr(errno.ErrUnknown, mysql.Message("Snapshot initiation failed", nil))
+
+	errKeyNotFound = errors.New("key not found")
 )
