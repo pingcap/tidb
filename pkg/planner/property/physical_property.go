@@ -22,8 +22,10 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
+	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -253,6 +255,12 @@ type PhysicalProperty struct {
 		*expression.VSInfo
 		TopK uint32
 	}
+
+	// IsParentPhyscicalHashAgg indicates whether the parent is a physical hash aggregation.
+	IsParentPhyscicalHashAgg bool
+
+	// FD is the functional dependency set of the current operator.
+	FD *funcdep.FDSet
 }
 
 // NewPhysicalProperty builds property from columns.
@@ -295,6 +303,40 @@ func (p *PhysicalProperty) IsSubsetOf(keys []*MPPPartitionColumn) []int {
 		}
 	}
 	return matches
+}
+
+// NeedEnforceExchangerWithHashByEquivalence checks if the keys can match the needs of partition with equivalence.
+// "Equivalence" refers to the process where we utilize a hash column to obtain equivalent columns,
+// and then use these equivalent columns to compare with the MPP partition column to determine whether an exchange is
+// necessary.
+//
+// for example:
+//  1. MPPPartitionCols: [18，13，16]
+//  2. keys: [9]
+//  3. FD: (1)-->(2-6,8), ()-->(7), (9)-->(10-18), (1,10)==(1,10), (18,21)-->(19,20,22-33)
+//     Because (9)-->(10-18), it is possible to avoid an exchange between [18, 13, 16] and [9].
+func (p *PhysicalProperty) NeedEnforceExchangerWithHashByEquivalence(keys []*MPPPartitionColumn) bool {
+	// keys is the HashCol. If the partition cols are a subset of the hash cols, then need to enforce exchange.
+	if len(p.MPPPartitionCols) < len(keys) {
+		return true
+	}
+	// if hash cols's collation is different from partition cols, then need to enforce exchange.
+	hashColUniqueID := intset.NewFastIntSet()
+	for _, hashCol := range keys {
+		for _, col := range p.MPPPartitionCols {
+			if hashCol.CollateID != col.CollateID {
+				return true
+			}
+		}
+		hashColUniqueID.Insert(int(hashCol.Col.UniqueID))
+	}
+	equivCal := p.FD.ClosureOfStrict(hashColUniqueID)
+	for _, col := range p.MPPPartitionCols {
+		if !equivCal.Has(int(col.Col.UniqueID)) {
+			return true
+		}
+	}
+	return false
 }
 
 // AllColsFromSchema checks whether all the columns needed by this physical
