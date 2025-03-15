@@ -3611,14 +3611,6 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 			failToLoadOrParseSQLFile = true
 		}
 	}
-	syncStatsCtxs, err := createSessions(store, concurrency)
-	if err != nil {
-		return nil, err
-	}
-	subCtxs := make([]sessionctx.Context, concurrency)
-	for i := 0; i < concurrency; i++ {
-		subCtxs[i] = sessionctx.Context(syncStatsCtxs[i])
-	}
 
 	// setup extract Handle
 	extractWorkers := 1
@@ -3637,7 +3629,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if err != nil {
 		return nil, err
 	}
-	if err = dom.LoadAndUpdateStatsLoop(subCtxs, initStatsCtx); err != nil {
+	if err = dom.LoadAndUpdateStatsLoop(concurrency, initStatsCtx); err != nil {
 		return nil, err
 	}
 

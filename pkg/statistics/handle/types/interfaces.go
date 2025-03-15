@@ -451,10 +451,10 @@ type StatsSyncLoad interface {
 	AppendNeededItem(task *NeededItemTask, timeout time.Duration) error
 
 	// SubLoadWorker will start a goroutine to handle the load requests.
-	SubLoadWorker(sctx sessionctx.Context, exit chan struct{}, exitWg *util.WaitGroupEnhancedWrapper)
+	SubLoadWorker(exit chan struct{}, exitWg *util.WaitGroupEnhancedWrapper)
 
 	// HandleOneTask will handle one task.
-	HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask, exit chan struct{}) (task *NeededItemTask, err error)
+	HandleOneTask(lastTask *NeededItemTask, exit chan struct{}) (task *NeededItemTask, err error)
 }
 
 // GlobalStatsInfo represents the contextual information pertaining to global statistics.

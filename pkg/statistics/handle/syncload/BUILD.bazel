@@ -42,7 +42,6 @@ go_test(
         "//pkg/config",
         "//pkg/meta/model",
         "//pkg/parser/ast",
-        "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/statistics/handle/ddl/testutil",
         "//pkg/statistics/handle/types",
