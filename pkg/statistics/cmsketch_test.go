@@ -47,7 +47,7 @@ func prepareCMSAndTopN(d, w int32, vals []*types.Datum, n uint32, total uint64) 
 		}
 		data = append(data, bytes)
 	}
-	cms, topN, _, _ := NewCMSketchAndTopN(d, w, data, n, total)
+	cms, topN := NewCMSketchAndTopN(d, w, data, n, total)
 	return cms, topN, nil
 }
 

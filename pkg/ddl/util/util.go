@@ -76,7 +76,7 @@ type DelRangeTask struct {
 }
 
 // Range returns the range [start, end) to delete.
-func (t DelRangeTask) Range() (kv.Key, kv.Key) {
+func (t DelRangeTask) Range() (start kv.Key, end kv.Key) {
 	return t.StartKey, t.EndKey
 }
 
