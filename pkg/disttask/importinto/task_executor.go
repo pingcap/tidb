@@ -17,6 +17,7 @@ package importinto
 import (
 	"context"
 	"encoding/json"
+	"path"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -262,6 +263,14 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 	}
 	subtaskMeta.SortedDataMeta = sharedVars.SortedDataMeta
 	subtaskMeta.SortedIndexMetas = sharedVars.SortedIndexMetas
+	// if using globalsort, write the external meta to external storage.
+	if s.tableImporter.IsGlobalSort() {
+		subtaskMeta.ExternalPath = externalSubtaskMetaPath(s.taskID, subtask.ID)
+		if err := subtaskMeta.WriteJSONToExternalStorage(ctx, s.tableImporter.GlobalSortStore, subtaskMeta); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	s.sharedVars.Delete(subtaskMeta.ID)
 	newMeta, err := json.Marshal(subtaskMeta)
 	if err != nil {
@@ -361,15 +370,20 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return m.onFinished(subtask)
+	return m.onFinished(ctx, subtask)
 }
 
-func (m *mergeSortStepExecutor) onFinished(subtask *proto.Subtask) error {
+func (m *mergeSortStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
 	var subtaskMeta MergeSortStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)
 	}
 	subtaskMeta.SortedKVMeta = *m.subtaskSortedKVMeta
+	subtaskMeta.ExternalPath = externalSubtaskMetaPath(m.taskID, subtask.ID)
+	if err := subtaskMeta.WriteJSONToExternalStorage(ctx, m.controller.GlobalSortStore, subtaskMeta); err != nil {
+		return errors.Trace(err)
+	}
+
 	m.subtaskSortedKVMeta = nil
 	newMeta, err := json.Marshal(subtaskMeta)
 	if err != nil {
@@ -405,6 +419,13 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	err = json.Unmarshal(subtask.Meta, sm)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	// read write and ingest step meta from external storage when using global sort.
+	if sm.ExternalPath != "" && e.tableImporter.IsGlobalSort() {
+		if err := sm.ReadJSONFromExternalStorage(ctx, e.tableImporter.GlobalSortStore, sm); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	logger := e.logger.With(zap.Int64("subtask-id", subtask.ID),
@@ -595,4 +616,11 @@ func (e *importExecutor) Close() {
 	task := e.GetTaskBase()
 	metricsManager.unregister(task.ID)
 	e.BaseTaskExecutor.Close()
+}
+
+func externalSubtaskMetaPath(taskID int64, subtaskID int64) string {
+	// generate a unique file name for the meta.
+	prefix := path.Join(strconv.FormatInt(taskID, 10), strconv.FormatInt(subtaskID, 10))
+	// taskID/subtaskID/meta.json
+	return path.Join(prefix, "meta.json")
 }

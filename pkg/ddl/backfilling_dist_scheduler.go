@@ -20,7 +20,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"math"
+	"path"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/docker/go-units"
@@ -132,7 +134,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 		logger.Info("available local disk space resource", zap.String("size", units.BytesSize(float64(availableDisk))))
 		return generateReadIndexPlan(ctx, sch.d, tblInfo, job, sch.GlobalSort, len(execIDs), logger)
 	case proto.BackfillStepMergeSort:
-		return generateMergePlan(taskHandle, task, logger)
+		return generateMergePlan(ctx, taskHandle, task, backfillMeta.CloudStorageURI, logger)
 	case proto.BackfillStepWriteAndIngest:
 		if sch.GlobalSort {
 			failpoint.Inject("mockWriteIngest", func() {
@@ -177,11 +179,12 @@ func (sch *LitBackfillScheduler) GetNextStep(task *proto.TaskBase) proto.Step {
 	}
 }
 
-func skipMergeSort(stats []external.MultipleFilesStat) bool {
+func skipMergeSort(_ []external.MultipleFilesStat) bool {
 	failpoint.Inject("forceMergeSort", func() {
 		failpoint.Return(false)
 	})
-	return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
+	//return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
+	return false
 }
 
 // OnDone implements scheduler.Extension interface.
@@ -393,7 +396,7 @@ func generateGlobalSortIngestPlan(
 	)
 	for _, step := range []proto.Step{proto.BackfillStepMergeSort, proto.BackfillStepReadIndex} {
 		hasSubtasks := false
-		err := forEachBackfillSubtaskMeta(taskHandle, task.ID, step, func(subtask *BackfillSubTaskMeta) {
+		err := forEachBackfillSubtaskMeta(ctx, cloudStorageURI, taskHandle, task.ID, step, func(subtask *BackfillSubTaskMeta) {
 			hasSubtasks = true
 			if kvMetaGroups == nil {
 				kvMetaGroups = make([]*external.SortedKVMeta, len(subtask.MetaGroups))
@@ -421,7 +424,7 @@ func generateGlobalSortIngestPlan(
 		return nil, err
 	}
 	iCnt := int64(len(instanceIDs))
-	metaArr := make([][]byte, 0, 16)
+	metaArr := make([]*BackfillSubTaskMeta, 0, 16)
 	for i, g := range kvMetaGroups {
 		if g == nil {
 			logger.Error("meet empty kv group when getting subtask summary",
@@ -439,7 +442,21 @@ func generateGlobalSortIngestPlan(
 		}
 		metaArr = append(metaArr, newMeta...)
 	}
-	return metaArr, nil
+	// write external meta to storage when using global sort
+	for i, m := range metaArr {
+		if err := writeExternalBackfillSubTaskMeta(ctx, cloudStorageURI, m, ExternalGlobalSortIngestPlanMetaPath(task.ID, i+1)); err != nil {
+			return nil, err
+		}
+	}
+	metas := make([][]byte, 0, len(metaArr))
+	for _, m := range metaArr {
+		metaBytes, err := json.Marshal(m)
+		if err != nil {
+			return nil, err
+		}
+		metas = append(metas, metaBytes)
+	}
+	return metas, nil
 }
 
 func allocNewTS(ctx context.Context, store kv.StorageWithPD) (uint64, error) {
@@ -460,7 +477,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 	cloudStorageURI string,
 	instanceCnt int64,
 	logger *zap.Logger,
-) (metaArr [][]byte, err error) {
+) (metaArr []*BackfillSubTaskMeta, err error) {
 	if len(kvMeta.StartKey) == 0 && len(kvMeta.EndKey) == 0 {
 		// Skip global sort for empty table.
 		return nil, nil
@@ -528,11 +545,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 		if eleID > 0 {
 			m.EleIDs = []int64{eleID}
 		}
-		metaBytes, err := json.Marshal(m)
-		if err != nil {
-			return nil, err
-		}
-		metaArr = append(metaArr, metaBytes)
+		metaArr = append(metaArr, m)
 		if len(endKeyOfGroup) == 0 {
 			break
 		}
@@ -542,8 +555,10 @@ func splitSubtaskMetaForOneKVMetaGroup(
 }
 
 func generateMergePlan(
+	ctx context.Context,
 	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
+	cloudStorageURI string,
 	logger *zap.Logger,
 ) ([][]byte, error) {
 	// check data files overlaps,
@@ -553,7 +568,7 @@ func generateMergePlan(
 		kvMetaGroups    []*external.SortedKVMeta
 		eleIDs          []int64
 	)
-	err := forEachBackfillSubtaskMeta(taskHandle, task.ID, proto.BackfillStepReadIndex,
+	err := forEachBackfillSubtaskMeta(ctx, cloudStorageURI, taskHandle, task.ID, proto.BackfillStepReadIndex,
 		func(subtask *BackfillSubTaskMeta) {
 			if kvMetaGroups == nil {
 				kvMetaGroups = make([]*external.SortedKVMeta, len(subtask.MetaGroups))
@@ -585,7 +600,7 @@ func generateMergePlan(
 		return nil, nil
 	}
 
-	metaArr := make([][]byte, 0, 16)
+	metaArr := make([]*BackfillSubTaskMeta, 0, 16)
 	for i, g := range kvMetaGroups {
 		dataFiles := make([]string, 0, 1000)
 		if g == nil {
@@ -613,16 +628,26 @@ func generateMergePlan(
 				DataFiles: dataFiles[start:end],
 				EleIDs:    eleID,
 			}
-			metaBytes, err := json.Marshal(m)
-			if err != nil {
-				return nil, err
-			}
-			metaArr = append(metaArr, metaBytes)
-
+			metaArr = append(metaArr, m)
 			start = end
 		}
 	}
-	return metaArr, nil
+
+	// write external meta to storage when using global sort
+	for i, m := range metaArr {
+		if err := writeExternalBackfillSubTaskMeta(ctx, cloudStorageURI, m, ExternalMergePlanMetaPath(task.ID, i+1)); err != nil {
+			return nil, err
+		}
+	}
+	metas := make([][]byte, 0, len(metaArr))
+	for _, m := range metaArr {
+		metaBytes, err := json.Marshal(m)
+		if err != nil {
+			return nil, err
+		}
+		metas = append(metas, metaBytes)
+	}
+	return metas, nil
 }
 
 func getRangeSplitter(
@@ -672,6 +697,8 @@ func getRangeSplitter(
 }
 
 func forEachBackfillSubtaskMeta(
+	ctx context.Context,
+	cloudStorageURI string,
 	taskHandle diststorage.TaskHandle,
 	gTaskID int64,
 	step proto.Step,
@@ -682,7 +709,7 @@ func forEachBackfillSubtaskMeta(
 		return errors.Trace(err)
 	}
 	for _, subTaskMeta := range subTaskMetas {
-		subtask, err := decodeBackfillSubTaskMeta(subTaskMeta)
+		subtask, err := decodeBackfillSubTaskMeta(ctx, cloudStorageURI, subTaskMeta)
 		if err != nil {
 			logutil.DDLLogger().Error("unmarshal error", zap.Error(err))
 			return errors.Trace(err)
@@ -690,4 +717,14 @@ func forEachBackfillSubtaskMeta(
 		fn(subtask)
 	}
 	return nil
+}
+
+// ExternalGlobalSortIngestPlanMetaPath returns the path of the external meta file for global sort ingest plan.
+func ExternalGlobalSortIngestPlanMetaPath(taskID int64, idx int) string {
+	return path.Join(strconv.FormatInt(taskID, 10), "global-sort-ingest-plan", strconv.Itoa(idx), "meta.json")
+}
+
+// ExternalMergePlanMetaPath returns the path of the external meta file for merge plan.
+func ExternalMergePlanMetaPath(taskID int64, idx int) string {
+	return path.Join(strconv.FormatInt(taskID, 10), "merge-plan", strconv.Itoa(idx), "meta.json")
 }

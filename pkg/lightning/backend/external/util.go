@@ -17,8 +17,10 @@ package external
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	goerrors "errors"
 	"io"
+	"reflect"
 	"slices"
 	"sort"
 	"strconv"
@@ -344,4 +346,150 @@ func getSpeed(n uint64, dur float64, isBytes bool) string {
 		return units.BytesSize(float64(n) / dur)
 	}
 	return strconv.FormatFloat(float64(n)/dur, 'f', 4, 64)
+}
+
+// copyInternalFields makes a copy of the internal fields.
+func copyInternalFields(a any) any {
+	v := reflect.ValueOf(a)
+	switch v.Kind() {
+	case reflect.Pointer:
+		if v.IsNil() {
+			return nil
+		}
+		newVal := reflect.New(v.Elem().Type())
+		copyStruct(v.Elem(), newVal.Elem())
+		return newVal.Interface()
+	case reflect.Struct:
+		newVal := reflect.New(v.Type()).Elem()
+		copyStruct(v, newVal)
+		return newVal.Interface()
+	default:
+		return a
+	}
+}
+
+// copyExternalFields extracts and returns external fields tagged for inclusion during JSON marshaling.
+// NOTE: Only handle the first level of external tags
+func copyExternalFields(a any) map[string]any {
+	res := make(map[string]any)
+	v := reflect.ValueOf(a)
+	if !v.IsValid() {
+		return res
+	}
+	if v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return res
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return res
+	}
+	t := v.Type()
+	for i := 0; i < v.NumField(); i++ {
+		f := t.Field(i)
+		jsonTag := f.Tag.Get("json")
+		if f.PkgPath != "" || jsonTag == "-" || strings.HasPrefix(jsonTag, "-,") || f.Tag.Get("external") != "true" {
+			continue
+		}
+		if strings.Contains(jsonTag, "inline") {
+			fieldVal := v.Field(i)
+			if fieldVal.Kind() == reflect.Pointer && fieldVal.IsNil() {
+				continue
+			}
+			for k, val := range copyExternalFields(fieldVal.Interface()) {
+				res[k] = val
+			}
+			continue
+		}
+		key := f.Name
+		var tagOpts []string
+		if jsonTag != "" {
+			parts := strings.Split(jsonTag, ",")
+			if parts[0] != "" {
+				key = parts[0]
+			}
+			if len(parts) > 1 {
+				tagOpts = parts[1:]
+			}
+		}
+		// Handle omitempty: if present and field is zero value, skip this field.
+		fieldVal := v.Field(i)
+		skip := false
+		for _, opt := range tagOpts {
+			if opt == "omitempty" && fieldVal.IsZero() {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
+		}
+		res[key] = fieldVal.Interface()
+	}
+	return res
+}
+
+// copyStruct copies non-external fields from source struct to destination struct.
+func copyStruct(src, dst reflect.Value) {
+	t := src.Type()
+	for i := 0; i < src.NumField(); i++ {
+		field := t.Field(i)
+		if field.PkgPath != "" || field.Tag.Get("external") == "true" {
+			continue
+		}
+		dst.Field(i).Set(src.Field(i))
+	}
+}
+
+// marshalInternalFields serializes internal fields to JSON.
+func marshalInternalFields(a any) ([]byte, error) {
+	return json.Marshal(copyInternalFields(a))
+}
+
+// marshalExternalFields serializes the external fields to JSON.
+// Usage: For saving external meta, ensuring only intended fields are stored.
+func marshalExternalFields(a any) ([]byte, error) {
+	return json.Marshal(copyExternalFields(a))
+}
+
+// BaseExternalMeta is the base meta of external meta.
+type BaseExternalMeta struct {
+	// ExternalPath is the path to the external storage where the external meta is stored.
+	ExternalPath string
+}
+
+// Marshal serializes the provided alias to JSON.
+// Usage: If ExternalPath is set, marshals using internal meta; otherwise marshals the alias directly.
+func (m BaseExternalMeta) Marshal(alias any) ([]byte, error) {
+	if m.ExternalPath == "" {
+		return json.Marshal(alias)
+	}
+	return marshalInternalFields(alias)
+}
+
+// WriteJSONToExternalStorage writes the serialized external meta JSON to external storage.
+// Usage: Store external meta after appropriate modifications.
+func (m BaseExternalMeta) WriteJSONToExternalStorage(ctx context.Context, store storage.ExternalStorage, a any) error {
+	if m.ExternalPath == "" {
+		return nil
+	}
+	data, err := marshalExternalFields(a)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return store.WriteFile(ctx, m.ExternalPath, data)
+}
+
+// ReadJSONFromExternalStorage reads and unmarshals JSON from external storage into the provided alias.
+// Usage: Retrieve external meta for further processing.
+func (m BaseExternalMeta) ReadJSONFromExternalStorage(ctx context.Context, store storage.ExternalStorage, a any) error {
+	if m.ExternalPath == "" || store == nil {
+		return nil
+	}
+	data, err := store.ReadFile(ctx, m.ExternalPath)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return json.Unmarshal(data, a)
 }
