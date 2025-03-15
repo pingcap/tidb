@@ -997,7 +997,7 @@ func loadCSVFile(path string) [][]string {
 
 func generateMaxSizeValues(cols []*Column) {
 	// load max size csv and convert to map
-	ms := loadCSVFile("/Users/fanzhou/tcms/pinterest/gcs/richpins/col_max_len.csv")
+	ms := loadCSVFile("/col_max_len.csv")
 	maxSizeMap := make(map[string]int)
 	for _, row := range ms {
 		maxL, err := strconv.ParseInt(row[1], 10, 64)
