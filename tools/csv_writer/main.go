@@ -965,7 +965,7 @@ func loadColNullRatio() {
 	_, err := os.Stat(path)
 	if err != nil {
 		if !os.IsExist(err) {
-			log.Fatalf("File %s does not exist", path)
+			log.Printf("File %s does not exist", path)
 			return
 		}
 	}
