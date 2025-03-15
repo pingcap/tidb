@@ -41,13 +41,16 @@ func NewMockStatisticsTable(columns int, indices int, withCMS, withTopN, withHis
 		if withHist {
 			hist = *statistics.NewHistogram(0, 10, 0, 0, types.NewFieldType(mysql.TypeBlob), 1, 0)
 		}
-		t.SetCol(int64(i), &statistics.Column{
-			Info:              &model.ColumnInfo{ID: int64(i)},
-			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
-			CMSketch:          cms,
-			TopN:              topn,
-			Histogram:         hist,
-		})
+		t.SetCol(int64(i), statistics.NewColumn(
+			&model.ColumnInfo{ID: int64(i)},
+			0,
+			false,
+			cms,
+			topn,
+			nil,
+			hist,
+			0,
+		))
 	}
 	for i := 1; i <= indices; i++ {
 		var (
@@ -79,10 +82,16 @@ func NewMockStatisticsTable(columns int, indices int, withCMS, withTopN, withHis
 // MockTableAppendColumn appends a column to the table.
 func MockTableAppendColumn(t *statistics.Table) {
 	index := int64(t.ColNum() + 1)
-	t.SetCol(index, &statistics.Column{
-		Info:     &model.ColumnInfo{ID: index},
-		CMSketch: statistics.NewCMSketch(1, 1),
-	})
+	t.SetCol(index, statistics.NewColumn(
+		&model.ColumnInfo{ID: index},
+		0,
+		false,
+		statistics.NewCMSketch(1, 1),
+		nil,
+		nil,
+		statistics.Histogram{},
+		0,
+	))
 }
 
 // MockTableAppendIndex appends an index to the table.
