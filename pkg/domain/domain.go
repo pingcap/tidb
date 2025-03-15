@@ -3483,10 +3483,11 @@ func (do *Domain) planCacheEvictTrigger() {
 // SetupWorkloadBasedLearningWorker sets up all of the workload based learning workers.
 func (do *Domain) SetupWorkloadBasedLearningWorker() {
 	wbLearningHandle := workloadlearning.NewWorkloadLearningHandle(do.sysSessionPool)
+	wbCacheWorker := workloadlearning.NewWLCacheWorker(do.sysSessionPool)
 	// Start the workload based learning worker to analyze the read workload by statement_summary.
 	do.wg.Run(
 		func() {
-			do.readTableCostWorker(wbLearningHandle)
+			do.readTableCostWorker(wbLearningHandle, wbCacheWorker)
 		},
 		"readTableCostWorker",
 	)
@@ -3494,7 +3495,7 @@ func (do *Domain) SetupWorkloadBasedLearningWorker() {
 }
 
 // readTableCostWorker is a background worker that periodically analyze the read path table cost by statement_summary.
-func (do *Domain) readTableCostWorker(wbLearningHandle *workloadlearning.Handle) {
+func (do *Domain) readTableCostWorker(wbLearningHandle *workloadlearning.Handle, wbCacheWorker *workloadlearning.WLCacheWorker) {
 	// Recover the panic and log the error when worker exit.
 	defer util.Recover(metrics.LabelDomain, "readTableCostWorker", nil, false)
 	readTableCostTicker := time.NewTicker(vardef.WorkloadBasedLearningInterval.Load())
@@ -3506,7 +3507,8 @@ func (do *Domain) readTableCostWorker(wbLearningHandle *workloadlearning.Handle)
 		select {
 		case <-readTableCostTicker.C:
 			if vardef.EnableWorkloadBasedLearning.Load() && do.statsOwner.IsOwner() {
-				wbLearningHandle.HandleReadTableCost(do.InfoSchema())
+				wbLearningHandle.HandleTableReadCost(do.InfoSchema())
+				wbCacheWorker.UpdateTableReadCostCache()
 			}
 		case <-do.exit:
 			return
