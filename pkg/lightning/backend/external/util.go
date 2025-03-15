@@ -453,7 +453,7 @@ func marshalExternalFields(a any) ([]byte, error) {
 	return json.Marshal(copyExternalFields(a))
 }
 
-// BaseMeta is the base meta of external meta.
+// BaseExternalMeta is the base meta of external meta.
 type BaseExternalMeta struct {
 	// ExternalPath is the path to the external storage where the external meta is stored.
 	ExternalPath string
