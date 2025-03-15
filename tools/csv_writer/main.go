@@ -961,7 +961,7 @@ func generateTotalRandomBigintForPk(num int, path string) {
 }
 
 func loadColNullRatio() {
-	path := "/col_null_ratio.csv"
+	path := "/Users/fanzhou/tcms/pinterest/gcs/richpins/col_null_ratio.csv"
 	_, err := os.Stat(path)
 	if err != nil {
 		if !os.IsExist(err) {
