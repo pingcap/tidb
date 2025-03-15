@@ -124,7 +124,7 @@ func (m *mergeSortExecutor) onFinished(ctx context.Context, subtask *proto.Subta
 	sm.MetaGroups = []*external.SortedKVMeta{m.subtaskSortedKVMeta}
 	m.subtaskSortedKVMeta = nil
 	// write external meta to storage when using global sort
-	if err := writeExternalBackfillSubTaskMeta(ctx, m.cloudStoreURI, sm, externalSubtaskMetaPath(subtask.TaskID, subtask.ID)); err != nil {
+	if err := writeExternalBackfillSubTaskMeta(ctx, m.cloudStoreURI, sm, ExternalSubtaskMetaPath(subtask.TaskID, subtask.ID)); err != nil {
 		return err
 	}
 
@@ -136,6 +136,7 @@ func (m *mergeSortExecutor) onFinished(ctx context.Context, subtask *proto.Subta
 	return nil
 }
 
-func externalSubtaskMetaPath(taskID, subtaskID int64) string {
+// ExternalSubtaskMetaPath returns the path of the external meta file for the subtask.
+func ExternalSubtaskMetaPath(taskID, subtaskID int64) string {
 	return path.Join(strconv.FormatInt(taskID, 10), strconv.FormatInt(subtaskID, 10), "meta.json")
 }

@@ -355,3 +355,9 @@ func createAddIndexTask(t *testing.T,
 
 	return task, server
 }
+
+func TestExternalMetaPath(t *testing.T) {
+	require.Equal(t, "1/1/meta.json", ddl.ExternalSubtaskMetaPath(1, 1))
+	require.Equal(t, "2/global-sort-ingest-plan/3/meta.json", ddl.ExternalGlobalSortIngestPlanMetaPath(2, 3))
+	require.Equal(t, "2/merge-plan/3/meta.json", ddl.ExternalMergePlanMetaPath(2, 3))
+}

@@ -360,7 +360,7 @@ func TestSplitForOneSubtask(t *testing.T) {
 	}, writeSpec.RangeSplitKeys)
 }
 
-func TestWriteIngestStepExternalMetaPath(t *testing.T) {
-	require.Equal(t, "1/write-ingest-meta/1/meta.json", writeIngestStepExternalMetaPath(1, 1))
-	require.Equal(t, "2/write-ingest-meta/3/meta.json", writeIngestStepExternalMetaPath(2, 3))
+func TestWriteIngestPlanMetaPath(t *testing.T) {
+	require.Equal(t, "1/write-ingest-plan/1/meta.json", writeIngestPlanMetaPath(1, 1))
+	require.Equal(t, "2/write-ingest-plan/3/meta.json", writeIngestPlanMetaPath(2, 3))
 }

@@ -46,7 +46,7 @@ type BackfillTaskMeta struct {
 
 // BackfillSubTaskMeta is the sub-task meta for backfilling index.
 type BackfillSubTaskMeta struct {
-	external.BaseMeta
+	external.BaseExternalMeta
 
 	PhysicalTableID int64 `json:"physical_table_id"`
 
@@ -75,9 +75,9 @@ type BackfillSubTaskMeta struct {
 }
 
 // MarshalJSON implements json.Marshaler interface.
-func (m *BackfillSubTaskMeta) MarshalJSON() ([]byte, error) {
+func (m BackfillSubTaskMeta) MarshalJSON() ([]byte, error) {
 	type alias BackfillSubTaskMeta
-	return m.BaseMeta.Marshal(alias(*m))
+	return m.BaseExternalMeta.Marshal(alias(m))
 }
 
 func decodeBackfillSubTaskMeta(ctx context.Context, cloudStorageURI string, raw []byte) (*BackfillSubTaskMeta, error) {
@@ -98,7 +98,7 @@ func decodeBackfillSubTaskMeta(ctx context.Context, cloudStorageURI string, raw 
 			return nil, err
 		}
 		defer extStore.Close()
-		if err := external.ReadJSONFromExternalStorage(ctx, extStore, subtask.ExternalPath, subtask); err != nil {
+		if err := subtask.ReadJSONFromExternalStorage(ctx, extStore, &subtask); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
@@ -129,7 +129,7 @@ func writeExternalBackfillSubTaskMeta(ctx context.Context, cloudStorageURI strin
 	}
 	defer extStore.Close()
 	subtask.ExternalPath = externalPath
-	return external.WriteJSONToExternalStorage(ctx, extStore, subtask.ExternalPath, subtask)
+	return subtask.WriteJSONToExternalStorage(ctx, extStore, subtask)
 }
 
 func (s *backfillDistExecutor) newBackfillStepExecutor(

@@ -393,8 +393,8 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 	if planCtx.GlobalSort {
 		for i, spec := range specs {
 			if w, ok := spec.(*WriteIngestSpec); ok {
-				w.ExternalPath = writeIngestStepExternalMetaPath(planCtx.TaskID, i+1)
-				if err := external.WriteJSONToExternalStorage(planCtx.Ctx, controller.GlobalSortStore, w.ExternalPath, w); err != nil {
+				w.ExternalPath = writeIngestPlanMetaPath(planCtx.TaskID, i+1)
+				if err := w.WriteJSONToExternalStorage(planCtx.Ctx, controller.GlobalSortStore, w.WriteIngestStepMeta); err != nil {
 					return nil, errors.Trace(err)
 				}
 			}
@@ -488,7 +488,7 @@ func getSortedKVMetasOfEncodeStep(ctx context.Context, subTaskMetas [][]byte, st
 			return nil, errors.Trace(err)
 		}
 		if stepMeta.ExternalPath != "" && store != nil {
-			if err := external.ReadJSONFromExternalStorage(ctx, store, stepMeta.ExternalPath, &stepMeta); err != nil {
+			if err := stepMeta.ReadJSONFromExternalStorage(ctx, store, &stepMeta); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
@@ -518,7 +518,7 @@ func getSortedKVMetasOfMergeStep(ctx context.Context, subTaskMetas [][]byte, sto
 			return nil, errors.Trace(err)
 		}
 		if stepMeta.ExternalPath != "" && store != nil {
-			if err := external.ReadJSONFromExternalStorage(ctx, store, stepMeta.ExternalPath, &stepMeta); err != nil {
+			if err := stepMeta.ReadJSONFromExternalStorage(ctx, store, &stepMeta); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
@@ -586,7 +586,7 @@ func getRangeSplitter(
 	)
 }
 
-func writeIngestStepExternalMetaPath(taskID int64, idx int) string {
-	prefix := path.Join(strconv.FormatInt(taskID, 10), "write-ingest-meta", strconv.Itoa(idx))
+func writeIngestPlanMetaPath(taskID int64, idx int) string {
+	prefix := path.Join(strconv.FormatInt(taskID, 10), "write-ingest-plan", strconv.Itoa(idx))
 	return path.Join(prefix, "meta.json")
 }

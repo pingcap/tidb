@@ -444,7 +444,7 @@ func generateGlobalSortIngestPlan(
 	}
 	// write external meta to storage when using global sort
 	for i, m := range metaArr {
-		if err := writeExternalBackfillSubTaskMeta(ctx, cloudStorageURI, m, externalGlobalSortIngestPath(task.ID, i+1)); err != nil {
+		if err := writeExternalBackfillSubTaskMeta(ctx, cloudStorageURI, m, ExternalGlobalSortIngestPlanMetaPath(task.ID, i+1)); err != nil {
 			return nil, err
 		}
 	}
@@ -635,7 +635,7 @@ func generateMergePlan(
 
 	// write external meta to storage when using global sort
 	for i, m := range metaArr {
-		if err := writeExternalBackfillSubTaskMeta(ctx, cloudStorageURI, m, externalMergePath(task.ID, i+1)); err != nil {
+		if err := writeExternalBackfillSubTaskMeta(ctx, cloudStorageURI, m, ExternalMergePlanMetaPath(task.ID, i+1)); err != nil {
 			return nil, err
 		}
 	}
@@ -719,10 +719,12 @@ func forEachBackfillSubtaskMeta(
 	return nil
 }
 
-func externalGlobalSortIngestPath(taskID int64, idx int) string {
-	return path.Join(strconv.FormatInt(taskID, 10), "global-sort-ingest", strconv.Itoa(idx), "meta.json")
+// ExternalGlobalSortIngestPlanMetaPath returns the path of the external meta file for global sort ingest plan.
+func ExternalGlobalSortIngestPlanMetaPath(taskID int64, idx int) string {
+	return path.Join(strconv.FormatInt(taskID, 10), "global-sort-ingest-plan", strconv.Itoa(idx), "meta.json")
 }
 
-func externalMergePath(taskID int64, idx int) string {
-	return path.Join(strconv.FormatInt(taskID, 10), "merge", strconv.Itoa(idx), "meta.json")
+// ExternalMergePlanMetaPath returns the path of the external meta file for merge plan.
+func ExternalMergePlanMetaPath(taskID int64, idx int) string {
+	return path.Join(strconv.FormatInt(taskID, 10), "merge-plan", strconv.Itoa(idx), "meta.json")
 }

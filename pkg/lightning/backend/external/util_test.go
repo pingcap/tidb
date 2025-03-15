@@ -326,110 +326,268 @@ func TestKeyMinMax(t *testing.T) {
 	require.Equal(t, []byte("b"), BytesMax([]byte("b"), []byte("a")))
 }
 
-type MockMeta struct {
-	BaseMeta
-	SortedDataMeta   *SortedKVMeta           `external:"true"`
-	SortedIndexMetas map[int64]*SortedKVMeta `external:"true"`
+type EmbedA struct {
+	X string
+	Y int
 }
 
-func (m MockMeta) MarshalJSON() ([]byte, error) {
-	type alias MockMeta
-	return m.Marshal(alias(m))
+type EmbedB EmbedA
+type EmbedC EmbedA
+type EmbedD EmbedA
+
+type InlineInternal struct {
+	I int    `json:"i"`
+	J string `json:"j"`
 }
 
-func TestWriteAndReadExternalJson(t *testing.T) {
+type InlineExternal struct {
+	S int    `json:"s" external:"true"`
+	T string `json:"t" external:"true"`
+}
+
+type testStruct struct {
+	BaseExternalMeta
+
+	A              int
+	B              string `external:"true"`
+	C              string `json:"c_rename"`
+	D              int    `json:"d_rename" external:"true"`
+	E              int    `json:"-" external:"true"`
+	F              string `json:"f,omitempty" external:"true"`
+	G              *EmbedA
+	H              *EmbedA `external:"true"`
+	L              EmbedA  `external:"true"`
+	M              EmbedA
+	EmbedA         `json:"EmbedA" external:"true"`
+	EmbedB         `json:"EmbedB"`
+	*EmbedC        `json:"EmbedC"`
+	*EmbedD        `json:"EmbedD" external:"true"`
+	InlineInternal `json:",inline"`
+	InlineExternal `json:",inline" external:"true"`
+}
+
+func (ts testStruct) MarshalJSON() ([]byte, error) {
+	type alias testStruct
+	return ts.Marshal(alias(ts))
+}
+
+func TestCopyFields(t *testing.T) {
+	inst := testStruct{
+		A: 42,
+		B: "external-b",
+		C: "internal-c",
+		D: 314,
+		E: 100,
+		F: "",
+		G: &EmbedA{
+			X: "internal-G-x",
+			Y: 123,
+		},
+		H: &EmbedA{
+			X: "external-H-x",
+			Y: 456,
+		},
+		EmbedA: EmbedA{
+			X: "external-a-x",
+			Y: 777,
+		},
+		EmbedB: EmbedB{
+			X: "internal-B",
+			Y: 888,
+		},
+		EmbedC: &EmbedC{
+			X: "internal-C",
+			Y: 999,
+		},
+		EmbedD: &EmbedD{
+			X: "external-d-x",
+			Y: 999,
+		},
+		InlineInternal: InlineInternal{
+			I: 111,
+			J: "inline-internal",
+		},
+		InlineExternal: InlineExternal{
+			S: 222,
+			T: "inline-external",
+		},
+		L: EmbedA{
+			X: "external-L-x",
+			Y: 999,
+		},
+		M: EmbedA{
+			X: "internal-M-x",
+			Y: 999,
+		},
+	}
+	resExt := copyExternalFields(inst)
+	expectedExt := map[string]any{
+		"B":        "external-b",
+		"d_rename": 314,
+		"EmbedA": EmbedA{
+			X: "external-a-x",
+			Y: 777,
+		},
+		"EmbedD": &EmbedD{
+			X: "external-d-x",
+			Y: 999,
+		},
+		"H": &EmbedA{
+			X: "external-H-x",
+			Y: 456,
+		},
+		"L": EmbedA{
+			X: "external-L-x",
+			Y: 999,
+		},
+		"s": 222,
+		"t": "inline-external",
+	}
+	require.Equal(t, expectedExt, resExt)
+	resExtPtr := copyExternalFields(&inst)
+	require.Equal(t, expectedExt, resExtPtr)
+
+	resInt := copyInternalFields(inst)
+	expectedInt := testStruct{
+		A: 42,
+		C: "internal-c",
+		F: "",
+		G: &EmbedA{
+			X: "internal-G-x",
+			Y: 123,
+		},
+		EmbedB: EmbedB{
+			X: "internal-B",
+			Y: 888,
+		},
+		EmbedC: &EmbedC{
+			X: "internal-C",
+			Y: 999,
+		},
+		InlineInternal: InlineInternal{
+			I: 111,
+			J: "inline-internal",
+		},
+		M: EmbedA{
+			X: "internal-M-x",
+			Y: 999,
+		},
+	}
+
+	require.Equal(t, expectedInt, resInt)
+	resIntPtr := copyInternalFields(&inst)
+	require.Equal(t, &expectedInt, resIntPtr)
+
+	resNonStruct := copyExternalFields(100)
+	require.Len(t, resNonStruct, 0)
+	resNonStruct1 := copyInternalFields(100)
+	require.Equal(t, 100, resNonStruct1)
+	var nilPtr *testStruct
+	resNilExt := copyExternalFields(nilPtr)
+	require.Len(t, resNilExt, 0)
+	resNilInt := copyInternalFields(nilPtr)
+	require.Nil(t, resNilInt)
+
+	dataInt, err := marshalInternalFields(inst)
+	require.NoError(t, err)
+	expectedJsonInt := `{"ExternalPath":"","A":42,"B":"","c_rename":"internal-c","d_rename":0,"G":{"X":"internal-G-x","Y":123},"H":null,"L":{"X":"","Y":0},"M":{"X":"internal-M-x","Y":999},"EmbedA":{"X":"","Y":0},"EmbedB":{"X":"internal-B","Y":888},"EmbedC":{"X":"internal-C","Y":999},"EmbedD":null,"i":111,"j":"inline-internal","s":0,"t":""}`
+	require.JSONEq(t, expectedJsonInt, string(dataInt))
+
+	dataExt, err := marshalExternalFields(inst)
+	require.NoError(t, err)
+	expectedJsonExt := `{"B":"external-b","d_rename":314,"EmbedA":{"X":"external-a-x","Y":777},"EmbedD":{"X":"external-d-x","Y":999},"H":{"X":"external-H-x","Y":456},"L":{"X":"external-L-x","Y":999},"s":222,"t":"inline-external"}`
+	require.JSONEq(t, expectedJsonExt, string(dataExt))
+
+	var newTestStruct testStruct
+	err = json.Unmarshal(dataInt, &newTestStruct)
+	require.NoError(t, err)
+	err = json.Unmarshal(dataExt, &newTestStruct)
+	require.NoError(t, err)
+	require.Equal(t, 0, newTestStruct.E)
+	newTestStruct.E = inst.E
+	require.Equal(t, inst, newTestStruct)
+
+	inst.ExternalPath = "external-path"
+	dataInt, err = marshalInternalFields(inst)
+	require.NoError(t, err)
+	data, err := json.Marshal(inst)
+	require.NoError(t, err)
+	require.JSONEq(t, string(data), string(dataInt))
+}
+
+func TestReadWriteJSON(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemStorage()
-	path := "/1/1/meta.json"
-
-	dummyMeta := &SortedKVMeta{
-		StartKey:    []byte("a"),
-		EndKey:      []byte("z"),
-		TotalKVSize: 100,
-		TotalKVCnt:  1,
-		MultipleFilesStats: []MultipleFilesStat{
-			{Filenames: [][2]string{{"data1", "stat1"}}},
+	ts := testStruct{
+		A: 42,
+		B: "external-b",
+		C: "internal-c",
+		D: 314,
+		E: 0,
+		F: "str",
+		G: &EmbedA{
+			X: "internal-G-x",
+			Y: 123,
+		},
+		H: &EmbedA{
+			X: "external-H-x",
+			Y: 456,
+		},
+		EmbedA: EmbedA{
+			X: "external-a-x",
+			Y: 777,
+		},
+		EmbedB: EmbedB{
+			X: "internal-B",
+			Y: 888,
+		},
+		EmbedC: &EmbedC{
+			X: "internal-C",
+			Y: 999,
+		},
+		EmbedD: &EmbedD{
+			X: "external-d-x",
+			Y: 999,
+		},
+		InlineInternal: InlineInternal{
+			I: 111,
+			J: "inline-internal",
+		},
+		InlineExternal: InlineExternal{
+			S: 222,
+			T: "inline-external",
+		},
+		L: EmbedA{
+			X: "external-L-x",
+			Y: 999,
+		},
+		M: EmbedA{
+			X: "internal-M-x",
+			Y: 999,
+		},
+		BaseExternalMeta: BaseExternalMeta{
+			ExternalPath: "/test/external-path",
 		},
 	}
-	indexMetas := map[int64]*SortedKVMeta{
-		1: {
-			StartKey:    []byte("b"),
-			EndKey:      []byte("y"),
-			TotalKVSize: 50,
-			TotalKVCnt:  2,
-			MultipleFilesStats: []MultipleFilesStat{
-				{Filenames: [][2]string{{"data2", "stat2"}}},
-			},
-		},
-	}
 
-	meta := MockMeta{
-		SortedDataMeta:   dummyMeta,
-		SortedIndexMetas: indexMetas,
-	}
-	meta.ExternalPath = path
-
-	err := WriteJSONToExternalStorage(ctx, store, path, meta)
+	// Write JSON to external storage.
+	err := ts.WriteJSONToExternalStorage(ctx, store, ts)
 	require.NoError(t, err)
 
-	var newMeta MockMeta
-	err = ReadJSONFromExternalStorage(ctx, store, path, &newMeta)
-	require.NoError(t, err)
-	require.Empty(t, newMeta.ExternalPath)
-
-	var newMeta2 MockMeta
-	newMeta2.ExternalPath = path
-	err = ReadJSONFromExternalStorage(ctx, store, path, &newMeta2)
-	require.NoError(t, err)
-	require.Equal(t, meta, newMeta2)
-}
-
-type Dummy struct {
-	Field1 int    `json:"field1"`
-	Field2 string `json:"field2" external:"true"`
-	field3 bool   // unexported field, should be ignored
-	Field4 string `json:"-"`
-	Field5 string `json:"custom_name"`
-}
-
-func TestMarshalFieldsNonExternal(t *testing.T) {
-	// For non-external, only fields without store:"external" are included,
-	// and fields with json:"-" should be skipped.
-	input := Dummy{
-		Field1: 42,
-		Field2: "hello",
-		field3: true,
-		Field4: "skip_me",
-		Field5: "customized",
-	}
-	data, err := marshalFields(input, false)
+	data, err := json.Marshal(ts)
 	require.NoError(t, err)
 
-	var result map[string]any
-	require.NoError(t, json.Unmarshal(data, &result))
-
-	// Expect "field1" and "custom_name" to be present.
-	require.Len(t, result, 2)
-	require.Equal(t, float64(42), result["field1"])
-	require.Equal(t, "customized", result["custom_name"])
-}
-
-func TestMarshalFieldsExternal(t *testing.T) {
-	// For external, only fields with store:"external" are included.
-	input := Dummy{
-		Field1: 42,
-		Field2: "hello",
-		Field4: "skip_me",
-		Field5: "customized",
-		field3: true,
-	}
-	data, err := marshalFields(input, true)
+	var ts1 testStruct
+	err = ts1.ReadJSONFromExternalStorage(ctx, store, &ts1)
 	require.NoError(t, err)
+	require.NotEqual(t, ts, ts1)
 
-	var result map[string]any
-	require.NoError(t, json.Unmarshal(data, &result))
+	var ts2 testStruct
+	err = json.Unmarshal(data, &ts2)
+	require.NoError(t, err)
+	require.NotEqual(t, ts, ts2)
 
-	// Expect only "field2" to be present.
-	require.Len(t, result, 1)
-	require.Equal(t, "hello", result["field2"])
+	err = ts2.ReadJSONFromExternalStorage(ctx, store, &ts2)
+	require.NoError(t, err)
+	require.Equal(t, ts, ts2)
 }

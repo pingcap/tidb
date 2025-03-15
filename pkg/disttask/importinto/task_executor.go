@@ -265,8 +265,8 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 	subtaskMeta.SortedIndexMetas = sharedVars.SortedIndexMetas
 	// if using globalsort, write the external meta to external storage.
 	if s.tableImporter.IsGlobalSort() {
-		subtaskMeta.ExternalPath = externalMetaPath(s.taskID, subtask.ID)
-		if err := external.WriteJSONToExternalStorage(ctx, s.tableImporter.GlobalSortStore, subtaskMeta.ExternalPath, subtaskMeta); err != nil {
+		subtaskMeta.ExternalPath = externalSubtaskMetaPath(s.taskID, subtask.ID)
+		if err := subtaskMeta.WriteJSONToExternalStorage(ctx, s.tableImporter.GlobalSortStore, subtaskMeta); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -379,8 +379,8 @@ func (m *mergeSortStepExecutor) onFinished(ctx context.Context, subtask *proto.S
 		return errors.Trace(err)
 	}
 	subtaskMeta.SortedKVMeta = *m.subtaskSortedKVMeta
-	subtaskMeta.ExternalPath = externalMetaPath(m.taskID, subtask.ID)
-	if err := external.WriteJSONToExternalStorage(ctx, m.controller.GlobalSortStore, subtaskMeta.ExternalPath, subtaskMeta); err != nil {
+	subtaskMeta.ExternalPath = externalSubtaskMetaPath(m.taskID, subtask.ID)
+	if err := subtaskMeta.WriteJSONToExternalStorage(ctx, m.controller.GlobalSortStore, subtaskMeta); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -423,7 +423,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 
 	// read write and ingest step meta from external storage when using global sort.
 	if sm.ExternalPath != "" && e.tableImporter.IsGlobalSort() {
-		if err := external.ReadJSONFromExternalStorage(ctx, e.tableImporter.GlobalSortStore, sm.ExternalPath, sm); err != nil {
+		if err := sm.ReadJSONFromExternalStorage(ctx, e.tableImporter.GlobalSortStore, sm); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -618,7 +618,7 @@ func (e *importExecutor) Close() {
 	e.BaseTaskExecutor.Close()
 }
 
-func externalMetaPath(taskID int64, subtaskID int64) string {
+func externalSubtaskMetaPath(taskID int64, subtaskID int64) string {
 	// generate a unique file name for the meta.
 	prefix := path.Join(strconv.FormatInt(taskID, 10), strconv.FormatInt(subtaskID, 10))
 	// taskID/subtaskID/meta.json

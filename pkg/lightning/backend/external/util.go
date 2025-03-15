@@ -348,76 +348,148 @@ func getSpeed(n uint64, dur float64, isBytes bool) string {
 	return strconv.FormatFloat(float64(n)/dur, 'f', 4, 64)
 }
 
-// Helper function: when external is false, only serialize non-external fields;
-// when true, serialize only external fields.
-// simply handle json:"-", other tags are ignored.
-func marshalFields(m any, external bool) ([]byte, error) {
-	t := reflect.TypeOf(m)
-	v := reflect.ValueOf(m)
-	if t.Kind() == reflect.Ptr {
-		t = t.Elem()
+// copyInternalFields makes a copy of the internal fields.
+func copyInternalFields(a any) any {
+	v := reflect.ValueOf(a)
+	switch v.Kind() {
+	case reflect.Pointer:
+		if v.IsNil() {
+			return nil
+		}
+		newVal := reflect.New(v.Elem().Type())
+		copyStruct(v.Elem(), newVal.Elem())
+		return newVal.Interface()
+	case reflect.Struct:
+		newVal := reflect.New(v.Type()).Elem()
+		copyStruct(v, newVal)
+		return newVal.Interface()
+	default:
+		return a
+	}
+}
+
+// copyExternalFields extracts and returns external fields tagged for inclusion during JSON marshaling.
+// NOTE: Only handle the first level of external tags
+func copyExternalFields(a any) map[string]any {
+	res := make(map[string]any)
+	v := reflect.ValueOf(a)
+	if !v.IsValid() {
+		return res
+	}
+	if v.Kind() == reflect.Pointer {
+		if v.IsNil() {
+			return res
+		}
 		v = v.Elem()
 	}
-	result := make(map[string]any)
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
-		// Skip non-exported fields
-		if field.PkgPath != "" {
+	if v.Kind() != reflect.Struct {
+		return res
+	}
+	t := v.Type()
+	for i := 0; i < v.NumField(); i++ {
+		f := t.Field(i)
+		jsonTag := f.Tag.Get("json")
+		if f.PkgPath != "" || jsonTag == "-" || strings.HasPrefix(jsonTag, "-,") || f.Tag.Get("external") != "true" {
 			continue
 		}
-		tag, ok := field.Tag.Lookup("external")
-		if external {
-			// Include only fields with tag external:"true"
-			if !(ok && tag == "true") {
+		if strings.Contains(jsonTag, "inline") {
+			fieldVal := v.Field(i)
+			if fieldVal.Kind() == reflect.Pointer && fieldVal.IsNil() {
 				continue
 			}
-		} else {
-			// Skip fields with tag external:"true"
-			if ok && tag == "true" {
-				continue
+			for k, val := range copyExternalFields(fieldVal.Interface()) {
+				res[k] = val
 			}
-		}
-		// Handle json:"-" by skipping such field.
-		jsonTag := field.Tag.Get("json")
-		if jsonTag == "-" {
 			continue
 		}
-		key := field.Name
+		key := f.Name
+		var tagOpts []string
 		if jsonTag != "" {
-			key = strings.Split(jsonTag, ",")[0]
+			parts := strings.Split(jsonTag, ",")
+			if parts[0] != "" {
+				key = parts[0]
+			}
+			if len(parts) > 1 {
+				tagOpts = parts[1:]
+			}
 		}
-		result[key] = v.Field(i).Interface()
+		// Handle omitempty: if present and field is zero value, skip this field.
+		fieldVal := v.Field(i)
+		skip := false
+		for _, opt := range tagOpts {
+			if opt == "omitempty" && fieldVal.IsZero() {
+				skip = true
+				break
+			}
+		}
+		if skip {
+			continue
+		}
+		res[key] = fieldVal.Interface()
 	}
-	return json.Marshal(result)
+	return res
 }
 
-// WriteJSONToExternalStorage to write any struct as JSON to external storage.
-func WriteJSONToExternalStorage(ctx context.Context, store storage.ExternalStorage, path string, v any) error {
-	data, err := marshalFields(v, true)
-	if err != nil {
-		return errors.Trace(err)
+// copyStruct copies non-external fields from source struct to destination struct.
+func copyStruct(src, dst reflect.Value) {
+	t := src.Type()
+	for i := 0; i < src.NumField(); i++ {
+		field := t.Field(i)
+		if field.PkgPath != "" || field.Tag.Get("external") == "true" {
+			continue
+		}
+		dst.Field(i).Set(src.Field(i))
 	}
-	return store.WriteFile(ctx, path, data)
 }
 
-// ReadJSONFromExternalStorage to read and unmarshal JSON from external storage into v.
-func ReadJSONFromExternalStorage(ctx context.Context, store storage.ExternalStorage, path string, v any) error {
-	data, err := store.ReadFile(ctx, path)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return errors.Trace(json.Unmarshal(data, v))
+// marshalInternalFields serializes internal fields to JSON.
+func marshalInternalFields(a any) ([]byte, error) {
+	return json.Marshal(copyInternalFields(a))
 }
 
-// BaseMeta is the base meta struct for external storage.
-type BaseMeta struct {
+// marshalExternalFields serializes the external fields to JSON.
+// Usage: For saving external meta, ensuring only intended fields are stored.
+func marshalExternalFields(a any) ([]byte, error) {
+	return json.Marshal(copyExternalFields(a))
+}
+
+// BaseMeta is the base meta of external meta.
+type BaseExternalMeta struct {
+	// ExternalPath is the path to the external storage where the external meta is stored.
 	ExternalPath string
 }
 
-// Marshal serializes the meta struct. If ExternalPath is not empty, only serialize non-external fields.
-func (bm BaseMeta) Marshal(meta any) ([]byte, error) {
-	if bm.ExternalPath == "" {
-		return json.Marshal(meta)
+// Marshal serializes the provided alias to JSON.
+// Usage: If ExternalPath is set, marshals using internal meta; otherwise marshals the alias directly.
+func (m BaseExternalMeta) Marshal(alias any) ([]byte, error) {
+	if m.ExternalPath == "" {
+		return json.Marshal(alias)
 	}
-	return marshalFields(meta, false)
+	return marshalInternalFields(alias)
+}
+
+// WriteJSONToExternalStorage writes the serialized external meta JSON to external storage.
+// Usage: Store external meta after appropriate modifications.
+func (m BaseExternalMeta) WriteJSONToExternalStorage(ctx context.Context, store storage.ExternalStorage, a any) error {
+	if m.ExternalPath == "" {
+		return nil
+	}
+	data, err := marshalExternalFields(a)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return store.WriteFile(ctx, m.ExternalPath, data)
+}
+
+// ReadJSONFromExternalStorage reads and unmarshals JSON from external storage into the provided alias.
+// Usage: Retrieve external meta for further processing.
+func (m BaseExternalMeta) ReadJSONFromExternalStorage(ctx context.Context, store storage.ExternalStorage, a any) error {
+	if m.ExternalPath == "" || store == nil {
+		return nil
+	}
+	data, err := store.ReadFile(ctx, m.ExternalPath)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return json.Unmarshal(data, a)
 }
