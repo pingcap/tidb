@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -53,7 +54,7 @@ func TestMultiSchemaReorganizePartitionIssue56819(t *testing.T) {
 			tkO.MustQuery(`select * from t where b = "4"`).Sort().Check(testkit.Rows("4 4"))
 		}
 	}
-	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn)
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn, false)
 }
 
 func TestMultiSchemaDropRangePartition(t *testing.T) {
@@ -131,7 +132,7 @@ func TestMultiSchemaDropRangePartition(t *testing.T) {
 			require.Failf(t, "unhandled schema state '%s'", schemaState)
 		}
 	}
-	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn)
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn, false)
 }
 
 func TestMultiSchemaDropListDefaultPartition(t *testing.T) {
@@ -210,7 +211,7 @@ func TestMultiSchemaDropListDefaultPartition(t *testing.T) {
 			require.Failf(t, "unhandled schema state '%s'", schemaState)
 		}
 	}
-	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn)
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn, false)
 }
 
 func TestMultiSchemaDropListColumnsDefaultPartition(t *testing.T) {
@@ -301,7 +302,7 @@ func TestMultiSchemaDropListColumnsDefaultPartition(t *testing.T) {
 			require.Failf(t, "unhandled schema state '%s'", schemaState)
 		}
 	}
-	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn)
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn, false)
 }
 
 func TestMultiSchemaReorganizePartition(t *testing.T) {
@@ -434,7 +435,7 @@ func TestMultiSchemaReorganizePartition(t *testing.T) {
 			" PARTITION `p1` VALUES LESS THAN (200),\n" +
 			" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
 	}
-	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn, false)
 }
 
 // Also tests for conversions of unique indexes
@@ -570,7 +571,7 @@ func TestMultiSchemaPartitionByGlobalIndex(t *testing.T) {
 			"8 8 8",
 			"9 9 9"))
 	}
-	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn, false)
 }
 
 // TestMultiSchemaModifyColumn to show behavior when changing a column
@@ -635,7 +636,7 @@ func TestMultiSchemaModifyColumn(t *testing.T) {
 			require.Failf(t, "unhandled schema state '%s'", schemaState)
 		}
 	}
-	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn)
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn, false)
 }
 
 // TestMultiSchemaDropUniqueIndex to show behavior when
@@ -704,7 +705,7 @@ func TestMultiSchemaDropUniqueIndex(t *testing.T) {
 			require.Failf(t, "unhandled schema state '%s'", schemaState)
 		}
 	}
-	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn)
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn, false)
 }
 
 // TODO: Also add test for REMOVE PARTITIONING!
@@ -814,10 +815,10 @@ func TestMultiSchemaDropUniqueIndex(t *testing.T) {
 //	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
 //}
 
-func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn func(*testkit.TestKit), postFn func(*testkit.TestKit, kv.Storage), loopFn func(tO, tNO *testkit.TestKit)) {
-	runMultiSchemaTestWithBackfillDML(t, createSQL, alterSQL, "", initFn, postFn, loopFn)
+func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn func(*testkit.TestKit), postFn func(*testkit.TestKit, kv.Storage), loopFn func(tO, tNO *testkit.TestKit), retestWithoutPartitions bool) {
+	runMultiSchemaTestWithBackfillDML(t, createSQL, alterSQL, "", initFn, postFn, loopFn, retestWithoutPartitions)
 }
-func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfillDML string, initFn func(*testkit.TestKit), postFn func(*testkit.TestKit, kv.Storage), loopFn func(tO, tNO *testkit.TestKit)) {
+func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfillDML string, initFn func(*testkit.TestKit), postFn func(*testkit.TestKit, kv.Storage), loopFn func(tO, tNO *testkit.TestKit), retestWithoutPartitions bool) {
 	// When debugging, increase the lease, so the schema does not auto reload :)
 	distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 15*time.Second)
 	store := distCtx.Store
@@ -870,13 +871,22 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 
 	initFn(tkO)
 
+	domOwner.Reload()
+	domNonOwner.Reload()
+
+	if !tbl.Meta().IsCommonHandle && !tbl.Meta().PKIsHandle {
+		// Debug prints, so it is possible to verify duplicate _tidb_rowid's
+		res := tkO.MustQuery(`select *, _tidb_rowid from t`)
+		logutil.BgLogger().Info("Query result before DDL", zap.String("result", res.String()))
+	}
+
 	verStart := domNonOwner.InfoSchema().SchemaMetaVersion()
 	hookChan := make(chan struct{})
 	hookFunc := func(job *model.Job) {
 		hookChan <- struct{}{}
-		logutil.BgLogger().Info("XXXXXXXXXXX Hook now waiting", zap.String("job.State", job.State.String()), zap.String("job.SchemaStage", job.SchemaState.String()))
+		logutil.BgLogger().Info("XXXXXXXXXXX Hook now waiting", zap.String("job.State", job.State.String()), zap.String("job.SchemaState", job.SchemaState.String()))
 		<-hookChan
-		logutil.BgLogger().Info("XXXXXXXXXXX Hook released", zap.String("job.State", job.State.String()), zap.String("job.SchemaStage", job.SchemaState.String()))
+		logutil.BgLogger().Info("XXXXXXXXXXX Hook released", zap.String("job.State", job.State.String()), zap.String("job.SchemaState", job.SchemaState.String()))
 	}
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", hookFunc)
 	alterChan := make(chan error)
@@ -902,7 +912,7 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 	<-hookChan
 	hookChan <- struct{}{}
 	verCurr := verStart + 1
-	i := 0
+	state := 0
 	for {
 		// Waiting for the next State change to be done (i.e. blocking the state after)
 		releaseHook := true
@@ -936,10 +946,16 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 		}
 		// Continue to next state
 		verCurr++
-		i++
+		state++
 		hookChan <- struct{}{}
 	}
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep")
 	logutil.BgLogger().Info("XXXXXXXXXXX states loop done")
+	if !tbl.Meta().IsCommonHandle && !tbl.Meta().PKIsHandle {
+		// Debug prints, so it is possible to verify possible newly generated _tidb_rowid's
+		res := tkO.MustQuery(`select *, _tidb_rowid from t`)
+		logutil.BgLogger().Info("Query result after DDL", zap.String("result", res.String()))
+	}
 	// Verify that there are no KV entries for old partitions or old indexes!!!
 	gcWorker, err := gcworker.NewMockGCWorker(store)
 	require.NoError(t, err)
@@ -994,9 +1010,11 @@ LocalLoop:
 	}
 PartitionLoop:
 	for _, partID := range originalPartitions {
-		for _, def := range tbl.Meta().Partition.Definitions {
-			if def.ID == partID {
-				continue PartitionLoop
+		if tbl.Meta().Partition != nil {
+			for _, def := range tbl.Meta().Partition.Definitions {
+				if def.ID == partID {
+					continue PartitionLoop
+				}
 			}
 		}
 		// old partitions removed
@@ -1004,6 +1022,24 @@ PartitionLoop:
 	}
 	if postFn != nil {
 		postFn(tkO, store)
+	}
+	if retestWithoutPartitions {
+		// Check that all DMLs would have give the same result without ALTER and on a non-partitioned table!
+		res := tkO.MustQuery(`select * from t`).Sort()
+		tkO.MustExec("drop table t")
+		tkO.MustExec(createSQL)
+		// Will give error if not already partitioned, just ignore it.
+		_, _ = tkO.Exec("alter table t remove partitioning")
+		initFn(tkO)
+		domOwner.Reload()
+		domNonOwner.Reload()
+		for i := 0; i <= state; i++ {
+			loopFn(tkO, tkNO)
+		}
+		if postFn != nil {
+			postFn(tkO, store)
+		}
+		tkO.MustQuery(`select * from t`).Sort().Check(res.Rows())
 	}
 	// NOT deferring this, since it might hang on test failures...
 	domOwner.Close()
@@ -1079,7 +1115,7 @@ func TestMultiSchemaReorganizePK(t *testing.T) {
 			"8 write reorganization NO",
 			"9 delete reorganization O"))
 	}
-	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn, false)
 }
 
 func TestMultiSchemaReorganizePKBackfillDML(t *testing.T) {
@@ -1117,7 +1153,7 @@ func TestMultiSchemaReorganizePKBackfillDML(t *testing.T) {
 			"8 write reorganization NO Original",
 			"9 delete reorganization O Original"))
 	}
-	runMultiSchemaTestWithBackfillDML(t, createSQL, alterSQL, "update t set c3 = 'updated'", initFn, postFn, loopFn)
+	runMultiSchemaTestWithBackfillDML(t, createSQL, alterSQL, "update t set c3 = 'updated'", initFn, postFn, loopFn, false)
 }
 
 func TestMultiSchemaReorganizeNoPK(t *testing.T) {
@@ -1141,24 +1177,24 @@ func TestMultiSchemaReorganizeNoPK(t *testing.T) {
 	postFn := func(tkO *testkit.TestKit, _ kv.Storage) {
 		require.Equal(t, int(7*2+1), i)
 		tkO.MustQuery(`select c1,_tidb_rowid,c2 from t`).Sort().Check(testkit.Rows(""+
-			"1 60001 init O",
+			"1 1 init O",
 			"10 30004 delete reorganization NO",
 			"11 7 public O",
 			"12 30005 public NO",
 			"13 8 none O",
 			"14 30006 none NO",
-			"2 60002 init O",
-			"3 60003 delete only O",
-			"4 60004 delete only NO",
+			"2 2 init O",
+			"3 3 delete only O",
+			"4 30001 delete only NO",
 			"5 4 write only O",
 			// Before, there were a DUPLICATE ROW here!!!
 			//"5 60004 write only O",
-			"6 60005 write only NO",
+			"6 30002 write only NO",
 			"7 5 write reorganization O",
 			"8 30003 write reorganization NO",
 			"9 6 delete reorganization O"))
 	}
-	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn, false)
 }
 
 func TestMultiSchemaReorganizeNoPKBackfillDML(t *testing.T) {
@@ -1197,7 +1233,7 @@ func TestMultiSchemaReorganizeNoPKBackfillDML(t *testing.T) {
 			"8 30003 write reorganization NO Original",
 			"9 6 delete reorganization O Original"))
 	}
-	runMultiSchemaTestWithBackfillDML(t, createSQL, alterSQL, "update t set c3 = 'updated'", initFn, postFn, loopFn)
+	runMultiSchemaTestWithBackfillDML(t, createSQL, alterSQL, "update t set c3 = 'updated'", initFn, postFn, loopFn, false)
 }
 
 // TestMultiSchemaTruncatePartitionWithGlobalIndex to show behavior when
@@ -1388,7 +1424,7 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 			require.Failf(t, "unhandled schema state '%s'", schemaState)
 		}
 	}
-	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn)
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn, false)
 }
 
 func TestMultiSchemaTruncatePartitionWithPKGlobal(t *testing.T) {
@@ -1580,5 +1616,559 @@ func TestMultiSchemaTruncatePartitionWithPKGlobal(t *testing.T) {
 			require.Fail(t, "Unhandled schema state", "State: '%s'", schemaState)
 		}
 	}
-	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn)
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn, false)
+}
+
+func TestRemovePartitioningNoPKCovering(t *testing.T) {
+	createSQL := `create table t (a int unsigned, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d))` +
+		` partition by range (a) ` +
+		`(partition p0 values less than (10),` +
+		` partition p1 values less than (20),` +
+		` partition pMax values less than (MAXVALUE))`
+	alterSQL := `alter table t remove partitioning`
+	runCoveringTest(t, createSQL, alterSQL)
+}
+
+func TestReorganizePartitionNoPKCovering(t *testing.T) {
+	createSQL := `create table t (a int unsigned, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d))` +
+		` partition by range (a) ` +
+		`(partition p0 values less than (10),` +
+		` partition p1 values less than (20),` +
+		` partition pMax values less than (MAXVALUE))`
+	alterSQL := `alter table t reorganize partition pMax into (partition p2 values less than (30), partition p3 values less than (40), partition p4 values less than (50), partition p5 values less than (60), partition p6 values less than (70), partition p7 values less than (80), partition p8 values less than (90), partition p9 values less than (100), partition p10 values less than (110), partition pMax values less than (MAXVALUE))`
+	runCoveringTest(t, createSQL, alterSQL)
+}
+
+func TestRePartitionByKeyNoPKCovering(t *testing.T) {
+	createSQL := `create table t (a int unsigned, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d))` +
+		` partition by range (a) ` +
+		`(partition p0 values less than (10),` +
+		` partition p1 values less than (20),` +
+		` partition pMax values less than (MAXVALUE))`
+	alterSQL := `alter table t partition by key(a) partitions 3`
+	runCoveringTest(t, createSQL, alterSQL)
+}
+
+func TestPartitionByKeyNoPKCovering(t *testing.T) {
+	createSQL := `create table t (a int unsigned, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d))`
+	alterSQL := `alter table t partition by key(a) partitions 3`
+	runCoveringTest(t, createSQL, alterSQL)
+}
+
+func TestAddKeyPartitionNoPKCovering(t *testing.T) {
+	createSQL := `create table t (a int unsigned, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d)) partition by key (a) partitions 3`
+	alterSQL := `alter table t add partition partitions 1`
+	runCoveringTest(t, createSQL, alterSQL)
+}
+
+func TestCoalesceKeyPartitionNoPKCovering(t *testing.T) {
+	createSQL := `create table t (a int unsigned, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d)) partition by key (a) partitions 3`
+	alterSQL := `alter table t coalesce partition 1`
+	runCoveringTest(t, createSQL, alterSQL)
+}
+
+func TestRemovePartitioningCovering(t *testing.T) {
+	createSQL := `create table t (a int unsigned PRIMARY KEY NONCLUSTERED, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d))` +
+		` partition by range (a) ` +
+		`(partition p0 values less than (10),` +
+		` partition p1 values less than (20),` +
+		` partition pMax values less than (MAXVALUE))`
+	alterSQL := `alter table t remove partitioning`
+	runCoveringTest(t, createSQL, alterSQL)
+}
+
+func TestReorganizePartitionCovering(t *testing.T) {
+	createSQL := `create table t (a int unsigned PRIMARY KEY NONCLUSTERED, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d))` +
+		` partition by range (a) ` +
+		`(partition p0 values less than (10),` +
+		` partition p1 values less than (20),` +
+		` partition pMax values less than (MAXVALUE))`
+	alterSQL := `alter table t reorganize partition pMax into (partition p2 values less than (30), partition p3 values less than (40), partition p4 values less than (50), partition p5 values less than (60), partition p6 values less than (70), partition p7 values less than (80), partition p8 values less than (90), partition p9 values less than (100), partition p10 values less than (110), partition pMax values less than (MAXVALUE))`
+	runCoveringTest(t, createSQL, alterSQL)
+}
+
+func TestRePartitionByKeyCovering(t *testing.T) {
+	createSQL := `create table t (a int unsigned PRIMARY KEY NONCLUSTERED, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d))` +
+		` partition by range (a) ` +
+		`(partition p0 values less than (10),` +
+		` partition p1 values less than (20),` +
+		` partition pMax values less than (MAXVALUE))`
+	alterSQL := `alter table t partition by key(a) partitions 3`
+	runCoveringTest(t, createSQL, alterSQL)
+}
+
+func TestPartitionByKeyCovering(t *testing.T) {
+	createSQL := `create table t (a int unsigned PRIMARY KEY NONCLUSTERED, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d))`
+	alterSQL := `alter table t partition by key(a) partitions 3`
+	runCoveringTest(t, createSQL, alterSQL)
+}
+
+func TestAddKeyPartitionCovering(t *testing.T) {
+	createSQL := `create table t (a int unsigned PRIMARY KEY NONCLUSTERED, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d)) partition by key (a) partitions 3`
+	alterSQL := `alter table t add partition partitions 1`
+	runCoveringTest(t, createSQL, alterSQL)
+}
+
+func TestCoalesceKeyPartitionCovering(t *testing.T) {
+	createSQL := `create table t (a int unsigned PRIMARY KEY NONCLUSTERED, b varchar(255), c int, d varchar(255), key (b), key (c,b), key(c), key(d)) partition by key (a) partitions 3`
+	alterSQL := `alter table t coalesce partition 1`
+	runCoveringTest(t, createSQL, alterSQL)
+}
+
+func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
+	//insert a row
+	//insert a row, on duplicate key update - no match
+	//insert a row, on duplicate key update - match original table - io
+	//insert a row, on duplicate key update - match inserted in this state - ic
+	//insert a row, on duplicate key update - match inserted in previous state - ip
+	//insert a row, on duplicate key update - match inserted in next state - in
+	//update a row from just inserted - ic
+	//update a row from inserted in original table - io
+	//update a row from inserted in previous state ip
+	//update a row from inserted in next state - in
+	//update a row from just updated - uc
+	//update a row from updated in original table - uo
+	//update a row from updated in previous state - up
+	//update a row from updated in next state - un
+	//delete a row from just inserted - ic
+	//delete a row from inserted in original table - io
+	//delete a row from inserted in previous state - ip
+	//delete a row from inserted in next state - in
+	//delete a row from just updated - uc
+	//delete a row from updated in original table - uo
+	//delete a row from updated in previous state - up
+	//delete a row from updated in next state - un
+
+	currID := 1
+	const (
+		Insert     = 0
+		Update     = 1
+		Delete     = 2
+		InsertODKU = 3
+		Original   = 0
+		Previous   = 1
+		Current    = 2
+	)
+	// dimensions: execute state, from state, type, IDs
+	states := 7
+	fromStates := 3
+	IDs := make([][][][]int, states)
+	for s := 0; s < states; s++ {
+		IDs[s] = make([][][]int, fromStates)
+		for f := 0; f < fromStates; f++ {
+			IDs[s][f] = make([][]int, 4)
+		}
+	}
+	// Skip first state, since it is none, i.e. before the DDL started...
+	for s := states - 1; s > 0; s-- {
+		// Check operation against 'before DDL'
+		IDs[s][Current][Delete] = append(IDs[s][Current][Delete], currID)
+		IDs[s][Original][Insert] = append(IDs[s][Original][Insert], currID)
+		currID++
+		IDs[s][Current][Update] = append(IDs[s][Current][Update], currID)
+		IDs[s][Original][Insert] = append(IDs[s][Original][Insert], currID)
+		currID++
+		IDs[s][Current][InsertODKU] = append(IDs[s][Current][InsertODKU], currID)
+		IDs[s][Original][Insert] = append(IDs[s][Original][Insert], currID)
+		currID++
+		for _, from := range []int{Previous, Current} {
+			// Check operation against previous and current state
+			IDs[s][Current][Delete] = append(IDs[s][Current][Delete], currID)
+			IDs[s][from][Update] = append(IDs[s][from][Update], currID)
+			IDs[s][from][Insert] = append(IDs[s][from][Insert], currID)
+			currID++
+			IDs[s][Current][Delete] = append(IDs[s][Current][Delete], currID)
+			IDs[s][from][Insert] = append(IDs[s][from][Insert], currID)
+			currID++
+			IDs[s][Current][Update] = append(IDs[s][Current][Update], currID)
+			IDs[s][from][Insert] = append(IDs[s][from][Insert], currID)
+			currID++
+			IDs[s][Current][InsertODKU] = append(IDs[s][Current][InsertODKU], currID)
+			IDs[s][from][Insert] = append(IDs[s][from][Insert], currID)
+			currID++
+		}
+		// Check against Next state, use 'Previous' as current and 'Current' as Next.
+		IDs[s][Previous][Delete] = append(IDs[s][Previous][Delete], currID)
+		IDs[s][Current][Update] = append(IDs[s][Current][Update], currID)
+		IDs[s][Current][Insert] = append(IDs[s][Current][Insert], currID)
+		currID++
+		IDs[s][Previous][Delete] = append(IDs[s][Previous][Delete], currID)
+		IDs[s][Current][Insert] = append(IDs[s][Current][Insert], currID)
+		currID++
+		IDs[s][Previous][Update] = append(IDs[s][Previous][Update], currID)
+		IDs[s][Current][Insert] = append(IDs[s][Current][Insert], currID)
+		currID++
+		IDs[s][Previous][InsertODKU] = append(IDs[s][Previous][InsertODKU], currID)
+		IDs[s][Current][Insert] = append(IDs[s][Current][Insert], currID)
+		currID++
+
+		// Normal inserts to keep
+		IDs[s][Current][Insert] = append(IDs[s][Current][Insert], currID)
+		currID++
+		IDs[s][Current][InsertODKU] = append(IDs[s][Current][InsertODKU], currID)
+		currID++
+	}
+	require.Equal(t, 103, currID)
+
+	// Run like this:
+	// prepare in previous state + run in Current
+	//   use tkNO for previous state
+	//   use tkO for Current state
+	//   for x in range IDs[s][Previous][Insert]
+	//   for x in range IDs[s][Current][Insert]
+	//   for x in range IDs[s][Previous][Update]
+	//   for x in range IDs[s][Current][Update]
+	//   for x in range IDs[s][Previous][Delete]
+	//   for x in range IDs[s][Current][Delete]
+	//   for x in range IDs[s][Previous][InsertODKU]
+	//   for x in range IDs[s][Current][InsertODKU]
+	hasUniqueKey := false
+	initFn := func(tkO *testkit.TestKit) {
+		logutil.BgLogger().Info("initFn start")
+		ctx := tkO.Session()
+		dom := domain.GetDomain(ctx)
+		is := dom.InfoSchema()
+		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+		require.NoError(t, err)
+		hasUniqueKey = tbl.Meta().PKIsHandle || tbl.Meta().IsCommonHandle
+		for _, idx := range tbl.Meta().Indices {
+			if idx.Unique {
+				hasUniqueKey = true
+			}
+		}
+		for s := range IDs {
+			for _, id := range IDs[s][Original][Insert] {
+				//if id != 53 {
+				//	continue
+				//}
+				sql := fmt.Sprintf(`insert into t values (%d,%d,%d,'Original s:%d')`, id, id, id, s)
+				tkO.MustExec(sql)
+				logutil.BgLogger().Info("run sql", zap.String("sql", sql))
+			}
+		}
+		// make all partitions to be EXCHANGED, so they have duplicated _tidb_rowid's between
+		// the partitions
+		if tbl.Meta().Partition != nil &&
+			!tbl.Meta().IsCommonHandle &&
+			!tbl.Meta().PKIsHandle {
+			for _, def := range tbl.Meta().Partition.Definitions {
+				partName := def.Name.O
+				tkO.MustExec(`create table tx like t`)
+				tkO.MustExec(`alter table tx remove partitioning`)
+				tkO.MustExec(fmt.Sprintf("insert into tx select * from t partition(`%s`)", partName))
+				res := tkO.MustQuery(`select *, _tidb_rowid from tx`)
+				logutil.BgLogger().Info("rows in Exchanged table", zap.Any("rows", res.Rows()))
+				// Somehow there is an issue internally when using WITH VALIDATION,
+				// giving test.tx does not exist error...
+				tkO.MustExec(fmt.Sprintf("alter table t exchange partition `%s` with table tx without validation", partName))
+				tkO.MustExec(`drop table tx`)
+			}
+		}
+		tkO.MustQuery(`select count(*) from t`).Check(testkit.Rows("18"))
+		logutil.BgLogger().Info("initFn Done")
+	}
+
+	state := 1
+	loopFn := func(tkO, tkNO *testkit.TestKit) {
+		logutil.BgLogger().Info("loopFn start", zap.Int("state", state))
+		if state >= len(IDs) {
+			// Reset state for validation against non-partitioned table
+			state = 1
+		}
+		for _, op := range []int{Insert, Update, Delete, InsertODKU} {
+			for _, from := range []int{Previous, Current} {
+				tk := tkO
+				if from == Previous {
+					tk = tkNO
+				}
+				for _, id := range IDs[state][from][op] {
+					//if id != 53 {
+					//	continue
+					//}
+					var sql string
+					switch op {
+					case Insert:
+						sql = fmt.Sprintf(`insert into t values (%d,%d,%d,'Insert s:%d f:%d')`, id, id, id, state, from)
+					case Update:
+						sql = fmt.Sprintf(`update t set b = %d, d = concat(d, ' Update s:%d f:%d') where a = %d`, id+currID, state, from, id)
+					case Delete:
+						sql = fmt.Sprintf(`delete from t where a = %d /* s:%d f:%d */`, id, state, from)
+					case InsertODKU:
+						sql = fmt.Sprintf(`insert into t values (%d, %d, %d, 'InsertODKU s:%d f:%d') on duplicate key update b = %d, d = concat(d, ' ODKU s:%d f:%d')`, id, id, id, state, from, id+currID, state, from)
+					default:
+						require.Fail(t, "unknown op", "op: %d", op)
+					}
+					logutil.BgLogger().Info("run sql", zap.String("sql", sql))
+					//tk.MustQuery(`select *, _tidb_rowid from t`).Check(testkit.Rows("53 53 53 Original s:3 1"))
+					tk.MustExec(sql)
+				}
+			}
+		}
+		logutil.BgLogger().Info("loopFn done", zap.Int("state", state))
+		state++
+	}
+	postFn := func(tkO *testkit.TestKit, _ kv.Storage) {
+		tkO.MustExec(`admin check table t`)
+		// Total number of rows after above operations.
+		// Just to check for duplicates or missing rows
+		// TODO: Fix this for non-PK tests
+		//tkO.MustQuery(`select count(*) from t`).Check(testkit.Rows("61"))
+		res := tkO.MustQuery(`select * from t`).Sort()
+		if hasUniqueKey {
+			tkO.MustQuery(`select a from t group by a having count(*) > 1`).Check(testkit.Rows())
+			res.Check(testkit.Rows(""+
+				"10 113 10 Insert s:6 f:2 Update s:6 f:2",
+				"100 203 100 Insert s:1 f:2 ODKU s:1 f:1",
+				"101 101 101 Insert s:1 f:2",
+				"102 102 102 InsertODKU s:1 f:2",
+				"11 114 11 Insert s:6 f:2 ODKU s:6 f:2",
+				"14 117 14 Insert s:6 f:2 Update s:6 f:1",
+				"15 118 15 Insert s:6 f:2 ODKU s:6 f:1",
+				"16 16 16 Insert s:6 f:2",
+				"17 17 17 InsertODKU s:6 f:2",
+				"19 122 19 Original s:5 Update s:5 f:2",
+				"2 105 2 Original s:6 Update s:6 f:2",
+				"20 123 20 Original s:5 ODKU s:5 f:2",
+				"23 126 23 Insert s:5 f:1 Update s:5 f:2",
+				"24 127 24 Insert s:5 f:1 ODKU s:5 f:2",
+				"27 130 27 Insert s:5 f:2 Update s:5 f:2",
+				"28 131 28 Insert s:5 f:2 ODKU s:5 f:2",
+				"3 106 3 Original s:6 ODKU s:6 f:2",
+				"31 134 31 Insert s:5 f:2 Update s:5 f:1",
+				"32 135 32 Insert s:5 f:2 ODKU s:5 f:1",
+				"33 33 33 Insert s:5 f:2",
+				"34 34 34 InsertODKU s:5 f:2",
+				"36 139 36 Original s:4 Update s:4 f:2",
+				"37 140 37 Original s:4 ODKU s:4 f:2",
+				"40 143 40 Insert s:4 f:1 Update s:4 f:2",
+				"41 144 41 Insert s:4 f:1 ODKU s:4 f:2",
+				"44 147 44 Insert s:4 f:2 Update s:4 f:2",
+				"45 148 45 Insert s:4 f:2 ODKU s:4 f:2",
+				"48 151 48 Insert s:4 f:2 Update s:4 f:1",
+				"49 152 49 Insert s:4 f:2 ODKU s:4 f:1",
+				"50 50 50 Insert s:4 f:2",
+				"51 51 51 InsertODKU s:4 f:2",
+				"53 156 53 Original s:3 Update s:3 f:2",
+				"54 157 54 Original s:3 ODKU s:3 f:2",
+				"57 160 57 Insert s:3 f:1 Update s:3 f:2",
+				"58 161 58 Insert s:3 f:1 ODKU s:3 f:2",
+				"6 109 6 Insert s:6 f:1 Update s:6 f:2",
+				"61 164 61 Insert s:3 f:2 Update s:3 f:2",
+				"62 165 62 Insert s:3 f:2 ODKU s:3 f:2",
+				"65 168 65 Insert s:3 f:2 Update s:3 f:1",
+				"66 169 66 Insert s:3 f:2 ODKU s:3 f:1",
+				"67 67 67 Insert s:3 f:2",
+				"68 68 68 InsertODKU s:3 f:2",
+				"7 110 7 Insert s:6 f:1 ODKU s:6 f:2",
+				"70 173 70 Original s:2 Update s:2 f:2",
+				"71 174 71 Original s:2 ODKU s:2 f:2",
+				"74 177 74 Insert s:2 f:1 Update s:2 f:2",
+				"75 178 75 Insert s:2 f:1 ODKU s:2 f:2",
+				"78 181 78 Insert s:2 f:2 Update s:2 f:2",
+				"79 182 79 Insert s:2 f:2 ODKU s:2 f:2",
+				"82 185 82 Insert s:2 f:2 Update s:2 f:1",
+				"83 186 83 Insert s:2 f:2 ODKU s:2 f:1",
+				"84 84 84 Insert s:2 f:2",
+				"85 85 85 InsertODKU s:2 f:2",
+				"87 190 87 Original s:1 Update s:1 f:2",
+				"88 191 88 Original s:1 ODKU s:1 f:2",
+				"91 194 91 Insert s:1 f:1 Update s:1 f:2",
+				"92 195 92 Insert s:1 f:1 ODKU s:1 f:2",
+				"95 198 95 Insert s:1 f:2 Update s:1 f:2",
+				"96 199 96 Insert s:1 f:2 ODKU s:1 f:2",
+				"99 202 99 Insert s:1 f:2 Update s:1 f:1"))
+		} else {
+			res.Sort().Check(testkit.Rows(""+
+				"10 113 10 Insert s:6 f:2 Update s:6 f:2",
+				"100 100 100 Insert s:1 f:2",
+				// TODO: FIXME!!! Why this duplicate of InsertODKU?
+				"100 100 100 InsertODKU s:1 f:1",
+				"101 101 101 Insert s:1 f:2",
+				"102 102 102 InsertODKU s:1 f:2",
+				"11 11 11 Insert s:6 f:2",
+				"11 11 11 InsertODKU s:6 f:2",
+				"14 117 14 Insert s:6 f:2 Update s:6 f:1",
+				"15 15 15 Insert s:6 f:2",
+				"15 15 15 InsertODKU s:6 f:1",
+				"16 16 16 Insert s:6 f:2",
+				"17 17 17 InsertODKU s:6 f:2",
+				"19 122 19 Original s:5 Update s:5 f:2",
+				"2 105 2 Original s:6 Update s:6 f:2",
+				"20 20 20 InsertODKU s:5 f:2",
+				"20 20 20 Original s:5",
+				"23 126 23 Insert s:5 f:1 Update s:5 f:2",
+				"24 24 24 Insert s:5 f:1",
+				"24 24 24 InsertODKU s:5 f:2",
+				"27 130 27 Insert s:5 f:2 Update s:5 f:2",
+				"28 28 28 Insert s:5 f:2",
+				"28 28 28 InsertODKU s:5 f:2",
+				"3 3 3 InsertODKU s:6 f:2",
+				"3 3 3 Original s:6",
+				"31 134 31 Insert s:5 f:2 Update s:5 f:1",
+				"32 32 32 Insert s:5 f:2",
+				"32 32 32 InsertODKU s:5 f:1",
+				"33 33 33 Insert s:5 f:2",
+				"34 34 34 InsertODKU s:5 f:2",
+				"36 139 36 Original s:4 Update s:4 f:2",
+				"37 37 37 InsertODKU s:4 f:2",
+				"37 37 37 Original s:4",
+				"40 143 40 Insert s:4 f:1 Update s:4 f:2",
+				"41 41 41 Insert s:4 f:1",
+				"41 41 41 InsertODKU s:4 f:2",
+				"44 147 44 Insert s:4 f:2 Update s:4 f:2",
+				"45 45 45 Insert s:4 f:2",
+				"45 45 45 InsertODKU s:4 f:2",
+				"48 151 48 Insert s:4 f:2 Update s:4 f:1",
+				"49 49 49 Insert s:4 f:2",
+				"49 49 49 InsertODKU s:4 f:1",
+				"50 50 50 Insert s:4 f:2",
+				"51 51 51 InsertODKU s:4 f:2",
+				"53 156 53 Original s:3 Update s:3 f:2",
+				"54 54 54 InsertODKU s:3 f:2",
+				"54 54 54 Original s:3",
+				"57 160 57 Insert s:3 f:1 Update s:3 f:2",
+				"58 58 58 Insert s:3 f:1",
+				"58 58 58 InsertODKU s:3 f:2",
+				"6 109 6 Insert s:6 f:1 Update s:6 f:2",
+				"61 164 61 Insert s:3 f:2 Update s:3 f:2",
+				"62 62 62 Insert s:3 f:2",
+				"62 62 62 InsertODKU s:3 f:2",
+				"65 168 65 Insert s:3 f:2 Update s:3 f:1",
+				"66 66 66 Insert s:3 f:2",
+				"66 66 66 InsertODKU s:3 f:1",
+				"67 67 67 Insert s:3 f:2",
+				"68 68 68 InsertODKU s:3 f:2",
+				"7 7 7 Insert s:6 f:1",
+				"7 7 7 InsertODKU s:6 f:2",
+				"70 173 70 Original s:2 Update s:2 f:2",
+				"71 71 71 InsertODKU s:2 f:2",
+				"71 71 71 Original s:2",
+				"74 177 74 Insert s:2 f:1 Update s:2 f:2",
+				"75 75 75 Insert s:2 f:1",
+				"75 75 75 InsertODKU s:2 f:2",
+				"78 181 78 Insert s:2 f:2 Update s:2 f:2",
+				"79 79 79 Insert s:2 f:2",
+				"79 79 79 InsertODKU s:2 f:2",
+				"82 185 82 Insert s:2 f:2 Update s:2 f:1",
+				"83 83 83 Insert s:2 f:2",
+				"83 83 83 InsertODKU s:2 f:1",
+				"84 84 84 Insert s:2 f:2",
+				"85 85 85 InsertODKU s:2 f:2",
+				"87 190 87 Original s:1 Update s:1 f:2",
+				"88 88 88 InsertODKU s:1 f:2",
+				"88 88 88 Original s:1",
+				"91 194 91 Insert s:1 f:1 Update s:1 f:2",
+				"92 92 92 Insert s:1 f:1",
+				"92 92 92 InsertODKU s:1 f:2",
+				"95 198 95 Insert s:1 f:2 Update s:1 f:2",
+				"96 96 96 Insert s:1 f:2",
+				"96 96 96 InsertODKU s:1 f:2",
+				"99 202 99 Insert s:1 f:2 Update s:1 f:1"))
+		}
+		logutil.BgLogger().Info("postFn done", zap.Int("state", state))
+	}
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn, true)
+}
+
+func TestIssue58692(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, index idx(a)) partition by hash(a) partitions 5")
+	tk.MustExec("insert into t (a, b) values (1, 1), (2, 2), (3, 3)")
+	var i atomic.Int32
+	i.Store(3)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		tk2 := testkit.NewTestKit(t, store)
+		tmp := i.Add(1)
+		tk2.MustExec(fmt.Sprintf("insert into test.t values (%d, %d)", tmp, tmp))
+		tk2.MustExec(fmt.Sprintf("update test.t set b = b + 11, a = b where b = %d", tmp-1))
+	})
+	tk.MustExec("alter table t remove partitioning")
+	rsIndex := tk.MustQuery("select *,_tidb_rowid from t use index(idx)").Sort()
+	rsTable := tk.MustQuery("select *,_tidb_rowid from t use index()").Sort()
+	tk.MustExec("admin check table t")
+	tk.MustQuery("select * from t where b = 20").Check(testkit.Rows("9 20"))
+	tk.MustQuery("select * from t use index(idx) where a = 9").Check(testkit.Rows("9 20"))
+	// TODO: about 1% of the runs, this can fail with '9 20' from table and '9 9' from index
+	// or an extra "10 10" table row!?!
+	// TODO: Investigate this and FIXME!!!
+	// Must a timing issue, since the following checks passes...
+	require.Equal(t, rsIndex.String(), rsTable.String(), "Expected: from index, Actual: from table")
+}
+
+func TestDuplicateRowsNoPK(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int, b int, key idx (a)) partition by hash(a) partitions 2")
+	tk.MustExec("insert into t (a, b) values (1, 1)")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+		if job.SchemaState != model.StateDeleteReorganization {
+			return
+		}
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+
+		tk2.MustExec("update t set b = 2 where b = 1")
+	})
+	tk.MustExec("alter table t remove partitioning")
+	tk.MustExec(`admin check table t`)
+	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 2"))
+	tk.MustQuery("select a from t").Check(testkit.Rows("1"))
+	tk.MustQuery("select *, _tidb_rowid from t").Sort().Check(testkit.Rows("1 2 1"))
+}
+
+func TestDuplicateRowsPK59680(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int, b int, primary key (a) nonclustered) partition by hash(a) partitions 2")
+	tk.MustExec("insert into t (a, b) values (1, 1)")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+		if job.SchemaState != model.StateDeleteReorganization {
+			return
+		}
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+
+		tk2.MustExec("update t set b = 2 where b = 1")
+	})
+	tk.MustExec("alter table t remove partitioning")
+	tk.MustExec(`admin check table t`)
+	tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 2"))
+	tk.MustQuery("select a from t").Check(testkit.Rows("1"))
+	tk.MustQuery("select *, _tidb_rowid from t").Sort().Check(testkit.Rows("1 2 1"))
+}
+
+func TestIssue58864(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int, b int, primary key (a) nonclustered) partition by hash(a) partitions 2")
+	tk.MustExec("insert into t (a, b) values (1, 1)")
+	var i atomic.Int32
+	i.Store(1)
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+		if job.State != model.JobStateDone {
+			return
+		}
+		val := int(i.Add(1))
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+
+		tk2.MustExec("insert into t values (?, ?)", val, val)
+		tk2.MustExec("update t set b = b + 1 where a = ?", val)
+	})
+	tk.MustExec("alter table t remove partitioning")
 }
