@@ -1008,7 +1008,7 @@ func generateMaxSizeValues(cols []*Column) {
 	}
 
 	colNum := len(cols)
-	repeatNumEveryCol := 10
+	repeatNumEveryCol := 20
 	colVals := make([][]string, colNum)
 	for i, col := range cols {
 		colVal := make([]string, colNum*repeatNumEveryCol)
@@ -1022,14 +1022,18 @@ func generateMaxSizeValues(cols []*Column) {
 			}
 		}
 
-		if !col.IsUnique && (strings.Contains(col.Type, "BINARY") || strings.Contains(col.Type, "TEXT")) {
+		if strings.Contains(col.Type, "BINARY") || strings.Contains(col.Type, "TEXT") {
 			maxL, ok := maxSizeMap[col.Name]
 			if !ok {
 				maxL = 100 // average length
 				log.Printf("Column %s not found in max size map, using average length", col.Name)
 			}
 			for j := i * repeatNumEveryCol; j < (i+1)*repeatNumEveryCol; j++ {
-				colVal[j] = generateLetterWithNum(maxL, false)
+				if col.IsUnique {
+					colVal[j] = faker.UUID() + generateLetterWithNum(maxL-uuidLen, false)
+				} else {
+					colVal[j] = generateLetterWithNum(maxL, false)
+				}
 			}
 		}
 		colVals[i] = colVal
