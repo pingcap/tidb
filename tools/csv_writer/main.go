@@ -1045,8 +1045,8 @@ func generateMaxSizeValues(cols []*Column) {
 		}
 	} else {
 		store := createExternalStorage()
-		filePath := ""
-		err := writeDataToGCS(store, filePath, colVals)
+		fileName := "max_val.csv"
+		err := writeDataToGCS(store, fileName, colVals)
 		if err != nil {
 			log.Fatal(err)
 		}
