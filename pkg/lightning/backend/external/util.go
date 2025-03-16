@@ -348,147 +348,63 @@ func getSpeed(n uint64, dur float64, isBytes bool) string {
 	return strconv.FormatFloat(float64(n)/dur, 'f', 4, 64)
 }
 
-// copyInternalFields makes a copy of the internal fields.
-func copyInternalFields(a any) any {
-	v := reflect.ValueOf(a)
-	switch v.Kind() {
-	case reflect.Pointer:
-		if v.IsNil() {
-			return nil
-		}
-		newVal := reflect.New(v.Elem().Type())
-		copyStruct(v.Elem(), newVal.Elem())
-		return newVal.Interface()
-	case reflect.Struct:
-		newVal := reflect.New(v.Type()).Elem()
-		copyStruct(v, newVal)
-		return newVal.Interface()
-	default:
-		return a
-	}
-}
-
-// extractFieldKey extracts the field key from field type and value information.
-// Returns an empty string if the field should be skipped (e.g., due to omitempty).
-func extractFieldKey(field reflect.StructField, fieldVal reflect.Value) string {
-	// Skip unexported fields
-	if field.PkgPath != "" {
-		return ""
-	}
-
-	jsonTag := field.Tag.Get("json")
-	if jsonTag == "-" || strings.HasPrefix(jsonTag, "-,") {
-		return ""
-	}
-
-	key := field.Name
-	if jsonTag != "" {
-		parts := strings.Split(jsonTag, ",")
-		if parts[0] != "" && parts[0] != "-" {
-			key = parts[0]
-		}
-
-		// Handle omitempty
-		for _, opt := range parts[1:] {
-			if opt == "omitempty" && fieldVal.IsZero() {
-				return "" // Skip this field
-			}
-		}
-	}
-
-	return key
-}
-
-// copyAllFields copies all fields from the source struct to a map.
-// NOTE: Only handle the first level of fields.
-func copyAllFields(src any) map[string]any {
-	res := make(map[string]any)
+// marshalWithOverride marshals the provided struct with the ability to override
+func marshalWithOverride(src any, hideCond func(externalTag string) bool) ([]byte, error) {
 	v := reflect.ValueOf(src)
-	if !v.IsValid() {
-		return res
-	}
 	if v.Kind() == reflect.Ptr {
 		if v.IsNil() {
-			return res
+			return json.Marshal(src)
 		}
 		v = v.Elem()
 	}
 	if v.Kind() != reflect.Struct {
-		return res
+		return json.Marshal(src)
 	}
 	t := v.Type()
-	for i := 0; i < v.NumField(); i++ {
-		key := extractFieldKey(t.Field(i), v.Field(i))
-		if key == "" {
-			continue
-		}
-		res[key] = v.Field(i).Interface()
-	}
-	return res
-}
-
-// copyExternalFields extracts and returns external fields tagged for inclusion during JSON marshaling.
-// NOTE: Only handle the first level of external tags
-func copyExternalFields(a any) map[string]any {
-	res := make(map[string]any)
-	v := reflect.ValueOf(a)
-	if !v.IsValid() {
-		return res
-	}
-	if v.Kind() == reflect.Pointer {
-		if v.IsNil() {
-			return res
-		}
-		v = v.Elem()
-	}
-	if v.Kind() != reflect.Struct {
-		return res
-	}
-	t := v.Type()
-	for i := 0; i < v.NumField(); i++ {
-		key := extractFieldKey(t.Field(i), v.Field(i))
-		if key == "" {
-			continue
-		}
+	var fields []reflect.StructField
+	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
-		if f.Tag.Get("external") != "true" {
+		if f.PkgPath != "" { // unexported
 			continue
 		}
-		jsonTag := f.Tag.Get("json")
-		// Only inline if the field is anonymous or has inline tag AND doesn't have a specific name in json tag
-		if (f.Anonymous || strings.Contains(jsonTag, "inline")) &&
-			(jsonTag == "" || strings.HasPrefix(jsonTag, ",") || jsonTag == "inline") {
-			for k, val := range copyAllFields(v.Field(i).Interface()) {
-				res[k] = val
-			}
-			continue
+		newTag := f.Tag
+		if hideCond(f.Tag.Get("external")) {
+			newTag = reflect.StructTag(`json:"-"`)
 		}
-		res[key] = v.Field(i).Interface()
+		fields = append(fields, reflect.StructField{
+			Name:      f.Name,
+			Type:      f.Type,
+			Tag:       newTag,
+			Offset:    f.Offset,
+			Anonymous: f.Anonymous,
+		})
 	}
-	return res
-}
-
-// copyStruct copies non-external fields from source struct to destination struct.
-func copyStruct(src, dst reflect.Value) {
-	t := src.Type()
-	for i := 0; i < src.NumField(); i++ {
-		field := t.Field(i)
-		if field.PkgPath != "" || field.Tag.Get("external") == "true" {
+	newType := reflect.StructOf(fields)
+	newVal := reflect.New(newType).Elem()
+	j := 0
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if f.PkgPath != "" {
 			continue
 		}
-		dst.Field(i).Set(src.Field(i))
+		newVal.Field(j).Set(v.Field(i))
+		j++
 	}
+	return json.Marshal(newVal.Interface())
 }
 
-// marshalInternalFields serializes internal fields to JSON.
-func marshalInternalFields(a any) ([]byte, error) {
-	return json.Marshal(copyInternalFields(a))
+// marshalInternalFields marshal all fields except those with external:"true" tag.
+func marshalInternalFields(src any) ([]byte, error) {
+	return marshalWithOverride(src, func(tag string) bool {
+		return tag == "true"
+	})
 }
 
-// marshalExternalFields serializes the external fields to JSON.
-// Usage: For saving external meta, ensuring only intended fields are stored.
-func marshalExternalFields(a any) ([]byte, error) {
-	return json.Marshal(copyExternalFields(a))
+// marshalExternalFields marshal all fields with external:"true" tag.
+func marshalExternalFields(src any) ([]byte, error) {
+	return marshalWithOverride(src, func(tag string) bool {
+		return tag != "true"
+	})
 }
 
 // BaseExternalMeta is the base meta of external meta.

@@ -348,6 +348,7 @@ type EmbedExternal struct {
 type testStruct struct {
 	BaseExternalMeta
 
+	z              int
 	A              int
 	B              string `external:"true"`
 	C              string `json:"c_rename"`
@@ -373,6 +374,7 @@ func (ts testStruct) MarshalJSON() ([]byte, error) {
 
 func TestCopyFields(t *testing.T) {
 	inst := testStruct{
+		z: 1,
 		A: 42,
 		B: "external-b",
 		C: "internal-c",
@@ -420,77 +422,10 @@ func TestCopyFields(t *testing.T) {
 			Y: 999,
 		},
 	}
-	resExt := copyExternalFields(inst)
-	expectedExt := map[string]any{
-		"B":        "external-b",
-		"d_rename": 314,
-		"EmbedA": EmbedA{
-			X: "external-a-x",
-			Y: 777,
-		},
-		"EmbedD": &EmbedD{
-			X: "external-d-x",
-			Y: 999,
-		},
-		"H": &EmbedA{
-			X: "external-H-x",
-			Y: 456,
-		},
-		"L": EmbedA{
-			X: "external-L-x",
-			Y: 999,
-		},
-		"s": 222,
-		"t": "inline-external",
-	}
-	require.Equal(t, expectedExt, resExt)
-	resExtPtr := copyExternalFields(&inst)
-	require.Equal(t, expectedExt, resExtPtr)
-
-	resInt := copyInternalFields(inst)
-	expectedInt := testStruct{
-		A: 42,
-		C: "internal-c",
-		F: "",
-		G: &EmbedA{
-			X: "internal-G-x",
-			Y: 123,
-		},
-		EmbedB: EmbedB{
-			X: "internal-B",
-			Y: 888,
-		},
-		EmbedC: &EmbedC{
-			X: "internal-C",
-			Y: 999,
-		},
-		InlineInternal: InlineInternal{
-			I: 111,
-			J: "inline-internal",
-		},
-		M: EmbedA{
-			X: "internal-M-x",
-			Y: 999,
-		},
-	}
-
-	require.Equal(t, expectedInt, resInt)
-	resIntPtr := copyInternalFields(&inst)
-	require.Equal(t, &expectedInt, resIntPtr)
-
-	resNonStruct := copyExternalFields(100)
-	require.Len(t, resNonStruct, 0)
-	resNonStruct1 := copyInternalFields(100)
-	require.Equal(t, 100, resNonStruct1)
-	var nilPtr *testStruct
-	resNilExt := copyExternalFields(nilPtr)
-	require.Len(t, resNilExt, 0)
-	resNilInt := copyInternalFields(nilPtr)
-	require.Nil(t, resNilInt)
 
 	dataInt, err := marshalInternalFields(inst)
 	require.NoError(t, err)
-	expectedJSONInt := `{"ExternalPath":"","A":42,"B":"","c_rename":"internal-c","d_rename":0,"G":{"X":"internal-G-x","Y":123},"H":null,"L":{"X":"","Y":0},"M":{"X":"internal-M-x","Y":999},"EmbedA":{"X":"","Y":0},"EmbedB":{"X":"internal-B","Y":888},"EmbedC":{"X":"internal-C","Y":999},"EmbedD":null,"i":111,"j":"inline-internal","s":0,"t":""}`
+	expectedJSONInt := `{"ExternalPath":"","A":42,"c_rename":"internal-c","G":{"X":"internal-G-x","Y":123},"M":{"X":"internal-M-x","Y":999},"EmbedB":{"X":"internal-B","Y":888},"EmbedC":{"X":"internal-C","Y":999},"i":111,"j":"inline-internal"}`
 	require.JSONEq(t, expectedJSONInt, string(dataInt))
 
 	dataExt, err := marshalExternalFields(inst)
@@ -504,7 +439,9 @@ func TestCopyFields(t *testing.T) {
 	err = json.Unmarshal(dataExt, &newTestStruct)
 	require.NoError(t, err)
 	require.Equal(t, 0, newTestStruct.E)
+	require.Equal(t, 0, newTestStruct.z)
 	newTestStruct.E = inst.E
+	newTestStruct.z = inst.z
 	require.Equal(t, inst, newTestStruct)
 
 	inst.ExternalPath = "external-path"
@@ -519,6 +456,7 @@ func TestReadWriteJSON(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemStorage()
 	ts := testStruct{
+		z: 1,
 		A: 42,
 		B: "external-b",
 		C: "internal-c",
@@ -589,5 +527,8 @@ func TestReadWriteJSON(t *testing.T) {
 
 	err = ts2.ReadJSONFromExternalStorage(ctx, store, &ts2)
 	require.NoError(t, err)
+	require.NotEqual(t, ts, ts2)
+
+	ts2.z = ts.z
 	require.Equal(t, ts, ts2)
 }
