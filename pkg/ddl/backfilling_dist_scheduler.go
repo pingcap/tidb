@@ -179,12 +179,11 @@ func (sch *LitBackfillScheduler) GetNextStep(task *proto.TaskBase) proto.Step {
 	}
 }
 
-func skipMergeSort(_ []external.MultipleFilesStat) bool {
+func skipMergeSort(stats []external.MultipleFilesStat) bool {
 	failpoint.Inject("forceMergeSort", func() {
 		failpoint.Return(false)
 	})
-	//return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
-	return false
+	return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
 }
 
 // OnDone implements scheduler.Extension interface.
