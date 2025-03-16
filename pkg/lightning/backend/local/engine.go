@@ -58,6 +58,9 @@ var (
 	normalIterStartKey = []byte{1}
 )
 
+// Make sure we are using block size larger than 16KB, whereas 4KB is the default block size of Pebble.
+var DefaultBlockSize = 16 * 1024
+
 type importMutexState uint32
 
 const (
@@ -1391,7 +1394,14 @@ func (w *Writer) addSST(ctx context.Context, meta *sstMeta) error {
 
 func (w *Writer) createSSTWriter() (*sstWriter, error) {
 	path := filepath.Join(w.engine.sstDir, uuid.New().String()+".sst")
-	writer, err := newSSTWriter(path, w.engine.config.BlockSize)
+
+	blockSize := w.engine.config.BlockSize
+	// Logic to check the block size we are using is at least 16KB.
+	if blockSize <= 0 {
+		blockSize = DefaultBlockSize
+	}
+	writer, err := newSSTWriter(path, blockSize)
+
 	if err != nil {
 		return nil, err
 	}
