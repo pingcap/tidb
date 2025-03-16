@@ -59,7 +59,7 @@ var (
 	normalIterStartKey = []byte{1}
 )
 
-// Make sure we are using block size larger than 16KB, whereas 4KB is the default block size of Pebble.
+// DefaultBlockSize ensures we are using a block size larger than 16KB, whereas 4KB is the default block size of Pebble.
 var DefaultBlockSize = 16 * 1024
 
 type importMutexState uint32
