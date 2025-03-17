@@ -21,6 +21,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -239,4 +240,32 @@ func TestIterOutputHasUniqueMemorySpace(t *testing.T) {
 	require.NoError(t, iter.Close())
 	// after iter closed, the memory buffer of iter goes to pool
 	require.Greater(t, pool.TotalSize(), int64(0))
+}
+
+func TestCreateSSTWriterDefaultBlockSize(t *testing.T) {
+	engine := &Engine{
+		config: backend.LocalEngineConfig{
+			BlockSize: 0, // BlockSize is not set
+		},
+		sstDir: "test_sst_dir",
+		logger: log.Logger{},
+	}
+
+	writer := &Writer{
+		engine: engine,
+	}
+
+	sstWriter, err := writer.createSSTWriter()
+	require.NoError(t, err)
+	require.NotNil(t, sstWriter)
+
+	// blockSize is a private field of sstWriter.writer, so we use reflection to access the private field blockSize
+	writerValue := reflect.ValueOf(sstWriter.writer).Elem()
+	blockSizeField := writerValue.FieldByName("blockSize")
+	require.True(t, blockSizeField.IsValid(), "blockSize field should be valid")
+	require.Equal(t, DefaultBlockSize, int(blockSizeField.Int()))
+
+	// Clean up
+	err = sstWriter.writer.Close()
+	require.NoError(t, err)
 }
