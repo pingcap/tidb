@@ -215,6 +215,12 @@ func (parser *CSVParser) unescapeString(input field) (unescaped string, isNull b
 			return
 		}
 		unescaped = string(decoded)
+		// we set escapedBy to empty when use base64 encoding
+		// also parser.escFlavor is not set when escapedBy is empty
+		// so directly check the unescaped is \N or not
+		if unescaped == `\N` {
+			return unescaped, true, nil
+		}
 		return
 	}
 
