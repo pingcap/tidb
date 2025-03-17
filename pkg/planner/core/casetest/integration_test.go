@@ -407,6 +407,9 @@ func TestFixControl45132(t *testing.T) {
 		tk.MustExec(`insert into t select * from t`)
 	}
 	tk.MustExec(`analyze table t`)
+	// disable the prefer range ratio to isolate the testing to FixControl 45132
+	tk.MustExec(`set @@tidb_opt_prefer_range_ratio=0`)
+
 	// the cost model prefers to use TableScan instead of IndexLookup to avoid double requests.
 	tk.MustHavePlan(`select * from t where a=2`, `TableFullScan`)
 
