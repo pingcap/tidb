@@ -349,7 +349,7 @@ func getSpeed(n uint64, dur float64, isBytes bool) string {
 }
 
 // marshalWithOverride marshals the provided struct with the ability to override
-func marshalWithOverride(src any, hideCond func(externalTag string) bool) ([]byte, error) {
+func marshalWithOverride(src any, hideCond func(f reflect.StructField) bool) ([]byte, error) {
 	v := reflect.ValueOf(src)
 	if v.Kind() == reflect.Ptr {
 		if v.IsNil() {
@@ -368,7 +368,7 @@ func marshalWithOverride(src any, hideCond func(externalTag string) bool) ([]byt
 			continue
 		}
 		newTag := f.Tag
-		if hideCond(f.Tag.Get("external")) {
+		if hideCond(f) {
 			newTag = reflect.StructTag(`json:"-"`)
 		}
 		fields = append(fields, reflect.StructField{
@@ -395,15 +395,15 @@ func marshalWithOverride(src any, hideCond func(externalTag string) bool) ([]byt
 
 // marshalInternalFields marshal all fields except those with external:"true" tag.
 func marshalInternalFields(src any) ([]byte, error) {
-	return marshalWithOverride(src, func(tag string) bool {
-		return tag == "true"
+	return marshalWithOverride(src, func(f reflect.StructField) bool {
+		return f.Tag.Get("external") == "true"
 	})
 }
 
 // marshalExternalFields marshal all fields with external:"true" tag.
 func marshalExternalFields(src any) ([]byte, error) {
-	return marshalWithOverride(src, func(tag string) bool {
-		return tag != "true"
+	return marshalWithOverride(src, func(f reflect.StructField) bool {
+		return f.Tag.Get("external") != "true"
 	})
 }
 
