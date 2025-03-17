@@ -323,6 +323,7 @@ func BuildIndexInfo(
 		MVIndex: mvIndex,
 	}
 
+	// Primary index is not null, so it's fine to use no_null_index even if it's a primary index (as it'll have no effect).
 	idxInfo.NoNullIdxColOffsets = buildNoNullIdxColOffsets(idxInfo.Columns, allTableColumns)
 
 	if indexOption != nil {
