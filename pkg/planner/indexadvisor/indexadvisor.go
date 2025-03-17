@@ -123,7 +123,7 @@ func adviseIndexesWithOption(ctx context.Context, sctx sessionctx.Context,
 			}
 		}
 
-		emptyResultExplanation := fmt.Sprintf(" Considered %v indexable columns(%v), " +
+		emptyResultExplanation := fmt.Sprintf(" Considered %v indexable columns(%v), "+
 			"%v or more index candidates(%v), no sufficiently beneficial indexes were found.",
 			indexableColSet.Size(), strings.Join(indexableColsTmp, ", "),
 			allCandidates.Size(), strings.Join(indexCandidatesTmp, ", "))
