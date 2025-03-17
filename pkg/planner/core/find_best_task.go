@@ -255,7 +255,7 @@ func enumeratePhysicalPlans4Task(
 
 func helpEliminateEnforcerUnderHashAgg(p *logicalop.BaseLogicalPlan, prop *property.PhysicalProperty) *fd.FDSet {
 	// while for join's both child, anyway and currently we should keep exchanger within the MPP for now
-	if joinP, ok := p.Self().(*logicalop.LogicalJoin); ok && prop.IsParentPhyscicalHashAgg {
+	if joinP, ok := p.Self().(*logicalop.LogicalJoin); ok && prop.IsParentPhysicalHashAgg {
 		if joinP.JoinType == logicalop.InnerJoin {
 			return joinP.ExtractFD()
 		}

@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
-	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -257,11 +256,8 @@ type PhysicalProperty struct {
 		TopK uint32
 	}
 
-	// IsParentPhyscicalHashAgg indicates whether the parent is a physical hash aggregation.
-	IsParentPhyscicalHashAgg bool
-
-	// FD is the functional dependency set of the current operator.
-	FD *funcdep.FDSet
+	// IsParentPhysicalHashAgg indicates whether the parent is a physical hash aggregation.
+	IsParentPhysicalHashAgg bool
 }
 
 // NewPhysicalProperty builds property from columns.

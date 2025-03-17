@@ -2768,7 +2768,7 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType,
 				ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType,
 				MPPPartitionCols: partitionCols, CanAddEnforcer: true, RejectSort: true,
-				CTEProducerStatus: prop.CTEProducerStatus, IsParentPhyscicalHashAgg: true}
+				CTEProducerStatus: prop.CTEProducerStatus, IsParentPhysicalHashAgg: true}
 			agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.Schema().Clone())
 			agg.MppRunMode = Mpp1Phase
@@ -2787,7 +2787,7 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 		// no partition property down，record partition cols inside agg itself, enforce shuffler latter.
 		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType,
 			ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType,
-			RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus, IsParentPhyscicalHashAgg: true}
+			RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus, IsParentPhysicalHashAgg: true}
 		agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 		agg.SetSchema(la.Schema().Clone())
 		agg.MppRunMode = Mpp2Phase
@@ -2799,7 +2799,7 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 		// agg runs on TiDB with a partial agg on TiFlash if possible
 		if prop.TaskTp == property.RootTaskType {
 			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64,
-				RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus, IsParentPhyscicalHashAgg: true}
+				RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus, IsParentPhysicalHashAgg: true}
 			agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.Schema().Clone())
 			agg.MppRunMode = MppTiDB
@@ -2808,7 +2808,7 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 	} else if !hasFinalAgg {
 		// TODO: support scalar agg in MPP, merge the final result to one node
 		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64,
-			RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus, IsParentPhyscicalHashAgg: true}
+			RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus, IsParentPhysicalHashAgg: true}
 		agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 		agg.SetSchema(la.Schema().Clone())
 		if la.HasDistinct() || la.HasOrderBy() {
