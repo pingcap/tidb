@@ -1074,6 +1074,7 @@ func (bc *Client) BuildProgressRangeTree(ctx context.Context, ranges []rtree.Ran
 			if err != nil {
 				return errors.Trace(err)
 			}
+			utils.SummaryFiles(rg.Files)
 			if err := metaWriter.Send(rg.Files, metautil.AppendDataFile); err != nil {
 				return errors.Trace(err)
 			}

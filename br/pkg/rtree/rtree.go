@@ -4,18 +4,17 @@ package rtree
 
 import (
 	"bytes"
-	"fmt"
 
 	"github.com/google/btree"
+	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/summary"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/redact"
-	"github.com/pkg/errors"
 	"go.uber.org/zap"
 )
 
@@ -424,6 +423,9 @@ func (rangeTree *ProgressRangeTree) GetIncompleteRanges() ([]*kvrpcpb.KeyRange, 
 		incomplete := item.Res.GetIncompleteRange(item.Origin.StartKey, item.Origin.EndKey)
 		if len(incomplete) == 0 {
 			rangeAscendErr = rangeTree.collectRangeFiles(item)
+			if rangeAscendErr != nil {
+				return false
+			}
 			deletedRanges = append(deletedRanges, item)
 			rangeTree.completeCallBack()
 			return true
@@ -431,10 +433,13 @@ func (rangeTree *ProgressRangeTree) GetIncompleteRanges() ([]*kvrpcpb.KeyRange, 
 		incompleteRanges = append(incompleteRanges, incomplete...)
 		return true
 	})
+	if rangeAscendErr != nil {
+		return nil, errors.Trace(rangeAscendErr)
+	}
 	for _, deletedRange := range deletedRanges {
 		rangeTree.Delete(deletedRange)
 	}
-	return incompleteRanges, rangeAscendErr
+	return incompleteRanges, nil
 }
 
 func (rangeTree *ProgressRangeTree) collectRangeFiles(item *ProgressRange) error {
@@ -444,17 +449,7 @@ func (rangeTree *ProgressRangeTree) collectRangeFiles(item *ProgressRange) error
 	var rangeAscendErr error
 	item.Res.Ascend(func(i btree.Item) bool {
 		r := i.(*Range)
-		cfCount := make(map[string]int)
-		for _, f := range r.Files {
-			cfCount[f.Cf] += 1
-			summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
-			summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
-		}
-		for cf, count := range cfCount {
-			summary.CollectInt(fmt.Sprintf("%s CF files", cf), count)
-		}
-		// we need keep the files in order after we support multi_ingest sst.
-		// default_sst and write_sst need to be together.
+		utils.SummaryFiles(r.Files)
 		if err := rangeTree.metaWriter.Send(r.Files, metautil.AppendDataFile); err != nil {
 			rangeAscendErr = err
 			return false

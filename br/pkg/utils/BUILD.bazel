@@ -30,6 +30,7 @@ go_library(
     deps = [
         "//br/pkg/errors",
         "//br/pkg/logutil",
+        "//br/pkg/summary",
         "//pkg/errno",
         "//pkg/kv",
         "//pkg/meta/model",
