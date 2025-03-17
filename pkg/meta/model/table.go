@@ -222,7 +222,7 @@ func (t *TableInfo) Clone() *TableInfo {
 	nt.Columns = make([]*ColumnInfo, len(t.Columns))
 	nt.Indices = make([]*IndexInfo, len(t.Indices))
 
-	if nt.ForeignKeys != nil {
+	if t.ForeignKeys != nil {
 		nt.ForeignKeys = make([]*FKInfo, len(t.ForeignKeys))
 		for i := range t.ForeignKeys {
 			nt.ForeignKeys[i] = t.ForeignKeys[i].Clone()
