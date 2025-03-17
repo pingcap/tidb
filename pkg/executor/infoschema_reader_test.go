@@ -562,7 +562,7 @@ func TestTablesTable(t *testing.T) {
 
 	// test table mode
 	tk.MustQuery(`select tidb_table_mode from information_schema.tables where table_schema = 'db1' and
-		table_name = 't1'`).Check(testkit.Rows("ModeNormal"))
+		table_name = 't1'`).Check(testkit.Rows("Normal"))
 
 	// Predicates are extracted in CNF, so we separate the test cases by the number of disjunctions in the predicate.
 
