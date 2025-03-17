@@ -58,3 +58,30 @@ drop table t;
 create table t(a bit(3) default b'000111');
 drop table t;
 create table t(a bit(32) default b'1111111111111111111111111111111');
+
+# TestSetNoNullIndex
+drop table if exists t;
+create table t(col1 int, col2 int);
+alter table t modify column col1 int no_null_index;
+# this grammar doesn't allow remove "no_null_index" from a column, modify it.
+alter table t add index idx(col1, col2);
+-- error 8200
+alter table t modify column col2 int no_null_index;
+alter table t modify column col1 int no_null_index;
+alter table t drop index idx;
+alter table t modify column col2 int no_null_index;
+alter table t add index idx(col1, col2);
+show create table t;
+
+drop table if exists t;
+create table t(col1 int, col2 int);
+alter table t change column col1 col1 int no_null_index;
+# this grammar doesn't allow remove "no_null_index" from a column, modify it.
+alter table t add index idx(col1, col2);
+-- error 8200
+alter table t change column col2 col3 int no_null_index;
+alter table t change column col1 col3 int no_null_index;
+alter table t drop index idx;
+alter table t change column col2 col4 int no_null_index;
+alter table t add index idx(col3, col4);
+show create table t;
