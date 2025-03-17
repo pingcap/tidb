@@ -202,5 +202,56 @@ func removeExtendedStatsItem(statsCache statsutil.StatsCache,
 	}
 	newTbl := tbl.Copy()
 	delete(newTbl.ExtendedStats.Stats, statsName)
+<<<<<<< HEAD
 	statsCache.UpdateStatsCache([]*statistics.Table{newTbl}, nil)
+=======
+	statsCache.UpdateStatsCache(types.CacheUpdate{
+		Updated: []*statistics.Table{newTbl},
+	})
+}
+
+var changeGlobalStatsTables = []string{
+	"stats_meta", "stats_top_n", "stats_fm_sketch", "stats_buckets",
+	"stats_histograms", "column_stats_usage",
+}
+
+// ChangeGlobalStatsID changes the table ID in global-stats to the new table ID.
+func ChangeGlobalStatsID(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	from, to int64,
+) error {
+	for _, table := range changeGlobalStatsTables {
+		_, err := statsutil.ExecWithCtx(
+			ctx, sctx,
+			"update mysql."+table+" set table_id = %? where table_id = %?",
+			to, from,
+		)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+// UpdateStatsMetaVersion updates the version to the newest TS for a table.
+func UpdateStatsMetaVersion(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	physicalID int64,
+) (uint64, error) {
+	startTS, err := statsutil.GetStartTS(sctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if _, err = statsutil.ExecWithCtx(
+		ctx,
+		sctx,
+		"update mysql.stats_meta set version=%? where table_id =%?",
+		startTS, physicalID,
+	); err != nil {
+		return 0, errors.Trace(err)
+	}
+	return startTS, nil
+>>>>>>> 0e150fc7700 (statistics: improve handling for slow stats updates and logging (#59887))
 }

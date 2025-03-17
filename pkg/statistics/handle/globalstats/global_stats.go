@@ -461,3 +461,35 @@ func blockingMergePartitionStats2GlobalStats(
 	}
 	return
 }
+<<<<<<< HEAD
+=======
+
+// WriteGlobalStatsToStorage is to write global stats to storage
+func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *GlobalStats, info *statstypes.GlobalStatsInfo, gid int64) (err error) {
+	// Dump global-level stats to kv.
+	for i := 0; i < globalStats.Num; i++ {
+		hg, cms, topN := globalStats.Hg[i], globalStats.Cms[i], globalStats.TopN[i]
+		if hg == nil {
+			// All partitions have no stats so global stats are not created.
+			continue
+		}
+		// fms for global stats doesn't need to dump to kv.
+		err = statsHandle.SaveColOrIdxStatsToStorage(gid,
+			globalStats.Count,
+			globalStats.ModifyCount,
+			info.IsIndex,
+			hg,
+			cms,
+			topN,
+			info.StatsVersion,
+			true,
+			util.StatsMetaHistorySourceAnalyze,
+		)
+		if err != nil {
+			statslogutil.StatsLogger().Error("save global-level stats to storage failed",
+				zap.Int64("histID", hg.ID), zap.Error(err), zap.Int64("tableID", gid))
+		}
+	}
+	return err
+}
+>>>>>>> 0e150fc7700 (statistics: improve handling for slow stats updates and logging (#59887))

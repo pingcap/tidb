@@ -231,12 +231,18 @@ type StatsReadWriter interface {
 	// ReloadExtendedStatistics drops the cache for extended statistics and reload data from mysql.stats_extended.
 	ReloadExtendedStatistics() error
 
+<<<<<<< HEAD:pkg/statistics/handle/util/interfaces.go
 	// SaveStatsToStorage save the stats data to the storage.
 	SaveStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
 		cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool, source string) (err error)
+=======
+	// SaveColOrIdxStatsToStorage save the column or index stats to storage.
+	SaveColOrIdxStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
+		cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, updateAnalyzeTime bool, source string) (err error)
+>>>>>>> 0e150fc7700 (statistics: improve handling for slow stats updates and logging (#59887)):pkg/statistics/handle/types/interfaces.go
 
-	// SaveTableStatsToStorage saves the stats of a table to storage.
-	SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error)
+	// SaveAnalyzeResultToStorage saves the analyze result to the storage.
+	SaveAnalyzeResultToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error)
 
 	// InsertColStats2KV inserts columns stats to kv.
 	InsertColStats2KV(physicalID int64, colInfos []*model.ColumnInfo) (err error)

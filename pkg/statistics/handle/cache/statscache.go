@@ -34,6 +34,11 @@ import (
 	"go.uber.org/zap"
 )
 
+// LeaseOffset represents the time offset for the stats cache to load statistics from the store.
+// This value is crucial to ensure that the stats are retrieved at the correct interval.
+// See more at where it is used.
+const LeaseOffset = 5
+
 // StatsCacheImpl implements util.StatsCache.
 type StatsCacheImpl struct {
 	atomic.Pointer[StatsCache]
@@ -60,16 +65,139 @@ func NewStatsCacheImplForTest() (util.StatsCache, error) {
 }
 
 // Update reads stats meta from store and updates the stats map.
+<<<<<<< HEAD
 func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
 	start := time.Now()
+=======
+func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) error {
+	onlyForAnalyzedTables := len(tableAndPartitionIDs) > 0
+	start := time.Now()
+	defer func() {
+		dur := time.Since(start)
+		tidbmetrics.StatsDeltaLoadHistogram.Observe(dur.Seconds())
+	}()
+	lastVersion := s.GetNextCheckVersionWithOffset()
+	var (
+		skipMoveForwardStatsCache bool
+		rows                      []chunk.Row
+		err                       error
+	)
+	if err := util.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		query := "SELECT version, table_id, modify_count, count, snapshot from mysql.stats_meta where version > %? "
+		args := []any{lastVersion}
+
+		if onlyForAnalyzedTables {
+			// When updating specific tables, we skip incrementing the max stats version to avoid missing
+			// delta updates for other tables. The max version only advances when doing a full update.
+			skipMoveForwardStatsCache = true
+			// Sort and deduplicate the table IDs to remove duplicates
+			slices.Sort(tableAndPartitionIDs)
+			tableAndPartitionIDs = slices.Compact(tableAndPartitionIDs)
+			// Convert table IDs to strings since the SQL executor only accepts string arrays for IN clauses
+			tableStringIDs := make([]string, 0, len(tableAndPartitionIDs))
+			for _, tableID := range tableAndPartitionIDs {
+				tableStringIDs = append(tableStringIDs, strconv.FormatInt(tableID, 10))
+			}
+			query += "and table_id in (%?) "
+			args = append(args, tableStringIDs)
+		}
+		query += "order by version"
+		rows, _, err = util.ExecRows(sctx, query, args...)
+		return err
+	}); err != nil {
+		return errors.Trace(err)
+	}
+
+	tblToUpdateOrDelete := newCacheOfBatchUpdate(batchSizeOfUpdateBatch, func(toUpdate []*statistics.Table, toDelete []int64) {
+		s.UpdateStatsCache(types.CacheUpdate{
+			Updated: toUpdate,
+			Deleted: toDelete,
+			Options: types.UpdateOptions{
+				SkipMoveForward: skipMoveForwardStatsCache,
+			},
+		})
+	})
+
+	for _, row := range rows {
+		version := row.GetUint64(0)
+		physicalID := row.GetInt64(1)
+		modifyCount := row.GetInt64(2)
+		count := row.GetInt64(3)
+		snapshot := row.GetUint64(4)
+
+		// Detect the context cancel signal, since it may take a long time for the loop.
+		// TODO: add context to TableInfoByID and remove this code block?
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		table, ok := s.statsHandle.TableInfoByID(is, physicalID)
+		if !ok {
+			logutil.BgLogger().Debug(
+				"unknown physical ID in stats meta table, maybe it has been dropped",
+				zap.Int64("ID", physicalID),
+			)
+			tblToUpdateOrDelete.addToDelete(physicalID)
+			continue
+		}
+		tableInfo := table.Meta()
+		// If the table is not updated, we can skip it.
+		if oldTbl, ok := s.Get(physicalID); ok &&
+			oldTbl.Version >= version &&
+			tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
+			continue
+		}
+		tbl, err := s.statsHandle.TableStatsFromStorage(
+			tableInfo,
+			physicalID,
+			false,
+			0,
+		)
+		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
+		if err != nil {
+			statslogutil.StatsLogger().Error(
+				"error occurred when read table stats",
+				zap.String("table", tableInfo.Name.O),
+				zap.Error(err),
+			)
+			continue
+		}
+		if tbl == nil {
+			tblToUpdateOrDelete.addToDelete(physicalID)
+			continue
+		}
+		tbl.Version = version
+		tbl.RealtimeCount = count
+		tbl.ModifyCount = modifyCount
+		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
+		// It only occurs in the following situations:
+		// 1. The table has already been analyzed,
+		//	but because the predicate columns feature is turned on, and it doesn't have any columns or indexes analyzed,
+		//	it only analyzes _row_id and refreshes stats_meta, in which case the snapshot is not zero.
+		// 2. LastAnalyzeVersion is 0 because it has never been loaded.
+		// In this case, we can initialize LastAnalyzeVersion to the snapshot,
+		//	otherwise auto-analyze will assume that the table has never been analyzed and try to analyze it again.
+		if tbl.LastAnalyzeVersion == 0 && snapshot != 0 {
+			tbl.LastAnalyzeVersion = snapshot
+		}
+		tblToUpdateOrDelete.addToUpdate(tbl)
+	}
+	tblToUpdateOrDelete.flush()
+	return nil
+}
+
+// GetNextCheckVersionWithOffset gets the last version with offset.
+func (s *StatsCacheImpl) GetNextCheckVersionWithOffset() uint64 {
+	// Get the greatest version of the stats meta table.
+>>>>>>> 0e150fc7700 (statistics: improve handling for slow stats updates and logging (#59887))
 	lastVersion := s.MaxTableStatsVersion()
 	// We need this because for two tables, the smaller version may write later than the one with larger version.
 	// Consider the case that there are two tables A and B, their version and commit time is (A0, A1) and (B0, B1),
 	// and A0 < B0 < B1 < A1. We will first read the stats of B, and update the lastVersion to B0, but we cannot read
 	// the table stats of A0 if we read stats that greater than lastVersion which is B0.
 	// We can read the stats if the diff between commit time and version is less than five lease.
-	offset := util.DurationToTS(5 * s.statsHandle.Lease()) // 5 lease is 15s.
-	if s.MaxTableStatsVersion() >= offset {
+	offset := util.DurationToTS(LeaseOffset * s.statsHandle.Lease())
+	if lastVersion >= offset {
 		lastVersion = lastVersion - offset
 	} else {
 		lastVersion = 0

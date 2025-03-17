@@ -61,8 +61,12 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, analyzeSnapshot b
 			worker.errCh <- errors.Trace(exeerrors.ErrQueryInterrupted)
 			return
 		}
+<<<<<<< HEAD
 		statsHandle := domain.GetDomain(worker.sctx).StatsHandle()
 		err := statsHandle.SaveTableStatsToStorage(results, analyzeSnapshot, util.StatsMetaHistorySourceAnalyze)
+=======
+		err := statsHandle.SaveAnalyzeResultToStorage(results, analyzeSnapshot, util.StatsMetaHistorySourceAnalyze)
+>>>>>>> 0e150fc7700 (statistics: improve handling for slow stats updates and logging (#59887))
 		if err != nil {
 			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
 			finishJobWithLog(worker.sctx, results.Job, err)

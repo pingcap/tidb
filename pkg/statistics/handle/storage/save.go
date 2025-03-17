@@ -119,8 +119,8 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 	return
 }
 
-// SaveTableStatsToStorage saves the stats of a table to storage.
-func SaveTableStatsToStorage(sctx sessionctx.Context,
+// SaveAnalyzeResultToStorage saves the analyze result to the storage.
+func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 	results *statistics.AnalyzeResults, analyzeSnapshot bool) (statsVer uint64, err error) {
 	needDumpFMS := results.TableID.IsPartitionTable()
 	tableID := results.TableID.GetStatisticsID()
@@ -320,13 +320,27 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 	return
 }
 
-// SaveStatsToStorage saves the stats to storage.
+// SaveColOrIdxStatsToStorage saves the column or index statistics to the storage.
 // If count is negative, both count and modify count would not be used and not be written to the table. Unless, corresponding
 // fields in the stats_meta table will be updated.
 // TODO: refactor to reduce the number of parameters
+<<<<<<< HEAD
 func SaveStatsToStorage(sctx sessionctx.Context,
 	tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
 	cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool) (statsVer uint64, err error) {
+=======
+func SaveColOrIdxStatsToStorage(
+	sctx sessionctx.Context,
+	tableID int64,
+	count, modifyCount int64,
+	isIndex int,
+	hg *statistics.Histogram,
+	cms *statistics.CMSketch,
+	topN *statistics.TopN,
+	statsVersion int,
+	updateAnalyzeTime bool,
+) (statsVer uint64, err error) {
+>>>>>>> 0e150fc7700 (statistics: improve handling for slow stats updates and logging (#59887))
 	version, err := util.GetStartTS(sctx)
 	if err != nil {
 		return 0, errors.Trace(err)
