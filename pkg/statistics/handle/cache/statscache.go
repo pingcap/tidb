@@ -35,6 +35,11 @@ import (
 	"go.uber.org/zap"
 )
 
+// LeaseOffset represents the time offset for the stats cache to load statistics from the store.
+// This value is crucial to ensure that the stats are retrieved at the correct interval.
+// See more at where it is used.
+const LeaseOffset = 5
+
 // StatsCacheImpl implements util.StatsCache.
 type StatsCacheImpl struct {
 	atomic.Pointer[StatsCache]
@@ -63,7 +68,12 @@ func NewStatsCacheImplForTest() (types.StatsCache, error) {
 }
 
 // Update reads stats meta from store and updates the stats map.
+<<<<<<< HEAD
 func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
+=======
+func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, tableAndPartitionIDs ...int64) error {
+	onlyForAnalyzedTables := len(tableAndPartitionIDs) > 0
+>>>>>>> 0e150fc7700 (statistics: improve handling for slow stats updates and logging (#59887))
 	start := time.Now()
 	lastVersion := s.getLastVersion()
 	var (
@@ -71,11 +81,34 @@ func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
 		err  error
 	)
 	if err := util.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+<<<<<<< HEAD
 		rows, _, err = util.ExecRows(
 			sctx,
 			"SELECT version, table_id, modify_count, count from mysql.stats_meta where version > %? order by version",
 			lastVersion,
 		)
+=======
+		query := "SELECT version, table_id, modify_count, count, snapshot from mysql.stats_meta where version > %? "
+		args := []any{lastVersion}
+
+		if onlyForAnalyzedTables {
+			// When updating specific tables, we skip incrementing the max stats version to avoid missing
+			// delta updates for other tables. The max version only advances when doing a full update.
+			skipMoveForwardStatsCache = true
+			// Sort and deduplicate the table IDs to remove duplicates
+			slices.Sort(tableAndPartitionIDs)
+			tableAndPartitionIDs = slices.Compact(tableAndPartitionIDs)
+			// Convert table IDs to strings since the SQL executor only accepts string arrays for IN clauses
+			tableStringIDs := make([]string, 0, len(tableAndPartitionIDs))
+			for _, tableID := range tableAndPartitionIDs {
+				tableStringIDs = append(tableStringIDs, strconv.FormatInt(tableID, 10))
+			}
+			query += "and table_id in (%?) "
+			args = append(args, tableStringIDs)
+		}
+		query += "order by version"
+		rows, _, err = util.ExecRows(sctx, query, args...)
+>>>>>>> 0e150fc7700 (statistics: improve handling for slow stats updates and logging (#59887))
 		return err
 	}); err != nil {
 		return errors.Trace(err)
@@ -145,8 +178,8 @@ func (s *StatsCacheImpl) getLastVersion() uint64 {
 	// and A0 < B0 < B1 < A1. We will first read the stats of B, and update the lastVersion to B0, but we cannot read
 	// the table stats of A0 if we read stats that greater than lastVersion which is B0.
 	// We can read the stats if the diff between commit time and version is less than five lease.
-	offset := util.DurationToTS(5 * s.statsHandle.Lease()) // 5 lease is 15s.
-	if s.MaxTableStatsVersion() >= offset {
+	offset := util.DurationToTS(LeaseOffset * s.statsHandle.Lease())
+	if lastVersion >= offset {
 		lastVersion = lastVersion - offset
 	} else {
 		lastVersion = 0

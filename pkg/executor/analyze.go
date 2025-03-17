@@ -18,8 +18,10 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"maps"
 	"math"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -498,10 +500,12 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 	wg.Wait()
 	close(errCh)
 	if len(errCh) > 0 {
-		errMsg := make([]string, 0)
-		for err1 := range errCh {
-			errMsg = append(errMsg, err1.Error())
+		errSet := make(map[string]struct{}, len(errCh))
+		for workerError := range errCh {
+			errSet[workerError.Error()] = struct{}{}
 		}
+		intest.Assert(len(errSet) > 0, "errSet should at least contain one error")
+		errMsg := slices.Collect(maps.Keys(errSet))
 		err = errors.New(strings.Join(errMsg, ","))
 	}
 	for tableID := range tableIDs {

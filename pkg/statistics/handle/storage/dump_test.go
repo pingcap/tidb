@@ -361,7 +361,11 @@ func TestDumpCMSketchWithTopN(t *testing.T) {
 	cms, _, _, _ := statistics.NewCMSketchAndTopN(5, 2048, fakeData, 20, 100)
 
 	stat := h.GetTableStats(tableInfo)
+<<<<<<< HEAD
 	err = h.SaveStatsToStorage(tableInfo.ID, 1, 0, 0, &stat.Columns[tableInfo.Columns[0].ID].Histogram, cms, nil, statistics.Version1, 1, false, handleutil.StatsMetaHistorySourceLoadStats)
+=======
+	err = h.SaveColOrIdxStatsToStorage(tableInfo.ID, 1, 0, 0, &stat.GetCol(tableInfo.Columns[0].ID).Histogram, cms, nil, statistics.Version1, false, handleutil.StatsMetaHistorySourceLoadStats)
+>>>>>>> 0e150fc7700 (statistics: improve handling for slow stats updates and logging (#59887))
 	require.NoError(t, err)
 	require.Nil(t, h.Update(is))
 
