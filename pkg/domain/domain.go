@@ -2821,10 +2821,12 @@ func (do *Domain) dumpColStatsUsageWorker() {
 		case <-do.exit:
 			return
 		case <-dumpColStatsUsageTicker.C:
+			start := time.Now()
 			err := statsHandle.DumpColStatsUsageToKV()
 			if err != nil {
 				logutil.BgLogger().Warn("dump column stats usage failed", zap.Error(err))
 			}
+			logutil.BgLogger().Info("dump column stats usage to kv finished", zap.Duration("costTime", time.Since(start)))
 		}
 	}
 }
