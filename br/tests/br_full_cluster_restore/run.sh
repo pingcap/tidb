@@ -1,6 +1,7 @@
 #! /bin/bash
 
 set -eu
+set -x
 
 # we need to keep backup data after restart service
 CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -21,6 +22,7 @@ function run_sql_as() {
   mysql -u$user -p$password -h127.0.0.1 -P4000 \
       "$@" \
       --default-character-set utf8 -E -e "$SQL" > "$TEST_DIR/sql_res.$TEST_NAME.txt" 2>&1
+  echo "SQL result: $(cat $TEST_DIR/sql_res.$TEST_NAME.txt)"
 }
 
 restart_services
@@ -127,12 +129,12 @@ check_contains "count(*): 2"
 run_sql_as user2 "123456" "select count(*) from db2.t1" || true
 check_contains "SELECT command denied to user"
 # user3 can only query db1.t1 using ssl
-# ci env uses mariadb client, ssl flag is different with mysql client
+# ci env uses mysql client, ssl flag is different with mariadb client
 run_sql_as user3 "123456" "select count(*) from db1.t1" || true
 check_contains "Access denied for user"
-run_sql_as user3 "123456" "select count(*) from db1.t1" --ssl
+run_sql_as user3 "123456" "select count(*) from db1.t1" --ssl-mode=REQUIRED
 check_contains "count(*): 2"
-run_sql_as user3 "123456" "select count(*) from db1.t2" --ssl || true
+run_sql_as user3 "123456" "select count(*) from db1.t2" --ssl-mode=REQUIRED || true
 check_contains "SELECT command denied to user"
 run_sql "select count(*) from mysql.user where user='cloud_admin'"
 check_contains "count(*): 3"
