@@ -397,6 +397,7 @@ func (checker *nonPreparedPlanCacheableChecker) reset(sctx base.PlanContext, sch
 
 // Enter implements Visitor interface.
 func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+	return in, !checker.cacheable
 	if checker.isFilterNode(in) {
 		checker.filterCnt++
 	}
