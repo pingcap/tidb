@@ -783,7 +783,8 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 		return errors.Trace(err)
 	}
 	defer sessPool.Put(sctx)
-	avgRowSize := estimateTableRowSize(ctx, dc.store, sctx.GetRestrictedSQLExecutor(), t)
+	avgRowSize, _ := ingest.EstimateTableRowSize(ctx, dc.store,
+		sctx.GetRestrictedSQLExecutor(), reorgInfo.dbInfo, t.Meta(), indexInfos)
 
 	engines, err := bcCtx.Register(indexIDs, uniques, t)
 	if err != nil {

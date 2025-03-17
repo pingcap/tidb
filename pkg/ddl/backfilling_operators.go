@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -982,6 +983,7 @@ func (s *indexWriteResultSink) collectResult() error {
 func (s *indexWriteResultSink) flush() error {
 	if s.backendCtx == nil { // use cloud storage
 		if s.writeStore != s.mergeStore { // use local disk
+			logSubtaskTempDirSize(s.ctx, s.jobID, s.subtaskID)
 			return s.mergeLocalOverlappingFilesAndUpload()
 		}
 		return nil
@@ -989,7 +991,43 @@ func (s *indexWriteResultSink) flush() error {
 	failpoint.Inject("mockFlushError", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("mock flush error"))
 	})
+	err := s.backendCtx.Flush(s.ctx)
+	if err != nil {
+		return err
+	}
+	logSubtaskTempDirSize(s.ctx, s.jobID, s.subtaskID)
 	return s.backendCtx.Ingest(s.ctx)
+}
+
+func logSubtaskTempDirSize(ctx context.Context, jobID, subtaskID int64) {
+	ingestBaseDir := ingest.GetIngestTempDataDir()
+	var targetDir string
+	if subtaskID == 0 {
+		targetDir = path.Join(ingestBaseDir, strconv.Itoa(int(jobID)))
+	} else {
+		targetDir = path.Join(ingestBaseDir, strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
+	}
+	var size int64
+	err := filepath.Walk(targetDir, func(_ string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			size += info.Size()
+		}
+		return err
+	})
+	if err != nil {
+		logutil.Logger(ctx).Warn("fail to get subtask data size",
+			zap.Int64("jobID", jobID),
+			zap.Int64("subtaskID", subtaskID),
+		)
+		return
+	}
+	logutil.Logger(ctx).Info("subtask data size",
+		zap.Int64("jobID", jobID),
+		zap.Int64("subtaskID", subtaskID),
+		zap.String("size", units.BytesSize(float64(size))))
 }
 
 func (s *indexWriteResultSink) mergeLocalOverlappingFilesAndUpload() error {

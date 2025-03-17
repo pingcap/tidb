@@ -127,9 +127,8 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 	// TODO: use planner.
 	switch nextStep {
 	case proto.BackfillStepReadIndex:
-		availableDisk := sch.nodeRes.GetTaskDiskResource(task.Concurrency, vardef.DDLDiskQuota.Load())
-		logger.Info("available local disk space resource", zap.String("size", units.BytesSize(float64(availableDisk))))
-		return generateReadIndexPlan(ctx, sch.d, tblInfo, job, sch.GlobalSort, len(execIDs), availableDisk, logger)
+		maxRegionPerSubtask := getMaxRegionPerSubtask(ctx, sch.d, sch.nodeRes, task.Concurrency, &backfillMeta, logger)
+		return generateReadIndexPlan(ctx, sch.d, tblInfo, job, sch.GlobalSort, len(execIDs), maxRegionPerSubtask, logger)
 	case proto.BackfillStepMergeSort:
 		return generateMergePlan(taskHandle, task, logger)
 	case proto.BackfillStepWriteAndIngest:
@@ -235,6 +234,45 @@ const (
 	scanRegionBackoffMax  = 2 * time.Second
 )
 
+func getMaxRegionPerSubtask(
+	ctx context.Context,
+	d *ddl,
+	nodeRes *proto.NodeResource,
+	concurrency int,
+	bfMeta *BackfillTaskMeta,
+	logger *zap.Logger,
+) int {
+	if bfMeta.EstimateRowSize == 0 {
+		return 0
+	}
+	pdCli := d.store.(tikv.Storage).GetRegionCache().PDClient()
+	tls, err := ingest.NewDDLTLS()
+	if err != nil {
+		logger.Warn("fail to get max regions per subtask", zap.Error(err))
+		return 0
+	}
+	regionSplitSize, _, err := local.GetRegionSplitSizeKeys(ctx, pdCli, tls)
+	if err != nil {
+		logger.Warn("fail to get max regions per subtask", zap.Error(err))
+		return 0
+	}
+	ddlDiskQuota := vardef.DDLDiskQuota.Load()
+	availableDisk := nodeRes.GetTaskDiskResource(concurrency, ddlDiskQuota)
+	ratio := float64(bfMeta.EstimateIndexSizePerRow) / float64(bfMeta.EstimateRowSize)
+	idxSizePerRegion := uint64(float64(regionSplitSize) * ratio)
+	logger.Info("get max regions per subtask",
+		zap.Uint64("regions", availableDisk/idxSizePerRegion),
+		zap.String("regionSize", units.BytesSize(float64(regionSplitSize))),
+		zap.Int("concurrency", concurrency),
+		zap.String("availableDisk", units.BytesSize(float64(availableDisk))),
+		zap.String("diskQuota", units.BytesSize(float64(ddlDiskQuota))),
+		zap.Int("estimateRowSize", bfMeta.EstimateRowSize),
+		zap.Int("estimateIndexSize", bfMeta.EstimateIndexSizePerRow),
+		zap.Float64("idxRowRatio", ratio),
+	)
+	return int(availableDisk / idxSizePerRegion)
+}
+
 func generateReadIndexPlan(
 	ctx context.Context,
 	d *ddl,
@@ -242,7 +280,7 @@ func generateReadIndexPlan(
 	job *model.Job,
 	useCloud bool,
 	instanceCnt int,
-	availableDiskUsage uint64,
+	maxRegionsPerSubtask int,
 	logger *zap.Logger,
 ) (metas [][]byte, err error) {
 	tbl, err := getTable(d.ddlCtx.getAutoIDRequirement(), job.SchemaID, tblInfo)
@@ -250,12 +288,12 @@ func generateReadIndexPlan(
 		return nil, err
 	}
 	if tblInfo.Partition == nil {
-		return generatePlanForPhysicalTable(ctx, d, tbl.(table.PhysicalTable), job, useCloud, instanceCnt, availableDiskUsage, logger)
+		return generatePlanForPhysicalTable(ctx, d, tbl.(table.PhysicalTable), job, useCloud, instanceCnt, maxRegionsPerSubtask, logger)
 	}
 	defs := tblInfo.Partition.Definitions
 	for _, def := range defs {
 		partTbl := tbl.GetPartitionedTable().GetPartition(def.ID)
-		partMeta, err := generatePlanForPhysicalTable(ctx, d, partTbl, job, useCloud, instanceCnt, availableDiskUsage, logger)
+		partMeta, err := generatePlanForPhysicalTable(ctx, d, partTbl, job, useCloud, instanceCnt, maxRegionsPerSubtask, logger)
 		if err != nil {
 			return nil, err
 		}
@@ -271,7 +309,7 @@ func generatePlanForPhysicalTable(
 	job *model.Job,
 	useCloud bool,
 	instanceCnt int,
-	availableDiskUsage uint64,
+	maxRegionsPerSubtask int,
 	logger *zap.Logger,
 ) (metas [][]byte, err error) {
 	ver, err := getValidCurrentVersion(d.store)
@@ -316,7 +354,7 @@ func generatePlanForPhysicalTable(
 			return true, nil
 		}
 
-		regionBatch := CalculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud, availableDiskUsage)
+		regionBatch := CalculateRegionBatch(len(recordRegionMetas), instanceCnt, !useCloud, maxRegionsPerSubtask)
 		logger.Info("calculate region batch",
 			zap.Int("totalRegionCnt", len(recordRegionMetas)),
 			zap.Int("regionBatch", regionBatch),
@@ -365,22 +403,22 @@ func generatePlanForPhysicalTable(
 }
 
 // CalculateRegionBatch is exported for test.
-func CalculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool, availableDiskUsage uint64) int {
+func CalculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool, maxRegionsPerSubtask int) int {
 	failpoint.Inject("mockRegionBatch", func(val failpoint.Value) {
 		failpoint.Return(val.(int))
 	})
 	var regionBatch int
+	defer func() {
+		logutil.DDLLogger().Info("calculate region batch", zap.Int("cnt", regionBatch))
+	}()
 	avgTasksPerInstance := (totalRegionCnt + instanceCnt - 1) / instanceCnt // ceiling
 	if useLocalDisk {
 		regionBatch = avgTasksPerInstance
 	} else {
 		// For cloud storage, each subtask should contain no more than 4000 regions.
 		regionBatch = min(4000, avgTasksPerInstance)
-		if vardef.EnableGlobalSortLocalStore.Load() && availableDiskUsage > 0 {
-			// TODO(tangenta): use a better estimate solution.
-			approxMaxRegions := availableDiskUsage / (96 * units.MiB)
-			logutil.DDLLogger().Info("calculate region batch", zap.Uint64("max region count", approxMaxRegions))
-			regionBatch = min(int(approxMaxRegions), avgTasksPerInstance)
+		if vardef.EnableGlobalSortLocalStore.Load() && maxRegionsPerSubtask > 0 {
+			regionBatch = min(maxRegionsPerSubtask, avgTasksPerInstance)
 		}
 	}
 	regionBatch = max(regionBatch, 1)

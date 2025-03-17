@@ -108,7 +108,7 @@ func WaitTaskDoneOrPaused(ctx context.Context, id int64) error {
 		return nil
 	case proto.TaskStateReverted:
 		logger.Error("task reverted", zap.Error(found.Error))
-		return found.Error
+		return wrapWithNonRetryable(found.Error)
 	case proto.TaskStatePaused:
 		logger.Error("task paused")
 		return nil
@@ -116,6 +116,10 @@ func WaitTaskDoneOrPaused(ctx context.Context, id int64) error {
 		return errors.Errorf("task stopped with state %s, err %v", found.State, found.Error)
 	}
 	return nil
+}
+
+func wrapWithNonRetryable(err error) error {
+	return errors.New("task reverted: " + err.Error())
 }
 
 // WaitTaskDoneByKey waits for a task done by task key.

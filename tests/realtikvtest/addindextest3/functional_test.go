@@ -22,7 +22,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -46,20 +45,20 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "estimate_row_size")
 	tkSess := tk.Session()
 	exec := tkSess.GetRestrictedSQLExecutor()
+	dbInfo, exists := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+	require.True(t, exists)
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
-	size := ddl.EstimateTableRowSizeForTest(ctx, store, exec, tbl)
-	require.Equal(t, 0, size) // No data in information_schema.columns.
-	tk.MustExec("analyze table t all columns;")
-	size = ddl.EstimateTableRowSizeForTest(ctx, store, exec, tbl)
-	require.Equal(t, 16, size)
+	size := ingest.EstimateTableRowSize(ctx, store, exec, dbInfo, tbl)
+	require.Equal(t, 4, size)
 
 	tk.MustExec("alter table t add column c varchar(255);")
 	tk.MustExec("update t set c = repeat('a', 50) where a = 1;")
-	tk.MustExec("analyze table t all columns;")
-	size = ddl.EstimateTableRowSizeForTest(ctx, store, exec, tbl)
-	require.Equal(t, 67, size)
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	size = ingest.EstimateTableRowSize(ctx, store, exec, tbl, dbInfo)
+	require.Equal(t, 56, size)
 
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (id bigint primary key, b text) partition by hash(id) partitions 4;")
@@ -68,18 +67,16 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 		tk.MustExec(insertSQL)
 	}
 	tk.MustQuery("split table t between (0) and (1000000) regions 2;").Check(testkit.Rows("4 1"))
-	tk.MustExec("set global tidb_analyze_skip_column_types=`json,blob,mediumblob,longblob`")
-	tk.MustExec("analyze table t all columns;")
 	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	size = ddl.EstimateTableRowSizeForTest(ctx, store, exec, tbl)
-	require.Equal(t, 19, size)
+	size = ingest.EstimateTableRowSize(ctx, store, exec, tbl, dbInfo)
+	require.Equal(t, 16, size)
 	ptbl := tbl.GetPartitionedTable()
 	pids := ptbl.GetAllPartitionIDs()
 	for _, pid := range pids {
 		partition := ptbl.GetPartition(pid)
-		size = ddl.EstimateTableRowSizeForTest(ctx, store, exec, partition)
-		require.Equal(t, 19, size)
+		size = ingest.EstimateTableRowSize(ctx, store, exec, partition, dbInfo)
+		require.Equal(t, 16, size)
 	}
 }
 

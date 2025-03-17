@@ -91,6 +91,11 @@ func (m *MockBackendCtx) IngestIfQuotaExceeded(_ context.Context, taskID, cnt in
 	return nil
 }
 
+// Flush implements BackendCtx.Flush interface.
+func (m *MockBackendCtx) Flush(_ context.Context) error {
+	return nil
+}
+
 // Ingest implements BackendCtx.Ingest interface.
 func (m *MockBackendCtx) Ingest(_ context.Context) error {
 	if m.checkpointMgr != nil {

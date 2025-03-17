@@ -39,8 +39,9 @@ type BackfillTaskMeta struct {
 	// For now, only index type is supported.
 	EleTypeKey []byte `json:"ele_type_key"`
 
-	CloudStorageURI string `json:"cloud_storage_uri"`
-	EstimateRowSize int    `json:"estimate_row_size"`
+	CloudStorageURI         string `json:"cloud_storage_uri"`
+	EstimateRowSize         int    `json:"estimate_row_size"`
+	EstimateIndexSizePerRow int    `json:"estimate_index_size_per_row"`
 }
 
 // BackfillSubTaskMeta is the sub-task meta for backfilling index.
