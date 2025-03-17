@@ -118,6 +118,7 @@ go_test(
         "table_import_test.go",
         "tidb_test.go",
     ],
+    data = glob(["testdata/**"]),
     embed = [":importer"],
     flaky = True,
     shard_count = 50,
