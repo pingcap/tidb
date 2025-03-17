@@ -1037,6 +1037,9 @@ func constructInnerTableScanTask(
 	rowCount float64,
 ) base.Task {
 	copTask := constructDS2TableScanTask(wrapper.ds, ranges, rangeInfo, keepOrder, desc, rowCount)
+	if copTask == nil {
+		return nil
+	}
 	return constructIndexJoinInnerSideTaskWithAggCheck(p, prop, copTask.(*CopTask), wrapper.ds, nil, wrapper)
 }
 
@@ -1246,6 +1249,9 @@ func constructInnerIndexScanTask(
 	maxOneRow bool,
 ) base.Task {
 	copTask := constructDS2IndexScanTask(wrapper.ds, path, ranges, filterConds, idxOffset2joinKeyOffset, rangeInfo, keepOrder, desc, rowCount, maxOneRow)
+	if copTask == nil {
+		return nil
+	}
 	return constructIndexJoinInnerSideTaskWithAggCheck(p, prop, copTask.(*CopTask), wrapper.ds, path, wrapper)
 }
 
