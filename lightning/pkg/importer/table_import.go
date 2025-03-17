@@ -669,6 +669,7 @@ func (tr *TableImporter) preprocessEngine(
 		dataEngineCfg.Local.Compact = true
 		dataEngineCfg.Local.CompactConcurrency = 4
 		dataEngineCfg.Local.CompactThreshold = local.CompactionUpperThreshold
+		dataEngineCfg.Local.BlockSize = int(rc.cfg.TikvImporter.BlockSize)
 	}
 	dataEngine, err := rc.engineMgr.OpenEngine(ctx, dataEngineCfg, tr.tableName, engineID)
 	if err != nil {
