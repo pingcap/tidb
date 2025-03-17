@@ -246,7 +246,7 @@ func (s *statsSyncLoad) AppendNeededItem(task *statstypes.NeededItemTask, timeou
 var errExit = errors.New("Stop loading since domain is closed")
 
 // SubLoadWorker loads hist data for each column
-func (s *statsSyncLoad) SubLoadWorker(sctx sessionctx.Context, exit chan struct{}, exitWg *util.WaitGroupEnhancedWrapper) {
+func (s *statsSyncLoad) SubLoadWorker(exit chan struct{}, exitWg *util.WaitGroupEnhancedWrapper) {
 	defer func() {
 		exitWg.Done()
 		logutil.BgLogger().Info("SubLoadWorker exited.")
@@ -254,7 +254,7 @@ func (s *statsSyncLoad) SubLoadWorker(sctx sessionctx.Context, exit chan struct{
 	// if the last task is not successfully handled in last round for error or panic, pass it to this round to retry
 	var lastTask *statstypes.NeededItemTask
 	for {
-		task, err := s.HandleOneTask(sctx, lastTask, exit)
+		task, err := s.HandleOneTask(lastTask, exit)
 		lastTask = task
 		if err != nil {
 			switch err {
@@ -275,9 +275,7 @@ func (s *statsSyncLoad) SubLoadWorker(sctx sessionctx.Context, exit chan struct{
 //   - If the task is handled successfully, return nil, nil.
 //   - If the task is timeout, return the task and nil. The caller should retry the timeout task without sleep.
 //   - If the task is failed, return the task, error. The caller should retry the timeout task with sleep.
-//
-// TODO: remove this session context, it's not necessary.
-func (s *statsSyncLoad) HandleOneTask(_ sessionctx.Context, lastTask *statstypes.NeededItemTask, exit chan struct{}) (task *statstypes.NeededItemTask, err error) {
+func (s *statsSyncLoad) HandleOneTask(lastTask *statstypes.NeededItemTask, exit chan struct{}) (task *statstypes.NeededItemTask, err error) {
 	defer func() {
 		// recover for each task, worker keeps working
 		if r := recover(); r != nil {
