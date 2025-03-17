@@ -778,7 +778,6 @@ func constructIndexHashJoin(
 // or match some part of on index. If so we will choose the best one and construct a index join.
 func getIndexJoinByOuterIdx(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, outerIdx int) (joins []base.PhysicalPlan) {
 	outerChild, innerChild := p.Children()[outerIdx], p.Children()[1-outerIdx]
-	// 需要 same order
 	all, _ := prop.AllSameOrder()
 	// If the order by columns are not all from outer child, index join cannot promise the order.
 	if !prop.AllColsFromSchema(outerChild.Schema()) || !all {
@@ -841,7 +840,6 @@ childLoop:
 	for curChild := innerChild; curChild != nil; curChild = nextChild(curChild) {
 		switch child := curChild.(type) {
 		case *logicalop.DataSource:
-			// 这里要看到 ds，因为需要 assert 到 ds 的 range scan 才能算有效的 index join
 			wrapper.ds = child
 			break childLoop
 		case *logicalop.LogicalProjection, *logicalop.LogicalSelection, *logicalop.LogicalAggregation:
@@ -1548,7 +1546,6 @@ func filterIndexJoinBySessionVars(sc base.PlanContext, indexJoins []base.Physica
 	if sc.GetSessionVars().EnableIndexMergeJoin {
 		return indexJoins
 	}
-	// 太 hack 了吧，卧槽
 	for i := len(indexJoins) - 1; i >= 0; i-- {
 		if _, ok := indexJoins[i].(*PhysicalIndexMergeJoin); ok {
 			indexJoins = append(indexJoins[:i], indexJoins[i+1:]...)
@@ -1628,7 +1625,7 @@ func tryToGetIndexJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty
 		return candidates, canForced
 	}
 	candidates = handleFilterIndexJoinHints(p, candidates)
-	// 最后才把 index merge 给 filter 掉的，不要生成不就完了吗
+	// todo: if any variables banned it, why bother to generate it first?
 	return filterIndexJoinBySessionVars(p.SCtx(), candidates), false
 }
 
