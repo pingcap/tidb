@@ -1394,14 +1394,7 @@ func (w *Writer) addSST(ctx context.Context, meta *sstMeta) error {
 
 func (w *Writer) createSSTWriter() (*sstWriter, error) {
 	path := filepath.Join(w.engine.sstDir, uuid.New().String()+".sst")
-
-	blockSize := w.engine.config.BlockSize
-	// Logic to check the block size we are using is at least 16KB.
-	if blockSize <= 0 {
-		blockSize = DefaultBlockSize
-	}
-	writer, err := newSSTWriter(path, blockSize)
-
+	writer, err := newSSTWriter(path, w.engine.config.BlockSize)
 	if err != nil {
 		return nil, err
 	}
@@ -1427,6 +1420,12 @@ func newSSTWriter(path string, blockSize int) (*sstable.Writer, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	// Logic to check the block size we are using is 16KB by default.
+	if blockSize <= 0 {
+		blockSize = DefaultBlockSize
+	}
+
 	writable := objstorageprovider.NewFileWritable(f)
 	writer := sstable.NewWriter(writable, sstable.WriterOptions{
 		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
