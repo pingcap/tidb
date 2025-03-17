@@ -313,8 +313,8 @@ func (p *PhysicalProperty) IsSubsetOf(keys []*MPPPartitionColumn) []int {
 // for example:
 //  1. MPPPartitionCols: [18，13，16]
 //  2. keys: [9]
-//  3. FD: (1)-->(2-6,8), ()-->(7), (9)-->(10-18), (1,10)==(1,10), (18,21)-->(19,20,22-33)
-//     Because (9)-->(10-18), it is possible to avoid an exchange between [18, 13, 16] and [9].
+//  3. FD: (1)-->(2-6,8), ()-->(7), (9)-->(10-17), (1,10)==(1,10), (18,21)-->(19,20,22-33), (9,18)==(9,18)
+//     Because (9)-->(10-17) and (9,18)==(9,18), it is possible to avoid an exchange between [18, 13, 16] and [9].
 func (p *PhysicalProperty) NeedEnforceExchangerWithHashByEquivalence(keys []*MPPPartitionColumn) bool {
 	// keys is the HashCol. If the partition cols are a subset of the hash cols, then need to enforce exchange.
 	if len(p.MPPPartitionCols) < len(keys) {
