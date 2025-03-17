@@ -64,7 +64,8 @@ func (aa *autoAdmin) recordCandidates(currentCandidates s.Set[Index]) {
 	aa.allCandidates = s.UnionSet(aa.allCandidates, currentCandidates)
 }
 
-func (aa *autoAdmin) calculateBestIndexes(querySet s.Set[Query], indexableColSet s.Set[Column]) (s.Set[Index], s.Set[Index], error) {
+func (aa *autoAdmin) calculateBestIndexes(querySet s.Set[Query],
+	indexableColSet s.Set[Column]) (s.Set[Index], s.Set[Index], error) {
 	if aa.option.MaxNumIndexes == 0 {
 		return nil, nil, nil
 	}
