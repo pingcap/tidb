@@ -343,7 +343,8 @@ SubsetLoop:
 				continue SubsetLoop
 			}
 		}
-		// once a child supplied keys can't find direct/in-direct equiv all parent required partition cols, we can break the subset check.
+		// once a child supplied keys can't find direct/in-direct equiv all parent required partition cols,
+		// we can break the subset check.
 		isSubset = false
 		break SubsetLoop
 	}
