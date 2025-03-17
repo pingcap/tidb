@@ -17,7 +17,6 @@ package core
 import (
 	"cmp"
 	"fmt"
-	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"math"
 	"slices"
 	"strings"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
