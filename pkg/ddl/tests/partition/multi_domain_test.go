@@ -2168,3 +2168,170 @@ func TestIssue58864(t *testing.T) {
 	})
 	tk.MustExec("alter table t remove partitioning")
 }
+
+func TestMultiSchemaNewTiDBRowID(t *testing.T) {
+	createSQL := "CREATE TABLE `t` (\n" +
+		"  `a` int(11) DEFAULT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL,\n" +
+		"  KEY `idx_a` (`a`),\n" +
+		"  KEY `idx_b` (`b`),\n" +
+		"  KEY `idx_ab` (`a`,`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY HASH (`a`) PARTITIONS 4"
+	oldTableDef := "t " + createSQL
+	newTableDef := oldTableDef
+	newTableDef = newTableDef[:len(newTableDef)-1] + "3"
+	//var rows int
+	initFn := func(tk *testkit.TestKit) {
+		tk.MustExec("insert into t (a, b) values (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9),(10,10)")
+		tk.MustExec("insert into t (a,b) select a+10,b+10 from t order by a")
+		tk.MustExec("create table tx0 (a int, b int, index idx_a (a), index idx_b (b), index idx_ab (a,b))")
+		tk.MustExec("insert into tx0 select * from t partition(p0)")
+		resTmp := tk.MustQuery(`select *, _tidb_rowid from tx0`)
+		logutil.BgLogger().Info("rows in Exchanged table tx0", zap.Any("rows", resTmp.Rows()))
+		//tk.MustExec("insert into tx0 (a,b) select a,b from t where a % 4 = 0 order by a")
+		tk.MustExec("alter table t exchange partition p0 with table tx0 without validation")
+		tk.MustExec("create table tx1 (a int, b int, index idx_a (a), index idx_b (b), index idx_ab (a,b))")
+		tk.MustExec("insert into tx1 (a,b) select a,b from t where a % 4 = 1 order by a")
+		tk.MustExec("create table tx2 (a int, b int, index idx_a (a), index idx_b (b), index idx_ab (a,b))")
+		tk.MustExec("insert into tx2 (a,b) select a,b from t where a % 4 = 2 order by a")
+		tk.MustExec("create table tx3 (a int, b int, index idx_a (a), index idx_b (b), index idx_ab (a,b))")
+		tk.MustExec("insert into tx3 (a,b) select a,b from t where a % 4 = 3 order by a")
+		tk.MustExec("alter table t exchange partition p1 with table tx1 without validation")
+		tk.MustExec("alter table t exchange partition p2 with table tx2 without validation")
+		tk.MustExec("alter table t exchange partition p3 with table tx3 without validation")
+		tk.MustExec("drop table tx0, tx1, tx2, tx3")
+		res := tk.MustQuery("select *, _tidb_rowid from t")
+		//rows = len(res.Rows())
+		res.Sort().Check(testkit.Rows(
+			"1 1 1",
+			"10 10 3",
+			"11 11 3",
+			"12 12 3",
+			"13 13 4",
+			"14 14 4",
+			"15 15 4",
+			"16 16 4",
+			"17 17 5",
+			"18 18 5",
+			"19 19 5",
+			"2 2 1",
+			"20 20 5",
+			"3 3 1",
+			"4 4 1",
+			"5 5 2",
+			"6 6 2",
+			"7 7 2",
+			"8 8 2",
+			"9 9 3"))
+	}
+	alterSQL := `alter table t coalesce partition 3`
+	loopFn := func(tkO, tkNO *testkit.TestKit) {
+		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
+		schemaState := res.Rows()[0][0].(string)
+		// TODO: Enable this check or move it to postFn!
+		//tkO.MustExec("admin check table t /* " + schemaState + " */")
+		switch schemaState {
+		case "delete only":
+			// Cannot do any test for updated _tidb_rowid
+		case "write only":
+			// Test if WriteReorganize will update the right New Partitions or create duplicates?
+			// Test two consecutive updates:
+			// - First update creates a new _tidb_rowid in old partition, is the _tidb_rowid also written to the new ones?
+			// - Second update will it update the correct _tidb_rowid in the new partition?
+			// 24 % 4 = 0, 24 % 3 = 0
+			tkO.MustExec("update t set a = 24 where a = 1")
+			// 25 % 4 = 1, 25 % 3 = 1
+			tkO.MustExec("update t set a = 25 where a = 24")
+			// Test the same but with a delete instead of in second query
+			// 26 % 4 = 2, 26 % 3 = 2
+			tkO.MustExec("update t set a = 26 where a = 3")
+			tkO.MustExec("delete from t where a = 26")
+
+			// - First update creates a new _tidb_rowid in new partition only
+			// - Second update will it update the correct _tidb_rowid in the new partition?
+			// 22 % 4 = 2, 22 % 3 = 1
+			tkO.MustExec("update t set a = 22 where a = 2")
+			// Will this create yet new duplicates or not?
+			// 42 % 4 = 2, 42 % 3 = 0
+			tkO.MustExec("update t set a = 42 where a = 22")
+			// Test the same but with a delete instead of in second query
+			// 12 % 4 = 0, 12 % 3 = 0, 23 % 4 = 3, 23 % 3 = 2
+			tkO.MustExec("update t set a = 23 where a = 12")
+			tkO.MustExec("delete from t where a = 23")
+			// TODO: More variants?
+		case "write reorganization":
+			// Is this before, during or after backfill?
+		case "delete reorganization":
+			// 'new' different, 'old' different
+			// 13 % 4 = 1, 13 % 3 = 1, 36 % 4 = 0, 36 % 3 = 0
+			tkO.MustExec("update t set a = 36 where a = 13")
+			// 38 % 4 = 2, 38 % 3 = 2
+			tkO.MustExec("update t set a = 38 where a = 36")
+			// Test the same but with a delete instead of in second query
+			// 14 % 4 = 2, 14 % 3 = 2, 37 % 4 = 1, 37 % 3 = 1
+			tkO.MustExec("update t set a = 37 where a = 14")
+			tkO.MustExec("delete from t where a = 37")
+			// TODO: FIXME: these two will show "14 14" and "37 14"!
+			//tkNO.MustQuery("select * from t where a = 14").Check(testkit.Rows())
+			//tkNO.MustQuery("select * from t where a = 37").Check(testkit.Rows())
+
+			// 'new' same, 'old' different
+			// 6 % 4 = 2, 6 % 3 = 0, 21 % 4 = 1, 21 % 3 = 0
+			tkO.MustExec("update t set a = 21 where a = 6")
+			// 41 % 4 = 1, 41 % 3 = 2
+			// Will this create yet new duplicates or not?
+			tkO.MustExec("update t set a = 41 where a = 21")
+			// Test the same but with a delete instead of in second query
+			// 7 % 4 = 3, 7 % 3 = 1, 28 % 4 = 0, 28 % 3 = 1
+			tkO.MustExec("update t set a = 28 where a = 7")
+			tkO.MustExec("delete from t where a = 28")
+			// TODO: FIXME: these two shows "7 7" and "28 7"
+			//tkNO.MustQuery("select * from t where a = 7").Check(testkit.Rows())
+			//tkNO.MustQuery("select * from t where a = 28").Check(testkit.Rows())
+
+			// TODO: Also do the opposite, i.e. change the 'old' and check the 'new' with tkNO (old) and tkO (new)
+			// Check new _tidb_rowid's, i.e. anything apart from p0
+		case "public":
+		case "none":
+		default:
+			require.Fail(t, "unhandled schema state", "State: '%s'", schemaState)
+		}
+		//tmpRows := tkO.MustQuery("select count(*) from t").Rows()[0][0].(string)
+		//tmpNr, err := strconv.Atoi(tmpRows)
+		//require.NoError(t, err)
+		//require.Equal(t, rows, tmpNr, "Number of rows not correct in table (%d!=%d) State: '%s'", rows, tmpNr, schemaState)
+	}
+	postFn := func(tkO *testkit.TestKit, _ kv.Storage) {
+		// TODO: FIXME Enable this!
+		//tkO.MustExec("admin check table t /* postFn */")
+		// TODO: FIXME Enable this!
+		// Currently says 20...
+		//tkO.MustQuery(`select count(*) from t`).Check(testkit.Rows("16"))
+		tkO.MustQuery(`select b, a,_tidb_rowid from t`).Sort().Check(testkit.Rows(""+
+			// TODO: Fix this deleted phantom!
+			"1 24 1",
+			"1 25 21",
+			// TODO: Fix this duplicate! From backfill?
+			"1 25 22",
+			"10 10 30007",
+			"11 11 30011",
+			// TODO: Fix this deleted phantom!
+			"12 23 3",
+			"13 38 30004",
+			"15 15 30012",
+			"16 16 4",
+			"17 17 30005",
+			"18 18 30009",
+			"19 19 30013",
+			"2 42 1",
+			"20 20 5",
+			"3 26 1",
+			"4 4 30001",
+			"5 5 30002",
+			"6 41 30006",
+			"8 8 2",
+			"9 9 30003"))
+	}
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn, false)
+}
