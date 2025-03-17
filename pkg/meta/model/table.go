@@ -221,13 +221,7 @@ func (t *TableInfo) Clone() *TableInfo {
 	nt := *t
 	nt.Columns = make([]*ColumnInfo, len(t.Columns))
 	nt.Indices = make([]*IndexInfo, len(t.Indices))
-
-	if len(t.ForeignKeys) > 0 {
-		nt.ForeignKeys = make([]*FKInfo, len(t.ForeignKeys))
-		for i := range t.ForeignKeys {
-			nt.ForeignKeys[i] = t.ForeignKeys[i].Clone()
-		}
-	}
+	nt.ForeignKeys = nil
 
 	for i := range t.Columns {
 		nt.Columns[i] = t.Columns[i].Clone()
@@ -235,6 +229,13 @@ func (t *TableInfo) Clone() *TableInfo {
 
 	for i := range t.Indices {
 		nt.Indices[i] = t.Indices[i].Clone()
+	}
+
+	if len(t.ForeignKeys) > 0 {
+		nt.ForeignKeys = make([]*FKInfo, len(t.ForeignKeys))
+		for i := range t.ForeignKeys {
+			nt.ForeignKeys[i] = t.ForeignKeys[i].Clone()
+		}
 	}
 
 	if t.Partition != nil {
