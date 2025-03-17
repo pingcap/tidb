@@ -243,11 +243,15 @@ func TestIterOutputHasUniqueMemorySpace(t *testing.T) {
 }
 
 func TestCreateSSTWriterDefaultBlockSize(t *testing.T) {
+	db, tmpPath := makePebbleDB(t, nil)
+	t.Cleanup(func() {
+		require.NoError(t, db.Close())
+	})
 	engine := &Engine{
 		config: backend.LocalEngineConfig{
 			BlockSize: 0, // BlockSize is not set
 		},
-		sstDir: "test_sst_dir",
+		sstDir: tmpPath,
 		logger: log.Logger{},
 	}
 
