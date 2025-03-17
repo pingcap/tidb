@@ -2299,7 +2299,7 @@ func exhaustPhysicalPlans4LogicalApply(lp base.LogicalPlan, prop *property.Physi
 	if cacheHitRatio > 0.1 && la.SCtx().GetSessionVars().MemQuotaApplyCache > 0 {
 		canUseCache = true
 	} else {
-		canUseCache = false
+		canUseCache = true
 	}
 
 	apply := PhysicalApply{
