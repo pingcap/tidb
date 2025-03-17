@@ -46,8 +46,8 @@ type Option struct {
 }
 
 // AdviseIndexes is the entry point for the index advisor.
-func AdviseIndexes(ctx context.Context, sctx sessionctx.Context,
-	userSQLs []string, userOptions []ast.RecommendIndexOption) ([]*Recommendation, error) {
+func AdviseIndexes(ctx context.Context, sctx sessionctx.Context, userSQLs []string,
+	userOptions []ast.RecommendIndexOption) (results []*Recommendation, err error) {
 	advisorLogger().Info("fill index advisor option")
 	option := &Option{SpecifiedSQLs: userSQLs}
 	if err := fillOption(sctx, option, userOptions); err != nil {
@@ -92,7 +92,7 @@ func adviseIndexesWithOption(ctx context.Context, sctx sessionctx.Context,
 	advisorLogger().Info("indexable columns filled", zap.Int("indexable-cols", indexableColSet.Size()))
 
 	// start the advisor
-	indexes, err := adviseIndexes(querySet, indexableColSet, opt, option)
+	indexes, allCandidates, err := adviseIndexes(querySet, indexableColSet, opt, option)
 	if err != nil {
 		advisorLogger().Error("advise indexes failed", zap.Error(err))
 		return nil, err
@@ -104,6 +104,29 @@ func adviseIndexesWithOption(ctx context.Context, sctx sessionctx.Context,
 	}
 
 	saveRecommendations(sctx, results)
+
+	if len(results) == 0 {
+		indexableColsTmp := make([]string, 0, 5)
+		for _, col := range indexableColSet.ToList() {
+			indexableColsTmp = append(indexableColsTmp, col.Key())
+			if len(indexableColsTmp) >= 5 {
+				indexableColsTmp = append(indexableColsTmp, "...")
+				break
+			}
+		}
+		indexCandidatesTmp := make([]string, 0, 5)
+		for _, candidate := range allCandidates.ToList() {
+			indexCandidatesTmp = append(indexCandidatesTmp, candidate.Key())
+			if len(indexCandidatesTmp) >= 5 {
+				indexCandidatesTmp = append(indexCandidatesTmp, "...")
+				break
+			}
+		}
+
+		emptyResultExplanation := fmt.Sprintf(" Considered %v indexable columns(%v), %v or more index candidates(%v), no sufficiently beneficial indexes were found.",
+			indexableColSet.Size(), strings.Join(indexableColsTmp, ", "), allCandidates.Size(), strings.Join(indexCandidatesTmp, ", "))
+		sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New(emptyResultExplanation))
+	}
 
 	return results, nil
 }

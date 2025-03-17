@@ -34,29 +34,39 @@ import (
 
 // adviseIndexes implements the auto-admin algorithm.
 func adviseIndexes(querySet s.Set[Query], indexableColSet s.Set[Column],
-	optimizer Optimizer, option *Option) (s.Set[Index], error) {
+	optimizer Optimizer, option *Option) (result, allCandidates s.Set[Index], err error) {
 	aa := &autoAdmin{
-		optimizer: optimizer,
-		option:    option,
-		startAt:   time.Now(),
+		optimizer:     optimizer,
+		option:        option,
+		startAt:       time.Now(),
+		allCandidates: s.NewSet[Index](),
 	}
 
-	bestIndexes, err := aa.calculateBestIndexes(querySet, indexableColSet)
+	bestIndexes, allCandidates, err := aa.calculateBestIndexes(querySet, indexableColSet)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return bestIndexes, nil
+	return bestIndexes, allCandidates, nil
 }
 
 type autoAdmin struct {
 	optimizer Optimizer
 	option    *Option
 	startAt   time.Time
+
+	allCandidates s.Set[Index]
 }
 
-func (aa *autoAdmin) calculateBestIndexes(querySet s.Set[Query], indexableColSet s.Set[Column]) (s.Set[Index], error) {
+func (aa *autoAdmin) recordCandidates(currentCandidates s.Set[Index]) {
+	if aa.allCandidates.Size() > 10000 {
+		return
+	}
+	aa.allCandidates = s.UnionSet(aa.allCandidates, currentCandidates)
+}
+
+func (aa *autoAdmin) calculateBestIndexes(querySet s.Set[Query], indexableColSet s.Set[Column]) (s.Set[Index], s.Set[Index], error) {
 	if aa.option.MaxNumIndexes == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	potentialIndexes := s.NewSet[Index]() // each indexable column as a single-column index
@@ -64,21 +74,22 @@ func (aa *autoAdmin) calculateBestIndexes(querySet s.Set[Query], indexableColSet
 		potentialIndexes.Add(NewIndex(col.SchemaName, col.TableName, aa.tempIndexName(col), col.ColumnName))
 	}
 	if err := aa.timeout(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	currentBestIndexes := s.NewSet[Index]()
 	for currentMaxIndexWidth := 1; currentMaxIndexWidth <= aa.option.MaxIndexWidth; currentMaxIndexWidth++ {
+		aa.recordCandidates(potentialIndexes)
 		candidates, err := aa.selectIndexCandidates(querySet, potentialIndexes)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		//maxIndexes := aa.option.MaxNumIndexes * (aa.option.MaxIndexWidth - currentMaxIndexWidth + 1)
 		maxIndexes := aa.option.MaxNumIndexes
 		currentBestIndexes, err = aa.enumerateCombinations(querySet, candidates, maxIndexes)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		if currentMaxIndexWidth < aa.option.MaxIndexWidth {
@@ -87,31 +98,31 @@ func (aa *autoAdmin) calculateBestIndexes(querySet s.Set[Query], indexableColSet
 			potentialIndexes.Add(aa.createMultiColumnIndexes(indexableColSet, currentBestIndexes).ToList()...)
 		}
 		if err := aa.timeout(); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
 	currentBestIndexes, err := aa.heuristicMergeIndexes(currentBestIndexes, querySet)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	currentBestIndexes, err = aa.heuristicCoveredIndexes(currentBestIndexes, querySet)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	currentBestIndexes, err = aa.filterIndexes(querySet, currentBestIndexes)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	currentBestIndexes, err = aa.cutDown(currentBestIndexes, querySet, aa.optimizer, aa.option.MaxNumIndexes)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if err := aa.timeout(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// try to add more indexes if the number of indexes is less than maxIndexes
@@ -119,24 +130,26 @@ func (aa *autoAdmin) calculateBestIndexes(querySet s.Set[Query], indexableColSet
 		potentialIndexes = s.DiffSet(potentialIndexes, currentBestIndexes)
 		currentCost, err := evaluateIndexSetCost(querySet, aa.optimizer, currentBestIndexes)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		currentBestIndexes, _, err = aa.enumerateGreedy(querySet, currentBestIndexes,
 			currentCost, potentialIndexes, aa.option.MaxNumIndexes)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		currentBestIndexes, err = aa.filterIndexes(querySet, currentBestIndexes)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if err := aa.timeout(); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
 
-	return currentBestIndexes, nil
+	allCandidates := aa.allCandidates
+	aa.allCandidates = nil
+	return currentBestIndexes, allCandidates, nil
 }
 
 // cutDown removes indexes from candidateIndexes until the number of indexes is less than or equal to maxIndexes.
@@ -228,6 +241,7 @@ func (aa *autoAdmin) heuristicCoveredIndexes(
 				continue // the new generated cover-index is duplicated
 			}
 			candidateIndexes.Add(coverIndex)
+			aa.recordCandidates(candidateIndexes)
 			cost, err := evaluateIndexSetCost(querySet, aa.optimizer, candidateIndexes)
 			if err != nil {
 				return nil, err
@@ -314,6 +328,7 @@ func (aa *autoAdmin) heuristicMergeIndexes(
 
 		// check whether these new indexes for IndexMerge can bring some benefits.
 		newCandidateIndexes := s.UnionSet(candidateIndexes, newIndexes)
+		aa.recordCandidates(newCandidateIndexes)
 		newCost, err := evaluateIndexSetCost(querySet, aa.optimizer, newCandidateIndexes)
 		if err != nil {
 			return nil, err
