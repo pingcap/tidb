@@ -2585,7 +2585,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			zap.String("task-key", taskKey))
 
 		indexInfos := extractIndexInfos(reorgInfo, t.Meta())
-		rowSize, idxSize := ingest.EstimateTableRowSize(w.workCtx, w.store, w.sess.GetRestrictedSQLExecutor(), reorgInfo.dbInfo, t.Meta(), indexInfos)
+		rowSize, idxSize := ingest.EstimateTableRowSize(w.workCtx, w.sess.GetRestrictedSQLExecutor(), reorgInfo.dbInfo, t.Meta(), indexInfos)
 		taskMeta := &BackfillTaskMeta{
 			Job:                     *job.Clone(),
 			EleIDs:                  extractElemIDs(reorgInfo),

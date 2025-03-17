@@ -277,10 +277,6 @@ func NewSortedKVMeta(summary *WriterSummary) *SortedKVMeta {
 
 // Merge merges the other SortedKVMeta into this one.
 func (m *SortedKVMeta) Merge(other *SortedKVMeta) {
-	if other == nil {
-		logutil.BgLogger().Warn("date0302 Merge nil other")
-		return
-	}
 	if len(other.StartKey) == 0 && len(other.EndKey) == 0 {
 		return
 	}

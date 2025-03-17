@@ -5,7 +5,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util"
@@ -19,7 +18,6 @@ import (
 // EstimateTableRowSize estimates the row size in bytes of a table.
 func EstimateTableRowSize(
 	ctx context.Context,
-	store kv.Storage,
 	exec sqlexec.RestrictedSQLExecutor,
 	dbInfo *model.DBInfo,
 	tblInfo *model.TableInfo,
@@ -63,8 +61,8 @@ func EstimateTableRowSize(
 	return rowAvg, allIdxAvg
 }
 
-func collectSamples(samples []chunk.Row, cols []*model.ColumnInfo) (min, max, avg int) {
-	min = math.MaxInt
+func collectSamples(samples []chunk.Row, cols []*model.ColumnInfo) (minSize, maxSize, avgSize int) {
+	minSize = math.MaxInt
 	total := 0
 	for i := range len(samples) {
 		row := 0
@@ -75,13 +73,9 @@ func collectSamples(samples []chunk.Row, cols []*model.ColumnInfo) (min, max, av
 				row += evs
 			}
 		}
-		if row > max {
-			max = row
-		}
-		if row < min {
-			min = row
-		}
+		maxSize = max(maxSize, row)
+		minSize = min(minSize, row)
 		total += row
 	}
-	return min, max, total / len(samples)
+	return minSize, maxSize, total / len(samples)
 }
