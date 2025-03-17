@@ -135,6 +135,11 @@ func (s *FDSet) closureOfLax(colSet intset.FastIntSet) intset.FastIntSet {
 	return laxOneStepReached
 }
 
+// ClosureOfEquivalence is exported for outer usage.
+func (s *FDSet) ClosureOfEquivalence(colSet intset.FastIntSet) intset.FastIntSet {
+	return s.closureOfEquivalence(colSet)
+}
+
 // closureOfEquivalence is to find strict equivalence closure of X with respect to F.
 func (s *FDSet) closureOfEquivalence(colSet intset.FastIntSet) intset.FastIntSet {
 	resultSet := intset.NewFastIntSet()

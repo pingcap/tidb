@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/funcdep"
+	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/intset"
@@ -311,31 +312,66 @@ func (p *PhysicalProperty) IsSubsetOf(keys []*MPPPartitionColumn) []int {
 // necessary.
 //
 // for example:
-//  1. MPPPartitionCols: [18，13，16]
-//  2. keys: [9]
-//  3. FD: (1)-->(2-6,8), ()-->(7), (9)-->(10-18), (1,10)==(1,10), (18,21)-->(19,20,22-33)
-//     Because (9)-->(10-18), it is possible to avoid an exchange between [18, 13, 16] and [9].
-func (p *PhysicalProperty) NeedEnforceExchangerWithHashByEquivalence(keys []*MPPPartitionColumn) bool {
+//  1. required MPPPartitionCols: [18，13，16]
+//  2. keys: [18]
+//  3. FD: (1)-->(2-6,8), ()-->(7), (9)-->(10-17), (1,10)==(1,10), (18,21)-->(19,20,22-33), (9,18)==(9,18)
+//
+// In this case, we can see that the child supplied partition keys is subset of parent required partition cols.
+func (p *PhysicalProperty) NeedEnforceExchangerWithHashByEquivalence(keys []*MPPPartitionColumn, fdSet *fd.FDSet) bool {
 	// keys is the HashCol. If the partition cols are a subset of the hash cols, then need to enforce exchange.
 	if len(p.MPPPartitionCols) < len(keys) {
 		return true
 	}
-	// if hash cols's collation is different from partition cols, then need to enforce exchange.
-	hashColUniqueID := intset.NewFastIntSet()
-	for _, hashCol := range keys {
-		for _, col := range p.MPPPartitionCols {
-			if hashCol.CollateID != col.CollateID {
-				return true
+	uniqueID2MppCol := make(map[*MPPPartitionColumn]intset.FastIntSet, len(keys))
+	// for each partition column, we calculate the equivalence alternative closure of it.
+	for _, pCol := range p.MPPPartitionCols {
+		uniqueID2MppCol[pCol] = fdSet.ClosureOfEquivalence(intset.NewFastIntSet(int(pCol.Col.UniqueID)))
+	}
+
+	// there is a subset theorem here, if the child supplied keys is a subset of parent required mpp partition cols,
+	// the mpp partition exchanger can also be eliminated.
+	isSubset := true
+SubsetLoop:
+	for _, key := range keys {
+		for pCol, equivSet := range uniqueID2MppCol {
+			if equivSet.Has(int(key.Col.UniqueID)) &&
+				// if the equiv set contain the key, it means it can supply the same col partition prop directly or in-indirectly.
+				// according to the old logic, when the child can supply the same key partition, we should check its collate-id
+				// when the new collation is enabled suggested by the collateID is negative. Or new collation is not set.
+				((key.CollateID < 0 && pCol.CollateID == key.CollateID) || key.CollateID >= 0) {
+				// yes, child can supply the same col partition prop. continue to next child supplied key.
+				continue SubsetLoop
 			}
 		}
-		hashColUniqueID.Insert(int(hashCol.Col.UniqueID))
+		// once a child supplied keys can't find direct/in-direct equiv all parent required partition cols, we can break the subset check.
+		isSubset = false
+		break SubsetLoop
 	}
-	equivCal := p.FD.ClosureOfStrict(hashColUniqueID)
-	for _, col := range p.MPPPartitionCols {
-		if !equivCal.Has(int(col.Col.UniqueID)) {
-			return true
+	// it's subset case, we don't need to add exchanger.
+	if isSubset {
+		return false
+	}
+
+	// when arrived here, it means the child supplied partition cols is not subset of parent required partition cols.
+	// then we need to check if the child supplied partition cols can supply the every partition col as parent required.
+	// iterate the parent prop required partition cols, check if it is compatible with children supplied.
+NextRequiredCol:
+	for pCol, equivSet := range uniqueID2MppCol {
+		// iterate the child supplied keys.
+		for _, key := range keys {
+			if equivSet.Has(int(key.Col.UniqueID)) &&
+				// if the equiv set contain the key, it means it can supply the same col partition prop directly or in-indirectly.
+				// according to the old logic, when the child can supply the same key partition, we should check its collate-id
+				// when the new collation is enabled suggested by the collateID is negative. Or new collation is not set.
+				((key.CollateID < 0 && pCol.CollateID == key.CollateID) || key.CollateID >= 0) {
+				// yes, child can supply the same col partition prop. continue out to next required partition col.
+				continue NextRequiredCol
+			}
 		}
+		// if all child supplied keys iterated can NOT supply the same col partition prop, then we need to enforce exchange.
+		return true
 	}
+	// all required keys are satisfied, enforcer is not needed.
 	return false
 }
 
