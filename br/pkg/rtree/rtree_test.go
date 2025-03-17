@@ -22,14 +22,15 @@ func newRange(start, end []byte) *rtree.Range {
 
 func TestRangeTree(t *testing.T) {
 	rangeTree := rtree.NewRangeTree()
-	require.Nil(t, rangeTree.Get(newRange([]byte(""), []byte(""))))
+	rg, _ := rangeTree.Get(newRange([]byte(""), []byte("")))
+	require.Nil(t, rg)
 
 	search := func(key []byte) *rtree.Range {
-		rg := rangeTree.Get(newRange(key, []byte("")))
+		rg, _ := rangeTree.Get(newRange(key, []byte("")))
 		if rg == nil {
 			return nil
 		}
-		return rg.(*rtree.Range)
+		return rg
 	}
 	assertIncomplete := func(startKey, endKey []byte, ranges []rtree.Range) {
 		incomplete := rangeTree.GetIncompleteRange(startKey, endKey)

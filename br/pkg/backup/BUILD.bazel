@@ -32,6 +32,7 @@ go_library(
         "//pkg/meta/model",
         "//pkg/statistics/handle",
         "//pkg/statistics/util",
+        "//pkg/tablecodec",
         "//pkg/util",
         "//pkg/util/table-filter",
         "@com_github_opentracing_opentracing_go//:opentracing-go",

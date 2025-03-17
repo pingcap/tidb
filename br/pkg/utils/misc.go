@@ -239,14 +239,18 @@ func FlattenValues[K comparable, V any](m map[K][]V) []V {
 	return result
 }
 
-func SummaryFiles(files []*backuppb.File) {
+func SummaryFiles(files []*backuppb.File) (crc, kvs, bytes uint64) {
 	cfCount := make(map[string]int)
 	for _, f := range files {
 		cfCount[f.Cf] += 1
 		summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
 		summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
+		crc ^= f.Crc64Xor
+		kvs += f.TotalKvs
+		bytes += f.TotalBytes
 	}
 	for cf, count := range cfCount {
 		summary.CollectInt(fmt.Sprintf("%s CF files", cf), count)
 	}
+	return crc, kvs, bytes
 }

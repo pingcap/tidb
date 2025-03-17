@@ -81,9 +81,8 @@ func (rg *Range) ContainsRange(startKey, endKey []byte) bool {
 }
 
 // Less impls btree.Item.
-func (rg *Range) Less(than btree.Item) bool {
+func (rg *Range) Less(ta *Range) bool {
 	// rg.StartKey < than.StartKey
-	ta := than.(*Range)
 	return bytes.Compare(rg.StartKey, ta.StartKey) < 0
 }
 
@@ -106,7 +105,7 @@ type RangeStatsTree struct {
 
 func NewRangeStatsTree() RangeStatsTree {
 	return RangeStatsTree{
-		BTreeG: btree.NewG[*RangeStats](32, (*RangeStats).Less),
+		BTreeG: btree.NewG(32, (*RangeStats).Less),
 	}
 }
 
@@ -184,18 +183,16 @@ func NeedsMerge(left, right *RangeStats, splitSizeBytes, splitKeyCount uint64) b
 	return false
 }
 
-var _ btree.Item = &Range{}
-
 // RangeTree is sorted tree for Ranges.
 // All the ranges it stored do not overlap.
 type RangeTree struct {
-	*btree.BTree
+	*btree.BTreeG[*Range]
 }
 
 // NewRangeTree returns an empty range tree.
 func NewRangeTree() RangeTree {
 	return RangeTree{
-		BTree: btree.New(32),
+		BTreeG: btree.NewG(32, (*Range).Less),
 	}
 }
 
@@ -203,8 +200,8 @@ func NewRangeTree() RangeTree {
 // key.
 func (rangeTree *RangeTree) Find(rg *Range) *Range {
 	var ret *Range
-	rangeTree.DescendLessOrEqual(rg, func(i btree.Item) bool {
-		ret = i.(*Range)
+	rangeTree.DescendLessOrEqual(rg, func(i *Range) bool {
+		ret = i
 		return false
 	})
 
@@ -229,8 +226,7 @@ func (rangeTree *RangeTree) getOverlaps(rg *Range) []*Range {
 	}
 
 	var overlaps []*Range
-	rangeTree.AscendGreaterOrEqual(found, func(i btree.Item) bool {
-		over := i.(*Range)
+	rangeTree.AscendGreaterOrEqual(found, func(over *Range) bool {
 		if len(rg.EndKey) > 0 && bytes.Compare(rg.EndKey, over.StartKey) <= 0 {
 			return false
 		}
@@ -268,11 +264,11 @@ func (rangeTree *RangeTree) Put(
 // InsertRange inserts ranges into the range tree.
 // It returns a non-nil range if there are soe overlapped ranges.
 func (rangeTree *RangeTree) InsertRange(rg Range) *Range {
-	out := rangeTree.ReplaceOrInsert(&rg)
+	out, _ := rangeTree.ReplaceOrInsert(&rg)
 	if out == nil {
 		return nil
 	}
-	return out.(*Range)
+	return out
 }
 
 // GetIncompleteRange returns missing range covered by startKey and endKey.
@@ -292,9 +288,8 @@ func (rangeTree *RangeTree) GetIncompleteRange(
 		pviot.StartKey = first.StartKey
 	}
 	pviotNotFound := true
-	rangeTree.AscendGreaterOrEqual(pviot, func(i btree.Item) bool {
+	rangeTree.AscendGreaterOrEqual(pviot, func(rg *Range) bool {
 		pviotNotFound = false
-		rg := i.(*Range)
 		if bytes.Compare(lastEndKey, rg.StartKey) < 0 {
 			start, end, isIntersect :=
 				requestRange.Intersect(lastEndKey, rg.StartKey)
@@ -322,9 +317,11 @@ func (rangeTree *RangeTree) GetIncompleteRange(
 }
 
 type ProgressRange struct {
-	Res      RangeTree
-	Origin   Range
-	GroupKey string
+	Res        RangeTree
+	Origin     Range
+	GroupKey   string
+	PhysicalID int64
+	Checksum   metautil.ChecksumStats
 }
 
 // Less impls btree.Item.
@@ -338,6 +335,7 @@ func (pr *ProgressRange) Less(than *ProgressRange) bool {
 type ProgressRangeTree struct {
 	*btree.BTreeG[*ProgressRange]
 
+	checksumMap      map[int64]*metautil.ChecksumStats
 	metaWriter       *metautil.MetaWriter
 	completeCallBack func()
 }
@@ -347,6 +345,7 @@ func NewProgressRangeTree(metaWriter *metautil.MetaWriter) ProgressRangeTree {
 	return ProgressRangeTree{
 		BTreeG: btree.NewG(32, (*ProgressRange).Less),
 
+		checksumMap:      make(map[int64]*metautil.ChecksumStats),
 		metaWriter:       metaWriter,
 		completeCallBack: func() {},
 	}
@@ -355,6 +354,11 @@ func NewProgressRangeTree(metaWriter *metautil.MetaWriter) ProgressRangeTree {
 // SetCallBack set the complete call back to update the progress.
 func (rangeTree *ProgressRangeTree) SetCallBack(callback func()) {
 	rangeTree.completeCallBack = callback
+}
+
+// GetChecksumMap get the checksum map from physical ID to checksum.
+func (rangeTree *ProgressRangeTree) GetChecksumMap() map[int64]*metautil.ChecksumStats {
+	return rangeTree.checksumMap
 }
 
 // find is a helper function to find an item that contains the range.
@@ -438,6 +442,7 @@ func (rangeTree *ProgressRangeTree) GetIncompleteRanges() ([]*kvrpcpb.KeyRange, 
 	}
 	for _, deletedRange := range deletedRanges {
 		rangeTree.Delete(deletedRange)
+		rangeTree.updateChecksum(deletedRange.PhysicalID, deletedRange.Checksum)
 	}
 	return incompleteRanges, nil
 }
@@ -447,13 +452,15 @@ func (rangeTree *ProgressRangeTree) collectRangeFiles(item *ProgressRange) error
 		return nil
 	}
 	var rangeAscendErr error
-	item.Res.Ascend(func(i btree.Item) bool {
-		r := i.(*Range)
-		utils.SummaryFiles(r.Files)
+	item.Res.Ascend(func(r *Range) bool {
+		crc, kvs, bytes := utils.SummaryFiles(r.Files)
 		if err := rangeTree.metaWriter.Send(r.Files, metautil.AppendDataFile); err != nil {
 			rangeAscendErr = err
 			return false
 		}
+		item.Checksum.Crc64Xor = crc
+		item.Checksum.TotalKvs = kvs
+		item.Checksum.TotalBytes = bytes
 		return true
 	})
 	return rangeAscendErr
@@ -461,4 +468,15 @@ func (rangeTree *ProgressRangeTree) collectRangeFiles(item *ProgressRange) error
 
 func (rangeTree *ProgressRangeTree) String() string {
 	return ""
+}
+
+func (rangeTree *ProgressRangeTree) updateChecksum(physicalID int64, checksum metautil.ChecksumStats) {
+	ckm, ok := rangeTree.checksumMap[physicalID]
+	if !ok {
+		ckm = &metautil.ChecksumStats{}
+		rangeTree.checksumMap[physicalID] = ckm
+	}
+	ckm.Crc64Xor ^= checksum.Crc64Xor
+	ckm.TotalKvs += checksum.TotalKvs
+	ckm.TotalBytes += checksum.TotalBytes
 }

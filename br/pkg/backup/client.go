@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
@@ -58,13 +59,6 @@ type ClientMgr interface {
 	GetPDClient() pd.Client
 	GetLockResolver() *txnlock.LockResolver
 	Close()
-}
-
-// Checksum is the checksum of some backup files calculated by CollectChecksums.
-type Checksum struct {
-	Crc64Xor   uint64
-	TotalKvs   uint64
-	TotalBytes uint64
 }
 
 // ProgressUnit represents the unit of progress.
@@ -630,13 +624,15 @@ func (bc *Client) WaitForFinishCheckpoint(ctx context.Context, flush bool) {
 func (bc *Client) getProgressRange(r rtree.Range) *rtree.ProgressRange {
 	// use groupKey to distinguish different ranges
 	groupKey := base64.URLEncoding.EncodeToString(r.StartKey)
+	physicalID := tablecodec.DecodeTableID(r.StartKey)
 
 	// the origin range are not recorded in checkpoint
 	// return the default progress range
 	return &rtree.ProgressRange{
-		Res:      rtree.NewRangeTree(),
-		Origin:   r,
-		GroupKey: groupKey,
+		Res:        rtree.NewRangeTree(),
+		Origin:     r,
+		GroupKey:   groupKey,
+		PhysicalID: physicalID,
 	}
 }
 
@@ -1074,12 +1070,15 @@ func (bc *Client) BuildProgressRangeTree(ctx context.Context, ranges []rtree.Ran
 			if err != nil {
 				return errors.Trace(err)
 			}
-			utils.SummaryFiles(rg.Files)
+			crc, kvs, bytes := utils.SummaryFiles(rg.Files)
 			if err := metaWriter.Send(rg.Files, metautil.AppendDataFile); err != nil {
 				return errors.Trace(err)
 			}
 			// Note: put the range without files since it is already persisted in the external storage.
 			pr.Res.Put(rg.StartKey, rg.EndKey, nil)
+			pr.Checksum.Crc64Xor = crc
+			pr.Checksum.TotalKvs = kvs
+			pr.Checksum.TotalBytes = bytes
 			progressCallBack(UnitRegion)
 			return nil
 		})
@@ -1104,7 +1103,7 @@ func (bc *Client) BackupRanges(
 	replicaReadLabel map[string]string,
 	metaWriter *metautil.MetaWriter,
 	progressCallBack func(ProgressUnit),
-) error {
+) (map[int64]*metautil.ChecksumStats, error) {
 	log.Info("Backup Ranges Started", rtree.ZapRanges(ranges))
 	init := time.Now()
 
@@ -1120,7 +1119,7 @@ func (bc *Client) BackupRanges(
 
 	globalProgressTree, err := bc.BuildProgressRangeTree(ctx, ranges, metaWriter, progressCallBack)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	stateNotifier := make(chan BackupRetryPolicy)
@@ -1146,13 +1145,13 @@ func (bc *Client) BackupRanges(
 
 	err = bc.RunLoop(ctx, mainBackupLoop)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	if globalProgressTree.Len() > 0 {
 		log.Error("backup ranges done but some ranges are in complete", zap.String("global progress tree", globalProgressTree.String()))
-		return errors.Errorf("backup ranges done but some ranges are in complete")
+		return nil, errors.Errorf("backup ranges done but some ranges are in complete")
 	}
-	return nil
+	return globalProgressTree.GetChecksumMap(), nil
 }
 
 func (bc *Client) getBackupStores(ctx context.Context, replicaReadLabel map[string]string) ([]*metapb.Store, error) {
