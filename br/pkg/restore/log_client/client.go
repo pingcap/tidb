@@ -1031,7 +1031,7 @@ func readFilteredFullBackupTables(
 				tableAdded = true
 				continue
 			}
-			if !piTRIdTracker.ContainsTableId(db.Info.ID, table.Info.ID) {
+			if !piTRIdTracker.ContainsTableId(table.Info.ID) {
 				continue
 			}
 			tables[table.Info.ID] = table
@@ -1412,6 +1412,11 @@ func (rc *LogClient) restoreAndRewriteMetaKvEntries(
 			return 0, 0, errors.Trace(err)
 		} else if newEntry == nil {
 			continue
+		}
+		// sanity check key will never be nil, otherwise will write invalid format data to TiKV
+		if len(newEntry.Key) == 0 {
+			log.Error("invalid nil key during rewrite")
+			return 0, 0, errors.Trace(err)
 		}
 		log.Debug("after rewrite entry", zap.Int("new-key-len", len(newEntry.Key)),
 			zap.Int("new-value-len", len(entry.E.Value)), zap.ByteString("new-key", newEntry.Key))

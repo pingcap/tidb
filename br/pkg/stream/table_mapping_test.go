@@ -443,7 +443,8 @@ func TestFilterDBReplaceMap(t *testing.T) {
 				},
 			},
 			filter: &utils.PiTRIdTracker{
-				DBIdToTableId: map[int64]map[int64]struct{}{},
+				DBIds:          map[int64]struct{}{},
+				TableIdToDBIds: make(map[int64]map[int64]struct{}),
 			},
 			expected: map[UpstreamID]*DBReplace{
 				1: {
@@ -475,8 +476,11 @@ func TestFilterDBReplaceMap(t *testing.T) {
 				},
 			},
 			filter: &utils.PiTRIdTracker{
-				DBIdToTableId: map[int64]map[int64]struct{}{
-					1: {10: struct{}{}},
+				DBIds: map[int64]struct{}{
+					1: {},
+				},
+				TableIdToDBIds: map[int64]map[int64]struct{}{
+					10: {1: {}},
 				},
 			},
 			expected: map[UpstreamID]*DBReplace{
@@ -511,11 +515,12 @@ func TestFilterDBReplaceMap(t *testing.T) {
 				},
 			},
 			filter: &utils.PiTRIdTracker{
-				DBIdToTableId: map[int64]map[int64]struct{}{
-					1: {
-						10: struct{}{},
-						12: struct{}{},
-					},
+				DBIds: map[int64]struct{}{
+					1: {},
+				},
+				TableIdToDBIds: map[int64]map[int64]struct{}{
+					10: {1: {}},
+					12: {1: {}},
 				},
 			},
 			expected: map[UpstreamID]*DBReplace{
@@ -557,8 +562,11 @@ func TestFilterDBReplaceMap(t *testing.T) {
 				},
 			},
 			filter: &utils.PiTRIdTracker{
-				DBIdToTableId: map[int64]map[int64]struct{}{
-					1: {10: struct{}{}},
+				DBIds: map[int64]struct{}{
+					1: {},
+				},
+				TableIdToDBIds: map[int64]map[int64]struct{}{
+					10: {1: {}},
 				},
 			},
 			expected: map[UpstreamID]*DBReplace{
@@ -615,12 +623,13 @@ func TestFilterDBReplaceMap(t *testing.T) {
 				},
 			},
 			filter: &utils.PiTRIdTracker{
-				DBIdToTableId: map[int64]map[int64]struct{}{
-					1: {10: struct{}{}},
-					2: {
-						20: struct{}{},
-						21: struct{}{},
-					},
+				DBIds: map[int64]struct{}{
+					1: {},
+					2: {},
+				},
+				TableIdToDBIds: map[int64]map[int64]struct{}{
+					10: {1: {}},
+					20: {2: {}},
 				},
 			},
 			expected: map[UpstreamID]*DBReplace{
@@ -988,6 +997,12 @@ func TestReplaceTemporaryIDs(t *testing.T) {
 	}
 }
 
+// NoopMetaInfoCollector is a simple implementation of MetaInfoCollector that does nothing
+type NoopMetaInfoCollector struct{}
+
+func (c *NoopMetaInfoCollector) OnDatabaseInfo(dbInfo *model.DBInfo)                {}
+func (c *NoopMetaInfoCollector) OnTableInfo(dbID int64, tableInfo *model.TableInfo) {}
+
 func TestParseMetaKvAndUpdateIdMapping(t *testing.T) {
 	var (
 		dbID      int64  = 40
@@ -1002,6 +1017,7 @@ func TestParseMetaKvAndUpdateIdMapping(t *testing.T) {
 	)
 
 	tc := NewTableMappingManager()
+	collector := &NoopMetaInfoCollector{}
 
 	// Test DB key
 	dbKey := meta.DBkey(dbID)
@@ -1020,7 +1036,7 @@ func TestParseMetaKvAndUpdateIdMapping(t *testing.T) {
 	}
 
 	// Test parsing DB key and value
-	err = tc.ParseMetaKvAndUpdateIdMapping(entry, consts.DefaultCF)
+	err = tc.ParseMetaKvAndUpdateIdMapping(entry, consts.DefaultCF, collector)
 	require.NoError(t, err)
 	require.Contains(t, tc.DBReplaceMap, dbID)
 	require.Equal(t, dbName, tc.DBReplaceMap[dbID].Name)
@@ -1057,7 +1073,7 @@ func TestParseMetaKvAndUpdateIdMapping(t *testing.T) {
 	}
 
 	// Test parsing table key and value
-	err = tc.ParseMetaKvAndUpdateIdMapping(tableEntry, consts.DefaultCF)
+	err = tc.ParseMetaKvAndUpdateIdMapping(tableEntry, consts.DefaultCF, collector)
 	require.NoError(t, err)
 	require.Contains(t, tc.DBReplaceMap[dbID].TableMap, tableID)
 	require.Equal(t, tableName, tc.DBReplaceMap[dbID].TableMap[tableID].Name)
@@ -1071,7 +1087,7 @@ func TestParseMetaKvAndUpdateIdMapping(t *testing.T) {
 		Key:   []byte("not_a_meta_key"),
 		Value: []byte("some_value"),
 	}
-	err = tc.ParseMetaKvAndUpdateIdMapping(nonMetaEntry, consts.DefaultCF)
+	err = tc.ParseMetaKvAndUpdateIdMapping(nonMetaEntry, consts.DefaultCF, collector)
 	require.NoError(t, err)
 
 	// Test auto increment key with different IDs
@@ -1082,7 +1098,7 @@ func TestParseMetaKvAndUpdateIdMapping(t *testing.T) {
 		Key:   autoIncrKey,
 		Value: []byte("1"),
 	}
-	err = tc.ParseMetaKvAndUpdateIdMapping(autoIncrEntry, consts.DefaultCF)
+	err = tc.ParseMetaKvAndUpdateIdMapping(autoIncrEntry, consts.DefaultCF, collector)
 	require.NoError(t, err)
 	require.Contains(t, tc.DBReplaceMap, autoIncrDBID)
 	require.Contains(t, tc.DBReplaceMap[autoIncrDBID].TableMap, autoIncrTableID)
@@ -1095,7 +1111,7 @@ func TestParseMetaKvAndUpdateIdMapping(t *testing.T) {
 		Key:   autoTableKey,
 		Value: []byte("1"),
 	}
-	err = tc.ParseMetaKvAndUpdateIdMapping(autoTableEntry, consts.DefaultCF)
+	err = tc.ParseMetaKvAndUpdateIdMapping(autoTableEntry, consts.DefaultCF, collector)
 	require.NoError(t, err)
 	require.Contains(t, tc.DBReplaceMap, autoTableDBID)
 	require.Contains(t, tc.DBReplaceMap[autoTableDBID].TableMap, autoTableTableID)
@@ -1108,7 +1124,7 @@ func TestParseMetaKvAndUpdateIdMapping(t *testing.T) {
 		Key:   seqKey,
 		Value: []byte("1"),
 	}
-	err = tc.ParseMetaKvAndUpdateIdMapping(seqEntry, consts.DefaultCF)
+	err = tc.ParseMetaKvAndUpdateIdMapping(seqEntry, consts.DefaultCF, collector)
 	require.NoError(t, err)
 	require.Contains(t, tc.DBReplaceMap, seqDBID)
 	require.Contains(t, tc.DBReplaceMap[seqDBID].TableMap, seqTableID)
@@ -1121,7 +1137,7 @@ func TestParseMetaKvAndUpdateIdMapping(t *testing.T) {
 		Key:   autoRandomKey,
 		Value: []byte("1"),
 	}
-	err = tc.ParseMetaKvAndUpdateIdMapping(autoRandomEntry, consts.DefaultCF)
+	err = tc.ParseMetaKvAndUpdateIdMapping(autoRandomEntry, consts.DefaultCF, collector)
 	require.NoError(t, err)
 	require.Contains(t, tc.DBReplaceMap, autoRandomDBID)
 	require.Contains(t, tc.DBReplaceMap[autoRandomDBID].TableMap, autoRandomTableID)

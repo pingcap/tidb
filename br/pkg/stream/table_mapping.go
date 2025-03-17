@@ -78,11 +78,19 @@ func (tm *TableMappingManager) FromDBReplaceMap(dbReplaceMap map[UpstreamID]*DBR
 	return nil
 }
 
+// MetaInfoCollector is an interface for collecting metadata information during parsing
+type MetaInfoCollector interface {
+	// OnDatabaseInfo is called when database information is found in a value
+	OnDatabaseInfo(dbInfo *model.DBInfo)
+	// OnTableInfo is called when table information is found in a value
+	OnTableInfo(dbID int64, tableInfo *model.TableInfo)
+}
+
 // ParseMetaKvAndUpdateIdMapping collect table information
 // the keys and values that are selected to parse here follows the implementation in rewrite_meta_rawkv. Maybe
 // parsing a subset of these keys/values would suffice, but to make it safe we decide to parse exactly same as
 // in rewrite_meta_rawkv.
-func (tm *TableMappingManager) ParseMetaKvAndUpdateIdMapping(e *kv.Entry, cf string) error {
+func (tm *TableMappingManager) ParseMetaKvAndUpdateIdMapping(e *kv.Entry, cf string, collector MetaInfoCollector) error {
 	if !utils.IsMetaDBKey(e.Key) {
 		return nil
 	}
@@ -105,7 +113,7 @@ func (tm *TableMappingManager) ParseMetaKvAndUpdateIdMapping(e *kv.Entry, cf str
 			return errors.Trace(err)
 		}
 		if value != nil {
-			return tm.parseDBValueAndUpdateIdMapping(value)
+			return tm.parseDBValueAndUpdateIdMapping(value, collector)
 		}
 	} else if !meta.IsDBkey(rawKey.Key) {
 		return nil
@@ -129,7 +137,7 @@ func (tm *TableMappingManager) ParseMetaKvAndUpdateIdMapping(e *kv.Entry, cf str
 			return errors.Trace(err)
 		}
 		if value != nil {
-			return tm.parseTableValueAndUpdateIdMapping(dbID, value)
+			return tm.parseTableValueAndUpdateIdMapping(dbID, value, collector)
 		}
 	} else if meta.IsAutoIncrementIDKey(rawKey.Field) {
 		// parse auto increment key and update
@@ -170,7 +178,7 @@ func (tm *TableMappingManager) parseDBKeyAndUpdateIdMapping(field []byte) error 
 	return errors.Trace(err)
 }
 
-func (tm *TableMappingManager) parseDBValueAndUpdateIdMapping(value []byte) error {
+func (tm *TableMappingManager) parseDBValueAndUpdateIdMapping(value []byte, collector MetaInfoCollector) error {
 	dbInfo := new(model.DBInfo)
 	if err := json.Unmarshal(value, dbInfo); err != nil {
 		return errors.Trace(err)
@@ -180,7 +188,10 @@ func (tm *TableMappingManager) parseDBValueAndUpdateIdMapping(value []byte) erro
 	if err != nil {
 		return errors.Trace(err)
 	}
-	dbReplace.Name = dbInfo.Name.O
+	if dbInfo.Name.O != "" {
+		dbReplace.Name = dbInfo.Name.O
+	}
+	collector.OnDatabaseInfo(dbInfo)
 	return nil
 }
 
@@ -237,7 +248,8 @@ func (tm *TableMappingManager) parseTableIdAndUpdateIdMapping(
 	return nil
 }
 
-func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(dbID int64, value []byte) error {
+func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(dbID int64, value []byte,
+	collector MetaInfoCollector) error {
 	var tableInfo model.TableInfo
 	if err := json.Unmarshal(value, &tableInfo); err != nil {
 		return errors.Trace(err)
@@ -252,7 +264,9 @@ func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(dbID int64, val
 	if err != nil {
 		return errors.Trace(err)
 	}
-	tableReplace.Name = tableInfo.Name.O
+	if tableInfo.Name.O != "" {
+		tableReplace.Name = tableInfo.Name.O
+	}
 
 	// update table ID and partition ID.
 	partitions := tableInfo.GetPartitionInfo()
@@ -269,6 +283,7 @@ func (tm *TableMappingManager) parseTableValueAndUpdateIdMapping(dbID int64, val
 			}
 		}
 	}
+	collector.OnTableInfo(dbID, &tableInfo)
 	return nil
 }
 
@@ -459,7 +474,7 @@ func (tm *TableMappingManager) ApplyFilterToDBReplaceMap(tracker *utils.PiTRIdTr
 
 		// filter tables in this database
 		for tableID, tableReplace := range dbReplace.TableMap {
-			if !tracker.ContainsTableId(dbID, tableID) {
+			if !tracker.ContainsDBAndTableId(dbID, tableID) {
 				tableReplace.FilteredOut = true
 			}
 		}

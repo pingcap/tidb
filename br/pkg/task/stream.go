@@ -1367,7 +1367,7 @@ func RunStreamRestore(
 	}
 	// TODO: pitr filtered restore doesn't support restore system table yet
 	if cfg.ExplicitFilter {
-		if cfg.TableFilter.MatchSchema(mysql.SystemDB) {
+		if cfg.TableFilter.MatchSchema(mysql.SystemDB) || cfg.TableFilter.MatchSchema(mysql.SysDB) {
 			return errors.Annotatef(berrors.ErrInvalidArgument,
 				"PiTR doesn't support custom filter to include system db, consider to exclude system db")
 		}
@@ -1582,6 +1582,7 @@ func restoreStream(
 	}); err != nil {
 		return errors.Annotate(err, "failed to restore meta files")
 	}
+	stream.LogDBReplaceMap("built db replace map, start to build rewrite rules", schemasReplace.DbReplaceMap)
 	rewriteRules := buildRewriteRules(schemasReplace)
 
 	ingestRecorder := schemasReplace.GetIngestRecorder()
