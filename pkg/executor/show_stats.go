@@ -278,7 +278,7 @@ func (e *ShowExec) appendTableForStatsHistograms(dbName, tblName, partitionName 
 		if !col.IsStatsInitialized() {
 			return false
 		}
-		e.histogramToRow(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, cardinality.AvgColSize(col, statsTbl.RealtimeCount, false),
+		e.histogramToRow(dbName, tblName, partitionName, col.Info.Name.O, 0, *col.GetHistogramImmutable(), cardinality.AvgColSize(col, statsTbl.RealtimeCount, false),
 			col.StatsLoadedStatus.StatusToString(), col.MemoryUsage())
 		return false
 	})
@@ -362,11 +362,11 @@ func (e *ShowExec) appendTableForStatsBuckets(dbName, tblName, partitionName str
 	}
 	colNameToType := make(map[string]byte, statsTbl.ColNum())
 	for _, col := range statsTbl.StableOrderColSlice() {
-		err := e.bucketsToRows(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, nil)
+		err := e.bucketsToRows(dbName, tblName, partitionName, col.Info.Name.O, 0, *col.GetHistogramImmutable(), nil)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		colNameToType[col.Info.Name.O] = col.Histogram.Tp.GetType()
+		colNameToType[col.Info.Name.O] = col.Info.GetType()
 	}
 	for _, idx := range statsTbl.StableOrderIdxSlice() {
 		idxColumnTypes := make([]byte, 0, len(idx.Info.Columns))
@@ -425,11 +425,11 @@ func (e *ShowExec) appendTableForStatsTopN(dbName, tblName, partitionName string
 	}
 	colNameToType := make(map[string]byte, statsTbl.ColNum())
 	for _, col := range statsTbl.StableOrderColSlice() {
-		err := e.topNToRows(dbName, tblName, partitionName, col.Info.Name.O, 1, 0, col.TopN, []byte{col.Histogram.Tp.GetType()})
+		err := e.topNToRows(dbName, tblName, partitionName, col.Info.Name.O, 1, 0, col.GetTopNImmutable(), []byte{col.Info.GetType()})
 		if err != nil {
 			return errors.Trace(err)
 		}
-		colNameToType[col.Info.Name.O] = col.Histogram.Tp.GetType()
+		colNameToType[col.Info.Name.O] = col.Info.GetType()
 	}
 	for _, idx := range statsTbl.StableOrderIdxSlice() {
 		idxColumnTypes := make([]byte, 0, len(idx.Info.Columns))
@@ -449,11 +449,13 @@ func (e *ShowExec) topNToRows(dbName, tblName, partitionName, colName string, nu
 		return nil
 	}
 	var tmpDatum types.Datum
-	for i := 0; i < len(topN.TopN); i++ {
-		tmpDatum.SetBytes(topN.TopN[i].Encoded)
+	var returnErr error
+	topN.ForEachImmutable(func(value []byte, count uint64) bool {
+		tmpDatum.SetBytes(value)
 		valStr, err := statistics.ValueToString(e.Ctx().GetSessionVars(), &tmpDatum, numOfCols, columnTypes)
 		if err != nil {
-			return err
+			returnErr = err
+			return true
 		}
 		e.appendRow([]any{
 			dbName,
@@ -462,8 +464,12 @@ func (e *ShowExec) topNToRows(dbName, tblName, partitionName, colName string, nu
 			colName,
 			isIndex,
 			valStr,
-			topN.TopN[i].Count,
+			count,
 		})
+		return false
+	})
+	if returnErr != nil {
+		return returnErr
 	}
 	return nil
 }

@@ -31,7 +31,7 @@ const distinctFactor = 0.8
 func EstimateColumnNDV(tbl *statistics.Table, colID int64) (ndv float64) {
 	hist := tbl.GetCol(colID)
 	if hist != nil && hist.IsStatsInitialized() {
-		ndv = float64(hist.Histogram.NDV)
+		ndv = float64(hist.SelfNDV())
 		// TODO: a better way to get the total row count derived from the last analyze.
 		analyzeCount := getTotalRowCount(tbl, hist)
 		if analyzeCount > 0 {

@@ -87,17 +87,16 @@ func traceColStats(colStats *Column, id int64, out *statsTblColOrIdxInfo) {
 	out.Correlation = colStats.Correlation
 	out.StatsVer = colStats.StatsVer
 	out.LoadingStatus = colStats.StatsLoadedStatus.StatusToString()
-	if colStats.Histogram.Buckets == nil {
+	out.HistogramSize = colStats.HistBucketNum()
+	if out.HistogramSize == 0 {
 		out.HistogramSize = -1
-	} else {
-		out.HistogramSize = len(colStats.Histogram.Buckets)
 	}
-	if colStats.TopN == nil {
+	if !colStats.HasTopN() {
 		out.TopNSize = -1
 	} else {
-		out.TopNSize = len(colStats.TopN.TopN)
+		out.TopNSize = colStats.TopNNum()
 	}
-	out.CMSketchInfo = traceCMSketchInfo(colStats.CMSketch)
+	out.CMSketchInfo = traceCMSketchInfo(colStats.GetCMSketchImmutable())
 }
 
 func traceIdxStats(idxStats *Index, id int64, out *statsTblColOrIdxInfo) {

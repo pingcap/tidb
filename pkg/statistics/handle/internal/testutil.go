@@ -29,14 +29,15 @@ func AssertTableEqual(t *testing.T, a *statistics.Table, b *statistics.Table) {
 	a.ForEachColumnImmutable(func(id int64, col *statistics.Column) bool {
 		bCol := b.GetCol(id)
 		require.NotNil(t, bCol)
-		require.True(t, statistics.HistogramEqual(&col.Histogram, &bCol.Histogram, false))
-		if col.CMSketch == nil {
-			require.Nil(t, bCol.CMSketch)
+		require.True(t, statistics.HistogramEqual(col.GetHistogramImmutable(), bCol.GetHistogramImmutable(), false))
+		cms := col.GetCMSketchImmutable()
+		if cms == nil {
+			require.Nil(t, bCol.GetCMSketchImmutable())
 		} else {
-			require.True(t, col.CMSketch.Equal(bCol.CMSketch))
+			require.True(t, cms.Equal(bCol.GetCMSketchImmutable()))
 		}
 		// The nil case has been considered in (*TopN).Equal() so we don't need to consider it here.
-		require.Truef(t, col.TopN.Equal(bCol.TopN), "%v, %v", col.TopN, bCol.TopN)
+		require.Truef(t, col.GetTopNImmutable().Equal(bCol.GetTopNImmutable()), "%v, %v", col.GetTopNImmutable(), bCol.GetTopNImmutable())
 		return false
 	})
 	require.Equal(t, a.IdxNum(), b.IdxNum())

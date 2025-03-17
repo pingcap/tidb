@@ -221,7 +221,7 @@ func SubTestColumnRange() func(*testing.T) {
 		require.NoError(t, err)
 		col := &Column{
 			Histogram:         *hg,
-			CMSketch:          buildCMSketch(s.rc.(*recordSet).data),
+			cmSketch:          buildCMSketch(s.rc.(*recordSet).data),
 			Info:              &model.ColumnInfo{},
 			StatsLoadedStatus: NewStatsFullLoadStatus(),
 		}

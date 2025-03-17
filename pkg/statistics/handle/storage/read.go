@@ -433,13 +433,16 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 			if col == nil {
 				return nil
 			}
-			col = &statistics.Column{
-				PhysicalID: table.PhysicalID,
-				Histogram:  *statistics.NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
-				Info:       colInfo,
-				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
-				StatsVer:   statsVer,
-			}
+			col = statistics.NewColumn(
+				colInfo,
+				table.PhysicalID,
+				tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
+				nil,
+				nil,
+				nil,
+				*statistics.NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
+				statsVer,
+			)
 			if col.StatsAvailable() {
 				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 			}
@@ -464,16 +467,16 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 					return errors.Trace(err)
 				}
 			}
-			col = &statistics.Column{
-				PhysicalID: table.PhysicalID,
-				Histogram:  *hg,
-				Info:       colInfo,
-				CMSketch:   cms,
-				TopN:       topN,
-				FMSketch:   fmSketch,
-				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
-				StatsVer:   statsVer,
-			}
+			col = statistics.NewColumn(
+				colInfo,
+				table.PhysicalID,
+				tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
+				cms,
+				topN,
+				fmSketch,
+				*hg,
+				statsVer,
+			)
 			if col.StatsAvailable() {
 				col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 			}
@@ -715,16 +718,16 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 		}
 	}
 
-	colHist := &statistics.Column{
-		PhysicalID: col.TableID,
-		Histogram:  *hg,
-		Info:       colInfo,
-		CMSketch:   cms,
-		TopN:       topN,
-		FMSketch:   fms,
-		IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
-		StatsVer:   statsVer,
-	}
+	colHist := statistics.NewColumn(
+		colInfo,
+		tblInfo.ID,
+		tblInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
+		cms,
+		topN,
+		fms,
+		*hg,
+		statsVer,
+	)
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
 	statsTbl, ok = statsHandle.Get(col.TableID)

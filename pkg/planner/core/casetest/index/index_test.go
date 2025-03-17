@@ -322,12 +322,12 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 	col := statsTbl.GetCol(1)
 	require.NotNil(t, col)
 	// It has stats.
-	require.True(t, (col.Histogram.Len()+col.TopN.Num()) > 0)
+	require.True(t, (col.HistBucketNum()+col.TopNNum()) > 0)
 	// vec col
 	col = statsTbl.GetCol(2)
 	require.NotNil(t, col)
 	// It doesn't have stats.
-	require.False(t, (col.Histogram.Len()+col.TopN.Num()) > 0)
+	require.False(t, (col.HistBucketNum()+col.TopNNum()) > 0)
 
 	tk.MustExec("set tidb_analyze_version=1")
 	tk.MustExec("analyze table t")

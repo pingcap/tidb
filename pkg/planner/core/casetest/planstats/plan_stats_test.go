@@ -255,7 +255,7 @@ func countFullStats(stats *statistics.HistColl, colID int64) int {
 	cnt := -1
 	stats.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		if col.Info.ID == colID {
-			cnt = col.Histogram.Len() + col.TopN.Num()
+			cnt = col.HistBucketNum() + col.TopNNum()
 			return true
 		}
 		return false

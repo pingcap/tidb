@@ -132,7 +132,7 @@ func AvgColSize(c *statistics.Column, count int64, isKey bool) float64 {
 	if histCount > 0 {
 		notNullRatio = max(0, 1.0-float64(c.NullCount)/histCount)
 	}
-	switch c.Histogram.Tp.GetType() {
+	switch c.Info.GetType() {
 	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeDuration, mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
 		return 8 * notNullRatio
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear, mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet:
@@ -150,7 +150,7 @@ func AvgColSizeChunkFormat(c *statistics.Column, count int64) float64 {
 	if count == 0 {
 		return 0
 	}
-	fixedLen := chunk.GetFixedLen(c.Histogram.Tp)
+	fixedLen := chunk.GetFixedLen(&c.Info.FieldType)
 	if fixedLen >= 0 {
 		return float64(fixedLen)
 	}
@@ -175,7 +175,7 @@ func AvgColSizeDataInDiskByRows(c *statistics.Column, count int64) float64 {
 	if histCount > 0 {
 		notNullRatio = 1.0 - float64(c.NullCount)/histCount
 	}
-	size := chunk.GetFixedLen(c.Histogram.Tp)
+	size := chunk.GetFixedLen(&c.Info.FieldType)
 	if size >= 0 {
 		return float64(size) * notNullRatio
 	}

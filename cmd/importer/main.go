@@ -69,7 +69,7 @@ func main() {
 		for i, colInfo := range table.tblInfo.Columns {
 			if hist := statsInfo.GetCol(colInfo.ID); hist != nil && table.columns[i].hist == nil && len(hist.Buckets) > 0 {
 				table.columns[i].hist = &histogram{
-					Histogram: hist.Histogram,
+					Histogram: *hist.GetHistogramImmutable(),
 				}
 			}
 		}

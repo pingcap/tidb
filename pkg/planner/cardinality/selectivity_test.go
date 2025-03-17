@@ -458,6 +458,7 @@ func TestUniqCompEqualEst(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
+	testKit.MustExec("use test")
 	testKit.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, b int, primary key(a, b))")
@@ -798,11 +799,10 @@ func prepareSelectivity(testKit *testkit.TestKit, dom *domain.Domain) (*statisti
 		return nil, err
 	}
 	for i := 1; i <= 5; i++ {
-		statsTbl.SetCol(int64(i), &statistics.Column{
-			Histogram:         *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)),
-			Info:              tbl.Columns[i-1],
-			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
-		})
+		histogram := mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong))
+		col := statistics.NewColumn(tbl.Columns[i-1], int64(i), false, nil, nil, nil, *histogram, 2)
+		col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+		statsTbl.SetCol(int64(i), col)
 	}
 
 	// Set the value of two indices' histograms.
@@ -1017,12 +1017,10 @@ func TestIssue39593(t *testing.T) {
 	colValues, err := generateIntDatum(1, 54)
 	require.NoError(t, err)
 	for i := 1; i <= 2; i++ {
-		statsTbl.SetCol(int64(i), &statistics.Column{
-			Histogram:         *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)),
-			Info:              tblInfo.Columns[i-1],
-			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
-			StatsVer:          2,
-		})
+		histogram := mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong))
+		col := statistics.NewColumn(tblInfo.Columns[i-1], int64(i), false, nil, nil, nil, *histogram, 2)
+		col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+		statsTbl.SetCol(int64(i), col)
 	}
 	idxValues, err := generateIntDatum(2, 3)
 	require.NoError(t, err)
@@ -1070,12 +1068,10 @@ func TestIndexJoinInnerRowCountUpperBound(t *testing.T) {
 	colValues, err := generateIntDatum(1, 500)
 	require.NoError(t, err)
 	for i := 1; i <= 2; i++ {
-		mockStatsTbl.SetCol(int64(i), &statistics.Column{
-			Histogram:         *mockStatsHistogram(int64(i), colValues, 1000, types.NewFieldType(mysql.TypeLonglong)),
-			Info:              tblInfo.Columns[i-1],
-			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
-			StatsVer:          2,
-		})
+		histogram := mockStatsHistogram(int64(i), colValues, 1000, types.NewFieldType(mysql.TypeLonglong))
+		col := statistics.NewColumn(tblInfo.Columns[i-1], int64(i), false, nil, nil, nil, *histogram, 2)
+		col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+		mockStatsTbl.SetCol(int64(i), col)
 	}
 	idxValues := make([]types.Datum, 0, len(colValues))
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
@@ -1143,12 +1139,11 @@ func TestOrderingIdxSelectivityThreshold(t *testing.T) {
 	mockStatsTbl := mockStatsTable(tblInfo, 100000)
 	pkColValues, err := generateIntDatum(1, 100000)
 	require.NoError(t, err)
-	mockStatsTbl.SetCol(1, &statistics.Column{
-		Histogram:         *mockStatsHistogram(1, pkColValues, 1, types.NewFieldType(mysql.TypeLonglong)),
-		Info:              tblInfo.Columns[0],
-		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
-		StatsVer:          2,
-	})
+	histogram := mockStatsHistogram(1, pkColValues, 1, types.NewFieldType(mysql.TypeLonglong))
+	col := statistics.NewColumn(tblInfo.Columns[0], int64(1), false, nil, nil, nil, *histogram, 2)
+	col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+	mockStatsTbl.SetCol(1, col)
+
 	colValues, err := generateIntDatum(1, 10000)
 	require.NoError(t, err)
 	idxValues := make([]types.Datum, 0)
@@ -1159,12 +1154,10 @@ func TestOrderingIdxSelectivityThreshold(t *testing.T) {
 	}
 
 	for i := 2; i <= 3; i++ {
-		mockStatsTbl.SetCol(int64(i), &statistics.Column{
-			Histogram:         *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)),
-			Info:              tblInfo.Columns[i-1],
-			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
-			StatsVer:          2,
-		})
+		histogram := mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong))
+		col := statistics.NewColumn(tblInfo.Columns[i-1], int64(i), false, nil, nil, nil, *histogram, 2)
+		col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+		mockStatsTbl.SetCol(int64(i), col)
 	}
 	for i := 1; i <= 2; i++ {
 		mockStatsTbl.SetIdx(int64(i), &statistics.Index{
@@ -1226,12 +1219,11 @@ func TestOrderingIdxSelectivityRatio(t *testing.T) {
 	mockStatsTbl := mockStatsTable(tblInfo, 1000)
 	pkColValues, err := generateIntDatum(1, 1000)
 	require.NoError(t, err)
-	mockStatsTbl.SetCol(1, &statistics.Column{
-		Histogram:         *mockStatsHistogram(1, pkColValues, 1, types.NewFieldType(mysql.TypeLonglong)),
-		Info:              tblInfo.Columns[0],
-		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
-		StatsVer:          2,
-	})
+	histogram := mockStatsHistogram(1, pkColValues, 1, types.NewFieldType(mysql.TypeLonglong))
+	col := statistics.NewColumn(tblInfo.Columns[0], int64(1), false, nil, nil, nil, *histogram, 2)
+	col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+	mockStatsTbl.SetCol(1, col)
+
 	colValues, err := generateIntDatum(1, 1000)
 	require.NoError(t, err)
 	idxValues := make([]types.Datum, 0)
@@ -1242,12 +1234,10 @@ func TestOrderingIdxSelectivityRatio(t *testing.T) {
 	}
 
 	for i := 2; i <= 3; i++ {
-		mockStatsTbl.SetCol(int64(i), &statistics.Column{
-			Histogram:         *mockStatsHistogram(int64(i), colValues, 1, types.NewFieldType(mysql.TypeLonglong)),
-			Info:              tblInfo.Columns[i-1],
-			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
-			StatsVer:          2,
-		})
+		histogram := mockStatsHistogram(int64(i), colValues, 1, types.NewFieldType(mysql.TypeLonglong))
+		col := statistics.NewColumn(tblInfo.Columns[i-1], int64(i), false, nil, nil, nil, *histogram, 2)
+		col.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+		mockStatsTbl.SetCol(int64(i), col)
 	}
 	for i := 1; i <= 2; i++ {
 		mockStatsTbl.SetIdx(int64(i), &statistics.Index{

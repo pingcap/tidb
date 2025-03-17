@@ -251,18 +251,12 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 			partitionStats: map[priorityqueue.PartitionIDAndName]*statistics.Table{
 				priorityqueue.NewPartitionIDAndName("p0", 1): {
 					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, statistics.AutoAnalyzeMinCnt+1, (statistics.AutoAnalyzeMinCnt+1)*2, map[int64]*statistics.Column{
-						1: {
-							StatsVer: 2,
-							Histogram: statistics.Histogram{
-								LastUpdateVersion: lastUpdateTs,
-							},
-						},
-						2: {
-							StatsVer: 2,
-							Histogram: statistics.Histogram{
-								LastUpdateVersion: lastUpdateTs,
-							},
-						},
+						1: statistics.NewColumn(nil, 0, false, nil, nil, nil, statistics.Histogram{
+							LastUpdateVersion: lastUpdateTs,
+						}, 2),
+						2: statistics.NewColumn(nil, 0, false, nil, nil, nil, statistics.Histogram{
+							LastUpdateVersion: lastUpdateTs,
+						}, 2),
 					}, nil),
 					Version:               currentTs,
 					ColAndIdxExistenceMap: analyzedMap,
@@ -270,18 +264,12 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 				},
 				priorityqueue.NewPartitionIDAndName("p1", 2): {
 					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, statistics.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
-						1: {
-							StatsVer: 2,
-							Histogram: statistics.Histogram{
-								LastUpdateVersion: lastUpdateTs,
-							},
-						},
-						2: {
-							StatsVer: 2,
-							Histogram: statistics.Histogram{
-								LastUpdateVersion: lastUpdateTs,
-							},
-						},
+						1: statistics.NewColumn(nil, 0, false, nil, nil, nil, statistics.Histogram{
+							LastUpdateVersion: lastUpdateTs,
+						}, 2),
+						2: statistics.NewColumn(nil, 0, false, nil, nil, nil, statistics.Histogram{
+							LastUpdateVersion: lastUpdateTs,
+						}, 2),
 					}, nil),
 					Version:               currentTs,
 					ColAndIdxExistenceMap: analyzedMap,
@@ -313,18 +301,12 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 			partitionStats: map[priorityqueue.PartitionIDAndName]*statistics.Table{
 				priorityqueue.NewPartitionIDAndName("p0", 1): {
 					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, statistics.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
-						1: {
-							StatsVer: 2,
-							Histogram: statistics.Histogram{
-								LastUpdateVersion: lastUpdateTs,
-							},
-						},
-						2: {
-							StatsVer: 2,
-							Histogram: statistics.Histogram{
-								LastUpdateVersion: lastUpdateTs,
-							},
-						},
+						1: statistics.NewColumn(nil, 0, false, nil, nil, nil, statistics.Histogram{
+							LastUpdateVersion: lastUpdateTs,
+						}, 2),
+						2: statistics.NewColumn(nil, 0, false, nil, nil, nil, statistics.Histogram{
+							LastUpdateVersion: lastUpdateTs,
+						}, 2),
 					}, nil),
 					Version:               currentTs,
 					ColAndIdxExistenceMap: analyzedMap,
@@ -332,18 +314,12 @@ func TestCalculateIndicatorsForPartitions(t *testing.T) {
 				},
 				priorityqueue.NewPartitionIDAndName("p1", 2): {
 					HistColl: *statistics.NewHistCollWithColsAndIdxs(0, statistics.AutoAnalyzeMinCnt+1, 0, map[int64]*statistics.Column{
-						1: {
-							StatsVer: 2,
-							Histogram: statistics.Histogram{
-								LastUpdateVersion: lastUpdateTs,
-							},
-						},
-						2: {
-							StatsVer: 2,
-							Histogram: statistics.Histogram{
-								LastUpdateVersion: lastUpdateTs,
-							},
-						},
+						1: statistics.NewColumn(nil, 0, false, nil, nil, nil, statistics.Histogram{
+							LastUpdateVersion: lastUpdateTs,
+						}, 2),
+						2: statistics.NewColumn(nil, 0, false, nil, nil, nil, statistics.Histogram{
+							LastUpdateVersion: lastUpdateTs,
+						}, 2),
 					}, nil),
 					Version:               currentTs,
 					ColAndIdxExistenceMap: analyzedMap,
