@@ -1208,6 +1208,10 @@ func (b *builtinJSONArrayAppendSig) appendJSONArray(res types.BinaryJSON, p stri
 		}
 	}
 
+	// wrap the new value `v` into an array explicitly, in case that the `v` is an array itself.
+	// For example, `JSON_ARRAY_APPEND('[1]', '$', JSON_ARRAY(2, 3))` should return `[1, [2, 3]]`
+	v = types.CreateBinaryJSON([]any{v})
+
 	obj = types.MergeBinaryJSON([]types.BinaryJSON{obj, v})
 	res, err = res.Modify([]types.JSONPathExpression{pathExpr}, []types.BinaryJSON{obj}, types.JSONModifySet)
 	return res, false, err
@@ -1816,10 +1820,7 @@ func (b *builtinJSONKeys2ArgsSig) evalJSON(ctx EvalContext, row chunk.Row) (res 
 	}
 
 	res, exists := res.Extract([]types.JSONPathExpression{pathExpr})
-	if !exists {
-		return res, true, nil
-	}
-	if res.TypeCode != types.JSONTypeCodeObject {
+	if !exists || res.TypeCode != types.JSONTypeCodeObject {
 		return res, true, nil
 	}
 

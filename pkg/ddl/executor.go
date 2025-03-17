@@ -72,6 +72,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/oracle"
+	"github.com/tikv/client-go/v2/tikv"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
@@ -4076,7 +4077,7 @@ var systemTables = map[string]struct{}{
 }
 
 func isUndroppableTable(schema, table string) bool {
-	if schema == "workload_schema" {
+	if schema == mysql.WorkloadSchema {
 		return true
 	}
 	if schema != mysql.SystemDB {
@@ -4713,7 +4714,7 @@ func checkIndexNameAndColumns(ctx *metabuild.Context, t table.Table, indexName a
 	return indexName, hiddenCols, nil
 }
 
-func checkTableTypeForVectorIndex(tblInfo *model.TableInfo) error {
+func checkTableTypeForColumnarIndex(tblInfo *model.TableInfo) error {
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Vector Index")
 	}
@@ -4721,10 +4722,10 @@ func checkTableTypeForVectorIndex(tblInfo *model.TableInfo) error {
 		return dbterror.ErrOptOnTemporaryTable.FastGenByArgs("vector index")
 	}
 	if tblInfo.GetPartitionInfo() != nil {
-		return dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("unsupported partition table")
+		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported partition table")
 	}
 	if tblInfo.TiFlashReplica == nil || tblInfo.TiFlashReplica.Count == 0 {
-		return dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("unsupported empty TiFlash replica, the replica is nil")
+		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported empty TiFlash replica, the replica is nil")
 	}
 
 	return nil
@@ -4738,7 +4739,7 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 	}
 
 	tblInfo := t.Meta()
-	if err := checkTableTypeForVectorIndex(tblInfo); err != nil {
+	if err := checkTableTypeForColumnarIndex(tblInfo); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -4782,7 +4783,7 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 			IndexPartSpecifications: indexPartSpecifications,
 			IndexOption:             indexOption,
 			FuncExpr:                funcExpr,
-			IsVector:                true,
+			IsColumnar:              true,
 		}},
 		OpType: model.OpAddIndex,
 	}
@@ -4941,8 +4942,29 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	return errors.Trace(err)
 }
 
+// GetDXFDefaultMaxNodeCntAuto calcuates a default max node count for distributed task execution.
+func GetDXFDefaultMaxNodeCntAuto(store kv.Storage) int {
+	tikvStore, ok := store.(tikv.Storage)
+	if !ok {
+		logutil.DDLLogger().Warn("not an TiKV or TiFlash store instance", zap.String("type", fmt.Sprintf("%T", store)))
+		return 0
+	}
+	pdClient := tikvStore.GetRegionCache().PDClient()
+	if pdClient == nil {
+		logutil.DDLLogger().Warn("pd unavailable when get default max node count")
+		return 0
+	}
+	stores, err := pdClient.GetAllStores(context.Background())
+	if err != nil {
+		logutil.DDLLogger().Warn("get all stores failed when get default max node count", zap.Error(err))
+		return 0
+	}
+	return max(3, len(stores)/3)
+}
+
 func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) error {
 	m := NewDDLReorgMeta(sctx)
+
 	setReorgParam := func() {
 		if sv, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBDDLReorgWorkerCount); ok {
 			m.SetConcurrency(variable.TidbOptInt(sv, 0))
@@ -4956,6 +4978,12 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 		m.IsDistReorg = vardef.EnableDistTask.Load()
 		m.IsFastReorg = vardef.EnableFastReorg.Load()
 		m.TargetScope = vardef.ServiceScope.Load()
+		if sv, ok := sctx.GetSessionVars().GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
+			m.MaxNodeCount = variable.TidbOptInt(sv, 0)
+			if m.MaxNodeCount == -1 { // -1 means calculate automatically
+				m.MaxNodeCount = GetDXFDefaultMaxNodeCntAuto(sctx.GetStore())
+			}
+		}
 		if hasSysDB(job) {
 			if m.IsDistReorg {
 				logutil.DDLLogger().Info("cannot use distributed task execution on system DB",
@@ -5012,6 +5040,7 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 		zap.Bool("enableDistTask", m.IsDistReorg),
 		zap.Bool("enableFastReorg", m.IsFastReorg),
 		zap.String("targetScope", m.TargetScope),
+		zap.Int("maxNodeCount", m.MaxNodeCount),
 		zap.Int("concurrency", m.GetConcurrency()),
 		zap.Int("batchSize", m.GetBatchSize()),
 	)

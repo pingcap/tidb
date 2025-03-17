@@ -59,6 +59,7 @@ type Session interface {
 	CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInfo) error
 	Close()
 	GetGlobalVariable(name string) (string, error)
+	GetGlobalSysVar(name string) (string, error)
 	GetSessionCtx() sessionctx.Context
 }
 

@@ -171,8 +171,8 @@ func TestBackfillOperators(t *testing.T) {
 		src := testutil.NewOperatorTestSource(chunkResults...)
 		reorgMeta := ddl.NewDDLReorgMeta(tk.Session())
 		ingestOp := ddl.NewIndexIngestOperator(
-			opCtx, copCtx, bcCtx, sessPool, pTbl, []table.Index{index}, []ingest.Engine{mockEngine},
-			srcChkPool, 3, reorgMeta, &ddl.EmptyRowCntListener{})
+			opCtx, copCtx, sessPool, pTbl, []table.Index{index}, []ingest.Engine{mockEngine},
+			srcChkPool, 3, reorgMeta)
 		sink := testutil.NewOperatorTestSink[ddl.IndexWriteResult]()
 
 		operator.Compose[ddl.IndexRecordChunk](src, ingestOp)
@@ -312,7 +312,7 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 					}
 				}))
 			} else if strings.Contains(tc.failPointPath, "scanRecordExec") {
-				require.NoError(t, failpoint.EnableCall(tc.failPointPath, func() { cancel() }))
+				require.NoError(t, failpoint.EnableCall(tc.failPointPath, func(*model.DDLReorgMeta) { cancel() }))
 			} else {
 				require.NoError(t, failpoint.Enable(tc.failPointPath, `return`))
 			}
@@ -421,9 +421,9 @@ func TestTuneWorkerPoolSize(t *testing.T) {
 
 		scanOp.Open()
 		require.Equal(t, scanOp.GetWorkerPoolSize(), int32(2))
-		scanOp.TuneWorkerPoolSize(8)
+		scanOp.TuneWorkerPoolSize(8, false)
 		require.Equal(t, scanOp.GetWorkerPoolSize(), int32(8))
-		scanOp.TuneWorkerPoolSize(1)
+		scanOp.TuneWorkerPoolSize(1, false)
 		require.Equal(t, scanOp.GetWorkerPoolSize(), int32(1))
 
 		cancel()
@@ -443,15 +443,14 @@ func TestTuneWorkerPoolSize(t *testing.T) {
 		require.NoError(t, err)
 		defer bcCtx.Close()
 		mockEngine := ingest.NewMockEngineInfo(nil)
-		ingestOp := ddl.NewIndexIngestOperator(opCtx, copCtx, bcCtx, sessPool, pTbl, []table.Index{index},
-			[]ingest.Engine{mockEngine}, nil, 2, nil,
-			&ddl.EmptyRowCntListener{})
+		ingestOp := ddl.NewIndexIngestOperator(opCtx, copCtx, sessPool, pTbl, []table.Index{index},
+			[]ingest.Engine{mockEngine}, nil, 2, nil)
 
 		ingestOp.Open()
 		require.Equal(t, ingestOp.GetWorkerPoolSize(), int32(2))
-		ingestOp.TuneWorkerPoolSize(8)
+		ingestOp.TuneWorkerPoolSize(8, false)
 		require.Equal(t, ingestOp.GetWorkerPoolSize(), int32(8))
-		ingestOp.TuneWorkerPoolSize(1)
+		ingestOp.TuneWorkerPoolSize(1, false)
 		require.Equal(t, ingestOp.GetWorkerPoolSize(), int32(1))
 
 		cancel()

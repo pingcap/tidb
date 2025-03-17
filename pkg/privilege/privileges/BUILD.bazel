@@ -15,6 +15,7 @@ go_library(
         "//pkg/extension",
         "//pkg/infoschema",
         "//pkg/kv",
+        "//pkg/metrics",
         "//pkg/parser/auth",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
@@ -60,6 +61,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/config",
+        "//pkg/domain",
         "//pkg/errno",
         "//pkg/kv",
         "//pkg/parser/auth",

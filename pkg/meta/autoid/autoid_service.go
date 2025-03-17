@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	"github.com/tikv/client-go/v2/tikv"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -62,7 +63,8 @@ type ClientDiscover struct {
 }
 
 const (
-	autoIDLeaderPath = "tidb/autoid/leader"
+	// AutoIDLeaderPath is etcd key of auto id service leader, exported for test.
+	AutoIDLeaderPath = "tidb/autoid/leader"
 )
 
 // NewClientDiscover creates a ClientDiscover object.
@@ -72,8 +74,16 @@ func NewClientDiscover(etcdCli *clientv3.Client) *ClientDiscover {
 	}
 }
 
+// GetAutoIDServiceLeaderEtcdPath exported for test.
+func GetAutoIDServiceLeaderEtcdPath(keyspaceID uint32) string {
+	if keyspaceID == uint32(tikv.NullspaceID) {
+		return AutoIDLeaderPath
+	}
+	return "/" + AutoIDLeaderPath
+}
+
 // GetClient gets the AutoIDAllocClient.
-func (d *ClientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClient, uint64, error) {
+func (d *ClientDiscover) GetClient(ctx context.Context, keyspaceID uint32) (autoid.AutoIDAllocClient, uint64, error) {
 	d.mu.RLock()
 	cli := d.mu.AutoIDAllocClient
 	if cli != nil {
@@ -88,7 +98,7 @@ func (d *ClientDiscover) GetClient(ctx context.Context) (autoid.AutoIDAllocClien
 		return d.mu.AutoIDAllocClient, atomic.LoadUint64(&d.version), nil
 	}
 
-	resp, err := d.etcdCli.Get(ctx, autoIDLeaderPath, clientv3.WithFirstCreate()...)
+	resp, err := d.etcdCli.Get(ctx, GetAutoIDServiceLeaderEtcdPath(keyspaceID), clientv3.WithFirstCreate()...)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
@@ -134,7 +144,7 @@ func (sp *singlePointAlloc) Alloc(ctx context.Context, n uint64, increment, offs
 
 	var bo backoffer
 retry:
-	cli, ver, err := sp.GetClient(ctx)
+	cli, ver, err := sp.GetClient(ctx, sp.keyspaceID)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
@@ -254,7 +264,7 @@ func (sp *singlePointAlloc) Rebase(ctx context.Context, newBase int64, _ bool) e
 func (sp *singlePointAlloc) rebase(ctx context.Context, newBase int64, force bool) error {
 	var bo backoffer
 retry:
-	cli, ver, err := sp.GetClient(ctx)
+	cli, ver, err := sp.GetClient(ctx, sp.keyspaceID)
 	if err != nil {
 		return errors.Trace(err)
 	}

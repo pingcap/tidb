@@ -1333,7 +1333,7 @@ const (
 //	Adding PK: Unique, IndexName, IndexPartSpecifications, IndexOptions, HiddelCols, Global
 //	Adding vector index: IndexName, IndexPartSpecifications, IndexOption, FuncExpr
 //	Drop index: IndexName, IfExist, IndexID
-//	Rollback add index: IndexName, IfExist, IsVector
+//	Rollback add index: IndexName, IfExist, IsColumnar
 //	Rename index: IndexName
 type IndexArg struct {
 	// Global is never used, we only use Global in IndexOption. Can be deprecated later.
@@ -1346,7 +1346,10 @@ type IndexArg struct {
 
 	// For vector index
 	FuncExpr string `json:"func_expr,omitempty"`
-	IsVector bool   `json:"is_vector,omitempty"`
+	// IsColumnar is used to distinguish columnar index and normal index.
+	// It used to be `IsVector`, after adding columnar index, we extend it to `IsColumnar`.
+	// But we keep the json field name as `is_vector` for compatibility.
+	IsColumnar bool `json:"is_vector,omitempty"`
 
 	// For PK
 	IsPK    bool          `json:"is_pk,omitempty"`
@@ -1555,7 +1558,7 @@ func (a *ModifyIndexArgs) decodeAddVectorIndexV1(job *Job) error {
 		IndexPartSpecifications: []*ast.IndexPartSpecification{indexPartSpecification},
 		IndexOption:             indexOption,
 		FuncExpr:                funcExpr,
-		IsVector:                true,
+		IsColumnar:              true,
 	}}
 	return nil
 }
@@ -1593,7 +1596,7 @@ func (a *ModifyIndexArgs) getFinishedArgsV1(job *Job) []any {
 	}
 
 	idxArg := a.IndexArgs[0]
-	return []any{idxArg.IndexName, idxArg.IfExist, idxArg.IndexID, a.PartitionIDs, idxArg.IsVector}
+	return []any{idxArg.IndexName, idxArg.IfExist, idxArg.IndexID, a.PartitionIDs, idxArg.IsColumnar}
 }
 
 // GetRenameIndexes get name of renamed index.
@@ -1637,15 +1640,15 @@ func GetFinishedModifyIndexArgs(job *Job) (*ModifyIndexArgs, error) {
 		ifExists := make([]bool, 1)
 		indexIDs := make([]int64, 1)
 		var partitionIDs []int64
-		isVector := false
+		isColumnar := false
 		var err error
 
 		if job.IsRollingback() {
 			// Rollback add indexes
-			err = job.decodeArgs(&indexNames, &ifExists, &partitionIDs, &isVector)
+			err = job.decodeArgs(&indexNames, &ifExists, &partitionIDs, &isColumnar)
 		} else {
 			// Finish drop index
-			err = job.decodeArgs(&indexNames[0], &ifExists[0], &indexIDs[0], &partitionIDs, &isVector)
+			err = job.decodeArgs(&indexNames[0], &ifExists[0], &indexIDs[0], &partitionIDs, &isColumnar)
 		}
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1657,9 +1660,9 @@ func GetFinishedModifyIndexArgs(job *Job) (*ModifyIndexArgs, error) {
 		a.IndexArgs = make([]*IndexArg, len(indexNames))
 		for i, indexName := range indexNames {
 			a.IndexArgs[i] = &IndexArg{
-				IndexName: indexName,
-				IfExist:   ifExists[i],
-				IsVector:  isVector,
+				IndexName:  indexName,
+				IfExist:    ifExists[i],
+				IsColumnar: isColumnar,
 			}
 		}
 		// For drop index, store index id in IndexArgs, no impact on other situations.

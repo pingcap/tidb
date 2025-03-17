@@ -71,6 +71,7 @@ func TestXFormedOperatorShouldDeriveTheirStatsOwn(t *testing.T) {
 	res2 = tk.MustQuery("explain format=\"brief\" SELECT /*+ inl_hash_join(tab, t2@sel_2) */ 1 FROM t1 AS tab WHERE  (EXISTS(SELECT  1 FROM t2 WHERE a2 = a1 ))").String()
 	require.Equal(t, res1, res2)
 
+	tk.MustExec("set tidb_hash_join_version=optimized")
 	tk.Session().GetSessionVars().SetEnableCascadesPlanner(false)
 	res1 = tk.MustQuery("explain format=\"brief\" SELECT /*+ hash_join(tab, t2@sel_2) */ 1 FROM t1 AS tab WHERE  (EXISTS(SELECT  1 FROM t2 WHERE a2 = a1 ))").String()
 	tk.Session().GetSessionVars().SetEnableCascadesPlanner(true)

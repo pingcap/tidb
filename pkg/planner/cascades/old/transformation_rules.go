@@ -1183,7 +1183,7 @@ func (*MergeAdjacentProjection) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	for i, expr := range proj.Exprs {
 		newExpr := expr.Clone()
 		ruleutil.ResolveExprAndReplace(newExpr, replace)
-		newProj.Exprs[i] = plannercore.ReplaceColumnOfExpr(newExpr, child, childGroup.Prop.Schema)
+		newProj.Exprs[i] = ruleutil.ReplaceColumnOfExpr(newExpr, child.Exprs, childGroup.Prop.Schema)
 	}
 
 	newProjExpr := memo.NewGroupExpr(newProj)
@@ -1960,7 +1960,7 @@ func (r *EliminateOuterJoinBelowAggregation) OnTransform(old *memo.ExprIter) (ne
 		return nil, false, false, nil
 	}
 	// outer join elimination with duplicate agnostic aggregate functions.
-	_, aggCols := plannercore.GetDupAgnosticAggCols(agg, nil)
+	_, aggCols := logicalop.GetDupAgnosticAggCols(agg, nil)
 	if len(aggCols) > 0 {
 		newAggExpr := memo.NewGroupExpr(agg)
 		newAggExpr.SetChildren(outerGroup)

@@ -501,7 +501,7 @@ func (t *TableInfo) IsSequence() bool {
 	return t.Sequence != nil
 }
 
-// IsBaseTable checks to see the table is neither a view or a sequence.
+// IsBaseTable checks to see the table is neither a view nor a sequence.
 func (t *TableInfo) IsBaseTable() bool {
 	return t.Sequence == nil && t.View == nil
 }
@@ -1093,7 +1093,7 @@ func (pi *PartitionInfo) IDsInDDLToIgnore() []int64 {
 			return ids
 		}
 	case ActionDropTablePartition:
-		if len(pi.DroppingDefinitions) > 0 && pi.DDLState == StateDeleteOnly {
+		if len(pi.DroppingDefinitions) > 0 {
 			ids := make([]int64, 0, len(pi.DroppingDefinitions))
 			for _, def := range pi.DroppingDefinitions {
 				ids = append(ids, def.ID)
