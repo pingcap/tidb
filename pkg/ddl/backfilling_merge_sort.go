@@ -22,6 +22,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
@@ -101,6 +102,9 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		int(res.CPU.Capacity()),
 		true,
 	)
+	failpoint.Inject("mockMergeSortRunSubtaskError", func(_ failpoint.Value) {
+		err = context.DeadlineExceeded
+	})
 	if err != nil {
 		return errors.Trace(err)
 	}

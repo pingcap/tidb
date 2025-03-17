@@ -5,8 +5,8 @@ go_library(
     srcs = [
         "binding.go",
         "binding_cache.go",
+        "binding_handle.go",
         "binding_operator.go",
-        "global_handle.go",
         "session_handle.go",
         "utils.go",
     ],

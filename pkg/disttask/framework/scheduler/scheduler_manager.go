@@ -355,7 +355,10 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 			sm.logger.Info("task scheduler exit", zap.Int64("task-id", task.ID))
 		}()
 		scheduler.ScheduleTask()
-		sm.finishCh <- struct{}{}
+		select {
+		case sm.finishCh <- struct{}{}:
+		default:
+		}
 	})
 }
 
@@ -381,6 +384,7 @@ func (sm *Manager) cleanupTaskLoop() {
 //
 //	tasks with global sort should clean up tmp files stored on S3.
 func (sm *Manager) doCleanupTask() {
+	failpoint.InjectCall("doCleanupTask")
 	tasks, err := sm.taskMgr.GetTasksInStates(
 		sm.ctx,
 		proto.TaskStateFailed,

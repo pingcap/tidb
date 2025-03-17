@@ -270,6 +270,20 @@ func (r *readIndexStepExecutor) getTableStartEndKey(sm *BackfillSubTaskMeta) (
 	if parTbl, ok := r.ptbl.(table.PartitionedTable); ok {
 		pid := sm.PhysicalTableID
 		tbl = parTbl.GetPartition(pid)
+		if len(sm.RowStart) == 0 {
+			// Handle upgrade compatibility
+			currentVer, err1 := getValidCurrentVersion(r.d.store)
+			if err1 != nil {
+				return nil, nil, nil, errors.Trace(err1)
+			}
+			start, end, err = getTableRange(r.jc, r.d.store, parTbl.GetPartition(pid), currentVer.Ver, r.job.Priority)
+			if err != nil {
+				logutil.DDLLogger().Error("get table range error",
+					zap.Error(err))
+				return nil, nil, nil, err
+			}
+			return start, end, tbl, nil
+		}
 	} else {
 		tbl = r.ptbl
 	}

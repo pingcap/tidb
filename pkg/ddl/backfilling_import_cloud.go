@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
@@ -146,6 +147,9 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 		return err
 	}
 	err = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	failpoint.Inject("mockCloudImportRunSubtaskError", func(_ failpoint.Value) {
+		err = context.DeadlineExceeded
+	})
 	if err == nil {
 		return nil
 	}

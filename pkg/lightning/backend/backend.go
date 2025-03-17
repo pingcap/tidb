@@ -218,9 +218,6 @@ type Backend interface {
 	// (e.g. preparing to resolve a disk quota violation).
 	FlushAllEngines(ctx context.Context) error
 
-	// ResetEngine clears all written KV pairs in this opened engine.
-	ResetEngine(ctx context.Context, engineUUID uuid.UUID) error
-
 	// LocalWriter obtains a thread-local EngineWriter for writing rows into the given engine.
 	LocalWriter(ctx context.Context, cfg *LocalWriterConfig, engineUUID uuid.UUID) (EngineWriter, error)
 }

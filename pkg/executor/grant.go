@@ -160,6 +160,10 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	}
 	// Check which user is not exist.
 	for _, user := range e.Users {
+		if user.User.CurrentUser {
+			user.User.Username = e.Ctx().GetSessionVars().User.AuthUsername
+			user.User.Hostname = e.Ctx().GetSessionVars().User.AuthHostname
+		}
 		exists, err := userExists(ctx, e.Ctx(), user.User.Username, user.User.Hostname)
 		if err != nil {
 			return err

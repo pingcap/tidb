@@ -259,13 +259,21 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	}, dataFiles123)
 
 	multi := mockOneMultiFileStat(dataFiles123[:4], statFiles123[:4])
+	multi[0].MinKey = []byte("key01")
+	multi[0].MaxKey = []byte("key21")
 	multi2 := mockOneMultiFileStat(dataFiles123[4:], statFiles123[4:])
-	multiFileStat := []MultipleFilesStat{multi[0], multi2[0]}
+	multi2[0].MinKey = []byte("key02")
+	multi2[0].MaxKey = []byte("key22")
+	multiFileStat := []MultipleFilesStat{multi2[0], multi[0]}
 	// group keys = 2, region keys = 1
 	splitter, err := NewRangeSplitter(
 		ctx, multiFileStat, memStore, 1000, 2, 1000, 1, 1000, 1,
 	)
 	require.NoError(t, err)
+
+	// verify the multiFileStat is sorted
+	require.Equal(t, multi[0], multiFileStat[0])
+	require.Equal(t, multi2[0], multiFileStat[1])
 
 	// [key01, key03), split at key02
 	endKey, dataFiles, statFiles, rangeJobKeys, regionSplitKeys, err := splitter.SplitOneRangesGroup()
