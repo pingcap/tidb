@@ -484,7 +484,7 @@ func TestMainBackupLoop(t *testing.T) {
 			EndKey:   []byte("zzz"),
 		},
 	}
-	tree, err := s.backupClient.BuildProgressRangeTree(ranges, nil)
+	tree, err := s.backupClient.BuildProgressRangeTree(backgroundCtx, ranges, nil, func(backup.ProgressUnit) {})
 	require.NoError(t, err)
 
 	mockBackupResponses := make(map[uint64][]*backup.ResponseAndStore)
@@ -525,7 +525,7 @@ func TestMainBackupLoop(t *testing.T) {
 			EndKey:   []byte("zzz"),
 		},
 	}
-	tree, err = s.backupClient.BuildProgressRangeTree(ranges, nil)
+	tree, err = s.backupClient.BuildProgressRangeTree(backgroundCtx, ranges, nil, func(backup.ProgressUnit) {})
 	require.NoError(t, err)
 
 	clear(mockBackupResponses)
@@ -570,7 +570,7 @@ func TestMainBackupLoop(t *testing.T) {
 			EndKey:   []byte("zzz"),
 		},
 	}
-	tree, err = s.backupClient.BuildProgressRangeTree(ranges, nil)
+	tree, err = s.backupClient.BuildProgressRangeTree(backgroundCtx, ranges, nil, func(backup.ProgressUnit) {})
 	require.NoError(t, err)
 
 	clear(mockBackupResponses)
@@ -629,7 +629,7 @@ func TestMainBackupLoop(t *testing.T) {
 			EndKey:   []byte("zzz"),
 		},
 	}
-	tree, err = s.backupClient.BuildProgressRangeTree(ranges, nil)
+	tree, err = s.backupClient.BuildProgressRangeTree(backgroundCtx, ranges, nil, func(backup.ProgressUnit) {})
 	require.NoError(t, err)
 
 	clear(mockBackupResponses)
@@ -682,7 +682,7 @@ func TestMainBackupLoop(t *testing.T) {
 			EndKey:   []byte("zzz"),
 		},
 	}
-	tree, err = s.backupClient.BuildProgressRangeTree(ranges, nil)
+	tree, err = s.backupClient.BuildProgressRangeTree(backgroundCtx, ranges, nil, func(backup.ProgressUnit) {})
 	require.NoError(t, err)
 
 	clear(mockBackupResponses)
@@ -745,7 +745,7 @@ func TestBuildProgressRangeTree(t *testing.T) {
 			EndKey:   []byte("d"),
 		},
 	}
-	tree, err := s.backupClient.BuildProgressRangeTree(ranges, nil)
+	tree, err := s.backupClient.BuildProgressRangeTree(context.Background(), ranges, nil, func(backup.ProgressUnit) {})
 	require.NoError(t, err)
 
 	contained, err := tree.FindContained([]byte("a"), []byte("aa"))
