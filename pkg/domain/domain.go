@@ -2440,12 +2440,11 @@ func (do *Domain) StatsHandle() *handle.Handle {
 }
 
 // CreateStatsHandle is used only for test.
-func (do *Domain) CreateStatsHandle(ctx, initStatsCtx sessionctx.Context) error {
+func (do *Domain) CreateStatsHandle(ctx context.Context, initStatsCtx sessionctx.Context) error {
 	h, err := handle.NewHandle(
 		ctx,
 		initStatsCtx,
 		do.statsLease,
-		do.InfoSchema(),
 		do.sysSessionPool,
 		&do.sysProcesses,
 		do.ddlNotifier,
@@ -2475,24 +2474,22 @@ func (do *Domain) SetStatsUpdating(val bool) {
 }
 
 // LoadAndUpdateStatsLoop loads and updates stats info.
-func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context, initStatsCtx sessionctx.Context) error {
-	if err := do.UpdateTableStatsLoop(ctxs[0], initStatsCtx); err != nil {
+func (do *Domain) LoadAndUpdateStatsLoop(concurrency int, initStatsCtx sessionctx.Context) error {
+	if err := do.UpdateTableStatsLoop(initStatsCtx); err != nil {
 		return err
 	}
-	do.StartLoadStatsSubWorkers(ctxs[1:])
+	do.StartLoadStatsSubWorkers(concurrency)
 	return nil
 }
 
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop.
 // It will also start a goroutine to analyze tables automatically.
 // It should be called only once in BootstrapSession.
-func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) error {
-	ctx.GetSessionVars().InRestrictedSQL = true
+func (do *Domain) UpdateTableStatsLoop(initStatsCtx sessionctx.Context) error {
 	statsHandle, err := handle.NewHandle(
-		ctx,
+		do.ctx,
 		initStatsCtx,
 		do.statsLease,
-		do.InfoSchema(),
 		do.sysSessionPool,
 		&do.sysProcesses,
 		do.ddlNotifier,
@@ -2600,13 +2597,13 @@ func quitStatsOwner(do *Domain, mgr owner.Manager) {
 }
 
 // StartLoadStatsSubWorkers starts sub workers with new sessions to load stats concurrently.
-func (do *Domain) StartLoadStatsSubWorkers(ctxList []sessionctx.Context) {
+func (do *Domain) StartLoadStatsSubWorkers(concurrency int) {
 	statsHandle := do.StatsHandle()
-	for _, ctx := range ctxList {
+	for i := 0; i < concurrency; i++ {
 		do.wg.Add(1)
-		go statsHandle.SubLoadWorker(ctx, do.exit, do.wg)
+		go statsHandle.SubLoadWorker(do.exit, do.wg)
 	}
-	logutil.BgLogger().Info("start load stats sub workers", zap.Int("worker count", len(ctxList)))
+	logutil.BgLogger().Info("start load stats sub workers", zap.Int("workerCount", concurrency))
 }
 
 // NewOwnerManager returns the owner manager for use outside of the domain.
@@ -3486,10 +3483,11 @@ func (do *Domain) planCacheEvictTrigger() {
 // SetupWorkloadBasedLearningWorker sets up all of the workload based learning workers.
 func (do *Domain) SetupWorkloadBasedLearningWorker() {
 	wbLearningHandle := workloadlearning.NewWorkloadLearningHandle(do.sysSessionPool)
+	wbCacheWorker := workloadlearning.NewWLCacheWorker(do.sysSessionPool)
 	// Start the workload based learning worker to analyze the read workload by statement_summary.
 	do.wg.Run(
 		func() {
-			do.readTableCostWorker(wbLearningHandle)
+			do.readTableCostWorker(wbLearningHandle, wbCacheWorker)
 		},
 		"readTableCostWorker",
 	)
@@ -3497,7 +3495,7 @@ func (do *Domain) SetupWorkloadBasedLearningWorker() {
 }
 
 // readTableCostWorker is a background worker that periodically analyze the read path table cost by statement_summary.
-func (do *Domain) readTableCostWorker(wbLearningHandle *workloadlearning.Handle) {
+func (do *Domain) readTableCostWorker(wbLearningHandle *workloadlearning.Handle, wbCacheWorker *workloadlearning.WLCacheWorker) {
 	// Recover the panic and log the error when worker exit.
 	defer util.Recover(metrics.LabelDomain, "readTableCostWorker", nil, false)
 	readTableCostTicker := time.NewTicker(vardef.WorkloadBasedLearningInterval.Load())
@@ -3509,7 +3507,8 @@ func (do *Domain) readTableCostWorker(wbLearningHandle *workloadlearning.Handle)
 		select {
 		case <-readTableCostTicker.C:
 			if vardef.EnableWorkloadBasedLearning.Load() && do.statsOwner.IsOwner() {
-				wbLearningHandle.HandleReadTableCost(do.InfoSchema())
+				wbLearningHandle.HandleTableReadCost(do.InfoSchema())
+				wbCacheWorker.UpdateTableReadCostCache()
 			}
 		case <-do.exit:
 			return

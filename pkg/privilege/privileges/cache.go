@@ -256,9 +256,6 @@ type roleGraphEdgesTable struct {
 
 // Find method is used to find role from table
 func (g roleGraphEdgesTable) Find(user, host string) bool {
-	if host == "" {
-		host = "%"
-	}
 	if g.roleList == nil {
 		return false
 	}
@@ -267,6 +264,10 @@ func (g roleGraphEdgesTable) Find(user, host string) bool {
 		Hostname: host,
 	}
 	_, ok := g.roleList[key]
+	if !ok && key.Hostname == "" {
+		key.Hostname = "%"
+		_, ok = g.roleList[key]
+	}
 	return ok
 }
 
