@@ -249,10 +249,22 @@ type PhysicalProperty struct {
 
 	CTEProducerStatus cteProducerStatus
 
+	IndexJoinProp *IndexJoinRuntimeProp
+
 	VectorProp struct {
 		*expression.VSInfo
 		TopK uint32
 	}
+}
+
+// IndexJoinRuntimeProp is the inner runtime property for index join.
+type IndexJoinRuntimeProp struct {
+	// for complete the last col range access, cuz its runtime constant.
+	JoinOtherConditions []expression.Expression
+	// for filling the range msg info
+	OuterJoinKeys []*expression.Column
+	// for inner ds/index to detect the range, cuz its runtime constant.
+	InnerJoinKeys []*expression.Column
 }
 
 // NewPhysicalProperty builds property from columns.
