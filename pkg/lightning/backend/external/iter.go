@@ -381,7 +381,7 @@ func newLimitSizeMergeIter[
 		nextReaderIdx: end,
 		limit:         limit,
 	}
-	// newMergeIter may close readers if the reader has no content, so we need to
+	// NewMergeIter may close readers if the reader has no content, so we need to
 	// fill more
 	for i, rp := range iter.readers {
 		if rp != nil {
@@ -571,7 +571,9 @@ func (i *MergeKVIter) Close() error {
 		return err
 	}
 	// memPool should be destroyed after reader's buffer pool.
-	i.memPool.Destroy()
+	if i.memPool != nil {
+		i.memPool.Destroy()
+	}
 	return nil
 }
 

@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"io"
 	"sort"
 	"sync"
 	"time"
@@ -65,7 +66,35 @@ type memKVsAndBuffers struct {
 	droppedSizePerFile []int
 }
 
-func (b *memKVsAndBuffers) build(ctx context.Context) {
+type bufferedKVReader struct {
+	keys   [][]byte
+	values [][]byte
+	cur    int
+}
+
+func (p bufferedKVReader) path() string {
+	return ""
+}
+
+func (p bufferedKVReader) next() (*kvPair, error) {
+	if p.cur >= len(p.keys) {
+		return nil, io.EOF
+	}
+
+	pair := &kvPair{key: p.keys[p.cur], value: p.values[p.cur]}
+	p.cur++
+	return pair, nil
+}
+
+func (_ bufferedKVReader) switchConcurrentMode(_ bool) error {
+	return nil
+}
+
+func (_ bufferedKVReader) close() error {
+	return nil
+}
+
+func (b *memKVsAndBuffers) build(ctx context.Context) error {
 	sumKVCnt := 0
 	for _, keys := range b.keysPerFile {
 		sumKVCnt += len(keys)
@@ -80,16 +109,36 @@ func (b *memKVsAndBuffers) build(ctx context.Context) {
 		zap.Int("sumKVCnt", sumKVCnt),
 		zap.Int("droppedSize", b.droppedSize))
 
+	readerOpeners := make([]readerOpenerFn[*kvPair, bufferedKVReader], len(b.keysPerFile))
+	for i := range len(b.keysPerFile) {
+		readerOpeners[i] = func() (*bufferedKVReader, error) {
+			return &bufferedKVReader{keys: b.keysPerFile[i], values: b.valuesPerFile[i]}, nil
+		}
+	}
+
+	it, err := newMergeIter(ctx, readerOpeners, false)
+	if err != nil {
+		return err
+	}
+
 	b.keys = make([][]byte, 0, sumKVCnt)
 	b.values = make([][]byte, 0, sumKVCnt)
+	for true {
+		if _, ok := it.next(); !ok {
+			break
+		}
+		b.keys = append(b.keys, it.curr.key)
+		b.values = append(b.values, it.curr.value)
+	}
+
 	for i := range b.keysPerFile {
-		b.keys = append(b.keys, b.keysPerFile[i]...)
 		b.keysPerFile[i] = nil
-		b.values = append(b.values, b.valuesPerFile[i]...)
 		b.valuesPerFile[i] = nil
 	}
 	b.keysPerFile = nil
 	b.valuesPerFile = nil
+
+	return nil
 }
 
 // Engine stored sorted key/value pairs in an external storage.
