@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -2331,4 +2332,208 @@ func TestMultiSchemaNewTiDBRowID(t *testing.T) {
 			"9 9 3"))
 	}
 	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn, false)
+}
+
+func TestBackfillConcurrentDML(t *testing.T) {
+	// We want to test the scenario where one batch fails and one succeeds,
+	// so it will retry both batches (since it never updated the reorgInfo).
+	// Additionally, we want to test if it can cause duplication due to it may not know
+	// the committed new record IDs.
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_ddl_reorg_batch_size = 32")
+	tk.MustExec("set global tidb_ddl_reorg_worker_cnt = 2")
+	tk.RefreshSession()
+
+	tk.MustExec("use test")
+
+	//tk.MustExec("create table t (a int, b int) partition by hash(a) partitions 3")
+	tk.MustExec("create table t (a int, b int, primary key (a) nonclustered) partition by hash(a) partitions 3")
+	tk.MustExec("insert into t (a, b) values (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9),(10,10),(11,11),(12,12),(13,13),(14,14),(15,15),(16,16)")
+	tk.MustExec("insert into t (a, b) select a+16, b+16 from t")
+	tk.MustExec("insert into t (a, b) select a+32, b+32 from t")
+	tk.MustExec("insert into t (a, b) select a+64, b+64 from t")
+	// use EXCHANGE PARTITION to make both partitions having _tidb_rowids 1-128/3
+	tk.MustExec("create table tx0 like t")
+	tk.MustExec("alter table tx0 remove partitioning")
+	tk.MustExec("insert into tx0 select a,b from t partition (p0)")
+	tk.MustExec("alter table t exchange partition p0 with table tx0 without validation")
+	tk.MustExec("create table tx1 like tx0")
+	tk.MustExec("insert into tx1 select a,b from t partition (p1)")
+	tk.MustExec("alter table t exchange partition p1 with table tx1 without validation")
+	tk.MustExec("create table tx2 like tx0")
+	tk.MustExec("insert into tx2 select a,b from t partition (p2)")
+	tk.MustExec("alter table t exchange partition p2 with table tx2 without validation")
+	tk.MustExec("drop table tx0, tx1, tx2")
+	//tk.MustQuery("select count(*) from t partition (p0)").Sort().Check(testkit.Rows("42"))
+	//tk.MustQuery("select count(*) from t partition (p1)").Sort().Check(testkit.Rows("43"))
+	//tk.MustQuery("select count(*) from t partition (p2)").Sort().Check(testkit.Rows("43"))
+	//tk.MustQuery("select *, _tidb_rowid from t").Sort().Check(testkit.Rows())
+	var i atomic.Int32
+	i.Store(0)
+
+	tbl, err := tk.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+
+	columnFt := make(map[int64]*types.FieldType)
+	for idx := range tbl.Columns {
+		col := tbl.Columns[idx]
+		columnFt[col.ID] = &col.FieldType
+	}
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillNonClustered", func(vals []byte) {
+		m, err := tablecodec.DecodeRowWithMapNew(vals, columnFt, time.UTC, nil)
+		require.NoError(t, err)
+		var col1 int64
+		if d, ok := m[tbl.Columns[0].ID]; ok {
+			col1 = d.GetInt64()
+		}
+		if col1%3 != 1 {
+			// Let the p0/p2 complete, so there will be duplicates in the new p0/p1 partitions
+			return
+		}
+		if col1 > 30 {
+			// let the first batch succeed, and generate new record IDs
+			return
+		}
+		round := i.Add(1)
+		if round == 1 {
+			// UPDATE the same row, so the backfill will fail and retry
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use test")
+			tk2.MustExec(fmt.Sprintf("update t set b = b + 300 where a = %d", col1))
+		}
+		// TODO: Also start a transaction that will fail due to conflict with the backfill?
+		// probably have to continue in another failpoint hook?
+	})
+	tk.MustExec("alter table t coalesce partition 1")
+	tk.MustQuery("select a,b,_tidb_rowid from t").Sort().Check(testkit.Rows(
+		"1 301 1",
+		"10 10 30035",
+		"100 100 30065",
+		"101 101 34",
+		"102 102 34",
+		"103 103 30066",
+		"104 104 35",
+		"105 105 35",
+		"106 106 30067",
+		"107 107 36",
+		"108 108 36",
+		"109 109 30068",
+		"11 11 4",
+		"110 110 37",
+		"111 111 37",
+		"112 112 30069",
+		"113 113 38",
+		"114 114 38",
+		"115 115 30070",
+		"116 116 39",
+		"117 117 39",
+		"118 118 30071",
+		"119 119 40",
+		"12 12 4",
+		"120 120 40",
+		"121 121 30072",
+		"122 122 41",
+		"123 123 41",
+		"124 124 30073",
+		"125 125 42",
+		"126 126 42",
+		"127 127 43",
+		"128 128 43",
+		"13 13 30036",
+		"14 14 5",
+		"15 15 5",
+		"16 16 30037",
+		"17 17 6",
+		"18 18 6",
+		"19 19 30038",
+		"2 2 1",
+		"20 20 7",
+		"21 21 7",
+		"22 22 30039",
+		"23 23 8",
+		"24 24 8",
+		"25 25 30040",
+		"26 26 9",
+		"27 27 9",
+		"28 28 30041",
+		"29 29 10",
+		"30 30 10",
+		"31 31 30042",
+		"32 32 11",
+		"33 33 11",
+		"34 34 30043",
+		"35 35 12",
+		"36 36 12",
+		"37 37 30044",
+		"38 38 13",
+		"39 39 13",
+		"4 4 30033",
+		"40 40 30045",
+		"41 41 14",
+		"42 42 14",
+		"43 43 30046",
+		"44 44 15",
+		"45 45 15",
+		"46 46 30047",
+		"47 47 16",
+		"48 48 16",
+		"49 49 30048",
+		"5 5 2",
+		"50 50 17",
+		"51 51 17",
+		"52 52 30049",
+		"53 53 18",
+		"54 54 18",
+		"55 55 30050",
+		"56 56 19",
+		"57 57 19",
+		"58 58 30051",
+		"59 59 20",
+		"6 6 2",
+		"60 60 20",
+		"61 61 30052",
+		"62 62 21",
+		"63 63 21",
+		"64 64 30053",
+		"65 65 22",
+		"66 66 22",
+		"67 67 30054",
+		"68 68 23",
+		"69 69 23",
+		"7 7 30034",
+		"70 70 30055",
+		"71 71 24",
+		"72 72 24",
+		"73 73 30056",
+		"74 74 25",
+		"75 75 25",
+		"76 76 30057",
+		"77 77 26",
+		"78 78 26",
+		"79 79 30058",
+		"8 8 3",
+		"80 80 27",
+		"81 81 27",
+		"82 82 30059",
+		"83 83 28",
+		"84 84 28",
+		"85 85 30060",
+		"86 86 29",
+		"87 87 29",
+		"88 88 30061",
+		"89 89 30",
+		"9 9 3",
+		"90 90 30",
+		"91 91 30062",
+		"92 92 31",
+		"93 93 31",
+		"94 94 30063",
+		"95 95 32",
+		"96 96 32",
+		"97 97 30064",
+		"98 98 33",
+		"99 99 33"))
 }

@@ -3828,6 +3828,7 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 		// and if so, skip it.
 		var found map[string][]byte
 		if len(w.oldKeys) > 0 {
+			failpoint.InjectCall("PartitionBackfillNonClustered", w.rowRecords[0].vals)
 			// we must check if old IDs already been written,
 			// i.e. double written by StateWriteOnly or StateWriteReorganization.
 			// TODO: while waiting for BatchGet to check for duplicate, do another round of reads in parallel?
@@ -3835,7 +3836,23 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 			if err != nil {
 				return errors.Trace(err)
 			}
+			// TODO: Add test that kills (like `kill -9`) the currently running
+			// ddl owner, to see how it handles re-running this backfill when some batches has
+			// committed and reorgInfo has not been updated, so it needs to redo some batches.
+
 			// TODO: Also check if already written with new id as a BatchGet?
+			// I.e check if we already committed a backfill batch where it generated new IDs
+			// then we should not generate it again!
+			// So we need to setup a test like this:
+			// - have at least one batch completed, and one not, then crash the ddl owner
+			//   so it needs to restart also the completed batch,
+			//   due to not updated the reorgInfo for the full range.
+			// - when retrying the full range, would it generate yet another new ID
+			//   and insert that too?
+			// - If this is an issue, then we can prevent it by also checking if the record ID
+			//   is already in the temporary index map in the new partition!
+			// TODO: This would most likely be an issue for CLUSTERED tables, since they
+			// do not check for duplicates. But it should just overwrite with same data?
 		}
 
 		for i, prr := range w.rowRecords {
@@ -3855,6 +3872,13 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 					// Not same row, due to earlier EXCHANGE PARTITION.
 					genNewID = true
 				}
+
+				// Lock the *old* partition's value, so it does not change during this backfill transaction.
+				// Since we are generating a new RecordID, this is needed to ensure no lost or duplicated
+				// rows from concurrent DML!
+				lockKey = make([]byte, len(key))
+				copy(lockKey, nextKey[:tablecodec.TableSplitKeyLen+2])
+				copy(lockKey[tablecodec.TableSplitKeyLen+2:], key[tablecodec.TableSplitKeyLen+2:])
 
 				if genNewID {
 					oldRecordIDEncoded := key[tablecodec.TableSplitKeyLen+2:]
@@ -3904,11 +3928,6 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 					// TODO: Add test for DeleteReorg update a row in a old partition, giving it a new _tidb_rowid
 					// not matching the _tidb_rowid in the new partition
 					// then try to read/update and/or delete that row in WriteReorg state.
-
-					// Lock the *old* partition's value, so it does not change during this backfill transaction.
-					// Since we are generating a new RecordID, this is needed to ensure no lost or duplicated
-					// rows from concurrent DML!
-					lockKey = tablecodec.EncodeRecordKey(nextKey[:tablecodec.TableSplitKeyLen+2], recordID)
 				}
 			}
 			// Check if we can lock the key, since there can still be concurrent update

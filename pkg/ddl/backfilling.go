@@ -364,6 +364,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 		taskCtx, err := bf.BackfillData(handleRange)
 		if err != nil {
 			result.err = err
+			logutil.DDLLogger().Warn("backfill worker error", zap.Stringer("worker", w), zap.Error(err), zap.Stack("stack"))
 			return result
 		}
 
