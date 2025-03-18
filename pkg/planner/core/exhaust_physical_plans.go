@@ -47,6 +47,15 @@ import (
 
 func exhaustPhysicalPlans4LogicalUnionScan(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	p := lp.(*logicalop.LogicalUnionScan)
+	// if prop is require an index join's probe side, check the inner pattern admission here.
+	if prop.IndexJoinProp != nil {
+		pass := admitIndexJoinInnerChildPattern(lp)
+		if !pass {
+			// even enforce hint can not work with this.
+			return nil, false, nil
+		}
+		// union scan is a special case, when it's in the inner side of an index join, it could guarantee the keep-order.
+	}
 	if prop.IsFlashProp() {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 			"MPP mode may be blocked because operator `UnionScan` is not supported now.")
@@ -777,6 +786,7 @@ func constructIndexHashJoin(
 // or match some part of on index. If so we will choose the best one and construct a index join.
 func getIndexJoinByOuterIdx(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, outerIdx int) (joins []base.PhysicalPlan) {
 	outerChild, innerChild := p.Children()[outerIdx], p.Children()[1-outerIdx]
+	// 需要 same order
 	all, _ := prop.AllSameOrder()
 	// If the order by columns are not all from outer child, index join cannot promise the order.
 	if !prop.AllColsFromSchema(outerChild.Schema()) || !all {
@@ -827,6 +837,29 @@ type indexJoinInnerChildWrapper struct {
 	zippedChildren []base.LogicalPlan
 }
 
+// admitIndexJoinInnerChildPattern is used to check whether current physical choosing is under an index join's
+// probe side. If it is, and we ganna check the original inner pattern check here to keep compatible with the old.
+// the @first bool indicate whether current logical plan is valid of index join inner side.
+func admitIndexJoinInnerChildPattern(p base.LogicalPlan) bool {
+	switch x := p.(type) {
+	case *logicalop.DataSource:
+		// DS that prefer tiFlash reading couldn't walk into index join.
+		if x.PreferStoreType&h.PreferTiFlash != 0 {
+			return false
+		}
+		return true
+	case *logicalop.LogicalProjection, *logicalop.LogicalSelection, *logicalop.LogicalAggregation:
+		if !p.SCtx().GetSessionVars().EnableINLJoinInnerMultiPattern {
+			return false
+		}
+		return true
+	case *logicalop.LogicalUnionScan:
+		return true
+	default: // index join inner side couldn't allow join, sort, limit, etc. todo @Arenatlx: open it.
+		return false
+	}
+}
+
 func extractIndexJoinInnerChildPattern(p *logicalop.LogicalJoin, innerChild base.LogicalPlan) *indexJoinInnerChildWrapper {
 	wrapper := &indexJoinInnerChildWrapper{}
 	nextChild := func(pp base.LogicalPlan) base.LogicalPlan {
@@ -839,6 +872,7 @@ childLoop:
 	for curChild := innerChild; curChild != nil; curChild = nextChild(curChild) {
 		switch child := curChild.(type) {
 		case *logicalop.DataSource:
+			// 这里要看到 ds，因为需要 assert 到 ds 的 range scan 才能算有效的 index join
 			wrapper.ds = child
 			break childLoop
 		case *logicalop.LogicalProjection, *logicalop.LogicalSelection, *logicalop.LogicalAggregation:
@@ -859,6 +893,88 @@ childLoop:
 	return wrapper
 }
 
+// buildDataSource2TableScanByIndexJoinProp builds a TableScan as the inner child for an
+// IndexJoin if possible.
+// If the inner side of a index join is a TableScan, only one tuple will be
+// fetched from the inner side for every tuple from the outer side. This will be
+// promised to be no worse than building IndexScan as the inner child.
+func buildDataSource2TableScanByIndexJoinProp(
+	ds *logicalop.DataSource,
+	prop *property.PhysicalProperty, hasDitryWrite bool,
+	outerIdx int, avgInnerRowCnt float64) base.Task {
+	var tblPath *util.AccessPath
+	for _, path := range ds.PossibleAccessPaths {
+		if path.IsTablePath() && path.StoreType == kv.TiKV { // ds 里面找一个 tikv 的 table path
+			tblPath = path
+			break
+		}
+	}
+	if tblPath == nil {
+		return nil
+	}
+	keyOff2IdxOff := make([]int, len(prop.IndexJoinProp.InnerJoinKeys))
+	var ranges ranger.MutableRanges = ranger.Ranges{}
+	var innerTask base.Task
+	var indexJoinResult *indexJoinPathResult
+	if ds.TableInfo.IsCommonHandle {
+		// 拿到 index join res 和 innerKeyOffset 到 index col 的映射
+		indexJoinResult, keyOff2IdxOff = getBestIndexJoinPathResultByProp(ds, prop.IndexJoinProp, func(path *util.AccessPath) bool { return path.IsCommonHandlePath })
+		if indexJoinResult == nil {
+			return nil
+		}
+		// 这里需要 outer join keys，因为要打印 range 信息，就是那个 decided by:
+		rangeInfo := indexJoinPathRangeInfo(ds.SCtx(), prop.IndexJoinProp.OuterJoinKeys, indexJoinResult)
+		// 这里构建 inner task
+		innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), rangeInfo, false, false, avgInnerRowCnt)
+		// The index merge join's inner plan is different from index join, so we
+		// should construct another inner plan for it.
+		// Because we can't keep order for union scan, if there is a union scan in inner task,
+		// we can't construct index merge join.
+		// if !hasDitryWrite {
+		// 	// 因为 index join 要保持 outer join key 的顺序，所以这里要保持 inner join key 的顺序
+		// 	innerTask2 = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
+		// }
+		ranges = indexJoinResult.chosenRanges
+	} else {
+		var (
+			ok               bool
+			newOuterJoinKeys []*expression.Column
+			// note: pk col doesn't have mutableRanges, the global var(ranges) which will be handled as empty range in constructIndexJoin.
+			localRanges ranger.Ranges
+		)
+		keyOff2IdxOff, newOuterJoinKeys, localRanges, ok = getIndexJoinIntPKPathInfo(ds, prop.IndexJoinProp.InnerJoinKeys, prop.IndexJoinProp.OuterJoinKeys)
+		if !ok {
+			return nil
+		}
+		rangeInfo := indexJoinIntPKRangeInfo(ds.SCtx().GetExprCtx().GetEvalCtx(), newOuterJoinKeys)
+		innerTask = constructDS2TableScanTask(ds, localRanges, rangeInfo, false, false, avgInnerRowCnt)
+		// The index merge join's inner plan is different from index join, so we
+		// should construct another inner plan for it.
+		// Because we can't keep order for union scan, if there is a union scan in inner task,
+		// we can't construct index merge join.
+		// if !hasDitryWrite {
+		// 	innerTask2 = constructDS2TableScanTask(ds, localRanges, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
+		// }
+	}
+	// 下面才是正经构造 index join 的代码
+	completeIndexJoinFeedBackInfo(innerTask.(*CopTask), indexJoinResult, ranges, keyOff2IdxOff)
+	// here we don't need to construct physical index join here anymore, because we will encapsulate it bottom-up.
+	// chosenPath and lastColManager of indexJoinResult should be returned to the caller (seen by index join to keep
+	// index join aware of indexColLens and compareFilters).
+	return innerTask
+}
+
+func completeIndexJoinFeedBackInfo(innerTask *CopTask, indexJoinResult *indexJoinPathResult, ranges ranger.MutableRanges, keyOff2IdxOff []int) {
+	if indexJoinResult != nil {
+		if indexJoinResult.chosenPath != nil {
+			innerTask.IdxColLens = indexJoinResult.chosenPath.IdxColLens
+		}
+		innerTask.Ranges = ranges
+		innerTask.KeyOff2IdxOff = keyOff2IdxOff
+		innerTask.CompareFilters = indexJoinResult.lastColManager
+	}
+}
+
 // buildIndexJoinInner2TableScan builds a TableScan as the inner child for an
 // IndexJoin if possible.
 // If the inner side of a index join is a TableScan, only one tuple will be
@@ -872,7 +988,7 @@ func buildIndexJoinInner2TableScan(
 	ds := wrapper.ds
 	var tblPath *util.AccessPath
 	for _, path := range ds.PossibleAccessPaths {
-		if path.IsTablePath() && path.StoreType == kv.TiKV {
+		if path.IsTablePath() && path.StoreType == kv.TiKV { // ds 里面找一个 tikv 的 table path
 			tblPath = path
 			break
 		}
@@ -885,17 +1001,21 @@ func buildIndexJoinInner2TableScan(
 	var innerTask, innerTask2 base.Task
 	var indexJoinResult *indexJoinPathResult
 	if ds.TableInfo.IsCommonHandle {
+		// 拿到 index join res 和 innerKeyOffset 到 index col 的映射
 		indexJoinResult, keyOff2IdxOff = getBestIndexJoinPathResult(p, ds, innerJoinKeys, outerJoinKeys, func(path *util.AccessPath) bool { return path.IsCommonHandlePath })
 		if indexJoinResult == nil {
 			return nil
 		}
+		// 这里需要 outer join keys，因为要打印 range 信息，就是那个 decided by:
 		rangeInfo := indexJoinPathRangeInfo(p.SCtx(), outerJoinKeys, indexJoinResult)
+		// 这里构建 inner task
 		innerTask = constructInnerTableScanTask(p, prop, wrapper, indexJoinResult.chosenRanges.Range(), rangeInfo, false, false, avgInnerRowCnt)
 		// The index merge join's inner plan is different from index join, so we
 		// should construct another inner plan for it.
 		// Because we can't keep order for union scan, if there is a union scan in inner task,
 		// we can't construct index merge join.
 		if !wrapper.hasDitryWrite {
+			// 因为 index join 要保持 outer join key 的顺序，所以这里要保持 inner join key 的顺序
 			innerTask2 = constructInnerTableScanTask(p, prop, wrapper, indexJoinResult.chosenRanges.Range(), rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
 		}
 		ranges = indexJoinResult.chosenRanges
@@ -1530,6 +1650,7 @@ func filterIndexJoinBySessionVars(sc base.PlanContext, indexJoins []base.Physica
 	if sc.GetSessionVars().EnableIndexMergeJoin {
 		return indexJoins
 	}
+	// 太 hack 了吧，卧槽
 	for i := len(indexJoins) - 1; i >= 0; i-- {
 		if _, ok := indexJoins[i].(*PhysicalIndexMergeJoin); ok {
 			indexJoins = append(indexJoins[:i], indexJoins[i+1:]...)
@@ -1610,6 +1731,7 @@ func tryToGetIndexJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty
 	}
 	candidates = handleFilterIndexJoinHints(p, candidates)
 	// todo: if any variables banned it, why bother to generate it first?
+	// 最后才把 index merge 给 filter 掉的，不要生成不就完了吗
 	return filterIndexJoinBySessionVars(p.SCtx(), candidates), false
 }
 
@@ -2192,6 +2314,14 @@ func exhaustPhysicalPlans4LogicalExpand(lp base.LogicalPlan, prop *property.Phys
 
 func exhaustPhysicalPlans4LogicalProjection(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	p := lp.(*logicalop.LogicalProjection)
+	// if prop is require an index join's probe side, check the inner pattern admission here.
+	if prop.IndexJoinProp != nil {
+		pass := admitIndexJoinInnerChildPattern(lp)
+		if !pass {
+			// even enforce hint can not work with this.
+			return nil, false, nil
+		}
+	}
 	newProp, ok := p.TryToGetChildProp(prop)
 	if !ok {
 		return nil, true, nil
@@ -2916,6 +3046,14 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 
 func exhaustPhysicalPlans4LogicalAggregation(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	la := lp.(*logicalop.LogicalAggregation)
+	// if prop is require an index join's probe side, check the inner pattern admission here.
+	if prop.IndexJoinProp != nil {
+		pass := admitIndexJoinInnerChildPattern(lp)
+		if !pass {
+			// even enforce hint can not work with this.
+			return nil, false, nil
+		}
+	}
 	if la.PreferAggToCop {
 		if !la.CanPushToCop(kv.TiKV) {
 			la.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
@@ -3058,6 +3196,14 @@ func exhaustPhysicalPlans4LogicalUnionAll(lp base.LogicalPlan, prop *property.Ph
 
 func exhaustPhysicalPlans4LogicalPartitionUnionAll(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	p := lp.(*logicalop.LogicalPartitionUnionAll)
+	// if prop is require an index join's probe side, check the inner pattern admission here.
+	if prop.IndexJoinProp != nil {
+		pass := admitIndexJoinInnerChildPattern(lp)
+		if !pass {
+			// even enforce hint can not work with this.
+			return nil, false, nil
+		}
+	}
 	uas, flagHint, err := p.LogicalUnionAll.ExhaustPhysicalPlans(prop)
 	if err != nil {
 		return nil, false, err

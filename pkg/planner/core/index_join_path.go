@@ -116,6 +116,7 @@ type indexJoinPathTmp struct {
 	curIdxOff2KeyOff []int
 }
 
+// index join 临时 range
 type indexJoinTmpRange struct {
 	ranges            ranger.Ranges
 	emptyRange        bool
@@ -152,11 +153,16 @@ func indexJoinPathUpdateTmpRange(
 	tempRangeRes *indexJoinTmpRange,
 	accesses, remained []expression.Expression) (lastColPos int, newAccesses, newRemained []expression.Expression) {
 	lastColPos = tempRangeRes.keyCntInRange + tempRangeRes.eqAndInCntInRange
+	// curPossibleUsedKeys 里面存的是可能会用到的 inner join keys
+	// keyCntInRange 严格记录了用到的 inner join keys 的数量，其是由 curIdxOff2KeyOff 控制的
 	buildTmp.curPossibleUsedKeys = buildTmp.curPossibleUsedKeys[:tempRangeRes.keyCntInRange]
 	for i := lastColPos; i < len(buildTmp.curIdxOff2KeyOff); i++ {
+		// 感觉只是 clean 一下 curIdxOff2KeyOff
 		buildTmp.curIdxOff2KeyOff[i] = -1
 	}
+	// 这个是真是用的 accesses, 因为可能有 fallback 之类的
 	newAccesses = accesses[:tempRangeRes.eqAndInCntInRange]
+	// 没有用到的再塞到 remain 的里面去
 	newRemained = ranger.AppendConditionsIfNotExist(sctx.GetExprCtx().GetEvalCtx(),
 		remained, accesses[tempRangeRes.eqAndInCntInRange:])
 	return
@@ -172,20 +178,26 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 		return nil, false, nil
 	}
 	accesses := make([]expression.Expression, 0, len(path.IdxCols))
+	// 找下 index col 和 inner join key 之间的映射关系
 	buildTmp := indexJoinPathTmpInit(sctx, indexJoinInfo, path.IdxCols, path.IdxColLens)
+	// 在 ds push down conditions 里面去填充一下刚的空洞的 index cols
 	notKeyEqAndIn, remained, rangeFilterCandidates, emptyRange := indexJoinPathFindUsefulEQIn(sctx, indexJoinInfo, buildTmp)
 	if emptyRange {
 		return nil, true, nil
 	}
 	var remainedEqAndIn []expression.Expression
+	// 在 ds 提供的 eq 中，看看能够填充多少 buildTmp 下的 index cols 的空洞，返回的是填充的 eq 和剩下的 eq
 	notKeyEqAndIn, remainedEqAndIn = indexJoinPathRemoveUselessEQIn(buildTmp, path.IdxCols, notKeyEqAndIn)
 	matchedKeyCnt := len(buildTmp.curPossibleUsedKeys)
 	// If no join key is matched while join keys actually are not empty. We don't choose index join for now.
+	// 如果一个 inner join key 传递的 index col 都用不到，那也就没有必要走 index join 了。自己用 ds 自己的 index range 捞不好嘛。
 	if matchedKeyCnt <= 0 && len(indexJoinInfo.innerJoinKeys) > 0 {
 		return nil, false, nil
 	}
 	accesses = append(accesses, notKeyEqAndIn...)
+	// 其实就将没有用到的 condition 都去重合到一起
 	remained = ranger.AppendConditionsIfNotExist(sctx.GetExprCtx().GetEvalCtx(), remained, remainedEqAndIn)
+	// 这两个加起来就是 index cols 整体填充下来的 eq 长度
 	lastColPos := matchedKeyCnt + len(notKeyEqAndIn)
 	// There should be some equal conditions. But we don't need that there must be some join key in accesses here.
 	// A more strict check is applied later.
@@ -206,15 +218,21 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 			return nil, false, nil
 		}
 		remained = append(remained, rangeFilterCandidates...)
+		// 利用 inner join keys 的 EQ，和 ds push down 自己的 EQ/In 来构造 ranges
 		tempRangeRes := indexJoinPathBuildTmpRange(sctx, buildTmp, matchedKeyCnt, notKeyEqAndIn, nil, false, rangeMaxSize)
+		// keyCntInRange = 0 说明根本没有利用到 inner join keys，那就没有必要选择 index join
 		if tempRangeRes.err != nil || tempRangeRes.emptyRange || tempRangeRes.keyCntInRange <= 0 {
 			return nil, tempRangeRes.emptyRange, tempRangeRes.err
 		}
+		// 因为 fallback 的存在，更新一下真实用到的 accesses, remained, tmp
 		lastColPos, accesses, remained = indexJoinPathUpdateTmpRange(sctx, buildTmp, tempRangeRes, accesses, remained)
+		// 如果参数里面用到了 parameter marker，那么就是需要为了 plan cache 构造 mutable range
 		mutableRange := indexJoinPathNewMutableRange(sctx, indexJoinInfo, accesses, tempRangeRes.ranges, path)
+
 		ret := indexJoinPathConstructResult(indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, lastColPos)
 		return ret, false, nil
 	}
+	// index cols 还没有被 eq 完全利用，给尾部添一些东西
 	lastPossibleCol := path.IdxCols[lastColPos]
 	lastColManager := &ColWithCmpFuncManager{
 		TargetCol:         lastPossibleCol,
@@ -224,63 +242,80 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 	lastColAccess := indexJoinPathBuildColManager(indexJoinInfo, lastPossibleCol, lastColManager)
 	// If the column manager holds no expression, then we fallback to find whether there're useful normal filters
 	if len(lastColAccess) == 0 {
+		// 这里是如果 index join other-cond 里面没有 last col range，我们这里就尝试在 ds push down 的 condition 里找。
+		//
 		// If there's no join key matching index column, then choosing hash join is always a better idea.
 		// e.g. select * from t1, t2 where t2.a=1 and t2.b=1 and t2.c > 10 and t2.c < 20. And t2 has index(a, b, c).
 		//      If we don't have the following check, TiDB will build index join for this case.
 		if matchedKeyCnt <= 0 {
 			return nil, false, nil
 		}
+		// ds 的 range filter 只要在 rangeFilterCandidates 找就行了，前面肯定都是 EQ conditions
 		colAccesses, colRemained := ranger.DetachCondsForColumn(sctx.GetRangerCtx(), rangeFilterCandidates, lastPossibleCol)
 		var nextColRange []*ranger.Range
 		var err error
 		if len(colAccesses) > 0 {
 			var colRemained2 []expression.Expression
+			// 在 ds push down conditions 里面找到了 last col 的范围 range，那么就用这个 range 来构造下一个 col 的 range
 			nextColRange, colAccesses, colRemained2, err = ranger.BuildColumnRange(colAccesses, sctx.GetRangerCtx(), lastPossibleCol.RetType, path.IdxColLens[lastColPos], rangeMaxSize)
 			if err != nil {
 				return nil, false, err
 			}
 			if len(colRemained2) > 0 {
+				// 如果 fallback 了，那么就直接返回前序的 ranges
 				colRemained = append(colRemained, colRemained2...)
 				nextColRange = nil
 			}
 		}
+		// 利用 ranges 和 next col range 组合，这个 col range 是常量
 		tempRangeRes := indexJoinPathBuildTmpRange(sctx, buildTmp, matchedKeyCnt, notKeyEqAndIn, nextColRange, false, rangeMaxSize)
 		if tempRangeRes.err != nil || tempRangeRes.emptyRange || tempRangeRes.keyCntInRange <= 0 {
 			return nil, tempRangeRes.emptyRange, tempRangeRes.err
 		}
+		// 因为 fallback 的存在，更新一下真实用到的 accesses, remained, tmp
 		lastColPos, accesses, remained = indexJoinPathUpdateTmpRange(sctx, buildTmp, tempRangeRes, accesses, remained)
 		// update accesses and remained by colAccesses and colRemained.
 		remained = append(remained, colRemained...)
 		if tempRangeRes.nextColInRange {
+			// 如果 next col range 有预留位置，且其 len 不是完整的，还是需要价格 filter 在外面
 			if path.IdxColLens[lastColPos] != types.UnspecifiedLength {
 				remained = append(remained, colAccesses...)
 			}
+			// access 条件也加一份
 			accesses = append(accesses, colAccesses...)
 			lastColPos = lastColPos + 1
 		} else {
 			remained = append(remained, colAccesses...)
 		}
+		// 如果参数里面用到了 parameter marker，那么就是需要为了 plan cache 构造 mutable range
 		mutableRange := indexJoinPathNewMutableRange(sctx, indexJoinInfo, accesses, tempRangeRes.ranges, path)
+
 		ret := indexJoinPathConstructResult(indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, lastColPos)
 		return ret, false, nil
 	}
+	// 然后就是 common 代码了，我们有 runtime last col range，所以尾部先填充 empty range 一下（has extra col）
 	tempRangeRes := indexJoinPathBuildTmpRange(sctx, buildTmp, matchedKeyCnt, notKeyEqAndIn, nil, true, rangeMaxSize)
 	if tempRangeRes.err != nil || tempRangeRes.emptyRange {
 		return nil, tempRangeRes.emptyRange, tempRangeRes.err
 	}
+	// 因为 fallback 的存在，更新一下真实用到的 accesses, remained, tmp
 	lastColPos, accesses, remained = indexJoinPathUpdateTmpRange(sctx, buildTmp, tempRangeRes, accesses, remained)
 
 	remained = append(remained, rangeFilterCandidates...)
 	if tempRangeRes.extraColInRange {
+		// 看看尾部有没有预留位置，因为 fallback 的情况下可能没有
 		accesses = append(accesses, lastColAccess...)
 		lastColPos = lastColPos + 1
 	} else {
 		if tempRangeRes.keyCntInRange <= 0 {
 			return nil, false, nil
 		}
+		// 没有预留的话，lastColManager 也 G 了
 		lastColManager = nil
 	}
+	// 如果参数里面用到了 parameter marker，那么就是需要为了 plan cache 构造 mutable range
 	mutableRange := indexJoinPathNewMutableRange(sctx, indexJoinInfo, accesses, tempRangeRes.ranges, path)
+	// 构造 res
 	ret := indexJoinPathConstructResult(indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, lastColManager, lastColPos)
 	return ret, false, nil
 }
@@ -301,6 +336,7 @@ func indexJoinPathCompare(best, current *indexJoinPathResult) (curIsBetter bool)
 	// since the NDV of outer join keys are not considered, and the detached access conditions
 	// may contain expressions like `t1.a > t2.a`. It's pretty hard to evaluate the join selectivity
 	// of these non-column-equal conditions, so I prefer to keep these heuristic rules simple at least for now.
+	// group ndv 越大，一次 fetch 扫的 rows 就会更多。
 	if current.usedColsNDV < best.usedColsNDV || (current.usedColsNDV == best.usedColsNDV && current.usedColsLen <= best.usedColsLen) {
 		return false
 	}
@@ -317,14 +353,16 @@ func indexJoinPathConstructResult(
 	lastColManager *ColWithCmpFuncManager,
 	usedColsLen int) *indexJoinPathResult {
 	var innerNDV float64
+	// 这里用了 inner stats 估算了一下用到的 inner join key 的 group NDV
 	if stats := indexJoinInfo.innerStats; stats != nil && stats.StatsVersion != statistics.PseudoVersion {
 		innerNDV, _ = cardinality.EstimateColsNDVWithMatchedLen(path.IdxCols[:usedColsLen], indexJoinInfo.innerSchema, stats)
 	}
+	// 重新 new 了一个 slices 复制了一下
 	idxOff2KeyOff := make([]int, len(buildTmp.curIdxOff2KeyOff))
 	copy(idxOff2KeyOff, buildTmp.curIdxOff2KeyOff)
 	return &indexJoinPathResult{
 		chosenPath:     path,
-		usedColsLen:    len(ranges.Range()[0].LowVal),
+		usedColsLen:    len(ranges.Range()[0].LowVal), // datum 长度就是用到的 cols len
 		usedColsNDV:    innerNDV,
 		chosenRanges:   ranges,
 		chosenAccess:   accesses,
@@ -334,6 +372,7 @@ func indexJoinPathConstructResult(
 	}
 }
 
+// 这里才是真正 build range 的地方
 func indexJoinPathBuildTmpRange(
 	sctx planctx.PlanContext,
 	buildTmp *indexJoinPathTmp,
@@ -355,6 +394,7 @@ func indexJoinPathBuildTmpRange(
 		if buildTmp.curIdxOff2KeyOff[i+j] != -1 {
 			// This position is occupied by join key.
 			var fallback bool
+			// 因为 join key 的值是动态的，所以这里我们的 range 其实给的是 empty datum 哦！
 			ranges, fallback = appendTailTemplateRange(ranges, rangeMaxSize)
 			if fallback {
 				sctx.GetSessionVars().StmtCtx.RecordRangeFallback(rangeMaxSize)
@@ -363,19 +403,24 @@ func indexJoinPathBuildTmpRange(
 				res.eqAndInCntInRange = j
 				return
 			}
+			// 先用 join key 填充的 index cols
 			i++
 		} else {
+			// curIdxOff2KeyOff = -1 之后，后面都是用 ds push down conditions 填充的 index cols
 			exprs := []expression.Expression{eqAndInFuncs[j]}
+			// 然后是用这个表达式来构造这个 column 的 range
 			oneColumnRan, _, remained, err := ranger.BuildColumnRange(exprs, sctx.GetRangerCtx(), buildTmp.curNotUsedIndexCols[j].RetType, buildTmp.curNotUsedColLens[j], rangeMaxSize)
 			if err != nil {
 				return &indexJoinTmpRange{err: err}
 			}
 			if len(oneColumnRan) == 0 {
+				// 如果这个 EQ/IN 没能 build 出来 column range，G，这里感觉可以 fallback 到前序的 range？todo:
 				return &indexJoinTmpRange{emptyRange: true}
 			}
 			if sc.MemTracker != nil {
 				sc.MemTracker.Consume(2 * types.EstimatedMemUsage(oneColumnRan[0].LowVal, len(oneColumnRan)))
 			}
+			// 如果这个 EQ/IN 居然还有剩余，可能是 col Len 不同导致额外加的 filter，就返回前序 ranges 了，感觉似乎还能继续往后 build range？todo：
 			if len(remained) > 0 {
 				res.ranges = ranges
 				res.keyCntInRange = i
@@ -383,17 +428,20 @@ func indexJoinPathBuildTmpRange(
 				return
 			}
 			var fallback bool
+			// 如果这个 EQ/IN 刚好用完，那就直接 append 这个 column range 到前序 ranges 里面
 			ranges, fallback = ranger.AppendRanges2PointRanges(ranges, oneColumnRan, rangeMaxSize)
-			if fallback {
+			if fallback { // 内容超了，当前这个 range append 失败了，直接返回前序 ranges
 				sctx.GetSessionVars().StmtCtx.RecordRangeFallback(rangeMaxSize)
 				res.ranges = ranges
 				res.keyCntInRange = i
 				res.eqAndInCntInRange = j
 				return
 			}
+			// 不然的话，继续往后看 ds push down conditions 里面的 EQ/IN
 			j++
 		}
 	}
+	// 如果中途没有任何异常，那么所有 EQ/IN 感觉都利用到了，这里尾部应该还有非 EQ 的范围 range
 	if len(nextColRange) > 0 {
 		var fallback bool
 		ranges, fallback = ranger.AppendRanges2PointRanges(ranges, nextColRange, rangeMaxSize)
@@ -406,6 +454,7 @@ func indexJoinPathBuildTmpRange(
 		res.nextColInRange = !fallback
 		return
 	}
+	// 如果有额外的 extra column ，那么就直接 append empty range 进去
 	if haveExtraCol {
 		var fallback bool
 		ranges, fallback = appendTailTemplateRange(ranges, rangeMaxSize)
@@ -418,9 +467,10 @@ func indexJoinPathBuildTmpRange(
 		res.extraColInRange = !fallback
 		return
 	}
+	// 没有的话就这样了
 	res.ranges = ranges
-	res.keyCntInRange = matchedKeyCnt
-	res.eqAndInCntInRange = len(eqAndInFuncs)
+	res.keyCntInRange = matchedKeyCnt         // 利用了多少 inner join key 的 EQ
+	res.eqAndInCntInRange = len(eqAndInFuncs) // 利用了多少 ds push down conditions 的 EQ/IN
 	return
 }
 
@@ -484,14 +534,18 @@ func indexJoinPathTmpInit(
 	indexJoinInfo *indexJoinPathInfo,
 	idxCols []*expression.Column,
 	colLens []int) *indexJoinPathTmp {
+	// inner join key 的 schema
 	tmpSchema := expression.NewSchema(indexJoinInfo.innerJoinKeys...)
 	buildTmp := new(indexJoinPathTmp)
 	buildTmp.curIdxOff2KeyOff = make([]int, len(idxCols))
 	buildTmp.curNotUsedIndexCols = make([]*expression.Column, 0, len(idxCols))
 	buildTmp.curNotUsedColLens = make([]int, 0, len(idxCols))
 	for i, idxCol := range idxCols {
+		// 在 inner join key 的 schema 里面找到 index col 的 offset
 		buildTmp.curIdxOff2KeyOff[i] = tmpSchema.ColumnIndex(idxCol)
 		if buildTmp.curIdxOff2KeyOff[i] >= 0 {
+			// 如果这个 index col 刚好在 inner join key 的 schema 里面找到了
+			// 如果 collation 不一致，那也不能用
 			// Don't use the join columns if their collations are unmatched and the new collation is enabled.
 			if collate.NewCollationEnabled() && types.IsString(idxCol.RetType.GetType()) && types.IsString(indexJoinInfo.outerJoinKeys[buildTmp.curIdxOff2KeyOff[i]].RetType.GetType()) {
 				et, err := expression.CheckAndDeriveCollationFromExprs(sctx.GetExprCtx(), "equal", types.ETInt, idxCol, indexJoinInfo.outerJoinKeys[buildTmp.curIdxOff2KeyOff[i]])
@@ -521,7 +575,7 @@ func indexJoinPathFindUsefulEQIn(sctx planctx.PlanContext, indexJoinInfo *indexJ
 	usefulEqOrInFilters, remainedEqOrIn, remainingRangeCandidates, _, emptyRange = ranger.ExtractEqAndInCondition(
 		sctx.GetRangerCtx(),
 		indexJoinInfo.innerPushedConditions,
-		buildTmp.curNotUsedIndexCols,
+		buildTmp.curNotUsedIndexCols, // 试图去 ds push down conditions 里面找下未能在 inner join key 里面的底层 index cols 的 EQ
 		buildTmp.curNotUsedColLens,
 	)
 	return usefulEqOrInFilters, remainedEqOrIn, remainingRangeCandidates, emptyRange
@@ -534,6 +588,7 @@ func indexJoinPathBuildColManager(indexJoinInfo *indexJoinPathInfo,
 	var lastColAccesses []expression.Expression
 loopOtherConds:
 	for _, filter := range indexJoinInfo.joinOtherConditions {
+		// 只看 > >= < <= 的范围条件
 		sf, ok := filter.(*expression.ScalarFunction)
 		if !ok || !(sf.FuncName.L == ast.LE || sf.FuncName.L == ast.LT || sf.FuncName.L == ast.GE || sf.FuncName.L == ast.GT) {
 			continue
@@ -551,15 +606,17 @@ loopOtherConds:
 		} else {
 			continue
 		}
+		// 范围参数里抽取 cols 看下
 		affectedCols := expression.ExtractColumns(anotherArg)
 		if len(affectedCols) == 0 {
 			continue
 		}
 		for _, col := range affectedCols {
-			if indexJoinInfo.innerSchema.Contains(col) {
+			if indexJoinInfo.innerSchema.Contains(col) { // 如果 inner col > func(inner col related) 其实没啥用，建不了范围
 				continue loopOtherConds
 			}
 		}
+		// 找到有用的 sf 当作 last col 的 access.
 		lastColAccesses = append(lastColAccesses, sf)
 		cwc.appendNewExpr(funcName, anotherArg, affectedCols)
 	}
@@ -577,20 +634,25 @@ func indexJoinPathRemoveUselessEQIn(buildTmp *indexJoinPathTmp, idxCols []*expre
 	notKeyEqAndIn []expression.Expression) (usefulEqAndIn, uselessOnes []expression.Expression) {
 	buildTmp.curPossibleUsedKeys = make([]*expression.Column, 0, len(idxCols))
 	for idxColPos, notKeyColPos := 0, 0; idxColPos < len(idxCols); idxColPos++ {
+		// 先找到空洞位置，非空洞位置直接就是 curPossibleUsedKeys
 		if buildTmp.curIdxOff2KeyOff[idxColPos] != -1 {
 			buildTmp.curPossibleUsedKeys = append(buildTmp.curPossibleUsedKeys, idxCols[idxColPos])
 			continue
 		}
+		// notKeyEqAndIn 迭代在合理范围内，且和空洞的 index col 要相同，则 notKeyColPos++
+		// 这里即使 curIdxOff2KeyOff = -1，也没有填充成为非 -1，而是卡后面的点去了
 		if notKeyColPos < len(notKeyEqAndIn) && buildTmp.curNotUsedIndexCols[notKeyColPos].EqualColumn(idxCols[idxColPos]) {
 			notKeyColPos++
 			continue
 		}
+		// 如果到了这里就说明，有个 index col 即使在 ds 提供的 eq 中也无法填满，那么 buildTmp.curIdxOff2KeyOff 之后的位置也就没必要了
 		for i := idxColPos + 1; i < len(idxCols); i++ {
 			buildTmp.curIdxOff2KeyOff[i] = -1
 		}
 		remained := make([]expression.Expression, 0, len(notKeyEqAndIn)-notKeyColPos)
 		remained = append(remained, notKeyEqAndIn[notKeyColPos:]...)
 		notKeyEqAndIn = notKeyEqAndIn[:notKeyColPos]
+		// 返回用到的 ds 提供的 eq，和没有用到的 ds 提供的 eq
 		return notKeyEqAndIn, remained
 	}
 	return notKeyEqAndIn, nil
@@ -622,6 +684,54 @@ func getIndexJoinIntPKPathInfo(ds *logicalop.DataSource, innerJoinKeys, outerJoi
 	return keyOff2IdxOff, newOuterJoinKeys, ranges, true
 }
 
+// getBestIndexJoinPathResultByProp tries to iterate all possible access paths of the inner child and builds
+// index join path for each access path. It returns the best index join path result and the mapping.
+func getBestIndexJoinPathResultByProp(
+	innerDS *logicalop.DataSource,
+	indexJoinProp *property.IndexJoinRuntimeProp,
+	checkPathValid func(path *util.AccessPath) bool) (*indexJoinPathResult, []int) {
+	indexJoinInfo := &indexJoinPathInfo{
+		joinOtherConditions:   indexJoinProp.OtherConditions, // 为什么构建 index join ds 的需要 other conditions
+		outerJoinKeys:         indexJoinProp.OuterJoinKeys,
+		innerJoinKeys:         indexJoinProp.InnerJoinKeys,
+		innerPushedConditions: innerDS.PushedDownConds,
+		innerSchema:           innerDS.Schema(),
+		innerStats:            innerDS.StatsInfo(),
+	}
+	var bestResult *indexJoinPathResult
+	for _, path := range innerDS.PossibleAccessPaths {
+		if checkPathValid(path) {
+			// 构建 index join path res
+			result, emptyRange, err := indexJoinPathBuild(innerDS.SCtx(), path, indexJoinInfo, false)
+			if emptyRange {
+				return nil, nil
+			}
+			if err != nil {
+				logutil.BgLogger().Warn("build index join failed", zap.Error(err))
+				continue
+			}
+			if indexJoinPathCompare(bestResult, result) {
+				bestResult = result
+			}
+		}
+	}
+	if bestResult == nil || bestResult.chosenPath == nil {
+		return nil, nil
+	}
+	// copy the KeyOff2IdxOff out 出来
+	keyOff2IdxOff := make([]int, len(indexJoinProp.InnerJoinKeys))
+	for i := range keyOff2IdxOff {
+		keyOff2IdxOff[i] = -1
+	}
+	// 把 idxOff2KeyOff 反过来，可以从 inner join key 的角度看到 index col 的 offset
+	for idxOff, keyOff := range bestResult.idxOff2KeyOff {
+		if keyOff != -1 {
+			keyOff2IdxOff[keyOff] = idxOff
+		}
+	}
+	return bestResult, keyOff2IdxOff
+}
+
 // getBestIndexJoinPathResult tries to iterate all possible access paths of the inner child and builds
 // index join path for each access path. It returns the best index join path result and the mapping.
 func getBestIndexJoinPathResult(
@@ -630,7 +740,7 @@ func getBestIndexJoinPathResult(
 	innerJoinKeys, outerJoinKeys []*expression.Column,
 	checkPathValid func(path *util.AccessPath) bool) (*indexJoinPathResult, []int) {
 	indexJoinInfo := &indexJoinPathInfo{
-		joinOtherConditions:   join.OtherConditions,
+		joinOtherConditions:   join.OtherConditions, // 为什么构建 index join ds 的需要 other conditions
 		outerJoinKeys:         outerJoinKeys,
 		innerJoinKeys:         innerJoinKeys,
 		innerPushedConditions: innerChild.PushedDownConds,
@@ -640,6 +750,7 @@ func getBestIndexJoinPathResult(
 	var bestResult *indexJoinPathResult
 	for _, path := range innerChild.PossibleAccessPaths {
 		if checkPathValid(path) {
+			// 构建 index join path res
 			result, emptyRange, err := indexJoinPathBuild(join.SCtx(), path, indexJoinInfo, false)
 			if emptyRange {
 				return nil, nil
@@ -656,10 +767,12 @@ func getBestIndexJoinPathResult(
 	if bestResult == nil || bestResult.chosenPath == nil {
 		return nil, nil
 	}
+	// copy the KeyOff2IdxOff out 出来
 	keyOff2IdxOff := make([]int, len(innerJoinKeys))
 	for i := range keyOff2IdxOff {
 		keyOff2IdxOff[i] = -1
 	}
+	// 把 idxOff2KeyOff 反过来，可以从 inner join key 的角度看到 index col 的 offset
 	for idxOff, keyOff := range bestResult.idxOff2KeyOff {
 		if keyOff != -1 {
 			keyOff2IdxOff[keyOff] = idxOff
@@ -705,11 +818,15 @@ func (cwc *ColWithCmpFuncManager) cloneForPlanCache() *ColWithCmpFuncManager {
 func (cwc *ColWithCmpFuncManager) appendNewExpr(opName string, arg expression.Expression, affectedCols []*expression.Column) {
 	cwc.OpType = append(cwc.OpType, opName)
 	cwc.opArg = append(cwc.opArg, arg)
+	// 跟我的运行时常量有的一拼啊，而且没有引入额外的负担，感觉 index join 如果真正泛化开来，真的不得了。
+	// 既然这些 affected col 不是来自于 inner schema，那么其就是 outer schema 上的运行时常量了。
+	// 总体的 arg 本身就可以 eval 出来一个常量
 	cwc.TmpConstant = append(cwc.TmpConstant, &expression.Constant{RetType: cwc.TargetCol.RetType})
 	for _, col := range affectedCols {
 		if cwc.affectedColSchema.Contains(col) {
 			continue
 		}
+		// compare func 是专门 cmp 这些 affected columns 的，为什么？todo
 		cwc.compareFuncs = append(cwc.compareFuncs, chunk.GetCompareFunc(col.RetType))
 		cwc.affectedColSchema.Append(col)
 	}
@@ -809,6 +926,7 @@ func appendTailTemplateRange(originRanges ranger.Ranges, rangeMaxSize int64) (ra
 	if rangeMaxSize > 0 && originRanges.MemUsage()+(types.EmptyDatumSize*2+16)*int64(len(originRanges)) > rangeMaxSize {
 		return originRanges, true
 	}
+	// 直接在原始 range 后面加上一个空的 datum
 	for _, ran := range originRanges {
 		ran.LowVal = append(ran.LowVal, types.Datum{})
 		ran.HighVal = append(ran.HighVal, types.Datum{})

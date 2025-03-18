@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -258,6 +259,12 @@ type CopTask struct {
 	// expectCnt is the expected row count of upper task, 0 for unlimited.
 	// It's used for deciding whether using paging distsql.
 	expectCnt uint64
+
+	// The following fields are used to keep index join aware of inner plan's index/pk choice.
+	IdxColLens     []int
+	KeyOff2IdxOff  []int
+	Ranges         ranger.MutableRanges
+	CompareFilters *ColWithCmpFuncManager
 }
 
 // Invalid implements Task interface.
