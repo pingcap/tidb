@@ -38,7 +38,7 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("create table t (a int, b int, index idx(a));")
 	tk.MustExec("insert into t values (1, 1);")
 
 	ctx := context.Background()
@@ -49,35 +49,34 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 	require.True(t, exists)
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
+	tblInfo := tbl.Meta()
 
-	size := ingest.EstimateTableRowSize(ctx, store, exec, dbInfo, tbl)
-	require.Equal(t, 4, size)
+	rowSize, idxSize := ingest.EstimateTableRowSize(ctx, exec, dbInfo, tblInfo, tblInfo.Indices)
+	require.Equal(t, 4, rowSize)
+	require.Equal(t, 2, idxSize)
 
 	tk.MustExec("alter table t add column c varchar(255);")
 	tk.MustExec("update t set c = repeat('a', 50) where a = 1;")
 	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	size = ingest.EstimateTableRowSize(ctx, store, exec, tbl, dbInfo)
-	require.Equal(t, 56, size)
+	tblInfo = tbl.Meta()
+	rowSize, idxSize = ingest.EstimateTableRowSize(ctx, exec, dbInfo, tblInfo, tblInfo.Indices)
+	require.Equal(t, 56, rowSize)
+	require.Equal(t, 2, idxSize)
 
 	tk.MustExec("drop table t;")
-	tk.MustExec("create table t (id bigint primary key, b text) partition by hash(id) partitions 4;")
+	tk.MustExec("create table t (id bigint primary key, b text, index idx(id)) partition by hash(id) partitions 4;")
 	for i := 1; i < 10; i++ {
 		insertSQL := fmt.Sprintf("insert into t values (%d, repeat('a', 10))", i*10000)
 		tk.MustExec(insertSQL)
 	}
-	tk.MustQuery("split table t between (0) and (1000000) regions 2;").Check(testkit.Rows("4 1"))
+	tk.MustQuery("split table t between (0) and (1000000) regions 2;").Check(testkit.Rows("8 1"))
 	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	size = ingest.EstimateTableRowSize(ctx, store, exec, tbl, dbInfo)
-	require.Equal(t, 16, size)
-	ptbl := tbl.GetPartitionedTable()
-	pids := ptbl.GetAllPartitionIDs()
-	for _, pid := range pids {
-		partition := ptbl.GetPartition(pid)
-		size = ingest.EstimateTableRowSize(ctx, store, exec, partition, dbInfo)
-		require.Equal(t, 16, size)
-	}
+	tblInfo = tbl.Meta()
+	rowSize, idxSize = ingest.EstimateTableRowSize(ctx, exec, dbInfo, tblInfo, tblInfo.Indices)
+	require.Equal(t, 16, rowSize)
+	require.Equal(t, 4, idxSize)
 }
 
 func TestBackendCtxConcurrentUnregister(t *testing.T) {
