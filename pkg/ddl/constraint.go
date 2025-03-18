@@ -121,8 +121,7 @@ func (w *worker) onAddCheckConstraint(jobCtx *jobContext, job *model.Job) (ver i
 	return ver, errors.Trace(err)
 }
 
-func checkAddCheckConstraint(t *meta.Mutator, job *model.Job) (
-	*model.DBInfo, *model.TableInfo, *model.ConstraintInfo, *model.ConstraintInfo, error) { //nolint: revive
+func checkAddCheckConstraint(t *meta.Mutator, job *model.Job) (*model.DBInfo, *model.TableInfo, *model.ConstraintInfo, *model.ConstraintInfo, error) { //nolint: revive
 	schemaID := job.SchemaID
 	dbInfo, err := t.GetDatabase(job.SchemaID)
 	if err != nil {
