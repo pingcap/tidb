@@ -232,81 +232,36 @@ ON base.c1 <=> base2.c1;`).Sort().Check(testkit.Rows(
 		"<nil> Bob <nil> <nil>"))
 }
 
-// TestIssue51584 tests the fix for issue 51584
-func TestIssue51584(t *testing.T) {
+func TestIssue58451(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec(`create table t (id int,
-		a int,
-		b varchar(20),
-		c int,
-		PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
-		index idx_a(a),
-		index idx_b(b)
-	)`)
-
-	result := tk.MustQuery("explain format='brief' SELECT /*+ USE_INDEX_MERGE(t, idx_a, idx_b) */ a, b, c FROM t WHERE a > 5 AND b > 'aaa'")
-	result.Check(testkit.Rows(
-		"IndexMerge 1111.11 root  type: intersection",
-		"├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t, index:idx_a(a) range:(5,+inf], keep order:false, stats:pseudo",
-		"├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t, index:idx_b(b) range:(\"aaa\",+inf], keep order:false, stats:pseudo",
-		"└─TableRowIDScan(Probe) 1111.11 cop[tikv] table:t keep order:false, stats:pseudo"))
-
-	result = tk.MustQuery("explain format='brief' SELECT /*+ USE_INDEX_MERGE(t, idx_a, idx_b) */ b, a FROM t WHERE a > 5 AND b > 'aaa'")
-	result.Check(testkit.Rows(
-		"Projection 1111.11 root  test.t.b, test.t.a",
-		"└─IndexMerge 1111.11 root  type: intersection",
-		"  ├─IndexRangeScan 3333.33 cop[tikv] table:t, index:idx_a(a) range:(5,+inf], keep order:false, stats:pseudo",
-		"  └─IndexRangeScan 3333.33 cop[tikv] table:t, index:idx_b(b) range:(\"aaa\",+inf], keep order:false, stats:pseudo"))
-
-	result = tk.MustQuery("explain format='brief' SELECT /*+ USE_INDEX_MERGE(t, idx_a, idx_b) */ a FROM t WHERE a > 5 AND b > 'aaa' limit 10")
-	result.Check(testkit.Rows(
-		"Limit 10.00 root  offset:0, count:10",
-		"└─IndexMerge 10.00 root  type: intersection",
-		"  ├─IndexRangeScan 30.00 cop[tikv] table:t, index:idx_a(a) range:(5,+inf], keep order:false, stats:pseudo",
-		"  └─IndexRangeScan 30.00 cop[tikv] table:t, index:idx_b(b) range:(\"aaa\",+inf], keep order:false, stats:pseudo"))
-
-	result = tk.MustQuery("explain format='brief' SELECT /*+ USE_INDEX_MERGE(t, idx_a, idx_b) */ a, b, b+10 FROM t WHERE a > 5 AND b > 'aaa'")
-	result.Check(testkit.Rows(
-		"Projection 1111.11 root  test.t.a, test.t.b, plus(cast(test.t.b, double BINARY), 10)->Column#5",
-		"└─IndexMerge 1111.11 root  type: intersection",
-		"  ├─IndexRangeScan 3333.33 cop[tikv] table:t, index:idx_a(a) range:(5,+inf], keep order:false, stats:pseudo",
-		"  └─IndexRangeScan 3333.33 cop[tikv] table:t, index:idx_b(b) range:(\"aaa\",+inf], keep order:false, stats:pseudo"))
-
-	result = tk.MustQuery("explain format='brief' SELECT /*+ USE_INDEX_MERGE(t, idx_a, idx_b) */ a, b, c FROM t WHERE a > 5 AND b > 'aaa' ORDER BY c")
-	result.Check(testkit.Rows(
-		"Sort 1111.11 root  test.t.c",
-		"└─IndexMerge 1111.11 root  type: intersection",
-		"  ├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t, index:idx_a(a) range:(5,+inf], keep order:false, stats:pseudo",
-		"  ├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t, index:idx_b(b) range:(\"aaa\",+inf], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan(Probe) 1111.11 cop[tikv] table:t keep order:false, stats:pseudo"))
-
-	// turn off the fix for issue 51584
-	tk.MustExec("SET SESSION tidb_opt_fix_control = '51584:OFF';")
-	result = tk.MustQuery("explain format='brief' SELECT /*+ USE_INDEX_MERGE(t, idx_a, idx_b) */ b, a FROM t WHERE a > 5 AND b > 'aaa'")
-	result.Check(testkit.Rows(
-		"Projection 1111.11 root  test.t.b, test.t.a",
-		"└─IndexMerge 1111.11 root  type: intersection",
-		"  ├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t, index:idx_a(a) range:(5,+inf], keep order:false, stats:pseudo",
-		"  ├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t, index:idx_b(b) range:(\"aaa\",+inf], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan(Probe) 1111.11 cop[tikv] table:t keep order:false, stats:pseudo"))
-
-	result = tk.MustQuery("explain format='brief' SELECT /*+ USE_INDEX_MERGE(t, idx_a, idx_b) */ a, c FROM t WHERE a > 5 AND b > 'aaa' limit 10")
-	result.Check(testkit.Rows(
-		"Projection 10.00 root  test.t.a, test.t.c",
-		"└─IndexMerge 10.00 root  type: intersection, limit embedded(offset:0, count:10)",
-		"  ├─IndexRangeScan(Build) 30.00 cop[tikv] table:t, index:idx_a(a) range:(5,+inf], keep order:false, stats:pseudo",
-		"  ├─IndexRangeScan(Build) 30.00 cop[tikv] table:t, index:idx_b(b) range:(\"aaa\",+inf], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"))
-
-	result = tk.MustQuery("explain format='brief' SELECT /*+ USE_INDEX_MERGE(t, idx_a, idx_b) */ a, b, b+10 FROM t WHERE a > 5 AND b > 'aaa'")
-	result.Check(testkit.Rows(
-		"Projection 1111.11 root  test.t.a, test.t.b, plus(cast(test.t.b, double BINARY), 10)->Column#5",
-		"└─IndexMerge 1111.11 root  type: intersection",
-		"  ├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t, index:idx_a(a) range:(5,+inf], keep order:false, stats:pseudo",
-		"  ├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t, index:idx_b(b) range:(\"aaa\",+inf], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan(Probe) 1111.11 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustExec("use test;")
+	tk.MustExec("create table t1 (a1 int, b1 int);")
+	tk.MustExec("create table t2 (a2 int, b2 int);")
+	tk.MustExec("insert into t1 values(1,1);")
+	tk.MustQuery(`explain format='brief'
+SELECT (4,5) IN (SELECT 8,0 UNION SELECT 8, 8) AS field1
+FROM t1 AS table1
+WHERE (EXISTS (SELECT SUBQUERY2_t1.a1 AS SUBQUERY2_field1 FROM t1 AS SUBQUERY2_t1)) OR table1.b1 >= 55
+GROUP BY field1;`).Check(testkit.Rows("HashJoin 2.00 root  CARTESIAN left outer semi join, left side:HashAgg",
+		"├─HashAgg(Build) 2.00 root  group by:Column#18, Column#19, funcs:firstrow(1)->Column#45",
+		"│ └─Union 0.00 root  ",
+		"│   ├─Projection 0.00 root  8->Column#18, 0->Column#19",
+		"│   │ └─TableDual 0.00 root  rows:0",
+		"│   └─Projection 0.00 root  8->Column#18, 8->Column#19",
+		"│     └─TableDual 0.00 root  rows:0",
+		"└─HashAgg(Probe) 2.00 root  group by:Column#10, funcs:firstrow(1)->Column#42",
+		"  └─HashJoin 10000.00 root  CARTESIAN left outer semi join, left side:TableReader",
+		"    ├─HashAgg(Build) 2.00 root  group by:Column#8, Column#9, funcs:firstrow(1)->Column#44",
+		"    │ └─Union 0.00 root  ",
+		"    │   ├─Projection 0.00 root  8->Column#8, 0->Column#9",
+		"    │   │ └─TableDual 0.00 root  rows:0",
+		"    │   └─Projection 0.00 root  8->Column#8, 8->Column#9",
+		"    │     └─TableDual 0.00 root  rows:0",
+		"    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+		"      └─TableFullScan 10000.00 cop[tikv] table:table1 keep order:false, stats:pseudo"))
+	tk.MustQuery(`SELECT (4,5) IN (SELECT 8,0 UNION SELECT 8, 8) AS field1
+FROM t1 AS table1
+WHERE (EXISTS (SELECT SUBQUERY2_t1.a1 AS SUBQUERY2_field1 FROM t1 AS SUBQUERY2_t1)) OR table1.b1 >= 55
+GROUP BY field1;`).Check(testkit.Rows("0"))
 }

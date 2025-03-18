@@ -1160,7 +1160,7 @@ func TestCreateTableWithVectorIndex(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(0), replicas)
 	tk.MustContainErrMsg("create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW);",
-		"Unsupported add vector index: unsupported TiFlash store count is 0")
+		"Unsupported add columnar index: unsupported TiFlash store count is 0")
 
 	// test TiFlash store count is 2
 	mockTiflashStoreCnt := uint64(2)
@@ -1177,7 +1177,7 @@ func TestCreateTableWithVectorIndex(t *testing.T) {
 		"`set TiFlash replica` is unsupported on temporary tables.")
 	tk.MustContainErrMsg("create table pt(id bigint, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW) "+
 		"partition by range(id) (partition p0 values less than (20), partition p1 values less than (100));",
-		"Unsupported add vector index: unsupported partition table")
+		"Unsupported add columnar index: unsupported partition table")
 	tk.MustContainErrMsg("create table t(a int, b vector(3), c char(210) CHARACTER SET gbk COLLATE gbk_bin, vector index((VEC_COSINE_DISTANCE(b))));",
 		"Unsupported `set TiFlash replica` settings for table contains gbk charset")
 	tk.MustContainErrMsg("create table mysql.t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))));",
@@ -1216,7 +1216,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 		PARTITION p2 VALUES LESS THAN (21)
 	 );`)
 	tk.MustContainErrMsg("alter table pt add vector index idx((vec_cosine_distance(b))) USING HNSW;",
-		"Unsupported add vector index: unsupported partition table")
+		"Unsupported add columnar index: unsupported partition table")
 	// for TiFlash replica
 	tk.MustExec("create table t (a int, b vector, c vector(3), d vector(4));")
 	tk.MustContainErrMsg("alter table t add vector index idx((VEC_COSINE_DISTANCE(b))) USING HNSW COMMENT 'b comment';",
@@ -1284,7 +1284,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 [1,2.1,3.3]"))
 	tk.MustExec("admin check table t")
 	tk.MustExec("admin check index t idx")
-	tk.MustContainErrMsg("admin cleanup index t idx", "vector index `idx` is not supported for cleanup index")
+	tk.MustContainErrMsg("admin cleanup index t idx", "columnar index `idx` is not supported for cleanup index")
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
 		"  `b` vector(3) DEFAULT NULL,\n" +
@@ -1293,7 +1293,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 
 	// test multi-schema change for unsupported operations
 	tk.MustContainErrMsg("alter table t drop column b;",
-		"can't drop column b with Vector Key covered now")
+		"can't drop column b with Columnar Index covered now")
 	tk.MustContainErrMsg("alter table t add index idx2(a), add vector index idx3((vec_l2_distance(b))) USING HNSW COMMENT 'b comment'",
 		"Unsupported multi schema change for add vector index")
 

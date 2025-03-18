@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/stretchr/testify/require"
 )
 
@@ -398,6 +399,22 @@ func TestPhysicalPlanClone(t *testing.T) {
 	mergeJoin = mergeJoin.Init(ctx, stats, 0)
 	mergeJoin.SetSchema(schema)
 	require.NoError(t, checkPhysicalPlanClone(mergeJoin))
+
+	// index join
+	baseJoin := basePhysicalJoin{
+		LeftJoinKeys:    []*expression.Column{col},
+		RightJoinKeys:   nil,
+		OtherConditions: []expression.Expression{col},
+	}
+
+	indexJoin := &PhysicalIndexJoin{
+		basePhysicalJoin: baseJoin,
+		innerPlan:        indexScan,
+		Ranges:           ranger.Ranges{},
+	}
+	indexJoin = indexJoin.Init(ctx, stats, 0)
+	indexJoin.SetSchema(schema)
+	require.NoError(t, checkPhysicalPlanClone(indexJoin))
 }
 
 //go:linkname valueInterface reflect.valueInterface
@@ -897,7 +914,7 @@ func TestTraffic(t *testing.T) {
 		{
 			sql:   "show traffic jobs",
 			privs: []string{"TRAFFIC_CAPTURE_ADMIN", "TRAFFIC_REPLAY_ADMIN"},
-			cols:  7,
+			cols:  8,
 		},
 		{
 			sql:   "cancel traffic jobs",

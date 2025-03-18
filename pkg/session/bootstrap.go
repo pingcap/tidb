@@ -295,8 +295,8 @@ const (
 
 	// CreateBindInfoTable stores the sql bind info which is used to update globalBindCache.
 	CreateBindInfoTable = `CREATE TABLE IF NOT EXISTS mysql.bind_info (
-		original_sql TEXT NOT NULL,
-		bind_sql TEXT NOT NULL,
+		original_sql LONGTEXT NOT NULL,
+		bind_sql LONGTEXT NOT NULL,
 		default_db TEXT NOT NULL,
 		status TEXT NOT NULL,
 		create_time TIMESTAMP(3) NOT NULL,
@@ -1272,11 +1272,14 @@ const (
 
 	// version242 add Max_user_connections into mysql.user.
 	version244 = 244
+
+	// version245 updates column types of mysql.bind_info.
+	version245 = 245
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version244
+var currentBootstrapVersion int64 = version245
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1456,6 +1459,7 @@ var (
 		upgradeToVer242,
 		upgradeToVer243,
 		upgradeToVer244,
+		upgradeToVer245,
 	}
 )
 
@@ -3391,6 +3395,15 @@ func upgradeToVer244(s sessiontypes.Session, ver int64) {
 	}
 
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Max_user_connections` INT UNSIGNED NOT NULL DEFAULT 0 AFTER `Password_lifetime`")
+}
+
+func upgradeToVer245(s sessiontypes.Session, ver int64) {
+	if ver >= version245 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info MODIFY COLUMN original_sql LONGTEXT NOT NULL")
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info MODIFY COLUMN bind_sql LONGTEXT NOT NULL")
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.

@@ -15,14 +15,99 @@
 package bindinfo
 
 import (
+	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/dgraph-io/ristretto"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
+	"go.uber.org/zap"
 )
+
+// BindingCacheUpdater maintains the binding cache and provide update APIs.
+type BindingCacheUpdater interface {
+	BindingCache
+
+	// LoadFromStorageToCache loads global bindings from storage to the memory cache.
+	LoadFromStorageToCache(fullLoad bool) (err error)
+
+	// LastUpdateTime returns the last update time.
+	LastUpdateTime() types.Time
+}
+
+type bindingCacheUpdater struct {
+	BindingCache
+
+	sPool util.DestroyableSessionPool
+
+	// lastTaskTime records the last update time for the global sql bind cache.
+	// This value is used to avoid reload duplicated bindings from storage.
+	lastUpdateTime atomic.Value
+}
+
+// LoadFromStorageToCache loads bindings from the storage into the cache.
+func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad bool) (err error) {
+	var lastUpdateTime types.Time
+	var timeCondition string
+	if fullLoad {
+		lastUpdateTime = types.ZeroTimestamp
+		timeCondition = ""
+	} else {
+		lastUpdateTime = u.lastUpdateTime.Load().(types.Time)
+		timeCondition = fmt.Sprintf("USE INDEX (time_index) WHERE update_time>'%s'", lastUpdateTime.String())
+	}
+	condition := fmt.Sprintf(`%s ORDER BY update_time, create_time`, timeCondition)
+	bindings, err := readBindingsFromStorage(u.sPool, condition)
+	if err != nil {
+		return err
+	}
+
+	for _, binding := range bindings {
+		// Update lastUpdateTime to the newest one.
+		// Even if this one is an invalid bind.
+		if binding.UpdateTime.Compare(lastUpdateTime) > 0 {
+			lastUpdateTime = binding.UpdateTime
+		}
+
+		oldBinding := u.GetBinding(binding.SQLDigest)
+		cachedBinding := pickCachedBinding(oldBinding, binding)
+		if cachedBinding != nil {
+			err = u.SetBinding(binding.SQLDigest, cachedBinding)
+			if err != nil {
+				bindingLogger().Warn("BindingHandle.Update", zap.Error(err))
+			}
+		} else {
+			u.RemoveBinding(binding.SQLDigest)
+		}
+	}
+
+	// update last-update-time and metrics
+	u.lastUpdateTime.Store(lastUpdateTime)
+	metrics.BindingCacheMemUsage.Set(float64(u.GetMemUsage()))
+	metrics.BindingCacheMemLimit.Set(float64(u.GetMemCapacity()))
+	metrics.BindingCacheNumBindings.Set(float64(len(u.GetAllBindings())))
+	return nil
+}
+
+// LastUpdateTime returns the last update time.
+func (u *bindingCacheUpdater) LastUpdateTime() types.Time {
+	return u.lastUpdateTime.Load().(types.Time)
+}
+
+// NewBindingCacheUpdater creates a new BindingCacheUpdater.
+func NewBindingCacheUpdater(sPool util.DestroyableSessionPool) BindingCacheUpdater {
+	u := new(bindingCacheUpdater)
+	u.lastUpdateTime.Store(types.ZeroTimestamp)
+	u.sPool = sPool
+	u.BindingCache = newBindCache()
+	return u
+}
 
 // digestBiMap represents a bidirectional map between noDBDigest and sqlDigest, used to support cross-db binding.
 // One noDBDigest can map to multiple sqlDigests, but one sqlDigest can only map to one noDBDigest.

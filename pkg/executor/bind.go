@@ -67,7 +67,7 @@ func (e *SQLBindExec) dropSQLBind() error {
 		err := handle.DropSessionBinding([]string{e.details[0].SQLDigest})
 		return err
 	}
-	affectedRows, err := domain.GetDomain(e.Ctx()).BindHandle().DropGlobalBinding([]string{e.details[0].SQLDigest})
+	affectedRows, err := domain.GetDomain(e.Ctx()).BindingHandle().DropBinding([]string{e.details[0].SQLDigest})
 	e.Ctx().GetSessionVars().StmtCtx.AddAffectedRows(affectedRows)
 	return err
 }
@@ -85,7 +85,7 @@ func (e *SQLBindExec) dropSQLBindByDigest() error {
 		err := handle.DropSessionBinding(sqlDigests)
 		return err
 	}
-	affectedRows, err := domain.GetDomain(e.Ctx()).BindHandle().DropGlobalBinding(sqlDigests)
+	affectedRows, err := domain.GetDomain(e.Ctx()).BindingHandle().DropBinding(sqlDigests)
 	e.Ctx().GetSessionVars().StmtCtx.AddAffectedRows(affectedRows)
 	return err
 }
@@ -95,7 +95,7 @@ func (e *SQLBindExec) setBindingStatus() error {
 		return errors.New("SQLBindExec: setBindingStatus should only have one SQLBindOpDetail")
 	}
 	_, sqlDigest := parser.NormalizeDigestForBinding(e.details[0].NormdOrigSQL)
-	ok, err := domain.GetDomain(e.Ctx()).BindHandle().SetGlobalBindingStatus(e.details[0].NewStatus, sqlDigest.String())
+	ok, err := domain.GetDomain(e.Ctx()).BindingHandle().SetBindingStatus(e.details[0].NewStatus, sqlDigest.String())
 	if err == nil && !ok {
 		warningMess := errors.NewNoStackError("There are no bindings can be set the status. Please check the SQL text")
 		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(warningMess)
@@ -107,7 +107,7 @@ func (e *SQLBindExec) setBindingStatusByDigest() error {
 	if len(e.details) != 1 {
 		return errors.New("SQLBindExec: setBindingStatusByDigest should only have one SQLBindOpDetail")
 	}
-	ok, err := domain.GetDomain(e.Ctx()).BindHandle().SetGlobalBindingStatus(
+	ok, err := domain.GetDomain(e.Ctx()).BindingHandle().SetBindingStatus(
 		e.details[0].NewStatus,
 		e.details[0].SQLDigest,
 	)
@@ -150,13 +150,13 @@ func (e *SQLBindExec) createSQLBind() error {
 		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
 		return handle.CreateSessionBinding(e.Ctx(), bindings)
 	}
-	return domain.GetDomain(e.Ctx()).BindHandle().CreateGlobalBinding(e.Ctx(), bindings)
+	return domain.GetDomain(e.Ctx()).BindingHandle().CreateBinding(e.Ctx(), bindings)
 }
 
 func (e *SQLBindExec) flushBindings() error {
-	return domain.GetDomain(e.Ctx()).BindHandle().LoadFromStorageToCache(false)
+	return domain.GetDomain(e.Ctx()).BindingHandle().LoadFromStorageToCache(false)
 }
 
 func (e *SQLBindExec) reloadBindings() error {
-	return domain.GetDomain(e.Ctx()).BindHandle().LoadFromStorageToCache(true)
+	return domain.GetDomain(e.Ctx()).BindingHandle().LoadFromStorageToCache(true)
 }

@@ -651,6 +651,7 @@ var Keywords = []KeywordsType{
 	{"DDL", false, "tidb"},
 	{"DEPENDENCY", false, "tidb"},
 	{"DEPTH", false, "tidb"},
+	{"DISTRIBUTIONS", false, "tidb"},
 	{"DRY", false, "tidb"},
 	{"HISTOGRAMS_IN_FLIGHT", false, "tidb"},
 	{"JOB", false, "tidb"},
