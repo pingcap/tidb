@@ -66,6 +66,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
+	"github.com/pingcap/tidb/pkg/util/intest"
+
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -309,6 +311,9 @@ func main() {
 		warnMsg := "tikv/client-go failpoint is enabled, this should NOT happen in the production environment"
 		logutil.BgLogger().Warn(warnMsg)
 		tikv.EnableFailpoints()
+	}
+	if intest.EnableInternalCheck {
+		logutil.BgLogger().Warn("internal check is enabled, this should NOT happen in the production environment")
 	}
 	setGlobalVars()
 	setCPUAffinity()
