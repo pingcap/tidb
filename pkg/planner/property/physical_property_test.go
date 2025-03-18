@@ -97,11 +97,46 @@ func TestNeedEnforceExchangerWithHashByEquivalence(t *testing.T) {
 			},
 			expected: true,
 		},
+		// One MPPPartitionColumn is equivalent
+		{
+			fd: buildFD(),
+			// MPPPartitionColumns: [1,2,3]
+			MPPPartitionColumns: []*MPPPartitionColumn{
+				{Col: &expression.Column{UniqueID: 1}},
+				{Col: &expression.Column{UniqueID: 2}},
+				{Col: &expression.Column{UniqueID: 3}},
+			},
+			// HashCol: [9]
+			HashCol: []*MPPPartitionColumn{
+				{Col: &expression.Column{UniqueID: 1}},
+				{Col: &expression.Column{UniqueID: 2}},
+				{Col: &expression.Column{UniqueID: 4}},
+				{Col: &expression.Column{UniqueID: 5}},
+			},
+			expected: true,
+		},
+		{
+			// (2,4,5)==(2,4,5)
+			fd: buildFD2(),
+			// MPPPartitionColumns: [1,2]
+			MPPPartitionColumns: []*MPPPartitionColumn{
+				{Col: &expression.Column{UniqueID: 1}},
+				{Col: &expression.Column{UniqueID: 2}},
+			},
+			// HashCol: [1,2,5]
+			HashCol: []*MPPPartitionColumn{
+				{Col: &expression.Column{UniqueID: 1}},
+				{Col: &expression.Column{UniqueID: 2}},
+				{Col: &expression.Column{UniqueID: 5}},
+			},
+			expected: false,
+		},
 	} {
 		prop := &PhysicalProperty{
 			MPPPartitionCols: testcase.MPPPartitionColumns,
 			FD:               testcase.fd,
 		}
+		t.Log(testcase.fd.String())
 		require.Equal(t, testcase.expected, prop.NeedEnforceExchangerWithHashByEquivalence(testcase.HashCol))
 	}
 }
@@ -117,5 +152,28 @@ func buildTPCHQ3FD() *funcdep.FDSet {
 
 	fd.AddEquivalenceUnion(intset.NewFastIntSet(9, 18))
 	fd.AddEquivalenceUnion(intset.NewFastIntSet(1, 10))
+	return fd
+}
+
+func buildFD() *funcdep.FDSet {
+	// we build a  case like:
+	// parent prop require: partition cols:   1, 2, 3
+	// the child can supply: partition cols:  1, 4, 5
+	// child supply is not subset of parent required, while child did can supply the parent required cols.
+	// with fd has an equivalence between column 3 and 4
+	fd := &funcdep.FDSet{}
+	fd.AddEquivalence(intset.NewFastIntSet(2), intset.NewFastIntSet(4))
+	fd.AddEquivalence(intset.NewFastIntSet(3), intset.NewFastIntSet(4))
+	return fd
+}
+func buildFD2() *funcdep.FDSet {
+	// we build a  case like:
+	// parent prop require: partition cols:   1, 2
+	// the child can supply: partition cols:  1, 4, 5
+	// child supply is not subset of parent required, while child did can supply the parent required cols.
+	// with fd has an equivalence between column 3 and 4
+	fd := &funcdep.FDSet{}
+	fd.AddEquivalence(intset.NewFastIntSet(2), intset.NewFastIntSet(4))
+	fd.AddEquivalence(intset.NewFastIntSet(2), intset.NewFastIntSet(5))
 	return fd
 }
