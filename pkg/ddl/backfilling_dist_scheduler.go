@@ -407,9 +407,6 @@ func CalculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool
 		failpoint.Return(val.(int))
 	})
 	var regionBatch int
-	defer func() {
-		logutil.DDLLogger().Info("calculate region batch", zap.Int("cnt", regionBatch))
-	}()
 	avgTasksPerInstance := (totalRegionCnt + instanceCnt - 1) / instanceCnt // ceiling
 	if useLocalDisk {
 		regionBatch = avgTasksPerInstance

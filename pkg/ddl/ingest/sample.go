@@ -7,6 +7,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -32,21 +33,24 @@ func EstimateTableRowSize(
 		return 0, 0
 	}
 
-	rowMin, rowMax, rowAvg := collectSamples(rows, tblInfo.Columns)
+	rowMin, rowMax, rowAvg := collectSamples(rows, tblInfo, len(tblInfo.Columns), func(i int) int { return i })
+	pkLen := 8
+	if tblInfo.IsCommonHandle {
+		pk := tables.FindPrimaryIndex(tblInfo)
+		_, _, pkLen = collectSamples(rows, tblInfo, len(pk.Columns),
+			func(i int) int { return pk.Columns[i].Offset })
+	}
 
 	allIdxAvg := 0
 	for _, idxInfo := range idxInfos {
-		idxCols := make([]*model.ColumnInfo, 0, len(idxInfo.Columns))
-		for _, idxCol := range idxInfo.Columns {
-			idxCols = append(idxCols, tblInfo.Columns[idxCol.Offset])
-		}
-		idxMin, idxMax, idxAvg := collectSamples(rows, idxCols)
+		idxMin, idxMax, idxAvg := collectSamples(rows, tblInfo, len(idxInfo.Columns),
+			func(i int) int { return idxInfo.Columns[i].Offset })
 		logutil.Logger(ctx).Info("estimate index size per row",
 			zap.Int("avgSize", idxAvg),
 			zap.Int("minSize", idxMin),
 			zap.Int("maxSize", idxMax),
 		)
-		allIdxAvg += idxAvg
+		allIdxAvg += idxAvg + pkLen
 	}
 
 	logutil.Logger(ctx).Info("estimate row size",
@@ -61,12 +65,18 @@ func EstimateTableRowSize(
 	return rowAvg, allIdxAvg
 }
 
-func collectSamples(samples []chunk.Row, cols []*model.ColumnInfo) (minSize, maxSize, avgSize int) {
+func collectSamples(
+	samples []chunk.Row,
+	tblInfo *model.TableInfo,
+	size int,
+	getColOffset func(int) int,
+) (minSize, maxSize, avgSize int) {
 	minSize = math.MaxInt
 	total := 0
 	for i := range len(samples) {
 		row := 0
-		for _, col := range cols {
+		for j := range size {
+			col := tblInfo.Columns[getColOffset(j)]
 			datum := samples[i].GetDatum(col.Offset, &col.FieldType)
 			evs, err := codec.EstimateValueSize(datum)
 			if err == nil {
