@@ -804,6 +804,7 @@ func TestIndexMergeLimitPushedAsIntersectionEmbeddedLimit(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c int, index idx(a, c), index idx2(b, c), index idx3(a, b, c))")
+	tk.MustExec("SET SESSION tidb_opt_fix_control = '51584:OFF';")
 	valsInsert := make([]string, 0, 1000)
 	for i := 0; i < 500; i++ {
 		valsInsert = append(valsInsert, fmt.Sprintf("(%v, %v, %v)", rand.Intn(100), rand.Intn(100), rand.Intn(100)))
