@@ -1684,8 +1684,11 @@ func calculateIndexMergeOutputColumns(ds *logicalop.DataSource, path *util.Acces
 		indexColLen := len(partialPath.Index.Columns)
 		for i, idxCol := range partialPath.IdxCols {
 			if i < indexColLen {
-				if col, exists := colMap[idxCol.ID]; exists {
-					outputColumns = append(outputColumns, col)
+				// Only add the column if IdxColLens[i] == types.UnspecifiedLength
+				if partialPath.IdxColLens[i] == types.UnspecifiedLength {
+					if col, exists := colMap[idxCol.ID]; exists {
+						outputColumns = append(outputColumns, col)
+					}
 				}
 			}
 		}

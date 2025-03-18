@@ -419,7 +419,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 				if !e.isIndexMergeSingleScan {
 					tps = worker.getRetTpsForIndexScan(e.handleCols)
 				} else {
-					tps = getRetTpsForSingleIndexScan(e.handleCols, e.outputColumns, is.IdxCols, len(is.Index.Columns))
+					tps = getRetTpsForSingleIndexScan(e.handleCols, e.outputColumns, is.IdxCols, is.IdxColLens, len(is.Index.Columns))
 				}
 				results := make([]distsql.SelectResult, 0, len(keyRanges))
 				defer func() {
@@ -1935,14 +1935,16 @@ func (w *partialIndexWorker) getRetTpsForIndexScan(handleCols plannerutil.Handle
 }
 
 // getRetTpsForSingleIndexScan is used to get the return types for index merge single index scan.
-func getRetTpsForSingleIndexScan(handleCols plannerutil.HandleCols, outputColumns []*expression.Column, idxCols []*expression.Column, indexColLen int) []*types.FieldType {
+func getRetTpsForSingleIndexScan(handleCols plannerutil.HandleCols, outputColumns []*expression.Column, idxCols []*expression.Column, idxColLens []int, indexColLen int) []*types.FieldType {
 	var tps []*types.FieldType
 	for i, idxCol := range idxCols {
 		if i < indexColLen {
-			for _, outCol := range outputColumns {
-				if idxCol.ID == outCol.ID {
-					tps = append(tps, idxCol.RetType)
-					break
+			if idxColLens[i] == types.UnspecifiedLength {
+				for _, outCol := range outputColumns {
+					if idxCol.ID == outCol.ID {
+						tps = append(tps, idxCol.RetType)
+						break
+					}
 				}
 			}
 		}

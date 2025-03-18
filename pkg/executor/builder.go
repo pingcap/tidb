@@ -4102,7 +4102,7 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 }
 
 // buildIndexReq4IndexMerge is used to build the DAG request & output columns for index merge.
-func buildIndexReq4IndexMerge(ctx sessionctx.Context, idxCols []*expression.Column, handleCols plannerutil.HandleCols, plans []base.PhysicalPlan, outputColumns []*expression.Column, indexColLen int) (dagReq *tipb.DAGRequest, err error) {
+func buildIndexReq4IndexMerge(ctx sessionctx.Context, idxCols []*expression.Column, idxColLens []int, handleCols plannerutil.HandleCols, plans []base.PhysicalPlan, outputColumns []*expression.Column, indexColLen int) (dagReq *tipb.DAGRequest, err error) {
 	indexReq, err := builder.ConstructDAGReq(ctx, plans, kv.TiKV)
 	if err != nil {
 		return nil, err
@@ -4111,10 +4111,12 @@ func buildIndexReq4IndexMerge(ctx sessionctx.Context, idxCols []*expression.Colu
 	// Output index columns for index merge intersection operations and for projection columns that need them
 	for i, idxCol := range idxCols {
 		if i < indexColLen {
-			for _, outCol := range outputColumns {
-				if outCol.ID == idxCol.ID {
-					indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(i))
-					break
+			if idxColLens[i] == types.UnspecifiedLength {
+				for _, outCol := range outputColumns {
+					if outCol.ID == idxCol.ID {
+						indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(i))
+						break
+					}
 				}
 			}
 		}
@@ -4286,7 +4288,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		var err error
 		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
 			if v.IdxMergeIsSingleScan {
-				tempReq, err = buildIndexReq4IndexMerge(b.ctx, is.IdxCols, v.HandleCols, v.PartialPlans[i], v.OutputColumns, len(is.Index.Columns))
+				tempReq, err = buildIndexReq4IndexMerge(b.ctx, is.IdxCols, is.IdxColLens, v.HandleCols, v.PartialPlans[i], v.OutputColumns, len(is.Index.Columns))
 			} else {
 				tempReq, err = buildIndexReq(b.ctx, is.Index.Columns, ts.HandleCols.NumCols(), v.PartialPlans[i])
 			}
