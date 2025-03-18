@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -2181,7 +2182,7 @@ func TestMultiSchemaNewTiDBRowID(t *testing.T) {
 	oldTableDef := "t " + createSQL
 	newTableDef := oldTableDef
 	newTableDef = newTableDef[:len(newTableDef)-1] + "3"
-	//var rows int
+	var rows int
 	initFn := func(tk *testkit.TestKit) {
 		tk.MustExec("insert into t (a, b) values (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9),(10,10)")
 		tk.MustExec("insert into t (a,b) select a+10,b+10 from t order by a")
@@ -2202,7 +2203,7 @@ func TestMultiSchemaNewTiDBRowID(t *testing.T) {
 		tk.MustExec("alter table t exchange partition p3 with table tx3 without validation")
 		tk.MustExec("drop table tx0, tx1, tx2, tx3")
 		res := tk.MustQuery("select *, _tidb_rowid from t")
-		//rows = len(res.Rows())
+		rows = len(res.Rows())
 		res.Sort().Check(testkit.Rows(
 			"1 1 1",
 			"10 10 3",
@@ -2247,6 +2248,7 @@ func TestMultiSchemaNewTiDBRowID(t *testing.T) {
 			// 26 % 4 = 2, 26 % 3 = 2
 			tkO.MustExec("update t set a = 26 where a = 3")
 			tkO.MustExec("delete from t where a = 26")
+			rows--
 
 			// - First update creates a new _tidb_rowid in new partition only
 			// - Second update will it update the correct _tidb_rowid in the new partition?
@@ -2259,12 +2261,15 @@ func TestMultiSchemaNewTiDBRowID(t *testing.T) {
 			// 12 % 4 = 0, 12 % 3 = 0, 23 % 4 = 3, 23 % 3 = 2
 			tkO.MustExec("update t set a = 23 where a = 12")
 			tkO.MustExec("delete from t where a = 23")
+			rows--
 			// TODO: More variants?
 		case "write reorganization":
 			// Is this before, during or after backfill?
 		case "delete reorganization":
 			// 'new' different, 'old' different
 			// 13 % 4 = 1, 13 % 3 = 1, 36 % 4 = 0, 36 % 3 = 0
+			tkO.MustQuery("select *, _tidb_rowid from t where a = 13").Check(testkit.Rows("13 13 30003"))
+			tkNO.MustQuery("select *, _tidb_rowid from t where a = 13").Check(testkit.Rows("13 13 4"))
 			tkO.MustExec("update t set a = 36 where a = 13")
 			// 38 % 4 = 2, 38 % 3 = 2
 			tkO.MustExec("update t set a = 38 where a = 36")
@@ -2272,9 +2277,10 @@ func TestMultiSchemaNewTiDBRowID(t *testing.T) {
 			// 14 % 4 = 2, 14 % 3 = 2, 37 % 4 = 1, 37 % 3 = 1
 			tkO.MustExec("update t set a = 37 where a = 14")
 			tkO.MustExec("delete from t where a = 37")
+			rows--
 			// TODO: FIXME: these two will show "14 14" and "37 14"!
-			//tkNO.MustQuery("select * from t where a = 14").Check(testkit.Rows())
-			//tkNO.MustQuery("select * from t where a = 37").Check(testkit.Rows())
+			tkNO.MustQuery("select * from t where a = 37").Check(testkit.Rows())
+			tkNO.MustQuery("select * from t where a = 14").Check(testkit.Rows())
 
 			// 'new' same, 'old' different
 			// 6 % 4 = 2, 6 % 3 = 0, 21 % 4 = 1, 21 % 3 = 0
@@ -2286,9 +2292,10 @@ func TestMultiSchemaNewTiDBRowID(t *testing.T) {
 			// 7 % 4 = 3, 7 % 3 = 1, 28 % 4 = 0, 28 % 3 = 1
 			tkO.MustExec("update t set a = 28 where a = 7")
 			tkO.MustExec("delete from t where a = 28")
+			rows--
 			// TODO: FIXME: these two shows "7 7" and "28 7"
-			//tkNO.MustQuery("select * from t where a = 7").Check(testkit.Rows())
-			//tkNO.MustQuery("select * from t where a = 28").Check(testkit.Rows())
+			tkNO.MustQuery("select * from t where a = 7").Check(testkit.Rows())
+			tkNO.MustQuery("select * from t where a = 28").Check(testkit.Rows())
 
 			// TODO: Also do the opposite, i.e. change the 'old' and check the 'new' with tkNO (old) and tkO (new)
 			// Check new _tidb_rowid's, i.e. anything apart from p0
@@ -2297,41 +2304,31 @@ func TestMultiSchemaNewTiDBRowID(t *testing.T) {
 		default:
 			require.Fail(t, "unhandled schema state", "State: '%s'", schemaState)
 		}
-		//tmpRows := tkO.MustQuery("select count(*) from t").Rows()[0][0].(string)
-		//tmpNr, err := strconv.Atoi(tmpRows)
-		//require.NoError(t, err)
-		//require.Equal(t, rows, tmpNr, "Number of rows not correct in table (%d!=%d) State: '%s'", rows, tmpNr, schemaState)
+		tmpRows := tkO.MustQuery("select count(*) from t").Rows()[0][0].(string)
+		tmpNr, err := strconv.Atoi(tmpRows)
+		require.NoError(t, err)
+		require.Equal(t, rows, tmpNr, "Number of rows not correct in table (%d!=%d) State: '%s'", rows, tmpNr, schemaState)
 	}
 	postFn := func(tkO *testkit.TestKit, _ kv.Storage) {
-		// TODO: FIXME Enable this!
-		//tkO.MustExec("admin check table t /* postFn */")
-		// TODO: FIXME Enable this!
-		// Currently says 20...
-		//tkO.MustQuery(`select count(*) from t`).Check(testkit.Rows("16"))
+		tkO.MustExec("admin check table t /* postFn */")
+		tkO.MustQuery(`select count(*) from t`).Check(testkit.Rows("16"))
 		tkO.MustQuery(`select b, a,_tidb_rowid from t`).Sort().Check(testkit.Rows(""+
-			// TODO: Fix this deleted phantom!
-			"1 24 1",
-			"1 25 21",
-			// TODO: Fix this duplicate! From backfill?
 			"1 25 22",
-			"10 10 30007",
-			"11 11 30011",
-			// TODO: Fix this deleted phantom!
-			"12 23 3",
-			"13 38 30004",
-			"15 15 30012",
+			"10 10 30006",
+			"11 11 30010",
+			"13 38 30003",
+			"15 15 30011",
 			"16 16 4",
-			"17 17 30005",
-			"18 18 30009",
-			"19 19 30013",
+			"17 17 30004",
+			"18 18 30008",
+			"19 19 30012",
 			"2 42 1",
 			"20 20 5",
-			"3 26 1",
 			"4 4 30001",
 			"5 5 30002",
-			"6 41 30006",
+			"6 41 30005",
 			"8 8 2",
-			"9 9 30003"))
+			"9 9 3"))
 	}
 	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn, false)
 }

@@ -3835,11 +3835,13 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 			if err != nil {
 				return errors.Trace(err)
 			}
+			// TODO: Also check if already written with new id as a BatchGet?
 		}
 
 		for i, prr := range w.rowRecords {
 			taskCtx.scanCount++
 			key := prr.key
+			lockKey := key
 
 			// w.oldKeys is only set for non-clustered tables, in w.fetchRowColVals().
 			if len(w.oldKeys) > 0 {
@@ -3855,6 +3857,12 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 				}
 
 				if genNewID {
+					oldRecordIDEncoded := key[tablecodec.TableSplitKeyLen+2:]
+					// This also guarantees that there will be no duplicates.
+					// We should still lock the old key!
+					// TODO: make sure there is a test that will check that this copy will fail and be retried
+					// if someone updates the 'old' partition during this backfill transaction.
+
 					recordID, err := tables.AllocHandle(w.ctx, w.tblCtx, w.reorgedTbl)
 					if err != nil {
 						return errors.Trace(err)
@@ -3862,9 +3870,45 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 
 					// tablecodec.prefixLen is not exported, but is just TableSplitKeyLen + 2
 					key = tablecodec.EncodeRecordKey(key[:tablecodec.TableSplitKeyLen+2], recordID)
-					// TODO: if genNewID should we skip locking? since it should not be able to be found/used
-					// due to new AllocHandle, which is unique.
-					// TODO: Should we also write a temporary index for old->new as well as new->old?
+					tblID, _, isRecord, err := tablecodec.DecodeKeyHead(key)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					if !isRecord {
+						return errors.Errorf("Internal error: invalid key for mapping between old and new partition _tidb_rowid %v", key)
+					}
+					logutil.DDLLogger().Info("Backfill generated a new recordID", zap.Int64("pID", tblID), zap.Int64("recordID", recordID.IntValue()))
+					// Old _tidb_rowid => New _tidb_rowid mapping only needs to be in the New partition
+					// Currently skipping to store the partition id, since it can be calculated through partition pruning.
+					tmpRecordIDMapKey := tablecodec.EncodeIndexSeekKey(tblID, tablecodec.TempIndexPrefix, oldRecordIDEncoded)
+					newRecordIDEncoded := key[tablecodec.TableSplitKeyLen+2:]
+					err = txn.Set(tmpRecordIDMapKey, newRecordIDEncoded)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					// TODO: Clean up the temporary index map between _tidb_rowid's!!!
+
+					// Also add a temporary index / Map for 'old' partitions, to use in DeleteReorg state+
+					// when moving a row between old partitions, so that sessions still in WriteReorg
+					tblID, _, _, err = tablecodec.DecodeKeyHead(nextKey)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					tmpRecordIDMapKey = tablecodec.EncodeIndexSeekKey(tblID, tablecodec.TempIndexPrefix, newRecordIDEncoded)
+					err = txn.Set(tmpRecordIDMapKey, oldRecordIDEncoded)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					// TODO: update/delete these entries for normal as well as reorg operation (delete/update)
+
+					// TODO: Add test for DeleteReorg update a row in a old partition, giving it a new _tidb_rowid
+					// not matching the _tidb_rowid in the new partition
+					// then try to read/update and/or delete that row in WriteReorg state.
+
+					// Lock the *old* partition's value, so it does not change during this backfill transaction.
+					// Since we are generating a new RecordID, this is needed to ensure no lost or duplicated
+					// rows from concurrent DML!
+					lockKey = tablecodec.EncodeRecordKey(nextKey[:tablecodec.TableSplitKeyLen+2], recordID)
 				}
 			}
 			// Check if we can lock the key, since there can still be concurrent update
@@ -3872,7 +3916,7 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 			// transaction and succeed when committing, then another transaction did update
 			// the same key, and we will fail and retry. When retrying, this key would be found
 			// through BatchGet and skipped.
-			err = txn.LockKeys(context.Background(), new(kv.LockCtx), key)
+			err = txn.LockKeys(context.Background(), new(kv.LockCtx), lockKey)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -3937,9 +3981,7 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 			w.rowRecords = append(w.rowRecords, &rowRecord{key: newKey, vals: rawRow})
 
 			if !isClustered {
-				oldKey := newKey[:tablecodec.TableSplitKeyLen]
-				oldKey = append(oldKey, recordKey[tablecodec.TableSplitKeyLen:]...)
-				w.oldKeys = append(w.oldKeys, oldKey)
+				w.oldKeys = append(w.oldKeys, newKey)
 			}
 
 			w.cleanRowMap()

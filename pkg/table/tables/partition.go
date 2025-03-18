@@ -19,6 +19,7 @@ import (
 	stdctx "context"
 	stderr "errors"
 	"fmt"
+	"github.com/pingcap/tidb/dumpling/context"
 	"hash/crc32"
 	"sort"
 	"strconv"
@@ -1851,6 +1852,8 @@ func (t *partitionedTable) RemoveRecord(ctx table.MutateContext, txn kv.Transact
 			return errors.Trace(err)
 		}
 		tbl = t.getPartition(pid)
+		// TODO: check if the row is in the temporary Reorg index for new _tidb_rowid's
+		// if so use the new _tidb_rowid instead of h!
 		err = tbl.removeRecord(ctx, txn, h, r, opt)
 		if err != nil {
 			return errors.Trace(err)
@@ -1917,95 +1920,163 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 	deleteOnly := t.Meta().Partition.DDLState == model.StateDeleteOnly || t.Meta().Partition.DDLState == model.StatePublic
 	// The old and new data locate in different partitions.
 	// Remove record from old partition and add record to new partition.
-	if from != to {
+	var newRecordID kv.Handle
+	if from == to {
+		err = t.getPartition(to).updateRecord(ctx, txn, h, currData, newData, touched, opt)
+	} else {
 		err = t.GetPartition(from).RemoveRecord(ctx, txn, h, currData)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		_, err = t.getPartition(to).addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
-		if err != nil {
-			return errors.Trace(err)
+		// TODO: Add a test for this case, where a new recordID is created for the current partition
+		// but maybe not re-used for the reorg partition?
+		// TODO: get the RecordID and use it for 'to' reorg partition as well!!!
+		newRecordID, err = t.getPartition(to).addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
+		if newRecordID != nil {
+			logutil.BgLogger().Info("PartitionUpdateRecord", zap.Int64("newRecordID", newRecordID.IntValue()))
 		}
-
-		newTo, newFrom := int64(0), int64(0)
-		if _, ok := t.reorganizePartitions[to]; ok {
-			newTo, err = t.locateReorgPartition(ectx.GetEvalCtx(), newData)
-			// There might be valid cases when errors should be accepted?
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-		if _, ok := t.reorganizePartitions[from]; ok {
-			newFrom, err = t.locateReorgPartition(ectx.GetEvalCtx(), currData)
-			// There might be valid cases when errors should be accepted?
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-		if newTo == newFrom && newTo != 0 {
-			// Update needs to be done in StateDeleteOnly as well
-			err = t.getPartition(newTo).updateRecord(ctx, txn, h, currData, newData, touched, opt)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			memBuffer.Release(sh)
-			return nil
-		}
-
-		if newFrom != 0 {
-			err = t.getPartition(newFrom).RemoveRecord(ctx, txn, h, currData)
-			// TODO: Can this happen? When the data is not yet backfilled?
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-		if newTo != 0 && !deleteOnly {
-			_, err = t.getPartition(newTo).addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-		memBuffer.Release(sh)
-		return nil
 	}
-	tbl := t.getPartition(to)
-	err = tbl.updateRecord(ctx, txn, h, currData, newData, touched, opt)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	newTo, newFrom := int64(0), int64(0)
 	if _, ok := t.reorganizePartitions[to]; ok {
-		// Even if to == from, in the reorganized partitions they may differ
-		// like in case of a split
-		newTo, err := t.locateReorgPartition(ectx.GetEvalCtx(), newData)
+		newTo, err = t.locateReorgPartition(ectx.GetEvalCtx(), newData)
+		// There might be valid cases when errors should be accepted?
 		if err != nil {
 			return errors.Trace(err)
 		}
-		newFrom, err := t.locateReorgPartition(ectx.GetEvalCtx(), currData)
+	}
+	if _, ok := t.reorganizePartitions[from]; ok {
+		newFrom, err = t.locateReorgPartition(ectx.GetEvalCtx(), currData)
+		// There might be valid cases when errors should be accepted?
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if newTo == newFrom {
-			tbl = t.getPartition(newTo)
-			if deleteOnly {
-				err = tbl.RemoveRecord(ctx, txn, h, currData)
-			} else {
-				err = tbl.updateRecord(ctx, txn, h, currData, newData, touched, opt)
+	}
+	if newFrom != 0 {
+		usingNewPartitions := false
+		switch t.Meta().Partition.DDLState {
+		case model.StateDeleteReorganization, model.StatePublic:
+			usingNewPartitions = true
+		}
+		// TODO: First check if _tidb_rowid has been changed and use the new ID if so.
+		var found map[string][]byte
+		var fromKey, oldFromKey, currKey, toKey kv.Key
+		removeHandle := h
+		if !t.Meta().PKIsHandle && !t.Meta().IsCommonHandle {
+			// Check if the new partitions have generated new _tidb_rowid
+			// or duplicated from EXCHANGE PARTITION
+			// We want to check these cases:
+			// 1) newFrom has a different _tidb_rowid
+			// 2) newTo has a different _tidb_rowid
+			// 3) newTo has an already taken _tidb_rowid (due to previous EXCHANGE PARTITION)
+			//    where we need to generate a new ID and store it in the reorg temp index
+			// 4) newFrom has the old _tikv_rowid, so we must check the map...
+			keys := make([]kv.Key, 0, 4)
+			EncodedRecordId := codec.EncodeInt(nil, h.IntValue())
+			fromKey = tablecodec.EncodeIndexSeekKey(newFrom, tablecodec.TempIndexPrefix, EncodedRecordId)
+			keys = append(keys, fromKey)
+			if usingNewPartitions {
+				oldFromKey = tablecodec.EncodeIndexSeekKey(newFrom, tablecodec.TempIndexPrefix, EncodedRecordId)
+				keys = append(keys, oldFromKey)
 			}
+			if !deleteOnly && newRecordID == nil && newTo != newFrom {
+				toKey = tablecodec.EncodeIndexSeekKey(newTo, tablecodec.TempIndexPrefix, EncodedRecordId)
+				keys = append(keys, toKey)
+				currKey = t.getPartition(newTo).RecordKey(h)
+				keys = append(keys, currKey)
+			}
+			found, err = txn.BatchGet(context.Background(), keys)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			memBuffer.Release(sh)
-			return nil
+			if val, ok := found[string(fromKey)]; ok {
+				var id int64
+				_, id, err = codec.DecodeInt(val)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				removeHandle = kv.IntHandle(id)
+				if !usingNewPartitions {
+					newRecordID = removeHandle
+					logutil.BgLogger().Info("PartitionUpdateRecord from part", zap.Int64("newRecordID", newRecordID.IntValue()))
+					// TODO: Test how to handle this, is it correct for usingNewPartitions = true?
+				}
+				// Remove the reorg mapping entry
+				if newFrom != newTo || deleteOnly {
+					err = txn.Delete(fromKey)
+					if err != nil {
+						return errors.Trace(err)
+					}
+				}
+			}
+		} else if val, ok := found[string(oldFromKey)]; ok {
+			// TODO: Also handle delete/RemoveRecord!
+			var id int64
+			_, id, err = codec.DecodeInt(val)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			removeHandle = kv.IntHandle(id)
+			err = txn.Delete(oldFromKey)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			logutil.BgLogger().Info("PartitionUpdateRecord old part", zap.Int64("OldRecordID", removeHandle.IntValue()))
 		}
-		tbl = t.getPartition(newFrom)
-		err = tbl.RemoveRecord(ctx, txn, h, currData)
+		err = t.GetPartition(newFrom).RemoveRecord(ctx, txn, removeHandle, currData)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if !deleteOnly {
-			tbl = t.getPartition(newTo)
-			_, err = tbl.addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
+			if newTo == 0 {
+				return errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
+			}
+			addRecordOpt := opt.GetAddRecordOpt()
+			if !t.Meta().PKIsHandle && !t.Meta().IsCommonHandle {
+				if val, ok := found[string(toKey)]; ok {
+					var id int64
+					_, id, err = codec.DecodeInt(val)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					h = kv.IntHandle(id)
+					newRecordID = h
+					logutil.BgLogger().Info("PartitionUpdateRecord to part", zap.Int64("newRecordID", newRecordID.IntValue()))
+				}
+				// Preserve the _tidb_rowid also in the new partition!
+				if newRecordID == nil {
+					// Handle case 3, _tidb_rowid already exists in the newTo partition!
+					// Update should not have happened if already updated in reorg parts?!? So skip checking value
+					if _, ok := found[string(toKey)]; ok {
+						// We must generate a new value, and add it to the reorg part temp index map
+						newRecordID, err = AllocHandle(context.Background(), ctx, t)
+						if err != nil {
+							return errors.Trace(err)
+						}
+						logutil.BgLogger().Info("PartitionUpdateRecord reorg part", zap.Int64("newRecordID", newRecordID.IntValue()))
+						// tablecodec.prefixLen is not exported, but is just TableSplitKeyLen + 2
+						tmpRecordIDMapKey := tablecodec.EncodeIndexSeekKey(newTo, tablecodec.TempIndexPrefix, toKey[tablecodec.TempIndexPrefix+2:])
+						encRecordId := codec.EncodeInt(nil, newRecordID.IntValue())
+						err = txn.Set(tmpRecordIDMapKey, encRecordId)
+						// TODO: How does this work in StateDeleteReorganization?!? Do we need to check the state and
+						// always have a mapping from 'new' partitions _tidb_rowid -> 'old' partitions _tidb_rowid?
+					} else {
+						newRecordID = h
+					}
+				}
+				if len(newData) > len(t.Cols()) {
+					newData[len(t.Cols())] = types.NewIntDatum(newRecordID.IntValue())
+				} else {
+					newData = append(newData, types.NewIntDatum(newRecordID.IntValue()))
+				}
+				addRecordOpt = opt.GetAddRecordOptKeepRecordID()
+			}
+
+			_, err = t.getPartition(newTo).addRecord(ctx, txn, newData, addRecordOpt)
 			if err != nil {
 				return errors.Trace(err)
 			}
