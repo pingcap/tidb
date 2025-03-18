@@ -176,7 +176,6 @@ func enumeratePhysicalPlans4Task(
 	addEnforcer bool,
 	planCounter *base.PlanCounterTp,
 	opt *optimizetrace.PhysicalOptimizeOp,
-	fd *funcdep.FDSet,
 ) (base.Task, int64, error) {
 	var bestTask base.Task = base.InvalidTask
 	var curCntPlan, cntPlan int64
@@ -188,7 +187,16 @@ func enumeratePhysicalPlans4Task(
 	if _, ok := p.Self().(*logicalop.LogicalSequence); ok {
 		iteration = iterateChildPlan4LogicalSequence
 	}
-
+	var fd *funcdep.FDSet
+	// while for join's both child, anyway and currently we should keep exchanger within the MPP for now
+	if prop.MPPExchangerEliminable {
+		if joinP, ok := p.Self().(*logicalop.LogicalJoin); ok {
+			if joinP.JoinType == logicalop.InnerJoin {
+				// TODO(hawkingrei): FD should be maintained as logical prop instead of constructing it in physical phase
+				fd = joinP.ExtractFD()
+			}
+		}
+	}
 	for _, pp := range physicalPlans {
 		timeStampNow := p.GetLogicalTS4TaskMap()
 		savedPlanID := p.SCtx().GetSessionVars().PlanID.Load()
@@ -568,19 +576,9 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 		}
 		newProp = prop
 	}
-	var fd *funcdep.FDSet
-	// while for join's both child, anyway and currently we should keep exchanger within the MPP for now
-	if prop.MPPExchangerEliminable {
-		if joinP, ok := p.Self().(*logicalop.LogicalJoin); ok {
-			if joinP.JoinType == logicalop.InnerJoin {
-				// TODO(hawkingrei): FD should be maintained as logical prop instead of constructing it in physical phase
-				fd = joinP.ExtractFD()
-			}
-		}
-	}
 	var cnt int64
 	var curTask base.Task
-	if bestTask, cnt, err = enumeratePhysicalPlans4Task(p, plansFitsProp, newProp, false, planCounter, opt, fd); err != nil {
+	if bestTask, cnt, err = enumeratePhysicalPlans4Task(p, plansFitsProp, newProp, false, planCounter, opt); err != nil {
 		return nil, 0, err
 	}
 	cntPlan += cnt
@@ -588,7 +586,7 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 		goto END
 	}
 
-	curTask, cnt, err = enumeratePhysicalPlans4Task(p, plansNeedEnforce, newProp, true, planCounter, opt, fd)
+	curTask, cnt, err = enumeratePhysicalPlans4Task(p, plansNeedEnforce, newProp, true, planCounter, opt)
 	if err != nil {
 		return nil, 0, err
 	}
