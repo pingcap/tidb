@@ -105,6 +105,11 @@ func (s *mockSession) GetGlobalVariable(name string) (string, error) {
 	return "True", nil
 }
 
+// GetGlobalSysVar implements glue.Session.
+func (s *mockSession) GetGlobalSysVar(string) (string, error) {
+	return "", nil
+}
+
 // MockGlue only used for test
 type MockGlue struct {
 	se         sessiontypes.Session

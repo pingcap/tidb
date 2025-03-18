@@ -3,9 +3,8 @@ updates:
   - package-ecosystem: "gomod"
     directory: "/"
     schedule:
-      interval: "weekly"
-      day: "friday"
-      time: "12:00"
+      interval: "daily"
+      time: "15:00"
       timezone: "Asia/Shanghai"
     allow:
       - dependency-name: "golang.org/*"

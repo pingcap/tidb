@@ -976,11 +976,6 @@ func (*tidbBackend) FlushAllEngines(context.Context) error {
 	return nil
 }
 
-// ResetEngine resets the engine.
-func (*tidbBackend) ResetEngine(context.Context, uuid.UUID) error {
-	return errors.New("cannot reset an engine in TiDB backend")
-}
-
 // LocalWriter returns a writer that writes data to local storage.
 func (be *tidbBackend) LocalWriter(
 	_ context.Context,

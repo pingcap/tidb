@@ -32,6 +32,7 @@ go_library(
         "//pkg/meta/model",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/vardef",
+        "//pkg/sessionctx/variable",
         "//pkg/store/driver/error",
         "//pkg/table/tables",
         "//pkg/types",
@@ -85,7 +86,13 @@ go_library(
         "@io_bazel_rules_go//go/platform:openbsd": [
             "@org_golang_x_sys//unix",
         ],
+        "@io_bazel_rules_go//go/platform:osx": [
+            "@org_golang_x_sys//unix",
+        ],
         "@io_bazel_rules_go//go/platform:plan9": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@io_bazel_rules_go//go/platform:qnx": [
             "@org_golang_x_sys//unix",
         ],
         "@io_bazel_rules_go//go/platform:solaris": [

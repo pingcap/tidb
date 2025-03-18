@@ -6,9 +6,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	goerrors "errors"
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -569,4 +571,10 @@ func TestSpeedReadManyFiles(t *testing.T) {
 	}
 	require.NoError(t, eg.Wait())
 	t.Logf("read %d large files cost %v", len(testFiles), time.Since(now))
+}
+
+func TestGCSShouldRetry(t *testing.T) {
+	require.True(t, shouldRetry(&url.Error{Err: goerrors.New("http2: server sent GOAWAY and closed the connectiont"), Op: "Get", URL: "https://storage.googleapis.com/storage/v1/"}))
+	require.True(t, shouldRetry(&url.Error{Err: goerrors.New("http2: client connection lost"), Op: "Get", URL: "https://storage.googleapis.com/storage/v1/"}))
+	require.True(t, shouldRetry(&url.Error{Err: io.EOF, Op: "Get", URL: "https://storage.googleapis.com/storage/v1/"}))
 }
