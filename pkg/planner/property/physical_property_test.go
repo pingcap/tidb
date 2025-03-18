@@ -134,10 +134,9 @@ func TestNeedEnforceExchangerWithHashByEquivalence(t *testing.T) {
 	} {
 		prop := &PhysicalProperty{
 			MPPPartitionCols: testcase.MPPPartitionColumns,
-			FD:               testcase.fd,
 		}
 		t.Log(testcase.fd.String())
-		require.Equal(t, testcase.expected, prop.NeedEnforceExchangerWithHashByEquivalence(testcase.HashCol))
+		require.Equal(t, testcase.expected, prop.NeedEnforceExchangerWithHashByEquivalence(testcase.HashCol, testcase.fd))
 	}
 }
 
