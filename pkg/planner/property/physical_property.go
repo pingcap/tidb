@@ -316,11 +316,7 @@ func (p *PhysicalProperty) IsSubsetOf(keys []*MPPPartitionColumn) []int {
 //  3. FD: (1)-->(2-6,8), ()-->(7), (9)-->(10-17), (1,10)==(1,10), (18,21)-->(19,20,22-33), (9,18)==(9,18)
 //     In this case, we can see that the child supplied partition keys is subset of parent required partition cols.
 func (p *PhysicalProperty) NeedEnforceExchangerWithHashByEquivalence(keys []*MPPPartitionColumn) bool {
-	// keys is the HashCol. If the partition cols are a subset of the hash cols, then need to enforce exchange.
-	if len(p.MPPPartitionCols) < len(keys) {
-		return true
-	}
-	uniqueID2MppCol := make(map[*MPPPartitionColumn]intset.FastIntSet, len(keys))
+	uniqueID2MppCol := make(map[*MPPPartitionColumn]intset.FastIntSet, len(p.MPPPartitionCols))
 	// for each partition column, we calculate the equivalence alternative closure of it.
 	for _, pCol := range p.MPPPartitionCols {
 		uniqueID2MppCol[pCol] = p.FD.ClosureOfEquivalence(intset.NewFastIntSet(int(pCol.Col.UniqueID)))
@@ -328,7 +324,6 @@ func (p *PhysicalProperty) NeedEnforceExchangerWithHashByEquivalence(keys []*MPP
 
 	// there is a subset theorem here, if the child supplied keys is a subset of parent required mpp partition cols,
 	// the mpp partition exchanger can also be eliminated.
-	isSubset := true
 SubsetLoop:
 	for _, key := range keys {
 		for pCol, equivSet := range uniqueID2MppCol {
@@ -339,30 +334,17 @@ SubsetLoop:
 		}
 		// once a child supplied keys can't find direct/in-direct equiv all parent required partition cols,
 		// we can break the subset check.
-		isSubset = false
-		break SubsetLoop
-	}
-	// it's subset case, we don't need to add exchanger.
-	if isSubset {
-		return false
-	}
-
-	// when arrived here, it means the child supplied partition cols is not subset of parent required partition cols.
-	// then we need to check if the child supplied partition cols can supply the every partition col as parent required.
-	// iterate the parent prop required partition cols, check if it is compatible with children supplied.
-NextRequiredCol:
-	for pCol, equivSet := range uniqueID2MppCol {
-		// iterate the child supplied keys.
-		for _, key := range keys {
-			if checkEquivalence(equivSet, key, pCol) {
-				// yes, child can supply the same col partition prop. continue out to next required partition col.
-				continue NextRequiredCol
-			}
-		}
-		// if all child supplied keys iterated can NOT supply the same col partition prop, then we need to enforce exchange.
+		//
+		// it's subset case, we don't need to add exchanger.
+		// once there is a column outside the parent required partition cols, we need to add exchanger.
+		// we build a  case like:
+		// parent prop require: partition cols:   1, 2, 3
+		// the child can supply: partition cols:  1, 4, 5
+		// fd: {2,3,4} = {2,3,4}
+		// column 5 will mixture the data distribute, even if parent required columns are all satisfied by child.
 		return true
 	}
-	// all required keys are satisfied, enforcer is not needed.
+
 	return false
 }
 
