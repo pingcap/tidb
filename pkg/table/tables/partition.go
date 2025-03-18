@@ -17,7 +17,6 @@ package tables
 import (
 	"bytes"
 	"context"
-	stdctx "context"
 	stderr "errors"
 	"fmt"
 	"hash/crc32"
@@ -1722,14 +1721,14 @@ func checkConstraintForExchangePartition(ctx table.MutateContext, row []types.Da
 	}
 
 	type InfoSchema interface {
-		TableByID(ctx stdctx.Context, id int64) (val table.Table, ok bool)
+		TableByID(ctx context.Context, id int64) (val table.Table, ok bool)
 	}
 
 	is, ok := support.GetInfoSchemaToCheckExchangeConstraint().(InfoSchema)
 	if !ok {
 		return errors.Errorf("exchange partition process assert inforSchema failed")
 	}
-	gCtx := stdctx.Background()
+	gCtx := context.Background()
 	nt, tableFound := is.TableByID(gCtx, ntID)
 	if !tableFound {
 		// Now partID is nt tableID.
@@ -1976,15 +1975,15 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 			//    where we need to generate a new ID and store it in the reorg temp index
 			// 4) newFrom has the old _tikv_rowid, so we must check the map...
 			keys := make([]kv.Key, 0, 4)
-			EncodedRecordId := codec.EncodeInt(nil, h.IntValue())
-			fromKey = tablecodec.EncodeIndexSeekKey(newFrom, tablecodec.TempIndexPrefix, EncodedRecordId)
+			encodedRecordID := codec.EncodeInt(nil, h.IntValue())
+			fromKey = tablecodec.EncodeIndexSeekKey(newFrom, tablecodec.TempIndexPrefix, encodedRecordID)
 			keys = append(keys, fromKey)
 			if usingNewPartitions {
-				oldFromKey = tablecodec.EncodeIndexSeekKey(newFrom, tablecodec.TempIndexPrefix, EncodedRecordId)
+				oldFromKey = tablecodec.EncodeIndexSeekKey(newFrom, tablecodec.TempIndexPrefix, encodedRecordID)
 				keys = append(keys, oldFromKey)
 			}
 			if !deleteOnly && newRecordID == nil && newTo != newFrom {
-				toKey = tablecodec.EncodeIndexSeekKey(newTo, tablecodec.TempIndexPrefix, EncodedRecordId)
+				toKey = tablecodec.EncodeIndexSeekKey(newTo, tablecodec.TempIndexPrefix, encodedRecordID)
 				keys = append(keys, toKey)
 				currKey = t.getPartition(newTo).RecordKey(h)
 				keys = append(keys, currKey)
@@ -2060,8 +2059,8 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 						logutil.BgLogger().Info("PartitionUpdateRecord reorg part", zap.Int64("newRecordID", newRecordID.IntValue()))
 						// tablecodec.prefixLen is not exported, but is just TableSplitKeyLen + 2
 						tmpRecordIDMapKey := tablecodec.EncodeIndexSeekKey(newTo, tablecodec.TempIndexPrefix, toKey[tablecodec.TempIndexPrefix+2:])
-						encRecordId := codec.EncodeInt(nil, newRecordID.IntValue())
-						err = txn.Set(tmpRecordIDMapKey, encRecordId)
+						encRecordID := codec.EncodeInt(nil, newRecordID.IntValue())
+						err = txn.Set(tmpRecordIDMapKey, encRecordID)
 						if err != nil {
 							return errors.Trace(err)
 						}
