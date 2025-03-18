@@ -93,6 +93,38 @@ type rangePropertiesCollector struct {
 	propKeysDist uint64
 }
 
+// size: the file size after adding 'data'
+func (rc *rangePropertiesCollector) onNextEncodedData(data []byte, size uint64) {
+	keyLen := binary.BigEndian.Uint64(data)
+	key := data[2*lengthBytes : 2*lengthBytes+keyLen]
+
+	if len(rc.currProp.firstKey) == 0 {
+		rc.currProp.firstKey = key
+	}
+	rc.currProp.lastKey = key
+
+	rc.currProp.size += uint64(len(data) - 2*lengthBytes)
+	rc.currProp.keys++
+
+	if rc.currProp.size >= rc.propSizeDist ||
+		rc.currProp.keys >= rc.propKeysDist {
+		newProp := *rc.currProp
+		rc.props = append(rc.props, &newProp)
+		// reset currProp, and start to update this prop.
+		rc.currProp.firstKey = nil
+		rc.currProp.offset = size
+		rc.currProp.keys = 0
+		rc.currProp.size = 0
+	}
+}
+
+func (rc *rangePropertiesCollector) onFileEnd() {
+	if rc.currProp.keys > 0 {
+		newProp := *rc.currProp
+		rc.props = append(rc.props, &newProp)
+	}
+}
+
 func (rc *rangePropertiesCollector) reset() {
 	rc.props = rc.props[:0]
 	rc.currProp = &rangeProperty{}
@@ -382,6 +414,9 @@ type Writer struct {
 	maxKey    tidbkv.Key
 	totalSize uint64
 	totalCnt  uint64
+	// when onDup=Record, we record the duplicate keys statistics.
+	totalDupCnt uint64
+	dupFiles    []string
 }
 
 // WriteRow implements ingest.Writer.
@@ -488,6 +523,10 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		}
 		return res
 	})
+	sortDuration := time.Since(sortStart)
+	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort").Observe(sortDuration.Seconds())
+	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort").Observe(float64(w.batchSize) / 1024.0 / 1024.0 / sortDuration.Seconds())
+
 	var (
 		dups   []membuf.SliceLocation
 		dupCnt int
@@ -501,14 +540,11 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			w.kvLocations, _, dupCnt = removeDuplicates(w.kvLocations, w.getKeyByLoc, false)
 		case OnDuplicateKeyError:
 			// not implemented yet, same as ignore.
-			// add-index might need this one
+			// add-index might need this one later.
 		}
 	}
 	_ = dupCnt
 	_ = dups
-	sortDuration := time.Since(sortStart)
-	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort").Observe(sortDuration.Seconds())
-	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort").Observe(float64(w.batchSize) / 1024.0 / 1024.0 / sortDuration.Seconds())
 
 	writeStartTime := time.Now()
 	var dataFile, statFile string
@@ -659,6 +695,15 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 		return "", "", nil, nil, err
 	}
 	return dataPath, statPath, dataWriter, statsWriter, nil
+}
+
+func (w *Writer) createDupWriter(ctx context.Context) (string, storage.ExternalFileWriter, error) {
+	path := filepath.Join(w.filenamePrefix+dupSuffix, strconv.Itoa(w.currentSeq))
+	writer, err := w.store.Create(ctx, path, &storage.WriterOption{
+		Concurrency: 20,
+		PartSize:    MinUploadPartSize,
+	})
+	return path, writer, err
 }
 
 // EngineWriter implements backend.EngineWriter interface.
