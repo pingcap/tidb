@@ -256,11 +256,8 @@ type PhysicalProperty struct {
 		TopK uint32
 	}
 
-	// IsParentPhyscicalHashAgg indicates whether the parent is a physical hash aggregation.
-	IsParentPhyscicalHashAgg bool
-
-	// FD is the functional dependency set of the current operator.
-	FD *funcdep.FDSet
+	// MPPExchangerEliminable indicates whether the MPPPartitionExchanger can be eliminated.
+	MPPExchangerEliminable bool
 }
 
 // NewPhysicalProperty builds property from columns.
