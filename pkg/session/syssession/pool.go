@@ -19,11 +19,13 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
+// PoolMaxSize is the maximum size of the session pool.
 const PoolMaxSize int = 1024 * 1024 * 1024
 
 // Factory is a function to create a new session context
@@ -32,6 +34,8 @@ type Factory func() (SessionContext, error)
 // Pool is a recyclable resource pool for the system internal session.
 type Pool struct {
 	noopOwnerHook
+	ctx     context.Context
+	cancel  context.CancelFunc
 	pool    chan *session
 	factory Factory
 	mu      struct {
@@ -44,11 +48,15 @@ type Pool struct {
 func NewPool(capacity int, factory Factory) *Pool {
 	intest.AssertNotNil(factory)
 	if capacity < 0 || capacity > PoolMaxSize {
-		intest.Assert(false, "invalid capacity: %d", capacity)
+		intest.Assert(suppressAssertInTest, "invalid capacity: %d", capacity)
 		capacity = PoolMaxSize
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	return &Pool{
+		ctx:     ctx,
+		cancel:  cancel,
 		pool:    make(chan *session, capacity),
 		factory: factory,
 	}
@@ -88,6 +96,7 @@ func (p *Pool) Get() (*Session, error) {
 		return nil, err
 	}
 
+	intest.AssertNotNil(internal)
 	se := &Session{}
 	defer func() {
 		if se.internal != internal {
@@ -96,10 +105,6 @@ func (p *Pool) Get() (*Session, error) {
 			internal.Close()
 		}
 	}()
-
-	if err = internal.OwnerResetState(context.Background(), p); err != nil {
-		return nil, err
-	}
 
 	if err = internal.TransferOwner(p, se); err != nil {
 		return nil, err
@@ -117,21 +122,19 @@ func (p *Pool) Put(se *Session) {
 	}
 
 	internal := se.internal
-	if internal.AvoidReuse() {
-		// If the internal session is marked as avoid-reuse, we should close it directly.
-		// Notice that we should not call `internal.Close` to make sure only close the internal session when its owner
-		// is the current session.
-		se.Close()
-	}
-
 	// We should transfer the owner back to the pool first for reasons:
 	// 1. Make sure the input Session is valid by checking the internal session's owner.
 	// 2. After ownership is transferred back to pool, we can ensure only the pool can access the internal session.
 	if err := internal.TransferOwner(se, p); err != nil {
 		// Notice that we should not call `internal.Close` to make sure only close the internal session when its owner
 		// is the current session.
+		logutil.BgLogger().Warn(
+			"TransferOwner failed when put back a session",
+			zap.String("sctx", objectStr(internal.sctx)),
+			zap.Error(err),
+			zap.Stack("stack"),
+		)
 		se.Close()
-		logutil.BgLogger().Warn("TransferOwner failed when put back a session", zap.Error(err))
 		return
 	}
 
@@ -142,8 +145,39 @@ func (p *Pool) Put(se *Session) {
 		}
 	}()
 
-	if err := internal.OwnerResetState(context.Background(), p); err != nil {
-		logutil.BgLogger().Warn("OwnerResetState failed when put back a session", zap.Error(err))
+	if internal.AvoidReuse() {
+		// If the internal session is marked as avoid-reuse, we should close it directly.
+		// Notice that we should not call `internal.Close` to make sure only close the internal session when its owner
+		// is the current session.
+		logutil.BgLogger().Info(
+			"the Session is marked as avoid-reusing when put back, close it instead",
+			zap.String("sctx", objectStr(internal.sctx)),
+		)
+		return
+	}
+
+	if err := internal.CheckNoPendingTxn(); err != nil {
+		// If the session has an unterminated transaction, it should close it instead of put back it to the pool
+		// to avoid some potential issues.
+		logutil.BgLogger().Warn(
+			"pending txn found when put back, close it instead to avoid undetermined state",
+			zap.String("sctx", objectStr(internal.sctx)),
+			zap.Error(err),
+			zap.Stack("stack"),
+		)
+		intest.Assert(suppressAssertInTest)
+		return
+	}
+
+	// for safety, still reset the inner state to make session clean
+	if err := internal.OwnerResetState(p.ctx, p); err != nil {
+		logutil.BgLogger().Warn(
+			"OwnerResetState failed when put back, close it instead to avoid undetermined state",
+			zap.String("sctx", objectStr(internal.sctx)),
+			zap.Error(err),
+			zap.Stack("stack"),
+		)
+		intest.Assert(suppressAssertInTest)
 		return
 	}
 
@@ -158,8 +192,18 @@ func (p *Pool) Put(se *Session) {
 	case p.pool <- internal:
 		returned = true
 	default:
-		internal.Close()
 	}
+}
+
+// WithSession executes the input function with the session.
+// After the function called, the session will be returned to the pool automatically.
+func (p *Pool) WithSession(fn func(*Session) error) error {
+	se, err := p.Get()
+	if err != nil {
+		return err
+	}
+	defer p.Put(se)
+	return fn(se)
 }
 
 // Close closes the pool to release all resources.
@@ -172,9 +216,17 @@ func (p *Pool) Close() {
 
 	p.mu.closed = true
 	close(p.pool)
+	p.cancel()
 	p.mu.Unlock()
 
 	for r := range p.pool {
 		r.Close()
 	}
+}
+
+// IsClosed returns whether the pool is closed
+func (p *Pool) IsClosed() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.mu.closed
 }

@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -30,7 +31,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func withSuppressAssert(fn func()) {
+// IsInternalClosed returns whether the internal session closed
+func (s *Session) IsInternalClosed() bool {
+	return s.internal.IsClosed()
+}
+
+// WithSuppressAssert suppress asserts in test
+func WithSuppressAssert(fn func()) {
 	defer func() {
 		suppressAssertInTest = false
 	}()
@@ -49,6 +56,24 @@ func (m *mockOwner) onBecameOwner(sctx SessionContext) error {
 
 func (m *mockOwner) onResignOwner(sctx SessionContext) error {
 	return m.Called(sctx).Error(0)
+}
+
+type mockTxn struct {
+	mock.Mock
+	kv.Transaction
+	valid bool
+}
+
+func (txn *mockTxn) Valid() bool {
+	return txn.valid
+}
+
+func (txn *mockTxn) String() string {
+	return txn.Transaction.String()
+}
+
+type mockPreparedFuture struct {
+	sessionctx.TxnFuture
 }
 
 type mockSessionContext struct {
@@ -143,6 +168,35 @@ func (m *mockSessionContext) StoreInternalSession(se any) {
 
 func (m *mockSessionContext) DeleteInternalSession(se any) {
 	m.Called(se)
+}
+
+func (m *mockSessionContext) GetPreparedTxnFuture() sessionctx.TxnFuture {
+	if arg := m.Called().Get(0); arg != nil {
+		return arg.(sessionctx.TxnFuture)
+	}
+	return nil
+}
+
+func (m *mockSessionContext) Txn(active bool) (txn kv.Transaction, err error) {
+	args := m.Called(active)
+	err = args.Error(1)
+	if args.Get(0) != nil {
+		txn = args.Get(0).(kv.Transaction)
+	}
+	return
+}
+
+func (m *mockSessionContext) MockNoPendingTxn() {
+	m.On("Txn", false).Return(&mockTxn{valid: false}, nil).Once()
+	m.On("GetPreparedTxnFuture").Return(nil).Once()
+}
+
+func (m *mockSessionContext) MockResetState(ctx context.Context, panicStr string) {
+	m.On("RollbackTxn", ctx).Run(func(args mock.Arguments) {
+		if panicStr != "" {
+			panic(panicStr)
+		}
+	}).Once()
 }
 
 func TestNewInternalSession(t *testing.T) {
@@ -308,7 +362,9 @@ func TestInternalSessionTransferOwner(t *testing.T) {
 	_, exit, err := se.EnterOperation(owner1)
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), se.Inuse())
-	require.EqualError(t, se.TransferOwner(owner1, owner2), "session is still inuse: 1")
+	err = se.TransferOwner(owner1, owner2)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "session is still inuse: 1")
 	require.Same(t, owner1, se.Owner())
 	require.False(t, se.IsClosed())
 
@@ -321,14 +377,6 @@ func TestInternalSessionTransferOwner(t *testing.T) {
 	require.False(t, se.IsClosed())
 	owner1.AssertExpectations(t)
 	owner2.AssertExpectations(t)
-
-	// avoid reuse session should not transfer the owner
-	require.False(t, se.AvoidReuse())
-	se.MarkAvoidReuse()
-	require.True(t, se.AvoidReuse())
-	require.EqualError(t, se.TransferOwner(owner2, owner1), "session is avoided to be reused by the new owner")
-	require.Same(t, owner2, se.Owner())
-	require.False(t, se.IsClosed())
 }
 
 func TestInternalSessionClose(t *testing.T) {
@@ -384,7 +432,7 @@ func TestInternalSessionClose(t *testing.T) {
 		se = mockInternalSession(t, sctx, owner)
 		owner.On("onResignOwner", sctx).Return(errors.New("mockErr1")).Once()
 		sctx.On("Close").Once()
-		withSuppressAssert(func() {
+		WithSuppressAssert(func() {
 			closeFn(se, owner)
 		})
 		require.True(t, se.IsClosed())
@@ -423,14 +471,14 @@ func TestInternalSessionClose(t *testing.T) {
 		require.Equal(t, uint64(1), se.Inuse())
 		owner.On("onResignOwner", sctx).Return(nil).Once()
 		sctx.On("Close").Once()
-		withSuppressAssert(func() {
+		WithSuppressAssert(func() {
 			closeFn(se, owner)
 		})
 		require.True(t, se.IsClosed())
 		require.Nil(t, se.Owner())
 		owner.AssertExpectations(t)
 		sctx.AssertExpectations(t)
-		withSuppressAssert(exit)
+		WithSuppressAssert(exit)
 	}
 
 	testWithErrorMock(func(se *session, owner *mockOwner) {
@@ -470,7 +518,7 @@ func TestInternalSessionEnterOperation(t *testing.T) {
 	exit3()
 	require.Equal(t, uint64(1), se.Inuse())
 
-	withSuppressAssert(func() {
+	WithSuppressAssert(func() {
 		// multiple exit should take no effect
 		exit1()
 		require.Equal(t, uint64(1), se.Inuse())
@@ -481,18 +529,20 @@ func TestInternalSessionEnterOperation(t *testing.T) {
 	require.Equal(t, uint64(0), se.Inuse())
 
 	// call with an invalid owner should report an error
-	withSuppressAssert(func() {
+	WithSuppressAssert(func() {
 		gotSctx, exit, err := se.EnterOperation(&mockOwner{})
 		require.Error(t, err)
+		require.Contains(t, err.Error(), "caller is not the owner")
 		require.Nil(t, gotSctx)
 		require.Nil(t, exit)
 		require.Equal(t, uint64(0), se.Inuse())
 	})
 
 	// call with a nil owner should report an error
-	withSuppressAssert(func() {
+	WithSuppressAssert(func() {
 		gotSctx, exit, err := se.EnterOperation(nil)
 		require.Error(t, err)
+		require.Contains(t, err.Error(), "caller is not the owner")
 		require.Nil(t, gotSctx)
 		require.Nil(t, exit)
 		require.Equal(t, uint64(0), se.Inuse())
@@ -502,7 +552,7 @@ func TestInternalSessionEnterOperation(t *testing.T) {
 	owner.On("onResignOwner", sctx).Return(nil).Once()
 	sctx.On("Close").Once()
 	se.Close()
-	withSuppressAssert(func() {
+	WithSuppressAssert(func() {
 		gotSctx, exit, err := se.EnterOperation(owner)
 		require.Error(t, err)
 		require.Nil(t, gotSctx)
@@ -527,16 +577,16 @@ func TestInternalSessionEnterOperation(t *testing.T) {
 	// Close the session before exit
 	owner.On("onResignOwner", sctx).Return(nil).Once()
 	sctx.On("Close").Once()
-	withSuppressAssert(se.Close)
+	WithSuppressAssert(se.Close)
 	require.True(t, se.IsClosed())
 	require.Equal(t, uint64(2), se.Inuse())
 	owner.AssertExpectations(t)
 	sctx.AssertExpectations(t)
 
 	// The exit should still work to decrease inuse
-	withSuppressAssert(exit4)
+	WithSuppressAssert(exit4)
 	require.Equal(t, uint64(1), se.Inuse())
-	withSuppressAssert(exit5)
+	WithSuppressAssert(exit5)
 	require.Equal(t, uint64(0), se.Inuse())
 }
 
@@ -570,16 +620,7 @@ func TestInternalSessionAvoidReuse(t *testing.T) {
 	require.False(t, se.IsClosed())
 	require.Same(t, owner, se.Owner())
 
-	// not allow transferring an owner when avoid reusing
-	require.EqualError(t,
-		se.TransferOwner(owner, &mockOwner{}),
-		"session is avoided to be reused by the new owner",
-	)
-	require.True(t, se.AvoidReuse())
-	require.False(t, se.IsClosed())
-	require.Same(t, owner, se.Owner())
-
-	// only allow to close
+	// allow to close
 	owner.On("onResignOwner", sctx).Return(nil).Once()
 	sctx.On("Close").Once()
 	se.OwnerClose(owner)
@@ -588,6 +629,72 @@ func TestInternalSessionAvoidReuse(t *testing.T) {
 	require.Nil(t, se.Owner())
 	owner.AssertExpectations(t)
 	sctx.AssertExpectations(t)
+}
+
+func TestInternalSessionCheckNoPendingTxn(t *testing.T) {
+	sctx := &mockSessionContext{}
+	se := mockInternalSession(t, sctx, &mockOwner{})
+
+	sctx.MockNoPendingTxn()
+	require.NoError(t, se.CheckNoPendingTxn())
+	sctx.AssertExpectations(t)
+
+	sctx.On("GetPreparedTxnFuture").Return(&mockPreparedFuture{}).Once()
+	require.EqualError(t, se.CheckNoPendingTxn(), "txn is pending for TSO")
+	sctx.AssertExpectations(t)
+
+	sctx.On("GetPreparedTxnFuture").Return(nil).Once()
+	sctx.On("Txn", false).Return(nil, errors.New("mockErr")).Once()
+	require.EqualError(t, se.CheckNoPendingTxn(), "mockErr")
+	sctx.AssertExpectations(t)
+
+	sctx.On("GetPreparedTxnFuture").Return(nil).Once()
+	sctx.On("Txn", false).Return(&mockTxn{valid: true}, nil).Once()
+	require.EqualError(t, se.CheckNoPendingTxn(), "txn is still valid")
+	sctx.AssertExpectations(t)
+}
+
+func TestInternalSessionResetState(t *testing.T) {
+	sctx := &mockSessionContext{}
+	owner := &mockOwner{}
+	se := mockInternalSession(t, sctx, owner)
+	ctx := context.WithValue(context.Background(), "a", "b")
+	checkInuse := func(mock.Arguments) { require.Equal(t, uint64(1), se.Inuse()) }
+
+	// normal case
+	sctx.On("RollbackTxn", ctx).Run(checkInuse).Once()
+	require.NoError(t, se.OwnerResetState(ctx, owner))
+	require.Zero(t, se.Inuse())
+	sctx.AssertExpectations(t)
+
+	// RollbackTxn panic
+	sctx.On("RollbackTxn", ctx).Run(checkInuse).Panic("mockPanic1").Once()
+	require.PanicsWithValue(t, "mockPanic1", func() {
+		_ = se.OwnerResetState(ctx, owner)
+	})
+	require.Zero(t, se.Inuse())
+	sctx.AssertExpectations(t)
+
+	// not owner
+	WithSuppressAssert(func() {
+		err := se.OwnerResetState(ctx, &mockOwner{})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "caller is not the owner")
+		require.Zero(t, se.Inuse())
+	})
+
+	// closed session
+	owner.On("onResignOwner", sctx).Return(nil).Once()
+	sctx.On("Close").Once()
+	se.Close()
+	sctx.AssertExpectations(t)
+	owner.AssertExpectations(t)
+	WithSuppressAssert(func() {
+		err := se.OwnerResetState(ctx, owner)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "session is closed")
+		require.Zero(t, se.Inuse())
+	})
 }
 
 func testCallProxyMethod(
@@ -619,7 +726,7 @@ func testCallProxyMethod(
 	sctx.AssertExpectations(t)
 
 	// error call
-	withSuppressAssert(func() {
+	WithSuppressAssert(func() {
 		actualRets = callMethod(args)
 	})
 	require.Equal(t, inuse, se.internal.Inuse())
@@ -628,7 +735,7 @@ func testCallProxyMethod(
 			require.Nil(t, actualRets[i], fmt.Sprintf("%d: %v", i, actualRets[i]))
 		} else {
 			err := actualRets[i].(error)
-			require.Contains(t, err.Error(), "session has already been closed")
+			require.Contains(t, err.Error(), "caller is not the owner")
 		}
 	}
 
@@ -809,59 +916,23 @@ func TestSessionProxyMethods(t *testing.T) {
 	)
 }
 
-func TestSessionResetState(t *testing.T) {
-	sctx := &mockSessionContext{}
-	se := mockSession(t, sctx)
-
-	// success
-	ctx := context.WithValue(context.Background(), "a", "b")
-	sctx.On("RollbackTxn", ctx).Once().Run(func(_ mock.Arguments) {
-		require.Equal(t, uint64(1), se.internal.Inuse())
-	})
-	require.NoError(t, se.ResetState(ctx))
-	require.Equal(t, uint64(0), se.internal.Inuse())
-	sctx.AssertExpectations(t)
-
-	// panic
-	require.False(t, se.internal.AvoidReuse())
-	sctx.On("RollbackTxn", ctx).Once().Run(func(_ mock.Arguments) {
-		require.Equal(t, uint64(1), se.internal.Inuse())
-		panic("testPanic")
-	})
-	require.PanicsWithValue(t, "testPanic", func() {
-		_ = se.ResetState(ctx)
-	})
-	require.Equal(t, uint64(0), se.internal.Inuse())
-	sctx.AssertExpectations(t)
-	require.True(t, se.internal.AvoidReuse())
-	se.internal.avoidReuse = false
-
-	// owner change
-	sctx.On("DeleteInternalSession", sctx).Once()
-	require.NoError(t, se.internal.TransferOwner(se, noopOwnerHook{}))
-	withSuppressAssert(func() {
-		err := se.ResetState(ctx)
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "caller is not the current session owner")
-	})
-	sctx.AssertExpectations(t)
-}
-
 func TestSessionClose(t *testing.T) {
 	sctx := &mockSessionContext{}
 	se := mockSession(t, sctx)
 
 	// normal close
+	sctx.On("DeleteInternalSession", sctx).Once()
 	sctx.On("Close").Once()
 	se.Close()
 	require.True(t, se.internal.IsClosed())
+	require.True(t, se.IsInternalClosed())
 	sctx.AssertExpectations(t)
 
 	// cannot use it again after closed
-	withSuppressAssert(func() {
+	WithSuppressAssert(func() {
 		_, err := se.Execute(context.TODO(), "select 1")
 		require.Error(t, err)
-		require.Contains(t, err.Error(), "caller is not the current session owner")
+		require.Contains(t, err.Error(), "session is closed")
 	})
 
 	// close a closed session should take no effect
@@ -870,5 +941,16 @@ func TestSessionClose(t *testing.T) {
 	// close a not own session should take no effect
 	se2 := mockSession(t, sctx)
 	se.internal = se2.internal
+	require.False(t, se.IsInternalClosed())
 	se.Close()
+	require.False(t, se.IsInternalClosed())
+	require.False(t, se2.IsInternalClosed())
+
+	// owner should close
+	sctx.On("DeleteInternalSession", sctx).Once()
+	sctx.On("Close").Once()
+	se2.Close()
+	require.True(t, se.IsInternalClosed())
+	require.True(t, se2.IsInternalClosed())
+	sctx.AssertExpectations(t)
 }
