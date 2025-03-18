@@ -271,15 +271,23 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 
 	mockedAllServerInfos := map[string]*infosync.ServerInfo{
 		"s1": {
-			ID: "s1",
-			Labels: map[string]string{
-				"zone": "zone1",
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID: "s1",
+			},
+			DynamicServerInfo: infosync.DynamicServerInfo{
+				Labels: map[string]string{
+					"zone": "zone1",
+				},
 			},
 		},
 		"s2": {
-			ID: "s2",
-			Labels: map[string]string{
-				"zone": "zone2",
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID: "s2",
+			},
+			DynamicServerInfo: infosync.DynamicServerInfo{
+				Labels: map[string]string{
+					"zone": "zone2",
+				},
 			},
 		},
 	}
@@ -345,33 +353,53 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 	// partial matches
 	mockedAllServerInfos = map[string]*infosync.ServerInfo{
 		"s1": {
-			ID: "s1",
-			Labels: map[string]string{
-				"zone": "zone1",
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID: "s1",
+			},
+			DynamicServerInfo: infosync.DynamicServerInfo{
+				Labels: map[string]string{
+					"zone": "zone1",
+				},
 			},
 		},
 		"s2": {
-			ID: "s2",
-			Labels: map[string]string{
-				"zone": "zone2",
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID: "s2",
+			},
+			DynamicServerInfo: infosync.DynamicServerInfo{
+				Labels: map[string]string{
+					"zone": "zone2",
+				},
 			},
 		},
 		"s22": {
-			ID: "s22",
-			Labels: map[string]string{
-				"zone": "zone2",
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID: "s22",
+			},
+			DynamicServerInfo: infosync.DynamicServerInfo{
+				Labels: map[string]string{
+					"zone": "zone2",
+				},
 			},
 		},
 		"s3": {
-			ID: "s3",
-			Labels: map[string]string{
-				"zone": "zone3",
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID: "s3",
+			},
+			DynamicServerInfo: infosync.DynamicServerInfo{
+				Labels: map[string]string{
+					"zone": "zone3",
+				},
 			},
 		},
 		"s4": {
-			ID: "s4",
-			Labels: map[string]string{
-				"zone": "zone4",
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID: "s4",
+			},
+			DynamicServerInfo: infosync.DynamicServerInfo{
+				Labels: map[string]string{
+					"zone": "zone4",
+				},
 			},
 		},
 	}
