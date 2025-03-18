@@ -159,11 +159,6 @@ func buildHist(
 	if ndvFactor > sampleFactor {
 		ndvFactor = sampleFactor
 	}
-	// If the number of buckets is not specified (set == 256), allow the number of buckets to
-	// be reduced for smaller tables.
-	if numBuckets == 256 {
-		numBuckets = min(int64(math.Sqrt(float64(count))*2), 256)
-	}
 	// Since bucket count is increased by sampleFactor, so the actual max values per bucket are
 	// floor(valuesPerBucket/sampleFactor)*sampleFactor, which may less than valuesPerBucket,
 	// thus we need to add a sampleFactor to avoid building too many buckets.
@@ -329,10 +324,7 @@ func BuildHistAndTopN(
 	allowPruning := true
 	if numTopN != 100 {
 		allowPruning = false
-	} //else {
-	// Reduce the number of topN collected for smaller tables, with the original value as the upper limit.
-	//numTopN = min(int(math.Sqrt(float64(count))), numTopN)
-	//}
+	}
 
 	// Step1: collect topn from samples
 
@@ -363,8 +355,8 @@ func BuildHistAndTopN(
 			continue
 		}
 		// case 2, meet a different value: counting for the "current" is complete
-		// case 2-1, do not add a count of 1 if we're sampling
-		if curCnt == 1 && sampleFactor > 1 && allowPruning {
+		// case 2-1, do not add a count of 1 if we're sampling or if we've already collected 10% of the topN
+		if curCnt == 1 && allowPruning && (len(topNList) >= (numTopN/10) || sampleFactor > 1) {
 			cur, curCnt = sampleBytes, 1
 			continue
 		}
@@ -375,7 +367,7 @@ func BuildHistAndTopN(
 			continue
 		}
 		// case 2-3, now topn is full, and the "current" count is less than the least count in the topn: no need to insert the "current"
-		if len(topNList) >= numTopN && uint64(curCnt) <= topNList[len(topNList)-1].Count {
+		if len(topNList) >= numTopN && (curCnt == 1 || uint64(curCnt) <= topNList[len(topNList)-1].Count) {
 			cur, curCnt = sampleBytes, 1
 			continue
 		}
@@ -486,6 +478,10 @@ func BuildHistAndTopN(
 
 	// Step3: build histogram with the rest samples
 	if len(samples) > 0 {
+		// if we pruned the topN, it means that there are no remaining skewed values in the samples
+		if len(topn.TopN) < numTopN && numBuckets == 256 {
+			numBuckets = int(min(math.Sqrt(float64(ndv)), float64(numBuckets)))
+		}
 		_, err = buildHist(sc, hg, samples, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets), memTracker)
 		if err != nil {
 			return nil, nil, err
