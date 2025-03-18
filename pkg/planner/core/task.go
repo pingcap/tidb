@@ -2525,7 +2525,8 @@ func (p *PhysicalHashAgg) Attach2Task(tasks ...base.Task) base.Task {
 			t = cop.ConvertToRootTask(p.SCtx())
 			attachPlan2Task(p, t)
 		}
-	} else if _, ok := t.(*MppTask); ok {
+	} else if MPPTask, ok := t.(*MppTask); ok {
+		MPPTask.needEnforceExchanger(p.GetChildReqProps(0), MPPTask.p.FD)
 		return p.attach2TaskForMpp(tasks...)
 	} else {
 		attachPlan2Task(p, t)

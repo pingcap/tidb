@@ -315,9 +315,6 @@ func (p *PhysicalProperty) IsSubsetOf(keys []*MPPPartitionColumn) []int {
 // In this case, we can see that the child supplied partition keys is subset of parent required partition cols.
 func (p *PhysicalProperty) NeedEnforceExchangerWithHashByEquivalence(keys []*MPPPartitionColumn, fdSet *fd.FDSet) bool {
 	// keys is the HashCol. If the partition cols are a subset of the hash cols, then need to enforce exchange.
-	if len(p.MPPPartitionCols) < len(keys) {
-		return true
-	}
 	uniqueID2MppCol := make(map[*MPPPartitionColumn]intset.FastIntSet, len(keys))
 	// for each partition column, we calculate the equivalence alternative closure of it.
 	for _, pCol := range p.MPPPartitionCols {
@@ -345,31 +342,16 @@ SubsetLoop:
 		break SubsetLoop
 	}
 	// it's subset case, we don't need to add exchanger.
+	// once there is a column outside the parent required partition cols, we need to add exchanger.
+	// we build a  case like:
+	// parent prop require: partition cols:   1, 2, 3
+	// the child can supply: partition cols:  1, 4, 5
+	// fd: {2,3,4} = {2,3,4}
+	// column 5 will mixture the data distribute, even if parent required columns are all satisfied by child.
 	if isSubset {
 		return false
 	}
-
-	// when arrived here, it means the child supplied partition cols is not subset of parent required partition cols.
-	// then we need to check if the child supplied partition cols can supply the every partition col as parent required.
-	// iterate the parent prop required partition cols, check if it is compatible with children supplied.
-NextRequiredCol:
-	for pCol, equivSet := range uniqueID2MppCol {
-		// iterate the child supplied keys.
-		for _, key := range keys {
-			if equivSet.Has(int(key.Col.UniqueID)) &&
-				// if the equiv set contain the key, it means it can supply the same col partition prop directly or in-indirectly.
-				// according to the old logic, when the child can supply the same key partition, we should check its collate-id
-				// when the new collation is enabled suggested by the collateID is negative. Or new collation is not set.
-				((key.CollateID < 0 && pCol.CollateID == key.CollateID) || key.CollateID >= 0) {
-				// yes, child can supply the same col partition prop. continue out to next required partition col.
-				continue NextRequiredCol
-			}
-		}
-		// if all child supplied keys iterated can NOT supply the same col partition prop, then we need to enforce exchange.
-		return true
-	}
-	// all required keys are satisfied, enforcer is not needed.
-	return false
+	return true
 }
 
 // AllColsFromSchema checks whether all the columns needed by this physical
