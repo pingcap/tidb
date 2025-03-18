@@ -56,7 +56,7 @@ go_test(
     srcs = ["info_test.go"],
     embed = [":infosync"],
     flaky = True,
-    shard_count = 50,
+    shard_count = 5,
     deps = [
         "//ddl/placement",
         "//ddl/util",
