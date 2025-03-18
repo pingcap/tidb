@@ -1066,7 +1066,7 @@ func (e *HashJoinV2Exec) collectSpillStats() {
 	}
 
 	buildRowTableSpillBytes := e.spillHelper.getBuildSpillBytes()
-	buildHashTableSpillBytes := getHashTableMemoryUsage(getHashTableLengthByRowLen(e.spillHelper.spilledValidRowNum))
+	buildHashTableSpillBytes := getHashTableMemoryUsage(getHashTableLengthByRowLen(e.spillHelper.spilledValidRowNum.Load()))
 	probeSpillBytes := e.spillHelper.getProbeSpillBytes()
 	spilledPartitionNum := e.spillHelper.getSpilledPartitionsNum()
 

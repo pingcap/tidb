@@ -58,3 +58,7 @@ drop table t;
 create table t(a bit(3) default b'000111');
 drop table t;
 create table t(a bit(32) default b'1111111111111111111111111111111');
+
+# issue 58947
+drop table t;
+create table t(id bigint primary key, i int unsigned DEFAULT (0));

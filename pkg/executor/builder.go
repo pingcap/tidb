@@ -502,23 +502,23 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 }
 
 func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Executor {
-	noMVIndexOrPrefixIndexOrVectorIndex := true
+	noMVIndexOrPrefixIndexOrColumnarIndex := true
 	for _, idx := range v.IndexInfos {
-		if idx.MVIndex || idx.VectorInfo != nil {
-			noMVIndexOrPrefixIndexOrVectorIndex = false
+		if idx.MVIndex || idx.IsTiFlashLocalIndex() {
+			noMVIndexOrPrefixIndexOrColumnarIndex = false
 			break
 		}
 		for _, col := range idx.Columns {
 			if col.Length != types.UnspecifiedLength {
-				noMVIndexOrPrefixIndexOrVectorIndex = false
+				noMVIndexOrPrefixIndexOrColumnarIndex = false
 				break
 			}
 		}
-		if !noMVIndexOrPrefixIndexOrVectorIndex {
+		if !noMVIndexOrPrefixIndexOrColumnarIndex {
 			break
 		}
 	}
-	if b.ctx.GetSessionVars().FastCheckTable && noMVIndexOrPrefixIndexOrVectorIndex {
+	if b.ctx.GetSessionVars().FastCheckTable && noMVIndexOrPrefixIndexOrColumnarIndex {
 		e := &FastCheckTableExec{
 			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 			dbName:       v.DBName,
@@ -683,8 +683,8 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) exec.Ex
 		b.err = errors.Errorf("secondary index `%v` is not found in table `%v`", v.IndexName, v.Table.Name.O)
 		return nil
 	}
-	if index.Meta().VectorInfo != nil {
-		b.err = errors.Errorf("vector index `%v` is not supported for cleanup index", v.IndexName)
+	if index.Meta().IsTiFlashLocalIndex() {
+		b.err = errors.Errorf("columnar index `%v` is not supported for cleanup index", v.IndexName)
 		return nil
 	}
 	e := &CleanupIndexExec{
@@ -5435,7 +5435,11 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 			b.inSelectLockStmt = false
 		}()
 	}
-	handles, isTableDual := plan.PrunePartitionsAndValues(b.ctx)
+	handles, isTableDual, err := plan.PrunePartitionsAndValues(b.ctx)
+	if err != nil {
+		b.err = err
+		return nil
+	}
 	if isTableDual {
 		// No matching partitions
 		return &TableDualExec{

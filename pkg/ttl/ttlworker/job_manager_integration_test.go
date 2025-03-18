@@ -1115,16 +1115,16 @@ func TestDelayMetrics(t *testing.T) {
 }
 
 type poolTestWrapper struct {
-	util.SessionPool
+	util.DestroyableSessionPool
 	inuse atomic.Int64
 }
 
-func wrapPoolForTest(pool util.SessionPool) *poolTestWrapper {
-	return &poolTestWrapper{SessionPool: pool}
+func wrapPoolForTest(pool util.DestroyableSessionPool) *poolTestWrapper {
+	return &poolTestWrapper{DestroyableSessionPool: pool}
 }
 
 func (w *poolTestWrapper) Get() (pools.Resource, error) {
-	r, err := w.SessionPool.Get()
+	r, err := w.DestroyableSessionPool.Get()
 	if err == nil {
 		w.inuse.Add(1)
 	}
@@ -1133,7 +1133,7 @@ func (w *poolTestWrapper) Get() (pools.Resource, error) {
 
 func (w *poolTestWrapper) Put(r pools.Resource) {
 	w.inuse.Add(-1)
-	w.SessionPool.Put(r)
+	w.DestroyableSessionPool.Put(r)
 }
 
 func (w *poolTestWrapper) AssertNoSessionInUse(t *testing.T) {
