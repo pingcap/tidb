@@ -12087,7 +12087,7 @@ ShowTargetFilterable:
 	}
 |	"PLAN" "FOR" stringLit
 	{
-		$$ = &ast.ShowStmt{Tp: ast.ShowPlanForSQL, SQL: $3}
+		$$ = &ast.ShowStmt{Tp: ast.ShowPlanForSQL, SQLOrDigest: $3}
 	}
 
 ShowLikeOrWhereOpt:
