@@ -111,8 +111,9 @@ func (b *memKVsAndBuffers) build(ctx context.Context) error {
 
 	readerOpeners := make([]readerOpenerFn[*kvPair, bufferedKVReader], len(b.keysPerFile))
 	for i := range len(b.keysPerFile) {
+		idx := i
 		readerOpeners[i] = func() (*bufferedKVReader, error) {
-			return &bufferedKVReader{keys: b.keysPerFile[i], values: b.valuesPerFile[i]}, nil
+			return &bufferedKVReader{keys: b.keysPerFile[idx], values: b.valuesPerFile[idx]}, nil
 		}
 	}
 
