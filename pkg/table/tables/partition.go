@@ -16,10 +16,10 @@ package tables
 
 import (
 	"bytes"
+	"context"
 	stdctx "context"
 	stderr "errors"
 	"fmt"
-	"github.com/pingcap/tidb/dumpling/context"
 	"hash/crc32"
 	"sort"
 	"strconv"
@@ -2062,6 +2062,9 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 						tmpRecordIDMapKey := tablecodec.EncodeIndexSeekKey(newTo, tablecodec.TempIndexPrefix, toKey[tablecodec.TempIndexPrefix+2:])
 						encRecordId := codec.EncodeInt(nil, newRecordID.IntValue())
 						err = txn.Set(tmpRecordIDMapKey, encRecordId)
+						if err != nil {
+							return errors.Trace(err)
+						}
 						// TODO: How does this work in StateDeleteReorganization?!? Do we need to check the state and
 						// always have a mapping from 'new' partitions _tidb_rowid -> 'old' partitions _tidb_rowid?
 					} else {
