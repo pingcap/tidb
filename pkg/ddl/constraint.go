@@ -121,13 +121,14 @@ func (w *worker) onAddCheckConstraint(jobCtx *jobContext, job *model.Job) (ver i
 	return ver, errors.Trace(err)
 }
 
-func checkAddCheckConstraint(t *meta.Mutator, job *model.Job) (*model.DBInfo, *model.TableInfo, *model.ConstraintInfo, *model.ConstraintInfo, error) { //nolint: revive
+func checkAddCheckConstraint(t *meta.Mutator, job *model.Job) (
+	dbInfo *model.DBInfo, tblInfo *model.TableInfo, constraintInfo2, constraintInfo1 *model.ConstraintInfo, err error) {
 	schemaID := job.SchemaID
-	dbInfo, err := t.GetDatabase(job.SchemaID)
+	dbInfo, err = t.GetDatabase(job.SchemaID)
 	if err != nil {
 		return nil, nil, nil, nil, errors.Trace(err)
 	}
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
+	tblInfo, err = GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return nil, nil, nil, nil, errors.Trace(err)
 	}
@@ -137,10 +138,10 @@ func checkAddCheckConstraint(t *meta.Mutator, job *model.Job) (*model.DBInfo, *m
 		job.State = model.JobStateCancelled
 		return nil, nil, nil, nil, errors.Trace(err)
 	}
-	constraintInfo1 := args.Constraint
+	constraintInfo1 = args.Constraint
 
 	// do the double-check with constraint existence.
-	constraintInfo2 := tblInfo.FindConstraintInfoByName(constraintInfo1.Name.L)
+	constraintInfo2 = tblInfo.FindConstraintInfoByName(constraintInfo1.Name.L)
 	if constraintInfo2 != nil {
 		if constraintInfo2.State == model.StatePublic {
 			// We already have a constraint with the same constraint name.
