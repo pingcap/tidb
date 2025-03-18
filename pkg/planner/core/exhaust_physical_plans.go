@@ -47,15 +47,6 @@ import (
 
 func exhaustPhysicalPlans4LogicalUnionScan(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	p := lp.(*logicalop.LogicalUnionScan)
-	// if prop is require an index join's probe side, check the inner pattern admission here.
-	if prop.IndexJoinProp != nil {
-		pass := admitIndexJoinInnerChildPattern(lp)
-		if !pass {
-			// even enforce hint can not work with this.
-			return nil, false, nil
-		}
-		// union scan is a special case, when it's in the inner side of an index join, it could guarantee the keep-order.
-	}
 	if prop.IsFlashProp() {
 		p.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 			"MPP mode may be blocked because operator `UnionScan` is not supported now.")
@@ -2314,14 +2305,6 @@ func exhaustPhysicalPlans4LogicalExpand(lp base.LogicalPlan, prop *property.Phys
 
 func exhaustPhysicalPlans4LogicalProjection(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	p := lp.(*logicalop.LogicalProjection)
-	// if prop is require an index join's probe side, check the inner pattern admission here.
-	if prop.IndexJoinProp != nil {
-		pass := admitIndexJoinInnerChildPattern(lp)
-		if !pass {
-			// even enforce hint can not work with this.
-			return nil, false, nil
-		}
-	}
 	newProp, ok := p.TryToGetChildProp(prop)
 	if !ok {
 		return nil, true, nil
@@ -3046,14 +3029,6 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 
 func exhaustPhysicalPlans4LogicalAggregation(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	la := lp.(*logicalop.LogicalAggregation)
-	// if prop is require an index join's probe side, check the inner pattern admission here.
-	if prop.IndexJoinProp != nil {
-		pass := admitIndexJoinInnerChildPattern(lp)
-		if !pass {
-			// even enforce hint can not work with this.
-			return nil, false, nil
-		}
-	}
 	if la.PreferAggToCop {
 		if !la.CanPushToCop(kv.TiKV) {
 			la.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
@@ -3196,14 +3171,6 @@ func exhaustPhysicalPlans4LogicalUnionAll(lp base.LogicalPlan, prop *property.Ph
 
 func exhaustPhysicalPlans4LogicalPartitionUnionAll(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	p := lp.(*logicalop.LogicalPartitionUnionAll)
-	// if prop is require an index join's probe side, check the inner pattern admission here.
-	if prop.IndexJoinProp != nil {
-		pass := admitIndexJoinInnerChildPattern(lp)
-		if !pass {
-			// even enforce hint can not work with this.
-			return nil, false, nil
-		}
-	}
 	uas, flagHint, err := p.LogicalUnionAll.ExhaustPhysicalPlans(prop)
 	if err != nil {
 		return nil, false, err
