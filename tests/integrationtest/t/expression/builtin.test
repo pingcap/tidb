@@ -719,7 +719,9 @@ DROP TABLE IF EXISTS t;
 CREATE TABLE t(a BINARY(10), b CHAR(10));
 INSERT INTO t SELECT "中文", "abc";
 SELECT LPAD(a, 11, "a"), LPAD(b, 2, "xx") FROM t;
+SELECT LPAD("abc", 5, "");
 SELECT RPAD(a, 11, "a"), RPAD(b, 2, "xx") FROM t;
+SELECT RPAD("abc", 5, "");
 
 # TestStringBuiltin
 drop table if exists t;

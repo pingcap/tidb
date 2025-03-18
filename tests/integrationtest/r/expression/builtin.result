@@ -1616,9 +1616,15 @@ INSERT INTO t SELECT "中文", "abc";
 SELECT LPAD(a, 11, "a"), LPAD(b, 2, "xx") FROM t;
 LPAD(a, 11, "a")	LPAD(b, 2, "xx")
 a中文    	ab
+SELECT LPAD("abc", 5, "");
+LPAD("abc", 5, "")
+
 SELECT RPAD(a, 11, "a"), RPAD(b, 2, "xx") FROM t;
 RPAD(a, 11, "a")	RPAD(b, 2, "xx")
 中文    a	ab
+SELECT RPAD("abc", 5, "");
+RPAD("abc", 5, "")
+
 drop table if exists t;
 create table t(a int, b double, c datetime, d time, e char(20), f bit(10));
 insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", 0b10101);
