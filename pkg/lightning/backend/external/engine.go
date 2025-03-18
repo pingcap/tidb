@@ -16,8 +16,8 @@ package external
 
 import (
 	"bytes"
+	"container/heap"
 	"context"
-	"encoding/hex"
 	"io"
 	"sort"
 	"sync"
@@ -25,8 +25,6 @@ import (
 
 	"github.com/cockroachdb/pebble"
 	"github.com/docker/go-units"
-	"github.com/jfcg/sorty/v2"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -94,6 +92,38 @@ func (_ bufferedKVReader) close() error {
 	return nil
 }
 
+type HeapItem struct {
+	fileIndex int // 文件在keysPerFile中的索引
+	elemIndex int // 元素在该文件中的索引
+}
+
+type MergeHeap struct {
+	items []HeapItem
+	m     *memKVsAndBuffers // 指向目标结构体，用于访问keysPerFile
+}
+
+func (h MergeHeap) Len() int { return len(h.items) }
+func (h MergeHeap) Less(i, j int) bool {
+	itemI := h.items[i]
+	itemJ := h.items[j]
+	keyI := h.m.keysPerFile[itemI.fileIndex][itemI.elemIndex]
+	keyJ := h.m.keysPerFile[itemJ.fileIndex][itemJ.elemIndex]
+	return bytes.Compare(keyI, keyJ) < 0
+}
+func (h MergeHeap) Swap(i, j int) { h.items[i], h.items[j] = h.items[j], h.items[i] }
+
+func (h *MergeHeap) Push(x interface{}) {
+	h.items = append(h.items, x.(HeapItem))
+}
+
+func (h *MergeHeap) Pop() interface{} {
+	old := h.items
+	n := len(old)
+	x := old[n-1]
+	h.items = old[0 : n-1]
+	return x
+}
+
 func (b *memKVsAndBuffers) build(ctx context.Context) error {
 	sumKVCnt := 0
 	for _, keys := range b.keysPerFile {
@@ -104,32 +134,42 @@ func (b *memKVsAndBuffers) build(ctx context.Context) error {
 		b.droppedSize += size
 	}
 	b.droppedSizePerFile = nil
-
 	logutil.Logger(ctx).Info("building memKVsAndBuffers",
 		zap.Int("sumKVCnt", sumKVCnt),
 		zap.Int("droppedSize", b.droppedSize))
 
-	readerOpeners := make([]readerOpenerFn[*kvPair, bufferedKVReader], len(b.keysPerFile))
-	for i := range len(b.keysPerFile) {
-		idx := i
-		readerOpeners[i] = func() (*bufferedKVReader, error) {
-			return &bufferedKVReader{keys: b.keysPerFile[idx], values: b.valuesPerFile[idx]}, nil
+	h := &MergeHeap{
+		m: b,
+	}
+	// 初始化堆，将每个文件的第一个元素（如果有）加入堆
+	for i := 0; i < len(b.keysPerFile); i++ {
+		if len(b.keysPerFile[i]) > 0 {
+			heap.Push(h, HeapItem{fileIndex: i, elemIndex: 0})
 		}
 	}
+	heap.Init(h)
 
-	it, err := newMergeIter(ctx, readerOpeners, false)
-	if err != nil {
-		return err
-	}
-
+	// 预分配空间（可选，根据实际情况调整）
 	b.keys = make([][]byte, 0, sumKVCnt)
 	b.values = make([][]byte, 0, sumKVCnt)
-	for true {
-		if _, ok := it.next(); !ok {
-			break
+
+	for h.Len() > 0 {
+		item := heap.Pop(h).(HeapItem)
+		fileIdx := item.fileIndex
+		elemIdx := item.elemIndex
+
+		// 添加当前元素到结果
+		b.keys = append(b.keys, b.keysPerFile[fileIdx][elemIdx])
+		b.values = append(b.values, b.valuesPerFile[fileIdx][elemIdx])
+
+		// 推进该文件的指针，若还有元素则加入堆
+		nextElemIdx := elemIdx + 1
+		if nextElemIdx < len(b.keysPerFile[fileIdx]) {
+			heap.Push(h, HeapItem{
+				fileIndex: fileIdx,
+				elemIndex: nextElemIdx,
+			})
 		}
-		b.keys = append(b.keys, it.curr.key)
-		b.values = append(b.values, it.curr.value)
 	}
 
 	for i := range b.keysPerFile {
@@ -335,7 +375,6 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	if err != nil {
 		return err
 	}
-	e.memKVsAndBuffers.build(ctx)
 
 	readSecond := time.Since(readStart).Seconds()
 	readDurHist.Observe(readSecond)
@@ -344,33 +383,14 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 		zap.Int("droppedSize", e.memKVsAndBuffers.droppedSize))
 
 	sortStart := time.Now()
-	oldSortyGor := sorty.MaxGor
-	sorty.MaxGor = uint64(e.workerConcurrency * 2)
-	var dupKey atomic.Pointer[[]byte]
-	sorty.Sort(len(e.memKVsAndBuffers.keys), func(i, k, r, s int) bool {
-		cmp := bytes.Compare(e.memKVsAndBuffers.keys[i], e.memKVsAndBuffers.keys[k])
-		if cmp < 0 { // strict comparator like < or >
-			if r != s {
-				e.memKVsAndBuffers.keys[r], e.memKVsAndBuffers.keys[s] = e.memKVsAndBuffers.keys[s], e.memKVsAndBuffers.keys[r]
-				e.memKVsAndBuffers.values[r], e.memKVsAndBuffers.values[s] = e.memKVsAndBuffers.values[s], e.memKVsAndBuffers.values[r]
-			}
-			return true
-		}
-		if cmp == 0 && i != k {
-			cloned := append([]byte(nil), e.memKVsAndBuffers.keys[i]...)
-			dupKey.Store(&cloned)
-		}
-		return false
-	})
-	sorty.MaxGor = oldSortyGor
+
+	e.memKVsAndBuffers.build(ctx)
+
 	sortSecond := time.Since(sortStart).Seconds()
 	sortDurHist.Observe(sortSecond)
 	logutil.Logger(ctx).Info("sorting in loadBatchRegionData",
 		zap.Duration("cost time", time.Since(sortStart)))
 
-	if k := dupKey.Load(); k != nil {
-		return errors.Errorf("duplicate key found: %s", hex.EncodeToString(*k))
-	}
 	readAndSortSecond := time.Since(readStart).Seconds()
 	readAndSortDurHist.Observe(readAndSortSecond)
 
