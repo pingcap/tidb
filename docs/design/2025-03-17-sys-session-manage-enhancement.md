@@ -65,7 +65,7 @@ func (p *Pool) WithSession(func(*Session) error) (err error) {
 }
 ```
 
-We can see that the `WithSession`n method always calls `p.put(se)` within a defer function to ensure the session is returned to the pool. One exception to this occurs when a panic happens. In such cases, the session is destroyed instead of being returned to the pool, as it may be in an undefined state, making it safer to discard rather than reuse.
+We can see that the `WithSession` method always calls `p.put(se)` within a defer function to ensure the session is returned to the pool. One exception to this occurs when a panic happens. In such cases, the session is destroyed instead of being returned to the pool, as it may be in an undefined state, making it safer to discard rather than reuse.
 
 The `Pool` should be responsible for managing the internal sessions' registration and unregistering, and the callers should not care about it. These operations are handled by `Pool.get` and `Pool.put` methods:
 
