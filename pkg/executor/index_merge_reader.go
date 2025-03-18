@@ -146,16 +146,20 @@ type IndexMergeReaderExecutor struct {
 	isIntersection bool
 
 	hasGlobalIndex bool
+	// outputColumns represents the columns that index readers return.
+	outputColumns []*expression.Column
+	// isIndexMergeSingleScan indicates if we can skip table lookup and use index data directly
+	isIndexMergeSingleScan bool
 }
 
 type indexMergeTableTask struct {
 	lookupTableTask
-
+	idxIdx uint8
 	// parTblIdx are only used in indexMergeProcessWorker.fetchLoopIntersection.
 	parTblIdx int
-
 	// partialPlanID are only used for indexMergeProcessWorker.fetchLoopUnionWithOrderBy.
 	partialPlanID int
+	chunks        []*chunk.Chunk
 }
 
 // Table implements the dataSourceExecutor interface.
@@ -362,19 +366,20 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 				failpoint.Inject("testIndexMergePanicPartialIndexWorker", nil)
 				is := e.partialPlans[workID][0].(*plannercore.PhysicalIndexScan)
 				worker := &partialIndexWorker{
-					stats:              e.stats,
-					idxID:              e.getPartitalPlanID(workID),
-					sc:                 e.Ctx(),
-					dagPB:              e.dagPBs[workID],
-					plan:               e.partialPlans[workID],
-					batchSize:          e.MaxChunkSize(),
-					maxBatchSize:       e.Ctx().GetSessionVars().IndexLookupSize,
-					maxChunkSize:       e.MaxChunkSize(),
-					memTracker:         e.memTracker,
-					partitionTableMode: e.partitionTableMode,
-					prunedPartitions:   e.prunedPartitions,
-					byItems:            is.ByItems,
-					pushedLimit:        pushedIndexLimit,
+					stats:                  e.stats,
+					idxID:                  e.getPartitalPlanID(workID),
+					sc:                     e.Ctx(),
+					dagPB:                  e.dagPBs[workID],
+					plan:                   e.partialPlans[workID],
+					batchSize:              e.MaxChunkSize(),
+					maxBatchSize:           e.Ctx().GetSessionVars().IndexLookupSize,
+					maxChunkSize:           e.MaxChunkSize(),
+					memTracker:             e.memTracker,
+					partitionTableMode:     e.partitionTableMode,
+					prunedPartitions:       e.prunedPartitions,
+					byItems:                is.ByItems,
+					pushedLimit:            pushedIndexLimit,
+					isIndexMergeSingleScan: e.isIndexMergeSingleScan,
 				}
 				if worker.stats != nil && worker.idxID != 0 {
 					worker.sc.GetSessionVars().StmtCtx.RuntimeStatsColl.GetBasicRuntimeStats(worker.idxID, true)
@@ -410,7 +415,12 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 						builder.Request.Paging.MaxPagingSize = uint64(worker.batchSize)
 					}
 				}
-				tps := worker.getRetTpsForIndexScan(e.handleCols)
+				var tps []*types.FieldType
+				if !e.isIndexMergeSingleScan {
+					tps = worker.getRetTpsForIndexScan(e.handleCols)
+				} else {
+					tps = getRetTpsForSingleIndexScan(e.handleCols, e.outputColumns, is.IdxCols, len(is.Index.Columns))
+				}
 				results := make([]distsql.SelectResult, 0, len(keyRanges))
 				defer func() {
 					// To make sure SelectResult.Close() is called even got panic in fetchHandles().
@@ -455,7 +465,8 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 				}
 				ctx1, cancel := context.WithCancel(ctx)
 				// this error is reported in fetchHandles(), so ignore it here.
-				_, _ = worker.fetchHandles(ctx1, results, exitCh, fetchCh, e.finished, e.handleCols, workID)
+				_, _ = worker.fetchHandles(ctx1, results, exitCh, fetchCh, e.finished, e.handleCols, workID, tps)
+
 				cancel()
 			},
 			handleWorkerPanic(ctx, e.finished, nil, fetchCh, nil, partialIndexWorkerType),
@@ -507,17 +518,18 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 				}
 
 				worker := &partialTableWorker{
-					stats:              e.stats,
-					sc:                 e.Ctx(),
-					batchSize:          e.MaxChunkSize(),
-					maxBatchSize:       e.Ctx().GetSessionVars().IndexLookupSize,
-					maxChunkSize:       e.MaxChunkSize(),
-					tableReader:        partialTableReader,
-					memTracker:         e.memTracker,
-					partitionTableMode: e.partitionTableMode,
-					prunedPartitions:   e.prunedPartitions,
-					byItems:            ts.ByItems,
-					pushedLimit:        pushedTableLimit,
+					stats:                  e.stats,
+					sc:                     e.Ctx(),
+					batchSize:              e.MaxChunkSize(),
+					maxBatchSize:           e.Ctx().GetSessionVars().IndexLookupSize,
+					maxChunkSize:           e.MaxChunkSize(),
+					tableReader:            partialTableReader,
+					memTracker:             e.memTracker,
+					partitionTableMode:     e.partitionTableMode,
+					prunedPartitions:       e.prunedPartitions,
+					byItems:                ts.ByItems,
+					pushedLimit:            pushedTableLimit,
+					isIndexMergeSingleScan: e.isIndexMergeSingleScan,
 				}
 
 				if len(e.prunedPartitions) != 0 && len(e.byItems) != 0 {
@@ -612,18 +624,19 @@ func (e *IndexMergeReaderExecutor) getTablePlanRootID() int {
 }
 
 type partialTableWorker struct {
-	stats              *IndexMergeRuntimeStat
-	sc                 sessionctx.Context
-	batchSize          int
-	maxBatchSize       int
-	maxChunkSize       int
-	tableReader        exec.Executor
-	memTracker         *memory.Tracker
-	partitionTableMode bool
-	prunedPartitions   []table.PhysicalTable
-	byItems            []*plannerutil.ByItems
-	scannedKeys        uint64
-	pushedLimit        *plannercore.PushedDownLimit
+	stats                  *IndexMergeRuntimeStat
+	sc                     sessionctx.Context
+	batchSize              int
+	maxBatchSize           int
+	maxChunkSize           int
+	tableReader            exec.Executor
+	memTracker             *memory.Tracker
+	partitionTableMode     bool
+	prunedPartitions       []table.PhysicalTable
+	byItems                []*plannerutil.ByItems
+	scannedKeys            uint64
+	pushedLimit            *plannercore.PushedDownLimit
+	isIndexMergeSingleScan bool
 }
 
 // needPartitionHandle indicates whether we need create a partitionHandle or not.
@@ -1377,11 +1390,112 @@ func (w *intersectionProcessWorker) consumeMemDelta() {
 	w.rowDelta = 0
 }
 
+// mergeRowsFromIndices is used to merge rows from different indices
+func (w *intersectionProcessWorker) mergeRowsFromIndices(indexRows map[string]map[uint8]chunk.Row, handles []kv.Handle, outputTps []*types.FieldType, handleCols plannerutil.HandleCols, outputColumns []*expression.Column, schemaColumns []*expression.Column) ([]chunk.Row, []*chunk.Chunk) {
+	tempChunk := chunk.NewChunkWithCapacity(outputTps, len(handles))
+
+	handleColsLen := handleCols.NumCols()
+	outputColsLen := len(outputColumns)
+
+	for _, h := range handles {
+		handleKey := h.String()
+		idxRowsForHandle, ok := indexRows[handleKey]
+		if !ok {
+			continue
+		}
+
+		mutRow := chunk.MutRowFromTypes(outputTps)
+		currPos := 0
+
+		for i := 0; i < len(w.indexMerge.partialPlans); i++ {
+			row, ok := idxRowsForHandle[uint8(i)]
+			if !ok {
+				continue
+			}
+			// inputColsLen is the length of the input columns for the current index.
+			inputColsLen := row.Len() - handleColsLen
+			if i == len(w.indexMerge.partialPlans)-1 && row.Len()+currPos == outputColsLen {
+				// If the current index is the last index and the length of the input columns is equal to the length of the output columns,
+				inputColsLen = row.Len()
+			}
+
+			for j := 0; j < inputColsLen; j++ {
+				datum := row.GetDatum(j, outputTps[currPos])
+				mutRow.SetDatum(currPos, datum)
+				currPos++
+			}
+		}
+
+		tempChunk.AppendRow(mutRow.ToRow())
+	}
+	// No rows found, return empty result
+	if tempChunk.NumRows() == 0 {
+		return []chunk.Row{}, []*chunk.Chunk{}
+	}
+
+	// Now remap all rows to match schemaColumns order
+	// Create mapping from column ID to its position in both schemas
+	colIDToOutputPos := make(map[int64]int, len(outputColumns))
+	for pos, col := range outputColumns {
+		colIDToOutputPos[col.ID] = pos
+	}
+
+	// Create field types for the schema columns
+	schemaTps := make([]*types.FieldType, len(schemaColumns))
+	for i, col := range schemaColumns {
+		schemaTps[i] = col.RetType
+	}
+
+	// Create the final result chunk with schemaColumns order
+	resultChunk := chunk.NewChunkWithCapacity(schemaTps, tempChunk.NumRows())
+	resultRows := make([]chunk.Row, 0, tempChunk.NumRows())
+
+	// Remap each row to the schemaColumns order
+	for i := 0; i < tempChunk.NumRows(); i++ {
+		tempRow := tempChunk.GetRow(i)
+		schemaRow := chunk.MutRowFromTypes(schemaTps)
+
+		// Map values from tempRow to schemaRow based on column IDs
+		for schemaPos, schemaCol := range schemaColumns {
+			if outputPos, exists := colIDToOutputPos[schemaCol.ID]; exists {
+				datum := tempRow.GetDatum(outputPos, outputTps[outputPos])
+				schemaRow.SetDatum(schemaPos, datum)
+			}
+			// If column doesn't exist in outputColumns, leave it as default value (NULL)
+		}
+
+		resultChunk.AppendRow(schemaRow.ToRow())
+	}
+
+	// Append all rows to resultRows
+	for i := 0; i < resultChunk.NumRows(); i++ {
+		resultRows = append(resultRows, resultChunk.GetRow(i))
+	}
+	return resultRows, []*chunk.Chunk{resultChunk}
+}
+
+// getRetTpsForSingleIndexScan is used to get the return types for index merge single index scan.
+func (w *intersectionProcessWorker) getRetTpsForSingleIndexScan() []*types.FieldType {
+	tps := make([]*types.FieldType, len(w.indexMerge.outputColumns))
+	for i, col := range w.indexMerge.outputColumns {
+		tps[i] = col.RetType
+	}
+	return tps
+}
+
 // doIntersectionPerPartition fetch all the task from workerChannel, and after that, then do the intersection pruning, which
 // will cause wasting a lot of time waiting for all the fetch task done.
 func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Context, workCh chan<- *indexMergeTableTask, resultCh chan<- *indexMergeTableTask, finished, limitDone <-chan struct{}) {
 	failpoint.Inject("testIndexMergePanicPartitionTableIntersectionWorker", nil)
 	defer w.memTracker.Detach()
+
+	isIndexMergeSingleScan := w.indexMerge.isIndexMergeSingleScan
+	var tps []*types.FieldType
+	var rowsMap map[string]map[uint8]chunk.Row
+	if isIndexMergeSingleScan {
+		tps = w.getRetTpsForSingleIndexScan()
+		rowsMap = make(map[string]map[uint8]chunk.Row)
+	}
 
 	for task := range w.workerCh {
 		var ok bool
@@ -1391,26 +1505,57 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 			w.handleMapsPerWorker[task.parTblIdx] = hMap
 		}
 		var mapDelta, rowDelta int64
-		for _, h := range task.handles {
-			if w.indexMerge.hasGlobalIndex {
-				if ph, ok := h.(kv.PartitionHandle); ok {
-					if v, exists := w.partitionIDMap[ph.PartitionID]; exists {
-						if hMap, ok = w.handleMapsPerWorker[v]; !ok {
-							hMap = kv.NewMemAwareHandleMap[*int]()
-							w.handleMapsPerWorker[v] = hMap
+		if isIndexMergeSingleScan {
+			// Process handles with row data for single index merge
+			for i, h := range task.handles {
+				if w.indexMerge.hasGlobalIndex {
+					if ph, ok := h.(kv.PartitionHandle); ok {
+						if v, exists := w.partitionIDMap[ph.PartitionID]; exists {
+							if hMap, ok = w.handleMapsPerWorker[v]; !ok {
+								hMap = kv.NewMemAwareHandleMap[*int]()
+								w.handleMapsPerWorker[v] = hMap
+							}
 						}
+					} else {
+						h = kv.NewPartitionHandle(task.partitionTable.GetPhysicalID(), h)
 					}
+				}
+
+				handleKey := h.String()
+				if cntPtr, ok := hMap.Get(h); ok {
+					(*cntPtr)++
+					rowsMap[handleKey][uint8(task.partialPlanID)] = task.idxRows.GetRow(i)
 				} else {
-					h = kv.NewPartitionHandle(task.partitionTable.GetPhysicalID(), h)
+					cnt := 1
+					mapDelta += hMap.Set(h, &cnt) + int64(h.ExtraMemSize())
+					rowDelta++
+					rowsMap[handleKey] = map[uint8]chunk.Row{
+						uint8(task.partialPlanID): task.idxRows.GetRow(i),
+					}
 				}
 			}
-			// Use *int to avoid Get() again.
-			if cntPtr, ok := hMap.Get(h); ok {
-				(*cntPtr)++
-			} else {
-				cnt := 1
-				mapDelta += hMap.Set(h, &cnt) + int64(h.ExtraMemSize())
-				rowDelta++
+		} else {
+			for _, h := range task.handles {
+				if w.indexMerge.hasGlobalIndex {
+					if ph, ok := h.(kv.PartitionHandle); ok {
+						if v, exists := w.partitionIDMap[ph.PartitionID]; exists {
+							if hMap, ok = w.handleMapsPerWorker[v]; !ok {
+								hMap = kv.NewMemAwareHandleMap[*int]()
+								w.handleMapsPerWorker[v] = hMap
+							}
+						}
+					} else {
+						h = kv.NewPartitionHandle(task.partitionTable.GetPhysicalID(), h)
+					}
+				}
+				// Use *int to avoid Get() again.
+				if cntPtr, ok := hMap.Get(h); ok {
+					(*cntPtr)++
+				} else {
+					cnt := 1
+					mapDelta += hMap.Set(h, &cnt) + int64(h.ExtraMemSize())
+					rowDelta++
+				}
 			}
 		}
 
@@ -1448,11 +1593,20 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 			if length > len(intersected) {
 				length = len(intersected)
 			}
+			handles := intersected[:length]
+			var rows []chunk.Row
+			var chunks []*chunk.Chunk
+			if isIndexMergeSingleScan {
+				rows, chunks = w.mergeRowsFromIndices(rowsMap, handles, tps, w.indexMerge.handleCols, w.indexMerge.outputColumns, w.indexMerge.Schema().Columns)
+			}
+
 			task := &indexMergeTableTask{
 				lookupTableTask: lookupTableTask{
-					handles: intersected[:length],
+					handles: handles,
+					rows:    rows,
 					doneCh:  make(chan error, 1),
 				},
+				chunks: chunks,
 			}
 			intersected = intersected[length:]
 			if w.indexMerge.partitionTableMode {
@@ -1667,20 +1821,21 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 }
 
 type partialIndexWorker struct {
-	stats              *IndexMergeRuntimeStat
-	sc                 sessionctx.Context
-	idxID              int
-	batchSize          int
-	maxBatchSize       int
-	maxChunkSize       int
-	memTracker         *memory.Tracker
-	partitionTableMode bool
-	prunedPartitions   []table.PhysicalTable
-	byItems            []*plannerutil.ByItems
-	scannedKeys        uint64
-	pushedLimit        *plannercore.PushedDownLimit
-	dagPB              *tipb.DAGRequest
-	plan               []base.PhysicalPlan
+	stats                  *IndexMergeRuntimeStat
+	sc                     sessionctx.Context
+	idxID                  int
+	batchSize              int
+	maxBatchSize           int
+	maxChunkSize           int
+	memTracker             *memory.Tracker
+	partitionTableMode     bool
+	prunedPartitions       []table.PhysicalTable
+	byItems                []*plannerutil.ByItems
+	scannedKeys            uint64
+	pushedLimit            *plannercore.PushedDownLimit
+	dagPB                  *tipb.DAGRequest
+	plan                   []base.PhysicalPlan
+	isIndexMergeSingleScan bool
 }
 
 func syncErr(ctx context.Context, finished <-chan struct{}, errCh chan<- *indexMergeTableTask, err error) {
@@ -1733,12 +1888,12 @@ func (w *partialIndexWorker) fetchHandles(
 	fetchCh chan<- *indexMergeTableTask,
 	finished <-chan struct{},
 	handleCols plannerutil.HandleCols,
-	partialPlanIndex int) (count int64, err error) {
-	tps := w.getRetTpsForIndexScan(handleCols)
+	partialPlanIndex int,
+	tps []*types.FieldType) (count int64, err error) {
 	chk := chunk.NewChunkWithCapacity(tps, w.maxChunkSize)
 	for i := 0; i < len(results); {
 		start := time.Now()
-		handles, retChunk, err := w.extractTaskHandles(ctx, chk, results[i], handleCols)
+		handles, retChunk, err := w.extractTaskHandles(ctx, chk, results[i], tps, handleCols)
 		if err != nil {
 			syncErr(ctx, finished, fetchCh, err)
 			return count, err
@@ -1779,11 +1934,34 @@ func (w *partialIndexWorker) getRetTpsForIndexScan(handleCols plannerutil.Handle
 	return tps
 }
 
-func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult, handleCols plannerutil.HandleCols) (
+// getRetTpsForSingleIndexScan is used to get the return types for index merge single index scan.
+func getRetTpsForSingleIndexScan(handleCols plannerutil.HandleCols, outputColumns []*expression.Column, idxCols []*expression.Column, indexColLen int) []*types.FieldType {
+	var tps []*types.FieldType
+	for i, idxCol := range idxCols {
+		if i < indexColLen {
+			for _, outCol := range outputColumns {
+				if idxCol.ID == outCol.ID {
+					tps = append(tps, idxCol.RetType)
+					break
+				}
+			}
+		}
+	}
+	// Directly append all handle columns to the types slice
+	for i := 0; i < handleCols.NumCols(); i++ {
+		handleCol := handleCols.GetCol(i)
+		tps = append(tps, handleCol.RetType)
+	}
+	return tps
+}
+
+func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult, tps []*types.FieldType, handleCols plannerutil.HandleCols) (
 	handles []kv.Handle, retChk *chunk.Chunk, err error) {
 	handles = make([]kv.Handle, 0, w.batchSize)
-	if len(w.byItems) != 0 {
+	if len(w.byItems) != 0 && !w.isIndexMergeSingleScan {
 		retChk = chunk.NewChunkWithCapacity(w.getRetTpsForIndexScan(handleCols), w.batchSize)
+	} else {
+		retChk = chunk.NewChunkWithCapacity(tps, w.batchSize)
 	}
 	var memUsage int64
 	var chunkRowOffset int
@@ -1837,8 +2015,8 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 			}
 			handles = append(handles, handle)
 		}
-		// used for order by
-		if len(w.byItems) != 0 {
+		// used for order by && single index merge
+		if len(w.byItems) != 0 || w.isIndexMergeSingleScan {
 			retChk.Append(chk, 0, chunkRowOffset)
 		}
 	}
@@ -1936,6 +2114,25 @@ func (*indexMergeTableScanWorker) handleTableScanWorkerPanic(ctx context.Context
 }
 
 func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *indexMergeTableTask) error {
+	// if task is single index merge, skip table lookup
+	if w.indexMergeExec.isIndexMergeSingleScan && task.rows != nil {
+		task.memTracker = memory.NewTracker(-1, -1)
+		task.memTracker.AttachTo(w.memTracker)
+
+		rowCount := len(task.rows)
+		memUsage := int64(rowCount) * int64(unsafe.Sizeof(chunk.Row{}))
+
+		for _, chk := range task.chunks {
+			if chk != nil {
+				memUsage += chk.MemoryUsage()
+			}
+		}
+
+		task.memUsage = memUsage
+		task.memTracker.Consume(memUsage)
+
+		return nil
+	}
 	tbl := w.indexMergeExec.table
 	if w.indexMergeExec.partitionTableMode && task.partitionTable != nil {
 		tbl = task.partitionTable

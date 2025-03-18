@@ -247,7 +247,10 @@ type CopTask struct {
 	idxMergePartPlans      []base.PhysicalPlan
 	idxMergeIsIntersection bool
 	idxMergeAccessMVIndex  bool
-
+	// IsSingleScan means the index merge scan is a single scan, no need table scan.
+	idxMergeIsSingleScan bool
+	// idxMergeOutputColumns is the columns to be projected to when we skip the table scan for index merge.
+	idxMergeOutputColumns []*expression.Column
 	// rootTaskConds stores select conditions containing virtual columns.
 	// These conditions can't push to TiKV, so we have to add a selection for rootTask
 	rootTaskConds []expression.Expression
@@ -361,14 +364,22 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 	newTask := &RootTask{}
 	if t.idxMergePartPlans != nil {
 		p := PhysicalIndexMergeReader{
-			partialPlans:       t.idxMergePartPlans,
-			tablePlan:          t.tablePlan,
-			IsIntersectionType: t.idxMergeIsIntersection,
-			AccessMVIndex:      t.idxMergeAccessMVIndex,
-			KeepOrder:          t.keepOrder,
+			partialPlans:         t.idxMergePartPlans,
+			tablePlan:            t.tablePlan,
+			IsIntersectionType:   t.idxMergeIsIntersection,
+			AccessMVIndex:        t.idxMergeAccessMVIndex,
+			KeepOrder:            t.keepOrder,
+			IdxMergeIsSingleScan: t.idxMergeIsSingleScan,
 		}.Init(ctx, t.idxMergePartPlans[0].QueryBlockOffset())
 		p.PlanPartInfo = t.physPlanPartInfo
-		setTableScanToTableRowIDScan(p.tablePlan)
+
+		if !t.idxMergeIsSingleScan {
+			setTableScanToTableRowIDScan(p.tablePlan)
+		} else {
+			p.tablePlan = nil
+			p.TablePlans = nil
+			p.OutputColumns = t.idxMergeOutputColumns
+		}
 		newTask.SetPlan(p)
 		if t.needExtraProj {
 			schema := t.originSchema

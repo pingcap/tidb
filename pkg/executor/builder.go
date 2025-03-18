@@ -4101,6 +4101,31 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 	return indexReq, err
 }
 
+// buildIndexReq4IndexMerge is used to build the DAG request & output columns for index merge.
+func buildIndexReq4IndexMerge(ctx sessionctx.Context, idxCols []*expression.Column, handleCols plannerutil.HandleCols, plans []base.PhysicalPlan, outputColumns []*expression.Column, indexColLen int) (dagReq *tipb.DAGRequest, err error) {
+	indexReq, err := builder.ConstructDAGReq(ctx, plans, kv.TiKV)
+	if err != nil {
+		return nil, err
+	}
+	indexReq.OutputOffsets = []uint32{}
+	// Output index columns for index merge intersection operations and for projection columns that need them
+	for i, idxCol := range idxCols {
+		if i < indexColLen {
+			for _, outCol := range outputColumns {
+				if outCol.ID == idxCol.ID {
+					indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(i))
+					break
+				}
+			}
+		}
+	}
+	// Output handle columns for index merge intersection operations and for some projection columns that need them
+	for i := 0; i < handleCols.NumCols(); i++ {
+		offset := uint32(indexColLen + i)
+		indexReq.OutputOffsets = append(indexReq.OutputOffsets, offset)
+	}
+	return indexReq, err
+}
 func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIndexLookUpReader) (*IndexLookUpExecutor, error) {
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
 	var handleLen int
@@ -4232,22 +4257,39 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 	return ret
 }
 
+// getTableByPhysicalTableID is used to get the table by physical table id.
+func getTableByPhysicalTableID(is infoschema.InfoSchema, tableID, physicalTableID int64) (table.Table, error) {
+	tbl, _ := is.TableByID(context.Background(), tableID)
+	isPartition := physicalTableID != tableID
+	if isPartition {
+		pt := tbl.(table.PartitionedTable)
+		tbl = pt.GetPartition(physicalTableID)
+	}
+	return tbl, nil
+}
+
 func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalIndexMergeReader) (*IndexMergeReaderExecutor, error) {
 	partialPlanCount := len(v.PartialPlans)
 	partialReqs := make([]*tipb.DAGRequest, 0, partialPlanCount)
 	partialDataSizes := make([]float64, 0, partialPlanCount)
 	indexes := make([]*model.IndexInfo, 0, partialPlanCount)
 	descs := make([]bool, 0, partialPlanCount)
-	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
+	var ts *plannercore.PhysicalTableScan
+	if len(v.TablePlans) > 0 {
+		ts = v.TablePlans[0].(*plannercore.PhysicalTableScan)
+	}
 	isCorColInPartialFilters := make([]bool, 0, partialPlanCount)
 	isCorColInPartialAccess := make([]bool, 0, partialPlanCount)
 	hasGlobalIndex := false
 	for i := 0; i < partialPlanCount; i++ {
 		var tempReq *tipb.DAGRequest
 		var err error
-
 		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
-			tempReq, err = buildIndexReq(b.ctx, is.Index.Columns, ts.HandleCols.NumCols(), v.PartialPlans[i])
+			if v.IdxMergeIsSingleScan {
+				tempReq, err = buildIndexReq4IndexMerge(b.ctx, is.IdxCols, v.HandleCols, v.PartialPlans[i], v.OutputColumns, len(is.Index.Columns))
+			} else {
+				tempReq, err = buildIndexReq(b.ctx, is.Index.Columns, ts.HandleCols.NumCols(), v.PartialPlans[i])
+			}
 			descs = append(descs, is.Desc)
 			indexes = append(indexes, is.Index)
 			if is.Index.Global {
@@ -4269,7 +4311,22 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		isCorColInPartialAccess = append(isCorColInPartialAccess, b.corColInAccess(v.PartialPlans[i][0]))
 		partialDataSizes = append(partialDataSizes, v.GetPartialReaderNetDataSize(v.PartialPlans[i][0]))
 	}
-	tableReq, tblInfo, err := buildTableReq(b, v.Schema().Len(), v.TablePlans)
+	var tableReq *tipb.DAGRequest
+	var tblInfo table.Table
+	var err error
+	if !v.IdxMergeIsSingleScan {
+		tableReq, tblInfo, err = buildTableReq(b, v.Schema().Len(), v.TablePlans)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// Extract table info from index plan for single scan
+		is := v.PartialPlans[0][0].(*plannercore.PhysicalIndexScan)
+		tblInfo, err = getTableByPhysicalTableID(b.is, is.Table.ID, is.GetPhysicalTableID())
+		if err != nil {
+			return nil, err
+		}
+	}
 	isCorColInTableFilter := b.corColInDistPlan(v.TablePlans)
 	if err != nil {
 		return nil, err
@@ -4293,7 +4350,6 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		indexes:                  indexes,
 		descs:                    descs,
 		tableRequest:             tableReq,
-		columns:                  ts.Columns,
 		partialPlans:             v.PartialPlans,
 		tblPlans:                 v.TablePlans,
 		partialNetDataSizes:      partialDataSizes,
@@ -4308,9 +4364,23 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 		pushedLimit:              v.PushedLimit,
 		keepOrder:                v.KeepOrder,
 		hasGlobalIndex:           hasGlobalIndex,
+		isIndexMergeSingleScan:   v.IdxMergeIsSingleScan,
+		outputColumns:            v.OutputColumns,
 	}
-	collectTable := false
-	e.tableRequest.CollectRangeCounts = &collectTable
+	// If the index merge scan is a single scan, we need to use the columns of the index scan.
+	if v.IdxMergeIsSingleScan {
+		indexScan, ok := v.PartialPlans[0][0].(*plannercore.PhysicalIndexScan)
+		if !ok {
+			return nil, errors.New("cannot find index scan in partial plan")
+		}
+		e.columns = indexScan.Columns
+	} else {
+		e.columns = ts.Columns
+	}
+	if e.tableRequest != nil {
+		collectTable := false
+		e.tableRequest.CollectRangeCounts = &collectTable
+	}
 	return e, nil
 }
 
@@ -4342,10 +4412,14 @@ func (b *executorBuilder) buildIndexUsageReporter(plan tableStatsPreloader, load
 }
 
 func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMergeReader) exec.Executor {
-	ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
-	if err := b.validCanReadTemporaryOrCacheTable(ts.Table); err != nil {
-		b.err = err
-		return nil
+	// Note that the table plan may be nil.
+	if len(v.PartialPlans) > 0 {
+		if is, ok := v.PartialPlans[0][0].(*plannercore.PhysicalIndexScan); ok {
+			if err := b.validCanReadTemporaryOrCacheTable(is.Table); err != nil {
+				b.err = err
+				return nil
+			}
+		}
 	}
 
 	ret, err := buildNoRangeIndexMergeReader(b, v)
@@ -4356,33 +4430,48 @@ func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMerg
 	ret.ranges = make([][]*ranger.Range, 0, len(v.PartialPlans))
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	hasGlobalIndex := false
+	var tableID int64
 	for i := 0; i < len(v.PartialPlans); i++ {
 		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
 			ret.ranges = append(ret.ranges, is.Ranges)
 			sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
+			tableID = is.Table.ID
 			if is.Index.Global {
 				hasGlobalIndex = true
 			}
 		} else {
-			ret.ranges = append(ret.ranges, v.PartialPlans[i][0].(*plannercore.PhysicalTableScan).Ranges)
+			ts := v.PartialPlans[i][0].(*plannercore.PhysicalTableScan)
+			ret.ranges = append(ret.ranges, ts.Ranges)
+			tableID = ts.Table.ID
 			if ret.table.Meta().IsCommonHandle {
 				tblInfo := ret.table.Meta()
 				sctx.IndexNames = append(sctx.IndexNames, tblInfo.Name.O+":"+tables.FindPrimaryIndex(tblInfo).Name.O)
 			}
 		}
 	}
-	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
+	sctx.TableIDs = append(sctx.TableIDs, tableID)
 	executor_metrics.ExecutorCounterIndexMergeReaderExecutor.Inc()
 
 	if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return ret
 	}
+	// Get table info from the partial plans
+	var tableInfo *model.TableInfo
+	for _, plan := range v.PartialPlans {
+		if is, ok := plan[0].(*plannercore.PhysicalIndexScan); ok {
+			tableInfo = is.Table
+			break
+		} else if ts, ok := plan[0].(*plannercore.PhysicalTableScan); ok {
+			tableInfo = ts.Table
+			break
+		}
+	}
 
-	if pi := ts.Table.GetPartitionInfo(); pi == nil {
+	if tableInfo == nil || tableInfo.GetPartitionInfo() == nil {
 		return ret
 	}
 
-	tmp, _ := b.is.TableByID(context.Background(), ts.Table.ID)
+	tmp, _ := b.is.TableByID(context.Background(), tableID)
 	partitions, err := partitionPruning(b.ctx, tmp.(table.PartitionedTable), v.PlanPartInfo)
 	if err != nil {
 		b.err = err

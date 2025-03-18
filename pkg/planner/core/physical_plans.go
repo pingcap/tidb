@@ -647,11 +647,25 @@ type PhysicalIndexMergeReader struct {
 	KeepOrder bool
 
 	HandleCols util.HandleCols
+	// IsSingleScan means the index merge scan is a single scan, no need table scan.
+	IdxMergeIsSingleScan bool
+	// OutputColumns is the columns to be projected to when we skip the table scan for index merge.
+	OutputColumns []*expression.Column
 }
 
 // GetAvgTableRowSize return the average row size of table plan.
 func (p *PhysicalIndexMergeReader) GetAvgTableRowSize() float64 {
-	return cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.TablePlans[len(p.TablePlans)-1]), p.Schema().Columns, false, false)
+	if !p.IdxMergeIsSingleScan {
+		return cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.TablePlans[len(p.TablePlans)-1]), p.Schema().Columns, false, false)
+	}
+	var totalSize float64
+	// Sum up the row sizes from all index scans
+	for _, plan := range p.partialPlans {
+		if indexPlan := FindIndexScan4IndexMerge(plan); indexPlan != nil {
+			totalSize += cardinality.GetIndexAvgRowSize(p.SCtx(), indexPlan.tblColHists, indexPlan.schema.Columns, indexPlan.Index.Unique)
+		}
+	}
+	return totalSize
 }
 
 // ExtractCorrelatedCols implements op.PhysicalPlan interface.
@@ -720,8 +734,31 @@ func (p *PhysicalIndexMergeReader) MemoryUsage() (sum int64) {
 
 // LoadTableStats preloads the stats data for the physical table
 func (p *PhysicalIndexMergeReader) LoadTableStats(ctx sessionctx.Context) {
-	ts := p.TablePlans[0].(*PhysicalTableScan)
-	loadTableStats(ctx, ts.Table, ts.physicalTableID)
+	if len(p.TablePlans) > 0 {
+		ts := p.TablePlans[0].(*PhysicalTableScan)
+		loadTableStats(ctx, ts.Table, ts.physicalTableID)
+	} else {
+		is := FindIndexScan4IndexMerge(p.partialPlans[0])
+		tableInfo := is.Table
+		physicalTableID := is.physicalTableID
+		loadTableStats(ctx, tableInfo, physicalTableID)
+	}
+}
+
+// FindIndexScan4IndexMerge recursively finds the PhysicalIndexScan in the plan tree
+func FindIndexScan4IndexMerge(plan base.PhysicalPlan) *PhysicalIndexScan {
+	if indexScan, ok := plan.(*PhysicalIndexScan); ok {
+		return indexScan
+	}
+
+	// If not an IndexScan, check the child plans
+	for _, child := range plan.Children() {
+		if result := FindIndexScan4IndexMerge(child); result != nil {
+			return result
+		}
+	}
+
+	return nil
 }
 
 // PhysicalIndexScan represents an index scan plan.
@@ -778,6 +815,11 @@ type PhysicalIndexScan struct {
 	// usedStatsInfo records stats status of this physical table.
 	// It's for printing stats related information when display execution plan.
 	usedStatsInfo *stmtctx.UsedStatsInfoForTable `plan-cache-clone:"shallow"`
+}
+
+// GetPhysicalTableID returns the physical table ID of the index scan.
+func (p *PhysicalIndexScan) GetPhysicalTableID() int64 {
+	return p.physicalTableID
 }
 
 // Clone implements op.PhysicalPlan interface.

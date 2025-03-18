@@ -1669,6 +1669,38 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 	return
 }
 
+// calculateIndexMergeOutputColumns is used to calculate the output columns for index merge when index merge is single scan.
+func calculateIndexMergeOutputColumns(ds *logicalop.DataSource, path *util.AccessPath) []*expression.Column {
+	// Create a map to track the original columns
+	colMap := make(map[int64]*expression.Column, len(ds.ColsRequiringFullLen))
+	for _, col := range ds.ColsRequiringFullLen {
+		colMap[col.ID] = col
+	}
+
+	outputColumns := make([]*expression.Column, 0, len(ds.ColsRequiringFullLen))
+
+	// First, add columns in the order they appear in the partial index paths
+	for _, partialPath := range path.PartialIndexPaths {
+		indexColLen := len(partialPath.Index.Columns)
+		for i, idxCol := range partialPath.IdxCols {
+			if i < indexColLen {
+				if col, exists := colMap[idxCol.ID]; exists {
+					outputColumns = append(outputColumns, col)
+				}
+			}
+		}
+	}
+
+	// Then add any remaining columns that weren't in the partial index paths
+	if ds.HandleCols != nil {
+		for i := 0; i < ds.HandleCols.NumCols(); i++ {
+			handleCol := ds.HandleCols.GetCol(i)
+			outputColumns = append(outputColumns, handleCol)
+		}
+	}
+	return outputColumns
+}
+
 // convertToIndexMergeScan builds the index merge scan for intersection or union cases.
 func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, candidate *candidatePath, _ *optimizetrace.PhysicalOptimizeOp) (task base.Task, err error) {
 	if prop.IsFlashProp() || prop.TaskTp == property.CopSingleReadTaskType {
@@ -1711,6 +1743,13 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 			Desc: si.Desc,
 		})
 	}
+	// Fix51584 controls whether to eliminate the table scan in IndexMergeReaderExecutor.
+	fixValue := fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix51584, true)
+	// Check if we can skip table scan
+	cop.idxMergeIsSingleScan = fixValue && path.IndexMergeIsIntersection && isNormalIndexMergeSingleScan(ds, path.PartialIndexPaths)
+	if cop.idxMergeIsSingleScan {
+		cop.idxMergeOutputColumns = calculateIndexMergeOutputColumns(ds, path)
+	}
 	globalRemainingFilters := make([]expression.Expression, 0, 3)
 	for _, partPath := range path.PartialIndexPaths {
 		var scan base.PhysicalPlan
@@ -1747,7 +1786,7 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 	cop.idxMergePartPlans = scans
 	cop.idxMergeIsIntersection = path.IndexMergeIsIntersection
 	cop.idxMergeAccessMVIndex = path.IndexMergeAccessMVIndex
-	if moreColumn {
+	if !cop.idxMergeIsSingleScan && moreColumn {
 		cop.needExtraProj = true
 		cop.originSchema = ds.Schema()
 	}
@@ -1763,9 +1802,14 @@ func convertToIndexMergeScan(ds *logicalop.DataSource, prop *property.PhysicalPr
 		cop.indexPlanFinished = true
 		task = cop.ConvertToRootTask(ds.SCtx())
 	} else {
-		_, pureTableScan := ts.(*PhysicalTableScan)
-		if !pureTableScan {
+		if cop.idxMergeIsSingleScan || ts == nil {
+			// For single scan or when table scan is skipped, mark index plan as finished
 			cop.indexPlanFinished = true
+		} else {
+			_, pureTableScan := ts.(*PhysicalTableScan)
+			if !pureTableScan {
+				cop.indexPlanFinished = true
+			}
 		}
 		task = cop
 	}
