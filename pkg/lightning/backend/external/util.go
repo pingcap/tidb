@@ -252,6 +252,28 @@ func GetMaxOverlapping(points []Endpoint) int64 {
 	return maxWeight
 }
 
+// ConflictInfo records the KV conflict information.
+// to help describe how we do conflict resolution, we separate 'conflict KV' out
+// from 'duplicate KV':
+//   - 'duplicate KV' means the KV pairs that have the same key, including keys
+//     come from PK/UK/non-UK.
+//   - 'conflict KV' means the KV pairs that have the same key, and they can create
+//     conflict ROWS in the table, including keys come from PK/UK. non-UK keys may
+//     became duplicate when PK keys are duplicated, but we don't need to consider
+//     them when resolving conflicts.
+type ConflictInfo struct {
+	// Count is the total count of conflict KV pairs, either PK or UK.
+	Count uint64 `json:"count,omitempty"`
+	// Files is the list of files that contain conflict KV pairs.
+	// it's in the same format as normal KV files.
+	Files []string `json:"files,omitempty"`
+}
+
+func (c *ConflictInfo) merge(other ConflictInfo) {
+	c.Count += other.Count
+	c.Files = append(c.Files, other.Files...)
+}
+
 // SortedKVMeta is the meta of sorted kv.
 type SortedKVMeta struct {
 	StartKey           []byte              `json:"start-key"`
@@ -259,6 +281,7 @@ type SortedKVMeta struct {
 	TotalKVSize        uint64              `json:"total-kv-size"`
 	TotalKVCnt         uint64              `json:"total-kv-cnt"`
 	MultipleFilesStats []MultipleFilesStat `json:"multiple-files-stats"`
+	ConflictInfo       ConflictInfo        `json:"conflict-info"`
 }
 
 // NewSortedKVMeta creates a SortedKVMeta from a WriterSummary. If the summary
@@ -273,6 +296,7 @@ func NewSortedKVMeta(summary *WriterSummary) *SortedKVMeta {
 		TotalKVSize:        summary.TotalSize,
 		TotalKVCnt:         summary.TotalCnt,
 		MultipleFilesStats: summary.MultipleFilesStats,
+		ConflictInfo:       summary.ConflictInfo,
 	}
 }
 
@@ -292,6 +316,7 @@ func (m *SortedKVMeta) Merge(other *SortedKVMeta) {
 	m.TotalKVCnt += other.TotalKVCnt
 
 	m.MultipleFilesStats = append(m.MultipleFilesStats, other.MultipleFilesStats...)
+	m.ConflictInfo.merge(other.ConflictInfo)
 }
 
 // MergeSummary merges the WriterSummary into this SortedKVMeta.
