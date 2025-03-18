@@ -17,11 +17,8 @@ package errno
 import (
 	"os"
 	"testing"
-
-	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 )
 
 func TestMain(m *testing.M) {
-	testsetup.SetupForCommonTest()
 	os.Exit(m.Run())
 }

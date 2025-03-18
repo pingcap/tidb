@@ -10,7 +10,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/timeutil",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/parser/mysql",
+        "//pkg/errno",
         "//pkg/types",
         "//pkg/util/dbterror",
         "//pkg/util/logutil",

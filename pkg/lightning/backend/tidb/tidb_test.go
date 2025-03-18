@@ -457,7 +457,7 @@ func TestFetchRemoteTableModelsDropTableHalfway(t *testing.T) {
 			AddRow("test", "tbl01", "id", int64(1), "_TIDB_ROWID").
 			AddRow("test", "tbl01", "id", int64(1), "AUTO_INCREMENT"))
 	s.mockDB.ExpectQuery("SHOW TABLE `test`.`tbl02` NEXT_ROW_ID").
-		WillReturnError(mysql.NewErr(mysql.ErrNoSuchTable, "test", "tbl02"))
+		WillReturnError(mysql.NewErr(errno.ErrNoSuchTable, "test", "tbl02"))
 	s.mockDB.ExpectCommit()
 
 	infoGetter := tidb.NewTargetInfoGetter(s.dbHandle)

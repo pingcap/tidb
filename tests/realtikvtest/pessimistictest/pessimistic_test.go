@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -243,7 +242,7 @@ func TestDeadlock(t *testing.T) {
 	}
 	e, ok := errors.Cause(err).(*terror.Error)
 	require.True(t, ok)
-	require.Equal(t, mysql.ErrLockDeadlock, int(e.Code()))
+	require.Equal(t, errno.ErrLockDeadlock, int(e.Code()))
 
 	_, digest := parser.NormalizeDigest("update deadlock set v = v + 1 where k = 1")
 
@@ -3326,7 +3325,7 @@ func TestIssue40114(t *testing.T) {
 	// tk2 block tk on row 2.
 	tk2.MustExec("update t set v = v + 1 where id = 2")
 	// tk wait until timeout.
-	tk.MustGetErrCode("delete from t where id = 1 or id = 2", mysql.ErrLockWaitTimeout)
+	tk.MustGetErrCode("delete from t where id = 1 or id = 2", errno.ErrLockWaitTimeout)
 	tk2.MustExec("commit")
 	// Now, row 1 should have been successfully locked since it's not in the same batch with row 2 (controlled by
 	// failpoint `twoPCRequestBatchSizeLimit`); then it's not pessimisticRollback-ed (controlled by failpoint
@@ -3334,13 +3333,13 @@ func TestIssue40114(t *testing.T) {
 	// Ensure the row is still locked.
 	time.Sleep(time.Millisecond * 50)
 	tk2.MustExec("begin pessimistic")
-	tk2.MustGetErrCode("select * from t where id = 1 for update nowait", mysql.ErrLockAcquireFailAndNoWaitSet)
+	tk2.MustGetErrCode("select * from t where id = 1 for update nowait", errno.ErrLockAcquireFailAndNoWaitSet)
 	tk2.MustExec("rollback")
 
 	// tk is still in transaction.
 	tk.MustQuery("select @@tidb_current_ts = 0").Check(testkit.Rows("0"))
 	// This will unexpectedly succeed in issue 40114.
-	tk.MustGetErrCode("insert into t values (1, 2)", mysql.ErrDupEntry)
+	tk.MustGetErrCode("insert into t values (1, 2)", errno.ErrDupEntry)
 	tk.MustExec("commit")
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 1", "2 3"))

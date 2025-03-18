@@ -44,7 +44,7 @@ func parseBinaryParams(params []param.BinaryParam, boundParams [][]byte, nullBit
 			}
 
 			// The legacy logic is kept: if the `paramTypes` somehow didn't contain the type information, it will be treated as
-			// BLOB type. We didn't return `mysql.ErrMalformPacket` to keep compatibility with older versions, though it's
+			// BLOB type. We didn't return `errno.ErrMalformPacket` to keep compatibility with older versions, though it's
 			// meaningless if every clients work properly.
 			if (i<<1)+1 < len(paramTypes) {
 				// Only TEXT or BLOB type will be sent through `SEND_LONG_DATA`.

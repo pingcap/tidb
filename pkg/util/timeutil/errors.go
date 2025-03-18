@@ -15,9 +15,9 @@
 package timeutil
 
 import (
-	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
 // ErrUnknownTimeZone indicates timezone is unknown.
-var ErrUnknownTimeZone = dbterror.ClassVariable.NewStd(mysql.ErrUnknownTimeZone)
+var ErrUnknownTimeZone = dbterror.ClassVariable.NewStd(errno.ErrUnknownTimeZone)

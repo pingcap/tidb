@@ -27,6 +27,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -252,9 +253,9 @@ func (b *builtinLockSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, e
 	if err != nil {
 		if terr, ok := errors.Cause(err).(*terror.Error); ok {
 			switch terr.Code() {
-			case mysql.ErrLockWaitTimeout:
+			case errno.ErrLockWaitTimeout:
 				return 0, false, nil // Another user has the lock
-			case mysql.ErrLockDeadlock:
+			case errno.ErrLockDeadlock:
 				// Currently this code is not reachable because each Advisory Lock
 				// Uses a separate session. Deadlock detection does not work across
 				// independent sessions.

@@ -23,7 +23,6 @@ go_library(
         "//pkg/meta/model",
         "//pkg/owner",
         "//pkg/parser/ast",
-        "//pkg/parser/mysql",
         "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",

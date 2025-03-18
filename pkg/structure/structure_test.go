@@ -18,8 +18,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/structure"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -351,7 +351,7 @@ func TestError(t *testing.T) {
 	}
 	for _, err := range kvErrs {
 		code := terror.ToSQLError(err).Code
-		require.NotEqual(t, mysql.ErrUnknown, code)
+		require.NotEqual(t, errno.ErrUnknown, code)
 		require.Equal(t, uint16(err.Code()), code, "err: %v", err)
 	}
 }

@@ -16,17 +16,18 @@ package mysql
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSQLError(t *testing.T) {
-	e := NewErrf(ErrNoDB, "no db error", nil)
+	e := NewErrf(errno.ErrNoDB, "no db error", nil)
 	require.Greater(t, len(e.Error()), 0)
 
 	e = NewErrf(0, "customized error", nil)
 	require.Greater(t, len(e.Error()), 0)
 
-	e = NewErr(ErrNoDB)
+	e = NewErr(errno.ErrNoDB)
 	require.Greater(t, len(e.Error()), 0)
 
 	e = NewErr(0, "customized error", nil)

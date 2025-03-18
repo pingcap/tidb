@@ -16,8 +16,7 @@ package expression
 
 import (
 	"github.com/pingcap/errors"
-	mysql "github.com/pingcap/tidb/pkg/errno"
-	pmysql "github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
@@ -25,46 +24,46 @@ import (
 // Error instances.
 var (
 	// All the exported errors are defined here:
-	ErrIncorrectParameterCount     = dbterror.ClassExpression.NewStd(mysql.ErrWrongParamcountToNativeFct)
-	ErrDivisionByZero              = dbterror.ClassExpression.NewStd(mysql.ErrDivisionByZero)
-	ErrRegexp                      = dbterror.ClassExpression.NewStd(mysql.ErrRegexp)
-	ErrOperandColumns              = dbterror.ClassExpression.NewStd(mysql.ErrOperandColumns)
-	ErrCutValueGroupConcat         = dbterror.ClassExpression.NewStd(mysql.ErrCutValueGroupConcat)
-	ErrFunctionsNoopImpl           = dbterror.ClassExpression.NewStdErr(mysql.ErrNotSupportedYet, pmysql.Message("function %s has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", nil))
-	ErrInvalidArgumentForLogarithm = dbterror.ClassExpression.NewStd(mysql.ErrInvalidArgumentForLogarithm)
-	ErrIncorrectType               = dbterror.ClassExpression.NewStd(mysql.ErrIncorrectType)
-	ErrInvalidTypeForJSON          = dbterror.ClassExpression.NewStd(mysql.ErrInvalidTypeForJSON)
-	ErrInvalidTableSample          = dbterror.ClassExpression.NewStd(mysql.ErrInvalidTableSample)
-	ErrNotSupportedYet             = dbterror.ClassExpression.NewStd(mysql.ErrNotSupportedYet)
-	ErrInvalidJSONForFuncIndex     = dbterror.ClassExpression.NewStd(mysql.ErrInvalidJSONValueForFuncIndex)
-	ErrDataOutOfRangeFuncIndex     = dbterror.ClassExpression.NewStd(mysql.ErrDataOutOfRangeFunctionalIndex)
-	ErrFuncIndexDataIsTooLong      = dbterror.ClassExpression.NewStd(mysql.ErrFunctionalIndexDataIsTooLong)
-	ErrFunctionNotExists           = dbterror.ClassExpression.NewStd(mysql.ErrSpDoesNotExist)
+	ErrIncorrectParameterCount     = dbterror.ClassExpression.NewStd(errno.ErrWrongParamcountToNativeFct)
+	ErrDivisionByZero              = dbterror.ClassExpression.NewStd(errno.ErrDivisionByZero)
+	ErrRegexp                      = dbterror.ClassExpression.NewStd(errno.ErrRegexp)
+	ErrOperandColumns              = dbterror.ClassExpression.NewStd(errno.ErrOperandColumns)
+	ErrCutValueGroupConcat         = dbterror.ClassExpression.NewStd(errno.ErrCutValueGroupConcat)
+	ErrFunctionsNoopImpl           = dbterror.ClassExpression.NewStdErr(errno.ErrNotSupportedYet, errno.Message("function %s has only noop implementation in tidb now, use tidb_enable_noop_functions to enable these functions", nil))
+	ErrInvalidArgumentForLogarithm = dbterror.ClassExpression.NewStd(errno.ErrInvalidArgumentForLogarithm)
+	ErrIncorrectType               = dbterror.ClassExpression.NewStd(errno.ErrIncorrectType)
+	ErrInvalidTypeForJSON          = dbterror.ClassExpression.NewStd(errno.ErrInvalidTypeForJSON)
+	ErrInvalidTableSample          = dbterror.ClassExpression.NewStd(errno.ErrInvalidTableSample)
+	ErrNotSupportedYet             = dbterror.ClassExpression.NewStd(errno.ErrNotSupportedYet)
+	ErrInvalidJSONForFuncIndex     = dbterror.ClassExpression.NewStd(errno.ErrInvalidJSONValueForFuncIndex)
+	ErrDataOutOfRangeFuncIndex     = dbterror.ClassExpression.NewStd(errno.ErrDataOutOfRangeFunctionalIndex)
+	ErrFuncIndexDataIsTooLong      = dbterror.ClassExpression.NewStd(errno.ErrFunctionalIndexDataIsTooLong)
+	ErrFunctionNotExists           = dbterror.ClassExpression.NewStd(errno.ErrSpDoesNotExist)
 
 	// All the un-exported errors are defined here:
-	errZlibZData                     = dbterror.ClassExpression.NewStd(mysql.ErrZlibZData)
-	errZlibZBuf                      = dbterror.ClassExpression.NewStd(mysql.ErrZlibZBuf)
-	errIncorrectArgs                 = dbterror.ClassExpression.NewStd(mysql.ErrWrongArguments)
-	errUnknownCharacterSet           = dbterror.ClassExpression.NewStd(mysql.ErrUnknownCharacterSet)
-	errDefaultValue                  = dbterror.ClassExpression.NewStdErr(mysql.ErrInvalidDefault, pmysql.Message("invalid default value", nil))
-	errDeprecatedSyntaxNoReplacement = dbterror.ClassExpression.NewStd(mysql.ErrWarnDeprecatedSyntaxNoReplacement)
-	errWarnAllowedPacketOverflowed   = dbterror.ClassExpression.NewStd(mysql.ErrWarnAllowedPacketOverflowed)
-	errWarnOptionIgnored             = dbterror.ClassExpression.NewStd(mysql.WarnOptionIgnored)
-	errTruncatedWrongValue           = dbterror.ClassExpression.NewStd(mysql.ErrTruncatedWrongValue)
-	errUnknownLocale                 = dbterror.ClassExpression.NewStd(mysql.ErrUnknownLocale)
-	errNonUniq                       = dbterror.ClassExpression.NewStd(mysql.ErrNonUniq)
-	errWrongValueForType             = dbterror.ClassExpression.NewStd(mysql.ErrWrongValueForType)
-	errUnknown                       = dbterror.ClassExpression.NewStd(mysql.ErrUnknown)
-	errSpecificAccessDenied          = dbterror.ClassExpression.NewStd(mysql.ErrSpecificAccessDenied)
-	errUserLockDeadlock              = dbterror.ClassExpression.NewStd(mysql.ErrUserLockDeadlock)
-	errUserLockWrongName             = dbterror.ClassExpression.NewStd(mysql.ErrUserLockWrongName)
-	errJSONInBooleanContext          = dbterror.ClassExpression.NewStd(mysql.ErrJSONInBooleanContext)
-	errBadNull                       = dbterror.ClassExpression.NewStd(mysql.ErrBadNull)
+	errZlibZData                     = dbterror.ClassExpression.NewStd(errno.ErrZlibZData)
+	errZlibZBuf                      = dbterror.ClassExpression.NewStd(errno.ErrZlibZBuf)
+	errIncorrectArgs                 = dbterror.ClassExpression.NewStd(errno.ErrWrongArguments)
+	errUnknownCharacterSet           = dbterror.ClassExpression.NewStd(errno.ErrUnknownCharacterSet)
+	errDefaultValue                  = dbterror.ClassExpression.NewStdErr(errno.ErrInvalidDefault, errno.Message("invalid default value", nil))
+	errDeprecatedSyntaxNoReplacement = dbterror.ClassExpression.NewStd(errno.ErrWarnDeprecatedSyntaxNoReplacement)
+	errWarnAllowedPacketOverflowed   = dbterror.ClassExpression.NewStd(errno.ErrWarnAllowedPacketOverflowed)
+	errWarnOptionIgnored             = dbterror.ClassExpression.NewStd(errno.WarnOptionIgnored)
+	errTruncatedWrongValue           = dbterror.ClassExpression.NewStd(errno.ErrTruncatedWrongValue)
+	errUnknownLocale                 = dbterror.ClassExpression.NewStd(errno.ErrUnknownLocale)
+	errNonUniq                       = dbterror.ClassExpression.NewStd(errno.ErrNonUniq)
+	errWrongValueForType             = dbterror.ClassExpression.NewStd(errno.ErrWrongValueForType)
+	errUnknown                       = dbterror.ClassExpression.NewStd(errno.ErrUnknown)
+	errSpecificAccessDenied          = dbterror.ClassExpression.NewStd(errno.ErrSpecificAccessDenied)
+	errUserLockDeadlock              = dbterror.ClassExpression.NewStd(errno.ErrUserLockDeadlock)
+	errUserLockWrongName             = dbterror.ClassExpression.NewStd(errno.ErrUserLockWrongName)
+	errJSONInBooleanContext          = dbterror.ClassExpression.NewStd(errno.ErrJSONInBooleanContext)
+	errBadNull                       = dbterror.ClassExpression.NewStd(errno.ErrBadNull)
 
 	// Sequence usage privilege check.
-	errSequenceAccessDenied      = dbterror.ClassExpression.NewStd(mysql.ErrTableaccessDenied)
-	errUnsupportedJSONComparison = dbterror.ClassExpression.NewStdErr(mysql.ErrNotSupportedYet,
-		pmysql.Message("comparison of JSON in the LEAST and GREATEST operators", nil))
+	errSequenceAccessDenied      = dbterror.ClassExpression.NewStd(errno.ErrTableaccessDenied)
+	errUnsupportedJSONComparison = dbterror.ClassExpression.NewStdErr(errno.ErrNotSupportedYet,
+		errno.Message("comparison of JSON in the LEAST and GREATEST operators", nil))
 )
 
 // handleInvalidTimeError reports error or warning depend on the context.

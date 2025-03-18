@@ -21,6 +21,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -39,13 +40,13 @@ var (
 	binCollatorInstanceSliceWithLen1 = []Collator{binCollatorInstance}
 
 	// ErrUnsupportedCollation is returned when an unsupported collation is specified.
-	ErrUnsupportedCollation = dbterror.ClassDDL.NewStdErr(mysql.ErrUnknownCollation, mysql.Message("Unsupported collation when new collation is enabled: '%-.64s'", nil))
+	ErrUnsupportedCollation = dbterror.ClassDDL.NewStdErr(errno.ErrUnknownCollation, errno.Message("Unsupported collation when new collation is enabled: '%-.64s'", nil))
 	// ErrIllegalMixCollation is returned when illegal mix of collations.
-	ErrIllegalMixCollation = dbterror.ClassExpression.NewStd(mysql.ErrCantAggregateNcollations)
+	ErrIllegalMixCollation = dbterror.ClassExpression.NewStd(errno.ErrCantAggregateNcollations)
 	// ErrIllegalMix2Collation is returned when illegal mix of 2 collations.
-	ErrIllegalMix2Collation = dbterror.ClassExpression.NewStd(mysql.ErrCantAggregate2collations)
+	ErrIllegalMix2Collation = dbterror.ClassExpression.NewStd(errno.ErrCantAggregate2collations)
 	// ErrIllegalMix3Collation is returned when illegal mix of 3 collations.
-	ErrIllegalMix3Collation = dbterror.ClassExpression.NewStd(mysql.ErrCantAggregate3collations)
+	ErrIllegalMix3Collation = dbterror.ClassExpression.NewStd(errno.ErrCantAggregate3collations)
 )
 
 const (
