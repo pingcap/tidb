@@ -5797,6 +5797,9 @@ func TestBinding(t *testing.T) {
 		{"CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST 'sss'", true, "CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST 'sss'"},
 		{"set binding enabled for sql digest '1'", true, "SET BINDING ENABLED FOR SQL DIGEST '1'"},
 		{"set binding disabled for sql digest '1'", true, "SET BINDING DISABLED FOR SQL DIGEST '1'"},
+		// Show plan for a specified SQL.
+		{"show plan for 'select a from t'", true, "SHOW PLAN FOR 'select a from t'"},
+		{"show plan for '23adc8e6f62'", true, "SHOW PLAN FOR '23adc8e6f62'"},
 	}
 	RunTest(t, table, false)
 
