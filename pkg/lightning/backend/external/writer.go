@@ -20,7 +20,6 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -38,6 +37,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
+
+	"github.com/twotwotwo/sorts"
 )
 
 var (
@@ -326,6 +327,18 @@ type location struct {
 	loc membuf.SliceLocation
 }
 
+type locations []location
+
+func (l locations) Len() int           { return len(l) }
+func (l locations) Swap(i, j int)      { l[i], l[j] = l[j], l[i] }
+func (l locations) Key(i int) []byte   { return l[i].key }
+func (l locations) Less(i, j int) bool { return bytes.Compare(l[i].key, l[j].key) == -1 }
+func (l locations) Sort()              { sorts.ByBytes(l) }
+
+func init() {
+	sorts.MaxProcs = 2
+}
+
 // Writer is used to write data into external storage.
 type Writer struct {
 	store          storage.ExternalStorage
@@ -458,9 +471,8 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		zap.Int("sequence-number", w.currentSeq),
 	)
 	sortStart := time.Now()
-	slices.SortFunc(w.kvLocations, func(i, j location) int {
-		return bytes.Compare(i.key, j.key)
-	})
+	locations(w.kvLocations).Sort()
+
 	sortDuration := time.Since(sortStart)
 	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort").Observe(sortDuration.Seconds())
 	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort").Observe(float64(w.batchSize) / 1024.0 / 1024.0 / sortDuration.Seconds())
