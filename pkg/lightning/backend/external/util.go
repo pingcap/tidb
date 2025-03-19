@@ -262,7 +262,7 @@ func GetMaxOverlapping(points []Endpoint) int64 {
 //     became duplicate when PK keys are duplicated, but we don't need to consider
 //     them when resolving conflicts.
 type ConflictInfo struct {
-	// Count is the total count of conflict KV pairs, either PK or UK.
+	// Count is the recorded count of conflict KV pairs, either PK or UK.
 	Count uint64 `json:"count,omitempty"`
 	// Files is the list of files that contain conflict KV pairs.
 	// it's in the same format as normal KV files.
@@ -372,7 +372,7 @@ func getSpeed(n uint64, dur float64, isBytes bool) string {
 	return strconv.FormatFloat(float64(n)/dur, 'f', 4, 64)
 }
 
-// remove all duplicates inside sorted array in place.
+// remove all duplicates inside sorted array in place, i.e. input elements will be changed.
 func removeDuplicates[E any](elements []E, compareValGetter func(E) []byte, record bool) ([]E, []E, int) {
 	if len(elements) <= 1 {
 		return elements, []E{}, 0
@@ -384,10 +384,13 @@ func removeDuplicates[E any](elements []E, compareValGetter func(E) []byte, reco
 	if record {
 		dups = make([]E, 0, 2)
 	}
-	for idx := 1; idx < len(elements); idx++ {
-		key := compareValGetter(elements[idx])
-		if bytes.Compare(pivot, key) == 0 {
-			continue
+	for idx := 1; idx <= len(elements); idx++ {
+		var key []byte
+		if idx < len(elements) {
+			key = compareValGetter(elements[idx])
+			if bytes.Compare(pivot, key) == 0 {
+				continue
+			}
 		}
 		if idx > pivotIdx+1 {
 			if record {
@@ -403,16 +406,47 @@ func removeDuplicates[E any](elements []E, compareValGetter func(E) []byte, reco
 		pivotIdx = idx
 		pivot = key
 	}
-	if len(elements) > pivotIdx+1 {
-		if record {
-			dups = append(dups, elements[pivotIdx:]...)
-		}
-		dupCount += len(elements) - pivotIdx
-	} else {
-		if pivotIdx != fillIdx {
-			elements[fillIdx] = elements[pivotIdx]
-		}
-		fillIdx++
-	}
 	return elements[:fillIdx], dups, dupCount
+}
+
+// remove all duplicates inside sorted array in place if the duplicate count is
+// more than 2, and keep the first two duplicates.
+// we also return the total number of duplicates as the third return value.
+func removeDuplicatesMoreThanTwo[E any](elements []E, compareValGetter func(E) []byte) ([]E, []E, int) {
+	if len(elements) <= 1 {
+		return elements, []E{}, 0
+	}
+	pivotIdx, fillIdx := 0, 0
+	pivot := compareValGetter(elements[pivotIdx])
+	var totalDup int
+	dups := make([]E, 0, 2)
+	for idx := 1; idx <= len(elements); idx++ {
+		var key []byte
+		if idx < len(elements) {
+			key = compareValGetter(elements[idx])
+			if bytes.Compare(pivot, key) == 0 {
+				continue
+			}
+		}
+		dupCount := idx - pivotIdx
+		if dupCount >= 2 {
+			totalDup += dupCount
+			// keep the first two duplicates, and remove the rest
+			for startIdx := pivotIdx; startIdx < pivotIdx+2; startIdx++ {
+				if startIdx != fillIdx {
+					elements[fillIdx] = elements[startIdx]
+				}
+				fillIdx++
+			}
+			dups = append(dups, elements[pivotIdx+2:idx]...)
+		} else {
+			if pivotIdx != fillIdx {
+				elements[fillIdx] = elements[pivotIdx]
+			}
+			fillIdx++
+		}
+		pivotIdx = idx
+		pivot = key
+	}
+	return elements[:fillIdx], dups, totalDup
 }

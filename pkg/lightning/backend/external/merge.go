@@ -38,8 +38,7 @@ var (
 
 // MergeOverlappingFiles reads from given files whose key range may overlap
 // and writes to new sorted, nonoverlapping files.
-func MergeOverlappingFiles(
-	ctx context.Context,
+func MergeOverlappingFiles(ctx context.Context,
 	paths []string,
 	store storage.ExternalStorage,
 	partSize int64,
@@ -48,6 +47,7 @@ func MergeOverlappingFiles(
 	onClose OnCloseFunc,
 	concurrency int,
 	checkHotspot bool,
+	onDup OnDuplicateKey,
 ) error {
 	dataFilesSlice := splitDataFiles(paths, concurrency)
 	// during encode&sort step, the writer-limit is aligned to block size, so we

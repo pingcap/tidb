@@ -180,6 +180,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 			closeFn,
 			1,
 			true,
+			OnDuplicateKeyIgnore,
 		))
 	}
 

@@ -344,7 +344,9 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		getKVGroupBlockSize(sm.KVGroup),
 		onClose,
 		subtask.Concurrency,
-		false)
+		false,
+		external.OnDuplicateKeyIgnore,
+	)
 	logger.Info(
 		"merge sort finished",
 		zap.Uint64("total-kv-size", m.subtaskSortedKVMeta.TotalKVSize),

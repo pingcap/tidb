@@ -505,6 +505,7 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 		onClose,
 		s.concurrency,
 		s.mergeIterHotspot,
+		OnDuplicateKeyIgnore,
 	)
 
 	intest.AssertNoError(err)

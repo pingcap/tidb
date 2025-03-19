@@ -164,7 +164,6 @@ type WriterSummary struct {
 	TotalSize          uint64
 	TotalCnt           uint64
 	MultipleFilesStats []MultipleFilesStat
-	TotalDupCnt        uint64
 	ConflictInfo       ConflictInfo
 }
 
@@ -432,7 +431,6 @@ type Writer struct {
 	totalSize uint64
 	totalCnt  uint64
 	// duplicate key's statistics.
-	totalDupCnt  uint64
 	conflictInfo ConflictInfo
 }
 
@@ -506,7 +504,6 @@ func (w *Writer) Close(ctx context.Context) error {
 		TotalSize:          w.totalSize,
 		TotalCnt:           w.totalCnt,
 		MultipleFilesStats: w.multiFileStats,
-		TotalDupCnt:        w.totalDupCnt,
 		ConflictInfo:       w.conflictInfo,
 	})
 	return nil
@@ -554,7 +551,9 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		switch w.onDup {
 		case OnDuplicateKeyIgnore:
 		case OnDuplicateKeyRecord:
-			w.kvLocations, dupLocs, dupCnt = removeDuplicates(w.kvLocations, w.getKeyByLoc, true)
+			// we don't have a global view, so need to keep duplicates with duplicate
+			// count <= 2, so later we can find them.
+			w.kvLocations, dupLocs, dupCnt = removeDuplicatesMoreThanTwo(w.kvLocations, w.getKeyByLoc)
 		case OnDuplicateKeyRemove:
 			w.kvLocations, _, dupCnt = removeDuplicates(w.kvLocations, w.getKeyByLoc, false)
 		case OnDuplicateKeyError:
@@ -589,6 +588,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		zap.String("writer-id", w.writerID),
 		zap.Stringer("on-dup", w.onDup),
 		zap.Int("dup-cnt", dupCnt),
+		zap.Int("recorded-dup-cnt", len(dupLocs)),
 	)
 	totalDuration := time.Since(sortStart)
 	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort_and_write").Observe(totalDuration.Seconds())
@@ -614,10 +614,9 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	}
 
 	// maintain dup statistics
-	w.totalDupCnt += uint64(dupCnt)
 	if len(dupFile) > 0 {
 		w.conflictInfo.merge(ConflictInfo{
-			Count: uint64(dupCnt),
+			Count: uint64(len(dupLocs)),
 			Files: []string{dupFile},
 		})
 	}
