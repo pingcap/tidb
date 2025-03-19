@@ -35,6 +35,7 @@ go_library(
         "//pkg/tablecodec",
         "//pkg/util",
         "//pkg/util/table-filter",
+        "@com_github_google_btree//:btree",
         "@com_github_opentracing_opentracing_go//:opentracing-go",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

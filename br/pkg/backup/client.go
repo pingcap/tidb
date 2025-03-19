@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/btree"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -387,8 +388,9 @@ mainLoop:
 
 // Client is a client instructs TiKV how to do a backup.
 type Client struct {
-	mgr       ClientMgr
-	clusterID uint64
+	mgr        ClientMgr
+	clusterID  uint64
+	tableRange bool
 
 	storage    storage.ExternalStorage
 	backend    *backuppb.StorageBackend
@@ -414,6 +416,13 @@ func NewBackupClient(ctx context.Context, mgr ClientMgr) *Client {
 		checkpointMeta:   nil,
 		checkpointRunner: nil,
 	}
+}
+
+// NewTableBackupClient returns a new table backup client
+func NewTableBackupClient(ctx context.Context, mgr ClientMgr) *Client {
+	client := NewBackupClient(ctx, mgr)
+	client.tableRange = true
+	return client
 }
 
 // SetCipher for checkpoint to encrypt sst file's metadata
@@ -587,20 +596,18 @@ func (bc *Client) StartCheckpointRunner(
 	ctx context.Context,
 	cfgHash []byte,
 	backupTS uint64,
-	ranges []rtree.Range,
 	safePointID string,
 	progressCallBack func(ProgressUnit),
 ) (err error) {
 	if bc.checkpointMeta == nil {
-		bc.checkpointMeta = &checkpoint.CheckpointMetadataForBackup{
+		checkpointMeta := &checkpoint.CheckpointMetadataForBackup{
 			GCServiceId: safePointID,
 			ConfigHash:  cfgHash,
 			BackupTS:    backupTS,
-			Ranges:      ranges,
 		}
 
 		// sync the checkpoint meta to the external storage at first
-		if err := checkpoint.SaveCheckpointMetadata(ctx, bc.storage, bc.checkpointMeta); err != nil {
+		if err := checkpoint.SaveCheckpointMetadata(ctx, bc.storage, checkpointMeta); err != nil {
 			return errors.Trace(err)
 		}
 	} else {
@@ -621,15 +628,18 @@ func (bc *Client) WaitForFinishCheckpoint(ctx context.Context, flush bool) {
 }
 
 // getProgressRange loads the checkpoint(finished) sub-ranges of the current range, and calculate its incompleted sub-ranges.
-func (bc *Client) getProgressRange(r rtree.Range) *rtree.ProgressRange {
+func (bc *Client) getProgressRange(r rtree.Range, sharedFreeListG *btree.FreeListG[*rtree.Range]) *rtree.ProgressRange {
 	// use groupKey to distinguish different ranges
 	groupKey := base64.URLEncoding.EncodeToString(r.StartKey)
-	physicalID := tablecodec.DecodeTableID(r.StartKey)
+	physicalID := int64(0)
+	if bc.tableRange {
+		physicalID = tablecodec.DecodeTableID(r.StartKey)
+	}
 
 	// the origin range are not recorded in checkpoint
 	// return the default progress range
 	return &rtree.ProgressRange{
-		Res:        rtree.NewRangeTree(),
+		Res:        rtree.NewRangeTreeWithFreeListG(sharedFreeListG),
 		Origin:     r,
 		GroupKey:   groupKey,
 		PhysicalID: physicalID,
@@ -673,11 +683,11 @@ func (bc *Client) BuildBackupRangeAndSchema(
 	isFullBackup bool,
 ) ([]rtree.Range, *Schemas, []*backuppb.PlacementPolicy, error) {
 	if bc.checkpointMeta == nil {
-		return BuildBackupRangeAndInitSchema(storage, tableFilter, backupTS, isFullBackup, true)
+		return BuildBackupRangeAndInitSchema(storage, tableFilter, backupTS, isFullBackup)
 	}
-	_, schemas, policies, err := BuildBackupRangeAndInitSchema(storage, tableFilter, backupTS, isFullBackup, false)
+	ranges, schemas, policies, err := BuildBackupRangeAndInitSchema(storage, tableFilter, backupTS, isFullBackup)
 	schemas.SetCheckpointChecksum(bc.checkpointMeta.CheckpointChecksum)
-	return bc.checkpointMeta.Ranges, schemas, policies, errors.Trace(err)
+	return ranges, schemas, policies, errors.Trace(err)
 }
 
 // CheckBackupStorageIsLocked checks whether backups is locked.
@@ -711,7 +721,6 @@ func BuildBackupRangeAndInitSchema(
 	tableFilter filter.Filter,
 	backupTS uint64,
 	isFullBackup bool,
-	buildRange bool,
 ) ([]rtree.Range, *Schemas, []*backuppb.PlacementPolicy, error) {
 	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
 	m := meta.NewReader(snapshot)
@@ -765,19 +774,17 @@ func BuildBackupRangeAndInitSchema(
 
 			schemasNum += 1
 			hasTable = true
-			if buildRange {
-				tableRanges, err := distsql.BuildTableRanges(tableInfo)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				for _, r := range tableRanges {
-					// Add keyspace prefix to BackupRequest
-					startKey, endKey := storage.GetCodec().EncodeRange(r.StartKey, r.EndKey)
-					ranges = append(ranges, rtree.Range{
-						StartKey: startKey,
-						EndKey:   endKey,
-					})
-				}
+			tableRanges, err := distsql.BuildTableRanges(tableInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			for _, r := range tableRanges {
+				// Add keyspace prefix to BackupRequest
+				startKey, endKey := storage.GetCodec().EncodeRange(r.StartKey, r.EndKey)
+				ranges = append(ranges, rtree.Range{
+					StartKey: startKey,
+					EndKey:   endKey,
+				})
 			}
 
 			return nil
@@ -1055,8 +1062,9 @@ func (bc *Client) BuildProgressRangeTree(ctx context.Context, ranges []rtree.Ran
 	// the response from TiKV only contains the region's key, so use the
 	// progress range tree to quickly seek the region's corresponding progress range.
 	progressRangeTree := rtree.NewProgressRangeTree(metaWriter)
+	sharedFreeListG := btree.NewFreeListG[*rtree.Range](10240)
 	for _, r := range ranges {
-		if err := progressRangeTree.Insert(bc.getProgressRange(r)); err != nil {
+		if err := progressRangeTree.Insert(bc.getProgressRange(r, sharedFreeListG)); err != nil {
 			return progressRangeTree, errors.Trace(err)
 		}
 	}

@@ -149,7 +149,11 @@ func (ss *Schemas) BackupSchemas(
 							zap.Uint64("TotalBytes", schema.totalBytes),
 							zap.Duration("TimeTaken", calculateCost))
 					}
-					schema.matchChecksum(checksumMap)
+					if checksumMap != nil {
+						if err := schema.matchChecksum(checksumMap); err != nil {
+							return errors.Trace(err)
+						}
+					}
 				}
 				if statsHandle != nil {
 					statsWriter := metaWriter.NewStatsWriter()

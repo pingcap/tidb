@@ -196,6 +196,13 @@ func NewRangeTree() RangeTree {
 	}
 }
 
+// NewRangeTreeWithFreeListG returns an empty range tree with the specified free list
+func NewRangeTreeWithFreeListG(f *btree.FreeListG[*Range]) RangeTree {
+	return RangeTree{
+		BTreeG: btree.NewWithFreeListG(32, (*Range).Less, f),
+	}
+}
+
 // Find is a helper function to find an item that contains the range start
 // key.
 func (rangeTree *RangeTree) Find(rg *Range) *Range {
@@ -400,7 +407,8 @@ func (rangeTree *ProgressRangeTree) FindContained(startKey, endKey []byte) (*Pro
 	ret := rangeTree.find(startPr)
 
 	if ret == nil {
-		log.Warn("Cannot find progress range that contains the start key, maybe the duplicated response", zap.String("key", redact.Key(startKey)))
+		log.Warn("Cannot find progress range that contains the start key, maybe the duplicated response",
+			zap.String("key", redact.Key(startKey)))
 		return nil, nil
 	}
 
