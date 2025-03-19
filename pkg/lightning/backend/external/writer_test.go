@@ -29,6 +29,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -538,11 +539,14 @@ func TestFlushKVsRetry(t *testing.T) {
 }
 
 func TestGetAdjustedIndexBlockSize(t *testing.T) {
-	require.EqualValues(t, 1*units.MiB, GetAdjustedBlockSize(1*units.MiB))
-	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(15*units.MiB))
-	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(16*units.MiB))
-	require.EqualValues(t, 17*units.MiB, GetAdjustedBlockSize(17*units.MiB))
-	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(166*units.MiB))
+	// our block size is calculated based on MaxTxnEntrySizeLimit, if you want to
+	// change it, contact with us please.
+	require.EqualValues(t, 120*units.MiB, tidbconfig.MaxTxnEntrySizeLimit)
+	require.EqualValues(t, 1*units.MiB, GetAdjustedBlockSize(1*units.MiB, DefaultBlockSize))
+	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(15*units.MiB, DefaultBlockSize))
+	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(16*units.MiB, DefaultBlockSize))
+	require.EqualValues(t, 17*units.MiB, GetAdjustedBlockSize(17*units.MiB, DefaultBlockSize))
+	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(166*units.MiB, DefaultBlockSize))
 }
 
 func TestGetAdjustedMergeSortOverlapThresholdAndMergeSortFileCountStep(t *testing.T) {

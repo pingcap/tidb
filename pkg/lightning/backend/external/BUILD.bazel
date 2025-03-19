@@ -79,6 +79,7 @@ go_test(
     deps = [
         "//br/pkg/membuf",
         "//br/pkg/storage",
+        "//pkg/config",
         "//pkg/kv",
         "//pkg/lightning/backend/kv",
         "//pkg/lightning/common",

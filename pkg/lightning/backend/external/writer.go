@@ -97,7 +97,7 @@ func GetAdjustedMergeSortFileCountStep(concurrency int) int {
 }
 
 // GetAdjustedBlockSize gets the block size after alignment.
-func GetAdjustedBlockSize(memSizePerWriter uint64) int {
+func GetAdjustedBlockSize(memSizePerWriter uint64, defBlockSize int) int {
 	// the buf size is aligned to block size, and the target table might have many
 	// writers, one writer might take much more memory when the buf size
 	// is slightly larger than the N*block-size.
@@ -105,12 +105,11 @@ func GetAdjustedBlockSize(memSizePerWriter uint64) int {
 	// is 16M, it's 8 times larger.
 	// so we adjust the block size when the aligned size is larger than 1.1 times
 	// of memSizePerWriter, to avoid OOM.
-	blockSize := DefaultBlockSize
-	alignedSize := membuf.GetAlignedSize(memSizePerWriter, uint64(blockSize))
+	alignedSize := membuf.GetAlignedSize(memSizePerWriter, uint64(defBlockSize))
 	if float64(alignedSize)/float64(memSizePerWriter) > 1.1 {
 		return int(memSizePerWriter)
 	}
-	return blockSize
+	return defBlockSize
 }
 
 // rangePropertiesCollector collects range properties for each range. The zero
