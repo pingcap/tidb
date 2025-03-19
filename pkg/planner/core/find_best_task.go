@@ -189,10 +189,8 @@ func enumeratePhysicalPlans4Task(
 	}
 	var fd *funcdep.FDSet
 	if joinP, ok := p.Self().(*logicalop.LogicalJoin); ok {
-		if joinP.JoinType == logicalop.InnerJoin {
-			// TODO(hawkingrei): FD should be maintained as logical prop instead of constructing it in physical phase
-			fd = joinP.ExtractFD()
-		}
+		// TODO(hawkingrei): FD should be maintained as logical prop instead of constructing it in physical phase
+		fd = joinP.ExtractFD()
 	}
 	for _, pp := range physicalPlans {
 		timeStampNow := p.GetLogicalTS4TaskMap()
