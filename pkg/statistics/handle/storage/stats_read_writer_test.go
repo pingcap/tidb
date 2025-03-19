@@ -101,7 +101,7 @@ func TestSlowStatsSaving(t *testing.T) {
 	testKit.MustExec("analyze table t with 0 topn")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(),
-		ast.NewCIStr("test"), ast.NewCIStr("t"),
+		model.NewCIStr("test"), model.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -159,7 +159,7 @@ func TestSlowStatsSavingForPartitionedTable(t *testing.T) {
 	testKit.MustExec("analyze table t with 0 topn")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(),
-		ast.NewCIStr("test"), ast.NewCIStr("t"),
+		model.NewCIStr("test"), model.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
