@@ -1025,7 +1025,7 @@ func splitRangeInt64Max(n int64) [][]string {
 func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concurrency int, fn func(info *model.TableInfo) error) error {
 	cancelCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	workGroup, _ := util.NewErrorGroupWithRecoverWithCtx(cancelCtx)
+	workGroup, egCtx := util.NewErrorGroupWithRecoverWithCtx(cancelCtx)
 
 	if concurrency >= 15 {
 		concurrency = 15
@@ -1046,6 +1046,11 @@ func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concur
 			endKey = codec.EncodeBytes(endKey, []byte(kvRanges[i][1]))
 
 			return t.IterateHashWithBoundedKey(startKey, endKey, func(key []byte, field []byte, value []byte) error {
+				select {
+				case <-egCtx.Done():
+					return egCtx.Err()
+				default:
+				}
 				// only handle table meta
 				tableKey := string(field)
 				if !strings.HasPrefix(tableKey, mTablePrefix) {
