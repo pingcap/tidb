@@ -12085,6 +12085,10 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowImportJobs}
 	}
+|	"PLAN" "FOR" stringLit
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowPlanForSQL, SQLOrDigest: $3}
+	}
 
 ShowLikeOrWhereOpt:
 	{
