@@ -29,10 +29,17 @@ import (
 	"go.uber.org/zap"
 )
 
-// defaultOneWriterMemSizeLimit is the memory size limit for one writer. OneWriter can write
-// data in stream, this memory limit is only used to avoid allocating too many times
-// for each KV pair.
-var defaultOneWriterMemSizeLimit uint64 = 128 * units.MiB
+var (
+	// defaultOneWriterMemSizeLimit is the memory size limit for one writer. OneWriter can write
+	// data in stream, this memory limit is only used to avoid allocating too many times
+	// for each KV pair.
+	defaultOneWriterMemSizeLimit uint64 = 128 * units.MiB
+	// DefaultOneWriterBlockSize is the default block size for one writer.
+	// TODO currently we don't have per-writer mem size limit, we always use the
+	// default, so we always use the default mem size limit as the block size too.
+	// it's ok for now, we can make it configurable in the future.
+	DefaultOneWriterBlockSize = int(defaultOneWriterMemSizeLimit)
+)
 
 // OneFileWriter is used to write data into external storage
 // with only one file for data and stat.
