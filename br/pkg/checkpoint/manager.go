@@ -27,9 +27,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
+// SnapshotMetaManagerT is a type alias for MetaManager interface specialized for snapshot restoration
 type SnapshotMetaManagerT = MetaManager[
 	RestoreKeyType, RestoreValueType, RestoreValueType, CheckpointMetadataForSnapshotRestore,
 ]
+
+// LogMetaManagerT is a type alias for LogMetaManager interface specialized for log restoration
 type LogMetaManagerT = LogMetaManager[
 	LogRestoreKeyType, LogRestoreValueType, LogRestoreValueMarshaled, CheckpointMetadataForLogRestore,
 ]
@@ -48,6 +51,8 @@ func DefaultTickDurationConfig() tickDurationConfig {
 	}
 }
 
+// MetaManager defines the interface for checkpoint metadata operations
+// It handles loading, saving, and checking the existence of checkpoint data
 type MetaManager[K KeyType, SV, LV ValueType, M any] interface {
 	fmt.Stringer
 
@@ -67,6 +72,8 @@ type MetaManager[K KeyType, SV, LV ValueType, M any] interface {
 	Close()
 }
 
+// LogMetaManager extends MetaManager with additional operations specific to log restoration
+// This includes handling checkpoint progress and ingest index repair SQLs
 type LogMetaManager[K KeyType, SV, LV ValueType, M any] interface {
 	MetaManager[K, SV, LV, M]
 
@@ -79,6 +86,8 @@ type LogMetaManager[K KeyType, SV, LV ValueType, M any] interface {
 	ExistsCheckpointIngestIndexRepairSQLs(context.Context) (bool, error)
 }
 
+// TableMetaManager implements the MetaManager interface using database tables for storage
+// It stores checkpoint data in tables within the TiDB database
 type TableMetaManager[K KeyType, SV, LV ValueType, M any] struct {
 	se       glue.Session
 	runnerSe glue.Session
@@ -90,6 +99,7 @@ func NewLogTableMetaManager(
 	g glue.Glue,
 	dom *domain.Domain,
 	dbName string,
+	id uint64,
 ) (LogMetaManagerT, error) {
 	se, err := g.CreateSession(dom.Store())
 	if err != nil {
@@ -105,7 +115,7 @@ func NewLogTableMetaManager(
 		se:       se,
 		runnerSe: runnerSe,
 		dom:      dom,
-		dbName:   dbName,
+		dbName:   fmt.Sprintf("%s_%d", dbName, id),
 	}, nil
 }
 
@@ -113,6 +123,7 @@ func NewSnapshotTableMetaManager(
 	g glue.Glue,
 	dom *domain.Domain,
 	dbName string,
+	id uint64,
 ) (SnapshotMetaManagerT, error) {
 	se, err := g.CreateSession(dom.Store())
 	if err != nil {
@@ -128,7 +139,7 @@ func NewSnapshotTableMetaManager(
 		se:       se,
 		runnerSe: runnerSe,
 		dom:      dom,
-		dbName:   dbName,
+		dbName:   fmt.Sprintf("%s_%d", dbName, id),
 	}, nil
 }
 
@@ -145,7 +156,7 @@ func (manager *TableMetaManager[K, SV, LV, M]) Close() {
 	}
 }
 
-// load the whole checkpoint range data and retrieve the metadata of restored ranges
+// LoadCheckpointData loads the whole checkpoint range data and retrieve the metadata of restored ranges
 // and return the total time cost in the past executions
 func (manager *TableMetaManager[K, SV, LV, M]) LoadCheckpointData(
 	ctx context.Context,
@@ -281,6 +292,7 @@ func NewSnapshotStorageMetaManager(
 	cipher *backuppb.CipherInfo,
 	clusterID uint64,
 	prefix string,
+	id uint64,
 ) SnapshotMetaManagerT {
 	return &StorageMetaManager[
 		RestoreKeyType, RestoreValueType, RestoreValueType, CheckpointMetadataForSnapshotRestore,
@@ -288,7 +300,7 @@ func NewSnapshotStorageMetaManager(
 		storage:   storage,
 		cipher:    cipher,
 		clusterID: fmt.Sprintf("%d", clusterID),
-		taskName:  fmt.Sprintf("%d/%s", clusterID, prefix),
+		taskName:  fmt.Sprintf("%d/%s_%d", clusterID, prefix, id),
 	}
 }
 
@@ -297,6 +309,7 @@ func NewLogStorageMetaManager(
 	cipher *backuppb.CipherInfo,
 	clusterID uint64,
 	prefix string,
+	id uint64,
 ) LogMetaManagerT {
 	return &StorageMetaManager[
 		LogRestoreKeyType, LogRestoreValueType, LogRestoreValueMarshaled, CheckpointMetadataForLogRestore,
@@ -304,7 +317,7 @@ func NewLogStorageMetaManager(
 		storage:   storage,
 		cipher:    cipher,
 		clusterID: fmt.Sprintf("%d", clusterID),
-		taskName:  fmt.Sprintf("%d/%s", clusterID, prefix),
+		taskName:  fmt.Sprintf("%d/%s_%d", clusterID, prefix, id),
 	}
 }
 

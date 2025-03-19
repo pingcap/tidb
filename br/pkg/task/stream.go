@@ -1343,7 +1343,21 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 
-	taskInfo, err := generatePiTRTaskInfo(ctx, mgr, g, cfg)
+	// Register this restore operation
+	restoreRegistry, err := restore.NewRestoreRegistry(g, mgr.GetDomain())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer restoreRegistry.Close()
+	registrationInfo := buildRegistrationInfo(cfg)
+
+	// get current registered (due to failure retry) or create new restore task id
+	restoreID, err := restoreRegistry.GetOrCreateRegistration(ctx, registrationInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	taskInfo, err := generatePiTRTaskInfo(ctx, mgr, g, cfg, restoreID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1420,6 +1434,11 @@ func RunStreamRestore(
 	}
 	if err := restoreStream(ctx, mgr, g, logRestoreConfig); err != nil {
 		return errors.Trace(err)
+	}
+	// unregister the restore operation when done, ignore errors
+	if err := restoreRegistry.Unregister(ctx, restoreID); err != nil {
+		log.Warn("failed to unregister restore task from registry",
+			zap.Uint64("restoreId", restoreID), zap.Error(err))
 	}
 	return nil
 }
@@ -2020,6 +2039,7 @@ func generatePiTRTaskInfo(
 	mgr *conn.Mgr,
 	g glue.Glue,
 	cfg *RestoreConfig,
+	restoreID uint64,
 ) (*PiTRTaskInfo, error) {
 	var (
 		doFullRestore = len(cfg.FullBackupStorage) > 0
@@ -2031,15 +2051,15 @@ func generatePiTRTaskInfo(
 	if cfg.UseCheckpoint {
 		if len(cfg.CheckpointStorage) > 0 {
 			clusterID := mgr.GetPDClient().GetClusterID(ctx)
-			if err = cfg.newStorageCheckpointMetaManagerPITR(ctx, clusterID); err != nil {
+			if err = cfg.newStorageCheckpointMetaManagerPITR(ctx, clusterID, restoreID); err != nil {
 				return nil, errors.Trace(err)
 			}
 		} else {
-			if err = cfg.newTableCheckpointMetaManagerPITR(g, mgr.GetDomain()); err != nil {
+			if err = cfg.newTableCheckpointMetaManagerPITR(g, mgr.GetDomain(), restoreID); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
-		curTaskInfo, err = checkpoint.TryToGetCheckpointTaskInfo(ctx, cfg.snapshotCheckpointMetaManager, cfg.logCheckpointMetaManager)
+		curTaskInfo, err = checkpoint.GetCheckpointTaskInfo(ctx, cfg.snapshotCheckpointMetaManager, cfg.logCheckpointMetaManager)
 		if err != nil {
 			return checkInfo, errors.Trace(err)
 		}
@@ -2195,4 +2215,13 @@ func getCurrentTSFromCheckpointOrPD(ctx context.Context, mgr *conn.Mgr, cfg *Log
 		return 0, errors.Trace(err)
 	}
 	return currentTS, nil
+}
+
+func buildRegistrationInfo(cfg *RestoreConfig) restore.RegistrationInfo {
+	return restore.RegistrationInfo{
+		StartTS:           cfg.StartTS,
+		RestoreTS:         cfg.RestoreTS,
+		FilterStrings:     cfg.FilterStr,
+		UpstreamClusterID: cfg.upstreamClusterID,
+	}
 }

@@ -560,6 +560,7 @@ func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
 func (cfg *RestoreConfig) newStorageCheckpointMetaManagerPITR(
 	ctx context.Context,
 	downstreamClusterID uint64,
+	restoreID uint64,
 ) error {
 	_, checkpointStorage, err := GetStorage(ctx, cfg.CheckpointStorage, &cfg.Config)
 	if err != nil {
@@ -567,18 +568,19 @@ func (cfg *RestoreConfig) newStorageCheckpointMetaManagerPITR(
 	}
 	if len(cfg.FullBackupStorage) > 0 {
 		cfg.snapshotCheckpointMetaManager = checkpoint.NewSnapshotStorageMetaManager(
-			checkpointStorage, &cfg.CipherInfo, downstreamClusterID, "snapshot")
+			checkpointStorage, &cfg.CipherInfo, downstreamClusterID, "snapshot", restoreID)
 	}
 	cfg.logCheckpointMetaManager = checkpoint.NewLogStorageMetaManager(
-		checkpointStorage, &cfg.CipherInfo, downstreamClusterID, "log")
+		checkpointStorage, &cfg.CipherInfo, downstreamClusterID, "log", restoreID)
 	cfg.sstCheckpointMetaManager = checkpoint.NewSnapshotStorageMetaManager(
-		checkpointStorage, &cfg.CipherInfo, downstreamClusterID, "sst")
+		checkpointStorage, &cfg.CipherInfo, downstreamClusterID, "sst", restoreID)
 	return nil
 }
 
 func (cfg *RestoreConfig) newStorageCheckpointMetaManagerSnapshot(
 	ctx context.Context,
 	downstreamClusterID uint64,
+	restoreID uint64,
 ) error {
 	if cfg.snapshotCheckpointMetaManager != nil {
 		return nil
@@ -588,37 +590,37 @@ func (cfg *RestoreConfig) newStorageCheckpointMetaManagerSnapshot(
 		return errors.Trace(err)
 	}
 	cfg.snapshotCheckpointMetaManager = checkpoint.NewSnapshotStorageMetaManager(
-		checkpointStorage, &cfg.CipherInfo, downstreamClusterID, "snapshot")
+		checkpointStorage, &cfg.CipherInfo, downstreamClusterID, "snapshot", restoreID)
 	return nil
 }
 
-func (cfg *RestoreConfig) newTableCheckpointMetaManagerPITR(g glue.Glue, dom *domain.Domain) (err error) {
+func (cfg *RestoreConfig) newTableCheckpointMetaManagerPITR(g glue.Glue, dom *domain.Domain, id uint64) (err error) {
 	if len(cfg.FullBackupStorage) > 0 {
 		if cfg.snapshotCheckpointMetaManager, err = checkpoint.NewSnapshotTableMetaManager(
-			g, dom, checkpoint.SnapshotRestoreCheckpointDatabaseName,
+			g, dom, checkpoint.SnapshotRestoreCheckpointDatabaseName, id,
 		); err != nil {
 			return errors.Trace(err)
 		}
 	}
 	if cfg.logCheckpointMetaManager, err = checkpoint.NewLogTableMetaManager(
-		g, dom, checkpoint.LogRestoreCheckpointDatabaseName,
+		g, dom, checkpoint.LogRestoreCheckpointDatabaseName, id,
 	); err != nil {
 		return errors.Trace(err)
 	}
 	if cfg.sstCheckpointMetaManager, err = checkpoint.NewSnapshotTableMetaManager(
-		g, dom, checkpoint.CustomSSTRestoreCheckpointDatabaseName,
+		g, dom, checkpoint.CustomSSTRestoreCheckpointDatabaseName, id,
 	); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
 }
 
-func (cfg *RestoreConfig) newTableCheckpointMetaManagerSnapshot(g glue.Glue, dom *domain.Domain) (err error) {
+func (cfg *RestoreConfig) newTableCheckpointMetaManagerSnapshot(g glue.Glue, dom *domain.Domain, id uint64) (err error) {
 	if cfg.snapshotCheckpointMetaManager != nil {
 		return nil
 	}
 	if cfg.snapshotCheckpointMetaManager, err = checkpoint.NewSnapshotTableMetaManager(
-		g, dom, checkpoint.SnapshotRestoreCheckpointDatabaseName,
+		g, dom, checkpoint.SnapshotRestoreCheckpointDatabaseName, id,
 	); err != nil {
 		return errors.Trace(err)
 	}
@@ -860,6 +862,7 @@ type SnapshotRestoreConfig struct {
 	*RestoreConfig
 	piTRTaskInfo           *PiTRTaskInfo
 	logTableHistoryManager *stream.LogBackupTableHistoryManager
+	restoreID              uint64
 }
 
 func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName string, cfg *SnapshotRestoreConfig) error {
@@ -946,11 +949,11 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if cfg.UseCheckpoint {
 		if len(cfg.CheckpointStorage) > 0 {
 			clusterID := mgr.PDClient().GetClusterID(ctx)
-			if err = cfg.newStorageCheckpointMetaManagerSnapshot(ctx, clusterID); err != nil {
+			if err = cfg.newStorageCheckpointMetaManagerSnapshot(ctx, clusterID, cfg.restoreID); err != nil {
 				return errors.Trace(err)
 			}
 		} else {
-			if err = cfg.newTableCheckpointMetaManagerSnapshot(g, mgr.GetDomain()); err != nil {
+			if err = cfg.newTableCheckpointMetaManagerSnapshot(g, mgr.GetDomain(), cfg.restoreID); err != nil {
 				return errors.Trace(err)
 			}
 		}
