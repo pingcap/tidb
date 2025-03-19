@@ -884,6 +884,17 @@ func TestOwnerRandomDown(t *testing.T) {
 		return workers[0].checkTablesExists(ctx, now)
 	}, time.Minute, 100*time.Millisecond)
 
+	require.Eventually(t, func() bool {
+		var err error
+		for _, wrk := range workers {
+			if wrk.owner.IsOwner() {
+				_, err = wrk.getSnapID(ctx)
+				break
+			}
+		}
+		return err == nil
+	}, time.Minute, 100*time.Millisecond)
+
 	// let us randomly stop the owner
 	for j := 0; j < testNum; j++ {
 		var err error
