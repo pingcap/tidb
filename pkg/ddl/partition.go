@@ -3843,6 +3843,7 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 
 			for i := range numKeys {
 				key := w.newKeys[i]
+				// TODO: Would it be possible/beneficial to get a range per partition instead?
 				logutil.DDLLogger().Info("check for old ID", zap.String("key", fmt.Sprintf("%x", []byte(key))))
 				// generate temporary index map entries for each key to see if they are already mapped
 				// key: new table id, curr table id, record id

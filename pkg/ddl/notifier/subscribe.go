@@ -153,7 +153,7 @@ func (n *DDLNotifier) start() {
 
 	ctx := kv.WithInternalSourceType(n.ctx, kv.InternalDDLNotifier)
 	ctx = logutil.WithCategory(ctx, "ddl-notifier")
-	ticker := time.NewTicker(n.pollInterval * 180)
+	ticker := time.NewTicker(n.pollInterval)
 	defer ticker.Stop()
 	for {
 		select {

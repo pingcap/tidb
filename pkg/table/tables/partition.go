@@ -2145,62 +2145,12 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 		}
 		addRecordOpt = opt.GetAddRecordOptKeepRecordID()
 	}
+	// TODO: Should not addRecordOpt always be KeepRecordID()?
 	_, err = t.getPartition(newTo).addRecord(ctx, txn, newData, addRecordOpt)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	logutil.BgLogger().Info("PartitionUpdateRecord added", zap.Int64("to", to))
-	/*
-		if !deleteOnly {
-			if !t.Meta().PKIsHandle && !t.Meta().IsCommonHandle {
-				if val, ok := found[string(toKey)]; ok {
-					var id int64
-					_, id, err = codec.DecodeInt(val)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					h = kv.IntHandle(id)
-					newRecordID = h
-					logutil.BgLogger().Info("PartitionUpdateRecord to part", zap.Int64("newRecordID", newRecordID.IntValue()))
-				}
-				// Preserve the _tidb_rowid also in the new partition!
-				if newRecordID == nil {
-					// Handle case 3, _tidb_rowid already exists in the newTo partition!
-					// Update should not have happened if already updated in reorg parts?!? So skip checking value
-					if _, ok := found[string(toKey)]; ok {
-						// We must generate a new value, and add it to the reorg part temp index map
-						newRecordID, err = AllocHandle(context.Background(), ctx, t)
-						if err != nil {
-							return errors.Trace(err)
-						}
-						logutil.BgLogger().Info("PartitionUpdateRecord reorg part", zap.Int64("newRecordID", newRecordID.IntValue()))
-						// tablecodec.prefixLen is not exported, but is just TableSplitKeyLen + 2
-						tmpRecordIDMapKey := tablecodec.EncodeIndexSeekKey(newTo, tablecodec.TempIndexPrefix, toKey[tablecodec.TempIndexPrefix+2:])
-						encRecordID := codec.EncodeInt(nil, newRecordID.IntValue())
-						err = txn.Set(tmpRecordIDMapKey, encRecordID)
-						if err != nil {
-							return errors.Trace(err)
-						}
-						// TODO: How does this work in StateDeleteReorganization?!? Do we need to check the state and
-						// always have a mapping from 'new' partitions _tidb_rowid -> 'old' partitions _tidb_rowid?
-					} else {
-						newRecordID = h
-					}
-				}
-				if len(newData) > len(t.Cols()) {
-					newData[len(t.Cols())] = types.NewIntDatum(newRecordID.IntValue())
-				} else {
-					newData = append(newData, types.NewIntDatum(newRecordID.IntValue()))
-				}
-				addRecordOpt = opt.GetAddRecordOptKeepRecordID()
-			}
-
-			_, err = t.getPartition(newTo).addRecord(ctx, txn, newData, addRecordOpt)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-	*/
 	memBuffer.Release(sh)
 	return nil
 }
