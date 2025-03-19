@@ -940,6 +940,7 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 		domNonOwner.Reload()
 		if !releaseHook {
 			// Alter done!
+			logutil.BgLogger().Info("XXXXXXXXXXX alter done, breaking states loop")
 			break
 		}
 		// Continue to next state
@@ -955,12 +956,26 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 		logutil.BgLogger().Info("Query result after DDL", zap.String("result", res.String()))
 	}
 	// Verify that there are no KV entries for old partitions or old indexes!!!
+	delRange := tkO.MustQuery(`select * from mysql.gc_delete_range`).Rows()
+	s := ""
+	for _, row := range delRange {
+		if s != "" {
+			s += "\n"
+		}
+		for i, col := range row {
+			if i != 0 {
+				s += " "
+			}
+			s += col.(string)
+		}
+	}
+	logutil.BgLogger().Info("gc_delete_range", zap.String("rows", s))
 	gcWorker, err := gcworker.NewMockGCWorker(store)
 	require.NoError(t, err)
 	err = gcWorker.DeleteRanges(context.Background(), uint64(math.MaxInt64))
 	require.NoError(t, err)
-	delRange := tkO.MustQuery(`select * from mysql.gc_delete_range_done`).Rows()
-	s := ""
+	delRange = tkO.MustQuery(`select * from mysql.gc_delete_range_done`).Rows()
+	s = ""
 	for _, row := range delRange {
 		if s != "" {
 			s += "\n"

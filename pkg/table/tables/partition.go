@@ -1956,11 +1956,8 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 			return errors.Trace(err)
 		}
 	}
-	if newFrom == 0 {
-		return errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
-	}
 	if t.Meta().PKIsHandle || t.Meta().IsCommonHandle {
-		if newTo == newFrom {
+		if newTo == newFrom && newFrom != 0 {
 			// Update needs to be done in StateDeleteOnly as well
 			err = t.getPartition(newTo).updateRecord(ctx, txn, h, currData, newData, touched, opt)
 			if err != nil {
@@ -1969,14 +1966,13 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 			memBuffer.Release(sh)
 			return nil
 		}
-		err = t.getPartition(newFrom).RemoveRecord(ctx, txn, h, currData)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if !deleteOnly {
-			if newTo == 0 {
-				return errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
+		if newFrom != 0 {
+			err = t.getPartition(newFrom).RemoveRecord(ctx, txn, h, currData)
+			if err != nil {
+				return errors.Trace(err)
 			}
+		}
+		if !deleteOnly && newTo != 0 {
 			_, err = t.getPartition(newTo).addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
 			if err != nil {
 				return errors.Trace(err)
@@ -2079,7 +2075,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 		}
 		removeHandle = kv.IntHandle(id)
 		// Remove the reorg mapping entry, if not reused
-		if newTo != newFrom {
+		if newTo != newFrom && newFrom != 0 {
 			err = txn.Delete(newFromMap)
 			if err != nil {
 				return errors.Trace(err)
@@ -2091,19 +2087,16 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 	}
 	// TODO: should we move this to after the non-clustered 'if'...?
 	// TODO: will this check if currData is the same?
-	if doDelete {
+	if doDelete && newFrom != 0 {
 		err = t.GetPartition(newFrom).RemoveRecord(ctx, txn, removeHandle, currData)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		logutil.BgLogger().Info("PartitionUpdateRecord removed", zap.Int64("RecordID", h.IntValue()), zap.Int64("from", from))
 	}
-	if deleteOnly {
+	if deleteOnly || newTo == 0 {
 		memBuffer.Release(sh)
 		return nil
-	}
-	if newTo == 0 {
-		return errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
 	}
 	addRecordOpt := opt.GetAddRecordOpt()
 	if _, ok := found[string(newToMap)]; newToMap != nil && ok {

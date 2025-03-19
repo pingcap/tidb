@@ -199,6 +199,7 @@ func (dr *delRange) doDelRangeWork() error {
 	}
 
 	for _, r := range ranges {
+		logutil.DDLLogger().Info("delRange emulator do task", zap.Stringer("startKey", r.StartKey), zap.Stringer("endKey", r.EndKey))
 		if err := dr.doTask(sctx, r); err != nil {
 			logutil.DDLLogger().Error("delRange emulator do task failed", zap.Error(err))
 			return errors.Trace(err)
