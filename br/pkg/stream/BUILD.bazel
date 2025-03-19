@@ -25,6 +25,7 @@ go_library(
         "//br/pkg/logutil",
         "//br/pkg/restore/ingestrec",
         "//br/pkg/restore/tiflashrec",
+        "//br/pkg/restore/utils",
         "//br/pkg/storage",
         "//br/pkg/streamhelper",
         "//br/pkg/utils",

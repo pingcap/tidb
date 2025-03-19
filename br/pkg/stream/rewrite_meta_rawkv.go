@@ -24,6 +24,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
+	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -219,8 +220,8 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 	if !exist {
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbID)
 	}
-	// skip updating the system table meta kv, but what if a user created mysql.i_am_user_table?
-	if dbReplace.FilteredOut || utils.IsSysDB(dbReplace.Name) {
+
+	if dbReplace.FilteredOut {
 		return nil, nil
 	}
 
@@ -228,7 +229,9 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 	if !exist {
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find table id:%v in maps", tableID)
 	}
-	if tableReplace.FilteredOut {
+
+	// don't restore meta kv change for system tables, only restore data
+	if tableReplace.FilteredOut || restoreutils.IsSysTable(dbReplace.Name, tableReplace.Name) {
 		return nil, nil
 	}
 

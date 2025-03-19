@@ -1515,7 +1515,6 @@ func restoreStream(
 	if err != nil {
 		return errors.Trace(err)
 	}
-
 	gcDisabledRestorable := false
 	defer func() {
 		// don't restore the gc-ratio-threshold if checkpoint mode is used and restored is not finished

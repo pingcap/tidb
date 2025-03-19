@@ -1,4 +1,4 @@
-// Copyright 2024 PingCAP, Inc.
+// Copyright 2025 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -117,6 +117,74 @@ var unRecoverableTable = map[string]map[string]struct{}{
 	},
 }
 
+// sysTables contains all the system tables in mysql and sys schema, all other maps in this file are subset of this map.
+var sysTables = map[string]map[string]struct{}{
+	"mysql": {
+		"advisory_locks":                   {},
+		"analyze_jobs":                     {},
+		"analyze_options":                  {},
+		"bind_info":                        {},
+		"capture_plan_baselines_blacklist": {},
+		"column_stats_usage":               {},
+		"columns_priv":                     {},
+		"db":                               {},
+		"default_roles":                    {},
+		"dist_framework_meta":              {},
+		"expr_pushdown_blacklist":          {},
+		"gc_delete_range":                  {},
+		"gc_delete_range_done":             {},
+		"global_grants":                    {},
+		"global_priv":                      {},
+		"global_variables":                 {},
+		"help_topic":                       {},
+		"index_advisor_results":            {},
+		"opt_rule_blacklist":               {},
+		"password_history":                 {},
+		"plan_replayer_status":             {},
+		"plan_replayer_task":               {},
+		"request_unit_by_group":            {},
+		"role_edges":                       {},
+		"stats_buckets":                    {},
+		"stats_extended":                   {},
+		"stats_feedback":                   {},
+		"stats_fm_sketch":                  {},
+		"stats_histograms":                 {},
+		"stats_history":                    {},
+		"stats_meta":                       {},
+		"stats_meta_history":               {},
+		"stats_table_locked":               {},
+		"stats_top_n":                      {},
+		"table_cache_meta":                 {},
+		"tables_priv":                      {},
+		"tidb":                             {},
+		"tidb_background_subtask":          {},
+		"tidb_background_subtask_history":  {},
+		"tidb_ddl_history":                 {},
+		"tidb_ddl_job":                     {},
+		"tidb_ddl_notifier":                {},
+		"tidb_ddl_reorg":                   {},
+		"tidb_global_task":                 {},
+		"tidb_global_task_history":         {},
+		"tidb_import_jobs":                 {},
+		"tidb_kernel_options":              {},
+		"tidb_mdl_info":                    {},
+		"tidb_mdl_view":                    {},
+		"tidb_pitr_id_map":                 {},
+		"tidb_runaway_queries":             {},
+		"tidb_runaway_watch":               {},
+		"tidb_runaway_watch_done":          {},
+		"tidb_timers":                      {},
+		"tidb_ttl_job_history":             {},
+		"tidb_ttl_table_status":            {},
+		"tidb_ttl_task":                    {},
+		"tidb_workload_values":             {},
+		"user":                             {},
+	},
+	"sys": {
+		"schema_unused_indexes": {},
+	},
+}
+
 var unRecoverableSchema = map[string]struct{}{
 	mysql.WorkloadSchema: {},
 }
@@ -153,4 +221,19 @@ func IsPlanReplayerTables(schemaName string, tableName string) bool {
 
 func IsSysPrivilegeTable(tableName string) bool {
 	return sysPrivilegeTableMap[tableName] != ""
+}
+
+// IsSysTable checks if the given table is a system table in the specified schema
+func IsSysTable(schemaName string, tableName string) bool {
+	tableMap, ok := sysTables[schemaName]
+	if !ok {
+		return false
+	}
+	_, ok = tableMap[tableName]
+	return ok
+}
+
+// GetSysTables returns the sysTables map for testing purposes
+func GetSysTables() map[string]map[string]struct{} {
+	return sysTables
 }

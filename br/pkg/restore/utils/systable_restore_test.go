@@ -1,4 +1,4 @@
-// Copyright 2024 PingCAP, Inc.
+// Copyright 2025 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,6 +17,7 @@ package utils_test
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/stretchr/testify/require"
 )
@@ -24,11 +25,21 @@ import (
 // NOTICE: Once there is a new system table, BR needs to ensure that it is correctly classified:
 //
 // - IF it is an unrecoverable table, please add the table name into `unRecoverableTable`.
-// - IF it is an system privilege table, please add the table name into `sysPrivilegeTableMap`.
-// - IF it is an statistics table, please add the table name into `statsTables`.
+// - IF it is a system privilege table, please add the table name into `sysPrivilegeTableMap`.
+// - IF it is a statistics table, please add the table name into `statsTables`.
 //
 
 // The above variables are in the file br/pkg/restore/utils/systable_restore.go
 func TestMonitorTheSystemTableIncremental(t *testing.T) {
 	require.Equal(t, int64(245), session.CurrentBootstrapVersion)
+}
+
+// TestSysTablesCount ensures we maintain the correct count of system tables
+// in the sysTables map. If this test fails after adding or removing tables,
+// update the expected count accordingly.
+func TestSysTablesCount(t *testing.T) {
+	const expectedSysTablesCount = 59
+	actualCount := len(utils.GetSysTables()["mysql"])
+	require.Equal(t, expectedSysTablesCount, actualCount, "System tables count should be %d, currently have %d tables",
+		expectedSysTablesCount, actualCount)
 }
