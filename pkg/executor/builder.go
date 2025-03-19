@@ -4414,10 +4414,21 @@ func (b *executorBuilder) buildIndexUsageReporter(plan tableStatsPreloader, load
 }
 
 func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMergeReader) exec.Executor {
-	// Note that the table plan may be nil.
-	if len(v.PartialPlans) > 0 {
-		if is, ok := v.PartialPlans[0][0].(*plannercore.PhysicalIndexScan); ok {
-			if err := b.validCanReadTemporaryOrCacheTable(is.Table); err != nil {
+	if !v.IdxMergeIsSingleScan {
+		ts := v.TablePlans[0].(*plannercore.PhysicalTableScan)
+		if err := b.validCanReadTemporaryOrCacheTable(ts.Table); err != nil {
+			b.err = err
+			return nil
+		}
+	} else {
+		switch p := v.PartialPlans[0][0].(type) {
+		case *plannercore.PhysicalIndexScan:
+			if err := b.validCanReadTemporaryOrCacheTable(p.Table); err != nil {
+				b.err = err
+				return nil
+			}
+		case *plannercore.PhysicalTableScan:
+			if err := b.validCanReadTemporaryOrCacheTable(p.Table); err != nil {
 				b.err = err
 				return nil
 			}
