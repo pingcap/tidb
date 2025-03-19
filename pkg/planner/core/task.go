@@ -2656,7 +2656,7 @@ func (t *MppTask) needEnforceExchanger(prop *property.PhysicalProperty, fd *func
 		}
 		// for example, if already partitioned by hash(B,C), then same (A,B,C) must distribute on a same node.
 		if fd != nil && len(t.hashCols) != 0 {
-			return prop.NeedEnforceExchangerWithHashByEquivalence(t.hashCols, fd)
+			return prop.NeedMPPExchangeByEquivalence(t.hashCols, fd)
 		}
 		if len(prop.MPPPartitionCols) != len(t.hashCols) {
 			return true

@@ -866,7 +866,7 @@ func TestIssue52828(t *testing.T) {
 		"WHERE OUTR . col_decimal_not_null IN ( SELECT INNR . col_int_not_null + 1 AS Y FROM DD AS INNR WHERE INNR . pk > INNR . pk OR INNR . col_varchar_10_not_null >= INNR . col_varchar_10 ) GROUP BY OUTR . col_datetime_not_null")
 }
 
-func TestMPPJoinWithoutRemoveUselessExchange(t *testing.T) {
+func TestMPPJoinWithRemoveUselessExchange(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -926,50 +926,98 @@ t3.v2
 FROM t3
 JOIN t4 ON t3.v2 = t4.v2) b ON a.v1 = b.v1
 AND a.v2 = b.v2) bbb ON aaa.v1 = bbb.v1
-AND aaa.v2 = bbb.v2;`).Check(testkit.Rows(
-		"HashAgg 1.00 root  funcs:count(Column#18)->Column#17",
+AND aaa.v2 = bbb.v2;`).Check(testkit.Rows("HashAgg 1.00 root  funcs:count(Column#18)->Column#17",
 		"└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
 		"  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"    └─HashAgg 1.00 mpp[tiflash]  funcs:count(1)->Column#18",
-		"      └─Projection 47683.72 mpp[tiflash]  test.t1.v1, test.t1.v1, test.t1.v2",
+		"      └─Projection 47683.72 mpp[tiflash]  test.t1.v1, test.t2.v2",
 		"        └─HashJoin 47683.72 mpp[tiflash]  inner join, equal:[eq(test.t1.v1, test.t1.v1) eq(test.t1.v2, test.t1.v2)]",
-		"          ├─ExchangeReceiver(Build) 19531.25 mpp[tiflash]  ",
-		"          │ └─ExchangeSender 19531.25 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.v1, collate: binary], [name: test.t1.v2, collate: binary]",
-		"          │   └─Projection 19531.25 mpp[tiflash]  test.t1.v1, test.t1.v2, test.t2.v1",
-		"          │     └─HashJoin 19531.25 mpp[tiflash]  inner join, equal:[eq(test.t3.v1, test.t4.v1)]",
+		"          ├─Projection(Build) 19531.25 mpp[tiflash]  test.t1.v1, test.t1.v2, test.t2.v1",
+		"          │ └─HashJoin 19531.25 mpp[tiflash]  inner join, equal:[eq(test.t3.v1, test.t4.v1)]",
+		"          │   ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
+		"          │   │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t4.v1, collate: binary]",
+		"          │   │   └─TableFullScan 10000.00 mpp[tiflash] table:t4 keep order:false, stats:pseudo",
+		"          │   └─Projection(Probe) 15625.00 mpp[tiflash]  test.t1.v1, test.t1.v2, test.t3.v1, test.t2.v1",
+		"          │     └─HashJoin 15625.00 mpp[tiflash]  inner join, equal:[eq(test.t1.v1, test.t3.v1) eq(test.t1.v2, test.t3.v2)]",
 		"          │       ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
-		"          │       │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t4.v1, collate: binary]",
-		"          │       │   └─TableFullScan 10000.00 mpp[tiflash] table:t4 keep order:false, stats:pseudo",
-		"          │       └─Projection(Probe) 15625.00 mpp[tiflash]  test.t1.v1, test.t1.v2, test.t3.v1, test.t2.v1",
-		"          │         └─HashJoin 15625.00 mpp[tiflash]  inner join, equal:[eq(test.t1.v1, test.t3.v1) eq(test.t1.v2, test.t3.v2)]",
-		"          │           ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
-		"          │           │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t3.v1, collate: binary]",
-		"          │           │   └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
-		"          │           └─HashJoin(Probe) 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t1.v1, test.t2.v1)]",
-		"          │             ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
-		"          │             │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.v1, collate: binary]",
-		"          │             │   └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
-		"          │             └─ExchangeReceiver(Probe) 10000.00 mpp[tiflash]  ",
-		"          │               └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t2.v1, collate: binary]",
-		"          │                 └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
-		"          └─ExchangeReceiver(Probe) 19531.25 mpp[tiflash]  ",
-		"            └─ExchangeSender 19531.25 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.v1, collate: binary], [name: test.t1.v2, collate: binary]",
-		"              └─Projection 19531.25 mpp[tiflash]  test.t1.v1, test.t1.v2, test.t2.v2",
-		"                └─HashJoin 19531.25 mpp[tiflash]  inner join, equal:[eq(test.t3.v2, test.t4.v2)]",
+		"          │       │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t3.v1, collate: binary]",
+		"          │       │   └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
+		"          │       └─HashJoin(Probe) 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t1.v1, test.t2.v1)]",
+		"          │         ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
+		"          │         │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.v1, collate: binary]",
+		"          │         │   └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+		"          │         └─ExchangeReceiver(Probe) 10000.00 mpp[tiflash]  ",
+		"          │           └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t2.v1, collate: binary]",
+		"          │             └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo",
+		"          └─Projection(Probe) 19531.25 mpp[tiflash]  test.t1.v1, test.t1.v2, test.t2.v2",
+		"            └─HashJoin 19531.25 mpp[tiflash]  inner join, equal:[eq(test.t3.v2, test.t4.v2)]",
+		"              ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
+		"              │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t4.v2, collate: binary]",
+		"              │   └─TableFullScan 10000.00 mpp[tiflash] table:t4 keep order:false, stats:pseudo",
+		"              └─Projection(Probe) 15625.00 mpp[tiflash]  test.t1.v1, test.t1.v2, test.t3.v2, test.t2.v2",
+		"                └─HashJoin 15625.00 mpp[tiflash]  inner join, equal:[eq(test.t1.v1, test.t3.v1) eq(test.t1.v2, test.t3.v2)]",
 		"                  ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
-		"                  │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t4.v2, collate: binary]",
-		"                  │   └─TableFullScan 10000.00 mpp[tiflash] table:t4 keep order:false, stats:pseudo",
-		"                  └─Projection(Probe) 15625.00 mpp[tiflash]  test.t1.v1, test.t1.v2, test.t3.v2, test.t2.v2",
-		"                    └─HashJoin 15625.00 mpp[tiflash]  inner join, equal:[eq(test.t1.v1, test.t3.v1) eq(test.t1.v2, test.t3.v2)]",
-		"                      ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
-		"                      │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t3.v2, collate: binary]",
-		"                      │   └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
-		"                      └─HashJoin(Probe) 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t1.v2, test.t2.v2)]",
-		"                        ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
-		"                        │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.v2, collate: binary]",
-		"                        │   └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
-		"                        └─ExchangeReceiver(Probe) 10000.00 mpp[tiflash]  ",
-		"                          └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t2.v2, collate: binary]",
-		"                            └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"))
+		"                  │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t3.v2, collate: binary]",
+		"                  │   └─TableFullScan 10000.00 mpp[tiflash] table:t3 keep order:false, stats:pseudo",
+		"                  └─HashJoin(Probe) 12500.00 mpp[tiflash]  inner join, equal:[eq(test.t1.v2, test.t2.v2)]",
+		"                    ├─ExchangeReceiver(Build) 10000.00 mpp[tiflash]  ",
+		"                    │ └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.v2, collate: binary]",
+		"                    │   └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+		"                    └─ExchangeReceiver(Probe) 10000.00 mpp[tiflash]  ",
+		"                      └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t2.v2, collate: binary]",
+		"                        └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
+}
+
+func TestMPPJoinWithoutUselessExchange(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(id int, v1 decimal(20,2), v2 decimal(20,2))")
+	tk.MustExec("create table t2(id int, v1 decimal(10,2), v2 decimal(10,2))")
+	tk.MustExec("create table t3(id int, v1 decimal(10,2), v2 decimal(10,2))")
+	tk.MustExec("insert into t1 values(1,1,1),(2,2,2)")
+	tk.MustExec("insert into t2 values(1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8)")
+	tk.MustExec("insert into t3 values(1,1,1)")
+	tk.MustExec("analyze table t1 all columns")
+	tk.MustExec("analyze table t2 all columns")
+	tk.MustExec("analyze table t3 all columns")
+
+	tk.MustExec("create table d1_t(d1_k int, value int)")
+	tk.MustExec("create table d2_t(d2_k decimal(10,2), value int)")
+	tk.MustExec("create table d3_t(d3_k date, value int)")
+	tk.MustExec("create table fact_t(d1_k int, d2_k decimal(10,2), d3_k date, col1 int, col2 int, col3 int)")
+
+	dom := domain.GetDomain(tk.Session())
+	testkit.SetTiFlashReplica(t, dom, "test", "t1")
+	testkit.SetTiFlashReplica(t, dom, "test", "t2")
+	testkit.SetTiFlashReplica(t, dom, "test", "t3")
+	testkit.SetTiFlashReplica(t, dom, "test", "fact_t")
+	testkit.SetTiFlashReplica(t, dom, "test", "d1_t")
+	testkit.SetTiFlashReplica(t, dom, "test", "d2_t")
+	testkit.SetTiFlashReplica(t, dom, "test", "d3_t")
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@session.tidb_enforce_mpp = 1")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
+	tk.MustExec("set @@session.tidb_opt_mpp_outer_join_fixed_build_side = 0")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	integrationSuiteData := GetIntegrationSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
 }
