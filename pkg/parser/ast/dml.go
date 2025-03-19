@@ -3101,7 +3101,7 @@ type ShowStmt struct {
 	ShowProfileLimit *Limit // Used for `SHOW PROFILE` syntax
 
 	ImportJobID *int64 // Used for `SHOW IMPORT JOB <ID>` syntax
-	SQLOrDigest string
+	SQLOrDigest string // Used for `SHOW PLAN FOR ...` syntax
 }
 
 // Restore implements Node interface.
