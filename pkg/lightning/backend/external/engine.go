@@ -93,13 +93,13 @@ func (_ bufferedKVReader) close() error {
 }
 
 type HeapItem struct {
-	fileIndex int // 文件在keysPerFile中的索引
-	elemIndex int // 元素在该文件中的索引
+	fileIndex int
+	elemIndex int
 }
 
 type MergeHeap struct {
 	items []HeapItem
-	m     *memKVsAndBuffers // 指向目标结构体，用于访问keysPerFile
+	m     *memKVsAndBuffers
 }
 
 func (h MergeHeap) Len() int { return len(h.items) }
@@ -141,7 +141,6 @@ func (b *memKVsAndBuffers) build(ctx context.Context) error {
 	h := &MergeHeap{
 		m: b,
 	}
-	// 初始化堆，将每个文件的第一个元素（如果有）加入堆
 	for i := 0; i < len(b.keysPerFile); i++ {
 		if len(b.keysPerFile[i]) > 0 {
 			heap.Push(h, HeapItem{fileIndex: i, elemIndex: 0})
@@ -149,7 +148,6 @@ func (b *memKVsAndBuffers) build(ctx context.Context) error {
 	}
 	heap.Init(h)
 
-	// 预分配空间（可选，根据实际情况调整）
 	b.keys = make([][]byte, 0, sumKVCnt)
 	b.values = make([][]byte, 0, sumKVCnt)
 
@@ -158,17 +156,13 @@ func (b *memKVsAndBuffers) build(ctx context.Context) error {
 		fileIdx := item.fileIndex
 		elemIdx := item.elemIndex
 
-		// 添加当前元素到结果
 		b.keys = append(b.keys, b.keysPerFile[fileIdx][elemIdx])
 		b.values = append(b.values, b.valuesPerFile[fileIdx][elemIdx])
 
-		// 推进该文件的指针，若还有元素则加入堆
 		nextElemIdx := elemIdx + 1
 		if nextElemIdx < len(b.keysPerFile[fileIdx]) {
-			heap.Push(h, HeapItem{
-				fileIndex: fileIdx,
-				elemIndex: nextElemIdx,
-			})
+			item.elemIndex = nextElemIdx
+			heap.Push(h, item)
 		}
 	}
 
