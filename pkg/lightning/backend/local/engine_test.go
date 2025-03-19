@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -268,7 +269,7 @@ func TestCreateSSTWriterDefaultBlockSize(t *testing.T) {
 	writerValue := reflect.ValueOf(sstWriter.writer).Elem()
 	blockSizeField := writerValue.FieldByName("blockSize")
 	require.True(t, blockSizeField.IsValid(), "blockSize field should be valid")
-	require.Equal(t, DefaultBlockSize, int(blockSizeField.Int()))
+	require.Equal(t, config.DefaultBlockSize, int(blockSizeField.Int()))
 
 	// Clean up
 	err = sstWriter.writer.Close()
