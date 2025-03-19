@@ -242,6 +242,7 @@ func TestIterOutputHasUniqueMemorySpace(t *testing.T) {
 	require.Greater(t, pool.TotalSize(), int64(0))
 }
 
+// TestCreateSSTWriterDefaultBlockSize tests that createSSTWriter will use the default block size of 16KB if the block size is not set.
 func TestCreateSSTWriterDefaultBlockSize(t *testing.T) {
 	db, tmpPath := makePebbleDB(t, nil)
 	t.Cleanup(func() {

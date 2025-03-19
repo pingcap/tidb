@@ -59,9 +59,6 @@ var (
 	normalIterStartKey = []byte{1}
 )
 
-// DefaultBlockSize ensures we are using a block size larger than 16KB, whereas 4KB is the default block size of Pebble.
-var DefaultBlockSize = 16 * 1024
-
 type importMutexState uint32
 
 const (
@@ -1427,9 +1424,13 @@ func newSSTWriter(path string, blockSize int) (*sstable.Writer, error) {
 		return nil, errors.Trace(err)
 	}
 
-	// Logic to check the block size we are using is 16KB by default.
+	// Logic to ensure the default block size is set to 16KB.
+	// If a smaller block size is used (e.g., 4KB, the default for Pebble),
+	// a single large SST file may generate a disproportionately large index block,
+	// potentially causing a memory spike and leading to an Out of Memory (OOM) scenario.
+	// If the user specifies a smaller block size, respect their choice.
 	if blockSize <= 0 {
-		blockSize = DefaultBlockSize
+		blockSize = config.DefaultBlockSize
 	}
 
 	writable := objstorageprovider.NewFileWritable(f)
