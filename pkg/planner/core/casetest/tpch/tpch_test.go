@@ -227,3 +227,167 @@ order by
 		"                        └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.customer.c_custkey, collate: binary]",
 		"                          └─TableFullScan 10000.00 mpp[tiflash] table:customer keep order:false, stats:pseudo"))
 }
+
+func TestQ9(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(` CREATE TABLE part (
+         P_PARTKEY bigint NOT NULL,
+         P_NAME varchar(55) NOT NULL,
+         P_MFGR char(25) NOT NULL,
+         P_BRAND char(10) NOT NULL,
+         P_TYPE varchar(25) NOT NULL,
+         P_SIZE bigint NOT NULL,
+         P_CONTAINER char(10) NOT NULL,
+         P_RETAILPRICE decimal(15,2) NOT NULL,
+         P_COMMENT varchar(23) NOT NULL,
+         PRIMARY KEY (P_PARTKEY) /*T![clustered_index] CLUSTERED */
+       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`
+CREATE TABLE supplier (
+    S_SUPPKEY bigint NOT NULL,
+    S_NAME char(25) NOT NULL,
+    S_ADDRESS varchar(40) NOT NULL,
+    S_NATIONKEY bigint NOT NULL,
+    S_PHONE char(15) NOT NULL,
+    S_ACCTBAL decimal(15,2) NOT NULL,
+    S_COMMENT varchar(101) NOT NULL,
+    PRIMARY KEY (S_SUPPKEY) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+`)
+	tk.MustExec(`
+CREATE TABLE lineitem (
+    L_ORDERKEY bigint NOT NULL,
+    L_PARTKEY bigint NOT NULL,
+    L_SUPPKEY bigint NOT NULL,
+    L_LINENUMBER bigint NOT NULL,
+    L_QUANTITY decimal(15,2) NOT NULL,
+    L_EXTENDEDPRICE decimal(15,2) NOT NULL,
+    L_DISCOUNT decimal(15,2) NOT NULL,
+    L_TAX decimal(15,2) NOT NULL,
+    L_RETURNFLAG char(1) NOT NULL,
+    L_LINESTATUS char(1) NOT NULL,
+    L_SHIPDATE date NOT NULL,
+    L_COMMITDATE date NOT NULL,
+    L_RECEIPTDATE date NOT NULL,
+    L_SHIPINSTRUCT char(25) NOT NULL,
+    L_SHIPMODE char(10) NOT NULL,
+    L_COMMENT varchar(44) NOT NULL,
+    PRIMARY KEY (L_ORDERKEY, L_LINENUMBER) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+`)
+	tk.MustExec(`
+CREATE TABLE partsupp (
+    PS_PARTKEY bigint NOT NULL,
+    PS_SUPPKEY bigint NOT NULL,
+    PS_AVAILQTY bigint NOT NULL,
+    PS_SUPPLYCOST decimal(15,2) NOT NULL,
+    PS_COMMENT varchar(199) NOT NULL,
+    PRIMARY KEY (PS_PARTKEY, PS_SUPPKEY) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+`)
+	tk.MustExec(`
+CREATE TABLE orders (
+    O_ORDERKEY bigint NOT NULL,
+    O_CUSTKEY bigint NOT NULL,
+    O_ORDERSTATUS char(1) NOT NULL,
+    O_TOTALPRICE decimal(15,2) NOT NULL,
+    O_ORDERDATE date NOT NULL,
+    O_ORDERPRIORITY char(15) NOT NULL,
+    O_CLERK char(15) NOT NULL,
+    O_SHIPPRIORITY bigint NOT NULL,
+    O_COMMENT varchar(79) NOT NULL,
+    PRIMARY KEY (O_ORDERKEY) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`
+CREATE TABLE nation (
+    N_NATIONKEY bigint NOT NULL,
+    N_NAME char(25) NOT NULL,
+    N_REGIONKEY bigint NOT NULL,
+    N_COMMENT varchar(152) DEFAULT NULL,
+    PRIMARY KEY (N_NATIONKEY) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+`)
+	testkit.SetTiFlashReplica(t, dom, "test", "part")
+	testkit.SetTiFlashReplica(t, dom, "test", "supplier")
+	testkit.SetTiFlashReplica(t, dom, "test", "lineitem")
+	testkit.SetTiFlashReplica(t, dom, "test", "partsupp")
+	testkit.SetTiFlashReplica(t, dom, "test", "orders")
+	testkit.SetTiFlashReplica(t, dom, "test", "nation")
+	require.NoError(t, loadTableStats("test.part.json", dom))
+	require.NoError(t, loadTableStats("test.supplier.json", dom))
+	require.NoError(t, loadTableStats("test.lineitem.json", dom))
+	require.NoError(t, loadTableStats("test.partsupp.json", dom))
+	require.NoError(t, loadTableStats("test.orders.json", dom))
+	require.NoError(t, loadTableStats("test.nation.json", dom))
+	tk.MustQuery(`explain select
+	nation,
+	o_year,
+	sum(amount) as sum_profit
+from
+	(
+		select
+			n_name as nation,
+			extract(year from o_orderdate) as o_year,
+			l_extendedprice * (1 - l_discount) - ps_supplycost * l_quantity as amount
+		from
+			part,
+			supplier,
+			lineitem,
+			partsupp,
+			orders,
+			nation
+		where
+			s_suppkey = l_suppkey
+			and ps_suppkey = l_suppkey
+			and ps_partkey = l_partkey
+			and p_partkey = l_partkey
+			and o_orderkey = l_orderkey
+			and s_nationkey = n_nationkey
+			and p_name like '%dim%'
+	) as profit
+group by
+	nation,
+	o_year
+order by
+	nation,
+	o_year desc;`).Check(testkit.Rows(
+		"Sort_26 2406.00 root  test.nation.n_name, Column#51:desc",
+		"└─Projection_28 2406.00 root  test.nation.n_name, Column#51, Column#53",
+		"  └─HashAgg_32 2406.00 root  group by:Column#57, Column#58, funcs:sum(Column#56)->Column#53, funcs:firstrow(Column#57)->test.nation.n_name, funcs:firstrow(Column#58)->Column#51",
+		"    └─Projection_185 247789900.85 root  minus(mul(test.lineitem.l_extendedprice, minus(1, test.lineitem.l_discount)), mul(test.partsupp.ps_supplycost, test.lineitem.l_quantity))->Column#56, test.nation.n_name->Column#57, extract(YEAR, test.orders.o_orderdate)->Column#58",
+		"      └─Projection_36 247789900.85 root  test.lineitem.l_quantity, test.lineitem.l_extendedprice, test.lineitem.l_discount, test.partsupp.ps_supplycost, test.orders.o_orderdate, test.nation.n_name",
+		"        └─HashJoin_50 247789900.85 root  inner join, equal:[eq(test.lineitem.l_orderkey, test.orders.o_orderkey)]",
+		"          ├─TableReader_176(Build) 75000000.00 root  MppVersion: 3, data:ExchangeSender_175",
+		"          │ └─ExchangeSender_175 75000000.00 mpp[tiflash]  ExchangeType: PassThrough",
+		"          │   └─TableFullScan_174 75000000.00 mpp[tiflash] table:orders keep order:false",
+		"          └─HashJoin_105(Probe) 244182819.96 root  inner join, equal:[eq(test.lineitem.l_suppkey, test.partsupp.ps_suppkey) eq(test.lineitem.l_partkey, test.partsupp.ps_partkey)]",
+		"            ├─TableReader_171(Build) 40000000.00 root  MppVersion: 3, data:ExchangeSender_170",
+		"            │ └─ExchangeSender_170 40000000.00 mpp[tiflash]  ExchangeType: PassThrough",
+		"            │   └─TableFullScan_169 40000000.00 mpp[tiflash] table:partsupp keep order:false",
+		"            └─TableReader_123(Probe) 241491729.94 root  MppVersion: 3, data:ExchangeSender_122",
+		"              └─ExchangeSender_122 241491729.94 mpp[tiflash]  ExchangeType: PassThrough",
+		"                └─Projection_121 241491729.94 mpp[tiflash]  test.nation.n_name, test.lineitem.l_orderkey, test.lineitem.l_partkey, test.lineitem.l_suppkey, test.lineitem.l_quantity, test.lineitem.l_extendedprice, test.lineitem.l_discount",
+		"                  └─HashJoin_107 241491729.94 mpp[tiflash]  inner join, equal:[eq(test.lineitem.l_partkey, test.part.p_partkey)]",
+		"                    ├─ExchangeReceiver_72(Build) 8000000.00 mpp[tiflash]  ",
+		"                    │ └─ExchangeSender_71 8000000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.part.p_partkey, collate: binary]",
+		`                    │   └─Selection_70 8000000.00 mpp[tiflash]  like(test.part.p_name, "%dim%", 92)`,
+		"                    │     └─TableFullScan_69 10000000.00 mpp[tiflash] table:part pushed down filter:empty, keep order:false",
+		"                    └─ExchangeReceiver_68(Probe) 300825282.01 mpp[tiflash]  ",
+		"                      └─ExchangeSender_67 300825282.01 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.lineitem.l_partkey, collate: binary]",
+		"                        └─Projection_66 300825282.01 mpp[tiflash]  test.nation.n_name, test.lineitem.l_orderkey, test.lineitem.l_partkey, test.lineitem.l_suppkey, test.lineitem.l_quantity, test.lineitem.l_extendedprice, test.lineitem.l_discount",
+		"                          └─HashJoin_54 300825282.01 mpp[tiflash]  inner join, equal:[eq(test.supplier.s_suppkey, test.lineitem.l_suppkey)]",
+		"                            ├─ExchangeReceiver_62(Build) 499986.00 mpp[tiflash]  ",
+		"                            │ └─ExchangeSender_61 499986.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.supplier.s_suppkey, collate: binary]",
+		"                            │   └─Projection_60 499986.00 mpp[tiflash]  test.nation.n_name, test.supplier.s_suppkey",
+		"                            │     └─HashJoin_55 499986.00 mpp[tiflash]  inner join, equal:[eq(test.nation.n_nationkey, test.supplier.s_nationkey)]",
+		"                            │       ├─ExchangeReceiver_58(Build) 25.00 mpp[tiflash]  ",
+		"                            │       │ └─ExchangeSender_57 25.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+		"                            │       │   └─TableFullScan_56 25.00 mpp[tiflash] table:nation keep order:false",
+		"                            │       └─TableFullScan_59(Probe) 500000.00 mpp[tiflash] table:supplier keep order:false",
+		"                            └─ExchangeReceiver_65(Probe) 300005811.00 mpp[tiflash]  ",
+		"                              └─ExchangeSender_64 300005811.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.lineitem.l_suppkey, collate: binary]",
+		"                                └─TableFullScan_63 300005811.00 mpp[tiflash] table:lineitem keep order:false",
+	))
+}
