@@ -77,15 +77,13 @@ func checkFileCleaned(t *testing.T, jobID, taskID int64, sortStorageURI string) 
 	}
 }
 
-func checkFileExist(t *testing.T, taskID int64, sortStorageURI string) {
+func checkFileExist(t *testing.T, sortStorageURI string, prefix string) {
 	storeBackend, err := storage.ParseBackend(sortStorageURI, nil)
 	require.NoError(t, err)
 	extStore, err := storage.NewWithDefaultOpt(context.Background(), storeBackend)
 	require.NoError(t, err)
-	prefix := strconv.Itoa(int(taskID))
 	dataFiles, _, err := external.GetAllFileNames(context.Background(), extStore, prefix)
 	require.NoError(t, err)
-	require.Greater(t, taskID, int64(0))
 	require.Greater(t, len(dataFiles), 0)
 }
 
@@ -193,7 +191,7 @@ func TestGlobalSortBasic(t *testing.T) {
 	checkDataAndShowJobs(t, tk, size)
 	checkExternalFields(t, tk)
 	taskID := getTaskID(t, tk)
-	checkFileExist(t, taskID, cloudStorageURI)
+	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/write-ingest")
 	<-ch
 	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
 
@@ -202,7 +200,8 @@ func TestGlobalSortBasic(t *testing.T) {
 	checkDataAndShowJobs(t, tk, size)
 	checkExternalFields(t, tk)
 	taskID = getTaskID(t, tk)
-	checkFileExist(t, taskID, cloudStorageURI)
+	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/write-ingest")
+	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/merge-sort")
 	<-ch
 	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
 
@@ -210,7 +209,8 @@ func TestGlobalSortBasic(t *testing.T) {
 	checkDataAndShowJobs(t, tk, size)
 	checkExternalFields(t, tk)
 	taskID = getTaskID(t, tk)
-	checkFileExist(t, taskID, cloudStorageURI)
+	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/write-ingest")
+	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/merge-sort")
 	<-ch
 	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
 }

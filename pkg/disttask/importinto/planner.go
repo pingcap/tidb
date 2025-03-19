@@ -392,7 +392,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 	if planCtx.GlobalSort {
 		for i, spec := range specs {
 			if w, ok := spec.(*WriteIngestSpec); ok {
-				w.ExternalPath = externalPlanMetaPath(planCtx.TaskID, proto.Step2Dirname(proto.ImportInto, proto.BackfillStepWriteAndIngest), i+1)
+				w.ExternalPath = externalPlanMetaPath(planCtx.TaskID, proto.Step2Dirname(proto.ImportInto, proto.ImportStepWriteAndIngest), i+1)
 				if err := w.WriteJSONToExternalStorage(planCtx.Ctx, controller.GlobalSortStore, w.WriteIngestStepMeta); err != nil {
 					return nil, errors.Trace(err)
 				}
