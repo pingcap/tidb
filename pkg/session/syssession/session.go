@@ -72,7 +72,7 @@ type session struct {
 	// In most cases, only the "owner" can do operations on the session.
 	// If `owner == nil`, it means the session is closed and should not be used.
 	owner sessionOwner
-	// seq is a monotone increasing uint64 to provide the an unique sequence number for each operation
+	// seq is a monotone increasing uint64 to provide the unique sequence number for each operation
 	seq uint64
 	// inUse is the counter to record how many operations are on going on the session.
 	// When `EnterOperation` is called, it will increase the counter.
