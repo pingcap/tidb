@@ -1938,13 +1938,11 @@ func (w *partialIndexWorker) getRetTpsForIndexScan(handleCols plannerutil.Handle
 func getRetTpsForSingleIndexScan(handleCols plannerutil.HandleCols, outputColumns []*expression.Column, idxCols []*expression.Column, idxColLens []int, indexColLen int) []*types.FieldType {
 	var tps []*types.FieldType
 	for i, idxCol := range idxCols {
-		if i < indexColLen {
-			if idxColLens[i] == types.UnspecifiedLength {
-				for _, outCol := range outputColumns {
-					if idxCol.ID == outCol.ID {
-						tps = append(tps, idxCol.RetType)
-						break
-					}
+		if i < indexColLen && idxColLens[i] == types.UnspecifiedLength {
+			for _, outCol := range outputColumns {
+				if idxCol.ID == outCol.ID {
+					tps = append(tps, idxCol.RetType)
+					break
 				}
 			}
 		}
