@@ -2784,14 +2784,13 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 		// <1,2> in node B           <1,null,gid=1> in node B
 		if len(partitionCols) != 0 && !la.SCtx().GetSessionVars().EnableSkewDistinctAgg {
 			childProp := &property.PhysicalProperty{
-				TaskTp:                 property.MppTaskType,
-				ExpectedCnt:            math.MaxFloat64,
-				MPPPartitionTp:         property.HashType,
-				MPPPartitionCols:       partitionCols,
-				CanAddEnforcer:         true,
-				RejectSort:             true,
-				CTEProducerStatus:      prop.CTEProducerStatus,
-				MPPExchangerEliminable: true,
+				TaskTp:            property.MppTaskType,
+				ExpectedCnt:       math.MaxFloat64,
+				MPPPartitionTp:    property.HashType,
+				MPPPartitionCols:  partitionCols,
+				CanAddEnforcer:    true,
+				RejectSort:        true,
+				CTEProducerStatus: prop.CTEProducerStatus,
 			}
 			agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.Schema().Clone())

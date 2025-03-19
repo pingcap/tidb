@@ -255,9 +255,6 @@ type PhysicalProperty struct {
 		*expression.VSInfo
 		TopK uint32
 	}
-
-	// MPPExchangerEliminable indicates whether the MPPPartitionExchanger can be eliminated.
-	MPPExchangerEliminable bool
 }
 
 // NewPhysicalProperty builds property from columns.
