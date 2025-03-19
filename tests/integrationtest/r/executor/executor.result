@@ -2454,6 +2454,10 @@ select x.a from (select 1 a) `x`, (select 2 a) `x`;
 Error 1066 (42000): Not unique table/alias: 'x'
 select a from (select 1 a), (select 2 a);
 Error 1248 (42000): Every derived table must have its own alias
+select * from (select 1 union select 2);
+Error 1248 (42000): Every derived table must have its own alias
+select * from (select 1 INTERSECT select 2);
+Error 1248 (42000): Every derived table must have its own alias
 set sql_mode = 'oracle';
 select a, b from (select 1 a) ``, (select 2 b) ``;
 a	b
@@ -2472,6 +2476,12 @@ select x.a from (select 1 a) `x`, (select 2 a) `x`;
 Error 1052 (23000): Column 'a' in field list is ambiguous
 select a from (select 1 a), (select 2 a);
 Error 1052 (23000): Column 'a' in field list is ambiguous
+select * from (select 1 union select 2);
+1
+2
+1
+select * from (select 1 INTERSECT select 2);
+1
 set sql_mode = default;
 drop table if exists th;
 create table th (a int, b int) partition by hash(a) partitions 3;
