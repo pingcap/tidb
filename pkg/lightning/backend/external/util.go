@@ -364,12 +364,12 @@ func marshalWithOverride(src any, hideCond func(f reflect.StructField) bool) ([]
 	var fields []reflect.StructField
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
-		if f.PkgPath != "" { // unexported
+		if !f.IsExported() {
 			continue
 		}
 		newTag := f.Tag
 		if hideCond(f) {
-			newTag = reflect.StructTag(`json:"-"`)
+			newTag = `json:"-"`
 		}
 		fields = append(fields, reflect.StructField{
 			Name:      f.Name,
@@ -384,7 +384,7 @@ func marshalWithOverride(src any, hideCond func(f reflect.StructField) bool) ([]
 	j := 0
 	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
-		if f.PkgPath != "" {
+		if !f.IsExported() {
 			continue
 		}
 		newVal.Field(j).Set(v.Field(i))
@@ -438,7 +438,7 @@ func (m BaseExternalMeta) WriteJSONToExternalStorage(ctx context.Context, store 
 // ReadJSONFromExternalStorage reads and unmarshals JSON from external storage into the provided alias.
 // Usage: Retrieve external meta for further processing.
 func (m BaseExternalMeta) ReadJSONFromExternalStorage(ctx context.Context, store storage.ExternalStorage, a any) error {
-	if m.ExternalPath == "" || store == nil {
+	if m.ExternalPath == "" {
 		return nil
 	}
 	data, err := store.ReadFile(ctx, m.ExternalPath)

@@ -16,7 +16,9 @@ package addindextest
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -27,6 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -59,17 +62,31 @@ func genStorageURI(t *testing.T) (host string, port uint16, uri string) {
 		fmt.Sprintf("gs://sorted/addindex?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
 }
 
-func checkFileCleaned(t *testing.T, jobID int64, sortStorageURI string) {
+func checkFileCleaned(t *testing.T, jobID, taskID int64, sortStorageURI string) {
 	storeBackend, err := storage.ParseBackend(sortStorageURI, nil)
 	require.NoError(t, err)
 	extStore, err := storage.NewWithDefaultOpt(context.Background(), storeBackend)
 	require.NoError(t, err)
-	prefix := strconv.Itoa(int(jobID))
-	dataFiles, statFiles, err := external.GetAllFileNames(context.Background(), extStore, prefix)
+	for _, id := range []int64{jobID, taskID} {
+		prefix := strconv.Itoa(int(id))
+		dataFiles, statFiles, err := external.GetAllFileNames(context.Background(), extStore, prefix)
+		require.NoError(t, err)
+		require.Greater(t, jobID, int64(0))
+		require.Equal(t, 0, len(dataFiles))
+		require.Equal(t, 0, len(statFiles))
+	}
+}
+
+func checkFileExist(t *testing.T, taskID int64, sortStorageURI string) {
+	storeBackend, err := storage.ParseBackend(sortStorageURI, nil)
 	require.NoError(t, err)
-	require.Greater(t, jobID, int64(0))
-	require.Equal(t, 0, len(dataFiles))
-	require.Equal(t, 0, len(statFiles))
+	extStore, err := storage.NewWithDefaultOpt(context.Background(), storeBackend)
+	require.NoError(t, err)
+	prefix := strconv.Itoa(int(taskID))
+	dataFiles, _, err := external.GetAllFileNames(context.Background(), extStore, prefix)
+	require.NoError(t, err)
+	require.Greater(t, taskID, int64(0))
+	require.Greater(t, len(dataFiles), 0)
 }
 
 func checkDataAndShowJobs(t *testing.T, tk *testkit.TestKit, count int) {
@@ -79,6 +96,50 @@ func checkDataAndShowJobs(t *testing.T, tk *testkit.TestKit, count int) {
 	require.Contains(t, rs[0][12], "ingest")
 	require.Contains(t, rs[0][12], "cloud")
 	require.Equal(t, rs[0][7], strconv.Itoa(count))
+}
+
+func assertExternalField(t *testing.T, subtaskMeta *ddl.BackfillSubTaskMeta) {
+	// Reflect on subtaskMeta to check fields with `external:"true"` tag
+	v := reflect.ValueOf(subtaskMeta)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	typ := v.Type()
+	for i := 0; i < v.NumField(); i++ {
+		field := typ.Field(i)
+		if field.Tag.Get("external") == "true" {
+			fv := v.Field(i)
+			switch fv.Kind() {
+			case reflect.Ptr:
+				require.Nil(t, fv.Interface(), "Field "+field.Name+" should be nil")
+			case reflect.Struct:
+				require.True(t, fv.IsZero(), "Field "+field.Name+" should be empty")
+			case reflect.Slice:
+				require.Empty(t, fv.Interface(), "Field "+field.Name+" should be empty")
+			default:
+				t.Fatalf("unexpected field type %s", fv.Kind())
+			}
+		}
+	}
+}
+
+func checkExternalFields(t *testing.T, tk *testkit.TestKit) {
+	// fetch subtask meta from tk, and check fields with `external:"true"` tag
+	rs := tk.MustQuery("select meta from mysql.tidb_background_subtask").Rows()
+	for _, r := range rs {
+		var subtaskMeta ddl.BackfillSubTaskMeta
+		require.NoError(t, json.Unmarshal([]byte(r[0].(string)), &subtaskMeta))
+		assertExternalField(t, &subtaskMeta)
+	}
+}
+
+func getTaskID(t *testing.T, tk *testkit.TestKit) int64 {
+	rs := tk.MustQuery("select id from mysql.tidb_global_task").Rows()
+	require.Len(t, rs, 1)
+	// convert string to int64
+	id, err := strconv.ParseInt(rs[0][0].(string), 10, 64)
+	require.NoError(t, err)
+	return id
 }
 
 func TestGlobalSortBasic(t *testing.T) {
@@ -130,19 +191,28 @@ func TestGlobalSortBasic(t *testing.T) {
 
 	tk.MustExec("alter table t add index idx(a);")
 	checkDataAndShowJobs(t, tk, size)
+	checkExternalFields(t, tk)
+	taskID := getTaskID(t, tk)
+	checkFileExist(t, taskID, cloudStorageURI)
 	<-ch
-	checkFileCleaned(t, jobID, cloudStorageURI)
+	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()")
 	tk.MustExec("alter table t add index idx1(a);")
 	checkDataAndShowJobs(t, tk, size)
+	checkExternalFields(t, tk)
+	taskID = getTaskID(t, tk)
+	checkFileExist(t, taskID, cloudStorageURI)
 	<-ch
-	checkFileCleaned(t, jobID, cloudStorageURI)
+	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
 
 	tk.MustExec("alter table t add unique index idx2(a);")
 	checkDataAndShowJobs(t, tk, size)
+	checkExternalFields(t, tk)
+	taskID = getTaskID(t, tk)
+	checkFileExist(t, taskID, cloudStorageURI)
 	<-ch
-	checkFileCleaned(t, jobID, cloudStorageURI)
+	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
 }
 
 func TestGlobalSortMultiSchemaChange(t *testing.T) {

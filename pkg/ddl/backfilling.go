@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -66,6 +67,10 @@ const (
 	typeReorgPartitionWorker
 
 	typeCount
+)
+
+const (
+	externalMetaName = "meta.json"
 )
 
 // BackupFillerTypeCount represents the count of ddl jobs that need to do backfill.
@@ -1279,4 +1284,12 @@ func (n *doneTaskKeeper) updateNextKey(doneTaskID int, next kv.Key) {
 		return
 	}
 	n.doneTaskNextKey[doneTaskID] = next
+}
+
+func externalPlanMetaPath(taskID int64, step string, idx int) string {
+	return path.Join(strconv.FormatInt(taskID, 10), "plan", step, strconv.Itoa(idx), externalMetaName)
+}
+
+func externalSubtaskMetaPath(taskID int64, subtaskID int64) string {
+	return path.Join(strconv.FormatInt(taskID, 10), strconv.FormatInt(subtaskID, 10), externalMetaName)
 }

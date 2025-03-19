@@ -20,9 +20,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"math"
-	"path"
 	"sort"
-	"strconv"
 	"time"
 
 	"github.com/docker/go-units"
@@ -141,7 +139,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 				m := &BackfillSubTaskMeta{
 					MetaGroups: []*external.SortedKVMeta{},
 				}
-				metaBytes, _ := json.Marshal(m)
+				metaBytes, _ := m.Marshal()
 				metaArr := make([][]byte, 0, 16)
 				metaArr = append(metaArr, metaBytes)
 				failpoint.Return(metaArr, nil)
@@ -347,7 +345,7 @@ func generatePlanForPhysicalTable(
 			if end == len(recordRegionMetas) {
 				subTaskMeta.RowEnd = endKey
 			}
-			metaBytes, err := json.Marshal(subTaskMeta)
+			metaBytes, err := subTaskMeta.Marshal()
 			if err != nil {
 				return false, err
 			}
@@ -443,13 +441,17 @@ func generateGlobalSortIngestPlan(
 	}
 	// write external meta to storage when using global sort
 	for i, m := range metaArr {
-		if err := writeExternalBackfillSubTaskMeta(ctx, cloudStorageURI, m, ExternalGlobalSortIngestPlanMetaPath(task.ID, i+1)); err != nil {
+		if err := writeExternalBackfillSubTaskMeta(ctx, cloudStorageURI, m, externalPlanMetaPath(
+			task.ID,
+			proto.Step2Dirname(proto.Backfill, proto.BackfillStepWriteAndIngest),
+			i+1,
+		)); err != nil {
 			return nil, err
 		}
 	}
 	metas := make([][]byte, 0, len(metaArr))
 	for _, m := range metaArr {
-		metaBytes, err := json.Marshal(m)
+		metaBytes, err := m.Marshal()
 		if err != nil {
 			return nil, err
 		}
@@ -634,13 +636,16 @@ func generateMergePlan(
 
 	// write external meta to storage when using global sort
 	for i, m := range metaArr {
-		if err := writeExternalBackfillSubTaskMeta(ctx, cloudStorageURI, m, ExternalMergePlanMetaPath(task.ID, i+1)); err != nil {
+		if err := writeExternalBackfillSubTaskMeta(ctx, cloudStorageURI, m, externalPlanMetaPath(
+			task.ID,
+			proto.Step2Dirname(proto.Backfill, proto.BackfillStepMergeSort),
+			i+1)); err != nil {
 			return nil, err
 		}
 	}
 	metas := make([][]byte, 0, len(metaArr))
 	for _, m := range metaArr {
-		metaBytes, err := json.Marshal(m)
+		metaBytes, err := m.Marshal()
 		if err != nil {
 			return nil, err
 		}
@@ -716,14 +721,4 @@ func forEachBackfillSubtaskMeta(
 		fn(subtask)
 	}
 	return nil
-}
-
-// ExternalGlobalSortIngestPlanMetaPath returns the path of the external meta file for global sort ingest plan.
-func ExternalGlobalSortIngestPlanMetaPath(taskID int64, idx int) string {
-	return path.Join(strconv.FormatInt(taskID, 10), "global-sort-ingest-plan", strconv.Itoa(idx), "meta.json")
-}
-
-// ExternalMergePlanMetaPath returns the path of the external meta file for merge plan.
-func ExternalMergePlanMetaPath(taskID int64, idx int) string {
-	return path.Join(strconv.FormatInt(taskID, 10), "merge-plan", strconv.Itoa(idx), "meta.json")
 }

@@ -255,12 +255,12 @@ func (r *readIndexStepExecutor) onFinished(ctx context.Context, subtask *proto.S
 
 	// write external meta to storage when using global sort
 	if r.isGlobalSort() {
-		if err := writeExternalBackfillSubTaskMeta(ctx, r.cloudStorageURI, sm, ExternalSubtaskMetaPath(subtask.TaskID, subtask.ID)); err != nil {
+		if err := writeExternalBackfillSubTaskMeta(ctx, r.cloudStorageURI, sm, externalSubtaskMetaPath(subtask.TaskID, subtask.ID)); err != nil {
 			return err
 		}
 	}
 
-	meta, err := json.Marshal(sm)
+	meta, err := sm.Marshal()
 	if err != nil {
 		return err
 	}

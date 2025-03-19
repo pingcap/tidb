@@ -360,7 +360,10 @@ func TestSplitForOneSubtask(t *testing.T) {
 	}, writeSpec.RangeSplitKeys)
 }
 
-func TestWriteIngestPlanMetaPath(t *testing.T) {
-	require.Equal(t, "1/write-ingest-plan/1/meta.json", writeIngestPlanMetaPath(1, 1))
-	require.Equal(t, "2/write-ingest-plan/3/meta.json", writeIngestPlanMetaPath(2, 3))
+func TestExternalMetaPath(t *testing.T) {
+	require.Equal(t, "1/plan/merge-sort/1/meta.json", externalPlanMetaPath(1, proto.Step2Dirname(proto.ImportInto, proto.ImportStepMergeSort), 1))
+	require.Equal(t, "2/plan/write-ingest/3/meta.json", externalPlanMetaPath(2, proto.Step2Dirname(proto.ImportInto, proto.ImportStepWriteAndIngest), 3))
+
+	require.Equal(t, "1/1/meta.json", externalSubtaskMetaPath(1, 1))
+	require.Equal(t, "2/3/meta.json", externalSubtaskMetaPath(2, 3))
 }

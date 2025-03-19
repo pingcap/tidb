@@ -14,7 +14,10 @@
 
 package proto
 
-import "fmt"
+import (
+	"fmt"
+	"strings" // added for string replacement
+)
 
 // Step is the step of task.
 type Step int64
@@ -45,6 +48,13 @@ func Step2Str(t TaskType, s Step) string {
 		return exampleStep2Str(s)
 	}
 	return fmt.Sprintf("unknown type %s", t)
+}
+
+// Step2Dirname converts step to dirname.
+// replace '&' with '-' in the step string.
+func Step2Dirname(t TaskType, s Step) string {
+	stepStr := Step2Str(t, s)
+	return strings.ReplaceAll(stepStr, "&", "-")
 }
 
 // Steps of example task type.

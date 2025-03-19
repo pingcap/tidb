@@ -16,6 +16,8 @@ package importinto
 
 import (
 	"fmt"
+	"path"
+	"strconv"
 	"sync"
 	"sync/atomic"
 
@@ -25,6 +27,10 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+)
+
+const (
+	externalMetaName = "meta.json"
 )
 
 // TaskMeta is the task of IMPORT INTO.
@@ -66,8 +72,8 @@ type ImportStepMeta struct {
 	SortedIndexMetas map[int64]*external.SortedKVMeta `external:"true"`
 }
 
-// MarshalJSON implements json.Marshaler interface.
-func (m ImportStepMeta) MarshalJSON() ([]byte, error) {
+// Marshal marshals the import step meta to JSON.
+func (m ImportStepMeta) Marshal() ([]byte, error) {
 	type alias ImportStepMeta
 	return m.BaseExternalMeta.Marshal(alias(m))
 }
@@ -87,8 +93,8 @@ type MergeSortStepMeta struct {
 	external.SortedKVMeta `external:"true"`
 }
 
-// MarshalJSON implements json.Marshaler interface.
-func (m MergeSortStepMeta) MarshalJSON() ([]byte, error) {
+// Marshal marshal the merge sort step meta to JSON.
+func (m MergeSortStepMeta) Marshal() ([]byte, error) {
 	type alias MergeSortStepMeta
 	return m.BaseExternalMeta.Marshal(alias(m))
 }
@@ -108,8 +114,8 @@ type WriteIngestStepMeta struct {
 	Result Result
 }
 
-// MarshalJSON implements json.Marshaler interface.
-func (m WriteIngestStepMeta) MarshalJSON() ([]byte, error) {
+// Marshal marshals the write ingest step meta to JSON.
+func (m WriteIngestStepMeta) Marshal() ([]byte, error) {
 	type alias WriteIngestStepMeta
 	return m.BaseExternalMeta.Marshal(alias(m))
 }
@@ -189,4 +195,12 @@ type Checksum struct {
 // This portion of the code may be implemented uniformly in the framework in the future.
 type Result struct {
 	LoadedRowCnt uint64
+}
+
+func externalPlanMetaPath(taskID int64, step string, idx int) string {
+	return path.Join(strconv.FormatInt(taskID, 10), "plan", step, strconv.Itoa(idx), externalMetaName)
+}
+
+func externalSubtaskMetaPath(taskID int64, subtaskID int64) string {
+	return path.Join(strconv.FormatInt(taskID, 10), strconv.FormatInt(subtaskID, 10), externalMetaName)
 }

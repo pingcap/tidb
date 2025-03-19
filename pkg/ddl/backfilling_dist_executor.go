@@ -74,8 +74,8 @@ type BackfillSubTaskMeta struct {
 	external.SortedKVMeta `json:",inline" external:"true"`
 }
 
-// MarshalJSON implements json.Marshaler interface.
-func (m BackfillSubTaskMeta) MarshalJSON() ([]byte, error) {
+// Marshal marshals the backfill subtask meta to JSON.
+func (m BackfillSubTaskMeta) Marshal() ([]byte, error) {
 	type alias BackfillSubTaskMeta
 	return m.BaseExternalMeta.Marshal(alias(m))
 }

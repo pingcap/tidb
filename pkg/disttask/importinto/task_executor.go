@@ -17,7 +17,6 @@ package importinto
 import (
 	"context"
 	"encoding/json"
-	"path"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -272,7 +271,7 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 	}
 
 	s.sharedVars.Delete(subtaskMeta.ID)
-	newMeta, err := json.Marshal(subtaskMeta)
+	newMeta, err := subtaskMeta.Marshal()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -385,7 +384,7 @@ func (m *mergeSortStepExecutor) onFinished(ctx context.Context, subtask *proto.S
 	}
 
 	m.subtaskSortedKVMeta = nil
-	newMeta, err := json.Marshal(subtaskMeta)
+	newMeta, err := subtaskMeta.Marshal()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -491,7 +490,7 @@ func (e *writeAndIngestStepExecutor) onFinished(ctx context.Context, subtask *pr
 		e.logger.Warn("failed to cleanup engine", zap.Error(err))
 	}
 
-	newMeta, err := json.Marshal(subtaskMeta)
+	newMeta, err := subtaskMeta.Marshal()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -616,11 +615,4 @@ func (e *importExecutor) Close() {
 	task := e.GetTaskBase()
 	metricsManager.unregister(task.ID)
 	e.BaseTaskExecutor.Close()
-}
-
-func externalSubtaskMetaPath(taskID int64, subtaskID int64) string {
-	// generate a unique file name for the meta.
-	prefix := path.Join(strconv.FormatInt(taskID, 10), strconv.FormatInt(subtaskID, 10))
-	// taskID/subtaskID/meta.json
-	return path.Join(prefix, "meta.json")
 }

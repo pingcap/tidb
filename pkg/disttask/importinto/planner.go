@@ -19,7 +19,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"math"
-	"path"
 	"strconv"
 
 	"github.com/pingcap/errors"
@@ -166,7 +165,7 @@ func (s *ImportSpec) ToSubtaskMeta(planner.PlanCtx) ([]byte, error) {
 		ID:     s.ID,
 		Chunks: s.Chunks,
 	}
-	return json.Marshal(importStepMeta)
+	return importStepMeta.Marshal()
 }
 
 // WriteIngestSpec is the specification of a write-ingest pipeline.
@@ -176,7 +175,7 @@ type WriteIngestSpec struct {
 
 // ToSubtaskMeta converts the write-ingest spec to subtask meta.
 func (s *WriteIngestSpec) ToSubtaskMeta(planner.PlanCtx) ([]byte, error) {
-	return json.Marshal(s.WriteIngestStepMeta)
+	return s.WriteIngestStepMeta.Marshal()
 }
 
 // MergeSortSpec is the specification of a merge-sort pipeline.
@@ -186,7 +185,7 @@ type MergeSortSpec struct {
 
 // ToSubtaskMeta converts the merge-sort spec to subtask meta.
 func (s *MergeSortSpec) ToSubtaskMeta(planner.PlanCtx) ([]byte, error) {
-	return json.Marshal(s.MergeSortStepMeta)
+	return s.MergeSortStepMeta.Marshal()
 }
 
 // PostProcessSpec is the specification of a post process pipeline.
@@ -393,7 +392,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 	if planCtx.GlobalSort {
 		for i, spec := range specs {
 			if w, ok := spec.(*WriteIngestSpec); ok {
-				w.ExternalPath = writeIngestPlanMetaPath(planCtx.TaskID, i+1)
+				w.ExternalPath = externalPlanMetaPath(planCtx.TaskID, proto.Step2Dirname(proto.ImportInto, proto.BackfillStepWriteAndIngest), i+1)
 				if err := w.WriteJSONToExternalStorage(planCtx.Ctx, controller.GlobalSortStore, w.WriteIngestStepMeta); err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -584,9 +583,4 @@ func getRangeSplitter(
 		regionSplitSize,
 		regionSplitKeys,
 	)
-}
-
-func writeIngestPlanMetaPath(taskID int64, idx int) string {
-	prefix := path.Join(strconv.FormatInt(taskID, 10), "write-ingest-plan", strconv.Itoa(idx))
-	return path.Join(prefix, "meta.json")
 }
