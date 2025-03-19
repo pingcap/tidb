@@ -241,9 +241,14 @@ func NewWriteIndexToExternalStoragePipeline(
 	}
 
 	memCap := resource.Mem.Capacity()
-	memSizePerIndex := uint64(memCap / int64(writerCnt*2*len(idxInfos)))
+	memSizePerWriter := uint64(memCap / int64(writerCnt*2*len(idxInfos)))
+	if reorgMeta.UseLocalStorage {
+		// For global sort that use local disk, we can reuse the same writer for all index
+		// without worrying about the overlapping issue.
+		memSizePerWriter = uint64(memCap / int64(writerCnt*2))
+	}
 	failpoint.Inject("mockWriterMemSize", func() {
-		memSizePerIndex = 1 * size.GB
+		memSizePerWriter = 1 * size.GB
 	})
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, nil)
@@ -252,7 +257,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	writeOp := NewWriteExternalStoreOperator(
 		ctx, copCtx, sessPool, jobID, subtaskID,
 		tbl, indexes, writeStore, srcChkPool, writerCnt,
-		onClose, memSizePerIndex, reorgMeta,
+		onClose, memSizePerWriter, reorgMeta,
 	)
 	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, rowCntListener,
 		jobID, subtaskID, writeStore, mergeStore, readSummaryMap, resource)
@@ -264,7 +269,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	logutil.Logger(ctx).Info("build add index cloud storage operators",
 		zap.Int64("jobID", jobID),
 		zap.String("memCap", units.BytesSize(float64(memCap))),
-		zap.String("memSizePerIdx", units.BytesSize(float64(memSizePerIndex))),
+		zap.String("memSizePerWriter", units.BytesSize(float64(memSizePerWriter))),
 		zap.Int("avgRowSize", avgRowSize),
 		zap.Int("reader", readerCnt),
 		zap.Int("writer", writerCnt))
@@ -650,8 +655,7 @@ func (w *tableScanWorker) recycleChunk(chk *chunk.Chunk) {
 // WriteExternalStoreOperator writes index records to external storage.
 type WriteExternalStoreOperator struct {
 	*operator.AsyncOperator[IndexRecordChunk, IndexWriteResult]
-	logger     *zap.Logger
-	totalCount *atomic.Int64
+	logger *zap.Logger
 }
 
 // NewWriteExternalStoreOperator creates a new WriteExternalStoreOperator.
@@ -680,23 +684,29 @@ func NewWriteExternalStoreOperator(
 		}
 	}
 
-	totalCount := new(atomic.Int64)
+	prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
+	builder := external.NewWriterBuilder().
+		SetOnCloseFunc(onClose).
+		SetKeyDuplicationEncoding(hasUnique).
+		SetMemorySizeLimit(memoryQuota)
 	pool := workerpool.NewWorkerPool(
 		"WriteExternalStoreOperator",
 		util.DDL,
 		concurrency,
 		func() workerpool.Worker[IndexRecordChunk, IndexWriteResult] {
-			writers := make([]ingest.Writer, 0, len(indexes))
-			for i := range indexes {
-				builder := external.NewWriterBuilder().
-					SetOnCloseFunc(onClose).
-					SetKeyDuplicationEncoding(hasUnique).
-					SetMemorySizeLimit(memoryQuota).
-					SetGroupOffset(i)
+			var writers []ingest.Writer
+			if reorgMeta.UseLocalStorage {
 				writerID := uuid.New().String()
-				prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
 				writer := builder.Build(store, prefix, writerID)
-				writers = append(writers, writer)
+				writers = []ingest.Writer{writer}
+			} else {
+				writers = make([]ingest.Writer, 0, len(indexes))
+				for i := range indexes {
+					builder := builder.SetGroupOffset(i)
+					writerID := uuid.New().String()
+					writer := builder.Build(store, prefix, writerID)
+					writers = append(writers, writer)
+				}
 			}
 
 			return &indexIngestWorker{
@@ -709,20 +719,16 @@ func NewWriteExternalStoreOperator(
 				writers:      writers,
 				srcChunkPool: srcChunkPool,
 				reorgMeta:    reorgMeta,
-				totalCount:   totalCount,
 			}
 		})
 	return &WriteExternalStoreOperator{
-		AsyncOperator: operator.NewAsyncOperator[IndexRecordChunk, IndexWriteResult](ctx, pool),
+		AsyncOperator: operator.NewAsyncOperator(ctx, pool),
 		logger:        logutil.Logger(ctx),
-		totalCount:    totalCount,
 	}
 }
 
 // Close implements operator.Operator interface.
 func (o *WriteExternalStoreOperator) Close() error {
-	o.logger.Info("write external storage operator total count",
-		zap.Int64("count", o.totalCount.Load()))
 	return o.AsyncOperator.Close()
 }
 
@@ -801,8 +807,6 @@ type indexIngestWorker struct {
 
 	writers      []ingest.Writer
 	srcChunkPool *sync.Pool
-	// only available in global sort
-	totalCount *atomic.Int64
 }
 
 func (w *indexIngestWorker) HandleTask(ck IndexRecordChunk, send func(IndexWriteResult)) {
@@ -827,9 +831,6 @@ func (w *indexIngestWorker) HandleTask(ck IndexRecordChunk, send func(IndexWrite
 	if count == 0 {
 		logutil.Logger(w.ctx).Info("finish a index ingest task", zap.Int("id", ck.ID))
 		return
-	}
-	if w.totalCount != nil {
-		w.totalCount.Add(int64(count))
 	}
 	result.Added = count
 	if ResultCounterForTest != nil {
@@ -1049,16 +1050,9 @@ func (s *indexWriteResultSink) mergeLocalOverlappingFilesAndUpload() error {
 		afterMergedMu.Unlock()
 	}
 
-	fileLen := 0
-	for _, metaGroup := range cs.(*readIndexSummary).metaGroups {
-		fileLen += len(metaGroup.MultipleFilesStats)
-	}
-	allDataFiles := make([]string, 0, fileLen)
-	allStatFiles := make([]string, 0, fileLen)
-	for _, metaGroup := range cs.(*readIndexSummary).metaGroups {
-		allDataFiles = append(allDataFiles, metaGroup.GetDataFiles()...)
-		allStatFiles = append(allStatFiles, metaGroup.GetStatFiles()...)
-	}
+	mg := cs.(*readIndexSummary).metaGroups[0]
+	allDataFiles := mg.GetDataFiles()
+	allStatFiles := mg.GetStatFiles()
 
 	err := external.MergeOverlappingFiles(
 		s.ctx,

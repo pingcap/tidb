@@ -2230,7 +2230,11 @@ func writeChunkToLocal(
 			if needRestoreForIndexes[i] {
 				rsData = getRestoreData(c.TableInfo, copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, restoreDataBuf)
 			}
-			err = writeOneIndexKeyValue(ctx, writers[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
+			w := writers[0]
+			if len(writers) == len(indexes) {
+				w = writers[i]
+			}
+			err = writeOneIndexKeyValue(ctx, w, index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}

@@ -413,6 +413,7 @@ func (w *Writer) Close(ctx context.Context) error {
 	logutil.Logger(ctx).Info("close writer",
 		zap.String("writerID", w.writerID),
 		zap.Int("kv-cnt-cap", cap(w.kvLocations)),
+		zap.Int("offset", w.groupOffset),
 		zap.String("minKey", hex.EncodeToString(w.minKey)),
 		zap.String("maxKey", hex.EncodeToString(w.maxKey)))
 
