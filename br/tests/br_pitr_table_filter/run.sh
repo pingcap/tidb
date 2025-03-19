@@ -469,21 +469,9 @@ test_system_tables() {
 
     restart_services || { echo "Failed to restart services"; exit 1; }
 
-    echo "PiTR should error out when system tables are included with explicit filter"
-    restore_fail=0
-    run_br --pd "$PD_ADDR" restore point -f "*.*" -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" || restore_fail=1
-    if [ $restore_fail -ne 1 ]; then
-        echo "Expected restore to fail when including system tables with filter"
-        exit 1
-    fi
+    run_br --pd "$PD_ADDR" restore point -f "*.*" -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full"
 
-    # Also verify that specific system table filters fail
-    restore_fail=0
-    run_br --pd "$PD_ADDR" restore point -f "mysql.*" -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full" || restore_fail=1
-    if [ $restore_fail -ne 1 ]; then
-        echo "Expected restore to fail when explicitly filtering system tables"
-        exit 1
-    fi
+    run_br --pd "$PD_ADDR" restore point -f "mysql.*" -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full"
 
     rm -rf "$TEST_DIR/$TASK_NAME"
     echo "system tables test passed"

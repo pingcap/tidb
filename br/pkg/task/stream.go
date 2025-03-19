@@ -57,7 +57,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/oracle"
@@ -1365,13 +1364,6 @@ func RunStreamRestore(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// TODO: pitr filtered restore doesn't support restore system table yet
-	if cfg.ExplicitFilter {
-		if cfg.TableFilter.MatchSchema(mysql.SystemDB) {
-			return errors.Annotatef(berrors.ErrInvalidArgument,
-				"PiTR doesn't support custom filter to include system db, consider to exclude system db")
-		}
-	}
 	metaInfoProcessor := logclient.NewMetaKVInfoProcessor(logClient)
 	// only doesn't need to build if id map has been saved during log restore
 	idMapSaved := isCurrentIdMapSaved(taskInfo.CheckpointInfo)
@@ -1949,6 +1941,10 @@ func buildRewriteRules(schemasReplace *stream.SchemasReplace) map[int64]*restore
 		}
 		for oldTableID, tableReplace := range dbReplace.TableMap {
 			if tableReplace.FilteredOut {
+				continue
+			}
+			if utils.IsSysDB(dbReplace.Name) &&
+				(restoreutils.IsUnrecoverableTable(dbReplace.Name, tableReplace.Name) || restoreutils.IsStatsTable(dbReplace.Name, tableReplace.Name)) {
 				continue
 			}
 			if _, exist := rules[oldTableID]; !exist {

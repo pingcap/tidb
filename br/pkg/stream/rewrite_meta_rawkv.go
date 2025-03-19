@@ -219,7 +219,8 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 	if !exist {
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbID)
 	}
-	if dbReplace.FilteredOut {
+	// skip updating the system table meta kv, but what if a user created mysql.i_am_user_table?
+	if dbReplace.FilteredOut || utils.IsSysDB(dbReplace.Name) {
 		return nil, nil
 	}
 
