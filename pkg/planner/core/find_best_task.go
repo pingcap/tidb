@@ -188,13 +188,10 @@ func enumeratePhysicalPlans4Task(
 		iteration = iterateChildPlan4LogicalSequence
 	}
 	var fd *funcdep.FDSet
-	// while for join's both child, anyway and currently we should keep exchanger within the MPP for now
-	if prop.MPPExchangerEliminable {
-		if joinP, ok := p.Self().(*logicalop.LogicalJoin); ok {
-			if joinP.JoinType == logicalop.InnerJoin {
-				// TODO(hawkingrei): FD should be maintained as logical prop instead of constructing it in physical phase
-				fd = joinP.ExtractFD()
-			}
+	if joinP, ok := p.Self().(*logicalop.LogicalJoin); ok {
+		if joinP.JoinType == logicalop.InnerJoin {
+			// TODO(hawkingrei): FD should be maintained as logical prop instead of constructing it in physical phase
+			fd = joinP.ExtractFD()
 		}
 	}
 	for _, pp := range physicalPlans {
