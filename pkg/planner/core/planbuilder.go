@@ -3891,6 +3891,13 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	if !ok {
 		return nil, infoschema.ErrTableNotExists.FastGenByArgs()
 	}
+	if insert.Select != nil && variable.InsertSelectFastMode.Load() {
+		importStmt := &ast.ImportIntoStmt{
+			Table:  tn,
+			Select: insert.Select,
+		}
+		return b.buildImportInto(ctx, importStmt)
+	}
 	tnW := b.resolveCtx.GetTableName(tn)
 	tableInfo := tnW.TableInfo
 	if tableInfo.IsView() {

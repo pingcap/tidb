@@ -987,6 +987,9 @@ const (
 	// TiDBEnableSharedLockPromotion indicates whether the `select for share` statement would be executed
 	// as `select for update` statements which do acquire pessimistic locks.
 	TiDBEnableSharedLockPromotion = "tidb_enable_shared_lock_promotion"
+
+	// TiDBInsertSelectFastMode uses IMPORT INTO FROM SELECT to speed up INSERT INTO SELECT.
+	TiDBInsertSelectFastMode = "tidb_insert_select_fast_mode"
 )
 
 // TiDB vars that have only global scope
@@ -1568,6 +1571,7 @@ const (
 	DefOptEnableProjectionPushDown                    = true
 	DefTiDBEnableSharedLockPromotion                  = false
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
+	DefTiDBInsertSelectFastMode                       = false
 )
 
 // Process global variables.
@@ -1690,6 +1694,7 @@ var (
 
 	SchemaCacheSize           = atomic.NewUint64(DefTiDBSchemaCacheSize)
 	SchemaCacheSizeOriginText = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
+	InsertSelectFastMode      = atomic.NewBool(DefTiDBInsertSelectFastMode)
 )
 
 var (
