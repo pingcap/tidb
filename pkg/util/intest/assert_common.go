@@ -93,7 +93,6 @@ func init() {
 	failpoint.Inject("enableInternalCheck", func(val failpoint.Value) {
 		if val.(bool) {
 			EnableInternalCheck = true
-			InTest = true
 			EnableAssert = true
 		}
 	})
