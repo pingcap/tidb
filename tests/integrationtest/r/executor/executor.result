@@ -2476,11 +2476,11 @@ select x.a from (select 1 a) `x`, (select 2 a) `x`;
 Error 1052 (23000): Column 'a' in field list is ambiguous
 select a from (select 1 a), (select 2 a);
 Error 1052 (23000): Column 'a' in field list is ambiguous
-select * from (select 1 union select 2);
+select * from (select 1 union select 1);
 1
-2
 1
-select * from (select 1 INTERSECT select 2);
+select * from (select 1 INTERSECT select 1);
+1
 1
 set sql_mode = default;
 drop table if exists th;
