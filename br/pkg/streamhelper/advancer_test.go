@@ -939,6 +939,9 @@ func TestSubscriptionPanic(t *testing.T) {
 
 	require.NoError(t, adv.OnTick(ctx))
 	failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription.listenOver.aboutToSend", "5*panic")
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription.listenOver.aboutToSend"))
+	}()
 	ckpt := c.advanceCheckpoints()
 	c.flushAll()
 	cnt := 0
