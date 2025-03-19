@@ -380,7 +380,7 @@ func (src *TableScanTaskSource) adjustStartKey(start, end kv.Key) (adjusted kv.K
 			zap.String("start", hex.EncodeToString(start)),
 			zap.String("end", hex.EncodeToString(end)),
 		)
-		if intest.InTest {
+		if intest.EnableInternalCheck {
 			panic("invalid checkpoint key")
 		}
 		return start, false

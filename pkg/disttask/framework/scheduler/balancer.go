@@ -51,7 +51,7 @@ type balancer struct {
 
 func newBalancer(param Param) *balancer {
 	logger := logutil.ErrVerboseLogger()
-	if intest.InTest {
+	if intest.EnableInternalCheck {
 		logger = logger.With(zap.String("server-id", param.serverID))
 	}
 	return &balancer{

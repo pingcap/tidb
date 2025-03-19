@@ -394,7 +394,7 @@ func PollAvailableTableProgress(schemas infoschema.InfoSchema, _ sessionctx.Cont
 
 		progress, err := infosync.CalculateTiFlashProgress(availableTableID.ID, tableInfo.TiFlashReplica.Count, pollTiFlashContext.TiFlashStores)
 		if err != nil {
-			if intest.InTest && err.Error() != "EOF" {
+			if intest.EnableInternalCheck && err.Error() != "EOF" {
 				// In the test, the server cannot start up because the port is occupied.
 				// Although the port is random. so we need to quickly return when to
 				// fail to get tiflash sync.
