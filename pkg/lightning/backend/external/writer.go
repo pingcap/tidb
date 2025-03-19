@@ -320,6 +320,7 @@ func (b *WriterBuilder) BuildOneFile(
 		kvStore:        nil,
 		onClose:        b.onClose,
 		closed:         false,
+		onDup:          b.onDup,
 	}
 	return ret
 }
@@ -650,10 +651,7 @@ func (w *Writer) flushSortedKVs(ctx context.Context, dupLocs []membuf.SliceLocat
 		}
 	}()
 	w.rc.reset()
-	kvStore, err := NewKeyValueStore(ctx, dataWriter, w.rc)
-	if err != nil {
-		return "", "", "", err
-	}
+	kvStore := NewKeyValueStore(ctx, dataWriter, w.rc)
 
 	for _, pair := range w.kvLocations {
 		err = kvStore.addEncodedData(w.kvBuffer.GetSlice(pair))
@@ -713,10 +711,7 @@ func (w *Writer) writeDupKVs(ctx context.Context, kvLocs []membuf.SliceLocation)
 			_ = dupWriter.Close(ctx)
 		}
 	}()
-	dupStore, err := NewKeyValueStore(ctx, dupWriter, nil)
-	if err != nil {
-		return "", err
-	}
+	dupStore := NewKeyValueStore(ctx, dupWriter, nil)
 	for _, pair := range kvLocs {
 		err = dupStore.addEncodedData(w.kvBuffer.GetSlice(pair))
 		if err != nil {

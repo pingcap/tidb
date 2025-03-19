@@ -285,6 +285,8 @@ type mergeSortStepExecutor struct {
 	// 	max(max-merged-files * max-file-size / max-part-num(10000), min-part-size)
 	dataKVPartSize  int64
 	indexKVPartSize int64
+
+	indicesGenKV map[int64]genKVIndex
 }
 
 var _ execute.StepExecutor = &mergeSortStepExecutor{}
@@ -332,9 +334,25 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	prefix := subtaskPrefix(m.taskID, subtask.ID)
 
 	partSize := m.dataKVPartSize
+	onDup := external.OnDuplicateKeyRecord
 	if sm.KVGroup != dataKVGroup {
 		partSize = m.indexKVPartSize
+
+		indexID, err2 := strconv.Atoi(sm.KVGroup)
+		if err2 != nil {
+			// shouldn't happen
+			return errors.Trace(err2)
+		}
+		info, ok := m.indicesGenKV[int64(indexID)]
+		if !ok {
+			// shouldn't happen
+			return errors.Errorf("unknown index %d", indexID)
+		}
+		if !info.unique {
+			onDup = external.OnDuplicateKeyRemove
+		}
 	}
+
 	err = external.MergeOverlappingFiles(
 		logutil.WithFields(ctx, zap.String("kv-group", sm.KVGroup), zap.Int64("subtask-id", subtask.ID)),
 		sm.DataFiles,
@@ -345,7 +363,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		onClose,
 		subtask.Concurrency,
 		false,
-		external.OnDuplicateKeyIgnore,
+		onDup,
 	)
 	logger.Info(
 		"merge sort finished",
@@ -567,9 +585,10 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 		}, nil
 	case proto.ImportStepMergeSort:
 		return &mergeSortStepExecutor{
-			taskID:   task.ID,
-			taskMeta: &taskMeta,
-			logger:   logger,
+			taskID:       task.ID,
+			taskMeta:     &taskMeta,
+			logger:       logger,
+			indicesGenKV: indicesGenKV,
 		}, nil
 	case proto.ImportStepWriteAndIngest:
 		return &writeAndIngestStepExecutor{

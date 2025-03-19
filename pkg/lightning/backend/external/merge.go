@@ -76,6 +76,7 @@ func MergeOverlappingFiles(ctx context.Context,
 				blockSize,
 				onClose,
 				checkHotspot,
+				onDup,
 			)
 		})
 	}
@@ -140,6 +141,7 @@ func mergeOverlappingFilesInternal(
 	blockSize int,
 	onClose OnCloseFunc,
 	checkHotspot bool,
+	onDup OnDuplicateKey,
 ) (err error) {
 	task := log.BeginTask(logutil.Logger(ctx).With(
 		zap.String("writer-id", writerID),
@@ -165,6 +167,7 @@ func mergeOverlappingFilesInternal(
 		SetMemorySizeLimit(defaultOneWriterMemSizeLimit).
 		SetBlockSize(blockSize).
 		SetOnCloseFunc(onClose).
+		SetOnDup(onDup).
 		BuildOneFile(store, newFilePrefix, writerID)
 	err = writer.Init(ctx, partSize)
 	if err != nil {

@@ -58,6 +58,19 @@ type OneFileWriter struct {
 	onClose OnCloseFunc
 	closed  bool
 
+	// for duplicate detection.
+	onDup      OnDuplicateKey
+	pivotKey   []byte
+	pivotValue []byte
+	// number of key that duplicate with pivotKey, include pivotKey itself, so it
+	// always >= 1 after init.
+	currDupCnt int
+	// below fields are only used when onDup is OnDuplicateKeyRecord.
+	recordedDupCnt int
+	dupFile        string
+	dupWriter      storage.ExternalFileWriter
+	dupKVStore     *KeyValueStore
+
 	minKey []byte
 	maxKey []byte
 
@@ -85,7 +98,26 @@ func (w *OneFileWriter) initWriter(ctx context.Context, partSize int64) (
 		err = w.dataWriter.Close(ctx)
 		return err
 	}
-	w.logger.Info("one file writer", zap.String("data-file", w.dataFile), zap.String("stat-file", w.statFile))
+	if w.onDup == OnDuplicateKeyRecord {
+		w.dupFile = filepath.Join(w.filenamePrefix+dupSuffix, "one-file")
+		w.dupWriter, err = w.store.Create(ctx, w.dupFile, &storage.WriterOption{
+			// too many duplicates will cause duplicate resolution part very slow,
+			// we temporarily use 1 as we don't expect too many duplicates, if there
+			// are, it will be slow anyway.
+			// we also need to consider memory usage if we want to increase it later.
+			Concurrency: 1,
+			PartSize:    partSize})
+		if err != nil {
+			w.logger.Info("create dup writer failed", zap.Error(err))
+			_ = w.statWriter.Close(ctx)
+			_ = w.dataWriter.Close(ctx)
+			return err
+		}
+		w.dupKVStore = NewKeyValueStore(ctx, w.dupWriter, nil)
+	}
+	w.logger.Info("one file writer", zap.String("data-file", w.dataFile),
+		zap.String("stat-file", w.statFile), zap.Stringer("on-dup", w.onDup),
+		zap.String("dup-file", w.dupFile))
 	return nil
 }
 
@@ -96,8 +128,8 @@ func (w *OneFileWriter) Init(ctx context.Context, partSize int64) (err error) {
 	if err != nil {
 		return err
 	}
-	w.kvStore, err = NewKeyValueStore(ctx, w.dataWriter, w.rc)
-	return err
+	w.kvStore = NewKeyValueStore(ctx, w.dataWriter, w.rc)
+	return nil
 }
 
 // WriteRow implements ingest.Writer.
@@ -105,6 +137,65 @@ func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) err
 	if w.minKey == nil {
 		w.minKey = slices.Clone(idxKey)
 	}
+	if w.onDup != OnDuplicateKeyIgnore {
+		// must be Record or Remove right now
+		return w.handleDupAndWrite(ctx, idxKey, idxVal)
+	}
+	return w.doWriteRow(ctx, idxKey, idxVal)
+}
+
+func (w *OneFileWriter) handleDupAndWrite(ctx context.Context, idxKey, idxVal []byte) error {
+	if w.currDupCnt == 0 {
+		return w.onNextPivot(ctx, idxKey, idxVal)
+	}
+	if slices.Compare(w.pivotKey, idxKey) == 0 {
+		w.currDupCnt++
+		if w.onDup == OnDuplicateKeyRecord {
+			// record first 2 duplicate to data file, others to dup file.
+			if w.currDupCnt == 2 {
+				if err := w.doWriteRow(ctx, w.pivotKey, w.pivotValue); err != nil {
+					return err
+				}
+				if err := w.doWriteRow(ctx, idxKey, idxVal); err != nil {
+					return err
+				}
+			} else {
+				// w.currDupCnt > 2
+				if err := w.doWriteDupRows(idxKey, idxVal); err != nil {
+					return err
+				}
+				w.recordedDupCnt++
+			}
+		}
+	} else {
+		return w.onNextPivot(ctx, idxKey, idxVal)
+	}
+	return nil
+}
+
+func (w *OneFileWriter) onNextPivot(ctx context.Context, idxKey, idxVal []byte) error {
+	if w.currDupCnt == 1 {
+		// last pivot has no duplicate.
+		if err := w.doWriteRow(ctx, w.pivotKey, w.pivotValue); err != nil {
+			return err
+		}
+	}
+	if idxKey != nil {
+		w.pivotKey = slices.Clone(idxKey)
+		w.pivotValue = slices.Clone(idxVal)
+		w.currDupCnt = 1
+	} else {
+		w.pivotKey, w.pivotValue = nil, nil
+		w.currDupCnt = 0
+	}
+	return nil
+}
+
+func (w *OneFileWriter) handlePivotOnClose(ctx context.Context) error {
+	return w.onNextPivot(ctx, nil, nil)
+}
+
+func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) error {
 	// 1. encode data and write to kvStore.
 	keyLen := len(idxKey)
 	length := len(idxKey) + len(idxVal) + lengthBytes*2
@@ -127,11 +218,8 @@ func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) err
 		// the new prop should have the same offset with kvStore.
 		w.rc.currProp.offset = w.kvStore.offset
 	}
-	binary.BigEndian.AppendUint64(buf[:0], uint64(keyLen))
-	binary.BigEndian.AppendUint64(buf[lengthBytes:lengthBytes], uint64(len(idxVal)))
-	copy(buf[lengthBytes*2:], idxKey)
+	w.encodeToBuf(buf, idxKey, idxVal)
 	w.maxKey = buf[lengthBytes*2 : lengthBytes*2+keyLen]
-	copy(buf[lengthBytes*2+keyLen:], idxVal)
 	err := w.kvStore.addEncodedData(buf[:length])
 	if err != nil {
 		return err
@@ -139,6 +227,21 @@ func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) err
 	w.totalCnt += 1
 	w.totalSize += uint64(keyLen + len(idxVal))
 	return nil
+}
+
+func (w *OneFileWriter) encodeToBuf(buf, key, value []byte) {
+	keyLen := len(key)
+	binary.BigEndian.AppendUint64(buf[:0], uint64(keyLen))
+	binary.BigEndian.AppendUint64(buf[lengthBytes:lengthBytes], uint64(len(value)))
+	copy(buf[lengthBytes*2:], key)
+	copy(buf[lengthBytes*2+keyLen:], value)
+}
+
+func (w *OneFileWriter) doWriteDupRows(idxKey, idxVal []byte) error {
+	length := len(idxKey) + len(idxVal) + lengthBytes*2
+	buf := make([]byte, length)
+	w.encodeToBuf(buf, idxKey, idxVal)
+	return w.dupKVStore.addEncodedData(buf[:length])
 }
 
 // Close closes the writer.
@@ -166,6 +269,10 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 		TotalSize:          w.totalSize,
 		TotalCnt:           w.totalCnt,
 		MultipleFilesStats: []MultipleFilesStat{stat},
+		ConflictInfo: ConflictInfo{
+			Count: uint64(w.recordedDupCnt),
+			Files: []string{w.dupFile},
+		},
 	})
 	w.totalCnt = 0
 	w.totalSize = 0
@@ -174,6 +281,9 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 }
 
 func (w *OneFileWriter) closeImpl(ctx context.Context) (err error) {
+	if err = w.handlePivotOnClose(ctx); err != nil {
+		return
+	}
 	// 1. write remaining statistic.
 	w.kvStore.Close()
 	encodedStat := w.rc.encode()
@@ -195,6 +305,14 @@ func (w *OneFileWriter) closeImpl(ctx context.Context) (err error) {
 		w.logger.Error("Close stat writer failed", zap.Error(err))
 		err = err2
 		return
+	}
+	if w.dupWriter != nil {
+		w.dupKVStore.Close()
+		if err3 := w.dupWriter.Close(ctx); err3 != nil {
+			w.logger.Error("Close dup writer failed", zap.Error(err3))
+			err = err3
+			return
+		}
 	}
 	return nil
 }
