@@ -188,9 +188,12 @@ func enumeratePhysicalPlans4Task(
 		iteration = iterateChildPlan4LogicalSequence
 	}
 	var fd *funcdep.FDSet
-	if joinP, ok := p.Self().(*logicalop.LogicalJoin); ok {
-		// TODO(hawkingrei): FD should be maintained as logical prop instead of constructing it in physical phase
-		fd = joinP.ExtractFD()
+	if addEnforcer {
+		switch logicalPlan := p.Self().(type) {
+		case *logicalop.LogicalJoin, *logicalop.LogicalAggregation:
+			// TODO(hawkingrei): FD should be maintained as logical prop instead of constructing it in physical phase
+			fd = logicalPlan.ExtractFD()
+		}
 	}
 	for _, pp := range physicalPlans {
 		timeStampNow := p.GetLogicalTS4TaskMap()

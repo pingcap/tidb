@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestQ3(t *testing.T) {
@@ -87,33 +88,25 @@ limit 10;`).Check(testkit.Rows(
 		"  └─TableReader 10.00 root  MppVersion: 3, data:ExchangeSender",
 		"    └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"      └─TopN 10.00 mpp[tiflash]  Column#34:desc, test.orders.o_orderdate, offset:0, count:10",
-		"        └─Projection 15.62 mpp[tiflash]  Column#34, test.orders.o_orderdate, test.orders.o_shippriority, test.lineitem.l_orderkey",
-		"          └─HashAgg 15.62 mpp[tiflash]  group by:test.lineitem.l_orderkey, test.orders.o_orderdate, test.orders.o_shippriority, funcs:sum(Column#43)->Column#34, funcs:firstrow(test.orders.o_orderdate)->test.orders.o_orderdate, funcs:firstrow(test.orders.o_shippriority)->test.orders.o_shippriority, funcs:firstrow(test.lineitem.l_orderkey)->test.lineitem.l_orderkey",
-		"            └─ExchangeReceiver 15.62 mpp[tiflash]  ",
-		"              └─ExchangeSender 15.62 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.lineitem.l_orderkey, collate: binary], [name: test.orders.o_orderdate, collate: binary], [name: test.orders.o_shippriority, collate: binary]",
-		"                └─HashAgg 15.62 mpp[tiflash]  group by:Column#48, Column#49, Column#50, funcs:sum(Column#47)->Column#43",
-		"                  └─Projection 15.62 mpp[tiflash]  mul(test.lineitem.l_extendedprice, minus(1, test.lineitem.l_discount))->Column#47, test.lineitem.l_orderkey->Column#48, test.orders.o_orderdate->Column#49, test.orders.o_shippriority->Column#50",
-		"                    └─Projection 15.62 mpp[tiflash]  test.orders.o_orderdate, test.orders.o_shippriority, test.lineitem.l_orderkey, test.lineitem.l_extendedprice, test.lineitem.l_discount",
-		"                      └─HashJoin 15.62 mpp[tiflash]  inner join, equal:[eq(test.orders.o_orderkey, test.lineitem.l_orderkey)]",
-		"                        ├─ExchangeReceiver(Build) 12.50 mpp[tiflash]  ",
-		"                        │ └─ExchangeSender 12.50 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.orders.o_orderkey, collate: binary]",
-		"                        │   └─Projection 12.50 mpp[tiflash]  test.orders.o_orderkey, test.orders.o_orderdate, test.orders.o_shippriority, test.orders.o_custkey",
-		"                        │     └─HashJoin 12.50 mpp[tiflash]  inner join, equal:[eq(test.customer.c_custkey, test.orders.o_custkey)]",
-		"                        │       ├─ExchangeReceiver(Build) 10.00 mpp[tiflash]  ",
-		"                        │       │ └─ExchangeSender 10.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.customer.c_custkey, collate: binary]",
-		`                        │       │   └─TableFullScan 10.00 mpp[tiflash] table:customer pushed down filter:eq(test.customer.c_mktsegment, "AUTOMOBILE"), keep order:false, stats:pseudo`,
-		"                        │       └─ExchangeReceiver(Probe) 3323.33 mpp[tiflash]  ",
-		"                        │         └─ExchangeSender 3323.33 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.orders.o_custkey, collate: binary]",
-		"                        │           └─Selection 3323.33 mpp[tiflash]  lt(test.orders.o_orderdate, 1995-03-13 00:00:00.000000)",
-		"                        │             └─TableFullScan 10000.00 mpp[tiflash] table:orders pushed down filter:empty, keep order:false, stats:pseudo",
-		"                        └─ExchangeReceiver(Probe) 3333.33 mpp[tiflash]  ",
-		"                          └─ExchangeSender 3333.33 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.lineitem.l_orderkey, collate: binary]",
-		"                            └─Selection 3333.33 mpp[tiflash]  gt(test.lineitem.l_shipdate, 1995-03-13 00:00:00.000000)",
-		"                              └─TableFullScan 10000.00 mpp[tiflash] table:lineitem pushed down filter:empty, keep order:false, stats:pseudo",
-	))
+		"        └─Projection 39998176.29 mpp[tiflash]  Column#34, test.orders.o_orderdate, test.orders.o_shippriority, test.lineitem.l_orderkey",
+		"          └─HashAgg 39998176.29 mpp[tiflash]  group by:Column#48, Column#49, Column#50, funcs:sum(Column#47)->Column#34, funcs:firstrow(Column#48)->test.orders.o_orderdate, funcs:firstrow(Column#49)->test.orders.o_shippriority, funcs:firstrow(Column#50)->test.lineitem.l_orderkey",
+		"            └─Projection 92822759.11 mpp[tiflash]  mul(test.lineitem.l_extendedprice, minus(1, test.lineitem.l_discount))->Column#47, test.orders.o_orderdate->Column#48, test.orders.o_shippriority->Column#49, test.lineitem.l_orderkey->Column#50",
+		"              └─Projection 92822759.11 mpp[tiflash]  test.orders.o_orderdate, test.orders.o_shippriority, test.lineitem.l_orderkey, test.lineitem.l_extendedprice, test.lineitem.l_discount",
+		"                └─HashJoin 92822759.11 mpp[tiflash]  inner join, equal:[eq(test.orders.o_orderkey, test.lineitem.l_orderkey)]",
+		"                  ├─ExchangeReceiver(Build) 22867441.30 mpp[tiflash]  ",
+		"                  │ └─ExchangeSender 22867441.30 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.orders.o_orderkey, collate: binary]",
+		"                  │   └─Projection 22867441.30 mpp[tiflash]  test.orders.o_orderkey, test.orders.o_orderdate, test.orders.o_shippriority",
+		"                  │     └─HashJoin 22867441.30 mpp[tiflash]  inner join, equal:[eq(test.customer.c_custkey, test.orders.o_custkey)]",
+		"                  │       ├─ExchangeReceiver(Build) 1501762.80 mpp[tiflash]  ",
+		"                  │       │ └─ExchangeSender 1501762.80 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+		`                  │       │   └─TableFullScan 1501762.80 mpp[tiflash] table:customer pushed down filter:eq(test.customer.c_mktsegment, "AUTOMOBILE"), keep order:false`,
+		"                  │       └─TableFullScan(Probe) 36377904.50 mpp[tiflash] table:orders pushed down filter:lt(test.orders.o_orderdate, 1995-03-13 00:00:00.000000), keep order:false",
+		"                  └─ExchangeReceiver(Probe) 162359270.28 mpp[tiflash]  ",
+		"                    └─ExchangeSender 162359270.28 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.lineitem.l_orderkey, collate: binary]",
+		"                      └─TableFullScan 162359270.28 mpp[tiflash] table:lineitem pushed down filter:gt(test.lineitem.l_shipdate, 1995-03-13 00:00:00.000000), keep order:false"))
 	// LEFT JOIN
 	tk.MustQuery(`EXPLAIN FORMAT="brief"
-SELECT /*+ HASH_JOIN(orders, lineitem, customer) */
+SELECT
     l_orderkey,
     SUM(l_extendedprice * (1 - l_discount)) AS revenue,
     o_orderdate,
@@ -321,7 +314,7 @@ CREATE TABLE nation (
 	require.NoError(t, loadTableStats("test.partsupp.json", dom))
 	require.NoError(t, loadTableStats("test.orders.json", dom))
 	require.NoError(t, loadTableStats("test.nation.json", dom))
-	tk.MustQuery(`explain select
+	tk.MustQuery(`explain format="brief" select
 	nation,
 	o_year,
 	sum(amount) as sum_profit
@@ -353,41 +346,196 @@ group by
 order by
 	nation,
 	o_year desc;`).Check(testkit.Rows(
-		"Sort_26 2406.00 root  test.nation.n_name, Column#51:desc",
-		"└─Projection_28 2406.00 root  test.nation.n_name, Column#51, Column#53",
-		"  └─HashAgg_32 2406.00 root  group by:Column#57, Column#58, funcs:sum(Column#56)->Column#53, funcs:firstrow(Column#57)->test.nation.n_name, funcs:firstrow(Column#58)->Column#51",
-		"    └─Projection_185 247789900.85 root  minus(mul(test.lineitem.l_extendedprice, minus(1, test.lineitem.l_discount)), mul(test.partsupp.ps_supplycost, test.lineitem.l_quantity))->Column#56, test.nation.n_name->Column#57, extract(YEAR, test.orders.o_orderdate)->Column#58",
-		"      └─Projection_36 247789900.85 root  test.lineitem.l_quantity, test.lineitem.l_extendedprice, test.lineitem.l_discount, test.partsupp.ps_supplycost, test.orders.o_orderdate, test.nation.n_name",
-		"        └─HashJoin_50 247789900.85 root  inner join, equal:[eq(test.lineitem.l_orderkey, test.orders.o_orderkey)]",
-		"          ├─TableReader_176(Build) 75000000.00 root  MppVersion: 3, data:ExchangeSender_175",
-		"          │ └─ExchangeSender_175 75000000.00 mpp[tiflash]  ExchangeType: PassThrough",
-		"          │   └─TableFullScan_174 75000000.00 mpp[tiflash] table:orders keep order:false",
-		"          └─HashJoin_105(Probe) 244182819.96 root  inner join, equal:[eq(test.lineitem.l_suppkey, test.partsupp.ps_suppkey) eq(test.lineitem.l_partkey, test.partsupp.ps_partkey)]",
-		"            ├─TableReader_171(Build) 40000000.00 root  MppVersion: 3, data:ExchangeSender_170",
-		"            │ └─ExchangeSender_170 40000000.00 mpp[tiflash]  ExchangeType: PassThrough",
-		"            │   └─TableFullScan_169 40000000.00 mpp[tiflash] table:partsupp keep order:false",
-		"            └─TableReader_123(Probe) 241491729.94 root  MppVersion: 3, data:ExchangeSender_122",
-		"              └─ExchangeSender_122 241491729.94 mpp[tiflash]  ExchangeType: PassThrough",
-		"                └─Projection_121 241491729.94 mpp[tiflash]  test.nation.n_name, test.lineitem.l_orderkey, test.lineitem.l_partkey, test.lineitem.l_suppkey, test.lineitem.l_quantity, test.lineitem.l_extendedprice, test.lineitem.l_discount",
-		"                  └─HashJoin_107 241491729.94 mpp[tiflash]  inner join, equal:[eq(test.lineitem.l_partkey, test.part.p_partkey)]",
-		"                    ├─ExchangeReceiver_72(Build) 8000000.00 mpp[tiflash]  ",
-		"                    │ └─ExchangeSender_71 8000000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.part.p_partkey, collate: binary]",
-		`                    │   └─Selection_70 8000000.00 mpp[tiflash]  like(test.part.p_name, "%dim%", 92)`,
-		"                    │     └─TableFullScan_69 10000000.00 mpp[tiflash] table:part pushed down filter:empty, keep order:false",
-		"                    └─ExchangeReceiver_68(Probe) 300825282.01 mpp[tiflash]  ",
-		"                      └─ExchangeSender_67 300825282.01 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.lineitem.l_partkey, collate: binary]",
-		"                        └─Projection_66 300825282.01 mpp[tiflash]  test.nation.n_name, test.lineitem.l_orderkey, test.lineitem.l_partkey, test.lineitem.l_suppkey, test.lineitem.l_quantity, test.lineitem.l_extendedprice, test.lineitem.l_discount",
-		"                          └─HashJoin_54 300825282.01 mpp[tiflash]  inner join, equal:[eq(test.supplier.s_suppkey, test.lineitem.l_suppkey)]",
-		"                            ├─ExchangeReceiver_62(Build) 499986.00 mpp[tiflash]  ",
-		"                            │ └─ExchangeSender_61 499986.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.supplier.s_suppkey, collate: binary]",
-		"                            │   └─Projection_60 499986.00 mpp[tiflash]  test.nation.n_name, test.supplier.s_suppkey",
-		"                            │     └─HashJoin_55 499986.00 mpp[tiflash]  inner join, equal:[eq(test.nation.n_nationkey, test.supplier.s_nationkey)]",
-		"                            │       ├─ExchangeReceiver_58(Build) 25.00 mpp[tiflash]  ",
-		"                            │       │ └─ExchangeSender_57 25.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-		"                            │       │   └─TableFullScan_56 25.00 mpp[tiflash] table:nation keep order:false",
-		"                            │       └─TableFullScan_59(Probe) 500000.00 mpp[tiflash] table:supplier keep order:false",
-		"                            └─ExchangeReceiver_65(Probe) 300005811.00 mpp[tiflash]  ",
-		"                              └─ExchangeSender_64 300005811.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.lineitem.l_suppkey, collate: binary]",
-		"                                └─TableFullScan_63 300005811.00 mpp[tiflash] table:lineitem keep order:false",
+		"Sort 2406.00 root  test.nation.n_name, Column#51:desc",
+		"└─Projection 2406.00 root  test.nation.n_name, Column#51, Column#53",
+		"  └─HashAgg 2406.00 root  group by:Column#57, Column#58, funcs:sum(Column#56)->Column#53, funcs:firstrow(Column#57)->test.nation.n_name, funcs:firstrow(Column#58)->Column#51",
+		"    └─Projection 247789900.85 root  minus(mul(test.lineitem.l_extendedprice, minus(1, test.lineitem.l_discount)), mul(test.partsupp.ps_supplycost, test.lineitem.l_quantity))->Column#56, test.nation.n_name->Column#57, extract(YEAR, test.orders.o_orderdate)->Column#58",
+		"      └─Projection 247789900.85 root  test.lineitem.l_quantity, test.lineitem.l_extendedprice, test.lineitem.l_discount, test.partsupp.ps_supplycost, test.orders.o_orderdate, test.nation.n_name",
+		"        └─HashJoin 247789900.85 root  inner join, equal:[eq(test.lineitem.l_orderkey, test.orders.o_orderkey)]",
+		"          ├─TableReader(Build) 75000000.00 root  MppVersion: 3, data:ExchangeSender",
+		"          │ └─ExchangeSender 75000000.00 mpp[tiflash]  ExchangeType: PassThrough",
+		"          │   └─TableFullScan 75000000.00 mpp[tiflash] table:orders keep order:false",
+		"          └─HashJoin(Probe) 244182819.96 root  inner join, equal:[eq(test.lineitem.l_suppkey, test.partsupp.ps_suppkey) eq(test.lineitem.l_partkey, test.partsupp.ps_partkey)]",
+		"            ├─TableReader(Build) 40000000.00 root  MppVersion: 3, data:ExchangeSender",
+		"            │ └─ExchangeSender 40000000.00 mpp[tiflash]  ExchangeType: PassThrough",
+		"            │   └─TableFullScan 40000000.00 mpp[tiflash] table:partsupp keep order:false",
+		"            └─TableReader(Probe) 241491729.94 root  MppVersion: 3, data:ExchangeSender",
+		"              └─ExchangeSender 241491729.94 mpp[tiflash]  ExchangeType: PassThrough",
+		"                └─Projection 241491729.94 mpp[tiflash]  test.nation.n_name, test.lineitem.l_orderkey, test.lineitem.l_partkey, test.lineitem.l_suppkey, test.lineitem.l_quantity, test.lineitem.l_extendedprice, test.lineitem.l_discount",
+		"                  └─HashJoin 241491729.94 mpp[tiflash]  inner join, equal:[eq(test.lineitem.l_partkey, test.part.p_partkey)]",
+		"                    ├─ExchangeReceiver(Build) 8000000.00 mpp[tiflash]  ",
+		"                    │ └─ExchangeSender 8000000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.part.p_partkey, collate: binary]",
+		`                    │   └─Selection 8000000.00 mpp[tiflash]  like(test.part.p_name, "%dim%", 92)`,
+		"                    │     └─TableFullScan 10000000.00 mpp[tiflash] table:part pushed down filter:empty, keep order:false",
+		"                    └─ExchangeReceiver(Probe) 300825282.01 mpp[tiflash]  ",
+		"                      └─ExchangeSender 300825282.01 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.lineitem.l_partkey, collate: binary]",
+		"                        └─Projection 300825282.01 mpp[tiflash]  test.nation.n_name, test.lineitem.l_orderkey, test.lineitem.l_partkey, test.lineitem.l_suppkey, test.lineitem.l_quantity, test.lineitem.l_extendedprice, test.lineitem.l_discount",
+		"                          └─HashJoin 300825282.01 mpp[tiflash]  inner join, equal:[eq(test.supplier.s_suppkey, test.lineitem.l_suppkey)]",
+		"                            ├─ExchangeReceiver(Build) 499986.00 mpp[tiflash]  ",
+		"                            │ └─ExchangeSender 499986.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.supplier.s_suppkey, collate: binary]",
+		"                            │   └─Projection 499986.00 mpp[tiflash]  test.nation.n_name, test.supplier.s_suppkey",
+		"                            │     └─HashJoin 499986.00 mpp[tiflash]  inner join, equal:[eq(test.nation.n_nationkey, test.supplier.s_nationkey)]",
+		"                            │       ├─ExchangeReceiver(Build) 25.00 mpp[tiflash]  ",
+		"                            │       │ └─ExchangeSender 25.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+		"                            │       │   └─TableFullScan 25.00 mpp[tiflash] table:nation keep order:false",
+		"                            │       └─TableFullScan(Probe) 500000.00 mpp[tiflash] table:supplier keep order:false",
+		"                            └─ExchangeReceiver(Probe) 300005811.00 mpp[tiflash]  ",
+		"                              └─ExchangeSender 300005811.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.lineitem.l_suppkey, collate: binary]",
+		"                                └─TableFullScan 300005811.00 mpp[tiflash] table:lineitem keep order:false",
 	))
+	// add windows functin
+	tk.MustQuery(`explain format="brief"  SELECT
+    nation,
+    o_year,
+    sum_profit,
+    ROW_NUMBER() OVER (PARTITION BY nation ORDER BY sum_profit DESC) AS profit_rank
+FROM
+    (
+        SELECT
+            nation,
+            o_year,
+            SUM(amount) AS sum_profit
+        FROM
+            (
+                SELECT
+                    n_name AS nation,
+                    EXTRACT(YEAR FROM o_orderdate) AS o_year,
+                    l_extendedprice * (1 - l_discount) - ps_supplycost * l_quantity AS amount
+                FROM
+                    part,
+                    supplier,
+                    lineitem,
+                    partsupp,
+                    orders,
+                    nation
+                WHERE
+                    s_suppkey = l_suppkey
+                    AND ps_suppkey = l_suppkey
+                    AND ps_partkey = l_partkey
+                    AND p_partkey = l_partkey
+                    AND o_orderkey = l_orderkey
+                    AND s_nationkey = n_nationkey
+                    AND p_name LIKE '%dim%'
+            ) AS profit
+        GROUP BY
+            nation,
+            o_year
+    ) AS grouped_profit
+ORDER BY
+    nation,
+    o_year DESC;
+`).Check(testkit.Rows(
+		"Sort 2406.00 root  test.nation.n_name, Column#51:desc",
+		"└─Projection 2406.00 root  test.nation.n_name, Column#51, Column#53, Column#55",
+		"  └─Shuffle 2406.00 root  execution info: concurrency:5, data sources:[HashAgg]",
+		"    └─Window 2406.00 root  row_number()->Column#55 over(partition by test.nation.n_name order by Column#53 desc rows between current row and current row)",
+		"      └─Sort 2406.00 root  test.nation.n_name, Column#53:desc",
+		"        └─ShuffleReceiver 2406.00 root  ",
+		"          └─HashAgg 2406.00 root  group by:Column#59, Column#60, funcs:sum(Column#58)->Column#53, funcs:firstrow(Column#59)->test.nation.n_name, funcs:firstrow(Column#60)->Column#51",
+		"            └─Projection 247789900.85 root  minus(mul(test.lineitem.l_extendedprice, minus(1, test.lineitem.l_discount)), mul(test.partsupp.ps_supplycost, test.lineitem.l_quantity))->Column#58, test.nation.n_name->Column#59, extract(YEAR, test.orders.o_orderdate)->Column#60",
+		"              └─Projection 247789900.85 root  test.lineitem.l_quantity, test.lineitem.l_extendedprice, test.lineitem.l_discount, test.partsupp.ps_supplycost, test.orders.o_orderdate, test.nation.n_name",
+		"                └─HashJoin 247789900.85 root  inner join, equal:[eq(test.lineitem.l_orderkey, test.orders.o_orderkey)]",
+		"                  ├─TableReader(Build) 75000000.00 root  MppVersion: 3, data:ExchangeSender",
+		"                  │ └─ExchangeSender 75000000.00 mpp[tiflash]  ExchangeType: PassThrough",
+		"                  │   └─TableFullScan 75000000.00 mpp[tiflash] table:orders keep order:false",
+		"                  └─HashJoin(Probe) 244182819.96 root  inner join, equal:[eq(test.lineitem.l_suppkey, test.partsupp.ps_suppkey) eq(test.lineitem.l_partkey, test.partsupp.ps_partkey)]",
+		"                    ├─TableReader(Build) 40000000.00 root  MppVersion: 3, data:ExchangeSender",
+		"                    │ └─ExchangeSender 40000000.00 mpp[tiflash]  ExchangeType: PassThrough",
+		"                    │   └─TableFullScan 40000000.00 mpp[tiflash] table:partsupp keep order:false",
+		"                    └─TableReader(Probe) 241491729.94 root  MppVersion: 3, data:ExchangeSender",
+		"                      └─ExchangeSender 241491729.94 mpp[tiflash]  ExchangeType: PassThrough",
+		"                        └─Projection 241491729.94 mpp[tiflash]  test.nation.n_name, test.lineitem.l_orderkey, test.lineitem.l_partkey, test.lineitem.l_suppkey, test.lineitem.l_quantity, test.lineitem.l_extendedprice, test.lineitem.l_discount",
+		"                          └─HashJoin 241491729.94 mpp[tiflash]  inner join, equal:[eq(test.lineitem.l_partkey, test.part.p_partkey)]",
+		"                            ├─ExchangeReceiver(Build) 8000000.00 mpp[tiflash]  ",
+		"                            │ └─ExchangeSender 8000000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.part.p_partkey, collate: binary]",
+		`                            │   └─Selection 8000000.00 mpp[tiflash]  like(test.part.p_name, "%dim%", 92)`,
+		"                            │     └─TableFullScan 10000000.00 mpp[tiflash] table:part pushed down filter:empty, keep order:false",
+		"                            └─ExchangeReceiver(Probe) 300825282.01 mpp[tiflash]  ",
+		"                              └─ExchangeSender 300825282.01 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.lineitem.l_partkey, collate: binary]",
+		"                                └─Projection 300825282.01 mpp[tiflash]  test.nation.n_name, test.lineitem.l_orderkey, test.lineitem.l_partkey, test.lineitem.l_suppkey, test.lineitem.l_quantity, test.lineitem.l_extendedprice, test.lineitem.l_discount",
+		"                                  └─HashJoin 300825282.01 mpp[tiflash]  inner join, equal:[eq(test.supplier.s_suppkey, test.lineitem.l_suppkey)]",
+		"                                    ├─ExchangeReceiver(Build) 499986.00 mpp[tiflash]  ",
+		"                                    │ └─ExchangeSender 499986.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.supplier.s_suppkey, collate: binary]",
+		"                                    │   └─Projection 499986.00 mpp[tiflash]  test.nation.n_name, test.supplier.s_suppkey",
+		"                                    │     └─HashJoin 499986.00 mpp[tiflash]  inner join, equal:[eq(test.nation.n_nationkey, test.supplier.s_nationkey)]",
+		"                                    │       ├─ExchangeReceiver(Build) 25.00 mpp[tiflash]  ",
+		"                                    │       │ └─ExchangeSender 25.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+		"                                    │       │   └─TableFullScan 25.00 mpp[tiflash] table:nation keep order:false",
+		"                                    │       └─TableFullScan(Probe) 500000.00 mpp[tiflash] table:supplier keep order:false",
+		"                                    └─ExchangeReceiver(Probe) 300005811.00 mpp[tiflash]  ",
+		"                                      └─ExchangeSender 300005811.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.lineitem.l_suppkey, collate: binary]",
+		"                                        └─TableFullScan 300005811.00 mpp[tiflash] table:lineitem keep order:false"))
+}
+
+func TestQ13(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE customer (
+    C_CUSTKEY bigint NOT NULL,
+    C_NAME varchar(25) NOT NULL,
+    C_ADDRESS varchar(40) NOT NULL,
+    C_NATIONKEY bigint NOT NULL,
+    C_PHONE char(15) NOT NULL,
+    C_ACCTBAL decimal(15,2) NOT NULL,
+    C_MKTSEGMENT char(10) NOT NULL,
+    C_COMMENT varchar(117) NOT NULL,
+    PRIMARY KEY (C_CUSTKEY) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(`
+CREATE TABLE orders (
+    O_ORDERKEY bigint NOT NULL,
+    O_CUSTKEY bigint NOT NULL,
+    O_ORDERSTATUS char(1) NOT NULL,
+    O_TOTALPRICE decimal(15,2) NOT NULL,
+    O_ORDERDATE date NOT NULL,
+    O_ORDERPRIORITY char(15) NOT NULL,
+    O_CLERK char(15) NOT NULL,
+    O_SHIPPRIORITY bigint NOT NULL,
+    O_COMMENT varchar(79) NOT NULL,
+    PRIMARY KEY (O_ORDERKEY) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	testkit.SetTiFlashReplica(t, dom, "test", "orders")
+	testkit.SetTiFlashReplica(t, dom, "test", "customer")
+	require.NoError(t, loadTableStats("test.orders.json", dom))
+	require.NoError(t, loadTableStats("test.customer.json", dom))
+	tk.MustQuery(`explain format="brief" select
+	c_count,
+	count(*) as custdist
+from
+	(
+		select
+			c_custkey,
+			count(o_orderkey) as c_count
+		from
+			customer left outer join orders on
+				c_custkey = o_custkey
+				and o_comment not like '%pending%deposits%'
+		group by
+			c_custkey
+	) c_orders
+group by
+	c_count
+order by
+	custdist desc,
+	c_count desc;`).Check(testkit.Rows(
+		"Sort 7500001.00 root  Column#19:desc, Column#18:desc",
+		"└─TableReader 7500001.00 root  MppVersion: 3, data:ExchangeSender",
+		"  └─ExchangeSender 7500001.00 mpp[tiflash]  ExchangeType: PassThrough",
+		"    └─Projection 7500001.00 mpp[tiflash]  Column#18, Column#19",
+		"      └─Projection 7500001.00 mpp[tiflash]  Column#19, Column#18",
+		"        └─HashAgg 7500001.00 mpp[tiflash]  group by:Column#18, funcs:count(1)->Column#19, funcs:firstrow(Column#18)->Column#18",
+		"          └─ExchangeReceiver 7500001.00 mpp[tiflash]  ",
+		"            └─ExchangeSender 7500001.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#18, collate: binary]",
+		"              └─Projection 7500001.00 mpp[tiflash]  Column#18",
+		"                └─HashAgg 7500001.00 mpp[tiflash]  group by:test.customer.c_custkey, funcs:count(test.orders.o_orderkey)->Column#18",
+		"                  └─Projection 59999992.00 mpp[tiflash]  test.customer.c_custkey, test.orders.o_orderkey",
+		"                    └─HashJoin 59999992.00 mpp[tiflash]  left outer join, left side:ExchangeReceiver, equal:[eq(test.customer.c_custkey, test.orders.o_custkey)]",
+		"                      ├─ExchangeReceiver(Build) 7500000.00 mpp[tiflash]  ",
+		"                      │ └─ExchangeSender 7500000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.customer.c_custkey, collate: binary]",
+		"                      │   └─TableFullScan 7500000.00 mpp[tiflash] table:customer keep order:false",
+		"                      └─ExchangeReceiver(Probe) 60000000.00 mpp[tiflash]  ",
+		"                        └─ExchangeSender 60000000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.orders.o_custkey, collate: binary]",
+		`                          └─Selection 60000000.00 mpp[tiflash]  not(like(test.orders.o_comment, "%pending%deposits%", 92))`,
+		"                            └─TableFullScan 75000000.00 mpp[tiflash] table:orders pushed down filter:empty, keep order:false"))
 }
