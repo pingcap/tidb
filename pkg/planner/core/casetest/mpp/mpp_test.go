@@ -866,7 +866,7 @@ func TestIssue52828(t *testing.T) {
 		"WHERE OUTR . col_decimal_not_null IN ( SELECT INNR . col_int_not_null + 1 AS Y FROM DD AS INNR WHERE INNR . pk > INNR . pk OR INNR . col_varchar_10_not_null >= INNR . col_varchar_10 ) GROUP BY OUTR . col_datetime_not_null")
 }
 
-func TestMPPJoinWithoutRemoveUselessExchange(t *testing.T) {
+func TestMPPJoinWithRemoveUselessExchange(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
