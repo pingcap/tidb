@@ -3929,8 +3929,8 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 
 				if genNewID {
 					currPartID := tablecodec.DecodeTableID(handleRange.startKey)
-					encodedNewPartID := key[tablecodec.TableSplitKeyLen]
-					oldRecordIDEncoded := key[len(tablecodec.TablePrefix()):tablecodec.TableSplitKeyLen+2:]
+					encodedNewPartID := key[len(tablecodec.TablePrefix()):tablecodec.TableSplitKeyLen]
+					oldRecordIDEncoded := key[tablecodec.TableSplitKeyLen+2:]
 
 					recordID, err := tables.AllocHandle(w.ctx, w.tblCtx, w.reorgedTbl)
 					if err != nil {
