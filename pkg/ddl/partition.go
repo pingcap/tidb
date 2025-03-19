@@ -3756,11 +3756,9 @@ type reorgPartitionWorker struct {
 	writeColOffsetMap map[int64]int
 	maxOffset         int
 	reorgedTbl        table.PartitionedTable
-	// Only used for non-clustered tables, since we need to re-generate _tidb_rowid,
+	// Only used for non-clustered tables, since we may need to re-generate _tidb_rowid,
 	// and check if the old _tidb_rowid was already written or not.
-	// If the old _tidb_rowid already exists, then the row is already backfilled (double written)
-	// and can be skipped. Otherwise, we will insert it and generate index entries.
-	oldKeys []kv.Key
+	newKeys []kv.Key
 }
 
 func newReorgPartitionWorker(i int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *ReorgContext) (*reorgPartitionWorker, error) {
@@ -3820,6 +3818,13 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
 
+		// TODO: remove debug code
+		columnFt := make(map[int64]*types.FieldType)
+		for idx := range w.table.Meta().Columns {
+			col := w.table.Meta().Columns[idx]
+			columnFt[col.ID] = &col.FieldType
+		}
+
 		failpoint.InjectCall("PartitionBackfillData", len(w.rowRecords) > 0)
 		// For non-clustered tables, we need to replace the _tidb_rowid handles since
 		// there may be duplicates across different partitions, due to EXCHANGE PARTITION.
@@ -3827,19 +3832,44 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 		// i.e. concurrently written by StateWriteOnly or StateWriteReorganization.
 		// and if so, skip it.
 		var found map[string][]byte
-		if len(w.oldKeys) > 0 {
+		currPartIDPrefix := handleRange.startKey[:tablecodec.TableSplitKeyLen]
+		encodedCurrPartID := handleRange.startKey[len(tablecodec.TablePrefix()):tablecodec.TableSplitKeyLen]
+		numKeys := len(w.newKeys)
+		if numKeys > 0 {
 			failpoint.InjectCall("PartitionBackfillNonClustered", w.rowRecords[0].vals)
 			// we must check if old IDs already been written,
 			// i.e. double written by StateWriteOnly or StateWriteReorganization.
 			// TODO: while waiting for BatchGet to check for duplicate, do another round of reads in parallel?
-			found, err = txn.BatchGet(ctx, w.oldKeys)
+
+			for i := range numKeys {
+				key := w.newKeys[i]
+				logutil.DDLLogger().Info("check for old ID", zap.String("key", fmt.Sprintf("%x", []byte(key))))
+				// generate temporary index map entries for each key to see if they are already mapped
+				// key: new table id, curr table id, record id
+				// TODO: Create a utility function in tables/partition.go for this!
+				oldRecordIDEncoded := key[tablecodec.TableSplitKeyLen+2:]
+				idMapKey := make([]byte, 0, len(oldRecordIDEncoded)+len(encodedCurrPartID))
+				idMapKey = append(idMapKey, oldRecordIDEncoded...)
+				idMapKey = append(idMapKey, encodedCurrPartID...)
+				newPartID := tablecodec.DecodeTableID(key)
+				tmpRecordIDMapKey := tablecodec.EncodeIndexSeekKey(newPartID, tablecodec.TempIndexPrefix, idMapKey)
+				w.newKeys = append(w.newKeys, tmpRecordIDMapKey)
+				logutil.DDLLogger().Info("check for new ID", zap.String("mapKey", fmt.Sprintf("%x", []byte(tmpRecordIDMapKey))))
+			}
+			found, err = txn.BatchGet(ctx, w.newKeys)
 			if err != nil {
 				return errors.Trace(err)
 			}
+			// TODO: delete debug code:
+			for k, v := range found {
+				logutil.DDLLogger().Info("found", zap.String("key", fmt.Sprintf("%x", []byte(k))), zap.String("val", fmt.Sprintf("%x", v)))
+			}
+
 			// TODO: Add test that kills (like `kill -9`) the currently running
 			// ddl owner, to see how it handles re-running this backfill when some batches has
 			// committed and reorgInfo has not been updated, so it needs to redo some batches.
 
+			// TODO: vvv THIS! needs to check if record ID is already changed in New partition?
 			// TODO: Also check if already written with new id as a BatchGet?
 			// I.e check if we already committed a backfill batch where it generated new IDs
 			// then we should not generate it again!
@@ -3860,69 +3890,82 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 			key := prr.key
 			lockKey := key
 
-			// w.oldKeys is only set for non-clustered tables, in w.fetchRowColVals().
-			if len(w.oldKeys) > 0 {
+			// TODO: remove debug code:
+			m, err := tablecodec.DecodeRowWithMapNew(prr.vals, columnFt, time.UTC, nil)
+			var col1 int64
+			if d, ok := m[w.table.Meta().Columns[0].ID]; ok {
+				col1 = d.GetInt64()
+			}
+			logutil.DDLLogger().Info("backfill data", zap.Int("i", i), zap.Int64("col1", col1))
+
+			// w.newKeys is only set for non-clustered tables, in w.fetchRowColVals().
+			if numKeys > 0 {
 				genNewID := false
-				key = w.oldKeys[i]
+				key = w.newKeys[i]
+				logutil.DDLLogger().Info("checking for new id", zap.String("key", fmt.Sprintf("%x", []byte(w.newKeys[i+numKeys]))))
+				if _, ok := found[string(w.newKeys[i+numKeys])]; ok {
+					// Already new generated unique _tidb_rowid
+					logutil.DDLLogger().Info("backfill data already filled with new id")
+					continue
+				}
 				if vals, ok := found[string(key)]; ok {
 					if len(vals) == len(prr.vals) && bytes.Equal(vals, prr.vals) {
 						// Already backfilled or double written earlier by concurrent DML
+						logutil.DDLLogger().Info("backfill data already filled")
 						continue
 					}
 					// Not same row, due to earlier EXCHANGE PARTITION.
+					logutil.DDLLogger().Info("backfill data need to generate new id", zap.String("key", fmt.Sprintf("%x", key)))
 					genNewID = true
 				}
 
-				// Lock the *old* partition's value, so it does not change during this backfill transaction.
-				// Since we are generating a new RecordID, this is needed to ensure no lost or duplicated
-				// rows from concurrent DML!
-				lockKey = make([]byte, len(key))
-				copy(lockKey, nextKey[:tablecodec.TableSplitKeyLen+2])
-				copy(lockKey[tablecodec.TableSplitKeyLen+2:], key[tablecodec.TableSplitKeyLen+2:])
+				// Lock the *old* partition's value, so it does not change during this
+				// backfill transaction.
+				// Since we are generating a new RecordID, this is needed to ensure no lost
+				// or duplicated rows from concurrent DML!
+				lockKey = make([]byte, 0, len(key))
+				lockKey = append(lockKey, currPartIDPrefix...)
+				lockKey = append(lockKey, key[tablecodec.TableSplitKeyLen:]...)
 
 				if genNewID {
-					oldRecordIDEncoded := key[tablecodec.TableSplitKeyLen+2:]
-					// This also guarantees that there will be no duplicates.
-					// We should still lock the old key!
-					// TODO: make sure there is a test that will check that this copy will fail and be retried
-					// if someone updates the 'old' partition during this backfill transaction.
+					currPartID := tablecodec.DecodeTableID(handleRange.startKey)
+					encodedNewPartID := key[tablecodec.TableSplitKeyLen]
+					oldRecordIDEncoded := key[len(tablecodec.TablePrefix()):tablecodec.TableSplitKeyLen+2:]
 
 					recordID, err := tables.AllocHandle(w.ctx, w.tblCtx, w.reorgedTbl)
 					if err != nil {
 						return errors.Trace(err)
 					}
+					logutil.DDLLogger().Info("new ID", zap.Int64("recordID", recordID.IntValue()))
 
 					// tablecodec.prefixLen is not exported, but is just TableSplitKeyLen + 2
 					key = tablecodec.EncodeRecordKey(key[:tablecodec.TableSplitKeyLen+2], recordID)
-					tblID, _, isRecord, err := tablecodec.DecodeKeyHead(key)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					if !isRecord {
-						return errors.Errorf("Internal error: invalid key for mapping between old and new partition _tidb_rowid %v", key)
-					}
-					logutil.DDLLogger().Info("Backfill generated a new recordID", zap.Int64("pID", tblID), zap.Int64("recordID", recordID.IntValue()))
-					// Old _tidb_rowid => New _tidb_rowid mapping only needs to be in the New partition
-					// Currently skipping to store the partition id, since it can be calculated through partition pruning.
-					tmpRecordIDMapKey := tablecodec.EncodeIndexSeekKey(tblID, tablecodec.TempIndexPrefix, oldRecordIDEncoded)
+					newPartID := tablecodec.DecodeTableID(key)
+					// Old _tidb_rowid,partID => New _tidb_rowid mapping only needs to be in the New partition
+					idMapKey := make([]byte, 0, len(oldRecordIDEncoded)+len(encodedCurrPartID))
+					idMapKey = append(idMapKey, oldRecordIDEncoded...)
+					idMapKey = append(idMapKey, encodedCurrPartID...)
+					tmpRecordIDMapKey := tablecodec.EncodeIndexSeekKey(newPartID, tablecodec.TempIndexPrefix, idMapKey)
 					newRecordIDEncoded := key[tablecodec.TableSplitKeyLen+2:]
 					err = txn.Set(tmpRecordIDMapKey, newRecordIDEncoded)
 					if err != nil {
 						return errors.Trace(err)
 					}
+					logutil.DDLLogger().Info("set new ID", zap.String("mapKey", fmt.Sprintf("%x", []byte(tmpRecordIDMapKey))))
 					// TODO: Clean up the temporary index map between _tidb_rowid's!!!
 
-					// Also add a temporary index / Map for 'old' partitions, to use in DeleteReorg state+
-					// when moving a row between old partitions, so that sessions still in WriteReorg
-					tblID, _, _, err = tablecodec.DecodeKeyHead(nextKey)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					tmpRecordIDMapKey = tablecodec.EncodeIndexSeekKey(tblID, tablecodec.TempIndexPrefix, newRecordIDEncoded)
+					// Also add a temporary index / Map for 'old' partitions,
+					// to use in DeleteReorg state+ when moving a row between old partitions,
+					// so that sessions still in WriteReorg can see the same rows.
+					idMapKey = idMapKey[:0]
+					idMapKey = append(idMapKey, newRecordIDEncoded...)
+					idMapKey = append(idMapKey, encodedNewPartID...)
+					tmpRecordIDMapKey = tablecodec.EncodeIndexSeekKey(currPartID, tablecodec.TempIndexPrefix, idMapKey)
 					err = txn.Set(tmpRecordIDMapKey, oldRecordIDEncoded)
 					if err != nil {
 						return errors.Trace(err)
 					}
+					logutil.DDLLogger().Info("set new ID for old part", zap.String("mapKey", fmt.Sprintf("%x", []byte(tmpRecordIDMapKey))))
 					// TODO: update/delete these entries for normal as well as reorg operation (delete/update)
 
 					// TODO: Add test for DeleteReorg update a row in a old partition, giving it a new _tidb_rowid
@@ -3939,11 +3982,13 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 			if err != nil {
 				return errors.Trace(err)
 			}
+			logutil.DDLLogger().Info("backfill data lock", zap.Int64("col1", col1), zap.String("lockKey", fmt.Sprintf("%x", lockKey)))
 
 			err = txn.Set(key, prr.vals)
 			if err != nil {
 				return errors.Trace(err)
 			}
+			logutil.DDLLogger().Info("backfill data set", zap.Int64("col1", col1), zap.String("key", fmt.Sprintf("%x", key)), zap.String("vals", fmt.Sprintf("%x", prr.vals)))
 			taskCtx.addedCount++
 		}
 		return nil
@@ -3956,7 +4001,7 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBackfillTask) (kv.Key, bool, error) {
 	w.rowRecords = w.rowRecords[:0]
 	isClustered := w.reorgedTbl.Meta().IsCommonHandle || w.reorgedTbl.Meta().PKIsHandle
-	w.oldKeys = w.oldKeys[:0]
+	w.newKeys = w.newKeys[:0]
 	startTime := time.Now()
 
 	// taskDone means that the added handle is out of taskRange.endHandle.
@@ -4000,7 +4045,7 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 			w.rowRecords = append(w.rowRecords, &rowRecord{key: newKey, vals: rawRow})
 
 			if !isClustered {
-				w.oldKeys = append(w.oldKeys, newKey)
+				w.newKeys = append(w.newKeys, newKey)
 			}
 
 			w.cleanRowMap()

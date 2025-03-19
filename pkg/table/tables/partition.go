@@ -1903,6 +1903,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 			return errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
 		}
 	}
+	// TODO: Remove this and require EXCHANGE PARTITION to have same CONSTRAINTs on the tables!
 	exchangePartitionInfo := t.Meta().ExchangePartitionInfo
 	if exchangePartitionInfo != nil && exchangePartitionInfo.ExchangePartitionDefID == to &&
 		vardef.EnableCheckConstraint.Load() {
@@ -1932,7 +1933,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 		// but maybe not re-used for the reorg partition?
 		// TODO: get the RecordID and use it for 'to' reorg partition as well!!!
 		newRecordID, err = t.getPartition(to).addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
-		if newRecordID != nil {
+		if newRecordID != nil && !newRecordID.Equal(h) {
 			logutil.BgLogger().Info("PartitionUpdateRecord", zap.Int64("newRecordID", newRecordID.IntValue()))
 		}
 	}
@@ -1955,78 +1956,20 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 			return errors.Trace(err)
 		}
 	}
-	if newFrom != 0 {
-		usingNewPartitions := false
-		switch t.Meta().Partition.DDLState {
-		case model.StateDeleteReorganization, model.StatePublic:
-			usingNewPartitions = true
+	if newFrom == 0 {
+		return errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
+	}
+	if t.Meta().PKIsHandle || t.Meta().IsCommonHandle {
+		if newTo == newFrom {
+			// Update needs to be done in StateDeleteOnly as well
+			err = t.getPartition(newTo).updateRecord(ctx, txn, h, currData, newData, touched, opt)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			memBuffer.Release(sh)
+			return nil
 		}
-		// TODO: First check if _tidb_rowid has been changed and use the new ID if so.
-		var found map[string][]byte
-		var fromKey, oldFromKey, currKey, toKey kv.Key
-		removeHandle := h
-		if !t.Meta().PKIsHandle && !t.Meta().IsCommonHandle {
-			// Check if the new partitions have generated new _tidb_rowid
-			// or duplicated from EXCHANGE PARTITION
-			// We want to check these cases:
-			// 1) newFrom has a different _tidb_rowid
-			// 2) newTo has a different _tidb_rowid
-			// 3) newTo has an already taken _tidb_rowid (due to previous EXCHANGE PARTITION)
-			//    where we need to generate a new ID and store it in the reorg temp index
-			// 4) newFrom has the old _tikv_rowid, so we must check the map...
-			keys := make([]kv.Key, 0, 4)
-			encodedRecordID := codec.EncodeInt(nil, h.IntValue())
-			fromKey = tablecodec.EncodeIndexSeekKey(newFrom, tablecodec.TempIndexPrefix, encodedRecordID)
-			keys = append(keys, fromKey)
-			if usingNewPartitions {
-				oldFromKey = tablecodec.EncodeIndexSeekKey(newFrom, tablecodec.TempIndexPrefix, encodedRecordID)
-				keys = append(keys, oldFromKey)
-			}
-			if !deleteOnly && newRecordID == nil && newTo != newFrom {
-				toKey = tablecodec.EncodeIndexSeekKey(newTo, tablecodec.TempIndexPrefix, encodedRecordID)
-				keys = append(keys, toKey)
-				currKey = t.getPartition(newTo).RecordKey(h)
-				keys = append(keys, currKey)
-			}
-			found, err = txn.BatchGet(context.Background(), keys)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if val, ok := found[string(fromKey)]; ok {
-				var id int64
-				_, id, err = codec.DecodeInt(val)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				removeHandle = kv.IntHandle(id)
-				if !usingNewPartitions {
-					newRecordID = removeHandle
-					logutil.BgLogger().Info("PartitionUpdateRecord from part", zap.Int64("newRecordID", newRecordID.IntValue()))
-					// TODO: Test how to handle this, is it correct for usingNewPartitions = true?
-				}
-				// Remove the reorg mapping entry
-				if newFrom != newTo || deleteOnly {
-					err = txn.Delete(fromKey)
-					if err != nil {
-						return errors.Trace(err)
-					}
-				}
-			}
-		} else if val, ok := found[string(oldFromKey)]; ok {
-			// TODO: Also handle delete/RemoveRecord!
-			var id int64
-			_, id, err = codec.DecodeInt(val)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			removeHandle = kv.IntHandle(id)
-			err = txn.Delete(oldFromKey)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			logutil.BgLogger().Info("PartitionUpdateRecord old part", zap.Int64("OldRecordID", removeHandle.IntValue()))
-		}
-		err = t.GetPartition(newFrom).RemoveRecord(ctx, txn, removeHandle, currData)
+		err = t.getPartition(newFrom).RemoveRecord(ctx, txn, h, currData)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -2034,7 +1977,188 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 			if newTo == 0 {
 				return errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
 			}
-			addRecordOpt := opt.GetAddRecordOpt()
+			_, err = t.getPartition(newTo).addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		memBuffer.Release(sh)
+		return nil
+	}
+
+	//usingNewPartitions := false
+	//switch t.Meta().Partition.DDLState {
+	//case model.StateDeleteReorganization, model.StatePublic:
+	//	usingNewPartitions = true
+	//}
+	// TODO: First check if _tidb_rowid has been changed and use the new ID if so.
+	var found map[string][]byte
+	var newFromMap, newToMap, newToKey kv.Key
+	removeHandle := h
+
+	// non-reorged partition ('original') will have the read record ID,
+	// so we are only concerned about the reorged partition's possible conflicts.
+	// I.e. during StateWriteReorganization: the new partitions
+	// and during StateDeleteReorganization (and StatePublic?): the old partitions
+	// TODO: Is this correct?
+
+	// Cases which don't need attention:
+	// - clustered tables - Can only have unique keys, ensured separately on old and new
+	//   partition sets
+	// - non-clustered tables that:
+	//   - there is no existing matching key newTo
+	//   AND
+	//   - there is no matching key in newTo temporary index map
+	//   AND
+	//   - if usingNewPartitions: there is no matching key in the newFrom temporary map
+	//     TODO: recheck how this is handled!!!
+	//
+	// So what do we need to check for non-clustered tables:
+	// For the RemoveRecord (newFrom):
+	// - if newFrom temporary index map exists: (Always checked!)
+	//   - use the new ID for remove (Also remove them map entry?)
+	//  else
+	//   - use the current ID for remove
+	// For the addRecord/newTo:
+	// - if newTo key already exists: (Only check if newRecordID != nil && !deleteOnly)
+	//   - if the values are the same as currData (i.e. same row):
+	//     - update (remove + add)
+	//    else
+	//     - if newTo temporary index map exists: (Always checked, but maybe not used!)
+	//       // TODO: the temporary index map must be (recordID+fromPartitionID)!
+	//       //       since the same recordID may have many duplicates!!!
+	//       // Also this can have two options:
+	//       //  - newFrom == newTo (OK, will do remove + add)
+	//       //  - newFrom != newTo Should not happen!?!
+	//       //    TODO: Add test that within an optimistic transaction updates 3 rows
+	//       //          with the same _tidb_rowid's
+	//       //          from three different partitions to the same partition
+	//       //          Will they overwrite each other?!?
+	//       - update (remove + add) using the mapped recordID
+	//      else
+	//       - generate new ID and save it to newTo temporary index map
+	// else if newTo temporary index map exists (and newTo key does not exists)
+	//   - if newTo temporary index map exists:
+	//     - update (remove + add) using the mapped recordID
+	//     // Or should we remove the temporary index map and use the current recordID?
+	// TODO: Test three different updates with each other (full combination?)
+	// - from == to, newFrom != newTo
+	// - from != to, newFrom != newTo
+	// - from != to, newFrom == newTo
+	// - from == to, newFrom == newTo, skip this one
+	keys := make([]kv.Key, 0, 3)
+	encodedRecordID := codec.EncodeInt(nil, h.IntValue())
+	mapKey := codec.EncodeInt(encodedRecordID, from)
+	newFromMap = tablecodec.EncodeIndexSeekKey(newFrom, tablecodec.TempIndexPrefix, mapKey)
+	keys = append(keys, newFromMap)
+	if !deleteOnly && (newRecordID == nil || newRecordID.Equal(h)) {
+		// Only need to check newToMap if writing, and
+		// no new record id generated (new unique id, cannot be found)
+		newToKey = tablecodec.EncodeRowKey(newTo, encodedRecordID)
+		keys = append(keys, newToKey)
+		// TODO: the below is not needed, should never match!
+		// since you can only update one row from one partition to another once,
+		// then it no longer exists in the old one!
+		// and not same as newFrom (already checked!)
+		mapKey = codec.EncodeInt(encodedRecordID, to)
+		newToMap = tablecodec.EncodeIndexSeekKey(newTo, tablecodec.TempIndexPrefix, mapKey)
+		if newTo != newFrom {
+			keys = append(keys, newToMap)
+		}
+	}
+	found, err = txn.BatchGet(context.Background(), keys)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	doDelete := true
+	if val, ok := found[string(newFromMap)]; ok {
+		var id int64
+		_, id, err = codec.DecodeInt(val)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		removeHandle = kv.IntHandle(id)
+		// Remove the reorg mapping entry, if not reused
+		if newTo != newFrom {
+			err = txn.Delete(newFromMap)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+	} else if _, ok := found[string(newToKey)]; ok {
+		// conflicting _tidb_rowid DO NOT DELETE IT!!!
+		doDelete = false
+	}
+	// TODO: should we move this to after the non-clustered 'if'...?
+	// TODO: will this check if currData is the same?
+	if doDelete {
+		err = t.GetPartition(newFrom).RemoveRecord(ctx, txn, removeHandle, currData)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		logutil.BgLogger().Info("PartitionUpdateRecord removed", zap.Int64("RecordID", h.IntValue()), zap.Int64("from", from))
+	}
+	if deleteOnly {
+		memBuffer.Release(sh)
+		return nil
+	}
+	if newTo == 0 {
+		return errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
+	}
+	addRecordOpt := opt.GetAddRecordOpt()
+	if _, ok := found[string(newToMap)]; newToMap != nil && ok {
+		if newTo != newFrom {
+			panic("Should not have found newToMap")
+		}
+		// TODO: How can this happen?!?
+		// there cannot be any recursion/multiple clashes of _tidb_rowid's
+		// since they will be uniquely created for this table during the reorg.
+
+		// add with same handle as was removed.
+		// TODO: Should we handle this as an update instead?
+		h = removeHandle
+		logutil.BgLogger().Info("PartitionUpdateRecord new part", zap.Int64("RecordID", h.IntValue()))
+	} else if _, ok := found[string(newToKey)]; ok {
+		// TODO: Check val if the same as this row?
+		//       Should not be possible, just treat it as a different row!
+		//       UNLESS JUST REMOVED?!?
+		// TODO: case to consider
+		// newFromKey == newToKey => if it can happen, then OK to insert with current ID
+		// ELSE need to generate a new ID!!!
+		// if above: && !bytes.Equal(newFromKey, newToKey)
+		// Would it have to be found in previous if? No!
+
+		// Not mapped before but conflicts with existing _tidb_rowid.
+		// Generate a new and add it to the map.
+		newRecordID, err = AllocHandle(context.Background(), ctx, t)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		logutil.BgLogger().Info("PartitionUpdateRecord reorg part", zap.Int64("newRecordID", newRecordID.IntValue()))
+
+		mapKey = codec.EncodeInt(encodedRecordID, to)
+		tmpRecordIDMapKey := tablecodec.EncodeIndexSeekKey(newTo, tablecodec.TempIndexPrefix, mapKey)
+		encNewRecordID := codec.EncodeInt(nil, newRecordID.IntValue())
+		err = txn.Set(tmpRecordIDMapKey, encNewRecordID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		logutil.BgLogger().Info("set new ID for new part", zap.String("mapKey", fmt.Sprintf("%x", []byte(tmpRecordIDMapKey))))
+		// Set the new _tidb_rowid to be used
+		if len(newData) > len(t.Cols()) {
+			newData[len(t.Cols())] = types.NewIntDatum(newRecordID.IntValue())
+		} else {
+			newData = append(newData, types.NewIntDatum(newRecordID.IntValue()))
+		}
+		addRecordOpt = opt.GetAddRecordOptKeepRecordID()
+	}
+	_, err = t.getPartition(newTo).addRecord(ctx, txn, newData, addRecordOpt)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	logutil.BgLogger().Info("PartitionUpdateRecord added", zap.Int64("to", to))
+	/*
+		if !deleteOnly {
 			if !t.Meta().PKIsHandle && !t.Meta().IsCommonHandle {
 				if val, ok := found[string(toKey)]; ok {
 					var id int64
@@ -2083,7 +2207,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 				return errors.Trace(err)
 			}
 		}
-	}
+	*/
 	memBuffer.Release(sh)
 	return nil
 }
