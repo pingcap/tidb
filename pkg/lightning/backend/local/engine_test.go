@@ -271,7 +271,7 @@ func TestCreateSSTWriterDefaultBlockSize(t *testing.T) {
 	require.True(t, blockSizeField.IsValid(), "blockSize field should be valid")
 	require.Equal(t, config.DefaultBlockSize, int(blockSizeField.Int()))
 
-	// Clean up
+	// clean up
 	err = sstWriter.writer.Close()
 	require.NoError(t, err)
 }
