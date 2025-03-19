@@ -16,6 +16,9 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"strings"
 
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -27,16 +30,20 @@ import (
 	pdhttp "github.com/tikv/pd/client/http"
 )
 
+var schedulerName = "balance-range-scheduler"
+
 // DistributeTableExec represents a distribute table  executor.
 type DistributeTableExec struct {
 	exec.BaseExecutor
 
 	tableInfo      *model.TableInfo
+	is             infoschema.InfoSchema
 	partitionNames []ast.CIStr
 	rule           ast.CIStr
 	engine         ast.CIStr
 	jobID          uint64
 
+	done      bool
 	keyRanges []*pdhttp.KeyRange
 }
 
@@ -53,21 +60,55 @@ func (e *DistributeTableExec) Open(context.Context) error {
 // Next implements the Executor Next interface.
 func (e *DistributeTableExec) Next(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
-
-	jobID, err := e.distributeTable(ctx)
+	if e.done {
+		return nil
+	}
+	e.done = true
+	err := e.distributeTable(ctx)
 	if err != nil {
 		return err
 	}
-	chk.AppendUint64(0, jobID)
+	jobs, err := infosync.GetSchedulerConfig(ctx, schedulerName)
+	if err != nil {
+		return err
+	}
+	alias := e.getAlias()
+	for _, job := range jobs {
+		if job["alias"] == alias && job["engine"] == e.engine.String() && job["rule"] == e.rule.String() {
+			chk.AppendUint64(0, job["job-id"].(uint64))
+		}
+	}
 	return nil
 }
 
-func (e *DistributeTableExec) distributeTable(_ context.Context) (uint64, error) {
-	return uint64(0), nil
+func (e *DistributeTableExec) distributeTable(ctx context.Context) error {
+	input := make(map[string]any)
+	input["alias"] = e.getAlias()
+	input["engine"] = e.engine.String()
+	input["rule"] = e.rule.String()
+	input["start-key"] = e.keyRanges[0].StartKey
+	input["end-key"] = e.keyRanges[0].EndKey
+	return infosync.CreateSchedulerConfigWithInput(ctx, schedulerName, input)
+}
+
+func (e *DistributeTableExec) getAlias() string {
+	partitionStr := ""
+	if len(e.partitionNames) != 0 {
+		partitionStr = "partition("
+		for idx, partition := range e.partitionNames {
+			partitionStr += partition.String()
+			if idx != len(e.partitionNames)-1 {
+				partitionStr += ","
+			}
+		}
+		partitionStr += ")"
+	}
+	dbName := getSchemaName(e.is, e.tableInfo.DBID)
+	return strings.Join([]string{dbName, e.tableInfo.Name.String(), partitionStr}, ".")
 }
 
 func (e *DistributeTableExec) getKeyRanges() ([]*pdhttp.KeyRange, error) {
-	physicalIDs := []int64{}
+	physicalIDs := make([]int64, 0)
 	pi := e.tableInfo.GetPartitionInfo()
 	if pi == nil {
 		physicalIDs = append(physicalIDs, e.tableInfo.ID)
@@ -81,7 +122,7 @@ func (e *DistributeTableExec) getKeyRanges() ([]*pdhttp.KeyRange, error) {
 		}
 	}
 
-	ranges := make([]*pdhttp.KeyRange, len(physicalIDs))
+	ranges := make([]*pdhttp.KeyRange, 0, len(physicalIDs))
 	for _, id := range physicalIDs {
 		startKey, endKey := tablecodec.GetTableHandleKeyRange(id)
 		r := pdhttp.NewKeyRange(startKey, endKey)

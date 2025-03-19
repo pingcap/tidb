@@ -902,6 +902,7 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) exec.Executor {
 		Extended:              v.Extended,
 		Extractor:             v.Extractor,
 		ImportJobID:           v.ImportJobID,
+		DistributionJobID:     v.DistributionJobID,
 	}
 	if e.Tp == ast.ShowMasterStatus || e.Tp == ast.ShowBinlogStatus {
 		// show master status need start ts.
@@ -2671,6 +2672,7 @@ func (b executorBuilder) buildDistributeTable(v *plannercore.DistributeTable) ex
 	return &DistributeTableExec{
 		BaseExecutor:   base,
 		tableInfo:      v.TableInfo,
+		is:             b.is,
 		partitionNames: v.PartitionNames,
 		engine:         v.Engine,
 		rule:           v.Rule,
