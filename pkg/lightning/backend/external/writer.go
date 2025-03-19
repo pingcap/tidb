@@ -164,7 +164,7 @@ type WriterSummary struct {
 	TotalSize          uint64
 	TotalCnt           uint64
 	MultipleFilesStats []MultipleFilesStat
-	ConflictInfo       ConflictInfo
+	ConflictInfo       common.ConflictInfo
 }
 
 // OnCloseFunc is the callback function when a writer is closed.
@@ -432,7 +432,7 @@ type Writer struct {
 	totalSize uint64
 	totalCnt  uint64
 	// duplicate key's statistics.
-	conflictInfo ConflictInfo
+	conflictInfo common.ConflictInfo
 }
 
 // WriteRow implements ingest.Writer.
@@ -616,7 +616,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 
 	// maintain dup statistics
 	if len(dupFile) > 0 {
-		w.conflictInfo.merge(ConflictInfo{
+		w.conflictInfo.Merge(common.ConflictInfo{
 			Count: uint64(len(dupLocs)),
 			Files: []string{dupFile},
 		})

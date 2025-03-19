@@ -468,6 +468,12 @@ func (e *Engine) ImportedStatistics() (importedSize int64, importedKVCount int64
 	return e.importedKVSize.Load(), e.importedKVCount.Load()
 }
 
+// ConflictInfo implements common.Engine.
+func (*Engine) ConflictInfo() common.ConflictInfo {
+	// to be implemented
+	return common.ConflictInfo{}
+}
+
 // ID is the identifier of an engine.
 func (e *Engine) ID() string {
 	return "external"
@@ -515,7 +521,7 @@ func (e *Engine) GetRegionSplitKeys() ([][]byte, error) {
 // When duplicate detection feature is enabled, the **end key** comes from
 // DupDetectKeyAdapter.Encode or Key.Next(). We try to decode it and check the
 // error.
-func (e Engine) tryDecodeEndKey(key []byte) (decoded []byte, err error) {
+func (e *Engine) tryDecodeEndKey(key []byte) (decoded []byte, err error) {
 	decoded, err = e.keyAdapter.Decode(nil, key)
 	if err == nil {
 		return

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -269,7 +270,7 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 		TotalSize:          w.totalSize,
 		TotalCnt:           w.totalCnt,
 		MultipleFilesStats: []MultipleFilesStat{stat},
-		ConflictInfo: ConflictInfo{
+		ConflictInfo: common.ConflictInfo{
 			Count: uint64(w.recordedDupCnt),
 			Files: []string{w.dupFile},
 		},
