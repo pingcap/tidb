@@ -2186,7 +2186,9 @@ func (s *session) onTxnManagerStmtStartOrRetry(ctx context.Context, node ast.Stm
 
 func (s *session) validateStatementInTxn(stmtNode ast.StmtNode) error {
 	vars := s.GetSessionVars()
-	if _, ok := stmtNode.(*ast.ImportIntoStmt); ok && vars.InTxn() && !variable.InsertSelectFastMode.Load() {
+	if _, ok := stmtNode.(*ast.ImportIntoStmt); ok &&
+		vars.InTxn() &&
+		!s.sessionVars.InsertSelectFastMode {
 		return errors.New("cannot run IMPORT INTO in explicit transaction")
 	}
 	return nil

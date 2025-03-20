@@ -1708,6 +1708,8 @@ type SessionVars struct {
 
 	// ScatterRegion will scatter the regions for DDLs when it is "table" or "global", "" indicates not trigger scatter.
 	ScatterRegion string
+
+	InsertSelectFastMode bool
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.

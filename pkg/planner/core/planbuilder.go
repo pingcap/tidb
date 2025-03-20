@@ -3891,7 +3891,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	if !ok {
 		return nil, infoschema.ErrTableNotExists.FastGenByArgs()
 	}
-	if insert.Select != nil && variable.InsertSelectFastMode.Load() {
+	if insert.Select != nil && b.ctx.GetSessionVars().InsertSelectFastMode {
 		importStmt := &ast.ImportIntoStmt{
 			Table:  tn,
 			Select: insert.Select,

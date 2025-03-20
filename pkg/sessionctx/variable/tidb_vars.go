@@ -1694,7 +1694,6 @@ var (
 
 	SchemaCacheSize           = atomic.NewUint64(DefTiDBSchemaCacheSize)
 	SchemaCacheSizeOriginText = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
-	InsertSelectFastMode      = atomic.NewBool(DefTiDBInsertSelectFastMode)
 )
 
 var (
