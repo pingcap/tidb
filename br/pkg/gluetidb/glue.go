@@ -4,6 +4,7 @@ package gluetidb
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -260,7 +261,7 @@ func (gs *tidbSession) Close() {
 	gs.se.Close()
 }
 
-// GetGlobalVariables implements glue.Session.
+// GetGlobalVariable implements glue.Session.
 func (gs *tidbSession) GetGlobalVariable(name string) (string, error) {
 	return gs.se.GetSessionVars().GlobalVarsAccessor.GetTiDBTableValue(name)
 }
@@ -272,4 +273,22 @@ func (gs *tidbSession) GetGlobalSysVar(name string) (string, error) {
 
 func (gs *tidbSession) showCreatePlacementPolicy(policy *model.PolicyInfo) string {
 	return executor.ConstructResultOfShowCreatePlacementPolicy(policy)
+}
+
+func (gs *tidbSession) AlterTableMode(
+	_ context.Context,
+	schemaID int64,
+	tableID int64,
+	tableMode model.TableModeState) error {
+	originQueryString := gs.se.Value(sessionctx.QueryString)
+	defer gs.se.SetValue(sessionctx.QueryString, originQueryString)
+	d := domain.GetDomain(gs.se).DDLExecutor()
+	gs.se.SetValue(sessionctx.QueryString,
+		fmt.Sprintf("ALTER TABLE MODE %d %d TO %s", schemaID, tableID, tableMode.String()))
+	args := &model.AlterTableModeArgs{
+		SchemaID:  schemaID,
+		TableID:   tableID,
+		TableMode: tableMode,
+	}
+	return d.AlterTableMode(gs.se, args)
 }

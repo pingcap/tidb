@@ -196,6 +196,8 @@ type TableInfo struct {
 	Revision uint64 `json:"revision"`
 
 	DBID int64 `json:"-"`
+
+	TableMode TableModeState `json:"table_mode"`
 }
 
 // Hash64 implement HashEquals interface.
@@ -660,6 +662,32 @@ func (t TableLockState) String() string {
 		return "public"
 	default:
 		return "none"
+	}
+}
+
+// TableModeState is the state for table mode.
+type TableModeState byte
+
+const (
+	// TableModeNormal means the table is in normal mode.
+	TableModeNormal TableModeState = iota
+	// TableModeImport means the table is in import mode.
+	TableModeImport
+	// TableModeRestore means the table is in restore mode.
+	TableModeRestore
+)
+
+// String implements fmt.Stringer interface.
+func (t TableModeState) String() string {
+	switch t {
+	case TableModeNormal:
+		return "ModeNormal"
+	case TableModeImport:
+		return "ModeImport"
+	case TableModeRestore:
+		return "ModeRestore"
+	default:
+		return ""
 	}
 }
 

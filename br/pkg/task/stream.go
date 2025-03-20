@@ -331,7 +331,7 @@ type streamMgr struct {
 	httpCli *http.Client
 }
 
-func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamStart bool) (*streamMgr, error) {
+func newStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamStart bool) (*streamMgr, error) {
 	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config),
 		cfg.CheckRequirements, false, conn.StreamVersionChecker)
 	if err != nil {
@@ -565,7 +565,7 @@ func RunStreamStart(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	streamMgr, err := NewStreamMgr(ctx, cfg, g, true)
+	streamMgr, err := newStreamMgr(ctx, cfg, g, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -758,7 +758,7 @@ func RunStreamStop(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	streamMgr, err := NewStreamMgr(ctx, cfg, g, false)
+	streamMgr, err := newStreamMgr(ctx, cfg, g, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -817,7 +817,7 @@ func RunStreamPause(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	streamMgr, err := NewStreamMgr(ctx, cfg, g, false)
+	streamMgr, err := newStreamMgr(ctx, cfg, g, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -891,7 +891,7 @@ func RunStreamResume(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	streamMgr, err := NewStreamMgr(ctx, cfg, g, false)
+	streamMgr, err := newStreamMgr(ctx, cfg, g, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1367,7 +1367,7 @@ func RunStreamRestore(
 	}
 	// TODO: pitr filtered restore doesn't support restore system table yet
 	if cfg.ExplicitFilter {
-		if cfg.TableFilter.MatchSchema(mysql.SystemDB) {
+		if cfg.TableFilter.MatchSchema(mysql.SystemDB) || cfg.TableFilter.MatchSchema(mysql.SysDB) {
 			return errors.Annotatef(berrors.ErrInvalidArgument,
 				"PiTR doesn't support custom filter to include system db, consider to exclude system db")
 		}
@@ -1379,7 +1379,7 @@ func RunStreamRestore(
 		// we restore additional tables at full snapshot phase when it is renamed into the filter range
 		// later in log backup.
 		// we also ignore the tables that currently in filter range but later renamed out of the filter.
-		log.Info("reading meta kv files to collect table renaming and id mapping information")
+		log.Info("reading meta kv files to collect table info and id mapping information")
 		err = metaInfoProcessor.ReadMetaKVFilesAndBuildInfo(ctx, ddlFiles)
 		if err != nil {
 			return errors.Trace(err)
@@ -1396,6 +1396,11 @@ func RunStreamRestore(
 			RestoreConfig:          cfg,
 			piTRTaskInfo:           taskInfo,
 			logTableHistoryManager: metaInfoProcessor.GetTableHistoryManager(),
+			tableMappingManager:    metaInfoProcessor.GetTableMappingManager(),
+			SaveIdMap: func(ctx context.Context, tableMappingManager *stream.TableMappingManager,
+				logCheckpointMetaManager checkpoint.LogMetaManagerT) error {
+				return logClient.SaveIdMapWithFailPoints(ctx, tableMappingManager, logCheckpointMetaManager)
+			},
 		}
 		// TiFlash replica is restored to down-stream on 'pitr' currently.
 		if err = runSnapshotRestore(ctx, mgr, g, FullRestoreCmd, &snapshotRestoreConfig); err != nil {
@@ -1558,10 +1563,13 @@ func restoreStream(
 		}
 	}
 
-	// build and save id map
-	if err := buildAndSaveIDMapIfNeeded(ctx, client, cfg, tableMappingManager); err != nil {
-		return errors.Trace(err)
+	if tableMappingManager.IsEmpty() {
+		// build and save id map
+		if err := buildAndSaveIDMapIfNeeded(ctx, client, cfg, tableMappingManager); err != nil {
+			return errors.Trace(err)
+		}
 	}
+
 	// build schema replace
 	schemasReplace, err := buildSchemaReplace(client, cfg, tableMappingManager)
 	if err != nil {
@@ -1578,10 +1586,11 @@ func restoreStream(
 	var rp *logclient.RestoreMetaKVProcessor
 	if err = glue.WithProgress(ctx, g, "Restore Meta Files", int64(len(ddlFiles)), !cfg.LogProgress, func(p glue.Progress) error {
 		rp = logclient.NewRestoreMetaKVProcessor(client, schemasReplace, updateStats, p.Inc)
-		return rp.RestoreAndRewriteMetaKVFiles(ctx, ddlFiles)
+		return rp.RestoreAndRewriteMetaKVFiles(ctx, cfg.ExplicitFilter, ddlFiles)
 	}); err != nil {
 		return errors.Annotate(err, "failed to restore meta files")
 	}
+	stream.LogDBReplaceMap("built db replace map, start to build rewrite rules", schemasReplace.DbReplaceMap)
 	rewriteRules := buildRewriteRules(schemasReplace)
 
 	ingestRecorder := schemasReplace.GetIngestRecorder()
@@ -1658,6 +1667,16 @@ func restoreStream(
 	})
 	if err != nil {
 		return errors.Annotate(err, "failed to restore kv files")
+	}
+
+	if cfg.ExplicitFilter {
+		failpoint.Inject("before-set-table-mode-to-normal", func(_ failpoint.Value) {
+			failpoint.Return(errors.New("fail before setting table mode to normal"))
+		})
+		err = client.SetTableModeToNormal(ctx, schemasReplace)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	// failpoint to stop for a while after restoring kvs
@@ -2005,10 +2024,9 @@ func checkPiTRRequirements(mgr *conn.Mgr, hasExplicitFilter bool) error {
 }
 
 type PiTRTaskInfo struct {
-	CheckpointInfo      *checkpoint.TaskInfoForLogRestore
-	RestoreTS           uint64
-	NeedFullRestore     bool
-	FullRestoreCheckErr error
+	CheckpointInfo  *checkpoint.TaskInfoForLogRestore
+	RestoreTS       uint64
+	NeedFullRestore bool
 }
 
 func (p *PiTRTaskInfo) hasTiFlashItemsInCheckpoint() bool {
@@ -2075,22 +2093,6 @@ func generatePiTRTaskInfo(
 	checkInfo.CheckpointInfo = curTaskInfo
 	checkInfo.NeedFullRestore = doFullRestore
 	checkInfo.RestoreTS = cfg.RestoreTS
-	// restore full snapshot precheck.
-	if doFullRestore {
-		if !(cfg.UseCheckpoint && (curTaskInfo.Metadata != nil || curTaskInfo.HasSnapshotMetadata)) {
-			// Only when use checkpoint and not the first execution,
-			// skip checking requirements.
-			log.Info("check pitr requirements for the first execution")
-			if err := checkPiTRRequirements(mgr, cfg.ExplicitFilter); err != nil {
-				// delay cluster checks after we get the backupmeta.
-				// for the case that the restore inc + log backup,
-				// we can still restore them.
-				checkInfo.FullRestoreCheckErr = err
-				return checkInfo, nil
-			}
-		}
-	}
-
 	return checkInfo, nil
 }
 
@@ -2125,7 +2127,7 @@ func buildSchemaReplace(
 	cfg *LogRestoreConfig,
 	tableMappingManager *stream.TableMappingManager) (*stream.SchemasReplace, error) {
 	schemasReplace := stream.NewSchemasReplace(tableMappingManager.DBReplaceMap, cfg.tiflashRecorder,
-		client.CurrentTS(), client.RecordDeleteRange)
+		client.CurrentTS(), client.RecordDeleteRange, cfg.ExplicitFilter)
 	schemasReplace.AfterTableRewrittenFn = func(deleted bool, tableInfo *model.TableInfo) {
 		// When the table replica changed to 0, the tiflash replica might be set to `nil`.
 		// We should remove the table if we meet.
@@ -2142,19 +2144,11 @@ func buildSchemaReplace(
 
 func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient, cfg *LogRestoreConfig,
 	tableMappingManager *stream.TableMappingManager) error {
-	// get full backup meta storage if needed.
-	fullBackupStorageConfig, err := parseFullBackupTablesStorage(cfg.RestoreConfig)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
 	// get the schemas ID replace information.
 	saved := isCurrentIdMapSaved(cfg.checkpointTaskInfo)
 	dbReplaces, err := client.GetBaseIDMap(ctx, &logclient.GetIDMapConfig{
-		LoadSavedIDMap:          saved,
-		PiTRTableTracker:        cfg.PiTRTableTracker,
-		FullBackupStorageConfig: fullBackupStorageConfig,
-		CipherInfo:              &cfg.Config.CipherInfo,
+		LoadSavedIDMap:      saved,
+		TableMappingManager: tableMappingManager,
 	})
 	if err != nil {
 		return errors.Trace(err)
@@ -2166,12 +2160,9 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 			return errors.Trace(err)
 		}
 	} else {
+		// if we come down here it must be the case that base map is from last PiTR restore, i.e., multiple continuous
+		// PiTR, which is not explicitly supported yet.
 		tableMappingManager.MergeBaseDBReplace(dbReplaces)
-		if cfg.PiTRTableTracker != nil {
-			tableMappingManager.ApplyFilterToDBReplaceMap(cfg.PiTRTableTracker)
-		} else {
-			log.Warn("pitr table tracker is nil, base map is not from full backup")
-		}
 		err = tableMappingManager.ReplaceTemporaryIDs(ctx, client.GenGlobalIDs)
 		if err != nil {
 			return errors.Trace(err)
