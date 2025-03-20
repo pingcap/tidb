@@ -814,7 +814,7 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 }
 
 func adjustWorkerCntAndMaxWriteSpeed(ctx context.Context, pipe *operator.AsyncPipeline, job *model.Job, bcCtx ingest.BackendCtx, avgRowSize int) {
-	reader, writer := pipe.GetIngestModeReaderAndWriter()
+	reader, writer := pipe.GetReaderAndWriter()
 	if reader == nil || writer == nil {
 		logutil.DDLIngestLogger().Error("failed to get local ingest mode reader or writer", zap.Int64("jobID", job.ID))
 		return

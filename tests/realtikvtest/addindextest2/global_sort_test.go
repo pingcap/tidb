@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,8 +29,12 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
+	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -348,4 +354,103 @@ func TestIngestUseGivenTS(t *testing.T) {
 	require.NotNil(t, mvccResp.Info)
 	require.Greater(t, len(mvccResp.Info.Writes), 0)
 	require.Equal(t, presetTS, mvccResp.Info.Writes[0].CommitTs)
+}
+
+func TestAlterJobOnDXWithGlobalSort(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(16)`))
+	testutil.ReduceCheckInterval(t)
+
+	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
+	opt := fakestorage.Options{
+		Scheme:     "http",
+		Host:       gcsHost,
+		Port:       gcsPort,
+		PublicHost: gcsHost,
+	}
+	server, err := fakestorage.NewServerWithOptions(opt)
+	require.NoError(t, err)
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+	t.Cleanup(server.Stop)
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set global tidb_enable_dist_task = on;")
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_enable_dist_task = off;")
+	})
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg = on;`)
+	tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + cloudStorageURI + "';")
+	t.Cleanup(func() {
+		tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
+	})
+
+	tk.MustExec("drop database if exists testalter;")
+	tk.MustExec("create database testalter;")
+	tk.MustExec("use testalter;")
+	tk.MustExec("create table gsort(a bigint auto_random primary key);")
+	for range 16 {
+		tk.MustExec("insert into gsort values (), (), (), ()")
+	}
+	tk.MustExec("split table gsort between (3) and (8646911284551352360) regions 50;")
+
+	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1")
+	tk.MustExec("set @@tidb_ddl_reorg_batch_size = 32")
+	tk.MustExec("set global tidb_ddl_reorg_max_write_speed = 16")
+	t.Cleanup(func() {
+		tk.MustExec("set global tidb_ddl_reorg_max_write_speed = 0")
+	})
+
+	var pipeClosed bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterPipeLineClose", func(pipe *operator.AsyncPipeline) {
+		pipeClosed = true
+		reader, writer := pipe.GetReaderAndWriter()
+		require.EqualValues(t, 4, reader.(*ddl.TableScanOperator).GetWorkerPoolSize())
+		require.EqualValues(t, 6, writer.(*ddl.IndexIngestOperator).GetWorkerPoolSize())
+	})
+
+	// Change the batch size and concurrency during table scanning and check the modified parameters.
+	var modified atomic.Bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterDetectAndHandleParamModify", func() {
+		require.False(t, modified.Load())
+		modified.Store(true)
+	})
+	var onceScan sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/scanRecordExec", func(reorgMeta *model.DDLReorgMeta) {
+		onceScan.Do(func() {
+			tk1 := testkit.NewTestKit(t, store)
+			rows := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
+			require.Len(t, rows, 1)
+			tk1.MustExec(fmt.Sprintf("admin alter ddl jobs %s thread = 8, batch_size = 256", rows[0][0]))
+			require.Eventually(t, func() bool {
+				return modified.Load()
+			}, 20*time.Second, 100*time.Millisecond)
+			require.Equal(t, 256, reorgMeta.GetBatchSize())
+			modified.Store(false)
+		})
+	})
+
+	// Change the max_write_speed of running ingest subtask and check the write speed of backend
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterDetectAndHandleParamModify", func() {
+		require.False(t, modified.Load())
+		modified.Store(true)
+	})
+	var onceIngest sync.Once
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/modifyRunningGlobalSortSpeed", func(be *local.Backend) {
+		onceIngest.Do(func() {
+			tk1 := testkit.NewTestKit(t, store)
+			rows := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
+			require.Len(t, rows, 1)
+			tk1.MustExec(fmt.Sprintf("admin alter ddl jobs %s max_write_speed=1024", rows[0][0]))
+			require.Eventually(t, func() bool {
+				return modified.Load()
+			}, 20*time.Second, 100*time.Millisecond)
+			require.EqualValues(t, 1024, be.GetWriteSpeedLimit())
+		})
+	})
+
+	tk.MustExec("alter table t1 add index idx(a);")
+	require.True(t, pipeClosed)
+	require.True(t, modified.Load())
+	tk.MustExec("admin check index t1 idx;")
 }

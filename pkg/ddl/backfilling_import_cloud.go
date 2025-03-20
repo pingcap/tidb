@@ -173,7 +173,8 @@ func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
 }
 
 // TaskMetaModified changes the max write speed for ingest
-func (m *cloudImportExecutor) TaskMetaModified(_ context.Context, newMeta []byte) error {
+func (m *cloudImportExecutor) TaskMetaModified(ctx context.Context, newMeta []byte) error {
+	logutil.Logger(ctx).Info("cloud import executor update task meta")
 	newTaskMeta := &BackfillTaskMeta{}
 	if err := json.Unmarshal(newMeta, newTaskMeta); err != nil {
 		return errors.Trace(err)
