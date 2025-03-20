@@ -135,6 +135,13 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		return errors.Trace(err)
 	}
 
+	// read import step meta from external storage when using global sort.
+	if subtaskMeta.ExternalPath != "" {
+		if err := subtaskMeta.ReadJSONFromExternalStorage(ctx, s.tableImporter.GlobalSortStore, subtaskMeta); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	var dataEngine, indexEngine *backend.OpenedEngine
 	if s.tableImporter.IsLocalSort() {
 		dataEngine, err = s.tableImporter.OpenDataEngine(ctx, subtaskMeta.ID)
@@ -328,6 +335,12 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	err = json.Unmarshal(subtask.Meta, sm)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	// read merge sort step meta from external storage when using global sort.
+	if sm.ExternalPath != "" {
+		if err := sm.ReadJSONFromExternalStorage(ctx, m.controller.GlobalSortStore, sm); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	logger := m.logger.With(zap.Int64("subtask-id", subtask.ID), zap.String("kv-group", sm.KVGroup))
 	task := log.BeginTask(logger, "run subtask")
