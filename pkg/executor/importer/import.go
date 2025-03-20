@@ -1019,7 +1019,7 @@ func (e *LoadDataController) InitDataStore(ctx context.Context) error {
 		e.GlobalSortStore = s
 
 		if e.EnableLocalStoreForCloud {
-			path, err := prepareSortDir(e, fmt.Sprintf("%d", e.taskID), tidb.GetGlobalConfig())
+			path, err := prepareSortDir(e, fmt.Sprintf("%d", e.taskID))
 			if err != nil {
 				return err
 			}

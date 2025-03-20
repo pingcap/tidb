@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -204,4 +205,8 @@ func filterProcessingJobIDs(ctx context.Context, se *sess.Session, jobIDs []int6
 		ret = append(ret, row.GetInt64(0))
 	}
 	return ret, nil
+}
+
+func init() {
+	metrics.GetIngestTempDataDir = GetIngestTempDataDir
 }

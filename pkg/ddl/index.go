@@ -2209,6 +2209,8 @@ func writeChunkToLocal(
 	if restore {
 		restoreDataBuf = make([]types.Datum, len(c.HandleOutputOffsets))
 	}
+	var totalSize int
+	start := time.Now()
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		handleDataBuf := ExtractDatumByOffsets(ectx, row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
 		if restore {
@@ -2234,14 +2236,18 @@ func writeChunkToLocal(
 			if len(writers) == len(indexes) {
 				w = writers[i]
 			}
-			err = writeOneIndexKeyValue(ctx, w, index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
+			s, err := writeOneIndexKeyValue(ctx, w, index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
+			totalSize += s
 		}
 		count++
 		lastHandle = h
 	}
+	ingestDir := metrics.GetIngestTempDataDir()
+	duration := time.Since(start)
+	metrics.TempDirWriteStorageRate.WithLabelValues(ingestDir).Observe(float64(totalSize) / 1024.0 / 1024.0 / duration.Seconds())
 	return count, lastHandle, nil
 }
 
@@ -2265,27 +2271,29 @@ func writeOneIndexKeyValue(
 	writeBufs *variable.WriteStmtBufs,
 	idxDt, rsData []types.Datum,
 	handle kv.Handle,
-) error {
+) (int, error) {
 	iter := index.GenIndexKVIter(errCtx, loc, idxDt, handle, rsData)
+	var totalSize int
 	for iter.Valid() {
 		key, idxVal, _, err := iter.Next(writeBufs.IndexKeyBuf, writeBufs.RowValBuf)
 		if err != nil {
-			return errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 		failpoint.Inject("mockLocalWriterPanic", func() {
 			panic("mock panic")
 		})
 		err = writer.WriteRow(ctx, key, idxVal, handle)
 		if err != nil {
-			return errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 		failpoint.Inject("mockLocalWriterError", func() {
 			failpoint.Return(errors.New("mock engine error"))
 		})
 		writeBufs.IndexKeyBuf = key
 		writeBufs.RowValBuf = idxVal
+		totalSize += len(key) + len(idxVal) + handle.Len()
 	}
-	return nil
+	return totalSize, nil
 }
 
 // BackfillData will backfill table index in a transaction. A lock corresponds to a rowKey if the value of rowKey is changed,

@@ -24,6 +24,7 @@ go_library(
         "session.go",
         "sli.go",
         "stats.go",
+        "temp_dir.go",
         "topsql.go",
         "ttl.go",
         "wrapper.go",

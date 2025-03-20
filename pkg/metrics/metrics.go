@@ -97,6 +97,7 @@ func InitMetrics() {
 	InitGlobalSortMetrics()
 	InitInfoSchemaV2Metrics()
 	timermetrics.InitTimerMetrics()
+	InitTempDirMetrics()
 
 	// For now, those metrics are initialized but not registered.
 	// They will be printed to log during restoring...
@@ -303,9 +304,16 @@ func RegisterMetrics() {
 
 	prometheus.MustRegister(NetworkTransmissionStats)
 
+	prometheus.MustRegister(TempDirWriteStorageRate)
+	prometheus.MustRegister(TempDirReadStorageRate)
+	prometheus.MustRegister(TempDirTotalFilesCount)
+	prometheus.MustRegister(TempDirTotalFilesSize)
+
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()
 	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
+
+	startTempDirUsageObserver()
 }
 
 var mode struct {

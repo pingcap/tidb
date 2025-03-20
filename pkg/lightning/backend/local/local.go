@@ -1105,7 +1105,7 @@ func (local *Backend) startWorker(
 	afterExecuteJob func([]*metapb.Peer),
 	jobWg *sync.WaitGroup,
 ) error {
-	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Set(0)
+	metrics.GlobalSortIngestWorkerCnt.Set(0)
 	for {
 		select {
 		case <-ctx.Done():
@@ -1121,9 +1121,9 @@ func (local *Backend) startWorker(
 				peers = job.region.Region.GetPeers()
 			}
 			failpoint.InjectCall("beforeExecuteRegionJob", ctx)
-			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Inc()
+			metrics.GlobalSortIngestWorkerCnt.Inc()
 			err := local.executeJob(ctx, job)
-			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Dec()
+			metrics.GlobalSortIngestWorkerCnt.Dec()
 
 			if afterExecuteJob != nil {
 				afterExecuteJob(peers)

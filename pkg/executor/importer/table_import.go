@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/metrics"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -101,8 +102,8 @@ type Chunk struct {
 }
 
 // prepareSortDir creates a new directory for import, remove previous sort directory if exists.
-func prepareSortDir(e *LoadDataController, id string, tidbCfg *tidb.Config) (string, error) {
-	importDir := GetImportRootDir(tidbCfg)
+func prepareSortDir(e *LoadDataController, id string) (string, error) {
+	importDir := GetImportRootDir()
 	sortDir := filepath.Join(importDir, id)
 
 	if info, err := os.Stat(importDir); err != nil || !info.IsDir() {
@@ -176,7 +177,7 @@ func NewTableImporter(
 
 	tidbCfg := tidb.GetGlobalConfig()
 	// todo: we only need to prepare this once on each node(we might call it 3 times in distribution framework)
-	dir, err := prepareSortDir(e, id, tidbCfg)
+	dir, err := prepareSortDir(e, id)
 	if err != nil {
 		return nil, err
 	}
@@ -255,7 +256,7 @@ func NewTableImporterForTest(ctx context.Context, e *LoadDataController, id stri
 	}
 
 	tidbCfg := tidb.GetGlobalConfig()
-	dir, err := prepareSortDir(e, id, tidbCfg)
+	dir, err := prepareSortDir(e, id)
 	if err != nil {
 		return nil, err
 	}
@@ -965,9 +966,10 @@ func setBackoffWeight(se sessionctx.Context, plan *Plan, logger *zap.Logger) err
 //	  -> some-uuid
 //
 // exported for testing.
-func GetImportRootDir(tidbCfg *tidb.Config) string {
-	sortPathSuffix := "import-" + strconv.Itoa(int(tidbCfg.Port))
-	return filepath.Join(tidbCfg.TempDir, sortPathSuffix)
+func GetImportRootDir() string {
+	cfg := tidb.GetGlobalConfig()
+	sortPathSuffix := "import-" + strconv.Itoa(int(cfg.Port))
+	return filepath.Join(cfg.TempDir, sortPathSuffix)
 }
 
 // FlushTableStats flushes the stats of the table.
@@ -985,4 +987,8 @@ func FlushTableStats(ctx context.Context, se sessionctx.Context, tableID int64, 
 	sessionVars.TxnCtx.UpdateDeltaForTable(tableID, int64(result.Affected), int64(result.Affected))
 	se.StmtCommit(ctx)
 	return se.CommitTxn(ctx)
+}
+
+func init() {
+	metrics.GetImportTempDataDir = GetImportRootDir
 }

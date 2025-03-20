@@ -1000,16 +1000,8 @@ func (s *indexWriteResultSink) flush() error {
 	return s.backendCtx.Ingest(s.ctx)
 }
 
-func logSubtaskTempDirSize(ctx context.Context, jobID, subtaskID int64) {
-	ingestBaseDir := ingest.GetIngestTempDataDir()
-	var targetDir string
-	if subtaskID == 0 {
-		targetDir = path.Join(ingestBaseDir, strconv.Itoa(int(jobID)))
-	} else {
-		targetDir = path.Join(ingestBaseDir, strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
-	}
-	var size int64
-	err := filepath.Walk(targetDir, func(_ string, info os.FileInfo, err error) error {
+func getDirSize(path string) (size int64, err error) {
+	err = filepath.Walk(path, func(_ string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -1018,6 +1010,18 @@ func logSubtaskTempDirSize(ctx context.Context, jobID, subtaskID int64) {
 		}
 		return err
 	})
+	return size, err
+}
+
+func logSubtaskTempDirSize(ctx context.Context, jobID, subtaskID int64) {
+	ingestBaseDir := ingest.GetIngestTempDataDir()
+	var targetDir string
+	if subtaskID == 0 {
+		targetDir = path.Join(ingestBaseDir, strconv.Itoa(int(jobID)))
+	} else {
+		targetDir = path.Join(ingestBaseDir, strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
+	}
+	size, err := getDirSize(targetDir)
 	if err != nil {
 		logutil.Logger(ctx).Warn("fail to get subtask data size",
 			zap.Int64("jobID", jobID),
@@ -1054,7 +1058,16 @@ func (s *indexWriteResultSink) mergeLocalOverlappingFilesAndUpload() error {
 	allDataFiles := mg.GetDataFiles()
 	allStatFiles := mg.GetStatFiles()
 
-	err := external.MergeOverlappingFiles(
+	ingestDir := ingest.GetIngestTempDataDir()
+	totalSize, err := getDirSize(path.Join(ingestDir, prefix))
+	if err != nil {
+		logutil.Logger(s.ctx).Warn("fail to get ingest directory size",
+			zap.Int64("jobID", s.jobID), zap.Int64("subtaskID", s.subtaskID),
+			zap.Int64("totalSize", totalSize), zap.Error(err))
+	}
+	start := time.Now()
+
+	err = external.MergeOverlappingFiles(
 		s.ctx,
 		allDataFiles,
 		s.writeStore, s.mergeStore,
@@ -1065,6 +1078,9 @@ func (s *indexWriteResultSink) mergeLocalOverlappingFilesAndUpload() error {
 		int(res.CPU.Capacity()),
 		false,
 	)
+	if err != nil {
+		return err
+	}
 	// err := external.MergeOverlappingFilesV2(
 	// 	s.ctx,
 	// 	mg.MultipleFilesStats,
@@ -1081,17 +1097,17 @@ func (s *indexWriteResultSink) mergeLocalOverlappingFilesAndUpload() error {
 	// 	int(res.CPU.Capacity()),
 	// 	false, // unused
 	// )
-	if err != nil {
-		return err
-	}
+
+	duration := time.Since(start)
+	metrics.TempDirReadStorageRate.WithLabelValues(ingestDir).Observe(float64(totalSize) / 1024.0 / 1024.0 / duration.Seconds())
+
 	// Remove uploaded temporary files.
-	tempPathPrefix := ingest.GetIngestTempDataDir()
 	for i := range allDataFiles {
-		err = os.RemoveAll(path.Join(tempPathPrefix, allDataFiles[i]))
+		err = os.RemoveAll(path.Join(ingestDir, allDataFiles[i]))
 		if err != nil {
 			logutil.BgLogger().Warn("remove temp file failed", zap.Error(err))
 		}
-		err = os.RemoveAll(path.Join(tempPathPrefix, allStatFiles[i]))
+		err = os.RemoveAll(path.Join(ingestDir, allStatFiles[i]))
 		if err != nil {
 			logutil.BgLogger().Warn("remove temp file failed", zap.Error(err))
 		}

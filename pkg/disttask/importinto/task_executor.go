@@ -272,6 +272,7 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 		dataKVPartSize := max(external.MinUploadPartSize, int64(dataKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/10000))
 		indexKVPartSize := max(external.MinUploadPartSize, int64(perIndexKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/10000))
 		prefix := subtaskPrefix(s.taskID, subtask.ID)
+		// TODO(cbc}: update metrics.TempDirReadStorageRate.WithLabelValues(importDir)
 		err := external.MergeOverlappingFiles(
 			ctx,
 			dataFiles,
