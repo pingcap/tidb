@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"sort"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -817,6 +818,99 @@ func TestMultiSchemaDropUniqueIndex(t *testing.T) {
 //	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn)
 //}
 
+// getTablePartitionAndIndexIDs returns one array consisting of:
+// table id + partition ids
+func getTableAndPartitionIDs(t *testing.T, tk *testkit.TestKit) (parts []int64) {
+	ctx := tk.Session()
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	if tbl.Meta().Partition == nil {
+		return []int64{tbl.Meta().ID}
+	}
+	originalIDs := make([]int64, 0, 1+len(tbl.Meta().Partition.Definitions))
+	originalIDs = append(originalIDs, tbl.Meta().ID)
+	if tbl.Meta().Partition != nil {
+		for _, def := range tbl.Meta().Partition.Definitions {
+			originalIDs = append(originalIDs, def.ID)
+		}
+	}
+	return originalIDs
+}
+
+func checkTableAndIndexEntries(t *testing.T, tk *testkit.TestKit, originalIDs []int64) {
+	ctx := tk.Session()
+	is := domain.GetDomain(ctx).InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	currTableID := tbl.Meta().ID
+	indexes := make([]int64, 0, len(tbl.Meta().Indices))
+	globalIndexes := make([]int64, 0, 2)
+	for _, idx := range tbl.Meta().Indices {
+		if idx.Global {
+			globalIndexes = append(globalIndexes, idx.ID)
+		} else {
+			indexes = append(indexes, idx.ID)
+		}
+	}
+	// Only existing Global Indexes on table level
+	if tbl.Meta().Partition == nil {
+		require.Equal(t, 0, len(globalIndexes))
+	} else {
+		sort.Slice(globalIndexes, func(i, j int) bool { return globalIndexes[i] < globalIndexes[j] })
+		prev := int64(0)
+		for _, idxID := range globalIndexes {
+			if prev+1 == idxID {
+				prev = idxID
+				continue
+			}
+			require.False(t, HaveEntriesForTableIndex(t, tk, currTableID, prev+1, idxID), "Global index id %d for table id %d has still entries!", idxID, currTableID)
+			prev = idxID
+		}
+		require.False(t, HaveEntriesForTableIndex(t, tk, currTableID, prev+1, 0), "Global index id > %d for table id %d has still entries!", prev, currTableID)
+	}
+
+	// Only existing non-global indexes on partitions or non-partitioned tables
+	sort.Slice(indexes, func(i, j int) bool { return indexes[i] < indexes[j] })
+	prev := int64(0)
+	for _, idxID := range indexes {
+		if prev+1 == idxID {
+			prev = idxID
+			continue
+		}
+		if tbl.Meta().Partition == nil {
+			require.False(t, HaveEntriesForTableIndex(t, tk, currTableID, prev+1, idxID), "Index id %d for table id %d has still entries!", idxID, currTableID)
+		} else {
+			for _, def := range tbl.Meta().Partition.Definitions {
+				require.True(t, HaveEntriesForTableIndex(t, tk, def.ID, prev+1, idxID), "Index id %d for table id %d has no entries!", idxID, currTableID)
+			}
+		}
+		prev = idxID
+	}
+	if tbl.Meta().Partition == nil {
+		require.False(t, HaveEntriesForTableIndex(t, tk, currTableID, prev+1, 0), "Index id > %d for table id %d has still entries!", prev, currTableID)
+	} else {
+		for i, def := range tbl.Meta().Partition.Definitions {
+			require.False(t, HaveEntriesForTableIndex(t, tk, def.ID, prev+1, 0), "Index id > %d for part (%d) id %d has still entries!", prev, i, def.ID)
+		}
+	}
+PartitionLoop:
+	for _, id := range originalIDs {
+		if tbl.Meta().Partition != nil {
+			for _, def := range tbl.Meta().Partition.Definitions {
+				if def.ID == id {
+					continue PartitionLoop
+				}
+			}
+		}
+		if id == currTableID {
+			continue
+		}
+		// old partitions removed
+		require.False(t, HaveEntriesForTableIndex(t, tk, id, 0), "Reorganized table or partition id %d for table id %d has still entries!", id, currTableID)
+	}
+}
+
 func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn func(*testkit.TestKit), postFn func(*testkit.TestKit, kv.Storage), loopFn func(tO, tNO *testkit.TestKit), retestWithoutPartitions bool) {
 	runMultiSchemaTestWithBackfillDML(t, createSQL, alterSQL, "", initFn, postFn, loopFn, retestWithoutPartitions)
 }
@@ -850,26 +944,12 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 	domOwner.Reload()
 	domNonOwner.Reload()
 
-	originalPartitions := make([]int64, 0, 2)
-	originalIndexIDs := make([]int64, 0, 1)
-	originalGlobalIndexIDs := make([]int64, 0, 1)
 	ctx := tkO.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableID := tbl.Meta().ID
-	if tbl.Meta().Partition != nil {
-		for _, def := range tbl.Meta().Partition.Definitions {
-			originalPartitions = append(originalPartitions, def.ID)
-		}
-	}
-	for _, idx := range tbl.Meta().Indices {
-		if idx.Global {
-			originalGlobalIndexIDs = append(originalGlobalIndexIDs, idx.ID)
-			continue
-		}
-		originalIndexIDs = append(originalIndexIDs, idx.ID)
-	}
+	originalIDs := getTableAndPartitionIDs(t, tkO)
 
 	initFn(tkO)
 
@@ -1001,42 +1081,8 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 	if tableID != newTableID {
 		require.False(t, HaveEntriesForTableIndex(t, tkO, tableID, 0), "Old table id %d has still entries!", tableID)
 	}
-GlobalLoop:
-	for _, globIdx := range originalGlobalIndexIDs {
-		for _, idx := range tbl.Meta().Indices {
-			if idx.ID == globIdx {
-				continue GlobalLoop
-			}
-		}
-		// Global index removed
-		require.False(t, HaveEntriesForTableIndex(t, tkO, tableID, globIdx), "Global index id %d for table id %d has still entries!", globIdx, tableID)
-	}
-LocalLoop:
-	for _, locIdx := range originalIndexIDs {
-		for _, idx := range tbl.Meta().Indices {
-			if idx.ID == locIdx {
-				continue LocalLoop
-			}
-		}
-		// local index removed
-		if tbl.Meta().Partition != nil {
-			for _, part := range tbl.Meta().Partition.Definitions {
-				require.False(t, HaveEntriesForTableIndex(t, tkO, part.ID, locIdx), "Local index id %d for partition id %d has still entries!", locIdx, tableID)
-			}
-		}
-	}
-PartitionLoop:
-	for _, partID := range originalPartitions {
-		if tbl.Meta().Partition != nil {
-			for _, def := range tbl.Meta().Partition.Definitions {
-				if def.ID == partID {
-					continue PartitionLoop
-				}
-			}
-		}
-		// old partitions removed
-		require.False(t, HaveEntriesForTableIndex(t, tkO, partID, 0), "Reorganized partition id %d for table id %d has still entries!", partID, tableID)
-	}
+	checkTableAndIndexEntries(t, tkO, originalIDs)
+
 	if postFn != nil {
 		postFn(tkO, store)
 	}
@@ -1066,15 +1112,33 @@ PartitionLoop:
 
 // HaveEntriesForTableIndex returns number of entries in the KV range of table+index or just the table if index is 0.
 // Also checks with gc_delete_range
-func HaveEntriesForTableIndex(t *testing.T, tk *testkit.TestKit, tableID, indexID int64) bool {
+func HaveEntriesForTableIndex(t *testing.T, tk *testkit.TestKit, ids ...int64) bool {
 	var start kv.Key
 	var end kv.Key
+	if len(ids) < 2 || len(ids) > 3 {
+		require.Fail(t, "HaveEntriesForTableIndex requires 2 or 3 ids: tableID, indexID [, lastIndexID]")
+	}
+	tableID := ids[0]
+	indexID := ids[1]
 	if indexID == 0 {
+		logutil.BgLogger().Info("HaveEntriesForTableIndex checking table", zap.Int64("tableID", tableID))
 		start = tablecodec.EncodeTablePrefix(tableID)
 		end = tablecodec.EncodeTablePrefix(tableID + 1)
 	} else {
 		start = tablecodec.EncodeTableIndexPrefix(tableID, indexID)
-		end = tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
+		if len(ids) == 3 {
+			if ids[2] == 0 {
+				logutil.BgLogger().Info("HaveEntriesForTableIndex indexes greater or equal than", zap.Int64("tableID", tableID), zap.Int64("indexID", indexID))
+				end = tablecodec.EncodeTableIndexPrefix(tableID, math.MaxInt64)
+				end = end.Next()
+			} else {
+				logutil.BgLogger().Info("HaveEntriesForTableIndex indexes between", zap.Int64("tableID", tableID), zap.Int64("indexID", indexID), zap.Int64("lastIndexID", ids[2]))
+				end = tablecodec.EncodeTableIndexPrefix(tableID, ids[2])
+			}
+		} else {
+			logutil.BgLogger().Info("HaveEntriesForTableIndex index", zap.Int64("tableID", tableID), zap.Int64("indexID", indexID))
+			end = tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
+		}
 	}
 	ctx := tk.Session()
 	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
@@ -1096,6 +1160,7 @@ func HaveEntriesForTableIndex(t *testing.T, tk *testkit.TestKit, tableID, indexI
 	}
 	return false
 }
+
 func TestMultiSchemaReorganizePK(t *testing.T) {
 	createSQL := `create table t (c1 INT primary key, c2 CHAR(255), c3 CHAR(255), c4 CHAR(255), c5 CHAR(255)) partition by range (c1) (partition p1 values less than (200), partition pMax values less than (maxvalue))`
 	i := 1
@@ -1732,6 +1797,30 @@ func TestCoalesceKeyPartitionCovering(t *testing.T) {
 	runCoveringTest(t, createSQL, alterSQL)
 }
 
+func exchangeAllPartitionsToGetDuplicateTiDBRowIDs(t *testing.T, tk *testkit.TestKit) {
+	ctx := tk.Session()
+	dom := domain.GetDomain(ctx)
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	// make all partitions to be EXCHANGED, so they have duplicated _tidb_rowid's between
+	// the partitions
+	if tbl.Meta().Partition != nil &&
+		!tbl.Meta().IsCommonHandle &&
+		!tbl.Meta().PKIsHandle {
+		for _, def := range tbl.Meta().Partition.Definitions {
+			partName := def.Name.O
+			tk.MustExec(`create table tx like t`)
+			tk.MustExec(`alter table tx remove partitioning`)
+			tk.MustExec(fmt.Sprintf("insert into tx select * from t partition(`%s`) order by a", partName))
+			//res := tk.MustQuery(`select *, _tidb_rowid from tx`)
+			//logutil.BgLogger().Info("rows in Exchanged table", zap.Any("rows", res.Rows()))
+			tk.MustExec(fmt.Sprintf("alter table t exchange partition `%s` with table tx without validation", partName))
+			tk.MustExec(`drop table tx`)
+		}
+	}
+}
+
 func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 	//insert a row
 	//insert a row, on duplicate key update - no match
@@ -1865,22 +1954,7 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 		}
 		// make all partitions to be EXCHANGED, so they have duplicated _tidb_rowid's between
 		// the partitions
-		if tbl.Meta().Partition != nil &&
-			!tbl.Meta().IsCommonHandle &&
-			!tbl.Meta().PKIsHandle {
-			for _, def := range tbl.Meta().Partition.Definitions {
-				partName := def.Name.O
-				tkO.MustExec(`create table tx like t`)
-				tkO.MustExec(`alter table tx remove partitioning`)
-				tkO.MustExec(fmt.Sprintf("insert into tx select * from t partition(`%s`)", partName))
-				res := tkO.MustQuery(`select *, _tidb_rowid from tx`)
-				logutil.BgLogger().Info("rows in Exchanged table", zap.Any("rows", res.Rows()))
-				// Somehow there is an issue internally when using WITH VALIDATION,
-				// giving test.tx does not exist error...
-				tkO.MustExec(fmt.Sprintf("alter table t exchange partition `%s` with table tx without validation", partName))
-				tkO.MustExec(`drop table tx`)
-			}
-		}
+		exchangeAllPartitionsToGetDuplicateTiDBRowIDs(t, tkO)
 		tkO.MustQuery(`select count(*) from t`).Check(testkit.Rows("18"))
 		logutil.BgLogger().Info("initFn Done")
 	}
@@ -2557,4 +2631,637 @@ func TestBackfillConcurrentDML(t *testing.T) {
 		"97 97 30064",
 		"98 98 33",
 		"99 99 33"))
+}
+
+func TestBackfillConcurrentDMLRange(t *testing.T) {
+	// We want to test the scenario where one batch fails and one succeeds,
+	// so it will retry both batches (since it never updated the reorgInfo).
+	// Additionally, we want to test if it can cause duplication due to it may not know
+	// the committed new record IDs.
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set global tidb_ddl_reorg_batch_size = 32")
+	tk.MustExec("set global tidb_ddl_reorg_worker_cnt = 2")
+	tk.RefreshSession()
+
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int, b int, primary key (a) nonclustered) partition by range (a) interval (100) first partition less than (100) last partition less than (900)")
+	//tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t`  (\n"))
+	tk.MustExec("alter table t reorganize partition P_LT_500, P_LT_600, P_LT_700, P_LT_800 into (partition p8 values less than (800))")
+	tk.MustExec("insert into t (a, b) values (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9),(10,10),(11,11),(12,12),(13,13),(14,14),(15,15),(16,16)")
+	tk.MustExec("insert into t (a, b) select a+16, b+16 from t order by a")
+	tk.MustExec("insert into t (a, b) select a+32, b+32 from t order by a")
+	tk.MustExec("insert into t (a, b) select a+100, b+100 from t order by a")
+	tk.MustExec("insert into t (a, b) select a+200, b+200 from t order by a")
+	tk.MustExec("insert into t (a, b) select a+400, b+400 from t order by a")
+	exchangeAllPartitionsToGetDuplicateTiDBRowIDs(t, tk)
+	// TODO: fix cleaning up and enable this!
+	//originalIDs := getTableAndPartitionIDs(t, tk)
+	//tk.MustQuery("select a,b,_tidb_rowid from t").Sort().Check(testkit.Rows())
+	var i atomic.Int32
+	i.Store(0)
+
+	tbl, err := tk.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+
+	columnFt := make(map[int64]*types.FieldType)
+	for idx := range tbl.Columns {
+		col := tbl.Columns[idx]
+		columnFt[col.ID] = &col.FieldType
+	}
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		// TODO: start a transaction to be committed during backfill
+		switch job.SchemaState {
+		case model.StateNone:
+		// start
+		case model.StateDeleteOnly:
+		case model.StateWriteOnly:
+		case model.StateWriteReorganization:
+		case model.StateDeleteReorganization:
+		case model.StatePublic:
+			// Last
+		default:
+			require.FailNow(t, "unexpected schema state: %v", job.SchemaState)
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+		switch job.SchemaState {
+		case model.StateDeleteOnly:
+		case model.StateWriteOnly:
+		case model.StateWriteReorganization:
+		case model.StateDeleteReorganization:
+		case model.StatePublic:
+		case model.StateNone:
+		// Done
+		default:
+			require.FailNow(t, "unexpected schema state: %v", job.SchemaState)
+		}
+		// TODO: start a transaction in backfill to be committed here
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillNonClustered", func(vals []byte) {
+		// TODO: Also start a transaction that will fail due to conflict with the backfill?
+		// TODO: Also use INSERT and DELETE and INSERT IGNORE and INSERT ON DUPLICATE KEY UPDATE
+		// probably have to continue in another failpoint hook?
+		// Tests:
+		// - 2+ updates of same rows (different transactions) to see that an already updated row,
+		//   that got a new _tidb_rowid, will update with the same _tidb_rowid
+		// - Delete a row that have a newly generated _tidb_rowid from backfill
+		// - Delete a row that have a newly generated _tidb_rowid from update
+		// - Delete a row that have a newly generated _tidb_rowid from backfill after it was updated
+		// combinations of update with 2 => 1 new partitions, 1 => 2 new partitions, same partition?
+		// also test combinations where old to/from is same or different and new from/to is same or different
+		// - test in DeleteOnly, WriteOnly, WriteReorganize (before, during and after backfill?), DeleteReorganize, public?
+		//   At least once so we read the set 'old' and double write to the 'new' set,
+		//   and once where we read the 'new' set and double write to the old set.
+		m, err := tablecodec.DecodeRowWithMapNew(vals, columnFt, time.UTC, nil)
+		require.NoError(t, err)
+		var col1 int64
+		if d, ok := m[tbl.Columns[0].ID]; ok {
+			col1 = d.GetInt64()
+		}
+		if col1%3 != 1 {
+			// Let the p0/p2 complete, so there will be duplicates in the new p0/p1 partitions
+			return
+		}
+		if col1 > 30 {
+			// let the first batch succeed, and generate new record IDs
+			return
+		}
+
+		round := i.Add(1)
+		if round == 1 {
+			// UPDATE the same row, so the backfill will fail and retry
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use test")
+			tk2.MustExec(fmt.Sprintf("update t set b = b + 300 where a = %d", col1))
+		}
+	})
+	// merge the first 4 into 1 and split the last into 4
+	tk.MustExec("alter table t reorganize partition P_LT_100, P_LT_200, P_LT_300, P_LT_400, p8 into (partition p0 values less than (400), partition p4 values less than (500), partition p5 values less than (600), partition p6 values less than (700), partition p7 values less than (800))")
+	tk.MustExec("admin check table t")
+	// TODO: Check for missing cleanups
+	// TODO: Clean up temporary index maps and enable this!
+	//checkTableAndIndexEntries(t, tk, originalIDs)
+	tk.MustQuery("select count(*) from t").Sort().Check(testkit.Rows("512"))
+	tk.MustQuery("select a,b,_tidb_rowid from t where _tidb_rowid = 1").Sort().Check(testkit.Rows("1 301 1", "401 401 1"))
+	tk.MustQuery("select a,b,_tidb_rowid from t").Sort().Check(testkit.Rows(""+
+		"1 301 1",
+		"10 10 10",
+		"101 101 30001",
+		"102 102 30002",
+		"103 103 30003",
+		"104 104 30004",
+		"105 105 30005",
+		"106 106 30006",
+		"107 107 30007",
+		"108 108 30008",
+		"109 109 30009",
+		"11 11 11",
+		"110 110 30010",
+		"111 111 30011",
+		"112 112 30012",
+		"113 113 30013",
+		"114 114 30014",
+		"115 115 30015",
+		"116 116 30016",
+		"117 117 30017",
+		"118 118 30018",
+		"119 119 30019",
+		"12 12 12",
+		"120 120 30020",
+		"121 121 30021",
+		"122 122 30022",
+		"123 123 30023",
+		"124 124 30024",
+		"125 125 30025",
+		"126 126 30026",
+		"127 127 30027",
+		"128 128 30028",
+		"129 129 30029",
+		"13 13 13",
+		"130 130 30030",
+		"131 131 30031",
+		"132 132 30032",
+		"133 133 30033",
+		"134 134 30034",
+		"135 135 30035",
+		"136 136 30036",
+		"137 137 30037",
+		"138 138 30038",
+		"139 139 30039",
+		"14 14 14",
+		"140 140 30040",
+		"141 141 30041",
+		"142 142 30042",
+		"143 143 30043",
+		"144 144 30044",
+		"145 145 30045",
+		"146 146 30046",
+		"147 147 30047",
+		"148 148 30048",
+		"149 149 30049",
+		"15 15 15",
+		"150 150 30050",
+		"151 151 30051",
+		"152 152 30052",
+		"153 153 30053",
+		"154 154 30054",
+		"155 155 30055",
+		"156 156 30056",
+		"157 157 30057",
+		"158 158 30058",
+		"159 159 30059",
+		"16 16 16",
+		"160 160 30060",
+		"161 161 30061",
+		"162 162 30062",
+		"163 163 30063",
+		"164 164 30064",
+		"17 17 17",
+		"18 18 18",
+		"19 19 19",
+		"2 2 2",
+		"20 20 20",
+		"201 201 30065",
+		"202 202 30066",
+		"203 203 30067",
+		"204 204 30068",
+		"205 205 30069",
+		"206 206 30070",
+		"207 207 30071",
+		"208 208 30072",
+		"209 209 30073",
+		"21 21 21",
+		"210 210 30074",
+		"211 211 30075",
+		"212 212 30076",
+		"213 213 30077",
+		"214 214 30078",
+		"215 215 30079",
+		"216 216 30080",
+		"217 217 30081",
+		"218 218 30082",
+		"219 219 30083",
+		"22 22 22",
+		"220 220 30084",
+		"221 221 30085",
+		"222 222 30086",
+		"223 223 30087",
+		"224 224 30088",
+		"225 225 30089",
+		"226 226 30090",
+		"227 227 30091",
+		"228 228 30092",
+		"229 229 30093",
+		"23 23 23",
+		"230 230 30094",
+		"231 231 30095",
+		"232 232 30096",
+		"233 233 30097",
+		"234 234 30098",
+		"235 235 30099",
+		"236 236 30100",
+		"237 237 30101",
+		"238 238 30102",
+		"239 239 30103",
+		"24 24 24",
+		"240 240 30104",
+		"241 241 30105",
+		"242 242 30106",
+		"243 243 30107",
+		"244 244 30108",
+		"245 245 30109",
+		"246 246 30110",
+		"247 247 30111",
+		"248 248 30112",
+		"249 249 30113",
+		"25 25 25",
+		"250 250 30114",
+		"251 251 30115",
+		"252 252 30116",
+		"253 253 30117",
+		"254 254 30118",
+		"255 255 30119",
+		"256 256 30120",
+		"257 257 30121",
+		"258 258 30122",
+		"259 259 30123",
+		"26 26 26",
+		"260 260 30124",
+		"261 261 30125",
+		"262 262 30126",
+		"263 263 30127",
+		"264 264 30128",
+		"27 27 27",
+		"28 28 28",
+		"29 29 29",
+		"3 3 3",
+		"30 30 30",
+		"301 301 30129",
+		"302 302 30130",
+		"303 303 30131",
+		"304 304 30132",
+		"305 305 30133",
+		"306 306 30134",
+		"307 307 30135",
+		"308 308 30136",
+		"309 309 30137",
+		"31 31 31",
+		"310 310 30138",
+		"311 311 30139",
+		"312 312 30140",
+		"313 313 30141",
+		"314 314 30142",
+		"315 315 30143",
+		"316 316 30144",
+		"317 317 30145",
+		"318 318 30146",
+		"319 319 30147",
+		"32 32 32",
+		"320 320 30148",
+		"321 321 30149",
+		"322 322 30150",
+		"323 323 30151",
+		"324 324 30152",
+		"325 325 30153",
+		"326 326 30154",
+		"327 327 30155",
+		"328 328 30156",
+		"329 329 30157",
+		"33 33 33",
+		"330 330 30158",
+		"331 331 30159",
+		"332 332 30160",
+		"333 333 30161",
+		"334 334 30162",
+		"335 335 30163",
+		"336 336 30164",
+		"337 337 30165",
+		"338 338 30166",
+		"339 339 30167",
+		"34 34 34",
+		"340 340 30168",
+		"341 341 30169",
+		"342 342 30170",
+		"343 343 30171",
+		"344 344 30172",
+		"345 345 30173",
+		"346 346 30174",
+		"347 347 30175",
+		"348 348 30176",
+		"349 349 30177",
+		"35 35 35",
+		"350 350 30178",
+		"351 351 30179",
+		"352 352 30180",
+		"353 353 30181",
+		"354 354 30182",
+		"355 355 30183",
+		"356 356 30184",
+		"357 357 30185",
+		"358 358 30186",
+		"359 359 30187",
+		"36 36 36",
+		"360 360 30188",
+		"361 361 30189",
+		"362 362 30190",
+		"363 363 30191",
+		"364 364 30192",
+		"37 37 37",
+		"38 38 38",
+		"39 39 39",
+		"4 4 4",
+		"40 40 40",
+		"401 401 1",
+		"402 402 2",
+		"403 403 3",
+		"404 404 4",
+		"405 405 5",
+		"406 406 6",
+		"407 407 7",
+		"408 408 8",
+		"409 409 9",
+		"41 41 41",
+		"410 410 10",
+		"411 411 11",
+		"412 412 12",
+		"413 413 13",
+		"414 414 14",
+		"415 415 15",
+		"416 416 16",
+		"417 417 17",
+		"418 418 18",
+		"419 419 19",
+		"42 42 42",
+		"420 420 20",
+		"421 421 21",
+		"422 422 22",
+		"423 423 23",
+		"424 424 24",
+		"425 425 25",
+		"426 426 26",
+		"427 427 27",
+		"428 428 28",
+		"429 429 29",
+		"43 43 43",
+		"430 430 30",
+		"431 431 31",
+		"432 432 32",
+		"433 433 33",
+		"434 434 34",
+		"435 435 35",
+		"436 436 36",
+		"437 437 37",
+		"438 438 38",
+		"439 439 39",
+		"44 44 44",
+		"440 440 40",
+		"441 441 41",
+		"442 442 42",
+		"443 443 43",
+		"444 444 44",
+		"445 445 45",
+		"446 446 46",
+		"447 447 47",
+		"448 448 48",
+		"449 449 49",
+		"45 45 45",
+		"450 450 50",
+		"451 451 51",
+		"452 452 52",
+		"453 453 53",
+		"454 454 54",
+		"455 455 55",
+		"456 456 56",
+		"457 457 57",
+		"458 458 58",
+		"459 459 59",
+		"46 46 46",
+		"460 460 60",
+		"461 461 61",
+		"462 462 62",
+		"463 463 63",
+		"464 464 64",
+		"47 47 47",
+		"48 48 48",
+		"49 49 49",
+		"5 5 5",
+		"50 50 50",
+		"501 501 65",
+		"502 502 66",
+		"503 503 67",
+		"504 504 68",
+		"505 505 69",
+		"506 506 70",
+		"507 507 71",
+		"508 508 72",
+		"509 509 73",
+		"51 51 51",
+		"510 510 74",
+		"511 511 75",
+		"512 512 76",
+		"513 513 77",
+		"514 514 78",
+		"515 515 79",
+		"516 516 80",
+		"517 517 81",
+		"518 518 82",
+		"519 519 83",
+		"52 52 52",
+		"520 520 84",
+		"521 521 85",
+		"522 522 86",
+		"523 523 87",
+		"524 524 88",
+		"525 525 89",
+		"526 526 90",
+		"527 527 91",
+		"528 528 92",
+		"529 529 93",
+		"53 53 53",
+		"530 530 94",
+		"531 531 95",
+		"532 532 96",
+		"533 533 97",
+		"534 534 98",
+		"535 535 99",
+		"536 536 100",
+		"537 537 101",
+		"538 538 102",
+		"539 539 103",
+		"54 54 54",
+		"540 540 104",
+		"541 541 105",
+		"542 542 106",
+		"543 543 107",
+		"544 544 108",
+		"545 545 109",
+		"546 546 110",
+		"547 547 111",
+		"548 548 112",
+		"549 549 113",
+		"55 55 55",
+		"550 550 114",
+		"551 551 115",
+		"552 552 116",
+		"553 553 117",
+		"554 554 118",
+		"555 555 119",
+		"556 556 120",
+		"557 557 121",
+		"558 558 122",
+		"559 559 123",
+		"56 56 56",
+		"560 560 124",
+		"561 561 125",
+		"562 562 126",
+		"563 563 127",
+		"564 564 128",
+		"57 57 57",
+		"58 58 58",
+		"59 59 59",
+		"6 6 6",
+		"60 60 60",
+		"601 601 129",
+		"602 602 130",
+		"603 603 131",
+		"604 604 132",
+		"605 605 133",
+		"606 606 134",
+		"607 607 135",
+		"608 608 136",
+		"609 609 137",
+		"61 61 61",
+		"610 610 138",
+		"611 611 139",
+		"612 612 140",
+		"613 613 141",
+		"614 614 142",
+		"615 615 143",
+		"616 616 144",
+		"617 617 145",
+		"618 618 146",
+		"619 619 147",
+		"62 62 62",
+		"620 620 148",
+		"621 621 149",
+		"622 622 150",
+		"623 623 151",
+		"624 624 152",
+		"625 625 153",
+		"626 626 154",
+		"627 627 155",
+		"628 628 156",
+		"629 629 157",
+		"63 63 63",
+		"630 630 158",
+		"631 631 159",
+		"632 632 160",
+		"633 633 161",
+		"634 634 162",
+		"635 635 163",
+		"636 636 164",
+		"637 637 165",
+		"638 638 166",
+		"639 639 167",
+		"64 64 64",
+		"640 640 168",
+		"641 641 169",
+		"642 642 170",
+		"643 643 171",
+		"644 644 172",
+		"645 645 173",
+		"646 646 174",
+		"647 647 175",
+		"648 648 176",
+		"649 649 177",
+		"650 650 178",
+		"651 651 179",
+		"652 652 180",
+		"653 653 181",
+		"654 654 182",
+		"655 655 183",
+		"656 656 184",
+		"657 657 185",
+		"658 658 186",
+		"659 659 187",
+		"660 660 188",
+		"661 661 189",
+		"662 662 190",
+		"663 663 191",
+		"664 664 192",
+		"7 7 7",
+		"701 701 193",
+		"702 702 194",
+		"703 703 195",
+		"704 704 196",
+		"705 705 197",
+		"706 706 198",
+		"707 707 199",
+		"708 708 200",
+		"709 709 201",
+		"710 710 202",
+		"711 711 203",
+		"712 712 204",
+		"713 713 205",
+		"714 714 206",
+		"715 715 207",
+		"716 716 208",
+		"717 717 209",
+		"718 718 210",
+		"719 719 211",
+		"720 720 212",
+		"721 721 213",
+		"722 722 214",
+		"723 723 215",
+		"724 724 216",
+		"725 725 217",
+		"726 726 218",
+		"727 727 219",
+		"728 728 220",
+		"729 729 221",
+		"730 730 222",
+		"731 731 223",
+		"732 732 224",
+		"733 733 225",
+		"734 734 226",
+		"735 735 227",
+		"736 736 228",
+		"737 737 229",
+		"738 738 230",
+		"739 739 231",
+		"740 740 232",
+		"741 741 233",
+		"742 742 234",
+		"743 743 235",
+		"744 744 236",
+		"745 745 237",
+		"746 746 238",
+		"747 747 239",
+		"748 748 240",
+		"749 749 241",
+		"750 750 242",
+		"751 751 243",
+		"752 752 244",
+		"753 753 245",
+		"754 754 246",
+		"755 755 247",
+		"756 756 248",
+		"757 757 249",
+		"758 758 250",
+		"759 759 251",
+		"760 760 252",
+		"761 761 253",
+		"762 762 254",
+		"763 763 255",
+		"764 764 256",
+		"8 8 8",
+		"9 9 9"))
+
+	tk.MustQuery("select md5(group_concat(a order by a)), md5(group_concat(b order by a)),md5(group_concat(_tidb_rowid order by a)) from t group by (a < 400) order by (a < 400)").Sort().Check(testkit.Rows(""+
+		"292c36bf0f77c2e41629dacc9732cb2b 292c36bf0f77c2e41629dacc9732cb2b ccd1411251918cb462dfa4fb7d261d0a",
+		"42a993d0eaa917a7bbc6b61ea262702a 97b84cc5e7bb3b4680de3da7f6c1793b 761d0ba4acf3508ac17a6c62ebf24b76"))
 }
