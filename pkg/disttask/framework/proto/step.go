@@ -132,7 +132,7 @@ const (
 func backfillStep2Str(s Step) string {
 	switch s {
 	case BackfillStepReadIndex:
-		return "read"
+		return "read-index"
 	case BackfillStepMergeSort:
 		return "merge-sort"
 	case BackfillStepWriteAndIngest:
