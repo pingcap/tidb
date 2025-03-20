@@ -3445,6 +3445,15 @@ var defaultSysVars = []*SysVar{
 			return (*SetPDClientDynamicOption.Load())(TiDBTSOClientRPCMode, val)
 		},
 	},
+	{Scope: ScopeSession, Name: TiDBInsertSelectFastMode, Value: BoolToOnOff(DefTiDBInsertSelectFastMode), Type: TypeBool,
+		SetSession: func(s *SessionVars, val string) error {
+			s.InsertSelectFastMode = TiDBOptOn(val)
+			return nil
+		},
+		GetSession: func(s *SessionVars) (string, error) {
+			return BoolToOnOff(s.InsertSelectFastMode), nil
+		},
+	},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)
