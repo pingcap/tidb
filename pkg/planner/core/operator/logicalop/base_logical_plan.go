@@ -15,6 +15,7 @@
 package logicalop
 
 import (
+	"fmt"
 	"strconv"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -217,6 +218,9 @@ func (*BaseLogicalPlan) PullUpConstantPredicates() []expression.Expression {
 
 // RecursiveDeriveStats implements LogicalPlan.<10th> interface.
 func (p *BaseLogicalPlan) RecursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, bool, error) {
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	childStats := make([]*property.StatsInfo, len(p.children))
 	childSchema := make([]*expression.Schema, len(p.children))
 	cumColGroups := p.self.ExtractColGroups(colGroups)

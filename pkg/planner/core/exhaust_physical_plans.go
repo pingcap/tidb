@@ -1346,7 +1346,7 @@ func constructDS2IndexScanTask(
 		}
 		cop.tablePlan = ts
 	}
-	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+	if !ds.SCtx().GetSessionVars().InRestrictedSQL {
 		fmt.Println("wwz")
 	}
 	if cop.tablePlan != nil && ds.TableInfo.IsCommonHandle {
@@ -1540,7 +1540,9 @@ func constructIndexJoinInnerSideTaskWithAggCheck(p *logicalop.LogicalJoin, prop 
 	if aggTask == nil {
 		physicalHashAgg := NewPhysicalHashAgg(la, la.StatsInfo(), prop)
 		physicalHashAgg.SetSchema(la.Schema().Clone())
+		physicalHashAgg.SetStats(dsCopTask.indexPlan.StatsInfo())
 		aggTask = physicalHashAgg.Attach2Task(dsCopTask)
+
 	}
 
 	// build other inner plan node to task
