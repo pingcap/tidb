@@ -16765,4 +16765,16 @@ DropQueryWatchStmt:
 			IntValue: $4.(int64),
 		}
 	}
+|	"QUERY" "WATCH" "REMOVE" "RESOURCE" "GROUP" ResourceGroupName
+	{
+		$$ = &ast.DropQueryWatchStmt{
+			GroupNameStr: ast.NewCIStr($6),
+		}
+	}
+|	"QUERY" "WATCH" "REMOVE" "RESOURCE" "GROUP" UserVariable
+	{
+		$$ = &ast.DropQueryWatchStmt{
+			GroupNameExpr: $6.(ast.ExprNode),
+		}
+	}
 %%
