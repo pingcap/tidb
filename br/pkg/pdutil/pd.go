@@ -632,44 +632,19 @@ func (p *PdController) RemoveSchedulersWithConfigGenerator(
 	return originCfg, removedCfg, nil
 }
 
-func (p *PdController) RemoveSchedulersConfig(
+func (p *PdController) GetOriginPDConfig(
 	ctx context.Context,
-) (origin ClusterConfig, modified ClusterConfig, err error) {
-	pdConfigGenerators := expectPDCfgGenerators
-	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
-		span1 := span.Tracer().StartSpan("PdController.RemoveSchedulers",
-			opentracing.ChildOf(span.Context()))
-		defer span1.Finish()
-		ctx = opentracing.ContextWithSpan(ctx, span1)
-	}
-
+) (origin ClusterConfig, err error) {
 	originCfg := ClusterConfig{}
-	removedCfg := ClusterConfig{}
-	stores, err := p.pdClient.GetAllStores(ctx)
-	if err != nil {
-		return originCfg, removedCfg, errors.Trace(err)
-	}
 	scheduleCfg, err := p.GetPDScheduleConfig(ctx)
 	if err != nil {
-		return originCfg, removedCfg, errors.Trace(err)
+		return originCfg, errors.Trace(err)
 	}
-	disablePDCfg := make(map[string]any, len(pdConfigGenerators))
-	originPDCfg := make(map[string]any, len(pdConfigGenerators))
-	for cfgKey, cfgValFunc := range pdConfigGenerators {
-		value, ok := scheduleCfg[cfgKey]
-		if !ok {
-			// Ignore non-exist config.
-			continue
-		}
-		disablePDCfg[cfgKey] = cfgValFunc(len(stores), value)
-		originPDCfg[cfgKey] = value
-	}
-	originCfg.ScheduleCfg = originPDCfg
-	removedCfg.ScheduleCfg = disablePDCfg
+	originCfg.ScheduleCfg = scheduleCfg
 
 	log.Debug("saved PD config", zap.Any("config", scheduleCfg))
 
-	return originCfg, removedCfg, nil
+	return originCfg, nil
 }
 
 // To resume the schedulers, call the cancel function.

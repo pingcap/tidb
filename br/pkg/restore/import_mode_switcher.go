@@ -225,7 +225,7 @@ func FineGrainedRestorePreWork(
 	}
 
 	// pause config
-	originCfg, _, err := mgr.RemoveSchedulersConfig(ctx)
+	originCfg, err := mgr.GetOriginPDConfig(ctx)
 	if err != nil {
 		return pdutil.Nop, nil, err
 	}
