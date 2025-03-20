@@ -34,16 +34,16 @@ var (
 	sampleErrVerboseLoggerFactory = logutil.SampleErrVerboseLoggerFactory(10*time.Minute, 1, zap.String(logutil.LogFieldCategory, "stats"))
 )
 
-// SingletonStatsSamplerLogger with category "stats" is used to log statistic related messages.
+// StatsSampleLogger with category "stats" is used to log statistic related messages.
 // It is used to sample the log to avoid too many logs.
 // Do not use it to log the message that is not related to statistics.
-func SingletonStatsSamplerLogger() *zap.Logger {
+func StatsSampleLogger() *zap.Logger {
 	return sampleLoggerFactory()
 }
 
-// SingletonStatsErrVerboseSamplerLogger with category "stats" is used to log statistics-related messages with verbose error details.
+// StatsErrVerboseSampleLogger with category "stats" is used to log statistics-related messages with verbose error details.
 // It is used to sample the log to avoid too many logs.
 // Do not use it to log the message that is not related to statistics.
-func SingletonStatsErrVerboseSamplerLogger() *zap.Logger {
+func StatsErrVerboseSampleLogger() *zap.Logger {
 	return sampleErrVerboseLoggerFactory()
 }

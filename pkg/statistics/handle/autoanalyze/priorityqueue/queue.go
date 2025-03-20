@@ -727,7 +727,7 @@ func (pq *AnalysisPriorityQueue) pushWithoutLock(job AnalysisJob) error {
 	// To prevent this, we filter out any negative weights. Under normal circumstances, table sizes should not be negative.
 	weight := pq.calculator.CalculateWeight(job)
 	if weight <= 0 {
-		statslogutil.SingletonStatsSamplerLogger().Warn(
+		statslogutil.StatsSampleLogger().Warn(
 			"Table gets a negative weight",
 			zap.Float64("weight", weight),
 			zap.Stringer("job", job),

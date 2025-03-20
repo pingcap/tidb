@@ -243,13 +243,13 @@ func (s *statsSyncLoad) SubLoadWorker(sctx sessionctx.Context, exit chan struct{
 			default:
 				const msg = "SubLoadWorker: failed to handle one task"
 				if task != nil {
-					statslogutil.SingletonStatsErrVerboseSamplerLogger().Warn(msg,
+					statslogutil.StatsErrVerboseSampleLogger().Warn(msg,
 						zap.Error(err),
 						zap.String("task", task.Item.Key()),
 						zap.Int("retry", task.Retry),
 					)
 				} else {
-					statslogutil.SingletonStatsErrVerboseSamplerLogger().Warn(msg,
+					statslogutil.StatsErrVerboseSampleLogger().Warn(msg,
 						zap.Error(err),
 					)
 				}
