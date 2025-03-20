@@ -1542,7 +1542,6 @@ func constructIndexJoinInnerSideTaskWithAggCheck(p *logicalop.LogicalJoin, prop 
 		physicalHashAgg.SetSchema(la.Schema().Clone())
 		physicalHashAgg.SetStats(dsCopTask.indexPlan.StatsInfo())
 		aggTask = physicalHashAgg.Attach2Task(dsCopTask)
-
 	}
 
 	// build other inner plan node to task
