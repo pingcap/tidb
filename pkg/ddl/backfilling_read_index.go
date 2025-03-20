@@ -103,39 +103,36 @@ func (r *readIndexStepExecutor) Init(ctx context.Context) error {
 	return nil
 }
 
-func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
-	logutil.DDLLogger().Info("read index executor run subtask",
-		zap.Bool("use cloud", r.isGlobalSort()))
-
-	r.subtaskSummary.Store(subtask.ID, &readIndexSummary{
-		metaGroups: make([]*external.SortedKVMeta, len(r.indexes)),
-	})
-
-	sm, err := decodeBackfillSubtaskMeta(subtask.Meta)
+func (r *readIndexStepExecutor) runGlobalPipeline(
+	ctx context.Context,
+	opCtx *OperatorCtx,
+	subtask *proto.Subtask,
+	sm *BackfillSubTaskMeta,
+	concurrency int,
+) error {
+	pipe, err := r.buildExternalStorePipeline(opCtx, subtask.ID, sm, concurrency)
 	if err != nil {
 		return err
 	}
 
-	opCtx, cancel := NewDistTaskOperatorCtx(ctx, subtask.TaskID, subtask.ID)
-	defer cancel()
-	r.curRowCount.Store(0)
+	r.currPipe.Store(pipe)
+	defer func() {
+		r.currPipe.Store(nil)
+	}()
 
-	concurrency := int(r.GetResource().CPU.Capacity())
-	if r.isGlobalSort() {
-		pipe, err := r.buildExternalStorePipeline(opCtx, subtask.ID, sm, concurrency)
-		if err != nil {
-			return err
-		}
-		r.currPipe.Store(pipe)
-		defer func() {
-			r.currPipe.Store(nil)
-		}()
-		if err = executeAndClosePipeline(opCtx, pipe, nil, nil, r.avgRowSize); err != nil {
-			return errors.Trace(err)
-		}
-		return r.onFinished(ctx, subtask)
+	if err = executeAndClosePipeline(opCtx, pipe, nil, nil, r.avgRowSize); err != nil {
+		return errors.Trace(err)
 	}
+	return r.onFinished(ctx, subtask)
+}
 
+func (r *readIndexStepExecutor) runLocalPipeline(
+	ctx context.Context,
+	opCtx *OperatorCtx,
+	subtask *proto.Subtask,
+	sm *BackfillSubTaskMeta,
+	concurrency int,
+) error {
 	// TODO(tangenta): support checkpoint manager that interact with subtask table.
 	bCtx, err := ingest.NewBackendCtxBuilder(ctx, r.d.store, r.job).
 		WithImportDistributedLock(r.d.etcdCli, sm.TS).
@@ -162,11 +159,35 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		}
 		return err
 	}
-	err = bCtx.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup)
-	if err != nil {
+
+	if err = bCtx.FinishAndUnregisterEngines(ingest.OptCleanData | ingest.OptCheckDup); err != nil {
 		return errors.Trace(err)
 	}
 	return r.onFinished(ctx, subtask)
+}
+
+func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
+	logutil.DDLLogger().Info("read index executor run subtask",
+		zap.Bool("use cloud", r.isGlobalSort()))
+
+	r.subtaskSummary.Store(subtask.ID, &readIndexSummary{
+		metaGroups: make([]*external.SortedKVMeta, len(r.indexes)),
+	})
+
+	sm, err := decodeBackfillSubtaskMeta(subtask.Meta)
+	if err != nil {
+		return err
+	}
+
+	opCtx, cancel := NewDistTaskOperatorCtx(ctx, subtask.TaskID, subtask.ID)
+	defer cancel()
+	r.curRowCount.Store(0)
+
+	concurrency := int(r.GetResource().CPU.Capacity())
+	if r.isGlobalSort() {
+		return r.runGlobalPipeline(ctx, opCtx, subtask, sm, concurrency)
+	}
+	return r.runLocalPipeline(ctx, opCtx, subtask, sm, concurrency)
 }
 
 func (r *readIndexStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
