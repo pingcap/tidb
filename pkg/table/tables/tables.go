@@ -497,7 +497,6 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 	}
 
 	key := t.RecordKey(h)
-	logutil.BgLogger().Info("updateRecord", zap.String("key", fmt.Sprintf("%x", []byte(key))), zap.String("handle", h.String()))
 	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
 	err = encodeRowBuffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key, h)
 	if err != nil {
@@ -709,12 +708,12 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 	cols := t.Cols()
 	// opt.GenerateRecordID is used for normal update.
 	// If handle ID is changed when update, update will remove the old record first, and then call `AddRecord` to add a new record.
-	// Currently, only insert can set _tidb_rowid, update can not update _tidb_rowid.
-	// And during REORGANIZE PARTITION, we need to keep the generated _tidb_rowid from the non-reorganized set of partitions.
+	// Currently, insert can set _tidb_rowid.
+	// Update can only update _tidb_rowid during reorganize partition, to keep the generated _tidb_rowid
+	// the same between the old/new sets of partitions, where possible.
 	if len(r) > len(cols) && !opt.GenerateRecordID() {
 		// The last value is _tidb_rowid.
 		recordID = kv.IntHandle(r[len(r)-1].GetInt64())
-		logutil.BgLogger().Info("addRecord", zap.Int64("recordID", recordID.IntValue()))
 		hasRecordID = true
 	} else {
 		tblInfo := t.Meta()
@@ -761,7 +760,6 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 		if err != nil {
 			return nil, err
 		}
-		logutil.BgLogger().Info("addRecord new id", zap.Int64("recordID", recordID.IntValue()))
 	}
 
 	// a reusable buffer to save malloc
@@ -829,7 +827,6 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 		return nil, err
 	}
 	key := t.RecordKey(recordID)
-	logutil.BgLogger().Info("addRecord", zap.String("key", fmt.Sprintf("%x", []byte(key))))
 	var setPresume bool
 	if opt.DupKeyCheck() != table.DupKeyCheckSkip {
 		if t.meta.TempTableType != model.TempTableNone {
@@ -1174,7 +1171,6 @@ func (t *TableCommon) removeRecord(ctx table.MutateContext, txn kv.Transaction, 
 func (t *TableCommon) removeRowData(ctx table.MutateContext, txn kv.Transaction, h kv.Handle) (err error) {
 	// Remove row data.
 	key := t.RecordKey(h)
-	logutil.BgLogger().Info("removeRowData", zap.String("key", fmt.Sprintf("%x", []byte(key))), zap.String("handle", h.String()))
 	failpoint.Inject("removeRecordForceAssertNotExist", func() {
 		// Assert the key doesn't exist while it actually exists. This is helpful to test if assertion takes effect.
 		// Since only the first assertion takes effect, set the injected assertion before setting the correct one to
