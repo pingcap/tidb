@@ -1537,9 +1537,9 @@ func constructIndexJoinInnerSideTaskWithAggCheck(p *logicalop.LogicalJoin, prop 
 	if aggTask == nil {
 		stats := la.StatsInfo()
 		if dsCopTask.indexPlan != nil {
-			stats.ScaleByExpectCnt(dsCopTask.indexPlan.StatsInfo().RowCount)
+			stats = stats.ScaleByExpectCnt(dsCopTask.indexPlan.StatsInfo().RowCount)
 		} else if dsCopTask.tablePlan != nil {
-			stats.ScaleByExpectCnt(dsCopTask.tablePlan.StatsInfo().RowCount)
+			stats = stats.ScaleByExpectCnt(dsCopTask.tablePlan.StatsInfo().RowCount)
 		}
 		physicalHashAgg := NewPhysicalHashAgg(
 			la,
