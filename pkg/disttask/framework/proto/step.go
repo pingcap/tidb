@@ -16,7 +16,6 @@ package proto
 
 import (
 	"fmt"
-	"strings" // added for string replacement
 )
 
 // Step is the step of task.
@@ -48,13 +47,6 @@ func Step2Str(t TaskType, s Step) string {
 		return exampleStep2Str(s)
 	}
 	return fmt.Sprintf("unknown type %s", t)
-}
-
-// Step2Dirname converts step to dirname.
-// replace '&' with '-' in the step string.
-func Step2Dirname(t TaskType, s Step) string {
-	stepStr := Step2Str(t, s)
-	return strings.ReplaceAll(stepStr, "&", "-")
 }
 
 // Steps of example task type.
@@ -107,11 +99,11 @@ func importIntoStep2Str(s Step) string {
 	case ImportStepPostProcess:
 		return "post-process"
 	case ImportStepEncodeAndSort:
-		return "encode&sort"
+		return "encode"
 	case ImportStepMergeSort:
 		return "merge-sort"
 	case ImportStepWriteAndIngest:
-		return "write&ingest"
+		return "ingest"
 	default:
 		return fmt.Sprintf("unknown step %d", s)
 	}
@@ -140,11 +132,11 @@ const (
 func backfillStep2Str(s Step) string {
 	switch s {
 	case BackfillStepReadIndex:
-		return "read-index"
+		return "read"
 	case BackfillStepMergeSort:
 		return "merge-sort"
 	case BackfillStepWriteAndIngest:
-		return "write&ingest"
+		return "ingest"
 	default:
 		return fmt.Sprintf("unknown step %d", s)
 	}

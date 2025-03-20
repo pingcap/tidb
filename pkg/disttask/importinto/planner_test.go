@@ -78,9 +78,11 @@ func TestToPhysicalPlan(t *testing.T) {
 			{
 				ID: 0,
 				Pipeline: &ImportSpec{
-					ID:     chunkID,
-					Plan:   logicalPlan.Plan,
-					Chunks: logicalPlan.ChunkMap[chunkID],
+					ImportStepMeta: &ImportStepMeta{
+						ID:     chunkID,
+						Chunks: logicalPlan.ChunkMap[chunkID],
+					},
+					Plan: logicalPlan.Plan,
 				},
 				Output: planner.OutputSpec{
 					Links: []planner.LinkSpec{
@@ -358,12 +360,4 @@ func TestSplitForOneSubtask(t *testing.T) {
 	require.Equal(t, [][]byte{
 		[]byte("00000"), []byte("00096"), []byte("00139\x00"),
 	}, writeSpec.RangeSplitKeys)
-}
-
-func TestExternalMetaPath(t *testing.T) {
-	require.Equal(t, "1/plan/merge-sort/1/meta.json", externalPlanMetaPath(1, proto.Step2Dirname(proto.ImportInto, proto.ImportStepMergeSort), 1))
-	require.Equal(t, "2/plan/write-ingest/3/meta.json", externalPlanMetaPath(2, proto.Step2Dirname(proto.ImportInto, proto.ImportStepWriteAndIngest), 3))
-
-	require.Equal(t, "1/1/meta.json", externalSubtaskMetaPath(1, 1))
-	require.Equal(t, "2/3/meta.json", externalSubtaskMetaPath(2, 3))
 }

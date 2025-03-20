@@ -83,6 +83,42 @@ func (p *LogicalPlan) FromTaskMeta(bs []byte) error {
 	return nil
 }
 
+func (p *LogicalPlan) writeExternalPlanMeta(planCtx planner.PlanCtx, specs []planner.PipelineSpec) error {
+	if !planCtx.GlobalSort {
+		return nil
+	}
+	// write external meta when using global sort
+	controller, err := buildControllerForPlan(p)
+	if err != nil {
+		return err
+	}
+	if err := controller.InitDataFiles(planCtx.Ctx); err != nil {
+		return err
+	}
+
+	for i, spec := range specs {
+		externalPath := external.PlanMetaPath(planCtx.TaskID, proto.Step2Str(proto.ImportInto, planCtx.NextTaskStep), i+1)
+		switch sp := spec.(type) {
+		case *ImportSpec:
+			sp.ImportStepMeta.ExternalPath = externalPath
+			if err := sp.ImportStepMeta.WriteJSONToExternalStorage(planCtx.Ctx, controller.GlobalSortStore, sp.ImportStepMeta); err != nil {
+				return err
+			}
+		case *MergeSortSpec:
+			sp.MergeSortStepMeta.ExternalPath = externalPath
+			if err := sp.MergeSortStepMeta.WriteJSONToExternalStorage(planCtx.Ctx, controller.GlobalSortStore, sp.MergeSortStepMeta); err != nil {
+				return err
+			}
+		case *WriteIngestSpec:
+			sp.WriteIngestStepMeta.ExternalPath = externalPath
+			if err := sp.WriteIngestStepMeta.WriteJSONToExternalStorage(planCtx.Ctx, controller.GlobalSortStore, sp.WriteIngestStepMeta); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // ToPhysicalPlan converts the logical plan to physical plan.
 func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.PhysicalPlan, error) {
 	physicalPlan := &planner.PhysicalPlan{}
@@ -115,6 +151,9 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 		if err != nil {
 			return nil, err
 		}
+		if p.writeExternalPlanMeta(planCtx, specs) != nil {
+			return nil, err
+		}
 
 		addSpecs(specs)
 	case proto.ImportStepMergeSort:
@@ -122,11 +161,17 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 		if err != nil {
 			return nil, err
 		}
+		if p.writeExternalPlanMeta(planCtx, specs) != nil {
+			return nil, err
+		}
 
 		addSpecs(specs)
 	case proto.ImportStepWriteAndIngest:
 		specs, err := generateWriteIngestSpecs(planCtx, p)
 		if err != nil {
+			return nil, err
+		}
+		if p.writeExternalPlanMeta(planCtx, specs) != nil {
 			return nil, err
 		}
 
@@ -154,18 +199,13 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 
 // ImportSpec is the specification of an import pipeline.
 type ImportSpec struct {
-	ID     int32
-	Plan   importer.Plan
-	Chunks []importer.Chunk
+	*ImportStepMeta
+	Plan importer.Plan
 }
 
 // ToSubtaskMeta converts the import spec to subtask meta.
 func (s *ImportSpec) ToSubtaskMeta(planner.PlanCtx) ([]byte, error) {
-	importStepMeta := ImportStepMeta{
-		ID:     s.ID,
-		Chunks: s.Chunks,
-	}
-	return importStepMeta.Marshal()
+	return s.ImportStepMeta.Marshal()
 }
 
 // WriteIngestSpec is the specification of a write-ingest pipeline.
@@ -282,9 +322,11 @@ func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.Pipeli
 			continue
 		}
 		importSpec := &ImportSpec{
-			ID:     id,
-			Plan:   p.Plan,
-			Chunks: chunks,
+			ImportStepMeta: &ImportStepMeta{
+				ID:     id,
+				Chunks: chunks,
+			},
+			Plan: p.Plan,
 		}
 		importSpecs = append(importSpecs, importSpec)
 	}
@@ -387,17 +429,6 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 			return nil, err3
 		}
 		specs = append(specs, specsForOneSubtask...)
-	}
-	// write external meta to storage when using global sort
-	if planCtx.GlobalSort {
-		for i, spec := range specs {
-			if w, ok := spec.(*WriteIngestSpec); ok {
-				w.ExternalPath = externalPlanMetaPath(planCtx.TaskID, proto.Step2Dirname(proto.ImportInto, proto.ImportStepWriteAndIngest), i+1)
-				if err := w.WriteJSONToExternalStorage(planCtx.Ctx, controller.GlobalSortStore, w.WriteIngestStepMeta); err != nil {
-					return nil, errors.Trace(err)
-				}
-			}
-		}
 	}
 	return specs, nil
 }

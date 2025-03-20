@@ -16,8 +16,6 @@ package importinto
 
 import (
 	"fmt"
-	"path"
-	"strconv"
 	"sync"
 	"sync/atomic"
 
@@ -27,10 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-)
-
-const (
-	externalMetaName = "meta.json"
 )
 
 // TaskMeta is the task of IMPORT INTO.
@@ -59,7 +53,7 @@ type ImportStepMeta struct {
 	external.BaseExternalMeta
 	// this is the engine ID, not the id in tidb_background_subtask table.
 	ID       int32
-	Chunks   []importer.Chunk
+	Chunks   []importer.Chunk   `external:"true"`
 	Checksum map[int64]Checksum // see KVGroupChecksum for definition of map key.
 	Result   Result
 	// MaxIDs stores the max id that have been used during encoding for each allocator type.
@@ -73,9 +67,8 @@ type ImportStepMeta struct {
 }
 
 // Marshal marshals the import step meta to JSON.
-func (m ImportStepMeta) Marshal() ([]byte, error) {
-	type alias ImportStepMeta
-	return m.BaseExternalMeta.Marshal(alias(m))
+func (m *ImportStepMeta) Marshal() ([]byte, error) {
+	return m.BaseExternalMeta.Marshal(m)
 }
 
 const (
@@ -94,9 +87,8 @@ type MergeSortStepMeta struct {
 }
 
 // Marshal marshal the merge sort step meta to JSON.
-func (m MergeSortStepMeta) Marshal() ([]byte, error) {
-	type alias MergeSortStepMeta
-	return m.BaseExternalMeta.Marshal(alias(m))
+func (m *MergeSortStepMeta) Marshal() ([]byte, error) {
+	return m.BaseExternalMeta.Marshal(m)
 }
 
 // WriteIngestStepMeta is the meta of write and ingest step.
@@ -115,9 +107,8 @@ type WriteIngestStepMeta struct {
 }
 
 // Marshal marshals the write ingest step meta to JSON.
-func (m WriteIngestStepMeta) Marshal() ([]byte, error) {
-	type alias WriteIngestStepMeta
-	return m.BaseExternalMeta.Marshal(alias(m))
+func (m *WriteIngestStepMeta) Marshal() ([]byte, error) {
+	return m.BaseExternalMeta.Marshal(m)
 }
 
 // PostProcessStepMeta is the meta of post process step.
@@ -195,12 +186,4 @@ type Checksum struct {
 // This portion of the code may be implemented uniformly in the framework in the future.
 type Result struct {
 	LoadedRowCnt uint64
-}
-
-func externalPlanMetaPath(taskID int64, step string, idx int) string {
-	return path.Join(strconv.FormatInt(taskID, 10), "plan", step, strconv.Itoa(idx), externalMetaName)
-}
-
-func externalSubtaskMetaPath(taskID int64, subtaskID int64) string {
-	return path.Join(strconv.FormatInt(taskID, 10), strconv.FormatInt(subtaskID, 10), externalMetaName)
 }

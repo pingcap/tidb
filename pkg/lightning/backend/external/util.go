@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	goerrors "errors"
 	"io"
+	"path"
 	"reflect"
 	"slices"
 	"sort"
@@ -35,6 +36,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap/zapcore"
+)
+
+const (
+	metaName = "meta.json"
 )
 
 // seekPropsOffsets reads the statistic files to find the largest offset of
@@ -446,4 +451,14 @@ func (m BaseExternalMeta) ReadJSONFromExternalStorage(ctx context.Context, store
 		return errors.Trace(err)
 	}
 	return json.Unmarshal(data, a)
+}
+
+// PlanMetaPath returns the path of the plan meta file.
+func PlanMetaPath(taskID int64, step string, idx int) string {
+	return path.Join(strconv.FormatInt(taskID, 10), "plan", step, strconv.Itoa(idx), metaName)
+}
+
+// SubtaskMetaPath returns the path of the subtask meta file.
+func SubtaskMetaPath(taskID int64, subtaskID int64) string {
+	return path.Join(strconv.FormatInt(taskID, 10), strconv.FormatInt(subtaskID, 10), metaName)
 }

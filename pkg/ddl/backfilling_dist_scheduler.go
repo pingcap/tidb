@@ -441,9 +441,9 @@ func generateGlobalSortIngestPlan(
 	}
 	// write external meta to storage when using global sort
 	for i, m := range metaArr {
-		if err := writeExternalBackfillSubTaskMeta(ctx, cloudStorageURI, m, externalPlanMetaPath(
+		if err := writeExternalBackfillSubTaskMeta(ctx, cloudStorageURI, m, external.PlanMetaPath(
 			task.ID,
-			proto.Step2Dirname(proto.Backfill, proto.BackfillStepWriteAndIngest),
+			proto.Step2Str(proto.Backfill, proto.BackfillStepWriteAndIngest),
 			i+1,
 		)); err != nil {
 			return nil, err
@@ -636,9 +636,9 @@ func generateMergePlan(
 
 	// write external meta to storage when using global sort
 	for i, m := range metaArr {
-		if err := writeExternalBackfillSubTaskMeta(ctx, cloudStorageURI, m, externalPlanMetaPath(
+		if err := writeExternalBackfillSubTaskMeta(ctx, cloudStorageURI, m, external.PlanMetaPath(
 			task.ID,
-			proto.Step2Dirname(proto.Backfill, proto.BackfillStepMergeSort),
+			proto.Step2Str(proto.Backfill, proto.BackfillStepMergeSort),
 			i+1)); err != nil {
 			return nil, err
 		}

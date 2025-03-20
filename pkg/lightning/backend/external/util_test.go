@@ -326,193 +326,165 @@ func TestKeyMinMax(t *testing.T) {
 	require.Equal(t, []byte("b"), BytesMax([]byte("b"), []byte("a")))
 }
 
-type EmbedA struct {
-	X string
-	Y int
-}
+func TestMarshalFields(t *testing.T) {
+	type Example struct {
+		X string
+		Y int `json:"y"`
+	}
 
-type EmbedB EmbedA
-type EmbedC EmbedA
-type EmbedD EmbedA
-
-type InlineInternal struct {
-	I int    `json:"i"`
-	J string `json:"j"`
-}
-
-type EmbedExternal struct {
-	S int    `json:"s" external:"true"`
-	T string `json:"t" external:"true"`
-}
-
-type testStruct struct {
-	BaseExternalMeta
-
-	z              int
-	A              int
-	B              string `external:"true"`
-	C              string `json:"c_rename"`
-	D              int    `json:"d_rename" external:"true"`
-	E              int    `json:"-" external:"true"`
-	F              string `json:"f,omitempty" external:"true"`
-	G              *EmbedA
-	H              *EmbedA `external:"true"`
-	L              EmbedA  `external:"true"`
-	M              EmbedA
-	EmbedA         `json:"EmbedA" external:"true"`
-	EmbedB         `json:"EmbedB"`
-	*EmbedC        `json:"EmbedC"`
-	*EmbedD        `json:"EmbedD" external:"true"`
-	InlineInternal `json:",inline"`
-	EmbedExternal  `external:"true"`
-}
-
-func (ts testStruct) MarshalJSON() ([]byte, error) {
-	type alias testStruct
-	return ts.Marshal(alias(ts))
-}
-
-func TestCopyFields(t *testing.T) {
-	inst := testStruct{
-		z: 1,
-		A: 42,
-		B: "external-b",
-		C: "internal-c",
-		D: 314,
-		E: 100,
-		F: "",
-		G: &EmbedA{
-			X: "internal-G-x",
-			Y: 123,
+	testCases := []struct {
+		name            string
+		instInternal    any
+		instExternal    any
+		expectedMarshal string
+		expectedOmit    string
+	}{
+		{
+			name: "non-public",
+			instInternal: struct {
+				a int
+			}{a: 42},
+			instExternal: struct {
+				a int `external:"true"`
+			}{a: 42},
+			expectedMarshal: `{}`,
+			expectedOmit:    `{}`,
 		},
-		H: &EmbedA{
-			X: "external-H-x",
-			Y: 456,
+		{
+			name: "-",
+			instInternal: struct {
+				A string `json:"-"`
+			}{A: "42"},
+			instExternal: struct {
+				A string `json:"-" external:"true"`
+			}{A: "42"},
+			expectedMarshal: `{}`,
+			expectedOmit:    `{}`,
 		},
-		EmbedA: EmbedA{
-			X: "external-a-x",
-			Y: 777,
+		{
+			name: "omitempty",
+			instInternal: struct {
+				A string `json:"a,omitempty"`
+			}{A: ""},
+			instExternal: struct {
+				A string `json:"a,omitempty" external:"true"`
+			}{A: ""},
+			expectedMarshal: `{}`,
+			expectedOmit:    `{}`,
 		},
-		EmbedB: EmbedB{
-			X: "internal-B",
-			Y: 888,
+		{
+			name: "int",
+			instInternal: struct {
+				A int
+			}{A: 42},
+			instExternal: struct {
+				A int `external:"true"`
+			}{A: 42},
+			expectedMarshal: `{"A":42}`,
+			expectedOmit:    `{}`,
 		},
-		EmbedC: &EmbedC{
-			X: "internal-C",
-			Y: 999,
+		{
+			name: "rename",
+			instInternal: struct {
+				A string `json:"a"`
+			}{A: "42"},
+			instExternal: struct {
+				A string `json:"a" external:"true"`
+			}{A: "42"},
+			expectedMarshal: `{"a":"42"}`,
+			expectedOmit:    `{}`,
 		},
-		EmbedD: &EmbedD{
-			X: "external-d-x",
-			Y: 999,
+		{
+			name: "embed",
+			instInternal: struct {
+				Example
+			}{Example: Example{X: "42", Y: 42}},
+			instExternal: struct {
+				Example `external:"true"`
+			}{Example: Example{X: "42", Y: 42}},
+			expectedMarshal: `{"X":"42","y":42}`,
+			expectedOmit:    `{}`,
 		},
-		InlineInternal: InlineInternal{
-			I: 111,
-			J: "inline-internal",
+		{
+			name: "nested",
+			instInternal: struct {
+				Example Example
+			}{Example: Example{X: "42", Y: 42}},
+			instExternal: struct {
+				Example Example `external:"true"`
+			}{Example: Example{X: "42", Y: 42}},
+			expectedMarshal: `{"Example":{"X":"42","y":42}}`,
+			expectedOmit:    `{}`,
 		},
-		EmbedExternal: EmbedExternal{
-			S: 222,
-			T: "inline-external",
+		{
+			name: "inline",
+			instInternal: struct {
+				Example `json:",inline"`
+			}{Example: Example{X: "42", Y: 42}},
+			instExternal: struct {
+				Example `json:",inline" external:"true"`
+			}{Example: Example{X: "42", Y: 42}},
+			expectedMarshal: `{"X":"42","y":42}`,
+			expectedOmit:    `{}`,
 		},
-		L: EmbedA{
-			X: "external-L-x",
-			Y: 999,
-		},
-		M: EmbedA{
-			X: "internal-M-x",
-			Y: 999,
+		{
+			name: "slice",
+			instInternal: struct {
+				A []string
+			}{A: []string{"42"}},
+			instExternal: struct {
+				A []string `external:"true"`
+			}{A: []string{"42"}},
+			expectedMarshal: `{"A":["42"]}`,
+			expectedOmit:    `{}`,
 		},
 	}
 
-	dataInt, err := marshalInternalFields(inst)
-	require.NoError(t, err)
-	expectedJSONInt := `{"ExternalPath":"","A":42,"c_rename":"internal-c","G":{"X":"internal-G-x","Y":123},"M":{"X":"internal-M-x","Y":999},"EmbedB":{"X":"internal-B","Y":888},"EmbedC":{"X":"internal-C","Y":999},"i":111,"j":"inline-internal"}`
-	require.JSONEq(t, expectedJSONInt, string(dataInt))
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			data, err := marshalInternalFields(tc.instInternal)
+			require.NoError(t, err)
+			require.Equal(t, tc.expectedMarshal, string(data))
 
-	dataExt, err := marshalExternalFields(inst)
-	require.NoError(t, err)
-	expectedJSONExt := `{"B":"external-b","d_rename":314,"EmbedA":{"X":"external-a-x","Y":777},"EmbedD":{"X":"external-d-x","Y":999},"H":{"X":"external-H-x","Y":456},"L":{"X":"external-L-x","Y":999},"s":222,"t":"inline-external"}`
-	require.JSONEq(t, expectedJSONExt, string(dataExt))
+			data, err = marshalExternalFields(tc.instInternal)
+			require.NoError(t, err)
+			require.Equal(t, tc.expectedOmit, string(data))
 
-	var newTestStruct testStruct
-	err = json.Unmarshal(dataInt, &newTestStruct)
-	require.NoError(t, err)
-	err = json.Unmarshal(dataExt, &newTestStruct)
-	require.NoError(t, err)
-	require.Equal(t, 0, newTestStruct.E)
-	require.Equal(t, 0, newTestStruct.z)
-	newTestStruct.E = inst.E
-	newTestStruct.z = inst.z
-	require.Equal(t, inst, newTestStruct)
+			data, err = marshalInternalFields(tc.instExternal)
+			require.NoError(t, err)
+			require.Equal(t, tc.expectedOmit, string(data))
 
-	inst.ExternalPath = "external-path"
-	dataInt, err = marshalInternalFields(inst)
-	require.NoError(t, err)
-	data, err := json.Marshal(inst)
-	require.NoError(t, err)
-	require.JSONEq(t, string(data), string(dataInt))
+			data, err = marshalExternalFields(tc.instExternal)
+			require.NoError(t, err)
+			require.Equal(t, tc.expectedMarshal, string(data))
+		})
+	}
 }
 
 func TestReadWriteJSON(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemStorage()
-	ts := testStruct{
-		z: 1,
-		A: 42,
-		B: "external-b",
-		C: "internal-c",
-		D: 314,
-		E: 0,
-		F: "str",
-		G: &EmbedA{
-			X: "internal-G-x",
-			Y: 123,
-		},
-		H: &EmbedA{
-			X: "external-H-x",
-			Y: 456,
-		},
-		EmbedA: EmbedA{
-			X: "external-a-x",
-			Y: 777,
-		},
-		EmbedB: EmbedB{
-			X: "internal-B",
-			Y: 888,
-		},
-		EmbedC: &EmbedC{
-			X: "internal-C",
-			Y: 999,
-		},
-		EmbedD: &EmbedD{
-			X: "external-d-x",
-			Y: 999,
-		},
-		InlineInternal: InlineInternal{
-			I: 111,
-			J: "inline-internal",
-		},
-		EmbedExternal: EmbedExternal{
-			S: 222,
-			T: "inline-external",
-		},
-		L: EmbedA{
-			X: "external-L-x",
-			Y: 999,
-		},
-		M: EmbedA{
-			X: "internal-M-x",
-			Y: 999,
-		},
-		BaseExternalMeta: BaseExternalMeta{
-			ExternalPath: "/test/external-path",
-		},
+
+	type testStruct struct {
+		BaseExternalMeta
+		X int
+		Y string `external:"true"`
+	}
+	ts := &testStruct{
+		X: 42,
+		Y: "test",
 	}
 
-	// Write JSON to external storage.
-	err := ts.WriteJSONToExternalStorage(ctx, store, ts)
+	data, err := ts.BaseExternalMeta.Marshal(ts)
 	require.NoError(t, err)
+	js, err := json.Marshal(ts)
+	require.NoError(t, err)
+	require.Equal(t, data, js)
 
-	data, err := json.Marshal(ts)
+	ts.BaseExternalMeta.ExternalPath = "/test"
+	err = ts.WriteJSONToExternalStorage(ctx, store, ts)
+	require.NoError(t, err)
+	data, err = ts.BaseExternalMeta.Marshal(ts)
 	require.NoError(t, err)
 
 	var ts1 testStruct
@@ -527,8 +499,13 @@ func TestReadWriteJSON(t *testing.T) {
 
 	err = ts2.ReadJSONFromExternalStorage(ctx, store, &ts2)
 	require.NoError(t, err)
-	require.NotEqual(t, ts, ts2)
+	require.Equal(t, *ts, ts2)
+}
 
-	ts2.z = ts.z
-	require.Equal(t, ts, ts2)
+func TestExternalMetaPath(t *testing.T) {
+	require.Equal(t, "1/plan/merge-sort/1/meta.json", PlanMetaPath(1, "merge-sort", 1))
+	require.Equal(t, "2/plan/ingest/3/meta.json", PlanMetaPath(2, "ingest", 3))
+
+	require.Equal(t, "1/1/meta.json", SubtaskMetaPath(1, 1))
+	require.Equal(t, "2/3/meta.json", SubtaskMetaPath(2, 3))
 }

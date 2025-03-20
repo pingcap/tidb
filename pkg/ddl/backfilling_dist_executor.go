@@ -75,9 +75,8 @@ type BackfillSubTaskMeta struct {
 }
 
 // Marshal marshals the backfill subtask meta to JSON.
-func (m BackfillSubTaskMeta) Marshal() ([]byte, error) {
-	type alias BackfillSubTaskMeta
-	return m.BaseExternalMeta.Marshal(alias(m))
+func (m *BackfillSubTaskMeta) Marshal() ([]byte, error) {
+	return m.BaseExternalMeta.Marshal(m)
 }
 
 func decodeBackfillSubTaskMeta(ctx context.Context, cloudStorageURI string, raw []byte) (*BackfillSubTaskMeta, error) {
