@@ -581,7 +581,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	}
 
 	// maintain dup statistics
-	if len(dupFile) > 0 {
+	if len(dupLocs) > 0 {
 		w.conflictInfo.Merge(common.ConflictInfo{
 			Count: uint64(len(dupLocs)),
 			Files: []string{dupFile},

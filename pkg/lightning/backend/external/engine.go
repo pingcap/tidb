@@ -536,7 +536,9 @@ func (e *Engine) ImportedStatistics() (importedSize int64, importedKVCount int64
 
 // ConflictInfo implements common.Engine.
 func (e *Engine) ConflictInfo() common.ConflictInfo {
-	// to be implemented
+	if e.recordedDupCnt == 0 {
+		return common.ConflictInfo{}
+	}
 	return common.ConflictInfo{
 		Count: uint64(e.recordedDupCnt),
 		Files: []string{e.dupFile},

@@ -247,6 +247,11 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 	stat.Filenames = append(stat.Filenames,
 		[2]string{w.dataFile, w.statFile})
 	stat.build([]tidbkv.Key{w.minKey}, []tidbkv.Key{maxKey})
+	conflictInfo := common.ConflictInfo{}
+	if w.recordedDupCnt > 0 {
+		conflictInfo.Count = uint64(w.recordedDupCnt)
+		conflictInfo.Files = []string{w.dupFile}
+	}
 	w.onClose(&WriterSummary{
 		WriterID:           w.writerID,
 		Seq:                0,
@@ -255,10 +260,7 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 		TotalSize:          w.totalSize,
 		TotalCnt:           w.totalCnt,
 		MultipleFilesStats: []MultipleFilesStat{stat},
-		ConflictInfo: common.ConflictInfo{
-			Count: uint64(w.recordedDupCnt),
-			Files: []string{w.dupFile},
-		},
+		ConflictInfo:       conflictInfo,
 	})
 	w.totalCnt = 0
 	w.totalSize = 0
