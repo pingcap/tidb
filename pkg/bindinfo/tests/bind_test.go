@@ -397,9 +397,9 @@ func TestGCBindRecord(t *testing.T) {
 		bindinfo.StatusEnabled,
 	))
 
-	h := dom.BindHandle()
+	h := dom.BindingHandle()
 	// bindinfo.Lease is set to 0 for test env in SetUpSuite.
-	require.NoError(t, h.GCGlobalBinding())
+	require.NoError(t, h.GCBinding())
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `test` . `t` where `a` = ?", rows[0][0])
@@ -413,7 +413,7 @@ func TestGCBindRecord(t *testing.T) {
 	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows(
 		"deleted",
 	))
-	require.NoError(t, h.GCGlobalBinding())
+	require.NoError(t, h.GCBinding())
 	tk.MustQuery("show global bindings").Check(testkit.Rows())
 	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows())
 }
@@ -554,7 +554,7 @@ func TestDropBindBySQLDigest(t *testing.T) {
 		{"select t1.a, t1.b from t t1 where t1.a in (select t2.a from t t2)", "select /*+ use_toja(true) */ t1.a, t1.b from t t1 where t1.a in (select t2.a from t t2)"},
 	}
 
-	h := dom.BindHandle()
+	h := dom.BindingHandle()
 	// global scope
 	for _, c := range cases {
 		utilCleanBindingEnv(tk)
@@ -567,7 +567,7 @@ func TestDropBindBySQLDigest(t *testing.T) {
 		require.Equal(t, len(res[0]), 11)
 		drop := fmt.Sprintf("drop global binding for sql digest '%s'", res[0][9])
 		tk.MustExec(drop)
-		require.NoError(t, h.GCGlobalBinding())
+		require.NoError(t, h.GCBinding())
 		h.LoadFromStorageToCache(true)
 		tk.MustQuery("show global bindings").Check(testkit.Rows())
 	}
@@ -583,7 +583,7 @@ func TestDropBindBySQLDigest(t *testing.T) {
 		require.Equal(t, len(res[0]), 11)
 		drop := fmt.Sprintf("drop binding for sql digest '%s'", res[0][9])
 		tk.MustExec(drop)
-		require.NoError(t, h.GCGlobalBinding())
+		require.NoError(t, h.GCBinding())
 		tk.MustQuery("show bindings").Check(testkit.Rows())
 	}
 

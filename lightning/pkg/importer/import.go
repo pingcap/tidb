@@ -1879,6 +1879,15 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 			return common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
 		}
 
+		pdEnableFollowerHandleRegion, err := common.GetPDEnableFollowerHandleRegion(ctx, rc.db)
+		if err != nil {
+			return common.NormalizeOrWrapErr(common.ErrUpdatePD, err)
+		}
+		err = pdController.SetFollowerHandle(pdEnableFollowerHandleRegion)
+		if err != nil {
+			return common.NormalizeOrWrapErr(common.ErrUpdatePD, err)
+		}
+
 		// PdController will be closed when `taskMetaMgr` closes.
 		rc.taskMgr = rc.metaMgrBuilder.TaskMetaMgr(pdController)
 		taskExist, err = rc.taskMgr.CheckTaskExist(ctx)

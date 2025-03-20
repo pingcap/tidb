@@ -356,8 +356,9 @@ type ProbeWorkerV2 struct {
 func (w *ProbeWorkerV2) updateProbeStatistic(start time.Time, probeTime int64) {
 	t := time.Since(start)
 	atomic.AddInt64(&w.HashJoinCtx.stats.probe, probeTime)
+	atomic.AddInt64(&w.HashJoinCtx.stats.workerFetchAndProbe, int64(t))
 	setMaxValue(&w.HashJoinCtx.stats.maxProbeForCurrentRound, probeTime)
-	setMaxValue(&w.HashJoinCtx.stats.maxFetchAndProbeForCurrentRound, int64(t))
+	setMaxValue(&w.HashJoinCtx.stats.maxWorkerFetchAndProbeForCurrentRound, int64(t))
 }
 
 func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks, start time.Time) {
@@ -634,6 +635,8 @@ type HashJoinV2Exec struct {
 	prepared  bool
 	inRestore bool
 
+	IsGA bool
+
 	isMemoryClearedForTest bool
 }
 
@@ -748,6 +751,7 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 	if e.stats != nil {
 		e.stats.reset()
 		e.stats.spill.partitionNum = int(e.partitionNumber)
+		e.stats.isHashJoinGA = e.IsGA
 	}
 	return nil
 }
@@ -1062,7 +1066,7 @@ func (e *HashJoinV2Exec) collectSpillStats() {
 	}
 
 	buildRowTableSpillBytes := e.spillHelper.getBuildSpillBytes()
-	buildHashTableSpillBytes := getHashTableMemoryUsage(getHashTableLengthByRowLen(e.spillHelper.spilledValidRowNum))
+	buildHashTableSpillBytes := getHashTableMemoryUsage(getHashTableLengthByRowLen(e.spillHelper.spilledValidRowNum.Load()))
 	probeSpillBytes := e.spillHelper.getProbeSpillBytes()
 	spilledPartitionNum := e.spillHelper.getSpilledPartitionsNum()
 

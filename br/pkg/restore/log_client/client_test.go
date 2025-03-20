@@ -1429,7 +1429,7 @@ func TestPITRIDMap(t *testing.T) {
 	baseTableMappingManager := &stream.TableMappingManager{
 		DBReplaceMap: getDBMap(),
 	}
-	err = client.TEST_saveIDMap(ctx, baseTableMappingManager)
+	err = client.TEST_saveIDMap(ctx, baseTableMappingManager, nil)
 	require.NoError(t, err)
 	newSchemaReplaces, err := client.TEST_initSchemasMap(ctx, 1)
 	require.NoError(t, err)
@@ -1513,15 +1513,20 @@ func TestLogSplitStrategy(t *testing.T) {
 	// Create a split client with the mock PD client.
 	client := split.NewClient(mockPDCli, nil, nil, 100, 4)
 
+	// these files should skip accumulation
+	smallFiles := make([]*backuppb.DataFileInfo, 0, 10)
+	for j := 0; j < 20; j++ {
+		smallFiles = append(smallFiles, fakeFile(1, 100, 1024*1024, 100))
+	}
+
 	// Define a mock iterator with sample data files.
-	mockIter := iter.FromSlice([]*backuppb.DataFileInfo{
-		fakeFile(1, 100, 100, 100),
+	mockIter := iter.FromSlice(append(smallFiles, []*backuppb.DataFileInfo{
 		fakeFile(1, 200, 2*units.MiB, 200),
 		fakeFile(2, 100, 3*units.MiB, 300),
 		fakeFile(3, 100, 10*units.MiB, 100000),
 		fakeFile(1, 300, 3*units.MiB, 10),
 		fakeFile(1, 400, 4*units.MiB, 10),
-	})
+	}...))
 	logIter := toLogDataFileInfoIter(mockIter)
 
 	// Initialize a wrapper for the file restorer with a region splitter.
@@ -1548,7 +1553,7 @@ func TestLogSplitStrategy(t *testing.T) {
 	count := 0
 	for i := helper.TryNext(ctx); !i.Finished; i = helper.TryNext(ctx) {
 		require.NoError(t, i.Err)
-		if count == expectSplitCount {
+		if count == len(smallFiles)+expectSplitCount {
 			// Verify that no split occurs initially due to insufficient data.
 			regions, err := mockPDCli.ScanRegions(ctx, []byte{}, []byte{}, 0)
 			require.NoError(t, err)
@@ -1561,6 +1566,9 @@ func TestLogSplitStrategy(t *testing.T) {
 		// iter.Filterout execute first
 		count += 1
 	}
+
+	// iterate 20 small files + 4 valid files
+	require.Equal(t, len(smallFiles)+4, count)
 
 	// Verify that a split occurs on the second region due to excess data.
 	regions, err := mockPDCli.ScanRegions(ctx, []byte{}, []byte{}, 0)
@@ -2073,7 +2081,7 @@ func TestRepairIngestIndex(t *testing.T) {
 			"test", "repair_index_t1", tableInfo.ID, indexIDi2, "i2", "a",
 			json.RawMessage(fmt.Sprintf("[%d, false, [], false]", indexIDi2)),
 		), false))
-		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, g))
+		require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, nil, g))
 		infoschema = s.Mock.InfoSchema()
 		table2, err := infoschema.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("repair_index_t1"))
 		require.NoError(t, err)
@@ -2128,7 +2136,10 @@ func TestRepairIngestIndexFromCheckpoint(t *testing.T) {
 		_, err = tk.Exec("DROP DATABASE __TiDB_BR_Temporary_Log_Restore_Checkpoint")
 		require.NoError(t, err)
 	}()
-	require.NoError(t, checkpoint.SaveCheckpointIngestIndexRepairSQLs(ctx, se, &checkpoint.CheckpointIngestIndexRepairSQLs{
+	logCheckpointMetaManager, err := checkpoint.NewLogTableMetaManager(g, s.Mock.Domain, checkpoint.LogRestoreCheckpointDatabaseName)
+	require.NoError(t, err)
+	defer logCheckpointMetaManager.Close()
+	require.NoError(t, logCheckpointMetaManager.SaveCheckpointIngestIndexRepairSQLs(ctx, &checkpoint.CheckpointIngestIndexRepairSQLs{
 		SQLs: []checkpoint.CheckpointIngestIndexRepairSQL{
 			{
 				// from checkpoint and old index (i1) id is found
@@ -2160,7 +2171,7 @@ func TestRepairIngestIndexFromCheckpoint(t *testing.T) {
 		},
 	}))
 	ingestRecorder := ingestrec.New()
-	require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, g))
+	require.NoError(t, client.RepairIngestIndex(ctx, ingestRecorder, logCheckpointMetaManager, g))
 	infoschema = s.Mock.InfoSchema()
 	table2, err := infoschema.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("repair_index_t1"))
 	require.NoError(t, err)

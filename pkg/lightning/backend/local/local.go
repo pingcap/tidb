@@ -1602,11 +1602,6 @@ func (local *Backend) GetExternalEngineKVStatistics(engineUUID uuid.UUID) (
 	return local.engineMgr.getExternalEngineKVStatistics(engineUUID)
 }
 
-// ResetEngine reset the engine and reclaim the space.
-func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error {
-	return local.engineMgr.resetEngine(ctx, engineUUID, false)
-}
-
 // ResetEngineSkipAllocTS is like ResetEngine but the inner TS of the engine is
 // invalid. Caller must use SetTSBeforeImportEngine to set a valid TS before import
 // the engine.

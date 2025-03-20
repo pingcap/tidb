@@ -5,8 +5,10 @@ go_library(
     srcs = [
         "binding.go",
         "binding_cache.go",
-        "global_handle.go",
+        "binding_handle.go",
+        "binding_operator.go",
         "session_handle.go",
+        "utils.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/bindinfo",
     visibility = ["//visibility:public"],
@@ -45,7 +47,7 @@ go_test(
     timeout = "moderate",
     srcs = [
         "binding_cache_test.go",
-        "global_handle_test.go",
+        "binding_operator_test.go",
         "main_test.go",
         "session_handle_test.go",
     ],
