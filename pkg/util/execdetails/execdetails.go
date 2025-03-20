@@ -1542,7 +1542,7 @@ func (e *BasicRuntimeStats) GetActRows() int64 {
 }
 
 // Clone implements the RuntimeStats interface.
-func (_ *BasicRuntimeStats) Clone() RuntimeStats {
+func (*BasicRuntimeStats) Clone() RuntimeStats {
 	panic("BasicRuntimeStats should not implement Clone function")
 }
 
