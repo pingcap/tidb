@@ -137,7 +137,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 
 	// read import step meta from external storage when using global sort.
 	if subtaskMeta.ExternalPath != "" {
-		if err := subtaskMeta.ReadJSONFromExternalStorage(ctx, s.tableImporter.GlobalSortStore, subtaskMeta); err != nil {
+		if err := subtaskMeta.ReadJSONFromExternalStorage(ctx, s.tableImporter.GlobalSortStore, &subtaskMeta); err != nil {
 			return errors.Trace(err)
 		}
 	}
