@@ -1561,13 +1561,13 @@ func TestLpad(t *testing.T) {
 		{"hi", 0, "?", ""},
 		{"hi", -1, "?", nil},
 		{"hi", 1, "", "h"},
-		{"hi", 5, "", nil},
+		{"hi", 5, "", ""},
 		{"hi", 5, "ab", "abahi"},
 		{"hi", 6, "ab", "ababhi"},
 		{"中文", 5, "字符", "字符字中文"},
 		{"中文", 1, "a", "中"},
 		{"中文", -5, "字符", nil},
-		{"中文", 10, "", nil},
+		{"中文", 10, "", ""},
 	}
 	fc := funcs[ast.Lpad]
 	for _, test := range tests {
@@ -1601,13 +1601,13 @@ func TestRpad(t *testing.T) {
 		{"hi", 0, "?", ""},
 		{"hi", -1, "?", nil},
 		{"hi", 1, "", "h"},
-		{"hi", 5, "", nil},
+		{"hi", 5, "", ""},
 		{"hi", 5, "ab", "hiaba"},
 		{"hi", 6, "ab", "hiabab"},
 		{"中文", 5, "字符", "中文字符字"},
 		{"中文", 1, "a", "中"},
 		{"中文", -5, "字符", nil},
-		{"中文", 10, "", nil},
+		{"中文", 10, "", ""},
 	}
 	fc := funcs[ast.Rpad]
 	for _, test := range tests {
