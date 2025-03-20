@@ -363,19 +363,6 @@ func generatePlanForPhysicalTable(
 
 		handlingRest := false
 		for i := 0; i < len(recordRegionMetas); i += regionBatch {
-			rest := len(recordRegionMetas) - i
-			if useCloud && !handlingRest && rest < regionBatch*instanceCnt {
-				// distribute the rest regions to all instances.
-				prevRegionBatch := regionBatch
-				regionBatch = (rest + (instanceCnt - 1)) / instanceCnt // ceiling division
-				handlingRest = true
-				logger.Info("change region batch for rest",
-					zap.Int("totalRegionCnt", len(recordRegionMetas)),
-					zap.Int("instanceCnt", instanceCnt),
-					zap.Int("prevRegionBatch", prevRegionBatch),
-					zap.Int("newRegionBatch", regionBatch),
-				)
-			}
 			// It should be different for each subtask to determine if there are duplicate entries.
 			importTS, err := allocNewTS(ctx, d.store.(kv.StorageWithPD))
 			if err != nil {
@@ -403,6 +390,20 @@ func generatePlanForPhysicalTable(
 				return false, err
 			}
 			subTaskMetas = append(subTaskMetas, metaBytes)
+
+			rest := len(recordRegionMetas) - i
+			if useCloud && !handlingRest && rest < regionBatch*instanceCnt {
+				// distribute the rest regions to all instances.
+				prevRegionBatch := regionBatch
+				regionBatch = (rest + (instanceCnt - 1)) / instanceCnt // ceiling division
+				handlingRest = true
+				logger.Info("change region batch for rest",
+					zap.Int("totalRegionCnt", len(recordRegionMetas)),
+					zap.Int("instanceCnt", instanceCnt),
+					zap.Int("prevRegionBatch", prevRegionBatch),
+					zap.Int("newRegionBatch", regionBatch),
+				)
+			}
 		}
 		return false, nil
 	})

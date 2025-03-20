@@ -1054,36 +1054,33 @@ func (s *indexWriteResultSink) mergeLocalOverlappingFilesAndUpload() error {
 	allDataFiles := mg.GetDataFiles()
 	allStatFiles := mg.GetStatFiles()
 
-	// err := external.MergeOverlappingFiles(
-	// 	s.ctx,
-	// 	allDataFiles,
-	// 	s.writeStore, s.mergeStore,
-	// 	partSize,
-	// 	prefix,
-	// 	external.DefaultBlockSize,
-	// 	mergeSortOnClose,
-	// 	int(res.CPU.Capacity()),
-	// 	false,
-	// )
-	// if err != nil {
-	// 	return err
-	// }
-	err := external.MergeOverlappingFilesV2(
+	err := external.MergeOverlappingFiles(
 		s.ctx,
-		mg.MultipleFilesStats,
+		allDataFiles,
 		s.writeStore, s.mergeStore,
-		mg.StartKey, mg.EndKey,
 		partSize,
 		prefix,
-		uuid.New().String(),
 		external.DefaultBlockSize,
-		0, // unused
-		1*size.MB,
-		8*1024,
 		mergeSortOnClose,
 		int(res.CPU.Capacity()),
-		false, // unused
+		false,
 	)
+	// err := external.MergeOverlappingFilesV2(
+	// 	s.ctx,
+	// 	mg.MultipleFilesStats,
+	// 	s.writeStore, s.mergeStore,
+	// 	mg.StartKey, mg.EndKey,
+	// 	partSize,
+	// 	prefix,
+	// 	uuid.New().String(),
+	// 	external.DefaultBlockSize,
+	// 	0, // unused
+	// 	1*size.MB,
+	// 	8*1024,
+	// 	mergeSortOnClose,
+	// 	int(res.CPU.Capacity()),
+	// 	false, // unused
+	// )
 	if err != nil {
 		return err
 	}
