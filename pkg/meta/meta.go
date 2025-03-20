@@ -998,21 +998,40 @@ func (m *Mutator) IterTables(dbID int64, fn func(info *model.TableInfo) error) e
 	return errors.Trace(err)
 }
 
-// IterAllTables iterates all the table at once, in order to avoid oom.
-func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concurrency int, fn func(info *model.TableInfo) error, hintMaxDBID int64) error {
+func splitRangeInt64Max(n int64) [][]string {
+	ranges := make([][]string, n)
+
+	// 9999999999999999999 is the max number than maxInt64 in string format.
+	batch := 9999999999999999999 / uint64(n)
+
+	for k := int64(0); k < n; k++ {
+		start := batch * uint64(k)
+		end := batch * uint64(k+1)
+
+		startStr := fmt.Sprintf("%019d", start)
+		if k == 0 {
+			startStr = "0"
+		}
+		endStr := fmt.Sprintf("%019d", end)
+
+		ranges[k] = []string{startStr, endStr}
+	}
+
+	return ranges
+}
+
+// IterAllTables iterates all the table at once, in order to avoid oom. It can use at most 15 concurrency to iterate.
+// This function is optimized for 'many databases' scenario. Only 1 concurrency can work for 'many tables in one database' scenario.
+func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concurrency int, fn func(info *model.TableInfo) error) error {
 	cancelCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	workGroup, _ := util.NewErrorGroupWithRecoverWithCtx(cancelCtx)
+	workGroup, egCtx := util.NewErrorGroupWithRecoverWithCtx(cancelCtx)
 
-	idBatch := math.MaxInt64
 	if concurrency >= 15 {
 		concurrency = 15
 	}
-	if hintMaxDBID == 0 {
-		concurrency = 1
-	} else {
-		idBatch = max(int(hintMaxDBID)/concurrency+1, 1)
-	}
+
+	kvRanges := splitRangeInt64Max(int64(concurrency))
 
 	mu := sync.Mutex{}
 	for i := 0; i < concurrency; i++ {
@@ -1021,9 +1040,17 @@ func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concur
 		snapshot.SetOption(kv.RequestSourceType, kv.InternalTxnMeta)
 		t := structure.NewStructure(snapshot, nil, mMetaPrefix)
 		workGroup.Go(func() error {
-			startKey := DBkey(int64(i * idBatch))
-			endKey := DBkey(int64((i + 1) * idBatch))
+			startKey := []byte(fmt.Sprintf("%s:", mDBPrefix))
+			startKey = codec.EncodeBytes(startKey, []byte(kvRanges[i][0]))
+			endKey := []byte(fmt.Sprintf("%s:", mDBPrefix))
+			endKey = codec.EncodeBytes(endKey, []byte(kvRanges[i][1]))
+
 			return t.IterateHashWithBoundedKey(startKey, endKey, func(key []byte, field []byte, value []byte) error {
+				select {
+				case <-egCtx.Done():
+					return egCtx.Err()
+				default:
+				}
 				// only handle table meta
 				tableKey := string(field)
 				if !strings.HasPrefix(tableKey, mTablePrefix) {

@@ -1522,6 +1522,7 @@ func TestStaleReadAllCombinations(t *testing.T) {
 	time.Sleep(1000 * time.Millisecond)
 	// Insert row #2
 	tk.MustExec("insert into t values (2, 20)")
+	row2CreatedTime := time.Now()
 	time.Sleep(1000 * time.Millisecond)
 	secondTime := time.Now().Add(-500 * time.Millisecond)
 
@@ -1535,7 +1536,9 @@ func TestStaleReadAllCombinations(t *testing.T) {
 		{
 			name: "tidb_read_staleness",
 			setup: func() {
-				tk.MustExec("set @@tidb_read_staleness='-2'")
+				row2CreatedElapsed := int(time.Since(row2CreatedTime).Seconds())
+				staleness := row2CreatedElapsed + 1 // The time `now - staleness(second)` is between row1 and row2.
+				tk.MustExec(fmt.Sprintf("set @@tidb_read_staleness='-%d'", staleness))
 			},
 			query: "select * from t",
 			clean: func() {

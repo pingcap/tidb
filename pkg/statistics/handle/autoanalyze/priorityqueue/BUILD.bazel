@@ -19,6 +19,7 @@ go_library(
     deps = [
         "//pkg/ddl/notifier",
         "//pkg/infoschema",
+        "//pkg/meta",
         "//pkg/meta/model",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
