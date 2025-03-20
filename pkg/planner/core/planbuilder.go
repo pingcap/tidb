@@ -3895,6 +3895,9 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		importStmt := &ast.ImportIntoStmt{
 			Table:  tn,
 			Select: insert.Select,
+			Options: []*ast.LoadDataOpt{
+				{Name: "thread", Value: ast.NewValueExpr(64, "", "")},
+			},
 		}
 		return b.buildImportInto(ctx, importStmt)
 	}
