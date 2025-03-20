@@ -164,7 +164,7 @@ func TestQueryWatch(t *testing.T) {
 	r := tk.MustQuery("select * from information_schema.runaway_watches where resource_group_name = 'rg1'")
 	require.Equal(t, 3, len(r.Rows()))
 	// test remove by resource group
-	rs, err = tk.Exec("query watch remove resouce group rg1")
+	rs, err = tk.Exec("query watch remove resource group rg1")
 	require.NoError(t, err)
 	require.Nil(t, rs)
 	r = tk.MustQuery("select * from information_schema.runaway_watches where resource_group_name = 'rg1'")
