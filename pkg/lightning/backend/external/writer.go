@@ -64,40 +64,6 @@ const (
 	DefaultBlockSize = 16 * units.MiB
 )
 
-// OnDuplicateKey is the action when a duplicate key is found during global sort.
-// Note: lightning also have similar concept call OnDup, they have different semantic.
-type OnDuplicateKey int
-
-const (
-	// OnDuplicateKeyIgnore means ignore the duplicate key.
-	// this is the old behavior as add-index check dup by using DupDetectKeyAdapter.
-	OnDuplicateKeyIgnore OnDuplicateKey = iota
-	// OnDuplicateKeyRecord means record all the duplicate keys to external store.
-	// we use this for PK and UK in import-into.
-	OnDuplicateKeyRecord
-	// OnDuplicateKeyRemove means remove the duplicate key silently.
-	// we use this action for non-unique secondary indexes in import-into.
-	OnDuplicateKeyRemove
-	// OnDuplicateKeyError return an error when a duplicate key is found.
-	// may use this for add unique index.
-	OnDuplicateKeyError
-)
-
-// String implements fmt.Stringer interface.
-func (o OnDuplicateKey) String() string {
-	switch o {
-	case OnDuplicateKeyIgnore:
-		return "ignore"
-	case OnDuplicateKeyRecord:
-		return "record"
-	case OnDuplicateKeyRemove:
-		return "remove"
-	case OnDuplicateKeyError:
-		return "error"
-	}
-	return "unknown"
-}
-
 // rangePropertiesCollector collects range properties for each range. The zero
 // value of rangePropertiesCollector is not ready to use, should call reset()
 // first.
@@ -182,7 +148,7 @@ type WriterBuilder struct {
 	propKeysDist    uint64
 	onClose         OnCloseFunc
 	keyDupeEncoding bool
-	onDup           OnDuplicateKey
+	onDup           common.OnDuplicateKey
 }
 
 // NewWriterBuilder creates a WriterBuilder.
@@ -248,7 +214,7 @@ func (b *WriterBuilder) SetGroupOffset(offset int) *WriterBuilder {
 }
 
 // SetOnDup set the action when checkDup enabled and a duplicate key is found.
-func (b *WriterBuilder) SetOnDup(onDup OnDuplicateKey) *WriterBuilder {
+func (b *WriterBuilder) SetOnDup(onDup common.OnDuplicateKey) *WriterBuilder {
 	b.onDup = onDup
 	return b
 }
@@ -416,7 +382,7 @@ type Writer struct {
 
 	onClose OnCloseFunc
 	closed  bool
-	onDup   OnDuplicateKey
+	onDup   common.OnDuplicateKey
 
 	// Statistic information per batch.
 	batchSize uint64
@@ -534,7 +500,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	sortStart := time.Now()
 	var dupFound bool
 	slices.SortFunc(w.kvLocations, func(i, j membuf.SliceLocation) int {
-		res := bytes.Compare(w.getKeyByLoc(i), w.getKeyByLoc(j))
+		res := bytes.Compare(w.getKeyByLoc(&i), w.getKeyByLoc(&j))
 		if res == 0 {
 			dupFound = true
 		}
@@ -550,14 +516,14 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	)
 	if dupFound {
 		switch w.onDup {
-		case OnDuplicateKeyIgnore:
-		case OnDuplicateKeyRecord:
+		case common.OnDuplicateKeyIgnore:
+		case common.OnDuplicateKeyRecord:
 			// we don't have a global view, so need to keep duplicates with duplicate
 			// count <= 2, so later we can find them.
 			w.kvLocations, dupLocs, dupCnt = removeDuplicatesMoreThanTwo(w.kvLocations, w.getKeyByLoc)
-		case OnDuplicateKeyRemove:
+		case common.OnDuplicateKeyRemove:
 			w.kvLocations, _, dupCnt = removeDuplicates(w.kvLocations, w.getKeyByLoc, false)
-		case OnDuplicateKeyError:
+		case common.OnDuplicateKeyError:
 			// not implemented yet, same as ignore.
 			// add-index might need this one later.
 		}
@@ -595,7 +561,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort_and_write").Observe(totalDuration.Seconds())
 	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort_and_write").Observe(float64(w.batchSize) / 1024.0 / 1024.0 / totalDuration.Seconds())
 
-	minKey, maxKey := w.getKeyByLoc(w.kvLocations[0]), w.getKeyByLoc(w.kvLocations[len(w.kvLocations)-1])
+	minKey, maxKey := w.getKeyByLoc(&w.kvLocations[0]), w.getKeyByLoc(&w.kvLocations[len(w.kvLocations)-1])
 	w.recordMinMax(minKey, maxKey, uint64(w.kvSize))
 
 	// maintain 500-batch statistics
@@ -654,13 +620,13 @@ func (w *Writer) flushSortedKVs(ctx context.Context, dupLocs []membuf.SliceLocat
 	kvStore := NewKeyValueStore(ctx, dataWriter, w.rc)
 
 	for _, pair := range w.kvLocations {
-		err = kvStore.addEncodedData(w.kvBuffer.GetSlice(pair))
+		err = kvStore.addEncodedData(w.kvBuffer.GetSlice(&pair))
 		if err != nil {
 			return "", "", "", err
 		}
 	}
 
-	kvStore.Close()
+	kvStore.finish()
 	encodedStat := w.rc.encode()
 	statSize := len(encodedStat)
 	_, err = statWriter.Write(ctx, encodedStat)
@@ -713,12 +679,12 @@ func (w *Writer) writeDupKVs(ctx context.Context, kvLocs []membuf.SliceLocation)
 	}()
 	dupStore := NewKeyValueStore(ctx, dupWriter, nil)
 	for _, pair := range kvLocs {
-		err = dupStore.addEncodedData(w.kvBuffer.GetSlice(pair))
+		err = dupStore.addEncodedData(w.kvBuffer.GetSlice(&pair))
 		if err != nil {
 			return "", err
 		}
 	}
-	dupStore.Close()
+	dupStore.finish()
 	err = dupWriter.Close(ctx)
 	dupWriter = nil
 	if err != nil {
@@ -727,7 +693,7 @@ func (w *Writer) writeDupKVs(ctx context.Context, kvLocs []membuf.SliceLocation)
 	return dupPath, nil
 }
 
-func (w *Writer) getKeyByLoc(loc membuf.SliceLocation) []byte {
+func (w *Writer) getKeyByLoc(loc *membuf.SliceLocation) []byte {
 	block := w.kvBuffer.GetSlice(loc)
 	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
 	return block[2*lengthBytes : 2*lengthBytes+keyLen]

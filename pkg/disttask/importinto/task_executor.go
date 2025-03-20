@@ -334,23 +334,12 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	prefix := subtaskPrefix(m.taskID, subtask.ID)
 
 	partSize := m.dataKVPartSize
-	onDup := external.OnDuplicateKeyRecord
 	if sm.KVGroup != dataKVGroup {
 		partSize = m.indexKVPartSize
-
-		indexID, err2 := strconv.Atoi(sm.KVGroup)
-		if err2 != nil {
-			// shouldn't happen
-			return errors.Trace(err2)
-		}
-		info, ok := m.indicesGenKV[int64(indexID)]
-		if !ok {
-			// shouldn't happen
-			return errors.Errorf("unknown index %d", indexID)
-		}
-		if !info.unique {
-			onDup = external.OnDuplicateKeyRemove
-		}
+	}
+	onDup, err := getOnDupForKVGroup(m.indicesGenKV, sm.KVGroup)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	err = external.MergeOverlappingFiles(
@@ -390,6 +379,28 @@ func (m *mergeSortStepExecutor) OnFinished(_ context.Context, subtask *proto.Sub
 	return nil
 }
 
+func getOnDupForKVGroup(indicesGenKV map[int64]genKVIndex, kvGroup string) (common.OnDuplicateKey, error) {
+	if kvGroup == dataKVGroup {
+		return common.OnDuplicateKeyRecord, nil
+	}
+
+	indexID, err2 := strconv.Atoi(kvGroup)
+	if err2 != nil {
+		// shouldn't happen
+		return common.OnDuplicateKeyIgnore, errors.Trace(err2)
+	}
+	info, ok := indicesGenKV[int64(indexID)]
+	if !ok {
+		// shouldn't happen
+		return common.OnDuplicateKeyIgnore, errors.Errorf("unknown index %d", indexID)
+	}
+	if info.unique {
+		return common.OnDuplicateKeyRecord, nil
+	}
+	return common.OnDuplicateKeyRemove, nil
+
+}
+
 type writeAndIngestStepExecutor struct {
 	execute.StepExecFrameworkInfo
 
@@ -398,6 +409,8 @@ type writeAndIngestStepExecutor struct {
 	logger        *zap.Logger
 	tableImporter *importer.TableImporter
 	store         tidbkv.Storage
+
+	indicesGenKV map[int64]genKVIndex
 }
 
 var _ execute.StepExecutor = &writeAndIngestStepExecutor{}
@@ -432,6 +445,11 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	if jobKeys == nil {
 		jobKeys = sm.RangeSplitKeys
 	}
+	onDup, err := getOnDupForKVGroup(e.indicesGenKV, sm.KVGroup)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
 			StorageURI:    e.taskMeta.Plan.CloudStorageURI,
@@ -445,6 +463,8 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 			TotalKVCount:  0,
 			CheckHotspot:  false,
 			MemCapacity:   e.GetResource().Mem.Capacity(),
+			OnDup:         onDup,
+			FilePrefix:    subtaskPrefix(e.taskID, subtask.ID),
 		},
 		TS: sm.TS,
 	}, engineUUID)
@@ -472,6 +492,7 @@ func (e *writeAndIngestStepExecutor) OnFinished(ctx context.Context, subtask *pr
 	localBackend := e.tableImporter.Backend()
 	_, kvCount := localBackend.GetExternalEngineKVStatistics(engineUUID)
 	subtaskMeta.Result.LoadedRowCnt = uint64(kvCount)
+	subtaskMeta.ConflictInfo = localBackend.GetExternalEngineConflictInfo(engineUUID)
 	err := localBackend.CleanupEngine(ctx, engineUUID)
 	if err != nil {
 		e.logger.Warn("failed to cleanup engine", zap.Error(err))
@@ -592,10 +613,11 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 		}, nil
 	case proto.ImportStepWriteAndIngest:
 		return &writeAndIngestStepExecutor{
-			taskID:   task.ID,
-			taskMeta: &taskMeta,
-			logger:   logger,
-			store:    e.store,
+			taskID:       task.ID,
+			taskMeta:     &taskMeta,
+			logger:       logger,
+			store:        e.store,
+			indicesGenKV: indicesGenKV,
 		}, nil
 	case proto.ImportStepPostProcess:
 		return NewPostProcessStepExecutor(task.ID, e.store, &taskMeta, logger), nil

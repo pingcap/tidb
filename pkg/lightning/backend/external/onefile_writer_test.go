@@ -212,7 +212,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		1000,
 		nil,
 		true,
-		OnDuplicateKeyIgnore,
+		common.OnDuplicateKeyIgnore,
 	))
 
 	keys := make([][]byte, 0, kvCount)
@@ -320,7 +320,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 		1000,
 		onClose,
 		true,
-		OnDuplicateKeyIgnore,
+		common.OnDuplicateKeyIgnore,
 	))
 
 	bufSize := rand.Intn(100) + 1

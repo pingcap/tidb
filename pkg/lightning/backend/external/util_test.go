@@ -328,8 +328,8 @@ func TestKeyMinMax(t *testing.T) {
 }
 
 func TestRemoveDuplicates(t *testing.T) {
-	valGetter := func(e int) []byte {
-		return []byte{byte(e)}
+	valGetter := func(e *int) []byte {
+		return []byte{byte(*e)}
 	}
 	cases := []struct {
 		in   []int
@@ -393,8 +393,8 @@ func TestRemoveDuplicates(t *testing.T) {
 }
 
 func TestRemoveDuplicatesMoreThan2(t *testing.T) {
-	valGetter := func(e int) []byte {
-		return []byte{byte(e)}
+	valGetter := func(e *int) []byte {
+		return []byte{byte(*e)}
 	}
 	cases := []struct {
 		in    []int

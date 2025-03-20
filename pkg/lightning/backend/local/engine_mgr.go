@@ -324,6 +324,8 @@ func (em *engineManager) closeEngine(
 			externalCfg.TotalKVCount,
 			externalCfg.CheckHotspot,
 			externalCfg.MemCapacity,
+			externalCfg.OnDup,
+			externalCfg.FilePrefix,
 		)
 		em.externalEngine[engineUUID] = externalEngine
 		return nil

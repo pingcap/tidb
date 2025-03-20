@@ -80,3 +80,38 @@ func (c *ConflictInfo) Merge(other ConflictInfo) {
 	c.Count += other.Count
 	c.Files = append(c.Files, other.Files...)
 }
+
+// OnDuplicateKey is the action when a duplicate key is found during global sort.
+// Note: lightning also have similar concept call OnDup, they have different semantic.
+// we put it here to avoid import cycle.
+type OnDuplicateKey int
+
+const (
+	// OnDuplicateKeyIgnore means ignore the duplicate key.
+	// this is the old behavior as add-index check dup by using DupDetectKeyAdapter.
+	OnDuplicateKeyIgnore OnDuplicateKey = iota
+	// OnDuplicateKeyRecord means record all the duplicate keys to external store.
+	// we use this for PK and UK in import-into.
+	OnDuplicateKeyRecord
+	// OnDuplicateKeyRemove means remove the duplicate key silently.
+	// we use this action for non-unique secondary indexes in import-into.
+	OnDuplicateKeyRemove
+	// OnDuplicateKeyError return an error when a duplicate key is found.
+	// may use this for add unique index.
+	OnDuplicateKeyError
+)
+
+// String implements fmt.Stringer interface.
+func (o OnDuplicateKey) String() string {
+	switch o {
+	case OnDuplicateKeyIgnore:
+		return "ignore"
+	case OnDuplicateKeyRecord:
+		return "record"
+	case OnDuplicateKeyRemove:
+		return "remove"
+	case OnDuplicateKeyError:
+		return "error"
+	}
+	return "unknown"
+}

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
@@ -168,9 +169,9 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 				// shouldn't happen normally, unless we have bug at getIndicesGenKV
 				return nil, errors.Errorf("unknown index with ID: %d", indexID)
 			}
-			onDup := external.OnDuplicateKeyRemove
+			onDup := common.OnDuplicateKeyRemove
 			if idx.unique {
-				onDup = external.OnDuplicateKeyRecord
+				onDup = common.OnDuplicateKeyRecord
 			}
 			builder := external.NewWriterBuilder().
 				SetOnCloseFunc(func(summary *external.WriterSummary) {
@@ -191,7 +192,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 			SetOnCloseFunc(op.sharedVars.mergeDataSummary).
 			SetMemorySizeLimit(dataKVMemSizePerCon).
 			SetBlockSize(getKVGroupBlockSize(dataKVGroup)).
-			SetOnDup(external.OnDuplicateKeyRecord)
+			SetOnDup(common.OnDuplicateKeyRecord)
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for data: data/{workerID}
 		writerID := path.Join("data", workerUUID)

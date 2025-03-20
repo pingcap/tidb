@@ -352,12 +352,12 @@ func getSpeed(n uint64, dur float64, isBytes bool) string {
 }
 
 // remove all duplicates inside sorted array in place, i.e. input elements will be changed.
-func removeDuplicates[E any](elements []E, compareValGetter func(E) []byte, record bool) ([]E, []E, int) {
+func removeDuplicates[E any](elements []E, keyGetter func(*E) []byte, record bool) ([]E, []E, int) {
 	if len(elements) <= 1 {
 		return elements, []E{}, 0
 	}
 	pivotIdx, fillIdx := 0, 0
-	pivot := compareValGetter(elements[pivotIdx])
+	pivot := keyGetter(&elements[pivotIdx])
 	var dups []E
 	dupCount := 0
 	if record {
@@ -366,7 +366,7 @@ func removeDuplicates[E any](elements []E, compareValGetter func(E) []byte, reco
 	for idx := 1; idx <= len(elements); idx++ {
 		var key []byte
 		if idx < len(elements) {
-			key = compareValGetter(elements[idx])
+			key = keyGetter(&elements[idx])
 			if bytes.Compare(pivot, key) == 0 {
 				continue
 			}
@@ -391,18 +391,18 @@ func removeDuplicates[E any](elements []E, compareValGetter func(E) []byte, reco
 // remove all duplicates inside sorted array in place if the duplicate count is
 // more than 2, and keep the first two duplicates.
 // we also return the total number of duplicates as the third return value.
-func removeDuplicatesMoreThanTwo[E any](elements []E, compareValGetter func(E) []byte) ([]E, []E, int) {
+func removeDuplicatesMoreThanTwo[E any](elements []E, compareValGetter func(*E) []byte) ([]E, []E, int) {
 	if len(elements) <= 1 {
 		return elements, []E{}, 0
 	}
 	pivotIdx, fillIdx := 0, 0
-	pivot := compareValGetter(elements[pivotIdx])
+	pivot := compareValGetter(&elements[pivotIdx])
 	var totalDup int
 	dups := make([]E, 0, 2)
 	for idx := 1; idx <= len(elements); idx++ {
 		var key []byte
 		if idx < len(elements) {
-			key = compareValGetter(elements[idx])
+			key = compareValGetter(&elements[idx])
 			if bytes.Compare(pivot, key) == 0 {
 				continue
 			}

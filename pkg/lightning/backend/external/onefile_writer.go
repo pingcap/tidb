@@ -60,7 +60,7 @@ type OneFileWriter struct {
 	closed  bool
 
 	// for duplicate detection.
-	onDup      OnDuplicateKey
+	onDup      common.OnDuplicateKey
 	pivotKey   []byte
 	pivotValue []byte
 	// number of key that duplicate with pivotKey, include pivotKey itself, so it
@@ -99,7 +99,7 @@ func (w *OneFileWriter) initWriter(ctx context.Context, partSize int64) (
 		err = w.dataWriter.Close(ctx)
 		return err
 	}
-	if w.onDup == OnDuplicateKeyRecord {
+	if w.onDup == common.OnDuplicateKeyRecord {
 		w.dupFile = filepath.Join(w.filenamePrefix+dupSuffix, "one-file")
 		w.dupWriter, err = w.store.Create(ctx, w.dupFile, &storage.WriterOption{
 			// too many duplicates will cause duplicate resolution part very slow,
@@ -138,7 +138,7 @@ func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) err
 	if w.minKey == nil {
 		w.minKey = slices.Clone(idxKey)
 	}
-	if w.onDup != OnDuplicateKeyIgnore {
+	if w.onDup != common.OnDuplicateKeyIgnore {
 		// must be Record or Remove right now
 		return w.handleDupAndWrite(ctx, idxKey, idxVal)
 	}
@@ -151,7 +151,7 @@ func (w *OneFileWriter) handleDupAndWrite(ctx context.Context, idxKey, idxVal []
 	}
 	if slices.Compare(w.pivotKey, idxKey) == 0 {
 		w.currDupCnt++
-		if w.onDup == OnDuplicateKeyRecord {
+		if w.onDup == common.OnDuplicateKeyRecord {
 			// record first 2 duplicate to data file, others to dup file.
 			if w.currDupCnt == 2 {
 				if err := w.doWriteRow(ctx, w.pivotKey, w.pivotValue); err != nil {
@@ -162,7 +162,7 @@ func (w *OneFileWriter) handleDupAndWrite(ctx context.Context, idxKey, idxVal []
 				}
 			} else {
 				// w.currDupCnt > 2
-				if err := w.doWriteDupRows(idxKey, idxVal); err != nil {
+				if err := w.dupKVStore.addRawKV(idxKey, idxVal); err != nil {
 					return err
 				}
 				w.recordedDupCnt++
@@ -209,7 +209,7 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 			return errors.Errorf("failed to allocate kv buffer: %d", length)
 		}
 		// 2. write statistics if one kvBuffer is used.
-		w.kvStore.Close()
+		w.kvStore.finish()
 		encodedStat := w.rc.encode()
 		_, err := w.statWriter.Write(ctx, encodedStat)
 		if err != nil {
@@ -219,7 +219,7 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 		// the new prop should have the same offset with kvStore.
 		w.rc.currProp.offset = w.kvStore.offset
 	}
-	w.encodeToBuf(buf, idxKey, idxVal)
+	encodeToBuf(buf, idxKey, idxVal)
 	w.maxKey = buf[lengthBytes*2 : lengthBytes*2+keyLen]
 	err := w.kvStore.addEncodedData(buf[:length])
 	if err != nil {
@@ -228,21 +228,6 @@ func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) e
 	w.totalCnt += 1
 	w.totalSize += uint64(keyLen + len(idxVal))
 	return nil
-}
-
-func (w *OneFileWriter) encodeToBuf(buf, key, value []byte) {
-	keyLen := len(key)
-	binary.BigEndian.AppendUint64(buf[:0], uint64(keyLen))
-	binary.BigEndian.AppendUint64(buf[lengthBytes:lengthBytes], uint64(len(value)))
-	copy(buf[lengthBytes*2:], key)
-	copy(buf[lengthBytes*2+keyLen:], value)
-}
-
-func (w *OneFileWriter) doWriteDupRows(idxKey, idxVal []byte) error {
-	length := len(idxKey) + len(idxVal) + lengthBytes*2
-	buf := make([]byte, length)
-	w.encodeToBuf(buf, idxKey, idxVal)
-	return w.dupKVStore.addEncodedData(buf[:length])
 }
 
 // Close closes the writer.
@@ -286,7 +271,7 @@ func (w *OneFileWriter) closeImpl(ctx context.Context) (err error) {
 		return
 	}
 	// 1. write remaining statistic.
-	w.kvStore.Close()
+	w.kvStore.finish()
 	encodedStat := w.rc.encode()
 	_, err = w.statWriter.Write(ctx, encodedStat)
 	if err != nil {
@@ -308,7 +293,7 @@ func (w *OneFileWriter) closeImpl(ctx context.Context) (err error) {
 		return
 	}
 	if w.dupWriter != nil {
-		w.dupKVStore.Close()
+		w.dupKVStore.finish()
 		if err3 := w.dupWriter.Close(ctx); err3 != nil {
 			w.logger.Error("Close dup writer failed", zap.Error(err3))
 			err = err3
@@ -316,4 +301,12 @@ func (w *OneFileWriter) closeImpl(ctx context.Context) (err error) {
 		}
 	}
 	return nil
+}
+
+func encodeToBuf(buf, key, value []byte) {
+	keyLen := len(key)
+	binary.BigEndian.AppendUint64(buf[:0], uint64(keyLen))
+	binary.BigEndian.AppendUint64(buf[lengthBytes:lengthBytes], uint64(len(value)))
+	copy(buf[lengthBytes*2:], key)
+	copy(buf[lengthBytes*2+keyLen:], value)
 }
