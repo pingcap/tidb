@@ -2433,8 +2433,8 @@ func TestBackfillConcurrentDML(t *testing.T) {
 		// probably have to continue in another failpoint hook?
 	})
 	tk.MustExec("alter table t coalesce partition 1")
-	//tk.MustQuery("select *, _tidb_rowid from t where b = 3").Sort().Check(testkit.Rows("3 3 1"))
-	tk.MustQuery("select *, _tidb_rowid from t partition (p1) where b = 301").Sort().Check(testkit.Rows("1 301 129"))
+	tk.MustQuery("select *, _tidb_rowid from t where b = 3").Sort().Check(testkit.Rows("3 3 1"))
+	//tk.MustQuery("select *, _tidb_rowid from t partition (p1) where b = 301").Sort().Check(testkit.Rows("1 301 129"))
 	tk.MustQuery("select *, _tidb_rowid from t partition (p0) where _tidb_rowid = 1").Sort().Check(testkit.Rows("2 2 1"))
 	//tk.MustQuery("select *, _tidb_rowid from t partition (p1) where _tidb_rowid = 1").Sort().Check(testkit.Rows("1 301 1"))
 	//tk.MustQuery("select *, _tidb_rowid from t where b = 301").Sort().Check(testkit.Rows("1 301 1"))
