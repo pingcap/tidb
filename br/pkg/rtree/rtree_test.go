@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -242,9 +243,9 @@ func TestProgressRangeTree(t *testing.T) {
 
 	ranges, err := prTree.GetIncompleteRanges()
 	require.NoError(t, err)
-	require.Equal(t, rtree.Range{StartKey: []byte("aa"), EndKey: []byte("cc")}, ranges[0])
-	require.Equal(t, rtree.Range{StartKey: []byte("cc"), EndKey: []byte("dd")}, ranges[1])
-	require.Equal(t, rtree.Range{StartKey: []byte("ee"), EndKey: []byte("ff")}, ranges[2])
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("aa"), EndKey: []byte("cc")}, ranges[0])
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("cc"), EndKey: []byte("dd")}, ranges[1])
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("ee"), EndKey: []byte("ff")}, ranges[2])
 
 	pr, err := prTree.FindContained([]byte("aaa"), []byte("b"))
 	require.NoError(t, err)
@@ -256,9 +257,9 @@ func TestProgressRangeTree(t *testing.T) {
 
 	ranges, err = prTree.GetIncompleteRanges()
 	require.NoError(t, err)
-	require.Equal(t, rtree.Range{StartKey: []byte("aa"), EndKey: []byte("aaa")}, ranges[0])
-	require.Equal(t, rtree.Range{StartKey: []byte("b"), EndKey: []byte("cc")}, ranges[1])
-	require.Equal(t, rtree.Range{StartKey: []byte("ee"), EndKey: []byte("ff")}, ranges[2])
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("aa"), EndKey: []byte("aaa")}, ranges[0])
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("b"), EndKey: []byte("cc")}, ranges[1])
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("ee"), EndKey: []byte("ff")}, ranges[2])
 
 	pr, err = prTree.FindContained([]byte("aa"), []byte("aaa"))
 	require.NoError(t, err)
@@ -289,25 +290,40 @@ func TestProgreeRangeTreeCallBack(t *testing.T) {
 
 	pr, err := prTree.FindContained([]byte("a"), []byte("b"))
 	require.NoError(t, err)
-	pr.Res.Put([]byte("a"), []byte("b"), nil)
+	pr.Res.Put([]byte("a"), []byte("aa"), nil)
 	ranges, err := prTree.GetIncompleteRanges()
 	require.NoError(t, err)
-	require.Equal(t, completeCount, 1)
-	require.Equal(t, rtree.Range{StartKey: []byte("c"), EndKey: []byte("d")}, ranges[0])
-	require.Equal(t, rtree.Range{StartKey: []byte("e"), EndKey: []byte("f")}, ranges[1])
+	require.Equal(t, completeCount, 0)
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("aa"), EndKey: []byte("b")}, ranges[0])
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("c"), EndKey: []byte("d")}, ranges[1])
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("e"), EndKey: []byte("f")}, ranges[2])
 
-	pr.Res.Put([]byte("a"), []byte("aa"), nil)
+	pr.Res.Put([]byte("a"), []byte("ab"), nil)
+	ranges, err = prTree.GetIncompleteRanges()
+	require.NoError(t, err)
+	require.Equal(t, completeCount, 0)
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("ab"), EndKey: []byte("b")}, ranges[0])
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("c"), EndKey: []byte("d")}, ranges[1])
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("e"), EndKey: []byte("f")}, ranges[2])
+
+	pr.Res.Put([]byte("ab"), []byte("b"), nil)
 	ranges, err = prTree.GetIncompleteRanges()
 	require.NoError(t, err)
 	require.Equal(t, completeCount, 1)
-	require.Equal(t, rtree.Range{StartKey: []byte("aa"), EndKey: []byte("b")}, ranges[0])
-	require.Equal(t, rtree.Range{StartKey: []byte("c"), EndKey: []byte("d")}, ranges[1])
-	require.Equal(t, rtree.Range{StartKey: []byte("e"), EndKey: []byte("f")}, ranges[2])
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("c"), EndKey: []byte("d")}, ranges[0])
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("e"), EndKey: []byte("f")}, ranges[1])
 
-	pr.Res.Put([]byte("a"), []byte("b"), nil)
+	pr.Res.Put([]byte("a"), []byte("abc"), nil)
 	ranges, err = prTree.GetIncompleteRanges()
 	require.NoError(t, err)
 	require.Equal(t, completeCount, 1)
-	require.Equal(t, rtree.Range{StartKey: []byte("c"), EndKey: []byte("d")}, ranges[0])
-	require.Equal(t, rtree.Range{StartKey: []byte("e"), EndKey: []byte("f")}, ranges[1])
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("c"), EndKey: []byte("d")}, ranges[0])
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("e"), EndKey: []byte("f")}, ranges[1])
+
+	pr.Res.Put([]byte("cc"), []byte("cd"), nil)
+	ranges, err = prTree.GetIncompleteRanges()
+	require.NoError(t, err)
+	require.Equal(t, completeCount, 1)
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("c"), EndKey: []byte("d")}, ranges[0])
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("e"), EndKey: []byte("f")}, ranges[1])
 }
