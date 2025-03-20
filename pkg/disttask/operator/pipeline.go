@@ -77,8 +77,9 @@ func (p *AsyncPipeline) String() string {
 	return "AsyncPipeline[" + strings.Join(opStrs, " -> ") + "]"
 }
 
-// GetIngestModeReaderAndWriter returns the reader and writer in the local ingest mode.
-func (p *AsyncPipeline) GetIngestModeReaderAndWriter() (operator1, operator2 TunableOperator) {
+// GetReaderAndWriter returns the reader and writer in this pipeline.
+// Currently this can only be used in readIndexStepExecutor.
+func (p *AsyncPipeline) GetReaderAndWriter() (operator1, operator2 TunableOperator) {
 	if len(p.ops) != 4 {
 		return nil, nil
 	}
