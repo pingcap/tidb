@@ -466,9 +466,9 @@ func (rangeTree *ProgressRangeTree) collectRangeFiles(item *ProgressRange) error
 			rangeAscendErr = err
 			return false
 		}
-		item.Checksum.Crc64Xor = crc
-		item.Checksum.TotalKvs = kvs
-		item.Checksum.TotalBytes = bytes
+		item.Checksum.Crc64Xor ^= crc
+		item.Checksum.TotalKvs += kvs
+		item.Checksum.TotalBytes += bytes
 		return true
 	})
 	return rangeAscendErr

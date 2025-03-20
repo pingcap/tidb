@@ -1084,9 +1084,9 @@ func (bc *Client) BuildProgressRangeTree(ctx context.Context, ranges []rtree.Ran
 			}
 			// Note: put the range without files since it is already persisted in the external storage.
 			pr.Res.Put(rg.StartKey, rg.EndKey, nil)
-			pr.Checksum.Crc64Xor = crc
-			pr.Checksum.TotalKvs = kvs
-			pr.Checksum.TotalBytes = bytes
+			pr.Checksum.Crc64Xor ^= crc
+			pr.Checksum.TotalKvs += kvs
+			pr.Checksum.TotalBytes += bytes
 			progressCallBack(UnitRegion)
 			return nil
 		})
