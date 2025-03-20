@@ -96,7 +96,7 @@ func checkDataAndShowJobs(t *testing.T, tk *testkit.TestKit, count int) {
 	require.Equal(t, rs[0][7], strconv.Itoa(count))
 }
 
-func assertExternalField(t *testing.T, subtaskMeta *ddl.BackfillSubTaskMeta) {
+func assertExternalField(t *testing.T, subtaskMeta any) {
 	// Reflect on subtaskMeta to check fields with `external:"true"` tag
 	v := reflect.ValueOf(subtaskMeta)
 	if v.Kind() == reflect.Ptr {
@@ -113,6 +113,8 @@ func assertExternalField(t *testing.T, subtaskMeta *ddl.BackfillSubTaskMeta) {
 			case reflect.Struct:
 				require.True(t, fv.IsZero(), "Field "+field.Name+" should be empty")
 			case reflect.Slice:
+				require.Empty(t, fv.Interface(), "Field "+field.Name+" should be empty")
+			case reflect.Map:
 				require.Empty(t, fv.Interface(), "Field "+field.Name+" should be empty")
 			default:
 				t.Fatalf("unexpected field type %s", fv.Kind())
