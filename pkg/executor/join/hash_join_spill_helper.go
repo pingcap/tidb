@@ -70,7 +70,7 @@ type hashJoinSpillHelper struct {
 	spilledPartitions []bool
 
 	validJoinKeysBuffer [][]byte
-	spilledValidRowNum  uint64
+	spilledValidRowNum  atomic.Uint64
 
 	// This variable will be set to false before restoring
 	spillTriggered bool
@@ -99,7 +99,7 @@ func newHashJoinSpillHelper(hashJoinExec *HashJoinV2Exec, partitionNum int, prob
 	helper.buildSpillChkFieldTypes = append(helper.buildSpillChkFieldTypes, types.NewFieldType(mysql.TypeBit)) // row data
 	helper.probeSpillFieldTypes = getProbeSpillChunkFieldTypes(probeFieldTypes)
 	helper.spilledPartitions = make([]bool, partitionNum)
-	helper.spilledValidRowNum = 0
+	helper.spilledValidRowNum.Store(0)
 	helper.hash = fnv.New64()
 	helper.rehashBuf = new(bytes.Buffer)
 
@@ -304,7 +304,7 @@ func (h *hashJoinSpillHelper) generateSpilledValidJoinKey(seg *rowTableSegment, 
 		validJoinKeys[pos] = byte(1)
 	}
 
-	h.spilledValidRowNum += uint64(len(seg.validJoinKeyPos))
+	h.spilledValidRowNum.Add(uint64(len(seg.validJoinKeyPos)))
 	return validJoinKeys
 }
 
@@ -528,7 +528,7 @@ func (h *hashJoinSpillHelper) reset() {
 		h.spilledPartitions[i] = false
 	}
 
-	h.spilledValidRowNum = 0
+	h.spilledValidRowNum.Store(0)
 	h.spillTriggered = false
 }
 

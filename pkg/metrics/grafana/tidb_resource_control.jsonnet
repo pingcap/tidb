@@ -135,7 +135,7 @@ local ConfigPanel = tableNewPanel.new(
   )
 ).addTarget(
   prometheus.target(
-    'max by (resource_group, type) (resource_manager_server_group_config{type="ru_capacity"}) < bool 0',
+    'max by (resource_group, type) (resource_manager_server_group_config{type="ru_capacity"})',
     legendFormat="{{resource_group}}",
     instant=true,
   )
@@ -184,18 +184,21 @@ local ConfigPanel = tableNewPanel.new(
       id: "mappings",
       value: [
         {
-          options: {
-            "0": {
-              index: 1,
-              text: "false",
-            },
-            "1": {
-              index: 0,
-              text: "true",
-            },
-          },
-          type: "value",
+          "from": "0",
+          "text": "Off",
+          "to": "2147483647",
+          "type": 2
         },
+        {
+          "text": "Moderated",
+          "type": 1,
+          "value": "-2"
+        },
+        {
+          "text": "Unlimited",
+          "type": 1,
+          "value": "-1"
+        }
       ],
     },
   ],
