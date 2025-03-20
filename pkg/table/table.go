@@ -321,6 +321,7 @@ type isUpdate struct{}
 
 func (i isUpdate) applyAddRecordOpt(opt *AddRecordOpt) {
 	opt.isUpdate = true
+	opt.genRecordID = true
 }
 
 // skipWriteUntouchedIndices implements UpdateRecordOption.
