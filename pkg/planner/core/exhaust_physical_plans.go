@@ -1346,9 +1346,6 @@ func constructDS2IndexScanTask(
 		}
 		cop.tablePlan = ts
 	}
-	if !ds.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("wwz")
-	}
 	if cop.tablePlan != nil && ds.TableInfo.IsCommonHandle {
 		cop.commonHandleCols = ds.CommonHandleCols
 	}
@@ -1538,9 +1535,11 @@ func constructIndexJoinInnerSideTaskWithAggCheck(p *logicalop.LogicalJoin, prop 
 
 	// build hash agg, when the stream agg is illegal such as the order by prop is not matched
 	if aggTask == nil {
-		physicalHashAgg := NewPhysicalHashAgg(la, la.StatsInfo(), prop)
+		physicalHashAgg := NewPhysicalHashAgg(
+			la,
+			la.StatsInfo().ScaleByExpectCnt(dsCopTask.indexPlan.StatsCount()),
+			prop)
 		physicalHashAgg.SetSchema(la.Schema().Clone())
-		physicalHashAgg.SetStats(dsCopTask.indexPlan.StatsInfo())
 		aggTask = physicalHashAgg.Attach2Task(dsCopTask)
 	}
 
@@ -2932,9 +2931,6 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 				hashAggs = append(hashAggs, mppAggs...)
 			}
 		} else {
-			if !lp.SCtx().GetSessionVars().InRestrictedSQL {
-				fmt.Println("wwz")
-			}
 			agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp, CTEProducerStatus: prop.CTEProducerStatus})
 			agg.SetSchema(la.Schema().Clone())
 			hashAggs = append(hashAggs, agg)

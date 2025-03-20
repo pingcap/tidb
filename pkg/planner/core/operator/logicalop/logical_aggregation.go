@@ -222,9 +222,6 @@ func (la *LogicalAggregation) BuildKeyInfo(selfSchema *expression.Schema, childS
 
 // DeriveStats implement base.LogicalPlan.<11th> interface.
 func (la *LogicalAggregation) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
-	if !la.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("here")
-	}
 	childProfile := childStats[0]
 	gbyCols := make([]*expression.Column, 0, len(la.GroupByItems))
 	for _, gbyExpr := range la.GroupByItems {
