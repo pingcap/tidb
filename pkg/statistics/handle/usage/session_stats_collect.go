@@ -46,7 +46,7 @@ var (
 	dumpStatsMaxDuration = 5 * time.Minute
 
 	// batchInsertSize is the batch size used by internal SQL to insert values to some system table.
-	batchInsertSize = 8192
+	batchInsertSize = 32768
 )
 
 // needDumpStatsDelta checks whether to dump stats delta.
