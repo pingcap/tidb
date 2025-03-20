@@ -3910,7 +3910,6 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 					if err != nil {
 						return errors.Trace(err)
 					}
-					// TODO: Clean up the temporary index map between _tidb_rowid's!!!
 
 					// Also add a temporary index / Map for 'old' partitions,
 					// to use in DeleteReorg state+ when moving a row between old partitions,

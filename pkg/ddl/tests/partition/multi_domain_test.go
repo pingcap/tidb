@@ -882,7 +882,7 @@ func checkTableAndIndexEntries(t *testing.T, tk *testkit.TestKit, originalIDs []
 			require.False(t, HaveEntriesForTableIndex(t, tk, currTableID, prev+1, idxID), "Index id %d for table id %d has still entries!", idxID, currTableID)
 		} else {
 			for _, def := range tbl.Meta().Partition.Definitions {
-				require.True(t, HaveEntriesForTableIndex(t, tk, def.ID, prev+1, idxID), "Index id %d for table id %d has no entries!", idxID, currTableID)
+				require.False(t, HaveEntriesForTableIndex(t, tk, def.ID, prev+1, idxID), "Index id %d for table id %d has still entries!", idxID, currTableID)
 			}
 		}
 		prev = idxID
@@ -907,7 +907,7 @@ PartitionLoop:
 			continue
 		}
 		// old partitions removed
-		require.False(t, HaveEntriesForTableIndex(t, tk, id, 0), "Reorganized table or partition id %d for table id %d has still entries!", id, currTableID)
+		require.False(t, HaveEntriesForTableIndex(t, tk, id, 0), "Reorganized table or partition id %d for table id %d has still entries!\nOrignal ids (table id, partition ids...): %#v\nTable: %#v\nPartitioning: %#v\nPartitions: %#v", id, currTableID, originalIDs, tbl, tbl.Meta().Partition)
 	}
 }
 
@@ -2657,8 +2657,7 @@ func TestBackfillConcurrentDMLRange(t *testing.T) {
 	tk.MustExec("insert into t (a, b) select a+200, b+200 from t order by a")
 	tk.MustExec("insert into t (a, b) select a+400, b+400 from t order by a")
 	exchangeAllPartitionsToGetDuplicateTiDBRowIDs(t, tk)
-	// TODO: fix cleaning up and enable this!
-	//originalIDs := getTableAndPartitionIDs(t, tk)
+	originalIDs := getTableAndPartitionIDs(t, tk)
 	//tk.MustQuery("select a,b,_tidb_rowid from t").Sort().Check(testkit.Rows())
 	var i atomic.Int32
 	i.Store(0)
@@ -2742,9 +2741,11 @@ func TestBackfillConcurrentDMLRange(t *testing.T) {
 	// merge the first 4 into 1 and split the last into 4
 	tk.MustExec("alter table t reorganize partition P_LT_100, P_LT_200, P_LT_300, P_LT_400, p8 into (partition p0 values less than (400), partition p4 values less than (500), partition p5 values less than (600), partition p6 values less than (700), partition p7 values less than (800))")
 	tk.MustExec("admin check table t")
-	// TODO: Check for missing cleanups
-	// TODO: Clean up temporary index maps and enable this!
-	//checkTableAndIndexEntries(t, tk, originalIDs)
+	gcWorker, err := gcworker.NewMockGCWorker(store)
+	require.NoError(t, err)
+	err = gcWorker.DeleteRanges(context.Background(), uint64(math.MaxInt64))
+	require.NoError(t, err)
+	checkTableAndIndexEntries(t, tk, originalIDs)
 	tk.MustQuery("select count(*) from t").Sort().Check(testkit.Rows("512"))
 	tk.MustQuery("select a,b,_tidb_rowid from t where _tidb_rowid = 1").Sort().Check(testkit.Rows("1 301 1", "401 401 1"))
 	tk.MustQuery("select a,b,_tidb_rowid from t").Sort().Check(testkit.Rows(""+
