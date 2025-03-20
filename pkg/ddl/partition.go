@@ -3893,6 +3893,9 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 
 			// TODO: remove debug code:
 			m, err := tablecodec.DecodeRowWithMapNew(prr.vals, columnFt, time.UTC, nil)
+			if err != nil {
+				return errors.Trace(err)
+			}
 			var col1 int64
 			if d, ok := m[w.table.Meta().Columns[0].ID]; ok {
 				col1 = d.GetInt64()
