@@ -539,7 +539,8 @@ func (e *BaseTaskExecutor) detectAndHandleParamModify(ctx context.Context) error
 		}
 		e.metaModifyApplied(latestTask.Meta)
 	}
-	failpoint.InjectCall("afterDetectAndHandleParamModify")
+
+	failpoint.InjectCall("afterDetectAndHandleParamModify", e.task.Load().Step)
 	return nil
 }
 

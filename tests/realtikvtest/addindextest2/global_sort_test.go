@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -407,7 +407,7 @@ func TestIngestUseGivenTS(t *testing.T) {
 	require.Equal(t, presetTS, mvccResp.Info.Writes[0].CommitTs)
 }
 
-func TestAlterJobOnDXWithGlobalSort(t *testing.T) {
+func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(16)`))
 	testutil.ReduceCheckInterval(t)
 
@@ -456,16 +456,24 @@ func TestAlterJobOnDXWithGlobalSort(t *testing.T) {
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterPipeLineClose", func(pipe *operator.AsyncPipeline) {
 		pipeClosed = true
 		reader, writer := pipe.GetReaderAndWriter()
-		require.EqualValues(t, 4, reader.(*ddl.TableScanOperator).GetWorkerPoolSize())
-		require.EqualValues(t, 6, writer.(*ddl.IndexIngestOperator).GetWorkerPoolSize())
+		require.EqualValues(t, 4, reader.GetWorkerPoolSize())
+		require.EqualValues(t, 6, writer.GetWorkerPoolSize())
+	})
+
+	var (
+		modifiedReadIndex atomic.Bool
+		modifiedIngest    atomic.Bool
+	)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterDetectAndHandleParamModify", func(step proto.Step) {
+		switch step {
+		case proto.BackfillStepReadIndex:
+			modifiedReadIndex.Store(true)
+		case proto.BackfillStepWriteAndIngest:
+			modifiedIngest.Store(true)
+		}
 	})
 
 	// Change the batch size and concurrency during table scanning and check the modified parameters.
-	var modified atomic.Bool
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterDetectAndHandleParamModify", func() {
-		require.False(t, modified.Load())
-		modified.Store(true)
-	})
 	var onceScan sync.Once
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/scanRecordExec", func(reorgMeta *model.DDLReorgMeta) {
 		onceScan.Do(func() {
@@ -474,18 +482,13 @@ func TestAlterJobOnDXWithGlobalSort(t *testing.T) {
 			require.Len(t, rows, 1)
 			tk1.MustExec(fmt.Sprintf("admin alter ddl jobs %s thread = 8, batch_size = 256", rows[0][0]))
 			require.Eventually(t, func() bool {
-				return modified.Load()
+				return modifiedReadIndex.Load()
 			}, 20*time.Second, 100*time.Millisecond)
 			require.Equal(t, 256, reorgMeta.GetBatchSize())
-			modified.Store(false)
 		})
 	})
 
 	// Change the max_write_speed of running ingest subtask and check the write speed of backend
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterDetectAndHandleParamModify", func() {
-		require.False(t, modified.Load())
-		modified.Store(true)
-	})
 	var onceIngest sync.Once
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/modifyRunningGlobalSortSpeed", func(be *local.Backend) {
 		onceIngest.Do(func() {
@@ -494,14 +497,15 @@ func TestAlterJobOnDXWithGlobalSort(t *testing.T) {
 			require.Len(t, rows, 1)
 			tk1.MustExec(fmt.Sprintf("admin alter ddl jobs %s max_write_speed=1024", rows[0][0]))
 			require.Eventually(t, func() bool {
-				return modified.Load()
+				return modifiedIngest.Load()
 			}, 20*time.Second, 100*time.Millisecond)
 			require.EqualValues(t, 1024, be.GetWriteSpeedLimit())
 		})
 	})
 
-	tk.MustExec("alter table t1 add index idx(a);")
+	tk.MustExec("alter table gsort add index idx(a);")
 	require.True(t, pipeClosed)
-	require.True(t, modified.Load())
-	tk.MustExec("admin check index t1 idx;")
+	require.True(t, modifiedIngest.Load())
+	require.True(t, modifiedReadIndex.Load())
+	tk.MustExec("admin check index gsort idx;")
 }

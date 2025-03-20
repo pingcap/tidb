@@ -126,6 +126,10 @@ func (r *readIndexStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		if err != nil {
 			return err
 		}
+		r.currPipe.Store(pipe)
+		defer func() {
+			r.currPipe.Store(nil)
+		}()
 		if err = executeAndClosePipeline(opCtx, pipe, nil, nil, r.avgRowSize); err != nil {
 			return errors.Trace(err)
 		}
