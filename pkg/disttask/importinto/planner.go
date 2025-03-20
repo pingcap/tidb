@@ -333,7 +333,7 @@ func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.Pipeli
 	return importSpecs, nil
 }
 
-func skipMergeSort(_ string, stats []external.MultipleFilesStat) bool {
+func skipMergeSort(_ string, _ []external.MultipleFilesStat) bool {
 	return false
 }
 
