@@ -42,6 +42,7 @@ go_test(
         "//pkg/tablecodec",
         "//pkg/testkit/testsetup",
         "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_zap//:zap",
