@@ -464,20 +464,20 @@ func (rm *Manager) RemoveRunawayWatch(recordID int64) error {
 
 // RemoveRunawayResourceGroupWatch is used to remove all runaway watch items of a resource group.
 func (rm *Manager) RemoveRunawayResourceGroupWatch(groupName string) error {
-    rm.runawaySyncer.mu.Lock()
-    defer rm.runawaySyncer.mu.Unlock()
-    records, err := rm.runawaySyncer.getWatchRecordByGroup(groupName)
-    if err != nil {
-        return errors.Annotate(err, "get watch records by resource group failed")
-    }
-    if len(records) == 0 {
-        return errors.Errorf("no runaway watch found for resource group: %s", groupName)
-    }
+	rm.runawaySyncer.mu.Lock()
+	defer rm.runawaySyncer.mu.Unlock()
+	records, err := rm.runawaySyncer.getWatchRecordByGroup(groupName)
+	if err != nil {
+		return errors.Annotate(err, "get watch records by resource group failed")
+	}
+	if len(records) == 0 {
+		return errors.Errorf("no runaway watch found for resource group: %s", groupName)
+	}
 
-    for _, record := range records {
-        if err := handleRunawayWatchDone(rm.sysSessionPool, record); err != nil {
-            return errors.Annotatef(err, "remove watch for resource group %s failed", groupName)
-        }
-    }
-    return nil
+	for _, record := range records {
+		if err := handleRunawayWatchDone(rm.sysSessionPool, record); err != nil {
+			return errors.Annotatef(err, "remove watch for resource group %s failed", groupName)
+		}
+	}
+	return nil
 }
