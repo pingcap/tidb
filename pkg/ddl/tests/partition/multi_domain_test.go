@@ -2366,8 +2366,8 @@ func TestBackfillConcurrentDML(t *testing.T) {
 	// TODO: adjust to 5 partitions, so that 3 values want to write to the same ID
 	// since the first would succeed with the same, the second one would generate and add to the map
 	// as well as the third must do the same!!!
-	tk.MustExec("create table t (a int, b int) partition by hash(a) partitions 3")
-	//tk.MustExec("create table t (a int, b int, primary key (a) nonclustered) partition by hash(a) partitions 3")
+	//tk.MustExec("create table t (a int, b int) partition by hash(a) partitions 3")
+	tk.MustExec("create table t (a int, b int, primary key (a) nonclustered) partition by hash(a) partitions 3")
 	tk.MustExec("insert into t (a, b) values (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9),(10,10),(11,11),(12,12),(13,13),(14,14),(15,15),(16,16)")
 	tk.MustExec("insert into t (a, b) select a+16, b+16 from t")
 	tk.MustExec("insert into t (a, b) select a+32, b+32 from t")
@@ -2397,9 +2397,6 @@ func TestBackfillConcurrentDML(t *testing.T) {
 	}
 
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillNonClustered", func(vals []byte) {
-		tk2 := testkit.NewTestKit(t, store)
-		tk2.MustExec("use test")
-		tk2.MustQuery("select *, _tidb_rowid from t where b = 3").Sort().Check(testkit.Rows("3 3 1"))
 		m, err := tablecodec.DecodeRowWithMapNew(vals, columnFt, time.UTC, nil)
 		require.NoError(t, err)
 		var col1 int64
@@ -2418,6 +2415,8 @@ func TestBackfillConcurrentDML(t *testing.T) {
 		round := i.Add(1)
 		if round == 1 {
 			// UPDATE the same row, so the backfill will fail and retry
+			tk2 := testkit.NewTestKit(t, store)
+			tk2.MustExec("use test")
 			tk2.MustExec(fmt.Sprintf("update t set b = b + 300 where a = %d", col1))
 		}
 		// TODO: Also start a transaction that will fail due to conflict with the backfill?
