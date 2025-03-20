@@ -1535,15 +1535,9 @@ func constructIndexJoinInnerSideTaskWithAggCheck(p *logicalop.LogicalJoin, prop 
 
 	// build hash agg, when the stream agg is illegal such as the order by prop is not matched
 	if aggTask == nil {
-		stats := la.StatsInfo()
-		if dsCopTask.indexPlan != nil {
-			stats.ScaleByExpectCnt(dsCopTask.indexPlan.StatsCount())
-		} else if dsCopTask.tablePlan != nil {
-			stats.ScaleByExpectCnt(dsCopTask.tablePlan.StatsCount())
-		}
 		physicalHashAgg := NewPhysicalHashAgg(
 			la,
-			stats,
+			la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt),
 			prop)
 		physicalHashAgg.SetSchema(la.Schema().Clone())
 		aggTask = physicalHashAgg.Attach2Task(dsCopTask)

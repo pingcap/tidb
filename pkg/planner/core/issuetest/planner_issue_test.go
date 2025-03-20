@@ -273,7 +273,7 @@ func TestIssue59902(t *testing.T) {
 	tk.MustExec("create table t1(a int primary key, b int);")
 	tk.MustExec("create table t2(a int, b int, key idx(a));")
 	tk.MustExec("set tidb_enable_inl_join_inner_multi_pattern=on;")
-	tk.MustQuery("explain select t1.b,(select count(*) from t2 where t2.a=t1.a) as a from t1 where t1.a=1;").
+	tk.MustQuery("explain format='brief' select t1.b,(select count(*) from t2 where t2.a=t1.a) as a from t1 where t1.a=1;").
 		Check(testkit.Rows(
 			"Projection_12 1.00 root  test.t1.b, ifnull(Column#9, 0)->Column#9",
 			"└─IndexJoin_19 1.00 root  left outer join, inner:HashAgg_17, left side:Point_Get_39, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
