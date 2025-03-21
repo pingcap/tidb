@@ -54,6 +54,7 @@ func TestOptions(t *testing.T) {
 	require.Equal(t, AddRecordOpt{
 		commonMutateOpt: commonMutateOpt{ctx: ctx},
 		isUpdate:        true,
+		genRecordID:     true,
 		reserveAutoID:   12,
 	}, *addOpt)
 	require.Equal(t, CreateIdxOpt{commonMutateOpt: commonMutateOpt{ctx: ctx}}, *(addOpt.GetCreateIdxOpt()))

@@ -3833,6 +3833,9 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 			// i.e. double written by StateWriteOnly or StateWriteReorganization.
 			// TODO: while waiting for BatchGet to check for duplicate, do another round of reads in parallel?
 
+			// TODO: test how to use PresumeKeyNotExists/NeedConstraintCheckInPrewrite/DO_CONSTRAINT_CHECK
+			// to delay the check until commit.
+			// And handle commit errors and fall back to this method of checking all keys to see if we need to skip any.
 			for i := range numKeys {
 				key := w.newKeys[i]
 				// TODO: Would it be possible/beneficial to get a range per partition instead?
