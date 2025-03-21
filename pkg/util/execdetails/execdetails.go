@@ -1542,6 +1542,8 @@ func (e *BasicRuntimeStats) GetActRows() int64 {
 }
 
 // Clone implements the RuntimeStats interface.
+// BasicRuntimeStats shouldn't implement Clone interface because all executors with the same executor_id
+// should share with the same BasicRuntimeStats, duplicated BasicRuntimeStats are easy to cause mistakes.
 func (*BasicRuntimeStats) Clone() RuntimeStats {
 	panic("BasicRuntimeStats should not implement Clone function")
 }
