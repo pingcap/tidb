@@ -249,12 +249,12 @@ type PhysicalProperty struct {
 
 	CTEProducerStatus cteProducerStatus
 
-	IndexJoinProp *IndexJoinRuntimeProp
-
 	VectorProp struct {
 		*expression.VSInfo
 		TopK uint32
 	}
+
+	IndexJoinProp *IndexJoinRuntimeProp
 }
 
 // IndexJoinRuntimeProp is the inner runtime property for index join.
@@ -394,13 +394,25 @@ func (p *PhysicalProperty) HashCode() []byte {
 			p.hashcode = append(p.hashcode, col.hashCode()...)
 		}
 		if p.VectorProp.VSInfo != nil {
-			// We only accpect the vector information from the TopN which is directly above the DataSource.
+			// We only accept the vector information from the TopN which is directly above the DataSource.
 			// So it's safe to not hash the vector constant.
 			p.hashcode = append(p.hashcode, p.VectorProp.Column.HashCode()...)
 			p.hashcode = codec.EncodeInt(p.hashcode, int64(p.VectorProp.FnPbCode))
 		}
 	}
 	p.hashcode = append(p.hashcode, codec.EncodeInt(nil, int64(p.CTEProducerStatus))...)
+	// encode indexJoinProp into physical prop's hashcode.
+	if p.IndexJoinProp != nil {
+		for _, expr := range p.IndexJoinProp.JoinOtherConditions {
+			p.hashcode = append(p.hashcode, expr.HashCode()...)
+		}
+		for _, col := range p.IndexJoinProp.OuterJoinKeys {
+			p.hashcode = append(p.hashcode, col.HashCode()...)
+		}
+		for _, col := range p.IndexJoinProp.InnerJoinKeys {
+			p.hashcode = append(p.hashcode, col.HashCode()...)
+		}
+	}
 	return p.hashcode
 }
 
