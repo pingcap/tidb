@@ -130,6 +130,7 @@ go_library(
         "//pkg/planner/core/resolve",
         "//pkg/planner/core/rule",
         "//pkg/planner/core/rule/util",
+        "//pkg/planner/funcdep",
         "//pkg/planner/planctx",
         "//pkg/planner/property",
         "//pkg/planner/util",
