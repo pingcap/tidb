@@ -21,6 +21,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -925,23 +926,44 @@ func (rc *SnapClient) createTables(
 	return cts, nil
 }
 
+// SortTablesBySchemaID sorts tables by their schema ID to ensure tables in the same schema
+// are processed together. It returns a new slice with sorted tables.
+func SortTablesBySchemaID(tables []*metautil.Table) []*metautil.Table {
+	if len(tables) <= 1 {
+		return tables
+	}
+
+	orderedTables := make([]*metautil.Table, len(tables))
+	copy(orderedTables, tables)
+
+	sort.SliceStable(orderedTables, func(i, j int) bool {
+		return orderedTables[i].DB.ID < orderedTables[j].DB.ID
+	})
+
+	return orderedTables
+}
+
 func (rc *SnapClient) createTablesBatch(ctx context.Context, tables []*metautil.Table, newTS uint64) ([]*CreatedTable, error) {
 	eg, ectx := errgroup.WithContext(ctx)
 	rater := logutil.TraceRateOver(metrics.RestoreTableCreatedCount)
 	workers := tidbutil.NewWorkerPool(uint(len(rc.dbPool)), "Create Tables Worker")
-	numOfTables := len(tables)
+
+	// sort tables by schema ID to ensure tables in the same schema are processed together
+	orderedTables := SortTablesBySchemaID(tables)
+
+	numOfTables := len(orderedTables)
 	createdTables := struct {
 		sync.Mutex
 		tables []*CreatedTable
 	}{
-		tables: make([]*CreatedTable, 0, len(tables)),
+		tables: make([]*CreatedTable, 0, numOfTables),
 	}
 
 	for lastSent := 0; lastSent < numOfTables; lastSent += int(rc.batchDdlSize) {
-		end := min(lastSent+int(rc.batchDdlSize), len(tables))
+		end := min(lastSent+int(rc.batchDdlSize), numOfTables)
 		log.Info("create tables", zap.Int("table start", lastSent), zap.Int("table end", end))
 
-		tableSlice := tables[lastSent:end]
+		tableSlice := orderedTables[lastSent:end]
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
 			db := rc.dbPool[id%uint64(len(rc.dbPool))]
 			cts, err := rc.createTables(ectx, db, tableSlice, newTS) // ddl job for [lastSent:i)
