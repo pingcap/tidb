@@ -910,7 +910,7 @@ func TestInfoschemaTablesSpecialOptimizationCovered(t *testing.T) {
 		sql    string
 		expect bool
 	}{
-		// {"select table_name, table_schema from information_schema.tables", true},
+		{"select table_name, table_schema from information_schema.tables", true},
 		{"select table_name from information_schema.tables", true},
 		{"select table_name from information_schema.tables where table_schema = 'test'", true},
 		{"select table_schema from information_schema.tables", true},
