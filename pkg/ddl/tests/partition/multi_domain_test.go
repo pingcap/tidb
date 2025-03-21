@@ -2082,22 +2082,27 @@ func TestIssue58692(t *testing.T) {
 	tk.MustExec("insert into t (a, b) values (1, 1), (2, 2), (3, 3)")
 	var i atomic.Int32
 	i.Store(3)
+	done := make(chan struct{})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		tk2 := testkit.NewTestKit(t, store)
 		tmp := i.Add(1)
 		tk2.MustExec(fmt.Sprintf("insert into test.t values (%d, %d)", tmp, tmp))
 		tk2.MustExec(fmt.Sprintf("update test.t set b = b + 11, a = b where b = %d", tmp-1))
+		if tmp == 10 {
+			close(done)
+		}
 	})
 	tk.MustExec("alter table t remove partitioning")
+	// about 1% of the runs, the alter returns before the failpoint finishes,
+	// which causes a failure with '9 20' from table and '9 9' from index.
+	// So wait until done :)
+	// See https://github.com/pingcap/tidb/pull/58902#discussion_r2001031467
+	<-done
 	rsIndex := tk.MustQuery("select *,_tidb_rowid from t use index(idx)").Sort()
 	rsTable := tk.MustQuery("select *,_tidb_rowid from t use index()").Sort()
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select * from t where b = 20").Check(testkit.Rows("9 20"))
 	tk.MustQuery("select * from t use index(idx) where a = 9").Check(testkit.Rows("9 20"))
-	// TODO: about 1% of the runs, this can fail with '9 20' from table and '9 9' from index
-	// or an extra "10 10" table row!?!
-	// TODO: Investigate this and FIXME!!!
-	// Must a timing issue, since the following checks passes...
 	require.Equal(t, rsIndex.String(), rsTable.String(), "Expected: from index, Actual: from table")
 }
 

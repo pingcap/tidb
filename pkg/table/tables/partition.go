@@ -131,7 +131,6 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 	DroppingDefinitionIndices := make([]*model.IndexInfo, 0, len(origIndices))
 	AddingDefinitionIndices := make([]*model.IndexInfo, 0, len(origIndices))
 	changesArePublic := pi.DDLState == model.StateDeleteReorganization || pi.DDLState == model.StatePublic
-	logutil.BgLogger().Info("newPartitionedTable", zap.String("pi.DDLState", pi.DDLState.String()))
 	for _, idx := range origIndices {
 		newIdx, ok := pi.DDLChangedIndex[idx.ID]
 		if !ok {

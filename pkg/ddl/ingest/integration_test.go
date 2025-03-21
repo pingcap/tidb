@@ -511,6 +511,7 @@ func TestAddGlobalIndexInIngestWithUpdate(t *testing.T) {
 	tk.MustExec("insert into t (a, b) values (1, 1), (2, 2), (3, 3)")
 	var i atomic.Int32
 	i.Store(3)
+	done := make(chan struct{})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		tk2 := testkit.NewTestKit(t, store)
 		tmp := i.Add(1)
@@ -519,8 +520,12 @@ func TestAddGlobalIndexInIngestWithUpdate(t *testing.T) {
 
 		_, err = tk2.Exec(fmt.Sprintf("update test.t set b = b + 11, a = b where b = %d", tmp-1))
 		assert.Nil(t, err)
+		if tmp == 12 {
+			close(done)
+		}
 	})
 	tk.MustExec("alter table t add unique index idx(b) global")
+	<-done
 	rsGlobalIndex := tk.MustQuery("select *,_tidb_rowid from t use index(idx)").Sort()
 	rsTable := tk.MustQuery("select *,_tidb_rowid from t use index()").Sort()
 	require.Equal(t, rsGlobalIndex.String(), rsTable.String())
