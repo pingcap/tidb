@@ -349,3 +349,44 @@ func TestSetSpeedLimit(t *testing.T) {
 		require.Equal(t, mockStores[i].Id, recordStores.get(i))
 	}
 }
+
+func TestSortTablesBySchemaID(t *testing.T) {
+	// Create test tables with different schema IDs in mixed order
+	tables := []*metautil.Table{
+		createTestTable(2, 3),
+		createTestTable(1, 1),
+		createTestTable(3, 5),
+		createTestTable(1, 2),
+		createTestTable(2, 4),
+		createTestTable(3, 6),
+		createTestTable(6, 7),
+	}
+
+	sorted := snapclient.SortTablesBySchemaID(tables)
+
+	require.Len(t, sorted, 7, "Should have 7 tables after sorting")
+
+	expectedSchemaIDs := []int64{1, 1, 2, 2, 3, 3, 6}
+	actualSchemaIDs := make([]int64, 7)
+	for i, table := range sorted {
+		actualSchemaIDs[i] = table.DB.ID
+	}
+
+	require.Equal(t, expectedSchemaIDs, actualSchemaIDs, "Tables should be sorted by schema ID")
+}
+
+// Helper function to create a test table with given IDs
+func createTestTable(schemaID, tableID int64) *metautil.Table {
+	dbInfo := &model.DBInfo{
+		ID: schemaID,
+	}
+
+	tableInfo := &model.TableInfo{
+		ID: tableID,
+	}
+
+	return &metautil.Table{
+		DB:   dbInfo,
+		Info: tableInfo,
+	}
+}
