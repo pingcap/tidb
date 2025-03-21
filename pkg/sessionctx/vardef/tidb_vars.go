@@ -1063,6 +1063,8 @@ const (
 	TiDBEnableDistTask = "tidb_enable_dist_task"
 	// TiDBMaxDistTaskNodes indicates the max node count that could be used by distributed execution framework.
 	TiDBMaxDistTaskNodes = "tidb_max_dist_task_nodes"
+	// TiDBEnableGlobalSortUseLocalStore indicates whether utilize the local disk before uploading to s3.
+	TiDBEnableGlobalSortUseLocalStore = "tidb_enable_global_sort_local_store"
 	// TiDBEnableFastCreateTable indicates whether to enable the fast create table feature.
 	TiDBEnableFastCreateTable = "tidb_enable_fast_create_table"
 	// TiDBGenerateBinaryPlan indicates whether binary plan should be generated in slow log and statements summary.
@@ -1476,6 +1478,7 @@ const (
 	DefTiDBWorkloadBasedLearningInterval              = 24 * time.Hour
 	DefTiDBEnableDistTask                             = true
 	DefTiDBMaxDistTaskNodes                           = -1
+	DefTiDBEnableGlobalSortUseLocalStore              = false
 	DefTiDBEnableFastCreateTable                      = true
 	DefTiDBSimplifiedMetrics                          = false
 	DefTiDBEnablePaging                               = true
@@ -1661,6 +1664,7 @@ var (
 	InstancePlanCacheReservedPercentage = atomic.NewFloat64(0.1)
 	InstancePlanCacheMaxMemSize         = atomic.NewInt64(int64(DefTiDBInstancePlanCacheMaxMemSize))
 	EnableDistTask                      = atomic.NewBool(DefTiDBEnableDistTask)
+	EnableGlobalSortLocalStore          = atomic.NewBool(DefTiDBEnableGlobalSortUseLocalStore)
 	EnableFastCreateTable               = atomic.NewBool(DefTiDBEnableFastCreateTable)
 	EnableNoopVariables                 = atomic.NewBool(DefTiDBEnableNoopVariables)
 	EnableMDL                           = atomic.NewBool(false)

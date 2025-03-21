@@ -150,8 +150,8 @@ func encode(loc *time.Location, b []byte, vals []types.Datum, comparable1 bool) 
 	return b, errors.Trace(err)
 }
 
-// EstimateValueSize uses to estimate the value  size of the encoded values.
-func EstimateValueSize(typeCtx types.Context, val types.Datum) (int, error) {
+// EstimateValueSize uses to estimate the value size of the encoded values.
+func EstimateValueSize(val types.Datum) (int, error) {
 	l := 0
 	switch val.Kind() {
 	case types.KindInt64:
@@ -174,8 +174,7 @@ func EstimateValueSize(typeCtx types.Context, val types.Datum) (int, error) {
 	case types.KindMysqlSet:
 		l = valueSizeOfUnsignedInt(val.GetMysqlSet().Value)
 	case types.KindMysqlBit, types.KindBinaryLiteral:
-		val, err := val.GetBinaryLiteral().ToInt(typeCtx)
-		terror.Log(errors.Trace(err))
+		val := val.GetBinaryLiteral().ToIntNoErr()
 		l = valueSizeOfUnsignedInt(val)
 	case types.KindMysqlJSON:
 		l = 2 + len(val.GetMysqlJSON().Value)

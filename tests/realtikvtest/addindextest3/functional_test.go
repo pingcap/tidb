@@ -22,7 +22,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -39,48 +38,45 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("create table t (a int, b int, index idx(a));")
 	tk.MustExec("insert into t values (1, 1);")
 
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "estimate_row_size")
 	tkSess := tk.Session()
 	exec := tkSess.GetRestrictedSQLExecutor()
+	dbInfo, exists := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+	require.True(t, exists)
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
+	tblInfo := tbl.Meta()
 
-	size := ddl.EstimateTableRowSizeForTest(ctx, store, exec, tbl)
-	require.Equal(t, 0, size) // No data in information_schema.columns.
-	tk.MustExec("analyze table t all columns;")
-	size = ddl.EstimateTableRowSizeForTest(ctx, store, exec, tbl)
-	require.Equal(t, 16, size)
+	rowSize, idxSize := ingest.EstimateTableRowSize(ctx, exec, dbInfo, tblInfo, tblInfo.Indices)
+	require.Equal(t, 4, rowSize)
+	require.Equal(t, 2, idxSize)
 
 	tk.MustExec("alter table t add column c varchar(255);")
 	tk.MustExec("update t set c = repeat('a', 50) where a = 1;")
-	tk.MustExec("analyze table t all columns;")
-	size = ddl.EstimateTableRowSizeForTest(ctx, store, exec, tbl)
-	require.Equal(t, 67, size)
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo = tbl.Meta()
+	rowSize, idxSize = ingest.EstimateTableRowSize(ctx, exec, dbInfo, tblInfo, tblInfo.Indices)
+	require.Equal(t, 56, rowSize)
+	require.Equal(t, 2, idxSize)
 
 	tk.MustExec("drop table t;")
-	tk.MustExec("create table t (id bigint primary key, b text) partition by hash(id) partitions 4;")
+	tk.MustExec("create table t (id bigint primary key, b text, index idx(id)) partition by hash(id) partitions 4;")
 	for i := 1; i < 10; i++ {
 		insertSQL := fmt.Sprintf("insert into t values (%d, repeat('a', 10))", i*10000)
 		tk.MustExec(insertSQL)
 	}
-	tk.MustQuery("split table t between (0) and (1000000) regions 2;").Check(testkit.Rows("4 1"))
-	tk.MustExec("set global tidb_analyze_skip_column_types=`json,blob,mediumblob,longblob`")
-	tk.MustExec("analyze table t all columns;")
+	tk.MustQuery("split table t between (0) and (1000000) regions 2;").Check(testkit.Rows("8 1"))
 	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	size = ddl.EstimateTableRowSizeForTest(ctx, store, exec, tbl)
-	require.Equal(t, 19, size)
-	ptbl := tbl.GetPartitionedTable()
-	pids := ptbl.GetAllPartitionIDs()
-	for _, pid := range pids {
-		partition := ptbl.GetPartition(pid)
-		size = ddl.EstimateTableRowSizeForTest(ctx, store, exec, partition)
-		require.Equal(t, 19, size)
-	}
+	tblInfo = tbl.Meta()
+	rowSize, idxSize = ingest.EstimateTableRowSize(ctx, exec, dbInfo, tblInfo, tblInfo.Indices)
+	require.Equal(t, 16, rowSize)
+	require.Equal(t, 4, idxSize)
 }
 
 func TestBackendCtxConcurrentUnregister(t *testing.T) {
@@ -97,7 +93,7 @@ func TestBackendCtxConcurrentUnregister(t *testing.T) {
 	tk.MustExec("alter table t add index idx(a);")
 	require.NotNil(t, realJob)
 
-	cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false)
+	cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, 0)
 	require.NoError(t, err)
 	bCtx, err := ingest.NewBackendCtxBuilder(context.Background(), store, realJob).Build(cfg, bd)
 	require.NoError(t, err)

@@ -34,17 +34,22 @@ import (
 
 func TestPrepareSortDir(t *testing.T) {
 	dir := t.TempDir()
-	tidbCfg := &tidb.Config{
+	testCfg := &tidb.Config{
 		Port:    4000,
 		TempDir: dir,
 	}
+	globalCfg := tidb.GetGlobalConfig()
+	tidb.StoreGlobalConfig(testCfg)
+	defer func() {
+		tidb.StoreGlobalConfig(globalCfg)
+	}()
 	e := &LoadDataController{
 		logger: zap.NewNop(),
 	}
 	importDir := filepath.Join(dir, "import-4000")
 
 	// dir not exist, create it
-	sortDir, err := prepareSortDir(e, "1", tidbCfg)
+	sortDir, err := prepareSortDir(e, "1")
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(importDir, "1"), sortDir)
 	info, err := os.Stat(importDir)
@@ -58,7 +63,7 @@ func TestPrepareSortDir(t *testing.T) {
 	require.NoError(t, os.Remove(importDir))
 	_, err = os.Create(importDir)
 	require.NoError(t, err)
-	sortDir, err = prepareSortDir(e, "2", tidbCfg)
+	sortDir, err = prepareSortDir(e, "2")
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(importDir, "2"), sortDir)
 	info, err = os.Stat(importDir)
@@ -66,7 +71,7 @@ func TestPrepareSortDir(t *testing.T) {
 	require.True(t, info.IsDir())
 
 	// dir already exist, do nothing
-	sortDir, err = prepareSortDir(e, "3", tidbCfg)
+	sortDir, err = prepareSortDir(e, "3")
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(importDir, "3"), sortDir)
 	info, err = os.Stat(importDir)
@@ -75,7 +80,7 @@ func TestPrepareSortDir(t *testing.T) {
 
 	// sortdir already exist, remove it
 	require.NoError(t, os.Mkdir(sortDir, 0755))
-	sortDir, err = prepareSortDir(e, "3", tidbCfg)
+	sortDir, err = prepareSortDir(e, "3")
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(importDir, "3"), sortDir)
 	info, err = os.Stat(importDir)

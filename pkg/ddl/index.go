@@ -62,7 +62,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -70,18 +69,15 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
 	"github.com/pingcap/tidb/pkg/util/size"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
-	pdHttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -1309,6 +1305,7 @@ func loadCloudStorageURI(w *worker, job *model.Job) {
 	jc := w.jobContext(job.ID, job.ReorgMeta)
 	jc.cloudStorageURI = vardef.CloudStorageURI.Load()
 	job.ReorgMeta.UseCloudStorage = len(jc.cloudStorageURI) > 0 && job.ReorgMeta.IsDistReorg
+	job.ReorgMeta.UseLocalStorage = vardef.EnableGlobalSortLocalStore.Load()
 }
 
 func doReorgWorkForCreateIndexMultiSchema(w *worker, jobCtx *jobContext, job *model.Job,
@@ -2168,7 +2165,7 @@ func getLocalWriterConfig(indexCnt, writerCnt int) *backend.LocalWriterConfig {
 	return writerCfg
 }
 
-func writeChunkToLocal(
+func writeChunk(
 	ctx context.Context,
 	writers []ingest.Writer,
 	indexes []table.Index,
@@ -2212,6 +2209,8 @@ func writeChunkToLocal(
 	if restore {
 		restoreDataBuf = make([]types.Datum, len(c.HandleOutputOffsets))
 	}
+	var totalSize int
+	start := time.Now()
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		handleDataBuf := ExtractDatumByOffsets(ectx, row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)
 		if restore {
@@ -2233,13 +2232,23 @@ func writeChunkToLocal(
 			if needRestoreForIndexes[i] {
 				rsData = getRestoreData(c.TableInfo, copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, restoreDataBuf)
 			}
-			err = writeOneKVToLocal(ctx, writers[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
+			w := writers[0]
+			if len(writers) == len(indexes) {
+				w = writers[i]
+			}
+			s, err := writeOneIndexKeyValue(ctx, w, index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
+			totalSize += s
 		}
 		count++
 		lastHandle = h
+	}
+	if writers[0].Target() == backend.WriteTargetLocal {
+		ingestDir := metrics.GetIngestTempDataDir()
+		duration := time.Since(start)
+		metrics.TempDirWriteStorageRate.WithLabelValues(ingestDir).Observe(float64(totalSize) / 1024.0 / 1024.0 / duration.Seconds())
 	}
 	return count, lastHandle, nil
 }
@@ -2255,7 +2264,7 @@ func maxIndexColumnCount(indexes []table.Index) int {
 	return maxCnt
 }
 
-func writeOneKVToLocal(
+func writeOneIndexKeyValue(
 	ctx context.Context,
 	writer ingest.Writer,
 	index table.Index,
@@ -2264,27 +2273,29 @@ func writeOneKVToLocal(
 	writeBufs *variable.WriteStmtBufs,
 	idxDt, rsData []types.Datum,
 	handle kv.Handle,
-) error {
+) (int, error) {
 	iter := index.GenIndexKVIter(errCtx, loc, idxDt, handle, rsData)
+	var totalSize int
 	for iter.Valid() {
 		key, idxVal, _, err := iter.Next(writeBufs.IndexKeyBuf, writeBufs.RowValBuf)
 		if err != nil {
-			return errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 		failpoint.Inject("mockLocalWriterPanic", func() {
 			panic("mock panic")
 		})
 		err = writer.WriteRow(ctx, key, idxVal, handle)
 		if err != nil {
-			return errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 		failpoint.Inject("mockLocalWriterError", func() {
 			failpoint.Return(errors.New("mock engine error"))
 		})
 		writeBufs.IndexKeyBuf = key
 		writeBufs.RowValBuf = idxVal
+		totalSize += len(key) + len(idxVal) + handle.Len()
 	}
-	return nil
+	return totalSize, nil
 }
 
 // BackfillData will backfill table index in a transaction. A lock corresponds to a rowKey if the value of rowKey is changed,
@@ -2478,7 +2489,7 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 			ctx := tidblogutil.WithCategory(ctx, "ddl-ingest")
 			if backendCtx == nil {
 				if config.GetGlobalConfig().Store == config.StoreTypeTiKV {
-					cfg, backend, err = ingest.CreateLocalBackend(ctx, store, reorgInfo.Job, true)
+					cfg, backend, err = ingest.CreateLocalBackend(ctx, store, reorgInfo.Job, true, 0)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -2586,13 +2597,16 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 		logutil.DDLLogger().Info("adjusted add-index task concurrency",
 			zap.Int("worker-cnt", workerCntLimit), zap.Int("task-concurrency", concurrency),
 			zap.String("task-key", taskKey))
-		rowSize := estimateTableRowSize(w.workCtx, w.store, w.sess.GetRestrictedSQLExecutor(), t)
+
+		indexInfos := extractIndexInfos(reorgInfo, t.Meta())
+		rowSize, idxSize := ingest.EstimateTableRowSize(w.workCtx, w.sess.GetRestrictedSQLExecutor(), reorgInfo.dbInfo, t.Meta(), indexInfos)
 		taskMeta := &BackfillTaskMeta{
-			Job:             *job.Clone(),
-			EleIDs:          extractElemIDs(reorgInfo),
-			EleTypeKey:      reorgInfo.currElement.TypeKey,
-			CloudStorageURI: w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
-			EstimateRowSize: rowSize,
+			Job:                     *job.Clone(),
+			EleIDs:                  extractElemIDs(reorgInfo),
+			EleTypeKey:              reorgInfo.currElement.TypeKey,
+			CloudStorageURI:         w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
+			EstimateRowSize:         rowSize,
+			EstimateIndexSizePerRow: idxSize,
 		}
 
 		metaData, err := json.Marshal(taskMeta)
@@ -2778,94 +2792,6 @@ func adjustConcurrency(ctx context.Context, taskMgr storage.Manager, workerCnt i
 	return min(workerCnt, cpuCount), nil
 }
 
-// EstimateTableRowSizeForTest is used for test.
-var EstimateTableRowSizeForTest = estimateTableRowSize
-
-// estimateTableRowSize estimates the row size in bytes of a table.
-// This function tries to retrieve row size in following orders:
-//  1. AVG_ROW_LENGTH column from information_schema.tables.
-//  2. region info's approximate key size / key number.
-func estimateTableRowSize(
-	ctx context.Context,
-	store kv.Storage,
-	exec sqlexec.RestrictedSQLExecutor,
-	tbl table.Table,
-) (sizeInBytes int) {
-	defer util.Recover(metrics.LabelDDL, "estimateTableRowSize", nil, false)
-	var gErr error
-	defer func() {
-		tidblogutil.Logger(ctx).Info("estimate row size",
-			zap.Int64("tableID", tbl.Meta().ID), zap.Int("size", sizeInBytes), zap.Error(gErr))
-	}()
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil,
-		"select AVG_ROW_LENGTH from information_schema.tables where TIDB_TABLE_ID = %?", tbl.Meta().ID)
-	if err != nil {
-		gErr = err
-		return 0
-	}
-	if len(rows) == 0 {
-		gErr = errors.New("no average row data")
-		return 0
-	}
-	avgRowSize := rows[0].GetInt64(0)
-	if avgRowSize != 0 {
-		return int(avgRowSize)
-	}
-	regionRowSize, err := estimateRowSizeFromRegion(ctx, store, tbl)
-	if err != nil {
-		gErr = err
-		return 0
-	}
-	return regionRowSize
-}
-
-func estimateRowSizeFromRegion(ctx context.Context, store kv.Storage, tbl table.Table) (int, error) {
-	hStore, ok := store.(helper.Storage)
-	if !ok {
-		return 0, fmt.Errorf("not a helper.Storage")
-	}
-	h := &helper.Helper{
-		Store:       hStore,
-		RegionCache: hStore.GetRegionCache(),
-	}
-	pdCli, err := h.TryGetPDHTTPClient()
-	if err != nil {
-		return 0, err
-	}
-	pid := tbl.Meta().ID
-	sk, ek := tablecodec.GetTableHandleKeyRange(pid)
-	sRegion, err := pdCli.GetRegionByKey(ctx, codec.EncodeBytes(nil, sk))
-	if err != nil {
-		return 0, err
-	}
-	eRegion, err := pdCli.GetRegionByKey(ctx, codec.EncodeBytes(nil, ek))
-	if err != nil {
-		return 0, err
-	}
-	sk, err = hex.DecodeString(sRegion.StartKey)
-	if err != nil {
-		return 0, err
-	}
-	ek, err = hex.DecodeString(eRegion.EndKey)
-	if err != nil {
-		return 0, err
-	}
-	// We use the second region to prevent the influence of the front and back tables.
-	regionLimit := 3
-	regionInfos, err := pdCli.GetRegionsByKeyRange(ctx, pdHttp.NewKeyRange(sk, ek), regionLimit)
-	if err != nil {
-		return 0, err
-	}
-	if len(regionInfos.Regions) != regionLimit {
-		return 0, fmt.Errorf("less than 3 regions")
-	}
-	sample := regionInfos.Regions[1]
-	if sample.ApproximateKeys == 0 || sample.ApproximateSize == 0 {
-		return 0, fmt.Errorf("zero approximate size")
-	}
-	return int(uint64(sample.ApproximateSize)*size.MB) / int(sample.ApproximateKeys), nil
-}
-
 func (w *worker) updateDistTaskRowCount(taskKey string, jobID int64) {
 	taskMgr, err := storage.GetTaskManager()
 	if err != nil {
@@ -2883,15 +2809,6 @@ func (w *worker) updateDistTaskRowCount(taskKey string, jobID int64) {
 		return
 	}
 	w.getReorgCtx(jobID).setRowCount(rowCount)
-}
-
-// submitAndWaitTask submits a task and wait for it to finish.
-func submitAndWaitTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, targetScope string, maxNodeCnt int, taskMeta []byte) error {
-	task, err := handle.SubmitTask(ctx, taskKey, taskType, concurrency, targetScope, maxNodeCnt, taskMeta)
-	if err != nil {
-		return err
-	}
-	return handle.WaitTaskDoneOrPaused(ctx, task.ID)
 }
 
 func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysicalTableID int64) (int64, kv.Key, kv.Key, error) {

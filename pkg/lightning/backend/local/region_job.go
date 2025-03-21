@@ -25,6 +25,8 @@ import (
 	"sync"
 	"time"
 
+	"slices"
+
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -40,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/metrics"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -532,7 +535,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		if totalSize >= regionMaxSize || totalCount >= j.regionSplitKeys {
 			// we will shrink the key range of this job to real written range
 			if iter.Next() {
-				remainingStartKey = append([]byte{}, iter.Key()...)
+				remainingStartKey = slices.Clone(iter.Key())
 				log.FromContext(ctx).Info("write to tikv partial finish",
 					zap.Int64("count", totalCount),
 					zap.Int64("size", totalSize),
@@ -597,6 +600,15 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		zap.Stringer("takeTime", takeTime))
 	if m, ok := metric.FromContext(ctx); ok {
 		m.SSTSecondsHistogram.WithLabelValues(metric.SSTProcessWrite).Observe(takeTime.Seconds())
+	}
+	if _, ok := j.ingestData.(*Engine); ok {
+		path := local.LocalStoreDir
+		if importPath := metrics.GetImportTempDataDir(); strings.HasPrefix(path, importPath) {
+			path = importPath
+		} else if ingestPath := metrics.GetIngestTempDataDir(); strings.HasPrefix(path, ingestPath) {
+			path = ingestPath
+		}
+		metrics.TempDirReadStorageRate.WithLabelValues(path).Observe(float64(totalSize) / 1024.0 / 1024.0 / takeTime.Seconds())
 	}
 
 	j.writeResult = &tikvWriteResult{

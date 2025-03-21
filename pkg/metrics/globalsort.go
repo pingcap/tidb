@@ -26,7 +26,7 @@ var (
 	// GlobalSortReadFromCloudStorageRate records the rate of reading from cloud storage.
 	GlobalSortReadFromCloudStorageRate *prometheus.HistogramVec
 	// GlobalSortIngestWorkerCnt records the working number of ingest workers.
-	GlobalSortIngestWorkerCnt *prometheus.GaugeVec
+	GlobalSortIngestWorkerCnt prometheus.Gauge
 	// GlobalSortUploadWorkerCount is the gauge of active parallel upload worker count.
 	GlobalSortUploadWorkerCount prometheus.Gauge
 )
@@ -65,12 +65,14 @@ func InitGlobalSortMetrics() {
 		Buckets:   prometheus.ExponentialBuckets(0.05, 2, 20),
 	}, []string{LblType})
 
-	GlobalSortIngestWorkerCnt = NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: "tidb",
-		Subsystem: "global_sort",
-		Name:      "ingest_worker_cnt",
-		Help:      "ingest worker cnt",
-	}, []string{LblType})
+	GlobalSortIngestWorkerCnt = NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "global_sort",
+			Name:      "ingest_worker_cnt",
+			Help:      "ingest worker cnt",
+		},
+	)
 
 	GlobalSortUploadWorkerCount = NewGauge(
 		prometheus.GaugeOpts{

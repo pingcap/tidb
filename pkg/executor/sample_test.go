@@ -119,6 +119,16 @@ func TestTableSamplePlan(t *testing.T) {
 	require.Regexp(t, ".*TableSample.*", tableSample)
 }
 
+func TestTableSampleEmptyRegion(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := createSampleTestkit(t, store)
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a bigint, b int, primary key (a));")
+	tk.MustExec("insert into t values (300000, 3), (400000, 4);")
+	tk.MustQuery("split table t between (100000) and (400000) regions 4;").Check(testkit.Rows("3 1"))
+	tk.MustQuery("select * from t tablesample regions() limit 1;").Check(testkit.Rows("300000 3"))
+}
+
 func TestMaxChunkSize(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := createSampleTestkit(t, store)

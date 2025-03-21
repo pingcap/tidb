@@ -86,7 +86,7 @@ func TestCodecKey(t *testing.T) {
 		b, err = EncodeValue(typeCtx.Location(), nil, datums.Input...)
 		require.NoError(t, err, comment)
 
-		size, err := estimateValuesSize(typeCtx, datums.Input)
+		size, err := estimateValuesSize(datums.Input)
 		require.NoError(t, err, comment)
 		require.Len(t, b, size, comment)
 
@@ -101,10 +101,10 @@ func TestCodecKey(t *testing.T) {
 	require.Error(t, err)
 }
 
-func estimateValuesSize(typeCtx types.Context, vals []types.Datum) (int, error) {
+func estimateValuesSize(vals []types.Datum) (int, error) {
 	size := 0
 	for _, val := range vals {
-		length, err := EstimateValueSize(typeCtx, val)
+		length, err := EstimateValueSize(val)
 		if err != nil {
 			return 0, err
 		}
@@ -741,7 +741,7 @@ func TestDecimal(t *testing.T) {
 
 		b1, err = EncodeValue(typeCtx.Location(), b1[:0], d1)
 		require.NoError(t, err)
-		size, err := EstimateValueSize(typeCtx, d1)
+		size, err := EstimateValueSize(d1)
 		require.NoError(t, err)
 		require.Len(t, b1, size)
 	}
@@ -758,7 +758,7 @@ func TestDecimal(t *testing.T) {
 		b, err := EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
 		require.NoError(t, err)
 		decs = append(decs, b)
-		size, err := EstimateValueSize(typeCtx, d)
+		size, err := EstimateValueSize(d)
 		require.NoError(t, err)
 		// size - 1 because the flag occupy 1 bit.
 		require.Len(t, b, size-1)

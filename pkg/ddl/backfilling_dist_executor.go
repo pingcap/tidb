@@ -39,8 +39,9 @@ type BackfillTaskMeta struct {
 	// For now, only index type is supported.
 	EleTypeKey []byte `json:"ele_type_key"`
 
-	CloudStorageURI string `json:"cloud_storage_uri"`
-	EstimateRowSize int    `json:"estimate_row_size"`
+	CloudStorageURI         string `json:"cloud_storage_uri"`
+	EstimateRowSize         int    `json:"estimate_row_size"`
+	EstimateIndexSizePerRow int    `json:"estimate_index_size_per_row"`
 }
 
 // BackfillSubTaskMeta is the sub-task meta for backfilling index.
@@ -130,7 +131,7 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 		if len(cloudStorageURI) == 0 {
 			return nil, errors.Errorf("local import does not have write & ingest step")
 		}
-		return newCloudImportExecutor(jobMeta, ddlObj.store, indexInfos, tbl, cloudStorageURI)
+		return newCloudImportExecutor(jobMeta, ddlObj.store, indexInfos, tbl, cloudStorageURI, s.GetTaskBase().Concurrency)
 	default:
 		// should not happen, caller has checked the stage
 		return nil, errors.Errorf("unknown step %d for job %d", stage, jobMeta.ID)

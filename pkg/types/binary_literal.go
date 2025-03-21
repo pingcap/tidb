@@ -120,6 +120,23 @@ func (b BinaryLiteral) ToInt(ctx Context) (uint64, error) {
 	return val, nil
 }
 
+// ToIntNoErr is the ToInt with no error returned.
+func (b BinaryLiteral) ToIntNoErr() uint64 {
+	buf := trimLeadingZeroBytes(b)
+	length := len(buf)
+	if length == 0 {
+		return 0
+	}
+	if length > 8 {
+		return math.MaxUint64
+	}
+	val := uint64(buf[0])
+	for i := 1; i < length; i++ {
+		val = (val << 8) | uint64(buf[i])
+	}
+	return val
+}
+
 // Compare compares BinaryLiteral to another one
 func (b BinaryLiteral) Compare(b2 BinaryLiteral) int {
 	bufB := trimLeadingZeroBytes(b)

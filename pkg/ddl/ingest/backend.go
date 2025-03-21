@@ -64,6 +64,8 @@ type BackendCtx interface {
 	// according to the last ingest time or the usage of local disk.
 	IngestIfQuotaExceeded(ctx context.Context, taskID int, count int) error
 
+	// Flush flushes the memory index records to disk.
+	Flush(ctx context.Context) (err error)
 	// Ingest checks if all engines need to be flushed and imported. It's concurrent safe.
 	Ingest(ctx context.Context) (err error)
 
@@ -205,13 +207,13 @@ func (bc *litBackendCtx) IngestIfQuotaExceeded(ctx context.Context, taskID int, 
 	return bc.AdvanceWatermark(true)
 }
 
+// Flush implements BackendContext.
+func (bc *litBackendCtx) Flush(ctx context.Context) error {
+	return bc.flushEngines(ctx)
+}
+
 // Ingest implements BackendContext.
 func (bc *litBackendCtx) Ingest(ctx context.Context) error {
-	err := bc.flushEngines(ctx)
-	if err != nil {
-		return err
-	}
-
 	release, err := bc.tryAcquireDistLock()
 	if err != nil {
 		return err

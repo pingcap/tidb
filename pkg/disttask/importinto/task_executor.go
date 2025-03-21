@@ -17,6 +17,8 @@ package importinto
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -41,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -242,7 +245,6 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 	// there's no imported dataKVCount on this stage when using global sort.
 
 	sharedVars.mu.Lock()
-	defer sharedVars.mu.Unlock()
 	subtaskMeta.Checksum = map[int64]Checksum{}
 	for id, c := range sharedVars.Checksum.GetInnerChecksums() {
 		subtaskMeta.Checksum[id] = Checksum{
@@ -262,6 +264,79 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 	}
 	subtaskMeta.SortedDataMeta = sharedVars.SortedDataMeta
 	subtaskMeta.SortedIndexMetas = sharedVars.SortedIndexMetas
+	sharedVars.mu.Unlock()
+
+	if s.tableImporter.IsGlobalSort() && s.tableImporter.GlobalSortLocalStore != nil {
+		sharedVars.mu.Lock()
+		dataFiles := sharedVars.SortedDataMeta.GetDataFiles()
+		sharedVars.SortedDataMeta = &external.SortedKVMeta{}
+		sharedVars.mu.Unlock()
+		dataKVMemSizePerCon, perIndexKVMemSizePerCon := getWriterMemorySizeLimit(s.GetResource(), &s.taskMeta.Plan)
+		dataKVPartSize := max(external.MinUploadPartSize, int64(dataKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/10000))
+		indexKVPartSize := max(external.MinUploadPartSize, int64(perIndexKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/10000))
+		prefix := subtaskPrefix(s.taskID, subtask.ID)
+		importDir := filepath.Join(metrics.GetImportTempDataDir(), prefix)
+		var totalSize int64
+		err := filepath.Walk(importDir, func(_ string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() {
+				totalSize += info.Size()
+			}
+			return err
+		})
+		if err != nil {
+			return err
+		}
+		start := time.Now()
+		err = external.MergeOverlappingFiles(
+			ctx,
+			dataFiles,
+			s.tableImporter.GlobalSortLocalStore,
+			s.tableImporter.GlobalSortStore,
+			dataKVPartSize,
+			prefix,
+			getKVGroupBlockSize(dataKVGroup),
+			sharedVars.mergeDataSummary,
+			int(s.GetResource().CPU.Capacity()),
+			false)
+		if err != nil {
+			return err
+		}
+		duration := time.Since(start)
+		metrics.TempDirReadStorageRate.WithLabelValues(importDir).Observe(float64(totalSize) / 1024.0 / 1024.0 / duration.Seconds())
+		sharedVars.mu.Lock()
+		sortedIndexMetas := sharedVars.SortedIndexMetas
+		sharedVars.mu.Unlock()
+		for idxID, idxKVGroup := range sortedIndexMetas {
+			dataFiles := idxKVGroup.GetDataFiles()
+			sharedVars.mu.Lock()
+			sharedVars.SortedIndexMetas[idxID] = &external.SortedKVMeta{}
+			sharedVars.mu.Unlock()
+			err = external.MergeOverlappingFiles(
+				ctx,
+				dataFiles,
+				s.tableImporter.GlobalSortLocalStore,
+				s.tableImporter.GlobalSortStore,
+				indexKVPartSize,
+				prefix,
+				getKVGroupBlockSize(strconv.Itoa(int(idxID))),
+				func(summary *external.WriterSummary) {
+					sharedVars.mergeIndexSummary(idxID, summary)
+				},
+				int(s.GetResource().CPU.Capacity()),
+				false)
+			if err != nil {
+				return err
+			}
+		}
+		sharedVars.mu.Lock()
+		subtaskMeta.SortedDataMeta = sharedVars.SortedDataMeta
+		subtaskMeta.SortedIndexMetas = sharedVars.SortedIndexMetas
+		sharedVars.mu.Unlock()
+	}
+
 	s.sharedVars.Delete(subtaskMeta.ID)
 	newMeta, err := json.Marshal(subtaskMeta)
 	if err != nil {
@@ -345,6 +420,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		logutil.WithFields(ctx, zap.String("kv-group", sm.KVGroup), zap.Int64("subtask-id", subtask.ID)),
 		sm.DataFiles,
 		m.controller.GlobalSortStore,
+		m.controller.GlobalSortStore,
 		partSize,
 		prefix,
 		getKVGroupBlockSize(sm.KVGroup),
@@ -416,7 +492,6 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 
 	_, engineUUID := backend.MakeUUID("", subtask.ID)
 	localBackend := e.tableImporter.Backend()
-	localBackend.WorkerConcurrency = int(e.GetResource().CPU.Capacity()) * 2
 	// compatible with old version task meta
 	jobKeys := sm.RangeJobKeys
 	if jobKeys == nil {
@@ -434,6 +509,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 			TotalFileSize: int64(sm.TotalKVSize),
 			TotalKVCount:  0,
 			CheckHotspot:  false,
+			MemCapacity:   e.GetResource().Mem.Capacity(),
 		},
 		TS: sm.TS,
 	}, engineUUID)

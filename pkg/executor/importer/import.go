@@ -241,6 +241,8 @@ type Plan struct {
 	CloudStorageURI       string
 	DisablePrecheck       bool
 
+	EnableLocalStoreForCloud bool
+
 	// used for checksum in physical mode
 	DistSQLScanConcurrency int
 
@@ -297,9 +299,12 @@ type LoadDataController struct {
 	dataStore storage.ExternalStorage
 	dataFiles []*mydump.SourceFileMeta
 	// GlobalSortStore is used to store sorted data when using global sort.
-	GlobalSortStore storage.ExternalStorage
+	GlobalSortStore      storage.ExternalStorage
+	GlobalSortLocalStore storage.ExternalStorage
 	// ExecuteNodesCnt is the count of execute nodes.
 	ExecuteNodesCnt int
+
+	taskID int64
 }
 
 func getImportantSysVars(sctx sessionctx.Context) map[string]string {
@@ -552,6 +557,7 @@ func (p *Plan) initDefaultOptions(targetNodeCPUCnt int) {
 	p.DisableTiKVImportMode = false
 	p.MaxEngineSize = config.ByteSize(defaultMaxEngineSize)
 	p.CloudStorageURI = vardef.CloudStorageURI.Load()
+	p.EnableLocalStoreForCloud = vardef.EnableGlobalSortLocalStore.Load()
 
 	v := "utf8mb4"
 	p.Charset = &v
@@ -1011,6 +1017,22 @@ func (e *LoadDataController) InitDataStore(ctx context.Context) error {
 			return err
 		}
 		e.GlobalSortStore = s
+
+		if e.EnableLocalStoreForCloud {
+			path, err := prepareSortDir(e, fmt.Sprintf("%d", e.taskID))
+			if err != nil {
+				return err
+			}
+			localBackend, err := storage.ParseBackend(fmt.Sprintf("local://%s", path), nil)
+			if err != nil {
+				return err
+			}
+			localStore, err := storage.NewWithDefaultOpt(ctx, localBackend)
+			if err != nil {
+				return err
+			}
+			e.GlobalSortLocalStore = localStore
+		}
 	}
 	return nil
 }
@@ -1355,20 +1377,13 @@ func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildCont
 	return res, allWarnings, nil
 }
 
-func (e *LoadDataController) getBackendWorkerConcurrency() int {
-	// suppose cpu:mem ratio 1:2(true in most case), and we assign 1G per concurrency,
-	// so we can use 2 * threadCnt as concurrency. write&ingest step is mostly
-	// IO intensive, so CPU usage is below ThreadCnt in our tests.
-	return e.ThreadCnt * 2
-}
-
 func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.BackendConfig {
 	backendConfig := local.BackendConfig{
 		PDAddr:                 pdAddr,
 		LocalStoreDir:          dataDir,
 		MaxConnPerStore:        config.DefaultRangeConcurrency,
 		ConnCompressType:       config.CompressionNone,
-		WorkerConcurrency:      e.getBackendWorkerConcurrency(),
+		WorkerConcurrency:      e.ThreadCnt,
 		KVWriteBatchSize:       config.KVWriteBatchSize,
 		RegionSplitBatchSize:   config.DefaultRegionSplitBatchSize,
 		RegionSplitConcurrency: runtime.GOMAXPROCS(0),
