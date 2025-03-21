@@ -140,6 +140,8 @@ func dumpType(tp byte) byte {
 	case mysql.TypeTiDBVectorFloat32:
 		// When passing Vector column to the SQL Client, pretend to be a non-binary String.
 		return mysql.TypeLongBlob
+	case mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		return mysql.TypeBlob
 	default:
 		return tp
 	}
