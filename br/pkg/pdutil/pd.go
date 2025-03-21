@@ -657,11 +657,14 @@ func (p *PdController) RemoveSchedulersOnRegion(ctx context.Context, keyRange []
 	// Let's use two times default value of `patrol-region-interval` from PD configuration.
 	<-time.After(20 * time.Millisecond)
 
-	resumeScheduler := func() {
+	waitPauseSchedulerDone := func() {
+		if done == nil {
+			return
+		}
 		<-done
 	}
 
-	return ruleID, resumeScheduler, errors.Trace(err)
+	return ruleID, waitPauseSchedulerDone, errors.Trace(err)
 }
 
 // RemoveSchedulersWithCfg removes pd schedulers and configs with specified ClusterConfig

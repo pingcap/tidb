@@ -232,14 +232,14 @@ func FineGrainedRestorePreWork(
 
 	// pause scheduler
 	keyRange := calSortedKeyRanges(tableIDs)
-	ruleID, resumeScheduler, err := mgr.RemoveSchedulersOnRegion(ctx, keyRange)
+	ruleID, waitPauseSchedulerDone, err := mgr.RemoveSchedulersOnRegion(ctx, keyRange)
 	if err != nil {
 		return pdutil.Nop, nil, err
 	}
 	originCfg.RuleID = ruleID
 
 	// handle undo
-	undo := mgr.MakeFineGrainedUndoFunction(originCfg, resumeScheduler)
+	undo := mgr.MakeFineGrainedUndoFunction(originCfg, waitPauseSchedulerDone)
 	return undo, &originCfg, errors.Trace(err)
 }
 
