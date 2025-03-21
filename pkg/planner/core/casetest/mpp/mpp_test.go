@@ -968,3 +968,56 @@ AND aaa.v2 = bbb.v2;`).Check(testkit.Rows("HashAgg 1.00 root  funcs:count(Column
 		"                        └─TableFullScan 10000.00 mpp[tiflash] table:t2 keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 }
+
+func TestMPPJoinWithoutUselessExchange(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(id int, v1 decimal(20,2), v2 decimal(20,2))")
+	tk.MustExec("create table t2(id int, v1 decimal(10,2), v2 decimal(10,2))")
+	tk.MustExec("create table t3(id int, v1 decimal(10,2), v2 decimal(10,2))")
+	tk.MustExec("insert into t1 values(1,1,1),(2,2,2)")
+	tk.MustExec("insert into t2 values(1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6),(7,7,7),(8,8,8)")
+	tk.MustExec("insert into t3 values(1,1,1)")
+	tk.MustExec("analyze table t1 all columns")
+	tk.MustExec("analyze table t2 all columns")
+	tk.MustExec("analyze table t3 all columns")
+
+	tk.MustExec("create table d1_t(d1_k int, value int)")
+	tk.MustExec("create table d2_t(d2_k decimal(10,2), value int)")
+	tk.MustExec("create table d3_t(d3_k date, value int)")
+	tk.MustExec("create table fact_t(d1_k int, d2_k decimal(10,2), d3_k date, col1 int, col2 int, col3 int)")
+
+	dom := domain.GetDomain(tk.Session())
+	testkit.SetTiFlashReplica(t, dom, "test", "t1")
+	testkit.SetTiFlashReplica(t, dom, "test", "t2")
+	testkit.SetTiFlashReplica(t, dom, "test", "t3")
+	testkit.SetTiFlashReplica(t, dom, "test", "fact_t")
+	testkit.SetTiFlashReplica(t, dom, "test", "d1_t")
+	testkit.SetTiFlashReplica(t, dom, "test", "d2_t")
+	testkit.SetTiFlashReplica(t, dom, "test", "d3_t")
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+	tk.MustExec("set @@session.tidb_enforce_mpp = 1")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
+	tk.MustExec("set @@session.tidb_opt_mpp_outer_join_fixed_build_side = 0")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+	}
+	integrationSuiteData := GetIntegrationSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+		})
+		res := tk.MustQuery(tt)
+		res.Check(testkit.Rows(output[i].Plan...))
+	}
+}
