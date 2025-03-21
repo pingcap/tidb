@@ -16,10 +16,6 @@ package core
 
 import (
 	"fmt"
-	"math"
-	"slices"
-	"strings"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
@@ -44,6 +40,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+	"math"
+	"slices"
 )
 
 func exhaustPhysicalPlans4LogicalUnionScan(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
@@ -881,8 +879,7 @@ func buildIndexJoinInner2TableScan(
 	if tblPath == nil {
 		return nil
 	}
-	keyOff2IdxOff := make([]int, len(innerJoinKeys))
-	newOuterJoinKeys := make([]*expression.Column, 0)
+	var keyOff2IdxOff []int
 	var ranges ranger.MutableRanges = ranger.Ranges{}
 	var innerTask, innerTask2 base.Task
 	var indexJoinResult *indexJoinPathResult
@@ -902,43 +899,24 @@ func buildIndexJoinInner2TableScan(
 		}
 		ranges = indexJoinResult.chosenRanges
 	} else {
-		pkMatched := false
-		pkCol := ds.GetPKIsHandleCol()
-		if pkCol == nil {
+		var (
+			ok    bool
+			pkCol *expression.Column
+			// note: pk col doesn't have mutableRanges, the global var(ranges) which will be handled as empty range in constructIndexJoin.
+			localRanges ranger.Ranges
+		)
+		keyOff2IdxOff, outerJoinKeys, pkCol, localRanges, ok = getIndexJoinIntPKPathInfo(ds, innerJoinKeys, outerJoinKeys)
+		if !ok {
 			return nil
 		}
-		for i, key := range innerJoinKeys {
-			if !key.EqualColumn(pkCol) {
-				keyOff2IdxOff[i] = -1
-				continue
-			}
-			pkMatched = true
-			keyOff2IdxOff[i] = 0
-			// Add to newOuterJoinKeys only if conditions contain inner primary key. For issue #14822.
-			newOuterJoinKeys = append(newOuterJoinKeys, outerJoinKeys[i])
-		}
-		outerJoinKeys = newOuterJoinKeys
-		if !pkMatched {
-			return nil
-		}
-		ranges := ranger.FullIntRange(mysql.HasUnsignedFlag(pkCol.RetType.GetFlag()))
-		var buffer strings.Builder
-		buffer.WriteString("[")
-		for i, key := range outerJoinKeys {
-			if i != 0 {
-				buffer.WriteString(" ")
-			}
-			buffer.WriteString(key.StringWithCtx(p.SCtx().GetExprCtx().GetEvalCtx(), errors.RedactLogDisable))
-		}
-		buffer.WriteString("]")
-		rangeInfo := buffer.String()
-		innerTask = constructInnerTableScanTask(p, prop, wrapper, ranges, rangeInfo, false, false, avgInnerRowCnt)
+		rangeInfo := indexJoinIntPKRangeInfo(p.SCtx().GetExprCtx().GetEvalCtx(), pkCol, outerJoinKeys)
+		innerTask = constructInnerTableScanTask(p, prop, wrapper, localRanges, rangeInfo, false, false, avgInnerRowCnt)
 		// The index merge join's inner plan is different from index join, so we
 		// should construct another inner plan for it.
 		// Because we can't keep order for union scan, if there is a union scan in inner task,
 		// we can't construct index merge join.
 		if !wrapper.hasDitryWrite {
-			innerTask2 = constructInnerTableScanTask(p, prop, wrapper, ranges, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
+			innerTask2 = constructInnerTableScanTask(p, prop, wrapper, localRanges, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
 		}
 	}
 	var (

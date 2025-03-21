@@ -17,6 +17,7 @@ package core
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -423,6 +424,19 @@ func indexJoinPathBuildTmpRange(
 	return
 }
 
+func indexJoinIntPKRangeInfo(ectx expression.EvalContext, pkCol *expression.Column, outerJoinKeys []*expression.Column) string {
+	var buffer strings.Builder
+	buffer.WriteString("[")
+	for i, key := range outerJoinKeys {
+		if i != 0 {
+			buffer.WriteString(" ")
+		}
+		buffer.WriteString(key.StringWithCtx(ectx, errors.RedactLogDisable))
+	}
+	buffer.WriteString("]")
+	return buffer.String()
+}
+
 // indexJoinPathRangeInfo generates the range information for the index join path.
 func indexJoinPathRangeInfo(sctx planctx.PlanContext,
 	outerJoinKeys []*expression.Column,
@@ -580,6 +594,32 @@ func indexJoinPathRemoveUselessEQIn(buildTmp *indexJoinPathTmp, idxCols []*expre
 		return notKeyEqAndIn, remained
 	}
 	return notKeyEqAndIn, nil
+}
+
+func getIndexJoinIntPKPathInfo(ds *logicalop.DataSource, innerJoinKeys, outerJoinKeys []*expression.Column) (
+	keyOff2IdxOff []int, newOuterJoinKeys []*expression.Column, pkCol *expression.Column, ranges ranger.Ranges, ok bool) {
+	pkMatched := false
+	pkCol = ds.GetPKIsHandleCol()
+	if pkCol == nil {
+		return nil, nil, nil, nil, false
+	}
+	keyOff2IdxOff = make([]int, len(innerJoinKeys))
+	newOuterJoinKeys = make([]*expression.Column, 0)
+	for i, key := range innerJoinKeys {
+		if !key.EqualColumn(pkCol) {
+			keyOff2IdxOff[i] = -1
+			continue
+		}
+		pkMatched = true
+		keyOff2IdxOff[i] = 0
+		// Add to newOuterJoinKeys only if conditions contain inner primary key. For issue #14822.
+		newOuterJoinKeys = append(newOuterJoinKeys, outerJoinKeys[i])
+	}
+	if !pkMatched {
+		return nil, nil, nil, nil, false
+	}
+	ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(pkCol.RetType.GetFlag()))
+	return keyOff2IdxOff, newOuterJoinKeys, pkCol, ranges, true
 }
 
 // getBestIndexJoinPathResult tries to iterate all possible access paths of the inner child and builds
