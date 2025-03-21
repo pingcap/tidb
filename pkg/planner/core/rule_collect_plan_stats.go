@@ -274,12 +274,17 @@ func SyncWaitStatsLoad(plan base.LogicalPlan) error {
 	err := domain.GetDomain(plan.SCtx()).StatsHandle().SyncWaitStatsLoad(stmtCtx)
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
+<<<<<<< HEAD
 		if variable.StatsLoadPseudoTimeout.Load() {
 			logutil.BgLogger().Warn("SyncWaitStatsLoad failed", zap.Error(err))
+=======
+		if vardef.StatsLoadPseudoTimeout.Load() {
+			logutil.ErrVerboseLogger().Warn("SyncWaitStatsLoad failed", zap.Error(err))
+>>>>>>> c0aea84bb4f (planner: update logging for SyncWaitStatsLoad and SubLoadWorker functions (#59978))
 			stmtCtx.AppendWarning(err)
 			return nil
 		}
-		logutil.BgLogger().Error("SyncWaitStatsLoad failed", zap.Error(err))
+		logutil.ErrVerboseLogger().Error("SyncWaitStatsLoad failed", zap.Error(err))
 		return err
 	}
 	return nil
