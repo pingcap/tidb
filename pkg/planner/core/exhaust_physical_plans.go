@@ -1541,7 +1541,7 @@ func constructIndexJoinInnerSideTaskWithAggCheck(p *logicalop.LogicalJoin, prop 
 		} else if dsCopTask.tablePlan != nil {
 			stats = stats.ScaleByExpectCnt(dsCopTask.tablePlan.StatsInfo().RowCount)
 		}
-		physicalHashAgg := NewPhysicalHashAgg(
+		physicalHashAgg := NewPhysicalHashAgg(la, stats, prop)
 			la,
 			stats,
 			prop)
