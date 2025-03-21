@@ -119,6 +119,7 @@ type Executor interface {
 	RenameTable(ctx sessionctx.Context, stmt *ast.RenameTableStmt) error
 	LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 	UnlockTables(ctx sessionctx.Context, lockedTables []model.TableLockTpInfo) error
+	AlterTableMode(ctx sessionctx.Context, args *model.AlterTableModeArgs) error
 	CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error
 	UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error
 	RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTableStmt) error
@@ -1062,6 +1063,15 @@ func (e *executor) createTableWithInfoJob(
 		switch cfg.OnExist {
 		case OnExistIgnore:
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			// if target TableMode is ModeRestore, we check if the existing mode is consistent the new one
+			if tbInfo.Mode == model.TableModeRestore {
+				oldTableMode := oldTable.Meta().Mode
+				if oldTableMode != model.TableModeRestore {
+					// Indeed this is not a conversion problem but an inconsistency problem.
+					return nil, infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(oldTableMode, tbInfo.Mode, tbInfo.Name)
+				}
+			}
+			// Currently, target TableMode will NEVER be ModeImport because ImportInto does not use this function
 			return nil, nil
 		case OnExistReplace:
 			// only CREATE OR REPLACE VIEW is supported at the moment.
@@ -5685,6 +5695,38 @@ func (e *executor) UnlockTables(ctx sessionctx.Context, unlockTables []model.Tab
 	if err == nil {
 		ctx.ReleaseAllTableLocks()
 	}
+	return errors.Trace(err)
+}
+
+func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTableModeArgs) error {
+	is := e.infoCache.GetLatest()
+
+	schema, ok := is.SchemaByID(args.SchemaID)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("SchemaID: %v", args.SchemaID))
+	}
+
+	table, ok := is.TableByID(e.ctx, args.TableID)
+	if !ok {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema.Name, args.TableID)
+	}
+
+	ok = checkTableMode(table.Meta().Mode, args.TableMode)
+	if !ok {
+		return infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(table.Meta().Mode, args.TableMode, table.Meta().Name.O)
+	}
+
+	job := &model.Job{
+		Version:        model.JobVersion2,
+		SchemaID:       args.SchemaID,
+		TableID:        args.TableID,
+		Type:           model.ActionAlterTableMode,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        sctx.GetSessionVars().SQLMode,
+	}
+	sctx.SetValue(sessionctx.QueryString, "skip")
+	err := e.doDDLJob2(sctx, job, args)
 	return errors.Trace(err)
 }
 
