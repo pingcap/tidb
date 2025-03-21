@@ -229,7 +229,7 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 	}
 
 	// don't restore meta kv change for system db, not supported yet
-	if tableReplace.FilteredOut || utils.IsSysDB(dbReplace.Name) {
+	if tableReplace.FilteredOut || utils.IsSysOrTempSysDB(dbReplace.Name) {
 		return nil, nil
 	}
 
