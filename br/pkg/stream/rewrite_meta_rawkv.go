@@ -227,7 +227,9 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 	if !exist {
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find table id:%v in maps", tableID)
 	}
-	if tableReplace.FilteredOut {
+
+	// don't restore meta kv change for system db, not supported yet
+	if tableReplace.FilteredOut || utils.IsSysDB(dbReplace.Name) {
 		return nil, nil
 	}
 
