@@ -3954,7 +3954,7 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 
 func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBackfillTask) (kv.Key, bool, error) {
 	w.rowRecords = w.rowRecords[:0]
-	isClustered := w.reorgedTbl.Meta().IsCommonHandle || w.reorgedTbl.Meta().PKIsHandle
+	isClustered := w.reorgedTbl.Meta().HasClusteredIndex()
 	w.newKeys = w.newKeys[:0]
 	startTime := time.Now()
 

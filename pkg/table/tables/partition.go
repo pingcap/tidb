@@ -1785,7 +1785,7 @@ func partitionedTableAddRecord(ctx table.MutateContext, txn kv.Transaction, t *p
 			return nil, errors.Trace(err)
 		}
 		tbl = t.getPartition(pid)
-		if !tbl.Meta().PKIsHandle && !tbl.Meta().IsCommonHandle {
+		if !tbl.Meta().HasClusteredIndex() {
 			// Preserve the _tidb_rowid also in the new partition!
 			r = append(r, types.NewIntDatum(recordID.IntValue()))
 		}
@@ -1957,7 +1957,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 		memBuffer.Release(sh)
 		return nil
 	}
-	if t.Meta().PKIsHandle || t.Meta().IsCommonHandle {
+	if t.Meta().HasClusteredIndex() {
 		err = t.getPartition(newFrom).RemoveRecord(ctx, txn, h, currData)
 		if err != nil {
 			return errors.Trace(err)
@@ -2112,13 +2112,6 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 			return errors.Trace(err)
 		}
 		newRecordID = kv.IntHandle(id)
-		panic("Should not have found newToMap")
-		// TODO: How can this happen?!?
-		// there cannot be any recursion/multiple clashes of _tidb_rowid's
-		// since they will be uniquely created for this table during the reorg.
-
-		// add with same handle as was removed.
-		// TODO: Should we handle this as an update instead?
 	} else if _, ok := found[string(newToKey)]; ok {
 		// compare val with currData
 		if newToKeyIsSame == nil {
