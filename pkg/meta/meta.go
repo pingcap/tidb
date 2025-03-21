@@ -1067,8 +1067,10 @@ func (m *Mutator) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
 	return res, nil
 }
 
+// checkAttributesInOrder contains regular expression patterns for checking it's special table or not.
+// For a table that is not an FK table, "fk_info" could either be null or an empty array ([]).
 var checkAttributesInOrder = []string{
-	`"fk_info":null`,
+	`"fk_info":\s*(null|\[\])`,
 	`"partition":null`,
 	`"Lock":null`,
 	`"tiflash_replica":null`,
@@ -1081,15 +1083,15 @@ var checkAttributesInOrder = []string{
 // If the byte representation contains all the given attributes,
 // then it does not need to be loaded and this function will return false.
 // Otherwise, it will return true, indicating that the table info should be loaded.
-// Since attributes are checked in sequence, it's important to choose the order carefully.
 func isTableInfoMustLoad(json []byte, filterAttrs ...string) bool {
-	idx := 0
 	for _, substr := range filterAttrs {
-		idx = bytes.Index(json, hack.Slice(substr))
-		if idx == -1 {
+		re, err := regexp.Compile(substr)
+		if err != nil {
 			return true
 		}
-		json = json[idx:]
+		if !re.Match(json) {
+			return true
+		}
 	}
 	return false
 }
