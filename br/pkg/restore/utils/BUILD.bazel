@@ -38,7 +38,7 @@ go_test(
         "systable_restore_test.go",
     ],
     flaky = True,
-    shard_count = 18,
+    shard_count = 17,
     deps = [
         ":utils",
         "//br/pkg/conn",

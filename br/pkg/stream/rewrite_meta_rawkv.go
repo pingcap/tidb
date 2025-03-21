@@ -24,7 +24,6 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
-	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -230,8 +229,8 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find table id:%v in maps", tableID)
 	}
 
-	// don't restore meta kv change for system tables, only restore data
-	if tableReplace.FilteredOut || restoreutils.IsSysTable(dbReplace.Name, tableReplace.Name) {
+	// don't restore meta kv change for system db
+	if tableReplace.FilteredOut || utils.IsSysDB(dbReplace.Name) {
 		return nil, nil
 	}
 
