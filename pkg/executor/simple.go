@@ -1141,7 +1141,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	passwordInit := true
 	// Get changed user password reuse info.
 	savePasswdHistory := whetherSavePasswordHistory(plOptions)
-	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime, Max_user_connections, Password_reuse_time, Password_reuse_history) VALUES "
+	sqlTemplate := "INSERT INTO %n.%n (Host, User, authentication_string, plugin, user_attributes, Account_locked, Token_issuer, Password_expired, Password_lifetime, max_user_connections, Password_reuse_time, Password_reuse_history) VALUES "
 	valueTemplate := "(%?, %?, %?, %?, %?, %?, %?, %?, %?, %?"
 
 	sqlescape.MustFormatSQL(sql, sqlTemplate, mysql.SystemDB, mysql.UserTable)
