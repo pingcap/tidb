@@ -306,7 +306,8 @@ func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBRepl
 				existingTableReplace.TableID = newID
 			}
 
-			// update table name if empty and exists in baseMap
+			// table replace in `TableMappingManager` has no name yet, it is determined by baseMap.
+			// TODO: update the name of the table replace that is not exists in baseMap. Now it is OK because user tables' name is not used.
 			if existingTableReplace.Name == "" {
 				if baseDBReplace, dbExists := baseMap[upDBID]; dbExists {
 					if baseTableReplace, tableExists := baseDBReplace.TableMap[upTableID]; tableExists && baseTableReplace.Name != "" {
