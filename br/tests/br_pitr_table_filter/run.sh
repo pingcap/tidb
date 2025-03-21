@@ -1389,16 +1389,16 @@ test_log_compaction() {
 }
 
 echo "run all test cases"
-#test_basic_filter
-#test_with_full_backup_filter
-#test_table_rename
-#test_with_checkpoint
+test_basic_filter
+test_with_full_backup_filter
+test_table_rename
+test_with_checkpoint
 test_system_tables
-#test_foreign_keys
-#test_index_filter
-#test_partition_exchange
-#test_table_truncation
-#test_sequential_restore
-#test_log_compaction
+test_foreign_keys
+test_index_filter
+test_partition_exchange
+test_table_truncation
+test_sequential_restore
+test_log_compaction
 
 echo "br pitr table filter all tests passed"
