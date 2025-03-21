@@ -658,6 +658,20 @@ func (e *memtableRetriever) setDataFromReferConst(ctx context.Context, sctx sess
 	return nil
 }
 
+func needTableRowsOrDataIndexLength(columns []*model.ColumnInfo) bool {
+	for _, colInfo := range columns {
+		switch colInfo.Name.L {
+		case "table_rows":
+			return true
+		case "data_length":
+			return true
+		case "index_length":
+			return true
+		}
+	}
+	return false
+}
+
 func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
 	err := tableStatsCache.update(ctx, sctx)
 	if err != nil {
@@ -672,6 +686,9 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 	if loc == nil {
 		loc = time.Local
 	}
+
+	needTableRowsEtc := needTableRowsOrDataIndexLength(e.columns)
+
 	for _, schema := range schemas {
 		for _, table := range schema.Tables {
 			collation := table.Collate
@@ -702,22 +719,30 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 				}
 
 				var rowCount, dataLength, indexLength uint64
-				if table.GetPartitionInfo() == nil {
-					rowCount = tableStatsCache.GetTableRows(table.ID)
-					dataLength, indexLength = getDataAndIndexLength(table, table.ID, rowCount)
+				avgRowLength := uint64(0)
+				if needTableRowsEtc {
+					if table.GetPartitionInfo() == nil {
+						rowCount = tableStatsCache.GetTableRows(table.ID)
+						dataLength, indexLength = getDataAndIndexLength(table, table.ID, rowCount)
+					} else {
+						for _, pi := range table.GetPartitionInfo().Definitions {
+							piRowCnt := tableStatsCache.GetTableRows(pi.ID)
+							rowCount += piRowCnt
+							parDataLen, parIndexLen := getDataAndIndexLength(table, pi.ID, piRowCnt)
+							dataLength += parDataLen
+							indexLength += parIndexLen
+						}
+					}
+					if rowCount != 0 {
+						avgRowLength = dataLength / rowCount
+					}
 				} else {
-					for _, pi := range table.GetPartitionInfo().Definitions {
-						piRowCnt := tableStatsCache.GetTableRows(pi.ID)
-						rowCount += piRowCnt
-						parDataLen, parIndexLen := getDataAndIndexLength(table, pi.ID, piRowCnt)
-						dataLength += parDataLen
-						indexLength += parIndexLen
+					if x := ctx.Value("cover-check"); x != nil {
+						slot := x.(*bool)
+						*slot = true
 					}
 				}
-				avgRowLength := uint64(0)
-				if rowCount != 0 {
-					avgRowLength = dataLength / rowCount
-				}
+
 				tableType := "BASE TABLE"
 				if util.IsSystemView(schema.Name.L) {
 					tableType = "SYSTEM VIEW"
