@@ -384,12 +384,12 @@ func getOnDupForKVGroup(indicesGenKV map[int64]genKVIndex, kvGroup string) (comm
 		return common.OnDuplicateKeyRecord, nil
 	}
 
-	indexID, err2 := strconv.Atoi(kvGroup)
+	indexID, err2 := kvGroup2IndexID(kvGroup)
 	if err2 != nil {
 		// shouldn't happen
 		return common.OnDuplicateKeyIgnore, errors.Trace(err2)
 	}
-	info, ok := indicesGenKV[int64(indexID)]
+	info, ok := indicesGenKV[indexID]
 	if !ok {
 		// shouldn't happen
 		return common.OnDuplicateKeyIgnore, errors.Errorf("unknown index %d", indexID)
@@ -511,6 +511,20 @@ func (e *writeAndIngestStepExecutor) Cleanup(_ context.Context) (err error) {
 	return e.tableImporter.Close()
 }
 
+type conflictResolutionStepExecutor struct {
+	taskexecutor.EmptyStepExecutor
+	taskID   int64
+	store    tidbkv.Storage
+	taskMeta *TaskMeta
+	logger   *zap.Logger
+}
+
+var _ execute.StepExecutor = &conflictResolutionStepExecutor{}
+
+func (e *conflictResolutionStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
+	return nil
+}
+
 type postProcessStepExecutor struct {
 	taskexecutor.EmptyStepExecutor
 	taskID   int64
@@ -618,6 +632,13 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 			logger:       logger,
 			store:        e.store,
 			indicesGenKV: indicesGenKV,
+		}, nil
+	case proto.ImportStepConflictResolution:
+		return &conflictResolutionStepExecutor{
+			taskID:   task.ID,
+			taskMeta: &taskMeta,
+			logger:   logger,
+			store:    e.store,
 		}, nil
 	case proto.ImportStepPostProcess:
 		return NewPostProcessStepExecutor(task.ID, e.store, &taskMeta, logger), nil

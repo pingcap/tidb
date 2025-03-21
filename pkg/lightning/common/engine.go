@@ -76,7 +76,7 @@ type ConflictInfo struct {
 }
 
 // Merge merges the other ConflictInfo into this one.
-func (c *ConflictInfo) Merge(other ConflictInfo) {
+func (c *ConflictInfo) Merge(other *ConflictInfo) {
 	c.Count += other.Count
 	c.Files = append(c.Files, other.Files...)
 }

@@ -267,6 +267,25 @@ func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 		if err = job2Step(ctx, logger, taskMeta, importer.JobStepImporting); err != nil {
 			return nil, err
 		}
+	case proto.ImportStepConflictResolution:
+		encodeAndSortMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepEncodeAndSort)
+		if err != nil {
+			return nil, err
+		}
+		mergeSortMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepMergeSort)
+		if err != nil {
+			return nil, err
+		}
+		ingestMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepWriteAndIngest)
+		if err != nil {
+			return nil, err
+		}
+		previousSubtaskMetas[proto.ImportStepEncodeAndSort] = encodeAndSortMetas
+		previousSubtaskMetas[proto.ImportStepMergeSort] = mergeSortMetas
+		previousSubtaskMetas[proto.ImportStepWriteAndIngest] = ingestMetas
+		if err = job2Step(ctx, logger, taskMeta, importer.JobStepImporting); err != nil {
+			return nil, err
+		}
 	case proto.ImportStepPostProcess:
 		sch.switchTiKV2NormalMode(ctx, task, logger)
 		failpoint.Inject("clearLastSwitchTime", func() {
@@ -378,7 +397,9 @@ func (sch *ImportSchedulerExt) GetNextStep(task *proto.TaskBase) proto.Step {
 		return proto.ImportStepMergeSort
 	case proto.ImportStepMergeSort:
 		return proto.ImportStepWriteAndIngest
-	case proto.ImportStepImport, proto.ImportStepWriteAndIngest:
+	case proto.ImportStepWriteAndIngest:
+		return proto.ImportStepConflictResolution
+	case proto.ImportStepImport, proto.ImportStepConflictResolution:
 		return proto.ImportStepPostProcess
 	default:
 		// current step must be ImportStepPostProcess

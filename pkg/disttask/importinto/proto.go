@@ -16,12 +16,14 @@ package importinto
 
 import (
 	"fmt"
+	"strconv"
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -77,6 +79,32 @@ type MergeSortStepMeta struct {
 	KVGroup               string   `json:"kv-group"`
 	DataFiles             []string `json:"data-files"`
 	external.SortedKVMeta `json:"sorted-kv-meta"`
+}
+
+// ConflictResolutionStepMeta is the meta of conflict resolution step.
+type ConflictResolutionStepMeta struct {
+	ConflictInfos map[string]*common.ConflictInfo `json:"conflict-infos,omitempty"`
+}
+
+func (m *ConflictResolutionStepMeta) addDataConflictInfo(other *common.ConflictInfo) {
+	m.addConflictInfo(dataKVGroup, other)
+}
+
+func (m *ConflictResolutionStepMeta) addIndexConflictInfo(indexID int64, other *common.ConflictInfo) {
+	kvGroup := indexID2KVGroup(indexID)
+	m.addConflictInfo(kvGroup, other)
+}
+
+func (m *ConflictResolutionStepMeta) addConflictInfo(kvGroup string, other *common.ConflictInfo) {
+	if other.Count == 0 {
+		return
+	}
+	ci, ok := m.ConflictInfos[kvGroup]
+	if !ok {
+		ci = &common.ConflictInfo{}
+		m.ConflictInfos[kvGroup] = ci
+	}
+	ci.Merge(other)
 }
 
 // WriteIngestStepMeta is the meta of write and ingest step.
@@ -175,4 +203,12 @@ type Checksum struct {
 type Result struct {
 	LoadedRowCnt uint64
 	ColSizeMap   map[int64]int64
+}
+
+func indexID2KVGroup(indexID int64) string {
+	return fmt.Sprintf("%d", indexID)
+}
+
+func kvGroup2IndexID(kvGroup string) (int64, error) {
+	return strconv.ParseInt(kvGroup, 10, 64)
 }

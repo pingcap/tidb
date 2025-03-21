@@ -19,7 +19,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"math"
-	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -132,6 +131,12 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 		}
 
 		addSpecs(specs)
+	case proto.ImportStepConflictResolution:
+		specs, err := generateConflictResolutionSpecs(planCtx, p)
+		if err != nil {
+			return nil, err
+		}
+		addSpecs(specs)
 	case proto.ImportStepPostProcess:
 		physicalPlan.AddProcessor(planner.ProcessorSpec{
 			ID: len(inputLinks),
@@ -187,6 +192,16 @@ type MergeSortSpec struct {
 // ToSubtaskMeta converts the merge-sort spec to subtask meta.
 func (s *MergeSortSpec) ToSubtaskMeta(planner.PlanCtx) ([]byte, error) {
 	return json.Marshal(s.MergeSortStepMeta)
+}
+
+// ConflictResolutionSpec is the specification of a conflict resolution pipeline.
+type ConflictResolutionSpec struct {
+	*ConflictResolutionStepMeta
+}
+
+// ToSubtaskMeta converts the conflict resolution spec to subtask meta.
+func (s *ConflictResolutionSpec) ToSubtaskMeta(planner.PlanCtx) ([]byte, error) {
+	return json.Marshal(s.ConflictResolutionStepMeta)
 }
 
 // PostProcessSpec is the specification of a post process pipeline.
@@ -478,7 +493,7 @@ func getSortedKVMetasOfEncodeStep(subTaskMetas [][]byte) (map[string]*external.S
 	res := make(map[string]*external.SortedKVMeta, 1+len(indexKVMetas))
 	res[dataKVGroup] = dataKVMeta
 	for indexID, item := range indexKVMetas {
-		res[strconv.Itoa(int(indexID))] = item
+		res[indexID2KVGroup(indexID)] = item
 	}
 	return res, nil
 }
@@ -558,4 +573,43 @@ func getRangeSplitter(
 		regionSplitSize,
 		regionSplitKeys,
 	)
+}
+
+func generateConflictResolutionSpecs(planCtx planner.PlanCtx, _ *LogicalPlan) ([]planner.PipelineSpec, error) {
+	m := &ConflictResolutionStepMeta{}
+	for _, subTaskMeta := range planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort] {
+		var stepMeta ImportStepMeta
+		err := json.Unmarshal(subTaskMeta, &stepMeta)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		m.addDataConflictInfo(&stepMeta.SortedDataMeta.ConflictInfo)
+		for indexID, kvMeta := range stepMeta.SortedIndexMetas {
+			// non-unique index don't have conflict info, to simplify the logic,
+			// we merge them all
+			m.addIndexConflictInfo(indexID, &kvMeta.ConflictInfo)
+		}
+	}
+	for _, subTaskMeta := range planCtx.PreviousSubtaskMetas[proto.ImportStepMergeSort] {
+		var stepMeta MergeSortStepMeta
+		err := json.Unmarshal(subTaskMeta, &stepMeta)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		m.addConflictInfo(stepMeta.KVGroup, &stepMeta.SortedKVMeta.ConflictInfo)
+	}
+	for _, subTaskMeta := range planCtx.PreviousSubtaskMetas[proto.ImportStepWriteAndIngest] {
+		var stepMeta WriteIngestStepMeta
+		err := json.Unmarshal(subTaskMeta, &stepMeta)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		m.addConflictInfo(stepMeta.KVGroup, &stepMeta.SortedKVMeta.ConflictInfo)
+	}
+	return []planner.PipelineSpec{
+		&ConflictResolutionSpec{
+			ConflictResolutionStepMeta: m,
+		},
+	}, nil
 }

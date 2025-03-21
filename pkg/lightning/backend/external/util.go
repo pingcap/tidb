@@ -295,7 +295,7 @@ func (m *SortedKVMeta) Merge(other *SortedKVMeta) {
 	m.TotalKVCnt += other.TotalKVCnt
 
 	m.MultipleFilesStats = append(m.MultipleFilesStats, other.MultipleFilesStats...)
-	m.ConflictInfo.Merge(other.ConflictInfo)
+	m.ConflictInfo.Merge(&other.ConflictInfo)
 }
 
 // MergeSummary merges the WriterSummary into this SortedKVMeta.
