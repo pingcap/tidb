@@ -964,6 +964,9 @@ type PhysicalTableScan struct {
 	maxWaitTimeMs     int
 
 	AnnIndexExtra *VectorIndexExtra `plan-cache-clone:"must-nil"` // MPP plan should not be cached.
+	// UsedColumnarIndexs is used to store the used columnar index for the table scan.
+	// Set after `postOptimize`
+	UsedColumnarIndexs []*model.IndexInfo `plan-cache-clone:"must-nil"`
 }
 
 // VectorIndexExtra is the extra information for vector index.
@@ -1849,7 +1852,7 @@ func (p *PhysicalExpand) Clone(newCtx base.PlanContext) (base.PhysicalPlan, erro
 	for _, one := range p.GroupingSets {
 		clonedGroupingSets = append(clonedGroupingSets, one.Clone())
 	}
-	np.GroupingSets = p.GroupingSets
+	np.GroupingSets = clonedGroupingSets
 	return np, nil
 }
 

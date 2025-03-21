@@ -83,6 +83,21 @@ func IsTypeInteger(tp byte) bool {
 	return false
 }
 
+// IsTypeStoredAsInteger returns a boolean indicating whether the tp is stored as integer type.
+func IsTypeStoredAsInteger(tp byte) bool {
+	switch tp {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		return true
+	case mysql.TypeYear:
+		return true
+	case mysql.TypeEnum, mysql.TypeSet:
+		return true
+	case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeTimestamp, mysql.TypeDuration:
+		return true
+	}
+	return false
+}
+
 // IsTypeNumeric returns a boolean indicating whether the tp is numeric type.
 func IsTypeNumeric(tp byte) bool {
 	switch tp {

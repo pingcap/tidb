@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	util2 "github.com/pingcap/tidb/pkg/planner/util"
@@ -279,6 +280,10 @@ func (p *PhysicalTableScan) ToPB(ctx *base.BuildPBContext, storeType kv.StoreTyp
 		tsExec.AnnQuery = &annQueryCopy
 	}
 
+	if p.UsedColumnarIndexs != nil {
+		tsExec.UsedIndexes = IndexInfosToPB(p.Table, p.UsedColumnarIndexs)
+	}
+
 	var err error
 	tsExec.RuntimeFilterList, err = RuntimeFilterListToPB(ctx, p.runtimeFilterList, ctx.GetClient())
 	if err != nil {
@@ -324,9 +329,38 @@ func (p *PhysicalTableScan) partitionTableScanToPBForFlash(ctx *base.BuildPBCont
 		ptsExec.AnnQuery = &annQueryCopy
 	}
 
+	if p.UsedColumnarIndexs != nil {
+		ptsExec.UsedIndexes = IndexInfosToPB(p.Table, p.UsedColumnarIndexs)
+	}
+
 	executorID := p.ExplainID().String()
 	err = tables.SetPBColumnsDefaultValue(ctx.GetExprCtx(), ptsExec.Columns, p.Columns)
 	return &tipb.Executor{Tp: tipb.ExecType_TypePartitionTableScan, PartitionTableScan: ptsExec, ExecutorId: &executorID}, err
+}
+
+// IndexInfosToPB converts []*model.IndexInfo to []*tipb.IndexInfo.
+func IndexInfosToPB(tblInfo *model.TableInfo, indexes []*model.IndexInfo) []*tipb.IndexInfo {
+	indexInfos := make([]*tipb.IndexInfo, 0, len(indexes))
+	for _, idx := range indexes {
+		columns := make([]*tipb.ColumnInfo, 0, len(idx.Columns))
+		for _, col := range idx.Columns {
+			column := tblInfo.Columns[col.Offset]
+			columns = append(columns, util.ColumnToProto(column, true, true))
+		}
+		var indexType tipb.ColumnarIndexType
+		if idx.Tp == ast.IndexTypeHNSW {
+			indexType = tipb.ColumnarIndexType_TypeHNSW
+		} else if idx.Tp == ast.IndexTypeInverted {
+			indexType = tipb.ColumnarIndexType_TypeInverted
+		}
+		indexInfos = append(indexInfos, &tipb.IndexInfo{
+			TableId:           tblInfo.ID,
+			IndexId:           idx.ID,
+			Columns:           columns,
+			ColumnarIndexType: indexType,
+		})
+	}
+	return indexInfos
 }
 
 // checkCoverIndex checks whether we can pass unique info to TiKV. We should push it if and only if the length of

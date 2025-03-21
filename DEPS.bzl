@@ -5932,13 +5932,13 @@ def go_deps():
         name = "com_github_pingcap_tipb",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/tipb",
-        sha256 = "87ef3f28a30822c9e2a4966bfb573025ae332ac2a045be1026641e121fccb7e6",
-        strip_prefix = "github.com/pingcap/tipb@v0.0.0-20241212101007-246f91188357",
+        sha256 = "d94ad8a35ed74adf46c2db967759d6780ab0c898cd0a3dd9e934a360080c7f61",
+        strip_prefix = "github.com/Lloyd-Pottiger/tipb@v0.0.0-20250224064836-86ccb886167d",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20241212101007-246f91188357.zip",
-            "http://ats.apps.svc/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20241212101007-246f91188357.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20241212101007-246f91188357.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20241212101007-246f91188357.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/Lloyd-Pottiger/tipb/com_github_lloyd_pottiger_tipb-v0.0.0-20250224064836-86ccb886167d.zip",
+            "http://ats.apps.svc/gomod/github.com/Lloyd-Pottiger/tipb/com_github_lloyd_pottiger_tipb-v0.0.0-20250224064836-86ccb886167d.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/Lloyd-Pottiger/tipb/com_github_lloyd_pottiger_tipb-v0.0.0-20250224064836-86ccb886167d.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/Lloyd-Pottiger/tipb/com_github_lloyd_pottiger_tipb-v0.0.0-20250224064836-86ccb886167d.zip",
         ],
     )
     go_repository(
