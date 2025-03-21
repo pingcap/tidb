@@ -465,15 +465,15 @@ test_system_tables() {
     restart_services || { echo "Failed to restart services"; exit 1; }
 
     echo "Test 1: Verify that default restore behavior (no filter) properly handles system tables"
-    # Restore without any filter - should restore user table but use system tables from TiDB
+    # restore without any filter, should only restore snapshot system tables, not log backup.
+    # this is the current behavior as restore log backup to system table will have issue
     run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full"
 
 
-    # Verify system tables are restored from snapshot only
-    # Only test_user should exist, post_backup_user should not exist
+    # verify system tables are restored from snapshot only
+    # only test_user should exist, post_backup_user should not exist
     users_result=$(run_sql "SELECT _tidb_rowid, user, host, authentication_string FROM mysql.user WHERE user IN ('test_user', 'post_backup_user')")
 
-    # Count occurrences of test_user
     test_user_count=$(echo "$users_result" | grep -c "test_user" || true)
 
     # Verify there is exactly one test_user

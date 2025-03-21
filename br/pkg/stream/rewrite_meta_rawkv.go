@@ -219,7 +219,6 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 	if !exist {
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbID)
 	}
-
 	if dbReplace.FilteredOut {
 		return nil, nil
 	}
