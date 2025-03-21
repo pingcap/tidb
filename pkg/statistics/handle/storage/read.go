@@ -655,18 +655,35 @@ func CleanFakeItemsForShowHistInFlights(statsCache statstypes.StatsCache) int {
 func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.StatsHandle, col model.TableItemID, loadFMSketch bool, fullLoad bool) (err error) {
 	statsTbl, ok := statsHandle.Get(col.TableID)
 	if !ok {
+		statslogutil.StatsLogger().Warn(
+			"Table statistics item not found, possibly due to table being dropped",
+			zap.Int64("tableID", col.TableID),
+			zap.Int64("columnID", col.ID),
+		)
+		intest.Assert(false, "Table statistics not found but async load was triggered")
 		return nil
 	}
-	// Now, we cannot init the column info in the ColAndIdxExistenceMap when to disable lite-init-stats.
-	// so we have to get the column info from the domain.
+	// When lite-init-stats is disabled, we cannot initialize the column info in the ColAndIdxExistenceMap.
+	// Therefore, we need to get the column info from the domain.
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	tbl, ok := statsHandle.TableInfoByID(is, col.TableID)
 	if !ok {
+		statslogutil.StatsLogger().Warn(
+			"Table information not found, possibly due to table being dropped",
+			zap.Int64("tableID", col.TableID),
+			zap.Int64("columnID", col.ID),
+		)
+		intest.Assert(false, "Table information not found but async load was triggered")
 		return nil
 	}
 	tblInfo := tbl.Meta()
 	colInfo := tblInfo.GetColumnByID(col.ID)
 	if colInfo == nil {
+		statslogutil.StatsLogger().Warn(
+			"Column information not found, possibly due to column being dropped",
+			zap.Int64("tableID", col.TableID),
+			zap.Int64("columnID", col.ID),
+		)
 		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 		return nil
 	}
@@ -690,6 +707,13 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 
 	hg, statsVer, err := HistMetaFromStorageWithHighPriority(sctx, &col, colInfo)
 	if hg == nil || err != nil {
+		if hg == nil {
+			statslogutil.StatsLogger().Warn(
+				"Histogram not found, possibly due to DDL event is not handled",
+				zap.Int64("tableID", col.TableID),
+				zap.Int64("columnID", col.ID),
+			)
+		}
 		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 		return err
 	}
@@ -729,6 +753,12 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
 	statsTbl, ok = statsHandle.Get(col.TableID)
 	if !ok {
+		statslogutil.StatsLogger().Warn(
+			"Table statistics item not found, possibly due to table being dropped",
+			zap.Int64("tableID", col.TableID),
+			zap.Int64("columnID", col.ID),
+		)
+		intest.Assert(false, "Table statistics not found but async load was triggered")
 		return nil
 	}
 	statsTbl = statsTbl.Copy()
@@ -760,6 +790,12 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, statsHandle statstypes.StatsHandle, idx model.TableItemID, loadFMSketch bool) (err error) {
 	tbl, ok := statsHandle.Get(idx.TableID)
 	if !ok {
+		statslogutil.StatsLogger().Warn(
+			"Table statistics item not found, possibly due to table being dropped",
+			zap.Int64("tableID", idx.TableID),
+			zap.Int64("indexID", idx.ID),
+		)
+		intest.Assert(false, "Table statistics not found but async load was triggered")
 		return nil
 	}
 	_, loadNeeded := tbl.IndexIsLoadNeeded(idx.ID)
@@ -769,15 +805,33 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 	}
 	hgMeta, statsVer, err := HistMetaFromStorageWithHighPriority(sctx, &idx, nil)
 	if hgMeta == nil || err != nil {
+		if hgMeta == nil {
+			statslogutil.StatsLogger().Warn(
+				"Histogram not found, possibly due to DDL event is not handled",
+				zap.Int64("tableID", idx.TableID),
+				zap.Int64("indexID", idx.ID),
+			)
+		}
 		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 		return err
 	}
 	tblInfo, ok := statsHandle.TableInfoByID(is, idx.TableID)
 	if !ok {
+		statslogutil.StatsLogger().Warn(
+			"Table information not found, possibly due to table being dropped",
+			zap.Int64("tableID", idx.TableID),
+			zap.Int64("indexID", idx.ID),
+		)
+		intest.Assert(false, "Table information not found but async load was triggered")
 		return nil
 	}
 	idxInfo := tblInfo.Meta().FindIndexByID(idx.ID)
 	if idxInfo == nil {
+		statslogutil.StatsLogger().Warn(
+			"Index information not found, possibly due to column being dropped",
+			zap.Int64("tableID", idx.TableID),
+			zap.Int64("indexID", idx.ID),
+		)
 		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 		return errors.NotFoundf("index %d in table %d", idx.ID, idx.TableID)
 	}
@@ -796,13 +850,25 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 			return errors.Trace(err)
 		}
 	}
-	idxHist := &statistics.Index{Histogram: *hg, CMSketch: cms, TopN: topN, FMSketch: fms,
-		Info: idxInfo, StatsVer: statsVer,
+	idxHist := &statistics.Index{
+		Histogram:         *hg,
+		CMSketch:          cms,
+		TopN:              topN,
+		FMSketch:          fms,
+		Info:              idxInfo,
+		StatsVer:          statsVer,
 		PhysicalID:        idx.TableID,
-		StatsLoadedStatus: statistics.NewStatsFullLoadStatus()}
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+	}
 
 	tbl, ok = statsHandle.Get(idx.TableID)
 	if !ok {
+		statslogutil.StatsLogger().Warn(
+			"Table statistics item not found, possibly due to table being dropped",
+			zap.Int64("tableID", idx.TableID),
+			zap.Int64("indexID", idx.ID),
+		)
+		intest.Assert(false, "Table statistics not found but async load was triggered")
 		return nil
 	}
 	tbl = tbl.Copy()
@@ -814,13 +880,13 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 	statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
 		Updated: []*statistics.Table{tbl},
 	})
+	asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 	if idx.IsSyncLoadFailed {
 		logutil.BgLogger().Warn("Hist for index should already be loaded as sync but not found.",
 			zap.Int64("table_id", idx.TableID),
 			zap.Int64("index_id", idxHist.Info.ID),
 			zap.String("index_name", idxHist.Info.Name.O))
 	}
-	asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 	return nil
 }
 
