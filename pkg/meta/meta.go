@@ -1067,10 +1067,8 @@ func (m *Mutator) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
 	return res, nil
 }
 
-// checkAttributesInOrder contains regular expression patterns for checking it's special table or not.
-// For a table that is not an FK table, "fk_info" could either be null or an empty array ([]).
 var checkAttributesInOrder = []string{
-	`"fk_info":\s*(null|\[\])`,
+	`"fk_info":null`,
 	`"partition":null`,
 	`"Lock":null`,
 	`"tiflash_replica":null`,
@@ -1095,7 +1093,7 @@ func isTableInfoMustLoad(json []byte, filterAttrs ...*regexp.Regexp) bool {
 // IsTableInfoMustLoad checks whether the table info needs to be loaded.
 // Exported for testing.
 func IsTableInfoMustLoad(json []byte) bool {
-	var filterAttrs []*regexp.Regexp
+	filterAttrs := make([]*regexp.Regexp, 0)
 	for _, substr := range checkAttributesInOrder {
 		filterAttr := regexp.MustCompile(substr)
 		filterAttrs = append(filterAttrs, filterAttr)
@@ -1130,7 +1128,7 @@ func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[strin
 	nameLRegex := regexp.MustCompile(NameExtractRegexp)
 
 	tableInfos := make([]*model.TableInfo, 0)
-	var filterAttrs []*regexp.Regexp
+	filterAttrs := make([]*regexp.Regexp, 0)
 	for _, substr := range checkAttributesInOrder {
 		filterAttr, err := regexp.Compile(substr)
 		if err != nil {
@@ -1176,7 +1174,7 @@ func GetTableInfoWithAttributes(m *Mutator, dbID int64, filterAttrs ...string) (
 	}
 
 	tableInfos := make([]*model.TableInfo, 0)
-	var filterAttrRegexps []*regexp.Regexp
+	filterAttrRegexps := make([]*regexp.Regexp, 0)
 	for _, substr := range checkAttributesInOrder {
 		re, err := regexp.Compile(substr)
 		if err != nil {
