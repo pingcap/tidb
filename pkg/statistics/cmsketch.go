@@ -134,10 +134,12 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 	return &topNHelper{sorted, uint64(len(sample)), onlyOnceItems, sumTopN, actualNumTop}
 }
 
-// NewCMSketchAndTopN returns a new CM sketch with TopN elements, the estimate NDV and the scale ratio.
-func NewCMSketchAndTopN(d, w int32, sample [][]byte, numTop uint32, rowCount uint64) (*CMSketch, *TopN, uint64, uint64) {
+// NewCMSketchAndTopN returns a new CM sketch with TopN elements, the estimate
+// NDV and the scale ratio. This function is exported for a unit test in another
+// package.
+func NewCMSketchAndTopN(d, w int32, sample [][]byte, numTop uint32, rowCount uint64) (*CMSketch, *TopN) {
 	if rowCount == 0 || len(sample) == 0 {
-		return nil, nil, 0, 0
+		return nil, nil
 	}
 	helper := newTopNHelper(sample, numTop)
 	// rowCount is not a accurate value when fast analyzing
@@ -146,7 +148,7 @@ func NewCMSketchAndTopN(d, w int32, sample [][]byte, numTop uint32, rowCount uin
 	estimateNDV, scaleRatio := calculateEstimateNDV(helper, rowCount)
 	defaultVal := calculateDefaultVal(helper, estimateNDV, scaleRatio, rowCount)
 	c, t := buildCMSAndTopN(helper, d, w, scaleRatio, defaultVal)
-	return c, t, estimateNDV, scaleRatio
+	return c, t
 }
 
 func buildCMSAndTopN(helper *topNHelper, d, w int32, scaleRatio uint64, defaultVal uint64) (c *CMSketch, t *TopN) {

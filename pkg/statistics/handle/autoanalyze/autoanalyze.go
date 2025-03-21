@@ -381,7 +381,11 @@ func CheckAutoAnalyzeWindow(sctx sessionctx.Context) bool {
 	return ok
 }
 
-func checkAutoAnalyzeWindow(parameters map[string]string) (time.Time, time.Time, bool) {
+func checkAutoAnalyzeWindow(parameters map[string]string) (
+	startTime time.Time,
+	endTime time.Time,
+	ok bool,
+) {
 	start, end, err := exec.ParseAutoAnalysisWindow(
 		parameters[vardef.TiDBAutoAnalyzeStartTime],
 		parameters[vardef.TiDBAutoAnalyzeEndTime],

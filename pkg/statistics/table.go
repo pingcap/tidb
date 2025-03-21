@@ -824,7 +824,7 @@ func (t *Table) GetStatsHealthy() (int64, bool) {
 // Also, if the stats has been loaded into the memory, we also don't need to load it.
 // We return the Column together with the checking result, to avoid accessing the map multiple times.
 // The first bool is whether we need to load it into memory. The second bool is whether this column has stats in the system table or not.
-func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (*Column, bool, bool) {
+func (t *Table) ColumnIsLoadNeeded(id int64, fullLoad bool) (col *Column, loadNeeded bool, analyzed bool) {
 	if t.Pseudo {
 		return nil, false, false
 	}
