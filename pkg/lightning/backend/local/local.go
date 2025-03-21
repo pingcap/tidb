@@ -1245,6 +1245,8 @@ func (local *Backend) executeJob(
 		}
 	}
 
+	failpoint.InjectCall("modifyRunningGlobalSortSpeed", local)
+
 	for {
 		err := local.writeToTiKV(ctx, job)
 		if err != nil {
