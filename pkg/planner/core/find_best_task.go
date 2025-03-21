@@ -17,6 +17,7 @@ package core
 import (
 	"cmp"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"math"
 	"slices"
 	"strings"
@@ -92,6 +93,14 @@ func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (*property.Ph
 
 func findBestTask4LogicalTableDual(lp base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
 	p := lp.(*logicalop.LogicalTableDual)
+	// if prop is require an index join's probe side, check the inner pattern admission here.
+	if prop.IndexJoinProp != nil {
+		pass := admitIndexJoinInnerChildPattern(lp)
+		if !pass {
+			// even enforce hint can not work with this.
+			return base.InvalidTask, 0, nil
+		}
+	}
 	// If the required property is not empty and the row count > 1,
 	// we cannot ensure this required property.
 	// But if the row count is 0 or 1, we don't need to care about the property.
@@ -112,6 +121,14 @@ func findBestTask4LogicalTableDual(lp base.LogicalPlan, prop *property.PhysicalP
 
 func findBestTask4LogicalShow(lp base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
 	p := lp.(*logicalop.LogicalShow)
+	// if prop is require an index join's probe side, check the inner pattern admission here.
+	if prop.IndexJoinProp != nil {
+		pass := admitIndexJoinInnerChildPattern(lp)
+		if !pass {
+			// even enforce hint can not work with this.
+			return base.InvalidTask, 0, nil
+		}
+	}
 	if !prop.IsSortItemEmpty() || planCounter.Empty() {
 		return base.InvalidTask, 0, nil
 	}
@@ -125,6 +142,14 @@ func findBestTask4LogicalShow(lp base.LogicalPlan, prop *property.PhysicalProper
 
 func findBestTask4LogicalShowDDLJobs(lp base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
 	p := lp.(*logicalop.LogicalShowDDLJobs)
+	// if prop is require an index join's probe side, check the inner pattern admission here.
+	if prop.IndexJoinProp != nil {
+		pass := admitIndexJoinInnerChildPattern(lp)
+		if !pass {
+			// even enforce hint can not work with this.
+			return base.InvalidTask, 0, nil
+		}
+	}
 	if !prop.IsSortItemEmpty() || planCounter.Empty() {
 		return base.InvalidTask, 0, nil
 	}
@@ -505,6 +530,15 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 	if prop == nil {
 		return nil, 1, nil
 	}
+	// if prop is require an index join's probe side, check the inner pattern admission here.
+	if prop.IndexJoinProp != nil {
+		pass := admitIndexJoinInnerChildPattern(lp)
+		if !pass {
+			// even enforce hint can not work with this.
+			return base.InvalidTask, 0, nil
+		}
+		// todo: consider dirty write compatible with index merge join.
+	}
 	// Look up the task with this prop in the task map.
 	// It's used to reduce double counting.
 	bestTask = p.GetTask(prop)
@@ -600,6 +634,14 @@ END:
 
 func findBestTask4LogicalMemTable(lp base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
 	p := lp.(*logicalop.LogicalMemTable)
+	// if prop is require an index join's probe side, check the inner pattern admission here.
+	if prop.IndexJoinProp != nil {
+		pass := admitIndexJoinInnerChildPattern(lp)
+		if !pass {
+			// even enforce hint can not work with this.
+			return base.InvalidTask, 0, nil
+		}
+	}
 	if prop.MPPPartitionTp != property.AnyType {
 		return base.InvalidTask, 0, nil
 	}
@@ -1352,6 +1394,73 @@ func exploreEnforcedPlan(ds *logicalop.DataSource) bool {
 	return fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix46177, true)
 }
 
+func buildIndexJoinInner2TableScanByProp(ds *logicalop.DataSource, indexJoinProp *property.IndexJoinRuntimeProp) base.Task {
+	// 保持 buildIndexJoinInner2TableScan 的一些前序检查逻辑
+	var tblPath *util.AccessPath
+	for _, path := range ds.PossibleAccessPaths {
+		if path.IsTablePath() && path.StoreType == kv.TiKV { // ds 里面找一个 tikv 的 table path
+			tblPath = path
+			break
+		}
+	}
+	if tblPath == nil {
+		return nil
+	}
+	// 还是分 handle 或者 index 来处理吧
+	keyOff2IdxOff := make([]int, len(indexJoinProp.InnerJoinKeys))
+	var indexJoinResult *indexJoinPathResult
+	newOuterJoinKeys := make([]*expression.Column, 0)
+	var innerTask base.Task
+	for _, path := range ds.PossibleAccessPaths {
+		if path.IsTiKVTablePath() {
+			if path.IsCommonHandlePath {
+				indexJoinResult, keyOff2IdxOff = getBestIndexJoinPathResultByProp(ds, indexJoinProp, func(path *util.AccessPath) bool { return path.IsCommonHandlePath })
+				if indexJoinResult == nil {
+					return nil
+				}
+				rangeInfo := indexJoinPathRangeInfo(ds.SCtx(), indexJoinProp.OuterJoinKeys, indexJoinResult)
+				innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), rangeInfo, false, false, indexJoinProp.AvgInnerRowCnt)
+			} else {
+				// int handle path
+				pkMatched := false
+				pkCol := ds.GetPKIsHandleCol()
+				if pkCol == nil {
+					return nil
+				}
+				for i, key := range indexJoinProp.InnerJoinKeys {
+					if !key.EqualColumn(pkCol) {
+						keyOff2IdxOff[i] = -1
+						continue
+					}
+					pkMatched = true
+					keyOff2IdxOff[i] = 0
+					// Add to newOuterJoinKeys only if conditions contain inner primary key. For issue #14822.
+					newOuterJoinKeys = append(newOuterJoinKeys, indexJoinProp.OuterJoinKeys[i])
+				}
+				outerJoinKeys := newOuterJoinKeys
+				if !pkMatched {
+					return nil
+				}
+				ranges := ranger.FullIntRange(mysql.HasUnsignedFlag(pkCol.RetType.GetFlag()))
+				var buffer strings.Builder
+				buffer.WriteString("[")
+				for i, key := range outerJoinKeys { // 只 decided by single outer = pk col
+					if i != 0 {
+						buffer.WriteString(" ")
+					}
+					buffer.WriteString(key.StringWithCtx(ds.SCtx().GetExprCtx().GetEvalCtx(), errors.RedactLogDisable))
+				}
+				buffer.WriteString("]")
+				rangeInfo := buffer.String()
+				innerTask = constructDS2TableScanTask(ds, ranges, rangeInfo, false, false, indexJoinProp.AvgInnerRowCnt)
+			}
+		} else {
+			// index path
+
+		}
+	}
+}
+
 func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
 	ds := lp.(*logicalop.DataSource)
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
@@ -1359,6 +1468,18 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 	if prop == nil {
 		planCounter.Dec(1)
 		return nil, 1, nil
+	}
+	// if prop is require an index join's probe side, check the inner pattern admission here.
+	if prop.IndexJoinProp != nil {
+		pass := admitIndexJoinInnerChildPattern(lp)
+		if !pass {
+			// even enforce hint can not work with this.
+			return base.InvalidTask, 0, nil
+		}
+		// when datasource leaf is in index join's inner side.
+		// 老得那边分 index path 和 table path 是因为底层构建的东西不一致，这里是为了兼容老的逻辑
+
+		getBestIndexJoinPathResultByProp(ds, prop.IndexJoinProp)
 	}
 	if ds.IsForUpdateRead && ds.SCtx().GetSessionVars().TxnCtx.IsExplicit {
 		hasPointGetPath := false
@@ -3058,6 +3179,14 @@ func getOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 
 func findBestTask4LogicalCTE(lp base.LogicalPlan, prop *property.PhysicalProperty, counter *base.PlanCounterTp, pop *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
 	p := lp.(*logicalop.LogicalCTE)
+	// if prop is require an index join's probe side, check the inner pattern admission here.
+	if prop.IndexJoinProp != nil {
+		pass := admitIndexJoinInnerChildPattern(lp)
+		if !pass {
+			// even enforce hint can not work with this.
+			return base.InvalidTask, 0, nil
+		}
+	}
 	if p.ChildLen() > 0 {
 		return p.BaseLogicalPlan.FindBestTask(prop, counter, pop)
 	}
@@ -3092,6 +3221,14 @@ func findBestTask4LogicalCTE(lp base.LogicalPlan, prop *property.PhysicalPropert
 
 func findBestTask4LogicalCTETable(lp base.LogicalPlan, prop *property.PhysicalProperty, _ *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
 	p := lp.(*logicalop.LogicalCTETable)
+	// if prop is require an index join's probe side, check the inner pattern admission here.
+	if prop.IndexJoinProp != nil {
+		pass := admitIndexJoinInnerChildPattern(lp)
+		if !pass {
+			// even enforce hint can not work with this.
+			return base.InvalidTask, 0, nil
+		}
+	}
 	if !prop.IsSortItemEmpty() {
 		return base.InvalidTask, 0, nil
 	}
