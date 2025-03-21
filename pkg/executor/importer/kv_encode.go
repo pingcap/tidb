@@ -16,7 +16,6 @@ package importer
 
 import (
 	"context"
-	"io"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -33,16 +32,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
-// KVEncoder encodes a row of data into a KV pair.
-type KVEncoder interface {
-	Encode(row []types.Datum, rowID int64) (*kv.Pairs, error)
-	// GetColumnSize returns the size of each column in the current encoder.
-	GetColumnSize() map[int64]int64
-	io.Closer
-}
-
-// tableKVEncoder encodes a row of data into a KV pair.
-type tableKVEncoder struct {
+// TableKVEncoder encodes a row of data into a KV pair.
+type TableKVEncoder struct {
 	*kv.BaseKVEncoder
 	// see import.go
 	columnAssignments  []expression.Expression
@@ -51,14 +42,12 @@ type tableKVEncoder struct {
 	insertColumns      []*table.Column
 }
 
-var _ KVEncoder = &tableKVEncoder{}
-
-// NewTableKVEncoder creates a new tableKVEncoder.
+// NewTableKVEncoder creates a new TableKVEncoder.
 // exported for test.
 func NewTableKVEncoder(
 	config *encode.EncodingConfig,
 	ti *TableImporter,
-) (KVEncoder, error) {
+) (*TableKVEncoder, error) {
 	baseKVEncoder, err := kv.NewBaseKVEncoder(config)
 	if err != nil {
 		return nil, err
@@ -70,7 +59,7 @@ func NewTableKVEncoder(
 		return nil, err
 	}
 
-	return &tableKVEncoder{
+	return &TableKVEncoder{
 		BaseKVEncoder:      baseKVEncoder,
 		columnAssignments:  colAssignExprs,
 		columnsAndUserVars: ti.ColumnsAndUserVars,
@@ -80,7 +69,7 @@ func NewTableKVEncoder(
 }
 
 // Encode implements the KVEncoder interface.
-func (en *tableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, error) {
+func (en *TableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, error) {
 	// we ignore warnings when encoding rows now, but warnings uses the same memory as parser, since the input
 	// row []types.Datum share the same underlying buf, and when doing CastValue, we're using hack.String/hack.Slice.
 	// when generating error such as mysql.ErrDataOutOfRange, the data will be part of the error, causing the buf
@@ -94,7 +83,7 @@ func (en *tableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, err
 	return en.Record2KV(record, row, rowID)
 }
 
-func (en *tableKVEncoder) GetColumnSize() map[int64]int64 {
+func (en *TableKVEncoder) GetColumnSize() map[int64]int64 {
 	sessionVars := en.SessionCtx.GetSessionVars()
 	sessionVars.TxnCtxMu.Lock()
 	defer sessionVars.TxnCtxMu.Unlock()
@@ -102,7 +91,7 @@ func (en *tableKVEncoder) GetColumnSize() map[int64]int64 {
 }
 
 // todo merge with code in load_data.go
-func (en *tableKVEncoder) parserData2TableData(parserData []types.Datum, rowID int64) ([]types.Datum, error) {
+func (en *TableKVEncoder) parserData2TableData(parserData []types.Datum, rowID int64) ([]types.Datum, error) {
 	row := make([]types.Datum, 0, len(en.insertColumns))
 	sessionVars := en.SessionCtx.GetSessionVars()
 	setVar := func(name string, col *types.Datum) {
@@ -162,7 +151,7 @@ func (en *tableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 // The input values from these two statements are datums instead of
 // expressions which are used in `insert into set x=y`.
 // copied from InsertValues
-func (en *tableKVEncoder) getRow(vals []types.Datum, rowID int64) ([]types.Datum, error) {
+func (en *TableKVEncoder) getRow(vals []types.Datum, rowID int64) ([]types.Datum, error) {
 	row := make([]types.Datum, len(en.Columns))
 	hasValue := make([]bool, len(en.Columns))
 	for i := 0; i < len(en.insertColumns); i++ {
@@ -179,7 +168,7 @@ func (en *tableKVEncoder) getRow(vals []types.Datum, rowID int64) ([]types.Datum
 	return en.fillRow(row, hasValue, rowID)
 }
 
-func (en *tableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int64) ([]types.Datum, error) {
+func (en *TableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int64) ([]types.Datum, error) {
 	var value types.Datum
 	var err error
 
@@ -217,7 +206,7 @@ func (en *tableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int6
 	return record, nil
 }
 
-func (en *tableKVEncoder) Close() error {
+func (en *TableKVEncoder) Close() error {
 	en.SessionCtx.Close()
 	return nil
 }

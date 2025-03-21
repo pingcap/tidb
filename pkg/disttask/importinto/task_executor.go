@@ -511,20 +511,6 @@ func (e *writeAndIngestStepExecutor) Cleanup(_ context.Context) (err error) {
 	return e.tableImporter.Close()
 }
 
-type conflictResolutionStepExecutor struct {
-	taskexecutor.EmptyStepExecutor
-	taskID   int64
-	store    tidbkv.Storage
-	taskMeta *TaskMeta
-	logger   *zap.Logger
-}
-
-var _ execute.StepExecutor = &conflictResolutionStepExecutor{}
-
-func (e *conflictResolutionStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
-	return nil
-}
-
 type postProcessStepExecutor struct {
 	taskexecutor.EmptyStepExecutor
 	taskID   int64

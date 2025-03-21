@@ -173,7 +173,7 @@ type chunkEncoder struct {
 
 	chunkName string
 	logger    *zap.Logger
-	encoder   KVEncoder
+	encoder   *TableKVEncoder
 	keyspace  []byte
 
 	// total duration takes by read/encode.
@@ -189,7 +189,7 @@ func newChunkEncoder(
 	offset int64,
 	sendFn func(ctx context.Context, batch *encodedKVGroupBatch) error,
 	logger *zap.Logger,
-	encoder KVEncoder,
+	encoder *TableKVEncoder,
 	keyspace []byte,
 ) *chunkEncoder {
 	return &chunkEncoder{
@@ -358,7 +358,7 @@ func (p *baseChunkProcessor) Process(ctx context.Context) (err error) {
 // exported for test.
 func NewFileChunkProcessor(
 	parser mydump.Parser,
-	encoder KVEncoder,
+	encoder *TableKVEncoder,
 	keyspace []byte,
 	chunk *checkpoints.ChunkCheckpoint,
 	logger *zap.Logger,
@@ -501,7 +501,7 @@ type QueryRow struct {
 
 func newQueryChunkProcessor(
 	rowCh chan QueryRow,
-	encoder KVEncoder,
+	encoder *TableKVEncoder,
 	keyspace []byte,
 	logger *zap.Logger,
 	diskQuotaLock *syncutil.RWMutex,

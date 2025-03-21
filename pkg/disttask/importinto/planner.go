@@ -607,6 +607,10 @@ func generateConflictResolutionSpecs(planCtx planner.PlanCtx, _ *LogicalPlan) ([
 		}
 		m.addConflictInfo(stepMeta.KVGroup, &stepMeta.SortedKVMeta.ConflictInfo)
 	}
+	// skip this step if no conflict
+	if len(m.ConflictInfos) == 0 {
+		return []planner.PipelineSpec{}, nil
+	}
 	return []planner.PipelineSpec{
 		&ConflictResolutionSpec{
 			ConflictResolutionStepMeta: m,

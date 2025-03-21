@@ -135,15 +135,15 @@ func TestWriter(t *testing.T) {
 	})
 
 	bufSize := rand.Intn(100) + 1
-	kvReader, err := newKVReader(ctx, "/test/0/0", memStore, 0, bufSize)
+	kvReader, err := NewKVReader(ctx, "/test/0/0", memStore, 0, bufSize)
 	require.NoError(t, err)
 	for i := 0; i < kvCnt; i++ {
-		key, value, err := kvReader.nextKV()
+		key, value, err := kvReader.NextKV()
 		require.NoError(t, err)
 		require.Equal(t, kvs[i].Key, key)
 		require.Equal(t, kvs[i].Val, value)
 	}
-	_, _, err = kvReader.nextKV()
+	_, _, err = kvReader.NextKV()
 	require.Equal(t, io.EOF, err)
 	require.NoError(t, kvReader.Close())
 
@@ -256,10 +256,10 @@ func TestWriterDuplicateDetect(t *testing.T) {
 	keys := make([][]byte, 0, kvCount)
 	values := make([][]byte, 0, kvCount)
 
-	kvReader, err := newKVReader(ctx, "/test2/mergeID/0", memStore, 0, 100)
+	kvReader, err := NewKVReader(ctx, "/test2/mergeID/0", memStore, 0, 100)
 	require.NoError(t, err)
 	for i := 0; i < kvCount; i++ {
-		key, value, err := kvReader.nextKV()
+		key, value, err := kvReader.NextKV()
 		require.NoError(t, err)
 		clonedKey := make([]byte, len(key))
 		copy(clonedKey, key)
@@ -268,7 +268,7 @@ func TestWriterDuplicateDetect(t *testing.T) {
 		keys = append(keys, clonedKey)
 		values = append(values, clonedVal)
 	}
-	_, _, err = kvReader.nextKV()
+	_, _, err = kvReader.NextKV()
 	require.Equal(t, io.EOF, err)
 	require.NoError(t, kvReader.Close())
 
