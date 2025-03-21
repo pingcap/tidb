@@ -1420,6 +1420,16 @@ func newSSTWriter(path string, blockSize int) (*sstable.Writer, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	// Logic to ensure the default block size is set to 16KB.
+	// If a smaller block size is used (e.g., 4KB, the default for Pebble),
+	// a single large SST file may generate a disproportionately large index block,
+	// potentially causing a memory spike and leading to an Out of Memory (OOM) scenario.
+	// If the user specifies a smaller block size, respect their choice.
+	if blockSize <= 0 {
+		blockSize = config.DefaultBlockSize
+	}
+
 	writable := objstorageprovider.NewFileWritable(f)
 	writer := sstable.NewWriter(writable, sstable.WriterOptions{
 		TablePropertyCollectors: []func() pebble.TablePropertyCollector{

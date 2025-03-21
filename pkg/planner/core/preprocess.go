@@ -391,7 +391,9 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 	case *ast.TableSource:
 		isModeOracle := p.sctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
-		if _, ok := node.Source.(*ast.SelectStmt); ok && !isModeOracle && len(node.AsName.L) == 0 {
+		_, isSelectStmt := node.Source.(*ast.SelectStmt)
+		_, isSetOprStmt := node.Source.(*ast.SetOprStmt)
+		if (isSelectStmt || isSetOprStmt) && !isModeOracle && len(node.AsName.L) == 0 {
 			p.err = dbterror.ErrDerivedMustHaveAlias.GenWithStackByArgs()
 		}
 		if v, ok := node.Source.(*ast.TableName); ok && v.TableSample != nil {

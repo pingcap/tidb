@@ -650,7 +650,7 @@ create table t2 (cc1 int,cc2 text,primary key(cc1));
 insert into t2 values (2, '2');
 set tidb_executor_concurrency = 1;
 set tidb_window_concurrency = 100;
-explain select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) order by a,b,c;
+explain select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) x order by a,b,c;
 id	estRows	task	access object	operator info
 Sort_15	20000.00	root		Column#8, Column#9, Column#10
 └─Union_18	20000.00	root		
@@ -664,7 +664,7 @@ Sort_15	20000.00	root		Column#8, Column#9, Column#10
           └─ShuffleReceiver_30	10000.00	root		
             └─TableReader_26	10000.00	root		data:TableFullScan_25
               └─TableFullScan_25	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) order by a,b,c;
+select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) x order by a,b,c;
 a	b	c
 1	aaaa	1
 1	bbbb	2

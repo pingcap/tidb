@@ -20,6 +20,7 @@ import (
 	"math"
 	"os"
 	"path"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -31,6 +32,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/stretchr/testify/require"
@@ -238,4 +240,37 @@ func TestIterOutputHasUniqueMemorySpace(t *testing.T) {
 	require.NoError(t, iter.Close())
 	// after iter closed, the memory buffer of iter goes to pool
 	require.Greater(t, pool.TotalSize(), int64(0))
+}
+
+// TestCreateSSTWriterDefaultBlockSize tests that createSSTWriter will use the default block size of 16KB if the block size is not set.
+func TestCreateSSTWriterDefaultBlockSize(t *testing.T) {
+	db, tmpPath := makePebbleDB(t, nil)
+	t.Cleanup(func() {
+		require.NoError(t, db.Close())
+	})
+	engine := &Engine{
+		config: backend.LocalEngineConfig{
+			BlockSize: 0, // BlockSize is not set
+		},
+		sstDir: tmpPath,
+		logger: log.Logger{},
+	}
+
+	writer := &Writer{
+		engine: engine,
+	}
+
+	sstWriter, err := writer.createSSTWriter()
+	require.NoError(t, err)
+	require.NotNil(t, sstWriter)
+
+	// blockSize is a private field of sstWriter.writer, so we use reflection to access the private field blockSize
+	writerValue := reflect.ValueOf(sstWriter.writer).Elem()
+	blockSizeField := writerValue.FieldByName("blockSize")
+	require.True(t, blockSizeField.IsValid(), "blockSize field should be valid")
+	require.Equal(t, config.DefaultBlockSize, int(blockSizeField.Int()))
+
+	// clean up
+	err = sstWriter.writer.Close()
+	require.NoError(t, err)
 }
