@@ -378,8 +378,9 @@ func TestOnBackupResponse(t *testing.T) {
 
 	require.NoError(t, tree.Insert(buildProgressRangeFn([]byte("aa"), []byte("c"))))
 	// error due to the tree range does not match response range.
-	_, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
-	require.Error(t, err)
+	lock, err = s.backupClient.OnBackupResponse(ctx, r, errContext, &tree)
+	require.Nil(t, lock)
+	require.NoError(t, err)
 
 	// case #3: partial range success case, find incomplete range
 	r.Resp.StartKey = []byte("aa")
@@ -744,26 +745,38 @@ func TestBuildProgressRangeTree(t *testing.T) {
 			StartKey: []byte("c"),
 			EndKey:   []byte("d"),
 		},
+		{
+			StartKey: []byte("f"),
+			EndKey:   []byte("g"),
+		},
 	}
 	tree, err := s.backupClient.BuildProgressRangeTree(context.Background(), ranges, nil, func(backup.ProgressUnit) {})
 	require.NoError(t, err)
 
 	contained, err := tree.FindContained([]byte("a"), []byte("aa"))
 	require.Nil(t, contained)
-	require.Error(t, err)
+	require.NoError(t, err)
 
 	contained, err = tree.FindContained([]byte("b"), []byte("ba"))
 	require.Nil(t, contained)
-	require.Error(t, err)
+	require.NoError(t, err)
 
 	contained, err = tree.FindContained([]byte("e"), []byte("ea"))
 	require.Nil(t, contained)
-	require.Error(t, err)
+	require.NoError(t, err)
 
 	contained, err = tree.FindContained([]byte("aa"), []byte("b"))
 	require.NotNil(t, contained)
 	require.Equal(t, []byte("aa"), contained.Origin.StartKey)
 	require.Equal(t, []byte("b"), contained.Origin.EndKey)
+	require.NoError(t, err)
+
+	contained, err = tree.FindContained([]byte("cc"), []byte("e"))
+	require.Nil(t, contained)
+	require.Error(t, err)
+
+	contained, err = tree.FindContained([]byte("e"), []byte("ff"))
+	require.Nil(t, contained)
 	require.NoError(t, err)
 }
 

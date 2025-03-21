@@ -251,6 +251,8 @@ func (s *schemaInfo) matchChecksum(checksumMap map[int64]*metautil.ChecksumStats
 			zap.Uint64("calculated total bytes", bytes))
 		return errors.Trace(berrors.ErrBackupChecksumMismatch)
 	}
+	log.Info("checksum success",
+		zap.Stringer("db", s.dbInfo.Name), zap.Stringer("table", s.tableInfo.Name))
 	return nil
 }
 
