@@ -15,6 +15,7 @@
 package executor_test
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -899,4 +900,33 @@ func TestIssue57345(t *testing.T) {
 		Check(testkit.Rows())
 	tk.MustQuery("select table_name from information_schema.referential_constraints where constraint_schema = 'a' and constraint_schema = 'b';").
 		Check(testkit.Rows())
+}
+
+func TestInfoschemaTablesSpecialOptimizationCovered(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	for _, testCase := range []struct {
+		sql    string
+		expect bool
+	}{
+		// {"select table_name, table_schema from information_schema.tables", true},
+		{"select table_name from information_schema.tables", true},
+		{"select table_name from information_schema.tables where table_schema = 'test'", true},
+		{"select table_schema from information_schema.tables", true},
+		{"select count(table_schema) from information_schema.tables", true},
+		{"select count(table_name) from information_schema.tables", true},
+		{"select count(table_rows) from information_schema.tables", false},
+		{"select count(1) from information_schema.tables", true},
+		{"select count(*) from information_schema.tables", true},
+		{"select count(1) from (select table_name from information_schema.tables) t", true},
+		{"select * from information_schema.tables", false},
+		{"select table_name, table_catalog from information_schema.tables", true},
+		{"select table_name, table_rows from information_schema.tables", false},
+	} {
+		var covered bool
+		ctx := context.WithValue(context.Background(), "cover-check", &covered)
+		tk.MustQueryWithContext(ctx, testCase.sql)
+		require.Equal(t, testCase.expect, covered, testCase.sql)
+	}
 }
