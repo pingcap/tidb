@@ -1526,8 +1526,15 @@ func constructIndexJoinInnerSideTaskWithAggCheck(p *logicalop.LogicalJoin, prop 
 				physicalIndexScan, _ = dsCopTask.indexPlan.Children()[0].(*PhysicalIndexScan)
 			}
 			if physicalIndexScan != nil {
+				stats := la.StatsInfo()
+				if dsCopTask.indexPlan != nil {
+					stats = stats.ScaleByExpectCnt(dsCopTask.indexPlan.StatsInfo().RowCount)
+				} else if dsCopTask.tablePlan != nil {
+					stats = stats.ScaleByExpectCnt(dsCopTask.tablePlan.StatsInfo().RowCount)
+				}
 				physicalIndexScan.KeepOrder = true
 				dsCopTask.keepOrder = true
+				streamAgg.SetStats(stats)
 				aggTask = streamAgg.Attach2Task(dsCopTask)
 			}
 		}
@@ -1542,9 +1549,6 @@ func constructIndexJoinInnerSideTaskWithAggCheck(p *logicalop.LogicalJoin, prop 
 			stats = stats.ScaleByExpectCnt(dsCopTask.tablePlan.StatsInfo().RowCount)
 		}
 		physicalHashAgg := NewPhysicalHashAgg(la, stats, prop)
-			la,
-			stats,
-			prop)
 		physicalHashAgg.SetSchema(la.Schema().Clone())
 		aggTask = physicalHashAgg.Attach2Task(dsCopTask)
 	}
