@@ -265,6 +265,12 @@ type IndexJoinRuntimeProp struct {
 	OuterJoinKeys []*expression.Column
 	// for inner ds/index to detect the range, cuz its runtime constant.
 	InnerJoinKeys []*expression.Column
+	// AvgInnerRowCnt is computed from join.EqualCondCount / outerChild.RowCount.
+	// since ds only can build empty range before seeing runtime data, the so inner
+	// ds can get an accurate countAfterAccess. Once index join prop pushed to the
+	// deeper side like through join, the deeper DS's countAfterAccess should be
+	// thought twice.
+	AvgInnerRowCnt float64
 }
 
 // NewPhysicalProperty builds property from columns.

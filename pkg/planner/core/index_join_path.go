@@ -647,12 +647,11 @@ func indexJoinPathRemoveUselessEQIn(buildTmp *indexJoinPathTmp, idxCols []*expre
 // getBestIndexJoinPathResultByProp tries to iterate all possible access paths of the inner child and builds
 // index join path for each access path. It returns the best index join path result and the mapping.
 func getBestIndexJoinPathResultByProp(
-	join *logicalop.LogicalJoin,
 	innerDS *logicalop.DataSource,
 	indexJoinProp *property.IndexJoinRuntimeProp,
 	checkPathValid func(path *util.AccessPath) bool) (*indexJoinPathResult, []int) {
 	indexJoinInfo := &indexJoinPathInfo{
-		joinOtherConditions:   join.OtherConditions, // 为什么构建 index join ds 的需要 other conditions
+		joinOtherConditions:   indexJoinProp.JoinOtherConditions, // 为什么构建 index join ds 的需要 other conditions
 		outerJoinKeys:         indexJoinProp.OuterJoinKeys,
 		innerJoinKeys:         indexJoinProp.InnerJoinKeys,
 		innerPushedConditions: innerDS.PushedDownConds,
@@ -663,7 +662,7 @@ func getBestIndexJoinPathResultByProp(
 	for _, path := range innerDS.PossibleAccessPaths {
 		if checkPathValid(path) {
 			// 构建 index join path res
-			result, emptyRange, err := indexJoinPathBuild(join.SCtx(), path, indexJoinInfo, false)
+			result, emptyRange, err := indexJoinPathBuild(innerDS.SCtx(), path, indexJoinInfo, false)
 			if emptyRange {
 				return nil, nil
 			}

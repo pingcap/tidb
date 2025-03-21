@@ -17,6 +17,7 @@ package core
 import (
 	"cmp"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"math"
 	"slices"
 	"strings"
@@ -1393,6 +1394,73 @@ func exploreEnforcedPlan(ds *logicalop.DataSource) bool {
 	return fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix46177, true)
 }
 
+func buildIndexJoinInner2TableScanByProp(ds *logicalop.DataSource, indexJoinProp *property.IndexJoinRuntimeProp) base.Task {
+	// 保持 buildIndexJoinInner2TableScan 的一些前序检查逻辑
+	var tblPath *util.AccessPath
+	for _, path := range ds.PossibleAccessPaths {
+		if path.IsTablePath() && path.StoreType == kv.TiKV { // ds 里面找一个 tikv 的 table path
+			tblPath = path
+			break
+		}
+	}
+	if tblPath == nil {
+		return nil
+	}
+	// 还是分 handle 或者 index 来处理吧
+	keyOff2IdxOff := make([]int, len(indexJoinProp.InnerJoinKeys))
+	var indexJoinResult *indexJoinPathResult
+	newOuterJoinKeys := make([]*expression.Column, 0)
+	var innerTask base.Task
+	for _, path := range ds.PossibleAccessPaths {
+		if path.IsTiKVTablePath() {
+			if path.IsCommonHandlePath {
+				indexJoinResult, keyOff2IdxOff = getBestIndexJoinPathResultByProp(ds, indexJoinProp, func(path *util.AccessPath) bool { return path.IsCommonHandlePath })
+				if indexJoinResult == nil {
+					return nil
+				}
+				rangeInfo := indexJoinPathRangeInfo(ds.SCtx(), indexJoinProp.OuterJoinKeys, indexJoinResult)
+				innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), rangeInfo, false, false, indexJoinProp.AvgInnerRowCnt)
+			} else {
+				// int handle path
+				pkMatched := false
+				pkCol := ds.GetPKIsHandleCol()
+				if pkCol == nil {
+					return nil
+				}
+				for i, key := range indexJoinProp.InnerJoinKeys {
+					if !key.EqualColumn(pkCol) {
+						keyOff2IdxOff[i] = -1
+						continue
+					}
+					pkMatched = true
+					keyOff2IdxOff[i] = 0
+					// Add to newOuterJoinKeys only if conditions contain inner primary key. For issue #14822.
+					newOuterJoinKeys = append(newOuterJoinKeys, indexJoinProp.OuterJoinKeys[i])
+				}
+				outerJoinKeys := newOuterJoinKeys
+				if !pkMatched {
+					return nil
+				}
+				ranges := ranger.FullIntRange(mysql.HasUnsignedFlag(pkCol.RetType.GetFlag()))
+				var buffer strings.Builder
+				buffer.WriteString("[")
+				for i, key := range outerJoinKeys { // 只 decided by single outer = pk col
+					if i != 0 {
+						buffer.WriteString(" ")
+					}
+					buffer.WriteString(key.StringWithCtx(ds.SCtx().GetExprCtx().GetEvalCtx(), errors.RedactLogDisable))
+				}
+				buffer.WriteString("]")
+				rangeInfo := buffer.String()
+				innerTask = constructDS2TableScanTask(ds, ranges, rangeInfo, false, false, indexJoinProp.AvgInnerRowCnt)
+			}
+		} else {
+			// index path
+
+		}
+	}
+}
+
 func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
 	ds := lp.(*logicalop.DataSource)
 	// If ds is an inner plan in an IndexJoin, the IndexJoin will generate an inner plan by itself,
@@ -1408,6 +1476,10 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 			// even enforce hint can not work with this.
 			return base.InvalidTask, 0, nil
 		}
+		// when datasource leaf is in index join's inner side.
+		// 老得那边分 index path 和 table path 是因为底层构建的东西不一致，这里是为了兼容老的逻辑
+
+		getBestIndexJoinPathResultByProp(ds, prop.IndexJoinProp)
 	}
 	if ds.IsForUpdateRead && ds.SCtx().GetSessionVars().TxnCtx.IsExplicit {
 		hasPointGetPath := false
