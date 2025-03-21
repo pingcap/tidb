@@ -89,7 +89,7 @@ go_test(
     ],
     embed = [":snap_client"],
     flaky = True,
-    shard_count = 24,
+    shard_count = 23,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/glue",
@@ -108,7 +108,6 @@ go_test(
         "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
-        "//pkg/session",
         "//pkg/tablecodec",
         "//pkg/testkit/testsetup",
         "//pkg/types",

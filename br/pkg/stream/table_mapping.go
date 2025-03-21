@@ -293,9 +293,25 @@ func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBRepl
 			existingDBReplace.DbID = newID
 		}
 
+		// update db name if empty and exists in baseMap
+		if existingDBReplace.Name == "" {
+			if baseDBReplace, exists := baseMap[upDBID]; exists && baseDBReplace.Name != "" {
+				existingDBReplace.Name = baseDBReplace.Name
+			}
+		}
+
 		for upTableID, existingTableReplace := range existingDBReplace.TableMap {
 			if newID, exists := tm.globalIdMap[upTableID]; exists {
 				existingTableReplace.TableID = newID
+			}
+
+			// update table name if empty and exists in baseMap
+			if existingTableReplace.Name == "" {
+				if baseDBReplace, dbExists := baseMap[upDBID]; dbExists {
+					if baseTableReplace, tableExists := baseDBReplace.TableMap[upTableID]; tableExists && baseTableReplace.Name != "" {
+						existingTableReplace.Name = baseTableReplace.Name
+					}
+				}
 			}
 
 			for partUpID := range existingTableReplace.PartitionMap {
