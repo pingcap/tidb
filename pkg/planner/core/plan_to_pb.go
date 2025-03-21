@@ -338,6 +338,7 @@ func (p *PhysicalTableScan) partitionTableScanToPBForFlash(ctx *base.BuildPBCont
 	return &tipb.Executor{Tp: tipb.ExecType_TypePartitionTableScan, PartitionTableScan: ptsExec, ExecutorId: &executorID}, err
 }
 
+// IndexInfosToPB converts []*model.IndexInfo to []*tipb.IndexInfo.
 func IndexInfosToPB(tblInfo *model.TableInfo, indexes []*model.IndexInfo) []*tipb.IndexInfo {
 	indexInfos := make([]*tipb.IndexInfo, 0, len(indexes))
 	for _, idx := range indexes {

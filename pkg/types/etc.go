@@ -83,7 +83,7 @@ func IsTypeInteger(tp byte) bool {
 	return false
 }
 
-// IsTypeStoreAsInteger returns a boolean indicating whether the tp is stored as integer type.
+// IsTypeStoredAsInteger returns a boolean indicating whether the tp is stored as integer type.
 func IsTypeStoredAsInteger(tp byte) bool {
 	switch tp {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:

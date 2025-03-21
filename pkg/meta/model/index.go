@@ -59,11 +59,13 @@ type VectorIndexInfo struct {
 	DistanceMetric DistanceMetric `json:"distance_metric"`
 }
 
+// InvertedIndexInfo is the information of inverted index of a column.
 type InvertedIndexInfo struct {
 	IsSigned bool  `json:"is_signed"`
 	TypeSize uint8 `json:"type_size"`
 }
 
+// FieldTypeToInvertedIndexInfo converts FieldType to InvertedIndexInfo.
 func FieldTypeToInvertedIndexInfo(tp types.FieldType) *InvertedIndexInfo {
 	var isSigned bool
 	var typeSize uint8
@@ -106,6 +108,7 @@ func FieldTypeToInvertedIndexInfo(tp types.FieldType) *InvertedIndexInfo {
 	}
 }
 
+// ColumnarIndexType is the type of columnar index.
 type ColumnarIndexType uint8
 
 const (
@@ -209,6 +212,7 @@ func (index *IndexInfo) IsColumnarIndex() bool {
 	return index.VectorInfo != nil || index.InvertedInfo != nil
 }
 
+// GetColumnarIndexType returns the type of columnar index.
 func (index *IndexInfo) GetColumnarIndexType() ColumnarIndexType {
 	if index.VectorInfo != nil {
 		return ColumnarIndexTypeVector
