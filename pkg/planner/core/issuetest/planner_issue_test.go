@@ -107,11 +107,11 @@ func TestIssue54535(t *testing.T) {
 			"  ├─TableReader_43(Build) 9990.00 root  data:Selection_42",
 			"  │ └─Selection_42 9990.00 cop[tikv]  not(isnull(test.ta.a1))",
 			"  │   └─TableFullScan_41 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo",
-			"  └─HashAgg_14(Probe) 79840080.00 root  group by:test.tb.b1, test.tb.b2, funcs:count(Column#11)->Column#9, funcs:firstrow(test.tb.b1)->test.tb.b1",
-			"    └─IndexLookUp_15 79840080.00 root  ",
+			"  └─HashAgg_14(Probe) 9990.00 root  group by:test.tb.b1, test.tb.b2, funcs:count(Column#11)->Column#9, funcs:firstrow(test.tb.b1)->test.tb.b1",
+			"    └─IndexLookUp_15 9990.00 root  ",
 			"      ├─Selection_12(Build) 9990.00 cop[tikv]  not(isnull(test.tb.b1))",
 			"      │ └─IndexRangeScan_10 10000.00 cop[tikv] table:tb, index:idx_b(b1) range: decided by [eq(test.tb.b1, test.ta.a1)], keep order:false, stats:pseudo",
-			"      └─HashAgg_13(Probe) 79840080.00 cop[tikv]  group by:test.tb.b1, test.tb.b2, funcs:count(test.tb.b3)->Column#11",
+			"      └─HashAgg_13(Probe) 9990.00 cop[tikv]  group by:test.tb.b1, test.tb.b2, funcs:count(test.tb.b3)->Column#11",
 			"        └─TableRowIDScan_11 9990.00 cop[tikv] table:tb keep order:false, stats:pseudo"))
 	// test for issues/55169
 	tk.MustExec("create table t1(col_1 int, index idx_1(col_1));")
@@ -264,4 +264,23 @@ GROUP BY field1;`).Check(testkit.Rows("HashJoin 2.00 root  CARTESIAN left outer 
 FROM t1 AS table1
 WHERE (EXISTS (SELECT SUBQUERY2_t1.a1 AS SUBQUERY2_field1 FROM t1 AS SUBQUERY2_t1)) OR table1.b1 >= 55
 GROUP BY field1;`).Check(testkit.Rows("0"))
+}
+
+func TestIssue59902(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t1(a int primary key, b int);")
+	tk.MustExec("create table t2(a int, b int, key idx(a));")
+	tk.MustExec("set tidb_enable_inl_join_inner_multi_pattern=on;")
+	tk.MustQuery("explain format='brief' select t1.b,(select count(*) from t2 where t2.a=t1.a) as a from t1 where t1.a=1;").
+		Check(testkit.Rows(
+			"Projection 1.00 root  test.t1.b, ifnull(Column#9, 0)->Column#9",
+			"└─IndexJoin 1.00 root  left outer join, inner:HashAgg, left side:Point_Get, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+			"  ├─Point_Get(Build) 1.00 root table:t1 handle:1",
+			"  └─HashAgg(Probe) 1.00 root  group by:test.t2.a, funcs:count(Column#10)->Column#9, funcs:firstrow(test.t2.a)->test.t2.a",
+			"    └─IndexReader 1.00 root  index:HashAgg",
+			"      └─HashAgg 1.00 cop[tikv]  group by:test.t2.a, funcs:count(1)->Column#10",
+			"        └─Selection 1.00 cop[tikv]  not(isnull(test.t2.a))",
+			"          └─IndexRangeScan 1.00 cop[tikv] table:t2, index:idx(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"))
 }
