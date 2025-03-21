@@ -436,3 +436,13 @@ type EngineWriter interface {
 func (engine *OpenedEngine) GetEngineUUID() uuid.UUID {
 	return engine.uuid
 }
+
+// WriteTarget is used by Writer interface
+type WriteTarget string
+
+const (
+	// WriteTargetLocal is the target for local write.
+	WriteTargetLocal WriteTarget = "local"
+	// WriteTargetExternal is the target for external write.
+	WriteTargetExternal WriteTarget = "external"
+)

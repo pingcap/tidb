@@ -25468,7 +25468,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "The rate of writing to the temp storage directory in bytes per second.",
+          "description": "The rate of writing kv to the temp storage directory in bytes per second.",
           "fieldConfig": {
             "defaults": {
               "unit": "MiBs"
@@ -25588,7 +25588,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "The rate of reading from the temp storage directory in bytes per second.",
+          "description": "The rate of reading kv from the temp storage directory in bytes per second.",
           "fieldConfig": {
             "defaults": {
               "unit": "MiBs"

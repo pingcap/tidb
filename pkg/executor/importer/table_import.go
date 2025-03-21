@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/metrics"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -990,5 +989,5 @@ func FlushTableStats(ctx context.Context, se sessionctx.Context, tableID int64, 
 }
 
 func init() {
-	metrics.GetImportTempDataDir = GetImportRootDir
+	tidbmetrics.GetImportTempDataDir = GetImportRootDir
 }

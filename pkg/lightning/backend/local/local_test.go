@@ -595,7 +595,7 @@ func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 	f.db.Store(db)
 
 	createSSTWriter := func() (*sstWriter, error) {
-		path := filepath.Join(f.sstDir, uuid.New().String()+".sst")
+		path := filepath.Join(f.sstDir.Path(), uuid.New().String()+".sst")
 		writer, err := newSSTWriter(path, 16*1024)
 		if err != nil {
 			return nil, err
@@ -618,7 +618,7 @@ func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 	}
 
 	i := dbSSTIngester{e: f}
-	newMeta, err := i.mergeSSTs(metas, tmpPath, 16*1024)
+	newMeta, err := i.mergeSSTs(metas, tmpPath.Path(), 16*1024)
 	require.NoError(t, err)
 
 	require.Equal(t, meta.totalCount, newMeta.totalCount)

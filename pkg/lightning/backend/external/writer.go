@@ -23,6 +23,7 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/docker/go-units"
@@ -354,6 +355,13 @@ type Writer struct {
 	maxKey    tidbkv.Key
 	totalSize uint64
 	totalCnt  uint64
+}
+
+func (w Writer) Target() backend.WriteTarget {
+	if strings.HasPrefix(w.store.URI(), "local:") {
+		return backend.WriteTargetLocal
+	}
+	return backend.WriteTargetExternal
 }
 
 // WriteRow implements ingest.Writer.

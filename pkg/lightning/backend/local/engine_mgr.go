@@ -237,14 +237,17 @@ func (em *engineManager) openEngine(ctx context.Context, cfg *backend.EngineConf
 		return err
 	}
 
-	sstDir := engineSSTDir(em.LocalStoreDir, engineUUID)
+	sstDir := sstDir{
+		base:   em.LocalStoreDir,
+		extend: engineUUID.String() + ".sst",
+	}
 	if !cfg.KeepSortDir {
-		if err := os.RemoveAll(sstDir); err != nil {
+		if err := os.RemoveAll(sstDir.Path()); err != nil {
 			return errors.Trace(err)
 		}
 	}
-	if !common.IsDirExists(sstDir) {
-		if err := os.Mkdir(sstDir, 0o750); err != nil {
+	if !common.IsDirExists(sstDir.Path()) {
+		if err := os.Mkdir(sstDir.Path(), 0o750); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -437,8 +440,8 @@ func (em *engineManager) resetEngine(
 	if err == nil {
 		localEngine.db.Store(db)
 		localEngine.engineMeta = engineMeta{}
-		if !common.IsDirExists(localEngine.sstDir) {
-			if err := os.Mkdir(localEngine.sstDir, 0o750); err != nil {
+		if !common.IsDirExists(localEngine.sstDir.Path()) {
+			if err := os.Mkdir(localEngine.sstDir.Path(), 0o750); err != nil {
 				return errors.Trace(err)
 			}
 		}

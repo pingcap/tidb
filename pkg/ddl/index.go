@@ -2165,7 +2165,7 @@ func getLocalWriterConfig(indexCnt, writerCnt int) *backend.LocalWriterConfig {
 	return writerCfg
 }
 
-func writeChunkToLocal(
+func writeChunk(
 	ctx context.Context,
 	writers []ingest.Writer,
 	indexes []table.Index,
@@ -2245,9 +2245,11 @@ func writeChunkToLocal(
 		count++
 		lastHandle = h
 	}
-	ingestDir := metrics.GetIngestTempDataDir()
-	duration := time.Since(start)
-	metrics.TempDirWriteStorageRate.WithLabelValues(ingestDir).Observe(float64(totalSize) / 1024.0 / 1024.0 / duration.Seconds())
+	if writers[0].Target() == backend.WriteTargetLocal {
+		ingestDir := metrics.GetIngestTempDataDir()
+		duration := time.Since(start)
+		metrics.TempDirWriteStorageRate.WithLabelValues(ingestDir).Observe(float64(totalSize) / 1024.0 / 1024.0 / duration.Seconds())
+	}
 	return count, lastHandle, nil
 }
 

@@ -39,7 +39,7 @@ func InitTempDirMetrics() {
 			Namespace: "tidb",
 			Subsystem: "temp_dir",
 			Name:      "write_rate_bytes_per_second",
-			Help:      "The rate of writing to the temp storage directory in bytes per second.",
+			Help:      "The rate of writing kv to the temp storage directory in bytes per second.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 20),
 		}, []string{LblType})
 
@@ -48,7 +48,7 @@ func InitTempDirMetrics() {
 			Namespace: "tidb",
 			Subsystem: "temp_dir",
 			Name:      "read_rate_bytes_per_second",
-			Help:      "The rate of reading from the temp storage directory in bytes per second.",
+			Help:      "The rate of reading kv from the temp storage directory in bytes per second.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 20),
 		}, []string{LblType})
 
@@ -69,9 +69,12 @@ func InitTempDirMetrics() {
 		}, []string{LblType})
 }
 
+//revive:disable:exported
 var CountFilesAndSize func(root string) (count int, size int) = nil
 var GetIngestTempDataDir func() string = nil
 var GetImportTempDataDir func() string = nil
+
+//revive:enable:exported
 
 func observeTempDirUsage(label string) {
 	count, size := CountFilesAndSize(label)

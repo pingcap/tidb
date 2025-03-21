@@ -20,7 +20,6 @@ import (
 	"math"
 	"os"
 	"path"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -38,14 +37,14 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
-func makePebbleDB(t *testing.T, opt *pebble.Options) (*pebble.DB, string) {
+func makePebbleDB(t *testing.T, opt *pebble.Options) (*pebble.DB, sstDir) {
 	dir := t.TempDir()
+	sstDir := sstDir{base: dir, extend: "test.sst"}
 	db, err := pebble.Open(path.Join(dir, "test"), opt)
 	require.NoError(t, err)
-	tmpPath := filepath.Join(dir, "test.sst")
-	err = os.Mkdir(tmpPath, 0o755)
+	err = os.Mkdir(sstDir.Path(), 0o755)
 	require.NoError(t, err)
-	return db, tmpPath
+	return db, sstDir
 }
 
 func TestGetEngineSizeWhenImport(t *testing.T) {
@@ -112,7 +111,7 @@ func TestIngestSSTWithClosedEngine(t *testing.T) {
 	f.TS = oracle.GoTimeToTS(time.Now())
 	f.db.Store(db)
 	f.sstIngester = dbSSTIngester{e: f}
-	sstPath := path.Join(tmpPath, uuid.New().String()+".sst")
+	sstPath := path.Join(tmpPath.Path(), uuid.New().String()+".sst")
 	file, err := vfs.Default.Create(sstPath)
 	require.NoError(t, err)
 	writable := objstorageprovider.NewFileWritable(file)

@@ -17,6 +17,8 @@ package importinto
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -41,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -272,8 +275,22 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 		dataKVPartSize := max(external.MinUploadPartSize, int64(dataKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/10000))
 		indexKVPartSize := max(external.MinUploadPartSize, int64(perIndexKVMemSizePerCon*uint64(external.MaxMergingFilesPerThread)/10000))
 		prefix := subtaskPrefix(s.taskID, subtask.ID)
-		// TODO(cbc}: update metrics.TempDirReadStorageRate.WithLabelValues(importDir)
-		err := external.MergeOverlappingFiles(
+		importDir := filepath.Join(metrics.GetImportTempDataDir(), prefix)
+		var totalSize int64
+		err := filepath.Walk(importDir, func(_ string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if !info.IsDir() {
+				totalSize += info.Size()
+			}
+			return err
+		})
+		if err != nil {
+			return err
+		}
+		start := time.Now()
+		err = external.MergeOverlappingFiles(
 			ctx,
 			dataFiles,
 			s.tableImporter.GlobalSortLocalStore,
@@ -287,6 +304,8 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 		if err != nil {
 			return err
 		}
+		duration := time.Since(start)
+		metrics.TempDirReadStorageRate.WithLabelValues(importDir).Observe(float64(totalSize) / 1024.0 / 1024.0 / duration.Seconds())
 		sharedVars.mu.Lock()
 		sortedIndexMetas := sharedVars.SortedIndexMetas
 		sharedVars.mu.Unlock()
