@@ -136,7 +136,7 @@ func TestNeedEnforceExchangerWithHashByEquivalence(t *testing.T) {
 			MPPPartitionCols: testcase.MPPPartitionColumns,
 		}
 		t.Log(testcase.fd.String())
-		require.Equal(t, testcase.expected, prop.NeedEnforceExchangerWithHashByEquivalence(testcase.HashCol, testcase.fd))
+		require.Equal(t, testcase.expected, prop.NeedMPPExchangeByEquivalence(testcase.HashCol, testcase.fd))
 	}
 }
 
