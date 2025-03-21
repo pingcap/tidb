@@ -918,6 +918,9 @@ func TestOwnershipLost(t *testing.T) {
 	c.flushAll()
 	failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription.listenOver.aboutToSend", "pause")
 	failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/FlushSubscriber.Clear.timeoutMs", "return(500)")
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/FlushSubscriber.Clear.timeoutMs"))
+	}()
 	wg := new(sync.WaitGroup)
 	wg.Add(adv.TEST_registerCallbackForSubscriptions(wg.Done))
 	cancel()
@@ -939,6 +942,9 @@ func TestSubscriptionPanic(t *testing.T) {
 
 	require.NoError(t, adv.OnTick(ctx))
 	failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription.listenOver.aboutToSend", "5*panic")
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription.listenOver.aboutToSend"))
+	}()
 	ckpt := c.advanceCheckpoints()
 	c.flushAll()
 	cnt := 0
