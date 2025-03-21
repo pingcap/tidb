@@ -1542,15 +1542,10 @@ func (e *BasicRuntimeStats) GetActRows() int64 {
 }
 
 // Clone implements the RuntimeStats interface.
-func (e *BasicRuntimeStats) Clone() RuntimeStats {
-	result := &BasicRuntimeStats{}
-	result.executorCount.Store(e.executorCount.Load())
-	result.loop.Store(e.loop.Load())
-	result.consume.Store(e.consume.Load())
-	result.open.Store(e.open.Load())
-	result.close.Store(e.close.Load())
-	result.rows.Store(e.rows.Load())
-	return result
+// BasicRuntimeStats shouldn't implement Clone interface because all executors with the same executor_id
+// should share the same BasicRuntimeStats, duplicated BasicRuntimeStats are easy to cause mistakes.
+func (*BasicRuntimeStats) Clone() RuntimeStats {
+	panic("BasicRuntimeStats should not implement Clone function")
 }
 
 // Merge implements the RuntimeStats interface.
