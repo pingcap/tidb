@@ -299,7 +299,7 @@ func (p *PhysicalProperty) IsSubsetOf(keys []*MPPPartitionColumn) []int {
 	return matches
 }
 
-// NeedEnforceExchangerWithHashByEquivalence checks if the keys can match the needs of partition with equivalence.
+// NeedMPPExchangeByEquivalence checks if the keys can match the needs of partition with equivalence.
 // "Equivalence" refers to the process where we utilize a hash column to obtain equivalent columns,
 // and then use these equivalent columns to compare with the MPP partition column to determine whether an exchange is
 // necessary.
@@ -309,7 +309,7 @@ func (p *PhysicalProperty) IsSubsetOf(keys []*MPPPartitionColumn) []int {
 //  2. keys: [9]
 //  3. FD: (1)-->(2-6,8), ()-->(7), (9)-->(10-17), (1,10)==(1,10), (18,21)-->(19,20,22-33), (9,18)==(9,18)
 //     In this case, we can see that the child supplied partition keys is subset of parent required partition cols.
-func (p *PhysicalProperty) NeedEnforceExchangerWithHashByEquivalence(
+func (p *PhysicalProperty) NeedMPPExchangeByEquivalence(
 	keys []*MPPPartitionColumn, fd *funcdep.FDSet) bool {
 	uniqueID2MppCol := make(map[*MPPPartitionColumn]intset.FastIntSet, len(p.MPPPartitionCols))
 	// for each partition column, we calculate the equivalence alternative closure of it.
