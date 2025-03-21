@@ -231,7 +231,9 @@ func (sr *SchemasReplace) rewriteKeyForTable(
 		// table filtered out
 		return nil, nil
 	}
-	if tableReplace.FilteredOut {
+
+	// don't restore meta kv change for system db, not supported yet
+	if tableReplace.FilteredOut || utils.IsSysOrTempSysDB(dbReplace.Name) {
 		return nil, nil
 	}
 
