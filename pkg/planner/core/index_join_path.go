@@ -424,7 +424,7 @@ func indexJoinPathBuildTmpRange(
 	return
 }
 
-func indexJoinIntPKRangeInfo(ectx expression.EvalContext, pkCol *expression.Column, outerJoinKeys []*expression.Column) string {
+func indexJoinIntPKRangeInfo(ectx expression.EvalContext, outerJoinKeys []*expression.Column) string {
 	var buffer strings.Builder
 	buffer.WriteString("[")
 	for i, key := range outerJoinKeys {
@@ -597,11 +597,11 @@ func indexJoinPathRemoveUselessEQIn(buildTmp *indexJoinPathTmp, idxCols []*expre
 }
 
 func getIndexJoinIntPKPathInfo(ds *logicalop.DataSource, innerJoinKeys, outerJoinKeys []*expression.Column) (
-	keyOff2IdxOff []int, newOuterJoinKeys []*expression.Column, pkCol *expression.Column, ranges ranger.Ranges, ok bool) {
+	keyOff2IdxOff []int, newOuterJoinKeys []*expression.Column, ranges ranger.Ranges, ok bool) {
 	pkMatched := false
-	pkCol = ds.GetPKIsHandleCol()
+	pkCol := ds.GetPKIsHandleCol()
 	if pkCol == nil {
-		return nil, nil, nil, nil, false
+		return nil, nil, nil, false
 	}
 	keyOff2IdxOff = make([]int, len(innerJoinKeys))
 	newOuterJoinKeys = make([]*expression.Column, 0)
@@ -616,10 +616,10 @@ func getIndexJoinIntPKPathInfo(ds *logicalop.DataSource, innerJoinKeys, outerJoi
 		newOuterJoinKeys = append(newOuterJoinKeys, outerJoinKeys[i])
 	}
 	if !pkMatched {
-		return nil, nil, nil, nil, false
+		return nil, nil, nil, false
 	}
 	ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(pkCol.RetType.GetFlag()))
-	return keyOff2IdxOff, newOuterJoinKeys, pkCol, ranges, true
+	return keyOff2IdxOff, newOuterJoinKeys, ranges, true
 }
 
 // getBestIndexJoinPathResult tries to iterate all possible access paths of the inner child and builds

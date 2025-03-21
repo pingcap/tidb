@@ -901,16 +901,15 @@ func buildIndexJoinInner2TableScan(
 		ranges = indexJoinResult.chosenRanges
 	} else {
 		var (
-			ok    bool
-			pkCol *expression.Column
+			ok bool
 			// note: pk col doesn't have mutableRanges, the global var(ranges) which will be handled as empty range in constructIndexJoin.
 			localRanges ranger.Ranges
 		)
-		keyOff2IdxOff, outerJoinKeys, pkCol, localRanges, ok = getIndexJoinIntPKPathInfo(ds, innerJoinKeys, outerJoinKeys)
+		keyOff2IdxOff, outerJoinKeys, localRanges, ok = getIndexJoinIntPKPathInfo(ds, innerJoinKeys, outerJoinKeys)
 		if !ok {
 			return nil
 		}
-		rangeInfo := indexJoinIntPKRangeInfo(p.SCtx().GetExprCtx().GetEvalCtx(), pkCol, outerJoinKeys)
+		rangeInfo := indexJoinIntPKRangeInfo(p.SCtx().GetExprCtx().GetEvalCtx(), outerJoinKeys)
 		innerTask = constructInnerTableScanTask(p, prop, wrapper, localRanges, rangeInfo, false, false, avgInnerRowCnt)
 		// The index merge join's inner plan is different from index join, so we
 		// should construct another inner plan for it.
