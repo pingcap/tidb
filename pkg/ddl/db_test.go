@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/rand"
 	"slices"
 	"strconv"
 	"strings"
@@ -502,6 +503,48 @@ func TestShowCountWarningsOrErrors(t *testing.T) {
 	// Error: Table exist
 	_, _ = tk.Exec("create table show_errors (a int)")
 	tk.MustQuery("show count(*) errors").Check(tk.MustQuery("select @@session.error_count").Rows())
+}
+
+func TestIssue60047(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`CREATE TABLE t (
+		a INT,
+		b INT,
+		c VARCHAR(10),
+		unique key idx(a, c)
+	) partition by range columns(c) (
+	partition p0 values less than ('30'),
+	partition p1 values less than ('60'),
+	partition p2 values less than ('90'));`)
+
+	// initialize the data.
+	for i := 0; i < 90; i++ {
+		tk.MustExec("insert into t values (?, ?, ?)", i, i, i)
+	}
+
+	// parallel execute `insert ... on duplicate key update` and `alter table ... add column after ...`
+	var err error
+	hookFunc := func(job *model.Job) {
+		if job.SchemaState == model.StateWriteOnly {
+			tk1 := testkit.NewTestKit(t, store)
+			tk1.MustExec("use test")
+			val := 30 + rand.Intn(60)
+			insertSQL := fmt.Sprintf("insert into t(a, b, c) values(%v, %v, %v) on duplicate key update a=values(a), b=values(b), c=values(c)",
+				val, rand.Intn(90), strconv.FormatInt(int64(val), 10))
+			err = tk1.ExecToErr(insertSQL)
+		}
+	}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", hookFunc)
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	ddlSQL := "alter table t add column `d` decimal(20,4) not null default '0'"
+	tk2.MustExec(ddlSQL)
+
+	require.NoError(t, err)
 }
 
 // Close issue #24172.
