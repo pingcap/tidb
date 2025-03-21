@@ -1610,15 +1610,21 @@ type PhysicalIndexJoin struct {
 
 	// Ranges stores the IndexRanges when the inner plan is index scan.
 	Ranges ranger.MutableRanges
+	// 一下三个信息是需要在底层 index ds 确定之后，返回给 index join 这边的孩子物理 prop，需要从底层往上传递。这个地方我们我们可以
+	// 封装在 task 里面来做。
 	// KeyOff2IdxOff maps the offsets in join key to the offsets in the index.
+	// 这个信息也是一致，是为了找到在 index key 中找到映射到 index col lens 数组中那些有 prefix 长度的列，然后 cut datum
 	KeyOff2IdxOff []int
 	// IdxColLens stores the length of each index column.
+	// 在 index 知道孩子选了 index path 之后，需要这里获取 index cols 的 len，因为需要在 lookup content 的来 cut datum
 	IdxColLens []int
 	// CompareFilters stores the filters for last column if those filters need to be evaluated during execution.
 	// e.g. select * from t, t1 where t.a = t1.a and t.b > t1.b and t.b < t1.b+10
 	//      If there's index(t.a, t.b). All the filters can be used to construct index range but t.b > t1.b and t.b < t1.b+10
 	//      need to be evaluated after we fetch the data of t1.
 	// This struct stores them and evaluate them to ranges.
+	// 这个也是在底层孩子用到哪个 othercondition 之后，index join 需要知道这个 last col range cond 依赖了哪几个 col，然后在构建 lookup
+	// content 的时候来根据这个 cols 信息来去重。
 	CompareFilters *ColWithCmpFuncManager
 	// OuterHashKeys indicates the outer keys used to build hash table during
 	// execution. OuterJoinKeys is the prefix of OuterHashKeys.

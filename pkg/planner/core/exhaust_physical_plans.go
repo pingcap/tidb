@@ -631,6 +631,7 @@ func constructIndexJoin(
 		OuterHashKeys:    outerHashKeys,
 		InnerHashKeys:    innerHashKeys,
 	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset(), chReqProps...)
+	// 这里为什么要感知孩子选什么样的 path 呢？
 	if path != nil {
 		join.IdxColLens = path.IdxColLens
 	}
