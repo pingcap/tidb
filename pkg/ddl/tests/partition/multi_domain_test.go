@@ -3703,7 +3703,7 @@ func TestNonClusteredUpdateReorgUpdate(t *testing.T) {
 		// Would delete newFrom 1, which would then be backfilled again!
 		// TODO: Is this true?
 		tk2.MustExec("update t set b = b + 10 where a = 2")
-		tk2.MustQuery(`select a,b,_tidb_rowid from t`).Check(testkit.Rows("1 11 1", "2 12 1"))
+		tk2.MustQuery(`select a,b,_tidb_rowid from t`).Sort().Check(testkit.Rows("1 11 1", "2 12 1"))
 	})
 	tk.MustExec("alter table t remove partitioning")
 	tk.MustQuery("select a,b,_tidb_rowid from t").Sort().Check(testkit.Rows("1 11 1", "2 12 3"))
