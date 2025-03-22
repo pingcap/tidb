@@ -85,7 +85,7 @@ func newEngineManager(config BackendConfig, storeHelper StoreHelper, logger log.
 
 	keyAdapter := common.KeyAdapter(common.NoopKeyAdapter{})
 	if config.DupeDetectEnabled {
-		duplicateDB, err = openDuplicateDB(config.LocalStoreDir)
+		duplicateDB, err = OpenDuplicateDB(config.LocalStoreDir)
 		if err != nil {
 			return nil, common.ErrOpenDuplicateDB.Wrap(err).GenWithStackByArgs()
 		}
@@ -622,7 +622,8 @@ func (s slowCreateFS) Create(name string) (vfs.File, error) {
 	return s.FS.Create(name)
 }
 
-func openDuplicateDB(storeDir string) (*pebble.DB, error) {
+// OpenDuplicateDB opens the kv db for duplicate detection.
+func OpenDuplicateDB(storeDir string) (*pebble.DB, error) {
 	dbPath := filepath.Join(storeDir, duplicateDBName)
 	// TODO: Optimize the opts for better write.
 	opts := &pebble.Options{
