@@ -1175,7 +1175,7 @@ func GetTableInfoWithAttributes(m *Mutator, dbID int64, filterAttrs ...string) (
 
 	tableInfos := make([]*model.TableInfo, 0)
 	filterAttrRegexps := make([]*regexp.Regexp, 0)
-	for _, substr := range checkAttributesInOrder {
+	for _, substr := range filterAttrs {
 		re, err := regexp.Compile(substr)
 		if err != nil {
 			return nil, errors.Trace(err)
