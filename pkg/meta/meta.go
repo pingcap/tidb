@@ -1068,7 +1068,7 @@ func (m *Mutator) GetMetasByDBID(dbID int64) ([]structure.HashPair, error) {
 }
 
 var checkAttributesInOrder = []string{
-	`"fk_info":null`,
+	`"fk_info":\s*(null|\[\])`,
 	`"partition":null`,
 	`"Lock":null`,
 	`"tiflash_replica":null`,
@@ -1081,15 +1081,11 @@ var checkAttributesInOrder = []string{
 // If the byte representation contains all the given attributes,
 // then it does not need to be loaded and this function will return false.
 // Otherwise, it will return true, indicating that the table info should be loaded.
-// Since attributes are checked in sequence, it's important to choose the order carefully.
-func isTableInfoMustLoad(json []byte, filterAttrs ...string) bool {
-	idx := 0
-	for _, substr := range filterAttrs {
-		idx = bytes.Index(json, hack.Slice(substr))
-		if idx == -1 {
+func isTableInfoMustLoad(json []byte, filterAttrs ...*regexp.Regexp) bool {
+	for _, filterAttr := range filterAttrs {
+		if !filterAttr.Match(json) {
 			return true
 		}
-		json = json[idx:]
 	}
 	return false
 }
@@ -1097,7 +1093,12 @@ func isTableInfoMustLoad(json []byte, filterAttrs ...string) bool {
 // IsTableInfoMustLoad checks whether the table info needs to be loaded.
 // Exported for testing.
 func IsTableInfoMustLoad(json []byte) bool {
-	return isTableInfoMustLoad(json, checkAttributesInOrder...)
+	filterAttrs := make([]*regexp.Regexp, 0)
+	for _, substr := range checkAttributesInOrder {
+		filterAttr := regexp.MustCompile(substr)
+		filterAttrs = append(filterAttrs, filterAttr)
+	}
+	return isTableInfoMustLoad(json, filterAttrs...)
 }
 
 // NameExtractRegexp is exported for testing.
@@ -1127,7 +1128,14 @@ func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[strin
 	nameLRegex := regexp.MustCompile(NameExtractRegexp)
 
 	tableInfos := make([]*model.TableInfo, 0)
-
+	filterAttrs := make([]*regexp.Regexp, 0)
+	for _, substr := range checkAttributesInOrder {
+		filterAttr, err := regexp.Compile(substr)
+		if err != nil {
+			return nil, nil, err
+		}
+		filterAttrs = append(filterAttrs, filterAttr)
+	}
 	err := m.txn.IterateHash(dbKey, func(field []byte, value []byte) error {
 		if !strings.HasPrefix(string(hack.String(field)), "Table") {
 			return nil
@@ -1142,7 +1150,7 @@ func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[strin
 
 		key := Unescape(nameLMatch[1])
 		res[strings.Clone(key)] = int64(id)
-		if isTableInfoMustLoad(value, checkAttributesInOrder...) {
+		if isTableInfoMustLoad(value, filterAttrs...) {
 			tbInfo := &model.TableInfo{}
 			err = json.Unmarshal(value, tbInfo)
 			if err != nil {
@@ -1166,12 +1174,20 @@ func GetTableInfoWithAttributes(m *Mutator, dbID int64, filterAttrs ...string) (
 	}
 
 	tableInfos := make([]*model.TableInfo, 0)
+	filterAttrRegexps := make([]*regexp.Regexp, 0)
+	for _, substr := range filterAttrs {
+		re, err := regexp.Compile(substr)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		filterAttrRegexps = append(filterAttrRegexps, re)
+	}
 	err := m.txn.IterateHash(dbKey, func(field []byte, value []byte) error {
 		if !strings.HasPrefix(string(hack.String(field)), "Table") {
 			return nil
 		}
 
-		if isTableInfoMustLoad(value, filterAttrs...) {
+		if isTableInfoMustLoad(value, filterAttrRegexps...) {
 			tbInfo := &model.TableInfo{}
 			err := json.Unmarshal(value, tbInfo)
 			if err != nil {
