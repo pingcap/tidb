@@ -457,10 +457,19 @@ func (c *Column) CheckNotNull(data *types.Datum) error {
 
 // HandleBadNull handles the bad null error.
 // If BadNullAsWarning is true, it will append the error as a warning, else return the error.
+<<<<<<< HEAD:table/column.go
 func (c *Column) HandleBadNull(d *types.Datum, sc *stmtctx.StatementContext) error {
 	if err := c.CheckNotNull(d); err != nil {
 		if sc.BadNullAsWarning {
 			sc.AppendWarning(err)
+=======
+func (c *Column) HandleBadNull(
+	ec errctx.Context,
+	d *types.Datum,
+	rowCntInLoadData uint64) error {
+	if err := c.CheckNotNull(d, rowCntInLoadData); err != nil {
+		if ec.HandleError(err) == nil {
+>>>>>>> 91beef4bb14 (*: disable insert null to not-null column for single-row insertion in non-strict mode (#55477)):pkg/table/column.go
 			*d = GetZeroValue(c.ToInfo())
 			return nil
 		}
@@ -511,7 +520,12 @@ func GetColOriginDefaultValueWithoutStrictSQLMode(ctx sessionctx.Context, col *m
 // But CheckNoDefaultValueForInsert logic should only check before insert.
 func CheckNoDefaultValueForInsert(sc *stmtctx.StatementContext, col *model.ColumnInfo) error {
 	if mysql.HasNoDefaultValueFlag(col.GetFlag()) && !col.DefaultIsExpr && col.GetDefaultValue() == nil && col.GetType() != mysql.TypeEnum {
+<<<<<<< HEAD:table/column.go
 		if !sc.BadNullAsWarning {
+=======
+		ignoreErr := sc.ErrGroupLevel(errctx.ErrGroupNoDefault) != errctx.LevelError
+		if !ignoreErr {
+>>>>>>> 91beef4bb14 (*: disable insert null to not-null column for single-row insertion in non-strict mode (#55477)):pkg/table/column.go
 			return ErrNoDefaultValue.GenWithStackByArgs(col.Name)
 		}
 		if !mysql.HasNotNullFlag(col.GetFlag()) {
