@@ -18,6 +18,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -83,16 +84,23 @@ type AsyncMergePartitionStats2GlobalStats struct {
 	tableInfo           map[int64]*model.TableInfo
 	// key is partition id and histID
 	skipPartition map[skipItem]struct{}
+	closeIOWorkerChOnce     sync.Once
 	// ioWorker meet error, it will close this channel to notify cpuWorker.
 	ioWorkerExitWhenErrChan chan struct{}
+	closeCPUWorkerChOnce    sync.Once
 	// cpuWorker exit, it will close this channel to notify ioWorker.
 	cpuWorkerExitChan         chan struct{}
 	globalTableInfo           *model.TableInfo
 	histIDs                   []int64
-	globalStatsNDV            []int64
+	globalStatsNDV            []statsNDVWithCh
 	partitionIDs              []int64
 	partitionNum              int
 	skipMissingPartitionStats bool
+}
+
+type statsNDVWithCh struct {
+	ndv   int64
+	ready chan struct{}
 }
 
 // NewAsyncMergePartitionStats2GlobalStats creates a new AsyncMergePartitionStats2GlobalStats.
@@ -121,6 +129,18 @@ func NewAsyncMergePartitionStats2GlobalStats(
 	}, nil
 }
 
+func (a *AsyncMergePartitionStats2GlobalStats) closeIOWorkerExitWhenErrChan() {
+	a.closeIOWorkerChOnce.Do(func() {
+		close(a.ioWorkerExitWhenErrChan)
+	})
+}
+
+func (a *AsyncMergePartitionStats2GlobalStats) closeCPUWorkerExitWhenErrChan() {
+	a.closeCPUWorkerChOnce.Do(func() {
+		close(a.cpuWorkerExitChan)
+	})
+}
+
 func (a *AsyncMergePartitionStats2GlobalStats) prepare(sctx sessionctx.Context, isIndex bool) (err error) {
 	if len(a.histIDs) == 0 {
 		for _, col := range a.globalTableInfo.Columns {
@@ -133,7 +153,13 @@ func (a *AsyncMergePartitionStats2GlobalStats) prepare(sctx sessionctx.Context, 
 	}
 	a.globalStats = newGlobalStats(len(a.histIDs))
 	a.globalStats.Num = len(a.histIDs)
-	a.globalStatsNDV = make([]int64, 0, a.globalStats.Num)
+	a.globalStatsNDV = make([]statsNDVWithCh, 0, a.globalStats.Num)
+	for i := 0; i < a.globalStats.Num; i++ {
+		a.globalStatsNDV = append(a.globalStatsNDV, statsNDVWithCh{
+			ndv:   0,
+			ready: make(chan struct{}, 1),
+		})
+	}
 	// get all partition stats
 	for _, def := range a.globalTableInfo.Partition.Definitions {
 		partitionID := def.ID
@@ -226,26 +252,60 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealErrPartitionColumnStatsMissin
 	return nil
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(sctx sessionctx.Context, isIndex bool) (err error) {
+func (a *AsyncMergePartitionStats2GlobalStats) loadFMSketchIOWorker(sctx sessionctx.Context, isIndex bool) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			statslogutil.StatsLogger().Warn("ioWorker panic", zap.Stack("stack"), zap.Any("error", r))
-			close(a.ioWorkerExitWhenErrChan)
+			statslogutil.StatsLogger().Warn("loadFMSketchIOWorker panic", zap.Stack("stack"), zap.Any("error", r))
+			a.closeIOWorkerExitWhenErrChan()
 			err = errors.New(fmt.Sprint(r))
 		}
 	}()
+	failpoint.Inject("PanicSameTime", func(val failpoint.Value) {
+		if val, _ := val.(bool); val {
+			time.Sleep(1 * time.Second)
+			panic("test for PanicSameTime")
+		}
+	})
 	err = a.loadFmsketch(sctx, isIndex)
 	if err != nil {
-		close(a.ioWorkerExitWhenErrChan)
+		a.closeIOWorkerExitWhenErrChan()
 		return err
 	}
 	close(a.fmsketch)
+	return nil
+}
+
+func (a *AsyncMergePartitionStats2GlobalStats) loadCMSketchIOWorker(sctx sessionctx.Context, isIndex bool) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			statslogutil.StatsLogger().Warn("loadCMSketchIOWorker panic", zap.Stack("stack"), zap.Any("error", r))
+			a.closeIOWorkerExitWhenErrChan()
+			err = errors.New(fmt.Sprint(r))
+		}
+	}()
+	failpoint.Inject("PanicSameTime", func(val failpoint.Value) {
+		if val, _ := val.(bool); val {
+			time.Sleep(1 * time.Second)
+			panic("test for PanicSameTime")
+		}
+	})
 	err = a.loadCMsketch(sctx, isIndex)
 	if err != nil {
-		close(a.ioWorkerExitWhenErrChan)
+		a.closeIOWorkerExitWhenErrChan()
 		return err
 	}
 	close(a.cmsketch)
+	return nil
+}
+
+func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopNIOWorker(sctx sessionctx.Context, isIndex bool) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			statslogutil.StatsLogger().Warn("loadHistogramAndTopNIOWorker panic", zap.Stack("stack"), zap.Any("error", r))
+			a.closeIOWorkerExitWhenErrChan()
+			err = errors.New(fmt.Sprint(r))
+		}
+	}()
 	failpoint.Inject("PanicSameTime", func(val failpoint.Value) {
 		if val, _ := val.(bool); val {
 			time.Sleep(1 * time.Second)
@@ -254,21 +314,27 @@ func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(sctx sessionctx.Context,
 	})
 	err = a.loadHistogramAndTopN(sctx, a.globalTableInfo, isIndex)
 	if err != nil {
-		close(a.ioWorkerExitWhenErrChan)
+		a.closeIOWorkerExitWhenErrChan()
 		return err
 	}
 	close(a.histogramAndTopn)
 	return nil
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.StatementContext, sctx sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, isIndex bool, tz *time.Location, analyzeVersion int) (err error) {
+func (a *AsyncMergePartitionStats2GlobalStats) dealFMSketchCPUWorker() (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			statslogutil.StatsLogger().Warn("cpuWorker panic", zap.Stack("stack"), zap.Any("error", r))
+			statslogutil.StatsLogger().Warn("dealFMSketchCPUWorker panic", zap.Stack("stack"), zap.Any("error", r), zap.String("category", "stats"))
+			a.closeCPUWorkerExitWhenErrChan()
 			err = errors.New(fmt.Sprint(r))
 		}
-		close(a.cpuWorkerExitChan)
 	}()
+	failpoint.Inject("PanicSameTime", func(val failpoint.Value) {
+		if val, _ := val.(bool); val {
+			time.Sleep(1 * time.Second)
+			panic("test for PanicSameTime")
+		}
+	})
 	a.dealFMSketch()
 	select {
 	case <-a.ioWorkerExitWhenErrChan:
@@ -280,15 +346,45 @@ func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.Statem
 			if globalStatsNDV > a.globalStats.Count {
 				globalStatsNDV = a.globalStats.Count
 			}
-			a.globalStatsNDV = append(a.globalStatsNDV, globalStatsNDV)
+			a.globalStatsNDV[i].ndv = globalStatsNDV
+			a.globalStatsNDV[i].ready <- struct{}{}
 			a.globalStats.Fms[i].DestroyAndPutToPool()
 		}
 	}
+	return nil
+}
+
+func (a *AsyncMergePartitionStats2GlobalStats) dealCMSketchCPUWorker() (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			statslogutil.StatsLogger().Warn("dealFMSketchCPUWorker panic", zap.Stack("stack"), zap.Any("error", r), zap.String("category", "stats"))
+			a.closeCPUWorkerExitWhenErrChan()
+			err = errors.New(fmt.Sprint(r))
+		}
+	}()
+	failpoint.Inject("PanicSameTime", func(val failpoint.Value) {
+		if val, _ := val.(bool); val {
+			time.Sleep(1 * time.Second)
+			panic("test for PanicSameTime")
+		}
+	})
 	err = a.dealCMSketch()
 	if err != nil {
 		statslogutil.StatsLogger().Warn("dealCMSketch failed", zap.Error(err))
+		a.closeCPUWorkerExitWhenErrChan()
 		return err
 	}
+	return nil
+}
+
+func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopNCPUWorker(stmtCtx *stmtctx.StatementContext, sctx sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, isIndex bool, tz *time.Location, analyzeVersion int) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			statslogutil.StatsLogger().Warn("dealFMSketchCPUWorker panic", zap.Stack("stack"), zap.Any("error", r), zap.String("category", "stats"))
+			a.closeCPUWorkerExitWhenErrChan()
+			err = errors.New(fmt.Sprint(r))
+		}
+	}()
 	failpoint.Inject("PanicSameTime", func(val failpoint.Value) {
 		if val, _ := val.(bool); val {
 			time.Sleep(1 * time.Second)
@@ -298,6 +394,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.Statem
 	err = a.dealHistogramAndTopN(stmtCtx, sctx, opts, isIndex, tz, analyzeVersion)
 	if err != nil {
 		statslogutil.StatsLogger().Warn("dealHistogramAndTopN failed", zap.Error(err))
+		a.closeCPUWorkerExitWhenErrChan()
 		return err
 	}
 	return nil
@@ -328,10 +425,22 @@ func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 			metawg, _ := errgroup.WithContext(ctx)
 			mergeWg, _ := errgroup.WithContext(ctx)
 			metawg.Go(func() error {
-				return a.ioWorker(sctx, isIndex)
+				return a.loadFMSketchIOWorker(sctx, isIndex)
+			})
+			metawg.Go(func() error {
+				return a.loadCMSketchIOWorker(sctx, isIndex)
+			})
+			metawg.Go(func() error {
+				return a.loadHistogramAndTopNIOWorker(sctx, isIndex)
 			})
 			mergeWg.Go(func() error {
-				return a.cpuWorker(stmtCtx, sctx, opts, isIndex, tz, analyzeVersion)
+				return a.dealFMSketchCPUWorker()
+			})
+			mergeWg.Go(func() error {
+				return a.dealCMSketchCPUWorker()
+			})
+			mergeWg.Go(func() error {
+				return a.dealHistogramAndTopNCPUWorker(stmtCtx, sctx, opts, isIndex, tz, analyzeVersion)
 			})
 			err = metawg.Wait()
 			if err != nil {
@@ -527,7 +636,8 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			for j := range (*globalHg).Buckets {
 				(*globalHg).Buckets[j].NDV = 0
 			}
-			(*globalHg).NDV = a.globalStatsNDV[item.idx]
+			<-a.globalStatsNDV[item.idx].ready
+			(*globalHg).NDV = a.globalStatsNDV[item.idx].ndv
 		case <-a.ioWorkerExitWhenErrChan:
 			return nil
 		}
