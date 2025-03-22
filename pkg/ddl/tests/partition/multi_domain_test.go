@@ -3681,3 +3681,55 @@ func TestMultiSchemaReorgDeleteNonClusteredRange(t *testing.T) {
 	}
 	runMultiSchemaTest(t, createSQL, alterSQL, initFn, postFn, loopFn, false)
 }
+
+func TestNonClusteredUpdateReorgUpdate(t *testing.T) {
+	// Currently there is a case where:
+	// update would remove the wrong row
+	// happens if update x when there is no newFromMap, but there is a matching newFromKey, but not the same row!!!
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, primary key (a) nonclustered) partition by hash(a) partitions 2")
+	tk.MustExec("insert into t (a, b) values (1,1),(2,2)")
+	exchangeAllPartitionsToGetDuplicateTiDBRowIDs(t, tk)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+		// So the table is actually in WriteOnly, before backfill!
+		if job.SchemaState != model.StateWriteReorganization {
+			return
+		}
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		tk2.MustExec("update t set b = b + 10 where a = 1")
+		tk2.MustExec("update t set b = b + 10 where a = 2") // Would delete newFrom 1, which would then be backfilled again!
+		tk2.MustQuery(`select a,b,_tidb_rowid from t`).Check(testkit.Rows("1 11 1", "2 12 1"))
+	})
+	tk.MustExec("alter table t remove partitioning")
+	tk.MustQuery("select a,b,_tidb_rowid from t").Sort().Check(testkit.Rows("1 1 1"))
+}
+
+func TestNonClusteredReorgUpdate(t *testing.T) {
+	createSQL := "create table t (a int, b int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than (30))"
+	initFn := func(tkO *testkit.TestKit) {
+		tkO.MustExec(`insert into t values (1,1),(11,11),(22,22)`)
+		exchangeAllPartitionsToGetDuplicateTiDBRowIDs(t, tkO)
+	}
+	alterSQL := "alter table t reorganize partition p0, p1 into (partition p0new values less than (20))"
+	loopFn := func(tkO, tkNO *testkit.TestKit, _ model.SchemaState) {
+		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
+		schemaState := res.Rows()[0][0].(string)
+		switch schemaState {
+		case model.StateDeleteReorganization.String():
+			tkNO.MustQuery(`select a,b,_tidb_rowid from t`).Sort().Check(testkit.Rows("1 1 1", "11 11 1", "22 22 1"))
+			tkO.MustQuery(`select a,b,_tidb_rowid from t`).Sort().Check(testkit.Rows("1 1 1", "11 11 30001", "22 22 1"))
+			tkNO.MustExec(`update t set a = 21 where a = 1`)
+			tkNO.MustQuery(`select a,b,_tidb_rowid from t`).Sort().Check(testkit.Rows("11 11 1", "21 1 60001", "22 22 1"))
+			tkO.MustQuery(`select a,b,_tidb_rowid from t`).Sort().Check(testkit.Rows("11 11 30001", "21 1 60001", "22 22 1"))
+			tkNO.MustExec(`update t set a = 2 where a = 22`)
+			tkO.MustQuery(`select a,b,_tidb_rowid from t`).Sort().Check(testkit.Rows("11 11 30001", "2 22 60002", "21 1 60001"))
+			tkNO.MustQuery(`select a,b,_tidb_rowid from t`).Sort().Check(testkit.Rows("11 11 1", "2 22 60002", "21 1 60001"))
+		}
+	}
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn, false)
+}
+
+// TODO: Still managed to repeat the issue of update removing the wrong newFrom row

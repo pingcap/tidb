@@ -2006,18 +2006,16 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 			return errors.Trace(err)
 		}
 	}
-	if newFrom == 0 {
-		if newTo != 0 {
-			// Should never happen
-			return errors.Errorf("Internal error during Reorganize Partition, newTo != 0, but newFrom == 0")
-		}
+	if newFrom == 0 && newTo == 0 {
 		memBuffer.Release(sh)
 		return nil
 	}
 	if t.Meta().HasClusteredIndex() {
-		err = t.getPartition(newFrom).RemoveRecord(ctx, txn, h, currData)
-		if err != nil {
-			return errors.Trace(err)
+		if newFrom != 0 {
+			err = t.getPartition(newFrom).RemoveRecord(ctx, txn, h, currData)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 		if !deleteOnly && newTo != 0 {
 			_, err = t.getPartition(newTo).addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
@@ -2033,7 +2031,6 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 	// so we are only concerned about the reorged partition's possible conflicts.
 	// I.e. during StateWriteReorganization: the new partitions
 	// and during StateDeleteReorganization (and StatePublic?): the old partitions
-	// TODO: Is this correct?
 
 	// Cases which don't need attention:
 	// - clustered tables - Can only have unique keys, ensured separately on old and new
@@ -2041,17 +2038,19 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 	// - non-clustered tables that:
 	//   - there is no existing matching key newTo
 	//   AND
+	//   - there is no existing matching key newFrom
+	//   AND
 	//   - there is no matching key in newTo temporary index map
 	//   AND
-	//   - if usingNewPartitions: there is no matching key in the newFrom temporary map
-	//     TODO: recheck how this is handled!!!
+	//   - there is no matching key in newFrom temporary index map
 	//
 	// So what do we need to check for non-clustered tables:
 	// For the RemoveRecord (newFrom):
-	// - if newFrom temporary index map exists: (Always checked!)
-	//   - use the new ID for remove (Also remove them map entry?)
+	//  - if newFromMap temporary index map exists: (Always checked!)
+	//    - use the new ID for remove (Also remove them map entry?)
 	//  else
-	//   - use the current ID for remove
+	//  - if newFromKey exists AND row is the same
+	//    - use the current ID for remove
 	//   ^^^^ ===== TODO: This could delete a different row!!!
 	//              We must check if it is the same row before just deleting it!
 	//              So we must read newFromKey as well!!!
@@ -2088,9 +2087,11 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 
 	keys := make([]kv.Key, 0, 3)
 	encodedRecordID := codec.EncodeInt(nil, h.IntValue())
-	mapKey := codec.EncodeInt(encodedRecordID, from)
-	newFromMap = tablecodec.EncodeIndexSeekKey(newFrom, tablecodec.TempIndexPrefix, mapKey)
-	keys = append(keys, newFromMap)
+	if newFrom != 0 {
+		mapKey := codec.EncodeInt(encodedRecordID, from)
+		newFromMap = tablecodec.EncodeIndexSeekKey(newFrom, tablecodec.TempIndexPrefix, mapKey)
+		keys = append(keys, newFromMap)
+	}
 	// TODO: Don't we need to check newFromKey?
 	// would we miss to delete it?
 	if !deleteOnly && (newRecordID == nil || newRecordID.Equal(h)) {
@@ -2099,7 +2100,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 		newToKey = tablecodec.EncodeRowKey(newTo, encodedRecordID)
 		keys = append(keys, newToKey)
 
-		mapKey = codec.EncodeInt(encodedRecordID, to)
+		mapKey := codec.EncodeInt(encodedRecordID, to)
 		newToMap = tablecodec.EncodeIndexSeekKey(newTo, tablecodec.TempIndexPrefix, mapKey)
 		if newTo != newFrom || to != from {
 			keys = append(keys, newToMap)
@@ -2111,55 +2112,57 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 	if err != nil {
 		return errors.Trace(err)
 	}
-	doRemove := true
 	var newToKeyIsSame *bool
-	if val, ok := found[string(newFromMap)]; ok {
-		var id int64
-		_, id, err = codec.DecodeInt(val)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		removeHandle = kv.IntHandle(id)
-		// Remove the reorg mapping entry, if not reused
-		if newTo != newFrom || deleteOnly {
-			err = txn.Delete(newFromMap)
+	if newFrom != 0 {
+		doRemove := true
+		if val, ok := found[string(newFromMap)]; ok {
+			var id int64
+			_, id, err = codec.DecodeInt(val)
 			if err != nil {
 				return errors.Trace(err)
 			}
-		}
-	} else if val, ok = found[string(newToKey)]; ok {
-		// TODO: Should not this be newFromKey?!?
-		//       Could we miss to remove a row from newFrom partition here?!?
-		// compare val with currData
-		columnFt := make(map[int64]*types.FieldType)
-		for idx := range t.Meta().Columns {
-			col := t.Meta().Columns[idx]
-			columnFt[col.ID] = &col.FieldType
-		}
-		foundData, err := tablecodec.DecodeRowToDatumMap(val, columnFt, ctx.GetExprCtx().GetEvalCtx().Location())
-		if err != nil {
-			return errors.Trace(err)
-		}
-		same := true
-		for idx, col := range t.Meta().Cols() {
-			if d, ok := foundData[col.ID]; ok {
-				if !d.Equals(currData[idx]) {
-					same = false
-					break
+			removeHandle = kv.IntHandle(id)
+			// Remove the reorg mapping entry, if not reused
+			if newTo != newFrom || deleteOnly {
+				err = txn.Delete(newFromMap)
+				if err != nil {
+					return errors.Trace(err)
 				}
 			}
+		} else if val, ok = found[string(newToKey)]; ok {
+			// TODO: Should not this be newFromKey?!?
+			//       Could we miss to remove a row from newFrom partition here?!?
+			// compare val with currData
+			columnFt := make(map[int64]*types.FieldType)
+			for idx := range t.Meta().Columns {
+				col := t.Meta().Columns[idx]
+				columnFt[col.ID] = &col.FieldType
+			}
+			foundData, err := tablecodec.DecodeRowToDatumMap(val, columnFt, ctx.GetExprCtx().GetEvalCtx().Location())
+			if err != nil {
+				return errors.Trace(err)
+			}
+			same := true
+			for idx, col := range t.Meta().Cols() {
+				if d, ok := foundData[col.ID]; ok {
+					if !d.Equals(currData[idx]) {
+						same = false
+						break
+					}
+				}
+			}
+			newToKeyIsSame = &same
+			if !same {
+				// conflicting _tidb_rowid DO NOT DELETE IT!!!
+				doRemove = false
+			}
 		}
-		newToKeyIsSame = &same
-		if !same {
-			// conflicting _tidb_rowid DO NOT DELETE IT!!!
-			doRemove = false
-		}
-	}
 
-	if doRemove {
-		err = t.GetPartition(newFrom).RemoveRecord(ctx, txn, removeHandle, currData)
-		if err != nil {
-			return errors.Trace(err)
+		if doRemove {
+			err = t.GetPartition(newFrom).RemoveRecord(ctx, txn, removeHandle, currData)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	if deleteOnly || newTo == 0 {
@@ -2210,7 +2213,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 			newRecordID = h
 		}
 
-		mapKey = codec.EncodeInt(encodedRecordID, to)
+		mapKey := codec.EncodeInt(encodedRecordID, to)
 		tmpRecordIDMapKey := tablecodec.EncodeIndexSeekKey(newTo, tablecodec.TempIndexPrefix, mapKey)
 		encNewRecordID := codec.EncodeInt(nil, newRecordID.IntValue())
 		err = txn.Set(tmpRecordIDMapKey, encNewRecordID)
