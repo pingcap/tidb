@@ -17,8 +17,11 @@ package label
 import (
 	"testing"
 
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client/http"
 )
 
@@ -56,7 +59,7 @@ func TestDefaultOrEmpty(t *testing.T) {
 		err := rule.ApplyAttributesSpec(specs[i])
 		require.NoError(t, err)
 
-		rule.Reset("db", "t", "", 1)
+		rule.Reset(keyspace.CodecV1, "db", "t", "", 1)
 		require.Len(t, rule.Labels, 0)
 	}
 }
@@ -66,7 +69,7 @@ func TestReset(t *testing.T) {
 	rule := NewRule()
 	require.NoError(t, rule.ApplyAttributesSpec(spec))
 
-	rule.Reset("db1", "t1", "", 1, 2, 3)
+	rule.Reset(keyspace.CodecV1, "db1", "t1", "", 1, 2, 3)
 	require.Equal(t, "schema/db1/t1", rule.ID)
 	require.Equal(t, ruleType, rule.RuleType)
 	require.Len(t, rule.Labels, 3)
@@ -88,7 +91,7 @@ func TestReset(t *testing.T) {
 	r1 := rule.Clone()
 	require.Equal(t, r1, rule)
 
-	r2 := rule.Reset("db2", "t2", "p2", 2)
+	r2 := rule.Reset(keyspace.CodecV1, "db2", "t2", "p2", 2)
 	require.Equal(t, "schema/db2/t2/p2", r2.ID)
 	require.Len(t, rule.Labels, 4)
 	require.Equal(t, "value", rule.Labels[0].Value)
@@ -106,6 +109,55 @@ func TestReset(t *testing.T) {
 	rule, expected := NewRule(), NewRule()
 	expected.ID, expected.Labels = "schema/db3/t3/p3", []pd.RegionLabel{}
 	require.NoError(t, rule.ApplyAttributesSpec(spec))
-	r3 := rule.Reset("db3", "t3", "p3", 3)
+	r3 := rule.Reset(keyspace.CodecV1, "db3", "t3", "p3", 3)
 	require.Equal(t, r3, expected)
+}
+
+func TestResetWithKeyspace(t *testing.T) {
+	spec := &ast.AttributesSpec{Attributes: "key=value"}
+	rule := NewRule()
+	require.NoError(t, rule.ApplyAttributesSpec(spec))
+
+	// Test with keyspace ID 42
+	keyspaceID := uint32(42)
+	keyspaceMeta := &keyspacepb.KeyspaceMeta{Id: keyspaceID}
+	codec, err := tikv.NewCodecV2(tikv.ModeTxn, keyspaceMeta)
+	require.NoError(t, err)
+
+	rule.Reset(codec, "db1", "t1", "", 1, 2, 3)
+	require.Equal(t, "keyspace/42/schema/db1/t1", rule.ID)
+	require.Equal(t, ruleType, rule.RuleType)
+	require.Len(t, rule.Labels, 4)
+	require.Equal(t, "value", rule.Labels[0].Value)
+	require.Equal(t, "42", rule.Labels[1].Value)
+	require.Equal(t, "db1", rule.Labels[2].Value)
+	require.Equal(t, "t1", rule.Labels[3].Value)
+	require.Equal(t, rule.Index, 2)
+
+	// Test with partition
+	r2 := rule.Reset(codec, "db2", "t2", "p2", 2)
+	require.Equal(t, "keyspace/42/schema/db2/t2/p2", r2.ID)
+	require.Len(t, rule.Labels, 5)
+	require.Equal(t, "value", rule.Labels[0].Value)
+	require.Equal(t, "42", rule.Labels[1].Value)
+	require.Equal(t, "db2", rule.Labels[2].Value)
+	require.Equal(t, "t2", rule.Labels[3].Value)
+	require.Equal(t, "p2", rule.Labels[4].Value)
+	require.Equal(t, rule.Index, 3)
+
+	// Test with default attributes
+	spec = &ast.AttributesSpec{Default: true}
+	rule, expected := NewRule(), NewRule()
+	expected.ID = "keyspace/42/schema/db3/t3/p3"
+	expected.Labels = []pd.RegionLabel{}
+	require.NoError(t, rule.ApplyAttributesSpec(spec))
+	r3 := rule.Reset(codec, "db3", "t3", "p3", 3)
+	require.Equal(t, expected.ID, r3.ID)
+	require.Equal(t, expected.Labels, r3.Labels)
+
+	// Test with NullspaceID
+	nullCodec := tikv.NewCodecV1(tikv.ModeTxn)
+	rule.Reset(nullCodec, "db4", "t4", "", 4)
+	require.Equal(t, "schema/db4/t4", rule.ID)
+	require.Len(t, rule.Labels, 0)
 }
