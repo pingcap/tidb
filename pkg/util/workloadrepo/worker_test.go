@@ -118,7 +118,7 @@ func setupWorker(ctx context.Context, t *testing.T, addr string, dom *domain.Dom
 	wrk := setupWorkerForTest(ctx, etcdCli, dom, id, testWorker)
 
 	t.Cleanup(func() {
-		wrk.stop()
+		wrk.setRepositoryDest(ctx, "")
 	})
 
 	return wrk
