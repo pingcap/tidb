@@ -56,6 +56,7 @@ import (
 )
 
 const (
+	flagRestoreChecksum          = "checksum"
 	flagOnline                   = "online"
 	flagNoSchema                 = "no-schema"
 	flagLoadStats                = "load-stats"
@@ -176,7 +177,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagWithSysTable, true, "whether restore system privilege tables on default setting")
 	flags.StringArrayP(FlagResetSysUsers, "", []string{"cloud_admin", "root"}, "whether reset these users after restoration")
 	flags.Bool(flagUseFSR, false, "whether enable FSR for AWS snapshots")
-
+	flags.Bool(flagRestoreChecksum, true, "Run checksum at end of task")
 	_ = flags.MarkHidden(FlagResetSysUsers)
 	_ = flags.MarkHidden(FlagMergeRegionSizeBytes)
 	_ = flags.MarkHidden(FlagMergeRegionKeyCount)
@@ -234,6 +235,7 @@ type RestoreConfig struct {
 	Config
 	RestoreCommonConfig
 
+	Checksum           bool          `json:"checksum" toml:"checksum"`
 	NoSchema           bool          `json:"no-schema" toml:"no-schema"`
 	LoadStats          bool          `json:"load-stats" toml:"load-stats"`
 	PDConcurrency      uint          `json:"pd-concurrency" toml:"pd-concurrency"`
@@ -371,6 +373,11 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 		return errors.Trace(err)
 	}
 	cfg.LoadStats, err = flags.GetBool(flagLoadStats)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	cfg.Checksum, err = flags.GetBool(flagRestoreChecksum)
 	if err != nil {
 		return errors.Trace(err)
 	}
