@@ -318,7 +318,7 @@ func (c *pdClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetO
 	return &pdpb.GetOperatorResponse{Status: pdpb.OperatorStatus_SUCCESS}, nil
 }
 
-func (c *pdClient) GetAllMembers(ctx context.Context) ([]*pdpb.Member, error) {
+func (c *pdClient) GetAllMembers(ctx context.Context) (*pdpb.GetMembersResponse, error) {
 	return nil, nil
 }
 

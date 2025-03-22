@@ -158,14 +158,14 @@ func TestString(t *testing.T) {
 		"read_byte: 100 Bytes, read_time: 20ms}}}, write_detail: {store_batch_wait: 10µs, propose_send_wait: 20µs, " +
 		"persist_log: {total: 30µs, write_leader_wait: 40µs, sync_log: 45µs, write_memtable: 50µs}, " +
 		"commit_log: 60µs, apply_batch_wait: 70µs, apply: {total:80µs, mutex_lock: 90µs, write_leader_wait: 100µs, " +
-		"write_wal: 101µs, write_memtable: 102µs}}} " +
+		"write_wal: 101µs, write_memtable: 102µs}, scheduler: {process: 0s}}} " +
 		"Commit_primary_rpc_detail: {total:2.000s, region_id: 2000, " +
 		"store: tikv-2:20160, time_detail: {tikv_wall_time: 1s}, scan_detail: {total_process_keys: 20, total_keys: 200, " +
 		"rocksdb: {delete_skipped_count: 2, key_skipped_count: 2, block: {cache_hit_count: 2, read_count: 2, " +
 		"read_byte: 200 Bytes, read_time: 40ms}}}, write_detail: {store_batch_wait: 110µs, propose_send_wait: 120µs, " +
 		"persist_log: {total: 130µs, write_leader_wait: 140µs, sync_log: 145µs, write_memtable: 150µs}, " +
 		"commit_log: 160µs, apply_batch_wait: 170µs, apply: {total:180µs, mutex_lock: 190µs, write_leader_wait: 200µs, " +
-		"write_wal: 201µs, write_memtable: 202µs}}} " +
+		"write_wal: 201µs, write_memtable: 202µs}, scheduler: {process: 0s}}} " +
 		"Resolve_lock_time: 1 Local_latch_wait_time: 1 Write_keys: 1 Write_size: " +
 		"1 Prewrite_region: 1 Txn_retry: 1 Process_keys: 10 Total_keys: 100 Rocksdb_delete_skipped_count: 1 Rocksdb_key_skipped_count: " +
 		"1 Rocksdb_block_cache_hit_count: 1 Rocksdb_block_read_count: 1 Rocksdb_block_read_byte: 100 Rocksdb_block_read_time: 0.001"
@@ -380,7 +380,7 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		"block: {cache_hit_count: 1, read_count: 1, read_byte: 100 Bytes, read_time: 20ms}}}, " +
 		"write_detail: {store_batch_wait: 10µs, propose_send_wait: 20µs, persist_log: {total: 30µs, write_leader_wait: 40µs, " +
 		"sync_log: 45µs, write_memtable: 50µs}, commit_log: 60µs, apply_batch_wait: 70µs, apply: {total:80µs, mutex_lock: 90µs, " +
-		"write_leader_wait: 100µs, write_wal: 101µs, write_memtable: 102µs}}}, resolve_lock: 1s, region_num:5, write_keys:3" +
+		"write_leader_wait: 100µs, write_wal: 101µs, write_memtable: 102µs}, scheduler: {process: 0s}}}, resolve_lock: 1s, region_num:5, write_keys:3" +
 		", write_byte:66, txn_retry:2}"
 	require.Equal(t, expect, stats.String())
 
@@ -450,7 +450,7 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		"{total_process_keys: 10, total_keys: 100, rocksdb: {delete_skipped_count: 1, key_skipped_count: 1, block: " +
 		"{cache_hit_count: 1, read_count: 1, read_byte: 100 Bytes, read_time: 20ms}}}, write_detail: " +
 		"{store_batch_wait: 10µs, propose_send_wait: 20µs, persist_log: {total: 30µs, write_leader_wait: 40µs, sync_log: 45µs, write_memtable: 50µs}, " +
-		"commit_log: 60µs, apply_batch_wait: 70µs, apply: {total:80µs, mutex_lock: 90µs, write_leader_wait: 100µs, write_wal: 101µs, write_memtable: 102µs}}}, " +
+		"commit_log: 60µs, apply_batch_wait: 70µs, apply: {total:80µs, mutex_lock: 90µs, write_leader_wait: 100µs, write_wal: 101µs, write_memtable: 102µs}, scheduler: {process: 0s}}}, " +
 		"lock_rpc:5s, rpc_count:50, retry_count:2}"
 	require.Equal(t, expect, stats.String())
 }
