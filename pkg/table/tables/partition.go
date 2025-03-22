@@ -2082,18 +2082,19 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 	// - from != to, newFrom == newTo
 	// - from == to, newFrom == newTo, skip this one
 	var found map[string][]byte
-	var newFromMap, newToMap, newToKey kv.Key
+	var newFromMap, newFromKey, newToMap, newToKey kv.Key
 	removeHandle := h
 
 	keys := make([]kv.Key, 0, 3)
 	encodedRecordID := codec.EncodeInt(nil, h.IntValue())
+	// TODO: refactor and use the same code for newFrom in both RemoveRecord and UpdateRecord!!!
 	if newFrom != 0 {
 		mapKey := codec.EncodeInt(encodedRecordID, from)
 		newFromMap = tablecodec.EncodeIndexSeekKey(newFrom, tablecodec.TempIndexPrefix, mapKey)
 		keys = append(keys, newFromMap)
+		newFromKey = tablecodec.EncodeRowKey(newFrom, encodedRecordID)
+		keys = append(keys, newFromKey)
 	}
-	// TODO: Don't we need to check newFromKey?
-	// would we miss to delete it?
 	if !deleteOnly && (newRecordID == nil || newRecordID.Equal(h)) {
 		// Only need to check newToMap if writing, and
 		// no new record id generated (new unique id, cannot be found)
@@ -2129,9 +2130,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 					return errors.Trace(err)
 				}
 			}
-		} else if val, ok = found[string(newToKey)]; ok {
-			// TODO: Should not this be newFromKey?!?
-			//       Could we miss to remove a row from newFrom partition here?!?
+		} else if val, ok = found[string(newFromKey)]; ok {
 			// compare val with currData
 			columnFt := make(map[int64]*types.FieldType)
 			for idx := range t.Meta().Columns {
@@ -2151,7 +2150,9 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 					}
 				}
 			}
-			newToKeyIsSame = &same
+			if newTo == newFrom {
+				newToKeyIsSame = &same
+			}
 			if !same {
 				// conflicting _tidb_rowid DO NOT DELETE IT!!!
 				doRemove = false
@@ -2179,7 +2180,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 			return errors.Trace(err)
 		}
 		newRecordID = kv.IntHandle(id)
-	} else if _, ok := found[string(newToKey)]; ok {
+	} else if val, ok = found[string(newToKey)]; ok {
 		// compare val with currData
 		if newToKeyIsSame == nil {
 			// TODO: refactor this into a separate function

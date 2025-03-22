@@ -3761,7 +3761,7 @@ func TestNonClusteredReorgUpdateHash(t *testing.T) {
 			tkO.MustQuery(`select a,b,_tidb_rowid from t`).Sort().Check(testkit.Rows("2 2 1", "3 3 1"))
 			tkNO.MustExec(`update t set a = 5 where a = 3`)
 			tkNO.MustQuery(`select a,b,_tidb_rowid from t`).Sort().Check(testkit.Rows("2 2 1", "5 3 1"))
-			tkO.MustQuery(`select a,b,_tidb_rowid from t`).Sort().Check(testkit.Rows("2 2 1", "3 3 1", "5 3 30001"))
+			tkO.MustQuery(`select a,b,_tidb_rowid from t`).Sort().Check(testkit.Rows("2 2 1", "5 3 30001"))
 		}
 	}
 	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn, false)
