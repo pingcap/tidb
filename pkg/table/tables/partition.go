@@ -16,7 +16,7 @@ package tables
 
 import (
 	"bytes"
-	stdctx "context"
+	"context"
 	stderr "errors"
 	"fmt"
 	"hash/crc32"
@@ -130,19 +130,27 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 	origIndices := ret.meta.Indices
 	DroppingDefinitionIndices := make([]*model.IndexInfo, 0, len(origIndices))
 	AddingDefinitionIndices := make([]*model.IndexInfo, 0, len(origIndices))
+	changesArePublic := pi.DDLState == model.StateDeleteReorganization || pi.DDLState == model.StatePublic
 	for _, idx := range origIndices {
 		newIdx, ok := pi.DDLChangedIndex[idx.ID]
 		if !ok {
 			// Untouched index
-			DroppingDefinitionIndices = append(DroppingDefinitionIndices, idx)
-			if pi.DDLState != model.StateDeleteReorganization {
-				// If pi.DDLState == DeleteReorg, then keep the StatePublic.
-				// Otherwise, set same state as DDLState. Like DeleteOnly is needed to
-				// set the correct assertion on the index.
-				idx = idx.Clone()
-				idx.State = pi.DDLState
+			clonedIdx := idx.Clone()
+			if changesArePublic {
+				// Adding partitions are now public, so we should assert on them.
+				AddingDefinitionIndices = append(AddingDefinitionIndices, idx)
+				// Dropping partitions are no longer public, so we cannot assert on them.
+				// Using WriteOnly, since DeleteOnly/DeleteReorganization is not classified
+				// as Writable, see tables.IsIndexWritable().
+				clonedIdx.State = model.StateWriteOnly
+				DroppingDefinitionIndices = append(DroppingDefinitionIndices, clonedIdx)
+				continue
 			}
-			AddingDefinitionIndices = append(AddingDefinitionIndices, idx)
+			// Currently used partitions, continue use StatePublic for assertions
+			DroppingDefinitionIndices = append(DroppingDefinitionIndices, idx)
+			// new partitions, use current state for skipping assertions
+			clonedIdx.State = pi.DDLState
+			AddingDefinitionIndices = append(AddingDefinitionIndices, clonedIdx)
 			continue
 		}
 		if newIdx {
@@ -1712,14 +1720,14 @@ func checkConstraintForExchangePartition(ctx table.MutateContext, row []types.Da
 	}
 
 	type InfoSchema interface {
-		TableByID(ctx stdctx.Context, id int64) (val table.Table, ok bool)
+		TableByID(ctx context.Context, id int64) (val table.Table, ok bool)
 	}
 
 	is, ok := support.GetInfoSchemaToCheckExchangeConstraint().(InfoSchema)
 	if !ok {
 		return errors.Errorf("exchange partition process assert inforSchema failed")
 	}
-	gCtx := stdctx.Background()
+	gCtx := context.Background()
 	nt, tableFound := is.TableByID(gCtx, ntID)
 	if !tableFound {
 		// Now partID is nt tableID.
@@ -1777,7 +1785,7 @@ func partitionedTableAddRecord(ctx table.MutateContext, txn kv.Transaction, t *p
 			return nil, errors.Trace(err)
 		}
 		tbl = t.getPartition(pid)
-		if !tbl.Meta().PKIsHandle && !tbl.Meta().IsCommonHandle {
+		if !tbl.Meta().HasClusteredIndex() {
 			// Preserve the _tidb_rowid also in the new partition!
 			r = append(r, types.NewIntDatum(recordID.IntValue()))
 		}
@@ -1825,26 +1833,85 @@ func (t *partitionTableWithGivenSets) GetAllPartitionIDs() []int64 {
 func (t *partitionedTable) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum, opts ...table.RemoveRecordOption) error {
 	opt := table.NewRemoveRecordOpt(opts...)
 	ectx := ctx.GetExprCtx()
-	pid, err := t.locatePartition(ectx.GetEvalCtx(), r)
+	from, err := t.locatePartition(ectx.GetEvalCtx(), r)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	tbl := t.getPartition(pid)
+	tbl := t.getPartition(from)
 	err = tbl.removeRecord(ctx, txn, h, r, opt)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	if _, ok := t.reorganizePartitions[pid]; ok {
-		pid, err = t.locateReorgPartition(ectx.GetEvalCtx(), r)
+	if _, ok := t.reorganizePartitions[from]; ok {
+		newFrom, err := t.locateReorgPartition(ectx.GetEvalCtx(), r)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		tbl = t.getPartition(pid)
-		err = tbl.removeRecord(ctx, txn, h, r, opt)
+
+		if t.Meta().HasClusteredIndex() {
+			tbl = t.getPartition(newFrom)
+			err = tbl.removeRecord(ctx, txn, h, r, opt)
+			return errors.Trace(err)
+		}
+		var found map[string][]byte
+		removeHandle := h
+		keys := make([]kv.Key, 0, 3)
+		encodedRecordID := codec.EncodeInt(nil, h.IntValue())
+		mapKey := codec.EncodeInt(encodedRecordID, from)
+		newFromMap := tablecodec.EncodeIndexSeekKey(newFrom, tablecodec.TempIndexPrefix, mapKey)
+		keys = append(keys, newFromMap)
+		newFromKey := tablecodec.EncodeRowKey(newFrom, encodedRecordID)
+		keys = append(keys, newFromKey)
+
+		found, err = txn.BatchGet(context.Background(), keys)
 		if err != nil {
 			return errors.Trace(err)
+		}
+
+		doRemove := false
+		if val, ok := found[string(newFromMap)]; ok {
+			var id int64
+			_, id, err = codec.DecodeInt(val)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			removeHandle = kv.IntHandle(id)
+			err = txn.Delete(newFromMap)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			doRemove = true
+		} else if val, ok = found[string(newFromKey)]; ok {
+			// compare val with currData
+			columnFt := make(map[int64]*types.FieldType)
+			for idx := range t.Meta().Columns {
+				col := t.Meta().Columns[idx]
+				columnFt[col.ID] = &col.FieldType
+			}
+			foundData, err := tablecodec.DecodeRowToDatumMap(val, columnFt, ctx.GetExprCtx().GetEvalCtx().Location())
+			if err != nil {
+				return errors.Trace(err)
+			}
+			same := true
+			for idx, col := range t.Meta().Cols() {
+				if d, ok := foundData[col.ID]; ok {
+					if !d.Equals(r[idx]) {
+						same = false
+						break
+					}
+				}
+			}
+			// If conflicting _tidb_rowid DO NOT DELETE IT!!!
+			doRemove = same
+		}
+
+		if doRemove {
+			err = t.GetPartition(newFrom).RemoveRecord(ctx, txn, removeHandle, r)
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return nil
@@ -1892,6 +1959,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 			return errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
 		}
 	}
+	// TODO: Remove this and require EXCHANGE PARTITION to have same CONSTRAINTs on the tables!
 	exchangePartitionInfo := t.Meta().ExchangePartitionInfo
 	if exchangePartitionInfo != nil && exchangePartitionInfo.ExchangePartitionDefID == to &&
 		vardef.EnableCheckConstraint.Load() {
@@ -1908,50 +1976,48 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 	deleteOnly := t.Meta().Partition.DDLState == model.StateDeleteOnly || t.Meta().Partition.DDLState == model.StatePublic
 	// The old and new data locate in different partitions.
 	// Remove record from old partition and add record to new partition.
-	if from != to {
+	var newRecordID kv.Handle
+	if from == to {
+		err = t.getPartition(to).updateRecord(ctx, txn, h, currData, newData, touched, opt)
+	} else {
 		err = t.GetPartition(from).RemoveRecord(ctx, txn, h, currData)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		_, err = t.getPartition(to).addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
+		newRecordID, err = t.getPartition(to).addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
+	}
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	newTo, newFrom := int64(0), int64(0)
+	if _, ok := t.reorganizePartitions[to]; ok {
+		newTo, err = t.locateReorgPartition(ectx.GetEvalCtx(), newData)
+		// There might be valid cases when errors should be accepted?
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		newTo, newFrom := int64(0), int64(0)
-		if _, ok := t.reorganizePartitions[to]; ok {
-			newTo, err = t.locateReorgPartition(ectx.GetEvalCtx(), newData)
-			// There might be valid cases when errors should be accepted?
-			if err != nil {
-				return errors.Trace(err)
-			}
+	}
+	if _, ok := t.reorganizePartitions[from]; ok {
+		newFrom, err = t.locateReorgPartition(ectx.GetEvalCtx(), currData)
+		// There might be valid cases when errors should be accepted?
+		if err != nil {
+			return errors.Trace(err)
 		}
-		if _, ok := t.reorganizePartitions[from]; ok {
-			newFrom, err = t.locateReorgPartition(ectx.GetEvalCtx(), currData)
-			// There might be valid cases when errors should be accepted?
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
-		if newTo == newFrom && newTo != 0 {
-			// Update needs to be done in StateDeleteOnly as well
-			err = t.getPartition(newTo).updateRecord(ctx, txn, h, currData, newData, touched, opt)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			memBuffer.Release(sh)
-			return nil
-		}
-
+	}
+	if newFrom == 0 && newTo == 0 {
+		memBuffer.Release(sh)
+		return nil
+	}
+	if t.Meta().HasClusteredIndex() {
 		if newFrom != 0 {
 			err = t.getPartition(newFrom).RemoveRecord(ctx, txn, h, currData)
-			// TODO: Can this happen? When the data is not yet backfilled?
 			if err != nil {
 				return errors.Trace(err)
 			}
 		}
-		if newTo != 0 && !deleteOnly {
+		if !deleteOnly && newTo != 0 {
 			_, err = t.getPartition(newTo).addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
 			if err != nil {
 				return errors.Trace(err)
@@ -1960,47 +2026,214 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 		memBuffer.Release(sh)
 		return nil
 	}
-	tbl := t.getPartition(to)
-	err = tbl.updateRecord(ctx, txn, h, currData, newData, touched, opt)
+
+	// non-reorged partition ('original') will have the read record ID,
+	// so we are only concerned about the reorged partition's possible conflicts.
+	// I.e. during StateWriteReorganization: the new partitions
+	// and during StateDeleteReorganization (and StatePublic?): the old partitions
+
+	// Cases which don't need attention:
+	// - clustered tables - Can only have unique keys, ensured separately on old and new
+	//   partition sets
+	// - non-clustered tables that:
+	//   - there is no existing matching key newTo
+	//   AND
+	//   - there is no existing matching key newFrom
+	//   AND
+	//   - there is no matching key in newTo temporary index map
+	//   AND
+	//   - there is no matching key in newFrom temporary index map
+	//
+	// So what do we need to check for non-clustered tables:
+	// For the RemoveRecord (newFrom):
+	//  - if newFromMap temporary index map exists: (Always checked!)
+	//    - use the new ID for remove (Also remove them map entry?)
+	//  else
+	//  - if newFromKey exists AND row is the same
+	//    - use the current ID for remove
+	//   ^^^^ ===== TODO: This could delete a different row!!!
+	//              We must check if it is the same row before just deleting it!
+	//              So we must read newFromKey as well!!!
+	// For the addRecord/newTo:
+	// - if newTo key already exists: (Only check if newRecordID != nil && !deleteOnly)
+	//   - if the values are the same as currData (i.e. same row):
+	//     - update (remove + add)
+	//    else
+	//     - if newTo temporary index map exists: (Always checked, but maybe not used!)
+	//       // TODO: the temporary index map must be (recordID+fromPartitionID)!
+	//       //       since the same recordID may have many duplicates!!!
+	//       // Also this can have two options:
+	//       //  - newFrom == newTo (OK, will do remove + add)
+	//       //  - newFrom != newTo Should not happen!?!
+	//       //    TODO: Add test that within an optimistic transaction updates 3 rows
+	//       //          with the same _tidb_rowid's
+	//       //          from three different partitions to the same partition
+	//       //          Will they overwrite each other?!?
+	//       - update (remove + add) using the mapped recordID
+	//      else
+	//       - generate new ID and save it to newTo temporary index map
+	// else if newTo temporary index map exists (and newTo key does not exists)
+	//   - if newTo temporary index map exists:
+	//     - update (remove + add) using the mapped recordID
+	//     // Or should we remove the temporary index map and use the current recordID?
+	// TODO: Test three different updates with each other (full combination?)
+	// - from == to, newFrom != newTo
+	// - from != to, newFrom != newTo
+	// - from != to, newFrom == newTo
+	// - from == to, newFrom == newTo, skip this one
+	var found map[string][]byte
+	var newFromMap, newFromKey, newToMap, newToKey kv.Key
+	removeHandle := h
+
+	keys := make([]kv.Key, 0, 3)
+	encodedRecordID := codec.EncodeInt(nil, h.IntValue())
+	// TODO: refactor and use the same code for newFrom in both RemoveRecord and UpdateRecord!!!
+	if newFrom != 0 {
+		mapKey := codec.EncodeInt(encodedRecordID, from)
+		newFromMap = tablecodec.EncodeIndexSeekKey(newFrom, tablecodec.TempIndexPrefix, mapKey)
+		keys = append(keys, newFromMap)
+		newFromKey = tablecodec.EncodeRowKey(newFrom, encodedRecordID)
+		keys = append(keys, newFromKey)
+	}
+	if !deleteOnly && (newRecordID == nil || newRecordID.Equal(h)) {
+		// Only need to check newToMap if writing, and
+		// no new record id generated (new unique id, cannot be found)
+		newToKey = tablecodec.EncodeRowKey(newTo, encodedRecordID)
+		keys = append(keys, newToKey)
+
+		mapKey := codec.EncodeInt(encodedRecordID, to)
+		newToMap = tablecodec.EncodeIndexSeekKey(newTo, tablecodec.TempIndexPrefix, mapKey)
+		if newTo != newFrom || to != from {
+			keys = append(keys, newToMap)
+		} else {
+			newToMap = newFromMap
+		}
+	}
+	found, err = txn.BatchGet(context.Background(), keys)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if _, ok := t.reorganizePartitions[to]; ok {
-		// Even if to == from, in the reorganized partitions they may differ
-		// like in case of a split
-		newTo, err := t.locateReorgPartition(ectx.GetEvalCtx(), newData)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		newFrom, err := t.locateReorgPartition(ectx.GetEvalCtx(), currData)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if newTo == newFrom {
-			tbl = t.getPartition(newTo)
-			if deleteOnly {
-				err = tbl.RemoveRecord(ctx, txn, h, currData)
-			} else {
-				err = tbl.updateRecord(ctx, txn, h, currData, newData, touched, opt)
-			}
+	var newToKeyIsSame *bool
+	if newFrom != 0 {
+		doRemove := true
+		if val, ok := found[string(newFromMap)]; ok {
+			var id int64
+			_, id, err = codec.DecodeInt(val)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			memBuffer.Release(sh)
-			return nil
+			removeHandle = kv.IntHandle(id)
+			// Remove the reorg mapping entry, if not reused
+			if newTo != newFrom || deleteOnly {
+				err = txn.Delete(newFromMap)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+		} else if val, ok = found[string(newFromKey)]; ok {
+			// compare val with currData
+			columnFt := make(map[int64]*types.FieldType)
+			for idx := range t.Meta().Columns {
+				col := t.Meta().Columns[idx]
+				columnFt[col.ID] = &col.FieldType
+			}
+			foundData, err := tablecodec.DecodeRowToDatumMap(val, columnFt, ctx.GetExprCtx().GetEvalCtx().Location())
+			if err != nil {
+				return errors.Trace(err)
+			}
+			same := true
+			for idx, col := range t.Meta().Cols() {
+				if d, ok := foundData[col.ID]; ok {
+					if !d.Equals(currData[idx]) {
+						same = false
+						break
+					}
+				}
+			}
+			if newTo == newFrom {
+				newToKeyIsSame = &same
+			}
+			if !same {
+				// conflicting _tidb_rowid DO NOT DELETE IT!!!
+				doRemove = false
+			}
 		}
-		tbl = t.getPartition(newFrom)
-		err = tbl.RemoveRecord(ctx, txn, h, currData)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if !deleteOnly {
-			tbl = t.getPartition(newTo)
-			_, err = tbl.addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
+
+		if doRemove {
+			err = t.GetPartition(newFrom).RemoveRecord(ctx, txn, removeHandle, currData)
 			if err != nil {
 				return errors.Trace(err)
 			}
 		}
+	}
+	if deleteOnly || newTo == 0 {
+		memBuffer.Release(sh)
+		return nil
+	}
+	if val, ok := found[string(newToMap)]; newToMap != nil && ok {
+		if newTo != newFrom {
+			panic("Should not have found newToMap")
+		}
+		var id int64
+		_, id, err = codec.DecodeInt(val)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		newRecordID = kv.IntHandle(id)
+	} else if val, ok = found[string(newToKey)]; ok {
+		// compare val with currData
+		if newToKeyIsSame == nil {
+			// TODO: refactor this into a separate function
+			columnFt := make(map[int64]*types.FieldType)
+			for idx := range t.Meta().Columns {
+				col := t.Meta().Columns[idx]
+				columnFt[col.ID] = &col.FieldType
+			}
+			foundData, err := tablecodec.DecodeRowToDatumMap(val, columnFt, ctx.GetExprCtx().GetEvalCtx().Location())
+			if err != nil {
+				return errors.Trace(err)
+			}
+			same := true
+			for idx, col := range t.Meta().Cols() {
+				if d, ok := foundData[col.ID]; ok {
+					if !d.Equals(currData[idx]) {
+						same = false
+						break
+					}
+				}
+			}
+			newToKeyIsSame = &same
+		}
+		if !*newToKeyIsSame {
+			// Generate a new ID
+			newRecordID, err = AllocHandle(context.Background(), ctx, t)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		} else {
+			newRecordID = h
+		}
+
+		mapKey := codec.EncodeInt(encodedRecordID, to)
+		tmpRecordIDMapKey := tablecodec.EncodeIndexSeekKey(newTo, tablecodec.TempIndexPrefix, mapKey)
+		encNewRecordID := codec.EncodeInt(nil, newRecordID.IntValue())
+		err = txn.Set(tmpRecordIDMapKey, encNewRecordID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if newRecordID == nil {
+		newRecordID = h
+	}
+	if len(newData) > len(t.Cols()) {
+		newData[len(t.Cols())] = types.NewIntDatum(newRecordID.IntValue())
+	} else {
+		newData = append(newData, types.NewIntDatum(newRecordID.IntValue()))
+	}
+	addRecordOpt := opt.GetAddRecordOptKeepRecordID()
+	_, err = t.getPartition(newTo).addRecord(ctx, txn, newData, addRecordOpt)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	memBuffer.Release(sh)
 	return nil
