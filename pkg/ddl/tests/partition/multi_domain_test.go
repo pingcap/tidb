@@ -2896,8 +2896,6 @@ func TestBackfillConcurrentDMLRange(t *testing.T) {
 		"10 10 30005",
 		"101 101 30007",
 		"102 1202 33",
-		// TODO: Actually delete 103!
-		"103 1103 34",
 		"104 1204 35",
 		"106 106 30008",
 		"107 107 30009",
@@ -3466,6 +3464,19 @@ func TestMultiSchemaReorgDeleteNonClusteredRange(t *testing.T) {
 		//require.NotEqual(t, state.String(), schemaState)
 		switch schemaState {
 		case model.StateWriteOnly.String():
+			tkO.MustQuery(`select *, _tidb_rowid from t`).Sort().Check(testkit.Rows(""+
+				"1 Original 1 1",
+				"101 Original 101 1",
+				"102 Original 102 2",
+				"103 Original 103 3",
+				"104 Original 104 4",
+				"2 Original 2 2",
+				"201 Original 201 1",
+				"202 Original 202 2",
+				"203 Original 203 3",
+				"204 Original 204 4",
+				"3 Original 3 3",
+				"4 Original 4 4"))
 			tkO.MustExec(`delete from t where a = 1 -- CASE (1)`)
 			tkO.MustExec(`update t set b = concat(b, " updated") where a = 2`)
 			tkO.MustExec(`update t set b = concat(b, " updated") where a = 102`)
@@ -3657,11 +3668,9 @@ func TestMultiSchemaReorgDeleteNonClusteredRange(t *testing.T) {
 		tkO.MustQuery(`select a,b,c,_tidb_rowid from t`).Sort().Check(testkit.Rows(""+
 			// 1 deleted
 			"101 Original 101 1",
-			// TODO: This should be deleted!
-			"102 Original updated 102 13",
+			// 102 deleted
 			// 103 deleted
-			// TODO: This should be deleted!
-			"104 Original updated 104 15",
+			// 104 deleted
 			"201 Original 201 30001",
 			"202 Original updated 202 14",
 			"203 Original 203 30002",
