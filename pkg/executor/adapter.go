@@ -68,6 +68,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/replayer"
@@ -1957,7 +1958,13 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	if stmtCtx.StmtType == "" {
 		stmtCtx.StmtType = ast.GetStmtLabel(a.StmtNode)
 	}
-	normalizedSQL, digest := stmtCtx.SQLDigest()
+
+	// We want the SQL digests used here to match the digests used for bindings,
+	// so SPM can use the same digest to refer to a SQL query consistently
+	// across bindings and the statement summary.
+	sqlWithDB := utilparser.RestoreWithDefaultDB(a.StmtNode, sessVars.CurrentDB, stmtCtx.OriginalSQL)
+	normalizedSQL, digest := parser.NormalizeDigestForBinding(sqlWithDB)
+
 	costTime := sessVars.GetTotalCostDuration()
 	charset, collation := sessVars.GetCharsetInfo()
 
