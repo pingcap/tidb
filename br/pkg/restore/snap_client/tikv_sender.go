@@ -224,8 +224,6 @@ func SortAndValidateFileRanges(
 			} else {
 				groupSize, groupCount = afterMergedGroupSize, afterMergedGroupCount
 			}
-			// override the previous key, which may not become a split key.
-			lastKey = rg.EndKey
 			// mergedRangeCount increment by the number of files before filtered by checkpoint in order to make split keys
 			// always the same as that from before execution.
 			mergedRangeCount += len(rg.Files)
@@ -235,6 +233,10 @@ func SortAndValidateFileRanges(
 			newFiles := filterOutFiles(checkpointSet, rg.Files)
 			// append the new files into the group
 			if len(newFiles) > 0 {
+				// override the previous key, which may not become a split key.
+				// if no new files, which means this range of files has been restored already.
+				// so we need to skip this key.
+				lastKey = rg.EndKey
 				if len(lastFilesGroup) == 0 || lastFilesGroup[len(lastFilesGroup)-1].TableID != table.NewPhysicalID {
 					lastFilesGroup = append(lastFilesGroup, restore.BackupFileSet{
 						TableID:      table.NewPhysicalID,
