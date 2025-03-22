@@ -213,6 +213,8 @@ type LogClient struct {
 
 	logFilesStat logFilesStatistic
 	restoreStat  restoreStatistics
+
+	checkpointTableSuffix string
 }
 
 type restoreStatistics struct {

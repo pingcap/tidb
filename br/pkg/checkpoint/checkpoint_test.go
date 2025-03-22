@@ -36,6 +36,8 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
+const tableSuffix string = "foo"
+
 func TestCheckpointMetaForBackup(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
