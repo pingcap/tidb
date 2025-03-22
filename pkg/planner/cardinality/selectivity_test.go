@@ -334,11 +334,29 @@ func TestEstimationForUnknownValuesAfterModify(t *testing.T) {
 	require.Nil(t, h.Update(context.Background(), dom.InfoSchema()))
 	statsTblnew := h.GetTableStats(table.Meta())
 
-	// Search for a not found value based upon statistics - count should be >= 10 and <=40
+	// Search for a not found value based upon statistics - count should be >= 20 and <=40
 	count, err = cardinality.GetColumnRowCount(sctx, col, getRange(15, 15), statsTblnew.RealtimeCount, statsTblnew.ModifyCount, false)
 	require.NoError(t, err)
-	require.Truef(t, count < 41, "expected: between 10 to 40, got: %v", count)
-	require.Truef(t, count > 9, "expected: between 10 to 40, got: %v", count)
+	require.Truef(t, count < 40, "expected: between 20 to 40, got: %v", count)
+	require.Truef(t, count > 20, "expected: between 20 to 40, got: %v", count)
+}
+
+func TestIssue57948(t *testing.T) {
+	// Similar to test (above) TestNewIndexWithoutStats
+	// Test when only 1 index exists - prioritize that index if it is missing statistics
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, c int)")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	testKit.MustExec("insert into t values (1, 1, 1)")
+	testKit.MustExec("insert into t select mod(a,250), mod(a,10), mod(a,100) from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 500) select a from x) as subquery")
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("create index idxb on t(b)")
+	// Create index after ANALYZE. SkyLine pruning should ensure that idxb is chosen because it has statistics
+	testKit.MustQuery("explain format='brief' select * from t where b = 5").CheckContain("idxb(b)")
 }
 
 func TestNewIndexWithoutStats(t *testing.T) {
