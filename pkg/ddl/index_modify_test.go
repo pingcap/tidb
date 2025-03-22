@@ -1491,3 +1491,17 @@ func TestInsertDuplicateBeforeIndexMerge(t *testing.T) {
 	tk.MustExec("alter table t add unique index i2(col2) /*T![global_index] GLOBAL */")
 	tk.MustExec("admin check table t")
 }
+
+func TestAddColumnarIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustContainErrMsg("create table t(a int, b bigint, columnar index(a) USING INVERTED);",
+		"Unsupported add columnar index: not currently supported")
+	tk.MustExec("create table t (a int, b bigint);")
+	tk.MustContainErrMsg("alter table t add columnar index idx(b) USING INVERTED COMMENT 'b comment';",
+		"Unsupported add columnar index: not currently supported")
+	tk.MustContainErrMsg("create columnar index idx on t (b) USING INVERTED COMMENT 'b comment';",
+		"Unsupported add columnar index: not currently supported")
+}
