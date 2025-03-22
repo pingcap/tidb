@@ -1017,11 +1017,11 @@ func TestRecoverSnapID(t *testing.T) {
 		return err == nil && snapID > 0
 	}, time.Minute, 100*time.Millisecond)
 
+	require.NoError(t, worker.setRepositoryDest(ctx, ""))
 	// wait for worker to stop
-	worker.stop()
-	require.Eventually(t, func() bool {
+	eventuallyWithLock(t, worker, func() bool {
 		return worker.cancel == nil
-	}, time.Second*10, time.Millisecond*100)
+	})
 
 	// setup a new etcd cluster and a new worker
 	etcd2 := setupEtcd(t)
