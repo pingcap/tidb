@@ -3607,7 +3607,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 			Handle: dom.PrivilegeHandle(),
 		}
 		privilege.BindPrivilegeManager(ses[9], pm)
-		if err := doBootstrapSQLFile(ses[9]); err != nil && intest.InTest {
+		if err := doBootstrapSQLFile(ses[9]); err != nil && intest.EnableInternalCheck {
 			failToLoadOrParseSQLFile = true
 		}
 	}
@@ -3666,7 +3666,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 
 	// This only happens in testing, since the failure of loading or parsing sql file
 	// would panic the bootstrapping.
-	if intest.InTest && failToLoadOrParseSQLFile {
+	if intest.EnableInternalCheck && failToLoadOrParseSQLFile {
 		dom.Close()
 		return nil, errors.New("Fail to load or parse sql file")
 	}
@@ -4512,7 +4512,7 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 	}
 	// panic in test mode in case there are requests without source in the future.
 	// log warnings in production mode.
-	if intest.InTest {
+	if intest.EnableInternalCheck {
 		panic("unexpected no source type context, if you see this error, " +
 			"the `RequestSourceTypeKey` is missing in your context")
 	}
