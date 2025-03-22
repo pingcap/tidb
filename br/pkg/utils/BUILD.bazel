@@ -30,6 +30,7 @@ go_library(
     deps = [
         "//br/pkg/errors",
         "//br/pkg/logutil",
+        "//br/pkg/summary",
         "//pkg/errno",
         "//pkg/kv",
         "//pkg/meta/model",
@@ -95,7 +96,7 @@ go_test(
     ],
     embed = [":utils"],
     flaky = True,
-    shard_count = 38,
+    shard_count = 39,
     deps = [
         "//br/pkg/errors",
         "//pkg/kv",

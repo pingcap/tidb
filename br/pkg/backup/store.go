@@ -13,11 +13,9 @@ import (
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/storewatch"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -280,17 +278,6 @@ func startBackup(
 		}
 		return eg.Wait()
 	}
-}
-
-func getBackupRanges(ranges []rtree.Range) []*kvrpcpb.KeyRange {
-	requestRanges := make([]*kvrpcpb.KeyRange, 0, len(ranges))
-	for _, r := range ranges {
-		requestRanges = append(requestRanges, &kvrpcpb.KeyRange{
-			StartKey: r.StartKey,
-			EndKey:   r.EndKey,
-		})
-	}
-	return requestRanges
 }
 
 func ObserveStoreChangesAsync(ctx context.Context, stateNotifier chan BackupRetryPolicy, pdCli pd.Client) {

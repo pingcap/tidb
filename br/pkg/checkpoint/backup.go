@@ -119,19 +119,18 @@ func WalkCheckpointFileForBackup(
 	ctx context.Context,
 	s storage.ExternalStorage,
 	cipher *backuppb.CipherInfo,
-	fn func(BackupKeyType, BackupValueType),
+	fn func(BackupKeyType, BackupValueType) error,
 ) (time.Duration, error) {
 	return walkCheckpointFile(ctx, s, cipher, CheckpointDataDirForBackup, fn)
 }
 
 type CheckpointMetadataForBackup struct {
-	GCServiceId string        `json:"gc-service-id"`
-	ConfigHash  []byte        `json:"config-hash"`
-	BackupTS    uint64        `json:"backup-ts"`
-	Ranges      []rtree.Range `json:"ranges"`
+	GCServiceId string `json:"gc-service-id"`
+	ConfigHash  []byte `json:"config-hash"`
+	BackupTS    uint64 `json:"backup-ts"`
 
-	CheckpointChecksum map[int64]*ChecksumItem    `json:"-"`
-	CheckpointDataMap  map[string]rtree.RangeTree `json:"-"`
+	CheckpointChecksum    map[int64]*ChecksumItem `json:"-"`
+	LoadCheckpointDataMap bool                    `json:"-"`
 }
 
 // load checkpoint metadata from the external storage
