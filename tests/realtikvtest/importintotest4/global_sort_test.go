@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"reflect"
 	"slices"
 	"strconv"
 	"testing"
@@ -44,6 +45,57 @@ func urlEqual(t *testing.T, expected, actual string) {
 	require.Equal(t, urlExpected.Query(), urlGot.Query())
 	urlExpected.RawQuery, urlGot.RawQuery = "", ""
 	require.Equal(t, urlExpected.String(), urlGot.String())
+}
+
+func assertExternalField(t *testing.T, subtaskMeta any) {
+	// Reflect on subtaskMeta to check fields with `external:"true"` tag
+	v := reflect.ValueOf(subtaskMeta)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	typ := v.Type()
+	for i := 0; i < v.NumField(); i++ {
+		field := typ.Field(i)
+		if field.Tag.Get("external") == "true" {
+			fv := v.Field(i)
+			switch fv.Kind() {
+			case reflect.Ptr:
+				require.Nil(t, fv.Interface(), "Field "+field.Name+" should be nil")
+			case reflect.Struct:
+				require.True(t, fv.IsZero(), "Field "+field.Name+" should be empty")
+			case reflect.Slice:
+				require.Empty(t, fv.Interface(), "Field "+field.Name+" should be empty")
+			case reflect.Map:
+				require.Empty(t, fv.Interface(), "Field "+field.Name+" should be empty")
+			default:
+				t.Fatalf("unexpected field type %s", fv.Kind())
+			}
+		}
+	}
+}
+
+func checkExternalFields(t *testing.T, tk *testkit.TestKit) {
+	// fetch subtask meta from tk, and check fields with `external:"true"` tag
+	rs := tk.MustQuery("select meta, step from mysql.tidb_background_subtask_history").Rows()
+	for _, r := range rs {
+		// convert string to int64
+		step, err := strconv.Atoi(r[1].(string))
+		require.NoError(t, err)
+		switch proto.Step(step) {
+		case proto.ImportStepEncodeAndSort:
+			var subtaskMeta importinto.ImportStepMeta
+			require.NoError(t, json.Unmarshal([]byte(r[0].(string)), &subtaskMeta))
+			assertExternalField(t, &subtaskMeta)
+		case proto.ImportStepMergeSort:
+			var subtaskMeta importinto.MergeSortStepMeta
+			require.NoError(t, json.Unmarshal([]byte(r[0].(string)), &subtaskMeta))
+			assertExternalField(t, &subtaskMeta)
+		case proto.ImportStepWriteAndIngest:
+			var subtaskMeta importinto.WriteIngestStepMeta
+			require.NoError(t, json.Unmarshal([]byte(r[0].(string)), &subtaskMeta))
+			assertExternalField(t, &subtaskMeta)
+		}
+	}
 }
 
 func (s *mockGCSSuite) TestGlobalSortBasic() {
@@ -128,6 +180,9 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	_, files, err = s.server.ListObjectsWithOptions("sorted", fakestorage.ListOptions{Prefix: "import"})
 	s.NoError(err)
 	s.Len(files, 0)
+
+	// check subtask external field
+	checkExternalFields(s.T(), s.tk)
 }
 
 func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
