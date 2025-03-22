@@ -265,3 +265,9 @@ FROM t1 AS table1
 WHERE (EXISTS (SELECT SUBQUERY2_t1.a1 AS SUBQUERY2_field1 FROM t1 AS SUBQUERY2_t1)) OR table1.b1 >= 55
 GROUP BY field1;`).Check(testkit.Rows("0"))
 }
+
+func TestIssue45956(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("show databases WHERE TRUE IN (SELECT TRUE) < ALL (SELECT TRUE);").Check(testkit.Rows("INFORMATION_SCHEMA"))
+}
