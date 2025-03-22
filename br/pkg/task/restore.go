@@ -6,6 +6,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
@@ -1022,27 +1024,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return cfg.piTRTaskInfo.FullRestoreCheckErr
 	}
 
-	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
-	restoreSchedulersFunc, schedulersConfig, err := restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, true)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	// need to know whether restore has been completed so can restore schedulers
-	canRestoreSchedulers := false
-	defer func() {
-		// don't reset pd scheduler if checkpoint mode is used and restored is not finished
-		if cfg.UseCheckpoint && !canRestoreSchedulers {
-			log.Info("skip removing pd scheduler for next retry")
-			return
-		}
-		log.Info("start to restore pd scheduler")
-		// run the post-work to avoid being stuck in the import
-		// mode or emptied schedulers.
-		restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
-		log.Info("finish restoring pd scheduler")
-	}()
-
 	if isFullRestore(cmdName) {
 		if client.NeedCheckFreshCluster(cfg.ExplicitFilter, checkpointFirstRun) {
 			if err = client.CheckTargetClusterFresh(ctx); err != nil {
@@ -1058,7 +1039,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		}
 	} else if client.IsFull() && checkpointFirstRun && cfg.CheckRequirements {
 		if err := checkTableExistence(ctx, mgr, tables); err != nil {
-			canRestoreSchedulers = true
 			return errors.Trace(err)
 		}
 	}
@@ -1072,31 +1052,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	// preallocate the table id, because any ddl job or database creation(include checkpoint) also allocates the global ID
 	if err = client.AllocTableIDs(ctx, tables); err != nil {
 		return errors.Trace(err)
-	}
-
-	// reload or register the checkpoint
-	var checkpointSetWithTableID map[int64]map[string]struct{}
-	if cfg.UseCheckpoint {
-		logRestoredTS := uint64(0)
-		if cfg.piTRTaskInfo != nil {
-			logRestoredTS = cfg.piTRTaskInfo.RestoreTS
-		}
-		sets, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(
-			ctx, cfg.snapshotCheckpointMetaManager, schedulersConfig, logRestoredTS, checkpointFirstRun)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if restoreSchedulersConfigFromCheckpoint != nil {
-			restoreSchedulersFunc = mgr.MakeUndoFunctionByConfig(*restoreSchedulersConfigFromCheckpoint)
-		}
-		checkpointSetWithTableID = sets
-
-		defer func() {
-			// need to flush the whole checkpoint data so that br can quickly jump to
-			// the log kv restore step when the next retry.
-			log.Info("wait for flush checkpoint...")
-			client.WaitForFinishCheckpoint(ctx, len(cfg.FullBackupStorage) > 0 || !canRestoreSchedulers)
-		}()
 	}
 
 	err = client.InstallPiTRSupport(ctx, snapclient.PiTRCollDep{
@@ -1241,6 +1196,94 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			}
 		}
 	}
+
+	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
+	var restoreSchedulersFunc pdutil.UndoFunc
+	var schedulersConfig *pdutil.ClusterConfig
+	if isFullRestore(cmdName) || client.IsIncremental() {
+		restoreSchedulersFunc, schedulersConfig, err = restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, true)
+	} else {
+		var tableIDs []int64
+		for _, table := range createdTables {
+			tableIDs = append(tableIDs, table.Table.ID)
+		}
+		restoreSchedulersFunc, schedulersConfig, err = restore.FineGrainedRestorePreWork(ctx, mgr, importModeSwitcher, tableIDs, cfg.Online, true)
+	}
+
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// need to know whether restore has been completed so can restore schedulers
+	canRestoreSchedulers := false
+	defer func() {
+		cancel()
+		// don't reset pd scheduler if checkpoint mode is used and restored is not finished
+		if cfg.UseCheckpoint && !canRestoreSchedulers {
+			log.Info("skip removing pd scheduler for next retry")
+			return
+		}
+		log.Info("start to restore pd scheduler")
+		// run the post-work to avoid being stuck in the import
+		// mode or emptied schedulers.
+		restore.RestorePostWork(ctx, importModeSwitcher, restoreSchedulersFunc, cfg.Online)
+		log.Info("finish restoring pd scheduler")
+	}()
+
+	// reload or register the checkpoint
+	var checkpointSetWithTableID map[int64]map[string]struct{}
+	if cfg.UseCheckpoint {
+		logRestoredTS := uint64(0)
+		if cfg.piTRTaskInfo != nil {
+			logRestoredTS = cfg.piTRTaskInfo.RestoreTS
+		}
+		sets, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(
+			ctx, cfg.snapshotCheckpointMetaManager, schedulersConfig, logRestoredTS, checkpointFirstRun)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if restoreSchedulersConfigFromCheckpoint != nil {
+			restoreSchedulersFunc = mgr.MakeUndoFunctionByConfig(*restoreSchedulersConfigFromCheckpoint)
+		}
+		checkpointSetWithTableID = sets
+
+		defer func() {
+			// need to flush the whole checkpoint data so that br can quickly jump to
+			// the log kv restore step when the next retry.
+			log.Info("wait for flush checkpoint...")
+			client.WaitForFinishCheckpoint(ctx, len(cfg.FullBackupStorage) > 0 || !canRestoreSchedulers)
+		}()
+	}
+
+	failpoint.Inject("sleep_for_check_scheduler_status", func(val failpoint.Value) {
+		fileName, ok := val.(string)
+		func() {
+			if !ok {
+				return
+			}
+			f, osErr := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, os.ModePerm)
+			if osErr != nil {
+				log.Warn("failed to create file", zap.Error(osErr))
+				return
+			}
+			msg := []byte("schedulers removed\n")
+			_, err = f.Write(msg)
+			if err != nil {
+				log.Warn("failed to write data to file", zap.Error(err))
+				return
+			}
+		}()
+		for {
+			_, statErr := os.Stat(fileName)
+			if os.IsNotExist(statErr) {
+				break
+			} else if statErr != nil {
+				log.Warn("error checking file", zap.Error(statErr))
+				break
+			}
+			time.Sleep(1 * time.Second)
+		}
+	})
 
 	if cfg.tiflashRecorder != nil {
 		for _, createdTable := range createdTables {

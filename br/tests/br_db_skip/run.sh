@@ -56,7 +56,7 @@ run_sql "CREATE TABLE $DB.usertable1 ( \
 
 echo "restore start must succeed"
 fail=false
-run_br restore db --db $DB -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --no-schema=true || fail=true
+run_br restore db --db $DB -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --no-schema=true --check-requirements=false || fail=true
 if $fail; then
     echo "TEST: [$TEST_NAME] restore $DB with no-schema failed"
     exit 1

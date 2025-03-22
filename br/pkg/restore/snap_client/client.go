@@ -409,7 +409,7 @@ func (rc *SnapClient) InitCheckpoint(
 		rc.restoreUUID = restoreID
 		// a nil config means undo function
 		if config != nil {
-			meta.SchedulersConfig = &pdutil.ClusterConfig{Schedulers: config.Schedulers, ScheduleCfg: config.ScheduleCfg}
+			meta.SchedulersConfig = &pdutil.ClusterConfig{Schedulers: config.Schedulers, ScheduleCfg: config.ScheduleCfg, RuleID: config.RuleID}
 		}
 		if err := snapshotCheckpointMetaManager.SaveCheckpointMetadata(ctx, meta); err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
