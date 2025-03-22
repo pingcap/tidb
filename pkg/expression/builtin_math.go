@@ -60,6 +60,7 @@ var (
 	_ functionClass = &sinFunctionClass{}
 	_ functionClass = &tanFunctionClass{}
 	_ functionClass = &truncateFunctionClass{}
+	_ functionClass = &truncFunctionClass{}
 )
 
 var (
@@ -2077,4 +2078,40 @@ func (b *builtinTruncateUintSig) evalInt(ctx EvalContext, row chunk.Row) (int64,
 	}
 	shift := uint64(math.Pow10(int(-d)))
 	return int64(uintx / shift * shift), false, nil
+}
+
+type truncFunctionClass struct {
+	baseFunctionClass
+}
+
+func (c *truncFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+
+	arg0Tp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
+
+	switch arg0Tp {
+	// string can be datetime-like
+	case types.ETDatetime, types.ETString:
+		if len(args) == 1 {
+			// TRUNC(datetime) is equivalent to TRUNC(datetime, 'dd')
+			args = append(args, &Constant{Value: types.NewDatum("dd"), RetType: types.NewFieldType(mysql.TypeVarchar)})
+		}
+		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETDatetime, types.ETDatetime, types.ETString)
+		if err != nil {
+			return nil, err
+		}
+		sig := &builtinTruncDatetimeSig{bf}
+		return sig, nil
+	case types.ETInt, types.ETReal, types.ETDecimal:
+		if len(args) == 1 {
+			// TRUNC(num1) is equivalent to TRUNCATE(num1, 0)
+			args = append(args, &Constant{Value: types.NewDatum(0), RetType: types.NewFieldType(mysql.TypeTiny)})
+		}
+		fc := truncateFunctionClass{baseFunctionClass{ast.Truncate, 2, 2}}
+		return fc.getFunction(ctx, args)
+	default:
+		return nil, perrors.Errorf("invalid argument type %v", arg0Tp)
+	}
 }
