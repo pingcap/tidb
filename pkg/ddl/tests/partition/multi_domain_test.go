@@ -3700,11 +3700,13 @@ func TestNonClusteredUpdateReorgUpdate(t *testing.T) {
 		tk2 := testkit.NewTestKit(t, store)
 		tk2.MustExec("use test")
 		tk2.MustExec("update t set b = b + 10 where a = 1")
-		tk2.MustExec("update t set b = b + 10 where a = 2") // Would delete newFrom 1, which would then be backfilled again!
+		// Would delete newFrom 1, which would then be backfilled again!
+		// TODO: Is this true?
+		tk2.MustExec("update t set b = b + 10 where a = 2")
 		tk2.MustQuery(`select a,b,_tidb_rowid from t`).Check(testkit.Rows("1 11 1", "2 12 1"))
 	})
 	tk.MustExec("alter table t remove partitioning")
-	tk.MustQuery("select a,b,_tidb_rowid from t").Sort().Check(testkit.Rows("1 1 1"))
+	tk.MustQuery("select a,b,_tidb_rowid from t").Sort().Check(testkit.Rows("1 11 1", "2 12 3"))
 }
 
 func TestNonClusteredReorgUpdate(t *testing.T) {
@@ -3733,3 +3735,34 @@ func TestNonClusteredReorgUpdate(t *testing.T) {
 }
 
 // TODO: Still managed to repeat the issue of update removing the wrong newFrom row
+// Need something like:
+// newFromKey != newToKey
+// newFromKey set for a different row
+// newFromMap not set for this value (so either was inserted as newFromKey and then deleted cannot happen, OR not inserted)
+// So can it happen after backfill? No, since it needs to already be there, so either newFromKey is set OR newFromMap
+// Hmm, what if the newFrom is 0?
+// So an zero alter, then moving the row, Nope, if newFrom is 0, then nothing is deleted...
+
+func TestNonClusteredReorgUpdateHash(t *testing.T) {
+	// if not works 2->3, test 3->2
+	createSQL := "create table t (a int, b int) partition by hash (a) partitions 2"
+	initFn := func(tkO *testkit.TestKit) {
+		tkO.MustExec(`insert into t values (2,2),(3,3)`)
+		exchangeAllPartitionsToGetDuplicateTiDBRowIDs(t, tkO)
+	}
+	// TODO: Allow "add partition 1" as syntax?
+	alterSQL := "alter table t add partition partitions 1"
+	loopFn := func(tkO, tkNO *testkit.TestKit, _ model.SchemaState) {
+		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
+		schemaState := res.Rows()[0][0].(string)
+		switch schemaState {
+		case model.StateDeleteReorganization.String():
+			tkNO.MustQuery(`select a,b,_tidb_rowid from t`).Sort().Check(testkit.Rows("2 2 1", "3 3 1"))
+			tkO.MustQuery(`select a,b,_tidb_rowid from t`).Sort().Check(testkit.Rows("2 2 1", "3 3 1"))
+			tkNO.MustExec(`update t set a = 5 where a = 3`)
+			tkNO.MustQuery(`select a,b,_tidb_rowid from t`).Sort().Check(testkit.Rows("2 2 1", "5 3 1"))
+			tkO.MustQuery(`select a,b,_tidb_rowid from t`).Sort().Check(testkit.Rows("2 2 1", "3 3 1", "5 3 30001"))
+		}
+	}
+	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn, false)
+}
