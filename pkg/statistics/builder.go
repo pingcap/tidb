@@ -355,8 +355,8 @@ func BuildHistAndTopN(
 			continue
 		}
 		// case 2, meet a different value: counting for the "current" is complete
-		// case 2-1, do not add a count of 1 if we're sampling
-		if curCnt == 1 && sampleFactor > 1 && allowPruning {
+		// case 2-1, do not add a count of 1 if we're sampling or if we've already collected 10% of the topN
+		if curCnt == 1 && allowPruning && (len(topNList) >= (numTopN/10) || sampleFactor > 1) {
 			cur, curCnt = sampleBytes, 1
 			continue
 		}
@@ -367,7 +367,7 @@ func BuildHistAndTopN(
 			continue
 		}
 		// case 2-3, now topn is full, and the "current" count is less than the least count in the topn: no need to insert the "current"
-		if len(topNList) >= numTopN && uint64(curCnt) <= topNList[len(topNList)-1].Count {
+		if len(topNList) >= numTopN && (curCnt == 1 || uint64(curCnt) <= topNList[len(topNList)-1].Count) {
 			cur, curCnt = sampleBytes, 1
 			continue
 		}
@@ -478,6 +478,10 @@ func BuildHistAndTopN(
 
 	// Step3: build histogram with the rest samples
 	if len(samples) > 0 {
+		// if we pruned the topN, it means that there are no remaining skewed values in the samples
+		if len(topn.TopN) < numTopN && numBuckets == 256 {
+			numBuckets = int(min(max((float64(numBuckets)/10), math.Sqrt(float64(ndv))), float64(numBuckets)))
+		}
 		_, err = buildHist(sc, hg, samples, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets), memTracker)
 		if err != nil {
 			return nil, nil, err
