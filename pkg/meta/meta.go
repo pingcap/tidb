@@ -1077,6 +1077,25 @@ var checkAttributesInOrder = []string{
 	`"ttl_info":null`,
 }
 
+var (
+	specialAttributes     []*regexp.Regexp
+	specialAttributesOnce sync.Once
+	specialAttributesErr  error
+)
+
+func initspecialAttributes() {
+	specialAttributesOnce.Do(func() {
+		for _, substr := range checkAttributesInOrder {
+			re, err := regexp.Compile(substr)
+			if err != nil {
+				specialAttributesErr = err
+				return
+			}
+			specialAttributes = append(specialAttributes, re)
+		}
+	})
+}
+
 // isTableInfoMustLoad checks whether the table info needs to be loaded.
 // If the byte representation contains all the given attributes,
 // then it does not need to be loaded and this function will return false.
@@ -1128,14 +1147,11 @@ func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[strin
 	nameLRegex := regexp.MustCompile(NameExtractRegexp)
 
 	tableInfos := make([]*model.TableInfo, 0)
-	filterAttrs := make([]*regexp.Regexp, 0)
-	for _, substr := range checkAttributesInOrder {
-		filterAttr, err := regexp.Compile(substr)
-		if err != nil {
-			return nil, nil, err
-		}
-		filterAttrs = append(filterAttrs, filterAttr)
+	initspecialAttributes()
+	if specialAttributesErr != nil {
+		return nil, nil, errors.Trace(specialAttributesErr)
 	}
+
 	err := m.txn.IterateHash(dbKey, func(field []byte, value []byte) error {
 		if !strings.HasPrefix(string(hack.String(field)), "Table") {
 			return nil
@@ -1147,10 +1163,9 @@ func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[strin
 		if err != nil {
 			return errors.Trace(err)
 		}
-
 		key := Unescape(nameLMatch[1])
 		res[strings.Clone(key)] = int64(id)
-		if isTableInfoMustLoad(value, filterAttrs...) {
+		if isTableInfoMustLoad(value, specialAttributes...) {
 			tbInfo := &model.TableInfo{}
 			err = json.Unmarshal(value, tbInfo)
 			if err != nil {
@@ -1167,27 +1182,19 @@ func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[strin
 
 // GetTableInfoWithAttributes retrieves all the table infos for a given db.
 // The filterAttrs are used to filter out any table that is not needed.
-func GetTableInfoWithAttributes(m *Mutator, dbID int64, filterAttrs ...string) ([]*model.TableInfo, error) {
+func GetTableInfoWithAttributes(m *Mutator, dbID int64, filterAttrs ...*regexp.Regexp) ([]*model.TableInfo, error) {
 	dbKey := m.dbKey(dbID)
 	if err := m.checkDBExists(dbKey); err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	tableInfos := make([]*model.TableInfo, 0)
-	filterAttrRegexps := make([]*regexp.Regexp, 0)
-	for _, substr := range filterAttrs {
-		re, err := regexp.Compile(substr)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		filterAttrRegexps = append(filterAttrRegexps, re)
-	}
 	err := m.txn.IterateHash(dbKey, func(field []byte, value []byte) error {
 		if !strings.HasPrefix(string(hack.String(field)), "Table") {
 			return nil
 		}
 
-		if isTableInfoMustLoad(value, filterAttrRegexps...) {
+		if isTableInfoMustLoad(value, filterAttrs...) {
 			tbInfo := &model.TableInfo{}
 			err := json.Unmarshal(value, tbInfo)
 			if err != nil {
