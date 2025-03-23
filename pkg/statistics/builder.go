@@ -480,7 +480,10 @@ func BuildHistAndTopN(
 	if len(samples) > 0 {
 		// if we pruned the topN, it means that there are no remaining skewed values in the samples
 		if len(topn.TopN) < numTopN && numBuckets == 256 {
-			numBuckets = int(min(max((float64(numBuckets)/10), math.Sqrt(float64(ndv))), float64(numBuckets)))
+			remainingNDV := ndv - int64(len(topn.TopN))
+			// set the number of buckets to be the number of remaining distinct values divided by 2
+			// but no less than 1 and no more than the original number of buckets
+			numBuckets = int(min(max(1, remainingNDV/2), int64(numBuckets)))
 		}
 		_, err = buildHist(sc, hg, samples, count-int64(topn.TotalCount()), ndv-int64(len(topn.TopN)), int64(numBuckets), memTracker)
 		if err != nil {
