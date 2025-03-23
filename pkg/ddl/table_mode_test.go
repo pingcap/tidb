@@ -121,14 +121,14 @@ func TestTableModeBasic(t *testing.T) {
 	tk.MustGetErrCode("insert into t1_restore_import values(1, 1, 1)", errno.ErrProtectedTableMode)
 	tk.MustGetErrCode("update t1_restore_import set id = 2 where id = 1", errno.ErrProtectedTableMode)
 	tk.MustGetErrCode("delete from t1_restore_import where id = 2", errno.ErrProtectedTableMode)
-	// DDLs: modify column/add column/add index, drop table, truncate table
+	tk.MustGetErrCode("truncate table t1_restore_import", errno.ErrProtectedTableMode)
+	// DDLs: modify column/add column/add index, drop table
 	tk.MustGetErrCode("drop table t1_restore_import", errno.ErrProtectedTableMode)
 	tk.MustGetErrCode("alter table t1_restore_import modify column c2 bigint", errno.ErrProtectedTableMode)
 	tk.MustGetErrCode("alter table t1_restore_import add column c3 int", errno.ErrProtectedTableMode)
 	tk.MustGetErrCode("alter table t1_restore_import drop column c2", errno.ErrProtectedTableMode)
 	tk.MustGetErrCode("alter table t1_restore_import drop index idx1", errno.ErrProtectedTableMode)
 	tk.MustGetErrCode("alter table t1_restore_import add index idx2(c2)", errno.ErrProtectedTableMode)
-	tk.MustGetErrCode("truncate table t1_restore_import", errno.ErrProtectedTableMode)
 
 	// For testing AlterTable ModeRestore -> ModeImport is not allowed
 	err = setTableModeTest(ctx, t, store, de, dbInfo, tblInfo, model.TableModeImport)
