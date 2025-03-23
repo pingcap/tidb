@@ -2149,6 +2149,7 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 				"19 122 19 Original s:5 Update s:5 f:2",
 				"2 105 2 Original s:6 Update s:6 f:2",
 				"20 20 20 InsertODKU s:5 f:2",
+				// TODO: Duplicate, should it really be here?
 				"20 20 20 Original s:5",
 				"23 126 23 Insert s:5 f:1 Update s:5 f:2",
 				"24 24 24 Insert s:5 f:1",

@@ -3824,8 +3824,8 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 		// i.e. concurrently written by StateWriteOnly or StateWriteReorganization.
 		// and if so, skip it.
 		var found map[string][]byte
-		currPartIDPrefix := handleRange.startKey[:tablecodec.TableSplitKeyLen]
-		encodedCurrPartID := handleRange.startKey[len(tablecodec.TablePrefix()):tablecodec.TableSplitKeyLen]
+		lockKey := make([]byte, 0, tablecodec.RecordRowKeyLen)
+		lockKey = append(lockKey, handleRange.startKey[:tablecodec.TableSplitKeyLen]...)
 		numKeys := len(w.newKeys)
 		if numKeys > 0 {
 			failpoint.InjectCall("PartitionBackfillNonClustered", w.rowRecords[0].vals)
@@ -3836,20 +3836,6 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 			// TODO: test how to use PresumeKeyNotExists/NeedConstraintCheckInPrewrite/DO_CONSTRAINT_CHECK
 			// to delay the check until commit.
 			// And handle commit errors and fall back to this method of checking all keys to see if we need to skip any.
-			for i := range numKeys {
-				key := w.newKeys[i]
-				// TODO: Would it be possible/beneficial to get a range per partition instead?
-				// using an iterator?
-				// TODO: Create a utility function in tables/partition.go for this!
-				// Generate temporary index map entries for each key to see if they are already mapped
-				oldRecordIDEncoded := key[tablecodec.TableSplitKeyLen+2:]
-				idMapKey := make([]byte, 0, len(oldRecordIDEncoded)+len(encodedCurrPartID))
-				idMapKey = append(idMapKey, oldRecordIDEncoded...)
-				idMapKey = append(idMapKey, encodedCurrPartID...)
-				newPartID := tablecodec.DecodeTableID(key)
-				tmpRecordIDMapKey := tablecodec.EncodeIndexSeekKey(newPartID, tablecodec.TempIndexPrefix, idMapKey)
-				w.newKeys = append(w.newKeys, tmpRecordIDMapKey)
-			}
 			found, err = txn.BatchGet(ctx, w.newKeys)
 			if err != nil {
 				return errors.Trace(err)
@@ -3863,83 +3849,53 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 		for i, prr := range w.rowRecords {
 			taskCtx.scanCount++
 			key := prr.key
-			lockKey := key
+			// Lock the *old* partition's value, so it does not change during this
+			// backfill transaction.
+			// Since we are generating a new RecordID, this is needed to ensure no lost
+			// or duplicated rows from concurrent DML!
+			lockKey = lockKey[:tablecodec.TableSplitKeyLen]
+			lockKey = append(lockKey, key[tablecodec.TableSplitKeyLen:]...)
+			// Check if we can lock the key, since there can still be concurrent update
+			// happening on the rows from fetchRowColVals(), if we cannot lock the keys in this
+			// transaction and succeed when committing, then another transaction did update
+			// the same key, and we will fail and retry. When retrying, this key would be found
+			// through BatchGet and skipped.
+			// TODO: would it help to accumulate the keys in a slice and then only call this once?
+			err = txn.LockKeys(context.Background(), new(kv.LockCtx), lockKey)
+			if err != nil {
+				return errors.Trace(err)
+			}
 
 			// w.newKeys is only set for non-clustered tables, in w.fetchRowColVals().
 			if numKeys > 0 {
-				genNewID := false
 				key = w.newKeys[i]
-				if _, ok := found[string(w.newKeys[i+numKeys])]; ok {
-					// Already new generated unique _tidb_rowid
-					continue
-				}
+
 				if vals, ok := found[string(key)]; ok {
 					if len(vals) == len(prr.vals) && bytes.Equal(vals, prr.vals) {
 						// Already backfilled or double written earlier by concurrent DML
 						continue
 					}
 					// Not same row, due to earlier EXCHANGE PARTITION.
-					genNewID = true
-				}
-
-				// Lock the *old* partition's value, so it does not change during this
-				// backfill transaction.
-				// Since we are generating a new RecordID, this is needed to ensure no lost
-				// or duplicated rows from concurrent DML!
-				lockKey = make([]byte, 0, len(key))
-				lockKey = append(lockKey, currPartIDPrefix...)
-				lockKey = append(lockKey, key[tablecodec.TableSplitKeyLen:]...)
-
-				if genNewID {
-					currPartID := tablecodec.DecodeTableID(handleRange.startKey)
-					encodedNewPartID := key[len(tablecodec.TablePrefix()):tablecodec.TableSplitKeyLen]
-					oldRecordIDEncoded := key[tablecodec.TableSplitKeyLen+2:]
 
 					recordID, err := tables.AllocHandle(w.ctx, w.tblCtx, w.reorgedTbl)
 					if err != nil {
 						return errors.Trace(err)
 					}
 
+					// Delete the read record and insert it with the new recordID (i.e. Update)
+					err = txn.Delete(lockKey)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					key = tablecodec.EncodeRecordKey(lockKey[:tablecodec.TableSplitKeyLen+2], recordID)
+					err = txn.Set(key, prr.vals)
+					if err != nil {
+						return errors.Trace(err)
+					}
+
 					// tablecodec.prefixLen is not exported, but is just TableSplitKeyLen + 2
 					key = tablecodec.EncodeRecordKey(key[:tablecodec.TableSplitKeyLen+2], recordID)
-					newPartID := tablecodec.DecodeTableID(key)
-					// Old _tidb_rowid,partID => New _tidb_rowid mapping only needs to be in the New partition
-					idMapKey := make([]byte, 0, len(oldRecordIDEncoded)+len(encodedCurrPartID))
-					idMapKey = append(idMapKey, oldRecordIDEncoded...)
-					idMapKey = append(idMapKey, encodedCurrPartID...)
-					tmpRecordIDMapKey := tablecodec.EncodeIndexSeekKey(newPartID, tablecodec.TempIndexPrefix, idMapKey)
-					newRecordIDEncoded := key[tablecodec.TableSplitKeyLen+2:]
-					err = txn.Set(tmpRecordIDMapKey, newRecordIDEncoded)
-					if err != nil {
-						return errors.Trace(err)
-					}
-
-					// Also add a temporary index / Map for 'old' partitions,
-					// to use in DeleteReorg state+ when moving a row between old partitions,
-					// so that sessions still in WriteReorg can see the same rows.
-					idMapKey = idMapKey[:0]
-					idMapKey = append(idMapKey, newRecordIDEncoded...)
-					idMapKey = append(idMapKey, encodedNewPartID...)
-					tmpRecordIDMapKey = tablecodec.EncodeIndexSeekKey(currPartID, tablecodec.TempIndexPrefix, idMapKey)
-					err = txn.Set(tmpRecordIDMapKey, oldRecordIDEncoded)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					// TODO: update/delete these entries for normal as well as reorg operation (delete/update)
-
-					// TODO: Add test for DeleteReorg update a row in a old partition, giving it a new _tidb_rowid
-					// not matching the _tidb_rowid in the new partition
-					// then try to read/update and/or delete that row in WriteReorg state.
 				}
-			}
-			// Check if we can lock the key, since there can still be concurrent update
-			// happening on the rows from fetchRowColVals(), if we cannot lock the keys in this
-			// transaction and succeed when committing, then another transaction did update
-			// the same key, and we will fail and retry. When retrying, this key would be found
-			// through BatchGet and skipped.
-			err = txn.LockKeys(context.Background(), new(kv.LockCtx), lockKey)
-			if err != nil {
-				return errors.Trace(err)
 			}
 
 			err = txn.Set(key, prr.vals)
