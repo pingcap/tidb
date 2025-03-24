@@ -425,7 +425,6 @@ func getPlacementPolicyDependedObjectsIDs(t *meta.Mutator, policy *model.PolicyI
 	dbIDs = make([]int64, 0, len(schemas))
 	partIDs = make([]int64, 0, len(schemas))
 	tblInfos = make([]*model.TableInfo, 0, len(schemas))
-
 	for _, dbInfo := range schemas {
 		if dbInfo.PlacementPolicyRef != nil && dbInfo.PlacementPolicyRef.ID == policy.ID {
 			dbIDs = append(dbIDs, dbInfo.ID)
