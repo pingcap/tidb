@@ -605,24 +605,19 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 	if intest.InTest {
 		ch := jobCtx.oldDDLCtx.ddlEventCh
 		if ch != nil {
+		forLoop:
 			// Try sending the event to the channel with a backoff strategy to avoid blocking indefinitely.
 			// Since most unit tests don't consume events, we make a few attempts and then give up rather
 			// than blocking the DDL job forever on a full channel.
-			success := false
-		forLoop:
 			for i := 0; i < 10; i++ {
 				select {
 				case ch <- e:
-					success = true
 					break forLoop
 				default:
 					time.Sleep(time.Microsecond * 10)
 				}
 			}
-			if !success {
-				logutil.DDLLogger().Warn("fail to notify DDL event", zap.Stringer("event", e))
-				panic("failed to notify DDL event")
-			}
+			logutil.DDLLogger().Warn("fail to notify DDL event", zap.Stringer("event", e))
 		}
 	}
 
