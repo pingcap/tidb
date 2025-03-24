@@ -344,12 +344,6 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 				return errors.Trace(err)
 			}
 		}
-		for _, newID := range args.NewPartitionIDs {
-			// TODO: only do this for non-clustered tables!
-			if err := doBatchDeleteIndiceRange(ctx, wrapper, job.ID, newID, []int64{tablecodec.TempIndexPrefix}, ea, "reorganize partition, temporary index over _tidb_rowid mapping"); err != nil {
-				return errors.Trace(err)
-			}
-		}
 		return errors.Trace(doBatchDeleteTablesRange(ctx, wrapper, job.ID, args.OldPhysicalTblIDs, ea, "reorganize partition: physical table ID(s)"))
 	case model.ActionTruncateTablePartition:
 		args, err := model.GetTruncateTableArgs(job)

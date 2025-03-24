@@ -110,7 +110,7 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		return len(args.OldPhysicalTblIDs) + len(args.OldGlobalIndexes) + len(args.NewPartitionIDs), nil
+		return len(args.OldPhysicalTblIDs) + len(args.OldGlobalIndexes), nil
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		args, err := model.GetFinishedModifyIndexArgs(job)
 		if err != nil {
