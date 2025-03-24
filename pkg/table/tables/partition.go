@@ -1854,9 +1854,9 @@ func dataEqRec(loc *time.Location, tblInfo *model.TableInfo, row []types.Datum, 
 func (t *partitionedTable) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum, opts ...table.RemoveRecordOption) error {
 	opt := table.NewRemoveRecordOpt(opts...)
 	ectx := ctx.GetExprCtx()
-	if h.IntValue() == 4 {
-		logutil.BgLogger().Warn("RemoveRecord", zap.Int64("handle", h.IntValue()))
-	}
+	//if h.IntValue() == 4 {
+	//	logutil.BgLogger().Warn("RemoveRecord", zap.Int64("handle", h.IntValue()))
+	//}
 	from, err := t.locatePartition(ectx.GetEvalCtx(), r)
 	if err != nil {
 		return errors.Trace(err)
@@ -1923,9 +1923,9 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 	opt := table.NewUpdateRecordOpt(opts...)
 	ectx := ctx.GetExprCtx()
 	var from, to int64
-	if h.IntValue() == 4 {
-		logutil.BgLogger().Warn("update record with recordID 4", zap.Int64("recordID", h.IntValue()))
-	}
+	//if h.IntValue() == 4 {
+	//	logutil.BgLogger().Warn("update record with recordID 4", zap.Int64("recordID", h.IntValue()))
+	//}
 	from, err = t.locatePartition(ectx.GetEvalCtx(), currData)
 	if err != nil {
 		return errors.Trace(err)
@@ -1983,9 +1983,9 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if !newRecordHandle.Equal(h) {
-			logutil.BgLogger().Warn("update record", zap.Int64("recordID", h.IntValue()), zap.Int64("newRecordID", newRecordHandle.IntValue()))
-		}
+		//if !newRecordHandle.Equal(h) {
+		//	logutil.BgLogger().Warn("update record", zap.Int64("recordID", h.IntValue()), zap.Int64("newRecordID", newRecordHandle.IntValue()))
+		//}
 	} else {
 		// to == from && !t.Meta().HasClusteredIndex()
 		// We don't yet know if there will be a new record id generate or not, better defer until we know!
