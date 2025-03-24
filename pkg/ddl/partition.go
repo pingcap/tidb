@@ -3852,8 +3852,8 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 			key := prr.key
 			lockKey = lockKey[:tablecodec.TableSplitKeyLen]
 			lockKey = append(lockKey, key[tablecodec.TableSplitKeyLen:]...)
-			// Check if we can lock the *old* key, since there can still be concurrent update
-			// happening on the rows from fetchRowColVals(), if we cannot lock the keys in this
+			// Lock the *old* key, since there can still be concurrent update happening on
+			// the rows from fetchRowColVals(). If we cannot lock the keys in this
 			// transaction and succeed when committing, then another transaction did update
 			// the same key, and we will fail and retry. When retrying, this key would be found
 			// through BatchGet and skipped.
@@ -3899,6 +3899,7 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 					if err != nil {
 						return errors.Trace(err)
 					}
+					w.cleanRowMap()
 					// tablecodec.prefixLen is not exported, but is just TableSplitKeyLen + 2 ("_r")
 					key = tablecodec.EncodeRecordKey(key[:tablecodec.TableSplitKeyLen+2], h)
 					// OK to only do txn.Set() for the new partition, and defer creating the indexes,
@@ -3906,7 +3907,6 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 					// by doing RemoveRecord+UpdateRecord
 				}
 			}
-
 			err = txn.Set(key, prr.vals)
 			if err != nil {
 				return errors.Trace(err)
@@ -3922,7 +3922,6 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 
 func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBackfillTask) (kv.Key, bool, error) {
 	w.rowRecords = w.rowRecords[:0]
-	isClustered := w.reorgedTbl.Meta().HasClusteredIndex()
 	startTime := time.Now()
 
 	// taskDone means that the added handle is out of taskRange.endHandle.
@@ -3949,26 +3948,12 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 				return false, errors.Trace(err)
 			}
 
-			// Set all partitioning columns and calculate which partition to write to
-			if isClustered {
-				// For clustered tables, we only need to extract the partitioning columns
-				for colID, offset := range w.writeColOffsetMap {
-					d, ok := w.rowMap[colID]
-					if !ok {
-						return false, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
-					}
-					tmpRow[offset] = d
+			for colID, offset := range w.writeColOffsetMap {
+				d, ok := w.rowMap[colID]
+				if !ok {
+					return false, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
 				}
-			} else {
-				// For non=clustered tables, we need to extract all columns, since if there is a collision
-				// in the new partition, we need to RemoveRecord and AddRecord with a new _tidb_rowid
-				for _, col := range w.reorgedTbl.WritableCols() {
-					d, ok := w.rowMap[col.ID]
-					if !ok {
-						return false, dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
-					}
-					tmpRow[col.Offset] = d
-				}
+				tmpRow[offset] = d
 			}
 			p, err := w.reorgedTbl.GetPartitionByRow(w.exprCtx.GetEvalCtx(), tmpRow)
 			if err != nil {
