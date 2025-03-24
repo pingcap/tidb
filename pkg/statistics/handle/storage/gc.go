@@ -247,7 +247,7 @@ func deleteHistStatsFromKV(sctx sessionctx.Context, physicalID int64, histID int
 		return errors.Trace(err)
 	}
 	// First of all, we update the version. If this table doesn't exist, it won't have any problem. Because we cannot delete anything.
-	if _, err = util.Exec(sctx, "update mysql.stats_meta set version = %? where table_id = %? ", startTS, physicalID); err != nil {
+	if _, err = util.Exec(sctx, "update mysql.stats_meta set version = %?, last_stats_histograms_version = %? where table_id = %? ", startTS, startTS, physicalID); err != nil {
 		return err
 	}
 	// delete histogram meta
@@ -436,7 +436,7 @@ func MarkExtendedStatsDeleted(sctx sessionctx.Context,
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if _, err = util.Exec(sctx, "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?", version, tableID); err != nil {
+	if _, err = util.Exec(sctx, "UPDATE mysql.stats_meta SET version = %?, last_stats_histograms_version = %? WHERE table_id = %?", version, version, tableID); err != nil {
 		return 0, err
 	}
 	statsVer = version

@@ -387,7 +387,7 @@ func SaveMetaToStorage(
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
+	_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count, last_stats_histograms_version) values (%?, %?, %?, %?, %?)", version, tableID, count, modifyCount, version)
 	statsVer = version
 	return
 }
