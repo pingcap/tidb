@@ -261,7 +261,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowBindingCacheStatus:
 		return e.fetchShowBindingCacheStatus(ctx)
 	case ast.ShowPlanForSQL:
-		return e.fetchPlanForSQL(ctx)
+		return e.fetchPlanForSQL()
 	case ast.ShowAnalyzeStatus:
 		return e.fetchShowAnalyzeStatus(ctx)
 	case ast.ShowRegions:
@@ -373,8 +373,32 @@ func (e *ShowExec) fetchShowBind() error {
 	return nil
 }
 
-func (e *ShowExec) fetchPlanForSQL(ctx context.Context) error {
-	// TODO
+func (e *ShowExec) fetchPlanForSQL() error {
+	bindingHandle := domain.GetDomain(e.Ctx()).BindingHandle()
+	plans, err := bindingHandle.ShowPlansForSQL(e.SQLOrDigest)
+	if err != nil {
+		return err
+	}
+	for _, p := range plans {
+		hintStr, err := p.Binding.Hint.Restore()
+		if err != nil {
+			return err
+		}
+
+		e.appendRow([]any{
+			p.Binding.OriginalSQL,
+			hintStr,
+			p.Plan,
+			p.PlanDigest,
+			p.AvgLatency,
+			float64(p.ExecTimes),
+			p.AvgScanRows,
+			p.AvgReturnedRows,
+			p.LatencyPerReturnRow,
+			p.ScanRowsPerReturnRow,
+			p.Recommend,
+			p.Reason})
+	}
 	return nil
 }
 
