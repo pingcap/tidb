@@ -16,11 +16,12 @@ package bindinfo
 
 import (
 	"fmt"
-
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"go.uber.org/zap"
 )
 
@@ -46,7 +47,7 @@ type BindingAuto interface {
 	// TODO: RecordHistPlansAsBindings records the history plans as bindings for qualified queries.
 
 	// ShowPlansForSQL shows historical plans for a specific SQL.
-	ShowPlansForSQL(sqlOrDigest string) ([]*BindingPlanInfo, error)
+	ShowPlansForSQL(currentDB, sqlOrDigest, charset, collation string) ([]*BindingPlanInfo, error)
 }
 
 type bindingAuto struct {
@@ -60,8 +61,19 @@ func newBindingAuto(sPool util.DestroyableSessionPool) BindingAuto {
 }
 
 // ShowPlansForSQL shows historical plans for a specific SQL.
-func (ba *bindingAuto) ShowPlansForSQL(sqlOrDigest string) ([]*BindingPlanInfo, error) {
-	whereCond := fmt.Sprintf("where sql_digest='%s'", sqlOrDigest)
+func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collation string) ([]*BindingPlanInfo, error) {
+	p := parser.New()
+	var normalizedSQL, whereCond string
+	stmtNode, err := p.ParseOneStmt(sqlOrDigest, charset, collation)
+	if err != nil {
+		db := utilparser.GetDefaultDB(stmtNode, currentDB)
+		normalizedSQL, _ = NormalizeStmtForBinding(stmtNode, db, false)
+	}
+	if normalizedSQL != "" {
+		whereCond = fmt.Sprintf("where original_sql='%s'", normalizedSQL)
+	} else { // treat sqlOrDigest as a digest
+		whereCond = fmt.Sprintf("where sql_digest='%s'", sqlOrDigest)
+	}
 	bindings, err := readBindingsFromStorage(ba.sPool, whereCond)
 	if err != nil {
 		return nil, err
