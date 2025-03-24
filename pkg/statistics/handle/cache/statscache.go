@@ -176,7 +176,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		snapshot := row.GetUint64(4)
 		var latestHistUpdateVersion uint64
 		if !row.IsNull(5) {
-			latestHistUpdateVersion = max(latestHistUpdateVersion, row.GetUint64(5))
+			latestHistUpdateVersion = row.GetUint64(5)
 		}
 
 		// Detect the context cancel signal, since it may take a long time for the loop.
@@ -233,6 +233,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 			}
 		}
 		tbl.Version = version
+		tbl.LastStatsHistVersion = latestHistUpdateVersion
 		tbl.RealtimeCount = count
 		tbl.ModifyCount = modifyCount
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
