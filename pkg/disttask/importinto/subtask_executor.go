@@ -143,8 +143,8 @@ func postProcess(ctx context.Context, store kv.Storage, taskMeta *TaskMeta, subt
 	deletedRowsChecksum := subtaskMeta.DeletedRowsChecksum.ToKVChecksum()
 	finalChecksum := encodeStepChecksum
 	finalChecksum.Sub(deletedRowsChecksum)
-	callLog.Info("checksum info", zap.Stringer("encodeStep", &encodeStepChecksum),
-		zap.Stringer("deletedRows", deletedRowsChecksum),
+	callLog.Info("checksum info", zap.Stringer("encodeStepSum", &encodeStepChecksum),
+		zap.Stringer("deletedRowsSum", deletedRowsChecksum),
 		zap.Stringer("final", &finalChecksum))
 
 	taskManager, err := storage.GetTaskManager()

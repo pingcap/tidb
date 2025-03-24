@@ -48,6 +48,7 @@ type conflictResolutionStepExecutor struct {
 	logger               *zap.Logger
 	tableImporter        *importer.TableImporter
 	conflictRowsChecksum *verification.KVChecksum
+	conflictedRowCount   int64
 }
 
 var _ execute.StepExecutor = &conflictResolutionStepExecutor{}
@@ -71,9 +72,10 @@ func (e *conflictResolutionStepExecutor) RunSubtask(ctx context.Context, subtask
 	if err = json.Unmarshal(subtask.Meta, &stepMeta); err != nil {
 		return errors.Trace(err)
 	}
+	e.conflictedRowCount = 0
 	e.conflictRowsChecksum = verification.NewKVChecksumWithKeyspace(e.store.GetCodec().GetKeyspace())
 	for kvGroup, ci := range stepMeta.ConflictInfos {
-		if err = e.handleKVConflicts(ctx, kvGroup, ci); err != nil {
+		if err = e.handleKVGroupConflicts(ctx, kvGroup, ci); err != nil {
 			return err
 		}
 	}
@@ -87,6 +89,7 @@ func (e *conflictResolutionStepExecutor) OnFinished(_ context.Context, subtask *
 		return errors.Trace(err)
 	}
 	subtaskMeta.Checksum = newFromKVChecksum(e.conflictRowsChecksum)
+	subtaskMeta.ConflictedRowCount = e.conflictedRowCount
 	newMeta, err := json.Marshal(subtaskMeta)
 	if err != nil {
 		return errors.Trace(err)
@@ -95,30 +98,36 @@ func (e *conflictResolutionStepExecutor) OnFinished(_ context.Context, subtask *
 	return nil
 }
 
-func (e *conflictResolutionStepExecutor) handleKVConflicts(ctx context.Context, kvGroup string, ci *common.ConflictInfo) (err error) {
+func (e *conflictResolutionStepExecutor) handleKVGroupConflicts(ctx context.Context, kvGroup string, ci *common.ConflictInfo) (err error) {
 	task := log.BeginTask(e.logger.With(
 		zap.String("kvGroup", kvGroup),
 		zap.Uint64("duplicates", ci.Count),
 		zap.Int("file-count", len(ci.Files)),
-	), "handle kv conflicts")
-	defer func() {
-		task.End(zapcore.ErrorLevel, err)
-	}()
+	), "handle kv group conflicts")
 
+	checksum := verification.NewKVChecksumWithKeyspace(e.store.GetCodec().GetKeyspace())
 	var handler conflictKVHandler
 	if kvGroup == dataKVGroup {
 		handler = &conflictDataKVHandler{
 			conflictResolutionStepExecutor: e,
-			checksum:                       e.conflictRowsChecksum,
+			checksum:                       checksum,
 		}
 	} else {
 		handler = &conflictIndexKVHandler{
 			conflictDataKVHandler: &conflictDataKVHandler{
 				conflictResolutionStepExecutor: e,
-				checksum:                       e.conflictRowsChecksum,
+				checksum:                       checksum,
 			},
 		}
 	}
+	defer func() {
+		conflictedRowCount := handler.getConflictedRowCount()
+		e.conflictedRowCount += conflictedRowCount
+		e.conflictRowsChecksum.Add(checksum)
+		task.End(zapcore.ErrorLevel, err, zap.Stringer("conflictedRowsSum", checksum),
+			zap.Int64("conflictedRowCount", conflictedRowCount))
+	}()
+
 	if err = handler.init(kvGroup); err != nil {
 		return errors.Trace(err)
 	}
@@ -163,13 +172,15 @@ type conflictKVHandler interface {
 	init(kvGroup string) error
 	handle(ctx context.Context, key, val []byte) error
 	close() error
+	getConflictedRowCount() int64
 }
 
 type conflictDataKVHandler struct {
 	*conflictResolutionStepExecutor
 	encoder *importer.TableKVEncoder
-	// record the checksum of the deleted KVs
-	checksum *verification.KVChecksum
+	// record the checksum of the all KVs of the conflicted row.
+	checksum           *verification.KVChecksum
+	conflictedRowCount int64
 }
 
 func (h *conflictDataKVHandler) init(string) error {
@@ -187,6 +198,10 @@ func (h *conflictDataKVHandler) handle(ctx context.Context, key, val []byte) err
 		return err
 	}
 	return h.encodeAndDeleteRow(ctx, h.encoder, handle, val)
+}
+
+func (h *conflictDataKVHandler) getConflictedRowCount() int64 {
+	return h.conflictedRowCount
 }
 
 // re-encode the row from the handle and value of data KV, and delete all encoded keys.
@@ -210,6 +225,7 @@ func (h *conflictDataKVHandler) encodeAndDeleteRow(ctx context.Context,
 	}
 	kvPairs := encoder.SessionCtx.TakeKvPairs()
 	h.checksum.Update(kvPairs.Pairs)
+	h.conflictedRowCount++
 
 	err = h.deleteKeys(ctx, kvPairs.Pairs)
 	kvPairs.Clear()
@@ -301,7 +317,7 @@ func (h *conflictIndexKVHandler) handle(ctx context.Context, key, val []byte) er
 	// either the data KV is deleted by handing conflicts in other KV group or the
 	// data KV itself is conflicted and not ingested.
 	if err != nil {
-		if tikverr.IsErrNotFound(err) {
+		if tidbkv.IsErrNotFound(err) || tikverr.IsErrNotFound(err) {
 			return nil
 		}
 		return errors.Trace(err)

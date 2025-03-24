@@ -479,15 +479,15 @@ func (e *writeAndIngestStepExecutor) OnFinished(ctx context.Context, subtask *pr
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)
 	}
-	if subtaskMeta.KVGroup != dataKVGroup {
-		return nil
-	}
 
 	// only data kv group has loaded row count
 	_, engineUUID := backend.MakeUUID("", subtask.ID)
 	localBackend := e.tableImporter.Backend()
-	_, kvCount := localBackend.GetExternalEngineKVStatistics(engineUUID)
-	subtaskMeta.Result.LoadedRowCnt = uint64(kvCount)
+	if subtaskMeta.KVGroup == dataKVGroup {
+		// only set row count for data kv group
+		_, kvCount := localBackend.GetExternalEngineKVStatistics(engineUUID)
+		subtaskMeta.Result.LoadedRowCnt = uint64(kvCount)
+	}
 	subtaskMeta.ConflictInfo = localBackend.GetExternalEngineConflictInfo(engineUUID)
 	err := localBackend.CleanupEngine(ctx, engineUUID)
 	if err != nil {

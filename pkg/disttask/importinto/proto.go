@@ -88,6 +88,8 @@ type ConflictResolutionStepMeta struct {
 	// Note: it's not the checksum of all conflicts rows, because we might implement
 	// the 'replace' semantic to keep one row for each conflict group.
 	Checksum *Checksum `json:"checksum,omitempty"`
+	// ConflictedRowCount is the count of all conflicted rows.
+	ConflictedRowCount int64 `json:"conflicted-row-count,omitempty"`
 }
 
 func (m *ConflictResolutionStepMeta) addDataConflictInfo(other *common.ConflictInfo) {
@@ -102,6 +104,9 @@ func (m *ConflictResolutionStepMeta) addIndexConflictInfo(indexID int64, other *
 func (m *ConflictResolutionStepMeta) addConflictInfo(kvGroup string, other *common.ConflictInfo) {
 	if other.Count == 0 {
 		return
+	}
+	if m.ConflictInfos == nil {
+		m.ConflictInfos = make(map[string]*common.ConflictInfo, 1)
 	}
 	ci, ok := m.ConflictInfos[kvGroup]
 	if !ok {
