@@ -449,8 +449,8 @@ insert into t2 values (2, '2');
 
 set tidb_executor_concurrency = 1;
 set tidb_window_concurrency = 100;
-explain select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) order by a,b,c;
-select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) order by a,b,c;
+explain select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) x order by a,b,c;
+select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) x order by a,b,c;
 
 # TestIssue55818
 CREATE TABLE `t61a85298` (
@@ -552,3 +552,19 @@ insert into t1 values(2, 123), (123, 2);
 set tidb_opt_fix_control='44855:on';
 explain select /*+ inl_join(t1), use_index(t1, idx) */ * from t join t1 on t.a = t1.a and t1.b = 123;
 select /*+ inl_join(t1), use_index(t1, idx) */ * from t join t1 on t.a = t1.a and t1.b = 123;
+
+# TestIssue59926
+drop table if exists t;
+create table t(a int, primary key (a));
+insert into t values(1), (2);
+# safe to directly compare the output since the data is stored in one region. so the output is ordered in fact
+select * from t t1 left join t t2 on t1.a=t2.a limit 1, 1;
+# the limit is push down across the join node
+explain select * from t t1 left join t t2 on t1.a=t2.a limit 1, 1;
+
+# TestIssue20710
+drop table if exists t1, t2;
+create table t1(a int, b int, index idx(a, b));
+create table t2(a int, b int, index idx(a));
+explain select /*+ merge_join(t1) */ * from t1 join t2 on t1.a=t2.a and t2.b=t1.b;
+explain select /*+ no_hash_join(t1), no_index_join(t1,t2), no_index_hash_join(t1,t2) */ * from t1 join t2 on t1.a=t2.a and t2.b=t1.b;

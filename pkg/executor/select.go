@@ -135,7 +135,7 @@ func init() {
 	action := &globalPanicOnExceed{}
 	GlobalMemoryUsageTracker = memory.NewGlobalTracker(memory.LabelForGlobalMemory, -1)
 	GlobalMemoryUsageTracker.SetActionOnExceed(action)
-	GlobalDiskUsageTracker = disk.NewGlobalTrcaker(memory.LabelForGlobalStorage, -1)
+	GlobalDiskUsageTracker = disk.NewGlobalTracker(memory.LabelForGlobalStorage, -1)
 	GlobalDiskUsageTracker.SetActionOnExceed(action)
 	GlobalAnalyzeMemoryTracker = memory.NewTracker(memory.LabelForGlobalAnalyzeMemory, -1)
 	GlobalAnalyzeMemoryTracker.SetActionOnExceed(action)

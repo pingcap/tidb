@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
@@ -35,13 +36,14 @@ import (
 
 type cloudImportExecutor struct {
 	taskexecutor.BaseStepExecutor
-	job           *model.Job
-	store         kv.Storage
-	indexes       []*model.IndexInfo
-	ptbl          table.PhysicalTable
-	cloudStoreURI string
-	backendCtx    ingest.BackendCtx
-	backend       *local.Backend
+	job             *model.Job
+	store           kv.Storage
+	indexes         []*model.IndexInfo
+	ptbl            table.PhysicalTable
+	cloudStoreURI   string
+	backendCtx      ingest.BackendCtx
+	backend         *local.Backend
+	taskConcurrency int
 }
 
 func newCloudImportExecutor(
@@ -50,19 +52,21 @@ func newCloudImportExecutor(
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
 	cloudStoreURI string,
+	taskConcurrency int,
 ) (*cloudImportExecutor, error) {
 	return &cloudImportExecutor{
-		job:           job,
-		store:         store,
-		indexes:       indexes,
-		ptbl:          ptbl,
-		cloudStoreURI: cloudStoreURI,
+		job:             job,
+		store:           store,
+		indexes:         indexes,
+		ptbl:            ptbl,
+		cloudStoreURI:   cloudStoreURI,
+		taskConcurrency: taskConcurrency,
 	}, nil
 }
 
 func (m *cloudImportExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor init subtask exec env")
-	cfg, bd, err := ingest.CreateLocalBackend(ctx, m.store, m.job, false)
+	cfg, bd, err := ingest.CreateLocalBackend(ctx, m.store, m.job, false, m.taskConcurrency)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -135,14 +139,17 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			TotalFileSize: int64(all.TotalKVSize),
 			TotalKVCount:  0,
 			CheckHotspot:  true,
+			MemCapacity:   m.GetResource().Mem.Capacity(),
 		},
 		TS: sm.TS,
 	}, engineUUID)
 	if err != nil {
 		return err
 	}
-	local.WorkerConcurrency = int(m.GetResource().CPU.Capacity()) * 2
 	err = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	failpoint.Inject("mockCloudImportRunSubtaskError", func(_ failpoint.Value) {
+		err = context.DeadlineExceeded
+	})
 	if err == nil {
 		return nil
 	}

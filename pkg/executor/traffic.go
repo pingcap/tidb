@@ -92,7 +92,7 @@ func (e *TrafficCaptureExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	e.Args[startTimeKey] = time.Now().Format(time.RFC3339)
 	addrs, err := getTiProxyAddrs(ctx)
 	if err != nil {
-		return errors.Wrapf(err, "get tiproxy addresses failed")
+		return err
 	}
 	// For shared storage, append a suffix to the output path for each TiProxy so that they won't write to the same path.
 	readers, err := formReader4Capture(e.Args, len(addrs))
@@ -114,7 +114,7 @@ func (e *TrafficReplayExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	e.Args[startTimeKey] = time.Now().Format(time.RFC3339)
 	addrs, err := getTiProxyAddrs(ctx)
 	if err != nil {
-		return errors.Wrapf(err, "get tiproxy addresses failed")
+		return err
 	}
 	// For shared storage, read the sub-direcotires from the input path and assign each sub-directory to a TiProxy instance.
 	formCtx, cancel := context.WithTimeout(ctx, sharedStorageTimeout)
@@ -148,7 +148,7 @@ type TrafficCancelExec struct {
 func (e *TrafficCancelExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	addrs, err := getTiProxyAddrs(ctx)
 	if err != nil {
-		return errors.Wrapf(err, "get tiproxy addresses failed")
+		return err
 	}
 	// Cancel all traffic jobs by default.
 	hasCapturePriv, hasReplayPriv := hasTrafficPriv(e.Ctx())
@@ -181,7 +181,7 @@ func (e *TrafficShowExec) Open(ctx context.Context) error {
 	}
 	addrs, err := getTiProxyAddrs(ctx)
 	if err != nil {
-		return errors.Wrapf(err, "get tiproxy addresses failed")
+		return err
 	}
 	resps, err := request(ctx, addrs, nil, http.MethodGet, showPath)
 	if err != nil {
@@ -257,7 +257,7 @@ func request(ctx context.Context, addrs []string, readers []io.Reader, method, p
 		if err != nil {
 			logutil.Logger(ctx).Error("traffic request to tiproxy failed", zap.String("path", path), zap.String("addr", addr),
 				zap.String("resp", resp), zap.Error(err))
-			return resps, errors.Wrapf(err, "request to tiproxy '%s' failed: %s", addr, resp)
+			return resps, errors.Errorf("request to tiproxy '%s' failed: %s", addr, err.Error())
 		}
 		resps[addr] = resp
 	}
@@ -274,7 +274,7 @@ func getTiProxyAddrs(ctx context.Context) ([]string, error) {
 		tiproxyNodes, err = infosync.GetTiProxyServerInfo(ctx)
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if len(tiproxyNodes) == 0 {
 		return nil, errors.Errorf("no tiproxy server found")
@@ -290,24 +290,27 @@ func requestOne(method, addr, path string, rd io.Reader) (string, error) {
 	url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, path)
 	req, err := http.NewRequest(method, url, rd)
 	if err != nil {
-		return "", errors.Trace(err)
+		return "", err
 	}
 	if method == http.MethodPost {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
 	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
-		return "", errors.Trace(err)
+		return "", err
 	}
 	defer func() {
 		terror.Log(resp.Body.Close())
 	}()
 	resb, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
 	switch resp.StatusCode {
 	case http.StatusOK:
-		return string(resb), err
+		return string(resb), nil
 	default:
-		return string(resb), errors.Errorf("request %s failed: %s", url, resp.Status)
+		return string(resb), errors.New(string(resb))
 	}
 }
 

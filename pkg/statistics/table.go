@@ -174,6 +174,7 @@ func (m *ColAndIdxExistenceMap) ColNum() int {
 // Clone deeply copies the map.
 func (m *ColAndIdxExistenceMap) Clone() *ColAndIdxExistenceMap {
 	mm := NewColAndIndexExistenceMap(len(m.colAnalyzed), len(m.idxAnalyzed))
+	mm.checked = m.checked
 	mm.colAnalyzed = maps.Clone(m.colAnalyzed)
 	mm.idxAnalyzed = maps.Clone(m.idxAnalyzed)
 	return mm
