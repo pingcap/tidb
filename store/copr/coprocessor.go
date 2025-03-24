@@ -1023,7 +1023,6 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	} else if worker.req.IsStaleness {
 		req.EnableStaleRead()
 	}
-	staleRead := req.GetStaleRead()
 	ops := make([]tikv.StoreSelectorOption, 0, 2)
 	if len(worker.req.MatchStoreLabels) > 0 {
 		ops = append(ops, tikv.WithMatchLabels(worker.req.MatchStoreLabels))
@@ -1046,8 +1045,12 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	if costTime > minLogCopTaskTime {
 		worker.logTimeCopTask(costTime, task, bo, copResp)
 	}
+<<<<<<< HEAD:store/copr/coprocessor.go
 	storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
 	metrics.TiKVCoprocessorHistogram.WithLabelValues(storeID, strconv.FormatBool(staleRead)).Observe(costTime.Seconds())
+=======
+
+>>>>>>> 12548a4dd45 (infoschema,metrics: use tidb_tikvclient_request_seconds_bucket to get the .999 cop req duration instead (#59845)):pkg/store/copr/coprocessor.go
 	if copResp != nil {
 		tidbmetrics.DistSQLCoprRespBodySize.WithLabelValues(storeAddr).Observe(float64(len(copResp.Data)))
 	}
