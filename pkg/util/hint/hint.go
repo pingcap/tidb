@@ -302,33 +302,33 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 	setVars := make(map[string]string)
 	setVarsOffs := make([]int, 0, len(hints))
 	for i, hint := range hints {
-		switch hint.HintName.L {
+		switch hint.HintName.L.Value() {
 		case "memory_quota":
-			hintOffs[hint.HintName.L] = i
+			hintOffs[hint.HintName.L.Value()] = i
 			memoryQuotaHintCnt++
 		case "resource_group":
-			hintOffs[hint.HintName.L] = i
+			hintOffs[hint.HintName.L.Value()] = i
 			resourceGroupHintCnt++
 		case "use_toja":
-			hintOffs[hint.HintName.L] = i
+			hintOffs[hint.HintName.L.Value()] = i
 			useToJAHintCnt++
 		case "use_cascades":
-			hintOffs[hint.HintName.L] = i
+			hintOffs[hint.HintName.L.Value()] = i
 			useCascadesHintCnt++
 		case "no_index_merge":
-			hintOffs[hint.HintName.L] = i
+			hintOffs[hint.HintName.L.Value()] = i
 			noIndexMergeHintCnt++
 		case "read_consistent_replica":
-			hintOffs[hint.HintName.L] = i
+			hintOffs[hint.HintName.L.Value()] = i
 			readReplicaHintCnt++
 		case "max_execution_time":
-			hintOffs[hint.HintName.L] = i
+			hintOffs[hint.HintName.L.Value()] = i
 			maxExecutionTimeCnt++
 		case "nth_plan":
 			forceNthPlanCnt++
 			forceNthPlan = hint
 		case "straight_join":
-			hintOffs[hint.HintName.L] = i
+			hintOffs[hint.HintName.L.Value()] = i
 			straightJoinHintCnt++
 		case "hypo_index":
 			// to make it simpler, use Tables[0] as table, Tables[1] as index name, and Tables[2:] as column name.

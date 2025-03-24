@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"unique"
 
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -34,11 +35,11 @@ const maxColumnNameSize = 256
 // Info contains information of a column
 type Info struct {
 	DefaultValue any
-	Schema       string
-	Table        string
-	OrgTable     string
-	Name         string
-	OrgName      string
+	Schema       unique.Handle[string]
+	Table        unique.Handle[string]
+	OrgTable     unique.Handle[string]
+	Name         unique.Handle[string]
+	OrgName      unique.Handle[string]
 	ColumnLength uint32
 	Charset      uint16
 	Flag         uint16
