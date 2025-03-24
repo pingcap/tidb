@@ -29,50 +29,50 @@ import (
 func TestCacheable(t *testing.T) {
 	// test non-SelectStmt
 	var stmt Node = &DeleteStmt{}
-	require.False(t, IsReadOnly(stmt))
+	require.False(t, IsReadOnly(stmt, true))
 
 	stmt = &InsertStmt{}
-	require.False(t, IsReadOnly(stmt))
+	require.False(t, IsReadOnly(stmt, true))
 
 	stmt = &UpdateStmt{}
-	require.False(t, IsReadOnly(stmt))
+	require.False(t, IsReadOnly(stmt, true))
 
 	stmt = &ExplainStmt{}
-	require.True(t, IsReadOnly(stmt))
+	require.True(t, IsReadOnly(stmt, true))
 
 	stmt = &ExplainStmt{}
-	require.True(t, IsReadOnly(stmt))
+	require.True(t, IsReadOnly(stmt, true))
 
 	stmt = &DoStmt{}
-	require.True(t, IsReadOnly(stmt))
+	require.True(t, IsReadOnly(stmt, true))
 
 	stmt = &ExplainStmt{
 		Stmt: &InsertStmt{},
 	}
-	require.True(t, IsReadOnly(stmt))
+	require.True(t, IsReadOnly(stmt, true))
 
 	stmt = &ExplainStmt{
 		Analyze: true,
 		Stmt:    &InsertStmt{},
 	}
-	require.False(t, IsReadOnly(stmt))
+	require.False(t, IsReadOnly(stmt, true))
 
 	stmt = &ExplainStmt{
 		Stmt: &SelectStmt{},
 	}
-	require.True(t, IsReadOnly(stmt))
+	require.True(t, IsReadOnly(stmt, true))
 
 	stmt = &ExplainStmt{
 		Analyze: true,
 		Stmt:    &SelectStmt{},
 	}
-	require.True(t, IsReadOnly(stmt))
+	require.True(t, IsReadOnly(stmt, true))
 
 	stmt = &ShowStmt{}
-	require.True(t, IsReadOnly(stmt))
+	require.True(t, IsReadOnly(stmt, true))
 
 	stmt = &ShowStmt{}
-	require.True(t, IsReadOnly(stmt))
+	require.True(t, IsReadOnly(stmt, true))
 }
 
 func TestUnionReadOnly(t *testing.T) {
@@ -89,22 +89,22 @@ func TestUnionReadOnly(t *testing.T) {
 			Selects: []Node{selectReadOnly, selectReadOnly},
 		},
 	}
-	require.True(t, IsReadOnly(setOprStmt))
+	require.True(t, IsReadOnly(setOprStmt, true))
 
 	setOprStmt.SelectList.Selects = []Node{selectReadOnly, selectReadOnly, selectReadOnly}
-	require.True(t, IsReadOnly(setOprStmt))
+	require.True(t, IsReadOnly(setOprStmt, true))
 
 	setOprStmt.SelectList.Selects = []Node{selectReadOnly, selectForUpdate}
-	require.False(t, IsReadOnly(setOprStmt))
+	require.False(t, IsReadOnly(setOprStmt, true))
 
 	setOprStmt.SelectList.Selects = []Node{selectReadOnly, selectForUpdateNoWait}
-	require.False(t, IsReadOnly(setOprStmt))
+	require.False(t, IsReadOnly(setOprStmt, true))
 
 	setOprStmt.SelectList.Selects = []Node{selectForUpdate, selectForUpdateNoWait}
-	require.False(t, IsReadOnly(setOprStmt))
+	require.False(t, IsReadOnly(setOprStmt, true))
 
 	setOprStmt.SelectList.Selects = []Node{selectReadOnly, selectForUpdate, selectForUpdateNoWait}
-	require.False(t, IsReadOnly(setOprStmt))
+	require.False(t, IsReadOnly(setOprStmt, true))
 }
 
 // CleanNodeText set the text of node and all child node empty.

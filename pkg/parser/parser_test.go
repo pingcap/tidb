@@ -1067,6 +1067,12 @@ AAAAAAAAAAAA5gm5Mg==
 		{"show table t1 partition (p0,p1) index idx1 regions where a=2", true, "SHOW TABLE `t1` PARTITION(`p0`, `p1`) INDEX `idx1` REGIONS WHERE `a`=2"},
 		{"show table t1 partition index idx1", false, ""},
 
+		// for show table partition distributions.
+		{"show table t1 distributions", true, "SHOW TABLE `t1` DISTRIBUTIONS"},
+		{"show table t1 distributions where a=1", true, "SHOW TABLE `t1` DISTRIBUTIONS WHERE `a`=1"},
+		{"show table t1 partition (p0,p1) distributions", true, "SHOW TABLE `t1` PARTITION(`p0`, `p1`) DISTRIBUTIONS"},
+		{"show table t1 partition (p0,p1) distributions where a=1", true, "SHOW TABLE `t1` PARTITION(`p0`, `p1`) DISTRIBUTIONS WHERE `a`=1"},
+
 		// for show table next_row_id.
 		{"show table t1.t1 next_row_id", true, "SHOW TABLE `t1`.`t1` NEXT_ROW_ID"},
 		{"show table t1 next_row_id", true, "SHOW TABLE `t1` NEXT_ROW_ID"},
@@ -2990,6 +2996,12 @@ func TestDDL(t *testing.T) {
 		{"create table t (j json default (json_object('foo', 5, 'bar', 'barfoo')))", true, "CREATE TABLE `t` (`j` JSON DEFAULT (JSON_OBJECT(_UTF8MB4'foo', 5, _UTF8MB4'bar', _UTF8MB4'barfoo')))"},
 		{"create table t (j json default (json_array(1,2,3)))", true, "CREATE TABLE `t` (`j` JSON DEFAULT (JSON_ARRAY(1, 2, 3)))"},
 		{"create table t (j json default (json_quote('foobar')))", true, "CREATE TABLE `t` (`j` JSON DEFAULT (JSON_QUOTE(_UTF8MB4'foobar')))"},
+		{"create table t (c char(33) default (nonexistingfunc('foobar')))", true, "CREATE TABLE `t` (`c` CHAR(33) DEFAULT (NONEXISTINGFUNC(_UTF8MB4'foobar')))"},
+		{"create table t (c char(33) default 'foobar')", true, "CREATE TABLE `t` (`c` CHAR(33) DEFAULT _UTF8MB4'foobar')"},
+		{"create table t (c char(33) default ('foobar'))", true, "CREATE TABLE `t` (`c` CHAR(33) DEFAULT _UTF8MB4'foobar')"},
+		{"create table t (i int default (0))", true, "CREATE TABLE `t` (`i` INT DEFAULT 0)"},
+		{"create table t (i int default (-1))", true, "CREATE TABLE `t` (`i` INT DEFAULT -1)"},
+		{"create table t (i int default (+1))", true, "CREATE TABLE `t` (`i` INT DEFAULT +1)"},
 
 		// For table option `ENCRYPTION`
 		{"create table t (a int) encryption = 'n';", true, "CREATE TABLE `t` (`a` INT) ENCRYPTION = 'n'"},
@@ -3214,6 +3226,16 @@ func TestDDL(t *testing.T) {
 		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a))) COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX((VEC_COSINE_DISTANCE(`a`))) USING HNSW COMMENT 'a'"},
 		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a))) USING HNSW COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX((VEC_COSINE_DISTANCE(`a`))) USING HNSW COMMENT 'a'"},
 		{"ALTER TABLE t ADD VECTOR INDEX IF NOT EXISTS ((VEC_COSINE_DISTANCE(a))) USING HNSW COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX IF NOT EXISTS((VEC_COSINE_DISTANCE(`a`))) USING HNSW COMMENT 'a'"},
+		{"ALTER TABLE t ADD COLUMNAR (a) USING INVERTED COMMENT 'a'", false, ""},
+		{"ALTER TABLE t ADD COLUMNAR ((a - 1)) USING INVERTED COMMENT 'a'", false, ""},
+		{"ALTER TABLE t ADD COLUMNAR (a) USING HASH COMMENT 'a'", false, ""},
+		{"ALTER TABLE t ADD COLUMNAR (a, b) USING INVERTED COMMENT 'a'", false, ""},
+		{"ALTER TABLE t ADD COLUMNAR KEY (a, b) USING INVERTED COMMENT 'a'", false, ""},
+		{"ALTER TABLE t ADD COLUMNAR INDEX (a, b) USING INVERTED COMMENT 'a'", false, ""},
+		{"ALTER TABLE t ADD COLUMNAR INDEX (a) USING INVERTED COMMENT 'a'", true, "ALTER TABLE `t` ADD COLUMNAR INDEX(`a`) USING INVERTED COMMENT 'a'"},
+		{"ALTER TABLE t ADD COLUMNAR INDEX (a) USING HYPO COMMENT 'a'", false, ""},
+		{"ALTER TABLE t ADD COLUMNAR INDEX ((a - 1)) USING HYPO COMMENT 'a'", false, ""},
+		{"ALTER TABLE t ADD COLUMNAR INDEX IF NOT EXISTS (a) USING INVERTED COMMENT 'a'", true, "ALTER TABLE `t` ADD COLUMNAR INDEX IF NOT EXISTS(`a`) USING INVERTED COMMENT 'a'"},
 		{"ALTER TABLE t ADD CONSTRAINT fk_t2_id FOREIGN KEY (t2_id) REFERENCES t(id)", true, "ALTER TABLE `t` ADD CONSTRAINT `fk_t2_id` FOREIGN KEY (`t2_id`) REFERENCES `t`(`id`)"},
 		{"ALTER TABLE t ADD CONSTRAINT fk_t2_id FOREIGN KEY IF NOT EXISTS (t2_id) REFERENCES t(id)", true, "ALTER TABLE `t` ADD CONSTRAINT `fk_t2_id` FOREIGN KEY IF NOT EXISTS (`t2_id`) REFERENCES `t`(`id`)"},
 		{"ALTER TABLE t ADD CONSTRAINT c_1 CHECK (1+1) NOT ENFORCED, ADD UNIQUE (a)", true, "ALTER TABLE `t` ADD CONSTRAINT `c_1` CHECK(1+1) NOT ENFORCED, ADD UNIQUE(`a`)"},
@@ -3927,15 +3949,35 @@ func TestDDL(t *testing.T) {
 		{"create resource group x ru_per_sec=unlimited", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED"},
 		{"create resource group x ru_per_sec='check'", false, ""},
 		{"create resource group x followers=0", false, ""},
-		{"create resource group x ru_per_sec=1000, burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BURSTABLE = TRUE"},
-		{"create resource group x burstable, ru_per_sec=2000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = TRUE, RU_PER_SEC = 2000"},
-		{"create resource group x ru_per_sec=3000 burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 3000, BURSTABLE = TRUE"},
-		{"create resource group x burstable ru_per_sec=4000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = TRUE, RU_PER_SEC = 4000"},
-		{"create resource group x burstable=false ru_per_sec=4000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = FALSE, RU_PER_SEC = 4000"},
-		{"create resource group x burstable = true ru_per_sec=4000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = TRUE, RU_PER_SEC = 4000"},
-		{"create resource group x ru_per_sec=20, priority=LOW, burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 20, PRIORITY = LOW, BURSTABLE = TRUE"},
-		{"create resource group default ru_per_sec=20, priority=LOW, burstable", true, "CREATE RESOURCE GROUP `default` RU_PER_SEC = 20, PRIORITY = LOW, BURSTABLE = TRUE"},
-		{"create resource group default ru_per_sec=UNLIMITED, priority=LOW, burstable", true, "CREATE RESOURCE GROUP `default` RU_PER_SEC = UNLIMITED, PRIORITY = LOW, BURSTABLE = TRUE"},
+		{"create resource group x burstable=true", false, ""},
+		{"create resource group x burstable=false", false, ""},
+		{"create resource group x burstable=disable", false, ""},
+		{"create resource group x ru_per_sec=1000, burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BURSTABLE = MODERATED"},
+		{"create resource group x burstable, ru_per_sec=2000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = MODERATED, RU_PER_SEC = 2000"},
+		{"create resource group x ru_per_sec=3000 burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 3000, BURSTABLE = MODERATED"},
+		{"create resource group x burstable ru_per_sec=4000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = MODERATED, RU_PER_SEC = 4000"},
+		{"create resource group x BURSTABLE = UNLIMITED ru_per_sec=4000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = UNLIMITED, RU_PER_SEC = 4000"},
+		{"create resource group x BURSTABLE = MODERATED ru_per_sec=4000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = MODERATED, RU_PER_SEC = 4000"},
+		{"create resource group x BURSTABLE = OFF ru_per_sec=4000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = OFF, RU_PER_SEC = 4000"},
+		{"create resource group x ru_per_sec=20, priority=LOW, burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 20, PRIORITY = LOW, BURSTABLE = MODERATED"},
+		{"create resource group default ru_per_sec=20, priority=LOW, burstable", true, "CREATE RESOURCE GROUP `default` RU_PER_SEC = 20, PRIORITY = LOW, BURSTABLE = MODERATED"},
+		{"create resource group default ru_per_sec=UNLIMITED, priority=LOW, burstable", true, "CREATE RESOURCE GROUP `default` RU_PER_SEC = UNLIMITED, PRIORITY = LOW, BURSTABLE = MODERATED"},
+		{"create resource group x ru_per_sec=1000", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000"},
+		{"create resource group x ru_per_sec=1000 burstable=unlimited", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BURSTABLE = UNLIMITED"},
+		{"create resource group x ru_per_sec=1000 burstable=off", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BURSTABLE = OFF"},
+		{"create resource group x ru_per_sec=1000 burstable=moderated", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BURSTABLE = MODERATED"},
+		{"create resource group x burstable=unlimited, ru_per_sec=2000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = UNLIMITED, RU_PER_SEC = 2000"},
+		{"create resource group x burstable=off, ru_per_sec=2000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = OFF, RU_PER_SEC = 2000"},
+		{"create resource group x burstable=moderated, ru_per_sec=2000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = MODERATED, RU_PER_SEC = 2000"},
+		{"create resource group x ru_per_sec=1000 ,burstable=unlimited", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BURSTABLE = UNLIMITED"},
+		{"create resource group x ru_per_sec=1000 ,burstable=off", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BURSTABLE = OFF"},
+		{"create resource group x ru_per_sec=1000 ,burstable=moderated", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BURSTABLE = MODERATED"},
+		{"create resource group x ru_per_sec=1000 , priority=LOW,burstable=unlimited", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, PRIORITY = LOW, BURSTABLE = UNLIMITED"},
+		{"create resource group x ru_per_sec=1000 , priority=LOW,burstable=off", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, PRIORITY = LOW, BURSTABLE = OFF"},
+		{"create resource group x ru_per_sec=1000 , priority=LOW,burstable=moderated", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, PRIORITY = LOW, BURSTABLE = MODERATED"},
+		{"create resource group x ru_per_sec=UNLIMITED , priority=LOW,burstable=unlimited", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, PRIORITY = LOW, BURSTABLE = UNLIMITED"},
+		{"create resource group x ru_per_sec=UNLIMITED , priority=LOW,burstable=off", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, PRIORITY = LOW, BURSTABLE = OFF"},
+		{"create resource group x ru_per_sec=UNLIMITED , priority=LOW,burstable=moderated", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, PRIORITY = LOW, BURSTABLE = MODERATED"},
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED '10s' ACTION DRYRUN)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = DRYRUN)"},
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED '10m' ACTION COOLDOWN)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10m' ACTION = COOLDOWN)"},
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT=(ACTION KILL EXEC_ELAPSED='10m')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (ACTION = KILL EXEC_ELAPSED = '10m')"},
@@ -3982,23 +4024,51 @@ func TestDDL(t *testing.T) {
 
 		{"alter resource group x cpu ='8c'", false, ""},
 		{"alter resource group x region ='us, 3'", false, ""},
+		{"alter resource group x burstable=true", false, ""},
+		{"alter resource group x burstable=false", false, ""},
+		{"alter resource group x burstable=disable", false, ""},
 		{"alter resource group default priority = high", true, "ALTER RESOURCE GROUP `default` PRIORITY = HIGH"},
 		{"alter resource group x cpu='8c', io_read_bandwidth='2GB/s', io_write_bandwidth='200MB/s'", false, ""},
 		{"alter resource group x ru_per_sec=1000", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000"},
-		{"alter resource group x ru_per_sec=2000, BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 2000, BURSTABLE = TRUE"},
+		{"alter resource group x ru_per_sec=2000, BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 2000, BURSTABLE = MODERATED"},
 		{"alter resource group x ru_per_sec=UNLIMITED", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED"},
-		{"alter resource group x ru_per_sec=UNLIMITED, BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, BURSTABLE = TRUE"},
-		{"alter resource group x ru_per_sec=unlimited, BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, BURSTABLE = TRUE"},
+		{"alter resource group x ru_per_sec=UNLIMITED, BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, BURSTABLE = MODERATED"},
+		{"alter resource group x ru_per_sec=unlimited, BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, BURSTABLE = MODERATED"},
 		{"alter resource group x ru_per_sec='check', BURSTABLE", false, ""},
-		{"alter resource group x BURSTABLE, ru_per_sec=3000", true, "ALTER RESOURCE GROUP `x` BURSTABLE = TRUE, RU_PER_SEC = 3000"},
-		{"alter resource group x BURSTABLE ru_per_sec=4000", true, "ALTER RESOURCE GROUP `x` BURSTABLE = TRUE, RU_PER_SEC = 4000"},
+		{"alter resource group x BURSTABLE, ru_per_sec=3000", true, "ALTER RESOURCE GROUP `x` BURSTABLE = MODERATED, RU_PER_SEC = 3000"},
+		{"alter resource group x BURSTABLE ru_per_sec=4000", true, "ALTER RESOURCE GROUP `x` BURSTABLE = MODERATED, RU_PER_SEC = 4000"},
+		{"alter resource group x ru_per_sec=2000, BURSTABLE=unlimited", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 2000, BURSTABLE = UNLIMITED"},
+		{"alter resource group x ru_per_sec=2000, BURSTABLE=moderated", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 2000, BURSTABLE = MODERATED"},
+		{"alter resource group x ru_per_sec=2000, BURSTABLE=off", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 2000, BURSTABLE = OFF"},
+		{"alter resource group x ru_per_sec=UNLIMITED", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED"},
+		{"alter resource group x ru_per_sec=UNLIMITED, BURSTABLE=unlimited", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, BURSTABLE = UNLIMITED"},
+		{"alter resource group x ru_per_sec=UNLIMITED, BURSTABLE=moderated", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, BURSTABLE = MODERATED"},
+		{"alter resource group x ru_per_sec=unlimited, BURSTABLE=off", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, BURSTABLE = OFF"},
+		{"alter resource group x ru_per_sec='check', BURSTABLE", false, ""},
+		{"alter resource group x ru_per_sec=2000, BURSTABLE=yes", false, ""},
+		{"alter resource group x BURSTABLE=unlimited, ru_per_sec=3000", true, "ALTER RESOURCE GROUP `x` BURSTABLE = UNLIMITED, RU_PER_SEC = 3000"},
+		{"alter resource group x BURSTABLE=moderated, ru_per_sec=3000", true, "ALTER RESOURCE GROUP `x` BURSTABLE = MODERATED, RU_PER_SEC = 3000"},
+		{"alter resource group x BURSTABLE=off, ru_per_sec=3000", true, "ALTER RESOURCE GROUP `x` BURSTABLE = OFF, RU_PER_SEC = 3000"},
+		{"alter resource group x BURSTABLE=unlimited ru_per_sec=4000", true, "ALTER RESOURCE GROUP `x` BURSTABLE = UNLIMITED, RU_PER_SEC = 4000"},
+		{"alter resource group x BURSTABLE=moderated ru_per_sec=4000", true, "ALTER RESOURCE GROUP `x` BURSTABLE = MODERATED, RU_PER_SEC = 4000"},
+		{"alter resource group x BURSTABLE=off ru_per_sec=4000", true, "ALTER RESOURCE GROUP `x` BURSTABLE = OFF, RU_PER_SEC = 4000"},
 		// This case is expected in parser test but not in actual ddl job.
 		// Todo: support patch setting(not cover all).
-		{"alter resource group x BURSTABLE", true, "ALTER RESOURCE GROUP `x` BURSTABLE = TRUE"},
-		{"alter resource group x ru_per_sec=200000 BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 200000, BURSTABLE = TRUE"},
+		{"alter resource group x BURSTABLE", true, "ALTER RESOURCE GROUP `x` BURSTABLE = MODERATED"},
+		{"alter resource group x ru_per_sec=200000 BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 200000, BURSTABLE = MODERATED"},
 		{"alter resource group x followers=0", false, ""},
 		{"alter resource group x ru_per_sec=20 priority=MID BURSTABLE", false, ""},
-		{"alter resource group x ru_per_sec=20 priority=HIGH BURSTABLE=FALSE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 20, PRIORITY = HIGH, BURSTABLE = FALSE"},
+		{"alter resource group x BURSTABLE=unlimited", true, "ALTER RESOURCE GROUP `x` BURSTABLE = UNLIMITED"},
+		{"alter resource group x BURSTABLE=moderated", true, "ALTER RESOURCE GROUP `x` BURSTABLE = MODERATED"},
+		{"alter resource group x BURSTABLE=off", true, "ALTER RESOURCE GROUP `x` BURSTABLE = OFF"},
+		{"alter resource group x ru_per_sec=200000 BURSTABLE=unlimited", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 200000, BURSTABLE = UNLIMITED"},
+		{"alter resource group x ru_per_sec=200000 BURSTABLE=moderated", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 200000, BURSTABLE = MODERATED"},
+		{"alter resource group x ru_per_sec=200000 BURSTABLE=off", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 200000, BURSTABLE = OFF"},
+		{"alter resource group x followers=0", false, ""},
+		{"alter resource group x ru_per_sec=20 priority=MID", false, ""},
+		{"alter resource group x ru_per_sec=20 priority=HIGH BURSTABLE=unlimited", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 20, PRIORITY = HIGH, BURSTABLE = UNLIMITED"},
+		{"alter resource group x ru_per_sec=20 priority=HIGH BURSTABLE=moderated", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 20, PRIORITY = HIGH, BURSTABLE = MODERATED"},
+		{"alter resource group x ru_per_sec=20 priority=HIGH BURSTABLE=off", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 20, PRIORITY = HIGH, BURSTABLE = OFF"},
 
 		{"alter resource group x QUERY_LIMIT=NULL", true, "ALTER RESOURCE GROUP `x` QUERY_LIMIT = NULL"},
 		{"alter resource group x QUERY_LIMIT=()", true, "ALTER RESOURCE GROUP `x` QUERY_LIMIT = NULL"},
@@ -4017,10 +4087,18 @@ func TestDDL(t *testing.T) {
 		{"alter resource group x background=()", true, "ALTER RESOURCE GROUP `x` BACKGROUND = NULL"},
 		{"alter resource group x background NULL", true, "ALTER RESOURCE GROUP `x` BACKGROUND = NULL"},
 		{"alter resource group default priority=low background = ( task_types \"ttl\" )", true, "ALTER RESOURCE GROUP `default` PRIORITY = LOW, BACKGROUND = (TASK_TYPES = 'ttl')"},
-		{"alter resource group default burstable background ( task_types = 'a,b,c' )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = TRUE, BACKGROUND = (TASK_TYPES = 'a,b,c')"},
-		{"alter resource group default burstable background ( utilization_limit = 20 )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = TRUE, BACKGROUND = (UTILIZATION_LIMIT = 20)"},
-		{"alter resource group default burstable background ( task_types = 'a,b,c', utilization_limit = 20 )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = TRUE, BACKGROUND = (TASK_TYPES = 'a,b,c', UTILIZATION_LIMIT = 20)"},
-		{"alter resource group default burstable background ( utilization_limit = 'abc' )", false, ""},
+		{"alter resource group default burstable=unlimited background ( task_types = 'a,b,c' )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = UNLIMITED, BACKGROUND = (TASK_TYPES = 'a,b,c')"},
+		{"alter resource group default burstable=moderated background ( task_types = 'a,b,c' )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = MODERATED, BACKGROUND = (TASK_TYPES = 'a,b,c')"},
+		{"alter resource group default burstable=off background ( task_types = 'a,b,c' )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = OFF, BACKGROUND = (TASK_TYPES = 'a,b,c')"},
+		{"alter resource group default burstable=unlimited background ( utilization_limit = 20 )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = UNLIMITED, BACKGROUND = (UTILIZATION_LIMIT = 20)"},
+		{"alter resource group default burstable=moderated background ( utilization_limit = 20 )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = MODERATED, BACKGROUND = (UTILIZATION_LIMIT = 20)"},
+		{"alter resource group default burstable=off background ( utilization_limit = 20 )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = OFF, BACKGROUND = (UTILIZATION_LIMIT = 20)"},
+		{"alter resource group default burstable=unlimited background ( task_types = 'a,b,c', utilization_limit = 20 )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = UNLIMITED, BACKGROUND = (TASK_TYPES = 'a,b,c', UTILIZATION_LIMIT = 20)"},
+		{"alter resource group default burstable=moderated background ( task_types = 'a,b,c', utilization_limit = 20 )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = MODERATED, BACKGROUND = (TASK_TYPES = 'a,b,c', UTILIZATION_LIMIT = 20)"},
+		{"alter resource group default burstable=off background ( task_types = 'a,b,c', utilization_limit = 20 )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = OFF, BACKGROUND = (TASK_TYPES = 'a,b,c', UTILIZATION_LIMIT = 20)"},
+		{"alter resource group default burstable=unlimited background ( utilization_limit = 'abc' )", false, ""},
+		{"alter resource group default burstable=moderated background ( utilization_limit = 'abc' )", false, ""},
+		{"alter resource group default burstable=off background ( utilization_limit = 'abc' )", false, ""},
 
 		{"drop resource group x;", true, "DROP RESOURCE GROUP `x`"},
 		{"drop resource group DEFAULT;", true, "DROP RESOURCE GROUP `DEFAULT`"},
@@ -5729,6 +5807,9 @@ func TestBinding(t *testing.T) {
 		{"CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST 'sss'", true, "CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST 'sss'"},
 		{"set binding enabled for sql digest '1'", true, "SET BINDING ENABLED FOR SQL DIGEST '1'"},
 		{"set binding disabled for sql digest '1'", true, "SET BINDING DISABLED FOR SQL DIGEST '1'"},
+		// Show plan for a specified SQL.
+		{"show plan for 'select a from t'", true, "SHOW PLAN FOR 'select a from t'"},
+		{"show plan for '23adc8e6f62'", true, "SHOW PLAN FOR '23adc8e6f62'"},
 	}
 	RunTest(t, table, false)
 
@@ -7477,6 +7558,54 @@ func TestGBKEncoding(t *testing.T) {
 		{"select '\x65\x5c'", true},
 	} {
 		_, _, err = p.ParseSQL(test.sql, gbkOpt)
+		if test.err {
+			require.Error(t, err, test.sql)
+		} else {
+			require.NoError(t, err, test.sql)
+		}
+	}
+}
+
+func TestGB18030Encoding(t *testing.T) {
+	p := parser.New()
+	gb18030Encoding, _ := charset.Lookup("gb18030")
+	encoder := gb18030Encoding.NewEncoder()
+	sql, err := encoder.String("create table 测试表 (测试列 varchar(255) default 'GB18030测试用例');")
+	require.NoError(t, err)
+
+	stmt, _, err := p.ParseSQL(sql)
+	require.NoError(t, err)
+	checker := &gbkEncodingChecker{}
+	_, _ = stmt[0].Accept(checker)
+	require.NotEqual(t, "测试表", checker.tblName)
+	require.NotEqual(t, "测试列", checker.colName)
+
+	gb18030Opt := parser.CharsetClient("gb18030")
+	stmt, _, err = p.ParseSQL(sql, gb18030Opt)
+	require.NoError(t, err)
+	_, _ = stmt[0].Accept(checker)
+	require.Equal(t, "测试表", checker.tblName)
+	require.Equal(t, "测试列", checker.colName)
+	require.Equal(t, "GB18030测试用例", checker.expr)
+
+	_, _, err = p.ParseSQL("select _gbk '\xc6\x5c' from dual;")
+	require.Error(t, err)
+
+	for _, test := range []struct {
+		sql string
+		err bool
+	}{
+		{"select '\xc6\x5c' from `\xab\x60`;", false},
+		{`prepare p1 from "insert into t values ('中文');";`, false},
+		{"select '啊';", false},
+		{"create table t1(s set('a一','b二','c三'));", false},
+		{"insert into t3 values('一a');", false},
+		{"select '\xa5\x5c'", false},
+		{"select '''\xa5\x5c'", false},
+		{"select ```\xa5\x5c`", false},
+		{"select '\x65\x5c'", true},
+	} {
+		_, _, err = p.ParseSQL(test.sql, gb18030Opt)
 		if test.err {
 			require.Error(t, err, test.sql)
 		} else {

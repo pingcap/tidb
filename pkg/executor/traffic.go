@@ -44,19 +44,27 @@ import (
 
 // The keys for the mocked data that stored in context. They are only used for test.
 type tiproxyAddrKeyType struct{}
-type trafficPathKeyType struct{}
+type trafficStoreKeyType struct{}
 
 var tiproxyAddrKey tiproxyAddrKeyType
-var trafficPathKey trafficPathKeyType
+var trafficStoreKey trafficStoreKeyType
 
 type trafficJob struct {
-	Instance  string `json:"-"` // not passed from TiProxy
-	Type      string `json:"type"`
-	Status    string `json:"status"`
-	StartTime string `json:"start_time"`
-	EndTime   string `json:"end_time,omitempty"`
-	Progress  string `json:"progress"`
-	Err       string `json:"error,omitempty"`
+	Instance         string  `json:"-"` // not passed from TiProxy
+	Type             string  `json:"type"`
+	Status           string  `json:"status"`
+	StartTime        string  `json:"start_time"`
+	EndTime          string  `json:"end_time,omitempty"`
+	Progress         string  `json:"progress"`
+	Err              string  `json:"error,omitempty"`
+	Output           string  `json:"output,omitempty"`
+	Duration         string  `json:"duration,omitempty"`
+	Compress         bool    `json:"compress,omitempty"`
+	EncryptionMethod string  `json:"encryption-method,omitempty"`
+	Input            string  `json:"input,omitempty"`
+	Username         string  `json:"username,omitempty"`
+	Speed            float64 `json:"speed,omitempty"`
+	ReadOnly         bool    `json:"readonly,omitempty"`
 }
 
 const (
@@ -84,7 +92,7 @@ func (e *TrafficCaptureExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	e.Args[startTimeKey] = time.Now().Format(time.RFC3339)
 	addrs, err := getTiProxyAddrs(ctx)
 	if err != nil {
-		return errors.Wrapf(err, "get tiproxy addresses failed")
+		return err
 	}
 	// For shared storage, append a suffix to the output path for each TiProxy so that they won't write to the same path.
 	readers, err := formReader4Capture(e.Args, len(addrs))
@@ -106,7 +114,7 @@ func (e *TrafficReplayExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	e.Args[startTimeKey] = time.Now().Format(time.RFC3339)
 	addrs, err := getTiProxyAddrs(ctx)
 	if err != nil {
-		return errors.Wrapf(err, "get tiproxy addresses failed")
+		return err
 	}
 	// For shared storage, read the sub-direcotires from the input path and assign each sub-directory to a TiProxy instance.
 	formCtx, cancel := context.WithTimeout(ctx, sharedStorageTimeout)
@@ -140,7 +148,7 @@ type TrafficCancelExec struct {
 func (e *TrafficCancelExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	addrs, err := getTiProxyAddrs(ctx)
 	if err != nil {
-		return errors.Wrapf(err, "get tiproxy addresses failed")
+		return err
 	}
 	// Cancel all traffic jobs by default.
 	hasCapturePriv, hasReplayPriv := hasTrafficPriv(e.Ctx())
@@ -173,7 +181,7 @@ func (e *TrafficShowExec) Open(ctx context.Context) error {
 	}
 	addrs, err := getTiProxyAddrs(ctx)
 	if err != nil {
-		return errors.Wrapf(err, "get tiproxy addresses failed")
+		return err
 	}
 	resps, err := request(ctx, addrs, nil, http.MethodGet, showPath)
 	if err != nil {
@@ -222,11 +230,18 @@ func (e *TrafficShowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		} else {
 			req.AppendTime(1, parseTime(ctx, e.BaseExecutor, job.EndTime))
 		}
+		var params string
+		if job.Type == "capture" {
+			params = fmt.Sprintf("OUTPUT=\"%s\", DURATION=\"%s\", COMPRESS=%t, ENCRYPTION_METHOD=\"%s\"", job.Output, job.Duration, job.Compress, job.EncryptionMethod)
+		} else {
+			params = fmt.Sprintf("INPUT=\"%s\", USER=\"%s\", SPEED=%f, READ_ONLY=%t", job.Input, job.Username, job.Speed, job.ReadOnly)
+		}
 		req.AppendString(2, job.Instance)
 		req.AppendString(3, job.Type)
 		req.AppendString(4, job.Progress)
 		req.AppendString(5, job.Status)
 		req.AppendString(6, job.Err)
+		req.AppendString(7, params)
 	}
 	return nil
 }
@@ -242,7 +257,7 @@ func request(ctx context.Context, addrs []string, readers []io.Reader, method, p
 		if err != nil {
 			logutil.Logger(ctx).Error("traffic request to tiproxy failed", zap.String("path", path), zap.String("addr", addr),
 				zap.String("resp", resp), zap.Error(err))
-			return resps, errors.Wrapf(err, "request to tiproxy '%s' failed: %s", addr, resp)
+			return resps, errors.Errorf("request to tiproxy '%s' failed: %s", addr, err.Error())
 		}
 		resps[addr] = resp
 	}
@@ -259,7 +274,7 @@ func getTiProxyAddrs(ctx context.Context) ([]string, error) {
 		tiproxyNodes, err = infosync.GetTiProxyServerInfo(ctx)
 	}
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
 	if len(tiproxyNodes) == 0 {
 		return nil, errors.Errorf("no tiproxy server found")
@@ -275,24 +290,27 @@ func requestOne(method, addr, path string, rd io.Reader) (string, error) {
 	url := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), addr, path)
 	req, err := http.NewRequest(method, url, rd)
 	if err != nil {
-		return "", errors.Trace(err)
+		return "", err
 	}
 	if method == http.MethodPost {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
 	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
-		return "", errors.Trace(err)
+		return "", err
 	}
 	defer func() {
 		terror.Log(resp.Body.Close())
 	}()
 	resb, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
 	switch resp.StatusCode {
 	case http.StatusOK:
-		return string(resb), err
+		return string(resb), nil
 	default:
-		return string(resb), errors.Errorf("request %s failed: %s", url, resp.Status)
+		return string(resb), errors.New(string(resb))
 	}
 }
 
@@ -344,11 +362,11 @@ func formReader4Replay(ctx context.Context, args map[string]string, tiproxyNum i
 	if !ok || len(input) == 0 {
 		return nil, errors.New("the input path for replay must be specified")
 	}
-	u, err := storage.ParseRawURL(input)
+	backend, err := storage.ParseBackend(input, nil)
 	if err != nil {
 		return nil, errors.Wrapf(err, "parse input path failed")
 	}
-	if storage.IsLocal(u) {
+	if backend.GetLocal() != nil {
 		readers := make([]io.Reader, tiproxyNum)
 		form := getForm(args)
 		for i := 0; i < tiproxyNum; i++ {
@@ -357,34 +375,38 @@ func formReader4Replay(ctx context.Context, args map[string]string, tiproxyNum i
 		return readers, nil
 	}
 
-	names := make([]string, 0, tiproxyNum)
-	if mockNames := ctx.Value(trafficPathKey); mockNames != nil {
-		names = mockNames.([]string)
+	var store storage.ExternalStorage
+	if mockStore := ctx.Value(trafficStoreKey); mockStore != nil {
+		store = mockStore.(storage.ExternalStorage)
 	} else {
-		backend, err := storage.ParseBackendFromURL(u, nil)
-		if err != nil {
-			return nil, errors.Wrapf(err, "parse backend from the input path failed")
-		}
-		store, err := storage.NewWithDefaultOpt(ctx, backend)
+		store, err = storage.NewWithDefaultOpt(ctx, backend)
 		if err != nil {
 			return nil, errors.Wrapf(err, "create storage for input failed")
 		}
 		defer store.Close()
-		err = store.WalkDir(ctx, &storage.WalkOption{
-			ObjPrefix: filePrefix,
-		}, func(name string, _ int64) error {
-			names = append(names, name)
-			return nil
-		})
-		if err != nil {
-			return nil, errors.Wrapf(err, "walk input path failed")
+	}
+	names := make(map[string]struct{}, tiproxyNum)
+	err = store.WalkDir(ctx, &storage.WalkOption{
+		ObjPrefix: filePrefix,
+	}, func(name string, _ int64) error {
+		if idx := strings.Index(name, "/"); idx >= 0 {
+			names[name[:idx]] = struct{}{}
 		}
+		return nil
+	})
+	if err != nil {
+		return nil, errors.Wrapf(err, "walk input path failed")
 	}
 	if len(names) == 0 {
 		return nil, errors.New("no replay files found in the input path")
 	}
 	readers := make([]io.Reader, 0, len(names))
-	for _, name := range names {
+	// ParseBackendFromURL clears URL.RawQuery, so no need to reuse the *url.URL.
+	u, err := storage.ParseRawURL(input)
+	if err != nil {
+		return nil, errors.Wrapf(err, "parse input path failed")
+	}
+	for name := range names {
 		m := maps.Clone(args)
 		m[inputKey] = u.JoinPath(name).String()
 		form := getForm(m)

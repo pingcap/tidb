@@ -16,7 +16,6 @@ package types
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -343,19 +342,15 @@ type StatsReadWriter interface {
 	// ReloadExtendedStatistics drops the cache for extended statistics and reload data from mysql.stats_extended.
 	ReloadExtendedStatistics() error
 
-	// SaveStatsToStorage save the stats data to the storage.
-	SaveStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
+	// SaveColOrIdxStatsToStorage save the column or index stats to storage.
+	SaveColOrIdxStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
 		cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, updateAnalyzeTime bool, source string) (err error)
 
-	// SaveTableStatsToStorage saves the stats of a table to storage.
-	SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error)
+	// SaveAnalyzeResultToStorage saves the analyze result to the storage.
+	SaveAnalyzeResultToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error)
 
 	// SaveMetaToStorage saves the stats meta of a table to storage.
 	SaveMetaToStorage(tableID, count, modifyCount int64, source string) (err error)
-
-	// UpdateStatsVersion will set statistics version to the newest TS,
-	// then tidb-server will reload automatic.
-	UpdateStatsVersion() error
 
 	// UpdateStatsMetaVersionForGC updates the version of mysql.stats_meta,
 	// ensuring it is greater than the last garbage collection (GC) time.
@@ -444,34 +439,6 @@ type NeededItemTask struct {
 	Retry     int
 }
 
-// StatsLoad is used to load stats concurrently
-// TODO(hawkingrei): Our implementation of loading statistics is flawed.
-// Currently, we enqueue tasks that require loading statistics into a channel,
-// from which workers retrieve tasks to process. Then, using the singleflight mechanism,
-// we filter out duplicate tasks. However, the issue with this approach is that it does
-// not filter out all duplicate tasks, but only the duplicates within the number of workers.
-// Such an implementation is not reasonable.
-//
-// We should first filter all tasks through singleflight as shown in the diagram, and then use workers to load stats.
-//
-// ┌─────────▼──────────▼─────────────▼──────────────▼────────────────▼────────────────────┐
-// │                                                                                       │
-// │                                       singleflight                                    │
-// │                                                                                       │
-// └───────────────────────────────────────────────────────────────────────────────────────┘
-//
-//		            │                │
-//	   ┌────────────▼──────┐ ┌───────▼───────────┐
-//	   │                   │ │                   │
-//	   │  syncload worker  │ │  syncload worker  │
-//	   │                   │ │                   │
-//	   └───────────────────┘ └───────────────────┘
-type StatsLoad struct {
-	NeededItemsCh  chan *NeededItemTask
-	TimeoutItemsCh chan *NeededItemTask
-	sync.Mutex
-}
-
 // StatsSyncLoad implement the sync-load feature.
 type StatsSyncLoad interface {
 	// SendLoadRequests sends load requests to the channel.
@@ -484,10 +451,10 @@ type StatsSyncLoad interface {
 	AppendNeededItem(task *NeededItemTask, timeout time.Duration) error
 
 	// SubLoadWorker will start a goroutine to handle the load requests.
-	SubLoadWorker(sctx sessionctx.Context, exit chan struct{}, exitWg *util.WaitGroupEnhancedWrapper)
+	SubLoadWorker(exit chan struct{}, exitWg *util.WaitGroupEnhancedWrapper)
 
 	// HandleOneTask will handle one task.
-	HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask, exit chan struct{}) (task *NeededItemTask, err error)
+	HandleOneTask(lastTask *NeededItemTask, exit chan struct{}) (task *NeededItemTask, err error)
 }
 
 // GlobalStatsInfo represents the contextual information pertaining to global statistics.
