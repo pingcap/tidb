@@ -130,7 +130,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 		maxRegionPerSubtask := getMaxRegionPerSubtask(ctx, sch.d, sch.nodeRes, task.Concurrency, &backfillMeta, logger)
 		return generateReadIndexPlan(ctx, sch.d, tblInfo, job, sch.GlobalSort, len(execIDs), maxRegionPerSubtask, logger)
 	case proto.BackfillStepMergeSort:
-		return generateMergePlan(taskHandle, task, logger)
+		return generateMergePlan(taskHandle, task, len(execIDs), logger)
 	case proto.BackfillStepWriteAndIngest:
 		if sch.GlobalSort {
 			failpoint.Inject("mockWriteIngest", func() {
@@ -598,6 +598,7 @@ func splitSubtaskMetaForOneKVMetaGroup(
 func generateMergePlan(
 	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
+	instanceCnt int,
 	logger *zap.Logger,
 ) ([][]byte, error) {
 	// check data files overlaps,
@@ -605,14 +606,14 @@ func generateMergePlan(
 	var (
 		multiStatsGroup [][]external.MultipleFilesStat
 		kvMetaGroups    []*external.SortedKVMeta
-		eleIDs          []int64
+		// eleIDs          []int64
 	)
 	err := forEachBackfillSubtaskMeta(taskHandle, task.ID, proto.BackfillStepReadIndex,
 		func(subtask *BackfillSubTaskMeta) {
 			if kvMetaGroups == nil {
 				kvMetaGroups = make([]*external.SortedKVMeta, len(subtask.MetaGroups))
 				multiStatsGroup = make([][]external.MultipleFilesStat, len(subtask.MetaGroups))
-				eleIDs = subtask.EleIDs
+				// eleIDs = subtask.EleIDs
 			}
 			for i, g := range subtask.MetaGroups {
 				if kvMetaGroups[i] == nil {
@@ -627,54 +628,61 @@ func generateMergePlan(
 		return nil, err
 	}
 
-	allSkip := true
-	for _, multiStats := range multiStatsGroup {
-		if !skipMergeSort(multiStats) {
-			allSkip = false
-			break
+	if !vardef.EnableForceMergeSort.Load() {
+		allSkip := true
+		for _, multiStats := range multiStatsGroup {
+			if !skipMergeSort(multiStats) {
+				allSkip = false
+				break
+			}
+		}
+		if allSkip {
+			logger.Info("skip merge sort")
+			return nil, nil
 		}
 	}
-	if allSkip {
-		logger.Info("skip merge sort")
-		return nil, nil
-	}
 
-	metaArr := make([][]byte, 0, 16)
+	dataFiles := make([]string, 0, 1000)
 	for i, g := range kvMetaGroups {
-		dataFiles := make([]string, 0, 1000)
 		if g == nil {
 			logger.Error("meet empty kv group when getting subtask summary",
 				zap.Int64("taskID", task.ID))
 			return nil, errors.Errorf("subtask kv group %d is empty", i)
 		}
-		for _, m := range g.MultipleFilesStats {
-			for _, filePair := range m.Filenames {
-				dataFiles = append(dataFiles, filePair[0])
-			}
+		dataFiles = append(dataFiles, g.GetDataFiles()...)
+	}
+	start := 0
+	avgFilesPerInstance := (len(dataFiles) + instanceCnt - 1) / instanceCnt
+	step := min(external.MergeSortFileCountStep, avgFilesPerInstance)
+	metaArr := make([][]byte, 0, 16)
+	handlingRest := false
+	for start < len(dataFiles) {
+		rest := len(dataFiles) - start
+		if !handlingRest && (start/step)%instanceCnt == 0 && rest < step*instanceCnt {
+			// distribute the rest files to all instances.
+			prevStep := step
+			step = (rest + (instanceCnt - 1)) / instanceCnt // ceiling division
+			handlingRest = true
+			logger.Info("change file batch for rest",
+				zap.Int("totalFiles", len(dataFiles)),
+				zap.Int("instanceCnt", instanceCnt),
+				zap.Int("prevStep", prevStep),
+				zap.Int("newStep", step),
+			)
 		}
-		var eleID []int64
-		if i < len(eleIDs) {
-			eleID = []int64{eleIDs[i]}
-		}
-		start := 0
-		step := external.MergeSortFileCountStep
-		for start < len(dataFiles) {
-			end := start + step
-			if end > len(dataFiles) {
-				end = len(dataFiles)
-			}
-			m := &BackfillSubTaskMeta{
-				DataFiles: dataFiles[start:end],
-				EleIDs:    eleID,
-			}
-			metaBytes, err := json.Marshal(m)
-			if err != nil {
-				return nil, err
-			}
-			metaArr = append(metaArr, metaBytes)
 
-			start = end
+		end := min(start+step, len(dataFiles))
+		m := &BackfillSubTaskMeta{
+			DataFiles: dataFiles[start:end],
+			// TODO: replace ElemID with better duplicate error message solution
 		}
+		metaBytes, err := json.Marshal(m)
+		if err != nil {
+			return nil, err
+		}
+		metaArr = append(metaArr, metaBytes)
+
+		start = end
 	}
 	return metaArr, nil
 }

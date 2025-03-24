@@ -1306,6 +1306,7 @@ func loadCloudStorageURI(w *worker, job *model.Job) {
 	jc.cloudStorageURI = vardef.CloudStorageURI.Load()
 	job.ReorgMeta.UseCloudStorage = len(jc.cloudStorageURI) > 0 && job.ReorgMeta.IsDistReorg
 	job.ReorgMeta.UseLocalStorage = vardef.EnableGlobalSortLocalStore.Load()
+	job.ReorgMeta.ForceMergeSort = vardef.EnableForceMergeSort.Load()
 }
 
 func doReorgWorkForCreateIndexMultiSchema(w *worker, jobCtx *jobContext, job *model.Job,

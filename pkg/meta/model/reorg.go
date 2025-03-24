@@ -71,6 +71,7 @@ type DDLReorgMeta struct {
 	IsDistReorg       bool                             `json:"is_dist_reorg"`
 	UseCloudStorage   bool                             `json:"use_cloud_storage"`
 	UseLocalStorage   bool                             `json:"use_local_storage"`
+	ForceMergeSort    bool                             `json:"force_merge_sort"`
 	ResourceGroupName string                           `json:"resource_group_name"`
 	Version           int64                            `json:"version"`
 	TargetScope       string                           `json:"target_scope"`

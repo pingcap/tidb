@@ -243,7 +243,7 @@ func NewWriteIndexToExternalStoragePipeline(
 
 	memCap := resource.Mem.Capacity()
 	memSizePerWriter := uint64(memCap / int64(writerCnt*2*len(idxInfos)))
-	if reorgMeta.UseLocalStorage {
+	if reorgMeta.UseLocalStorage || reorgMeta.ForceMergeSort {
 		// For global sort that use local disk, we can reuse the same writer for all index
 		// without worrying about the overlapping issue.
 		memSizePerWriter = uint64(memCap / int64(writerCnt*2))
