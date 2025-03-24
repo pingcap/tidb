@@ -85,7 +85,7 @@ func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collatio
 	}
 
 	// read plan info from information_schema.tidb_statements_stats
-	var bindingPlans []*BindingPlanInfo
+	bindingPlans := make([]*BindingPlanInfo, 0, len(bindings))
 	for _, binding := range bindings {
 		pInfo, err := ba.getPlanExecInfo(binding.PlanDigest)
 		if err != nil {
