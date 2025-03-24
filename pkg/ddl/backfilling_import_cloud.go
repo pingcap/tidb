@@ -33,12 +33,24 @@ import (
 )
 
 type cloudImportExecutor struct {
+<<<<<<< HEAD
 	taskexecutor.EmptyStepExecutor
 	job           *model.Job
 	indexes       []*model.IndexInfo
 	ptbl          table.PhysicalTable
 	bc            ingest.BackendCtx
 	cloudStoreURI string
+=======
+	taskexecutor.BaseStepExecutor
+	job             *model.Job
+	store           kv.Storage
+	indexes         []*model.IndexInfo
+	ptbl            table.PhysicalTable
+	cloudStoreURI   string
+	backendCtx      ingest.BackendCtx
+	backend         *local.Backend
+	taskConcurrency int
+>>>>>>> d51e00e5bbf (globalsort: reduce number of SST ingested into TiKV (#59870) (#60045))
 }
 
 func newCloudImportExecutor(
@@ -47,22 +59,46 @@ func newCloudImportExecutor(
 	ptbl table.PhysicalTable,
 	bcGetter func() (ingest.BackendCtx, error),
 	cloudStoreURI string,
+	taskConcurrency int,
 ) (*cloudImportExecutor, error) {
 	bc, err := bcGetter()
 	if err != nil {
 		return nil, err
 	}
 	return &cloudImportExecutor{
+<<<<<<< HEAD
 		job:           job,
 		indexes:       indexes,
 		ptbl:          ptbl,
 		bc:            bc,
 		cloudStoreURI: cloudStoreURI,
+=======
+		job:             job,
+		store:           store,
+		indexes:         indexes,
+		ptbl:            ptbl,
+		cloudStoreURI:   cloudStoreURI,
+		taskConcurrency: taskConcurrency,
+>>>>>>> d51e00e5bbf (globalsort: reduce number of SST ingested into TiKV (#59870) (#60045))
 	}, nil
 }
 
 func (*cloudImportExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor init subtask exec env")
+<<<<<<< HEAD
+=======
+	cfg, bd, err := ingest.CreateLocalBackend(ctx, m.store, m.job, false, m.taskConcurrency)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	bCtx, err := ingest.NewBackendCtxBuilder(ctx, m.store, m.job).Build(cfg, bd)
+	if err != nil {
+		bd.Close()
+		return err
+	}
+	m.backend = bd
+	m.backendCtx = bCtx
+>>>>>>> d51e00e5bbf (globalsort: reduce number of SST ingested into TiKV (#59870) (#60045))
 	return nil
 }
 
@@ -126,13 +162,17 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			TotalFileSize: int64(all.TotalKVSize),
 			TotalKVCount:  0,
 			CheckHotspot:  true,
+			MemCapacity:   m.GetResource().Mem.Capacity(),
 		},
 		TS: sm.TS,
 	}, engineUUID)
 	if err != nil {
 		return err
 	}
+<<<<<<< HEAD
 	local.WorkerConcurrency = subtask.Concurrency * 2
+=======
+>>>>>>> d51e00e5bbf (globalsort: reduce number of SST ingested into TiKV (#59870) (#60045))
 	err = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	if err == nil {
 		return nil

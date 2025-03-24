@@ -131,7 +131,11 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 		if len(cloudStorageURI) == 0 {
 			return nil, errors.Errorf("local import does not have write & ingest step")
 		}
+<<<<<<< HEAD
 		return newCloudImportExecutor(jobMeta, indexInfos, tbl, s.getBackendCtx, cloudStorageURI)
+=======
+		return newCloudImportExecutor(jobMeta, ddlObj.store, indexInfos, tbl, cloudStorageURI, s.GetTaskBase().Concurrency)
+>>>>>>> d51e00e5bbf (globalsort: reduce number of SST ingested into TiKV (#59870) (#60045))
 	default:
 		// should not happen, caller has checked the stage
 		return nil, errors.Errorf("unknown step %d for job %d", stage, jobMeta.ID)

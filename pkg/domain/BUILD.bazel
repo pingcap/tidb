@@ -32,6 +32,11 @@ go_library(
         "//pkg/ddl/schematracker",
         "//pkg/ddl/systable",
         "//pkg/ddl/util",
+<<<<<<< HEAD
+=======
+        "//pkg/disttask/framework/handle",
+        "//pkg/disttask/framework/proto",
+>>>>>>> d51e00e5bbf (globalsort: reduce number of SST ingested into TiKV (#59870) (#60045))
         "//pkg/disttask/framework/scheduler",
         "//pkg/disttask/framework/storage",
         "//pkg/disttask/framework/taskexecutor",

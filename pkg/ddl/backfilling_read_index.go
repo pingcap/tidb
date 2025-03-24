@@ -90,6 +90,18 @@ func newReadIndexExecutor(
 
 func (*readIndexExecutor) Init(_ context.Context) error {
 	logutil.DDLLogger().Info("read index executor init subtask exec env")
+<<<<<<< HEAD
+=======
+	cfg := config.GetGlobalConfig()
+	if cfg.Store == config.StoreTypeTiKV {
+		cfg, bd, err := ingest.CreateLocalBackend(ctx, r.d.store, r.job, false, 0)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		r.backendCfg = cfg
+		r.backend = bd
+	}
+>>>>>>> d51e00e5bbf (globalsort: reduce number of SST ingested into TiKV (#59870) (#60045))
 	return nil
 }
 
