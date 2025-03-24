@@ -281,29 +281,36 @@ func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table,
 	return nil
 }
 
-func (db *DB) canReuseTableID(ti *model.TableInfo) bool {
+func (db *DB) reallocTableID(tables []*metautil.Table) error {
+	if len(tables) == 0 {
+		return nil
+	}
+
+	ids := make([]int64, 0, 0)
+	for _, t := range tables {
+		ids = append(ids, t.Info.ID)
+		if t.Info.Partition != nil && t.Info.Partition.Definitions != nil {
+			for _, def := range t.Info.Partition.Definitions {
+				ids = append(ids, def.ID)
+			}
+		}
+	}
+
+	db.preallocedIDs.BatchAlloc(ids)
+
 	if db.preallocedIDs == nil {
-		return false
+		return errors.New("preallocedIDs is nil")
 	}
-	prealloced := db.preallocedIDs.PreallocedFor(ti)
-	if prealloced {
-		log.Info("reusing table ID", zap.Stringer("table", ti.Name), zap.Int64("tableID", ti.ID))
-	}
-	return prealloced
+	return nil
 }
 
 // CreateTables execute a internal CREATE TABLES.
 func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 	ddlTables map[restore.UniqueTableName]bool, supportPolicy bool, policyMap *sync.Map) error {
 	if batchSession, ok := db.se.(glue.BatchCreateTableSession); ok {
-		idReusableTbls := map[string][]*model.TableInfo{}
-		idNonReusableTbls := map[string][]*model.TableInfo{}
+		reallocTbls := map[string][]*model.TableInfo{}
 		for _, table := range tables {
-			if db.canReuseTableID(table.Info) {
-				idReusableTbls[table.DB.Name.L] = append(idReusableTbls[table.DB.Name.L], table.Info)
-			} else {
-				idNonReusableTbls[table.DB.Name.L] = append(idNonReusableTbls[table.DB.Name.L], table.Info)
-			}
+			reallocTbls[table.DB.Name.L] = append(reallocTbls[table.DB.Name.L], table.Info)
 			if !supportPolicy {
 				log.Info("set placementPolicyRef to nil when target tidb not support policy",
 					zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))

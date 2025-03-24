@@ -7,7 +7,6 @@ import (
 	"math"
 
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
 const (
@@ -28,10 +27,13 @@ type Allocator interface {
 }
 
 // PreallocIDs mantains the state of preallocated table IDs.
+// Not thread safe.
 type PreallocIDs struct {
 	end int64
 
 	allocedFrom int64
+
+	alloced map[int64]struct{}
 }
 
 // New collects the requirement of prealloc IDs and return a
@@ -46,20 +48,14 @@ func New(tables []*metautil.Table) *PreallocIDs {
 	maxv := int64(0)
 
 	for _, t := range tables {
-		if t.Info.ID > maxv && t.Info.ID < insaneTableIDThreshold {
-			maxv = t.Info.ID
-		}
+		maxv += 1
 
 		if t.Info.Partition != nil && t.Info.Partition.Definitions != nil {
-			for _, part := range t.Info.Partition.Definitions {
-				if part.ID > maxv && part.ID < insaneTableIDThreshold {
-					maxv = part.ID
-				}
-			}
+			maxv += int64(len(t.Info.Partition.Definitions))
 		}
 	}
 	return &PreallocIDs{
-		end: maxv + 1,
+		end: maxv,
 
 		allocedFrom: math.MaxInt64,
 	}
@@ -75,19 +71,17 @@ func (p *PreallocIDs) String() string {
 
 // preallocTableIDs peralloc the id for [start, end)
 func (p *PreallocIDs) Alloc(m Allocator) error {
-	currentId, err := m.GetGlobalID()
-	if err != nil {
-		return err
-	}
-	if currentId > p.end {
+	if p.end == 0 {
 		return nil
 	}
 
-	alloced, err := m.AdvanceGlobalIDs(int(p.end - currentId))
+	alloced, err := m.AdvanceGlobalIDs(int(p.end))
 	if err != nil {
 		return err
 	}
 	p.allocedFrom = alloced + 1
+	p.end += p.allocedFrom
+	p.alloced = make(map[int64]struct{})
 	return nil
 }
 
@@ -96,16 +90,44 @@ func (p *PreallocIDs) Prealloced(tid int64) bool {
 	return p.allocedFrom <= tid && tid < p.end
 }
 
-func (p *PreallocIDs) PreallocedFor(ti *model.TableInfo) bool {
-	if !p.Prealloced(ti.ID) {
-		return false
+// func (p *PreallocIDs) PreallocedFor(ti *model.TableInfo) {}
+
+func (p *PreallocIDs) BatchAlloc(ids []int64) ([]int64,error) {
+	if len(ids) > int(p.end-p.allocedFrom) {
+		return []int64{}, fmt.Errorf("batch alloc too many IDs")
 	}
-	if ti.Partition != nil && ti.Partition.Definitions != nil {
-		for _, part := range ti.Partition.Definitions {
-			if !p.Prealloced(part.ID) {
-				return false
-			}
-		}
+
+	result := make([]int64, len(ids))
+    fillIndices := make([]int, 0, len(ids))
+
+    for i, id := range ids {
+        if id >= p.allocedFrom && id < p.end {
+            if _, exists := p.alloced[id]; !exists {
+                p.alloced[id] = struct{}{}
+                result[i] = id
+                continue
+            }
+        }
+        fillIndices = append(fillIndices, i)
 	}
-	return true
+
+	fillCount := len(fillIndices)
+    if fillCount == 0 {
+        return result, nil
+    }
+
+    available := make([]int64, 0)
+    for id := p.allocedFrom; id < p.end; id++ {
+        if _, exists := p.alloced[id]; !exists {
+            available = append(available, id)
+        }
+	}
+
+	for i, idx := range fillIndices {
+		id := available[i]
+        p.alloced[id] = struct{}{}
+        result[idx] = id
+	}
+
+	return result, nil
 }
