@@ -1888,7 +1888,7 @@ func (t *partitionedTable) RemoveRecord(ctx table.MutateContext, txn kv.Transact
 			if err != nil || !same {
 				return errors.Trace(err)
 			}
-			return t.GetPartition(newFrom).RemoveRecord(ctx, txn, h, r)
+			return t.getPartition(newFrom).RemoveRecord(ctx, txn, h, r)
 		}
 	}
 	return nil
@@ -1967,7 +1967,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 	} else if from != to {
 		// The old and new data locate in different partitions.
 		// Remove record from old partition
-		err = t.GetPartition(from).RemoveRecord(ctx, txn, h, currData)
+		err = t.getPartition(from).RemoveRecord(ctx, txn, h, currData)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1992,7 +1992,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 				memBuffer.Release(sh)
 				return nil
 			}
-			err = t.GetPartition(from).RemoveRecord(ctx, txn, h, currData)
+			err = t.getPartition(from).RemoveRecord(ctx, txn, h, currData)
 			if err != nil {
 				return err
 			}
@@ -2078,7 +2078,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 			if same {
 				// Always do Remove+Add, to always have the indexes in-sync,
 				// since the indexes might not been created yet, i.e. not backfilled yet.
-				err = t.GetPartition(newFrom).RemoveRecord(ctx, txn, h, currData)
+				err = t.getPartition(newFrom).RemoveRecord(ctx, txn, h, currData)
 				if err != nil {
 					return errors.Trace(err)
 				}
