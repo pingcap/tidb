@@ -17,7 +17,6 @@ package ddl
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -410,12 +409,6 @@ func checkPlacementPolicyNotInUseFromRange(policy *model.PolicyInfo) error {
 	return checkFn(placement.TiDBBundleRangePrefixForMeta)
 }
 
-var (
-	partitionNullRegex = regexp.MustCompile(`"partition":null`)
-	policyRefNullRegex = regexp.MustCompile(`"policy_ref_info":null`)
-	filterAttrsRegexp  = []*regexp.Regexp{partitionNullRegex, policyRefNullRegex}
-)
-
 func getPlacementPolicyDependedObjectsIDs(t *meta.Mutator, policy *model.PolicyInfo) (dbIDs, partIDs []int64, tblInfos []*model.TableInfo, err error) {
 	schemas, err := t.ListDatabases()
 	if err != nil {
@@ -430,7 +423,9 @@ func getPlacementPolicyDependedObjectsIDs(t *meta.Mutator, policy *model.PolicyI
 			dbIDs = append(dbIDs, dbInfo.ID)
 		}
 		tables, err := meta.GetTableInfoWithAttributes(
-			t, dbInfo.ID, filterAttrsRegexp...)
+			t, dbInfo.ID,
+			`"partition":null`,
+			`"policy_ref_info":null`)
 		if err != nil {
 			return nil, nil, nil, err
 		}
