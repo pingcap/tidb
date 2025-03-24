@@ -1152,6 +1152,7 @@ func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[strin
 		if err != nil {
 			return errors.Trace(err)
 		}
+
 		key := Unescape(nameLMatch[1])
 		res[strings.Clone(key)] = int64(id)
 		if isTableInfoMustLoad(value, true, checkAttributesInOrder...) {
