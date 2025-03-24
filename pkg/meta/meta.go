@@ -20,6 +20,8 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"math"
 	"regexp"
 	"strconv"
@@ -997,8 +999,6 @@ func (m *Mutator) IterTables(dbID int64, fn func(info *model.TableInfo) error) e
 	return errors.Trace(err)
 }
 
-<<<<<<< HEAD
-=======
 func splitRangeInt64Max(n int64) [][]string {
 	ranges := make([][]string, n)
 
@@ -1075,7 +1075,6 @@ func IterAllTables(ctx context.Context, store kv.Storage, startTs uint64, concur
 	return errors.Trace(workGroup.Wait())
 }
 
->>>>>>> 6bdacafe82d (*: fix incorrect handling IterAllTables (#59894))
 // GetMetasByDBID return all meta information of a database.
 // Note(dongmen): This method is used by TiCDC to reduce the time of changefeed initialization.
 // Ref: https://github.com/pingcap/tiflow/issues/11109

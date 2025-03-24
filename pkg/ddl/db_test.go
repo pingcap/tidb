@@ -17,7 +17,9 @@ package ddl_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,6 +34,7 @@ import (
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/inf
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -1270,8 +1273,6 @@ func TestAdminAlterDDLJobCommitFailed(t *testing.T) {
 	require.Equal(t, j.ReorgMeta, job.ReorgMeta)
 	deleteJobMetaByID(tk, job.ID)
 }
-<<<<<<< HEAD
-=======
 
 func TestGetAllTableInfos(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -1316,4 +1317,3 @@ func TestGetAllTableInfos(t *testing.T) {
 		require.Equal(t, tblInfos1[i].DBID, tblInfos2[i].DBID)
 	}
 }
->>>>>>> 6bdacafe82d (*: fix incorrect handling IterAllTables (#59894))
