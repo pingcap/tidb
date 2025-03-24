@@ -1083,10 +1083,10 @@ func (e *Engine) GetTS() uint64 {
 }
 
 // IncRef implements IngestData interface.
-func (Engine) IncRef() {}
+func (*Engine) IncRef() {}
 
 // DecRef implements IngestData interface.
-func (Engine) DecRef() {}
+func (*Engine) DecRef() {}
 
 // Finish implements IngestData interface.
 func (e *Engine) Finish(totalBytes, totalCount int64) {

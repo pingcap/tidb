@@ -51,8 +51,7 @@ func (s *storeHelper) GetTiKVCodec() tikv.Codec {
 var _ local.StoreHelper = (*storeHelper)(nil)
 
 func checkImportDirEmpty(t *testing.T) {
-	tidbCfg := tidb.GetGlobalConfig()
-	importDir := importer.GetImportRootDir(tidbCfg)
+	importDir := importer.GetImportRootDir()
 	if _, err := os.Stat(importDir); err != nil {
 		require.True(t, os.IsNotExist(err), importDir)
 	} else {

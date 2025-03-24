@@ -357,6 +357,7 @@ type Writer struct {
 	totalCnt  uint64
 }
 
+// Target implements ingest.Writer.
 func (w Writer) Target() backend.WriteTarget {
 	if strings.HasPrefix(w.store.URI(), "local:") {
 		return backend.WriteTargetLocal

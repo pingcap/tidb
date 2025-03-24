@@ -221,11 +221,12 @@ type MockWriter struct {
 	onWrite MockWriteHook
 }
 
+// Target implements Writer interface.
 func (MockWriter) Target() backend.WriteTarget {
 	return backend.WriteTargetLocal
 }
 
-// WriteRow implements Writer.WriteRow interface.
+// WriteRow implements Writer interface.
 func (m *MockWriter) WriteRow(_ context.Context, key, idxVal []byte, _ kv.Handle) error {
 	logutil.DDLIngestLogger().Info("mock writer write row",
 		zap.String("key", hex.EncodeToString(key)),
@@ -253,7 +254,7 @@ func (m *MockWriter) WriteRow(_ context.Context, key, idxVal []byte, _ kv.Handle
 	return nil
 }
 
-// LockForWrite implements Writer.LockForWrite interface.
+// LockForWrite implements Writer interface.
 func (*MockWriter) LockForWrite() func() {
 	return func() {}
 }

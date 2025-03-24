@@ -21,11 +21,10 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"slices"
 	"strings"
 	"sync"
 	"time"
-
-	"slices"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
