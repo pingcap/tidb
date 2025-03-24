@@ -3796,7 +3796,6 @@ func TestNonClusteredUpdateReorgUpdate(t *testing.T) {
 		tk2.MustExec("use test")
 		tk2.MustExec("update t set b = b + 10 where a = 1")
 		// Would delete newFrom 1, which would then be backfilled again!
-		// TODO: Is this true?
 		tk2.MustExec("update t set b = b + 10 where a = 2")
 		tk2.MustQuery(`select a,b,_tidb_rowid from t`).Sort().Check(testkit.Rows("1 11 1", "2 12 3"))
 	})
@@ -3839,7 +3838,6 @@ func TestNonClusteredReorgUpdate(t *testing.T) {
 // So an zero alter, then moving the row, Nope, if newFrom is 0, then nothing is deleted...
 
 func TestNonClusteredReorgUpdateHash(t *testing.T) {
-	// if not works 2->3, test 3->2
 	createSQL := "create table t (a int, b int) partition by hash (a) partitions 2"
 	initFn := func(tkO *testkit.TestKit) {
 		tkO.MustExec(`insert into t values (2,2),(3,3)`)
