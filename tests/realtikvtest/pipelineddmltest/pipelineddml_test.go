@@ -216,11 +216,10 @@ func TestPipelinedDMLPositive(t *testing.T) {
 	config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(false)
 
 	// enable by hint
-	// Hint works for DELETE and UPDATE, but not for INSERT if the hint is in its select clause.
 	tk.MustExec("set @@tidb_dml_type = standard")
 	dmls := [][2]string{
 		{"update t set b = b + 1", "update /*+ SET_VAR(tidb_dml_type=bulk) */ t set b = b + 1"},
-		{"insert into t select * from t", "insert /*+ SET_VAR(tidb_dml_type=bulk) */ into t select * from t"},
+		{"insert into t select * from t", "insert into t select /*+ SET_VAR(tidb_dml_type=bulk) */ * from t"},
 		{"delete from t", "delete /*+ SET_VAR(tidb_dml_type=bulk) */ from t"},
 	}
 	for _, dmlPair := range dmls {

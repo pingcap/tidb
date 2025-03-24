@@ -326,11 +326,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 		hint.BindHint(stmtNode, originHints)
 	}
 
-	// postpone Warmup because binding may change the behaviour, like pipelined DML
-	if err = pctx.AdviseTxnWarmup(); err != nil {
-		return nil, nil, err
-	}
-
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace && bestPlanFromBind != nil {
 		core.DebugTraceBestBinding(pctx, chosenBinding.Hint)
 	}
@@ -473,6 +468,10 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer debugtrace.LeaveContextCommon(sctx)
+	}
+
+	if err := sctx.AdviseTxnWarmup(); err != nil {
+		return nil, nil, 0, err
 	}
 
 	// build logical plan
