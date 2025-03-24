@@ -54,5 +54,5 @@ func (db *DBInfo) Copy() *DBInfo {
 
 // LessDBInfo is used for sorting DBInfo by DBInfo.Name.
 func LessDBInfo(a *DBInfo, b *DBInfo) int {
-	return strings.Compare(a.Name.L, b.Name.L)
+	return strings.Compare(a.Name.L.Value(), b.Name.L.Value())
 }

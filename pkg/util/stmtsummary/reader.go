@@ -55,7 +55,7 @@ func NewStmtSummaryReader(user *auth.UserIdentity, hasProcessPriv bool, cols []*
 	// initialize column value factories.
 	reader.columnValueFactories = make([]columnValueFactory, len(reader.columns))
 	for i, col := range reader.columns {
-		factory, ok := columnValueFactoryMap[col.Name.O]
+		factory, ok := columnValueFactoryMap[col.Name.O.Value()]
 		if !ok {
 			panic(fmt.Sprintf("should never happen, should register new column %v into columnValueFactoryMap", col.Name.O))
 		}

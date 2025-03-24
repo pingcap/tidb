@@ -403,17 +403,17 @@ func (n *FuncCallExpr) Restore(ctx *format.RestoreCtx) error {
 	}
 
 	if len(n.Schema.String()) != 0 {
-		ctx.WriteName(n.Schema.O)
+		ctx.WriteName(n.Schema.O.Value())
 		ctx.WritePlain(".")
 	}
 	if n.Tp == FuncCallExprTypeGeneric {
-		ctx.WriteName(n.FnName.O)
+		ctx.WriteName(n.FnName.O.Value())
 	} else {
-		ctx.WriteKeyWord(n.FnName.O)
+		ctx.WriteKeyWord(n.FnName.O.Value())
 	}
 
 	ctx.WritePlain("(")
-	switch n.FnName.L {
+	switch n.FnName.L.Value() {
 	case "convert":
 		if err := n.Args[0].Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while restore FuncCastExpr.Expr")
@@ -502,7 +502,7 @@ func (n *FuncCallExpr) Restore(ctx *format.RestoreCtx) error {
 
 func (n *FuncCallExpr) customRestore(ctx *format.RestoreCtx) (bool, error) {
 	var specialLiteral string
-	switch n.FnName.L {
+	switch n.FnName.L.Value() {
 	case DateLiteral:
 		specialLiteral = "DATE "
 	case TimeLiteral:
@@ -517,7 +517,7 @@ func (n *FuncCallExpr) customRestore(ctx *format.RestoreCtx) (bool, error) {
 		}
 		return true, nil
 	}
-	if n.FnName.L == JSONMemberOf {
+	if n.FnName.L.Value() == JSONMemberOf {
 		if len(n.Args) == 2 {
 			if err := n.Args[0].Restore(ctx); err != nil {
 				return true, errors.Annotatef(err, "An error occurred while restore FuncCallExpr.(MEMBER OF).Args[0]")
@@ -538,7 +538,7 @@ func (n *FuncCallExpr) customRestore(ctx *format.RestoreCtx) (bool, error) {
 // Format the ExprNode into a Writer.
 func (n *FuncCallExpr) Format(w io.Writer) {
 	if !n.specialFormatArgs(w) {
-		fmt.Fprintf(w, "%s(", n.FnName.L)
+		fmt.Fprintf(w, "%s(", n.FnName.L.Value())
 		for i, arg := range n.Args {
 			arg.Format(w)
 			if i != len(n.Args)-1 {
@@ -551,9 +551,9 @@ func (n *FuncCallExpr) Format(w io.Writer) {
 
 // specialFormatArgs formats argument list for some special functions.
 func (n *FuncCallExpr) specialFormatArgs(w io.Writer) bool {
-	switch n.FnName.L {
+	switch n.FnName.L.Value() {
 	case DateAdd, DateSub, AddDate, SubDate:
-		fmt.Fprintf(w, "%s(", n.FnName.L)
+		fmt.Fprintf(w, "%s(", n.FnName.L.Value())
 		n.Args[0].Format(w)
 		fmt.Fprint(w, ", INTERVAL ")
 		n.Args[1].Format(w)
@@ -569,7 +569,7 @@ func (n *FuncCallExpr) specialFormatArgs(w io.Writer) bool {
 		fmt.Fprint(w, ")")
 		return true
 	case Extract:
-		fmt.Fprintf(w, "%s(", n.FnName.L)
+		fmt.Fprintf(w, "%s(", n.FnName.L.Value())
 		n.Args[0].Format(w)
 		fmt.Fprint(w, " FROM ")
 		n.Args[1].Format(w)

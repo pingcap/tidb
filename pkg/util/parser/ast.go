@@ -40,7 +40,7 @@ type implicitDatabase struct {
 func (i *implicitDatabase) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch x := in.(type) {
 	case *ast.TableName:
-		if x.Schema.L == "" {
+		if x.Schema.L.Value() == "" {
 			i.hasImplicit = true
 		}
 		return in, true
@@ -102,7 +102,7 @@ func SimpleCases(node ast.StmtNode, defaultDB, origin string) (s string, ok bool
 		return origin, true
 	}
 	lower := strings.ToLower(origin[:parenPos])
-	pos := findTablePos(lower, tn.Name.L)
+	pos := findTablePos(lower, tn.Name.L.Value())
 	if pos == -1 {
 		return "", false
 	}

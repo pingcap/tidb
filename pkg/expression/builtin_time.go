@@ -1750,7 +1750,7 @@ func (c *fromUnixTimeFunctionClass) getFunction(ctx BuildContext, args []Express
 		x, ok := (bf.getArgs()[0]).(*ScalarFunction)
 		if ok {
 			//used to adjust FromUnixTime precision #Fixbug35184
-			if x.FuncName.L == ast.Cast {
+			if x.FuncName.L.Value() == ast.Cast {
 				if x.RetType.GetDecimal() == 0 && (x.RetType.GetType() == mysql.TypeNewDecimal) {
 					x.RetType.SetDecimal(6)
 					fieldLen := min(x.RetType.GetFlen()+6, mysql.MaxDecimalWidth)

@@ -300,33 +300,33 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 	setVars := make(map[string]string)
 	setVarsOffs := make([]int, 0, len(hints))
 	for i, hint := range hints {
-		switch hint.HintName.L {
+		switch hint.HintName.L.Value() {
 		case "memory_quota":
-			hintOffs[hint.HintName.L] = i
+			hintOffs[hint.HintName.L.Value()] = i
 			memoryQuotaHintCnt++
 		case "resource_group":
-			hintOffs[hint.HintName.L] = i
+			hintOffs[hint.HintName.L.Value()] = i
 			resourceGroupHintCnt++
 		case "use_toja":
-			hintOffs[hint.HintName.L] = i
+			hintOffs[hint.HintName.L.Value()] = i
 			useToJAHintCnt++
 		case "use_cascades":
-			hintOffs[hint.HintName.L] = i
+			hintOffs[hint.HintName.L.Value()] = i
 			useCascadesHintCnt++
 		case "no_index_merge":
-			hintOffs[hint.HintName.L] = i
+			hintOffs[hint.HintName.L.Value()] = i
 			noIndexMergeHintCnt++
 		case "read_consistent_replica":
-			hintOffs[hint.HintName.L] = i
+			hintOffs[hint.HintName.L.Value()] = i
 			readReplicaHintCnt++
 		case "max_execution_time":
-			hintOffs[hint.HintName.L] = i
+			hintOffs[hint.HintName.L.Value()] = i
 			maxExecutionTimeCnt++
 		case "nth_plan":
 			forceNthPlanCnt++
 			forceNthPlan = hint
 		case "straight_join":
-			hintOffs[hint.HintName.L] = i
+			hintOffs[hint.HintName.L.Value()] = i
 			straightJoinHintCnt++
 		case "hypo_index":
 			// to make it simpler, use Tables[0] as table, Tables[1] as index name, and Tables[2:] as column name.
@@ -335,7 +335,7 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 				warns = append(warns, warn)
 				continue
 			}
-			db := hint.Tables[0].DBName.L
+			db := hint.Tables[0].DBName.L.Value()
 			if db == "" {
 				db = currentDB
 			}
@@ -367,7 +367,7 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 				State:   model.StatePublic,
 				Tp:      ast.IndexTypeHypo,
 			}
-			stmtHints.addHypoIndex(db, tbl.L, idx.L, idxInfo)
+			stmtHints.addHypoIndex(db, tbl.L.Value(), idx.L.Value(), idxInfo)
 		case "set_var":
 			setVarHint := hint.HintData.(ast.HintSetVar)
 
@@ -505,7 +505,7 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 
 // isStmtHint checks whether this hint is a statement-level hint.
 func isStmtHint(h *ast.TableOptimizerHint) bool {
-	switch h.HintName.L {
+	switch h.HintName.L.Value() {
 	case "max_execution_time", "memory_quota", "resource_group":
 		return true
 	default:
@@ -573,7 +573,7 @@ type HintedIndex struct {
 func (hint *HintedIndex) Match(dbName, tblName ast.CIStr) bool {
 	return hint.TblName.L == tblName.L &&
 		(hint.DBName.L == dbName.L ||
-			hint.DBName.L == "*") // for universal bindings, e.g. *.t
+			hint.DBName.L.Value() == "*") // for universal bindings, e.g. *.t
 }
 
 // HintTypeString returns the string representation of the hint type.
@@ -594,7 +594,7 @@ func (hint *HintedIndex) IndexString() string {
 	var indexListString string
 	indexList := make([]string, len(hint.IndexHint.IndexNames))
 	for i := range hint.IndexHint.IndexNames {
-		indexList[i] = hint.IndexHint.IndexNames[i].L
+		indexList[i] = hint.IndexHint.IndexNames[i].L.Value()
 	}
 	if len(indexList) > 0 {
 		indexListString = fmt.Sprintf(", %s", strings.Join(indexList, ", "))
@@ -710,7 +710,7 @@ func (*PlanHints) MatchTableName(tables []*HintedTable, hintTables []HintedTable
 			if table == nil {
 				continue
 			}
-			if (curEntry.DBName.L == table.DBName.L || curEntry.DBName.L == "*") &&
+			if (curEntry.DBName.L == table.DBName.L || curEntry.DBName.L.Value() == "*") &&
 				curEntry.TblName.L == table.TblName.L &&
 				table.SelectOffset == curEntry.SelectOffset {
 				hintTables[i].Matched = true
@@ -746,7 +746,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 	)
 	for _, hint := range hints {
 		// Set warning for the hint that requires the table name.
-		switch hint.HintName.L {
+		switch hint.HintName.L.Value() {
 		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ,
 			HintNoHashJoin, HintNoMergeJoin, TiDBHashJoin, HintHJ, HintUseIndex, HintIgnoreIndex,
 			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexMerge, HintLeading:
@@ -762,42 +762,42 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			}
 		}
 
-		switch hint.HintName.L {
+		switch hint.HintName.L.Value() {
 		case TiDBMergeJoin, HintSMJ:
-			sortMergeTables = append(sortMergeTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+			sortMergeTables = append(sortMergeTables, tableNames2HintTableInfo(currentDB, hint.HintName.L.Value(), hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 		case TiDBBroadCastJoin, HintBCJ:
-			bcTables = append(bcTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+			bcTables = append(bcTables, tableNames2HintTableInfo(currentDB, hint.HintName.L.Value(), hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 		case HintShuffleJoin:
-			shuffleJoinTables = append(shuffleJoinTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+			shuffleJoinTables = append(shuffleJoinTables, tableNames2HintTableInfo(currentDB, hint.HintName.L.Value(), hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 		case TiDBIndexNestedLoopJoin, HintINLJ:
-			inljTables = append(inljTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+			inljTables = append(inljTables, tableNames2HintTableInfo(currentDB, hint.HintName.L.Value(), hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 		case HintINLHJ:
-			inlhjTables = append(inlhjTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+			inlhjTables = append(inlhjTables, tableNames2HintTableInfo(currentDB, hint.HintName.L.Value(), hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 		case HintINLMJ:
 			if hint.Tables != nil {
 				warnHandler.SetHintWarning("The INDEX MERGE JOIN hint is deprecated for usage, try other hints.")
 				continue
 			}
 		case TiDBHashJoin, HintHJ:
-			hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+			hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(currentDB, hint.HintName.L.Value(), hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 		case HintNoHashJoin:
-			noHashJoinTables = append(noHashJoinTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+			noHashJoinTables = append(noHashJoinTables, tableNames2HintTableInfo(currentDB, hint.HintName.L.Value(), hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 		case HintNoMergeJoin:
-			noMergeJoinTables = append(noMergeJoinTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+			noMergeJoinTables = append(noMergeJoinTables, tableNames2HintTableInfo(currentDB, hint.HintName.L.Value(), hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 		case HintNoIndexJoin:
-			noIndexJoinTables = append(noIndexJoinTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+			noIndexJoinTables = append(noIndexJoinTables, tableNames2HintTableInfo(currentDB, hint.HintName.L.Value(), hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 		case HintNoIndexHashJoin:
-			noIndexHashJoinTables = append(noIndexHashJoinTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+			noIndexHashJoinTables = append(noIndexHashJoinTables, tableNames2HintTableInfo(currentDB, hint.HintName.L.Value(), hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 		case HintNoIndexMergeJoin:
-			noIndexMergeJoinTables = append(noIndexMergeJoinTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+			noIndexMergeJoinTables = append(noIndexMergeJoinTables, tableNames2HintTableInfo(currentDB, hint.HintName.L.Value(), hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 		case HintMPP1PhaseAgg:
 			preferAggType |= PreferMPP1PhaseAgg
 		case HintMPP2PhaseAgg:
 			preferAggType |= PreferMPP2PhaseAgg
 		case HintHashJoinBuild:
-			hjBuildTables = append(hjBuildTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+			hjBuildTables = append(hjBuildTables, tableNames2HintTableInfo(currentDB, hint.HintName.L.Value(), hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 		case HintHashJoinProbe:
-			hjProbeTables = append(hjProbeTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+			hjProbeTables = append(hjProbeTables, tableNames2HintTableInfo(currentDB, hint.HintName.L.Value(), hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 		case HintHashAgg:
 			preferAggType |= PreferHashAgg
 		case HintStreamAgg:
@@ -806,11 +806,11 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			preferAggToCop = true
 		case HintUseIndex, HintIgnoreIndex, HintForceIndex, HintOrderIndex, HintNoOrderIndex:
 			dbName := hint.Tables[0].DBName
-			if dbName.L == "" {
+			if dbName.L.Value() == "" {
 				dbName = ast.NewCIStr(currentDB)
 			}
 			var hintType ast.IndexHintType
-			switch hint.HintName.L {
+			switch hint.HintName.L.Value() {
 			case HintUseIndex:
 				hintType = ast.HintUse
 			case HintIgnoreIndex:
@@ -833,15 +833,15 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 				},
 			})
 		case HintReadFromStorage:
-			switch hint.HintData.(ast.CIStr).L {
+			switch hint.HintData.(ast.CIStr).L.Value() {
 			case HintTiFlash:
-				tiflashTables = append(tiflashTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+				tiflashTables = append(tiflashTables, tableNames2HintTableInfo(currentDB, hint.HintName.L.Value(), hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 			case HintTiKV:
-				tikvTables = append(tikvTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+				tikvTables = append(tikvTables, tableNames2HintTableInfo(currentDB, hint.HintName.L.Value(), hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 			}
 		case HintIndexMerge:
 			dbName := hint.Tables[0].DBName
-			if dbName.L == "" {
+			if dbName.L.Value() == "" {
 				dbName = ast.NewCIStr(currentDB)
 			}
 			indexMergeHintList = append(indexMergeHintList, HintedIndex{
@@ -866,7 +866,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			cteMerge = true
 		case HintLeading:
 			if leadingHintCnt == 0 {
-				leadingJoinOrder = append(leadingJoinOrder, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+				leadingJoinOrder = append(leadingJoinOrder, tableNames2HintTableInfo(currentDB, hint.HintName.L.Value(), hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 			}
 			leadingHintCnt++
 		case HintSemiJoinRewrite:
@@ -952,7 +952,7 @@ func tableNames2HintTableInfo(currentDB, hintName string, hintTables []ast.HintT
 			Partitions:   hintTable.PartitionList,
 			SelectOffset: p.GetHintOffset(hintTable.QBName, currentOffset),
 		}
-		if tableInfo.DBName.L == "" {
+		if tableInfo.DBName.L.Value() == "" {
 			tableInfo.DBName = defaultDBName
 		}
 		switch hintName {
@@ -974,14 +974,14 @@ func tableNames2HintTableInfo(currentDB, hintName string, hintTables []ast.HintT
 func restore2TableHint(hintTables ...HintedTable) string {
 	buffer := bytes.NewBufferString("")
 	for i, table := range hintTables {
-		buffer.WriteString(table.TblName.L)
+		buffer.WriteString(table.TblName.L.Value())
 		if len(table.Partitions) > 0 {
 			buffer.WriteString(" PARTITION(")
 			for j, partition := range table.Partitions {
 				if j > 0 {
 					buffer.WriteString(", ")
 				}
-				buffer.WriteString(partition.L)
+				buffer.WriteString(partition.L.Value())
 			}
 			buffer.WriteString(")")
 		}
@@ -1020,7 +1020,7 @@ func Restore2IndexHint(hintType string, hintIndex HintedIndex) string {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(" " + indexName.L)
+			buffer.WriteString(" " + indexName.L.Value())
 		}
 	}
 	buffer.WriteString(") */")
@@ -1054,7 +1054,7 @@ func ExtractUnmatchedTables(hintTables []HintedTable) []string {
 	var tableNames []string
 	for _, table := range hintTables {
 		if !table.Matched {
-			tableNames = append(tableNames, table.TblName.O)
+			tableNames = append(tableNames, table.TblName.O.Value())
 		}
 	}
 	return tableNames

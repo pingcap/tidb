@@ -31,6 +31,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unique"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -851,7 +852,7 @@ type SessionVars struct {
 	Port string
 
 	// CurrentDB is the default database of this session.
-	CurrentDB string
+	CurrentDB unique.Handle[string]
 
 	// CurrentDBChanged indicates if the CurrentDB has been updated, and if it is we should print it into
 	// the slow log to make it be compatible with MySQL, https://github.com/pingcap/tidb/issues/17846.
@@ -2909,7 +2910,7 @@ func (s *SessionVars) EncodeSessionStates(_ context.Context, sessionStates *sess
 	// Encode other session contexts.
 	sessionStates.PreparedStmtID = s.preparedStmtID
 	sessionStates.Status = s.status.Load()
-	sessionStates.CurrentDB = s.CurrentDB
+	sessionStates.CurrentDB = s.CurrentDB.Value()
 	sessionStates.LastTxnInfo = s.LastTxnInfo
 	if s.LastQueryInfo.StartTS != 0 {
 		sessionStates.LastQueryInfo = &s.LastQueryInfo
@@ -2944,7 +2945,7 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	// Decode other session contexts.
 	s.preparedStmtID = sessionStates.PreparedStmtID
 	s.status.Store(sessionStates.Status)
-	s.CurrentDB = sessionStates.CurrentDB
+	s.CurrentDB = unique.Make(sessionStates.CurrentDB)
 	s.LastTxnInfo = sessionStates.LastTxnInfo
 	if sessionStates.LastQueryInfo != nil {
 		s.LastQueryInfo = *sessionStates.LastQueryInfo
@@ -3555,8 +3556,8 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 		buf.WriteString(SlowLogRowPrefixStr + execDetailStr + "\n")
 	}
 
-	if len(s.CurrentDB) > 0 {
-		writeSlowLogItem(&buf, SlowLogDBStr, strings.ToLower(s.CurrentDB))
+	if len(s.CurrentDB.Value()) > 0 {
+		writeSlowLogItem(&buf, SlowLogDBStr, strings.ToLower(s.CurrentDB.Value()))
 	}
 	if len(logItems.IndexNames) > 0 {
 		writeSlowLogItem(&buf, SlowLogIndexNamesStr, logItems.IndexNames)
@@ -3707,7 +3708,7 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 
 	if s.CurrentDBChanged {
-		buf.WriteString(fmt.Sprintf("use %s;\n", strings.ToLower(s.CurrentDB)))
+		buf.WriteString(fmt.Sprintf("use %s;\n", strings.ToLower(s.CurrentDB.Value())))
 		s.CurrentDBChanged = false
 	}
 

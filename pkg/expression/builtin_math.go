@@ -1278,7 +1278,7 @@ func (b *builtinConvSig) evalString(ctx EvalContext, row chunk.Row) (res string,
 			str = datum.GetBinaryLiteral().ToBitLiteralString(true)
 		}
 	case *ScalarFunction:
-		if x.FuncName.L == ast.Cast {
+		if x.FuncName.L.Value() == ast.Cast {
 			arg0 := x.GetArgs()[0]
 			if arg0.GetType(ctx).Hybrid() || IsBinaryLiteral(arg0) {
 				str, isNull, err = arg0.EvalString(ctx, row)

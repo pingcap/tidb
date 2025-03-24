@@ -15,6 +15,8 @@
 package column
 
 import (
+	"unique"
+
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -35,7 +37,7 @@ func ConvertColumnInfo(fld *resolve.ResultField) (ci *Info) {
 	}
 
 	if fld.EmptyOrgName {
-		ci.OrgName = ""
+		ci.OrgName = unique.Make("")
 	}
 	if fld.Table != nil {
 		ci.OrgTable = fld.Table.Name.O

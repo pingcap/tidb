@@ -173,7 +173,7 @@ func crossDBMatchBindings(sctx sessionctx.Context, tableNames []*ast.TableName, 
 	leastWildcards := len(tableNames) + 1
 	enableCrossDBBinding := sctx.GetSessionVars().EnableFuzzyBinding
 	for _, binding := range bindings {
-		numWildcards, matched := crossDBMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, binding.TableNames)
+		numWildcards, matched := crossDBMatchBindingTableName(sctx.GetSessionVars().CurrentDB.Value(), tableNames, binding.TableNames)
 		if matched && numWildcards > 0 && sctx != nil && !enableCrossDBBinding {
 			continue // cross-db binding is disabled, skip this binding
 		}
@@ -194,12 +194,12 @@ func crossDBMatchBindingTableName(currentDB string, stmtTableNames, bindingTable
 		if stmtTableNames[i].Name.L != bindingTableNames[i].Name.L {
 			return 0, false
 		}
-		if bindingTableNames[i].Schema.L == "*" {
+		if bindingTableNames[i].Schema.L.Value() == "*" {
 			numWildcards++
 		}
 		if bindingTableNames[i].Schema.L == stmtTableNames[i].Schema.L || // exactly same, or
-			(stmtTableNames[i].Schema.L == "" && bindingTableNames[i].Schema.L == strings.ToLower(currentDB)) || // equal to the current DB, or
-			bindingTableNames[i].Schema.L == "*" { // cross-db match successfully
+			(stmtTableNames[i].Schema.L.Value() == "" && bindingTableNames[i].Schema.L.Value() == strings.ToLower(currentDB)) || // equal to the current DB, or
+			bindingTableNames[i].Schema.L.Value() == "*" { // cross-db match successfully
 			continue
 		}
 		return 0, false
@@ -210,7 +210,7 @@ func crossDBMatchBindingTableName(currentDB string, stmtTableNames, bindingTable
 // isCrossDBBinding checks whether the stmtNode is a cross-db binding.
 func isCrossDBBinding(stmt ast.Node) bool {
 	for _, t := range CollectTableNames(stmt) {
-		if t.Schema.L == "*" {
+		if t.Schema.L.Value() == "*" {
 			return true
 		}
 	}

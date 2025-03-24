@@ -5,6 +5,7 @@ package utils
 import (
 	"fmt"
 	"strings"
+	"unique"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -33,7 +34,7 @@ func EncloseDBAndTable(database, table string) string {
 
 // IsTemplateSysDB checks wheterh the dbname is temporary system database(__TiDB_BR_Temporary_mysql or __TiDB_BR_Temporary_sys).
 func IsTemplateSysDB(dbname ast.CIStr) bool {
-	return dbname.O == temporaryDBNamePrefix+mysql.SystemDB || dbname.O == temporaryDBNamePrefix+mysql.SysDB
+	return dbname.O.Value() == temporaryDBNamePrefix+mysql.SystemDB || dbname.O.Value() == temporaryDBNamePrefix+mysql.SysDB
 }
 
 // IsSysDB tests whether the database is system DB.
@@ -63,10 +64,10 @@ func IsSysOrTempSysDB(db string) bool {
 
 // GetSysDBCIStrName get the CIStr name of system DB
 func GetSysDBCIStrName(tempDB ast.CIStr) (ast.CIStr, bool) {
-	if ok := strings.HasPrefix(tempDB.O, temporaryDBNamePrefix); !ok {
+	if ok := strings.HasPrefix(tempDB.O.Value(), temporaryDBNamePrefix); !ok {
 		return tempDB, false
 	}
-	tempDB.O = tempDB.O[len(temporaryDBNamePrefix):]
-	tempDB.L = tempDB.L[len(temporaryDBNamePrefix):]
+	tempDB.O = unique.Make(tempDB.O.Value()[len(temporaryDBNamePrefix):])
+	tempDB.L = unique.Make(tempDB.L.Value()[len(temporaryDBNamePrefix):])
 	return tempDB, true
 }

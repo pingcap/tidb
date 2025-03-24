@@ -32,10 +32,10 @@ func GetPartitionIDMap(newTable, oldTable *model.TableInfo) map[int64]int64 {
 		nameMapID := make(map[string]int64)
 
 		for _, old := range oldTable.Partition.Definitions {
-			nameMapID[old.Name.L] = old.ID
+			nameMapID[old.Name.L.Value()] = old.ID
 		}
 		for _, new := range newTable.Partition.Definitions {
-			if oldID, exist := nameMapID[new.Name.L]; exist {
+			if oldID, exist := nameMapID[new.Name.L.Value()]; exist {
 				tableIDMap[oldID] = new.ID
 			}
 		}

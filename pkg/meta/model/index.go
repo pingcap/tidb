@@ -356,7 +356,7 @@ func (i *IndexColumn) Clone() *IndexColumn {
 // FindIndexColumnByName finds IndexColumn by name. When IndexColumn is not found, returns (-1, nil).
 func FindIndexColumnByName(indexCols []*IndexColumn, nameL string) (int, *IndexColumn) {
 	for i, ic := range indexCols {
-		if ic.Name.L == nameL {
+		if ic.Name.L.Value() == nameL {
 			return i, ic
 		}
 	}

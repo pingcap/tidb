@@ -19,6 +19,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"strings"
+	"unique"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -422,7 +423,7 @@ func (tc *TiDBContext) DecodeSessionStates(ctx context.Context, _ sessionctx.Con
 	for id, preparedStmtInfo := range sessionStates.PreparedStmts {
 		// Set the next id and currentDB manually.
 		sessionVars.SetNextPreparedStmtID(id - 1)
-		sessionVars.CurrentDB = preparedStmtInfo.StmtDB
+		sessionVars.CurrentDB = unique.Make(preparedStmtInfo.StmtDB)
 		if preparedStmtInfo.Name == "" {
 			// Binary protocol: add to sessionVars.PreparedStmts and TiDBContext.stmts.
 			stmt, _, _, err := tc.Prepare(preparedStmtInfo.StmtText)

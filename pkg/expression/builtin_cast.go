@@ -2418,7 +2418,7 @@ const inUnionCastContext inCastContext = 0
 // See https://github.com/mysql/mysql-server/blob/ee4455a33b10f1b1886044322e4893f587b319ed/sql/item_timefunc.h#L423 for details.
 func CanImplicitEvalInt(expr Expression) bool {
 	if f, ok := expr.(*ScalarFunction); ok {
-		return f.FuncName.L == ast.DayName
+		return f.FuncName.L.Value() == ast.DayName
 	}
 	return false
 }
@@ -2429,7 +2429,7 @@ func CanImplicitEvalInt(expr Expression) bool {
 // See https://github.com/mysql/mysql-server/blob/ee4455a33b10f1b1886044322e4893f587b319ed/sql/item_timefunc.h#L423 for details.
 func CanImplicitEvalReal(expr Expression) bool {
 	if f, ok := expr.(*ScalarFunction); ok {
-		return f.FuncName.L == ast.DayName
+		return f.FuncName.L.Value() == ast.DayName
 	}
 	return false
 }
@@ -2781,7 +2781,7 @@ func TryPushCastIntoControlFunctionForHybridType(ctx BuildContext, expr Expressi
 	}
 
 	args := sf.GetArgs()
-	switch sf.FuncName.L {
+	switch sf.FuncName.L.Value() {
 	case ast.If:
 		if isHybrid(args[1].GetType(ctx.GetEvalCtx())) || isHybrid(args[2].GetType(ctx.GetEvalCtx())) {
 			args[1] = wrapCastFunc(ctx, args[1])

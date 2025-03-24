@@ -46,15 +46,15 @@ func (name *FieldName) String() string {
 	if name.Hidden {
 		return emptyName
 	}
-	bs := make([]byte, 0, len(name.DBName.L)+1+len(name.TblName.L)+1+len(name.ColName.L))
+	bs := make([]byte, 0, len(name.DBName.L.Value())+1+len(name.TblName.L.Value())+1+len(name.ColName.L.Value()))
 	builder := bytes.NewBuffer(bs)
-	if name.DBName.L != "" {
-		builder.WriteString(name.DBName.L + ".")
+	if name.DBName.L.Value() != "" {
+		builder.WriteString(name.DBName.L.Value() + ".")
 	}
-	if name.TblName.L != "" {
-		builder.WriteString(name.TblName.L + ".")
+	if name.TblName.L.Value() != "" {
+		builder.WriteString(name.TblName.L.Value() + ".")
 	}
-	builder.WriteString(name.ColName.L)
+	builder.WriteString(name.ColName.L.Value())
 	return builder.String()
 }
 
@@ -85,9 +85,9 @@ var EmptyName = &FieldName{Hidden: true}
 // FindAstColName checks whether the given ast.ColumnName is appeared in this slice.
 func (s NameSlice) FindAstColName(name *ast.ColumnName) bool {
 	for _, fieldName := range s {
-		if (name.Schema.L == "" || name.Schema.L == fieldName.DBName.L) &&
-			(name.Table.L == "" || name.Table.L == fieldName.TblName.L) &&
-			name.Name.L == fieldName.ColName.L {
+		if (name.Schema.L.Value() == "" || name.Schema.L.Value() == fieldName.DBName.L.Value()) &&
+			(name.Table.L.Value() == "" || name.Table.L.Value() == fieldName.TblName.L.Value()) &&
+			name.Name.L.Value() == fieldName.ColName.L.Value() {
 			return true
 		}
 	}

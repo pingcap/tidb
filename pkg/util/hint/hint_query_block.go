@@ -92,7 +92,7 @@ const hintQBName = "qb_name"
 func (p *QBHintHandler) checkQueryBlockHints(hints []*ast.TableOptimizerHint, offset int) {
 	var qbName string
 	for _, hint := range hints {
-		if hint.HintName.L != hintQBName {
+		if hint.HintName.L.Value() != hintQBName {
 			continue
 		}
 		if qbName != "" {
@@ -100,7 +100,7 @@ func (p *QBHintHandler) checkQueryBlockHints(hints []*ast.TableOptimizerHint, of
 				p.warnHandler.SetHintWarning(fmt.Sprintf("There are more than two query names in same query block, using the first one %s", qbName))
 			}
 		} else {
-			qbName = hint.QBName.L
+			qbName = hint.QBName.L.Value()
 		}
 	}
 	if qbName == "" {
@@ -126,7 +126,7 @@ func (p *QBHintHandler) handleViewHints(hints []*ast.TableOptimizerHint, offset 
 	usedHints := make([]bool, len(hints))
 	// handle the query block name hints for view
 	for i, hint := range hints {
-		if hint.HintName.L != hintQBName || len(hint.Tables) == 0 {
+		if hint.HintName.L.Value() != hintQBName || len(hint.Tables) == 0 {
 			continue
 		}
 		usedHints[i] = true
@@ -134,7 +134,7 @@ func (p *QBHintHandler) handleViewHints(hints []*ast.TableOptimizerHint, offset 
 			p.ViewQBNameToTable = make(map[string][]ast.HintTable)
 			p.ViewQBNameUsed = make(map[string]struct{})
 		}
-		qbName := hint.QBName.L
+		qbName := hint.QBName.L.Value()
 		if qbName == "" {
 			continue
 		}
@@ -146,7 +146,7 @@ func (p *QBHintHandler) handleViewHints(hints []*ast.TableOptimizerHint, offset 
 			if offset != 1 {
 				// If there are some qb_name hints for view are not defined in the first query block,
 				// we should add the query block number where it is located to the first table in the view's qb_name hint table list.
-				qbNum := hint.Tables[0].QBName.L
+				qbNum := hint.Tables[0].QBName.L.Value()
 				if qbNum == "" {
 					hint.Tables[0].QBName = ast.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, offset))
 				}
@@ -157,21 +157,21 @@ func (p *QBHintHandler) handleViewHints(hints []*ast.TableOptimizerHint, offset 
 
 	// handle the view hints
 	for i, hint := range hints {
-		if usedHints[i] || hint.HintName.L == hintQBName {
+		if usedHints[i] || hint.HintName.L.Value() == hintQBName {
 			continue
 		}
 
 		ok := false
-		qbName := hint.QBName.L
+		qbName := hint.QBName.L.Value()
 		if qbName != "" {
 			_, ok = p.ViewQBNameToTable[qbName]
 		} else if len(hint.Tables) > 0 {
 			// Only support to define the tables belong to the same query block in one view hint
-			qbName = hint.Tables[0].QBName.L
+			qbName = hint.Tables[0].QBName.L.Value()
 			_, ok = p.ViewQBNameToTable[qbName]
 			if ok {
 				for _, table := range hint.Tables {
-					if table.QBName.L != qbName {
+					if table.QBName.L.Value() != qbName {
 						ok = false
 						break
 					}
@@ -222,17 +222,17 @@ const (
 // -1 for invalid block name.
 func (p *QBHintHandler) getBlockOffset(blockName ast.CIStr) int {
 	if p.QBNameToSelOffset != nil {
-		level, ok := p.QBNameToSelOffset[blockName.L]
+		level, ok := p.QBNameToSelOffset[blockName.L.Value()]
 		if ok {
 			return level
 		}
 	}
 	// Handle the default query block name.
-	if blockName.L == defaultUpdateBlockName || blockName.L == defaultDeleteBlockName {
+	if blockName.L.Value() == defaultUpdateBlockName || blockName.L.Value() == defaultDeleteBlockName {
 		return 0
 	}
-	if strings.HasPrefix(blockName.L, defaultSelectBlockPrefix) {
-		suffix := blockName.L[len(defaultSelectBlockPrefix):]
+	if strings.HasPrefix(blockName.L.Value(), defaultSelectBlockPrefix) {
+		suffix := blockName.L.Value()[len(defaultSelectBlockPrefix):]
 		level, err := strconv.ParseInt(suffix, 10, 64)
 		if err != nil || level > int64(p.selectStmtOffset) {
 			return -1
@@ -244,7 +244,7 @@ func (p *QBHintHandler) getBlockOffset(blockName ast.CIStr) int {
 
 // GetHintOffset gets the offset of stmt that the hints take effects.
 func (p *QBHintHandler) GetHintOffset(qbName ast.CIStr, currentOffset int) int {
-	if qbName.L != "" {
+	if qbName.L.Value() != "" {
 		return p.getBlockOffset(qbName)
 	}
 	return currentOffset
@@ -252,7 +252,7 @@ func (p *QBHintHandler) GetHintOffset(qbName ast.CIStr, currentOffset int) int {
 
 func (p *QBHintHandler) checkTableQBName(tables []ast.HintTable) bool {
 	for _, table := range tables {
-		if table.QBName.L != "" && p.getBlockOffset(table.QBName) < 0 {
+		if table.QBName.L.Value() != "" && p.getBlockOffset(table.QBName) < 0 {
 			return false
 		}
 	}
@@ -260,16 +260,16 @@ func (p *QBHintHandler) checkTableQBName(tables []ast.HintTable) bool {
 }
 
 func (p *QBHintHandler) isHint4View(hint *ast.TableOptimizerHint) bool {
-	if hint.QBName.L != "" {
+	if hint.QBName.L.Value() != "" {
 		if p.ViewQBNameToTable != nil {
-			_, ok := p.ViewQBNameToTable[hint.QBName.L]
+			_, ok := p.ViewQBNameToTable[hint.QBName.L.Value()]
 			return ok
 		}
 		return false
 	}
 	allViewHints := true
 	for _, table := range hint.Tables {
-		qbName := table.QBName.L
+		qbName := table.QBName.L.Value()
 		if _, ok := p.ViewQBNameToTable[qbName]; !ok {
 			allViewHints = false
 			break
@@ -284,7 +284,7 @@ func (p *QBHintHandler) GetCurrentStmtHints(hints []*ast.TableOptimizerHint, cur
 		p.QBOffsetToHints = make(map[int][]*ast.TableOptimizerHint)
 	}
 	for _, hint := range hints {
-		if hint.HintName.L == hintQBName {
+		if hint.HintName.L.Value() == hintQBName {
 			continue
 		}
 		offset := p.GetHintOffset(hint.QBName, currentOffset)

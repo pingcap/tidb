@@ -300,7 +300,7 @@ func (n *TableName) restoreName(ctx *format.RestoreCtx) {
 			ctx.WritePlain(".")
 		} else if ctx.DefaultDB != "" && !n.IsAlias {
 			// Try CTE, for a CTE table name, we shouldn't write the database name.
-			if !ctx.IsCTETableName(n.Name.L) {
+			if !ctx.IsCTETableName(n.Name.L.Value()) {
 				ctx.WriteName(ctx.DefaultDB)
 				ctx.WritePlain(".")
 			}
@@ -423,7 +423,7 @@ func (n *IndexHint) Restore(ctx *format.RestoreCtx) error {
 		if i > 0 {
 			ctx.WritePlain(", ")
 		}
-		ctx.WriteName(value.O)
+		ctx.WriteName(value.O.Value())
 	}
 	ctx.WritePlain(")")
 
@@ -747,8 +747,8 @@ func (n *SelectField) Accept(v Visitor) (Node, bool) {
 
 func (n *SelectField) Match(col *ColumnNameExpr, ignoreAsName bool) bool {
 	// if col specify a table name, resolve from table source directly.
-	if col.Name.Table.L == "" {
-		if n.AsName.L == "" || ignoreAsName {
+	if col.Name.Table.L.Value() == "" {
+		if n.AsName.L.Value() == "" || ignoreAsName {
 			if curCol, isCol := n.Expr.(*ColumnNameExpr); isCol {
 				return curCol.Name.Name.L == col.Name.Name.L
 			} else if _, isFunc := n.Expr.(*FuncCallExpr); isFunc {
@@ -757,7 +757,7 @@ func (n *SelectField) Match(col *ColumnNameExpr, ignoreAsName bool) bool {
 				// ColumnNameExpr in GroupByClause matches one of these function calls.
 				// Example: select concat(k1,k2) from t group by `concat(k1,k2)`,
 				// `concat(k1,k2)` matches with function call concat(k1, k2).
-				return strings.ToLower(n.Text()) == col.Name.Name.L
+				return strings.ToLower(n.Text()) == col.Name.Name.L.Value()
 			}
 			// a expression without as name can't be matched.
 			return false
@@ -1099,7 +1099,7 @@ func (c *CommonTableExpression) Restore(ctx *format.RestoreCtx) error {
 	if c.IsRecursive {
 		// If the CTE is recursive, we should make it visible for the CTE's query.
 		// Otherwise, we should put it to stack after building the CTE's query.
-		ctx.RecordCTEName(c.Name.L)
+		ctx.RecordCTEName(c.Name.L.Value())
 	}
 	if len(c.ColNameList) > 0 {
 		ctx.WritePlain(" (")
@@ -1117,7 +1117,7 @@ func (c *CommonTableExpression) Restore(ctx *format.RestoreCtx) error {
 		return err
 	}
 	if !c.IsRecursive {
-		ctx.RecordCTEName(c.Name.L)
+		ctx.RecordCTEName(c.Name.L.Value())
 	}
 	return nil
 }
@@ -3424,7 +3424,7 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			if err := n.Table.Restore(ctx); err != nil {
 				return errors.Annotate(err, "An error occurred while restore ShowStmt.Table")
 			}
-			if len(n.IndexName.L) > 0 {
+			if len(n.IndexName.L.Value()) > 0 {
 				ctx.WriteKeyWord(" INDEX ")
 				ctx.WriteName(n.IndexName.String())
 			}
@@ -3882,12 +3882,12 @@ func (n *DistributeTableStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(")")
 	}
 
-	if len(n.Rule.L) > 0 {
+	if len(n.Rule.L.Value()) > 0 {
 		ctx.WriteKeyWord(" RULE = ")
 		ctx.WriteName(n.Rule.String())
 	}
 
-	if len(n.Engine.L) > 0 {
+	if len(n.Engine.L.Value()) > 0 {
 		ctx.WriteKeyWord(" ENGINE = ")
 		ctx.WriteName(n.Engine.String())
 	}
@@ -3963,7 +3963,7 @@ func (n *SplitRegionStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(")")
 	}
 
-	if len(n.IndexName.L) > 0 {
+	if len(n.IndexName.L.Value()) > 0 {
 		ctx.WriteKeyWord(" INDEX ")
 		ctx.WriteName(n.IndexName.String())
 	}

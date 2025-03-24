@@ -599,7 +599,7 @@ func (n *CompactTableStmt) Restore(ctx *format.RestoreCtx) error {
 			if i != 0 {
 				ctx.WritePlain(",")
 			}
-			ctx.WriteName(partition.O)
+			ctx.WriteName(partition.O.Value())
 		}
 	}
 	if n.ReplicaKind != CompactReplicaKindAll {
@@ -2004,7 +2004,7 @@ type AlterRangeStmt struct {
 // Restore implements Node interface.
 func (n *AlterRangeStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("ALTER RANGE ")
-	ctx.WriteName(n.RangeName.O)
+	ctx.WriteName(n.RangeName.O.Value())
 	ctx.WritePlain(" ")
 	if err := n.PlacementOption.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore AlterRangeStmt.PlacementOption")
@@ -3882,8 +3882,8 @@ type Ident struct {
 
 // String implements fmt.Stringer interface.
 func (i Ident) String() string {
-	if i.Schema.O == "" {
-		return i.Name.O
+	if i.Schema.O.Value() == "" {
+		return i.Name.O.Value()
 	}
 	return fmt.Sprintf("%s.%s", i.Schema, i.Name)
 }
@@ -3953,13 +3953,13 @@ type HintTable struct {
 
 func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
 	if !ctx.Flags.HasWithoutSchemaNameFlag() {
-		if ht.DBName.L != "" {
+		if ht.DBName.L.Value() != "" {
 			ctx.WriteName(ht.DBName.String())
 			ctx.WriteKeyWord(".")
 		}
 	}
 	ctx.WriteName(ht.TableName.String())
-	if ht.QBName.L != "" {
+	if ht.QBName.L.Value() != "" {
 		ctx.WriteKeyWord("@")
 		ctx.WriteName(ht.QBName.String())
 	}
@@ -3980,27 +3980,27 @@ func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
 func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord(n.HintName.String())
 	ctx.WritePlain("(")
-	if n.QBName.L != "" {
-		if n.HintName.L != "qb_name" {
+	if n.QBName.L.Value() != "" {
+		if n.HintName.L.Value() != "qb_name" {
 			ctx.WriteKeyWord("@")
 		}
 		ctx.WriteName(n.QBName.String())
 	}
-	if n.HintName.L == "qb_name" && len(n.Tables) == 0 {
+	if n.HintName.L.Value() == "qb_name" && len(n.Tables) == 0 {
 		ctx.WritePlain(")")
 		return nil
 	}
 	// Hints without args except query block.
-	switch n.HintName.L {
+	switch n.HintName.L.Value() {
 	case "mpp_1phase_agg", "mpp_2phase_agg", "hash_agg", "stream_agg", "agg_to_cop", "read_consistent_replica", "no_index_merge", "ignore_plan_cache", "limit_to_cop", "straight_join", "merge", "no_decorrelate":
 		ctx.WritePlain(")")
 		return nil
 	}
-	if n.QBName.L != "" {
+	if n.QBName.L.Value() != "" {
 		ctx.WritePlain(" ")
 	}
 	// Hints with args except query block.
-	switch n.HintName.L {
+	switch n.HintName.L.Value() {
 	case "max_execution_time":
 		ctx.WritePlainf("%d", n.HintData.(uint64))
 	case "resource_group":
@@ -4110,7 +4110,7 @@ type SetResourceGroupStmt struct {
 
 func (n *SetResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("SET RESOURCE GROUP ")
-	ctx.WriteName(n.Name.O)
+	ctx.WriteName(n.Name.O.Value())
 	return nil
 }
 

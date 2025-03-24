@@ -199,9 +199,9 @@ func IsMemOrSysDB(dbLowerName string) bool {
 // IsMemDB checks whether dbLowerName is memory database.
 func IsMemDB(dbLowerName string) bool {
 	switch dbLowerName {
-	case InformationSchemaName.L,
-		PerformanceSchemaName.L,
-		MetricSchemaName.L:
+	case InformationSchemaName.L.Value(),
+		PerformanceSchemaName.L.Value(),
+		MetricSchemaName.L.Value():
 		return true
 	}
 	return false
@@ -215,9 +215,9 @@ func IsSysDB(dbLowerName string) bool {
 // IsSystemView is similar to IsMemOrSyDB, but does not include the mysql schema
 func IsSystemView(dbLowerName string) bool {
 	switch dbLowerName {
-	case InformationSchemaName.L,
-		PerformanceSchemaName.L,
-		MetricSchemaName.L:
+	case InformationSchemaName.L.Value(),
+		PerformanceSchemaName.L.Value(),
+		MetricSchemaName.L.Value():
 		return true
 	}
 	return false
