@@ -84,6 +84,10 @@ type MergeSortStepMeta struct {
 // ConflictResolutionStepMeta is the meta of conflict resolution step.
 type ConflictResolutionStepMeta struct {
 	ConflictInfos map[string]*common.ConflictInfo `json:"conflict-infos,omitempty"`
+	// Checksum is the checksum of all deleted conflicts rows.
+	// Note: it's not the checksum of all conflicts rows, because we might implement
+	// the 'replace' semantic to keep one row for each conflict group.
+	Checksum *Checksum `json:"checksum,omitempty"`
 }
 
 func (m *ConflictResolutionStepMeta) addDataConflictInfo(other *common.ConflictInfo) {
@@ -123,9 +127,11 @@ type WriteIngestStepMeta struct {
 
 // PostProcessStepMeta is the meta of post process step.
 type PostProcessStepMeta struct {
-	// accumulated checksum of all subtasks in import step. See KVGroupChecksum for
-	// definition of map key.
+	// accumulated checksum of all subtasks in encode step. See KVGroupChecksum
+	// for definition of map key.
 	Checksum map[int64]Checksum
+	// DeletedRowsChecksum is the checksum of all deleted rows due to conflicts.
+	DeletedRowsChecksum Checksum
 	// MaxIDs of max all max-ids of subtasks in import step.
 	MaxIDs map[autoid.AllocatorType]int64
 }
@@ -196,6 +202,20 @@ type Checksum struct {
 	Sum  uint64
 	KVs  uint64
 	Size uint64
+}
+
+func newFromKVChecksum(sum *verification.KVChecksum) *Checksum {
+	return &Checksum{
+		Sum:  sum.Sum(),
+		KVs:  sum.SumKVS(),
+		Size: sum.SumSize(),
+	}
+}
+
+// ToKVChecksum converts the Checksum to verification.KVChecksum.
+func (c *Checksum) ToKVChecksum() *verification.KVChecksum {
+	sum := verification.MakeKVChecksum(c.Size, c.KVs, c.Sum)
+	return &sum
 }
 
 // Result records the metrics information.

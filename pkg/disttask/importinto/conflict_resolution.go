@@ -29,10 +29,12 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -40,11 +42,12 @@ import (
 
 type conflictResolutionStepExecutor struct {
 	taskexecutor.EmptyStepExecutor
-	taskID        int64
-	store         tidbkv.Storage
-	taskMeta      *TaskMeta
-	logger        *zap.Logger
-	tableImporter *importer.TableImporter
+	taskID               int64
+	store                tidbkv.Storage
+	taskMeta             *TaskMeta
+	logger               *zap.Logger
+	tableImporter        *importer.TableImporter
+	conflictRowsChecksum *verification.KVChecksum
 }
 
 var _ execute.StepExecutor = &conflictResolutionStepExecutor{}
@@ -68,13 +71,27 @@ func (e *conflictResolutionStepExecutor) RunSubtask(ctx context.Context, subtask
 	if err = json.Unmarshal(subtask.Meta, &stepMeta); err != nil {
 		return errors.Trace(err)
 	}
+	e.conflictRowsChecksum = verification.NewKVChecksumWithKeyspace(e.store.GetCodec().GetKeyspace())
 	for kvGroup, ci := range stepMeta.ConflictInfos {
 		if err = e.handleKVConflicts(ctx, kvGroup, ci); err != nil {
 			return err
 		}
 	}
 	// TODO record conflicts to s3
-	// TODO implement the 'replace' semantic
+	return nil
+}
+
+func (e *conflictResolutionStepExecutor) OnFinished(_ context.Context, subtask *proto.Subtask) error {
+	subtaskMeta := &ConflictResolutionStepMeta{}
+	if err := json.Unmarshal(subtask.Meta, subtaskMeta); err != nil {
+		return errors.Trace(err)
+	}
+	subtaskMeta.Checksum = newFromKVChecksum(e.conflictRowsChecksum)
+	newMeta, err := json.Marshal(subtaskMeta)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	subtask.Meta = newMeta
 	return nil
 }
 
@@ -92,11 +109,13 @@ func (e *conflictResolutionStepExecutor) handleKVConflicts(ctx context.Context, 
 	if kvGroup == dataKVGroup {
 		handler = &conflictDataKVHandler{
 			conflictResolutionStepExecutor: e,
+			checksum:                       e.conflictRowsChecksum,
 		}
 	} else {
 		handler = &conflictIndexKVHandler{
 			conflictDataKVHandler: &conflictDataKVHandler{
 				conflictResolutionStepExecutor: e,
+				checksum:                       e.conflictRowsChecksum,
 			},
 		}
 	}
@@ -149,6 +168,8 @@ type conflictKVHandler interface {
 type conflictDataKVHandler struct {
 	*conflictResolutionStepExecutor
 	encoder *importer.TableKVEncoder
+	// record the checksum of the deleted KVs
+	checksum *verification.KVChecksum
 }
 
 func (h *conflictDataKVHandler) init(string) error {
@@ -168,7 +189,8 @@ func (h *conflictDataKVHandler) handle(ctx context.Context, key, val []byte) err
 	return h.encodeAndDeleteRow(ctx, h.encoder, handle, val)
 }
 
-// re-encode the row from the handle and value of data KV, and delete all encoded keys
+// re-encode the row from the handle and value of data KV, and delete all encoded keys.
+// it's possible that part or all of the keys are already deleted.
 func (h *conflictDataKVHandler) encodeAndDeleteRow(ctx context.Context,
 	encoder *importer.TableKVEncoder, handle tidbkv.Handle, val []byte) (err error) {
 	tbl := h.tableImporter.Table
@@ -187,6 +209,8 @@ func (h *conflictDataKVHandler) encodeAndDeleteRow(ctx context.Context,
 		return errors.Trace(err)
 	}
 	kvPairs := encoder.SessionCtx.TakeKvPairs()
+	h.checksum.Update(kvPairs.Pairs)
+
 	err = h.deleteKeys(ctx, kvPairs.Pairs)
 	kvPairs.Clear()
 	if err != nil {
@@ -224,7 +248,6 @@ func (h *conflictDataKVHandler) close() error {
 
 type conflictIndexKVHandler struct {
 	*conflictDataKVHandler
-	tableID   int64
 	targetIdx *model.IndexInfo
 	snapshot  tidbkv.Snapshot
 }
@@ -242,7 +265,12 @@ func (h *conflictIndexKVHandler) init(kvGroup string) error {
 		return errors.Errorf("index %d in table %s", indexID, tblMeta.Name)
 	}
 
-	// TODO after handling each conflict KV, this version should be updated
+	// it's not necessary to update this version even though we will delete KVs
+	// during conflict KV handing, as this handler is used to handle conflicts of
+	// the same KV group, the data KVs corresponding to any 2 conflict KVs are
+	// either conflicts with each other too and recorded in the conflict KV file,
+	// or they are not conflicted and are either recorded or ingested, so for a
+	// single data KV found in this handler cannot be deleted twice.
 	ver, err := h.store.CurrentVersion(tidbkv.GlobalTxnScope)
 	if err != nil {
 		return errors.Trace(err)
@@ -253,21 +281,25 @@ func (h *conflictIndexKVHandler) init(kvGroup string) error {
 		return err
 	}
 
-	h.tableID = tblMeta.ID
 	h.targetIdx = targetIdx
 	h.snapshot = snapshot
 	return nil
 }
 
 func (h *conflictIndexKVHandler) handle(ctx context.Context, key, val []byte) error {
+	tableID := tablecodec.DecodeTableID(key)
+	if tableID == 0 {
+		// should not happen
+		return errors.Errorf("invalid table ID in key %v", redact.Key(key))
+	}
 	handle, err := tablecodec.DecodeIndexHandle(key, val, len(h.targetIdx.Columns))
 	if err != nil {
 		return err
 	}
-	rowKey := tablecodec.EncodeRowKeyWithHandle(h.tableID, handle)
+	rowKey := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
 	val, err = h.snapshot.Get(ctx, rowKey)
-	// either the data KV is deleted previously or the data KV itself is conflicted
-	// and not ingested.
+	// either the data KV is deleted by handing conflicts in other KV group or the
+	// data KV itself is conflicted and not ingested.
 	if err != nil {
 		if tikverr.IsErrNotFound(err) {
 			return nil

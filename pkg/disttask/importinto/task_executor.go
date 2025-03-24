@@ -238,11 +238,7 @@ func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subt
 	defer sharedVars.mu.Unlock()
 	subtaskMeta.Checksum = map[int64]Checksum{}
 	for id, c := range sharedVars.Checksum.GetInnerChecksums() {
-		subtaskMeta.Checksum[id] = Checksum{
-			Sum:  c.Sum(),
-			KVs:  c.SumKVS(),
-			Size: c.SumSize(),
-		}
+		subtaskMeta.Checksum[id] = *newFromKVChecksum(c)
 	}
 	subtaskMeta.Result = Result{
 		LoadedRowCnt: dataKVCount,

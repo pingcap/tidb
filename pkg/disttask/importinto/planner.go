@@ -222,6 +222,15 @@ func (*PostProcessSpec) ToSubtaskMeta(planCtx planner.PlanCtx) ([]byte, error) {
 		}
 		subtaskMetas = append(subtaskMetas, &subtaskMeta)
 	}
+	deletedRowsChecksum := verify.NewKVChecksum()
+	for _, bs := range planCtx.PreviousSubtaskMetas[proto.ImportStepConflictResolution] {
+		var subtaskMeta ConflictResolutionStepMeta
+		if err := json.Unmarshal(bs, &subtaskMeta); err != nil {
+			return nil, errors.Trace(err)
+		}
+		checksum := verify.MakeKVChecksum(subtaskMeta.Checksum.Size, subtaskMeta.Checksum.KVs, subtaskMeta.Checksum.Sum)
+		deletedRowsChecksum.Add(&checksum)
+	}
 	localChecksum := verify.NewKVGroupChecksumForAdd()
 	maxIDs := make(map[autoid.AllocatorType]int64, 3)
 	for _, subtaskMeta := range subtaskMetas {
@@ -237,15 +246,12 @@ func (*PostProcessSpec) ToSubtaskMeta(planCtx planner.PlanCtx) ([]byte, error) {
 	}
 	c := localChecksum.GetInnerChecksums()
 	postProcessStepMeta := &PostProcessStepMeta{
-		Checksum: make(map[int64]Checksum, len(c)),
-		MaxIDs:   maxIDs,
+		Checksum:            make(map[int64]Checksum, len(c)),
+		DeletedRowsChecksum: *newFromKVChecksum(deletedRowsChecksum),
+		MaxIDs:              maxIDs,
 	}
 	for id, cksum := range c {
-		postProcessStepMeta.Checksum[id] = Checksum{
-			Size: cksum.SumSize(),
-			KVs:  cksum.SumKVS(),
-			Sum:  cksum.Sum(),
-		}
+		postProcessStepMeta.Checksum[id] = *newFromKVChecksum(cksum)
 	}
 	return json.Marshal(postProcessStepMeta)
 }

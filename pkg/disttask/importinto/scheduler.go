@@ -306,7 +306,12 @@ func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 		if err != nil {
 			return nil, err
 		}
+		conflictResMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepConflictResolution)
+		if err != nil {
+			return nil, err
+		}
 		previousSubtaskMetas[step] = metas
+		previousSubtaskMetas[proto.ImportStepConflictResolution] = conflictResMetas
 		logger.Info("move to post-process step ", zap.Any("result", taskMeta.Result))
 	case proto.StepDone:
 		return nil, nil
