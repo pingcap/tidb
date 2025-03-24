@@ -236,9 +236,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 			return fp, fp.OutputNames(), nil
 		}
 	}
-	if err := pctx.AdviseTxnWarmup(); err != nil {
-		return nil, nil, err
-	}
 
 	enableUseBinding := sessVars.UsePlanBaselines
 	stmtNode, isStmtNode := node.Node.(ast.StmtNode)
@@ -349,6 +346,11 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 		}
 		// Restore the hint to avoid changing the stmt node.
 		hint.BindHint(stmtNode, originHints)
+	}
+
+	// postpone Warmup because binding may change the behaviour, like pipelined DML
+	if err = pctx.AdviseTxnWarmup(); err != nil {
+		return nil, nil, err
 	}
 
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace && bestPlanFromBind != nil {
