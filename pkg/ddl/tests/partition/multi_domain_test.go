@@ -47,7 +47,7 @@ func TestMultiSchemaReorganizePartitionIssue56819(t *testing.T) {
 		tkO.MustExec(`insert into t values (1,1),(2,2)`)
 	}
 	alterSQL := `alter table t reorganize partition p1 into (partition p0 values less than (100), partition p1 values less than (200))`
-	loopFn := func(tkO, tkNO *testkit.TestKit, _ model.SchemaState) {
+	loopFn := func(tkO, tkNO *testkit.TestKit) {
 		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
 		schemaState := res.Rows()[0][0].(string)
 		switch schemaState {
@@ -66,7 +66,7 @@ func TestMultiSchemaDropRangePartition(t *testing.T) {
 		tkO.MustExec(`insert into t values (1,1),(2,2),(101,101),(102,102)`)
 	}
 	alterSQL := `alter table t drop partition p0`
-	loopFn := func(tkO, tkNO *testkit.TestKit, _ model.SchemaState) {
+	loopFn := func(tkO, tkNO *testkit.TestKit) {
 		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
 		schemaState := res.Rows()[0][0].(string)
 		// TODO: Test both static and dynamic partition pruning!
@@ -144,7 +144,7 @@ func TestMultiSchemaDropListDefaultPartition(t *testing.T) {
 		tkO.MustExec(`insert into t values (1,1),(2,2),(101,101),(102,102)`)
 	}
 	alterSQL := `alter table t drop partition p0`
-	loopFn := func(tkO, tkNO *testkit.TestKit, _ model.SchemaState) {
+	loopFn := func(tkO, tkNO *testkit.TestKit) {
 		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
 		schemaState := res.Rows()[0][0].(string)
 		// TODO: Test both static and dynamic partition pruning!
@@ -223,7 +223,7 @@ func TestMultiSchemaDropListColumnsDefaultPartition(t *testing.T) {
 		tkO.MustExec(`insert into t values (1,1,1),(2,2,2),(101,101,101),(102,102,102)`)
 	}
 	alterSQL := `alter table t drop partition p0`
-	loopFn := func(tkO, tkNO *testkit.TestKit, _ model.SchemaState) {
+	loopFn := func(tkO, tkNO *testkit.TestKit) {
 		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
 		schemaState := res.Rows()[0][0].(string)
 		// TODO: Test both static and dynamic partition pruning!
@@ -316,7 +316,7 @@ func TestMultiSchemaReorganizePartition(t *testing.T) {
 	alterSQL := `alter table t reorganize partition p1 into (partition p0 values less than (100), partition p1 values less than (200))`
 
 	testID := 4
-	loopFn := func(tkO, tkNO *testkit.TestKit, _ model.SchemaState) {
+	loopFn := func(tkO, tkNO *testkit.TestKit) {
 		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
 		schemaState := res.Rows()[0][0].(string)
 		dbgStr := ` /* ` + schemaState + ` */`
@@ -453,7 +453,7 @@ func TestMultiSchemaPartitionByGlobalIndex(t *testing.T) {
 	}
 	alterSQL := `alter table t partition by key (b,a) partitions 5 update indexes (idx_ba global, idx_ab local)`
 	doneStateWriteReorganize := false
-	loopFn := func(tkO, tkNO *testkit.TestKit, _ model.SchemaState) {
+	loopFn := func(tkO, tkNO *testkit.TestKit) {
 		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
 		schemaState := res.Rows()[0][0].(string)
 		switch schemaState {
@@ -584,7 +584,7 @@ func TestMultiSchemaModifyColumn(t *testing.T) {
 		tkO.MustExec(`insert into t values (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9)`)
 	}
 	alterSQL := `alter table t modify column b int unsigned not null`
-	loopFn := func(tkO, tkNO *testkit.TestKit, _ model.SchemaState) {
+	loopFn := func(tkO, tkNO *testkit.TestKit) {
 		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
 		schemaState := res.Rows()[0][0].(string)
 		switch schemaState {
@@ -650,7 +650,7 @@ func TestMultiSchemaDropUniqueIndex(t *testing.T) {
 		tkO.MustExec(`insert into t values (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8),(9,9)`)
 	}
 	alterSQL := `alter table t drop index uk_b`
-	loopFn := func(tkO, tkNO *testkit.TestKit, _ model.SchemaState) {
+	loopFn := func(tkO, tkNO *testkit.TestKit) {
 		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
 		schemaState := res.Rows()[0][0].(string)
 		switch schemaState {
@@ -724,7 +724,7 @@ func TestMultiSchemaDropUniqueIndex(t *testing.T) {
 //		tkO.MustExec(`insert into t values (1,1),(2,2),(101,101),(102,102)`)
 //	}
 //	alterSQL := `alter table t partition by key (b,a) partitions 5`
-//	loopFn := func(tkO, tkNO *testkit.TestKit, _ model.SchemaState) {
+//	loopFn := func(tkO, tkNO *testkit.TestKit) {
 //		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
 //		schemaState := res.Rows()[0][0].(string)
 //		switch schemaState {
@@ -930,10 +930,10 @@ PartitionLoop:
 	}
 }
 
-func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn func(*testkit.TestKit), postFn func(*testkit.TestKit, kv.Storage), loopFn func(tO, tNO *testkit.TestKit, job model.SchemaState), retestWithoutPartitions bool) {
+func runMultiSchemaTest(t *testing.T, createSQL, alterSQL string, initFn func(*testkit.TestKit), postFn func(*testkit.TestKit, kv.Storage), loopFn func(tO, tNO *testkit.TestKit), retestWithoutPartitions bool) {
 	runMultiSchemaTestWithBackfillDML(t, createSQL, alterSQL, "", initFn, postFn, loopFn, retestWithoutPartitions)
 }
-func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfillDML string, initFn func(*testkit.TestKit), postFn func(*testkit.TestKit, kv.Storage), loopFn func(tO, tNO *testkit.TestKit, job model.SchemaState), retestWithoutPartitions bool) {
+func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfillDML string, initFn func(*testkit.TestKit), postFn func(*testkit.TestKit, kv.Storage), loopFn func(tO, tNO *testkit.TestKit), retestWithoutPartitions bool) {
 	// When debugging, increase the lease, so the schema does not auto reload :)
 	distCtx := testkit.NewDistExecutionContextWithLease(t, 2, 15*time.Second)
 	store := distCtx.Store
@@ -1061,7 +1061,7 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 			state = job.SchemaState
 		}
 		states = append(states, state)
-		loopFn(tkO, tkNO, state)
+		loopFn(tkO, tkNO)
 		domNonOwner.Reload()
 		if !releaseHook {
 			// Alter done!
@@ -1175,8 +1175,8 @@ PartitionLoop:
 		initFn(tkO)
 		domOwner.Reload()
 		domNonOwner.Reload()
-		for _, state := range states {
-			loopFn(tkO, tkNO, state)
+		for range states {
+			loopFn(tkO, tkNO)
 		}
 		if postFn != nil {
 			postFn(tkO, store)
@@ -1250,7 +1250,7 @@ func TestMultiSchemaReorganizePK(t *testing.T) {
 		i++
 	}
 	alterSQL := `alter table t reorganize partition p1 into (partition p0 values less than (100), partition p1 values less than (200))`
-	loopFn := func(tkO, tkNO *testkit.TestKit, _ model.SchemaState) {
+	loopFn := func(tkO, tkNO *testkit.TestKit) {
 		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
 		schemaState := res.Rows()[0][0].(string)
 		tkO.MustExec(fmt.Sprintf(`insert into t values (%d,'%s','Original',%d,%d)`, i, schemaState+" O", 4185725186-i, 7483634197-i))
@@ -1289,7 +1289,7 @@ func TestMultiSchemaReorganizePKBackfillDML(t *testing.T) {
 		i++
 	}
 	alterSQL := `alter table t reorganize partition p1 into (partition p0 values less than (100), partition p1 values less than (200))`
-	loopFn := func(tkO, tkNO *testkit.TestKit, _ model.SchemaState) {
+	loopFn := func(tkO, tkNO *testkit.TestKit) {
 		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
 		schemaState := res.Rows()[0][0].(string)
 		tkO.MustExec(fmt.Sprintf(`insert into t values (%d,'%s','Original',%d,%d)`, i, schemaState+" O", 4185725186-i, 7483634197-i))
@@ -1327,7 +1327,7 @@ func TestMultiSchemaReorganizeNoPK(t *testing.T) {
 		i++
 	}
 	alterSQL := `alter table t reorganize partition p1 into (partition p0 values less than (100), partition p1 values less than (200))`
-	loopFn := func(tkO, tkNO *testkit.TestKit, _ model.SchemaState) {
+	loopFn := func(tkO, tkNO *testkit.TestKit) {
 		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
 		schemaState := res.Rows()[0][0].(string)
 		tkO.MustExec(fmt.Sprintf(`insert into t values (%d,'%s','Original',repeat('%d', 25),repeat('%d', 25))`, i, schemaState+" O", 4185725186-i, 7483634197-i))
@@ -1368,7 +1368,7 @@ func TestMultiSchemaReorganizeNoPKBackfillDML(t *testing.T) {
 		i++
 	}
 	alterSQL := `alter table t reorganize partition p1 into (partition p0 values less than (100), partition p1 values less than (200))`
-	loopFn := func(tkO, tkNO *testkit.TestKit, _ model.SchemaState) {
+	loopFn := func(tkO, tkNO *testkit.TestKit) {
 		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
 		schemaState := res.Rows()[0][0].(string)
 		tkO.MustExec(fmt.Sprintf(`insert into t values (%d,'%s','Original',repeat('%d', 25),repeat('%d', 25))`, i, schemaState+" O", 4185725186-i, 7483634197-i))
@@ -1406,7 +1406,7 @@ func TestMultiSchemaTruncatePartitionWithGlobalIndex(t *testing.T) {
 		tkO.MustExec(`insert into t (a,b) values (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7)`)
 	}
 	alterSQL := `alter table t truncate partition p1`
-	loopFn := func(tkO, tkNO *testkit.TestKit, _ model.SchemaState) {
+	loopFn := func(tkO, tkNO *testkit.TestKit) {
 		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
 		schemaState := res.Rows()[0][0].(string)
 		logutil.BgLogger().Info("XXXXXXXXXXX loopFn", zap.String("schemaState", schemaState))
@@ -1594,7 +1594,7 @@ func TestMultiSchemaTruncatePartitionWithPKGlobal(t *testing.T) {
 		tkO.MustExec(`insert into t (a,b) values (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7)`)
 	}
 	alterSQL := `alter table t truncate partition p1`
-	loopFn := func(tkO, tkNO *testkit.TestKit, _ model.SchemaState) {
+	loopFn := func(tkO, tkNO *testkit.TestKit) {
 		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
 		schemaState := res.Rows()[0][0].(string)
 		switch schemaState {
@@ -2040,7 +2040,7 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 	}
 
 	state := 1
-	loopFn := func(tkO, tkNO *testkit.TestKit, _ model.SchemaState) {
+	loopFn := func(tkO, tkNO *testkit.TestKit) {
 		logutil.BgLogger().Info("loopFn start", zap.Int("state", state))
 		if state >= len(IDs) {
 			// Reset state for validation against non-partitioned table
@@ -2403,7 +2403,7 @@ func TestMultiSchemaNewTiDBRowID(t *testing.T) {
 			"9 9 3"))
 	}
 	alterSQL := `alter table t coalesce partition 3`
-	loopFn := func(tkO, tkNO *testkit.TestKit, _ model.SchemaState) {
+	loopFn := func(tkO, tkNO *testkit.TestKit) {
 		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
 		schemaState := res.Rows()[0][0].(string)
 		tableAndPartIDs := getTableAndPartitionIDs(t, tkO)
@@ -3552,11 +3552,9 @@ func TestMultiSchemaReorgDeleteNonClusteredRange(t *testing.T) {
 	//     AND that id is used for lookup on the other set (i.e. new for <= WriteReorg, and old for DeleteReorg)
 	// Better to create one of these tests first to == from, newTo == newFrom and create alterative after, when this works.
 	alterSQL := `alter table t reorganize partition p1,p2,p3 into (partition newP1 values less than (300))`
-	loopFn := func(tkO, tkNO *testkit.TestKit, _ model.SchemaState) {
+	loopFn := func(tkO, tkNO *testkit.TestKit) {
 		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
 		schemaState := res.Rows()[0][0].(string)
-		// Notice that the job.SchemaState is not committed yet, so the table will still be in the previous state!
-		//require.NotEqual(t, state.String(), schemaState)
 		switch schemaState {
 		case model.StateWriteOnly.String():
 			tkO.MustQuery(`select *, _tidb_rowid from t`).Sort().Check(testkit.Rows(""+
@@ -3810,7 +3808,7 @@ func TestNonClusteredReorgUpdate(t *testing.T) {
 		exchangeAllPartitionsToGetDuplicateTiDBRowIDs(t, tkO)
 	}
 	alterSQL := "alter table t reorganize partition p0, p1 into (partition p0new values less than (20))"
-	loopFn := func(tkO, tkNO *testkit.TestKit, _ model.SchemaState) {
+	loopFn := func(tkO, tkNO *testkit.TestKit) {
 		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
 		schemaState := res.Rows()[0][0].(string)
 		switch schemaState {
@@ -3845,7 +3843,7 @@ func TestNonClusteredReorgUpdateHash(t *testing.T) {
 	}
 	// TODO: Allow "add partition 1" as syntax?
 	alterSQL := "alter table t add partition partitions 1"
-	loopFn := func(tkO, tkNO *testkit.TestKit, _ model.SchemaState) {
+	loopFn := func(tkO, tkNO *testkit.TestKit) {
 		res := tkO.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
 		schemaState := res.Rows()[0][0].(string)
 		switch schemaState {
