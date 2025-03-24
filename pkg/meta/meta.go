@@ -1104,7 +1104,6 @@ func isTableInfoMustLoad(json []byte, isCheckForeignKeyAttrsInOrder bool, filter
 		}
 		json = json[idx:]
 	}
-
 	return false
 }
 
