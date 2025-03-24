@@ -493,7 +493,7 @@ func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job) error {
 }
 
 func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
-	err := w.sess.Begin(w.workCtx)
+	err := w.sess.BeginPessimistic(w.workCtx)
 	if err != nil {
 		return nil, err
 	}
