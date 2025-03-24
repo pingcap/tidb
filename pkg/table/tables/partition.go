@@ -1854,9 +1854,6 @@ func dataEqRec(loc *time.Location, tblInfo *model.TableInfo, row []types.Datum, 
 func (t *partitionedTable) RemoveRecord(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, r []types.Datum, opts ...table.RemoveRecordOption) error {
 	opt := table.NewRemoveRecordOpt(opts...)
 	ectx := ctx.GetExprCtx()
-	//if h.IntValue() == 4 {
-	//	logutil.BgLogger().Warn("RemoveRecord", zap.Int64("handle", h.IntValue()))
-	//}
 	from, err := t.locatePartition(ectx.GetEvalCtx(), r)
 	if err != nil {
 		return errors.Trace(err)
@@ -1923,9 +1920,6 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 	opt := table.NewUpdateRecordOpt(opts...)
 	ectx := ctx.GetExprCtx()
 	var from, to int64
-	//if h.IntValue() == 4 {
-	//	logutil.BgLogger().Warn("update record with recordID 4", zap.Int64("recordID", h.IntValue()))
-	//}
 	from, err = t.locatePartition(ectx.GetEvalCtx(), currData)
 	if err != nil {
 		return errors.Trace(err)
@@ -1983,12 +1977,10 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 		if err != nil {
 			return errors.Trace(err)
 		}
-		//if !newRecordHandle.Equal(h) {
-		//	logutil.BgLogger().Warn("update record", zap.Int64("recordID", h.IntValue()), zap.Int64("newRecordID", newRecordHandle.IntValue()))
-		//}
 	} else {
 		// to == from && !t.Meta().HasClusteredIndex()
-		// We don't yet know if there will be a new record id generate or not, better defer until we know!
+		// We don't yet know if there will be a new record id generate or not,
+		// better defer handling current record until checked reorganized partitions so we know!
 		finishFunc = func(err error, newRecordHandle kv.Handle) error {
 			if err != nil {
 				return err
@@ -2006,14 +1998,10 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 				return err
 			}
 			if !deleteOnly {
-				h = newRecordHandle
-				newRecordHandle, err = t.getPartition(to).addRecord(ctx, txn, newData, opt.GetAddRecordOptKeepRecordID())
+				// newData now contains the new record ID
+				_, err = t.getPartition(to).addRecord(ctx, txn, newData, opt.GetAddRecordOptKeepRecordID())
 				if err != nil {
 					return err
-				}
-				// TODO: remove this if tests passes!
-				if !h.Equal(newRecordHandle) {
-					panic("record id should be the same")
 				}
 			}
 			memBuffer.Release(sh)
@@ -2024,14 +2012,12 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 	var newTo, newFrom int64
 	if _, ok := t.reorganizePartitions[to]; ok {
 		newTo, err = t.locateReorgPartition(ectx.GetEvalCtx(), newData)
-		// There might be valid cases when errors should be accepted?
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 	if _, ok := t.reorganizePartitions[from]; ok {
 		newFrom, err = t.locateReorgPartition(ectx.GetEvalCtx(), currData)
-		// There might be valid cases when errors should be accepted?
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -2049,13 +2035,9 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 			}
 		}
 		if !deleteOnly && newTo != 0 {
-			newRecordHandle, err = t.getPartition(newTo).addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
+			_, err = t.getPartition(newTo).addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
 			if err != nil {
 				return errors.Trace(err)
-			}
-			// TODO: remove if tests passes!
-			if !h.Equal(newRecordHandle) {
-				panic("record id should be the same")
 			}
 		}
 		return finishFunc(err, nil)
@@ -2071,11 +2053,11 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 		keys = append(keys, newFromKey)
 	}
 	if !deleteOnly && newTo != 0 {
-		// Only need to check if writing, and
-		// no new record id generated (new unique id, cannot be found)
+		// Only need to check if writing.
 		if newTo == newFrom {
 			newToKey = newFromKey
 		} else if newRecordHandle.Equal(h) {
+			// And no new record id generated (else new unique id, cannot be found)
 			newToKey = tablecodec.EncodeRowKey(newTo, encodedRecordID)
 			keys = append(keys, newToKey)
 		}
@@ -2104,7 +2086,6 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 			}
 			if newTo == newFrom {
 				newToKeyAndValIsSame = &same
-				logutil.BgLogger().Warn("newToKeyAndValIsSame newFromKey", zap.Bool("same", same))
 			}
 		}
 	}
@@ -2118,22 +2099,12 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 				return errors.Trace(err)
 			}
 			newToKeyAndValIsSame = &same
-			logutil.BgLogger().Warn("newToKeyAndValIsSame newToKey", zap.Bool("same", same))
 		}
 		if !*newToKeyAndValIsSame {
 			// Generate a new ID
 			newRecordHandle, err = AllocHandle(context.Background(), ctx, t)
 			if err != nil {
 				return errors.Trace(err)
-			}
-		} else {
-			if newFrom != newTo {
-				panic("newToKeyAndValIsSame == true && newFrom != newTo")
-				//t.getPartition(newTo).RemoveRecord(ctx, txn, h, currData)
-				// TODO: this should never happen?! I.e. we should not find the existing key and value already in the newTo partition!
-				// if newTo == newFrom, it is already handled
-				// if newTo != newFrom how did the duplicate row get there in the first place?!?
-				// OK to have this as a safety fallback, in case EXCHANGE PARTITION WITHOUT VALIDATION introduced duplicate rows!?!
 			}
 		}
 	}
@@ -2143,13 +2114,9 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 		newData = append(newData, types.NewIntDatum(newRecordHandle.IntValue()))
 	}
 	addRecordOpt := opt.GetAddRecordOptKeepRecordID()
-	var checkHandle kv.Handle
-	checkHandle, err = t.getPartition(newTo).addRecord(ctx, txn, newData, addRecordOpt)
+	_, err = t.getPartition(newTo).addRecord(ctx, txn, newData, addRecordOpt)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	if !checkHandle.Equal(newRecordHandle) {
-		panic("record id should be the same")
 	}
 	var newHandle kv.Handle
 	if !h.Equal(newRecordHandle) {
