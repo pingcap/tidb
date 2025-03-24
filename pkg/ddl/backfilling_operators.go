@@ -1067,6 +1067,7 @@ func (s *indexWriteResultSink) mergeLocalOverlappingFilesAndUpload() error {
 	}
 	start := time.Now()
 
+	mergeConc := int(max(1, res.CPU.Capacity()/4))
 	err = external.MergeOverlappingFiles(
 		s.ctx,
 		allDataFiles,
@@ -1075,7 +1076,7 @@ func (s *indexWriteResultSink) mergeLocalOverlappingFilesAndUpload() error {
 		prefix,
 		external.DefaultBlockSize,
 		mergeSortOnClose,
-		int(res.CPU.Capacity()),
+		mergeConc,
 		false,
 	)
 	if err != nil {
