@@ -116,6 +116,7 @@ type ShowExec struct {
 	Extended    bool // Used for `show extended columns from ...`
 
 	ImportJobID *int64
+	SQLOrDigest string // Used for SHOW PLAN FOR <SQL or Digest>
 }
 
 type showTableRegionRowItem struct {
@@ -259,6 +260,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowBind()
 	case ast.ShowBindingCacheStatus:
 		return e.fetchShowBindingCacheStatus(ctx)
+	case ast.ShowPlanForSQL:
+		return e.fetchPlanForSQL(ctx)
 	case ast.ShowAnalyzeStatus:
 		return e.fetchShowAnalyzeStatus(ctx)
 	case ast.ShowRegions:
@@ -367,6 +370,11 @@ func (e *ShowExec) fetchShowBind() error {
 			hint.PlanDigest,
 		})
 	}
+	return nil
+}
+
+func (e *ShowExec) fetchPlanForSQL(ctx context.Context) error {
+	// TODO
 	return nil
 }
 
