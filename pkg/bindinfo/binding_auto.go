@@ -65,7 +65,7 @@ func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collatio
 	p := parser.New()
 	var normalizedSQL, whereCond string
 	stmtNode, err := p.ParseOneStmt(sqlOrDigest, charset, collation)
-	if err != nil {
+	if err == nil {
 		db := utilparser.GetDefaultDB(stmtNode, currentDB)
 		normalizedSQL, _ = NormalizeStmtForBinding(stmtNode, db, false)
 	}
