@@ -168,7 +168,7 @@ func EncodeCompactBytes(b []byte, data []byte) []byte {
 }
 
 // DecodeCompactBytes decodes bytes which is encoded by EncodeCompactBytes before.
-func DecodeCompactBytes(b []byte) ([]byte, []byte, error) {
+func DecodeCompactBytes(b []byte) (_, _ []byte, _ error) {
 	b, n, err := DecodeVarint(b)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
