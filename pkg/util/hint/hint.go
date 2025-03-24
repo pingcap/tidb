@@ -808,11 +808,11 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			preferAggToCop = true
 		case HintUseIndex, HintIgnoreIndex, HintForceIndex, HintOrderIndex, HintNoOrderIndex:
 			dbName := hint.Tables[0].DBName
-			if dbName.L == "" {
+			if dbName.L.Value() == "" {
 				dbName = ast.NewCIStr(currentDB)
 			}
 			var hintType ast.IndexHintType
-			switch hint.HintName.L {
+			switch hint.HintName.L.Value() {
 			case HintUseIndex:
 				hintType = ast.HintUse
 			case HintIgnoreIndex:
@@ -839,7 +839,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			case HintTiFlash:
 				tiflashTables = append(tiflashTables, tableNames2HintTableInfo(currentDB, hint.HintName.L.Value(), hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 			case HintTiKV:
-				tikvTables = append(tikvTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+				tikvTables = append(tikvTables, tableNames2HintTableInfo(currentDB, hint.HintName.L.Value(), hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 			}
 		case HintIndexMerge:
 			dbName := hint.Tables[0].DBName
@@ -868,7 +868,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			cteMerge = true
 		case HintLeading:
 			if leadingHintCnt == 0 {
-				leadingJoinOrder = append(leadingJoinOrder, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+				leadingJoinOrder = append(leadingJoinOrder, tableNames2HintTableInfo(currentDB, hint.HintName.L.Value(), hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 			}
 			leadingHintCnt++
 		case HintSemiJoinRewrite:
@@ -954,7 +954,7 @@ func tableNames2HintTableInfo(currentDB, hintName string, hintTables []ast.HintT
 			Partitions:   hintTable.PartitionList,
 			SelectOffset: p.GetHintOffset(hintTable.QBName, currentOffset),
 		}
-		if tableInfo.DBName.L == "" {
+		if tableInfo.DBName.L.Value() == "" {
 			tableInfo.DBName = defaultDBName
 		}
 		switch hintName {
@@ -1022,7 +1022,7 @@ func Restore2IndexHint(hintType string, hintIndex HintedIndex) string {
 			if i > 0 {
 				buffer.WriteString(",")
 			}
-			buffer.WriteString(" " + indexName.L)
+			buffer.WriteString(" " + indexName.L.Value())
 		}
 	}
 	buffer.WriteString(") */")
@@ -1056,7 +1056,7 @@ func ExtractUnmatchedTables(hintTables []HintedTable) []string {
 	var tableNames []string
 	for _, table := range hintTables {
 		if !table.Matched {
-			tableNames = append(tableNames, table.TblName.O)
+			tableNames = append(tableNames, table.TblName.O.Value())
 		}
 	}
 	return tableNames
