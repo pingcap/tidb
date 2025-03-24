@@ -592,7 +592,7 @@ func TestAvoidColumnEvaluatorForProjBelowUnion(t *testing.T) {
 	tk.MustExec(`set tidb_window_concurrency = 100;`)
 
 	testCases := []string{
-		`select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) order by a, b, c;`,
+		`select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) x order by a, b, c;`,
 		`select a+1, b+1 from (select cc1 as a, cc2 as b from t1 union select cc2, cc1 from t1) tmp`,
 	}
 

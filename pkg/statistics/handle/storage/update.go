@@ -292,9 +292,8 @@ func ChangeGlobalStatsID(
 	return nil
 }
 
-// UpdateStatsMetaVersionForGC updates the version of stats_meta to be deleted
-// soon.
-func UpdateStatsMetaVersionForGC(
+// UpdateStatsMetaVersion updates the version to the newest TS for a table.
+func UpdateStatsMetaVersion(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	physicalID int64,

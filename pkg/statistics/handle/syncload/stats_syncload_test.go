@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/syncload"
@@ -226,7 +225,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		exitCh := make(chan struct{})
 		require.NoError(t, failpoint.Enable(fp.failPath, fp.inTerms))
 
-		task1, err1 := h.HandleOneTask(testKit.Session().(sessionctx.Context), nil, exitCh)
+		task1, err1 := h.HandleOneTask(nil, exitCh)
 		require.Error(t, err1)
 		require.NotNil(t, task1)
 		for _, resultCh := range stmtCtx1.StatsLoad.ResultCh {
@@ -253,7 +252,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		}
 
 		require.NoError(t, failpoint.Disable(fp.failPath))
-		task3, err3 := h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)
+		task3, err3 := h.HandleOneTask(task1, exitCh)
 		require.NoError(t, err3)
 		require.Nil(t, task3)
 		for _, resultCh := range stmtCtx1.StatsLoad.ResultCh {
@@ -332,7 +331,7 @@ func TestRetry(t *testing.T) {
 	)
 
 	for i := 0; i < syncload.RetryCount; i++ {
-		task1, err1 = h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)
+		task1, err1 = h.HandleOneTask(task1, exitCh)
 		require.Error(t, err1)
 		require.NotNil(t, task1)
 		select {
@@ -342,7 +341,7 @@ func TestRetry(t *testing.T) {
 		default:
 		}
 	}
-	result, err1 := h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)
+	result, err1 := h.HandleOneTask(task1, exitCh)
 	require.NoError(t, err1)
 	require.Nil(t, result)
 	for _, resultCh := range stmtCtx1.StatsLoad.ResultCh {
@@ -353,7 +352,7 @@ func TestRetry(t *testing.T) {
 	}
 	task1.Retry = 0
 	for i := 0; i < syncload.RetryCount*5; i++ {
-		task1, err1 = h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)
+		task1, err1 = h.HandleOneTask(task1, exitCh)
 		require.Error(t, err1)
 		require.NotNil(t, task1)
 		select {

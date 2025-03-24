@@ -3611,16 +3611,6 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 			failToLoadOrParseSQLFile = true
 		}
 	}
-	// A sub context for update table stats, and other contexts for concurrent stats loading.
-	cnt := 1 + concurrency
-	syncStatsCtxs, err := createSessions(store, cnt)
-	if err != nil {
-		return nil, err
-	}
-	subCtxs := make([]sessionctx.Context, cnt)
-	for i := 0; i < cnt; i++ {
-		subCtxs[i] = sessionctx.Context(syncStatsCtxs[i])
-	}
 
 	// setup extract Handle
 	extractWorkers := 1
@@ -3639,7 +3629,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if err != nil {
 		return nil, err
 	}
-	if err = dom.LoadAndUpdateStatsLoop(subCtxs, initStatsCtx); err != nil {
+	if err = dom.LoadAndUpdateStatsLoop(concurrency, initStatsCtx); err != nil {
 		return nil, err
 	}
 
@@ -4030,10 +4020,13 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 	})
 
 	s.txn.changeToPending(&txnFuture{
-		future:    future,
-		store:     s.store,
-		txnScope:  scope,
-		pipelined: s.usePipelinedDmlOrWarn(ctx),
+		future:                          future,
+		store:                           s.store,
+		txnScope:                        scope,
+		pipelined:                       s.usePipelinedDmlOrWarn(ctx),
+		pipelinedFlushConcurrency:       s.GetSessionVars().PipelinedFlushConcurrency,
+		pipelinedResolveLockConcurrency: s.GetSessionVars().PipelinedResolveLockConcurrency,
+		pipelinedWriteThrottleRatio:     s.GetSessionVars().PipelinedWriteThrottleRatio,
 	})
 	return nil
 }

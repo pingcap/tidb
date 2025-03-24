@@ -330,9 +330,9 @@ func JobNeedGC(job *model.Job) bool {
 			if err != nil {
 				return false
 			}
-			// If it's a vector index, it needn't to store key ranges to gc_delete_range.
-			// We don't support drop vector index in multi-schema, so we only check the first one.
-			if args.IndexArgs[0].IsVector {
+			// If it's a columnar index, it needn't to store key ranges to gc_delete_range.
+			// We don't support drop columnar index in multi-schema, so we only check the first one.
+			if args.IndexArgs[0].IsColumnar {
 				return false
 			}
 			return true
