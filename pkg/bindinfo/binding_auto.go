@@ -80,7 +80,7 @@ func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collatio
 	}
 	var autoBindings []*BindingPlanInfo
 	for _, binding := range bindings {
-		pInfo, err := ba.getStmtStatsByPlanDigestInCluster(binding.PlanDigest)
+		pInfo, err := ba.getStmtStatsByPlanDigest(binding.PlanDigest)
 		if err != nil {
 			logutil.BgLogger().Error("getStmtStatsByDigestInCluster", zap.String("plan_digest", binding.PlanDigest), zap.Error(err))
 			continue
@@ -100,7 +100,8 @@ func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collatio
 	return nil, nil
 }
 
-func (ba *bindingAuto) getStmtStatsByPlanDigestInCluster(planDigest string) (plan *planInfo, err error) {
+// getStmtStatsByPlanDigest gets the plan info from information_schema.tidb_statements_stats table.
+func (ba *bindingAuto) getStmtStatsByPlanDigest(planDigest string) (plan *planInfo, err error) {
 	if planDigest == "" {
 		return nil, nil
 	}
@@ -121,25 +122,25 @@ func (ba *bindingAuto) getStmtStatsByPlanDigestInCluster(planDigest string) (pla
 	if len(rows) == 0 {
 		return nil, nil
 	}
-	if len(rows) > 1 {
-		// TODO: accumulate them
-	}
 
-	row := rows[0]
-	return &planInfo{
-		Digest:          row.GetString(0),
-		QuerySampleText: row.GetString(1),
-		Charset:         row.GetString(2),
-		Collation:       row.GetString(3),
-		PlanHint:        row.GetString(4),
-		PlanDigest:      row.GetString(5),
-		SchemaName:      row.GetString(6),
-		ResultRows:      row.GetInt64(7),
-		ExecCount:       row.GetInt64(8),
-		ProcessedKeys:   row.GetInt64(9),
-		TotalTime:       row.GetInt64(10),
-		Plan:            row.GetString(11),
-	}, nil
+	pi := new(planInfo)
+	for _, row := range rows {
+		// Merge them into one record if there are multiple rows.
+		// Assume they have the same meta info and accumulate result-rows, exec-count, pro-keys, total-time.
+		pi.Digest = row.GetString(0)
+		pi.QuerySampleText = row.GetString(1)
+		pi.Charset = row.GetString(2)
+		pi.Collation = row.GetString(3)
+		pi.PlanHint = row.GetString(4)
+		pi.PlanDigest = row.GetString(5)
+		pi.SchemaName = row.GetString(6)
+		pi.ResultRows += row.GetInt64(7)
+		pi.ExecCount += row.GetInt64(8)
+		pi.ProcessedKeys += row.GetInt64(9)
+		pi.TotalTime += row.GetInt64(10)
+		pi.Plan = row.GetString(11)
+	}
+	return pi, nil
 }
 
 // planInfo represents the plan info from information_schema.tidb_statements_stats table.
