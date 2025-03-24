@@ -54,6 +54,7 @@ go_test(
         "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
         "//pkg/util",
+        "//pkg/util/logutil",
         "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
