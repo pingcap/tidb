@@ -650,7 +650,7 @@ create table t2 (cc1 int,cc2 text,primary key(cc1));
 insert into t2 values (2, '2');
 set tidb_executor_concurrency = 1;
 set tidb_window_concurrency = 100;
-explain select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) order by a,b,c;
+explain select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) x order by a,b,c;
 id	estRows	task	access object	operator info
 Sort_15	20000.00	root		Column#8, Column#9, Column#10
 └─Union_18	20000.00	root		
@@ -664,7 +664,7 @@ Sort_15	20000.00	root		Column#8, Column#9, Column#10
           └─ShuffleReceiver_30	10000.00	root		
             └─TableReader_26	10000.00	root		data:TableFullScan_25
               └─TableFullScan_25	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) order by a,b,c;
+select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) x order by a,b,c;
 a	b	c
 1	aaaa	1
 1	bbbb	2
@@ -791,6 +791,21 @@ Projection_9	12.50	root		test.t.a, test.t1.a, test.t1.b
 select /*+ inl_join(t1), use_index(t1, idx) */ * from t join t1 on t.a = t1.a and t1.b = 123;
 a	a	b
 2	2	123
+drop table if exists t;
+create table t(a int, primary key (a));
+insert into t values(1), (2);
+select * from t t1 left join t t2 on t1.a=t2.a limit 1, 1;
+a	a
+2	2
+explain select * from t t1 left join t t2 on t1.a=t2.a limit 1, 1;
+id	estRows	task	access object	operator info
+IndexJoin_15	1.25	root		left outer join, inner:TableReader_12, left side:Limit_22, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)
+├─Limit_22(Build)	1.00	root		offset:1, count:1
+│ └─TableReader_26	2.00	root		data:Limit_25
+│   └─Limit_25	2.00	cop[tikv]		offset:0, count:2
+│     └─TableFullScan_24	2.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableReader_12(Probe)	1.00	root		data:TableRangeScan_11
+  └─TableRangeScan_11	1.00	cop[tikv]	table:t2	range: decided by [test.t.a], keep order:false, stats:pseudo
 drop table if exists t1, t2;
 create table t1(a int, b int, index idx(a, b));
 create table t2(a int, b int, index idx(a));
