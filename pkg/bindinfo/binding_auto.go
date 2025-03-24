@@ -1,0 +1,150 @@
+// Copyright 2025 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package bindinfo
+
+import (
+	"fmt"
+
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	utilparser "github.com/pingcap/tidb/pkg/util/parser"
+	"go.uber.org/zap"
+)
+
+// BindingPlanInfo represents the binding plan info.
+type BindingPlanInfo struct {
+	*Binding
+
+	// Info from StmtStats
+	Plan                 string
+	AvgLatency           float64
+	ExecTimes            int64
+	AvgScanRows          float64
+	AvgReturnedRows      float64
+	LatencyPerReturnRow  float64
+	ScanRowsPerReturnRow float64
+
+	// Recommendation
+	Recommend string
+	Reason    string
+}
+
+// BindingAuto represents a series of APIs that help manage bindings automatically.
+type BindingAuto interface {
+	// TODO: RecordHistPlansAsBindings records the history plans as bindings for qualified queries.
+
+	// ShowPlansForSQL shows historical plans for a specific SQL.
+	ShowPlansForSQL(currentDB, sqlOrDigest, charset, collation string) ([]*BindingPlanInfo, error)
+}
+
+type bindingAuto struct {
+	sPool util.DestroyableSessionPool
+}
+
+func newBindingAuto(sPool util.DestroyableSessionPool) BindingAuto {
+	return &bindingAuto{
+		sPool: sPool,
+	}
+}
+
+// ShowPlansForSQL shows historical plans for a specific SQL.
+func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collation string) ([]*BindingPlanInfo, error) {
+	// parse and normalize sqlOrDigest
+	p := parser.New()
+	var normalizedSQL, whereCond string
+	stmtNode, err := p.ParseOneStmt(sqlOrDigest, charset, collation)
+	if err == nil {
+		db := utilparser.GetDefaultDB(stmtNode, currentDB)
+		normalizedSQL, _ = NormalizeStmtForBinding(stmtNode, db, false)
+	}
+
+	// read binding data from mysql.bind_info
+	if normalizedSQL != "" {
+		whereCond = fmt.Sprintf("where original_sql='%s'", normalizedSQL)
+	} else { // treat sqlOrDigest as a digest
+		whereCond = fmt.Sprintf("where sql_digest='%s'", sqlOrDigest)
+	}
+	bindings, err := readBindingsFromStorage(ba.sPool, whereCond)
+	if err != nil {
+		return nil, err
+	}
+
+	// read plan info from information_schema.tidb_statements_stats
+	var bindingPlans []*BindingPlanInfo
+	for _, binding := range bindings {
+		pInfo, err := ba.getPlanExecInfo(binding.PlanDigest)
+		if err != nil {
+			logutil.BgLogger().Error("getStmtStatsByDigestInCluster", zap.String("plan_digest", binding.PlanDigest), zap.Error(err))
+			continue
+		}
+		autoBinding := &BindingPlanInfo{Binding: binding}
+		if pInfo != nil && pInfo.ExecCount > 0 {
+			autoBinding.Plan = pInfo.Plan
+			autoBinding.ExecTimes = pInfo.ExecCount
+			autoBinding.AvgLatency = float64(pInfo.TotalTime) / float64(pInfo.ExecCount)
+			autoBinding.AvgScanRows = float64(pInfo.ProcessedKeys) / float64(pInfo.ExecCount)
+			autoBinding.AvgReturnedRows = float64(pInfo.ResultRows) / float64(pInfo.ExecCount)
+			autoBinding.LatencyPerReturnRow = autoBinding.AvgLatency / autoBinding.AvgReturnedRows
+			autoBinding.ScanRowsPerReturnRow = autoBinding.AvgScanRows / autoBinding.AvgReturnedRows
+		}
+		bindingPlans = append(bindingPlans, autoBinding)
+	}
+	return bindingPlans, nil
+}
+
+// getPlanExecInfo gets the plan execution info from information_schema.tidb_statements_stats table.
+func (ba *bindingAuto) getPlanExecInfo(planDigest string) (plan *planExecInfo, err error) {
+	if planDigest == "" {
+		return nil, nil
+	}
+	stmtQuery := fmt.Sprintf(`select result_rows, exec_count, processed_keys, total_time, plan
+		from information_schema.tidb_statements_stats where plan_digest = '%v'`, planDigest)
+	var rows []chunk.Row
+	err = callWithSCtx(ba.sPool, false, func(sctx sessionctx.Context) error {
+		rows, _, err = execRows(sctx, stmtQuery)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		// TODO: read data from workload_schema.hist_stmt_stats in this case if it's enabled.
+		return nil, nil
+	}
+
+	plan = new(planExecInfo)
+	for _, row := range rows {
+		// Sum them up if there are multiple records.
+		plan.ResultRows += row.GetInt64(0)
+		plan.ExecCount += row.GetInt64(1)
+		plan.ProcessedKeys += row.GetInt64(2)
+		plan.TotalTime += row.GetInt64(3)
+		plan.Plan = row.GetString(4)
+	}
+	return plan, nil
+}
+
+// planExecInfo represents the plan info from information_schema.tidb_statements_stats table.
+type planExecInfo struct {
+	// exec info
+	Plan          string
+	ResultRows    int64
+	ExecCount     int64
+	ProcessedKeys int64
+	TotalTime     int64
+}
