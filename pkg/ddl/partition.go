@@ -3833,7 +3833,6 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 			failpoint.InjectCall("PartitionBackfillNonClustered", w.rowRecords[0].vals)
 			// we must check if old IDs already been written,
 			// i.e. double written by StateWriteOnly or StateWriteReorganization.
-			// TODO: while waiting for BatchGet to check for duplicate, do another round of reads in parallel?
 
 			// TODO: test how to use PresumeKeyNotExists/NeedConstraintCheckInPrewrite/DO_CONSTRAINT_CHECK
 			// to delay the check until commit.

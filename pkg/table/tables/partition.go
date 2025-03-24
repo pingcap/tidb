@@ -2143,7 +2143,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 		newData = append(newData, types.NewIntDatum(newRecordHandle.IntValue()))
 	}
 	addRecordOpt := opt.GetAddRecordOptKeepRecordID()
-	checkHandle := h
+	var checkHandle kv.Handle
 	checkHandle, err = t.getPartition(newTo).addRecord(ctx, txn, newData, addRecordOpt)
 	if err != nil {
 		return errors.Trace(err)
