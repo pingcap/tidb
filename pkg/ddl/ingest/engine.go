@@ -41,6 +41,7 @@ type Writer interface {
 	// To enable uniqueness check, the handle should be non-empty.
 	WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tidbkv.Handle) error
 	LockForWrite() (unlock func())
+	Target() backend.WriteTarget
 }
 
 // engineInfo is the engine for one index reorg task, each task will create several new writers under the
@@ -130,6 +131,10 @@ type writerContext struct {
 	ctx    context.Context
 	lWrite backend.EngineWriter
 	fLock  *sync.RWMutex
+}
+
+func (writerContext) Target() backend.WriteTarget {
+	return backend.WriteTargetLocal
 }
 
 // CreateWriter creates a new writerContext.

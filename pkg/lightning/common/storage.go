@@ -16,9 +16,43 @@
 
 package common
 
+import (
+	"context"
+	"io/fs"
+	"path/filepath"
+
+	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"go.uber.org/zap"
+)
+
 // StorageSize represents the storage's capacity and available size
 // Learn from tidb-binlog source code.
 type StorageSize struct {
 	Capacity  uint64
 	Available uint64
+}
+
+// CountFilesAndSize counts the number of files in a directory
+// It is used for monitoring, therefore any error encountered will be ignored
+func CountFilesAndSize(root string) (count int, size int) {
+	err := filepath.WalkDir(root, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return fs.SkipDir
+		}
+
+		if info, infoErr := d.Info(); infoErr == nil && !d.IsDir() {
+			count++
+			size += int(info.Size())
+		}
+		return nil
+	})
+	if err != nil {
+		log.FromContext(context.Background()).Warn("failed to walk dir", zap.String("dir", root), zap.Error(err))
+	}
+	return count, size
+}
+
+func init() {
+	metrics.CountFilesAndSize = CountFilesAndSize
 }

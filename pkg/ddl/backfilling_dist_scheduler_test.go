@@ -115,19 +115,19 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 
 func TestCalculateRegionBatch(t *testing.T) {
 	// Test calculate in cloud storage.
-	batchCnt := ddl.CalculateRegionBatch(100, 8, false)
+	batchCnt := ddl.CalculateRegionBatch(100, 8, false, 0)
 	require.Equal(t, 13, batchCnt)
-	batchCnt = ddl.CalculateRegionBatch(2, 8, false)
+	batchCnt = ddl.CalculateRegionBatch(2, 8, false, 0)
 	require.Equal(t, 1, batchCnt)
-	batchCnt = ddl.CalculateRegionBatch(8, 8, false)
+	batchCnt = ddl.CalculateRegionBatch(8, 8, false, 0)
 	require.Equal(t, 1, batchCnt)
 
 	// Test calculate in local storage.
-	batchCnt = ddl.CalculateRegionBatch(100, 8, true)
+	batchCnt = ddl.CalculateRegionBatch(100, 8, true, 0)
 	require.Equal(t, 13, batchCnt)
-	batchCnt = ddl.CalculateRegionBatch(2, 8, true)
+	batchCnt = ddl.CalculateRegionBatch(2, 8, true, 0)
 	require.Equal(t, 1, batchCnt)
-	batchCnt = ddl.CalculateRegionBatch(24, 8, true)
+	batchCnt = ddl.CalculateRegionBatch(24, 8, true, 0)
 	require.Equal(t, 3, batchCnt)
 }
 

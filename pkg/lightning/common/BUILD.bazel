@@ -30,6 +30,7 @@ go_library(
         "//pkg/lightning/membuf",
         "//pkg/meta/autoid",
         "//pkg/meta/model",
+        "//pkg/metrics",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
@@ -119,7 +120,7 @@ go_test(
     ],
     embed = [":common"],
     flaky = True,
-    shard_count = 29,
+    shard_count = 30,
     deps = [
         "//br/pkg/errors",
         "//pkg/autoid_service",

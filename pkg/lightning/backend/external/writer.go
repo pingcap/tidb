@@ -23,6 +23,7 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/docker/go-units"
@@ -356,6 +357,14 @@ type Writer struct {
 	totalCnt  uint64
 }
 
+// Target implements ingest.Writer.
+func (w Writer) Target() backend.WriteTarget {
+	if strings.HasPrefix(w.store.URI(), "local:") {
+		return backend.WriteTargetLocal
+	}
+	return backend.WriteTargetExternal
+}
+
 // WriteRow implements ingest.Writer.
 func (w *Writer) WriteRow(ctx context.Context, key, val []byte, handle tidbkv.Handle) error {
 	keyAdapter := w.keyAdapter
@@ -413,6 +422,7 @@ func (w *Writer) Close(ctx context.Context) error {
 	logutil.Logger(ctx).Info("close writer",
 		zap.String("writerID", w.writerID),
 		zap.Int("kv-cnt-cap", cap(w.kvLocations)),
+		zap.Int("offset", w.groupOffset),
 		zap.String("minKey", hex.EncodeToString(w.minKey)),
 		zap.String("maxKey", hex.EncodeToString(w.maxKey)))
 

@@ -500,6 +500,7 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 		ctx,
 		datas,
 		s.store,
+		s.store,
 		int64(5*size.MB),
 		mergeOutput,
 		DefaultBlockSize,
@@ -540,6 +541,7 @@ func newMergeStep(t *testing.T, s *mergeTestSuite) {
 	err = MergeOverlappingFilesV2(
 		ctx,
 		mockOneMultiFileStat(datas, stats),
+		s.store,
 		s.store,
 		s.minKey,
 		s.maxKey.Next(),

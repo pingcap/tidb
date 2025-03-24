@@ -464,6 +464,15 @@ func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *
 	return nil
 }
 
+func extractIndexInfos(r *reorgInfo, tblInfo *model.TableInfo) []*model.IndexInfo {
+	indexInfos := make([]*model.IndexInfo, 0, len(r.elements))
+	for _, elem := range r.elements {
+		idxInfo := model.FindIndexInfoByID(tblInfo.Indices, elem.ID)
+		indexInfos = append(indexInfos, idxInfo)
+	}
+	return indexInfos
+}
+
 func extractElemIDs(r *reorgInfo) []int64 {
 	elemIDs := make([]int64, 0, len(r.elements))
 	for _, elem := range r.elements {

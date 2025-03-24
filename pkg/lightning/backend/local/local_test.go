@@ -595,7 +595,7 @@ func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 	f.db.Store(db)
 
 	createSSTWriter := func() (*sstWriter, error) {
-		path := filepath.Join(f.sstDir, uuid.New().String()+".sst")
+		path := filepath.Join(f.sstDir.Path(), uuid.New().String()+".sst")
 		writer, err := newSSTWriter(path, 16*1024)
 		if err != nil {
 			return nil, err
@@ -618,7 +618,7 @@ func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 	}
 
 	i := dbSSTIngester{e: f}
-	newMeta, err := i.mergeSSTs(metas, tmpPath, 16*1024)
+	newMeta, err := i.mergeSSTs(metas, tmpPath.Path(), 16*1024)
 	require.NoError(t, err)
 
 	require.Equal(t, meta.totalCount, newMeta.totalCount)
@@ -1790,6 +1790,7 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 		456,
 		789,
 		true,
+		16*units.GiB,
 	)
 
 	jobCh := make(chan *regionJob, 9)
@@ -2332,6 +2333,7 @@ func TestExternalEngine(t *testing.T) {
 		SplitKeys:     [][]byte{keys[0], keys[50], endKey},
 		TotalFileSize: int64(config.SplitRegionSize) + 1,
 		TotalKVCount:  int64(config.SplitRegionKeys) + 1,
+		MemCapacity:   8 * units.GiB,
 	}
 	engineUUID := uuid.New()
 	hook := &recordScanRegionsHook{}

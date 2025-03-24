@@ -132,6 +132,8 @@ type ExternalEngineConfig struct {
 	// TotalKVCount can be an estimated value.
 	TotalKVCount int64
 	CheckHotspot bool
+	// MemCapacity is the memory capacity for the whole subtask.
+	MemCapacity int64
 }
 
 // CheckCtx contains all parameters used in CheckRequirements
@@ -434,3 +436,13 @@ type EngineWriter interface {
 func (engine *OpenedEngine) GetEngineUUID() uuid.UUID {
 	return engine.uuid
 }
+
+// WriteTarget is used by Writer interface
+type WriteTarget string
+
+const (
+	// WriteTargetLocal is the target for local write.
+	WriteTargetLocal WriteTarget = "local"
+	// WriteTargetExternal is the target for external write.
+	WriteTargetExternal WriteTarget = "external"
+)

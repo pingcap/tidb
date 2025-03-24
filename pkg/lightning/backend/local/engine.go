@@ -25,6 +25,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 	"unsafe"
@@ -47,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/atomic"
@@ -89,21 +91,13 @@ type engineMeta struct {
 	TotalSize atomic.Int64 `json:"total_size"`
 }
 
-type syncedRanges struct {
-	sync.Mutex
-	ranges []common.Range
+type sstDir struct {
+	base   string
+	extend string
 }
 
-func (r *syncedRanges) add(g common.Range) {
-	r.Lock()
-	r.ranges = append(r.ranges, g)
-	r.Unlock()
-}
-
-func (r *syncedRanges) reset() {
-	r.Lock()
-	r.ranges = r.ranges[:0]
-	r.Unlock()
+func (s sstDir) Path() string {
+	return filepath.Join(s.base, s.extend)
 }
 
 // Engine is a local engine.
@@ -126,7 +120,7 @@ type Engine struct {
 
 	ctx          context.Context
 	cancel       context.CancelFunc
-	sstDir       string
+	sstDir       sstDir
 	sstMetasChan chan metaOrFlush
 	ingestErr    common.OnceError
 	wg           sync.WaitGroup
@@ -185,7 +179,7 @@ func (e *Engine) Close() error {
 
 // Cleanup remove meta, db and duplicate detection files
 func (e *Engine) Cleanup(dataDir string) error {
-	if err := os.RemoveAll(e.sstDir); err != nil {
+	if err := os.RemoveAll(e.sstDir.Path()); err != nil {
 		return errors.Trace(err)
 	}
 	uuid := e.UUID.String()
@@ -667,7 +661,7 @@ func (e *Engine) ingestSSTLoop() {
 					}
 					ingestMetas := metas.metas
 					if e.config.Compact {
-						newMeta, err := e.sstIngester.mergeSSTs(metas.metas, e.sstDir, e.config.BlockSize)
+						newMeta, err := e.sstIngester.mergeSSTs(metas.metas, e.sstDir.Path(), e.config.BlockSize)
 						if err != nil {
 							e.setError(err)
 							return
@@ -895,17 +889,20 @@ func (e *Engine) ingestSSTs(metas []*sstMeta) error {
 		zap.String("file", metas[0].path),
 		logutil.Key("firstKey", metas[0].minKey),
 		logutil.Key("lastKey", metas[len(metas)-1].maxKey))
+	start := time.Now()
 	if err := e.sstIngester.ingest(metas); err != nil {
 		return errors.Trace(err)
 	}
-	count := int64(0)
-	size := int64(0)
-	for _, m := range metas {
-		count += m.totalCount
-		size += m.totalSize
+	path := e.sstDir.base
+	if importPath := metrics.GetImportTempDataDir(); strings.HasPrefix(path, importPath) {
+		path = importPath
+	} else if ingestPath := metrics.GetIngestTempDataDir(); strings.HasPrefix(path, ingestPath) {
+		path = ingestPath
 	}
-	e.Length.Add(count)
-	e.TotalSize.Add(size)
+	duration := time.Since(start)
+	metrics.TempDirWriteStorageRate.WithLabelValues(path).Observe(float64(totalSize) / 1024.0 / 1024.0 / duration.Seconds())
+	e.Length.Add(totalCount)
+	e.TotalSize.Add(totalSize)
 	return nil
 }
 
@@ -1396,7 +1393,7 @@ func (w *Writer) addSST(ctx context.Context, meta *sstMeta) error {
 }
 
 func (w *Writer) createSSTWriter() (*sstWriter, error) {
-	path := filepath.Join(w.engine.sstDir, uuid.New().String()+".sst")
+	path := filepath.Join(w.engine.sstDir.Path(), uuid.New().String()+".sst")
 	writer, err := newSSTWriter(path, w.engine.config.BlockSize)
 	if err != nil {
 		return nil, err
@@ -1448,7 +1445,7 @@ func (sw *sstWriter) writeKVs(kvs []common.KvPair) error {
 		return nil
 	}
 	if len(sw.minKey) == 0 {
-		sw.minKey = append([]byte{}, kvs[0].Key...)
+		sw.minKey = slices.Clone(kvs[0].Key)
 	}
 	if bytes.Compare(kvs[0].Key, sw.maxKey) <= 0 {
 		return errorUnorderedSSTInsertion

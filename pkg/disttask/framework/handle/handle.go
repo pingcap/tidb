@@ -19,12 +19,13 @@ import (
 	goerrors "errors"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -78,7 +79,6 @@ func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, co
 	if err != nil {
 		return nil, err
 	}
-	metrics.UpdateMetricsForAddTask(&task.TaskBase)
 
 	NotifyTaskChange()
 	return task, nil
@@ -108,7 +108,7 @@ func WaitTaskDoneOrPaused(ctx context.Context, id int64) error {
 		return nil
 	case proto.TaskStateReverted:
 		logger.Error("task reverted", zap.Error(found.Error))
-		return found.Error
+		return wrapWithNonRetryable(found.Error)
 	case proto.TaskStatePaused:
 		logger.Error("task paused")
 		return nil
@@ -116,6 +116,10 @@ func WaitTaskDoneOrPaused(ctx context.Context, id int64) error {
 		return errors.Errorf("task stopped with state %s, err %v", found.State, found.Error)
 	}
 	return nil
+}
+
+func wrapWithNonRetryable(err error) error {
+	return errors.New("task reverted: " + err.Error())
 }
 
 // WaitTaskDoneByKey waits for a task done by task key.
@@ -235,4 +239,22 @@ func RunWithRetry(
 		}
 	}
 	return lastErr
+}
+
+var nodeResource atomic.Pointer[proto.NodeResource]
+
+// GetNodeResource gets the node resource.
+func GetNodeResource() *proto.NodeResource {
+	return nodeResource.Load()
+}
+
+// SetNodeResource gets the node resource.
+func SetNodeResource(rc *proto.NodeResource) {
+	nodeResource.Store(rc)
+}
+
+func init() {
+	// domain will init this var at runtime, we store it here for test, as some
+	// test might not start domain.
+	nodeResource.Store(proto.NewNodeResource(8, 16*units.GiB, 100*units.GiB))
 }

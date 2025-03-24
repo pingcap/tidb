@@ -757,7 +757,7 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 		err error
 	)
 	if config.GetGlobalConfig().Store == config.StoreTypeTiKV {
-		cfg, bd, err = ingest.CreateLocalBackend(ctx, dc.store, job, false)
+		cfg, bd, err = ingest.CreateLocalBackend(ctx, dc.store, job, false, 0)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -783,7 +783,7 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 		return errors.Trace(err)
 	}
 	defer sessPool.Put(sctx)
-	avgRowSize := estimateTableRowSize(ctx, dc.store, sctx.GetRestrictedSQLExecutor(), t)
+	avgRowSize, _ := ingest.EstimateTableRowSize(ctx, sctx.GetRestrictedSQLExecutor(), reorgInfo.dbInfo, t.Meta(), indexInfos)
 
 	engines, err := bcCtx.Register(indexIDs, uniques, t)
 	if err != nil {
@@ -801,6 +801,7 @@ func (dc *ddlCtx) addIndexWithLocalIngest(
 		bcCtx,
 		engines,
 		job.ID,
+		0,
 		t,
 		indexInfos,
 		reorgInfo.StartKey,
