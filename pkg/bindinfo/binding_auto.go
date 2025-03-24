@@ -69,16 +69,22 @@ func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collatio
 		db := utilparser.GetDefaultDB(stmtNode, currentDB)
 		normalizedSQL, _ = NormalizeStmtForBinding(stmtNode, db, false)
 	}
+
+	fmt.Println("?????>>>>>>>>>> ", normalizedSQL)
+
 	if normalizedSQL != "" {
 		whereCond = fmt.Sprintf("where original_sql='%s'", normalizedSQL)
 	} else { // treat sqlOrDigest as a digest
 		whereCond = fmt.Sprintf("where sql_digest='%s'", sqlOrDigest)
 	}
+
+	fmt.Println("------->>>>>>> ", whereCond)
+
 	bindings, err := readBindingsFromStorage(ba.sPool, whereCond)
 	if err != nil {
 		return nil, err
 	}
-	var autoBindings []*BindingPlanInfo
+	var bindingPlans []*BindingPlanInfo
 	for _, binding := range bindings {
 		pInfo, err := ba.getStmtStatsByPlanDigest(binding.PlanDigest)
 		if err != nil {
@@ -95,9 +101,9 @@ func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collatio
 			autoBinding.LatencyPerReturnRow = autoBinding.AvgLatency / autoBinding.AvgReturnedRows
 			autoBinding.ScanRowsPerReturnRow = autoBinding.AvgScanRows / autoBinding.AvgReturnedRows
 		}
-		autoBindings = append(autoBindings, autoBinding)
+		bindingPlans = append(bindingPlans, autoBinding)
 	}
-	return nil, nil
+	return bindingPlans, nil
 }
 
 // getStmtStatsByPlanDigest gets the plan info from information_schema.tidb_statements_stats table.

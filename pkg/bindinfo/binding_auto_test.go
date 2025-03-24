@@ -15,6 +15,7 @@
 package bindinfo_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -28,5 +29,13 @@ func TestShowPlanForSQL(t *testing.T) {
 	tk.MustExec(`create table t (a int, b int, c int, key(a))`)
 	tk.MustQuery(`show plan for "select a from t where b=1"`).Check(testkit.Rows())
 	tk.MustExec(`create global binding using select a from t where b=1`)
+	rs := tk.MustQuery(`show global bindings`).Rows()
+
+	fmt.Println("============================================")
+	for _, r := range rs {
+		fmt.Println(r)
+	}
+	fmt.Println("============================================")
+
 	tk.MustQuery(`show plan for "select a from t where b=1"`).Check(testkit.Rows())
 }
