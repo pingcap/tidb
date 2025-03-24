@@ -1080,20 +1080,21 @@ var checkAttributesInOrder = []string{
 var (
 	specialAttributes     []*regexp.Regexp
 	specialAttributesOnce sync.Once
-	specialAttributesErr  error
 )
 
-func initspecialAttributes() {
+func initSpecialAttributes() error {
+	var err error
 	specialAttributesOnce.Do(func() {
 		for _, substr := range checkAttributesInOrder {
-			re, err := regexp.Compile(substr)
-			if err != nil {
-				specialAttributesErr = err
+			re, err2 := regexp.Compile(substr)
+			if err2 != nil {
+				err = err2
 				return
 			}
 			specialAttributes = append(specialAttributes, re)
 		}
 	})
+	return err
 }
 
 // isTableInfoMustLoad checks whether the table info needs to be loaded.
@@ -1147,9 +1148,8 @@ func (m *Mutator) GetAllNameToIDAndTheMustLoadedTableInfo(dbID int64) (map[strin
 	nameLRegex := regexp.MustCompile(NameExtractRegexp)
 
 	tableInfos := make([]*model.TableInfo, 0)
-	initspecialAttributes()
-	if specialAttributesErr != nil {
-		return nil, nil, errors.Trace(specialAttributesErr)
+	if err := initSpecialAttributes(); err != nil {
+		return nil, nil, errors.Trace(err)
 	}
 
 	err := m.txn.IterateHash(dbKey, func(field []byte, value []byte) error {

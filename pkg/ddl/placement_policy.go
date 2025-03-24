@@ -410,6 +410,12 @@ func checkPlacementPolicyNotInUseFromRange(policy *model.PolicyInfo) error {
 	return checkFn(placement.TiDBBundleRangePrefixForMeta)
 }
 
+var (
+	partitionNullRegex = regexp.MustCompile(`"partition":null`)
+	policyRefNullRegex = regexp.MustCompile(`"policy_ref_info":null`)
+	filterAttrsRegexp  = []*regexp.Regexp{partitionNullRegex, policyRefNullRegex}
+)
+
 func getPlacementPolicyDependedObjectsIDs(t *meta.Mutator, policy *model.PolicyInfo) (dbIDs, partIDs []int64, tblInfos []*model.TableInfo, err error) {
 	schemas, err := t.ListDatabases()
 	if err != nil {
@@ -419,16 +425,6 @@ func getPlacementPolicyDependedObjectsIDs(t *meta.Mutator, policy *model.PolicyI
 	dbIDs = make([]int64, 0, len(schemas))
 	partIDs = make([]int64, 0, len(schemas))
 	tblInfos = make([]*model.TableInfo, 0, len(schemas))
-
-	filterAttrs := []string{`"partition":null"`, `"policy_ref_info":null`}
-	filterAttrsRegexp := make([]*regexp.Regexp, 0)
-	for _, substr := range filterAttrs {
-		re, err := regexp.Compile(substr)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		filterAttrsRegexp = append(filterAttrsRegexp, re)
-	}
 
 	for _, dbInfo := range schemas {
 		if dbInfo.PlacementPolicyRef != nil && dbInfo.PlacementPolicyRef.ID == policy.ID {
