@@ -1726,7 +1726,7 @@ select @@max_execution_time;
 2000
 drop table if exists t;
 create table t(a int);
-create global binding for select * from t where a = 1 and sleep(0.1) using select /*+ SET_VAR(max_execution_time=500) */ * from t where a = 1 and sleep(0.1);
+create global binding for select * from t where a = 1 and sleep(0.1) using select /*+ SET_VAR(max_execution_time=1000) */ * from t where a = 1 and sleep(0.1);
 select * from t where a = 1 and sleep(0.1);
 a
 select @@last_plan_from_binding;
@@ -1757,6 +1757,8 @@ select @@max_execution_time;
 2000
 insert into t values(1);
 set @@max_execution_time=0;
+drop global binding for select * from t where a = 2 and sleep(0.1);
+create global binding for select * from t where a = 1 and sleep(0.1) using select /*+ SET_VAR(max_execution_time=500) */ * from t where a = 1 and sleep(0.1);
 select /*+ SET_VAR(max_execution_time=4000) */ * from t where a = 1 and sleep(1);
 Error 3024 (HY000): Query execution was interrupted, maximum statement execution time exceeded
 select @@last_plan_from_binding;
