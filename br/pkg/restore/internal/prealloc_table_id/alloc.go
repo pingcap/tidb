@@ -92,42 +92,47 @@ func (p *PreallocIDs) Prealloced(tid int64) bool {
 
 // func (p *PreallocIDs) PreallocedFor(ti *model.TableInfo) {}
 
-func (p *PreallocIDs) BatchAlloc(ids []int64) ([]int64,error) {
-	if len(ids) > int(p.end-p.allocedFrom) {
-		return []int64{}, fmt.Errorf("batch alloc too many IDs")
+func (p *PreallocIDs) BatchAlloc(idMap map[int64]*int64) error {
+	available := p.end - p.allocedFrom
+	if available < 0 {
+		return fmt.Errorf("invalid state: available IDs (%d) cannot be negative", available)
+	}
+	if int64(len(idMap)) > available {
+		return fmt.Errorf("need alloc %d IDs but only %d available", len(idMap), available)
+	}
+	needRewrite := make([]*int64, 0, len(idMap))
+	reused := make(map[int64]struct{})
+	for upstreamID, ptr := range idMap {
+		if upstreamID >= p.allocedFrom && upstreamID < p.end {
+			if _, exists := p.alloced[upstreamID]; !exists {
+				p.alloced[upstreamID] = struct{}{}
+				*ptr = upstreamID
+				continue
+			} 
+
+			// will there be duplicated upstreamID?
+			if _, exists := reused[upstreamID]; exists {
+				return fmt.Errorf("duplicate upstream ID: %d", upstreamID)
+			}
+			reused[upstreamID] = struct{}{}
+		}
+		needRewrite = append(needRewrite, ptr)
 	}
 
-	result := make([]int64, len(ids))
-    fillIndices := make([]int, 0, len(ids))
-
-    for i, id := range ids {
-        if id >= p.allocedFrom && id < p.end {
-            if _, exists := p.alloced[id]; !exists {
-                p.alloced[id] = struct{}{}
-                result[i] = id
-                continue
-            }
-        }
-        fillIndices = append(fillIndices, i)
+	if int64(len(needRewrite)) > (available - int64(len(p.alloced))) {
+		return fmt.Errorf("need alloc %d IDs but only %d available", len(needRewrite), (available - int64(len(p.alloced))))
 	}
 
-	fillCount := len(fillIndices)
-    if fillCount == 0 {
-        return result, nil
-    }
-
-    available := make([]int64, 0)
-    for id := p.allocedFrom; id < p.end; id++ {
-        if _, exists := p.alloced[id]; !exists {
-            available = append(available, id)
-        }
+	current := p.allocedFrom
+	for _, ptr := range needRewrite {
+		for ; current < p.end; current++ {
+			if _, exists := p.alloced[current]; !exists {
+				p.alloced[current] = struct{}{}
+				*ptr = current
+				current++
+				break
+			}
+		}
 	}
-
-	for i, idx := range fillIndices {
-		id := available[i]
-        p.alloced[id] = struct{}{}
-        result[idx] = id
-	}
-
-	return result, nil
+	return nil
 }

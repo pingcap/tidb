@@ -285,30 +285,38 @@ func (db *DB) reallocTableID(tables []*metautil.Table) error {
 	if len(tables) == 0 {
 		return nil
 	}
+	if db.preallocedIDs == nil {
+		return errors.New("preallocedIDs is nil")
+	}
 
-	ids := make([]int64, 0, 0)
+	modMap := make(map[int64]*int64) 
 	for _, t := range tables {
-		ids = append(ids, t.Info.ID)
-		if t.Info.Partition != nil && t.Info.Partition.Definitions != nil {
-			for _, def := range t.Info.Partition.Definitions {
-				ids = append(ids, def.ID)
+		originalID := t.Info.ID
+		modMap[originalID] = &t.Info.ID
+		if partition := t.Info.Partition; partition != nil {
+			for i := range partition.Definitions {
+				def := &partition.Definitions[i]
+				modMap[def.ID] = &def.ID
 			}
 		}
 	}
 
-	db.preallocedIDs.BatchAlloc(ids)
-
-	if db.preallocedIDs == nil {
-		return errors.New("preallocedIDs is nil")
+	if err := db.preallocedIDs.BatchAlloc(modMap); err != nil {
+		return err
 	}
 	return nil
 }
+
 
 // CreateTables execute a internal CREATE TABLES.
 func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 	ddlTables map[restore.UniqueTableName]bool, supportPolicy bool, policyMap *sync.Map) error {
 	if batchSession, ok := db.se.(glue.BatchCreateTableSession); ok {
 		reallocTbls := map[string][]*model.TableInfo{}
+		// Modify the table ID inplace, would this be too dangerous?
+		if err := db.reallocTableID(tables); err != nil {
+			return errors.Trace(err)
+		}
 		for _, table := range tables {
 			reallocTbls[table.DB.Name.L] = append(reallocTbls[table.DB.Name.L], table.Info)
 			if !supportPolicy {
@@ -325,13 +333,8 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 				ttlInfo.Enable = false
 			}
 		}
-		if len(idReusableTbls) > 0 {
-			if err := batchSession.CreateTables(ctx, idReusableTbls, ddl.WithIDAllocated(true)); err != nil {
-				return err
-			}
-		}
-		if len(idNonReusableTbls) > 0 {
-			if err := batchSession.CreateTables(ctx, idNonReusableTbls); err != nil {
+		if len(reallocTbls) > 0 {
+			if err := batchSession.CreateTables(ctx, reallocTbls, ddl.WithIDAllocated(true)); err != nil {
 				return err
 			}
 		}
