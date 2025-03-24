@@ -102,6 +102,7 @@ func TestAddIndexIngestLimitOneBackend(t *testing.T) {
 		wg.Done()
 	}()
 	wg.Wait()
+	time.Sleep(time.Second * 10)
 	rows := tk.MustQuery("admin show ddl jobs 2;").Rows()
 	require.Len(t, rows, 2)
 	require.True(t, strings.Contains(rows[0][12].(string) /* comments */, "ingest"))
