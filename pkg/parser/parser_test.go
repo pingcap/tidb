@@ -1073,6 +1073,22 @@ AAAAAAAAAAAA5gm5Mg==
 		{"show table t1 partition (p0,p1) distributions", true, "SHOW TABLE `t1` PARTITION(`p0`, `p1`) DISTRIBUTIONS"},
 		{"show table t1 partition (p0,p1) distributions where a=1", true, "SHOW TABLE `t1` PARTITION(`p0`, `p1`) DISTRIBUTIONS WHERE `a`=1"},
 
+		// for distribute table
+		{"distribute table t1", false, ""},
+		{"distribute table t1 partition(p0)", false, ""},
+		{"distribute table t1 partition(p0,p1)", false, ""},
+		{"distribute table t1 partition(p0,p1) engine = tikv", false, ""},
+		{"distribute table t1 rule = leader engine = tikv", true, "DISTRIBUTE TABLE `t1` RULE = `leader` ENGINE = `tikv`"},
+		{"distribute table t1 partition(p0,p1) rule = leader engine = tikv", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`, `p1`) RULE = `leader` ENGINE = `tikv`"},
+		{"distribute table t1 partition(p0) rule = learner engine = tiflash", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`) RULE = `learner` ENGINE = `tiflash`"},
+
+		// for show distribution job(s)
+		{"show distribution jobs 1", false, ""},
+		{"show distribution jobs", true, "SHOW DISTRIBUTION JOBS"},
+		{"show distribution jobs where id > 0", true, "SHOW DISTRIBUTION JOBS WHERE `id`>0"},
+		{"show distribution job 1 where id > 0", false, ""},
+		{"show distribution job 1", true, "SHOW DISTRIBUTION JOB 1"},
+
 		// for show table next_row_id.
 		{"show table t1.t1 next_row_id", true, "SHOW TABLE `t1`.`t1` NEXT_ROW_ID"},
 		{"show table t1 next_row_id", true, "SHOW TABLE `t1` NEXT_ROW_ID"},
