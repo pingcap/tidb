@@ -1484,7 +1484,7 @@ func NewConfig() *Config {
 			DiskQuota:               ByteSize(math.MaxInt64),
 			DuplicateResolution:     NoneOnDup,
 			PausePDSchedulerScope:   PausePDSchedulerScopeTable,
-			BlockSize:               16 * 1024,
+			BlockSize:               DefaultBlockSize,
 			LogicalImportBatchSize:  ByteSize(defaultLogicalImportBatchSize),
 			LogicalImportBatchRows:  defaultLogicalImportBatchRows,
 		},
