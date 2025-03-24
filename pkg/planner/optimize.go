@@ -224,6 +224,21 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 			fp = fpv.Plan
 		} else {
 			fp = core.TryFastPlan(pctx, node)
+			if fp != nil {
+				// If fast plan exists, we bind the setvar hint for execution phase's usage.
+				if len(sessVars.StmtCtx.SetVarHintRestore) == 0 {
+					for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
+						oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
+						if err != nil {
+							sessVars.StmtCtx.AppendWarning(err)
+						}
+						sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
+					}
+					if len(sessVars.StmtCtx.StmtHints.SetVars) > 0 {
+						sessVars.StmtCtx.SetSkipPlanCache("SET_VAR is used in the SQL")
+					}
+				}
+			}
 		}
 		if fp != nil {
 			return fp, fp.OutputNames(), nil
