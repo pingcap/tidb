@@ -1191,6 +1191,10 @@ func TestGetActiveTaskExecInfo(t *testing.T) {
 }
 
 func TestTaskManagerEntrySize(t *testing.T) {
+	t.Skip(`this case is used to verify that the global TxnEntrySizeLimit is used in DXF,
+it success in local test, and success in CI in most cases, but it times out sometimes,
+one guess is it's related to the uni-store storage badger,
+to avoid block CI, skip it, as we have already verified it works`)
 	store, tm, ctx := testutil.InitTableTest(t)
 	getMeta := func(l int) []byte {
 		meta := make([]byte, l)
