@@ -120,6 +120,7 @@ func (ba *bindingAuto) getStmtStatsByPlanDigest(planDigest string) (plan *planIn
 		return nil, err
 	}
 	if len(rows) == 0 {
+		// TODO: read data from workload_schema.hist_stmt_stats in this case if it's enabled.
 		return nil, nil
 	}
 
