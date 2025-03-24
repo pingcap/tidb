@@ -3948,6 +3948,7 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 				return false, errors.Trace(err)
 			}
 
+			// Set all partitioning columns and calculate which partition to write to
 			for colID, offset := range w.writeColOffsetMap {
 				d, ok := w.rowMap[colID]
 				if !ok {

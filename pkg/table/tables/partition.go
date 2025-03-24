@@ -1916,15 +1916,14 @@ func (t *partitionTableWithGivenSets) UpdateRecord(ctx table.MutateContext, txn 
 	return partitionedTableUpdateRecord(ctx, txn, t.partitionedTable, h, currData, newData, touched, t.givenSetPartitions, opts...)
 }
 
-func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t *partitionedTable, h kv.Handle, currData, newData []types.Datum, touched []bool, partitionSelection map[int64]struct{}, opts ...table.UpdateRecordOption) (err error) {
+func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t *partitionedTable, h kv.Handle, currData, newData []types.Datum, touched []bool, partitionSelection map[int64]struct{}, opts ...table.UpdateRecordOption) error {
 	opt := table.NewUpdateRecordOpt(opts...)
 	ectx := ctx.GetExprCtx()
-	var from, to int64
-	from, err = t.locatePartition(ectx.GetEvalCtx(), currData)
+	from, err := t.locatePartition(ectx.GetEvalCtx(), currData)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	to, err = t.locatePartition(ectx.GetEvalCtx(), newData)
+	to, err := t.locatePartition(ectx.GetEvalCtx(), newData)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2034,7 +2033,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 				return errors.Trace(err)
 			}
 		}
-		if !deleteOnly && newTo != 0 {
+		if newTo != 0 && !deleteOnly {
 			_, err = t.getPartition(newTo).addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
 			if err != nil {
 				return errors.Trace(err)
@@ -2108,6 +2107,8 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 			}
 		}
 	}
+	// Set/Add the recordID/_tidb_rowid to newData so it will be used also in the
+	// newTo partition, and all its indexes.
 	if len(newData) > len(t.Cols()) {
 		newData[len(t.Cols())] = types.NewIntDatum(newRecordHandle.IntValue())
 	} else {
