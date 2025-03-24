@@ -263,8 +263,8 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 			}
 			table.SetCol(hist.ID, col)
 			table.ColAndIdxExistenceMap.InsertCol(colInfo.ID, statsVer != statistics.Version0 || ndv > 0 || nullCount > 0)
-			if statsVer != statistics.Version1 {
-				// The LastXXXVersion can be added by ALTER table so its value might be 0, so we also need to update its memory value by the column/index's.
+			if statsVer != statistics.Version0 {
+				// The LastAnalyzeVersion is added by ALTER table so its value might be 0.
 				table.LastAnalyzeVersion = max(table.LastAnalyzeVersion, version)
 				// We will also set int primary key's loaded status to evicted.
 				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
@@ -273,6 +273,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache stats
 				// So we align its status as evicted too.
 				col.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 			}
+			// Otherwise the column's stats is not initialized.
 		}
 	}
 	if table != nil {
