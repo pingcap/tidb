@@ -113,7 +113,7 @@ func (ba *bindingAuto) getPlanExecInfo(planDigest string) (plan *planExecInfo, e
 		return nil, nil
 	}
 	stmtQuery := fmt.Sprintf(`select result_rows, exec_count, processed_keys, total_time, plan
-		from information_schema.tidb_statements_stats where plan_digest = '%v'`, planDigest)
+		from information_schema.cluster_tidb_statements_stats where plan_digest = '%v'`, planDigest)
 	var rows []chunk.Row
 	err = callWithSCtx(ba.sPool, false, func(sctx sessionctx.Context) error {
 		rows, _, err = execRows(sctx, stmtQuery)
