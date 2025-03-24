@@ -84,8 +84,26 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 
 func TestBackendCtxConcurrentUnregister(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
+<<<<<<< HEAD
 	discovery := store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
 	bCtx, err := ingest.LitBackCtxMgr.Register(context.Background(), 1, false, nil, discovery, "test", 1, 0, 0)
+=======
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t (a int);")
+	var realJob *model.Job
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		if job.State == model.JobStateDone && job.Type == model.ActionAddIndex {
+			realJob = job.Clone()
+		}
+	})
+	tk.MustExec("alter table t add index idx(a);")
+	require.NotNil(t, realJob)
+
+	cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, 0)
+	require.NoError(t, err)
+	bCtx, err := ingest.NewBackendCtxBuilder(context.Background(), store, realJob).Build(cfg, bd)
+>>>>>>> d51e00e5bbf (globalsort: reduce number of SST ingested into TiKV (#59870) (#60045))
 	require.NoError(t, err)
 	idxIDs := []int64{1, 2, 3, 4, 5, 6, 7}
 	uniques := make([]bool, 0, len(idxIDs))

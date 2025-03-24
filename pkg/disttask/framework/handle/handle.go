@@ -18,12 +18,14 @@ import (
 	"context"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -234,4 +236,22 @@ func RunWithRetry(
 		}
 	}
 	return lastErr
+}
+
+var nodeResource atomic.Pointer[proto.NodeResource]
+
+// GetNodeResource gets the node resource.
+func GetNodeResource() *proto.NodeResource {
+	return nodeResource.Load()
+}
+
+// SetNodeResource gets the node resource.
+func SetNodeResource(rc *proto.NodeResource) {
+	nodeResource.Store(rc)
+}
+
+func init() {
+	// domain will init this var at runtime, we store it here for test, as some
+	// test might not start domain.
+	nodeResource.Store(proto.NewNodeResource(8, 16*units.GiB, 100*units.GiB))
 }

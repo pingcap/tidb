@@ -42,6 +42,11 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+<<<<<<< HEAD
+=======
+	disthandle "github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+>>>>>>> d51e00e5bbf (globalsort: reduce number of SST ingested into TiKV (#59870) (#60045))
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
@@ -1717,7 +1722,16 @@ func (do *Domain) InitDistTaskLoop() error {
 	do.cancelFns.mu.Lock()
 	do.cancelFns.fns = append(do.cancelFns.fns, cancel)
 	do.cancelFns.mu.Unlock()
+<<<<<<< HEAD
 	executorManager, err := taskexecutor.NewManager(managerCtx, serverID, taskManager)
+=======
+	nodeRes, err := calculateNodeResource()
+	if err != nil {
+		return err
+	}
+	disthandle.SetNodeResource(nodeRes)
+	executorManager, err := taskexecutor.NewManager(managerCtx, serverID, taskManager, nodeRes)
+>>>>>>> d51e00e5bbf (globalsort: reduce number of SST ingested into TiKV (#59870) (#60045))
 	if err != nil {
 		return err
 	}

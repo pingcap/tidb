@@ -174,11 +174,36 @@ func (m *litBackendCtxMgr) EncodeJobSortPath(jobID int64) string {
 	return filepath.Join(m.path, encodeBackendTag(jobID))
 }
 
+<<<<<<< HEAD
 func createLocalBackend(
 	ctx context.Context,
 	cfg *local.BackendConfig,
 	pdSvcDiscovery pd.ServiceDiscovery,
 ) (*local.Backend, error) {
+=======
+// CreateLocalBackend creates a local backend for adding index.
+func CreateLocalBackend(ctx context.Context, store kv.Storage, job *model.Job, checkDup bool, adjustedWorkerConcurrency int) (*local.BackendConfig, *local.Backend, error) {
+	jobSortPath, err := genJobSortPath(job.ID, checkDup)
+	if err != nil {
+		return nil, nil, err
+	}
+	intest.Assert(job.Type == model.ActionAddPrimaryKey ||
+		job.Type == model.ActionAddIndex)
+	intest.Assert(job.ReorgMeta != nil)
+
+	resGroupName := job.ReorgMeta.ResourceGroupName
+	concurrency := job.ReorgMeta.GetConcurrency()
+	maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeed()
+	hasUnique, err := hasUniqueIndex(job)
+	if err != nil {
+		return nil, nil, err
+	}
+	cfg := genConfig(ctx, jobSortPath, LitMemRoot, hasUnique, resGroupName, concurrency, maxWriteSpeed)
+	if adjustedWorkerConcurrency > 0 {
+		cfg.WorkerConcurrency = adjustedWorkerConcurrency
+	}
+
+>>>>>>> d51e00e5bbf (globalsort: reduce number of SST ingested into TiKV (#59870) (#60045))
 	tidbCfg := config.GetGlobalConfig()
 	tls, err := common.NewTLS(
 		tidbCfg.Security.ClusterSSLCA,
