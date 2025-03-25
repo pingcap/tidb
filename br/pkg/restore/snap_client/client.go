@@ -937,7 +937,12 @@ func SortTablesBySchemaID(tables []*metautil.Table) []*metautil.Table {
 	copy(orderedTables, tables)
 
 	sort.SliceStable(orderedTables, func(i, j int) bool {
-		return orderedTables[i].DB.ID < orderedTables[j].DB.ID
+		// first sort by schema ID
+		if orderedTables[i].DB.ID != orderedTables[j].DB.ID {
+			return orderedTables[i].DB.ID < orderedTables[j].DB.ID
+		}
+		// if schema IDs are equal, sort by table ID
+		return orderedTables[i].Info.ID < orderedTables[j].Info.ID
 	})
 
 	return orderedTables
