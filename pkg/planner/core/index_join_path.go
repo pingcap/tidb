@@ -17,7 +17,6 @@ package core
 import (
 	"bytes"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"strings"
 	"unsafe"
 
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"

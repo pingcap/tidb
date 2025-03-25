@@ -772,6 +772,36 @@ func constructIndexHashJoin(
 	return indexHashJoins
 }
 
+func enumerateIndexJoinByOuterIdx(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, outerIdx int) (joins []base.PhysicalPlan) {
+	outerChild, innerChild := p.Children()[outerIdx], p.Children()[1-outerIdx]
+	// 需要 same order
+	all, _ := prop.AllSameOrder()
+	// If the order by columns are not all from outer child, index join cannot promise the order.
+	if !prop.AllColsFromSchema(outerChild.Schema()) || !all {
+		return nil
+	}
+	var (
+		innerJoinKeys []*expression.Column
+		outerJoinKeys []*expression.Column
+	)
+	if outerIdx == 0 {
+		outerJoinKeys, innerJoinKeys, _, _ = p.GetJoinKeys()
+	} else {
+		innerJoinKeys, outerJoinKeys, _, _ = p.GetJoinKeys()
+	}
+	// computed the avgInnerRowCnt
+	var avgInnerRowCnt float64
+	if outerChild.StatsInfo().RowCount > 0 {
+		avgInnerRowCnt = p.EqualCondOutCnt / outerChild.StatsInfo().RowCount
+	}
+	indexJoinProp := &property.IndexJoinRuntimeProp{
+		OtherConditions: p.OtherConditions,
+		InnerJoinKeys:   innerJoinKeys,
+		OuterJoinKeys:   outerJoinKeys,
+		AvgInnerRowCnt:  avgInnerRowCnt,
+	}
+}
+
 // getIndexJoinByOuterIdx will generate index join by outerIndex. OuterIdx points out the outer child.
 // First of all, we'll check whether the inner child is DataSource.
 // Then, we will extract the join keys of p's equal conditions. Then check whether all of them are just the primary key
