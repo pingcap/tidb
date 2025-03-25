@@ -116,8 +116,10 @@ func (ba *bindingAuto) getPlanExecInfo(planDigest string) (plan *planExecInfo, e
 	if planDigest == "" {
 		return nil, nil
 	}
-	stmtQuery := fmt.Sprintf(`select sum(result_rows), sum(exec_count), sum(processed_keys), sum(total_time),
-       any_value(plan) from information_schema.cluster_tidb_statements_stats where plan_digest = '%v'`, planDigest)
+	stmtQuery := fmt.Sprintf(`select cast(sum(result_rows) as signed), cast(sum(exec_count) as signed),
+       cast(sum(processed_keys) as signed), cast(sum(total_time) as signed), any_value(plan)
+       from information_schema.cluster_tidb_statements_stats where plan_digest = '%v'`, planDigest)
+
 	var rows []chunk.Row
 	err = callWithSCtx(ba.sPool, false, func(sctx sessionctx.Context) error {
 		rows, _, err = execRows(sctx, stmtQuery)
@@ -126,7 +128,7 @@ func (ba *bindingAuto) getPlanExecInfo(planDigest string) (plan *planExecInfo, e
 	if err != nil {
 		return nil, err
 	}
-	if len(rows) == 0 {
+	if len(rows) == 0 || rows[0].IsNull(0) {
 		// TODO: read data from workload_schema.hist_stmt_stats in this case if it's enabled.
 		return nil, nil
 	}

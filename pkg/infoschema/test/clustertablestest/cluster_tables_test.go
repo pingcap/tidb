@@ -1246,7 +1246,6 @@ func TestStmtSummaryShowPlanForSQL(t *testing.T) {
 	tk.MustExec(`insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3)`)
 	tk.MustQuery(`select * from t where a=1`)
 	tk.MustExec(`create global binding from history using plan digest '4e3159169cc63c14b139a4e7d72eae1759875c9a9581f94bb2079aae961189cb'`)
-
 	result := tk.MustQuery(`show plan for "select * from t where a = 1"`).Rows()[0]
 	require.Equal(t, result[0], "select * from `test` . `t` where `a` = ?")
 	require.Equal(t, result[1], "use_index(@`sel_1` `test`.`t` )")
