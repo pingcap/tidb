@@ -19,13 +19,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/testkit/testmain"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"go.uber.org/goleak"
-)
-
-import (
-	"github.com/pingcap/tidb/pkg/testkit/testdata"
 )
 
 var testDataMap = make(testdata.BookKeeper)
