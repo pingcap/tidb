@@ -39,8 +39,8 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/tests/realtikvtest"
-	"github.com/stretchr/testify/require"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
 

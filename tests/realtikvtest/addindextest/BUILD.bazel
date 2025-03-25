@@ -20,7 +20,6 @@ go_test(
         "//pkg/testkit/testfailpoint",
         "//tests/realtikvtest",
         "//tests/realtikvtest/testutils",
-        "//tests/realtikvtest/testutils:util",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
