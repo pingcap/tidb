@@ -58,6 +58,18 @@ type VectorIndexInfo struct {
 	DistanceMetric DistanceMetric `json:"distance_metric"`
 }
 
+// ColumnarIndexType is the type of columnar index.
+type ColumnarIndexType uint8
+
+const (
+	// ColumnarIndexTypeNA means this is not a columnar index.
+	ColumnarIndexTypeNA ColumnarIndexType = iota
+	// ColumnarIndexTypeInverted is the inverted index type.
+	ColumnarIndexTypeInverted
+	// ColumnarIndexTypeVector is the vector index type.
+	ColumnarIndexTypeVector
+)
+
 // IndexInfo provides meta data describing a DB index.
 // It corresponds to the statement `CREATE INDEX Name ON Table (Column);`
 // See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
@@ -143,10 +155,18 @@ func (index *IndexInfo) IsPublic() bool {
 	return index.State == StatePublic
 }
 
-// IsTiFlashLocalIndex checks whether the index is a TiFlash local index.
-// For a TiFlash local index, no actual index data need to be written to KV layer.
-func (index *IndexInfo) IsTiFlashLocalIndex() bool {
+// IsColumnarIndex checks whether the index is a columnar index.
+// Columnar index only exists in TiFlash, no actual index data need to be written to KV layer.
+func (index *IndexInfo) IsColumnarIndex() bool {
 	return index.VectorInfo != nil
+}
+
+// GetColumnarIndexType returns the type of columnar index.
+func (index *IndexInfo) GetColumnarIndexType() ColumnarIndexType {
+	if index.VectorInfo != nil {
+		return ColumnarIndexTypeVector
+	}
+	return ColumnarIndexTypeNA
 }
 
 // FindIndexByColumns find IndexInfo in indices which is cover the specified columns.
