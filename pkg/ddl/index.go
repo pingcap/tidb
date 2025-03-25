@@ -354,6 +354,8 @@ func BuildIndexInfo(
 			return nil, errors.Trace(err)
 		}
 		idxInfo.VectorInfo = vectorInfo
+	case model.ColumnarIndexTypeInverted:
+		// do nothing now
 	}
 
 	var err error
@@ -719,7 +721,7 @@ func checkAndBuildIndexInfo(
 	return indexInfo, nil
 }
 
-func (w *worker) onCreateColumnarIndex(jobCtx *jobContext, job *model.Job, columnarIndexType model.ColumnarIndexType) (ver int64, err error) {
+func (w *worker) onCreateColumnarIndex(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	// Handle the rolling back job.
 	if job.IsRollingback() {
 		ver, err = onDropIndex(jobCtx, job)
@@ -745,6 +747,7 @@ func (w *worker) onCreateColumnarIndex(jobCtx *jobContext, job *model.Job, colum
 		return ver, errors.Trace(err)
 	}
 	a := args.IndexArgs[0]
+	columnarIndexType := a.GetColumnarIndexType()
 	if columnarIndexType == model.ColumnarIndexTypeVector {
 		a.IndexPartSpecifications[0].Expr, err = generatedexpr.ParseExpression(a.FuncExpr)
 		if err != nil {
@@ -756,7 +759,7 @@ func (w *worker) onCreateColumnarIndex(jobCtx *jobContext, job *model.Job, colum
 		}()
 	}
 
-	indexInfo, err := checkAndBuildIndexInfo(job, tblInfo, model.ColumnarIndexTypeVector, false, a)
+	indexInfo, err := checkAndBuildIndexInfo(job, tblInfo, columnarIndexType, false, a)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -908,9 +911,9 @@ func (w *worker) checkColumnarIndexProcess(jobCtx *jobContext, tbl table.Table, 
 // checkColumnarIndexProcessOnce checks the backfill process of a columnar index from TiFlash once.
 func (w *worker) checkColumnarIndexProcessOnce(jobCtx *jobContext, tbl table.Table, indexID int64) (
 	isDone bool, notAddedIndexCnt, addedIndexCnt int64, err error) {
-	failpoint.Inject("MockCheckVectorIndexProcess", func(val failpoint.Value) {
+	failpoint.Inject("MockCheckColumnarIndexProcess", func(val failpoint.Value) {
 		if valInt, ok := val.(int); ok {
-			logutil.DDLLogger().Info("MockCheckVectorIndexProcess", zap.Int("val", valInt))
+			logutil.DDLLogger().Info("MockCheckColumnarIndexProcess", zap.Int("val", valInt))
 			if valInt < 0 {
 				failpoint.Return(false, 0, 0, dbterror.ErrTiFlashBackfillIndex.FastGenByArgs("mock a check error"))
 			} else if valInt == 0 {
@@ -1610,11 +1613,11 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 		}
 	case model.StateDeleteReorganization:
 		// reorganization -> absent
-		isTiFlashIndex := false
+		isColumnarIndex := false
 		indexIDs := make([]int64, 0, len(allIndexInfos))
 		for _, indexInfo := range allIndexInfos {
 			if indexInfo.IsColumnarIndex() {
-				isTiFlashIndex = true
+				isColumnarIndex = true
 			}
 			indexInfo.State = model.StateNone
 			// Set column index flag.
@@ -1636,10 +1639,10 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 			return ver, errors.Trace(err)
 		}
 
-		if isTiFlashIndex {
+		if isColumnarIndex {
 			// Send sync schema notification to TiFlash.
 			if err := infosync.SyncTiFlashTableSchema(jobCtx.stepCtx, tblInfo.ID); err != nil {
-				logutil.DDLLogger().Warn("run drop tiflash index but syncing schema failed", zap.Error(err))
+				logutil.DDLLogger().Warn("run drop column index but syncing TiFlash schema failed", zap.Error(err))
 			}
 		}
 
@@ -1678,6 +1681,7 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 			}
 			dropArgs.IndexArgs[0].IndexID = indexIDs[0]
 			dropArgs.IndexArgs[0].IsColumnar = allIndexInfos[0].IsColumnarIndex()
+			dropArgs.IndexArgs[0].ColumnarIndexType = allIndexInfos[0].GetColumnarIndexType()
 			if !allIndexInfos[0].Global {
 				dropArgs.PartitionIDs = getPartitionIDs(tblInfo)
 			}
