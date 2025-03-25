@@ -69,8 +69,8 @@ func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collatio
 	// if the length is 64 and it has no " ", treat it as a digest.
 	var whereCond string
 	sqlOrDigest = strings.TrimSpace(sqlOrDigest)
-	if len(sqlOrDigest) == 64 && strings.Contains(sqlOrDigest, " ") {
-		whereCond = "where sql_digest = ?"
+	if len(sqlOrDigest) == 64 && !strings.Contains(sqlOrDigest, " ") {
+		whereCond = "where sql_digest = %?"
 	} else {
 		p := parser.New()
 		stmtNode, err := p.ParseOneStmt(sqlOrDigest, charset, collation)
@@ -79,7 +79,7 @@ func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collatio
 		}
 		db := utilparser.GetDefaultDB(stmtNode, currentDB)
 		sqlOrDigest, _ = NormalizeStmtForBinding(stmtNode, db, false)
-		whereCond = "where original_sql = ?"
+		whereCond = "where original_sql = %?"
 	}
 	bindings, err := readBindingsFromStorage(ba.sPool, whereCond, sqlOrDigest)
 	if err != nil {
