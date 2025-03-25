@@ -810,7 +810,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 	hgMeta, statsVer, err := HistMetaFromStorageWithHighPriority(sctx, &idx, nil)
 	if hgMeta == nil || err != nil {
 		if hgMeta == nil {
-			statslogutil.StatsSampleLogger().Info(
+			statslogutil.StatsSampleLogger().Warn(
 				"Histogram not found, possibly due to DDL event is not handled, please consider analyze the table",
 				zap.Int64("tableID", idx.TableID),
 				zap.Int64("indexID", idx.ID),
