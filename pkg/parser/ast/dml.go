@@ -3882,12 +3882,12 @@ func (n *DistributeTableStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(")")
 	}
 
-	if len(n.Rule.L) > 0 {
+	if len(n.Rule.L.Value()) > 0 {
 		ctx.WriteKeyWord(" RULE = ")
 		ctx.WriteName(n.Rule.String())
 	}
 
-	if len(n.Engine.L) > 0 {
+	if len(n.Engine.L.Value()) > 0 {
 		ctx.WriteKeyWord(" ENGINE = ")
 		ctx.WriteName(n.Engine.String())
 	}
