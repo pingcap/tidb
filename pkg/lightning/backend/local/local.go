@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
@@ -65,6 +66,7 @@ import (
 	"github.com/tikv/pd/client/pkg/caller"
 	"github.com/tikv/pd/client/pkg/retry"
 	sd "github.com/tikv/pd/client/servicediscovery"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -429,7 +431,7 @@ type BackendConfig struct {
 	// compress type when write or ingest into tikv
 	ConnCompressType config.CompressionType
 	// concurrency of generateJobForRange and import(write & ingest) workers
-	WorkerConcurrency int
+	WorkerConcurrency atomic.Int32
 	// batch kv size when writing to TiKV
 	KVWriteBatchSize       int64
 	RegionSplitBatchSize   int
@@ -474,12 +476,13 @@ type BackendConfig struct {
 
 // NewBackendConfig creates a new BackendConfig.
 func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resourceGroupName, taskType string, raftKV2SwitchModeDuration time.Duration) BackendConfig {
+
 	return BackendConfig{
 		PDAddr:                      cfg.TiDB.PdAddr,
 		LocalStoreDir:               cfg.TikvImporter.SortedKVDir,
 		MaxConnPerStore:             cfg.TikvImporter.RangeConcurrency,
 		ConnCompressType:            cfg.TikvImporter.CompressKVPairs,
-		WorkerConcurrency:           cfg.TikvImporter.RangeConcurrency * 2,
+		WorkerConcurrency:           *atomic.NewInt32(int32(cfg.TikvImporter.RangeConcurrency) * 2),
 		BlockSize:                   int(cfg.TikvImporter.BlockSize),
 		KVWriteBatchSize:            int64(cfg.TikvImporter.SendKVSize),
 		RegionSplitBatchSize:        cfg.TikvImporter.RegionSplitBatchSize,
@@ -504,6 +507,10 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resour
 
 func (c *BackendConfig) adjust() {
 	c.MaxOpenFiles = max(c.MaxOpenFiles, openFilesLowerThreshold)
+}
+
+func (c *BackendConfig) Concurrency() int {
+	return int(c.WorkerConcurrency.Load())
 }
 
 // Backend is a local backend.
@@ -965,7 +972,7 @@ func (local *Backend) generateAndSendJob(
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 
 	dataAndRangeCh := make(chan common.DataAndRanges)
-	conn := local.WorkerConcurrency
+	conn := int(local.WorkerConcurrency.Load())
 	if _, ok := engine.(*external.Engine); ok {
 		// currently external engine will generate a large IngestData, se we lower the
 		// concurrency to pass backpressure to the LoadIngestData goroutine to avoid OOM
@@ -1395,6 +1402,124 @@ var (
 	testJobWg         *sync.WaitGroup
 )
 
+func (local *Backend) doImportWithBalancer(
+	ctx context.Context,
+	engine common.Engine,
+	regionSplitKeys [][]byte,
+	regionSplitSize, regionSplitKeyCnt int64,
+) error {
+	/*
+		 Workflow:
+		 [prepareAndSendJob]---jobToWorkerCh->[storeBalancer(optional)]->[workers]
+							 ^                                             |
+							 |                                     jobFromWorkerCh
+							 |                                             |
+							 |                                             v
+					   [regionJobRetryer]<-------------[dispatchJobGoroutine]-->done
+	*/
+
+	// Unlike a regular linear workflow, this workflow contains a circular path.
+	// Therefore, we cannot stop the entire pipeline by simply closing channels sequentially.
+	// Instead, we rely on a unified error group to manage all goroutines.
+
+	var (
+		workGroup, workerCtx = util.NewErrorGroupWithRecoverWithCtx(ctx)
+		jobWg                sync.WaitGroup
+	)
+
+	jobFromWorkerCh := operator.NewSimpleDataChannel(make(chan *regionJob))
+	jobToWorkerCh := operator.NewSimpleDataChannel(make(chan *regionJob))
+	innerJobToWorkerCh := operator.NewSimpleDataChannel(make(chan *regionJob))
+
+	balancer := newStoreBalanceOperator(workerCtx, workGroup, &jobWg, local)
+	dispatcher := newJobDispatchOperator(workerCtx, workGroup, &jobWg, local, balancer)
+
+	workerConcurrency := int(local.WorkerConcurrency.Load())
+	failpoint.Inject("skipStartWorker", func() {
+		workerConcurrency = 0
+	})
+
+	workers := newJobOperator(
+		workerCtx, workGroup, &jobWg,
+		workerConcurrency,
+		local, balancer,
+	)
+
+	sender := newJobPrepareAndSendOperator(workerCtx, workGroup, &jobWg, local, balancer, workers, engine, regionSplitSize, regionSplitKeyCnt)
+
+	sender.SetSink(jobToWorkerCh)
+	dispatcher.SetSink(jobToWorkerCh)
+	balancer.SetSource(jobToWorkerCh)
+
+	balancer.SetSink(innerJobToWorkerCh)
+	workers.SetSource(innerJobToWorkerCh)
+
+	workers.SetSink(jobFromWorkerCh)
+	dispatcher.SetSource(jobFromWorkerCh)
+
+	pipeline := operator.NewAsyncPipeline(sender, balancer, workers, dispatcher)
+	if err := pipeline.Execute(); err != nil {
+		return err
+	}
+
+	if err := pipeline.Close(); err != nil {
+		log.FromContext(ctx).Error("do import meets error", zap.Error(err))
+		return err
+	}
+
+	return nil
+}
+
+func (local *Backend) doImportWithoutBalancer(
+	ctx context.Context,
+	engine common.Engine,
+	regionSplitKeys [][]byte,
+	regionSplitSize, regionSplitKeyCnt int64,
+) error {
+	var (
+		workGroup, workerCtx = util.NewErrorGroupWithRecoverWithCtx(ctx)
+		jobWg                sync.WaitGroup
+	)
+	/*
+	 [prepareAndSendJob]--->jobToWorkerCh------------->[workers]
+	                            ^                          |
+	                            |                   jobFromWorkerCh
+	                            |                          |
+	                            |                          v
+	                    [regionJobRetryer]<----[dispatchJobGoroutine]---->done
+	*/
+
+	jobFromWorkerCh := operator.NewSimpleDataChannel(make(chan *regionJob))
+	jobToWorkerCh := operator.NewSimpleDataChannel(make(chan *regionJob))
+
+	workers := newJobOperator(workerCtx, workGroup, &jobWg, int(local.WorkerConcurrency.Load()), local, nil)
+	sender := newJobPrepareAndSendOperator(workerCtx, workGroup, &jobWg, local, nil, workers, engine, regionSplitSize, regionSplitKeyCnt)
+	dispatcher := newJobDispatchOperator(workerCtx, workGroup, &jobWg, local, nil)
+
+	sender.SetSink(jobToWorkerCh)
+	workers.SetSource(jobToWorkerCh)
+
+	workers.SetSink(jobFromWorkerCh)
+	dispatcher.SetSource(jobFromWorkerCh)
+	dispatcher.SetSink(jobToWorkerCh)
+
+	pipeline := operator.NewAsyncPipeline(sender, workers, dispatcher)
+	if err := pipeline.Execute(); err != nil {
+		return err
+	}
+
+	if err := pipeline.Close(); err != nil {
+		return err
+	}
+
+	err := workGroup.Wait()
+	if err != nil && !common.IsContextCanceledError(err) {
+		log.FromContext(ctx).Error("do import meets error", zap.Error(err))
+	}
+
+	return nil
+}
+
 func (local *Backend) doImport(
 	ctx context.Context,
 	engine common.Engine,
@@ -1444,6 +1569,12 @@ func (local *Backend) doImport(
 	// close channels.
 	//
 	// 3. the main goroutine can see the error and exit after workGroup.Wait().
+
+	if _, ok := engine.(*Engine); ok {
+		return local.doImportWithBalancer(ctx, engine, regionSplitKeys, regionSplitSize, regionSplitKeyCnt)
+	}
+	return local.doImportWithoutBalancer(ctx, engine, regionSplitKeys, regionSplitSize, regionSplitKeyCnt)
+
 	var (
 		workGroup, workerCtx = util.NewErrorGroupWithRecoverWithCtx(ctx)
 		// jobToWorkerCh and jobFromWorkerCh are unbuffered so jobs will not be
@@ -1536,7 +1667,7 @@ func (local *Backend) doImport(
 		failpoint.Goto("afterStartWorker")
 	})
 
-	for i := 0; i < local.WorkerConcurrency; i++ {
+	for i := 0; i < int(local.WorkerConcurrency.Load()); i++ {
 		workGroup.Go(func() error {
 			toCh := jobToWorkerCh
 			var afterExecuteJob func([]*metapb.Peer)

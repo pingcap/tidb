@@ -50,7 +50,6 @@ func genConfig(
 		LocalStoreDir:     jobSortPath,
 		ResourceGroupName: resourceGroup,
 		MaxConnPerStore:   concurrency,
-		WorkerConcurrency: concurrency * 2,
 		KeyspaceName:      tidb.GetGlobalKeyspaceName(),
 		// We disable the switch TiKV mode feature for now, because the impact is not
 		// fully tested.
@@ -72,8 +71,9 @@ func genConfig(
 		StoreWriteBWLimit:           maxWriteSpeed,
 	}
 	// Each backend will build a single dir in lightning dir.
+	cfg.WorkerConcurrency.Store(int32(concurrency * 2))
 	if ImporterRangeConcurrencyForTest != nil {
-		cfg.WorkerConcurrency = int(ImporterRangeConcurrencyForTest.Load()) * 2
+		cfg.WorkerConcurrency.Store(ImporterRangeConcurrencyForTest.Load() * 2)
 	}
 	adjustImportMemory(ctx, memRoot, cfg)
 	if unique {
@@ -146,12 +146,12 @@ func adjustImportMemory(ctx context.Context, memRoot MemRoot, cfg *local.Backend
 		return
 	}
 
-	defaultMemSize := int64(int(cfg.LocalWriterMemCacheSize) * cfg.WorkerConcurrency / 2)
+	defaultMemSize := int64(int(cfg.LocalWriterMemCacheSize) * cfg.Concurrency() / 2)
 	defaultMemSize += 4 * int64(cfg.MemTableSize)
 	logutil.Logger(ctx).Info(LitInfoInitMemSetting,
 		zap.Int64("local writer memory cache size", cfg.LocalWriterMemCacheSize),
 		zap.Int("engine memory cache size", cfg.MemTableSize),
-		zap.Int("worker concurrency", cfg.WorkerConcurrency))
+		zap.Int("worker concurrency", cfg.Concurrency()))
 
 	maxLimit := memRoot.MaxMemoryQuota()
 	scale = defaultMemSize / maxLimit
@@ -166,13 +166,13 @@ func adjustImportMemory(ctx context.Context, memRoot MemRoot, cfg *local.Backend
 	logutil.Logger(ctx).Info(LitInfoChgMemSetting,
 		zap.Int64("local writer memory cache size", cfg.LocalWriterMemCacheSize),
 		zap.Int("engine memory cache size", cfg.MemTableSize),
-		zap.Int("worker concurrency", cfg.WorkerConcurrency))
+		zap.Int("worker concurrency", cfg.Concurrency()))
 }
 
 // tryAggressiveMemory lightning memory parameters according memory root's max limitation.
 func tryAggressiveMemory(ctx context.Context, memRoot MemRoot, cfg *local.BackendConfig) bool {
 	var defaultMemSize int64
-	defaultMemSize = int64(int(cfg.LocalWriterMemCacheSize) * cfg.WorkerConcurrency / 2)
+	defaultMemSize = int64(int(cfg.LocalWriterMemCacheSize) * cfg.Concurrency() / 2)
 	defaultMemSize += int64(cfg.MemTableSize)
 
 	if (defaultMemSize + memRoot.CurrentUsage()) > memRoot.MaxMemoryQuota() {
@@ -181,7 +181,7 @@ func tryAggressiveMemory(ctx context.Context, memRoot MemRoot, cfg *local.Backen
 	logutil.Logger(ctx).Info(LitInfoChgMemSetting,
 		zap.Int64("local writer memory cache size", cfg.LocalWriterMemCacheSize),
 		zap.Int("engine memory cache size", cfg.MemTableSize),
-		zap.Int("worker concurrency", cfg.WorkerConcurrency))
+		zap.Int("worker concurrency", cfg.Concurrency()))
 	return true
 }
 

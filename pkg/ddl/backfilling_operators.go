@@ -114,6 +114,12 @@ func (ctx *OperatorCtx) onError(err error) {
 	ctx.cancel()
 }
 
+func (ctx *OperatorCtx) OnError(err error) {
+	tracedErr := errors.Trace(err)
+	ctx.err.CompareAndSwap(nil, &tracedErr)
+	ctx.cancel()
+}
+
 // OperatorErr returns the error of the operator.
 func (ctx *OperatorCtx) OperatorErr() error {
 	err := ctx.err.Load()
