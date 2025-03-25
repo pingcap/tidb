@@ -94,14 +94,16 @@ func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collatio
 			continue
 		}
 		autoBinding := &BindingPlanInfo{Binding: binding}
-		if pInfo != nil && pInfo.ExecCount > 0 {
+		if pInfo != nil && pInfo.ExecCount > 0 { // pInfo could be nil when stmt_stats' data is incomplete.
 			autoBinding.Plan = pInfo.Plan
 			autoBinding.ExecTimes = pInfo.ExecCount
 			autoBinding.AvgLatency = float64(pInfo.TotalTime) / float64(pInfo.ExecCount)
 			autoBinding.AvgScanRows = float64(pInfo.ProcessedKeys) / float64(pInfo.ExecCount)
 			autoBinding.AvgReturnedRows = float64(pInfo.ResultRows) / float64(pInfo.ExecCount)
-			autoBinding.LatencyPerReturnRow = autoBinding.AvgLatency / autoBinding.AvgReturnedRows
-			autoBinding.ScanRowsPerReturnRow = autoBinding.AvgScanRows / autoBinding.AvgReturnedRows
+			if autoBinding.AvgReturnedRows > 0 {
+				autoBinding.LatencyPerReturnRow = autoBinding.AvgLatency / autoBinding.AvgReturnedRows
+				autoBinding.ScanRowsPerReturnRow = autoBinding.AvgScanRows / autoBinding.AvgReturnedRows
+			}
 		}
 		bindingPlans = append(bindingPlans, autoBinding)
 	}
