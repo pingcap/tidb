@@ -116,8 +116,8 @@ func (ba *bindingAuto) getPlanExecInfo(planDigest string) (plan *planExecInfo, e
 	if planDigest == "" {
 		return nil, nil
 	}
-	stmtQuery := fmt.Sprintf(`select result_rows, exec_count, processed_keys, total_time, plan
-		from information_schema.cluster_tidb_statements_stats where plan_digest = '%v'`, planDigest)
+	stmtQuery := fmt.Sprintf(`select sum(result_rows), sum(exec_count), sum(processed_keys), sum(total_time),
+       any_value(plan) from information_schema.cluster_tidb_statements_stats where plan_digest = '%v'`, planDigest)
 	var rows []chunk.Row
 	err = callWithSCtx(ba.sPool, false, func(sctx sessionctx.Context) error {
 		rows, _, err = execRows(sctx, stmtQuery)
@@ -130,17 +130,13 @@ func (ba *bindingAuto) getPlanExecInfo(planDigest string) (plan *planExecInfo, e
 		// TODO: read data from workload_schema.hist_stmt_stats in this case if it's enabled.
 		return nil, nil
 	}
-
-	plan = new(planExecInfo)
-	for _, row := range rows {
-		// Sum them up if there are multiple records.
-		plan.ResultRows += row.GetInt64(0)
-		plan.ExecCount += row.GetInt64(1)
-		plan.ProcessedKeys += row.GetInt64(2)
-		plan.TotalTime += row.GetInt64(3)
-		plan.Plan = row.GetString(4)
-	}
-	return plan, nil
+	return &planExecInfo{
+		ResultRows:    rows[0].GetInt64(0),
+		ExecCount:     rows[0].GetInt64(1),
+		ProcessedKeys: rows[0].GetInt64(2),
+		TotalTime:     rows[0].GetInt64(3),
+		Plan:          rows[0].GetString(4),
+	}, nil
 }
 
 // planExecInfo represents the plan info from information_schema.tidb_statements_stats table.
