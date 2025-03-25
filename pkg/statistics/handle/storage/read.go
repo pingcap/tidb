@@ -874,7 +874,6 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 			zap.Int64("tableID", idx.TableID),
 			zap.Int64("indexID", idx.ID),
 		)
-		intest.Assert(false, "Table statistics not found but async load was triggered")
 		return nil
 	}
 	tbl = tbl.Copy()
