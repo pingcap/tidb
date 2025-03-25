@@ -656,7 +656,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 	statsTbl, ok := statsHandle.Get(col.TableID)
 	if !ok {
 		// This could happen when the table is dropped after the async load is triggered.
-		statslogutil.StatsLogger().Info(
+		statslogutil.StatsSampleLogger().Info(
 			"Table statistics item not found, possibly due to table being dropped",
 			zap.Int64("tableID", col.TableID),
 			zap.Int64("columnID", col.ID),
@@ -670,7 +670,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 	tbl, ok := statsHandle.TableInfoByID(is, col.TableID)
 	if !ok {
 		// This could happen when the table is dropped after the async load is triggered.
-		statslogutil.StatsLogger().Info(
+		statslogutil.StatsSampleLogger().Info(
 			"Table information not found, possibly due to table being dropped",
 			zap.Int64("tableID", col.TableID),
 			zap.Int64("columnID", col.ID),
@@ -681,7 +681,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 	colInfo := tblInfo.GetColumnByID(col.ID)
 	if colInfo == nil {
 		// This could happen when the column is dropped after the async load is triggered.
-		statslogutil.StatsLogger().Info(
+		statslogutil.StatsSampleLogger().Info(
 			"Column information not found, possibly due to column being dropped",
 			zap.Int64("tableID", col.TableID),
 			zap.Int64("columnID", col.ID),
@@ -756,7 +756,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 	statsTbl, ok = statsHandle.Get(col.TableID)
 	if !ok {
 		// This could happen when the table is dropped after the async load is triggered.
-		statslogutil.StatsLogger().Info(
+		statslogutil.StatsSampleLogger().Info(
 			"Table statistics item not found, possibly due to table being dropped",
 			zap.Int64("tableID", col.TableID),
 			zap.Int64("columnID", col.ID),
@@ -781,7 +781,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 	})
 	asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 	if col.IsSyncLoadFailed {
-		logutil.BgLogger().Warn("Column histogram loaded asynchronously after sync load failure",
+		statslogutil.StatsLogger().Warn("Column histogram loaded asynchronously after sync load failure",
 			zap.Int64("tableID", colHist.PhysicalID),
 			zap.Int64("columnID", colHist.Info.ID),
 			zap.String("columnName", colHist.Info.Name.O))
@@ -795,7 +795,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 	tbl, ok := statsHandle.Get(idx.TableID)
 	if !ok {
 		// This could happen when the table is dropped after the async load is triggered.
-		statslogutil.StatsLogger().Info(
+		statslogutil.StatsSampleLogger().Info(
 			"Table statistics item not found, possibly due to table being dropped",
 			zap.Int64("tableID", idx.TableID),
 			zap.Int64("indexID", idx.ID),
@@ -832,7 +832,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 	idxInfo := tblInfo.Meta().FindIndexByID(idx.ID)
 	if idxInfo == nil {
 		// This could happen when the index is dropped after the async load is triggered.
-		statslogutil.StatsLogger().Info(
+		statslogutil.StatsSampleLogger().Info(
 			"Index information not found, possibly due to index being dropped",
 			zap.Int64("tableID", idx.TableID),
 			zap.Int64("indexID", idx.ID),
@@ -869,7 +869,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 	tbl, ok = statsHandle.Get(idx.TableID)
 	if !ok {
 		// This could happen when the table is dropped after the async load is triggered.
-		statslogutil.StatsLogger().Info(
+		statslogutil.StatsSampleLogger().Info(
 			"Table statistics item not found, possibly due to table being dropped",
 			zap.Int64("tableID", idx.TableID),
 			zap.Int64("indexID", idx.ID),
@@ -887,7 +887,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 	})
 	asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 	if idx.IsSyncLoadFailed {
-		logutil.BgLogger().Warn("Index histogram loaded asynchronously after sync load failure",
+		statslogutil.StatsLogger().Warn("Index histogram loaded asynchronously after sync load failure",
 			zap.Int64("tableID", idx.TableID),
 			zap.Int64("indexID", idxHist.Info.ID),
 			zap.String("indexName", idxHist.Info.Name.O))
