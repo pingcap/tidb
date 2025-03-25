@@ -33,7 +33,7 @@ var (
 	deleteFileByPrefix = flag.String("deleteFileByPrefix", "", "Delete all files with the specific prefix")
 	deleteAfterGen     = flag.Bool("deleteAfterGen", false, "Delete all files after generating (TEST ONLY!)")
 
-	tableInfo           = flag.String("tableInfo", "/home/admin/template.sql", "Path to table information")
+	tableInfo           = flag.String("tableInfo", "/home/admin/table_info.csv", "Path to table information")
 	localPath           = flag.String("localPath", "", "Local path to write file")
 	fileName            = flag.String("fileName", "testCSVWriter", "Base file name")
 	fileNameSuffixStart = flag.Int("fileNameSuffixStart", 0, "Start of file name suffix")
