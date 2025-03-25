@@ -366,8 +366,7 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
 		ttlInfo.Enable = false
 	}
 
-	reuseID := db.canReuseTableID(table.Info)
-	err := db.se.CreateTable(ctx, table.DB.Name, table.Info, ddl.WithIDAllocated(reuseID))
+	err := db.se.CreateTable(ctx, table.DB.Name, table.Info, ddl.WithIDAllocated(true))
 	if err != nil {
 		log.Error("create table failed",
 			zap.Stringer("db", table.DB.Name),

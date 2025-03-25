@@ -1256,15 +1256,9 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			if !ok {
 				return
 			}
-			f, osErr := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, os.ModePerm)
+			_, osErr := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, os.ModePerm)
 			if osErr != nil {
 				log.Warn("failed to create file", zap.Error(osErr))
-				return
-			}
-			msg := []byte("schedulers removed\n")
-			_, err = f.Write(msg)
-			if err != nil {
-				log.Warn("failed to write data to file", zap.Error(err))
 				return
 			}
 		}()

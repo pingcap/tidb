@@ -101,7 +101,7 @@ func (p *PreallocIDs) BatchAlloc(idMap map[int64]*int64) error {
 		return fmt.Errorf("need alloc %d IDs but only %d available", len(idMap), available)
 	}
 	needRewrite := make([]*int64, 0, len(idMap))
-	reused := make(map[int64]struct{})
+	dups := make(map[int64]struct{})
 	for upstreamID, ptr := range idMap {
 		if upstreamID >= p.allocedFrom && upstreamID < p.end {
 			if _, exists := p.alloced[upstreamID]; !exists {
@@ -111,10 +111,10 @@ func (p *PreallocIDs) BatchAlloc(idMap map[int64]*int64) error {
 			} 
 
 			// will there be duplicated upstreamID?
-			if _, exists := reused[upstreamID]; exists {
+			if _, exists := dups[upstreamID]; exists {
 				return fmt.Errorf("duplicate upstream ID: %d", upstreamID)
 			}
-			reused[upstreamID] = struct{}{}
+			dups[upstreamID] = struct{}{}
 		}
 		needRewrite = append(needRewrite, ptr)
 	}
