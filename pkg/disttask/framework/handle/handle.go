@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -77,7 +76,6 @@ func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, co
 	if err != nil {
 		return nil, err
 	}
-	metrics.UpdateMetricsForAddTask(&task.TaskBase)
 
 	NotifyTaskChange()
 	return task, nil
