@@ -66,10 +66,13 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *logicalop.L
 			return nil
 		}
 	}
-	schemaByGroupby := expression.NewSchema(agg.GetGroupByCols()...)
+	schemas := agg.GetGroupByCols()
+
+	schemaByGroupby := expression.NewSchema(schemas...)
 	coveredByUniqueKey := false
 	var uniqueKey expression.KeyInfo
-	for _, key := range agg.Children()[0].Schema().PKOrUK {
+	tmp := agg.Children()[0].Schema()
+	for _, key := range tmp.PKOrUK {
 		if schemaByGroupby.ColumnsIndices(key) != nil {
 			coveredByUniqueKey = true
 			uniqueKey = key
@@ -77,17 +80,26 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *logicalop.L
 		}
 	}
 	if coveredByUniqueKey {
-		if a.oldAggEliminationCheck && !CheckCanConvertAggToProj(agg) {
-			return nil
-		}
-		// GroupByCols has unique key, so this aggregation can be removed.
-		if ok, proj := ConvertAggToProj(agg, agg.Schema()); ok {
-			proj.SetChildren(agg.Children()[0])
-			appendAggregationEliminateTraceStep(agg, proj, uniqueKey, opt)
-			return proj
+		if len(schemas) == 1 {
+			if a.oldAggEliminationCheck && !CheckCanConvertAggToProj(agg) {
+				return nil
+			}
+			// GroupByCols has unique key, so this aggregation can be removed.
+			if ok, proj := ConvertAggToProj(agg, agg.Schema()); ok {
+				proj.SetChildren(agg.Children()[0])
+				appendAggregationEliminateTraceStep(agg, proj, uniqueKey, opt)
+				return proj
+			}
 		}
 	}
 	return nil
+}
+
+func (a *aggregationEliminateChecker) tryToSimplyAggregation(agg *logicalop.LogicalAggregation) {
+	fd := agg.ExtractFD()
+	if !agg.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("fd: ", fd)
+	}
 }
 
 // tryToEliminateDistinct will eliminate distinct in the aggregation function if the aggregation args
@@ -273,7 +285,11 @@ func (a *AggregationEliminator) Optimize(ctx context.Context, p base.LogicalPlan
 	if !ok {
 		return p, planChanged, nil
 	}
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	a.tryToEliminateDistinct(agg, opt)
+	a.tryToSimplyAggregation(agg)
 	if proj := a.tryToEliminateAggregation(agg, opt); proj != nil {
 		return proj, planChanged, nil
 	}

@@ -265,3 +265,63 @@ FROM t1 AS table1
 WHERE (EXISTS (SELECT SUBQUERY2_t1.a1 AS SUBQUERY2_field1 FROM t1 AS SUBQUERY2_t1)) OR table1.b1 >= 55
 GROUP BY field1;`).Check(testkit.Rows("0"))
 }
+
+func TestIssue55203(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec(`CREATE TABLE a (
+    id INT NOT NULL,
+    pk INT PRIMARY KEY,
+    col1 VARCHAR(255),
+    col2 VARCHAR(255),
+    col3 VARCHAR(255)
+);`)
+	tk.MustExec(`CREATE TABLE b (
+    id INT NOT NULL,
+    col4 VARCHAR(255),
+    col5 VARCHAR(255),
+    PRIMARY KEY (id)
+);`)
+	tk.MustExec("analyze table a all columns")
+	tk.MustExec("analyze table b all columns")
+	tk.MustQuery(`EXPLAIN format='brief' SELECT
+    a.pk,
+    a.col1,
+    COUNT(*)
+FROM
+    a
+JOIN
+    b
+ON
+    a.id = b.id
+GROUP BY
+    a.pk,
+    a.col1;`).Check(testkit.Rows(
+		"Projection 8000.00 root  test.a.pk, test.a.col1, Column#9",
+		"└─HashAgg 8000.00 root  group by:test.a.col1, test.a.pk, funcs:count(1)->Column#9, funcs:firstrow(test.a.pk)->test.a.pk, funcs:firstrow(test.a.col1)->test.a.col1",
+		"  └─HashJoin 12500.00 root  inner join, equal:[eq(test.a.id, test.b.id)]",
+		"    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+		"    │ └─TableFullScan 10000.00 cop[tikv] table:b keep order:false, stats:pseudo",
+		"    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+		"      └─TableFullScan 10000.00 cop[tikv] table:a keep order:false, stats:pseudo"))
+}
+
+func TestIssueABC(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t1 (c1 int primary key, c2 int, c3 int, index c2 (c2));")
+	tk.MustExec("create table t2 (c1 int unique, c2 int);")
+	tk.MustQuery("explain format = 'brief' select a.c1, a.c2, a.c3, count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1, a.c2, a.c3;").
+		Check(testkit.Rows(
+			"Projection 8000.00 root  test.t1.c1, test.t1.c2, test.t1.c3, Column#7",
+			"└─HashAgg 8000.00 root  group by:test.t1.c1, test.t1.c2, test.t1.c3, funcs:count(test.t2.c2)->Column#7, funcs:firstrow(test.t1.c1)->test.t1.c1, funcs:firstrow(test.t1.c2)->test.t1.c2, funcs:firstrow(test.t1.c3)->test.t1.c3",
+			"  └─Projection 12487.50 root  test.t1.c1, test.t1.c2, test.t1.c3, test.t2.c2",
+			"    └─HashJoin 12487.50 root  inner join, equal:[eq(test.t2.c2, test.t1.c1)]",
+			"      ├─TableReader(Build) 9990.00 root  data:Selection",
+			"      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.c2))",
+			"      │   └─TableFullScan 10000.00 cop[tikv] table:b keep order:false, stats:pseudo",
+			"      └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+			"        └─TableFullScan 10000.00 cop[tikv] table:a keep order:false, stats:pseudo"))
+}
