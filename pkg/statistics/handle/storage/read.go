@@ -610,7 +610,7 @@ func LoadNeededHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, sta
 			err = loadNeededIndexHistograms(sctx, is, statsHandle, item.TableItemID, loadFMSketch)
 		}
 		if err != nil {
-			statslogutil.StatsLogger().Error("load needed histogram failed",
+			statslogutil.StatsSampleLogger().Error("load needed histogram failed",
 				zap.Error(err),
 				zap.Int64("tableID", item.TableID),
 				zap.Int64("histID", item.ID),
