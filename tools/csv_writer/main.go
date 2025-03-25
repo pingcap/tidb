@@ -76,22 +76,17 @@ func init() {
 	seed := time.Now().UnixNano()
 	faker = gofakeit.New(seed)
 	log.Printf("Faker seed: %d", seed)
-	//loadColNullRatio()
 }
 
 // Column fields is read only
 type Column struct {
-	Name string
-	Type string
-	//Enum     []string // For ENUM type
-	IsPK     bool
-	IsUnique bool
-	Order    string
-	//Len      int     // varchar(999)
-	StdDev float64 // StdDev=1.0, mean=0.0
-	Mean   float64
-	//NotNull  bool
-
+	Name      string
+	Type      string
+	IsPK      bool
+	IsUnique  bool
+	Order     string
+	StdDev    float64
+	Mean      float64
 	MinLen    int
 	MaxLen    int
 	NullRatio int
@@ -204,7 +199,7 @@ func (t *Task) generateValueByCol(col *Column, num int, res []string) {
 func generateLetterWithNum(minLen, maxLen int) string {
 	var builder strings.Builder
 
-	length := faker.Number(minLen, maxLen) // Random length for varbinary
+	length := faker.Number(minLen, maxLen) // Random length
 	// If length is less than or equal to 1000, generate directly
 	if length <= 1000 {
 		builder.WriteString(faker.Regex(fmt.Sprintf("[a-zA-Z0-9]{%d}", length)))
@@ -617,11 +612,7 @@ func generatorWorker(tasksCh <-chan Task, resultsCh chan<- Result, workerID int,
 		// Set the length of the slice to count
 		values := buf[:colNum]
 		for i, col := range task.cols {
-			//if col.IsPK {
-			//	generatePrimaryKey(task.begin, task.end, values[i]) // todo: remove
-			//} else {
 			task.generateValueByCol(col, count, values[i])
-			//}
 		}
 		log.Printf("Generator %d: Processed %s, primary key range [%d, %d), generated %d rows, elapsed time: %v",
 			workerID, task.fileName, task.begin, task.end, count, time.Since(startTime))
@@ -823,7 +814,7 @@ func main() {
 		return
 	}
 
-	// Fetch  file from S3
+	// Fetch file from S3
 	if *fetchFile != "" {
 		if *localPath == "" {
 			log.Fatal("localPath must be provided when fetching a file")
