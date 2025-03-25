@@ -2747,6 +2747,7 @@ func (w *worker) updateDistTaskRowCount(taskKey string, jobID int64) {
 	w.getReorgCtx(jobID).setRowCount(rowCount)
 }
 
+<<<<<<< HEAD
 // submitAndWaitTask submits a task and wait for it to finish.
 func submitAndWaitTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, targetScope string, taskMeta []byte) error {
 	task, err := handle.SubmitTask(ctx, taskKey, taskType, concurrency, targetScope, taskMeta)
@@ -2756,6 +2757,8 @@ func submitAndWaitTask(ctx context.Context, taskKey string, taskType proto.TaskT
 	return handle.WaitTaskDoneOrPaused(ctx, task.ID)
 }
 
+=======
+>>>>>>> b08a92082fe (disttask: fix task metrics for distributed execute framework panel (#59940))
 func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysicalTableID int64) (int64, kv.Key, kv.Key, error) {
 	pi := t.Meta().GetPartitionInfo()
 	if pi == nil {
