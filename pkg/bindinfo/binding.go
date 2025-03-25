@@ -266,6 +266,27 @@ func (*tableNameCollector) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 
+// fillBindingPlanDigest does the best efforts to fill binding's plan_digest.
+func fillBindingPlanDigest(sctx sessionctx.Context, binding *Binding) {
+	if binding.PlanDigest != "" {
+		return
+	}
+	defer func(originalValue bool) {
+		sctx.GetSessionVars().UsePlanBaselines = originalValue
+	}(sctx.GetSessionVars().UsePlanBaselines)
+
+	sctx.GetSessionVars().UsePlanBaselines = false
+	p := parser.New()
+	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
+	if stmt, err := p.ParseOneStmt(binding.BindSQL, charset, collation); err == nil {
+		if !hasParam(stmt) {
+			// if there is '?' from `create binding using select a from t where a=?`,
+			// the final plan digest might be incorrect.
+			binding.PlanDigest, _ = PlanDigestFunc(sctx, stmt)
+		}
+	}
+}
+
 // prepareHints builds ID and Hint for Bindings. If sctx is not nil, we check if
 // the BindSQL is still valid.
 func prepareHints(sctx sessionctx.Context, binding *Binding) (rerr error) {

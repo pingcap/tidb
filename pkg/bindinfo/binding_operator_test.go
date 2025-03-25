@@ -55,6 +55,35 @@ func TestBindingCache(t *testing.T) {
 	require.Equal(t, 1, len(dom.BindingHandle().GetAllBindings()))
 }
 
+func TestCreateBindingPlanDigest(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, c int, key(a), key(b))`)
+
+	checkPlanDigest := func(planDigest string) {
+		results := tk.MustQuery(`show global bindings`).Rows()
+		require.Len(t, results, 1)
+		require.Equal(t, planDigest, results[0][10])
+	}
+
+	tk.MustExec(`create global binding using select /*+ use_index(t, a) */ * from t where a=1 and b=1`)
+	checkPlanDigest(`0d6e97fb1191bbd08dddefa7bd007ec0c422b1416b152662768f43e64a9958a6`)
+	tk.MustExec(`create global binding using select /*+ use_index(t, b) */ * from t where a=1 and b=1`)
+	checkPlanDigest(`0464c53b374260d178c7e189a2bb4e911d248b2be163b45e464f96d888a52bb1`)
+	tk.MustExec(`create global binding using select /*+ use_index(t) */ * from t where a=1 and b=1`)
+	checkPlanDigest(`b4ad8081b85c4f885ed3413755eec63b3e7fdb825e51c0c384060bcaf45f7365`)
+	tk.MustExec(`drop global binding for select * from t where a=1 and b=1`)
+
+	// can't work if there are question markers '?'.
+	tk.MustExec(`create global binding using select /*+ use_index(t, a) */ * from t where a in (?, ?, ?) and b=?`)
+	checkPlanDigest(``)
+	tk.MustExec(`create global binding using select /*+ use_index(t, b) */ * from t where a in (?, ?, ?) and b=?`)
+	checkPlanDigest(``)
+	tk.MustExec(`create global binding using select /*+ use_index(t) */ * from t where a in (?, ?, ?) and b=?`)
+	checkPlanDigest(``)
+}
+
 func TestBindingLastUpdateTime(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

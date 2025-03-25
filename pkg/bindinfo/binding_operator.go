@@ -20,11 +20,15 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 )
+
+// PlanDigestFunc is used to get the plan digest of this SQL.
+var PlanDigestFunc func(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest string, err error)
 
 // BindingOperator is used to operate (create/drop/update/GC) bindings.
 type BindingOperator interface {
@@ -61,6 +65,7 @@ func (op *bindingOperator) CreateBinding(sctx sessionctx.Context, bindings []*Bi
 		if err := prepareHints(sctx, binding); err != nil {
 			return err
 		}
+		fillBindingPlanDigest(sctx, binding)
 	}
 	defer func() {
 		if err == nil {
