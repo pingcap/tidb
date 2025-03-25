@@ -26,7 +26,8 @@ import (
 	"go.uber.org/zap"
 )
 
-// BindingPlanInfo represents the binding plan info.
+// BindingPlanInfo contains the binding info and its corresponding plan execution info, which is used by
+// "SHOW PLAN FOR <SQL>" to help users understand the historical plans for a specific SQL.
 type BindingPlanInfo struct {
 	*Binding
 
