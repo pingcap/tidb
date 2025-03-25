@@ -67,6 +67,7 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *logicalop.L
 		}
 	}
 	schemas := agg.GetGroupByCols()
+
 	schemaByGroupby := expression.NewSchema(schemas...)
 	coveredByUniqueKey := false
 	var uniqueKey expression.KeyInfo
@@ -79,14 +80,16 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *logicalop.L
 		}
 	}
 	if coveredByUniqueKey {
-		if a.oldAggEliminationCheck && !CheckCanConvertAggToProj(agg) {
-			return nil
-		}
-		// GroupByCols has unique key, so this aggregation can be removed.
-		if ok, proj := ConvertAggToProj(agg, agg.Schema()); ok {
-			proj.SetChildren(agg.Children()[0])
-			appendAggregationEliminateTraceStep(agg, proj, uniqueKey, opt)
-			return proj
+		if len(schemas) == 1 {
+			if a.oldAggEliminationCheck && !CheckCanConvertAggToProj(agg) {
+				return nil
+			}
+			// GroupByCols has unique key, so this aggregation can be removed.
+			if ok, proj := ConvertAggToProj(agg, agg.Schema()); ok {
+				proj.SetChildren(agg.Children()[0])
+				appendAggregationEliminateTraceStep(agg, proj, uniqueKey, opt)
+				return proj
+			}
 		}
 	}
 	return nil
