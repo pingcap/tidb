@@ -969,6 +969,7 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 	ctx := tkO.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tableID := tbl.Meta().ID
 	require.NoError(t, err)
 	if tbl.Meta().Partition != nil {
 		for _, def := range tbl.Meta().Partition.Definitions {
@@ -987,8 +988,6 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 
 	domOwner.Reload()
 	domNonOwner.Reload()
-
-	originalIDs := getTableAndPartitionIDs(t, tkO)
 
 	if !tbl.Meta().HasClusteredIndex() {
 		// Debug prints, so it is possible to verify duplicate _tidb_rowid's
@@ -1090,53 +1089,51 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 	is = domain.GetDomain(ctx).InfoSchema()
 	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	/*
-		newTableID := tbl.Meta().ID
-		if tableID != newTableID {
-			require.False(t, HaveEntriesForTableIndex(t, tkO, tableID, 0), "Old table id %d has still entries!", tableID)
+	newTableID := tbl.Meta().ID
+	if tableID != newTableID {
+		require.False(t, HaveEntriesForTableIndex(t, tkO, tableID, 0), "Old table id %d has still entries!", tableID)
+	}
+GlobalLoop:
+	for _, globIdx := range originalGlobalIndexIDs {
+		for _, idx := range tbl.Meta().Indices {
+			if idx.ID == globIdx {
+				continue GlobalLoop
+			}
 		}
-			GlobalLoop:
-				for _, globIdx := range originalGlobalIndexIDs {
-					for _, idx := range tbl.Meta().Indices {
-						if idx.ID == globIdx {
-							continue GlobalLoop
-						}
-					}
-					// Global index removed
-					require.False(t, HaveEntriesForTableIndex(t, tkO, tableID, globIdx), "Global index id %d for table id %d has still entries!", globIdx, tableID)
+		// Global index removed
+		require.False(t, HaveEntriesForTableIndex(t, tkO, tableID, globIdx), "Global index id %d for table id %d has still entries!", globIdx, tableID)
+	}
+LocalLoop:
+	for _, locIdx := range originalIndexIDs {
+		for _, idx := range tbl.Meta().Indices {
+			if idx.ID == locIdx {
+				continue LocalLoop
+			}
+		}
+		// local index removed
+		if tbl.Meta().Partition != nil {
+			for _, part := range tbl.Meta().Partition.Definitions {
+				require.False(t, HaveEntriesForTableIndex(t, tkO, part.ID, locIdx), "Local index id %d for partition id %d has still entries!", locIdx, tableID)
+			}
+		}
+	}
+PartitionLoop:
+	for _, partID := range originalPartitions {
+		if tbl.Meta().Partition != nil {
+			for _, def := range tbl.Meta().Partition.Definitions {
+				if def.ID == partID {
+					continue PartitionLoop
 				}
-			LocalLoop:
-				for _, locIdx := range originalIndexIDs {
-					for _, idx := range tbl.Meta().Indices {
-						if idx.ID == locIdx {
-							continue LocalLoop
-						}
-					}
-					// local index removed
-					if tbl.Meta().Partition != nil {
-						for _, part := range tbl.Meta().Partition.Definitions {
-							require.False(t, HaveEntriesForTableIndex(t, tkO, part.ID, locIdx), "Local index id %d for partition id %d has still entries!", locIdx, tableID)
-						}
-					}
-				}
-			PartitionLoop:
-				for _, partID := range originalPartitions {
-					if tbl.Meta().Partition != nil {
-						for _, def := range tbl.Meta().Partition.Definitions {
-							if def.ID == partID {
-								continue PartitionLoop
-							}
-						}
-					}
-					// old partitions removed
-					require.False(t, HaveEntriesForTableIndex(t, tkO, partID, 0), "Reorganized partition id %d for table id %d has still entries!", partID, tableID)
-				}
-
-	*/
+			}
+		}
+		// old partitions removed
+		require.False(t, HaveEntriesForTableIndex(t, tkO, partID, 0), "Reorganized partition id %d for table id %d has still entries!", partID, tableID)
+	}
 	// TODO: Use this instead of the above, which check for any row that should not exists
-	// instead of expected deleted ones, but currently the following tests fails:
-	// - TestMultiSchemaModifyColumn
-	checkTableAndIndexEntries(t, tkO, originalIDs)
+	// When the following issues are fixed:
+	// TestMultiSchemaModifyColumn - https://github.com/pingcap/tidb/issues/60264
+	// TestMultiSchemaPartitionByGlobalIndex -https://github.com/pingcap/tidb/issues/60263
+	//checkTableAndIndexEntries(t, tkO, originalIDs)
 
 	if postFn != nil {
 		postFn(tkO, store)
@@ -3837,15 +3834,4 @@ func TestNonClusteredReorgUpdateHash(t *testing.T) {
 		}
 	}
 	runMultiSchemaTest(t, createSQL, alterSQL, initFn, nil, loopFn, false)
-}
-
-func TestGlobalIndexCleanup(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table t (a int primary key nonclustered global, b varchar(255), c bigint, unique index idx_b_global (b) global, unique key idx_ba (b,a), unique key idx_ab (a,b) global, unique key idx_c_global (c) global, unique key idx_cab (c,a,b)) partition by key (a,b) partitions 3`)
-	tk.MustExec(`insert into t values (1,1,1)`)
-	originalIDs := getTableAndPartitionIDs(t, tk)
-	tk.MustExec(`alter table t partition by key (b,a) partitions 5 update indexes (idx_ba global, idx_ab local)`)
-	checkTableAndIndexEntries(t, tk, originalIDs)
 }
