@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
@@ -75,7 +76,7 @@ func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collatio
 		p := parser.New()
 		stmtNode, err := p.ParseOneStmt(sqlOrDigest, charset, collation)
 		if err != nil {
-			return nil, err
+			return nil, errors.NewNoStackErrorf("failed to normalize the SQL: %v", err)
 		}
 		db := utilparser.GetDefaultDB(stmtNode, currentDB)
 		sqlOrDigest, _ = NormalizeStmtForBinding(stmtNode, db, false)

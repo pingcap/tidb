@@ -50,4 +50,7 @@ func TestShowPlanForSQLBasic(t *testing.T) {
 	require.True(t, len(tk.MustQuery(`show plan for "select a from t where c = '              '"`).Rows()) == 1)
 	require.True(t, len(tk.MustQuery(`show plan for 'select a from t where c = ""'`).Rows()) == 1)
 	require.True(t, len(tk.MustQuery(`show plan for 'select a from t where c = "\'"'`).Rows()) == 1)
+
+	tk.MustExecToErr("show plan for 'xxx'", "")
+	tk.MustExecToErr("show plan for 'SELECT A FROM'", "")
 }
