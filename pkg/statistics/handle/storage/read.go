@@ -810,7 +810,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 	hgMeta, statsVer, err := HistMetaFromStorageWithHighPriority(sctx, &idx, nil)
 	if hgMeta == nil || err != nil {
 		if hgMeta == nil {
-			statslogutil.StatsSampleLogger().Warn(
+			statslogutil.StatsLogger().Warn(
 				"Histogram not found, possibly due to DDL event is not handled, please consider analyze the table",
 				zap.Int64("tableID", idx.TableID),
 				zap.Int64("indexID", idx.ID),
@@ -822,7 +822,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 	tblInfo, ok := statsHandle.TableInfoByID(is, idx.TableID)
 	if !ok {
 		// This could happen when the table is dropped after the async load is triggered.
-		statslogutil.StatsLogger().Info(
+		statslogutil.StatsSampleLogger().Info(
 			"Table information not found, possibly due to table being dropped",
 			zap.Int64("tableID", idx.TableID),
 			zap.Int64("indexID", idx.ID),
