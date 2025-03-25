@@ -833,7 +833,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 	if idxInfo == nil {
 		// This could happen when the index is dropped after the async load is triggered.
 		statslogutil.StatsLogger().Info(
-			"Index information not found, possibly due to column being dropped",
+			"Index information not found, possibly due to index being dropped",
 			zap.Int64("tableID", idx.TableID),
 			zap.Int64("indexID", idx.ID),
 		)
