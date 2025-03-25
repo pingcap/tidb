@@ -16,12 +16,12 @@ package bindinfo
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"go.uber.org/zap"
 )
@@ -65,19 +65,20 @@ func newBindingAuto(sPool util.DestroyableSessionPool) BindingAuto {
 // ShowPlansForSQL shows historical plans for a specific SQL.
 func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collation string) ([]*BindingPlanInfo, error) {
 	// parse and normalize sqlOrDigest
-	p := parser.New()
-	var normalizedSQL, whereCond string
-	stmtNode, err := p.ParseOneStmt(sqlOrDigest, charset, collation)
-	if err == nil {
-		db := utilparser.GetDefaultDB(stmtNode, currentDB)
-		normalizedSQL, _ = NormalizeStmtForBinding(stmtNode, db, false)
-	}
-
-	// read binding data from mysql.bind_info
-	if normalizedSQL != "" {
-		whereCond = fmt.Sprintf("where original_sql='%s'", normalizedSQL)
-	} else { // treat sqlOrDigest as a digest
+	// if the length is 64 and it has no " ", treat it as a digest.
+	var whereCond string
+	sqlOrDigest = strings.TrimSpace(sqlOrDigest)
+	if len(sqlOrDigest) == 64 && strings.Contains(sqlOrDigest, " ") {
 		whereCond = fmt.Sprintf("where sql_digest='%s'", sqlOrDigest)
+	} else {
+		p := parser.New()
+		stmtNode, err := p.ParseOneStmt(sqlOrDigest, charset, collation)
+		if err != nil {
+			return nil, err
+		}
+		db := utilparser.GetDefaultDB(stmtNode, currentDB)
+		normalizedSQL, _ := NormalizeStmtForBinding(stmtNode, db, false)
+		whereCond = fmt.Sprintf("where original_sql='%s'", normalizedSQL)
 	}
 	bindings, err := readBindingsFromStorage(ba.sPool, whereCond)
 	if err != nil {
@@ -89,7 +90,7 @@ func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collatio
 	for _, binding := range bindings {
 		pInfo, err := ba.getPlanExecInfo(binding.PlanDigest)
 		if err != nil {
-			logutil.BgLogger().Error("getStmtStatsByDigestInCluster", zap.String("plan_digest", binding.PlanDigest), zap.Error(err))
+			bindingLogger().Error("get plan execution info failed", zap.String("plan_digest", binding.PlanDigest), zap.Error(err))
 			continue
 		}
 		autoBinding := &BindingPlanInfo{Binding: binding}
@@ -141,7 +142,6 @@ func (ba *bindingAuto) getPlanExecInfo(planDigest string) (plan *planExecInfo, e
 
 // planExecInfo represents the plan info from information_schema.tidb_statements_stats table.
 type planExecInfo struct {
-	// exec info
 	Plan          string
 	ResultRows    int64
 	ExecCount     int64
