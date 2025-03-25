@@ -10,7 +10,11 @@ go_test(
     data = glob(["testdata/**"]),
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 7,
+=======
+    shard_count = 9,
+>>>>>>> 991551e41a7 (planner: fix wrong HashAgg estrows for inner operator of index join (#60071))
     deps = [
         "//pkg/parser",
         "//pkg/planner",
