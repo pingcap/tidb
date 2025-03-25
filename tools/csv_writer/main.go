@@ -8,8 +8,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"hash/crc32"
-	"io/ioutil"
+	"github.com/docker/go-units"
 	"log"
 	"math"
 	"math/rand"
@@ -35,7 +34,6 @@ var (
 	glanceFile       = flag.String("glanceFile", "", "Glance the first 128*1024 bytes of a specific file from GCS")
 	fileNamePrefix   = flag.String("fileNamePrefix", "testCSVWriter", "Base file name")
 	deletePrefixFile = flag.String("deletePrefixFile", "", "Delete all files with prefix")
-	genMaxSizeVal    = flag.Bool("genMaxSizeVal", false, "Generate max size value")
 
 	batchSize           = flag.Int("batchSize", 10, "Number of rows to generate in each batch")
 	generatorNum        = flag.Int("generatorNum", 1, "Number of generator goroutines")
@@ -45,7 +43,6 @@ var (
 	fileNameSuffixStart = flag.Int("fileNameSuffixStart", 0, "Start of file name suffix")
 	base64Encode        = flag.Bool("base64Encode", false, "Base64 encode the CSV file")
 	fetchFile           = flag.String("fetchFile", "", "Fetch a specific file from GCS and write to local disk")
-	checkColUniqueness  = flag.Int("checkCol", -1, "Check the uniqueness of a specific column in a CSV file")
 
 	s3Path      = flag.String("s3Path", "gcs://global-sort-dir/testGenerateCSV", "S3 path")
 	s3AccessKey = flag.String("s3AccessKey", "", "S3 access key")
@@ -56,19 +53,21 @@ var (
 )
 
 const (
-	maxRetries       = 3
-	uuidLen          = 36
-	maxIndexLen      = 3072
-	totalOrdered     = "TOTAL ORDERED"
-	partialOrdered   = "PARTIAL ORDERED"
-	totalRandom      = "TOTAL RANDOM"
-	defaultNullRatio = 0 // [0, 100], 0 means no null value
-	nullVal          = "\\N"
+	maxRetries     = 3
+	uuidLen        = 36
+	totalOrdered   = "TOTAL ORDERED"
+	partialOrdered = "PARTIAL ORDERED"
+	totalRandom    = "TOTAL RANDOM"
+	nullVal        = "\\N"
 )
 
 var (
-	faker        *gofakeit.Faker
-	nullRatioMap = map[string]int{}
+	faker    *gofakeit.Faker
+	orderMap = map[string]string{
+		"total ordered":   totalOrdered,
+		"partial ordered": partialOrdered,
+		"total random":    totalRandom,
+	}
 )
 
 // Initialize Faker instance
@@ -76,249 +75,163 @@ func init() {
 	seed := time.Now().UnixNano()
 	faker = gofakeit.New(seed)
 	log.Printf("Faker seed: %d", seed)
-	loadColNullRatio()
+	//loadColNullRatio()
 }
 
 // Column fields is read only
 type Column struct {
-	Name     string
-	Type     string
-	Enum     []string // For ENUM type
+	Name string
+	Type string
+	//Enum     []string // For ENUM type
 	IsPK     bool
 	IsUnique bool
 	Order    string
-	Len      int     // varchar(999)
-	StdDev   float64 // stdDev=1.0, mean=0.0
-	Mean     float64
-	NotNull  bool
+	//Len      int     // varchar(999)
+	StdDev float64 // StdDev=1.0, mean=0.0
+	Mean   float64
+	//NotNull  bool
+
+	MinLen    int
+	MaxLen    int
+	NullRatio int
 }
 
 // Read SQL schema file
-func readSQLFile(filename string) (string, error) {
-	data, err := ioutil.ReadFile(filename)
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
-}
+//func readSQLFile(filename string) (string, error) {
+//	data, err := ioutil.ReadFile(filename)
+//	if err != nil {
+//		return "", err
+//	}
+//	return string(data), nil
+//}
 
-func getNullRation(colName string) int {
-	if n, ok := nullRatioMap[colName]; ok {
-		return n
-	}
-	return defaultNullRatio
-}
+//func getNullRation(colName string) int {
+//	if n, ok := nullRatioMap[colName]; ok {
+//		return n
+//	}
+//	return defaultNullRatio
+//}
 
 func (c *Column) canThisValNull() bool {
-	return !c.NotNull && faker.Number(1, 100) <= getNullRation(c.Name)
+	if c.IsPK || c.NullRatio == 0 {
+		return false
+	} else if c.NullRatio == 100 {
+		return true
+	}
+	return faker.Number(1, 100) <= c.NullRatio
 }
 
-// Parse SQL schema and extract columns
-func parseSQLSchema(schema string) []*Column {
-	lines := strings.Split(schema, "\n")
-	columns := []*Column{}
+const (
+	INT       = "int"
+	BIGINT    = "bigint"
+	BOOLEAN   = "boolean"
+	DECIMAL   = "decimal"
+	STRING    = "string"
+	TIMESTAMP = "timestamp"
+	JSON      = "json"
+)
 
-	//hasPk := false
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		// Skip empty lines, CREATE TABLE and ");"
-		if line == "" || strings.HasPrefix(strings.ToUpper(line), "CREATE TABLE") || strings.HasPrefix(line, ");") {
-			continue
-		}
+var supportedTypes = map[string]string{
+	"int":       INT,
+	"bigint":    BIGINT,
+	"boolean":   BOOLEAN,
+	"decimal":   DECIMAL,
+	"string":    STRING,
+	"timestamp": TIMESTAMP,
+	"json":      JSON,
+}
 
-		// Remove trailing comma
-		line = strings.TrimSuffix(line, ",")
+func loadSchemaInfoFromCSV(filename string) []*Column {
+	log.Printf("Reading schema info from: %s", filename)
+	schemaInfos := readCSVFile(filename)
+	schemaInfos = schemaInfos[1:] // Skip header
+	columns := make([]*Column, len(schemaInfos))
+	for i, colInfo := range schemaInfos {
+		if _, ok := supportedTypes[strings.ToLower(colInfo[1])]; !ok {
+			panic(fmt.Sprintf("Unsupported type: %s, please confirm your schema info", colInfo[1]))
+		}
+		columns[i] = &Column{
+			Name:     strings.ToLower(colInfo[0]),
+			Type:     supportedTypes[strings.ToLower(colInfo[1])],
+			IsPK:     strings.ToLower(colInfo[2]) == "1",
+			IsUnique: strings.ToLower(colInfo[3]) == "1",
+			Order:    orderMap[strings.ToLower(colInfo[9])],
+		}
+		var err error
 
-		// Split column definition
-		parts := strings.Fields(line)
-		if len(parts) < 2 {
-			continue
+		if columns[i].MinLen, err = strconv.Atoi(colInfo[4]); len(colInfo[4]) != 0 && err != nil {
+			panic(err)
 		}
-
-		colName := strings.Trim(parts[0], "`") // Get column name
-		colType := strings.ToUpper(parts[1])   // Get data type
-
-		// Handle ENUM type
-		var enumValues []string
-		if strings.HasPrefix(strings.ToUpper(colType), "ENUM") {
-			start := strings.Index(line, "(")
-			end := strings.LastIndex(line, ")")
-			if start != -1 && end != -1 && end > start {
-				enumStr := line[start+1 : end]
-				enumStr = strings.ReplaceAll(enumStr, "'", "")
-				enumValues = strings.Split(enumStr, ",")
-			}
+		if columns[i].MaxLen, err = strconv.Atoi(colInfo[5]); len(colInfo[5]) != 0 && err != nil {
+			panic(err)
 		}
-		col := Column{Name: colName, Type: colType, Enum: enumValues}
-		//if strings.Contains(strings.ToUpper(line), "PRIMARY KEY") && !hasPk {
-		if strings.Contains(strings.ToUpper(line), "PRIMARY KEY") {
-			//hasPk = true
-			col.IsPK = true
+		if columns[i].NullRatio, err = strconv.Atoi(colInfo[6]); len(colInfo[6]) != 0 && err != nil {
+			panic(err)
 		}
-		extractLenFromSQL(&col, line)
-		extractStdMeanFromSQL(&col, line)
-		// check unique key
-		if strings.Contains(strings.ToUpper(line), "UNIQUE KEY") &&
-			(strings.HasPrefix(col.Type, "VARBINARY") || strings.HasPrefix(col.Type, "VARCHAR")) &&
-			col.Len > uuidLen && col.Len < maxIndexLen {
-			col.IsUnique = true
-		} else if strings.Contains(strings.ToUpper(line), "UNIQUE KEY") && strings.HasPrefix(col.Type, "BIGINT") {
-			col.IsUnique = true
+		if columns[i].Mean, err = strconv.ParseFloat(colInfo[7], 64); len(colInfo[7]) != 0 && err != nil {
+			panic(err)
 		}
-		// check unique bigint type ordered or random
-		if strings.Contains(strings.ToUpper(line), totalOrdered) {
-			col.Order = totalOrdered
-		} else if strings.Contains(strings.ToUpper(line), partialOrdered) {
-			col.Order = partialOrdered
-		} else if strings.Contains(strings.ToUpper(line), totalRandom) {
-			col.Order = totalRandom
+		if columns[i].StdDev, err = strconv.ParseFloat(colInfo[8], 64); len(colInfo[7]) != 0 && err != nil {
+			panic(err)
 		}
-		// check if not null
-		if strings.Contains(strings.ToUpper(line), "NOT NULL") {
-			col.NotNull = true
-		}
-		columns = append(columns, &col)
+		checkColumnInfoLegality(columns[i])
 	}
 	return columns
 }
 
-// Extract length from SQL type definition
-func extractNumberFromStr(sqlType string) int {
-	start := strings.Index(sqlType, "(")
-	end := strings.Index(sqlType, ")")
-	if start != -1 && end != -1 && start < end {
-		numStr := sqlType[start+1 : end]
-		num, err := strconv.Atoi(numStr)
-		if err == nil {
-			return num
-		}
+func checkColumnInfoLegality(col *Column) {
+	if col.MinLen > col.MaxLen || col.MinLen < 0 || col.MaxLen < 0 {
+		panic(fmt.Sprintf("Invalid Column length: %d, %d", col.MinLen, col.MaxLen))
 	}
-	return -1
-}
-
-func extractLenFromSQL(col *Column, s string) {
-	if !strings.HasPrefix(col.Type, "VARBINARY") &&
-		!strings.HasPrefix(col.Type, "VARCHAR") &&
-		!strings.HasPrefix(col.Type, "TEXT") &&
-		!strings.HasPrefix(col.Type, "CHAR") {
-		return
+	if col.Type == STRING && (col.IsPK || col.IsUnique) && col.MinLen < uuidLen {
+		panic(fmt.Sprintf("Invalid string length for uk/pk string: %d", col.MinLen))
 	}
-
-	// from type
-	if l := extractNumberFromStr(col.Type); l != -1 {
-		col.Len = l
-		return
+	if col.NullRatio < 0 || col.NullRatio > 100 {
+		panic(fmt.Sprintf("Invalid null ratio: %d", col.NullRatio))
 	}
-	// from comment
-	strs := strings.Split(s, "--")
-	if len(strs) != 2 {
-		log.Printf("No comment or Invalid comment: %s", s)
-		return
+	if col.Type == BOOLEAN && (col.IsPK || col.IsUnique) {
+		panic(fmt.Sprintf("BOOLEAN can't be pk or uk"))
 	}
-	if l := extractNumberFromStr(strs[1]); l != -1 {
-		col.Len = l
-	}
-}
-
-func extractStdMeanFromSQL(col *Column, s string) {
-	if !strings.HasPrefix(col.Type, "INT") {
-		return
-	}
-
-	// get comment
-	strs := strings.Split(s, "--")
-	if len(strs) == 1 { // no comment
-		return
-	}
-	if len(strs) != 2 {
-		log.Printf("No comment or Invalid comment: %s", s)
-		panic("extractStdMeanFromSQL")
-	}
-	strs = strings.Split(strs[1], ",")
-	if len(strs) < 2 {
-		log.Printf("Invalid stdDev, mean: %s", s)
-		panic("extractStdMeanFromSQL")
-	}
-	// handle stdDev
-	parts := strings.Split(strings.TrimSpace(strs[0]), "=")
-	if len(parts) != 2 {
-		log.Printf("Invalid stdDev comment: %s", s)
-		panic("extractStdMeanFromSQL")
-	}
-	stdDev, err := strconv.ParseFloat(parts[1], 64)
-	if err != nil {
-		log.Printf("Invalid stdDev: %s", s)
-		panic(err)
-	}
-	col.StdDev = stdDev
-	// handle mean
-	parts = strings.Split(strings.TrimSpace(strs[1]), "=")
-	if len(parts) != 2 {
-		log.Printf("Invalid mean comment: %s", s)
-		panic("extractStdMeanFromSQL")
-	}
-	mean, err := strconv.ParseFloat(parts[1], 64)
-	if err != nil {
-		log.Printf("Invalid mean: %s", s)
-		panic(err)
-	}
-	col.Mean = mean
 }
 
 // Generate data for each column
 func (t *Task) generateValueByCol(col *Column, num int, res []string) {
-	switch {
-	case strings.HasPrefix(col.Type, "INT"): // int32
-		col.generateInt32(num, res, col.StdDev)
-	case strings.HasPrefix(col.Type, "BIGINT"): // int64
-		if col.IsUnique {
-			col.generateBigint(res, col.Order, t.begin, t.end)
-		} else {
-			col.generateBigintWithNoLimit(num, res, col.Name)
-		}
-	case strings.HasPrefix(col.Type, "TINYINT"):
-		col.generateTinyint1(num, res)
-	case strings.HasPrefix(col.Type, "BOOLEAN"):
-		col.generateTinyint1(num, res)
-	case strings.HasPrefix(col.Type, "TIMESTAMP"):
-		col.generateTimestamp(num, res)
-	case strings.HasPrefix(col.Type, "VARBINARY"):
-		col.generateVarbinary(num, col.Len, res, col.IsUnique)
-	case strings.HasPrefix(col.Type, "VARCHAR"):
-		col.generateVarbinary(num, col.Len, res, col.IsUnique)
-	case strings.HasPrefix(col.Type, "MEDIUMBLOB"):
-		col.generateMediumblob(num, res)
-	case strings.HasPrefix(col.Type, "JSON"):
-		col.generateJSONObject(num, res)
-	case strings.HasPrefix(col.Type, "TEXT"):
-		col.generateVarbinary(num, col.Len, res, col.IsUnique)
-	case strings.HasPrefix(col.Type, "CHAR"):
-		col.generateChar(num, res, col.Len)
-	case strings.HasPrefix(col.Type, "DECIMAL"):
+	switch col.Type {
+	case STRING:
+		col.generateString(num, res)
+	case BOOLEAN:
+		col.generateBoolean(num, res)
+	case INT:
+		col.generateInt(num, res, t.begin)
+	case BIGINT:
+		col.generateBigint(num, res, t.begin, t.end)
+	case DECIMAL:
 		col.generateDecimal(num, res)
+	case TIMESTAMP:
+		col.generateTimestamp(num, res)
+	case JSON:
+		col.generateJSONObject(num, res)
 	default:
 		log.Printf("Unsupported type: %s", col.Type)
 	}
 }
 
-func generateLetterWithNum(len int, randomLen bool) string {
+func generateLetterWithNum(minLen, maxLen int) string {
 	var builder strings.Builder
 
-	if randomLen {
-		len = faker.Number(0, len) // Random length for varbinary
-	}
+	length := faker.Number(minLen, maxLen) // Random length for varbinary
 	// If length is less than or equal to 1000, generate directly
-	if len <= 1000 {
-		builder.WriteString(faker.Regex(fmt.Sprintf("[a-zA-Z0-9]{%d}", len)))
+	if length <= 1000 {
+		builder.WriteString(faker.Regex(fmt.Sprintf("[a-zA-Z0-9]{%d}", length)))
 	} else {
 		// Generate the first 1000 characters
 		builder.WriteString(faker.Regex("[a-zA-Z0-9]{1000}"))
 		// Repeat generation
-		for i := 1; i < len/1000; i++ {
+		for i := 1; i < length/1000; i++ {
 			builder.WriteString(builder.String()[:1000])
 		}
 		// If there is remaining part, append it
-		remain := len % 1000
+		remain := length % 1000
 		if remain > 0 {
 			builder.WriteString(builder.String()[:remain])
 		}
@@ -338,19 +251,26 @@ func (c *Column) generateDecimal(num int, res []string) {
 	}
 }
 
-func (c *Column) generateBigintWithNoLimit(num int, res []string, colName string) {
+func (c *Column) generateBigint(num int, res []string, pkBegin, pkEnd int) {
+	if len(c.Order) != 0 {
+		c.generateBigintByOrder(res, pkBegin, pkEnd)
+		return
+	}
+
 	for i := 0; i < num; i++ {
 		if c.canThisValNull() {
 			res[i] = nullVal
+		} else if c.IsPK || c.IsUnique {
+			res[i] = strconv.Itoa(pkBegin + i)
 		} else {
-			res[i] = strconv.Itoa(faker.Number(math.MinInt64, math.MaxInt64)) // https://docs.pingcap.com/zh/tidb/stable/data-type-numeric#bigint-%E7%B1%BB%E5%9E%8B)
+			res[i] = strconv.Itoa(faker.Number(math.MinInt64, math.MaxInt64))
 		}
 	}
 }
 
-func (c *Column) generateBigint(res []string, order string, begin, end int) {
+func (c *Column) generateBigintByOrder(res []string, begin, end int) {
 	// WARN: total row num should less than 12 digits, 1000 Billion!
-	switch order {
+	switch c.Order {
 	case totalOrdered:
 		generateTotalOrderBigint(res, begin, end)
 	case partialOrdered:
@@ -358,7 +278,7 @@ func (c *Column) generateBigint(res []string, order string, begin, end int) {
 	case totalRandom:
 		generateTotalRandomBigint(res, begin, end)
 	default:
-		log.Printf("Unsupported order: %s", order)
+		log.Printf("Unsupported order: %s", c.Order)
 	}
 }
 
@@ -396,76 +316,57 @@ func generateUniqueRandomBigint(uk int) string {
 	return r
 }
 
-func generateNormalFloat(num int, res []string) {
-	intRes := make([]float64, num)
+func (c *Column) generateInt(num int, res []string, pkBegin int) {
 	for i := 0; i < num; i++ {
-		intRes[i] = rand.NormFloat64()
-	}
-}
-
-func (c *Column) generateInt32(num int, res []string, stdDev float64) {
-	if stdDev == 0 {
-		generateInt32WithNoLimit(num, res)
-	} else {
-		generateNormalDistributeInt32(num, res, stdDev, 0.0)
-	}
-}
-
-func generateInt32WithNoLimit(num int, res []string) {
-	for i := 0; i < num; i++ {
-		res[i] = strconv.Itoa(faker.Number(math.MinInt32, math.MaxInt32))
-	}
-}
-
-func generateNormalDistributeInt32(num int, res []string, stdDev, mean float64) {
-	for i := 0; i < num; i++ {
-		randomFloat := rand.NormFloat64()*stdDev + mean
-		randomInt := int(math.Round(randomFloat))
-
-		// Limit to int32 range, https://docs.pingcap.com/zh/tidb/stable/data-type-numeric#integer-%E7%B1%BB%E5%9E%8B
-		if randomInt > math.MaxInt32 {
-			randomInt = math.MaxInt32
-		} else if randomInt < math.MinInt32 {
-			randomInt = math.MinInt32
-		}
-		res[i] = strconv.Itoa(randomInt)
-	}
-}
-
-func (c *Column) generateTinyint1(num int, res []string) {
-	for i := 0; i < num; i++ {
-		res[i] = strconv.Itoa(faker.Number(0, 1))
-	}
-}
-
-func (c *Column) generateVarbinary(num, len int, res []string, unique bool) {
-	if len <= 0 {
-		log.Printf("Invalid length: %d", len)
-		return
-	}
-
-	for i := 0; i < num; i++ {
-		if unique {
-			uuid := faker.UUID()
-			res[i] = uuid + generateLetterWithNum(len-uuidLen, true)
+		if c.canThisValNull() {
+			res[i] = nullVal
+		} else if c.IsPK || c.IsUnique {
+			res[i] = strconv.Itoa(pkBegin + i)
+		} else if c.StdDev != 0 { // normal distribution int
+			res[i] = generateNormalDistributeInt32(c.StdDev, c.Mean)
 		} else {
-			if c.canThisValNull() {
-				res[i] = nullVal
-			} else {
-				// todo: remove 1024
-				res[i] = generateLetterWithNum(len, true)
-			}
+			res[i] = generateUniformDistributeInt32()
 		}
 	}
 }
 
-func (c *Column) generateMediumblob(num int, res []string) {
-	c.generateVarbinary(num, 73312, res, false)
+func generateUniformDistributeInt32() string {
+	return strconv.Itoa(faker.Number(math.MinInt32, math.MaxInt32))
+
 }
 
-func (c *Column) generateChar(num int, res []string, charLen int) {
+func generateNormalDistributeInt32(stdDev, mean float64) string {
+	randomFloat := rand.NormFloat64()*stdDev + mean
+	randomInt := int(math.Round(randomFloat))
+
+	// Limit to int32 range
+	if randomInt > math.MaxInt32 {
+		randomInt = math.MaxInt32
+	} else if randomInt < math.MinInt32 {
+		randomInt = math.MinInt32
+	}
+	return strconv.Itoa(randomInt)
+}
+
+func (c *Column) generateBoolean(num int, res []string) {
 	for i := 0; i < num; i++ {
-		res[i] = generateLetterWithNum(charLen, false)
+		if c.canThisValNull() {
+			res[i] = nullVal
+		} else {
+			res[i] = strconv.Itoa(faker.Number(0, 1))
+		}
+	}
+}
+
+func (c *Column) generateString(num int, res []string) {
+	for i := 0; i < num; i++ {
+		if c.canThisValNull() {
+			res[i] = nullVal
+		} else if c.IsPK || c.IsUnique {
+			res[i] = faker.UUID() + generateLetterWithNum(c.MinLen-uuidLen, c.MaxLen-uuidLen)
+		} else {
+			res[i] = generateLetterWithNum(c.MinLen, c.MaxLen)
+		}
 	}
 }
 
@@ -473,17 +374,12 @@ func (c *Column) generateTimestamp(num int, res []string) {
 	start := time.Date(1971, 1, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Now()
 	for i := 0; i < num; i++ {
-		randomTime := faker.DateRange(start, end)
-		res[i] = randomTime.Format("2006-01-02 15:04:05")
-	}
-}
-
-// Generate primary key values for range [begin, end)
-func generatePrimaryKey(begin, end int, res []string) {
-	idx := 0
-	for key := begin; key < end; key++ {
-		res[idx] = strconv.Itoa(key)
-		idx++
+		if c.canThisValNull() {
+			res[i] = nullVal
+		} else {
+			randomTime := faker.DateRange(start, end)
+			res[i] = randomTime.Format("2006-01-02 15:04:05")
+		}
 	}
 }
 
@@ -496,11 +392,15 @@ func escapeJSONString(jsonStr string) string {
 
 func (c *Column) generateJSONObject(num int, res []string) {
 	for i := 0; i < num; i++ {
-		r := generateJSON()
-		if *localPath == "" {
-			res[i] = escapeJSONString(r)
+		if c.canThisValNull() {
+			res[i] = nullVal
 		} else {
-			res[i] = r
+			r := generateJSON()
+			if *localPath == "" {
+				res[i] = escapeJSONString(r) // todo: ??
+			} else {
+				res[i] = r
+			}
 		}
 	}
 }
@@ -583,50 +483,46 @@ func writeDataToGCS(store storage.ExternalStorage, fileName string, data [][]str
 	return nil
 }
 
-func deleteFile(credentialPath, fileName string) {
-	// gcs
-	//op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: credentialPath}}
-	// aws
-	op := storage.BackendOptions{S3: storage.S3BackendOptions{
-		Region:          *s3Region,
-		AccessKey:       *s3AccessKey,
-		SecretAccessKey: *s3SecretKey,
-		Provider:        *s3Provider,
-		Endpoint:        *s3Endpoint,
-	}}
-	s, err := storage.ParseBackend(*s3Path, &op)
-	if err != nil {
-		panic(err)
-	}
-	store, err := storage.NewWithDefaultOpt(context.Background(), s)
-	if err != nil {
-		panic(err)
-	}
-	err = store.DeleteFile(context.Background(), fileName)
+func deleteFile(fileName string) {
+	//op := storage.BackendOptions{S3: storage.S3BackendOptions{
+	//	Region:          *s3Region,
+	//	AccessKey:       *s3AccessKey,
+	//	SecretAccessKey: *s3SecretKey,
+	//	Provider:        *s3Provider,
+	//	Endpoint:        *s3Endpoint,
+	//}}
+	//s, err := storage.ParseBackend(*s3Path, &op)
+	//if err != nil {
+	//	panic(err)
+	//}
+	//store, err := storage.NewWithDefaultOpt(context.Background(), s)
+	//if err != nil {
+	//	panic(err)
+	//}
+	store := createExternalStorage()
+	err := store.DeleteFile(context.Background(), fileName)
 	if err != nil {
 		panic(err)
 	}
 }
 
-func showFiles(credentialPath string) {
-	// gcs
-	//op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: credentialPath}}
-	// aws
-	op := storage.BackendOptions{S3: storage.S3BackendOptions{
-		Region:          *s3Region,
-		AccessKey:       *s3AccessKey,
-		SecretAccessKey: *s3SecretKey,
-		Provider:        *s3Provider,
-		Endpoint:        *s3Endpoint,
-	}}
-	s, err := storage.ParseBackend(*s3Path, &op)
-	if err != nil {
-		panic(err)
-	}
-	store, err := storage.NewWithDefaultOpt(context.Background(), s)
-	if err != nil {
-		panic(err)
-	}
+func showFiles() {
+	//op := storage.BackendOptions{S3: storage.S3BackendOptions{
+	//	Region:          *s3Region,
+	//	AccessKey:       *s3AccessKey,
+	//	SecretAccessKey: *s3SecretKey,
+	//	Provider:        *s3Provider,
+	//	Endpoint:        *s3Endpoint,
+	//}}
+	//s, err := storage.ParseBackend(*s3Path, &op)
+	//if err != nil {
+	//	panic(err)
+	//}
+	//store, err := storage.NewWithDefaultOpt(context.Background(), s)
+	//if err != nil {
+	//	panic(err)
+	//}
+	store := createExternalStorage()
 	dirSize := 0.0
 	dirFileNum := 0
 	store.WalkDir(context.Background(), &storage.WalkOption{SkipSubDir: true}, func(path string, size int64) error {
@@ -639,32 +535,46 @@ func showFiles(credentialPath string) {
 	log.Printf("Total file Num: %d  Total size: %.2f MiB, %.2f GiB, %.2f TiB", dirFileNum, dirSize, dirSize/1024, dirSize/1024/1024)
 }
 
-func glanceFiles(credentialPath, fileName string) {
-	op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: credentialPath}}
-	s, err := storage.ParseBackend(*s3Path, &op)
-	if err != nil {
-		panic(err)
-	}
-	store, err := storage.NewWithDefaultOpt(context.Background(), s)
-	if err != nil {
-		panic(err)
-	}
+func glanceFiles(fileName string) {
+	//op := storage.BackendOptions{S3: storage.S3BackendOptions{
+	//	Region:          *s3Region,
+	//	AccessKey:       *s3AccessKey,
+	//	SecretAccessKey: *s3SecretKey,
+	//	Provider:        *s3Provider,
+	//	Endpoint:        *s3Endpoint,
+	//}}
+	//s, err := storage.ParseBackend(*s3Path, &op)
+	//if err != nil {
+	//	panic(err)
+	//}
+	//store, err := storage.NewWithDefaultOpt(context.Background(), s)
+	//if err != nil {
+	//	panic(err)
+	//}
+	store := createExternalStorage()
 	r, _ := store.Open(context.Background(), fileName, nil)
-	b := make([]byte, 128*1024)
+	b := make([]byte, 1*units.MiB)
 	r.Read(b)
 	fmt.Println(string(b))
 }
 
-func fetchFileFromGCS(credentialPath, fileName string) {
-	op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: credentialPath}}
-	s, err := storage.ParseBackend(*s3Path, &op)
-	if err != nil {
-		panic(err)
-	}
-	store, err := storage.NewWithDefaultOpt(context.Background(), s)
-	if err != nil {
-		panic(err)
-	}
+func fetchFileFromGCS(fileName string) {
+	//op := storage.BackendOptions{S3: storage.S3BackendOptions{
+	//	Region:          *s3Region,
+	//	AccessKey:       *s3AccessKey,
+	//	SecretAccessKey: *s3SecretKey,
+	//	Provider:        *s3Provider,
+	//	Endpoint:        *s3Endpoint,
+	//}}
+	//s, err := storage.ParseBackend(*s3Path, &op)
+	//if err != nil {
+	//	panic(err)
+	//}
+	//store, err := storage.NewWithDefaultOpt(context.Background(), s)
+	//if err != nil {
+	//	panic(err)
+	//}
+	store := createExternalStorage()
 	if exist, _ := store.FileExists(context.Background(), fileName); !exist {
 		panic(fmt.Errorf("file %s does not exist", fileName))
 	}
@@ -676,7 +586,7 @@ func fetchFileFromGCS(credentialPath, fileName string) {
 	// Open the local file where the content will be written
 	file, err := os.Create(*localPath + fileName)
 	if err != nil {
-		panic(fmt.Errorf("failed to create file %s: %v", localPath, err))
+		panic(fmt.Errorf("failed to create file %s: %v", *localPath, err))
 	}
 	defer file.Close() // Ensure the file is closed after writing
 
@@ -703,55 +613,8 @@ func fetchFileFromGCS(credentialPath, fileName string) {
 	fmt.Printf("File %s successfully fetched and written to %s\n", fileName, *localPath)
 }
 
-func checkCSVUniqueness(credentialPath, f string) {
-	m := map[uint32]string{}
-	op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: credentialPath}}
-	s, err := storage.ParseBackend(*s3Path, &op)
-	if err != nil {
-		panic(err)
-	}
-	store, err := storage.NewWithDefaultOpt(context.Background(), s)
-	if err != nil {
-		panic(err)
-	}
-
-	var fileNames []string
-	store.WalkDir(context.Background(), &storage.WalkOption{SkipSubDir: true}, func(path string, size int64) error {
-		fileNames = append(fileNames, path)
-		return nil
-	})
-
-	for _, fileName := range fileNames {
-		fmt.Println("Checking file: ", fileName)
-		res, err := store.ReadFile(context.Background(), fileName)
-		if err != nil {
-			panic(err)
-		}
-		reader := csv.NewReader(bytes.NewReader(res)) // Read the []byte as CSV
-		idx := *checkColUniqueness
-		for {
-			record, err := reader.Read()
-			if err != nil {
-				if err.Error() != "EOF" {
-					panic(fmt.Errorf("failed to read CSV from file: %v", err))
-				}
-				break
-			}
-			//fmt.Printf("Record value: %s\n", record[idx])
-			hash := crc32.ChecksumIEEE([]byte(record[idx]))
-			if _, ok := m[hash]; !ok {
-				m[hash] = fileName
-			} else {
-				log.Fatal("duplicate value: ", record[idx], " in file: ", fileName, " and file: ", m[hash])
-				return
-			}
-		}
-	}
-	log.Printf("Check success, no duplicate value")
-}
-
 // Write CSV to local disk (column-oriented)
-func writeCSVToLocalDisk(filename string, columns []Column, data [][]string) error {
+func writeCSVToLocalDisk(filename string, data [][]string) error {
 	file, err := os.Create(filename)
 	if err != nil {
 		return err
@@ -776,55 +639,24 @@ func writeCSVToLocalDisk(filename string, columns []Column, data [][]string) err
 	return nil
 }
 
-func showWriteSpeed(ctx context.Context, wg sync.WaitGroup) {
-	defer wg.Done()
-	op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: *credentialPath}}
-	s, err := storage.ParseBackend(*s3Path, &op)
-	if err != nil {
-		panic(err)
-	}
-	store, err := storage.NewWithDefaultOpt(context.Background(), s)
-	if err != nil {
-		panic(err)
-	}
-	t := time.NewTicker(60 * time.Second)
-	lastFileNum := 0
-	lastTime := time.Now()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			curFileNum := 0
-			curSize := 0.0 // MiB
-			store.WalkDir(ctx, &storage.WalkOption{SkipSubDir: true}, func(path string, size int64) error {
-				curFileNum++
-				curSize += float64(size) / 1024 / 1024
-				return nil
-			})
-			if curFileNum > lastFileNum {
-				timeDiff := time.Since(lastTime).Seconds()
-				writeSpeed := (curSize - float64(lastFileNum)) / timeDiff
-				log.Printf("Time: %s, Total files: %d, Files added: %d, WriteSpeed: %.2f MiB/s",
-					time.Now().Format("2006-01-02 15:04:05"), curFileNum, curFileNum-lastFileNum, writeSpeed)
-			}
-			lastFileNum = curFileNum
-			lastTime = time.Now()
-		}
-	}
-}
-
 func deleteAllFilesByPrefix(prefix string) {
 	var fileNames []string
-	op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: *credentialPath}}
-	s, err := storage.ParseBackend(*s3Path, &op)
-	if err != nil {
-		panic(err)
-	}
-	store, err := storage.NewWithDefaultOpt(context.Background(), s)
-	if err != nil {
-		panic(err)
-	}
+	//op := storage.BackendOptions{S3: storage.S3BackendOptions{
+	//	Region:          *s3Region,
+	//	AccessKey:       *s3AccessKey,
+	//	SecretAccessKey: *s3SecretKey,
+	//	Provider:        *s3Provider,
+	//	Endpoint:        *s3Endpoint,
+	//}}
+	//s, err := storage.ParseBackend(*s3Path, &op)
+	//if err != nil {
+	//	panic(err)
+	//}
+	//store, err := storage.NewWithDefaultOpt(context.Background(), s)
+	//if err != nil {
+	//	panic(err)
+	//}
+	store := createExternalStorage()
 	store.WalkDir(context.Background(), &storage.WalkOption{SkipSubDir: true}, func(path string, size int64) error {
 		if strings.HasPrefix(path, prefix) {
 			fileNames = append(fileNames, path)
@@ -832,7 +664,7 @@ func deleteAllFilesByPrefix(prefix string) {
 		return nil
 	})
 	for _, fileName := range fileNames {
-		err = store.DeleteFile(context.Background(), fileName)
+		err := store.DeleteFile(context.Background(), fileName)
 		if err != nil {
 			panic(err)
 		}
@@ -875,11 +707,11 @@ func generatorWorker(tasksCh <-chan Task, resultsCh chan<- Result, workerID int,
 		// Set the length of the slice to count
 		values := buf[:colNum]
 		for i, col := range task.cols {
-			if col.IsPK {
-				generatePrimaryKey(task.begin, task.end, values[i])
-			} else {
-				task.generateValueByCol(col, count, values[i])
-			}
+			//if col.IsPK {
+			//	generatePrimaryKey(task.begin, task.end, values[i]) // todo: remove
+			//} else {
+			task.generateValueByCol(col, count, values[i])
+			//}
 		}
 		log.Printf("Generator %d: Processed %s, primary key range [%d, %d), generated %d rows, elapsed time: %v",
 			workerID, task.fileName, task.begin, task.end, count, time.Since(startTime))
@@ -898,7 +730,7 @@ func writerWorker(resultsCh <-chan Result, store storage.ExternalStorage, worker
 		for attempt := 1; attempt <= maxRetries; attempt++ {
 			startTime := time.Now()
 			if *localPath != "" {
-				err = writeCSVToLocalDisk(*localPath+fileName, nil, result.values)
+				err = writeCSVToLocalDisk(*localPath+fileName, result.values)
 				if err != nil {
 					log.Fatal("Error writing CSV:", err)
 				}
@@ -926,61 +758,7 @@ func writerWorker(resultsCh <-chan Result, store storage.ExternalStorage, worker
 	}
 }
 
-func generateTotalRandomBigintForPk(num int, path string) {
-	res := make([]string, num)
-	intMap := make(map[int]struct{})
-	// generate uniform distribute bigint
-	for len(intMap) < num {
-		intMap[faker.Number(math.MinInt64, math.MaxInt64)] = struct{}{}
-	}
-	i := 0
-	for v := range intMap {
-		res[i] = strconv.Itoa(v)
-		i++
-	}
-	writeCSVToLocalDisk(path+"/uniform_bigint_pk.csv", nil, [][]string{res})
-	// generate normal distribute bigint
-	res = make([]string, num)
-	intMap = make(map[int]struct{})
-	for len(intMap) < num {
-		randomFloat := rand.NormFloat64()
-		randomInt := int(math.Round(randomFloat))
-		if randomInt > math.MaxInt64 {
-			randomInt = math.MaxInt64
-		} else if randomInt < math.MinInt64 {
-			randomInt = math.MinInt64
-		}
-		intMap[randomInt] = struct{}{}
-	}
-	i = 0
-	for v := range intMap {
-		res[i] = strconv.Itoa(v)
-		i++
-	}
-	writeCSVToLocalDisk(path+"/normal_bigint_pk.csv", nil, [][]string{res})
-}
-
-func loadColNullRatio() {
-	path := "/Users/fanzhou/tcms/pinterest/gcs/richpins/col_null_ratio.csv"
-	_, err := os.Stat(path)
-	if err != nil {
-		if !os.IsExist(err) {
-			log.Printf("File %s does not exist", path)
-			return
-		}
-	}
-
-	nr := loadCSVFile(path)
-	for _, row := range nr {
-		n, err := strconv.ParseFloat(row[1], 64)
-		if err != nil {
-			log.Fatal(err)
-		}
-		nullRatioMap[row[0]] = int(n)
-	}
-}
-
-func loadCSVFile(path string) [][]string {
+func readCSVFile(path string) [][]string {
 	file, err := os.Open(path)
 	if err != nil {
 		log.Fatal(err)
@@ -995,79 +773,19 @@ func loadCSVFile(path string) [][]string {
 	return records
 }
 
-func generateMaxSizeValues(cols []*Column) {
-	// load max size csv and convert to map
-	ms := loadCSVFile("/Users/fanzhou/tcms/pinterest/gcs/richpins/col_max_len.csv")
-	maxSizeMap := make(map[string]int)
-	for _, row := range ms {
-		maxL, err := strconv.ParseInt(row[1], 10, 64)
-		if err != nil {
-			log.Fatal(err)
-		}
-		maxSizeMap[row[0]] = int(maxL)
-	}
-
-	colNum := len(cols)
-	repeatNumEveryCol := 20
-	colVals := make([][]string, colNum)
-	for i, col := range cols {
-		colVal := make([]string, colNum*repeatNumEveryCol)
-		for j := 0; j < colNum*repeatNumEveryCol; j++ {
-			if col.IsPK { // pk
-				colVal[j] = strconv.Itoa(*pkBegin + j)
-			} else if col.IsUnique { // uk
-				colVal[j] = faker.UUID()
-			} else {
-				colVal[j] = nullVal
-			}
-		}
-
-		if strings.Contains(col.Type, "BINARY") || strings.Contains(col.Type, "TEXT") {
-			maxL, ok := maxSizeMap[col.Name]
-			if !ok {
-				maxL = 100 // average length
-				log.Printf("Column %s not found in max size map, using average length", col.Name)
-			}
-			for j := i * repeatNumEveryCol; j < (i+1)*repeatNumEveryCol; j++ {
-				if col.IsUnique {
-					colVal[j] = faker.UUID() + generateLetterWithNum(maxL-uuidLen, false)
-				} else {
-					colVal[j] = generateLetterWithNum(maxL, false)
-				}
-			}
-		}
-		colVals[i] = colVal
-	}
-	if *localPath != "" {
-		err := writeCSVToLocalDisk(*localPath+"max_size_values.csv", nil, colVals)
-		if err != nil {
-			log.Fatal(err)
-		}
-	} else {
-		store := createExternalStorage()
-		fileName := "max_val.csv"
-		err := writeDataToGCS(store, fileName, colVals)
-		if err != nil {
-			log.Fatal(err)
-		}
-	}
-}
-
 func main() {
 	// Parse command-line arguments.
 	flag.Parse()
-	//checkCSVUniqueness(*credentialPath, "")
-	//return
 
 	// List files in GCS directory if showFile is true
 	if *showFile {
-		showFiles(*credentialPath)
+		showFiles()
 		return
 	}
 
 	// Delete specified file if deleteFileName is provided
 	if *deleteFileName != "" {
-		deleteFile(*credentialPath, *deleteFileName)
+		deleteFile(*deleteFileName)
 		return
 	}
 
@@ -1079,7 +797,7 @@ func main() {
 
 	// Glance at the first 128*1024 bytes of the specified file if glanceFile is provided
 	if *glanceFile != "" {
-		glanceFiles(*credentialPath, *glanceFile)
+		glanceFiles(*glanceFile)
 		return
 	}
 
@@ -1088,12 +806,7 @@ func main() {
 		if *localPath == "" {
 			log.Fatal("localPath must be provided when fetching a file")
 		}
-		fetchFileFromGCS(*credentialPath, *fetchFile)
-		return
-	}
-
-	if *checkColUniqueness != -1 {
-		checkCSVUniqueness(*credentialPath, "")
+		fetchFileFromGCS(*fetchFile)
 		return
 	}
 
@@ -1101,14 +814,8 @@ func main() {
 	log.Printf("Configuration: credential=%s, template=%s, generatorNum=%d, writerNum=%d, rowCount=%d, batchSize=%d",
 		*credentialPath, *templatePath, *generatorNum, *writerNum, rowCount, *batchSize)
 
-	// Read SQL schema
-	sqlSchema, err := readSQLFile(*templatePath)
-	if err != nil {
-		log.Fatalf("Failed to read SQL template: %v", err)
-	}
-
-	// Parse schema
-	columns := parseSQLSchema(sqlSchema)
+	// Read schema info from CSV
+	columns := loadSchemaInfoFromCSV(*templatePath)
 
 	// Check primary key range
 	if rowCount%*batchSize != 0 {
@@ -1120,12 +827,6 @@ func main() {
 	}
 	taskCount := (rowCount + *batchSize - 1) / *batchSize
 	log.Printf("Total tasks: %d, each task generates at most %d rows", taskCount, *batchSize)
-
-	// generate max size values and write into csv
-	if *genMaxSizeVal {
-		generateMaxSizeValues(columns)
-		return
-	}
 
 	// Create tasks and results channels
 	tasksCh := make(chan Task, taskCount)
@@ -1153,9 +854,6 @@ func main() {
 
 	var wgWriter sync.WaitGroup
 	// Start writer workers
-	// gcs
-	//op := storage.BackendOptions{GCS: storage.GCSBackendOptions{CredentialsFile: *credentialPath}}
-	// aws
 	op := storage.BackendOptions{S3: storage.S3BackendOptions{
 		Region:          *s3Region,
 		AccessKey:       *s3AccessKey,
@@ -1209,12 +907,12 @@ func main() {
 	wgWriter.Wait()
 	log.Printf("GCS write completed, total time: %v", time.Since(startTime))
 	if *localPath == "" {
-		showFiles(*credentialPath)
+		showFiles()
 	}
 
 	if *deleteAfterWrite {
 		for _, fileName := range fileNames {
-			deleteFile(*credentialPath, fileName)
+			deleteFile(fileName)
 		}
 		log.Printf("Deleted all files after write")
 	}
