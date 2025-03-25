@@ -7,10 +7,13 @@ go_test(
         "main_test.go",
         "tpch_test.go",
     ],
+    data = glob(["testdata/**"]),
     flaky = True,
     deps = [
         "//pkg/config",
         "//pkg/testkit",
+        "//pkg/testkit/testdata",
+        "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
         "@org_uber_go_goleak//:goleak",
     ],
