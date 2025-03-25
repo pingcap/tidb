@@ -16,14 +16,19 @@ package parser
 
 import (
 	"strconv"
+	"sync"
 	"unicode"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser"
 )
 
 var (
 	// ErrPatternNotMatch represents an error that patterns doesn't match.
 	ErrPatternNotMatch = errors.New("Pattern not match")
+
+	// Pool is a pool of parser.Parser
+	Pool = &sync.Pool{New: func() any { return parser.New() }}
 )
 
 // Match matches the `pat` at least `times`, and returns the match, the rest and the error
