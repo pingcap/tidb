@@ -31,7 +31,7 @@ var (
 	glanceFile         = flag.String("glanceFile", "", "Glance the first 1024*1024 character of a specific file from S3")
 	fetchFile          = flag.String("fetchFile", "", "Fetch a specific file from S3, need to specify the local path.")
 	deleteFileByPrefix = flag.String("deleteFileByPrefix", "", "Delete all files with the specific prefix")
-	deleteAfterWrite   = flag.Bool("deleteAfterWrite", false, "Delete all files after generating (TEST ONLY!)")
+	deleteAfterGen     = flag.Bool("deleteAfterGen", false, "Delete all files after generating (TEST ONLY!)")
 
 	tableInfo           = flag.String("tableInfo", "/home/admin/template.sql", "Path to table information")
 	localPath           = flag.String("localPath", "", "Local path to write file")
@@ -784,7 +784,7 @@ func generateData() {
 		showFiles()
 	}
 
-	if *deleteAfterWrite {
+	if *deleteAfterGen {
 		for _, fileName := range fileNames {
 			deleteFileByName(fileName)
 		}
