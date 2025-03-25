@@ -281,6 +281,9 @@ func NewSortedKVMeta(summary *WriterSummary) *SortedKVMeta {
 
 // Merge merges the other SortedKVMeta into this one.
 func (m *SortedKVMeta) Merge(other *SortedKVMeta) {
+	if len(other.MultipleFilesStats) == 0 {
+		return
+	}
 	if len(other.StartKey) == 0 && len(other.EndKey) == 0 {
 		return
 	}

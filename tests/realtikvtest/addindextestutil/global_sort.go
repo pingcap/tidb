@@ -16,8 +16,10 @@ package addindextestutil
 
 import (
 	"context"
+	goerrors "errors"
 	"testing"
 
+	"cloud.google.com/go/storage"
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/stretchr/testify/require"
 )
@@ -29,6 +31,11 @@ func RemoveAllObjects(t *testing.T, server *fakestorage.Server, bucket string) {
 	require.NoError(t, err)
 	bucketHandle := server.Client().Bucket(bucket)
 	for _, attr := range objectAttrs {
-		require.NoError(t, bucketHandle.Object(attr.Name).Delete(context.Background()))
+		err := bucketHandle.Object(attr.Name).Delete(context.Background())
+		if goerrors.Is(err, storage.ErrObjectNotExist) {
+			// DXF cleanup might also delete the object, so we ignore the error.
+			continue
+		}
+		require.NoError(t, err)
 	}
 }

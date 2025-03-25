@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql" //nolint: goimports
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -36,10 +35,9 @@ import (
 type TableKVEncoder struct {
 	*kv.BaseKVEncoder
 	// see import.go
-	columnAssignments  []expression.Expression
-	columnsAndUserVars []*ast.ColumnNameOrUserVar
-	fieldMappings      []*FieldMapping
-	insertColumns      []*table.Column
+	columnAssignments []expression.Expression
+	fieldMappings     []*FieldMapping
+	insertColumns     []*table.Column
 }
 
 // NewTableKVEncoder creates a new TableKVEncoder.
@@ -47,6 +45,24 @@ type TableKVEncoder struct {
 func NewTableKVEncoder(
 	config *encode.EncodingConfig,
 	ti *TableImporter,
+) (*TableKVEncoder, error) {
+	return newTableKVEncoderInner(config, ti, ti.FieldMappings, ti.InsertColumns)
+}
+
+// NewTableKVEncoderForDupResolve creates a new TableKVEncoder for duplicate resolution.
+func NewTableKVEncoderForDupResolve(
+	config *encode.EncodingConfig,
+	ti *TableImporter,
+) (*TableKVEncoder, error) {
+	mappings, _ := ti.tableVisCols2FieldMappings()
+	return newTableKVEncoderInner(config, ti, mappings, ti.Table.VisibleCols())
+}
+
+func newTableKVEncoderInner(
+	config *encode.EncodingConfig,
+	ti *TableImporter,
+	fieldMappings []*FieldMapping,
+	insertColumns []*table.Column,
 ) (*TableKVEncoder, error) {
 	baseKVEncoder, err := kv.NewBaseKVEncoder(config)
 	if err != nil {
@@ -60,11 +76,10 @@ func NewTableKVEncoder(
 	}
 
 	return &TableKVEncoder{
-		BaseKVEncoder:      baseKVEncoder,
-		columnAssignments:  colAssignExprs,
-		columnsAndUserVars: ti.ColumnsAndUserVars,
-		fieldMappings:      ti.FieldMappings,
-		insertColumns:      ti.InsertColumns,
+		BaseKVEncoder:     baseKVEncoder,
+		columnAssignments: colAssignExprs,
+		fieldMappings:     fieldMappings,
+		insertColumns:     insertColumns,
 	}, nil
 }
 

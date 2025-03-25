@@ -61,7 +61,7 @@ type Engine interface {
 // from 'duplicate KV':
 //   - 'duplicate KV' means the KV pairs that have the same key, including keys
 //     come from PK/UK/non-UK.
-//   - 'conflict KV' means the KV pairs that have the same key, and they can create
+//   - 'conflict KV' means the KV pairs that have the same key, and they can cause
 //     conflict ROWS in the table, including keys come from PK/UK. non-UK keys may
 //     became duplicate when PK keys are duplicated, but we don't need to consider
 //     them when resolving conflicts.

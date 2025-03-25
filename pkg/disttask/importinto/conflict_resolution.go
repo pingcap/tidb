@@ -26,14 +26,12 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/zap"
@@ -184,7 +182,7 @@ type conflictDataKVHandler struct {
 }
 
 func (h *conflictDataKVHandler) init(string) error {
-	encoder, err := h.tableImporter.GetKVEncoder(&checkpoints.ChunkCheckpoint{})
+	encoder, err := h.tableImporter.GetKVEncoderForDupResolve()
 	if err != nil {
 		return err
 	}
@@ -215,15 +213,14 @@ func (h *conflictDataKVHandler) encodeAndDeleteRow(ctx context.Context,
 	if err != nil {
 		return errors.Trace(err)
 	}
+	var autoRowID int64
 	if !tblMeta.HasClusteredIndex() {
-		// for non-clustered PK, need to append handle
-		decodedData = append(decodedData, types.NewIntDatum(handle.IntValue()))
+		autoRowID = handle.IntValue()
 	}
-	_, err = encoder.Table.AddRecord(encoder.SessionCtx.GetTableCtx(), decodedData)
+	kvPairs, err := encoder.Encode(decodedData, autoRowID)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	kvPairs := encoder.SessionCtx.TakeKvPairs()
 	h.checksum.Update(kvPairs.Pairs)
 	h.conflictedRowCount++
 
