@@ -710,8 +710,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 	hg, statsVer, err := HistMetaFromStorageWithHighPriority(sctx, &col, colInfo)
 	if hg == nil || err != nil {
 		if hg == nil {
-			// TODO: Use sample later.
-			statslogutil.StatsLogger().Warn(
+			statslogutil.StatsSampleLogger().Warn(
 				"Histogram not found, possibly due to DDL event is not handled, please consider analyze the table",
 				zap.Int64("tableID", col.TableID),
 				zap.Int64("columnID", col.ID),
@@ -811,7 +810,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 	hgMeta, statsVer, err := HistMetaFromStorageWithHighPriority(sctx, &idx, nil)
 	if hgMeta == nil || err != nil {
 		if hgMeta == nil {
-			statslogutil.StatsLogger().Info(
+			statslogutil.StatsSampleLogger().Info(
 				"Histogram not found, possibly due to DDL event is not handled, please consider analyze the table",
 				zap.Int64("tableID", idx.TableID),
 				zap.Int64("indexID", idx.ID),
