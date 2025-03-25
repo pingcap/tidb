@@ -11,7 +11,9 @@ go_library(
         "//pkg/metrics",
         "//pkg/util/backoff",
         "//pkg/util/logutil",
+        "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],
 )
