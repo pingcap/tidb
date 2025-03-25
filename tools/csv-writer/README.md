@@ -114,9 +114,9 @@ The tool uses command line parameters to control the path to write to S3, the nu
 
 The `pkBegin` and `pkEnd` controls the total row generated, even if your table does not have a primary key, these two parameters is also needed.
 If you are going to execute multiple commands generate data concurrently, you can build this as a binary and plan the range of primary keys, the number of files in each directory, file names in advance.
-For example, this command will generate 50000(pkEnd-pkBegin) rows data, each csv has 10000 rows, total 50 csv files will be written to `s3Path=gcs://path/to/directory` directory, file names are `part000.000000000.csv ~ part000.000000049.csv`
+For example, this command will generate 50000(pkEnd-pkBegin) rows data, each csv has 10000 rows, total 5 csv files will be written to `s3Path=gcs://path/to/directory` directory, file names are `part000.000000000.csv ~ part000.000000004.csv`
 ```
-go run main.go -tableInfo=./table_info.csv -pkBegin=0 -pkEnd=500000 -rowNumPerFile=10000 -s3Path=gcs://path/to/directory -fileNameSuffixStart=0 -fileName=part000
+go run main.go -tableInfo=./table_info.csv -pkBegin=0 -pkEnd=50000 -rowNumPerFile=10000 -s3Path=gcs://path/to/directory -fileNameSuffixStart=0 -fileName=part000
 ```
 
 ## TODO
