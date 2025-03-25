@@ -281,7 +281,7 @@ func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table,
 	return nil
 }
 
-func (db *DB) reallocTableID(tables []*metautil.Table)  (map[string][]*model.TableInfo, error) {
+func (db *DB) reallocTableID(tables []*metautil.Table) (map[string][]*model.TableInfo, error) {
 	clonedInfos := make(map[string][]*model.TableInfo, len(tables))
 	if len(tables) == 0 {
 		return clonedInfos, nil
@@ -290,7 +290,7 @@ func (db *DB) reallocTableID(tables []*metautil.Table)  (map[string][]*model.Tab
 		return clonedInfos, errors.New("preallocedIDs is nil")
 	}
 
-	idMapping := make(map[int64]*int64) 
+	idMapping := make(map[int64]*int64)
 	for _, t := range tables {
 		infoClone := t.Info.Clone()
 		originalID := infoClone.ID
@@ -310,13 +310,12 @@ func (db *DB) reallocTableID(tables []*metautil.Table)  (map[string][]*model.Tab
 	return clonedInfos, nil
 }
 
-
 // CreateTables execute a internal CREATE TABLES.
 func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 	ddlTables map[restore.UniqueTableName]bool, supportPolicy bool, policyMap *sync.Map) error {
 	if batchSession, ok := db.se.(glue.BatchCreateTableSession); ok {
 		// Modify the table ID inplace, would this be too dangerous?
-		clonedInfos ,err := db.reallocTableID(tables)
+		clonedInfos, err := db.reallocTableID(tables)
 		if err != nil {
 			return errors.Trace(err)
 		}

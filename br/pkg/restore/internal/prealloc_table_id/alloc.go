@@ -108,7 +108,7 @@ func (p *PreallocIDs) BatchAlloc(idMap map[int64]*int64) error {
 				p.alloced[upstreamID] = struct{}{}
 				*ptr = upstreamID
 				continue
-			} 
+			}
 
 			// will there be duplicated upstreamID?
 			if _, exists := dups[upstreamID]; exists {
