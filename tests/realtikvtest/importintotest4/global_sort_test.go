@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	testutil "github.com/pingcap/tidb/tests/realtikvtest/util"
+	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -58,15 +58,15 @@ func checkExternalFields(t *testing.T, tk *testkit.TestKit) {
 		case proto.ImportStepEncodeAndSort:
 			var subtaskMeta importinto.ImportStepMeta
 			require.NoError(t, json.Unmarshal([]byte(r[0].(string)), &subtaskMeta))
-			testutil.AssertExternalField(t, &subtaskMeta)
+			testutils.AssertExternalField(t, &subtaskMeta)
 		case proto.ImportStepMergeSort:
 			var subtaskMeta importinto.MergeSortStepMeta
 			require.NoError(t, json.Unmarshal([]byte(r[0].(string)), &subtaskMeta))
-			testutil.AssertExternalField(t, &subtaskMeta)
+			testutils.AssertExternalField(t, &subtaskMeta)
 		case proto.ImportStepWriteAndIngest:
 			var subtaskMeta importinto.WriteIngestStepMeta
 			require.NoError(t, json.Unmarshal([]byte(r[0].(string)), &subtaskMeta))
-			testutil.AssertExternalField(t, &subtaskMeta)
+			testutils.AssertExternalField(t, &subtaskMeta)
 		}
 	}
 }

@@ -39,8 +39,8 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/tests/realtikvtest"
-	"github.com/pingcap/tidb/tests/realtikvtest/util"
 	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -102,7 +102,7 @@ func checkExternalFields(t *testing.T, tk *testkit.TestKit) {
 	for _, r := range rs {
 		var subtaskMeta ddl.BackfillSubTaskMeta
 		require.NoError(t, json.Unmarshal([]byte(r[0].(string)), &subtaskMeta))
-		util.AssertExternalField(t, &subtaskMeta)
+		testutils.AssertExternalField(t, &subtaskMeta)
 	}
 }
 
