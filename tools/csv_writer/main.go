@@ -26,24 +26,24 @@ import (
 
 // Command-line parameters
 var (
-	templatePath     = flag.String("template", "/home/admin/template.sql", "Path to SQL schema template")
-	credentialPath   = flag.String("credential", "", "Path to GCS credential file")
-	showFile         = flag.Bool("showFile", false, "List all files in the GCS directory without generating data")
-	deleteFileName   = flag.String("deleteFile", "", "Delete a specific file from GCS")
-	deleteAfterWrite = flag.Bool("deleteAfterWrite", false, "Delete all files from GCS after writing (TEST ONLY)")
-	localPath        = flag.String("localPath", "", "Path to write local file")
-	glanceFile       = flag.String("glanceFile", "", "Glance the first 128*1024 bytes of a specific file from GCS")
-	fileNamePrefix   = flag.String("fileNamePrefix", "testCSVWriter", "Base file name")
-	deletePrefixFile = flag.String("deletePrefixFile", "", "Delete all files with prefix")
-
-	batchSize           = flag.Int("batchSize", 10, "Number of rows to generate in each batch")
-	generatorNum        = flag.Int("generatorNum", 1, "Number of generator goroutines")
-	writerNum           = flag.Int("writerNum", 8, "Number of writer goroutines")
-	pkBegin             = flag.Int("pkBegin", 0, "Begin of primary key, [begin, end)")
-	pkEnd               = flag.Int("pkEnd", 10, "End of primary key [begin, end)")
+	templatePath        = flag.String("template", "/home/admin/template.sql", "Path to table schema information")
+	credentialPath      = flag.String("credential", "", "Path to S3 credential file")
+	showFile            = flag.Bool("showFile", false, "List all files in the S3 directory")
+	deleteFileName      = flag.String("deleteFile", "", "Delete a specific file from S3")
+	deleteAfterWrite    = flag.Bool("deleteAfterWrite", false, "Delete all files from S3 after generating (TEST ONLY)")
+	localPath           = flag.String("localPath", "", "Local path to write file")
+	glanceFile          = flag.String("glanceFile", "", "Glance the first 1024*1024 character of a specific file from S3")
+	deletePrefixFile    = flag.String("deletePrefixFile", "", "Delete all files with the specific prefix")
+	fileNamePrefix      = flag.String("fileNamePrefix", "testCSVWriter", "Base file name")
 	fileNameSuffixStart = flag.Int("fileNameSuffixStart", 0, "Start of file name suffix")
-	base64Encode        = flag.Bool("base64Encode", false, "Base64 encode the CSV file")
-	fetchFile           = flag.String("fetchFile", "", "Fetch a specific file from GCS and write to local disk")
+
+	rowNumPerFile = flag.Int("rowNumPerFile", 10, "Number of rows to generate in each csv file")
+	generatorNum  = flag.Int("generatorNum", 1, "Number of generator goroutines")
+	writerNum     = flag.Int("writerNum", 8, "Number of writer goroutines")
+	pkBegin       = flag.Int("pkBegin", 0, "Begin of primary key, [begin, end)")
+	pkEnd         = flag.Int("pkEnd", 10, "End of primary key [begin, end)")
+	base64Encode  = flag.Bool("base64Encode", false, "Base64 encode the CSV file")
+	fetchFile     = flag.String("fetchFile", "", "Fetch a specific file from S3, need to specify the local path.")
 
 	s3Path      = flag.String("s3Path", "gcs://global-sort-dir/testGenerateCSV", "S3 path")
 	s3AccessKey = flag.String("s3AccessKey", "", "S3 access key")
@@ -439,11 +439,11 @@ func createExternalStorage() storage.ExternalStorage {
 	return store
 }
 
-// Write data to GCS with retry (column-oriented)
-func writeDataToGCS(store storage.ExternalStorage, fileName string, data [][]string) error {
+// Write data to S3 with retry (column-oriented)
+func writeDataToS3(store storage.ExternalStorage, fileName string, data [][]string) error {
 	writer, err := store.Create(context.Background(), fileName, nil)
 	if err != nil {
-		return fmt.Errorf("failed to create GCS file: %w", err)
+		return fmt.Errorf("failed to create S3 file: %w", err)
 	}
 	defer writer.Close(context.Background())
 
@@ -460,9 +460,9 @@ func writeDataToGCS(store storage.ExternalStorage, fileName string, data [][]str
 		}
 		_, err = writer.Write(context.Background(), []byte(strings.Join(row, ",")+"\n"))
 		if err != nil {
-			log.Printf("Write to GCS failed, deleting file: %s", fileName)
+			log.Printf("Write to S3 failed, deleting file: %s", fileName)
 			store.DeleteFile(context.Background(), fileName) // Delete the file if write fails
-			return fmt.Errorf("failed to write to GCS: %w", err)
+			return fmt.Errorf("failed to write to S3: %w", err)
 		}
 	}
 	return nil
@@ -498,7 +498,7 @@ func glanceFiles(fileName string) {
 	fmt.Println(string(b))
 }
 
-func fetchFileFromGCS(fileName string) {
+func fetchFileFromS3(fileName string) {
 	store := createExternalStorage()
 	if exist, _ := store.FileExists(context.Background(), fileName); !exist {
 		panic(fmt.Errorf("file %s does not exist", fileName))
@@ -629,7 +629,7 @@ func generatorWorker(tasksCh <-chan Task, resultsCh chan<- Result, workerID int,
 	}
 }
 
-// writerWorker retrieves generated results from resultsCh, writes them to CSV (or GCS), and puts used slices back to pool
+// writerWorker retrieves generated results from resultsCh, writes them to CSV (or S3), and puts used slices back to pool
 func writerWorker(resultsCh <-chan Result, store storage.ExternalStorage, workerID int, pool *sync.Pool, wg *sync.WaitGroup) {
 	defer wg.Done()
 	var err error
@@ -645,14 +645,14 @@ func writerWorker(resultsCh <-chan Result, store storage.ExternalStorage, worker
 					log.Fatal("Error writing CSV:", err)
 				}
 			} else {
-				err = writeDataToGCS(store, fileName, result.values)
+				err = writeDataToS3(store, fileName, result.values)
 			}
 			if err == nil {
 				log.Printf("Writer %d: Wrote %s (%d rows), elapsed time: %v", workerID, fileName, len(result.values[0]), time.Since(startTime))
 				success = true
 				break
 			}
-			log.Printf("Writer %d: Attempt %d to write to GCS failed: %v", workerID, attempt, err)
+			log.Printf("Writer %d: Attempt %d to write to S3 failed: %v", workerID, attempt, err)
 			// Exponential backoff: wait for 2^(attempt-1)*100ms (max 4s)
 			waitTime := time.Duration(100*(1<<uint(attempt-1))) * time.Millisecond
 			if waitTime > 4*time.Second {
@@ -685,22 +685,22 @@ func readCSVFile(path string) [][]string {
 
 func generateData() {
 	rowCount := *pkEnd - *pkBegin
-	log.Printf("Configuration: credential=%s, template=%s, generatorNum=%d, writerNum=%d, rowCount=%d, batchSize=%d",
-		*credentialPath, *templatePath, *generatorNum, *writerNum, rowCount, *batchSize)
+	log.Printf("Configuration: credential=%s, template=%s, generatorNum=%d, writerNum=%d, rowCount=%d, rowNumPerFile=%d",
+		*credentialPath, *templatePath, *generatorNum, *writerNum, rowCount, *rowNumPerFile)
 
 	// Read schema info from CSV
 	columns := loadSchemaInfoFromCSV(*templatePath)
 
 	// Check primary key range
-	if rowCount%*batchSize != 0 {
-		log.Fatal("pkEnd - pkBegin must be a multiple of batchSize")
+	if rowCount%*rowNumPerFile != 0 {
+		log.Fatal("pkEnd - pkBegin must be a multiple of rowNumPerFile")
 	}
 
-	if rowCount <= 0 || *batchSize <= 0 {
-		log.Fatal("Row count and batchSize must be greater than 0")
+	if rowCount <= 0 || *rowNumPerFile <= 0 {
+		log.Fatal("Row count and rowNumPerFile must be greater than 0")
 	}
-	taskCount := (rowCount + *batchSize - 1) / *batchSize
-	log.Printf("Total tasks: %d, each task generates at most %d rows", taskCount, *batchSize)
+	taskCount := (rowCount + *rowNumPerFile - 1) / *rowNumPerFile
+	log.Printf("Total tasks: %d, each task generates at most %d rows", taskCount, *rowNumPerFile)
 
 	// Create tasks and results channels
 	tasksCh := make(chan Task, taskCount)
@@ -711,8 +711,8 @@ func generateData() {
 		New: func() interface{} {
 			buf := make([][]string, len(columns))
 			for i := range buf {
-				if len(buf[i]) != *batchSize {
-					buf[i] = make([]string, *batchSize)
+				if len(buf[i]) != *rowNumPerFile {
+					buf[i] = make([]string, *rowNumPerFile)
 				}
 			}
 			return buf
@@ -756,9 +756,9 @@ func generateData() {
 	taskID := *fileNameSuffixStart
 	var fileNames []string
 
-	for pk := *pkBegin; pk < *pkEnd; pk += *batchSize {
+	for pk := *pkBegin; pk < *pkEnd; pk += *rowNumPerFile {
 		begin := pk
-		end := pk + *batchSize
+		end := pk + *rowNumPerFile
 		csvFileName := fmt.Sprintf("%s.%09d.csv", *fileNamePrefix, taskID)
 		fileNames = append(fileNames, csvFileName)
 		task := Task{
@@ -779,7 +779,7 @@ func generateData() {
 
 	// Wait for all writers to finish writing
 	wgWriter.Wait()
-	log.Printf("GCS write completed, total time: %v", time.Since(startTime))
+	log.Printf("S3 write completed, total time: %v", time.Since(startTime))
 	if *localPath == "" {
 		showFiles()
 	}
@@ -828,7 +828,7 @@ func main() {
 		if *localPath == "" {
 			log.Fatal("localPath must be provided when fetching a file")
 		}
-		fetchFileFromGCS(*fetchFile)
+		fetchFileFromS3(*fetchFile)
 		return
 	}
 
