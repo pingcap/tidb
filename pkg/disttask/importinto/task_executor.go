@@ -416,7 +416,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 
 	_, engineUUID := backend.MakeUUID("", subtask.ID)
 	localBackend := e.tableImporter.Backend()
-	localBackend.WorkerConcurrency = int(e.GetResource().CPU.Capacity()) * 2
+	localBackend.WorkerConcurrency.Store(int32(e.GetResource().CPU.Capacity()) * 2)
 	// compatible with old version task meta
 	jobKeys := sm.RangeJobKeys
 	if jobKeys == nil {

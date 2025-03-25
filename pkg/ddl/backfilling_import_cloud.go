@@ -143,7 +143,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if err != nil {
 		return err
 	}
-	local.WorkerConcurrency = int(m.GetResource().CPU.Capacity()) * 2
+	local.WorkerConcurrency.Store(int32(m.GetResource().CPU.Capacity()) * 2)
 	err = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	failpoint.Inject("mockCloudImportRunSubtaskError", func(_ failpoint.Value) {
 		err = context.DeadlineExceeded
@@ -190,6 +190,15 @@ func (m *cloudImportExecutor) TaskMetaModified(ctx context.Context, newMeta []by
 		if m.backend != nil {
 			m.backend.UpdateWriteSpeedLimit(newMaxWriteSpeed)
 		}
+	}
+	return nil
+}
+
+func (m *cloudImportExecutor) ResourceModified(ctx context.Context, newResource *proto.StepResource) error {
+	logutil.Logger(ctx).Info("cloud import executor update resource")
+	newConcurrency := newResource.CPU.Capacity() * 2
+	if newConcurrency != int64(m.backend.GetWriteConcurrency()) {
+		m.backend.UpdpateWriteConcurrency(int(newConcurrency))
 	}
 	return nil
 }
