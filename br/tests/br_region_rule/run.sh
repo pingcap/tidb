@@ -83,11 +83,10 @@ wait_for_checkpoint_stage() {
 # Returns 0 if found, 1 if not found.
 #######################################
 check_region_label_rule_exists() {
-  local exists
-  exists=$(
-    run_curl "https://${PD_ADDR}/pd/api/v1/config/region-label/rules" | \
-    jq 'any(.[]; .labels[]? | (.key=="schedule" and .value=="deny"))'
-  )
+  local response exists
+  response=$(run_curl "https://${PD_ADDR}/pd/api/v1/config/region-label/rules")
+  echo "$response" 
+  exists=$(echo "$response" | jq 'any(.[]; .labels[]? | (.key=="schedule" and .value=="deny"))')
   [ "$exists" = "true" ]
 }
 
@@ -142,8 +141,8 @@ echo "Test 1 finished successfully!"
 
 # Test 2: Restore random tables without checkpoint
 echo "=== Test 2: restore random tables without checkpoint ==="
-# We pick 20 random tables from 1..300
-TABLE_LIST=$(shuf -i 1-300 -n 20 | awk '{printf "-t sbtest%s ", $1}')
+# We pick 50 random tables from 1..300
+TABLE_LIST=$(shuf -i 1-300 -n 50 | awk '{printf "-t sbtest%s ", $1}')
 perform_restore_test table --db "$DB" $TABLE_LIST
 echo "Test 2 finished successfully!"
 

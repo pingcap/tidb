@@ -281,30 +281,33 @@ func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table,
 	return nil
 }
 
-func (db *DB) reallocTableID(tables []*metautil.Table) error {
+func (db *DB) reallocTableID(tables []*metautil.Table)  (map[string][]*model.TableInfo, error) {
+	clonedInfos := make(map[string][]*model.TableInfo, len(tables))
 	if len(tables) == 0 {
-		return nil
+		return clonedInfos, nil
 	}
 	if db.preallocedIDs == nil {
-		return errors.New("preallocedIDs is nil")
+		return clonedInfos, errors.New("preallocedIDs is nil")
 	}
 
-	modMap := make(map[int64]*int64) 
+	idMapping := make(map[int64]*int64) 
 	for _, t := range tables {
-		originalID := t.Info.ID
-		modMap[originalID] = &t.Info.ID
-		if partition := t.Info.Partition; partition != nil {
+		infoClone := t.Info.Clone()
+		originalID := infoClone.ID
+		idMapping[originalID] = &infoClone.ID
+		if partition := infoClone.Partition; partition != nil {
 			for i := range partition.Definitions {
 				def := &partition.Definitions[i]
-				modMap[def.ID] = &def.ID
+				idMapping[def.ID] = &def.ID
 			}
 		}
+		clonedInfos[t.DB.Name.L] = append(clonedInfos[t.DB.Name.L], infoClone)
 	}
 
-	if err := db.preallocedIDs.BatchAlloc(modMap); err != nil {
-		return err
+	if err := db.preallocedIDs.BatchAlloc(idMapping); err != nil {
+		return clonedInfos, err
 	}
-	return nil
+	return clonedInfos, nil
 }
 
 
@@ -312,13 +315,12 @@ func (db *DB) reallocTableID(tables []*metautil.Table) error {
 func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 	ddlTables map[restore.UniqueTableName]bool, supportPolicy bool, policyMap *sync.Map) error {
 	if batchSession, ok := db.se.(glue.BatchCreateTableSession); ok {
-		reallocTbls := map[string][]*model.TableInfo{}
 		// Modify the table ID inplace, would this be too dangerous?
-		if err := db.reallocTableID(tables); err != nil {
+		clonedInfos ,err := db.reallocTableID(tables)
+		if err != nil {
 			return errors.Trace(err)
 		}
 		for _, table := range tables {
-			reallocTbls[table.DB.Name.L] = append(reallocTbls[table.DB.Name.L], table.Info)
 			if !supportPolicy {
 				log.Info("set placementPolicyRef to nil when target tidb not support policy",
 					zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))
@@ -333,8 +335,8 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 				ttlInfo.Enable = false
 			}
 		}
-		if len(reallocTbls) > 0 {
-			if err := batchSession.CreateTables(ctx, reallocTbls, ddl.WithIDAllocated(true)); err != nil {
+		if len(clonedInfos) > 0 {
+			if err := batchSession.CreateTables(ctx, clonedInfos, ddl.WithIDAllocated(true)); err != nil {
 				return err
 			}
 		}
