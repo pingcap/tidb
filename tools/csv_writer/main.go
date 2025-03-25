@@ -683,43 +683,7 @@ func readCSVFile(path string) [][]string {
 	return records
 }
 
-func main() {
-	// Parse command-line arguments.
-	flag.Parse()
-
-	// List files in GCS directory if showFile is true
-	if *showFile {
-		showFiles()
-		return
-	}
-
-	// Delete specified file if deleteFileName is provided
-	if *deleteFileName != "" {
-		deleteFile(*deleteFileName)
-		return
-	}
-
-	// Delete all files with the specified prefix
-	if *deletePrefixFile != "" {
-		deleteAllFilesByPrefix(*deletePrefixFile)
-		return
-	}
-
-	// Glance at the first 128*1024 bytes of the specified file if glanceFile is provided
-	if *glanceFile != "" {
-		glanceFiles(*glanceFile)
-		return
-	}
-
-	// Fetch file from GCS if fetchFile is provided
-	if *fetchFile != "" {
-		if *localPath == "" {
-			log.Fatal("localPath must be provided when fetching a file")
-		}
-		fetchFileFromGCS(*fetchFile)
-		return
-	}
-
+func generateData() {
 	rowCount := *pkEnd - *pkBegin
 	log.Printf("Configuration: credential=%s, template=%s, generatorNum=%d, writerNum=%d, rowCount=%d, batchSize=%d",
 		*credentialPath, *templatePath, *generatorNum, *writerNum, rowCount, *batchSize)
@@ -828,4 +792,45 @@ func main() {
 	}
 
 	log.Printf("Done!")
+
+}
+
+func main() {
+	// Parse command-line arguments.
+	flag.Parse()
+
+	// List files in S3 directory
+	if *showFile {
+		showFiles()
+		return
+	}
+
+	// Delete specified file
+	if *deleteFileName != "" {
+		deleteFile(*deleteFileName)
+		return
+	}
+
+	// Delete all files with the specified prefix
+	if *deletePrefixFile != "" {
+		deleteAllFilesByPrefix(*deletePrefixFile)
+		return
+	}
+
+	// Glance at the first 128*1024 bytes of the specified file
+	if *glanceFile != "" {
+		glanceFiles(*glanceFile)
+		return
+	}
+
+	// Fetch  file from S3
+	if *fetchFile != "" {
+		if *localPath == "" {
+			log.Fatal("localPath must be provided when fetching a file")
+		}
+		fetchFileFromGCS(*fetchFile)
+		return
+	}
+
+	generateData()
 }
