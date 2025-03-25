@@ -231,10 +231,25 @@ func (s *statsReadWriter) SaveColOrIdxStatsToStorage(
 }
 
 // SaveMetaToStorage saves stats meta to the storage.
+// It's called when the column/index stats are not updated.
 func (s *statsReadWriter) SaveMetaToStorage(tableID, count, modifyCount int64, source string) (err error) {
 	var statsVer uint64
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		statsVer, err = SaveMetaToStorage(sctx, tableID, count, modifyCount)
+		return err
+	}, util.FlagWrapTxn)
+	if err == nil && statsVer != 0 {
+		s.statsHandler.RecordHistoricalStatsMeta(statsVer, source, false, tableID)
+	}
+	return
+}
+
+// SaveMetaToStorageAndUpdateLastHistVer saves stats meta to the storage and update the latest hist version together.
+// It's called when the column/index stats are also updated.
+func (s *statsReadWriter) SaveMetaToStorageAndUpdateLastHistVer(tableID, count, modifyCount int64, source string) (err error) {
+	var statsVer uint64
+	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+		statsVer, err = SaveMetaToStorageAndUpdateLastHistVer(sctx, tableID, count, modifyCount)
 		return err
 	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
@@ -696,7 +711,7 @@ func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physical
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return s.SaveMetaToStorage(tbl.PhysicalID, tbl.RealtimeCount, tbl.ModifyCount, util.StatsMetaHistorySourceLoadStats)
+	return s.SaveMetaToStorageAndUpdateLastHistVer(tbl.PhysicalID, tbl.RealtimeCount, tbl.ModifyCount, util.StatsMetaHistorySourceLoadStats)
 }
 
 // SaveColumnStatsUsageToStorage saves column statistics usage information for a table into mysql.column_stats_usage.

@@ -387,6 +387,19 @@ func SaveMetaToStorage(
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
+	statsVer = version
+	return
+}
+
+// SaveMetaToStorageAndUpdateLastHistVer will save stats_meta to storage and update last stats histograms version.
+func SaveMetaToStorageAndUpdateLastHistVer(
+	sctx sessionctx.Context,
+	tableID, count, modifyCount int64) (statsVer uint64, err error) {
+	version, err := util.GetStartTS(sctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
 	_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count, last_stats_histograms_version) values (%?, %?, %?, %?, %?)", version, tableID, count, modifyCount, version)
 	statsVer = version
 	return
