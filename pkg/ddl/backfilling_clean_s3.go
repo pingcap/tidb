@@ -68,7 +68,7 @@ func (*BackfillCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
 	metaPrefix := strconv.Itoa(int(task.ID))
 	err = external.CleanUpFiles(ctx, extStore, metaPrefix)
 	if err != nil {
-		logutil.Logger(ctx).Warn("cannot cleanup cloud storage meta files", zap.Error(err))
+		logutil.Logger(ctx).Warn("cannot cleanup cloud storage files", zap.Error(err))
 		return err
 	}
 	redactCloudStorageURI(ctx, task, &taskMeta)

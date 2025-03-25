@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package addindextestutil
+package util
 
 import (
 	"context"
+	"reflect"
 	"strconv"
 	"sync"
 	"testing"
@@ -556,4 +557,32 @@ func InitTestFailpoint(t *testing.T) *SuiteContext {
 	ctx := InitTest(t)
 	ctx.isFailpointsTest = true
 	return ctx
+}
+
+// AssertExternalField checks if the fields with `external:"true"` tag in the subtaskMeta are nil or empty.
+func AssertExternalField(t *testing.T, subtaskMeta any) {
+	// Reflect on subtaskMeta to check fields with `external:"true"` tag
+	v := reflect.ValueOf(subtaskMeta)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	typ := v.Type()
+	for i := 0; i < v.NumField(); i++ {
+		field := typ.Field(i)
+		if field.Tag.Get("external") == "true" {
+			fv := v.Field(i)
+			switch fv.Kind() {
+			case reflect.Ptr:
+				require.Nil(t, fv.Interface(), "Field "+field.Name+" should be nil")
+			case reflect.Struct:
+				require.True(t, fv.IsZero(), "Field "+field.Name+" should be empty")
+			case reflect.Slice:
+				require.Empty(t, fv.Interface(), "Field "+field.Name+" should be empty")
+			case reflect.Map:
+				require.Empty(t, fv.Interface(), "Field "+field.Name+" should be empty")
+			default:
+				t.Fatalf("unexpected field type %s", fv.Kind())
+			}
+		}
+	}
 }

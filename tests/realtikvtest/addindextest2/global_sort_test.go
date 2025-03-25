@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -40,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/tests/realtikvtest"
+	"github.com/pingcap/tidb/tests/realtikvtest/util"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -96,40 +96,13 @@ func checkDataAndShowJobs(t *testing.T, tk *testkit.TestKit, count int) {
 	require.Equal(t, rs[0][7], strconv.Itoa(count))
 }
 
-func assertExternalField(t *testing.T, subtaskMeta any) {
-	// Reflect on subtaskMeta to check fields with `external:"true"` tag
-	v := reflect.ValueOf(subtaskMeta)
-	if v.Kind() == reflect.Ptr {
-		v = v.Elem()
-	}
-	typ := v.Type()
-	for i := 0; i < v.NumField(); i++ {
-		field := typ.Field(i)
-		if field.Tag.Get("external") == "true" {
-			fv := v.Field(i)
-			switch fv.Kind() {
-			case reflect.Ptr:
-				require.Nil(t, fv.Interface(), "Field "+field.Name+" should be nil")
-			case reflect.Struct:
-				require.True(t, fv.IsZero(), "Field "+field.Name+" should be empty")
-			case reflect.Slice:
-				require.Empty(t, fv.Interface(), "Field "+field.Name+" should be empty")
-			case reflect.Map:
-				require.Empty(t, fv.Interface(), "Field "+field.Name+" should be empty")
-			default:
-				t.Fatalf("unexpected field type %s", fv.Kind())
-			}
-		}
-	}
-}
-
 func checkExternalFields(t *testing.T, tk *testkit.TestKit) {
 	// fetch subtask meta from tk, and check fields with `external:"true"` tag
 	rs := tk.MustQuery("select meta from mysql.tidb_background_subtask").Rows()
 	for _, r := range rs {
 		var subtaskMeta ddl.BackfillSubTaskMeta
 		require.NoError(t, json.Unmarshal([]byte(r[0].(string)), &subtaskMeta))
-		assertExternalField(t, &subtaskMeta)
+		util.AssertExternalField(t, &subtaskMeta)
 	}
 }
 

@@ -517,7 +517,7 @@ func getSortedKVMetasOfEncodeStep(ctx context.Context, subTaskMetas [][]byte, st
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if stepMeta.ExternalPath != "" && store != nil {
+		if stepMeta.ExternalPath != "" {
 			if err := stepMeta.ReadJSONFromExternalStorage(ctx, store, &stepMeta); err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -547,7 +547,7 @@ func getSortedKVMetasOfMergeStep(ctx context.Context, subTaskMetas [][]byte, sto
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		if stepMeta.ExternalPath != "" && store != nil {
+		if stepMeta.ExternalPath != "" {
 			if err := stepMeta.ReadJSONFromExternalStorage(ctx, store, &stepMeta); err != nil {
 				return nil, errors.Trace(err)
 			}

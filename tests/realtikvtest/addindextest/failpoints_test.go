@@ -17,7 +17,7 @@ package addindextest
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/tests/realtikvtest/addindextestutil"
+	"github.com/pingcap/tidb/tests/realtikvtest/util"
 )
 
 func TestFailpointsCreateNonUniqueIndex(t *testing.T) {
@@ -29,8 +29,8 @@ func TestFailpointsCreateNonUniqueIndex(t *testing.T) {
 		{2, 5, 8, 11, 14, 17, 20, 23, 26},
 		{3, 6, 9, 12, 15, 18, 21, 24, 27},
 	}
-	ctx := addindextestutil.InitTestFailpoint(t)
-	addindextestutil.TestOneColFrame(ctx, colIDs, addindextestutil.AddIndexNonUnique)
+	ctx := util.InitTestFailpoint(t)
+	util.TestOneColFrame(ctx, colIDs, util.AddIndexNonUnique)
 }
 
 func TestFailpointsCreateUniqueIndex(t *testing.T) {
@@ -42,24 +42,24 @@ func TestFailpointsCreateUniqueIndex(t *testing.T) {
 		{2, 9, 11, 17},
 		{3, 12, 25},
 	}
-	ctx := addindextestutil.InitTestFailpoint(t)
-	addindextestutil.TestOneColFrame(ctx, colIDs, addindextestutil.AddIndexUnique)
+	ctx := util.InitTestFailpoint(t)
+	util.TestOneColFrame(ctx, colIDs, util.AddIndexUnique)
 }
 
 func TestFailpointsCreatePrimaryKeyFailpoints(t *testing.T) {
 	if !*FullMode {
 		t.Skip()
 	}
-	ctx := addindextestutil.InitTest(t)
-	addindextestutil.TestOneIndexFrame(ctx, 0, addindextestutil.AddIndexPK)
+	ctx := util.InitTest(t)
+	util.TestOneIndexFrame(ctx, 0, util.AddIndexPK)
 }
 
 func TestFailpointsCreateGenColIndex(t *testing.T) {
 	if !*FullMode {
 		t.Skip()
 	}
-	ctx := addindextestutil.InitTestFailpoint(t)
-	addindextestutil.TestOneIndexFrame(ctx, 29, addindextestutil.AddIndexGenCol)
+	ctx := util.InitTestFailpoint(t)
+	util.TestOneIndexFrame(ctx, 29, util.AddIndexGenCol)
 }
 
 func TestFailpointsCreateMultiColsIndex(t *testing.T) {
@@ -76,6 +76,6 @@ func TestFailpointsCreateMultiColsIndex(t *testing.T) {
 		{14, 17, 20},
 		{18, 21, 24},
 	}
-	ctx := addindextestutil.InitTestFailpoint(t)
-	addindextestutil.TestTwoColsFrame(ctx, coliIDs, coljIDs, addindextestutil.AddIndexMultiCols)
+	ctx := util.InitTestFailpoint(t)
+	util.TestTwoColsFrame(ctx, coliIDs, coljIDs, util.AddIndexMultiCols)
 }

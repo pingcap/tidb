@@ -17,7 +17,7 @@ package addindextest
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/tests/realtikvtest/addindextestutil"
+	"github.com/pingcap/tidb/tests/realtikvtest/util"
 )
 
 func TestMultiSchemaChangeCreateNonUniqueIndex(t *testing.T) {
@@ -26,9 +26,9 @@ func TestMultiSchemaChangeCreateNonUniqueIndex(t *testing.T) {
 		{2, 5, 8},
 		{3, 6, 9},
 	}
-	ctx := addindextestutil.InitCompCtx(t)
+	ctx := util.InitCompCtx(t)
 	ctx.CompCtx.IsMultiSchemaChange = true
-	addindextestutil.TestOneColFrame(ctx, colIDs, addindextestutil.AddIndexNonUnique)
+	util.TestOneColFrame(ctx, colIDs, util.AddIndexNonUnique)
 }
 
 func TestMultiSchemaChangeCreateUniqueIndex(t *testing.T) {
@@ -37,21 +37,21 @@ func TestMultiSchemaChangeCreateUniqueIndex(t *testing.T) {
 		{2, 19},
 		{11},
 	}
-	ctx := addindextestutil.InitCompCtx(t)
+	ctx := util.InitCompCtx(t)
 	ctx.CompCtx.IsMultiSchemaChange = true
-	addindextestutil.TestOneColFrame(ctx, colIDs, addindextestutil.AddIndexUnique)
+	util.TestOneColFrame(ctx, colIDs, util.AddIndexUnique)
 }
 
 func TestMultiSchemaChangeCreatePrimaryKey(t *testing.T) {
-	ctx := addindextestutil.InitCompCtx(t)
+	ctx := util.InitCompCtx(t)
 	ctx.CompCtx.IsMultiSchemaChange = true
-	addindextestutil.TestOneIndexFrame(ctx, 0, addindextestutil.AddIndexPK)
+	util.TestOneIndexFrame(ctx, 0, util.AddIndexPK)
 }
 
 func TestMultiSchemaChangeCreateGenColIndex(t *testing.T) {
-	ctx := addindextestutil.InitCompCtx(t)
+	ctx := util.InitCompCtx(t)
 	ctx.CompCtx.IsMultiSchemaChange = true
-	addindextestutil.TestOneIndexFrame(ctx, 29, addindextestutil.AddIndexGenCol)
+	util.TestOneIndexFrame(ctx, 29, util.AddIndexGenCol)
 }
 
 func TestMultiSchemaChangeMultiColsIndex(t *testing.T) {
@@ -65,7 +65,7 @@ func TestMultiSchemaChangeMultiColsIndex(t *testing.T) {
 		{14},
 		{18},
 	}
-	ctx := addindextestutil.InitCompCtx(t)
+	ctx := util.InitCompCtx(t)
 	ctx.CompCtx.IsMultiSchemaChange = true
-	addindextestutil.TestTwoColsFrame(ctx, coliIDs, coljIDs, addindextestutil.AddIndexMultiCols)
+	util.TestTwoColsFrame(ctx, coliIDs, coljIDs, util.AddIndexMultiCols)
 }
