@@ -97,22 +97,6 @@ type Column struct {
 	NullRatio int
 }
 
-// Read SQL schema file
-//func readSQLFile(filename string) (string, error) {
-//	data, err := ioutil.ReadFile(filename)
-//	if err != nil {
-//		return "", err
-//	}
-//	return string(data), nil
-//}
-
-//func getNullRation(colName string) int {
-//	if n, ok := nullRatioMap[colName]; ok {
-//		return n
-//	}
-//	return defaultNullRatio
-//}
-
 func (c *Column) canThisValNull() bool {
 	if c.IsPK || c.NullRatio == 0 {
 		return false
@@ -485,21 +469,6 @@ func writeDataToGCS(store storage.ExternalStorage, fileName string, data [][]str
 }
 
 func deleteFile(fileName string) {
-	//op := storage.BackendOptions{S3: storage.S3BackendOptions{
-	//	Region:          *s3Region,
-	//	AccessKey:       *s3AccessKey,
-	//	SecretAccessKey: *s3SecretKey,
-	//	Provider:        *s3Provider,
-	//	Endpoint:        *s3Endpoint,
-	//}}
-	//s, err := storage.ParseBackend(*s3Path, &op)
-	//if err != nil {
-	//	panic(err)
-	//}
-	//store, err := storage.NewWithDefaultOpt(context.Background(), s)
-	//if err != nil {
-	//	panic(err)
-	//}
 	store := createExternalStorage()
 	err := store.DeleteFile(context.Background(), fileName)
 	if err != nil {
@@ -508,21 +477,6 @@ func deleteFile(fileName string) {
 }
 
 func showFiles() {
-	//op := storage.BackendOptions{S3: storage.S3BackendOptions{
-	//	Region:          *s3Region,
-	//	AccessKey:       *s3AccessKey,
-	//	SecretAccessKey: *s3SecretKey,
-	//	Provider:        *s3Provider,
-	//	Endpoint:        *s3Endpoint,
-	//}}
-	//s, err := storage.ParseBackend(*s3Path, &op)
-	//if err != nil {
-	//	panic(err)
-	//}
-	//store, err := storage.NewWithDefaultOpt(context.Background(), s)
-	//if err != nil {
-	//	panic(err)
-	//}
 	store := createExternalStorage()
 	dirSize := 0.0
 	dirFileNum := 0
@@ -537,21 +491,6 @@ func showFiles() {
 }
 
 func glanceFiles(fileName string) {
-	//op := storage.BackendOptions{S3: storage.S3BackendOptions{
-	//	Region:          *s3Region,
-	//	AccessKey:       *s3AccessKey,
-	//	SecretAccessKey: *s3SecretKey,
-	//	Provider:        *s3Provider,
-	//	Endpoint:        *s3Endpoint,
-	//}}
-	//s, err := storage.ParseBackend(*s3Path, &op)
-	//if err != nil {
-	//	panic(err)
-	//}
-	//store, err := storage.NewWithDefaultOpt(context.Background(), s)
-	//if err != nil {
-	//	panic(err)
-	//}
 	store := createExternalStorage()
 	r, _ := store.Open(context.Background(), fileName, nil)
 	b := make([]byte, 1*units.MiB)
@@ -560,21 +499,6 @@ func glanceFiles(fileName string) {
 }
 
 func fetchFileFromGCS(fileName string) {
-	//op := storage.BackendOptions{S3: storage.S3BackendOptions{
-	//	Region:          *s3Region,
-	//	AccessKey:       *s3AccessKey,
-	//	SecretAccessKey: *s3SecretKey,
-	//	Provider:        *s3Provider,
-	//	Endpoint:        *s3Endpoint,
-	//}}
-	//s, err := storage.ParseBackend(*s3Path, &op)
-	//if err != nil {
-	//	panic(err)
-	//}
-	//store, err := storage.NewWithDefaultOpt(context.Background(), s)
-	//if err != nil {
-	//	panic(err)
-	//}
 	store := createExternalStorage()
 	if exist, _ := store.FileExists(context.Background(), fileName); !exist {
 		panic(fmt.Errorf("file %s does not exist", fileName))
@@ -642,21 +566,6 @@ func writeCSVToLocalDisk(filename string, data [][]string) error {
 
 func deleteAllFilesByPrefix(prefix string) {
 	var fileNames []string
-	//op := storage.BackendOptions{S3: storage.S3BackendOptions{
-	//	Region:          *s3Region,
-	//	AccessKey:       *s3AccessKey,
-	//	SecretAccessKey: *s3SecretKey,
-	//	Provider:        *s3Provider,
-	//	Endpoint:        *s3Endpoint,
-	//}}
-	//s, err := storage.ParseBackend(*s3Path, &op)
-	//if err != nil {
-	//	panic(err)
-	//}
-	//store, err := storage.NewWithDefaultOpt(context.Background(), s)
-	//if err != nil {
-	//	panic(err)
-	//}
 	store := createExternalStorage()
 	store.WalkDir(context.Background(), &storage.WalkOption{SkipSubDir: true}, func(path string, size int64) error {
 		if strings.HasPrefix(path, prefix) {
