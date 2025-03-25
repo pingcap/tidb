@@ -697,7 +697,7 @@ func NewWriteExternalStoreOperator(
 		concurrency,
 		func() workerpool.Worker[IndexRecordChunk, IndexWriteResult] {
 			var writers []ingest.Writer
-			if reorgMeta.UseLocalStorage {
+			if reorgMeta.UseLocalStorage || reorgMeta.ForceMergeSort {
 				writerID := uuid.New().String()
 				writer := builder.Build(store, prefix, writerID)
 				writers = []ingest.Writer{writer}
