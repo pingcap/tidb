@@ -594,6 +594,19 @@ func queryPlanCost(sctx sessionctx.Context, stmt ast.StmtNode) (float64, error) 
 	return core.GetPlanCost(pp, property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
 }
 
+func planDigest(sctx sessionctx.Context, stmt ast.StmtNode) string {
+	nodeW := resolve.NewNodeW(stmt)
+	p, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetDomainInfoSchema().(infoschema.InfoSchema))
+	if err != nil {
+	}
+	flat := core.FlattenPhysicalPlan(p, false)
+	if flat == nil {
+
+	}
+	_, planDigest := core.NormalizeFlatPlan(flat)
+	return planDigest.String()
+}
+
 func init() {
 	core.OptimizeAstNode = Optimize
 	core.IsReadOnly = IsReadOnly
