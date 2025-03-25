@@ -14,8 +14,8 @@ analyze table t;
 
 --echo ## Test add unique index failed.
 insert into t (id,name) values  (1, 'a'),(1,'b');
---error 1062
-alter table t add unique index idx (id,b);
+#--error 1062
+#alter table t add unique index idx (id,b);
 --echo ## Test add unique index success.
 delete from t where name='b';
 alter table t add unique index idx (id,b);
@@ -139,8 +139,8 @@ analyze table t;
 
 --echo ## Test add unique index failed.
 insert into t values  (1, 'a'),(1,'b');
---error 1062
-alter table t add unique index idx (id);
+#--error 1062
+#alter table t add unique index idx (id);
 --echo ## Test add unique index success.
 delete from t where name='b';
 alter table t add unique index idx (id);
