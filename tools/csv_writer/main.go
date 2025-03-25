@@ -26,24 +26,24 @@ import (
 
 // Command-line parameters
 var (
-	templatePath        = flag.String("template", "/home/admin/template.sql", "Path to table schema information")
-	credentialPath      = flag.String("credential", "", "Path to S3 credential file")
-	showFile            = flag.Bool("showFile", false, "List all files in the S3 directory")
-	deleteFileName      = flag.String("deleteFile", "", "Delete a specific file from S3")
-	deleteAfterWrite    = flag.Bool("deleteAfterWrite", false, "Delete all files from S3 after generating (TEST ONLY)")
-	localPath           = flag.String("localPath", "", "Local path to write file")
-	glanceFile          = flag.String("glanceFile", "", "Glance the first 1024*1024 character of a specific file from S3")
-	deletePrefixFile    = flag.String("deletePrefixFile", "", "Delete all files with the specific prefix")
-	fileNamePrefix      = flag.String("fileNamePrefix", "testCSVWriter", "Base file name")
-	fileNameSuffixStart = flag.Int("fileNameSuffixStart", 0, "Start of file name suffix")
+	showFile           = flag.Bool("showFile", false, "List all files in the S3 directory")
+	deleteFile         = flag.String("deleteFile", "", "Delete a specific file from S3")
+	glanceFile         = flag.String("glanceFile", "", "Glance the first 1024*1024 character of a specific file from S3")
+	fetchFile          = flag.String("fetchFile", "", "Fetch a specific file from S3, need to specify the local path.")
+	deleteFileByPrefix = flag.String("deleteFileByPrefix", "", "Delete all files with the specific prefix")
+	deleteAfterWrite   = flag.Bool("deleteAfterWrite", false, "Delete all files after generating (TEST ONLY!)")
 
-	rowNumPerFile = flag.Int("rowNumPerFile", 10, "Number of rows to generate in each csv file")
-	generatorNum  = flag.Int("generatorNum", 1, "Number of generator goroutines")
-	writerNum     = flag.Int("writerNum", 8, "Number of writer goroutines")
-	pkBegin       = flag.Int("pkBegin", 0, "Begin of primary key, [begin, end)")
-	pkEnd         = flag.Int("pkEnd", 10, "End of primary key [begin, end)")
-	base64Encode  = flag.Bool("base64Encode", false, "Base64 encode the CSV file")
-	fetchFile     = flag.String("fetchFile", "", "Fetch a specific file from S3, need to specify the local path.")
+	tableInfo           = flag.String("tableInfo", "/home/admin/template.sql", "Path to table information")
+	localPath           = flag.String("localPath", "", "Local path to write file")
+	fileName            = flag.String("fileName", "testCSVWriter", "Base file name")
+	fileNameSuffixStart = flag.Int("fileNameSuffixStart", 0, "Start of file name suffix")
+	credentialPath      = flag.String("credential", "", "Path to S3 credential file")
+	rowNumPerFile       = flag.Int("rowNumPerFile", 10, "Number of rows to generate in each csv file")
+	pkBegin             = flag.Int("pkBegin", 0, "Begin of primary key, [begin, end)")
+	pkEnd               = flag.Int("pkEnd", 10, "End of primary key [begin, end)")
+	base64Encode        = flag.Bool("base64Encode", false, "Base64 encode the CSV file")
+	generatorNum        = flag.Int("generatorNum", 1, "Number of generator goroutines")
+	writerNum           = flag.Int("writerNum", 8, "Number of writer goroutines")
 
 	s3Path      = flag.String("s3Path", "gcs://global-sort-dir/testGenerateCSV", "S3 path")
 	s3AccessKey = flag.String("s3AccessKey", "", "S3 access key")
@@ -468,7 +468,7 @@ func writeDataToS3(store storage.ExternalStorage, fileName string, data [][]stri
 	return nil
 }
 
-func deleteFile(fileName string) {
+func deleteFileByName(fileName string) {
 	store := createExternalStorage()
 	err := store.DeleteFile(context.Background(), fileName)
 	if err != nil {
@@ -686,10 +686,10 @@ func readCSVFile(path string) [][]string {
 func generateData() {
 	rowCount := *pkEnd - *pkBegin
 	log.Printf("Configuration: credential=%s, template=%s, generatorNum=%d, writerNum=%d, rowCount=%d, rowNumPerFile=%d",
-		*credentialPath, *templatePath, *generatorNum, *writerNum, rowCount, *rowNumPerFile)
+		*credentialPath, *tableInfo, *generatorNum, *writerNum, rowCount, *rowNumPerFile)
 
 	// Read schema info from CSV
-	columns := loadSchemaInfoFromCSV(*templatePath)
+	columns := loadSchemaInfoFromCSV(*tableInfo)
 
 	// Check primary key range
 	if rowCount%*rowNumPerFile != 0 {
@@ -759,7 +759,7 @@ func generateData() {
 	for pk := *pkBegin; pk < *pkEnd; pk += *rowNumPerFile {
 		begin := pk
 		end := pk + *rowNumPerFile
-		csvFileName := fmt.Sprintf("%s.%09d.csv", *fileNamePrefix, taskID)
+		csvFileName := fmt.Sprintf("%s.%09d.csv", *fileName, taskID)
 		fileNames = append(fileNames, csvFileName)
 		task := Task{
 			id:       taskID,
@@ -786,7 +786,7 @@ func generateData() {
 
 	if *deleteAfterWrite {
 		for _, fileName := range fileNames {
-			deleteFile(fileName)
+			deleteFileByName(fileName)
 		}
 		log.Printf("Deleted all files after write")
 	}
@@ -806,14 +806,14 @@ func main() {
 	}
 
 	// Delete specified file
-	if *deleteFileName != "" {
-		deleteFile(*deleteFileName)
+	if *deleteFile != "" {
+		deleteFileByName(*deleteFile)
 		return
 	}
 
 	// Delete all files with the specified prefix
-	if *deletePrefixFile != "" {
-		deleteAllFilesByPrefix(*deletePrefixFile)
+	if *deleteFileByPrefix != "" {
+		deleteAllFilesByPrefix(*deleteFileByPrefix)
 		return
 	}
 
