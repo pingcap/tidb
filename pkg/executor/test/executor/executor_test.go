@@ -1400,12 +1400,12 @@ func TestCollectDMLRuntimeStats(t *testing.T) {
 
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert ignore into t1 values (9,9)")
-	require.Regexp(t, "time:.*, loops:.*, prepare:.*, check_insert: {total_time:.*, mem_insert_time:.*, prefetch:.*, rpc:{BatchGet:{num_rpc:.*, total_time:.*}}}.*", getRootStats())
+	require.Regexp(t, "time:.*, loops:.*, check_insert: {total_time:.*, mem_insert_time:.*, prefetch:.*, rpc:{BatchGet:{num_rpc:.*, total_time:.*}}}.*", getRootStats())
 	tk.MustExec("rollback")
 
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t1 values (10,10) on duplicate key update a=a+1")
-	require.Regexp(t, "time:.*, loops:.*, prepare:.*, check_insert: {total_time:.*, mem_insert_time:.*, prefetch:.*, rpc:{BatchGet:{num_rpc:.*, total_time:.*}.*", getRootStats())
+	require.Regexp(t, "time:.*, loops:.*, check_insert: {total_time:.*, mem_insert_time:.*, prefetch:.*, rpc:{BatchGet:{num_rpc:.*, total_time:.*}.*", getRootStats())
 	tk.MustExec("rollback")
 
 	tk.MustExec("begin pessimistic")
@@ -1415,7 +1415,7 @@ func TestCollectDMLRuntimeStats(t *testing.T) {
 
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert ignore into t1 values(11,11) on duplicate key update `a`=`a`+1")
-	require.Regexp(t, "time:.*, loops:.*, prepare:.*, check_insert: {total_time:.*, mem_insert_time:.*, prefetch:.*, rpc:.*}", getRootStats())
+	require.Regexp(t, "time:.*, loops:.*, check_insert: {total_time:.*, mem_insert_time:.*, prefetch:.*, rpc:.*}", getRootStats())
 	tk.MustExec("rollback")
 
 	tk.MustExec("begin pessimistic")

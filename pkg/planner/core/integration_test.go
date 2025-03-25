@@ -1002,12 +1002,12 @@ func TestExplainAnalyzeDML2(t *testing.T) {
 		// Test for insert ignore.
 		{
 			sql:        "insert ignore into t values (null,1), (2, 2), (99000000000, 3), (100000000000, 4)",
-			planRegexp: ".*prepare.*total.*, auto_id_allocator.*alloc_cnt: 1, rebase_cnt: 2, Get.*num_rpc.*total_time.*commit_txn.*count: 3, prewrite.*get_commit_ts.*commit.*write_keys.*, check_insert.*",
+			planRegexp: ".*total.*, auto_id_allocator.*alloc_cnt: 1, rebase_cnt: 2, Get.*num_rpc.*total_time.*commit_txn.*count: 3, prewrite.*get_commit_ts.*commit.*write_keys.*, check_insert.*",
 		},
 		// Test for insert on duplicate.
 		{
 			sql:        "insert into t values (null,null), (1,1),(2,2) on duplicate key update a = a + 100000000000",
-			planRegexp: ".*prepare.*total.*, auto_id_allocator.*alloc_cnt: 1, rebase_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*count: 2, prewrite.*get_commit_ts.*commit.*write_keys.*, check_insert.*",
+			planRegexp: ".*total.*, auto_id_allocator.*alloc_cnt: 1, rebase_cnt: 1, Get.*num_rpc.*total_time.*commit_txn.*count: 2, prewrite.*get_commit_ts.*commit.*write_keys.*, check_insert.*",
 		},
 		// Test for replace with alloc ID.
 		{

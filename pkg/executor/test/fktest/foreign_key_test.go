@@ -1898,10 +1898,10 @@ func TestDMLExplainAnalyzeFKInfo(t *testing.T) {
 	tk.MustExec("insert into t2 values (1)")
 	res := tk.MustQuery("explain analyze insert ignore into t3 values (1, 1, 1), (2, 1, 1), (3, 2, 1), (4, 1, 1), (5, 2, 1), (6, 2, 1)")
 	explain := getExplainResult(res)
-	require.Regexpf(t, "time:.* loops:.* prepare:.* check_insert: {total_time:.* mem_insert_time:.* prefetch:.* fk_check:.*", explain, "")
+	require.Regexpf(t, "time:.* loops:.* check_insert: {total_time:.* mem_insert_time:.* prefetch:.* fk_check:.*", explain, "")
 	res = tk.MustQuery("explain analyze insert ignore into t3 values (7, null, null), (8, null, null)")
 	explain = getExplainResult(res)
-	require.Regexpf(t, "time:.* loops:.* prepare:.* check_insert: {total_time:.* mem_insert_time:.* prefetch:.* fk_check:.*", explain, "")
+	require.Regexpf(t, "time:.* loops:.* check_insert: {total_time:.* mem_insert_time:.* prefetch:.* fk_check:.*", explain, "")
 }
 
 func getExplainResult(res *testkit.Result) string {
@@ -2086,7 +2086,7 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 		},
 		{
 			sql: "explain analyze insert ignore into t6 values (1,1,10)",
-			plan: "Insert_.* root  time:.* loops:.* prepare:.* check_insert.* fk_check:.*" +
+			plan: "Insert_.* root  time:.* loops:.* check_insert.* fk_check:.*" +
 				"├─Foreign_Key_Check.* 0 root table:t5 total:.*, lock:.*, foreign_keys:1 foreign_key:fk_1, check_exist N/A N/A.*" +
 				"├─Foreign_Key_Check.* 0 root table:t5, index:idx2 total:.*, lock:.*, foreign_keys:1 foreign_key:fk_2, check_exist N/A N/A.*" +
 				"└─Foreign_Key_Check.* 0 root table:t5, index:idx3 total:0s, foreign_keys:1 foreign_key:fk_3, check_exist N/A N/A",
