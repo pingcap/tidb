@@ -14,6 +14,7 @@ import (
 	"math/rand"
 	_ "net/http/pprof"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -584,7 +585,7 @@ func fetchFileFromGCS(fileName string) {
 	}
 
 	// Open the local file where the content will be written
-	file, err := os.Create(*localPath + fileName)
+	file, err := os.Create(filepath.Join(*localPath, fileName))
 	if err != nil {
 		panic(fmt.Errorf("failed to create file %s: %v", *localPath, err))
 	}
