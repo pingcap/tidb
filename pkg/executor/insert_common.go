@@ -1156,7 +1156,6 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 		if e.stats == nil {
 			snapshotStats := &txnsnapshot.SnapshotRuntimeStats{}
 			e.stats = &InsertRuntimeStat{
-				BasicRuntimeStats:     e.RuntimeStats(),
 				SnapshotRuntimeStats:  snapshotStats,
 				AllocatorRuntimeStats: autoid.NewAllocatorRuntimeStats(),
 			}
@@ -1452,7 +1451,6 @@ var CloseSession func(ctx sessionctx.Context)
 
 // InsertRuntimeStat record the stat about insert and check
 type InsertRuntimeStat struct {
-	*execdetails.BasicRuntimeStats
 	*txnsnapshot.SnapshotRuntimeStats
 	*autoid.AllocatorRuntimeStats
 	CheckInsertTime time.Duration
@@ -1484,14 +1482,7 @@ func (e *InsertRuntimeStat) String() string {
 		return buf.String()
 	}
 	if allocatorStatsStr != "" {
-		buf.WriteString("prepare: {total: ")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(e.BasicRuntimeStats.GetTime()) - e.CheckInsertTime))
-		buf.WriteString(", ")
 		buf.WriteString(allocatorStatsStr)
-		buf.WriteString("}, ")
-	} else {
-		buf.WriteString("prepare: ")
-		buf.WriteString(execdetails.FormatDuration(time.Duration(e.BasicRuntimeStats.GetTime()) - e.CheckInsertTime))
 		buf.WriteString(", ")
 	}
 	if e.Prefetch > 0 {
@@ -1532,10 +1523,6 @@ func (e *InsertRuntimeStat) Clone() execdetails.RuntimeStats {
 		snapshotStats := e.SnapshotRuntimeStats.Clone()
 		newRs.SnapshotRuntimeStats = snapshotStats
 	}
-	if e.BasicRuntimeStats != nil {
-		basicStats := e.BasicRuntimeStats.Clone()
-		newRs.BasicRuntimeStats = basicStats.(*execdetails.BasicRuntimeStats)
-	}
 	if e.AllocatorRuntimeStats != nil {
 		newRs.AllocatorRuntimeStats = e.AllocatorRuntimeStats.Clone()
 	}
@@ -1554,14 +1541,6 @@ func (e *InsertRuntimeStat) Merge(other execdetails.RuntimeStats) {
 			e.SnapshotRuntimeStats = snapshotStats
 		} else {
 			e.SnapshotRuntimeStats.Merge(tmp.SnapshotRuntimeStats)
-		}
-	}
-	if tmp.BasicRuntimeStats != nil {
-		if e.BasicRuntimeStats == nil {
-			basicStats := tmp.BasicRuntimeStats.Clone()
-			e.BasicRuntimeStats = basicStats.(*execdetails.BasicRuntimeStats)
-		} else {
-			e.BasicRuntimeStats.Merge(tmp.BasicRuntimeStats)
 		}
 	}
 	if tmp.AllocatorRuntimeStats != nil {
