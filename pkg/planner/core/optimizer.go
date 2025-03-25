@@ -1084,9 +1084,6 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 	var err error
 	var againRuleList []base.LogicalOptRule
 	for i, rule := range logicalRuleList {
-		if !logic.SCtx().GetSessionVars().InRestrictedSQL {
-			fmt.Println("helo")
-		}
 		// The order of flags is same as the order of optRule in the list.
 		// We use a bitmask to record which opt rules should be used. If the i-th bit is 1, it means we should
 		// apply i-th optimizing rule.
@@ -1095,9 +1092,6 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 		}
 		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
 		var planChanged bool
-		if !logic.SCtx().GetSessionVars().InRestrictedSQL && i == 16 {
-			fmt.Println("wwz")
-		}
 		logic, planChanged, err = rule.Optimize(ctx, logic, opt)
 		if err != nil {
 			return nil, err
