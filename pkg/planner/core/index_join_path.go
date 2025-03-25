@@ -17,6 +17,7 @@ package core
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"strings"
 	"unsafe"
 
@@ -682,6 +683,11 @@ func getIndexJoinIntPKPathInfo(ds *logicalop.DataSource, innerJoinKeys, outerJoi
 	}
 	ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(pkCol.RetType.GetFlag()))
 	return keyOff2IdxOff, newOuterJoinKeys, ranges, true
+}
+
+func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.PhysicalProperty) base.Task {
+	innerCopTask := buildDataSource2TableScanByIndexJoinProp(ds, prop)
+	return innerCopTask
 }
 
 // getBestIndexJoinPathResultByProp tries to iterate all possible access paths of the inner child and builds

@@ -892,8 +892,10 @@ childLoop:
 // promised to be no worse than building IndexScan as the inner child.
 func buildDataSource2TableScanByIndexJoinProp(
 	ds *logicalop.DataSource,
-	prop *property.PhysicalProperty, hasDitryWrite bool,
-	outerIdx int, avgInnerRowCnt float64) base.Task {
+	prop *property.PhysicalProperty,
+	// hasDitryWrite bool,
+	// outerIdx can be identify by index join itself, when it compares the inner key.
+) base.Task {
 	var tblPath *util.AccessPath
 	for _, path := range ds.PossibleAccessPaths {
 		if path.IsTablePath() && path.StoreType == kv.TiKV { // ds 里面找一个 tikv 的 table path
@@ -917,7 +919,7 @@ func buildDataSource2TableScanByIndexJoinProp(
 		// 这里需要 outer join keys，因为要打印 range 信息，就是那个 decided by:
 		rangeInfo := indexJoinPathRangeInfo(ds.SCtx(), prop.IndexJoinProp.OuterJoinKeys, indexJoinResult)
 		// 这里构建 inner task
-		innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), rangeInfo, false, false, avgInnerRowCnt)
+		innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt)
 		// The index merge join's inner plan is different from index join, so we
 		// should construct another inner plan for it.
 		// Because we can't keep order for union scan, if there is a union scan in inner task,
@@ -939,7 +941,7 @@ func buildDataSource2TableScanByIndexJoinProp(
 			return nil
 		}
 		rangeInfo := indexJoinIntPKRangeInfo(ds.SCtx().GetExprCtx().GetEvalCtx(), newOuterJoinKeys)
-		innerTask = constructDS2TableScanTask(ds, localRanges, rangeInfo, false, false, avgInnerRowCnt)
+		innerTask = constructDS2TableScanTask(ds, localRanges, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt)
 		// The index merge join's inner plan is different from index join, so we
 		// should construct another inner plan for it.
 		// Because we can't keep order for union scan, if there is a union scan in inner task,
