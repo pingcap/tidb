@@ -1359,6 +1359,7 @@ func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.Ba
 	backendConfig := local.BackendConfig{
 		PDAddr:                 pdAddr,
 		LocalStoreDir:          dataDir,
+		WorkerConcurrency:      e.ThreadCnt,
 		MaxConnPerStore:        config.DefaultRangeConcurrency,
 		ConnCompressType:       config.CompressionNone,
 		KVWriteBatchSize:       config.KVWriteBatchSize,
@@ -1378,7 +1379,6 @@ func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.Ba
 		DisableAutomaticCompactions: true,
 		BlockSize:                   config.DefaultBlockSize,
 	}
-	backendConfig.WorkerConcurrency.Store(int32(e.ThreadCnt))
 	if e.IsRaftKV2 {
 		backendConfig.RaftKV2SwitchModeDuration = config.DefaultSwitchTiKVModeInterval
 	}

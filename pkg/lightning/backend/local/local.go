@@ -65,7 +65,6 @@ import (
 	"github.com/tikv/pd/client/pkg/caller"
 	"github.com/tikv/pd/client/pkg/retry"
 	sd "github.com/tikv/pd/client/servicediscovery"
-	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -430,7 +429,7 @@ type BackendConfig struct {
 	// compress type when write or ingest into tikv
 	ConnCompressType config.CompressionType
 	// concurrency of generateJobForRange and import(write & ingest) workers
-	WorkerConcurrency atomic.Int32
+	WorkerConcurrency int
 	// batch kv size when writing to TiKV
 	KVWriteBatchSize       int64
 	RegionSplitBatchSize   int
@@ -480,7 +479,7 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resour
 		LocalStoreDir:               cfg.TikvImporter.SortedKVDir,
 		MaxConnPerStore:             cfg.TikvImporter.RangeConcurrency,
 		ConnCompressType:            cfg.TikvImporter.CompressKVPairs,
-		WorkerConcurrency:           *atomic.NewInt32(int32(cfg.TikvImporter.RangeConcurrency) * 2),
+		WorkerConcurrency:           cfg.TikvImporter.RangeConcurrency * 2,
 		BlockSize:                   int(cfg.TikvImporter.BlockSize),
 		KVWriteBatchSize:            int64(cfg.TikvImporter.SendKVSize),
 		RegionSplitBatchSize:        cfg.TikvImporter.RegionSplitBatchSize,
@@ -505,10 +504,6 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resour
 
 func (c *BackendConfig) adjust() {
 	c.MaxOpenFiles = max(c.MaxOpenFiles, openFilesLowerThreshold)
-}
-
-func (c *BackendConfig) Concurrency() int {
-	return int(c.WorkerConcurrency.Load())
 }
 
 // Backend is a local backend.
@@ -970,7 +965,7 @@ func (local *Backend) generateAndSendJob(
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 
 	dataAndRangeCh := make(chan common.DataAndRanges)
-	conn := int(local.WorkerConcurrency.Load())
+	conn := local.WorkerConcurrency
 	if _, ok := engine.(*external.Engine); ok {
 		// currently external engine will generate a large IngestData, se we lower the
 		// concurrency to pass backpressure to the LoadIngestData goroutine to avoid OOM
@@ -1477,7 +1472,7 @@ func (local *Backend) doImport(
 
 	dispatcher := newJobDispatchOperator(workerCtx, workGroup, &jobWg, local, balancer)
 
-	workerConcurrency := int(local.WorkerConcurrency.Load())
+	workerConcurrency := local.WorkerConcurrency
 	failpoint.Inject("skipStartWorker", func() {
 		workerConcurrency = 0
 	})

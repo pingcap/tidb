@@ -325,7 +325,7 @@ func (em *engineManager) closeEngine(
 			em.DupeDetectEnabled,
 			em.duplicateDB,
 			em.DuplicateDetectOpt,
-			int(em.WorkerConcurrency.Load()),
+			em.WorkerConcurrency,
 			ts,
 			externalCfg.TotalFileSize,
 			externalCfg.TotalKVCount,
