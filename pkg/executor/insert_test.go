@@ -423,7 +423,8 @@ func TestInsertRuntimeStat(t *testing.T) {
 	}
 	require.Equal(t, "check_insert: {total_time: 2s, mem_insert_time: 1s, prefetch: 1s}", stats.String())
 	require.Equal(t, stats.Clone().String(), stats.String())
-	stats.Merge(stats.Clone())
+	newStats := stats.Clone()
+	stats.Merge(newStats)
 	require.Equal(t, "check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s}", stats.String())
 	stats.FKCheckTime = time.Second
 	require.Equal(t, "check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s, fk_check: 1s}", stats.String())
