@@ -336,3 +336,5 @@ create user test_user;
 create temporary table t(id int);
 grant select on t to test_user;
 Error 1146 (42S02): Table 'executor__grant.t' doesn't exist
+drop user test_user;
+drop temporary table t;
