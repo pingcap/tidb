@@ -142,7 +142,7 @@ echo "Test 1 finished successfully!"
 # Test 2: Restore random tables without checkpoint
 echo "=== Test 2: restore random tables without checkpoint ==="
 # We pick 50 random tables from 1..300
-TABLE_LIST=$(shuf -i 1-300 -n 50 | awk '{printf "-t sbtest%s ", $1}')
+TABLE_LIST=$(shuf -i 1-$TABLES_COUNT -n 50 | awk '{printf "-t sbtest%s ", $1}')
 perform_restore_test table --db "$DB" $TABLE_LIST
 echo "Test 2 finished successfully!"
 
