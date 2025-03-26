@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	disthandle "github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -1764,6 +1765,7 @@ func (do *Domain) InitDistTaskLoop() error {
 	if err != nil {
 		return err
 	}
+	disthandle.SetNodeResource(nodeRes)
 	executorManager, err := taskexecutor.NewManager(managerCtx, serverID, taskManager, nodeRes)
 	if err != nil {
 		return err
@@ -2700,7 +2702,7 @@ func (do *Domain) asyncLoadHistogram() {
 		case <-cleanupTicker.C:
 			err = statsHandle.LoadNeededHistograms(do.InfoSchema())
 			if err != nil {
-				logutil.ErrVerboseLogger().Warn("load histograms failed", zap.Error(err))
+				statslogutil.StatsErrVerboseSampleLogger().Warn("Load histograms failed", zap.Error(err))
 			}
 		case <-do.exit:
 			return

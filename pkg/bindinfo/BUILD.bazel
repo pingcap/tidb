@@ -4,6 +4,7 @@ go_library(
     name = "bindinfo",
     srcs = [
         "binding.go",
+        "binding_auto.go",
         "binding_cache.go",
         "binding_handle.go",
         "binding_operator.go",
@@ -46,6 +47,7 @@ go_test(
     name = "bindinfo_test",
     timeout = "moderate",
     srcs = [
+        "binding_auto_test.go",
         "binding_cache_test.go",
         "binding_operator_test.go",
         "main_test.go",
@@ -54,7 +56,7 @@ go_test(
     embed = [":bindinfo"],
     flaky = True,
     race = "on",
-    shard_count = 32,
+    shard_count = 33,
     deps = [
         "//pkg/parser",
         "//pkg/parser/ast",
