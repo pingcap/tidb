@@ -306,22 +306,24 @@ func (p *PhysicalProperty) IsSubsetOf(keys []*MPPPartitionColumn) []int {
 //
 // for example:
 //  1. requiredPartitionColumn: [18，13，16]
+//
 // 2. currentPartitionColumn: 9
 //  2. keys: [9]
 //  3. FD: (1)-->(2-6,8), ()-->(7), (9)-->(10-17), (1,10)==(1,10), (18,21)-->(19,20,22-33), (9,18)==(9,18)
 //     In this case, we can see that the child supplied partition keys is subset of parent required partition cols.
 func (p *PhysicalProperty) NeedMPPExchangeByEquivalence(
-currentPartitionColumn []*MPPPartitionColumn, fd *funcdep.FDSet) bool {
+	currentPartitionColumn []*MPPPartitionColumn, fd *funcdep.FDSet) bool {
 	requiredPartitionCols := p.MPPPartitionCols
+	uniqueID2MppCol := make(map[*MPPPartitionColumn]intset.FastIntSet, len(requiredPartitionCols))
 	// for each partition column, we calculate the equivalence alternative closure of it.
-	for _, pCol := range p.MPPPartitionCols {
+	for _, pCol := range requiredPartitionCols {
 		uniqueID2MppCol[pCol] = fd.ClosureOfEquivalence(intset.NewFastIntSet(int(pCol.Col.UniqueID)))
 	}
 
 	// there is a subset theorem here, if the child supplied keys is a subset of parent required mpp partition cols,
 	// the mpp partition exchanger can also be eliminated.
 SubsetLoop:
-	for _, key := range hashCols {
+	for _, key := range currentPartitionColumn {
 		for pCol, equivSet := range uniqueID2MppCol {
 			if checkEquivalence(equivSet, key, pCol) {
 				// yes, child can supply the same col partition prop. continue to next child supplied key.
