@@ -233,8 +233,6 @@ type session struct {
 	commitWaitGroup sync.WaitGroup
 }
 
-var parserPool = &sync.Pool{New: func() any { return parser.New() }}
-
 // AddTableLock adds table lock to the session lock map.
 func (s *session) AddTableLock(locks []model.TableLockTpInfo) {
 	for _, l := range locks {
