@@ -793,6 +793,12 @@ var defaultSysVars = []*SysVar{
 		vardef.SetMaxDeltaSchemaCount(TidbOptInt64(val, vardef.DefTiDBMaxDeltaSchemaCount))
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnablePointGetCache, Value: BoolToOnOff(vardef.DefTiDBPointGetCache), Hidden: true, Type: vardef.TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		vardef.EnablePointGetCache.Store(TiDBOptOn(val))
+		return nil
+	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return BoolToOnOff(vardef.EnablePointGetCache.Load()), nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBScatterRegion, Value: vardef.DefTiDBScatterRegion, PossibleValues: []string{vardef.ScatterOff, vardef.ScatterTable, vardef.ScatterGlobal}, Type: vardef.TypeStr,
 		SetSession: func(vars *SessionVars, val string) error {
 			vars.ScatterRegion = val
