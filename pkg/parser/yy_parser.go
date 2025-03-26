@@ -137,10 +137,10 @@ func (parser *Parser) Reset() {
 }
 
 func (parser *Parser) reset() {
-	parser.EnableWindowFunc(true)
-	parser.SetStrictDoubleTypeCheck(true)
 	parser.explicitCharset = false
 	parser.strictDoubleFieldType = false
+	parser.EnableWindowFunc(true)
+	parser.SetStrictDoubleTypeCheck(true)
 	mode, _ := mysql.GetSQLMode(mysql.DefaultSQLMode)
 	parser.SetSQLMode(mode)
 }
