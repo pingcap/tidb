@@ -521,6 +521,207 @@ func getHashJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, inne
 	return hashJoin
 }
 
+func completePhysicalIndexJoin(physic *PhysicalIndexJoin, info *IndexJoinInfo, innerS, outerS *expression.Schema, extractOtherEQ bool) base.PhysicalPlan {
+	// runtime fill back ranges
+	if info.Ranges == nil {
+		info.Ranges = ranger.Ranges{} // empty range
+	}
+	// set the new key off according to the index join info's keyOff2IdxOff
+	newKeyOff := make([]int, 0, len(info.KeyOff2IdxOff))
+	// IsNullEQ & InnerJoinKeys & OuterJoinKeys in physic may change.
+	newIsNullEQ := make([]bool, 0, len(physic.IsNullEQ))
+	newInnerKeys := make([]*expression.Column, 0, len(physic.InnerJoinKeys))
+	newOuterKeys := make([]*expression.Column, 0, len(physic.OuterJoinKeys))
+	// OtherCondition may change because EQ can be leverage in hash table retrieve.
+	newOtherConds := make([]expression.Expression, len(physic.OtherConditions), len(physic.OtherConditions)+len(physic.EqualConditions))
+	copy(newOtherConds, physic.OtherConditions)
+	for keyOff, idxOff := range info.KeyOff2IdxOff {
+		// 如果有个 index key < 0, 说明该 key 位置空洞了，需要早 OtherConditions 中重新来 eval 他，不然 EQ 这关就算过了
+		if info.KeyOff2IdxOff[keyOff] < 0 {
+			newOtherConds = append(newOtherConds, physic.EqualConditions[keyOff])
+			continue
+		}
+		newInnerKeys = append(newInnerKeys, physic.InnerJoinKeys[keyOff])
+		newOuterKeys = append(newOuterKeys, physic.OuterJoinKeys[keyOff])
+		newIsNullEQ = append(newIsNullEQ, physic.IsNullEQ[keyOff])
+		newKeyOff = append(newKeyOff, idxOff)
+	}
+
+	// we can use the `col <eq> col` in `OtherCondition` to build the hashtable to avoid the unnecessary calculating.
+	var outerHashKeys, innerHashKeys []*expression.Column
+	outerHashKeys, innerHashKeys = make([]*expression.Column, len(newOuterKeys)), make([]*expression.Column, len(newInnerKeys))
+	copy(outerHashKeys, newOuterKeys)
+	copy(innerHashKeys, newInnerKeys)
+	for i := len(newOtherConds) - 1; extractOtherEQ && i >= 0; i = i - 1 {
+		switch c := newOtherConds[i].(type) {
+		case *expression.ScalarFunction:
+			if c.FuncName.L == ast.EQ {
+				lhs, ok1 := c.GetArgs()[0].(*expression.Column)
+				rhs, ok2 := c.GetArgs()[1].(*expression.Column)
+				if ok1 && ok2 {
+					if lhs.InOperand || rhs.InOperand {
+						// if this other-cond is from a `[not] in` sub-query, do not convert it into eq-cond since
+						// IndexJoin cannot deal with NULL correctly in this case; please see #25799 for more details.
+						continue
+					}
+					// 这里需要 physical 能够看到物理孩子的 attach。
+					outerSchema, innerSchema := outerS, innerS
+					if outerSchema.Contains(lhs) && innerSchema.Contains(rhs) {
+						outerHashKeys = append(outerHashKeys, lhs) // nozero
+						innerHashKeys = append(innerHashKeys, rhs) // nozero
+					} else if innerSchema.Contains(lhs) && outerSchema.Contains(rhs) {
+						outerHashKeys = append(outerHashKeys, rhs) // nozero
+						innerHashKeys = append(innerHashKeys, lhs) // nozero
+					}
+					newOtherConds = append(newOtherConds[:i], newOtherConds[i+1:]...)
+				}
+			}
+		default:
+			continue
+		}
+	}
+	// then, fill back the physic.
+	physic.IsNullEQ = newIsNullEQ
+	physic.InnerJoinKeys = newInnerKeys
+	physic.OuterJoinKeys = newOuterKeys
+	physic.OtherConditions = newOtherConds
+	physic.KeyOff2IdxOff = newKeyOff
+	// info.KeyOff2IdxOff has been used above to derive newInnerKeys, newOuterKeys, newIsNullEQ, newOtherConds, newKeyOff.
+	physic.Ranges = info.Ranges
+	physic.IdxColLens = info.IdxColLens
+	physic.CompareFilters = info.CompareFilters
+	// fill executing hashKeys.
+	physic.OuterJoinKeys = outerHashKeys
+	physic.InnerJoinKeys = innerHashKeys
+	// the logical EqualConditions is not used anymore in later phase.
+	physic.EqualConditions = nil
+	return physic
+}
+
+// When inner plan is TableReader, the parameter `ranges` will be nil. Because pk only have one column. So all of its range
+// is generated during execution time.
+func constructIndexJoinStatic(
+	p *logicalop.LogicalJoin,
+	prop *property.PhysicalProperty,
+	outerIdx int,
+	indexJoinProp *property.IndexJoinRuntimeProp,
+) []base.PhysicalPlan {
+	// runtime fill back
+	//if ranges == nil {
+	//	ranges = ranger.Ranges{} // empty range
+	//}
+
+	joinType := p.JoinType
+	var (
+		innerJoinKeys []*expression.Column
+		outerJoinKeys []*expression.Column
+		isNullEQ      []bool
+		hasNullEQ     bool
+	)
+	if outerIdx == 0 {
+		outerJoinKeys, innerJoinKeys, isNullEQ, hasNullEQ = p.GetJoinKeys()
+	} else {
+		innerJoinKeys, outerJoinKeys, isNullEQ, hasNullEQ = p.GetJoinKeys()
+	}
+	// TODO: support null equal join keys for index join
+	if hasNullEQ {
+		return nil
+	}
+	chReqProps := make([]*property.PhysicalProperty, 2)
+	// outer 侧限制了 limit 穿透的估算
+	chReqProps[outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64, SortItems: prop.SortItems, CTEProducerStatus: prop.CTEProducerStatus}
+	if prop.ExpectedCnt < p.StatsInfo().RowCount {
+		expCntScale := prop.ExpectedCnt / p.StatsInfo().RowCount
+		chReqProps[outerIdx].ExpectedCnt = p.Children()[outerIdx].StatsInfo().RowCount * expCntScale
+	}
+	// inner 侧我们可以给 indexJoinProp
+	chReqProps[1-outerIdx] = &property.PhysicalProperty{TaskTp: property.RootTaskType, ExpectedCnt: math.MaxFloat64, CTEProducerStatus: prop.CTEProducerStatus, IndexJoinProp: indexJoinProp}
+
+	//newInnerKeys := make([]*expression.Column, 0, len(innerJoinKeys))
+	//newOuterKeys := make([]*expression.Column, 0, len(outerJoinKeys))
+	//newIsNullEQ := make([]bool, 0, len(isNullEQ))
+	// newKeyOff := make([]int, 0, len(keyOff2IdxOff))
+	// newOtherConds := make([]expression.Expression, len(p.OtherConditions), len(p.OtherConditions)+len(p.EqualConditions))
+	// copy(newOtherConds, p.OtherConditions)
+	// for keyOff, idxOff := range keyOff2IdxOff {
+	// 如果有个 index key < 0, 说明该 key 位置空洞了，需要早 OtherConditions 中重新来 eval 他，不然 EQ 这关就算过了
+	//	if keyOff2IdxOff[keyOff] < 0 {
+	//		newOtherConds = append(newOtherConds, p.EqualConditions[keyOff])
+	//		continue
+	//	}
+	//	newInnerKeys = append(newInnerKeys, innerJoinKeys[keyOff])
+	//	newOuterKeys = append(newOuterKeys, outerJoinKeys[keyOff])
+	//	newIsNullEQ = append(newIsNullEQ, isNullEQ[keyOff])
+	//	newKeyOff = append(newKeyOff, idxOff)
+	//}
+
+	//var outerHashKeys, innerHashKeys []*expression.Column
+	//outerHashKeys, innerHashKeys = make([]*expression.Column, len(newOuterKeys)), make([]*expression.Column, len(newInnerKeys))
+	//copy(outerHashKeys, newOuterKeys)
+	//copy(innerHashKeys, newInnerKeys)
+	// we can use the `col <eq> col` in `OtherCondition` to build the hashtable to avoid the unnecessary calculating.
+	//for i := len(newOtherConds) - 1; extractOtherEQ && i >= 0; i = i - 1 {
+	//	switch c := newOtherConds[i].(type) {
+	//	case *expression.ScalarFunction:
+	//		if c.FuncName.L == ast.EQ {
+	//			lhs, ok1 := c.GetArgs()[0].(*expression.Column)
+	//			rhs, ok2 := c.GetArgs()[1].(*expression.Column)
+	//			if ok1 && ok2 {
+	//				if lhs.InOperand || rhs.InOperand {
+	//					// if this other-cond is from a `[not] in` sub-query, do not convert it into eq-cond since
+	//					// IndexJoin cannot deal with NULL correctly in this case; please see #25799 for more details.
+	//					continue
+	//				}
+	//				outerSchema, innerSchema := p.Children()[outerIdx].Schema(), p.Children()[1-outerIdx].Schema()
+	//				if outerSchema.Contains(lhs) && innerSchema.Contains(rhs) {
+	//					outerHashKeys = append(outerHashKeys, lhs) // nozero
+	//					innerHashKeys = append(innerHashKeys, rhs) // nozero
+	//				} else if innerSchema.Contains(lhs) && outerSchema.Contains(rhs) {
+	//					outerHashKeys = append(outerHashKeys, rhs) // nozero
+	//					innerHashKeys = append(innerHashKeys, lhs) // nozero
+	//				}
+	//				newOtherConds = append(newOtherConds[:i], newOtherConds[i+1:]...)
+	//			}
+	//		}
+	//	default:
+	//		continue
+	//	}
+	//}
+
+	baseJoin := basePhysicalJoin{
+		InnerChildIdx:   1 - outerIdx,
+		LeftConditions:  p.LeftConditions,
+		RightConditions: p.RightConditions,
+		OtherConditions: p.OtherConditions,
+		// OtherConditions: newOtherConds,
+		JoinType: joinType,
+		// 这三个先填原来的，indexInfo 后面上来之后再调整
+		OuterJoinKeys: outerJoinKeys,
+		InnerJoinKeys: innerJoinKeys,
+		IsNullEQ:      isNullEQ,
+		DefaultValues: p.DefaultValues,
+	}
+
+	join := PhysicalIndexJoin{
+		basePhysicalJoin: baseJoin,
+		//innerPlan:        innerTask.Plan(),
+		// KeyOff2IdxOff: newKeyOff,
+		//Ranges:           ranges,
+		//CompareFilters:   compareFilters,
+		// 两个运行时的 hash keys 可以先不填充
+		// OuterHashKeys: outerHashKeys,
+		// InnerHashKeys: innerHashKeys,
+		// 这里给到全量的 logical equal conditions
+		EqualConditions: p.EqualConditions,
+	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset(), chReqProps...)
+	// 这里为什么要感知孩子选什么样的 path 呢？
+	//if path != nil {
+	//	join.IdxColLens = path.IdxColLens
+	//}
+	join.SetSchema(p.Schema())
+	return []base.PhysicalPlan{join}
+}
+
 // When inner plan is TableReader, the parameter `ranges` will be nil. Because pk only have one column. So all of its range
 // is generated during execution time.
 func constructIndexJoin(
@@ -773,7 +974,7 @@ func constructIndexHashJoin(
 }
 
 func enumerateIndexJoinByOuterIdx(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, outerIdx int) (joins []base.PhysicalPlan) {
-	outerChild, innerChild := p.Children()[outerIdx], p.Children()[1-outerIdx]
+	outerChild, _ := p.Children()[outerIdx], p.Children()[1-outerIdx]
 	// 需要 same order
 	all, _ := prop.AllSameOrder()
 	// If the order by columns are not all from outer child, index join cannot promise the order.
@@ -800,6 +1001,7 @@ func enumerateIndexJoinByOuterIdx(p *logicalop.LogicalJoin, prop *property.Physi
 		OuterJoinKeys:   outerJoinKeys,
 		AvgInnerRowCnt:  avgInnerRowCnt,
 	}
+	return constructIndexJoinStatic(p, prop, outerIdx, indexJoinProp)
 }
 
 // getIndexJoinByOuterIdx will generate index join by outerIndex. OuterIdx points out the outer child.
@@ -989,14 +1191,20 @@ func buildDataSource2TableScanByIndexJoinProp(
 }
 
 func completeIndexJoinFeedBackInfo(innerTask *CopTask, indexJoinResult *indexJoinPathResult, ranges ranger.MutableRanges, keyOff2IdxOff []int) {
+	info := innerTask.IndexJoinInfo
+	if info == nil {
+		info = &IndexJoinInfo{}
+	}
 	if indexJoinResult != nil {
 		if indexJoinResult.chosenPath != nil {
-			innerTask.IdxColLens = indexJoinResult.chosenPath.IdxColLens
+			info.IdxColLens = indexJoinResult.chosenPath.IdxColLens
 		}
-		innerTask.Ranges = ranges
-		innerTask.KeyOff2IdxOff = keyOff2IdxOff
-		innerTask.CompareFilters = indexJoinResult.lastColManager
+		info.CompareFilters = indexJoinResult.lastColManager
 	}
+	info.Ranges = ranges
+	info.KeyOff2IdxOff = keyOff2IdxOff
+	// fill it back
+	innerTask.IndexJoinInfo = info
 }
 
 // buildIndexJoinInner2TableScan builds a TableScan as the inner child for an
@@ -1729,10 +1937,10 @@ func tryToGetIndexJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty
 	}
 	candidates := make([]base.PhysicalPlan, 0, 2)
 	if supportLeftOuter {
-		candidates = append(candidates, getIndexJoinByOuterIdx(p, prop, 0)...)
+		candidates = append(candidates, enumerateIndexJoinByOuterIdx(p, prop, 0)...)
 	}
 	if supportRightOuter {
-		candidates = append(candidates, getIndexJoinByOuterIdx(p, prop, 1)...)
+		candidates = append(candidates, enumerateIndexJoinByOuterIdx(p, prop, 1)...)
 	}
 
 	// Handle hints and variables about index join.
@@ -3086,6 +3294,26 @@ func exhaustPhysicalPlans4LogicalAggregation(lp base.LogicalPlan, prop *property
 	return aggs, !(preferStream || preferHash), nil
 }
 
+func admitIndexJoinProp(children []*property.PhysicalProperty, prop *property.PhysicalProperty) []*property.PhysicalProperty {
+	if prop.TaskTp == property.MppTaskType {
+		// if the parent prop is mppTask, we assume it couldn't contain indexJoinProp by default,
+		// which is guaranteed by the parent physical plans enumeration.
+		return children
+	}
+	// only admit root & cop task type to push down indexJoinProp.
+	if prop.IndexJoinProp != nil {
+		newChildren := children[:0]
+		for _, child := range children {
+			if child.TaskTp != property.MppTaskType {
+				child.IndexJoinProp = prop.IndexJoinProp
+				newChildren = append(newChildren, child)
+			}
+		}
+		children = newChildren
+	}
+	return children
+}
+
 func exhaustPhysicalPlans4LogicalSelection(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	p := lp.(*logicalop.LogicalSelection)
 	newProps := make([]*property.PhysicalProperty, 0, 2)
@@ -3101,6 +3329,7 @@ func exhaustPhysicalPlans4LogicalSelection(lp base.LogicalPlan, prop *property.P
 	}
 
 	ret := make([]base.PhysicalPlan, 0, len(newProps))
+	newProps = admitIndexJoinProp(newProps, prop)
 	for _, newProp := range newProps {
 		sel := PhysicalSelection{
 			Conditions: p.Conditions,

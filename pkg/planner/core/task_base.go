@@ -42,6 +42,10 @@ type RootTask struct {
 	p       base.PhysicalPlan
 	isEmpty bool // isEmpty indicates if this task contains a dual table and returns empty data.
 	// TODO: The flag 'isEmpty' is only checked by Projection and UnionAll. We should support more cases in the future.
+
+	// For copTask and rootTask, when we compose physical tree bottom-up, index join need some special info
+	// fetched from underlying ds which built index range or table range based on these runtime constant.
+	IndexJoinInfo *IndexJoinInfo
 }
 
 // GetPlan returns the root task's plan.
@@ -260,11 +264,7 @@ type CopTask struct {
 	// It's used for deciding whether using paging distsql.
 	expectCnt uint64
 
-	// The following fields are used to keep index join aware of inner plan's index/pk choice.
-	IdxColLens     []int
-	KeyOff2IdxOff  []int
-	Ranges         ranger.MutableRanges
-	CompareFilters *ColWithCmpFuncManager
+	IndexJoinInfo *IndexJoinInfo
 }
 
 // Invalid implements Task interface.
@@ -338,7 +338,13 @@ func (t *CopTask) ConvertToRootTask(ctx base.PlanContext) base.Task {
 	return t.Copy().(*CopTask).convertToRootTaskImpl(ctx)
 }
 
-func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) *RootTask {
+func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
+	defer func() {
+		if t.IndexJoinInfo != nil {
+			// return indexJoinInfo upward.
+			rt.IndexJoinInfo = t.IndexJoinInfo
+		}
+	}()
 	// copTasks are run in parallel, to make the estimated cost closer to execution time, we amortize
 	// the cost to cop iterator workers. According to `CopClient::Send`, the concurrency
 	// is Min(DistSQLScanConcurrency, numRegionsInvolvedInScan), since we cannot infer
@@ -440,3 +446,11 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 }
 
 // ************************************* CopTask End ******************************************
+
+type IndexJoinInfo struct {
+	// The following fields are used to keep index join aware of inner plan's index/pk choice.
+	IdxColLens     []int
+	KeyOff2IdxOff  []int
+	Ranges         ranger.MutableRanges
+	CompareFilters *ColWithCmpFuncManager
+}
