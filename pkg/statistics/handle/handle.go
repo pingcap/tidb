@@ -110,7 +110,7 @@ func NewHandle(
 	_, /* ctx, keep it for feature usage */
 	initStatsCtx sessionctx.Context,
 	lease time.Duration,
-	pool util.SessionPool,
+	pool util.DestroyableSessionPool,
 	tracker sysproctrack.Tracker,
 	autoAnalyzeProcIDGetter func() uint64,
 ) (*Handle, error) {
