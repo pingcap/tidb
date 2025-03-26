@@ -306,9 +306,7 @@ func (p *PhysicalProperty) IsSubsetOf(keys []*MPPPartitionColumn) []int {
 //
 // for example:
 //  1. requiredPartitionColumn: [18，13，16]
-//
-// 2. currentPartitionColumn: 9
-//  2. keys: [9]
+//  2. currentPartitionColumn: 9
 //  3. FD: (1)-->(2-6,8), ()-->(7), (9)-->(10-17), (1,10)==(1,10), (18,21)-->(19,20,22-33), (9,18)==(9,18)
 //     In this case, we can see that the child supplied partition keys is subset of parent required partition cols.
 func (p *PhysicalProperty) NeedMPPExchangeByEquivalence(
