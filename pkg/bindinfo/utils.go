@@ -206,17 +206,20 @@ func getBindingPlanDigest(sctx sessionctx.Context, schema, bindingSQL string) (p
 		}
 	}()
 
-	defer func(originalValue bool) {
-		sctx.GetSessionVars().UsePlanBaselines = originalValue
-	}(sctx.GetSessionVars().UsePlanBaselines)
+	vars := sctx.GetSessionVars()
+	defer func(originalBaseline bool, originalDB string) {
+		vars.UsePlanBaselines = originalBaseline
+		vars.CurrentDB = originalDB
+	}(vars.UsePlanBaselines, vars.CurrentDB)
+	vars.UsePlanBaselines = false
+	vars.CurrentDB = schema
 
-	sctx.GetSessionVars().UsePlanBaselines = false
-	sctx.GetSessionVars().CurrentDB = schema
 	p := utilparser.Pool.Get().(*parser.Parser)
 	defer utilparser.Pool.Put(p)
-	p.SetSQLMode(sctx.GetSessionVars().SQLMode)
-	p.SetParserConfig(sctx.GetSessionVars().BuildParserConfig())
-	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
+	p.SetSQLMode(vars.SQLMode)
+	p.SetParserConfig(vars.BuildParserConfig())
+
+	charset, collation := vars.GetCharsetInfo()
 	if stmt, err := p.ParseOneStmt(bindingSQL, charset, collation); err == nil {
 		if !hasParam(stmt) {
 			// if there is '?' from `create binding using select a from t where a=?`,
