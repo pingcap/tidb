@@ -17,8 +17,10 @@ package storage
 import (
 	"context"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
@@ -108,6 +110,9 @@ func (mgr *TaskManager) PauseSubtasks(ctx context.Context, execID string, taskID
 
 // ResumeSubtasks update all paused subtasks to pending state.
 func (mgr *TaskManager) ResumeSubtasks(ctx context.Context, taskID int64) error {
+	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error ResumeSubtasks")); err != nil {
+		return err
+	}
 	_, err := mgr.ExecuteSQLWithNewSession(ctx,
 		`update mysql.tidb_background_subtask set state = "pending", error = null where task_key = %? and state = "paused"`, taskID)
 	return err
