@@ -282,32 +282,7 @@ func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table,
 }
 
 func (db *DB) reallocTableID(tables []*metautil.Table) (map[string][]*model.TableInfo, error) {
-	clonedInfos := make(map[string][]*model.TableInfo, len(tables))
-	if len(tables) == 0 {
-		return clonedInfos, nil
-	}
-	if db.preallocedIDs == nil {
-		return clonedInfos, errors.New("preallocedIDs is nil")
-	}
-
-	idMapping := make(map[int64]*int64)
-	for _, t := range tables {
-		infoClone := t.Info.Clone()
-		originalID := infoClone.ID
-		idMapping[originalID] = &infoClone.ID
-		if partition := infoClone.Partition; partition != nil {
-			for i := range partition.Definitions {
-				def := &partition.Definitions[i]
-				idMapping[def.ID] = &def.ID
-			}
-		}
-		clonedInfos[t.DB.Name.L] = append(clonedInfos[t.DB.Name.L], infoClone)
-	}
-
-	if err := db.preallocedIDs.BatchAlloc(idMapping); err != nil {
-		return clonedInfos, err
-	}
-	return clonedInfos, nil
+	return db.preallocedIDs.BatchAlloc(tables)
 }
 
 // CreateTables execute a internal CREATE TABLES.

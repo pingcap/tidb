@@ -7,6 +7,7 @@ import (
 	"math"
 
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
 const (
@@ -55,9 +56,9 @@ func New(tables []*metautil.Table) *PreallocIDs {
 		}
 	}
 	return &PreallocIDs{
-		end: maxv,
-
+		end:         maxv,
 		allocedFrom: math.MaxInt64,
+		alloced:     make(map[int64]struct{}),
 	}
 }
 
@@ -81,18 +82,10 @@ func (p *PreallocIDs) Alloc(m Allocator) error {
 	}
 	p.allocedFrom = alloced + 1
 	p.end += p.allocedFrom
-	p.alloced = make(map[int64]struct{})
 	return nil
 }
 
-// Prealloced checks whether a table ID has been successfully allocated.
-func (p *PreallocIDs) Prealloced(tid int64) bool {
-	return p.allocedFrom <= tid && tid < p.end
-}
-
-// func (p *PreallocIDs) PreallocedFor(ti *model.TableInfo) {}
-
-func (p *PreallocIDs) BatchAlloc(idMap map[int64]*int64) error {
+func (p *PreallocIDs) RewriteTableInfoInplace(idMap map[int64]*int64) error {
 	available := p.end - p.allocedFrom
 	if available < 0 {
 		return fmt.Errorf("invalid state: available IDs (%d) cannot be negative", available)
@@ -135,4 +128,30 @@ func (p *PreallocIDs) BatchAlloc(idMap map[int64]*int64) error {
 		}
 	}
 	return nil
+}
+
+func (p *PreallocIDs) BatchAlloc(tables []*metautil.Table) (map[string][]*model.TableInfo, error) {
+	clonedInfos := make(map[string][]*model.TableInfo, len(tables))
+	if len(tables) == 0 {
+		return clonedInfos, nil
+	}
+
+	idMapping := make(map[int64]*int64)
+	for _, t := range tables {
+		infoClone := t.Info.Clone()
+		originalID := infoClone.ID
+		idMapping[originalID] = &infoClone.ID
+		if partition := infoClone.Partition; partition != nil {
+			for i := range partition.Definitions {
+				def := &partition.Definitions[i]
+				idMapping[def.ID] = &def.ID
+			}
+		}
+		clonedInfos[t.DB.Name.L] = append(clonedInfos[t.DB.Name.L], infoClone)
+	}
+
+	if err := p.RewriteTableInfoInplace(idMapping); err != nil {
+		return clonedInfos, err
+	}
+	return clonedInfos, nil
 }

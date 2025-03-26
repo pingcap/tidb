@@ -5,6 +5,7 @@ package prealloctableid_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -13,6 +14,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -29,64 +31,93 @@ func (t *testAllocator) AdvanceGlobalIDs(n int) (int64, error) {
 	return old, nil
 }
 
+func checkMap(m map[string][]*model.TableInfo, from, end int64) bool {
+	used := make(map[int64]struct{})
+	validate := func(id int64) bool {
+		return id >= from && id < end
+	}
+	checkDup := func(id int64) bool {
+		if _, ok := used[id]; ok {
+			return true
+		}
+		used[id] = struct{}{}
+		return false
+	}
+
+	for db, infos := range m {
+		dbID, _ := strconv.ParseInt(db, 10, 64)
+		for _, info := range infos {
+			if !validate(info.ID) || checkDup(info.ID) ||
+				(validate(dbID) && dbID != info.ID) {
+				return false
+			}
+			for _, part := range info.Partition.Definitions {
+				if !validate(part.ID) || checkDup(part.ID) {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
 func TestAllocator(t *testing.T) {
 	type Case struct {
-		tableIDs              []int64
-		partitions            map[int64][]int64
-		hasAllocatedTo        int64
-		successfullyAllocated []int64
-		shouldAllocatedTo     int64
-		msg                   string
+		tableIDs       []int64
+		partitions     map[int64][]int64
+		hasAllocatedTo int64
+		allocedRange   [2]int64
+		msg            string
 	}
 
 	cases := []Case{
 		{
-			tableIDs:              []int64{1, 2, 5, 6, 7},
-			hasAllocatedTo:        6,
-			successfullyAllocated: []int64{7},
-			shouldAllocatedTo:     8,
-			msg:                   "ID:[7,8)",
+			tableIDs:       []int64{},
+			hasAllocatedTo: 20,
+			allocedRange:   [2]int64{21, 20},
+			msg:            "ID:empty(end=0)",
 		},
 		{
-			tableIDs:              []int64{4, 6, 9, 2},
-			hasAllocatedTo:        1,
-			successfullyAllocated: []int64{2, 4, 6, 9},
-			shouldAllocatedTo:     10,
-			msg:                   "ID:[2,10)",
+			tableIDs:       []int64{1, 2, 5, 6, 7},
+			hasAllocatedTo: 6,
+			allocedRange:   [2]int64{7, 12},
+			msg:            "ID:[7,12)",
 		},
 		{
-			tableIDs:              []int64{1, 2, 3, 4},
-			hasAllocatedTo:        5,
-			successfullyAllocated: []int64{},
-			shouldAllocatedTo:     5,
-			msg:                   "ID:empty(end=5)",
+			tableIDs:       []int64{4, 6, 9, 2},
+			hasAllocatedTo: 1,
+			allocedRange:   [2]int64{2, 6},
+			msg:            "ID:[2,6)",
 		},
 		{
-			tableIDs:              []int64{1, 2, 5, 6, 1 << 50, 1<<50 + 2479},
-			hasAllocatedTo:        3,
-			successfullyAllocated: []int64{5, 6},
-			shouldAllocatedTo:     7,
-			msg:                   "ID:[4,7)",
+			tableIDs:       []int64{1, 2, 3, 4},
+			hasAllocatedTo: 5,
+			allocedRange:   [2]int64{6, 10},
+			msg:            "ID:[6,10)",
 		},
 		{
-			tableIDs:              []int64{1, 2, 5, 6, 7},
-			hasAllocatedTo:        6,
-			successfullyAllocated: []int64{7},
-			shouldAllocatedTo:     13,
+			tableIDs:       []int64{1, 2, 5, 6, 1 << 50, 1<<50 + 2479},
+			hasAllocatedTo: 3,
+			allocedRange:   [2]int64{4, 10},
+			msg:            "ID:[4,10)",
+		},
+		{
+			tableIDs:       []int64{1, 2, 5, 6, 7},
+			hasAllocatedTo: 6,
+			allocedRange:   [2]int64{7, 17},
 			partitions: map[int64][]int64{
 				7: {8, 9, 10, 11, 12},
 			},
-			msg: "ID:[7,13)",
+			msg: "ID:[7,17)",
 		},
 		{
-			tableIDs:              []int64{1, 2, 5, 6, 7, 13},
-			hasAllocatedTo:        9,
-			successfullyAllocated: []int64{13},
-			shouldAllocatedTo:     14,
+			tableIDs:       []int64{1, 2, 5, 6, 7, 13},
+			hasAllocatedTo: 9,
+			allocedRange:   [2]int64{10, 21},
 			partitions: map[int64][]int64{
 				7: {8, 9, 10, 11, 12},
 			},
-			msg: "ID:[10,14)",
+			msg: "ID:[10,21)",
 		},
 	}
 
@@ -94,6 +125,12 @@ func TestAllocator(t *testing.T) {
 		tables := make([]*metautil.Table, 0, len(c.tableIDs))
 		for _, id := range c.tableIDs {
 			table := metautil.Table{
+				// Use the same ID for DB and table.
+				// We will use DB ID to check if table ID is correctly allocated.
+				DB: &model.DBInfo{
+					ID:   id,
+					Name: ast.CIStr{L: fmt.Sprintf("%d", id)},
+				},
 				Info: &model.TableInfo{
 					ID:        id,
 					Partition: &model.PartitionInfo{},
@@ -109,17 +146,11 @@ func TestAllocator(t *testing.T) {
 
 		ids := prealloctableid.New(tables)
 		allocator := testAllocator(c.hasAllocatedTo)
-		require.NoError(t, ids.Alloc(&allocator))
+		ids.Alloc(&allocator)
+		alloc, err := ids.BatchAlloc(tables)
+		checkMap(alloc, c.allocedRange[0], c.allocedRange[1])
+		require.NoError(t, err)
 		require.Equal(t, c.msg, ids.String())
-
-		allocated := make([]int64, 0, len(c.successfullyAllocated))
-		for _, t := range tables {
-			if ids.PreallocedFor(t.Info) {
-				allocated = append(allocated, t.Info.ID)
-			}
-		}
-		require.ElementsMatch(t, allocated, c.successfullyAllocated)
-		require.Equal(t, int64(allocator), c.shouldAllocatedTo)
 	}
 
 	for i, c := range cases {
@@ -161,8 +192,4 @@ func TestAllocatorBound(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, fmt.Sprintf("ID:[%d,%d)", lastGlobalID+1, currentGlobalID), ids.String())
-	require.False(t, ids.Prealloced(tableInfos[0].Info.ID))
-	require.True(t, ids.Prealloced(tableInfos[1].Info.ID))
-	require.True(t, ids.Prealloced(tableInfos[2].Info.ID))
-	require.True(t, ids.Prealloced(currentGlobalID-1))
 }
