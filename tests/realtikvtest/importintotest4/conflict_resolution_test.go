@@ -80,12 +80,12 @@ func (s *mockGCSSuite) TestGlobalSortConflictResolutionBasicCases() {
 	****************************************************************************/
 
 	s.Run("all row duplicated", func() {
-		// Note: '2,2,3' is not whole row duplicated, but it only differs in the
-		// column that have non-unique index, so it's the same as '2,2,2' from the
-		// conflict resolution perspective.
-		s.testSingleFileConflictResolution(
+		for _, tblSQL := range []string{
 			`create table t(a int primary key clustered, b int, c int, unique(b), index(c))`,
-			`
+			`create table t(a int primary key nonclustered, b int, c int, unique(b), index(c))`,
+		} {
+			s.testSingleFileConflictResolution(tblSQL,
+				`
 0,0,0
 0,0,0
 0,0,0
@@ -93,17 +93,21 @@ func (s *mockGCSSuite) TestGlobalSortConflictResolutionBasicCases() {
 0,0,0
 0,0,0
 `,
-			[]string{},
-		)
+				[]string{},
+			)
+		}
 	})
 
 	s.Run("whole row duplicated, but not all", func() {
 		// Note: '2,2,3' is not whole row duplicated, but it only differs in the
 		// column that have non-unique index, so it's the same as '2,2,2' from the
 		// conflict resolution perspective.
-		s.testSingleFileConflictResolution(
+		for _, tblSQL := range []string{
 			`create table t(a int primary key clustered, b int, c int, unique(b), index(c))`,
-			`
+			`create table t(a int primary key nonclustered, b int, c int, unique(b), index(c))`,
+		} {
+			s.testSingleFileConflictResolution(tblSQL,
+				`
 0,0,0
 1,1,1
 1,1,1
@@ -113,13 +117,14 @@ func (s *mockGCSSuite) TestGlobalSortConflictResolutionBasicCases() {
 3,\N,3
 3,\N,3
 `,
-			[]string{"0 0 0"},
-		)
+				[]string{"0 0 0"},
+			)
+		}
 	})
 
-	s.Run("clustered pk conflict", func() {
+	s.Run("pk conflict", func() {
 		for _, tblSQL := range []string{
-			// `create table t(a int primary key clustered, b int, index(b))`,
+			`create table t(a int primary key clustered, b int, index(b))`,
 			`create table t(a int primary key nonclustered, b int, index(b))`,
 		} {
 			s.testSingleFileConflictResolution(tblSQL,
@@ -157,9 +162,12 @@ func (s *mockGCSSuite) TestGlobalSortConflictResolutionBasicCases() {
 	})
 
 	s.Run("mixing pk/single-uk conflict, no cycle", func() {
-		s.testSingleFileConflictResolution(
+		for _, tblSQL := range []string{
 			`create table t(a int primary key clustered, b int, c int, unique(b), index(c))`,
-			`
+			`create table t(a int primary key nonclustered, b int, c int, unique(b), index(c))`,
+		} {
+			s.testSingleFileConflictResolution(tblSQL,
+				`
 0,0,0
 1,1,1
 1,1,1
@@ -169,24 +177,29 @@ func (s *mockGCSSuite) TestGlobalSortConflictResolutionBasicCases() {
 4,3,3
 5,3,2
 `,
-			[]string{"0 0 0"},
-		)
+				[]string{"0 0 0"},
+			)
+		}
 	})
 
 	s.Run("mixing pk/single-uk conflict, cycle", func() {
 		// A---B---C---D
 		// └-----------┘
-		s.testSingleFileConflictResolution(
+		for _, tblSQL := range []string{
 			`create table t(a int primary key clustered, b int, c int, unique(b), index(c))`,
-			`
+			`create table t(a int primary key nonclustered, b int, c int, unique(b), index(c))`,
+		} {
+			s.testSingleFileConflictResolution(tblSQL,
+				`
 0,0,0
 1,1,1
 1,2,1
 2,2,1
 1,2,2
 `,
-			[]string{"0 0 0"},
-		)
+				[]string{"0 0 0"},
+			)
+		}
 	})
 
 	s.Run("multiple-uk conflict, no cycle", func() {
@@ -265,15 +278,24 @@ func (s *mockGCSSuite) TestGlobalSortConflictResolutionBasicCases() {
 	})
 
 	s.Run("partition table", func() {
-		s.testSingleFileConflictResolution(
-			`create table t(pk int primary key, a int, b int, c int, d int, unique(a), unique(b), unique(c), index(d))
+		for _, tblSQL := range []string{
+			`create table t(pk int primary key clustered, a int, b int, c int, d int, unique(a), unique(b), unique(c), index(d))
 	partition by range(pk)(
 		partition p0 values less than (6),
 		partition p1 values less than (12),
 		partition p2 values less than (18),
 		partition p3 values less than (MAXVALUE)
 	)`,
-			`
+			`create table t(pk int primary key nonclustered, a int, b int, c int, d int, unique(a), unique(b), unique(c), index(d))
+	partition by range(pk)(
+		partition p0 values less than (6),
+		partition p1 values less than (12),
+		partition p2 values less than (18),
+		partition p3 values less than (MAXVALUE)
+	)`,
+		} {
+			s.testSingleFileConflictResolution(tblSQL,
+				`
 1,0,0,0,0
 2,1,1,1,1
 3,1,2,2,2
@@ -295,8 +317,9 @@ func (s *mockGCSSuite) TestGlobalSortConflictResolutionBasicCases() {
 12,12,12,12,14
 13,13,13,13,13
 `,
-			[]string{"1 0 0 0 0", "13 13 13 13 13"},
-		)
+				[]string{"1 0 0 0 0", "13 13 13 13 13"},
+			)
+		}
 	})
 
 	s.Run("multiple value index", func() {
@@ -333,11 +356,15 @@ func (s *mockGCSSuite) TestGlobalSortConflictResolutionMultipleSubtasks() {
 		for i := 0; i < 10; i++ {
 			fileContents = append(fileContents, "0,0,0\n0,0,0\n0,0,0\n0,0,0\n0,0,0\n0,0,0\n0,0,0")
 		}
-		s.testConflictResolution(
-			`create table t(pk int primary key, a int, b int, unique(a), index(b))`,
-			fileContents,
-			[]string{},
-		)
+		for _, tblSQL := range []string{
+			`create table t(pk int primary key clustered, a int, b int, unique(a), index(b))`,
+			`create table t(pk int primary key nonclustered, a int, b int, unique(a), index(b))`,
+		} {
+			s.testConflictResolution(tblSQL,
+				fileContents,
+				[]string{},
+			)
+		}
 	})
 
 	s.Run("duplicate file content, not all row duplicated", func() {
@@ -345,54 +372,70 @@ func (s *mockGCSSuite) TestGlobalSortConflictResolutionMultipleSubtasks() {
 		for i := 0; i < 10; i++ {
 			fileContents = append(fileContents, "1,1,1\n2,2,2\n3,3,3\n4,4,4\n4,4,4\n4,4,4\n4,4,4")
 		}
-		s.testConflictResolution(
-			`create table t(pk int primary key, a int, b int, unique(a), index(b))`,
-			fileContents,
-			[]string{},
-		)
+		for _, tblSQL := range []string{
+			`create table t(pk int primary key clustered, a int, b int, unique(a), index(b))`,
+			`create table t(pk int primary key nonclustered, a int, b int, unique(a), index(b))`,
+		} {
+			s.testConflictResolution(tblSQL,
+				fileContents,
+				[]string{},
+			)
+		}
 	})
 
 	s.Run("rows in conflict group remains in one file", func() {
-		s.testConflictResolution(
-			`create table t(pk int primary key, a int, b int, c int, d int, unique(a), unique(b), unique(c), index(d))`,
-			[]string{
-				"1,0,0,0,0\n2,1,1,1,1\n3,1,2,2,2\n4,3,2,3,3\n5,1,5,3,5",
-				"6,6,6,6,6\n6,6,6,6,6\n6,6,6,6,6\n6,6,6,6,6\n",
-				"7,7,7,7,7\n7,8,8,8,8\n9,8,9,9,9\n10,10,9,10,10\n11,11,11,10,11",
-			},
-			[]string{"1 0 0 0 0"},
-		)
+		for _, tblSQL := range []string{
+			`create table t(pk int primary key clustered, a int, b int, c int, d int, unique(a), unique(b), unique(c), index(d))`,
+			`create table t(pk int primary key nonclustered, a int, b int, c int, d int, unique(a), unique(b), unique(c), index(d))`,
+		} {
+			s.testConflictResolution(tblSQL,
+				[]string{
+					"1,0,0,0,0\n2,1,1,1,1\n3,1,2,2,2\n4,3,2,3,3\n5,1,5,3,5",
+					"6,6,6,6,6\n6,6,6,6,6\n6,6,6,6,6\n6,6,6,6,6\n",
+					"7,7,7,7,7\n7,8,8,8,8\n9,8,9,9,9\n10,10,9,10,10\n11,11,11,10,11",
+				},
+				[]string{"1 0 0 0 0"},
+			)
+		}
 	})
 
 	s.Run("rows in conflict group split into multiple files", func() {
-		s.testConflictResolution(
-			`create table t(pk int primary key, a int, b int, c int, d int, unique(a), unique(b), unique(c), index(d))`,
-			[]string{
-				"1,0,0,0,0\n2,1,1,1,1\n3,1,2,2,2",
-				"4,3,2,3,3\n5,1,5,3,5\n6,6,6,6,6\n6,6,6,6,6",
-				"6,6,6,6,6\n6,6,6,6,6\n7,7,7,7,7\n7,8,8,8,8",
-				"9,8,9,9,9\n10,10,9,10,10\n11,11,11,10,11",
-			},
-			[]string{"1 0 0 0 0"},
-		)
+		for _, tblSQL := range []string{
+			`create table t(pk int primary key clustered, a int, b int, c int, d int, unique(a), unique(b), unique(c), index(d))`,
+			`create table t(pk int primary key nonclustered, a int, b int, c int, d int, unique(a), unique(b), unique(c), index(d))`,
+		} {
+			s.testConflictResolution(tblSQL,
+				[]string{
+					"1,0,0,0,0\n2,1,1,1,1\n3,1,2,2,2",
+					"4,3,2,3,3\n5,1,5,3,5\n6,6,6,6,6\n6,6,6,6,6",
+					"6,6,6,6,6\n6,6,6,6,6\n7,7,7,7,7\n7,8,8,8,8",
+					"9,8,9,9,9\n10,10,9,10,10\n11,11,11,10,11",
+				},
+				[]string{"1 0 0 0 0"},
+			)
+		}
 	})
 
 	s.Run("mixing above cases", func() {
-		s.testConflictResolution(
-			`create table t(pk int primary key, a int, b int, c int, d int, unique(a), unique(b), unique(c), index(d))`,
-			[]string{
-				"1,0,0,0,0\n2,1,1,1,1\n3,1,2,2,2\n4,3,2,3,3\n5,1,5,3,5",
-				"6,6,6,6,6\n6,6,6,6,6\n6,6,6,6,6\n6,6,6,6,6\n",
-				"7,7,7,7,7\n7,8,8,8,8\n9,8,9,9,9\n10,10,9,10,10\n11,11,11,10,11",
-				"2,1,1,1,1\n3,1,2,2,2",
-				"4,3,2,3,3\n5,1,5,3,5\n6,6,6,6,6\n6,6,6,6,6",
-				"6,6,6,6,6\n6,6,6,6,6\n7,7,7,7,7\n7,8,8,8,8",
-				"9,8,9,9,9\n10,10,9,10,10\n11,11,11,10,11",
-				"12,12,12,12\n12,12,12,12\n12,12,12,12\n12,12,12,12",
-				"12,12,12,12\n12,12,12,12\n12,12,12,12\n12,12,12,12",
-			},
-			[]string{"1 0 0 0 0"},
-		)
+		for _, tblSQL := range []string{
+			`create table t(pk int primary key clustered, a int, b int, c int, d int, unique(a), unique(b), unique(c), index(d))`,
+			`create table t(pk int primary key nonclustered, a int, b int, c int, d int, unique(a), unique(b), unique(c), index(d))`,
+		} {
+			s.testConflictResolution(tblSQL,
+				[]string{
+					"1,0,0,0,0\n2,1,1,1,1\n3,1,2,2,2\n4,3,2,3,3\n5,1,5,3,5",
+					"6,6,6,6,6\n6,6,6,6,6\n6,6,6,6,6\n6,6,6,6,6\n",
+					"7,7,7,7,7\n7,8,8,8,8\n9,8,9,9,9\n10,10,9,10,10\n11,11,11,10,11",
+					"2,1,1,1,1\n3,1,2,2,2",
+					"4,3,2,3,3\n5,1,5,3,5\n6,6,6,6,6\n6,6,6,6,6",
+					"6,6,6,6,6\n6,6,6,6,6\n7,7,7,7,7\n7,8,8,8,8",
+					"9,8,9,9,9\n10,10,9,10,10\n11,11,11,10,11",
+					"12,12,12,12\n12,12,12,12\n12,12,12,12\n12,12,12,12",
+					"12,12,12,12\n12,12,12,12\n12,12,12,12\n12,12,12,12",
+				},
+				[]string{"1 0 0 0 0"},
+			)
+		}
 	})
 }
 
@@ -420,7 +463,7 @@ func (s *mockGCSSuite) checkMergeStepConflictInfo(jobID int64) {
 	}
 }
 
-func (s *mockGCSSuite) TestGlobalSortConflictResolutionFoundInMergeSort() {
+func (s *mockGCSSuite) TestGlobalSortConflictFoundInMergeSort() {
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
@@ -429,13 +472,17 @@ func (s *mockGCSSuite) TestGlobalSortConflictResolutionFoundInMergeSort() {
 		for i := 0; i < 10; i++ {
 			fileContents = append(fileContents, "0,0,0\n0,0,0\n0,0,0\n0,0,0")
 		}
-		jobID := s.testConflictResolutionWithOptions(
-			`create table t(pk int primary key, a int, b int, unique(a), index(b))`,
-			fileContents,
-			[]string{},
-			"__force_merge_step",
-		)
-		s.checkMergeStepConflictInfo(jobID)
+		for _, tblSQL := range []string{
+			`create table t(pk int primary key clustered, a int, b int, unique(a), index(b))`,
+			`create table t(pk int primary key nonclustered, a int, b int, unique(a), index(b))`,
+		} {
+			jobID := s.testConflictResolutionWithOptions(tblSQL,
+				fileContents,
+				[]string{},
+				"__force_merge_step",
+			)
+			s.checkMergeStepConflictInfo(jobID)
+		}
 	})
 
 	s.Run("duplicate file content, not all row duplicated", func() {
@@ -443,12 +490,16 @@ func (s *mockGCSSuite) TestGlobalSortConflictResolutionFoundInMergeSort() {
 		for i := 0; i < 10; i++ {
 			fileContents = append(fileContents, "1,1,1\n2,2,2\n3,3,3\n4,4,4\n4,4,4\n4,4,4\n4,4,4")
 		}
-		jobID := s.testConflictResolutionWithOptions(
-			`create table t(pk int primary key, a int, b int, unique(a), index(b))`,
-			fileContents,
-			[]string{},
-			"__force_merge_step",
-		)
-		s.checkMergeStepConflictInfo(jobID)
+		for _, tblSQL := range []string{
+			`create table t(pk int primary key clustered, a int, b int, unique(a), index(b))`,
+			`create table t(pk int primary key nonclustered, a int, b int, unique(a), index(b))`,
+		} {
+			jobID := s.testConflictResolutionWithOptions(tblSQL,
+				fileContents,
+				[]string{},
+				"__force_merge_step",
+			)
+			s.checkMergeStepConflictInfo(jobID)
+		}
 	})
 }
