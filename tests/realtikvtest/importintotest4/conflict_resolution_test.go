@@ -279,20 +279,20 @@ func (s *mockGCSSuite) TestGlobalSortConflictResolutionBasicCases() {
 
 	s.Run("partition table", func() {
 		for _, tblSQL := range []string{
-			`create table t(pk int primary key clustered, a int, b int, c int, d int, unique(a), unique(b), unique(c), index(d))
-	partition by range(pk)(
-		partition p0 values less than (6),
-		partition p1 values less than (12),
-		partition p2 values less than (18),
-		partition p3 values less than (MAXVALUE)
-	)`,
+			`create table t(pk int primary key, a int, b int, c int, d int, unique(a), unique(b), unique(c), index(d))
+			partition by range(pk)(
+				partition p0 values less than (6),
+				partition p1 values less than (12),
+				partition p2 values less than (18),
+				partition p3 values less than (MAXVALUE)
+			)`,
 			`create table t(pk int primary key nonclustered, a int, b int, c int, d int, unique(a), unique(b), unique(c), index(d))
-	partition by range(pk)(
-		partition p0 values less than (6),
-		partition p1 values less than (12),
-		partition p2 values less than (18),
-		partition p3 values less than (MAXVALUE)
-	)`,
+			partition by range(pk)(
+				partition p0 values less than (6),
+				partition p1 values less than (12),
+				partition p2 values less than (18),
+				partition p3 values less than (MAXVALUE)
+			)`,
 		} {
 			s.testSingleFileConflictResolution(tblSQL,
 				`

@@ -81,39 +81,49 @@ type MergeSortStepMeta struct {
 	external.SortedKVMeta `json:"sorted-kv-meta"`
 }
 
-// ConflictResolutionStepMeta is the meta of conflict resolution step.
-type ConflictResolutionStepMeta struct {
+type kvGroupConflictInfos struct {
 	ConflictInfos map[string]*common.ConflictInfo `json:"conflict-infos,omitempty"`
-	// Checksum is the checksum of all deleted conflicts rows.
-	// Note: it's not the checksum of all conflicts rows, because we might implement
-	// the 'replace' semantic to keep one row for each conflict group.
-	Checksum *Checksum `json:"checksum,omitempty"`
-	// ConflictedRowCount is the count of all conflicted rows.
-	ConflictedRowCount int64 `json:"conflicted-row-count,omitempty"`
 }
 
-func (m *ConflictResolutionStepMeta) addDataConflictInfo(other *common.ConflictInfo) {
-	m.addConflictInfo(dataKVGroup, other)
+func (gci *kvGroupConflictInfos) addDataConflictInfo(other *common.ConflictInfo) {
+	gci.addConflictInfo(dataKVGroup, other)
 }
 
-func (m *ConflictResolutionStepMeta) addIndexConflictInfo(indexID int64, other *common.ConflictInfo) {
+func (gci *kvGroupConflictInfos) addIndexConflictInfo(indexID int64, other *common.ConflictInfo) {
 	kvGroup := indexID2KVGroup(indexID)
-	m.addConflictInfo(kvGroup, other)
+	gci.addConflictInfo(kvGroup, other)
 }
 
-func (m *ConflictResolutionStepMeta) addConflictInfo(kvGroup string, other *common.ConflictInfo) {
+func (gci *kvGroupConflictInfos) addConflictInfo(kvGroup string, other *common.ConflictInfo) {
 	if other.Count == 0 {
 		return
 	}
-	if m.ConflictInfos == nil {
-		m.ConflictInfos = make(map[string]*common.ConflictInfo, 1)
+	if gci.ConflictInfos == nil {
+		gci.ConflictInfos = make(map[string]*common.ConflictInfo, 1)
 	}
-	ci, ok := m.ConflictInfos[kvGroup]
+	ci, ok := gci.ConflictInfos[kvGroup]
 	if !ok {
 		ci = &common.ConflictInfo{}
-		m.ConflictInfos[kvGroup] = ci
+		gci.ConflictInfos[kvGroup] = ci
 	}
 	ci.Merge(other)
+}
+
+// CollectConflictsStepMeta is the meta of collect conflicts step.
+type CollectConflictsStepMeta struct {
+	kvGroupConflictInfos `json:",inline"`
+	// Checksum is the checksum of all conflicts rows.
+	Checksum *Checksum `json:"checksum,omitempty"`
+	// ConflictedRowCount is the count of all conflicted rows.
+	ConflictedRowCount int64 `json:"conflicted-row-count,omitempty"`
+	// ConflictedRowFilename is the filename of all conflicted rows.
+	// Note: this file is for user to resolve conflicts manually.
+	ConflictedRowFilename string `json:"conflicted-row-filename,omitempty"`
+}
+
+// ConflictResolutionStepMeta is the meta of conflict resolution step.
+type ConflictResolutionStepMeta struct {
+	kvGroupConflictInfos `json:",inline"`
 }
 
 // WriteIngestStepMeta is the meta of write and ingest step.

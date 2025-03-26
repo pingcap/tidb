@@ -267,7 +267,7 @@ func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 		if err = job2Step(ctx, logger, taskMeta, importer.JobStepImporting); err != nil {
 			return nil, err
 		}
-	case proto.ImportStepConflictResolution:
+	case proto.ImportStepCollectConflicts, proto.ImportStepConflictResolution:
 		encodeAndSortMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepEncodeAndSort)
 		if err != nil {
 			return nil, err
@@ -283,7 +283,7 @@ func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 		previousSubtaskMetas[proto.ImportStepEncodeAndSort] = encodeAndSortMetas
 		previousSubtaskMetas[proto.ImportStepMergeSort] = mergeSortMetas
 		previousSubtaskMetas[proto.ImportStepWriteAndIngest] = ingestMetas
-		if err = job2Step(ctx, logger, taskMeta, importer.JobStepImporting); err != nil {
+		if err = job2Step(ctx, logger, taskMeta, importer.JobStepResolvingConflicts); err != nil {
 			return nil, err
 		}
 	case proto.ImportStepPostProcess:
@@ -306,12 +306,12 @@ func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 		if err != nil {
 			return nil, err
 		}
-		conflictResMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepConflictResolution)
+		conflictResMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepCollectConflicts)
 		if err != nil {
 			return nil, err
 		}
 		previousSubtaskMetas[step] = metas
-		previousSubtaskMetas[proto.ImportStepConflictResolution] = conflictResMetas
+		previousSubtaskMetas[proto.ImportStepCollectConflicts] = conflictResMetas
 		logger.Info("move to post-process step ", zap.Any("result", taskMeta.Result))
 	case proto.StepDone:
 		return nil, nil
@@ -403,6 +403,8 @@ func (sch *ImportSchedulerExt) GetNextStep(task *proto.TaskBase) proto.Step {
 	case proto.ImportStepMergeSort:
 		return proto.ImportStepWriteAndIngest
 	case proto.ImportStepWriteAndIngest:
+		return proto.ImportStepCollectConflicts
+	case proto.ImportStepCollectConflicts:
 		return proto.ImportStepConflictResolution
 	case proto.ImportStepImport, proto.ImportStepConflictResolution:
 		return proto.ImportStepPostProcess
@@ -640,12 +642,12 @@ func getLoadedRowCountOnGlobalSort(handle storage.TaskHandle, task *proto.Task) 
 		}
 		loadedRowCount += subtaskMeta.Result.LoadedRowCnt
 	}
-	metas, err = handle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepConflictResolution)
+	metas, err = handle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepCollectConflicts)
 	if err != nil {
 		return 0, err
 	}
 	for _, bs := range metas {
-		var subtaskMeta ConflictResolutionStepMeta
+		var subtaskMeta CollectConflictsStepMeta
 		if err = json.Unmarshal(bs, &subtaskMeta); err != nil {
 			return 0, errors.Trace(err)
 		}

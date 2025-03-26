@@ -615,6 +615,13 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 			store:        e.store,
 			indicesGenKV: indicesGenKV,
 		}, nil
+	case proto.ImportStepCollectConflicts:
+		return &collectConflictsStepExecutor{
+			taskID:   task.ID,
+			taskMeta: &taskMeta,
+			logger:   logger,
+			store:    e.store,
+		}, nil
 	case proto.ImportStepConflictResolution:
 		return &conflictResolutionStepExecutor{
 			taskID:   task.ID,

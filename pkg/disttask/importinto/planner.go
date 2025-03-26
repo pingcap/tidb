@@ -131,6 +131,12 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 		}
 
 		addSpecs(specs)
+	case proto.ImportStepCollectConflicts:
+		specs, err := generateCollectConflictsSpecs(planCtx, p)
+		if err != nil {
+			return nil, err
+		}
+		addSpecs(specs)
 	case proto.ImportStepConflictResolution:
 		specs, err := generateConflictResolutionSpecs(planCtx, p)
 		if err != nil {
@@ -194,6 +200,16 @@ func (s *MergeSortSpec) ToSubtaskMeta(planner.PlanCtx) ([]byte, error) {
 	return json.Marshal(s.MergeSortStepMeta)
 }
 
+// CollectConflictsSpec is the specification of a conflict resolution pipeline.
+type CollectConflictsSpec struct {
+	*CollectConflictsStepMeta
+}
+
+// ToSubtaskMeta converts the conflict resolution spec to subtask meta.
+func (s *CollectConflictsSpec) ToSubtaskMeta(planner.PlanCtx) ([]byte, error) {
+	return json.Marshal(s.CollectConflictsStepMeta)
+}
+
 // ConflictResolutionSpec is the specification of a conflict resolution pipeline.
 type ConflictResolutionSpec struct {
 	*ConflictResolutionStepMeta
@@ -223,8 +239,8 @@ func (*PostProcessSpec) ToSubtaskMeta(planCtx planner.PlanCtx) ([]byte, error) {
 		subtaskMetas = append(subtaskMetas, &subtaskMeta)
 	}
 	deletedRowsChecksum := verify.NewKVChecksum()
-	for _, bs := range planCtx.PreviousSubtaskMetas[proto.ImportStepConflictResolution] {
-		var subtaskMeta ConflictResolutionStepMeta
+	for _, bs := range planCtx.PreviousSubtaskMetas[proto.ImportStepCollectConflicts] {
+		var subtaskMeta CollectConflictsStepMeta
 		if err := json.Unmarshal(bs, &subtaskMeta); err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -591,8 +607,44 @@ func getRangeSplitter(
 	)
 }
 
+func generateCollectConflictsSpecs(planCtx planner.PlanCtx, _ *LogicalPlan) ([]planner.PipelineSpec, error) {
+	groupConflictInfos, err := collectConflictInfos(planCtx)
+	if err != nil {
+		return nil, err
+	}
+	// skip this step if no conflict
+	if len(groupConflictInfos.ConflictInfos) == 0 {
+		return []planner.PipelineSpec{}, nil
+	}
+	return []planner.PipelineSpec{
+		&CollectConflictsSpec{
+			CollectConflictsStepMeta: &CollectConflictsStepMeta{
+				kvGroupConflictInfos: *groupConflictInfos,
+			},
+		},
+	}, nil
+}
+
 func generateConflictResolutionSpecs(planCtx planner.PlanCtx, _ *LogicalPlan) ([]planner.PipelineSpec, error) {
-	m := &ConflictResolutionStepMeta{}
+	groupConflictInfos, err := collectConflictInfos(planCtx)
+	if err != nil {
+		return nil, err
+	}
+	// skip this step if no conflict
+	if len(groupConflictInfos.ConflictInfos) == 0 {
+		return []planner.PipelineSpec{}, nil
+	}
+	return []planner.PipelineSpec{
+		&ConflictResolutionSpec{
+			ConflictResolutionStepMeta: &ConflictResolutionStepMeta{
+				kvGroupConflictInfos: *groupConflictInfos,
+			},
+		},
+	}, nil
+}
+
+func collectConflictInfos(planCtx planner.PlanCtx) (*kvGroupConflictInfos, error) {
+	m := &kvGroupConflictInfos{}
 	for _, subTaskMeta := range planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort] {
 		var stepMeta ImportStepMeta
 		err := json.Unmarshal(subTaskMeta, &stepMeta)
@@ -623,13 +675,5 @@ func generateConflictResolutionSpecs(planCtx planner.PlanCtx, _ *LogicalPlan) ([
 		}
 		m.addConflictInfo(stepMeta.KVGroup, &stepMeta.SortedKVMeta.ConflictInfo)
 	}
-	// skip this step if no conflict
-	if len(m.ConflictInfos) == 0 {
-		return []planner.PipelineSpec{}, nil
-	}
-	return []planner.PipelineSpec{
-		&ConflictResolutionSpec{
-			ConflictResolutionStepMeta: m,
-		},
-	}, nil
+	return m, nil
 }
