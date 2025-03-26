@@ -1483,7 +1483,7 @@ func (local *Backend) doImport(
 		local, balancer,
 	)
 
-	sender := newJobPrepareAndSendOperator(workerCtx, workGroup, &jobWg, local, balancer, workers, engine, regionSplitSize, regionSplitKeyCnt)
+	sender := newJobPrepareAndSendOperator(workerCtx, workGroup, &jobWg, local, balancer, workers, engine, regionSplitKeys, regionSplitSize, regionSplitKeyCnt)
 
 	var ops []operator.Operator
 	if useBalancer {
