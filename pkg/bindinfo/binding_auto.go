@@ -16,6 +16,7 @@ package bindinfo
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -26,6 +27,9 @@ import (
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"go.uber.org/zap"
 )
+
+// PlanDigestFunc is used to get the plan digest of this SQL.
+var PlanDigestFunc func(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest string, err error)
 
 // BindingPlanInfo contains the binding info and its corresponding plan execution info, which is used by
 // "SHOW PLAN FOR <SQL>" to help users understand the historical plans for a specific SQL.
@@ -90,7 +94,15 @@ func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collatio
 	// read plan info from information_schema.tidb_statements_stats
 	bindingPlans := make([]*BindingPlanInfo, 0, len(bindings))
 	for _, binding := range bindings {
-		pInfo, err := ba.getPlanExecInfo(binding.PlanDigest)
+		planDigest := binding.PlanDigest
+		if planDigest == "" {
+			_ = callWithSCtx(ba.sPool, false, func(sctx sessionctx.Context) error {
+				planDigest = getBindingPlanDigest(sctx, binding.Db, binding.BindSQL)
+				return nil
+			})
+		}
+
+		pInfo, err := ba.getPlanExecInfo(planDigest)
 		if err != nil {
 			bindingLogger().Error("get plan execution info failed", zap.String("plan_digest", binding.PlanDigest), zap.Error(err))
 			continue

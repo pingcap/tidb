@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -159,6 +161,9 @@ func readBindingsFromStorage(sPool util.DestroyableSessionPool, condition string
 				continue
 			}
 			binding := newBindingFromStorage(row)
+			if binding.Status == StatusDeleted {
+				continue // deleted
+			}
 			if hErr := prepareHints(sctx, binding); hErr != nil {
 				bindingLogger().Warn("failed to generate bind record from data row", zap.Error(hErr))
 				continue
@@ -190,4 +195,34 @@ func newBindingFromStorage(row chunk.Row) *Binding {
 		SQLDigest:   row.GetString(9),
 		PlanDigest:  row.GetString(10),
 	}
+}
+
+// getBindingPlanDigest does the best efforts to fill binding's plan_digest.
+func getBindingPlanDigest(sctx sessionctx.Context, schema, bindingSQL string) (planDigest string) {
+	defer func() {
+		if r := recover(); r != nil {
+			bindingLogger().Error("panic when filling plan digest for binding",
+				zap.String("binding_sql", bindingSQL), zap.Reflect("panic", r))
+		}
+	}()
+
+	defer func(originalValue bool) {
+		sctx.GetSessionVars().UsePlanBaselines = originalValue
+	}(sctx.GetSessionVars().UsePlanBaselines)
+
+	sctx.GetSessionVars().UsePlanBaselines = false
+	sctx.GetSessionVars().CurrentDB = schema
+	p := utilparser.Pool.Get().(*parser.Parser)
+	defer utilparser.Pool.Put(p)
+	p.SetSQLMode(sctx.GetSessionVars().SQLMode)
+	p.SetParserConfig(sctx.GetSessionVars().BuildParserConfig())
+	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
+	if stmt, err := p.ParseOneStmt(bindingSQL, charset, collation); err == nil {
+		if !hasParam(stmt) {
+			// if there is '?' from `create binding using select a from t where a=?`,
+			// the final plan digest might be incorrect.
+			planDigest, _ = PlanDigestFunc(sctx, stmt)
+		}
+	}
+	return
 }
