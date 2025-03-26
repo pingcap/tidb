@@ -3,12 +3,15 @@
 package rtree_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
@@ -16,8 +19,10 @@ import (
 
 func newRange(start, end []byte) *rtree.Range {
 	return &rtree.Range{
-		StartKey: start,
-		EndKey:   end,
+		KeyRange: rtree.KeyRange{
+			StartKey: start,
+			EndKey:   end,
+		},
 	}
 }
 
@@ -33,7 +38,7 @@ func TestRangeTree(t *testing.T) {
 		}
 		return rg
 	}
-	assertIncomplete := func(startKey, endKey []byte, ranges []rtree.Range) {
+	assertIncomplete := func(startKey, endKey []byte, ranges []rtree.KeyRange) {
 		incomplete := rangeTree.GetIncompleteRange(startKey, endKey)
 		t.Logf("%#v %#v\n%#v\n%#v\n", startKey, endKey, incomplete, ranges)
 		require.Equal(t, len(ranges), len(incomplete))
@@ -47,14 +52,14 @@ func TestRangeTree(t *testing.T) {
 			for e := s + 1; e < 0xff; e++ {
 				start := []byte{byte(s)}
 				end := []byte{byte(e)}
-				assertIncomplete(start, end, []rtree.Range{})
+				assertIncomplete(start, end, []rtree.KeyRange{})
 			}
 		}
 	}
 
-	assertIncomplete([]byte(""), []byte("b"), []rtree.Range{{StartKey: []byte(""), EndKey: []byte("b")}})
-	assertIncomplete([]byte(""), []byte(""), []rtree.Range{{StartKey: []byte(""), EndKey: []byte("")}})
-	assertIncomplete([]byte("b"), []byte(""), []rtree.Range{{StartKey: []byte("b"), EndKey: []byte("")}})
+	assertIncomplete([]byte(""), []byte("b"), []rtree.KeyRange{{StartKey: []byte(""), EndKey: []byte("b")}})
+	assertIncomplete([]byte(""), []byte(""), []rtree.KeyRange{{StartKey: []byte(""), EndKey: []byte("")}})
+	assertIncomplete([]byte("b"), []byte(""), []rtree.KeyRange{{StartKey: []byte("b"), EndKey: []byte("")}})
 
 	range0 := newRange([]byte(""), []byte("a"))
 	rangeA := newRange([]byte("a"), []byte("b"))
@@ -64,24 +69,24 @@ func TestRangeTree(t *testing.T) {
 
 	rangeTree.Update(*rangeA)
 	require.Equal(t, 1, rangeTree.Len())
-	assertIncomplete([]byte("a"), []byte("b"), []rtree.Range{})
+	assertIncomplete([]byte("a"), []byte("b"), []rtree.KeyRange{})
 	assertIncomplete([]byte(""), []byte(""),
-		[]rtree.Range{
+		[]rtree.KeyRange{
 			{StartKey: []byte(""), EndKey: []byte("a")},
 			{StartKey: []byte("b"), EndKey: []byte("")},
 		})
-	assertIncomplete([]byte("b"), []byte(""), []rtree.Range{{StartKey: []byte("b"), EndKey: []byte("")}})
+	assertIncomplete([]byte("b"), []byte(""), []rtree.KeyRange{{StartKey: []byte("b"), EndKey: []byte("")}})
 
 	rangeTree.Update(*rangeC)
 	require.Equal(t, 2, rangeTree.Len())
-	assertIncomplete([]byte("a"), []byte("c"), []rtree.Range{
+	assertIncomplete([]byte("a"), []byte("c"), []rtree.KeyRange{
 		{StartKey: []byte("b"), EndKey: []byte("c")},
 	})
-	assertIncomplete([]byte("b"), []byte("c"), []rtree.Range{
+	assertIncomplete([]byte("b"), []byte("c"), []rtree.KeyRange{
 		{StartKey: []byte("b"), EndKey: []byte("c")},
 	})
 	assertIncomplete([]byte(""), []byte(""),
-		[]rtree.Range{
+		[]rtree.KeyRange{
 			{StartKey: []byte(""), EndKey: []byte("a")},
 			{StartKey: []byte("b"), EndKey: []byte("c")},
 			{StartKey: []byte("d"), EndKey: []byte("")},
@@ -97,7 +102,7 @@ func TestRangeTree(t *testing.T) {
 	require.Equal(t, 3, rangeTree.Len())
 	require.Equal(t, rangeB, search([]byte("b")))
 	assertIncomplete([]byte(""), []byte(""),
-		[]rtree.Range{
+		[]rtree.KeyRange{
 			{StartKey: []byte(""), EndKey: []byte("a")},
 			{StartKey: []byte("d"), EndKey: []byte("")},
 		})
@@ -105,7 +110,7 @@ func TestRangeTree(t *testing.T) {
 	rangeTree.Update(*rangeD)
 	require.Equal(t, 4, rangeTree.Len())
 	require.Equal(t, rangeD, search([]byte("d")))
-	assertIncomplete([]byte(""), []byte(""), []rtree.Range{
+	assertIncomplete([]byte(""), []byte(""), []rtree.KeyRange{
 		{StartKey: []byte(""), EndKey: []byte("a")},
 	})
 
@@ -122,7 +127,7 @@ func TestRangeTree(t *testing.T) {
 	// Overwrite range BD, c-d should be empty
 	rangeTree.Update(*rangeB)
 	require.Equal(t, 4, rangeTree.Len())
-	assertIncomplete([]byte(""), []byte(""), []rtree.Range{
+	assertIncomplete([]byte(""), []byte(""), []rtree.KeyRange{
 		{StartKey: []byte("c"), EndKey: []byte("d")},
 	})
 
@@ -179,8 +184,10 @@ func BenchmarkRangeTreeUpdate(b *testing.B) {
 	rangeTree := rtree.NewRangeTree()
 	for i := 0; i < b.N; i++ {
 		item := rtree.Range{
-			StartKey: []byte(fmt.Sprintf("%20d", i)),
-			EndKey:   []byte(fmt.Sprintf("%20d", i+1)),
+			KeyRange: rtree.KeyRange{
+				StartKey: []byte(fmt.Sprintf("%20d", i)),
+				EndKey:   []byte(fmt.Sprintf("%20d", i+1)),
+			},
 		}
 		rangeTree.Update(item)
 	}
@@ -195,8 +202,10 @@ func TestRangeTreeMerge(t *testing.T) {
 	tablePrefix := tablecodec.GenTableRecordPrefix(1)
 	for i := uint64(0); i < 10000; i += 1 {
 		rangeTree.InsertRange(&rtree.Range{
-			StartKey: encodeTableRecord(tablePrefix, i),
-			EndKey:   encodeTableRecord(tablePrefix, i+1),
+			KeyRange: rtree.KeyRange{
+				StartKey: encodeTableRecord(tablePrefix, i),
+				EndKey:   encodeTableRecord(tablePrefix, i+1),
+			},
 			Files: []*backuppb.File{
 				{
 					Name:       fmt.Sprintf("%20d", i),
@@ -224,7 +233,7 @@ func TestRangeTreeMerge(t *testing.T) {
 func buildProgressRange(startKey, endKey string) *rtree.ProgressRange {
 	pr := &rtree.ProgressRange{
 		Res: rtree.NewRangeTree(),
-		Origin: rtree.Range{
+		Origin: rtree.KeyRange{
 			StartKey: []byte(startKey),
 			EndKey:   []byte(endKey),
 		},
@@ -233,7 +242,7 @@ func buildProgressRange(startKey, endKey string) *rtree.ProgressRange {
 }
 
 func TestProgressRangeTree(t *testing.T) {
-	prTree := rtree.NewProgressRangeTree(nil)
+	prTree := rtree.NewProgressRangeTree(nil, false)
 
 	require.NoError(t, prTree.Insert(buildProgressRange("aa", "cc")))
 	require.Error(t, prTree.Insert(buildProgressRange("bb", "cc")))
@@ -279,7 +288,7 @@ func TestProgressRangeTree(t *testing.T) {
 }
 
 func TestProgreeRangeTreeCallBack(t *testing.T) {
-	prTree := rtree.NewProgressRangeTree(nil)
+	prTree := rtree.NewProgressRangeTree(nil, false)
 
 	require.NoError(t, prTree.Insert(buildProgressRange("a", "b")))
 	require.NoError(t, prTree.Insert(buildProgressRange("c", "d")))
@@ -312,6 +321,97 @@ func TestProgreeRangeTreeCallBack(t *testing.T) {
 	require.Equal(t, completeCount, 1)
 	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("c"), EndKey: []byte("d")}, ranges[0])
 	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("e"), EndKey: []byte("f")}, ranges[1])
+
+	pr.Res.Put([]byte("a"), []byte("abc"), nil)
+	ranges, err = prTree.GetIncompleteRanges()
+	require.NoError(t, err)
+	require.Equal(t, completeCount, 1)
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("c"), EndKey: []byte("d")}, ranges[0])
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("e"), EndKey: []byte("f")}, ranges[1])
+
+	pr.Res.Put([]byte("cc"), []byte("cd"), nil)
+	ranges, err = prTree.GetIncompleteRanges()
+	require.NoError(t, err)
+	require.Equal(t, completeCount, 1)
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("c"), EndKey: []byte("d")}, ranges[0])
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("e"), EndKey: []byte("f")}, ranges[1])
+}
+
+func buildProgressRangeWithPhysicalID(startKey, endKey string, physicalID int64) *rtree.ProgressRange {
+	pr := &rtree.ProgressRange{
+		Res: rtree.NewRangeTree(),
+		Origin: rtree.KeyRange{
+			StartKey: []byte(startKey),
+			EndKey:   []byte(endKey),
+		},
+	}
+	pr.Res.PhysicalID = physicalID
+	return pr
+}
+
+func getFiles(startKey, endKey []byte, checksums [][3]uint64) []*backuppb.File {
+	files := make([]*backuppb.File, 0, len(checksums))
+	for _, checksum := range checksums {
+		files = append(files, &backuppb.File{
+			StartKey:   startKey,
+			EndKey:     endKey,
+			Crc64Xor:   checksum[0],
+			TotalKvs:   checksum[1],
+			TotalBytes: checksum[2],
+		})
+	}
+	return files
+}
+
+func TestProgreeRangeTreeCallBack2(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	stg, err := storage.NewLocalStorage(base)
+	require.NoError(t, err)
+	metawriter := metautil.NewMetaWriter(stg, metautil.MetaFileSize, false, "temp.meta", nil)
+	metawriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
+	defer func() {
+		require.NoError(t, metawriter.FinishWriteMetas(ctx, metautil.AppendDataFile))
+	}()
+	prTree := rtree.NewProgressRangeTree(metawriter, false)
+
+	require.NoError(t, prTree.Insert(buildProgressRangeWithPhysicalID("a", "b", 1)))
+	require.NoError(t, prTree.Insert(buildProgressRangeWithPhysicalID("c", "d", 2)))
+	require.NoError(t, prTree.Insert(buildProgressRangeWithPhysicalID("e", "f", 3)))
+
+	completeCount := 0
+	prTree.SetCallBack(func() { completeCount += 1 })
+
+	pr, err := prTree.FindContained([]byte("a"), []byte("b"))
+	require.NoError(t, err)
+	pr.Res.Put([]byte("a"), []byte("aa"), getFiles([]byte("a"), []byte("aa"), [][3]uint64{{1, 1, 1}, {2, 2, 2}}))
+	ranges, err := prTree.GetIncompleteRanges()
+	require.NoError(t, err)
+	require.Equal(t, completeCount, 0)
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("aa"), EndKey: []byte("b")}, ranges[0])
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("c"), EndKey: []byte("d")}, ranges[1])
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("e"), EndKey: []byte("f")}, ranges[2])
+
+	pr.Res.Put([]byte("a"), []byte("ab"), getFiles([]byte("a"), []byte("ab"), [][3]uint64{{3, 3, 3}, {4, 4, 4}}))
+	ranges, err = prTree.GetIncompleteRanges()
+	require.NoError(t, err)
+	require.Equal(t, completeCount, 0)
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("ab"), EndKey: []byte("b")}, ranges[0])
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("c"), EndKey: []byte("d")}, ranges[1])
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("e"), EndKey: []byte("f")}, ranges[2])
+
+	pr.Res.Put([]byte("ab"), []byte("b"), getFiles([]byte("ab"), []byte("b"), [][3]uint64{{5, 5, 5}, {6, 6, 6}}))
+	ranges, err = prTree.GetIncompleteRanges()
+	require.NoError(t, err)
+	require.Equal(t, completeCount, 1)
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("c"), EndKey: []byte("d")}, ranges[0])
+	require.Equal(t, &kvrpcpb.KeyRange{StartKey: []byte("e"), EndKey: []byte("f")}, ranges[1])
+	cksm := prTree.GetChecksumMap()
+	require.Len(t, cksm, 1)
+	checksum := cksm[1]
+	require.Equal(t, uint64(3^4^5^6), checksum.Crc64Xor)
+	require.Equal(t, uint64(3+4+5+6), checksum.TotalKvs)
+	require.Equal(t, uint64(3+4+5+6), checksum.TotalBytes)
 
 	pr.Res.Put([]byte("a"), []byte("abc"), nil)
 	ranges, err = prTree.GetIncompleteRanges()

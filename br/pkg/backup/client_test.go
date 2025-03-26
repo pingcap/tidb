@@ -337,7 +337,7 @@ func TestOnBackupResponse(t *testing.T) {
 	buildProgressRangeFn := func(startKey []byte, endKey []byte) *rtree.ProgressRange {
 		return &rtree.ProgressRange{
 			Res: rtree.NewRangeTree(),
-			Origin: rtree.Range{
+			Origin: rtree.KeyRange{
 				StartKey: startKey,
 				EndKey:   endKey,
 			},
@@ -349,7 +349,7 @@ func TestOnBackupResponse(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, lock)
 
-	tree := rtree.NewProgressRangeTree(nil)
+	tree := rtree.NewProgressRangeTree(nil, false)
 	r := &backup.ResponseAndStore{
 		StoreID: 0,
 		Resp: &backuppb.BackupResponse{
@@ -456,7 +456,7 @@ func TestMainBackupLoop(t *testing.T) {
 		}
 	}
 	// split each range into limit parts
-	splitRangesFn := func(ranges []rtree.Range, limit int) [][]byte {
+	splitRangesFn := func(ranges []rtree.KeyRange, limit int) [][]byte {
 		if len(ranges) == 0 {
 			return nil
 		}
@@ -479,7 +479,7 @@ func TestMainBackupLoop(t *testing.T) {
 	}
 
 	// Case #1: normal case
-	ranges := []rtree.Range{
+	ranges := []rtree.KeyRange{
 		{
 			StartKey: []byte("aaa"),
 			EndKey:   []byte("zzz"),
@@ -520,7 +520,7 @@ func TestMainBackupLoop(t *testing.T) {
 	require.NoError(t, s.backupClient.RunLoop(backgroundCtx, mainLoop))
 
 	// Case #2: canceled case
-	ranges = []rtree.Range{
+	ranges = []rtree.KeyRange{
 		{
 			StartKey: []byte("aaa"),
 			EndKey:   []byte("zzz"),
@@ -565,7 +565,7 @@ func TestMainBackupLoop(t *testing.T) {
 	require.Error(t, s.backupClient.RunLoop(ctx, mainLoop))
 
 	// Case #3: one store drops and never come back
-	ranges = []rtree.Range{
+	ranges = []rtree.KeyRange{
 		{
 			StartKey: []byte("aaa"),
 			EndKey:   []byte("zzz"),
@@ -624,7 +624,7 @@ func TestMainBackupLoop(t *testing.T) {
 	require.Equal(t, 0, connectedStore[dropStoreID])
 
 	// Case #4 one store drops and come back soon
-	ranges = []rtree.Range{
+	ranges = []rtree.KeyRange{
 		{
 			StartKey: []byte("aaa"),
 			EndKey:   []byte("zzz"),
@@ -677,7 +677,7 @@ func TestMainBackupLoop(t *testing.T) {
 	require.Equal(t, 1, connectedStore[dropStoreID])
 
 	// Case #5 one store drops and watch store back
-	ranges = []rtree.Range{
+	ranges = []rtree.KeyRange{
 		{
 			StartKey: []byte("aaa"),
 			EndKey:   []byte("zzz"),
@@ -736,7 +736,7 @@ func TestMainBackupLoop(t *testing.T) {
 
 func TestBuildProgressRangeTree(t *testing.T) {
 	s := createBackupSuite(t)
-	ranges := []rtree.Range{
+	ranges := []rtree.KeyRange{
 		{
 			StartKey: []byte("aa"),
 			EndKey:   []byte("b"),

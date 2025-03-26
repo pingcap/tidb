@@ -242,7 +242,7 @@ func TestCheckpointBackupRunner(t *testing.T) {
 	}
 
 	for _, d := range data {
-		err = checkpoint.AppendForBackup(ctx, checkpointRunner, "a", []byte(d.StartKey), []byte(d.EndKey), []*backuppb.File{
+		err = checkpoint.AppendForBackup(ctx, checkpointRunner, []byte(d.StartKey), []byte(d.EndKey), []*backuppb.File{
 			{Name: d.Name},
 			{Name: d.Name2},
 		})
@@ -255,7 +255,7 @@ func TestCheckpointBackupRunner(t *testing.T) {
 	checkpointRunner.FlushChecksum(ctx, 4, 4, 4, 4)
 
 	for _, d := range data2 {
-		err = checkpoint.AppendForBackup(ctx, checkpointRunner, "+", []byte(d.StartKey), []byte(d.EndKey), []*backuppb.File{
+		err = checkpoint.AppendForBackup(ctx, checkpointRunner, []byte(d.StartKey), []byte(d.EndKey), []*backuppb.File{
 			{Name: d.Name},
 			{Name: d.Name2},
 		})

@@ -61,7 +61,7 @@ func StartCheckpointBackupRunnerForTest(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	runner := newCheckpointRunner[BackupKeyType, BackupValueType](
+	runner := newCheckpointRunner(
 		checkpointStorage, cipher, valueMarshalerForBackup)
 
 	runner.startCheckpointMainLoop(ctx, tick, tick, tick, tick)
@@ -94,19 +94,19 @@ func StartCheckpointRunnerForBackup(
 func AppendForBackup(
 	ctx context.Context,
 	r *CheckpointRunner[BackupKeyType, BackupValueType],
-	groupKey BackupKeyType,
 	startKey []byte,
 	endKey []byte,
 	files []*backuppb.File,
 ) error {
 	return r.Append(ctx, &CheckpointMessage[BackupKeyType, BackupValueType]{
-		GroupKey: groupKey,
 		Group: []BackupValueType{
 			{
 				Range: &rtree.Range{
-					StartKey: startKey,
-					EndKey:   endKey,
-					Files:    files,
+					KeyRange: rtree.KeyRange{
+						StartKey: startKey,
+						EndKey:   endKey,
+					},
+					Files: files,
 				},
 			},
 		},

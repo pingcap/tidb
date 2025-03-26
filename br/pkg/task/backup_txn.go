@@ -133,11 +133,11 @@ func RunBackupTxn(c context.Context, g glue.Glue, cmdName string, cfg *TxnKvConf
 		return errors.Trace(err)
 	}
 
-	backupRanges := make([]rtree.Range, 0, 1)
+	backupRanges := make([]rtree.KeyRange, 0, 1)
 	// current just build full txn range to support full txn backup
 	minStartKey := []byte{}
 	maxEndKey := []byte{}
-	backupRanges = append(backupRanges, rtree.Range{
+	backupRanges = append(backupRanges, rtree.KeyRange{
 		StartKey: minStartKey,
 		EndKey:   maxEndKey,
 	})

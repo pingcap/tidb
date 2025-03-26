@@ -391,6 +391,8 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
+	isIncrementalBackup := cfg.LastBackupTS > 0
+	skipChecksum := !cfg.Checksum || isIncrementalBackup
 	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 	if err != nil {
 		return errors.Trace(err)
@@ -441,6 +443,8 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 
 	// set cipher only for checkpoint
 	client.SetCipher(&cfg.CipherInfo)
+	// set skip checksum status
+	client.SetSkipChecksum(skipChecksum)
 
 	opts := storage.ExternalStorageOptions{
 		NoCredentials:            cfg.NoCreds,
@@ -485,7 +489,6 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 
 	// use lastBackupTS as safePoint if exists
-	isIncrementalBackup := cfg.LastBackupTS > 0
 	if isIncrementalBackup {
 		sp.BackupTS = cfg.LastBackupTS
 	}
@@ -697,7 +700,6 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 
-	skipChecksum := !cfg.Checksum || isIncrementalBackup
 	checksumProgress := int64(schemas.Len())
 	if skipChecksum {
 		checksumProgress = 1
@@ -741,7 +743,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 func getProgressCountOfRanges(
 	ctx context.Context,
 	mgr *conn.Mgr,
-	ranges []rtree.Range,
+	ranges []rtree.KeyRange,
 ) (int, backup.ProgressUnit, error) {
 	if len(ranges) > 1000 {
 		return len(ranges), backup.UnitRange, nil

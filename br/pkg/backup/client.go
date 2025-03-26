@@ -5,7 +5,6 @@ package backup
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"reflect"
 	"sort"
@@ -388,9 +387,8 @@ mainLoop:
 
 // Client is a client instructs TiKV how to do a backup.
 type Client struct {
-	mgr        ClientMgr
-	clusterID  uint64
-	tableRange bool
+	mgr       ClientMgr
+	clusterID uint64
 
 	storage    storage.ExternalStorage
 	backend    *backuppb.StorageBackend
@@ -401,6 +399,9 @@ type Client struct {
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.BackupKeyType, checkpoint.BackupValueType]
 
 	gcTTL int64
+
+	tableRange   bool
+	skipChecksum bool
 }
 
 // NewBackupClient returns a new backup client.
@@ -428,6 +429,10 @@ func NewTableBackupClient(ctx context.Context, mgr ClientMgr) *Client {
 // SetCipher for checkpoint to encrypt sst file's metadata
 func (bc *Client) SetCipher(cipher *backuppb.CipherInfo) {
 	bc.cipher = cipher
+}
+
+func (bc *Client) SetSkipChecksum(skipChecksum bool) {
+	bc.skipChecksum = skipChecksum
 }
 
 // GetCurrentTS gets a new timestamp from PD.
@@ -628,9 +633,7 @@ func (bc *Client) WaitForFinishCheckpoint(ctx context.Context, flush bool) {
 }
 
 // getProgressRange loads the checkpoint(finished) sub-ranges of the current range, and calculate its incompleted sub-ranges.
-func (bc *Client) getProgressRange(r rtree.Range, sharedFreeListG *btree.FreeListG[*rtree.Range]) *rtree.ProgressRange {
-	// use groupKey to distinguish different ranges
-	groupKey := base64.URLEncoding.EncodeToString(r.StartKey)
+func (bc *Client) getProgressRange(r rtree.KeyRange, sharedFreeListG *btree.FreeListG[*rtree.Range]) *rtree.ProgressRange {
 	physicalID := int64(0)
 	if bc.tableRange {
 		physicalID = tablecodec.DecodeTableID(r.StartKey)
@@ -639,10 +642,8 @@ func (bc *Client) getProgressRange(r rtree.Range, sharedFreeListG *btree.FreeLis
 	// the origin range are not recorded in checkpoint
 	// return the default progress range
 	return &rtree.ProgressRange{
-		Res:        rtree.NewRangeTreeWithFreeListG(sharedFreeListG),
-		Origin:     r,
-		GroupKey:   groupKey,
-		PhysicalID: physicalID,
+		Res:    rtree.NewRangeTreeWithFreeListG(physicalID, sharedFreeListG),
+		Origin: r,
 	}
 }
 
@@ -681,7 +682,7 @@ func (bc *Client) BuildBackupRangeAndSchema(
 	tableFilter filter.Filter,
 	backupTS uint64,
 	isFullBackup bool,
-) ([]rtree.Range, *Schemas, []*backuppb.PlacementPolicy, error) {
+) ([]rtree.KeyRange, *Schemas, []*backuppb.PlacementPolicy, error) {
 	if bc.checkpointMeta == nil {
 		return BuildBackupRangeAndInitSchema(storage, tableFilter, backupTS, isFullBackup)
 	}
@@ -721,7 +722,7 @@ func BuildBackupRangeAndInitSchema(
 	tableFilter filter.Filter,
 	backupTS uint64,
 	isFullBackup bool,
-) ([]rtree.Range, *Schemas, []*backuppb.PlacementPolicy, error) {
+) ([]rtree.KeyRange, *Schemas, []*backuppb.PlacementPolicy, error) {
 	snapshot := storage.GetSnapshot(kv.NewVersion(backupTS))
 	m := meta.NewReader(snapshot)
 
@@ -743,7 +744,7 @@ func BuildBackupRangeAndInitSchema(
 		}
 	}
 
-	ranges := make([]rtree.Range, 0)
+	ranges := make([]rtree.KeyRange, 0)
 	schemasNum := 0
 	dbs, err := m.ListDatabases()
 	if err != nil {
@@ -781,7 +782,7 @@ func BuildBackupRangeAndInitSchema(
 			for _, r := range tableRanges {
 				// Add keyspace prefix to BackupRequest
 				startKey, endKey := storage.GetCodec().EncodeRange(r.StartKey, r.EndKey)
-				ranges = append(ranges, rtree.Range{
+				ranges = append(ranges, rtree.KeyRange{
 					StartKey: startKey,
 					EndKey:   endKey,
 				})
@@ -1058,10 +1059,10 @@ func WriteBackupDDLJobs(metaWriter *metautil.MetaWriter, g glue.Glue, store kv.S
 	return nil
 }
 
-func (bc *Client) BuildProgressRangeTree(ctx context.Context, ranges []rtree.Range, metaWriter *metautil.MetaWriter, progressCallBack func(ProgressUnit)) (rtree.ProgressRangeTree, error) {
+func (bc *Client) BuildProgressRangeTree(ctx context.Context, ranges []rtree.KeyRange, metaWriter *metautil.MetaWriter, progressCallBack func(ProgressUnit)) (rtree.ProgressRangeTree, error) {
 	// the response from TiKV only contains the region's key, so use the
 	// progress range tree to quickly seek the region's corresponding progress range.
-	progressRangeTree := rtree.NewProgressRangeTree(metaWriter)
+	progressRangeTree := rtree.NewProgressRangeTree(metaWriter, bc.skipChecksum)
 	sharedFreeListG := btree.NewFreeListG[*rtree.Range](10240)
 	for _, r := range ranges {
 		if err := progressRangeTree.Insert(bc.getProgressRange(r, sharedFreeListG)); err != nil {
@@ -1073,7 +1074,7 @@ func (bc *Client) BuildProgressRangeTree(ctx context.Context, ranges []rtree.Ran
 	// loads the checkpoint(finished) sub-ranges of the current range, and calculate its incompleted sub-ranges.
 	// TODO: clean up the deprecated metafile.datafile in the external storage.
 	if bc.checkpointMeta != nil && bc.checkpointMeta.LoadCheckpointDataMap {
-		pastDureTime, err := checkpoint.WalkCheckpointFileForBackup(ctx, bc.storage, bc.cipher, func(groupKey string, rg checkpoint.BackupValueType) error {
+		pastDureTime, err := checkpoint.WalkCheckpointFileForBackup(ctx, bc.storage, bc.cipher, func(_ string, rg checkpoint.BackupValueType) error {
 			pr, err := progressRangeTree.FindContained(rg.StartKey, rg.EndKey)
 			if err != nil {
 				return errors.Trace(err)
@@ -1084,9 +1085,9 @@ func (bc *Client) BuildProgressRangeTree(ctx context.Context, ranges []rtree.Ran
 			}
 			// Note: put the range without files since it is already persisted in the external storage.
 			pr.Res.Put(rg.StartKey, rg.EndKey, nil)
-			pr.Checksum.Crc64Xor ^= crc
-			pr.Checksum.TotalKvs += kvs
-			pr.Checksum.TotalBytes += bytes
+			if !bc.skipChecksum {
+				progressRangeTree.UpdateChecksum(pr.Res.PhysicalID, crc, kvs, bytes)
+			}
 			progressCallBack(UnitRegion)
 			return nil
 		})
@@ -1105,7 +1106,7 @@ func (bc *Client) BuildProgressRangeTree(ctx context.Context, ranges []rtree.Ran
 // BackupRanges make a backup of the given key ranges.
 func (bc *Client) BackupRanges(
 	ctx context.Context,
-	ranges []rtree.Range,
+	ranges []rtree.KeyRange,
 	request backuppb.BackupRequest,
 	concurrency uint,
 	replicaReadLabel map[string]string,
@@ -1213,7 +1214,6 @@ func (bc *Client) OnBackupResponse(
 				if err := checkpoint.AppendForBackup(
 					ctx,
 					bc.checkpointRunner,
-					pr.GroupKey,
 					resp.StartKey,
 					resp.EndKey,
 					resp.Files,
