@@ -157,7 +157,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
 	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
 	task, server := createAddIndexTask(t, dom, "test", "t1", proto.Backfill, true)
-	defer server.Stop()
+	require.NotNil(t, server)
 
 	sch := schManager.MockScheduler(task)
 	ext, err := ddl.NewBackfillingSchedulerForTest(dom.DDL())
@@ -333,6 +333,9 @@ func createAddIndexTask(t *testing.T,
 			PublicHost: gcsHost,
 		}
 		server, err = fakestorage.NewServerWithOptions(opt)
+		t.Cleanup(func() {
+			server.Stop()
+		})
 		require.NoError(t, err)
 		server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 		taskMeta.CloudStorageURI = fmt.Sprintf("gs://sorted/addindex?endpoint=%s&access-key=xxxxxx&secret-access-key=xxxxxx", gcsEndpoint)
