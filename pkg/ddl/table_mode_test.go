@@ -114,21 +114,32 @@ func TestTableModeBasic(t *testing.T) {
 	// For testing accessing table metadata is allowed when table is in ModeRestore
 	tk.MustExec("show create table t1_restore_import")
 	tk.MustExec("describe t1_restore_import")
+	tk.MustExec("show create table t1_restore_import")
+	tk.MustExec("show table status where Name = 't1_restore_import'")
+	tk.MustExec("show columns from t1_restore_import")
+	tk.MustExec("show index from t1_restore_import")
 
 	// For testing below stmt is not allowed when table is in ModeImport/ModeRestore
-	// DMLS: select/insert/update/delete/alter table/drop table/truncate table
+	// DMLs
 	tk.MustGetErrCode("select * from t1_restore_import", errno.ErrProtectedTableMode)
 	tk.MustGetErrCode("insert into t1_restore_import values(1, 1, 1)", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("replace into t1_restore_import values(1,1,1)", errno.ErrProtectedTableMode)
 	tk.MustGetErrCode("update t1_restore_import set id = 2 where id = 1", errno.ErrProtectedTableMode)
 	tk.MustGetErrCode("delete from t1_restore_import where id = 2", errno.ErrProtectedTableMode)
 	tk.MustGetErrCode("truncate table t1_restore_import", errno.ErrProtectedTableMode)
-	// DDLs: modify column/add column/add index, drop table
+	// DDLs
 	tk.MustGetErrCode("drop table t1_restore_import", errno.ErrProtectedTableMode)
 	tk.MustGetErrCode("alter table t1_restore_import modify column c2 bigint", errno.ErrProtectedTableMode)
 	tk.MustGetErrCode("alter table t1_restore_import add column c3 int", errno.ErrProtectedTableMode)
 	tk.MustGetErrCode("alter table t1_restore_import drop column c2", errno.ErrProtectedTableMode)
 	tk.MustGetErrCode("alter table t1_restore_import drop index idx1", errno.ErrProtectedTableMode)
 	tk.MustGetErrCode("alter table t1_restore_import add index idx2(c2)", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("alter table t1_restore_import rename to t1_new", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("alter table t1_restore_import partition by range(id) (partition p0 values less than (100))", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("alter table t1_restore_import comment='new comment'", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("alter table t1_restore_import convert to character set utf8mb4", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("alter table t1_restore_import rename column c1 to c1_new", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("alter table t1_restore_import alter column c1 set default 100", errno.ErrProtectedTableMode)
 
 	// For testing AlterTable ModeRestore -> ModeImport is not allowed
 	err = setTableModeTest(ctx, t, store, de, dbInfo, tblInfo, model.TableModeImport)
