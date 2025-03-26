@@ -28,6 +28,7 @@ go_test(
         "//pkg/testkit/testfailpoint",
         "//pkg/types",
         "//tests/realtikvtest",
+        "//tests/realtikvtest/testutils",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
         "@com_github_phayes_freeport//:freeport",
         "@com_github_pingcap_failpoint//:failpoint",
