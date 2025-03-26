@@ -283,7 +283,10 @@ func fillBindingPlanDigest(sctx sessionctx.Context, binding *Binding) {
 	}(sctx.GetSessionVars().UsePlanBaselines)
 
 	sctx.GetSessionVars().UsePlanBaselines = false
-	p := parser.New()
+	p := utilparser.Pool.Get().(*parser.Parser)
+	defer utilparser.Pool.Put(p)
+	p.SetSQLMode(sctx.GetSessionVars().SQLMode)
+	p.SetParserConfig(sctx.GetSessionVars().BuildParserConfig())
 	charset, collation := sctx.GetSessionVars().GetCharsetInfo()
 	if stmt, err := p.ParseOneStmt(binding.BindSQL, charset, collation); err == nil {
 		if !hasParam(stmt) {
