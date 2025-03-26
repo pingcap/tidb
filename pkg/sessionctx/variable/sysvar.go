@@ -794,10 +794,10 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnablePointGetCache, Value: BoolToOnOff(vardef.DefTiDBPointGetCache), Hidden: true, Type: vardef.TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		vardef.EnablePointGetCache.Store(TiDBOptOn(val))
+		s.EnablePointGetCache = TiDBOptOn(val)
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
-		return BoolToOnOff(vardef.EnablePointGetCache.Load()), nil
+		return BoolToOnOff(s.EnablePointGetCache), nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBScatterRegion, Value: vardef.DefTiDBScatterRegion, PossibleValues: []string{vardef.ScatterOff, vardef.ScatterTable, vardef.ScatterGlobal}, Type: vardef.TypeStr,
 		SetSession: func(vars *SessionVars, val string) error {
