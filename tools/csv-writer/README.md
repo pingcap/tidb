@@ -28,6 +28,8 @@ Currently, this tool supports the following data types:
     }
 ```
 
+<img height="189" src="./property.png" width="852"/>
+
 Please note that not all attributes apply to every data type. The attributes marked in green in the configuration file are effective for the respective data type. Below are details on the relevant properties for each type
 
 - string
