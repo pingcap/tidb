@@ -2915,7 +2915,7 @@ func TestMultiSchemaReorgDeleteNonClusteredRange(t *testing.T) {
 				}
 				// TODO: We are testing if update is reflected in other partition set!!
 				// After this:
-				// old partitions _tikv_rowid
+				// old partitions _tidb_rowid
 				//                new partitions _tidb_rowid
 				// 1   1          1   1
 				// ...

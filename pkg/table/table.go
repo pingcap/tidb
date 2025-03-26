@@ -164,7 +164,7 @@ func (opt *AddRecordOpt) IsUpdate() bool {
 	return opt.isUpdate
 }
 
-// GenerateRecordID indicates whether the `AddRecord` operation should generate new _tikv_rowid.
+// GenerateRecordID indicates whether the `AddRecord` operation should generate new _tidb_rowid.
 // Used in normal Update.
 func (opt *AddRecordOpt) GenerateRecordID() bool {
 	return opt.genRecordID

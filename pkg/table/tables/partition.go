@@ -1971,7 +1971,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 		if err != nil {
 			return errors.Trace(err)
 		}
-		// and add record to new partition, which will also give it a new Record ID/_tikv_rowid!
+		// and add record to new partition, which will also give it a new Record ID/_tidb_rowid!
 		newRecordHandle, err = t.getPartition(to).addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
 		if err != nil {
 			return errors.Trace(err)
