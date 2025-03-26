@@ -810,16 +810,6 @@ func (local *Backend) GetWriteSpeedLimit() int {
 	return local.writeLimiter.Limit()
 }
 
-// UpdpateWriteConcurrency updates the write concurrency of the backend.
-func (local *Backend) UpdpateWriteConcurrency(concurrency int) {
-	local.WorkerConcurrency.Store(int32(concurrency))
-}
-
-// GetWriteConcurrency returns the concurrency write limiter.
-func (local *Backend) GetWriteConcurrency() int {
-	return int(local.WorkerConcurrency.Load())
-}
-
 // convertStageOnIngestError will try to fix the error contained in ingest response.
 // Return (_, error) when another error occurred.
 // Return (true, nil) when the job can retry ingesting immediately.
