@@ -843,6 +843,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		err = w.HandleJobDone(d, job, t)
 		return 0, err
 	}
+	failpoint.InjectCall("beforeRunOneJobStep", job)
 
 	d.mu.RLock()
 	d.mu.hook.OnJobRunBefore(job)
