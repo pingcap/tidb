@@ -1068,7 +1068,7 @@ type indexJoinInnerChildWrapper struct {
 // probe side. If it is, and we ganna check the original inner pattern check here to keep compatible with the old.
 // the @first bool indicate whether current logical plan is valid of index join inner side.
 func admitIndexJoinInnerChildPattern(p base.LogicalPlan) bool {
-	switch x := p.(type) {
+	switch x := p.GetBaseLogicalPlan().(*logicalop.BaseLogicalPlan).Self().(type) {
 	case *logicalop.DataSource:
 		// DS that prefer tiFlash reading couldn't walk into index join.
 		if x.PreferStoreType&h.PreferTiFlash != 0 {

@@ -71,7 +71,8 @@ func (t *RootTask) SetEmpty(x bool) {
 // Copy implements Task interface.
 func (t *RootTask) Copy() base.Task {
 	return &RootTask{
-		p: t.p,
+		p:             t.p,
+		IndexJoinInfo: t.IndexJoinInfo,
 	}
 }
 
