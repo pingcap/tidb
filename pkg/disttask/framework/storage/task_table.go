@@ -383,7 +383,7 @@ func (mgr *TaskManager) GetTasksInStates(ctx context.Context, states ...any) (ta
 
 // GetTaskByID gets the task by the task ID.
 func (mgr *TaskManager) GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error) {
-	// TODO: enable it after.
+	// TODO: enable it later.
 	//if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error GetTaskByID")); err != nil {
 	//	return nil, err
 	//}
