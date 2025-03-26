@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/failpoint"
 )
 
+// DXFRandomError returns an error with the given probability. It controls the DXF's failpoint.
 func DXFRandomError(probability float64, err error) error {
 	failpoint.Inject("DXFRandomError", func() {
 		failpoint.Return(RandomError(probability, err))
