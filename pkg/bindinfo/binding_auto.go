@@ -16,11 +16,11 @@ package bindinfo
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
