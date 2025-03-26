@@ -1053,6 +1053,6 @@ func TestIssue60266(t *testing.T) {
 	tk.MustExec(`create table t1(id bigint primary key, a text, b text as ((regexp_replace(a, '^[1-9]\d{9,29}$', 'aaaaa'))), c text)`)
 	tk.MustExec(`insert into t1 (id, a, c) values(1,123456, 'ab\\\\c');`)
 	tk.MustExec(`insert into t1 (id, a, c) values(2,1234567890123, 'ab\\c');`)
-	tk.MustQuery("select * from t1;").
-		Check(testkit.Rows("1 123456 123456 ab\\\\c", "2 1234567890123 aaaaa ab\\c"))
+	tk.MustQuery("select * from t1;").Sort().
+		Check(testkit.Rows("1 123456 123456 ab\\\\\\\\c", "2 1234567890123 aaaaa ab\\\\c"))
 }
