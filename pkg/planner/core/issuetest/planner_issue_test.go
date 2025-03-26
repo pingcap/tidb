@@ -299,7 +299,7 @@ GROUP BY
     a.pk,
     a.col1;`).Check(testkit.Rows(
 		"Projection 8000.00 root  test.a.pk, test.a.col1, Column#9",
-		"└─HashAgg 8000.00 root  group by:test.a.col1, test.a.pk, funcs:count(1)->Column#9, funcs:firstrow(test.a.pk)->test.a.pk, funcs:firstrow(test.a.col1)->test.a.col1",
+		"└─HashAgg 8000.00 root  group by:test.a.col1, test.a.pk, funcs:count(1)->Column#9",
 		"  └─HashJoin 12500.00 root  inner join, equal:[eq(test.a.id, test.b.id)]",
 		"    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
 		"    │ └─TableFullScan 10000.00 cop[tikv] table:b keep order:false, stats:pseudo",
@@ -316,7 +316,7 @@ func TestIssueABC(t *testing.T) {
 	tk.MustQuery("explain format = 'brief' select a.c1, a.c2, a.c3, count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1, a.c2, a.c3;").
 		Check(testkit.Rows(
 			"Projection 8000.00 root  test.t1.c1, test.t1.c2, test.t1.c3, Column#7",
-			"└─HashAgg 8000.00 root  group by:test.t1.c1, test.t1.c2, test.t1.c3, funcs:count(test.t2.c2)->Column#7, funcs:firstrow(test.t1.c1)->test.t1.c1, funcs:firstrow(test.t1.c2)->test.t1.c2, funcs:firstrow(test.t1.c3)->test.t1.c3",
+			"└─HashAgg 8000.00 root  group by:test.t1.c1, test.t1.c2, test.t1.c3, funcs:count(test.t2.c2)->Column#7",
 			"  └─Projection 12487.50 root  test.t1.c1, test.t1.c2, test.t1.c3, test.t2.c2",
 			"    └─HashJoin 12487.50 root  inner join, equal:[eq(test.t2.c2, test.t1.c1)]",
 			"      ├─TableReader(Build) 9990.00 root  data:Selection",

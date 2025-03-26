@@ -17,6 +17,7 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -112,7 +113,9 @@ func (la *LogicalAggregation) PredicatePushDown(predicates []expression.Expressi
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
 func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+	slices.Compact(la.GroupByItems)
 	child := la.Children()[0]
+	pkOrUK := la.schema.PKOrUK
 	used := expression.GetUsedList(la.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, la.Schema())
 	prunedColumns := make([]*expression.Column, 0)
 	prunedFunctions := make([]*aggregation.AggFuncDesc, 0)
@@ -133,6 +136,22 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 			allRemainFirstRow = false
 		}
 	}
+	la.AggFuncs = slices.DeleteFunc(la.AggFuncs, func(i *aggregation.AggFuncDesc) bool {
+		if i.Name == ast.AggFuncFirstRow {
+			cols := expression.ExtractColumns(i.Args[0])
+			if len(cols) == 1 {
+				for _, key := range pkOrUK {
+					for _, k := range key {
+						if k.Equal(nil, cols[0]) {
+							prunedFunctions = append(prunedFunctions, i)
+							return true
+						}
+					}
+				}
+			}
+		}
+		return false
+	})
 	logicaltrace.AppendColumnPruneTraceStep(la, prunedColumns, opt)
 	logicaltrace.AppendFunctionPruneTraceStep(la, prunedFunctions, opt)
 	selfUsedCols := make([]*expression.Column, 0, 5)
