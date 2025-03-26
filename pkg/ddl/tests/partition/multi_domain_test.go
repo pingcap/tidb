@@ -862,8 +862,8 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 	ctx := tkO.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	tableID := tbl.Meta().ID
 	require.NoError(t, err)
+	tableID := tbl.Meta().ID
 	if tbl.Meta().Partition != nil {
 		for _, def := range tbl.Meta().Partition.Definitions {
 			originalPartitions = append(originalPartitions, def.ID)
