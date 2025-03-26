@@ -450,10 +450,6 @@ test_system_tables() {
     run_sql "create schema $DB;"
 
     echo "write initial data and do snapshot backup"
-    # create and populate a user table for reference
-    run_sql "create table $DB.user_table(id int primary key);"
-    run_sql "insert into $DB.user_table values (1);"
-    
     # make some changes to system tables
     run_sql "create user 'test_user'@'%' identified by 'password';"
     run_sql "grant select on $DB.* to 'test_user'@'%';"
@@ -461,13 +457,45 @@ test_system_tables() {
     run_br backup full -s "local://$TEST_DIR/$TASK_NAME/full" --pd $PD_ADDR
 
     echo "make more changes to system tables and wait for log backup"
-    run_sql "revoke select on $DB.* from 'test_user'@'%';"
-    run_sql "grant insert on $DB.* to 'test_user'@'%';"
+    run_sql "create user 'post_backup_user'@'%' identified by 'otherpassword';"
     run_sql "alter user 'test_user'@'%' identified by 'newpassword';"
 
     . "$CUR/../br_test_utils.sh" && wait_log_checkpoint_advance "$TASK_NAME"
 
     restart_services || { echo "Failed to restart services"; exit 1; }
+
+    echo "Test 1: Verify that default restore behavior (no filter) properly handles system tables"
+    # restore without any filter, should only restore snapshot system tables, not log backup.
+    # this is the current behavior as restore log backup to system table will have issue
+    run_br --pd "$PD_ADDR" restore point -s "local://$TEST_DIR/$TASK_NAME/log" --full-backup-storage "local://$TEST_DIR/$TASK_NAME/full"
+
+
+    # verify system tables are restored from snapshot only
+    # only test_user should exist, post_backup_user should not exist
+    users_result=$(run_sql "SELECT _tidb_rowid, user, host, authentication_string FROM mysql.user WHERE user IN ('test_user', 'post_backup_user')")
+
+    test_user_count=$(echo "$users_result" | grep -c "test_user" || true)
+
+    # Verify there is exactly one test_user
+    if [ "$test_user_count" -eq 0 ]; then
+        echo "Error: test_user not found in mysql.user table"
+        exit 1
+    elif [ "$test_user_count" -gt 1 ]; then
+        echo "Error: Found $test_user_count instances of test_user in mysql.user table, expected exactly 1"
+        echo "Full query result:"
+        echo "$users_result"
+        exit 1
+    fi
+
+    # Check that post_backup_user does not exist (was created after snapshot)
+    if echo "$users_result" | grep -q "post_backup_user"; then
+        echo "Error: post_backup_user found in mysql.user table but should not be restored"
+        echo "Full query result:"
+        echo "$users_result"
+        exit 1
+    fi
+
+    echo "Default restore correctly restored system tables from snapshot only: verified one test_user exists"
 
     echo "PiTR should error out when system tables are included with explicit filter"
     restore_fail=0

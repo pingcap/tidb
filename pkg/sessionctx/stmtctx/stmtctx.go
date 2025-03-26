@@ -1087,7 +1087,6 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.TableIDs = sc.TableIDs[:0]
 	sc.IndexNames = sc.IndexNames[:0]
 	sc.TaskID = AllocateTaskID()
-	sc.SyncExecDetails.Reset()
 	sc.WarnHandler.TruncateWarnings(0)
 	sc.ExtraWarnHandler.TruncateWarnings(0)
 

@@ -18,8 +18,6 @@ go_library(
         "//pkg/ddl",
         "//pkg/domain",
         "//pkg/kv",
-        "//pkg/sessionctx/vardef",
-        "//pkg/sessionctx/variable",
         "@com_github_docker_go_units//:go-units",
         "@com_github_opentracing_opentracing_go//:opentracing-go",
         "@com_github_pingcap_errors//:errors",

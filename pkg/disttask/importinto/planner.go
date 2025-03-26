@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -83,6 +84,42 @@ func (p *LogicalPlan) FromTaskMeta(bs []byte) error {
 	return nil
 }
 
+func (p *LogicalPlan) writeExternalPlanMeta(planCtx planner.PlanCtx, specs []planner.PipelineSpec) error {
+	if !planCtx.GlobalSort {
+		return nil
+	}
+	// write external meta when using global sort
+	controller, err := buildControllerForPlan(p)
+	if err != nil {
+		return err
+	}
+	if err := controller.InitDataFiles(planCtx.Ctx); err != nil {
+		return err
+	}
+
+	for i, spec := range specs {
+		externalPath := external.PlanMetaPath(planCtx.TaskID, proto.Step2Str(proto.ImportInto, planCtx.NextTaskStep), i+1)
+		switch sp := spec.(type) {
+		case *ImportSpec:
+			sp.ImportStepMeta.ExternalPath = externalPath
+			if err := sp.ImportStepMeta.WriteJSONToExternalStorage(planCtx.Ctx, controller.GlobalSortStore, sp.ImportStepMeta); err != nil {
+				return err
+			}
+		case *MergeSortSpec:
+			sp.MergeSortStepMeta.ExternalPath = externalPath
+			if err := sp.MergeSortStepMeta.WriteJSONToExternalStorage(planCtx.Ctx, controller.GlobalSortStore, sp.MergeSortStepMeta); err != nil {
+				return err
+			}
+		case *WriteIngestSpec:
+			sp.WriteIngestStepMeta.ExternalPath = externalPath
+			if err := sp.WriteIngestStepMeta.WriteJSONToExternalStorage(planCtx.Ctx, controller.GlobalSortStore, sp.WriteIngestStepMeta); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // ToPhysicalPlan converts the logical plan to physical plan.
 func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.PhysicalPlan, error) {
 	physicalPlan := &planner.PhysicalPlan{}
@@ -115,6 +152,9 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 		if err != nil {
 			return nil, err
 		}
+		if p.writeExternalPlanMeta(planCtx, specs) != nil {
+			return nil, err
+		}
 
 		addSpecs(specs)
 	case proto.ImportStepMergeSort:
@@ -122,11 +162,17 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 		if err != nil {
 			return nil, err
 		}
+		if p.writeExternalPlanMeta(planCtx, specs) != nil {
+			return nil, err
+		}
 
 		addSpecs(specs)
 	case proto.ImportStepWriteAndIngest:
 		specs, err := generateWriteIngestSpecs(planCtx, p)
 		if err != nil {
+			return nil, err
+		}
+		if p.writeExternalPlanMeta(planCtx, specs) != nil {
 			return nil, err
 		}
 
@@ -154,18 +200,13 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 
 // ImportSpec is the specification of an import pipeline.
 type ImportSpec struct {
-	ID     int32
-	Plan   importer.Plan
-	Chunks []importer.Chunk
+	*ImportStepMeta
+	Plan importer.Plan
 }
 
 // ToSubtaskMeta converts the import spec to subtask meta.
 func (s *ImportSpec) ToSubtaskMeta(planner.PlanCtx) ([]byte, error) {
-	importStepMeta := ImportStepMeta{
-		ID:     s.ID,
-		Chunks: s.Chunks,
-	}
-	return json.Marshal(importStepMeta)
+	return s.ImportStepMeta.Marshal()
 }
 
 // WriteIngestSpec is the specification of a write-ingest pipeline.
@@ -175,7 +216,7 @@ type WriteIngestSpec struct {
 
 // ToSubtaskMeta converts the write-ingest spec to subtask meta.
 func (s *WriteIngestSpec) ToSubtaskMeta(planner.PlanCtx) ([]byte, error) {
-	return json.Marshal(s.WriteIngestStepMeta)
+	return s.WriteIngestStepMeta.Marshal()
 }
 
 // MergeSortSpec is the specification of a merge-sort pipeline.
@@ -185,7 +226,7 @@ type MergeSortSpec struct {
 
 // ToSubtaskMeta converts the merge-sort spec to subtask meta.
 func (s *MergeSortSpec) ToSubtaskMeta(planner.PlanCtx) ([]byte, error) {
-	return json.Marshal(s.MergeSortStepMeta)
+	return s.MergeSortStepMeta.Marshal()
 }
 
 // PostProcessSpec is the specification of a post process pipeline.
@@ -282,9 +323,11 @@ func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.Pipeli
 			continue
 		}
 		importSpec := &ImportSpec{
-			ID:     id,
-			Plan:   p.Plan,
-			Chunks: chunks,
+			ImportStepMeta: &ImportStepMeta{
+				ID:     id,
+				Chunks: chunks,
+			},
+			Plan: p.Plan,
 		}
 		importSpecs = append(importSpecs, importSpec)
 	}
@@ -304,7 +347,17 @@ func skipMergeSort(kvGroup string, stats []external.MultipleFilesStat) bool {
 func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {
 	step := external.MergeSortFileCountStep
 	result := make([]planner.PipelineSpec, 0, 16)
-	kvMetas, err := getSortedKVMetasOfEncodeStep(planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort])
+
+	ctx := planCtx.Ctx
+	controller, err := buildControllerForPlan(p)
+	if err != nil {
+		return nil, err
+	}
+	if err := controller.InitDataStore(ctx); err != nil {
+		return nil, err
+	}
+
+	kvMetas, err := getSortedKVMetasOfEncodeStep(planCtx.Ctx, planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort], controller.GlobalSortStore)
 	if err != nil {
 		return nil, err
 	}
@@ -345,7 +398,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 	// kvMetas contains data kv meta and all index kv metas.
 	// each kvMeta will be split into multiple range group individually,
 	// i.e. data and index kv will NOT be in the same subtask.
-	kvMetas, err := getSortedKVMetasForIngest(planCtx, p)
+	kvMetas, err := getSortedKVMetasForIngest(planCtx, p, controller.GlobalSortStore)
 	if err != nil {
 		return nil, err
 	}
@@ -456,7 +509,7 @@ func splitForOneSubtask(
 	return ret, nil
 }
 
-func getSortedKVMetasOfEncodeStep(subTaskMetas [][]byte) (map[string]*external.SortedKVMeta, error) {
+func getSortedKVMetasOfEncodeStep(ctx context.Context, subTaskMetas [][]byte, store storage.ExternalStorage) (map[string]*external.SortedKVMeta, error) {
 	dataKVMeta := &external.SortedKVMeta{}
 	indexKVMetas := make(map[int64]*external.SortedKVMeta)
 	for _, subTaskMeta := range subTaskMetas {
@@ -464,6 +517,11 @@ func getSortedKVMetasOfEncodeStep(subTaskMetas [][]byte) (map[string]*external.S
 		err := json.Unmarshal(subTaskMeta, &stepMeta)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if stepMeta.ExternalPath != "" {
+			if err := stepMeta.ReadJSONFromExternalStorage(ctx, store, &stepMeta); err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 		dataKVMeta.Merge(stepMeta.SortedDataMeta)
 		for indexID, sortedIndexMeta := range stepMeta.SortedIndexMetas {
@@ -482,13 +540,18 @@ func getSortedKVMetasOfEncodeStep(subTaskMetas [][]byte) (map[string]*external.S
 	return res, nil
 }
 
-func getSortedKVMetasOfMergeStep(subTaskMetas [][]byte) (map[string]*external.SortedKVMeta, error) {
+func getSortedKVMetasOfMergeStep(ctx context.Context, subTaskMetas [][]byte, store storage.ExternalStorage) (map[string]*external.SortedKVMeta, error) {
 	result := make(map[string]*external.SortedKVMeta, len(subTaskMetas))
 	for _, subTaskMeta := range subTaskMetas {
 		var stepMeta MergeSortStepMeta
 		err := json.Unmarshal(subTaskMeta, &stepMeta)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if stepMeta.ExternalPath != "" {
+			if err := stepMeta.ReadJSONFromExternalStorage(ctx, store, &stepMeta); err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 		meta, ok := result[stepMeta.KVGroup]
 		if !ok {
@@ -500,12 +563,12 @@ func getSortedKVMetasOfMergeStep(subTaskMetas [][]byte) (map[string]*external.So
 	return result, nil
 }
 
-func getSortedKVMetasForIngest(planCtx planner.PlanCtx, p *LogicalPlan) (map[string]*external.SortedKVMeta, error) {
-	kvMetasOfMergeSort, err := getSortedKVMetasOfMergeStep(planCtx.PreviousSubtaskMetas[proto.ImportStepMergeSort])
+func getSortedKVMetasForIngest(planCtx planner.PlanCtx, p *LogicalPlan, store storage.ExternalStorage) (map[string]*external.SortedKVMeta, error) {
+	kvMetasOfMergeSort, err := getSortedKVMetasOfMergeStep(planCtx.Ctx, planCtx.PreviousSubtaskMetas[proto.ImportStepMergeSort], store)
 	if err != nil {
 		return nil, err
 	}
-	kvMetasOfEncodeStep, err := getSortedKVMetasOfEncodeStep(planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort])
+	kvMetasOfEncodeStep, err := getSortedKVMetasOfEncodeStep(planCtx.Ctx, planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort], store)
 	if err != nil {
 		return nil, err
 	}
@@ -536,9 +599,14 @@ func getRangeSplitter(
 	}
 	regionSplitSize = max(regionSplitSize, int64(config.SplitRegionSize))
 	regionSplitKeys = max(regionSplitKeys, int64(config.SplitRegionKeys))
+	nodeRc := handle.GetNodeResource()
+	rangeSize, rangeKeys := external.CalRangeSize(nodeRc.TotalMem/int64(nodeRc.TotalCPU), regionSplitSize, regionSplitKeys)
 	logutil.Logger(ctx).Info("split kv range with split size and keys",
 		zap.Int64("region-split-size", regionSplitSize),
-		zap.Int64("region-split-keys", regionSplitKeys))
+		zap.Int64("region-split-keys", regionSplitKeys),
+		zap.Int64("range-size", rangeSize),
+		zap.Int64("range-keys", rangeKeys),
+	)
 
 	// no matter region split size and keys, we always split range jobs by 96MB
 	return external.NewRangeSplitter(
@@ -547,8 +615,8 @@ func getRangeSplitter(
 		store,
 		int64(config.DefaultBatchSize),
 		int64(math.MaxInt64),
-		int64(config.SplitRegionSize),
-		int64(config.SplitRegionKeys),
+		rangeSize,
+		rangeKeys,
 		regionSplitSize,
 		regionSplitKeys,
 	)

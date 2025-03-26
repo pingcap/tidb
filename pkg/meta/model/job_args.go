@@ -1331,6 +1331,12 @@ type IndexArg struct {
 	// But we keep the json field name as `is_vector` for compatibility.
 	IsColumnar bool `json:"is_vector,omitempty"`
 
+	// ColumnarIndexType is used to distinguish different columnar index types.
+	// Only used for job args v2.
+	// Note: 1. when you want to read it, always calling `GetColumnarIndexType`` rather than using it directly.
+	//       2. when you set it, make sure IsColumnar = ColumnarIndexType != ColumnarIndexTypeNA.
+	ColumnarIndexType ColumnarIndexType `json:"columnar_index_type,omitempty"`
+
 	// For PK
 	IsPK    bool          `json:"is_pk,omitempty"`
 	SQLMode mysql.SQLMode `json:"sql_mode,omitempty"`
@@ -1342,6 +1348,21 @@ type IndexArg struct {
 
 	// Only used for job args v2.
 	SplitOpt *IndexArgSplitOpt `json:"split_opt,omitempty"`
+}
+
+// GetColumnarIndexType gets the real columnar index type in a backward compatibility way.
+func (a *IndexArg) GetColumnarIndexType() ColumnarIndexType {
+	// For compatibility, if columnar index type is not set, and it's a columnar index, it's a vector index.
+
+	// If the columnar index type is NA and it's not a columnar index, it's a general index.
+	if a.ColumnarIndexType == ColumnarIndexTypeNA && !a.IsColumnar {
+		return ColumnarIndexTypeNA
+	}
+	// If the columnar index type is NA and it's a columnar index, it's a vector index.
+	if a.ColumnarIndexType == ColumnarIndexTypeNA && a.IsColumnar {
+		return ColumnarIndexTypeVector
+	}
+	return a.ColumnarIndexType
 }
 
 // IndexArgSplitOpt is a field of IndexArg used by index presplit.
@@ -1385,8 +1406,8 @@ func (a *ModifyIndexArgs) getArgsV1(job *Job) []any {
 		return []any{indexNames, ifExists}
 	}
 
-	// Add vector index
-	if job.Type == ActionAddVectorIndex {
+	// Add columnar index
+	if job.Type == ActionAddColumnarIndex {
 		arg := a.IndexArgs[0]
 		return []any{arg.IndexName, arg.IndexPartSpecifications[0], arg.IndexOption, arg.FuncExpr}
 	}
@@ -1436,8 +1457,8 @@ func (a *ModifyIndexArgs) decodeV1(job *Job) error {
 		err = a.decodeRenameIndexV1(job)
 	case ActionAddIndex:
 		err = a.decodeAddIndexV1(job)
-	case ActionAddVectorIndex:
-		err = a.decodeAddVectorIndexV1(job)
+	case ActionAddColumnarIndex:
+		err = a.decodeAddColumnarIndexV1(job)
 	case ActionAddPrimaryKey:
 		err = a.decodeAddPrimaryKeyV1(job)
 	default:
@@ -1520,7 +1541,7 @@ func (a *ModifyIndexArgs) decodeAddPrimaryKeyV1(job *Job) error {
 	return nil
 }
 
-func (a *ModifyIndexArgs) decodeAddVectorIndexV1(job *Job) error {
+func (a *ModifyIndexArgs) decodeAddColumnarIndexV1(job *Job) error {
 	var (
 		indexName              ast.CIStr
 		indexPartSpecification *ast.IndexPartSpecification
@@ -1546,7 +1567,7 @@ func (a *ModifyIndexArgs) decodeAddVectorIndexV1(job *Job) error {
 func (a *ModifyIndexArgs) getFinishedArgsV1(job *Job) []any {
 	// Add index
 	if a.OpType == OpAddIndex {
-		if job.Type == ActionAddVectorIndex {
+		if job.Type == ActionAddColumnarIndex {
 			return []any{a.IndexArgs[0].IndexID, a.IndexArgs[0].IfExist, a.PartitionIDs, a.IndexArgs[0].IsGlobal}
 		}
 

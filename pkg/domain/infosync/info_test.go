@@ -84,10 +84,11 @@ func TestTopology(t *testing.T) {
 	v, ok := topology.Labels["foo"]
 	require.True(t, ok)
 	require.Equal(t, "bar", v)
-	require.Equal(t, info.getTopologyInfo(), *topology)
+	selfInfo := info.getLocalServerInfo()
+	require.Equal(t, selfInfo.asTopologyInfo(), *topology)
 
-	nonTTLKey := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, info.info.IP, info.info.Port)
-	ttlKey := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, info.info.IP, info.info.Port)
+	nonTTLKey := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, selfInfo.IP, selfInfo.Port)
+	ttlKey := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, selfInfo.IP, selfInfo.Port)
 
 	err = util.DeleteKeyFromEtcd(nonTTLKey, client, util2.NewSessionDefaultRetryCnt, time.Second)
 	require.NoError(t, err)
@@ -105,7 +106,7 @@ func TestTopology(t *testing.T) {
 	dir := path.Dir(s)
 	require.Equal(t, dir, topology.DeployPath)
 	require.Equal(t, int64(1282967700), topology.StartTimestamp)
-	require.Equal(t, info.getTopologyInfo(), *topology)
+	require.Equal(t, info.getLocalServerInfo().asTopologyInfo(), *topology)
 
 	// check ttl key
 	ttlExists, err := info.ttlKeyExists(ctx)
@@ -124,7 +125,8 @@ func TestTopology(t *testing.T) {
 }
 
 func (is *InfoSyncer) getTopologyFromEtcd(ctx context.Context) (*TopologyInfo, error) {
-	key := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, is.info.IP, is.info.Port)
+	info := is.getLocalServerInfo()
+	key := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, info.IP, info.Port)
 	resp, err := is.etcdCli.Get(ctx, key)
 	if err != nil {
 		return nil, err
@@ -144,7 +146,8 @@ func (is *InfoSyncer) getTopologyFromEtcd(ctx context.Context) (*TopologyInfo, e
 }
 
 func (is *InfoSyncer) ttlKeyExists(ctx context.Context) (bool, error) {
-	key := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, is.info.IP, is.info.Port)
+	info := is.getLocalServerInfo()
+	key := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, info.IP, info.Port)
 	resp, err := is.etcdCli.Get(ctx, key)
 	if err != nil {
 		return false, err
@@ -280,4 +283,45 @@ func TestTiFlashManager(t *testing.T) {
 	require.Equal(t, true, z.Accel)
 
 	CloseTiFlashManager(ctx)
+}
+
+func TestInfoSyncerMarshal(t *testing.T) {
+	info := &ServerInfo{
+		StaticServerInfo: StaticServerInfo{
+			ServerVersionInfo: ServerVersionInfo{
+				Version: "8.8.8",
+				GitHash: "123456",
+			},
+			ID:             "tidb1",
+			IP:             "127.0.0.1",
+			Port:           4000,
+			StatusPort:     10080,
+			Lease:          "1s",
+			StartTimestamp: 10000,
+			ServerIDGetter: func() uint64 { return 0 },
+			JSONServerID:   1,
+		},
+		DynamicServerInfo: DynamicServerInfo{
+			Labels: map[string]string{"zone": "ap-northeast-1a"},
+		},
+	}
+	data, err := json.Marshal(info)
+	require.NoError(t, err)
+	require.Equal(t, data, []byte(`{"version":"8.8.8","git_hash":"123456",`+
+		`"ddl_id":"tidb1","ip":"127.0.0.1","listening_port":4000,"status_port":10080,"lease":"1s","start_timestamp":10000,`+
+		`"server_id":1,"labels":{"zone":"ap-northeast-1a"}}`))
+	var decodeInfo *ServerInfo
+	err = json.Unmarshal(data, &decodeInfo)
+	require.NoError(t, err)
+	require.Nil(t, decodeInfo.ServerIDGetter)
+	require.Equal(t, info.Version, decodeInfo.Version)
+	require.Equal(t, info.GitHash, decodeInfo.GitHash)
+	require.Equal(t, info.ID, decodeInfo.ID)
+	require.Equal(t, info.IP, decodeInfo.IP)
+	require.Equal(t, info.Port, decodeInfo.Port)
+	require.Equal(t, info.StatusPort, decodeInfo.StatusPort)
+	require.Equal(t, info.Lease, decodeInfo.Lease)
+	require.Equal(t, info.StartTimestamp, decodeInfo.StartTimestamp)
+	require.Equal(t, info.JSONServerID, decodeInfo.JSONServerID)
+	require.Equal(t, info.Labels, decodeInfo.Labels)
 }

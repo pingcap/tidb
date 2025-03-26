@@ -449,8 +449,8 @@ insert into t2 values (2, '2');
 
 set tidb_executor_concurrency = 1;
 set tidb_window_concurrency = 100;
-explain select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) order by a,b,c;
-select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) order by a,b,c;
+explain select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) x order by a,b,c;
+select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) x order by a,b,c;
 
 # TestIssue55818
 CREATE TABLE `t61a85298` (

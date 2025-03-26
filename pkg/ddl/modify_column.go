@@ -53,7 +53,7 @@ import (
 func hasColumnarIndexColumn(tblInfo *model.TableInfo, col *model.ColumnInfo) bool {
 	indexesToChange := FindRelatedIndexesToChange(tblInfo, col.Name)
 	for _, idx := range indexesToChange {
-		if idx.IndexInfo.IsTiFlashLocalIndex() {
+		if idx.IndexInfo.IsColumnarIndex() {
 			return true
 		}
 	}
@@ -1134,7 +1134,7 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 		if !modified {
 			return
 		}
-		err = checkIndexInModifiableColumns(columns, indexInfo.Columns, indexInfo.IsTiFlashLocalIndex())
+		err = checkIndexInModifiableColumns(columns, indexInfo.Columns, indexInfo.GetColumnarIndexType())
 		if err != nil {
 			return
 		}
@@ -1167,7 +1167,7 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 	return nil
 }
 
-func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn, isColumnarIndex bool) error {
+func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn, columnarIndexType model.ColumnarIndexType) error {
 	for _, ic := range idxColumns {
 		col := model.FindColumnInfo(columns, ic.Name.L)
 		if col == nil {
@@ -1180,7 +1180,7 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*mo
 			// if the type is still prefixable and larger than old prefix length.
 			prefixLength = ic.Length
 		}
-		if err := checkIndexColumn(col, prefixLength, false, isColumnarIndex); err != nil {
+		if err := checkIndexColumn(col, prefixLength, false, columnarIndexType); err != nil {
 			return err
 		}
 	}
