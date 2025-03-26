@@ -1127,7 +1127,7 @@ func TestOrderingIdxSelectivityThreshold(t *testing.T) {
 
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int primary key , b int, c int, index ib(b), index ic(c))")
+	testKit.MustExec("create table t(a int primary key , b int, c int, d int, index ib(b), index ic(c))")
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	is := dom.InfoSchema()
@@ -1138,7 +1138,7 @@ func TestOrderingIdxSelectivityThreshold(t *testing.T) {
 	// Mock the stats:
 	// total row count 100000
 	// column a: PK, from 0 to 100000, NDV 100000
-	// column b, c: from 0 to 10000, each value has 10 rows, NDV 10000
+	// column b, c, d: from 0 to 10000, each value has 10 rows, NDV 10000
 	// indexes are created on (b), (c) respectively
 	mockStatsTbl := mockStatsTable(tblInfo, 100000)
 	pkColValues, err := generateIntDatum(1, 100000)
@@ -1158,7 +1158,7 @@ func TestOrderingIdxSelectivityThreshold(t *testing.T) {
 		idxValues = append(idxValues, types.NewBytesDatum(b))
 	}
 
-	for i := 2; i <= 3; i++ {
+	for i := 2; i <= 4; i++ {
 		mockStatsTbl.SetCol(int64(i), &statistics.Column{
 			Histogram:         *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)),
 			Info:              tblInfo.Columns[i-1],
