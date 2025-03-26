@@ -268,6 +268,13 @@ func (*tableNameCollector) Leave(in ast.Node) (out ast.Node, ok bool) {
 
 // fillBindingPlanDigest does the best efforts to fill binding's plan_digest.
 func fillBindingPlanDigest(sctx sessionctx.Context, binding *Binding) {
+	defer func() {
+		if r := recover(); r != nil {
+			bindingLogger().Error("panic when filling plan digest for binding",
+				zap.String("binding_sql", binding.BindSQL), zap.Reflect("panic", r))
+		}
+	}()
+
 	if binding.PlanDigest != "" {
 		return
 	}
