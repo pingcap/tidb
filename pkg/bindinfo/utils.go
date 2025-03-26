@@ -161,9 +161,6 @@ func readBindingsFromStorage(sPool util.DestroyableSessionPool, condition string
 				continue
 			}
 			binding := newBindingFromStorage(row)
-			if binding.Status == StatusDeleted {
-				continue // deleted
-			}
 			if hErr := prepareHints(sctx, binding); hErr != nil {
 				bindingLogger().Warn("failed to generate bind record from data row", zap.Error(hErr))
 				continue

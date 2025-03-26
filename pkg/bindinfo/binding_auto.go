@@ -94,6 +94,10 @@ func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collatio
 	// read plan info from information_schema.tidb_statements_stats
 	bindingPlans := make([]*BindingPlanInfo, 0, len(bindings))
 	for _, binding := range bindings {
+		if binding.Status == StatusDeleted {
+			continue
+		}
+
 		planDigest := binding.PlanDigest
 		if planDigest == "" {
 			_ = callWithSCtx(ba.sPool, false, func(sctx sessionctx.Context) error {
