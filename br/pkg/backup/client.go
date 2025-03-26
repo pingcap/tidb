@@ -1157,7 +1157,7 @@ func (bc *Client) BackupRanges(
 		return nil, errors.Trace(err)
 	}
 	if globalProgressTree.Len() > 0 {
-		log.Error("backup ranges done but some ranges are in complete", zap.String("global progress tree", globalProgressTree.String()))
+		log.Error("backup ranges done but some ranges are in complete", zap.Int("count", globalProgressTree.Len()))
 		return nil, errors.Errorf("backup ranges done but some ranges are in complete")
 	}
 	return globalProgressTree.GetChecksumMap(), nil

@@ -91,7 +91,7 @@ type CheckpointMessage[K KeyType, V ValueType] struct {
 // with multi-ranges in the ChecksumData.
 
 type RangeGroup[K KeyType, V ValueType] struct {
-	GroupKey K   `json:"group-key"`
+	GroupKey K   `json:"group-key,omitempty"`
 	Group    []V `json:"groups"`
 }
 

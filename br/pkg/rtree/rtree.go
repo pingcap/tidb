@@ -500,10 +500,6 @@ func (rangeTree *ProgressRangeTree) collectRangeFiles(item *ProgressRange) (meta
 	return checksum, rangeAscendErr
 }
 
-func (rangeTree *ProgressRangeTree) String() string {
-	return ""
-}
-
 func (rangeTree *ProgressRangeTree) UpdateChecksum(physicalID int64, crc, kvs, bytes uint64) {
 	ckm, ok := rangeTree.checksumMap[physicalID]
 	if !ok {
