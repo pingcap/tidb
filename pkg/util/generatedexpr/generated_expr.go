@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/util"
+	parserutil "github.com/pingcap/tidb/pkg/util/parser"
 )
 
 // nameResolver is the visitor to resolve table name and column name.
@@ -63,8 +64,11 @@ var parserPool = &sync.Pool{New: func() any { return parser.New() }}
 func ParseExpression(expr string) (node ast.ExprNode, err error) {
 	expr = fmt.Sprintf("select %s", expr)
 	charset, collation := charset.GetDefaultCharsetAndCollate()
-	parse := parserPool.Get().(*parser.Parser)
-	defer parserPool.Put(parse)
+	parse := parserutil.Pool.Get().(*parser.Parser)
+	defer func() {
+		parse.Reset()
+		parserutil.Pool.Put(parse)
+	}()
 	stmts, _, err := parse.ParseSQL(expr,
 		parser.CharsetConnection(charset),
 		parser.CollationConnection(collation))

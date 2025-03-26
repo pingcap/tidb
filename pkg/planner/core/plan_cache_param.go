@@ -190,7 +190,10 @@ func Params2Expressions(params []types.Datum) []expression.Expression {
 // ParseParameterizedSQL parse this parameterized SQL with the specified sctx.
 func ParseParameterizedSQL(sctx sessionctx.Context, paramSQL string) (ast.StmtNode, error) {
 	p := parserutil.Pool.Get().(*parser.Parser)
-	defer parserutil.Pool.Put(p)
+	defer func() {
+		p.Reset()
+		parserutil.Pool.Put(p)
+	}()
 	p.SetSQLMode(sctx.GetSessionVars().SQLMode)
 	p.SetParserConfig(sctx.GetSessionVars().BuildParserConfig())
 	tmp, _, err := p.ParseSQL(paramSQL, sctx.GetSessionVars().GetParseParams()...)

@@ -114,6 +114,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	parserutil "github.com/pingcap/tidb/pkg/util/parser"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/sem"
@@ -1390,9 +1391,11 @@ var _ sqlexec.SQLParser = &session{}
 
 func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.ParseParam) ([]ast.StmtNode, []error, error) {
 	defer tracing.StartRegion(ctx, "ParseSQL").End()
-
-	p := parserPool.Get().(*parser.Parser)
-	defer parserPool.Put(p)
+	p := parserutil.Pool.Get().(*parser.Parser)
+	defer func() {
+		p.Reset()
+		parserutil.Pool.Put(p)
+	}()
 
 	sqlMode := s.sessionVars.SQLMode
 	if s.isInternal() {

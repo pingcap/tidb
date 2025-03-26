@@ -133,6 +133,17 @@ func New() *Parser {
 	return p
 }
 
+// Reset resets the parser.
+func (parser *Parser) Reset() {
+	clear(parser.cache)
+	parser.EnableWindowFunc(true)
+	parser.SetStrictDoubleTypeCheck(true)
+	parser.explicitCharset = false
+	parser.strictDoubleFieldType = false
+	mode, _ := mysql.GetSQLMode(mysql.DefaultSQLMode)
+	parser.SetSQLMode(mode)
+}
+
 // SetStrictDoubleTypeCheck enables/disables strict double type check.
 func (parser *Parser) SetStrictDoubleTypeCheck(val bool) {
 	parser.strictDoubleFieldType = val
