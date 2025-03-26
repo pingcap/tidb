@@ -312,7 +312,7 @@ func (p *PhysicalProperty) IsSubsetOf(keys []*MPPPartitionColumn) []int {
 //     In this case, we can see that the child supplied partition keys is subset of parent required partition cols.
 func (p *PhysicalProperty) NeedMPPExchangeByEquivalence(
 currentPartitionColumn []*MPPPartitionColumn, fd *funcdep.FDSet) bool {
-	uniqueID2MppCol := make(map[*MPPPartitionColumn]intset.FastIntSet, len(p.MPPPartitionCols))
+	requiredPartitionCols := p.MPPPartitionCols
 	// for each partition column, we calculate the equivalence alternative closure of it.
 	for _, pCol := range p.MPPPartitionCols {
 		uniqueID2MppCol[pCol] = fd.ClosureOfEquivalence(intset.NewFastIntSet(int(pCol.Col.UniqueID)))
