@@ -48,9 +48,10 @@ type jobPrepareAndSendOperator struct {
 	balancer *storeBalanceOperator
 	worker   *jobOperator
 
-	engine          common.Engine
-	regionSplitSize int64
-	regionSplitKeys int64
+	engine            common.Engine
+	regionSplitKeys   [][]byte
+	regionSplitSize   int64
+	regionSplitKeyCnt int64
 
 	sendErr       error
 	sendWg        sync.WaitGroup
@@ -65,8 +66,9 @@ func newJobPrepareAndSendOperator(
 	balancer *storeBalanceOperator,
 	op *jobOperator,
 	engine common.Engine,
+	regionSplitKeys [][]byte,
 	regionSplitSize int64,
-	regionSplitKeys int64,
+	regionSplitKeyCnt int64,
 ) *jobPrepareAndSendOperator {
 	return &jobPrepareAndSendOperator{
 		workerCtx:   workerCtx,
@@ -77,9 +79,10 @@ func newJobPrepareAndSendOperator(
 		balancer: balancer,
 		worker:   op,
 
-		engine:          engine,
-		regionSplitSize: regionSplitSize,
-		regionSplitKeys: regionSplitKeys,
+		engine:            engine,
+		regionSplitKeys:   regionSplitKeys,
+		regionSplitSize:   regionSplitSize,
+		regionSplitKeyCnt: regionSplitKeyCnt,
 	}
 }
 
@@ -101,11 +104,12 @@ func (sender *jobPrepareAndSendOperator) Open() error {
 
 func (sender *jobPrepareAndSendOperator) generateJobs() error {
 	defer sender.sendWg.Done()
-	sender.sendErr = sender.local.generateAndSendJob(
+	sender.sendErr = sender.local.prepareAndSendJob(
 		sender.workerCtx,
 		sender.engine,
-		sender.regionSplitSize,
 		sender.regionSplitKeys,
+		sender.regionSplitSize,
+		sender.regionSplitKeyCnt,
 		sender.jobToWorkerCh.Channel(),
 		sender.jobWg,
 	)
