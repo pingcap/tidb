@@ -332,8 +332,8 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 				StoreAddr:    "tikv-1:20160",
 				ExecDetails: util.TiKVExecDetails{
 					TimeDetail: &util.TimeDetail{
-						TotalRPCWallTime: 500 * time.Millisecond,
-						KvGrpcWaitTime:   100 * time.Millisecond,
+						TotalRPCWallTime:  500 * time.Millisecond,
+						KvGrpcWaitTime:    100 * time.Millisecond,
 						KvGrpcProcessTime: 200 * time.Millisecond,
 					},
 					ScanDetail: &util.ScanDetail{
@@ -347,22 +347,22 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 						RocksdbBlockReadDuration:  20 * time.Millisecond,
 					},
 					WriteDetail: &util.WriteDetail{
-						StoreBatchWaitDuration:        10 * time.Microsecond,
-						ProposeSendWaitDuration:       20 * time.Microsecond,
-						PersistLogDuration:            30 * time.Microsecond,
-						RaftDbWriteLeaderWaitDuration: 40 * time.Microsecond,
-						RaftDbSyncLogDuration:         45 * time.Microsecond,
-						RaftDbWriteMemtableDuration:   50 * time.Microsecond,
-						CommitLogDuration:             60 * time.Microsecond,
-						ApplyBatchWaitDuration:        70 * time.Microsecond,
-						ApplyLogDuration:              80 * time.Microsecond,
-						ApplyMutexLockDuration:        90 * time.Microsecond,
-						ApplyWriteLeaderWaitDuration:  100 * time.Microsecond,
-						ApplyWriteWalDuration:         101 * time.Microsecond,
-						ApplyWriteMemtableDuration:    102 * time.Microsecond,
-						SchedulerLatchWaitDuration:   103 * time.Microsecond,
-						SchedulerProcessDuration:    104 * time.Microsecond,
-						SchedulerThrottleDuration:105 * time.Microsecond,
+						StoreBatchWaitDuration:               10 * time.Microsecond,
+						ProposeSendWaitDuration:              20 * time.Microsecond,
+						PersistLogDuration:                   30 * time.Microsecond,
+						RaftDbWriteLeaderWaitDuration:        40 * time.Microsecond,
+						RaftDbSyncLogDuration:                45 * time.Microsecond,
+						RaftDbWriteMemtableDuration:          50 * time.Microsecond,
+						CommitLogDuration:                    60 * time.Microsecond,
+						ApplyBatchWaitDuration:               70 * time.Microsecond,
+						ApplyLogDuration:                     80 * time.Microsecond,
+						ApplyMutexLockDuration:               90 * time.Microsecond,
+						ApplyWriteLeaderWaitDuration:         100 * time.Microsecond,
+						ApplyWriteWalDuration:                101 * time.Microsecond,
+						ApplyWriteMemtableDuration:           102 * time.Microsecond,
+						SchedulerLatchWaitDuration:           103 * time.Microsecond,
+						SchedulerProcessDuration:             104 * time.Microsecond,
+						SchedulerThrottleDuration:            105 * time.Microsecond,
 						SchedulerPessimisticLockWaitDuration: 106 * time.Microsecond,
 					},
 				},
@@ -381,7 +381,7 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		Commit: commitDetail,
 	}
 	expect := "commit_txn: {prewrite:1s, get_commit_ts:1s, commit:1s, backoff: {time: 1s, prewrite type: [backoff1 backoff2]}, " +
-		"slowest_prewrite_rpc: {total: 1.000s, region_id: 1000, store: tikv-1:20160, "+
+		"slowest_prewrite_rpc: {total: 1.000s, region_id: 1000, store: tikv-1:20160, " +
 		"time_detail: {tikv_grpc_process_time: 200ms, tikv_grpc_wait_time: 100ms, tikv_wall_time: 500ms}, " +
 		"scan_detail: {total_process_keys: 10, total_keys: 100, rocksdb: {delete_skipped_count: 1, key_skipped_count: 1, " +
 		"block: {cache_hit_count: 1, read_count: 1, read_byte: 100 Bytes, read_time: 20ms}}}, " +
