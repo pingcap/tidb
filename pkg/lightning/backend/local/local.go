@@ -1471,15 +1471,9 @@ func (local *Backend) doImport(
 	}
 
 	dispatcher := newJobDispatchOperator(workerCtx, workGroup, &jobWg, local, balancer)
-
-	workerConcurrency := local.WorkerConcurrency
-	failpoint.Inject("skipStartWorker", func() {
-		workerConcurrency = 0
-	})
-
 	workers := newJobOperator(
 		workerCtx, workGroup, &jobWg,
-		workerConcurrency,
+		local.WorkerConcurrency,
 		local, balancer,
 	)
 
@@ -1508,6 +1502,10 @@ func (local *Backend) doImport(
 
 		ops = []operator.Operator{sender, workers, dispatcher}
 	}
+
+	failpoint.Inject("skipStartWorker", func() {
+		ops = []operator.Operator{sender, dispatcher}
+	})
 
 	pipeline := operator.NewAsyncPipeline(ops...)
 	if err := pipeline.Execute(); err != nil {
