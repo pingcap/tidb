@@ -279,6 +279,12 @@
       "explain format = 'brief' select * from t where a < 10000 order by c limit 1",
       "explain format = 'brief' select * from t where a < 9999 order by c limit 1",
       "explain format = 'brief' select * from t where b >= 0 and b <= 100 or c >= 0 and c <= 100 order by c limit 1",
+<<<<<<< HEAD
+=======
+      "explain format = 'brief' select * from t where a < 1000 and c < 100 limit 1",
+      "explain format = 'brief' select * from t where d >= 9950 order by c limit 1",
+      "explain format = 'brief' select * from t where d < 9950 order by c limit 1",
+>>>>>>> b503b1167ca (planner: change the semantic of `tidb_opt_ordering_index_selectivity_threshold` from `<` to `<=` (#60255))
       "set @@tidb_opt_ordering_index_selectivity_threshold = 0.1",
       "explain format = 'brief' select * from t where b >= 9950 order by c limit 1",
       "explain format = 'brief' select * from t where b >= 9950 order by c desc limit 1",
@@ -290,7 +296,39 @@
       "explain format = 'brief' select * from t where a < 9999 order by c limit 1",
       "explain format = 'brief' select * from t where b >= 0 and b <= 50 or c >= 0 and c <= 50 order by c limit 1",
       "explain format = 'brief' select * from t where b >= 9950 and c >= 9950 order by c limit 1",
+<<<<<<< HEAD
       "explain format = 'brief' select * from t where b >= 9950 and c >= 9900 order by c limit 1"
+=======
+      "explain format = 'brief' select * from t where b >= 9950 and c >= 9900 order by c limit 1",
+      "explain format = 'brief' select * from t where a < 1000 and c < 100 limit 1",
+      "explain format = 'brief' select * from t where d >= 9950 order by c limit 1",
+      "explain format = 'brief' select * from t where d < 9950 order by c limit 1",
+      "set @@tidb_opt_ordering_index_selectivity_threshold = 1",
+      "explain format = 'brief' select * from t where d >= 9950 order by c limit 1",
+      "explain format = 'brief' select * from t where d < 9950 order by c limit 1"
+    ]
+  },
+  {
+    "name": "TestOrderingIdxSelectivityRatio",
+    "cases": [
+      "set @@tidb_opt_ordering_index_selectivity_threshold = 0",
+      "set @@tidb_opt_ordering_index_selectivity_ratio = -1",
+      "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 1",
+      "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 10",
+      "explain format = 'brief' select * from t where a < 500 and c < 100 limit 1",
+      "set @@tidb_opt_ordering_index_selectivity_ratio = 0",
+      "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 1",
+      "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 10",
+      "explain format = 'brief' select * from t where a < 500 and c < 100 limit 1",
+      "set @@tidb_opt_ordering_index_selectivity_ratio = 0.1",
+      "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 1",
+      "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 10",
+      "explain format = 'brief' select * from t where a < 500 and c < 100 limit 1",
+      "set @@tidb_opt_ordering_index_selectivity_ratio = 0.5",
+      "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 1",
+      "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 10",
+      "explain format = 'brief' select * from t where a < 500 and c < 100 limit 1"
+>>>>>>> b503b1167ca (planner: change the semantic of `tidb_opt_ordering_index_selectivity_threshold` from `<` to `<=` (#60255))
     ]
   },
   {
