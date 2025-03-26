@@ -467,7 +467,6 @@ go_test(
         "//pkg/util/dbterror/plannererrors",
         "//pkg/util/deadlockhistory",
         "//pkg/util/disk",
-        "//pkg/util/execdetails",
         "//pkg/util/gcutil",
         "//pkg/util/hint",
         "//pkg/util/logutil",
