@@ -3823,8 +3823,7 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 		var found map[string][]byte
 		lockKey := make([]byte, 0, tablecodec.RecordRowKeyLen)
 		lockKey = append(lockKey, handleRange.startKey[:tablecodec.TableSplitKeyLen]...)
-		isNonClustered := !w.table.Meta().HasClusteredIndex()
-		if isNonClustered && len(w.rowRecords) > 0 {
+		if !w.table.Meta().HasClusteredIndex() && len(w.rowRecords) > 0 {
 			failpoint.InjectCall("PartitionBackfillNonClustered", w.rowRecords[0].vals)
 			// we must check if old IDs already been written,
 			// i.e. double written by StateWriteOnly or StateWriteReorganization.
@@ -3863,49 +3862,47 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 				return errors.Trace(err)
 			}
 
-			if isNonClustered {
-				if vals, ok := found[string(key)]; ok {
-					if len(vals) == len(prr.vals) && bytes.Equal(vals, prr.vals) {
-						// Already backfilled or double written earlier by concurrent DML
-						continue
-					}
-					// Not same row, due to earlier EXCHANGE PARTITION.
-					// Update the current read row by Remove it and Add it back (which will give it a new _tidb_rowid)
-					// which then also will be used as unique id in the new partition.
-					var h kv.Handle
-					var currPartID int64
-					currPartID, h, err = tablecodec.DecodeRecordKey(lockKey)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					_, err = w.rowDecoder.DecodeTheExistedColumnMap(w.exprCtx, h, prr.vals, w.loc, w.rowMap)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					for _, col := range w.table.WritableCols() {
-						d, ok := w.rowMap[col.ID]
-						if !ok {
-							return dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
-						}
-						tmpRow[col.Offset] = d
-					}
-					// Use RemoveRecord/AddRecord to keep the indexes in-sync!
-					pt := w.table.GetPartitionedTable().GetPartition(currPartID)
-					err = pt.RemoveRecord(w.tblCtx, txn, h, tmpRow)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					h, err = pt.AddRecord(w.tblCtx, txn, tmpRow)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					w.cleanRowMap()
-					// tablecodec.prefixLen is not exported, but is just TableSplitKeyLen + 2 ("_r")
-					key = tablecodec.EncodeRecordKey(key[:tablecodec.TableSplitKeyLen+2], h)
-					// OK to only do txn.Set() for the new partition, and defer creating the indexes,
-					// since any DML changes the record it will also update or create the indexes,
-					// by doing RemoveRecord+UpdateRecord
+			if vals, ok := found[string(key)]; ok {
+				if len(vals) == len(prr.vals) && bytes.Equal(vals, prr.vals) {
+					// Already backfilled or double written earlier by concurrent DML
+					continue
 				}
+				// Not same row, due to earlier EXCHANGE PARTITION.
+				// Update the current read row by Remove it and Add it back (which will give it a new _tidb_rowid)
+				// which then also will be used as unique id in the new partition.
+				var h kv.Handle
+				var currPartID int64
+				currPartID, h, err = tablecodec.DecodeRecordKey(lockKey)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				_, err = w.rowDecoder.DecodeTheExistedColumnMap(w.exprCtx, h, prr.vals, w.loc, w.rowMap)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				for _, col := range w.table.WritableCols() {
+					d, ok := w.rowMap[col.ID]
+					if !ok {
+						return dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
+					}
+					tmpRow[col.Offset] = d
+				}
+				// Use RemoveRecord/AddRecord to keep the indexes in-sync!
+				pt := w.table.GetPartitionedTable().GetPartition(currPartID)
+				err = pt.RemoveRecord(w.tblCtx, txn, h, tmpRow)
+				if err != nil {
+						return errors.Trace(err)
+				}
+				h, err = pt.AddRecord(w.tblCtx, txn, tmpRow)
+				if err != nil {
+				return errors.Trace(err)
+				}
+				w.cleanRowMap()
+				// tablecodec.prefixLen is not exported, but is just TableSplitKeyLen + 2 ("_r")
+				key = tablecodec.EncodeRecordKey(key[:tablecodec.TableSplitKeyLen+2], h)
+				// OK to only do txn.Set() for the new partition, and defer creating the indexes,
+				// since any DML changes the record it will also update or create the indexes,
+				// by doing RemoveRecord+UpdateRecord
 			}
 			err = txn.Set(key, prr.vals)
 			if err != nil {

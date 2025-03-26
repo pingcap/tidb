@@ -1888,7 +1888,7 @@ func (t *partitionedTable) RemoveRecord(ctx table.MutateContext, txn kv.Transact
 			if err != nil || !same {
 				return errors.Trace(err)
 			}
-			return t.getPartition(newFrom).RemoveRecord(ctx, txn, h, r)
+			return t.getPartition(newFrom).removeRecord(ctx, txn, h, r, opt)
 		}
 	}
 	return nil
