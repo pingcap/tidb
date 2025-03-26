@@ -521,7 +521,8 @@ func getHashJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, inne
 	return hashJoin
 }
 
-func completePhysicalIndexJoin(physic *PhysicalIndexJoin, info *IndexJoinInfo, innerS, outerS *expression.Schema, extractOtherEQ bool) base.PhysicalPlan {
+func completePhysicalIndexJoin(physic *PhysicalIndexJoin, rt *RootTask, innerS, outerS *expression.Schema, extractOtherEQ bool) base.PhysicalPlan {
+	info := rt.IndexJoinInfo
 	// runtime fill back ranges
 	if info.Ranges == nil {
 		info.Ranges = ranger.Ranges{} // empty range
@@ -595,6 +596,8 @@ func completePhysicalIndexJoin(physic *PhysicalIndexJoin, info *IndexJoinInfo, i
 	physic.InnerJoinKeys = innerHashKeys
 	// the logical EqualConditions is not used anymore in later phase.
 	physic.EqualConditions = nil
+	// clear rootTask's indexJoinInfo in case of pushing upward.
+	rt.IndexJoinInfo = nil
 	return physic
 }
 
@@ -2569,6 +2572,7 @@ func exhaustPhysicalPlans4LogicalProjection(lp base.LogicalPlan, prop *property.
 	}
 
 	ret := make([]base.PhysicalPlan, 0, len(newProps))
+	newProps = admitIndexJoinProp(newProps, prop)
 	for _, newProp := range newProps {
 		proj := PhysicalProjection{
 			Exprs:            p.Exprs,

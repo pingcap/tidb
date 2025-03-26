@@ -193,7 +193,7 @@ func indexJoinAttach2TaskV1(p *PhysicalIndexJoin, tasks ...base.Task) base.Task 
 func indexJoinAttach2TaskV2(p *PhysicalIndexJoin, tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	innerTask := tasks[p.InnerChildIdx].ConvertToRootTask(p.SCtx())
-	completePhysicalIndexJoin(p, innerTask.(*RootTask).IndexJoinInfo, innerTask.Plan().Schema(), outerTask.Plan().Schema(), true)
+	completePhysicalIndexJoin(p, innerTask.(*RootTask), innerTask.Plan().Schema(), outerTask.Plan().Schema(), true)
 	if p.InnerChildIdx == 1 {
 		p.SetChildren(outerTask.Plan(), innerTask.Plan())
 	} else {
