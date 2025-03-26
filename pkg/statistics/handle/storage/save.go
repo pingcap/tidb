@@ -340,7 +340,7 @@ func SaveColOrIdxStatsToStorage(
 	if count >= 0 {
 		_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count, last_stats_histograms_version) values (%?, %?, %?, %?, %?)", version, tableID, count, modifyCount, version)
 	} else {
-		_, err = util.Exec(sctx, "update mysql.stats_meta set version = %? and last_stats_histograms_version = %? where table_id = %?", version, version, tableID)
+		_, err = util.Exec(sctx, "update mysql.stats_meta set version = %?, last_stats_histograms_version = %? where table_id = %?", version, version, tableID)
 	}
 	if err != nil {
 		return 0, err
