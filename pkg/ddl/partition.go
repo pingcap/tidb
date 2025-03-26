@@ -3891,11 +3891,11 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 				pt := w.table.GetPartitionedTable().GetPartition(currPartID)
 				err = pt.RemoveRecord(w.tblCtx, txn, h, tmpRow)
 				if err != nil {
-						return errors.Trace(err)
+					return errors.Trace(err)
 				}
 				h, err = pt.AddRecord(w.tblCtx, txn, tmpRow)
 				if err != nil {
-				return errors.Trace(err)
+					return errors.Trace(err)
 				}
 				w.cleanRowMap()
 				// tablecodec.prefixLen is not exported, but is just TableSplitKeyLen + 2 ("_r")
