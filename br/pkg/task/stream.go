@@ -1944,7 +1944,7 @@ func buildRewriteRules(schemasReplace *stream.SchemasReplace) map[int64]*restore
 	rules := make(map[int64]*restoreutils.RewriteRules)
 
 	for _, dbReplace := range schemasReplace.DbReplaceMap {
-		if dbReplace.FilteredOut {
+		if dbReplace.FilteredOut || utils.IsSysOrTempSysDB(dbReplace.Name) {
 			continue
 		}
 		for oldTableID, tableReplace := range dbReplace.TableMap {

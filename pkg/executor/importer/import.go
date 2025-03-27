@@ -1355,13 +1355,6 @@ func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildCont
 	return res, allWarnings, nil
 }
 
-func (e *LoadDataController) getBackendWorkerConcurrency() int {
-	// suppose cpu:mem ratio 1:2(true in most case), and we assign 1G per concurrency,
-	// so we can use 2 * threadCnt as concurrency. write&ingest step is mostly
-	// IO intensive, so CPU usage is below ThreadCnt in our tests.
-	return e.ThreadCnt * 2
-}
-
 func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.BackendConfig {
 	backendConfig := local.BackendConfig{
 		PDAddr:                 pdAddr,
@@ -1385,7 +1378,7 @@ func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.Ba
 		DisableAutomaticCompactions: true,
 		BlockSize:                   config.DefaultBlockSize,
 	}
-	backendConfig.WorkerConcurrency.Store(int32(e.getBackendWorkerConcurrency()))
+	backendConfig.SetConcurrency(e.ThreadCnt)
 	if e.IsRaftKV2 {
 		backendConfig.RaftKV2SwitchModeDuration = config.DefaultSwitchTiKVModeInterval
 	}

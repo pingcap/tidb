@@ -111,7 +111,7 @@ const (
 	ActionDropResourceGroup      ActionType = 70
 	ActionAlterTablePartitioning ActionType = 71
 	ActionRemovePartitioning     ActionType = 72
-	ActionAddVectorIndex         ActionType = 73
+	ActionAddColumnarIndex       ActionType = 73
 	ActionModifyEngineAttribute  ActionType = 74
 )
 
@@ -184,7 +184,7 @@ var ActionMap = map[ActionType]string{
 	ActionDropResourceGroup:             "drop resource group",
 	ActionAlterTablePartitioning:        "alter table partition by",
 	ActionRemovePartitioning:            "alter table remove partitioning",
-	ActionAddVectorIndex:                "add vector index",
+	ActionAddColumnarIndex:              "add columnar index",
 	ActionModifyEngineAttribute:         "modify engine attribute",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
@@ -635,7 +635,7 @@ func (job *Job) IsPausing() bool {
 // IsPausable checks whether we can pause the job.
 func (job *Job) IsPausable() bool {
 	// TODO: We can remove it after TiFlash supports the pause operation.
-	if job.Type == ActionAddVectorIndex && job.SchemaState == StateWriteReorganization {
+	if job.Type == ActionAddColumnarIndex && job.SchemaState == StateWriteReorganization {
 		return false
 	}
 	return job.NotStarted() || (job.IsRunning() && job.IsRollbackable())
