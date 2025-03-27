@@ -1300,7 +1300,7 @@ func (b *storeBalancer) releaseStoreLoad(peers []*metapb.Peer) {
 }
 
 // RecoverArgs implements workerpool.TaskMayPanic interface.
-func (_ *regionJob) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
+func (*regionJob) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
 	return "", "", nil, false
 }
 
@@ -1382,7 +1382,7 @@ func (w *jobWorker) HandleTask(job *regionJob, _ func(*regionJob)) {
 	}
 }
 
-func (w *jobWorker) Close() {}
+func (*jobWorker) Close() {}
 
 type jobOperator struct {
 	*operator.AsyncOperator[*regionJob, *regionJob]
