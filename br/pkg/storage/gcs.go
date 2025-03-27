@@ -489,6 +489,8 @@ func shouldRetry(err error) bool {
 		"http2: client connection force closed via ClientConn.Close",
 		"broken pipe",
 		"http2: client connection lost",
+		// See https://stackoverflow.com/questions/45209168/http2-server-sent-goaway-and-closed-the-connection-laststreamid-1999 for details.
+		"http2: server sent GOAWAY",
 	}
 
 	for _, msg := range retryableErrMsg {
