@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
@@ -71,7 +72,9 @@ func (e *conflictResolutionStepExecutor) RunSubtask(ctx context.Context, subtask
 		if kvGroup != dataKVGroup {
 			handler = &conflictIndexKVHandler{baseConflictKVHandler: baseHandler}
 		}
-		if err = handleKVGroupConflicts(ctx, e.logger, handler, e.tableImporter.GlobalSortStore, kvGroup, ci); err != nil {
+		err = handleKVGroupConflicts(ctx, e.logger, handler, e.tableImporter.GlobalSortStore, kvGroup, ci)
+		failpoint.InjectCall("afterResolveOneKVGroup", &err)
+		if err != nil {
 			return err
 		}
 	}

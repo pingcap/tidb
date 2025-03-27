@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
@@ -110,7 +111,9 @@ func (e *collectConflictsStepExecutor) RunSubtask(ctx context.Context, subtask *
 				isRowHandledFn:        e.isRowHandledFn,
 			}
 		}
-		if err = handleKVGroupConflicts(ctx, e.logger, handler, e.tableImporter.GlobalSortStore, kvGroup, ci); err != nil {
+		err = handleKVGroupConflicts(ctx, e.logger, handler, e.tableImporter.GlobalSortStore, kvGroup, ci)
+		failpoint.InjectCall("afterCollectOneKVGroup", &err)
+		if err != nil {
 			_ = e.conflictRowWriter.Close(ctx)
 			return err
 		}

@@ -20,14 +20,19 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"testing"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest/addindextestutil"
 	"github.com/tikv/client-go/v2/util"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func (s *mockGCSSuite) testSingleFileConflictResolution(tblSQL string, sourceContent string, resultRows []string) {
@@ -567,5 +572,42 @@ func (s *mockGCSSuite) TestGlobalSortConflictFoundInMergeSort() {
 			)
 			s.checkMergeStepConflictInfo(jobID)
 		}
+	})
+}
+
+func (s *mockGCSSuite) TestGlobalSortRetryOnConflictResolutionStep() {
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+
+	doTestWithFP := func(t *testing.T, fpName string) {
+		t.Helper()
+		fileContents := []string{
+			"0,0,0,0,0",
+			"2,1,1,1,1\n2,2,2,2,2\n2,3,3,3,3",
+			"4,4,4,4,4\n4,4,4,4,4\n4,4,4,4,4\n4,4,4,4,4",
+			"5,5,5,5,5\n6,5,6,6,6\n7,7,7,7,7\n8,8,7,8,8\n9,9,9,8,9",
+		}
+		var cnt atomic.Int32
+		testfailpoint.EnableCall(s.T(), fpName, func(errP *error) {
+			s.NoError(*errP)
+			// we have 4 KV group to handle, return a retryable error after handle
+			// first 2
+			if cnt.Add(1) == 2 {
+				*errP = status.New(codes.Unknown, "inject error").Err()
+			}
+		})
+		s.testConflictResolution(
+			`create table t(pk int primary key, a int, b int, c int, d int, unique(a), unique(b), unique(c), index(d))`,
+			fileContents,
+			[]string{"0 0 0 0 0"},
+		)
+	}
+
+	s.Run("retry on collect conflicts step", func() {
+		doTestWithFP(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/afterCollectOneKVGroup")
+	})
+
+	s.Run("retry on conflict resolution step", func() {
+		doTestWithFP(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/afterResolveOneKVGroup")
 	})
 }
