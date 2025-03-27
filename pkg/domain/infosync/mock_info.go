@@ -92,12 +92,12 @@ func (m *MockGlobalServerInfoManager) getServerInfo(id string, serverIDGetter fu
 			Port:           m.mockServerPort,
 			StatusPort:     cfg.Status.StatusPort,
 			Lease:          cfg.Lease,
-			BinlogStatus:   binloginfo.GetStatus().String(),
 			StartTimestamp: time.Now().Unix(),
 			ServerIDGetter: serverIDGetter,
 		},
 		DynamicServerInfo: DynamicServerInfo{
-			Labels: cfg.Labels,
+			BinlogStatus: binloginfo.GetStatus().String(),
+			Labels:       cfg.Labels,
 		},
 	}
 

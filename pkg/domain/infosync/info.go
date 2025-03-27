@@ -178,7 +178,6 @@ type StaticServerInfo struct {
 	Port           uint   `json:"listening_port"`
 	StatusPort     uint   `json:"status_port"`
 	Lease          string `json:"lease"`
-	BinlogStatus   string `json:"binlog_status"`
 	StartTimestamp int64  `json:"start_timestamp"`
 	// ServerID is a function, to always retrieve latest serverID from `Domain`,
 	// which will be changed on occasions such as connection to PD is restored after broken.
@@ -193,13 +192,15 @@ type StaticServerInfo struct {
 // To update the dynamic server information, use `InfoSyncer.cloneDynamicServerInfo` to obtain a copy of the dynamic server info.
 // After making modifications, use `InfoSyncer.setDynamicServerInfo` to update the dynamic server information.
 type DynamicServerInfo struct {
-	Labels map[string]string `json:"labels"`
+	BinlogStatus string            `json:"binlog_status"`
+	Labels       map[string]string `json:"labels"`
 }
 
 // clone the DynamicServerInfo.
 func (d *DynamicServerInfo) clone() *DynamicServerInfo {
 	return &DynamicServerInfo{
-		Labels: maps.Clone(d.Labels),
+		BinlogStatus: d.BinlogStatus,
+		Labels:       maps.Clone(d.Labels),
 	}
 }
 
@@ -890,7 +891,13 @@ func (is *InfoSyncer) newSessionAndStoreServerInfo(ctx context.Context, retryCnt
 	}
 	is.session = session
 	binloginfo.RegisterStatusListener(func(status binloginfo.BinlogStatus) error {
-		is.info.BinlogStatus = status.String()
+		binlogStatus := status.String()
+		dynamicInfo := is.cloneDynamicServerInfo()
+		if dynamicInfo.BinlogStatus == binlogStatus {
+			return nil
+		}
+		dynamicInfo.BinlogStatus = binlogStatus
+		is.setDynamicServerInfo(dynamicInfo)
 		err := is.StoreServerInfo(ctx)
 		return errors.Trace(err)
 	})
@@ -1033,7 +1040,9 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 		}
 		for _, kv := range resp.Kvs {
 			info := &ServerInfo{
-				BinlogStatus: binloginfo.BinlogStatusUnknown.String(),
+				DynamicServerInfo: DynamicServerInfo{
+					BinlogStatus: binloginfo.BinlogStatusUnknown.String(),
+				},
 			}
 			err = info.Unmarshal(kv.Value)
 			if err != nil {
@@ -1052,17 +1061,6 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 	cfg := config.GetGlobalConfig()
 	info := &ServerInfo{
-<<<<<<< HEAD
-		ID:             id,
-		IP:             cfg.AdvertiseAddress,
-		Port:           cfg.Port,
-		StatusPort:     cfg.Status.StatusPort,
-		Lease:          cfg.Lease,
-		BinlogStatus:   binloginfo.GetStatus().String(),
-		StartTimestamp: time.Now().Unix(),
-		Labels:         cfg.Labels,
-		ServerIDGetter: serverIDGetter,
-=======
 		StaticServerInfo: StaticServerInfo{
 			ID:             id,
 			IP:             cfg.AdvertiseAddress,
@@ -1073,9 +1071,9 @@ func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 			ServerIDGetter: serverIDGetter,
 		},
 		DynamicServerInfo: DynamicServerInfo{
-			Labels: maps.Clone(cfg.Labels),
+			BinlogStatus: binloginfo.GetStatus().String(),
+			Labels:       maps.Clone(cfg.Labels),
 		},
->>>>>>> 80d6b5683c5 (infosync: refactor server config into dynamic and static sections (#58473))
 	}
 	info.Version = mysql.ServerVersion
 	info.GitHash = versioninfo.TiDBGitHash
