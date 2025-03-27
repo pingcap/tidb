@@ -690,7 +690,11 @@ func (importer *SnapFileImporter) downloadSST(
 				resp, err = utils.WithRetryV2(ectx, utils.NewDownloadSSTBackoffStrategy(), func(ctx context.Context) (*import_sstpb.DownloadResponse, error) {
 					dctx, cancel := context.WithTimeout(ctx, gRPCTimeOut)
 					defer cancel()
-					return importer.importClient.DownloadSST(dctx, peer.GetStoreId(), req)
+					return func(ctx context.Context) (*import_sstpb.DownloadResponse, error) {
+						// hack download twice
+						go importer.importClient.DownloadSST(dctx, peer.GetStoreId(), req)
+						return importer.importClient.DownloadSST(dctx, peer.GetStoreId(), req)
+					}(dctx)
 				})
 				if err != nil {
 					return errors.Trace(err)
