@@ -301,14 +301,15 @@ func TestInfoSyncerMarshal(t *testing.T) {
 			JSONServerID:   1,
 		},
 		DynamicServerInfo: DynamicServerInfo{
-			Labels: map[string]string{"zone": "ap-northeast-1a"},
+			BinlogStatus: "binlog",
+			Labels:       map[string]string{"zone": "ap-northeast-1a"},
 		},
 	}
 	data, err := json.Marshal(info)
 	require.NoError(t, err)
 	require.Equal(t, data, []byte(`{"version":"8.8.8","git_hash":"123456",`+
 		`"ddl_id":"tidb1","ip":"127.0.0.1","listening_port":4000,"status_port":10080,"lease":"1s","start_timestamp":10000,`+
-		`"server_id":1,"labels":{"zone":"ap-northeast-1a"}}`))
+		`"server_id":1,"binlog_status":"binlog","labels":{"zone":"ap-northeast-1a"}}`))
 	var decodeInfo *ServerInfo
 	err = json.Unmarshal(data, &decodeInfo)
 	require.NoError(t, err)
@@ -322,5 +323,6 @@ func TestInfoSyncerMarshal(t *testing.T) {
 	require.Equal(t, info.Lease, decodeInfo.Lease)
 	require.Equal(t, info.StartTimestamp, decodeInfo.StartTimestamp)
 	require.Equal(t, info.JSONServerID, decodeInfo.JSONServerID)
+	require.Equal(t, info.BinlogStatus, decodeInfo.BinlogStatus)
 	require.Equal(t, info.Labels, decodeInfo.Labels)
 }
