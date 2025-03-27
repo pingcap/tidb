@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -211,8 +210,8 @@ func getBindingPlanDigest(sctx sessionctx.Context, schema, bindingSQL string) (p
 	vars.UsePlanBaselines = false
 	vars.CurrentDB = schema
 
-	p := utilparser.Pool.Get().(*parser.Parser)
-	defer utilparser.Pool.Put(p)
+	p := utilparser.GetParser()
+	defer utilparser.DestoryParser(p)
 	p.SetSQLMode(vars.SQLMode)
 	p.SetParserConfig(vars.BuildParserConfig())
 
