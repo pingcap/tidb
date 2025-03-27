@@ -2167,6 +2167,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableClusteredIndex:          vardef.DefTiDBEnableClusteredIndex,
 		EnableParallelApply:           vardef.DefTiDBEnableParallelApply,
 		ShardAllocateStep:             vardef.DefTiDBShardAllocateStep,
+		EnablePointGetCache:           vardef.DefTiDBPointGetCache,
 		PartitionPruneMode:            *atomic2.NewString(vardef.DefTiDBPartitionPruneMode),
 		TxnScope:                      kv.NewDefaultTxnScopeVar(),
 		EnabledRateLimitAction:        vardef.DefTiDBEnableRateLimitAction,
