@@ -136,6 +136,7 @@ func SetTiFlashConfVarsInContext(ctx context.Context, dctx *distsqlctx.DistSQLCo
 		ctx = metadata.AppendToOutgoingContext(ctx, vardef.TiFlashMemQuotaQueryPerNode, strconv.FormatInt(dctx.TiFlashMaxQueryMemoryPerNode, 10))
 	}
 	ctx = metadata.AppendToOutgoingContext(ctx, vardef.TiFlashQuerySpillRatio, strconv.FormatFloat(dctx.TiFlashQuerySpillRatio, 'f', -1, 64))
+	ctx = metadata.AppendToOutgoingContext(ctx, "tiflash_use_hash_join_v2", strconv.FormatBool(dctx.TiFlashUseHashJoinV2))
 	return ctx
 }
 

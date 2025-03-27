@@ -885,7 +885,8 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 			joinKeys = x.RightJoinKeys
 			probChild = child0
 		}
-		if len(joinKeys) > 0 { // Not cross join
+
+		if len(joinKeys) > 0 && !x.CanTiFlashUseHashJoinV2() { // Not cross join and can not use hash join v2 in tiflash
 			buildHelper := fineGrainedShuffleHelper{shuffleTarget: joinBuild, plans: []*physicalop.BasePhysicalPlan{}}
 			buildHelper.plans = append(buildHelper.plans, &x.BasePhysicalPlan)
 			buildHelper.joinKeys = joinKeys
@@ -933,13 +934,13 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 				if !applyFlag {
 					break
 				}
-				/*applyFlag, streamCount := checkFineGrainedShuffleForJoinAgg(ctx, sctx, streamCountInfo, tiflashServerCountInfo, exchangeColCount, 600) // 600: performance test result
-				/if applyFlag {
+				applyFlag, streamCount := checkFineGrainedShuffleForJoinAgg(ctx, sctx, streamCountInfo, tiflashServerCountInfo, exchangeColCount, 600) // 600: performance test result
+				if applyFlag {
 					x.TiFlashFineGrainedShuffleStreamCount = streamCount
 					for _, p := range helper.plans {
 						p.TiFlashFineGrainedShuffleStreamCount = streamCount
 					}
-				}*/
+				}
 			}
 		}
 		// exchange sender will break the data partition.

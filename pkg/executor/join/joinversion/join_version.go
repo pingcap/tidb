@@ -27,6 +27,10 @@ const (
 	HashJoinVersionLegacy = "legacy"
 	// HashJoinVersionOptimized means hash join v2
 	HashJoinVersionOptimized = "optimized"
+	// TiFlashHashJoinVersionDefault means the default value of hash join version in TiFlash
+	TiFlashHashJoinVersionDefVal = HashJoinVersionOptimized
+	// TiFlashUseHashJoinV2DefVal means if TiFlash uses hash join v2
+	TiFlashUseHashJoinV2DefVal = TiFlashHashJoinVersionDefVal == HashJoinVersionOptimized
 )
 
 var (

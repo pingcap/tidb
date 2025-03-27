@@ -60,6 +60,7 @@ type DistSQLContext struct {
 	TiFlashMaxBytesBeforeExternalSort    int64
 	TiFlashMaxQueryMemoryPerNode         int64
 	TiFlashQuerySpillRatio               float64
+	TiFlashUseHashJoinV2                 bool
 
 	DistSQLConcurrency            int
 	ReplicaReadType               kv.ReplicaReadType
