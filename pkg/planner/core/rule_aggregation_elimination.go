@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -79,6 +80,11 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *logicalop.L
 	if coveredByUniqueKey {
 		if a.oldAggEliminationCheck && !CheckCanConvertAggToProj(agg) {
 			return nil
+		} else {
+			agg.GroupByItems = slices.DeleteFunc(agg.GroupByItems, func(expr expression.Expression) bool {
+				return schemaByGroupby.ColumnsIndices(uniqueKey) == nil
+			})
+			return nil
 		}
 		// GroupByCols has unique key, so this aggregation can be removed.
 		if ok, proj := ConvertAggToProj(agg, agg.Schema()); ok {
@@ -88,6 +94,22 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *logicalop.L
 		}
 	}
 	return nil
+}
+
+func (*aggregationEliminateChecker) tryToSimpleGroupBy(agg *logicalop.LogicalAggregation) {
+	for _, groupby := range agg.GroupByItems {
+		cols, ok := groupby.(*expression.Column)
+		if !ok {
+			continue
+		}
+		groupBySchema := expression.NewSchema(cols)
+		for _, key := range agg.Schema().PKOrUK {
+			if groupBySchema.ColumnsIndices(key) != nil {
+
+			}
+		}
+
+	}
 }
 
 // tryToEliminateDistinct will eliminate distinct in the aggregation function if the aggregation args
@@ -273,10 +295,14 @@ func (a *AggregationEliminator) Optimize(ctx context.Context, p base.LogicalPlan
 	if !ok {
 		return p, planChanged, nil
 	}
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	a.tryToEliminateDistinct(agg, opt)
 	if proj := a.tryToEliminateAggregation(agg, opt); proj != nil {
 		return proj, planChanged, nil
 	}
+	a.tryToSimpleGroupBy(agg)
 	return p, planChanged, nil
 }
 
