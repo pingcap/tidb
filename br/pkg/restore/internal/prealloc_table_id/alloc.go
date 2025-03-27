@@ -8,6 +8,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -30,11 +31,13 @@ type Allocator interface {
 // PreallocIDs mantains the state of preallocated table IDs.
 // Not thread safe.
 type PreallocIDs struct {
+	start int64
+
 	end int64
 
-	allocedFrom int64
+	used map[int64]struct{}
 
-	alloced map[int64]struct{}
+	next int64 //new added
 }
 
 // New collects the requirement of prealloc IDs and return a
@@ -42,7 +45,7 @@ type PreallocIDs struct {
 func New(tables []*metautil.Table) *PreallocIDs {
 	if len(tables) == 0 {
 		return &PreallocIDs{
-			allocedFrom: math.MaxInt64,
+			start: math.MaxInt64,
 		}
 	}
 
@@ -56,18 +59,19 @@ func New(tables []*metautil.Table) *PreallocIDs {
 		}
 	}
 	return &PreallocIDs{
-		end:         maxv,
-		allocedFrom: math.MaxInt64,
-		alloced:     make(map[int64]struct{}),
+		start: math.MaxInt64,
+		end: maxv,
+		used:     make(map[int64]struct{}),
+		next: math.MaxInt64,
 	}
 }
 
 // String implements fmt.Stringer.
 func (p *PreallocIDs) String() string {
-	if p.allocedFrom >= p.end {
+	if p.start >= p.end {
 		return fmt.Sprintf("ID:empty(end=%d)", p.end)
 	}
-	return fmt.Sprintf("ID:[%d,%d)", p.allocedFrom, p.end)
+	return fmt.Sprintf("ID:[%d,%d)", p.start, p.end)
 }
 
 // preallocTableIDs peralloc the id for [start, end)
@@ -80,78 +84,81 @@ func (p *PreallocIDs) Alloc(m Allocator) error {
 	if err != nil {
 		return err
 	}
-	p.allocedFrom = alloced + 1
-	p.end += p.allocedFrom
+	p.start = alloced + 1
+	p.end += p.start
+	p.next = p.start
 	return nil
 }
 
-func (p *PreallocIDs) RewriteTableInfoInplace(idMap map[int64]*int64) error {
-	available := p.end - p.allocedFrom
-	if available < 0 {
-		return fmt.Errorf("invalid state: available IDs (%d) cannot be negative", available)
-	}
-	if int64(len(idMap)) > available {
-		return fmt.Errorf("need alloc %d IDs but only %d available", len(idMap), available)
-	}
-	needRewrite := make([]*int64, 0, len(idMap))
-	dups := make(map[int64]struct{})
-	for upstreamID, ptr := range idMap {
-		if upstreamID >= p.allocedFrom && upstreamID < p.end {
-			if _, exists := p.alloced[upstreamID]; !exists {
-				p.alloced[upstreamID] = struct{}{}
-				*ptr = upstreamID
-				continue
-			}
+func (p *PreallocIDs) allocID(originalID int64) (int64, error) {
+    if int64(len(p.used)) >= p.end - p.start {
+        return 0, errors.Errorf("no available IDs")
+    }
 
-			// will there be duplicated upstreamID?
-			if _, exists := dups[upstreamID]; exists {
-				return fmt.Errorf("duplicate upstream ID: %d", upstreamID)
-			}
-			dups[upstreamID] = struct{}{}
-		}
-		needRewrite = append(needRewrite, ptr)
-	}
+    if originalID >= p.start && originalID < p.end {
+        if _, exists := p.used[originalID]; !exists {
+            p.used[originalID] = struct{}{}
+            return originalID, nil
+        }
+    }
 
-	if int64(len(needRewrite)) > (available - int64(len(p.alloced))) {
-		return fmt.Errorf("need alloc %d IDs but only %d available", len(needRewrite), (available - int64(len(p.alloced))))
+    start := p.next
+    for {
+        current := p.next
+        p.next = (current + 1 - p.start) % (p.end - p.start) + p.start
+        
+        if _, exists := p.used[current]; !exists {
+            p.used[current] = struct{}{}
+            return current, nil
+        }
+        if p.next == start {
+            break
+        }
 	}
 
-	current := p.allocedFrom
-	for _, ptr := range needRewrite {
-		for ; current < p.end; current++ {
-			if _, exists := p.alloced[current]; !exists {
-				p.alloced[current] = struct{}{}
-				*ptr = current
-				current++
-				break
-			}
-		}
-	}
-	return nil
+    return 0, errors.Errorf("no available IDs")
 }
 
+func (p *PreallocIDs) RewriteTableInfo(info *model.TableInfo) (*model.TableInfo, error) {
+	if info == nil {
+		return nil, nil
+	}
+    infoCopy := info.Clone()
+
+    newID, err := p.allocID(info.ID)
+    if err != nil {
+        return nil, errors.Wrapf(err, "failed to allocate table ID for %d", info.ID)
+    }
+    infoCopy.ID = newID
+
+    if infoCopy.Partition != nil {
+        for i := range infoCopy.Partition.Definitions {
+            def := &infoCopy.Partition.Definitions[i]
+            newPartID, err := p.allocID(def.ID)
+            if err != nil {
+                return nil, errors.Wrapf(err, "failed to allocate partition ID for %d", def.ID)
+            }
+            def.ID = newPartID
+        }
+    }
+
+    return infoCopy, nil
+}
+
+// Only used in test, mock the behavior of Batch create tables.
 func (p *PreallocIDs) BatchAlloc(tables []*metautil.Table) (map[string][]*model.TableInfo, error) {
 	clonedInfos := make(map[string][]*model.TableInfo, len(tables))
 	if len(tables) == 0 {
 		return clonedInfos, nil
 	}
 
-	idMapping := make(map[int64]*int64)
 	for _, t := range tables {
-		infoClone := t.Info.Clone()
-		originalID := infoClone.ID
-		idMapping[originalID] = &infoClone.ID
-		if partition := infoClone.Partition; partition != nil {
-			for i := range partition.Definitions {
-				def := &partition.Definitions[i]
-				idMapping[def.ID] = &def.ID
-			}
+		infoClone, err := p.RewriteTableInfo(t.Info)
+		if err != nil {
+			return nil, err
 		}
 		clonedInfos[t.DB.Name.L] = append(clonedInfos[t.DB.Name.L], infoClone)
 	}
 
-	if err := p.RewriteTableInfoInplace(idMapping); err != nil {
-		return clonedInfos, err
-	}
 	return clonedInfos, nil
 }

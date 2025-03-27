@@ -281,20 +281,18 @@ func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table,
 	return nil
 }
 
-func (db *DB) reallocTableID(tables []*metautil.Table) (map[string][]*model.TableInfo, error) {
-	return db.preallocedIDs.BatchAlloc(tables)
-}
-
 // CreateTables execute a internal CREATE TABLES.
 func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 	ddlTables map[restore.UniqueTableName]bool, supportPolicy bool, policyMap *sync.Map) error {
 	if batchSession, ok := db.se.(glue.BatchCreateTableSession); ok {
 		// Modify the table ID inplace, would this be too dangerous?
-		clonedInfos, err := db.reallocTableID(tables)
-		if err != nil {
-			return errors.Trace(err)
-		}
+		clonedInfos := make(map[string][]*model.TableInfo)
 		for _, table := range tables {
+			infoClone, err := db.preallocedIDs.RewriteTableInfo(table.Info)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			clonedInfos[table.DB.Name.L] = append(clonedInfos[table.DB.Name.L], infoClone)
 			if !supportPolicy {
 				log.Info("set placementPolicyRef to nil when target tidb not support policy",
 					zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))
@@ -328,6 +326,10 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 // CreateTable executes a CREATE TABLE SQL.
 func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
 	ddlTables map[restore.UniqueTableName]bool, supportPolicy bool, policyMap *sync.Map) error {
+	infoClone, err := db.preallocedIDs.RewriteTableInfo(table.Info)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	if !supportPolicy {
 		log.Info("set placementPolicyRef to nil when target tidb not support policy",
 			zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))
@@ -342,7 +344,7 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
 		ttlInfo.Enable = false
 	}
 
-	err := db.se.CreateTable(ctx, table.DB.Name, table.Info, ddl.WithIDAllocated(true))
+	err = db.se.CreateTable(ctx, table.DB.Name, infoClone, ddl.WithIDAllocated(true))
 	if err != nil {
 		log.Error("create table failed",
 			zap.Stringer("db", table.DB.Name),

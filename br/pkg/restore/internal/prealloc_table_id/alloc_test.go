@@ -5,7 +5,6 @@ package prealloctableid_test
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -16,6 +15,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -31,34 +31,75 @@ func (t *testAllocator) AdvanceGlobalIDs(n int) (int64, error) {
 	return old, nil
 }
 
-func checkMap(m map[string][]*model.TableInfo, from, end int64) bool {
-	used := make(map[int64]struct{})
-	validate := func(id int64) bool {
-		return id >= from && id < end
-	}
-	checkDup := func(id int64) bool {
-		if _, ok := used[id]; ok {
-			return true
-		}
-		used[id] = struct{}{}
-		return false
-	}
+func checkBatchAlloc(ret map[string][]*model.TableInfo, tables []*metautil.Table, from, end int64) error {
+    originalTables := make(map[string]*model.TableInfo)
+    originalIDs := make(map[int64]struct{})
+    for _, tbl := range tables {
+        ti := tbl.Info
+        originalTables[ti.Name.O] = ti
+        originalIDs[ti.ID] = struct{}{}
+        if ti.Partition != nil {
+            for _, p := range ti.Partition.Definitions {
+                originalIDs[p.ID] = struct{}{}
+            }
+        }
+    }
 
-	for db, infos := range m {
-		dbID, _ := strconv.ParseInt(db, 10, 64)
-		for _, info := range infos {
-			if !validate(info.ID) || checkDup(info.ID) ||
-				(validate(dbID) && dbID != info.ID) {
-				return false
+    allocated := make(map[int64]struct{})
+    totalNewTables := 0
+    for _, infos := range ret {
+        for _, info := range infos {
+            totalNewTables++
+			if !validateID(info.ID, from, end, allocated, originalIDs) {
+                return errors.Errorf("table ID %d is invalid", info.ID)
+            }
+			if info.Partition != nil {
+                for _, p := range info.Partition.Definitions {
+                    if !validateID(p.ID, from, end, allocated, originalIDs) {
+                        return errors.Errorf("table partition ID %d is invalid", p.ID)
+                    }
+                }
+            }
+
+			originalInfo, exists := originalTables[info.Name.O]
+			if !exists {
+				return errors.Errorf("table %s not found", info.Name.O)
 			}
-			for _, part := range info.Partition.Definitions {
-				if !validate(part.ID) || checkDup(part.ID) {
-					return false
-				}
+			originalPartitions := 0
+			if originalInfo.Partition != nil {
+				originalPartitions = len(originalInfo.Partition.Definitions)
 			}
-		}
-	}
-	return true
+
+            newPartitions := 0
+            if info.Partition != nil {
+                newPartitions = len(info.Partition.Definitions)
+            }
+            if newPartitions != originalPartitions {
+                return errors.Errorf("table %s partition count mismatch, expect %d, got %d", info.Name.O, originalPartitions, newPartitions)
+            }
+        }
+    }
+
+    if totalNewTables != len(tables) {
+        return errors.Errorf("table count mismatch, expect %d, got %d", len(tables), totalNewTables)
+    }
+    return nil
+}
+
+func validateID(id, from, end int64, allocated map[int64]struct{}, originalIDs map[int64]struct{}) bool {
+    if id < from || id >= end {
+        return false
+    }
+    if _, exists := allocated[id]; exists {
+        return false
+    }
+    allocated[id] = struct{}{}
+    if id >= from && id < end {
+        if _, existed := originalIDs[id]; existed {
+            return true
+        }
+    }
+    return true
 }
 
 func TestAllocator(t *testing.T) {
@@ -78,7 +119,7 @@ func TestAllocator(t *testing.T) {
 			msg:            "ID:empty(end=0)",
 		},
 		{
-			tableIDs:       []int64{1, 2, 5, 6, 7},
+			tableIDs:       []int64{1, 2, 15, 6, 7},
 			hasAllocatedTo: 6,
 			allocedRange:   [2]int64{7, 12},
 			msg:            "ID:[7,12)",
@@ -90,10 +131,19 @@ func TestAllocator(t *testing.T) {
 			msg:            "ID:[2,6)",
 		},
 		{
-			tableIDs:       []int64{1, 2, 3, 4},
+			tableIDs:       []int64{3, 3, 3, 3},
 			hasAllocatedTo: 5,
 			allocedRange:   [2]int64{6, 10},
 			msg:            "ID:[6,10)",
+		},
+		{
+			tableIDs:       []int64{7, 7, 8, 8},
+			hasAllocatedTo: 5,
+			allocedRange:   [2]int64{6, 20},
+			partitions: map[int64][]int64{
+				7: {8, 9, 10, 11, 12},
+			},
+			msg:            "ID:[6,20)",
 		},
 		{
 			tableIDs:       []int64{1, 2, 5, 6, 1 << 50, 1<<50 + 2479},
@@ -102,7 +152,7 @@ func TestAllocator(t *testing.T) {
 			msg:            "ID:[4,10)",
 		},
 		{
-			tableIDs:       []int64{1, 2, 5, 6, 7},
+			tableIDs:       []int64{11, 22, 5, 6, 7},
 			hasAllocatedTo: 6,
 			allocedRange:   [2]int64{7, 17},
 			partitions: map[int64][]int64{
@@ -111,7 +161,7 @@ func TestAllocator(t *testing.T) {
 			msg: "ID:[7,17)",
 		},
 		{
-			tableIDs:       []int64{1, 2, 5, 6, 7, 13},
+			tableIDs:       []int64{1, 2, 9000005, 7, 17, 130},
 			hasAllocatedTo: 9,
 			allocedRange:   [2]int64{10, 21},
 			partitions: map[int64][]int64{
@@ -125,13 +175,11 @@ func TestAllocator(t *testing.T) {
 		tables := make([]*metautil.Table, 0, len(c.tableIDs))
 		for _, id := range c.tableIDs {
 			table := metautil.Table{
-				// Use the same ID for DB and table.
-				// We will use DB ID to check if table ID is correctly allocated.
 				DB: &model.DBInfo{
-					ID:   id,
-					Name: ast.CIStr{L: fmt.Sprintf("%d", id)},
+					Name: ast.NewCIStr("test"),
 				},
 				Info: &model.TableInfo{
+					Name:      ast.NewCIStr(fmt.Sprintf("t%d", id)),
 					ID:        id,
 					Partition: &model.PartitionInfo{},
 				},
@@ -147,8 +195,8 @@ func TestAllocator(t *testing.T) {
 		ids := prealloctableid.New(tables)
 		allocator := testAllocator(c.hasAllocatedTo)
 		ids.Alloc(&allocator)
-		alloc, err := ids.BatchAlloc(tables)
-		checkMap(alloc, c.allocedRange[0], c.allocedRange[1])
+		alloc, err := ids.BatchAlloc(tables) 
+		require.NoError(t, checkBatchAlloc(alloc, tables, c.allocedRange[0], c.allocedRange[1]))
 		require.NoError(t, err)
 		require.Equal(t, c.msg, ids.String())
 	}
