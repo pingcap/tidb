@@ -656,7 +656,7 @@ func newStmtSummaryStats(sei *StmtExecInfo) *stmtSummaryStats {
 		firstSeen:         sei.StartTime,
 		lastSeen:          sei.StartTime,
 		backoffTypes:      make(map[string]int),
-		authUsers:         make(map[string]struct{}),
+		authUsers:         make(map[string]struct{}, 16),
 		planInCache:       false,
 		planCacheHits:     0,
 		planInBinding:     false,
@@ -696,7 +696,9 @@ func (ssElement *stmtSummaryByDigestElement) onExpire(intervalSeconds int64) {
 func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo) {
 	// add user to auth users set
 	if len(sei.User) > 0 {
-		ssStats.authUsers[sei.User] = struct{}{}
+		if _, exist := ssStats.authUsers[sei.User]; !exist {
+			ssStats.authUsers[sei.User] = struct{}{}
+		}
 	}
 
 	ssStats.execCount++
