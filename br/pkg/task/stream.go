@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/registry"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
@@ -1361,7 +1362,13 @@ func RunStreamRestore(
 		return errors.Trace(err)
 	}
 
-	taskInfo, err := generatePiTRTaskInfo(ctx, mgr, g, cfg)
+	// register task
+	err = RegisterRestoreIfNeeded(ctx, cfg, PointRestoreCmd)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	taskInfo, err := generatePiTRTaskInfo(ctx, mgr, g, cfg, cfg.RestoreID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1746,6 +1753,11 @@ func restoreStream(
 		}
 	})
 
+	failpoint.Inject("fail-at-end-of-stream-restore", func() {
+		log.Info("failpoint fail-at-end-of-stream-restore injected, failing at the end of stream restore task")
+		failpoint.Return(errors.New("failpoint triggered: fail-at-end-of-stream-restore"))
+	})
+
 	gcDisabledRestorable = true
 
 	return nil
@@ -2026,6 +2038,7 @@ func generatePiTRTaskInfo(
 	mgr *conn.Mgr,
 	g glue.Glue,
 	cfg *RestoreConfig,
+	restoreID uint64,
 ) (*PiTRTaskInfo, error) {
 	var (
 		doFullRestore = len(cfg.FullBackupStorage) > 0
@@ -2037,15 +2050,15 @@ func generatePiTRTaskInfo(
 	if cfg.UseCheckpoint {
 		if len(cfg.CheckpointStorage) > 0 {
 			clusterID := mgr.GetPDClient().GetClusterID(ctx)
-			if err = cfg.newStorageCheckpointMetaManagerPITR(ctx, clusterID); err != nil {
+			if err = cfg.newStorageCheckpointMetaManagerPITR(ctx, clusterID, restoreID); err != nil {
 				return nil, errors.Trace(err)
 			}
 		} else {
-			if err = cfg.newTableCheckpointMetaManagerPITR(g, mgr.GetDomain()); err != nil {
+			if err = cfg.newTableCheckpointMetaManagerPITR(g, mgr.GetDomain(), restoreID); err != nil {
 				return nil, errors.Trace(err)
 			}
 		}
-		curTaskInfo, err = checkpoint.TryToGetCheckpointTaskInfo(ctx, cfg.snapshotCheckpointMetaManager, cfg.logCheckpointMetaManager)
+		curTaskInfo, err = checkpoint.GetCheckpointTaskInfo(ctx, cfg.snapshotCheckpointMetaManager, cfg.logCheckpointMetaManager)
 		log.Info("current task checkpoint info", zap.Any("checkpoint", curTaskInfo))
 		if err != nil {
 			return checkInfo, errors.Trace(err)
@@ -2170,4 +2183,28 @@ func getCurrentTSFromCheckpointOrPD(ctx context.Context, mgr *conn.Mgr, cfg *Log
 		return 0, errors.Trace(err)
 	}
 	return currentTS, nil
+}
+
+func RegisterRestoreIfNeeded(ctx context.Context, cfg *RestoreConfig, cmdName string) error {
+	// already registered previously
+	if cfg.RestoreID != 0 {
+		return nil
+	}
+
+	registrationInfo := registry.RegistrationInfo{
+		StartTS:           cfg.StartTS,
+		RestoredTS:        cfg.RestoreTS,
+		FilterStrings:     cfg.FilterStr,
+		UpstreamClusterID: cfg.upstreamClusterID,
+		WithSysTable:      cfg.WithSysTable,
+		Cmd:               cmdName,
+	}
+
+	// get current registered (due to failure retry) or create new restore task id
+	restoreID, err := cfg.RestoreRegistry.ResumeOrCreateRegistration(ctx, registrationInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.RestoreID = restoreID
+	return nil
 }
