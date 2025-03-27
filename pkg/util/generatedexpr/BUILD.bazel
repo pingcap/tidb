@@ -11,6 +11,7 @@ go_library(
         "//pkg/parser/ast",
         "//pkg/parser/charset",
         "//pkg/util",
+        "//pkg/util/parser",
         "@com_github_pingcap_errors//:errors",
     ],
 )

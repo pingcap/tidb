@@ -142,13 +142,13 @@ func GenerateBindingSQL(stmtNode ast.StmtNode, planHint string, defaultDB string
 	return ""
 }
 
-func readBindingsFromStorage(sPool util.DestroyableSessionPool, condition string) (bindings []*Binding, err error) {
+func readBindingsFromStorage(sPool util.DestroyableSessionPool, condition string, args ...any) (bindings []*Binding, err error) {
 	selectStmt := fmt.Sprintf(`SELECT original_sql, bind_sql, default_db, status, create_time,
        update_time, charset, collation, source, sql_digest, plan_digest FROM mysql.bind_info
        %s`, condition)
 
 	err = callWithSCtx(sPool, false, func(sctx sessionctx.Context) error {
-		rows, _, err := execRows(sctx, selectStmt)
+		rows, _, err := execRows(sctx, selectStmt, args...)
 		if err != nil {
 			return err
 		}

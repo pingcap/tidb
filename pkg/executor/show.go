@@ -117,6 +117,7 @@ type ShowExec struct {
 
 	ImportJobID       *int64
 	DistributionJobID *int64
+	SQLOrDigest       string // Used for SHOW PLAN FOR <SQL or Digest>
 }
 
 type showTableRegionRowItem struct {
@@ -260,6 +261,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowBind()
 	case ast.ShowBindingCacheStatus:
 		return e.fetchShowBindingCacheStatus(ctx)
+	case ast.ShowPlanForSQL:
+		return e.fetchPlanForSQL()
 	case ast.ShowAnalyzeStatus:
 		return e.fetchShowAnalyzeStatus(ctx)
 	case ast.ShowRegions:
@@ -284,8 +287,6 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowSessionStates(ctx)
 	case ast.ShowImportJobs:
 		return e.fetchShowImportJobs(ctx)
-	case ast.ShowDistributionJobs:
-		return e.fetchShowDistributionJobs(ctx)
 	}
 	return nil
 }
@@ -369,6 +370,37 @@ func (e *ShowExec) fetchShowBind() error {
 			hint.SQLDigest,
 			hint.PlanDigest,
 		})
+	}
+	return nil
+}
+
+func (e *ShowExec) fetchPlanForSQL() error {
+	bindingHandle := domain.GetDomain(e.Ctx()).BindingHandle()
+	charset, collation := e.Ctx().GetSessionVars().GetCharsetInfo()
+	currentDB := e.Ctx().GetSessionVars().CurrentDB
+	plans, err := bindingHandle.ShowPlansForSQL(currentDB, e.SQLOrDigest, charset, collation)
+	if err != nil {
+		return err
+	}
+	for _, p := range plans {
+		hintStr, err := p.Binding.Hint.Restore()
+		if err != nil {
+			return err
+		}
+
+		e.appendRow([]any{
+			p.Binding.OriginalSQL,
+			hintStr,
+			p.Plan,
+			p.PlanDigest,
+			p.AvgLatency,
+			float64(p.ExecTimes),
+			p.AvgScanRows,
+			p.AvgReturnedRows,
+			p.LatencyPerReturnRow,
+			p.ScanRowsPerReturnRow,
+			p.Recommend,
+			p.Reason})
 	}
 	return nil
 }
@@ -2319,26 +2351,6 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	return nil
 }
 
-// fillDistributionJobToChunk fills the distribution job to the chunk
-func fillDistributionJobToChunk(ctx context.Context, job map[string]any, result *chunk.Chunk) {
-	// alias is combined by db_name,table_name,partition_name
-	alias := strings.Split(job["alias"].(string), ".")
-	if len(alias) != 3 {
-		logutil.Logger(ctx).Debug("alias does not belong to tidb", zap.String("alias", job["alias"].(string)))
-		return
-	}
-	result.AppendUint64(0, job["job-id"].(uint64))
-	result.AppendString(1, alias[0])
-	result.AppendString(2, alias[1])
-	result.AppendString(3, alias[2])
-	result.AppendString(4, job["engine"].(string))
-	result.AppendString(5, job["rule"].(string))
-	result.AppendString(6, job["status"].(string))
-	result.AppendTime(7, types.NewTime(types.FromGoTime(job["create-time"].(time.Time)), mysql.TypeDatetime, types.DefaultFsp))
-	result.AppendTime(8, types.NewTime(types.FromGoTime(job["start-time"].(time.Time)), mysql.TypeDatetime, types.DefaultFsp))
-	result.AppendTime(9, types.NewTime(types.FromGoTime(job["finish-time"].(time.Time)), mysql.TypeDatetime, types.DefaultFsp))
-}
-
 // FillOneImportJobInfo is exported for testing.
 func FillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedRowCount int64) {
 	fullTableName := utils.EncloseDBAndTable(info.TableSchema, info.TableName)
@@ -2382,29 +2394,6 @@ func handleImportJobInfo(ctx context.Context, info *importer.JobInfo, result *ch
 		importedRowCount = int64(rows)
 	}
 	FillOneImportJobInfo(info, result, importedRowCount)
-	return nil
-}
-
-const DistributeScheduler = "balance-range-scheduler"
-
-func (e *ShowExec) fetchShowDistributionJobs(ctx context.Context) error {
-	jobs, err := infosync.GetSchedulerConfig(ctx, DistributeScheduler)
-	if err != nil {
-		return err
-	}
-	if e.DistributionJobID != nil {
-		for _, job := range jobs {
-			jobID, ok := job["job-id"].(uint64)
-			if ok && *e.DistributionJobID == int64(jobID) {
-				fillDistributionJobToChunk(ctx, job, e.result)
-				break
-			}
-		}
-	} else {
-		for _, job := range jobs {
-			fillDistributionJobToChunk(ctx, job, e.result)
-		}
-	}
 	return nil
 }
 

@@ -95,7 +95,7 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 			}
 		}
 		dbNameStr := ast.NewCIStr(dbName)
-		schema := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
+		schema := e.Ctx().GetDomain().(*domain.Domain).InfoSchema()
 		tbl, err := schema.TableByName(ctx, dbNameStr, ast.NewCIStr(e.Level.TableName))
 		// Allow GRANT on non-existent table with at least create privilege, see issue #28533 #29268
 		if err != nil {
@@ -160,6 +160,10 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	}
 	// Check which user is not exist.
 	for _, user := range e.Users {
+		if user.User.CurrentUser {
+			user.User.Username = e.Ctx().GetSessionVars().User.AuthUsername
+			user.User.Hostname = e.Ctx().GetSessionVars().User.AuthHostname
+		}
 		exists, err := userExists(ctx, e.Ctx(), user.User.Username, user.User.Hostname)
 		if err != nil {
 			return err

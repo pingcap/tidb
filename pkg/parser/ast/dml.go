@@ -3052,6 +3052,7 @@ const (
 	ShowBinlogStatus
 	ShowReplicaStatus
 	ShowDistributions
+	ShowPlanForSQL
 	ShowDistributionJobs
 )
 
@@ -3102,6 +3103,7 @@ type ShowStmt struct {
 	ShowProfileLimit *Limit // Used for `SHOW PROFILE` syntax
 
 	ImportJobID *int64 // Used for `SHOW IMPORT JOB <ID>` syntax
+	SQLOrDigest string // Used for `SHOW PLAN FOR ...` syntax
 
 	DistributionJobID *int64 // Used for `SHOW DISTRIBUTION JOB <ID>` syntax
 }
@@ -3452,6 +3454,9 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("SESSION_STATES")
 		case ShowReplicaStatus:
 			ctx.WriteKeyWord("REPLICA STATUS")
+		case ShowPlanForSQL:
+			ctx.WriteKeyWord("PLAN FOR ")
+			ctx.WriteString(n.SQLOrDigest)
 		default:
 			return errors.New("Unknown ShowStmt type")
 		}

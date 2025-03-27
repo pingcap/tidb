@@ -506,7 +506,7 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Executor {
 	noMVIndexOrPrefixIndexOrColumnarIndex := true
 	for _, idx := range v.IndexInfos {
-		if idx.MVIndex || idx.IsTiFlashLocalIndex() {
+		if idx.MVIndex || idx.IsColumnarIndex() {
 			noMVIndexOrPrefixIndexOrColumnarIndex = false
 			break
 		}
@@ -685,7 +685,7 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) exec.Ex
 		b.err = errors.Errorf("secondary index `%v` is not found in table `%v`", v.IndexName, v.Table.Name.O)
 		return nil
 	}
-	if index.Meta().IsTiFlashLocalIndex() {
+	if index.Meta().IsColumnarIndex() {
 		b.err = errors.Errorf("columnar index `%v` is not supported for cleanup index", v.IndexName)
 		return nil
 	}
@@ -903,6 +903,7 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) exec.Executor {
 		Extractor:             v.Extractor,
 		ImportJobID:           v.ImportJobID,
 		DistributionJobID:     v.DistributionJobID,
+		SQLOrDigest:           v.SQLOrDigest,
 	}
 	if e.Tp == ast.ShowMasterStatus || e.Tp == ast.ShowBinlogStatus {
 		// show master status need start ts.
@@ -2662,21 +2663,6 @@ func buildHandleColsForSplit(sc *stmtctx.StatementContext, tbInfo *model.TableIn
 		RetType: types.NewFieldType(mysql.TypeLonglong),
 	}
 	return plannerutil.NewIntHandleCols(intCol)
-}
-
-func (b executorBuilder) buildDistributeTable(v *plannercore.DistributeTable) exec.Executor {
-	base := exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID())
-	base.SetInitCap(1)
-	base.SetMaxChunkSize(1)
-
-	return &DistributeTableExec{
-		BaseExecutor:   base,
-		tableInfo:      v.TableInfo,
-		is:             b.is,
-		partitionNames: v.PartitionNames,
-		engine:         v.Engine,
-		rule:           v.Rule,
-	}
 }
 
 func (b *executorBuilder) buildSplitRegion(v *plannercore.SplitRegion) exec.Executor {
