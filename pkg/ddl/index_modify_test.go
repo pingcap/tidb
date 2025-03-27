@@ -1238,7 +1238,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	tk.MustExec("alter table t add key idx(a);")
 	tk.MustGetErrCode("alter table t add vector index idx((vec_cosine_distance(c))) USING HNSW;", errno.ErrDupKeyName)
 	// for duplicated function
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 	tk.MustContainErrMsg("alter table t add vector index vecIdx((vec_cosine_distance(b))) USING HNSW;",
 		"add vector index can only be defined on fixed-dimension vector columns")
 	tk.MustExec("alter table t add vector index vecIdx((vec_cosine_distance(c))) USING HNSW;")
@@ -1278,7 +1278,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	jobs, err := getJobsBySQL(tk.Session(), "tidb_ddl_history", "order by job_id desc limit 1")
 	require.NoError(t, err)
 	require.Equal(t, 1, len(jobs))
-	require.Equal(t, model.ActionAddVectorIndex, jobs[0].Type)
+	require.Equal(t, model.ActionAddColumnarIndex, jobs[0].Type)
 	require.Equal(t, int64(1), jobs[0].RowCount)
 
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 [1,2.1,3.3]"))
@@ -1295,7 +1295,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	tk.MustContainErrMsg("alter table t drop column b;",
 		"can't drop column b with Columnar Index covered now")
 	tk.MustContainErrMsg("alter table t add index idx2(a), add vector index idx3((vec_l2_distance(b))) USING HNSW COMMENT 'b comment'",
-		"Unsupported multi schema change for add vector index")
+		"Unsupported multi schema change for add columnar index")
 
 	// test alter index visibility
 	tk.MustContainErrMsg("alter table t alter index idx invisible", "Unsupported set vector index invisible")
@@ -1375,7 +1375,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	require.Equal(t, false, tbl.Meta().Indices[2].VectorInfo == nil)
 }
 
-func TestAddVectorIndexRollback(t *testing.T) {
+func testAddColumnarIndexRollback(prepareSQL []string, addIdxSQL string, t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1387,19 +1387,17 @@ func TestAddVectorIndexRollback(t *testing.T) {
 	}()
 
 	// mock TiFlash replicas
-	tk.MustExec("create table t1 (c1 int, b vector, c vector(3), unique key(c1));")
-	tk.MustExec("alter table t1 set tiflash replica 2 location labels 'a','b';")
-
-	tk.MustExec("insert into t1 values (1, '[1,6.6]', '[1,8.88,9.99]'), (2, '[2,6.6]', '[2,8.88,9.99]'), (3, '[3,6.6]', '[3,8.88,9.99]'), (4, '[4,6.6]', '[4,8.88,9.99]')")
+	for _, sql := range prepareSQL {
+		tk.MustExec(sql)
+	}
 	ddl.SetWaitTimeWhenErrorOccurred(100 * time.Millisecond)
-	addIdxSQL := "alter table t1 add vector index v_idx((VEC_COSINE_DISTANCE(c))) USING HNSW COMMENT 'b comment';"
 
 	// Check whether the reorg information is cleaned up, and check the rollback info.
 	checkRollbackInfo := func(expectState model.JobState) {
 		jobs, err := getJobsBySQL(tk.Session(), "tidb_ddl_history", "order by job_id desc limit 1")
 		require.NoError(t, err)
 		currJob := jobs[0]
-		require.Equal(t, model.ActionAddVectorIndex, currJob.Type)
+		require.Equal(t, model.ActionAddColumnarIndex, currJob.Type)
 		require.Equal(t, expectState, currJob.State)
 		// check reorg meta
 		element, start, end, physicalID, err := ddl.NewReorgHandlerForTest(testkit.NewTestKit(t, store).Session()).GetDDLReorgHandle(currJob)
@@ -1427,7 +1425,7 @@ func TestAddVectorIndexRollback(t *testing.T) {
 	var checkErr error
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(0)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(0)`)
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkErr != nil {
 			return
@@ -1452,18 +1450,25 @@ func TestAddVectorIndexRollback(t *testing.T) {
 
 	// Case3: test get error message from tiflash
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(-1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(-1)`)
 	tk.MustContainErrMsg(addIdxSQL, "[ddl:9014]TiFlash backfill index failed: mock a check error")
 	checkRollbackInfo(model.JobStateRollbackDone)
 
 	// Case4: add a vector index normally.
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(4)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(4)`)
 	tk.MustExec(addIdxSQL)
 	checkRollbackInfo(model.JobStateSynced)
 	// TODO: add mock TiFlash to make sure the vector index count is equal to row count.
 	// tk.MustQuery("select count(1) from t1 use index(v_idx);").Check(testkit.Rows("4"))
 
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess")
+}
+
+func TestAddVectorIndexRollback(t *testing.T) {
+	testAddColumnarIndexRollback([]string{"create table t1 (c1 int, b vector, c vector(3), unique key(c1));",
+		"alter table t1 set tiflash replica 2 location labels 'a','b';",
+		"insert into t1 values (1, '[1,6.6]', '[1,8.88,9.99]'), (2, '[2,6.6]', '[2,8.88,9.99]'), (3, '[3,6.6]', '[3,8.88,9.99]'), (4, '[4,6.6]', '[4,8.88,9.99]')",
+	}, "alter table t1 add vector index v_idx((VEC_COSINE_DISTANCE(c))) USING HNSW COMMENT 'b comment';", t)
 }
 
 func TestInsertDuplicateBeforeIndexMerge(t *testing.T) {
@@ -1490,4 +1495,18 @@ func TestInsertDuplicateBeforeIndexMerge(t *testing.T) {
 	tk.MustExec("create table t (col1 int, col2 int, unique index i1(col1, col2)) PARTITION BY HASH (col1) PARTITIONS 2")
 	tk.MustExec("alter table t add unique index i2(col2) /*T![global_index] GLOBAL */")
 	tk.MustExec("admin check table t")
+}
+
+func TestAddColumnarIndex(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustContainErrMsg("create table t(a int, b bigint, columnar index(a) USING INVERTED);",
+		"Unsupported add columnar index: not currently supported")
+	tk.MustExec("create table t (a int, b bigint);")
+	tk.MustContainErrMsg("alter table t add columnar index idx(b) USING INVERTED COMMENT 'b comment';",
+		"Unsupported add columnar index: not currently supported")
+	tk.MustContainErrMsg("create columnar index idx on t (b) USING INVERTED COMMENT 'b comment';",
+		"Unsupported add columnar index: not currently supported")
 }
