@@ -102,6 +102,23 @@ func validateID(id, from, end int64, allocated map[int64]struct{}, originalIDs m
 	return true
 }
 
+func BatchAlloc(tables []*metautil.Table, p *prealloctableid.PreallocIDs) (map[string][]*model.TableInfo, error) {
+	clonedInfos := make(map[string][]*model.TableInfo, len(tables))
+	if len(tables) == 0 {
+		return clonedInfos, nil
+	}
+
+	for _, t := range tables {
+		infoClone, err := p.RewriteTableInfo(t.Info)
+		if err != nil {
+			return nil, err
+		}
+		clonedInfos[t.DB.Name.L] = append(clonedInfos[t.DB.Name.L], infoClone)
+	}
+
+	return clonedInfos, nil
+}
+
 func TestAllocator(t *testing.T) {
 	type Case struct {
 		tableIDs       []int64
@@ -195,7 +212,7 @@ func TestAllocator(t *testing.T) {
 		ids := prealloctableid.New(tables)
 		allocator := testAllocator(c.hasAllocatedTo)
 		ids.Alloc(&allocator)
-		alloc, err := ids.BatchAlloc(tables)
+		alloc, err := BatchAlloc(tables, ids)
 		require.NoError(t, checkBatchAlloc(alloc, tables, c.allocedRange[0], c.allocedRange[1]))
 		require.NoError(t, err)
 		require.Equal(t, c.msg, ids.String())

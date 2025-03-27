@@ -30,7 +30,6 @@ type Allocator interface {
 }
 
 // PreallocIDs mantains the state of preallocated table IDs.
-// Not thread safe.
 type PreallocIDs struct {
 	mu    sync.Mutex
 	start int64
@@ -151,22 +150,4 @@ func (p *PreallocIDs) RewriteTableInfo(info *model.TableInfo) (*model.TableInfo,
 	}
 
 	return infoCopy, nil
-}
-
-// Only used in test, mock the behavior of Batch create tables.
-func (p *PreallocIDs) BatchAlloc(tables []*metautil.Table) (map[string][]*model.TableInfo, error) {
-	clonedInfos := make(map[string][]*model.TableInfo, len(tables))
-	if len(tables) == 0 {
-		return clonedInfos, nil
-	}
-
-	for _, t := range tables {
-		infoClone, err := p.RewriteTableInfo(t.Info)
-		if err != nil {
-			return nil, err
-		}
-		clonedInfos[t.DB.Name.L] = append(clonedInfos[t.DB.Name.L], infoClone)
-	}
-
-	return clonedInfos, nil
 }
