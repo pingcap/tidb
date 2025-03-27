@@ -793,7 +793,7 @@ var defaultSysVars = []*SysVar{
 		vardef.SetMaxDeltaSchemaCount(TidbOptInt64(val, vardef.DefTiDBMaxDeltaSchemaCount))
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnablePointGetCache, Value: BoolToOnOff(vardef.DefTiDBPointGetCache), Hidden: true, Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: vardef.ScopeSession, Name: vardef.TiDBEnablePointGetCache, Value: BoolToOnOff(vardef.DefTiDBPointGetCache), Hidden: true, Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnablePointGetCache = TiDBOptOn(val)
 		return nil
 	}},
