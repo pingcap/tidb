@@ -64,13 +64,14 @@ type statsAnalyze struct {
 
 // NewStatsAnalyze creates a new StatsAnalyze.
 func NewStatsAnalyze(
+	ctx context.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 	ddlNotifier *notifier.DDLNotifier,
 ) statstypes.StatsAnalyze {
 	// Usually, we should only create the refresher when auto-analyze priority queue is enabled.
 	// But to allow users to enable auto-analyze priority queue on the fly, we need to create the refresher here.
-	r := refresher.NewRefresher(statsHandle, sysProcTracker, ddlNotifier)
+	r := refresher.NewRefresher(ctx, statsHandle, sysProcTracker, ddlNotifier)
 	return &statsAnalyze{
 		statsHandle:    statsHandle,
 		sysProcTracker: sysProcTracker,
@@ -573,7 +574,7 @@ func tryAutoAnalyzeTable(
 	for _, idx := range tblInfo.Indices {
 		if idxStats := statsTbl.GetIdx(idx.ID); idxStats == nil && !statsTbl.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) && idx.State == model.StatePublic {
 			// Columnar index doesn't need stats yet.
-			if idx.IsTiFlashLocalIndex() {
+			if idx.IsColumnarIndex() {
 				continue
 			}
 			sqlWithIdx := sql + " index %n"
@@ -714,7 +715,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 			continue
 		}
 		// Columnar index doesn't need stats yet.
-		if idx.IsTiFlashLocalIndex() {
+		if idx.IsColumnarIndex() {
 			continue
 		}
 		// Collect all the partition names that need to analyze.
