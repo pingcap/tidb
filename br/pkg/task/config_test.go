@@ -35,6 +35,11 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+<<<<<<< HEAD
+=======
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
+>>>>>>> f3d0e430407 (*: upgrade to the latest client-go (#59757))
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -58,6 +63,10 @@ func (m mockPDClient) GetClusterID(_ context.Context) uint64 {
 
 func (m mockPDClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {
 	return []*metapb.Store{}, nil
+}
+
+func (m mockPDClient) WithCallerComponent(_ caller.Component) pd.Client {
+	return m
 }
 
 func TestConfigureRestoreClient(t *testing.T) {

@@ -66,6 +66,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/mock/gomock"
 )
 
@@ -1248,6 +1249,10 @@ func (m *mockPDClient) GetClusterID(_ context.Context) uint64 {
 
 func (m *mockPDClient) GetLeaderAddr() string {
 	return m.leaderAddr
+}
+
+func (m *mockPDClient) WithCallerComponent(_ caller.Component) pd.Client {
+	return m
 }
 
 func (s *tableRestoreSuite) TestCheckClusterRegion() {

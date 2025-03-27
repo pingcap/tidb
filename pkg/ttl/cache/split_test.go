@@ -40,7 +40,13 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+<<<<<<< HEAD
 	"go.uber.org/zap"
+=======
+	"github.com/tikv/pd/client/clients/router"
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
+>>>>>>> f3d0e430407 (*: upgrade to the latest client-go (#59757))
 )
 
 func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *pd.Region {
@@ -164,6 +170,7 @@ func (c *mockPDClient) GetClusterID(_ context.Context) uint64 {
 	return 1
 }
 
+<<<<<<< HEAD
 func (c *mockPDClient) addRegion(key, endKey []byte) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -235,6 +242,10 @@ func (c *mockPDClient) randomlyMergeRegions() int {
 	c.regions = append(c.regions, newRegion)
 	c.regionsSorted = false
 	return len(c.regions)
+=======
+func (c *mockPDClient) WithCallerComponent(_ caller.Component) pd.Client {
+	return c
+>>>>>>> f3d0e430407 (*: upgrade to the latest client-go (#59757))
 }
 
 type mockTiKVStore struct {

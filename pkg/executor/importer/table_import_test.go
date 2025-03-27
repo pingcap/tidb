@@ -190,6 +190,10 @@ func (c *mockPDClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*m
 func (c *mockPDClient) Close() {
 }
 
+func (c *mockPDClient) WithCallerComponent(_ caller.Component) pd.Client {
+	return c
+}
+
 func TestGetRegionSplitSizeKeys(t *testing.T) {
 	bak := NewClientWithContext
 	t.Cleanup(func() {

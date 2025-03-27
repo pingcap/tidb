@@ -34,6 +34,12 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"
+<<<<<<< HEAD
+=======
+	"github.com/tikv/pd/client/clients/router"
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
+>>>>>>> f3d0e430407 (*: upgrade to the latest client-go (#59757))
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -898,7 +904,15 @@ func (p *mockPDClient) GetClusterID(ctx context.Context) uint64 {
 	return 1
 }
 
+<<<<<<< HEAD
 func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *pd.Region {
+=======
+func (p *mockPDClient) WithCallerComponent(_ caller.Component) pd.Client {
+	return p
+}
+
+func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *router.Region {
+>>>>>>> f3d0e430407 (*: upgrade to the latest client-go (#59757))
 	leader := &metapb.Peer{
 		Id:      regionID,
 		StoreId: 1,

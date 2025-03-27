@@ -177,6 +177,7 @@ go_test(
         "@com_github_tikv_client_go_v2//config",
         "@com_github_tikv_pd_client//:client",
         "@com_github_tikv_pd_client//http",
+        "@com_github_tikv_pd_client//pkg/caller",
         "@com_github_xitongsys_parquet_go//writer",
         "@com_github_xitongsys_parquet_go_source//buffer",
         "@io_etcd_go_etcd_client_v3//:client",
