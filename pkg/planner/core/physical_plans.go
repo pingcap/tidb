@@ -1503,6 +1503,7 @@ func (p *PhysicalHashJoin) CanUseHashJoinV2() bool {
 	return canUseHashJoinV2(p.JoinType, p.LeftJoinKeys, p.IsNullEQ, p.LeftNAJoinKeys)
 }
 
+// CanTiFlashUseHashJoinV2 returns if current join is supported by hash join v2 in TiFlash
 func (p *PhysicalHashJoin) CanTiFlashUseHashJoinV2() bool {
 	vars := p.SCtx().GetSessionVars()
 	if !vars.TiFlashUseHashJoinV2 {
