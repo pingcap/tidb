@@ -1,4 +1,4 @@
-// Copyright 2023 PingCAP, Inc.
+// Copyright 2025 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,11 +18,7 @@ import (
 	"testing"
 )
 
-// BenchmarkStmtSummaryAdd 测试单线程下 StmtSummary.Add 的性能
 func BenchmarkStmtSummaryAdd(b *testing.B) {
-	// 使用函数完整名称，避免被错误解析
-
-	// 准备一个固定的 StmtExecInfo 进行测试
 	info := GenerateStmtExecInfo4Test("digest_test")
 
 	b.ResetTimer()
@@ -31,10 +27,7 @@ func BenchmarkStmtSummaryAdd(b *testing.B) {
 	}
 }
 
-// BenchmarkStmtSummaryAddParallel 测试并发添加的性能
 func BenchmarkStmtSummaryAddParallel(b *testing.B) {
-
-	// 准备一个固定的 StmtExecInfo 进行测试
 	info := GenerateStmtExecInfo4Test("digest_test")
 
 	b.ResetTimer()
@@ -44,4 +37,3 @@ func BenchmarkStmtSummaryAddParallel(b *testing.B) {
 		}
 	})
 }
-// you may not use this file except in compliance with the License.

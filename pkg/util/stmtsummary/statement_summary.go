@@ -559,6 +559,8 @@ func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, _ int64, _ int64, _ int
 
 func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, intervalSeconds int64, historySize int) {
 	// Enclose this block in a function to ensure the lock will always be released.
+	warningCount := int(sei.StmtCtx.WarningCount())
+	affectedRows := sei.StmtCtx.AffectedRows()
 	ssElement, isElementNew := func() (*stmtSummaryByDigestElement, bool) {
 		ssbd.Lock()
 		defer ssbd.Unlock()
@@ -566,7 +568,7 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, interva
 		if !ssbd.initialized {
 			ssbd.init(sei, beginTime, intervalSeconds, historySize)
 		}
-		ssbd.cumulative.add(sei)
+		ssbd.cumulative.add(sei, warningCount, affectedRows)
 
 		var ssElement *stmtSummaryByDigestElement
 		isElementNew := true
@@ -582,7 +584,7 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, interva
 		}
 		if isElementNew {
 			// If the element is new created, `ssElement.add(sei)` should be done inside the lock of `ssbd`.
-			ssElement = newStmtSummaryByDigestElement(sei, beginTime, intervalSeconds)
+			ssElement = newStmtSummaryByDigestElement(sei, beginTime, intervalSeconds, warningCount, affectedRows)
 			if ssElement == nil {
 				return nil, isElementNew
 			}
@@ -600,7 +602,7 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, interva
 
 	// Lock a single entry, not the whole `ssbd`.
 	if !isElementNew {
-		ssElement.add(sei, intervalSeconds)
+		ssElement.add(sei, intervalSeconds, warningCount, affectedRows)
 	}
 }
 
@@ -656,7 +658,7 @@ func newStmtSummaryStats(sei *StmtExecInfo) *stmtSummaryStats {
 		firstSeen:         sei.StartTime,
 		lastSeen:          sei.StartTime,
 		backoffTypes:      make(map[string]int),
-		authUsers:         make(map[string]struct{}, 16),
+		authUsers:         make(map[string]struct{}),
 		planInCache:       false,
 		planCacheHits:     0,
 		planInBinding:     false,
@@ -666,12 +668,12 @@ func newStmtSummaryStats(sei *StmtExecInfo) *stmtSummaryStats {
 	}
 }
 
-func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64) *stmtSummaryByDigestElement {
+func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64, warningCount int, affectedRows uint64) *stmtSummaryByDigestElement {
 	ssElement := &stmtSummaryByDigestElement{
 		beginTime:        beginTime,
 		stmtSummaryStats: *newStmtSummaryStats(sei),
 	}
-	ssElement.add(sei, intervalSeconds)
+	ssElement.add(sei, intervalSeconds, warningCount, affectedRows)
 	return ssElement
 }
 
@@ -693,7 +695,7 @@ func (ssElement *stmtSummaryByDigestElement) onExpire(intervalSeconds int64) {
 	}
 }
 
-func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo) {
+func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affectedRows uint64) {
 	// add user to auth users set
 	if len(sei.User) > 0 {
 		if _, exist := ssStats.authUsers[sei.User]; !exist {
@@ -705,7 +707,7 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo) {
 	if !sei.Succeed {
 		ssStats.sumErrors++
 	}
-	ssStats.sumWarnings += int(sei.StmtCtx.WarningCount())
+	ssStats.sumWarnings += warningCount
 
 	// latency
 	ssStats.sumLatency += sei.TotalLatency
@@ -863,7 +865,7 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo) {
 	}
 
 	// other
-	ssStats.sumAffectedRows += sei.StmtCtx.AffectedRows()
+	ssStats.sumAffectedRows += uint64(affectedRows)
 	ssStats.sumMem += sei.MemMax
 	if sei.MemMax > ssStats.maxMem {
 		ssStats.maxMem = sei.MemMax
@@ -907,13 +909,13 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo) {
 	ssStats.StmtRUSummary.Add(sei.RUDetail)
 }
 
-func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeconds int64) {
+func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeconds int64, warningCount int, affectedRows uint64) {
 	ssElement.Lock()
 	defer ssElement.Unlock()
 
 	// refreshInterval may change anytime, update endTime ASAP.
 	ssElement.endTime = ssElement.beginTime + intervalSeconds
-	ssElement.stmtSummaryStats.add(sei)
+	ssElement.stmtSummaryStats.add(sei, warningCount, affectedRows)
 }
 
 // Truncate SQL to maxSQLLength.
