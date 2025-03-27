@@ -98,6 +98,7 @@ func (en *TableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, err
 	return en.Record2KV(record, row, rowID)
 }
 
+// GetColumnSize get column size.
 func (en *TableKVEncoder) GetColumnSize() map[int64]int64 {
 	sessionVars := en.SessionCtx.GetSessionVars()
 	sessionVars.TxnCtxMu.Lock()
@@ -221,6 +222,7 @@ func (en *TableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int6
 	return record, nil
 }
 
+// Close the TableKVEncoder.
 func (en *TableKVEncoder) Close() error {
 	en.SessionCtx.Close()
 	return nil
