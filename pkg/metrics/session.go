@@ -235,7 +235,7 @@ func InitSessionMetrics() {
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
 			Name:      "pessimistic_lock_keys_duration",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 24), // 1ms ~ 8389s
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 19), // 1ms ~ 262s, The default value of innodb_lock_wait_timeout is 50s
 			Help:      "tidb txn pessimistic lock keys duration",
 		})
 }
