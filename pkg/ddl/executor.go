@@ -4129,6 +4129,9 @@ func (e *executor) dropTableObject(
 			if referredFK := checkTableHasForeignKeyReferred(is, tn.Schema.L, tn.Name.L, objectIdents, fkCheck); referredFK != nil {
 				return errors.Trace(dbterror.ErrForeignKeyCannotDropParent.GenWithStackByArgs(tn.Name, referredFK.ChildFKName, referredFK.ChildTable))
 			}
+			if check := isTableModeNormal(); check {
+
+			}
 		}
 	case viewObject:
 		dropExistErr = infoschema.ErrTableDropExists

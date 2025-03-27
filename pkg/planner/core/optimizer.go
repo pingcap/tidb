@@ -252,16 +252,17 @@ func CheckTableLock(ctx tablelock.TableLockReadContext, is infoschema.InfoSchema
 func CheckTableMode(node *resolve.NodeW) error {
 	// First make exceptions for stmt that only visit table meta;
 	// For example, `describe <table_name>` and `show create table <table_name>`;
-	// These exceptions can be simply categorized as `ast.ShowStmt`;
-	if _, ok := node.Node.(*ast.ShowStmt); ok {
+	switch node.Node.(type) {
+	case *ast.ShowStmt, *ast.ExplainStmt:
 		return nil
+	default:
 	}
 
 	tableList := ExtractTableList(node, false)
 	for i := range tableList {
 		tb := node.GetResolveContext().GetTableName(tableList[i])
 		if tb == nil {
-			return nil
+			continue
 		}
 		if tb.TableInfo.Mode == model.TableModeImport || tb.TableInfo.Mode == model.TableModeRestore {
 			return infoschema.ErrProtectedTableMode.GenWithStackByArgs(tb.TableName, tb.TableInfo.Mode)
