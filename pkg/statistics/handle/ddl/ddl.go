@@ -63,7 +63,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(ctx context.Context, sctx sessionctx.Con
 			fmt.Sprintf("handle ddl event failed, err: %v", err),
 		)
 		statslogutil.StatsLogger().Warn(
-			"failed to handle DDL event",
+			"Failed to handle DDL event",
 			zap.String("event", s.String()),
 			zap.Error(err),
 		)
