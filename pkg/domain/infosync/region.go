@@ -71,8 +71,8 @@ func GetReplicationState(ctx context.Context, startKey []byte, endKey []byte) (P
 	return st, nil
 }
 
-// GetRegionDistributions is used to get the region distributions by given key range from PD.
-func GetRegionDistributions(ctx context.Context, startKey []byte, endKey []byte, engine string) (*pd.RegionDistributions, error) {
+// GetRegionDistributionByKeyRange is used to get the region distributions by given key range from PD.
+func GetRegionDistributionByKeyRange(ctx context.Context, startKey []byte, endKey []byte, engine string) (*pd.RegionDistributions, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return nil, err
@@ -80,7 +80,7 @@ func GetRegionDistributions(ctx context.Context, startKey []byte, endKey []byte,
 	if is.pdHTTPCli == nil {
 		return nil, errs.ErrClientGetClusterInfo.FastGenByArgs("pd client not found")
 	}
-	distributions, err := is.pdHTTPCli.GetRegionDistribution(ctx, pd.NewKeyRange(startKey, endKey), engine)
+	distributions, err := is.pdHTTPCli.GetRegionDistributionByKeyRange(ctx, pd.NewKeyRange(startKey, endKey), engine)
 	if err != nil {
 		return nil, err
 	}

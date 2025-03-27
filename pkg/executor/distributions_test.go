@@ -18,17 +18,16 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/stretchr/testify/mock"
-	pdhttp "github.com/tikv/pd/client/http"
-
-	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	pdhttp "github.com/tikv/pd/client/http"
 )
 
-func (cli *mockPDCli) GetRegionDistribution(ctx context.Context, keyRange *pdhttp.KeyRange, engine string) (*pdhttp.RegionDistributions, error) {
+func (cli *mockPDCli) GetRegionDistributionByKeyRange(ctx context.Context, keyRange *pdhttp.KeyRange, engine string) (*pdhttp.RegionDistributions, error) {
 	args := cli.Called(ctx, keyRange, engine)
 	return args.Get(0).(*pdhttp.RegionDistributions), args.Error(1)
 }
@@ -52,7 +51,7 @@ func TestShowTableDistributions(t *testing.T) {
 		}
 		startKey, endKey := tablecodec.GetTableHandleKeyRange(tblID)
 		keyRange := pdhttp.NewKeyRange(startKey, endKey)
-		return cli.On("GetRegionDistribution", mock.Anything, keyRange, "").
+		return cli.On("GetRegionDistributionByKeyRange", mock.Anything, keyRange, "").
 			Return(distributions, nil)
 	}
 	distributions := &pdhttp.RegionDistributions{}

@@ -2143,7 +2143,7 @@ func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 	for _, pid := range physicalIDs {
 		startKey, endKey := tablecodec.GetTableHandleKeyRange(pid)
 		// todo： support engine type
-		resp, err = infosync.GetRegionDistributions(ctx, startKey, endKey, "")
+		resp, err = infosync.GetRegionDistributionByKeyRange(ctx, startKey, endKey, "")
 		if err != nil {
 			return err
 		}
