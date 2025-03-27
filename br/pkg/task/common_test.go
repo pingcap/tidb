@@ -334,7 +334,6 @@ func TestDefault(t *testing.T) {
 
 func TestDefaultBackup(t *testing.T) {
 	commonConfig := DefaultConfig()
-	commonConfig.OverrideDefaultForBackup()
 	def := DefaultBackupConfig(commonConfig)
 	defaultConfig := expectedDefaultBackupConfig()
 	require.Equal(t, defaultConfig, def)

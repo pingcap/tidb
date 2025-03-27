@@ -46,6 +46,7 @@ import (
 )
 
 const (
+	flagBackupChecksum   = "checksum"
 	flagBackupTimeago    = "timeago"
 	flagBackupTS         = "backupts"
 	flagLastBackupTS     = "lastbackupts"
@@ -87,6 +88,7 @@ type BackupConfig struct {
 	BackupTS         uint64            `json:"backup-ts" toml:"backup-ts"`
 	LastBackupTS     uint64            `json:"last-backup-ts" toml:"last-backup-ts"`
 	GCTTL            int64             `json:"gc-ttl" toml:"gc-ttl"`
+	Checksum         bool              `json:"checksum" toml:"checksum"`
 	RemoveSchedulers bool              `json:"remove-schedulers" toml:"remove-schedulers"`
 	IgnoreStats      bool              `json:"ignore-stats" toml:"ignore-stats"`
 	UseBackupMetaV2  bool              `json:"use-backupmeta-v2"`
@@ -110,6 +112,7 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 		flagBackupTimeago, 0,
 		"The history version of the backup task, e.g. 1m, 1h. Do not exceed GCSafePoint")
 
+	flags.Bool(flagBackupChecksum, false, "Run checksum at end of task")
 	// TODO: remove experimental tag if it's stable
 	flags.Uint64(flagLastBackupTS, 0, "(experimental) the last time backup ts,"+
 		" use for incremental backup, support TSO only")
@@ -179,6 +182,12 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig b
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	cfg.Checksum, err = flags.GetBool(flagBackupChecksum)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	cfg.UseBackupMetaV2, err = flags.GetBool(flagUseBackupMetaV2)
 	if err != nil {
 		return errors.Trace(err)
