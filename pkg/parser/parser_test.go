@@ -4163,6 +4163,10 @@ func TestDDL(t *testing.T) {
 
 		// Restore INSERT_METHOD table option
 		{"CREATE TABLE t (a int) INSERT_METHOD=FIRST", true, "CREATE TABLE `t` (`a` INT) INSERT_METHOD = FIRST"},
+
+		// Geometry column type(s)
+		{"CREATE TABLE t (id INT PRIMARY KEY, g GEOMETRY)", true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`g` GEOMETRY)"},
+		{"CREATE TABLE t (id INT PRIMARY KEY, g GEOMETRY SRID 4326)", true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`g` GEOMETRY /*!80003 SRID 4326 */)"},
 	}
 	RunTest(t, table, false)
 }
