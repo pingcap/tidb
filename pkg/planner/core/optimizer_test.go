@@ -166,6 +166,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	const expStreamCount int64 = 8
 	sctx := MockContext()
 	sctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount = expStreamCount
+	sctx.GetSessionVars().TiFlashUseHashJoinV2 = false
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()

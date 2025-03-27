@@ -1504,8 +1504,8 @@ func (p *PhysicalHashJoin) CanUseHashJoinV2() bool {
 }
 
 // CanTiFlashUseHashJoinV2 returns if current join is supported by hash join v2 in TiFlash
-func (p *PhysicalHashJoin) CanTiFlashUseHashJoinV2() bool {
-	vars := p.SCtx().GetSessionVars()
+func (p *PhysicalHashJoin) CanTiFlashUseHashJoinV2(sctx base.PlanContext) bool {
+	vars := sctx.GetSessionVars()
 	if !vars.TiFlashUseHashJoinV2 {
 		return false
 	}

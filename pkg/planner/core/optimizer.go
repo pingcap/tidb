@@ -886,7 +886,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 			probChild = child0
 		}
 
-		if len(joinKeys) > 0 && !x.CanTiFlashUseHashJoinV2() { // Not cross join and can not use hash join v2 in tiflash
+		if len(joinKeys) > 0 && !x.CanTiFlashUseHashJoinV2(sctx) { // Not cross join and can not use hash join v2 in tiflash
 			buildHelper := fineGrainedShuffleHelper{shuffleTarget: joinBuild, plans: []*physicalop.BasePhysicalPlan{}}
 			buildHelper.plans = append(buildHelper.plans, &x.BasePhysicalPlan)
 			buildHelper.joinKeys = joinKeys
