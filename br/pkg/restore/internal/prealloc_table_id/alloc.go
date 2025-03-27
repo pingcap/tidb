@@ -60,9 +60,9 @@ func New(tables []*metautil.Table) *PreallocIDs {
 	}
 	return &PreallocIDs{
 		start: math.MaxInt64,
-		end: maxv,
-		used:     make(map[int64]struct{}),
-		next: math.MaxInt64,
+		end:   maxv,
+		used:  make(map[int64]struct{}),
+		next:  math.MaxInt64,
 	}
 }
 
@@ -91,58 +91,58 @@ func (p *PreallocIDs) Alloc(m Allocator) error {
 }
 
 func (p *PreallocIDs) allocID(originalID int64) (int64, error) {
-    if int64(len(p.used)) >= p.end - p.start {
-        return 0, errors.Errorf("no available IDs")
-    }
-
-    if originalID >= p.start && originalID < p.end {
-        if _, exists := p.used[originalID]; !exists {
-            p.used[originalID] = struct{}{}
-            return originalID, nil
-        }
-    }
-
-    start := p.next
-    for {
-        current := p.next
-        p.next = (current + 1 - p.start) % (p.end - p.start) + p.start
-        
-        if _, exists := p.used[current]; !exists {
-            p.used[current] = struct{}{}
-            return current, nil
-        }
-        if p.next == start {
-            break
-        }
+	if int64(len(p.used)) >= p.end-p.start {
+		return 0, errors.Errorf("no available IDs")
 	}
 
-    return 0, errors.Errorf("no available IDs")
+	if originalID >= p.start && originalID < p.end {
+		if _, exists := p.used[originalID]; !exists {
+			p.used[originalID] = struct{}{}
+			return originalID, nil
+		}
+	}
+
+	start := p.next
+	for {
+		current := p.next
+		p.next = (current+1-p.start)%(p.end-p.start) + p.start
+
+		if _, exists := p.used[current]; !exists {
+			p.used[current] = struct{}{}
+			return current, nil
+		}
+		if p.next == start {
+			break
+		}
+	}
+
+	return 0, errors.Errorf("no available IDs")
 }
 
 func (p *PreallocIDs) RewriteTableInfo(info *model.TableInfo) (*model.TableInfo, error) {
 	if info == nil {
 		return nil, nil
 	}
-    infoCopy := info.Clone()
+	infoCopy := info.Clone()
 
-    newID, err := p.allocID(info.ID)
-    if err != nil {
-        return nil, errors.Wrapf(err, "failed to allocate table ID for %d", info.ID)
-    }
-    infoCopy.ID = newID
+	newID, err := p.allocID(info.ID)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to allocate table ID for %d", info.ID)
+	}
+	infoCopy.ID = newID
 
-    if infoCopy.Partition != nil {
-        for i := range infoCopy.Partition.Definitions {
-            def := &infoCopy.Partition.Definitions[i]
-            newPartID, err := p.allocID(def.ID)
-            if err != nil {
-                return nil, errors.Wrapf(err, "failed to allocate partition ID for %d", def.ID)
-            }
-            def.ID = newPartID
-        }
-    }
+	if infoCopy.Partition != nil {
+		for i := range infoCopy.Partition.Definitions {
+			def := &infoCopy.Partition.Definitions[i]
+			newPartID, err := p.allocID(def.ID)
+			if err != nil {
+				return nil, errors.Wrapf(err, "failed to allocate partition ID for %d", def.ID)
+			}
+			def.ID = newPartID
+		}
+	}
 
-    return infoCopy, nil
+	return infoCopy, nil
 }
 
 // Only used in test, mock the behavior of Batch create tables.
