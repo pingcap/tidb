@@ -98,6 +98,7 @@ func TestTableModeBasic(t *testing.T) {
 	// init test
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(id int, c1 int, c2 int, index idx1(c1))")
+	tk.MustExec("create table t2(id int, c1 int, c2 int, index idx1(c1))")
 	// get cloned table info for creating new table t1_restore_import
 	tblInfo := getClonedTableInfoFromDomain(t, "test", "t1", domain)
 
@@ -133,7 +134,9 @@ func TestTableModeBasic(t *testing.T) {
 	tk.MustGetErrCode("truncate table t1_restore_import", errno.ErrProtectedTableMode)
 	// DDLs
 	tk.MustGetErrCode("drop table t1_restore_import", errno.ErrProtectedTableMode)
-	// tk.MustGetErrCode("alter table t1_restore_import rename to t1_new", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("alter table t1_restore_import rename to t1_new", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("rename table t1_restore_import to t1_new", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("rename table t1_restore_import to t1_new, t2 to t2_new", errno.ErrProtectedTableMode)
 	tk.MustGetErrCode("alter table t1_restore_import modify column c2 bigint", errno.ErrProtectedTableMode)
 	tk.MustGetErrCode("alter table t1_restore_import add column c3 int", errno.ErrProtectedTableMode)
 	tk.MustGetErrCode("alter table t1_restore_import drop column c2", errno.ErrProtectedTableMode)

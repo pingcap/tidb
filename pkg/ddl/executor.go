@@ -4129,9 +4129,6 @@ func (e *executor) dropTableObject(
 			if referredFK := checkTableHasForeignKeyReferred(is, tn.Schema.L, tn.Name.L, objectIdents, fkCheck); referredFK != nil {
 				return errors.Trace(dbterror.ErrForeignKeyCannotDropParent.GenWithStackByArgs(tn.Name, referredFK.ChildFKName, referredFK.ChildTable))
 			}
-			if check := isTableModeNormal(); check {
-
-			}
 		}
 	case viewObject:
 		dropExistErr = infoschema.ErrTableDropExists
@@ -4155,6 +4152,10 @@ func (e *executor) dropTableObject(
 			continue
 		} else if err != nil {
 			return err
+		}
+		// Only table mode is TableModeNormal can be dropped table
+		if tableInfo.Meta().Mode != model.TableModeNormal {
+			return infoschema.ErrProtectedTableMode.GenWithStackByArgs(tableInfo.Meta().Name, tableInfo.Meta().Mode)
 		}
 
 		// prechecks before build DDL job
@@ -4347,6 +4348,10 @@ func (e *executor) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Id
 		if tbl.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 			return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Table"))
 		}
+		// Only table mode is TableModeNormal can be renamed table
+		if tbl.Meta().Mode != model.TableModeNormal {
+			return infoschema.ErrProtectedTableMode.GenWithStackByArgs(tbl.Meta().Name, tbl.Meta().Mode)
+		}
 	}
 
 	job := &model.Job{
@@ -4393,6 +4398,10 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 		if t, ok := is.TableByID(e.ctx, tableID); ok {
 			if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 				return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Tables"))
+			}
+			// Only table mode is TableModeNormal can be renamed table
+			if t.Meta().Mode != model.TableModeNormal {
+				return infoschema.ErrProtectedTableMode.GenWithStackByArgs(t.Meta().Name, t.Meta().Mode)
 			}
 		}
 

@@ -88,8 +88,3 @@ func checkTableMode(origin, target model.TableMode) bool {
 	}
 	return true
 }
-
-func isTableModeNormal(is infoschema.InfoSchema, schema, tbl string) bool {
-	// tableInfo, err := is.TableByName(e.ctx, schema, tbl)
-	return false
-}
