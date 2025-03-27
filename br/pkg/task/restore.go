@@ -1201,6 +1201,11 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		var tableIDs []int64
 		for _, table := range createdTables {
 			tableIDs = append(tableIDs, table.Table.ID)
+			if table.Table.Partition != nil {
+				for _, p := range table.Table.Partition.Definitions {
+					tableIDs = append(tableIDs, p.ID)
+				}
+			}
 		}
 		restoreSchedulersFunc, schedulersConfig, err = restore.FineGrainedRestorePreWork(ctx, mgr, importModeSwitcher, tableIDs, cfg.Online, true)
 	}

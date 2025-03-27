@@ -256,5 +256,5 @@ func TestAllocatorBound(t *testing.T) {
 		return err
 	})
 	require.NoError(t, err)
-	require.Equal(t, fmt.Sprintf("ID:[%d,%d)", lastGlobalID+1, currentGlobalID), ids.String())
+	require.Equal(t, fmt.Sprintf("ID:[%d,%d)", lastGlobalID+1, currentGlobalID+1), ids.String())
 }

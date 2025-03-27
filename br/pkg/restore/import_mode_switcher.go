@@ -273,7 +273,7 @@ func calSortedTableIds(ids []int64) [][]int64 {
 	end := start + 1
 
 	for i := 1; i < len(ids); i++ {
-		if ids[i] <= ids[i-1]+2 {
+		if ids[i] == ids[i-1]+1 {
 			end = ids[i] + 1
 		} else {
 			idRanges = append(idRanges, []int64{start, end})
