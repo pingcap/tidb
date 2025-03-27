@@ -483,7 +483,7 @@ func buildInvertedInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecific
 	idxPart.Column = &ast.ColumnName{Name: colInfo.Name}
 	idxPart.Length = types.UnspecifiedLength
 
-	return model.FieldTypeToInvertedIndexInfo(colInfo.FieldType), nil
+	return model.FieldTypeToInvertedIndexInfo(colInfo.FieldType, colInfo.ID), nil
 }
 
 // AddIndexColumnFlag aligns the column flags of columns in TableInfo to IndexInfo.

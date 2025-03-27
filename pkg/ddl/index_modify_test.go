@@ -1357,7 +1357,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	tk.MustExec("alter table t alter index idx visible")
 
 	// test modify/change column with a vector index
-	tk.MustContainErrMsg("alter table t modify column b vector(2)", "[ddl:8200]Unsupported modify column: vector indexes on the column")
+	tk.MustContainErrMsg("alter table t modify column b vector(2)", "[ddl:8200]Unsupported modify column: columnar indexes on the column")
 	tk.MustExec("alter table t modify column b vector(3) not null")
 
 	// test rename index
@@ -1528,7 +1528,7 @@ func TestAddColumnarIndexSimple(t *testing.T) {
 	tk.MustExec("alter table t alter index idx visible")
 
 	// test modify/change column with a columnar index
-	tk.MustContainErrMsg("alter table t modify column a smallint", "[ddl:8200]Unsupported modify column: vector indexes on the column")
+	tk.MustContainErrMsg("alter table t modify column a smallint", "[ddl:8200]Unsupported modify column: columnar indexes on the column")
 	tk.MustExec("alter table t modify column a int not null")
 
 	// test rename index
