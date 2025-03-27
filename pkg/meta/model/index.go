@@ -60,14 +60,20 @@ type VectorIndexInfo struct {
 }
 
 // InvertedIndexInfo is the information of inverted index.
+// Currently, we do not support changing the type of the column that has an inverted index.
+// But we expect to support modifying the column type which does not need to change data (e.g., INT -> BIGINT).
+// In this case, during reading, we can use ColumnID to get both the old and new column types.
 type InvertedIndexInfo struct {
+	// ColumnID is used for reading.
 	ColumnID int64 `json:"column_id"`
+
+	// IsSigned and TypeSize are used for writing.
 	IsSigned bool  `json:"is_signed"`
 	TypeSize uint8 `json:"type_size"`
 }
 
 // FieldTypeToInvertedIndexInfo converts FieldType to InvertedIndexInfo.
-func FieldTypeToInvertedIndexInfo(tp types.FieldType) *InvertedIndexInfo {
+func FieldTypeToInvertedIndexInfo(tp types.FieldType, columnID int64) *InvertedIndexInfo {
 	var isSigned bool
 	var typeSize uint8
 
@@ -104,6 +110,7 @@ func FieldTypeToInvertedIndexInfo(tp types.FieldType) *InvertedIndexInfo {
 	}
 
 	return &InvertedIndexInfo{
+		ColumnID: columnID,
 		IsSigned: isSigned,
 		TypeSize: typeSize,
 	}
