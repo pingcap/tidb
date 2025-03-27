@@ -464,6 +464,7 @@ func (e *Engine) buildIngestData(keys, values [][]byte, buf []*membuf.Buffer) *M
 	}
 }
 
+// UpdateConcurrency changes the concurrency of this engine.
 func (e *Engine) UpdateConcurrency(concurrency int) {
 	e.workerConcurrency.Store(int32(concurrency))
 }

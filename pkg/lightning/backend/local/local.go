@@ -762,6 +762,8 @@ func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, factory impor
 	return true, nil
 }
 
+// UpdateConcurrency update the concurrency of current running job, including reader and writer.
+// If there is no running job, or the concurrency change is not allowed, it will return an error.
 func (local *Backend) UpdateConcurrency(concurrency int) error {
 	if local.worker == nil || local.engine == nil {
 		// let framework retry

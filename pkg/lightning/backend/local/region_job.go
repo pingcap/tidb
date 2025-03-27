@@ -822,7 +822,6 @@ func (local *Backend) UpdpateConcurrency(concurrency int) error {
 	if local.worker == nil || local.engine == nil {
 		// let framework retry
 		return goerrors.New("worker not running")
-
 	}
 
 	e, ok := local.engine.(*external.Engine)

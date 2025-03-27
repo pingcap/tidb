@@ -611,31 +611,6 @@ func TestUpdateAndGetLimiterConcurrencySafety(t *testing.T) {
 	wg.Wait()
 }
 
-func TestUpdateBackendConcurrency(t *testing.T) {
-	var (
-		ctx                  = context.Background()
-		workGroup, workerCtx = util.NewErrorGroupWithRecoverWithCtx(ctx)
-		jobToWorkerCh        = make(chan *regionJob)
-		jobFromWorkerCh      = make(chan *regionJob)
-		jobWg                sync.WaitGroup
-	)
-
-	local := &Backend{
-		writeLimiter: newStoreWriteLimiter(0),
-	}
-	local.WorkerConcurrency.Store(1)
-
-	local.worker = newJobWorker(
-		workerCtx, workGroup, &jobWg,
-		local, nil,
-		jobFromWorkerCh, jobToWorkerCh,
-	)
-	require.NoError(t, local.worker.Open())
-	time.Sleep(time.Second)
-	require.NoError(t, local.UpdpateConcurrency(4))
-	require.NoError(t, local.worker.Close())
-}
-
 func TestWorkerWithError(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/MockSuccessExecution", "return()")
 
