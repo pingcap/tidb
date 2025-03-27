@@ -441,9 +441,8 @@ func TestReferredFKInfo(t *testing.T) {
 	require.NoError(t, err)
 	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionCreateTable, Version: 2, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
-	require.Equal(t, len(v2.referredForeignKeyMap), 1)
-	ref, ok := v2.referredForeignKeyMap[SchemaAndTableName{schema: tblInfo.ForeignKeys[0].RefSchema.L, table: tblInfo.ForeignKeys[0].RefTable.L}]
-	require.True(t, ok)
+	require.Equal(t, v2.Data.referredForeignKeys.Load().Len(), 1)
+	ref := v2.GetTableReferredForeignKeys(tblInfo.ForeignKeys[0].RefSchema.L, tblInfo.ForeignKeys[0].RefTable.L)
 	require.Equal(t, len(ref), 1)
 	require.Equal(t, ref[0].ChildFKName, tblInfo.ForeignKeys[0].Name)
 
@@ -460,9 +459,8 @@ func TestReferredFKInfo(t *testing.T) {
 	require.NoError(t, err)
 	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionAddForeignKey, Version: 3, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
-	require.Equal(t, len(v2.referredForeignKeyMap), 1)
-	ref, ok = v2.referredForeignKeyMap[SchemaAndTableName{schema: tblInfo.ForeignKeys[0].RefSchema.L, table: tblInfo.ForeignKeys[0].RefTable.L}]
-	require.True(t, ok)
+	require.Equal(t, v2.Data.referredForeignKeys.Load().Len(), 4)
+	ref = v2.GetTableReferredForeignKeys(tblInfo.ForeignKeys[0].RefSchema.L, tblInfo.ForeignKeys[0].RefTable.L)
 	require.Equal(t, len(ref), 2)
 	require.Equal(t, ref[1].ChildFKName, tblInfo.ForeignKeys[1].Name)
 
@@ -473,9 +471,8 @@ func TestReferredFKInfo(t *testing.T) {
 	require.NoError(t, err)
 	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionDropForeignKey, Version: 4, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
-	require.Equal(t, len(v2.referredForeignKeyMap), 1)
-	ref, ok = v2.referredForeignKeyMap[SchemaAndTableName{schema: tblInfo.ForeignKeys[0].RefSchema.L, table: tblInfo.ForeignKeys[0].RefTable.L}]
-	require.True(t, ok)
+	require.Equal(t, v2.Data.referredForeignKeys.Load().Len(), 7)
+	ref = v2.GetTableReferredForeignKeys(tblInfo.ForeignKeys[0].RefSchema.L, tblInfo.ForeignKeys[0].RefTable.L)
 	require.Equal(t, len(ref), 1)
 	require.Equal(t, ref[0].ChildFKName, tblInfo.ForeignKeys[0].Name)
 
@@ -485,9 +482,8 @@ func TestReferredFKInfo(t *testing.T) {
 	require.NoError(t, err)
 	_, err = builder.ApplyDiff(meta.NewMutator(txn), &model.SchemaDiff{Type: model.ActionDropTable, Version: 5, SchemaID: dbInfo.ID, TableID: tblInfo.ID})
 	require.NoError(t, err)
-	require.Equal(t, len(v2.referredForeignKeyMap), 1)
-	ref, ok = v2.referredForeignKeyMap[SchemaAndTableName{schema: tblInfo.ForeignKeys[0].RefSchema.L, table: tblInfo.ForeignKeys[0].RefTable.L}]
-	require.True(t, ok)
+	require.Equal(t, v2.Data.referredForeignKeys.Load().Len(), 8)
+	ref = v2.GetTableReferredForeignKeys(tblInfo.ForeignKeys[0].RefSchema.L, tblInfo.ForeignKeys[0].RefTable.L)
 	require.Equal(t, len(ref), 0)
 }
 
