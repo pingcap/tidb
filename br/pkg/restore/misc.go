@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/registry"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -286,6 +287,9 @@ LISTDBS:
 		if tidbutil.IsMemOrSysDB(dbName) {
 			continue
 		}
+		if IsBRInternalDB(dbName) {
+			continue
+		}
 		tables, err := m.ListSimpleTables(db.ID)
 		if err != nil {
 			return errors.Annotatef(err, "failed to iterator tables of database[id=%d]", db.ID)
@@ -350,4 +354,9 @@ func GetTSWithRetry(ctx context.Context, pdClient pd.Client) (uint64, error) {
 		log.Error("failed to get TS", zap.Error(err))
 	}
 	return startTS, errors.Trace(err)
+}
+
+// IsBRInternalDB checks whether it's a db used internally by BR.
+func IsBRInternalDB(dbLowerName string) bool {
+	return registry.IsRestoreRegistryDB(dbLowerName)
 }

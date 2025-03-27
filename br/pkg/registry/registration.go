@@ -37,6 +37,10 @@ const (
 	RegistrationTableName        = "restore_registry"
 
 	// createRegistrationTableSQL is the SQL to create the registration table
+	// we use unique index to prevent race condition that two threads inserting tasks with same parameters.
+	// we use uuid to verify the task is indeed created by the current thread, since duplicate key errors thrown by
+	// unique index checking might be silent and not returned to caller.
+	// we initialize auto increment id to be 1 to make sure default value 0 is not used when insertion failed.
 	createRegistrationTableSQL = `CREATE TABLE IF NOT EXISTS %s.%s (
 		id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
 		filter_strings TEXT NOT NULL,
@@ -194,20 +198,29 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 		return 0, errors.Trace(err)
 	}
 
-	// Generate a proper RFC 4122 UUID for this operation
 	operationUUID := uuid.New().String()
 
 	filterStrings := strings.Join(info.FilterStrings, ",")
+
+	log.Info("checking for task to resume",
+		zap.String("filter_strings", filterStrings),
+		zap.Uint64("start_ts", info.StartTS),
+		zap.Uint64("restored_ts", info.RestoredTS),
+		zap.Uint64("upstream_cluster_id", info.UpstreamClusterID),
+		zap.Bool("with_sys_table", info.WithSysTable),
+		zap.String("cmd", info.Cmd),
+		zap.String("uuid", operationUUID))
 
 	// first try to update if exists and paused
 	updateSQL := fmt.Sprintf(resumePausedTaskSQLTemplate, RegistrationDBName, RegistrationTableName)
 
 	if err := r.se.ExecuteInternal(ctx, updateSQL,
-		operationUUID, filterStrings, info.StartTS, info.RestoredTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd); err != nil {
+		operationUUID, filterStrings, info.StartTS, info.RestoredTS, info.UpstreamClusterID,
+		info.WithSysTable, info.Cmd); err != nil {
 		return 0, errors.Annotatef(err, "failed to update existing registration")
 	}
 
-	// Check if a task with our parameters and in running state exists
+	// check if a task with our parameters and in running state exists
 	execCtx := r.se.GetSessionCtx().GetRestrictedSQLExecutor()
 	rows, _, err := execCtx.ExecRestrictedSQL(
 		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
@@ -218,7 +231,7 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 		return 0, errors.Annotatef(err, "failed to look up task")
 	}
 
-	// If we found a task, check if it was resumed by us
+	// if we found a task, check if it was resumed by us
 	if len(rows) > 0 {
 		taskID := rows[0].GetUint64(0)
 		foundUUID := rows[0].GetString(1)
@@ -227,7 +240,7 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 			return 0, errors.New("invalid task ID: got 0 from lookup")
 		}
 
-		// Check if this task has our UUID (we resumed it or created it)
+		// check if this task has our UUID
 		if foundUUID == operationUUID {
 			log.Info("successfully resumed existing registration by this process",
 				zap.Uint64("restore_id", taskID),
@@ -235,8 +248,8 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 				zap.Strings("filters", info.FilterStrings))
 			return taskID, nil
 		} else {
-			// Task exists but was either created by another process or has been running
-			// We need to check if it's in running state
+			// task exists but was either created by another process or has been running
+			// check if it's in running state
 			runningRows, _, err := execCtx.ExecRestrictedSQL(
 				kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
 				nil,
@@ -252,13 +265,12 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 					zap.Uint64("restore_id", taskID))
 				return 0, errors.Annotatef(berrors.ErrInvalidArgument,
 					"task with ID %d already exists and is running", taskID)
-			} else {
-				// Task exists but is not running - unexpected state
-				log.Warn("task exists but is in an unexpected state",
-					zap.Uint64("restore_id", taskID),
-					zap.String("uuid", foundUUID))
-				return 0, errors.New("task exists but is in an unexpected state")
 			}
+			// Task exists but is not running - unexpected state
+			log.Warn("task exists but is in an unexpected state",
+				zap.Uint64("restore_id", taskID),
+				zap.String("uuid", foundUUID))
+			return 0, errors.New("task exists but is in an unexpected state")
 		}
 	}
 
@@ -275,11 +287,12 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 		zap.String("uuid", operationUUID))
 
 	if err := r.se.ExecuteInternal(ctx, insertSQL,
-		filterStrings, info.StartTS, info.RestoredTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd, operationUUID); err != nil {
+		filterStrings, info.StartTS, info.RestoredTS, info.UpstreamClusterID, info.WithSysTable,
+		info.Cmd, operationUUID); err != nil {
 		return 0, errors.Annotatef(err, "failed to create new registration")
 	}
 
-	// Check if a row with our parameters exists
+	// check if a row with our parameters exists
 	rows, _, err = execCtx.ExecRestrictedSQL(
 		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
 		nil,
@@ -290,7 +303,7 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 	}
 
 	if len(rows) == 0 {
-		// This is really unexpected - record doesn't exist at all
+		// this is really unexpected - record doesn't exist at all
 		log.Error("failed to find task after insertion - record doesn't exist")
 		return 0, errors.New("failed to find task after insertion")
 	}
@@ -320,7 +333,8 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 }
 
 // updateTaskStatusConditional updates a task's status only if its current status matches the expected status
-func (r *Registry) updateTaskStatusConditional(ctx context.Context, restoreID uint64, currentStatus, newStatus TaskStatus) error {
+func (r *Registry) updateTaskStatusConditional(ctx context.Context, restoreID uint64, currentStatus,
+	newStatus TaskStatus) error {
 	log.Info("attempting to update task status",
 		zap.Uint64("restore_id", restoreID),
 		zap.String("current_status", string(currentStatus)),
@@ -462,7 +476,8 @@ func (r *Registry) checkForTableConflicts(
 			zap.Bool("with_sys_table", regInfo.WithSysTable),
 			zap.String("cmd", regInfo.Cmd))
 		return errors.Annotatef(berrors.ErrInvalidArgument,
-			"table %s.%s cannot be restored by current task with ID %d because it is already being restored by task (time range: %d->%d, cmd: %s)",
+			"table %s.%s cannot be restored by current task with ID %d "+
+				"because it is already being restored by task (time range: %d->%d, cmd: %s)",
 			dbName, tableName, restoreID, regInfo.StartTS, regInfo.RestoredTS, regInfo.Cmd)
 	}
 
