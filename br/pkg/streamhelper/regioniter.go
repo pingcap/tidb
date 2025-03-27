@@ -36,15 +36,12 @@ type TiKVClusterMeta interface {
 	// Stores returns the store metadata from the cluster.
 	Stores(ctx context.Context) ([]Store, error)
 
-	// Updates the service GC safe point for the cluster.
-	// Returns the latest service GC safe point.
-	// If the arguments is `0`, this would remove the service safe point.
-	// NOTE: once we support multi tasks, perhaps we need to allow the caller to provide a namespace.
-	// For now, all tasks (exactly one task in fact) use the same checkpoint.
-	BlockGCUntil(ctx context.Context, at uint64) (uint64, error)
+	// UpdateServiceGCSafePoint updates the safepoint for specific service and
+	// returns the minimum safepoint across all services.
+	UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error)
 
 	// UnblockGC used to remove the service GC safe point in PD.
-	UnblockGC(ctx context.Context) error
+	UnblockGC(ctx context.Context, serviceID string) error
 
 	FetchCurrentTS(ctx context.Context) (uint64, error)
 }
