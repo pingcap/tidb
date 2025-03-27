@@ -308,7 +308,7 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 		return nil, errors.New("Etcd client not found")
 	}
 	for {
-		members, err := pdClient.GetAllMembers(ctx)
+		resp, err := pdClient.GetAllMembers(ctx)
 		if err != nil {
 			err := bo.Backoff(tikv.BoRegionMiss(), err)
 			if err != nil {
@@ -316,7 +316,7 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 			}
 			continue
 		}
-		for _, member := range members {
+		for _, member := range resp.Members {
 			if len(member.ClientUrls) > 0 {
 				u, err := url.Parse(member.ClientUrls[0])
 				if err != nil {
