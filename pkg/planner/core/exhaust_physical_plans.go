@@ -1120,6 +1120,55 @@ childLoop:
 	return wrapper
 }
 
+// buildDataSource2TableScanByIndexJoinProp builds an IndexScan as the inner child for an
+// IndexJoin if possible.
+func buildDataSource2IndexScanByIndexJoinProp(
+	ds *logicalop.DataSource,
+	prop *property.PhysicalProperty) base.Task {
+	indexValid := func(path *util.AccessPath) bool {
+		if path.IsTablePath() {
+			return false
+		}
+		// if path is index path. index path currently include two kind of, one is normal, and the other is mv index.
+		// for mv index like mvi(a, json, b), if driving condition is a=1, and we build a prefix scan with range [1,1]
+		// on mvi, it will return many index rows which breaks handle-unique attribute here.
+		//
+		// the basic rule is that: mv index can be and can only be accessed by indexMerge operator. (embedded handle duplication)
+		if !isMVIndexPath(path) {
+			return true // not a MVIndex path, it can successfully be index join probe side.
+		}
+		return false
+	}
+	indexJoinResult, keyOff2IdxOff := getBestIndexJoinPathResultByProp(ds, prop.IndexJoinProp, indexValid)
+	if indexJoinResult == nil {
+		return base.InvalidTask
+	}
+	rangeInfo := indexJoinPathRangeInfo(ds.SCtx(), prop.IndexJoinProp.OuterJoinKeys, indexJoinResult)
+	maxOneRow := false
+	if indexJoinResult.chosenPath.Index.Unique && indexJoinResult.usedColsLen == len(indexJoinResult.chosenPath.FullIdxCols) {
+		l := len(indexJoinResult.chosenAccess)
+		if l == 0 {
+			maxOneRow = true
+		} else {
+			sf, ok := indexJoinResult.chosenAccess[l-1].(*expression.ScalarFunction)
+			maxOneRow = ok && (sf.FuncName.L == ast.EQ)
+		}
+	}
+	innerTask := constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
+	// todo: 构建 Index join 和 Index Hash Join
+	//if innerTask != nil {
+	//	joins = append(joins, constructIndexJoin(ds, prop, outerIdx, innerTask, indexJoinResult.chosenRanges, keyOff2IdxOff, indexJoinResult.chosenPath, indexJoinResult.lastColManager, true)...)
+	//	// We can reuse the `innerTask` here since index nested loop hash join
+	//	// do not need the inner child to promise the order.
+	//	joins = append(joins, constructIndexHashJoin(ds, prop, outerIdx, innerTask, indexJoinResult.chosenRanges, keyOff2IdxOff, indexJoinResult.chosenPath, indexJoinResult.lastColManager)...)
+	//}
+	completeIndexJoinFeedBackInfo(innerTask.(*CopTask), indexJoinResult, indexJoinResult.chosenRanges.Range(), keyOff2IdxOff)
+	// here we don't need to construct physical index join here anymore, because we will encapsulate it bottom-up.
+	// chosenPath and lastColManager of indexJoinResult should be returned to the caller (seen by index join to keep
+	// index join aware of indexColLens and compareFilters).
+	return innerTask
+}
+
 // buildDataSource2TableScanByIndexJoinProp builds a TableScan as the inner child for an
 // IndexJoin if possible.
 // If the inner side of a index join is a TableScan, only one tuple will be
@@ -1139,7 +1188,7 @@ func buildDataSource2TableScanByIndexJoinProp(
 		}
 	}
 	if tblPath == nil {
-		return nil
+		return base.InvalidTask
 	}
 	keyOff2IdxOff := make([]int, len(prop.IndexJoinProp.InnerJoinKeys))
 	var ranges ranger.MutableRanges = ranger.Ranges{}
@@ -1149,7 +1198,7 @@ func buildDataSource2TableScanByIndexJoinProp(
 		// 拿到 index join res 和 innerKeyOffset 到 index col 的映射
 		indexJoinResult, keyOff2IdxOff = getBestIndexJoinPathResultByProp(ds, prop.IndexJoinProp, func(path *util.AccessPath) bool { return path.IsCommonHandlePath })
 		if indexJoinResult == nil {
-			return nil
+			return base.InvalidTask
 		}
 		// 这里需要 outer join keys，因为要打印 range 信息，就是那个 decided by:
 		rangeInfo := indexJoinPathRangeInfo(ds.SCtx(), prop.IndexJoinProp.OuterJoinKeys, indexJoinResult)
@@ -1173,7 +1222,7 @@ func buildDataSource2TableScanByIndexJoinProp(
 		)
 		keyOff2IdxOff, newOuterJoinKeys, localRanges, ok = getIndexJoinIntPKPathInfo(ds, prop.IndexJoinProp.InnerJoinKeys, prop.IndexJoinProp.OuterJoinKeys)
 		if !ok {
-			return nil
+			return base.InvalidTask
 		}
 		rangeInfo := indexJoinIntPKRangeInfo(ds.SCtx().GetExprCtx().GetEvalCtx(), newOuterJoinKeys)
 		innerTask = constructDS2TableScanTask(ds, localRanges, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt)
@@ -1206,7 +1255,7 @@ func completeIndexJoinFeedBackInfo(innerTask *CopTask, indexJoinResult *indexJoi
 	}
 	info.Ranges = ranges
 	info.KeyOff2IdxOff = keyOff2IdxOff
-	// fill it back
+	// fill it back to the bottom-up Task.
 	innerTask.IndexJoinInfo = info
 }
 

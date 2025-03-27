@@ -57,6 +57,7 @@ var HeavyFunctionNameMap = map[string]struct{}{
 }
 
 func attachPlan2Task(p base.PhysicalPlan, t base.Task) base.Task {
+	inheritStatsFromBottomForIndexJoinInner(p, t)
 	switch v := t.(type) {
 	case *CopTask:
 		if v.indexPlanFinished {
@@ -1338,6 +1339,41 @@ func (sel *PhysicalSelection) Attach2Task(tasks ...base.Task) base.Task {
 	}
 	t := tasks[0].ConvertToRootTask(sel.SCtx())
 	return attachPlan2Task(sel, t)
+}
+
+func inheritStatsFromBottomForIndexJoinInner(p base.PhysicalPlan, t base.Task) {
+	var indexJoinInfo *IndexJoinInfo
+	switch v := t.(type) {
+	case *CopTask:
+		indexJoinInfo = v.IndexJoinInfo
+	case *RootTask:
+		indexJoinInfo = v.IndexJoinInfo
+	default:
+	}
+	var isIndexJoinOrApplyItSelf bool
+	switch p.(type) {
+	case *PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin, *PhysicalApply:
+		isIndexJoinOrApplyItSelf = true
+	default:
+	}
+	if !isIndexJoinOrApplyItSelf && indexJoinInfo != nil {
+		switch p.(type) {
+		case *PhysicalSelection:
+			// same as logicalSelection
+			p.SetStats(t.Plan().StatsInfo().Scale(cost.SelectionFactor))
+		case *PhysicalProjection:
+			// mainly about the rowEst, proj doesn't change that.
+			p.SetStats(t.Plan().StatsInfo())
+		case *PhysicalHashAgg, *PhysicalStreamAgg:
+			// todo: for simplicity, we can just inherit it from child.
+			p.SetStats(t.Plan().StatsInfo())
+		case *PhysicalUnionScan:
+			// todo: for simplicity, we can just inherit it from child.
+			p.SetStats(t.Plan().StatsInfo())
+		default:
+			p.SetStats(t.Plan().StatsInfo())
+		}
+	}
 }
 
 // CheckAggCanPushCop checks whether the aggFuncs and groupByItems can

@@ -1403,6 +1403,9 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 		return nil, 1, nil
 	}
 	// if prop is require an index join's probe side, check the inner pattern admission here.
+	// 这边不用特殊操作，都是看 indexJoinProp 才自动化操作的，只要在 enumerate index join 通过 variable
+	// 控制是走传统的 pattern assert 的方式直接构建，还是通过 enumerate physical 配合 indexJoinProp
+	// 下传就行。
 	if prop.IndexJoinProp != nil {
 		pass := admitIndexJoinInnerChildPattern(lp)
 		if !pass {
@@ -1411,7 +1414,7 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 		}
 		// when datasource leaf is in index join's inner side.
 		// 老得那边分 index path 和 table path 是因为底层构建的东西不一致，这里是为了兼容老的逻辑
-		return getBestIndexJoinInnerTaskByProp(ds, prop), 1, nil
+		return getBestIndexJoinInnerTaskByProp(ds, prop, opt, planCounter)
 	}
 	if ds.IsForUpdateRead && ds.SCtx().GetSessionVars().TxnCtx.IsExplicit {
 		hasPointGetPath := false
