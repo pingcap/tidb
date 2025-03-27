@@ -476,7 +476,7 @@ func (r *Registry) checkForTableConflicts(
 			zap.Uint64("upstream_cluster_id", regInfo.UpstreamClusterID),
 			zap.Bool("with_sys_table", regInfo.WithSysTable),
 			zap.String("cmd", regInfo.Cmd))
-		return errors.Annotatef(berrors.ErrInvalidArgument,
+		return errors.Annotatef(berrors.ErrTablesAlreadyExisted,
 			"table %s.%s cannot be restored by current task with ID %d "+
 				"because it is already being restored by task (time range: %d->%d, cmd: %s)",
 			dbName, tableName, restoreID, regInfo.StartTS, regInfo.RestoredTS, regInfo.Cmd)

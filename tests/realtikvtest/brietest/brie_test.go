@@ -132,8 +132,21 @@ func TestCancel(t *testing.T) {
 	}
 }
 
+// cleanupRegistry drops the registry tables and database
+func cleanupRegistry(tk *testkit.TestKit) {
+	registryDB := "__TiDB_BR_Temporary_Restore_Registration_DB"
+	registryTable := "restore_registry"
+	tk.MustExec(fmt.Sprintf("DROP TABLE IF EXISTS %s.%s", registryDB, registryTable))
+	tk.MustExec(fmt.Sprintf("DROP DATABASE IF EXISTS %s", registryDB))
+}
+
 func TestExistedTables(t *testing.T) {
 	tk := initTestKit(t)
+	// Register cleanup function
+	t.Cleanup(func() {
+		cleanupRegistry(tk)
+	})
+
 	tmp := makeTempDirForBackup(t)
 	sqlTmp := strings.ReplaceAll(tmp, "'", "''")
 	executor.ResetGlobalBRIEQueueForTest()
@@ -212,6 +225,11 @@ func TestExistedTables(t *testing.T) {
 // full backup * -> incremental backup * -> restore full backup * -> restore incremental backup *
 func TestExistedTablesOfIncremental(t *testing.T) {
 	tk := initTestKit(t)
+	// Register cleanup function
+	t.Cleanup(func() {
+		cleanupRegistry(tk)
+	})
+
 	tmp := makeTempDirForBackup(t)
 	sqlTmp := strings.ReplaceAll(tmp, "'", "''")
 	executor.ResetGlobalBRIEQueueForTest()
@@ -260,6 +278,10 @@ func TestExistedTablesOfIncremental(t *testing.T) {
 // full backup * -> incremental backup * -> restore full backup `test` -> restore incremental backup `test`
 func TestExistedTablesOfIncremental_1(t *testing.T) {
 	tk := initTestKit(t)
+	t.Cleanup(func() {
+		cleanupRegistry(tk)
+	})
+
 	tmp := makeTempDirForBackup(t)
 	sqlTmp := strings.ReplaceAll(tmp, "'", "''")
 	executor.ResetGlobalBRIEQueueForTest()
@@ -308,6 +330,11 @@ func TestExistedTablesOfIncremental_1(t *testing.T) {
 // full backup `test` -> incremental backup `test` -> restore full backup * -> restore incremental backup *
 func TestExistedTablesOfIncremental_2(t *testing.T) {
 	tk := initTestKit(t)
+	// Register cleanup function
+	t.Cleanup(func() {
+		cleanupRegistry(tk)
+	})
+
 	tmp := makeTempDirForBackup(t)
 	sqlTmp := strings.ReplaceAll(tmp, "'", "''")
 	executor.ResetGlobalBRIEQueueForTest()
