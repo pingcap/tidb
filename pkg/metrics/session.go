@@ -39,6 +39,7 @@ var (
 	PessimisticDMLDurationByAttempt    *prometheus.HistogramVec
 	ResourceGroupQueryTotalCounter     *prometheus.CounterVec
 	FairLockingUsageCount              *prometheus.CounterVec
+	TiKVPessimisticLockKeysDuration    prometheus.Histogram
 )
 
 // InitSessionMetrics initializes session metrics.
@@ -227,6 +228,16 @@ func InitSessionMetrics() {
 			Name:      "transaction_fair_locking_usage",
 			Help:      "The counter of statements and transactions in which fair locking is used or takes effect",
 		}, []string{LblType})
+
+	// Moved from client-go module to tidb, to keep consistency with history versions, keep the subsystem name "tikvclient"
+	TiKVPessimisticLockKeysDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "pessimistic_lock_keys_duration",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 24), // 1ms ~ 8389s
+			Help:      "tidb txn pessimistic lock keys duration",
+		})
 }
 
 // Label constants.
