@@ -16,8 +16,8 @@ package infosync
 
 import (
 	"context"
-	"github.com/tikv/pd/client/errs"
 
+	"github.com/tikv/pd/client/errs"
 	pd "github.com/tikv/pd/client/http"
 )
 

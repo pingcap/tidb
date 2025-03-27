@@ -16,16 +16,15 @@ package executor
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"strings"
 
-	"github.com/pingcap/tidb/pkg/table/tables"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	pdhttp "github.com/tikv/pd/client/http"
 )

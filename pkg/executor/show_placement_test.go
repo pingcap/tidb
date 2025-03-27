@@ -17,6 +17,8 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"testing"
+	
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -28,7 +30,6 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	pdhttp "github.com/tikv/pd/client/http"
-	"testing"
 )
 
 func TestShowPlacement(t *testing.T) {
@@ -483,12 +484,12 @@ func TestShowPlacementForTableAndPartitionPrivilege(t *testing.T) {
 	}
 }
 
-type MockPDCli struct {
+type mockPDCli struct {
 	pdhttp.Client
 	mock.Mock
 }
 
-func (cli *MockPDCli) GetRegionsReplicatedStateByKeyRange(ctx context.Context, r *pdhttp.KeyRange) (string, error) {
+func (cli *mockPDCli) GetRegionsReplicatedStateByKeyRange(ctx context.Context, r *pdhttp.KeyRange) (string, error) {
 	args := cli.Called(ctx, r)
 	return args.String(0), args.Error(1)
 }
@@ -499,7 +500,7 @@ func TestShowPlacementHandleRegionStatus(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create placement policy p1 followers=1")
 
-	cli := &MockPDCli{}
+	cli := &mockPDCli{}
 	recoverCli := infosync.SetPDHttpCliForTest(cli)
 	defer recoverCli()
 
