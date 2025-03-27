@@ -19,6 +19,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
+	goerrors "errors"
 	"io"
 	"math"
 	"net"
@@ -759,6 +760,23 @@ func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, factory impor
 
 	log.FromContext(ctx).Info("multi ingest support")
 	return true, nil
+}
+
+func (local *Backend) UpdateConcurrency(concurrency int) error {
+	if local.worker == nil || local.engine == nil {
+		// let framework retry
+		return goerrors.New("worker not running")
+	}
+
+	e, ok := local.engine.(*external.Engine)
+	if !ok {
+		return goerrors.New("changing concurrency is only supported on external engine")
+	}
+
+	local.worker.TuneWorkerPoolSize(int32(concurrency), true)
+	local.WorkerConcurrency.Store(int32(concurrency))
+	e.UpdateConcurrency(concurrency)
+	return nil
 }
 
 func (local *Backend) tikvSideCheckFreeSpace(ctx context.Context) {
