@@ -201,7 +201,7 @@ func (m *cloudImportExecutor) ResourceModified(ctx context.Context, newResource 
 	logutil.Logger(ctx).Info("cloud import executor update resource")
 	newConcurrency := int(newResource.CPU.Capacity())
 	if newConcurrency != m.backend.Concurrency() {
-		return m.backend.UpdpateWriteConcurrency(int(newConcurrency))
+		return m.backend.UpdpateWriteConcurrency(newConcurrency)
 	}
 	return nil
 }
