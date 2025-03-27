@@ -329,8 +329,8 @@ select * from v1
 select * from test2;
 id	value
 1	0
-2	0
-3	0
+2	2
+3	3
 4	4
 5	5
 create table A(a int primary key, b int);
