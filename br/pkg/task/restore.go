@@ -1238,6 +1238,8 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			return errors.Trace(err)
 		}
 		if restoreSchedulersConfigFromCheckpoint != nil {
+			// The last range rule will be dropped when the last restore quits.
+			restoreSchedulersConfigFromCheckpoint.RuleID = schedulersConfig.RuleID
 			restoreSchedulersFunc = mgr.MakeUndoFunctionByConfig(*restoreSchedulersConfigFromCheckpoint)
 		}
 		checkpointSetWithTableID = sets

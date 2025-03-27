@@ -236,10 +236,11 @@ func FineGrainedRestorePreWork(
 	if err != nil {
 		return pdutil.Nop, nil, err
 	}
-	originCfg.RuleID = ruleID
+	newCfg := originCfg
+	newCfg.RuleID = ruleID
 
 	// handle undo
-	undo := mgr.MakeFineGrainedUndoFunction(originCfg, waitPauseSchedulerDone)
+	undo := mgr.MakeFineGrainedUndoFunction(newCfg, waitPauseSchedulerDone)
 	return undo, &originCfg, errors.Trace(err)
 }
 

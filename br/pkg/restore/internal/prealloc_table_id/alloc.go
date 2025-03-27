@@ -5,6 +5,7 @@ package prealloctableid
 import (
 	"fmt"
 	"math"
+	"sync"
 
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -31,13 +32,11 @@ type Allocator interface {
 // PreallocIDs mantains the state of preallocated table IDs.
 // Not thread safe.
 type PreallocIDs struct {
+	mu    sync.Mutex
 	start int64
-
-	end int64
-
-	used map[int64]struct{}
-
-	next int64 //new added
+	end   int64
+	used  map[int64]struct{}
+	next  int64 //new added
 }
 
 // New collects the requirement of prealloc IDs and return a
@@ -68,6 +67,9 @@ func New(tables []*metautil.Table) *PreallocIDs {
 
 // String implements fmt.Stringer.
 func (p *PreallocIDs) String() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	if p.start >= p.end {
 		return fmt.Sprintf("ID:empty(end=%d)", p.end)
 	}
@@ -76,6 +78,9 @@ func (p *PreallocIDs) String() string {
 
 // preallocTableIDs peralloc the id for [start, end)
 func (p *PreallocIDs) Alloc(m Allocator) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	if p.end == 0 {
 		return nil
 	}
@@ -124,6 +129,9 @@ func (p *PreallocIDs) RewriteTableInfo(info *model.TableInfo) (*model.TableInfo,
 		return nil, nil
 	}
 	infoCopy := info.Clone()
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
 	newID, err := p.allocID(info.ID)
 	if err != nil {
