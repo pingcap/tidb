@@ -418,6 +418,7 @@ func (p *PhysicalProperty) HashCode() []byte {
 		for _, col := range p.IndexJoinProp.InnerJoinKeys {
 			p.hashcode = append(p.hashcode, col.HashCode()...)
 		}
+		p.hashcode = codec.EncodeFloat(p.hashcode, p.IndexJoinProp.AvgInnerRowCnt)
 	}
 	return p.hashcode
 }

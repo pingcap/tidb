@@ -1585,6 +1585,9 @@ type SessionVars struct {
 	// For now it is not public to user
 	EnableINLJoinInnerMultiPattern bool
 
+	// EnhanceIndexJoinBuild indicates whether to enhance index join build.
+	EnhanceIndexJoinBuild bool
+
 	// Enable late materialization: push down some selection condition to tablescan.
 	EnableLateMaterialization bool
 
