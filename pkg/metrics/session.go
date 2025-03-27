@@ -39,7 +39,7 @@ var (
 	PessimisticDMLDurationByAttempt    *prometheus.HistogramVec
 	ResourceGroupQueryTotalCounter     *prometheus.CounterVec
 	FairLockingUsageCount              *prometheus.CounterVec
-	TiKVPessimisticLockKeysDuration    prometheus.Histogram
+	PessimisticLockKeysDuration        prometheus.Histogram
 )
 
 // InitSessionMetrics initializes session metrics.
@@ -230,7 +230,7 @@ func InitSessionMetrics() {
 		}, []string{LblType})
 
 	// Moved from client-go module to tidb, to keep consistency with history versions, keep the subsystem name "tikvclient"
-	TiKVPessimisticLockKeysDuration = prometheus.NewHistogram(
+	PessimisticLockKeysDuration = prometheus.NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",

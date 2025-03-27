@@ -471,7 +471,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 					metrics.StatementLockKeysCount.Observe(float64(execDetails.LockKeysDetail.LockKeys))
 				}
 				if a.Ctx.GetSessionVars().StmtCtx.PessimisticLockStarted() && execDetails.LockKeysDetail.TotalTime > 0 {
-					metrics.TiKVPessimisticLockKeysDuration.Observe(execDetails.LockKeysDetail.TotalTime.Seconds())
+					metrics.PessimisticLockKeysDuration.Observe(execDetails.LockKeysDetail.TotalTime.Seconds())
 				}
 			}
 
