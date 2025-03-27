@@ -1132,7 +1132,9 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 	}
 
 	preparePossibleProperties(logic)
-
+	if !logic.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	prop := &property.PhysicalProperty{
 		TaskTp:      property.RootTaskType,
 		ExpectedCnt: math.MaxFloat64,
