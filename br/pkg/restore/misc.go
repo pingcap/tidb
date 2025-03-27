@@ -287,7 +287,7 @@ LISTDBS:
 		if tidbutil.IsMemOrSysDB(dbName) {
 			continue
 		}
-		if IsBRInternalDB(dbName) {
+		if IsBRInternalDB(db.Name.O) {
 			continue
 		}
 		tables, err := m.ListSimpleTables(db.ID)

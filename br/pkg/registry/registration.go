@@ -247,31 +247,30 @@ func (r *Registry) ResumeOrCreateRegistration(ctx context.Context, info Registra
 				zap.String("uuid", operationUUID),
 				zap.Strings("filters", info.FilterStrings))
 			return taskID, nil
-		} else {
-			// task exists but was either created by another process or has been running
-			// check if it's in running state
-			runningRows, _, err := execCtx.ExecRestrictedSQL(
-				kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
-				nil,
-				fmt.Sprintf(getRunningTaskIDSQLTemplate, RegistrationDBName, RegistrationTableName),
-				filterStrings, info.StartTS, info.RestoredTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd)
-			if err != nil {
-				return 0, errors.Annotatef(err, "failed to check for running task")
-			}
-
-			if len(runningRows) > 0 {
-				taskID := runningRows[0].GetUint64(0)
-				log.Warn("task already exists and is running",
-					zap.Uint64("restore_id", taskID))
-				return 0, errors.Annotatef(berrors.ErrInvalidArgument,
-					"task with ID %d already exists and is running", taskID)
-			}
-			// Task exists but is not running - unexpected state
-			log.Warn("task exists but is in an unexpected state",
-				zap.Uint64("restore_id", taskID),
-				zap.String("uuid", foundUUID))
-			return 0, errors.New("task exists but is in an unexpected state")
 		}
+		// task exists but was either created by another process or has been running
+		// check if it's in running state
+		runningRows, _, err := execCtx.ExecRestrictedSQL(
+			kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
+			nil,
+			fmt.Sprintf(getRunningTaskIDSQLTemplate, RegistrationDBName, RegistrationTableName),
+			filterStrings, info.StartTS, info.RestoredTS, info.UpstreamClusterID, info.WithSysTable, info.Cmd)
+		if err != nil {
+			return 0, errors.Annotatef(err, "failed to check for running task")
+		}
+
+		if len(runningRows) > 0 {
+			taskID := runningRows[0].GetUint64(0)
+			log.Warn("task already exists and is running",
+				zap.Uint64("restore_id", taskID))
+			return 0, errors.Annotatef(berrors.ErrInvalidArgument,
+				"task with ID %d already exists and is running", taskID)
+		}
+		// Task exists but is not running - unexpected state
+		log.Warn("task exists but is in an unexpected state",
+			zap.Uint64("restore_id", taskID),
+			zap.String("uuid", foundUUID))
+		return 0, errors.New("task exists but is in an unexpected state")
 	}
 
 	// no existing task found, create a new one
@@ -389,6 +388,8 @@ func (r *Registry) GetRegistrationsByMaxID(ctx context.Context, maxID uint64) ([
 	}
 
 	for _, row := range rows {
+		log.Info("found existing restore task", zap.Uint64("restore_id", row.GetUint64(0)),
+			zap.Uint64("max_id", maxID))
 		var (
 			filterStrings     = row.GetString(1)
 			startTS           = row.GetUint64(2)
