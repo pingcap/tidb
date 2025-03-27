@@ -2761,3 +2761,47 @@ func TestWriteClusterIDToMySQLTiDBWhenUpgradingTo242(t *testing.T) {
 	require.NoError(t, r.Close())
 	seCurVer.Close()
 }
+
+
+func TestBindInfoUniqueIndex(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// bootstrap as version245
+	ver245 := version245
+	seV245 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver245))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV245, ver245)
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	store.SetOption(StoreBootstrappedKey, nil)
+
+	// remove the unique index on mysql.bind_info for testing
+	MustExec(t, seV245, "alter table mysql.bind_info drop index digest_index")
+
+	// insert duplicated values into mysql.bind_info
+	for _, sqlDigest := range []string {"null", "'x'", "'y'"} {
+		for _, planDigest := range []string {"null", "'x'", "'y'"} {
+			insertStmt := fmt.Sprintf(`insert into mysql.bind_info values (
+             "sql", "bind_sql", "db", "disabled", NOW(), NOW(), "", "", "", %s, %s)`,
+			 sqlDigest, planDigest)
+			MustExec(t, seV245, insertStmt)
+			MustExec(t, seV245, insertStmt)
+		}
+	}
+
+	// upgrade to current version
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+}
