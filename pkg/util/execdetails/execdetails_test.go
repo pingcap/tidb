@@ -31,6 +31,64 @@ func TestString(t *testing.T) {
 		CopTime:      time.Second + 3*time.Millisecond,
 		BackoffTime:  time.Second,
 		RequestCount: 1,
+		LockKeysDetail: &util.LockKeysDetails{
+			TotalTime:   time.Second,
+			RegionNum:   2,
+			LockKeys:    10,
+			BackoffTime: int64(time.Second * 3),
+			Mu: struct {
+				sync.Mutex
+				BackoffTypes        []string
+				SlowestReqTotalTime time.Duration
+				SlowestRegion       uint64
+				SlowestStoreAddr    string
+				SlowestExecDetails  util.TiKVExecDetails
+			}{
+				BackoffTypes: []string{
+					"backoff4",
+					"backoff5",
+					"backoff5",
+				},
+				SlowestReqTotalTime: time.Second,
+				SlowestRegion:       1000,
+				SlowestStoreAddr:    "tikv-1:20160",
+				SlowestExecDetails: util.TiKVExecDetails{
+					TimeDetail: &util.TimeDetail{
+						TotalRPCWallTime: 500 * time.Millisecond,
+					},
+					ScanDetail: &util.ScanDetail{
+						ProcessedKeys:             10,
+						TotalKeys:                 100,
+						RocksdbDeleteSkippedCount: 1,
+						RocksdbKeySkippedCount:    1,
+						RocksdbBlockCacheHitCount: 1,
+						RocksdbBlockReadCount:     1,
+						RocksdbBlockReadByte:      100,
+						RocksdbBlockReadDuration:  20 * time.Millisecond,
+					},
+					WriteDetail: &util.WriteDetail{
+						StoreBatchWaitDuration:        10 * time.Microsecond,
+						ProposeSendWaitDuration:       20 * time.Microsecond,
+						PersistLogDuration:            30 * time.Microsecond,
+						RaftDbWriteLeaderWaitDuration: 40 * time.Microsecond,
+						RaftDbSyncLogDuration:         45 * time.Microsecond,
+						RaftDbWriteMemtableDuration:   50 * time.Microsecond,
+						CommitLogDuration:             60 * time.Microsecond,
+						ApplyBatchWaitDuration:        70 * time.Microsecond,
+						ApplyLogDuration:              80 * time.Microsecond,
+						ApplyMutexLockDuration:        90 * time.Microsecond,
+						ApplyWriteLeaderWaitDuration:  100 * time.Microsecond,
+						ApplyWriteWalDuration:         101 * time.Microsecond,
+						ApplyWriteMemtableDuration:    102 * time.Microsecond,
+					},
+				}},
+			LockRPCTime:  int64(time.Second * 5),
+			LockRPCCount: 50,
+			RetryCount:   2,
+			ResolveLock: util.ResolveLockDetail{
+				ResolveLockTime: int64(time.Second * 2),
+			},
+		},
 		CommitDetail: &util.CommitDetails{
 			GetCommitTsTime: time.Second,
 			GetLatestTsTime: time.Second,
@@ -149,7 +207,7 @@ func TestString(t *testing.T) {
 			WaitTime:    time.Second,
 		}},
 	}
-	expected := "Cop_time: 1.003 Process_time: 2.005 Wait_time: 1 Backoff_time: 1 Request_count: 1 Prewrite_time: 1 Commit_time: " +
+	expected := "Cop_time: 1.003 Process_time: 2.005 Wait_time: 1 Backoff_time: 1 LockKeys_time: 1 Request_count: 1 Prewrite_time: 1 Commit_time: " +
 		"1 Get_commit_ts_time: 1 Get_latest_ts_time: 1 Commit_backoff_time: 1 " +
 		"Prewrite_Backoff_types: [backoff1 backoff2] Commit_Backoff_types: [commit1 commit2] " +
 		"Slowest_prewrite_rpc_detail: {total:1.000s, region_id: 1000, " +
