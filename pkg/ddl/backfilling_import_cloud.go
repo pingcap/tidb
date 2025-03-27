@@ -199,9 +199,9 @@ func (m *cloudImportExecutor) TaskMetaModified(ctx context.Context, newMeta []by
 
 func (m *cloudImportExecutor) ResourceModified(ctx context.Context, newResource *proto.StepResource) error {
 	logutil.Logger(ctx).Info("cloud import executor update resource")
-	newConcurrency := newResource.CPU.Capacity() * 2
-	if newConcurrency != int64(m.backend.GetWriteConcurrency()) {
-		m.backend.UpdpateWriteConcurrency(int(newConcurrency))
+	newConcurrency := int(newResource.CPU.Capacity())
+	if newConcurrency != m.backend.Concurrency() {
+		return m.backend.UpdpateWriteConcurrency(int(newConcurrency))
 	}
 	return nil
 }

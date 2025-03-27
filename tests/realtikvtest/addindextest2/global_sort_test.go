@@ -540,11 +540,12 @@ func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
 			tk1 := testkit.NewTestKit(t, store)
 			rows := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
 			require.Len(t, rows, 1)
-			tk1.MustExec(fmt.Sprintf("admin alter ddl jobs %s max_write_speed=1024", rows[0][0]))
+			tk1.MustExec(fmt.Sprintf("admin alter ddl jobs %s thread = 4, max_write_speed=1024", rows[0][0]))
 			require.Eventually(t, func() bool {
 				return modifiedIngest.Load()
 			}, 20*time.Second, 100*time.Millisecond)
 			require.EqualValues(t, 1024, be.GetWriteSpeedLimit())
+			require.EqualValues(t, 4, be.Concurrency())
 		})
 	})
 

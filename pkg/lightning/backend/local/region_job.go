@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
+	goerrors "errors"
 	"fmt"
 	"io"
 	"math"
@@ -816,8 +817,14 @@ func (local *Backend) GetWriteSpeedLimit() int {
 }
 
 // UpdpateWriteConcurrency updates the write concurrency of the backend.
-func (local *Backend) UpdpateWriteConcurrency(concurrency int) {
-	local.WorkerConcurrency.Store(int32(concurrency))
+func (local *Backend) UpdpateWriteConcurrency(concurrency int) error {
+	if local.worker != nil {
+		local.worker.TuneWorkerPoolSize(int32(concurrency), true)
+		local.WorkerConcurrency.Store(int32(concurrency))
+		return nil
+	}
+	// let framework retry
+	return goerrors.New("worker not running")
 }
 
 // GetWriteConcurrency returns the concurrency write limiter.

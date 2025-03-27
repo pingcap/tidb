@@ -536,6 +536,8 @@ type Backend struct {
 	supportMultiIngest  bool
 	importClientFactory importClientFactory
 
+	worker *jobOperator
+
 	metrics      *metric.Common
 	writeLimiter StoreWriteLimiter
 	logger       log.Logger
@@ -1472,6 +1474,13 @@ func (local *Backend) doImport(
 		balancer        *storeBalancer
 	)
 
+	if local.worker != nil {
+		return errors.Errorf("worker should be nil")
+	}
+	defer func() {
+		local.worker = nil
+	}()
+
 	// storeBalancer does not have backpressure, it should not be used with external
 	// engine to avoid OOM.
 	if _, ok := engine.(*Engine); ok {
@@ -1550,7 +1559,7 @@ func (local *Backend) doImport(
 		}
 	})
 
-	workers := newJobWorker(
+	local.worker = newJobWorker(
 		workerCtx, workGroup, &jobWg,
 		local, balancer,
 		jobFromWorkerCh, jobToWorkerCh,
@@ -1560,7 +1569,7 @@ func (local *Backend) doImport(
 		failpoint.Goto("afterStartWorker")
 	})
 
-	workers.Open()
+	local.worker.Open()
 
 	failpoint.Label("afterStartWorker")
 
@@ -1592,7 +1601,7 @@ func (local *Backend) doImport(
 				return allZero
 			})
 		}
-		return workers.Close()
+		return local.worker.Close()
 	})
 
 	err := workGroup.Wait()
