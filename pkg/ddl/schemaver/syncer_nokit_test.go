@@ -174,13 +174,8 @@ func TestSyncJobSchemaVerLoop(t *testing.T) {
 	require.NoError(t, err)
 
 	// job 4 is matched using WaitVersionSynced
-<<<<<<< HEAD
 	variable.EnableMDL.Store(true)
-	serverInfos := map[string]*infosync.ServerInfo{"aa": {ID: "aa", IP: "test", Port: 4000}}
-=======
-	vardef.EnableMDL.Store(true)
 	serverInfos := map[string]*infosync.ServerInfo{"aa": {StaticServerInfo: infosync.StaticServerInfo{ID: "aa", IP: "test", Port: 4000}}}
->>>>>>> 80d6b5683c5 (infosync: refactor server config into dynamic and static sections (#58473))
 	bytes, err := json.Marshal(serverInfos)
 	require.NoError(t, err)
 	inTerms := fmt.Sprintf("return(`%s`)", string(bytes))

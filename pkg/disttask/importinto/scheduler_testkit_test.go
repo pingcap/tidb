@@ -68,13 +68,8 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 			DisableTiKVImportMode: true,
 		},
 		Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
-<<<<<<< HEAD
-		EligibleInstances: []*infosync.ServerInfo{{ID: "1"}},
-		ChunkMap:          map[int32][]importinto.Chunk{1: {{Path: "gs://test-load/1.csv"}}},
-=======
 		EligibleInstances: []*infosync.ServerInfo{{StaticServerInfo: infosync.StaticServerInfo{ID: "1"}}},
-		ChunkMap:          map[int32][]importer.Chunk{1: {{Path: "gs://test-load/1.csv"}}},
->>>>>>> 80d6b5683c5 (infosync: refactor server config into dynamic and static sections (#58473))
+		ChunkMap:          map[int32][]importinto.Chunk{1: {{Path: "gs://test-load/1.csv"}}},
 	}
 	bs, err := logicalPlan.ToTaskMeta()
 	require.NoError(t, err)
@@ -213,13 +208,8 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 			InImportInto:          true,
 		},
 		Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
-<<<<<<< HEAD
-		EligibleInstances: []*infosync.ServerInfo{{ID: "1"}},
-		ChunkMap: map[int32][]importinto.Chunk{
-=======
 		EligibleInstances: []*infosync.ServerInfo{{StaticServerInfo: infosync.StaticServerInfo{ID: "1"}}},
-		ChunkMap: map[int32][]importer.Chunk{
->>>>>>> 80d6b5683c5 (infosync: refactor server config into dynamic and static sections (#58473))
+		ChunkMap: map[int32][]importinto.Chunk{
 			1: {{Path: "gs://test-load/1.csv"}},
 			2: {{Path: "gs://test-load/2.csv"}},
 		},

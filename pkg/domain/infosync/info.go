@@ -956,26 +956,6 @@ func (is *InfoSyncer) updateTopologyAliveness(ctx context.Context) error {
 		clientv3.WithLease(is.topologySession.Lease()))
 }
 
-<<<<<<< HEAD
-=======
-// RemoveTopologyInfo remove self server topology information from etcd.
-func (is *InfoSyncer) RemoveTopologyInfo() {
-	if is.etcdCli == nil {
-		return
-	}
-	info := is.info.Load()
-	prefix := fmt.Sprintf(
-		"%s/%s",
-		TopologyInformationPath,
-		net.JoinHostPort(info.IP, strconv.Itoa(int(info.Port))),
-	)
-	err := util.DeleteKeysWithPrefixFromEtcd(prefix, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
-	if err != nil {
-		logutil.BgLogger().Error("remove topology info failed", zap.Error(err))
-	}
-}
-
->>>>>>> 80d6b5683c5 (infosync: refactor server config into dynamic and static sections (#58473))
 // GetPrometheusAddr gets prometheus Address
 func GetPrometheusAddr() (string, error) {
 	is, err := getGlobalInfoSyncer()

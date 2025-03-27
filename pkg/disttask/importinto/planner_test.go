@@ -41,13 +41,8 @@ func TestLogicalPlan(t *testing.T) {
 		JobID:             1,
 		Plan:              importer.Plan{},
 		Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
-<<<<<<< HEAD
-		EligibleInstances: []*infosync.ServerInfo{{ID: "1"}},
-		ChunkMap:          map[int32][]Chunk{1: {{Path: "gs://test-load/1.csv"}}},
-=======
 		EligibleInstances: []*infosync.ServerInfo{{StaticServerInfo: infosync.StaticServerInfo{ID: "1"}}},
-		ChunkMap:          map[int32][]importer.Chunk{1: {{Path: "gs://test-load/1.csv"}}},
->>>>>>> 80d6b5683c5 (infosync: refactor server config into dynamic and static sections (#58473))
+		ChunkMap:          map[int32][]Chunk{1: {{Path: "gs://test-load/1.csv"}}},
 	}
 	bs, err := logicalPlan.ToTaskMeta()
 	require.NoError(t, err)
@@ -67,13 +62,8 @@ func TestToPhysicalPlan(t *testing.T) {
 			},
 		},
 		Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
-<<<<<<< HEAD
-		EligibleInstances: []*infosync.ServerInfo{{ID: "1"}},
-		ChunkMap:          map[int32][]Chunk{chunkID: {{Path: "gs://test-load/1.csv"}}},
-=======
 		EligibleInstances: []*infosync.ServerInfo{{StaticServerInfo: infosync.StaticServerInfo{ID: "1"}}},
-		ChunkMap:          map[int32][]importer.Chunk{chunkID: {{Path: "gs://test-load/1.csv"}}},
->>>>>>> 80d6b5683c5 (infosync: refactor server config into dynamic and static sections (#58473))
+		ChunkMap:          map[int32][]Chunk{chunkID: {{Path: "gs://test-load/1.csv"}}},
 	}
 	planCtx := planner.PlanCtx{
 		NextTaskStep: proto.ImportStepImport,
