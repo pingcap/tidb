@@ -41,10 +41,10 @@ run_br --pd $PD_ADDR backup table -s "local://$TEST_DIR/$DB/full" --db $DB -t $T
 
 # when we backup, we should close domain in one shot session.
 # so we can check the log count of `one shot domain closed` to be 2.
-# we will call UseOneShotSession once to get the value global variable.
+# we will call UseOneShotSession twice to get the value global variable.
 one_shot_session_count=$(cat $LOG | grep "one shot session closed" | wc -l | xargs)
 one_shot_domain_count=$(cat $LOG | grep "one shot domain closed" | wc -l | xargs)
-if [ "${one_shot_session_count}" -ne "1" ] || [ "$one_shot_domain_count" -ne "1" ];then
+if [ "${one_shot_session_count}" -ne "2" ] || [ "$one_shot_domain_count" -ne "2" ];then
     echo "TEST: [$TEST_NAME] fail on one shot session check during backup, $one_shot_session_count, $one_shot_domain_count"
     exit 1
 fi
@@ -74,13 +74,13 @@ last_backup_ts=$(run_br validate decode --field="end-version" -s "local://$TEST_
 run_br --pd $PD_ADDR backup db -s "local://$TEST_DIR/$DB/inc" --db $DB --lastbackupts $last_backup_ts --log-file $LOG
 
 # when we doing incremental backup, we should close domain in one shot session.
-# so we can check the log count of `one shot domain closed` to be 2.
-# we will call UseOneShotSession two times
-# 1. to get the value global variable once.
+# so we can check the log count of `one shot domain closed` to be 3.
+# we will call UseOneShotSession three times
+# 1. to get the value global variable twice.
 # 2. to get all ddl jobs with session.
 one_shot_session_count=$(cat $LOG | grep "one shot session closed" | wc -l | xargs)
 one_shot_domain_count=$(cat $LOG | grep "one shot domain closed" | wc -l | xargs)
-if [ "${one_shot_session_count}" -ne "2" ] || [ "$one_shot_domain_count" -ne "2" ];then
+if [ "${one_shot_session_count}" -ne "3" ] || [ "$one_shot_domain_count" -ne "3" ];then
     echo "TEST: [$TEST_NAME] fail on one shot session check during inc backup, $one_shot_session_count, $one_shot_domain_count"
     exit 1
 fi
