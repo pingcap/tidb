@@ -48,7 +48,7 @@ func (mgr *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 	for _, task := range tasks {
 		taskIDStrs = append(taskIDStrs, fmt.Sprintf("%d", task.ID))
 	}
-	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error TransferTasks2History")); err != nil {
+	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error")); err != nil {
 		return err
 	}
 	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
@@ -89,7 +89,7 @@ func (mgr *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 func (mgr *TaskManager) GCSubtasks(ctx context.Context) error {
 	subtaskHistoryKeepSeconds := defaultSubtaskKeepDays * 24 * 60 * 60
 	failpoint.InjectCall("subtaskHistoryKeepSeconds", &subtaskHistoryKeepSeconds)
-	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error GCSubtasks")); err != nil {
+	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error")); err != nil {
 		return err
 	}
 	_, err := mgr.ExecuteSQLWithNewSession(

@@ -16,14 +16,21 @@ package injectfailpoint
 
 import (
 	"math/rand"
+	"runtime"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 )
+
+func getFunctionName() string {
+	pc, _, _, _ := runtime.Caller(2)
+	return runtime.FuncForPC(pc).Name()
+}
 
 // DXFRandomError returns an error with the given probability. It controls the DXF's failpoint.
 func DXFRandomError(probability float64, err error) error {
 	failpoint.Inject("DXFRandomError", func() {
-		failpoint.Return(RandomError(probability, err))
+		failpoint.Return(RandomError(probability, errors.Errorf("%v, caller: %s", err, getFunctionName())))
 	})
 	return nil
 }

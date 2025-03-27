@@ -277,7 +277,7 @@ func (mgr *TaskManager) CreateTaskWithSession(
 
 // GetTopUnfinishedTasks implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) ([]*proto.TaskBase, error) {
-	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error GetTopUnfinishedTasks")); err != nil {
+	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error")); err != nil {
 		return nil, err
 	}
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
@@ -364,7 +364,7 @@ func (mgr *TaskManager) GetTasksInStates(ctx context.Context, states ...any) (ta
 		return task, nil
 	}
 
-	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error GetTasksInStates")); err != nil {
+	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error")); err != nil {
 		return nil, err
 	}
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
@@ -384,7 +384,7 @@ func (mgr *TaskManager) GetTasksInStates(ctx context.Context, states ...any) (ta
 // GetTaskByID gets the task by the task ID.
 func (mgr *TaskManager) GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error) {
 	// TODO: enable it later.
-	//if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error GetTaskByID")); err != nil {
+	//if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error")); err != nil {
 	//	return nil, err
 	//}
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+TaskColumns+" from mysql.tidb_global_task t where id = %?", taskID)
@@ -400,7 +400,7 @@ func (mgr *TaskManager) GetTaskByID(ctx context.Context, taskID int64) (task *pr
 
 // GetTaskBaseByID implements the TaskManager.GetTaskBaseByID interface.
 func (mgr *TaskManager) GetTaskBaseByID(ctx context.Context, taskID int64) (task *proto.TaskBase, err error) {
-	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error GetTaskBaseByID")); err != nil {
+	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error")); err != nil {
 		return nil, err
 	}
 	err = mgr.WithNewSession(func(se sessionctx.Context) error {
@@ -533,7 +533,7 @@ func (mgr *TaskManager) GetFirstSubtaskInStates(ctx context.Context, tidbID stri
 
 // GetActiveSubtasks implements TaskManager.GetActiveSubtasks.
 func (mgr *TaskManager) GetActiveSubtasks(ctx context.Context, taskID int64) ([]*proto.SubtaskBase, error) {
-	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error GetActiveSubtasks")); err != nil {
+	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error")); err != nil {
 		return nil, err
 	}
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `
@@ -552,7 +552,7 @@ func (mgr *TaskManager) GetActiveSubtasks(ctx context.Context, taskID int64) ([]
 
 // GetAllSubtasksByStepAndState gets the subtask by step and state.
 func (mgr *TaskManager) GetAllSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.SubtaskState) ([]*proto.Subtask, error) {
-	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error GetAllSubtasksByStepAndState")); err != nil {
+	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error")); err != nil {
 		return nil, err
 	}
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select `+SubtaskColumns+` from mysql.tidb_background_subtask
@@ -601,7 +601,7 @@ func (mgr *TaskManager) UpdateSubtaskRowCount(ctx context.Context, subtaskID int
 
 // GetSubtaskCntGroupByStates gets the subtask count by states.
 func (mgr *TaskManager) GetSubtaskCntGroupByStates(ctx context.Context, taskID int64, step proto.Step) (map[proto.SubtaskState]int64, error) {
-	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error GetSubtaskCntGroupByStates")); err != nil {
+	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error")); err != nil {
 		return nil, err
 	}
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `
@@ -625,7 +625,7 @@ func (mgr *TaskManager) GetSubtaskCntGroupByStates(ctx context.Context, taskID i
 
 // GetSubtaskErrors gets subtasks' errors.
 func (mgr *TaskManager) GetSubtaskErrors(ctx context.Context, taskID int64) ([]error, error) {
-	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error GetSubtaskErrors")); err != nil {
+	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error")); err != nil {
 		return nil, err
 	}
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
@@ -662,7 +662,7 @@ func (mgr *TaskManager) UpdateSubtasksExecIDs(ctx context.Context, subtasks []*p
 	if len(subtasks) == 0 {
 		return nil
 	}
-	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error UpdateSubtasksExecIDs")); err != nil {
+	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error")); err != nil {
 		return err
 	}
 	err := mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
@@ -689,7 +689,7 @@ func (mgr *TaskManager) SwitchTaskStep(
 	nextStep proto.Step,
 	subtasks []*proto.Subtask,
 ) error {
-	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error SwitchTaskStep")); err != nil {
+	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error")); err != nil {
 		return err
 	}
 	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
@@ -773,7 +773,7 @@ func (mgr *TaskManager) SwitchTaskStepInBatch(
 	nextStep proto.Step,
 	subtasks []*proto.Subtask,
 ) error {
-	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error SwitchTaskStepInBatch")); err != nil {
+	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error")); err != nil {
 		return err
 	}
 	return mgr.WithNewSession(func(se sessionctx.Context) error {
@@ -897,7 +897,7 @@ func (mgr *TaskManager) GetAllTasks(ctx context.Context) ([]*proto.TaskBase, err
 
 // GetAllSubtasks gets all subtasks with basic columns.
 func (mgr *TaskManager) GetAllSubtasks(ctx context.Context) ([]*proto.SubtaskBase, error) {
-	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error GetAllSubtasks")); err != nil {
+	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error")); err != nil {
 		return nil, err
 	}
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select `+basicSubtaskColumns+` from mysql.tidb_background_subtask`)
