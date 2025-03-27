@@ -194,7 +194,8 @@ func TestExistedTables(t *testing.T) {
 		require.NoError(t, err)
 
 		_, err = session.ResultSetToStringSlice(context.Background(), tk.Session(), res)
-		require.ErrorContains(t, err, "table already exists")
+		// due to previous restore didn't succeed with checkpoint enabled
+		require.ErrorContains(t, err, "it is already being restored by task")
 	}()
 	select {
 	case <-time.After(20 * time.Second):
