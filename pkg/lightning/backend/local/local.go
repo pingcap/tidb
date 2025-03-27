@@ -475,7 +475,6 @@ type BackendConfig struct {
 
 // NewBackendConfig creates a new BackendConfig.
 func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resourceGroupName, taskType string, raftKV2SwitchModeDuration time.Duration) BackendConfig {
-
 	return BackendConfig{
 		PDAddr:                      cfg.TiDB.PdAddr,
 		LocalStoreDir:               cfg.TikvImporter.SortedKVDir,
@@ -508,6 +507,7 @@ func (c *BackendConfig) adjust() {
 	c.MaxOpenFiles = max(c.MaxOpenFiles, openFilesLowerThreshold)
 }
 
+// Concurrency get the current concurrency of the backend
 func (c *BackendConfig) Concurrency() int {
 	return int(c.WorkerConcurrency.Load())
 }
@@ -517,6 +517,7 @@ func toAtomic(v int) atomic.Int32 {
 	return *atomic.NewInt32(int32(v))
 }
 
+// SetConcurrency set the new concurrency
 func (c *BackendConfig) SetConcurrency(newConcurrency int) {
 	c.WorkerConcurrency.Store(int32(newConcurrency))
 }
@@ -1569,7 +1570,7 @@ func (local *Backend) doImport(
 		failpoint.Goto("afterStartWorker")
 	})
 
-	local.worker.Open()
+	_ = local.worker.Open()
 
 	failpoint.Label("afterStartWorker")
 
