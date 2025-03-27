@@ -136,6 +136,132 @@ func TestRangeTree(t *testing.T) {
 	assertAllComplete()
 }
 
+func TestRangeTreePutForce(t *testing.T) {
+	type expectedRange struct {
+		startKey []byte
+		endKey   []byte
+		filename string
+	}
+	check := func(t *testing.T, rangeTree rtree.RangeTree, expectedRanges []expectedRange) {
+		require.Equal(t, rangeTree.Len(), len(expectedRanges))
+		i := 0
+		rangeTree.Ascend(func(item *rtree.Range) bool {
+			require.Equal(t, expectedRanges[i].startKey, item.StartKey)
+			require.Equal(t, expectedRanges[i].endKey, item.EndKey)
+			require.Equal(t, expectedRanges[i].filename, item.Files[0].Name)
+			i += 1
+			return true
+		})
+	}
+	rangeTree := rtree.NewRangeTree()
+	require.True(t, rangeTree.PutForce([]byte("aa"), []byte("bb"), []*backuppb.File{{Name: "1.sst"}}, true))
+	require.True(t, rangeTree.PutForce([]byte("ff"), []byte("hh"), []*backuppb.File{{Name: "2.sst"}}, false))
+	check(t, rangeTree, []expectedRange{
+		{startKey: []byte("aa"), endKey: []byte("bb"), filename: "1.sst"},
+		{startKey: []byte("ff"), endKey: []byte("hh"), filename: "2.sst"},
+	})
+
+	// put with force
+	require.True(t, rangeTree.PutForce([]byte("a"), []byte("ab"), []*backuppb.File{{Name: "3.sst"}}, true))
+	check(t, rangeTree, []expectedRange{
+		{startKey: []byte("a"), endKey: []byte("ab"), filename: "3.sst"},
+		{startKey: []byte("ff"), endKey: []byte("hh"), filename: "2.sst"},
+	})
+	require.True(t, rangeTree.PutForce([]byte("aaa"), []byte("abc"), []*backuppb.File{{Name: "4.sst"}}, true))
+	check(t, rangeTree, []expectedRange{
+		{startKey: []byte("aaa"), endKey: []byte("abc"), filename: "4.sst"},
+		{startKey: []byte("ff"), endKey: []byte("hh"), filename: "2.sst"},
+	})
+	require.True(t, rangeTree.PutForce([]byte("aaaa"), []byte("aaab"), []*backuppb.File{{Name: "5.sst"}}, true))
+	check(t, rangeTree, []expectedRange{
+		{startKey: []byte("aaaa"), endKey: []byte("aaab"), filename: "5.sst"},
+		{startKey: []byte("ff"), endKey: []byte("hh"), filename: "2.sst"},
+	})
+	require.True(t, rangeTree.PutForce([]byte("aa"), []byte("bb"), []*backuppb.File{{Name: "6.sst"}}, true))
+	check(t, rangeTree, []expectedRange{
+		{startKey: []byte("aa"), endKey: []byte("bb"), filename: "6.sst"},
+		{startKey: []byte("ff"), endKey: []byte("hh"), filename: "2.sst"},
+	})
+
+	// put without force
+	require.False(t, rangeTree.PutForce([]byte("f"), []byte("fh"), []*backuppb.File{{Name: "7.sst"}}, false))
+	check(t, rangeTree, []expectedRange{
+		{startKey: []byte("aa"), endKey: []byte("bb"), filename: "6.sst"},
+		{startKey: []byte("ff"), endKey: []byte("hh"), filename: "2.sst"},
+	})
+	require.False(t, rangeTree.PutForce([]byte("fff"), []byte("fhi"), []*backuppb.File{{Name: "8.sst"}}, false))
+	check(t, rangeTree, []expectedRange{
+		{startKey: []byte("aa"), endKey: []byte("bb"), filename: "6.sst"},
+		{startKey: []byte("ff"), endKey: []byte("hh"), filename: "2.sst"},
+	})
+	require.False(t, rangeTree.PutForce([]byte("ffff"), []byte("fffh"), []*backuppb.File{{Name: "9.sst"}}, false))
+	check(t, rangeTree, []expectedRange{
+		{startKey: []byte("aa"), endKey: []byte("bb"), filename: "6.sst"},
+		{startKey: []byte("ff"), endKey: []byte("hh"), filename: "2.sst"},
+	})
+	require.False(t, rangeTree.PutForce([]byte("ff"), []byte("hh"), []*backuppb.File{{Name: "10.sst"}}, false))
+	check(t, rangeTree, []expectedRange{
+		{startKey: []byte("aa"), endKey: []byte("bb"), filename: "6.sst"},
+		{startKey: []byte("ff"), endKey: []byte("hh"), filename: "2.sst"},
+	})
+
+	// put with force bound
+	require.True(t, rangeTree.PutForce([]byte("aa"), []byte("ab"), []*backuppb.File{{Name: "11.sst"}}, true))
+	check(t, rangeTree, []expectedRange{
+		{startKey: []byte("aa"), endKey: []byte("ab"), filename: "11.sst"},
+		{startKey: []byte("ff"), endKey: []byte("hh"), filename: "2.sst"},
+	})
+	require.True(t, rangeTree.PutForce([]byte("aaa"), []byte("ab"), []*backuppb.File{{Name: "12.sst"}}, true))
+	check(t, rangeTree, []expectedRange{
+		{startKey: []byte("aaa"), endKey: []byte("ab"), filename: "12.sst"},
+		{startKey: []byte("ff"), endKey: []byte("hh"), filename: "2.sst"},
+	})
+
+	// put without force bound
+	require.False(t, rangeTree.PutForce([]byte("ff"), []byte("fh"), []*backuppb.File{{Name: "13.sst"}}, false))
+	check(t, rangeTree, []expectedRange{
+		{startKey: []byte("aaa"), endKey: []byte("ab"), filename: "12.sst"},
+		{startKey: []byte("ff"), endKey: []byte("hh"), filename: "2.sst"},
+	})
+	require.False(t, rangeTree.PutForce([]byte("fh"), []byte("hh"), []*backuppb.File{{Name: "14.sst"}}, false))
+	check(t, rangeTree, []expectedRange{
+		{startKey: []byte("aaa"), endKey: []byte("ab"), filename: "12.sst"},
+		{startKey: []byte("ff"), endKey: []byte("hh"), filename: "2.sst"},
+	})
+
+	// put outside bound
+	require.True(t, rangeTree.PutForce([]byte("ab"), []byte("abc"), []*backuppb.File{{Name: "15.sst"}}, true))
+	check(t, rangeTree, []expectedRange{
+		{startKey: []byte("aaa"), endKey: []byte("ab"), filename: "12.sst"},
+		{startKey: []byte("ab"), endKey: []byte("abc"), filename: "15.sst"},
+		{startKey: []byte("ff"), endKey: []byte("hh"), filename: "2.sst"},
+	})
+	require.True(t, rangeTree.PutForce([]byte("aa"), []byte("aaa"), []*backuppb.File{{Name: "16.sst"}}, true))
+	check(t, rangeTree, []expectedRange{
+		{startKey: []byte("aa"), endKey: []byte("aaa"), filename: "16.sst"},
+		{startKey: []byte("aaa"), endKey: []byte("ab"), filename: "12.sst"},
+		{startKey: []byte("ab"), endKey: []byte("abc"), filename: "15.sst"},
+		{startKey: []byte("ff"), endKey: []byte("hh"), filename: "2.sst"},
+	})
+	require.True(t, rangeTree.PutForce([]byte("hh"), []byte("hi"), []*backuppb.File{{Name: "17.sst"}}, false))
+	check(t, rangeTree, []expectedRange{
+		{startKey: []byte("aa"), endKey: []byte("aaa"), filename: "16.sst"},
+		{startKey: []byte("aaa"), endKey: []byte("ab"), filename: "12.sst"},
+		{startKey: []byte("ab"), endKey: []byte("abc"), filename: "15.sst"},
+		{startKey: []byte("ff"), endKey: []byte("hh"), filename: "2.sst"},
+		{startKey: []byte("hh"), endKey: []byte("hi"), filename: "17.sst"},
+	})
+	require.True(t, rangeTree.PutForce([]byte("ef"), []byte("ff"), []*backuppb.File{{Name: "18.sst"}}, false))
+	check(t, rangeTree, []expectedRange{
+		{startKey: []byte("aa"), endKey: []byte("aaa"), filename: "16.sst"},
+		{startKey: []byte("aaa"), endKey: []byte("ab"), filename: "12.sst"},
+		{startKey: []byte("ab"), endKey: []byte("abc"), filename: "15.sst"},
+		{startKey: []byte("ef"), endKey: []byte("ff"), filename: "18.sst"},
+		{startKey: []byte("ff"), endKey: []byte("hh"), filename: "2.sst"},
+		{startKey: []byte("hh"), endKey: []byte("hi"), filename: "17.sst"},
+	})
+}
+
 func TestRangeIntersect(t *testing.T) {
 	rg := newRange([]byte("a"), []byte("c"))
 

@@ -252,8 +252,15 @@ func (rangeTree *RangeTree) getOverlaps(rg *Range) []*Range {
 }
 
 // Update inserts range into tree and delete overlapping ranges.
-func (rangeTree *RangeTree) Update(rg Range) {
-	overlaps := rangeTree.getOverlaps(&rg)
+func (rangeTree *RangeTree) Update(rg Range) bool {
+	return rangeTree.updateForce(&rg, true)
+}
+
+func (rangeTree *RangeTree) updateForce(rg *Range, force bool) bool {
+	overlaps := rangeTree.getOverlaps(rg)
+	if !force && len(overlaps) > 0 {
+		return false
+	}
 	// Range has backuped, overwrite overlapping range.
 	for _, item := range overlaps {
 		log.Info("delete overlapping range",
@@ -261,7 +268,8 @@ func (rangeTree *RangeTree) Update(rg Range) {
 			logutil.Key("endKey", item.EndKey))
 		rangeTree.Delete(item)
 	}
-	rangeTree.ReplaceOrInsert(&rg)
+	rangeTree.ReplaceOrInsert(rg)
+	return true
 }
 
 // Put forms a range and inserts it into tree.
@@ -275,7 +283,22 @@ func (rangeTree *RangeTree) Put(
 		},
 		Files: files,
 	}
-	rangeTree.Update(rg)
+	rangeTree.updateForce(&rg, true)
+}
+
+// PutForce forms a range and inserts it into tree without force.
+func (rangeTree *RangeTree) PutForce(
+	startKey, endKey []byte, files []*backuppb.File, force bool,
+) bool {
+	rg := Range{
+		KeyRange: KeyRange{
+			StartKey: startKey,
+			EndKey:   endKey,
+		},
+		Files: files,
+	}
+
+	return rangeTree.updateForce(&rg, force)
 }
 
 // InsertRange inserts ranges into the range tree.

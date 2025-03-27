@@ -1079,16 +1079,19 @@ func (bc *Client) BuildProgressRangeTree(ctx context.Context, ranges []rtree.Key
 			if err != nil {
 				return errors.Trace(err)
 			}
-			crc, kvs, bytes := utils.SummaryFiles(rg.Files)
-			if err := metaWriter.Send(rg.Files, metautil.AppendDataFile); err != nil {
-				return errors.Trace(err)
+			// Note1: put the range without files since it is already persisted in the external storage.
+			// Note2: give up the files if there are already overlapped ranges because the overlapped files
+			// have been flushed into metafile.
+			if pr.Res.PutForce(rg.StartKey, rg.EndKey, nil, false) {
+				crc, kvs, bytes := utils.SummaryFiles(rg.Files)
+				if err := metaWriter.Send(rg.Files, metautil.AppendDataFile); err != nil {
+					return errors.Trace(err)
+				}
+				if !bc.skipChecksum {
+					progressRangeTree.UpdateChecksum(pr.Res.PhysicalID, crc, kvs, bytes)
+				}
+				progressCallBack(UnitRegion)
 			}
-			// Note: put the range without files since it is already persisted in the external storage.
-			pr.Res.Put(rg.StartKey, rg.EndKey, nil)
-			if !bc.skipChecksum {
-				progressRangeTree.UpdateChecksum(pr.Res.PhysicalID, crc, kvs, bytes)
-			}
-			progressCallBack(UnitRegion)
 			return nil
 		})
 		if err != nil {
