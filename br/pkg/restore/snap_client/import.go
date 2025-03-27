@@ -692,7 +692,12 @@ func (importer *SnapFileImporter) downloadSST(
 					defer cancel()
 					return func(ctx context.Context) (*import_sstpb.DownloadResponse, error) {
 						// hack download twice
-						go importer.importClient.DownloadSST(dctx, peer.GetStoreId(), req)
+						go func() {
+							if rand.Intn(10) == 1 {
+								time.Sleep(200 * time.Millisecond)
+								importer.importClient.DownloadSST(dctx, peer.GetStoreId(), req)
+							}
+						}()
 						return importer.importClient.DownloadSST(dctx, peer.GetStoreId(), req)
 					}(dctx)
 				})
