@@ -1091,17 +1091,15 @@ func getNumericPrecision(ft *types.FieldType, colLen int) int {
 		// It's a MySQL bug, ref link https://bugs.mysql.com/bug.php?id=69042
 		if mysql.HasUnsignedFlag(ft.GetFlag()) {
 			return 8
-		} else {
-			return 7
 		}
+		return 7
 	case mysql.TypeLong:
 		return 10
 	case mysql.TypeLonglong:
 		if mysql.HasUnsignedFlag(ft.GetFlag()) {
 			return 20
-		} else {
-			return 19
 		}
+		return 19
 	case mysql.TypeBit, mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
 		return colLen
 	}
