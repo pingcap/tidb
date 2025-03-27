@@ -110,7 +110,7 @@ func (mgr *TaskManager) PauseSubtasks(ctx context.Context, execID string, taskID
 
 // ResumeSubtasks update all paused subtasks to pending state.
 func (mgr *TaskManager) ResumeSubtasks(ctx context.Context, taskID int64) error {
-	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error")); err != nil {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
 	_, err := mgr.ExecuteSQLWithNewSession(ctx,

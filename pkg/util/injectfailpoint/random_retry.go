@@ -27,10 +27,10 @@ func getFunctionName() string {
 	return runtime.FuncForPC(pc).Name()
 }
 
-// DXFRandomError returns an error with the given probability. It controls the DXF's failpoint.
-func DXFRandomError(probability float64, err error) error {
+// DXFRandomErrorWithOnePercent returns an error with probability 0.01. It controls the DXF's failpoint.
+func DXFRandomErrorWithOnePercent() error {
 	failpoint.Inject("DXFRandomError", func() {
-		failpoint.Return(RandomError(probability, errors.Errorf("%v, caller: %s", err, getFunctionName())))
+		failpoint.Return(RandomError(0.01, errors.Errorf("injected random error, caller: %s", getFunctionName())))
 	})
 	return nil
 }

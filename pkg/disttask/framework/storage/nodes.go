@@ -68,7 +68,7 @@ func (mgr *TaskManager) DeleteDeadNodes(ctx context.Context, nodes []string) err
 	if len(nodes) == 0 {
 		return nil
 	}
-	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error")); err != nil {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
 	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
@@ -91,7 +91,7 @@ func (mgr *TaskManager) DeleteDeadNodes(ctx context.Context, nodes []string) err
 // GetAllNodes gets nodes in dist_framework_meta.
 func (mgr *TaskManager) GetAllNodes(ctx context.Context) ([]proto.ManagedNode, error) {
 	var nodes []proto.ManagedNode
-	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error")); err != nil {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return nodes, err
 	}
 	err := mgr.WithNewSession(func(se sessionctx.Context) error {
@@ -123,7 +123,7 @@ func (*TaskManager) getAllNodesWithSession(ctx context.Context, se sessionctx.Co
 
 // GetUsedSlotsOnNodes implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) GetUsedSlotsOnNodes(ctx context.Context) (map[string]int, error) {
-	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error")); err != nil {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return nil, err
 	}
 	// concurrency of subtasks of some step is the same, we use max(concurrency)

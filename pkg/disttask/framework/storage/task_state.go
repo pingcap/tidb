@@ -28,7 +28,7 @@ import (
 
 // CancelTask cancels task.
 func (mgr *TaskManager) CancelTask(ctx context.Context, taskID int64) error {
-	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error")); err != nil {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
 	_, err := mgr.ExecuteSQLWithNewSession(ctx,
@@ -57,7 +57,7 @@ func (*TaskManager) CancelTaskByKeySession(ctx context.Context, se sessionctx.Co
 
 // FailTask implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) FailTask(ctx context.Context, taskID int64, currentState proto.TaskState, taskErr error) error {
-	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error")); err != nil {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
 	_, err := mgr.ExecuteSQLWithNewSession(ctx,
@@ -74,7 +74,7 @@ func (mgr *TaskManager) FailTask(ctx context.Context, taskID int64, currentState
 
 // RevertTask implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) RevertTask(ctx context.Context, taskID int64, taskState proto.TaskState, taskErr error) error {
-	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error")); err != nil {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
 	return mgr.transitTaskStateOnErr(ctx, taskID, taskState, proto.TaskStateReverting, taskErr)
@@ -94,7 +94,7 @@ func (mgr *TaskManager) transitTaskStateOnErr(ctx context.Context, taskID int64,
 
 // AwaitingResolveTask implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) AwaitingResolveTask(ctx context.Context, taskID int64, taskState proto.TaskState, taskErr error) error {
-	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error")); err != nil {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
 	return mgr.transitTaskStateOnErr(ctx, taskID, taskState, proto.TaskStateAwaitingResolution, taskErr)
@@ -102,7 +102,7 @@ func (mgr *TaskManager) AwaitingResolveTask(ctx context.Context, taskID int64, t
 
 // RevertedTask implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) RevertedTask(ctx context.Context, taskID int64) error {
-	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error")); err != nil {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
 	_, err := mgr.ExecuteSQLWithNewSession(ctx,
@@ -119,7 +119,7 @@ func (mgr *TaskManager) RevertedTask(ctx context.Context, taskID int64) error {
 // PauseTask pauses the task.
 func (mgr *TaskManager) PauseTask(ctx context.Context, taskKey string) (bool, error) {
 	found := false
-	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error")); err != nil {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return false, err
 	}
 	err := mgr.WithNewSession(func(se sessionctx.Context) error {
@@ -146,7 +146,7 @@ func (mgr *TaskManager) PauseTask(ctx context.Context, taskKey string) (bool, er
 
 // PausedTask update the task state from pausing to paused.
 func (mgr *TaskManager) PausedTask(ctx context.Context, taskID int64) error {
-	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error")); err != nil {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
 	_, err := mgr.ExecuteSQLWithNewSession(ctx,
@@ -186,7 +186,7 @@ func (mgr *TaskManager) ResumeTask(ctx context.Context, taskKey string) (bool, e
 
 // ResumedTask implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) ResumedTask(ctx context.Context, taskID int64) error {
-	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error")); err != nil {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
 	_, err := mgr.ExecuteSQLWithNewSession(ctx, `
@@ -238,7 +238,7 @@ func (mgr *TaskManager) ModifyTaskByID(ctx context.Context, taskID int64, param 
 
 // ModifiedTask implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) ModifiedTask(ctx context.Context, task *proto.Task) error {
-	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error")); err != nil {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
 	prevState := task.ModifyParam.PrevState
@@ -276,7 +276,7 @@ func (mgr *TaskManager) ModifiedTask(ctx context.Context, task *proto.Task) erro
 
 // SucceedTask update task state from running to succeed.
 func (mgr *TaskManager) SucceedTask(ctx context.Context, taskID int64) error {
-	if err := injectfailpoint.DXFRandomError(0.01, errors.New("injected random error")); err != nil {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
 		return err
 	}
 	return mgr.WithNewSession(func(se sessionctx.Context) error {
