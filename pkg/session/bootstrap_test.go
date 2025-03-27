@@ -2762,7 +2762,6 @@ func TestWriteClusterIDToMySQLTiDBWhenUpgradingTo242(t *testing.T) {
 	seCurVer.Close()
 }
 
-
 func TestBindInfoUniqueIndex(t *testing.T) {
 	ctx := context.Background()
 	store, dom := CreateStoreAndBootstrap(t)
@@ -2785,11 +2784,11 @@ func TestBindInfoUniqueIndex(t *testing.T) {
 	MustExec(t, seV245, "alter table mysql.bind_info drop index digest_index")
 
 	// insert duplicated values into mysql.bind_info
-	for _, sqlDigest := range []string {"null", "'x'", "'y'"} {
-		for _, planDigest := range []string {"null", "'x'", "'y'"} {
+	for _, sqlDigest := range []string{"null", "'x'", "'y'"} {
+		for _, planDigest := range []string{"null", "'x'", "'y'"} {
 			insertStmt := fmt.Sprintf(`insert into mysql.bind_info values (
              "sql", "bind_sql", "db", "disabled", NOW(), NOW(), "", "", "", %s, %s)`,
-			 sqlDigest, planDigest)
+				sqlDigest, planDigest)
 			MustExec(t, seV245, insertStmt)
 			MustExec(t, seV245, insertStmt)
 		}
