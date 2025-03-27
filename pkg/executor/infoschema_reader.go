@@ -1080,6 +1080,34 @@ func (e *hugeMemTableRetriever) setDataForColumnsWithOneTable(
 	return len(e.rows) >= e.batch
 }
 
+// Ref link https://github.com/mysql/mysql-server/blob/6b6d3ed3d5c6591b446276184642d7d0504ecc86/sql/dd/dd_table.cc#L411
+func getNumericPrecision(ft *types.FieldType, colLen int) int {
+	switch ft.GetType() {
+	case mysql.TypeTiny:
+		return 3
+	case mysql.TypeShort:
+		return 5
+	case mysql.TypeInt24:
+		// It's a MySQL bug, ref link https://bugs.mysql.com/bug.php?id=69042
+		if mysql.HasUnsignedFlag(ft.GetFlag()) {
+			return 8
+		} else {
+			return 7
+		}
+	case mysql.TypeLong:
+		return 10
+	case mysql.TypeLonglong:
+		if mysql.HasUnsignedFlag(ft.GetFlag()) {
+			return 20
+		} else {
+			return 19
+		}
+	case mysql.TypeBit, mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
+		return colLen
+	}
+	return 0
+}
+
 func (e *hugeMemTableRetriever) dataForColumnsInTable(
 	ctx context.Context,
 	sctx sessionctx.Context,
@@ -1166,7 +1194,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(
 		} else if types.IsTypeFractionable(ft.GetType()) {
 			datetimePrecision = decimal
 		} else if types.IsTypeNumeric(ft.GetType()) {
-			numericPrecision = colLen
+			numericPrecision = getNumericPrecision(ft, colLen)
 			if ft.GetType() != mysql.TypeFloat && ft.GetType() != mysql.TypeDouble {
 				numericScale = decimal
 			} else if decimal != -1 {
