@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -816,20 +817,33 @@ func (local *Backend) GetWriteSpeedLimit() int {
 	return local.writeLimiter.Limit()
 }
 
-// UpdpateWriteConcurrency updates the write concurrency of the backend.
-func (local *Backend) UpdpateWriteConcurrency(concurrency int) error {
-	if local.worker != nil {
-		local.worker.TuneWorkerPoolSize(int32(concurrency), true)
-		local.WorkerConcurrency.Store(int32(concurrency))
-		return nil
+// UpdpateConcurrency updates the write concurrency of the backend.
+func (local *Backend) UpdpateConcurrency(concurrency int) error {
+	if local.worker == nil || local.engine == nil {
+		// let framework retry
+		return goerrors.New("worker not running")
+
 	}
-	// let framework retry
-	return goerrors.New("worker not running")
+
+	e, ok := local.engine.(*external.Engine)
+	if !ok {
+		return goerrors.New("changing concurrency is only supported on external engine")
+	}
+
+	local.worker.TuneWorkerPoolSize(int32(concurrency), true)
+	local.WorkerConcurrency.Store(int32(concurrency))
+	e.UpdateConcurrency(concurrency)
+	return nil
 }
 
-// GetWriteConcurrency returns the concurrency write limiter.
-func (local *Backend) GetWriteConcurrency() int {
+// Concurrency get the current concurrency of the backend
+func (local *BackendConfig) Concurrency() int {
 	return int(local.WorkerConcurrency.Load())
+}
+
+// util function to create atomic variable
+func toAtomic(v int) atomic.Int32 {
+	return *atomic.NewInt32(int32(v))
 }
 
 // convertStageOnIngestError will try to fix the error contained in ingest response.
@@ -1372,7 +1386,7 @@ func (w *jobWorker) HandleTask(job *regionJob, _ func(*regionJob)) {
 				j.done(w.jobWg)
 				// don't exit here, we mark done for each job and exit in the outer loop
 			// We can't use sender function directly
-			case w.jobFromWorkerCh <- job:
+			case w.jobFromWorkerCh <- j:
 			}
 		}
 	}
@@ -1463,10 +1477,9 @@ func (j *jobOperator) Open() error {
 		case err, ok := <-j.errCh:
 			if !ok || j.firstErr.CompareAndSwap(nil, err) {
 				return j.firstErr.Load()
-			} else {
-				if errors.Cause(err) != context.Canceled {
-					log.FromContext(j.workerCtx).Error("error on ingest", zap.Error(err))
-				}
+			}
+			if errors.Cause(err) != context.Canceled {
+				log.FromContext(j.workerCtx).Error("error on ingest", zap.Error(err))
 			}
 		}
 		return nil

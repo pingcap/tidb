@@ -507,21 +507,6 @@ func (c *BackendConfig) adjust() {
 	c.MaxOpenFiles = max(c.MaxOpenFiles, openFilesLowerThreshold)
 }
 
-// Concurrency get the current concurrency of the backend
-func (c *BackendConfig) Concurrency() int {
-	return int(c.WorkerConcurrency.Load())
-}
-
-// util function to create atomic variable
-func toAtomic(v int) atomic.Int32 {
-	return *atomic.NewInt32(int32(v))
-}
-
-// SetConcurrency set the new concurrency
-func (c *BackendConfig) SetConcurrency(newConcurrency int) {
-	c.WorkerConcurrency.Store(int32(newConcurrency))
-}
-
 // Backend is a local backend.
 type Backend struct {
 	pdCli     pd.Client
@@ -537,6 +522,7 @@ type Backend struct {
 	supportMultiIngest  bool
 	importClientFactory importClientFactory
 
+	engine common.Engine
 	worker *jobOperator
 
 	metrics      *metric.Common
@@ -1245,6 +1231,11 @@ func (local *Backend) executeJob(
 	ctx context.Context,
 	job *regionJob,
 ) error {
+	failpoint.Inject("MockSuccessExecution", func(_ failpoint.Value) {
+		job.convertStageTo(regionScanned)
+		failpoint.Return(nil)
+	})
+
 	failpoint.Inject("WriteToTiKVNotEnoughDiskSpace", func(_ failpoint.Value) {
 		failpoint.Return(
 			errors.New("the remaining storage capacity of TiKV is less than 10%%; please increase the storage capacity of TiKV and try again"))
@@ -1480,7 +1471,9 @@ func (local *Backend) doImport(
 	}
 	defer func() {
 		local.worker = nil
+		local.engine = nil
 	}()
+	local.engine = engine
 
 	// storeBalancer does not have backpressure, it should not be used with external
 	// engine to avoid OOM.

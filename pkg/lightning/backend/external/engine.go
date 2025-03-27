@@ -154,7 +154,7 @@ type Engine struct {
 	duplicateDetection bool
 	duplicateDB        *pebble.DB
 	dupDetectOpt       common.DupDetectOpt
-	workerConcurrency  int
+	workerConcurrency  atomic.Int32
 	ts                 uint64
 
 	totalKVSize  int64
@@ -219,7 +219,7 @@ func NewExternalEngine(
 		duplicateDetection: duplicateDetection,
 		duplicateDB:        duplicateDB,
 		dupDetectOpt:       dupDetectOpt,
-		workerConcurrency:  workerConcurrency,
+		workerConcurrency:  *atomic.NewInt32(int32(workerConcurrency)),
 		ts:                 ts,
 		totalKVSize:        totalKVSize,
 		totalKVCount:       totalKVCount,
@@ -259,7 +259,7 @@ func (e *Engine) getAdjustedConcurrency() int {
 		}
 		return min(adjusted, 8)
 	}
-	adjusted := min(e.workerConcurrency, maxCloudStorageConnections/len(e.dataFiles))
+	adjusted := min(int(e.workerConcurrency.Load()), maxCloudStorageConnections/len(e.dataFiles))
 	return max(adjusted, 1)
 }
 
@@ -343,7 +343,7 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 
 	sortStart := time.Now()
 	oldSortyGor := sorty.MaxGor
-	sorty.MaxGor = uint64(e.workerConcurrency * 2)
+	sorty.MaxGor = uint64(e.workerConcurrency.Load() * 2)
 	var dupKey atomic.Pointer[[]byte]
 	sorty.Sort(len(e.memKVsAndBuffers.keys), func(i, k, r, s int) bool {
 		cmp := bytes.Compare(e.memKVsAndBuffers.keys[i], e.memKVsAndBuffers.keys[k])
@@ -436,18 +436,28 @@ func (e *Engine) LoadIngestData(
 	outCh chan<- common.DataAndRanges,
 ) error {
 	// try to make every worker busy for each batch
-	rangeBatchSize := e.workerConcurrency
-	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
-		rangeBatchSize = val.(int)
-	})
-	logutil.Logger(ctx).Info("load ingest data", zap.Int("batchSize", rangeBatchSize))
-	for start := 0; start < len(e.jobKeys)-1; start += rangeBatchSize {
+	currBatchSize := int(e.workerConcurrency.Load())
+	logutil.Logger(ctx).Info("load ingest data", zap.Int("current batchSize", currBatchSize))
+	for start := 0; start < len(e.jobKeys)-1; {
+		newBatchSize := int(e.workerConcurrency.Load())
+		if newBatchSize != currBatchSize {
+			logutil.Logger(ctx).Info("load ingest data batch size change",
+				zap.Int("prev batchSize", currBatchSize),
+				zap.Int("new batchSize", newBatchSize),
+			)
+			currBatchSize = newBatchSize
+		}
+		failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
+			currBatchSize = val.(int)
+		})
+
 		// want to generate N ranges, so we need N+1 keys
-		end := min(1+start+rangeBatchSize, len(e.jobKeys))
+		end := min(1+start+currBatchSize, len(e.jobKeys))
 		err := e.loadBatchRegionData(ctx, e.jobKeys[start:end], outCh)
 		if err != nil {
 			return err
 		}
+		start += currBatchSize
 	}
 	return nil
 }
@@ -466,6 +476,10 @@ func (e *Engine) buildIngestData(keys, values [][]byte, buf []*membuf.Buffer) *M
 		importedKVSize:     e.importedKVSize,
 		importedKVCount:    e.importedKVCount,
 	}
+}
+
+func (e *Engine) UpdateConcurrency(concurrency int) {
+	e.workerConcurrency.Store(int32(concurrency))
 }
 
 // KVStatistics returns the total kv size and total kv count.

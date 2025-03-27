@@ -21,12 +21,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
@@ -606,4 +609,68 @@ func TestUpdateAndGetLimiterConcurrencySafety(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestUpdateBackendConcurrency(t *testing.T) {
+	var (
+		ctx                  = context.Background()
+		workGroup, workerCtx = util.NewErrorGroupWithRecoverWithCtx(ctx)
+		jobToWorkerCh        = make(chan *regionJob)
+		jobFromWorkerCh      = make(chan *regionJob)
+		jobWg                sync.WaitGroup
+	)
+
+	local := &Backend{
+		writeLimiter: newStoreWriteLimiter(0),
+	}
+	local.WorkerConcurrency.Store(1)
+
+	local.worker = newJobWorker(
+		workerCtx, workGroup, &jobWg,
+		local, nil,
+		jobFromWorkerCh, jobToWorkerCh,
+	)
+	require.NoError(t, local.worker.Open())
+	time.Sleep(time.Second)
+	require.NoError(t, local.UpdpateConcurrency(4))
+	require.NoError(t, local.worker.Close())
+}
+
+func TestWorkerWithError(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/MockSuccessExecution", "return()")
+
+	var (
+		workGroup, workerCtx = util.NewErrorGroupWithRecoverWithCtx(context.Background())
+		jobToWorkerCh        = make(chan *regionJob)
+		jobFromWorkerCh      = make(chan *regionJob)
+		jobWg                sync.WaitGroup
+	)
+
+	local := &Backend{
+		writeLimiter: newStoreWriteLimiter(0),
+	}
+	local.WorkerConcurrency.Store(4)
+
+	worker := newJobWorker(
+		workerCtx, workGroup, &jobWg,
+		local, nil,
+		jobFromWorkerCh, jobToWorkerCh,
+	)
+	require.NoError(t, worker.Open())
+
+	// Add some jobs
+	for range 4 {
+		jobToWorkerCh <- &regionJob{}
+		jobWg.Add(1)
+	}
+
+	// Mock error in the worker group
+	workGroup.Go(func() error {
+		return errors.Errorf("some error")
+	})
+
+	// worker should clean up the job state
+	jobWg.Wait()
+
+	require.NoError(t, worker.Close())
 }

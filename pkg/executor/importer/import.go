@@ -1378,7 +1378,7 @@ func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.Ba
 		DisableAutomaticCompactions: true,
 		BlockSize:                   config.DefaultBlockSize,
 	}
-	backendConfig.SetConcurrency(e.ThreadCnt)
+	backendConfig.WorkerConcurrency.Store(int32(e.ThreadCnt))
 	if e.IsRaftKV2 {
 		backendConfig.RaftKV2SwitchModeDuration = config.DefaultSwitchTiKVModeInterval
 	}
