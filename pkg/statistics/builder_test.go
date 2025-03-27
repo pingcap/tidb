@@ -74,7 +74,7 @@ func BenchmarkBuildHistAndTopN(b *testing.B) {
 	memoryTracker := memory.NewTracker(10, 1024*1024*1024)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _, _ = BuildHistAndTopN(ctx, 256, 500, 0, collector, filedType, true, memoryTracker, false)
+		_, _, _ = BuildHistAndTopN(ctx, 256, 500, 0, 0, collector, filedType, true, memoryTracker, false)
 	}
 }
 
@@ -127,6 +127,6 @@ func BenchmarkBuildHistAndTopNWithLowNDV(b *testing.B) {
 	memoryTracker := memory.NewTracker(10, 1024*1024*1024)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _, _ = BuildHistAndTopN(ctx, 256, 500, 0, collector, filedType, true, memoryTracker, false)
+		_, _, _ = BuildHistAndTopN(ctx, 256, 500, 0, 0, collector, filedType, true, memoryTracker, false)
 	}
 }
