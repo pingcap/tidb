@@ -357,6 +357,6 @@ func GetTSWithRetry(ctx context.Context, pdClient pd.Client) (uint64, error) {
 }
 
 // IsBRInternalDB checks whether it's a db used internally by BR.
-func IsBRInternalDB(dbLowerName string) bool {
-	return registry.IsRestoreRegistryDB(dbLowerName)
+func IsBRInternalDB(dbName string) bool {
+	return registry.IsRestoreRegistryDB(dbName)
 }

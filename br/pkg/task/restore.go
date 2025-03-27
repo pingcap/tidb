@@ -893,19 +893,29 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		restoreErr = runSnapshotRestore(c, mgr, g, cmdName, &snapshotRestoreConfig)
 	}
 	if restoreErr != nil {
-		// if err happens at register phase no restoreID will be generated and default is 0
-		if cfg.UseCheckpoint && cfg.RestoreID != 0 {
+		// if err happens at register phase no restoreID will be generated and default is 0.
+		if cfg.RestoreID == 0 {
+			return errors.Trace(restoreErr)
+		}
+		// if checkpoint is not persisted, let's just unregister the task since we don't need it
+		if hasCheckpointPersisted(c, cfg) {
+			log.Info("pausing restore task from registry",
+				zap.Uint64("restoreId", cfg.RestoreID), zap.Error(err))
 			if err := restoreRegistry.PauseTask(c, cfg.RestoreID); err != nil {
-				log.Error("failed to pause restore task after restore failed", zap.Error(err),
+				log.Error("failed to pause restore task from registry",
 					zap.Uint64("restoreId", cfg.RestoreID), zap.Error(err))
 			}
 		} else {
-			// if no checkpoint enabled, will not retry using checkpoint so just unregister
+			log.Info("unregistering restore task from registry",
+				zap.Uint64("restoreId", cfg.RestoreID), zap.Error(err))
 			if err := restoreRegistry.Unregister(c, cfg.RestoreID); err != nil {
 				log.Error("failed to unregister restore task from registry",
 					zap.Uint64("restoreId", cfg.RestoreID), zap.Error(err))
 			}
+			// clean up checkpoint just in case there are some empty checkpoint db/table created but no data
+			cleanUpCheckpoints(c, cfg, cmdName)
 		}
+
 		return errors.Trace(restoreError)
 	}
 
@@ -915,15 +925,20 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			zap.Uint64("restoreId", cfg.RestoreID), zap.Error(err))
 	}
 
-	// Clear the checkpoint data
+	// Clear the checkpoint data if needed
+	cleanUpCheckpoints(c, cfg, cmdName)
+	return nil
+}
+
+func cleanUpCheckpoints(ctx context.Context, cfg *RestoreConfig, cmdName string) {
 	if cfg.UseCheckpoint {
 		if IsStreamRestore(cmdName) {
 			log.Info("start to remove checkpoint data for PITR restore")
-			err = cfg.logCheckpointMetaManager.RemoveCheckpointData(c)
+			err := cfg.logCheckpointMetaManager.RemoveCheckpointData(ctx)
 			if err != nil {
 				log.Warn("failed to remove checkpoint data for log restore", zap.Error(err))
 			}
-			err = cfg.sstCheckpointMetaManager.RemoveCheckpointData(c)
+			err = cfg.sstCheckpointMetaManager.RemoveCheckpointData(ctx)
 			if err != nil {
 				log.Warn("failed to remove checkpoint data for compacted restore", zap.Error(err))
 			}
@@ -931,20 +946,44 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			// (i.e. restoring only from log backup without a base snapshot backup),
 			// since snapshotCheckpointMetaManager would be nil in that case
 			if cfg.snapshotCheckpointMetaManager != nil {
-				err = cfg.snapshotCheckpointMetaManager.RemoveCheckpointData(c)
+				err = cfg.snapshotCheckpointMetaManager.RemoveCheckpointData(ctx)
 				if err != nil {
 					log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
 				}
 			}
 		} else {
-			err = cfg.snapshotCheckpointMetaManager.RemoveCheckpointData(c)
+			err := cfg.snapshotCheckpointMetaManager.RemoveCheckpointData(ctx)
 			if err != nil {
 				log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
 			}
 		}
-		log.Info("all the checkpoint data is removed.")
+		log.Info("all the checkpoint data removed.")
+	} else {
+		log.Info("checkpoint not enabled, skip to remove checkpoint data")
 	}
-	return nil
+}
+
+// hasCheckpointPersisted checks if there are any checkpoint data persisted in storage or tables
+func hasCheckpointPersisted(ctx context.Context, cfg *RestoreConfig) bool {
+	if cfg.snapshotCheckpointMetaManager != nil {
+		exists, err := cfg.snapshotCheckpointMetaManager.ExistsCheckpointMetadata(ctx)
+		if err == nil && exists {
+			return true
+		}
+	}
+	if cfg.logCheckpointMetaManager != nil {
+		exists, err := cfg.logCheckpointMetaManager.ExistsCheckpointMetadata(ctx)
+		if err == nil && exists {
+			return true
+		}
+	}
+	if cfg.sstCheckpointMetaManager != nil {
+		exists, err := cfg.sstCheckpointMetaManager.ExistsCheckpointMetadata(ctx)
+		if err == nil && exists {
+			return true
+		}
+	}
+	return false
 }
 
 type SnapshotRestoreConfig struct {
