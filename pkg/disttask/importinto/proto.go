@@ -90,7 +90,7 @@ func (gci *kvGroupConflictInfos) addDataConflictInfo(other *common.ConflictInfo)
 }
 
 func (gci *kvGroupConflictInfos) addIndexConflictInfo(indexID int64, other *common.ConflictInfo) {
-	kvGroup := indexID2KVGroup(indexID)
+	kvGroup := IndexID2KVGroup(indexID)
 	gci.addConflictInfo(kvGroup, other)
 }
 
@@ -240,7 +240,9 @@ type Result struct {
 	ColSizeMap   map[int64]int64
 }
 
-func indexID2KVGroup(indexID int64) string {
+// IndexID2KVGroup converts index id to kv group name.
+// exported for test.
+func IndexID2KVGroup(indexID int64) string {
 	return fmt.Sprintf("%d", indexID)
 }
 

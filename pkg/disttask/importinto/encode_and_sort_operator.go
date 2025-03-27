@@ -182,7 +182,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, dataKVMemSiz
 				SetOnDup(onDup)
 			prefix := subtaskPrefix(op.taskID, op.subtaskID)
 			// writer id for index: index/{indexID}/{workerID}
-			writerID := path.Join("index", indexID2KVGroup(indexID), workerUUID)
+			writerID := path.Join("index", IndexID2KVGroup(indexID), workerUUID)
 			writer := builder.Build(op.tableImporter.GlobalSortStore, prefix, writerID)
 			return writer, nil
 		}

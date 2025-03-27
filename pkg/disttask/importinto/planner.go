@@ -525,7 +525,7 @@ func getSortedKVMetasOfEncodeStep(subTaskMetas [][]byte) (map[string]*external.S
 	res := make(map[string]*external.SortedKVMeta, 1+len(indexKVMetas))
 	res[dataKVGroup] = dataKVMeta
 	for indexID, item := range indexKVMetas {
-		res[indexID2KVGroup(indexID)] = item
+		res[IndexID2KVGroup(indexID)] = item
 	}
 	return res, nil
 }
