@@ -100,10 +100,13 @@ func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collatio
 
 		planDigest := binding.PlanDigest
 		if planDigest == "" {
-			_ = callWithSCtx(ba.sPool, false, func(sctx sessionctx.Context) error {
+			if err := callWithSCtx(ba.sPool, false, func(sctx sessionctx.Context) error {
 				planDigest = getBindingPlanDigest(sctx, binding.Db, binding.BindSQL)
 				return nil
-			})
+			}); err != nil {
+				bindingLogger().Error("get plan digest failed",
+					zap.String("bind_sql", binding.BindSQL), zap.Error(err))
+			}
 		}
 
 		pInfo, err := ba.getPlanExecInfo(planDigest)
