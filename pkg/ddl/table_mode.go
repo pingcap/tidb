@@ -35,8 +35,7 @@ func onAlterTableMode(jobCtx *jobContext, job *model.Job) (ver int64, err error)
 
 	switch tbInfo.Mode {
 	case model.TableModeNormal, model.TableModeImport, model.TableModeRestore:
-		// skip updateVersionAndTableInfo when changing table mode from TableModeNormal to TableModeNormal
-		if tbInfo.Mode == model.TableModeNormal && args.TableMode == model.TableModeNormal {
+		if tbInfo.Mode == args.TableMode {
 			job.State = model.JobStateDone
 			return ver, err
 		}
