@@ -106,8 +106,8 @@ Projection	1999.00	root		eq(explain_easy_stats.t1.c2, explain_easy_stats.t2.c2)-
 └─Apply	1999.00	root		CARTESIAN left outer join, left side:TableReader
   ├─TableReader(Build)	1999.00	root		data:TableFullScan
   │ └─TableFullScan	1999.00	cop[tikv]	table:t1	keep order:false
-  └─TopN(Probe)	1999.00	root		explain_easy_stats.t2.c1, offset:0, count:1
-    └─IndexLookUp	1999.00	root		
+  └─Projection(Probe)	1999.00	root		explain_easy_stats.t2.c2
+    └─IndexLookUp	1999.00	root		topn embedded(offset:0, count:1)
       ├─TopN(Build)	1999.00	cop[tikv]		explain_easy_stats.t2.c1, offset:0, count:1
       │ └─IndexRangeScan	4960.02	cop[tikv]	table:t2, index:c1(c1)	range: decided by [eq(explain_easy_stats.t1.c1, explain_easy_stats.t2.c1)], keep order:false
       └─TableRowIDScan(Probe)	1999.00	cop[tikv]	table:t2	keep order:false
