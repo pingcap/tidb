@@ -84,6 +84,8 @@ func (e *collectConflictsStepExecutor) RunSubtask(ctx context.Context, subtask *
 			potentialConflictRowsDueToIndex += int(ci.Count)
 		}
 	}
+	// TODO consider the memory usage of the conflict rows.
+	potentialConflictRowsDueToIndex = min(potentialConflictRowsDueToIndex, 128)
 	e.conflictedRowCount, e.conflictedRowSize = 0, 0
 	e.conflictRowsChecksum = verification.NewKVChecksumWithKeyspace(e.store.GetCodec().GetKeyspace())
 	e.handledRowsFromIndex = make(map[string]bool, potentialConflictRowsDueToIndex)
@@ -141,6 +143,8 @@ func (e *collectConflictsStepExecutor) OnFinished(_ context.Context, subtask *pr
 }
 
 func (e *collectConflictsStepExecutor) isRowHandledFn(handle tidbkv.Handle) bool {
+	// TODO this memory check limit how many rows can be conflicted by index solely.
+	//  might OOM if there are too many conflicts.
 	return e.handledRowsFromIndex[handle.String()]
 }
 func (e *collectConflictsStepExecutor) recordConflictRow(ctx context.Context, kvGroup string, handle tidbkv.Handle, row []types.Datum, kvPairs *kv.Pairs) error {

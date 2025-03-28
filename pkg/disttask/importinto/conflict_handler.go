@@ -17,9 +17,11 @@ package importinto
 import (
 	"context"
 	"io"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	dxfhandle "github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -30,10 +32,18 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+)
+
+const (
+	// (1+2+4+8)*0.1s + (10-4)*1s = 7.5s
+	storeOpMinBackoff  = 100 * time.Millisecond
+	storeOpMaxBackoff  = time.Second
+	storeOpMaxRetryCnt = 10
 )
 
 type conflictKVHandler interface {
@@ -92,13 +102,24 @@ func (h *baseConflictKVHandler) encodeAndHandleRow(ctx context.Context,
 	if h.handleConflictRowFn != nil {
 		err = h.handleConflictRowFn(ctx, h.kvGroup, handle, decodedData, kvPairs)
 	} else {
-		err = h.deleteKeys(ctx, kvPairs.Pairs)
+		err = h.deleteKeysWithRetry(ctx, kvPairs.Pairs)
 	}
 	kvPairs.Clear()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+func (h *baseConflictKVHandler) deleteKeysWithRetry(ctx context.Context, pairs []common.KvPair) error {
+	backoffer := backoff.NewExponential(storeOpMinBackoff, 2, storeOpMaxBackoff)
+	return dxfhandle.RunWithRetry(ctx, storeOpMaxRetryCnt, backoffer, h.logger, func(ctx context.Context) (bool, error) {
+		err := h.deleteKeys(ctx, pairs)
+		if err != nil {
+			return common.IsRetryableError(err), err
+		}
+		return true, nil
+	})
 }
 
 func (h *baseConflictKVHandler) deleteKeys(ctx context.Context, pairs []common.KvPair) (err error) {
