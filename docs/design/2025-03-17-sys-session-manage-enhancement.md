@@ -47,25 +47,30 @@ The most important method of `Pool` is `WithSession` which is introduced to repl
 Let's see how `WithSession` works:
 
 ```go
-func (p *Pool) WithSession(func(*Session) error) (err error) {
-    se, err := p.get()
+func (p *Pool) WithSession(fn func(*Session) error) error {
+    se, err := p.Get()
     if err != nil {
         return err
     }
-    
+
+    success := false
     defer func() {
-        if r := recover(); r != nil {
-            // Always destroy the session when panic to avoid undetermined state.
-            se.Destroy()    
-            panic(r)
+        if success {
+            p.Put(se)
+        } else {
+            se.Close()
         }
-        p.put(se)
     }()
-    return f(se)
+
+    if err = fn(se); err != nil {
+        return err
+    }
+    success = true
+    return nil
 }
 ```
 
-We can see that the `WithSession` method always calls `p.put(se)` within a defer function to ensure the session is returned to the pool. One exception to this occurs when a panic happens. In such cases, the session is destroyed instead of being returned to the pool, as it may be in an undefined state, making it safer to discard rather than reuse.
+We can see that the `WithSession` method always calls `p.put(se)` within a defer function to ensure the session is returned to the pool. Some exceptions are when a panic or error happens. In such cases, the session is destroyed instead of being returned to the pool, as it may be in an undefined state, making it safer to discard rather than reuse.
 
 The `Pool` should be responsible for managing the internal sessions' registration and unregistering, and the callers should not care about it. These operations are handled by `Pool.get` and `Pool.put` methods:
 
