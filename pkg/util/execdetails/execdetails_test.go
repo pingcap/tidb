@@ -31,6 +31,64 @@ func TestString(t *testing.T) {
 		CopTime:      time.Second + 3*time.Millisecond,
 		BackoffTime:  time.Second,
 		RequestCount: 1,
+		LockKeysDetail: &util.LockKeysDetails{
+			TotalTime:   time.Second,
+			RegionNum:   2,
+			LockKeys:    10,
+			BackoffTime: int64(time.Second * 3),
+			Mu: struct {
+				sync.Mutex
+				BackoffTypes        []string
+				SlowestReqTotalTime time.Duration
+				SlowestRegion       uint64
+				SlowestStoreAddr    string
+				SlowestExecDetails  util.TiKVExecDetails
+			}{
+				BackoffTypes: []string{
+					"backoff4",
+					"backoff5",
+					"backoff5",
+				},
+				SlowestReqTotalTime: time.Second,
+				SlowestRegion:       1000,
+				SlowestStoreAddr:    "tikv-1:20160",
+				SlowestExecDetails: util.TiKVExecDetails{
+					TimeDetail: &util.TimeDetail{
+						TotalRPCWallTime: 500 * time.Millisecond,
+					},
+					ScanDetail: &util.ScanDetail{
+						ProcessedKeys:             10,
+						TotalKeys:                 100,
+						RocksdbDeleteSkippedCount: 1,
+						RocksdbKeySkippedCount:    1,
+						RocksdbBlockCacheHitCount: 1,
+						RocksdbBlockReadCount:     1,
+						RocksdbBlockReadByte:      100,
+						RocksdbBlockReadDuration:  20 * time.Millisecond,
+					},
+					WriteDetail: &util.WriteDetail{
+						StoreBatchWaitDuration:        10 * time.Microsecond,
+						ProposeSendWaitDuration:       20 * time.Microsecond,
+						PersistLogDuration:            30 * time.Microsecond,
+						RaftDbWriteLeaderWaitDuration: 40 * time.Microsecond,
+						RaftDbSyncLogDuration:         45 * time.Microsecond,
+						RaftDbWriteMemtableDuration:   50 * time.Microsecond,
+						CommitLogDuration:             60 * time.Microsecond,
+						ApplyBatchWaitDuration:        70 * time.Microsecond,
+						ApplyLogDuration:              80 * time.Microsecond,
+						ApplyMutexLockDuration:        90 * time.Microsecond,
+						ApplyWriteLeaderWaitDuration:  100 * time.Microsecond,
+						ApplyWriteWalDuration:         101 * time.Microsecond,
+						ApplyWriteMemtableDuration:    102 * time.Microsecond,
+					},
+				}},
+			LockRPCTime:  int64(time.Second * 5),
+			LockRPCCount: 50,
+			RetryCount:   2,
+			ResolveLock: util.ResolveLockDetail{
+				ResolveLockTime: int64(time.Second * 2),
+			},
+		},
 		CommitDetail: &util.CommitDetails{
 			GetCommitTsTime: time.Second,
 			GetLatestTsTime: time.Second,
@@ -149,7 +207,7 @@ func TestString(t *testing.T) {
 			WaitTime:    time.Second,
 		}},
 	}
-	expected := "Cop_time: 1.003 Process_time: 2.005 Wait_time: 1 Backoff_time: 1 Request_count: 1 Prewrite_time: 1 Commit_time: " +
+	expected := "Cop_time: 1.003 Process_time: 2.005 Wait_time: 1 Backoff_time: 1 LockKeys_time: 1 Request_count: 1 Prewrite_time: 1 Commit_time: " +
 		"1 Get_commit_ts_time: 1 Get_latest_ts_time: 1 Commit_backoff_time: 1 " +
 		"Prewrite_Backoff_types: [backoff1 backoff2] Commit_Backoff_types: [commit1 commit2] " +
 		"Slowest_prewrite_rpc_detail: {total:1.000s, region_id: 1000, " +
@@ -158,14 +216,14 @@ func TestString(t *testing.T) {
 		"read_byte: 100 Bytes, read_time: 20ms}}}, write_detail: {store_batch_wait: 10µs, propose_send_wait: 20µs, " +
 		"persist_log: {total: 30µs, write_leader_wait: 40µs, sync_log: 45µs, write_memtable: 50µs}, " +
 		"commit_log: 60µs, apply_batch_wait: 70µs, apply: {total:80µs, mutex_lock: 90µs, write_leader_wait: 100µs, " +
-		"write_wal: 101µs, write_memtable: 102µs}}} " +
+		"write_wal: 101µs, write_memtable: 102µs}, scheduler: {process: 0s}}} " +
 		"Commit_primary_rpc_detail: {total:2.000s, region_id: 2000, " +
 		"store: tikv-2:20160, time_detail: {tikv_wall_time: 1s}, scan_detail: {total_process_keys: 20, total_keys: 200, " +
 		"rocksdb: {delete_skipped_count: 2, key_skipped_count: 2, block: {cache_hit_count: 2, read_count: 2, " +
 		"read_byte: 200 Bytes, read_time: 40ms}}}, write_detail: {store_batch_wait: 110µs, propose_send_wait: 120µs, " +
 		"persist_log: {total: 130µs, write_leader_wait: 140µs, sync_log: 145µs, write_memtable: 150µs}, " +
 		"commit_log: 160µs, apply_batch_wait: 170µs, apply: {total:180µs, mutex_lock: 190µs, write_leader_wait: 200µs, " +
-		"write_wal: 201µs, write_memtable: 202µs}}} " +
+		"write_wal: 201µs, write_memtable: 202µs}, scheduler: {process: 0s}}} " +
 		"Resolve_lock_time: 1 Local_latch_wait_time: 1 Write_keys: 1 Write_size: " +
 		"1 Prewrite_region: 1 Txn_retry: 1 Process_keys: 10 Total_keys: 100 Rocksdb_delete_skipped_count: 1 Rocksdb_key_skipped_count: " +
 		"1 Rocksdb_block_cache_hit_count: 1 Rocksdb_block_read_count: 1 Rocksdb_block_read_byte: 100 Rocksdb_block_read_time: 0.001"
@@ -380,7 +438,7 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		"block: {cache_hit_count: 1, read_count: 1, read_byte: 100 Bytes, read_time: 20ms}}}, " +
 		"write_detail: {store_batch_wait: 10µs, propose_send_wait: 20µs, persist_log: {total: 30µs, write_leader_wait: 40µs, " +
 		"sync_log: 45µs, write_memtable: 50µs}, commit_log: 60µs, apply_batch_wait: 70µs, apply: {total:80µs, mutex_lock: 90µs, " +
-		"write_leader_wait: 100µs, write_wal: 101µs, write_memtable: 102µs}}}, resolve_lock: 1s, region_num:5, write_keys:3" +
+		"write_leader_wait: 100µs, write_wal: 101µs, write_memtable: 102µs}, scheduler: {process: 0s}}}, resolve_lock: 1s, region_num:5, write_keys:3" +
 		", write_byte:66, txn_retry:2}"
 	require.Equal(t, expect, stats.String())
 
@@ -450,7 +508,7 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		"{total_process_keys: 10, total_keys: 100, rocksdb: {delete_skipped_count: 1, key_skipped_count: 1, block: " +
 		"{cache_hit_count: 1, read_count: 1, read_byte: 100 Bytes, read_time: 20ms}}}, write_detail: " +
 		"{store_batch_wait: 10µs, propose_send_wait: 20µs, persist_log: {total: 30µs, write_leader_wait: 40µs, sync_log: 45µs, write_memtable: 50µs}, " +
-		"commit_log: 60µs, apply_batch_wait: 70µs, apply: {total:80µs, mutex_lock: 90µs, write_leader_wait: 100µs, write_wal: 101µs, write_memtable: 102µs}}}, " +
+		"commit_log: 60µs, apply_batch_wait: 70µs, apply: {total:80µs, mutex_lock: 90µs, write_leader_wait: 100µs, write_wal: 101µs, write_memtable: 102µs}, scheduler: {process: 0s}}}, " +
 		"lock_rpc:5s, rpc_count:50, retry_count:2}"
 	require.Equal(t, expect, stats.String())
 }
