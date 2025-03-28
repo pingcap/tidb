@@ -108,8 +108,8 @@ func (*aggregationEliminateChecker) tryToSimpleGroupBy(agg *logicalop.LogicalAgg
 			}
 		}
 	}
-	slices.DeleteFunc(agg.GroupByItems, func(expr expression.Expression) bool {
-		return slices.Contains(deleteGroupByItems, expr)
+	agg.GroupByItems = slices.DeleteFunc(agg.GroupByItems, func(expr expression.Expression) bool {
+		return !slices.Contains(deleteGroupByItems, expr)
 	})
 }
 
