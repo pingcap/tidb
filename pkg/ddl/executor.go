@@ -4152,7 +4152,6 @@ func (e *executor) dropTableObject(
 		} else if err != nil {
 			return err
 		}
-		// Only table mode is TableModeNormal can be dropped table
 		if err = checkTableMode(tableInfo); err != nil {
 			return err
 		}
@@ -4347,7 +4346,6 @@ func (e *executor) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Id
 		if tbl.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 			return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Table"))
 		}
-		// Only table mode is TableModeNormal can be renamed table
 		if err = checkTableMode(tbl); err != nil {
 			return err
 		}
@@ -4398,7 +4396,6 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 			if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 				return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Tables"))
 			}
-			// Only table mode is TableModeNormal can be renamed table
 			if err = checkTableMode(t); err != nil {
 				return err
 			}
