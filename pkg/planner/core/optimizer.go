@@ -258,14 +258,9 @@ func CheckTableMode(node *resolve.NodeW) error {
 	default:
 	}
 
-	tableList := ExtractTableList(node, false)
-	for i := range tableList {
-		tb := node.GetResolveContext().GetTableName(tableList[i])
-		if tb == nil {
-			continue
-		}
-		if tb.TableInfo.Mode == model.TableModeImport || tb.TableInfo.Mode == model.TableModeRestore {
-			return infoschema.ErrProtectedTableMode.GenWithStackByArgs(tb.TableName, tb.TableInfo.Mode)
+	for _, tblNameW := range node.GetResolveContext().GetTableNames() {
+		if tblNameW.TableInfo.Mode == model.TableModeImport || tblNameW.TableInfo.Mode == model.TableModeRestore {
+			return infoschema.ErrProtectedTableMode.GenWithStackByArgs(tblNameW.TableName, tblNameW.TableInfo.Mode)
 		}
 	}
 
