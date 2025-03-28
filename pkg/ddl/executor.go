@@ -7031,13 +7031,15 @@ func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 	}
 }
 
-// checkTableMode checks the table mode is TableModeNormal or not.
-// This is a special validation for tablemode during the DDL phase. Originally, reads and writes to non-normal
-// tables were prohibited during the optimize phase of execution plan generation.
-// However, the current approach relies on the `tableNameW` recorded in the ResolveContext
-// during the preprocessing phase to store the tables involved in the statement,
-// and then checks whether the table mode is normal. However, for some statements, `tableNameW` is not recorded as those table might not exists, such as for rename table DDL
-// in the `ResolveContext`, so these statements require special handling during the DDL execution phase.
+// checkTableMode checks the table mode is TableModeNormal or not. This is a
+// special validation for tablemode during the DDL phase. Originally, reads and writes
+// to non-normal tables were prohibited during the optimize phase of execution plan
+// generation. However, the current approach relies on the `tableNameW` recorded
+// in the ResolveContext during the preprocessing phase to store the tables involved
+// in the statement,and then checks whether the table mode is normal. However,
+// for some statements, `tableNameW` is not recorded as those table might not exists,
+// such as for rename table DDL in the `ResolveContext`, so these statements
+// require special handling during the DDL execution phase.
 func checkTableMode(tableInfo table.Table) error {
 	if tableInfo.Meta().Mode != model.TableModeNormal {
 		return infoschema.ErrProtectedTableMode.GenWithStackByArgs(tableInfo.Meta().Name, tableInfo.Meta().Mode)
