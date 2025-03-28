@@ -20,6 +20,7 @@ import (
 	stderr "errors"
 	"fmt"
 	"hash/crc32"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -49,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"go.uber.org/zap"
-	"slices"
 )
 
 const (

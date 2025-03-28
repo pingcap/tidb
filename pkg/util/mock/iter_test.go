@@ -14,11 +14,11 @@
 package mock
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/stretchr/testify/assert"
-	"slices"
 )
 
 func newSliceIterWithCopy(data []*kv.Entry) *SliceIter {

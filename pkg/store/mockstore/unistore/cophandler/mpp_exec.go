@@ -20,6 +20,7 @@ import (
 	"hash/fnv"
 	"io"
 	"math"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -43,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikvrpc"
-	"slices"
 )
 
 var (

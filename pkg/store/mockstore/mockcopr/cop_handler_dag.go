@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"slices"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -48,7 +49,6 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
-	"slices"
 )
 
 var dummySlice = make([]byte, 0)

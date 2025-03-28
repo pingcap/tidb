@@ -15,11 +15,12 @@
 package context
 
 import (
+	"maps"
+
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
-	"maps"
 )
 
 // RangerContext is the context used to build range.

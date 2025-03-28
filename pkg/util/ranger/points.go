@@ -18,6 +18,7 @@ import (
 	"cmp"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 
 	"github.com/pingcap/errors"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
-	"slices"
 )
 
 // RangeType is alias for int.

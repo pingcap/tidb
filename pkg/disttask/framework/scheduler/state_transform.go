@@ -15,8 +15,9 @@
 package scheduler
 
 import (
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"slices"
+
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 )
 
 // VerifyTaskStateTransform verifies whether the task state transform is valid.
