@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 )
@@ -157,11 +156,6 @@ func UpdateStatsMeta(
 		if _, err = statsutil.ExecWithCtx(ctx, sctx, sql); err != nil {
 			return err
 		}
-	}
-
-	// Invalidate cache for all unlocked tables
-	for _, id := range cacheInvalidateIDs {
-		cache.TableRowStatsCache.Invalidate(id)
 	}
 
 	return nil
