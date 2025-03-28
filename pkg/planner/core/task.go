@@ -1350,13 +1350,13 @@ func inheritStatsFromBottomForIndexJoinInner(p base.PhysicalPlan, t base.Task) {
 		indexJoinInfo = v.IndexJoinInfo
 	default:
 	}
-	var isIndexJoinOrApplyItSelf bool
+	var isIndexJoinOrApply bool
 	switch p.(type) {
 	case *PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin, *PhysicalApply:
-		isIndexJoinOrApplyItSelf = true
+		isIndexJoinOrApply = true
 	default:
 	}
-	if !isIndexJoinOrApplyItSelf && indexJoinInfo != nil {
+	if !isIndexJoinOrApply && indexJoinInfo != nil {
 		switch p.(type) {
 		case *PhysicalSelection:
 			// same as logicalSelection
