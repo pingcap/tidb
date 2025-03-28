@@ -154,7 +154,7 @@ func EncodeBytesDesc(b []byte, data []byte) []byte {
 
 // DecodeBytesDesc decodes bytes which is encoded by EncodeBytesDesc before,
 // returns the leftover bytes and decoded value if no error.
-func DecodeBytesDesc(b []byte, buf []byte) ([]byte, []byte, error) {
+func DecodeBytesDesc(b []byte, buf []byte) (_, _ []byte, _ error) {
 	return decodeBytes(b, buf, true)
 }
 
