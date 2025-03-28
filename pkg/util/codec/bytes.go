@@ -87,7 +87,7 @@ func EncodedBytesLength(dataLen int) int {
 	return dataLen + padCount + 1 + dataLen/encGroupSize
 }
 
-func decodeBytes(b []byte, buf []byte, reverse bool) ([]byte, []byte, error) {
+func decodeBytes(b []byte, buf []byte, reverse bool) (_, _ []byte, _ error) {
 	if buf == nil {
 		buf = make([]byte, 0, len(b))
 	}
@@ -139,7 +139,7 @@ func decodeBytes(b []byte, buf []byte, reverse bool) ([]byte, []byte, error) {
 // DecodeBytes decodes bytes which is encoded by EncodeBytes before,
 // returns the leftover bytes and decoded value if no error.
 // `buf` is used to buffer data to avoid the cost of makeslice in decodeBytes when DecodeBytes is called by Decoder.DecodeOne.
-func DecodeBytes(b []byte, buf []byte) ([]byte, []byte, error) {
+func DecodeBytes(b []byte, buf []byte) (_, _ []byte, _ error) {
 	return decodeBytes(b, buf, false)
 }
 
