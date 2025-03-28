@@ -5932,13 +5932,13 @@ def go_deps():
         name = "com_github_pingcap_tipb",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/tipb",
-        sha256 = "5e3c8c9f5adf83237863bc50dce280037646c4e9d8f2d68980d484f9c8263d1d",
-        strip_prefix = "github.com/pingcap/tipb@v0.0.0-20250321085733-a91a8fafd4ed",
+        sha256 = "48fc87928844868ef203f3d3941ee092bc3f73b1154471a07a1d55ec460d9c32",
+        strip_prefix = "github.com/EricZequan/tipb@v0.0.0-20250326091523-d79d4d685876",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20250321085733-a91a8fafd4ed.zip",
-            "http://ats.apps.svc/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20250321085733-a91a8fafd4ed.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20250321085733-a91a8fafd4ed.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20250321085733-a91a8fafd4ed.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/EricZequan/tipb/com_github_ericzequan_tipb-v0.0.0-20250326091523-d79d4d685876.zip",
+            "http://ats.apps.svc/gomod/github.com/EricZequan/tipb/com_github_ericzequan_tipb-v0.0.0-20250326091523-d79d4d685876.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/EricZequan/tipb/com_github_ericzequan_tipb-v0.0.0-20250326091523-d79d4d685876.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/EricZequan/tipb/com_github_ericzequan_tipb-v0.0.0-20250326091523-d79d4d685876.zip",
         ],
     )
     go_repository(
