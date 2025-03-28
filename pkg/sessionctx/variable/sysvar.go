@@ -185,7 +185,7 @@ var defaultSysVars = []*SysVar{
 			return normalizedValue, nil
 		},
 		SetSession: func(s *SessionVars, val string) error {
-			s.TiFlashUseHashJoinV2 = joinversion.IsOptimizedVersion(val)
+			s.TiFlashHashJoinVersion = val
 			return nil
 		},
 	},

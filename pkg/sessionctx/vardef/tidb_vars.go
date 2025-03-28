@@ -1348,7 +1348,6 @@ const (
 	DefTiFlashMemQuotaQueryPerNode          = 0
 	DefTiFlashQuerySpillRatio               = 0.7
 	DefTiFlashHashJoinVersion               = joinversion.TiFlashHashJoinVersionDefVal
-	DefTiFlashUseHashJoinV2                 = joinversion.TiFlashUseHashJoinV2DefVal
 	DefTiDBEnableTiFlashPipelineMode        = true
 	DefTiDBMPPStoreFailTTL                  = "60s"
 	DefTiDBTxnMode                          = PessimisticTxnMode

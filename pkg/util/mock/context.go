@@ -260,7 +260,7 @@ func (c *Context) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 		TiFlashMaxBytesBeforeExternalSort:    vars.TiFlashMaxBytesBeforeExternalSort,
 		TiFlashMaxQueryMemoryPerNode:         vars.TiFlashMaxQueryMemoryPerNode,
 		TiFlashQuerySpillRatio:               vars.TiFlashQuerySpillRatio,
-		TiFlashUseHashJoinV2:                 vars.TiFlashUseHashJoinV2,
+		TiFlashHashJoinVersion:               vars.TiFlashHashJoinVersion,
 		ResourceGroupName:                    sc.ResourceGroupName,
 		ExecDetails:                          &sc.SyncExecDetails,
 	}

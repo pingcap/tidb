@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
+	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -136,7 +137,7 @@ func SetTiFlashConfVarsInContext(ctx context.Context, dctx *distsqlctx.DistSQLCo
 		ctx = metadata.AppendToOutgoingContext(ctx, vardef.TiFlashMemQuotaQueryPerNode, strconv.FormatInt(dctx.TiFlashMaxQueryMemoryPerNode, 10))
 	}
 	ctx = metadata.AppendToOutgoingContext(ctx, vardef.TiFlashQuerySpillRatio, strconv.FormatFloat(dctx.TiFlashQuerySpillRatio, 'f', -1, 64))
-	ctx = metadata.AppendToOutgoingContext(ctx, "tiflash_use_hash_join_v2", strconv.FormatBool(dctx.TiFlashUseHashJoinV2))
+	ctx = metadata.AppendToOutgoingContext(ctx, "tiflash_use_hash_join_v2", strconv.FormatBool(joinversion.IsOptimizedVersion(dctx.TiFlashHashJoinVersion)))
 	return ctx
 }
 

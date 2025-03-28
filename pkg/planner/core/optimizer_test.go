@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -166,7 +167,7 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	const expStreamCount int64 = 8
 	sctx := MockContext()
 	sctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount = expStreamCount
-	sctx.GetSessionVars().TiFlashUseHashJoinV2 = false
+	sctx.GetSessionVars().TiFlashHashJoinVersion = joinversion.HashJoinVersionLegacy
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()

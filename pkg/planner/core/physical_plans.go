@@ -21,6 +21,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -1506,7 +1507,7 @@ func (p *PhysicalHashJoin) CanUseHashJoinV2() bool {
 // CanTiFlashUseHashJoinV2 returns if current join is supported by hash join v2 in TiFlash
 func (p *PhysicalHashJoin) CanTiFlashUseHashJoinV2(sctx base.PlanContext) bool {
 	vars := sctx.GetSessionVars()
-	if !vars.TiFlashUseHashJoinV2 {
+	if !joinversion.IsOptimizedVersion(vars.TiFlashHashJoinVersion) {
 		return false
 	}
 	// spill is not supported yet
