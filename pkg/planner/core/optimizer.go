@@ -259,7 +259,7 @@ func CheckTableMode(node *resolve.NodeW) error {
 	}
 
 	for _, tblNameW := range node.GetResolveContext().GetTableNames() {
-		if tblNameW.TableInfo.Mode == model.TableModeImport || tblNameW.TableInfo.Mode == model.TableModeRestore {
+		if tblNameW.TableInfo.Mode != model.TableModeNormal {
 			return infoschema.ErrProtectedTableMode.GenWithStackByArgs(tblNameW.TableName, tblNameW.TableInfo.Mode)
 		}
 	}

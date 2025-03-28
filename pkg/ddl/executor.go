@@ -5714,7 +5714,7 @@ func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTabl
 	if !ok {
 		return infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(table.Meta().Mode, args.TableMode, table.Meta().Name.O)
 	}
-	if table.Meta().Mode == model.TableModeNormal && args.TableMode == model.TableModeNormal {
+	if table.Meta().Mode == args.TableMode {
 		return nil
 	}
 
