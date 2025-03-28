@@ -114,7 +114,13 @@ go_test(
         "//pkg/meta/autoid",
         "//pkg/parser",
         "//pkg/parser/ast",
+<<<<<<< HEAD
         "//pkg/parser/model",
+=======
+        "//pkg/planner/core",
+        "//pkg/session",
+        "//pkg/store/driver/error",
+>>>>>>> 6e5a6d2a93f (importinto: check retryable schedule error (#60320))
         "//pkg/testkit",
         "//pkg/util/logutil",
         "//pkg/util/mock",
