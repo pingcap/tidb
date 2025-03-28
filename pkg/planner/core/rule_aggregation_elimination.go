@@ -80,11 +80,6 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *logicalop.L
 	if coveredByUniqueKey {
 		if a.oldAggEliminationCheck && !CheckCanConvertAggToProj(agg) {
 			return nil
-		} else {
-			agg.GroupByItems = slices.DeleteFunc(agg.GroupByItems, func(expr expression.Expression) bool {
-				return schemaByGroupby.ColumnsIndices(uniqueKey) == nil
-			})
-			return nil
 		}
 		// GroupByCols has unique key, so this aggregation can be removed.
 		if ok, proj := ConvertAggToProj(agg, agg.Schema()); ok {
@@ -97,6 +92,10 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *logicalop.L
 }
 
 func (*aggregationEliminateChecker) tryToSimpleGroupBy(agg *logicalop.LogicalAggregation) {
+	if !agg.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("here")
+	}
+	deleteGroupByItems := make([]expression.Expression, 0, len(agg.GroupByItems))
 	for _, groupby := range agg.GroupByItems {
 		cols, ok := groupby.(*expression.Column)
 		if !ok {
@@ -104,12 +103,14 @@ func (*aggregationEliminateChecker) tryToSimpleGroupBy(agg *logicalop.LogicalAgg
 		}
 		groupBySchema := expression.NewSchema(cols)
 		for _, key := range agg.Schema().PKOrUK {
-			if groupBySchema.ColumnsIndices(key) != nil {
-
+			if groupBySchema.ColumnsIndices(key) != nil && !agg.SCtx().GetSessionVars().InRestrictedSQL {
+				deleteGroupByItems = append(deleteGroupByItems, groupby)
 			}
 		}
-
 	}
+	agg.GroupByItems = slices.DeleteFunc(agg.GroupByItems, func(expr expression.Expression) bool {
+		return !slices.Contains(deleteGroupByItems, expr)
+	})
 }
 
 // tryToEliminateDistinct will eliminate distinct in the aggregation function if the aggregation args
