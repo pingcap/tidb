@@ -1406,7 +1406,7 @@ func TestVisitInfo(t *testing.T) {
 		{
 			sql: `show create table test.ttt`,
 			ans: []visitInfo{
-				{mysql.AllPrivMask&(^mysql.CreateTMPTablePriv), "test", "ttt", "", nil, false, nil, false},
+				{mysql.AllPrivMask & (^mysql.CreateTMPTablePriv), "test", "ttt", "", nil, false, nil, false},
 			},
 		},
 		{
