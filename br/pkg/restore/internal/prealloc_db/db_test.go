@@ -29,6 +29,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type testAllocator int64
+
+func (t *testAllocator) GetGlobalID() (int64, error) {
+	return int64(*t), nil
+}
+
+func (t *testAllocator) AdvanceGlobalIDs(n int) (int64, error) {
+	old := int64(*t)
+	*t = testAllocator(int64(*t) + int64(n))
+	return old, nil
+}
+
 func TestRestoreAutoIncID(t *testing.T) {
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
@@ -551,6 +563,7 @@ func TestDB_ExecDDL2(t *testing.T) {
 
 func TestCreateTableConsistent(t *testing.T) {
 	ctx := context.Background()
+	allocator := testAllocator(0)
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
 	tk.MustExec("use test")
@@ -574,6 +587,13 @@ func TestCreateTableConsistent(t *testing.T) {
 	dbInfo, seqInfo := getTableInfo("s")
 	tk.MustExec("drop sequence test.s;")
 
+	preallocId := func(tables []*metautil.Table) {
+		ids := prealloctableid.New(tables)
+		ids.Alloc(&allocator)
+		db.RegisterPreallocatedIDs(ids)
+		allocator += testAllocator(len(tables))
+	}
+
 	newSeqInfo := seqInfo.Clone()
 	newSeqInfo.ID += 100
 	newTables := []*metautil.Table{
@@ -582,6 +602,8 @@ func TestCreateTableConsistent(t *testing.T) {
 			Info: newSeqInfo,
 		},
 	}
+
+	preallocId(newTables)
 	err = db.CreateTables(ctx, newTables, nil, false, nil)
 	require.NoError(t, err)
 	r11 := tk.MustQuery("select nextval(s)").Rows()
@@ -592,6 +614,7 @@ func TestCreateTableConsistent(t *testing.T) {
 	newSeqInfo = seqInfo.Clone()
 	newSeqInfo.ID += 100
 	newTable := &metautil.Table{DB: dbInfo.Clone(), Info: newSeqInfo}
+	preallocId(newTables)
 	err = db.CreateTable(ctx, newTable, nil, false, nil)
 	require.NoError(t, err)
 	r21 := tk.MustQuery("select nextval(s)").Rows()
@@ -623,6 +646,7 @@ func TestCreateTableConsistent(t *testing.T) {
 			Info: newViewInfo,
 		},
 	}
+	preallocId(newTables)
 	err = db.CreateTables(ctx, newTables, nil, false, nil)
 	require.NoError(t, err)
 	r11 = tk.MustQuery("show create table t;").Rows()
@@ -634,11 +658,13 @@ func TestCreateTableConsistent(t *testing.T) {
 	newTblInfo = tblInfo.Clone()
 	newTblInfo.ID += 200
 	newTable = &metautil.Table{DB: dbInfo.Clone(), Info: newTblInfo}
+	preallocId(newTables)
 	err = db.CreateTable(ctx, newTable, nil, false, nil)
 	require.NoError(t, err)
 	newViewInfo = viewInfo.Clone()
 	newViewInfo.ID += 200
 	newTable = &metautil.Table{DB: dbInfo.Clone(), Info: newViewInfo}
+	preallocId(newTables)
 	err = db.CreateTable(ctx, newTable, nil, false, nil)
 	require.NoError(t, err)
 

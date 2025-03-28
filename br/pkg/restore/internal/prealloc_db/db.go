@@ -298,12 +298,12 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 					zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))
 				table.Info.ClearPlacement()
 			} else {
-				if err := db.ensureTablePlacementPolicies(ctx, table.Info, policyMap); err != nil {
+				if err := db.ensureTablePlacementPolicies(ctx, infoClone, policyMap); err != nil {
 					return errors.Trace(err)
 				}
 			}
 
-			if ttlInfo := table.Info.TTLInfo; ttlInfo != nil {
+			if ttlInfo := infoClone.TTLInfo; ttlInfo != nil {
 				ttlInfo.Enable = false
 			}
 		}
@@ -335,12 +335,12 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
 			zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))
 		table.Info.ClearPlacement()
 	} else {
-		if err := db.ensureTablePlacementPolicies(ctx, table.Info, policyMap); err != nil {
+		if err := db.ensureTablePlacementPolicies(ctx, infoClone, policyMap); err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	if ttlInfo := table.Info.TTLInfo; ttlInfo != nil {
+	if ttlInfo := infoClone.TTLInfo; ttlInfo != nil {
 		ttlInfo.Enable = false
 	}
 
