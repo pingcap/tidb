@@ -168,7 +168,7 @@ type Domain struct {
 	// advancedSysSessionPool is a more powerful session pool that returns a wrapped session which can detect
 	// some miss-use of the session to avoid potential bugs.
 	// It is recommended to use this pool instead of `sysSessionPool`.
-	advancedSysSessionPool *syssession.Pool
+	advancedSysSessionPool *syssession.AdvancedSessionPool
 	// Note: If you no longer need the session, you must call Destroy to release it.
 	// Otherwise, the session will be leaked. Because there is a strong reference from the domain to the session.
 	// Deprecated: Use `advancedSysSessionPool` instead.
@@ -1311,6 +1311,7 @@ func (do *Domain) Close() {
 	}
 
 	do.sysSessionPool.Close()
+	do.advancedSysSessionPool.Close()
 	variable.UnregisterStatistics(do.BindingHandle())
 	if do.onClose != nil {
 		do.onClose()
@@ -1376,7 +1377,7 @@ func NewDomainWithEtcdClient(store kv.Storage, schemaLease time.Duration, statsL
 		mdlCheckCh: make(chan struct{}),
 	}
 
-	do.advancedSysSessionPool = syssession.NewPool(capacity, func() (syssession.SessionContext, error) {
+	do.advancedSysSessionPool = syssession.NewAdvancedSessionPool(capacity, func() (syssession.SessionContext, error) {
 		r, err := factory()
 		if err != nil {
 			return nil, err
@@ -1907,7 +1908,7 @@ func (do *Domain) SysSessionPool() util.DestroyableSessionPool {
 // AdvancedSysSessionPool is a more powerful session pool that returns a wrapped session which can detect
 // some miss-use of the session to avoid potential bugs.
 // It is recommended to use this pool instead of `sysSessionPool`.
-func (do *Domain) AdvancedSysSessionPool() *syssession.Pool {
+func (do *Domain) AdvancedSysSessionPool() syssession.Pool {
 	return do.advancedSysSessionPool
 }
 

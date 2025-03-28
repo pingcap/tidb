@@ -31,8 +31,19 @@ const PoolMaxSize int = 1024 * 1024 * 1024
 // Factory is a function to create a new session context
 type Factory func() (SessionContext, error)
 
-// Pool is a recyclable resource pool for the system internal session.
-type Pool struct {
+// Pool is an interface for system internal session pool.
+type Pool interface {
+	// Get gets a session from the session pool.
+	Get() (*Session, error)
+	// Put puts the session back to the pool.
+	Put(*Session)
+	// WithSession executes the input function with the session.
+	// After the function called, the session will be returned to the pool automatically.
+	WithSession(func(*Session) error) error
+}
+
+// AdvancedSessionPool is a recyclable resource pool for the system internal session.
+type AdvancedSessionPool struct {
 	noopOwnerHook
 	ctx     context.Context
 	cancel  context.CancelFunc
@@ -44,8 +55,8 @@ type Pool struct {
 	}
 }
 
-// NewPool creates a new session pool with the given capacity and factory function.
-func NewPool(capacity int, factory Factory) *Pool {
+// NewAdvancedSessionPool creates a default session pool with the given capacity and factory function.
+func NewAdvancedSessionPool(capacity int, factory Factory) *AdvancedSessionPool {
 	intest.AssertNotNil(factory)
 	if capacity < 0 || capacity > PoolMaxSize {
 		intest.Assert(suppressAssertInTest, "invalid capacity: %d", capacity)
@@ -54,7 +65,7 @@ func NewPool(capacity int, factory Factory) *Pool {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
-	return &Pool{
+	return &AdvancedSessionPool{
 		ctx:     ctx,
 		cancel:  cancel,
 		pool:    make(chan *session, capacity),
@@ -62,7 +73,7 @@ func NewPool(capacity int, factory Factory) *Pool {
 	}
 }
 
-func (p *Pool) getInternal() (s *session, _ error) {
+func (p *AdvancedSessionPool) getInternal() (s *session, _ error) {
 	select {
 	case r, ok := <-p.pool:
 		if !ok {
@@ -90,7 +101,7 @@ func (p *Pool) getInternal() (s *session, _ error) {
 }
 
 // Get gets a session from the session pool.
-func (p *Pool) Get() (*Session, error) {
+func (p *AdvancedSessionPool) Get() (*Session, error) {
 	internal, err := p.getInternal()
 	if err != nil {
 		return nil, err
@@ -115,7 +126,7 @@ func (p *Pool) Get() (*Session, error) {
 }
 
 // Put puts the session back to the pool.
-func (p *Pool) Put(se *Session) {
+func (p *AdvancedSessionPool) Put(se *Session) {
 	if se == nil || se.internal == nil || se.internal.Owner() != se {
 		// Do nothing when the input session is invalid.
 		return
@@ -197,17 +208,30 @@ func (p *Pool) Put(se *Session) {
 
 // WithSession executes the input function with the session.
 // After the function called, the session will be returned to the pool automatically.
-func (p *Pool) WithSession(fn func(*Session) error) error {
+func (p *AdvancedSessionPool) WithSession(fn func(*Session) error) error {
 	se, err := p.Get()
 	if err != nil {
 		return err
 	}
-	defer p.Put(se)
-	return fn(se)
+
+	success := false
+	defer func() {
+		if success {
+			p.Put(se)
+		} else {
+			se.Close()
+		}
+	}()
+
+	if err = fn(se); err != nil {
+		return err
+	}
+	success = true
+	return nil
 }
 
 // Close closes the pool to release all resources.
-func (p *Pool) Close() {
+func (p *AdvancedSessionPool) Close() {
 	p.mu.Lock()
 	if p.mu.closed {
 		p.mu.Unlock()
@@ -225,7 +249,7 @@ func (p *Pool) Close() {
 }
 
 // IsClosed returns whether the pool is closed
-func (p *Pool) IsClosed() bool {
+func (p *AdvancedSessionPool) IsClosed() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.mu.closed

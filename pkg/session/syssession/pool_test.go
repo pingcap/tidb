@@ -40,7 +40,7 @@ func TestNewSessionPool(t *testing.T) {
 		return &mockSessionContext{}, nil
 	}
 
-	p := NewPool(128, factory)
+	p := NewAdvancedSessionPool(128, factory)
 	require.NotNil(t, p)
 	require.Equal(t, 128, cap(p.pool))
 	require.Equal(t, 0, len(p.pool))
@@ -49,24 +49,24 @@ func TestNewSessionPool(t *testing.T) {
 	require.NoError(t, p.ctx.Err())
 
 	// pool with PoolMaxSize
-	p = NewPool(PoolMaxSize, factory)
+	p = NewAdvancedSessionPool(PoolMaxSize, factory)
 	require.Equal(t, PoolMaxSize, cap(p.pool))
 	require.False(t, p.IsClosed())
 
 	// pool with zero-size, it means always return a new session
-	p = NewPool(0, factory)
+	p = NewAdvancedSessionPool(0, factory)
 	require.Equal(t, 0, cap(p.pool))
 	require.False(t, p.IsClosed())
 
 	// test pool size limit
 	WithSuppressAssert(func() {
-		p = NewPool(PoolMaxSize+1, factory)
+		p = NewAdvancedSessionPool(PoolMaxSize+1, factory)
 		require.Equal(t, PoolMaxSize, cap(p.pool))
 		require.False(t, p.IsClosed())
 	})
 
 	WithSuppressAssert(func() {
-		p = NewPool(-1, factory)
+		p = NewAdvancedSessionPool(-1, factory)
 		require.Equal(t, PoolMaxSize, cap(p.pool))
 		require.False(t, p.IsClosed())
 	})
@@ -74,7 +74,7 @@ func TestNewSessionPool(t *testing.T) {
 
 func TestSessionPoolGet(t *testing.T) {
 	mockFactory := &mockSessionFactory{}
-	p := NewPool(128, mockFactory.create)
+	p := NewAdvancedSessionPool(128, mockFactory.create)
 
 	// get a new Session from pool
 	sctx := &mockSessionContext{}
@@ -134,7 +134,7 @@ func TestSessionPoolGet(t *testing.T) {
 func TestSessionPoolPut(t *testing.T) {
 	mockFactory := &mockSessionFactory{}
 	poolCap := 4
-	p := NewPool(poolCap, mockFactory.create)
+	p := NewAdvancedSessionPool(poolCap, mockFactory.create)
 	require.Equal(t, 4, cap(p.pool))
 	// Put invalid Session
 	p.Put(nil)
@@ -351,73 +351,73 @@ func TestSessionPoolWithSession(t *testing.T) {
 	factory := &mockSessionFactory{}
 	capacity := 8
 	sctx := &mockSessionContext{}
-	p := NewPool(capacity, factory.create)
+	p := NewAdvancedSessionPool(capacity, factory.create)
 
 	var called atomic.Bool
 	fn := func(err error, panicS string) func(*Session) error {
+		sctx.On("StoreInternalSession", sctx).Once()
 		return func(se *Session) error {
 			factory.AssertExpectations(t)
 			sctx.AssertExpectations(t)
 			require.Zero(t, len(p.pool))
 			require.True(t, called.CompareAndSwap(false, true))
 			sctx.On("DeleteInternalSession", sctx).Once()
-			sctx.MockNoPendingTxn()
-			sctx.MockResetState(p.ctx, "")
 			if panicS != "" {
+				sctx.On("Close").Once()
 				panic(panicS)
 			}
-			return err
+
+			if err != nil {
+				sctx.On("Close").Once()
+				return err
+			}
+
+			sctx.MockNoPendingTxn()
+			sctx.MockResetState(p.ctx, "")
+			return nil
 		}
 	}
 
 	// success case
 	require.Zero(t, len(p.pool))
 	factory.On("create").Return(sctx, nil).Once()
-	sctx.On("StoreInternalSession", sctx).Once()
 	err := p.WithSession(fn(nil, ""))
 	require.Nil(t, err)
 	require.True(t, called.CompareAndSwap(true, false))
 	sctx.AssertExpectations(t)
+	require.Equal(t, 1, len(p.pool))
 
 	// error case
-	require.Equal(t, 1, len(p.pool))
-	sctx.On("StoreInternalSession", sctx).Once()
 	err = p.WithSession(fn(errors.New("mockErr1"), ""))
 	require.EqualError(t, err, "mockErr1")
 	require.True(t, called.CompareAndSwap(true, false))
 	sctx.AssertExpectations(t)
+	require.Zero(t, len(p.pool))
 
 	// panic case
-	require.Equal(t, 1, len(p.pool))
-	sctx.On("StoreInternalSession", sctx).Once()
+	factory.On("create").Return(sctx, nil).Once()
 	require.PanicsWithValue(t, "mockPanic1", func() {
 		_ = p.WithSession(fn(nil, "mockPanic1"))
 	})
 	require.True(t, called.CompareAndSwap(true, false))
 	sctx.AssertExpectations(t)
-
-	// clear pool
-	sctx.On("StoreInternalSession", sctx).Once()
-	se, err := p.Get()
-	require.NoError(t, err)
 	require.Zero(t, len(p.pool))
-	sctx.On("DeleteInternalSession", sctx).Once()
-	sctx.On("Close").Once()
-	se.Close()
-	sctx.AssertExpectations(t)
 
 	// p.Get returns error, the function should not be called
 	factory.On("create").Return(nil, errors.New("mockErr2")).Once()
-	err = p.WithSession(fn(nil, ""))
+	err = p.WithSession(func(*Session) error {
+		require.FailNow(t, "should not be called")
+		return nil
+	})
 	require.EqualError(t, err, "mockErr2")
 	factory.AssertExpectations(t)
-	require.False(t, called.Load())
+	require.Zero(t, len(p.pool))
 }
 
 func TestSessionPoolClose(t *testing.T) {
 	factory := &mockSessionFactory{}
 	capacity := 8
-	p := NewPool(capacity, factory.create)
+	p := NewAdvancedSessionPool(capacity, factory.create)
 
 	// make a pool with some sessions
 	sctxs := make([]*mockSessionContext, capacity)
