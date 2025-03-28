@@ -1067,7 +1067,6 @@ func (e *executor) createTableWithInfoJob(
 			if tbInfo.Mode == model.TableModeRestore {
 				oldTableMode := oldTable.Meta().Mode
 				if oldTableMode != model.TableModeRestore {
-					// Indeed this is not a conversion problem but an inconsistency problem.
 					return nil, infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(oldTableMode, tbInfo.Mode, tbInfo.Name)
 				}
 			}
