@@ -110,8 +110,8 @@ require (
 	github.com/stretchr/testify v1.10.0
 	github.com/tdakkota/asciicheck v0.3.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20250311021513-34130b733a03
-	github.com/tikv/pd/client v0.0.0-20250311030855-e245c1fb30c9
+	github.com/tikv/client-go/v2 v2.0.8-0.20250319060800-599e671b3a15
+	github.com/tikv/pd/client v0.0.0-20250318085533-e8050f72d00d
 	github.com/timakin/bodyclose v0.0.0-20241017074812-ed6a65f985e3
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
