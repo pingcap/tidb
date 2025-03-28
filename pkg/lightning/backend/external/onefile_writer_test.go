@@ -215,8 +215,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		common.OnDuplicateKeyIgnore,
 	))
 
-	keys := make([][]byte, 0, kvCount)
-	values := make([][]byte, 0, kvCount)
+	kvs := make([]kvPair, 0, kvCount)
 
 	kvReader, err := NewKVReader(ctx, "/test2/mergeID/one-file", memStore, 0, 100)
 	require.NoError(t, err)
@@ -227,8 +226,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		copy(clonedKey, key)
 		clonedVal := make([]byte, len(value))
 		copy(clonedVal, value)
-		keys = append(keys, clonedKey)
-		values = append(values, clonedVal)
+		kvs = append(kvs, kvPair{key: clonedKey, value: clonedVal})
 	}
 	_, _, err = kvReader.NextKV()
 	require.Equal(t, io.EOF, err)
@@ -243,8 +241,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		duplicateDetection: true,
 		duplicateDB:        db,
 		dupDetectOpt:       common.DupDetectOpt{ReportErrOnDup: true},
-		keys:               keys,
-		values:             values,
+		kvs:                kvs,
 		ts:                 123,
 	}
 	pool := membuf.NewPool()
