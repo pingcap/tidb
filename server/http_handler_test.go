@@ -31,6 +31,7 @@ import (
 	"net/http/httptest"
 	"net/http/httputil"
 	"sort"
+	"sync"
 	"testing"
 	"time"
 
@@ -1220,6 +1221,7 @@ func TestSetLabelsWithEtcd(t *testing.T) {
 	ts.startServer(t)
 	defer ts.stopServer(t)
 
+	time.Sleep(time.Second)
 	integration.BeforeTestExternal(t)
 	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer cluster.Terminate(t)
@@ -1306,6 +1308,69 @@ func TestSetLabelsConcurrentWithGetLabel(t *testing.T) {
 		testUpdateLabels()
 	}
 	close(done)
+
+	// reset the global variable
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Labels = map[string]string{}
+	})
+}
+
+func TestSetLabelsConcurrentWithStoreTopology(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	time.Sleep(time.Second)
+	integration.BeforeTestExternal(t)
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+	client := cluster.RandClient()
+	infosync.SetEtcdClient(client)
+
+	ts.domain.InfoSyncer().Restart(ctx)
+	ts.domain.InfoSyncer().RestartTopology(ctx)
+
+	testUpdateLabels := func() {
+		labels := map[string]string{}
+		labels["zone"] = fmt.Sprintf("z-%v", rand.Intn(100000))
+		buffer := bytes.NewBuffer([]byte{})
+		require.Nil(t, json.NewEncoder(buffer).Encode(labels))
+		resp, err := ts.postStatus("/labels", "application/json", buffer)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		defer func() {
+			require.NoError(t, resp.Body.Close())
+		}()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		newLabels := config.GetGlobalConfig().Labels
+		require.Equal(t, newLabels, labels)
+	}
+	testStoreTopology := func() {
+		require.NoError(t, ts.domain.InfoSyncer().StoreTopologyInfo(context.Background()))
+	}
+
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				testStoreTopology()
+			}
+		}
+	}()
+	for i := 0; i < 100; i++ {
+		testUpdateLabels()
+	}
+	close(done)
+	wg.Wait()
 
 	// reset the global variable
 	config.UpdateGlobal(func(conf *config.Config) {
