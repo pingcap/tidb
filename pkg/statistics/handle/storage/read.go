@@ -661,6 +661,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 			zap.Int64("tableID", col.TableID),
 			zap.Int64("columnID", col.ID),
 		)
+		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 		return nil
 	}
 	// When lite-init-stats is disabled, we cannot store the column info in the ColAndIdxExistenceMap.
@@ -675,6 +676,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 			zap.Int64("tableID", col.TableID),
 			zap.Int64("columnID", col.ID),
 		)
+		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 		return nil
 	}
 	tblInfo := tbl.Meta()
@@ -800,6 +802,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 			zap.Int64("tableID", idx.TableID),
 			zap.Int64("indexID", idx.ID),
 		)
+		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 		return nil
 	}
 	_, loadNeeded := tbl.IndexIsLoadNeeded(idx.ID)
@@ -827,6 +830,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 			zap.Int64("tableID", idx.TableID),
 			zap.Int64("indexID", idx.ID),
 		)
+		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 		return nil
 	}
 	idxInfo := tblInfo.Meta().FindIndexByID(idx.ID)
@@ -838,7 +842,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 			zap.Int64("indexID", idx.ID),
 		)
 		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
-		return errors.NotFoundf("index %d in table %d", idx.ID, idx.TableID)
+		return nil
 	}
 	hg, err := HistogramFromStorageWithPriority(sctx, idx.TableID, idx.ID, types.NewFieldType(mysql.TypeBlob), hgMeta.NDV, 1, hgMeta.LastUpdateVersion, hgMeta.NullCount, hgMeta.TotColSize, hgMeta.Correlation, kv.PriorityHigh)
 	if err != nil {
