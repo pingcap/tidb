@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	math2 "math"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -66,7 +67,6 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"go.uber.org/zap"
-	"slices"
 )
 
 // GlobalWithoutColumnPos marks the index has no partition column.
@@ -1963,7 +1963,12 @@ func isExprHasSubQuery(expr ast.Node) bool {
 }
 
 func checkIfAssignmentListHasSubQuery(list []*ast.Assignment) bool {
-	return slices.ContainsFunc(list, isExprHasSubQuery)
+	for _, a := range list {
+		if isExprHasSubQuery(a) {
+			return true
+		}
+	}
+	return false
 }
 
 func tryUpdatePointPlan(ctx base.PlanContext, updateStmt *ast.UpdateStmt, resolveCtx *resolve.Context) base.Plan {

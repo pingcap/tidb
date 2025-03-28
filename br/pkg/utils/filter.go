@@ -16,11 +16,10 @@ package utils
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 	"strings"
 
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
-	"slices"
 )
 
 // PiTRIdTracker tracks all the DB and tables ids that need to restore in a PiTR

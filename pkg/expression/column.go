@@ -877,7 +877,12 @@ func SortColumns(cols []*Column) []*Column {
 
 // InColumnArray check whether the col is in the cols array
 func (col *Column) InColumnArray(cols []*Column) bool {
-	return slices.ContainsFunc(cols, col.EqualColumn)
+	for _, c := range cols {
+		if col.EqualColumn(c) {
+			return true
+		}
+	}
+	return false
 }
 
 // GcColumnExprIsTidbShard check whether the expression is tidb_shard()
