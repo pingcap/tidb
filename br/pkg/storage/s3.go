@@ -347,9 +347,10 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 		request.WithRetryer(awsConfig, defaultS3Retryer())
 	}
 
-	// for aws provider we cannot set global endpoint
-	// if set, it will make AssumeRoleWithWebIdentity failed.
-	// see https://github.com/aws/aws-sdk-go/issues/3972
+	// ⚠️ Do NOT set a global endpoint in the AWS config.
+	// Setting a global endpoint will break AssumeRoleWithWebIdentity,
+	// as it overrides the STS endpoint and causes authentication to fail.
+	// See: https://github.com/aws/aws-sdk-go/issues/3972
 	if len(qs.Endpoint) != 0 && qs.Provider != "aws" {
 		awsConfig.WithEndpoint(qs.Endpoint)
 	}
