@@ -437,7 +437,7 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 
 				if memSize >= DefaultMemSizeLimit {
 					memSize = 0
-					w.kvStore.Close()
+					w.kvStore.finish()
 					encodedStat := w.rc.encode()
 					_, err := w.statWriter.Write(ctx, encodedStat)
 					if err != nil {

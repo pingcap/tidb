@@ -307,7 +307,8 @@ func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.Chunk
 	return parser, nil
 }
 
-func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (KVEncoder, error) {
+// GetKVEncoder get the KV encoder.
+func (ti *TableImporter) GetKVEncoder(chunk *checkpoints.ChunkCheckpoint) (*TableKVEncoder, error) {
 	cfg := &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
 			SQLMode:        ti.SQLMode,
@@ -320,6 +321,20 @@ func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (KVEnc
 		Logger: log.Logger{Logger: ti.logger.With(zap.String("path", chunk.FileMeta.Path))},
 	}
 	return NewTableKVEncoder(cfg, ti)
+}
+
+// GetKVEncoderForDupResolve get the KV encoder.
+func (ti *TableImporter) GetKVEncoderForDupResolve() (*TableKVEncoder, error) {
+	cfg := &encode.EncodingConfig{
+		SessionOptions: encode.SessionOptions{
+			SQLMode: ti.SQLMode,
+			SysVars: ti.ImportantSysVars,
+		},
+		Table:                ti.encTable,
+		Logger:               log.Logger{Logger: ti.logger},
+		UseIdentityAutoRowID: true,
+	}
+	return NewTableKVEncoderForDupResolve(cfg, ti)
 }
 
 func (e *LoadDataController) calculateSubtaskCnt() int {

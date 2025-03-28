@@ -244,7 +244,7 @@ func TestSwitchMode(t *testing.T) {
 	require.NoError(t, err)
 	pool := membuf.NewPool()
 	ConcurrentReaderBufferSizePerConc = rand.Intn(100) + 1
-	kvReader, err := newKVReader(context.Background(), "/test/0/one-file", st, 0, 64*1024)
+	kvReader, err := NewKVReader(context.Background(), "/test/0/one-file", st, 0, 64*1024)
 	require.NoError(t, err)
 	kvReader.byteReader.enableConcurrentRead(st, "/test/0/one-file", 100, ConcurrentReaderBufferSizePerConc, pool.NewBuffer())
 	modeUseCon := false
@@ -259,7 +259,7 @@ func TestSwitchMode(t *testing.T) {
 				modeUseCon = true
 			}
 		}
-		key, val, err := kvReader.nextKV()
+		key, val, err := kvReader.NextKV()
 		if err == io.EOF {
 			break
 		}

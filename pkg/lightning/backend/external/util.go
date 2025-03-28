@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -259,6 +260,7 @@ type SortedKVMeta struct {
 	TotalKVSize        uint64              `json:"total-kv-size"`
 	TotalKVCnt         uint64              `json:"total-kv-cnt"`
 	MultipleFilesStats []MultipleFilesStat `json:"multiple-files-stats"`
+	ConflictInfo       common.ConflictInfo `json:"conflict-info"`
 }
 
 // NewSortedKVMeta creates a SortedKVMeta from a WriterSummary. If the summary
@@ -273,6 +275,7 @@ func NewSortedKVMeta(summary *WriterSummary) *SortedKVMeta {
 		TotalKVSize:        summary.TotalSize,
 		TotalKVCnt:         summary.TotalCnt,
 		MultipleFilesStats: summary.MultipleFilesStats,
+		ConflictInfo:       summary.ConflictInfo,
 	}
 }
 
@@ -292,6 +295,7 @@ func (m *SortedKVMeta) Merge(other *SortedKVMeta) {
 	m.TotalKVCnt += other.TotalKVCnt
 
 	m.MultipleFilesStats = append(m.MultipleFilesStats, other.MultipleFilesStats...)
+	m.ConflictInfo.Merge(&other.ConflictInfo)
 }
 
 // MergeSummary merges the WriterSummary into this SortedKVMeta.
@@ -345,4 +349,83 @@ func getSpeed(n uint64, dur float64, isBytes bool) string {
 		return units.BytesSize(float64(n) / dur)
 	}
 	return strconv.FormatFloat(float64(n)/dur, 'f', 4, 64)
+}
+
+// remove all duplicates inside sorted array in place, i.e. input elements will be changed.
+func removeDuplicates[E any](elements []E, keyGetter func(*E) []byte, record bool) ([]E, []E, int) {
+	if len(elements) <= 1 {
+		return elements, []E{}, 0
+	}
+	pivotIdx, fillIdx := 0, 0
+	pivot := keyGetter(&elements[pivotIdx])
+	var dups []E
+	dupCount := 0
+	if record {
+		dups = make([]E, 0, 2)
+	}
+	for idx := 1; idx <= len(elements); idx++ {
+		var key []byte
+		if idx < len(elements) {
+			key = keyGetter(&elements[idx])
+			if bytes.Compare(pivot, key) == 0 {
+				continue
+			}
+		}
+		if idx > pivotIdx+1 {
+			if record {
+				dups = append(dups, elements[pivotIdx:idx]...)
+			}
+			dupCount += idx - pivotIdx
+		} else {
+			if pivotIdx != fillIdx {
+				elements[fillIdx] = elements[pivotIdx]
+			}
+			fillIdx++
+		}
+		pivotIdx = idx
+		pivot = key
+	}
+	return elements[:fillIdx], dups, dupCount
+}
+
+// remove all duplicates inside sorted array in place if the duplicate count is
+// more than 2, and keep the first two duplicates.
+// we also return the total number of duplicates as the third return value.
+func removeDuplicatesMoreThanTwo[E any](elements []E, compareValGetter func(*E) []byte) ([]E, []E, int) {
+	if len(elements) <= 1 {
+		return elements, []E{}, 0
+	}
+	pivotIdx, fillIdx := 0, 0
+	pivot := compareValGetter(&elements[pivotIdx])
+	var totalDup int
+	dups := make([]E, 0, 2)
+	for idx := 1; idx <= len(elements); idx++ {
+		var key []byte
+		if idx < len(elements) {
+			key = compareValGetter(&elements[idx])
+			if bytes.Compare(pivot, key) == 0 {
+				continue
+			}
+		}
+		dupCount := idx - pivotIdx
+		if dupCount >= 2 {
+			totalDup += dupCount
+			// keep the first two duplicates, and remove the rest
+			for startIdx := pivotIdx; startIdx < pivotIdx+2; startIdx++ {
+				if startIdx != fillIdx {
+					elements[fillIdx] = elements[startIdx]
+				}
+				fillIdx++
+			}
+			dups = append(dups, elements[pivotIdx+2:idx]...)
+		} else {
+			if pivotIdx != fillIdx {
+				elements[fillIdx] = elements[pivotIdx]
+			}
+			fillIdx++
+		}
+		pivotIdx = idx
+		pivot = key
+	}
+	return elements[:fillIdx], dups, totalDup
 }

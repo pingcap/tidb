@@ -16,12 +16,14 @@ package importinto
 
 import (
 	"fmt"
+	"strconv"
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -79,6 +81,51 @@ type MergeSortStepMeta struct {
 	external.SortedKVMeta `json:"sorted-kv-meta"`
 }
 
+type kvGroupConflictInfos struct {
+	ConflictInfos map[string]*common.ConflictInfo `json:"conflict-infos,omitempty"`
+}
+
+func (gci *kvGroupConflictInfos) addDataConflictInfo(other *common.ConflictInfo) {
+	gci.addConflictInfo(dataKVGroup, other)
+}
+
+func (gci *kvGroupConflictInfos) addIndexConflictInfo(indexID int64, other *common.ConflictInfo) {
+	kvGroup := IndexID2KVGroup(indexID)
+	gci.addConflictInfo(kvGroup, other)
+}
+
+func (gci *kvGroupConflictInfos) addConflictInfo(kvGroup string, other *common.ConflictInfo) {
+	if other.Count == 0 {
+		return
+	}
+	if gci.ConflictInfos == nil {
+		gci.ConflictInfos = make(map[string]*common.ConflictInfo, 1)
+	}
+	ci, ok := gci.ConflictInfos[kvGroup]
+	if !ok {
+		ci = &common.ConflictInfo{}
+		gci.ConflictInfos[kvGroup] = ci
+	}
+	ci.Merge(other)
+}
+
+// CollectConflictsStepMeta is the meta of collect conflicts step.
+type CollectConflictsStepMeta struct {
+	kvGroupConflictInfos `json:",inline"`
+	// Checksum is the checksum of all conflicts rows.
+	Checksum *Checksum `json:"checksum,omitempty"`
+	// ConflictedRowCount is the count of all conflicted rows.
+	ConflictedRowCount int64 `json:"conflicted-row-count,omitempty"`
+	// ConflictedRowFilename is the filename of all conflicted rows.
+	// Note: this file is for user to resolve conflicts manually.
+	ConflictedRowFilename string `json:"conflicted-row-filename,omitempty"`
+}
+
+// ConflictResolutionStepMeta is the meta of conflict resolution step.
+type ConflictResolutionStepMeta struct {
+	kvGroupConflictInfos `json:",inline"`
+}
+
 // WriteIngestStepMeta is the meta of write and ingest step.
 // only used when global sort is enabled.
 type WriteIngestStepMeta struct {
@@ -95,9 +142,11 @@ type WriteIngestStepMeta struct {
 
 // PostProcessStepMeta is the meta of post process step.
 type PostProcessStepMeta struct {
-	// accumulated checksum of all subtasks in import step. See KVGroupChecksum for
-	// definition of map key.
+	// accumulated checksum of all subtasks in encode step. See KVGroupChecksum
+	// for definition of map key.
 	Checksum map[int64]Checksum
+	// DeletedRowsChecksum is the checksum of all deleted rows due to conflicts.
+	DeletedRowsChecksum Checksum
 	// MaxIDs of max all max-ids of subtasks in import step.
 	MaxIDs map[autoid.AllocatorType]int64
 }
@@ -170,9 +219,33 @@ type Checksum struct {
 	Size uint64
 }
 
+func newFromKVChecksum(sum *verification.KVChecksum) *Checksum {
+	return &Checksum{
+		Sum:  sum.Sum(),
+		KVs:  sum.SumKVS(),
+		Size: sum.SumSize(),
+	}
+}
+
+// ToKVChecksum converts the Checksum to verification.KVChecksum.
+func (c *Checksum) ToKVChecksum() *verification.KVChecksum {
+	sum := verification.MakeKVChecksum(c.Size, c.KVs, c.Sum)
+	return &sum
+}
+
 // Result records the metrics information.
 // This portion of the code may be implemented uniformly in the framework in the future.
 type Result struct {
 	LoadedRowCnt uint64
 	ColSizeMap   map[int64]int64
+}
+
+// IndexID2KVGroup converts index id to kv group name.
+// exported for test.
+func IndexID2KVGroup(indexID int64) string {
+	return fmt.Sprintf("%d", indexID)
+}
+
+func kvGroup2IndexID(kvGroup string) (int64, error) {
+	return strconv.ParseInt(kvGroup, 10, 64)
 }
