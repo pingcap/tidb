@@ -16,6 +16,7 @@ package utils
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
-	"slices"
 )
 
 // AppliedFile has two types for now.

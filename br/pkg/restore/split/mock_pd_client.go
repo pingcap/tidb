@@ -5,7 +5,9 @@ package split
 import (
 	"bytes"
 	"context"
+	"maps"
 	"math"
+	"slices"
 	"sync"
 	"time"
 
@@ -23,8 +25,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
-	"maps"
-	"slices"
 )
 
 // TODO consilodate TestClient and MockPDClientForSplit and FakePDClient

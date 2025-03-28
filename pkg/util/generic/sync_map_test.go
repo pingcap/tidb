@@ -15,12 +15,11 @@
 package generic_test
 
 import (
-	"sort"
+	"slices"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/stretchr/testify/require"
-	"slices"
 )
 
 func TestSyncMap(t *testing.T) {

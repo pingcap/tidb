@@ -4,9 +4,9 @@ package encryption
 
 import (
 	"crypto/rand"
+	"slices"
 
 	"github.com/pingcap/errors"
-	"slices"
 )
 
 // must keep it same with the constants in TiKV implementation
