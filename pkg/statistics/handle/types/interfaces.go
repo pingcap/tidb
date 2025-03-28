@@ -350,7 +350,12 @@ type StatsReadWriter interface {
 	SaveAnalyzeResultToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error)
 
 	// SaveMetaToStorage saves the stats meta of a table to storage.
+	// It's called when the column/index stats are not updated.
 	SaveMetaToStorage(tableID, count, modifyCount int64, source string) (err error)
+
+	// SaveMetaToStorageAndUpdateLastHistVer saves the stats meta of a table to storage and updates the last histogram version.
+	// It's called when the column/index stats are also updated.
+	SaveMetaToStorageAndUpdateLastHistVer(tableID, count, modifyCount int64, source string) (err error)
 
 	// UpdateStatsMetaVersionForGC updates the version of mysql.stats_meta,
 	// ensuring it is greater than the last garbage collection (GC) time.
