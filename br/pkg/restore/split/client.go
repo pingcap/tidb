@@ -191,7 +191,12 @@ func (c *pdClient) scatterRegions(ctx context.Context, newRegions []*RegionInfo)
 	// the retry is for the temporary network errors during sending request.
 	return utils.WithRetry(ctx, func() error {
 		err := c.tryScatterRegions(ctx, newRegions)
-		if isUnsupportedError(err) {
+		// if err is unsupported, we need to fallback to the old method.
+		// ErrPDRegionsNotFullyScatter means the regions are not fully scattered,
+		// in new version of PD, the scatter regions API will return the failed regions id,
+		// but the old version of PD will only return the FinishedPercentage.
+		// so we need to retry the regions one by one.
+		if isUnsupportedError(err) || berrors.ErrPDRegionsNotFullyScatter.Equal(err) {
 			log.Warn("batch scatter isn't supported, rollback to old method", logutil.ShortError(err))
 			c.scatterRegionsSequentially(
 				ctx, newRegions,
@@ -222,6 +227,10 @@ func (c *pdClient) tryScatterRegions(ctx context.Context, regionInfo []*RegionIn
 		return errors.Annotatef(berrors.ErrPDInvalidResponse,
 			"pd returns error during batch scattering: %s", pbErr)
 	}
+	if finished := resp.GetFinishedPercentage(); finished < 100 {
+		return errors.Annotatef(berrors.ErrPDRegionsNotFullyScatter, "scatter finished percentage %d less than 100", finished)
+	}
+
 	return nil
 }
 
