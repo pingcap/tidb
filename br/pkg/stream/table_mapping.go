@@ -90,7 +90,8 @@ type MetaInfoCollector interface {
 // the keys and values that are selected to parse here follows the implementation in rewrite_meta_rawkv. Maybe
 // parsing a subset of these keys/values would suffice, but to make it safe we decide to parse exactly same as
 // in rewrite_meta_rawkv.
-func (tm *TableMappingManager) ParseMetaKvAndUpdateIdMapping(e *kv.Entry, cf string, collector MetaInfoCollector) error {
+func (tm *TableMappingManager) ParseMetaKvAndUpdateIdMapping(e *kv.Entry, cf string,
+	collector MetaInfoCollector) error {
 	if !utils.IsMetaDBKey(e.Key) {
 		return nil
 	}

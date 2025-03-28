@@ -1498,16 +1498,16 @@ test_log_compaction() {
     echo "log compaction with filter test passed"
 }
 
-#test_basic_filter
-#test_with_full_backup_filter
-#test_table_rename
-#test_with_checkpoint
-#test_partition_exchange
-#test_system_tables
-#test_foreign_keys
+test_basic_filter
+test_with_full_backup_filter
+test_table_rename
+test_with_checkpoint
+test_partition_exchange
+test_system_tables
+test_foreign_keys
 test_index_filter
-#test_table_truncation
-#test_sequential_restore
-#test_log_compaction
+test_table_truncation
+test_sequential_restore
+test_log_compaction
 
 echo "br pitr table filter all tests passed"
