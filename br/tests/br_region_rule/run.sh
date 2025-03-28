@@ -142,8 +142,8 @@ echo "Test 1 finished successfully!"
 # Test 2: Restore random tables without checkpoint
 echo "=== Test 2: restore random tables without checkpoint ==="
 # We pick 50 random tables from 1..300
-TABLE_LIST=$(shuf -i 1-$TABLES_COUNT -n 50 | awk '{printf "-t sbtest%s ", $1}')
-perform_restore_test table --db "$DB" $TABLE_LIST
+TABLE_LIST=$(shuf -i 1-$TABLES_COUNT -n 50 | awk -v db="$DB" '{printf "-f %s.sbtest%s ", db, $1}')
+perform_restore_test full $TABLE_LIST
 echo "Test 2 finished successfully!"
 
 # Test 3: Attempt restore with checkpoint (inject corruption to force error)
@@ -152,7 +152,7 @@ run_sql "drop schema if exists $DB;"
 
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/sleep_for_check_scheduler_status=return(\"$LOG_FILE\");github.com/pingcap/tidb/br/pkg/restore/snap_client/corrupt-files=return(\"corrupt-last-table-files\")"
 
-run_restore_in_background table --db "$DB" $TABLE_LIST
+run_restore_in_background full $TABLE_LIST
 wait_for_checkpoint_stage
 
 set +e
@@ -174,6 +174,21 @@ wait_for_checkpoint_stage
 wait $RESTORE_PID
 ensure_region_label_rule_absent
 echo "Test 3 finished successfully!"
+
+# Test 4: Restore full without checkpoint (check deny rule absent)
+echo "=== Test4: restore full without checkpoint (check deny rule absent) ==="
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/sleep_for_check_scheduler_status=return(\"$LOG_FILE\")"
+run_sql "drop schema if exists $DB;"
+run_restore_in_background full
+echo "Monitoring checkpoint stage (expecting no deny rule)..."
+while [ ! -f "$LOG_FILE" ]; do
+    sleep 1
+done
+ensure_region_label_rule_absent
+rm -f "$LOG_FILE"
+wait $RESTORE_PID
+ensure_region_label_rule_absent
+echo "Test4 finished successfully!"
 
 export GO_FAILPOINTS=""
 echo "All tests finished successfully!"

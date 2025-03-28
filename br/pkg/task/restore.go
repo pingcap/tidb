@@ -45,7 +45,9 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/spf13/cobra"
@@ -1195,9 +1197,13 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(), cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
 	var restoreSchedulersFunc pdutil.UndoFunc
 	var schedulersConfig *pdutil.ClusterConfig
-	if isFullRestore(cmdName) || client.IsIncremental() {
+	if (isFullRestore(cmdName) && !cfg.ExplicitFilter) || client.IsIncremental() {
 		restoreSchedulersFunc, schedulersConfig, err = restore.RestorePreWork(ctx, mgr, importModeSwitcher, cfg.Online, true)
 	} else {
+		preAllocRange, err := client.GetPreAllocedTableIDRange()
+		if err != nil {
+			return errors.Trace(err)
+		}
 		var tableIDs []int64
 		for _, table := range createdTables {
 			tableIDs = append(tableIDs, table.Table.ID)
@@ -1207,7 +1213,8 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 				}
 			}
 		}
-		restoreSchedulersFunc, schedulersConfig, err = restore.FineGrainedRestorePreWork(ctx, mgr, importModeSwitcher, tableIDs, cfg.Online, true)
+		keyRange := SortKeyRanges(tableIDs, preAllocRange)
+		restoreSchedulersFunc, schedulersConfig, err = restore.FineGrainedRestorePreWork(ctx, mgr, importModeSwitcher, keyRange, cfg.Online, true)
 	}
 
 	if err != nil {
@@ -1956,6 +1963,88 @@ func FilterDDLJobByRules(srcDDLJobs []*model.Job, rules ...DDLJobFilterRule) (ds
 	}
 
 	return
+}
+
+func SortKeyRanges(ids []int64, preAlloced [2]int64) [][2]kv.Key {
+	if len(ids) == 0 {
+		return nil
+	}
+	slices.Sort(ids)
+	idRanges := calSortedTableIds(ids)
+
+	if preAlloced[0] < preAlloced[1] {
+		overlap := false
+		for _, r := range idRanges {
+			if r[0] < preAlloced[1] && r[1] > preAlloced[0] {
+				overlap = true
+				break
+			}
+		}
+		if overlap {
+			idRanges = append(idRanges, []int64{preAlloced[0], preAlloced[1]})
+		}
+	}
+
+	mergedRanges := mergeIntervals(idRanges)
+
+	keyRanges := make([][2]kv.Key, 0, len(mergedRanges))
+	for _, r := range mergedRanges {
+		startKey := codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(r[0]))
+		endKey := codec.EncodeBytes([]byte{}, tablecodec.EncodeTablePrefix(r[1]))
+		keyRanges = append(keyRanges, [2]kv.Key{startKey, endKey})
+	}
+	return keyRanges
+}
+
+func calSortedTableIds(ids []int64) [][]int64 {
+	if len(ids) == 0 {
+		return [][]int64{}
+	}
+
+	var idRanges [][]int64
+
+	start := ids[0]
+	end := start + 1
+
+	for i := 1; i < len(ids); i++ {
+		if ids[i] == ids[i-1]+1 {
+			end = ids[i] + 1
+		} else {
+			idRanges = append(idRanges, []int64{start, end})
+			start = ids[i]
+			end = start + 1
+		}
+	}
+	idRanges = append(idRanges, []int64{start, end})
+
+	return idRanges
+}
+
+func mergeIntervals(intervals [][]int64) [][]int64 {
+	if len(intervals) == 0 {
+		return nil
+	}
+	slices.SortFunc(intervals, func(a, b []int64) int {
+		if a[0] < b[0] {
+			return -1
+		} else if a[0] > b[0] {
+			return 1
+		}
+		return 0
+	})
+	merged := [][]int64{intervals[0]}
+	for i := 1; i < len(intervals); i++ {
+		last := merged[len(merged)-1]
+		current := intervals[i]
+		if current[0] <= last[1] {
+			if current[1] > last[1] {
+				last[1] = current[1]
+			}
+		} else {
+			merged = append(merged, current)
+		}
+	}
+	return merged
 }
 
 type DDLJobFilterRule func(ddlJob *model.Job) bool

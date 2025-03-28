@@ -75,6 +75,12 @@ func (p *PreallocIDs) String() string {
 	return fmt.Sprintf("ID:[%d,%d)", p.start, p.end)
 }
 
+func (p *PreallocIDs) GetIDRange() (int64, int64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.start, p.end
+}
+
 // preallocTableIDs peralloc the id for [start, end)
 func (p *PreallocIDs) Alloc(m Allocator) error {
 	p.mu.Lock()

@@ -123,6 +123,8 @@ type SnapClient struct {
 	// use db pool to speed up restoration in BR binary mode.
 	dbPool []*tidallocdb.DB
 
+	preallocedIDs *tidalloc.PreallocIDs
+
 	dom *domain.Domain
 
 	// correspond to --tidb-placement-mode config.
@@ -311,7 +313,21 @@ func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Tabl
 	if rc.db != nil {
 		rc.db.RegisterPreallocatedIDs(preallocedTableIDs)
 	}
+	rc.preallocedIDs = preallocedTableIDs
 	return nil
+}
+
+func (rc *SnapClient) GetPreAllocedTableIDRange() ([2]int64, error) {
+	if rc.preallocedIDs == nil {
+		return [2]int64{}, errors.Errorf("No preAlloced IDs")
+	}
+
+	start, end := rc.preallocedIDs.GetIDRange()
+	if start >= end {
+		return [2]int64{}, errors.Errorf("Invalid preAlloced IDs range: [%d, %d]", start, end)
+	}
+
+	return [2]int64{start, end}, nil
 }
 
 // InitCheckpoint initialize the checkpoint status for the cluster. If the cluster is
