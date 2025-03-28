@@ -2257,10 +2257,10 @@ func TestRepairIngestIndexFromCheckpoint(t *testing.T) {
 	require.NotEqual(t, int64(0), indexIDi2)
 
 	// add checkpoint
-	_, err = tk.Exec("CREATE DATABASE __TiDB_BR_Temporary_Log_Restore_Checkpoint")
+	_, err = tk.Exec("CREATE DATABASE __TiDB_BR_Temporary_Log_Restore_Checkpoint_1")
 	require.NoError(t, err)
 	defer func() {
-		_, err = tk.Exec("DROP DATABASE __TiDB_BR_Temporary_Log_Restore_Checkpoint")
+		_, err = tk.Exec("DROP DATABASE __TiDB_BR_Temporary_Log_Restore_Checkpoint_1")
 		require.NoError(t, err)
 	}()
 	logCheckpointMetaManager, err := checkpoint.NewLogTableMetaManager(g, s.Mock.Domain, checkpoint.LogRestoreCheckpointDatabaseName, 1)
