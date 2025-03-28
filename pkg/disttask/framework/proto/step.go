@@ -88,7 +88,7 @@ const (
 	// ImportStepCollectConflicts collect conflicts info, this step doesn't mutate
 	// downstream data, so it's idempotent, and we can collect a correct checksum
 	// for conflict rows.
-	ImportStepCollectConflicts = 6
+	ImportStepCollectConflicts Step = 6
 	// ImportStepConflictResolution resolve detected conflicts.
 	// during other steps of global sort, we will detect conflicts and record them
 	// in external storage, if any conflicts are detected, we will resolve them
