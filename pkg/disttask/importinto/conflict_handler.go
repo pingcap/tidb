@@ -61,7 +61,7 @@ func (h *baseConflictKVHandler) init() error {
 	return nil
 }
 
-func (h *baseConflictKVHandler) handle(_ context.Context, _, _ []byte) error {
+func (*baseConflictKVHandler) handle(_ context.Context, _, _ []byte) error {
 	return nil
 }
 
@@ -219,6 +219,7 @@ func handleKVGroupConflicts(ctx context.Context, logger *zap.Logger, handler con
 	if err = handler.init(); err != nil {
 		return errors.Trace(err)
 	}
+	//nolint: errcheck
 	defer handler.close()
 
 	for _, file := range ci.Files {
@@ -234,6 +235,7 @@ func handleConflictFile(ctx context.Context, handler conflictKVHandler, store st
 	if err != nil {
 		return err
 	}
+	//nolint: errcheck
 	defer reader.Close()
 
 	for {

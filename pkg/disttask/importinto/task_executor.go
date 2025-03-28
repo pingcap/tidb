@@ -398,7 +398,6 @@ func getOnDupForKVGroup(indicesGenKV map[int64]genKVIndex, kvGroup string) (comm
 		return common.OnDuplicateKeyRecord, nil
 	}
 	return common.OnDuplicateKeyRemove, nil
-
 }
 
 type writeAndIngestStepExecutor struct {
