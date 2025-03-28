@@ -129,7 +129,7 @@ func eventuallyWithLock(t *testing.T, wrk *worker, fn func() bool) {
 		wrk.Lock()
 		defer wrk.Unlock()
 		return fn()
-	}, time.Minute, time.Second)
+	}, time.Minute, time.Millisecond*100)
 }
 
 func trueWithLock(t *testing.T, wrk *worker, fn func() bool) {
@@ -189,7 +189,7 @@ func TestRaceToCreateTablesWorker(t *testing.T) {
 }
 
 func getMultipleWorkerCount(tk *testkit.TestKit, worker string) int {
-	res := tk.MustQuery("select count(*) from workload_schema.hist_memory_usage group by instance_id having instance_id = '" + worker + "'").Rows()
+	res := tk.MustQuery("select * from workload_schema.hist_memory_usage where instance_id = '" + worker + "'").Rows()
 	return len(res)
 }
 
@@ -203,58 +203,69 @@ func TestMultipleWorker(t *testing.T) {
 	wrk2.changeSamplingInterval(ctx, "1")
 
 	// start worker 1
-	now := time.Now()
+	now := time.Now() // This time must be before we started worker1.
 	require.NoError(t, wrk1.setRepositoryDest(ctx, "table"))
 	waitForTables(ctx, t, wrk1, now)
-	require.True(t, wrk1.owner.IsOwner())
-
 	require.Eventually(t, func() bool {
 		return getMultipleWorkerCount(tk, "worker1") >= 1
-	}, time.Minute, time.Second)
+	}, time.Minute, time.Millisecond*100)
+	// worker1 should be the owner.
+	require.True(t, wrk1.owner.IsOwner())
 
 	// start worker 2
 	require.NoError(t, wrk2.setRepositoryDest(ctx, "table"))
-	eventuallyWithLock(t, wrk2, func() bool { return wrk2.owner != nil })
-	require.True(t, !wrk2.owner.IsOwner())
-
 	require.Eventually(t, func() bool {
 		return getMultipleWorkerCount(tk, "worker2") >= 1
-	}, time.Minute, time.Second)
+	}, time.Minute, time.Millisecond*100)
+	// worker1 should still be the owner.
+	require.True(t, wrk1.owner.IsOwner())
+	require.False(t, wrk2.owner.IsOwner())
 
-	// stop worker 1, worker 2 should become owner
+	// stop worker1
 	require.NoError(t, wrk1.setRepositoryDest(ctx, ""))
+	// wait for worker1 to stop
+	eventuallyWithLock(t, wrk1, func() bool {
+		return wrk1.cancel == nil
+	})
+	// worker2 should become owner
 	require.Eventually(t, func() bool {
 		return wrk2.owner.IsOwner()
-	}, time.Minute, time.Second)
+	}, time.Minute, time.Millisecond*100)
 
 	// start worker 1 again
-	require.NoError(t, wrk1.setRepositoryDest(ctx, "table"))
-	eventuallyWithLock(t, wrk1, func() bool { return wrk1.owner != nil })
-	require.True(t, !wrk1.owner.IsOwner())
-
-	// get counts from tables for both workers
 	cnt1 := getMultipleWorkerCount(tk, "worker1")
-	cnt2 := getMultipleWorkerCount(tk, "worker2")
-
+	require.NoError(t, wrk1.setRepositoryDest(ctx, "table"))
+	// wait for worker1 to start writing rows again
 	require.Eventually(t, func() bool {
 		cnt := getMultipleWorkerCount(tk, "worker1")
-		return cnt >= cnt1
-	}, time.Minute, time.Second)
+		return cnt > cnt1
+	}, time.Minute, time.Millisecond*100)
+	// worker2 should still be the owner.
+	require.False(t, wrk1.owner.IsOwner())
+	require.True(t, wrk2.owner.IsOwner())
 
-	// stop worker 2, worker 1 should become owner
+	// stop worker 2
 	require.NoError(t, wrk2.setRepositoryDest(ctx, ""))
+	// wait for worker2 to stop
+	eventuallyWithLock(t, wrk2, func() bool {
+		return wrk2.cancel == nil
+	})
+	// worker 1 should become owner
 	require.Eventually(t, func() bool {
 		return wrk1.owner.IsOwner()
-	}, time.Minute, time.Second)
-	// start worker 2 again
-	require.NoError(t, wrk2.setRepositoryDest(ctx, "table"))
-	eventuallyWithLock(t, wrk2, func() bool { return wrk2.owner != nil })
-	require.True(t, !wrk2.owner.IsOwner())
+	}, time.Minute, time.Millisecond*100)
 
+	// start worker 2 again
+	cnt2 := getMultipleWorkerCount(tk, "worker2")
+	require.NoError(t, wrk2.setRepositoryDest(ctx, "table"))
+	// wait for worker2 to start writing rows again
 	require.Eventually(t, func() bool {
 		cnt := getMultipleWorkerCount(tk, "worker2")
-		return cnt >= cnt2
-	}, time.Minute, time.Second)
+		return cnt > cnt2
+	}, time.Minute, time.Millisecond*100)
+	// worker1 should still be the owner
+	require.True(t, wrk1.owner.IsOwner())
+	require.False(t, wrk2.owner.IsOwner())
 }
 
 func TestGlobalWorker(t *testing.T) {

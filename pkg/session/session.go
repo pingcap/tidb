@@ -1389,9 +1389,10 @@ var _ sqlexec.SQLParser = &session{}
 
 func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.ParseParam) ([]ast.StmtNode, []error, error) {
 	defer tracing.StartRegion(ctx, "ParseSQL").End()
-
-	p := parserutil.Pool.Get().(*parser.Parser)
-	defer parserutil.Pool.Put(p)
+	p := parserutil.GetParser()
+	defer func() {
+		parserutil.DestoryParser(p)
+	}()
 
 	sqlMode := s.sessionVars.SQLMode
 	if s.isInternal() {
