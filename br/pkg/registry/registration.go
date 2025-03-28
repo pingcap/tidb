@@ -148,6 +148,11 @@ type RegistrationInfo struct {
 	Cmd string
 }
 
+type RegistrationInfoWithID struct {
+	RegistrationInfo
+	restoreID uint64
+}
+
 // Registry manages registrations of restore tasks
 type Registry struct {
 	se glue.Session
@@ -368,13 +373,13 @@ func (r *Registry) PauseTask(ctx context.Context, restoreID uint64) error {
 }
 
 // GetRegistrationsByMaxID returns all registrations with IDs smaller than maxID
-func (r *Registry) GetRegistrationsByMaxID(ctx context.Context, maxID uint64) ([]RegistrationInfo, error) {
+func (r *Registry) GetRegistrationsByMaxID(ctx context.Context, maxID uint64) ([]RegistrationInfoWithID, error) {
 	if err := r.createTableIfNotExist(ctx); err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	selectSQL := fmt.Sprintf(selectRegistrationsByMaxIDSQLTemplate, RegistrationDBName, RegistrationTableName)
-	registrations := make([]RegistrationInfo, 0)
+	registrations := make([]RegistrationInfoWithID, 0)
 
 	execCtx := r.se.GetSessionCtx().GetRestrictedSQLExecutor()
 	rows, _, errSQL := execCtx.ExecRestrictedSQL(
@@ -408,7 +413,12 @@ func (r *Registry) GetRegistrationsByMaxID(ctx context.Context, maxID uint64) ([
 			Cmd:               cmd,
 		}
 
-		registrations = append(registrations, info)
+		infoWithID := RegistrationInfoWithID{
+			info,
+			row.GetUint64(0),
+		}
+
+		registrations = append(registrations, infoWithID)
 	}
 
 	return registrations, nil
@@ -460,16 +470,17 @@ func (r *Registry) CheckTablesWithRegisteredTasks(
 func (r *Registry) checkForTableConflicts(
 	tracker *utils.PiTRIdTracker,
 	tables []*metautil.Table,
-	regInfo RegistrationInfo,
+	regInfo RegistrationInfoWithID,
 	f filter.Filter,
-	restoreID uint64,
+	curRestoreID uint64,
 ) error {
 	// function to handle conflict when found
 	handleConflict := func(dbName, tableName string) error {
 		log.Warn("table already covered by another restore task",
+			zap.Uint64("existing_restore_id", regInfo.restoreID),
+			zap.Uint64("current_restore_id", curRestoreID),
 			zap.String("database", dbName),
 			zap.String("table", tableName),
-			zap.Uint64("current_restore_id", restoreID),
 			zap.Strings("filter_strings", regInfo.FilterStrings),
 			zap.Uint64("start_ts", regInfo.StartTS),
 			zap.Uint64("restored_ts", regInfo.RestoredTS),
@@ -478,8 +489,8 @@ func (r *Registry) checkForTableConflicts(
 			zap.String("cmd", regInfo.Cmd))
 		return errors.Annotatef(berrors.ErrTablesAlreadyExisted,
 			"table %s.%s cannot be restored by current task with ID %d "+
-				"because it is already being restored by task (time range: %d->%d, cmd: %s)",
-			dbName, tableName, restoreID, regInfo.StartTS, regInfo.RestoredTS, regInfo.Cmd)
+				"because it is already being restored by task (restoreId: %d, time range: %d->%d, cmd: %s)",
+			dbName, tableName, curRestoreID, regInfo.restoreID, regInfo.StartTS, regInfo.RestoredTS, regInfo.Cmd)
 	}
 
 	// Use PiTRTableTracker if available for PiTR task

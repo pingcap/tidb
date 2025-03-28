@@ -900,20 +900,18 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		// if checkpoint is not persisted, let's just unregister the task since we don't need it
 		if hasCheckpointPersisted(c, cfg) {
 			log.Info("pausing restore task from registry",
-				zap.Uint64("restoreId", cfg.RestoreID), zap.Error(err))
+				zap.Uint64("restoreId", cfg.RestoreID), zap.Error(restoreError))
 			if err := restoreRegistry.PauseTask(c, cfg.RestoreID); err != nil {
 				log.Error("failed to pause restore task from registry",
 					zap.Uint64("restoreId", cfg.RestoreID), zap.Error(err))
 			}
 		} else {
 			log.Info("unregistering restore task from registry",
-				zap.Uint64("restoreId", cfg.RestoreID), zap.Error(err))
+				zap.Uint64("restoreId", cfg.RestoreID), zap.Error(restoreError))
 			if err := restoreRegistry.Unregister(c, cfg.RestoreID); err != nil {
 				log.Error("failed to unregister restore task from registry",
 					zap.Uint64("restoreId", cfg.RestoreID), zap.Error(err))
 			}
-			// clean up checkpoint just in case there are some empty checkpoint db/table created but no data
-			cleanUpCheckpoints(c, cfg, cmdName)
 		}
 
 		return errors.Trace(restoreError)
@@ -932,32 +930,29 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 func cleanUpCheckpoints(ctx context.Context, cfg *RestoreConfig, cmdName string) {
 	if cfg.UseCheckpoint {
-		if IsStreamRestore(cmdName) {
-			log.Info("start to remove checkpoint data for PITR restore")
+		log.Info("start to remove checkpoint data for PITR restore")
+		if cfg.logCheckpointMetaManager != nil {
 			err := cfg.logCheckpointMetaManager.RemoveCheckpointData(ctx)
 			if err != nil {
 				log.Warn("failed to remove checkpoint data for log restore", zap.Error(err))
 			}
-			err = cfg.sstCheckpointMetaManager.RemoveCheckpointData(ctx)
+		}
+		if cfg.sstCheckpointMetaManager != nil {
+			err := cfg.sstCheckpointMetaManager.RemoveCheckpointData(ctx)
 			if err != nil {
 				log.Warn("failed to remove checkpoint data for compacted restore", zap.Error(err))
 			}
-			// Skip removing snapshot checkpoint data if this is a pure log restore
-			// (i.e. restoring only from log backup without a base snapshot backup),
-			// since snapshotCheckpointMetaManager would be nil in that case
-			if cfg.snapshotCheckpointMetaManager != nil {
-				err = cfg.snapshotCheckpointMetaManager.RemoveCheckpointData(ctx)
-				if err != nil {
-					log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
-				}
-			}
-		} else {
+		}
+		// Skip removing snapshot checkpoint data if this is a pure log restore
+		// (i.e. restoring only from log backup without a base snapshot backup),
+		// since snapshotCheckpointMetaManager would be nil in that case
+		if cfg.snapshotCheckpointMetaManager != nil {
 			err := cfg.snapshotCheckpointMetaManager.RemoveCheckpointData(ctx)
 			if err != nil {
 				log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
 			}
 		}
-		log.Info("all the checkpoint data removed.")
+		log.Info("all checkpoint data removed.")
 	} else {
 		log.Info("checkpoint not enabled, skip to remove checkpoint data")
 	}

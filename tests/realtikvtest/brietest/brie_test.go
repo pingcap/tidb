@@ -135,8 +135,6 @@ func TestCancel(t *testing.T) {
 // cleanupRegistry drops the registry tables and database
 func cleanupRegistry(tk *testkit.TestKit) {
 	registryDB := "__TiDB_BR_Temporary_Restore_Registration_DB"
-	registryTable := "restore_registry"
-	tk.MustExec(fmt.Sprintf("DROP TABLE IF EXISTS %s.%s", registryDB, registryTable))
 	tk.MustExec(fmt.Sprintf("DROP DATABASE IF EXISTS %s", registryDB))
 }
 
@@ -207,8 +205,7 @@ func TestExistedTables(t *testing.T) {
 		require.NoError(t, err)
 
 		_, err = session.ResultSetToStringSlice(context.Background(), tk.Session(), res)
-		// due to previous restore didn't succeed with checkpoint enabled
-		require.ErrorContains(t, err, "it is already being restored by task")
+		require.ErrorContains(t, err, "table already exists")
 	}()
 	select {
 	case <-time.After(20 * time.Second):
