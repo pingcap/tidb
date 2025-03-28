@@ -1129,6 +1129,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			WithIgnoreTruncateErr(false).
 			WithIgnoreZeroInDate(true).
 			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()))
+	case *ast.DistributeTableStmt:
+		sc.SetTypeFlags(sc.TypeFlags().
+			WithIgnoreTruncateErr(false).
+			WithIgnoreZeroInDate(true).
+			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()))
 	case *ast.SetSessionStatesStmt:
 		sc.InSetSessionStatesStmt = true
 		sc.SetTypeFlags(sc.TypeFlags().

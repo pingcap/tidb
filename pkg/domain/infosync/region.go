@@ -17,6 +17,7 @@ package infosync
 import (
 	"context"
 
+	"github.com/tikv/pd/client/errs"
 	pd "github.com/tikv/pd/client/http"
 )
 
@@ -68,4 +69,33 @@ func GetReplicationState(ctx context.Context, startKey []byte, endKey []byte) (P
 		st = PlacementScheduleStatePending
 	}
 	return st, nil
+}
+
+// GetSchedulerConfig is used to get the configuration of the specified scheduler from PD.
+func GetSchedulerConfig(ctx context.Context, schedulerName string) ([]map[string]any, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+	if is.pdHTTPCli == nil {
+		return nil, errs.ErrClientGetLeader.FastGenByArgs(schedulerName)
+	}
+	config, err := is.pdHTTPCli.GetSchedulerConfig(ctx, schedulerName)
+	jobs, ok := config.([]map[string]any)
+	if !ok {
+		return nil, errs.ErrClientGetLeader.FastGenByArgs(config)
+	}
+	return jobs, err
+}
+
+// CreateSchedulerConfigWithInput is used to create a scheduler with the specified input.
+func CreateSchedulerConfigWithInput(ctx context.Context, schedulerName string, input map[string]any) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return err
+	}
+	if is.pdHTTPCli == nil {
+		return errs.ErrClientGetLeader.FastGenByArgs(schedulerName)
+	}
+	return is.pdHTTPCli.CreateSchedulerWithInput(ctx, schedulerName, input)
 }

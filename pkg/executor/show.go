@@ -115,8 +115,9 @@ type ShowExec struct {
 	GlobalScope bool // GlobalScope is used by show variables
 	Extended    bool // Used for `show extended columns from ...`
 
-	ImportJobID *int64
-	SQLOrDigest string // Used for SHOW PLAN FOR <SQL or Digest>
+	ImportJobID       *int64
+	DistributionJobID *int64
+	SQLOrDigest       string // Used for SHOW PLAN FOR <SQL or Digest>
 }
 
 type showTableRegionRowItem struct {
