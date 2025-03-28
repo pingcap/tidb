@@ -404,3 +404,53 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	start(hashJoin, 0, 3, 0)
 	require.NoError(t, failpoint.Disable(fpName2))
 }
+
+func TestCanTiFlashUseHashJoinV2(t *testing.T) {
+	sctx := MockContext()
+	defer func() {
+		domain.GetDomain(sctx).StatsHandle().Close()
+	}()
+	col0 := &expression.Column{
+		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	cond, err := expression.NewFunction(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col0)
+	require.True(t, err == nil)
+	sf, isSF := cond.(*expression.ScalarFunction)
+	require.True(t, isSF)
+	hashJoin := &PhysicalHashJoin{}
+	hashJoin.EqualConditions = append(hashJoin.EqualConditions, sf)
+	hashJoin.LeftJoinKeys = append(hashJoin.LeftJoinKeys, col0)
+
+	sctx.GetSessionVars().TiFlashHashJoinVersion = joinversion.HashJoinVersionLegacy
+	sctx.GetSessionVars().TiFlashMaxBytesBeforeExternalJoin = 0
+	sctx.GetSessionVars().TiFlashMaxQueryMemoryPerNode = 0
+	sctx.GetSessionVars().TiFlashQuerySpillRatio = 0
+	require.False(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
+	// can use hash join v2
+	sctx.GetSessionVars().TiFlashHashJoinVersion = joinversion.HashJoinVersionOptimized
+	require.True(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
+	// can not use hash join v2 due to enabling join spill
+	sctx.GetSessionVars().TiFlashMaxBytesBeforeExternalJoin = 1
+	require.False(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
+	// can use hash join v2 due to TiFlashMaxQueryMemoryPerNode * TiFlashQuerySpillRatio = 0
+	sctx.GetSessionVars().TiFlashMaxBytesBeforeExternalJoin = 0
+	sctx.GetSessionVars().TiFlashMaxQueryMemoryPerNode = 1
+	require.True(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
+	// can not use hash join v2 due to enabling join spill
+	sctx.GetSessionVars().TiFlashQuerySpillRatio = 0.7
+	require.False(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
+
+	sctx.GetSessionVars().TiFlashMaxQueryMemoryPerNode = 0
+	sctx.GetSessionVars().TiFlashQuerySpillRatio = 0
+	hashJoin = &PhysicalHashJoin{}
+	// can not use hash join v2 due to cross join
+	require.False(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
+
+	hashJoin = &PhysicalHashJoin{}
+	hashJoin.EqualConditions = append(hashJoin.EqualConditions, sf)
+	hashJoin.LeftJoinKeys = append(hashJoin.LeftJoinKeys, col0)
+	hashJoin.IsNullEQ = append(hashJoin.IsNullEQ, true)
+	// can not use hash join v2 due to null eq
+	require.False(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
+}
