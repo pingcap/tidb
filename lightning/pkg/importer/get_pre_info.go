@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"slices"
 	"strings"
 
 	mysql_sql_driver "github.com/go-sql-driver/mysql"
@@ -53,7 +54,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
-	"slices"
 )
 
 // compressionRatio is the tikv/tiflash's compression ratio

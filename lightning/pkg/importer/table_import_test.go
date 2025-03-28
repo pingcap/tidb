@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -67,7 +68,6 @@ import (
 	pdhttp "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/mock/gomock"
-	"slices"
 )
 
 const (

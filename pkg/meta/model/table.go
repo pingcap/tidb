@@ -17,6 +17,7 @@ package model
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/duration"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
-	"slices"
 )
 
 // ExtraHandleID is the column ID of column which we need to append to schema to occupy the handle's position

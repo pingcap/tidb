@@ -16,6 +16,7 @@ package infosync
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -23,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
-	"slices"
 )
 
 // MockGlobalServerInfoManagerEntry is a mock global ServerInfoManager entry.

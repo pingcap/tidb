@@ -17,6 +17,7 @@ package statistics
 import (
 	"cmp"
 	"fmt"
+	maps0 "maps"
 	"slices"
 	"strings"
 
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/atomic"
 	"golang.org/x/exp/maps"
-	maps0 "maps"
 )
 
 const (

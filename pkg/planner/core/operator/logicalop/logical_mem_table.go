@@ -15,6 +15,8 @@
 package logicalop
 
 import (
+	"slices"
+
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -28,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
-	"slices"
 )
 
 // LogicalMemTable represents a memory table or virtual table

@@ -17,11 +17,11 @@ package structure
 import (
 	"bytes"
 	"context"
+	"slices"
 	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
-	"slices"
 )
 
 // HashPair is the pair for (field, value) in a hash.

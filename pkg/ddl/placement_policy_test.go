@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"testing"
 
@@ -41,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client/http"
-	"slices"
 )
 
 type bundleCheck struct {

@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -71,7 +72,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
-	"slices"
 )
 
 const notSpecified = -1

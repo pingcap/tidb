@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -37,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
-	"slices"
 )
 
 // writeStepMemShareCount defines the number of shares of memory per job worker.

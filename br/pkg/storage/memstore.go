@@ -18,13 +18,13 @@ import (
 	"context"
 	"io"
 	"path"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 
 	"github.com/pingcap/errors"
 	"go.uber.org/atomic"
-	"slices"
 )
 
 type memFile struct {

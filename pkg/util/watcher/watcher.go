@@ -15,6 +15,7 @@
 package watcher
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"sync"
@@ -22,7 +23,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"go.uber.org/atomic"
-	"maps"
 )
 
 // errors created by Watcher

@@ -16,8 +16,10 @@ package plugin
 
 import (
 	"context"
+	"maps"
 	"path/filepath"
 	gplugin "plugin"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -31,8 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
-	"maps"
-	"slices"
 )
 
 // pluginGlobal holds all global variables for plugin.

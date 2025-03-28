@@ -16,6 +16,7 @@ package bindinfo
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
-	"slices"
 )
 
 // BindingCacheUpdater maintains the binding cache and provide update APIs.

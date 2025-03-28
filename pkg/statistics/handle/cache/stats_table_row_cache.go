@@ -17,6 +17,7 @@
 package cache
 
 import (
+	"maps"
 	"strconv"
 	"strings"
 	"time"
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
-	"maps"
 )
 
 // TableRowStatsCache is the cache of table row count.

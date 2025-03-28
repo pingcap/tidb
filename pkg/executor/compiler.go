@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"slices"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
@@ -33,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
-	"slices"
 )
 
 // Compiler compiles an ast.StmtNode to a physical plan.

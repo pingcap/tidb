@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"path"
 	"slices"
@@ -40,7 +41,6 @@ import (
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"go.uber.org/zap"
-	"maps"
 )
 
 // CheckpointStatus is the status of a checkpoint.

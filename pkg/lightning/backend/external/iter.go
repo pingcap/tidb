@@ -20,6 +20,7 @@ import (
 	"context"
 	goerrors "errors"
 	"io"
+	"slices"
 	"sort"
 	"sync"
 
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
-	"slices"
 )
 
 type heapElem interface {

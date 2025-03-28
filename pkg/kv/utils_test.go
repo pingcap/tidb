@@ -16,12 +16,12 @@ package kv
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/stretchr/testify/assert"
-	"slices"
 )
 
 func TestIncInt64(t *testing.T) {

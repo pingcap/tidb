@@ -16,6 +16,7 @@ package deadlockhistory
 
 import (
 	"encoding/hex"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/zap"
-	"slices"
 )
 
 const (

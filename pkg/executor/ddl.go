@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -45,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
-	"slices"
 )
 
 // DDLExec represents a DDL executor.

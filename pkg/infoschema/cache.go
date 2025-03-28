@@ -15,6 +15,7 @@
 package infoschema
 
 import (
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
-	"slices"
 )
 
 // InfoCache handles information schema, including getting and setting.

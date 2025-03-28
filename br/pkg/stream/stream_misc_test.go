@@ -4,6 +4,7 @@ package stream_test
 
 import (
 	"context"
+	"slices"
 	"testing"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -11,7 +12,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/stretchr/testify/require"
-	"slices"
 )
 
 func TestGetCheckpointOfTask(t *testing.T) {

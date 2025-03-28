@@ -17,6 +17,7 @@ package hint
 import (
 	"bytes"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"maps"
 )
 
 // Hint flags listed here are used by PlanBuilder.subQueryHintFlags.

@@ -34,6 +34,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"         //nolint:goimports
 	_ "net/http/pprof" // #nosec G108 for pprof
@@ -78,7 +79,6 @@ import (
 	uatomic "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"maps"
 )
 
 var (

@@ -20,6 +20,7 @@ package schematracker
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -37,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"slices"
 )
 
 // SchemaTracker is used to track schema changes by DM. It implements

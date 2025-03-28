@@ -17,6 +17,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -47,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
-	"slices"
 )
 
 // EvalSubqueryFirstRow evaluates incorrelated subqueries once, and get first row.

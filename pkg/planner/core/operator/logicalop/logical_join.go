@@ -17,8 +17,10 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
+	"maps"
 	"math"
 	"math/bits"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -37,8 +39,6 @@ import (
 	utilhint "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
-	"maps"
-	"slices"
 )
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, SemiJoin, AntiJoin.
