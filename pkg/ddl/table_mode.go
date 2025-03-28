@@ -71,20 +71,16 @@ func alterTableMode(tbInfo *model.TableInfo, args *model.AlterTableModeArgs) err
 	return nil
 }
 
+// validateTableMode validate whether table mode convert is legal.
+// Now only block import/restore to convert to each other.
+// TODO: Now allow switching between the same table modes, but additional validation will be added later
+// to verify that only the same modification source can perform ALTER same table mode.
 func validateTableMode(origin, target model.TableMode) bool {
-	if target == model.TableModeImport {
-		// only transition from ModeNormal to ModeImport is allowed
-		if origin != model.TableModeNormal {
-			return false
-		}
+	if origin == model.TableModeImport && target == model.TableModeRestore {
+		return false
 	}
-
-	if target == model.TableModeRestore {
-		// Currently this branch will never be executed except for testing.
-		// only transition from ModeNormal to ModeRestore is allowed
-		if origin != model.TableModeNormal {
-			return false
-		}
+	if origin == model.TableModeRestore && target == model.TableModeImport {
+		return false
 	}
 	return true
 }

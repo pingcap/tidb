@@ -163,6 +163,9 @@ func TestTableModeBasic(t *testing.T) {
 	// For testing AlterTableMode ModeNormal -> ModeRestore
 	err = setTableModeTest(ctx, t, store, de, dbInfo, tblInfo, model.TableModeRestore)
 	require.NoError(t, err)
+	// For testing AlterTableMode ModeRestore -> ModeRestore
+	err = setTableModeTest(ctx, t, store, de, dbInfo, tblInfo, model.TableModeRestore)
+	require.NoError(t, err)
 
 	// For testing an exist table with ModeImport is not allowed recreate with ModeRestore from BR
 	err = setTableModeTest(ctx, t, store, de, dbInfo, tblInfo, model.TableModeNormal)
@@ -232,8 +235,8 @@ func TestTableModeConcurrent(t *testing.T) {
 			failedErr = e
 		}
 	}
-	require.Equal(t, 1, successCount)
-	require.ErrorContains(t, failedErr, "Invalid mode set from (or by default) Import to Import for table t1")
+	require.Equal(t, 2, successCount)
+	require.Nil(t, failedErr)
 	checkTableModeTest(t, store, dbInfo, t1Infos[0], model.TableModeImport)
 
 	// Concurrency test2: concurrently alter t1 to ModeNormal, expecting both success.
@@ -258,7 +261,36 @@ func TestTableModeConcurrent(t *testing.T) {
 	}
 	checkTableModeTest(t, store, dbInfo, t1NormalInfos[0], model.TableModeNormal)
 
-	// Concurrency test3: concurrently alter t1 to ModeRestore and ModeImport, expecting one success, one failure.
+	// Concurrency test3: concurrently alter t1 to ModeRestore, expecting both success.
+	t1Infos = []*model.TableInfo{
+		getClonedTableInfoFromDomain(t, "test", "t1", domain),
+		getClonedTableInfoFromDomain(t, "test", "t1", domain),
+	}
+	var wg3 sync.WaitGroup
+	wg3.Add(len(t1Infos))
+	errs = make(chan error, len(t1Infos))
+	for _, info := range t1Infos {
+		go func(info *model.TableInfo) {
+			defer wg3.Done()
+			errs <- setTableModeTest(ctx, t, store, de, dbInfo, info, model.TableModeRestore)
+		}(info)
+	}
+	wg3.Wait()
+	close(errs)
+	successCount = 0
+	failedErr = nil
+	for e := range errs {
+		if e == nil {
+			successCount++
+		} else {
+			failedErr = e
+		}
+	}
+	require.Equal(t, 2, successCount)
+	require.Nil(t, failedErr)
+	checkTableModeTest(t, store, dbInfo, t1Infos[0], model.TableModeRestore)
+
+	// Concurrency test4: concurrently alter t1 to ModeRestore and ModeImport, expecting one success, one failure.
 	modes := []model.TableMode{
 		model.TableModeRestore,
 		model.TableModeImport,
@@ -267,20 +299,20 @@ func TestTableModeConcurrent(t *testing.T) {
 	for i := range modes {
 		clones[i] = getClonedTableInfoFromDomain(t, "test", "t1", domain)
 	}
-	var wg3 sync.WaitGroup
-	wg3.Add(len(modes))
-	errs3 := make(chan error, len(modes))
+	var wg4 sync.WaitGroup
+	wg4.Add(len(modes))
+	errs = make(chan error, len(modes))
 	for i, mode := range modes {
 		go func(clone *model.TableInfo, m model.TableMode) {
-			defer wg3.Done()
-			errs3 <- setTableModeTest(ctx, t, store, de, dbInfo, clone, m)
+			defer wg4.Done()
+			errs <- setTableModeTest(ctx, t, store, de, dbInfo, clone, m)
 		}(clones[i], mode)
 	}
-	wg3.Wait()
-	close(errs3)
+	wg4.Wait()
+	close(errs)
 	var successCount3 int
 	var failedErr3 error
-	for e := range errs3 {
+	for e := range errs {
 		if e == nil {
 			successCount3++
 		} else {
