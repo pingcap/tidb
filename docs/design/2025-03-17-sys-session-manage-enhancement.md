@@ -157,6 +157,7 @@ We should do the below tests to make sure the new introduced session pool works 
 - Unit tests.
 - Integration tests for specified scenarios:
   - Test 1000+ TTL tables with small `tidb_ttl_job_internal` settings to test the frequent session creation and destruction in the TTL scene.
+  - Test async load with corrupted statistics to ensure there are no memory leaks.
   - More tests for other scenarios.
 
 ## More Features to Support
