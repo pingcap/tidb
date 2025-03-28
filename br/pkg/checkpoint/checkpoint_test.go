@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
+	"slices"
 )
 
 func TestCheckpointMetaForBackup(t *testing.T) {
@@ -611,11 +612,9 @@ func testCheckpointLogRestoreRunner(
 			if !exists {
 				continue
 			}
-			for _, foff := range foffs {
-				if f.foff == foff {
-					respCount += 1
-					return
-				}
+			if slices.Contains(foffs, f.foff) {
+				respCount += 1
+				return
 			}
 		}
 		require.FailNow(t, "not found in the original data")

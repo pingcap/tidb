@@ -105,7 +105,7 @@ func intToDecimalString(intValue int64, decimal int) string {
 
 func genRowDatas(table *table, count int) ([]string, error) {
 	datas := make([]string, 0, count)
-	for i := 0; i < count; i++ {
+	for range count {
 		data, err := genRowData(table)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -338,7 +338,7 @@ func closeDB(db *sql.DB) error {
 
 func createDBs(cfg DBConfig, count int) ([]*sql.DB, error) {
 	dbs := make([]*sql.DB, 0, count)
-	for i := 0; i < count; i++ {
+	for range count {
 		db, err := createDB(cfg)
 		if err != nil {
 			return nil, errors.Trace(err)

@@ -240,7 +240,7 @@ func TestSplit(t *testing.T) {
 func TestGetAdjustedConcurrency(t *testing.T) {
 	genFiles := func(n int) []string {
 		files := make([]string, 0, n)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			files = append(files, fmt.Sprintf("file%d", i))
 		}
 		return files

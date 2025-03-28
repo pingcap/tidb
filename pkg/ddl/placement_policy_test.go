@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client/http"
+	"slices"
 )
 
 type bundleCheck struct {
@@ -1036,12 +1037,7 @@ func TestPolicyCacheAndPolicyDependency(t *testing.T) {
 	require.NotNil(t, dependencies)
 	require.Equal(t, 2, len(dependencies))
 	in := func() bool {
-		for _, one := range dependencies {
-			if one == tbl2.Meta().ID {
-				return true
-			}
-		}
-		return false
+		return slices.Contains(dependencies, tbl2.Meta().ID)
 	}
 	require.Equal(t, true, in())
 

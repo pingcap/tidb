@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
+	"slices"
 )
 
 const (
@@ -445,7 +446,7 @@ func (c *mockClient) WatchCommand(ctx context.Context) <-chan *CmdRequest {
 		defer c.Unlock()
 		for i, chItem := range c.commandWatchers {
 			if chItem == ch {
-				c.commandWatchers = append(c.commandWatchers[:i], c.commandWatchers[i+1:]...)
+				c.commandWatchers = slices.Delete(c.commandWatchers, i, i+1)
 				break
 			}
 		}

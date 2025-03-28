@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	"slices"
 )
 
 var _ base.LogicalPlan = &BaseLogicalPlan{}
@@ -317,8 +318,8 @@ func (p *BaseLogicalPlan) RollBackTaskMap(ts uint64) {
 			}
 
 			// Remove the i_th log.
-			p.taskMapBak = append(p.taskMapBak[:i], p.taskMapBak[i+1:]...)
-			p.taskMapBakTS = append(p.taskMapBakTS[:i], p.taskMapBakTS[i+1:]...)
+			p.taskMapBak = slices.Delete(p.taskMapBak, i, i+1)
+			p.taskMapBakTS = slices.Delete(p.taskMapBakTS, i, i+1)
 			i--
 			n--
 

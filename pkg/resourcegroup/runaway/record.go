@@ -416,7 +416,7 @@ func (rm *Manager) AddRunawayWatch(record *QuarantineRecord) (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	for retry := 0; retry < maxIDRetries; retry++ {
+	for retry := range maxIDRetries {
 		if retry > 0 {
 			select {
 			case <-rm.exit:

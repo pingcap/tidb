@@ -67,6 +67,7 @@ import (
 	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
+	"slices"
 )
 
 const (
@@ -382,7 +383,7 @@ func checkAddPartitionValue(meta *model.TableInfo, part *model.PartitionInfo) er
 				return errors.Trace(err)
 			}
 
-			for i := 0; i < len(newDefs); i++ {
+			for i := range newDefs {
 				ifMaxvalue := strings.EqualFold(newDefs[i].LessThan[0], "MAXVALUE")
 				if ifMaxvalue && i == len(newDefs)-1 {
 					return nil
@@ -1267,7 +1268,7 @@ func GeneratePartDefsFromInterval(ctx expression.BuildContext, tp ast.AlterTable
 	} else {
 		partDefs = make([]*ast.PartitionDefinition, 0, 1)
 	}
-	for i := 0; i < mysql.PartitionCountLimit; i++ {
+	for i := range mysql.PartitionCountLimit {
 		if i == 0 {
 			currExpr = startExpr
 			// TODO: adjust the startExpr and have an offset for interval to handle
@@ -1841,7 +1842,7 @@ func checkRangePartitionValue(ctx expression.BuildContext, tblInfo *model.TableI
 	}
 	isUnsigned := isPartExprUnsigned(ctx.GetEvalCtx(), tblInfo)
 	var prevRangeValue any
-	for i := 0; i < len(defs); i++ {
+	for i := range defs {
 		if strings.EqualFold(defs[i].LessThan[0], partitionMaxValue) {
 			return errors.Trace(dbterror.ErrPartitionMaxvalue)
 		}
@@ -2048,13 +2049,7 @@ func updateDroppingPartitionInfo(tblInfo *model.TableInfo, partLowerNames []stri
 
 	// consider using a map to probe partLowerNames if too many partLowerNames
 	for i := range oldDefs {
-		found := false
-		for _, partName := range partLowerNames {
-			if oldDefs[i].Name.L == partName {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(partLowerNames, oldDefs[i].Name.L)
 		if found {
 			droppingDefs = append(droppingDefs, oldDefs[i])
 		} else {
@@ -2068,7 +2063,7 @@ func updateDroppingPartitionInfo(tblInfo *model.TableInfo, partLowerNames []stri
 
 func getPartitionDef(tblInfo *model.TableInfo, partName string) (index int, def *model.PartitionDefinition, _ error) {
 	defs := tblInfo.Partition.Definitions
-	for i := 0; i < len(defs); i++ {
+	for i := range defs {
 		if strings.EqualFold(defs[i].Name.L, strings.ToLower(partName)) {
 			return i, &(defs[i]), nil
 		}
@@ -4381,7 +4376,7 @@ func buildCheckSQLConditionForRangeColumnsPartition(pi *model.PartitionInfo, ind
 	// Lower bound check (for all partitions except first)
 	if hasLowerBound {
 		currVals := pi.Definitions[index-1].LessThan
-		for i := 0; i < len(pi.Columns); i++ {
+		for i := range pi.Columns {
 			nextIsMax := false
 			if i < (len(pi.Columns)-1) && strings.EqualFold(currVals[i+1], partitionMaxValue) {
 				nextIsMax = true
@@ -4392,7 +4387,7 @@ func buildCheckSQLConditionForRangeColumnsPartition(pi *model.PartitionInfo, ind
 			if i > 0 {
 				buf.WriteString("(")
 				// All previous columns must be equal and non-NULL
-				for j := 0; j < i; j++ {
+				for j := range i {
 					if j > 0 {
 						buf.WriteString(" AND ")
 					}
@@ -4419,7 +4414,7 @@ func buildCheckSQLConditionForRangeColumnsPartition(pi *model.PartitionInfo, ind
 
 	currVals := pi.Definitions[index].LessThan
 	// Upper bound check (for all partitions)
-	for i := 0; i < len(pi.Columns); i++ {
+	for i := range pi.Columns {
 		if strings.EqualFold(currVals[i], partitionMaxValue) {
 			break
 		}
@@ -4429,7 +4424,7 @@ func buildCheckSQLConditionForRangeColumnsPartition(pi *model.PartitionInfo, ind
 		if i > 0 {
 			buf.WriteString("(")
 			// All previous columns must be equal
-			for j := 0; j < i; j++ {
+			for j := range i {
 				if j > 0 {
 					buf.WriteString(" AND ")
 				}
@@ -4699,7 +4694,7 @@ type stringSlice interface {
 
 // checkUniqueKeyIncludePartKey checks that the partitioning key is included in the constraint.
 func checkUniqueKeyIncludePartKey(partCols stringSlice, idxCols []*model.IndexColumn) bool {
-	for i := 0; i < partCols.Len(); i++ {
+	for i := range partCols.Len() {
 		partCol := partCols.At(i)
 		_, idxCol := model.FindIndexColumnByName(idxCols, partCol)
 		if idxCol == nil {
@@ -5211,7 +5206,7 @@ func checkTwoRangeColumns(ctx expression.BuildContext, curr, prev *model.Partiti
 	if len(curr.LessThan) != len(pi.Columns) {
 		return false, errors.Trace(ast.ErrPartitionColumnList)
 	}
-	for i := 0; i < len(pi.Columns); i++ {
+	for i := range pi.Columns {
 		// Special handling for MAXVALUE.
 		if strings.EqualFold(curr.LessThan[i], partitionMaxValue) && !strings.EqualFold(prev.LessThan[i], partitionMaxValue) {
 			// If current is maxvalue, it certainly >= previous.

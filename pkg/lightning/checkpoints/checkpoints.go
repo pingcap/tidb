@@ -40,6 +40,7 @@ import (
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"go.uber.org/zap"
+	"maps"
 )
 
 // CheckpointStatus is the status of a checkpoint.
@@ -429,9 +430,7 @@ func (cpd *TableCheckpointDiff) insertEngineCheckpointDiff(engineID int32, newDi
 			oldDiff.hasStatus = true
 			oldDiff.status = newDiff.status
 		}
-		for key, chunkDiff := range newDiff.chunks {
-			oldDiff.chunks[key] = chunkDiff
-		}
+		maps.Copy(oldDiff.chunks, newDiff.chunks)
 		newDiff = oldDiff
 	}
 	cpd.engines[engineID] = newDiff

@@ -150,9 +150,9 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 	// column sets are **NOT** always ordered, see comment: https://github.com/pingcap/tidb/pull/45831#discussion_r1481031471
 	// we are using mapping mechanism instead of moving j forward.
 	marked := make([]bool, mergedSchema.Len())
-	for i := 0; i < colsNeedResolving; i++ {
+	for i := range colsNeedResolving {
 		findIdx := -1
-		for j := 0; j < len(mergedSchema.Columns); j++ {
+		for j := range mergedSchema.Columns {
 			if !p.schema.Columns[i].EqualColumn(mergedSchema.Columns[j]) || marked[j] {
 				continue
 			}
@@ -469,7 +469,7 @@ func (p *PhysicalIndexMergeReader) ResolveIndices() (err error) {
 			return err
 		}
 	}
-	for i := 0; i < len(p.partialPlans); i++ {
+	for i := range p.partialPlans {
 		err = p.partialPlans[i].ResolveIndices()
 		if err != nil {
 			return err
@@ -631,7 +631,7 @@ func (p *PhysicalWindow) ResolveIndices() (err error) {
 	if err != nil {
 		return err
 	}
-	for i := 0; i < len(p.Schema().Columns)-len(p.WindowFuncDescs); i++ {
+	for i := range len(p.Schema().Columns) - len(p.WindowFuncDescs) {
 		col := p.Schema().Columns[i]
 		newCol, err := col.ResolveIndices(p.Children()[0].Schema())
 		if err != nil {

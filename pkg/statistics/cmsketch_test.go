@@ -236,8 +236,8 @@ func TestCMSketchCodingTopN(t *testing.T) {
 	unsignedLong.AddFlag(mysql.UnsignedFlag)
 	chk := chunk.New([]*types.FieldType{types.NewFieldType(mysql.TypeBlob), unsignedLong}, 20, 20)
 	var rows []chunk.Row
-	for i := 0; i < 20; i++ {
-		tString := []byte(fmt.Sprintf("%20000d", i))
+	for i := range 20 {
+		tString := fmt.Appendf(nil, "%20000d", i)
 		topN[i] = TopNMeta{tString, math.MaxUint64}
 		chk.AppendBytes(0, tString)
 		chk.AppendUint64(1, math.MaxUint64)
@@ -271,7 +271,7 @@ func TestTopNScale(t *testing.T) {
 	for _, scaleFactor := range []float64{0.9999, 1.00001, 1.9999, 4.9999, 5.001, 9.99} {
 		var data []TopNMeta
 		sumCount := uint64(0)
-		for i := 0; i < 20; i++ {
+		for range 20 {
 			cnt := uint64(rand.Intn(100000))
 			data = append(data, TopNMeta{
 				Count: cnt,

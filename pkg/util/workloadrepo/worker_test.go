@@ -880,7 +880,7 @@ func TestOwnerRandomDown(t *testing.T) {
 
 	ctx, _, dom, addr := setupDomainAndContext(t)
 	var workers []*worker
-	for i := 0; i < workerNum; i++ {
+	for i := range workerNum {
 		wrk := setupWorker(ctx, t, addr, dom, fmt.Sprintf("worker%d", i), true)
 		wrk.samplingInterval = 6000
 		workers = append(workers, wrk)
@@ -907,7 +907,7 @@ func TestOwnerRandomDown(t *testing.T) {
 	}, time.Minute, 100*time.Millisecond)
 
 	// let us randomly stop the owner
-	for j := 0; j < testNum; j++ {
+	for j := range testNum {
 		var err error
 		prevSnapID := uint64(0)
 		breakOwnerIdx := -1

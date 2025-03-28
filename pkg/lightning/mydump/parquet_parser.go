@@ -432,7 +432,7 @@ func (pp *ParquetParser) ReadRow() error {
 	} else {
 		pp.lastRow.Row = pp.lastRow.Row[:length]
 	}
-	for i := 0; i < length; i++ {
+	for i := range length {
 		pp.lastRow.Length += getDatumLen(v.Field(i))
 		if err := setDatumValue(&pp.lastRow.Row[i], v.Field(i), pp.columnMetas[i], pp.logger); err != nil {
 			return err
@@ -503,7 +503,7 @@ func setDatumByString(d *types.Datum, v string, meta *parquet.SchemaElement) {
 func binaryToDecimalStr(rawBytes []byte, scale int) string {
 	negative := rawBytes[0] > 127
 	if negative {
-		for i := 0; i < len(rawBytes); i++ {
+		for i := range rawBytes {
 			rawBytes[i] = ^rawBytes[i]
 		}
 		for i := len(rawBytes) - 1; i >= 0; i-- {

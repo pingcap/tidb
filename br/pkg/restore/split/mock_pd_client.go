@@ -23,6 +23,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
+	"maps"
+	"slices"
 )
 
 // TODO consilodate TestClient and MockPDClientForSplit and FakePDClient
@@ -473,9 +475,7 @@ func (fpdh *FakePDHTTPClient) SetSchedulerDelay(_ context.Context, key string, d
 }
 
 func (fpdh *FakePDHTTPClient) SetConfig(_ context.Context, config map[string]any, ttl ...float64) error {
-	for key, value := range config {
-		fpdh.cfgs[key] = value
-	}
+	maps.Copy(fpdh.cfgs, config)
 	return nil
 }
 
@@ -547,7 +547,7 @@ func (fpdc *FakePDClient) SetRegions(regions []*router.Region) {
 }
 
 func (fpdc *FakePDClient) GetAllStores(context.Context, ...opt.GetStoreOption) ([]*metapb.Store, error) {
-	return append([]*metapb.Store{}, fpdc.stores...), nil
+	return slices.Clone(fpdc.stores), nil
 }
 
 func (fpdc *FakePDClient) ScanRegions(

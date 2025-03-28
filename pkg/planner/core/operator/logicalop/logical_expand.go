@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
+	"slices"
 )
 
 // LogicalExpand represents a logical Expand OP serves for data replication requirement.
@@ -101,8 +102,8 @@ func (p *LogicalExpand) PruneColumns(parentUsedCols []*expression.Column, opt *o
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			prunedColumns = append(prunedColumns, p.Schema().Columns[i])
-			p.Schema().Columns = append(p.Schema().Columns[:i], p.Schema().Columns[i+1:]...)
-			p.SetOutputNames(append(p.OutputNames()[:i], p.OutputNames()[i+1:]...))
+			p.Schema().Columns = slices.Delete(p.Schema().Columns, i, i+1)
+			p.SetOutputNames(slices.Delete(p.OutputNames(), i, i+1))
 		}
 	}
 	logicaltrace.AppendColumnPruneTraceStep(p, prunedColumns, opt)

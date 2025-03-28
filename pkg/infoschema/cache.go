@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
+	"slices"
 )
 
 // InfoCache handles information schema, including getting and setting.
@@ -379,7 +380,7 @@ func (h *InfoCache) InsertEmptySchemaVersion(version int64) {
 		for ver := range h.emptySchemaVersions {
 			versions = append(versions, ver)
 		}
-		sort.Slice(versions, func(i, j int) bool { return versions[i] < versions[j] })
+		slices.Sort(versions)
 		for _, ver := range versions {
 			delete(h.emptySchemaVersions, ver)
 			if len(h.emptySchemaVersions) <= cap(h.cache) {

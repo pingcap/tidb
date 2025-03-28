@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"go.uber.org/zap"
+	"maps"
 )
 
 type UpstreamID = int64
@@ -103,9 +104,7 @@ func NewSchemasReplace(
 				continue
 			}
 			globalTableIdMap[tblID] = tr.TableID
-			for oldpID, newpID := range tr.PartitionMap {
-				globalTableIdMap[oldpID] = newpID
-			}
+			maps.Copy(globalTableIdMap, tr.PartitionMap)
 		}
 	}
 

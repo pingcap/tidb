@@ -971,9 +971,9 @@ func TestMaxScanFilesOption(t *testing.T) {
 	))
 	const dataFilesCount = 200
 	maxScanFilesCount := 500
-	for i := 0; i < dataFilesCount; i++ {
+	for i := range dataFilesCount {
 		require.NoError(t, memStore.WriteFile(ctx, fmt.Sprintf("/test-src/db1.tbl1.%d.sql", i),
-			[]byte(fmt.Sprintf("INSERT INTO db1.tbl1 (id, val) VALUES (%d, 'aaa%d');", i, i)),
+			fmt.Appendf(nil, "INSERT INTO db1.tbl1 (id, val) VALUES (%d, 'aaa%d');", i, i),
 		))
 	}
 	cfg := newConfigWithSourceDir("/test-src")
@@ -1089,7 +1089,7 @@ func TestSampleFileCompressRatio(t *testing.T) {
 	bf := bytes.NewBuffer(byteArray)
 	compressWriter := gzip.NewWriter(bf)
 	csvData := []byte("aaaa\n")
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		_, err = compressWriter.Write(csvData)
 		require.NoError(t, err)
 	}
@@ -1133,7 +1133,7 @@ func testSampleParquetDataSize(t *testing.T, count int) {
 	t.Logf("seed: %d. To reproduce the random behaviour, manually set `rand.New(rand.NewSource(seed))`", seed)
 	rnd := rand.New(rand.NewSource(seed))
 	totalRowSize := 0
-	for i := 0; i < count; i++ {
+	for i := range count {
 		kl := rnd.Intn(20) + 1
 		key := make([]byte, kl)
 		kl, err = rnd.Read(key)

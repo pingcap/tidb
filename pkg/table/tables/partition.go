@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"go.uber.org/zap"
+	"slices"
 )
 
 const (
@@ -397,7 +398,7 @@ type ForRangeColumnsPruning struct {
 func dataForRangeColumnsPruning(ctx expression.BuildContext, defs []model.PartitionDefinition, schema *expression.Schema, names []*types.FieldName, p *parser.Parser, colOffsets []int) (*ForRangeColumnsPruning, error) {
 	var res ForRangeColumnsPruning
 	res.LessThan = make([][]*expression.Expression, 0, len(defs))
-	for i := 0; i < len(defs); i++ {
+	for i := range defs {
 		lessThanCols := make([]*expression.Expression, 0, len(defs[i].LessThan))
 		for j := range defs[i].LessThan {
 			if strings.EqualFold(defs[i].LessThan[j], "MAXVALUE") {
@@ -649,12 +650,7 @@ func (pg *ListPartitionGroup) union(otherPg ListPartitionGroup) {
 }
 
 func (pg *ListPartitionGroup) findGroupIdx(groupIdx int) bool {
-	for _, gidx := range pg.GroupIdxs {
-		if gidx == groupIdx {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(pg.GroupIdxs, groupIdx)
 }
 
 // ForRangePruning is used for range partition pruning.
@@ -669,7 +665,7 @@ func dataForRangePruning(sctx expression.BuildContext, defs []model.PartitionDef
 	var maxValue bool
 	var unsigned bool
 	lessThan := make([]int64, len(defs))
-	for i := 0; i < len(defs); i++ {
+	for i := range defs {
 		if strings.EqualFold(defs[i].LessThan[0], "MAXVALUE") {
 			// Use a bool flag instead of math.MaxInt64 to avoid the corner cases.
 			maxValue = true
@@ -782,7 +778,7 @@ func generateRangePartitionExpr(ctx expression.BuildContext, expr string, partCo
 func getRangeLocateExprs(ctx expression.BuildContext, p *parser.Parser, defs []model.PartitionDefinition, partStrs []string, schema *expression.Schema, names types.NameSlice) ([]expression.Expression, error) {
 	var buf bytes.Buffer
 	locateExprs := make([]expression.Expression, 0, len(defs))
-	for i := 0; i < len(defs); i++ {
+	for i := range defs {
 		if strings.EqualFold(defs[i].LessThan[0], "MAXVALUE") {
 			// Expr less than maxvalue is always true.
 			fmt.Fprintf(&buf, "true")

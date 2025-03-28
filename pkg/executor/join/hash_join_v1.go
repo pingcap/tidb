@@ -264,7 +264,7 @@ func (w *ProbeWorkerV1) handleUnmatchedRowsFromHashTable() {
 			w.HashJoinCtx.joinResultCh <- joinResult
 			return
 		}
-		for j := 0; j < chk.NumRows(); j++ {
+		for j := range chk.NumRows() {
 			if !w.HashJoinCtx.outerMatchedStatus[i].UnsafeIsSet(j) { // process unmatched Outer rows
 				w.Joiner.OnMissMatch(false, chk.GetRow(j), joinResult.chk)
 			}
@@ -854,7 +854,7 @@ func (w *ProbeWorkerV1) join2Chunk(probeSideChk *chunk.Chunk, hCtx *HashContext,
 		}
 		// after fetch one NA column, collect the null value to null bitmap for every how. (use hasNull flag to accelerate)
 		// eg: if a NA Join cols is (a, b, c), for every build row here we maintained a 3-bit map to mark which column is null for them.
-		for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+		for rowIdx := range numRows {
 			if hCtx.HasNull[rowIdx] {
 				hCtx.naColNullBitMap[rowIdx].UnsafeSet(keyIdx)
 				// clean and try fetch Next NA join col.
@@ -943,7 +943,7 @@ func (w *ProbeWorkerV1) join2ChunkForOuterHashJoin(probeSideChk *chunk.Chunk, hC
 			return false, waitTime, joinResult
 		}
 	}
-	for i := 0; i < probeSideChk.NumRows(); i++ {
+	for i := range probeSideChk.NumRows() {
 		err := w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller.HandleSignal()
 		failpoint.Inject("killedInJoin2ChunkForOuterHashJoin", func(val failpoint.Value) {
 			if val.(bool) {

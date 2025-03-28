@@ -342,7 +342,7 @@ func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskCh
 	rebuildConnFn func(*sql.Conn, bool) (*sql.Conn, error)) ([]*Writer, func(), error) {
 	conf, pool := d.conf, d.dbHandle
 	writers := make([]*Writer, conf.Threads)
-	for i := 0; i < conf.Threads; i++ {
+	for i := range conf.Threads {
 		conn, err := createConnWithConsistency(tctx, pool, needRepeatableRead(conf.ServerInfo.ServerType, conf.Consistency))
 		if err != nil {
 			return nil, func() {}, err

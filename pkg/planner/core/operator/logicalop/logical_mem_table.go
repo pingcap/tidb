@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"slices"
 )
 
 // LogicalMemTable represents a memory table or virtual table
@@ -100,9 +101,9 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column, opt 
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && p.Schema().Len() > 1 {
 			prunedColumns = append(prunedColumns, p.Schema().Columns[i])
-			p.Schema().Columns = append(p.Schema().Columns[:i], p.Schema().Columns[i+1:]...)
-			p.SetOutputNames(append(p.OutputNames()[:i], p.OutputNames()[i+1:]...))
-			p.Columns = append(p.Columns[:i], p.Columns[i+1:]...)
+			p.Schema().Columns = slices.Delete(p.Schema().Columns, i, i+1)
+			p.SetOutputNames(slices.Delete(p.OutputNames(), i, i+1))
+			p.Columns = slices.Delete(p.Columns, i, i+1)
 		}
 	}
 	logicaltrace.AppendColumnPruneTraceStep(p, prunedColumns, opt)

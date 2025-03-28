@@ -29,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"maps"
+	"slices"
 )
 
 // LogicalApply gets one row from outer executor and gets one row from inner executor according to outer row.
@@ -136,9 +138,7 @@ func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema
 		RowCount: leftProfile.RowCount,
 		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
 	})
-	for id, c := range leftProfile.ColNDVs {
-		la.StatsInfo().ColNDVs[id] = c
-	}
+	maps.Copy(la.StatsInfo().ColNDVs, leftProfile.ColNDVs)
 	if la.JoinType == LeftOuterSemiJoin || la.JoinType == AntiLeftOuterSemiJoin {
 		la.StatsInfo().ColNDVs[selfSchema.Columns[selfSchema.Len()-1].UniqueID] = 2.0
 	} else {
@@ -183,7 +183,7 @@ func (la *LogicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn {
 	corCols := la.LogicalJoin.ExtractCorrelatedCols()
 	for i := len(corCols) - 1; i >= 0; i-- {
 		if la.Children()[0].Schema().Contains(&corCols[i].Column) {
-			corCols = append(corCols[:i], corCols[i+1:]...)
+			corCols = slices.Delete(corCols, i, i+1)
 		}
 	}
 	return corCols

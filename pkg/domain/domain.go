@@ -116,6 +116,8 @@ import (
 	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
+	"maps"
+	"slices"
 )
 
 var (
@@ -257,7 +259,7 @@ func (df *deferFn) check() {
 
 	// iterate the slice, call the defer function and remove it.
 	rm := 0
-	for i := 0; i < len(df.data); i++ {
+	for i := range df.data {
 		record := &df.data[i]
 		if now.After(record.fire) {
 			record.fn()
@@ -660,7 +662,7 @@ func (do *Domain) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, new
 		}
 		diffTypes = append(diffTypes, diff.Type.String())
 		phyTblIDs = append(phyTblIDs, ids...)
-		for i := 0; i < len(ids); i++ {
+		for range ids {
 			actions = append(actions, uint64(diff.Type))
 		}
 	}
@@ -1044,7 +1046,7 @@ func (do *Domain) refreshMDLCheckTableInfo(ctx context.Context) {
 	do.mdlCheckTableInfo.newestVer = domainSchemaVer
 	do.mdlCheckTableInfo.jobsVerMap = make(map[int64]int64, len(rows))
 	do.mdlCheckTableInfo.jobsIDsMap = make(map[int64]string, len(rows))
-	for i := 0; i < len(rows); i++ {
+	for i := range rows {
 		do.mdlCheckTableInfo.jobsVerMap[rows[i].GetInt64(0)] = rows[i].GetInt64(1)
 		do.mdlCheckTableInfo.jobsIDsMap[rows[i].GetInt64(0)] = rows[i].GetString(2)
 	}
@@ -1088,12 +1090,8 @@ func (do *Domain) mdlCheckLoop() {
 
 		jobsVerMap := make(map[int64]int64, len(do.mdlCheckTableInfo.jobsVerMap))
 		jobsIDsMap := make(map[int64]string, len(do.mdlCheckTableInfo.jobsIDsMap))
-		for k, v := range do.mdlCheckTableInfo.jobsVerMap {
-			jobsVerMap[k] = v
-		}
-		for k, v := range do.mdlCheckTableInfo.jobsIDsMap {
-			jobsIDsMap[k] = v
-		}
+		maps.Copy(jobsVerMap, do.mdlCheckTableInfo.jobsVerMap)
+		maps.Copy(jobsIDsMap, do.mdlCheckTableInfo.jobsIDsMap)
 		do.mdlCheckTableInfo.mu.Unlock()
 
 		jobNeedToSync = true
@@ -1722,11 +1720,8 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 		})
 	}
 	enabled := true
-	for _, s := range svrIDsInThisZone[enabledCount:] {
-		if s == serverInfo.ID {
-			enabled = false
-			break
-		}
+	if slices.Contains(svrIDsInThisZone[enabledCount:], serverInfo.ID) {
+		enabled = false
 	}
 
 	if variable.SetEnableAdaptiveReplicaRead(enabled) {
@@ -1950,7 +1945,7 @@ func batchReadMoreData(ch clientv3.WatchChan, event PrivilegeEvent) PrivilegeEve
 	timer := time.NewTimer(5 * time.Millisecond)
 	defer timer.Stop()
 	const maxBatchSize = 128
-	for i := 0; i < maxBatchSize; i++ {
+	for range maxBatchSize {
 		select {
 		case resp, ok := <-ch:
 			if !ok {
@@ -2256,7 +2251,7 @@ func (do *Domain) SetupPlanReplayerHandle(collectorSctx sessionctx.Context, work
 		status: taskStatus,
 	}
 	do.planReplayerHandle.planReplayerTaskDumpHandle.workers = make([]*planReplayerTaskDumpWorker, 0)
-	for i := 0; i < len(workersSctxs); i++ {
+	for i := range workersSctxs {
 		worker := &planReplayerTaskDumpWorker{
 			ctx:    ctx,
 			sctx:   workersSctxs[i],
@@ -2601,7 +2596,7 @@ func quitStatsOwner(do *Domain, mgr owner.Manager) {
 // StartLoadStatsSubWorkers starts sub workers with new sessions to load stats concurrently.
 func (do *Domain) StartLoadStatsSubWorkers(concurrency int) {
 	statsHandle := do.StatsHandle()
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		do.wg.Add(1)
 		go statsHandle.SubLoadWorker(do.exit, do.wg)
 	}
@@ -3277,7 +3272,7 @@ func (*Domain) proposeServerID(ctx context.Context, conflictCnt int) (uint64, er
 				}
 			}
 
-			for retry := 0; retry < 15; retry++ {
+			for range 15 {
 				randServerID := randomServerID(1, globalconn.MaxServerID32)
 				if _, ok := serverIDs[randServerID]; !ok {
 					return randServerID, nil

@@ -52,10 +52,10 @@ func TestSingleSessionInsert(t *testing.T) {
 
 	rowCount1 := 10
 	rowCount2 := 20
-	for i := 0; i < rowCount1; i++ {
+	for range rowCount1 {
 		testKit.MustExec("insert into t1 values(1, 2)")
 	}
-	for i := 0; i < rowCount2; i++ {
+	for range rowCount2 {
 		testKit.MustExec("insert into t2 values(1, 2)")
 	}
 
@@ -82,7 +82,7 @@ func TestSingleSessionInsert(t *testing.T) {
 
 	testKit.MustExec("analyze table t1")
 	// Test update in a txn.
-	for i := 0; i < rowCount1; i++ {
+	for range rowCount1 {
 		testKit.MustExec("insert into t1 values(1, 2)")
 	}
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
@@ -96,7 +96,7 @@ func TestSingleSessionInsert(t *testing.T) {
 	require.Equal(t, float64(rowCount1*2), count)
 
 	testKit.MustExec("begin")
-	for i := 0; i < rowCount1; i++ {
+	for range rowCount1 {
 		testKit.MustExec("insert into t1 values(1, 2)")
 	}
 	testKit.MustExec("commit")
@@ -106,13 +106,13 @@ func TestSingleSessionInsert(t *testing.T) {
 	require.Equal(t, int64(rowCount1*3), stats1.RealtimeCount)
 
 	testKit.MustExec("begin")
-	for i := 0; i < rowCount1; i++ {
+	for range rowCount1 {
 		testKit.MustExec("insert into t1 values(1, 2)")
 	}
-	for i := 0; i < rowCount1; i++ {
+	for range rowCount1 {
 		testKit.MustExec("delete from t1 limit 1")
 	}
-	for i := 0; i < rowCount2; i++ {
+	for range rowCount2 {
 		testKit.MustExec("update t2 set c2 = c1")
 	}
 	testKit.MustExec("commit")
@@ -144,7 +144,7 @@ func TestSingleSessionInsert(t *testing.T) {
 		usage.DumpStatsDeltaRatio = originValue
 	}()
 	usage.DumpStatsDeltaRatio = 0.5
-	for i := 0; i < rowCount1; i++ {
+	for range rowCount1 {
 		testKit.MustExec("insert into t1 values (1,2)")
 	}
 	err = h.DumpStatsDeltaToKV(false)
@@ -198,16 +198,16 @@ func TestMultiSession(t *testing.T) {
 	testKit.MustExec("create table t1 (c1 int, c2 int)")
 
 	rowCount1 := 10
-	for i := 0; i < rowCount1; i++ {
+	for range rowCount1 {
 		testKit.MustExec("insert into t1 values(1, 2)")
 	}
 
 	testKit1 := testkit.NewTestKit(t, store)
-	for i := 0; i < rowCount1; i++ {
+	for range rowCount1 {
 		testKit1.MustExec("insert into test.t1 values(1, 2)")
 	}
 	testKit2 := testkit.NewTestKit(t, store)
-	for i := 0; i < rowCount1; i++ {
+	for range rowCount1 {
 		testKit2.MustExec("delete from test.t1 limit 1")
 	}
 	is := dom.InfoSchema()
@@ -223,15 +223,15 @@ func TestMultiSession(t *testing.T) {
 	stats1 := h.GetTableStats(tableInfo1)
 	require.Equal(t, int64(rowCount1), stats1.RealtimeCount)
 
-	for i := 0; i < rowCount1; i++ {
+	for range rowCount1 {
 		testKit.MustExec("insert into t1 values(1, 2)")
 	}
 
-	for i := 0; i < rowCount1; i++ {
+	for range rowCount1 {
 		testKit1.MustExec("insert into test.t1 values(1, 2)")
 	}
 
-	for i := 0; i < rowCount1; i++ {
+	for range rowCount1 {
 		testKit2.MustExec("delete from test.t1 limit 1")
 	}
 
@@ -263,7 +263,7 @@ func TestTxnWithFailure(t *testing.T) {
 
 	rowCount1 := 10
 	testKit.MustExec("begin")
-	for i := 0; i < rowCount1; i++ {
+	for i := range rowCount1 {
 		testKit.MustExec("insert into t1 values(?, 2)", i)
 	}
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
@@ -701,10 +701,10 @@ func TestMergeTopN(t *testing.T) {
 
 		topNs := make([]*statistics.TopN, 0, topnNum)
 		res := make(map[int]uint64)
-		for i := 0; i < topnNum; i++ {
+		for range topnNum {
 			topN := statistics.NewTopN(n)
 			occur := make(map[int]bool)
-			for j := 0; j < n; j++ {
+			for range n {
 				// The range of numbers in the topn structure is in [0, maxTopNVal)
 				// But there cannot be repeated occurrences of value in a topN structure.
 				randNum := rand.Intn(maxTopNVal)
@@ -712,7 +712,7 @@ func TestMergeTopN(t *testing.T) {
 					randNum = rand.Intn(maxTopNVal)
 				}
 				occur[randNum] = true
-				tString := []byte(fmt.Sprintf("%d", randNum))
+				tString := fmt.Appendf(nil, "%d", randNum)
 				// The range of the number of occurrences in the topn structure is in [0, maxTopNCnt)
 				randCnt := uint64(rand.Intn(maxTopNCnt))
 				res[randNum] += randCnt
@@ -1132,10 +1132,10 @@ func TestStatsLockForDelta(t *testing.T) {
 
 	rowCount1 := 10
 	rowCount2 := 20
-	for i := 0; i < rowCount1; i++ {
+	for range rowCount1 {
 		testKit.MustExec("insert into t1 values(1, 2)")
 	}
-	for i := 0; i < rowCount2; i++ {
+	for range rowCount2 {
 		testKit.MustExec("insert into t2 values(1, 2)")
 	}
 
@@ -1156,7 +1156,7 @@ func TestStatsLockForDelta(t *testing.T) {
 	require.Equal(t, int64(rowCount2), stats2.RealtimeCount)
 
 	testKit.MustExec("analyze table t1")
-	for i := 0; i < rowCount1; i++ {
+	for range rowCount1 {
 		testKit.MustExec("insert into t1 values(1, 2)")
 	}
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
@@ -1170,7 +1170,7 @@ func TestStatsLockForDelta(t *testing.T) {
 	stats1 = h.GetTableStats(tableInfo1)
 	require.Equal(t, int64(20), stats1.RealtimeCount)
 
-	for i := 0; i < rowCount1; i++ {
+	for range rowCount1 {
 		testKit.MustExec("insert into t1 values(1, 2)")
 	}
 	require.NoError(t, h.DumpStatsDeltaToKV(true))

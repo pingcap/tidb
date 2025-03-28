@@ -459,9 +459,9 @@ func TestMainBackupLoop(t *testing.T) {
 		}
 		res := make([][]byte, 0)
 		res = append(res, ranges[0].StartKey)
-		for i := 0; i < len(ranges); i++ {
+		for i := range ranges {
 			partRes := make([][]byte, 0)
-			for j := 0; j < limit; j++ {
+			for range limit {
 				x, err := genRandBytesFn(ranges[i].StartKey, ranges[i].EndKey)
 				require.NoError(t, err)
 				partRes = append(partRes, x)
@@ -487,7 +487,7 @@ func TestMainBackupLoop(t *testing.T) {
 
 	mockBackupResponses := make(map[uint64][]*backup.ResponseAndStore)
 	splitKeys := splitRangesFn(ranges, 10)
-	for i := 0; i < len(splitKeys)-1; i++ {
+	for i := range len(splitKeys) - 1 {
 		randStoreID := uint64(rand.Int()%len(stores) + 1)
 		mockBackupResponses[randStoreID] = append(mockBackupResponses[randStoreID], &backup.ResponseAndStore{
 			StoreID: randStoreID,
@@ -529,7 +529,7 @@ func TestMainBackupLoop(t *testing.T) {
 	clear(mockBackupResponses)
 	splitKeys = splitRangesFn(ranges, 10)
 	// range is not complete
-	for i := 0; i < len(splitKeys)-2; i++ {
+	for i := range len(splitKeys) - 2 {
 		randStoreID := uint64(rand.Int()%len(stores) + 1)
 		mockBackupResponses[randStoreID] = append(mockBackupResponses[randStoreID], &backup.ResponseAndStore{
 			StoreID: randStoreID,
@@ -573,7 +573,7 @@ func TestMainBackupLoop(t *testing.T) {
 
 	clear(mockBackupResponses)
 	splitKeys = splitRangesFn(ranges, 10)
-	for i := 0; i < len(splitKeys)-1; i++ {
+	for i := range len(splitKeys) - 1 {
 		randStoreID := uint64(rand.Int()%len(stores) + 1)
 		mockBackupResponses[randStoreID] = append(mockBackupResponses[randStoreID], &backup.ResponseAndStore{
 			StoreID: randStoreID,
@@ -632,7 +632,7 @@ func TestMainBackupLoop(t *testing.T) {
 
 	clear(mockBackupResponses)
 	splitKeys = splitRangesFn(ranges, 10)
-	for i := 0; i < len(splitKeys)-1; i++ {
+	for i := range len(splitKeys) - 1 {
 		randStoreID := uint64(rand.Int()%len(stores) + 1)
 		mockBackupResponses[randStoreID] = append(mockBackupResponses[randStoreID], &backup.ResponseAndStore{
 			StoreID: randStoreID,
@@ -685,7 +685,7 @@ func TestMainBackupLoop(t *testing.T) {
 
 	clear(mockBackupResponses)
 	splitKeys = splitRangesFn(ranges, 10)
-	for i := 0; i < len(splitKeys)-1; i++ {
+	for i := range len(splitKeys) - 1 {
 		randStoreID := uint64(rand.Int()%len(stores) + 1)
 		mockBackupResponses[randStoreID] = append(mockBackupResponses[randStoreID], &backup.ResponseAndStore{
 			StoreID: randStoreID,
@@ -824,7 +824,7 @@ func TestSplitBackupReqRanges(t *testing.T) {
 	require.Len(t, res, 1)
 
 	genSubRanges := func(req *backuppb.BackupRequest, count int) {
-		for i := 0; i < count; i++ {
+		for i := range count {
 			req.SubRanges = append(req.SubRanges, &kvrpcpb.KeyRange{
 				StartKey: []byte{byte(i)},
 				EndKey:   []byte{byte(i + 1)},
@@ -836,7 +836,7 @@ func TestSplitBackupReqRanges(t *testing.T) {
 	// case #3: 10 subranges and split into 10 parts
 	res = backup.SplitBackupReqRanges(req, 10)
 	require.Len(t, res, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		require.Equal(t, res[i].SubRanges[0].StartKey, req.SubRanges[i].StartKey)
 		require.Equal(t, res[i].SubRanges[0].EndKey, req.SubRanges[i].EndKey)
 	}
@@ -844,7 +844,7 @@ func TestSplitBackupReqRanges(t *testing.T) {
 	// case #3.1: 10 subranges and split into 11 parts(has no difference with 10 parts)
 	res = backup.SplitBackupReqRanges(req, 11)
 	require.Len(t, res, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		require.Equal(t, res[i].SubRanges[0].StartKey, req.SubRanges[i].StartKey)
 		require.Equal(t, res[i].SubRanges[0].EndKey, req.SubRanges[i].EndKey)
 	}
@@ -852,7 +852,7 @@ func TestSplitBackupReqRanges(t *testing.T) {
 	// case #3.2: 10 subranges and split into 9 parts(has no difference with 10 parts)
 	res = backup.SplitBackupReqRanges(req, 9)
 	require.Len(t, res, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		require.Equal(t, res[i].SubRanges[0].StartKey, req.SubRanges[i].StartKey)
 		require.Equal(t, res[i].SubRanges[0].EndKey, req.SubRanges[i].EndKey)
 	}
@@ -861,9 +861,9 @@ func TestSplitBackupReqRanges(t *testing.T) {
 	// but actually it will generate 4 parts due to not divisible.
 	res = backup.SplitBackupReqRanges(req, 3)
 	require.Len(t, res, 4)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		require.Len(t, res[i].SubRanges, 3)
-		for j := 0; j < 3; j++ {
+		for j := range 3 {
 			require.Equal(t, res[i].SubRanges[j].StartKey, req.SubRanges[i*3+j].StartKey)
 			require.Equal(t, res[i].SubRanges[j].EndKey, req.SubRanges[i*3+j].EndKey)
 		}

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"maps"
 )
 
 // MockSessionManager is a mocked session manager which is used for test.
@@ -76,9 +77,7 @@ func (msm *MockSessionManager) ShowProcessList() map[uint64]*util.ProcessInfo {
 	}
 	msm.mu.Unlock()
 	if msm.Dom != nil {
-		for connID, pi := range msm.Dom.SysProcTracker().GetSysProcessList() {
-			ret[connID] = pi
-		}
+		maps.Copy(ret, msm.Dom.SysProcTracker().GetSysProcessList())
 	}
 	return ret
 }

@@ -110,7 +110,7 @@ func TestParallelSort(t *testing.T) {
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(sortCase, schema)
 	exe := buildSortExec(sortCase, dataSource)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		parallelSortTest(t, ctx, nil, schema, dataSource, sortCase)
 		parallelSortTest(t, ctx, exe, schema, dataSource, sortCase)
 	}
@@ -132,7 +132,7 @@ func TestFailpoint(t *testing.T) {
 
 	testNum := 30
 	exe := buildSortExec(sortCase, dataSource)
-	for i := 0; i < testNum; i++ {
+	for range testNum {
 		failpointTest(t, ctx, nil, sortCase, dataSource)
 		failpointTest(t, ctx, exe, sortCase, dataSource)
 	}
@@ -157,7 +157,7 @@ func TestIssue55344(t *testing.T) {
 	tk.MustExec("CREATE TABLE t1(c int);")
 	valueNum := 1000
 	insertedValues := make([]int, 0, valueNum)
-	for i := 0; i < valueNum; i++ {
+	for range valueNum {
 		insertedValues = append(insertedValues, rand.Intn(10000))
 	}
 

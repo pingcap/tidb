@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
+	"slices"
 )
 
 //go:generate go run ./generator/plan_cache/plan_clone_generator.go -- plan_clone_generated.go
@@ -1301,7 +1302,7 @@ func (la *PhysicalApply) ExtractCorrelatedCols() []*expression.CorrelatedColumn 
 	corCols := la.PhysicalHashJoin.ExtractCorrelatedCols()
 	for i := len(corCols) - 1; i >= 0; i-- {
 		if la.Children()[0].Schema().Contains(&corCols[i].Column) {
-			corCols = append(corCols[:i], corCols[i+1:]...)
+			corCols = slices.Delete(corCols, i, i+1)
 		}
 	}
 	return corCols

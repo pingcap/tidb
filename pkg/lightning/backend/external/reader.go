@@ -81,7 +81,7 @@ func readAllData(
 	readConn = min(readConn, len(dataFiles))
 	taskCh := make(chan int)
 	output.memKVBuffers = make([]*membuf.Buffer, readConn*2)
-	for readIdx := 0; readIdx < readConn; readIdx++ {
+	for readIdx := range readConn {
 		eg.Go(func() error {
 			output.memKVBuffers[readIdx] = smallBlockBufPool.NewBuffer()
 			output.memKVBuffers[readIdx+readConn] = largeBlockBufPool.NewBuffer()

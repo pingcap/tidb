@@ -1426,7 +1426,7 @@ func (e *Explain) prepareTaskDot(p base.PhysicalPlan, taskTp string, buffer *byt
 			copTasks = append(copTasks, copPlan.tablePlan)
 			copTasks = append(copTasks, copPlan.indexPlan)
 		case *PhysicalIndexMergeReader:
-			for i := 0; i < len(copPlan.partialPlans); i++ {
+			for i := range copPlan.partialPlans {
 				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.partialPlans[i].ExplainID()))
 				copTasks = append(copTasks, copPlan.partialPlans[i])
 			}

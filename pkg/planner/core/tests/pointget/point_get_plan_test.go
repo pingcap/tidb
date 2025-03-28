@@ -157,7 +157,7 @@ func TestPointGetId(t *testing.T) {
 	tk.MustExec("create table t (c1 int primary key, c2 int)")
 	defer tk.MustExec("drop table if exists t")
 	pointGetQuery := "select c2 from t where c1 = 1"
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		ctx := tk.Session().(sessionctx.Context)
 		stmts, err := session.Parse(ctx, pointGetQuery)
 		require.NoError(t, err)

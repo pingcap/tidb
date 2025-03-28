@@ -299,7 +299,7 @@ func iterateChildPlan4LogicalSequence(
 	// The curCntPlan records the number of possible plans for selfPhysicalPlan
 	curCntPlan := int64(1)
 	lastIdx := p.ChildLen() - 1
-	for j := 0; j < lastIdx; j++ {
+	for j := range lastIdx {
 		child := p.Children()[j]
 		childProp := selfPhysicalPlan.GetChildReqProps(j)
 		childTask, cnt, err := child.FindBestTask(childProp, &PlanCounterDisabled, opt)
@@ -1243,7 +1243,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				// We can break here because the current candidate cannot prune others anymore.
 				break
 			} else if result == -1 {
-				candidates = append(candidates[:i], candidates[i+1:]...)
+				candidates = slices.Delete(candidates, i, i+1)
 			}
 		}
 		if !pruned {
@@ -1865,7 +1865,7 @@ func overwritePartialTableScanSchema(ds *logicalop.DataSource, ts *PhysicalTable
 	hdColNum := handleCols.NumCols()
 	exprCols := make([]*expression.Column, 0, hdColNum)
 	infoCols := make([]*model.ColumnInfo, 0, hdColNum)
-	for i := 0; i < hdColNum; i++ {
+	for i := range hdColNum {
 		col := handleCols.GetCol(i)
 		exprCols = append(exprCols, col)
 		if c := model.FindColumnInfoByID(ds.TableInfo.Columns, col.ID); c != nil {
@@ -1886,7 +1886,7 @@ func setIndexMergeTableScanHandleCols(ds *logicalop.DataSource, ts *PhysicalTabl
 	}
 	hdColNum := handleCols.NumCols()
 	exprCols := make([]*expression.Column, 0, hdColNum)
-	for i := 0; i < hdColNum; i++ {
+	for i := range hdColNum {
 		col := handleCols.GetCol(i)
 		exprCols = append(exprCols, col)
 	}

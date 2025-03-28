@@ -57,7 +57,7 @@ func (r *recordSet) Fields() []*resolve.ResultField {
 
 func (r *recordSet) setFields(tps ...uint8) {
 	r.fields = make([]*resolve.ResultField, len(tps))
-	for i := 0; i < len(tps); i++ {
+	for i := range tps {
 		rf := new(resolve.ResultField)
 		rf.Column = new(model.ColumnInfo)
 		rf.Column.FieldType = *types.NewFieldType(tps[i])
@@ -82,7 +82,7 @@ func (r *recordSet) Next(_ context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	row := r.getNext()
 	if row != nil {
-		for i := 0; i < len(row); i++ {
+		for i := range row {
 			req.AppendDatum(i, &row[i])
 		}
 	}
@@ -665,7 +665,7 @@ func TestPruneTopN(t *testing.T) {
 
 	// case 3
 	topnIn = nil
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		topnIn = append(topnIn, TopNMeta{[]byte{byte(i)}, 10_000})
 	}
 	totalNDV = 100
@@ -689,7 +689,7 @@ func TestPruneTopN(t *testing.T) {
 
 	// case 5 - test pruning of value=1
 	topnIn = nil
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		topnIn = append(topnIn, TopNMeta{[]byte{byte(i)}, 90})
 	}
 	topnPruned := topnIn

@@ -58,7 +58,7 @@ func (s *mockGCSSuite) TestImportFromSelectBasic() {
 	var count = 5000
 	values := make([]string, 0, count)
 	queryResult := make([]string, 0, count)
-	for i := 0; i < count; i++ {
+	for i := range count {
 		values = append(values, fmt.Sprintf("(%d, 'abc-%d')", i, i))
 		queryResult = append(queryResult, fmt.Sprintf("%d abc-%d", i, i))
 	}

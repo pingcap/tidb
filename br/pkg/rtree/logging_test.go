@@ -32,8 +32,8 @@ func TestLogRanges(t *testing.T) {
 	encoder := zapcore.NewConsoleEncoder(zapcore.EncoderConfig{})
 	for _, cs := range cases {
 		ranges := make([]rtree.Range, cs.count)
-		for j := 0; j < cs.count; j++ {
-			ranges[j] = *newRange([]byte(fmt.Sprintf("%d", j)), []byte(fmt.Sprintf("%d", j+1)))
+		for j := range cs.count {
+			ranges[j] = *newRange(fmt.Appendf(nil, "%d", j), fmt.Appendf(nil, "%d", j+1))
 			ranges[j].Files = append(ranges[j].Files, &backuppb.File{TotalKvs: uint64(j), TotalBytes: uint64(j), Size_: uint64(j)})
 		}
 		out, err := encoder.EncodeEntry(zapcore.Entry{}, []zap.Field{rtree.ZapRanges(ranges)})

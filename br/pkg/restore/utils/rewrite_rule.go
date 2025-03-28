@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
+	"slices"
 )
 
 // AppliedFile has two types for now.
@@ -116,13 +117,7 @@ func (r *RewriteRules) SetTimeRangeFilter(cfName string) error {
 	var ignoreBeforeTs uint64
 	switch {
 	case strings.Contains(cfName, DefaultCFName):
-		ignoreBeforeTs = r.ShiftStartTs
-		if ignoreBeforeTs > r.StartTs {
-			// for default cf, shift start ts could less than start ts
-			// this could happen when large kv txn happen after small kv txn.
-			// use the start ts to filter out irrelevant data for default cf is more safe
-			ignoreBeforeTs = r.StartTs
-		}
+		ignoreBeforeTs = min(r.ShiftStartTs, r.StartTs)
 	case strings.Contains(cfName, WriteCFName):
 		ignoreBeforeTs = r.StartTs
 	default:
@@ -453,7 +448,7 @@ func replacePrefix(s []byte, rewriteRules *RewriteRules) ([]byte, *import_sstpb.
 	// We should search the dataRules firstly.
 	for _, rule := range rewriteRules.Data {
 		if bytes.HasPrefix(s, rule.GetOldKeyPrefix()) {
-			return append(append([]byte{}, rule.GetNewKeyPrefix()...), s[len(rule.GetOldKeyPrefix()):]...), rule
+			return slices.Concat(rule.GetNewKeyPrefix(), s[len(rule.GetOldKeyPrefix()):]), rule
 		}
 	}
 

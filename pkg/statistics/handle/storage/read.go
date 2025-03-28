@@ -140,7 +140,7 @@ func HistogramFromStorageWithPriority(
 	hg := statistics.NewHistogram(colID, distinct, nullCount, ver, tp, bucketSize, totColSize)
 	hg.Correlation = corr
 	totalCount := int64(0)
-	for i := 0; i < bucketSize; i++ {
+	for i := range bucketSize {
 		count := rows[i].GetInt64(0)
 		repeats := rows[i].GetInt64(1)
 		var upperBound, lowerBound types.Datum

@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"slices"
 )
 
 type joinReorderDPSolver struct {
@@ -102,7 +103,7 @@ func (s *joinReorderDPSolver) solve(joinGroup []base.LogicalPlan, tracer *joinRe
 	nodeID2VisitID := make([]int, len(joinGroup))
 	var joins []base.LogicalPlan
 	// BFS the tree.
-	for i := 0; i < len(joinGroup); i++ {
+	for i := range joinGroup {
 		if visited[i] {
 			continue
 		}
@@ -123,7 +124,7 @@ func (s *joinReorderDPSolver) solve(joinGroup []base.LogicalPlan, tracer *joinRe
 			}
 			totalNonEqEdges[i].nodeIDMask = newMask
 			subNonEqEdges = append(subNonEqEdges, totalNonEqEdges[i])
-			totalNonEqEdges = append(totalNonEqEdges[:i], totalNonEqEdges[i+1:]...)
+			totalNonEqEdges = slices.Delete(totalNonEqEdges, i, i+1)
 		}
 		// Do DP on each sub graph.
 		join, err := s.dpGraph(visitID2NodeID, nodeID2VisitID, joinGroup, totalEqEdges, subNonEqEdges, tracer)

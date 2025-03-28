@@ -49,6 +49,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"slices"
 )
 
 type KvMode int
@@ -497,7 +498,7 @@ func getSSTMetaFromFile(
 	// https://github.com/tikv/tikv/blob/970a9bf2a9ea782a455ae579ad237aaf6cb1daec/
 	// components/sst_importer/src/sst_importer.rs#L221
 	suffix := []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
-	rangeEnd := append(append([]byte{}, regionRule.GetNewKeyPrefix()...), suffix...)
+	rangeEnd := slices.Concat(regionRule.GetNewKeyPrefix(), suffix)
 	// rangeEnd = min(rangeEnd, region.EndKey)
 	if len(r.GetEndKey()) > 0 && bytes.Compare(rangeEnd, r.GetEndKey()) > 0 {
 		rangeEnd = r.GetEndKey()

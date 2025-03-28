@@ -512,7 +512,7 @@ func (rm *MockRegionManager) splitKeys(keys [][]byte) ([]*regionCtx, error) {
 		region := item.(*btreeItem).region.Meta()
 
 		var i int
-		for i = 0; i < len(keys); i++ {
+		for i = range keys {
 			if len(region.EndKey) > 0 && bytes.Compare(keys[i], region.EndKey) >= 0 {
 				break
 			}
@@ -542,7 +542,7 @@ func (rm *MockRegionManager) splitKeys(keys [][]byte) ([]*regionCtx, error) {
 			Peers: region.Peers,
 		}, rm.latches, nil))
 
-		for i := 0; i < len(splits)-1; i++ {
+		for i := range len(splits) - 1 {
 			newRegions = append(newRegions, newRegionCtx(&metapb.Region{
 				Id:          rm.AllocID(),
 				RegionEpoch: &metapb.RegionEpoch{ConfVer: 1, Version: 1},

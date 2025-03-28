@@ -21,6 +21,7 @@ import (
 
 	"github.com/google/uuid"
 	s "github.com/pingcap/tidb/pkg/util/set"
+	"slices"
 )
 
 /*
@@ -356,7 +357,7 @@ func (aa *autoAdmin) createMultiColumnIndexes(indexableColsSet s.Set[Column], in
 		tableColsSet := s.ListToSet[Column](columns...)
 		indexColsSet := s.ListToSet[Column](index.Columns...)
 		for _, column := range s.DiffSet(s.AndSet(tableColsSet, indexableColsSet), indexColsSet).ToList() {
-			cols := append([]Column{}, index.Columns...)
+			cols := slices.Clone(index.Columns)
 			cols = append(cols, column)
 			multiColumnCandidates.Add(Index{
 				SchemaName: index.SchemaName,
@@ -436,7 +437,7 @@ func (aa *autoAdmin) selectIndexCandidates(querySet s.Set[Query], potentialIndex
 
 		bestPerQuery := 3 // keep 3 best indexes for each single-query
 		bestQueryIndexes := s.NewSet[Index]()
-		for i := 0; i < bestPerQuery; i++ {
+		for range bestPerQuery {
 			best, err := aa.enumerateCombinations(tmpQuerySet, indexes, 1)
 			if err != nil {
 				return nil, err
