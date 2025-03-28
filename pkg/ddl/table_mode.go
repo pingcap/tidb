@@ -62,7 +62,7 @@ func onAlterTableMode(jobCtx *jobContext, job *model.Job) (ver int64, err error)
 // Because BR will NOT use this function to set a table into ModeRestore,
 // instead BR will use (batch)CreateTableWithInfo.
 func alterTableMode(tbInfo *model.TableInfo, args *model.AlterTableModeArgs) error {
-	ok := checkTableMode(tbInfo.Mode, args.TableMode)
+	ok := validateTableMode(tbInfo.Mode, args.TableMode)
 	if !ok {
 		return infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(tbInfo.Mode, args.TableMode, tbInfo.Name.O)
 	}
@@ -71,7 +71,7 @@ func alterTableMode(tbInfo *model.TableInfo, args *model.AlterTableModeArgs) err
 	return nil
 }
 
-func checkTableMode(origin, target model.TableMode) bool {
+func validateTableMode(origin, target model.TableMode) bool {
 	if target == model.TableModeImport {
 		// only transition from ModeNormal to ModeImport is allowed
 		if origin != model.TableModeNormal {

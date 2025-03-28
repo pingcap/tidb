@@ -4154,8 +4154,8 @@ func (e *executor) dropTableObject(
 			return err
 		}
 		// Only table mode is TableModeNormal can be dropped table
-		if tableInfo.Meta().Mode != model.TableModeNormal {
-			return infoschema.ErrProtectedTableMode.GenWithStackByArgs(tableInfo.Meta().Name, tableInfo.Meta().Mode)
+		if err = checkTableMode(tableInfo); err != nil {
+			return err
 		}
 
 		// prechecks before build DDL job
@@ -4349,8 +4349,8 @@ func (e *executor) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Id
 			return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Table"))
 		}
 		// Only table mode is TableModeNormal can be renamed table
-		if tbl.Meta().Mode != model.TableModeNormal {
-			return infoschema.ErrProtectedTableMode.GenWithStackByArgs(tbl.Meta().Name, tbl.Meta().Mode)
+		if err = checkTableMode(tbl); err != nil {
+			return err
 		}
 	}
 
@@ -4400,8 +4400,8 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 				return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Tables"))
 			}
 			// Only table mode is TableModeNormal can be renamed table
-			if t.Meta().Mode != model.TableModeNormal {
-				return infoschema.ErrProtectedTableMode.GenWithStackByArgs(t.Meta().Name, t.Meta().Mode)
+			if err = checkTableMode(t); err != nil {
+				return err
 			}
 		}
 
@@ -5714,7 +5714,7 @@ func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTabl
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema.Name, args.TableID)
 	}
 
-	ok = checkTableMode(table.Meta().Mode, args.TableMode)
+	ok = validateTableMode(table.Meta().Mode, args.TableMode)
 	if !ok {
 		return infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(table.Meta().Mode, args.TableMode, table.Meta().Name.O)
 	}
@@ -7030,4 +7030,18 @@ func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 		ResourceGroupName: ctx.GetSessionVars().StmtCtx.ResourceGroupName,
 		Version:           model.CurrentReorgMetaVersion,
 	}
+}
+
+// checkTableMode checks the table mode is TableModeNormal or not.
+// This is a special validation for tablemode during the DDL phase. Originally, reads and writes to non-normal
+// tables were prohibited during the optimize phase of execution plan generation.
+// However, the current approach relies on the `tableNameW` recorded in the ResolveContext
+// during the preprocessing phase to store the tables involved in the statement,
+// and then checks whether the table mode is normal. However, for some statements, `tableNameW` is not recorded
+// in the `ResolveContext`, so these statements require special handling during the DDL execution phase.
+func checkTableMode(tableInfo table.Table) error {
+	if tableInfo.Meta().Mode != model.TableModeNormal {
+		return infoschema.ErrProtectedTableMode.GenWithStackByArgs(tableInfo.Meta().Name, tableInfo.Meta().Mode)
+	}
+	return nil
 }
