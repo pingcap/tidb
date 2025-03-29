@@ -119,6 +119,7 @@ type Executor interface {
 	RenameTable(ctx sessionctx.Context, stmt *ast.RenameTableStmt) error
 	LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 	UnlockTables(ctx sessionctx.Context, lockedTables []model.TableLockTpInfo) error
+	AlterTableMode(ctx sessionctx.Context, args *model.AlterTableModeArgs) error
 	CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error
 	UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error
 	RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTableStmt) error
@@ -1062,6 +1063,14 @@ func (e *executor) createTableWithInfoJob(
 		switch cfg.OnExist {
 		case OnExistIgnore:
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			// if target TableMode is ModeRestore, we check if the existing mode is consistent the new one
+			if tbInfo.Mode == model.TableModeRestore {
+				oldTableMode := oldTable.Meta().Mode
+				if oldTableMode != model.TableModeRestore {
+					return nil, infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(oldTableMode, tbInfo.Mode, tbInfo.Name)
+				}
+			}
+			// Currently, target TableMode will NEVER be ModeImport because ImportInto does not use this function
 			return nil, nil
 		case OnExistReplace:
 			// only CREATE OR REPLACE VIEW is supported at the moment.
@@ -4146,6 +4155,9 @@ func (e *executor) dropTableObject(
 		} else if err != nil {
 			return err
 		}
+		if err = checkTableMode(tableInfo); err != nil {
+			return err
+		}
 
 		// prechecks before build DDL job
 
@@ -4337,6 +4349,9 @@ func (e *executor) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Id
 		if tbl.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 			return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Table"))
 		}
+		if err = checkTableMode(tbl); err != nil {
+			return err
+		}
 	}
 
 	job := &model.Job{
@@ -4383,6 +4398,9 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 		if t, ok := is.TableByID(e.ctx, tableID); ok {
 			if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 				return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Tables"))
+			}
+			if err = checkTableMode(t); err != nil {
+				return err
 			}
 		}
 
@@ -5691,6 +5709,41 @@ func (e *executor) UnlockTables(ctx sessionctx.Context, unlockTables []model.Tab
 	return errors.Trace(err)
 }
 
+func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTableModeArgs) error {
+	is := e.infoCache.GetLatest()
+
+	schema, ok := is.SchemaByID(args.SchemaID)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("SchemaID: %v", args.SchemaID))
+	}
+
+	table, ok := is.TableByID(e.ctx, args.TableID)
+	if !ok {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema.Name, args.TableID)
+	}
+
+	ok = validateTableMode(table.Meta().Mode, args.TableMode)
+	if !ok {
+		return infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(table.Meta().Mode, args.TableMode, table.Meta().Name.O)
+	}
+	if table.Meta().Mode == args.TableMode {
+		return nil
+	}
+
+	job := &model.Job{
+		Version:        model.JobVersion2,
+		SchemaID:       args.SchemaID,
+		TableID:        args.TableID,
+		Type:           model.ActionAlterTableMode,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        sctx.GetSessionVars().SQLMode,
+	}
+	sctx.SetValue(sessionctx.QueryString, "skip")
+	err := e.doDDLJob2(sctx, job, args)
+	return errors.Trace(err)
+}
+
 func throwErrIfInMemOrSysDB(ctx sessionctx.Context, dbLowerName string) error {
 	if util.IsMemOrSysDB(dbLowerName) {
 		if ctx.GetSessionVars().User != nil {
@@ -6985,4 +7038,20 @@ func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 		ResourceGroupName: ctx.GetSessionVars().StmtCtx.ResourceGroupName,
 		Version:           model.CurrentReorgMetaVersion,
 	}
+}
+
+// checkTableMode checks the table mode is TableModeNormal or not. This is a
+// special validation for tablemode during the DDL phase. Originally, reads and writes
+// to non-normal tables were prohibited during the optimize phase of execution plan
+// generation. However, the current approach relies on the `tableNameW` recorded
+// in the ResolveContext during the preprocessing phase to store the tables involved
+// in the statement,and then checks whether the table mode is normal. However,
+// for some statements, `tableNameW` is not recorded as those table might not exists,
+// such as for rename table DDL in the `ResolveContext`, so these statements
+// require special handling during the DDL execution phase.
+func checkTableMode(tableInfo table.Table) error {
+	if tableInfo.Meta().Mode != model.TableModeNormal {
+		return infoschema.ErrProtectedTableMode.GenWithStackByArgs(tableInfo.Meta().Name, tableInfo.Meta().Mode)
+	}
+	return nil
 }

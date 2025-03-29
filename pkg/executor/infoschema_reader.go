@@ -727,6 +727,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 			shardingInfo,          // TIDB_ROW_ID_SHARDING_INFO
 			pkType,                // TIDB_PK_TYPE
 			policyName,            // TIDB_PLACEMENT_POLICY_NAME
+			table.Mode.String(),   // TIDB_TABLE_MODE
 		)
 		rows = append(rows, record)
 		e.recordMemoryConsume(record)
@@ -757,6 +758,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 			nil,                   // TIDB_ROW_ID_SHARDING_INFO
 			pkType,                // TIDB_PK_TYPE
 			nil,                   // TIDB_PLACEMENT_POLICY_NAME
+			nil,                   // TIDB_TABLE_MODE
 		)
 		rows = append(rows, record)
 		e.recordMemoryConsume(record)
@@ -861,6 +863,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 					nil,                   // TIDB_ROW_ID_SHARDING_INFO
 					nil,                   // TIDB_PK_TYPE
 					nil,                   // TIDB_PLACEMENT_POLICY_NAME
+					nil,                   // TIDB_TABLE_MODE
 				)
 				rows = append(rows, record)
 				e.recordMemoryConsume(record)
