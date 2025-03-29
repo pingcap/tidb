@@ -146,7 +146,7 @@ func (n *CreateDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.IfNotExists {
 		ctx.WriteKeyWord("IF NOT EXISTS ")
 	}
-	ctx.WriteName(n.Name.O)
+	ctx.WriteName(n.Name.O.Value())
 	for i, option := range n.Options {
 		ctx.WritePlain(" ")
 		err := option.Restore(ctx)
@@ -195,7 +195,7 @@ func (n *AlterDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("ALTER DATABASE")
 	if !n.AlterDefaultDatabase {
 		ctx.WritePlain(" ")
-		ctx.WriteName(n.Name.O)
+		ctx.WriteName(n.Name.O.Value())
 	}
 	for i, option := range n.Options {
 		ctx.WritePlain(" ")
@@ -243,7 +243,7 @@ func (n *DropDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.IfExists {
 		ctx.WriteKeyWord("IF EXISTS ")
 	}
-	ctx.WriteName(n.Name.O)
+	ctx.WriteName(n.Name.O.Value())
 	return nil
 }
 
@@ -268,7 +268,7 @@ type FlashBackDatabaseStmt struct {
 // Restore implements Node interface.
 func (n *FlashBackDatabaseStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("FLASHBACK DATABASE ")
-	ctx.WriteName(n.DBName.O)
+	ctx.WriteName(n.DBName.O.Value())
 	if len(n.NewName) > 0 {
 		ctx.WriteKeyWord(" TO ")
 		ctx.WriteName(n.NewName)
@@ -586,7 +586,7 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("DEFAULT ")
 		printOuterParentheses := false
 		if funcCallExpr, ok := n.Expr.(*FuncCallExpr); ok {
-			if name := funcCallExpr.FnName.L; name != CurrentTimestamp {
+			if name := funcCallExpr.FnName.L.Value(); name != CurrentTimestamp {
 				printOuterParentheses = true
 			}
 		}
@@ -746,7 +746,7 @@ func (n *IndexOption) IsEmpty() bool {
 	if n.PrimaryKeyTp != PrimaryKeyTypeDefault ||
 		n.KeyBlockSize > 0 ||
 		n.Tp != IndexTypeInvalid ||
-		len(n.ParserName.O) > 0 ||
+		len(n.ParserName.O.Value()) > 0 ||
 		n.Comment != "" ||
 		n.Global ||
 		n.Visibility != IndexVisibilityDefault ||
@@ -784,12 +784,12 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		hasPrevOption = true
 	}
 
-	if len(n.ParserName.O) > 0 {
+	if len(n.ParserName.O.Value()) > 0 {
 		if hasPrevOption {
 			ctx.WritePlain(" ")
 		}
 		ctx.WriteKeyWord("WITH PARSER ")
-		ctx.WriteName(n.ParserName.O)
+		ctx.WriteName(n.ParserName.O.Value())
 		hasPrevOption = true
 	}
 
@@ -1374,7 +1374,7 @@ func (n *DropPlacementPolicyStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.IfExists {
 		ctx.WriteKeyWord("IF EXISTS ")
 	}
-	ctx.WriteName(n.PolicyName.O)
+	ctx.WriteName(n.PolicyName.O.Value())
 	return nil
 }
 
@@ -1404,7 +1404,7 @@ func (n *DropResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.IfExists {
 		ctx.WriteKeyWord("IF EXISTS ")
 	}
-	ctx.WriteName(n.ResourceGroupName.O)
+	ctx.WriteName(n.ResourceGroupName.O.Value())
 	return nil
 }
 
@@ -1627,7 +1627,7 @@ func (n *CreateViewStmt) Restore(ctx *format.RestoreCtx) error {
 		} else {
 			ctx.WritePlain(",")
 		}
-		ctx.WriteName(col.O)
+		ctx.WriteName(col.O.Value())
 		if i == len(n.Cols)-1 {
 			ctx.WritePlain(")")
 		}
@@ -1691,7 +1691,7 @@ func (n *CreatePlacementPolicyStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.IfNotExists {
 		ctx.WriteKeyWord("IF NOT EXISTS ")
 	}
-	ctx.WriteName(n.PolicyName.O)
+	ctx.WriteName(n.PolicyName.O.Value())
 	for i, option := range n.PlacementOptions {
 		ctx.WritePlain(" ")
 		if err := option.Restore(ctx); err != nil {
@@ -1732,7 +1732,7 @@ func (n *CreateResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.IfNotExists {
 		ctx.WriteKeyWord("IF NOT EXISTS ")
 	}
-	ctx.WriteName(n.ResourceGroupName.O)
+	ctx.WriteName(n.ResourceGroupName.O.Value())
 	for i, option := range n.ResourceGroupOptionList {
 		if i > 0 {
 			ctx.WritePlain(",")
@@ -3531,9 +3531,9 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(n.Algorithm.String())
 	case AlterTableRenameIndex:
 		ctx.WriteKeyWord("RENAME INDEX ")
-		ctx.WriteName(n.FromKey.O)
+		ctx.WriteName(n.FromKey.O.Value())
 		ctx.WriteKeyWord(" TO ")
-		ctx.WriteName(n.ToKey.O)
+		ctx.WriteName(n.ToKey.O.Value())
 	case AlterTableForce:
 		// TODO: not support
 		ctx.WriteKeyWord("FORCE")
@@ -3587,7 +3587,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			}()
 			ctx.Flags &= ^format.RestoreTiDBSpecialComment
 			ctx.WriteKeyWord("PARTITION ")
-			ctx.WriteName(n.PartitionNames[0].O)
+			ctx.WriteName(n.PartitionNames[0].O.Value())
 			ctx.WritePlain(" ")
 
 			for i, opt := range n.Options {
@@ -3595,7 +3595,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 					ctx.WritePlain(" ")
 				}
 				if err := opt.Restore(ctx); err != nil {
-					return errors.Annotatef(err, "An error occurred while restore AlterTableSpec.Options[%d] for PARTITION `%s`", i, n.PartitionNames[0].O)
+					return errors.Annotatef(err, "An error occurred while restore AlterTableSpec.Options[%d] for PARTITION `%s`", i, n.PartitionNames[0].O.Value())
 				}
 			}
 			return nil
@@ -3614,7 +3614,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 		}
 	case AlterTablePartitionAttributes:
 		ctx.WriteKeyWord("PARTITION ")
-		ctx.WriteName(n.PartitionNames[0].O)
+		ctx.WriteName(n.PartitionNames[0].O.Value())
 		ctx.WritePlain(" ")
 
 		spec := n.AttributesSpec
@@ -3636,7 +3636,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			if i != 0 {
 				ctx.WritePlain(",")
 			}
-			ctx.WriteName(name.O)
+			ctx.WriteName(name.O.Value())
 		}
 	case AlterTableTruncatePartition:
 		ctx.WriteKeyWord("TRUNCATE PARTITION ")
@@ -3648,7 +3648,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			if i != 0 {
 				ctx.WritePlain(",")
 			}
-			ctx.WriteName(name.O)
+			ctx.WriteName(name.O.Value())
 		}
 	case AlterTableCheckPartitions:
 		ctx.WriteKeyWord("CHECK PARTITION ")
@@ -3660,7 +3660,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			if i != 0 {
 				ctx.WritePlain(",")
 			}
-			ctx.WriteName(name.O)
+			ctx.WriteName(name.O.Value())
 		}
 	case AlterTableOptimizePartition:
 		ctx.WriteKeyWord("OPTIMIZE PARTITION ")
@@ -3675,7 +3675,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			if i != 0 {
 				ctx.WritePlain(",")
 			}
-			ctx.WriteName(name.O)
+			ctx.WriteName(name.O.Value())
 		}
 	case AlterTableRepairPartition:
 		ctx.WriteKeyWord("REPAIR PARTITION ")
@@ -3690,7 +3690,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			if i != 0 {
 				ctx.WritePlain(",")
 			}
-			ctx.WriteName(name.O)
+			ctx.WriteName(name.O.Value())
 		}
 	case AlterTableImportPartitionTablespace:
 		ctx.WriteKeyWord("IMPORT PARTITION ")
@@ -3701,7 +3701,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 				if i != 0 {
 					ctx.WritePlain(",")
 				}
-				ctx.WriteName(name.O)
+				ctx.WriteName(name.O.Value())
 			}
 		}
 		ctx.WriteKeyWord(" TABLESPACE")
@@ -3714,7 +3714,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 				if i != 0 {
 					ctx.WritePlain(",")
 				}
-				ctx.WriteName(name.O)
+				ctx.WriteName(name.O.Value())
 			}
 		}
 		ctx.WriteKeyWord(" TABLESPACE")
@@ -3745,7 +3745,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			if i != 0 {
 				ctx.WritePlain(",")
 			}
-			ctx.WriteName(name.O)
+			ctx.WriteName(name.O.Value())
 		}
 	case AlterTableReorganizeLastPartition:
 		ctx.WriteKeyWord("SPLIT MAXVALUE PARTITION LESS THAN (")
@@ -3773,7 +3773,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			} else {
 				ctx.WritePlain(" ")
 			}
-			ctx.WriteName(name.O)
+			ctx.WriteName(name.O.Value())
 		}
 		ctx.WriteKeyWord(" INTO ")
 		if n.PartDefinitions != nil {
@@ -3790,7 +3790,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 		}
 	case AlterTableExchangePartition:
 		ctx.WriteKeyWord("EXCHANGE PARTITION ")
-		ctx.WriteName(n.PartitionNames[0].O)
+		ctx.WriteName(n.PartitionNames[0].O.Value())
 		ctx.WriteKeyWord(" WITH TABLE ")
 		n.NewTable.Restore(ctx)
 		if !n.WithValidation {
@@ -3816,7 +3816,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("DISCARD TABLESPACE")
 	case AlterTableIndexInvisible:
 		ctx.WriteKeyWord("ALTER INDEX ")
-		ctx.WriteName(n.IndexName.O)
+		ctx.WriteName(n.IndexName.O.Value())
 		switch n.Visibility {
 		case IndexVisibilityVisible:
 			ctx.WriteKeyWord(" VISIBLE")
@@ -4058,7 +4058,7 @@ type SubPartitionDefinition struct {
 
 func (spd *SubPartitionDefinition) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("SUBPARTITION ")
-	ctx.WriteName(spd.Name.O)
+	ctx.WriteName(spd.Name.O.Value())
 	for i, opt := range spd.Options {
 		ctx.WritePlain(" ")
 		if err := opt.Restore(ctx); err != nil {
@@ -4303,7 +4303,7 @@ func (n *PartitionDefinition) acceptInPlace(v Visitor) bool {
 // Restore implements Node interface.
 func (n *PartitionDefinition) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("PARTITION ")
-	ctx.WriteName(n.Name.O)
+	ctx.WriteName(n.Name.O.Value())
 
 	if err := n.Clause.restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore PartitionDefinition.Clause")
@@ -4686,9 +4686,9 @@ func (n *FlashBackToTimestampStmt) Restore(ctx *format.RestoreCtx) error {
 				return errors.Annotatef(err, "An error occurred while restore DropTableStmt.Tables[%d]", index)
 			}
 		}
-	} else if n.DBName.O != "" {
+	} else if n.DBName.O.Value() != "" {
 		ctx.WriteKeyWord("DATABASE ")
-		ctx.WriteName(n.DBName.O)
+		ctx.WriteName(n.DBName.O.Value())
 	} else {
 		ctx.WriteKeyWord("CLUSTER")
 	}
@@ -4845,7 +4845,7 @@ func (n *AlterPlacementPolicyStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.IfExists {
 		ctx.WriteKeyWord("IF EXISTS ")
 	}
-	ctx.WriteName(n.PolicyName.O)
+	ctx.WriteName(n.PolicyName.O.Value())
 	for i, option := range n.PlacementOptions {
 		ctx.WritePlain(" ")
 		if err := option.Restore(ctx); err != nil {
@@ -4913,7 +4913,7 @@ func (n *AlterResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.IfExists {
 		ctx.WriteKeyWord("IF EXISTS ")
 	}
-	ctx.WriteName(n.ResourceGroupName.O)
+	ctx.WriteName(n.ResourceGroupName.O.Value())
 	for i, option := range n.ResourceGroupOptionList {
 		if i > 0 {
 			ctx.WritePlain(",")
