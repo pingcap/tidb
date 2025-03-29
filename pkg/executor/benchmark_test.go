@@ -284,7 +284,7 @@ func buildWindowExecutor(ctx sessionctx.Context, windowFunc string, funcs int, f
 	win := new(core.PhysicalWindow)
 	win.WindowFuncDescs = make([]*aggregation.WindowFuncDesc, 0)
 	winSchema := schema.Clone()
-	for i := 0; i < funcs; i++ {
+	for i := range funcs {
 		var args []expression.Expression
 		switch windowFunc {
 		case ast.WindowFuncNtile:
@@ -638,9 +638,9 @@ func prepareResolveIndices(joinSchema, lSchema, rSchema *expression.Schema, join
 	// column sets are **NOT** always ordered, see comment: https://github.com/pingcap/tidb/pull/45831#discussion_r1481031471
 	// we are using mapping mechanism instead of moving j forward.
 	marked := make([]bool, mergedSchema.Len())
-	for i := 0; i < colsNeedResolving; i++ {
+	for i := range colsNeedResolving {
 		findIdx := -1
-		for j := 0; j < len(mergedSchema.Columns); j++ {
+		for j := range mergedSchema.Columns {
 			if !joinSchema.Columns[i].EqualColumn(mergedSchema.Columns[j]) || marked[j] {
 				continue
 			}
@@ -728,7 +728,7 @@ func prepare4HashJoinV2(testCase *hashJoinTestCase, innerExec, outerExec exec.Ex
 		e.RUsed = append(e.RUsed, index)
 	}
 
-	for i := 0; i < testCase.concurrency; i++ {
+	for i := range testCase.concurrency {
 		e.ProbeWorkers[i] = &join.ProbeWorkerV2{
 			HashJoinCtx: e.HashJoinCtxV2,
 			JoinProbe:   join.NewJoinProbe(e.HashJoinCtxV2, uint(i), testCase.joinType, probeKeysColIdx, joinedTypes, probeKeyTypes, false),
@@ -1291,7 +1291,7 @@ func prepare4IndexOuterHashJoin(tc *IndexJoinTestCase, outerDS *testutil.MockDat
 	idxHash := &join.IndexNestedLoopHashJoin{IndexLookUpJoin: *e.(*join.IndexLookUpJoin)}
 	concurrency := tc.Concurrency
 	idxHash.Joiners = make([]join.Joiner, concurrency)
-	for i := 0; i < concurrency; i++ {
+	for i := range concurrency {
 		idxHash.Joiners[i] = e.(*join.IndexLookUpJoin).Joiner.Clone()
 	}
 	return idxHash, nil
@@ -1357,7 +1357,7 @@ func prepare4IndexMergeJoin(tc *IndexJoinTestCase, outerDS *testutil.MockDataSou
 	}
 	concurrency := e.Ctx().GetSessionVars().IndexLookupJoinConcurrency()
 	joiners := make([]join.Joiner, concurrency)
-	for i := 0; i < concurrency; i++ {
+	for i := range concurrency {
 		joiners[i] = join.NewJoiner(tc.Ctx, 0, false, defaultValues, nil, leftTypes, rightTypes, nil, false)
 	}
 	e.Joiners = joiners
@@ -2057,7 +2057,7 @@ func BenchmarkAggPartialResultMapperMemoryUsage(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				aggMap := make(aggfuncs.AggPartialResultMapper)
 				tempSlice := make([]aggfuncs.PartialResult, 10)
-				for num := 0; num < c.rowNum; num++ {
+				for num := range c.rowNum {
 					aggMap[strconv.Itoa(num)] = tempSlice
 				}
 			}

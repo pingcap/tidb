@@ -74,10 +74,7 @@ func newCoprCache(config *config.CoprocessorCache) (*coprCache, error) {
 	if maxEntityInBytes == 0 {
 		return nil, errors.New("AdmissionMaxResultMB must be > 0 to enable the cache")
 	}
-	estimatedEntities := capacityInBytes / maxEntityInBytes * 2
-	if estimatedEntities < 10 {
-		estimatedEntities = 10
-	}
+	estimatedEntities := max(capacityInBytes/maxEntityInBytes*2, 10)
 	cache, err := ristretto.NewCache(&ristretto.Config{
 		NumCounters: estimatedEntities * 10,
 		MaxCost:     capacityInBytes,

@@ -1443,8 +1443,8 @@ func (cc *clientConn) writeStats(ctx context.Context) error {
 	} else {
 		uptime = int64(time.Since(time.Unix(info.ServerInfo.StartTimestamp, 0)).Seconds())
 	}
-	msg := []byte(fmt.Sprintf("Uptime: %d  Threads: 0  Questions: 0  Slow queries: 0  Opens: 0  Flush tables: 0  Open tables: 0  Queries per second avg: 0.000",
-		uptime))
+	msg := fmt.Appendf(nil, "Uptime: %d  Threads: 0  Questions: 0  Slow queries: 0  Opens: 0  Flush tables: 0  Open tables: 0  Queries per second avg: 0.000",
+		uptime)
 	data := cc.alloc.AllocWithLen(4, len(msg))
 	data = append(data, msg...)
 
@@ -2368,7 +2368,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 		if stmtDetail != nil {
 			start = time.Now()
 		}
-		for i := 0; i < rowCount; i++ {
+		for i := range rowCount {
 			data = data[0:4]
 			if binary {
 				data, err = column.DumpBinaryRow(data, rs.Columns(), req.GetRow(i), cc.rsEncoder)

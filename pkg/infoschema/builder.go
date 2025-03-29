@@ -779,7 +779,7 @@ func (b *Builder) deleteReferredForeignKeys(dbInfo *model.DBInfo, tableID int64)
 			if i == len(tables)-1 {
 				tables = tables[:i]
 			} else {
-				tables = append(tables[:i], tables[i+1:]...)
+				tables = slices.Delete(tables, i, i+1)
 			}
 			b.infoSchema.deleteReferredForeignKeys(dbInfo.Name, tblInfo)
 			break

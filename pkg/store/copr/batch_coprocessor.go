@@ -1097,7 +1097,7 @@ func convertRegionInfosToPartitionTableRegions(batchTasks []*batchCopTask, parti
 		}
 		count := 0
 		// clear empty table region
-		for j := 0; j < len(tableRegions); j++ {
+		for j := range tableRegions {
 			if len(tableRegions[j].Regions) != 0 {
 				tableRegions[count] = tableRegions[j]
 				count++
@@ -1271,7 +1271,7 @@ func (b *batchCopIterator) Close() error {
 
 func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *batchCopTask) {
 	tasks := []*batchCopTask{task}
-	for idx := 0; idx < len(tasks); idx++ {
+	for idx := range tasks {
 		ret, err := b.handleTaskOnce(ctx, bo, tasks[idx])
 		if err != nil {
 			resp := &batchCopResponse{err: errors.Trace(err), detail: new(CopRuntimeStats)}

@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -1590,11 +1591,9 @@ func (p *preprocessor) stmtType() string {
 
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
-		for _, cte := range p.preprocessWith.cteCanUsed {
-			if cte == tn.Name.L {
-				p.preprocessWith.UpdateCTEConsumerCount(tn.Name.L)
-				return
-			}
+		if slices.Contains(p.preprocessWith.cteCanUsed, tn.Name.L) {
+			p.preprocessWith.UpdateCTEConsumerCount(tn.Name.L)
+			return
 		}
 
 		currentDB := p.sctx.GetSessionVars().CurrentDB

@@ -99,7 +99,7 @@ func InitConcurrentDDLTest(t *testing.T, colIIDs [][]int, colJIDs [][]int, tType
 // Start start the compatibility tests.
 func (cCtx *CompatibilityContext) Start(ctx *SuiteContext) {
 	cCtx.executor = cCtx.executor[:0]
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		er := newExecutor(i)
 		er.tk = ctx.getTestKit()
 		cCtx.executor = append(cCtx.executor, er)
@@ -110,7 +110,7 @@ func (cCtx *CompatibilityContext) Start(ctx *SuiteContext) {
 // Stop stop the compatibility tests.
 func (cCtx *CompatibilityContext) Stop(ctx *SuiteContext) error {
 	count := 3
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		pdChan := <-cCtx.executor[i].PDChan
 		if pdChan.err != nil {
 			require.NoError(ctx.t, pdChan.err)

@@ -515,13 +515,13 @@ func TestTuneTableScanWorkerBatchSize(t *testing.T) {
 		hintBatchSize: 32,
 		reorgMeta:     reorgMeta,
 	}
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		chk := w.getChunk()
 		require.Equal(t, 32, chk.Capacity())
 		w.srcChkPool.Put(chk)
 	}
 	reorgMeta.SetBatchSize(64)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		chk := w.getChunk()
 		require.Equal(t, 64, chk.Capacity())
 		w.srcChkPool.Put(chk)

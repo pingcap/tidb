@@ -370,7 +370,7 @@ func ResultSetToStringSlice(ctx context.Context, s types.Session, rs sqlexec.Rec
 	for i := range rows {
 		row := rows[i]
 		iRow := make([]string, row.Len())
-		for j := 0; j < row.Len(); j++ {
+		for j := range row.Len() {
 			if row.IsNull(j) {
 				iRow[j] = "<nil>"
 			} else {

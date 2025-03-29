@@ -458,7 +458,7 @@ func (e *executor) waitPendingTableThreshold(sctx sessionctx.Context, schemaID i
 		configWaitTime = time.Millisecond * 200
 	})
 
-	for retry := 0; retry < configRetry; retry++ {
+	for range configRetry {
 		done, killed := isSessionDone(sctx)
 		if done {
 			logutil.DDLLogger().Info("abort batch add TiFlash replica", zap.Int64("schemaID", schemaID), zap.Uint32("isKilled", killed))
@@ -2693,11 +2693,11 @@ func (e *executor) CoalescePartitions(sctx sessionctx.Context, ident ast.Ident, 
 func (e *executor) hashPartitionManagement(sctx sessionctx.Context, ident ast.Ident, spec *ast.AlterTableSpec, pi *model.PartitionInfo) error {
 	newSpec := *spec
 	newSpec.PartitionNames = make([]ast.CIStr, len(pi.Definitions))
-	for i := 0; i < len(pi.Definitions); i++ {
+	for i := range pi.Definitions {
 		// reorganize ALL partitions into the new number of partitions
 		newSpec.PartitionNames[i] = pi.Definitions[i].Name
 	}
-	for i := 0; i < len(newSpec.PartDefinitions); i++ {
+	for i := range newSpec.PartDefinitions {
 		switch newSpec.PartDefinitions[i].Clause.(type) {
 		case *ast.PartitionDefinitionClauseNone:
 			// OK, expected
@@ -4374,7 +4374,7 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 
 	tables := make(map[string]int64)
 	infos := make([]*model.RenameTableArgs, 0, len(oldIdents))
-	for i := 0; i < len(oldIdents); i++ {
+	for i := range oldIdents {
 		schemas, tableID, err = ExtractTblInfos(is, oldIdents[i], newIdents[i], isAlterTable, tables)
 		if err != nil {
 			return err

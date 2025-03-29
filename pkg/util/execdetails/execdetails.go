@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"cmp"
 	"fmt"
+	"maps"
 	"math"
 	"slices"
 	"strconv"
@@ -1100,9 +1101,7 @@ func (context *TiFlashScanContext) Clone() TiFlashScanContext {
 		totalVectorIdxReadVecTimeMs:        context.totalVectorIdxReadVecTimeMs,
 		totalVectorIdxReadOthersTimeMs:     context.totalVectorIdxReadOthersTimeMs,
 	}
-	for k, v := range context.regionsOfInstance {
-		newContext.regionsOfInstance[k] = v
-	}
+	maps.Copy(newContext.regionsOfInstance, context.regionsOfInstance)
 	return newContext
 }
 

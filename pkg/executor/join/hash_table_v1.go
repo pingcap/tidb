@@ -55,11 +55,11 @@ func (hc *HashContext) InitHash(rows int) {
 	if len(hc.HashVals) < rows {
 		hc.HasNull = make([]bool, rows)
 		hc.HashVals = make([]hash.Hash64, rows)
-		for i := 0; i < rows; i++ {
+		for i := range rows {
 			hc.HashVals[i] = fnv.New64()
 		}
 	} else {
-		for i := 0; i < rows; i++ {
+		for i := range rows {
 			hc.HasNull[i] = false
 			hc.HashVals[i].Reset()
 		}
@@ -69,11 +69,11 @@ func (hc *HashContext) InitHash(rows int) {
 		if len(hc.naColNullBitMap) < rows {
 			hc.naHasNull = make([]bool, rows)
 			hc.naColNullBitMap = make([]*bitmap.ConcurrentBitmap, rows)
-			for i := 0; i < rows; i++ {
+			for i := range rows {
 				hc.naColNullBitMap[i] = bitmap.NewConcurrentBitmap(len(hc.NaKeyColIdx))
 			}
 		} else {
-			for i := 0; i < rows; i++ {
+			for i := range rows {
 				hc.naHasNull[i] = false
 				hc.naColNullBitMap[i].Reset(len(hc.NaKeyColIdx))
 			}
@@ -171,10 +171,7 @@ func (c *hashRowContainer) GetOneMatchedRow(probeKey uint64, probeRow chunk.Row,
 		}
 		atomic.AddInt64(&c.stat.probeCollision, 1)
 		if i == 0 {
-			capacity = c.chkBuf.Capacity()
-			if capacity < 128 {
-				capacity = 128
-			}
+			capacity = max(c.chkBuf.Capacity(), 128)
 		} else if (i+1)%capacity == 0 {
 			c.chkBuf.Reset()
 		}
@@ -215,7 +212,7 @@ func (c *hashRowContainer) GetAllMatchedRows(probeHCtx *HashContext, probeSideRo
 		needCheckBuildTypes = needCheckBuildTypes[:0]
 		needCheckProbeTypes = needCheckProbeTypes[:0]
 		keyColLen := len(c.hCtx.NaKeyColIdx)
-		for i := 0; i < keyColLen; i++ {
+		for i := range keyColLen {
 			// since all bucket is from hash table (Not Null), so the buildSideNullBits check is eliminated.
 			if probeKeyNullBits.UnsafeIsSet(i) {
 				continue
@@ -361,7 +358,7 @@ func (c *hashRowContainer) GetNullBucketRows(probeHCtx *HashContext, probeSideRo
 			// 1 0 0 0 means right join key : null ?   ?  ?
 			// ---------------------------------------------
 			// left & right: 1 0 1 0: just do the explicit column value check for whose bit is 0. (means no null from both side)
-			for i := 0; i < keyColLen; i++ {
+			for i := range keyColLen {
 				if probeKeyNullBits.UnsafeIsSet(i) || nullEntry.nullBitMap.UnsafeIsSet(i) {
 					continue
 				}
@@ -384,7 +381,7 @@ func (c *hashRowContainer) GetNullBucketRows(probeHCtx *HashContext, probeSideRo
 			//
 			// eg: the probe key is <1,2>, we only get <2, null> in the null bucket, even we can take the null as a wildcard symbol,
 			// the first value of this two tuple is obviously not a match. So we need filter it here.
-			for i := 0; i < keyColLen; i++ {
+			for i := range keyColLen {
 				if nullEntry.nullBitMap.UnsafeIsSet(i) {
 					continue
 				}
@@ -470,7 +467,7 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 		// todo: we can collect the bitmap in codec.HashChunkSelected to avoid loop here, but the params modification is quite big.
 		// after fetch one NA column, collect the null value to null bitmap for every row. (use hasNull flag to accelerate)
 		// eg: if a NA Join cols is (a, b, c), for every build row here we maintained a 3-bit map to mark which column are null for them.
-		for rowIdx := 0; rowIdx < numRows; rowIdx++ {
+		for rowIdx := range numRows {
 			if hCtx.HasNull[rowIdx] {
 				hCtx.naColNullBitMap[rowIdx].UnsafeSet(keyIdx)
 				// clean and try fetch Next NA join col.
@@ -480,7 +477,7 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 			}
 		}
 	}
-	for i := 0; i < numRows; i++ {
+	for i := range numRows {
 		if isNAAJ {
 			if selected != nil && !selected[i] {
 				continue
@@ -582,10 +579,7 @@ func (es *entryStore) GetStore() (e *entry, memDelta int64) {
 	sliceIdx := uint32(len(es.slices) - 1)
 	slice := es.slices[sliceIdx]
 	if es.cursor >= cap(slice) {
-		size := cap(slice) * 2
-		if size >= maxEntrySliceLen {
-			size = maxEntrySliceLen
-		}
+		size := min(cap(slice)*2, maxEntrySliceLen)
 		slice = make([]entry, size)
 		es.slices = append(es.slices, slice)
 		sliceIdx++

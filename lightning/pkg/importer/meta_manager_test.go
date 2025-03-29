@@ -421,7 +421,7 @@ func TestCheckTasksExclusively(t *testing.T) {
 		sort.Slice(tasks, func(i, j int) bool {
 			return tasks[i].taskID < tasks[j].taskID
 		})
-		for j := 0; j < 5; j++ {
+		for j := range 5 {
 			require.Equal(t, int64(j), tasks[j].taskID)
 		}
 

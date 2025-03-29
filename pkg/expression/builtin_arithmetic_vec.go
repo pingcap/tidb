@@ -48,7 +48,7 @@ func (b *builtinArithmeticMultiplyRealSig) vecEvalReal(ctx EvalContext, input *c
 	result.MergeNulls(buf)
 	x := result.Float64s()
 	y := buf.Float64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		x[i] = x[i] * y[i]
 		if math.IsInf(x[i], 0) {
 			if result.IsNull(i) {
@@ -84,7 +84,7 @@ func (b *builtinArithmeticDivideDecimalSig) vecEvalDecimal(ctx EvalContext, inpu
 	var to types.MyDecimal
 	var frac int
 	ec := errCtx(ctx)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -139,7 +139,7 @@ func (b *builtinArithmeticModIntUnsignedUnsignedSig) vecEvalInt(ctx EvalContext,
 	lhi64s := lh.Int64s()
 	rhi64s := rh.Int64s()
 
-	for i := 0; i < len(lhi64s); i++ {
+	for i := range lhi64s {
 		if lh.IsNull(i) || rh.IsNull(i) {
 			result.SetNull(i, true)
 			continue
@@ -180,7 +180,7 @@ func (b *builtinArithmeticModIntUnsignedSignedSig) vecEvalInt(ctx EvalContext, i
 	lhi64s := lh.Int64s()
 	rhi64s := rh.Int64s()
 
-	for i := 0; i < len(lhi64s); i++ {
+	for i := range lhi64s {
 		if lh.IsNull(i) || rh.IsNull(i) {
 			result.SetNull(i, true)
 			continue
@@ -225,7 +225,7 @@ func (b *builtinArithmeticModIntSignedUnsignedSig) vecEvalInt(ctx EvalContext, i
 	lhi64s := lh.Int64s()
 	rhi64s := rh.Int64s()
 
-	for i := 0; i < len(lhi64s); i++ {
+	for i := range lhi64s {
 		if lh.IsNull(i) || rh.IsNull(i) {
 			result.SetNull(i, true)
 			continue
@@ -270,7 +270,7 @@ func (b *builtinArithmeticModIntSignedSignedSig) vecEvalInt(ctx EvalContext, inp
 	lhi64s := lh.Int64s()
 	rhi64s := rh.Int64s()
 
-	for i := 0; i < len(lhi64s); i++ {
+	for i := range lhi64s {
 		if lh.IsNull(i) || rh.IsNull(i) {
 			result.SetNull(i, true)
 			continue
@@ -309,7 +309,7 @@ func (b *builtinArithmeticMinusRealSig) vecEvalReal(ctx EvalContext, input *chun
 	result.MergeNulls(buf)
 	x := result.Float64s()
 	y := buf.Float64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if !mathutil.IsFinite(x[i] - y[i]) {
 			if result.IsNull(i) {
 				continue
@@ -343,7 +343,7 @@ func (b *builtinArithmeticMinusDecimalSig) vecEvalDecimal(ctx EvalContext, input
 	x := result.Decimals()
 	y := buf.Decimals()
 	var to types.MyDecimal
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -393,7 +393,7 @@ func (b *builtinArithmeticMinusIntSig) vecEvalInt(ctx EvalContext, input *chunk.
 	if signed {
 		errType = "BIGINT"
 	}
-	for i := 0; i < len(lhi64s); i++ {
+	for i := range lhi64s {
 		lh, rh := lhi64s[i], rhi64s[i]
 
 		overflow := b.overflowCheck(isLHSUnsigned, isRHSUnsigned, signed, lh, rh)
@@ -430,7 +430,7 @@ func (b *builtinArithmeticModRealSig) vecEvalReal(ctx EvalContext, input *chunk.
 	result.MergeNulls(buf)
 	x := result.Float64s()
 	y := buf.Float64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) || result.IsNull(i) {
 			continue
 		}
@@ -469,7 +469,7 @@ func (b *builtinArithmeticModDecimalSig) vecEvalDecimal(ctx EvalContext, input *
 	x := result.Decimals()
 	y := buf.Decimals()
 	var to types.MyDecimal
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) || buf.IsNull(i) {
 			continue
 		}
@@ -510,7 +510,7 @@ func (b *builtinArithmeticPlusRealSig) vecEvalReal(ctx EvalContext, input *chunk
 	result.MergeNulls(buf)
 	x := result.Float64s()
 	y := buf.Float64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if !mathutil.IsFinite(x[i] + y[i]) {
 			if result.IsNull(i) {
 				continue
@@ -544,7 +544,7 @@ func (b *builtinArithmeticMultiplyDecimalSig) vecEvalDecimal(ctx EvalContext, in
 	x := result.Decimals()
 	y := buf.Decimals()
 	var to types.MyDecimal
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -591,7 +591,7 @@ func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(ctx EvalContext, input
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf[0], buf[1])
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -662,7 +662,7 @@ func (b *builtinArithmeticMultiplyIntSig) vecEvalInt(ctx EvalContext, input *chu
 	y := buf.Int64s()
 	result.MergeNulls(buf)
 	var tmp int64
-	for i := 0; i < n; i++ {
+	for i := range n {
 		tmp = x[i] * y[i]
 		if (x[i] != 0 && tmp/x[i] != y[i]) || (tmp == math.MinInt64 && x[i] == -1) {
 			if result.IsNull(i) {
@@ -699,7 +699,7 @@ func (b *builtinArithmeticDivideRealSig) vecEvalReal(ctx EvalContext, input *chu
 	result.MergeNulls(buf)
 	x := result.Float64s()
 	y := buf.Float64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -763,7 +763,7 @@ func (b *builtinArithmeticIntDivideIntSig) vecEvalInt(ctx EvalContext, input *ch
 }
 
 func (b *builtinArithmeticIntDivideIntSig) divideUU(ctx EvalContext, result *chunk.Column, lhsI64s, rhsI64s, resultI64s []int64) error {
-	for i := 0; i < len(lhsI64s); i++ {
+	for i := range lhsI64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -782,7 +782,7 @@ func (b *builtinArithmeticIntDivideIntSig) divideUU(ctx EvalContext, result *chu
 }
 
 func (b *builtinArithmeticIntDivideIntSig) divideUS(ctx EvalContext, result *chunk.Column, lhsI64s, rhsI64s, resultI64s []int64) error {
-	for i := 0; i < len(lhsI64s); i++ {
+	for i := range lhsI64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -804,7 +804,7 @@ func (b *builtinArithmeticIntDivideIntSig) divideUS(ctx EvalContext, result *chu
 }
 
 func (b *builtinArithmeticIntDivideIntSig) divideSU(ctx EvalContext, result *chunk.Column, lhsI64s, rhsI64s, resultI64s []int64) error {
-	for i := 0; i < len(lhsI64s); i++ {
+	for i := range lhsI64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -827,7 +827,7 @@ func (b *builtinArithmeticIntDivideIntSig) divideSU(ctx EvalContext, result *chu
 }
 
 func (b *builtinArithmeticIntDivideIntSig) divideSS(ctx EvalContext, result *chunk.Column, lhsI64s, rhsI64s, resultI64s []int64) error {
-	for i := 0; i < len(lhsI64s); i++ {
+	for i := range lhsI64s {
 		if result.IsNull(i) {
 			continue
 		}
@@ -892,7 +892,7 @@ func (b *builtinArithmeticPlusIntSig) vecEvalInt(ctx EvalContext, input *chunk.C
 	return err
 }
 func (b *builtinArithmeticPlusIntSig) plusUU(ctx EvalContext, result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
-	for i := 0; i < len(lhi64s); i++ {
+	for i := range lhi64s {
 		lh, rh := lhi64s[i], rhi64s[i]
 
 		if uint64(lh) > math.MaxUint64-uint64(rh) {
@@ -908,7 +908,7 @@ func (b *builtinArithmeticPlusIntSig) plusUU(ctx EvalContext, result *chunk.Colu
 }
 
 func (b *builtinArithmeticPlusIntSig) plusUS(ctx EvalContext, result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
-	for i := 0; i < len(lhi64s); i++ {
+	for i := range lhi64s {
 		lh, rh := lhi64s[i], rhi64s[i]
 
 		if rh < 0 && uint64(-rh) > uint64(lh) {
@@ -930,7 +930,7 @@ func (b *builtinArithmeticPlusIntSig) plusUS(ctx EvalContext, result *chunk.Colu
 }
 
 func (b *builtinArithmeticPlusIntSig) plusSU(ctx EvalContext, result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
-	for i := 0; i < len(lhi64s); i++ {
+	for i := range lhi64s {
 		lh, rh := lhi64s[i], rhi64s[i]
 
 		if lh < 0 && uint64(-lh) > uint64(rh) {
@@ -951,7 +951,7 @@ func (b *builtinArithmeticPlusIntSig) plusSU(ctx EvalContext, result *chunk.Colu
 	return nil
 }
 func (b *builtinArithmeticPlusIntSig) plusSS(ctx EvalContext, result *chunk.Column, lhi64s, rhi64s, resulti64s []int64) error {
-	for i := 0; i < len(lhi64s); i++ {
+	for i := range lhi64s {
 		lh, rh := lhi64s[i], rhi64s[i]
 
 		if (lh > 0 && rh > math.MaxInt64-lh) || (lh < 0 && rh < math.MinInt64-lh) {
@@ -988,7 +988,7 @@ func (b *builtinArithmeticPlusDecimalSig) vecEvalDecimal(ctx EvalContext, input 
 	x := result.Decimals()
 	y := buf.Decimals()
 	to := new(types.MyDecimal)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -1026,7 +1026,7 @@ func (b *builtinArithmeticMultiplyIntUnsignedSig) vecEvalInt(ctx EvalContext, in
 	y := buf.Uint64s()
 	result.MergeNulls(buf)
 	var res uint64
-	for i := 0; i < n; i++ {
+	for i := range n {
 		res = x[i] * y[i]
 		if x[i] != 0 && res/x[i] != y[i] {
 			if result.IsNull(i) {

@@ -121,7 +121,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	// Start workers with channel to collect results.
 	taskCh := make(chan *analyzeTask, buildStatsConcurrency)
 	resultsCh := make(chan *statistics.AnalyzeResults, 1)
-	for i := 0; i < buildStatsConcurrency; i++ {
+	for range buildStatsConcurrency {
 		e.wg.Run(func() { e.analyzeWorker(taskCh, resultsCh) })
 	}
 	pruneMode := variable.PartitionPruneMode(sessionVars.PartitionPruneMode.Load())
@@ -438,7 +438,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 	saveResultsCh := make(chan *statistics.AnalyzeResults, saveStatsConcurrency)
 	errCh := make(chan error, saveStatsConcurrency)
 	enableAnalyzeSnapshot := e.Ctx().GetSessionVars().EnableAnalyzeSnapshot
-	for i := 0; i < saveStatsConcurrency; i++ {
+	for range saveStatsConcurrency {
 		worker := newAnalyzeSaveStatsWorker(saveResultsCh, errCh, &e.Ctx().GetSessionVars().SQLKiller)
 		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 		wg.Run(func() {

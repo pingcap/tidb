@@ -430,10 +430,7 @@ func SplitLargeCSV(
 			columns = parser.Columns()
 		}
 		startOffset, _ = parser.Pos()
-		endOffset = startOffset + maxRegionSize
-		if endOffset > dataFile.FileMeta.FileSize {
-			endOffset = dataFile.FileMeta.FileSize
-		}
+		endOffset = min(startOffset+maxRegionSize, dataFile.FileMeta.FileSize)
 		_ = parser.Close()
 	}
 	divisor := int64(cfg.ColumnCnt)

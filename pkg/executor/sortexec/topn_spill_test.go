@@ -404,25 +404,25 @@ func TestTopNSpillDisk(t *testing.T) {
 	schema := expression.NewSchema(topNCase.Columns()...)
 	dataSource := buildDataSource(topNCase, schema)
 	initTopNNoSpillCaseParams(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		topNNoSpillCase(t, nil, topNCase, schema, dataSource, 0, count)
 		topNNoSpillCase(t, exe, topNCase, schema, dataSource, offset, count)
 	}
 
 	initTopNSpillCase1Params(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		topNSpillCase1(t, nil, topNCase, schema, dataSource, 0, count)
 		topNSpillCase1(t, exe, topNCase, schema, dataSource, offset, count)
 	}
 
 	initTopNSpillCase2Params(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		topNSpillCase2(t, nil, topNCase, schema, dataSource, 0, count)
 		topNSpillCase2(t, exe, topNCase, schema, dataSource, offset, count)
 	}
 
 	initTopNInMemoryThenSpillParams(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		topNInMemoryThenSpillCase(t, ctx, nil, topNCase, schema, dataSource, 0, count)
 		topNInMemoryThenSpillCase(t, ctx, exe, topNCase, schema, dataSource, offset, count)
 	}
@@ -457,25 +457,25 @@ func TestTopNSpillDiskFailpoint(t *testing.T) {
 	schema := expression.NewSchema(topNCase.Columns()...)
 	dataSource := buildDataSource(topNCase, schema)
 	initTopNNoSpillCaseParams(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		topNFailPointTest(t, nil, topNCase, dataSource, 0, count, 0, ctx.GetSessionVars().MemTracker)
 		topNFailPointTest(t, exe, topNCase, dataSource, offset, count, 0, ctx.GetSessionVars().MemTracker)
 	}
 
 	initTopNSpillCase1Params(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		topNFailPointTest(t, nil, topNCase, dataSource, 0, count, 0, ctx.GetSessionVars().MemTracker)
 		topNFailPointTest(t, exe, topNCase, dataSource, offset, count, 0, ctx.GetSessionVars().MemTracker)
 	}
 
 	initTopNSpillCase2Params(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		topNFailPointTest(t, nil, topNCase, dataSource, 0, count, 0, ctx.GetSessionVars().MemTracker)
 		topNFailPointTest(t, exe, topNCase, dataSource, offset, count, 0, ctx.GetSessionVars().MemTracker)
 	}
 
 	initTopNInMemoryThenSpillParams(ctx, dataSource, topNCase, totalRowNum, &count, &offset, &exe)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		topNFailPointTest(t, nil, topNCase, dataSource, 0, count, inMemoryThenSpillHardLimit, ctx.GetSessionVars().MemTracker)
 		topNFailPointTest(t, exe, topNCase, dataSource, offset, count, inMemoryThenSpillHardLimit, ctx.GetSessionVars().MemTracker)
 	}

@@ -330,7 +330,7 @@ func TestUpgrade(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, 0, req.NumRows())
 	require.Equal(t, 1, row.Len())
-	require.Equal(t, []byte(fmt.Sprintf("%d", currentBootstrapVersion)), row.GetBytes(0))
+	require.Equal(t, fmt.Appendf(nil, "%d", currentBootstrapVersion), row.GetBytes(0))
 	require.NoError(t, r.Close())
 
 	se1 := CreateSessionAndSetID(t, store)
@@ -377,7 +377,7 @@ func TestUpgrade(t *testing.T) {
 	require.NotEqual(t, 0, req.NumRows())
 	row = req.GetRow(0)
 	require.Equal(t, 1, row.Len())
-	require.Equal(t, []byte(fmt.Sprintf("%d", currentBootstrapVersion)), row.GetBytes(0))
+	require.Equal(t, fmt.Appendf(nil, "%d", currentBootstrapVersion), row.GetBytes(0))
 	require.NoError(t, r.Close())
 
 	ver, err = getBootstrapVersion(se2)
@@ -398,7 +398,7 @@ func TestUpgrade(t *testing.T) {
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
 	rowCnt := req.NumRows()
-	for i := 0; i < rowCnt; i++ {
+	for i := range rowCnt {
 		jobType := req.GetRow(i).GetString(3) // get job type.
 		// Should not use multi-schema change in bootstrap DDL because the job arguments may be changed.
 		require.False(t, strings.Contains(jobType, "multi-schema"))
@@ -1196,7 +1196,7 @@ func TestTiDBCostModelUpgradeFrom300To650(t *testing.T) {
 }
 
 func TestTiDBCostModelUpgradeFrom610To650(t *testing.T) {
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		func() {
 			ctx := context.Background()
 			store, dom := CreateStoreAndBootstrap(t)
@@ -1492,7 +1492,7 @@ func TestTiDBGlobalVariablesDefaultValueUpgradeFrom630To660(t *testing.T) {
 }
 
 func TestTiDBStoreBatchSizeUpgradeFrom650To660(t *testing.T) {
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		func() {
 			ctx := context.Background()
 			store, dom := CreateStoreAndBootstrap(t)
@@ -2042,7 +2042,7 @@ func TestTiDBBindingInListToVer175(t *testing.T) {
 			if chk.NumRows() == 0 {
 				break
 			}
-			for i := 0; i < chk.NumRows(); i++ {
+			for i := range chk.NumRows() {
 				originalSQL := chk.GetRow(i).GetString(0)
 				bindSQL := chk.GetRow(i).GetString(1)
 				records = append(records, fmt.Sprintf("%s:%s", bindSQL, originalSQL))
@@ -2168,7 +2168,7 @@ func TestWriteDDLTableVersionToMySQLTiDB(t *testing.T) {
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
 	require.Equal(t, 1, req.NumRows())
-	require.Equal(t, []byte(fmt.Sprintf("%d", ddlTableVer)), req.GetRow(0).GetBytes(0))
+	require.Equal(t, fmt.Appendf(nil, "%d", ddlTableVer), req.GetRow(0).GetBytes(0))
 	require.NoError(t, r.Close())
 	dom.Close()
 }
@@ -2215,7 +2215,7 @@ func TestWriteDDLTableVersionToMySQLTiDBWhenUpgradingTo178(t *testing.T) {
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
 	require.Equal(t, 1, req.NumRows())
-	require.Equal(t, []byte(fmt.Sprintf("%d", ddlTableVer)), req.GetRow(0).GetBytes(0))
+	require.Equal(t, fmt.Appendf(nil, "%d", ddlTableVer), req.GetRow(0).GetBytes(0))
 	require.NoError(t, r.Close())
 }
 

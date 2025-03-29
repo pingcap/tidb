@@ -725,7 +725,7 @@ func (b *builtinGreatestCmpStringAsTimeSig) Clone() builtinFunc {
 // evalString evals a builtinGreatestCmpStringAsTimeSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
 func (b *builtinGreatestCmpStringAsTimeSig) evalString(ctx EvalContext, row chunk.Row) (strRes string, isNull bool, err error) {
-	for i := 0; i < len(b.args); i++ {
+	for i := range b.args {
 		v, isNull, err := b.args[i].EvalString(ctx, row)
 		if isNull || err != nil {
 			return "", true, err
@@ -780,7 +780,7 @@ func (b *builtinGreatestTimeSig) Clone() builtinFunc {
 }
 
 func (b *builtinGreatestTimeSig) evalTime(ctx EvalContext, row chunk.Row) (res types.Time, isNull bool, err error) {
-	for i := 0; i < len(b.args); i++ {
+	for i := range b.args {
 		v, isNull, err := b.args[i].EvalTime(ctx, row)
 		if isNull || err != nil {
 			return types.ZeroTime, true, err
@@ -812,7 +812,7 @@ func (b *builtinGreatestDurationSig) Clone() builtinFunc {
 }
 
 func (b *builtinGreatestDurationSig) evalDuration(ctx EvalContext, row chunk.Row) (res types.Duration, isNull bool, err error) {
-	for i := 0; i < len(b.args); i++ {
+	for i := range b.args {
 		v, isNull, err := b.args[i].EvalDuration(ctx, row)
 		if isNull || err != nil {
 			return types.Duration{}, true, err
@@ -838,7 +838,7 @@ func (b *builtinGreatestVectorFloat32Sig) Clone() builtinFunc {
 }
 
 func (b *builtinGreatestVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, row chunk.Row) (res types.VectorFloat32, isNull bool, err error) {
-	for i := 0; i < len(b.args); i++ {
+	for i := range b.args {
 		v, isNull, err := b.args[i].EvalVectorFloat32(ctx, row)
 		if isNull || err != nil {
 			return types.VectorFloat32{}, true, err
@@ -1069,7 +1069,7 @@ func (b *builtinLeastCmpStringAsTimeSig) Clone() builtinFunc {
 // evalString evals a builtinLeastCmpStringAsTimeSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
 func (b *builtinLeastCmpStringAsTimeSig) evalString(ctx EvalContext, row chunk.Row) (strRes string, isNull bool, err error) {
-	for i := 0; i < len(b.args); i++ {
+	for i := range b.args {
 		v, isNull, err := b.args[i].EvalString(ctx, row)
 		if isNull || err != nil {
 			return "", true, err
@@ -1099,7 +1099,7 @@ func (b *builtinLeastTimeSig) Clone() builtinFunc {
 }
 
 func (b *builtinLeastTimeSig) evalTime(ctx EvalContext, row chunk.Row) (res types.Time, isNull bool, err error) {
-	for i := 0; i < len(b.args); i++ {
+	for i := range b.args {
 		v, isNull, err := b.args[i].EvalTime(ctx, row)
 		if isNull || err != nil {
 			return types.ZeroTime, true, err
@@ -1141,7 +1141,7 @@ func (b *builtinLeastDurationSig) Clone() builtinFunc {
 }
 
 func (b *builtinLeastDurationSig) evalDuration(ctx EvalContext, row chunk.Row) (res types.Duration, isNull bool, err error) {
-	for i := 0; i < len(b.args); i++ {
+	for i := range b.args {
 		v, isNull, err := b.args[i].EvalDuration(ctx, row)
 		if isNull || err != nil {
 			return types.Duration{}, true, err
@@ -1167,7 +1167,7 @@ func (b *builtinLeastVectorFloat32Sig) Clone() builtinFunc {
 }
 
 func (b *builtinLeastVectorFloat32Sig) evalVectorFloat32(ctx EvalContext, row chunk.Row) (res types.VectorFloat32, isNull bool, err error) {
-	for i := 0; i < len(b.args); i++ {
+	for i := range b.args {
 		v, isNull, err := b.args[i].EvalVectorFloat32(ctx, row)
 		if isNull || err != nil {
 			return types.VectorFloat32{}, true, err
@@ -1726,7 +1726,7 @@ func allowCmpArgsRefining4PlanCache(ctx BuildContext, args []Expression) (allowR
 	// 1. year-expr <cmp> const
 	// 2. int-expr <cmp> string/float/double/decimal-const
 	// 3. datetime/timestamp column <cmp> int/float/double/decimal-const
-	for conIdx := 0; conIdx < 2; conIdx++ {
+	for conIdx := range 2 {
 		if _, isCon := args[conIdx].(*Constant); !isCon {
 			continue // not a constant
 		}
@@ -1931,7 +1931,7 @@ func (c *compareFunctionClass) refineArgsByUnsignedFlag(ctx BuildContext, args [
 			colArgs[i] = &x.Column
 		}
 	}
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if con, col := constArgs[1-i], colArgs[i]; con != nil && col != nil {
 			v, isNull, err := con.EvalInt(ctx.GetEvalCtx(), chunk.Row{})
 			if err != nil || isNull || v > 0 {

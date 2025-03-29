@@ -194,10 +194,7 @@ func (b *targetInfoGetter) FetchRemoteTableModels(
 	eg.SetLimit(FetchRemoteTableModelsConcurrency)
 	for i := 0; i < len(tableNames); i += FetchRemoteTableModelsBatchSize {
 		start := i
-		end := i + FetchRemoteTableModelsBatchSize
-		if end > len(tableNames) {
-			end = len(tableNames)
-		}
+		end := min(i+FetchRemoteTableModelsBatchSize, len(tableNames))
 		eg.Go(func() error {
 			return s.Transact(
 				egCtx, "fetch table columns",
@@ -585,7 +582,7 @@ func (enc *tidbEncoder) Encode(row []types.Datum, _ int64, columnPermutation []i
 	if len(enc.columnIdx) == 0 {
 		columnMaxIdx := -1
 		columnIdx := make([]int, len(columnPermutation))
-		for i := 0; i < len(columnPermutation); i++ {
+		for i := range columnPermutation {
 			columnIdx[i] = -1
 		}
 		for i, idx := range columnPermutation {
@@ -718,7 +715,7 @@ func (be *tidbBackend) WriteRows(ctx context.Context, tableName string, columnNa
 	var err error
 rowLoop:
 	for _, r := range rows.(tidbRows).splitIntoChunks(be.maxChunkSize, be.maxChunkRows) {
-		for i := 0; i < writeRowsMaxRetryTimes; i++ {
+		for range writeRowsMaxRetryTimes {
 			// Write in the batch mode first.
 			err = be.WriteBatchRowsToDB(ctx, tableName, columnNames, r)
 			switch {
@@ -849,7 +846,7 @@ stmtLoop:
 			result sql.Result
 			err    error
 		)
-		for i := 0; i < writeRowsMaxRetryTimes; i++ {
+		for range writeRowsMaxRetryTimes {
 			query := stmtTask.stmt
 			if be.stmtCache != nil {
 				var prepStmt *sql.Stmt

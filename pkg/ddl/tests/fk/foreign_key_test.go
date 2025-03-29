@@ -1515,7 +1515,7 @@ func TestAddForeignKeyInBigTable(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table employee (id bigint auto_increment key, pid bigint)")
 	tk.MustExec("insert into employee (id) values (1),(2),(3),(4),(5),(6),(7),(8)")
-	for i := 0; i < 14; i++ {
+	for range 14 {
 		tk.MustExec("insert into employee (pid) select pid from employee")
 	}
 	tk.MustExec("update employee set pid=id-1 where id>1")

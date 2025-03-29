@@ -267,7 +267,7 @@ func (p *parallelHashAggSpillHelper) restoreFromOneSpillFile(ctx sessionctx.Cont
 		partialResultsRestored: make([][]aggfuncs.PartialResult, aggFuncNum),
 		bInMap:                 bInMap,
 	}
-	for i := 0; i < chunkNum; i++ {
+	for i := range chunkNum {
 		chunk, err := diskIO.GetChunk(i)
 		if err != nil {
 			return totalMemDelta, totalExpandMem, err
@@ -283,7 +283,7 @@ func (p *parallelHashAggSpillHelper) restoreFromOneSpillFile(ctx sessionctx.Cont
 		// Merge or create results
 		rowNum := chunk.NumRows()
 		processRowContext.chunk = chunk
-		for rowPos := 0; rowPos < rowNum; rowPos++ {
+		for rowPos := range rowNum {
 			processRowContext.rowPos = rowPos
 			memDelta, expandMem, err := p.processRow(processRowContext)
 			if err != nil {
@@ -302,7 +302,7 @@ func (p *parallelHashAggSpillHelper) processRow(context *processRowContext) (tot
 	if ok {
 		exprCtx := context.ctx.GetExprCtx()
 		// The key has appeared before, merge results.
-		for aggPos := 0; aggPos < context.aggFuncNum; aggPos++ {
+		for aggPos := range context.aggFuncNum {
 			memDelta, err := p.finalWorkerAggFuncs[aggPos].MergePartialResult(exprCtx.GetEvalCtx(), context.partialResultsRestored[aggPos][context.rowPos], prs[aggPos])
 			if err != nil {
 				return totalMemDelta, 0, err
@@ -321,7 +321,7 @@ func (p *parallelHashAggSpillHelper) processRow(context *processRowContext) (tot
 		results := make([]aggfuncs.PartialResult, context.aggFuncNum)
 		(*context.restoreadData)[key] = results
 
-		for aggPos := 0; aggPos < context.aggFuncNum; aggPos++ {
+		for aggPos := range context.aggFuncNum {
 			results[aggPos] = context.partialResultsRestored[aggPos][context.rowPos]
 		}
 	}

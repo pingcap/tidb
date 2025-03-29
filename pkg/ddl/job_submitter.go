@@ -87,7 +87,7 @@ func (s *JobSubmitter) submitLoop() {
 			failpoint.InjectCall("afterGetJobFromLimitCh", ch)
 			jobLen := len(ch)
 			jobWs = append(jobWs, jobW)
-			for i := 0; i < jobLen; i++ {
+			for range jobLen {
 				jobWs = append(jobWs, <-ch)
 			}
 			s.addBatchDDLJobs(jobWs)

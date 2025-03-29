@@ -589,7 +589,7 @@ func (c *cachedTableRenewLease) stop(_ context.Context) {
 }
 
 func (c *cachedTableRenewLease) commitTSCheck(commitTS uint64) bool {
-	for i := 0; i < len(c.lease); i++ {
+	for i := range c.lease {
 		lease := atomic.LoadUint64(&c.lease[i])
 		if commitTS >= lease {
 			// Txn fails to commit because the write lease is expired.
@@ -3590,7 +3590,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if err != nil {
 		return nil, err
 	}
-	for i := 0; i < int(planReplayerWorkerCnt); i++ {
+	for i := range int(planReplayerWorkerCnt) {
 		planReplayerWorkersSctx[i] = pworkerSes[i]
 	}
 	// setup plan replayer handle
@@ -3767,7 +3767,7 @@ func createSessions4DistExecution(store kv.Storage, cnt int) ([]*session, error)
 func createSessionsImpl(store kv.Storage, cnt int, createSessionImpl func(kv.Storage) (*session, error)) ([]*session, error) {
 	// Then we can create new dom
 	ses := make([]*session, cnt)
-	for i := 0; i < cnt; i++ {
+	for i := range cnt {
 		se, err := createSessionImpl(store)
 		if err != nil {
 			return nil, err

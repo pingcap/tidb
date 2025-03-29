@@ -667,7 +667,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 	getSQL := func(prefix, suffix string, numPartitions int) string {
 		var sqlBuilder strings.Builder
 		sqlBuilder.WriteString(prefix)
-		for i := 0; i < numPartitions; i++ {
+		for i := range numPartitions {
 			if i != 0 {
 				sqlBuilder.WriteString(",")
 			}
@@ -689,10 +689,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
 		for i := 0; i < len(needAnalyzePartitionNames); i += analyzePartitionBatchSize {
 			start := i
-			end := start + analyzePartitionBatchSize
-			if end >= len(needAnalyzePartitionNames) {
-				end = len(needAnalyzePartitionNames)
-			}
+			end := min(start+analyzePartitionBatchSize, len(needAnalyzePartitionNames))
 
 			// Do batch analyze for partitions.
 			sql := getSQL("analyze table %n.%n partition", "", end-start)
@@ -738,10 +735,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 
 			for i := 0; i < len(needAnalyzePartitionNames); i += analyzePartitionBatchSize {
 				start := i
-				end := start + analyzePartitionBatchSize
-				if end >= len(needAnalyzePartitionNames) {
-					end = len(needAnalyzePartitionNames)
-				}
+				end := min(start+analyzePartitionBatchSize, len(needAnalyzePartitionNames))
 
 				sql := getSQL("analyze table %n.%n partition", " index %n", end-start)
 				params := append([]any{db, tblInfo.Name.O}, needAnalyzePartitionNames[start:end]...)

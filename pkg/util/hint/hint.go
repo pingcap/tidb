@@ -17,6 +17,7 @@ package hint
 import (
 	"bytes"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 
@@ -245,9 +246,7 @@ func (sh *StmtHints) Clone() *StmtHints {
 	)
 	if len(sh.SetVars) > 0 {
 		vars = make(map[string]string, len(sh.SetVars))
-		for k, v := range sh.SetVars {
-			vars[k] = v
-		}
+		maps.Copy(vars, sh.SetVars)
 	}
 	if len(sh.OriginalTableHints) > 0 {
 		tableHints = make([]*ast.TableOptimizerHint, len(sh.OriginalTableHints))

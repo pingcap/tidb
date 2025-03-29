@@ -81,7 +81,7 @@ func TestAlterJobOnDXF(t *testing.T) {
 	tk.MustExec("use test;")
 	tk.MustExec(`set global tidb_enable_dist_task=1;`)
 	tk.MustExec("create table t1(a bigint auto_random primary key);")
-	for i := 0; i < 16; i++ {
+	for range 16 {
 		tk.MustExec("insert into t1 values (), (), (), ()")
 	}
 	tk.MustExec("split table t1 between (3) and (8646911284551352360) regions 50;")

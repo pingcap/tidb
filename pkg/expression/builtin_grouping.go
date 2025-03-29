@@ -244,15 +244,15 @@ func (b *BuiltinGroupingImplSig) groupingVec(groupingIds *chunk.Column, rowNum i
 	resContainer := result.Int64s()
 	switch b.mode {
 	case tipb.GroupingMode_ModeBitAnd:
-		for i := 0; i < rowNum; i++ {
+		for i := range rowNum {
 			resContainer[i] = b.groupingImplBitAnd(groupingIds.GetUint64(i))
 		}
 	case tipb.GroupingMode_ModeNumericCmp:
-		for i := 0; i < rowNum; i++ {
+		for i := range rowNum {
 			resContainer[i] = b.groupingImplNumericCmp(groupingIds.GetUint64(i))
 		}
 	case tipb.GroupingMode_ModeNumericSet:
-		for i := 0; i < rowNum; i++ {
+		for i := range rowNum {
 			resContainer[i] = b.groupingImplNumericSet(groupingIds.GetUint64(i))
 		}
 	}

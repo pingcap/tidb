@@ -43,7 +43,7 @@ func TestAddIndexIngestGeneratedColumns(t *testing.T) {
 		tk.MustExec("admin check table t;")
 		rows := tk.MustQuery(fmt.Sprintf("admin show ddl jobs %d;", n)).Rows()
 		require.Len(t, rows, n)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			//nolint: forcetypeassert
 			jobTp := rows[i][12].(string)
 			require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
@@ -89,7 +89,7 @@ func TestIngestError(t *testing.T) {
 
 	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
 	tk.MustExec("create table t (a int primary key, b int);")
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
 	}
 	tk.MustQuery("split table t between (0) and (50000) regions 5;").Check(testkit.Rows("4 1"))
@@ -105,7 +105,7 @@ func TestIngestError(t *testing.T) {
 
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (a int primary key, b int);")
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
 	}
 	tk.MustQuery("split table t between (0) and (50000) regions 5;").Check(testkit.Rows("4 1"))
@@ -307,7 +307,7 @@ func TestAddIndexIngestMultiSchemaChange(t *testing.T) {
 		partition p0 values less than (10),
 		partition p1 values less than (20),
 		partition p2 values less than MAXVALUE);`)
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		insertSQL := fmt.Sprintf("insert into t (a, b) values (%d, %d);", i, i)
 		tk.MustExec(insertSQL)
 	}
@@ -413,7 +413,7 @@ func TestAddIndexIngestPartitionCheckpoint(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set global tidb_enable_dist_task = off;")
 	tk.MustExec("create table t (a int primary key, b int) partition by hash(a) partitions 4;")
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		insertSQL := fmt.Sprintf("insert into t values (%d, %d)", i, i)
 		tk.MustExec(insertSQL)
 	}

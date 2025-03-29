@@ -195,7 +195,7 @@ func TestWriteOnMultipleCachedTable(t *testing.T) {
 	}
 
 	cached := false
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		tk.MustQuery("select * from ct1")
 		if lastReadFromCache(tk) {
 			cached = true
@@ -480,7 +480,7 @@ func TestRollbackOnCompileError(t *testing.T) {
 
 	tk.MustExec("rename table t to t2")
 	var meetErr bool
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		_, err := tk2.Exec("insert t values (1)")
 		if err != nil {
 			meetErr = true
@@ -491,7 +491,7 @@ func TestRollbackOnCompileError(t *testing.T) {
 
 	tk.MustExec("rename table t2 to t")
 	var recoverErr bool
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		_, err := tk2.Exec("insert t values (1)")
 		if err == nil {
 			recoverErr = true

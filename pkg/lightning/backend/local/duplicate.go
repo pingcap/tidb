@@ -924,7 +924,7 @@ func (m *dupeDetector) processRemoteDupTaskOnce(
 	var metErr common.OnceError
 	wg := &sync.WaitGroup{}
 	atomicMadeProgress := atomic.NewBool(false)
-	for i := 0; i < len(regions); i++ {
+	for i := range regions {
 		if ctx.Err() != nil {
 			metErr.Set(ctx.Err())
 			break

@@ -35,7 +35,7 @@ func (c constantRegions) EqualsTo(other []streamhelper.RegionWithLeader) bool {
 	if len(c) != len(other) {
 		return false
 	}
-	for i := 0; i < len(c); i++ {
+	for i := range c {
 		r1 := regionToRange(c[i])
 		r2 := regionToRange(other[i])
 

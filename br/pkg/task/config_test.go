@@ -246,7 +246,7 @@ func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) 
 		dbBytes, err := json.Marshal(mockDB)
 		require.NoError(t, err)
 
-		for i := 0; i < len(tblBytesList); i++ {
+		for i := range tblBytesList {
 			mockSchemas = append(mockSchemas, &backuppb.Schema{
 				Db:    dbBytes,
 				Table: tblBytesList[i],

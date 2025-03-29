@@ -44,7 +44,7 @@ func createAggFuncSuite() (s *mockAggFuncSuite) {
 	s.ctx.GetSessionVars().DivPrecisionIncrement = vardef.DefDivPrecisionIncrement
 	s.rows = make([]chunk.Row, 0, 5050)
 	for i := 1; i <= 100; i++ {
-		for j := 0; j < i; j++ {
+		for range i {
 			s.rows = append(s.rows, chunk.MutRowFromDatums(types.MakeDatums(i)).ToRow())
 		}
 	}

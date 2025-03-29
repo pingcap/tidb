@@ -113,12 +113,12 @@ func TestCacheTableSizeLimit(t *testing.T) {
 	tk.MustExec("create table tmp (c1 int, c varchar(1024))")
 	defer tk.MustExec("drop table if exists cache_t1")
 
-	for i := 0; i < 64; i++ {
+	for i := range 64 {
 		tk.MustExec("insert into tmp values (?, repeat('x', 1024));", i)
 	}
 
 	// Make the cache_t1 size large than 64K
-	for i := 0; i < 1024; i++ {
+	for i := range 1024 {
 		tk.MustExec("insert into cache_t1 select * from tmp;")
 		if i == 900 {
 			tk.MustExec("insert into cache_t2 select * from cache_t1;")
@@ -131,7 +131,7 @@ func TestCacheTableSizeLimit(t *testing.T) {
 	tk.MustExec("alter table cache_t2 cache")
 
 	// But after continuously insertion, the table reachs the size limit
-	for i := 0; i < 124; i++ {
+	for range 124 {
 		_, err := tk.Exec("insert into cache_t2 select * from tmp;")
 		// The size limit check is not accurate, so it's not detected here.
 		require.NoError(t, err)
@@ -142,7 +142,7 @@ func TestCacheTableSizeLimit(t *testing.T) {
 	}
 
 	cached := false
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		tk.MustQuery("select count(*) from (select * from cache_t2 limit 1) t1").Check(testkit.Rows("1"))
 		if lastReadFromCache(tk) {
 			cached = true

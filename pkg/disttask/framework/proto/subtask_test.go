@@ -53,14 +53,14 @@ func TestAllocatable(t *testing.T) {
 	require.Equal(t, int64(0), allocatable.Used())
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			seed := time.Now().UnixNano()
 			t.Logf("routine: %d, seed: %d", i, seed)
 			rand.New(rand.NewSource(seed))
-			for i := 0; i < 10000; i++ {
+			for range 10000 {
 				n := rand.Int63n(1000)
 				if allocatable.Alloc(n) {
 					allocatable.Free(n)

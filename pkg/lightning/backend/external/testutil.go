@@ -127,10 +127,7 @@ func splitDataAndStatFiles(datas []string, stats []string) ([][]string, [][]stri
 	start := 0
 	step := 10
 	for start < len(datas) {
-		end := start + step
-		if end > len(datas) {
-			end = len(datas)
-		}
+		end := min(start+step, len(datas))
 		dataGroup = append(dataGroup, datas[start:end])
 		statGroup = append(statGroup, stats[start:end])
 		start = end
@@ -161,10 +158,7 @@ func splitDataStatAndKeys(datas []string, stats []string, multiStats []MultipleF
 	start := 0
 	step := 2 * multiFileStatNum
 	for start < len(datas) {
-		end := start + step
-		if end > len(datas) {
-			end = len(datas)
-		}
+		end := min(start+step, len(datas))
 		dataGroup = append(dataGroup, datas[start:end])
 		statGroup = append(statGroup, stats[start:end])
 		start = end

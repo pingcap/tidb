@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -856,11 +857,8 @@ func checkCertSAN(priv *globalPrivRecord, cert *x509.Certificate, sans map[util.
 		}
 		var givenMatchOne bool
 		for _, req := range requireOr {
-			for _, give := range given {
-				if req == give {
-					givenMatchOne = true
-					break
-				}
+			if slices.Contains(given, req) {
+				givenMatchOne = true
 			}
 		}
 		if !givenMatchOne {
@@ -982,12 +980,7 @@ func (p *UserPrivileges) GetAllRoles(user, host string) []*auth.RoleIdentity {
 // IsDynamicPrivilege returns true if the DYNAMIC privilege is built-in or has been registered by a plugin
 func (p *UserPrivileges) IsDynamicPrivilege(privName string) bool {
 	privNameInUpper := strings.ToUpper(privName)
-	for _, priv := range dynamicPrivs {
-		if privNameInUpper == priv {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(dynamicPrivs, privNameInUpper)
 }
 
 // RegisterDynamicPrivilege is used by plugins to add new privileges to TiDB
@@ -1002,10 +995,8 @@ func RegisterDynamicPrivilege(privName string) error {
 	}
 	dynamicPrivLock.Lock()
 	defer dynamicPrivLock.Unlock()
-	for _, priv := range dynamicPrivs {
-		if privNameInUpper == priv {
-			return errors.New("privilege is already registered")
-		}
+	if slices.Contains(dynamicPrivs, privNameInUpper) {
+		return errors.New("privilege is already registered")
 	}
 	dynamicPrivs = append(dynamicPrivs, privNameInUpper)
 	return nil
@@ -1029,7 +1020,7 @@ func RemoveDynamicPrivilege(privName string) bool {
 	defer dynamicPrivLock.Unlock()
 	for idx, priv := range dynamicPrivs {
 		if privNameInUpper == priv {
-			dynamicPrivs = append(dynamicPrivs[:idx], dynamicPrivs[idx+1:]...)
+			dynamicPrivs = slices.Delete(dynamicPrivs, idx, idx+1)
 			return true
 		}
 	}
