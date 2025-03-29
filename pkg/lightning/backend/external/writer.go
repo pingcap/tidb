@@ -20,7 +20,6 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -38,6 +37,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
+
+	"github.com/twotwotwo/sorts"
 )
 
 var (
@@ -321,6 +322,23 @@ func GetMaxOverlappingTotal(stats []MultipleFilesStat) int64 {
 	return GetMaxOverlapping(points)
 }
 
+type location struct {
+	key []byte
+	loc membuf.SliceLocation
+}
+
+type locations []location
+
+func (l locations) Len() int           { return len(l) }
+func (l locations) Swap(i, j int)      { l[i], l[j] = l[j], l[i] }
+func (l locations) Key(i int) []byte   { return l[i].key }
+func (l locations) Less(i, j int) bool { return bytes.Compare(l[i].key, l[j].key) == -1 }
+func (l locations) Sort()              { sorts.ByBytes(l) }
+
+func init() {
+	sorts.MaxProcs = 2
+}
+
 // Writer is used to write data into external storage.
 type Writer struct {
 	store          storage.ExternalStorage
@@ -335,8 +353,9 @@ type Writer struct {
 	memSizeLimit uint64
 
 	kvBuffer    *membuf.Buffer
-	kvLocations []membuf.SliceLocation
-	kvSize      int64
+	kvLocations []location
+
+	kvSize int64
 
 	onClose OnCloseFunc
 	closed  bool
@@ -382,7 +401,7 @@ func (w *Writer) WriteRow(ctx context.Context, key, val []byte, handle tidbkv.Ha
 	keyAdapter.Encode(dataBuf[2*lengthBytes:2*lengthBytes:2*lengthBytes+encodedKeyLen], key, rowID)
 	copy(dataBuf[2*lengthBytes+encodedKeyLen:], val)
 
-	w.kvLocations = append(w.kvLocations, loc)
+	w.kvLocations = append(w.kvLocations, location{dataBuf[2*lengthBytes : 2*lengthBytes+encodedKeyLen], loc})
 	w.kvSize += int64(encodedKeyLen + len(val))
 	w.batchSize += uint64(length)
 	w.totalCnt += 1
@@ -452,9 +471,8 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		zap.Int("sequence-number", w.currentSeq),
 	)
 	sortStart := time.Now()
-	slices.SortFunc(w.kvLocations, func(i, j membuf.SliceLocation) int {
-		return bytes.Compare(w.getKeyByLoc(i), w.getKeyByLoc(j))
-	})
+	locations(w.kvLocations).Sort()
+
 	sortDuration := time.Since(sortStart)
 	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort").Observe(sortDuration.Seconds())
 	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort").Observe(float64(w.batchSize) / 1024.0 / 1024.0 / sortDuration.Seconds())
@@ -488,7 +506,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort_and_write").Observe(totalDuration.Seconds())
 	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort_and_write").Observe(float64(w.batchSize) / 1024.0 / 1024.0 / totalDuration.Seconds())
 
-	minKey, maxKey := w.getKeyByLoc(w.kvLocations[0]), w.getKeyByLoc(w.kvLocations[len(w.kvLocations)-1])
+	minKey, maxKey := w.getKeyByLoc(w.kvLocations[0].loc), w.getKeyByLoc(w.kvLocations[len(w.kvLocations)-1].loc)
 	w.recordMinMax(minKey, maxKey, uint64(w.kvSize))
 
 	// maintain 500-batch statistics
@@ -542,7 +560,7 @@ func (w *Writer) flushSortedKVs(ctx context.Context) (string, string, error) {
 	}
 
 	for _, pair := range w.kvLocations {
-		err = kvStore.addEncodedData(w.kvBuffer.GetSlice(pair))
+		err = kvStore.addEncodedData(w.kvBuffer.GetSlice(pair.loc))
 		if err != nil {
 			return "", "", err
 		}
