@@ -722,8 +722,9 @@ func TestShowCreateTable(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`CREATE USER tsct1, tsct2`)
+	tk.MustExec(`CREATE USER tsct1, tsct2, tsct3`)
 	tk.MustExec(`GRANT select ON mysql.* to tsct2`)
+	tk.MustExec(`GRANT create temporary tables on mysql.* to tsct3`)
 
 	// should fail
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "tsct1", Hostname: "localhost", AuthUsername: "tsct1", AuthHostname: "%"}, nil, nil, nil))
@@ -733,6 +734,12 @@ func TestShowCreateTable(t *testing.T) {
 	// should pass
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "tsct2", Hostname: "localhost", AuthUsername: "tsct2", AuthHostname: "%"}, nil, nil, nil))
 	tk.MustExec(`SHOW CREATE TABLE mysql.user`)
+
+	// should fail
+	// https://github.com/pingcap/tidb/issues/29281
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "tsct3", Hostname: "localhost", AuthUsername: "tsct3", AuthHostname: "%"}, nil, nil, nil))
+	err = tk.ExecToErr(`SHOW CREATE TABLE mysql.user`)
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
 }
 
 func TestAnalyzeTable(t *testing.T) {

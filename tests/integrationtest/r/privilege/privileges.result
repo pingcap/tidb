@@ -722,3 +722,13 @@ Error 1227 (42000): Access denied; you need (at least one of) the CREATE USER pr
 alter user test account unlock;
 Error 1227 (42000): Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation
 alter user u59677 identified by 'abcde';
+drop database if exists tmpdb;
+create database tmpdb;
+drop user test_user;
+create user test_user;
+grant create temporary tables on tmpdb.* to test_user;
+show databases;
+Database
+INFORMATION_SCHEMA
+tmpdb
+create temporary table tmpdb.tmp(id int);

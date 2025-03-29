@@ -977,3 +977,16 @@ alter user test account unlock;
 alter user u59677 identified by 'abcde';
 disconnect u59677;
 connection default;
+
+# TestIssue29280
+drop database if exists tmpdb;
+create database tmpdb;
+drop user test_user;
+create user test_user;
+grant create temporary tables on tmpdb.* to test_user;
+connect (test_user, localhost, test_user,,);
+show databases;
+create temporary table tmpdb.tmp(id int);
+disconnect test_user;
+connection default;
+
