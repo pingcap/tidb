@@ -342,12 +342,12 @@ func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) 
 	if wo.PartSize > partSize {
 		partSize = wo.PartSize
 	}
-	w, err := NewGCSWriter(ctx, s.getClient(), uri, partSize, wo.Concurrency, s.gcs.Bucket)
+	w, err := NewGCSWriter(ctx, s.getClient(), uri, partSize, wo.Concurrency, s.gcs.Bucket, wo.BufPool)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	fw := newFlushStorageWriter(w, &emptyFlusher{}, w)
-	bw := newBufferedWriter(fw, int(partSize), NoCompression)
+	bw := newNonCompressBufferedWriterWithPool(fw, int(partSize), wo.BufPool)
 	return bw, nil
 }
 

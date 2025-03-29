@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tidb/pkg/util/zeropool"
 	"go.uber.org/zap"
 )
 
@@ -195,6 +196,9 @@ func (b *WriterBuilder) Build(
 		membuf.WithBlockNum(0),
 		membuf.WithBlockSize(b.blockSize),
 	)
+	bufPool := zeropool.New(func() []byte {
+		return make([]byte, 0, MinUploadPartSize)
+	})
 	ret := &Writer{
 		rc: &rangePropertiesCollector{
 			props:        make([]*rangeProperty, 0, 1024),
@@ -215,6 +219,7 @@ func (b *WriterBuilder) Build(
 		multiFileStats: make([]MultipleFilesStat, 1),
 		fileMinKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
 		fileMaxKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
+		bufPool:        &bufPool,
 	}
 	ret.multiFileStats[0].Filenames = make([][2]string, 0, multiFileStatNum)
 
@@ -354,6 +359,8 @@ type Writer struct {
 	maxKey    tidbkv.Key
 	totalSize uint64
 	totalCnt  uint64
+
+	bufPool *zeropool.Pool[[]byte]
 }
 
 // WriteRow implements ingest.Writer.
@@ -594,6 +601,7 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 	dataWriter, err := w.store.Create(ctx, dataPath, &storage.WriterOption{
 		Concurrency: 20,
 		PartSize:    MinUploadPartSize,
+		BufPool:     w.bufPool,
 	})
 	if err != nil {
 		return "", "", nil, nil, err
@@ -602,6 +610,7 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 	statsWriter, err := w.store.Create(ctx, statPath, &storage.WriterOption{
 		Concurrency: 20,
 		PartSize:    MinUploadPartSize,
+		BufPool:     w.bufPool,
 	})
 	if err != nil {
 		_ = dataWriter.Close(ctx)

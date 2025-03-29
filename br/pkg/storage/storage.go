@@ -12,6 +12,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/util/zeropool"
 	"go.uber.org/zap"
 )
 
@@ -105,6 +106,7 @@ type Writer interface {
 type WriterOption struct {
 	Concurrency int
 	PartSize    int64
+	BufPool     *zeropool.Pool[[]byte]
 }
 
 type ReaderOption struct {
