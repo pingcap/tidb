@@ -253,6 +253,24 @@ type PhysicalProperty struct {
 		*expression.VSInfo
 		TopK uint32
 	}
+
+	IndexJoinProp *IndexJoinRuntimeProp
+}
+
+// IndexJoinRuntimeProp is the inner runtime property for index join.
+type IndexJoinRuntimeProp struct {
+	// for complete the last col range access, cuz its runtime constant.
+	OtherConditions []expression.Expression
+	// for filling the range msg info
+	OuterJoinKeys []*expression.Column
+	// for inner ds/index to detect the range, cuz its runtime constant.
+	InnerJoinKeys []*expression.Column
+	// AvgInnerRowCnt is computed from join.EqualCondCount / outerChild.RowCount.
+	// since ds only can build empty range before seeing runtime data, the so inner
+	// ds can get an accurate countAfterAccess. Once index join prop pushed to the
+	// deeper side like through join, the deeper DS's countAfterAccess should be
+	// thought twice.
+	AvgInnerRowCnt float64
 }
 
 // NewPhysicalProperty builds property from columns.
@@ -382,13 +400,26 @@ func (p *PhysicalProperty) HashCode() []byte {
 			p.hashcode = append(p.hashcode, col.hashCode()...)
 		}
 		if p.VectorProp.VSInfo != nil {
-			// We only accpect the vector information from the TopN which is directly above the DataSource.
+			// We only accept the vector information from the TopN which is directly above the DataSource.
 			// So it's safe to not hash the vector constant.
 			p.hashcode = append(p.hashcode, p.VectorProp.Column.HashCode()...)
 			p.hashcode = codec.EncodeInt(p.hashcode, int64(p.VectorProp.FnPbCode))
 		}
 	}
 	p.hashcode = append(p.hashcode, codec.EncodeInt(nil, int64(p.CTEProducerStatus))...)
+	// encode indexJoinProp into physical prop's hashcode.
+	if p.IndexJoinProp != nil {
+		for _, expr := range p.IndexJoinProp.OtherConditions {
+			p.hashcode = append(p.hashcode, expr.HashCode()...)
+		}
+		for _, col := range p.IndexJoinProp.OuterJoinKeys {
+			p.hashcode = append(p.hashcode, col.HashCode()...)
+		}
+		for _, col := range p.IndexJoinProp.InnerJoinKeys {
+			p.hashcode = append(p.hashcode, col.HashCode()...)
+		}
+		p.hashcode = codec.EncodeFloat(p.hashcode, p.IndexJoinProp.AvgInnerRowCnt)
+	}
 	return p.hashcode
 }
 

@@ -1795,6 +1795,12 @@ func TestEnableWindowFunction(t *testing.T) {
 	require.Equal(t, vars.EnableWindowFunction, true)
 }
 
+func TestTiDBOptIndexJoinBuild(t *testing.T) {
+	vars := NewSessionVars(nil)
+	sv := GetSysVar(vardef.TiDBOptIndexJoinBuild)
+
+}
+
 func TestTiDBHashJoinVersion(t *testing.T) {
 	vars := NewSessionVars(nil)
 	sv := GetSysVar(vardef.TiDBHashJoinVersion)

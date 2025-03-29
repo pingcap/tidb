@@ -57,6 +57,7 @@ var HeavyFunctionNameMap = map[string]struct{}{
 }
 
 func attachPlan2Task(p base.PhysicalPlan, t base.Task) base.Task {
+	inheritStatsFromBottomForIndexJoinInner(p, t)
 	switch v := t.(type) {
 	case *CopTask:
 		if v.indexPlanFinished {
@@ -178,8 +179,7 @@ func (p *PhysicalIndexHashJoin) Attach2Task(tasks ...base.Task) base.Task {
 	return t
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalIndexJoin) Attach2Task(tasks ...base.Task) base.Task {
+func indexJoinAttach2TaskV1(p *PhysicalIndexJoin, tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	if p.InnerChildIdx == 1 {
 		p.SetChildren(outerTask.Plan(), p.innerPlan)
@@ -189,6 +189,26 @@ func (p *PhysicalIndexJoin) Attach2Task(tasks ...base.Task) base.Task {
 	t := &RootTask{}
 	t.SetPlan(p)
 	return t
+}
+
+func indexJoinAttach2TaskV2(p *PhysicalIndexJoin, tasks ...base.Task) base.Task {
+	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
+	innerTask := tasks[p.InnerChildIdx].ConvertToRootTask(p.SCtx())
+	completePhysicalIndexJoin(p, innerTask.(*RootTask), innerTask.Plan().Schema(), outerTask.Plan().Schema(), true)
+	if p.InnerChildIdx == 1 {
+		p.SetChildren(outerTask.Plan(), innerTask.Plan())
+	} else {
+		p.SetChildren(innerTask.Plan(), outerTask.Plan())
+	}
+	t := &RootTask{}
+	t.SetPlan(p)
+	return t
+}
+
+// Attach2Task implements PhysicalPlan interface.
+func (p *PhysicalIndexJoin) Attach2Task(tasks ...base.Task) base.Task {
+	// todo: we can use indexJoinV2 variable to identify
+	return indexJoinAttach2TaskV2(p, tasks...)
 }
 
 // RowSize for cost model ver2 is simplified, always use this function to calculate row size.
@@ -1319,6 +1339,41 @@ func (sel *PhysicalSelection) Attach2Task(tasks ...base.Task) base.Task {
 	}
 	t := tasks[0].ConvertToRootTask(sel.SCtx())
 	return attachPlan2Task(sel, t)
+}
+
+func inheritStatsFromBottomForIndexJoinInner(p base.PhysicalPlan, t base.Task) {
+	var indexJoinInfo *IndexJoinInfo
+	switch v := t.(type) {
+	case *CopTask:
+		indexJoinInfo = v.IndexJoinInfo
+	case *RootTask:
+		indexJoinInfo = v.IndexJoinInfo
+	default:
+	}
+	var isIndexJoinOrApply bool
+	switch p.(type) {
+	case *PhysicalIndexJoin, *PhysicalIndexHashJoin, *PhysicalIndexMergeJoin, *PhysicalApply:
+		isIndexJoinOrApply = true
+	default:
+	}
+	if !isIndexJoinOrApply && indexJoinInfo != nil {
+		switch p.(type) {
+		case *PhysicalSelection:
+			// same as logicalSelection
+			p.SetStats(t.Plan().StatsInfo().Scale(cost.SelectionFactor))
+		case *PhysicalProjection:
+			// mainly about the rowEst, proj doesn't change that.
+			p.SetStats(t.Plan().StatsInfo())
+		case *PhysicalHashAgg, *PhysicalStreamAgg:
+			// todo: for simplicity, we can just inherit it from child.
+			p.SetStats(t.Plan().StatsInfo())
+		case *PhysicalUnionScan:
+			// todo: for simplicity, we can just inherit it from child.
+			p.SetStats(t.Plan().StatsInfo())
+		default:
+			p.SetStats(t.Plan().StatsInfo())
+		}
+	}
 }
 
 // CheckAggCanPushCop checks whether the aggFuncs and groupByItems can
