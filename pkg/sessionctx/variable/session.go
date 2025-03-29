@@ -984,6 +984,10 @@ type SessionVars struct {
 	// TiFlashQuerySpillRatio is the percentage threshold to trigger auto spill in TiFlash if TiFlashMaxQueryMemoryPerNode is set
 	TiFlashQuerySpillRatio float64
 
+	// TiFlashHashJoinVersion controls the hash join version in TiFlash.
+	// "optimized" enables hash join v2, while "legacy" uses the original version.
+	TiFlashHashJoinVersion string
+
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
 
@@ -2245,6 +2249,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.TiFlashMaxBytesBeforeExternalSort = vardef.DefTiFlashMaxBytesBeforeExternalSort
 	vars.TiFlashMaxQueryMemoryPerNode = vardef.DefTiFlashMemQuotaQueryPerNode
 	vars.TiFlashQuerySpillRatio = vardef.DefTiFlashQuerySpillRatio
+	vars.TiFlashHashJoinVersion = vardef.DefTiFlashHashJoinVersion
 	vars.MPPStoreFailTTL = vardef.DefTiDBMPPStoreFailTTL
 	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
 	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
