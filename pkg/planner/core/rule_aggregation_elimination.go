@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -88,6 +89,28 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *logicalop.L
 		}
 	}
 	return nil
+}
+
+func (*aggregationEliminateChecker) tryToSimpleGroupBy(agg *logicalop.LogicalAggregation) {
+	if !agg.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("here")
+	}
+	deleteGroupByItems := make([]expression.Expression, 0, len(agg.GroupByItems))
+	for _, groupby := range agg.GroupByItems {
+		cols, ok := groupby.(*expression.Column)
+		if !ok {
+			continue
+		}
+		groupBySchema := expression.NewSchema(cols)
+		for _, key := range agg.Schema().PKOrUK {
+			if groupBySchema.ColumnsIndices(key) != nil && !agg.SCtx().GetSessionVars().InRestrictedSQL {
+				deleteGroupByItems = append(deleteGroupByItems, groupby)
+			}
+		}
+	}
+	agg.GroupByItems = slices.DeleteFunc(agg.GroupByItems, func(expr expression.Expression) bool {
+		return !slices.Contains(deleteGroupByItems, expr)
+	})
 }
 
 // tryToEliminateDistinct will eliminate distinct in the aggregation function if the aggregation args
@@ -273,10 +296,14 @@ func (a *AggregationEliminator) Optimize(ctx context.Context, p base.LogicalPlan
 	if !ok {
 		return p, planChanged, nil
 	}
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	a.tryToEliminateDistinct(agg, opt)
 	if proj := a.tryToEliminateAggregation(agg, opt); proj != nil {
 		return proj, planChanged, nil
 	}
+	a.tryToSimpleGroupBy(agg)
 	return p, planChanged, nil
 }
 
