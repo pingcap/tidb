@@ -353,16 +353,33 @@ func (f *FlatPhysicalPlan) flattenRecursively(p base.Plan, info *operatorCtx, ta
 		childCtx.isRoot = false
 		childCtx.reqType = Cop
 		childCtx.storeType = kv.TiKV
-		for _, pchild := range plan.partialPlans {
-			childCtx.label = BuildSide
-			childCtx.isLastChild = false
-			target, childIdx = f.flattenRecursively(pchild, childCtx, target)
+		if plan.IdxMergeIsSingleScan {
+			// Process all partial plans (index scans)
+			for i, pchild := range plan.partialPlans {
+				// When table scan is eliminated, indexes have a parallel/union relationship
+				// The build/probe concept doesn't apply in this scenario
+				reader := FindIndexScan4IndexMerge(pchild)
+				if reader != nil && plan.tablePlan == nil {
+					childCtx.label = Empty
+				} else {
+					childCtx.label = BuildSide
+				}
+				childCtx.isLastChild = (i == len(plan.partialPlans)-1) && (plan.tablePlan == nil)
+				target, childIdx = f.flattenRecursively(pchild, childCtx, target)
+				childIdxs = append(childIdxs, childIdx)
+			}
+		} else {
+			for _, pchild := range plan.partialPlans {
+				childCtx.label = BuildSide
+				childCtx.isLastChild = false
+				target, childIdx = f.flattenRecursively(pchild, childCtx, target)
+				childIdxs = append(childIdxs, childIdx)
+			}
+			childCtx.label = ProbeSide
+			childCtx.isLastChild = true
+			target, childIdx = f.flattenRecursively(plan.tablePlan, childCtx, target)
 			childIdxs = append(childIdxs, childIdx)
 		}
-		childCtx.label = ProbeSide
-		childCtx.isLastChild = true
-		target, childIdx = f.flattenRecursively(plan.tablePlan, childCtx, target)
-		childIdxs = append(childIdxs, childIdx)
 	case *PhysicalShuffleReceiverStub:
 		childCtx.isRoot = true
 		childCtx.label = Empty
