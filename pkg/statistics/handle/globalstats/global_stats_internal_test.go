@@ -439,6 +439,9 @@ func testGlobalStatsAndSQLBinding(tk *testkit.TestKit) {
 	tk.MustExec("insert into trange values " + strings.Join(vals, ","))
 	tk.MustExec("insert into tlist values " + strings.Join(listVals, ","))
 
+	// Must disable prefer range scan to ensure the planner will choose tablescan for tests
+	tk.MustExec("set session tidb_opt_prefer_range_scan=0")
+
 	// before analyzing, the planner will choose TableScan to access the 1% of records
 	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
 	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")
