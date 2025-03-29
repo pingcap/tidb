@@ -1254,6 +1254,41 @@ func TestStmtSummaryShowPlanForSQL(t *testing.T) {
 	require.Equal(t, result[7], "1") // avg_returned_rows
 }
 
+func TestStmtSummaryShowPlanForSQL2(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, c varchar(10), key(a), key(b))`)
+
+	tk.MustExec(`create global binding using select /*+ use_index(t, a) */ a from t where b=1`)
+	tk.MustQuery(`select a from test.t where b=1`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+
+	rs := tk.MustQuery(`show plan for "select a from test.t where b=1"`).Rows()[0]
+	require.Contains(t, rs[2], "index:a(a)")
+	require.Equal(t, rs[5], "1") // exec_count
+	tk.MustQuery(`select a from test.t where b=1`).Check(testkit.Rows())
+	rs = tk.MustQuery(`show plan for "select a from test.t where b=1"`).Rows()[0]
+	require.Equal(t, rs[5], "2") // exec_count
+
+	tk.MustExec(`create global binding using select /*+ use_index(t, b) */ a from test.t where b=1`)
+	tk.MustQuery(`select a from test.t where b=1`).Check(testkit.Rows())
+	rs = tk.MustQuery(`show plan for "select a from test.t where b=2"`).Rows()[0]
+	require.Contains(t, rs[2], "index:b(b)")
+	require.Equal(t, rs[5], "1") // exec_count
+	tk.MustQuery(`select a from test.t where b=1`).Check(testkit.Rows())
+	rs = tk.MustQuery(`show plan for "select a from test.t where b=2"`).Rows()[0]
+	require.Equal(t, rs[5], "2") // exec_count
+}
+
 func TestCreateBindingFromHistory(t *testing.T) {
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
