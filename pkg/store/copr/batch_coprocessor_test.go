@@ -46,7 +46,7 @@ func buildStoreTaskMap(storeCount int) map[uint64]*batchCopTask {
 }
 
 func buildRegionInfos(storeCount, regionCount, replicaNum int) []RegionInfo {
-	var ss []string
+	ss := make([]string, 0, regionCount)
 	for i := range regionCount {
 		s := strconv.Itoa(i)
 		ss = append(ss, s)

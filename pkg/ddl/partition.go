@@ -1262,10 +1262,8 @@ func GeneratePartDefsFromInterval(ctx expression.BuildContext, tp ast.AlterTable
 			return err
 		}
 	}
-	var partDefs []*ast.PartitionDefinition
-	if len(partitionOptions.Definitions) != 0 {
-		partDefs = partitionOptions.Definitions
-	} else {
+	partDefs := partitionOptions.Definitions
+	if len(partDefs) == 0 {
 		partDefs = make([]*ast.PartitionDefinition, 0, 1)
 	}
 	for i := range mysql.PartitionCountLimit {

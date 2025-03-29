@@ -33,8 +33,8 @@ import (
 func (s *mockGCSSuite) TestSplitFile() {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
-	var allData []string
-	var content []byte
+	allData := make([]string, 0, 500)
+	content := make([]byte, 0, 500)
 	for j := range 500 {
 		content = append(content, fmt.Appendf(nil, "%d,test-%d\n", j, j)...)
 		allData = append(allData, fmt.Sprintf("%d test-%d", j, j))

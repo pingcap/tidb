@@ -183,7 +183,7 @@ func TestCacheSnapShot(t *testing.T) {
 	txn, err := se.GetStore().Begin(tikv.WithStartTS(0))
 	memBuffer := txn.GetMemBuffer()
 	require.NoError(t, err)
-	var keys []kv.Key
+	keys := make([]kv.Key, 0, 2)
 	for i := range 2 {
 		keys = append(keys, []byte(string(rune(i))))
 	}

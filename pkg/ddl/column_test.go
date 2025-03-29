@@ -559,7 +559,7 @@ func checkPublicColumn(t *testing.T, ctx sessionctx.Context, tableID int64, newC
 	require.NoError(t, err)
 
 	i := 0
-	var updatedRow []types.Datum
+	updatedRow := make([]types.Datum, 0, len(oldRow)+columnCnt)
 	updatedRow = append(updatedRow, oldRow...)
 	for range columnCnt {
 		updatedRow = append(updatedRow, types.NewDatum(columnValue))

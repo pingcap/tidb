@@ -401,7 +401,7 @@ func (g *vectorFloat32RandGener) gen() any {
 	if g.dimension == -1 {
 		return nil
 	}
-	var values []float32
+	values := make([]float32, 0, g.dimension)
 	for range g.dimension {
 		values = append(values, g.randGen.Float32())
 	}

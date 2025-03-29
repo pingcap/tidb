@@ -101,7 +101,7 @@ func (s *joinReorderDPSolver) solve(joinGroup []base.LogicalPlan, tracer *joinRe
 	}
 	visited := make([]bool, len(joinGroup))
 	nodeID2VisitID := make([]int, len(joinGroup))
-	var joins []base.LogicalPlan
+	joins := make([]base.LogicalPlan, 0, len(joinGroup))
 	// BFS the tree.
 	for i := range joinGroup {
 		if visited[i] {

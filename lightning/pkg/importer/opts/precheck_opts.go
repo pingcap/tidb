@@ -16,8 +16,9 @@
 package opts
 
 import (
-	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"slices"
+
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 )
 
 // PrecheckItemBuilderConfig defines the config used in a precheck builder,

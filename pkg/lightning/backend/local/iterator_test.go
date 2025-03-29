@@ -39,7 +39,7 @@ func randBytes(n int) []byte {
 }
 
 func TestDupDetectIterator(t *testing.T) {
-	var pairs []common.KvPair
+	pairs := make([]common.KvPair, 0, 20+40+30)
 	prevRowMax := int64(0)
 	// Unique pairs.
 	for range 20 {

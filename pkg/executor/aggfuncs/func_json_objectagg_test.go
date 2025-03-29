@@ -68,7 +68,7 @@ func TestMergePartialResult4JsonObjectagg(t *testing.T) {
 		}
 	}
 
-	var tests []multiArgsAggTest
+	tests := make([]multiArgsAggTest, 0, len(argCombines))
 	numRows := 5
 
 	for k := range argCombines {
@@ -130,7 +130,7 @@ func TestJsonObjectagg(t *testing.T) {
 		}
 	}
 
-	var tests []multiArgsAggTest
+	tests := make([]multiArgsAggTest, 0, len(argCombines))
 	numRows := 5
 
 	for k := range argCombines {
