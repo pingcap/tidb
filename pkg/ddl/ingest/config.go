@@ -50,7 +50,6 @@ func genConfig(
 		LocalStoreDir:     jobSortPath,
 		ResourceGroupName: resourceGroup,
 		MaxConnPerStore:   concurrency,
-		WorkerConcurrency: concurrency * 2,
 		KeyspaceName:      tidb.GetGlobalKeyspaceName(),
 		// We disable the switch TiKV mode feature for now, because the impact is not
 		// fully tested.
@@ -72,8 +71,9 @@ func genConfig(
 		StoreWriteBWLimit:           maxWriteSpeed,
 	}
 	// Each backend will build a single dir in lightning dir.
+	cfg.WorkerConcurrency = concurrency * 2
 	if ImporterRangeConcurrencyForTest != nil {
-		cfg.WorkerConcurrency = int(ImporterRangeConcurrencyForTest.Load()) * 2
+		cfg.WorkerConcurrency = int(ImporterRangeConcurrencyForTest.Load() * 2)
 	}
 	adjustImportMemory(ctx, memRoot, cfg)
 	if unique {

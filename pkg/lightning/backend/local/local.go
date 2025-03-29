@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
@@ -56,7 +57,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
@@ -1401,6 +1401,10 @@ func (local *Backend) doImport(
 	regionSplitKeys [][]byte,
 	regionSplitSize, regionSplitKeyCnt int64,
 ) error {
+	var (
+		workGroup, workerCtx = util.NewErrorGroupWithRecoverWithCtx(ctx)
+		jobWg                sync.WaitGroup
+	)
 	/*
 	 [prepareAndSendJob]---jobToWorkerCh->[storeBalancer(optional)]->[workers]
 	                     ^                                             |
@@ -1444,149 +1448,80 @@ func (local *Backend) doImport(
 	// close channels.
 	//
 	// 3. the main goroutine can see the error and exit after workGroup.Wait().
-	var (
-		workGroup, workerCtx = util.NewErrorGroupWithRecoverWithCtx(ctx)
-		// jobToWorkerCh and jobFromWorkerCh are unbuffered so jobs will not be
-		// owned by them.
-		jobToWorkerCh   = make(chan *regionJob)
-		jobFromWorkerCh = make(chan *regionJob)
-		jobWg           sync.WaitGroup
-		balancer        *storeBalancer
-	)
 
-	// storeBalancer does not have backpressure, it should not be used with external
-	// engine to avoid OOM.
-	if _, ok := engine.(*Engine); ok {
-		balancer = newStoreBalancer(jobToWorkerCh, &jobWg)
-		workGroup.Go(func() error {
-			return balancer.run(workerCtx)
-		})
-	}
+	jobFromWorkerCh := operator.NewSimpleDataChannel(make(chan *regionJob))
+	jobToWorkerCh := operator.NewSimpleDataChannel(make(chan *regionJob))
+	innerJobToWorkerCh := operator.NewSimpleDataChannel(make(chan *regionJob))
 
 	failpoint.Inject("injectVariables", func() {
-		jobToWorkerCh = testJobToWorkerCh
+		jobToWorkerCh = operator.NewSimpleDataChannel(testJobToWorkerCh)
 		testJobWg = &jobWg
 	})
 
-	retryer := newRegionJobRetryer(workerCtx, jobToWorkerCh, &jobWg)
-	workGroup.Go(func() error {
-		retryer.run()
-		return nil
-	})
-
-	// dispatchJobGoroutine
-	workGroup.Go(func() error {
-		var (
-			job *regionJob
-			ok  bool
-		)
-		for {
-			select {
-			case <-workerCtx.Done():
-				return nil
-			case job, ok = <-jobFromWorkerCh:
-			}
-			if !ok {
-				retryer.close()
-				return nil
-			}
-			switch job.stage {
-			case regionScanned, wrote:
-				job.retryCount++
-				if job.retryCount > MaxWriteAndIngestRetryTimes {
-					job.done(&jobWg)
-					lastErr := job.lastRetryableErr
-					intest.Assert(lastErr != nil, "lastRetryableErr should not be nil")
-					if lastErr == nil {
-						lastErr = errors.New("retry limit exceeded")
-						log.FromContext(ctx).Error(
-							"lastRetryableErr should not be nil",
-							logutil.Key("startKey", job.keyRange.Start),
-							logutil.Key("endKey", job.keyRange.End),
-							zap.Stringer("stage", job.stage),
-							zap.Error(lastErr))
-					}
-					return lastErr
-				}
-				// max retry backoff time: 2+4+8+16+30*26=810s
-				sleepSecond := math.Pow(2, float64(job.retryCount))
-				if sleepSecond > float64(maxRetryBackoffSecond) {
-					sleepSecond = float64(maxRetryBackoffSecond)
-				}
-				job.waitUntil = time.Now().Add(time.Second * time.Duration(sleepSecond))
-				log.FromContext(ctx).Info("put job back to jobCh to retry later",
-					logutil.Key("startKey", job.keyRange.Start),
-					logutil.Key("endKey", job.keyRange.End),
-					zap.Stringer("stage", job.stage),
-					zap.Int("retryCount", job.retryCount),
-					zap.Time("waitUntil", job.waitUntil))
-				if !retryer.push(job) {
-					// retryer is closed by worker error
-					job.done(&jobWg)
-				}
-			case ingested:
-				job.done(&jobWg)
-			case needRescan:
-				panic("should not reach here")
-			}
-		}
-	})
-
-	failpoint.Inject("skipStartWorker", func() {
-		failpoint.Goto("afterStartWorker")
-	})
-
-	for i := 0; i < local.WorkerConcurrency; i++ {
-		workGroup.Go(func() error {
-			toCh := jobToWorkerCh
-			var afterExecuteJob func([]*metapb.Peer)
-			if balancer != nil {
-				toCh = balancer.innerJobToWorkerCh
-				afterExecuteJob = balancer.releaseStoreLoad
-			}
-			return local.startWorker(workerCtx, toCh, jobFromWorkerCh, afterExecuteJob, &jobWg)
-		})
+	// storeBalancer does not have backpressure, it should not be used with external
+	// engine to avoid OOM.
+	useBalancer := false
+	if _, ok := engine.(*Engine); ok {
+		useBalancer = true
 	}
 
-	failpoint.Label("afterStartWorker")
+	var balancer *storeBalanceOperator
+	if useBalancer {
+		balancer = newStoreBalanceOperator(workerCtx, workGroup, &jobWg, local)
+	}
 
-	workGroup.Go(func() error {
-		err := local.prepareAndSendJob(
-			workerCtx,
-			engine,
-			regionSplitKeys,
-			regionSplitSize,
-			regionSplitKeyCnt,
-			jobToWorkerCh,
-			&jobWg,
-		)
-		if err != nil {
-			return err
-		}
+	dispatcher := newJobDispatchOperator(workerCtx, workGroup, &jobWg, local, balancer)
+	workers := newJobOperator(
+		workerCtx, workGroup, &jobWg,
+		local.WorkerConcurrency,
+		local, balancer,
+	)
 
-		jobWg.Wait()
-		if balancer != nil {
-			intest.AssertFunc(func() bool {
-				allZero := true
-				balancer.storeLoadMap.Range(func(_, value any) bool {
-					if value.(int) != 0 {
-						allZero = false
-						return false
-					}
-					return true
-				})
-				return allZero
-			})
-		}
-		close(jobFromWorkerCh)
-		return nil
+	sender := newJobPrepareAndSendOperator(workerCtx, workGroup, &jobWg, local, balancer, workers, engine, regionSplitKeys, regionSplitSize, regionSplitKeyCnt)
+
+	var ops []operator.Operator
+	if useBalancer {
+		sender.SetSink(jobToWorkerCh)
+		dispatcher.SetSink(jobToWorkerCh)
+		balancer.SetSource(jobToWorkerCh)
+
+		balancer.SetSink(innerJobToWorkerCh)
+		workers.SetSource(innerJobToWorkerCh)
+
+		workers.SetSink(jobFromWorkerCh)
+		dispatcher.SetSource(jobFromWorkerCh)
+
+		ops = []operator.Operator{sender, balancer, workers, dispatcher}
+	} else {
+		sender.SetSink(jobToWorkerCh)
+		workers.SetSource(jobToWorkerCh)
+
+		workers.SetSink(jobFromWorkerCh)
+		dispatcher.SetSource(jobFromWorkerCh)
+		dispatcher.SetSink(jobToWorkerCh)
+
+		ops = []operator.Operator{sender, workers, dispatcher}
+	}
+
+	failpoint.Inject("skipStartWorker", func() {
+		ops = []operator.Operator{sender, dispatcher}
 	})
+
+	pipeline := operator.NewAsyncPipeline(ops...)
+	if err := pipeline.Execute(); err != nil {
+		return err
+	}
+
+	if err := pipeline.Close(); err != nil {
+		return err
+	}
 
 	err := workGroup.Wait()
 	if err != nil && !common.IsContextCanceledError(err) {
 		log.FromContext(ctx).Error("do import meets error", zap.Error(err))
 	}
-	return err
+
+	return nil
 }
 
 // GetImportedKVCount returns the number of imported KV pairs of some engine.

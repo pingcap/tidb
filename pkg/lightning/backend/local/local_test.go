@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
@@ -2293,16 +2294,11 @@ func (r *recordScanRegionsHook) AfterScanRegions(infos []*split.RegionInfo, err 
 }
 
 func TestExternalEngine(t *testing.T) {
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipStartWorker", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/injectVariables", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/external/LoadIngestDataBatchSize", "return(2)")
-	t.Cleanup(func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipStartWorker")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/injectVariables")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/external/LoadIngestDataBatchSize")
-	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/skipStartWorker", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/injectVariables", "return()")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/LoadIngestDataBatchSize", "return(2)")
+
 	ctx := context.Background()
 	dir := t.TempDir()
 	storageURI := "file://" + filepath.ToSlash(dir)
