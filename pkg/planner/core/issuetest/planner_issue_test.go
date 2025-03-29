@@ -284,3 +284,20 @@ func TestIssue59902(t *testing.T) {
 			"        └─Selection 1.00 cop[tikv]  not(isnull(test.t2.a))",
 			"          └─IndexRangeScan 1.00 cop[tikv] table:t2, index:idx(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"))
 }
+
+func TestIssueABC(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec(` CREATE TABLE t (
+  a int NOT NULL,
+  b int DEFAULT NULL,
+  PRIMARY KEY (a) /*T![clustered_index] CLUSTERED */
+);`)
+	tk.MustExec(`CREATE TABLE s (
+  a int NOT NULL,
+  b int DEFAULT NULL,
+  PRIMARY KEY (a) /*T![clustered_index] CLUSTERED */
+);`)
+	tk.MustQuery(`explain select /*+ INL_JOIN(t2) */ t2.c+1 from (select a, b+2 as c from t) as t2 join s where t2.a = s.a;`).Check(testkit.Rows())
+}
