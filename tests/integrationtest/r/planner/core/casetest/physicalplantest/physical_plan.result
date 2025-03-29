@@ -909,7 +909,7 @@ HashAgg	16000.00	root		group by:Column#5, funcs:firstrow(Column#6)->Column#3
   │ └─IndexReader	8000.00	root		index:HashAgg
   │   └─HashAgg	8000.00	cop[tikv]		group by:date_format(planner__core__casetest__physicalplantest__physical_plan.tc.timestamp, "%Y-%m-%d %H"), 
   │     └─IndexFullScan	10000.00	cop[tikv]	table:tc, partition:p2020072312, index:idx_timestamp(timestamp)	keep order:false, stats:pseudo
-  └─HashAgg	8000.00	root		group by:Column#10, funcs:firstrow(Column#10)->Column#6, funcs:firstrow(Column#10)->Column#5
+  └─HashAgg	8000.00	root		group by:Column#11, funcs:firstrow(Column#11)->Column#6, funcs:firstrow(Column#11)->Column#5
     └─IndexReader	8000.00	root		index:HashAgg
       └─HashAgg	8000.00	cop[tikv]		group by:date_format(planner__core__casetest__physicalplantest__physical_plan.tc.timestamp, "%Y-%m-%d %H"), 
         └─IndexFullScan	10000.00	cop[tikv]	table:tc, partition:p2020072313, index:idx_timestamp(timestamp)	keep order:false, stats:pseudo
@@ -1355,8 +1355,8 @@ NULL	1	NULL
 explain format='brief' select date_format(d,'%Y') as df, sum(a), count(b), count(distinct c) from t group by date_format(d,'%Y');
 id	estRows	task	access object	operator info
 Projection	8000.00	root		date_format(planner__core__casetest__physicalplantest__physical_plan.t.d, %Y)->Column#9, Column#6, cast(Column#13, bigint BINARY)->Column#7, Column#8
-└─HashAgg	8000.00	root		group by:Column#23, funcs:sum(Column#19)->Column#6, funcs:sum(Column#20)->Column#13, funcs:count(Column#21)->Column#8, funcs:firstrow(Column#22)->planner__core__casetest__physicalplantest__physical_plan.t.d
-  └─Projection	8000.00	root		Column#11->Column#19, cast(Column#12, decimal(20,0) BINARY)->Column#20, planner__core__casetest__physicalplantest__physical_plan.t.c->Column#21, planner__core__casetest__physicalplantest__physical_plan.t.d->Column#22, date_format(planner__core__casetest__physicalplantest__physical_plan.t.d, %Y)->Column#23
+└─HashAgg	8000.00	root		group by:Column#24, funcs:sum(Column#20)->Column#6, funcs:sum(Column#21)->Column#13, funcs:count(Column#22)->Column#8, funcs:firstrow(Column#23)->planner__core__casetest__physicalplantest__physical_plan.t.d
+  └─Projection	8000.00	root		Column#11->Column#20, cast(Column#12, decimal(20,0) BINARY)->Column#21, planner__core__casetest__physicalplantest__physical_plan.t.c->Column#22, planner__core__casetest__physicalplantest__physical_plan.t.d->Column#23, date_format(planner__core__casetest__physicalplantest__physical_plan.t.d, %Y)->Column#24
     └─HashAgg	8000.00	root		group by:Column#14, planner__core__casetest__physicalplantest__physical_plan.t.c, funcs:sum(Column#15)->Column#11, funcs:count(Column#16)->Column#12, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.t.c)->planner__core__casetest__physicalplantest__physical_plan.t.c, funcs:firstrow(Column#18)->planner__core__casetest__physicalplantest__physical_plan.t.d
       └─TableReader	8000.00	root		data:HashAgg
         └─HashAgg	8000.00	cop[tikv]		group by:date_format(planner__core__casetest__physicalplantest__physical_plan.t.d, "%Y"), planner__core__casetest__physicalplantest__physical_plan.t.c, funcs:sum(planner__core__casetest__physicalplantest__physical_plan.t.a)->Column#15, funcs:count(planner__core__casetest__physicalplantest__physical_plan.t.b)->Column#16, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.t.d)->Column#18
