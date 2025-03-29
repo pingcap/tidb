@@ -90,6 +90,7 @@ func NewLogTableMetaManager(
 	g glue.Glue,
 	dom *domain.Domain,
 	dbName string,
+	id uint64,
 ) (LogMetaManagerT, error) {
 	se, err := g.CreateSession(dom.Store())
 	if err != nil {
@@ -105,7 +106,7 @@ func NewLogTableMetaManager(
 		se:       se,
 		runnerSe: runnerSe,
 		dom:      dom,
-		dbName:   dbName,
+		dbName:   fmt.Sprintf("%s_%d", dbName, id),
 	}, nil
 }
 
@@ -113,6 +114,7 @@ func NewSnapshotTableMetaManager(
 	g glue.Glue,
 	dom *domain.Domain,
 	dbName string,
+	id uint64,
 ) (SnapshotMetaManagerT, error) {
 	se, err := g.CreateSession(dom.Store())
 	if err != nil {
@@ -128,7 +130,7 @@ func NewSnapshotTableMetaManager(
 		se:       se,
 		runnerSe: runnerSe,
 		dom:      dom,
-		dbName:   dbName,
+		dbName:   fmt.Sprintf("%s_%d", dbName, id),
 	}, nil
 }
 
@@ -145,7 +147,7 @@ func (manager *TableMetaManager[K, SV, LV, M]) Close() {
 	}
 }
 
-// load the whole checkpoint range data and retrieve the metadata of restored ranges
+// LoadCheckpointData loads the whole checkpoint range data and retrieve the metadata of restored ranges
 // and return the total time cost in the past executions
 func (manager *TableMetaManager[K, SV, LV, M]) LoadCheckpointData(
 	ctx context.Context,
@@ -281,6 +283,7 @@ func NewSnapshotStorageMetaManager(
 	cipher *backuppb.CipherInfo,
 	clusterID uint64,
 	prefix string,
+	id uint64,
 ) SnapshotMetaManagerT {
 	return &StorageMetaManager[
 		RestoreKeyType, RestoreValueType, RestoreValueType, CheckpointMetadataForSnapshotRestore,
@@ -288,7 +291,7 @@ func NewSnapshotStorageMetaManager(
 		storage:   storage,
 		cipher:    cipher,
 		clusterID: fmt.Sprintf("%d", clusterID),
-		taskName:  fmt.Sprintf("%d/%s", clusterID, prefix),
+		taskName:  fmt.Sprintf("%d/%s_%d", clusterID, prefix, id),
 	}
 }
 
@@ -297,6 +300,7 @@ func NewLogStorageMetaManager(
 	cipher *backuppb.CipherInfo,
 	clusterID uint64,
 	prefix string,
+	id uint64,
 ) LogMetaManagerT {
 	return &StorageMetaManager[
 		LogRestoreKeyType, LogRestoreValueType, LogRestoreValueMarshaled, CheckpointMetadataForLogRestore,
@@ -304,7 +308,7 @@ func NewLogStorageMetaManager(
 		storage:   storage,
 		cipher:    cipher,
 		clusterID: fmt.Sprintf("%d", clusterID),
-		taskName:  fmt.Sprintf("%d/%s", clusterID, prefix),
+		taskName:  fmt.Sprintf("%d/%s_%d", clusterID, prefix, id),
 	}
 }
 

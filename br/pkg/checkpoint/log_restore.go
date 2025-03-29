@@ -187,7 +187,7 @@ type TaskInfoForLogRestore struct {
 	Progress RestoreProgress
 }
 
-func TryToGetCheckpointTaskInfo(
+func GetCheckpointTaskInfo(
 	ctx context.Context,
 	snapshotManager SnapshotMetaManagerT,
 	logManager LogMetaManagerT,
