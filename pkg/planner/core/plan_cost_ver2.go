@@ -131,6 +131,8 @@ func (p *PhysicalIndexScan) GetPlanCostVer2(taskType property.TaskType, option *
 
 	p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
 	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexScanCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -185,6 +187,8 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 	}
 
 	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableScanCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -306,6 +310,8 @@ func (p *PhysicalIndexLookUpReader) GetPlanCostVer2(taskType property.TaskType, 
 	}
 
 	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexLookupCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -365,6 +371,8 @@ func (p *PhysicalIndexMergeReader) GetPlanCostVer2(taskType property.TaskType, o
 		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, 0.99)
 	}
 	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexMergeCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -418,6 +426,8 @@ func (p *PhysicalSort) GetPlanCostVer2(taskType property.TaskType, option *optim
 
 	p.PlanCostVer2 = costusage.SumCostVer2(childCost, sortCPUCost, sortMemCost, sortDiskCost)
 	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().SortCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -453,6 +463,8 @@ func (p *PhysicalTopN) GetPlanCostVer2(taskType property.TaskType, option *optim
 
 	p.PlanCostVer2 = costusage.SumCostVer2(childCost, topNCPUCost, topNMemCost)
 	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TopNCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -476,6 +488,8 @@ func (p *PhysicalStreamAgg) GetPlanCostVer2(taskType property.TaskType, option *
 
 	p.PlanCostVer2 = costusage.SumCostVer2(childCost, aggCost, groupCost)
 	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().StreamAggCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -508,6 +522,8 @@ func (p *PhysicalHashAgg) GetPlanCostVer2(taskType property.TaskType, option *op
 
 	p.PlanCostVer2 = costusage.SumCostVer2(startCost, childCost, costusage.DivCostVer2(costusage.SumCostVer2(aggCost, groupCost, hashBuildCost, hashProbeCost), concurrency))
 	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().HashAggCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -538,6 +554,8 @@ func (p *PhysicalMergeJoin) GetPlanCostVer2(taskType property.TaskType, option *
 
 	p.PlanCostVer2 = costusage.SumCostVer2(leftChildCost, rightChildCost, filterCost, groupCost)
 	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().MergeJoinCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -591,6 +609,8 @@ func (p *PhysicalHashJoin) GetPlanCostVer2(taskType property.TaskType, option *o
 			costusage.DivCostVer2(costusage.SumCostVer2(probeFilterCost, probeHashCost), tidbConcurrency))
 	}
 	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().HashJoinCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -658,6 +678,8 @@ func (p *PhysicalIndexJoin) getIndexJoinCostVer2(taskType property.TaskType, opt
 
 	p.PlanCostVer2 = costusage.SumCostVer2(startCost, buildChildCost, buildFilterCost, buildTaskCost, costusage.DivCostVer2(costusage.SumCostVer2(doubleReadCost, probeCost, probeFilterCost, hashTableCost), probeConcurrency))
 	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexJoinCostFactor)
 	return p.PlanCostVer2, nil
 }
 

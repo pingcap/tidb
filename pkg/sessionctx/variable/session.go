@@ -1031,6 +1031,19 @@ type SessionVars struct {
 	// concurrencyFactor is the CPU cost of additional one goroutine.
 	concurrencyFactor float64
 
+	// Optimizer cost model factors for each physical operator
+	IndexScanCostFactor   float64
+	TableScanCostFactor   float64
+	IndexLookupCostFactor float64
+	IndexMergeCostFactor  float64
+	SortCostFactor        float64
+	TopNCostFactor        float64
+	StreamAggCostFactor   float64
+	HashAggCostFactor     float64
+	MergeJoinCostFactor   float64
+	HashJoinCostFactor    float64
+	IndexJoinCostFactor   float64
+
 	// enableForceInlineCTE is used to enable/disable force inline CTE.
 	enableForceInlineCTE bool
 
@@ -2138,6 +2151,17 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		memoryFactor:                  vardef.DefOptMemoryFactor,
 		diskFactor:                    vardef.DefOptDiskFactor,
 		concurrencyFactor:             vardef.DefOptConcurrencyFactor,
+		IndexScanCostFactor:           vardef.DefOptIndexScanCostFactor,
+		TableScanCostFactor:           vardef.DefOptTableScanCostFactor,
+		IndexLookupCostFactor:         vardef.DefOptIndexLookupCostFactor,
+		IndexMergeCostFactor:          vardef.DefOptIndexMergeCostFactor,
+		SortCostFactor:                vardef.DefOptSortCostFactor,
+		TopNCostFactor:                vardef.DefOptTopNCostFactor,
+		StreamAggCostFactor:           vardef.DefOptStreamAggCostFactor,
+		HashAggCostFactor:             vardef.DefOptHashAggCostFactor,
+		MergeJoinCostFactor:           vardef.DefOptMergeJoinCostFactor,
+		HashJoinCostFactor:            vardef.DefOptHashJoinCostFactor,
+		IndexJoinCostFactor:           vardef.DefOptIndexJoinCostFactor,
 		enableForceInlineCTE:          vardef.DefOptForceInlineCTE,
 		EnableVectorizedExpression:    vardef.DefEnableVectorizedExpression,
 		CommandValue:                  uint32(mysql.ComSleep),
