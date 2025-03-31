@@ -763,6 +763,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 			zap.Int64("tableID", col.TableID),
 			zap.Int64("columnID", col.ID),
 		)
+		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 		return nil
 	}
 	statsTbl = statsTbl.Copy()
@@ -878,6 +879,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 			zap.Int64("tableID", idx.TableID),
 			zap.Int64("indexID", idx.ID),
 		)
+		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 		return nil
 	}
 	tbl = tbl.Copy()
