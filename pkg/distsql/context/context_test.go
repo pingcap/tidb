@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
@@ -68,6 +69,7 @@ func TestContextDetach(t *testing.T) {
 		TiFlashMaxBytesBeforeExternalSort:    1,
 		TiFlashMaxQueryMemoryPerNode:         1,
 		TiFlashQuerySpillRatio:               1.0,
+		TiFlashHashJoinVersion:               joinversion.HashJoinVersionLegacy,
 
 		DistSQLConcurrency:            1,
 		ReplicaReadType:               kv.ReplicaReadFollower,
