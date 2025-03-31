@@ -1090,6 +1090,10 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 		if !isFirstAttempt {
 			if !txn.IsReadOnly() {
 				a.Ctx.GetSessionVars().StmtCtx.MemBufferSnapshot = txn.GetMemBuffer().GetSnapshot()
+			} else {
+				// If the transaction is read-only, we need to set the snapshot to nil.
+				// This is because the snapshot may be used by the next statement.
+				a.Ctx.GetSessionVars().StmtCtx.MemBufferSnapshot = nil
 			}
 		}
 
