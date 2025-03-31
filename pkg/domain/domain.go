@@ -165,7 +165,7 @@ type Domain struct {
 	SchemaValidator SchemaValidator
 	schemaLease     time.Duration
 	// advancedSysSessionPool is a more powerful session pool that returns a wrapped session which can detect
-	// some miss-use of the session to avoid potential bugs.
+	// some misuse of the session to avoid potential bugs.
 	// It is recommended to use this pool instead of `sysSessionPool`.
 	advancedSysSessionPool *syssession.AdvancedSessionPool
 	// Note: If you no longer need the session, you must call Destroy to release it.
