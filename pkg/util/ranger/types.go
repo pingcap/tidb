@@ -245,8 +245,7 @@ func (ran *Range) string(redact string) string {
 }
 
 // Encode encodes the range to its encoded value.
-func (ran *Range) Encode(ec errctx.Context, loc *time.Location, lowBuffer, highBuffer []byte) ([]byte, []byte, error) {
-	var err error
+func (ran *Range) Encode(ec errctx.Context, loc *time.Location, lowBuffer, highBuffer []byte) (_, _ []byte, err error) {
 	lowBuffer, err = codec.EncodeKey(loc, lowBuffer[:0], ran.LowVal...)
 	err = ec.HandleError(err)
 	if err != nil {

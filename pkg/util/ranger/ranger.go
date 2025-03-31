@@ -413,7 +413,7 @@ func points2TableRanges(sctx *rangerctx.RangerContext, rangePoints []*point, new
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
 // The second return value is the conditions used to build ranges and the third return value is the remained conditions.
 func buildColumnRange(accessConditions []expression.Expression, sctx *rangerctx.RangerContext, tp *types.FieldType, tableRange bool,
-	colLen int, rangeMaxSize int64) (Ranges, []expression.Expression, []expression.Expression, error) {
+	colLen int, rangeMaxSize int64) (ranges Ranges, _, _ []expression.Expression, err error) {
 	rb := builder{sctx: sctx}
 	newTp := newFieldType(tp)
 	rangePoints := getFullRange()
@@ -425,9 +425,7 @@ func buildColumnRange(accessConditions []expression.Expression, sctx *rangerctx.
 		}
 	}
 	var (
-		ranges        Ranges
 		rangeFallback bool
-		err           error
 	)
 	newTp = convertStringFTToBinaryCollate(newTp)
 	if tableRange {
@@ -458,7 +456,7 @@ func buildColumnRange(accessConditions []expression.Expression, sctx *rangerctx.
 // If you use the function to build ranges for some access path, you need to update the path's access conditions and filter
 // conditions by the second and third return values respectively.
 func BuildTableRange(accessConditions []expression.Expression, sctx *rangerctx.RangerContext, tp *types.FieldType,
-	rangeMaxSize int64) (Ranges, []expression.Expression, []expression.Expression, error) {
+	rangeMaxSize int64) (_ Ranges, _, _ []expression.Expression, _ error) {
 	return buildColumnRange(accessConditions, sctx, tp, true, types.UnspecifiedLength, rangeMaxSize)
 }
 
