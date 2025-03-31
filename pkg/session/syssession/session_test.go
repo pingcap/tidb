@@ -31,11 +31,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// IsInternalClosed returns whether the internal session closed
-func (s *Session) IsInternalClosed() bool {
-	return s.internal.IsClosed()
-}
-
 // WithSuppressAssert suppress asserts in test
 func WithSuppressAssert(fn func()) {
 	defer func() {
@@ -234,14 +229,12 @@ func mockInternalSession(t *testing.T, sctx *mockSessionContext, owner *mockOwne
 }
 
 func mockSession(t *testing.T, sctx *mockSessionContext) *Session {
-	se := &Session{}
 	sctx.On("StoreInternalSession", sctx).Return().Once()
-	internal, err := newInternalSession(sctx, se)
+	se, err := NewSessionForTest(sctx)
 	require.NoError(t, err)
-	require.Same(t, se, internal.Owner())
-	require.False(t, internal.IsClosed())
+	require.Same(t, se, se.internal.Owner())
+	require.False(t, se.internal.IsClosed())
 	sctx.AssertExpectations(t)
-	se.internal = internal
 	return se
 }
 

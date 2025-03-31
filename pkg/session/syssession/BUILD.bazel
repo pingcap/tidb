@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "pool.go",
         "session.go",
+        "session_test_util.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/session/syssession",
     visibility = ["//visibility:public"],
