@@ -3425,7 +3425,7 @@ func upgradeToVer246(s sessiontypes.Session, ver int64) {
                          group by plan_digest, sql_digest having count(1) > 1)`)
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info MODIFY COLUMN sql_digest VARCHAR(64) DEFAULT NULL")
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info MODIFY COLUMN plan_digest VARCHAR(64) DEFAULT NULL")
-	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD UNIQUE INDEX digest_index(plan_digest, sql_digest)")
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD UNIQUE INDEX digest_index(plan_digest, sql_digest)", dbterror.ErrDupKeyName)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
