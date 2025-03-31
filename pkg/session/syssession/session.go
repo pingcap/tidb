@@ -43,9 +43,9 @@ type SessionContext interface {
 // sessionOwner defines the interface for the owner of the session.
 type sessionOwner interface {
 	// onBecameOwner is a hook that will be called when it becomes the owner of the session.
-	onBecameOwner(SessionContext) error
+	onBecameOwner(sessionctx.Context) error
 	// onResignOwner is a hook that will be called when it resigns the ownership of the session.
-	onResignOwner(SessionContext) error
+	onResignOwner(sessionctx.Context) error
 }
 
 func objectStr(obj any) string {
@@ -58,9 +58,9 @@ func objectStr(obj any) string {
 // noopOwnerHook does nothing when the owner of the session is changed.
 type noopOwnerHook struct{}
 
-func (noopOwnerHook) onBecameOwner(SessionContext) error { return nil }
+func (noopOwnerHook) onBecameOwner(sessionctx.Context) error { return nil }
 
-func (noopOwnerHook) onResignOwner(SessionContext) error { return nil }
+func (noopOwnerHook) onResignOwner(sessionctx.Context) error { return nil }
 
 // session is the internal session that will be cached in the session pool.
 // It is private and should not be accessed directly by the outside callers.
@@ -377,7 +377,7 @@ func (s *Session) IsOwner() bool {
 }
 
 // WithSessionContext executes the input function with the session context.
-func (s *Session) WithSessionContext(fn func(ctx SessionContext) error) error {
+func (s *Session) WithSessionContext(fn func(ctx sessionctx.Context) error) error {
 	sctx, exit, err := s.internal.EnterOperation(s)
 	if err != nil {
 		return err
@@ -458,14 +458,14 @@ func (s *Session) GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor {
 	return s
 }
 
-func (*Session) onBecameOwner(sctx SessionContext) error {
+func (*Session) onBecameOwner(sctx sessionctx.Context) error {
 	if mgr := sctx.GetSessionManager(); mgr != nil {
 		mgr.StoreInternalSession(sctx)
 	}
 	return nil
 }
 
-func (*Session) onResignOwner(sctx SessionContext) error {
+func (*Session) onResignOwner(sctx sessionctx.Context) error {
 	if mgr := sctx.GetSessionManager(); mgr != nil {
 		mgr.DeleteInternalSession(sctx)
 	}

@@ -50,11 +50,11 @@ type mockOwner struct {
 	mock.Mock
 }
 
-func (m *mockOwner) onBecameOwner(sctx SessionContext) error {
+func (m *mockOwner) onBecameOwner(sctx sessionctx.Context) error {
 	return m.Called(sctx).Error(0)
 }
 
-func (m *mockOwner) onResignOwner(sctx SessionContext) error {
+func (m *mockOwner) onResignOwner(sctx sessionctx.Context) error {
 	return m.Called(sctx).Error(0)
 }
 
@@ -902,7 +902,7 @@ func TestSessionProxyMethods(t *testing.T) {
 		[]sqlexec.RecordSet{&mockRecordSet{v: 1}, &mockRecordSet{v: 2}}, errors.New("err"),
 		func(arg1 context.Context, arg2 string) (rs []sqlexec.RecordSet, err error) {
 			var execErr error
-			err = se.WithSessionContext(func(sctx SessionContext) error {
+			err = se.WithSessionContext(func(sctx sessionctx.Context) error {
 				rs, execErr = sctx.GetSQLExecutor().Execute(arg1, arg2)
 				return execErr
 			})
