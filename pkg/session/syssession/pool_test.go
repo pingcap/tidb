@@ -200,7 +200,7 @@ func TestSessionPoolPut(t *testing.T) {
 	// Put a Session that avoids reusing
 	se = getNewSessionFromPool(sctx)
 	require.Equal(t, 0, len(p.pool))
-	se.internal.MarkAvoidReuse()
+	se.internal.avoidReuse = true
 	sctx.On("Close").Once()
 	p.Put(se)
 	require.True(t, se.internal.IsClosed())

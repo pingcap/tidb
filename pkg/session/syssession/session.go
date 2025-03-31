@@ -152,18 +152,20 @@ func (s *session) TransferOwner(from, to sessionOwner) error {
 	return nil
 }
 
-// AvoidReuse returns whether the session should be avoided to reuse.
-func (s *session) AvoidReuse() bool {
+// IsAvoidReuse returns whether the session should be avoided to reuse.
+func (s *session) IsAvoidReuse() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.avoidReuse
 }
 
-// MarkAvoidReuse marks the session as avoid-reuse.
-func (s *session) MarkAvoidReuse() {
+// OwnerMarkAvoidReuse marks the session as avoid-reuse.
+func (s *session) OwnerMarkAvoidReuse(caller sessionOwner) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.avoidReuse = true
+	if s.owner != nil && caller == s.owner {
+		s.avoidReuse = true
+	}
 }
 
 // Inuse returns the number of operations that are on going on the session.
@@ -375,6 +377,11 @@ func (s *Session) Close() {
 // IsOwner returns whether the Session is the owner of the internal one.
 func (s *Session) IsOwner() bool {
 	return s.internal.Owner() == s
+}
+
+// AvoidReuse avoids to reuse the session
+func (s *Session) AvoidReuse() {
+	s.internal.OwnerMarkAvoidReuse(s)
 }
 
 // WithSessionContext executes the input function with the session context.

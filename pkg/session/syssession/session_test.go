@@ -574,7 +574,7 @@ func TestInternalSessionAvoidReuse(t *testing.T) {
 	sctx := &mockSessionContext{}
 	owner := &mockOwner{}
 	se := mockInternalSession(t, sctx, owner)
-	require.False(t, se.AvoidReuse())
+	require.False(t, se.IsAvoidReuse())
 
 	execute := func(do func()) {
 		gotSctx, exit, err := se.EnterOperation(owner)
@@ -586,7 +586,7 @@ func TestInternalSessionAvoidReuse(t *testing.T) {
 
 	// normal use
 	execute(func() {})
-	require.False(t, se.AvoidReuse())
+	require.False(t, se.IsAvoidReuse())
 	require.False(t, se.IsClosed())
 	require.Same(t, owner, se.Owner())
 
@@ -596,7 +596,7 @@ func TestInternalSessionAvoidReuse(t *testing.T) {
 			panic("panic1")
 		})
 	})
-	require.True(t, se.AvoidReuse())
+	require.True(t, se.IsAvoidReuse())
 	require.False(t, se.IsClosed())
 	require.Same(t, owner, se.Owner())
 
@@ -604,7 +604,7 @@ func TestInternalSessionAvoidReuse(t *testing.T) {
 	owner.On("onResignOwner", sctx).Return(nil).Once()
 	sctx.On("Close").Once()
 	se.OwnerClose(owner)
-	require.True(t, se.AvoidReuse())
+	require.True(t, se.IsAvoidReuse())
 	require.True(t, se.IsClosed())
 	require.Nil(t, se.Owner())
 	owner.AssertExpectations(t)
@@ -723,7 +723,7 @@ func testCallProxyMethod(
 	sctx.AssertExpectations(t)
 
 	// test panics
-	require.False(t, se.internal.AvoidReuse())
+	require.False(t, se.internal.IsAvoidReuse())
 	sctx.On(name, args...).Run(func(_ mock.Arguments) {
 		inCallInuse = se.internal.Inuse()
 		panic("panicTest")
@@ -733,7 +733,7 @@ func testCallProxyMethod(
 	})
 	require.Equal(t, inuse+1, inCallInuse)
 	require.Equal(t, inuse, se.internal.Inuse())
-	require.True(t, se.internal.AvoidReuse())
+	require.True(t, se.internal.IsAvoidReuse())
 	se.internal.avoidReuse = false
 	sctx.AssertExpectations(t)
 }
@@ -929,4 +929,34 @@ func TestSessionClose(t *testing.T) {
 	require.True(t, se.IsInternalClosed())
 	require.True(t, se2.IsInternalClosed())
 	sctx.AssertExpectations(t)
+}
+
+func TestSessionAvoidReuse(t *testing.T) {
+	// owner
+	sctx := &mockSessionContext{}
+	s, err := NewSessionForTest(sctx)
+	require.NoError(t, err)
+	require.False(t, s.internal.avoidReuse)
+	s.AvoidReuse()
+	require.True(t, s.internal.avoidReuse)
+
+	// multiple calls of AvoidReuse
+	s.AvoidReuse()
+	require.True(t, s.internal.avoidReuse)
+
+	// still can use the session after AvoidReuse
+	ctx := context.WithValue(context.Background(), "a", "b")
+	sctx.On("ExecuteInternal", ctx, "select 1", []any(nil)).Return(nil, nil).Once()
+	rs, err := s.ExecuteInternal(ctx, "select 1")
+	require.Nil(t, rs)
+	require.NoError(t, err)
+	sctx.AssertExpectations(t)
+
+	// not owner
+	s, err = NewSessionForTest(sctx)
+	require.NoError(t, err)
+	s2 := &Session{internal: s.internal}
+	require.False(t, s.internal.avoidReuse)
+	s2.AvoidReuse()
+	require.False(t, s.internal.avoidReuse)
 }

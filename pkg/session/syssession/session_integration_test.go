@@ -139,6 +139,22 @@ func TestDomainAdvancedSessionPoolPutBackDirtySession(t *testing.T) {
 				return nil
 			},
 		},
+		{
+			name: "avoid reuse in withSession",
+			withSession: func(session *syssession.Session) error {
+				session.AvoidReuse()
+				return nil
+			},
+		},
+		{
+			name: "avoid reuse in withSessionContext",
+			withSession: func(session *syssession.Session) error {
+				return session.WithSessionContext(func(sessionctx.Context) error {
+					session.AvoidReuse()
+					return nil
+				})
+			},
+		},
 	}
 
 	for _, c := range cases {

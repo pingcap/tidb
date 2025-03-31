@@ -158,7 +158,7 @@ func (p *AdvancedSessionPool) Put(se *Session) {
 		}
 	}()
 
-	if internal.AvoidReuse() {
+	if internal.IsAvoidReuse() {
 		// If the internal session is marked as avoid-reuse, we should close it directly.
 		// Notice that we should not call `internal.Close` to make sure only close the internal session when its owner
 		// is the current session.

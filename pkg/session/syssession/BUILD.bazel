@@ -35,7 +35,7 @@ go_test(
     ],
     embed = [":syssession"],
     flaky = True,
-    shard_count = 16,
+    shard_count = 17,
     deps = [
         "//pkg/kv",
         "//pkg/parser/ast",
