@@ -43,3 +43,8 @@ func (s *Session) ResetSctxForTest(fn func(SessionContext) SessionContext) error
 func (s *Session) IsInternalClosed() bool {
 	return s.internal.IsClosed()
 }
+
+// Size returns the size of the session pool
+func (p *AdvancedSessionPool) Size() int {
+	return len(p.pool)
+}

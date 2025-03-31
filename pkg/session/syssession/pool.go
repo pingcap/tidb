@@ -108,6 +108,8 @@ func (p *AdvancedSessionPool) Get() (*Session, error) {
 	}
 
 	intest.AssertNotNil(internal)
+	intest.Assert(!internal.IsClosed())
+	intest.Assert(internal.Owner() == p)
 	se := &Session{}
 	defer func() {
 		if se.internal != internal {
