@@ -663,11 +663,12 @@ func (t TableLockState) String() string {
 }
 
 // TableMode is the state for table mode, it's a table level metadata for prevent
-// table read/write during importing(import into) or BR restoring when table mode
-// isn't TableModeNormal. TableModeImport/TableModeRestore will return error to block
-// read/write sql. To modify table mode, only internal DDL operations(AlterTableMode)
-// are permitted. Now allow switching between the same table modes, and not allow
-// convert between TableModeImport and TableModeRestore
+// table read/write during importing(import into) or BR restoring.
+// when table mode isn't TableModeNormal, DMLs or DDLs that change the table will
+// return error.
+// To modify table mode, only internal DDL operations(AlterTableMode) are permitted.
+// Now allow switching between the same table modes, and not allow convert between
+// TableModeImport and TableModeRestore
 type TableMode byte
 
 const (
