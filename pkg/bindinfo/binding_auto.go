@@ -20,12 +20,17 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"go.uber.org/zap"
 )
+
+// PlanDigestFunc is used to get the plan digest of this SQL.
+var PlanDigestFunc func(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest string, err error)
 
 // BindingPlanInfo contains the binding info and its corresponding plan execution info, which is used by
 // "SHOW PLAN FOR <SQL>" to help users understand the historical plans for a specific SQL.
@@ -90,7 +95,22 @@ func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collatio
 	// read plan info from information_schema.tidb_statements_stats
 	bindingPlans := make([]*BindingPlanInfo, 0, len(bindings))
 	for _, binding := range bindings {
-		pInfo, err := ba.getPlanExecInfo(binding.PlanDigest)
+		if binding.Status == StatusDeleted {
+			continue
+		}
+
+		planDigest := binding.PlanDigest
+		if planDigest == "" {
+			if err := callWithSCtx(ba.sPool, false, func(sctx sessionctx.Context) error {
+				planDigest = getBindingPlanDigest(sctx, binding.Db, binding.BindSQL)
+				return nil
+			}); err != nil {
+				bindingLogger().Error("get plan digest failed",
+					zap.String("bind_sql", binding.BindSQL), zap.Error(err))
+			}
+		}
+
+		pInfo, err := ba.getPlanExecInfo(planDigest)
 		if err != nil {
 			bindingLogger().Error("get plan execution info failed", zap.String("plan_digest", binding.PlanDigest), zap.Error(err))
 			continue
@@ -117,9 +137,13 @@ func (ba *bindingAuto) getPlanExecInfo(planDigest string) (plan *planExecInfo, e
 	if planDigest == "" {
 		return nil, nil
 	}
+	stmtStatsTable := "information_schema.cluster_tidb_statements_stats"
+	if intest.InTest { // don't need to access the cluster table in tests.
+		stmtStatsTable = "information_schema.tidb_statements_stats"
+	}
 	stmtQuery := fmt.Sprintf(`select cast(sum(result_rows) as signed), cast(sum(exec_count) as signed),
        cast(sum(processed_keys) as signed), cast(sum(total_time) as signed), any_value(plan)
-       from information_schema.cluster_tidb_statements_stats where plan_digest = '%v'`, planDigest)
+       from %v where plan_digest = '%v'`, stmtStatsTable, planDigest)
 
 	var rows []chunk.Row
 	err = callWithSCtx(ba.sPool, false, func(sctx sessionctx.Context) error {
