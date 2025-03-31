@@ -295,7 +295,7 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 			if !supportPolicy {
 				log.Info("set placementPolicyRef to nil when target tidb not support policy",
 					zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))
-					infoClone.ClearPlacement()
+				infoClone.ClearPlacement()
 			} else {
 				if err := db.ensureTablePlacementPolicies(ctx, infoClone, policyMap); err != nil {
 					return errors.Trace(err)
@@ -329,7 +329,7 @@ func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
 	if err != nil {
 		return errors.Trace(err)
 	}
-		if !supportPolicy {
+	if !supportPolicy {
 		log.Info("set placementPolicyRef to nil when target tidb not support policy",
 			zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))
 		infoClone.ClearPlacement()

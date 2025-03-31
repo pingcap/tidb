@@ -127,7 +127,7 @@ func TestAllocator(t *testing.T) {
 		allocedRange   [2]int64
 		msg            string
 	}
-	
+
 	cases := []Case{
 		{
 			tableIDs:       []int64{},
@@ -208,7 +208,6 @@ func TestAllocator(t *testing.T) {
 			}
 			tables = append(tables, &table)
 		}
-
 
 		ids := prealloctableid.New(tables)
 		allocator := testAllocator(c.hasAllocatedTo)
