@@ -142,6 +142,8 @@ type Engine struct {
 
 	memKVsAndBuffers memKVsAndBuffers
 
+	generatedData []*MemoryIngestData
+
 	// checkHotspot is true means we will check hotspot file when using MergeKVIter.
 	// if hotspot file is detected, we will use multiple readers to read data.
 	// if it's false, MergeKVIter will read each file using 1 reader.
@@ -409,8 +411,50 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 		Data:         data,
 		SortedRanges: ranges,
 	}:
+		e.generatedData = append(e.generatedData, data)
 	}
 	return nil
+}
+
+// checkConcurrencyChange is used to check concurrency change and wait all previous data consumed
+func (e *Engine) checkConcurrencyChange(ctx context.Context, currBatchSize int) int {
+	newBatchSize := int(e.workerConcurrency.Load())
+	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
+		currBatchSize = val.(int)
+		newBatchSize = currBatchSize
+	})
+
+	if newBatchSize == currBatchSize {
+		return currBatchSize
+	}
+
+	logutil.Logger(ctx).Info("load ingest data batch size change",
+		zap.Int("prev batchSize", currBatchSize),
+		zap.Int("new batchSize", newBatchSize),
+	)
+
+	tick := time.NewTicker(time.Second)
+	defer func() {
+		tick.Stop()
+	}()
+
+OUTER:
+	for {
+		select {
+		case <-ctx.Done():
+			return currBatchSize
+		case <-tick.C:
+			for _, data := range e.generatedData {
+				if data.refCnt.Load() > 0 {
+					break
+				}
+			}
+			e.generatedData = e.generatedData[:0]
+			break OUTER
+		}
+	}
+
+	return newBatchSize
 }
 
 // LoadIngestData loads the data from the external storage to memory in [start,
@@ -424,19 +468,9 @@ func (e *Engine) LoadIngestData(
 	// try to make every worker busy for each batch
 	currBatchSize := int(e.workerConcurrency.Load())
 	logutil.Logger(ctx).Info("load ingest data", zap.Int("current batchSize", currBatchSize))
-	for start := 0; start < len(e.jobKeys)-1; {
-		newBatchSize := int(e.workerConcurrency.Load())
-		if newBatchSize != currBatchSize {
-			logutil.Logger(ctx).Info("load ingest data batch size change",
-				zap.Int("prev batchSize", currBatchSize),
-				zap.Int("new batchSize", newBatchSize),
-			)
-			currBatchSize = newBatchSize
-		}
-		failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
-			currBatchSize = val.(int)
-		})
 
+	for start := 0; start < len(e.jobKeys)-1; {
+		currBatchSize = e.checkConcurrencyChange(ctx, currBatchSize)
 		// want to generate N ranges, so we need N+1 keys
 		end := min(1+start+currBatchSize, len(e.jobKeys))
 		err := e.loadBatchRegionData(ctx, e.jobKeys[start:end], outCh)

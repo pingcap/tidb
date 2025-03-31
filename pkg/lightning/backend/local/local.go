@@ -523,8 +523,7 @@ type Backend struct {
 	supportMultiIngest  bool
 	importClientFactory importClientFactory
 
-	engine common.Engine
-	worker *jobOperator
+	workers sync.Map
 
 	metrics      *metric.Common
 	writeLimiter StoreWriteLimiter
@@ -762,20 +761,24 @@ func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, factory impor
 	return true, nil
 }
 
-// UpdateConcurrency update the concurrency of current running job, including reader and writer.
+// UpdateConcurrency update the concurrency of current running job.
+// The engineUUID is used to get corresponding engine.
 // If there is no running job, or the concurrency change is not allowed, it will return an error.
-func (local *Backend) UpdateConcurrency(concurrency int) error {
-	if local.worker == nil || local.engine == nil {
-		// let framework retry
-		return goerrors.New("worker not running")
-	}
-
-	e, ok := local.engine.(*external.Engine)
+func (local *Backend) UpdateConcurrency(engineUUID uuid.UUID, concurrency int) error {
+	engine, ok := local.engineMgr.getExternalEngine(engineUUID)
 	if !ok {
 		return goerrors.New("changing concurrency is only supported on external engine")
 	}
 
-	local.worker.TuneWorkerPoolSize(int32(concurrency), true)
+	v, ok := local.workers.Load(engine.ID())
+	if !ok {
+		// let framework retry
+		return goerrors.New("worker not running")
+	}
+
+	e, _ := engine.(*external.Engine)
+	worker, _ := v.(*jobOperator)
+	worker.TuneWorkerPoolSize(int32(concurrency), true)
 	local.WorkerConcurrency.Store(int32(concurrency))
 	e.UpdateConcurrency(concurrency)
 	return nil
@@ -1486,15 +1489,6 @@ func (local *Backend) doImport(
 		balancer        *storeBalancer
 	)
 
-	if local.worker != nil {
-		return errors.Errorf("worker should be nil")
-	}
-	defer func() {
-		local.worker = nil
-		local.engine = nil
-	}()
-	local.engine = engine
-
 	// storeBalancer does not have backpressure, it should not be used with external
 	// engine to avoid OOM.
 	if _, ok := engine.(*Engine); ok {
@@ -1573,7 +1567,7 @@ func (local *Backend) doImport(
 		}
 	})
 
-	local.worker = newJobWorker(
+	worker := newJobWorker(
 		workerCtx, workGroup, &jobWg,
 		local, balancer,
 		jobFromWorkerCh, jobToWorkerCh,
@@ -1582,8 +1576,12 @@ func (local *Backend) doImport(
 	failpoint.Inject("skipStartWorker", func() {
 		failpoint.Goto("afterStartWorker")
 	})
+	local.workers.Store(engine.ID(), worker)
+	defer func() {
+		local.workers.Delete(engine.ID())
+	}()
 
-	_ = local.worker.Open()
+	_ = worker.Open()
 
 	failpoint.Label("afterStartWorker")
 
@@ -1615,7 +1613,7 @@ func (local *Backend) doImport(
 				return allZero
 			})
 		}
-		return local.worker.Close()
+		return worker.Close()
 	})
 
 	err := workGroup.Wait()

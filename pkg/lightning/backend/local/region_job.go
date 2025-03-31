@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
-	goerrors "errors"
 	"fmt"
 	"io"
 	"math"
@@ -38,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -815,24 +813,6 @@ func (local *Backend) UpdateWriteSpeedLimit(limit int) {
 // GetWriteSpeedLimit returns the speed of the write limiter.
 func (local *Backend) GetWriteSpeedLimit() int {
 	return local.writeLimiter.Limit()
-}
-
-// UpdpateConcurrency updates the write concurrency of the backend.
-func (local *Backend) UpdpateConcurrency(concurrency int) error {
-	if local.worker == nil || local.engine == nil {
-		// let framework retry
-		return goerrors.New("worker not running")
-	}
-
-	e, ok := local.engine.(*external.Engine)
-	if !ok {
-		return goerrors.New("changing concurrency is only supported on external engine")
-	}
-
-	local.worker.TuneWorkerPoolSize(int32(concurrency), true)
-	local.WorkerConcurrency.Store(int32(concurrency))
-	e.UpdateConcurrency(concurrency)
-	return nil
 }
 
 // Concurrency get the current concurrency of the backend

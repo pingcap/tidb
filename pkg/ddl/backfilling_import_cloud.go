@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
@@ -45,6 +46,7 @@ type cloudImportExecutor struct {
 	backendCtx      ingest.BackendCtx
 	backend         *local.Backend
 	taskConcurrency int
+	engineUUID      uuid.UUID
 }
 
 func newCloudImportExecutor(
@@ -147,6 +149,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if err != nil {
 		return err
 	}
+	m.engineUUID = engineUUID
 	err = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	failpoint.Inject("mockCloudImportRunSubtaskError", func(_ failpoint.Value) {
 		err = context.DeadlineExceeded
@@ -202,7 +205,7 @@ func (m *cloudImportExecutor) ResourceModified(ctx context.Context, newResource 
 	logutil.Logger(ctx).Info("cloud import executor update resource")
 	newConcurrency := int(newResource.CPU.Capacity())
 	if newConcurrency != m.backend.Concurrency() {
-		return m.backend.UpdpateConcurrency(newConcurrency)
+		return m.backend.UpdateConcurrency(m.engineUUID, newConcurrency)
 	}
 	return nil
 }
