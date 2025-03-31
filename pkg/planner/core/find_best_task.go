@@ -200,7 +200,7 @@ func enumeratePhysicalPlans4Task(
 	planCounter *base.PlanCounterTp,
 	opt *optimizetrace.PhysicalOptimizeOp,
 ) (base.Task, int64, error) {
-	var bestTask base.Task = base.InvalidTask
+	var bestTask, preferTask = base.InvalidTask, base.InvalidTask
 	var curCntPlan, cntPlan int64
 	var err error
 	childTasks := make([]base.Task, 0, p.ChildLen())
@@ -271,7 +271,21 @@ func enumeratePhysicalPlans4Task(
 		} else if curIsBetter {
 			bestTask = curTask
 		}
+		// since hint applicable plan may greater than 1, like inl_join can suit for: index_join, index_hash_join, index_merge_join
+		if suitLogicalJoinHint(p.Self(), prop, curTask.Plan()) {
+			// curTask is a preferred physic plan, compare cost and cache the most suitable one.
+			if curIsBetter, err := compareTaskCost(curTask, preferTask, opt); err != nil {
+				return nil, 0, err
+			} else if curIsBetter {
+				preferTask = curTask
+			}
+		}
 	}
+	// there is a valid preferred physical one, return it.
+	if !preferTask.Invalid() {
+		return preferTask, cntPlan, nil
+	}
+	// return the lowest-cost physical one.
 	return bestTask, cntPlan, nil
 }
 

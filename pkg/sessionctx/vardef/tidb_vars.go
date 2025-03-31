@@ -968,7 +968,7 @@ const (
 	TiDBHashJoinVersion = "tidb_hash_join_version"
 
 	// TiDBOptIndexJoinBuild indicates which way to build index join.
-	TiDBOptIndexJoinBuild = "tidb_opt_index_join_build"
+	TiDBOptIndexJoinBuild = "tidb_opt_index_join_build_v2"
 
 	// TiDBOptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
 	// Please see comments of SessionVars.OptObjective for details.
