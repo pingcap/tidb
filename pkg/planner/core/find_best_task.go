@@ -2624,7 +2624,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 					DeprecatedColumnId: &prop.VectorProp.Column.ID,
 					IndexId:            candidate.path.Index.ID,
 					RefVecF32:          prop.VectorProp.Vec.SerializeTo(nil),
-					Column:             *tidbutil.ColumnToProto(prop.VectorProp.Column.ToInfo(), true, true),
+					Column:             *tidbutil.ColumnToProto(prop.VectorProp.Column.ToInfo(), false, false),
 				},
 			}
 			ts.SetStats(util.DeriveLimitStats(ts.StatsInfo(), float64(prop.VectorProp.TopK)))
