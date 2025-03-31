@@ -149,7 +149,7 @@ a	b
 1	2
 explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select a +1 as a1, b from t group by a, b ) tmp, t1 where tmp.a1=t1.a;
 id	estRows	task	access object	operator info
-IndexJoin	1.25	root		inner join, inner:IndexReader, outer key:Column#4, inner key:planner__core__indexjoin.t1.a, equal cond:eq(Column#4, planner__core__indexjoin.t1.a)
+IndexHashJoin	1.25	root		inner join, inner:IndexReader, outer key:Column#4, inner key:planner__core__indexjoin.t1.a, equal cond:eq(Column#4, planner__core__indexjoin.t1.a)
 ├─Projection(Build)	1.00	root		plus(planner__core__indexjoin.t.a, 1)->Column#4, planner__core__indexjoin.t.b
 │ └─StreamAgg	1.00	root		group by:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a, funcs:firstrow(planner__core__indexjoin.t.b)->planner__core__indexjoin.t.b
 │   └─IndexReader	1.00	root		index:StreamAgg
