@@ -43,6 +43,7 @@ func (t *testAllocator) AdvanceGlobalIDs(n int) (int64, error) {
 }
 
 func TestRestoreAutoIncID(t *testing.T) {
+	allocator := testAllocator(0)
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
 	tk.MustExec("use test")
@@ -90,6 +91,15 @@ func TestRestoreAutoIncID(t *testing.T) {
 	err = db.CreateDatabase(context.Background(), table.DB, false, nil)
 	require.NoErrorf(t, err, "Error create empty charset db: %s %s", err, s.Mock.DSN)
 	uniqueMap := make(map[restore.UniqueTableName]bool)
+
+	preallocId := func(tables []*metautil.Table) {
+		ids := prealloctableid.New(tables)
+		ids.Alloc(&allocator)
+		db.RegisterPreallocatedIDs(ids)
+		allocator += testAllocator(len(tables))
+	}
+
+	preallocId([]*metautil.Table{&table})
 	err = db.CreateTable(context.Background(), &table, uniqueMap, false, nil)
 	require.NoErrorf(t, err, "Error create table: %s %s", err, s.Mock.DSN)
 
@@ -101,6 +111,7 @@ func TestRestoreAutoIncID(t *testing.T) {
 
 	// try again, failed due to table exists.
 	table.Info.AutoIncID = globalAutoID + 200
+	preallocId([]*metautil.Table{&table})
 	err = db.CreateTable(context.Background(), &table, uniqueMap, false, nil)
 	require.NoError(t, err)
 	// Check if AutoIncID is not altered.
@@ -111,6 +122,7 @@ func TestRestoreAutoIncID(t *testing.T) {
 	// try again, success because we use alter sql in unique map.
 	table.Info.AutoIncID = globalAutoID + 300
 	uniqueMap[restore.UniqueTableName{DB: "test", Table: "\"t\""}] = true
+	preallocId([]*metautil.Table{&table})
 	err = db.CreateTable(context.Background(), &table, uniqueMap, false, nil)
 	require.NoError(t, err)
 	// Check if AutoIncID is altered to globalAutoID + 300.
@@ -265,6 +277,7 @@ func fakePolicyInfo(ident byte) *model.PolicyInfo {
 }
 
 func TestPolicyMode(t *testing.T) {
+	allocator := testAllocator(0)
 	ctx := context.Background()
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
@@ -296,6 +309,15 @@ func TestPolicyMode(t *testing.T) {
 		ID:   fakepolicy2.ID,
 		Name: fakepolicy2.Name,
 	}
+
+	preallocId := func(tables []*metautil.Table) {
+		ids := prealloctableid.New(tables)
+		ids.Alloc(&allocator)
+		db.RegisterPreallocatedIDs(ids)
+		allocator += testAllocator(len(tables))
+	}
+
+	preallocId(tableInfos)
 	err = db.CreateTables(ctx, tableInfos, nil, true, policyMap)
 	require.NoError(t, err)
 	for _, checkFn := range checkTableSQLs {
@@ -319,6 +341,7 @@ func TestPolicyMode(t *testing.T) {
 		ID:   fakepolicy2.ID,
 		Name: fakepolicy2.Name,
 	}
+	preallocId(tableInfos)
 	for i := 0; i < len(createTableSQLs); i += 1 {
 		err = db.CreateTable(ctx, tableInfos[i], nil, true, policyMap)
 		require.NoError(t, err)
@@ -384,6 +407,7 @@ func TestUpdateMetaVersion(t *testing.T) {
 }
 
 func TestCreateTablesInDb(t *testing.T) {
+	allocator := testAllocator(0)
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	info, err := s.Mock.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoErrorf(t, err, "Error get snapshot info schema: %s", err)
@@ -416,11 +440,20 @@ func TestCreateTablesInDb(t *testing.T) {
 	db, _, err := preallocdb.NewDB(gluetidb.New(), s.Mock.Storage, "STRICT")
 	require.NoError(t, err)
 
+	preallocId := func(tables []*metautil.Table) {
+		ids := prealloctableid.New(tables)
+		ids.Alloc(&allocator)
+		db.RegisterPreallocatedIDs(ids)
+		allocator += testAllocator(len(tables))
+	}
+
+	preallocId(tables)
 	err = db.CreateTables(context.Background(), tables, ddlJobMap, false, nil)
 	require.NoError(t, err)
 }
 
 func TestDDLJobMap(t *testing.T) {
+	allocator := testAllocator(0)
 	ctx := context.Background()
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
@@ -461,6 +494,20 @@ func TestDDLJobMap(t *testing.T) {
 		{DB: "test", Table: "t5"}: true,
 	}
 
+	preallocId := func(tables []*metautil.Table) {
+		ids := prealloctableid.New(tables)
+		ids.Alloc(&allocator)
+		db.RegisterPreallocatedIDs(ids)
+		allocator += testAllocator(len(tables))
+	}
+
+	preallocId([]*metautil.Table{
+		{DB: dbInfo.Clone(), Info: tableInfo1.Meta().Clone()},
+		{DB: dbInfo.Clone(), Info: tableInfo2.Meta().Clone()},
+		{DB: dbInfo.Clone(), Info: tableInfo3.Meta().Clone()},
+		{DB: dbInfo.Clone(), Info: tableInfo4.Meta().Clone()},
+		{DB: dbInfo.Clone(), Info: tableInfo5.Meta().Clone()},
+	})
 	err = db.CreateTablePostRestore(ctx, &metautil.Table{DB: dbInfo.Clone(), Info: tableInfo1.Meta().Clone()}, toBeCorrectedTables)
 	require.NoError(t, err)
 	err = db.CreateTablePostRestore(ctx, &metautil.Table{DB: dbInfo.Clone(), Info: tableInfo2.Meta().Clone()}, toBeCorrectedTables)
