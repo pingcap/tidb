@@ -329,13 +329,17 @@
       {
         "SQL": "EXPLAIN format = 'brief' SELECT count(*) from t group by b; -- 8. group by virtual column",
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#11)->Column#6",
-          "└─TableReader 1.00 root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg 1.00 mpp[tiflash]  funcs:count(test.t._tidb_rowid)->Column#11",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "HashAgg 8000.00 root  group by:test.t.b, funcs:count(1)->Column#6",
+          "└─TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "Aggregation can not be pushed to tiflash because groupByItems contain virtual columns, which is not supported now",
+          "Aggregation can not be pushed to tikv because groupByItems contain virtual columns, which is not supported now",
+          "MPP mode may be blocked because column `test.t.b` is a virtual column which is not supported now.",
+          "Aggregation can not be pushed to tiflash because groupByItems contain virtual columns, which is not supported now"
+        ]
       },
       {
         "SQL": "EXPLAIN format = 'brief' SELECT count(a) from t group by md5(a); -- 10. scalar func not supported",
@@ -346,7 +350,12 @@
           "    └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.",
+          "Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs",
+          "Scalar function 'md5'(signature: MD5, return type: var_string(32)) is not supported to push down to tiflash now.",
+          "Aggregation can not be pushed to tiflash because groupByItems contain unsupported exprs"
+        ]
       },
       {
         "SQL": "EXPLAIN format = 'brief' SELECT count(a) from t where c=1; -- 11. type not supported",
