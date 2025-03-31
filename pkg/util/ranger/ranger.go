@@ -552,8 +552,8 @@ func convertStringFTToBinaryCollate(ft *types.FieldType) *types.FieldType {
 
 // buildCNFIndexRange builds the range for index where the top layer is CNF.
 func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType, eqAndInCount int,
-	accessConds []expression.Expression) (Ranges, []expression.Expression, []expression.Expression, error) {
-	ranges, newAccessConds, remainedConds, err := d.buildRangeOnColsByCNFCond(newTp, eqAndInCount, accessConds)
+	accessConds []expression.Expression) (ranges Ranges, newAccessConds, remainedConds []expression.Expression, err error) {
+	ranges, newAccessConds, remainedConds, err = d.buildRangeOnColsByCNFCond(newTp, eqAndInCount, accessConds)
 	if err != nil {
 		return nil, nil, nil, err
 	}
