@@ -388,7 +388,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":executor"],
     flaky = True,
-    shard_count = 50,
+    shard_count = 51,
     deps = [
         "//br/pkg/storage",
         "//pkg/config",
