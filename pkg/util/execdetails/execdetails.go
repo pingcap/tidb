@@ -37,13 +37,12 @@ import (
 // ExecDetails contains execution detail information.
 type ExecDetails struct {
 	DetailsNeedP90
-	CommitDetail     *util.CommitDetails
-	LockKeysDetail   *util.LockKeysDetails
-	ScanDetail       *util.ScanDetail
-	CopTime          time.Duration
-	BackoffTime      time.Duration
-	LockKeysDuration time.Duration
-	RequestCount     int
+	CommitDetail   *util.CommitDetails
+	LockKeysDetail *util.LockKeysDetails
+	ScanDetail     *util.ScanDetail
+	CopTime        time.Duration
+	BackoffTime    time.Duration
+	RequestCount   int
 }
 
 // DetailsNeedP90 contains execution detail information which need calculate P90.
@@ -206,8 +205,11 @@ func (d ExecDetails) String() string {
 	if d.BackoffTime > 0 {
 		parts = append(parts, BackoffTimeStr+": "+strconv.FormatFloat(d.BackoffTime.Seconds(), 'f', -1, 64))
 	}
-	if d.LockKeysDuration > 0 {
-		parts = append(parts, LockKeysTimeStr+": "+strconv.FormatFloat(d.LockKeysDuration.Seconds(), 'f', -1, 64))
+	lockKeyDetails := d.LockKeysDetail
+	if lockKeyDetails != nil {
+		if lockKeyDetails.TotalTime > 0 {
+			parts = append(parts, LockKeysTimeStr+": "+strconv.FormatFloat(lockKeyDetails.TotalTime.Seconds(), 'f', -1, 64))
+		}
 	}
 	if d.RequestCount > 0 {
 		parts = append(parts, RequestCountStr+": "+strconv.FormatInt(int64(d.RequestCount), 10))
