@@ -475,12 +475,10 @@ func BuildColumnRange(conds []expression.Expression, sctx *rangerctx.RangerConte
 }
 
 func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAndInCount int,
-	accessConds []expression.Expression) (Ranges, []expression.Expression, []expression.Expression, error) {
+	accessConds []expression.Expression) (ranges Ranges, _, _ []expression.Expression, err error) {
 	rb := builder{sctx: d.sctx}
 	var (
-		ranges        Ranges
 		rangeFallback bool
-		err           error
 	)
 	for i := range eqAndInCount {
 		// Build ranges for equal or in access conditions.
