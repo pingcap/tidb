@@ -5,9 +5,11 @@ package prealloctableid
 import (
 	"fmt"
 	"math"
+	"sync"
 
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -29,9 +31,11 @@ type Allocator interface {
 
 // PreallocIDs mantains the state of preallocated table IDs.
 type PreallocIDs struct {
-	end int64
-
-	allocedFrom int64
+	mu    sync.Mutex
+	start int64
+	end   int64
+	used  map[int64]struct{}
+	next  int64 //new added
 }
 
 // New collects the requirement of prealloc IDs and return a
@@ -39,73 +43,117 @@ type PreallocIDs struct {
 func New(tables []*metautil.Table) *PreallocIDs {
 	if len(tables) == 0 {
 		return &PreallocIDs{
-			allocedFrom: math.MaxInt64,
+			start: math.MaxInt64,
 		}
 	}
 
 	maxv := int64(0)
 
 	for _, t := range tables {
-		if t.Info.ID > maxv && t.Info.ID < insaneTableIDThreshold {
-			maxv = t.Info.ID
-		}
+		maxv += 1
 
 		if t.Info.Partition != nil && t.Info.Partition.Definitions != nil {
-			for _, part := range t.Info.Partition.Definitions {
-				if part.ID > maxv && part.ID < insaneTableIDThreshold {
-					maxv = part.ID
-				}
-			}
+			maxv += int64(len(t.Info.Partition.Definitions))
 		}
 	}
 	return &PreallocIDs{
-		end: maxv + 1,
-
-		allocedFrom: math.MaxInt64,
+		start: math.MaxInt64,
+		end:   maxv,
+		used:  make(map[int64]struct{}),
+		next:  math.MaxInt64,
 	}
 }
 
 // String implements fmt.Stringer.
 func (p *PreallocIDs) String() string {
-	if p.allocedFrom >= p.end {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.start >= p.end {
 		return fmt.Sprintf("ID:empty(end=%d)", p.end)
 	}
-	return fmt.Sprintf("ID:[%d,%d)", p.allocedFrom, p.end)
+	return fmt.Sprintf("ID:[%d,%d)", p.start, p.end)
+}
+
+func (p *PreallocIDs) GetIDRange() (int64, int64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.start, p.end
 }
 
 // preallocTableIDs peralloc the id for [start, end)
 func (p *PreallocIDs) Alloc(m Allocator) error {
-	currentId, err := m.GetGlobalID()
-	if err != nil {
-		return err
-	}
-	if currentId > p.end {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.end == 0 {
 		return nil
 	}
 
-	alloced, err := m.AdvanceGlobalIDs(int(p.end - currentId))
+	alloced, err := m.AdvanceGlobalIDs(int(p.end))
 	if err != nil {
 		return err
 	}
-	p.allocedFrom = alloced + 1
+	p.start = alloced + 1
+	p.end += p.start
+	p.next = p.start
 	return nil
 }
 
-// Prealloced checks whether a table ID has been successfully allocated.
-func (p *PreallocIDs) Prealloced(tid int64) bool {
-	return p.allocedFrom <= tid && tid < p.end
-}
-
-func (p *PreallocIDs) PreallocedFor(ti *model.TableInfo) bool {
-	if !p.Prealloced(ti.ID) {
-		return false
+func (p *PreallocIDs) allocID(originalID int64) (int64, error) {
+	if int64(len(p.used)) >= p.end-p.start {
+		return 0, errors.Errorf("no available IDs")
 	}
-	if ti.Partition != nil && ti.Partition.Definitions != nil {
-		for _, part := range ti.Partition.Definitions {
-			if !p.Prealloced(part.ID) {
-				return false
-			}
+
+	if originalID >= p.start && originalID < p.end {
+		if _, exists := p.used[originalID]; !exists {
+			p.used[originalID] = struct{}{}
+			return originalID, nil
 		}
 	}
-	return true
+
+	start := p.next
+	for {
+		current := p.next
+		p.next = (current+1-p.start)%(p.end-p.start) + p.start
+
+		if _, exists := p.used[current]; !exists {
+			p.used[current] = struct{}{}
+			return current, nil
+		}
+		if p.next == start {
+			break
+		}
+	}
+
+	return 0, errors.Errorf("no available IDs")
+}
+
+func (p *PreallocIDs) RewriteTableInfo(info *model.TableInfo) (*model.TableInfo, error) {
+	if info == nil {
+		return nil, nil
+	}
+	infoCopy := info.Clone()
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	newID, err := p.allocID(info.ID)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to allocate table ID for %d", info.ID)
+	}
+	infoCopy.ID = newID
+
+	if infoCopy.Partition != nil {
+		for i := range infoCopy.Partition.Definitions {
+			def := &infoCopy.Partition.Definitions[i]
+			newPartID, err := p.allocID(def.ID)
+			if err != nil {
+				return nil, errors.Wrapf(err, "failed to allocate partition ID for %d", def.ID)
+			}
+			def.ID = newPartID
+		}
+	}
+
+	return infoCopy, nil
 }
