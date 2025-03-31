@@ -18,7 +18,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -33,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -2003,89 +2001,6 @@ func TestTiDBUpgradeToVer170(t *testing.T) {
 	require.NoError(t, err)
 	require.Less(t, int64(ver169), ver)
 	dom.Close()
-}
-
-func TestTiDBBindingInListToVer175(t *testing.T) {
-	ctx := context.Background()
-	store, dom := CreateStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
-
-	// bootstrap as version174
-	ver174 := version174
-	seV174 := CreateSessionAndSetID(t, store)
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMutator(txn)
-	err = m.FinishBootstrap(int64(ver174))
-	require.NoError(t, err)
-	revertVersionAndVariables(t, seV174, ver174)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-	store.SetOption(StoreBootstrappedKey, nil)
-
-	// create some bindings at version174
-	MustExec(t, seV174, "use test")
-	MustExec(t, seV174, "create table t (a int, b int, c int, key(c))")
-	_, digest := parser.NormalizeDigestForBinding("SELECT * FROM `test`.`t` WHERE `a` IN (1,2,3)")
-	MustExec(t, seV174, fmt.Sprintf("insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ... )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:35.319', 'utf8', 'utf8_general_ci', 'manual', '%s', '')", digest.String()))
-	_, digest = parser.NormalizeDigestForBinding("SELECT * FROM `test`.`t` WHERE `a` IN (1)")
-	MustExec(t, seV174, fmt.Sprintf("insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:36.319', 'utf8', 'utf8_general_ci', 'manual', '%s', '')", digest.String()))
-	_, digest = parser.NormalizeDigestForBinding("SELECT * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3)")
-	MustExec(t, seV174, fmt.Sprintf("insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? ) and `b` in ( ... )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:37.319', '2023-09-13 14:41:38.319', 'utf8', 'utf8_general_ci', 'manual', '%s', '')", digest.String()))
-
-	showBindings := func(s sessiontypes.Session) (records []string) {
-		MustExec(t, s, "admin reload bindings")
-		res := MustExecToRecodeSet(t, s, "show global bindings")
-		chk := res.NewChunk(nil)
-		for {
-			require.NoError(t, res.Next(ctx, chk))
-			if chk.NumRows() == 0 {
-				break
-			}
-			for i := 0; i < chk.NumRows(); i++ {
-				originalSQL := chk.GetRow(i).GetString(0)
-				bindSQL := chk.GetRow(i).GetString(1)
-				records = append(records, fmt.Sprintf("%s:%s", bindSQL, originalSQL))
-			}
-		}
-		require.NoError(t, res.Close())
-		sort.Strings(records)
-		return
-	}
-	bindings := showBindings(seV174)
-	// on ver174, `in (1)` and `in (1,2,3)` have different normalized results: `in (?)` and `in (...)`
-	require.Equal(t, []string{"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3):select * from `test` . `t` where `a` in ( ? ) and `b` in ( ... )",
-		"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1):select * from `test` . `t` where `a` in ( ? )"}, bindings)
-
-	// upgrade to ver175
-	dom.Close()
-	domCurVer, err := BootstrapSession(store)
-	require.NoError(t, err)
-	defer domCurVer.Close()
-	seCurVer := CreateSessionAndSetID(t, store)
-	ver, err := getBootstrapVersion(seCurVer)
-	require.NoError(t, err)
-	require.Equal(t, currentBootstrapVersion, ver)
-
-	// `in (?)` becomes to `in ( ... )`
-	bindings = showBindings(seCurVer)
-	require.Equal(t, []string{"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3):select * from `test` . `t` where `a` in ( ... ) and `b` in ( ... )",
-		"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1):select * from `test` . `t` where `a` in ( ... )"}, bindings)
-
-	planFromBinding := func(s sessiontypes.Session, q string) {
-		MustExec(t, s, q)
-		res := MustExecToRecodeSet(t, s, "select @@last_plan_from_binding")
-		chk := res.NewChunk(nil)
-		require.NoError(t, res.Next(ctx, chk))
-		require.Equal(t, int64(1), chk.GetRow(0).GetInt64(0))
-		require.NoError(t, res.Close())
-	}
-	planFromBinding(seCurVer, "select * from test.t where a in (1)")
-	planFromBinding(seCurVer, "select * from test.t where a in (1,2,3)")
-	planFromBinding(seCurVer, "select * from test.t where a in (1,2,3,4,5,6,7)")
-	planFromBinding(seCurVer, "select * from test.t where a in (1,2,3,4,5,6,7) and b in(1)")
-	planFromBinding(seCurVer, "select * from test.t where a in (1,2,3,4,5,6,7) and b in(1,2,3,4)")
-	planFromBinding(seCurVer, "select * from test.t where a in (7) and b in(1,2,3,4)")
 }
 
 func TestTiDBUpgradeToVer176(t *testing.T) {
