@@ -361,14 +361,8 @@ func (*ImportSchedulerExt) GetEligibleInstances(_ context.Context, task *proto.T
 }
 
 // IsRetryableErr implements scheduler.Extension interface.
-<<<<<<< HEAD
-func (*ImportSchedulerExt) IsRetryableErr(error) bool {
-	// TODO: check whether the error is retryable.
-	return false
-=======
-func (*importScheduler) IsRetryableErr(err error) bool {
+func (*ImportSchedulerExt) IsRetryableErr(err error) bool {
 	return common.IsRetryableError(err)
->>>>>>> 6e5a6d2a93f (importinto: check retryable schedule error (#60320))
 }
 
 // GetNextStep implements scheduler.Extension interface.
