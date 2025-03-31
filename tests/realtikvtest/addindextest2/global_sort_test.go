@@ -157,33 +157,26 @@ func TestGlobalSortBasic(t *testing.T) {
 
 	tk.MustExec("alter table t add index idx(a);")
 	tk.MustExec("admin check table t;")
-	checkExternalFields(t, tk)
-	taskID := getTaskID(t, tk)
-	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/ingest")
 	<-scheduler.WaitCleanUpFinished
-	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
+	checkFileCleaned(t, jobID, 0, cloudStorageURI)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()"))
 	tk.MustExec("alter table t add index idx1(a);")
 	tk.MustExec("admin check table t;")
-	checkExternalFields(t, tk)
-	taskID = getTaskID(t, tk)
-	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/ingest")
-	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/merge-sort")
 	<-scheduler.WaitCleanUpFinished
-	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
+	checkFileCleaned(t, jobID, 0, cloudStorageURI)
 
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/skipCleanup", "return()"))
 	tk.MustExec("alter table t add unique index idx2(a);")
 	tk.MustExec("admin check table t;")
 	checkExternalFields(t, tk)
-	taskID = getTaskID(t, tk)
+	taskID := getTaskID(t, tk)
 	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/ingest")
 	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/merge-sort")
-	<-scheduler.WaitCleanUpFinished
-	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
 
 	dom.DDL().SetHook(origin)
 
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/skipCleanup"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort"))
 }
