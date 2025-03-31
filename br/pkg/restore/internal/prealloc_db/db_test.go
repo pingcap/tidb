@@ -29,7 +29,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-
 type testAllocator int64
 
 func (t *testAllocator) GetGlobalID() (int64, error) {
