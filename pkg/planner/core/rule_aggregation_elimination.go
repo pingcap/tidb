@@ -103,6 +103,7 @@ func (*aggregationEliminateChecker) tryToSimpleGroupBy(agg *logicalop.LogicalAgg
 		}
 		groupBySchema := expression.NewSchema(cols)
 		for _, key := range agg.Schema().PKOrUK {
+
 			if groupBySchema.ColumnsIndices(key) != nil && !agg.SCtx().GetSessionVars().InRestrictedSQL {
 				deleteGroupByItems = append(deleteGroupByItems, groupby)
 			}

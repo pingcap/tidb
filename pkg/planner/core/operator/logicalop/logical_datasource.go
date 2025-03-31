@@ -248,6 +248,9 @@ func (ds *DataSource) FindBestTask(prop *property.PhysicalProperty, planCounter 
 
 // BuildKeyInfo implements base.LogicalPlan.<4th> interface.
 func (ds *DataSource) BuildKeyInfo(selfSchema *expression.Schema, _ []*expression.Schema) {
+	if !ds.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	selfSchema.PKOrUK = nil
 	var latestIndexes map[int64]*model.IndexInfo
 	var changed bool
