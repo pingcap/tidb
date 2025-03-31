@@ -108,9 +108,11 @@ func (*aggregationEliminateChecker) tryToSimpleGroupBy(agg *logicalop.LogicalAgg
 			}
 		}
 	}
-	agg.GroupByItems = slices.DeleteFunc(agg.GroupByItems, func(expr expression.Expression) bool {
-		return !slices.Contains(deleteGroupByItems, expr)
-	})
+	if len(deleteGroupByItems) != 0 {
+		agg.GroupByItems = slices.DeleteFunc(agg.GroupByItems, func(expr expression.Expression) bool {
+			return !slices.Contains(deleteGroupByItems, expr)
+		})
+	}
 }
 
 // tryToEliminateDistinct will eliminate distinct in the aggregation function if the aggregation args
