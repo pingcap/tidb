@@ -367,9 +367,8 @@ func compareLexicographically(tc types.Context, bound1, bound2 []types.Datum, co
 				return 0, nil
 			} else if low1 {
 				return 1, nil
-			} else {
-				return -1, nil
 			}
+			return -1, nil
 		case open1:
 			if low1 {
 				return 1, nil

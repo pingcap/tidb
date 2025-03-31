@@ -467,7 +467,7 @@ func BuildTableRange(accessConditions []expression.Expression, sctx *rangerctx.R
 // If you use the function to build ranges for some access path, you need to update the path's access conditions and filter
 // conditions by the second and third return values respectively.
 func BuildColumnRange(conds []expression.Expression, sctx *rangerctx.RangerContext, tp *types.FieldType, colLen int,
-	rangeMemQuota int64) (Ranges, []expression.Expression, []expression.Expression, error) {
+	rangeMemQuota int64) (_ Ranges, _, _ []expression.Expression, _ error) {
 	if len(conds) == 0 {
 		return FullRange(), nil, nil, nil
 	}
