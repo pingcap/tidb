@@ -263,7 +263,6 @@ type CopTask struct {
 	physPlanPartInfo *PhysPlanPartInfo
 
 	// expectCnt is the expected row count of upper task, 0 for unlimited.
-	// expectCnt is the expected row count of upper task, 0 for unlimited.
 	// It's used for deciding whether using paging distsql.
 	expectCnt uint64
 
