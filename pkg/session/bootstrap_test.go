@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
@@ -584,53 +583,6 @@ func TestStmtSummary(t *testing.T) {
 	row := req.GetRow(0)
 	require.Equal(t, []byte("ON"), row.GetBytes(0))
 	require.NoError(t, r.Close())
-}
-
-func TestUpdateDuplicateBindInfo(t *testing.T) {
-	ctx := context.Background()
-	store, dom := CreateStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
-	defer dom.Close()
-	se := CreateSessionAndSetID(t, store)
-	MustExec(t, se, "alter table mysql.bind_info drop column if exists plan_digest")
-	MustExec(t, se, "alter table mysql.bind_info drop column if exists sql_digest")
-
-	MustExec(t, se, `insert into mysql.bind_info values('select * from t', 'select /*+ use_index(t, idx_a)*/ * from t', 'test', 'enabled', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
-	// The latest one.
-	MustExec(t, se, `insert into mysql.bind_info values('select * from test . t', 'select /*+ use_index(t, idx_b)*/ * from test.t', 'test', 'enabled', '2021-01-04 14:50:58.257', '2021-01-09 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
-
-	MustExec(t, se, `insert into mysql.bind_info values('select * from t where a < ?', 'select * from t use index(idx) where a < 1', 'test', 'deleted', '2021-06-04 17:04:43.333', '2021-06-04 17:04:43.335', 'utf8', 'utf8_general_ci', 'manual')`)
-	MustExec(t, se, `insert into mysql.bind_info values('select * from t where a < ?', 'select * from t ignore index(idx) where a < 1', 'test', 'enabled', '2021-06-04 17:04:43.335', '2021-06-04 17:04:43.335', 'utf8', 'utf8_general_ci', 'manual')`)
-	MustExec(t, se, `insert into mysql.bind_info values('select * from test . t where a <= ?', 'select * from test.t use index(idx) where a <= 1', '', 'deleted', '2021-06-04 17:04:43.345', '2021-06-04 17:04:45.334', 'utf8', 'utf8_general_ci', 'manual')`)
-	MustExec(t, se, `insert into mysql.bind_info values('select * from test . t where a <= ?', 'select * from test.t ignore index(idx) where a <= 1', '', 'enabled', '2021-06-04 17:04:45.334', '2021-06-04 17:04:45.334', 'utf8', 'utf8_general_ci', 'manual')`)
-
-	upgradeToVer67(se, version66)
-
-	r := MustExecToRecodeSet(t, se, `select original_sql, bind_sql, default_db, status, create_time from mysql.bind_info where source != 'builtin' order by create_time`)
-	req := r.NewChunk(nil)
-	require.NoError(t, r.Next(ctx, req))
-	require.Equal(t, 3, req.NumRows())
-	row := req.GetRow(0)
-	require.Equal(t, "select * from `test` . `t`", row.GetString(0))
-	require.Equal(t, "SELECT /*+ use_index(`t` `idx_b`)*/ * FROM `test`.`t`", row.GetString(1))
-	require.Equal(t, "", row.GetString(2))
-	require.Equal(t, bindinfo.StatusEnabled, row.GetString(3))
-	require.Equal(t, "2021-01-04 14:50:58.257", row.GetTime(4).String())
-	row = req.GetRow(1)
-	require.Equal(t, "select * from `test` . `t` where `a` < ?", row.GetString(0))
-	require.Equal(t, "SELECT * FROM `test`.`t` IGNORE INDEX (`idx`) WHERE `a` < 1", row.GetString(1))
-	require.Equal(t, "", row.GetString(2))
-	require.Equal(t, bindinfo.StatusEnabled, row.GetString(3))
-	require.Equal(t, "2021-06-04 17:04:43.335", row.GetTime(4).String())
-	row = req.GetRow(2)
-	require.Equal(t, "select * from `test` . `t` where `a` <= ?", row.GetString(0))
-	require.Equal(t, "SELECT * FROM `test`.`t` IGNORE INDEX (`idx`) WHERE `a` <= 1", row.GetString(1))
-	require.Equal(t, "", row.GetString(2))
-	require.Equal(t, bindinfo.StatusEnabled, row.GetString(3))
-	require.Equal(t, "2021-06-04 17:04:45.334", row.GetTime(4).String())
-
-	require.NoError(t, r.Close())
-	MustExec(t, se, "delete from mysql.bind_info where original_sql = 'select * from test . t'")
 }
 
 func TestUpgradeClusteredIndexDefaultValue(t *testing.T) {

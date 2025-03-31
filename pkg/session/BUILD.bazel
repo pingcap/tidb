@@ -155,7 +155,6 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/autoid_service",
-        "//pkg/bindinfo",
         "//pkg/config",
         "//pkg/ddl",
         "//pkg/domain",
@@ -165,7 +164,6 @@ go_test(
         "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/meta",
-        "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
         "//pkg/session/types",
