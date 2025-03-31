@@ -330,7 +330,7 @@ type txnMemBufferIter struct {
 func newTxnMemBufferIter(sctx sessionctx.Context, cacheTable kv.MemBuffer, kvRanges []kv.KeyRange, reverse bool) (*txnMemBufferIter, error) {
 	return &txnMemBufferIter{
 		sctx:              sctx,
-		memBufferSnapshot: sctx.GetSessionVars().TxnCtx.MemBufferSnapshot,
+		memBufferSnapshot: sctx.GetSessionVars().StmtCtx.MemBufferSnapshot,
 		kvRanges:          kvRanges,
 		cacheTable:        cacheTable,
 		reverse:           reverse,
@@ -583,7 +583,7 @@ func hasColVal(data [][]byte, colIDs map[int64]int, id int64) bool {
 type processKVFunc func(key, value []byte) error
 
 func iterTxnMemBuffer(ctx sessionctx.Context, cacheTable kv.MemBuffer, kvRanges []kv.KeyRange, reverse bool, fn processKVFunc) error {
-	memBufferSnapshot := ctx.GetSessionVars().TxnCtx.MemBufferSnapshot
+	memBufferSnapshot := ctx.GetSessionVars().StmtCtx.MemBufferSnapshot
 	for _, rg := range kvRanges {
 		var iter kv.Iterator
 		if memBufferSnapshot != nil {

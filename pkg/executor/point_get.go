@@ -650,7 +650,7 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) ([]byte, error) 
 	)
 
 	// 1. read our writes.
-	if snapshot := e.Ctx().GetSessionVars().TxnCtx.MemBufferSnapshot; snapshot != nil {
+	if snapshot := e.Ctx().GetSessionVars().StmtCtx.MemBufferSnapshot; snapshot != nil {
 		val, err = snapshot.Get(ctx, key)
 		if err == nil {
 			return val, err

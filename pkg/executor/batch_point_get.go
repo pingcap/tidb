@@ -107,7 +107,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	var batchGetter kv.BatchGetter = e.snapshot
 	if txn.Valid() {
 		lock := e.tblInfo.Lock
-		snapshot := e.Ctx().GetSessionVars().TxnCtx.MemBufferSnapshot
+		snapshot := e.Ctx().GetSessionVars().StmtCtx.MemBufferSnapshot
 		if e.lock {
 			batchGetter = driver.NewBufferSnapshotBatchGetter(snapshot, &PessimisticLockCacheGetter{txnCtx: txnCtx}, e.snapshot)
 		} else if lock != nil && (lock.Tp == ast.TableLockRead || lock.Tp == ast.TableLockReadOnly) && e.Ctx().GetSessionVars().EnablePointGetCache {

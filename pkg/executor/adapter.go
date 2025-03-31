@@ -671,7 +671,7 @@ func (a *ExecStmt) handleStmtForeignKeyTrigger(ctx context.Context, e exec.Execu
 		a.Ctx.StmtCommit(ctx)
 		txn, _ := a.Ctx.Txn(false)
 		if txn != nil && !txn.IsReadOnly() {
-			a.Ctx.GetSessionVars().TxnCtx.MemBufferSnapshot = txn.GetMemBuffer().GetSnapshot()
+			a.Ctx.GetSessionVars().StmtCtx.MemBufferSnapshot = txn.GetMemBuffer().GetSnapshot()
 		}
 	}
 	err := a.handleForeignKeyTrigger(ctx, e, 1)
@@ -772,7 +772,7 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 		a.Ctx.StmtCommit(ctx)
 		txn, _ := a.Ctx.Txn(false)
 		if txn != nil && !txn.IsReadOnly() {
-			a.Ctx.GetSessionVars().TxnCtx.MemBufferSnapshot = txn.GetMemBuffer().GetSnapshot()
+			a.Ctx.GetSessionVars().StmtCtx.MemBufferSnapshot = txn.GetMemBuffer().GetSnapshot()
 		}
 
 		err = a.handleForeignKeyTrigger(ctx, e, depth+1)
@@ -956,7 +956,7 @@ func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e exec.
 	txn, _ := a.Ctx.Txn(false)
 	for {
 		if txn != nil && !txn.IsReadOnly() {
-			a.Ctx.GetSessionVars().TxnCtx.MemBufferSnapshot = txn.GetMemBuffer().GetSnapshot()
+			a.Ctx.GetSessionVars().StmtCtx.MemBufferSnapshot = txn.GetMemBuffer().GetSnapshot()
 		}
 		startTime := time.Now()
 		rs, err := a.runPessimisticSelectForUpdate(ctx, e)
@@ -1089,7 +1089,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 		}
 		if !isFirstAttempt {
 			if !txn.IsReadOnly() {
-				a.Ctx.GetSessionVars().TxnCtx.MemBufferSnapshot = txn.GetMemBuffer().GetSnapshot()
+				a.Ctx.GetSessionVars().StmtCtx.MemBufferSnapshot = txn.GetMemBuffer().GetSnapshot()
 			}
 		}
 

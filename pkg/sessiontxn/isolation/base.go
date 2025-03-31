@@ -211,11 +211,11 @@ func (p *baseTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 // OnStmtStart is the hook that should be called when a new statement started
 func (p *baseTxnContextProvider) OnStmtStart(ctx context.Context, _ ast.StmtNode) error {
 	p.ctx = ctx
-	txnCtx := p.sctx.GetSessionVars().TxnCtx
+	stmtCtx := p.sctx.GetSessionVars().StmtCtx
 	if p.txn != nil && !p.txn.IsReadOnly() {
-		txnCtx.MemBufferSnapshot = p.txn.GetMemBuffer().GetSnapshot()
+		stmtCtx.MemBufferSnapshot = p.txn.GetMemBuffer().GetSnapshot()
 	} else {
-		txnCtx.MemBufferSnapshot = nil
+		stmtCtx.MemBufferSnapshot = nil
 	}
 	return nil
 }
