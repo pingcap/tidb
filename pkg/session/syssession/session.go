@@ -20,6 +20,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -459,15 +460,11 @@ func (s *Session) GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExecutor {
 }
 
 func (*Session) onBecameOwner(sctx sessionctx.Context) error {
-	if mgr := sctx.GetSessionManager(); mgr != nil {
-		mgr.StoreInternalSession(sctx)
-	}
+	infosync.StoreInternalSession(sctx)
 	return nil
 }
 
 func (*Session) onResignOwner(sctx sessionctx.Context) error {
-	if mgr := sctx.GetSessionManager(); mgr != nil {
-		mgr.DeleteInternalSession(sctx)
-	}
+	infosync.DeleteInternalSession(sctx)
 	return nil
 }

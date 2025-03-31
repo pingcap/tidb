@@ -70,7 +70,6 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
 	"github.com/pingcap/tidb/pkg/session/syssession"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
@@ -1382,16 +1381,9 @@ func NewDomainWithEtcdClient(store kv.Storage, schemaLease time.Duration, statsL
 		if err != nil {
 			return nil, err
 		}
-		sctx, ok := r.(sessiontypes.Session)
+		sctx, ok := r.(syssession.SessionContext)
 		if !ok {
 			return nil, errors.Errorf("type: %T cannot be cast to syssession.SessionContext", r)
-		}
-
-		is := do.InfoSyncer()
-		intest.AssertNotNil(is)
-		if is != nil {
-			sctx.SetSessionManager(is.GetSessionManager())
-			intest.AssertNotNil(sctx.GetSessionManager())
 		}
 		return sctx, nil
 	})

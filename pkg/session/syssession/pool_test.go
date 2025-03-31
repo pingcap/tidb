@@ -79,7 +79,6 @@ func TestSessionPoolGet(t *testing.T) {
 	// get a new Session from pool
 	sctx := &mockSessionContext{}
 	mockFactory.On("create").Return(sctx, nil).Once()
-	sctx.On("StoreInternalSession", sctx).Once()
 	se, err := p.Get()
 	require.NoError(t, err)
 	require.Same(t, se, se.internal.Owner())
@@ -89,13 +88,11 @@ func TestSessionPoolGet(t *testing.T) {
 	sctx.AssertExpectations(t)
 
 	// reuse the session
-	sctx.On("DeleteInternalSession", sctx).Once()
 	sctx.MockNoPendingTxn()
 	sctx.MockResetState(p.ctx, "")
 	p.Put(se)
 	require.Equal(t, 1, len(p.pool))
 	sctx.AssertExpectations(t)
-	sctx.On("StoreInternalSession", sctx).Once()
 	se2, err := p.Get()
 	require.NoError(t, err)
 	require.NotSame(t, se, se2)
@@ -113,16 +110,6 @@ func TestSessionPoolGet(t *testing.T) {
 	require.EqualError(t, err, "mockErr")
 	require.Nil(t, se)
 	mockFactory.AssertExpectations(t)
-
-	// hook panics
-	mockFactory.On("create").Return(sctx, nil).Once()
-	sctx.On("StoreInternalSession", sctx).Panic("mockPanic").Once()
-	sctx.On("Close").Once()
-	require.PanicsWithValue(t, "mockPanic", func() {
-		_, _ = p.Get()
-	})
-	mockFactory.AssertExpectations(t)
-	sctx.AssertExpectations(t)
 
 	// get session from a closed pool
 	p.Close()
@@ -142,7 +129,6 @@ func TestSessionPoolPut(t *testing.T) {
 	require.Equal(t, 0, len(p.pool))
 
 	getCachedSessionFromPool := func(sctx *mockSessionContext) *Session {
-		sctx.On("StoreInternalSession", sctx).Once()
 		se, err := p.Get()
 		require.NoError(t, err)
 		require.Same(t, se, se.internal.Owner())
@@ -154,7 +140,6 @@ func TestSessionPoolPut(t *testing.T) {
 
 	getNewSessionFromPool := func(sctx *mockSessionContext) *Session {
 		mockFactory.On("create").Return(sctx, nil).Once()
-		sctx.On("StoreInternalSession", sctx).Once()
 		se, err := p.Get()
 		require.NoError(t, err)
 		require.Same(t, se, se.internal.Owner())
@@ -167,7 +152,6 @@ func TestSessionPoolPut(t *testing.T) {
 	// Put a normal session
 	sctx := &mockSessionContext{}
 	se := getNewSessionFromPool(sctx)
-	sctx.On("DeleteInternalSession", sctx).Once()
 	sctx.MockResetState(p.ctx, "")
 	sctx.MockNoPendingTxn()
 	p.Put(se)
@@ -185,7 +169,6 @@ func TestSessionPoolPut(t *testing.T) {
 	require.Equal(t, 0, len(p.pool))
 
 	// Put a Session that is the owner
-	sctx.On("DeleteInternalSession", sctx).Once()
 	sctx.MockNoPendingTxn()
 	sctx.MockResetState(p.ctx, "")
 	p.Put(se2)
@@ -204,7 +187,6 @@ func TestSessionPoolPut(t *testing.T) {
 	require.Equal(t, 0, len(p.pool))
 	_, _, err := se.internal.EnterOperation(se)
 	require.NoError(t, err)
-	sctx.On("DeleteInternalSession", sctx).Once()
 	sctx.On("Close").Once()
 	WithSuppressAssert(func() {
 		p.Put(se)
@@ -219,7 +201,6 @@ func TestSessionPoolPut(t *testing.T) {
 	se = getNewSessionFromPool(sctx)
 	require.Equal(t, 0, len(p.pool))
 	se.internal.MarkAvoidReuse()
-	sctx.On("DeleteInternalSession", sctx).Once()
 	sctx.On("Close").Once()
 	p.Put(se)
 	require.True(t, se.internal.IsClosed())
@@ -228,7 +209,6 @@ func TestSessionPoolPut(t *testing.T) {
 
 	// Put a Session that has pending txn
 	se = getNewSessionFromPool(sctx)
-	sctx.On("DeleteInternalSession", sctx).Once()
 	sctx.On("GetPreparedTxnFuture").Return(&mockPreparedFuture{}).Once()
 	sctx.On("Close").Once()
 	WithSuppressAssert(func() {
@@ -240,7 +220,6 @@ func TestSessionPoolPut(t *testing.T) {
 
 	// Put a Session but `CheckPendingTxn` panics
 	se = getNewSessionFromPool(sctx)
-	sctx.On("DeleteInternalSession", sctx).Once()
 	sctx.On("GetPreparedTxnFuture").Panic("txnFuturePanic").Once()
 	sctx.On("Close").Once()
 	WithSuppressAssert(func() {
@@ -254,7 +233,6 @@ func TestSessionPoolPut(t *testing.T) {
 
 	// Put a Session but `OwnerResetState` panics
 	se = getNewSessionFromPool(sctx)
-	sctx.On("DeleteInternalSession", sctx).Once()
 	sctx.MockNoPendingTxn()
 	sctx.MockResetState(p.ctx, "resetStatePanic")
 	sctx.On("Close").Once()
@@ -271,23 +249,11 @@ func TestSessionPoolPut(t *testing.T) {
 	se = getNewSessionFromPool(sctx)
 	require.Equal(t, 0, len(p.pool))
 	require.False(t, se.internal.IsClosed())
-	sctx.On("DeleteInternalSession", sctx).Once()
 	sctx.On("Close").Once()
 	se.Close()
 	require.True(t, se.internal.IsClosed())
 	p.Put(se)
 	require.Equal(t, 0, len(p.pool))
-	sctx.AssertExpectations(t)
-
-	// onResignOwner panics
-	se = getNewSessionFromPool(sctx)
-	sctx.On("DeleteInternalSession", sctx).Panic("mockPanic").Once()
-	sctx.On("Close").Once()
-	require.PanicsWithValue(t, "mockPanic", func() {
-		p.Put(se)
-	})
-	require.Equal(t, 0, len(p.pool))
-	require.True(t, se.internal.IsClosed())
 	sctx.AssertExpectations(t)
 
 	// put a full pool
@@ -301,7 +267,6 @@ func TestSessionPoolPut(t *testing.T) {
 	for i := 0; i < poolCap; i++ {
 		require.Equal(t, i, len(p.pool))
 		sctx = sessions[i].internal.sctx.(*mockSessionContext)
-		sctx.On("DeleteInternalSession", sctx).Once()
 		sctx.MockNoPendingTxn()
 		sctx.MockResetState(p.ctx, "")
 		p.Put(sessions[i])
@@ -312,7 +277,6 @@ func TestSessionPoolPut(t *testing.T) {
 
 	se = sessions[poolCap]
 	sctx = se.internal.sctx.(*mockSessionContext)
-	sctx.On("DeleteInternalSession", sctx).Once()
 	sctx.MockNoPendingTxn()
 	sctx.MockResetState(p.ctx, "")
 	sctx.On("Close").Once()
@@ -337,7 +301,6 @@ func TestSessionPoolPut(t *testing.T) {
 
 	se = sessions[poolCap+1]
 	sctx = se.internal.sctx.(*mockSessionContext)
-	sctx.On("DeleteInternalSession", sctx).Once()
 	sctx.MockNoPendingTxn()
 	sctx.MockResetState(p.ctx, "")
 	sctx.On("Close").Once()
@@ -355,13 +318,11 @@ func TestSessionPoolWithSession(t *testing.T) {
 
 	var called atomic.Bool
 	fn := func(err error, panicS string) func(*Session) error {
-		sctx.On("StoreInternalSession", sctx).Once()
 		return func(se *Session) error {
 			factory.AssertExpectations(t)
 			sctx.AssertExpectations(t)
 			require.Zero(t, len(p.pool))
 			require.True(t, called.CompareAndSwap(false, true))
-			sctx.On("DeleteInternalSession", sctx).Once()
 			if panicS != "" {
 				sctx.On("Close").Once()
 				panic(panicS)
@@ -426,7 +387,6 @@ func TestSessionPoolClose(t *testing.T) {
 		sctx := &mockSessionContext{}
 		sctxs[i] = sctx
 		factory.On("create").Return(sctx, nil).Once()
-		sctx.On("StoreInternalSession", sctx).Once()
 		se, err := p.Get()
 		require.NoError(t, err)
 		ses[i] = se
@@ -436,7 +396,6 @@ func TestSessionPoolClose(t *testing.T) {
 	for i := 0; i < capacity; i++ {
 		sctx := sctxs[i]
 		se := ses[i]
-		sctx.On("DeleteInternalSession", sctx).Once()
 		sctx.MockNoPendingTxn()
 		sctx.MockResetState(p.ctx, "")
 		p.Put(se)

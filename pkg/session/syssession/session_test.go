@@ -153,18 +153,6 @@ func (m *mockSessionContext) GetRestrictedSQLExecutor() sqlexec.RestrictedSQLExe
 	return m
 }
 
-func (m *mockSessionContext) GetSessionManager() util.SessionManager {
-	return m
-}
-
-func (m *mockSessionContext) StoreInternalSession(se any) {
-	m.Called(se)
-}
-
-func (m *mockSessionContext) DeleteInternalSession(se any) {
-	m.Called(se)
-}
-
 func (m *mockSessionContext) GetPreparedTxnFuture() sessionctx.TxnFuture {
 	if arg := m.Called().Get(0); arg != nil {
 		return arg.(sessionctx.TxnFuture)
@@ -229,7 +217,6 @@ func mockInternalSession(t *testing.T, sctx *mockSessionContext, owner *mockOwne
 }
 
 func mockSession(t *testing.T, sctx *mockSessionContext) *Session {
-	sctx.On("StoreInternalSession", sctx).Return().Once()
 	se, err := NewSessionForTest(sctx)
 	require.NoError(t, err)
 	require.Same(t, se, se.internal.Owner())
@@ -714,7 +701,6 @@ func testCallProxyMethod(
 
 	// transfer the owner to make call fail
 	owner2 := noopOwnerHook{}
-	sctx.On("DeleteInternalSession", sctx).Once()
 	require.NoError(t, se.internal.TransferOwner(se, owner2))
 	sctx.AssertExpectations(t)
 
@@ -733,7 +719,6 @@ func testCallProxyMethod(
 	}
 
 	// transfer the owner back
-	sctx.On("StoreInternalSession", sctx).Once()
 	require.NoError(t, se.internal.TransferOwner(owner2, se))
 	sctx.AssertExpectations(t)
 
@@ -914,7 +899,6 @@ func TestSessionClose(t *testing.T) {
 	se := mockSession(t, sctx)
 
 	// normal close
-	sctx.On("DeleteInternalSession", sctx).Once()
 	sctx.On("Close").Once()
 	se.Close()
 	require.True(t, se.internal.IsClosed())
@@ -940,7 +924,6 @@ func TestSessionClose(t *testing.T) {
 	require.False(t, se2.IsInternalClosed())
 
 	// owner should close
-	sctx.On("DeleteInternalSession", sctx).Once()
 	sctx.On("Close").Once()
 	se2.Close()
 	require.True(t, se.IsInternalClosed())

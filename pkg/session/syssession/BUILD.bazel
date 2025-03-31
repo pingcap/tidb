@@ -10,6 +10,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/session/syssession",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/domain/infosync",
         "//pkg/kv",
         "//pkg/parser/ast",
         "//pkg/planner/core/resolve",

@@ -59,7 +59,6 @@ go_library(
         "//pkg/privilege/privileges",
         "//pkg/resourcegroup/runaway",
         "//pkg/session/syssession",
-        "//pkg/session/types",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/sysproctrack",
