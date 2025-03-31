@@ -775,13 +775,13 @@ def go_deps():
         name = "com_github_burntsushi_toml",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/BurntSushi/toml",
-        sha256 = "f15f0ca7a3c5a4275d3d560236f178e9d735a084534bf3b685ec5f676806230a",
-        strip_prefix = "github.com/BurntSushi/toml@v1.4.1-0.20240526193622-a339e1f7089c",
+        sha256 = "a10c8d3d6c4a9b73dc885464245eec6b27d64f430d6979389cd9c58adde15855",
+        strip_prefix = "github.com/BurntSushi/toml@v1.5.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/BurntSushi/toml/com_github_burntsushi_toml-v1.4.1-0.20240526193622-a339e1f7089c.zip",
-            "http://ats.apps.svc/gomod/github.com/BurntSushi/toml/com_github_burntsushi_toml-v1.4.1-0.20240526193622-a339e1f7089c.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/BurntSushi/toml/com_github_burntsushi_toml-v1.4.1-0.20240526193622-a339e1f7089c.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/BurntSushi/toml/com_github_burntsushi_toml-v1.4.1-0.20240526193622-a339e1f7089c.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/BurntSushi/toml/com_github_burntsushi_toml-v1.5.0.zip",
+            "http://ats.apps.svc/gomod/github.com/BurntSushi/toml/com_github_burntsushi_toml-v1.5.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/BurntSushi/toml/com_github_burntsushi_toml-v1.5.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/BurntSushi/toml/com_github_burntsushi_toml-v1.5.0.zip",
         ],
     )
     go_repository(
@@ -5087,13 +5087,13 @@ def go_deps():
         name = "com_github_mgechev_revive",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/mgechev/revive",
-        sha256 = "115b752d8c3236c747988ec0873a4556c824d0be80a6fde840c02a6c01f8ee64",
-        strip_prefix = "github.com/mgechev/revive@v1.7.0",
+        sha256 = "a5a1652458b70ee54f0d869082d384a2e75433a13a30ba11871e34e22f3a28fa",
+        strip_prefix = "github.com/mgechev/revive@v1.8.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/mgechev/revive/com_github_mgechev_revive-v1.7.0.zip",
-            "http://ats.apps.svc/gomod/github.com/mgechev/revive/com_github_mgechev_revive-v1.7.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/mgechev/revive/com_github_mgechev_revive-v1.7.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/mgechev/revive/com_github_mgechev_revive-v1.7.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/mgechev/revive/com_github_mgechev_revive-v1.8.0.zip",
+            "http://ats.apps.svc/gomod/github.com/mgechev/revive/com_github_mgechev_revive-v1.8.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/mgechev/revive/com_github_mgechev_revive-v1.8.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/mgechev/revive/com_github_mgechev_revive-v1.8.0.zip",
         ],
     )
     go_repository(
@@ -6764,13 +6764,13 @@ def go_deps():
         name = "com_github_spf13_afero",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/spf13/afero",
-        sha256 = "777d9869388ae8c61c0e308f741e540507be8bb96a7ece8dd3295801edaf2e7c",
-        strip_prefix = "github.com/spf13/afero@v1.12.0",
+        sha256 = "eec827dee35b23df42f757c5f73841d388951ee6cd49cc14d724e48c4e04d140",
+        strip_prefix = "github.com/spf13/afero@v1.14.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/spf13/afero/com_github_spf13_afero-v1.12.0.zip",
-            "http://ats.apps.svc/gomod/github.com/spf13/afero/com_github_spf13_afero-v1.12.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/spf13/afero/com_github_spf13_afero-v1.12.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/spf13/afero/com_github_spf13_afero-v1.12.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/spf13/afero/com_github_spf13_afero-v1.14.0.zip",
+            "http://ats.apps.svc/gomod/github.com/spf13/afero/com_github_spf13_afero-v1.14.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/spf13/afero/com_github_spf13_afero-v1.14.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/spf13/afero/com_github_spf13_afero-v1.14.0.zip",
         ],
     )
     go_repository(
