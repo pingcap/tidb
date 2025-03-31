@@ -13,6 +13,7 @@ go_test(
     timeout = "short",
     srcs = ["async_load_test.go"],
     flaky = True,
+    shard_count = 4,
     deps = [
         ":asyncload",
         "//pkg/parser/ast",
