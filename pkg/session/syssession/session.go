@@ -319,7 +319,7 @@ func (s *session) doClose(seq uint64) {
 
 // checkNotInuse returns an error if the session is still in use.
 // It should be called with the protection of the mutex.
-func (s *session) checkNotInuse(errMsgPrefix string) error {
+func (s *session) checkNotInuseWithoutLock(errMsgPrefix string) error {
 	if s.inuse > 0 {
 		return errors.Errorf("%ssession is still inuse: %d", errMsgPrefix, s.inuse)
 	}
