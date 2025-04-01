@@ -66,6 +66,9 @@ type ImportStepMeta struct {
 	SortedDataMeta *external.SortedKVMeta `external:"true"`
 	// SortedIndexMetas is a map from index id to its sorted kv meta.
 	SortedIndexMetas map[int64]*external.SortedKVMeta `external:"true"`
+	// it's the sum of all conflict KVs in all SortedKVMeta, we keep it here to
+	// avoid get the external meta when no conflict KVs.
+	RecordedConflictKVCount uint64
 }
 
 // Marshal marshals the import step meta to JSON.
@@ -83,30 +86,32 @@ const (
 type MergeSortStepMeta struct {
 	external.BaseExternalMeta
 	// KVGroup is the group name of the sorted kv, either dataKVGroup or index-id.
-	KVGroup               string   `json:"kv-group"`
-	DataFiles             []string `json:"data-files" external:"true"`
-	external.SortedKVMeta `external:"true"`
+	KVGroup                 string   `json:"kv-group"`
+	DataFiles               []string `json:"data-files" external:"true"`
+	external.SortedKVMeta   `external:"true"`
+	RecordedConflictKVCount uint64 `json:"recorded-conflict-kv-count,omitempty"`
 }
 
-// Marshal marshal the merge sort step meta to JSON.
+// Marshal the merge sort step meta to JSON.
 func (m *MergeSortStepMeta) Marshal() ([]byte, error) {
 	return m.BaseExternalMeta.Marshal(m)
 }
 
-type kvGroupConflictInfos struct {
+// KVGroupConflictInfos is the conflict infos of a kv group.
+type KVGroupConflictInfos struct {
 	ConflictInfos map[string]*common.ConflictInfo `json:"conflict-infos,omitempty"`
 }
 
-func (gci *kvGroupConflictInfos) addDataConflictInfo(other *common.ConflictInfo) {
+func (gci *KVGroupConflictInfos) addDataConflictInfo(other *common.ConflictInfo) {
 	gci.addConflictInfo(dataKVGroup, other)
 }
 
-func (gci *kvGroupConflictInfos) addIndexConflictInfo(indexID int64, other *common.ConflictInfo) {
+func (gci *KVGroupConflictInfos) addIndexConflictInfo(indexID int64, other *common.ConflictInfo) {
 	kvGroup := IndexID2KVGroup(indexID)
 	gci.addConflictInfo(kvGroup, other)
 }
 
-func (gci *kvGroupConflictInfos) addConflictInfo(kvGroup string, other *common.ConflictInfo) {
+func (gci *KVGroupConflictInfos) addConflictInfo(kvGroup string, other *common.ConflictInfo) {
 	if other.Count == 0 {
 		return
 	}
@@ -123,7 +128,9 @@ func (gci *kvGroupConflictInfos) addConflictInfo(kvGroup string, other *common.C
 
 // CollectConflictsStepMeta is the meta of collect conflicts step.
 type CollectConflictsStepMeta struct {
-	kvGroupConflictInfos `json:",inline"`
+	external.BaseExternalMeta `json:"base"`
+	Infos                     KVGroupConflictInfos `json:"infos" external:"true"`
+	RecordedDataKVConflicts   int64                `json:"recorded-data-kv-conflicts,omitempty"`
 	// Checksum is the checksum of all conflicts rows.
 	Checksum *Checksum `json:"checksum,omitempty"`
 	// ConflictedRowCount is the count of all conflicted rows.
@@ -133,22 +140,34 @@ type CollectConflictsStepMeta struct {
 	ConflictedRowFilename string `json:"conflicted-row-filename,omitempty"`
 }
 
+// Marshal marshals the collect conflicts step meta to JSON.
+func (m *CollectConflictsStepMeta) Marshal() ([]byte, error) {
+	return m.BaseExternalMeta.Marshal(m)
+}
+
 // ConflictResolutionStepMeta is the meta of conflict resolution step.
 type ConflictResolutionStepMeta struct {
-	kvGroupConflictInfos `json:",inline"`
+	external.BaseExternalMeta `json:"base"`
+	Infos                     KVGroupConflictInfos `json:"infos" external:"true"`
+}
+
+// Marshal marshals the conflict resolution step meta to JSON.
+func (m *ConflictResolutionStepMeta) Marshal() ([]byte, error) {
+	return m.BaseExternalMeta.Marshal(m)
 }
 
 // WriteIngestStepMeta is the meta of write and ingest step.
 // only used when global sort is enabled.
 type WriteIngestStepMeta struct {
 	external.BaseExternalMeta
-	KVGroup               string `json:"kv-group"`
-	external.SortedKVMeta `json:"sorted-kv-meta" external:"true"`
-	DataFiles             []string `json:"data-files" external:"true"`
-	StatFiles             []string `json:"stat-files" external:"true"`
-	RangeJobKeys          [][]byte `json:"range-job-keys" external:"true"`
-	RangeSplitKeys        [][]byte `json:"range-split-keys" external:"true"`
-	TS                    uint64   `json:"ts"`
+	KVGroup                 string `json:"kv-group"`
+	external.SortedKVMeta   `json:"sorted-kv-meta" external:"true"`
+	RecordedConflictKVCount uint64   `json:"recorded-conflict-kv-count,omitempty"`
+	DataFiles               []string `json:"data-files" external:"true"`
+	StatFiles               []string `json:"stat-files" external:"true"`
+	RangeJobKeys            [][]byte `json:"range-job-keys" external:"true"`
+	RangeSplitKeys          [][]byte `json:"range-split-keys" external:"true"`
+	TS                      uint64   `json:"ts"`
 
 	Result Result
 }
@@ -183,19 +202,23 @@ type SharedVars struct {
 
 	SortedDataMeta *external.SortedKVMeta
 	// SortedIndexMetas is a map from index id to its sorted kv meta.
-	SortedIndexMetas map[int64]*external.SortedKVMeta
-	ShareMu          sync.Mutex
+	SortedIndexMetas        map[int64]*external.SortedKVMeta
+	RecordedConflictKVCount uint64
+	ShareMu                 sync.Mutex
 }
 
 func (sv *SharedVars) mergeDataSummary(summary *external.WriterSummary) {
 	sv.mu.Lock()
 	defer sv.mu.Unlock()
 	sv.SortedDataMeta.MergeSummary(summary)
+	sv.RecordedConflictKVCount += summary.ConflictInfo.Count
 }
 
 func (sv *SharedVars) mergeIndexSummary(indexID int64, summary *external.WriterSummary) {
 	sv.mu.Lock()
 	defer sv.mu.Unlock()
+	sv.RecordedConflictKVCount += summary.ConflictInfo.Count
+
 	meta, ok := sv.SortedIndexMetas[indexID]
 	if !ok {
 		meta = external.NewSortedKVMeta(summary)

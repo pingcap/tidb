@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
+	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
@@ -41,10 +42,12 @@ func (s *mockGCSSuite) testSingleFileConflictResolution(tblSQL string, sourceCon
 }
 
 func (s *mockGCSSuite) testConflictResolution(tblSQL string, sourceContents []string, resultRows []string) int64 {
+	s.T().Helper()
 	return s.testConflictResolutionWithOptions(tblSQL, sourceContents, resultRows, "")
 }
 
 func (s *mockGCSSuite) testConflictResolutionWithOptions(tblSQL string, sourceContents []string, resultRows []string, options string) int64 {
+	s.T().Helper()
 	return s.testConflictResolutionWithColumnVarsAndOptions(tblSQL, sourceContents, resultRows, "", options)
 }
 
@@ -65,6 +68,8 @@ func (s *mockGCSSuite) testConflictResolutionWithColumnVarsAndOptions(tblSQL str
 			Content:     []byte(content),
 		})
 	}
+	// we need the intermediate files to check meta.
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/lightning/backend/external/skipCleanUpFiles", `return(true)`)
 	s.T().Cleanup(func() {
 		testutils.RemoveAllObjects(s.T(), s.server, "conflicts")
 		testutils.RemoveAllObjects(s.T(), s.server, "sorted")
@@ -94,6 +99,10 @@ func (s *mockGCSSuite) testConflictResolutionWithColumnVarsAndOptions(tblSQL str
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
 	task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 	s.NoError(err2)
+
+	s.checkExternalFields(task.ID, false)
+
+	// check lines inside the file that records the conflicted rows.
 	subtasks, err := taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepCollectConflicts)
 	s.NoError(err)
 	s.Len(subtasks, 1)
@@ -522,15 +531,20 @@ func (s *mockGCSSuite) checkMergeStepConflictInfo(jobID int64) {
 	for _, idx := range taskMeta.Plan.TableInfo.Indices {
 		kvGroupCanConflict[importinto.IndexID2KVGroup(idx.ID)] = idx.Unique
 	}
+	store, err := importer.GetSortStore(ctx, taskMeta.Plan.CloudStorageURI)
+	s.NoError(err)
 	for _, st := range subtasks {
 		m := importinto.MergeSortStepMeta{}
 		s.NoError(json.Unmarshal(st.Meta, &m))
+		s.NotEmpty(m.ExternalPath)
+		s.NoError(m.BaseExternalMeta.ReadJSONFromExternalStorage(ctx, store, &m))
 		if kvGroupCanConflict[m.KVGroup] {
 			s.Greater(m.ConflictInfo.Count, uint64(0))
 		} else {
 			// this is the non-unique index
 			s.Zero(m.ConflictInfo.Count)
 		}
+		s.Equal(m.RecordedConflictKVCount, m.ConflictInfo.Count)
 	}
 }
 

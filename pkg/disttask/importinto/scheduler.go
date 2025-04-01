@@ -650,13 +650,9 @@ func getLoadedRowCountOnGlobalSort(handle storage.TaskHandle, task *proto.Task) 
 		if err = json.Unmarshal(bs, &subtaskMeta); err != nil {
 			return 0, errors.Trace(err)
 		}
-		var recordedDataKVConflicts uint64
-		if dataKVConflictInfo, ok := subtaskMeta.ConflictInfos[dataKVGroup]; ok {
-			recordedDataKVConflicts = dataKVConflictInfo.Count
-		}
 		// 'left row count' = 'ingested data KV count' - 'conflicted row count due to index conflict only'
 		//                  = 'ingested data KV count' - ('total conflicted row count' - 'recorded data KV conflicts')
-		loadedRowCount -= uint64(subtaskMeta.ConflictedRowCount) - recordedDataKVConflicts
+		loadedRowCount -= uint64(subtaskMeta.ConflictedRowCount) - uint64(subtaskMeta.RecordedDataKVConflicts)
 	}
 	return loadedRowCount, nil
 }

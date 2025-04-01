@@ -72,14 +72,19 @@ func (e *collectConflictsStepExecutor) RunSubtask(ctx context.Context, subtask *
 	defer func() {
 		task.End(zapcore.ErrorLevel, err)
 	}()
-	stepMeta := CollectConflictsStepMeta{}
-	if err = json.Unmarshal(subtask.Meta, &stepMeta); err != nil {
+	stepMeta := &CollectConflictsStepMeta{}
+	if err = json.Unmarshal(subtask.Meta, stepMeta); err != nil {
 		return errors.Trace(err)
+	}
+	if stepMeta.ExternalPath != "" {
+		if err := stepMeta.ReadJSONFromExternalStorage(ctx, e.tableImporter.GlobalSortStore, stepMeta); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	// TODO if there are too many conflicts due to index, we need to skip this
 	// step to avoid OOM.
 	var potentialConflictRowsDueToIndex int
-	for kvGroup, ci := range stepMeta.ConflictInfos {
+	for kvGroup, ci := range stepMeta.Infos.ConflictInfos {
 		if kvGroup != dataKVGroup {
 			potentialConflictRowsDueToIndex += int(ci.Count)
 		}
@@ -98,7 +103,7 @@ func (e *collectConflictsStepExecutor) RunSubtask(ctx context.Context, subtask *
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for kvGroup, ci := range stepMeta.ConflictInfos {
+	for kvGroup, ci := range stepMeta.Infos.ConflictInfos {
 		baseHandler := &baseConflictKVHandler{
 			tableImporter:       e.tableImporter,
 			store:               e.store,

@@ -57,11 +57,16 @@ func (e *conflictResolutionStepExecutor) RunSubtask(ctx context.Context, subtask
 	defer func() {
 		task.End(zapcore.ErrorLevel, err)
 	}()
-	stepMeta := ConflictResolutionStepMeta{}
-	if err = json.Unmarshal(subtask.Meta, &stepMeta); err != nil {
+	stepMeta := &ConflictResolutionStepMeta{}
+	if err = json.Unmarshal(subtask.Meta, stepMeta); err != nil {
 		return errors.Trace(err)
 	}
-	for kvGroup, ci := range stepMeta.ConflictInfos {
+	if stepMeta.ExternalPath != "" {
+		if err := stepMeta.ReadJSONFromExternalStorage(ctx, e.tableImporter.GlobalSortStore, stepMeta); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	for kvGroup, ci := range stepMeta.Infos.ConflictInfos {
 		baseHandler := &baseConflictKVHandler{
 			tableImporter: e.tableImporter,
 			store:         e.store,

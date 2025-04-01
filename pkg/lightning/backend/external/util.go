@@ -28,6 +28,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -166,6 +167,9 @@ func GetAllFileNames(
 
 // CleanUpFiles delete all data and stat files under one subDir.
 func CleanUpFiles(ctx context.Context, store storage.ExternalStorage, subDir string) error {
+	failpoint.Inject("skipCleanUpFiles", func() {
+		failpoint.Return(nil)
+	})
 	dataNames, statNames, err := GetAllFileNames(ctx, store, subDir)
 	if err != nil {
 		return err

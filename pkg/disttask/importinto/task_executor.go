@@ -263,6 +263,7 @@ func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subt
 	}
 	subtaskMeta.SortedDataMeta = sharedVars.SortedDataMeta
 	subtaskMeta.SortedIndexMetas = sharedVars.SortedIndexMetas
+	subtaskMeta.RecordedConflictKVCount = sharedVars.RecordedConflictKVCount
 	// if using global sort, write the external meta to external storage.
 	if s.tableImporter.IsGlobalSort() {
 		subtaskMeta.ExternalPath = external.SubtaskMetaPath(s.taskID, subtask.ID)
@@ -391,6 +392,7 @@ func (m *mergeSortStepExecutor) OnFinished(ctx context.Context, subtask *proto.S
 		return errors.Trace(err)
 	}
 	subtaskMeta.SortedKVMeta = *m.subtaskSortedKVMeta
+	subtaskMeta.RecordedConflictKVCount = subtaskMeta.SortedKVMeta.ConflictInfo.Count
 	subtaskMeta.ExternalPath = external.SubtaskMetaPath(m.taskID, subtask.ID)
 	if err := subtaskMeta.WriteJSONToExternalStorage(ctx, m.controller.GlobalSortStore, subtaskMeta); err != nil {
 		return errors.Trace(err)
@@ -525,11 +527,15 @@ func (e *writeAndIngestStepExecutor) OnFinished(ctx context.Context, subtask *pr
 		subtaskMeta.Result.LoadedRowCnt = uint64(kvCount)
 	}
 	subtaskMeta.ConflictInfo = localBackend.GetExternalEngineConflictInfo(engineUUID)
+	subtaskMeta.RecordedConflictKVCount = subtaskMeta.ConflictInfo.Count
 	err := localBackend.CleanupEngine(ctx, engineUUID)
 	if err != nil {
 		e.logger.Warn("failed to cleanup engine", zap.Error(err))
 	}
-
+	subtaskMeta.ExternalPath = external.SubtaskMetaPath(e.taskID, subtask.ID)
+	if err := subtaskMeta.WriteJSONToExternalStorage(ctx, e.tableImporter.GlobalSortStore, subtaskMeta); err != nil {
+		return errors.Trace(err)
+	}
 	newMeta, err := subtaskMeta.Marshal()
 	if err != nil {
 		return errors.Trace(err)

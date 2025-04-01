@@ -87,31 +87,38 @@ func (p *LogicalPlan) writeExternalPlanMeta(planCtx planner.PlanCtx, specs []pla
 	if !planCtx.GlobalSort {
 		return nil
 	}
-	// write external meta when using global sort
-	controller, err := buildControllerForPlan(p)
+	store, err := importer.GetSortStore(planCtx.Ctx, p.Plan.CloudStorageURI)
 	if err != nil {
 		return err
 	}
-	if err := controller.InitDataFiles(planCtx.Ctx); err != nil {
-		return err
-	}
+	defer store.Close()
 
 	for i, spec := range specs {
 		externalPath := external.PlanMetaPath(planCtx.TaskID, proto.Step2Str(proto.ImportInto, planCtx.NextTaskStep), i+1)
 		switch sp := spec.(type) {
 		case *ImportSpec:
 			sp.ImportStepMeta.ExternalPath = externalPath
-			if err := sp.ImportStepMeta.WriteJSONToExternalStorage(planCtx.Ctx, controller.GlobalSortStore, sp.ImportStepMeta); err != nil {
+			if err := sp.ImportStepMeta.WriteJSONToExternalStorage(planCtx.Ctx, store, sp.ImportStepMeta); err != nil {
 				return err
 			}
 		case *MergeSortSpec:
 			sp.MergeSortStepMeta.ExternalPath = externalPath
-			if err := sp.MergeSortStepMeta.WriteJSONToExternalStorage(planCtx.Ctx, controller.GlobalSortStore, sp.MergeSortStepMeta); err != nil {
+			if err := sp.MergeSortStepMeta.WriteJSONToExternalStorage(planCtx.Ctx, store, sp.MergeSortStepMeta); err != nil {
 				return err
 			}
 		case *WriteIngestSpec:
 			sp.WriteIngestStepMeta.ExternalPath = externalPath
-			if err := sp.WriteIngestStepMeta.WriteJSONToExternalStorage(planCtx.Ctx, controller.GlobalSortStore, sp.WriteIngestStepMeta); err != nil {
+			if err := sp.WriteIngestStepMeta.WriteJSONToExternalStorage(planCtx.Ctx, store, sp.WriteIngestStepMeta); err != nil {
+				return err
+			}
+		case *CollectConflictsSpec:
+			sp.CollectConflictsStepMeta.ExternalPath = externalPath
+			if err := sp.CollectConflictsStepMeta.WriteJSONToExternalStorage(planCtx.Ctx, store, sp.CollectConflictsStepMeta); err != nil {
+				return err
+			}
+		case *ConflictResolutionSpec:
+			sp.ConflictResolutionStepMeta.ExternalPath = externalPath
+			if err := sp.ConflictResolutionStepMeta.WriteJSONToExternalStorage(planCtx.Ctx, store, sp.ConflictResolutionStepMeta); err != nil {
 				return err
 			}
 		}
@@ -181,10 +188,16 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 		if err != nil {
 			return nil, err
 		}
+		if err = p.writeExternalPlanMeta(planCtx, specs); err != nil {
+			return nil, err
+		}
 		addSpecs(specs)
 	case proto.ImportStepConflictResolution:
 		specs, err := generateConflictResolutionSpecs(planCtx, p)
 		if err != nil {
+			return nil, err
+		}
+		if err = p.writeExternalPlanMeta(planCtx, specs); err != nil {
 			return nil, err
 		}
 		addSpecs(specs)
@@ -247,7 +260,7 @@ type CollectConflictsSpec struct {
 
 // ToSubtaskMeta converts the conflict resolution spec to subtask meta.
 func (s *CollectConflictsSpec) ToSubtaskMeta(planner.PlanCtx) ([]byte, error) {
-	return json.Marshal(s.CollectConflictsStepMeta)
+	return s.CollectConflictsStepMeta.Marshal()
 }
 
 // ConflictResolutionSpec is the specification of a conflict resolution pipeline.
@@ -257,7 +270,7 @@ type ConflictResolutionSpec struct {
 
 // ToSubtaskMeta converts the conflict resolution spec to subtask meta.
 func (s *ConflictResolutionSpec) ToSubtaskMeta(planner.PlanCtx) ([]byte, error) {
-	return json.Marshal(s.ConflictResolutionStepMeta)
+	return s.ConflictResolutionStepMeta.Marshal()
 }
 
 // PostProcessSpec is the specification of a post process pipeline.
@@ -386,15 +399,13 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.
 	result := make([]planner.PipelineSpec, 0, 16)
 
 	ctx := planCtx.Ctx
-	controller, err := buildControllerForPlan(p)
+	store, err := importer.GetSortStore(ctx, p.Plan.CloudStorageURI)
 	if err != nil {
 		return nil, err
 	}
-	if err := controller.InitDataStore(ctx); err != nil {
-		return nil, err
-	}
+	defer store.Close()
 
-	kvMetas, err := getSortedKVMetasOfEncodeStep(planCtx.Ctx, planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort], controller.GlobalSortStore)
+	kvMetas, err := getSortedKVMetasOfEncodeStep(planCtx.Ctx, planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort], store)
 	if err != nil {
 		return nil, err
 	}
@@ -669,8 +680,13 @@ func getRangeSplitter(
 	)
 }
 
-func generateCollectConflictsSpecs(planCtx planner.PlanCtx, _ *LogicalPlan) ([]planner.PipelineSpec, error) {
-	groupConflictInfos, err := collectConflictInfos(planCtx)
+func generateCollectConflictsSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {
+	store, err := importer.GetSortStore(planCtx.Ctx, p.Plan.CloudStorageURI)
+	if err != nil {
+		return nil, err
+	}
+	defer store.Close()
+	groupConflictInfos, err := collectConflictInfos(planCtx.Ctx, store, planCtx)
 	if err != nil {
 		return nil, err
 	}
@@ -678,17 +694,27 @@ func generateCollectConflictsSpecs(planCtx planner.PlanCtx, _ *LogicalPlan) ([]p
 	if len(groupConflictInfos.ConflictInfos) == 0 {
 		return []planner.PipelineSpec{}, nil
 	}
+	var recordedDataKVConflicts int64
+	if info, ok := groupConflictInfos.ConflictInfos[dataKVGroup]; ok {
+		recordedDataKVConflicts = int64(info.Count)
+	}
 	return []planner.PipelineSpec{
 		&CollectConflictsSpec{
 			CollectConflictsStepMeta: &CollectConflictsStepMeta{
-				kvGroupConflictInfos: *groupConflictInfos,
+				Infos:                   *groupConflictInfos,
+				RecordedDataKVConflicts: recordedDataKVConflicts,
 			},
 		},
 	}, nil
 }
 
-func generateConflictResolutionSpecs(planCtx planner.PlanCtx, _ *LogicalPlan) ([]planner.PipelineSpec, error) {
-	groupConflictInfos, err := collectConflictInfos(planCtx)
+func generateConflictResolutionSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {
+	store, err := importer.GetSortStore(planCtx.Ctx, p.Plan.CloudStorageURI)
+	if err != nil {
+		return nil, err
+	}
+	defer store.Close()
+	groupConflictInfos, err := collectConflictInfos(planCtx.Ctx, store, planCtx)
 	if err != nil {
 		return nil, err
 	}
@@ -699,21 +725,28 @@ func generateConflictResolutionSpecs(planCtx planner.PlanCtx, _ *LogicalPlan) ([
 	return []planner.PipelineSpec{
 		&ConflictResolutionSpec{
 			ConflictResolutionStepMeta: &ConflictResolutionStepMeta{
-				kvGroupConflictInfos: *groupConflictInfos,
+				Infos: *groupConflictInfos,
 			},
 		},
 	}, nil
 }
 
-func collectConflictInfos(planCtx planner.PlanCtx) (*kvGroupConflictInfos, error) {
-	m := &kvGroupConflictInfos{}
+func collectConflictInfos(ctx context.Context, store storage.ExternalStorage, planCtx planner.PlanCtx) (*KVGroupConflictInfos, error) {
+	m := &KVGroupConflictInfos{}
 	for _, subTaskMeta := range planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort] {
 		var stepMeta ImportStepMeta
 		err := json.Unmarshal(subTaskMeta, &stepMeta)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-
+		if stepMeta.RecordedConflictKVCount <= 0 {
+			continue
+		}
+		if stepMeta.ExternalPath != "" {
+			if err = stepMeta.ReadJSONFromExternalStorage(ctx, store, &stepMeta); err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
 		m.addDataConflictInfo(&stepMeta.SortedDataMeta.ConflictInfo)
 		for indexID, kvMeta := range stepMeta.SortedIndexMetas {
 			// non-unique index don't have conflict info, to simplify the logic,
@@ -727,6 +760,14 @@ func collectConflictInfos(planCtx planner.PlanCtx) (*kvGroupConflictInfos, error
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		if stepMeta.RecordedConflictKVCount <= 0 {
+			continue
+		}
+		if stepMeta.ExternalPath != "" {
+			if err = stepMeta.ReadJSONFromExternalStorage(ctx, store, &stepMeta); err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
 		m.addConflictInfo(stepMeta.KVGroup, &stepMeta.SortedKVMeta.ConflictInfo)
 	}
 	for _, subTaskMeta := range planCtx.PreviousSubtaskMetas[proto.ImportStepWriteAndIngest] {
@@ -734,6 +775,14 @@ func collectConflictInfos(planCtx planner.PlanCtx) (*kvGroupConflictInfos, error
 		err := json.Unmarshal(subTaskMeta, &stepMeta)
 		if err != nil {
 			return nil, errors.Trace(err)
+		}
+		if stepMeta.RecordedConflictKVCount <= 0 {
+			continue
+		}
+		if stepMeta.ExternalPath != "" {
+			if err = stepMeta.ReadJSONFromExternalStorage(ctx, store, &stepMeta); err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 		m.addConflictInfo(stepMeta.KVGroup, &stepMeta.SortedKVMeta.ConflictInfo)
 	}

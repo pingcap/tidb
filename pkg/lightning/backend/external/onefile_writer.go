@@ -249,10 +249,12 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 	w.logger.Info("close one file writer",
 		zap.String("writerID", w.writerID))
 
-	maxKey := slices.Clone(w.maxKey)
+	var minKey, maxKey []byte
 	mStats := make([]MultipleFilesStat, 0, 1)
 	if w.totalCnt > 0 {
 		// it's possible that all KV pairs are duplicates and removed.
+		minKey = w.minKey
+		maxKey = slices.Clone(w.maxKey)
 		var stat MultipleFilesStat
 		stat.Filenames = append(stat.Filenames,
 			[2]string{w.dataFile, w.statFile})
@@ -267,7 +269,7 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 	w.onClose(&WriterSummary{
 		WriterID:           w.writerID,
 		Seq:                0,
-		Min:                w.minKey,
+		Min:                minKey,
 		Max:                maxKey,
 		TotalSize:          w.totalSize,
 		TotalCnt:           w.totalCnt,
