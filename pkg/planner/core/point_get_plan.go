@@ -22,6 +22,8 @@ import (
 	"sync"
 	"unsafe"
 
+	"slices"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -66,7 +68,6 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"go.uber.org/zap"
-	"slices"
 )
 
 // GlobalWithoutColumnPos marks the index has no partition column.
@@ -1963,7 +1964,9 @@ func isExprHasSubQuery(expr ast.Node) bool {
 }
 
 func checkIfAssignmentListHasSubQuery(list []*ast.Assignment) bool {
-	return slices.ContainsFunc(list, isExprHasSubQuery)
+	return slices.ContainsFunc(list, func(a *ast.Assignment) bool {
+		return isExprHasSubQuery(a)
+	})
 }
 
 func tryUpdatePointPlan(ctx base.PlanContext, updateStmt *ast.UpdateStmt, resolveCtx *resolve.Context) base.Plan {

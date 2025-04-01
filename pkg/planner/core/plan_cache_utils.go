@@ -22,7 +22,6 @@ import (
 	"hash"
 	"math"
 	"slices"
-	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
