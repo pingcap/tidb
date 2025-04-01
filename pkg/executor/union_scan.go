@@ -103,6 +103,8 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 
 	if snapshot := us.Ctx().GetSessionVars().StmtCtx.MemBufferSnapshot; snapshot != nil {
 		us.memBufSnap = snapshot
+	} else {
+		us.memBufSnap = nil
 	}
 
 	// 1. select without virtual columns
@@ -234,9 +236,6 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 		// From cache table, so the snapshot is nil
 		return nil, nil
 	}
-	if us.memBufSnap == nil {
-		return nil, nil
-	}
 	if us.cursor4SnapshotRows < len(us.snapshotRows) {
 		return us.snapshotRows[us.cursor4SnapshotRows], nil
 	}
@@ -262,10 +261,12 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 			} else {
 				checkKey = tablecodec.EncodeRecordKey(us.table.RecordPrefix(), snapshotHandle)
 			}
-			if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
-				// If src handle appears in added rows, it means there is conflict and the transaction will fail to
-				// commit, but for simplicity, we don't handle it here.
-				continue
+			if us.memBufSnap != nil {
+				if _, err := us.memBufSnap.Get(context.TODO(), checkKey); err == nil {
+					// If src handle appears in added rows, it means there is conflict and the transaction will fail to
+					// commit, but for simplicity, we don't handle it here.
+					continue
+				}
 			}
 			us.snapshotRows = append(us.snapshotRows, row.GetDatumRow(exec.RetTypes(us.Children(0))))
 		}
