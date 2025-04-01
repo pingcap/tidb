@@ -147,14 +147,6 @@ type RetrieverMutator interface {
 type MemBuffer interface {
 	RetrieverMutator
 
-	// RLock locks the MemBuffer for shared read.
-	// In the most case, MemBuffer will only used by single goroutine,
-	// but it will be read by multiple goroutine when combined with executor.UnionScanExec.
-	// To avoid race introduced by executor.UnionScanExec, MemBuffer expose read lock for it.
-	RLock()
-	// RUnlock unlocks the MemBuffer.
-	RUnlock()
-
 	// GetFlags returns the latest flags associated with key.
 	GetFlags(Key) (KeyFlags, error)
 	// SetWithFlags put key-value into the last active staging buffer with the given KeyFlags.

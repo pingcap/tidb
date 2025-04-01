@@ -669,6 +669,7 @@ func (a *ExecStmt) handleStmtForeignKeyTrigger(ctx context.Context, e exec.Execu
 		// Since `UnionScanExec` use `SnapshotIter` and `SnapshotGetter` to read txn mem-buffer, if we don't do `StmtCommit`,
 		// then the fk cascade executor can't read the mem-buffer changed by the ExecStmt.
 		a.Ctx.StmtCommit(ctx)
+		// `StmtCommit` will change the snapshot of the MemBuffer, so we need to get a new one.
 		txn, _ := a.Ctx.Txn(false)
 		if txn != nil && !txn.IsReadOnly() {
 			a.Ctx.GetSessionVars().StmtCtx.MemBufferSnapshot = txn.GetMemBuffer().GetSnapshot()
@@ -1184,6 +1185,7 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	a.retryStartTime = time.Now()
 
 	// Rollback the statement change before retry it.
+	// Call it before `OnStmtRetry` to ensure that the MemBuffer's snapshot is fetched after rollback.
 	a.Ctx.StmtRollback(ctx, true)
 	err = txnManager.OnStmtRetry(ctx)
 	if err != nil {

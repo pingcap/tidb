@@ -38,7 +38,6 @@ import (
 type UnionScanExec struct {
 	exec.BaseExecutor
 
-	memBuf     kv.MemBuffer
 	memBufSnap kv.Getter
 
 	conditions           []expression.Expression
@@ -93,10 +92,6 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 	}
 
 	defer trace.StartRegion(ctx, "UnionScanBuildRows").End()
-	txn, err := us.Ctx().Txn(false)
-	if err != nil {
-		return err
-	}
 
 	us.physTblIDIdx = -1
 	for i := len(us.columns) - 1; i >= 0; i-- {
@@ -105,12 +100,10 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 			break
 		}
 	}
-	mb := txn.GetMemBuffer()
-	mb.RLock()
-	defer mb.RUnlock()
 
-	us.memBuf = mb
-	us.memBufSnap = mb.SnapshotGetter()
+	if snapshot := us.Ctx().GetSessionVars().StmtCtx.MemBufferSnapshot; snapshot != nil {
+		us.memBufSnap = snapshot
+	}
 
 	// 1. select without virtual columns
 	// 2. build virtual columns and select with virtual columns
@@ -239,6 +232,9 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, error) {
 	if us.cacheTable != nil {
 		// From cache table, so the snapshot is nil
+		return nil, nil
+	}
+	if us.memBufSnap == nil {
 		return nil, nil
 	}
 	if us.cursor4SnapshotRows < len(us.snapshotRows) {
