@@ -53,10 +53,12 @@ func TestNewSessionPool(t *testing.T) {
 	require.Equal(t, PoolMaxSize, cap(p.pool))
 	require.False(t, p.IsClosed())
 
-	// pool with zero-size, it means always return a new session
-	p = NewAdvancedSessionPool(0, factory)
-	require.Equal(t, 0, cap(p.pool))
-	require.False(t, p.IsClosed())
+	// pool with zero-size
+	WithSuppressAssert(func() {
+		p = NewAdvancedSessionPool(0, factory)
+		require.Equal(t, PoolMaxSize, cap(p.pool))
+		require.False(t, p.IsClosed())
+	})
 
 	// test pool size limit
 	WithSuppressAssert(func() {

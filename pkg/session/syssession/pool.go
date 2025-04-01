@@ -58,7 +58,7 @@ type AdvancedSessionPool struct {
 // NewAdvancedSessionPool creates a default session pool with the given capacity and factory function.
 func NewAdvancedSessionPool(capacity int, factory Factory) *AdvancedSessionPool {
 	intest.AssertNotNil(factory)
-	if capacity < 0 || capacity > PoolMaxSize {
+	if capacity <= 0 || capacity > PoolMaxSize {
 		intest.Assert(suppressAssertInTest, "invalid capacity: %d", capacity)
 		capacity = PoolMaxSize
 	}
