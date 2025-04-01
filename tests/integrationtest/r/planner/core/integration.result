@@ -4406,3 +4406,42 @@ IndexLookUp	9980.01	root
 select * from t use index (idx3) where col1 is not null and col3 is not null;
 id	col1	col2	col3
 3	1	NULL	1
+drop table if exists t;
+create table t (id int primary key, col1 int no_null_index, col2 int, col3 int);
+alter table t add index idx2(col1, col2);
+alter table t add index idx3(col1, col3);
+insert into t values (2, null, 1, 1);
+select * FROM t WHERE col1 is null and col2 < 100 and col3 < 100;
+id	col1	col2	col3
+2	NULL	1	1
+select /*+ USE_INDEX_MERGE(t, idx2, idx3) */ * FROM t WHERE col1 is null and col2 < 100 and col3 < 100;
+Error 1815 (HY000): Internal : Can't find a proper physical plan for this query
+explain format='brief' select /*+ USE_INDEX_MERGE(t, idx2, idx3) */ * FROM t WHERE col1 is null and col2 < 100 and col3 < 100;
+Error 1815 (HY000): Internal : Can't find a proper physical plan for this query
+drop table if exists t;
+create table t (id int primary key, col1 int no_null_index, col2 int no_null_index);
+alter table t add index idx1(col1);
+alter table t add index idx2(col2);
+insert into t values (1, 1, NULL);
+insert into t values (2, NULL, 1);
+select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * FROM t WHERE col1 > 5 or col2 > 5;
+id	col1	col2
+explain format='brief' select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * FROM t WHERE col1 > 5 or col2 > 5;
+id	estRows	task	access object	operator info
+IndexMerge	5555.56	root		type: union
+├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:t, index:idx1(col1)	range:(5,+inf], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:t, index:idx2(col2)	range:(5,+inf], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	5555.56	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t;
+create table t (id int primary key, col1 int no_null_index, col2 json, col3 json);
+alter table t add index idx2(col1, (CAST(col2->'$.path' AS SIGNED ARRAY)) );
+alter table t add index idx3(col1, (CAST(col3->'$.path' AS SIGNED ARRAY)) );
+insert into t values (2, null, '{"path":[1]}', '{"path":[1]}');
+select /*+ USE_INDEX_MERGE(t, idx2, idx3) */ * FROM t WHERE col1 is null and json_contains(col2->'$.path', '1') and json_contains(col3->'$.path', '1');
+id	col1	col2	col3
+2	NULL	{"path": [1]}	{"path": [1]}
+explain format='brief' select /*+ USE_INDEX_MERGE(t, idx2, idx3) */ * FROM t WHERE col1 is null and json_contains(col2->'$.path', '1') and json_contains(col3->'$.path', '1');
+id	estRows	task	access object	operator info
+TableReader	8.00	root		data:Selection
+└─Selection	8.00	cop[tikv]		isnull(planner__core__integration.t.col1), json_contains(json_extract(planner__core__integration.t.col2, "$.path"), cast("1", json BINARY)), json_contains(json_extract(planner__core__integration.t.col3, "$.path"), cast("1", json BINARY))
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo

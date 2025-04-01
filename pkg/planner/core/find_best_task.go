@@ -1174,37 +1174,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 			candidates = append(candidates, ds.getIndexMergeCandidate(path, prop))
 			continue
 		}
-		// If the index contains NO_NULL_INDEX column, it may not contain all rows
-		if path.Index != nil && len(path.Index.NoNullIdxColOffsets) > 0 {
-			includeNullRange := false
 
-			for _, col := range path.Index.NoNullIdxColOffsets {
-				for _, ran := range path.Ranges {
-					if len(ran.LowVal) <= col || len(ran.HighVal) <= col ||
-						ran.LowVal[col].IsNull() || ran.HighVal[col].IsNull() {
-						includeNullRange = true
-						break
-					}
-				}
-
-				if includeNullRange {
-					// If the condition can make sure the column is not null, we can also use this index.
-					// TODO: maybe only considering the conditions except accessConds is enough, because the ranges
-					// don't contain NULL.
-					if ranger.CheckColumnIsNotNullWithCNFConditions(ds.SCtx(), path.FullIdxCols[col], ds.allConds) {
-						includeNullRange = false
-						continue
-					}
-
-					break
-				}
-			}
-
-			// conditions that the column is not null
-			if includeNullRange {
-				continue
-			}
-		}
 		// if we already know the range of the scan is empty, just return a TableDual
 		if len(path.Ranges) == 0 {
 			return []*candidatePath{{path: path}}
