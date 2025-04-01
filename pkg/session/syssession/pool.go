@@ -46,12 +46,12 @@ type Pool interface {
 type AdvancedSessionPool struct {
 	noopOwnerHook
 	ctx     context.Context
-	cancel  context.CancelFunc
 	pool    chan *session
 	factory Factory
 	mu      struct {
 		sync.RWMutex
 		closed bool
+		cancel context.CancelFunc
 	}
 }
 
@@ -65,12 +65,13 @@ func NewAdvancedSessionPool(capacity int, factory Factory) *AdvancedSessionPool 
 
 	ctx, cancel := context.WithCancel(context.Background())
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
-	return &AdvancedSessionPool{
+	pool := &AdvancedSessionPool{
 		ctx:     ctx,
-		cancel:  cancel,
 		pool:    make(chan *session, capacity),
 		factory: factory,
 	}
+	pool.mu.cancel = cancel
+	return pool
 }
 
 func (p *AdvancedSessionPool) getInternal() (s *session, _ error) {
@@ -86,7 +87,7 @@ func (p *AdvancedSessionPool) getInternal() (s *session, _ error) {
 
 	sctx, err := p.factory()
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	defer func() {
@@ -242,7 +243,7 @@ func (p *AdvancedSessionPool) Close() {
 
 	p.mu.closed = true
 	close(p.pool)
-	p.cancel()
+	p.mu.cancel()
 	p.mu.Unlock()
 
 	for r := range p.pool {

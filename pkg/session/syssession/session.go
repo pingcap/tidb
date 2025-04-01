@@ -111,9 +111,9 @@ func (s *session) IsClosed() bool {
 func (s *session) TransferOwner(from, to sessionOwner) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	seq := s.seqInc()
+	seq := s.seqIncWithoutLock()
 	errMsgPrefix := fmt.Sprintf("TransferOwner error, opSeq: %d, ", seq)
-	if err := s.checkOwner(from, errMsgPrefix); err != nil {
+	if err := s.checkOwnerWithoutLock(from, errMsgPrefix); err != nil {
 		return err
 	}
 
@@ -125,7 +125,7 @@ func (s *session) TransferOwner(from, to sessionOwner) error {
 		return nil
 	}
 
-	if err := s.checkNotInuse(errMsgPrefix); err != nil {
+	if err := s.checkNotInuseWithoutLock(errMsgPrefix); err != nil {
 		return err
 	}
 
@@ -135,7 +135,7 @@ func (s *session) TransferOwner(from, to sessionOwner) error {
 		if s.owner != to {
 			// This means some error or panic occurs.
 			// We should close the session to avoid some unexpected behavior.
-			s.doClose(seq)
+			s.doCloseWithoutLock(seq)
 			return
 		}
 	}()
@@ -213,9 +213,9 @@ func (s *session) OwnerResetState(ctx context.Context, caller sessionOwner) erro
 func (s *session) EnterOperation(caller sessionOwner) (SessionContext, func(), error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	seqStart := s.seqInc()
-	if err := s.checkOwner(caller, "EnterOperation error: "); err != nil {
-		s.reportError(
+	seqStart := s.seqIncWithoutLock()
+	if err := s.checkOwnerWithoutLock(caller, "EnterOperation error: "); err != nil {
+		s.reportErrorWithoutLock(
 			err.Error(),
 			zap.Uint64("seqStart", seqStart),
 			zap.String("caller", objectStr(caller)),
@@ -229,9 +229,9 @@ func (s *session) EnterOperation(caller sessionOwner) (SessionContext, func(), e
 		r := recover()
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		seqEnd := s.seqInc()
+		seqEnd := s.seqIncWithoutLock()
 		if exit {
-			s.reportError(
+			s.reportErrorWithoutLock(
 				"EnterOperation error: multiple exits for the same operation",
 				zap.Uint64("seqStart", seqStart),
 				zap.Uint64("seqEnd", seqEnd),
@@ -243,7 +243,7 @@ func (s *session) EnterOperation(caller sessionOwner) (SessionContext, func(), e
 		exit = true
 		s.inuse--
 		if s.owner != caller {
-			s.reportError(
+			s.reportErrorWithoutLock(
 				"ExitOperation error: session owner transferred when executing operation",
 				zap.Uint64("seqStart", seqStart),
 				zap.Uint64("seqEnd", seqEnd),
@@ -275,7 +275,7 @@ func (s *session) OwnerClose(caller sessionOwner) {
 	defer s.mu.Unlock()
 	if caller != nil && caller == s.owner {
 		// only close the session when the caller is the owner
-		s.doClose(s.seqInc())
+		s.doCloseWithoutLock(s.seqIncWithoutLock())
 	}
 }
 
@@ -283,12 +283,12 @@ func (s *session) OwnerClose(caller sessionOwner) {
 func (s *session) Close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.doClose(s.seqInc())
+	s.doCloseWithoutLock(s.seqIncWithoutLock())
 }
 
-// doClose closes the session.
+// doCloseWithoutLock closes the session.
 // It should be called with the protection of the mutex.
-func (s *session) doClose(seq uint64) {
+func (s *session) doCloseWithoutLock(seq uint64) {
 	if s.owner == nil {
 		return
 	}
@@ -298,18 +298,16 @@ func (s *session) doClose(seq uint64) {
 		s.sctx.Close()
 	}()
 
-	if s.owner != nil {
-		if err := s.owner.onResignOwner(s.sctx); err != nil {
-			s.reportError(
-				"error occurs when resigning the owner",
-				zap.Uint64("seq", seq),
-				zap.Error(err),
-			)
-		}
+	if err := s.owner.onResignOwner(s.sctx); err != nil {
+		s.reportErrorWithoutLock(
+			"error occurs when resigning the owner",
+			zap.Uint64("seq", seq),
+			zap.Error(err),
+		)
 	}
 
 	if s.inuse > 0 {
-		s.reportError(
+		s.reportErrorWithoutLock(
 			"session owner is still in use when closing",
 			zap.Uint64("inuse", s.inuse),
 			zap.Uint64("seq", seq),
@@ -317,7 +315,7 @@ func (s *session) doClose(seq uint64) {
 	}
 }
 
-// checkNotInuse returns an error if the session is still in use.
+// checkNotInuseWithoutLock returns an error if the session is still in use.
 // It should be called with the protection of the mutex.
 func (s *session) checkNotInuseWithoutLock(errMsgPrefix string) error {
 	if s.inuse > 0 {
@@ -326,9 +324,9 @@ func (s *session) checkNotInuseWithoutLock(errMsgPrefix string) error {
 	return nil
 }
 
-// checkOwner returns an error if the session is closed or the caller is not the owner.
+// checkOwnerWithoutLock returns an error if the session is closed or the caller is not the owner.
 // It should be called with the protection of the mutex.
-func (s *session) checkOwner(caller sessionOwner, errMsgPrefix string) error {
+func (s *session) checkOwnerWithoutLock(caller sessionOwner, errMsgPrefix string) error {
 	var msg string
 	switch {
 	case s.owner == nil:
@@ -341,15 +339,15 @@ func (s *session) checkOwner(caller sessionOwner, errMsgPrefix string) error {
 	return errors.Errorf("%s%s, caller: %s, owner: %s", errMsgPrefix, msg, objectStr(caller), objectStr(s.owner))
 }
 
-// seqInc increases the sequence and returns the new one
-func (s *session) seqInc() uint64 {
+// seqIncWithoutLock increases the sequence and returns the new one
+func (s *session) seqIncWithoutLock() uint64 {
 	s.seq++
 	return s.seq
 }
 
-// reportError does not return an error to the caller, it logs some message and stack information instead.
+// reportErrorWithoutLock does not return an error to the caller, it logs some message and stack information instead.
 // However, it will panic in the test environment to make the test fail.
-func (s *session) reportError(msg string, fields ...zap.Field) {
+func (s *session) reportErrorWithoutLock(msg string, fields ...zap.Field) {
 	fields = append(fields,
 		zap.String("sctx", objectStr(s.sctx)),
 		zap.String("owner", objectStr(s.owner)),

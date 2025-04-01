@@ -38,7 +38,7 @@ func (s *Session) InternalSctxForTest() SessionContext {
 func (s *Session) ResetSctxForTest(fn func(SessionContext) SessionContext) error {
 	s.internal.mu.Lock()
 	defer s.internal.mu.Unlock()
-	if err := s.internal.checkOwner(s, "ResetSctxForTest"); err != nil {
+	if err := s.internal.checkOwnerWithoutLock(s, "ResetSctxForTest"); err != nil {
 		return err
 	}
 	s.internal.sctx = fn(s.internal.sctx)
