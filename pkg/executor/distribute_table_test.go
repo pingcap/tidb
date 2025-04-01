@@ -25,9 +25,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/stretchr/testify/require"
-
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	pdhttp "github.com/tikv/pd/client/http"
 )
 
