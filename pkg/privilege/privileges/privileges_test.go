@@ -1667,9 +1667,7 @@ func TestCreateTmpTablesPriv(t *testing.T) {
 	tk.MustExec(createStmt)
 	tk.MustExec(dropStmt)
 	tk.Session().Auth(&auth.UserIdentity{Username: "vcreate_tmp_all", Hostname: "localhost"}, nil, nil, nil)
-	// TODO: issue #29280 to be fixed.
-	//err = tk.ExecToErr(createStmt)
-	//require.EqualError(t, err, "[planner:1044]Access denied for user 'vcreate_tmp_all'@'%' to database 'test'")
+	tk.MustExec(createStmt)
 
 	tests := []struct {
 		sql     string
@@ -1744,11 +1742,10 @@ func TestCreateTmpTablesPriv(t *testing.T) {
 		{
 			sql: "show create table tmp",
 		},
-		// TODO: issue #29281 to be fixed.
-		//{
-		//	sql: "show create table t",
-		//	errcode: mysql.ErrTableaccessDenied,
-		//},
+		{
+			sql:     "show create table t",
+			errcode: mysql.ErrTableaccessDenied,
+		},
 		{
 			sql:     "drop sequence tmp",
 			errcode: mysql.ErrTableaccessDenied,
