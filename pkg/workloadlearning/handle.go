@@ -75,7 +75,7 @@ func NewWorkloadLearningHandle(pool util.DestroyableSessionPool) *Handle {
 func (handle *Handle) HandleTableReadCost(infoSchema infoschema.InfoSchema) {
 	// step1: abstract middle table cost metrics from every record in statement_summary
 	middleMetrics, startTime, endTime := handle.analyzeBasedOnStatementStats()
-	if len(middleMetrics) == 0 {
+	if middleMetrics == nil || len(middleMetrics) == 0 {
 		return
 	}
 	// step2: group by tablename, sum(table-scan-time), sum(table-mem-usage), sum(read-frequency)
@@ -112,12 +112,103 @@ func (*Handle) analyzeBasedOnStatementSummary() []*TableReadCostMetrics {
 	return nil
 }
 
-// TODO
-func (*Handle) analyzeBasedOnStatementStats() ([]*TableReadCostMetrics, time.Time, time.Time) {
-	// step1: get all record from statement_stats
-	// step2: abstract table cost metrics from each record
-	// TODO change the mock value
-	return nil, time.Now(), time.Now()
+// analyzeBasedOnStatementStats Analyze table cost metrics based on the
+func (handle *Handle) analyzeBasedOnStatementStats() ([]*TableReadCostMetrics, time.Time, time.Time) {
+	// Calculate time range for the last 7 days
+	endTime := time.Now()
+	startTime := endTime.AddDate(0, 0, -7)
+
+	// step1: create a new session, context for getting the records from ClusterTableTiDBStatementsStats/snapshot
+	se, err := handle.sysSessionPool.Get()
+	if err != nil {
+		logutil.BgLogger().Warn("get system session failed when saving table cost metrics", zap.Error(err))
+		return nil, startTime, startTime
+	}
+	defer func() {
+		if err == nil { // only recycle when no error
+			handle.sysSessionPool.Put(se)
+		} else {
+			// Note: Otherwise, the session will be leaked.
+			handle.sysSessionPool.Destroy(se)
+		}
+	}()
+	sctx := se.(sessionctx.Context)
+	exec := sctx.GetRestrictedSQLExecutor()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnWorkloadLearning)
+
+	// Get records from ClusterTableTiDBStatementsStats
+	// TODO: use constant for table name and field name/values
+	sql := `SELECT DIGEST, DIGEST_TEXT, PLAN, EXEC_COUNT
+	        FROM INFORMATION_SCHEMA.CLUSTER_TIDB_STATEMENTS_STATS
+	        WHERE LOWER(STMT_TYPE) = 'Select'
+	        AND SUMMARY_END_TIME >= '%?'`
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql, endTime.Format("2006-01-02 15:04:05"))
+	if err != nil {
+		logutil.ErrVerboseLogger().Warn("Failed to query CLUSTER_TIDB_STATEMENTS_STATS table",
+			zap.Time("end_time", endTime),
+			zap.Error(err))
+		return nil, startTime, startTime
+	}
+
+	// forbidden the cross db query by abstract table name from digest_text
+
+	// TODO: Execute the SQL and get results
+	// For now, let's define the structure we expect from parsing the plan
+	type PlanNode struct {
+		ID       string     `json:"id"`
+		EstCost  float64    `json:"estCost"`
+		TaskType string     `json:"task"`
+		Children []PlanNode `json:"children"`
+		Stats    PlanStats  `json:"stats"`
+	}
+
+	type PlanStats struct {
+		TableScan struct {
+			TimeProcessed float64 `json:"timeProcessed"`
+			MemoryUsage   float64 `json:"memoryUsage"`
+		} `json:"tableScan"`
+		TableName string `json:"tableName"`
+	}
+
+	// Process each record
+	metrics := make([]*TableReadCostMetrics, 0)
+
+	// For each row in the result:
+	// 1. Parse the PLAN field (JSON format)
+	// 2. Extract table scan information recursively
+	var processPlanNode func(node PlanNode) *TableReadCostMetrics
+	processPlanNode = func(node PlanNode) *TableReadCostMetrics {
+		if node.TaskType == "TableScan" {
+			return &TableReadCostMetrics{
+				TableName:     ast.NewCIStr(node.Stats.TableName),
+				TableScanTime: node.Stats.TableScan.TimeProcessed,
+				TableMemUsage: node.Stats.TableScan.MemoryUsage,
+				ReadFrequency: 1, // Will be multiplied by EXEC_COUNT later
+			}
+		}
+
+		// Recursively process child nodes
+		for _, child := range node.Children {
+			if metric := processPlanNode(child); metric != nil {
+				return metric
+			}
+		}
+		return nil
+	}
+
+	// TODO: For each row in the actual query results:
+	// planStr := row[0]                    // PLAN field
+	// execCount := row[2].(int64)         // EXEC_COUNT field
+	// var plan PlanNode
+	// if err := json.Unmarshal([]byte(planStr), &plan); err != nil {
+	//     continue
+	// }
+	// if metric := processPlanNode(plan); metric != nil {
+	//     metric.ReadFrequency *= execCount
+	//     metrics = append(metrics, metric)
+	// }
+
+	return metrics, startTime, endTime
 }
 
 // SaveTableReadCostMetrics table cost metrics, workload-based start and end time, version,
