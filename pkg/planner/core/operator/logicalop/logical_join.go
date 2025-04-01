@@ -37,6 +37,8 @@ import (
 	utilhint "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"maps"
+	"slices"
 )
 
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, SemiJoin, AntiJoin.
@@ -534,9 +536,7 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 			RowCount: leftProfile.RowCount,
 			ColNDVs:  make(map[int64]float64, selfSchema.Len()),
 		})
-		for id, c := range leftProfile.ColNDVs {
-			p.StatsInfo().ColNDVs[id] = c
-		}
+		maps.Copy(p.StatsInfo().ColNDVs, leftProfile.ColNDVs)
 		p.StatsInfo().ColNDVs[selfSchema.Columns[selfSchema.Len()-1].UniqueID] = 2.0
 		p.StatsInfo().GroupNDVs = p.getGroupNDVs(childStats)
 		return p.StatsInfo(), true, nil
@@ -1008,7 +1008,7 @@ func (p *LogicalJoin) ColumnSubstituteAll(schema *expression.Schema, exprs []exp
 		// we can push this filter to it.
 		if expression.ExprFromSchema(newCond, p.Children()[0].Schema()) {
 			p.LeftConditions = append(p.LeftConditions, newCond)
-			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
+			p.EqualConditions = slices.Delete(p.EqualConditions, i, i+1)
 			continue
 		}
 
@@ -1016,7 +1016,7 @@ func (p *LogicalJoin) ColumnSubstituteAll(schema *expression.Schema, exprs []exp
 		// child, we can push this filter to it.
 		if expression.ExprFromSchema(newCond, p.Children()[1].Schema()) {
 			p.RightConditions = append(p.RightConditions, newCond)
-			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
+			p.EqualConditions = slices.Delete(p.EqualConditions, i, i+1)
 			continue
 		}
 
@@ -1027,7 +1027,7 @@ func (p *LogicalJoin) ColumnSubstituteAll(schema *expression.Schema, exprs []exp
 		// we can not use it as join's equal condition.
 		if !(lhsIsCol && rhsIsCol) {
 			p.OtherConditions = append(p.OtherConditions, newCond)
-			p.EqualConditions = append(p.EqualConditions[:i], p.EqualConditions[i+1:]...)
+			p.EqualConditions = slices.Delete(p.EqualConditions, i, i+1)
 			continue
 		}
 
@@ -1561,7 +1561,7 @@ func (p *LogicalJoin) updateEQCond() {
 			}
 		}
 		if need2Remove {
-			p.OtherConditions = append(p.OtherConditions[:i], p.OtherConditions[i+1:]...)
+			p.OtherConditions = slices.Delete(p.OtherConditions, i, i+1)
 		}
 	}
 	// eg: explain select * from t1, t3 where t1.a+1 = t3.a;
@@ -1612,7 +1612,7 @@ func (p *LogicalJoin) updateEQCond() {
 	canBeNAAJ := (p.JoinType == AntiSemiJoin || p.JoinType == AntiLeftOuterSemiJoin) && len(p.EqualConditions) == 0
 	if canBeNAAJ && p.SCtx().GetSessionVars().OptimizerEnableNAAJ {
 		var otherCond expression.CNFExprs
-		for i := 0; i < len(p.OtherConditions); i++ {
+		for i := range p.OtherConditions {
 			eqCond, ok := p.OtherConditions[i].(*expression.ScalarFunction)
 			if ok && eqCond.FuncName.L == ast.EQ && expression.IsEQCondFromIn(eqCond) {
 				// here must be a EQCondFromIn.

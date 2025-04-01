@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"go.uber.org/zap"
+	"slices"
 )
 
 // GlobalWithoutColumnPos marks the index has no partition column.
@@ -912,7 +913,7 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 		for i, use := range usedValues {
 			if !use {
 				curr := i - skipped
-				p.IndexValues = append(p.IndexValues[:curr], p.IndexValues[curr+1:]...)
+				p.IndexValues = slices.Delete(p.IndexValues, curr, curr+1)
 				skipped++
 			}
 		}
@@ -926,8 +927,8 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 						partIdxs[i] != p.PartitionIdxs[0]) ||
 					!isInExplicitPartitions(pi, idx, p.PartitionNames) {
 					curr := i - skipped
-					handles = append(handles[:curr], handles[curr+1:]...)
-					p.IndexValues = append(p.IndexValues[:curr], p.IndexValues[curr+1:]...)
+					handles = slices.Delete(handles, curr, curr+1)
+					p.IndexValues = slices.Delete(p.IndexValues, curr, curr+1)
 					skipped++
 					continue
 				} else if !p.SinglePartition {
@@ -1546,17 +1547,13 @@ func indexIsAvailableByHints(idxInfo *model.IndexInfo, idxHints []*ast.IndexHint
 		}
 		if hint.HintType == ast.HintIgnore && hint.IndexNames != nil {
 			isIgnore = true
-			for _, name := range hint.IndexNames {
-				if match(name) {
-					return false
-				}
+			if slices.ContainsFunc(hint.IndexNames, match) {
+				return false
 			}
 		}
 		if (hint.HintType == ast.HintForce || hint.HintType == ast.HintUse) && hint.IndexNames != nil {
-			for _, name := range hint.IndexNames {
-				if match(name) {
-					return true
-				}
+			if slices.ContainsFunc(hint.IndexNames, match) {
+				return true
 			}
 		}
 	}
@@ -1966,12 +1963,7 @@ func isExprHasSubQuery(expr ast.Node) bool {
 }
 
 func checkIfAssignmentListHasSubQuery(list []*ast.Assignment) bool {
-	for _, a := range list {
-		if isExprHasSubQuery(a) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(list, isExprHasSubQuery)
 }
 
 func tryUpdatePointPlan(ctx base.PlanContext, updateStmt *ast.UpdateStmt, resolveCtx *resolve.Context) base.Plan {

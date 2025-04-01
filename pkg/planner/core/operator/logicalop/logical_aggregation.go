@@ -34,6 +34,7 @@ import (
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"slices"
 )
 
 // LogicalAggregation represents an aggregate plan.
@@ -127,8 +128,8 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 		if !used[i] && !expression.ExprsHasSideEffects(la.AggFuncs[i].Args) {
 			prunedColumns = append(prunedColumns, la.Schema().Columns[i])
 			prunedFunctions = append(prunedFunctions, la.AggFuncs[i])
-			la.Schema().Columns = append(la.Schema().Columns[:i], la.Schema().Columns[i+1:]...)
-			la.AggFuncs = append(la.AggFuncs[:i], la.AggFuncs[i+1:]...)
+			la.Schema().Columns = slices.Delete(la.Schema().Columns, i, i+1)
+			la.AggFuncs = slices.Delete(la.AggFuncs, i, i+1)
 		} else if la.AggFuncs[i].Name != ast.AggFuncFirstRow {
 			allRemainFirstRow = false
 		}
@@ -171,7 +172,7 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 			cols := expression.ExtractColumns(la.GroupByItems[i])
 			if len(cols) == 0 && !expression.ExprHasSetVarOrSleep(la.GroupByItems[i]) {
 				prunedGroupByItems = append(prunedGroupByItems, la.GroupByItems[i])
-				la.GroupByItems = append(la.GroupByItems[:i], la.GroupByItems[i+1:]...)
+				la.GroupByItems = slices.Delete(la.GroupByItems, i, i+1)
 			} else {
 				selfUsedCols = append(selfUsedCols, cols...)
 			}

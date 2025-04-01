@@ -244,13 +244,7 @@ func getNewJoinKeysByOffsets(oldJoinKeys []*expression.Column, offsets []int) []
 		newKeys = append(newKeys, oldJoinKeys[offset])
 	}
 	for pos, key := range oldJoinKeys {
-		isExist := false
-		for _, p := range offsets {
-			if p == pos {
-				isExist = true
-				break
-			}
-		}
+		isExist := slices.Contains(offsets, pos)
 		if !isExist {
 			newKeys = append(newKeys, key)
 		}
@@ -264,13 +258,7 @@ func getNewNullEQByOffsets(oldNullEQ []bool, offsets []int) []bool {
 		newNullEQ = append(newNullEQ, oldNullEQ[offset])
 	}
 	for pos, key := range oldNullEQ {
-		isExist := false
-		for _, p := range offsets {
-			if p == pos {
-				isExist = true
-				break
-			}
-		}
+		isExist := slices.Contains(offsets, pos)
 		if !isExist {
 			newNullEQ = append(newNullEQ, key)
 		}
@@ -293,7 +281,7 @@ func getEnforcedMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalPrope
 	evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
 	for _, item := range prop.SortItems {
 		isExist, hasLeftColInProp, hasRightColInProp := false, false, false
-		for joinKeyPos := 0; joinKeyPos < len(leftJoinKeys); joinKeyPos++ {
+		for joinKeyPos := range leftJoinKeys {
 			var key *expression.Column
 			if item.Col.Equal(evalCtx, leftJoinKeys[joinKeyPos]) {
 				key = leftJoinKeys[joinKeyPos]
@@ -306,7 +294,7 @@ func getEnforcedMergeJoin(p *logicalop.LogicalJoin, prop *property.PhysicalPrope
 			if key == nil {
 				continue
 			}
-			for i := 0; i < len(offsets); i++ {
+			for i := range offsets {
 				if offsets[i] == joinKeyPos {
 					isExist = true
 					break
@@ -602,7 +590,7 @@ func constructIndexJoin(
 						outerHashKeys = append(outerHashKeys, rhs) // nozero
 						innerHashKeys = append(innerHashKeys, lhs) // nozero
 					}
-					newOtherConds = append(newOtherConds[:i], newOtherConds[i+1:]...)
+					newOtherConds = slices.Delete(newOtherConds, i, i+1)
 				}
 			}
 		default:
@@ -1539,7 +1527,7 @@ func filterIndexJoinBySessionVars(sc base.PlanContext, indexJoins []base.Physica
 	}
 	for i := len(indexJoins) - 1; i >= 0; i-- {
 		if _, ok := indexJoins[i].(*PhysicalIndexMergeJoin); ok {
-			indexJoins = append(indexJoins[:i], indexJoins[i+1:]...)
+			indexJoins = slices.Delete(indexJoins, i, i+1)
 		}
 	}
 	return indexJoins
@@ -3198,7 +3186,7 @@ func exhaustPhysicalPlans4LogicalSequence(lp base.LogicalPlan, prop *property.Ph
 	seqs := make([]base.PhysicalPlan, 0, 2)
 	for _, propChoice := range possibleChildrenProps {
 		childReqs := make([]*property.PhysicalProperty, 0, p.ChildLen())
-		for i := 0; i < p.ChildLen()-1; i++ {
+		for range p.ChildLen() - 1 {
 			childReqs = append(childReqs, propChoice[0].CloneEssentialFields())
 		}
 		childReqs = append(childReqs, propChoice[1])

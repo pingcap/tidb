@@ -60,7 +60,7 @@ func genPlanCloneForPlanCache(x any) ([]byte, error) {
 	c.write("func (op *%v) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {", vType.Name())
 	c.write("cloned := new(%v)", vType.Name())
 	c.write("*cloned = *op")
-	for i := 0; i < vType.NumField(); i++ {
+	for i := range vType.NumField() {
 		f := vType.Field(i)
 		if allowShallowClone(f) {
 			continue

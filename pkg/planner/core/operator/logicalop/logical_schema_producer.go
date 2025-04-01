@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
 	"github.com/pingcap/tidb/pkg/types"
+	"slices"
 )
 
 var _ base.HashEquals = &LogicalSchemaProducer{}
@@ -140,7 +141,7 @@ func (s *LogicalSchemaProducer) InlineProjection(parentUsedCols []*expression.Co
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			prunedColumns = append(prunedColumns, s.Schema().Columns[i])
-			s.schema.Columns = append(s.Schema().Columns[:i], s.Schema().Columns[i+1:]...)
+			s.schema.Columns = slices.Delete(s.Schema().Columns, i, i+1)
 		}
 	}
 	logicaltrace.AppendColumnPruneTraceStep(s.Self(), prunedColumns, opt)
