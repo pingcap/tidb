@@ -27,6 +27,13 @@ func NewSessionForTest(sctx SessionContext) (*Session, error) {
 	return se, err
 }
 
+// InternalSctxForTest returns the internal session context for test
+func (s *Session) InternalSctxForTest() SessionContext {
+	s.internal.mu.Lock()
+	defer s.internal.mu.Unlock()
+	return s.internal.sctx
+}
+
 // ResetSctxForTest is only used for testing to mock some methods of internal context
 func (s *Session) ResetSctxForTest(fn func(SessionContext) SessionContext) error {
 	s.internal.mu.Lock()
