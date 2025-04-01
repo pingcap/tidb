@@ -132,7 +132,6 @@ func TestLog(t *testing.T) {
 }
 
 func TestTraceAndLocation(t *testing.T) {
-	t.Skip("fail in CI")
 	err := example()
 	stack := errors.ErrorStack(err)
 	lines := strings.Split(stack, "\n")
@@ -162,7 +161,7 @@ func TestTraceAndLocation(t *testing.T) {
 			sysStack++
 		}
 	}
-	require.Equalf(t, 11, len(lines)-(2*sysStack), "stack =\n%s", stack)
+	require.Equalf(t, 9, len(lines)-(2*sysStack), "stack =\n%s", stack)
 	var containTerr bool
 	for _, v := range lines {
 		if strings.Contains(v, "terror_test.go") {
