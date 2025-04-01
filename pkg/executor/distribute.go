@@ -40,7 +40,6 @@ type DistributeTableExec struct {
 	partitionNames []ast.CIStr
 	rule           ast.CIStr
 	engine         ast.CIStr
-	jobID          uint64
 
 	done      bool
 	keyRanges []*pdhttp.KeyRange
