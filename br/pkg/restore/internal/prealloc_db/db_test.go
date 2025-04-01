@@ -288,10 +288,6 @@ func TestPolicyMode(t *testing.T) {
 	require.True(t, supportPolicy)
 	defer db.Close()
 
-	// Initialize sequence allocator
-	tk.MustExec("create sequence test.seq start with 1 increment by 1;")
-	tk.MustExec("drop sequence test.seq;")
-
 	// Prepare the tables
 	oriTableInfos := prepareAllocTables(ctx, t, db, s.Mock.Domain)
 	tableInfos := cloneTableInfos(ctx, t, db, s.Mock.Domain, "tt", oriTableInfos)
