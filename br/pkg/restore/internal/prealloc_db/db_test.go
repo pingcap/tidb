@@ -661,7 +661,7 @@ func TestCreateTableConsistent(t *testing.T) {
 	newSeqInfo = seqInfo.Clone()
 	newSeqInfo.ID += 100
 	newTable := &metautil.Table{DB: dbInfo.Clone(), Info: newSeqInfo}
-	preallocId(newTables)
+	preallocId([]*metautil.Table{newTable})
 	err = db.CreateTable(ctx, newTable, nil, false, nil)
 	require.NoError(t, err)
 	r21 := tk.MustQuery("select nextval(s)").Rows()
@@ -705,11 +705,13 @@ func TestCreateTableConsistent(t *testing.T) {
 	newTblInfo = tblInfo.Clone()
 	newTblInfo.ID += 200
 	newTable = &metautil.Table{DB: dbInfo.Clone(), Info: newTblInfo}
+	preallocId([]*metautil.Table{newTable})
 	err = db.CreateTable(ctx, newTable, nil, false, nil)
 	require.NoError(t, err)
 	newViewInfo = viewInfo.Clone()
 	newViewInfo.ID += 200
 	newTable = &metautil.Table{DB: dbInfo.Clone(), Info: newViewInfo}
+	preallocId([]*metautil.Table{newTable})
 	err = db.CreateTable(ctx, newTable, nil, false, nil)
 	require.NoError(t, err)
 
