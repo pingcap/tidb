@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/tests/realtikvtest/addindextestutil"
+	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/tikv/client-go/v2/util"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -66,8 +66,8 @@ func (s *mockGCSSuite) testConflictResolutionWithColumnVarsAndOptions(tblSQL str
 		})
 	}
 	s.T().Cleanup(func() {
-		addindextestutil.RemoveAllObjects(s.T(), s.server, "conflicts")
-		addindextestutil.RemoveAllObjects(s.T(), s.server, "sorted")
+		testutils.RemoveAllObjects(s.T(), s.server, "conflicts")
+		testutils.RemoveAllObjects(s.T(), s.server, "sorted")
 	})
 
 	s.prepareAndUseDB("conflicts")

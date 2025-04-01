@@ -1,14 +1,14 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
-    name = "addindextestutil",
+    name = "testutils",
     srcs = [
         "common.go",
         "compatibility.go",
         "global_sort.go",
         "workload.go",
     ],
-    importpath = "github.com/pingcap/tidb/tests/realtikvtest/addindextestutil",
+    importpath = "github.com/pingcap/tidb/tests/realtikvtest/testutils",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/kv",
