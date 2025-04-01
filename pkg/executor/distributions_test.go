@@ -84,10 +84,8 @@ func TestShowTableDistributions(t *testing.T) {
 		")")
 	mockGetDistributions("tp1", "p0", distributions)
 	mockGetDistributions("tp1", "p1", distributions)
-	ret = tk.MustQuery("show table tp1 partition(p0) distributions").Rows()
-	re.Len(ret, 1)
-	re.Len(ret[0], 13)
-	ret = tk.MustQuery("show table tp1 partition(p0,p1) distributions").Rows()
-	re.Len(ret, 2)
-	re.Len(ret[1], 13)
+	tk.MustQuery("show table tp1 partition(p0) distributions").Check(testkit.Rows("1 tikv 1 3 100 10 1 " +
+		"1000 100 10 1000 10000 100"))
+	tk.MustQuery("show table tp1 partition(p0,p1) distributions").Check(testkit.Rows("1 tikv 1 3 100 10 1 "+
+		"1000 100 10 1000 10000 100", "1 tikv 1 3 100 10 1 1000 100 10 1000 10000 100"))
 }
