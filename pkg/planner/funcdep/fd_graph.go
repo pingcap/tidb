@@ -135,8 +135,8 @@ func (s *FDSet) closureOfLax(colSet intset.FastIntSet) intset.FastIntSet {
 	return laxOneStepReached
 }
 
-// closureOfEquivalence is to find strict equivalence closure of X with respect to F.
-func (s *FDSet) closureOfEquivalence(colSet intset.FastIntSet) intset.FastIntSet {
+// ClosureOfEquivalence is to find strict equivalence closure of X with respect to F.
+func (s *FDSet) ClosureOfEquivalence(colSet intset.FastIntSet) intset.FastIntSet {
 	resultSet := intset.NewFastIntSet()
 	// self included.
 	resultSet.UnionWith(colSet)
@@ -345,7 +345,7 @@ func (e *fdEdge) implies(otherEdge *fdEdge) bool {
 func (s *FDSet) addEquivalence(eqs intset.FastIntSet) {
 	var addConst bool
 	// get equivalence closure.
-	eqClosure := s.closureOfEquivalence(eqs)
+	eqClosure := s.ClosureOfEquivalence(eqs)
 	s.fdEdges = append(s.fdEdges, &fdEdge{from: eqClosure.Copy(), to: eqClosure.Copy(), strict: true, equiv: true})
 
 	for i := 0; i < len(s.fdEdges)-1; i++ {
@@ -534,7 +534,7 @@ func (s *FDSet) EquivalenceCols() (eqs []*intset.FastIntSet) {
 // which can upgrade lax FDs to strict ones.
 func (s *FDSet) MakeNotNull(notNullCols intset.FastIntSet) {
 	notNullCols.UnionWith(s.NotNullCols)
-	notNullColsSet := s.closureOfEquivalence(notNullCols)
+	notNullColsSet := s.ClosureOfEquivalence(notNullCols)
 	// make nc FD visible.
 	for i := 0; i < len(s.ncEdges); i++ {
 		fd := s.ncEdges[i]
@@ -546,7 +546,7 @@ func (s *FDSet) MakeNotNull(notNullCols intset.FastIntSet) {
 				s.AddConstants(fd.to)
 			} else if fd.equiv {
 				s.AddEquivalence(fd.from, fd.to)
-				newNotNullColsSet := s.closureOfEquivalence(notNullColsSet)
+				newNotNullColsSet := s.ClosureOfEquivalence(notNullColsSet)
 				if !newNotNullColsSet.Difference(notNullColsSet).IsEmpty() {
 					notNullColsSet = newNotNullColsSet
 					// expand not-null set.
@@ -1166,7 +1166,7 @@ func (s *FDSet) makeEquivMap(detCols, projectedCols intset.FastIntSet) map[int]i
 	for i, ok := detCols.Next(0); ok; i, ok = detCols.Next(i + 1) {
 		var oneCol intset.FastIntSet
 		oneCol.Insert(i)
-		closure := s.closureOfEquivalence(oneCol)
+		closure := s.ClosureOfEquivalence(oneCol)
 		closure.IntersectionWith(projectedCols)
 		// the column to be deleted has an equivalence column exactly in the project list.
 		if !closure.IsEmpty() {

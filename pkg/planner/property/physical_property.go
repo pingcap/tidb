@@ -22,8 +22,10 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
+	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -313,6 +315,59 @@ func (p *PhysicalProperty) IsSubsetOf(keys []*MPPPartitionColumn) []int {
 		}
 	}
 	return matches
+}
+
+// NeedMPPExchangeByEquivalence checks if the keys can match the needs of partition with equivalence.
+// "Equivalence" refers to the process where we utilize a hash column to obtain equivalent columns,
+// and then use these equivalent columns to compare with the MPP partition column to determine whether an exchange is
+// necessary.
+//
+// for example:
+//  1. requiredPartitionColumn: [18，13，16]
+//  2. currentPartitionColumn: 9
+//  3. FD: (1)-->(2-6,8), ()-->(7), (9)-->(10-17), (1,10)==(1,10), (18,21)-->(19,20,22-33), (9,18)==(9,18)
+//     In this case, we can see that the child supplied partition keys is subset of parent required partition cols.
+func (p *PhysicalProperty) NeedMPPExchangeByEquivalence(
+	currentPartitionColumn []*MPPPartitionColumn, fd *funcdep.FDSet) bool {
+	requiredPartitionCols := p.MPPPartitionCols
+	uniqueID2requiredPartitionCols := make(map[*MPPPartitionColumn]intset.FastIntSet, len(requiredPartitionCols))
+	// for each partition column, we calculate the equivalence alternative closure of it.
+	for _, pCol := range requiredPartitionCols {
+		uniqueID2requiredPartitionCols[pCol] = fd.ClosureOfEquivalence(intset.NewFastIntSet(int(pCol.Col.UniqueID)))
+	}
+
+	// there is a subset theorem here, if the child supplied keys is a subset of parent required mpp partition cols,
+	// the mpp partition exchanger can also be eliminated.
+SubsetLoop:
+	for _, key := range currentPartitionColumn {
+		for pCol, equivSet := range uniqueID2requiredPartitionCols {
+			if checkEquivalence(equivSet, key, pCol) {
+				// yes, child can supply the same col partition prop. continue to next child supplied key.
+				continue SubsetLoop
+			}
+		}
+		// once a child supplied keys can't find direct/in-direct equiv all parent required partition cols,
+		// we can break the subset check.
+		//
+		// it's subset case, we don't need to add exchanger.
+		// once there is a column outside the parent required partition cols, we need to add exchanger.
+		// we build a  case like:
+		// parent prop require: partition cols:   1, 2, 3
+		// the child can supply: partition cols:  1, 4, 5
+		// fd: {2,3,4} = {2,3,4}
+		// column 5 will mixture the data distribute, even if parent required columns are all satisfied by child.
+		return true
+	}
+
+	return false
+}
+
+func checkEquivalence(equivSet intset.FastIntSet, key, pCol *MPPPartitionColumn) bool {
+	// if the equiv set contain the key, it means it can supply the same col partition prop directly or in-indirectly.
+	// according to the old logic, when the child can supply the same key partition, we should check its collate-id
+	// when the new collation is enabled suggested by the collateID is negative. Or new collation is not set.
+	return equivSet.Has(int(key.Col.UniqueID)) &&
+		((key.CollateID < 0 && pCol.CollateID == key.CollateID) || key.CollateID >= 0)
 }
 
 // AllColsFromSchema checks whether all the columns needed by this physical
