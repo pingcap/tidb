@@ -371,9 +371,11 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 	}
 	handleColumns := strings.Join(pkCols, ",")
 
+	useMVIndex := idxInfo.MVIndex
+
 	var generatedExpr string
 	indexColNames := make([]string, len(idxInfo.Columns))
-	if idxInfo.MVIndex {
+	if useMVIndex {
 		tblCol := tblMeta.Columns[idxInfo.Columns[0].Offset]
 		// We use a unique name as the column name
 		indexColNames[0] = "_mv_index_from_subquery"
@@ -417,11 +419,14 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		return
 	}
 
-	fromForTable := tblName
-	fromForIndex := tblName
-	if idxInfo.MVIndex {
-		fromForTable = fmt.Sprintf("(select %s, SUM(%s) as %s from %s group by %s)", handleColumns, generatedExpr, indexColNames[0], tblName, handleColumns)
-		fromForIndex = fmt.Sprintf("(select %s, SUM(%s) as %s from %s group by %s)", handleColumns, generatedExpr, indexColNames[0], tblName, handleColumns)
+	fromForTable := fmt.Sprintf("%s use index()", tblName)
+	fromForIndex := fmt.Sprintf("%s use index(`%s`)", tblName, idxInfo.Name)
+	if useMVIndex {
+		generatedExpr = strings.Trim(generatedExpr, "cast")
+		fromForTable = fmt.Sprintf("(select %s, SUM(JSON_SUM%s) as %s from %s use index() group by %s) tmp",
+			handleColumns, generatedExpr, indexColNames[0], tblName, handleColumns)
+		fromForIndex = fmt.Sprintf("(select %s, SUM(CRC32(CAST%s)) as %s from %s use index(`%s`) group by %s) tmp",
+			handleColumns, generatedExpr, indexColNames[0], tblName, idxInfo.Name, handleColumns)
 	}
 
 	times := 0
@@ -440,11 +445,11 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		checkOnce = true
 
 		tblQuery := fmt.Sprintf(
-			"select /*+ read_from_storage(tikv[%s]) */ bit_xor(%s), %s, count(*) from %s use index() where %s = 0 group by %s",
+			"select /*+ read_from_storage(tikv[%s]) */ bit_xor(%s), %s, count(*) from %s where %s = 0 group by %s",
 			tblName, md5HandleAndIndexCol, groupByKey, fromForTable, whereKey, groupByKey)
 		idxQuery := fmt.Sprintf(
-			"select bit_xor(%s), %s, count(*) from %s use index(`%s`) where %s = 0 group by %s",
-			md5HandleAndIndexCol, groupByKey, fromForIndex, idxInfo.Name, whereKey, groupByKey)
+			"select bit_xor(%s), %s, count(*) from %s where %s = 0 group by %s",
+			md5HandleAndIndexCol, groupByKey, fromForIndex, whereKey, groupByKey)
 
 		logutil.BgLogger().Info(
 			"fast check table by group",
