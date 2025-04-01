@@ -938,7 +938,7 @@ func buildDataSource2TableScanByIndexJoinProp(
 	if tblPath == nil {
 		return base.InvalidTask
 	}
-	keyOff2IdxOff := make([]int, len(prop.IndexJoinProp.InnerJoinKeys))
+	var keyOff2IdxOff []int
 	var ranges ranger.MutableRanges = ranger.Ranges{}
 	var innerTask base.Task
 	var indexJoinResult *indexJoinPathResult
