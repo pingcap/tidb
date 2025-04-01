@@ -99,15 +99,27 @@ func TestTableModeBasic(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(id int, c1 int, c2 int, index idx1(c1))")
 	tk.MustExec("create table t2(id int, c1 int, c2 int, index idx1(c1))")
-	// get cloned table info for creating new table t1_restore_import
-	tblInfo := getClonedTableInfoFromDomain(t, "test", "t1", domain)
+	tk.MustExec("create table t3(id int, pid INT, INDEX idx_pid (pid),FOREIGN KEY fk_1 (pid) REFERENCES t1(c1) ON UPDATE SET NULL)")
 
-	// For testing create table as ModeRestore
-	tblInfo.Name = ast.NewCIStr("t1_restore_import")
-	tblInfo.Mode = model.TableModeRestore
+	// For testing create foreign key table as ModeImport
+	tblInfo := getClonedTableInfoFromDomain(t, "test", "t3", domain)
+	tblInfo.Name = ast.NewCIStr("t1_foreign_key")
+	tblInfo.Mode = model.TableModeImport
 	err := de.CreateTableWithInfo(tk.Session(), ast.NewCIStr("test"), tblInfo, nil, ddl.WithOnExist(ddl.OnExistIgnore))
 	require.NoError(t, err)
 	dbInfo, ok := domain.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+	require.True(t, ok)
+	checkTableModeTest(t, store, dbInfo, tblInfo, model.TableModeImport)
+	// not allow delete foreign key constraint
+	tk.MustGetErrCode("ALTER TABLE t1_foreign_key DROP FOREIGN KEY fk_1", errno.ErrProtectedTableMode)
+
+	// For testing create table as ModeRestore
+	tblInfo = getClonedTableInfoFromDomain(t, "test", "t1", domain)
+	tblInfo.Name = ast.NewCIStr("t1_restore_import")
+	tblInfo.Mode = model.TableModeRestore
+	err = de.CreateTableWithInfo(tk.Session(), ast.NewCIStr("test"), tblInfo, nil, ddl.WithOnExist(ddl.OnExistIgnore))
+	require.NoError(t, err)
+	dbInfo, ok = domain.InfoSchema().SchemaByName(ast.NewCIStr("test"))
 	require.True(t, ok)
 	checkTableModeTest(t, store, dbInfo, tblInfo, model.TableModeRestore)
 
@@ -121,6 +133,8 @@ func TestTableModeBasic(t *testing.T) {
 	tk.MustExec("describe t1_restore_import")
 	tk.MustExec("create table t1_restore_import_2 like t1_restore_import")
 	tk.MustExec("create view t1_restore_import_view as select * from t1_restore_import")
+	tk.MustExec("create table foreign_key_child(id int, pid INT, INDEX idx_pid (pid),FOREIGN KEY (pid) REFERENCES t1_restore_import(c1) ON DELETE CASCADE)")
+	tk.MustExec("drop table foreign_key_child")
 
 	// For testing below stmt is not allowed when table is in ModeImport/ModeRestore
 	// DMLs
@@ -147,6 +161,7 @@ func TestTableModeBasic(t *testing.T) {
 	tk.MustGetErrCode("alter table t1_restore_import convert to character set utf8mb4", errno.ErrProtectedTableMode)
 	tk.MustGetErrCode("alter table t1_restore_import rename column c1 to c1_new", errno.ErrProtectedTableMode)
 	tk.MustGetErrCode("alter table t1_restore_import alter column c1 set default 100", errno.ErrProtectedTableMode)
+	tk.MustGetErrCode("alter table t1_restore_import add foreign key fk_1 (c2) REFERENCES t1(c1) ON UPDATE SET NULL ", errno.ErrProtectedTableMode)
 	// Transaction related operations
 	tk.MustExec("begin")
 	tk.MustGetErrCode("insert into t1_restore_import values(1,1,1)", errno.ErrProtectedTableMode)
