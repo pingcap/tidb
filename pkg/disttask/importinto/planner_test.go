@@ -125,6 +125,14 @@ func TestToPhysicalPlan(t *testing.T) {
 	bs, err = json.Marshal(subtaskMeta2)
 	require.NoError(t, err)
 	require.Equal(t, [][]byte{bs}, subtaskMetas2)
+
+	planCtx = planner.PlanCtx{
+		NextTaskStep: proto.ImportStepImport,
+		GlobalSort:   true,
+	}
+	_, err = logicalPlan.ToPhysicalPlan(planCtx)
+	// error when build controller plan
+	require.ErrorContains(t, err, "table tb can't be in none state")
 }
 
 func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
