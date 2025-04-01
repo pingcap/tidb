@@ -953,11 +953,7 @@ func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e exec.
 	}()
 
 	isFirstAttempt := true
-	txn, _ := a.Ctx.Txn(false)
 	for {
-		if txn != nil && !txn.IsReadOnly() {
-			a.Ctx.GetSessionVars().StmtCtx.MemBufferSnapshot = txn.GetMemBuffer().GetSnapshot()
-		}
 		startTime := time.Now()
 		rs, err := a.runPessimisticSelectForUpdate(ctx, e)
 
@@ -1087,15 +1083,6 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 		if !isFirstAttempt {
 			failpoint.Inject("pessimisticDMLRetry", nil)
 		}
-		if !isFirstAttempt {
-			if !txn.IsReadOnly() {
-				a.Ctx.GetSessionVars().StmtCtx.MemBufferSnapshot = txn.GetMemBuffer().GetSnapshot()
-			} else {
-				// If the transaction is read-only, we need to set the snapshot to nil.
-				// This is because the snapshot may be used by the next statement.
-				a.Ctx.GetSessionVars().StmtCtx.MemBufferSnapshot = nil
-			}
-		}
 
 		startTime := time.Now()
 		_, err = a.handleNoDelayExecutor(ctx, e)
@@ -1196,6 +1183,8 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	a.retryCount++
 	a.retryStartTime = time.Now()
 
+	// Rollback the statement change before retry it.
+	a.Ctx.StmtRollback(ctx, true)
 	err = txnManager.OnStmtRetry(ctx)
 	if err != nil {
 		return nil, err
@@ -1216,8 +1205,6 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	if err != nil {
 		return nil, err
 	}
-	// Rollback the statement change before retry it.
-	a.Ctx.StmtRollback(ctx, true)
 	a.Ctx.GetSessionVars().StmtCtx.ResetForRetry()
 	a.Ctx.GetSessionVars().RetryInfo.ResetOffset()
 

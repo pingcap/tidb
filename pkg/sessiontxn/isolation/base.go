@@ -236,6 +236,9 @@ func (p *baseTxnContextProvider) OnPessimisticStmtEnd(_ context.Context, _ bool)
 func (p *baseTxnContextProvider) OnStmtRetry(ctx context.Context) error {
 	p.ctx = ctx
 	p.sctx.GetSessionVars().TxnCtx.CurrentStmtPessimisticLockCache = nil
+	if p.txn != nil && !p.txn.IsReadOnly() {
+		p.sctx.GetSessionVars().StmtCtx.MemBufferSnapshot = p.txn.GetMemBuffer().GetSnapshot()
+	}
 	return nil
 }
 
