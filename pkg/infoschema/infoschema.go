@@ -315,17 +315,22 @@ func (is *infoSchema) TableByID(_ stdctx.Context, id int64) (val table.Table, ok
 	return slice[idx], true
 }
 
+<<<<<<< HEAD
 func (is *infoSchema) SchemaNameByTableID(tableID int64) (schemaName pmodel.CIStr, ok bool) {
 	tbl, ok := is.TableByID(stdctx.Background(), tableID)
+=======
+// TableItemByID implements InfoSchema.TableItemByID.
+func (is *infoSchema) TableItemByID(id int64) (TableItem, bool) {
+	tbl, ok := is.TableByID(stdctx.Background(), id)
+>>>>>>> 513bfebd877 (stats, infoschema: avoid some network cost of reading table meta kv (#59105))
 	if !ok {
-		return
+		return TableItem{}, false
 	}
 	db, ok := is.SchemaByID(tbl.Meta().DBID)
 	if !ok {
-		return
+		return TableItem{}, false
 	}
-
-	return db.Name, true
+	return TableItem{DBName: db.Name, TableName: tbl.Meta().Name}, true
 }
 
 // TableInfoByID implements InfoSchema.TableInfoByID
@@ -410,6 +415,23 @@ func (is *infoSchema) AllSchemaNames() (schemas []pmodel.CIStr) {
 		rs = append(rs, v.dbInfo.Name)
 	}
 	return rs
+}
+
+func (is *infoSchema) TableItemByPartitionID(partitionID int64) (TableItem, bool) {
+	tbl, db, _ := is.FindTableByPartitionID(partitionID)
+	if tbl == nil {
+		return TableItem{}, false
+	}
+	return TableItem{DBName: db.Name, TableName: tbl.Meta().Name}, true
+}
+
+// TableIDByPartitionID implements InfoSchema.TableIDByPartitionID.
+func (is *infoSchema) TableIDByPartitionID(partitionID int64) (tableID int64, ok bool) {
+	tbl, _, _ := is.FindTableByPartitionID(partitionID)
+	if tbl == nil {
+		return
+	}
+	return tbl.Meta().ID, true
 }
 
 // FindTableByPartitionID finds the partition-table info by the partitionID.
