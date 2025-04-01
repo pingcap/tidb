@@ -673,6 +673,8 @@ func (a *ExecStmt) handleStmtForeignKeyTrigger(ctx context.Context, e exec.Execu
 		txn, _ := a.Ctx.Txn(false)
 		if txn != nil && !txn.IsReadOnly() {
 			a.Ctx.GetSessionVars().StmtCtx.MemBufferSnapshot = txn.GetMemBuffer().GetSnapshot()
+		} else {
+			a.Ctx.GetSessionVars().StmtCtx.MemBufferSnapshot = nil
 		}
 	}
 	err := a.handleForeignKeyTrigger(ctx, e, 1)
@@ -774,6 +776,8 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 		txn, _ := a.Ctx.Txn(false)
 		if txn != nil && !txn.IsReadOnly() {
 			a.Ctx.GetSessionVars().StmtCtx.MemBufferSnapshot = txn.GetMemBuffer().GetSnapshot()
+		} else {
+			a.Ctx.GetSessionVars().StmtCtx.MemBufferSnapshot = nil
 		}
 
 		err = a.handleForeignKeyTrigger(ctx, e, depth+1)
