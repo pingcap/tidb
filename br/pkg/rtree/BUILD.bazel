@@ -32,7 +32,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 5,
+    shard_count = 6,
     deps = [
         ":rtree",
         "//pkg/kv",
