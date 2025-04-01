@@ -65,7 +65,7 @@ func (aa *autoAdmin) recordCandidates(currentCandidates s.Set[Index]) {
 }
 
 func (aa *autoAdmin) calculateBestIndexes(querySet s.Set[Query],
-	indexableColSet s.Set[Column]) (s.Set[Index], s.Set[Index], error) {
+	indexableColSet s.Set[Column]) (currentBestIndexes, allCandidates s.Set[Index], err error) {
 	if aa.option.MaxNumIndexes == 0 {
 		return nil, nil, nil
 	}
@@ -78,7 +78,7 @@ func (aa *autoAdmin) calculateBestIndexes(querySet s.Set[Query],
 		return nil, nil, err
 	}
 
-	currentBestIndexes := s.NewSet[Index]()
+	currentBestIndexes = s.NewSet[Index]()
 	for currentMaxIndexWidth := 1; currentMaxIndexWidth <= aa.option.MaxIndexWidth; currentMaxIndexWidth++ {
 		aa.recordCandidates(potentialIndexes)
 		candidates, err := aa.selectIndexCandidates(querySet, potentialIndexes)
@@ -103,7 +103,7 @@ func (aa *autoAdmin) calculateBestIndexes(querySet s.Set[Query],
 		}
 	}
 
-	currentBestIndexes, err := aa.heuristicMergeIndexes(currentBestIndexes, querySet)
+	currentBestIndexes, err = aa.heuristicMergeIndexes(currentBestIndexes, querySet)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -148,7 +148,7 @@ func (aa *autoAdmin) calculateBestIndexes(querySet s.Set[Query],
 		}
 	}
 
-	allCandidates := aa.allCandidates
+	allCandidates = aa.allCandidates
 	aa.allCandidates = nil
 	return currentBestIndexes, allCandidates, nil
 }
