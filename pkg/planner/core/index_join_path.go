@@ -660,7 +660,8 @@ func indexJoinPathRemoveUselessEQIn(buildTmp *indexJoinPathTmp, idxCols []*expre
 	return notKeyEqAndIn, nil
 }
 
-func getIndexJoinIntPKPathInfo(ds *logicalop.DataSource, innerJoinKeys, outerJoinKeys []*expression.Column, checkPathValid func(path *util.AccessPath) bool) (
+func getIndexJoinIntPKPathInfo(ds *logicalop.DataSource, innerJoinKeys, outerJoinKeys []*expression.Column,
+	checkPathValid func(path *util.AccessPath) bool) (
 	keyOff2IdxOff []int, newOuterJoinKeys []*expression.Column, ranges ranger.Ranges, chosenPath *util.AccessPath, ok bool) {
 	pkMatched := false
 	pkCol := ds.GetPKIsHandleCol()

@@ -174,6 +174,27 @@ func TestTiFlashQuerySpillRatio(t *testing.T) {
 	require.Equal(t, 0.75, vars.TiFlashQuerySpillRatio)
 }
 
+func TestTiFlashHashJoinVersion(t *testing.T) {
+	vars := NewSessionVars(nil)
+	sv := GetSysVar(vardef.TiFlashHashJoinVersion)
+	// set error value
+	_, err := sv.Validation(vars, "invalid", "invalid", vardef.ScopeSession)
+	require.NotNil(t, err)
+	// set valid value
+	_, err = sv.Validation(vars, "legacy", "legacy", vardef.ScopeSession)
+	require.NoError(t, err)
+	_, err = sv.Validation(vars, "optimized", "optimized", vardef.ScopeSession)
+	require.NoError(t, err)
+	_, err = sv.Validation(vars, "Legacy", "Legacy", vardef.ScopeSession)
+	require.NoError(t, err)
+	_, err = sv.Validation(vars, "Optimized", "Optimized", vardef.ScopeSession)
+	require.NoError(t, err)
+	_, err = sv.Validation(vars, "LegaCy", "LegaCy", vardef.ScopeSession)
+	require.NoError(t, err)
+	_, err = sv.Validation(vars, "OptimiZed", "OptimiZed", vardef.ScopeSession)
+	require.NoError(t, err)
+}
+
 func TestCollationServer(t *testing.T) {
 	sv := GetSysVar(vardef.CollationServer)
 	vars := NewSessionVars(nil)

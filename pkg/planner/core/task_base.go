@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
@@ -71,7 +70,9 @@ func (t *RootTask) SetEmpty(x bool) {
 // Copy implements Task interface.
 func (t *RootTask) Copy() base.Task {
 	return &RootTask{
-		p:             t.p,
+		p: t.p,
+
+		// when copying, just copy it out.
 		IndexJoinInfo: t.IndexJoinInfo,
 	}
 }
@@ -265,6 +266,8 @@ type CopTask struct {
 	// It's used for deciding whether using paging distsql.
 	expectCnt uint64
 
+	// For copTask and rootTask, when we compose physical tree bottom-up, index join need some special info
+	// fetched from underlying ds which built index range or table range based on these runtime constant.
 	IndexJoinInfo *IndexJoinInfo
 }
 
@@ -342,7 +345,7 @@ func (t *CopTask) ConvertToRootTask(ctx base.PlanContext) base.Task {
 func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 	defer func() {
 		if t.IndexJoinInfo != nil {
-			// return indexJoinInfo upward.
+			// return indexJoinInfo upward, when copTask is converted to rootTask.
 			rt.IndexJoinInfo = t.IndexJoinInfo
 		}
 	}()
@@ -447,11 +450,3 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 }
 
 // ************************************* CopTask End ******************************************
-
-type IndexJoinInfo struct {
-	// The following fields are used to keep index join aware of inner plan's index/pk choice.
-	IdxColLens     []int
-	KeyOff2IdxOff  []int
-	Ranges         ranger.MutableRanges
-	CompareFilters *ColWithCmpFuncManager
-}

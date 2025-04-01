@@ -266,6 +266,7 @@ go_test(
         "//pkg/config",
         "//pkg/domain",
         "//pkg/domain/infosync",
+        "//pkg/executor/join/joinversion",
         "//pkg/expression",
         "//pkg/expression/aggregation",
         "//pkg/expression/exprctx",

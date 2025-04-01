@@ -161,7 +161,7 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 	intest.AssertFunc(func() bool {
 		// Columnar index has a separate job type. We should not see columnar index here.
 		for _, idx := range idxes {
-			if idx.IsTiFlashLocalIndex() {
+			if idx.IsColumnarIndex() {
 				return false
 			}
 		}
