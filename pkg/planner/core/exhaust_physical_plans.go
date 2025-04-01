@@ -905,7 +905,7 @@ func buildIndexJoinInner2TableScan(
 			// note: pk col doesn't have mutableRanges, the global var(ranges) which will be handled as empty range in constructIndexJoin.
 			localRanges ranger.Ranges
 		)
-		keyOff2IdxOff, outerJoinKeys, localRanges, ok = getIndexJoinIntPKPathInfo(ds, innerJoinKeys, outerJoinKeys)
+		keyOff2IdxOff, outerJoinKeys, localRanges, _, ok = getIndexJoinIntPKPathInfo(ds, innerJoinKeys, outerJoinKeys, func(path *util.AccessPath) bool { return path.IsIntHandlePath })
 		if !ok {
 			return nil
 		}

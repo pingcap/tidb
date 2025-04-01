@@ -31,6 +31,7 @@ func NewDistSQLContextForTest() *distsqlctx.DistSQLContext {
 		TiFlashMaxBytesBeforeExternalSort:    vardef.DefTiFlashMaxBytesBeforeExternalSort,
 		TiFlashMaxQueryMemoryPerNode:         vardef.DefTiFlashMemQuotaQueryPerNode,
 		TiFlashQuerySpillRatio:               vardef.DefTiFlashQuerySpillRatio,
+		TiFlashHashJoinVersion:               vardef.DefTiFlashHashJoinVersion,
 
 		DistSQLConcurrency: vardef.DefDistSQLScanConcurrency,
 		MinPagingSize:      vardef.DefMinPagingSize,

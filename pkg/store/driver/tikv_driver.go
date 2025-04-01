@@ -316,7 +316,7 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 			}
 			continue
 		}
-		for _, member := range members {
+		for _, member := range members.GetMembers() {
 			if len(member.ClientUrls) > 0 {
 				u, err := url.Parse(member.ClientUrls[0])
 				if err != nil {
