@@ -128,6 +128,13 @@ func TestToPhysicalPlan(t *testing.T) {
 	bs, err = json.Marshal(subtaskMeta2)
 	require.NoError(t, err)
 	require.Equal(t, [][]byte{bs}, subtaskMetas2)
+
+	planCtx = planner.PlanCtx{
+		NextTaskStep: proto.ImportStepImport,
+		GlobalSort:   true,
+	}
+	_, err = logicalPlan.ToPhysicalPlan(planCtx)
+	require.Error(t, err)
 }
 
 func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
