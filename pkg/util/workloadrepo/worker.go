@@ -308,7 +308,6 @@ func (w *worker) startRepository(ctx context.Context) func() {
 	// TODO: add another txn type
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	return func() {
-		w.owner = w.newOwner(ownerKey, promptKey)
 		if err := w.owner.CampaignOwner(); err != nil {
 			logutil.BgLogger().Error("repository could not campaign for owner", zap.NamedError("err", err))
 		}
@@ -370,6 +369,7 @@ func (w *worker) start() error {
 		return errUnsupportedEtcdRequired.GenWithStackByArgs()
 	}
 
+	w.owner = w.newOwner(ownerKey, promptKey)
 	_ = stmtsummary.StmtSummaryByDigestMap.SetHistoryEnabled(false)
 	ctx, cancel := context.WithCancel(context.Background())
 	w.cancel = cancel

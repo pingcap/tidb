@@ -905,7 +905,7 @@ func buildIndexJoinInner2TableScan(
 			// note: pk col doesn't have mutableRanges, the global var(ranges) which will be handled as empty range in constructIndexJoin.
 			localRanges ranger.Ranges
 		)
-		keyOff2IdxOff, outerJoinKeys, localRanges, ok = getIndexJoinIntPKPathInfo(ds, innerJoinKeys, outerJoinKeys)
+		keyOff2IdxOff, outerJoinKeys, localRanges, _, ok = getIndexJoinIntPKPathInfo(ds, innerJoinKeys, outerJoinKeys, func(path *util.AccessPath) bool { return path.IsIntHandlePath })
 		if !ok {
 			return nil
 		}
@@ -1486,6 +1486,12 @@ func constructIndexJoinInnerSideTaskWithAggCheck(p *logicalop.LogicalJoin, prop 
 	// build physical agg and attach to task
 	var aggTask base.Task
 	// build stream agg and change ds keep order to true
+	stats := la.StatsInfo()
+	if dsCopTask.indexPlan != nil {
+		stats = stats.ScaleByExpectCnt(dsCopTask.indexPlan.StatsInfo().RowCount)
+	} else if dsCopTask.tablePlan != nil {
+		stats = stats.ScaleByExpectCnt(dsCopTask.tablePlan.StatsInfo().RowCount)
+	}
 	if preferStream {
 		newGbyItems := make([]expression.Expression, len(la.GroupByItems))
 		copy(newGbyItems, la.GroupByItems)
@@ -1506,6 +1512,7 @@ func constructIndexJoinInnerSideTaskWithAggCheck(p *logicalop.LogicalJoin, prop 
 			if physicalIndexScan != nil {
 				physicalIndexScan.KeepOrder = true
 				dsCopTask.keepOrder = true
+				streamAgg.SetStats(stats)
 				aggTask = streamAgg.Attach2Task(dsCopTask)
 			}
 		}
@@ -1513,7 +1520,7 @@ func constructIndexJoinInnerSideTaskWithAggCheck(p *logicalop.LogicalJoin, prop 
 
 	// build hash agg, when the stream agg is illegal such as the order by prop is not matched
 	if aggTask == nil {
-		physicalHashAgg := NewPhysicalHashAgg(la, la.StatsInfo(), prop)
+		physicalHashAgg := NewPhysicalHashAgg(la, stats, prop)
 		physicalHashAgg.SetSchema(la.Schema().Clone())
 		aggTask = physicalHashAgg.Attach2Task(dsCopTask)
 	}
@@ -2776,7 +2783,15 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 		// <1,1> in node A           <1,null,gid=1> in node A
 		// <1,2> in node B           <1,null,gid=1> in node B
 		if len(partitionCols) != 0 && !la.SCtx().GetSessionVars().EnableSkewDistinctAgg {
-			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: partitionCols, CanAddEnforcer: true, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
+			childProp := &property.PhysicalProperty{
+				TaskTp:            property.MppTaskType,
+				ExpectedCnt:       math.MaxFloat64,
+				MPPPartitionTp:    property.HashType,
+				MPPPartitionCols:  partitionCols,
+				CanAddEnforcer:    true,
+				RejectSort:        true,
+				CTEProducerStatus: prop.CTEProducerStatus,
+			}
 			agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.Schema().Clone())
 			agg.MppRunMode = Mpp1Phase
@@ -2793,7 +2808,12 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 
 		// 2-phase agg
 		// no partition property down，record partition cols inside agg itself, enforce shuffler latter.
-		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
+		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType,
+			ExpectedCnt:       math.MaxFloat64,
+			MPPPartitionTp:    property.AnyType,
+			RejectSort:        true,
+			CTEProducerStatus: prop.CTEProducerStatus,
+		}
 		agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 		agg.SetSchema(la.Schema().Clone())
 		agg.MppRunMode = Mpp2Phase
@@ -2804,7 +2824,12 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 
 		// agg runs on TiDB with a partial agg on TiFlash if possible
 		if prop.TaskTp == property.RootTaskType {
-			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
+			childProp := &property.PhysicalProperty{
+				TaskTp:            property.MppTaskType,
+				ExpectedCnt:       math.MaxFloat64,
+				RejectSort:        true,
+				CTEProducerStatus: prop.CTEProducerStatus,
+			}
 			agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.Schema().Clone())
 			agg.MppRunMode = MppTiDB
@@ -2812,7 +2837,12 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 		}
 	} else if !hasFinalAgg {
 		// TODO: support scalar agg in MPP, merge the final result to one node
-		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
+		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType,
+			ExpectedCnt:       math.MaxFloat64,
+			RejectSort:        true,
+			CTEProducerStatus: prop.CTEProducerStatus,
+		}
+
 		agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 		agg.SetSchema(la.Schema().Clone())
 		if la.HasDistinct() || la.HasOrderBy() {

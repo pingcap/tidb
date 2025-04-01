@@ -2702,7 +2702,7 @@ func (do *Domain) asyncLoadHistogram() {
 		case <-cleanupTicker.C:
 			err = statsHandle.LoadNeededHistograms(do.InfoSchema())
 			if err != nil {
-				logutil.ErrVerboseLogger().Warn("load histograms failed", zap.Error(err))
+				statslogutil.StatsErrVerboseSampleLogger().Warn("Load histograms failed", zap.Error(err))
 			}
 		case <-do.exit:
 			return
