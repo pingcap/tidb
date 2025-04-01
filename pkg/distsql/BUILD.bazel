@@ -15,6 +15,7 @@ go_library(
         "//pkg/distsql/context",
         "//pkg/errctx",
         "//pkg/errno",
+        "//pkg/executor/join/joinversion",
         "//pkg/expression",
         "//pkg/infoschema/context",
         "//pkg/kv",

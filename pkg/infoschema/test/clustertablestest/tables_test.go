@@ -79,9 +79,12 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 	tk.MustExec("create table timeschema(d date, dt datetime(3), ts timestamp(3), t time(4), y year(4))")
 	tk.MustExec("create table strschema(c char(3), c2 varchar(3), b blob(3), t text(3))")
 	tk.MustExec("create table floatschema(a float, b double(7, 3))")
+	tk.MustExec("create table numericprecisionschema(a tinyint, b smallint, c mediumint, d mediumint unsigned, e int, f bigint, g bigint unsigned)")
 
 	tk.MustQuery("select CHARACTER_MAXIMUM_LENGTH,CHARACTER_OCTET_LENGTH,NUMERIC_PRECISION,NUMERIC_SCALE,DATETIME_PRECISION from information_schema.COLUMNS where table_name='numschema'").
-		Check(testkit.Rows("<nil> <nil> 2 0 <nil>", "<nil> <nil> 4 2 <nil>", "<nil> <nil> 4 3 <nil>")) // FIXME: for mysql first one will be "<nil> <nil> 10 0 <nil>"
+		Check(testkit.Rows("<nil> <nil> 10 0 <nil>", "<nil> <nil> 4 2 <nil>", "<nil> <nil> 4 3 <nil>"))
+	tk.MustQuery("select column_name, NUMERIC_PRECISION from information_schema.COLUMNS where table_name='numericprecisionschema'").
+		Check(testkit.Rows("a 3", "b 5", "c 7", "d 8", "e 10", "f 19", "g 20")) // `d` in MySQL is 7, but it's bug for MySQL, https://bugs.mysql.com/bug.php?id=69042.
 	tk.MustQuery("select CHARACTER_MAXIMUM_LENGTH,CHARACTER_OCTET_LENGTH,NUMERIC_PRECISION,NUMERIC_SCALE,DATETIME_PRECISION from information_schema.COLUMNS where table_name='timeschema'").
 		Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil>", "<nil> <nil> <nil> <nil> 3", "<nil> <nil> <nil> <nil> 3", "<nil> <nil> <nil> <nil> 4", "<nil> <nil> <nil> <nil> <nil>"))
 	tk.MustQuery("select CHARACTER_MAXIMUM_LENGTH,CHARACTER_OCTET_LENGTH,NUMERIC_PRECISION,NUMERIC_SCALE,DATETIME_PRECISION from information_schema.COLUMNS where table_name='strschema'").
