@@ -31,7 +31,6 @@ import (
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	pdhttp "github.com/tikv/pd/client/http"
-	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -93,14 +92,11 @@ type PipelineContext struct {
 }
 
 // RestorePipeline does checksum, load stats and wait for tiflash to be ready.
-func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext, createdTables []*CreatedTable) (err error) {
+func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext, createdTables []*CreatedTable) error {
 	start := time.Now()
 	defer func() {
 		summary.CollectDuration("restore pipeline", time.Since(start))
 	}()
-	// We make bigger errCh so we won't block on multi-part failed.
-	errCh := make(chan error, 32)
-	postHandleCh := afterTableRestoredCh(ctx, createdTables)
 	progressLen := int64(0)
 	if plCtx.Checksum {
 		progressLen += int64(len(createdTables))
@@ -113,153 +109,208 @@ func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext
 	// Redirect to log if there is no log file to avoid unreadable output.
 	updateCh := plCtx.Glue.StartProgress(ctx, "Restore Pipeline", progressLen, !plCtx.LogProgress)
 	defer updateCh.Close()
+
+	handlerBuilder := &PipelineConcurrentBuilder{}
 	// pipeline checksum
 	if plCtx.Checksum {
-		postHandleCh = rc.GoValidateChecksum(ctx, postHandleCh, plCtx.KvClient, errCh, updateCh, plCtx.ChecksumConcurrency)
+		rc.registerValidateChecksum(handlerBuilder, plCtx.KvClient, updateCh, plCtx.ChecksumConcurrency)
 	}
 
 	// pipeline update meta and load stats
-	postHandleCh = rc.GoUpdateMetaAndLoadStats(ctx, plCtx.ExtStorage, postHandleCh, errCh, updateCh, plCtx.StatsConcurrency, plCtx.LoadStats)
+	rc.registerUpdateMetaAndLoadStats(handlerBuilder, plCtx.ExtStorage, updateCh, plCtx.StatsConcurrency, plCtx.LoadStats)
 
 	// pipeline wait Tiflash synced
 	if plCtx.WaitTiflashReady {
-		postHandleCh = rc.GoWaitTiFlashReady(ctx, postHandleCh, updateCh, errCh)
+		if err := rc.registerWaitTiFlashReady(handlerBuilder, updateCh); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
-	finish := dropToBlackhole(ctx, postHandleCh, errCh)
-
-	select {
-	case err = <-errCh:
-		err = multierr.Append(err, multierr.Combine(ExhaustErrors(errCh)...))
-	case <-finish:
-	}
-
-	return errors.Trace(err)
+	return errors.Trace(handlerBuilder.StartPipelineTask(ctx, createdTables))
 }
 
-func afterTableRestoredCh(ctx context.Context, createdTables []*CreatedTable) <-chan *CreatedTable {
+type pipelineFunction struct {
+	taskLabel   string
+	concurrency uint
+
+	processFn func(context.Context, *CreatedTable) error
+	deferFn   func(context.Context) error
+}
+
+type PipelineConcurrentBuilder struct {
+	pipelineFunctions []pipelineFunction
+}
+
+func (builder *PipelineConcurrentBuilder) RegisterPipelineTask(
+	taskLabel string,
+	concurrency uint,
+	processFn func(context.Context, *CreatedTable) error,
+	deferFn func(context.Context) error,
+) {
+	builder.pipelineFunctions = append(builder.pipelineFunctions, pipelineFunction{
+		taskLabel:   taskLabel,
+		concurrency: concurrency,
+		processFn:   processFn,
+		deferFn:     deferFn,
+	})
+}
+
+func (builder *PipelineConcurrentBuilder) StartPipelineTask(ctx context.Context, createdTables []*CreatedTable) error {
+	eg, pipelineTaskCtx := errgroup.WithContext(ctx)
+	handler := &PipelineConcurrentHandler{
+		pipelineTaskCtx: pipelineTaskCtx,
+		eg:              eg,
+	}
+
+	// the first pipeline task
+	postHandleCh := handler.afterTableRestoredCh(createdTables)
+
+	// the middle pipeline tasks
+	for _, f := range builder.pipelineFunctions {
+		postHandleCh = handler.concurrentHandleTablesCh(postHandleCh, f.concurrency, f.taskLabel, f.processFn, f.deferFn)
+	}
+
+	// the last pipeline task
+	handler.dropToBlackhole(postHandleCh)
+
+	return eg.Wait()
+}
+
+type PipelineConcurrentHandler struct {
+	pipelineTaskCtx context.Context
+	eg              *errgroup.Group
+}
+
+func (handler *PipelineConcurrentHandler) afterTableRestoredCh(createdTables []*CreatedTable) <-chan *CreatedTable {
 	outCh := make(chan *CreatedTable)
 
-	go func() {
+	handler.eg.Go(func() error {
 		defer close(outCh)
 
 		for _, createdTable := range createdTables {
 			select {
-			case <-ctx.Done():
-				return
-			default:
-				outCh <- createdTable
+			case <-handler.pipelineTaskCtx.Done():
+				return handler.pipelineTaskCtx.Err()
+			case outCh <- createdTable:
 			}
 		}
-	}()
+
+		return nil
+	})
 	return outCh
 }
 
 // dropToBlackhole drop all incoming tables into black hole,
 // i.e. don't execute checksum, just increase the process anyhow.
-func dropToBlackhole(ctx context.Context, inCh <-chan *CreatedTable, errCh chan<- error) <-chan struct{} {
-	outCh := make(chan struct{}, 1)
-	go func() {
-		defer func() {
-			close(outCh)
-		}()
+func (handler *PipelineConcurrentHandler) dropToBlackhole(inCh <-chan *CreatedTable) {
+	handler.eg.Go(func() error {
 		for {
 			select {
-			case <-ctx.Done():
-				errCh <- ctx.Err()
-				return
+			case <-handler.pipelineTaskCtx.Done():
+				return handler.pipelineTaskCtx.Err()
 			case _, ok := <-inCh:
+				if !ok {
+					return nil
+				}
+			}
+		}
+	})
+}
+
+func (handler *PipelineConcurrentHandler) concurrentHandleTablesCh(
+	inCh <-chan *CreatedTable,
+	concurrency uint,
+	taskLabel string,
+	processFun func(context.Context, *CreatedTable) error,
+	deferFun func(context.Context) error,
+) (outCh chan *CreatedTable) {
+	outCh = defaultOutputTableChan()
+	handler.eg.Go(func() (pipelineErr error) {
+		workers := tidbutil.NewWorkerPool(concurrency, taskLabel)
+		eg, ectx := errgroup.WithContext(handler.pipelineTaskCtx)
+		defer func() {
+			// Note: directly return the error and then the pipelineTaskCtx will be cancelled.
+			if err := eg.Wait(); err != nil {
+				log.Error("pipeline item execution is failed", zap.String("task", taskLabel), zap.Error(err))
+				pipelineErr = errors.Trace(err)
+				return
+			}
+			if err := deferFun(handler.pipelineTaskCtx); err != nil {
+				log.Error("pipeline defer execution is failed", zap.String("task", taskLabel), zap.Error(err))
+				pipelineErr = errors.Trace(err)
+				return
+			}
+			close(outCh)
+		}()
+
+		for {
+			select {
+			// parent context is cancelled, no need to return the error
+			case <-handler.pipelineTaskCtx.Done():
+				return
+			case tbl, ok := <-inCh:
 				if !ok {
 					return
 				}
+				if ectx.Err() != nil {
+					// ectx is cancelled, return and get the error from error group in defer function
+					return
+				}
+				cloneTable := tbl
+				workers.ApplyOnErrorGroup(eg, func() error {
+					if err := processFun(ectx, cloneTable); err != nil {
+						return err
+					}
+					select {
+					case <-ectx.Done():
+						// ectx is cancelled, return and get the error from error group in defer function
+					case outCh <- cloneTable:
+					}
+					return nil
+				})
 			}
 		}
-	}()
+	})
 	return outCh
 }
 
-func concurrentHandleTablesCh(
-	ctx context.Context,
-	inCh <-chan *CreatedTable,
-	outCh chan<- *CreatedTable,
-	errCh chan<- error,
-	workers *tidbutil.WorkerPool,
-	processFun func(context.Context, *CreatedTable) error,
-	deferFun func()) {
-	eg, ectx := errgroup.WithContext(ctx)
-	defer func() {
-		if err := eg.Wait(); err != nil {
-			errCh <- err
-		}
-		close(outCh)
-		deferFun()
-	}()
-
-	for {
-		select {
-		// if we use ectx here, maybe canceled will mask real error.
-		case <-ctx.Done():
-			errCh <- ctx.Err()
-		case tbl, ok := <-inCh:
-			if !ok {
-				return
-			}
-			cloneTable := tbl
-			worker := workers.ApplyWorker()
-			eg.Go(func() error {
-				defer workers.RecycleWorker(worker)
-				err := processFun(ectx, cloneTable)
-				if err != nil {
-					return err
-				}
-				outCh <- cloneTable
-				return nil
-			})
-		}
-	}
-}
-
-// GoValidateChecksum forks a goroutine to validate checksum after restore.
-// it returns a channel fires a struct{} when all things get done.
-func (rc *SnapClient) GoValidateChecksum(
-	ctx context.Context,
-	inCh <-chan *CreatedTable,
+// registerValidateChecksum validates checksum after restore.
+func (rc *SnapClient) registerValidateChecksum(
+	builder *PipelineConcurrentBuilder,
 	kvClient kv.Client,
-	errCh chan<- error,
 	updateCh glue.Progress,
 	concurrency uint,
-) chan *CreatedTable {
-	log.Info("Start to validate checksum")
-	outCh := defaultOutputTableChan()
-	workers := tidbutil.NewWorkerPool(defaultChecksumConcurrency, "RestoreChecksum")
-	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
+) {
+	builder.RegisterPipelineTask("Restore Checksum", defaultChecksumConcurrency, func(c context.Context, tbl *CreatedTable) error {
 		err := rc.execAndValidateChecksum(c, tbl, kvClient, concurrency)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		updateCh.Inc()
 		return nil
-	}, func() {
+	}, func(context.Context) error {
 		log.Info("all checksum ended")
+		return nil
 	})
-	return outCh
 }
 
-func (rc *SnapClient) GoUpdateMetaAndLoadStats(
-	ctx context.Context,
+type statsMetaItem struct {
+	tableID int64
+	count   int64
+}
+
+const statsMetaItemBufferSize = 10000
+
+func (rc *SnapClient) registerUpdateMetaAndLoadStats(
+	builder *PipelineConcurrentBuilder,
 	s storage.ExternalStorage,
-	inCh <-chan *CreatedTable,
-	errCh chan<- error,
 	updateCh glue.Progress,
 	statsConcurrency uint,
 	loadStats bool,
-) chan *CreatedTable {
-	log.Info("Start to update meta then load stats")
-	outCh := defaultOutputTableChan()
-	workers := tidbutil.NewWorkerPool(statsConcurrency, "UpdateStats")
+) {
 	statsHandler := rc.dom.StatsHandle()
 
-	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
+	builder.RegisterPipelineTask("Update Stats", statsConcurrency, func(c context.Context, tbl *CreatedTable) error {
 		oldTable := tbl.OldTable
 		var statsErr error = nil
 		if loadStats && oldTable.Stats != nil {
@@ -269,7 +320,7 @@ func (rc *SnapClient) GoUpdateMetaAndLoadStats(
 			)
 			start := time.Now()
 			// NOTICE: skip updating cache after load stats from json
-			if statsErr = statsHandler.LoadStatsFromJSONNoUpdate(ctx, rc.dom.InfoSchema(), oldTable.Stats, 0); statsErr != nil {
+			if statsErr = statsHandler.LoadStatsFromJSONNoUpdate(c, rc.dom.InfoSchema(), oldTable.Stats, 0); statsErr != nil {
 				log.Error("analyze table failed", zap.Any("table", oldTable.Stats), zap.Error(statsErr))
 			}
 			log.Info("restore stat done",
@@ -283,7 +334,7 @@ func (rc *SnapClient) GoUpdateMetaAndLoadStats(
 			)
 			start := time.Now()
 			rewriteIDMap := restoreutils.GetTableIDMap(tbl.Table, tbl.OldTable.Info)
-			if statsErr = metautil.RestoreStats(ctx, s, rc.cipher, statsHandler, tbl.Table, oldTable.StatsFileIndexes, rewriteIDMap); statsErr != nil {
+			if statsErr = metautil.RestoreStats(c, s, rc.cipher, statsHandler, tbl.Table, oldTable.StatsFileIndexes, rewriteIDMap); statsErr != nil {
 				log.Error("analyze table failed", zap.Any("table", oldTable.StatsFileIndexes), zap.Error(statsErr))
 			}
 			log.Info("restore statistic data done",
@@ -303,25 +354,20 @@ func (rc *SnapClient) GoUpdateMetaAndLoadStats(
 		}
 		updateCh.Inc()
 		return nil
-	}, func() {
+	}, func(context.Context) error {
 		log.Info("all stats updated")
+		return nil
 	})
-	return outCh
 }
 
-func (rc *SnapClient) GoWaitTiFlashReady(
-	ctx context.Context,
-	inCh <-chan *CreatedTable,
+func (rc *SnapClient) registerWaitTiFlashReady(
+	builder *PipelineConcurrentBuilder,
 	updateCh glue.Progress,
-	errCh chan<- error,
-) chan *CreatedTable {
-	log.Info("Start to wait tiflash replica sync")
-	outCh := defaultOutputTableChan()
-	workers := tidbutil.NewWorkerPool(4, "WaitForTiflashReady")
+) error {
 	// TODO support tiflash store changes
 	tikvStats, err := infosync.GetTiFlashStoresStat(context.Background())
 	if err != nil {
-		errCh <- err
+		return errors.Trace(err)
 	}
 	tiFlashStores := make(map[int64]pdhttp.StoreInfo)
 	for _, store := range tikvStats.Stores {
@@ -329,7 +375,8 @@ func (rc *SnapClient) GoWaitTiFlashReady(
 			tiFlashStores[store.Store.ID] = store
 		}
 	}
-	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
+
+	builder.RegisterPipelineTask("Wait For Tiflash Ready", 4, func(c context.Context, tbl *CreatedTable) error {
 		if tbl.Table != nil && tbl.Table.TiFlashReplica == nil {
 			log.Info("table has no tiflash replica",
 				zap.Stringer("table", tbl.OldTable.Info.Name),
@@ -382,8 +429,9 @@ func (rc *SnapClient) GoWaitTiFlashReady(
 		}
 		updateCh.Inc()
 		return nil
-	}, func() {
+	}, func(context.Context) error {
 		log.Info("all tiflash replica synced")
+		return nil
 	})
-	return outCh
+	return nil
 }
