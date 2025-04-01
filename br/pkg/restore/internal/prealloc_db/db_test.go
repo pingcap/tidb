@@ -276,7 +276,6 @@ func fakePolicyInfo(ident byte) *model.PolicyInfo {
 }
 
 func TestPolicyMode(t *testing.T) {
-	allocator := testAllocator(0)
 	ctx := context.Background()
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
@@ -288,6 +287,10 @@ func TestPolicyMode(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, supportPolicy)
 	defer db.Close()
+
+	// Initialize sequence allocator
+	tk.MustExec("create sequence test.seq start with 1 increment by 1;")
+	tk.MustExec("drop sequence test.seq;")
 
 	// Prepare the tables
 	oriTableInfos := prepareAllocTables(ctx, t, db, s.Mock.Domain)
@@ -309,14 +312,6 @@ func TestPolicyMode(t *testing.T) {
 		Name: fakepolicy2.Name,
 	}
 
-	preallocId := func(tables []*metautil.Table) {
-		ids := prealloctableid.New(tables)
-		ids.Alloc(&allocator)
-		db.RegisterPreallocatedIDs(ids)
-		allocator += testAllocator(len(tables))
-	}
-
-	preallocId(tableInfos)
 	err = db.CreateTables(ctx, tableInfos, nil, true, policyMap)
 	require.NoError(t, err)
 	for _, checkFn := range checkTableSQLs {
@@ -340,7 +335,6 @@ func TestPolicyMode(t *testing.T) {
 		ID:   fakepolicy2.ID,
 		Name: fakepolicy2.Name,
 	}
-	preallocId(tableInfos)
 	for i := 0; i < len(createTableSQLs); i += 1 {
 		err = db.CreateTable(ctx, tableInfos[i], nil, true, policyMap)
 		require.NoError(t, err)
