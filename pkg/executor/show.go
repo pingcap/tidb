@@ -2399,10 +2399,10 @@ func handleImportJobInfo(ctx context.Context, info *importer.JobInfo, result *ch
 	return nil
 }
 
-const DistributeScheduler = "balance-range-scheduler"
+const balanceRangeScheduler = "balance-range-scheduler"
 
 func (e *ShowExec) fetchShowDistributionJobs(ctx context.Context) error {
-	jobs, err := infosync.GetSchedulerConfig(ctx, DistributeScheduler)
+	jobs, err := infosync.GetSchedulerConfig(ctx, balanceRangeScheduler)
 	if err != nil {
 		return err
 	}

@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -4751,9 +4752,22 @@ func (b *PlanBuilder) requireInsertAndSelectPriv(tables []*ast.TableName) {
 	}
 }
 
+var ruleList = []string{"leader", "follower", "learner"}
+var engineList = []string{"tikv", "tiflash"}
+
 func (b *PlanBuilder) buildDistributeTable(node *ast.DistributeTableStmt) (base.Plan, error) {
 	tnW := b.resolveCtx.GetTableName(node.Table)
 	tblInfo := tnW.TableInfo
+	if !slices.Contains(ruleList, node.Rule.L) {
+		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("rule must be one of leader, follower, learner")
+	}
+	if !slices.Contains(engineList, node.Engine.L) {
+		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("engine must be one of tikv, tiflash")
+	}
+
+	if node.Engine.L == "tiflash" && node.Rule.L != "learner" {
+		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("tiflash only supports learner")
+	}
 	plan := &DistributeTable{
 		TableInfo:      tblInfo,
 		PartitionNames: node.PartitionNames,

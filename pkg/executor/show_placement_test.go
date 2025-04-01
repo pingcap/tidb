@@ -18,7 +18,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
-	
+
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"

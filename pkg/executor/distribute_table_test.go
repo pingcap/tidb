@@ -50,7 +50,6 @@ func (cli *MockDistributePDCli) CreateSchedulerWithInput(ctx context.Context, na
 }
 
 func TestShowDistributionJobs(t *testing.T) {
-	re := require.New(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -67,25 +66,27 @@ func TestShowDistributionJobs(t *testing.T) {
 	job["alias"] = strings.Join([]string{"test", "test", "partition(P0,P1)"}, ".")
 	job["engine"] = "tikv"
 	job["rule"] = "leader"
-	job["create-time"] = time.Now().Add(-time.Minute)
-	job["start-time"] = time.Now().Add(-time.Second * 30)
-	job["finish-time"] = time.Now().Add(-time.Second * 10)
+	now := time.Now()
+	job["create-time"] = now.Add(-time.Minute)
+	job["start-time"] = now.Add(-time.Second * 30)
+	job["finish-time"] = now.Add(-time.Second * 10)
 	job["status"] = "finish"
 	jobs := make([]map[string]any, 0)
 	jobs = append(jobs, job)
 	cli.jobs = jobs
 	mockGetSchedulerConfig("balance-range-scheduler")
 
-	ret := tk.MustQuery("show distribution jobs").Rows()
-	re.Len(ret, 1)
-	re.Len(ret[0], 10)
+	tk.MustQuery("show distribution jobs").Check(testkit.Rows(
+		fmt.Sprintf("1 test test partition(P0,P1) tikv leader finish %s %s %s",
+			now.Add(-time.Minute).Format("2006-01-02 15:04:05"),
+			now.Add(-time.Second*30).Format("2006-01-02 15:04:05"),
+			now.Add(-time.Second*10).Format("2006-01-02 15:04:05"))))
 
 	tk.MustQuery("show distribution jobs where `job_id`=1").Check(tk.MustQuery("show distribution job 1").Rows())
 	tk.MustQuery("show distribution jobs where `job_id`=0").Check(tk.MustQuery("show distribution job 0").Rows())
 }
 
 func TestDistributeTable(t *testing.T) {
-	re := require.New(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	database := "test"
@@ -125,7 +126,13 @@ func TestDistributeTable(t *testing.T) {
 	tk.MustExec("create table t1(a int)")
 	mockCreateSchedulerWithInput(table, partition, "balance-range-scheduler", config)
 	mockGetSchedulerConfig("balance-range-scheduler")
-	ret := tk.MustQuery(fmt.Sprintf("distribute table %s rule=leader engine=tikv", table)).Rows()
-	re.Len(ret, 1)
-	re.Equal("1", ret[0][0].(string))
+	tk.MustQuery(fmt.Sprintf("distribute table %s rule=leader engine=tikv", table)).Check(testkit.Rows("1"))
+
+	// test for incorrect arguments
+	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule=leader engine=tiflash", table),
+		"[planner:1210]Incorrect arguments to tiflash only supports learner")
+	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule=leader engine=titan", table),
+		"[planner:1210]Incorrect arguments to engine must be one of tikv, tiflash")
+	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule=witness engine=tikv", table),
+		"[planner:1210]Incorrect arguments to rule must be one of leader, follower, learner")
 }
