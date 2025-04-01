@@ -229,7 +229,6 @@ const (
 		snapshot        			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
 		last_stats_histograms_version 	BIGINT(64) UNSIGNED DEFAULT NULL,
 		INDEX idx_ver(version),
-		INDEX idx_last_stats_histograms_version(last_stats_histograms_version),
 		UNIQUE INDEX tbl(table_id)
 	);`
 
@@ -1278,7 +1277,7 @@ const (
 	// version245 updates column types of mysql.bind_info.
 	version245 = 245
 
-	// version 245
+	// version 246
 	// Add last_stats_histograms_version to mysql.stats_meta.
 	version246 = 246
 )
@@ -3416,7 +3415,7 @@ func upgradeToVer246(s sessiontypes.Session, ver int64) {
 	if ver >= version246 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN last_stats_histograms_version bigint(20) unsigned DEFAULT NULL", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN last_stats_histograms_version bigint unsigned DEFAULT NULL", infoschema.ErrColumnExists)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
