@@ -2402,7 +2402,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 // If we found some columns that are not in select fields, we will append it to select fields and update the colMapper.
 // When we rewrite the order by / having expression, we will find column in map at first.
 func (b *PlanBuilder) resolveHavingAndOrderBy(ctx context.Context, sel *ast.SelectStmt, p base.LogicalPlan) (
-	map[*ast.AggregateFuncExpr]int, map[*ast.AggregateFuncExpr]int, error) {
+	havingAggMapper, _ map[*ast.AggregateFuncExpr]int, err error) {
 	extractor := &havingWindowAndOrderbyExprResolver{
 		p:            p,
 		selectFields: sel.Fields.Fields,
@@ -2423,7 +2423,7 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(ctx context.Context, sel *ast.Sele
 		}
 		sel.Having.Expr = n.(ast.ExprNode)
 	}
-	havingAggMapper := extractor.aggMapper
+	havingAggMapper = extractor.aggMapper
 	extractor.aggMapper = make(map[*ast.AggregateFuncExpr]int)
 	// Extract agg funcs from order by clause.
 	if sel.OrderBy != nil {
