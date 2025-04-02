@@ -270,6 +270,8 @@ import (
 	starting          "STARTING"
 	stored            "STORED"
 	straightJoin      "STRAIGHT_JOIN"
+	sysDate           "SYSDATE"
+	sysTimestamp      "SYSTIMESTAMP"
 	tableKwd          "TABLE"
 	tableSample       "TABLESAMPLE"
 	terminated        "TERMINATED"
@@ -817,6 +819,7 @@ import (
 	voters                "VOTERS"
 	voter                 "VOTER"
 	watch                 "WATCH"
+	wmConcat           	  "WM_CONCAT"
 
 	/* The following tokens belong to TiDBKeyword. Notice: make sure these tokens are contained in TiDBKeyword. */
 	admin                      "ADMIN"
@@ -850,6 +853,7 @@ import (
 	builtinUser
 	builtinVarPop
 	builtinVarSamp
+	builtinWMConcat
 	cancel                     "CANCEL"
 	cardinality                "CARDINALITY"
 	cmSketch                   "CMSKETCH"
@@ -929,6 +933,7 @@ import (
 	SetExpr                         "Set variable statement value's expression"
 	BitExpr                         "bit expression"
 	SimpleExpr                      "simple expression"
+	WMConcatVar                     "wmconcat var"
 	SimpleIdent                     "Simple Identifier expression"
 	SumExpr                         "aggregate functions"
 	FunctionCallGeneric             "Function call with Identifier"
@@ -1157,6 +1162,7 @@ import (
 	EqOpt                                  "= or empty"
 	EscapedTableRef                        "escaped table reference"
 	ExpressionList                         "expression list"
+	WMConcatList                           "wmconcat list"
 	ExtendedPriv                           "Extended privileges like LOAD FROM S3 or dynamic privileges"
 	MaxValueOrExpressionList               "maxvalue or expression list"
 	DefaultOrExpressionList                "default or expression list"
@@ -1533,8 +1539,8 @@ import (
 	KeyOrIndex        "{KEY|INDEX}"
 	ColumnKeywordOpt  "Column keyword or empty"
 	PrimaryOpt        "Optional primary keyword"
-	NowSym            "CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP"
-	NowSymFunc        "CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP/NOW"
+	NowSym            "CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP/SYSDATE/SYSTIMESTAMP"
+	NowSymFunc        "CURRENT_TIMESTAMP/LOCALTIME/LOCALTIMESTAMP/NOW/SYSDATE/SYSTIMESTAMP"
 	CurdateSym        "CURDATE or CURRENT_DATE"
 	DefaultKwdOpt     "optional DEFAULT keyword"
 	DatabaseSym       "DATABASE or SCHEMA"
@@ -4102,12 +4108,16 @@ NowSymFunc:
 	"CURRENT_TIMESTAMP"
 |	"LOCALTIME"
 |	"LOCALTIMESTAMP"
+|	"SYSDATE"
+|	"SYSTIMESTAMP"
 |	builtinNow
 
 NowSym:
 	"CURRENT_TIMESTAMP"
 |	"LOCALTIME"
 |	"LOCALTIMESTAMP"
+|	"SYSDATE"
+|	"SYSTIMESTAMP"
 
 CurdateSym:
 	builtinCurDate
@@ -6161,6 +6171,21 @@ ExpressionList:
 		$$ = append($1.([]ast.ExprNode), $3)
 	}
 
+WMConcatVar:
+	SimpleIdent
+|	Literal
+|	Variable
+
+WMConcatList:
+	WMConcatVar
+	{
+		$$ = []ast.ExprNode{$1}
+	}
+|	WMConcatList pipesAsOr WMConcatVar
+	{
+		$$ = append($1.([]ast.ExprNode), $3)
+	}
+
 MaxValueOrExpressionList:
 	MaxValueOrExpression
 	{
@@ -7180,6 +7205,7 @@ NotKeywordToken:
 |	"END_TIME"
 |	"GET_FORMAT"
 |	"GROUP_CONCAT"
+|	"WM_CONCAT"
 |	"HNSW"
 |	"INPLACE"
 |	"INSTANT"
@@ -8104,6 +8130,8 @@ FunctionNameDatetimePrecision:
 |	"LOCALTIMESTAMP"
 |	"UTC_TIME"
 |	"UTC_TIMESTAMP"
+|	"SYSDATE"
+|	"SYSTIMESTAMP"
 
 FunctionCallKeyword:
 	FunctionNameConflict '(' ExpressionListOpt ')'
@@ -8509,6 +8537,20 @@ SumExpr:
 			$$ = &ast.WindowFuncExpr{Name: $1, Args: args, Distinct: $3.(bool), Spec: *($8.(*ast.WindowSpec))}
 		} else {
 			agg := &ast.AggregateFuncExpr{F: $1, Args: args, Distinct: $3.(bool)}
+			if $5 != nil {
+				agg.Order = $5.(*ast.OrderByClause)
+			}
+			$$ = agg
+		}
+	}
+|	builtinWMConcat '(' BuggyDefaultFalseDistinctOpt WMConcatList OrderByOptional OptGConcatSeparator ')' OptWindowingClause
+	{
+		args := $4.([]ast.ExprNode)
+		args = append(args, $6.(ast.ExprNode))
+		if $8 != nil {
+			$$ = &ast.WindowFuncExpr{Name: "GROUP_CONCAT", Args: args, Distinct: $3.(bool), Spec: *($8.(*ast.WindowSpec))}
+		} else {
+			agg := &ast.AggregateFuncExpr{F: "GROUP_CONCAT", Args: args, Distinct: $3.(bool)}
 			if $5 != nil {
 				agg.Order = $5.(*ast.OrderByClause)
 			}

@@ -161,6 +161,17 @@ func TestUUID(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestGetGUID(t *testing.T) {
+	ctx := createContext(t)
+	f, err := newFunctionForTest(ctx, ast.GetGUID)
+	require.NoError(t, err)
+	d, err := f.Eval(ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, 32, len(d.GetString()))
+	_, err = funcs[ast.GetGUID].getFunction(ctx, datumsToConstants(nil))
+	require.NoError(t, err)
+}
+
 func TestAnyValue(t *testing.T) {
 	ctx := createContext(t)
 	tbl := []struct {
