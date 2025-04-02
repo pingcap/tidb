@@ -16,13 +16,13 @@ package logicalop
 
 import (
 	"math"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
 	"github.com/pingcap/tidb/pkg/types"
-	"slices"
 )
 
 var _ base.HashEquals = &LogicalSchemaProducer{}

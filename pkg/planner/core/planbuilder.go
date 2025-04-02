@@ -18,8 +18,10 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"maps"
 	"math"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -74,8 +76,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
-	"maps"
-	"slices"
 )
 
 type visitInfo struct {

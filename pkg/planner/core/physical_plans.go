@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"unsafe"
@@ -52,7 +53,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
-	"slices"
 )
 
 //go:generate go run ./generator/plan_cache/plan_clone_generator.go -- plan_clone_generated.go

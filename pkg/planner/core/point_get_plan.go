@@ -17,12 +17,11 @@ package core
 import (
 	"context"
 	math2 "math"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"unsafe"
-
-	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"

@@ -17,6 +17,7 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tipb/go-tipb"
-	"slices"
 )
 
 // LogicalExpand represents a logical Expand OP serves for data replication requirement.

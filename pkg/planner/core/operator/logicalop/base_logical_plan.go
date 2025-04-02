@@ -15,6 +15,7 @@
 package logicalop
 
 import (
+	"slices"
 	"strconv"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -31,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/tracing"
-	"slices"
 )
 
 var _ base.LogicalPlan = &BaseLogicalPlan{}

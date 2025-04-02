@@ -16,6 +16,7 @@ package old
 
 import (
 	"math"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -34,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/ranger"
-	"slices"
 )
 
 // Transformation defines the interface for the transformation rules.

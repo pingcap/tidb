@@ -15,6 +15,7 @@
 package logicalop
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
-	"slices"
 )
 
 // LogicalTableDual represents a dual table plan.

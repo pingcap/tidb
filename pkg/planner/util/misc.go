@@ -17,7 +17,6 @@ package util
 import (
 	"encoding/binary"
 	"fmt"
-	"iter"
 	"math"
 	"reflect"
 	"time"
@@ -34,6 +33,7 @@ import (
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	"iter"
 )
 
 // SliceDeepClone uses Clone() to clone a slice.

@@ -15,6 +15,9 @@
 package logicalop
 
 import (
+	"maps"
+	"slices"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -29,8 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
-	"maps"
-	"slices"
 )
 
 // LogicalApply gets one row from outer executor and gets one row from inner executor according to outer row.

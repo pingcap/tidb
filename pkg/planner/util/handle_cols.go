@@ -15,7 +15,6 @@
 package util
 
 import (
-	"iter"
 	"slices"
 	"strings"
 	"unsafe"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"iter"
 )
 
 // HandleCols is the interface that holds handle columns.

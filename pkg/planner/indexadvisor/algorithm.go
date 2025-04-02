@@ -16,12 +16,12 @@ package indexadvisor
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	s "github.com/pingcap/tidb/pkg/util/set"
-	"slices"
 )
 
 /*
