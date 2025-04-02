@@ -211,7 +211,7 @@ func FillRecommendation(bindingPlans []*BindingPlanInfo) {
 		for i, cur := range bindingPlans {
 			hitRule2 := true
 			for j, other := range bindingPlans {
-				if i == j || cur.ScanRowsPerReturnRow < other.ScanRowsPerReturnRow*0.5 {
+				if i == j || cur.ScanRowsPerReturnRow < other.ScanRowsPerReturnRow/2 {
 					continue // cur's ScanRowsPerReturnRow is 50% better than other's
 				}
 				hitRule2 = false
