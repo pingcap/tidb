@@ -861,7 +861,7 @@ childLoop:
 	return wrapper
 }
 
-// buildDataSource2TableScanByIndexJoinProp builds an IndexScan as the inner child for an
+// buildDataSource2IndexScanByIndexJoinProp builds an IndexScan as the inner child for an
 // IndexJoin based on IndexJoinProp included in prop if possible.
 //
 // buildDataSource2TableScanByIndexJoinProp differs with buildIndexJoinInner2TableScan in that
