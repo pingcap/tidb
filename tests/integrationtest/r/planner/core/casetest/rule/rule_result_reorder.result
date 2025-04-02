@@ -41,11 +41,10 @@ Sort	10000.00	root		planner__core__casetest__rule__rule_result_reorder.t.b, plan
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain FORMAT='brief' select * from t use index(b) limit 10;
 id	estRows	task	access object	operator info
-TopN	10.00	root		planner__core__casetest__rule__rule_result_reorder.t.a, offset:0, count:10
-└─IndexLookUp	10.00	root		
-  ├─TopN(Build)	10.00	cop[tikv]		planner__core__casetest__rule__rule_result_reorder.t.a, offset:0, count:10
-  │ └─IndexFullScan	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+IndexLookUp	10.00	root		topn embedded(offset:0, count:10)
+├─TopN(Build)	10.00	cop[tikv]		planner__core__casetest__rule__rule_result_reorder.t.a, offset:0, count:10
+│ └─IndexFullScan	10000.00	cop[tikv]	table:t, index:b(b)	keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain FORMAT='brief' select * from t use index(primary) limit 10;
 id	estRows	task	access object	operator info
 Limit	10.00	root		offset:0, count:10
