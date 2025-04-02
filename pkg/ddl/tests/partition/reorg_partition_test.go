@@ -1202,8 +1202,6 @@ func TestPartitionByFailuresAddPlacementPolicyGlobalIndex(t *testing.T) {
 	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, nil, afterResult)
 }
 
-// Test different concurrency scenarios during backfill, to avoid that backfill will silently
-// delete or overwrite concurrent DML (UPDATE/DELETE/INSERT ODKU)
 func TestBackfillDML(t *testing.T) {
 	// Start by test case 1, concurrently delete a row that has just been read by backfill
 	create := `create table t (a int, b int, index (b), index (a,b)) partition by range (a) (partition p0 values less than (100))`
@@ -1267,8 +1265,6 @@ func TestBackfillDML(t *testing.T) {
 	testBackfillDMLStartTxnDuringCommitAfterFail(t, create, ddl, dmls, initFn, postFn, true)
 }
 
-// Test different concurrency scenarios during backfill, to avoid that backfill will silently
-// delete or overwrite concurrent DML (UPDATE/DELETE/INSERT ODKU)
 func TestBackfillDMLClustered(t *testing.T) {
 	// Start by test case 1, concurrently delete a row that has just been read by backfill
 	create := `create table t (a int primary key clustered, b int, index (b), index (a,b)) partition by range (a) (partition p0 values less than (100))`
@@ -1328,17 +1324,11 @@ func TestBackfillDMLClustered(t *testing.T) {
 	testBackfillDMLStartTxnDuringCommitAfterFail(t, create, ddl, dmls, initFn, postFn, true)
 }
 
-// Test different concurrency scenarios during backfill, to avoid that backfill will silently
-// delete or overwrite concurrent DML (UPDATE/DELETE/INSERT ODKU)
-// So we want to test:
-// And both clustered and non-clustered?
 func testBackfillDMLAutoCommit(t *testing.T, create, ddl string, dmls []string, initFn func(tk *testkit.TestKit), postFn func(tk *testkit.TestKit, called int32), optimistic bool) {
 	// For optimistic/pessimistic impact see:
 	// https://docs.pingcap.com/tidb/stable/pessimistic-transaction/#difference-with-mysql-innodb
 	// bullet point 5. I.e. if pessimistic, it will first try the auto-commit in optimistic
-	// mode, then tidb_retry_limit retries in pessimistic mode. If 0 it would return dup key error.
-	// TODO: Create a test which would show this as a possible error for auto-commit optimistic
-	// statement.
+	// mode, then tidb_retry_limit retries in pessimistic mode. If 0 it returns dup key error.
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
