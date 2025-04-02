@@ -24,12 +24,14 @@ import (
 
 // PiTRIdTracker tracks all the DB and tables ids that need to restore in a PiTR
 type PiTRIdTracker struct {
-	DBIdToTableId map[int64]map[int64]struct{}
+	DBIdToTableId     map[int64]map[int64]struct{}
+	DBNameToTableName map[string]map[string]struct{}
 }
 
 func NewPiTRIdTracker() *PiTRIdTracker {
 	return &PiTRIdTracker{
-		DBIdToTableId: make(map[int64]map[int64]struct{}),
+		DBIdToTableId:     make(map[int64]map[int64]struct{}),
+		DBNameToTableName: make(map[string]map[string]struct{}),
 	}
 }
 
@@ -121,4 +123,22 @@ func MatchTable(filter filter.Filter, schema, table string, withSys bool) bool {
 		schema = name
 	}
 	return filter.MatchTable(schema, table)
+}
+
+// TrackTableName adds a table name for the given database name
+func (t *PiTRIdTracker) TrackTableName(dbName, tableName string) {
+	if t.DBNameToTableName == nil {
+		t.DBNameToTableName = make(map[string]map[string]struct{})
+	}
+
+	if _, ok := t.DBNameToTableName[dbName]; !ok {
+		t.DBNameToTableName[dbName] = make(map[string]struct{})
+	}
+
+	t.DBNameToTableName[dbName][tableName] = struct{}{}
+}
+
+// GetDBNameToTableName returns the map of database names to table names
+func (t *PiTRIdTracker) GetDBNameToTableName() map[string]map[string]struct{} {
+	return t.DBNameToTableName
 }
