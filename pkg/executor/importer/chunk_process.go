@@ -113,14 +113,15 @@ func (r *queryChunkEncodeReader) readRow(ctx context.Context) (data rowToEncode,
 			err = ctx.Err()
 			return
 		case queryChk, ok := <-r.chunkCh:
-			logutil.BgLogger().Info("--cs-- fetch chunk", zap.Int64("offset", queryChk.Offset), zap.Int("num-rows", queryChk.Chk.NumRows()), zap.Bool("ok", ok))
 			if !ok {
+				logutil.BgLogger().Info("--cs-- fetch no ok chunk", zap.Bool("ok", ok), zap.Any("chk", queryChk.Chk), zap.Int64("offset", queryChk.Offset))
 				closed = true
 				return
 			}
 			r.queryChk = queryChk
 			r.cursor = 0
 			r.numRows = r.queryChk.Chk.NumRows()
+			logutil.BgLogger().Info("--cs-- fetch chunk", zap.Int64("offset", queryChk.Offset), zap.Int("num-rows", queryChk.Chk.NumRows()), zap.Bool("ok", ok))
 		}
 	}
 
