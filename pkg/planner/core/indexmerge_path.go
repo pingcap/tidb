@@ -279,7 +279,7 @@ func generateANDIndexMerge4NormalIndex(ds *logicalop.DataSource, normalPathCnt i
 	composedWithMvIndex := len(usedAccessMap) != 0
 
 	// 1. Collect partial paths from normal paths.
-	var partialPaths []*util.AccessPath
+	partialPaths := make([]*util.AccessPath, 0, normalPathCnt)
 	for i := range normalPathCnt {
 		originalPath := ds.PossibleAccessPaths[i]
 		// No need to consider table path as a partial path.
@@ -1337,7 +1337,7 @@ func jsonArrayExpr2Exprs(
 		}
 		return nil, false
 	}
-	var exprs []expression.Expression
+	exprs := make([]expression.Expression, 0, jsonArray.GetElemCount())
 	for i := range jsonArray.GetElemCount() { // '[1, 2, 3]' -> []expr{1, 2, 3}
 		expr, ok := jsonValue2Expr(jsonArray.ArrayGetElem(i), targetType)
 		if !ok {
