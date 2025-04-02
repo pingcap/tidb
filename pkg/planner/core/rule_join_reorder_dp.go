@@ -171,7 +171,7 @@ func (s *joinReorderDPSolver) dpGraph(visitID2NodeID, nodeID2VisitID []int, _ []
 	nodeCnt := uint(len(visitID2NodeID))
 	bestPlan := make([]*jrNode, 1<<nodeCnt)
 	// bestPlan[s] is nil can be treated as bestCost[s] = +inf.
-	for i := range uint(nodeCnt) {
+	for i := range nodeCnt {
 		bestPlan[1<<i] = s.curJoinGroup[visitID2NodeID[i]]
 	}
 	// Enumerate the nodeBitmap from small to big, make sure that S1 must be enumerated before S2 if S1 belongs to S2.
