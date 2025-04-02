@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/intset"
 )
 
 // AggregationEliminator is used to eliminate aggregation grouped by unique key.
@@ -77,10 +78,10 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *logicalop.L
 			break
 		}
 	}
+	if a.oldAggEliminationCheck && !CheckCanConvertAggToProj(agg) {
+		return nil
+	}
 	if coveredByUniqueKey {
-		if a.oldAggEliminationCheck && !CheckCanConvertAggToProj(agg) {
-			return nil
-		}
 		// GroupByCols has unique key, so this aggregation can be removed.
 		if ok, proj := ConvertAggToProj(agg, agg.Schema()); ok {
 			proj.SetChildren(agg.Children()[0])
@@ -88,35 +89,49 @@ func (a *aggregationEliminateChecker) tryToEliminateAggregation(agg *logicalop.L
 			return proj
 		}
 	}
+	a.tryToSimpleGroupBy(agg)
 	return nil
 }
 
 func (*aggregationEliminateChecker) tryToSimpleGroupBy(agg *logicalop.LogicalAggregation) {
-	if !agg.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("here")
-	}
 	if len(agg.GroupByItems) <= 1 {
 		return
 	}
-	deleteGroupByItems := make([]expression.Expression, 0, len(agg.GroupByItems))
-	for _, groupby := range agg.GroupByItems {
-		cols, ok := groupby.(*expression.Column)
+	if !agg.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("here")
+	}
+	fd := agg.ExtractFD()
+	pkset, ok := fd.FindPrimaryKey()
+	if !ok {
+		return
+	}
+	primaryKey2col := make(map[int]intset.FastIntSet, pkset.Len())
+	for _, GroupByItem := range agg.GroupByItems {
+		col, ok := GroupByItem.(*expression.Column)
 		if !ok {
 			continue
 		}
-		groupBySchema := expression.NewSchema(cols)
-		for _, key := range agg.Schema().PKOrUK {
-
-			if groupBySchema.ColumnsIndices(key) != nil && !agg.SCtx().GetSessionVars().InRestrictedSQL {
-				deleteGroupByItems = append(deleteGroupByItems, groupby)
-			}
+		if pkset.Has(int(col.UniqueID)) {
+			primaryKey2col[int(col.UniqueID)] = fd.ClosureOfStrict(intset.NewFastIntSet(int(col.UniqueID)))
+			//fmt.Println("col:", int(col.UniqueID))
+			//fmt.Println("primaryKey2col[int(col.UniqueID)]:", primaryKey2col[int(col.UniqueID)])
 		}
 	}
-	if len(deleteGroupByItems) != 0 {
-		agg.GroupByItems = slices.DeleteFunc(agg.GroupByItems, func(expr expression.Expression) bool {
-			return !slices.Contains(deleteGroupByItems, expr)
-		})
-	}
+	agg.GroupByItems = slices.DeleteFunc(agg.GroupByItems, func(i expression.Expression) bool {
+		col, ok := i.(*expression.Column)
+		if !ok {
+			return false
+		}
+		if pkset.Has(int(col.UniqueID)) {
+			return false
+		}
+		for _, colSet := range primaryKey2col {
+			if colSet.Has(int(col.UniqueID)) {
+				return true
+			}
+		}
+		return false
+	})
 }
 
 // tryToEliminateDistinct will eliminate distinct in the aggregation function if the aggregation args
@@ -309,7 +324,6 @@ func (a *AggregationEliminator) Optimize(ctx context.Context, p base.LogicalPlan
 	if proj := a.tryToEliminateAggregation(agg, opt); proj != nil {
 		return proj, planChanged, nil
 	}
-	a.tryToSimpleGroupBy(agg)
 	return p, planChanged, nil
 }
 
