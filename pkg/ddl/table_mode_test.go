@@ -111,6 +111,7 @@ func TestTableModeBasic(t *testing.T) {
 	require.True(t, ok)
 	checkTableModeTest(t, store, dbInfo, tblInfo, model.TableModeImport)
 	// not allow delete foreign key constraint
+	// TODO: need to verify DML(update/delete) on foreign key father table
 	tk.MustGetErrCode("ALTER TABLE t1_foreign_key DROP FOREIGN KEY fk_1", errno.ErrProtectedTableMode)
 
 	// For testing create table as ModeRestore
