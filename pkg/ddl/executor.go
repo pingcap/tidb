@@ -4742,10 +4742,16 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	// Do some checks here to fast fail the DDL job.
 	var funcExpr string
-	if columnarIndexType == model.ColumnarIndexTypeVector {
-		_, funcExpr, err = buildVectorInfoWithCheck(indexPartSpecifications, tblInfo)
-		if err != nil {
+	switch columnarIndexType {
+	case model.ColumnarIndexTypeInverted:
+		if _, err := buildInvertedInfoWithCheck(indexPartSpecifications, tblInfo); err != nil {
+			return errors.Trace(err)
+		}
+	case model.ColumnarIndexTypeVector:
+		if _, funcExpr, err = buildVectorInfoWithCheck(indexPartSpecifications, tblInfo); err != nil {
 			return errors.Trace(err)
 		}
 	}
