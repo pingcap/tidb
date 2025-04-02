@@ -197,7 +197,7 @@ func (c *pdClient) scatterRegions(ctx context.Context, newRegions []*RegionInfo)
 		// but the old version of PD will only return the FinishedPercentage.
 		// so we need to retry the regions one by one.
 		if isUnsupportedError(err) || berrors.ErrPDRegionsNotFullyScatter.Equal(err) {
-			log.Warn("batch scatter isn't supported, rollback to old method", logutil.ShortError(err))
+			log.Warn("failed to batch scatter regions, rollback to sequentially scatter", logutil.ShortError(err))
 			c.scatterRegionsSequentially(
 				ctx, newRegions,
 				// backoff about 6s, or we give up scattering this region.
