@@ -47,6 +47,12 @@ func readAllData(
 		zap.String("start-key", hex.EncodeToString(startKey)),
 		zap.String("end-key", hex.EncodeToString(endKey)),
 	)
+	log.FromContext(ctx).Info("readAllData info",
+		zap.String("start-key", string(startKey)),
+		zap.String("end-key", string(endKey)),
+		zap.Strings("dataFiles", dataFiles),
+		zap.Strings("statsFiles", statsFiles),
+	)
 	defer func() {
 		if err != nil {
 			output.keysPerFile = nil
