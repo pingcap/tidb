@@ -278,7 +278,7 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	}()
 	selectedChunkCh := make(chan importer.QueryChunk, e.controller.ThreadCnt)
 	ti.SetSelectedChunkCh(selectedChunkCh)
-	logutil.Logger(ctx).Info("--cs-- importer begin", zap.Int("thread", e.controller.ThreadCnt))
+	logutil.Logger(ctx).Info("--cs-- importer begin", zap.Int("thread", e.controller.ThreadCnt), zap.Int("max-chk-size", e.selectExec.MaxChunkSize()), zap.Int("init-chk-size", e.selectExec.InitCap()))
 
 	var importResult *importer.JobImportResult
 	eg, egCtx := errgroup.WithContext(ctx)
