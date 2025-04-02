@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -572,6 +573,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildChange(x)
 	case *ast.SplitRegionStmt:
 		return b.buildSplitRegion(x)
+	case *ast.DistributeTableStmt:
+		return b.buildDistributeTable(x)
 	case *ast.CompactTableStmt:
 		return b.buildCompactTable(x)
 	case *ast.RecommendIndexStmt:
@@ -3208,6 +3211,12 @@ func buildSplitRegionsSchema() (*expression.Schema, types.NameSlice) {
 	return schema.col2Schema(), schema.names
 }
 
+func buildDistributeTableSchema() (*expression.Schema, types.NameSlice) {
+	schema := newColumnsWithNames(1)
+	schema.Append(buildColumnWithName("", "JOB_ID", mysql.TypeLonglong, 4))
+	return schema.col2Schema(), schema.names
+}
+
 func buildShowDDLJobQueriesFields() (*expression.Schema, types.NameSlice) {
 	schema := newColumnsWithNames(1)
 	schema.Append(buildColumnWithName("", "QUERY", mysql.TypeVarchar, 256))
@@ -3434,6 +3443,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 			Extended:              show.Extended,
 			Limit:                 show.Limit,
 			ImportJobID:           show.ImportJobID,
+			DistributionJobID:     show.DistributionJobID,
 			SQLOrDigest:           show.SQLOrDigest,
 		},
 	}.Init(b.ctx)
@@ -4464,6 +4474,14 @@ var (
 	ImportIntoDataSource = "data source"
 )
 
+var (
+	distributionJobsSchemaNames = []string{"Job_ID", "Database", "Table", "Partition_List", "Engine", "Rule", "Status",
+		"Create_Time", "Start_Time", "Finish_Time"}
+	distributionJobsSchedulerFTypes = []byte{mysql.TypeLonglong, mysql.TypeString, mysql.TypeString, mysql.TypeString,
+		mysql.TypeString,
+		mysql.TypeString, mysql.TypeString, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp}
+)
+
 // importIntoCollAssignmentChecker implements ast.Visitor interface.
 // It is used to check the column assignment expressions in IMPORT INTO statement.
 // Currently, the import into column assignment only supports some simple expressions.
@@ -4732,6 +4750,32 @@ func (b *PlanBuilder) requireInsertAndSelectPriv(tables []*ast.TableName) {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tbl.Schema.O, tbl.Name.O, "", insertErr)
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tbl.Schema.O, tbl.Name.O, "", selectErr)
 	}
+}
+
+var ruleList = []string{"leader", "follower", "learner"}
+var engineList = []string{"tikv", "tiflash"}
+
+func (b *PlanBuilder) buildDistributeTable(node *ast.DistributeTableStmt) (base.Plan, error) {
+	tnW := b.resolveCtx.GetTableName(node.Table)
+	tblInfo := tnW.TableInfo
+	if !slices.Contains(ruleList, node.Rule.L) {
+		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("rule must be one of leader, follower, learner")
+	}
+	if !slices.Contains(engineList, node.Engine.L) {
+		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("engine must be one of tikv, tiflash")
+	}
+
+	if node.Engine.L == "tiflash" && node.Rule.L != "learner" {
+		return nil, plannererrors.ErrWrongArguments.GenWithStackByArgs("tiflash only supports learner")
+	}
+	plan := &DistributeTable{
+		TableInfo:      tblInfo,
+		PartitionNames: node.PartitionNames,
+		Engine:         node.Engine,
+		Rule:           node.Rule,
+	}
+	plan.setSchemaAndNames(buildDistributeTableSchema())
+	return plan, nil
 }
 
 func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (base.Plan, error) {
@@ -5748,6 +5792,9 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowImportJobs:
 		names = importIntoSchemaNames
 		ftypes = importIntoSchemaFTypes
+	case ast.ShowDistributionJobs:
+		names = distributionJobsSchemaNames
+		ftypes = distributionJobsSchedulerFTypes
 	}
 	return convert2OutputSchemasAndNames(names, ftypes, flags)
 }
