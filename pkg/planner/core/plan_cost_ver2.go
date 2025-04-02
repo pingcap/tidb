@@ -161,10 +161,18 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 	scanFactor := getTaskScanFactorVer2(p, p.StoreType, taskType)
 	p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
 
+	var unsignedIntHandle bool
+	if p.Table.PKIsHandle {
+		if pkColInfo := p.Table.GetPkColInfo(); pkColInfo != nil {
+			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+		}
+	}
+	hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
+
 	// Apply TiFlash startup cost to prefer TiKV for small table scans
 	if p.StoreType == kv.TiFlash {
 		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, TiFlashStartupRowPenalty, rowSize, scanFactor))
-	} else if !p.isChildOfIndexLookUp {
+	} else if !p.isChildOfIndexLookUp && hasFullRangeScan {
 		newRowCount := getTableScanPenalty(p, rows)
 		if newRowCount > 0 {
 			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, newRowCount, rowSize, scanFactor))
@@ -188,7 +196,16 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
-	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableScanCostFactor)
+	if p.isChildOfIndexLookUp {
+		// This is a RowID table scan (child of IndexLookUp)
+		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableRowIDScanCostFactor)
+	} else if !hasFullRangeScan {
+		// This is a table range scan (predicate exists on the PK)
+		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableRangeScanCostFactor)
+	} else {
+		// This is a table full scan
+		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableFullScanCostFactor)
+	}
 	return p.PlanCostVer2, nil
 }
 
@@ -941,17 +958,6 @@ func getTableScanPenalty(p *PhysicalTableScan, rows float64) (rowPenalty float64
 	if len(p.rangeInfo) > 0 {
 		return float64(0)
 	}
-	var unsignedIntHandle bool
-	if p.Table.PKIsHandle {
-		if pkColInfo := p.Table.GetPkColInfo(); pkColInfo != nil {
-			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
-		}
-	}
-	hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
-	if !hasFullRangeScan {
-		return float64(0)
-	}
-
 	sessionVars := p.SCtx().GetSessionVars()
 	allowPreferRangeScan := sessionVars.GetAllowPreferRangeScan()
 	tblColHists := p.tblColHists
@@ -978,7 +984,7 @@ func getTableScanPenalty(p *PhysicalTableScan, rows float64) (rowPenalty float64
 	// penalty is applied to a full table scan (not range scan). This may also penalize a
 	// full table scan where USE/FORCE was applied to the primary key.
 	hasIndexForce := sessionVars.StmtCtx.GetIndexForce()
-	shouldApplyPenalty := hasFullRangeScan && (hasIndexForce || preferRangeScanCondition)
+	shouldApplyPenalty := hasIndexForce || preferRangeScanCondition
 	if shouldApplyPenalty {
 		// MySQL will increase the cost of table scan if FORCE index is used. TiDB takes this one
 		// step further - because we don't differentiate USE/FORCE - the added penalty applies to

@@ -1032,17 +1032,19 @@ type SessionVars struct {
 	concurrencyFactor float64
 
 	// Optimizer cost model factors for each physical operator
-	IndexScanCostFactor   float64
-	TableScanCostFactor   float64
-	IndexLookupCostFactor float64
-	IndexMergeCostFactor  float64
-	SortCostFactor        float64
-	TopNCostFactor        float64
-	StreamAggCostFactor   float64
-	HashAggCostFactor     float64
-	MergeJoinCostFactor   float64
-	HashJoinCostFactor    float64
-	IndexJoinCostFactor   float64
+	IndexScanCostFactor      float64
+	TableFullScanCostFactor  float64
+	TableRangeScanCostFactor float64
+	TableRowIDScanCostFactor float64
+	IndexLookupCostFactor    float64
+	IndexMergeCostFactor     float64
+	SortCostFactor           float64
+	TopNCostFactor           float64
+	StreamAggCostFactor      float64
+	HashAggCostFactor        float64
+	MergeJoinCostFactor      float64
+	HashJoinCostFactor       float64
+	IndexJoinCostFactor      float64
 
 	// enableForceInlineCTE is used to enable/disable force inline CTE.
 	enableForceInlineCTE bool
@@ -2152,7 +2154,9 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		diskFactor:                    vardef.DefOptDiskFactor,
 		concurrencyFactor:             vardef.DefOptConcurrencyFactor,
 		IndexScanCostFactor:           vardef.DefOptIndexScanCostFactor,
-		TableScanCostFactor:           vardef.DefOptTableScanCostFactor,
+		TableFullScanCostFactor:       vardef.DefOptTableFullScanCostFactor,
+		TableRangeScanCostFactor:      vardef.DefOptTableRangeScanCostFactor,
+		TableRowIDScanCostFactor:      vardef.DefOptTableRowIDScanCostFactor,
 		IndexLookupCostFactor:         vardef.DefOptIndexLookupCostFactor,
 		IndexMergeCostFactor:          vardef.DefOptIndexMergeCostFactor,
 		SortCostFactor:                vardef.DefOptSortCostFactor,

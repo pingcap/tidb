@@ -346,17 +346,19 @@ const (
 
 	// The following optimizer cost factors represent a multiplier for each optimizer physical operator.
 	// These factors are used to adjust the cost of each operator to influence the optimizer's plan selection.
-	TiDBOptIndexScanCostFactor   = "tidb_opt_index_scan_cost_factor"
-	TiDBOptTableScanCostFactor   = "tidb_opt_table_scan_cost_factor"
-	TiDBOptIndexLookupCostFactor = "tidb_opt_index_lookup_cost_factor"
-	TiDBOptIndexMergeCostFactor  = "tidb_opt_index_merge_cost_factor"
-	TiDBOptSortCostFactor        = "tidb_opt_sort_cost_factor"
-	TiDBOptTopNCostFactor        = "tidb_opt_topn_cost_factor"
-	TiDBOptStreamAggCostFactor   = "tidb_opt_stream_agg_cost_factor"
-	TiDBOptHashAggCostFactor     = "tidb_opt_hash_agg_cost_factor"
-	TiDBOptMergeJoinCostFactor   = "tidb_opt_merge_join_cost_factor"
-	TiDBOptHashJoinCostFactor    = "tidb_opt_hash_join_cost_factor"
-	TiDBOptIndexJoinCostFactor   = "tidb_opt_index_join_cost_factor"
+	TiDBOptIndexScanCostFactor      = "tidb_opt_index_scan_cost_factor"
+	TiDBOptTableFullScanCostFactor  = "tidb_opt_table_full_scan_cost_factor"
+	TiDBOptTableRangeScanCostFactor = "tidb_opt_table_range_scan_cost_factor"
+	TiDBOptTableRowIDScanCostFactor = "tidb_opt_table_rowid_scan_cost_factor"
+	TiDBOptIndexLookupCostFactor    = "tidb_opt_index_lookup_cost_factor"
+	TiDBOptIndexMergeCostFactor     = "tidb_opt_index_merge_cost_factor"
+	TiDBOptSortCostFactor           = "tidb_opt_sort_cost_factor"
+	TiDBOptTopNCostFactor           = "tidb_opt_topn_cost_factor"
+	TiDBOptStreamAggCostFactor      = "tidb_opt_stream_agg_cost_factor"
+	TiDBOptHashAggCostFactor        = "tidb_opt_hash_agg_cost_factor"
+	TiDBOptMergeJoinCostFactor      = "tidb_opt_merge_join_cost_factor"
+	TiDBOptHashJoinCostFactor       = "tidb_opt_hash_join_cost_factor"
+	TiDBOptIndexJoinCostFactor      = "tidb_opt_index_join_cost_factor"
 
 	// TiDBOptForceInlineCTE is used to enable/disable inline CTE
 	TiDBOptForceInlineCTE = "tidb_opt_force_inline_cte"
@@ -1319,7 +1321,9 @@ const (
 	DefOptDiskFactor                        = 1.5
 	DefOptConcurrencyFactor                 = 3.0
 	DefOptIndexScanCostFactor               = 1.0
-	DefOptTableScanCostFactor               = 1.0
+	DefOptTableFullScanCostFactor           = 1.0
+	DefOptTableRangeScanCostFactor          = 1.0
+	DefOptTableRowIDScanCostFactor          = 1.0
 	DefOptIndexLookupCostFactor             = 1.0
 	DefOptIndexMergeCostFactor              = 1.0
 	DefOptSortCostFactor                    = 1.0
