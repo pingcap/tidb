@@ -2316,10 +2316,10 @@ func getModifiedIndexesInfoForAnalyze(
 	tblInfo *model.TableInfo,
 	allColumns bool,
 	colsInfo []*model.ColumnInfo,
-) ([]*model.IndexInfo, []*model.IndexInfo, []*model.IndexInfo) {
-	idxsInfo := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
-	independentIdxsInfo := make([]*model.IndexInfo, 0)
-	specialGlobalIdxsInfo := make([]*model.IndexInfo, 0)
+) (idxsInfo, independentIdxsInfo, specialGlobalIdxsInfo []*model.IndexInfo) {
+	idxsInfo = make([]*model.IndexInfo, 0, len(tblInfo.Indices))
+	independentIdxsInfo = make([]*model.IndexInfo, 0)
+	specialGlobalIdxsInfo = make([]*model.IndexInfo, 0)
 	for _, originIdx := range tblInfo.Indices {
 		if originIdx.State != model.StatePublic {
 			continue
