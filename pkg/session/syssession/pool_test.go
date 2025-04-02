@@ -126,9 +126,11 @@ func TestSessionPoolPut(t *testing.T) {
 	p := NewAdvancedSessionPool(poolCap, mockFactory.create)
 	require.Equal(t, 4, cap(p.pool))
 	// Put invalid Session
-	p.Put(nil)
-	p.Put(&Session{})
-	require.Equal(t, 0, len(p.pool))
+	WithSuppressAssert(func() {
+		p.Put(nil)
+		p.Put(&Session{})
+		require.Equal(t, 0, len(p.pool))
+	})
 
 	getCachedSessionFromPool := func(sctx *mockSessionContext) *Session {
 		se, err := p.Get()

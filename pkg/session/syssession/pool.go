@@ -129,9 +129,24 @@ func (p *AdvancedSessionPool) Get() (*Session, error) {
 }
 
 // Put puts the session back to the pool.
+// After the session is put back to the pool, the owner of the internal session will transfer to pool.
 func (p *AdvancedSessionPool) Put(se *Session) {
-	if se == nil || se.internal == nil || se.internal.Owner() != se {
-		// Do nothing when the input session is invalid.
+	if se == nil {
+		intest.Assert(suppressAssertInTest)
+		return
+	}
+
+	if se.internal == nil {
+		intest.Assert(suppressAssertInTest)
+		return
+	}
+
+	if se.internal.Owner() != se {
+		// This is regarded as normal of the below cases and do nothing when the Session is no longer the owner.
+		// 1. `p.Put(se)` is called more than once and the internal session already in the pool (internal.Owner() == p).
+		// 2. `se` is closed and then `p.Put(se)` is called (internal.Owner() == nil).
+		// 3. `p.Put(se)` is called, and the internal session is obtained by another session.
+		//    Then Calling `p.Put(se)` again with the old Session (internal.Owner() != anotherSe).
 		return
 	}
 
