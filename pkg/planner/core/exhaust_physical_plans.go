@@ -864,7 +864,7 @@ childLoop:
 // buildDataSource2IndexScanByIndexJoinProp builds an IndexScan as the inner child for an
 // IndexJoin based on IndexJoinProp included in prop if possible.
 //
-// buildDataSource2TableScanByIndexJoinProp differs with buildIndexJoinInner2TableScan in that
+buildDataSource2IndexScanByIndexJoinProp
 // the first one is try to build a single table scan as the inner child of an index join then return
 // this inner task(raw table scan) bottom-up, which will be attached with other inner parents of an
 // index join in attach2Task when bottom-up of enumerating the physical plans;
