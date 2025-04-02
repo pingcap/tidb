@@ -1160,6 +1160,7 @@ import (
 	CreateSequenceOptionListOpt            "create sequence list opt"
 	CreateTableOptionListOpt               "create table option list opt"
 	CreateTableSelectOpt                   "Select/Union statement in CREATE TABLE ... SELECT"
+	CreateUserDefaultRoleOption            "CREATE USER default role option"
 	DatabaseOption                         "CREATE Database specification"
 	DatabaseOptionList                     "CREATE Database specification list"
 	DatabaseOptionListOpt                  "CREATE Database specification list opt"
@@ -13790,22 +13791,25 @@ WhereClauseOptional:
  *  https://dev.mysql.com/doc/refman/5.7/en/account-management-sql.html
  ************************************************************************************/
 CreateUserStmt:
-	"CREATE" "USER" IfNotExists UserSpecList RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption ResourceGroupNameOption
+	"CREATE" "USER" IfNotExists UserSpecList CreateUserDefaultRoleOption RequireClauseOpt ConnectionOptions PasswordOrLockOptions CommentOrAttributeOption ResourceGroupNameOption
 	{
 		// See https://dev.mysql.com/doc/refman/8.0/en/create-user.html
 		ret := &ast.CreateUserStmt{
 			IsCreateRole:          false,
 			IfNotExists:           $3.(bool),
 			Specs:                 $4.([]*ast.UserSpec),
-			AuthTokenOrTLSOptions: $5.([]*ast.AuthTokenOrTLSOption),
-			ResourceOptions:       $6.([]*ast.ResourceOption),
-			PasswordOrLockOptions: $7.([]*ast.PasswordOrLockOption),
+			AuthTokenOrTLSOptions: $6.([]*ast.AuthTokenOrTLSOption),
+			ResourceOptions:       $7.([]*ast.ResourceOption),
+			PasswordOrLockOptions: $8.([]*ast.PasswordOrLockOption),
 		}
-		if $8 != nil {
-			ret.CommentOrAttributeOption = $8.(*ast.CommentOrAttributeOption)
+		if $5 != nil {
+			ret.CreateUserDefaultRoleOpt = $5.(*ast.CreateUserDefaultRoleOption)
 		}
 		if $9 != nil {
-			ret.ResourceGroupNameOption = $9.(*ast.ResourceGroupNameOption)
+			ret.CommentOrAttributeOption = $9.(*ast.CommentOrAttributeOption)
+		}
+		if $10 != nil {
+			ret.ResourceGroupNameOption = $10.(*ast.ResourceGroupNameOption)
 		}
 		$$ = ret
 	}
@@ -13849,6 +13853,19 @@ AlterUserStmt:
 		$$ = &ast.AlterUserStmt{
 			IfExists:    $3.(bool),
 			CurrentAuth: auth,
+		}
+	}
+|	"ALTER" "USER" IfExists Username "DEFAULT" "ROLE" SetDefaultRoleOpt
+	{
+		tmp := $7.(*ast.SetRoleStmt)
+		roleopt := &ast.AlterUserDefaultRoleOption{
+			SetRoleOpt: tmp.SetRoleOpt,
+			RoleList:   tmp.RoleList,
+		}
+		$$ = &ast.AlterUserStmt{
+			IfExists:                $3.(bool),
+			User:                    $4.(*auth.UserIdentity),
+			AlterUserDefaultRoleOpt: roleopt,
 		}
 	}
 
@@ -13966,6 +13983,15 @@ ConnectionOption:
 			Type:  ast.MaxUserConnections,
 			Count: $2.(int64),
 		}
+	}
+
+CreateUserDefaultRoleOption:
+	{
+		$$ = nil
+	}
+|	"DEFAULT" "ROLE" RolenameList
+	{
+		$$ = &ast.CreateUserDefaultRoleOption{RoleList: $3.([]*auth.RoleIdentity)}
 	}
 
 RequireClauseOpt:
