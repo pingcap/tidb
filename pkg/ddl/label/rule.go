@@ -19,10 +19,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strconv"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client/http"
 	"gopkg.in/yaml.v2"
 )
@@ -30,7 +32,9 @@ import (
 const (
 	// IDPrefix is the prefix for label rule ID.
 	IDPrefix = "schema"
-	ruleType = "key-range"
+	// KeyspacePrefix is the prefix for keyspace in label rule ID.
+	KeyspacePrefix = "keyspace"
+	ruleType       = "key-range"
 )
 
 const (
@@ -45,12 +49,12 @@ const (
 )
 
 var (
-	// TableIDFormat is the format of the label rule ID for a table.
+	// tableIDFormat is the format of the label rule ID for a table.
 	// The format follows "schema/database_name/table_name".
-	TableIDFormat = "%s/%s/%s"
-	// PartitionIDFormat is the format of the label rule ID for a partition.
+	tableIDFormat = "%s/%s/%s"
+	// partitionIDFormat is the format of the label rule ID for a partition.
 	// The format follows "schema/database_name/table_name/partition_name".
-	PartitionIDFormat = "%s/%s/%s/%s"
+	partitionIDFormat = "%s/%s/%s/%s"
 )
 
 // Rule is used to establish the relationship between labels and a key range.
@@ -94,20 +98,34 @@ func (r *Rule) Clone() *Rule {
 	return newRule
 }
 
-// Reset will reset the label rule for a table/partition with a given ID and names.
-func (r *Rule) Reset(dbName, tableName, partName string, ids ...int64) *Rule {
+// NewRuleID generates a new rule ID for a table or partition.
+func NewRuleID(tikvCodec tikv.Codec, dbName, tableName, partName string) string {
+	var id string
 	isPartition := partName != ""
 	if isPartition {
-		r.ID = fmt.Sprintf(PartitionIDFormat, IDPrefix, dbName, tableName, partName)
+		id = fmt.Sprintf(partitionIDFormat, IDPrefix, dbName, tableName, partName)
 	} else {
-		r.ID = fmt.Sprintf(TableIDFormat, IDPrefix, dbName, tableName)
+		id = fmt.Sprintf(tableIDFormat, IDPrefix, dbName, tableName)
 	}
+	if tikvCodec.GetKeyspaceMeta() != nil {
+		id = fmt.Sprintf("%s/%d/%s", KeyspacePrefix, tikvCodec.GetKeyspaceID(), id)
+	}
+	return id
+}
+
+// Reset will reset the label rule for a table/partition with a given ID and names.
+func (r *Rule) Reset(tikvCodec tikv.Codec, dbName, tableName, partName string, ids ...int64) *Rule {
+	isPartition := partName != ""
+	r.ID = NewRuleID(tikvCodec, dbName, tableName, partName)
 	if len(r.Labels) == 0 {
 		return r
 	}
-	var hasDBKey, hasTableKey, hasPartitionKey bool
+	var hasKeyspaceKey, hasDBKey, hasTableKey, hasPartitionKey bool
 	for i := range r.Labels {
 		switch r.Labels[i].Key {
+		case keyspaceKey:
+			r.Labels[i].Value = strconv.FormatInt(int64(tikvCodec.GetKeyspaceID()), 10)
+			hasKeyspaceKey = true
 		case dbKey:
 			r.Labels[i].Value = dbName
 			hasDBKey = true
@@ -121,6 +139,10 @@ func (r *Rule) Reset(dbName, tableName, partName string, ids ...int64) *Rule {
 			}
 		default:
 		}
+	}
+
+	if tikvCodec.GetKeyspaceMeta() != nil && !hasKeyspaceKey {
+		r.Labels = append(r.Labels, pd.RegionLabel{Key: keyspaceKey, Value: strconv.FormatInt(int64(tikvCodec.GetKeyspaceID()), 10)})
 	}
 
 	if !hasDBKey {
@@ -138,9 +160,12 @@ func (r *Rule) Reset(dbName, tableName, partName string, ids ...int64) *Rule {
 	dataSlice := make([]any, 0, len(ids))
 	slices.Sort(ids)
 	for i := 0; i < len(ids); i++ {
+		startKey := codec.EncodeBytes(nil, tablecodec.GenTablePrefix(ids[i]))
+		endKey := codec.EncodeBytes(nil, tablecodec.GenTablePrefix(ids[i]+1))
+		startKey, endKey = tikvCodec.EncodeRange(startKey, endKey)
 		data := map[string]string{
-			"start_key": hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(ids[i]))),
-			"end_key":   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(ids[i]+1))),
+			"start_key": hex.EncodeToString(startKey),
+			"end_key":   hex.EncodeToString(endKey),
 		}
 		dataSlice = append(dataSlice, data)
 	}
