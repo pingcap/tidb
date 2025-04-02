@@ -1221,13 +1221,11 @@ func TestBackfillDML(t *testing.T) {
 	}
 
 	ddl := `alter table t reorganize partition p0 into (partition p0 values less than (101))`
-	postFn := func(tk *testkit.TestKit, calls int32) {
-		tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "3 3", "4 4"))
-		tk.MustExec(`admin check table t`)
-		require.Equal(t, int32(2), calls)
-	}
-	testBackfillDMLAutoCommit(t, create, ddl, dmls[0], initFn, postFn, false)
-	testBackfillDMLAutoCommit(t, create, ddl, dmls[0], initFn, postFn, true)
+	//postFn := func(tk *testkit.TestKit, calls int32) {
+	//	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "3 3", "4 4"))
+	//	tk.MustExec(`admin check table t`)
+	//	require.Equal(t, int32(2), calls)
+	//}
 	postFnRest := func(tk *testkit.TestKit) {
 		tk.MustExec(`admin check table t`)
 		ctx := tk.Session()
@@ -1247,22 +1245,31 @@ func TestBackfillDML(t *testing.T) {
 			"7 7",
 			"8 8"))
 	}
-	postFn = func(tk *testkit.TestKit, calls int32) {
+	postFn := func(tk *testkit.TestKit, calls int32) {
 		require.Equal(t, int32(2), calls)
 		postFnRest(tk)
 	}
 	// This takes ~1.5 min. TODO: investigate if possible to fix lock wait time?
 	//testBackfillDMLStartTxnDuringCommitAfterFail(t, create, ddl, dmls, initFn, postFn, false)
 
+	testBackfillDMLAutoCommit(t, create, ddl, dmls, initFn, postFn, false)
+	logutil.DDLLogger().Info("autocommit pess MJONSS")
+	testBackfillDMLAutoCommit(t, create, ddl, dmls, initFn, postFn, true)
+	logutil.DDLLogger().Info("autocommit opt MJONSS")
 	testBackfillDMLStartTxnBeforeCommitDuring(t, create, ddl, dmls, initFn, postFn, false)
+	logutil.DDLLogger().Info("before/during pess MJONSS")
 	testBackfillDMLStartTxnBeforeCommitDuring(t, create, ddl, dmls, initFn, postFn, true)
+	logutil.DDLLogger().Info("before/during opt MJONSS")
 	testBackfillDMLStartTxnAndCommitDuring(t, create, ddl, dmls, initFn, postFn, false)
+	logutil.DDLLogger().Info("during pess MJONSS")
 	testBackfillDMLStartTxnAndCommitDuring(t, create, ddl, dmls, initFn, postFn, true)
+	logutil.DDLLogger().Info("during opt MJONSS")
 	postFn = func(tk *testkit.TestKit, calls int32) {
 		require.Equal(t, int32(3), calls)
 		postFnRest(tk)
 	}
 	testBackfillDMLStartTxnDuringCommitAfter(t, create, ddl, dmls, initFn, postFn, false)
+	logutil.DDLLogger().Info("during/after pess MJONSS")
 	postFn = func(tk *testkit.TestKit, calls int32) {
 		require.Equal(t, int32(1), calls)
 		tk.MustExec(`admin check table t`)
@@ -1278,8 +1285,10 @@ func TestBackfillDML(t *testing.T) {
 			"4 4"))
 	}
 	testBackfillDMLStartTxnDuringCommitAfter(t, create, ddl, dmls, initFn, postFn, true)
+	logutil.DDLLogger().Info("during/after opt MJONSS")
 	// Basically the same...
 	testBackfillDMLStartTxnDuringCommitAfterFail(t, create, ddl, dmls, initFn, postFn, true)
+	logutil.DDLLogger().Info("during/after fail opt MJONSS")
 }
 
 // Test different concurrency scenarios during backfill, to avoid that backfill will silently
@@ -1297,7 +1306,7 @@ func TestBackfillDML(t *testing.T) {
 // And run them for Optimistic+Pessimistic
 // And three different DML (Delete/Update/Insert ODKU)
 // And both clustered and non-clustered?
-func testBackfillDMLAutoCommit(t *testing.T, create, ddl, dml string, initFn func(tk *testkit.TestKit), postFn func(tk *testkit.TestKit, called int32), optimistic bool) {
+func testBackfillDMLAutoCommit(t *testing.T, create, ddl string, dmls []string, initFn func(tk *testkit.TestKit), postFn func(tk *testkit.TestKit, called int32), optimistic bool) {
 	// For optimistic/pessimistic impact see:
 	// https://docs.pingcap.com/tidb/stable/pessimistic-transaction/#difference-with-mysql-innodb
 	// bullet point 5. I.e. if pessimistic, it will first try the auto-commit in optimistic
@@ -1315,7 +1324,7 @@ func testBackfillDMLAutoCommit(t *testing.T, create, ddl, dml string, initFn fun
 	}
 	i := atomic.Int32{}
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillData", func(hasRows bool) {
+	callback := func(hasRows bool) {
 		if !hasRows {
 			return
 		}
@@ -1332,8 +1341,13 @@ func testBackfillDMLAutoCommit(t *testing.T, create, ddl, dml string, initFn fun
 		} else {
 			tk2.MustExec("set tidb_txn_mode=pessimistic")
 		}
-		tk2.MustExec(dml)
-	})
+		for _, dml := range dmls {
+			tk2.MustExec(dml)
+			logutil.DDLLogger().Info("MJONSS dml", zap.String("dml", dml))
+		}
+	}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillDataNoCheck", callback)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillDataCheck", callback)
 	tk.MustExec(ddl)
 	if postFn != nil {
 		postFn(tk, i.Load())
@@ -1363,7 +1377,7 @@ func testBackfillDMLStartTxnBeforeCommitDuring(t *testing.T, create, ddl string,
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBeforeBackfillData", func(_ []byte) {
 		tk2.MustExec(`BEGIN`)
 	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillData", func(hasRows bool) {
+	callback := func(hasRows bool) {
 		if !hasRows {
 			return
 		}
@@ -1376,7 +1390,9 @@ func testBackfillDMLStartTxnBeforeCommitDuring(t *testing.T, create, ddl string,
 			logutil.DDLLogger().Info("MJONSS dml", zap.String("dml", dml))
 		}
 		tk2.MustExec(`COMMIT`)
-	})
+	}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillDataNoCheck", callback)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillDataCheck", callback)
 	tk.MustExec(ddl)
 	if postFn != nil {
 		postFn(tk, i.Load())
@@ -1394,7 +1410,7 @@ func testBackfillDMLStartTxnAndCommitDuring(t *testing.T, create, ddl string, dm
 		initFn(tk)
 	}
 	i := atomic.Int32{}
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillData", func(hasRows bool) {
+	callback := func(hasRows bool) {
 		if !hasRows {
 			return
 		}
@@ -1417,7 +1433,9 @@ func testBackfillDMLStartTxnAndCommitDuring(t *testing.T, create, ddl string, dm
 			logutil.DDLLogger().Info("MJONSS dml", zap.String("dml", dml))
 		}
 		tk2.MustExec(`COMMIT`)
-	})
+	}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillDataNoCheck", callback)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillDataCheck", callback)
 	tk.MustExec(ddl)
 	if postFn != nil {
 		postFn(tk, i.Load())
@@ -1445,17 +1463,19 @@ func testBackfillDMLStartTxnDuringCommitAfter(t *testing.T, create, ddl string, 
 	}
 	if optimistic {
 		committed := atomic.Int32{}
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionAfterBackfillData", func(_ []byte) {
+		callback := func(_ []byte) {
 			c := committed.Add(1)
 			if c > 1 {
 				return
 			}
 			tk2.MustContainErrMsg(`COMMIT`, "[kv:9007]Write conflict, ")
 			logutil.DDLLogger().Info("MJONSS commit optimistic failed")
-		})
+		}
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionAfterBackfillDataNoCheck", callback)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionAfterBackfillDataCheck", callback)
 	}
 	i := atomic.Int32{}
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillData", func(hasRows bool) {
+	callback := func(hasRows bool) {
 		if !hasRows {
 			return
 		}
@@ -1474,7 +1494,9 @@ func testBackfillDMLStartTxnDuringCommitAfter(t *testing.T, create, ddl string, 
 			tk2.MustExec(dml)
 			logutil.DDLLogger().Info("MJONSS dml", zap.String("dml", dml))
 		}
-	})
+	}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillDataNoCheck", callback)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillDataCheck", callback)
 	tk.MustExec(ddl)
 	if postFn != nil {
 		postFn(tk, i.Load())
@@ -1502,7 +1524,7 @@ func testBackfillDMLStartTxnDuringCommitAfterFail(t *testing.T, create, ddl stri
 	}
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillShortLockWait", "return(true)")
 	committed := atomic.Int32{}
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionAfterBackfillData", func(_ []byte) {
+	afterBackfill := func(_ []byte) {
 		c := committed.Add(1)
 		if c > 1 {
 			return
@@ -1513,9 +1535,11 @@ func testBackfillDMLStartTxnDuringCommitAfterFail(t *testing.T, create, ddl stri
 			tk2.MustExec(`COMMIT`)
 		}
 		logutil.DDLLogger().Info("MJONSS commit")
-	})
+	}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionAfterBackfillDataNoCheck", afterBackfill)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionAfterBackfillDataCheck", afterBackfill)
 	during := atomic.Int32{}
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillData", func(hasRows bool) {
+	callback := func(hasRows bool) {
 		if !hasRows {
 			return
 		}
@@ -1528,7 +1552,9 @@ func testBackfillDMLStartTxnDuringCommitAfterFail(t *testing.T, create, ddl stri
 			tk2.MustExec(dml)
 			logutil.DDLLogger().Info("MJONSS dml", zap.String("dml", dml))
 		}
-	})
+	}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillDataNoCheck", callback)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillDataCheck", callback)
 	if optimistic {
 		tk.MustExec(ddl)
 	} else {

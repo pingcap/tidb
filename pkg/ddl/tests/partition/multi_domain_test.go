@@ -902,7 +902,7 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 	go func() {
 		if backfillDML != "" {
 			// This can be used for testing concurrent writes during backfill.
-			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillData", func(b bool) {
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillDataNoCheck", func(b bool) {
 				if b {
 					logutil.BgLogger().Info("XXXXXXXXXXX Concurrent UPDATE!")
 					tkO.MustExec(backfillDML)
@@ -913,7 +913,7 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 		err := tkDDLOwner.ExecToErr(alterSQL)
 		logutil.BgLogger().Info("XXXXXXXXXXX DDL done!", zap.String("alterSQL", alterSQL))
 		if backfillDML != "" {
-			testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillData")
+			testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillDataNoCheck")
 		}
 		alterChan <- err
 	}()

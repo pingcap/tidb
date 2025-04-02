@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	kvtikv "github.com/tikv/client-go/v2/kv"
 	"math"
 	"strconv"
 	"strings"
@@ -3799,70 +3798,69 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 	failpoint.InjectCall("PartitionBeforeBackfillData", handleRange.startKey)
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
-	/*
-		errInTxn = kv.RunInNewTxn(ctx, w.ddlCtx.store, false, func(_ context.Context, txn kv.Transaction) error {
-			taskCtx.addedCount = 0
-			taskCtx.scanCount = 0
-			updateTxnEntrySizeLimitIfNeeded(txn)
-			txn.SetOption(kv.Priority, handleRange.priority)
-			if tagger := w.GetCtx().getResourceGroupTaggerForTopSQL(handleRange.getJobID()); tagger != nil {
-				txn.SetOption(kv.ResourceGroupTagger, tagger)
-			}
-			txn.SetOption(kv.ResourceGroupName, w.jobContext.resourceGroupName)
+	errInTxn = kv.RunInNewTxn(ctx, w.ddlCtx.store, false, func(_ context.Context, txn kv.Transaction) error {
+		taskCtx.addedCount = 0
+		taskCtx.scanCount = 0
+		updateTxnEntrySizeLimitIfNeeded(txn)
+		txn.SetOption(kv.Priority, handleRange.priority)
+		if tagger := w.GetCtx().getResourceGroupTaggerForTopSQL(handleRange.getJobID()); tagger != nil {
+			txn.SetOption(kv.ResourceGroupTagger, tagger)
+		}
+		txn.SetOption(kv.ResourceGroupName, w.jobContext.resourceGroupName)
 
-			nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
+		nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		taskCtx.nextKey = nextKey
+		taskCtx.done = taskDone
+
+		failpoint.InjectCall("PartitionBackfillDataNoCheck", len(w.rowRecords) > 0)
+		// TODO: Do we even need to lock the keys if we are doing optimistic?
+		// YES!!! otherwise we could overwrite rows that was concurrently updated/deleted!
+		lockKey := make([]byte, 0, tablecodec.RecordRowKeyLen)
+		lockKey = append(lockKey, handleRange.startKey[:tablecodec.TableSplitKeyLen]...)
+		if !w.table.Meta().HasClusteredIndex() && len(w.rowRecords) > 0 {
+			failpoint.InjectCall("PartitionBackfillNonClusteredNoCheck", w.rowRecords[0].vals)
+		}
+
+		for _, prr := range w.rowRecords {
+			taskCtx.scanCount++
+			key := prr.key
+			lockKey = lockKey[:tablecodec.TableSplitKeyLen]
+			lockKey = append(lockKey, key[tablecodec.TableSplitKeyLen:]...)
+			// Lock the *old* key, since there can still be concurrent update happening on
+			// the rows from fetchRowColVals(). If we cannot lock the keys in this
+			// transaction and succeed when committing, then another transaction did update
+			// the same key, and we will fail and retry. When retrying, this key would be found
+			// through BatchGet and skipped.
+			err = txn.LockKeys(context.Background(), new(kv.LockCtx), lockKey)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			taskCtx.nextKey = nextKey
-			taskCtx.done = taskDone
-
-			failpoint.InjectCall("PartitionBackfillData", len(w.rowRecords) > 0)
-			// TODO: Do we even need to lock the keys if we are doing optimistic?
-			lockKey := make([]byte, 0, tablecodec.RecordRowKeyLen)
-			lockKey = append(lockKey, handleRange.startKey[:tablecodec.TableSplitKeyLen]...)
-			if len(w.rowRecords) > 0 {
-				failpoint.InjectCall("PartitionBackfillNonClustered", w.rowRecords[0].vals)
-			}
-
-			for _, prr := range w.rowRecords {
-				taskCtx.scanCount++
-				key := prr.key
-				lockKey = lockKey[:tablecodec.TableSplitKeyLen]
-				lockKey = append(lockKey, key[tablecodec.TableSplitKeyLen:]...)
-				// Lock the *old* key, since there can still be concurrent update happening on
-				// the rows from fetchRowColVals(). If we cannot lock the keys in this
-				// transaction and succeed when committing, then another transaction did update
-				// the same key, and we will fail and retry. When retrying, this key would be found
-				// through BatchGet and skipped.
-				err = txn.LockKeys(context.Background(), new(kv.LockCtx), lockKey)
-				if err != nil {
-					return errors.Trace(err)
-			}
 
 			err = txn.SetAssertion(key, kv.SetAssertUnknown)
-				if err != nil {
-					return errors.Trace(err)
-					}
-					err = txn.GetMemBuffer().SetWithFlags(key, prr.vals, kv.SetPresumeKeyNotExists)
-				//err = txn.Set(key, prr.vals)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				logutil.DDLLogger().Info("BackfillData ============ MJONSS ======= key", zap.String("key", fmt.Sprintf("%x", key)))
-				//txn.UpdateMemBufferFlags(key, kv.SetPresumeKeyNotExists)
-				taskCtx.addedCount++
+			if err != nil {
+				return errors.Trace(err)
 			}
-			return nil
-		})
-		logutil.DDLLogger().Info("BackfillData ============ MJONSS =======", zap.Error(errInTxn))
-		if errInTxn == nil {
-			logutil.DDLLogger().Info("BackfillData ============ MJONSS ======= OK !!!")
-			logSlowOperations(time.Since(oprStartTime), "BackfillData", 3000)
-			return
+			err = txn.GetMemBuffer().SetWithFlags(key, prr.vals, kv.SetPresumeKeyNotExists)
+			//err = txn.Set(key, prr.vals)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			logutil.DDLLogger().Info("BackfillData ============ MJONSS ======= key", zap.String("key", fmt.Sprintf("%x", key)))
+			//txn.UpdateMemBufferFlags(key, kv.SetPresumeKeyNotExists)
+			taskCtx.addedCount++
 		}
-
-	*/
+		return nil
+	})
+	logutil.DDLLogger().Info("BackfillData ============ MJONSS =======", zap.Error(errInTxn))
+	if errInTxn == nil {
+		logutil.DDLLogger().Info("BackfillData ============ MJONSS ======= OK !!!")
+		logSlowOperations(time.Since(oprStartTime), "BackfillData", 3000)
+		failpoint.InjectCall("PartitionAfterBackfillDataNoCheck", handleRange.startKey)
+		return
+	}
 
 	errInTxn = kv.RunInNewTxn(ctx, w.ddlCtx.store, true, func(_ context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
@@ -3881,7 +3879,7 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 		taskCtx.nextKey = nextKey
 		taskCtx.done = taskDone
 
-		failpoint.InjectCall("PartitionBackfillData", len(w.rowRecords) > 0)
+		failpoint.InjectCall("PartitionBackfillDataCheck", len(w.rowRecords) > 0)
 		// For non-clustered tables, we need to replace the _tidb_rowid handles since
 		// there may be duplicates across different partitions, due to EXCHANGE PARTITION.
 		// Meaning we need to check here if a record was double written to the new partition,
@@ -3891,7 +3889,7 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 		lockKey := make([]byte, 0, tablecodec.RecordRowKeyLen)
 		lockKey = append(lockKey, handleRange.startKey[:tablecodec.TableSplitKeyLen]...)
 		if !w.table.Meta().HasClusteredIndex() && len(w.rowRecords) > 0 {
-			failpoint.InjectCall("PartitionBackfillNonClustered", w.rowRecords[0].vals)
+			failpoint.InjectCall("PartitionBackfillNonClusteredCheck", w.rowRecords[0].vals)
 			// we must check if old IDs already been written,
 			// i.e. double written by StateWriteOnly or StateWriteReorganization.
 
@@ -3914,13 +3912,6 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 		tmpRow := make([]types.Datum, len(w.reorgedTbl.Cols()))
 
 		lockCtx := new(kv.LockCtx)
-		failpoint.Inject("PartitionBackfillShortLockWait", func(val failpoint.Value) {
-			//nolint:forcetypeassert
-			if val.(bool) {
-				// Set 50 milliseconds as timeout, to trigger failure faster.
-				lockCtx = kvtikv.NewLockCtx(txn.StartTS(), 50, time.Now())
-			}
-		})
 		for _, prr := range w.rowRecords {
 			taskCtx.scanCount++
 			key := prr.key
@@ -3937,7 +3928,6 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 			if err != nil {
 				return errors.Trace(err)
 			}
-			// TODO: add failpoint here and check if we can trigger DML (UPDATE/DELETE) to fail, due to the backfill?
 
 			if vals, ok := found[string(key)]; ok {
 				logutil.DDLLogger().Info("BackfillData ------------ MJONSS ------- key found", zap.String("key", fmt.Sprintf("%x", key)))
@@ -3997,7 +3987,7 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "BackfillData", 3000)
-	failpoint.InjectCall("PartitionAfterBackfillData", handleRange.startKey)
+	failpoint.InjectCall("PartitionAfterBackfillDataCheck", handleRange.startKey)
 
 	return
 }
