@@ -4710,10 +4710,10 @@ func checkIndexNameAndColumns(ctx *metabuild.Context, t table.Table, indexName a
 
 func checkTableTypeForColumnarIndex(tblInfo *model.TableInfo) error {
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
-		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Vector Index")
+		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Columnar Index")
 	}
 	if tblInfo.TempTableType != model.TempTableNone {
-		return dbterror.ErrOptOnTemporaryTable.FastGenByArgs("vector index")
+		return dbterror.ErrOptOnTemporaryTable.FastGenByArgs("columnar index")
 	}
 	if tblInfo.GetPartitionInfo() != nil {
 		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported partition table")
