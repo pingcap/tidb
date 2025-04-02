@@ -79,28 +79,12 @@ const (
 	// 0 means no limit
 	unlimitedWriteSpeed = config.ByteSize(0)
 
-<<<<<<< HEAD
-	characterSetOption          = "character_set"
-	fieldsTerminatedByOption    = "fields_terminated_by"
-	fieldsEnclosedByOption      = "fields_enclosed_by"
-	fieldsEscapedByOption       = "fields_escaped_by"
-	fieldsDefinedNullByOption   = "fields_defined_null_by"
-	fieldsEncodedByOption       = "fields_encoded_by"
-	linesTerminatedByOption     = "lines_terminated_by"
-	skipRowsOption              = "skip_rows"
-	splitFileOption             = "split_file"
-	diskQuotaOption             = "disk_quota"
-	threadOption                = "thread"
-	maxWriteSpeedOption         = "max_write_speed"
-	checksumTableOption         = "checksum_table"
-	recordErrorsOption          = "record_errors"
-	detachedOption              = "detached"
-=======
 	characterSetOption        = "character_set"
 	fieldsTerminatedByOption  = "fields_terminated_by"
 	fieldsEnclosedByOption    = "fields_enclosed_by"
 	fieldsEscapedByOption     = "fields_escaped_by"
 	fieldsDefinedNullByOption = "fields_defined_null_by"
+	fieldsEncodedByOption     = "fields_encoded_by"
 	linesTerminatedByOption   = "lines_terminated_by"
 	skipRowsOption            = "skip_rows"
 	splitFileOption           = "split_file"
@@ -120,7 +104,6 @@ const (
 	//    very large and be a hotspot, might cause latency spike.
 	//
 	// default false for local sort, true for global sort.
->>>>>>> fe5a5175a1d (importinto: disable switching to 'import mode' when global sort (#60363))
 	disableTiKVImportModeOption = "disable_tikv_import_mode"
 	cloudStorageURIOption       = "cloud_storage_uri"
 	disablePrecheckOption       = "disable_precheck"
