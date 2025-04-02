@@ -121,6 +121,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	taskMeta := importinto.TaskMeta{}
 	s.NoError(json.Unmarshal(task.Meta, &taskMeta))
 	urlEqual(s.T(), redactedSortStorageURI, taskMeta.Plan.CloudStorageURI)
+	require.True(s.T(), taskMeta.Plan.DisableTiKVImportMode)
 
 	// merge-sort data kv
 	s.tk.MustExec("truncate table t")
