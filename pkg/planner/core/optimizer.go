@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -256,8 +257,8 @@ func CheckTableMode(node *resolve.NodeW) error {
 	case *ast.ShowStmt, *ast.ExplainStmt:
 	default:
 		for _, tblNameW := range node.GetResolveContext().GetTableNames() {
-			if tblNameW.TableInfo.Mode != model.TableModeNormal {
-				return infoschema.ErrProtectedTableMode.GenWithStackByArgs(tblNameW.TableName, tblNameW.TableInfo.Mode)
+			if err := ddl.CheckTableModeIsNormal(tblNameW.Name, tblNameW.TableInfo.Mode); err != nil {
+				return err
 			}
 		}
 	}

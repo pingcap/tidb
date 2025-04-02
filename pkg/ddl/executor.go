@@ -4152,7 +4152,7 @@ func (e *executor) dropTableObject(
 		} else if err != nil {
 			return err
 		}
-		if err = checkTableMode(tableInfo); err != nil {
+		if err = CheckTableModeIsNormal(tableInfo.Meta().Name, tableInfo.Meta().Mode); err != nil {
 			return err
 		}
 
@@ -4346,7 +4346,7 @@ func (e *executor) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Id
 		if tbl.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 			return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Table"))
 		}
-		if err = checkTableMode(tbl); err != nil {
+		if err = CheckTableModeIsNormal(tbl.Meta().Name, tbl.Meta().Mode); err != nil {
 			return err
 		}
 	}
@@ -4396,7 +4396,7 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 			if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 				return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Tables"))
 			}
-			if err = checkTableMode(t); err != nil {
+			if err = CheckTableModeIsNormal(t.Meta().Name, t.Meta().Mode); err != nil {
 				return err
 			}
 		}
@@ -7028,7 +7028,7 @@ func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 	}
 }
 
-// checkTableMode checks the table mode is TableModeNormal or not. This is a
+// CheckTableModeIsNormal checks the table mode is TableModeNormal or not. This is a
 // special validation for tablemode during the DDL phase. Originally, reads and writes
 // to non-normal tables were prohibited during the optimize phase of execution plan
 // generation. However, the current approach relies on the `tableNameW` recorded
@@ -7037,9 +7037,9 @@ func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 // for some statements, `tableNameW` is not recorded as those table might not exists,
 // such as for rename table DDL in the `ResolveContext`, so these statements
 // require special handling during the DDL execution phase.
-func checkTableMode(tableInfo table.Table) error {
-	if tableInfo.Meta().Mode != model.TableModeNormal {
-		return infoschema.ErrProtectedTableMode.GenWithStackByArgs(tableInfo.Meta().Name, tableInfo.Meta().Mode)
+func CheckTableModeIsNormal(tableName ast.CIStr, tableMode model.TableMode) error {
+	if tableMode != model.TableModeNormal {
+		return infoschema.ErrProtectedTableMode.FastGenByArgs(tableName, tableMode)
 	}
 	return nil
 }
