@@ -316,6 +316,7 @@ func (s *session) OwnerClose(caller sessionOwner) {
 }
 
 // Close closes the session without checking the owner.
+// If the session is already closed, it will return without doing anything.
 func (s *session) Close() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -326,6 +327,7 @@ func (s *session) Close() {
 // It should be called with the protection of the mutex.
 func (s *session) doCloseWithoutLock(seq uint64) {
 	if s.owner == nil {
+		// `s.owner == nil` means it is already closed, do nothing.
 		return
 	}
 

@@ -208,10 +208,15 @@ func (p *AdvancedSessionPool) Put(se *Session) {
 		return
 	}
 
+	// Please notice that we should make sure `p.pool <- internal` is protected by the mutex.
+	// Consider a case the `p.Put` and `p.Close` is called concurrently, without the mutex protection, the internal
+	// channel may be closed by `p.Close` after checking `p.mu.closed` is false, and then `p.pool <- internal` will
+	// panic.
 	select {
 	case p.pool <- internal:
 		returned = true
 	default:
+		// That means the pool is full now, and the session will then be closed in the defer function.
 	}
 }
 
