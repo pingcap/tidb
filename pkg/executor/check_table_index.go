@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	poolutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -429,6 +430,8 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 			handleColumns, generatedExpr, indexColNames[0], tblName, idxInfo.Name, handleColumns)
 	}
 
+	sqlctx := plannercore.WithUnfoldOption(w.e.contextCtx, true)
+
 	times := 0
 	const maxTimes = 10
 	for tableRowCntToCheck > lookupCheckThreshold || !checkOnce {
@@ -461,7 +464,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		)
 
 		// compute table side checksum.
-		tableChecksum, err := getCheckSum(w.e.contextCtx, se, tblQuery)
+		tableChecksum, err := getCheckSum(sqlctx, se, tblQuery)
 		if err != nil {
 			trySaveErr(err)
 			return
@@ -471,7 +474,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		})
 
 		// compute index side checksum.
-		indexChecksum, err := getCheckSum(w.e.contextCtx, se, idxQuery)
+		indexChecksum, err := getCheckSum(sqlctx, se, idxQuery)
 		if err != nil {
 			trySaveErr(err)
 			return

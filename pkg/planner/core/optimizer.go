@@ -359,6 +359,12 @@ func DoOptimize(
 		debugtrace.EnterContextCommon(sctx)
 		defer debugtrace.LeaveContextCommon(sctx)
 	}
+
+	// if GetUnfoldOption(ctx) {
+	flag &= ^rule.FlagEliminateAgg
+	flag &= ^rule.FlagPushDownAgg
+	// }
+
 	_, finalPlan, cost, err := doOptimize(ctx, sctx, flag, logic)
 	return finalPlan, cost, err
 }

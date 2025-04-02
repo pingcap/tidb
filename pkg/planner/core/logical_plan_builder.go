@@ -3679,37 +3679,25 @@ func (b *PlanBuilder) TableHints() *h.PlanHints {
 
 type unfoldOption struct{}
 
-var jsonOptionKey unfoldOption
-
-type JSONArrayOption int64
-
-const (
-	JSONArraytNone JSONArrayOption = 0
-	JSONArraySplit JSONArrayOption = 1
-)
+var unfoldOptionKey unfoldOption
 
 // WithJSONOption controls the rewriter unfold operation.
 // If it's true, it indicated we want to unfold cast(... as ... array).
 // NOTE!!! It should only be used in restricted SQL (admin check table).
-func WithJSONOption(ctx context.Context, opt JSONArrayOption) context.Context {
-	return context.WithValue(ctx, jsonOptionKey, opt)
+func WithUnfoldOption(ctx context.Context, unfold bool) context.Context {
+	return context.WithValue(ctx, unfoldOptionKey, unfold)
 }
 
-func GetJSONOption(ctx context.Context) JSONArrayOption {
-	jsonOpt := JSONArraytNone
-	if opt := ctx.Value(jsonOptionKey); opt != nil {
-		jsonOpt = opt.(JSONArrayOption)
+func GetUnfoldOption(ctx context.Context) bool {
+	unfold := false
+	if opt := ctx.Value(unfoldOptionKey); opt != nil {
+		unfold = opt.(bool)
 	}
-	return jsonOpt
+	return unfold
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p base.LogicalPlan, err error) {
-	// TODO(joechenrh): move this into admin check table function
-	// Otherwise, we can only execute SQL like:
-	// CREATE TABLE t1(a INT, j JSON, INDEX mvi((CAST(j->'$.path' AS UNSIGNED ARRAY))));
-	// select CAST(j->'$.path' AS UNSIGNED ARRAY) from t1 use index(mvi);
-	ctx = WithJSONOption(ctx, JSONArraySplit)
-
+	ctx = WithUnfoldOption(ctx, true)
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
 	defer func() {
@@ -4626,7 +4614,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			}
 		}
 	}
-	splitJSONArray := GetJSONOption(ctx) == JSONArraySplit
+	splitJSONArray := GetUnfoldOption(ctx) == true
 	ds := logicalop.DataSource{
 		DBName:              dbName,
 		TableAsName:         asName,
