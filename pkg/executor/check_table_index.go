@@ -178,7 +178,7 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	for _, src := range e.srcs {
 		taskCh <- src
 	}
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		wg.Run(func() {
 			util.WithRecovery(func() {
 				for {

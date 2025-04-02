@@ -928,7 +928,7 @@ func TestCastFuncSig(t *testing.T) {
 		resAfter := c.after.String()
 		if c.fsp > 0 {
 			resAfter += "."
-			for i := 0; i < c.fsp; i++ {
+			for range c.fsp {
 				resAfter += "0"
 			}
 		}
@@ -1089,7 +1089,7 @@ func TestCastFuncSig(t *testing.T) {
 		resAfter := c.after.String()
 		if c.fsp > 0 {
 			resAfter += "."
-			for j := 0; j < c.fsp; j++ {
+			for range c.fsp {
 				resAfter += "0"
 			}
 		}

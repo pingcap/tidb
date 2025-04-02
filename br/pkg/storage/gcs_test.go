@@ -168,7 +168,7 @@ func TestGCS(t *testing.T) {
 
 	// test 1003 files
 	var totalSize int64 = 0
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		err = stg.WriteFile(ctx, fmt.Sprintf("f%d", i), []byte("data"))
 		require.NoError(t, err)
 	}
@@ -186,7 +186,7 @@ func TestGCS(t *testing.T) {
 	require.True(t, ok)
 	_, ok = filesSet["key2"]
 	require.True(t, ok)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		_, ok = filesSet[fmt.Sprintf("f%d", i)]
 		require.True(t, ok)
 	}
@@ -514,13 +514,13 @@ func TestSpeedReadManyFiles(t *testing.T) {
 
 	fileNum := 1000
 	filenames := make([]string, fileNum)
-	for i := 0; i < fileNum; i++ {
+	for i := range fileNum {
 		filenames[i] = fmt.Sprintf("TestSpeedReadManySmallFiles/%d", i)
 	}
 	fileSize := 1024
 	data := make([]byte, fileSize)
 	eg := &errgroup.Group{}
-	for i := 0; i < fileNum; i++ {
+	for i := range fileNum {
 		filename := filenames[i]
 		eg.Go(func() error {
 			return s.WriteFile(ctx, filename, data)
@@ -547,12 +547,12 @@ func TestSpeedReadManyFiles(t *testing.T) {
 
 	fileNum = 30
 	filenames = make([]string, fileNum)
-	for i := 0; i < fileNum; i++ {
+	for i := range fileNum {
 		filenames[i] = fmt.Sprintf("TestSpeedReadManyLargeFiles/%d", i)
 	}
 	fileSize = 100 * 1024 * 1024
 	data = make([]byte, fileSize)
-	for i := 0; i < fileNum; i++ {
+	for i := range fileNum {
 		filename := filenames[i]
 		eg.Go(func() error {
 			return s.WriteFile(ctx, filename, data)

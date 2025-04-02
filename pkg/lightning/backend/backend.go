@@ -389,7 +389,7 @@ func NewClosedEngine(backend Backend, logger log.Logger, uuid uuid.UUID, id int3
 func (engine *ClosedEngine) Import(ctx context.Context, regionSplitSize, regionSplitKeys int64) error {
 	var err error
 
-	for i := 0; i < importMaxRetryTimes; i++ {
+	for i := range importMaxRetryTimes {
 		task := engine.logger.With(zap.Int("retryCnt", i)).Begin(zap.InfoLevel, "import")
 		err = engine.backend.ImportEngine(ctx, engine.uuid, regionSplitSize, regionSplitKeys)
 		if !common.IsRetryableError(err) {

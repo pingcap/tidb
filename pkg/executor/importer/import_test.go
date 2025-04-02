@@ -345,12 +345,12 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 	require.NoError(t, c.InitDataFiles(ctx))
 
 	var allData []string
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		fileName := fmt.Sprintf("server-%d.csv", i)
 		var content []byte
 		rowCnt := 2
-		for j := 0; j < rowCnt; j++ {
-			content = append(content, []byte(fmt.Sprintf("%d,test-%d\n", i*rowCnt+j, i*rowCnt+j))...)
+		for j := range rowCnt {
+			content = append(content, fmt.Appendf(nil, "%d,test-%d\n", i*rowCnt+j, i*rowCnt+j)...)
 			allData = append(allData, fmt.Sprintf("%d test-%d", i*rowCnt+j, i*rowCnt+j))
 		}
 		require.NoError(t, os.WriteFile(path.Join(tempDir, fileName), content, 0o644))

@@ -124,7 +124,7 @@ func (p *WorkerPool[T, R]) Start(ctx context.Context) {
 
 	p.ctx, p.cancel = context.WithCancel(ctx)
 
-	for i := 0; i < int(p.numWorkers); i++ {
+	for range int(p.numWorkers) {
 		p.runAWorker()
 	}
 }
@@ -203,14 +203,14 @@ func (p *WorkerPool[T, R]) Tune(numWorkers int32, wait bool) {
 	diff := numWorkers - p.numWorkers
 	if diff > 0 {
 		// Add workers
-		for i := 0; i < int(diff); i++ {
+		for range int(diff) {
 			p.runAWorker()
 		}
 	} else if diff < 0 {
 		// Remove workers
 		var wg sync.WaitGroup
 	outer:
-		for i := 0; i < int(-diff); i++ {
+		for range int(-diff) {
 			wg.Add(1)
 			select {
 			case p.quitChan <- tuneConfig{wg: &wg}:

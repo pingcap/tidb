@@ -161,7 +161,7 @@ func (b *rowTableBuilder) ResetBuffer(chk *chunk.Chunk) {
 
 	if b.usedRows == nil {
 		b.selRows = resizeSlice(b.selRows, logicalRows)
-		for i := 0; i < logicalRows; i++ {
+		for i := range logicalRows {
 			b.selRows[i] = i
 		}
 		b.usedRows = b.selRows
@@ -173,13 +173,13 @@ func (b *rowTableBuilder) ResetBuffer(chk *chunk.Chunk) {
 	}
 	if b.hasNullableKey {
 		b.nullKeyVector = resizeSlice(b.nullKeyVector, physicalRows)
-		for i := 0; i < physicalRows; i++ {
+		for i := range physicalRows {
 			b.nullKeyVector[i] = false
 		}
 	}
 	if cap(b.serializedKeyVectorBuffer) >= logicalRows {
 		b.serializedKeyVectorBuffer = b.serializedKeyVectorBuffer[:logicalRows]
-		for i := 0; i < logicalRows; i++ {
+		for i := range logicalRows {
 			b.serializedKeyVectorBuffer[i] = b.serializedKeyVectorBuffer[i][:0]
 		}
 	} else {
@@ -203,7 +203,7 @@ func (b *rowTableBuilder) processOneRestoredChunk(chk *chunk.Chunk, hashJoinCtx 
 	var partID int
 	var err error
 
-	for i := 0; i < rowNum; i++ {
+	for i := range rowNum {
 		if i%100 == 0 {
 			err := checkSQLKiller(&hashJoinCtx.SessCtx.GetSessionVars().SQLKiller, "killedDuringRestoreBuild")
 			if err != nil {
@@ -256,7 +256,7 @@ func (b *rowTableBuilder) regenerateHashValueAndPartIndex(hashValue uint64, part
 }
 
 func (b *rowTableBuilder) appendRemainingRowLocations(workerID int, htCtx *hashTableContext) {
-	for partID := 0; partID < int(htCtx.hashTable.partitionNumber); partID++ {
+	for partID := range int(htCtx.hashTable.partitionNumber) {
 		if b.rowNumberInCurrentRowTableSeg[partID] > 0 {
 			htCtx.finalizeCurrentSeg(workerID, partID, b, true)
 		}

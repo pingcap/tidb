@@ -550,7 +550,7 @@ func BenchmarkGenGlobalIDOneByOne(b *testing.B) {
 	b.ResetTimer()
 	var id int64
 	for i := 0; i < b.N; i++ {
-		for j := 0; j < 10; j++ {
+		for range 10 {
 			id, _ = m.GenGlobalID()
 		}
 	}

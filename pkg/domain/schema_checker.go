@@ -63,7 +63,7 @@ func (s *SchemaChecker) Check(txnTS uint64) (*transaction.RelatedSchemaChange, e
 func (s *SchemaChecker) CheckBySchemaVer(txnTS uint64, startSchemaVer tikv.SchemaVer) (*transaction.RelatedSchemaChange, error) {
 	schemaOutOfDateRetryInterval := SchemaOutOfDateRetryInterval.Load()
 	schemaOutOfDateRetryTimes := int(SchemaOutOfDateRetryTimes.Load())
-	for i := 0; i < schemaOutOfDateRetryTimes; i++ {
+	for range schemaOutOfDateRetryTimes {
 		relatedChange, checkResult := s.SchemaValidator.Check(txnTS, startSchemaVer.SchemaMetaVersion(), s.relatedTableIDs, s.needCheckSchema)
 		switch checkResult {
 		case ResultSucc:

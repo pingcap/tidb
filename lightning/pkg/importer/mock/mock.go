@@ -16,6 +16,7 @@ package mock
 
 import (
 	"context"
+	"maps"
 	"strings"
 
 	"github.com/docker/go-units"
@@ -250,9 +251,7 @@ func (t *TargetInfo) FetchRemoteTableModels(
 // It implements the TargetInfoGetter interface.
 func (t *TargetInfo) GetTargetSysVariablesForImport(_ context.Context, _ ...ropts.GetPreInfoOption) map[string]string {
 	result := make(map[string]string)
-	for k, v := range t.sysVarMap {
-		result[k] = v
-	}
+	maps.Copy(result, t.sysVarMap)
 	return result
 }
 
@@ -296,7 +295,7 @@ func (t *TargetInfo) GetEmptyRegionsInfo(_ context.Context) (*pdhttp.RegionsInfo
 	totalEmptyRegionCount := 0
 	for storeID, storeEmptyRegionCount := range t.EmptyRegionCountMap {
 		regions := make([]pdhttp.RegionInfo, storeEmptyRegionCount)
-		for i := 0; i < storeEmptyRegionCount; i++ {
+		for i := range storeEmptyRegionCount {
 			regions[i] = pdhttp.RegionInfo{
 				Peers: []pdhttp.RegionPeer{
 					{

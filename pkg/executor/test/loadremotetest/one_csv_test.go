@@ -280,8 +280,8 @@ mynull,"mynull"
 			BucketName: "test-bucket",
 			Name:       "ascii-0.csv",
 		},
-		Content: []byte(fmt.Sprintf(`\0,"\0"
-%s,"%s"`, ascii0, ascii0)),
+		Content: fmt.Appendf(nil, `\0,"\0"
+%s,"%s"`, ascii0, ascii0),
 	})
 	sql = fmt.Sprintf(`LOAD DATA INFILE 'gcs://test-bucket/ascii-0.csv?endpoint=%s' INTO TABLE load_csv.t
 		FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '"' ESCAPED BY '' DEFINED NULL BY x'00' OPTIONALLY ENCLOSED

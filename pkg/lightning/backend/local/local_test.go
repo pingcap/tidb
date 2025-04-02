@@ -190,7 +190,7 @@ func TestRangeProperties(t *testing.T) {
 	collector := newRangePropertiesCollector()
 	for _, p := range cases {
 		v := make([]byte, p.vLen)
-		for i := 0; i < p.count; i++ {
+		for range p.count {
 			_ = collector.Add(pebble.InternalKey{UserKey: p.key, Trailer: uint64(pebble.InternalKeyKindSet)}, v)
 		}
 	}
@@ -299,9 +299,9 @@ func TestRangePropertiesWithPebble(t *testing.T) {
 	}
 	writeOpt := &pebble.WriteOptions{Sync: false}
 	value := make([]byte, 100)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		wb := db.NewBatch()
-		for j := 0; j < 100; j++ {
+		for j := range 100 {
 			key := make([]byte, 8)
 			valueLen := rand.Intn(50)
 			binary.BigEndian.PutUint64(key, uint64(i*100+j))
@@ -373,7 +373,7 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 	ctx := context.Background()
 	var kvs []common.KvPair
 	value := make([]byte, 128)
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		binary.BigEndian.PutUint64(value[i*8:], uint64(i))
 	}
 	var keys [][]byte
@@ -514,12 +514,12 @@ func TestLocalIngestLoop(t *testing.T) {
 	count := 500
 	var metaSeqLock sync.Mutex
 	maxMetaSeq := int32(0)
-	for i := 0; i < concurrency; i++ {
+	for range concurrency {
 		go func() {
 			defer wg.Done()
 			flushCnt := rand.Int31n(10) + 1
 			seq := int32(0)
-			for i := 0; i < count; i++ {
+			for i := range count {
 				size := int64(rand.Int31n(50) + 1)
 				m := &sstMeta{totalSize: size, totalCount: 1}
 				atomic.AddInt64(&totalSize, size)
@@ -627,9 +627,9 @@ func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 
 func TestMergeSSTs(t *testing.T) {
 	kvs := make([][]common.KvPair, 0, 5)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		var pairs []common.KvPair
-		for j := 0; j < 10; j++ {
+		for j := range 10 {
 			var kv common.KvPair
 			kv.Key = make([]byte, 16)
 			key := i*100 + j
@@ -645,9 +645,9 @@ func TestMergeSSTs(t *testing.T) {
 
 func TestMergeSSTsDuplicated(t *testing.T) {
 	kvs := make([][]common.KvPair, 0, 5)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		var pairs []common.KvPair
-		for j := 0; j < 10; j++ {
+		for j := range 10 {
 			var kv common.KvPair
 			kv.Key = make([]byte, 16)
 			key := i*100 + j
@@ -1736,7 +1736,7 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Len(t, jobCh, 10)
-	for i := 0; i < 9; i++ {
+	for i := range 9 {
 		job := <-jobCh
 		require.Equal(t, []byte{byte(i + 1)}, job.keyRange.Start)
 		require.Equal(t, []byte{byte(i + 2)}, job.keyRange.End)
@@ -1805,7 +1805,7 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Len(t, jobCh, 9)
-	for i := 0; i < 9; i++ {
+	for i := range 9 {
 		job := <-jobCh
 		require.Equal(t, []byte{byte(i + 1)}, job.keyRange.Start)
 		require.Equal(t, []byte{byte(i + 2)}, job.keyRange.End)
@@ -2313,8 +2313,8 @@ func TestExternalEngine(t *testing.T) {
 	keys := make([][]byte, 100)
 	values := make([][]byte, 100)
 	for i := range keys {
-		keys[i] = []byte(fmt.Sprintf("key%06d", i))
-		values[i] = []byte(fmt.Sprintf("value%06d", i))
+		keys[i] = fmt.Appendf(nil, "key%06d", i)
+		values[i] = fmt.Appendf(nil, "value%06d", i)
 	}
 	// simple append 0x00
 	endKey := make([]byte, len(keys[99])+1)
@@ -2356,7 +2356,7 @@ func TestExternalEngine(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		for i := 0; i < 7; i++ {
+		for range 7 {
 			jobs = append(jobs, <-jobToWorkerCh)
 			testJobWg.Done()
 		}
@@ -2521,11 +2521,11 @@ func TestTotalMemoryConsume(t *testing.T) {
 	require.NoError(t, err)
 	// write about 150 MiB data
 	val := make([]byte, 35)
-	for i := 0; i < 1024*1024; i++ {
+	for i := range 1024 * 1024 {
 		err = unsortedWriter.AppendRows(ctx, []string{"a", "b", "c"}, kv.MakeRowsFromKvPairs([]common.KvPair{
-			{Key: []byte(fmt.Sprintf("key_a_%09d", i)), Val: val},
-			{Key: []byte(fmt.Sprintf("key_b_%09d", i)), Val: val},
-			{Key: []byte(fmt.Sprintf("key_c_%09d", i)), Val: val},
+			{Key: fmt.Appendf(nil, "key_a_%09d", i), Val: val},
+			{Key: fmt.Appendf(nil, "key_b_%09d", i), Val: val},
+			{Key: fmt.Appendf(nil, "key_c_%09d", i), Val: val},
 		}))
 		require.NoError(t, err)
 	}

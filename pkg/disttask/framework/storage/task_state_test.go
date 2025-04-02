@@ -166,7 +166,7 @@ func TestModifyTask(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, proto.TaskStatePending, task.State)
 	subtasks := make([]*proto.Subtask, 0, 4)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		subtasks = append(subtasks, proto.NewSubtask(proto.StepOne, task.ID, task.Type,
 			":4000", task.Concurrency, proto.EmptyMeta, i+1))
 	}

@@ -91,7 +91,7 @@ func checkList(d []string, s []string) bool {
 	if len(d) != len(s) {
 		return false
 	}
-	for i := 0; i < len(d); i++ {
+	for i := range d {
 		if strings.Compare(d[i], s[i]) != 0 {
 			return false
 		}

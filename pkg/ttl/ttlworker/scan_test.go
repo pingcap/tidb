@@ -389,7 +389,7 @@ loop:
 
 func (t *mockScanTask) checkDelTasks(cnt int) {
 	require.Equal(t.t, cnt, len(t.delTasks))
-	for i := 0; i < cnt; i++ {
+	for i := range cnt {
 		del := t.delTasks[i]
 		require.Nil(t.t, del)
 		require.NotNil(t.t, del.statistics)
@@ -411,7 +411,7 @@ func (t *mockScanTask) checkDelTasks(cnt int) {
 func (t *mockScanTask) execSQL(_ context.Context, sql string, _ ...any) ([]chunk.Row, error) {
 	var i int
 	found := false
-	for i = 0; i < len(t.sqlRetry); i++ {
+	for i = range t.sqlRetry {
 		if sql == t.selectSQL(i) {
 			found = true
 			break

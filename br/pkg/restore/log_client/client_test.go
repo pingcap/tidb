@@ -1267,7 +1267,7 @@ func (m *mockLogIter) TryNext(ctx context.Context) iter.IterResult[*logclient.Lo
 	m.next += 1
 	return iter.Emit(&logclient.LogDataFileInfo{
 		DataFileInfo: &backuppb.DataFileInfo{
-			StartKey: []byte(fmt.Sprintf("a%d", m.next)),
+			StartKey: fmt.Appendf(nil, "a%d", m.next),
 			EndKey:   []byte("b"),
 			Length:   1024, // 1 KB
 		},
@@ -1300,7 +1300,7 @@ func TestLogFilesIterWithSplitHelper(t *testing.T) {
 	for r := logIter.TryNext(ctx); !r.Finished; r = logIter.TryNext(ctx) {
 		require.NoError(t, r.Err)
 		next += 1
-		require.Equal(t, []byte(fmt.Sprintf("a%d", next)), r.Item.StartKey)
+		require.Equal(t, fmt.Appendf(nil, "a%d", next), r.Item.StartKey)
 	}
 }
 
@@ -1515,7 +1515,7 @@ func TestLogSplitStrategy(t *testing.T) {
 
 	// these files should skip accumulation
 	smallFiles := make([]*backuppb.DataFileInfo, 0, 10)
-	for j := 0; j < 20; j++ {
+	for range 20 {
 		smallFiles = append(smallFiles, fakeFile(1, 100, 1024*1024, 100))
 	}
 

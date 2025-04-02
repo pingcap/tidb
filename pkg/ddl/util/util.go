@@ -276,7 +276,7 @@ func IsInternalResourceGroupTaggerForTopSQL(tag []byte) bool {
 func DeleteKeyFromEtcd(key string, etcdCli *clientv3.Client, retryCnt int, timeout time.Duration) error {
 	var err error
 	ctx := context.Background()
-	for i := 0; i < retryCnt; i++ {
+	for i := range retryCnt {
 		childCtx, cancel := context.WithTimeout(ctx, timeout)
 		_, err = etcdCli.Delete(childCtx, key)
 		cancel()
@@ -292,7 +292,7 @@ func DeleteKeyFromEtcd(key string, etcdCli *clientv3.Client, retryCnt int, timeo
 func DeleteKeysWithPrefixFromEtcd(prefix string, etcdCli *clientv3.Client, retryCnt int, timeout time.Duration) error {
 	var err error
 	ctx := context.Background()
-	for i := 0; i < retryCnt; i++ {
+	for i := range retryCnt {
 		childCtx, cancel := context.WithTimeout(ctx, timeout)
 		_, err = etcdCli.Delete(childCtx, prefix, clientv3.WithPrefix())
 		cancel()
@@ -316,7 +316,7 @@ func DeleteKeysWithPrefixFromEtcd(prefix string, etcdCli *clientv3.Client, retry
 func PutKVToEtcdMono(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, key, val string,
 	opts ...clientv3.OpOption) error {
 	var err error
-	for i := 0; i < retryCnt; i++ {
+	for i := range retryCnt {
 		if err = ctx.Err(); err != nil {
 			return errors.Trace(err)
 		}
@@ -364,7 +364,7 @@ func PutKVToEtcdMono(ctx context.Context, etcdCli *clientv3.Client, retryCnt int
 func PutKVToEtcd(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, key, val string,
 	opts ...clientv3.OpOption) error {
 	var err error
-	for i := 0; i < retryCnt; i++ {
+	for i := range retryCnt {
 		if err = ctx.Err(); err != nil {
 			return errors.Trace(err)
 		}

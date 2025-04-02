@@ -43,7 +43,7 @@ func (b *builtinInetNtoaSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 	result.ReserveString(n)
 	i64s := buf.Int64s()
 	ip := make(net.IP, net.IPv4len)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		val := i64s[i]
 		if buf.IsNull(i) || val < 0 || uint64(val) > math.MaxUint32 {
 			result.AppendNull()
@@ -77,7 +77,7 @@ func (b *builtinIsIPv4Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resul
 	}
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		// Note that even when the i-th input string is null, the output is
 		// 0 instead of null, therefore we do not set the null bit mask in
 		// result's corresponding row.
@@ -134,7 +134,7 @@ func (b *builtinIsIPv6Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resul
 	}
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		// Note that even when the i-th input string is null, the output is
 		// 0 instead of null, therefore we do not set the null bit mask in
 		// result's corresponding row.
@@ -170,7 +170,7 @@ func (b *builtinIsUUIDSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resul
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
 	result.MergeNulls(buf)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -208,7 +208,7 @@ func (b *builtinUUIDSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resu
 	result.ReserveString(n)
 	var id uuid.UUID
 	var err error
-	for i := 0; i < n; i++ {
+	for range n {
 		id, err = uuid.NewUUID()
 		if err != nil {
 			return err
@@ -259,7 +259,7 @@ func (b *builtinIsIPv4CompatSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
 	prefixCompat := []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			i64s[i] = 0
 		} else {
@@ -323,7 +323,7 @@ func (b *builtinSleepSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 	i64s := result.Int64s()
 
 	ec := errCtx(ctx)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		isNull := buf.IsNull(i)
 		val := buf.GetFloat64(i)
 
@@ -397,7 +397,7 @@ func (b *builtinIsIPv4MappedSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
 	prefixMapped := []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			i64s[i] = 0
 		} else {
@@ -456,7 +456,7 @@ func (b *builtinInet6AtonSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 		res   []byte
 	)
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -533,7 +533,7 @@ func (b *builtinInetAtonSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
 	result.MergeNulls(buf)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if result.IsNull(i) {
 			continue
 		}
@@ -600,7 +600,7 @@ func (b *builtinInet6NtoaSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 		return err
 	}
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if val.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -647,7 +647,7 @@ func (b *builtinVitessHashSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 	r64s := result.Uint64s()
 	result.MergeNulls(column)
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if column.IsNull(i) {
 			continue
 		}
@@ -693,7 +693,7 @@ func (b *builtinUUIDToBinSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 		i64s = flagBuf.Int64s()
 	}
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if valBuf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -751,7 +751,7 @@ func (b *builtinBinToUUIDSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 		i64s = flagBuf.Int64s()
 	}
 	result.ReserveString(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if valBuf.IsNull(i) {
 			result.AppendNull()
 			continue

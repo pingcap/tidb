@@ -99,7 +99,7 @@ func TestListAllTables(t *testing.T) {
 	for d, table := range tables {
 		expectedTbs, ok := data[d]
 		require.True(t, ok)
-		for i := 0; i < len(table); i++ {
+		for i := range table {
 			require.Truef(t, table[i].Equals(expectedTbs[i]), "%v mismatches expected: %v", table[i], expectedTbs[i])
 		}
 	}
@@ -116,7 +116,7 @@ func TestListAllTables(t *testing.T) {
 	require.Len(t, tables, 1)
 	require.Len(t, tables["db"], 2)
 
-	for i := 0; i < len(tables["db"]); i++ {
+	for i := range tables["db"] {
 		require.Truef(t, tables["db"][i].Equals(data["db"][i]), "%v mismatches expected: %v", tables["db"][i], data["db"][i])
 	}
 
@@ -165,7 +165,7 @@ func TestListAllTablesByTableStatus(t *testing.T) {
 		expectedTbs, ok := data[d]
 		require.True(t, ok)
 
-		for i := 0; i < len(table); i++ {
+		for i := range table {
 			require.Truef(t, table[i].Equals(expectedTbs[i]), "%v mismatches expected: %v", table[i], expectedTbs[i])
 		}
 	}
@@ -182,7 +182,7 @@ func TestListAllTablesByTableStatus(t *testing.T) {
 	require.Len(t, tables, 1)
 	require.Len(t, tables["db"], 2)
 
-	for i := 0; i < len(tables["db"]); i++ {
+	for i := range tables["db"] {
 		require.Truef(t, tables["db"][i].Equals(data["db"][i]), "%v mismatches expected: %v", tables["db"][i], data["db"][i])
 	}
 
@@ -230,7 +230,7 @@ func TestListAllTablesByShowFullTables(t *testing.T) {
 		expectedTbs, ok := data[d]
 		require.True(t, ok)
 
-		for i := 0; i < len(table); i++ {
+		for i := range table {
 			require.Truef(t, table[i].Equals(expectedTbs[i]), "%v mismatches expected: %v", table[i], expectedTbs[i])
 		}
 	}
@@ -257,7 +257,7 @@ func TestListAllTablesByShowFullTables(t *testing.T) {
 	require.Len(t, tables, 1)
 	require.Len(t, tables["db"], 2)
 
-	for i := 0; i < len(tables["db"]); i++ {
+	for i := range tables["db"] {
 		require.Truef(t, tables["db"][i].Equals(data["db"][i]), "%v mismatches expected: %v", tables["db"][i], data["db"][i])
 	}
 

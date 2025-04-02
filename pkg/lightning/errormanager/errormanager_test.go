@@ -145,14 +145,8 @@ func (c mockConn) QueryContext(_ context.Context, query string, args []driver.Na
 		return &mockRows{}, nil
 	}
 	// args are tableName, start, end, and limit.
-	start := args[1].Value.(int64)
-	if start < 1 {
-		start = 1
-	}
-	end := args[2].Value.(int64)
-	if end > c.totalRows+1 {
-		end = c.totalRows + 1
-	}
+	start := max(args[1].Value.(int64), 1)
+	end := min(args[2].Value.(int64), c.totalRows+1)
 	limit := args[3].Value.(int64)
 	if start+limit < end {
 		end = start + limit
@@ -298,7 +292,7 @@ func TestReplaceConflictOneKey(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "raw_value"}).
 			AddRow(1, data1RowKey, data1RowValue).
 			AddRow(2, data1RowKey, data2RowValue))
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		mockDB.ExpectQuery("\\QSELECT id, raw_key, raw_value FROM `lightning_task_info`.conflict_error_v4 WHERE table_name = ? AND kv_type <> 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
 			WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "raw_value"}))
 	}
@@ -502,7 +496,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 			0, "test", nil, nil, data4RowKey, data4RowValue, 2).
 		WillReturnResult(driver.ResultNoRows)
 	mockDB.ExpectCommit()
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		mockDB.ExpectQuery("\\QSELECT id, raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v4 WHERE table_name = ? AND kv_type = 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
 			WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "index_name", "raw_value", "raw_handle"}))
 	}
@@ -510,7 +504,7 @@ func TestReplaceConflictOneUniqueKey(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "raw_value"}).
 			AddRow(1, data1RowKey, data1RowValue).
 			AddRow(2, data1RowKey, data3RowValue))
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		mockDB.ExpectQuery("\\QSELECT id, raw_key, raw_value FROM `lightning_task_info`.conflict_error_v4 WHERE table_name = ? AND kv_type <> 0 AND id >= ? and id < ? ORDER BY id LIMIT ?\\E").
 			WillReturnRows(sqlmock.NewRows([]string{"id", "raw_key", "raw_value"}))
 	}

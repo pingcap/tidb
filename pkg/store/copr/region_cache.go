@@ -51,7 +51,7 @@ func (c *RegionCache) SplitRegionRanges(bo *Backoffer, keyRanges []kv.KeyRange, 
 	}
 	var ret []kv.KeyRange
 	for _, loc := range locations {
-		for i := 0; i < loc.Ranges.Len(); i++ {
+		for i := range loc.Ranges.Len() {
 			ret = append(ret, loc.Ranges.At(i))
 		}
 	}
@@ -172,7 +172,7 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 	}
 
 	kvRanges := make([]tikv.KeyRange, 0, ranges.Len())
-	for i := 0; i < ranges.Len(); i++ {
+	for i := range ranges.Len() {
 		kvRanges = append(kvRanges, tikv.KeyRange{
 			StartKey: ranges.At(i).StartKey,
 			EndKey:   ranges.At(i).EndKey,

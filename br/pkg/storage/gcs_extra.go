@@ -125,7 +125,7 @@ func (w *GCSWriter) init() error {
 	uploadID := result.UploadId
 	w.uploadID = uploadID
 	w.chunkCh = make(chan chunk)
-	for i := 0; i < w.workers; i++ {
+	for range w.workers {
 		w.wg.Add(1)
 		go w.readChunk(w.chunkCh)
 	}
@@ -358,7 +358,7 @@ func (p *xmlMPUPart) Clone() *xmlMPUPart {
 
 func (p *xmlMPUPart) Upload() error {
 	var err error
-	for i := 0; i < p.retry; i++ {
+	for range p.retry {
 		err = p.upload()
 		if err == nil {
 			return nil

@@ -33,7 +33,7 @@ func genCastIntAsInt(ctx BuildContext) (*builtinCastIntAsIntSig, *chunk.Chunk, *
 	baseCast := newBaseBuiltinCastFunc(baseFunc, false)
 	cast := &builtinCastIntAsIntSig{baseCast}
 	input := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1024)
-	for i := 0; i < 1024; i++ {
+	for range 1024 {
 		input.AppendInt64(0, rand.Int63n(10000)-5000)
 	}
 	result := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)

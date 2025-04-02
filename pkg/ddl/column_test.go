@@ -163,7 +163,7 @@ func TestColumnBasic(t *testing.T) {
 	tk.MustExec("create table t1 (c1 int, c2 int, c3 int);")
 
 	num := 10
-	for i := 0; i < num; i++ {
+	for i := range num {
 		tk.MustExec(fmt.Sprintf("insert into t1 values(%d, %d, %d)", i, 10*i, 100*i))
 	}
 
@@ -559,9 +559,9 @@ func checkPublicColumn(t *testing.T, ctx sessionctx.Context, tableID int64, newC
 	require.NoError(t, err)
 
 	i := 0
-	var updatedRow []types.Datum
+	updatedRow := make([]types.Datum, 0, len(oldRow)+columnCnt)
 	updatedRow = append(updatedRow, oldRow...)
-	for j := 0; j < columnCnt; j++ {
+	for range columnCnt {
 		updatedRow = append(updatedRow, types.NewDatum(columnValue))
 	}
 	err = tables.IterRecords(tbl, ctx, tbl.Cols(), func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {

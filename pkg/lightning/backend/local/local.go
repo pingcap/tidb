@@ -715,7 +715,7 @@ func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, factory impor
 			continue
 		}
 		var err error
-		for i := 0; i < maxRetryTimes; i++ {
+		for i := range maxRetryTimes {
 			if i > 0 {
 				select {
 				case <-time.After(100 * time.Millisecond):
@@ -916,7 +916,7 @@ func (local *Backend) prepareAndSendJob(
 		logger := log.FromContext(ctx).With(zap.String("uuid", engine.ID())).Begin(zap.InfoLevel, "split and scatter ranges")
 		backOffTime := 10 * time.Second
 		maxbackoffTime := 120 * time.Second
-		for i := 0; i < maxRetryTimes; i++ {
+		for i := range maxRetryTimes {
 			failpoint.Inject("skipSplitAndScatter", func() {
 				failpoint.Break()
 			})
@@ -971,7 +971,7 @@ func (local *Backend) generateAndSendJob(
 		// concurrency to pass backpressure to the LoadIngestData goroutine to avoid OOM
 		conn = 1
 	}
-	for i := 0; i < conn; i++ {
+	for range conn {
 		eg.Go(func() error {
 			for {
 				select {
@@ -1509,10 +1509,7 @@ func (local *Backend) doImport(
 					return lastErr
 				}
 				// max retry backoff time: 2+4+8+16+30*26=810s
-				sleepSecond := math.Pow(2, float64(job.retryCount))
-				if sleepSecond > float64(maxRetryBackoffSecond) {
-					sleepSecond = float64(maxRetryBackoffSecond)
-				}
+				sleepSecond := min(math.Pow(2, float64(job.retryCount)), float64(maxRetryBackoffSecond))
 				job.waitUntil = time.Now().Add(time.Second * time.Duration(sleepSecond))
 				log.FromContext(ctx).Info("put job back to jobCh to retry later",
 					logutil.Key("startKey", job.keyRange.Start),
@@ -1536,7 +1533,7 @@ func (local *Backend) doImport(
 		failpoint.Goto("afterStartWorker")
 	})
 
-	for i := 0; i < local.WorkerConcurrency; i++ {
+	for range local.WorkerConcurrency {
 		workGroup.Go(func() error {
 			toCh := jobToWorkerCh
 			var afterExecuteJob func([]*metapb.Peer)

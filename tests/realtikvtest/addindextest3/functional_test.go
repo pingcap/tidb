@@ -111,7 +111,7 @@ func TestBackendCtxConcurrentUnregister(t *testing.T) {
 
 	wg := sync.WaitGroup{}
 	wg.Add(3)
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		go func() {
 			err := bCtx.FinishAndUnregisterEngines(ingest.OptCloseEngines)
 			require.NoError(t, err)
@@ -194,7 +194,7 @@ func TestAddIndexPresplitIndexRegions(t *testing.T) {
 	}
 
 	tk.MustExec("create table t (a int primary key, b int);")
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		insertSQL := fmt.Sprintf("insert into t values (%[1]d, %[1]d);", 10000*i)
 		tk.MustExec(insertSQL)
 	}
@@ -227,7 +227,7 @@ func TestAddIndexPresplitIndexRegions(t *testing.T) {
 	resetIdxID()
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (a int primary key, b int) partition by hash(a) partitions 4;")
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		insertSQL := fmt.Sprintf("insert into t values (%[1]d, %[1]d);", 10000*i)
 		tk.MustExec(insertSQL)
 	}

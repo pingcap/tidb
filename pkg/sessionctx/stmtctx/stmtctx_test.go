@@ -43,7 +43,7 @@ import (
 func TestCopTasksDetails(t *testing.T) {
 	ctx := stmtctx.NewStmtCtx()
 	backoffs := []string{"tikvRPC", "pdRPC", "regionMiss"}
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		d := &execdetails.ExecDetails{
 			DetailsNeedP90: execdetails.DetailsNeedP90{
 				CalleeAddress: fmt.Sprintf("%v", i+1),
@@ -225,7 +225,7 @@ func TestApproxRuntimeInfo(t *testing.T) {
 	var valRange = rand.Int31n(10000) + 1000
 	backoffs := []string{"tikvRPC", "pdRPC", "regionMiss"}
 	details := []*execdetails.ExecDetails{}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		d := &execdetails.ExecDetails{
 			DetailsNeedP90: execdetails.DetailsNeedP90{
 				CalleeAddress: fmt.Sprintf("%v", i+1),
@@ -252,7 +252,7 @@ func TestApproxRuntimeInfo(t *testing.T) {
 	}
 
 	ctx := stmtctx.NewStmtCtx()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		ctx.MergeExecDetails(details[i], nil)
 	}
 	d := ctx.CopTasksDetails()
@@ -309,7 +309,7 @@ func TestApproxRuntimeInfo(t *testing.T) {
 func TestStmtHintsClone(t *testing.T) {
 	hints := hint.StmtHints{}
 	value := reflect.ValueOf(&hints).Elem()
-	for i := 0; i < value.NumField(); i++ {
+	for i := range value.NumField() {
 		field := value.Field(i)
 		switch field.Kind() {
 		case reflect.Int, reflect.Int32, reflect.Int64:

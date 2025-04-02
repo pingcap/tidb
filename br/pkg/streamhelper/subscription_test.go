@@ -53,7 +53,7 @@ func TestSubBasic(t *testing.T) {
 	sub := streamhelper.NewSubscriber(c, c)
 	req.NoError(sub.UpdateStoreTopology(ctx))
 	var cp uint64
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		cp = c.advanceCheckpoints()
 		c.flushAll()
 	}
@@ -90,7 +90,7 @@ func TestNormalError(t *testing.T) {
 	sub.HandleErrors(ctx)
 	req.NoError(sub.PendingErrors())
 	var cp uint64
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		cp = c.advanceCheckpoints()
 		c.flushAll()
 	}
@@ -151,7 +151,7 @@ func TestStoreRemoved(t *testing.T) {
 	req.NoError(sub.UpdateStoreTopology(ctx))
 
 	var cp uint64
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		cp = c.advanceCheckpoints()
 		c.flushAll()
 	}
@@ -162,7 +162,7 @@ func TestStoreRemoved(t *testing.T) {
 		break
 	}
 	req.NoError(sub.UpdateStoreTopology(ctx))
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		cp = c.advanceCheckpoints()
 		c.flushAll()
 	}
@@ -197,7 +197,7 @@ func TestSomeOfStoreUnsupported(t *testing.T) {
 	req.NoError(sub.UpdateStoreTopology(ctx))
 
 	var cp uint64
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		cp = c.advanceCheckpoints()
 		c.flushAll()
 	}

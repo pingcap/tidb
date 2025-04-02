@@ -99,7 +99,7 @@ func TestCreateTables(t *testing.T) {
 		newTableIDExist[newTableID] = true
 	}
 
-	for i := 0; i < len(tables); i++ {
+	for i := range tables {
 		require.True(t, oldTableIDExist[int64(i)], "table rule does not exist")
 	}
 }
@@ -325,7 +325,7 @@ func TestSetSpeedLimit(t *testing.T) {
 	serialCost := len(mockStores) * WORKING_TIME
 	require.Less(t, cost, time.Duration(serialCost)*time.Millisecond)
 	require.Equal(t, len(mockStores), recordStores.len())
-	for i := 0; i < recordStores.len(); i++ {
+	for i := range recordStores.len() {
 		require.Equal(t, mockStores[i].Id, recordStores.get(i))
 	}
 
@@ -345,7 +345,7 @@ func TestSetSpeedLimit(t *testing.T) {
 	sort.Slice(mockStores, func(i, j int) bool { return mockStores[i].Id < mockStores[j].Id })
 	t.Logf("Has Communicated: %v\n", recordStores.toString())
 	require.Less(t, recordStores.len(), len(mockStores))
-	for i := 0; i < recordStores.len(); i++ {
+	for i := range recordStores.len() {
 		require.Equal(t, mockStores[i].Id, recordStores.get(i))
 	}
 }

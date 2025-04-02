@@ -1055,7 +1055,7 @@ func TestPprof(t *testing.T) {
 	ts.startServer(t)
 	defer ts.stopServer(t)
 	retryTime := 100
-	for retry := 0; retry < retryTime; retry++ {
+	for range retryTime {
 		resp, err := ts.FetchStatus("/debug/pprof/heap")
 		if err == nil {
 			_, err = io.ReadAll(resp.Body)
@@ -1309,7 +1309,7 @@ func TestSetLabelsConcurrentWithGetLabel(t *testing.T) {
 			}
 		}
 	}()
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		testUpdateLabels()
 	}
 	close(done)
@@ -1584,7 +1584,7 @@ func TestSetLabelsConcurrentWithStoreTopology(t *testing.T) {
 			}
 		}
 	}()
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		testUpdateLabels()
 	}
 	close(done)

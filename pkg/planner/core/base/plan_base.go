@@ -173,10 +173,7 @@ func (c *PlanCounterTp) Dec(x int64) {
 	if *c <= 0 {
 		return
 	}
-	*c = PlanCounterTp(int64(*c) - x)
-	if *c < 0 {
-		*c = 0
-	}
+	*c = max(PlanCounterTp(int64(*c)-x), 0)
 }
 
 // Empty indicates whether the PlanCounterTp is clear now.

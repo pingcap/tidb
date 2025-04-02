@@ -193,7 +193,7 @@ func FlattenPhysicalPlan(p base.Plan, buildSideFirst bool) *FlatPhysicalPlan {
 	flattenedCTEPlan := make(map[int]struct{}, len(res.ctesToFlatten))
 
 	// Note that ctesToFlatten may be modified during the loop, so we manually loop over it instead of using for...range.
-	for i := 0; i < len(res.ctesToFlatten); i++ {
+	for i := range res.ctesToFlatten {
 		cte := res.ctesToFlatten[i]
 		cteDef := (*CTEDefinition)(cte)
 		if _, ok := flattenedCTEPlan[cteDef.CTE.IDForStorage]; ok {

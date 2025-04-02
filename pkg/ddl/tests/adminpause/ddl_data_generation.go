@@ -143,7 +143,7 @@ func (tu *TestTableUser) insertStmt(tableName string, count int) string {
 	if tableName == adminPauseTestTableWithVec {
 		sql = fmt.Sprintf("INSERT INTO %s(tenant, name, age, province, city, phone, created_time, updated_time, vec) VALUES ", tableName)
 	}
-	for n := 0; n < count; n++ {
+	for n := range count {
 		_ = tu.generateAttributes(n)
 		if tableName == adminPauseTestTable {
 			sql += fmt.Sprintf("('%s', '%s', %d, '%s', '%s', '%s', '%s', '%s')",

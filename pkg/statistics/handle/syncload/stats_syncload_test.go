@@ -330,7 +330,7 @@ func TestRetry(t *testing.T) {
 		err1  error
 	)
 
-	for i := 0; i < syncload.RetryCount; i++ {
+	for range syncload.RetryCount {
 		task1, err1 = h.HandleOneTask(task1, exitCh)
 		require.Error(t, err1)
 		require.NotNil(t, task1)
@@ -351,7 +351,7 @@ func TestRetry(t *testing.T) {
 		require.Error(t, rs1.Val.(stmtctx.StatsLoadResult).Error)
 	}
 	task1.Retry = 0
-	for i := 0; i < syncload.RetryCount*5; i++ {
+	for range syncload.RetryCount * 5 {
 		task1, err1 = h.HandleOneTask(task1, exitCh)
 		require.Error(t, err1)
 		require.NotNil(t, task1)

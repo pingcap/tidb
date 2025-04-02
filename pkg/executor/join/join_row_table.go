@@ -63,7 +63,7 @@ func init() {
 //   - If the system is big-endian, the bit masks are set sequentially from the highest bit (bit 31) to the lowest bit (bit 0),
 //     ensuring that atomic operations can be performed correctly on different endian systems
 func initializeBitMasks(isLittleEndian bool) {
-	for i := 0; i < 32; i++ {
+	for i := range 32 {
 		if isLittleEndian {
 			// On little-endian systems, bit masks are arranged in order from high to low within each byte
 			bitMaskInUint32[i] = uint32(1) << (7 - (i % 8) + (i/8)*8)
@@ -203,7 +203,7 @@ func (rt *rowTable) clearSegments() {
 
 // used for test
 func (rt *rowTable) getRowPointer(rowIndex int) unsafe.Pointer {
-	for segIndex := 0; segIndex < len(rt.segments); segIndex++ {
+	for segIndex := range rt.segments {
 		if rowIndex < len(rt.segments[segIndex].rowStartOffset) {
 			return rt.segments[segIndex].getRowPointer(rowIndex)
 		}
@@ -214,7 +214,7 @@ func (rt *rowTable) getRowPointer(rowIndex int) unsafe.Pointer {
 
 func (rt *rowTable) getValidJoinKeyPos(rowIndex int) int {
 	startOffset := 0
-	for segIndex := 0; segIndex < len(rt.segments); segIndex++ {
+	for segIndex := range rt.segments {
 		if rowIndex < len(rt.segments[segIndex].validJoinKeyPos) {
 			return startOffset + rt.segments[segIndex].validJoinKeyPos[rowIndex]
 		}

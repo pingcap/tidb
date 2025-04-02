@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -120,7 +121,7 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 			}
 			if ok {
 				localTempTablesToDrop = append(localTempTablesToDrop, s.Tables[tbIdx])
-				s.Tables = append(s.Tables[:tbIdx], s.Tables[tbIdx+1:]...)
+				s.Tables = slices.Delete(s.Tables, tbIdx, tbIdx+1)
 			}
 		}
 

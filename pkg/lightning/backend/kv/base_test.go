@@ -57,7 +57,7 @@ func TestLogKVConvertFailed(t *testing.T) {
 		Logger: log.L(),
 	})
 	var newString strings.Builder
-	for i := 0; i < 100000; i++ {
+	for range 100000 {
 		newString.WriteString("test_test_test_test_")
 	}
 	newDatum := types.NewStringDatum(newString.String())

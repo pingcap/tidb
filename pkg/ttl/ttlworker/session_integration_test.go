@@ -178,7 +178,7 @@ func TestGetSessionWithFault(t *testing.T) {
 
 	pool := newFaultSessionPool(dom.SysSessionPool())
 
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		pool.setFault(newFaultWithFilter(func(sql string) bool {
 			// skip some local only sql, ref `getSession()` in `session.go`
 			if strings.HasPrefix(sql, "set tidb_") || strings.HasPrefix(sql, "set @@") {
