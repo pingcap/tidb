@@ -281,12 +281,30 @@ func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table,
 	return nil
 }
 
+func (db *DB) sortTables(tables []*metautil.Table) []*metautil.Table {
+	var reusable, nonReusable []*metautil.Table
+	start, end := db.preallocedIDs.GetIDRange()
+
+	for _, tbl := range tables {
+		if tbl.Info.ID >= start && tbl.Info.ID < end {
+			reusable = append(reusable, tbl)
+		} else {
+			nonReusable = append(nonReusable, tbl)
+		}
+	}
+	return append(reusable, nonReusable...)
+}
+
 // CreateTables execute a internal CREATE TABLES.
 func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 	ddlTables map[restore.UniqueTableName]bool, supportPolicy bool, policyMap *sync.Map) error {
+	if db.preallocedIDs == nil {
+		return errors.New("preallocedIDs is nil")
+	}
 	if batchSession, ok := db.se.(glue.BatchCreateTableSession); ok {
 		clonedInfos := make(map[string][]*model.TableInfo)
-		for _, table := range tables {
+		sortedTables := db.sortTables(tables)
+		for _, table := range sortedTables {
 			infoClone, err := db.preallocedIDs.RewriteTableInfo(table.Info)
 			if err != nil {
 				return errors.Trace(err)
@@ -312,7 +330,7 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 			}
 		}
 
-		for _, table := range tables {
+		for _, table := range sortedTables {
 			err := db.CreateTablePostRestore(ctx, table, ddlTables)
 			if err != nil {
 				return errors.Trace(err)

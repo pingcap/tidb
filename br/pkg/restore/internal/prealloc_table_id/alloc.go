@@ -35,7 +35,7 @@ type PreallocIDs struct {
 	start int64
 	end   int64
 	used  map[int64]struct{}
-	next  int64 //new added
+	next  int64
 }
 
 // New collects the requirement of prealloc IDs and return a
@@ -131,7 +131,7 @@ func (p *PreallocIDs) allocID(originalID int64) (int64, error) {
 
 func (p *PreallocIDs) RewriteTableInfo(info *model.TableInfo) (*model.TableInfo, error) {
 	if info == nil {
-		return nil, nil
+		return nil, errors.Errorf("table info is nil")
 	}
 	infoCopy := info.Clone()
 
