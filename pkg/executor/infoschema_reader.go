@@ -2604,7 +2604,8 @@ func dataForAnalyzeStatusHelper(ctx context.Context, e *memtableRetriever, sctx 
 func getRemainDurationForAnalyzeStatusHelper(
 	ctx context.Context,
 	sctx sessionctx.Context, startTime *types.Time,
-	dbName, tableName, partitionName string, processedRows int64) (remainingDuration *time.Duration, percentage, totalCnt float64, err error) {
+	dbName, tableName, partitionName string, processedRows int64) (_ *time.Duration, percentage, totalCnt float64, err error) {
+	remainingDuration := time.Duration(0)
 	if startTime != nil {
 		start, err := startTime.GoTime(time.UTC)
 		if err != nil {
@@ -2613,8 +2614,8 @@ func getRemainDurationForAnalyzeStatusHelper(
 		duration := time.Now().UTC().Sub(start)
 		if intest.InTest {
 			if val := ctx.Value(AnalyzeProgressTest); val != nil {
-				*remainingDuration, percentage = calRemainInfoForAnalyzeStatus(ctx, int64(totalCnt), processedRows, duration)
-				return remainingDuration, percentage, totalCnt, nil
+				remainingDuration, percentage = calRemainInfoForAnalyzeStatus(ctx, int64(totalCnt), processedRows, duration)
+				return &remainingDuration, percentage, totalCnt, nil
 			}
 		}
 		var tid int64
@@ -2642,9 +2643,9 @@ func getRemainDurationForAnalyzeStatusHelper(
 		if (tid > 0 && totalCnt == 0) || float64(processedRows) > totalCnt {
 			totalCnt, _ = pdhelper.GlobalPDHelper.GetApproximateTableCountFromStorage(ctx, sctx, tid, dbName, tableName, partitionName)
 		}
-		*remainingDuration, percentage = calRemainInfoForAnalyzeStatus(ctx, int64(totalCnt), processedRows, duration)
+		remainingDuration, percentage = calRemainInfoForAnalyzeStatus(ctx, int64(totalCnt), processedRows, duration)
 	}
-	return remainingDuration, percentage, totalCnt, nil
+	return &remainingDuration, percentage, totalCnt, nil
 }
 
 func calRemainInfoForAnalyzeStatus(ctx context.Context, totalCnt int64, processedRows int64, duration time.Duration) (time.Duration, float64) {
