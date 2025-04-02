@@ -15,6 +15,8 @@
 package planctx
 
 import (
+	"iter"
+
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -25,7 +27,6 @@ import (
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"iter"
 )
 
 // PlanContext is the context for building plan.
