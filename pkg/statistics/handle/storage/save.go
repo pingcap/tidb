@@ -390,6 +390,7 @@ func SaveMetaToStorage(
 	return
 }
 
+// SaveMetasToStorage will batch save stats_meta to storage.
 func SaveMetasToStorage(
 	sctx sessionctx.Context,
 	metaUpdates []statstypes.MetaUpdate,
