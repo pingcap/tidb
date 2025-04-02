@@ -207,6 +207,11 @@ func (b *PlanBuilder) rewrite(ctx context.Context, exprNode ast.ExprNode, p base
 	return expr, resultPlan, err
 }
 
+func (b *PlanBuilder) Rewrite4Exec(ctx context.Context, exprNode ast.ExprNode) (expression.Expression, error) {
+	expr, _, err := b.rewrite(ctx, exprNode, nil, nil, true)
+	return expr, err
+}
+
 // rewriteWithPreprocess is for handling the situation that we need to adjust the input ast tree
 // before really using its node in `expressionRewriter.Leave`. In that case, we first call
 // er.preprocess(expr), which returns a new expr. Then we use the new expr in `Leave`.

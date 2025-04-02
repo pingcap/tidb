@@ -330,6 +330,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 			pointGetPlan := a.Plan.(*plannercore.PointGetPlan)
 			exec.Init(pointGetPlan)
 			a.PsStmt.PointGet.Executor = exec
+			a.PsStmt.PointGet.Plan = pointGetPlan
 			executor = exec
 		}
 	}

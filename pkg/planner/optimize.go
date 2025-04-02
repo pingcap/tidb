@@ -18,6 +18,7 @@ import (
 	"context"
 	"math"
 	"math/rand"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -43,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -133,6 +136,13 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 
 // Optimize does optimization and creates a Plan.
 func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW, is infoschema.InfoSchema) (plan base.Plan, slice types.NameSlice, retErr error) {
+	durP, ok := ctx.Value(tracing.TestDurationCtxKey("test")).(*time.Duration)
+	if ok {
+		now := time.Now()
+		defer func() {
+			*durP += time.Since(now)
+		}()
+	}
 	defer tracing.StartRegion(ctx, "planner.Optimize").End()
 	sessVars := sctx.GetSessionVars()
 	pctx := sctx.GetPlanCtx()
@@ -148,6 +158,49 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 		}
 		if !allowed {
 			return nil, nil, errors.Trace(plannererrors.ErrSQLInReadOnlyMode)
+		}
+	}
+
+	if execStmt, ok2 := node.Node.(*ast.ExecuteStmt); ok2 {
+		prepStmt, err := core.GetPreparedStmt(execStmt, sessVars)
+		if err != nil {
+			return nil, nil, err
+		}
+		if prepStmt.PointGet.Executor != nil {
+			pointGet := prepStmt.PointGet.Plan
+			if pointGet != nil {
+				var params []expression.Expression
+				if execStmt.BinaryArgs != nil {
+					params = execStmt.BinaryArgs.([]expression.Expression)
+					err = core.SetParameterValuesIntoSCtx(sctx.GetPlanCtx(), false, prepStmt.Params, params)
+					if err != nil {
+						return nil, nil, err
+					}
+				} else {
+					params = make([]expression.Expression, 0, len(execStmt.UsingVars))
+					for i, expr := range execStmt.UsingVars {
+						v := expr.(*ast.VariableExpr)
+						name := strings.ToLower(v.Name)
+						val, ok := sessVars.UserVars.GetUserVarVal(name)
+						if !ok {
+							return nil, nil, errors.Errorf("user var %s not found", name)
+						}
+						marker := prepStmt.Params[i].(*driver.ParamMarkerExpr)
+						marker.Datum = val
+						marker.InExecute = true
+					}
+				}
+
+				if core.RebuildPointPlan(pctx, pointGet, prepStmt.PreparedAst.Stmt.(*ast.SelectStmt)) {
+					execPlan := &core.Execute{
+						Name:     execStmt.Name,
+						Plan:     pointGet,
+						PrepStmt: prepStmt,
+						Stmt:     prepStmt.PreparedAst.Stmt,
+					}
+					return execPlan, pointGet.OutputNames(), nil
+				}
+			}
 		}
 	}
 

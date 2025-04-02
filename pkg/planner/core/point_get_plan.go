@@ -1374,6 +1374,41 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 	return checkTblIndexForPointPlan(ctx, tnW, schema, names, pairs, isTableDual, check)
 }
 
+func RebuildPointPlan(
+	ctx base.PlanContext,
+	old *PointGetPlan,
+	selStmt *ast.SelectStmt,
+) bool {
+	tblName, tblAlias := getSingleTableNameAndAlias(selStmt.From)
+	tbl := old.TblInfo
+	pairs := make([]nameValuePair, 0, 4)
+	pairs, isTableDual := getNameValuePairs(ctx.GetExprCtx(), tbl, tblAlias, pairs, selStmt.Where)
+	dbName := tblName.Schema.L
+	if dbName == "" {
+		dbName = ctx.GetSessionVars().CurrentDB
+	}
+
+	handlePair, fieldType := findPKHandle(tbl, pairs)
+	if handlePair.value.Kind() != types.KindNull && len(pairs) == 1 && indexIsAvailableByHints(nil, tblName.IndexHints) {
+		if isTableDual {
+			old.IsTableDual = true
+			return true
+		}
+
+		old.IsTableDual = false
+		old.Handle = kv.IntHandle(handlePair.value.GetInt64())
+		old.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.GetFlag())
+		old.handleFieldType = fieldType
+		old.HandleConstant = handlePair.con
+		return true
+	} else if handlePair.value.Kind() != types.KindNull {
+		return false
+	}
+
+	// TODO(lance6716): rebuild for index type
+	return false
+}
+
 func checkTblIndexForPointPlan(ctx base.PlanContext, tblName *resolve.TableNameW, schema *expression.Schema,
 	names []*types.FieldName, pairs []nameValuePair, isTableDual, check bool) *PointGetPlan {
 	check = check || ctx.GetSessionVars().IsIsolation(ast.ReadCommitted)
