@@ -63,8 +63,37 @@ func (noopOwnerHook) onBecameOwner(sessionctx.Context) error { return nil }
 
 func (noopOwnerHook) onResignOwner(sessionctx.Context) error { return nil }
 
-// session is the internal session that will be cached in the session pool.
-// It is private and should not be accessed directly by the outside callers.
+// `session` is a private struct, accessible only within the same package.
+// It encapsulates `SessionContext` and provides controlled access via dedicated methods.
+//
+// The `session` is primarily used by `AdvancedSessionPool` and `Session`:
+//   - `AdvancedSessionPool` manages a pool of `session` instances, performing state validation
+//     when acquiring or releasing them.
+//   - `Session` is the public-facing structure that external callers use. It acts as a proxy
+//     for `session`, ensuring restricted access to `SessionContext`.
+//
+// To safeguard the internal `SessionContext`, `session` includes additional fields:
+//
+//   - `owner`: Represents the entity that "owns" the session, ensuring only the owner can
+//     perform operations on it.
+//     The `session.OwnerWithSctx(caller, fn)` method verifies whether `caller` is the
+//     current owner before executing `fn`, returning an error if not.
+//     Ownership can be transferred using `TransferOwner`.
+//     The session can be closed via `Close` or `OwnerClose`, which resets the owner to `nil`.
+//
+//   - `inuse`: A counter tracking the number of ongoing operations on the session.
+//     `session.OwnerWithSctx(caller, fn)` increments `inuse` at the start of an operation
+//     and decrements it upon completion.
+//     When `inuse == 0`, the session is idle, allowing ownership transfer or closure.
+//     When `inuse > 0`, ongoing operations exist, leading to:
+//     `session.TransferOwner` failing to prevent concurrent access by different owners.
+//     `session.Close` triggering a panic in tests, but logging a warning in production.
+//
+//   - `seq`: A monotonically increasing `uint64` used for logging and debugging.
+//     It provides a unique sequence number for each operation.
+//     In `EnterOperation`, `seq` increments to mark an operation’s start and increments again
+//     upon completion.
+//     These sequence numbers help track operation order and diagnose unexpected behaviors.
 type session struct {
 	mu sync.Mutex
 	// sctx is the raw state of the session.

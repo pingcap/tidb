@@ -140,8 +140,14 @@ func (p *AdvancedSessionPool) Put(se *Session) {
 	// 1. Make sure the input Session is valid by checking the internal session's owner.
 	// 2. After ownership is transferred back to pool, we can ensure only the pool can access the internal session.
 	if err := internal.TransferOwner(se, p); err != nil {
-		// Notice that we should not call `internal.Close` to make sure only close the internal session when its owner
-		// is the current session.
+		// Use `se.Close()` instead of `se.internal.Close()` because the former will close the internal session only
+		// when it is the owner.
+		// Consider the below case that Put is called concurrently:
+		// 1. goroutine 1: In `p.Put(se)`, before `internal.TransferOwner(se, p)`
+		// 2. goroutine 2: Call `p.Put(se)` with the same `Session`, the internal session is put back to the pool.
+		// 3. goroutine 2: Call `p.Get()` and get a new `Session` with the same internal session with goroutine 1.
+		// 4. goroutine 1: Call `internal.TransferOwner(se, p)` and failed, then it should close the session.
+		// If we use `se.internal.Close()` in step4, the `Session` got in step3 will be closed unexpectedly.
 		logutil.BgLogger().Warn(
 			"TransferOwner failed when put back a session",
 			zap.String("sctx", objectStr(internal.sctx)),
