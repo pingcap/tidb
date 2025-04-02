@@ -20,6 +20,7 @@ go_library(
         "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/cpu",
+        "//pkg/util/injectfailpoint",
         "//pkg/util/logutil",
         "//pkg/util/sqlescape",
         "//pkg/util/sqlexec",
