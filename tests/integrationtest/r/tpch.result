@@ -441,8 +441,8 @@ l_year;
 id	estRows	task	access object	operator info
 Sort	766.31	root		tpch50.nation.n_name, tpch50.nation.n_name, Column#50
 └─Projection	766.31	root		tpch50.nation.n_name, tpch50.nation.n_name, Column#50, Column#52
-  └─HashAgg	766.31	root		group by:Column#56, Column#57, Column#58, funcs:sum(Column#55)->Column#52, funcs:firstrow(Column#56)->tpch50.nation.n_name, funcs:firstrow(Column#57)->tpch50.nation.n_name, funcs:firstrow(Column#58)->Column#50
-    └─Projection	1953718.78	root		mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount))->Column#55, tpch50.nation.n_name->Column#56, tpch50.nation.n_name->Column#57, extract(YEAR, tpch50.lineitem.l_shipdate)->Column#58
+  └─HashAgg	766.31	root		group by:Column#57, Column#58, Column#59, funcs:sum(Column#56)->Column#52, funcs:firstrow(Column#57)->tpch50.nation.n_name, funcs:firstrow(Column#58)->tpch50.nation.n_name, funcs:firstrow(Column#59)->Column#50
+    └─Projection	1953718.78	root		mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount))->Column#56, tpch50.nation.n_name->Column#57, tpch50.nation.n_name->Column#58, extract(YEAR, tpch50.lineitem.l_shipdate)->Column#59
       └─Projection	1953718.78	root		tpch50.lineitem.l_extendedprice, tpch50.lineitem.l_discount, tpch50.lineitem.l_shipdate, tpch50.nation.n_name, tpch50.nation.n_name
         └─HashJoin	1953718.78	root		inner join, equal:[eq(tpch50.customer.c_nationkey, tpch50.nation.n_nationkey)], other cond:or(and(eq(tpch50.nation.n_name, "JAPAN"), eq(tpch50.nation.n_name, "INDIA")), and(eq(tpch50.nation.n_name, "INDIA"), eq(tpch50.nation.n_name, "JAPAN")))
           ├─TableReader(Build)	2.00	root		data:Selection
@@ -514,8 +514,8 @@ o_year;
 id	estRows	task	access object	operator info
 Sort	724.08	root		Column#62
 └─Projection	724.08	root		Column#62, div(Column#64, Column#65)->Column#66
-  └─HashAgg	724.08	root		group by:Column#77, funcs:sum(Column#75)->Column#64, funcs:sum(Column#76)->Column#65, funcs:firstrow(Column#77)->Column#62
-    └─Projection	632534.06	root		case(eq(tpch50.nation.n_name, INDIA), mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount)), 0.0000)->Column#75, mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount))->Column#76, extract(YEAR, tpch50.orders.o_orderdate)->Column#77
+  └─HashAgg	724.08	root		group by:Column#78, funcs:sum(Column#76)->Column#64, funcs:sum(Column#77)->Column#65, funcs:firstrow(Column#78)->Column#62
+    └─Projection	632534.06	root		case(eq(tpch50.nation.n_name, INDIA), mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount)), 0.0000)->Column#76, mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount))->Column#77, extract(YEAR, tpch50.orders.o_orderdate)->Column#78
       └─Projection	632534.06	root		tpch50.lineitem.l_extendedprice, tpch50.lineitem.l_discount, tpch50.orders.o_orderdate, tpch50.nation.n_name
         └─HashJoin	632534.06	root		inner join, equal:[eq(tpch50.supplier.s_nationkey, tpch50.nation.n_nationkey)]
           ├─TableReader(Build)	25.00	root		data:TableFullScan
@@ -590,8 +590,8 @@ o_year desc;
 id	estRows	task	access object	operator info
 Sort	2406.00	root		tpch50.nation.n_name, Column#53:desc
 └─Projection	2406.00	root		tpch50.nation.n_name, Column#53, Column#55
-  └─HashAgg	2406.00	root		group by:Column#65, Column#66, funcs:sum(Column#64)->Column#55, funcs:firstrow(Column#65)->tpch50.nation.n_name, funcs:firstrow(Column#66)->Column#53
-    └─Projection	247789900.85	root		minus(mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount)), mul(tpch50.partsupp.ps_supplycost, tpch50.lineitem.l_quantity))->Column#64, tpch50.nation.n_name->Column#65, extract(YEAR, tpch50.orders.o_orderdate)->Column#66
+  └─HashAgg	2406.00	root		group by:Column#66, Column#67, funcs:sum(Column#65)->Column#55, funcs:firstrow(Column#66)->tpch50.nation.n_name, funcs:firstrow(Column#67)->Column#53
+    └─Projection	247789900.85	root		minus(mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount)), mul(tpch50.partsupp.ps_supplycost, tpch50.lineitem.l_quantity))->Column#65, tpch50.nation.n_name->Column#66, extract(YEAR, tpch50.orders.o_orderdate)->Column#67
       └─Projection	247789900.85	root		tpch50.lineitem.l_quantity, tpch50.lineitem.l_extendedprice, tpch50.lineitem.l_discount, tpch50.partsupp.ps_supplycost, tpch50.orders.o_orderdate, tpch50.nation.n_name
         └─HashJoin	247789900.85	root		inner join, equal:[eq(tpch50.lineitem.l_orderkey, tpch50.orders.o_orderkey)]
           ├─TableReader(Build)	75000000.00	root		data:TableFullScan
@@ -1279,6 +1279,6 @@ cntrycode;
 id	estRows	task	access object	operator info
 Sort	1.00	root		Column#31
 └─Projection	1.00	root		Column#31, Column#32, Column#33
-  └─HashAgg	1.00	root		group by:Column#36, funcs:count(1)->Column#32, funcs:sum(Column#35)->Column#33, funcs:firstrow(Column#36)->Column#31
-    └─Projection	0.00	root		tpch50.customer.c_acctbal->Column#35, substring(tpch50.customer.c_phone, 1, 2)->Column#36
+  └─HashAgg	1.00	root		group by:Column#37, funcs:count(1)->Column#32, funcs:sum(Column#36)->Column#33, funcs:firstrow(Column#37)->Column#31
+    └─Projection	0.00	root		tpch50.customer.c_acctbal->Column#36, substring(tpch50.customer.c_phone, 1, 2)->Column#37
       └─TableDual	0.00	root		rows:0

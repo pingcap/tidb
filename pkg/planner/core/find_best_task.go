@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -210,7 +211,14 @@ func enumeratePhysicalPlans4Task(
 	if _, ok := p.Self().(*logicalop.LogicalSequence); ok {
 		iteration = iterateChildPlan4LogicalSequence
 	}
-
+	var fd *funcdep.FDSet
+	if addEnforcer {
+		switch logicalPlan := p.Self().(type) {
+		case *logicalop.LogicalJoin, *logicalop.LogicalAggregation:
+			// TODO(hawkingrei): FD should be maintained as logical prop instead of constructing it in physical phase
+			fd = logicalPlan.ExtractFD()
+		}
+	}
 	for _, pp := range physicalPlans {
 		timeStampNow := p.GetLogicalTS4TaskMap()
 		savedPlanID := p.SCtx().GetSessionVars().PlanID.Load()
@@ -248,7 +256,7 @@ func enumeratePhysicalPlans4Task(
 
 		// Enforce curTask property
 		if addEnforcer {
-			curTask = enforceProperty(prop, curTask, p.Plan.SCtx())
+			curTask = enforceProperty(prop, curTask, p.Plan.SCtx(), fd)
 		}
 
 		// Optimize by shuffle executor to running in parallel manner.
@@ -614,7 +622,6 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 		}
 		newProp = prop
 	}
-
 	var cnt int64
 	var curTask base.Task
 	if bestTask, cnt, err = enumeratePhysicalPlans4Task(p, plansFitsProp, newProp, false, planCounter, opt); err != nil {
@@ -685,7 +692,7 @@ func findBestTask4LogicalMemTable(lp base.LogicalPlan, prop *property.PhysicalPr
 		}
 		if prop.CanAddEnforcer {
 			*prop = *oldProp
-			t = enforceProperty(prop, t, p.Plan.SCtx())
+			t = enforceProperty(prop, t, p.Plan.SCtx(), nil)
 			prop.CanAddEnforcer = true
 		}
 	}()
@@ -1491,7 +1498,7 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 		}
 		if prop.CanAddEnforcer {
 			*prop = *oldProp
-			t = enforceProperty(prop, t, ds.Plan.SCtx())
+			t = enforceProperty(prop, t, ds.Plan.SCtx(), nil)
 			prop.CanAddEnforcer = true
 		}
 
@@ -2687,13 +2694,14 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			ts.AnnIndexExtra = &VectorIndexExtra{
 				IndexInfo: candidate.path.Index,
 				PushDownQueryInfo: &tipb.ANNQueryInfo{
-					QueryType:      tipb.ANNQueryType_OrderBy,
-					DistanceMetric: tipb.VectorDistanceMetric(distanceMetricPB),
-					TopK:           prop.VectorProp.TopK,
-					ColumnName:     ts.Table.Columns[candidate.path.Index.Columns[0].Offset].Name.L,
-					ColumnId:       prop.VectorProp.Column.ID,
-					IndexId:        candidate.path.Index.ID,
-					RefVecF32:      prop.VectorProp.Vec.SerializeTo(nil),
+					QueryType:          tipb.ANNQueryType_OrderBy,
+					DistanceMetric:     tipb.VectorDistanceMetric(distanceMetricPB),
+					TopK:               prop.VectorProp.TopK,
+					ColumnName:         ts.Table.Columns[candidate.path.Index.Columns[0].Offset].Name.L,
+					DeprecatedColumnId: &prop.VectorProp.Column.ID, // deprecated field, will be removed after TiFlash supports the new field.
+					IndexId:            candidate.path.Index.ID,
+					RefVecF32:          prop.VectorProp.Vec.SerializeTo(nil),
+					Column:             *tidbutil.ColumnToProto(prop.VectorProp.Column.ToInfo(), false, false),
 				},
 			}
 			ts.SetStats(util.DeriveLimitStats(ts.StatsInfo(), float64(prop.VectorProp.TopK)))
@@ -3165,7 +3173,7 @@ func findBestTask4LogicalCTE(lp base.LogicalPlan, prop *property.PhysicalPropert
 		t = rt
 	}
 	if prop.CanAddEnforcer {
-		t = enforceProperty(prop, t, p.Plan.SCtx())
+		t = enforceProperty(prop, t, p.Plan.SCtx(), nil)
 	}
 	return t, 1, nil
 }

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -419,7 +420,7 @@ func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *MppTask) (*M
 			TaskTp:           property.MppTaskType,
 			MPPPartitionTp:   property.HashType,
 			MPPPartitionCols: lPartKeys,
-		})
+		}, nil)
 		lTask = nlTask
 	}
 	if rChanged {
@@ -429,7 +430,7 @@ func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *MppTask) (*M
 			TaskTp:           property.MppTaskType,
 			MPPPartitionTp:   property.HashType,
 			MPPPartitionCols: rPartKeys,
-		})
+		}, nil)
 		rTask = nrTask
 	}
 	return lTask, rTask
@@ -2510,7 +2511,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 		return t
 	case MppScalar:
 		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.SinglePartitionType}
-		if !mpp.needEnforceExchanger(prop) {
+		if !mpp.needEnforceExchanger(prop, nil) {
 			// On the one hand: when the low layer already satisfied the single partition layout, just do the all agg computation in the single node.
 			return p.attach2TaskForMpp1Phase(mpp)
 		}
@@ -2553,7 +2554,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 			}
 
 			exProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: partitionCols}
-			newMpp := mpp.enforceExchanger(exProp)
+			newMpp := mpp.enforceExchanger(exProp, nil)
 			attachPlan2Task(middle, newMpp)
 			mpp = newMpp
 			if partialHashAgg, ok := partial.(*PhysicalHashAgg); ok && len(partitionCols) != 0 {
@@ -2562,7 +2563,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 		}
 
 		// prop here still be the first generated single-partition requirement.
-		newMpp := mpp.enforceExchanger(prop)
+		newMpp := mpp.enforceExchanger(prop, nil)
 		attachPlan2Task(final, newMpp)
 		if proj == nil {
 			proj = PhysicalProjection{
@@ -2741,7 +2742,7 @@ func tryExpandVirtualColumn(p base.PhysicalPlan) {
 	}
 }
 
-func (t *MppTask) needEnforceExchanger(prop *property.PhysicalProperty) bool {
+func (t *MppTask) needEnforceExchanger(prop *property.PhysicalProperty, fd *funcdep.FDSet) bool {
 	switch prop.MPPPartitionTp {
 	case property.AnyType:
 		return false
@@ -2753,8 +2754,10 @@ func (t *MppTask) needEnforceExchanger(prop *property.PhysicalProperty) bool {
 		if t.partTp != property.HashType {
 			return true
 		}
-		// TODO: consider equalivant class
 		// for example, if already partitioned by hash(B,C), then same (A,B,C) must distribute on a same node.
+		if fd != nil && len(t.hashCols) != 0 {
+			return prop.NeedMPPExchangeByEquivalence(t.hashCols, fd)
+		}
 		if len(prop.MPPPartitionCols) != len(t.hashCols) {
 			return true
 		}
@@ -2767,8 +2770,8 @@ func (t *MppTask) needEnforceExchanger(prop *property.PhysicalProperty) bool {
 	}
 }
 
-func (t *MppTask) enforceExchanger(prop *property.PhysicalProperty) *MppTask {
-	if !t.needEnforceExchanger(prop) {
+func (t *MppTask) enforceExchanger(prop *property.PhysicalProperty, fd *funcdep.FDSet) *MppTask {
+	if !t.needEnforceExchanger(prop, fd) {
 		return t
 	}
 	return t.Copy().(*MppTask).enforceExchangerImpl(prop)

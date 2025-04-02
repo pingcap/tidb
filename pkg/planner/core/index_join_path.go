@@ -729,13 +729,13 @@ func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.Ph
 }
 
 // getBestIndexJoinPathResultByProp tries to iterate all possible access paths of the inner child and builds
-// index join path for each access path. It returns the best index join path result and the mapping.
+// index join path for each access path based on push-down indexIndexProp. It returns the best index join path result and the mapping.
 func getBestIndexJoinPathResultByProp(
 	innerDS *logicalop.DataSource,
 	indexJoinProp *property.IndexJoinRuntimeProp,
 	checkPathValid func(path *util.AccessPath) bool) (*indexJoinPathResult, []int) {
 	indexJoinInfo := &indexJoinPathInfo{
-		joinOtherConditions:   indexJoinProp.OtherConditions, // 为什么构建 index join ds 的需要 other conditions
+		joinOtherConditions:   indexJoinProp.OtherConditions, // other conditions is for complete last col non-eq range
 		outerJoinKeys:         indexJoinProp.OuterJoinKeys,
 		innerJoinKeys:         indexJoinProp.InnerJoinKeys,
 		innerPushedConditions: innerDS.PushedDownConds,
@@ -745,7 +745,7 @@ func getBestIndexJoinPathResultByProp(
 	var bestResult *indexJoinPathResult
 	for _, path := range innerDS.PossibleAccessPaths {
 		if checkPathValid(path) {
-			// 构建 index join path res
+			// here we still wrap indexJoinPathInfo to call index indexJoinPathBuild to get the chosen path result.
 			result, emptyRange, err := indexJoinPathBuild(innerDS.SCtx(), path, indexJoinInfo, false)
 			if emptyRange {
 				return nil, nil
@@ -762,12 +762,11 @@ func getBestIndexJoinPathResultByProp(
 	if bestResult == nil || bestResult.chosenPath == nil {
 		return nil, nil
 	}
-	// copy the KeyOff2IdxOff out 出来
 	keyOff2IdxOff := make([]int, len(indexJoinProp.InnerJoinKeys))
 	for i := range keyOff2IdxOff {
 		keyOff2IdxOff[i] = -1
 	}
-	// 把 idxOff2KeyOff 反过来，可以从 inner join key 的角度看到 index col 的 offset
+	// reverse idxOff2KeyOff as keyOff2IdxOff, from the perspective of inner join key, we could easily get the offset of index col.
 	for idxOff, keyOff := range bestResult.idxOff2KeyOff {
 		if keyOff != -1 {
 			keyOff2IdxOff[keyOff] = idxOff
@@ -816,7 +815,7 @@ func getBestIndexJoinPathResult(
 	for i := range keyOff2IdxOff {
 		keyOff2IdxOff[i] = -1
 	}
-	// 把 idxOff2KeyOff 反过来，可以从 inner join key 的角度看到 index col 的 offset
+	// reverse idxOff2KeyOff as keyOff2IdxOff, from the perspective of inner join key, we could easily get the offset of index col.
 	for idxOff, keyOff := range bestResult.idxOff2KeyOff {
 		if keyOff != -1 {
 			keyOff2IdxOff[keyOff] = idxOff

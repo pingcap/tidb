@@ -59,6 +59,8 @@ func exhaustPhysicalPlans4LogicalUnionScan(lp base.LogicalPlan, prop *property.P
 		// even hint can not work with this. index join prop is not satisfied in mpp task type.
 		return nil, false, nil
 	}
+	// here we just pass down the keep order property to the child.
+	// cuz, in union scan exec, it will feel the underlying tableReader or indexReader to get the keepOrder.
 	us := PhysicalUnionScan{
 		Conditions: p.Conditions,
 		HandleCols: p.HandleCols,
@@ -1150,8 +1152,19 @@ childLoop:
 	return wrapper
 }
 
-// buildDataSource2TableScanByIndexJoinProp builds an IndexScan as the inner child for an
-// IndexJoin if possible.
+// buildDataSource2IndexScanByIndexJoinProp builds an IndexScan as the inner child for an
+// IndexJoin based on IndexJoinProp included in prop if possible.
+//
+// buildDataSource2IndexScanByIndexJoinProp differs with buildIndexJoinInner2IndexScan in that
+// the first one is try to build a single table scan as the inner child of an index join then return
+// this inner task(raw table scan) bottom-up, which will be attached with other inner parents of an
+// index join in attach2Task when bottom-up of enumerating the physical plans;
+//
+// while the second is try to build a table scan as the inner child of an index join, then build
+// entire inner subtree of a index join out as innerTask instantly according those validated and
+// zipped inner patterns with calling constructInnerIndexScanTask. That's not done yet, it also
+// tries to enumerate kinds of index join operators based on the finished innerTask and un-decided
+// outer child which will be physical-ed in the future.
 func buildDataSource2IndexScanByIndexJoinProp(
 	ds *logicalop.DataSource,
 	prop *property.PhysicalProperty) base.Task {
@@ -1190,34 +1203,25 @@ func buildDataSource2IndexScanByIndexJoinProp(
 	} else {
 		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
 	}
-	// todo: 构建 Index join 和 Index Hash Join
-	//if innerTask != nil {
-	//	joins = append(joins, constructIndexJoin(ds, prop, outerIdx, innerTask, indexJoinResult.chosenRanges, keyOff2IdxOff, indexJoinResult.chosenPath, indexJoinResult.lastColManager, true)...)
-	//	// We can reuse the `innerTask` here since index nested loop hash join
-	//	// do not need the inner child to promise the order.
-	//	joins = append(joins, constructIndexHashJoin(ds, prop, outerIdx, innerTask, indexJoinResult.chosenRanges, keyOff2IdxOff, indexJoinResult.chosenPath, indexJoinResult.lastColManager)...)
-	//}
-	completeIndexJoinFeedBackInfo(innerTask.(*CopTask), indexJoinResult, indexJoinResult.chosenRanges.Range(), keyOff2IdxOff)
+	// prepare the index path chosen information and wrap them as IndexJoinInfo and fill back to CopTask.
 	// here we don't need to construct physical index join here anymore, because we will encapsulate it bottom-up.
 	// chosenPath and lastColManager of indexJoinResult should be returned to the caller (seen by index join to keep
 	// index join aware of indexColLens and compareFilters).
+	completeIndexJoinFeedBackInfo(innerTask.(*CopTask), indexJoinResult, indexJoinResult.chosenRanges.Range(), keyOff2IdxOff)
 	return innerTask
 }
 
 // buildDataSource2TableScanByIndexJoinProp builds a TableScan as the inner child for an
 // IndexJoin if possible.
-// If the inner side of a index join is a TableScan, only one tuple will be
+// If the inner side of an index join is a TableScan, only one tuple will be
 // fetched from the inner side for every tuple from the outer side. This will be
 // promised to be no worse than building IndexScan as the inner child.
 func buildDataSource2TableScanByIndexJoinProp(
 	ds *logicalop.DataSource,
-	prop *property.PhysicalProperty,
-	// hasDitryWrite bool,
-	// outerIdx can be identify by index join itself, when it compares the inner key.
-) base.Task {
+	prop *property.PhysicalProperty) base.Task {
 	var tblPath *util.AccessPath
 	for _, path := range ds.PossibleAccessPaths {
-		if path.IsTablePath() && path.StoreType == kv.TiKV { // ds 里面找一个 tikv 的 table path
+		if path.IsTablePath() && path.StoreType == kv.TiKV { // old logic
 			tblPath = path
 			break
 		}
@@ -1225,33 +1229,26 @@ func buildDataSource2TableScanByIndexJoinProp(
 	if tblPath == nil {
 		return base.InvalidTask
 	}
-	keyOff2IdxOff := make([]int, len(prop.IndexJoinProp.InnerJoinKeys))
+	var keyOff2IdxOff []int
 	var ranges ranger.MutableRanges = ranger.Ranges{}
 	var innerTask base.Task
 	var indexJoinResult *indexJoinPathResult
 	if ds.TableInfo.IsCommonHandle {
-		// 拿到 index join res 和 innerKeyOffset 到 index col 的映射
+		// for the leaf datasource, we use old logic to get the indexJoinResult, which contain the chosen path and ranges.
 		indexJoinResult, keyOff2IdxOff = getBestIndexJoinPathResultByProp(ds, prop.IndexJoinProp, func(path *util.AccessPath) bool { return path.IsCommonHandlePath })
+		// if there is no chosen info, it means the leaf datasource couldn't even leverage this indexJoinProp, return InvalidTask.
 		if indexJoinResult == nil {
 			return base.InvalidTask
 		}
-		// 这里需要 outer join keys，因为要打印 range 信息，就是那个 decided by:
+		// prepare the range info with outer join keys, it shows like: [xxx] decided by:
 		rangeInfo := indexJoinPathRangeInfo(ds.SCtx(), prop.IndexJoinProp.OuterJoinKeys, indexJoinResult)
-		// 这里构建 inner task
+		// construct the inner task with chosen path and ranges, note: it only for this leaf datasource.
+		// like the normal way, we need to check whether the chosen path is matched with the prop, if so, we will set the `keepOrder` to true.
 		if isMatchProp(ds, indexJoinResult.chosenPath, prop) {
 			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt)
 		} else {
 			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt)
 		}
-
-		// The index merge join's inner plan is different from index join, so we
-		// should construct another inner plan for it.
-		// Because we can't keep order for union scan, if there is a union scan in inner task,
-		// we can't construct index merge join.
-		// if !hasDitryWrite {
-		// 	// 因为 index join 要保持 outer join key 的顺序，所以这里要保持 inner join key 的顺序
-		// 	innerTask2 = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
-		// }
 		ranges = indexJoinResult.chosenRanges
 	} else {
 		var (
@@ -1271,22 +1268,29 @@ func buildDataSource2TableScanByIndexJoinProp(
 		} else {
 			innerTask = constructDS2TableScanTask(ds, localRanges, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt)
 		}
-		// The index merge join's inner plan is different from index join, so we
-		// should construct another inner plan for it.
-		// Because we can't keep order for union scan, if there is a union scan in inner task,
-		// we can't construct index merge join.
-		// if !hasDitryWrite {
-		// 	innerTask2 = constructDS2TableScanTask(ds, localRanges, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
-		// }
 	}
-	// 下面才是正经构造 index join 的代码
-	completeIndexJoinFeedBackInfo(innerTask.(*CopTask), indexJoinResult, ranges, keyOff2IdxOff)
+	// prepare the index path chosen information and wrap them as IndexJoinInfo and fill back to CopTask.
 	// here we don't need to construct physical index join here anymore, because we will encapsulate it bottom-up.
 	// chosenPath and lastColManager of indexJoinResult should be returned to the caller (seen by index join to keep
 	// index join aware of indexColLens and compareFilters).
+	completeIndexJoinFeedBackInfo(innerTask.(*CopTask), indexJoinResult, ranges, keyOff2IdxOff)
 	return innerTask
 }
 
+// completeIndexJoinFeedBackInfo completes the IndexJoinInfo for the innerTask.
+// indexJoin
+//
+//	+--- outer child
+//	+--- inner child (say: projection ------------> unionScan -------------> ds)
+//	        <-------RootTask(IndexJoinInfo) <--RootTask(IndexJoinInfo) <--copTask(IndexJoinInfo)
+//
+// when we build the underlying datasource as table-scan, we will return wrap it and
+// return as a CopTask, inside which the index join contains some index path chosen
+// information which will be used in indexJoin execution runtime: ref IndexJoinInfo
+// declaration for more information.
+// the indexJoinInfo will be filled back to the innerTask, passed upward to RootTask
+// once this copTask is converted to RootTask type, and finally end up usage in the
+// indexJoin's attach2Task with calling completePhysicalIndexJoin.
 func completeIndexJoinFeedBackInfo(innerTask *CopTask, indexJoinResult *indexJoinPathResult, ranges ranger.MutableRanges, keyOff2IdxOff []int) {
 	info := innerTask.IndexJoinInfo
 	if info == nil {
@@ -1306,7 +1310,7 @@ func completeIndexJoinFeedBackInfo(innerTask *CopTask, indexJoinResult *indexJoi
 
 // buildIndexJoinInner2TableScan builds a TableScan as the inner child for an
 // IndexJoin if possible.
-// If the inner side of a index join is a TableScan, only one tuple will be
+// If the inner side of an index join is a TableScan, only one tuple will be
 // fetched from the inner side for every tuple from the outer side. This will be
 // promised to be no worse than building IndexScan as the inner child.
 func buildIndexJoinInner2TableScan(
@@ -3357,7 +3361,15 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 		// <1,1> in node A           <1,null,gid=1> in node A
 		// <1,2> in node B           <1,null,gid=1> in node B
 		if len(partitionCols) != 0 && !la.SCtx().GetSessionVars().EnableSkewDistinctAgg {
-			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: partitionCols, CanAddEnforcer: true, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
+			childProp := &property.PhysicalProperty{
+				TaskTp:            property.MppTaskType,
+				ExpectedCnt:       math.MaxFloat64,
+				MPPPartitionTp:    property.HashType,
+				MPPPartitionCols:  partitionCols,
+				CanAddEnforcer:    true,
+				RejectSort:        true,
+				CTEProducerStatus: prop.CTEProducerStatus,
+			}
 			agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.Schema().Clone())
 			agg.MppRunMode = Mpp1Phase
@@ -3374,7 +3386,12 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 
 		// 2-phase agg
 		// no partition property down，record partition cols inside agg itself, enforce shuffler latter.
-		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.AnyType, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
+		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType,
+			ExpectedCnt:       math.MaxFloat64,
+			MPPPartitionTp:    property.AnyType,
+			RejectSort:        true,
+			CTEProducerStatus: prop.CTEProducerStatus,
+		}
 		agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 		agg.SetSchema(la.Schema().Clone())
 		agg.MppRunMode = Mpp2Phase
@@ -3385,7 +3402,12 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 
 		// agg runs on TiDB with a partial agg on TiFlash if possible
 		if prop.TaskTp == property.RootTaskType {
-			childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
+			childProp := &property.PhysicalProperty{
+				TaskTp:            property.MppTaskType,
+				ExpectedCnt:       math.MaxFloat64,
+				RejectSort:        true,
+				CTEProducerStatus: prop.CTEProducerStatus,
+			}
 			agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.Schema().Clone())
 			agg.MppRunMode = MppTiDB
@@ -3393,7 +3415,12 @@ func tryToGetMppHashAggs(la *logicalop.LogicalAggregation, prop *property.Physic
 		}
 	} else if !hasFinalAgg {
 		// TODO: support scalar agg in MPP, merge the final result to one node
-		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, RejectSort: true, CTEProducerStatus: prop.CTEProducerStatus}
+		childProp := &property.PhysicalProperty{TaskTp: property.MppTaskType,
+			ExpectedCnt:       math.MaxFloat64,
+			RejectSort:        true,
+			CTEProducerStatus: prop.CTEProducerStatus,
+		}
+
 		agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 		agg.SetSchema(la.Schema().Clone())
 		if la.HasDistinct() || la.HasOrderBy() {
