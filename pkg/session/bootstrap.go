@@ -222,11 +222,12 @@ const (
 
 	// CreateStatsMetaTable stores the meta of table statistics.
 	CreateStatsMetaTable = `CREATE TABLE IF NOT EXISTS mysql.stats_meta (
-		version 		BIGINT(64) UNSIGNED NOT NULL,
-		table_id 		BIGINT(64) NOT NULL,
-		modify_count	BIGINT(64) NOT NULL DEFAULT 0,
-		count 			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
-		snapshot        BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		version 					BIGINT(64) UNSIGNED NOT NULL,
+		table_id 					BIGINT(64) NOT NULL,
+		modify_count				BIGINT(64) NOT NULL DEFAULT 0,
+		count 						BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		snapshot        			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		last_stats_histograms_version 	BIGINT(64) UNSIGNED DEFAULT NULL,
 		INDEX idx_ver(version),
 		UNIQUE INDEX tbl(table_id)
 	);`
@@ -1270,16 +1271,20 @@ const (
 	// Add extra_params to tidb_global_task and tidb_global_task_history.
 	version243 = 243
 
-	// version242 add Max_user_connections into mysql.user.
+	// version244 add Max_user_connections into mysql.user.
 	version244 = 244
 
 	// version245 updates column types of mysql.bind_info.
 	version245 = 245
+
+	// version 246
+	// Add last_stats_histograms_version to mysql.stats_meta.
+	version246 = 246
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version245
+var currentBootstrapVersion int64 = version246
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1460,6 +1465,7 @@ var (
 		upgradeToVer243,
 		upgradeToVer244,
 		upgradeToVer245,
+		upgradeToVer246,
 	}
 )
 
@@ -3401,9 +3407,15 @@ func upgradeToVer245(s sessiontypes.Session, ver int64) {
 	if ver >= version245 {
 		return
 	}
-
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info MODIFY COLUMN original_sql LONGTEXT NOT NULL")
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info MODIFY COLUMN bind_sql LONGTEXT NOT NULL")
+}
+
+func upgradeToVer246(s sessiontypes.Session, ver int64) {
+	if ver >= version246 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN last_stats_histograms_version bigint unsigned DEFAULT NULL", infoschema.ErrColumnExists)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
