@@ -199,7 +199,7 @@ func FillRecommendation(bindingPlans []*BindingPlanInfo) {
 	hitRule := false
 	// rule 1
 	for _, cur := range bindingPlans {
-		if isSimplePointPlan(cur.Plan) {
+		if IsSimplePointPlan(cur.Plan) {
 			hitRule = true
 			cur.Recommend = "YES (rule-based)"
 			cur.Reason = "Simple PointGet or BatchPointGet is the best plan"
@@ -260,7 +260,9 @@ func FillRecommendationViaLLM([]*BindingPlanInfo) {
 	// TODO
 }
 
-func isSimplePointPlan(plan string) bool {
+// IsSimplePointPlan checks whether the plan is a simple point plan.
+// Expose this function for testing.
+func IsSimplePointPlan(plan string) bool {
 	// if the plan only contains Point_Get, Batch_Point_Get, Selection and Projection, it's a simple point plan.
 	lines := strings.Split(plan, "\n")
 	for _, line := range lines {
