@@ -864,14 +864,14 @@ childLoop:
 // buildDataSource2IndexScanByIndexJoinProp builds an IndexScan as the inner child for an
 // IndexJoin based on IndexJoinProp included in prop if possible.
 //
-buildDataSource2IndexScanByIndexJoinProp
+// buildDataSource2IndexScanByIndexJoinProp differs with buildIndexJoinInner2IndexScan in that
 // the first one is try to build a single table scan as the inner child of an index join then return
 // this inner task(raw table scan) bottom-up, which will be attached with other inner parents of an
 // index join in attach2Task when bottom-up of enumerating the physical plans;
 //
 // while the second is try to build a table scan as the inner child of an index join, then build
 // entire inner subtree of a index join out as innerTask instantly according those validated and
-// zipped inner patterns with calling constructInnerTableScanTask. That's not done yet, it also
+// zipped inner patterns with calling constructInnerIndexScanTask. That's not done yet, it also
 // tries to enumerate kinds of index join operators based on the finished innerTask and un-decided
 // outer child which will be physical-ed in the future.
 func buildDataSource2IndexScanByIndexJoinProp(
