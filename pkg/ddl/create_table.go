@@ -1000,14 +1000,7 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint) {
 		var colName string
 		for _, keyPart := range constr.Keys {
 			if keyPart.Expr != nil {
-				switch constr.Tp {
-				case ast.ConstraintVector:
-					colName = getAnonymousIndexPrefix(model.ColumnarIndexTypeVector)
-				case ast.ConstraintColumnar:
-					colName = getAnonymousIndexPrefix(model.ColumnarIndexTypeInverted)
-				default:
-					colName = getAnonymousIndexPrefix(model.ColumnarIndexTypeNA)
-				}
+				colName = getAnonymousIndexPrefix(constr.Tp == ast.ConstraintVector)
 			}
 		}
 		if colName == "" {
@@ -1336,7 +1329,7 @@ func BuildTableInfo(
 			if constr.Option.Visibility == ast.IndexVisibilityInvisible {
 				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set columnar index invisible")
 			}
-			columnarIndexType = model.ColumnarIndexTypeInverted // TODO: support other columnar index types
+			columnarIndexType = model.ColumnarIndexTypeInverted
 		}
 
 		// check constraint

@@ -4501,15 +4501,14 @@ func getIdentKey(ident ast.Ident) string {
 	return fmt.Sprintf("%s.%s", ident.Schema.L, ident.Name.L)
 }
 
-func getAnonymousIndexPrefix(columnarIndexType model.ColumnarIndexType) string {
-	switch columnarIndexType {
-	case model.ColumnarIndexTypeVector:
+// getAnonymousIndexPrefix returns the prefix for anonymous index name.
+// Column name of vector index IndexPartSpecifications is nil,
+// so we need a different prefix to distinguish between vector index and expression index.
+func getAnonymousIndexPrefix(isVector bool) string {
+	if isVector {
 		return "vector_index"
-	case model.ColumnarIndexTypeInverted:
-		return "inverted_index"
-	default:
-		return "expression_index"
 	}
+	return "expression_index"
 }
 
 // GetName4AnonymousIndex returns a valid name for anonymous index.
@@ -4666,7 +4665,7 @@ func checkIndexNameAndColumns(ctx *metabuild.Context, t table.Table, indexName a
 	indexPartSpecifications []*ast.IndexPartSpecification, columnarIndexType model.ColumnarIndexType, ifNotExists bool) (ast.CIStr, []*model.ColumnInfo, error) {
 	// Deal with anonymous index.
 	if len(indexName.L) == 0 {
-		colName := ast.NewCIStr(getAnonymousIndexPrefix(columnarIndexType))
+		colName := ast.NewCIStr(getAnonymousIndexPrefix(columnarIndexType == model.ColumnarIndexTypeVector))
 		if indexPartSpecifications[0].Column != nil {
 			colName = indexPartSpecifications[0].Column.Name
 		}

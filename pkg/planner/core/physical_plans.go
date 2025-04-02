@@ -966,7 +966,6 @@ type PhysicalTableScan struct {
 
 	AnnIndexExtra *VectorIndexExtra `plan-cache-clone:"must-nil"` // MPP plan should not be cached.
 	// UsedColumnarIndexes is used to store the used columnar index for the table scan.
-	// Set after `postOptimize`
 	UsedColumnarIndexes []*tipb.ColumnarIndexInfo `plan-cache-clone:"must-nil"`
 }
 

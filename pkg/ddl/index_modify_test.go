@@ -1463,6 +1463,9 @@ func TestAddColumnarIndexSimple(t *testing.T) {
 	tk.MustContainErrMsg("alter table t add key idx(d) USING INVERTED;", "Unsupported index type")
 	// for a wrong column
 	tk.MustContainErrMsg("alter table t add columnar index (n) USING INVERTED;", "column does not exist: n")
+	// for wrong data type
+	tk.MustContainErrMsg("alter table t add columnar index (b) USING INVERTED;", "only support integer type, but this is type")
+	tk.MustContainErrMsg("alter table t add columnar index (d) USING INVERTED;", "only support integer type, but this is type")
 
 	// for duplicated index name
 	tk.MustExec("alter table t add key idx(a);")
