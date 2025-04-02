@@ -16,7 +16,6 @@ package importer
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"io"
 	"time"
 
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -92,12 +92,6 @@ func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) 
 	}
 }
 
-type QueryChunk struct {
-	Fields []*types.FieldType
-	Chk    *chunk.Chunk
-	Offset int64
-}
-
 type queryChunkEncodeReader struct {
 	chunkCh  <-chan QueryChunk
 	queryChk QueryChunk
@@ -133,7 +127,7 @@ func (r *queryChunkEncodeReader) readRow(ctx context.Context) (data rowToEncode,
 	return
 }
 
-// queryRowEncodeReader wraps a QueryRow channel as a encodeReaderFn.
+// queryRowEncodeReader wraps a queryChunkEncodeReader as a encodeReaderFn.
 func queryRowEncodeReader(chunkCh <-chan QueryChunk) encodeReaderFn {
 	reader := queryChunkEncodeReader{chunkCh: chunkCh}
 	return func(ctx context.Context) (data rowToEncode, closed bool, err error) {
@@ -520,10 +514,11 @@ func (p *dataDeliver) summaryFields() []zap.Field {
 	}
 }
 
-// QueryRow is a row from query result.
-type QueryRow struct {
-	ID   int64
-	Data []types.Datum
+// QueryChunk is a chunk from query result.
+type QueryChunk struct {
+	Fields []*types.FieldType
+	Chk    *chunk.Chunk
+	Offset int64
 }
 
 func newQueryChunkProcessor(
