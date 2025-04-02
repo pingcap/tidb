@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/stretchr/testify/require"
 )
 
@@ -226,6 +227,44 @@ func TestBaselineDBLowerCase(t *testing.T) {
 		"select * from `spm` . `t` SPM deleted",
 		"select * from `spm` . `t` spm enabled",
 	))
+}
+
+func TestComparePointGet(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE sbtest1 (" +
+		"`id` int NOT NULL AUTO_INCREMENT," +
+		"`k` int NOT NULL DEFAULT '0'," +
+		"`c` char(120) NOT NULL DEFAULT ''," +
+		"`pad` char(60) NOT NULL DEFAULT ''," +
+		"PRIMARY KEY (`id`)," +
+		"KEY `k_1` (`k`))")
+	tk.MustExec("insert into sbtest1 values (123, 1, 'a', 'b')")
+	tk.MustExec("insert into sbtest1 values (124, 2, 'a', 'b')")
+
+	ctx := context.Background()
+	duration := time.Duration(0)
+	ctx = context.WithValue(ctx, tracing.TestDurationCtxKey("test"), &duration)
+	repeat := 10_000
+	for range repeat {
+		tk.MustQueryWithContext(ctx, "select * from sbtest1 where id = 123")
+	}
+	t.Logf("average optimize time for point get: %v", duration/time.Duration(repeat))
+
+	tk.MustExec(`prepare stmt1 from 'select * from sbtest1 where id = ?'`)
+	tk.Exec("set @a = 123")
+	tk.MustQueryWithContext(ctx, "execute stmt1 using @a").Check(testkit.Rows("123 1 a b"))
+	tk.Exec("set @a = 124")
+	tk.MustQueryWithContext(ctx, "execute stmt1 using @a").Check(testkit.Rows("124 2 a b"))
+	//i := 100
+	duration = 0
+	for range repeat {
+		//i++
+		//tk.Exec(fmt.Sprintf("set @a = %d", i))
+		tk.MustQueryWithContext(ctx, "execute stmt1 using @a")
+	}
+	t.Logf("average optimize time for point get with prepared statement: %v", duration/time.Duration(repeat))
 }
 
 func TestShowGlobalBindings(t *testing.T) {
