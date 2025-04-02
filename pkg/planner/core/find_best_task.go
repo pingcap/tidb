@@ -2589,6 +2589,23 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		// TiFlash fast mode(https://github.com/pingcap/tidb/pull/35851) does not keep order in TableScan
 		return base.InvalidTask, nil
 	}
+	// When the the store type is TiFlash, we will try to set the UsedColumnarIndexes.
+	// FIXME: Now it is a naive implementation, we will refine it based on selectivity and cost in the future.
+	if ts.StoreType == kv.TiFlash {
+		for _, index := range ts.Table.Indices {
+			if index.State == model.StatePublic && index.InvertedInfo != nil {
+				ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, &tipb.ColumnarIndexInfo{
+					IndexType: tipb.ColumnarIndexType_TypeInverted,
+					Index: &tipb.ColumnarIndexInfo_InvertedQueryInfo{
+						InvertedQueryInfo: &tipb.InvertedQueryInfo{
+							IndexId:  index.ID,
+							ColumnId: index.InvertedInfo.ColumnID,
+						},
+					},
+				})
+			}
+		}
+	}
 
 	// In disaggregated tiflash mode, only MPP is allowed, cop and batchCop is deprecated.
 	// So if prop.TaskTp is RootTaskType, have to use mppTask then convert to rootTask.

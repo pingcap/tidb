@@ -463,7 +463,6 @@ func postOptimize(ctx context.Context, sctx base.PlanContext, plan base.Physical
 	propagateProbeParents(plan, nil)
 	countStarRewrite(plan)
 	disableReuseChunkIfNeeded(sctx, plan)
-	tryEnableInvertedIndex(sctx, plan)
 	tryEnableLateMaterialization(sctx, plan)
 	generateRuntimeFilter(sctx, plan)
 	return plan
@@ -503,45 +502,6 @@ func tryEnableLateMaterialization(sctx base.PlanContext, plan base.PhysicalPlan)
 		sc := sctx.GetSessionVars().StmtCtx
 		sc.AppendWarning(errors.NewNoStackError("FastScan is not compatible with late materialization, late materialization is disabled"))
 	}
-}
-
-// tryEnableInvertedIndex tries to enable the inverted index for the table scan operator
-// FIXME: Now it is a naive implementation, we will refine it based on selectivity and cost in the future.
-func tryEnableInvertedIndex(sctx base.PlanContext, plan base.PhysicalPlan) base.PhysicalPlan {
-	switch p := plan.(type) {
-	case *PhysicalTableScan:
-		if p.StoreType == kv.TiFlash {
-			// Only when the the store type is TiFlash, we will try to set the used indexes info.
-			usedIndexes := make([]*tipb.ColumnarIndexInfo, 0, len(p.Table.Indices))
-			for _, index := range p.Table.Indices {
-				if index.State == model.StatePublic && index.InvertedInfo != nil {
-					usedIndexes = append(usedIndexes, &tipb.ColumnarIndexInfo{
-						IndexType: tipb.ColumnarIndexType_TypeInverted,
-						Index: &tipb.ColumnarIndexInfo_InvertedQueryInfo{
-							InvertedQueryInfo: &tipb.InvertedQueryInfo{
-								IndexId:  index.ID,
-								ColumnId: index.InvertedInfo.ColumnID,
-							},
-						},
-					})
-				}
-			}
-			if len(usedIndexes) > 0 {
-				p.UsedColumnarIndexes = usedIndexes
-			}
-		}
-	case *PhysicalTableReader:
-		p.tablePlan = tryEnableInvertedIndex(sctx, p.tablePlan)
-	default:
-		if len(plan.Children()) > 0 {
-			newChildren := make([]base.PhysicalPlan, 0, len(plan.Children()))
-			for _, child := range plan.Children() {
-				newChildren = append(newChildren, tryEnableInvertedIndex(sctx, child))
-			}
-			plan.SetChildren(newChildren...)
-		}
-	}
-	return plan
 }
 
 /*
