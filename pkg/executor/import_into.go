@@ -276,7 +276,7 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 			logutil.Logger(ctx).Error("close importer failed", zap.Error(err))
 		}
 	}()
-	selectedRowCh := make(chan importer.QueryRow)
+	selectedRowCh := make(chan importer.QueryRow, e.MaxChunkSize())
 	ti.SetSelectedRowCh(selectedRowCh)
 
 	var importResult *importer.JobImportResult
@@ -290,9 +290,11 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 		defer close(selectedRowCh)
 		fields := exec.RetTypes(e.selectExec)
 		var idAllocator int64
+		chkSize := e.selectExec.InitCap()
+		maxChkSize := e.selectExec.MaxChunkSize()
 		for {
 			// rows will be consumed concurrently, we cannot use chunk pool in session ctx.
-			chk := exec.NewFirstChunk(e.selectExec)
+			chk := chunk.New(e.selectExec.RetFieldTypes(), chkSize, maxChkSize)
 			iter := chunk.NewIterator4Chunk(chk)
 			err := exec.Next(egCtx, e.selectExec, chk)
 			if err != nil {
@@ -311,6 +313,10 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 				case <-egCtx.Done():
 					return egCtx.Err()
 				}
+			}
+			if chkSize < maxChkSize {
+				chkSize = chkSize * 2
+				chkSize = min(chkSize, maxChkSize)
 			}
 		}
 		return nil
