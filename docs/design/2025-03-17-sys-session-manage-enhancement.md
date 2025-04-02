@@ -56,7 +56,7 @@ func (p *Pool) WithSession(fn func(*Session) error) error {
     success := false
     defer func() {
         if success {
-            p.Put(se)
+            p.put(se)
         } else {
             se.Close()
         }
