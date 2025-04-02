@@ -2155,7 +2155,7 @@ func (b *PlanBuilder) getFullAnalyzeColumnsInfo(
 	predicateCols, mustAnalyzedCols *calcOnceMap,
 	mustAllColumns bool,
 	warning bool,
-) ([]*model.ColumnInfo, []*model.ColumnInfo, error) {
+) (_, _ []*model.ColumnInfo, _ error) {
 	if mustAllColumns && warning && (columnChoice == ast.PredicateColumns || columnChoice == ast.ColumnList) {
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Table %s.%s has version 1 statistics so all the columns must be analyzed to overwrite the current statistics", tbl.Schema.L, tbl.Name.L))
 	}
