@@ -1952,7 +1952,7 @@ func (s *subQueryChecker) Leave(in ast.Node) (ast.Node, bool) {
 	return in, !s.hasSubQuery
 }
 
-func isExprHasSubQuery(expr ast.Node) bool {
+func isExprHasSubQuery(expr *ast.Assignment) bool {
 	checker := subQueryCheckerPool.Get().(*subQueryChecker)
 	defer func() {
 		// Do not forget to reset the flag.
@@ -1964,9 +1964,7 @@ func isExprHasSubQuery(expr ast.Node) bool {
 }
 
 func checkIfAssignmentListHasSubQuery(list []*ast.Assignment) bool {
-	return slices.ContainsFunc(list, func(a *ast.Assignment) bool {
-		return isExprHasSubQuery(a)
-	})
+	return slices.ContainsFunc(list, isExprHasSubQuery)
 }
 
 func tryUpdatePointPlan(ctx base.PlanContext, updateStmt *ast.UpdateStmt, resolveCtx *resolve.Context) base.Plan {
