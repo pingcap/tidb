@@ -3838,13 +3838,13 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 				err = txn.LockKeys(context.Background(), new(kv.LockCtx), lockKey)
 				if err != nil {
 					return errors.Trace(err)
-				}
+			}
 
-				err = txn.SetAssertion(key, kv.SetAssertUnknown)
+			err = txn.SetAssertion(key, kv.SetAssertUnknown)
 				if err != nil {
 					return errors.Trace(err)
-				}
-				err = txn.GetMemBuffer().SetWithFlags(key, prr.vals, kv.SetPresumeKeyNotExists)
+					}
+					err = txn.GetMemBuffer().SetWithFlags(key, prr.vals, kv.SetPresumeKeyNotExists)
 				//err = txn.Set(key, prr.vals)
 				if err != nil {
 					return errors.Trace(err)
@@ -3861,6 +3861,7 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 			logSlowOperations(time.Since(oprStartTime), "BackfillData", 3000)
 			return
 		}
+
 	*/
 
 	errInTxn = kv.RunInNewTxn(ctx, w.ddlCtx.store, true, func(_ context.Context, txn kv.Transaction) error {

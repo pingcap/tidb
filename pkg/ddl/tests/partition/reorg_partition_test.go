@@ -1204,7 +1204,6 @@ func TestPartitionByFailuresAddPlacementPolicyGlobalIndex(t *testing.T) {
 
 // Test different concurrency scenarios during backfill, to avoid that backfill will silently
 // delete or overwrite concurrent DML (UPDATE/DELETE/INSERT ODKU)
-// TODO: Also test with both OPTIMISTIC and PESSIMISTIC transactions.
 func TestBackfillDML(t *testing.T) {
 	// Start by test case 1, concurrently delete a row that has just been read by backfill
 	create := `create table t (a int, b int, index (b), index (a,b)) partition by range (a) (partition p0 values less than (100))`
@@ -1213,6 +1212,8 @@ func TestBackfillDML(t *testing.T) {
 	}
 	dmls := []string{
 		`delete from t where a = 2`,
+		`update t set b = 13 where a = 3`,
+		`insert into t values (4,4) on duplicate key update b = 14`,
 		`insert into t values (5,5),(6,6),(7,7),(8,8)`,
 		`delete from t where a = 5`,
 		`update t set b = 16 where a = 6`,
@@ -1236,7 +1237,9 @@ func TestBackfillDML(t *testing.T) {
 		logutil.DDLLogger().Info("all data MJONSS", zap.Any("data", data))
 		tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
 			"1 1",
-			"3 3",
+			"3 13",
+			"4 4",
+			// Duplicate, since no unique key (INSERT ODKU...)
 			"4 4",
 			"6 16",
 			"7 7",
