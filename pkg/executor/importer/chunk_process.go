@@ -107,7 +107,7 @@ type queryChunkEncodeReader struct {
 }
 
 func (r *queryChunkEncodeReader) readRow(ctx context.Context) (data rowToEncode, closed bool, err error) {
-	if r.queryChk.Chk == nil || r.cursor <= r.numRows {
+	if r.queryChk.Chk == nil || r.cursor >= r.numRows {
 		select {
 		case <-ctx.Done():
 			err = ctx.Err()
