@@ -16,11 +16,11 @@ package funcdep
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"slices"
 )
 
 type fdEdge struct {
