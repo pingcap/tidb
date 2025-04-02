@@ -163,13 +163,14 @@ func (p *AdvancedSessionPool) Put(se *Session) {
 		// 3. goroutine 2: Call `p.Get()` and get a new `Session` with the same internal session with goroutine 1.
 		// 4. goroutine 1: Call `internal.TransferOwner(se, p)` and failed, then it should close the session.
 		// If we use `se.internal.Close()` in step4, the `Session` got in step3 will be closed unexpectedly.
-		logutil.BgLogger().Warn(
+		logutil.BgLogger().Error(
 			"TransferOwner failed when put back a session",
 			zap.String("sctx", objectStr(internal.sctx)),
 			zap.Error(err),
 			zap.Stack("stack"),
 		)
 		se.Close()
+		intest.Assert(suppressAssertInTest)
 		return
 	}
 
@@ -194,7 +195,7 @@ func (p *AdvancedSessionPool) Put(se *Session) {
 	if err := internal.CheckNoPendingTxn(); err != nil {
 		// If the session has an unterminated transaction, it should close it instead of put back it to the pool
 		// to avoid some potential issues.
-		logutil.BgLogger().Warn(
+		logutil.BgLogger().Error(
 			"pending txn found when put back, close it instead to avoid undetermined state",
 			zap.String("sctx", objectStr(internal.sctx)),
 			zap.Error(err),
@@ -206,7 +207,7 @@ func (p *AdvancedSessionPool) Put(se *Session) {
 
 	// for safety, still reset the inner state to make session clean
 	if err := internal.OwnerResetState(p.ctx, p); err != nil {
-		logutil.BgLogger().Warn(
+		logutil.BgLogger().Error(
 			"OwnerResetState failed when put back, close it instead to avoid undetermined state",
 			zap.String("sctx", objectStr(internal.sctx)),
 			zap.Error(err),
