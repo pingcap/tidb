@@ -196,13 +196,20 @@ func (s *session) CheckNoPendingTxn() error {
 
 // OwnerResetState resets the state of the session by owner
 func (s *session) OwnerResetState(ctx context.Context, caller sessionOwner) error {
+	return s.OwnerWithSctx(caller, func(sctx sessionctx.Context) error {
+		sctx.RollbackTxn(ctx)
+		return nil
+	})
+}
+
+// OwnerWithSctx executes the input function with the session context.
+func (s *session) OwnerWithSctx(caller sessionOwner, fn func(sessionctx.Context) error) error {
 	sctx, exit, err := s.EnterOperation(caller)
 	if err != nil {
 		return err
 	}
 	defer exit()
-	sctx.RollbackTxn(ctx)
-	return nil
+	return fn(sctx)
 }
 
 // EnterOperation enters an operation on the session.

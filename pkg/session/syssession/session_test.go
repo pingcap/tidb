@@ -570,6 +570,61 @@ func TestInternalSessionEnterOperation(t *testing.T) {
 	require.Equal(t, uint64(0), se.Inuse())
 }
 
+func TestInternalSessionOwnerWithSctx(t *testing.T) {
+	sctx := &mockSessionContext{}
+	owner := &mockOwner{}
+	se := mockInternalSession(t, sctx, owner)
+	mockCb := &mock.Mock{}
+	cb := func(sctx sessionctx.Context) error {
+		require.Equal(t, uint64(1), se.Inuse())
+		return mockCb.MethodCalled("cb", sctx).Error(0)
+	}
+
+	// normal case
+	mockCb.On("cb", sctx).Return(nil).Once()
+	require.NoError(t, se.OwnerWithSctx(owner, cb))
+	require.Zero(t, se.Inuse())
+	mockCb.AssertExpectations(t)
+
+	// invalid owner
+	WithSuppressAssert(func() {
+		err := se.OwnerWithSctx(&mockOwner{}, cb)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "caller is not the owner")
+		require.Zero(t, se.Inuse())
+	})
+
+	// error in cb
+	mockCb.On("cb", sctx).Return(errors.New("mockErr")).Once()
+	err := se.OwnerWithSctx(owner, cb)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "mockErr")
+	require.Zero(t, se.Inuse())
+	mockCb.AssertExpectations(t)
+
+	// panic in cb
+	mockCb.On("cb", sctx).Panic("mockPanic").Once()
+	require.PanicsWithValue(t, "mockPanic", func() {
+		_ = se.OwnerWithSctx(owner, cb)
+	})
+	require.Zero(t, se.Inuse())
+	mockCb.AssertExpectations(t)
+
+	// session closed
+	sctx.On("Close").Once()
+	owner.On("onResignOwner", sctx).Return(nil).Once()
+	se.Close()
+	require.True(t, se.IsClosed())
+	sctx.AssertExpectations(t)
+	owner.AssertExpectations(t)
+	WithSuppressAssert(func() {
+		err := se.OwnerWithSctx(owner, cb)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "session is closed")
+		require.Zero(t, se.Inuse())
+	})
+}
+
 func TestInternalSessionAvoidReuse(t *testing.T) {
 	sctx := &mockSessionContext{}
 	owner := &mockOwner{}
