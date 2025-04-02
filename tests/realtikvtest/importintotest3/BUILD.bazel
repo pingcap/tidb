@@ -4,6 +4,7 @@ go_test(
     name = "importintotest3_test",
     timeout = "moderate",
     srcs = [
+        "base64_encode_test.go",
         "file_compression_test.go",
         "from_server_test.go",
         "main_test.go",

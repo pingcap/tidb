@@ -1458,3 +1458,24 @@ func TestRedactConfig(t *testing.T) {
 		require.Contains(t, cfg.String(), tt.origin)
 	}
 }
+
+func TestCSVEncodedBy(t *testing.T) {
+	ctx := context.Background()
+	cfg := NewConfig()
+	assignMinimalLegalValue(cfg)
+	require.NoError(t, cfg.Adjust(ctx))
+	cfg.Mydumper.CSV.FieldsEncodedBy = "gzip"
+	require.ErrorContains(t, cfg.Adjust(ctx), "unsupported `encoded-by` value")
+	cfg.Mydumper.CSV.FieldsEncodedBy = FieldEncodeBase64
+	require.ErrorContains(t, cfg.Adjust(ctx), "header` must be false")
+	cfg.Mydumper.CSV.Header = false
+	require.ErrorContains(t, cfg.Adjust(ctx), "delimiter` must be empty")
+	cfg.Mydumper.CSV.FieldsEnclosedBy = ""
+	require.ErrorContains(t, cfg.Adjust(ctx), "escaped-by` must be empty")
+	cfg.Mydumper.CSV.BackslashEscape = false
+	cfg.Mydumper.CSV.FieldsEscapedBy = ""
+	cfg.Mydumper.DataCharacterSet = "utf8"
+	require.ErrorContains(t, cfg.Adjust(ctx), "`mydumper.data-character-set` must be 'binary'")
+	cfg.Mydumper.DataCharacterSet = ""
+	require.NoError(t, cfg.Adjust(ctx))
+}
