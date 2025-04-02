@@ -4,10 +4,10 @@ package streamhelper
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"time"
 
-	"github.com/pingcap/errors"
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/config"
@@ -23,9 +23,24 @@ import (
 )
 
 const (
-	logBackupServiceID    = "log-backup-coordinator"
-	logBackupSafePointTTL = 24 * time.Hour
+	logBackupServiceIDPrefix = "log-backup-coordinator"
+	logBackupSafePointTTL    = 24 * time.Hour
 )
+
+// Get the service id name unique to the specified task. When there are steps as follows:
+// 1. start a log backup task named `task1`.
+// 2. stop the log backup task `task1`.
+// 3. satrt another log backup task named `task1`.
+//
+// For any newly launched TiDB node(log backup advancer node), it will get the steps from PD and
+// 1. set a safepoint A.
+// 2. delete the safepoint A.
+// 3. set a safepoint B.
+//
+// The advancer should ensure that A is different from B.
+func logBackupServiceID(taskName string, startTs uint64) string {
+	return fmt.Sprintf("%s-%s-%d", logBackupServiceIDPrefix, taskName, startTs)
+}
 
 // Env is the interface required by the advancer.
 type Env interface {
@@ -45,24 +60,9 @@ type PDRegionScanner struct {
 	pd.Client
 }
 
-// Updates the service GC safe point for the cluster.
-// Returns the minimal service GC safe point across all services.
-// If the arguments is `0`, this would remove the service safe point.
-func (c PDRegionScanner) BlockGCUntil(ctx context.Context, at uint64) (uint64, error) {
-	minimalSafePoint, err := c.UpdateServiceGCSafePoint(
-		ctx, logBackupServiceID, int64(logBackupSafePointTTL.Seconds()), at)
-	if err != nil {
-		return 0, errors.Annotate(err, "failed to block gc until")
-	}
-	if minimalSafePoint > at {
-		return 0, errors.Errorf("minimal safe point %d is greater than the target %d", minimalSafePoint, at)
-	}
-	return at, nil
-}
-
-func (c PDRegionScanner) UnblockGC(ctx context.Context) error {
+func (c PDRegionScanner) UnblockGC(ctx context.Context, serviceID string) error {
 	// set ttl to 0, means remove the safe point.
-	_, err := c.UpdateServiceGCSafePoint(ctx, logBackupServiceID, 0, math.MaxUint64)
+	_, err := c.UpdateServiceGCSafePoint(ctx, serviceID, 0, math.MaxUint64)
 	return err
 }
 
@@ -172,8 +172,9 @@ type LogBackupService interface {
 type StreamMeta interface {
 	// Begin begins listen the task event change.
 	Begin(ctx context.Context, ch chan<- TaskEvent) error
-	// UploadV3GlobalCheckpointForTask uploads the global checkpoint to the meta store.
-	UploadV3GlobalCheckpointForTask(ctx context.Context, taskName string, checkpoint uint64) error
+	// UploadV3GlobalCheckpointForTask uploads the global checkpoint to the meta store
+	// and returns the lastest global checkpoint
+	UploadV3GlobalCheckpointForTask(ctx context.Context, taskName string, checkpoint uint64) (uint64, error)
 	// GetGlobalCheckpointForTask gets the global checkpoint from the meta store.
 	GetGlobalCheckpointForTask(ctx context.Context, taskName string) (uint64, error)
 	// ClearV3GlobalCheckpointForTask clears the global checkpoint to the meta store.
