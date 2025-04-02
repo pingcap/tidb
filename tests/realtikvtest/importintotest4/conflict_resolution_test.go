@@ -15,7 +15,6 @@
 package importintotest
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -25,13 +24,11 @@ import (
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
-	"github.com/tikv/client-go/v2/util"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -51,17 +48,39 @@ func (s *mockGCSSuite) testConflictResolutionWithOptions(tblSQL string, sourceCo
 	return s.testConflictResolutionWithColumnVarsAndOptions(tblSQL, sourceContents, resultRows, "", options)
 }
 
-func (s *mockGCSSuite) testConflictResolutionWithColumnVarsAndOptions(tblSQL string,
-	sourceContents []string, resultRows []string, columnVars string, options string) int64 {
-	s.T().Helper()
+func (s *mockGCSSuite) getSourceRowCount(sourceContents []string) int {
 	totalRowCount := 0
-	for i, content := range sourceContents {
+	for _, content := range sourceContents {
 		rows := strings.Split(content, "\n")
 		for _, r := range rows {
 			if len(r) > 0 {
 				totalRowCount++
 			}
 		}
+	}
+	return totalRowCount
+}
+
+func (s *mockGCSSuite) getTaskByJob(jobID int64) *proto.Task {
+	s.T().Helper()
+	taskKey := importinto.TaskKey(int64(jobID))
+	task, err2 := s.taskMgr.GetTaskByKeyWithHistory(s.ctx, taskKey)
+	s.NoError(err2)
+	return task
+}
+
+func (s *mockGCSSuite) getSubtasksOfStep(taskID int64, step proto.Step) []*proto.Subtask {
+	s.T().Helper()
+	subtasks, err := s.taskMgr.GetSubtasksWithHistory(s.ctx, taskID, step)
+	s.NoError(err)
+	return subtasks
+}
+
+func (s *mockGCSSuite) testConflictResolutionWithColumnVarsAndOptions(tblSQL string,
+	sourceContents []string, resultRows []string, columnVars string, options string) int64 {
+	s.T().Helper()
+	totalRowCount := s.getSourceRowCount(sourceContents)
+	for i, content := range sourceContents {
 		filename := fmt.Sprintf("t.%d.csv", i)
 		s.server.CreateObject(fakestorage.Object{
 			ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "conflicts", Name: filename},
@@ -86,32 +105,31 @@ func (s *mockGCSSuite) testConflictResolutionWithColumnVarsAndOptions(tblSQL str
 	}
 	result := s.tk.MustQuery(importSQL).Rows()
 	s.Len(result, 1)
-	s.Equal(fmt.Sprintf("%d", len(resultRows)), result[0][7])
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(resultRows...))
 	s.tk.MustExec("admin check table t")
 	jobID, err := strconv.Atoi(result[0][0].(string))
 	s.NoError(err)
 
-	taskManager, err := storage.GetTaskManager()
-	s.NoError(err)
-	taskKey := importinto.TaskKey(int64(jobID))
-	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "taskManager")
-	task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
-	s.NoError(err2)
-
+	task := s.getTaskByJob(int64(jobID))
 	s.checkExternalFields(task.ID, false)
 
 	// check lines inside the file that records the conflicted rows.
-	subtasks, err := taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepCollectConflicts)
-	s.NoError(err)
+	subtasks := s.getSubtasksOfStep(task.ID, proto.ImportStepCollectConflicts)
 	s.Len(subtasks, 1)
 	subtaskM := &importinto.CollectConflictsStepMeta{}
 	s.NoError(json.Unmarshal(subtasks[0].Meta, subtaskM))
-	object, err := s.server.GetObject("sorted", subtaskM.ConflictedRowFilename)
-	s.NoError(err)
-	conflictedRows := strings.Split(strings.Trim(string(object.Content), "\n"), "\n")
-	s.Equal(totalRowCount-len(resultRows), len(conflictedRows))
+	if !subtaskM.TooManyConflictsFromIndex {
+		s.Equal(fmt.Sprintf("%d", len(resultRows)), result[0][7])
+
+		totalConflictedRowCnt := 0
+		for _, filename := range subtaskM.ConflictedRowFilenames {
+			object, err := s.server.GetObject("sorted", filename)
+			s.NoError(err)
+			conflictedRows := strings.Split(strings.Trim(string(object.Content), "\n"), "\n")
+			totalConflictedRowCnt += len(conflictedRows)
+		}
+		s.EqualValues(totalRowCount-len(resultRows), totalConflictedRowCnt)
+	}
 
 	return int64(jobID)
 }
@@ -514,15 +532,8 @@ func (s *mockGCSSuite) TestGlobalSortConflictResolutionMultipleSubtasks() {
 func (s *mockGCSSuite) checkMergeStepConflictInfo(jobID int64) {
 	s.T().Helper()
 
-	taskManager, err := storage.GetTaskManager()
-	s.NoError(err)
-	taskKey := importinto.TaskKey(jobID)
-	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "taskManager")
-	task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
-	s.NoError(err2)
-	subtasks, err := taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepMergeSort)
-	s.NoError(err)
+	task := s.getTaskByJob(jobID)
+	subtasks := s.getSubtasksOfStep(task.ID, proto.ImportStepMergeSort)
 
 	taskMeta := importinto.TaskMeta{}
 	s.NoError(json.Unmarshal(task.Meta, &taskMeta))
@@ -531,13 +542,13 @@ func (s *mockGCSSuite) checkMergeStepConflictInfo(jobID int64) {
 	for _, idx := range taskMeta.Plan.TableInfo.Indices {
 		kvGroupCanConflict[importinto.IndexID2KVGroup(idx.ID)] = idx.Unique
 	}
-	store, err := importer.GetSortStore(ctx, taskMeta.Plan.CloudStorageURI)
+	store, err := importer.GetSortStore(s.ctx, taskMeta.Plan.CloudStorageURI)
 	s.NoError(err)
 	for _, st := range subtasks {
 		m := importinto.MergeSortStepMeta{}
 		s.NoError(json.Unmarshal(st.Meta, &m))
 		s.NotEmpty(m.ExternalPath)
-		s.NoError(m.BaseExternalMeta.ReadJSONFromExternalStorage(ctx, store, &m))
+		s.NoError(m.BaseExternalMeta.ReadJSONFromExternalStorage(s.ctx, store, &m))
 		if kvGroupCanConflict[m.KVGroup] {
 			s.Greater(m.ConflictInfo.Count, uint64(0))
 		} else {
@@ -624,4 +635,83 @@ func (s *mockGCSSuite) TestGlobalSortRetryOnConflictResolutionStep() {
 	s.Run("retry on conflict resolution step", func() {
 		doTestWithFP(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/afterResolveOneKVGroup")
 	})
+}
+
+func (s *mockGCSSuite) TestGlobalSortConflictedRowsWrite2MultipleFiles() {
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+	bak := importinto.MaxConflictRowFileSize
+	importinto.MaxConflictRowFileSize = 1
+	s.T().Cleanup(func() {
+		importinto.MaxConflictRowFileSize = bak
+	})
+	contents := []string{
+		"1,0,0,0,0\n2,1,1,1,1\n3,1,2,2,2\n4,3,2,3,3\n5,1,5,3,5",
+		"6,6,6,6,6\n6,6,6,6,6\n6,6,6,6,6\n6,6,6,6,6\n",
+		"7,7,7,7,7\n7,8,8,8,8\n9,8,9,9,9\n10,10,9,10,10\n11,11,11,10,11",
+		"2,1,1,1,1\n3,1,2,2,2",
+		"4,3,2,3,3\n5,1,5,3,5\n6,6,6,6,6\n6,6,6,6,6",
+		"6,6,6,6,6\n6,6,6,6,6\n7,7,7,7,7\n7,8,8,8,8",
+		"9,8,9,9,9\n10,10,9,10,10\n11,11,11,10,11",
+		"12,12,12,12\n12,12,12,12\n12,12,12,12\n12,12,12,12",
+		"12,12,12,12\n12,12,12,12\n12,12,12,12\n12,12,12,12",
+	}
+	totalSourceRows := s.getSourceRowCount(contents)
+	jobID := s.testConflictResolution(
+		`create table t(pk int primary key clustered, a int, b int, c int, d int, unique(a), unique(b), unique(c), index(d))`,
+		contents,
+		[]string{"1 0 0 0 0"},
+	)
+	task := s.getTaskByJob(jobID)
+	subtasks := s.getSubtasksOfStep(task.ID, proto.ImportStepCollectConflicts)
+	s.Len(subtasks, 1)
+	subtaskM := &importinto.CollectConflictsStepMeta{}
+	s.NoError(json.Unmarshal(subtasks[0].Meta, subtaskM))
+	// one file per row
+	s.Len(subtaskM.ConflictedRowFilenames, totalSourceRows-1)
+	s.False(subtaskM.TooManyConflictsFromIndex)
+
+	// we still need to verify checksum
+	subtasks = s.getSubtasksOfStep(task.ID, proto.ImportStepPostProcess)
+	s.Len(subtasks, 1)
+	ppMeta := &importinto.PostProcessStepMeta{}
+	s.NoError(json.Unmarshal(subtasks[0].Meta, ppMeta))
+	s.False(ppMeta.TooManyConflictsFromIndex)
+}
+
+func (s *mockGCSSuite) TestGlobalSortTooManyConflictedRowsFromIndex() {
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+
+	var fpEnterCount atomic.Int32
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/tryCacheHandledRowFromIndex", func(limitP *int64) {
+		*limitP = 0
+		fpEnterCount.Add(1)
+	})
+	jobID := s.testConflictResolution(
+		`create table t(pk int primary key clustered, a int, b int, c int, d int, unique(a), unique(b), unique(c), index(d))`,
+		[]string{
+			"1,0,0,0,0\n2,1,1,1,1\n3,1,1,1,1\n4,3,3,3,3\n5,3,3,3,3",
+			"6,6,6,6,6\n6,6,6,6,6\n6,6,6,6,6\n6,6,6,6,6\n",
+			"7,7,7,7,7\n7,8,8,8,8\n9,8,9,9,9\n10,10,9,10,10\n11,11,11,10,11",
+			"12,12,12,12\n12,12,12,12\n12,12,12,12\n12,12,12,12",
+		},
+		[]string{"1 0 0 0 0"},
+	)
+	s.EqualValues(1, fpEnterCount.Load())
+
+	task := s.getTaskByJob(jobID)
+
+	subtasks := s.getSubtasksOfStep(task.ID, proto.ImportStepCollectConflicts)
+	s.Len(subtasks, 1)
+	subtaskM := &importinto.CollectConflictsStepMeta{}
+	s.NoError(json.Unmarshal(subtasks[0].Meta, subtaskM))
+	s.True(subtaskM.TooManyConflictsFromIndex)
+
+	// verify checksum is skipped, else there will be a checksum mismatch error
+	subtasks = s.getSubtasksOfStep(task.ID, proto.ImportStepPostProcess)
+	s.Len(subtasks, 1)
+	ppMeta := &importinto.PostProcessStepMeta{}
+	s.NoError(json.Unmarshal(subtasks[0].Meta, ppMeta))
+	s.True(ppMeta.TooManyConflictsFromIndex)
 }

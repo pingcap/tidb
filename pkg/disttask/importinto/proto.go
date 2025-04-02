@@ -135,9 +135,12 @@ type CollectConflictsStepMeta struct {
 	Checksum *Checksum `json:"checksum,omitempty"`
 	// ConflictedRowCount is the count of all conflicted rows.
 	ConflictedRowCount int64 `json:"conflicted-row-count,omitempty"`
-	// ConflictedRowFilename is the filename of all conflicted rows.
+	// ConflictedRowFilenames is the filenames of all conflicted rows.
 	// Note: this file is for user to resolve conflicts manually.
-	ConflictedRowFilename string `json:"conflicted-row-filename,omitempty"`
+	ConflictedRowFilenames []string `json:"conflicted-row-filenames,omitempty"`
+	// TooManyConflictsFromIndex is true if there are too many conflicts from index.
+	// if true, we will skip checksum.
+	TooManyConflictsFromIndex bool `json:"too-many-conflicts-from-index,omitempty"`
 }
 
 // Marshal marshals the collect conflicts step meta to JSON.
@@ -184,6 +187,9 @@ type PostProcessStepMeta struct {
 	Checksum map[int64]Checksum
 	// DeletedRowsChecksum is the checksum of all deleted rows due to conflicts.
 	DeletedRowsChecksum Checksum
+	// TooManyConflictsFromIndex is true if there are too many conflicts from index.
+	// if true, the DeletedRowsChecksum might not be accurate, we will skip checksum.
+	TooManyConflictsFromIndex bool `json:"too-many-conflicts-from-index,omitempty"`
 	// MaxIDs of max all max-ids of subtasks in import step.
 	MaxIDs map[autoid.AllocatorType]int64
 }

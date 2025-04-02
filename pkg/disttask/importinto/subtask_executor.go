@@ -146,6 +146,10 @@ func postProcess(ctx context.Context, store kv.Storage, taskMeta *TaskMeta, subt
 	callLog.Info("checksum info", zap.Stringer("encodeStepSum", &encodeStepChecksum),
 		zap.Stringer("deletedRowsSum", deletedRowsChecksum),
 		zap.Stringer("final", &finalChecksum))
+	if subtaskMeta.TooManyConflictsFromIndex {
+		callLog.Info("too many conflicts from index, skip verify checksum, as the checksum of deleted rows may be inaccurate")
+		return nil
+	}
 
 	taskManager, err := storage.GetTaskManager()
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)

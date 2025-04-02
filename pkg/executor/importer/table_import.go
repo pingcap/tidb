@@ -800,7 +800,7 @@ func (r *autoIDRequirement) AutoIDClient() *autoid.ClientDiscover {
 
 // RebaseAllocatorBases rebase the allocator bases.
 func RebaseAllocatorBases(ctx context.Context, kvStore tidbkv.Storage, maxIDs map[autoid.AllocatorType]int64, plan *Plan, logger *zap.Logger) (err error) {
-	callLog := log.BeginTask(logger, "rebase allocators")
+	callLog := log.BeginTask(logger.With(zap.Any("maxIDs", maxIDs)), "rebase allocators")
 	defer func() {
 		callLog.End(zap.ErrorLevel, err)
 	}()

@@ -18,8 +18,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
+	"unsafe"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -37,6 +38,12 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+const handleMapEntryShallowSize = int64(unsafe.Sizeof("") + unsafe.Sizeof(true))
+
+// MaxConflictRowFileSize is the maximum size of the conflict row file.
+// exported for testing.
+var MaxConflictRowFileSize int64 = 8 * units.GiB
+
 type collectConflictsStepExecutor struct {
 	taskexecutor.EmptyStepExecutor
 	taskID   int64
@@ -47,12 +54,21 @@ type collectConflictsStepExecutor struct {
 	tableImporter *importer.TableImporter
 
 	// per subtask fields
+	currSubtaskID        int64
 	conflictedRowCount   int64
 	conflictedRowSize    int64
 	conflictRowsChecksum *verification.KVChecksum
 	handledRowsFromIndex map[string]bool
-	conflictRowFilename  string
-	conflictRowWriter    storage.ExternalFileWriter
+	// if there are too many conflict rows from index, we must stop caching them
+	// in memory, and we must skip the checksum for the whole task.
+	// but we still need keep running this step to record all conflicted rows to
+	// let user resolve them manually.
+	tooManyConflictsFromIndex        bool
+	conflictHandleFromIndexSize      int64
+	conflictHandleFromIndexSizeLimit int64
+	conflictRowFileSeq               int
+	conflictRowFilenames             []string
+	conflictRowWriter                storage.ExternalFileWriter
 }
 
 var _ execute.StepExecutor = &collectConflictsStepExecutor{}
@@ -81,28 +97,19 @@ func (e *collectConflictsStepExecutor) RunSubtask(ctx context.Context, subtask *
 			return errors.Trace(err)
 		}
 	}
-	// TODO if there are too many conflicts due to index, we need to skip this
-	// step to avoid OOM.
+
 	var potentialConflictRowsDueToIndex int
 	for kvGroup, ci := range stepMeta.Infos.ConflictInfos {
 		if kvGroup != dataKVGroup {
 			potentialConflictRowsDueToIndex += int(ci.Count)
 		}
 	}
-	// TODO consider the memory usage of the conflict rows.
 	potentialConflictRowsDueToIndex = min(potentialConflictRowsDueToIndex, 128)
-	e.conflictedRowCount, e.conflictedRowSize = 0, 0
-	e.conflictRowsChecksum = verification.NewKVChecksumWithKeyspace(e.store.GetCodec().GetKeyspace())
-	e.handledRowsFromIndex = make(map[string]bool, potentialConflictRowsDueToIndex)
-	e.conflictRowFilename = conflictRowFileName(e.taskID, subtask.ID)
-	e.conflictRowWriter, err = e.tableImporter.GlobalSortStore.Create(ctx, e.conflictRowFilename, &storage.WriterOption{
-		// TODO max 50GiB can be stored for now.
-		Concurrency: 20,
-		PartSize:    external.MinUploadPartSize,
-	})
-	if err != nil {
+	e.resetForNewSubtask(subtask.ID, potentialConflictRowsDueToIndex)
+	if err = e.switchConflictRowFile(ctx); err != nil {
 		return errors.Trace(err)
 	}
+
 	for kvGroup, ci := range stepMeta.Infos.ConflictInfos {
 		baseHandler := &baseConflictKVHandler{
 			tableImporter:       e.tableImporter,
@@ -135,10 +142,14 @@ func (e *collectConflictsStepExecutor) OnFinished(_ context.Context, subtask *pr
 	}
 	e.logger.Info("collected conflict row info", zap.Int64("count", e.conflictedRowCount),
 		zap.Stringer("checksum", e.conflictRowsChecksum),
-		zap.String("targetFile", e.conflictRowFilename), zap.Int64("fileSize", e.conflictedRowSize))
+		zap.Strings("targetFiles", e.conflictRowFilenames),
+		zap.Int64("fileSize", e.conflictedRowSize),
+		zap.Bool("tooManyConflictsFromIndex", e.tooManyConflictsFromIndex),
+	)
 	subtaskMeta.Checksum = newFromKVChecksum(e.conflictRowsChecksum)
 	subtaskMeta.ConflictedRowCount = e.conflictedRowCount
-	subtaskMeta.ConflictedRowFilename = e.conflictRowFilename
+	subtaskMeta.ConflictedRowFilenames = e.conflictRowFilenames
+	subtaskMeta.TooManyConflictsFromIndex = e.tooManyConflictsFromIndex
 	newMeta, err := json.Marshal(subtaskMeta)
 	if err != nil {
 		return errors.Trace(err)
@@ -147,16 +158,90 @@ func (e *collectConflictsStepExecutor) OnFinished(_ context.Context, subtask *pr
 	return nil
 }
 
+// right now we only have 1 subtask, but later we might have multiple subtasks
+// to run it distributively.
+func (e *collectConflictsStepExecutor) resetForNewSubtask(subtaskID int64, potentialConflictRowsDueToIndex int) {
+	e.currSubtaskID = subtaskID
+	e.conflictedRowCount = 0
+	e.conflictedRowSize = 0
+	e.conflictRowsChecksum = verification.NewKVChecksumWithKeyspace(e.store.GetCodec().GetKeyspace())
+	e.handledRowsFromIndex = make(map[string]bool, potentialConflictRowsDueToIndex)
+	e.tooManyConflictsFromIndex = false
+	e.conflictHandleFromIndexSize = 0
+	// we use half of the subtask memory to cache the conflict row handle from index.
+	e.conflictHandleFromIndexSizeLimit = e.GetResource().Mem.Capacity() / 2
+	e.conflictRowFileSeq = 0
+	e.conflictRowFilenames = make([]string, 0, 1)
+	e.conflictRowWriter = nil
+}
+
+func (e *collectConflictsStepExecutor) switchConflictRowFile(ctx context.Context) error {
+	if e.conflictRowWriter != nil {
+		if err := e.conflictRowWriter.Close(ctx); err != nil {
+			e.logger.Warn("failed to close conflict row writer", zap.Error(err))
+			return errors.Trace(err)
+		}
+		e.conflictRowWriter = nil
+	}
+	e.conflictRowFileSeq++
+	filename := getConflictRowFileName(e.taskID, e.currSubtaskID, e.conflictRowFileSeq)
+	writer, err := e.tableImporter.GlobalSortStore.Create(ctx, filename, &storage.WriterOption{
+		Concurrency: 20,
+		PartSize:    external.MinUploadPartSize,
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.conflictRowFilenames = append(e.conflictRowFilenames, filename)
+	e.conflictRowWriter = writer
+	return nil
+}
+
 func (e *collectConflictsStepExecutor) isRowHandledFn(handle tidbkv.Handle) bool {
-	// TODO this memory check limit how many rows can be conflicted by index solely.
-	//  might OOM if there are too many conflicts.
+	if e.tooManyConflictsFromIndex {
+		return false
+	}
 	return e.handledRowsFromIndex[handle.String()]
 }
-func (e *collectConflictsStepExecutor) recordConflictRow(ctx context.Context, kvGroup string, handle tidbkv.Handle, row []types.Datum, kvPairs *kv.Pairs) error {
+
+func (e *collectConflictsStepExecutor) tryCacheHandledRowFromIndex(handle tidbkv.Handle) {
+	if e.tooManyConflictsFromIndex {
+		return
+	}
+
+	hdlStr := handle.String()
+	e.conflictHandleFromIndexSize += int64(len(hdlStr)) + handleMapEntryShallowSize
+	limit := e.conflictHandleFromIndexSizeLimit
+	failpoint.InjectCall("tryCacheHandledRowFromIndex", &limit)
+	if e.conflictHandleFromIndexSize >= limit {
+		e.logger.Info("too many conflict rows from index, skip cache",
+			zap.String("handleSize", units.BytesSize(float64(e.conflictHandleFromIndexSize))))
+		e.tooManyConflictsFromIndex = true
+		e.handledRowsFromIndex = make(map[string]bool)
+		return
+	}
+
+	e.handledRowsFromIndex[hdlStr] = true
+}
+
+func (e *collectConflictsStepExecutor) recordConflictRow(ctx context.Context, kvGroup string,
+	handle tidbkv.Handle, row []types.Datum, kvPairs *kv.Pairs) error {
+	if e.conflictedRowSize >= MaxConflictRowFileSize {
+		e.logger.Info("conflict row file size exceeds the limit, switch to a new file",
+			zap.String("currSize", units.BytesSize(float64(e.conflictedRowSize))))
+		if err := e.switchConflictRowFile(ctx); err != nil {
+			return errors.Trace(err)
+		}
+	}
 	// every conflicted row from data KV group must be recorded, but for index KV
-	// group, we only need to record the row if it's not handled before.
+	// group, they might come from the same row, so we only need to record it on
+	// the first time we meet it.
+	// currently, we use memory to do this check, if it's too large, we just skip
+	// the cache and skip later checksum.
+	// TODO we can upload those handles to sort storage and check them in another
+	//  pass later.
 	if kvGroup != dataKVGroup {
-		e.handledRowsFromIndex[handle.String()] = true
+		e.tryCacheHandledRowFromIndex(handle)
 	}
 	e.conflictRowsChecksum.Update(kvPairs.Pairs)
 	e.conflictedRowCount++
@@ -176,12 +261,12 @@ func (e *collectConflictsStepExecutor) Cleanup(_ context.Context) (err error) {
 	return e.tableImporter.Close()
 }
 
-// conflictRowFileName returns the file name to store the conflict rows for the
+// getConflictRowFileName returns the file name to store the conflict rows for the
 // given task and subtask.
 // user can check this file to resolve the conflict rows manually.
-func conflictRowFileName(taskID, subtaskID int64) string {
+func getConflictRowFileName(taskID, subtaskID int64, seq int) string {
 	// we need to keep this file for the user to check the conflict rows, so we
 	// don't put it under '<task-id>/' directory to avoid it being deleted by the
 	// cleanup process.
-	return filepath.Join(fmt.Sprintf("conflict-rows-%d-%d", taskID, subtaskID), "data.txt")
+	return fmt.Sprintf("conflict-rows-%d-%d/data-%d.txt", taskID, subtaskID, seq)
 }
