@@ -17,6 +17,7 @@ package importer
 import (
 	"context"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"io"
 	"time"
 
@@ -119,6 +120,7 @@ func (r *queryChunkEncodeReader) readRow(ctx context.Context) (data rowToEncode,
 			r.queryChk = queryChk
 			r.cursor = 0
 			r.numRows = r.queryChk.Chk.NumRows()
+			logutil.BgLogger().Info("--cs-- fetch chunk", zap.Int64("offet", r.queryChk.Offset), zap.Int("num-rows", r.numRows))
 		}
 	}
 
@@ -354,7 +356,7 @@ type baseChunkProcessor struct {
 }
 
 func (p *baseChunkProcessor) Process(ctx context.Context) (err error) {
-	task := log.BeginTask(p.logger, "process chunk")
+	task := log.BeginTask(p.logger, "--cs-- process chunk")
 	defer func() {
 		logFields := append(p.enc.summaryFields(), p.deliver.summaryFields()...)
 		logFields = append(logFields, zap.Stringer("type", p.sourceType))
