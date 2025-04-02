@@ -48,7 +48,7 @@ Let's see how `WithSession` works:
 
 ```go
 func (p *Pool) WithSession(fn func(*Session) error) error {
-    se, err := p.Get()
+    se, err := p.get()
     if err != nil {
         return err
     }
