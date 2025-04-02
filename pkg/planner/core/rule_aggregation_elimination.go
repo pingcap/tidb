@@ -95,6 +95,9 @@ func (*aggregationEliminateChecker) tryToSimpleGroupBy(agg *logicalop.LogicalAgg
 	if !agg.SCtx().GetSessionVars().InRestrictedSQL {
 		fmt.Println("here")
 	}
+	if len(agg.GroupByItems) <= 1 {
+		return
+	}
 	deleteGroupByItems := make([]expression.Expression, 0, len(agg.GroupByItems))
 	for _, groupby := range agg.GroupByItems {
 		cols, ok := groupby.(*expression.Column)
