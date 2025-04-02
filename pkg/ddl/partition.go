@@ -3798,6 +3798,8 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 	failpoint.InjectCall("PartitionBeforeBackfillData", handleRange.startKey)
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
+	// First try optimistically to write, but set PresumeKeyNotExists to trigger error
+	// if the new row already exists in the new reorganized partitions
 	errInTxn = kv.RunInNewTxn(ctx, w.ddlCtx.store, false, func(_ context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
@@ -3816,8 +3818,6 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 		taskCtx.done = taskDone
 
 		failpoint.InjectCall("PartitionBackfillDataNoCheck", len(w.rowRecords) > 0)
-		// TODO: Do we even need to lock the keys if we are doing optimistic?
-		// YES!!! otherwise we could overwrite rows that was concurrently updated/deleted!
 		lockKey := make([]byte, 0, tablecodec.RecordRowKeyLen)
 		lockKey = append(lockKey, handleRange.startKey[:tablecodec.TableSplitKeyLen]...)
 		if !w.table.Meta().HasClusteredIndex() && len(w.rowRecords) > 0 {
@@ -3839,29 +3839,22 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 				return errors.Trace(err)
 			}
 
-			err = txn.SetAssertion(key, kv.SetAssertUnknown)
-			if err != nil {
-				return errors.Trace(err)
-			}
 			err = txn.GetMemBuffer().SetWithFlags(key, prr.vals, kv.SetPresumeKeyNotExists)
-			//err = txn.Set(key, prr.vals)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			logutil.DDLLogger().Info("BackfillData ============ MJONSS ======= key", zap.String("key", fmt.Sprintf("%x", key)))
-			//txn.UpdateMemBufferFlags(key, kv.SetPresumeKeyNotExists)
 			taskCtx.addedCount++
 		}
 		return nil
 	})
-	logutil.DDLLogger().Info("BackfillData ============ MJONSS =======", zap.Error(errInTxn))
 	if errInTxn == nil {
-		logutil.DDLLogger().Info("BackfillData ============ MJONSS ======= OK !!!")
 		logSlowOperations(time.Since(oprStartTime), "BackfillData", 3000)
 		failpoint.InjectCall("PartitionAfterBackfillDataNoCheck", handleRange.startKey)
 		return
 	}
 
+	// Failure might be that the row already been inserted or updated by concurrent DML
+	// so keep retrying by reading and checking the new keys.
 	errInTxn = kv.RunInNewTxn(ctx, w.ddlCtx.store, true, func(_ context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
@@ -3893,9 +3886,6 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 			// we must check if old IDs already been written,
 			// i.e. double written by StateWriteOnly or StateWriteReorganization.
 
-			// TODO: test how to use PresumeKeyNotExists/NeedConstraintCheckInPrewrite/DO_CONSTRAINT_CHECK
-			// to delay the check until commit.
-			// And handle commit errors and fall back to this method of checking all keys to see if we need to skip any.
 			newKeys := make([]kv.Key, 0, len(w.rowRecords))
 			for i := range w.rowRecords {
 				newKeys = append(newKeys, w.rowRecords[i].key)
@@ -3930,15 +3920,13 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 			}
 
 			if vals, ok := found[string(key)]; ok {
-				logutil.DDLLogger().Info("BackfillData ------------ MJONSS ------- key found", zap.String("key", fmt.Sprintf("%x", key)))
 				if len(vals) == len(prr.vals) && bytes.Equal(vals, prr.vals) {
-					logutil.DDLLogger().Info("BackfillData ============ MJONSS ======= key SAME", zap.String("key", fmt.Sprintf("%x", key)))
 					// Already backfilled or double written earlier by concurrent DML
 					continue
 				}
 				// Not same row, due to earlier EXCHANGE PARTITION.
-				// Update the current read row by Remove it and Add it back (which will give it a new _tidb_rowid)
-				// which then also will be used as unique id in the new partition.
+				// Update the current read row by Remove it and Add it back,
+				// which will give it a new _tidb_rowid which is unique in the table.
 				var h kv.Handle
 				var currPartID int64
 				currPartID, h, err = tablecodec.DecodeRecordKey(lockKey)
@@ -3972,16 +3960,11 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 				// OK to only do txn.Set() for the new partition, and defer creating the indexes,
 				// since any DML changes the record it will also update or create the indexes,
 				// by doing RemoveRecord+UpdateRecord
-				logutil.DDLLogger().Info("BackfillData ============ MJONSS ======= NEW key", zap.String("key", fmt.Sprintf("%x", key)))
 			}
-			// TODO: First round, use flag SetPresumeKeyNotExists for every key!
-			// memBuffer.SetWithFlags(key, encoded, flags...)
-			// And txn.SetAssertion(key, kv.SetAssertUnknown)
 			err = txn.Set(key, prr.vals)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			logutil.DDLLogger().Info("BackfillData 222222222222 MJONSS 2222222 key", zap.String("key", fmt.Sprintf("%x", key)))
 			taskCtx.addedCount++
 		}
 		return nil

@@ -1221,18 +1221,8 @@ func TestBackfillDML(t *testing.T) {
 	}
 
 	ddl := `alter table t reorganize partition p0 into (partition p0 values less than (101))`
-	//postFn := func(tk *testkit.TestKit, calls int32) {
-	//	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "3 3", "4 4"))
-	//	tk.MustExec(`admin check table t`)
-	//	require.Equal(t, int32(2), calls)
-	//}
 	postFnRest := func(tk *testkit.TestKit) {
 		tk.MustExec(`admin check table t`)
-		ctx := tk.Session()
-		tbl, err := tk.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
-		require.NoError(t, err)
-		data := getAllDataForTableID(t, ctx, tbl.Partition.Definitions[0].ID)
-		logutil.DDLLogger().Info("all data MJONSS", zap.Any("data", data))
 		tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
 			"1 1",
 			"3 13",
@@ -1253,31 +1243,19 @@ func TestBackfillDML(t *testing.T) {
 	//testBackfillDMLStartTxnDuringCommitAfterFail(t, create, ddl, dmls, initFn, postFn, false)
 
 	testBackfillDMLAutoCommit(t, create, ddl, dmls, initFn, postFn, false)
-	logutil.DDLLogger().Info("autocommit pess MJONSS")
 	testBackfillDMLAutoCommit(t, create, ddl, dmls, initFn, postFn, true)
-	logutil.DDLLogger().Info("autocommit opt MJONSS")
 	testBackfillDMLStartTxnBeforeCommitDuring(t, create, ddl, dmls, initFn, postFn, false)
-	logutil.DDLLogger().Info("before/during pess MJONSS")
 	testBackfillDMLStartTxnBeforeCommitDuring(t, create, ddl, dmls, initFn, postFn, true)
-	logutil.DDLLogger().Info("before/during opt MJONSS")
 	testBackfillDMLStartTxnAndCommitDuring(t, create, ddl, dmls, initFn, postFn, false)
-	logutil.DDLLogger().Info("during pess MJONSS")
 	testBackfillDMLStartTxnAndCommitDuring(t, create, ddl, dmls, initFn, postFn, true)
-	logutil.DDLLogger().Info("during opt MJONSS")
 	postFn = func(tk *testkit.TestKit, calls int32) {
 		require.Equal(t, int32(3), calls)
 		postFnRest(tk)
 	}
 	testBackfillDMLStartTxnDuringCommitAfter(t, create, ddl, dmls, initFn, postFn, false)
-	logutil.DDLLogger().Info("during/after pess MJONSS")
 	postFn = func(tk *testkit.TestKit, calls int32) {
 		require.Equal(t, int32(1), calls)
 		tk.MustExec(`admin check table t`)
-		ctx := tk.Session()
-		tbl, err := tk.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
-		require.NoError(t, err)
-		data := getAllDataForTableID(t, ctx, tbl.Partition.Definitions[0].ID)
-		logutil.DDLLogger().Info("all data MJONSS", zap.Any("data", data))
 		tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
 			"1 1",
 			"2 2",
@@ -1285,26 +1263,74 @@ func TestBackfillDML(t *testing.T) {
 			"4 4"))
 	}
 	testBackfillDMLStartTxnDuringCommitAfter(t, create, ddl, dmls, initFn, postFn, true)
-	logutil.DDLLogger().Info("during/after opt MJONSS")
 	// Basically the same...
 	testBackfillDMLStartTxnDuringCommitAfterFail(t, create, ddl, dmls, initFn, postFn, true)
-	logutil.DDLLogger().Info("during/after fail opt MJONSS")
+}
+
+// Test different concurrency scenarios during backfill, to avoid that backfill will silently
+// delete or overwrite concurrent DML (UPDATE/DELETE/INSERT ODKU)
+func TestBackfillDMLClustered(t *testing.T) {
+	// Start by test case 1, concurrently delete a row that has just been read by backfill
+	create := `create table t (a int primary key clustered, b int, index (b), index (a,b)) partition by range (a) (partition p0 values less than (100))`
+	initFn := func(tk *testkit.TestKit) {
+		tk.MustExec(`insert into t values (1,1),(2,2),(3,3),(4,4)`)
+	}
+	dmls := []string{
+		`delete from t where a = 2`,
+		`update t set b = 13 where a = 3`,
+		`insert into t values (4,4) on duplicate key update b = 14`,
+		`insert into t values (5,5),(6,6),(7,7),(8,8)`,
+		`delete from t where a = 5`,
+		`update t set b = 16 where a = 6`,
+		`insert into t values (7,7) on duplicate key update b = 17`,
+	}
+
+	ddl := `alter table t reorganize partition p0 into (partition p0 values less than (101))`
+	postFnRest := func(tk *testkit.TestKit) {
+		tk.MustExec(`admin check table t`)
+		tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
+			"1 1",
+			"3 13",
+			"4 14",
+			"6 16",
+			"7 17",
+			"8 8"))
+	}
+	postFn := func(tk *testkit.TestKit, calls int32) {
+		require.Equal(t, int32(2), calls)
+		postFnRest(tk)
+	}
+	// This takes ~1.5 min. TODO: investigate if possible to fix lock wait time?
+	//testBackfillDMLStartTxnDuringCommitAfterFail(t, create, ddl, dmls, initFn, postFn, false)
+
+	testBackfillDMLAutoCommit(t, create, ddl, dmls, initFn, postFn, false)
+	testBackfillDMLAutoCommit(t, create, ddl, dmls, initFn, postFn, true)
+	testBackfillDMLStartTxnBeforeCommitDuring(t, create, ddl, dmls, initFn, postFn, false)
+	testBackfillDMLStartTxnBeforeCommitDuring(t, create, ddl, dmls, initFn, postFn, true)
+	testBackfillDMLStartTxnAndCommitDuring(t, create, ddl, dmls, initFn, postFn, false)
+	testBackfillDMLStartTxnAndCommitDuring(t, create, ddl, dmls, initFn, postFn, true)
+	postFn = func(tk *testkit.TestKit, calls int32) {
+		require.Equal(t, int32(3), calls)
+		postFnRest(tk)
+	}
+	testBackfillDMLStartTxnDuringCommitAfter(t, create, ddl, dmls, initFn, postFn, false)
+	postFn = func(tk *testkit.TestKit, calls int32) {
+		require.Equal(t, int32(1), calls)
+		tk.MustExec(`admin check table t`)
+		tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
+			"1 1",
+			"2 2",
+			"3 3",
+			"4 4"))
+	}
+	testBackfillDMLStartTxnDuringCommitAfter(t, create, ddl, dmls, initFn, postFn, true)
+	// Basically the same...
+	testBackfillDMLStartTxnDuringCommitAfterFail(t, create, ddl, dmls, initFn, postFn, true)
 }
 
 // Test different concurrency scenarios during backfill, to avoid that backfill will silently
 // delete or overwrite concurrent DML (UPDATE/DELETE/INSERT ODKU)
 // So we want to test:
-// - DELETE/UPDATE/INSERT ODKU
-// - OPTIMISTIC/PESSIMISTIC
-// - Transactions:
-// - auto-commit between between fetchRowColVals and commit (does the order matter?)
-// - Started before RunInNewTxn and committed before backfill commit
-// - Started in RunInNewTxn and committed before backfill commit (does the order matter?)
-// - Started before backfill commit and committed after.
-// OK so create four different subtests:
-// - auto-commit/TxnStartBefore/TxnDuring/TxnCommitAfter
-// And run them for Optimistic+Pessimistic
-// And three different DML (Delete/Update/Insert ODKU)
 // And both clustered and non-clustered?
 func testBackfillDMLAutoCommit(t *testing.T, create, ddl string, dmls []string, initFn func(tk *testkit.TestKit), postFn func(tk *testkit.TestKit, called int32), optimistic bool) {
 	// For optimistic/pessimistic impact see:
@@ -1343,7 +1369,6 @@ func testBackfillDMLAutoCommit(t *testing.T, create, ddl string, dmls []string, 
 		}
 		for _, dml := range dmls {
 			tk2.MustExec(dml)
-			logutil.DDLLogger().Info("MJONSS dml", zap.String("dml", dml))
 		}
 	}
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillDataNoCheck", callback)
@@ -1387,7 +1412,6 @@ func testBackfillDMLStartTxnBeforeCommitDuring(t *testing.T, create, ddl string,
 		}
 		for _, dml := range dmls {
 			tk2.MustExec(dml)
-			logutil.DDLLogger().Info("MJONSS dml", zap.String("dml", dml))
 		}
 		tk2.MustExec(`COMMIT`)
 	}
@@ -1430,7 +1454,6 @@ func testBackfillDMLStartTxnAndCommitDuring(t *testing.T, create, ddl string, dm
 		tk2.MustExec(`BEGIN`)
 		for _, dml := range dmls {
 			tk2.MustExec(dml)
-			logutil.DDLLogger().Info("MJONSS dml", zap.String("dml", dml))
 		}
 		tk2.MustExec(`COMMIT`)
 	}
@@ -1469,7 +1492,6 @@ func testBackfillDMLStartTxnDuringCommitAfter(t *testing.T, create, ddl string, 
 				return
 			}
 			tk2.MustContainErrMsg(`COMMIT`, "[kv:9007]Write conflict, ")
-			logutil.DDLLogger().Info("MJONSS commit optimistic failed")
 		}
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionAfterBackfillDataNoCheck", callback)
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionAfterBackfillDataCheck", callback)
@@ -1492,7 +1514,6 @@ func testBackfillDMLStartTxnDuringCommitAfter(t *testing.T, create, ddl string, 
 		tk2.MustExec(`BEGIN`)
 		for _, dml := range dmls {
 			tk2.MustExec(dml)
-			logutil.DDLLogger().Info("MJONSS dml", zap.String("dml", dml))
 		}
 	}
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillDataNoCheck", callback)
@@ -1534,7 +1555,6 @@ func testBackfillDMLStartTxnDuringCommitAfterFail(t *testing.T, create, ddl stri
 		} else {
 			tk2.MustExec(`COMMIT`)
 		}
-		logutil.DDLLogger().Info("MJONSS commit")
 	}
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionAfterBackfillDataNoCheck", afterBackfill)
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionAfterBackfillDataCheck", afterBackfill)
@@ -1550,7 +1570,6 @@ func testBackfillDMLStartTxnDuringCommitAfterFail(t *testing.T, create, ddl stri
 		tk2.MustExec(`BEGIN`)
 		for _, dml := range dmls {
 			tk2.MustExec(dml)
-			logutil.DDLLogger().Info("MJONSS dml", zap.String("dml", dml))
 		}
 	}
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillDataNoCheck", callback)
