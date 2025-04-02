@@ -254,16 +254,13 @@ func CheckTableMode(node *resolve.NodeW) error {
 	// For example, `describe <table_name>` and `show create table <table_name>`;
 	switch node.Node.(type) {
 	case *ast.ShowStmt, *ast.ExplainStmt:
-		return nil
 	default:
-	}
-
-	for _, tblNameW := range node.GetResolveContext().GetTableNames() {
-		if tblNameW.TableInfo.Mode != model.TableModeNormal {
-			return infoschema.ErrProtectedTableMode.GenWithStackByArgs(tblNameW.TableName, tblNameW.TableInfo.Mode)
+		for _, tblNameW := range node.GetResolveContext().GetTableNames() {
+			if tblNameW.TableInfo.Mode != model.TableModeNormal {
+				return infoschema.ErrProtectedTableMode.GenWithStackByArgs(tblNameW.TableName, tblNameW.TableInfo.Mode)
+			}
 		}
 	}
-
 	return nil
 }
 
