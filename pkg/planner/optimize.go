@@ -594,6 +594,29 @@ func queryPlanCost(sctx sessionctx.Context, stmt ast.StmtNode) (float64, error) 
 	return core.GetPlanCost(pp, property.RootTaskType, optimizetrace.NewDefaultPlanCostOption())
 }
 
+func planDigestFunc(sctx sessionctx.Context, stmt ast.StmtNode) (planDigest string, err error) {
+	ret := &core.PreprocessorReturn{}
+	nodeW := resolve.NewNodeW(stmt)
+	err = core.Preprocess(
+		context.Background(),
+		sctx,
+		nodeW,
+		core.WithPreprocessorReturn(ret),
+		core.InitTxnContextProvider,
+	)
+	if err != nil {
+		return "", err
+	}
+
+	p, _, err := Optimize(context.Background(), sctx, nodeW, sctx.GetDomainInfoSchema().(infoschema.InfoSchema))
+	if err != nil {
+		return "", err
+	}
+	flat := core.FlattenPhysicalPlan(p, false)
+	_, digest := core.NormalizeFlatPlan(flat)
+	return digest.String(), nil
+}
+
 func init() {
 	core.OptimizeAstNode = Optimize
 	core.IsReadOnly = IsReadOnly
@@ -601,4 +624,5 @@ func init() {
 	bindinfo.GetBindingHandle = func(sctx sessionctx.Context) bindinfo.BindingHandle {
 		return domain.GetDomain(sctx).BindingHandle()
 	}
+	bindinfo.PlanDigestFunc = planDigestFunc
 }
