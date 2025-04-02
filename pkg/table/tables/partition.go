@@ -1776,6 +1776,7 @@ func partitionedTableAddRecord(ctx table.MutateContext, txn kv.Transaction, t *p
 	if err != nil {
 		return
 	}
+	logutil.BgLogger().Info("MJONSS addRecord normal part", zap.Int64("pid", pid), zap.String("recordID", recordID.String()))
 	if t.Meta().Partition.DDLState == model.StateDeleteOnly || t.Meta().Partition.DDLState == model.StatePublic {
 		return
 	}
@@ -1794,6 +1795,7 @@ func partitionedTableAddRecord(ctx table.MutateContext, txn kv.Transaction, t *p
 		if err != nil {
 			return
 		}
+		logutil.BgLogger().Info("MJONSS addRecord reorg part", zap.Int64("pid", pid), zap.String("recordID", recordID.String()))
 	}
 	return
 }
@@ -1864,32 +1866,14 @@ func (t *partitionedTable) RemoveRecord(ctx table.MutateContext, txn kv.Transact
 	if err != nil {
 		return errors.Trace(err)
 	}
+	logutil.BgLogger().Info("MJONSS removeRecord normal part", zap.Int64("from", from), zap.String("h", h.String()))
 
 	if _, ok := t.reorganizePartitions[from]; ok {
 		newFrom, err := t.locateReorgPartition(ectx.GetEvalCtx(), r)
 		if err != nil || newFrom == 0 {
 			return errors.Trace(err)
 		}
-
-		if t.Meta().HasClusteredIndex() {
-			return t.getPartition(newFrom).removeRecord(ctx, txn, h, r, opt)
-		}
-		var found map[string][]byte
-		encodedRecordID := codec.EncodeInt(nil, h.IntValue())
-		newFromKey := tablecodec.EncodeRowKey(newFrom, encodedRecordID)
-
-		found, err = txn.BatchGet(context.Background(), []kv.Key{newFromKey})
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		if val, ok := found[string(newFromKey)]; ok {
-			same, err := dataEqRec(ctx.GetExprCtx().GetEvalCtx().Location(), t.Meta(), r, val)
-			if err != nil || !same {
-				return errors.Trace(err)
-			}
-			return t.getPartition(newFrom).removeRecord(ctx, txn, h, r, opt)
-		}
+		return t.getPartition(newFrom).removeRecord(ctx, txn, h, r, opt)
 	}
 	return nil
 }
@@ -1936,6 +1920,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 			return errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
 		}
 	}
+	logutil.BgLogger().Info("MJONSS updateRecord normal part", zap.Int64("from", from), zap.Int64("to", to), zap.String("h", h.String()))
 	// TODO: Remove this and require EXCHANGE PARTITION to have same CONSTRAINTs on the tables!
 	exchangePartitionInfo := t.Meta().ExchangePartitionInfo
 	if exchangePartitionInfo != nil && exchangePartitionInfo.ExchangePartitionDefID == to &&
@@ -1976,6 +1961,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 		if err != nil {
 			return errors.Trace(err)
 		}
+		logutil.BgLogger().Info("MJONSS updateRecord normal part", zap.String("newRecordHandle", newRecordHandle.String()))
 	} else {
 		// to == from && !t.Meta().HasClusteredIndex()
 		// We don't yet know if there will be a new record id generate or not,
@@ -1989,6 +1975,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 				if err != nil {
 					return err
 				}
+				logutil.BgLogger().Info("MJONSS updateRecord normal part update", zap.String("h", h.String()))
 				memBuffer.Release(sh)
 				return nil
 			}
@@ -1996,12 +1983,14 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 			if err != nil {
 				return err
 			}
+			logutil.BgLogger().Info("MJONSS updateRecord normal part remove", zap.String("h", h.String()))
 			if !deleteOnly {
 				// newData now contains the new record ID
 				_, err = t.getPartition(to).addRecord(ctx, txn, newData, opt.GetAddRecordOptKeepRecordID())
 				if err != nil {
 					return err
 				}
+				logutil.BgLogger().Info("MJONSS updateRecord normal part add")
 			}
 			memBuffer.Release(sh)
 			return nil
@@ -2021,6 +2010,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 			return errors.Trace(err)
 		}
 	}
+	logutil.BgLogger().Info("MJONSS updateRecord reorg part", zap.Int64("newTo", newTo), zap.Int64("newFrom", newFrom))
 	if newFrom == 0 && newTo == 0 {
 		return finishFunc(err, nil)
 	}
@@ -2032,12 +2022,14 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 			if err != nil {
 				return errors.Trace(err)
 			}
+			logutil.BgLogger().Info("MJONSS updateRecord reorg part remove clustered", zap.String("h", h.String()))
 		}
 		if newTo != 0 && !deleteOnly {
 			_, err = t.getPartition(newTo).addRecord(ctx, txn, newData, opt.GetAddRecordOpt())
 			if err != nil {
 				return errors.Trace(err)
 			}
+			logutil.BgLogger().Info("MJONSS updateRecord reorg part add clustered", zap.String("old h", h.String()))
 		}
 		return finishFunc(err, nil)
 	}
@@ -2082,6 +2074,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 				if err != nil {
 					return errors.Trace(err)
 				}
+				logutil.BgLogger().Info("MJONSS updateRecord reorg remove", zap.String("old h", h.String()))
 			}
 			if newTo == newFrom {
 				newToKeyAndValIsSame = &same
@@ -2119,6 +2112,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 	if err != nil {
 		return errors.Trace(err)
 	}
+	logutil.BgLogger().Info("MJONSS updateRecord reorg add", zap.String("newRecordHandle", newRecordHandle.String()))
 	var newHandle kv.Handle
 	if !h.Equal(newRecordHandle) {
 		newHandle = newRecordHandle

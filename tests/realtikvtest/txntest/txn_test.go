@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"strconv"
 	"sync"
 	"testing"
@@ -626,4 +627,305 @@ func TestLockKeysInDML(t *testing.T) {
 	require.Greater(t, tk2CommitTime.Sub(tk2StartTime), sleepDuration)
 	tk.MustQuery("SELECT * FROM t1").Check(testkit.Rows("1"))
 	tk.MustQuery("SELECT * FROM t2").Check(testkit.Rows("1"))
+}
+
+func txnCleanupKeys(t *testing.T, store kv.Storage, keys [][]byte) {
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	// Cleanup of possible previous runs
+	for _, key := range keys {
+		require.NoError(t, txn.Delete(key))
+	}
+	require.NoError(t, txn.Commit(context.Background()))
+}
+
+func TestPresumeKeyNotExists(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+
+	tk := testkit.NewTestKit(t, store)
+	// Check that no table exists with the tests table ids (normally DDL jobs will get the IDs from the same global pool as table IDs, so low odd numbers should be safe
+	tk.MustQuery("select table_catalog,table_schema,table_name,tidb_table_id from information_schema.tables where tidb_table_id in (3,5)").Check(testkit.Rows())
+	key1 := tablecodec.EncodeRowKey(3, kv.IntHandle(5).Encoded())
+	key2 := tablecodec.EncodeRowKey(5, kv.IntHandle(5).Encoded())
+	// Make sure the keys are not here when starting the test
+	txnCleanupKeys(t, store, [][]byte{key1, key2})
+	// and not here when ending the test
+	defer txnCleanupKeys(t, store, [][]byte{key1, key2})
+	// TODO: test with both optimistic and pessimistic, to see what flags/options etc. will be set...
+	// Default is Optimistic transaction!
+
+	// Test 1a, Naive, just check if concurrent overwrite is possible without any flags and options (NO).
+	// txn1 outer transaction, txn2 started and committed inside txn1
+	// Concurrent transactions will fail with write conflict, so we need to check for read conflicts!
+	txn1, err := store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, txn1.Set(key1, []byte{6}))
+	txn2, err := store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, txn2.Set(key1, []byte{7}))
+	txn3, err := store.Begin()
+	val, err := txn3.Get(context.Background(), key1)
+	require.ErrorContains(t, err, "[kv:8021]Error: key not exist")
+	require.NoError(t, txn2.Commit(context.Background()))
+	require.ErrorContains(t, txn1.Commit(context.Background()), "[kv:9007]Write conflict, ")
+	txn1, err = store.Begin()
+	require.NoError(t, err)
+	val, err = txn1.Get(context.Background(), key1)
+	require.NoError(t, err)
+	require.Equal(t, []byte{7}, val)
+	require.NoError(t, txn1.Rollback())
+
+	// Test 1b, Naive, just check if concurrent overwrite is possible without any flags and options (NO).
+	// txn1 interleaved transaction, txn1 started, txn2 started, txn1 committed, txn2 committed.
+	// Concurrent transactions will fail with write conflict, so we need to check for read conflicts!
+	txn1, err = store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, txn1.Set(key1, []byte{6}))
+	txn2, err = store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, txn2.Set(key1, []byte{5}))
+	txn3, err = store.Begin()
+	val, err = txn3.Get(context.Background(), key1)
+	require.NoError(t, err)
+	require.Equal(t, []byte{7}, val)
+	require.NoError(t, txn1.Commit(context.Background()))
+	require.ErrorContains(t, txn2.Commit(context.Background()), "[kv:9007]Write conflict, ")
+	txn1, err = store.Begin()
+	require.NoError(t, err)
+	val, err = txn1.Get(context.Background(), key1)
+	require.NoError(t, err)
+	require.Equal(t, []byte{6}, val)
+	require.NoError(t, txn1.Rollback())
+
+	// Test 2, Will overwriting existing row be allowed without flags and options?
+	// YES!
+	txn1, err = store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, txn1.Set(key1, []byte{5}))
+	require.NoError(t, txn1.Commit(context.Background()))
+	txn1, err = store.Begin()
+	require.NoError(t, err)
+	val, err = txn1.Get(context.Background(), key1)
+	require.NoError(t, err)
+	require.Equal(t, []byte{5}, val)
+	require.NoError(t, txn1.Rollback())
+
+	// Test 3, Will PresumeKeyNotExists block overwrite?
+	// YES!
+	txn1, err = store.Begin()
+	require.NoError(t, err)
+	txn1.UpdateMemBufferFlags(key1, kv.SetPresumeKeyNotExists)
+	require.NoError(t, txn1.Set(key1, []byte{6}))
+	require.ErrorContains(t, txn1.Commit(context.Background()), "[kv:1062]Duplicate entry '7480000000000000035f728000000000000005' for key 'UNKNOWN'")
+	txn1, err = store.Begin()
+	require.NoError(t, err)
+	val, err = txn1.Get(context.Background(), key1)
+	require.NoError(t, err)
+	require.Equal(t, []byte{5}, val)
+	require.NoError(t, txn1.Rollback())
+
+	// Test 4, just check if concurrent delete and set is possible without any flags and options?
+	// NO!
+	txn1, err = store.Begin()
+	require.NoError(t, err)
+	val, err = txn1.Get(context.Background(), key1)
+	require.Equal(t, []byte{5}, val)
+	require.NoError(t, txn1.Set(key1, []byte{6}))
+	txn2, err = store.Begin()
+	require.NoError(t, err)
+	val, err = txn2.Get(context.Background(), key1)
+	require.Equal(t, []byte{5}, val)
+	require.NoError(t, txn2.Delete(key1))
+	require.NoError(t, txn2.Commit(context.Background()))
+	require.ErrorContains(t, txn1.Commit(context.Background()), "[kv:9007]Write conflict, ")
+	txn1, err = store.Begin()
+	require.NoError(t, err)
+	val, err = txn1.Get(context.Background(), key1)
+	require.ErrorContains(t, err, "[kv:8021]Error: key not exist")
+	require.NoError(t, txn1.Rollback())
+
+	// Test 5, just check if concurrent read and delete after backfill commit is possible
+	// without any flags and options?
+	// YES -> We need to use LockKeys() to protect from this!
+
+	txn1, err = store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, txn1.Set(key1, []byte{2}))
+	require.NoError(t, txn1.Commit(context.Background()))
+	txn1, err = store.Begin()
+	require.NoError(t, err)
+	val, err = txn1.Get(context.Background(), key1)
+	require.NoError(t, err)
+	require.Equal(t, []byte{2}, val)
+	txn2, err = store.Begin()
+	require.NoError(t, err)
+	val, err = txn2.Get(context.Background(), key1)
+	require.NoError(t, err)
+	require.Equal(t, []byte{2}, val)
+	// Simulate backfill by writing to a different key
+	require.NoError(t, txn1.Set(key2, []byte{2}))
+	require.NoError(t, txn2.Delete(key1))
+	require.NoError(t, txn2.Commit(context.Background()))
+	// No conflict! -> needs LockKeys() to avoid this!
+	require.NoError(t, txn1.Commit(context.Background()))
+	txn1, err = store.Begin()
+	require.NoError(t, err)
+	val, err = txn1.Get(context.Background(), key1)
+	require.ErrorContains(t, err, "[kv:8021]Error: key not exist")
+	val, err = txn1.Get(context.Background(), key2)
+	require.NoError(t, err)
+	require.Equal(t, []byte{2}, val)
+	require.NoError(t, txn1.Rollback())
+}
+
+func TestLockKey(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+
+	tk := testkit.NewTestKit(t, store)
+	// Check that no table exists with the tests table ids (normally DDL jobs will get the IDs from the same global pool as table IDs, so low odd numbers should be safe
+	tk.MustQuery("select table_catalog,table_schema,table_name,tidb_table_id from information_schema.tables where tidb_table_id in (3,5)").Check(testkit.Rows())
+	key1 := tablecodec.EncodeRowKey(3, kv.IntHandle(5).Encoded())
+	key2 := tablecodec.EncodeRowKey(5, kv.IntHandle(5).Encoded())
+	// Make sure the keys are not here when starting the test
+	txnCleanupKeys(t, store, [][]byte{key1, key2})
+	// and not here when ending the test
+	defer txnCleanupKeys(t, store, [][]byte{key1, key2})
+	// TODO: test with both optimistic and pessimistic, to see what flags/options etc. will be set...
+	// Default is Optimistic transaction!
+
+	// Test 1a, LockKeys() to prevent read rows to be changed without any flags and options?
+	// Commit the DELETE first => backfill fails, good.
+
+	// Prepare the test with an existing key to emulate backfill on.
+	txn1, err := store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, txn1.Set(key1, []byte{2}))
+	require.NoError(t, txn1.Commit(context.Background()))
+
+	txn1, err = store.Begin()
+	require.NoError(t, err)
+	val, err := txn1.Get(context.Background(), key1)
+	require.NoError(t, err)
+	require.Equal(t, []byte{2}, val)
+	lockCtx := &kv.LockCtx{
+		ForUpdateTS:   txn1.StartTS(),
+		WaitStartTime: time.Now(),
+	}
+	require.NoError(t, txn1.LockKeys(context.Background(), lockCtx, key1))
+	txn2, err := store.Begin()
+	require.NoError(t, err)
+	val, err = txn2.Get(context.Background(), key1)
+	require.NoError(t, err)
+	require.Equal(t, []byte{2}, val)
+	// Simulate backfill by writing to a different key
+	require.NoError(t, txn1.Set(key2, []byte{2}))
+	require.NoError(t, txn2.Delete(key1))
+	require.NoError(t, txn2.Commit(context.Background()))
+	require.ErrorContains(t, txn1.Commit(context.Background()), "[kv:9007]Write conflict, ")
+	txn1, err = store.Begin()
+	require.NoError(t, err)
+	val, err = txn1.Get(context.Background(), key1)
+	require.ErrorContains(t, err, "[kv:8021]Error: key not exist")
+	val, err = txn1.Get(context.Background(), key2)
+	require.ErrorContains(t, err, "[kv:8021]Error: key not exist")
+	require.NoError(t, txn1.Rollback())
+
+	// Test 1b, LockKeys() to prevent read rows to be changed without any flags and options?
+	// Commit the backfill first => DELETE fails, could be weird, TODO: is DELETE using LockKeys?
+
+	// Prepare the test with an existing key to emulate backfill on.
+	txn1, err = store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, txn1.Set(key1, []byte{2}))
+	require.NoError(t, txn1.Commit(context.Background()))
+
+	txn1, err = store.Begin()
+	require.NoError(t, err)
+	val, err = txn1.Get(context.Background(), key1)
+	require.NoError(t, err)
+	require.Equal(t, []byte{2}, val)
+	lockCtx = &kv.LockCtx{
+		ForUpdateTS:   txn1.StartTS(),
+		WaitStartTime: time.Now(),
+	}
+	require.NoError(t, txn1.LockKeys(context.Background(), lockCtx, key1))
+	txn2, err = store.Begin()
+	require.NoError(t, err)
+	val, err = txn2.Get(context.Background(), key1)
+	require.NoError(t, err)
+	require.Equal(t, []byte{2}, val)
+	// Simulate backfill by writing to a different key
+	require.NoError(t, txn1.Set(key2, []byte{2}))
+	require.NoError(t, txn2.Delete(key1))
+	require.NoError(t, txn1.Commit(context.Background()))
+	// This will not be expected from DELETE...
+	require.ErrorContains(t, txn2.Commit(context.Background()), "[kv:9007]Write conflict, ")
+	txn1, err = store.Begin()
+	require.NoError(t, err)
+	val, err = txn1.Get(context.Background(), key1)
+	require.NoError(t, err)
+	require.Equal(t, []byte{2}, val)
+	val, err = txn1.Get(context.Background(), key2)
+	require.NoError(t, err)
+	require.Equal(t, []byte{2}, val)
+	require.NoError(t, txn1.Rollback())
+
+	// Test 2, LockKeys() to prevent backfill from concurrent DELETE if the DELETE also does LockKeys?
+	// Commit the backfill first => DELETE fails, still...
+
+	// Prepare the test with an existing key to emulate backfill on.
+	txn1, err = store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, txn1.Delete(key2))
+	require.NoError(t, txn1.Commit(context.Background()))
+
+	txn1, err = store.Begin()
+	require.NoError(t, err)
+	val, err = txn1.Get(context.Background(), key1)
+	require.NoError(t, err)
+	require.Equal(t, []byte{2}, val)
+	lockCtx = &kv.LockCtx{
+		ForUpdateTS:   txn1.StartTS(),
+		WaitStartTime: time.Now(),
+	}
+	require.NoError(t, txn1.LockKeys(context.Background(), lockCtx, key1))
+	txn2, err = store.Begin()
+	require.NoError(t, err)
+	val, err = txn2.Get(context.Background(), key1)
+	require.NoError(t, err)
+	require.Equal(t, []byte{2}, val)
+	require.NoError(t, txn2.LockKeys(context.Background(), lockCtx, key1))
+	// Simulate backfill by writing to a different key
+	require.NoError(t, txn1.Set(key2, []byte{2}))
+	require.NoError(t, txn2.Delete(key1))
+	require.NoError(t, txn1.Commit(context.Background()))
+	// This will not be expected from DELETE...
+	require.ErrorContains(t, txn2.Commit(context.Background()), "[kv:9007]Write conflict, ")
+	txn1, err = store.Begin()
+	require.NoError(t, err)
+	val, err = txn1.Get(context.Background(), key1)
+	require.NoError(t, err)
+	require.Equal(t, []byte{2}, val)
+	val, err = txn1.Get(context.Background(), key2)
+	require.NoError(t, err)
+	require.Equal(t, []byte{2}, val)
+	require.NoError(t, txn1.Rollback())
+}
+
+// Used this for debugging, and it seems like there are no LockKeys() call for Delete,
+// So we need to create a test for backfilling showing that DELETE can indeed fail due to
+// backfill!!!
+func TestDeleteLockKey(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int)`)
+	tk.MustExec(`insert into t values (1,1),(2,2),(3,3)`)
+	tk.MustExec(`delete from t where a = 1`)
+	tk.MustExec(`begin`)
+	tk.MustExec(`delete from t where a = 2`)
+	tk.MustExec(`delete from t where a = 3`)
+	tk.MustExec(`commit`)
+
 }

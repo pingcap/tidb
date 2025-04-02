@@ -434,6 +434,23 @@ func TestInsertRuntimeStat(t *testing.T) {
 	require.Equal(t, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s, fk_check: 1s}", stats.String())
 }
 
+func TestInsertLocking(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t(a int not null primary key clustered, b int not null)")
+	tk.MustExec("insert into t value (1,1)")
+	tk.MustExec("insert into t value (2,2)")
+
+	tk.MustExec("begin optimistic")
+	tk.MustExec("insert into t value (2,2)")
+	tk.MustExec("insert into t value (1,1)")
+	tk.MustExec("insert into t value (3,3)")
+	tk.MustGetErrMsg("commit", "previous statement: insert into t value (3,3): [kv:1062]Duplicate entry '1' for key 't.PRIMARY'")
+
+	tk.MustExec("alter table t partition by hash(a) partitions 2")
+}
+
 func TestDuplicateEntryMessage(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

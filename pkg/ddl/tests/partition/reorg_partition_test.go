@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -155,15 +156,20 @@ func getAllDataForTableID(t *testing.T, ctx sessionctx.Context, tableID int64) a
 			all.tp = append(all.tp, "Record")
 			tblID, kv, _ := tablecodec.DecodeRecordKey(it.Key())
 			require.Equal(t, tableID, tblID)
-			vals, _ := tablecodec.DecodeValuesBytesToStrings(it.Value())
 			logutil.DDLLogger().Info("Record",
 				zap.Int64("pid", tblID),
 				zap.Stringer("key", kv),
-				zap.Strings("values", vals))
+				zap.String("value", fmt.Sprintf("%x", it.Value())))
 		} else if tablecodec.IsIndexKey(it.Key()) {
 			all.tp = append(all.tp, "Index")
+			logutil.DDLLogger().Info("Index",
+				zap.String("key", it.Key().String()),
+				zap.String("value", fmt.Sprintf("%x", it.Value())))
 		} else {
 			all.tp = append(all.tp, "Other")
+			logutil.DDLLogger().Info("Other",
+				zap.String("key", it.Key().String()),
+				zap.String("value", fmt.Sprintf("%x", it.Value())))
 		}
 		err = it.Next()
 		require.NoError(t, err)
@@ -1194,4 +1200,338 @@ func TestPartitionByFailuresAddPlacementPolicyGlobalIndex(t *testing.T) {
 	alter := "alter table t partition by range (a) (partition p1 values less than (150), partition pMax values less than (maxvalue) placement policy pp1) update indexes (`primary` local, `c` global)"
 	afterResult := beforeResult
 	testReorganizePartitionFailures(t, create, alter, beforeDML, beforeResult, nil, afterResult)
+}
+
+// Test different concurrency scenarios during backfill, to avoid that backfill will silently
+// delete or overwrite concurrent DML (UPDATE/DELETE/INSERT ODKU)
+// TODO: Also test with both OPTIMISTIC and PESSIMISTIC transactions.
+func TestBackfillDML(t *testing.T) {
+	// Start by test case 1, concurrently delete a row that has just been read by backfill
+	create := `create table t (a int, b int, index (b), index (a,b)) partition by range (a) (partition p0 values less than (100))`
+	initFn := func(tk *testkit.TestKit) {
+		tk.MustExec(`insert into t values (1,1),(2,2),(3,3),(4,4)`)
+	}
+	dmls := []string{
+		`delete from t where a = 2`,
+		`insert into t values (5,5),(6,6),(7,7),(8,8)`,
+		`delete from t where a = 5`,
+		`update t set b = 16 where a = 6`,
+		`insert into t values (7,7) on duplicate key update b = 17`,
+	}
+
+	ddl := `alter table t reorganize partition p0 into (partition p0 values less than (101))`
+	postFn := func(tk *testkit.TestKit, calls int32) {
+		tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1", "3 3", "4 4"))
+		tk.MustExec(`admin check table t`)
+		require.Equal(t, int32(2), calls)
+	}
+	testBackfillDMLAutoCommit(t, create, ddl, dmls[0], initFn, postFn, false)
+	testBackfillDMLAutoCommit(t, create, ddl, dmls[0], initFn, postFn, true)
+	postFnRest := func(tk *testkit.TestKit) {
+		tk.MustExec(`admin check table t`)
+		ctx := tk.Session()
+		tbl, err := tk.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
+		require.NoError(t, err)
+		data := getAllDataForTableID(t, ctx, tbl.Partition.Definitions[0].ID)
+		logutil.DDLLogger().Info("all data MJONSS", zap.Any("data", data))
+		tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
+			"1 1",
+			"3 3",
+			"4 4",
+			"6 16",
+			"7 7",
+			// Duplicate, since no unique key (INSERT ODKU...)
+			"7 7",
+			"8 8"))
+	}
+	postFn = func(tk *testkit.TestKit, calls int32) {
+		require.Equal(t, int32(2), calls)
+		postFnRest(tk)
+	}
+	// This takes ~1.5 min. TODO: investigate if possible to fix lock wait time?
+	//testBackfillDMLStartTxnDuringCommitAfterFail(t, create, ddl, dmls, initFn, postFn, false)
+
+	testBackfillDMLStartTxnBeforeCommitDuring(t, create, ddl, dmls, initFn, postFn, false)
+	testBackfillDMLStartTxnBeforeCommitDuring(t, create, ddl, dmls, initFn, postFn, true)
+	testBackfillDMLStartTxnAndCommitDuring(t, create, ddl, dmls, initFn, postFn, false)
+	testBackfillDMLStartTxnAndCommitDuring(t, create, ddl, dmls, initFn, postFn, true)
+	postFn = func(tk *testkit.TestKit, calls int32) {
+		require.Equal(t, int32(3), calls)
+		postFnRest(tk)
+	}
+	testBackfillDMLStartTxnDuringCommitAfter(t, create, ddl, dmls, initFn, postFn, false)
+	postFn = func(tk *testkit.TestKit, calls int32) {
+		require.Equal(t, int32(1), calls)
+		tk.MustExec(`admin check table t`)
+		ctx := tk.Session()
+		tbl, err := tk.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
+		require.NoError(t, err)
+		data := getAllDataForTableID(t, ctx, tbl.Partition.Definitions[0].ID)
+		logutil.DDLLogger().Info("all data MJONSS", zap.Any("data", data))
+		tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(""+
+			"1 1",
+			"2 2",
+			"3 3",
+			"4 4"))
+	}
+	testBackfillDMLStartTxnDuringCommitAfter(t, create, ddl, dmls, initFn, postFn, true)
+	// Basically the same...
+	testBackfillDMLStartTxnDuringCommitAfterFail(t, create, ddl, dmls, initFn, postFn, true)
+}
+
+// Test different concurrency scenarios during backfill, to avoid that backfill will silently
+// delete or overwrite concurrent DML (UPDATE/DELETE/INSERT ODKU)
+// So we want to test:
+// - DELETE/UPDATE/INSERT ODKU
+// - OPTIMISTIC/PESSIMISTIC
+// - Transactions:
+// - auto-commit between between fetchRowColVals and commit (does the order matter?)
+// - Started before RunInNewTxn and committed before backfill commit
+// - Started in RunInNewTxn and committed before backfill commit (does the order matter?)
+// - Started before backfill commit and committed after.
+// OK so create four different subtests:
+// - auto-commit/TxnStartBefore/TxnDuring/TxnCommitAfter
+// And run them for Optimistic+Pessimistic
+// And three different DML (Delete/Update/Insert ODKU)
+// And both clustered and non-clustered?
+func testBackfillDMLAutoCommit(t *testing.T, create, ddl, dml string, initFn func(tk *testkit.TestKit), postFn func(tk *testkit.TestKit, called int32), optimistic bool) {
+	// For optimistic/pessimistic impact see:
+	// https://docs.pingcap.com/tidb/stable/pessimistic-transaction/#difference-with-mysql-innodb
+	// bullet point 5. I.e. if pessimistic, it will first try the auto-commit in optimistic
+	// mode, then tidb_retry_limit retries in pessimistic mode. If 0 it would return dup key error.
+	// TODO: Create a test which would show this as a possible error for auto-commit optimistic
+	// statement.
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_txn_assertion_level=strict")
+	// Start by test case 1, concurrently delete a row that has just been read by backfill
+	tk.MustExec(create)
+	if initFn != nil {
+		initFn(tk)
+	}
+	i := atomic.Int32{}
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillData", func(hasRows bool) {
+		if !hasRows {
+			return
+		}
+		x := i.Add(1)
+		if x > 1 {
+			return
+		}
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		tk2.MustExec("set tidb_txn_assertion_level=strict")
+		if optimistic {
+			tk2.MustExec("set tidb_txn_mode=optimistic")
+			tk2.MustExec("set tidb_retry_limit=0")
+		} else {
+			tk2.MustExec("set tidb_txn_mode=pessimistic")
+		}
+		tk2.MustExec(dml)
+	})
+	tk.MustExec(ddl)
+	if postFn != nil {
+		postFn(tk, i.Load())
+	}
+}
+
+func testBackfillDMLStartTxnBeforeCommitDuring(t *testing.T, create, ddl string, dmls []string, initFn func(tk *testkit.TestKit), postFn func(tk *testkit.TestKit, called int32), optimistic bool) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_txn_assertion_level=strict")
+	// Start by test case 1, concurrently delete a row that has just been read by backfill
+	tk.MustExec(create)
+	if initFn != nil {
+		initFn(tk)
+	}
+	i := atomic.Int32{}
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("set tidb_txn_assertion_level=strict")
+	if optimistic {
+		tk2.MustExec("set tidb_txn_mode=optimistic")
+		tk2.MustExec("set tidb_retry_limit=0")
+	} else {
+		tk2.MustExec("set tidb_txn_mode=pessimistic")
+	}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBeforeBackfillData", func(_ []byte) {
+		tk2.MustExec(`BEGIN`)
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillData", func(hasRows bool) {
+		if !hasRows {
+			return
+		}
+		x := i.Add(1)
+		if x > 1 {
+			return
+		}
+		for _, dml := range dmls {
+			tk2.MustExec(dml)
+			logutil.DDLLogger().Info("MJONSS dml", zap.String("dml", dml))
+		}
+		tk2.MustExec(`COMMIT`)
+	})
+	tk.MustExec(ddl)
+	if postFn != nil {
+		postFn(tk, i.Load())
+	}
+}
+
+func testBackfillDMLStartTxnAndCommitDuring(t *testing.T, create, ddl string, dmls []string, initFn func(tk *testkit.TestKit), postFn func(tk *testkit.TestKit, called int32), optimistic bool) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_txn_assertion_level=strict")
+	// Start by test case 1, concurrently delete a row that has just been read by backfill
+	tk.MustExec(create)
+	if initFn != nil {
+		initFn(tk)
+	}
+	i := atomic.Int32{}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillData", func(hasRows bool) {
+		if !hasRows {
+			return
+		}
+		x := i.Add(1)
+		if x > 1 {
+			return
+		}
+		tk2 := testkit.NewTestKit(t, store)
+		tk2.MustExec("use test")
+		tk2.MustExec("set tidb_txn_assertion_level=strict")
+		if optimistic {
+			tk2.MustExec("set tidb_txn_mode=optimistic")
+			tk2.MustExec("set tidb_retry_limit=0")
+		} else {
+			tk2.MustExec("set tidb_txn_mode=pessimistic")
+		}
+		tk2.MustExec(`BEGIN`)
+		for _, dml := range dmls {
+			tk2.MustExec(dml)
+			logutil.DDLLogger().Info("MJONSS dml", zap.String("dml", dml))
+		}
+		tk2.MustExec(`COMMIT`)
+	})
+	tk.MustExec(ddl)
+	if postFn != nil {
+		postFn(tk, i.Load())
+	}
+}
+
+func testBackfillDMLStartTxnDuringCommitAfter(t *testing.T, create, ddl string, dmls []string, initFn func(tk *testkit.TestKit), postFn func(tk *testkit.TestKit, called int32), optimistic bool) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_txn_assertion_level=strict")
+	// Start by test case 1, concurrently delete a row that has just been read by backfill
+	tk.MustExec(create)
+	if initFn != nil {
+		initFn(tk)
+	}
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("set tidb_txn_assertion_level=strict")
+	if optimistic {
+		tk2.MustExec("set tidb_txn_mode=optimistic")
+		tk2.MustExec("set tidb_retry_limit=0")
+	} else {
+		tk2.MustExec("set tidb_txn_mode=pessimistic")
+	}
+	if optimistic {
+		committed := atomic.Int32{}
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionAfterBackfillData", func(_ []byte) {
+			c := committed.Add(1)
+			if c > 1 {
+				return
+			}
+			tk2.MustContainErrMsg(`COMMIT`, "[kv:9007]Write conflict, ")
+			logutil.DDLLogger().Info("MJONSS commit optimistic failed")
+		})
+	}
+	i := atomic.Int32{}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillData", func(hasRows bool) {
+		if !hasRows {
+			return
+		}
+		x := i.Add(1)
+		if x == 2 {
+			if !optimistic {
+				// we are holding locks, so we need to commit after the first retry
+				tk2.MustExec(`COMMIT`)
+			}
+			return
+		} else if x > 2 {
+			return
+		}
+		tk2.MustExec(`BEGIN`)
+		for _, dml := range dmls {
+			tk2.MustExec(dml)
+			logutil.DDLLogger().Info("MJONSS dml", zap.String("dml", dml))
+		}
+	})
+	tk.MustExec(ddl)
+	if postFn != nil {
+		postFn(tk, i.Load())
+	}
+}
+
+func testBackfillDMLStartTxnDuringCommitAfterFail(t *testing.T, create, ddl string, dmls []string, initFn func(tk *testkit.TestKit), postFn func(tk *testkit.TestKit, called int32), optimistic bool) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_txn_assertion_level=strict")
+	// Start by test case 1, concurrently delete a row that has just been read by backfill
+	tk.MustExec(create)
+	if initFn != nil {
+		initFn(tk)
+	}
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("set tidb_txn_assertion_level=strict")
+	if optimistic {
+		tk2.MustExec("set tidb_txn_mode=optimistic")
+		tk2.MustExec("set tidb_retry_limit=0")
+	} else {
+		tk2.MustExec("set tidb_txn_mode=pessimistic")
+	}
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillShortLockWait", "return(true)")
+	committed := atomic.Int32{}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionAfterBackfillData", func(_ []byte) {
+		c := committed.Add(1)
+		if c > 1 {
+			return
+		}
+		if optimistic {
+			tk2.MustContainErrMsg(`COMMIT`, "[kv:9007]Write conflict, ")
+		} else {
+			tk2.MustExec(`COMMIT`)
+		}
+		logutil.DDLLogger().Info("MJONSS commit")
+	})
+	during := atomic.Int32{}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillData", func(hasRows bool) {
+		if !hasRows {
+			return
+		}
+		d := during.Add(1)
+		if d > 1 {
+			return
+		}
+		tk2.MustExec(`BEGIN`)
+		for _, dml := range dmls {
+			tk2.MustExec(dml)
+			logutil.DDLLogger().Info("MJONSS dml", zap.String("dml", dml))
+		}
+	})
+	if optimistic {
+		tk.MustExec(ddl)
+	} else {
+		tk.MustContainErrMsg(ddl, "[tikv:9004]Resolve lock timeout")
+	}
+	if postFn != nil {
+		postFn(tk, during.Load())
+	}
 }

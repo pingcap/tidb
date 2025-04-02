@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	kvtikv "github.com/tikv/client-go/v2/kv"
 	"math"
 	"strconv"
 	"strings"
@@ -3795,8 +3796,73 @@ func newReorgPartitionWorker(i int, t table.PhysicalTable, decodeColMap map[int6
 }
 
 func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
+	failpoint.InjectCall("PartitionBeforeBackfillData", handleRange.startKey)
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
+	/*
+		errInTxn = kv.RunInNewTxn(ctx, w.ddlCtx.store, false, func(_ context.Context, txn kv.Transaction) error {
+			taskCtx.addedCount = 0
+			taskCtx.scanCount = 0
+			updateTxnEntrySizeLimitIfNeeded(txn)
+			txn.SetOption(kv.Priority, handleRange.priority)
+			if tagger := w.GetCtx().getResourceGroupTaggerForTopSQL(handleRange.getJobID()); tagger != nil {
+				txn.SetOption(kv.ResourceGroupTagger, tagger)
+			}
+			txn.SetOption(kv.ResourceGroupName, w.jobContext.resourceGroupName)
+
+			nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			taskCtx.nextKey = nextKey
+			taskCtx.done = taskDone
+
+			failpoint.InjectCall("PartitionBackfillData", len(w.rowRecords) > 0)
+			// TODO: Do we even need to lock the keys if we are doing optimistic?
+			lockKey := make([]byte, 0, tablecodec.RecordRowKeyLen)
+			lockKey = append(lockKey, handleRange.startKey[:tablecodec.TableSplitKeyLen]...)
+			if len(w.rowRecords) > 0 {
+				failpoint.InjectCall("PartitionBackfillNonClustered", w.rowRecords[0].vals)
+			}
+
+			for _, prr := range w.rowRecords {
+				taskCtx.scanCount++
+				key := prr.key
+				lockKey = lockKey[:tablecodec.TableSplitKeyLen]
+				lockKey = append(lockKey, key[tablecodec.TableSplitKeyLen:]...)
+				// Lock the *old* key, since there can still be concurrent update happening on
+				// the rows from fetchRowColVals(). If we cannot lock the keys in this
+				// transaction and succeed when committing, then another transaction did update
+				// the same key, and we will fail and retry. When retrying, this key would be found
+				// through BatchGet and skipped.
+				err = txn.LockKeys(context.Background(), new(kv.LockCtx), lockKey)
+				if err != nil {
+					return errors.Trace(err)
+				}
+
+				err = txn.SetAssertion(key, kv.SetAssertUnknown)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				err = txn.GetMemBuffer().SetWithFlags(key, prr.vals, kv.SetPresumeKeyNotExists)
+				//err = txn.Set(key, prr.vals)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				logutil.DDLLogger().Info("BackfillData ============ MJONSS ======= key", zap.String("key", fmt.Sprintf("%x", key)))
+				//txn.UpdateMemBufferFlags(key, kv.SetPresumeKeyNotExists)
+				taskCtx.addedCount++
+			}
+			return nil
+		})
+		logutil.DDLLogger().Info("BackfillData ============ MJONSS =======", zap.Error(errInTxn))
+		if errInTxn == nil {
+			logutil.DDLLogger().Info("BackfillData ============ MJONSS ======= OK !!!")
+			logSlowOperations(time.Since(oprStartTime), "BackfillData", 3000)
+			return
+		}
+	*/
+
 	errInTxn = kv.RunInNewTxn(ctx, w.ddlCtx.store, true, func(_ context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
@@ -3846,6 +3912,14 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 		}
 		tmpRow := make([]types.Datum, len(w.reorgedTbl.Cols()))
 
+		lockCtx := new(kv.LockCtx)
+		failpoint.Inject("PartitionBackfillShortLockWait", func(val failpoint.Value) {
+			//nolint:forcetypeassert
+			if val.(bool) {
+				// Set 50 milliseconds as timeout, to trigger failure faster.
+				lockCtx = kvtikv.NewLockCtx(txn.StartTS(), 50, time.Now())
+			}
+		})
 		for _, prr := range w.rowRecords {
 			taskCtx.scanCount++
 			key := prr.key
@@ -3857,13 +3931,17 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 			// the same key, and we will fail and retry. When retrying, this key would be found
 			// through BatchGet and skipped.
 			// TODO: would it help to accumulate the keys in a slice and then only call this once?
-			err = txn.LockKeys(context.Background(), new(kv.LockCtx), lockKey)
+
+			err = txn.LockKeys(context.Background(), lockCtx, lockKey)
 			if err != nil {
 				return errors.Trace(err)
 			}
+			// TODO: add failpoint here and check if we can trigger DML (UPDATE/DELETE) to fail, due to the backfill?
 
 			if vals, ok := found[string(key)]; ok {
+				logutil.DDLLogger().Info("BackfillData ------------ MJONSS ------- key found", zap.String("key", fmt.Sprintf("%x", key)))
 				if len(vals) == len(prr.vals) && bytes.Equal(vals, prr.vals) {
+					logutil.DDLLogger().Info("BackfillData ============ MJONSS ======= key SAME", zap.String("key", fmt.Sprintf("%x", key)))
 					// Already backfilled or double written earlier by concurrent DML
 					continue
 				}
@@ -3903,16 +3981,22 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 				// OK to only do txn.Set() for the new partition, and defer creating the indexes,
 				// since any DML changes the record it will also update or create the indexes,
 				// by doing RemoveRecord+UpdateRecord
+				logutil.DDLLogger().Info("BackfillData ============ MJONSS ======= NEW key", zap.String("key", fmt.Sprintf("%x", key)))
 			}
+			// TODO: First round, use flag SetPresumeKeyNotExists for every key!
+			// memBuffer.SetWithFlags(key, encoded, flags...)
+			// And txn.SetAssertion(key, kv.SetAssertUnknown)
 			err = txn.Set(key, prr.vals)
 			if err != nil {
 				return errors.Trace(err)
 			}
+			logutil.DDLLogger().Info("BackfillData 222222222222 MJONSS 2222222 key", zap.String("key", fmt.Sprintf("%x", key)))
 			taskCtx.addedCount++
 		}
 		return nil
 	})
 	logSlowOperations(time.Since(oprStartTime), "BackfillData", 3000)
+	failpoint.InjectCall("PartitionAfterBackfillData", handleRange.startKey)
 
 	return
 }
