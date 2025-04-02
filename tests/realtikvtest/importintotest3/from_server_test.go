@@ -73,4 +73,5 @@ func (s *mockGCSSuite) TestImportFromServer() {
 	var taskMeta importinto.TaskMeta
 	require.NoError(s.T(), json.Unmarshal(task.Meta, &taskMeta))
 	require.Len(s.T(), taskMeta.ChunkMap, 2)
+	require.False(s.T(), taskMeta.Plan.DisableTiKVImportMode)
 }
