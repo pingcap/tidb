@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/tablecodec"
 	"strconv"
 	"sync"
 	"testing"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -664,13 +664,14 @@ func TestPresumeKeyNotExists(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, txn2.Set(key1, []byte{7}))
 	txn3, err := store.Begin()
-	val, err := txn3.Get(context.Background(), key1)
+	require.NoError(t, err)
+	_, err = txn3.Get(context.Background(), key1)
 	require.ErrorContains(t, err, "[kv:8021]Error: key not exist")
 	require.NoError(t, txn2.Commit(context.Background()))
 	require.ErrorContains(t, txn1.Commit(context.Background()), "[kv:9007]Write conflict, ")
 	txn1, err = store.Begin()
 	require.NoError(t, err)
-	val, err = txn1.Get(context.Background(), key1)
+	val, err := txn1.Get(context.Background(), key1)
 	require.NoError(t, err)
 	require.Equal(t, []byte{7}, val)
 	require.NoError(t, txn1.Rollback())
@@ -685,6 +686,7 @@ func TestPresumeKeyNotExists(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, txn2.Set(key1, []byte{5}))
 	txn3, err = store.Begin()
+	require.NoError(t, err)
 	val, err = txn3.Get(context.Background(), key1)
 	require.NoError(t, err)
 	require.Equal(t, []byte{7}, val)
@@ -729,18 +731,20 @@ func TestPresumeKeyNotExists(t *testing.T) {
 	txn1, err = store.Begin()
 	require.NoError(t, err)
 	val, err = txn1.Get(context.Background(), key1)
+	require.NoError(t, err)
 	require.Equal(t, []byte{5}, val)
 	require.NoError(t, txn1.Set(key1, []byte{6}))
 	txn2, err = store.Begin()
 	require.NoError(t, err)
 	val, err = txn2.Get(context.Background(), key1)
+	require.NoError(t, err)
 	require.Equal(t, []byte{5}, val)
 	require.NoError(t, txn2.Delete(key1))
 	require.NoError(t, txn2.Commit(context.Background()))
 	require.ErrorContains(t, txn1.Commit(context.Background()), "[kv:9007]Write conflict, ")
 	txn1, err = store.Begin()
 	require.NoError(t, err)
-	val, err = txn1.Get(context.Background(), key1)
+	_, err = txn1.Get(context.Background(), key1)
 	require.ErrorContains(t, err, "[kv:8021]Error: key not exist")
 	require.NoError(t, txn1.Rollback())
 
@@ -770,7 +774,7 @@ func TestPresumeKeyNotExists(t *testing.T) {
 	require.NoError(t, txn1.Commit(context.Background()))
 	txn1, err = store.Begin()
 	require.NoError(t, err)
-	val, err = txn1.Get(context.Background(), key1)
+	_, err = txn1.Get(context.Background(), key1)
 	require.ErrorContains(t, err, "[kv:8021]Error: key not exist")
 	val, err = txn1.Get(context.Background(), key2)
 	require.NoError(t, err)
@@ -824,9 +828,9 @@ func TestLockKey(t *testing.T) {
 	require.ErrorContains(t, txn1.Commit(context.Background()), "[kv:9007]Write conflict, ")
 	txn1, err = store.Begin()
 	require.NoError(t, err)
-	val, err = txn1.Get(context.Background(), key1)
+	_, err = txn1.Get(context.Background(), key1)
 	require.ErrorContains(t, err, "[kv:8021]Error: key not exist")
-	val, err = txn1.Get(context.Background(), key2)
+	_, err = txn1.Get(context.Background(), key2)
 	require.ErrorContains(t, err, "[kv:8021]Error: key not exist")
 	require.NoError(t, txn1.Rollback())
 
@@ -927,5 +931,4 @@ func TestDeleteLockKey(t *testing.T) {
 	tk.MustExec(`delete from t where a = 2`)
 	tk.MustExec(`delete from t where a = 3`)
 	tk.MustExec(`commit`)
-
 }
