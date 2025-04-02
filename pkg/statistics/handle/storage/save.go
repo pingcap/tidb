@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -386,6 +387,23 @@ func SaveMetaToStorage(
 	}
 	_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
 	statsVer = version
+	return
+}
+
+func SaveMetasToStorage(
+	sctx sessionctx.Context,
+	metaUpdates []statstypes.MetaUpdate,
+) (err error) {
+	version, err := util.GetStartTS(sctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	values := make([]string, 0, len(metaUpdates))
+	for _, metaUpdate := range metaUpdates {
+		values = append(values, fmt.Sprintf("(%d, %d, %d, %d)", version, metaUpdate.PhysicalID, metaUpdate.Count, metaUpdate.ModifyCount))
+	}
+	sql := fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count, modify_count) values %s", strings.Join(values, ","))
+	_, err = util.Exec(sctx, sql)
 	return
 }
 

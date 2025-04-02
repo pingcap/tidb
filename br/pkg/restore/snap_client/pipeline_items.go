@@ -16,6 +16,7 @@ package snapclient
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -28,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/statistics/handle"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -84,6 +87,7 @@ type PipelineContext struct {
 	LogProgress         bool
 	ChecksumConcurrency uint
 	StatsConcurrency    uint
+	AutoAnalyze         bool
 
 	// pipeline item tool client
 	KvClient   kv.Client
@@ -117,7 +121,7 @@ func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext
 	}
 
 	// pipeline update meta and load stats
-	rc.registerUpdateMetaAndLoadStats(handlerBuilder, plCtx.ExtStorage, updateCh, plCtx.StatsConcurrency, plCtx.LoadStats)
+	rc.registerUpdateMetaAndLoadStats(handlerBuilder, plCtx.ExtStorage, updateCh, plCtx.StatsConcurrency, plCtx.AutoAnalyze, plCtx.LoadStats)
 
 	// pipeline wait Tiflash synced
 	if plCtx.WaitTiflashReady {
@@ -294,21 +298,59 @@ func (rc *SnapClient) registerValidateChecksum(
 	})
 }
 
-type statsMetaItem struct {
-	tableID int64
-	count   int64
+const statsMetaItemBufferSize = 10000
+
+type statsMetaItemBuffer struct {
+	sync.Mutex
+	autoAnalyze bool
+	metaUpdates []statstypes.MetaUpdate
 }
 
-const statsMetaItemBufferSize = 10000
+func NewStatsMetaItemBuffer(autoAnalyze bool) *statsMetaItemBuffer {
+	return &statsMetaItemBuffer{
+		autoAnalyze: autoAnalyze,
+		metaUpdates: make([]statstypes.MetaUpdate, 0, statsMetaItemBufferSize),
+	}
+}
+
+func (buffer *statsMetaItemBuffer) appendItem(item statstypes.MetaUpdate) (metaUpdates []statstypes.MetaUpdate) {
+	buffer.Lock()
+	defer buffer.Unlock()
+	buffer.metaUpdates = append(buffer.metaUpdates, item)
+	if len(buffer.metaUpdates) < statsMetaItemBufferSize {
+		return
+	}
+	metaUpdates = buffer.metaUpdates
+	buffer.metaUpdates = make([]statstypes.MetaUpdate, 0, statsMetaItemBufferSize)
+	return metaUpdates
+}
+
+func (buffer *statsMetaItemBuffer) TryUpdateMetas(ctx context.Context, statsHandler *handle.Handle, physicalID, count int64) error {
+	item := statstypes.MetaUpdate{
+		PhysicalID:  physicalID,
+		Count:       count,
+		ModifyCount: 0,
+	}
+	if buffer.autoAnalyze {
+		item.ModifyCount = count
+	}
+	metaUpdates := buffer.appendItem(item)
+	if len(metaUpdates) == 0 {
+		return nil
+	}
+	return statsHandler.SaveMetasToStorage(metaUpdates, "br restore")
+}
 
 func (rc *SnapClient) registerUpdateMetaAndLoadStats(
 	builder *PipelineConcurrentBuilder,
 	s storage.ExternalStorage,
 	updateCh glue.Progress,
 	statsConcurrency uint,
+	autoAnalyze bool,
 	loadStats bool,
 ) {
 	statsHandler := rc.dom.StatsHandle()
+	buffer := NewStatsMetaItemBuffer(false)
 
 	builder.RegisterPipelineTask("Update Stats", statsConcurrency, func(c context.Context, tbl *CreatedTable) error {
 		oldTable := tbl.OldTable
@@ -348,7 +390,7 @@ func (rc *SnapClient) registerUpdateMetaAndLoadStats(
 			log.Info("start update metas", zap.Stringer("table", oldTable.Info.Name), zap.Stringer("db", oldTable.DB.Name))
 			// the total kvs contains the index kvs, but the stats meta needs the count of rows
 			count := int64(oldTable.TotalKvs / uint64(len(oldTable.Info.Indices)+1))
-			if statsErr = statsHandler.SaveMetaToStorage(tbl.Table.ID, count, 0, "br restore"); statsErr != nil {
+			if statsErr = buffer.TryUpdateMetas(c, statsHandler, tbl.Table.ID, count); statsErr != nil {
 				log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(statsErr))
 			}
 		}

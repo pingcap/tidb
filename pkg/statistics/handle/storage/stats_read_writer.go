@@ -243,6 +243,18 @@ func (s *statsReadWriter) SaveMetaToStorage(tableID, count, modifyCount int64, s
 	return
 }
 
+// SaveMetasToStorage saves the stats meta of tables to storage.
+func (s *statsReadWriter) SaveMetasToStorage(metaUpdates []statstypes.MetaUpdate, source string) (err error) {
+	if len(metaUpdates) == 0 {
+		return nil
+	}
+	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+		return SaveMetasToStorage(sctx, metaUpdates)
+	}, util.FlagWrapTxn)
+	// NOTE: recording historical stats meta is deprecated.
+	return
+}
+
 // InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
 func (s *statsReadWriter) InsertExtendedStats(statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (err error) {
 	var statsVer uint64
