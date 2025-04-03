@@ -589,6 +589,119 @@ func generateOtherIndexMerge(ds *logicalop.DataSource, regularPathCount int, ind
 	return "", nil
 }
 
+// isNormalIndexMergeSingleScan checks if the IndexMerge path can avoid table scan (double read).
+// It follows the same logic as isSingleScan in find_best_task.go.
+func isNormalIndexMergeSingleScan(ds *logicalop.DataSource, paths []*util.AccessPath) bool {
+	var indexPaths []*util.AccessPath
+	for _, path := range paths {
+		if !path.IsIntHandlePath && !path.IsCommonHandlePath {
+			indexPaths = append(indexPaths, path)
+		}
+	}
+
+	// If no index paths, we must do table scan
+	if len(indexPaths) == 0 {
+		return false
+	}
+
+	// If prefix index single scan is disabled or ColsRequiringFullLen is not set,
+	// we only need to check if all schema columns are covered
+	if !ds.SCtx().GetSessionVars().OptPrefixIndexSingleScan || ds.ColsRequiringFullLen == nil {
+		// ds.ColsRequiringFullLen is set at (*DataSource).PruneColumns. In some cases we don't reach (*DataSource).PruneColumns
+		// and ds.ColsRequiringFullLen is nil, so we fall back to ds.isIndexCoveringColumns(ds.schema.Columns, indexColumns, idxColLens).
+		return false
+	}
+
+	// Check columns that require full length
+	if !isIndexMergeCoveringColumns(ds, ds.ColsRequiringFullLen, indexPaths) {
+		return false
+	}
+
+	// Check columns in conditions
+	for _, cond := range ds.AllConds {
+		if !isIndexMergeCoveringCondition(ds, cond, indexPaths) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// isIndexMergeCoveringColumns checks if all required columns are covered by any index in the merge path.
+// A column is considered covered if:
+// 1. It's a primary key and the table uses it as handle
+// 2. It's an extra handle column or physical table ID column
+// 3. It's covered by any index in the merge path
+// 4. It's covered by the clustered index
+func isIndexMergeCoveringColumns(ds *logicalop.DataSource, columns []*expression.Column, paths []*util.AccessPath) bool {
+	// For each required column, check if any index can cover it
+	for _, col := range columns {
+		// Handle special columns first
+		if ds.TableInfo.PKIsHandle && mysql.HasPriKeyFlag(col.RetType.GetFlag()) {
+			continue
+		}
+		if col.ID == model.ExtraHandleID || col.ID == model.ExtraPhysTblID {
+			continue
+		}
+
+		// Try to find an index that covers this column
+		covered := false
+		for _, path := range paths {
+			if indexCoveringColumn(ds, col, path.IdxCols, path.IdxColLens, false) {
+				covered = true
+				break // Found an index that covers this column, move to next column
+			}
+		}
+
+		// If no index covers this column, return false
+		if !covered {
+			return false
+		}
+	}
+
+	return true
+}
+
+// isIndexMergeCoveringCondition checks if all columns in the condition expression are covered.
+// Special cases:
+// 1. For IS NULL conditions, we can use prefix index
+// 2. For scalar functions, we need to check all arguments
+func isIndexMergeCoveringCondition(ds *logicalop.DataSource, cond expression.Expression, paths []*util.AccessPath) bool {
+	switch v := cond.(type) {
+	case *expression.Column:
+		// Check if any index covers this column
+		for _, path := range paths {
+			if indexCoveringColumn(ds, v, path.IdxCols, path.IdxColLens, false) {
+				return true
+			}
+		}
+		return false
+
+	case *expression.ScalarFunction:
+		// Special handling for IS NULL: can use prefix index
+		if v.FuncName.L == ast.IsNull {
+			if col, ok := v.GetArgs()[0].(*expression.Column); ok {
+				for _, path := range paths {
+					if indexCoveringColumn(ds, col, path.IdxCols, path.IdxColLens, true) {
+						return true
+					}
+				}
+				return false
+			}
+		}
+
+		// For other functions, check all arguments
+		for _, arg := range v.GetArgs() {
+			if !isIndexMergeCoveringCondition(ds, arg, paths) {
+				return false
+			}
+		}
+		return true
+	}
+	// Constants and other expressions are always considered covered
+	return true
+}
+
 // generateANDIndexMerge4ComposedIndex tries to generate AND type index merge AccessPath for ( json_member_of /
 // json_overlaps / json_contains) on multiple multi-valued or normal indexes.
 /*
