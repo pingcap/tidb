@@ -2,6 +2,7 @@ package bindinfo
 
 import (
 	"fmt"
+	"math/rand"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -13,11 +14,39 @@ func generateBindingPlans(sPool util.DestroyableSessionPool, currentDB, sql stri
 		sql = strings.TrimSpace(sql)
 		sctx.GetSessionVars().CurrentDB = currentDB
 
-		bindingPlan, err := generateBindingPlan(sctx, sql)
+		defaultPlan, _, err := explainPlan(sctx, sql)
 		if err != nil {
 			return err
 		}
-		plans = append(plans, bindingPlan)
+		relatedCostFactors := collectRelatedCostFactors(sctx, defaultPlan)
+
+		// change these related cost factors randomly to walk in the plan space and sample some plans
+		if len(relatedCostFactors) > 0 {
+			memorizedPlan := make(map[string]struct{})
+			for walkStep := 0; walkStep < 100; walkStep++ {
+				// each step, randomly change one cost factor
+				idx := rand.Intn(len(relatedCostFactors))
+				factorValue := rand.Float64() * 1000 // scale range: [0, 1000]
+				*relatedCostFactors[idx] = factorValue
+
+				// generate a new plan based on the modified cost factors
+				bindingPlan, err := generateBindingPlan(sctx, sql)
+				if err != nil {
+					return err
+				}
+				planHint, err := bindingPlan.Hint.Restore()
+				if err != nil {
+					return err
+				}
+				if _, ok := memorizedPlan[planHint]; ok {
+					// skip the same plan
+					continue
+				}
+				memorizedPlan[planHint] = struct{}{}
+				plans = append(plans, bindingPlan)
+			}
+		}
+
 		return nil
 	})
 	return
@@ -77,4 +106,32 @@ func explainPlan(sctx sessionctx.Context, sql string) (plan, hint string, err er
 	}
 	hint = rows[0].GetString(0)
 	return
+}
+
+func collectRelatedCostFactors(sctx sessionctx.Context, plan string) []*float64 {
+	factors := make([]*float64, 0, 4)
+	if strings.Contains(plan, "Index") {
+		factors = append(factors, &sctx.GetSessionVars().IndexScanCostFactor,
+			&sctx.GetSessionVars().IndexLookupCostFactor,
+			&sctx.GetSessionVars().IndexMergeCostFactor)
+	}
+	if strings.Contains(plan, "Table") {
+		factors = append(factors, &sctx.GetSessionVars().TableFullScanCostFactor,
+			&sctx.GetSessionVars().TableRangeScanCostFactor,
+			&sctx.GetSessionVars().TableRowIDScanCostFactor)
+	}
+	if strings.Contains(plan, "Join") {
+		factors = append(factors, &sctx.GetSessionVars().HashJoinCostFactor,
+			&sctx.GetSessionVars().MergeJoinCostFactor,
+			&sctx.GetSessionVars().IndexJoinCostFactor)
+	}
+	if strings.Contains(plan, "Sort") {
+		factors = append(factors, &sctx.GetSessionVars().SortCostFactor,
+			&sctx.GetSessionVars().TopNCostFactor)
+	}
+	if strings.Contains(plan, "Agg") {
+		factors = append(factors, &sctx.GetSessionVars().HashAggCostFactor,
+			&sctx.GetSessionVars().StreamAggCostFactor)
+	}
+	return factors
 }
