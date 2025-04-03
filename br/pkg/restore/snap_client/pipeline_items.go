@@ -325,6 +325,22 @@ func (buffer *statsMetaItemBuffer) appendItem(item statstypes.MetaUpdate) (metaU
 	return metaUpdates
 }
 
+func (buffer *statsMetaItemBuffer) take() (metaUpdates []statstypes.MetaUpdate) {
+	buffer.Lock()
+	defer buffer.Unlock()
+	metaUpdates = buffer.metaUpdates
+	buffer.metaUpdates = make([]statstypes.MetaUpdate, 0, statsMetaItemBufferSize)
+	return metaUpdates
+}
+
+func (buffer *statsMetaItemBuffer) UpdateMetasRest(ctx context.Context, statsHandler *handle.Handle) error {
+	metaUpdates := buffer.take()
+	if len(metaUpdates) == 0 {
+		return nil
+	}
+	return statsHandler.SaveMetasToStorage(metaUpdates, "br restore")
+}
+
 func (buffer *statsMetaItemBuffer) TryUpdateMetas(ctx context.Context, statsHandler *handle.Handle, physicalID, count int64) error {
 	item := statstypes.MetaUpdate{
 		PhysicalID:  physicalID,
@@ -350,7 +366,7 @@ func (rc *SnapClient) registerUpdateMetaAndLoadStats(
 	loadStats bool,
 ) {
 	statsHandler := rc.dom.StatsHandle()
-	buffer := NewStatsMetaItemBuffer(false)
+	buffer := NewStatsMetaItemBuffer(autoAnalyze)
 
 	builder.RegisterPipelineTask("Update Stats", statsConcurrency, func(c context.Context, tbl *CreatedTable) error {
 		oldTable := tbl.OldTable
@@ -391,12 +407,17 @@ func (rc *SnapClient) registerUpdateMetaAndLoadStats(
 			// the total kvs contains the index kvs, but the stats meta needs the count of rows
 			count := int64(oldTable.TotalKvs / uint64(len(oldTable.Info.Indices)+1))
 			if statsErr = buffer.TryUpdateMetas(c, statsHandler, tbl.Table.ID, count); statsErr != nil {
-				log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(statsErr))
+				log.Error("update stats meta failed", zap.Error(statsErr))
+				return statsErr
 			}
 		}
 		updateCh.Inc()
 		return nil
-	}, func(context.Context) error {
+	}, func(c context.Context) error {
+		if statsErr := buffer.UpdateMetasRest(c, statsHandler); statsErr != nil {
+			log.Error("update stats meta failed", zap.Error(statsErr))
+			return statsErr
+		}
 		log.Info("all stats updated")
 		return nil
 	})
