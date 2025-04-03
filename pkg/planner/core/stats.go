@@ -200,7 +200,7 @@ func checkNoNullIndexForPath(ds *logicalop.DataSource, path *util.AccessPath, co
 	return !includeNullRange
 }
 
-// removeInvalidPaths will remove invalid paths from PossibleAccessPaths.
+// removeInvalidPathsForDataSource will remove invalid paths from PossibleAccessPaths.
 // Some paths are not available because they may use index which contains NO_NULL_INDEX column,
 // but cannot make sure the column is not null.
 func removeInvalidPathsForDataSource(ds *logicalop.DataSource) {
@@ -223,11 +223,9 @@ func removeInvalidPathsForDataSource(ds *logicalop.DataSource) {
 			// consider whether this path is valid for the `NO_NULL_INDEX` column.
 			isValid := true
 			for _, partialPath := range path.PartialIndexPaths {
-				if partialPath.Index != nil && len(partialPath.Index.NoNullIdxColOffsets) > 0 {
-					if !checkNoNullIndexForPath(ds, partialPath, append(partialPath.IndexFilters, path.TableFilters...)) {
-						isValid = false
-						break
-					}
+				if !checkPartialPathValid(ds, partialPath, path.TableFilters) {
+					isValid = false
+					break
 				}
 			}
 			if !isValid {
@@ -235,7 +233,45 @@ func removeInvalidPathsForDataSource(ds *logicalop.DataSource) {
 				continue
 			}
 		}
+
+		if len(path.PartialAlternativeIndexPaths) > 0 {
+			isValid := true
+			// For each branch, remove the invalid path.
+			for i := 0; i < len(path.PartialAlternativeIndexPaths); i++ {
+				partialPaths := path.PartialAlternativeIndexPaths[i]
+				for j := len(partialPaths) - 1; j >= 0; j-- {
+					partialPath := partialPaths[j]
+					if !checkPartialPathValid(ds, partialPath, path.TableFilters) {
+						partialPaths = slices.Delete(partialPaths, j, j+1)
+					}
+				}
+
+				// If all paths are invalid, remove the whole possibleAccessPath.
+				if len(partialPaths) == 0 {
+					isValid = false
+					break
+				}
+
+				// If there are still valid paths, we need to update the PartialAlternativeIndexPaths.
+				path.PartialAlternativeIndexPaths[i] = partialPaths
+			}
+			if !isValid {
+				ds.PossibleAccessPaths = slices.Delete(ds.PossibleAccessPaths, i, i+1)
+				continue
+			}
+		}
 	}
+}
+
+// checkPartialPathValid checks whether a partial path of index merge is valid
+func checkPartialPathValid(ds *logicalop.DataSource, partialPath *util.AccessPath, tableFilters []expression.Expression) bool {
+	if partialPath.Index != nil && len(partialPath.Index.NoNullIdxColOffsets) > 0 {
+		if !checkNoNullIndexForPath(ds, partialPath, append(partialPath.IndexFilters, tableFilters...)) {
+			return false
+		}
+	}
+
+	return true
 }
 
 func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression) error {
