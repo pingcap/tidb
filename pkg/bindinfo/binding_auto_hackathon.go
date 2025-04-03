@@ -49,8 +49,8 @@ func generateBindingPlans(sPool util.DestroyableSessionPool, currentDB, sql stri
 			for walkStep := 0; walkStep < 100; walkStep++ {
 				// each step, randomly change one cost factor
 				idx := rand.Intn(len(relatedCostFactors))
-				factorValue := rand.Float64() * 100000000 // scale range: [0, 1000000]
-				*relatedCostFactors[idx] = factorValue
+				randomFactorValues := []float64{0.000001, 0.0001, 0.01, 0.1, 10, 100, 1000, 10000, 100000, 1000000, 10000000}
+				*relatedCostFactors[idx] = randomFactorValues[rand.Intn(len(randomFactorValues))]
 
 				// generate a new plan based on the modified cost factors
 				bindingPlan, err := generateBindingPlan(sctx, sql)
