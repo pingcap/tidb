@@ -29,6 +29,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -1797,6 +1798,8 @@ func TestEnableWindowFunction(t *testing.T) {
 
 func TestTiDBHashJoinVersion(t *testing.T) {
 	vars := NewSessionVars(nil)
+	// test the default value
+	require.Equal(t, joinversion.IsOptimizedVersion(vardef.DefTiDBHashJoinVersion), vars.UseHashJoinV2)
 	sv := GetSysVar(vardef.TiDBHashJoinVersion)
 	// set error value
 	_, err := sv.Validation(vars, "invalid", "invalid", vardef.ScopeSession)
