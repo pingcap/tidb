@@ -60,10 +60,15 @@ type baseConflictKVHandler struct {
 	kvGroup             string
 	handleConflictRowFn func(ctx context.Context, kvGroup string, handle tidbkv.Handle, row []types.Datum, pairs *kv.Pairs) error
 
-	encoder *importer.TableKVEncoder
+	encoder         *importer.TableKVEncoder
+	lastRefreshTime time.Time
+	snapshot        tidbkv.Snapshot
 }
 
 func (h *baseConflictKVHandler) init() error {
+	if err := h.refreshSnapshotAsNeeded(); err != nil {
+		return errors.Trace(err)
+	}
 	encoder, err := h.tableImporter.GetKVEncoderForDupResolve()
 	if err != nil {
 		return err
@@ -78,6 +83,26 @@ func (*baseConflictKVHandler) handle(_ context.Context, _, _ []byte) error {
 
 func (h *baseConflictKVHandler) close() error {
 	return h.encoder.Close()
+}
+
+func (h *baseConflictKVHandler) refreshSnapshotAsNeeded() error {
+	if h.snapshot != nil && time.Since(h.lastRefreshTime) < snapshotRefreshInterval {
+		return nil
+	}
+	// we refresh it to avoid fall behind GC safe point.
+	// it's not necessary to update this version too frequently, even though we
+	// will delete KVs during conflict KV handing, as this handler is used to handle
+	// conflicts of the same KV group, the data KVs corresponding to any 2 conflict
+	// KVs are either conflicts with each other too and recorded in the conflict
+	// KV file, or they are not conflicted and are either recorded or ingested,
+	// so for a single data KV found in this handler cannot be deleted twice.
+	ver, err := h.store.CurrentVersion(tidbkv.GlobalTxnScope)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	h.snapshot = h.store.GetSnapshot(ver)
+	h.lastRefreshTime = time.Now()
+	return nil
 }
 
 // re-encode the row from the handle and value of data KV, and delete all encoded keys.
@@ -124,6 +149,26 @@ func (h *baseConflictKVHandler) deleteKeysWithRetry(ctx context.Context, pairs [
 }
 
 func (h *baseConflictKVHandler) deleteKeys(ctx context.Context, pairs []common.KvPair) (err error) {
+	if err = h.refreshSnapshotAsNeeded(); err != nil {
+		return errors.Trace(err)
+	}
+	existingPairs := make([]common.KvPair, 0, len(pairs))
+	for _, p := range pairs {
+		_, err = h.snapshot.Get(ctx, p.Key)
+		if err != nil {
+			if isKeyNotFoundErr(err) {
+				// not ingested, or already deleted by previous resolution.
+				continue
+			}
+			return errors.Trace(err)
+		}
+		existingPairs = append(existingPairs, p)
+	}
+
+	if len(existingPairs) == 0 {
+		return nil
+	}
+
 	txn, err := h.store.Begin()
 	if err != nil {
 		return errors.Trace(err)
@@ -138,7 +183,7 @@ func (h *baseConflictKVHandler) deleteKeys(ctx context.Context, pairs []common.K
 		}
 	}()
 
-	for _, p := range pairs {
+	for _, p := range existingPairs {
 		if err = txn.Delete(p.Key); err != nil {
 			return errors.Trace(err)
 		}
@@ -160,9 +205,7 @@ func (h *conflictDataKVHandler) handle(ctx context.Context, key, val []byte) err
 
 type conflictIndexKVHandler struct {
 	*baseConflictKVHandler
-	targetIdx       *model.IndexInfo
-	lastRefreshTime time.Time
-	snapshot        tidbkv.Snapshot
+	targetIdx *model.IndexInfo
 
 	isRowHandledFn func(handle tidbkv.Handle) bool
 }
@@ -183,31 +226,8 @@ func (h *conflictIndexKVHandler) init() error {
 	if err = h.baseConflictKVHandler.init(); err != nil {
 		return err
 	}
-	if err = h.refreshSnapshotAsNeeded(); err != nil {
-		return errors.Trace(err)
-	}
 
 	h.targetIdx = targetIdx
-	return nil
-}
-
-func (h *conflictIndexKVHandler) refreshSnapshotAsNeeded() error {
-	if h.snapshot != nil && time.Since(h.lastRefreshTime) < snapshotRefreshInterval {
-		return nil
-	}
-	// we refresh it to avoid fall behind GC safe point.
-	// it's not necessary to update this version too frequently, even though we
-	// will delete KVs during conflict KV handing, as this handler is used to handle
-	// conflicts of the same KV group, the data KVs corresponding to any 2 conflict
-	// KVs are either conflicts with each other too and recorded in the conflict
-	// KV file, or they are not conflicted and are either recorded or ingested,
-	// so for a single data KV found in this handler cannot be deleted twice.
-	ver, err := h.store.CurrentVersion(tidbkv.GlobalTxnScope)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	h.snapshot = h.store.GetSnapshot(ver)
-	h.lastRefreshTime = time.Now()
 	return nil
 }
 
@@ -230,7 +250,7 @@ func (h *conflictIndexKVHandler) handle(ctx context.Context, key, val []byte) er
 	// either the data KV is deleted by handing conflicts in other KV group or the
 	// data KV itself is conflicted and not ingested.
 	if err != nil {
-		if tidbkv.IsErrNotFound(err) || tikverr.IsErrNotFound(err) {
+		if isKeyNotFoundErr(err) {
 			return nil
 		}
 		return errors.Trace(err)
@@ -288,4 +308,8 @@ func handleConflictFile(ctx context.Context, handler conflictKVHandler, store st
 		}
 	}
 	return nil
+}
+
+func isKeyNotFoundErr(err error) bool {
+	return tidbkv.IsErrNotFound(err) || tikverr.IsErrNotFound(err)
 }
