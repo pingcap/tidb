@@ -12,21 +12,43 @@ import (
 func generateBindingPlans(sPool util.DestroyableSessionPool, currentDB, sql string) (plans []*BindingPlanInfo, rerr error) {
 	rerr = callWithSCtx(sPool, false, func(sctx sessionctx.Context) error {
 		sql = strings.TrimSpace(sql)
-		sctx.GetSessionVars().CurrentDB = currentDB
 
-		defaultPlan, _, err := explainPlan(sctx, sql)
+		// reset cost factors
+		sctx.GetSessionVars().CurrentDB = currentDB
+		sctx.GetSessionVars().CostModelVersion = 2
+		sctx.GetSessionVars().IndexScanCostFactor = 1
+		sctx.GetSessionVars().TableFullScanCostFactor = 1
+		sctx.GetSessionVars().TableRangeScanCostFactor = 1
+		sctx.GetSessionVars().TableRowIDScanCostFactor = 1
+		sctx.GetSessionVars().IndexLookupCostFactor = 1
+		sctx.GetSessionVars().IndexMergeCostFactor = 1
+		sctx.GetSessionVars().SortCostFactor = 1
+		sctx.GetSessionVars().TopNCostFactor = 1
+		sctx.GetSessionVars().StreamAggCostFactor = 1
+		sctx.GetSessionVars().HashAggCostFactor = 1
+		sctx.GetSessionVars().MergeJoinCostFactor = 1
+		sctx.GetSessionVars().HashJoinCostFactor = 1
+		sctx.GetSessionVars().IndexJoinCostFactor = 1
+
+		memorizedPlan := make(map[string]struct{})
+		defaultPlan, err := generateBindingPlan(sctx, sql)
 		if err != nil {
 			return err
 		}
-		relatedCostFactors := collectRelatedCostFactors(sctx, defaultPlan)
+		relatedCostFactors := collectRelatedCostFactors(sctx, defaultPlan.Plan)
+		planHint, err := defaultPlan.Hint.Restore()
+		if err != nil {
+			return err
+		}
+		memorizedPlan[planHint] = struct{}{}
+		plans = append(plans, defaultPlan)
 
 		// change these related cost factors randomly to walk in the plan space and sample some plans
 		if len(relatedCostFactors) > 0 {
-			memorizedPlan := make(map[string]struct{})
 			for walkStep := 0; walkStep < 100; walkStep++ {
 				// each step, randomly change one cost factor
 				idx := rand.Intn(len(relatedCostFactors))
-				factorValue := rand.Float64() * 1000 // scale range: [0, 1000]
+				factorValue := rand.Float64() * 100000000 // scale range: [0, 1000000]
 				*relatedCostFactors[idx] = factorValue
 
 				// generate a new plan based on the modified cost factors
@@ -110,28 +132,36 @@ func explainPlan(sctx sessionctx.Context, sql string) (plan, hint string, err er
 
 func collectRelatedCostFactors(sctx sessionctx.Context, plan string) []*float64 {
 	factors := make([]*float64, 0, 4)
-	if strings.Contains(plan, "Index") {
-		factors = append(factors, &sctx.GetSessionVars().IndexScanCostFactor,
-			&sctx.GetSessionVars().IndexLookupCostFactor,
-			&sctx.GetSessionVars().IndexMergeCostFactor)
+	//if strings.Contains(plan, "IndexFullScan") || strings.Contains(plan, "IndexRangeScan") {
+	//	factors = append(factors, &sctx.GetSessionVars().IndexScanCostFactor)
+	//}
+	//if strings.Contains(plan, "IndexLookUp") {
+	//	factors = append(factors, &sctx.GetSessionVars().IndexLookupCostFactor)
+	//}
+	//if strings.Contains(plan, "TableFullScan") {
+	//	factors = append(factors, &sctx.GetSessionVars().TableFullScanCostFactor)
+	//}
+	//if strings.Contains(plan, "TableRangeScan") {
+	//	factors = append(factors, &sctx.GetSessionVars().TableRangeScanCostFactor)
+	//}
+	//if strings.Contains(plan, "HashJoin") {
+	//	factors = append(factors, &sctx.GetSessionVars().HashJoinCostFactor)
+	//}
+	//if strings.Contains(plan, "MergeJoin") {
+	//	factors = append(factors, &sctx.GetSessionVars().MergeJoinCostFactor)
+	//}
+	//if strings.Contains(plan, "IndexJoin") {
+	//	factors = append(factors, &sctx.GetSessionVars().IndexJoinCostFactor)
+	//}
+	//if strings.Contains(plan, "Sort") {
+	//	factors = append(factors, &sctx.GetSessionVars().SortCostFactor,
+	//		&sctx.GetSessionVars().TopNCostFactor)
+	//}
+	if strings.Contains(plan, "HashAgg") {
+		factors = append(factors, &sctx.GetSessionVars().HashAggCostFactor)
 	}
-	if strings.Contains(plan, "Table") {
-		factors = append(factors, &sctx.GetSessionVars().TableFullScanCostFactor,
-			&sctx.GetSessionVars().TableRangeScanCostFactor,
-			&sctx.GetSessionVars().TableRowIDScanCostFactor)
-	}
-	if strings.Contains(plan, "Join") {
-		factors = append(factors, &sctx.GetSessionVars().HashJoinCostFactor,
-			&sctx.GetSessionVars().MergeJoinCostFactor,
-			&sctx.GetSessionVars().IndexJoinCostFactor)
-	}
-	if strings.Contains(plan, "Sort") {
-		factors = append(factors, &sctx.GetSessionVars().SortCostFactor,
-			&sctx.GetSessionVars().TopNCostFactor)
-	}
-	if strings.Contains(plan, "Agg") {
-		factors = append(factors, &sctx.GetSessionVars().HashAggCostFactor,
-			&sctx.GetSessionVars().StreamAggCostFactor)
+	if strings.Contains(plan, "StreamAgg") {
+		factors = append(factors, &sctx.GetSessionVars().StreamAggCostFactor)
 	}
 	return factors
 }
