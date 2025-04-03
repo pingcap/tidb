@@ -574,11 +574,9 @@ func (ds *DataSource) removeInvalidPaths() {
 			// consider whether this path is valid for the `NO_NULL_INDEX` column.
 			isValid := true
 			for _, partialPath := range path.PartialIndexPaths {
-				if partialPath.Index != nil && len(partialPath.Index.NoNullIdxColOffsets) > 0 {
-					if !ds.checkNoNullIndexForPath(partialPath, append(partialPath.IndexFilters, path.TableFilters...)) {
-						isValid = false
-						break
-					}
+				if !ds.checkPartialPathValid(partialPath, path.TableFilters) {
+					isValid = false
+					break
 				}
 			}
 			if !isValid {
@@ -586,7 +584,45 @@ func (ds *DataSource) removeInvalidPaths() {
 				continue
 			}
 		}
+
+		if len(path.PartialAlternativeIndexPaths) > 0 {
+			isValid := true
+			// For each branch, remove the invalid path.
+			for i := 0; i < len(path.PartialAlternativeIndexPaths); i++ {
+				partialPaths := path.PartialAlternativeIndexPaths[i]
+				for j := len(partialPaths) - 1; j >= 0; j-- {
+					partialPath := partialPaths[j]
+					if !ds.checkPartialPathValid(partialPath, path.TableFilters) {
+						partialPaths = slices.Delete(partialPaths, j, j+1)
+					}
+				}
+
+				// If all paths are invalid, remove the whole possibleAccessPath.
+				if len(partialPaths) == 0 {
+					isValid = false
+					break
+				}
+
+				// If there are still valid paths, we need to update the PartialAlternativeIndexPaths.
+				path.PartialAlternativeIndexPaths[i] = partialPaths
+			}
+			if !isValid {
+				ds.possibleAccessPaths = slices.Delete(ds.possibleAccessPaths, i, i+1)
+				continue
+			}
+		}
 	}
+}
+
+// checkPartialPathValid checks whether a partial path of index merge is valid
+func (ds *DataSource) checkPartialPathValid(partialPath *util.AccessPath, tableFilters []expression.Expression) bool {
+	if partialPath.Index != nil && len(partialPath.Index.NoNullIdxColOffsets) > 0 {
+		if !ds.checkNoNullIndexForPath(partialPath, append(partialPath.IndexFilters, tableFilters...)) {
+			return false
+		}
+	}
+
+	return true
 }
 
 func getMinSelectivityFromPaths(paths []*util.AccessPath, totalRowCount float64) float64 {

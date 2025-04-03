@@ -4445,3 +4445,34 @@ id	estRows	task	access object	operator info
 TableReader	8.00	root		data:Selection
 └─Selection	8.00	cop[tikv]		isnull(planner__core__integration.t.col1), json_contains(json_extract(planner__core__integration.t.col2, "$.path"), cast("1", json BINARY)), json_contains(json_extract(planner__core__integration.t.col3, "$.path"), cast("1", json BINARY))
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t;
+create table t (a int, b int, c int no_null_index, key a(a), key b(b), key ac(a, c), key bc(b, c));
+insert into t values (NULL, 1, 1);
+insert into t values (1, NULL, 1);
+insert into t values (1, 1, NULL);
+select * from t where a is null or b is null order by c;
+a	b	c
+NULL	1	1
+1	NULL	1
+explain format='verbose' select * from t where a is null or b is null order by c;
+id	estRows	estCost	task	access object	operator info
+Sort_5	19.99	5431.39	root		planner__core__integration.t.c
+└─IndexMerge_14	19.99	1019.04	root		type: union
+  ├─IndexRangeScan_11(Build)	10.00	2035.00	cop[tikv]	table:t, index:a(a)	range:[NULL,NULL], keep order:false, stats:pseudo
+  ├─IndexRangeScan_12(Build)	10.00	2035.00	cop[tikv]	table:t, index:b(b)	range:[NULL,NULL], keep order:false, stats:pseudo
+  └─TableRowIDScan_13(Probe)	19.99	4881.56	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t;
+create table t (a int no_null_index, b int, c int, key a(a), key b(b), key ac(a, c), key bc(b, c));
+insert into t values (NULL, 1, 1);
+insert into t values (1, NULL, 1);
+insert into t values (1, 1, NULL);
+select * from t where a is null or b is null order by c;
+a	b	c
+NULL	1	1
+1	NULL	1
+explain format='verbose' select * from t where a is null or b is null order by c;
+id	estRows	estCost	task	access object	operator info
+Sort_5	19.99	200732.32	root		planner__core__integration.t.c
+└─TableReader_10	19.99	196319.98	root		data:Selection_9
+  └─Selection_9	19.99	2941000.00	cop[tikv]		or(isnull(planner__core__integration.t.a), isnull(planner__core__integration.t.b))
+    └─TableFullScan_8	10000.00	2442000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
