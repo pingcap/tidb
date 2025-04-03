@@ -93,6 +93,7 @@ go_library(
         "//br/pkg/storage",
         "//pkg/bindinfo",
         "//pkg/config",
+        "//pkg/ddl",
         "//pkg/distsql",
         "//pkg/domain",
         "//pkg/errctx",
