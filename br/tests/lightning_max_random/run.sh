@@ -74,7 +74,7 @@ export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/backend/local/cha
 # db.test contains key auto_random_max - 1
 # db.test1 contains key auto_random_max
 # db.test2 contains key auto_random_max + 1 (overflow)
-run_lightning --sorted-kv-dir "$TEST_DIR/sst" --config "$CUR/config.toml" --log-file "$TEST_DIR/lightning.log"
+run_lightning --sorted-kv-dir "$TEST_DIR/sst" --config "tests/$TEST_NAME/config.toml" --log-file "$TEST_DIR/lightning.log"
 check_result
 # successfully insert: d.test auto_random key has not reached maximum
 run_sql 'INSERT INTO db.test(b) VALUES(11);'
