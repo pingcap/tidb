@@ -1462,7 +1462,7 @@ func TestAddColumnarIndexSimple(t *testing.T) {
 	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
 	tk.MustContainErrMsg("alter table t add key idx(d) USING INVERTED;", "Unsupported index type")
 	// for a wrong column
-	tk.MustContainErrMsg("alter table t add columnar index (n) USING INVERTED;", "column does not exist: n")
+	tk.MustContainErrMsg("alter table t add columnar index (n) USING INVERTED;", "[schema:1054]Unknown column 'n' in 't'")
 	// for wrong data type
 	tk.MustContainErrMsg("alter table t add columnar index (b) USING INVERTED;", "only support integer type, but this is type")
 	tk.MustContainErrMsg("alter table t add columnar index (d) USING INVERTED;", "only support integer type, but this is type")
@@ -1482,7 +1482,7 @@ func TestAddColumnarIndexSimple(t *testing.T) {
 	lastWarn := warnings[len(warnings)-1]
 	require.Truef(t, terror.ErrorEqual(dbterror.ErrDupKeyName, lastWarn.Err), "err %v", lastWarn.Err)
 	require.Equal(t, contextutil.WarnLevelNote, lastWarn.Level)
-	tk.MustExec("alter table t add columnar index if not exists idx(c) USING INVERTED;")
+	tk.MustContainErrMsg("alter table t add columnar index if not exists idx(c) USING INVERTED;", "[ddl:1061]inverted columnar index  already exist on column c")
 
 	// normal test cases
 	tk.MustExec("drop table if exists t;")
@@ -1515,7 +1515,7 @@ func TestAddColumnarIndexSimple(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
 		"  `b` int(11) DEFAULT NULL,\n" +
-		"  COLUMNAR INDEX `idx`(`a`) COMMENT 'a comment'\n" +
+		"  INVERTED INDEX `idx`(`a`) COMMENT 'a comment'\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// test multi-schema change for unsupported operations
@@ -1567,7 +1567,7 @@ func TestAddColumnarIndexSimple(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) NOT NULL,\n" +
 		"  `b` int(11) DEFAULT NULL,\n" +
-		"  COLUMNAR INDEX `idx`(`b`) COMMENT 'b comment'\n" +
+		"  INVERTED INDEX `idx`(`b`) COMMENT 'b comment'\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// test multi-schema change for dropping indexes
