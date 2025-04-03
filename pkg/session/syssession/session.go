@@ -225,14 +225,15 @@ func (s *session) CheckNoPendingTxn() error {
 
 // OwnerResetState resets the state of the session by owner
 func (s *session) OwnerResetState(ctx context.Context, caller sessionOwner) error {
-	return s.OwnerWithSctx(caller, func(sctx sessionctx.Context) error {
+	return s.OwnerWithSctx(caller, func(sctx SessionContext) error {
 		sctx.RollbackTxn(ctx)
 		return nil
 	})
 }
 
 // OwnerWithSctx executes the input function with the session context.
-func (s *session) OwnerWithSctx(caller sessionOwner, fn func(sessionctx.Context) error) error {
+func (s *session) OwnerWithSctx(caller sessionOwner, fn func(SessionContext) error) error {
+	intest.AssertNotNil(fn)
 	sctx, exit, err := s.EnterOperation(caller)
 	if err != nil {
 		return err
@@ -421,13 +422,11 @@ func (s *Session) AvoidReuse() {
 }
 
 // WithSessionContext executes the input function with the session context.
-func (s *Session) WithSessionContext(fn func(ctx sessionctx.Context) error) error {
-	sctx, exit, err := s.internal.EnterOperation(s)
-	if err != nil {
-		return err
-	}
-	defer exit()
-	return fn(sctx)
+func (s *Session) WithSessionContext(fn func(sessionctx.Context) error) error {
+	intest.AssertNotNil(fn)
+	return s.internal.OwnerWithSctx(s, func(sctx SessionContext) error {
+		return fn(sctx)
+	})
 }
 
 // Execute implements the SQLExecutor.Execute interface.

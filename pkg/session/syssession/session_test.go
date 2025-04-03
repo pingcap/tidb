@@ -575,7 +575,7 @@ func TestInternalSessionOwnerWithSctx(t *testing.T) {
 	owner := &mockOwner{}
 	se := mockInternalSession(t, sctx, owner)
 	mockCb := &mock.Mock{}
-	cb := func(sctx sessionctx.Context) error {
+	cb := func(sctx SessionContext) error {
 		require.Equal(t, uint64(1), se.Inuse())
 		return mockCb.MethodCalled("cb", sctx).Error(0)
 	}
