@@ -815,11 +815,6 @@ func (local *Backend) GetWriteSpeedLimit() int {
 	return local.writeLimiter.Limit()
 }
 
-// Concurrency get the current concurrency of the backend
-func (local *BackendConfig) Concurrency() int {
-	return int(local.WorkerConcurrency.Load())
-}
-
 // util function to create atomic variable
 func toAtomic(v int) atomic.Int32 {
 	return *atomic.NewInt32(int32(v))

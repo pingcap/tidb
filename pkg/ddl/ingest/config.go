@@ -71,9 +71,9 @@ func genConfig(
 		StoreWriteBWLimit:           maxWriteSpeed,
 	}
 	// Each backend will build a single dir in lightning dir.
-	cfg.WorkerConcurrency.Store(int32(concurrency * 2))
+	cfg.SetConcurrency(concurrency * 2)
 	if ImporterRangeConcurrencyForTest != nil {
-		cfg.WorkerConcurrency.Store(ImporterRangeConcurrencyForTest.Load() * 2)
+		cfg.SetConcurrency(int(ImporterRangeConcurrencyForTest.Load() * 2))
 	}
 	adjustImportMemory(ctx, memRoot, cfg)
 	if unique {

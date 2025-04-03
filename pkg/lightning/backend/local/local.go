@@ -508,6 +508,15 @@ func (c *BackendConfig) adjust() {
 	c.MaxOpenFiles = max(c.MaxOpenFiles, openFilesLowerThreshold)
 }
 
+func (c *BackendConfig) SetConcurrency(concurrency int) {
+	c.WorkerConcurrency.Store(int32(concurrency))
+}
+
+// Concurrency get the current concurrency of the backend
+func (c *BackendConfig) Concurrency() int {
+	return int(c.WorkerConcurrency.Load())
+}
+
 // Backend is a local backend.
 type Backend struct {
 	pdCli     pd.Client

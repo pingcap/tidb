@@ -53,7 +53,8 @@ func (t *mergeMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, 
 	}, false
 }
 
-type mergeOperator struct {
+// MergeOperator is the operator that merges overlapping files.
+type MergeOperator struct {
 	*operator.AsyncOperator[*mergeMinimalTask, workerpool.None]
 	wg       tidbutil.WaitGroupWrapper
 	firstErr atomic.Error
@@ -64,18 +65,27 @@ type mergeOperator struct {
 	errCh chan error
 }
 
-func newMergeOperator(
+// NewMergeOperator creates a new MergeOperator instance.
+func NewMergeOperator(
 	ctx context.Context,
 	store storage.ExternalStorage,
 	partSize int64,
 	newFilePrefix string,
 	blockSize int,
 	onClose OnCloseFunc,
-	checkHotspot bool,
 	concurrency int,
-) *mergeOperator {
+	checkHotspot bool,
+) *MergeOperator {
+	// during encode&sort step, the writer-limit is aligned to block size, so we
+	// need align this too. the max additional written size per file is max-block-size.
+	// for max-block-size = 32MiB, adding (max-block-size * MaxMergingFilesPerThread)/10000 ~ 1MiB
+	// to part-size is enough.
+	partSize = max(MinUploadPartSize, partSize+units.MiB)
+	logutil.Logger(ctx).Info("merge overlapping files get part size",
+		zap.Int64("part-size", partSize))
+
 	subCtx, cancel := context.WithCancel(ctx)
-	op := &mergeOperator{
+	op := &MergeOperator{
 		ctx:    subCtx,
 		cancel: cancel,
 		errCh:  make(chan error),
@@ -101,11 +111,18 @@ func newMergeOperator(
 	return op
 }
 
-func (*mergeOperator) String() string {
+// String implements the Operator interface.
+func (*MergeOperator) String() string {
 	return "mergeOperator"
 }
 
-func (op *mergeOperator) Open() error {
+// GetWorkerPoolSize returns the current worker pool size.
+func (op *MergeOperator) GetWorkerPoolSize() int32 {
+	return op.AsyncOperator.GetWorkerPoolSize()
+}
+
+// Open opens the operator and starts the worker pool.
+func (op *MergeOperator) Open() error {
 	op.wg.Run(func() {
 		for err := range op.errCh {
 			if op.firstErr.CompareAndSwap(nil, err) {
@@ -120,7 +137,8 @@ func (op *mergeOperator) Open() error {
 	return op.AsyncOperator.Open()
 }
 
-func (op *mergeOperator) Close() error {
+// Close closes the operator and waits for all workers to finish.
+func (op *MergeOperator) Close() error {
 	op.cancel()
 	// nolint:errcheck
 	op.AsyncOperator.Close()
@@ -129,17 +147,18 @@ func (op *mergeOperator) Close() error {
 	return op.firstErr.Load()
 }
 
-func (op *mergeOperator) onError(err error) {
+func (op *MergeOperator) onError(err error) {
 	op.errCh <- err
 }
 
-func (op *mergeOperator) Done() <-chan struct{} {
+// Done returns the done channel of the operator.
+func (op *MergeOperator) Done() <-chan struct{} {
 	return op.ctx.Done()
 }
 
 type mergeWorker struct {
 	ctx context.Context
-	op  *mergeOperator
+	op  *MergeOperator
 
 	store         storage.ExternalStorage
 	partSize      int64
@@ -174,29 +193,15 @@ func (*mergeWorker) Close() {}
 func MergeOverlappingFiles(
 	ctx context.Context,
 	paths []string,
-	store storage.ExternalStorage,
-	partSize int64,
-	newFilePrefix string,
-	blockSize int,
-	onClose OnCloseFunc,
 	concurrency int,
-	checkHotspot bool,
+	op *MergeOperator,
 ) error {
 	dataFilesSlice := splitDataFiles(paths, concurrency)
-	// during encode&sort step, the writer-limit is aligned to block size, so we
-	// need align this too. the max additional written size per file is max-block-size.
-	// for max-block-size = 32MiB, adding (max-block-size * MaxMergingFilesPerThread)/10000 ~ 1MiB
-	// to part-size is enough.
-	partSize = max(MinUploadPartSize, partSize+units.MiB)
-
 	logutil.Logger(ctx).Info("start to merge overlapping files",
 		zap.Int("file-count", len(paths)),
 		zap.Int("file-groups", len(dataFilesSlice)),
-		zap.Int("concurrency", concurrency),
-		zap.Int64("part-size", partSize))
+		zap.Int("concurrency", concurrency))
 
-	op := newMergeOperator(ctx, store, partSize, newFilePrefix,
-		blockSize, onClose, checkHotspot, concurrency)
 	source := operator.NewSimpleDataChannel(make(chan *mergeMinimalTask))
 	op.SetSource(source)
 

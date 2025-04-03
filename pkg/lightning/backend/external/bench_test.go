@@ -496,9 +496,9 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 	}
 
 	now := time.Now()
-	err = MergeOverlappingFiles(
+
+	op := NewMergeOperator(
 		ctx,
-		datas,
 		s.store,
 		int64(5*size.MB),
 		mergeOutput,
@@ -506,6 +506,13 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 		onClose,
 		s.concurrency,
 		s.mergeIterHotspot,
+	)
+
+	err = MergeOverlappingFiles(
+		ctx,
+		datas,
+		s.concurrency,
+		op,
 	)
 
 	intest.AssertNoError(err)
