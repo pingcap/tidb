@@ -20,10 +20,15 @@ import (
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
+	"github.com/pingcap/tidb/pkg/resourcemanager/util"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pkg/errors"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
 
 var (
@@ -35,6 +40,134 @@ var (
 	// external storage, which is 5MiB for both S3 and GCS.
 	MinUploadPartSize int64 = 5 * units.MiB
 )
+
+type mergeMinimalTask struct {
+	files    []string
+	panicked *atomic.Bool
+}
+
+// RecoverArgs implements workerpool.TaskMayPanic interface.
+func (t *mergeMinimalTask) RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool) {
+	return "mergeSortOperator", "RecoverArgs", func() {
+		t.panicked.Store(true)
+	}, false
+}
+
+type mergeOperator struct {
+	*operator.AsyncOperator[*mergeMinimalTask, workerpool.None]
+	wg       tidbutil.WaitGroupWrapper
+	firstErr atomic.Error
+
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	errCh chan error
+}
+
+func newMergeOperator(
+	ctx context.Context,
+	store storage.ExternalStorage,
+	partSize int64,
+	newFilePrefix string,
+	blockSize int,
+	onClose OnCloseFunc,
+	checkHotspot bool,
+	concurrency int,
+) *mergeOperator {
+	subCtx, cancel := context.WithCancel(ctx)
+	op := &mergeOperator{
+		ctx:    subCtx,
+		cancel: cancel,
+		errCh:  make(chan error),
+	}
+	pool := workerpool.NewWorkerPool(
+		"mergeOperator",
+		util.ImportInto,
+		concurrency,
+		func() workerpool.Worker[*mergeMinimalTask, workerpool.None] {
+			return &mergeWorker{
+				ctx:           ctx,
+				op:            op,
+				store:         store,
+				partSize:      partSize,
+				newFilePrefix: newFilePrefix,
+				blockSize:     blockSize,
+				onClose:       onClose,
+				checkHotspot:  checkHotspot,
+			}
+		},
+	)
+	op.AsyncOperator = operator.NewAsyncOperator(subCtx, pool)
+	return op
+}
+
+func (*mergeOperator) String() string {
+	return "mergeOperator"
+}
+
+func (op *mergeOperator) Open() error {
+	op.wg.Run(func() {
+		for err := range op.errCh {
+			if op.firstErr.CompareAndSwap(nil, err) {
+				op.cancel()
+			} else {
+				if errors.Cause(err) != context.Canceled {
+					logutil.Logger(op.ctx).Error("error on encode and sort", zap.Error(err))
+				}
+			}
+		}
+	})
+	return op.AsyncOperator.Open()
+}
+
+func (op *mergeOperator) Close() error {
+	op.cancel()
+	// nolint:errcheck
+	op.AsyncOperator.Close()
+	close(op.errCh)
+	op.wg.Wait()
+	return op.firstErr.Load()
+}
+
+func (op *mergeOperator) onError(err error) {
+	op.errCh <- err
+}
+
+func (op *mergeOperator) Done() <-chan struct{} {
+	return op.ctx.Done()
+}
+
+type mergeWorker struct {
+	ctx context.Context
+	op  *mergeOperator
+
+	store         storage.ExternalStorage
+	partSize      int64
+	newFilePrefix string
+	blockSize     int
+	onClose       OnCloseFunc
+	checkHotspot  bool
+}
+
+func (w *mergeWorker) HandleTask(task *mergeMinimalTask, _ func(workerpool.None)) {
+	err := mergeOverlappingFilesInternal(
+		w.ctx,
+		task.files,
+		w.store,
+		w.partSize,
+		w.newFilePrefix,
+		uuid.New().String(),
+		w.blockSize,
+		w.onClose,
+		w.checkHotspot,
+	)
+
+	if err != nil {
+		w.op.onError(err)
+	}
+}
+
+func (*mergeWorker) Close() {}
 
 // MergeOverlappingFiles reads from given files whose key range may overlap
 // and writes to new sorted, nonoverlapping files.
@@ -61,24 +194,37 @@ func MergeOverlappingFiles(
 		zap.Int("file-groups", len(dataFilesSlice)),
 		zap.Int("concurrency", concurrency),
 		zap.Int64("part-size", partSize))
-	eg, egCtx := errgroup.WithContext(ctx)
-	eg.SetLimit(concurrency)
-	for _, files := range dataFilesSlice {
-		eg.Go(func() error {
-			return mergeOverlappingFilesInternal(
-				egCtx,
-				files,
-				store,
-				partSize,
-				newFilePrefix,
-				uuid.New().String(),
-				blockSize,
-				onClose,
-				checkHotspot,
-			)
-		})
+
+	op := newMergeOperator(ctx, store, partSize, newFilePrefix,
+		blockSize, onClose, checkHotspot, concurrency)
+	source := operator.NewSimpleDataChannel(make(chan *mergeMinimalTask))
+	op.SetSource(source)
+
+	if err := op.Open(); err != nil {
+		return err
 	}
-	return eg.Wait()
+
+	panicked := atomic.Bool{}
+outer:
+	for _, files := range dataFilesSlice {
+		select {
+		case source.Channel() <- &mergeMinimalTask{
+			files:    files,
+			panicked: &panicked,
+		}:
+		case <-op.Done():
+			break outer
+		}
+	}
+	source.Finish()
+
+	if err := op.Close(); err != nil {
+		return err
+	}
+	if panicked.Load() {
+		return errors.Errorf("panic occurred during import, please check log")
+	}
+	return nil
 }
 
 // split input data files into multiple shares evenly, with the max number files

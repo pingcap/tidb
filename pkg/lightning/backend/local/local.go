@@ -19,6 +19,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
+	goerrors "errors"
 	"io"
 	"math"
 	"net"
@@ -65,6 +66,7 @@ import (
 	"github.com/tikv/pd/client/pkg/caller"
 	"github.com/tikv/pd/client/pkg/retry"
 	sd "github.com/tikv/pd/client/servicediscovery"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -429,7 +431,7 @@ type BackendConfig struct {
 	// compress type when write or ingest into tikv
 	ConnCompressType config.CompressionType
 	// concurrency of generateJobForRange and import(write & ingest) workers
-	WorkerConcurrency int
+	WorkerConcurrency atomic.Int32
 	// batch kv size when writing to TiKV
 	KVWriteBatchSize       int64
 	RegionSplitBatchSize   int
@@ -479,7 +481,7 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resour
 		LocalStoreDir:               cfg.TikvImporter.SortedKVDir,
 		MaxConnPerStore:             cfg.TikvImporter.RangeConcurrency,
 		ConnCompressType:            cfg.TikvImporter.CompressKVPairs,
-		WorkerConcurrency:           cfg.TikvImporter.RangeConcurrency * 2,
+		WorkerConcurrency:           *atomic.NewInt32(int32(cfg.TikvImporter.RangeConcurrency) * 2),
 		BlockSize:                   int(cfg.TikvImporter.BlockSize),
 		KVWriteBatchSize:            int64(cfg.TikvImporter.SendKVSize),
 		RegionSplitBatchSize:        cfg.TikvImporter.RegionSplitBatchSize,
@@ -520,6 +522,8 @@ type Backend struct {
 
 	supportMultiIngest  bool
 	importClientFactory importClientFactory
+
+	workers sync.Map
 
 	metrics      *metric.Common
 	writeLimiter StoreWriteLimiter
@@ -757,6 +761,29 @@ func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, factory impor
 	return true, nil
 }
 
+// UpdateConcurrency update the concurrency of current running job.
+// The engineUUID is used to get corresponding engine.
+// If there is no running job, or the concurrency change is not allowed, it will return an error.
+func (local *Backend) UpdateConcurrency(engineUUID uuid.UUID, concurrency int) error {
+	engine, ok := local.engineMgr.getExternalEngine(engineUUID)
+	if !ok {
+		return goerrors.New("changing concurrency is only supported on external engine")
+	}
+
+	v, ok := local.workers.Load(engine.ID())
+	if !ok {
+		// let framework retry
+		return goerrors.New("worker not running")
+	}
+
+	e, _ := engine.(*external.Engine)
+	worker, _ := v.(*jobOperator)
+	worker.TuneWorkerPoolSize(int32(concurrency), true)
+	local.WorkerConcurrency.Store(int32(concurrency))
+	e.UpdateConcurrency(concurrency)
+	return nil
+}
+
 func (local *Backend) tikvSideCheckFreeSpace(ctx context.Context) {
 	if !local.ShouldCheckTiKV {
 		return
@@ -965,7 +992,7 @@ func (local *Backend) generateAndSendJob(
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 
 	dataAndRangeCh := make(chan common.DataAndRanges)
-	conn := local.WorkerConcurrency
+	conn := int(local.WorkerConcurrency.Load())
 	if _, ok := engine.(*external.Engine); ok {
 		// currently external engine will generate a large IngestData, se we lower the
 		// concurrency to pass backpressure to the LoadIngestData goroutine to avoid OOM
@@ -1227,6 +1254,11 @@ func (local *Backend) executeJob(
 	ctx context.Context,
 	job *regionJob,
 ) error {
+	failpoint.Inject("MockSuccessExecution", func(_ failpoint.Value) {
+		job.convertStageTo(regionScanned)
+		failpoint.Return(nil)
+	})
+
 	failpoint.Inject("WriteToTiKVNotEnoughDiskSpace", func(_ failpoint.Value) {
 		failpoint.Return(
 			errors.New("the remaining storage capacity of TiKV is less than 10%%; please increase the storage capacity of TiKV and try again"))
@@ -1244,6 +1276,8 @@ func (local *Backend) executeJob(
 			}
 		}
 	}
+
+	failpoint.InjectCall("modifyRunningGlobalSortSpeed", local)
 
 	for {
 		err := local.writeToTiKV(ctx, job)
@@ -1444,6 +1478,7 @@ func (local *Backend) doImport(
 	// close channels.
 	//
 	// 3. the main goroutine can see the error and exit after workGroup.Wait().
+
 	var (
 		workGroup, workerCtx = util.NewErrorGroupWithRecoverWithCtx(ctx)
 		// jobToWorkerCh and jobFromWorkerCh are unbuffered so jobs will not be
@@ -1532,21 +1567,21 @@ func (local *Backend) doImport(
 		}
 	})
 
+	worker := newJobWorker(
+		workerCtx, workGroup, &jobWg,
+		local, balancer,
+		jobFromWorkerCh, jobToWorkerCh,
+	)
+
 	failpoint.Inject("skipStartWorker", func() {
 		failpoint.Goto("afterStartWorker")
 	})
+	local.workers.Store(engine.ID(), worker)
+	defer func() {
+		local.workers.Delete(engine.ID())
+	}()
 
-	for i := 0; i < local.WorkerConcurrency; i++ {
-		workGroup.Go(func() error {
-			toCh := jobToWorkerCh
-			var afterExecuteJob func([]*metapb.Peer)
-			if balancer != nil {
-				toCh = balancer.innerJobToWorkerCh
-				afterExecuteJob = balancer.releaseStoreLoad
-			}
-			return local.startWorker(workerCtx, toCh, jobFromWorkerCh, afterExecuteJob, &jobWg)
-		})
-	}
+	_ = worker.Open()
 
 	failpoint.Label("afterStartWorker")
 
@@ -1578,8 +1613,7 @@ func (local *Backend) doImport(
 				return allZero
 			})
 		}
-		close(jobFromWorkerCh)
-		return nil
+		return worker.Close()
 	})
 
 	err := workGroup.Wait()
