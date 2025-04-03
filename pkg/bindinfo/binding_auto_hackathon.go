@@ -13,30 +13,40 @@ func generateBindingPlans(sPool util.DestroyableSessionPool, currentDB, sql stri
 		sql = strings.TrimSpace(sql)
 		sctx.GetSessionVars().CurrentDB = currentDB
 
-		plan, hint, err := explainPlan(sctx, currentDB, sql)
-
-		bindingSQL := fmt.Sprintf("%v /*+ %v */ %v", sql[:6], hint, sql[6:]) // "select" + hint + ...
-		binding := &Binding{
-			OriginalSQL: sql, // TODO: normalize
-			BindSQL:     bindingSQL,
-			Db:          currentDB,
-			Source:      "generated vis cost factors",
-		}
-		if err = prepareHints(sctx, binding); err != nil {
+		bindingPlan, err := generateBindingPlan(sctx, sql)
+		if err != nil {
 			return err
 		}
-
-		plans = append(plans, &BindingPlanInfo{
-			Binding: binding,
-			Plan:    plan,
-		})
+		plans = append(plans, bindingPlan)
 		return nil
 	})
 	return
 }
 
-func explainPlan(sctx sessionctx.Context, currentDB, sql string) (plan, hint string, err error) {
-	sctx.GetSessionVars().CurrentDB = currentDB
+func generateBindingPlan(sctx sessionctx.Context, sql string) (*BindingPlanInfo, error) {
+	plan, hint, err := explainPlan(sctx, sql)
+	if err != nil {
+		return nil, err
+	}
+
+	bindingSQL := fmt.Sprintf("%v /*+ %v */ %v", sql[:6], hint, sql[6:]) // "select" + hint + ...
+	binding := &Binding{
+		OriginalSQL: sql, // TODO: normalize
+		BindSQL:     bindingSQL,
+		Db:          sctx.GetSessionVars().CurrentDB,
+		Source:      "generated vis cost factors",
+	}
+	if err = prepareHints(sctx, binding); err != nil {
+		return nil, err
+	}
+
+	return &BindingPlanInfo{
+		Binding: binding,
+		Plan:    plan,
+	}, nil
+}
+
+func explainPlan(sctx sessionctx.Context, sql string) (plan, hint string, err error) {
 	rows, _, err := execRows(sctx, "EXPLAIN "+sql)
 	if err != nil {
 		return "", "", err
