@@ -271,6 +271,7 @@ func IsSimplePointPlan(plan string) bool {
 			continue
 		}
 		operatorName := strings.Split(line, " ")[0]
+		// TODO: these hard-coding lines are a temporary implementation, refactor this part later.
 		if operatorName == "id" || // the first line with column names
 			strings.Contains(operatorName, "Point_Get") ||
 			strings.Contains(operatorName, "Batch_Point_Get") ||
