@@ -73,11 +73,12 @@ func newBindingAuto(sPool util.DestroyableSessionPool) BindingAuto {
 func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collation string) ([]*BindingPlanInfo, error) {
 	// parse and normalize sqlOrDigest
 	// if the length is 64 and it has no " ", treat it as a digest.
-	var whereCond string
+	var whereCond, originalSQL string
 	sqlOrDigest = strings.TrimSpace(sqlOrDigest)
 	if len(sqlOrDigest) == 64 && !strings.Contains(sqlOrDigest, " ") {
 		whereCond = "where sql_digest = %?"
 	} else {
+		originalSQL = sqlOrDigest
 		p := parser.New()
 		stmtNode, err := p.ParseOneStmt(sqlOrDigest, charset, collation)
 		if err != nil {
@@ -129,6 +130,14 @@ func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collatio
 		}
 		bindingPlans = append(bindingPlans, autoBinding)
 	}
+
+	// explore new plans via cost factors.
+	genedPlans, err := generateBindingPlans(ba.sPool, currentDB, originalSQL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate new binding plans: %w", err)
+	}
+	bindingPlans = append(bindingPlans, genedPlans...)
+
 	return bindingPlans, nil
 }
 
