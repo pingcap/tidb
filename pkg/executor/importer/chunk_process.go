@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -91,26 +92,46 @@ func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) 
 	}
 }
 
-// queryRowEncodeReader wraps a QueryRow channel as a encodeReaderFn.
-func queryRowEncodeReader(rowCh <-chan QueryRow) encodeReaderFn {
-	return func(ctx context.Context) (data rowToEncode, closed bool, err error) {
+type queryChunkEncodeReader struct {
+	chunkCh  <-chan QueryChunk
+	queryChk QueryChunk
+	cursor   int
+	numRows  int
+}
+
+func (r *queryChunkEncodeReader) readRow(ctx context.Context) (data rowToEncode, closed bool, err error) {
+	if r.queryChk.Chk == nil || r.cursor >= r.numRows {
 		select {
 		case <-ctx.Done():
 			err = ctx.Err()
 			return
-		case row, ok := <-rowCh:
+		case queryChk, ok := <-r.chunkCh:
 			if !ok {
 				closed = true
 				return
 			}
-			data = rowToEncode{
-				row:       row.Data,
-				rowID:     row.ID,
-				endOffset: -1,
-				resetFn:   func() {},
-			}
-			return
+			r.queryChk = queryChk
+			r.cursor = 0
+			r.numRows = r.queryChk.Chk.NumRows()
 		}
+	}
+
+	row := r.queryChk.Chk.GetRow(r.cursor)
+	r.cursor++
+	data = rowToEncode{
+		row:       row.GetDatumRow(r.queryChk.Fields),
+		rowID:     r.queryChk.Offset + int64(r.cursor),
+		endOffset: -1,
+		resetFn:   func() {},
+	}
+	return
+}
+
+// queryRowEncodeReader wraps a queryChunkEncodeReader as a encodeReaderFn.
+func queryRowEncodeReader(chunkCh <-chan QueryChunk) encodeReaderFn {
+	reader := queryChunkEncodeReader{chunkCh: chunkCh}
+	return func(ctx context.Context) (data rowToEncode, closed bool, err error) {
+		return reader.readRow(ctx)
 	}
 }
 
@@ -493,14 +514,15 @@ func (p *dataDeliver) summaryFields() []zap.Field {
 	}
 }
 
-// QueryRow is a row from query result.
-type QueryRow struct {
-	ID   int64
-	Data []types.Datum
+// QueryChunk is a chunk from query result.
+type QueryChunk struct {
+	Fields []*types.FieldType
+	Chk    *chunk.Chunk
+	Offset int64
 }
 
 func newQueryChunkProcessor(
-	rowCh chan QueryRow,
+	chunkCh chan QueryChunk,
 	encoder KVEncoder,
 	keyspace []byte,
 	logger *zap.Logger,
@@ -523,7 +545,7 @@ func newQueryChunkProcessor(
 		deliver:    deliver,
 		enc: newChunkEncoder(
 			chunkName,
-			queryRowEncodeReader(rowCh),
+			queryRowEncodeReader(chunkCh),
 			-1,
 			deliver.sendEncodedData,
 			chunkLogger,
