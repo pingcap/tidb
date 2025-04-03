@@ -1,0 +1,8 @@
+name,type,is_pk,is_unique,min_len,max_len,null_ratio,mean,std_dev,order
+a,string,,,,,,,,
+b,boolean,,,,,,,,
+c,int,,,,,,,,
+d,bigint,,,,,,,,
+f,decimal,,,,,,,,
+g,timestamp,,,,,,,,
+h,json,,,,,,,,
