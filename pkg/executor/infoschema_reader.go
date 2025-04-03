@@ -2604,10 +2604,8 @@ func dataForAnalyzeStatusHelper(ctx context.Context, e *memtableRetriever, sctx 
 func getRemainDurationForAnalyzeStatusHelper(
 	ctx context.Context,
 	sctx sessionctx.Context, startTime *types.Time,
-	dbName, tableName, partitionName string, processedRows int64) (*time.Duration, float64, float64, error) {
-	var remainingDuration = time.Duration(0)
-	var percentage = 0.0
-	var totalCnt = float64(0)
+	dbName, tableName, partitionName string, processedRows int64) (_ *time.Duration, percentage, totalCnt float64, err error) {
+	remainingDuration := time.Duration(0)
 	if startTime != nil {
 		start, err := startTime.GoTime(time.UTC)
 		if err != nil {
