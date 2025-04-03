@@ -1552,6 +1552,52 @@ func (n *UserSpec) SecurityString() string {
 	return n.User.String()
 }
 
+type CreateUserDefaultRoleOption struct {
+	RoleList []*auth.RoleIdentity
+}
+
+func (n *CreateUserDefaultRoleOption) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord(" DEFAULT ROLE")
+	for i, role := range n.RoleList {
+		ctx.WritePlain(" ")
+		err := role.Restore(ctx)
+		if err != nil {
+			return errors.Annotate(err, "An error occurred while restore CreateUserDefaultRoleOption.RoleList")
+		}
+		if i != len(n.RoleList)-1 {
+			ctx.WritePlain(",")
+		}
+	}
+	return nil
+}
+
+type AlterUserDefaultRoleOption struct {
+	SetRoleOpt SetRoleStmtType
+	RoleList   []*auth.RoleIdentity
+}
+
+func (n *AlterUserDefaultRoleOption) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord(" DEFAULT ROLE")
+	switch n.SetRoleOpt {
+	case SetRoleNone:
+		ctx.WriteKeyWord(" NONE")
+	case SetRoleAll:
+		ctx.WriteKeyWord(" ALL")
+	default:
+	}
+	for i, role := range n.RoleList {
+		ctx.WritePlain(" ")
+		err := role.Restore(ctx)
+		if err != nil {
+			return errors.Annotate(err, "An error occurred while restore AlterUserDefaultRoleOption.RoleList")
+		}
+		if i != len(n.RoleList)-1 {
+			ctx.WritePlain(",")
+		}
+	}
+	return nil
+}
+
 type AuthTokenOrTLSOption struct {
 	Type  AuthTokenOrTLSOptionType
 	Value string
@@ -1752,6 +1798,7 @@ type CreateUserStmt struct {
 	IsCreateRole             bool
 	IfNotExists              bool
 	Specs                    []*UserSpec
+	CreateUserDefaultRoleOpt *CreateUserDefaultRoleOption
 	AuthTokenOrTLSOptions    []*AuthTokenOrTLSOption
 	ResourceOptions          []*ResourceOption
 	PasswordOrLockOptions    []*PasswordOrLockOption
@@ -1775,6 +1822,12 @@ func (n *CreateUserStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 		if err := v.Restore(ctx); err != nil {
 			return errors.Annotatef(err, "An error occurred while restore CreateUserStmt.Specs[%d]", i)
+		}
+	}
+
+	if n.CreateUserDefaultRoleOpt != nil {
+		if err := n.CreateUserDefaultRoleOpt.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore CreateUserStmt.CreateUserDefaultRoleOpt")
 		}
 	}
 
@@ -1858,6 +1911,8 @@ type AlterUserStmt struct {
 	PasswordOrLockOptions    []*PasswordOrLockOption
 	CommentOrAttributeOption *CommentOrAttributeOption
 	ResourceGroupNameOption  *ResourceGroupNameOption
+	User                     *auth.UserIdentity // Only used in case of ALTER USER DEFAULT ROLE
+	AlterUserDefaultRoleOpt  *AlterUserDefaultRoleOption
 }
 
 // Restore implements Node interface.
@@ -1872,6 +1927,16 @@ func (n *AlterUserStmt) Restore(ctx *format.RestoreCtx) error {
 		if err := n.CurrentAuth.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore AlterUserStmt.CurrentAuth")
 		}
+	}
+	if n.AlterUserDefaultRoleOpt != nil {
+		if err := n.User.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterUserStmt.User")
+		}
+		if err := n.AlterUserDefaultRoleOpt.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterUserStmt.AlterUserDefaultRoleOpt")
+		}
+
+		return nil
 	}
 	for i, v := range n.Specs {
 		if i != 0 {
