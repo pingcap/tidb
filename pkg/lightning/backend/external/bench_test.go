@@ -854,7 +854,7 @@ func readAllDataFormS3(StorageURI string, startKey, endKey []byte, dataFiles, st
 }
 
 var (
-	storageURI = ""
+	storageURI = "" // Should Always Be EMPTY
 	repeatNum  = 1
 )
 
