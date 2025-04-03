@@ -134,7 +134,7 @@ func TestMultiMVIndexRandom(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`create table t1(pk int auto_increment primary key, a json, b json, c int, d int, index idx((cast(a as %v array))), index idx2((cast(b as %v array)), c), index idx3(c, d), index idx4(d))`, testCase.indexType, testCase.indexType))
 		nRows := 20
 		rows := make([]string, 0, nRows)
-		for i := 0; i < nRows; i++ {
+		for range nRows {
 			va1, va2, vb1, vb2, vc, vd := randMVIndexValue(testCase.insertValOpts), randMVIndexValue(testCase.insertValOpts), randMVIndexValue(testCase.insertValOpts), randMVIndexValue(testCase.insertValOpts), rand.Intn(testCase.insertValOpts.distinct), rand.Intn(testCase.insertValOpts.distinct)
 			if testCase.indexType == "date" {
 				rows = append(rows, fmt.Sprintf(`(json_array(cast(%v as date), cast(%v as date)),  json_array(cast(%v as date), cast(%v as date)), %v, %v)`, va1, va2, vb1, vb2, vc, vd))
@@ -157,7 +157,7 @@ func TestMultiMVIndexRandom(t *testing.T) {
 		}
 		nQueries := 20
 		tk.MustExec(`set @@tidb_opt_fix_control = "45798:on"`)
-		for i := 0; i < nQueries; i++ {
+		for i := range nQueries {
 			cnf := true
 			if i >= 10 {
 				// cnf
@@ -205,7 +205,7 @@ func TestMVIndexRandom(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`create table t(a int, j json, index kj((cast(j as %v array))))`, testCase.indexType))
 		nRows := 20
 		rows := make([]string, 0, nRows)
-		for i := 0; i < nRows; i++ {
+		for range nRows {
 			va, v1, v2 := rand.Intn(testCase.insertValOpts.distinct), randMVIndexValue(testCase.insertValOpts), randMVIndexValue(testCase.insertValOpts)
 			if testCase.indexType == "date" {
 				rows = append(rows, fmt.Sprintf(`(%v, json_array(cast(%v as date), cast(%v as date)))`, va, v1, v2))
@@ -222,7 +222,7 @@ func TestMVIndexRandom(t *testing.T) {
 		}
 		nQueries := 20
 		tk.MustExec(`set @@tidb_opt_fix_control = "45798:on"`)
-		for i := 0; i < nQueries; i++ {
+		for range nQueries {
 			conds, conds4PlanCache, params := randMVIndexConds(rand.Intn(3)+1, testCase.queryValsOpts, randJColName, randNColName)
 			r1 := tk.MustQuery("select /*+ ignore_index(t, kj) */ * from t where " + conds).Sort()
 			tk.MustQuery("select /*+ use_index_merge(t, kj) */ * from t where " + conds).Sort().Check(r1.Rows())
@@ -279,7 +279,7 @@ func TestPlanCacheMVIndex(t *testing.T) {
   KEY f_item_ids ((cast(f_item_ids as unsigned array))),
   KEY short_link ((cast(short_link as char(1000) array)),country))`)
 
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		var insertVals []string
 		insertVals = append(insertVals, fmt.Sprintf("'%v'", i))                                                                            // item_pk varbinary(255) NOT NULL,
 		insertVals = append(insertVals, fmt.Sprintf("'%v'", i))                                                                            // item_id varchar(45) DEFAULT NULL,
@@ -329,7 +329,7 @@ func TestPlanCacheMVIndex(t *testing.T) {
 		return vs[rand.Intn(len(vs))]
 	}
 
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		check(true, `select * from ti where (? member of (short_link)) and (ti.country = ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)))
 		check(true, `select * from ti where (? member of (f_profile_ids) AND (ti.m_item_set_id = ?) AND (ti.country = ?))`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)))
 		check(true, `select * from ti where (? member of (short_link))`, fmt.Sprintf("'%v'", rand.Intn(30)))
@@ -354,7 +354,7 @@ func TestPlanCacheMVIndex(t *testing.T) {
 }
 
 func randMVIndexCondsXNF4MemberOf(nConds int, valOpts randMVIndexValOpts, CNF bool, randJCol, randNCol func() string) (conds, conds4PlanCache string, params []string) {
-	for i := 0; i < nConds; i++ {
+	for i := range nConds {
 		if i > 0 {
 			if CNF {
 				conds += " AND "
@@ -373,7 +373,7 @@ func randMVIndexCondsXNF4MemberOf(nConds int, valOpts randMVIndexValOpts, CNF bo
 }
 
 func randMVIndexConds(nConds int, valOpts randMVIndexValOpts, randJCol, randNCol func() string) (conds, conds4PlanCache string, params []string) {
-	for i := 0; i < nConds; i++ {
+	for i := range nConds {
 		if i > 0 {
 			if rand.Intn(5) < 1 { // OR
 				conds += " OR "
@@ -415,7 +415,7 @@ func randMVIndexCond(condType int, valOpts randMVIndexValOpts, randJCol, randNCo
 func randArray(opts randMVIndexValOpts) string {
 	n := rand.Intn(5) // n can be 0
 	var vals []string
-	for i := 0; i < n; i++ {
+	for range n {
 		vals = append(vals, randMVIndexValue(opts))
 	}
 	return "[" + strings.Join(vals, ", ") + "]"

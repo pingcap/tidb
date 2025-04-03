@@ -69,7 +69,7 @@ func TestLRUPCPut(t *testing.T) {
 	}
 
 	// one key corresponding to multi values
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		keys[i] = "key-1"
 		opts := pTypes[i]
 		vals[i] = &PlanCacheValue{
@@ -82,7 +82,7 @@ func TestLRUPCPut(t *testing.T) {
 
 	// test for non-existent elements
 	require.Equal(t, dropCnt, 2)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		bucket, exist := lru.buckets[keys[i]]
 		require.True(t, exist)
 		for element := range bucket {
@@ -140,7 +140,7 @@ func TestLRUPCGet(t *testing.T) {
 		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeInt24)},
 	}
 	// 5 bucket
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		keys[i] = fmt.Sprintf("key-%v", i%4)
 		opts := pTypes[i]
 		vals[i] = &PlanCacheValue{
@@ -150,7 +150,7 @@ func TestLRUPCGet(t *testing.T) {
 	}
 
 	// test for non-existent elements
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		opts := pTypes[i]
 		value, exists := lru.Get(keys[i], opts)
 		require.False(t, exists)
@@ -193,7 +193,7 @@ func TestLRUPCDelete(t *testing.T) {
 		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeEnum)},
 		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDate)},
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		keys[i] = fmt.Sprintf("key-%v", i)
 		opts := pTypes[i]
 		vals[i] = &PlanCacheValue{
@@ -229,7 +229,7 @@ func TestLRUPCDeleteAll(t *testing.T) {
 		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeEnum)},
 		{types.NewFieldType(mysql.TypeFloat), types.NewFieldType(mysql.TypeDate)},
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		keys[i] = fmt.Sprintf("key-%v", i)
 		opts := pTypes[i]
 		vals[i] = &PlanCacheValue{
@@ -241,7 +241,7 @@ func TestLRUPCDeleteAll(t *testing.T) {
 
 	lru.DeleteAll()
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		opts := pTypes[i]
 		value, exists := lru.Get(keys[i], opts)
 		require.False(t, exists)
@@ -272,7 +272,7 @@ func TestLRUPCSetCapacity(t *testing.T) {
 	}
 
 	// one key corresponding to multi values
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		keys[i] = "key-1"
 		opts := pTypes[i]
 		vals[i] = &PlanCacheValue{
@@ -288,7 +288,7 @@ func TestLRUPCSetCapacity(t *testing.T) {
 
 	// test for non-existent elements
 	require.Equal(t, dropCnt, 2)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		bucket, exist := lru.buckets[keys[i]]
 		require.True(t, exist)
 		for element := range bucket {
@@ -353,7 +353,7 @@ func TestIssue38244(t *testing.T) {
 	}
 
 	// one key corresponding to multi values
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		keys[i] = fmt.Sprintf("key-%v", i)
 		opts := pTypes[i]
 		vals[i] = &PlanCacheValue{ParamTypes: opts}
@@ -378,7 +378,7 @@ func TestLRUPlanCacheMemoryUsage(t *testing.T) {
 	}
 	var res int64 = 0
 	// put
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		k := randomPlanCacheKey()
 		v := randomPlanCacheValue(pTypes)
 		opts := pTypes

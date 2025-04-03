@@ -357,7 +357,8 @@
     },
     "only_files": {
       "pkg/util/": "util code",
-      "pkg/workloadlearning": "workloadlearning code"
+      "pkg/workloadlearning": "workloadlearning code",
+      "pkg/planner/core": "planner/core"
     }
   },
   "inspect": {
@@ -1276,6 +1277,7 @@
   "prealloc": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
+      ".*_test.go": "ignore test code",
       "cmd/mirror": "cmd/mirror code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
