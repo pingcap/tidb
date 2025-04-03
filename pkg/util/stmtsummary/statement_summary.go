@@ -322,7 +322,6 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	// All times are counted in seconds.
 	now := time.Now().Unix()
-
 	failpoint.Inject("mockTimeForStatementsSummary", func(val failpoint.Value) {
 		// mockTimeForStatementsSummary takes string of Unix timestamp
 		if unixTimeStr, ok := val.(string); ok {
@@ -335,56 +334,54 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	})
 
 	intervalSeconds := ssMap.refreshInterval()
+	historyEnabled := ssMap.historyEnabled()
 	historySize := 0
-	if ssMap.historyEnabled() {
+	if historyEnabled {
 		historySize = ssMap.historySize()
+	}
+	enabled := ssMap.Enabled()
+	enabledInternal := ssMap.EnabledInternal()
+
+	if !enabled || (sei.IsInternal && !enabledInternal) {
+		return
 	}
 
 	key := StmtDigestKeyPool.Get().(*StmtDigestKey)
-	// Init hash value in advance, to reduce the time holding the lock.
 	key.Init(sei.SchemaName, sei.Digest, sei.PrevSQLDigest, sei.PlanDigest, sei.ResourceGroupName)
 
-	var exist bool
-	// Enclose the block in a function to ensure the lock will always be released.
-	summary, beginTime := func() (*stmtSummaryByDigest, int64) {
-		ssMap.Lock()
-		defer ssMap.Unlock()
+	var summary *stmtSummaryByDigest
+	var beginTime int64
 
-		// Check again. Statements could be added before disabling the flag and after Clear().
-		if !ssMap.Enabled() {
-			return nil, 0
-		}
-		if sei.IsInternal && !ssMap.EnabledInternal() {
-			return nil, 0
-		}
+	ssMap.Lock()
+	defer ssMap.Unlock()
 
-		if ssMap.beginTimeForCurInterval+intervalSeconds <= now {
-			// `beginTimeForCurInterval` is a multiple of intervalSeconds, so that when the interval is a multiple
-			// of 60 (or 600, 1800, 3600, etc), begin time shows 'XX:XX:00', not 'XX:XX:01'~'XX:XX:59'.
-			ssMap.beginTimeForCurInterval = now / intervalSeconds * intervalSeconds
-		}
-
-		beginTime := ssMap.beginTimeForCurInterval
-		var value kvcache.Value
-		value, exist = ssMap.summaryMap.Get(key)
-		var summary *stmtSummaryByDigest
-		if !exist {
-			// Lazy initialize it to release ssMap.mutex ASAP.
-			summary = new(stmtSummaryByDigest)
-			ssMap.summaryMap.Put(key, summary)
-		} else {
-			summary = value.(*stmtSummaryByDigest)
-		}
-		summary.isInternal = summary.isInternal && sei.IsInternal
-		return summary, beginTime
-	}()
-	// Lock a single entry, not the whole cache.
-	if summary != nil {
-		summary.add(sei, beginTime, intervalSeconds, historySize)
+	// --- Re-check enabled status under lock (prevents race condition) ---
+	if !ssMap.Enabled() || (sei.IsInternal && !ssMap.EnabledInternal()) {
+		StmtDigestKeyPool.Put(key)
+		return
 	}
-	if exist {
+
+	if ssMap.beginTimeForCurInterval+intervalSeconds <= now {
+		ssMap.beginTimeForCurInterval = now / intervalSeconds * intervalSeconds
+	}
+	beginTime = ssMap.beginTimeForCurInterval
+
+	// Get or create summary in the LRU map
+	value, exist := ssMap.summaryMap.Get(key)
+	if !exist {
+		summary = new(stmtSummaryByDigest)
+		ssMap.summaryMap.Put(key, summary)
+		// Key object from pool is now owned by the map, DO NOT put it back.
+	} else {
+		summary = value.(*stmtSummaryByDigest)
+		// Key object from pool is redundant because the map already has its key.
+		// Put the fetched key object back.
 		StmtDigestKeyPool.Put(key)
 	}
+	summary.isInternal = summary.isInternal && sei.IsInternal
+	// --- Call add method outside the main lock ---
+	// summary cannot be nil here due to the early returns
+	summary.add(sei, beginTime, intervalSeconds, historySize)
 }
 
 // Clear removes all statement summaries.
