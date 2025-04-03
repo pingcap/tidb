@@ -117,21 +117,23 @@ func (*aggregationEliminateChecker) tryToSimpleGroupBy(agg *logicalop.LogicalAgg
 			//fmt.Println("primaryKey2col[int(col.UniqueID)]:", primaryKey2col[int(col.UniqueID)])
 		}
 	}
-	agg.GroupByItems = slices.DeleteFunc(agg.GroupByItems, func(i expression.Expression) bool {
-		col, ok := i.(*expression.Column)
-		if !ok {
-			return false
-		}
-		if pkset.Has(int(col.UniqueID)) {
-			return false
-		}
-		for _, colSet := range primaryKey2col {
-			if colSet.Has(int(col.UniqueID)) {
-				return true
+	if len(primaryKey2col) != 0 {
+		agg.GroupByItems = slices.DeleteFunc(agg.GroupByItems, func(i expression.Expression) bool {
+			col, ok := i.(*expression.Column)
+			if !ok {
+				return false
 			}
-		}
-		return false
-	})
+			if pkset.Has(int(col.UniqueID)) {
+				return false
+			}
+			for _, colSet := range primaryKey2col {
+				if colSet.Has(int(col.UniqueID)) {
+					return true
+				}
+			}
+			return false
+		})
+	}
 }
 
 // tryToEliminateDistinct will eliminate distinct in the aggregation function if the aggregation args
