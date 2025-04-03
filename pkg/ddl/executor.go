@@ -4710,7 +4710,7 @@ func checkIndexNameAndColumns(ctx *metabuild.Context, t table.Table, indexName a
 
 func checkTableTypeForColumnarIndex(tblInfo *model.TableInfo) error {
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
-		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Columnar Index")
+		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("create columnar index")
 	}
 	if tblInfo.TempTableType != model.TempTableNone {
 		return dbterror.ErrOptOnTemporaryTable.FastGenByArgs("columnar index")
