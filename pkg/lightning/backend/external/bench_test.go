@@ -853,9 +853,12 @@ func readAllDataFormS3(StorageURI string, startKey, endKey []byte, dataFiles, st
 	}
 }
 
+var (
+	storageURI = ""
+	repeatNum  = 1
+)
+
 func TestReadAllDataFormS3TotalOrder(t *testing.T) {
-	N := 1
-	storageURI := ""
 	startKey, err := hex.DecodeString("74800000000000006a5f698000000000000010038000000069322706038000000069322706")
 	if err != nil {
 		panic(err)
@@ -871,15 +874,14 @@ func TestReadAllDataFormS3TotalOrder(t *testing.T) {
 	statsFiles := strings.Split(stats, ",")
 
 	startTime := time.Now()
-	for i := 0; i < N; i++ {
+	for i := 0; i < repeatNum; i++ {
 		readAllDataFormS3(storageURI, startKey, endKey, dataFiles, statsFiles)
 	}
 	elapsed := time.Since(startTime)
-	logutil.BgLogger().Info("ReadAllDataFormS3TotalOrder", zap.Float64("average time", elapsed.Seconds()/float64(N)))
+	logutil.BgLogger().Info("ReadAllDataFormS3TotalOrder", zap.Float64("average time", elapsed.Seconds()/float64(repeatNum)))
 }
 
 func BenchmarkReadAllDataFormS3TotalOrder(b *testing.B) {
-	storageURI := ""
 	startKey, err := hex.DecodeString("74800000000000006a5f698000000000000010038000000069322706038000000069322706")
 	if err != nil {
 		panic(err)
@@ -899,8 +901,6 @@ func BenchmarkReadAllDataFormS3TotalOrder(b *testing.B) {
 }
 
 func TestReadAllDataFormS3TotalRandom(t *testing.T) {
-	N := 1
-	storageURI := ""
 	startKey, err := hex.DecodeString("74800000000000006a5f698000000000000011037245b491af06cd4303800000013e2f12bd")
 	if err != nil {
 		panic(err)
@@ -917,9 +917,9 @@ func TestReadAllDataFormS3TotalRandom(t *testing.T) {
 	statsFiles := strings.Split(stats, ",")
 
 	startTime := time.Now()
-	for i := 0; i < N; i++ {
+	for i := 0; i < repeatNum; i++ {
 		readAllDataFormS3(storageURI, startKey, endKey, dataFiles, statsFiles)
 	}
 	elapsed := time.Since(startTime)
-	logutil.BgLogger().Info("ReadAllDataFormS3TotalOrder", zap.Float64("average time", elapsed.Seconds()/float64(N)))
+	logutil.BgLogger().Info("ReadAllDataFormS3TotalOrder", zap.Float64("average time", elapsed.Seconds()/float64(repeatNum)))
 }
