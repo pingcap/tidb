@@ -828,7 +828,8 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affect
 		if commitDetails.TxnRetry > ssStats.maxTxnRetry {
 			ssStats.maxTxnRetry = commitDetails.TxnRetry
 		}
-		commitDetails.Mu.Lock()
+		// we don't need to lock here, because there must not be any other goroutine
+		// modifying the commitDetails when we are summarizing
 		commitBackoffTime := commitDetails.Mu.CommitBackoffTime
 		ssStats.sumCommitBackoffTime += commitBackoffTime
 		if commitBackoffTime > ssStats.maxCommitBackoffTime {
@@ -842,7 +843,6 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affect
 		for _, backoffType := range commitDetails.Mu.CommitBackoffTypes {
 			ssStats.backoffTypes[backoffType]++
 		}
-		commitDetails.Mu.Unlock()
 	}
 
 	// plan cache
