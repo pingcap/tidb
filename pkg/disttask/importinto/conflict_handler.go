@@ -44,7 +44,7 @@ const (
 	storeOpMinBackoff       = 100 * time.Millisecond
 	storeOpMaxBackoff       = time.Second
 	storeOpMaxRetryCnt      = 10
-	snapshotRefreshInterval = 30 * time.Second
+	snapshotRefreshInterval = 15 * time.Second
 )
 
 type conflictKVHandler interface {

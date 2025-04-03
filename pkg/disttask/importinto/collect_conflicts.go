@@ -143,7 +143,7 @@ func (e *collectConflictsStepExecutor) OnFinished(_ context.Context, subtask *pr
 	e.logger.Info("collected conflict row info", zap.Int64("count", e.conflictedRowCount),
 		zap.Stringer("checksum", e.conflictRowsChecksum),
 		zap.Strings("targetFiles", e.conflictRowFilenames),
-		zap.Int64("fileSize", e.conflictedRowSize),
+		zap.String("fileSize", units.BytesSize(float64(e.conflictedRowSize))),
 		zap.Bool("tooManyConflictsFromIndex", e.tooManyConflictsFromIndex),
 	)
 	subtaskMeta.Checksum = newFromKVChecksum(e.conflictRowsChecksum)
