@@ -139,10 +139,16 @@ func (s *GCSStorage) DeleteFile(ctx context.Context, name string) error {
 }
 
 // DeleteFiles delete the files in storage.
+// If the file does not exist, we will ignore it.
 func (s *GCSStorage) DeleteFiles(ctx context.Context, names []string) error {
 	for _, name := range names {
 		err := s.DeleteFile(ctx, name)
 		if err != nil {
+			// some real-TiKV test also delete objects, so we ignore the error if
+			// the object does not exist
+			if goerrors.Is(err, storage.ErrObjectNotExist) {
+				continue
+			}
 			return err
 		}
 	}

@@ -20,6 +20,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -38,8 +39,7 @@ var (
 
 // MergeOverlappingFiles reads from given files whose key range may overlap
 // and writes to new sorted, nonoverlapping files.
-func MergeOverlappingFiles(
-	ctx context.Context,
+func MergeOverlappingFiles(ctx context.Context,
 	paths []string,
 	store storage.ExternalStorage,
 	partSize int64,
@@ -48,6 +48,7 @@ func MergeOverlappingFiles(
 	onClose OnCloseFunc,
 	concurrency int,
 	checkHotspot bool,
+	onDup common.OnDuplicateKey,
 ) error {
 	dataFilesSlice := splitDataFiles(paths, concurrency)
 	// during encode&sort step, the writer-limit is aligned to block size, so we
@@ -76,6 +77,7 @@ func MergeOverlappingFiles(
 				blockSize,
 				onClose,
 				checkHotspot,
+				onDup,
 			)
 		})
 	}
@@ -116,7 +118,7 @@ func splitDataFiles(paths []string, concurrency int) [][]string {
 // memory usage of this function is:
 //
 //	defaultOneWriterMemSizeLimit
-//	+ MaxMergingFilesPerThread * (X + defaultReadBufferSize)
+//	+ MaxMergingFilesPerThread * (X + DefaultReadBufferSize)
 //	+ maxUploadWorkersPerThread * (data-part-size + 5MiB(stat-part-size))
 //	+ memory taken by concurrent reading if check-hotspot is enabled
 //
@@ -140,6 +142,7 @@ func mergeOverlappingFilesInternal(
 	blockSize int,
 	onClose OnCloseFunc,
 	checkHotspot bool,
+	onDup common.OnDuplicateKey,
 ) (err error) {
 	task := log.BeginTask(logutil.Logger(ctx).With(
 		zap.String("writer-id", writerID),
@@ -150,7 +153,7 @@ func mergeOverlappingFilesInternal(
 	}()
 
 	zeroOffsets := make([]uint64, len(paths))
-	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, defaultReadBufferSize, checkHotspot, 0)
+	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, DefaultReadBufferSize, checkHotspot, 0)
 	if err != nil {
 		return err
 	}
@@ -165,6 +168,7 @@ func mergeOverlappingFilesInternal(
 		SetMemorySizeLimit(defaultOneWriterMemSizeLimit).
 		SetBlockSize(blockSize).
 		SetOnCloseFunc(onClose).
+		SetOnDup(onDup).
 		BuildOneFile(store, newFilePrefix, writerID)
 	err = writer.Init(ctx, partSize)
 	if err != nil {

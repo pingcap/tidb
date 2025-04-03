@@ -72,15 +72,15 @@ func TestOnefileWriterBasic(t *testing.T) {
 	require.NoError(t, writer.Close(ctx))
 
 	bufSize := rand.Intn(100) + 1
-	kvReader, err := newKVReader(ctx, "/test/0/one-file", memStore, 0, bufSize)
+	kvReader, err := NewKVReader(ctx, "/test/0/one-file", memStore, 0, bufSize)
 	require.NoError(t, err)
 	for i := 0; i < kvCnt; i++ {
-		key, value, err := kvReader.nextKV()
+		key, value, err := kvReader.NextKV()
 		require.NoError(t, err)
 		require.Equal(t, kvs[i].Key, key)
 		require.Equal(t, kvs[i].Val, value)
 	}
-	_, _, err = kvReader.nextKV()
+	_, _, err = kvReader.NextKV()
 	require.Equal(t, io.EOF, err)
 	require.NoError(t, kvReader.Close())
 
@@ -135,15 +135,15 @@ func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance ui
 	require.NoError(t, writer.Close(ctx))
 
 	bufSize := rand.Intn(100) + 1
-	kvReader, err := newKVReader(ctx, "/"+prefix+"/0/one-file", memStore, 0, bufSize)
+	kvReader, err := NewKVReader(ctx, "/"+prefix+"/0/one-file", memStore, 0, bufSize)
 	require.NoError(t, err)
 	for i := 0; i < kvCnt; i++ {
-		key, value, err := kvReader.nextKV()
+		key, value, err := kvReader.NextKV()
 		require.NoError(t, err)
 		require.Equal(t, kvs[i].Key, key)
 		require.Equal(t, kvs[i].Val, value)
 	}
-	_, _, err = kvReader.nextKV()
+	_, _, err = kvReader.NextKV()
 	require.Equal(t, io.EOF, err)
 	require.NoError(t, kvReader.Close())
 
@@ -194,13 +194,13 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		require.NoError(t, writer.WriteRow(ctx, key, val, dbkv.IntHandle(i)))
 	}
 	require.NoError(t, writer.Close(ctx))
-	readBufSizeBak := defaultReadBufferSize
+	readBufSizeBak := DefaultReadBufferSize
 	memLimitBak := defaultOneWriterMemSizeLimit
 	t.Cleanup(func() {
-		defaultReadBufferSize = readBufSizeBak
+		DefaultReadBufferSize = readBufSizeBak
 		defaultOneWriterMemSizeLimit = memLimitBak
 	})
-	defaultReadBufferSize = 100
+	DefaultReadBufferSize = 100
 	defaultOneWriterMemSizeLimit = 1000
 	require.NoError(t, mergeOverlappingFilesInternal(
 		ctx,
@@ -212,24 +212,23 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		1000,
 		nil,
 		true,
+		common.OnDuplicateKeyIgnore,
 	))
 
-	keys := make([][]byte, 0, kvCount)
-	values := make([][]byte, 0, kvCount)
+	kvs := make([]kvPair, 0, kvCount)
 
-	kvReader, err := newKVReader(ctx, "/test2/mergeID/one-file", memStore, 0, 100)
+	kvReader, err := NewKVReader(ctx, "/test2/mergeID/one-file", memStore, 0, 100)
 	require.NoError(t, err)
 	for i := 0; i < kvCount; i++ {
-		key, value, err := kvReader.nextKV()
+		key, value, err := kvReader.NextKV()
 		require.NoError(t, err)
 		clonedKey := make([]byte, len(key))
 		copy(clonedKey, key)
 		clonedVal := make([]byte, len(value))
 		copy(clonedVal, value)
-		keys = append(keys, clonedKey)
-		values = append(values, clonedVal)
+		kvs = append(kvs, kvPair{key: clonedKey, value: clonedVal})
 	}
-	_, _, err = kvReader.nextKV()
+	_, _, err = kvReader.NextKV()
 	require.Equal(t, io.EOF, err)
 	require.NoError(t, kvReader.Close())
 
@@ -242,8 +241,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		duplicateDetection: true,
 		duplicateDB:        db,
 		dupDetectOpt:       common.DupDetectOpt{ReportErrOnDup: true},
-		keys:               keys,
-		values:             values,
+		kvs:                kvs,
 		ts:                 123,
 	}
 	pool := membuf.NewPool()
@@ -301,13 +299,13 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	onClose := func(summary *WriterSummary) {
 		resSummary = summary
 	}
-	readBufSizeBak := defaultReadBufferSize
+	readBufSizeBak := DefaultReadBufferSize
 	memLimitBak := defaultOneWriterMemSizeLimit
 	t.Cleanup(func() {
-		defaultReadBufferSize = readBufSizeBak
+		DefaultReadBufferSize = readBufSizeBak
 		defaultOneWriterMemSizeLimit = memLimitBak
 	})
-	defaultReadBufferSize = 100
+	DefaultReadBufferSize = 100
 	defaultOneWriterMemSizeLimit = 1000
 	require.NoError(t, mergeOverlappingFilesInternal(
 		ctx,
@@ -319,18 +317,19 @@ func TestOnefileWriterManyRows(t *testing.T) {
 		1000,
 		onClose,
 		true,
+		common.OnDuplicateKeyIgnore,
 	))
 
 	bufSize := rand.Intn(100) + 1
-	kvReader, err := newKVReader(ctx, "/test2/mergeID/one-file", memStore, 0, bufSize)
+	kvReader, err := NewKVReader(ctx, "/test2/mergeID/one-file", memStore, 0, bufSize)
 	require.NoError(t, err)
 	for i := 0; i < kvCnt; i++ {
-		key, value, err := kvReader.nextKV()
+		key, value, err := kvReader.NextKV()
 		require.NoError(t, err)
 		require.Equal(t, kvs[i].Key, key)
 		require.Equal(t, kvs[i].Val, value)
 	}
-	_, _, err = kvReader.nextKV()
+	_, _, err = kvReader.NextKV()
 	require.Equal(t, io.EOF, err)
 	require.NoError(t, kvReader.Close())
 

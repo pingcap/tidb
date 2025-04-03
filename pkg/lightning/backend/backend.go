@@ -126,6 +126,8 @@ type ExternalEngineConfig struct {
 	CheckHotspot bool
 	// MemCapacity is the memory capacity for the whole subtask.
 	MemCapacity int64
+	OnDup       common.OnDuplicateKey
+	FilePrefix  string
 }
 
 // CheckCtx contains all parameters used in CheckRequirements
