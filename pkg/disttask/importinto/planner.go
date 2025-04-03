@@ -345,8 +345,8 @@ func skipMergeSort(kvGroup string, stats []external.MultipleFilesStat) bool {
 }
 
 func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {
-	step := external.MergeSortFileCountStep
 	result := make([]planner.PipelineSpec, 0, 16)
+	nodeCnt := planCtx.ExecuteNodesCnt
 
 	ctx := planCtx.Ctx
 	controller, err := buildControllerForPlan(p)
@@ -369,12 +369,17 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.
 			continue
 		}
 		dataFiles := kvMeta.GetDataFiles()
-		length := len(dataFiles)
-		for start := 0; start < length; start += step {
-			end := start + step
-			if end > length {
-				end = length
+		dataFileLen := len(dataFiles)
+		avgFilesPerNode := (dataFileLen + nodeCnt - 1) / nodeCnt
+		step := min(external.MergeSortFileCountStep, avgFilesPerNode)
+		lastBatch := false
+		for start := 0; start < dataFileLen; start += step {
+			rest := dataFileLen - start
+			if !lastBatch && (start/step)%nodeCnt == 0 && rest < step*nodeCnt {
+				step = (rest + (nodeCnt - 1)) / nodeCnt // ceiling division
+				lastBatch = true
 			}
+			end := min(start+step, dataFileLen)
 			result = append(result, &MergeSortSpec{
 				MergeSortStepMeta: &MergeSortStepMeta{
 					KVGroup:   kvGroup,
