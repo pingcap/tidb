@@ -152,8 +152,10 @@ func (en *tableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 func (en *tableKVEncoder) getRow(vals []types.Datum, rowID int64) ([]types.Datum, error) {
 	row := make([]types.Datum, len(en.Columns))
 	hasValue := make([]bool, len(en.Columns))
+	needCast := make([]bool, len(en.Columns))
 	for i := 0; i < len(en.insertColumns); i++ {
-		casted, err := table.CastColumnValue(en.SessionCtx.GetExprCtx(), vals[i], en.insertColumns[i].ToInfo(), false, false)
+		insertCol := en.insertColumns[i].ToInfo()
+		casted, err := table.CastColumnValue(en.SessionCtx.GetExprCtx(), vals[i], insertCol, false, false)
 		if err != nil {
 			return nil, err
 		}
@@ -161,22 +163,25 @@ func (en *tableKVEncoder) getRow(vals []types.Datum, rowID int64) ([]types.Datum
 		offset := en.insertColumns[i].Offset
 		row[offset] = casted
 		hasValue[offset] = true
+		needCast[offset] = !(en.Columns[offset].ToInfo().FieldType.Equal(&insertCol.FieldType))
 	}
 
-	return en.fillRow(row, hasValue, rowID)
+	return en.fillRow(row, hasValue, needCast, rowID)
 }
 
-func (en *tableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int64) ([]types.Datum, error) {
+func (en *tableKVEncoder) fillRow(row []types.Datum, hasValue, needCast []bool, rowID int64) ([]types.Datum, error) {
 	var value types.Datum
 	var err error
 
 	record := en.GetOrCreateRecord()
 	for i, col := range en.Columns {
 		var theDatum *types.Datum
+		doCast := true
 		if hasValue[i] {
 			theDatum = &row[i]
+			doCast = needCast[i]
 		}
-		value, err = en.ProcessColDatum(col, rowID, theDatum)
+		value, err = en.ProcessColDatum(col, rowID, theDatum, doCast)
 		if err != nil {
 			return nil, en.LogKVConvertFailed(row, i, col.ToInfo(), err)
 		}
