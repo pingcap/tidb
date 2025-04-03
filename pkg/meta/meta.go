@@ -781,7 +781,7 @@ func (m *Mutator) GetSystemDBID() (int64, error) {
 		return 0, err
 	}
 	for _, db := range dbs {
-		if db.Name.L == mysql.SystemDB {
+		if db.Name.L.Value() == mysql.SystemDB {
 			return db.ID, nil
 		}
 	}
@@ -1412,7 +1412,7 @@ func (m *Mutator) ListResourceGroups() ([]*model.ResourceGroupInfo, error) {
 			return nil, errors.Trace(err)
 		}
 		groups = append(groups, group)
-		hasDefault = hasDefault || (group.Name.L == resourcegroup.DefaultResourceGroupName)
+		hasDefault = hasDefault || (group.Name.L.Value() == resourcegroup.DefaultResourceGroupName)
 	}
 	if !hasDefault {
 		groups = append(groups, defaultRGroupMeta)

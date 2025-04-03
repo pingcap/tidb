@@ -532,7 +532,7 @@ func (n *FuncCallExpr) customRestore(ctx *format.RestoreCtx) (bool, error) {
 // Format the ExprNode into a Writer.
 func (n *FuncCallExpr) Format(w io.Writer) {
 	if !n.specialFormatArgs(w) {
-		fmt.Fprintf(w, "%s(", n.FnName.L)
+		fmt.Fprintf(w, "%s(", n.FnName.L.Value())
 		for i, arg := range n.Args {
 			arg.Format(w)
 			if i != len(n.Args)-1 {
@@ -547,7 +547,7 @@ func (n *FuncCallExpr) Format(w io.Writer) {
 func (n *FuncCallExpr) specialFormatArgs(w io.Writer) bool {
 	switch n.FnName.L.Value() {
 	case DateAdd, DateSub, AddDate, SubDate:
-		fmt.Fprintf(w, "%s(", n.FnName.L)
+		fmt.Fprintf(w, "%s(", n.FnName.L.Value())
 		n.Args[0].Format(w)
 		fmt.Fprint(w, ", INTERVAL ")
 		n.Args[1].Format(w)
@@ -563,7 +563,7 @@ func (n *FuncCallExpr) specialFormatArgs(w io.Writer) bool {
 		fmt.Fprint(w, ")")
 		return true
 	case Extract:
-		fmt.Fprintf(w, "%s(", n.FnName.L)
+		fmt.Fprintf(w, "%s(", n.FnName.L.Value())
 		n.Args[0].Format(w)
 		fmt.Fprint(w, " FROM ")
 		n.Args[1].Format(w)

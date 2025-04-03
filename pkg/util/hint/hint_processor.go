@@ -127,7 +127,7 @@ func checkInsertStmtHintDuplicated(node ast.Node, warnHandler hintWarnHandler) {
 		if len(x.TableHints) > 0 {
 			var supportedHint *ast.TableOptimizerHint
 			for _, hint := range x.TableHints {
-				if _, ok := supportedHintNameForInsertStmt[hint.HintName.L]; ok {
+				if _, ok := supportedHintNameForInsertStmt[hint.HintName.L.Value()]; ok {
 					supportedHint = hint
 					break
 				}
@@ -296,7 +296,7 @@ func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*Hints
 			curOffset = curOffset - 1
 		}
 		for _, tblHint := range tblHints {
-			if tblHint.HintName.L == hintQBName {
+			if tblHint.HintName.L.Value() == hintQBName {
 				if len(tblHint.Tables) > 0 {
 					newHints = append(newHints, tblHint)
 				}

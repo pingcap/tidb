@@ -535,7 +535,7 @@ var columnFactoryMap = map[string]columnFactory{
 func makeColumnFactories(columns []*model.ColumnInfo) []columnFactory {
 	columnFactories := make([]columnFactory, len(columns))
 	for i, col := range columns {
-		factory, ok := columnFactoryMap[col.Name.O]
+		factory, ok := columnFactoryMap[col.Name.O.Value()]
 		if !ok {
 			panic(fmt.Sprintf("should never happen, should register new column %v into columnValueFactoryMap", col.Name.O))
 		}
