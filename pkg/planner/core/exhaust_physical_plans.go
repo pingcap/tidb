@@ -2212,6 +2212,9 @@ func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.Physic
 			failpoint.Return(indexJoins, true, nil)
 		}
 	})
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 
 	if !isJoinHintSupportedInMPPMode(p.PreferJoinType) {
 		if hasMPPJoinHints(p.PreferJoinType) {
