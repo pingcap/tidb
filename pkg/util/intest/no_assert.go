@@ -17,20 +17,32 @@
 package intest
 
 // EnableAssert checks if the code is running in integration test.
-const EnableAssert = false
+var EnableAssert = false
 
-// Assert is a stub function in release build.
-// See the same function in `util/intest/assert.go` for the real implement in test.
-func Assert(_ bool, _ ...any) {}
+// Assert asserts a condition is true
+func Assert(cond bool, msgAndArgs ...any) {
+	if EnableInternalCheck {
+		doAssert(cond, msgAndArgs...)
+	}
+}
 
-// AssertNotNil is a stub function in release build.
-// See the same function in `util/intest/assert.go` for the real implement in test.
-func AssertNotNil(_ any, _ ...any) {}
+// AssertNoError asserts an error is nil
+func AssertNoError(err error, msgAndArgs ...any) {
+	if EnableInternalCheck {
+		doAssertNoError(err, msgAndArgs...)
+	}
+}
 
-// AssertNoError is a stub function in release build.
-// See the same function in `util/intest/assert.go` for the real implement in test.
-func AssertNoError(_ error, _ ...any) {}
+// AssertNotNil asserts an object is not nil
+func AssertNotNil(obj any, msgAndArgs ...any) {
+	if EnableInternalCheck {
+		doAssertNotNil(obj, msgAndArgs...)
+	}
+}
 
-// AssertFunc is a stub function in release build.
-// See the same function `util/intest/assert.go` for the real implement in test.
-func AssertFunc(_ func() bool, _ ...any) {}
+// AssertFunc asserts a function condition
+func AssertFunc(fn func() bool, msgAndArgs ...any) {
+	if EnableInternalCheck {
+		doAssertFunc(fn, msgAndArgs...)
+	}
+}

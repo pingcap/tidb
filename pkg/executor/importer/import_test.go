@@ -189,11 +189,17 @@ func TestAdjustOptions(t *testing.T) {
 	plan.adjustOptions(16)
 	require.Equal(t, 16, plan.ThreadCnt)
 	require.Equal(t, config.ByteSize(10), plan.MaxWriteSpeed) // not adjusted
+	require.False(t, plan.DisableTiKVImportMode)
 
 	plan.ThreadCnt = 100000000
 	plan.DataSourceType = DataSourceTypeQuery
 	plan.adjustOptions(16)
 	require.Equal(t, 32, plan.ThreadCnt)
+	require.False(t, plan.DisableTiKVImportMode)
+
+	plan.CloudStorageURI = "s3://bucket/path"
+	plan.adjustOptions(16)
+	require.True(t, plan.DisableTiKVImportMode)
 }
 
 func TestAdjustDiskQuota(t *testing.T) {
@@ -311,19 +317,6 @@ func TestGetLocalBackendCfg(t *testing.T) {
 	cfg = c.getLocalBackendCfg("http://1.1.1.1:1234", "/tmp")
 	require.Greater(t, cfg.RaftKV2SwitchModeDuration, time.Duration(0))
 	require.Equal(t, config.DefaultSwitchTiKVModeInterval, cfg.RaftKV2SwitchModeDuration)
-}
-
-func TestGetBackendWorkerConcurrency(t *testing.T) {
-	c := &LoadDataController{
-		Plan: &Plan{
-			ThreadCnt: 3,
-		},
-	}
-	require.Equal(t, 6, c.getBackendWorkerConcurrency())
-	c.Plan.CloudStorageURI = "xxx"
-	require.Equal(t, 6, c.getBackendWorkerConcurrency())
-	c.Plan.ThreadCnt = 123
-	require.Equal(t, 246, c.getBackendWorkerConcurrency())
 }
 
 func TestSupportedSuffixForServerDisk(t *testing.T) {

@@ -83,20 +83,30 @@ const (
 	// 0 means no limit
 	unlimitedWriteSpeed = config.ByteSize(0)
 
-	characterSetOption          = "character_set"
-	fieldsTerminatedByOption    = "fields_terminated_by"
-	fieldsEnclosedByOption      = "fields_enclosed_by"
-	fieldsEscapedByOption       = "fields_escaped_by"
-	fieldsDefinedNullByOption   = "fields_defined_null_by"
-	linesTerminatedByOption     = "lines_terminated_by"
-	skipRowsOption              = "skip_rows"
-	splitFileOption             = "split_file"
-	diskQuotaOption             = "disk_quota"
-	threadOption                = "thread"
-	maxWriteSpeedOption         = "max_write_speed"
-	checksumTableOption         = "checksum_table"
-	recordErrorsOption          = "record_errors"
-	detachedOption              = "detached"
+	characterSetOption        = "character_set"
+	fieldsTerminatedByOption  = "fields_terminated_by"
+	fieldsEnclosedByOption    = "fields_enclosed_by"
+	fieldsEscapedByOption     = "fields_escaped_by"
+	fieldsDefinedNullByOption = "fields_defined_null_by"
+	linesTerminatedByOption   = "lines_terminated_by"
+	skipRowsOption            = "skip_rows"
+	splitFileOption           = "split_file"
+	diskQuotaOption           = "disk_quota"
+	threadOption              = "thread"
+	maxWriteSpeedOption       = "max_write_speed"
+	checksumTableOption       = "checksum_table"
+	recordErrorsOption        = "record_errors"
+	detachedOption            = "detached"
+	// if 'import mode' enabled, TiKV will:
+	//  - set level0_stop_writes_trigger = max(old, 1 << 30)
+	//  - set level0_slowdown_writes_trigger = max(old, 1 << 30)
+	//  - set soft_pending_compaction_bytes_limit = 0,
+	//  - set hard_pending_compaction_bytes_limit = 0,
+	//  - will not trigger flow control when SST count in L0 is large
+	//  - will not trigger region split, it might cause some region became
+	//    very large and be a hotspot, might cause latency spike.
+	//
+	// default false for local sort, true for global sort.
 	disableTiKVImportModeOption = "disable_tikv_import_mode"
 	cloudStorageURIOption       = "cloud_storage_uri"
 	disablePrecheckOption       = "disable_precheck"
@@ -792,6 +802,9 @@ func (p *Plan) adjustOptions(targetNodeCPUCnt int) {
 			zap.Int("before", p.ThreadCnt), zap.Int("after", limit))
 		p.ThreadCnt = limit
 	}
+	if p.IsGlobalSort() {
+		p.DisableTiKVImportMode = true
+	}
 }
 
 func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
@@ -1355,20 +1368,13 @@ func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildCont
 	return res, allWarnings, nil
 }
 
-func (e *LoadDataController) getBackendWorkerConcurrency() int {
-	// suppose cpu:mem ratio 1:2(true in most case), and we assign 1G per concurrency,
-	// so we can use 2 * threadCnt as concurrency. write&ingest step is mostly
-	// IO intensive, so CPU usage is below ThreadCnt in our tests.
-	return e.ThreadCnt * 2
-}
-
 func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.BackendConfig {
 	backendConfig := local.BackendConfig{
 		PDAddr:                 pdAddr,
 		LocalStoreDir:          dataDir,
 		MaxConnPerStore:        config.DefaultRangeConcurrency,
 		ConnCompressType:       config.CompressionNone,
-		WorkerConcurrency:      e.getBackendWorkerConcurrency(),
+		WorkerConcurrency:      e.ThreadCnt,
 		KVWriteBatchSize:       config.KVWriteBatchSize,
 		RegionSplitBatchSize:   config.DefaultRegionSplitBatchSize,
 		RegionSplitConcurrency: runtime.GOMAXPROCS(0),
