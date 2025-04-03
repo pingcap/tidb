@@ -41,9 +41,10 @@ import (
 
 const (
 	// (1+2+4+8)*0.1s + (10-4)*1s = 7.5s
-	storeOpMinBackoff  = 100 * time.Millisecond
-	storeOpMaxBackoff  = time.Second
-	storeOpMaxRetryCnt = 10
+	storeOpMinBackoff       = 100 * time.Millisecond
+	storeOpMaxBackoff       = time.Second
+	storeOpMaxRetryCnt      = 10
+	snapshotRefreshInterval = 30 * time.Second
 )
 
 type conflictKVHandler interface {
@@ -159,8 +160,9 @@ func (h *conflictDataKVHandler) handle(ctx context.Context, key, val []byte) err
 
 type conflictIndexKVHandler struct {
 	*baseConflictKVHandler
-	targetIdx *model.IndexInfo
-	snapshot  tidbkv.Snapshot
+	targetIdx       *model.IndexInfo
+	lastRefreshTime time.Time
+	snapshot        tidbkv.Snapshot
 
 	isRowHandledFn func(handle tidbkv.Handle) bool
 }
@@ -178,24 +180,34 @@ func (h *conflictIndexKVHandler) init() error {
 		return errors.Errorf("index %d in table %s", indexID, tblMeta.Name)
 	}
 
-	// it's not necessary to update this version even though we will delete KVs
-	// during conflict KV handing, as this handler is used to handle conflicts of
-	// the same KV group, the data KVs corresponding to any 2 conflict KVs are
-	// either conflicts with each other too and recorded in the conflict KV file,
-	// or they are not conflicted and are either recorded or ingested, so for a
-	// single data KV found in this handler cannot be deleted twice.
+	if err = h.baseConflictKVHandler.init(); err != nil {
+		return err
+	}
+	if err = h.refreshSnapshotAsNeeded(); err != nil {
+		return errors.Trace(err)
+	}
+
+	h.targetIdx = targetIdx
+	return nil
+}
+
+func (h *conflictIndexKVHandler) refreshSnapshotAsNeeded() error {
+	if h.snapshot != nil && time.Since(h.lastRefreshTime) < snapshotRefreshInterval {
+		return nil
+	}
+	// we refresh it to avoid fall behind GC safe point.
+	// it's not necessary to update this version too frequently, even though we
+	// will delete KVs during conflict KV handing, as this handler is used to handle
+	// conflicts of the same KV group, the data KVs corresponding to any 2 conflict
+	// KVs are either conflicts with each other too and recorded in the conflict
+	// KV file, or they are not conflicted and are either recorded or ingested,
+	// so for a single data KV found in this handler cannot be deleted twice.
 	ver, err := h.store.CurrentVersion(tidbkv.GlobalTxnScope)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	snapshot := h.store.GetSnapshot(ver)
-
-	if err = h.baseConflictKVHandler.init(); err != nil {
-		return err
-	}
-
-	h.targetIdx = targetIdx
-	h.snapshot = snapshot
+	h.snapshot = h.store.GetSnapshot(ver)
+	h.lastRefreshTime = time.Now()
 	return nil
 }
 
@@ -210,6 +222,10 @@ func (h *conflictIndexKVHandler) handle(ctx context.Context, key, val []byte) er
 		return err
 	}
 	rowKey := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
+
+	if err = h.refreshSnapshotAsNeeded(); err != nil {
+		return errors.Trace(err)
+	}
 	val, err = h.snapshot.Get(ctx, rowKey)
 	// either the data KV is deleted by handing conflicts in other KV group or the
 	// data KV itself is conflicted and not ingested.
