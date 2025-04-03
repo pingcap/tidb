@@ -116,6 +116,7 @@ func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collatio
 			bindingLogger().Error("get plan execution info failed", zap.String("plan_digest", binding.PlanDigest), zap.Error(err))
 			continue
 		}
+		binding.Source = "history plan"
 		autoBinding := &BindingPlanInfo{Binding: binding}
 		if pInfo != nil && pInfo.ExecCount > 0 { // pInfo could be nil when stmt_stats' data is incomplete.
 			autoBinding.Plan = pInfo.Plan

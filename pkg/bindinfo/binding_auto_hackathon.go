@@ -20,7 +20,7 @@ func generateBindingPlans(sPool util.DestroyableSessionPool, currentDB, sql stri
 			OriginalSQL: sql, // TODO: normalize
 			BindSQL:     bindingSQL,
 			Db:          currentDB,
-			Source:      "generated",
+			Source:      "generated vis cost factors",
 		}
 		if err = prepareHints(sctx, binding); err != nil {
 			return err
