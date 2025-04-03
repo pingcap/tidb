@@ -1659,6 +1659,8 @@ type PhysicalIndexJoin struct {
 	// InnerHashKeys indicates the inner keys used to build hash table during
 	// execution. InnerJoinKeys is the prefix of InnerHashKeys.
 	InnerHashKeys []*expression.Column
+	// EqualConditions stores the equal conditions for logical join's original EqualConditions.
+	EqualConditions []*expression.ScalarFunction
 }
 
 // Clone implements op.PhysicalPlan interface.
