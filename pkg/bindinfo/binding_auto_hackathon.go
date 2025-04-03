@@ -15,6 +15,7 @@ func generateBindingPlans(sPool util.DestroyableSessionPool, currentDB, sql stri
 
 		// reset cost factors
 		sctx.GetSessionVars().CurrentDB = currentDB
+		sctx.GetSessionVars().UsePlanBaselines = false
 		sctx.GetSessionVars().CostModelVersion = 2
 		sctx.GetSessionVars().IndexScanCostFactor = 1
 		sctx.GetSessionVars().TableFullScanCostFactor = 1
@@ -132,31 +133,31 @@ func explainPlan(sctx sessionctx.Context, sql string) (plan, hint string, err er
 
 func collectRelatedCostFactors(sctx sessionctx.Context, plan string) []*float64 {
 	factors := make([]*float64, 0, 4)
-	//if strings.Contains(plan, "IndexFullScan") || strings.Contains(plan, "IndexRangeScan") {
-	//	factors = append(factors, &sctx.GetSessionVars().IndexScanCostFactor)
-	//}
-	//if strings.Contains(plan, "IndexLookUp") {
-	//	factors = append(factors, &sctx.GetSessionVars().IndexLookupCostFactor)
-	//}
-	//if strings.Contains(plan, "TableFullScan") {
-	//	factors = append(factors, &sctx.GetSessionVars().TableFullScanCostFactor)
-	//}
-	//if strings.Contains(plan, "TableRangeScan") {
-	//	factors = append(factors, &sctx.GetSessionVars().TableRangeScanCostFactor)
-	//}
-	//if strings.Contains(plan, "HashJoin") {
-	//	factors = append(factors, &sctx.GetSessionVars().HashJoinCostFactor)
-	//}
-	//if strings.Contains(plan, "MergeJoin") {
-	//	factors = append(factors, &sctx.GetSessionVars().MergeJoinCostFactor)
-	//}
-	//if strings.Contains(plan, "IndexJoin") {
-	//	factors = append(factors, &sctx.GetSessionVars().IndexJoinCostFactor)
-	//}
-	//if strings.Contains(plan, "Sort") {
-	//	factors = append(factors, &sctx.GetSessionVars().SortCostFactor,
-	//		&sctx.GetSessionVars().TopNCostFactor)
-	//}
+	if strings.Contains(plan, "IndexFullScan") || strings.Contains(plan, "IndexRangeScan") {
+		factors = append(factors, &sctx.GetSessionVars().IndexScanCostFactor)
+	}
+	if strings.Contains(plan, "IndexLookUp") {
+		factors = append(factors, &sctx.GetSessionVars().IndexLookupCostFactor)
+	}
+	if strings.Contains(plan, "TableFullScan") {
+		factors = append(factors, &sctx.GetSessionVars().TableFullScanCostFactor)
+	}
+	if strings.Contains(plan, "TableRangeScan") {
+		factors = append(factors, &sctx.GetSessionVars().TableRangeScanCostFactor)
+	}
+	if strings.Contains(plan, "HashJoin") {
+		factors = append(factors, &sctx.GetSessionVars().HashJoinCostFactor)
+	}
+	if strings.Contains(plan, "MergeJoin") {
+		factors = append(factors, &sctx.GetSessionVars().MergeJoinCostFactor)
+	}
+	if strings.Contains(plan, "IndexJoin") {
+		factors = append(factors, &sctx.GetSessionVars().IndexJoinCostFactor)
+	}
+	if strings.Contains(plan, "Sort") {
+		factors = append(factors, &sctx.GetSessionVars().SortCostFactor,
+			&sctx.GetSessionVars().TopNCostFactor)
+	}
 	if strings.Contains(plan, "HashAgg") {
 		factors = append(factors, &sctx.GetSessionVars().HashAggCostFactor)
 	}
