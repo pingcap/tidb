@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -33,7 +34,6 @@ func (cli *mockPDCli) GetRegionDistributionByKeyRange(ctx context.Context, keyRa
 }
 
 func TestShowTableDistributions(t *testing.T) {
-	re := require.New(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -45,11 +45,12 @@ func TestShowTableDistributions(t *testing.T) {
 		is := tk.Session().GetDomainInfoSchema()
 		tbl, err := is.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr(tblName))
 		require.NoError(t, err)
-		tblID := tbl.ID
+		pid := tbl.ID
 		if partition != "" {
-			tblID = tbl.GetPartitionInfo().GetPartitionIDByName(partition)
+			pid = tbl.GetPartitionInfo().GetPartitionIDByName(partition)
 		}
-		startKey, endKey := tablecodec.GetTableHandleKeyRange(tblID)
+		startKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid))
+		endKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid+1))
 		keyRange := pdhttp.NewKeyRange(startKey, endKey)
 		return cli.On("GetRegionDistributionByKeyRange", mock.Anything, keyRange, "").
 			Return(distributions, nil)
@@ -72,9 +73,7 @@ func TestShowTableDistributions(t *testing.T) {
 	})
 	tk.MustExec("create table t1(a int)")
 	mockGetDistributions("t1", "", distributions)
-	ret := tk.MustQuery("show table t1 distributions").Rows()
-	re.Len(ret, 1)
-	re.Len(ret[0], 13)
+	tk.MustQuery("show table t1 distributions").Check(testkit.Rows("1 tikv 1 3 100 10 1 1000 100 10 1000 10000 100"))
 
 	// test for partition table distributions
 	tk.MustExec("create table tp1 (id int) PARTITION BY RANGE (id) (" +

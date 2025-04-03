@@ -78,7 +78,7 @@ func GetRegionDistributionByKeyRange(ctx context.Context, startKey []byte, endKe
 		return nil, err
 	}
 	if is.pdHTTPCli == nil {
-		return nil, errs.ErrClientGetClusterInfo.FastGenByArgs("pd client not found")
+		return nil, errs.ErrClientGetLeader.FastGenByArgs("pd client not found")
 	}
 	distributions, err := is.pdHTTPCli.GetRegionDistributionByKeyRange(ctx, pd.NewKeyRange(startKey, endKey), engine)
 	if err != nil {

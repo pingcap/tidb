@@ -68,6 +68,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -2141,7 +2142,8 @@ func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 	distributions := make([]*pdHttp.RegionDistribution, 0)
 	var resp *pdHttp.RegionDistributions
 	for _, pid := range physicalIDs {
-		startKey, endKey := tablecodec.GetTableHandleKeyRange(pid)
+		startKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid))
+		endKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid+1))
 		// todo： support engine type
 		resp, err = infosync.GetRegionDistributionByKeyRange(ctx, startKey, endKey, "")
 		if err != nil {
