@@ -2419,6 +2419,7 @@ create table t (id int primary key, col1 int no_null_index, col2 int, col3 int);
 alter table t add index idx2(col1, col2);
 alter table t add index idx3(col1, col3);
 insert into t values (2, null, 1, 1);
+-- sorted_result
 select * FROM t WHERE col1 is null and col2 < 100 and col3 < 100;
 -- error 1815
 select /*+ USE_INDEX_MERGE(t, idx2, idx3) */ * FROM t WHERE col1 is null and col2 < 100 and col3 < 100;
@@ -2431,6 +2432,7 @@ alter table t add index idx1(col1);
 alter table t add index idx2(col2);
 insert into t values (1, 1, NULL);
 insert into t values (2, NULL, 1);
+-- sorted_result
 select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * FROM t WHERE col1 > 5 or col2 > 5;
 explain format='brief' select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * FROM t WHERE col1 > 5 or col2 > 5;
 
@@ -2439,5 +2441,24 @@ create table t (id int primary key, col1 int no_null_index, col2 json, col3 json
 alter table t add index idx2(col1, (CAST(col2->'$.path' AS SIGNED ARRAY)) );
 alter table t add index idx3(col1, (CAST(col3->'$.path' AS SIGNED ARRAY)) );
 insert into t values (2, null, '{"path":[1]}', '{"path":[1]}');
+-- sorted_result
 select /*+ USE_INDEX_MERGE(t, idx2, idx3) */ * FROM t WHERE col1 is null and json_contains(col2->'$.path', '1') and json_contains(col3->'$.path', '1');
 explain format='brief' select /*+ USE_INDEX_MERGE(t, idx2, idx3) */ * FROM t WHERE col1 is null and json_contains(col2->'$.path', '1') and json_contains(col3->'$.path', '1');
+
+drop table if exists t;
+create table t (a int, b int, c int no_null_index, key a(a), key b(b), key ac(a, c), key bc(b, c));
+insert into t values (NULL, 1, 1);
+insert into t values (1, NULL, 1);
+insert into t values (1, 1, NULL);
+-- sorted_result
+select * from t where a is null or b is null order by c;
+explain format='verbose' select * from t where a is null or b is null order by c;
+
+drop table if exists t;
+create table t (a int no_null_index, b int, c int, key a(a), key b(b), key ac(a, c), key bc(b, c));
+insert into t values (NULL, 1, 1);
+insert into t values (1, NULL, 1);
+insert into t values (1, 1, NULL);
+-- sorted_result
+select * from t where a is null or b is null order by c;
+explain format='verbose' select * from t where a is null or b is null order by c;
