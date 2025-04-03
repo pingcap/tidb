@@ -16,6 +16,7 @@ package bindinfo
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -186,73 +187,64 @@ type planExecInfo struct {
 // 2. If `ScanRowsPerReturnedRow` of a plan is 50% better than others', recommend it.
 // 3. If `Latency`, `ScanRows` and `LatencyPerReturnRow` of a plan are 50% better than others', recommend it.
 // LLM: TODO
-func FillRecommendation(bindingPlans []*BindingPlanInfo) {
-	for _, p := range bindingPlans {
+func FillRecommendation(bindings []*BindingPlanInfo) {
+	if len(bindings) < 2 {
+		// if there is only 1 binding, don't need to recommend.
+		return
+	}
+
+	for _, p := range bindings {
 		if p.ExecTimes == 0 {
 			// if we can't get plan info for any binding, we can't give any recommendation.
-			FillRecommendationViaLLM(bindingPlans)
+			FillRecommendationViaLLM(bindings)
 			return
 		}
 	}
 
 	// rule-based recommendation
-	hitRule := false
 	// rule 1
-	for _, cur := range bindingPlans {
+	for _, cur := range bindings {
 		if IsSimplePointPlan(cur.Plan) {
-			hitRule = true
 			cur.Recommend = "YES (rule-based)"
 			cur.Reason = "Simple PointGet or BatchPointGet is the best plan"
+			return
 		}
 	}
+
+	// sort for rule 2 & 3.
+	// only the first binding could be the candidate for rule 2 & 3.
+	sort.Slice(bindings, func(i, j int) bool {
+		if bindings[i].ScanRowsPerReturnRow == bindings[j].ScanRowsPerReturnRow {
+			return bindings[i].AvgLatency < bindings[j].AvgLatency &&
+				bindings[i].AvgScanRows < bindings[j].AvgScanRows &&
+				bindings[i].LatencyPerReturnRow < bindings[j].LatencyPerReturnRow
+		}
+		return bindings[i].ScanRowsPerReturnRow < bindings[j].ScanRowsPerReturnRow
+	})
 
 	// rule 2
-	if !hitRule {
-		for i, cur := range bindingPlans {
-			hitRule2 := true
-			for j, other := range bindingPlans {
-				if i == j || cur.ScanRowsPerReturnRow < other.ScanRowsPerReturnRow/2 {
-					continue // cur's ScanRowsPerReturnRow is 50% better than other's
-				}
-				hitRule2 = false
-				break
-			}
-			if hitRule2 {
-				hitRule = true
-				cur.Recommend = "YES (rule-based)"
-				cur.Reason = "Plan's scan_rows_per_returned_row is 50% better than others'"
-				break
-			}
+	if bindings[0].ScanRowsPerReturnRow < bindings[1].ScanRowsPerReturnRow/2 {
+		bindings[0].Recommend = "YES (rule-based)"
+		bindings[0].Reason = "Plan's scan_rows_per_returned_row is 50% better than others'"
+		return
+	}
+
+	// rule 3
+	for i := 1; i < len(bindings); i++ {
+		hitRule3 := bindings[0].AvgLatency <= bindings[i].AvgLatency/2 &&
+			bindings[0].AvgScanRows <= bindings[i].AvgScanRows/2 &&
+			bindings[0].LatencyPerReturnRow <= bindings[i].LatencyPerReturnRow/2
+		if !hitRule3 {
+			break
+		}
+		if i == len(bindings)-1 { // the last one
+			bindings[0].Recommend = "YES (rule-based)"
+			bindings[0].Reason = "Plan's latency, scan_rows and latency_per_returned_row are 50% better than others'"
+			return
 		}
 	}
 
-	// rule 3:
-	if !hitRule {
-		for i, cur := range bindingPlans {
-			hitRule3 := true
-			for j, other := range bindingPlans {
-				if i == j ||
-					(cur.ScanRowsPerReturnRow <= other.AvgReturnedRows &&
-						cur.AvgLatency <= other.AvgLatency/2 &&
-						cur.AvgScanRows <= other.AvgScanRows/2 &&
-						cur.LatencyPerReturnRow <= other.LatencyPerReturnRow/2) {
-					continue
-				}
-				hitRule3 = false
-				break
-			}
-			if hitRule3 {
-				hitRule = true
-				cur.Recommend = "YES (rule-based)"
-				cur.Reason = "Plan's latency, scan_rows and latency_per_returned_row are 50% better than others'"
-				break
-			}
-		}
-	}
-
-	if !hitRule {
-		FillRecommendationViaLLM(bindingPlans)
-	}
+	FillRecommendationViaLLM(bindings)
 }
 
 // FillRecommendationViaLLM fills the recommendation field for each binding plan via LLM.
