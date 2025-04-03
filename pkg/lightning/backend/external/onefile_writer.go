@@ -82,7 +82,8 @@ type OneFileWriter struct {
 	minKey []byte
 	maxKey []byte
 
-	logger *zap.Logger
+	logger   *zap.Logger
+	partSize int64
 }
 
 // initWriter inits the underlying dataFile/statFile path, dataWriter/statWriter for OneFileWriter.
@@ -106,26 +107,31 @@ func (w *OneFileWriter) initWriter(ctx context.Context, partSize int64) (
 		err = w.dataWriter.Close(ctx)
 		return err
 	}
-	if w.onDup == common.OnDuplicateKeyRecord {
-		w.dupFile = filepath.Join(w.filenamePrefix+dupSuffix, "one-file")
-		w.dupWriter, err = w.store.Create(ctx, w.dupFile, &storage.WriterOption{
-			// too many duplicates will cause duplicate resolution part very slow,
-			// we temporarily use 1 as we don't expect too many duplicates, if there
-			// are, it will be slow anyway.
-			// we also need to consider memory usage if we want to increase it later.
-			Concurrency: 1,
-			PartSize:    partSize})
-		if err != nil {
-			w.logger.Info("create dup writer failed", zap.Error(err))
-			_ = w.statWriter.Close(ctx)
-			_ = w.dataWriter.Close(ctx)
-			return err
-		}
-		w.dupKVStore = NewKeyValueStore(ctx, w.dupWriter, nil)
-	}
 	w.logger.Info("one file writer", zap.String("data-file", w.dataFile),
-		zap.String("stat-file", w.statFile), zap.Stringer("on-dup", w.onDup),
-		zap.String("dup-file", w.dupFile))
+		zap.String("stat-file", w.statFile), zap.Stringer("on-dup", w.onDup))
+	return nil
+}
+
+func (w *OneFileWriter) lazyInitDupFile(ctx context.Context) error {
+	if w.dupWriter != nil {
+		return nil
+	}
+
+	dupFile := filepath.Join(w.filenamePrefix+dupSuffix, "one-file")
+	dupWriter, err := w.store.Create(ctx, dupFile, &storage.WriterOption{
+		// too many duplicates will cause duplicate resolution part very slow,
+		// we temporarily use 1 as we don't expect too many duplicates, if there
+		// are, it will be slow anyway.
+		// we also need to consider memory usage if we want to increase it later.
+		Concurrency: 1,
+		PartSize:    w.partSize})
+	if err != nil {
+		w.logger.Info("create dup writer failed", zap.Error(err))
+		return err
+	}
+	w.dupFile = dupFile
+	w.dupWriter = dupWriter
+	w.dupKVStore = NewKeyValueStore(ctx, w.dupWriter, nil)
 	return nil
 }
 
@@ -137,6 +143,7 @@ func (w *OneFileWriter) Init(ctx context.Context, partSize int64) (err error) {
 		return err
 	}
 	w.kvStore = NewKeyValueStore(ctx, w.dataWriter, w.rc)
+	w.partSize = partSize
 	return nil
 }
 
@@ -169,6 +176,9 @@ func (w *OneFileWriter) handleDupAndWrite(ctx context.Context, idxKey, idxVal []
 				}
 			} else {
 				// w.currDupCnt > 2
+				if err := w.lazyInitDupFile(ctx); err != nil {
+					return err
+				}
 				if err := w.dupKVStore.addRawKV(idxKey, idxVal); err != nil {
 					return err
 				}

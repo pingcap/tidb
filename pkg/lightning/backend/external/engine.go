@@ -160,10 +160,11 @@ type Engine struct {
 	onDup           common.OnDuplicateKey
 	filePrefix      string
 	// below fields are only used when onDup is OnDuplicateKeyRecord.
-	recordedDupCnt int
-	dupFile        string
-	dupWriter      storage.ExternalFileWriter
-	dupKVStore     *KeyValueStore
+	recordedDupCnt  int
+	recordedDupSize int64
+	dupFile         string
+	dupWriter       storage.ExternalFileWriter
+	dupKVStore      *KeyValueStore
 }
 
 var _ common.Engine = (*Engine)(nil)
@@ -382,9 +383,13 @@ func (e *Engine) loadRangeBatch(ctx context.Context, jobKeys [][]byte, outCh cha
 	if dupFound.Load() {
 		start := time.Now()
 		if e.onDup == common.OnDuplicateKeyRecord {
+			if err = e.lazyInitDupWriter(ctx); err != nil {
+				return err
+			}
 			deduplicatedKVs, dups, dupCount = removeDuplicates(deduplicatedKVs, getPairKey, true)
 			e.recordedDupCnt += len(dups)
 			for _, p := range dups {
+				e.recordedDupSize += int64(len(p.key) + len(p.value))
 				if err = e.dupKVStore.addRawKV(p.key, p.value); err != nil {
 					return err
 				}
@@ -402,6 +407,8 @@ func (e *Engine) loadRangeBatch(ctx context.Context, jobKeys [][]byte, outCh cha
 		zap.String("loadedSize", units.HumanSize(float64(e.memKVsAndBuffers.size))),
 		zap.Int("dupCount", dupCount),
 		zap.Int("recordedDupCount", len(dups)),
+		zap.Int("totalRecordedDupCount", e.recordedDupCnt),
+		zap.String("totalRecordedDupSize", units.BytesSize(float64(e.recordedDupSize))),
 		zap.Duration("deduplicateDur", deduplicateDur),
 	)
 
@@ -462,25 +469,8 @@ func (e *Engine) LoadIngestData(
 	outCh chan<- common.DataAndRanges,
 ) error {
 	if e.onDup == common.OnDuplicateKeyRecord {
-		var err error
-		e.dupFile = filepath.Join(e.filePrefix, "dup")
-		e.dupWriter, err = e.storage.Create(ctx, e.dupFile, &storage.WriterOption{
-			// TODO might need to tune concurrency and part size.
-			//  max 50GiB duplicates can be saved right now.
-			Concurrency: 1,
-			PartSize:    MinUploadPartSize})
-		if err != nil {
-			logutil.Logger(ctx).Info("create dup writer failed", zap.Error(err))
-			return err
-		}
-		e.dupKVStore = NewKeyValueStore(ctx, e.dupWriter, nil)
 		defer func() {
-			if e.dupWriter != nil {
-				// error happened in middle, if no err, writer will be closed below,
-				e.dupKVStore.finish()
-				_ = e.dupWriter.Close(ctx)
-				e.dupKVStore, e.dupWriter = nil, nil
-			}
+			_ = e.closeDupWriterAsNeeded(ctx)
 		}()
 	}
 	// try to make every worker busy for each batch
@@ -498,13 +488,47 @@ func (e *Engine) LoadIngestData(
 		}
 	}
 	if e.onDup == common.OnDuplicateKeyRecord {
-		kvStore, writer := e.dupKVStore, e.dupWriter
-		e.dupKVStore, e.dupWriter = nil, nil
-		kvStore.finish()
-		if err := writer.Close(ctx); err != nil {
-			logutil.Logger(ctx).Info("close dup writer failed", zap.Error(err))
+		if err := e.closeDupWriterAsNeeded(ctx); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// lazyInitDupWriter lazily initializes the duplicate writer.
+// we need test on KS3 which will report InvalidArgument if the file is empty.
+// GCS is ok with empty file.
+func (e *Engine) lazyInitDupWriter(ctx context.Context) error {
+	if e.dupWriter != nil {
+		return nil
+	}
+	dupFile := filepath.Join(e.filePrefix, "dup")
+	dupWriter, err := e.storage.Create(ctx, dupFile, &storage.WriterOption{
+		// TODO might need to tune concurrency.
+		// max 150GiB duplicates can be saved, it should be enough, as we split
+		// subtask into 100G each.
+		Concurrency: 1,
+		PartSize:    3 * MinUploadPartSize})
+	if err != nil {
+		logutil.Logger(ctx).Info("create dup writer failed", zap.Error(err))
+		return err
+	}
+	e.dupFile = dupFile
+	e.dupWriter = dupWriter
+	e.dupKVStore = NewKeyValueStore(ctx, e.dupWriter, nil)
+	return nil
+}
+
+func (e *Engine) closeDupWriterAsNeeded(ctx context.Context) error {
+	if e.dupWriter == nil {
+		return nil
+	}
+	kvStore, writer := e.dupKVStore, e.dupWriter
+	e.dupKVStore, e.dupWriter = nil, nil
+	kvStore.finish()
+	if err := writer.Close(ctx); err != nil {
+		logutil.Logger(ctx).Info("close dup writer failed", zap.Error(err))
+		return err
 	}
 	return nil
 }
