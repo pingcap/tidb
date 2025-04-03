@@ -65,6 +65,7 @@ go_library(
         "stat.go",
         "table.go",
         "table_lock.go",
+        "table_mode.go",
         "ttl.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/ddl",
@@ -152,6 +153,11 @@ go_library(
         "//pkg/util/context",
         "//pkg/util/dbterror",
         "//pkg/util/dbterror/exeerrors",
+<<<<<<< HEAD
+=======
+        "//pkg/util/dbterror/plannererrors",
+        "//pkg/util/dbutil",
+>>>>>>> d9fb3a53376 (ddl: Implement TableMode feature (#59009))
         "//pkg/util/domainutil",
         "//pkg/util/engine",
         "//pkg/util/execdetails",
@@ -265,6 +271,7 @@ go_test(
         "schema_test.go",
         "sequence_test.go",
         "stat_test.go",
+        "table_mode_test.go",
         "table_modify_test.go",
         "table_split_test.go",
         "table_test.go",
