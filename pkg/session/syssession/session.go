@@ -264,6 +264,10 @@ func (s *session) EnterOperation(caller sessionOwner) (SessionContext, func(), e
 	exit := false
 	return s.sctx, func() {
 		r := recover()
+		if r != nil {
+			s.OwnerMarkAvoidReuse(caller)
+		}
+
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		seqEnd := s.seqIncWithoutLock()
@@ -298,7 +302,6 @@ func (s *session) EnterOperation(caller sessionOwner) (SessionContext, func(), e
 				zap.String("owner", objectStr(s.owner)),
 				zap.Stack("stack"),
 			)
-			s.avoidReuse = true
 			panic(r)
 		}
 	}, nil

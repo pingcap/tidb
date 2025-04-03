@@ -108,9 +108,14 @@ func (p *AdvancedSessionPool) Get() (*Session, error) {
 		return nil, err
 	}
 
-	intest.AssertNotNil(internal)
-	intest.Assert(!internal.IsClosed())
-	intest.Assert(internal.Owner() == p)
+	intest.AssertFunc(func() bool {
+		intest.AssertNotNil(internal)
+		intest.Assert(internal.Owner() == p)
+		intest.Assert(!internal.IsAvoidReuse())
+		intest.Assert(!internal.IsClosed())
+		return true
+	})
+
 	se := &Session{}
 	defer func() {
 		if se.internal != internal {
@@ -216,6 +221,13 @@ func (p *AdvancedSessionPool) Put(se *Session) {
 		intest.Assert(suppressAssertInTest)
 		return
 	}
+
+	intest.AssertFunc(func() bool {
+		intest.Assert(internal.Owner() == p)
+		intest.Assert(!internal.IsAvoidReuse())
+		intest.Assert(!internal.IsClosed())
+		return true
+	})
 
 	p.mu.RLock()
 	defer p.mu.RUnlock()
