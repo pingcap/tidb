@@ -60,7 +60,6 @@ func TestShowPlanForSQLBasic(t *testing.T) {
 }
 
 func TestLLMBasic(t *testing.T) {
-	key := os.Getenv("OPENAI_API_KEY")
-	resp, err := bindinfo.CallLLM(key, "hello")
+	resp, err := bindinfo.CallLLM(os.Getenv("LLM_KEY"), os.Getenv("LLM_URL"), "hello")
 	fmt.Println(">>>>>>> ", resp, err)
 }

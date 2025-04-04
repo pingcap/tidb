@@ -3,12 +3,10 @@ package bindinfo
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"strings"
-	"time"
 )
 
 // FillRecommendationViaLLM fills the recommendation field for each binding plan via LLM.
@@ -40,31 +38,23 @@ Here is an example of output JSON:
 
 }
 
-func CallLLM(apiKey, prompt string) (string, error) {
-	if apiKey == "" {
-		return "", errors.New("not set OPENAI_API_KEY")
-	}
-
-	fmt.Println("------------------------------------- call LLM -------------------------------------")
-	fmt.Println("apiKey: ", apiKey)
-	fmt.Println("prompt: ", prompt)
-	fmt.Println("-------------------------------------------------------------------------------------")
-
-	url := "https://api.openai.com/v1/chat/completions"
-
+func CallLLM(apiKey, apiURL, msg string) (respMsg string, err error) {
 	requestBody := ChatRequest{
-		Model: "gpt-3.5-turbo", // or "gpt-4"
+		Model: "deepseek-chat",
 		Messages: []Message{
-			{Role: "user", Content: prompt},
+			{
+				Role:    "user",
+				Content: msg,
+			},
 		},
+		Stream: false,
 	}
-
-	jsonData, err := json.Marshal(requestBody)
+	reqBytes, err := json.Marshal(requestBody)
 	if err != nil {
-		panic(err)
+		return "", err
 	}
 
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	req, err := http.NewRequest("POST", apiURL, bytes.NewBuffer(reqBytes))
 	if err != nil {
 		return "", err
 	}
@@ -72,29 +62,35 @@ func CallLLM(apiKey, prompt string) (string, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+apiKey)
 
-	client := &http.Client{
-		Timeout: 120 * time.Second,
-	}
+	client := &http.Client{}
+	defer client.CloseIdleConnections()
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
 
-	body, _ := ioutil.ReadAll(resp.Body)
-
-	if resp.StatusCode != 200 {
-		fmt.Printf("Error: %s\n", body)
-		return "", fmt.Errorf("Error: %s\n", body)
-	}
-
-	var chatResp ChatResponse
-	err = json.Unmarshal(body, &chatResp)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		fmt.Printf("Error: %s\n", body)
+		return "", err
 	}
 
-	return chatResp.Choices[0].Message.Content, nil
+	if resp.StatusCode != http.StatusOK {
+		err = fmt.Errorf("API FAIL, status code: %d, resp: %v", resp.StatusCode, string(body))
+		return "", err
+	}
+
+	var response ChatResponse
+	if err = json.Unmarshal(body, &response); err != nil {
+		return "", err
+	}
+
+	if len(response.Choices) > 0 {
+		respMsg = response.Choices[0].Message.Content
+	} else {
+		return "", nil
+	}
+	return respMsg, nil
 }
 
 type Message struct {
@@ -104,6 +100,7 @@ type Message struct {
 
 type ChatRequest struct {
 	Model    string    `json:"model"`
+	Stream   bool      `json:"stream"`
 	Messages []Message `json:"messages"`
 }
 
