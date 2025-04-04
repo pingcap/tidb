@@ -138,6 +138,9 @@ func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collatio
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate new binding plans: %w", err)
 	}
+
+	// TODO: run these generated plans to get there execution info for recommendation.
+
 	bindingPlans = append(bindingPlans, genedPlans...)
 
 	FillRecommendation(bindingPlans)
