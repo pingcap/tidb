@@ -16,6 +16,7 @@ package bindinfo
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -139,6 +140,8 @@ func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collatio
 	}
 	bindingPlans = append(bindingPlans, genedPlans...)
 
+	FillRecommendation(bindingPlans)
+
 	return bindingPlans, nil
 }
 
@@ -183,4 +186,101 @@ type planExecInfo struct {
 	ExecCount     int64
 	ProcessedKeys int64
 	TotalTime     int64
+}
+
+// FillRecommendation fills the recommendation field for each binding plan.
+// Expose this function for testing.
+// The recommendation is rule-based + LLM-based.
+// Rules:
+// 1. If any plan is a simple PointGet or BatchPointGet, recommend it.
+// 2. If `ScanRowsPerReturnedRow` of a plan is 50% better than others', recommend it.
+// 3. If `Latency`, `ScanRows` and `LatencyPerReturnRow` of a plan are 50% better than others', recommend it.
+// LLM: TODO
+func FillRecommendation(bindings []*BindingPlanInfo) {
+	if len(bindings) < 2 {
+		// if there is only 1 binding, don't need to recommend.
+		return
+	}
+
+	for _, p := range bindings {
+		if p.ExecTimes == 0 {
+			// if we can't get plan info for any binding, we can't give any recommendation.
+			FillRecommendationViaLLM(bindings)
+			return
+		}
+	}
+
+	// rule-based recommendation
+	// rule 1
+	for _, cur := range bindings {
+		if IsSimplePointPlan(cur.Plan) {
+			cur.Recommend = "YES (rule-based)"
+			cur.Reason = "Simple PointGet or BatchPointGet is the best plan"
+			return
+		}
+	}
+
+	// sort for rule 2 & 3.
+	// only the first binding could be the candidate for rule 2 & 3.
+	sort.Slice(bindings, func(i, j int) bool {
+		if bindings[i].ScanRowsPerReturnRow == bindings[j].ScanRowsPerReturnRow {
+			return bindings[i].AvgLatency < bindings[j].AvgLatency &&
+				bindings[i].AvgScanRows < bindings[j].AvgScanRows &&
+				bindings[i].LatencyPerReturnRow < bindings[j].LatencyPerReturnRow
+		}
+		return bindings[i].ScanRowsPerReturnRow < bindings[j].ScanRowsPerReturnRow
+	})
+
+	// rule 2
+	if bindings[0].ScanRowsPerReturnRow < bindings[1].ScanRowsPerReturnRow/2 {
+		bindings[0].Recommend = "YES (rule-based)"
+		bindings[0].Reason = "Plan's scan_rows_per_returned_row is 50% better than others'"
+		return
+	}
+
+	// rule 3
+	for i := 1; i < len(bindings); i++ {
+		hitRule3 := bindings[0].AvgLatency <= bindings[i].AvgLatency/2 &&
+			bindings[0].AvgScanRows <= bindings[i].AvgScanRows/2 &&
+			bindings[0].LatencyPerReturnRow <= bindings[i].LatencyPerReturnRow/2
+		if !hitRule3 {
+			break
+		}
+		if i == len(bindings)-1 { // the last one
+			bindings[0].Recommend = "YES (rule-based)"
+			bindings[0].Reason = "Plan's latency, scan_rows and latency_per_returned_row are 50% better than others'"
+			return
+		}
+	}
+
+	FillRecommendationViaLLM(bindings)
+}
+
+// FillRecommendationViaLLM fills the recommendation field for each binding plan via LLM.
+func FillRecommendationViaLLM([]*BindingPlanInfo) {
+	// TODO
+}
+
+// IsSimplePointPlan checks whether the plan is a simple point plan.
+// Expose this function for testing.
+func IsSimplePointPlan(plan string) bool {
+	// if the plan only contains Point_Get, Batch_Point_Get, Selection and Projection, it's a simple point plan.
+	lines := strings.Split(plan, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		operatorName := strings.Split(line, " ")[0]
+		// TODO: these hard-coding lines are a temporary implementation, refactor this part later.
+		if operatorName == "id" || // the first line with column names
+			strings.Contains(operatorName, "Point_Get") ||
+			strings.Contains(operatorName, "Batch_Point_Get") ||
+			strings.Contains(operatorName, "Selection") ||
+			strings.Contains(operatorName, "Projection") {
+			continue
+		}
+		return false
+	}
+	return true
 }
