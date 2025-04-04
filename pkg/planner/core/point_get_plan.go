@@ -404,6 +404,11 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) (bool, error) {
 		// reading for the Global Index / table id
 		return false, nil
 	}
+	for _, name := range p.PartitionNames {
+		if pi.FindPartitionDefinitionByName(name.L) < 0 {
+			return false, table.ErrUnknownPartition.FastGenByArgs(name.O, p.TblInfo.Name.O)
+		}
+	}
 	// _tidb_rowid + specify a partition
 	if p.IndexInfo == nil && !p.TblInfo.HasClusteredIndex() && len(p.PartitionNames) == 1 {
 		for i, def := range pi.Definitions {
