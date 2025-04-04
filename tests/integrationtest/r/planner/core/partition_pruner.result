@@ -3255,3 +3255,26 @@ id	estRows	task	access object	operator info
 TableReader_7	20.00	root	partition:p0	data:Selection_6
 └─Selection_6	20.00	cop[tikv]		in(planner__core__partition_pruner.t.a, -6895222, 3125507, 9223372036854775809)
   └─TableFullScan_5	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table t;
+create table t (a int primary key , b varchar(255)) partition by hash(a) partitions 2;
+select * from t partition (pUnknown) where a = 1 and b is not null;
+Error 1735 (HY000): Unknown partition 'punknown' in table 't'
+select * from t partition (p0,pUnknown,p1) where a = 1 and b is not null;
+Error 1735 (HY000): Unknown partition 'punknown' in table 't'
+select * from t partition (pUnknown) where a = 1;
+Error 1735 (HY000): Unknown partition 'pUnknown' in table 't'
+select * from t partition (p0, pUnknown) where a = 1;
+Error 1735 (HY000): Unknown partition 'pUnknown' in table 't'
+select * from t partition (p0, pUnknown, p1) where a = 1;
+Error 1735 (HY000): Unknown partition 'pUnknown' in table 't'
+select * from t partition (pUnknown) where a IN (1,2) and b is not null;
+Error 1735 (HY000): Unknown partition 'punknown' in table 't'
+select * from t partition (p0,pUnknown,p1) where a IN (1,2) and b is not null;
+Error 1735 (HY000): Unknown partition 'punknown' in table 't'
+select * from t partition (pUnknown) where a IN (1,2);
+Error 1735 (HY000): Unknown partition 'punknown' in table 't'
+select * from t partition (p0, pUnknown) where a IN (1,2);
+Error 1735 (HY000): Unknown partition 'punknown' in table 't'
+select * from t partition (p0, pUnknown, p1) where a IN (1,2);
+Error 1735 (HY000): Unknown partition 'punknown' in table 't'
+drop table t;

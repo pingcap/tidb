@@ -1035,3 +1035,27 @@ desc select * from t where a BETWEEN -6895222 AND 3125507;
 desc select * from t where a > 9223372036854775808;
 desc select * from t where a in (-6895222, 3125507, 9223372036854775809);
 
+# Issue 59003
+drop table t;
+create table t (a int primary key , b varchar(255)) partition by hash(a) partitions 2;
+-- error 1735
+select * from t partition (pUnknown) where a = 1 and b is not null;
+-- error 1735
+select * from t partition (p0,pUnknown,p1) where a = 1 and b is not null;
+-- error 1735
+select * from t partition (pUnknown) where a = 1;
+-- error 1735
+select * from t partition (p0, pUnknown) where a = 1;
+-- error 1735
+select * from t partition (p0, pUnknown, p1) where a = 1;
+-- error 1735
+select * from t partition (pUnknown) where a IN (1,2) and b is not null;
+-- error 1735
+select * from t partition (p0,pUnknown,p1) where a IN (1,2) and b is not null;
+-- error 1735
+select * from t partition (pUnknown) where a IN (1,2);
+-- error 1735
+select * from t partition (p0, pUnknown) where a IN (1,2);
+-- error 1735
+select * from t partition (p0, pUnknown, p1) where a IN (1,2);
+drop table t;

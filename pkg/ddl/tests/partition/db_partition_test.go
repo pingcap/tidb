@@ -3759,20 +3759,3 @@ func TestTruncateNumberOfPhases(t *testing.T) {
 	dom.Reload()
 	require.Equal(t, int64(4), dom.InfoSchema().SchemaMetaVersion()-schemaVersion)
 }
-
-func TestPointGetUnknownPartitionError(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table t (a int primary key , b varchar(255)) partition by hash(a) partitions 2`)
-	tk.MustContainErrMsg(`select * from t partition (pUnknown) where a = 1 and b is not null`, "[table:1735]Unknown partition 'punknown' in table 't'")
-	tk.MustContainErrMsg(`select * from t partition (p0,pUnknown,p1) where a = 1 and b is not null`, "[table:1735]Unknown partition 'punknown' in table 't'")
-	tk.MustContainErrMsg(`select * from t partition (pUnknown) where a = 1`, "[table:1735]Unknown partition 'pUnknown' in table 't'")
-	tk.MustContainErrMsg(`select * from t partition (p0, pUnknown) where a = 1`, "[table:1735]Unknown partition 'pUnknown' in table 't'")
-	tk.MustContainErrMsg(`select * from t partition (p0, pUnknown, p1) where a = 1`, "[table:1735]Unknown partition 'pUnknown' in table 't'")
-	tk.MustContainErrMsg(`select * from t partition (pUnknown) where a IN (1,2) and b is not null`, "[table:1735]Unknown partition 'punknown' in table 't'")
-	tk.MustContainErrMsg(`select * from t partition (p0,pUnknown,p1) where a IN (1,2) and b is not null`, "[table:1735]Unknown partition 'punknown' in table 't'")
-	tk.MustContainErrMsg(`select * from t partition (pUnknown) where a IN (1,2)`, "[table:1735]Unknown partition 'punknown' in table 't'")
-	tk.MustContainErrMsg(`select * from t partition (p0, pUnknown) where a IN (1,2)`, "[table:1735]Unknown partition 'punknown' in table 't'")
-	tk.MustContainErrMsg(`select * from t partition (p0, pUnknown, p1) where a IN (1,2)`, "[table:1735]Unknown partition 'punknown' in table 't'")
-}
