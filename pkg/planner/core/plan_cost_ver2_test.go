@@ -51,18 +51,18 @@ func TestCostModelVer2ScanRowSize(t *testing.T) {
 		scanFormula string
 	}{
 		// index scan row-size on idx_ab is always equal to row-size(index_ab)
-		{"select a from t use index(ab) where a=1", "scan(1*logrowsize(32)*tikv_scan_factor(40.7))"},
-		{"select a, b from t use index(ab) where a=1", "scan(1*logrowsize(32)*tikv_scan_factor(40.7))"},
-		{"select b from t use index(ab) where a=1 and b=1", "scan(1*logrowsize(32)*tikv_scan_factor(40.7))"},
+		{"select a from t use index(ab) where a=1", "(scan(1*logrowsize(32)*tikv_scan_factor(40.7)))*1.00"},
+		{"select a, b from t use index(ab) where a=1", "(scan(1*logrowsize(32)*tikv_scan_factor(40.7)))*1.00"},
+		{"select b from t use index(ab) where a=1 and b=1", "(scan(1*logrowsize(32)*tikv_scan_factor(40.7)))*1.00"},
 		// index scan row-size on idx_abc is always equal to row-size(index_abc)
-		{"select a from t use index(abc) where a=1", "scan(1*logrowsize(48)*tikv_scan_factor(40.7))"},
-		{"select a from t use index(abc) where a=1 and b=1", "scan(1*logrowsize(48)*tikv_scan_factor(40.7))"},
-		{"select a, b from t use index(abc) where a=1 and b=1", "scan(1*logrowsize(48)*tikv_scan_factor(40.7))"},
-		{"select a, b, c from t use index(abc) where a=1 and b=1 and c=1", "scan(1*logrowsize(48)*tikv_scan_factor(40.7))"},
+		{"select a from t use index(abc) where a=1", "(scan(1*logrowsize(48)*tikv_scan_factor(40.7)))*1.00"},
+		{"select a from t use index(abc) where a=1 and b=1", "(scan(1*logrowsize(48)*tikv_scan_factor(40.7)))*1.00"},
+		{"select a, b from t use index(abc) where a=1 and b=1", "(scan(1*logrowsize(48)*tikv_scan_factor(40.7)))*1.00"},
+		{"select a, b, c from t use index(abc) where a=1 and b=1 and c=1", "(scan(1*logrowsize(48)*tikv_scan_factor(40.7)))*1.00"},
 		// table scan row-size is always equal to row-size(*)
-		{"select a from t use index(primary) where a=1", "(scan(1*logrowsize(80)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(80)*tikv_scan_factor(40.7)))"},
-		{"select a, d from t use index(primary) where a=1", "(scan(1*logrowsize(80)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(80)*tikv_scan_factor(40.7)))"},
-		{"select * from t use index(primary) where a=1", "(scan(1*logrowsize(80)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(80)*tikv_scan_factor(40.7)))"},
+		{"select a from t use index(primary) where a=1", "((scan(1*logrowsize(80)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(80)*tikv_scan_factor(40.7))))*1.00"},
+		{"select a, d from t use index(primary) where a=1", "((scan(1*logrowsize(80)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(80)*tikv_scan_factor(40.7))))*1.00"},
+		{"select * from t use index(primary) where a=1", "((scan(1*logrowsize(80)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(80)*tikv_scan_factor(40.7))))*1.00"},
 	}
 	for _, c := range cases {
 		rs := tk.MustQuery("explain analyze format=true_card_cost " + c.query).Rows()

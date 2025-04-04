@@ -399,7 +399,8 @@ func (e *ShowExec) fetchPlanForSQL() error {
 			p.LatencyPerReturnRow,
 			p.ScanRowsPerReturnRow,
 			p.Recommend,
-			p.Reason})
+			p.Reason,
+			p.Source})
 	}
 	return nil
 }

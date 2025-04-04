@@ -15,10 +15,14 @@
 package bindinfo_test
 
 import (
-	"testing"
+	"fmt"
+	"github.com/pingcap/tidb/pkg/bindinfo"
 
+	//"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
+	"os"
+	"testing"
 )
 
 func TestShowPlanForSQLBasic(t *testing.T) {
@@ -53,4 +57,9 @@ func TestShowPlanForSQLBasic(t *testing.T) {
 
 	tk.MustExecToErr("show plan for 'xxx'", "")
 	tk.MustExecToErr("show plan for 'SELECT A FROM'", "")
+}
+
+func TestLLMBasic(t *testing.T) {
+	resp, err := bindinfo.CallLLM(os.Getenv("LLM_KEY"), os.Getenv("LLM_URL"), "hello")
+	fmt.Println(">>>>>>> ", resp, err)
 }
