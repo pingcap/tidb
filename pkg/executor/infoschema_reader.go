@@ -727,6 +727,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 			shardingInfo,          // TIDB_ROW_ID_SHARDING_INFO
 			pkType,                // TIDB_PK_TYPE
 			policyName,            // TIDB_PLACEMENT_POLICY_NAME
+			table.Mode.String(),   // TIDB_TABLE_MODE
 		)
 		rows = append(rows, record)
 		e.recordMemoryConsume(record)
@@ -757,6 +758,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 			nil,                   // TIDB_ROW_ID_SHARDING_INFO
 			pkType,                // TIDB_PK_TYPE
 			nil,                   // TIDB_PLACEMENT_POLICY_NAME
+			nil,                   // TIDB_TABLE_MODE
 		)
 		rows = append(rows, record)
 		e.recordMemoryConsume(record)
@@ -861,6 +863,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 					nil,                   // TIDB_ROW_ID_SHARDING_INFO
 					nil,                   // TIDB_PK_TYPE
 					nil,                   // TIDB_PLACEMENT_POLICY_NAME
+					nil,                   // TIDB_TABLE_MODE
 				)
 				rows = append(rows, record)
 				e.recordMemoryConsume(record)
@@ -1080,6 +1083,32 @@ func (e *hugeMemTableRetriever) setDataForColumnsWithOneTable(
 	return len(e.rows) >= e.batch
 }
 
+// Ref link https://github.com/mysql/mysql-server/blob/6b6d3ed3d5c6591b446276184642d7d0504ecc86/sql/dd/dd_table.cc#L411
+func getNumericPrecision(ft *types.FieldType, colLen int) int {
+	switch ft.GetType() {
+	case mysql.TypeTiny:
+		return 3
+	case mysql.TypeShort:
+		return 5
+	case mysql.TypeInt24:
+		// It's a MySQL bug, ref link https://bugs.mysql.com/bug.php?id=69042
+		if mysql.HasUnsignedFlag(ft.GetFlag()) {
+			return 8
+		}
+		return 7
+	case mysql.TypeLong:
+		return 10
+	case mysql.TypeLonglong:
+		if mysql.HasUnsignedFlag(ft.GetFlag()) {
+			return 20
+		}
+		return 19
+	case mysql.TypeBit, mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
+		return colLen
+	}
+	return 0
+}
+
 func (e *hugeMemTableRetriever) dataForColumnsInTable(
 	ctx context.Context,
 	sctx sessionctx.Context,
@@ -1166,7 +1195,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(
 		} else if types.IsTypeFractionable(ft.GetType()) {
 			datetimePrecision = decimal
 		} else if types.IsTypeNumeric(ft.GetType()) {
-			numericPrecision = colLen
+			numericPrecision = getNumericPrecision(ft, colLen)
 			if ft.GetType() != mysql.TypeFloat && ft.GetType() != mysql.TypeDouble {
 				numericScale = decimal
 			} else if decimal != -1 {
@@ -2578,10 +2607,8 @@ func dataForAnalyzeStatusHelper(ctx context.Context, e *memtableRetriever, sctx 
 func getRemainDurationForAnalyzeStatusHelper(
 	ctx context.Context,
 	sctx sessionctx.Context, startTime *types.Time,
-	dbName, tableName, partitionName string, processedRows int64) (*time.Duration, float64, float64, error) {
-	var remainingDuration = time.Duration(0)
-	var percentage = 0.0
-	var totalCnt = float64(0)
+	dbName, tableName, partitionName string, processedRows int64) (_ *time.Duration, percentage, totalCnt float64, err error) {
+	remainingDuration := time.Duration(0)
 	if startTime != nil {
 		start, err := startTime.GoTime(time.UTC)
 		if err != nil {

@@ -245,8 +245,7 @@ func (ran *Range) string(redact string) string {
 }
 
 // Encode encodes the range to its encoded value.
-func (ran *Range) Encode(ec errctx.Context, loc *time.Location, lowBuffer, highBuffer []byte) ([]byte, []byte, error) {
-	var err error
+func (ran *Range) Encode(ec errctx.Context, loc *time.Location, lowBuffer, highBuffer []byte) (_, _ []byte, err error) {
 	lowBuffer, err = codec.EncodeKey(loc, lowBuffer[:0], ran.LowVal...)
 	err = ec.HandleError(err)
 	if err != nil {
@@ -368,9 +367,8 @@ func compareLexicographically(tc types.Context, bound1, bound2 []types.Datum, co
 				return 0, nil
 			} else if low1 {
 				return 1, nil
-			} else {
-				return -1, nil
 			}
+			return -1, nil
 		case open1:
 			if low1 {
 				return 1, nil

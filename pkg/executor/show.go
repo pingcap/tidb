@@ -629,7 +629,7 @@ func (e *ShowExec) fetchShowTables(ctx context.Context) error {
 	for _, v := range showInfos {
 		// Test with mysql.AllPrivMask means any privilege would be OK.
 		// TODO: Should consider column privileges, which also make a table visible.
-		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, v.Name.O, "", mysql.AllPrivMask) {
+		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, v.Name.O, "", mysql.AllPrivMask&(^mysql.CreateTMPTablePriv)) {
 			continue
 		} else if fieldFilter != "" && v.Name.L != fieldFilter {
 			continue

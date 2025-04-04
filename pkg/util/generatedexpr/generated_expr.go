@@ -61,8 +61,10 @@ func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 func ParseExpression(expr string) (node ast.ExprNode, err error) {
 	expr = fmt.Sprintf("select %s", expr)
 	charset, collation := charset.GetDefaultCharsetAndCollate()
-	parse := parserutil.Pool.Get().(*parser.Parser)
-	defer parserutil.Pool.Put(parse)
+	parse := parserutil.GetParser()
+	defer func() {
+		parserutil.DestoryParser(parse)
+	}()
 	stmts, _, err := parse.ParseSQL(expr,
 		parser.CharsetConnection(charset),
 		parser.CollationConnection(collation))
