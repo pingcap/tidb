@@ -17,8 +17,10 @@ package expression
 import (
 	"bytes"
 	goJSON "encoding/json"
+	goerrors "errors"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -900,6 +902,13 @@ func (b *builtinJSONTypeSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 	}
 	defer b.bufAllocator.put(buf)
 	if err := b.args[0].VecEvalJSON(ctx, input, buf); err != nil {
+		// Fix the name of the function in ErrInvalidJSONTextInParam
+		var jerr *errors.Error
+		if types.ErrInvalidJSONTextInParam.Equal(err) && goerrors.As(err, &jerr) {
+			args := jerr.Args()
+			args[1] = "json_type"
+			return types.ErrInvalidJSONTextInParam.GenWithStackByArgs(args...)
+		}
 		return err
 	}
 
