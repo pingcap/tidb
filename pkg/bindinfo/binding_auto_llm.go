@@ -3,9 +3,11 @@ package bindinfo
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 )
 
@@ -36,6 +38,40 @@ Here is an example of output JSON:
 	fmt.Println(prompt)
 	fmt.Println("--------------------- prompt ------------------------------")
 
+	resp, err := CallLLM(os.Getenv("LLM_KEY"), os.Getenv("LLM_URL"), prompt)
+	if err != nil {
+		fmt.Println("err ", err)
+		return
+	}
+
+	fmt.Println("=================== RESP BODY =========================")
+	fmt.Println(resp)
+	fmt.Println("=================== RESP BODY =========================")
+
+	if strings.HasPrefix(resp, "```json") {
+		resp = strings.TrimPrefix(resp, "```json")
+		resp = strings.TrimSuffix(resp, "```")
+	}
+
+	r := new(LLMRecommendation)
+	err = json.Unmarshal([]byte(resp), r)
+	if err != nil {
+		fmt.Println("unmarshal error ", err)
+		return
+	}
+
+	if r.Number < 0 || r.Number >= len(bindingPlans) {
+		fmt.Println(errors.New("invalid result number"))
+	}
+
+	bindingPlans[r.Number].Recommend = "YES (from LLM)"
+	bindingPlans[r.Number].Reason = r.Reason
+	return
+}
+
+type LLMRecommendation struct {
+	Number int    `json:"number"`
+	Reason string `json:"reason"`
 }
 
 func CallLLM(apiKey, apiURL, msg string) (respMsg string, err error) {
