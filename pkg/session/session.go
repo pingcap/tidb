@@ -2327,6 +2327,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 			}
 		}
 		return &execStmtResult{
+			ctx:       ctx,
 			RecordSet: rs,
 			sql:       s,
 			se:        se,
@@ -2341,7 +2342,7 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	} else {
 		// If it is not a select statement or special query, we record its slow log here,
 		// then it could include the transaction commit time.
-		s.(*executor.ExecStmt).FinishExecuteStmt(origTxnCtx.StartTS, err, false)
+		s.(*executor.ExecStmt).FinishExecuteStmt(ctx, origTxnCtx.StartTS, err, false)
 	}
 	return nil, err
 }
@@ -2362,6 +2363,7 @@ const ExecStmtVarKey ExecStmtVarKeyType = 0
 // This is because there are so many session state related things that definitely not belongs to the original
 // RecordSet, so this struct exists and RecordSet.Close() is overridden to handle that.
 type execStmtResult struct {
+	ctx context.Context
 	sqlexec.RecordSet
 	se     *session
 	sql    sqlexec.Statement
@@ -2376,7 +2378,7 @@ func (rs *execStmtResult) Finish() error {
 		if f, ok := rs.RecordSet.(interface{ Finish() error }); ok {
 			err1 = f.Finish()
 		}
-		err2 := finishStmt(context.Background(), rs.se, err, rs.sql)
+		err2 := finishStmt(rs.ctx, rs.se, err, rs.sql)
 		if err1 != nil {
 			err = err1
 		} else {
@@ -2391,6 +2393,7 @@ func (rs *execStmtResult) Close() error {
 		return nil
 	}
 	err1 := rs.Finish()
+
 	err2 := rs.RecordSet.Close()
 	rs.closed = true
 	if err1 != nil {

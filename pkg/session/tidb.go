@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -218,6 +219,7 @@ func recordAbortTxnDuration(sessVars *variable.SessionVars, isInternal bool) {
 }
 
 func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
+	defer tracing.StartRegion(ctx, "finishStmt").End()
 	failpoint.Inject("finishStmtError", func() {
 		failpoint.Return(errors.New("occur an error after finishStmt"))
 	})

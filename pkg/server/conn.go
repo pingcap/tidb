@@ -44,6 +44,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"os/user"
 	"runtime"
 	"runtime/pprof"
@@ -203,6 +204,7 @@ type clientConn struct {
 
 	// Proxy Protocol Enabled
 	ppEnabled bool
+	tracebuf  bytes.Buffer
 }
 
 type userResourceLimits struct {
@@ -1336,8 +1338,18 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 			pprof.SetGoroutineLabels(ctx)
 		}
 	}
+	ctx, _ = tracing.NewTask(ctx, &cc.tracebuf)
 	token := cc.server.getToken()
 	defer func() {
+		// if task.Keep {
+			f, err := os.CreateTemp("", "trace")
+			if err == nil {
+				fmt.Println("here dump the trace:", f.Name())
+				io.Copy(f, &cc.tracebuf)
+				f.Close()
+			}
+		// }
+		cc.tracebuf.Reset()
 		// if handleChangeUser failed, cc.ctx may be nil
 		if ctx := cc.getCtx(); ctx != nil {
 			ctx.SetProcessInfo("", t, mysql.ComSleep, 0)
@@ -1481,11 +1493,11 @@ func (cc *clientConn) flush(ctx context.Context) error {
 		stmtDetail = stmtDetailRaw.(*execdetails.StmtExecDetails)
 		startTime = time.Now()
 	}
+	defer tracing.StartRegion(ctx, "clientConn.flush").End()
 	defer func() {
 		if stmtDetail != nil {
 			stmtDetail.WriteSQLRespDuration += time.Since(startTime)
 		}
-		trace.StartRegion(ctx, "FlushClientConn").End()
 		if ctx := cc.getCtx(); ctx != nil && ctx.WarningCount() > 0 {
 			for _, err := range ctx.GetWarnings() {
 				var warn *errors.Error
@@ -1713,7 +1725,7 @@ func (cc *clientConn) audit(eventType plugin.GeneralEvent) {
 // As the execution time of this function represents the performance of TiDB, we do time log and metrics here.
 // Some special queries like `load data` that does not return result, which is handled in handleFileTransInConn.
 func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
-	defer trace.StartRegion(ctx, "handleQuery").End()
+	defer tracing.StartRegion(ctx, "handleQuery").End()
 	sessVars := cc.ctx.GetSessionVars()
 	sc := sessVars.StmtCtx
 	prevWarns := sc.GetWarnings()
@@ -2025,7 +2037,7 @@ func (cc *clientConn) handleStmt(
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
-	reg := trace.StartRegion(ctx, "ExecuteStmt")
+	defer tracing.StartRegion(ctx, "handleStmt").End()
 	cc.audit(plugin.Starting)
 
 	// if stmt is load data stmt, store the channel that reads from the conn
@@ -2041,7 +2053,6 @@ func (cc *clientConn) handleStmt(
 	}
 
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
-	reg.End()
 	// - If rs is not nil, the statement tracker detachment from session tracker
 	//   is done in the `rs.Close` in most cases.
 	// - If the rs is nil and err is not nil, the detachment will be done in
@@ -2089,7 +2100,7 @@ func (cc *clientConn) handleStmt(
 	if handled {
 		if execStmt := cc.ctx.Value(session.ExecStmtVarKey); execStmt != nil {
 			//nolint:forcetypeassert
-			execStmt.(*executor.ExecStmt).FinishExecuteStmt(0, err, false)
+			execStmt.(*executor.ExecStmt).FinishExecuteStmt(ctx, 0, err, false)
 		}
 	}
 	return false, err
@@ -2246,6 +2257,7 @@ func (cc *clientConn) handleFieldList(ctx context.Context, sql string) (err erro
 // has side effect in cursor mode or once data has been sent to client. Currently retryable is used to fallback to TiKV when
 // TiFlash is down.
 func (cc *clientConn) writeResultSet(ctx context.Context, rs resultset.ResultSet, binary bool, serverStatus uint16, fetchSize int) (retryable bool, runErr error) {
+	defer tracing.StartRegion(ctx, "writeResultSet").End()
 	defer func() {
 		// close ResultSet when cursor doesn't exist
 		r := recover()
@@ -2364,7 +2376,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 		}
 		validNextCount++
 		firstNext = false
-		reg := trace.StartRegion(ctx, "WriteClientConn")
+		reg := tracing.StartRegion(ctx, "WriteClientConn")
 		if stmtDetail != nil {
 			start = time.Now()
 		}

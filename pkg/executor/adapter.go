@@ -233,7 +233,7 @@ func (a *recordSet) Close() error {
 
 // OnFetchReturned implements commandLifeCycle#OnFetchReturned
 func (a *recordSet) OnFetchReturned() {
-	a.stmt.LogSlowQuery(a.txnStartTS, len(a.lastErrs) == 0, true)
+	a.stmt.LogSlowQuery(context.Background(), a.txnStartTS, len(a.lastErrs) == 0, true)
 }
 
 // TryDetach creates a new `RecordSet` which doesn't depend on the current session context.
@@ -887,6 +887,7 @@ func isNoResultPlan(p base.Plan) bool {
 }
 
 type chunkRowRecordSet struct {
+	ctx      context.Context
 	rows     []chunk.Row
 	idx      int
 	fields   []*resolve.ResultField
@@ -982,7 +983,7 @@ func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e exec.Exe
 			break
 		}
 		if req.NumRows() == 0 {
-			return &chunkRowRecordSet{rows: rows, e: e, execStmt: a}, nil
+			return &chunkRowRecordSet{ctx: ctx, rows: rows, e: e, execStmt: a}, nil
 		}
 		iter := chunk.NewIterator4Chunk(req)
 		for r := iter.Begin(); r != iter.End(); r = iter.Next() {
@@ -1392,7 +1393,8 @@ func (a *ExecStmt) observePhaseDurations(internal bool, commitDetails *util.Comm
 // 3. record execute duration metric.
 // 4. update the `PrevStmt` in session variable.
 // 5. reset `DurationParse` in session variable.
-func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults bool) {
+func (a *ExecStmt) FinishExecuteStmt(ctx context.Context, txnTS uint64, err error, hasMoreResults bool) {
+	defer tracing.StartRegion(ctx, "ExecStmt.FinishExecuteStmt").End()
 	a.checkPlanReplayerCapture(txnTS)
 
 	sessVars := a.Ctx.GetSessionVars()
@@ -1425,8 +1427,8 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 
 	a.updateNetworkTrafficStatsAndMetrics()
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
-	a.LogSlowQuery(txnTS, succ, hasMoreResults)
-	a.SummaryStmt(succ)
+	a.LogSlowQuery(ctx, txnTS, succ, hasMoreResults)
+	a.SummaryStmt(ctx, succ)
 	a.observeStmtFinishedForTopSQL()
 	a.UpdatePlanCacheRuntimeInfo()
 	if sessVars.StmtCtx.IsTiFlash.Load() {
@@ -1552,7 +1554,9 @@ func (a *ExecStmt) checkPlanReplayerCapture(txnTS uint64) {
 
 // CloseRecordSet will finish the execution of current statement and do some record work
 func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
-	a.FinishExecuteStmt(txnStartTS, lastErr, false)
+	ctx := a.GoCtx
+	defer tracing.StartRegion(ctx, "ExecStmt.CloseRecordSet").End()
+	a.FinishExecuteStmt(ctx, txnStartTS, lastErr, false)
 	a.logAudit()
 	a.Ctx.GetSessionVars().StmtCtx.DetachMemDiskTracker()
 }
@@ -1590,7 +1594,8 @@ func resetCTEStorageMap(se sessionctx.Context) error {
 }
 
 // LogSlowQuery is used to print the slow query in the log files.
-func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
+func (a *ExecStmt) LogSlowQuery(ctx context.Context, txnTS uint64, succ bool, hasMoreResults bool) {
+	defer tracing.StartRegion(ctx, "ExecStmt.LogSlowQuery").End()
 	sessVars := a.Ctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	level := log.GetLevel()
@@ -1603,6 +1608,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if (!enable || costTime < threshold) && !force {
 		return
 	}
+
 	sql := FormatSQL(a.GetTextToLog(true))
 	_, digest := stmtCtx.SQLDigest()
 
@@ -1727,7 +1733,13 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if trace.IsEnabled() {
 		trace.Log(a.GoCtx, "details", slowLog)
 	}
+
+	reg := tracing.StartRegion(ctx, "SlowQueryLogger.Warn")
 	logutil.SlowQueryLogger.Warn(slowLog)
+	reg.End()
+
+	tracing.MarkDump(ctx)
+
 	if costTime >= threshold {
 		if sessVars.InRestrictedSQL {
 			executor_metrics.TotalQueryProcHistogramInternal.Observe(costTime.Seconds())
@@ -1940,7 +1952,8 @@ func getEncodedPlan(stmtCtx *stmtctx.StatementContext, genHint bool) (encodedPla
 }
 
 // SummaryStmt collects statements for information_schema.statements_summary
-func (a *ExecStmt) SummaryStmt(succ bool) {
+func (a *ExecStmt) SummaryStmt(ctx context.Context, succ bool) {
+	defer tracing.StartRegion(ctx, "ExecStmt.SummaryStmt").End()
 	sessVars := a.Ctx.GetSessionVars()
 	var userString string
 	if sessVars.User != nil {
