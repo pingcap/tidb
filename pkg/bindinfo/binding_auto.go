@@ -256,11 +256,6 @@ func FillRecommendation(bindings []*BindingPlanInfo) {
 	FillRecommendationViaLLM(bindings)
 }
 
-// FillRecommendationViaLLM fills the recommendation field for each binding plan via LLM.
-func FillRecommendationViaLLM([]*BindingPlanInfo) {
-	// TODO
-}
-
 // IsSimplePointPlan checks whether the plan is a simple point plan.
 // Expose this function for testing.
 func IsSimplePointPlan(plan string) bool {
