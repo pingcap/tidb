@@ -83,8 +83,8 @@ func Test53726(t *testing.T) {
 		Check(testkit.Rows("-258025139 -258025139", "575932053 575932053"))
 	tk.MustQuery("explain select distinct cast(c as decimal), cast(c as signed) from t7").
 		Check(testkit.Rows(
-			"HashAgg_6 2.00 root  group by:Column#11, Column#12, funcs:firstrow(Column#11)->Column#3, funcs:firstrow(Column#12)->Column#4",
-			"└─Projection_12 2.00 root  cast(test.t7.c, decimal(10,0) BINARY)->Column#11, cast(test.t7.c, bigint(22) BINARY)->Column#12",
+			"HashAgg_6 2.00 root  group by:Column#13, Column#14, funcs:firstrow(Column#13)->Column#3, funcs:firstrow(Column#14)->Column#4",
+			"└─Projection_12 2.00 root  cast(test.t7.c, decimal(10,0) BINARY)->Column#13, cast(test.t7.c, bigint(22) BINARY)->Column#14",
 			"  └─TableReader_11 2.00 root  data:TableFullScan_10",
 			"    └─TableFullScan_10 2.00 cop[tikv] table:t7 keep order:false"))
 }

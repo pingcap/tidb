@@ -28,8 +28,19 @@ var (
 	ErrPatternNotMatch = errors.New("Pattern not match")
 
 	// Pool is a pool of parser.Parser
-	Pool = &sync.Pool{New: func() any { return parser.New() }}
+	pool = &sync.Pool{New: func() any { return parser.New() }}
 )
+
+// GetParser gets a parser from the pool
+func GetParser() *parser.Parser {
+	return pool.Get().(*parser.Parser)
+}
+
+// DestoryParser resets the parser and puts it back to the pool
+func DestoryParser(p *parser.Parser) {
+	p.Reset()
+	pool.Put(p)
+}
 
 // Match matches the `pat` at least `times`, and returns the match, the rest and the error
 func Match(buf string, pat func(byte) bool, times int) (match string, rest string, err error) {
