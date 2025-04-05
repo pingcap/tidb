@@ -196,9 +196,9 @@ func (c *cc) EqualsElement(fType reflect.Type, lhs, rhs string, i string) {
 				rhs = "&" + rhs
 			}
 			c.write("if !%v.Equals(%v) {return false}", lhs, rhs)
-		} else {
-			panic("doesn't support element type" + fType.Kind().String())
+			return
 		}
+		panic("doesn't support element type" + fType.Kind().String())
 	}
 }
 
@@ -228,9 +228,9 @@ func (c *cc) Hash64Element(fType reflect.Type, callName string) {
 		if fType.Implements(hashEqualsType) || fType.Implements(iHashEqualsType) ||
 			reflect.PtrTo(fType).Implements(hashEqualsType) || reflect.PtrTo(fType).Implements(iHashEqualsType) {
 			c.write("%v.Hash64(h)", callName)
-		} else {
-			panic("doesn't support element type" + fType.Kind().String())
+			return
 		}
+		panic("doesn't support element type" + fType.Kind().String())
 	}
 }
 
