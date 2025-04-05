@@ -358,6 +358,7 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	// --- Re-check enabled status under lock (prevents race condition) ---
 	if !ssMap.Enabled() || (sei.IsInternal && !ssMap.EnabledInternal()) {
 		StmtDigestKeyPool.Put(key)
+		ssMap.Unlock()
 		return
 	}
 
@@ -379,8 +380,6 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		StmtDigestKeyPool.Put(key)
 	}
 	summary.isInternal = summary.isInternal && sei.IsInternal
-	// --- Call add method outside the main lock ---
-	// summary cannot be nil here due to the early returns
 	summary.add(sei, beginTime, intervalSeconds, historySize)
 }
 
@@ -554,52 +553,63 @@ func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, _ int64, _ int64, _ int
 	ssbd.initialized = true
 }
 
+// invariant: no concurrent access. This method must be protected by the caller
 func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, intervalSeconds int64, historySize int) {
-	// Enclose this block in a function to ensure the lock will always be released.
+	// Pre-calculate values
 	warningCount := int(sei.StmtCtx.WarningCount())
 	affectedRows := sei.StmtCtx.AffectedRows()
-	ssElement, isElementNew := func() (*stmtSummaryByDigestElement, bool) {
-		ssbd.Lock()
-		defer ssbd.Unlock()
 
-		if !ssbd.initialized {
-			ssbd.init(sei, beginTime, intervalSeconds, historySize)
+	// Variables to store results from the critical section
+	var elementToUpdate *stmtSummaryByDigestElement
+	var isNew bool
+	var lastElementToExpire *stmtSummaryByDigestElement
+
+	if !ssbd.initialized {
+		ssbd.init(sei, beginTime, intervalSeconds, historySize)
+		// After init, cumulative is updated, but history element needs creation below.
+	}
+	// Update cumulative stats regardless of initialization state (init calls it first time)
+	ssbd.cumulative.add(sei, warningCount, affectedRows)
+
+	// Check history for existing element or prepare for new one
+	isNew = true // Assume new initially
+	if ssbd.history.Len() > 0 {
+		lastElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
+		if lastElement.beginTime >= beginTime { // Found current interval element
+			elementToUpdate = lastElement
+			isNew = false
+		} else { // Last element is from previous interval
+			// Mark for expiration call outside the lock
+			lastElementToExpire = lastElement
 		}
-		ssbd.cumulative.add(sei, warningCount, affectedRows)
+	}
 
-		var ssElement *stmtSummaryByDigestElement
-		isElementNew := true
-		if ssbd.history.Len() > 0 {
-			lastElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
-			if lastElement.beginTime >= beginTime {
-				ssElement = lastElement
-				isElementNew = false
-			} else {
-				// The last elements expires to the history.
-				lastElement.onExpire(intervalSeconds)
-			}
+	if isNew {
+		// Create and add the new element *inside* the lock because it modifies history list.
+		// The expensive part (newStmtSummaryStats, first add) is inside newStmtSummaryByDigestElement.
+		newElement := newStmtSummaryByDigestElement(sei, beginTime, intervalSeconds, warningCount, affectedRows)
+		if newElement != nil {
+			ssbd.history.PushBack(newElement)
+			// We don't need to update this element outside the lock, as newElement includes the first add.
+			elementToUpdate = newElement // Store for potential future use if needed, though add isn't called below for new.
+		} else {
+			// Handle potential creation failure - log? For now, just proceed.
 		}
-		if isElementNew {
-			// If the element is new created, `ssElement.add(sei)` should be done inside the lock of `ssbd`.
-			ssElement = newStmtSummaryByDigestElement(sei, beginTime, intervalSeconds, warningCount, affectedRows)
-			if ssElement == nil {
-				return nil, isElementNew
-			}
-			ssbd.history.PushBack(ssElement)
-		}
+	}
 
-		// `historySize` might be modified anytime, so check expiration every time.
-		// Even if history is set to 0, current summary is still needed.
-		for ssbd.history.Len() > historySize && ssbd.history.Len() > 1 {
-			ssbd.history.Remove(ssbd.history.Front())
-		}
+	// Trim history list (must be inside the lock)
+	for ssbd.history.Len() > historySize && ssbd.history.Len() > 1 {
+		ssbd.history.Remove(ssbd.history.Front())
+	}
 
-		return ssElement, isElementNew
-	}()
+	// Handle expiration if necessary
+	if lastElementToExpire != nil {
+		lastElementToExpire.onExpire(intervalSeconds)
+	}
 
-	// Lock a single entry, not the whole `ssbd`.
-	if !isElementNew {
-		ssElement.add(sei, intervalSeconds, warningCount, affectedRows)
+	// Add to the existing element if it wasn't new
+	if !isNew && elementToUpdate != nil {
+		elementToUpdate.add(sei, intervalSeconds, warningCount, affectedRows)
 	}
 }
 
@@ -665,6 +675,7 @@ func newStmtSummaryStats(sei *StmtExecInfo) *stmtSummaryStats {
 	}
 }
 
+// invariant: no concurrent access. This method must be protected by the caller
 func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64, warningCount int, affectedRows uint64) *stmtSummaryByDigestElement {
 	ssElement := &stmtSummaryByDigestElement{
 		beginTime:        beginTime,
@@ -677,8 +688,6 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 // onExpire is called when this element expires to history.
 func (ssElement *stmtSummaryByDigestElement) onExpire(intervalSeconds int64) {
 	ssElement.Lock()
-	defer ssElement.Unlock()
-
 	// refreshInterval may change anytime, so we need to update endTime.
 	if ssElement.beginTime+intervalSeconds > ssElement.endTime {
 		// // If interval changes to a bigger value, update endTime to beginTime + interval.
@@ -690,6 +699,7 @@ func (ssElement *stmtSummaryByDigestElement) onExpire(intervalSeconds int64) {
 			ssElement.endTime = now
 		}
 	}
+	ssElement.Unlock()
 }
 
 func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affectedRows uint64) {
@@ -906,10 +916,8 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affect
 	ssStats.StmtRUSummary.Add(sei.RUDetail)
 }
 
+// invariant: no concurrent access. This method must be protected by the caller
 func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeconds int64, warningCount int, affectedRows uint64) {
-	ssElement.Lock()
-	defer ssElement.Unlock()
-
 	// refreshInterval may change anytime, update endTime ASAP.
 	ssElement.endTime = ssElement.beginTime + intervalSeconds
 	ssElement.stmtSummaryStats.add(sei, warningCount, affectedRows)
