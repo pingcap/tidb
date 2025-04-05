@@ -40,6 +40,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/binary"
+	"encoding/json"
 	goerr "errors"
 	"fmt"
 	"io"
@@ -204,7 +205,7 @@ type clientConn struct {
 
 	// Proxy Protocol Enabled
 	ppEnabled bool
-	tracebuf  bytes.Buffer
+	tracebuf  []tracing.Event
 }
 
 type userResourceLimits struct {
@@ -1338,18 +1339,21 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 			pprof.SetGoroutineLabels(ctx)
 		}
 	}
-	ctx, _ = tracing.NewTask(ctx, &cc.tracebuf)
+	ctx, trace := tracing.NewTrace(ctx, cc.tracebuf)
 	token := cc.server.getToken()
 	defer func() {
+		tracebuf := trace.Close()
 		// if task.Keep {
-			f, err := os.CreateTemp("", "trace")
-			if err == nil {
-				fmt.Println("here dump the trace:", f.Name())
-				io.Copy(f, &cc.tracebuf)
-				f.Close()
-			}
+		f, err := os.CreateTemp("", "trace")
+		if err == nil {
+			enc := json.NewEncoder(f)
+			fmt.Println("here dump the trace:", f.Name())
+			enc.Encode(tracebuf)
+			f.Close()
+		}
 		// }
-		cc.tracebuf.Reset()
+		cc.tracebuf = tracebuf[:0]
+
 		// if handleChangeUser failed, cc.ctx may be nil
 		if ctx := cc.getCtx(); ctx != nil {
 			ctx.SetProcessInfo("", t, mysql.ComSleep, 0)

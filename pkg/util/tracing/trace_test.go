@@ -15,7 +15,8 @@
 package tracing
 
 import (
-	"bytes"
+	"sync"
+	"time"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -25,59 +26,80 @@ import (
 )
 
 type msg struct {
-	span Span
+	span *AsyncSpan
+	flow *Flow
 	done chan struct{}
 }
 
-func parent(ctx context.Context) {
+func parent(ctx context.Context, ch chan *msg) {
 	span := StartSpan(ctx, "parent")
 	defer span.Done()
-	s := child(ctx)
 
-	ch := make(chan msg)
-	ctx = StartGoroutine(ctx)
-	go spawn(ctx, ch)
-
-	m := msg{span: s, done: make(chan struct{})}
-	ch <- m
+	span1 := StartAsyncSpan(ctx, "async")
+	m := msg{span: &span1, done: make(chan struct{})}
+	ch <- &m
 
 	<-m.done
+	fmt.Println("get flow ==", m.flow)
 
-	close(ch)
+	m.flow.Done(ctx)
+	child(ctx)
 }
 
-func child(ctx context.Context) Span {
+func child(ctx context.Context) {
 	span := StartSpan(ctx, "child")
 	defer span.Done()
-	return span
+	time.Sleep(30 * time.Microsecond)
+
+	return
 }
 
-func spawn(ctx context.Context, ch chan msg) {
-	span := StartSpan(ctx, "span")
-	defer span.Done()
-
+func worker(ch chan *msg, wg *sync.WaitGroup) {
+	ctx := SetTID(context.Background())
 	for {
 		msg, ok := <-ch
 		if !ok {
-			return
+			break
 		}
 
-		span1 := StartSpan(ctx, "Handle")
-		Flow(ctx, &msg.span, &span1)
-		close(msg.done)
-		span1.Done()
+		handleMsg(ctx, msg)
 	}
+	wg.Done()
+}
+
+func handleMsg(ctx context.Context, msg *msg) {
+	ctx = WithTrace(ctx, msg.span.GetTrace())
+	span := StartSpan(ctx, "handleMsg")
+	flow := StartFlow(ctx, "flow->test")
+	defer span.Done()
+
+	time.Sleep(20 * time.Microsecond)
+
+	msg.span.Done(ctx)
+
+	msg.flow = &flow
+
+	time.Sleep(10 * time.Microsecond)
+	close(msg.done)
 }
 
 func TestTrace(t *testing.T) {
-	var buf bytes.Buffer
-	ctx,_ := NewTask(context.Background(), &buf)
-	parent(ctx)
+	ch := make(chan *msg)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go worker(ch, &wg)
 
-	events, err := Read(&buf)
-	require.NoError(t, err)
+	ctx, task := NewTrace(context.Background(), nil)
+	parent(ctx, ch)
+
+	close(ch)
+	wg.Wait()
+
+	// events, err := Read(&buf)
+	events := task.Close()
 
 	res, err := json.Marshal(events)
+	require.NoError(t, err)
 	fmt.Println(string(res))
 }
 
@@ -92,15 +114,15 @@ func recur(ctx context.Context, i int, n int) {
 }
 
 func BenchmarkTrace(b *testing.B) {
-	var buf bytes.Buffer
-	ctx, _ := NewTask(context.Background(), &buf)
+	var events []Event
+	ctx, t := NewTrace(context.Background(), events)
 	recur(ctx, 0, 1)
-	buf.Reset()
+	events = t.Close()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		ctx, _ := NewTask(context.Background(), &buf)
+		ctx, t := NewTrace(context.Background(), events[:0])
 		recur(ctx, 0, 10)
-		buf.Reset()
+		events = t.Close()
 	}
 }
