@@ -322,7 +322,6 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	// All times are counted in seconds.
 	now := time.Now().Unix()
-
 	failpoint.Inject("mockTimeForStatementsSummary", func(val failpoint.Value) {
 		// mockTimeForStatementsSummary takes string of Unix timestamp
 		if unixTimeStr, ok := val.(string); ok {
@@ -335,56 +334,53 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	})
 
 	intervalSeconds := ssMap.refreshInterval()
+	historyEnabled := ssMap.historyEnabled()
 	historySize := 0
-	if ssMap.historyEnabled() {
+	if historyEnabled {
 		historySize = ssMap.historySize()
+	}
+	enabled := ssMap.Enabled()
+	enabledInternal := ssMap.EnabledInternal()
+
+	if !enabled || (sei.IsInternal && !enabledInternal) {
+		return
 	}
 
 	key := StmtDigestKeyPool.Get().(*StmtDigestKey)
-	// Init hash value in advance, to reduce the time holding the lock.
 	key.Init(sei.SchemaName, sei.Digest, sei.PrevSQLDigest, sei.PlanDigest, sei.ResourceGroupName)
 
-	var exist bool
-	// Enclose the block in a function to ensure the lock will always be released.
-	summary, beginTime := func() (*stmtSummaryByDigest, int64) {
-		ssMap.Lock()
-		defer ssMap.Unlock()
+	var summary *stmtSummaryByDigest
+	var beginTime int64
 
-		// Check again. Statements could be added before disabling the flag and after Clear().
-		if !ssMap.Enabled() {
-			return nil, 0
-		}
-		if sei.IsInternal && !ssMap.EnabledInternal() {
-			return nil, 0
-		}
+	ssMap.Lock()
+	defer ssMap.Unlock()
 
-		if ssMap.beginTimeForCurInterval+intervalSeconds <= now {
-			// `beginTimeForCurInterval` is a multiple of intervalSeconds, so that when the interval is a multiple
-			// of 60 (or 600, 1800, 3600, etc), begin time shows 'XX:XX:00', not 'XX:XX:01'~'XX:XX:59'.
-			ssMap.beginTimeForCurInterval = now / intervalSeconds * intervalSeconds
-		}
-
-		beginTime := ssMap.beginTimeForCurInterval
-		var value kvcache.Value
-		value, exist = ssMap.summaryMap.Get(key)
-		var summary *stmtSummaryByDigest
-		if !exist {
-			// Lazy initialize it to release ssMap.mutex ASAP.
-			summary = new(stmtSummaryByDigest)
-			ssMap.summaryMap.Put(key, summary)
-		} else {
-			summary = value.(*stmtSummaryByDigest)
-		}
-		summary.isInternal = summary.isInternal && sei.IsInternal
-		return summary, beginTime
-	}()
-	// Lock a single entry, not the whole cache.
-	if summary != nil {
-		summary.add(sei, beginTime, intervalSeconds, historySize)
+	// --- Re-check enabled status under lock (prevents race condition) ---
+	if !ssMap.Enabled() || (sei.IsInternal && !ssMap.EnabledInternal()) {
+		StmtDigestKeyPool.Put(key)
+		ssMap.Unlock()
+		return
 	}
-	if exist {
+
+	if ssMap.beginTimeForCurInterval+intervalSeconds <= now {
+		ssMap.beginTimeForCurInterval = now / intervalSeconds * intervalSeconds
+	}
+	beginTime = ssMap.beginTimeForCurInterval
+
+	// Get or create summary in the LRU map
+	value, exist := ssMap.summaryMap.Get(key)
+	if !exist {
+		summary = new(stmtSummaryByDigest)
+		ssMap.summaryMap.Put(key, summary)
+		// Key object from pool is now owned by the map, DO NOT put it back.
+	} else {
+		summary = value.(*stmtSummaryByDigest)
+		// Key object from pool is redundant because the map already has its key.
+		// Put the fetched key object back.
 		StmtDigestKeyPool.Put(key)
 	}
+	summary.isInternal = summary.isInternal && sei.IsInternal
+	summary.add(sei, beginTime, intervalSeconds, historySize)
 }
 
 // Clear removes all statement summaries.
@@ -557,50 +553,63 @@ func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, _ int64, _ int64, _ int
 	ssbd.initialized = true
 }
 
+// invariant: no concurrent access. This method must be protected by the caller
 func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, intervalSeconds int64, historySize int) {
-	// Enclose this block in a function to ensure the lock will always be released.
-	ssElement, isElementNew := func() (*stmtSummaryByDigestElement, bool) {
-		ssbd.Lock()
-		defer ssbd.Unlock()
+	// Pre-calculate values
+	warningCount := int(sei.StmtCtx.WarningCount())
+	affectedRows := sei.StmtCtx.AffectedRows()
 
-		if !ssbd.initialized {
-			ssbd.init(sei, beginTime, intervalSeconds, historySize)
+	// Variables to store results from the critical section
+	var elementToUpdate *stmtSummaryByDigestElement
+	var isNew bool
+	var lastElementToExpire *stmtSummaryByDigestElement
+
+	if !ssbd.initialized {
+		ssbd.init(sei, beginTime, intervalSeconds, historySize)
+		// After init, cumulative is updated, but history element needs creation below.
+	}
+	// Update cumulative stats regardless of initialization state (init calls it first time)
+	ssbd.cumulative.add(sei, warningCount, affectedRows)
+
+	// Check history for existing element or prepare for new one
+	isNew = true // Assume new initially
+	if ssbd.history.Len() > 0 {
+		lastElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
+		if lastElement.beginTime >= beginTime { // Found current interval element
+			elementToUpdate = lastElement
+			isNew = false
+		} else { // Last element is from previous interval
+			// Mark for expiration call outside the lock
+			lastElementToExpire = lastElement
 		}
-		ssbd.cumulative.add(sei)
+	}
 
-		var ssElement *stmtSummaryByDigestElement
-		isElementNew := true
-		if ssbd.history.Len() > 0 {
-			lastElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
-			if lastElement.beginTime >= beginTime {
-				ssElement = lastElement
-				isElementNew = false
-			} else {
-				// The last elements expires to the history.
-				lastElement.onExpire(intervalSeconds)
-			}
+	if isNew {
+		// Create and add the new element *inside* the lock because it modifies history list.
+		// The expensive part (newStmtSummaryStats, first add) is inside newStmtSummaryByDigestElement.
+		newElement := newStmtSummaryByDigestElement(sei, beginTime, intervalSeconds, warningCount, affectedRows)
+		if newElement != nil {
+			ssbd.history.PushBack(newElement)
+			// We don't need to update this element outside the lock, as newElement includes the first add.
+			elementToUpdate = newElement // Store for potential future use if needed, though add isn't called below for new.
+		} else {
+			// Handle potential creation failure - log? For now, just proceed.
 		}
-		if isElementNew {
-			// If the element is new created, `ssElement.add(sei)` should be done inside the lock of `ssbd`.
-			ssElement = newStmtSummaryByDigestElement(sei, beginTime, intervalSeconds)
-			if ssElement == nil {
-				return nil, isElementNew
-			}
-			ssbd.history.PushBack(ssElement)
-		}
+	}
 
-		// `historySize` might be modified anytime, so check expiration every time.
-		// Even if history is set to 0, current summary is still needed.
-		for ssbd.history.Len() > historySize && ssbd.history.Len() > 1 {
-			ssbd.history.Remove(ssbd.history.Front())
-		}
+	// Trim history list (must be inside the lock)
+	for ssbd.history.Len() > historySize && ssbd.history.Len() > 1 {
+		ssbd.history.Remove(ssbd.history.Front())
+	}
 
-		return ssElement, isElementNew
-	}()
+	// Handle expiration if necessary
+	if lastElementToExpire != nil {
+		lastElementToExpire.onExpire(intervalSeconds)
+	}
 
-	// Lock a single entry, not the whole `ssbd`.
-	if !isElementNew {
-		ssElement.add(sei, intervalSeconds)
+	// Add to the existing element if it wasn't new
+	if !isNew && elementToUpdate != nil {
+		elementToUpdate.add(sei, intervalSeconds, warningCount, affectedRows)
 	}
 }
 
@@ -666,20 +675,19 @@ func newStmtSummaryStats(sei *StmtExecInfo) *stmtSummaryStats {
 	}
 }
 
-func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64) *stmtSummaryByDigestElement {
+// invariant: no concurrent access. This method must be protected by the caller
+func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64, warningCount int, affectedRows uint64) *stmtSummaryByDigestElement {
 	ssElement := &stmtSummaryByDigestElement{
 		beginTime:        beginTime,
 		stmtSummaryStats: *newStmtSummaryStats(sei),
 	}
-	ssElement.add(sei, intervalSeconds)
+	ssElement.add(sei, intervalSeconds, warningCount, affectedRows)
 	return ssElement
 }
 
 // onExpire is called when this element expires to history.
 func (ssElement *stmtSummaryByDigestElement) onExpire(intervalSeconds int64) {
 	ssElement.Lock()
-	defer ssElement.Unlock()
-
 	// refreshInterval may change anytime, so we need to update endTime.
 	if ssElement.beginTime+intervalSeconds > ssElement.endTime {
 		// // If interval changes to a bigger value, update endTime to beginTime + interval.
@@ -691,19 +699,22 @@ func (ssElement *stmtSummaryByDigestElement) onExpire(intervalSeconds int64) {
 			ssElement.endTime = now
 		}
 	}
+	ssElement.Unlock()
 }
 
-func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo) {
+func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affectedRows uint64) {
 	// add user to auth users set
 	if len(sei.User) > 0 {
-		ssStats.authUsers[sei.User] = struct{}{}
+		if _, exist := ssStats.authUsers[sei.User]; !exist {
+			ssStats.authUsers[sei.User] = struct{}{}
+		}
 	}
 
 	ssStats.execCount++
 	if !sei.Succeed {
 		ssStats.sumErrors++
 	}
-	ssStats.sumWarnings += int(sei.StmtCtx.WarningCount())
+	ssStats.sumWarnings += warningCount
 
 	// latency
 	ssStats.sumLatency += sei.TotalLatency
@@ -824,7 +835,8 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo) {
 		if commitDetails.TxnRetry > ssStats.maxTxnRetry {
 			ssStats.maxTxnRetry = commitDetails.TxnRetry
 		}
-		commitDetails.Mu.Lock()
+		// we don't need to lock here, because there must not be any other goroutine
+		// modifying the commitDetails when we are summarizing
 		commitBackoffTime := commitDetails.Mu.CommitBackoffTime
 		ssStats.sumCommitBackoffTime += commitBackoffTime
 		if commitBackoffTime > ssStats.maxCommitBackoffTime {
@@ -838,7 +850,6 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo) {
 		for _, backoffType := range commitDetails.Mu.CommitBackoffTypes {
 			ssStats.backoffTypes[backoffType]++
 		}
-		commitDetails.Mu.Unlock()
 	}
 
 	// plan cache
@@ -861,7 +872,7 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo) {
 	}
 
 	// other
-	ssStats.sumAffectedRows += sei.StmtCtx.AffectedRows()
+	ssStats.sumAffectedRows += uint64(affectedRows)
 	ssStats.sumMem += sei.MemMax
 	if sei.MemMax > ssStats.maxMem {
 		ssStats.maxMem = sei.MemMax
@@ -905,13 +916,11 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo) {
 	ssStats.StmtRUSummary.Add(sei.RUDetail)
 }
 
-func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeconds int64) {
-	ssElement.Lock()
-	defer ssElement.Unlock()
-
+// invariant: no concurrent access. This method must be protected by the caller
+func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeconds int64, warningCount int, affectedRows uint64) {
 	// refreshInterval may change anytime, update endTime ASAP.
 	ssElement.endTime = ssElement.beginTime + intervalSeconds
-	ssElement.stmtSummaryStats.add(sei)
+	ssElement.stmtSummaryStats.add(sei, warningCount, affectedRows)
 }
 
 // Truncate SQL to maxSQLLength.

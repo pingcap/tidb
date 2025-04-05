@@ -139,7 +139,7 @@ var _ WarnHandler = &StaticWarnHandler{}
 
 // StaticWarnHandler implements the WarnHandler interface.
 type StaticWarnHandler struct {
-	sync.Mutex
+	sync.RWMutex
 	warnings []SQLWarn
 }
 
@@ -208,8 +208,8 @@ func (h *StaticWarnHandler) AppendError(warn error) {
 
 // WarningCount implements the StaticWarnHandler.WarningCount.
 func (h *StaticWarnHandler) WarningCount() int {
-	h.Lock()
-	defer h.Unlock()
+	h.RLock()
+	defer h.RUnlock()
 	return len(h.warnings)
 }
 
@@ -242,8 +242,8 @@ func (h *StaticWarnHandler) CopyWarnings(dst []SQLWarn) []SQLWarn {
 
 // GetWarnings returns all warnings in the handler. It's not safe to modify the returned slice.
 func (h *StaticWarnHandler) GetWarnings() []SQLWarn {
-	h.Mutex.Lock()
-	defer h.Mutex.Unlock()
+	h.RWMutex.RLock()
+	defer h.RWMutex.RUnlock()
 
 	return h.warnings
 }
