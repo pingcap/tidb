@@ -314,6 +314,11 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 // DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
 func (s *statsUsageImpl) DumpColStatsUsageToKV() error {
 	defer util.Recover(metrics.LabelStats, "DumpColStatsUsageToKV", nil, false)
+	start := time.Now()
+	defer func() {
+		dur := time.Since(start)
+		metrics.StatsUsageUpdateHistogram.Observe(dur.Seconds())
+	}()
 	s.SweepSessionStatsList()
 	colMap := s.SessionStatsUsage().GetUsageAndReset()
 	defer func() {
