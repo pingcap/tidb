@@ -1257,9 +1257,11 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		fixcontrol.Fix52869,
 		false,
 	)
+	// is preferRangeRatio is set, check index selectivity
+	preferRangeRatio := ds.AccessPathMinIndexSel < ds.SCtx().GetSessionVars().PreferRangeRatio
 	if preferRange {
 		// Override preferRange with the following limitations to scope
-		preferRange = ds.AccessPathMinIndexSel < ds.SCtx().GetSessionVars().PreferRangeRatio || preferMerge || idxMissingStats || ds.TableStats.HistColl.Pseudo
+		preferRange = preferRangeRatio || preferMerge || idxMissingStats || ds.TableStats.HistColl.Pseudo
 	}
 	if preferRange && len(candidates) > 1 {
 		// If a candidate path is TiFlash-path or forced-path or MV index or global index, we just keep them. For other
@@ -1272,8 +1274,8 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				continue
 			}
 			if !c.path.IsFullScanRange(ds.TableInfo) {
-				// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
-				indexFilters := c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
+				// Preference plans with equals/IN predicates or where there is more matching index filtering than table filtering
+				indexFilters := c.path.EqOrInCondCount > 0 || (preferRangeRatio && len(c.path.TableFilters) < len(c.path.AccessConds))
 				if preferMerge || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
