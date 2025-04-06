@@ -192,9 +192,9 @@ id	estRows	task	access object	operator info
 Projection	207.02	root		explain_complex_stats.pp.pc, explain_complex_stats.pp.cr, Column#22, Column#23, Column#24
 └─HashAgg	207.02	root		group by:explain_complex_stats.pp.cr, explain_complex_stats.pp.pc, funcs:count(distinct explain_complex_stats.pp.uid)->Column#22, funcs:count(explain_complex_stats.pp.oid)->Column#23, funcs:sum(explain_complex_stats.pp.am)->Column#24, funcs:firstrow(explain_complex_stats.pp.pc)->explain_complex_stats.pp.pc, funcs:firstrow(explain_complex_stats.pp.cr)->explain_complex_stats.pp.cr
   └─IndexLookUp	207.02	root		
-    ├─IndexRangeScan(Build)	627.00	cop[tikv]	table:pp, index:ps(ps)	range:[2,2], keep order:false, stats:partial[uid:unInitialized, ppt:unInitialized, ps:unInitialized]
+    ├─IndexRangeScan(Build)	627.00	cop[tikv]	table:pp, index:ps(ps)	range:[2,2], keep order:false, stats:partial[uid:missing, ppt:missing, ps:missing]
     └─Selection(Probe)	207.02	cop[tikv]		ge(explain_complex_stats.pp.ppt, 1478188800), in(explain_complex_stats.pp.pi, 510017, 520017), in(explain_complex_stats.pp.uid, 18089709, 18090780), lt(explain_complex_stats.pp.ppt, 1478275200)
-      └─TableRowIDScan	627.00	cop[tikv]	table:pp	keep order:false, stats:partial[uid:unInitialized, ppt:unInitialized, ps:unInitialized]
+      └─TableRowIDScan	627.00	cop[tikv]	table:pp	keep order:false, stats:partial[uid:missing, ppt:missing, ps:missing]
 drop table if exists tbl_001;
 CREATE TABLE tbl_001 (a int, b int);
 load stats 's/explain_complex_stats_tbl_001.json';
