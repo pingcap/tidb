@@ -15,17 +15,14 @@
 package stmtsummary
 
 import (
+	"fmt"
 	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 )
 
-// BenchmarkStmtSummaryAdd 测试单线程下 StmtSummary.Add 的性能
-func BenchmarkStmtSummaryAdd(b *testing.B) {
-	// 使用函数完整名称，避免被错误解析
-
-	// 准备一个固定的 StmtExecInfo 进行测试
+func BenchmarkStmtSummaryAddSingleWorkload(b *testing.B) {
 	info := GenerateStmtExecInfo4Test("digest_test")
 
 	b.ResetTimer()
@@ -34,8 +31,7 @@ func BenchmarkStmtSummaryAdd(b *testing.B) {
 	}
 }
 
-func BenchmarkStmtSummaryAddParallelRealistic(b *testing.B) {
-	// allocate different infos for each thread
+func BenchmarkStmtSummaryAddParallelSingleWorkload(b *testing.B) {
     const infoCount = 1000
     infos := make([]*stmtsummary.StmtExecInfo, infoCount)
     for i := 0; i < infoCount; i++ {
@@ -43,7 +39,6 @@ func BenchmarkStmtSummaryAddParallelRealistic(b *testing.B) {
     }
     
 	var id atomic.Int64
-	// b.SetParallelism(10)
     b.ResetTimer()
     b.RunParallel(func(pb *testing.PB) {
 		idx := id.Add(1)
@@ -51,4 +46,21 @@ func BenchmarkStmtSummaryAddParallelRealistic(b *testing.B) {
             Add(infos[idx])
         }
     })
+}
+
+func BenchmarkStmtSummaryAddParallelMultiWorkload(b *testing.B) {
+	infoCount := 1000
+	infos := make([]*stmtsummary.StmtExecInfo, infoCount)
+	for i := 0; i < infoCount; i++ {
+		infos[i] = GenerateStmtExecInfo4Test(fmt.Sprintf("digest_test_%d", i))
+	}
+
+	var id atomic.Int64
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		idx := id.Add(1)
+		for pb.Next() {
+			Add(infos[idx])
+		}
+	})
 }
