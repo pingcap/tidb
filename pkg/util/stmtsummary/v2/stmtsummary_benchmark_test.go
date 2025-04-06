@@ -1,4 +1,4 @@
-// Copyright 2023 PingCAP, Inc.
+// Copyright 2025 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -32,20 +32,20 @@ func BenchmarkStmtSummaryAddSingleWorkload(b *testing.B) {
 }
 
 func BenchmarkStmtSummaryAddParallelSingleWorkload(b *testing.B) {
-    const infoCount = 1000
-    infos := make([]*stmtsummary.StmtExecInfo, infoCount)
-    for i := 0; i < infoCount; i++ {
-        infos[i] = GenerateStmtExecInfo4Test("digest_test")
-    }
-    
+	const infoCount = 1000
+	infos := make([]*stmtsummary.StmtExecInfo, infoCount)
+	for i := 0; i < infoCount; i++ {
+		infos[i] = GenerateStmtExecInfo4Test("digest_test")
+	}
+
 	var id atomic.Int64
-    b.ResetTimer()
-    b.RunParallel(func(pb *testing.PB) {
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
 		idx := id.Add(1)
-        for pb.Next() {
-            Add(infos[idx])
-        }
-    })
+		for pb.Next() {
+			Add(infos[idx])
+		}
+	})
 }
 
 func BenchmarkStmtSummaryAddParallelMultiWorkload(b *testing.B) {

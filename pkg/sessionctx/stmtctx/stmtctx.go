@@ -135,8 +135,7 @@ func (r *ReservedRowIDAlloc) Exhausted() bool {
 type stmtCtxMu struct {
 	sync.Mutex
 
-	affectedRows uint64
-	foundRows    uint64
+	foundRows uint64
 
 	/*
 		following variables are ported from 'COPY_INFO' struct of MySQL server source,
@@ -164,7 +163,6 @@ func (mu *stmtCtxMu) reset() *stmtCtxMu {
 	if mu == nil {
 		return &stmtCtxMu{}
 	}
-	mu.affectedRows = 0
 	mu.copied = 0
 	mu.deleted = 0
 	mu.foundRows = 0
@@ -275,6 +273,8 @@ type StatementContext struct {
 	ViewDepth       int32
 	// mu struct holds variables that change during execution.
 	mu *stmtCtxMu
+	// affectedRows is lifted from mu for performance reason.
+	affectedRows atomic.Uint64
 
 	WarnHandler contextutil.WarnHandlerExt
 	// ExtraWarnHandler record the extra warnings and are only used by the slow log only now.
@@ -546,6 +546,7 @@ func (sc *StatementContext) Reset() bool {
 		StaleTSOProvider:    sc.StaleTSOProvider,
 	}
 	sc.mu = sc.mu.reset()
+	sc.affectedRows.Store(0)
 	sc.stmtCache = sc.stmtCache.reset()
 	sc.StaleTSOProvider = sc.StaleTSOProvider.reset()
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc)
@@ -870,24 +871,18 @@ func (sc *StatementContext) AddAffectedRows(rows uint64) {
 		// For compatibility with MySQL, not add the affected row cause by the foreign key trigger.
 		return
 	}
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	sc.mu.affectedRows += rows
+	sc.affectedRows.Add(rows)
 }
 
 // SetAffectedRows sets affected rows.
 func (sc *StatementContext) SetAffectedRows(rows uint64) {
-	sc.mu.Lock()
-	sc.mu.affectedRows = rows
-	sc.mu.Unlock()
+	sc.affectedRows.Store(rows)
 }
 
 // AffectedRows gets affected rows.
 func (sc *StatementContext) AffectedRows() uint64 {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
 	failpoint.InjectCall("afterAffectedRowsLocked", sc)
-	return sc.mu.affectedRows
+	return sc.affectedRows.Load()
 }
 
 // FoundRows gets found rows.
@@ -1070,7 +1065,7 @@ func (sc *StatementContext) AppendExtraError(warn error) {
 func (sc *StatementContext) resetMuForRetry() {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
-	sc.mu.affectedRows = 0
+	sc.affectedRows.Store(0)
 	sc.mu.foundRows = 0
 	sc.mu.records = 0
 	sc.mu.deleted = 0
