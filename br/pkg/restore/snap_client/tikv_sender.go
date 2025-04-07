@@ -42,6 +42,7 @@ func getSortedPhysicalTables(createdTables []*CreatedTable) []*PhysicalTable {
 			NewPhysicalID: createdTable.Table.ID,
 			OldPhysicalID: createdTable.OldTable.Info.ID,
 			RewriteRules:  createdTable.RewriteRule,
+			Files:         createdTable.OldTable.FilesOfPhysicals[createdTable.OldTable.Info.ID],
 		})
 
 		partitionIDMap := restoreutils.GetPartitionIDMap(createdTable.Table, createdTable.OldTable.Info)
@@ -50,6 +51,7 @@ func getSortedPhysicalTables(createdTables []*CreatedTable) []*PhysicalTable {
 				NewPhysicalID: newID,
 				OldPhysicalID: oldID,
 				RewriteRules:  createdTable.RewriteRule,
+				Files:         createdTable.OldTable.FilesOfPhysicals[oldID],
 			})
 		}
 	}
@@ -123,24 +125,21 @@ const MergedRangeCountThreshold = 1536
 // SortAndValidateFileRanges sort, merge and validate files by tables and yields tables with range.
 func SortAndValidateFileRanges(
 	createdTables []*CreatedTable,
-	allFiles []*backuppb.File,
 	checkpointSetWithTableID map[int64]map[string]struct{},
 	splitSizeBytes, splitKeyCount uint64,
 	splitOnTable bool,
 ) ([][]byte, []restore.BatchBackupFileSet, error) {
 	sortedPhysicalTables := getSortedPhysicalTables(createdTables)
-	// mapping table ID to its backup files
-	fileOfTable, hintSplitKeyCount := mapTableToFiles(allFiles)
 	// sort, merge, and validate files in each tables, and generate split keys by the way
 	var (
 		// to generate region split keys, merge the small ranges over the adjacent tables
-		sortedSplitKeys        = make([][]byte, 0, hintSplitKeyCount)
+		sortedSplitKeys        = make([][]byte, 0)
 		groupSize              = uint64(0)
 		groupCount             = uint64(0)
 		lastKey         []byte = nil
 
 		// group the files by the generated split keys
-		tableIDWithFilesGroup                            = make([]restore.BatchBackupFileSet, 0, hintSplitKeyCount)
+		tableIDWithFilesGroup                            = make([]restore.BatchBackupFileSet, 0)
 		lastFilesGroup        restore.BatchBackupFileSet = nil
 
 		// statistic
@@ -151,7 +150,7 @@ func SortAndValidateFileRanges(
 
 	log.Info("start to merge ranges", zap.Uint64("kv size threshold", splitSizeBytes), zap.Uint64("kv count threshold", splitKeyCount))
 	for _, table := range sortedPhysicalTables {
-		files := fileOfTable[table.OldPhysicalID]
+		files := table.Files
 		for _, file := range files {
 			if err := restoreutils.ValidateFileRewriteRule(file, table.RewriteRules); err != nil {
 				return nil, nil, errors.Trace(err)
@@ -291,7 +290,6 @@ type RestoreTablesContext struct {
 
 	// data
 	CreatedTables            []*CreatedTable
-	AllFiles                 []*backuppb.File
 	CheckpointSetWithTableID map[int64]map[string]struct{}
 
 	// tool client
@@ -315,7 +313,7 @@ func (rc *SnapClient) RestoreTables(ctx context.Context, rtCtx RestoreTablesCont
 
 	start := time.Now()
 	sortedSplitKeys, tableIDWithFilesGroup, err :=
-		SortAndValidateFileRanges(rtCtx.CreatedTables, rtCtx.AllFiles, rtCtx.CheckpointSetWithTableID, rtCtx.SplitSizeBytes, rtCtx.SplitKeyCount, rtCtx.SplitOnTable)
+		SortAndValidateFileRanges(rtCtx.CreatedTables, rtCtx.CheckpointSetWithTableID, rtCtx.SplitSizeBytes, rtCtx.SplitKeyCount, rtCtx.SplitOnTable)
 	if err != nil {
 		return errors.Trace(err)
 	}
