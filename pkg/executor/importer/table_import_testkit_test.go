@@ -16,6 +16,8 @@ package importer_test
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"os"
 	"testing"
 
@@ -110,13 +112,22 @@ func TestImportFromSelectCleanup(t *testing.T) {
 	var wg util.WaitGroupWrapper
 	wg.Run(func() {
 		defer close(ch)
-		for i := 1; i <= 3; i++ {
-			ch <- importer.QueryChunk{
-				ID: int64(i),
-				Data: []types.Datum{
-					types.NewIntDatum(int64(i)),
-				},
-			}
+		fields := make([]*types.FieldType, 0, 3)
+		fields = append(fields, types.NewFieldType(mysql.TypeLong))
+		chk := chunk.New(fields, 2, 2)
+		chk.AppendInt64(0, int64(1))
+		chk.AppendInt64(0, int64(2))
+		ch <- importer.QueryChunk{
+			Fields: fields,
+			Chk:    chk,
+			Offset: 0,
+		}
+		chk = chunk.New(fields, 1, 1)
+		chk.AppendInt64(0, int64(3))
+		ch <- importer.QueryChunk{
+			Fields: fields,
+			Chk:    chk,
+			Offset: 2,
 		}
 	})
 	_, err = ti.ImportSelectedRows(ctx, tk.Session())
