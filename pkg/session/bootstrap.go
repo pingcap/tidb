@@ -305,10 +305,11 @@ const (
 		charset TEXT NOT NULL,
 		collation TEXT NOT NULL,
 		source VARCHAR(10) NOT NULL DEFAULT 'unknown',
-		sql_digest varchar(64),
-		plan_digest varchar(64),
+		sql_digest varchar(64) DEFAULT NULL,
+		plan_digest varchar(64) DEFAULT NULL,
 		INDEX sql_index(original_sql(700),default_db(68)) COMMENT "accelerate the speed when add global binding query",
-		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
+		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time",
+		UNIQUE INDEX digest_index(plan_digest, sql_digest) COMMENT "avoid duplicated records"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateRoleEdgesTable stores the role and user relationship information.
@@ -1277,14 +1278,17 @@ const (
 	// version245 updates column types of mysql.bind_info.
 	version245 = 245
 
-	// version 246
-	// Add last_stats_histograms_version to mysql.stats_meta.
+	// version246 adds new unique index for mysql.bind_info.
 	version246 = 246
+
+	// version 247
+	// Add last_stats_histograms_version to mysql.stats_meta.
+	version247 = 247
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version246
+var currentBootstrapVersion int64 = version247
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1466,6 +1470,7 @@ var (
 		upgradeToVer244,
 		upgradeToVer245,
 		upgradeToVer246,
+		upgradeToVer247,
 	}
 )
 
@@ -3413,6 +3418,60 @@ func upgradeToVer245(s sessiontypes.Session, ver int64) {
 
 func upgradeToVer246(s sessiontypes.Session, ver int64) {
 	if ver >= version246 {
+		return
+	}
+
+	// log duplicated digests that will be set to null.
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx,
+		`select plan_digest, sql_digest from mysql.bind_info group by plan_digest, sql_digest having count(1) > 1`)
+	if err != nil {
+		logutil.BgLogger().Fatal("failed to get duplicated plan and sql digests", zap.Error(err))
+		return
+	}
+	req := rs.NewChunk(nil)
+	duplicatedDigests := make(map[string]struct{})
+	for {
+		err = rs.Next(ctx, req)
+		if err != nil {
+			logutil.BgLogger().Fatal("failed to get duplicated plan and sql digests", zap.Error(err))
+			return
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		for i := 0; i < req.NumRows(); i++ {
+			planDigest, sqlDigest := req.GetRow(i).GetString(0), req.GetRow(i).GetString(1)
+			duplicatedDigests[sqlDigest+", "+planDigest] = struct{}{}
+		}
+		req.Reset()
+	}
+	if err := rs.Close(); err != nil {
+		logutil.BgLogger().Warn("failed to close record set", zap.Error(err))
+	}
+	if len(duplicatedDigests) > 0 {
+		digestList := make([]string, 0, len(duplicatedDigests))
+		for k := range duplicatedDigests {
+			digestList = append(digestList, "("+k+")")
+		}
+		logutil.BgLogger().Warn("set the following (plan digest, sql digest) in mysql.bind_info to null " +
+			"for adding new unique index: " + strings.Join(digestList, ", "))
+	}
+
+	// to avoid the failure of adding the unique index, remove duplicated rows on these 2 digest columns first.
+	// in most cases, there should be no duplicated rows, since now we only store one binding for each sql_digest.
+	// compared with upgrading failure, it's OK to set these 2 columns to null.
+	doReentrantDDL(s, `UPDATE mysql.bind_info SET plan_digest=null, sql_digest=null
+                       WHERE (plan_digest, sql_digest) in (
+                         select plan_digest, sql_digest from mysql.bind_info
+                         group by plan_digest, sql_digest having count(1) > 1)`)
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info MODIFY COLUMN sql_digest VARCHAR(64) DEFAULT NULL")
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info MODIFY COLUMN plan_digest VARCHAR(64) DEFAULT NULL")
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD UNIQUE INDEX digest_index(plan_digest, sql_digest)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer247(s sessiontypes.Session, ver int64) {
+	if ver >= version247 {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN last_stats_histograms_version bigint unsigned DEFAULT NULL", infoschema.ErrColumnExists)

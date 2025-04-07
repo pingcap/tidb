@@ -232,7 +232,7 @@ func buildJoinKeyStringDatums(num int) []any {
 	return datums
 }
 
-func buildLeftAndRightDataSource(ctx sessionctx.Context, leftCols []*expression.Column, rightCols []*expression.Column, hasSel bool) (*testutil.MockDataSource, *testutil.MockDataSource) {
+func buildLeftAndRightDataSource(ctx sessionctx.Context, leftCols []*expression.Column, rightCols []*expression.Column, hasSel bool) (_, _ *testutil.MockDataSource) {
 	leftSchema := expression.NewSchema(leftCols...)
 	rightSchema := expression.NewSchema(rightCols...)
 
