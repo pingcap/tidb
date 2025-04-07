@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
-	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -171,34 +170,32 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 			if pointGet != nil {
 				var params []expression.Expression
 				if execStmt.BinaryArgs != nil {
+					// TODO(lance6716): this branch is not optimized yet
 					params = execStmt.BinaryArgs.([]expression.Expression)
 					err = core.SetParameterValuesIntoSCtx(sctx.GetPlanCtx(), false, prepStmt.Params, params)
 					if err != nil {
 						return nil, nil, err
 					}
 				} else {
-					params = make([]expression.Expression, 0, len(execStmt.UsingVars))
-					for i, expr := range execStmt.UsingVars {
+					sessVars.PlanCacheParams.Reset()
+					for _, expr := range execStmt.UsingVars {
 						v := expr.(*ast.VariableExpr)
 						name := strings.ToLower(v.Name)
 						val, ok := sessVars.UserVars.GetUserVarVal(name)
 						if !ok {
 							return nil, nil, errors.Errorf("user var %s not found", name)
 						}
-						marker := prepStmt.Params[i].(*driver.ParamMarkerExpr)
-						marker.Datum = val
-						marker.InExecute = true
+						sessVars.PlanCacheParams.Append(val)
 					}
-				}
-
-				if core.RebuildPointPlan(pctx, pointGet, prepStmt.PreparedAst.Stmt.(*ast.SelectStmt)) {
-					execPlan := &core.Execute{
-						Name:     execStmt.Name,
-						Plan:     pointGet,
-						PrepStmt: prepStmt,
-						Stmt:     prepStmt.PreparedAst.Stmt,
+					if pointGet.Rebuild(pctx) == nil {
+						execPlan := &core.Execute{
+							Name:     execStmt.Name,
+							Plan:     pointGet,
+							PrepStmt: prepStmt,
+							Stmt:     prepStmt.PreparedAst.Stmt,
+						}
+						return execPlan, pointGet.OutputNames(), nil
 					}
-					return execPlan, pointGet.OutputNames(), nil
 				}
 			}
 		}
@@ -481,7 +478,7 @@ func allowInReadOnlyMode(sctx planctx.PlanContext, node ast.Node) (bool, error) 
 	switch node.(type) {
 	// allow change variables (otherwise can't unset read-only mode)
 	case *ast.SetStmt,
-		// allow analyze table
+	// allow analyze table
 		*ast.AnalyzeTableStmt,
 		*ast.UseStmt,
 		*ast.ShowStmt,

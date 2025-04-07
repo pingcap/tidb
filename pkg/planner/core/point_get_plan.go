@@ -411,6 +411,32 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 	return false
 }
 
+func (p *PointGetPlan) Rebuild(pctx base.PlanContext) error {
+	if p.HandleConstant != nil {
+		sc := pctx.GetSessionVars().StmtCtx
+		dVal, err := convertConstant2Datum(pctx, p.HandleConstant, p.handleFieldType)
+		if err != nil {
+			return err
+		}
+		iv, err := dVal.ToInt64(sc.TypeCtx())
+		if err != nil {
+			return err
+		}
+		p.Handle = kv.IntHandle(iv)
+		return nil
+	}
+	for i, param := range p.IndexConstants {
+		if param != nil {
+			dVal, err := convertConstant2Datum(pctx, param, p.ColsFieldType[i])
+			if err != nil {
+				return err
+			}
+			p.IndexValues[i] = *dVal
+		}
+	}
+	return nil
+}
+
 // BatchPointGetPlan represents a physical plan which contains a bunch of
 // keys reference the same table and use the same `unique key`
 type BatchPointGetPlan struct {
@@ -1374,6 +1400,7 @@ func tryPointGetPlan(ctx base.PlanContext, selStmt *ast.SelectStmt, resolveCtx *
 	return checkTblIndexForPointPlan(ctx, tnW, schema, names, pairs, isTableDual, check)
 }
 
+// TODO(lance6716): refine it
 func RebuildPointPlan(
 	ctx base.PlanContext,
 	old *PointGetPlan,
