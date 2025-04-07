@@ -881,7 +881,6 @@ func (sc *StatementContext) SetAffectedRows(rows uint64) {
 
 // AffectedRows gets affected rows.
 func (sc *StatementContext) AffectedRows() uint64 {
-	failpoint.InjectCall("afterAffectedRowsLocked", sc)
 	return sc.affectedRows.Load()
 }
 
@@ -889,6 +888,7 @@ func (sc *StatementContext) AffectedRows() uint64 {
 func (sc *StatementContext) FoundRows() uint64 {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
+	failpoint.InjectCall("afterFoundRowsLocked", sc)
 	return sc.mu.foundRows
 }
 
