@@ -651,17 +651,12 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 	return ret, true
 }
 
-<<<<<<< HEAD
-func (is *infoschemaV2) SchemaNameByTableID(tableID int64) (schemaName pmodel.CIStr, ok bool) {
-	if !tableIDIsValid(tableID) {
-		return
-	}
-
-=======
 // TableItemByID implements the InfoSchema interface.
 // It only contains memory operations, no worries about accessing the storage.
 func (is *infoschemaV2) TableItemByID(tableID int64) (TableItem, bool) {
->>>>>>> 513bfebd877 (stats, infoschema: avoid some network cost of reading table meta kv (#59105))
+	if !tableIDIsValid(tableID) {
+		return TableItem{}, false
+	}
 	itm, ok := is.searchTableItemByID(tableID)
 	if !ok {
 		return TableItem{}, false
@@ -1028,15 +1023,8 @@ func (is *infoschemaV2) SchemaExists(schema pmodel.CIStr) bool {
 	return ok
 }
 
-<<<<<<< HEAD
-func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition) {
-	var ok bool
-	var pi partitionItem
-	is.pid2tid.Descend(partitionItem{partitionID: partitionID, schemaVersion: math.MaxInt64},
-=======
 func (is *infoschemaV2) searchPartitionItemByPartitionID(partitionID int64) (pi partitionItem, ok bool) {
-	is.pid2tid.Load().DescendLessOrEqual(partitionItem{partitionID: partitionID, schemaVersion: math.MaxInt64},
->>>>>>> 513bfebd877 (stats, infoschema: avoid some network cost of reading table meta kv (#59105))
+	is.pid2tid.Descend(partitionItem{partitionID: partitionID, schemaVersion: math.MaxInt64},
 		func(item partitionItem) bool {
 			if item.partitionID != partitionID {
 				return false

@@ -315,14 +315,9 @@ func (is *infoSchema) TableByID(_ stdctx.Context, id int64) (val table.Table, ok
 	return slice[idx], true
 }
 
-<<<<<<< HEAD
-func (is *infoSchema) SchemaNameByTableID(tableID int64) (schemaName pmodel.CIStr, ok bool) {
-	tbl, ok := is.TableByID(stdctx.Background(), tableID)
-=======
 // TableItemByID implements InfoSchema.TableItemByID.
 func (is *infoSchema) TableItemByID(id int64) (TableItem, bool) {
 	tbl, ok := is.TableByID(stdctx.Background(), id)
->>>>>>> 513bfebd877 (stats, infoschema: avoid some network cost of reading table meta kv (#59105))
 	if !ok {
 		return TableItem{}, false
 	}
