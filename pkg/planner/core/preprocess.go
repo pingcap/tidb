@@ -299,8 +299,10 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.stmtTp = TypeCreate
 		p.checkCreateIndexGrammar(node)
 	case *ast.AlterTableStmt:
-		p.flag |= inCreateOrDropTable
 		p.stmtTp = TypeAlter
+		if p.flag&inPrepare != 0 {
+			p.flag |= inCreateOrDropTable
+		}
 		p.resolveAlterTableStmt(node)
 		p.checkAlterTableGrammar(node)
 	case *ast.CreateDatabaseStmt:
