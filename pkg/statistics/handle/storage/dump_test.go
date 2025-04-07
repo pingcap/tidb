@@ -208,7 +208,7 @@ func TestLastStatsHistUpdateVersionAfterLoadStats(t *testing.T) {
 	tk.MustExec("analyze table t")
 
 	statsHandle := dom.StatsHandle()
-	table, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	table, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	statsTbl := statsHandle.GetTableStats(tableInfo)
