@@ -1660,7 +1660,7 @@ type PhysicalIndexJoin struct {
 	// execution. InnerJoinKeys is the prefix of InnerHashKeys.
 	InnerHashKeys []*expression.Column
 	// EqualConditions stores the equal conditions for logical join's original EqualConditions.
-	EqualConditions []*expression.ScalarFunction
+	EqualConditions []*expression.ScalarFunction `plan-cache-clone:"shallow"`
 }
 
 // Clone implements op.PhysicalPlan interface.
