@@ -27,13 +27,13 @@ func (s *mockGCSSuite) TestCSVFieldsEncodedByBase64() {
 
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "base64", Name: "base64.csv"},
-		Content:     []byte("YWFhYQ==,MQ==\nYmJiYg==,\n,Mg==\n"),
+		Content:     []byte("YWFhYQ==,MQ==\nYmJiYg==,\n,Mg==\n,"),
 	})
 	s.tk.MustExec("set sql_mode=''")
 	sql := fmt.Sprintf(`IMPORT INTO t FROM 'gs://base64/base64.csv?endpoint=%s'
 		WITH fields_encoded_by='base64', fields_enclosed_by='', fields_escaped_by='', character_set='binary';`, gcsEndpoint)
 	s.tk.MustQuery(sql)
-	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows(
-		"aaaa 1", "bbbb 0", " 2",
+	s.tk.MustQuery("SELECT * FROM t;").Sort().Check(testkit.Rows(
+		"<nil> 2", "<nil> <nil>", "aaaa 1", "bbbb <nil>",
 	))
 }
