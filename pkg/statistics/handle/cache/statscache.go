@@ -129,7 +129,7 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		err                       error
 	)
 	if err := util.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		query := "SELECT version, table_id, modify_count, count, snapshot from mysql.stats_meta where version > %? "
+		query := "SELECT version, table_id, modify_count, count, snapshot, last_stats_histograms_version from mysql.stats_meta where version > %? "
 		args := []any{lastVersion}
 
 		if onlyForAnalyzedTables {
@@ -170,6 +170,10 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		modifyCount := row.GetInt64(2)
 		count := row.GetInt64(3)
 		snapshot := row.GetUint64(4)
+		var latestHistUpdateVersion uint64
+		if !row.IsNull(5) {
+			latestHistUpdateVersion = row.GetUint64(5)
+		}
 
 		// Detect the context cancel signal, since it may take a long time for the loop.
 		// TODO: add context to TableInfoByID and remove this code block?
@@ -188,31 +192,44 @@ func (s *StatsCacheImpl) Update(ctx context.Context, is infoschema.InfoSchema, t
 		}
 		tableInfo := table.Meta()
 		// If the table is not updated, we can skip it.
-		if oldTbl, ok := s.Get(physicalID); ok &&
-			oldTbl.Version >= version &&
+
+		oldTbl, ok := s.Get(physicalID)
+		if ok && oldTbl.Version >= version &&
 			tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
 			continue
 		}
-		tbl, err := s.statsHandle.TableStatsFromStorage(
-			tableInfo,
-			physicalID,
-			false,
-			0,
-		)
-		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
-		if err != nil {
-			statslogutil.StatsLogger().Error(
-				"error occurred when read table stats",
-				zap.String("table", tableInfo.Name.O),
-				zap.Error(err),
-			)
-			continue
+		var tbl *statistics.Table
+		needLoadColAndIdxStats := true
+		// If the column/index stats has not been updated, we can reuse the old table stats.
+		// Only need to update the count and modify count.
+		if ok && latestHistUpdateVersion > 0 && oldTbl.LastStatsHistVersion >= latestHistUpdateVersion {
+			tbl = oldTbl.Copy()
+			// count and modify count is updated in finalProcess
+			needLoadColAndIdxStats = false
 		}
-		if tbl == nil {
-			tblToUpdateOrDelete.addToDelete(physicalID)
-			continue
+		if needLoadColAndIdxStats {
+			tbl, err = s.statsHandle.TableStatsFromStorage(
+				tableInfo,
+				physicalID,
+				false,
+				0,
+			)
+			// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
+			if err != nil {
+				statslogutil.StatsLogger().Error(
+					"error occurred when read table stats",
+					zap.String("table", tableInfo.Name.O),
+					zap.Error(err),
+				)
+				continue
+			}
+			if tbl == nil {
+				tblToUpdateOrDelete.addToDelete(physicalID)
+				continue
+			}
 		}
 		tbl.Version = version
+		tbl.LastStatsHistVersion = latestHistUpdateVersion
 		tbl.RealtimeCount = count
 		tbl.ModifyCount = modifyCount
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
