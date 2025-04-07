@@ -69,7 +69,6 @@ func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWr
 			sharedVars.TableImporter,
 			sharedVars.DataEngine,
 			sharedVars.IndexEngine,
-			sharedVars.Progress,
 			logger,
 			checksum,
 		); err != nil {
@@ -82,7 +81,6 @@ func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWr
 			sharedVars.TableImporter,
 			dataWriter,
 			indexWriter,
-			sharedVars.Progress,
 			logger,
 			checksum,
 		); err != nil {

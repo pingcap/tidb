@@ -1395,9 +1395,8 @@ func getDataSourceType(p *plannercore.ImportInto) DataSourceType {
 
 // JobImportResult is the result of the job import.
 type JobImportResult struct {
-	Affected   uint64
-	Warnings   []contextutil.SQLWarn
-	ColSizeMap variable.DeltaColsMap
+	Affected uint64
+	Warnings []contextutil.SQLWarn
 }
 
 // GetMsgFromBRError get msg from BR error.

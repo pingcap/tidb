@@ -135,7 +135,7 @@ func TestSingleSessionInsert(t *testing.T) {
 	rs.Check(testkit.Rows("40", "70"))
 
 	rs = testKit.MustQuery("select tot_col_size from mysql.stats_histograms").Sort()
-	rs.Check(testkit.Rows("0", "0", "20", "20"))
+	rs.Check(testkit.Rows("0", "0", "10", "10"))
 
 	// test dump delta only when `modify count / count` is greater than the ratio.
 	originValue := usage.DumpStatsDeltaRatio
@@ -324,7 +324,7 @@ func TestUpdatePartition(t *testing.T) {
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 			require.Equal(t, int64(1), statsTbl.ModifyCount)
 			require.Equal(t, int64(1), statsTbl.RealtimeCount)
-			require.Equal(t, int64(2), statsTbl.GetCol(bColID).TotColSize)
+			require.Equal(t, int64(0), statsTbl.GetCol(bColID).TotColSize)
 		}
 
 		testKit.MustExec(`update t set a = a + 1, b = "aa"`)
@@ -334,7 +334,7 @@ func TestUpdatePartition(t *testing.T) {
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 			require.Equal(t, int64(2), statsTbl.ModifyCount)
 			require.Equal(t, int64(1), statsTbl.RealtimeCount)
-			require.Equal(t, int64(3), statsTbl.GetCol(bColID).TotColSize)
+			require.Equal(t, int64(0), statsTbl.GetCol(bColID).TotColSize)
 		}
 
 		testKit.MustExec("delete from t")
@@ -432,8 +432,7 @@ func TestAutoUpdate(t *testing.T) {
 		// Modify count is non-zero means that we do not analyze the table.
 		require.Equal(t, int64(1), stats.ModifyCount)
 		stats.ForEachColumnImmutable(func(_ int64, item *statistics.Column) bool {
-			// TotColSize = 27, because the table has not been analyzed, and insert statement will add 3(length of 'eee') to TotColSize.
-			require.Equal(t, int64(27), item.TotColSize)
+			require.Equal(t, int64(23), item.TotColSize)
 			return true
 		})
 
@@ -514,6 +513,7 @@ func TestIssue25700(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE `t` ( `ldecimal` decimal(32,4) DEFAULT NULL, `rdecimal` decimal(32,4) DEFAULT NULL, `gen_col` decimal(36,4) GENERATED ALWAYS AS (`ldecimal` + `rdecimal`) VIRTUAL, `col_timestamp` timestamp(3) NULL DEFAULT NULL ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	statstestutil.HandleNextDDLEventWithTxn(dom.StatsHandle())
 	tk.MustExec("analyze table t")
 	tk.MustExec("INSERT INTO `t` (`ldecimal`, `rdecimal`, `col_timestamp`) VALUES (2265.2200, 9843.4100, '1999-12-31 16:00:00')" + strings.Repeat(", (2265.2200, 9843.4100, '1999-12-31 16:00:00')", int(statistics.AutoAnalyzeMinCnt)))
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))

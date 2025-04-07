@@ -475,7 +475,6 @@ go_test(
         "//pkg/util/sqlexec",
         "//pkg/util/sqlkiller",
         "//pkg/util/stmtsummary/v2:stmtsummary",
-        "//pkg/util/stringutil",
         "//pkg/util/syncutil",
         "//pkg/util/tableutil",
         "//pkg/util/topsql/state",
