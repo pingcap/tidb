@@ -244,7 +244,7 @@ func (s *statsReadWriter) SaveMetaToStorage(tableID, count, modifyCount int64, s
 }
 
 // SaveMetasToStorage saves the stats meta of tables to storage.
-func (s *statsReadWriter) SaveMetasToStorage(metaUpdates []statstypes.MetaUpdate, source string) (err error) {
+func (s *statsReadWriter) SaveMetasToStorage(metaUpdates []statstypes.MetaUpdate) (err error) {
 	if len(metaUpdates) == 0 {
 		return nil
 	}

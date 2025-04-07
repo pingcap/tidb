@@ -338,7 +338,7 @@ func (buffer *statsMetaItemBuffer) UpdateMetasRest(ctx context.Context, statsHan
 	if len(metaUpdates) == 0 {
 		return nil
 	}
-	return statsHandler.SaveMetasToStorage(metaUpdates, "br restore")
+	return statsHandler.SaveMetasToStorage(metaUpdates)
 }
 
 func (buffer *statsMetaItemBuffer) TryUpdateMetas(ctx context.Context, statsHandler *handle.Handle, physicalID, count int64) error {
@@ -354,7 +354,7 @@ func (buffer *statsMetaItemBuffer) TryUpdateMetas(ctx context.Context, statsHand
 	if len(metaUpdates) == 0 {
 		return nil
 	}
-	return statsHandler.SaveMetasToStorage(metaUpdates, "br restore")
+	return statsHandler.SaveMetasToStorage(metaUpdates)
 }
 
 func (rc *SnapClient) registerUpdateMetaAndLoadStats(

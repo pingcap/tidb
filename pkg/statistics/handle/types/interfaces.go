@@ -360,7 +360,7 @@ type StatsReadWriter interface {
 	SaveMetaToStorage(tableID, count, modifyCount int64, source string) (err error)
 
 	// SaveMetasToStorage saves the stats meta of tables to storage.
-	SaveMetasToStorage(metaUpdates []MetaUpdate, source string) (err error)
+	SaveMetasToStorage(metaUpdates []MetaUpdate) (err error)
 
 	// UpdateStatsMetaVersionForGC updates the version of mysql.stats_meta,
 	// ensuring it is greater than the last garbage collection (GC) time.
