@@ -21,6 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/opentracing/basictracer-go"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/bindinfo/internal"
 	"github.com/pingcap/tidb/pkg/bindinfo/norm"
@@ -239,32 +241,69 @@ func TestComparePointGet(t *testing.T) {
 		"`c` char(120) NOT NULL DEFAULT ''," +
 		"`pad` char(60) NOT NULL DEFAULT ''," +
 		"PRIMARY KEY (`id`)," +
-		"KEY `k_1` (`k`))")
+		"UNIQUE KEY `uk_1` (`k`)," +
+		"UNIQUE KEY `uk_2` (`c`, `pad`))")
 	tk.MustExec("insert into sbtest1 values (123, 1, 'a', 'b')")
-	tk.MustExec("insert into sbtest1 values (124, 2, 'a', 'b')")
+	tk.MustExec("insert into sbtest1 values (124, 2, 'c', 'd')")
+
+	// test correctness after the optimization
+
+	tk.MustExec(`prepare stmt1 from 'select * from sbtest1 where id = ?'`)
+	tk.MustExec("set @a = 123")
+	tk.MustQuery("execute stmt1 using @a").Check(testkit.Rows("123 1 a b"))
+	tk.MustExec("set @a = 124")
+	tk.MustQuery("execute stmt1 using @a").Check(testkit.Rows("124 2 c d"))
+	tk.MustExec("set @a = '123'")
+	tk.MustQuery("execute stmt1 using @a").Check(testkit.Rows("123 1 a b"))
+	tk.MustExec("set @a = '124'")
+	tk.MustQuery("execute stmt1 using @a").Check(testkit.Rows("124 2 c d"))
+	tk.MustExec(`prepare stmt2 from 'select * from sbtest1 where k = ?'`)
+	tk.MustExec("set @a = 1")
+	tk.MustQuery("execute stmt2 using @a").Check(testkit.Rows("123 1 a b"))
+	tk.MustExec("set @a = 2")
+	tk.MustQuery("execute stmt2 using @a").Check(testkit.Rows("124 2 c d"))
+	tk.MustExec(`prepare stmt3 from 'select * from sbtest1 where pad = ? and c = ?'`)
+	tk.MustExec("set @a1 = 'a', @a2 = 'b'")
+	tk.MustQuery("execute stmt3 using @a2, @a1").Check(testkit.Rows("123 1 a b"))
+	tk.MustExec("set @a1 = 'c', @a2 = 'd'")
+	tk.MustQuery("execute stmt3 using @a2, @a1").Check(testkit.Rows("124 2 c d"))
 
 	ctx := context.Background()
-	duration := time.Duration(0)
-	ctx = context.WithValue(ctx, tracing.TestDurationCtxKey("test"), &duration)
 	repeat := 10_000
+	collectedSpans := make([]basictracer.RawSpan, repeat)
+	sp1 := tracing.NewRecordedTrace("test", func(sp basictracer.RawSpan) {
+		if sp.Operation != "planner.Optimize" {
+			return
+		}
+		collectedSpans = append(collectedSpans, sp)
+	})
+	ctx = opentracing.ContextWithSpan(ctx, sp1)
+
+	duration := time.Duration(0)
 	for range repeat {
 		tk.MustQueryWithContext(ctx, "select * from sbtest1 where id = 123")
 	}
-	t.Logf("average optimize time for point get: %v", duration/time.Duration(repeat))
+	// TODO(lance6716): why 2 times?
+	require.Len(t, collectedSpans, 2*repeat)
+	for _, s := range collectedSpans {
+		duration += s.Duration
+	}
+	avg := duration / time.Duration(repeat)
+	t.Logf("average optimize time for point get: %v", avg)
 
-	tk.MustExec(`prepare stmt1 from 'select * from sbtest1 where id = ?'`)
-	tk.Exec("set @a = 123")
-	tk.MustQueryWithContext(ctx, "execute stmt1 using @a").Check(testkit.Rows("123 1 a b"))
-	tk.Exec("set @a = 124")
-	tk.MustQueryWithContext(ctx, "execute stmt1 using @a").Check(testkit.Rows("124 2 a b"))
-	//i := 100
-	duration = 0
+	tk.MustExec("set @a = 123")
+	collectedSpans = collectedSpans[:0]
 	for range repeat {
-		//i++
-		//tk.Exec(fmt.Sprintf("set @a = %d", i))
 		tk.MustQueryWithContext(ctx, "execute stmt1 using @a")
 	}
-	t.Logf("average optimize time for point get with prepared statement: %v", duration/time.Duration(repeat))
+	require.Len(t, collectedSpans, repeat)
+	duration = 0
+	for _, s := range collectedSpans {
+		duration += s.Duration
+	}
+	avgPrepared := duration / time.Duration(repeat)
+	t.Logf("average optimize time for point get with prepared statement: %v", avgPrepared)
+	require.Less(t, avgPrepared, avg)
 }
 
 func TestShowGlobalBindings(t *testing.T) {

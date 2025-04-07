@@ -101,8 +101,6 @@ func StartRegion(ctx context.Context, regionType string) Region {
 	}
 }
 
-type TestDurationCtxKey string
-
 // StartRegionEx returns Region together with the context.
 // Recommended usage is
 //
