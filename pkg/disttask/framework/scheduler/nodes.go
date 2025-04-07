@@ -185,3 +185,30 @@ func filterByScope(nodes []proto.ManagedNode, targetScope string) []string {
 	}
 	return nodeIDs
 }
+
+// SplitItemsEvenlyToWorkers split the items into batches that is suitble to be handled by `workerCnt` workers.
+func SplitItemsEvenlyToWorkers[T any](
+	items []T,
+	workerCnt int,
+	defaultStep int,
+	handleOneBatch func([]T),
+) {
+	itemLen := len(items)
+	step := defaultStep
+	if workerCnt > 0 {
+		avgItemsPerWorker := (itemLen + workerCnt - 1) / workerCnt // ceiling division
+		step = min(step, avgItemsPerWorker)
+	}
+
+	lastBatch := false
+	for start := 0; start < itemLen; start += step {
+		rest := itemLen - start
+		if workerCnt > 0 && !lastBatch && (start/step)%workerCnt == 0 && rest < step*workerCnt {
+			// distribute the rest items to all workers.
+			step = (rest + (workerCnt - 1)) / workerCnt // ceiling division
+			lastBatch = true
+		}
+		end := min(start+step, itemLen)
+		handleOneBatch(items[start:end])
+	}
+}

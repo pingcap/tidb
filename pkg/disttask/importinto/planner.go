@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
@@ -346,7 +347,6 @@ func skipMergeSort(kvGroup string, stats []external.MultipleFilesStat) bool {
 
 func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {
 	result := make([]planner.PipelineSpec, 0, 16)
-	nodeCnt := planCtx.ExecuteNodesCnt
 
 	ctx := planCtx.Ctx
 	controller, err := buildControllerForPlan(p)
@@ -369,27 +369,18 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.
 			continue
 		}
 		dataFiles := kvMeta.GetDataFiles()
-		dataFileLen := len(dataFiles)
-		step := external.MergeSortFileCountStep
-		if nodeCnt > 0 {
-			avgFilesPerNode := (dataFileLen + nodeCnt - 1) / nodeCnt
-			step = min(step, avgFilesPerNode)
-		}
-		lastBatch := false
-		for start := 0; start < dataFileLen; start += step {
-			rest := dataFileLen - start
-			if nodeCnt > 0 && !lastBatch && (start/step)%nodeCnt == 0 && rest < step*nodeCnt {
-				step = (rest + (nodeCnt - 1)) / nodeCnt // ceiling division
-				lastBatch = true
-			}
-			end := min(start+step, dataFileLen)
-			result = append(result, &MergeSortSpec{
-				MergeSortStepMeta: &MergeSortStepMeta{
-					KVGroup:   kvGroup,
-					DataFiles: dataFiles[start:end],
-				},
+		scheduler.SplitItemsEvenlyToWorkers(
+			dataFiles,
+			planCtx.ExecuteNodesCnt,
+			external.MergeSortFileCountStep,
+			func(files []string) {
+				result = append(result, &MergeSortSpec{
+					MergeSortStepMeta: &MergeSortStepMeta{
+						KVGroup:   kvGroup,
+						DataFiles: files,
+					},
+				})
 			})
-		}
 	}
 	return result, nil
 }

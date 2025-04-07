@@ -619,33 +619,18 @@ func generateMergePlan(
 		if i < len(eleIDs) {
 			eleID = []int64{eleIDs[i]}
 		}
-		start := 0
-		dataFileLen := len(dataFiles)
-		avgFilesPerNode := (dataFileLen + nodeCnt - 1) / nodeCnt
-		step := min(external.MergeSortFileCountStep, avgFilesPerNode)
-		lastBatch := false
-		for start < dataFileLen {
-			rest := dataFileLen - start
-			if !lastBatch && (start/step)%nodeCnt == 0 && rest < step*nodeCnt {
-				// distribute the rest files to all instances.
-				prevStep := step
-				step = (rest + (nodeCnt - 1)) / nodeCnt // ceiling division
-				lastBatch = true
-				logger.Info("change file batch for rest",
-					zap.Int("totalFiles", dataFileLen),
-					zap.Int("instanceCnt", nodeCnt),
-					zap.Int("prevStep", prevStep),
-					zap.Int("newStep", step),
-				)
-			}
-			end := min(start+step, len(dataFiles))
-			m := &BackfillSubTaskMeta{
-				DataFiles: dataFiles[start:end],
-				EleIDs:    eleID,
-			}
-			metaArr = append(metaArr, m)
-			start = end
-		}
+		scheduler.SplitItemsEvenlyToWorkers(
+			dataFiles,
+			nodeCnt,
+			external.MergeSortFileCountStep,
+			func(files []string) {
+				m := &BackfillSubTaskMeta{
+					DataFiles: files,
+					EleIDs:    eleID,
+				}
+				metaArr = append(metaArr, m)
+			},
+		)
 	}
 
 	// write external meta to storage when using global sort
