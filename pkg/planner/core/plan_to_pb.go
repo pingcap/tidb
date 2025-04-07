@@ -284,7 +284,7 @@ func (p *PhysicalTableScan) ToPB(ctx *base.BuildPBContext, storeType kv.StoreTyp
 		})
 	}
 
-	if p.UsedColumnarIndexes != nil {
+	if len(p.UsedColumnarIndexes) > 0 {
 		tsExec.UsedColumnarIndexes = append(tsExec.UsedColumnarIndexes, p.UsedColumnarIndexes...)
 	}
 
@@ -338,7 +338,7 @@ func (p *PhysicalTableScan) partitionTableScanToPBForFlash(ctx *base.BuildPBCont
 		})
 	}
 
-	if p.UsedColumnarIndexes != nil {
+	if len(p.UsedColumnarIndexes) > 0 {
 		ptsExec.UsedColumnarIndexes = append(ptsExec.UsedColumnarIndexes, p.UsedColumnarIndexes...)
 	}
 

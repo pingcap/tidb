@@ -1005,6 +1005,11 @@ func (ts *PhysicalTableScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, 
 		clonedRF := rf.Clone()
 		clonedScan.runtimeFilterList = append(clonedScan.runtimeFilterList, clonedRF)
 	}
+	clonedScan.UsedColumnarIndexes = make([]*tipb.ColumnarIndexInfo, 0, len(ts.UsedColumnarIndexes))
+	for _, colIdx := range ts.UsedColumnarIndexes {
+		colIdxClone := *colIdx
+		clonedScan.UsedColumnarIndexes = append(clonedScan.UsedColumnarIndexes, &colIdxClone)
+	}
 	return clonedScan, nil
 }
 
