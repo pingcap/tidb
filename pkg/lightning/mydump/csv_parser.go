@@ -209,6 +209,11 @@ func encodeSpecialSymbols(cfg *config.CSVConfig, cc *CharsetConvertor) (separato
 
 func (parser *CSVParser) unescapeString(input field) (unescaped string, isNull bool, err error) {
 	if parser.base64Encoded {
+		// when base64 encoded, NULL is represented by empty string, there is no
+		// way to configure it in the config file.
+		if len(input.content) == 0 {
+			return "", true, nil
+		}
 		var decoded []byte
 		decoded, err = base64.StdEncoding.DecodeString(input.content)
 		if err != nil {
