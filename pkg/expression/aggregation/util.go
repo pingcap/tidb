@@ -16,7 +16,7 @@ package aggregation
 
 import (
 	"github.com/pingcap/errors"
-	exprctx "github.com/pingcap/tidb/pkg/expression/context"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/mvmap"

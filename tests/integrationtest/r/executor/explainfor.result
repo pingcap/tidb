@@ -514,7 +514,6 @@ set tidb_enable_prepared_plan_cache=default;
 set @@tidb_enable_collect_execution_info=default;
 set tidb_enable_prepared_plan_cache=1;
 set @@tidb_enable_collect_execution_info=0;
-set @@session.tidb_enable_list_partition=1;
 drop table if exists t;
 create table t(a int, b int) PARTITION BY LIST (a) ( PARTITION p0 VALUES IN (1, 2, 3), PARTITION p1 VALUES IN (4, 5, 6));
 set @@tidb_partition_prune_mode='static';
@@ -528,7 +527,6 @@ select @@last_plan_from_cache;
 0
 set tidb_enable_prepared_plan_cache=default;
 set @@tidb_enable_collect_execution_info=default;
-set @@session.tidb_enable_list_partition=default;
 set @@tidb_partition_prune_mode=default;
 drop table if exists t12, t97;
 CREATE TABLE t12(a INT, b INT);
@@ -847,7 +845,7 @@ id	estRows	task	access object	operator info
 MemTableScan	10000.00	root	table:TABLES	table_name:["t"]
 desc format='brief' select * from information_schema.tables where upper(table_name)=upper('t');
 id	estRows	task	access object	operator info
-MemTableScan	10000.00	root	table:TABLES	table_name:["T"]
+MemTableScan	10000.00	root	table:TABLES	table_name:["t"]
 desc format='brief' select * from information_schema.REFERENTIAL_CONSTRAINTS where table_name='t';
 id	estRows	task	access object	operator info
 MemTableScan	10000.00	root	table:REFERENTIAL_CONSTRAINTS	table_name:["t"]
@@ -883,10 +881,9 @@ id	estRows	task	access object	operator info
 MemTableScan	10000.00	root	table:STATISTICS	table_schema:["s1","test"]
 desc format='brief' SELECT column_name FROM information_schema.statistics WHERE index_name = 'idx1' AND table_schema = DATABASE () AND table_name = 't' ORDER BY seq_in_index;
 id	estRows	task	access object	operator info
-Projection	8000.00	root		Column#8->Column#19
-└─Sort	8000.00	root		Column#7
-  └─Selection	8000.00	root		eq(Column#6, "idx1")
-    └─MemTableScan	10000.00	root	table:STATISTICS	table_name:["t"], table_schema:["plan_cache"]
+Projection	10000.00	root		Column#8->Column#19
+└─Sort	10000.00	root		Column#7
+  └─MemTableScan	10000.00	root	table:STATISTICS	index_name:["idx1"], table_name:["t"], table_schema:["plan_cache"]
 desc format='brief' SELECT table_comment FROM information_schema.tables WHERE table_schema = DATABASE () AND table_name = 't';
 id	estRows	task	access object	operator info
 MemTableScan	10000.00	root	table:TABLES	table_name:["t"], table_schema:["plan_cache"]
@@ -894,7 +891,6 @@ desc format='brief' SELECT * FROM information_schema.referential_constraints rc 
 id	estRows	task	access object	operator info
 Projection	8000.00	root		Column#2, Column#3, Column#1, Column#4, Column#5, Column#6, Column#7, Column#8, Column#9, Column#10, Column#11, Column#12, Column#15, Column#16, Column#17, Column#18, Column#19, Column#20, Column#21, Column#22, Column#23
 └─HashJoin	8000.00	root		inner join, equal:[eq(Column#3, Column#14)]
-  ├─Selection(Build)	8000.00	root		eq("plan_cache", Column#13), ne(Column#23, "t")
-  │ └─MemTableScan	10000.00	root	table:KEY_COLUMN_USAGE	table_name:["t"], table_schema:["plan_cache"]
-  └─Selection(Probe)	8000.00	root		eq(Column#2, "plan_cache")
-    └─MemTableScan	10000.00	root	table:REFERENTIAL_CONSTRAINTS	table_name:["t"]
+  ├─Selection(Build)	8000.00	root		ne(Column#23, "t")
+  │ └─MemTableScan	10000.00	root	table:KEY_COLUMN_USAGE	constraint_schema:["plan_cache"], table_name:["t"], table_schema:["plan_cache"]
+  └─MemTableScan(Probe)	10000.00	root	table:REFERENTIAL_CONSTRAINTS	constraint_schema:["plan_cache"], table_name:["t"]

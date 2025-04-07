@@ -14,6 +14,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# disable global ENCRYPTION_ARGS and ENABLE_ENCRYPTION_CHECK for this script
+ENCRYPTION_ARGS=""
+ENABLE_ENCRYPTION_CHECK=false
+export ENCRYPTION_ARGS
+export ENABLE_ENCRYPTION_CHECK
+
 set -eux
 
 # restart service without tiflash

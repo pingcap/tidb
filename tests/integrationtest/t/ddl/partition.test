@@ -171,3 +171,38 @@ alter table child drop foreign key fk_1;
 alter table child drop key fk_1;
 alter table child_with_partition exchange partition p1 with table child;
 
+drop table if exists t;
+-- error 1493
+create table t(a int, b datetime, c varchar(8)) PARTITION BY RANGE COLUMNS(`c`,`b`) (PARTITION `p20240520Z` VALUES LESS THAN ('Z','2024-05-20 00:00:00'),  PARTITION `p20240521A` VALUES LESS THAN ('A','2024-05-21 00:00:00'));
+-- error 1493
+create table t(a int, b datetime, c varchar(8)) PARTITION BY RANGE COLUMNS(`c`,`b`) (PARTITION `p20240520Z` VALUES LESS THAN ('Z','2024-05-20 00:00:00'),  PARTITION `p20240521Z` VALUES LESS THAN ('Z','2024-05-20 00:00:00'));
+create table t(a int, b datetime, c varchar(8)) PARTITION BY RANGE COLUMNS(`c`,`b`) (PARTITION `p20240520Z` VALUES LESS THAN ('Z','2024-05-20 00:00:00'),  PARTITION `p20240521Z` VALUES LESS THAN ('Z','2024-05-21 00:00:00'));
+
+drop table t;
+create table t(a int, b datetime, c varchar(8)) PARTITION BY RANGE COLUMNS(`c`,`b`) (PARTITION `p20240520Z` VALUES LESS THAN ('Z','2024-05-20 00:00:00'));
+-- error 1493
+alter table t add partition (PARTITION `p20240521A` VALUES LESS THAN ('A','2024-05-21 00:00:00'));
+alter table t add partition (PARTITION `p20240521Z` VALUES LESS THAN ('Z','2024-05-21 00:00:00'));
+
+# TestIntervalPartitionCreateTooManyPartitions
+-- error 1499
+CREATE TABLE employees (id int unsigned NOT NULL) PARTITION BY RANGE (id) INTERVAL (1) FIRST PARTITION LESS THAN (1) LAST PARTITION LESS THAN (8193);
+CREATE TABLE employees (id int unsigned NOT NULL) PARTITION BY RANGE (id) INTERVAL (1) FIRST PARTITION LESS THAN (1) LAST PARTITION LESS THAN (8192);
+
+# test rewrite SQL in DDL with interval partition
+drop table if exists tp1;
+CREATE TABLE tp1 (id int) PARTITION BY RANGE (id) INTERVAL (100) FIRST PARTITION LESS THAN (100) LAST PARTITION LESS THAN (500);
+select QUERY from information_schema.ddl_jobs limit 1;
+drop table tp1;
+create table tp1(id int);
+ALTER TABLE tp1 PARTITION BY RANGE (id) INTERVAL (100) FIRST PARTITION LESS THAN (200) LAST PARTITION LESS THAN (600);
+select QUERY from information_schema.ddl_jobs limit 1;
+drop table tp1;
+
+# Minute interval partitioning, #57698
+DROP TABLE IF EXISTS t;
+CREATE TABLE t (a int NOT NULL, b varchar(20) NOT NULL, c datetime NOT NULL ) PARTITION BY RANGE COLUMNS (c) INTERVAL (1 MINUTE) FIRST PARTITION LESS THAN ('2024-01-01') LAST PARTITION LESS THAN ('2024-01-01 00:10:00');
+SHOW CREATE TABLE t;
+ALTER TABLE t FIRST PARTITION LESS THAN ('2024-01-01 00:02:00');
+ALTER TABLE t LAST PARTITION LESS THAN ('2024-01-01 00:12:00');
+SHOW CREATE TABLE t;

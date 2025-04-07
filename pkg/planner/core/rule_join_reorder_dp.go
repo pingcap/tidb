@@ -20,12 +20,13 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
 type joinReorderDPSolver struct {
 	*baseSingleGroupJoinOrderSolver
-	newJoin func(lChild, rChild base.LogicalPlan, eqConds []*expression.ScalarFunction, otherConds, leftConds, rightConds []expression.Expression, joinType JoinType) base.LogicalPlan
+	newJoin func(lChild, rChild base.LogicalPlan, eqConds []*expression.ScalarFunction, otherConds, leftConds, rightConds []expression.Expression, joinType logicalop.JoinType) base.LogicalPlan
 }
 
 type joinGroupEqEdge struct {
@@ -42,7 +43,7 @@ type joinGroupNonEqEdge struct {
 func (s *joinReorderDPSolver) solve(joinGroup []base.LogicalPlan, tracer *joinReorderTrace) (base.LogicalPlan, error) {
 	eqConds := expression.ScalarFuncs2Exprs(s.eqEdges)
 	for _, node := range joinGroup {
-		_, err := node.RecursiveDeriveStats(nil)
+		_, _, err := node.RecursiveDeriveStats(nil)
 		if err != nil {
 			return nil, err
 		}
@@ -215,11 +216,7 @@ func (s *joinReorderDPSolver) dpGraph(visitID2NodeID, nodeID2VisitID []int, _ []
 
 func (*joinReorderDPSolver) nodesAreConnected(leftMask, rightMask uint, oldPos2NewPos []int,
 	totalEqEdges []joinGroupEqEdge, totalNonEqEdges []joinGroupNonEqEdge) ([]joinGroupEqEdge, []expression.Expression) {
-	//nolint: prealloc
 	var usedEqEdges []joinGroupEqEdge
-	//nolint: prealloc
-	var otherConds []expression.Expression
-
 	for _, edge := range totalEqEdges {
 		lIdx := uint(oldPos2NewPos[edge.nodeIDs[0]])
 		rIdx := uint(oldPos2NewPos[edge.nodeIDs[1]])
@@ -227,6 +224,7 @@ func (*joinReorderDPSolver) nodesAreConnected(leftMask, rightMask uint, oldPos2N
 			usedEqEdges = append(usedEqEdges, edge)
 		}
 	}
+	otherConds := make([]expression.Expression, 0, len(totalNonEqEdges))
 	for _, edge := range totalNonEqEdges {
 		// If the result is false, means that the current group hasn't covered the columns involved in the expression.
 		if edge.nodeIDMask&(leftMask|rightMask) != edge.nodeIDMask {
@@ -249,12 +247,12 @@ func (s *joinReorderDPSolver) newJoinWithEdge(leftPlan, rightPlan base.LogicalPl
 		if leftPlan.Schema().Contains(lCol) {
 			eqConds = append(eqConds, edge.edge)
 		} else {
-			newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), ast.EQ, edge.edge.GetType(), rCol, lCol).(*expression.ScalarFunction)
+			newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), ast.EQ, edge.edge.GetStaticType(), rCol, lCol).(*expression.ScalarFunction)
 			eqConds = append(eqConds, newSf)
 		}
 	}
-	join := s.newJoin(leftPlan, rightPlan, eqConds, otherConds, nil, nil, InnerJoin)
-	_, err := join.RecursiveDeriveStats(nil)
+	join := s.newJoin(leftPlan, rightPlan, eqConds, otherConds, nil, nil, logicalop.InnerJoin)
+	_, _, err := join.RecursiveDeriveStats(nil)
 	return join, err
 }
 
@@ -275,7 +273,7 @@ func (s *joinReorderDPSolver) makeBushyJoin(cartesianJoinGroup []base.LogicalPla
 			otherConds, usedOtherConds = expression.FilterOutInPlace(otherConds, func(expr expression.Expression) bool {
 				return expression.ExprFromSchema(expr, mergedSchema)
 			})
-			resultJoinGroup = append(resultJoinGroup, s.newJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1], nil, usedOtherConds, nil, nil, InnerJoin))
+			resultJoinGroup = append(resultJoinGroup, s.newJoin(cartesianJoinGroup[i], cartesianJoinGroup[i+1], nil, usedOtherConds, nil, nil, logicalop.InnerJoin))
 		}
 		cartesianJoinGroup = resultJoinGroup
 	}

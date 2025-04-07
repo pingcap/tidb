@@ -16,25 +16,38 @@ package workerpool
 
 import (
 	"context"
+	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	atomicutil "go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
+// TaskMayPanic is a type to remind the developer that need to handle panic in
+// the task.
+type TaskMayPanic interface {
+	// RecoverArgs returns the argument for pkg/util.Recover function of this task.
+	RecoverArgs() (metricsLabel string, funcInfo string, recoverFn func(), quit bool)
+}
+
 // Worker is worker interface.
-type Worker[T, R any] interface {
+type Worker[T TaskMayPanic, R any] interface {
 	// HandleTask consumes a task(T) and produces a result(R).
 	// The result is sent to the result channel by calling `send` function.
 	HandleTask(task T, send func(R))
 	Close()
 }
 
+type tuneConfig struct {
+	wg *sync.WaitGroup
+}
+
 // WorkerPool is a pool of workers.
-type WorkerPool[T, R any] struct {
+type WorkerPool[T TaskMayPanic, R any] struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	name          string
@@ -43,7 +56,7 @@ type WorkerPool[T, R any] struct {
 	runningTask   atomicutil.Int32
 	taskChan      chan T
 	resChan       chan R
-	quitChan      chan struct{}
+	quitChan      chan tuneConfig
 	wg            tidbutil.WaitGroupWrapper
 	createWorker  func() Worker[T, R]
 	lastTuneTs    atomicutil.Time
@@ -51,7 +64,7 @@ type WorkerPool[T, R any] struct {
 }
 
 // Option is the config option for WorkerPool.
-type Option[T, R any] interface {
+type Option[T TaskMayPanic, R any] interface {
 	Apply(pool *WorkerPool[T, R])
 }
 
@@ -59,8 +72,13 @@ type Option[T, R any] interface {
 type None struct{}
 
 // NewWorkerPool creates a new worker pool.
-func NewWorkerPool[T, R any](name string, _ util.Component, numWorkers int,
-	createWorker func() Worker[T, R], opts ...Option[T, R]) *WorkerPool[T, R] {
+func NewWorkerPool[T TaskMayPanic, R any](
+	name string,
+	_ util.Component,
+	numWorkers int,
+	createWorker func() Worker[T, R],
+	opts ...Option[T, R],
+) *WorkerPool[T, R] {
 	if numWorkers <= 0 {
 		numWorkers = 1
 	}
@@ -69,7 +87,7 @@ func NewWorkerPool[T, R any](name string, _ util.Component, numWorkers int,
 		name:          name,
 		numWorkers:    int32(numWorkers),
 		originWorkers: int32(numWorkers),
-		quitChan:      make(chan struct{}),
+		quitChan:      make(chan tuneConfig),
 	}
 
 	for _, opt := range opts {
@@ -116,7 +134,7 @@ func (p *WorkerPool[T, R]) handleTaskWithRecover(w Worker[T, R], task T) {
 	defer func() {
 		p.runningTask.Add(-1)
 	}()
-	defer tidbutil.Recover(metrics.LabelWorkerPool, "handleTaskWithRecover", nil, false)
+	defer tidbutil.Recover(task.RecoverArgs())
 
 	sendResult := func(r R) {
 		if p.resChan == nil {
@@ -145,8 +163,11 @@ func (p *WorkerPool[T, R]) runAWorker() {
 					return
 				}
 				p.handleTaskWithRecover(w, task)
-			case <-p.quitChan:
+			case cfg, ok := <-p.quitChan:
 				w.Close()
+				if ok {
+					cfg.wg.Done()
+				}
 				return
 			case <-p.ctx.Done():
 				w.Close()
@@ -170,7 +191,9 @@ func (p *WorkerPool[T, R]) GetResultChan() <-chan R {
 }
 
 // Tune tunes the pool to the specified number of workers.
-func (p *WorkerPool[T, R]) Tune(numWorkers int32) {
+// wait: whether to wait for all workers to close when reducing workers count.
+// this method can only be called after Start.
+func (p *WorkerPool[T, R]) Tune(numWorkers int32, wait bool) {
 	if numWorkers <= 0 {
 		numWorkers = 1
 	}
@@ -185,8 +208,21 @@ func (p *WorkerPool[T, R]) Tune(numWorkers int32) {
 		}
 	} else if diff < 0 {
 		// Remove workers
+		var wg sync.WaitGroup
+	outer:
 		for i := 0; i < int(-diff); i++ {
-			p.quitChan <- struct{}{}
+			wg.Add(1)
+			select {
+			case p.quitChan <- tuneConfig{wg: &wg}:
+			case <-p.ctx.Done():
+				logutil.BgLogger().Info("context done when tuning worker pool",
+					zap.Int32("from", p.numWorkers), zap.Int32("to", numWorkers))
+				wg.Done()
+				break outer
+			}
+		}
+		if wait {
+			wg.Wait()
 		}
 	}
 	p.numWorkers = numWorkers

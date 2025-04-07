@@ -18,7 +18,6 @@ import (
 	"testing"
 	"time"
 
-	ddlctrl "github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -29,14 +28,13 @@ const dbTestLease = 600 * time.Millisecond
 // Logger is the global logger in this package
 var Logger = logutil.DDLLogger()
 
-func prepareDomain(t *testing.T) (*domain.Domain, *testkit.TestKit, *testkit.TestKit) {
+func prepareDomain(t *testing.T) (dom *domain.Domain, stmtKit, adminCommandKit *testkit.TestKit) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
-	stmtKit := testkit.NewTestKit(t, store)
-	adminCommandKit := testkit.NewTestKit(t, store)
+	stmtKit = testkit.NewTestKit(t, store)
+	adminCommandKit = testkit.NewTestKit(t, store)
 
-	ddlctrl.ReorgWaitTimeout = 10 * time.Millisecond
-	stmtKit.MustExec("set @@global.tidb_ddl_reorg_batch_size = 2")
-	stmtKit.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1")
+	stmtKit.MustExec("set @@tidb_ddl_reorg_batch_size = 2")
+	stmtKit.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1")
 	stmtKit = testkit.NewTestKit(t, store)
 	stmtKit.MustExec("use test")
 

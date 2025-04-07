@@ -404,7 +404,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 
 	// cancel a running job created by self
 	syncCh := make(chan struct{})
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforeSortChunk", "return(true)")
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/beforeSortChunk", "sleep(3000)")
 	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/syncAfterJobStarted",
 		func() {
 			close(syncCh)
@@ -454,7 +454,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 
 	// cancel job in post-process phase, using test_cancel_job2
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_cancel_job2", Hostname: "localhost"}, nil, nil, nil))
-	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforeSortChunk"))
+	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/beforeSortChunk"))
 	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/syncAfterJobStarted"))
 	wg := sync.WaitGroup{}
 	wg.Add(1)

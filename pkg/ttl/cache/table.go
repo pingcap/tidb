@@ -24,10 +24,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/contextstatic"
+	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -38,7 +39,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
+	"go.uber.org/zap"
 )
 
 func getTableKeyColumns(tbl *model.TableInfo) ([]*model.ColumnInfo, []*types.FieldType, error) {
@@ -97,10 +100,10 @@ type PhysicalTable struct {
 	// ID is the physical ID of the table
 	ID int64
 	// Schema is the database name of the table
-	Schema model.CIStr
+	Schema ast.CIStr
 	*model.TableInfo
 	// Partition is the partition name
-	Partition model.CIStr
+	Partition ast.CIStr
 	// PartitionDef is the partition definition
 	PartitionDef *model.PartitionDefinition
 	// KeyColumns is the cluster index key columns for the table
@@ -111,10 +114,10 @@ type PhysicalTable struct {
 	TimeColumn *model.ColumnInfo
 }
 
-// NewBasePhysicalTable create a new PhysicalTable with specific timeColunm.
-func NewBasePhysicalTable(schema model.CIStr,
+// NewBasePhysicalTable create a new PhysicalTable with specific timeColumn.
+func NewBasePhysicalTable(schema ast.CIStr,
 	tbl *model.TableInfo,
-	partition model.CIStr,
+	partition ast.CIStr,
 	timeColumn *model.ColumnInfo,
 ) (*PhysicalTable, error) {
 	if tbl.State != model.StatePublic {
@@ -165,7 +168,7 @@ func NewBasePhysicalTable(schema model.CIStr,
 }
 
 // NewPhysicalTable create a new PhysicalTable
-func NewPhysicalTable(schema model.CIStr, tbl *model.TableInfo, partition model.CIStr) (*PhysicalTable, error) {
+func NewPhysicalTable(schema ast.CIStr, tbl *model.TableInfo, partition ast.CIStr) (*PhysicalTable, error) {
 	ttlInfo := tbl.TTLInfo
 	if ttlInfo == nil {
 		return nil, errors.Errorf("table '%s.%s' is not a ttl table", schema, tbl.Name)
@@ -187,11 +190,11 @@ func (t *PhysicalTable) ValidateKeyPrefix(key []types.Datum) error {
 	return nil
 }
 
-var mockExpireTimeKey struct{}
+type mockExpireTimeKey struct{}
 
 // SetMockExpireTime can only used in test
 func SetMockExpireTime(ctx context.Context, tm time.Time) context.Context {
-	return context.WithValue(ctx, mockExpireTimeKey, tm)
+	return context.WithValue(ctx, mockExpireTimeKey{}, tm)
 }
 
 // EvalExpireTime returns the expired time.
@@ -207,7 +210,7 @@ func EvalExpireTime(now time.Time, interval string, unit ast.TimeUnitType) (time
 		now.Nanosecond(), time.UTC,
 	)
 
-	exprCtx := contextstatic.NewStaticExprContext()
+	exprCtx := exprstatic.NewExprContext()
 	// we need to set the location to UTC to make sure the time is in the same timezone as the start time.
 	intest.Assert(exprCtx.GetEvalCtx().Location() == time.UTC)
 	expr, err := expression.ParseSimpleExpr(
@@ -240,13 +243,21 @@ func EvalExpireTime(now time.Time, interval string, unit ast.TimeUnitType) (time
 	return expiredTime, nil
 }
 
+// FullName returns the full name of the table
+func (t *PhysicalTable) FullName() string {
+	if t.Partition.L != "" {
+		return fmt.Sprintf("%s.%s.%s", t.Schema.O, t.Name.O, t.Partition.O)
+	}
+	return fmt.Sprintf("%s.%s", t.Schema.O, t.Name.O)
+}
+
 // EvalExpireTime returns the expired time for the current time.
 // It uses the global timezone in session to evaluation the context
 // and the return time is in the same timezone of now argument.
 func (t *PhysicalTable) EvalExpireTime(ctx context.Context, se session.Session,
 	now time.Time) (time.Time, error) {
 	if intest.InTest {
-		if tm, ok := ctx.Value(mockExpireTimeKey).(time.Time); ok {
+		if tm, ok := ctx.Value(mockExpireTimeKey{}).(time.Time); ok {
 			return tm, nil
 		}
 	}
@@ -287,15 +298,31 @@ func (t *PhysicalTable) SplitScanRanges(ctx context.Context, store kv.Storage, s
 	switch ft.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeInt24:
 		if len(t.KeyColumns) > 1 {
-			return t.splitCommonHandleRanges(ctx, tikvStore, splitCnt, true, mysql.HasUnsignedFlag(ft.GetFlag()))
+			return t.splitCommonHandleRanges(ctx, tikvStore, splitCnt, true, mysql.HasUnsignedFlag(ft.GetFlag()), nil)
 		}
 		return t.splitIntRanges(ctx, tikvStore, splitCnt)
 	case mysql.TypeBit:
-		return t.splitCommonHandleRanges(ctx, tikvStore, splitCnt, false, false)
+		return t.splitCommonHandleRanges(ctx, tikvStore, splitCnt, false, false, nil)
 	case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar:
-		if mysql.HasBinaryFlag(ft.GetFlag()) {
-			return t.splitCommonHandleRanges(ctx, tikvStore, splitCnt, false, false)
+		var decode func([]byte) types.Datum
+		if !mysql.HasBinaryFlag(ft.GetFlag()) {
+			switch ft.GetCharset() {
+			case charset.CharsetASCII, charset.CharsetLatin1:
+				// ASCII and Latin1 are 8-bit charset, we can use GetASCIIPrefixDatumFromBytes to decode it.
+				decode = GetASCIIPrefixDatumFromBytes
+			case charset.CharsetUTF8, charset.CharsetUTF8MB4:
+				switch ft.GetCollate() {
+				case charset.CollationUTF8, charset.CollationUTF8MB4, "utf8mb4_0900_bin":
+					// We can only use GetASCIIPrefixDatumFromBytes to decode UTF8 and UTF8MB4 when they are
+					// "utf8_bin" or "utf8mb4_bin" collation.
+					decode = GetASCIIPrefixDatumFromBytes
+				}
+			}
+			if decode == nil {
+				return []ScanRange{newFullRange()}, nil
+			}
 		}
+		return t.splitCommonHandleRanges(ctx, tikvStore, splitCnt, false, false, decode)
 	}
 	return []ScanRange{newFullRange()}, nil
 }
@@ -365,7 +392,7 @@ func (t *PhysicalTable) splitIntRanges(ctx context.Context, store tikv.Storage, 
 }
 
 func (t *PhysicalTable) splitCommonHandleRanges(
-	ctx context.Context, store tikv.Storage, splitCnt int, isInt bool, unsigned bool,
+	ctx context.Context, store tikv.Storage, splitCnt int, isInt bool, unsigned bool, decode func([]byte) types.Datum,
 ) ([]ScanRange, error) {
 	recordPrefix := tablecodec.GenTableRecordPrefix(t.ID)
 	startKey, endKey := recordPrefix, recordPrefix.PrefixNext()
@@ -381,20 +408,26 @@ func (t *PhysicalTable) splitCommonHandleRanges(
 	scanRanges := make([]ScanRange, 0, len(keyRanges))
 	curScanStart := nullDatum()
 	for i, keyRange := range keyRanges {
-		if i != 0 && curScanStart.IsNull() {
-			break
-		}
-
 		curScanEnd := nullDatum()
 		if i != len(keyRanges)-1 {
 			if isInt {
 				curScanEnd = GetNextIntDatumFromCommonHandle(keyRange.EndKey, recordPrefix, unsigned)
 			} else {
 				curScanEnd = GetNextBytesHandleDatum(keyRange.EndKey, recordPrefix)
+				if decode != nil {
+					curScanEnd = decode(curScanEnd.GetBytes())
+				}
+
+				// "" is the smallest value for string/[]byte, skip to add it to ranges.
+				if len(curScanEnd.GetBytes()) == 0 {
+					continue
+				}
 			}
 		}
 
 		if !curScanStart.IsNull() && !curScanEnd.IsNull() {
+			// Sometimes curScanStart >= curScanEnd because the edge datum is an approximate value.
+			// At this time, we should skip this range to ensure the incremental of ranges.
 			cmp, err := curScanStart.Compare(types.StrictContext, &curScanEnd, collate.GetBinaryCollator())
 			intest.AssertNoError(err)
 			if err != nil {
@@ -407,6 +440,9 @@ func (t *PhysicalTable) splitCommonHandleRanges(
 		}
 
 		scanRanges = append(scanRanges, newDatumRange(curScanStart, curScanEnd))
+		if curScanEnd.IsNull() {
+			break
+		}
 		curScanStart = curScanEnd
 	}
 	return scanRanges, nil
@@ -421,9 +457,10 @@ func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storag
 		return nil, err
 	}
 
-	regionsPerRange := len(regionIDs) / splitCnt
-	oversizeCnt := len(regionIDs) % splitCnt
-	ranges := make([]kv.KeyRange, 0, min(len(regionIDs), splitCnt))
+	regionsCnt := len(regionIDs)
+	regionsPerRange := regionsCnt / splitCnt
+	oversizeCnt := regionsCnt % splitCnt
+	ranges := make([]kv.KeyRange, 0, min(regionsCnt, splitCnt))
 	for len(regionIDs) > 0 {
 		startRegion, err := regionCache.LocateRegionByID(tikv.NewBackofferWithVars(ctx, 20000, nil),
 			regionIDs[0])
@@ -456,6 +493,15 @@ func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storag
 		oversizeCnt--
 		regionIDs = regionIDs[endRegionIdx+1:]
 	}
+	logutil.BgLogger().Info("TTL table raw key ranges split",
+		zap.Int("regionsCnt", regionsCnt),
+		zap.Int("shouldSplitCnt", splitCnt),
+		zap.Int("actualSplitCnt", len(ranges)),
+		zap.Int64("tableID", t.ID),
+		zap.String("db", t.Schema.O),
+		zap.String("table", t.Name.O),
+		zap.String("partition", t.Partition.O),
+	)
 	return ranges, nil
 }
 
@@ -647,4 +693,28 @@ func GetNextBytesHandleDatum(key kv.Key, recordPrefix []byte) (d types.Datum) {
 	}
 	d.SetBytes(val)
 	return d
+}
+
+// GetASCIIPrefixDatumFromBytes is used to convert bytes to string datum which only contains ASCII prefix string.
+// The ASCII prefix string only contains visible characters and `\t`, `\n`, `\r`.
+// "abc" -> "abc"
+// "\0abc" -> ""
+// "ab\x01c" -> "ab"
+// "ab\xffc" -> "ab"
+// "ab\rc\xff" -> "ab\rc"
+func GetASCIIPrefixDatumFromBytes(bs []byte) types.Datum {
+	for i, c := range bs {
+		if c >= 0x20 && c <= 0x7E {
+			// visible characters from ` ` to `~`
+			continue
+		}
+
+		if c == '\t' || c == '\n' || c == '\r' {
+			continue
+		}
+
+		bs = bs[:i]
+		break
+	}
+	return types.NewStringDatum(string(bs))
 }

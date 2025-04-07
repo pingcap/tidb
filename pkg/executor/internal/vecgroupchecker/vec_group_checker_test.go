@@ -268,3 +268,13 @@ func TestVecGroupChecker(t *testing.T) {
 	require.Equal(t, e, 3)
 	require.True(t, groupChecker.IsExhausted())
 }
+
+func TestIssue53867(t *testing.T) {
+	checker := NewVecGroupChecker(nil, true, nil)
+	checker.groupOffset = make([]int, 20)
+	checker.nextGroupID = 10
+	checker.groupCount = 15
+	require.False(t, checker.IsExhausted())
+	checker.Reset()
+	require.True(t, checker.IsExhausted())
+}

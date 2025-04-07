@@ -23,8 +23,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -145,7 +145,11 @@ func (a *AsyncMergePartitionStats2GlobalStats) prepare(sctx sessionctx.Context, 
 		}
 		tableInfo := partitionTable.Meta()
 		a.tableInfo[partitionID] = tableInfo
-		realtimeCount, modifyCount, isNull, err := storage.StatsMetaCountAndModifyCount(sctx, partitionID)
+		realtimeCount, modifyCount, isNull, err := storage.StatsMetaCountAndModifyCount(
+			util.StatsCtx,
+			sctx,
+			partitionID,
+		)
 		if err != nil {
 			return err
 		}
@@ -384,9 +388,6 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadCMsketch(sctx sessionctx.Cont
 			if err != nil {
 				return err
 			}
-			a.cmsketch <- mergeItem[*statistics.CMSketch]{
-				cmsketch, i,
-			}
 			select {
 			case a.cmsketch <- mergeItem[*statistics.CMSketch]{
 				cmsketch, i,
@@ -517,7 +518,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			// Merge histogram.
 			globalHg := &(a.globalStats.Hg[item.idx])
 			*globalHg, err = statistics.MergePartitionHist2GlobalHist(stmtCtx, allhg, poppedTopN,
-				int64(opts[ast.AnalyzeOptNumBuckets]), isIndex)
+				int64(opts[ast.AnalyzeOptNumBuckets]), isIndex, analyzeVersion)
 			if err != nil {
 				return err
 			}

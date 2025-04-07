@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
@@ -82,6 +82,10 @@ func (e *LoadStatsInfo) Update(data []byte) error {
 	jsonTbl := &util.JSONTable{}
 	if err := json.Unmarshal(data, jsonTbl); err != nil {
 		return errors.Trace(err)
+	}
+	// Check the `jsonTbl` in cases where the stats file with `null`.
+	if jsonTbl.TableName == "" && jsonTbl.Version == 0 {
+		return nil
 	}
 	do := domain.GetDomain(e.Ctx)
 	h := do.StatsHandle()

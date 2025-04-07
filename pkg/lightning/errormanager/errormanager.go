@@ -52,17 +52,18 @@ const (
 		CREATE SCHEMA IF NOT EXISTS %s;
 	`
 
-	syntaxErrorTableName = "syntax_error_v1"
-	typeErrorTableName   = "type_error_v1"
+	syntaxErrorTableName = "syntax_error_v2"
+	typeErrorTableName   = "type_error_v2"
 	// ConflictErrorTableName is the table name for duplicate detection.
-	ConflictErrorTableName = "conflict_error_v3"
+	ConflictErrorTableName = "conflict_error_v4"
 	// DupRecordTableName is the table name to record duplicate data that displayed to user.
-	DupRecordTableName = "conflict_records"
+	DupRecordTableName = "conflict_records_v2"
 	// ConflictViewName is the view name for presenting the union information of ConflictErrorTable and DupRecordTable.
 	ConflictViewName = "conflict_view"
 
 	createSyntaxErrorTable = `
 		CREATE TABLE IF NOT EXISTS %s.` + syntaxErrorTableName + ` (
+			id 	    	bigint PRIMARY KEY AUTO_INCREMENT,
 			task_id     bigint NOT NULL,
 			create_time datetime(6) NOT NULL DEFAULT now(6),
 			table_name  varchar(261) NOT NULL,
@@ -75,6 +76,7 @@ const (
 
 	createTypeErrorTable = `
 		CREATE TABLE IF NOT EXISTS %s.` + typeErrorTableName + ` (
+			id		    bigint PRIMARY KEY AUTO_INCREMENT,
 			task_id     bigint NOT NULL,
 			create_time datetime(6) NOT NULL DEFAULT now(6),
 			table_name  varchar(261) NOT NULL,
@@ -87,12 +89,13 @@ const (
 
 	createConflictErrorTable = `
 		CREATE TABLE IF NOT EXISTS %s.` + ConflictErrorTableName + ` (
+			id          bigint PRIMARY KEY AUTO_INCREMENT,
 			task_id     bigint NOT NULL,
 			create_time datetime(6) NOT NULL DEFAULT now(6),
 			table_name  varchar(261) NOT NULL,
 			index_name  varchar(128) NOT NULL,
-			key_data    text NOT NULL COMMENT 'decoded from raw_key, human readable only, not for machine use',
-			row_data    text NOT NULL COMMENT 'decoded from raw_row, human readable only, not for machine use',
+			key_data    text COMMENT 'decoded from raw_key, human readable only, not for machine use',
+			row_data    text COMMENT 'decoded from raw_row, human readable only, not for machine use',
 			raw_key     mediumblob NOT NULL COMMENT 'the conflicted key',
 			raw_value   mediumblob NOT NULL COMMENT 'the value of the conflicted key',
 			raw_handle  mediumblob NOT NULL COMMENT 'the data handle derived from the conflicted key or value',
@@ -107,6 +110,7 @@ const (
 
 	createDupRecordTableName = `
 		CREATE TABLE IF NOT EXISTS %s.` + DupRecordTableName + ` (
+			id          bigint PRIMARY KEY AUTO_INCREMENT,
 			task_id     bigint NOT NULL,
 			create_time datetime(6) NOT NULL DEFAULT now(6),
 			table_name  varchar(261) NOT NULL,
@@ -166,17 +170,17 @@ const (
 	sqlValuesConflictErrorIndex = "(?,?,?,?,?,?,?,?,?,?)"
 
 	selectIndexConflictKeysReplace = `
-		SELECT _tidb_rowid, raw_key, index_name, raw_value, raw_handle
+		SELECT id, raw_key, index_name, raw_value, raw_handle
 		FROM %s.` + ConflictErrorTableName + `
-		WHERE table_name = ? AND kv_type = 0 AND _tidb_rowid >= ? and _tidb_rowid < ?
-		ORDER BY _tidb_rowid LIMIT ?;
+		WHERE table_name = ? AND kv_type = 0 AND id >= ? and id < ?
+		ORDER BY id LIMIT ?;
 	`
 
 	selectDataConflictKeysReplace = `
-		SELECT _tidb_rowid, raw_key, raw_value
+		SELECT id, raw_key, raw_value
 		FROM %s.` + ConflictErrorTableName + `
-		WHERE table_name = ? AND kv_type <> 0 AND _tidb_rowid >= ? and _tidb_rowid < ?
-		ORDER BY _tidb_rowid LIMIT ?;
+		WHERE table_name = ? AND kv_type <> 0 AND id >= ? and id < ?
+		ORDER BY id LIMIT ?;
 	`
 
 	deleteNullDataRow = `
@@ -611,7 +615,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 					if err != nil {
 						return errors.Trace(err)
 					}
-					decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx,
+					decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx.GetExprCtx(),
 						tbl.Meta(), overwrittenHandle, tbl.Cols(), overwritten)
 					if err != nil {
 						return errors.Trace(err)
@@ -620,7 +624,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 						// for nonclustered PK, need to append handle to decodedData for AddRecord
 						decodedData = append(decodedData, types.NewIntDatum(overwrittenHandle.IntValue()))
 					}
-					_, err = encoder.Table.AddRecord(encoder.SessionCtx.GetTableCtx(), decodedData)
+					_, err = encoder.AddRecord(decodedData)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -791,7 +795,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 							if err != nil {
 								return errors.Trace(err)
 							}
-							decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx,
+							decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx.GetExprCtx(),
 								tbl.Meta(), handle, tbl.Cols(), latestValue)
 							if err != nil {
 								return errors.Trace(err)
@@ -800,7 +804,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 								// for nonclustered PK, need to append handle to decodedData for AddRecord
 								decodedData = append(decodedData, types.NewIntDatum(handle.IntValue()))
 							}
-							_, err = encoder.Table.AddRecord(encoder.SessionCtx.GetTableCtx(), decodedData)
+							_, err = encoder.AddRecord(decodedData)
 							if err != nil {
 								return errors.Trace(err)
 							}
@@ -820,7 +824,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 					if err != nil {
 						return errors.Trace(err)
 					}
-					decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx,
+					decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx.GetExprCtx(),
 						tbl.Meta(), handle, tbl.Cols(), rawValue)
 					if err != nil {
 						return errors.Trace(err)
@@ -829,7 +833,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 						// for nonclustered PK, need to append handle to decodedData for AddRecord
 						decodedData = append(decodedData, types.NewIntDatum(handle.IntValue()))
 					}
-					_, err = encoder.Table.AddRecord(encoder.SessionCtx.GetTableCtx(), decodedData)
+					_, err = encoder.AddRecord(decodedData)
 					if err != nil {
 						return errors.Trace(err)
 					}
@@ -1103,10 +1107,10 @@ func (em *ErrorManager) Output() string {
 	t := table.NewWriter()
 	t.AppendHeader(table.Row{"#", "Error Type", "Error Count", "Error Data Table"})
 	t.SetColumnConfigs([]table.ColumnConfig{
-		{Name: "#", WidthMax: 6},
-		{Name: "Error Type", WidthMax: 20},
-		{Name: "Error Count", WidthMax: 12},
-		{Name: "Error Data Table", WidthMax: 42},
+		{Name: "#"},
+		{Name: "Error Type"},
+		{Name: "Error Count"},
+		{Name: "Error Data Table"},
 	})
 	t.SetRowPainter(func(table.Row) text.Colors {
 		return text.Colors{text.FgRed}

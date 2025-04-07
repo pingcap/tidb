@@ -10,7 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/errno",
-        "//pkg/parser/model",
+        "//pkg/meta/model",
         "//pkg/parser/types",
         "//pkg/types",
         "//pkg/util/context",
@@ -40,7 +40,7 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/server",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/testkit",
         "//pkg/util",
         "//pkg/util/sem",

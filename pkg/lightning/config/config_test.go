@@ -100,7 +100,7 @@ func TestStrictFormat(t *testing.T) {
 	require.ErrorContains(t, err, "mydumper.strict-format can not be used with empty mydumper.csv.terminator")
 	t.Log(err.Error())
 
-	cfg.Mydumper.CSV.Terminator = "\r\n"
+	cfg.Mydumper.CSV.LinesTerminatedBy = "\r\n"
 	err = cfg.Adjust(context.Background())
 	require.NoError(t, err)
 }
@@ -445,6 +445,17 @@ func TestAdjustSecuritySection(t *testing.T) {
 			hasTLS:         false,
 			fallback2NoTLS: false,
 		},
+		{
+			input: `
+				[security]
+				ca-path = "/path/to/ca2.pem"
+				[tidb]
+				tls = "false"
+			`,
+			expectedCA:     "",
+			hasTLS:         false,
+			fallback2NoTLS: false,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -465,6 +476,18 @@ func TestAdjustSecuritySection(t *testing.T) {
 			require.Nil(t, cfg.TiDB.Security.TLSConfig, comment)
 		}
 		require.Equal(t, tc.fallback2NoTLS, cfg.TiDB.Security.AllowFallbackToPlaintext, comment)
+		// test to see if the security ca-path is affected when tls is false.
+		if cfg.TiDB.TLS == "false" {
+			beforeAjustCfg := NewConfig()
+			assignMinimalLegalValue(beforeAjustCfg)
+			beforeAjustCfg.TiDB.DistSQLScanConcurrency = 1
+			err = beforeAjustCfg.LoadFromTOML([]byte(tc.input))
+			require.NoError(t, err, comment)
+
+			require.Nil(t, cfg.TiDB.Security.TLSConfig, comment)
+			require.Equal(t, "", cfg.TiDB.Security.CAPath, comment)
+			require.Equal(t, beforeAjustCfg.Security.CAPath, cfg.Security.CAPath, comment)
+		}
 	}
 	// test different tls config name
 	cfg := NewConfig()
@@ -692,7 +715,7 @@ func TestMaxErrorUnmarshal(t *testing.T) {
 		},
 		{
 			TOMLStr:      `max-error = "abcde"`,
-			ExpectErrStr: "invalid max-error 'abcde', should be an integer or a map of string:int64",
+			ExpectErrStr: "toml: line 1 (last key \"max-error\"): invalid max-error 'abcde', should be an integer or a map of string:int64",
 			CaseName:     "Abnormal_String",
 		},
 		{
@@ -943,13 +966,13 @@ func TestTomlPostRestore(t *testing.T) {
 		[post-restore]
 		checksum = "req"
 	`))
-	require.EqualError(t, err, "invalid op level 'req', please choose valid option between ['off', 'optional', 'required']")
+	require.EqualError(t, err, "toml: line 3 (last key \"post-restore.checksum\"): invalid op level 'req', please choose valid option between ['off', 'optional', 'required']")
 
 	err = cfg.LoadFromTOML([]byte(`
 		[post-restore]
 		analyze = 123
 	`))
-	require.EqualError(t, err, "invalid op level '123', please choose valid option between ['off', 'optional', 'required']")
+	require.EqualError(t, err, "toml: line 3 (last key \"post-restore.analyze\"): invalid op level '123', please choose valid option between ['off', 'optional', 'required']")
 
 	kvMap := map[string]PostOpLevel{
 		`"off"`:      OpLevelOff,
@@ -1014,6 +1037,20 @@ func TestAdjustDiskQuota(t *testing.T) {
 	cfg.TiDB.DistSQLScanConcurrency = 1
 	require.NoError(t, cfg.Adjust(ctx))
 	require.Equal(t, int64(0), int64(cfg.TikvImporter.DiskQuota))
+}
+
+func TestAdjustLogicalImportPrepStmt(t *testing.T) {
+	cfg := NewConfig()
+	assignMinimalLegalValue(cfg)
+	ctx := context.Background()
+
+	cfg.TikvImporter.Backend = BackendTiDB
+	require.NoError(t, cfg.Adjust(ctx))
+	require.Equal(t, false, cfg.TikvImporter.LogicalImportPrepStmt)
+
+	cfg.TikvImporter.LogicalImportPrepStmt = true
+	require.NoError(t, cfg.Adjust(ctx))
+	require.Equal(t, true, cfg.TikvImporter.LogicalImportPrepStmt)
 }
 
 func TestAdjustConflictStrategy(t *testing.T) {
@@ -1393,4 +1430,31 @@ func TestAdjustBlockSize(t *testing.T) {
 	err := cfg.Adjust(context.Background())
 	require.NoError(t, err)
 	require.EqualValues(t, 16384, cfg.TikvImporter.BlockSize)
+}
+
+func TestRedactConfig(t *testing.T) {
+	tests := []struct {
+		origin string
+		redact string
+	}{
+		{"", ""},
+		{":", ":"},
+		{"~/file", "~/file"},
+		{"gs://bucket/file", "gs://bucket/file"},
+		{"gs://bucket/file?access-key=123", "gs://bucket/file?access-key=123"},
+		{"gs://bucket/file?secret-access-key=123", "gs://bucket/file?secret-access-key=123"},
+		{"s3://bucket/file", "s3://bucket/file"},
+		{"s3://bucket/file?other-key=123", "s3://bucket/file?other-key=123"},
+		{"s3://bucket/file?access-key=123", "s3://bucket/file?access-key=xxxxxx"},
+		{"s3://bucket/file?secret-access-key=123", "s3://bucket/file?secret-access-key=xxxxxx"},
+		{"s3://bucket/file?access_key=123", "s3://bucket/file?access_key=xxxxxx"},
+		{"s3://bucket/file?secret_access_key=123", "s3://bucket/file?secret_access_key=xxxxxx"},
+	}
+	for _, tt := range tests {
+		cfg := NewConfig()
+		cfg.Mydumper.SourceDir = tt.origin
+
+		require.Contains(t, cfg.Redact(), tt.redact)
+		require.Contains(t, cfg.String(), tt.origin)
+	}
 }

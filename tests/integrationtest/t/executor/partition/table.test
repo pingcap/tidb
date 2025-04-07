@@ -252,7 +252,7 @@ create table t(a int) partition by range(a) (
 		  partition p1 values less than (10),
 		  partition p2 values less than (15));
 insert into t values (2), (7), (12);
-analyze table t;
+analyze table t all columns;
 explain format='brief' select * from t where a < 3;
 --sorted_result
 select * from t where a < 3;

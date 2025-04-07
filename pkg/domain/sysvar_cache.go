@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
@@ -64,9 +65,7 @@ func (do *Domain) GetSessionCache() (map[string]string, error) {
 	do.sysVarCache.RLock()
 	defer do.sysVarCache.RUnlock()
 	// Perform a deep copy since this will be assigned directly to the session
-	newMap := make(map[string]string, len(do.sysVarCache.session))
-	maps.Copy(newMap, do.sysVarCache.session)
-	return newMap, nil
+	return maps.Clone(do.sysVarCache.session), nil
 }
 
 // GetGlobalVar gets an individual global var from the sysvar cache.
@@ -107,12 +106,11 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 	newSessionCache := make(map[string]string)
 	newGlobalCache := make(map[string]string)
 	if ctx == nil {
-		sysSessionPool := do.SysSessionPool()
-		res, err := sysSessionPool.Get()
+		res, err := do.sysSessionPool.Get()
 		if err != nil {
 			return err
 		}
-		defer sysSessionPool.Put(res)
+		defer do.sysSessionPool.Put(res)
 		ctx = res.(sessionctx.Context)
 	}
 	// Only one rebuild can be in progress at a time, this prevents a lost update race
@@ -142,7 +140,7 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 			// This ensures it is run on all tidb servers.
 			// This does not apply to INSTANCE scoped vars (HasGlobalScope() is false)
 			if sv.SetGlobal != nil && !sv.SkipSysvarCache() {
-				sVal = sv.ValidateWithRelaxedValidation(ctx.GetSessionVars(), sVal, variable.ScopeGlobal)
+				sVal = sv.ValidateWithRelaxedValidation(ctx.GetSessionVars(), sVal, vardef.ScopeGlobal)
 				err = sv.SetGlobal(context.Background(), ctx.GetSessionVars(), sVal)
 				if err != nil {
 					logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", sv.Name), zap.Error(err))
@@ -157,6 +155,6 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 	defer do.sysVarCache.Unlock()
 	do.sysVarCache.session = newSessionCache
 	do.sysVarCache.global = newGlobalCache
-	do.infoCache.ReSize(int(variable.SchemaVersionCacheLimit.Load()))
+	do.infoCache.ReSize(int(vardef.SchemaVersionCacheLimit.Load()))
 	return nil
 }

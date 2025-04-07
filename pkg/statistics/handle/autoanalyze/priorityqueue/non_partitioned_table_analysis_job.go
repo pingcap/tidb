@@ -34,32 +34,37 @@ const (
 )
 
 // NonPartitionedTableAnalysisJob is a TableAnalysisJob for analyzing the physical table.
+//
+//nolint:fieldalignment
 type NonPartitionedTableAnalysisJob struct {
-	TableSchema string
-	TableName   string
-	// This is only for newly added indexes.
-	Indexes []string
+	successHook SuccessJobHook
+	failureHook FailureJobHook
+
+	TableID  int64
+	IndexIDs map[int64]struct{}
+
 	Indicators
-	TableID       int64
 	TableStatsVer int
 	Weight        float64
+
+	// Lazy initialized.
+	SchemaName string
+	TableName  string
+	IndexNames []string
 }
 
 // NewNonPartitionedTableAnalysisJob creates a new TableAnalysisJob for analyzing the physical table.
 func NewNonPartitionedTableAnalysisJob(
-	schema, tableName string,
 	tableID int64,
-	indexes []string,
+	indexIDs map[int64]struct{},
 	tableStatsVer int,
 	changePercentage float64,
 	tableSize float64,
 	lastAnalysisDuration time.Duration,
 ) *NonPartitionedTableAnalysisJob {
 	return &NonPartitionedTableAnalysisJob{
-		TableSchema:   schema,
-		TableName:     tableName,
 		TableID:       tableID,
-		Indexes:       indexes,
+		IndexIDs:      indexIDs,
 		TableStatsVer: tableStatsVer,
 		Indicators: Indicators{
 			ChangePercentage:     changePercentage,
@@ -69,37 +74,97 @@ func NewNonPartitionedTableAnalysisJob(
 	}
 }
 
+// GetTableID gets the table ID of the job.
+func (j *NonPartitionedTableAnalysisJob) GetTableID() int64 {
+	return j.TableID
+}
+
 // Analyze analyzes the table or indexes.
 func (j *NonPartitionedTableAnalysisJob) Analyze(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) error {
+	success := true
+	defer func() {
+		if success {
+			if j.successHook != nil {
+				j.successHook(j)
+			}
+		} else {
+			if j.failureHook != nil {
+				j.failureHook(j, true)
+			}
+		}
+	}()
+
 	return statsutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		switch j.getAnalyzeType() {
 		case analyzeTable:
-			j.analyzeTable(sctx, statsHandle, sysProcTracker)
+			success = j.analyzeTable(sctx, statsHandle, sysProcTracker)
 		case analyzeIndex:
-			j.analyzeIndexes(sctx, statsHandle, sysProcTracker)
+			success = j.analyzeIndexes(sctx, statsHandle, sysProcTracker)
 		}
 		return nil
 	})
 }
 
-// HasNewlyAddedIndex checks whether the table has newly added indexes.
-func (j *NonPartitionedTableAnalysisJob) HasNewlyAddedIndex() bool {
-	return len(j.Indexes) > 0
+// RegisterSuccessHook registers a successHook function that will be called after the job can be marked as successful.
+func (j *NonPartitionedTableAnalysisJob) RegisterSuccessHook(hook SuccessJobHook) {
+	j.successHook = hook
 }
 
-// IsValidToAnalyze checks whether the table is valid to analyze.
-// We will check the last failed job and average analyze duration to determine whether the table is valid to analyze.
-func (j *NonPartitionedTableAnalysisJob) IsValidToAnalyze(
+// RegisterFailureHook registers a failureHook function that will be called after the job can be marked as failed.
+func (j *NonPartitionedTableAnalysisJob) RegisterFailureHook(hook FailureJobHook) {
+	j.failureHook = hook
+}
+
+// HasNewlyAddedIndex checks whether the table has newly added indexes.
+func (j *NonPartitionedTableAnalysisJob) HasNewlyAddedIndex() bool {
+	return len(j.IndexIDs) > 0
+}
+
+// ValidateAndPrepare validates if the analysis job can run and prepares it for execution.
+// For non-partitioned tables, it checks:
+// - Schema exists
+// - Table exists
+// - No recent failed analysis to avoid queue blocking
+func (j *NonPartitionedTableAnalysisJob) ValidateAndPrepare(
 	sctx sessionctx.Context,
 ) (bool, string) {
+	callFailureHook := func(needRetry bool) {
+		if j.failureHook != nil {
+			j.failureHook(j, needRetry)
+		}
+	}
+	is := sctx.GetDomainInfoSchema()
+	tableInfo, ok := is.TableInfoByID(j.TableID)
+	if !ok {
+		callFailureHook(false)
+		return false, tableNotExist
+	}
+	dbID := tableInfo.DBID
+	schema, ok := is.SchemaByID(dbID)
+	if !ok {
+		callFailureHook(false)
+		return false, schemaNotExist
+	}
+	tableName := tableInfo.Name.O
+	indexNames := make([]string, 0, len(j.IndexIDs))
+	for _, index := range tableInfo.Indices {
+		if _, ok := j.IndexIDs[index.ID]; ok {
+			indexNames = append(indexNames, index.Name.O)
+		}
+	}
+
+	j.SchemaName = schema.Name.O
+	j.TableName = tableName
+	j.IndexNames = indexNames
 	if valid, failReason := isValidToAnalyze(
 		sctx,
-		j.TableSchema,
+		j.SchemaName,
 		j.TableName,
 	); !valid {
+		callFailureHook(true)
 		return false, failReason
 	}
 
@@ -121,6 +186,11 @@ func (j *NonPartitionedTableAnalysisJob) GetIndicators() Indicators {
 	return j.Indicators
 }
 
+// SetIndicators sets the indicators of the table.
+func (j *NonPartitionedTableAnalysisJob) SetIndicators(indicators Indicators) {
+	j.Indicators = indicators
+}
+
 // String implements fmt.Stringer interface.
 func (j *NonPartitionedTableAnalysisJob) String() string {
 	return fmt.Sprintf(
@@ -136,8 +206,8 @@ func (j *NonPartitionedTableAnalysisJob) String() string {
 			"\tLastAnalysisDuration: %v\n"+
 			"\tWeight: %.6f\n",
 		j.getAnalyzeType(),
-		strings.Join(j.Indexes, ", "),
-		j.TableSchema, j.TableName, j.TableID, j.TableStatsVer,
+		strings.Join(j.IndexNames, ", "),
+		j.SchemaName, j.TableName, j.TableID, j.TableStatsVer,
 		j.ChangePercentage, j.TableSize, j.LastAnalysisDuration, j.Weight,
 	)
 }
@@ -152,15 +222,15 @@ func (j *NonPartitionedTableAnalysisJob) analyzeTable(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
-) {
+) bool {
 	sql, params := j.GenSQLForAnalyzeTable()
-	exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
+	return exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
 }
 
 // GenSQLForAnalyzeTable generates the SQL for analyzing the specified table.
 func (j *NonPartitionedTableAnalysisJob) GenSQLForAnalyzeTable() (string, []any) {
 	sql := "analyze table %n.%n"
-	params := []any{j.TableSchema, j.TableName}
+	params := []any{j.SchemaName, j.TableName}
 
 	return sql, params
 }
@@ -169,22 +239,50 @@ func (j *NonPartitionedTableAnalysisJob) analyzeIndexes(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
-) {
-	if len(j.Indexes) == 0 {
-		return
+) bool {
+	if len(j.IndexNames) == 0 {
+		return true
+	}
+	// For version 2, analyze one index will analyze all other indexes and columns.
+	// For version 1, analyze one index will only analyze the specified index.
+	analyzeVersion := sctx.GetSessionVars().AnalyzeVersion
+	if analyzeVersion == 1 {
+		for _, index := range j.IndexNames {
+			sql, params := j.GenSQLForAnalyzeIndex(index)
+			if !exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...) {
+				return false
+			}
+		}
+		return true
 	}
 	// Only analyze the first index.
 	// This is because analyzing a single index also analyzes all other indexes and columns.
 	// Therefore, to avoid redundancy, we prevent multiple analyses of the same table.
-	firstIndex := j.Indexes[0]
+	firstIndex := j.IndexNames[0]
 	sql, params := j.GenSQLForAnalyzeIndex(firstIndex)
-	exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
+	return exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
 }
 
 // GenSQLForAnalyzeIndex generates the SQL for analyzing the specified index.
 func (j *NonPartitionedTableAnalysisJob) GenSQLForAnalyzeIndex(index string) (string, []any) {
 	sql := "analyze table %n.%n index %n"
-	params := []any{j.TableSchema, j.TableName, index}
+	params := []any{j.SchemaName, j.TableName, index}
 
 	return sql, params
+}
+
+// AsJSON converts the job to a JSON object.
+func (j *NonPartitionedTableAnalysisJob) AsJSON() statstypes.AnalysisJobJSON {
+	indexes := make([]int64, 0, len(j.IndexIDs))
+	for index := range j.IndexIDs {
+		indexes = append(indexes, index)
+	}
+	return statstypes.AnalysisJobJSON{
+		Type:               string(j.getAnalyzeType()),
+		TableID:            j.TableID,
+		IndexIDs:           indexes,
+		Weight:             j.Weight,
+		Indicators:         asJSONIndicators(j.Indicators),
+		HasNewlyAddedIndex: j.HasNewlyAddedIndex(),
+	}
 }

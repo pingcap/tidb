@@ -21,4 +21,4 @@ import (
 )
 
 // Res is the web resources.
-var Res http.FileSystem = http.Dir("br/web/dist")
+var Res http.FileSystem = http.Dir("lightning/web/dist")

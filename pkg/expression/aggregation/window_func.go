@@ -66,8 +66,8 @@ func NewWindowFuncDesc(ctx expression.BuildContext, name string, args []expressi
 		base.RetTp.SetFlag(mysql.NotNullFlag)
 	case ast.WindowFuncLead, ast.WindowFuncLag:
 		if len(args) == 3 &&
-			((args[0].GetType().GetFlag() & mysql.NotNullFlag) != 0) &&
-			((args[2].GetType().GetFlag() & mysql.NotNullFlag) != 0) {
+			((args[0].GetType(ctx.GetEvalCtx()).GetFlag() & mysql.NotNullFlag) != 0) &&
+			((args[2].GetType(ctx.GetEvalCtx()).GetFlag() & mysql.NotNullFlag) != 0) {
 			base.RetTp.SetFlag(mysql.NotNullFlag)
 			break
 		}
@@ -152,9 +152,8 @@ func (s *WindowFuncDesc) CanPushDownToTiFlash(ctx expression.PushDownContext) bo
 	case ast.WindowFuncRowNumber, ast.WindowFuncRank, ast.WindowFuncDenseRank, ast.WindowFuncLead, ast.WindowFuncLag,
 		ast.WindowFuncFirstValue, ast.WindowFuncLastValue:
 		return true
-		// TODO: support aggregate functions
-		//case ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncAvg, ast.AggFuncMax, ast.AggFuncMin:
-		//	return true
+	case ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncAvg, ast.AggFuncMax, ast.AggFuncMin:
+		return true
 	}
 
 	return false

@@ -9,6 +9,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/filter",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/parser/mysql",
         "//pkg/util/table-filter",
         "//pkg/util/table-rule-selector",
         "@com_github_pingcap_errors//:errors",

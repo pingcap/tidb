@@ -25,13 +25,15 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
-	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
@@ -44,10 +46,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/linter/constructor"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/nocopy"
-	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/pkg/util/tracing"
-	"github.com/tikv/client-go/v2/tikvrpc"
 	atomic2 "go.uber.org/atomic"
 	"golang.org/x/exp/maps"
 	"golang.org/x/sync/singleflight"
@@ -103,6 +103,104 @@ func (rf *ReferenceCount) TryFreeze() bool {
 // UnFreeze unfreeze the frozen StmtCtx thus the other session can access this StmtCtx.
 func (rf *ReferenceCount) UnFreeze() {
 	atomic.StoreInt32((*int32)(rf), ReferenceCountNoReference)
+}
+
+// ReservedRowIDAlloc is used to reserve autoID for the auto_increment column.
+type ReservedRowIDAlloc struct {
+	base int64
+	max  int64
+}
+
+// Reset resets the base and max of reserved rowIDs.
+func (r *ReservedRowIDAlloc) Reset(base int64, maxv int64) {
+	r.base = base
+	r.max = maxv
+}
+
+// Consume consumes a reserved rowID.
+// If the second return value is false, it means the reserved rowID is exhausted.
+func (r *ReservedRowIDAlloc) Consume() (int64, bool) {
+	if r.base < r.max {
+		r.base++
+		return r.base, true
+	}
+	return 0, false
+}
+
+// Exhausted returns whether the reserved rowID is exhausted.
+func (r *ReservedRowIDAlloc) Exhausted() bool {
+	return r.base >= r.max
+}
+
+type stmtCtxMu struct {
+	sync.Mutex
+
+	affectedRows uint64
+	foundRows    uint64
+
+	/*
+		following variables are ported from 'COPY_INFO' struct of MySQL server source,
+		they are used to count rows for INSERT/REPLACE/UPDATE queries:
+		  If a row is inserted then the copied variable is incremented.
+		  If a row is updated by the INSERT ... ON DUPLICATE KEY UPDATE and the
+		     new data differs from the old one then the copied and the updated
+		     variables are incremented.
+		  The touched variable is incremented if a row was touched by the update part
+		     of the INSERT ... ON DUPLICATE KEY UPDATE no matter whether the row
+		     was actually changed or not.
+
+		see https://github.com/mysql/mysql-server/blob/d2029238d6d9f648077664e4cdd611e231a6dc14/sql/sql_data_change.h#L60 for more details
+	*/
+	records uint64
+	deleted uint64
+	updated uint64
+	copied  uint64
+	touched uint64
+
+	message string
+}
+
+func (mu *stmtCtxMu) reset() *stmtCtxMu {
+	if mu == nil {
+		return &stmtCtxMu{}
+	}
+	mu.affectedRows = 0
+	mu.copied = 0
+	mu.deleted = 0
+	mu.foundRows = 0
+	mu.message = ""
+	mu.records = 0
+	mu.touched = 0
+	mu.updated = 0
+	return mu
+}
+
+type staleTSOProvider struct {
+	sync.Mutex
+	value *uint64
+	eval  func() (uint64, error)
+}
+
+func (s *staleTSOProvider) reset() *staleTSOProvider {
+	if s == nil {
+		return &staleTSOProvider{}
+	}
+	s.value = nil
+	s.eval = nil
+	return s
+}
+
+type stmtCache struct {
+	mu   sync.Mutex
+	data map[StmtCacheKey]any
+}
+
+func (s *stmtCache) reset() *stmtCache {
+	if s == nil {
+		return &stmtCache{}
+	}
+	s.data = nil
+	return s
 }
 
 // StatementContext contains variables for a statement.
@@ -167,7 +265,6 @@ type StatementContext struct {
 	contextutil.PlanCacheTracker
 	contextutil.RangeFallbackHandler
 
-	BatchCheck            bool
 	IgnoreExplainIDSuffix bool
 	MultiSchemaInfo       *model.MultiSchemaInfo
 	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
@@ -177,33 +274,8 @@ type StatementContext struct {
 	InRestrictedSQL bool
 	ViewDepth       int32
 	// mu struct holds variables that change during execution.
-	mu struct {
-		sync.Mutex
+	mu *stmtCtxMu
 
-		affectedRows uint64
-		foundRows    uint64
-
-		/*
-			following variables are ported from 'COPY_INFO' struct of MySQL server source,
-			they are used to count rows for INSERT/REPLACE/UPDATE queries:
-			  If a row is inserted then the copied variable is incremented.
-			  If a row is updated by the INSERT ... ON DUPLICATE KEY UPDATE and the
-			     new data differs from the old one then the copied and the updated
-			     variables are incremented.
-			  The touched variable is incremented if a row was touched by the update part
-			     of the INSERT ... ON DUPLICATE KEY UPDATE no matter whether the row
-			     was actually changed or not.
-
-			see https://github.com/mysql/mysql-server/blob/d2029238d6d9f648077664e4cdd611e231a6dc14/sql/sql_data_change.h#L60 for more details
-		*/
-		records uint64
-		deleted uint64
-		updated uint64
-		copied  uint64
-		touched uint64
-
-		message string
-	}
 	WarnHandler contextutil.WarnHandlerExt
 	// ExtraWarnHandler record the extra warnings and are only used by the slow log only now.
 	// If a warning is expected to be output only under some conditions (like in EXPLAIN or EXPLAIN VERBOSE) but it's
@@ -220,11 +292,13 @@ type StatementContext struct {
 	PrevLastInsertID uint64
 	// LastInsertID is the auto-generated ID in the current statement.
 	LastInsertID uint64
+	// LastInsertIDSet is true if the LastInsertId was set
+	LastInsertIDSet bool
 	// InsertID is the given insert ID of an auto_increment column.
 	InsertID uint64
 
-	BaseRowID int64
-	MaxRowID  int64
+	// ReservedRowIDAlloc is used to alloc auto ID from the reserved IDs.
+	ReservedRowIDAlloc ReservedRowIDAlloc
 
 	// Copied from SessionVars.TimeZone.
 	Priority     mysql.PriorityEnum
@@ -234,7 +308,7 @@ type StatementContext struct {
 	// per statement resource group name
 	// hint /* +ResourceGroup(name) */ can change the statement group name
 	ResourceGroupName   string
-	RunawayChecker      *resourcegroup.RunawayChecker
+	RunawayChecker      resourcegroup.RunawayChecker
 	IsTiFlash           atomic2.Bool
 	RuntimeStatsColl    *execdetails.RuntimeStatsColl
 	IndexUsageCollector *indexusage.StmtIndexUsageCollector
@@ -263,29 +337,25 @@ type StatementContext struct {
 	planHint       string
 	planHintSet    bool
 	binaryPlan     string
+	// indexForce is set if any table in the query has a force or use index applied
+	indexForce bool
 	// To avoid cycle import, we use interface{} for the following two fields.
 	// flatPlan should be a *plannercore.FlatPhysicalPlan if it's not nil
 	flatPlan any
 	// plan should be a plannercore.Plan if it's not nil
 	plan any
 
-	Tables                []TableEntry
-	lockWaitStartTime     int64 // LockWaitStartTime stores the pessimistic lock wait start time
-	PessimisticLockWaited int32
-	LockKeysDuration      int64
-	LockKeysCount         int32
-	LockTableIDs          map[int64]struct{} // table IDs need to be locked, empty for lock all tables
-	TblInfo2UnionScan     map[*model.TableInfo]bool
-	TaskID                uint64 // unique ID for an execution of a statement
-	TaskMapBakTS          uint64 // counter for
+	Tables            []TableEntry
+	lockWaitStartTime int64              // LockWaitStartTime stores the pessimistic lock wait start time
+	LockTableIDs      map[int64]struct{} // table IDs need to be locked, empty for lock all tables
+	TblInfo2UnionScan map[*model.TableInfo]bool
+	TaskID            uint64 // unique ID for an execution of a statement
+	TaskMapBakTS      uint64 // counter for
 
 	// stmtCache is used to store some statement-related values.
 	// add mutex to protect stmtCache concurrent access
 	// https://github.com/pingcap/tidb/issues/36159
-	stmtCache struct {
-		mu   sync.Mutex
-		data map[StmtCacheKey]any
-	}
+	stmtCache *stmtCache
 
 	// Map to store all CTE storages of current SQL.
 	// Will clean up at the end of the execution.
@@ -394,14 +464,18 @@ type StatementContext struct {
 	// Check if TiFlash read engine is removed due to strict sql mode.
 	TiFlashEngineRemovedDueToStrictSQLMode bool
 	// StaleTSOProvider is used to provide stale timestamp oracle for read-only transactions.
-	StaleTSOProvider struct {
-		sync.Mutex
-		value *uint64
-		eval  func() (uint64, error)
-	}
+	StaleTSOProvider *staleTSOProvider
 
 	// MDLRelatedTableIDs is used to store the table IDs that are related to the current MDL lock.
 	MDLRelatedTableIDs map[int64]struct{}
+
+	// ForShareLockEnabledByNoop indicates whether the current statement contains `for share` clause
+	// and the `for share` execution is enabled by `tidb_enable_noop_functions`, no locks should be
+	// acquired in this case.
+	ForShareLockEnabledByNoop bool
+
+	// OperatorNum is used to record the number of operators in the current logical plan.
+	OperatorNum uint64
 }
 
 // DefaultStmtErrLevels is the default error levels for statement
@@ -419,7 +493,10 @@ func NewStmtCtx() *StatementContext {
 func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	intest.AssertNotNil(tz)
 	sc := &StatementContext{
-		ctxID: contextutil.GenContextID(),
+		ctxID:            contextutil.GenContextID(),
+		mu:               &stmtCtxMu{},
+		stmtCache:        &stmtCache{},
+		StaleTSOProvider: &staleTSOProvider{},
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
@@ -431,16 +508,58 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 }
 
 // Reset resets a statement context
-func (sc *StatementContext) Reset() {
-	*sc = StatementContext{
-		ctxID: contextutil.GenContextID(),
+func (sc *StatementContext) Reset() bool {
+	// make sure no other goroutines still get locks.
+	if sc.mu != nil {
+		if !sc.mu.TryLock() {
+			return false
+		}
+		defer sc.mu.Unlock()
 	}
+	if sc.stmtCache != nil {
+		if !sc.stmtCache.mu.TryLock() {
+			return false
+		}
+		defer sc.stmtCache.mu.Unlock()
+	}
+	if sc.StaleTSOProvider != nil {
+		if !sc.StaleTSOProvider.TryLock() {
+			return false
+		}
+		defer sc.StaleTSOProvider.Unlock()
+	}
+	*sc = StatementContext{
+		ctxID:               contextutil.GenContextID(),
+		CTEStorageMap:       sc.CTEStorageMap,
+		LockTableIDs:        sc.LockTableIDs,
+		TableStats:          sc.TableStats,
+		MDLRelatedTableIDs:  sc.MDLRelatedTableIDs,
+		TblInfo2UnionScan:   sc.TblInfo2UnionScan,
+		WarnHandler:         sc.WarnHandler,
+		ExtraWarnHandler:    sc.ExtraWarnHandler,
+		IndexUsageCollector: sc.IndexUsageCollector,
+		mu:                  sc.mu,
+		stmtCache:           sc.stmtCache,
+		StaleTSOProvider:    sc.StaleTSOProvider,
+	}
+	sc.mu = sc.mu.reset()
+	sc.stmtCache = sc.stmtCache.reset()
+	sc.StaleTSOProvider = sc.StaleTSOProvider.reset()
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
 	sc.PlanCacheTracker = contextutil.NewPlanCacheTracker(sc)
 	sc.RangeFallbackHandler = contextutil.NewRangeFallbackHandler(&sc.PlanCacheTracker, sc)
-	sc.WarnHandler = contextutil.NewStaticWarnHandler(0)
-	sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
+	if h, ok := sc.WarnHandler.(interface{ Reset() }); ok && sc.WarnHandler != nil {
+		h.Reset()
+	} else {
+		sc.WarnHandler = contextutil.NewStaticWarnHandler(0)
+	}
+	if h, ok := sc.ExtraWarnHandler.(interface{ Reset() }); ok && sc.ExtraWarnHandler != nil {
+		h.Reset()
+	} else {
+		sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
+	}
+	return true
 }
 
 // CtxID returns the context id of the statement
@@ -639,20 +758,14 @@ func (sc *StatementContext) SetBinaryPlan(binaryPlan string) {
 	sc.binaryPlan = binaryPlan
 }
 
-// GetResourceGroupTagger returns the implementation of tikvrpc.ResourceGroupTagger related to self.
-func (sc *StatementContext) GetResourceGroupTagger() tikvrpc.ResourceGroupTagger {
+// GetResourceGroupTagger returns the implementation of kv.ResourceGroupTagBuilder related to self.
+func (sc *StatementContext) GetResourceGroupTagger() *kv.ResourceGroupTagBuilder {
+	tagger := kv.NewResourceGroupTagBuilder().SetPlanDigest(sc.planDigest)
 	normalized, digest := sc.SQLDigest()
-	planDigest := sc.planDigest
-	return func(req *tikvrpc.Request) {
-		if req == nil {
-			return
-		}
-		if len(normalized) == 0 {
-			return
-		}
-		req.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(digest, planDigest,
-			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
+	if len(normalized) > 0 {
+		tagger.SetSQLDigest(digest)
 	}
+	return tagger
 }
 
 // SetUseChunkAlloc set use chunk alloc status
@@ -692,6 +805,11 @@ func (sc *StatementContext) GetPlanHint() (string, bool) {
 	return sc.planHint, sc.planHintSet
 }
 
+// GetIndexForce gets the IndexForce boolean generated from the plan.
+func (sc *StatementContext) GetIndexForce() bool {
+	return sc.indexForce
+}
+
 // InitDiskTracker initializes the sc.DiskTracker, use cache to avoid allocation.
 func (sc *StatementContext) InitDiskTracker(label int, bytesLimit int64) {
 	memory.InitTracker(&sc.cache.DiskTracker, label, bytesLimit, &sc.cache.LogOnExceed[0])
@@ -708,6 +826,11 @@ func (sc *StatementContext) InitMemTracker(label int, bytesLimit int64) {
 func (sc *StatementContext) SetPlanHint(hint string) {
 	sc.planHintSet = true
 	sc.planHint = hint
+}
+
+// SetIndexForce sets the hint for the plan.
+func (sc *StatementContext) SetIndexForce() {
+	sc.indexForce = true
 }
 
 // PlanCacheType is the flag of plan cache
@@ -760,6 +883,7 @@ func (sc *StatementContext) SetAffectedRows(rows uint64) {
 func (sc *StatementContext) AffectedRows() uint64 {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
+	failpoint.InjectCall("afterAffectedRowsLocked", sc)
 	return sc.mu.affectedRows
 }
 
@@ -956,12 +1080,10 @@ func (sc *StatementContext) resetMuForRetry() {
 // ResetForRetry resets the changed states during execution.
 func (sc *StatementContext) ResetForRetry() {
 	sc.resetMuForRetry()
-	sc.MaxRowID = 0
-	sc.BaseRowID = 0
+	sc.ReservedRowIDAlloc.Reset(0, 0)
 	sc.TableIDs = sc.TableIDs[:0]
 	sc.IndexNames = sc.IndexNames[:0]
 	sc.TaskID = AllocateTaskID()
-	sc.SyncExecDetails.Reset()
 	sc.WarnHandler.TruncateWarnings(0)
 	sc.ExtraWarnHandler.TruncateWarnings(0)
 
@@ -975,14 +1097,13 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	details = sc.SyncExecDetails.GetExecDetails()
-	details.LockKeysDuration = time.Duration(atomic.LoadInt64(&sc.LockKeysDuration))
 	return details
 }
 
 // PushDownFlags converts StatementContext to tipb.SelectRequest.Flags.
 func (sc *StatementContext) PushDownFlags() uint64 {
-	var flags uint64
 	ec := sc.ErrCtx()
+	flags := PushDownFlagsWithTypeFlagsAndErrLevels(sc.TypeFlags(), ec.LevelMap())
 	if sc.InInsertStmt {
 		flags |= model.FlagInInsertStmt
 	} else if sc.InUpdateStmt || sc.InDeleteStmt {
@@ -990,24 +1111,31 @@ func (sc *StatementContext) PushDownFlags() uint64 {
 	} else if sc.InSelectStmt {
 		flags |= model.FlagInSelectStmt
 	}
-	if sc.TypeFlags().IgnoreTruncateErr() {
-		flags |= model.FlagIgnoreTruncate
-	} else if sc.TypeFlags().TruncateAsWarning() {
-		flags |= model.FlagTruncateAsWarning
-		// TODO: remove this flag from TiKV.
-		flags |= model.FlagOverflowAsWarning
-	}
-	if sc.TypeFlags().IgnoreZeroInDate() {
-		flags |= model.FlagIgnoreZeroInDate
-	}
-	if ec.LevelForGroup(errctx.ErrGroupDividedByZero) != errctx.LevelError {
-		flags |= model.FlagDividedByZeroAsWarning
-	}
 	if sc.InLoadDataStmt {
 		flags |= model.FlagInLoadDataStmt
 	}
 	if sc.InRestrictedSQL {
 		flags |= model.FlagInRestrictedSQL
+	}
+	return flags
+}
+
+// PushDownFlagsWithTypeFlagsAndErrLevels applies gets the related bits to push down flags
+// with `type.Flags` and `errctx.LevelMap`
+func PushDownFlagsWithTypeFlagsAndErrLevels(tcFlags types.Flags, errLevels errctx.LevelMap) uint64 {
+	var flags uint64
+	if tcFlags.IgnoreTruncateErr() {
+		flags |= model.FlagIgnoreTruncate
+	} else if tcFlags.TruncateAsWarning() {
+		flags |= model.FlagTruncateAsWarning
+		// TODO: remove this flag from TiKV.
+		flags |= model.FlagOverflowAsWarning
+	}
+	if tcFlags.IgnoreZeroInDate() {
+		flags |= model.FlagIgnoreZeroInDate
+	}
+	if errLevels[errctx.ErrGroupDividedByZero] != errctx.LevelError {
+		flags |= model.FlagDividedByZeroAsWarning
 	}
 	return flags
 }
@@ -1028,6 +1156,11 @@ func (sc *StatementContext) InitFromPBFlagAndTz(flags uint64, tz *time.Location)
 		WithTruncateAsWarning((flags & model.FlagTruncateAsWarning) > 0).
 		WithIgnoreZeroInDate((flags & model.FlagIgnoreZeroInDate) > 0).
 		WithAllowNegativeToUnsigned(!sc.InInsertStmt))
+}
+
+// PessimisticLockStarted returns if the statement pessimistic lock wait start time is set
+func (sc *StatementContext) PessimisticLockStarted() bool {
+	return atomic.LoadInt64(&sc.lockWaitStartTime) > 0
 }
 
 // GetLockWaitStartTime returns the statement pessimistic lock wait start time

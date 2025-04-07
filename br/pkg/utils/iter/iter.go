@@ -5,6 +5,7 @@ package iter
 import (
 	"context"
 	"fmt"
+	goiter "iter"
 )
 
 // IterResult is the result of try to advancing an impure iterator.
@@ -119,5 +120,25 @@ func Tap[T any](i TryNextor[T], with func(T)) TryNextor[T] {
 	return tap[T]{
 		inner:  i,
 		tapper: with,
+	}
+}
+
+// AsSeq wraps an `TryNextor` to a Seq2.
+func AsSeq[T any](ctx context.Context, i TryNextor[T]) goiter.Seq2[error, T] {
+	return func(yield func(error, T) bool) {
+		for {
+			res := i.TryNext(ctx)
+			var cont bool
+			if res.Err != nil {
+				cont = yield(res.Err, *new(T))
+			} else if res.Finished {
+				cont = false
+			} else {
+				cont = yield(nil, res.Item)
+			}
+			if !cont {
+				break
+			}
+		}
 	}
 }

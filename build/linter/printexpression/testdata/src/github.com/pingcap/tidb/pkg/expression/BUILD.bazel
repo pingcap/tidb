@@ -1,0 +1,8 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "expression",
+    srcs = ["expression.go"],
+    importpath = "github.com/pingcap/tidb/build/linter/printexpression/testdata/src/github.com/pingcap/tidb/pkg/expression",
+    visibility = ["//visibility:public"],
+)

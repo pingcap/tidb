@@ -174,3 +174,19 @@ import into t from '';
 -- error 8157
 import into t from '/a.csv' format 'xx';
 
+# import into temporary or cached table is not supported
+drop table if exists temp;
+create temporary table temp (id int);
+-- error 1105
+import into temp from '/file.csv';
+
+drop table if exists gtemp;
+create global temporary table gtemp (id int) on commit delete rows;
+-- error 1105
+import into gtemp from '/file.csv';
+
+drop table if exists cachetbl;
+create table cachetbl (id int);
+alter table cachetbl cache;
+-- error 1105
+import into cachetbl from '/file.csv';

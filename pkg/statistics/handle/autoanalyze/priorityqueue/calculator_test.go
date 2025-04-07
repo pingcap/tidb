@@ -128,19 +128,21 @@ func TestGetSpecialEvent(t *testing.T) {
 	pc := priorityqueue.NewPriorityCalculator()
 
 	jobWithIndex1 := &priorityqueue.DynamicPartitionedTableAnalysisJob{
-		PartitionIndexes: map[string][]string{
-			"index1": {"p1", "p2"},
+		PartitionIndexIDs: map[int64][]int64{
+			1: {1, 2},
 		},
 	}
 	require.Equal(t, priorityqueue.EventNewIndex, pc.GetSpecialEvent(jobWithIndex1))
 
 	jobWithIndex2 := &priorityqueue.NonPartitionedTableAnalysisJob{
-		Indexes: []string{"index1"},
+		IndexIDs: map[int64]struct{}{
+			1: {},
+		},
 	}
 	require.Equal(t, priorityqueue.EventNewIndex, pc.GetSpecialEvent(jobWithIndex2))
 
 	jobWithoutIndex := &priorityqueue.DynamicPartitionedTableAnalysisJob{
-		PartitionIndexes: map[string][]string{},
+		PartitionIndexIDs: map[int64][]int64{},
 	}
 	require.Equal(t, priorityqueue.EventNone, pc.GetSpecialEvent(jobWithoutIndex))
 }

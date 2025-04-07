@@ -15,12 +15,10 @@
 package logutil
 
 import (
-	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 // StatsLogger with category "stats" is used to log statistic related messages.
@@ -30,27 +28,22 @@ func StatsLogger() *zap.Logger {
 }
 
 var (
-	initSamplerLoggerOnce sync.Once
-	samplerLogger         *zap.Logger
+	sampleLoggerFactory = logutil.SampleLoggerFactory(5*time.Minute, 1, zap.String(logutil.LogFieldCategory, "stats"))
+	// sampleErrVerboseLoggerFactory creates a logger for error messages with a higher
+	// sampling rate (once per 10 minutes) since error logs tend to be more verbose.
+	sampleErrVerboseLoggerFactory = logutil.SampleErrVerboseLoggerFactory(10*time.Minute, 1, zap.String(logutil.LogFieldCategory, "stats"))
 )
 
-// SingletonStatsSamplerLogger with category "stats" is used to log statistic related messages.
+// StatsSampleLogger with category "stats" is used to log statistic related messages.
 // It is used to sample the log to avoid too many logs.
-// NOTE: Do not create a new logger for each log, it will cause the sampler not work.
-// Because we need to record the log count with the same level and message in this specific logger.
 // Do not use it to log the message that is not related to statistics.
-func SingletonStatsSamplerLogger() *zap.Logger {
-	init := func() {
-		if samplerLogger == nil {
-			// Create a new zapcore sampler with options
-			// This will log the first log entries with the same level and message in 5 minutes and ignore the rest of the logs.
-			sampler := zap.WrapCore(func(core zapcore.Core) zapcore.Core {
-				return zapcore.NewSamplerWithOptions(core, 5*time.Minute, 1, 0)
-			})
-			samplerLogger = StatsLogger().WithOptions(sampler)
-		}
-	}
+func StatsSampleLogger() *zap.Logger {
+	return sampleLoggerFactory()
+}
 
-	initSamplerLoggerOnce.Do(init)
-	return samplerLogger
+// StatsErrVerboseSampleLogger with category "stats" is used to log statistics-related messages with verbose error details.
+// It is used to sample the log to avoid too many logs.
+// Do not use it to log the message that is not related to statistics.
+func StatsErrVerboseSampleLogger() *zap.Logger {
+	return sampleErrVerboseLoggerFactory()
 }

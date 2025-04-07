@@ -18,7 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
 // Database wraps the schema and tables of a database.

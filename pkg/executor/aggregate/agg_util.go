@@ -116,7 +116,7 @@ func GetGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 	errCtx := ctx.GetSessionVars().StmtCtx.ErrCtx()
 	exprCtx := ctx.GetExprCtx()
 	for _, item := range groupByItems {
-		tp := item.GetType()
+		tp := item.GetType(ctx.GetExprCtx().GetEvalCtx())
 
 		buf, err := expression.GetColumn(tp.EvalType(), numRows)
 		if err != nil {
@@ -129,7 +129,7 @@ func GetGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 		// Ref to issue #26885.
 		// This check is used to handle invalid enum name same with user defined enum name.
 		// Use enum value as groupKey instead of enum name.
-		if item.GetType().GetType() == mysql.TypeEnum {
+		if item.GetType(ctx.GetExprCtx().GetEvalCtx()).GetType() == mysql.TypeEnum {
 			newTp := *tp
 			newTp.AddFlag(mysql.EnumSetAsIntFlag)
 			tp = &newTp
@@ -140,7 +140,7 @@ func GetGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 			return nil, err
 		}
 		// This check is used to avoid error during the execution of `EncodeDecimal`.
-		if item.GetType().GetType() == mysql.TypeNewDecimal {
+		if item.GetType(ctx.GetExprCtx().GetEvalCtx()).GetType() == mysql.TypeNewDecimal {
 			newTp := *tp
 			newTp.SetFlen(0)
 			tp = &newTp

@@ -26,10 +26,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/spkg/bom"
 	"go.uber.org/zap"
 	"golang.org/x/text/encoding/charmap"
-	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 var (
@@ -54,7 +54,7 @@ func decodeCharacterSet(data []byte, characterSet string) ([]byte, error) {
 		// perform `chardet` first.
 		fallthrough
 	case "gb18030":
-		decoded, err := simplifiedchinese.GB18030.NewDecoder().Bytes(data)
+		decoded, err := charset.EncodingGB18030Impl.Transform(nil, data, charset.OpDecodeReplace)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -91,7 +91,9 @@ func ExportStatement(ctx context.Context, store storage.ExternalStorage,
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		store = storage.WithCompression(store, compressType, storage.DecompressConfig{})
+		store = storage.WithCompression(store, compressType, storage.DecompressConfig{
+			ZStdDecodeConcurrency: 1,
+		})
 	}
 	fd, err := store.Open(ctx, sqlFile.FileMeta.Path, nil)
 	if err != nil {
@@ -187,7 +189,8 @@ func (pr PooledReader) Read(p []byte) (n int, err error) {
 
 // Seek implements io.Seeker
 func (pr PooledReader) Seek(offset int64, whence int) (int64, error) {
-	if pr.ioWorkers != nil {
+	// Seek(0, io.SeekCurrent) is used to get the current offset, which will not cause any Disk I/O.
+	if pr.ioWorkers != nil && !(offset == 0 && whence == io.SeekCurrent) {
 		w := pr.ioWorkers.Apply()
 		defer pr.ioWorkers.Recycle(w)
 	}

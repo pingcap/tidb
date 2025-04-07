@@ -15,6 +15,7 @@
 package core
 
 import (
+	"context"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -22,9 +23,10 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/types"
@@ -94,7 +96,7 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor, subPlan base.Physical
 
 func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (base.PhysicalPlan, error) {
 	tblScan := e.TblScan
-	tbl, ok := b.is.TableByID(tblScan.TableId)
+	tbl, ok := b.is.TableByID(context.Background(), tblScan.TableId)
 	if !ok {
 		return nil, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %d does not exist.", tblScan.TableId)
 	}
@@ -130,6 +132,8 @@ func (b *PBPlanBuilder) pbToTableScan(e *tipb.Executor) (base.PhysicalPlan, erro
 		p.Extractor = extractor
 	case infoschema.ClusterTableStatementsSummary, infoschema.ClusterTableStatementsSummaryHistory:
 		p.Extractor = &StatementsSummaryExtractor{}
+	case infoschema.ClusterTableTiDBIndexUsage:
+		p.Extractor = NewInfoSchemaTiDBIndexUsageExtractor()
 	}
 	return p, nil
 }
@@ -264,7 +268,7 @@ func (*PBPlanBuilder) pbToKill(e *tipb.Executor) (base.PhysicalPlan, error) {
 		ConnectionID: e.Kill.ConnID,
 		Query:        e.Kill.Query,
 	}
-	simple := Simple{Statement: node, IsFromRemote: true}
+	simple := Simple{Statement: node, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
 	return &PhysicalSimpleWrapper{Inner: simple}, nil
 }
 

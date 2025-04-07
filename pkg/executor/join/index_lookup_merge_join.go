@@ -443,11 +443,6 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 		}
 	}
 	task.memTracker.Consume(int64(cap(task.outerOrderIdx)))
-	failpoint.Inject("IndexMergeJoinMockOOM", func(val failpoint.Value) {
-		if val.(bool) {
-			panic("OOM test index merge join doesn't hang here.")
-		}
-	})
 	// NeedOuterSort means the outer side property items can't guarantee the order of join keys.
 	// Because the necessary condition of merge join is both outer and inner keep order of join keys.
 	// In this case, we need sort the outer side.

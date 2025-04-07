@@ -38,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -58,9 +58,9 @@ func TestInitDefaultOptions(t *testing.T) {
 	plan = &Plan{
 		DataSourceType: DataSourceTypeFile,
 	}
-	variable.CloudStorageURI.Store("s3://bucket/path")
+	vardef.CloudStorageURI.Store("s3://bucket/path")
 	t.Cleanup(func() {
-		variable.CloudStorageURI.Store("")
+		vardef.CloudStorageURI.Store("")
 	})
 	plan.initDefaultOptions(1)
 	require.Equal(t, config.ByteSize(0), plan.DiskQuota)
@@ -144,9 +144,9 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	require.True(t, plan.DisablePrecheck, sql)
 
 	// set cloud storage uri
-	variable.CloudStorageURI.Store("s3://bucket/path")
+	vardef.CloudStorageURI.Store("s3://bucket/path")
 	t.Cleanup(func() {
-		variable.CloudStorageURI.Store("")
+		vardef.CloudStorageURI.Store("")
 	})
 	plan = &Plan{Format: DataFormatCSV}
 	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
@@ -189,11 +189,17 @@ func TestAdjustOptions(t *testing.T) {
 	plan.adjustOptions(16)
 	require.Equal(t, 16, plan.ThreadCnt)
 	require.Equal(t, config.ByteSize(10), plan.MaxWriteSpeed) // not adjusted
+	require.False(t, plan.DisableTiKVImportMode)
 
 	plan.ThreadCnt = 100000000
 	plan.DataSourceType = DataSourceTypeQuery
 	plan.adjustOptions(16)
 	require.Equal(t, 32, plan.ThreadCnt)
+	require.False(t, plan.DisableTiKVImportMode)
+
+	plan.CloudStorageURI = "s3://bucket/path"
+	plan.adjustOptions(16)
+	require.True(t, plan.DisableTiKVImportMode)
 }
 
 func TestAdjustDiskQuota(t *testing.T) {
@@ -311,19 +317,6 @@ func TestGetLocalBackendCfg(t *testing.T) {
 	cfg = c.getLocalBackendCfg("http://1.1.1.1:1234", "/tmp")
 	require.Greater(t, cfg.RaftKV2SwitchModeDuration, time.Duration(0))
 	require.Equal(t, config.DefaultSwitchTiKVModeInterval, cfg.RaftKV2SwitchModeDuration)
-}
-
-func TestGetBackendWorkerConcurrency(t *testing.T) {
-	c := &LoadDataController{
-		Plan: &Plan{
-			ThreadCnt: 3,
-		},
-	}
-	require.Equal(t, 6, c.getBackendWorkerConcurrency())
-	c.Plan.CloudStorageURI = "xxx"
-	require.Equal(t, 6, c.getBackendWorkerConcurrency())
-	c.Plan.ThreadCnt = 123
-	require.Equal(t, 246, c.getBackendWorkerConcurrency())
 }
 
 func TestSupportedSuffixForServerDisk(t *testing.T) {

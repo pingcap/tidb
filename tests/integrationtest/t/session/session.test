@@ -127,4 +127,7 @@ execute stmt1 using @v2;
 deallocate prepare stmt1;
 select c1 from t where c2 = 20;
 
-
+# https://github.com/pingcap/tidb/issues/58201
+select last_insert_id(1);
+select last_insert_id(0);
+select last_insert_id();

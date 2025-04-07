@@ -8,7 +8,7 @@ go_test(
         "password_management_test.go",
     ],
     flaky = True,
-    shard_count = 8,
+    shard_count = 9,
     deps = [
         "//pkg/domain",
         "//pkg/errno",
@@ -16,7 +16,7 @@ go_test(
         "//pkg/parser/auth",
         "//pkg/parser/mysql",
         "//pkg/privilege/privileges",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/testkit",
         "//pkg/util/sqlescape",
         "@com_github_stretchr_testify//require",

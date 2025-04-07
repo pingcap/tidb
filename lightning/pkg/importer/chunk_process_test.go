@@ -41,9 +41,10 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	tmock "github.com/pingcap/tidb/pkg/util/mock"
@@ -188,7 +189,9 @@ func (s *chunkRestoreSuite) TestDeliverLoop() {
 	indexEngine, err := importer.OpenEngine(ctx, &backend.EngineConfig{}, s.tr.tableName, -1)
 	require.NoError(s.T(), err)
 
-	dataWriter, err := dataEngine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: s.tr.tableName})
+	writerCfg := &backend.LocalWriterConfig{}
+	writerCfg.TiDB.TableName = s.tr.tableName
+	dataWriter, err := dataEngine.LocalWriter(ctx, writerCfg)
 	require.NoError(s.T(), err)
 	indexWriter, err := indexEngine.LocalWriter(ctx, &backend.LocalWriterConfig{})
 	require.NoError(s.T(), err)
@@ -708,7 +711,7 @@ func TestCompressChunkRestore(t *testing.T) {
 	)
 `, "", "")
 	require.NoError(t, err)
-	core, err := ddl.BuildTableInfoFromAST(node.(*ast.CreateTableStmt))
+	core, err := ddl.BuildTableInfoFromAST(metabuild.NewContext(), node.(*ast.CreateTableStmt))
 	require.NoError(t, err)
 	core.State = model.StatePublic
 

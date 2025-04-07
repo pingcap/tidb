@@ -18,7 +18,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
 type repairInfo struct {
@@ -80,12 +80,12 @@ func (r *repairInfo) CheckAndFetchRepairedTable(di *model.DBInfo, tbl *model.Tab
 	if isRepair {
 		// Record the repaired table in Map.
 		if repairedDB, ok := r.repairDBInfoMap[di.ID]; ok {
-			repairedDB.Tables = append(repairedDB.Tables, tbl)
+			repairedDB.Deprecated.Tables = append(repairedDB.Deprecated.Tables, tbl)
 		} else {
 			// Shallow copy the DBInfo.
 			repairedDB := di.Copy()
 			// Clean the tables and set repaired table.
-			repairedDB.Tables = []*model.TableInfo{tbl}
+			repairedDB.Deprecated.Tables = []*model.TableInfo{tbl}
 			r.repairDBInfoMap[di.ID] = repairedDB
 		}
 		return true
@@ -101,7 +101,7 @@ func (r *repairInfo) GetRepairedTableInfoByTableName(schemaLowerName, tableLower
 		if db.Name.L != schemaLowerName {
 			continue
 		}
-		for _, t := range db.Tables {
+		for _, t := range db.Deprecated.Tables {
 			if t.Name.L == tableLowerName {
 				return t, db
 			}
@@ -126,13 +126,15 @@ func (r *repairInfo) RemoveFromRepairInfo(schemaLowerName, tableLowerName string
 	// Remove from the repair map.
 	for _, db := range r.repairDBInfoMap {
 		if db.Name.L == schemaLowerName {
-			for j, t := range db.Tables {
+			tables := db.Deprecated.Tables
+			for j, t := range tables {
 				if t.Name.L == tableLowerName {
-					db.Tables = append(db.Tables[:j], db.Tables[j+1:]...)
+					tables = append(tables[:j], tables[j+1:]...)
 					break
 				}
 			}
-			if len(db.Tables) == 0 {
+			db.Deprecated.Tables = tables
+			if len(tables) == 0 {
 				delete(r.repairDBInfoMap, db.ID)
 			}
 			break

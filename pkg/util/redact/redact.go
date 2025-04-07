@@ -22,13 +22,24 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
+	backup "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 var (
 	_ fmt.Stringer = redactStringer{}
+
+	reAccessKey       = regexp.MustCompile(`access_key:\"[^\"]*\"`)
+	reSecretAccessKey = regexp.MustCompile(`secret_access_key:\"[^\"]*\"`)
+	reSharedKey       = regexp.MustCompile(`shared_key:\"[^\"]*\"`)
+	reCredentialsBlob = regexp.MustCompile(`credentials_blob:\"[^\"]*\"`)
+	reAccessSig       = regexp.MustCompile(`access_sig:\"[^\"]*\"`)
+	reEncryptKey      = regexp.MustCompile(`encryption_key:<.*?>`)
 )
 
 // String will redact the input string according to 'mode'. Check 'tidb_redact_log': https://github.com/pingcap/tidb/blob/acf9e3128693a5a13f31027f05f4de41edf8d7b2/pkg/sessionctx/variable/sysvar.go#L2154.
@@ -50,7 +61,11 @@ func String(mode string, input string) string {
 		return b.String()
 	case "OFF":
 		return input
+	case "ON":
+		return ""
 	default:
+		// should never happen
+		intest.Assert(false, "invalid redact mode")
 		return ""
 	}
 }
@@ -203,4 +218,73 @@ func Key(key []byte) string {
 		return "?"
 	}
 	return strings.ToUpper(hex.EncodeToString(key))
+}
+
+// WriteRedact is to write string with redact into `strings.Builder`
+func WriteRedact(build *strings.Builder, v string, redact string) {
+	if redact == errors.RedactLogMarker {
+		build.WriteString("‹")
+		build.WriteString(v)
+		build.WriteString("›")
+		return
+	} else if redact == errors.RedactLogEnable {
+		build.WriteString("?")
+		return
+	}
+	build.WriteString(v)
+}
+
+// TaskInfoRedacted is a wrapper of backup.StreamBackupTaskInfo to redact sensitive information
+type TaskInfoRedacted struct {
+	Info *backup.StreamBackupTaskInfo
+}
+
+// String returns the redacted string of the task info
+func (t TaskInfoRedacted) String() string {
+	if t.Info == nil {
+		return "nil"
+	}
+
+	infoCopy := *t.Info
+
+	if t.Info.Storage != nil {
+		// Create a copy of StorageBackend to modify
+		storageCopy := *t.Info.Storage
+
+		// Handle different backend types
+		switch backend := storageCopy.Backend.(type) {
+		case *backup.StorageBackend_S3:
+			if backend.S3 != nil {
+				// Copy S3 config and redact sensitive fields
+				s3Copy := *backend.S3
+				s3Copy.AccessKey = "[REDACTED]"
+				s3Copy.SecretAccessKey = "[REDACTED]"
+				s3Copy.SseKmsKeyId = "[REDACTED]"
+				storageCopy.Backend = &backup.StorageBackend_S3{S3: &s3Copy}
+			}
+
+		case *backup.StorageBackend_Gcs:
+			if backend.Gcs != nil {
+				gcsCopy := *backend.Gcs
+				gcsCopy.CredentialsBlob = "[REDACTED]"
+				storageCopy.Backend = &backup.StorageBackend_Gcs{Gcs: &gcsCopy}
+			}
+
+		case *backup.StorageBackend_AzureBlobStorage:
+			if backend.AzureBlobStorage != nil {
+				azCopy := *backend.AzureBlobStorage
+				azCopy.SharedKey = "[REDACTED]"
+				azCopy.AccessSig = "[REDACTED]"
+				azCopy.EncryptionKey = &backup.AzureCustomerKey{EncryptionKey: "[REDACTED]"}
+				storageCopy.Backend = &backup.StorageBackend_AzureBlobStorage{
+					AzureBlobStorage: &azCopy,
+				}
+			}
+		default:
+		}
+
+		infoCopy.Storage = &storageCopy
+	}
+
+	return proto.CompactTextString(&infoCopy)
 }

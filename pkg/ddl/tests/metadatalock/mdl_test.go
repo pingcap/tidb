@@ -15,16 +15,20 @@
 package metadatalocktest
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl"
 	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	mysql "github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -898,7 +902,7 @@ func TestMDLPreparePlanCacheInvalid(t *testing.T) {
 
 func TestMDLPreparePlanCacheExecute(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
 	sv := server.CreateMockServer(t, store)
 
@@ -934,7 +938,11 @@ func TestMDLPreparePlanCacheExecute(t *testing.T) {
 
 	tk.MustQuery("select * from t2")
 	tk.MustExec(`set @a = 2, @b=4;`)
-	tk.MustExec(`execute stmt_test_1 using @a, @b;`)
+	tk.MustExec(`execute stmt_test_1 using @a, @b;`) // can't reuse the prior plan created outside this txn.
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustExec(`execute stmt_test_1 using @a, @b;`) // can't reuse the prior plan since this table becomes dirty.
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustExec(`execute stmt_test_1 using @a, @b;`) // can't reuse the prior plan now.
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 	// The plan is from cache, the metadata lock should be added to block the DDL.
 	ch <- struct{}{}
@@ -950,7 +958,7 @@ func TestMDLPreparePlanCacheExecute(t *testing.T) {
 
 func TestMDLPreparePlanCacheExecute2(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	defer ingesttestutil.InjectMockBackendMgr(t, store)()
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 
 	sv := server.CreateMockServer(t, store)
 
@@ -989,6 +997,83 @@ func TestMDLPreparePlanCacheExecute2(t *testing.T) {
 	// The plan should not be from cache because the schema has changed.
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 	tk.MustExec("commit")
+
+	tk.MustExec("admin check table t")
+}
+
+// TestMDLPreparePlanCacheExecuteInsert makes sure the insert statement handle the schema correctly in plan cache.
+func TestMDLPreparePlanCacheExecuteInsert(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+
+	sv := server.CreateMockServer(t, store)
+
+	sv.SetDomain(dom)
+	dom.InfoSyncer().SetSessionManager(sv)
+	defer sv.Close()
+
+	conn1 := server.CreateMockConn(t, sv)
+	tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
+	conn2 := server.CreateMockConn(t, sv)
+	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
+	tk.MustExec("create table t(a int primary key, b int);")
+	tk.MustExec("create table t2(a int);")
+	tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3), (4, 4);")
+
+	tk.MustExec(`prepare insert_stmt from 'insert into t values (?, ?)'`)
+	tk.MustExec(`set @a=4, @b=4;`)
+
+	ch := make(chan struct{})
+
+	first := true
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		switch job.SchemaState {
+		case model.StateWriteReorganization:
+			tbl, _ := dom.InfoSchema().TableByID(context.Background(), job.TableID)
+			idx := tbl.Meta().FindIndexByName("idx")
+			switch idx.BackfillState {
+			case model.BackfillStateRunning:
+				if first {
+					// generate plan, cache it, and make some row change to make
+					// sure backfill state 'merging' is not skipped.
+					tk.MustExec(`begin`)
+					tk.MustExec(`delete from t where a = 4;`)
+					tk.MustExec(`execute insert_stmt using @a, @b;`)
+					tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+					tk.MustExec(`commit`)
+
+					tk.MustExec("begin")
+					// Activate txn.
+					tk.MustExec("select * from t2")
+					first = false
+					return
+				}
+			}
+		}
+	})
+
+	ddl.MockDMLExecutionMerging = func() {
+		tk.MustExec(`delete from t where a = 4;`)
+		// we must generate a new plan here, because the schema has changed since
+		// the last plan was generated.
+		tk.MustExec(`execute insert_stmt using @a, @b;`)
+		tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+		tk.MustExec("commit")
+	}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionMerging", "1*return(true)->return(false)"))
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		<-ch
+		tkDDL.MustExec("alter table test.t add index idx(a);")
+		wg.Done()
+	}()
+
+	ch <- struct{}{}
+	wg.Wait()
 
 	tk.MustExec("admin check table t")
 }
@@ -1356,10 +1441,7 @@ func TestMDLUpdateEtcdFail(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int);")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockUpdateMDLToETCDError", `3*return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockUpdateMDLToETCDError"))
-	}()
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/schemaver/mockUpdateMDLToETCDError", `3*return(true)`)
 
 	tk.MustExec("alter table test.t add column c int")
 }

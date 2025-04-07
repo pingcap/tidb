@@ -1,0 +1,57 @@
+[
+  {
+    "name": "TestRangeDerivation",
+    "cases": [
+	"select /*+ USE_INDEX(t1,PKX) */ count(*) from t1 where  (a1>1) or (a1=1 and b1 >= 10) -- simple DNF on (a1,b1) ",
+	"select /*+ USE_INDEX(t1,PKX) */ count(*) from t1 where  ((a1>1) or (a1=1 and b1 >= 10)) and (c1 > 10) -- -- same as previous example with another conjunct",
+	"select /*+ USE_INDEX(t1,PKX) */ count(*) from t1 where  (a1>1) or (a1=1 and b1 > 10) -- simple DNF on (a1,b1) with open interval",
+	"select /*+ USE_INDEX(t1,PKX) */ count(*) from t1 where  ((a1>1) or (a1=1 and b1 > 10)) and (c1 > 10) -- same as previous example with another conjunct",
+	"select /*+ USE_INDEX(t1,PKX) */ count(*) from t1 where  ((a1<10) or (a1=10 and b1 < 20)) -- upper bound on (a1,b1)",
+	"select /*+ USE_INDEX(t1,PKX) */ count(*) from t1 where ((a1>1) or (a1=1 and b1 > 10)) and ((a1<10) or (a1=10 and b1 < 20)) -- upper and lower bound on (a1,b1)",
+	"select * from t where (a,b) in ((1,1),(2,2)) and c = 3 -- IN list",
+	"select * from tuk where a<=>null and b>0 and b<2;",
+	"select a,b,c  from tuk where a>3 and b=4 order by a,c;",
+	// Same test cases with char type
+	"select /*+ USE_INDEX(t1char,PKX) */ count(*) from t1char where  (a1>'1') or (a1='1' and b1 >= '10') -- simple DNF on (a1,b1) ",
+	"select /*+ USE_INDEX(t1char,PKX) */ count(*) from t1char where  ((a1>'1') or (a1='1' and b1 >= '10')) and (c1 > '10') -- -- same as previous example with another conjunct",
+	"select /*+ USE_INDEX(t1char,PKX) */ count(*) from t1char where  (a1>'1') or (a1='1' and b1 > '10') -- simple DNF on (a1,b1) with open interval",
+	"select /*+ USE_INDEX(t1char,PKX) */ count(*) from t1char where  ((a1>'1') or (a1='1' and b1 > '10')) and (c1 > '10') -- same as previous example with another conjunct",
+	"select /*+ USE_INDEX(t1char,PKX) */ count(*) from t1char where  ((a1<'10') or (a1='10' and b1 < '20')) -- upper bound on (a1,b1)",
+	"select /*+ USE_INDEX(t1char,PKX) */ count(*) from t1char where ((a1>'1') or (a1='1' and b1 > '10')) and ((a1<'10') or (a1='10' and b1 < '20')) -- upper and lower bound on (a1,b1)"
+    ]
+  },
+  {
+    "name": "TestRangeIntersection",
+    "cases": [
+	"select /*+ USE_INDEX(t1,PKX) */ count(*) from t1 where ((a1>1) or (a1=1 and b1 > 10));",
+	"select /*+ USE_INDEX(t1,PKX) */ count(*) from t1 where ((a1<10) or (a1=10 and b1 < 20));",
+	"select /*+ USE_INDEX(t1,PKX) */ count(*) from t1 where ((a1>1) or (a1=1 and b1 > 10)) and ((a1<10) or (a1=10 and b1 < 20));",
+	"select /*+ USE_INDEX(t1,PKX) */ count(*) from t1 where (a1,b1) > (1,10) and (a1,b1) < (10,20); -- row format of previous test",
+	"select /*+ USE_INDEX(t1,PKX) */ count(*) from t1 where ((a1>1) or (a1=1 and b1 >= 10)) and ((a1<10) or (a1=10 and b1 <= 20));",
+	"select /*+ USE_INDEX(t1,PKX) */ count(*) from t1 where (a1,b1) >= (1,10) and (a1,b1) <= (10,20); -- row format of previous test",
+	"select /*+ USE_INDEX(t1,PKX) */ count(*) from t1 where (a1>1 and a1 < 10) or (a1=1 and b1>10) or (a1=10 and b1<20);",
+	"select /*+ USE_INDEX(t11,PKX) */ count(*) from t11 where ((a1>1) or (a1=1 and b1 > 10));",
+	"select /*+ USE_INDEX(t11,PKX) */ count(*) from t11 where ((a1<10) or (a1=10 and b1 < 20));",
+	"select /*+ USE_INDEX(t11,PKX) */ count(*) from t11 where ((a1>1) or (a1=1 and b1 > 10)) and ((a1<10) or (a1=10 and b1 < 20));",
+	"select /*+ USE_INDEX(t11,PKX) */ count(*) from t11 where (a1>1 and a1 < 10) or (a1=1 and b1>10) or (a1=10 and b1<20);",
+	"select /*+ USE_INDEX(t,PKX) */ * from t where (a,b) in ((1,1),(2,2)) and c > 2;",
+	"select /*+ USE_INDEX(t,PKX) */ * from t where c > 2 and (a,b,c) in ((1,1,1),(2,2,3));",
+	"select /*+ USE_INDEX(t,PKX) */ * from t where (a,b) in ((1,1),(2,2)) and c > 2 and (a,b,c) in ((1,1,1),(2,2,3));",
+	"select /*+ USE_INDEX(t,PKX) */ * from tt where (a,b) in ((1,1),(2,2)) and c > 2;",
+	"select /*+ USE_INDEX(t,PKX) */ * from tt where c > 2 and (a,b,c) in ((1,1,1),(2,2,3));",
+	"select /*+ USE_INDEX(t,PKX) */ * from tt where (a,b) in ((1,1),(2,2)) and c > 2 and (a,b,c) in ((1,1,1),(2,2,3));",
+	"select /*+ USE_INDEX(tablename,PKK) */ count(*) from tablename where (primary_key > '1primary_key_start' or (primary_key = '1primary_key_start' and secondary_key > '3secondary_key_start') or (primary_key = '1primary_key_start' and secondary_key = '3secondary_key_start' and timestamp >= '1707885658544000000')) and (primary_key < '2primary_key_end' or (primary_key = '2primary_key_end' and secondary_key < '4secondary_key_end') or (primary_key = '2primary_key_end' and secondary_key = '4secondary_key_end' and timestamp <= '2707885658544000000'));",
+	"select /*+ USE_INDEX(tablename,PKK) */ count(*) from tablename where (primary_key,secondary_key,timestamp) >= ('1primary_key_start','3secondary_key_start','1707885658544000000') and (primary_key,secondary_key,timestamp) <= ('2primary_key_end','4secondary_key_end','2707885658544000000');",
+	"SELECT /*+ USE_INDEX(t,PK) */ a FROM tnull WHERE a IN (42) OR (a IS TRUE AND a IS NULL);",
+	"SELECT id7 FROM tkey_string WHERE id7 > 'large' AND id7 < 'x-small';",
+	// IN list and range intersection
+        "SELECT 1 FROM t_inlist_test FORCE INDEX (twoColIndex) WHERE a1 IN (44, 70, 76) AND (a1 > 70 OR (a1 = 70 AND b1 > 41));",
+        "SELECT 1 FROM t_inlist_test FORCE INDEX (twoColIndex) WHERE a1 IN (44,45) AND (a1 > 70 OR (a1 = 70 AND b1 > 41));",
+        "SELECT 1 FROM t_inlist_test FORCE INDEX (twoColIndex) WHERE a1 IN (70, 73, 76) AND (a1 > 70 OR (a1 = 70 AND b1 > 41));",
+	// Empty intersections.
+	"select count(*) from t1 where (a1, b1) > (1, 10) and (a1, b1) < (0, 20)", 
+	"select count(*) from t1 where (a1, b1) > (1, 10) and (a1, b1) < (2, 20) and b1 <5",
+	"select count(*) from t1 where (a1, b1) > (1, 10) and (a1, b1) < (4, 20) and a1 < 0"
+    ]
+  }
+]

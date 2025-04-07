@@ -35,7 +35,7 @@ func TestMemoryUsageOpsHistory(t *testing.T) {
 		info.Info = strconv.Itoa(6 * i)
 	}
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		genInfo(i)
 		GlobalMemoryOpsHistoryManager.recordOne(&info, time.Now(), uint64(i), uint64(2*i))
 	}
@@ -54,7 +54,7 @@ func TestMemoryUsageOpsHistory(t *testing.T) {
 
 	rows := GlobalMemoryOpsHistoryManager.GetRows()
 	require.Equal(t, 3, len(rows))
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		checkResult(rows[i], i)
 	}
 	// Test evict

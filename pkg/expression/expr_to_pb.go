@@ -39,7 +39,7 @@ func ExpressionsToPBList(ctx EvalContext, exprs []Expression, client kv.Client) 
 	for _, expr := range exprs {
 		v := pc.ExprToPB(expr)
 		if v == nil {
-			return nil, plannererrors.ErrInternal.GenWithStack("expression %v cannot be pushed down", expr)
+			return nil, plannererrors.ErrInternal.GenWithStack("expression %v cannot be pushed down", expr.StringWithCtx(ctx, errors.RedactLogDisable))
 		}
 		pbExpr = append(pbExpr, v)
 	}
@@ -58,7 +58,7 @@ func ProjectionExpressionsToPBList(ctx EvalContext, exprs []Expression, client k
 			v = pc.ExprToPB(expr)
 		}
 		if v == nil {
-			return nil, plannererrors.ErrInternal.GenWithStack("expression %v cannot be pushed down", expr)
+			return nil, plannererrors.ErrInternal.GenWithStack("expression %v cannot be pushed down", expr.StringWithCtx(ctx, errors.RedactLogDisable))
 		}
 		pbExpr = append(pbExpr, v)
 	}
@@ -96,7 +96,7 @@ func (pc PbConverter) ExprToPB(expr Expression) *tipb.Expr {
 }
 
 func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
-	ft := expr.GetType()
+	ft := expr.GetType(pc.ctx)
 	d, err := expr.Eval(pc.ctx, chunk.Row{})
 	if err != nil {
 		logutil.BgLogger().Error("eval constant or correlated column", zap.String("expression", expr.ExplainInfo(pc.ctx)), zap.Error(err))
@@ -175,6 +175,9 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 	case types.KindMysqlEnum:
 		tp = tipb.ExprType_MysqlEnum
 		val = codec.EncodeUint(nil, d.GetUint64())
+	case types.KindVectorFloat32:
+		tp = tipb.ExprType_TiDBVectorFloat32
+		val = d.GetVectorFloat32().ZeroCopySerialize()
 	default:
 		return tp, nil, false
 	}
@@ -214,7 +217,7 @@ func (pc PbConverter) columnToPBExpr(column *Column, checkType bool) *tipb.Expr 
 		return nil
 	}
 	if checkType {
-		switch column.GetType().GetType() {
+		switch column.GetType(pc.ctx).GetType() {
 		case mysql.TypeBit:
 			if !IsPushDownEnabled(ast.TypeStr(mysql.TypeBit), kv.TiKV) {
 				return nil
@@ -257,7 +260,7 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 	}
 
 	// Check whether this function can be pushed.
-	if !canFuncBePushed(expr, kv.UnSpecified) {
+	if !canFuncBePushed(pc.ctx, expr, kv.UnSpecified) {
 		return nil
 	}
 

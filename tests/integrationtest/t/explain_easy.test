@@ -182,14 +182,14 @@ drop table if exists t;
 
 create table t(a time, b date);
 insert into t values (1, "1000-01-01"), (2, "1000-01-02"), (3, "1000-01-03");
-analyze table t;
+analyze table t all columns;
 explain format = 'brief' select * from t where a = 1;
 explain format = 'brief' select * from t where b = "1000-01-01";
 drop table t;
 
 create table t(a int);
 insert into t values (1),(2),(2),(2),(9),(9),(9),(10);
-analyze table t with 1 buckets;
+analyze table t all columns with 1 buckets;
 explain format = 'brief' select * from t where a >= 3 and a <= 8;
 drop table t;
 

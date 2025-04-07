@@ -34,17 +34,18 @@ func TestListPartitionPruning(t *testing.T) {
 	tk.MustExec("create database list_partition_pruning")
 	tk.MustExec("use list_partition_pruning")
 	tk.MustExec("drop table if exists tlist")
-	tk.MustExec(`set tidb_enable_list_partition = 1`)
-	tk.MustExec(`create table tlist (a int) partition by list (a) (
+	tk.MustExec(`create table tlist (a int, b int) partition by list (a) (
     partition p0 values in (0, 1, 2),
     partition p1 values in (3, 4, 5),
     partition p2 values in (6, 7, 8),
-    partition p3 values in (9, 10, 11))`)
-	tk.MustExec(`create table tcollist (a int) partition by list columns(a) (
+    partition p3 values in (9, 10, 11),
+    partition p4 values in (-1))`)
+	tk.MustExec(`create table tcollist (a int, b int) partition by list columns(a) (
     partition p0 values in (0, 1, 2),
     partition p1 values in (3, 4, 5),
     partition p2 values in (6, 7, 8),
-    partition p3 values in (9, 10, 11))`)
+    partition p3 values in (9, 10, 11),
+    partition p4 values in (-1))`)
 	tk.MustExec(`analyze table tlist`)
 	tk.MustExec(`analyze table tcollist`)
 
@@ -82,7 +83,7 @@ func TestPartitionTableExplain(t *testing.T) {
 	tk.MustExec(`create table t2 (a int, b int)`)
 	tk.MustExec(`insert into t values (1,1),(2,2),(3,3)`)
 	tk.MustExec(`insert into t2 values (1,1),(2,2),(3,3)`)
-	tk.MustExec(`analyze table t, t2`)
+	tk.MustExec(`analyze table t, t2 all columns`)
 
 	var input []string
 	var output []struct {
@@ -245,4 +246,24 @@ func TestBatchPointGetPartitionForAccessObject(t *testing.T) {
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
+}
+
+// Issue 58475
+func TestGeneratedColumnWithPartition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`
+		CREATE TABLE tp (
+			id int,
+			c1 int,
+			c2 int GENERATED ALWAYS AS (c1) VIRTUAL,
+			KEY idx (id)
+		) PARTITION BY RANGE (id)
+		(PARTITION p0 VALUES LESS THAN (0),
+		PARTITION p1 VALUES LESS THAN (10000))
+	`)
+	tk.MustExec(`INSERT INTO tp (id, c1) VALUES (0, 1)`)
+	tk.MustExec(`select /*+ FORCE_INDEX(tp, idx) */id from tp where c2 = 2 group by id having id in (0)`)
 }

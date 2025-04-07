@@ -288,19 +288,11 @@ func dumpPatchArgsForRepo(repoName string) error {
 	}
 	candidate := filepath.Join(runfiles, "build", "patches", repoName+".patch")
 	if _, err := os.Stat(candidate); err == nil {
-		if repoName == "io_etcd_go_etcd_api_v3" {
-			fmt.Printf(`        patch_args = ["-p2"],
+		fmt.Printf(`        patch_args = ["-p1"],
         patches = [
             "//build/patches:%s.patch",
         ],
 `, repoName)
-		} else {
-			fmt.Printf(`        patch_args = ["-p1"],
-        patches = [
-            "//build/patches:%s.patch",
-        ],
-`, repoName)
-		}
 	} else if !os.IsNotExist(err) {
 		return err
 	}
@@ -400,9 +392,6 @@ def go_deps():
 			sha, err := getSha256OfFile(d.Zip)
 			if err != nil {
 				return fmt.Errorf("could not get zip for %v: %w", *replaced, err)
-			}
-			if replaced.Path == "github.com/form3tech-oss/jwt-go" && replaced.Version == "v3.2.5+incompatible" {
-				replaced.Version = "v3.2.6-0.20210809144907-32ab6a8243d7+incompatible"
 			}
 			if sha == "30cf0ef9aa63aea696e40df8912d41fbce69dd02986a5b99af7c5b75f277690c" {
 				sha = "ebe8386761761d53fac2de5f8f575ddf66c114ec9835947c761131662f1d38f3"

@@ -29,13 +29,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/manual"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
@@ -48,7 +48,7 @@ var (
 	// RunInTest indicates whether the current process is running in test.
 	RunInTest bool
 	// LastAlloc is the last ID allocator.
-	LastAlloc manual.Allocator
+	LastAlloc atomic.Pointer[manual.Allocator]
 )
 
 // StoreHelper have some api to help encode or store KV data
@@ -68,6 +68,8 @@ type engineManager struct {
 	keyAdapter     common.KeyAdapter
 	logger         log.Logger
 }
+
+var inMemTest = false
 
 func newEngineManager(config BackendConfig, storeHelper StoreHelper, logger log.Logger) (_ *engineManager, err error) {
 	var duplicateDB *pebble.DB
@@ -92,14 +94,19 @@ func newEngineManager(config BackendConfig, storeHelper StoreHelper, logger log.
 	alloc := manual.Allocator{}
 	if RunInTest {
 		alloc.RefCnt = new(atomic.Int64)
-		LastAlloc = alloc
+		LastAlloc.Store(&alloc)
+	}
+	var opts = make([]membuf.Option, 0, 1)
+	if !inMemTest {
+		// otherwise, we use the default allocator that can be tracked by golang runtime.
+		opts = append(opts, membuf.WithAllocator(alloc))
 	}
 	return &engineManager{
 		BackendConfig:  config,
 		StoreHelper:    storeHelper,
 		engines:        sync.Map{},
 		externalEngine: map[uuid.UUID]common.Engine{},
-		bufferPool:     membuf.NewPool(membuf.WithAllocator(alloc)),
+		bufferPool:     membuf.NewPool(opts...),
 		duplicateDB:    duplicateDB,
 		keyAdapter:     keyAdapter,
 		logger:         logger,
@@ -312,8 +319,8 @@ func (em *engineManager) closeEngine(
 			externalCfg.StatFiles,
 			externalCfg.StartKey,
 			externalCfg.EndKey,
+			externalCfg.JobKeys,
 			externalCfg.SplitKeys,
-			externalCfg.RegionSplitSize,
 			em.keyAdapter,
 			em.DupeDetectEnabled,
 			em.duplicateDB,
@@ -323,6 +330,7 @@ func (em *engineManager) closeEngine(
 			externalCfg.TotalFileSize,
 			externalCfg.TotalKVCount,
 			externalCfg.CheckHotspot,
+			externalCfg.MemCapacity,
 		)
 		em.externalEngine[engineUUID] = externalEngine
 		return nil
@@ -498,7 +506,11 @@ func (em *engineManager) localWriter(_ context.Context, cfg *backend.LocalWriter
 		return nil, errors.Errorf("could not find engine for %s", engineUUID.String())
 	}
 	engine := e.(*Engine)
-	return openLocalWriter(cfg, engine, em.GetTiKVCodec(), em.LocalWriterMemCacheSize, em.bufferPool.NewBuffer())
+	memCacheSize := em.LocalWriterMemCacheSize
+	if cfg.Local.MemCacheSize > 0 {
+		memCacheSize = cfg.Local.MemCacheSize
+	}
+	return openLocalWriter(cfg, engine, em.GetTiKVCodec(), memCacheSize, em.bufferPool.NewBuffer())
 }
 
 func (em *engineManager) engineFileSizes() (res []backend.EngineFileSize) {

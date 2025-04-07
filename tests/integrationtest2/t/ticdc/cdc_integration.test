@@ -1,0 +1,13 @@
+# Test TiCDC replication
+
+CREATE TABLE t3 (a INT PRIMARY KEY, b INT, UNIQUE KEY (b));
+
+INSERT INTO t3 VALUES (1, 23);
+--error 1062
+INSERT INTO t3 VALUES (11, 23);
+
+--replication_checkpoint
+--connection downstream
+use ticdc__cdc_integration;
+--error 1062
+INSERT INTO t3 VALUES (11, 23);

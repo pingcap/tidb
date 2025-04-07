@@ -15,35 +15,35 @@ set tidb_analyze_version=2;
 drop table if exists tint;
 create table tint(a int, b int, c int, index singular(a), index multi(b, c));
 insert into tint values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8);
-analyze table tint with 2 topn, 3 buckets;
+analyze table tint all columns with 2 topn, 3 buckets;
 drop table if exists tdouble;
 create table tdouble(a double, b double, c double, index singular(a), index multi(b, c));
 insert into tdouble values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8);
-analyze table tdouble with 2 topn, 3 buckets;
+analyze table tdouble all columns with 2 topn, 3 buckets;
 drop table if exists tdecimal;
 create table tdecimal(a decimal(40, 20), b decimal(40, 20), c decimal(40, 20), index singular(a), index multi(b, c));
 insert into tdecimal values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8);
-analyze table tdecimal with 2 topn, 3 buckets;
+analyze table tdecimal all columns with 2 topn, 3 buckets;
 drop table if exists tstring;
 create table tstring(a varchar(64), b varchar(64), c varchar(64), index singular(a), index multi(b, c));
 insert into tstring values ('1', '1', '1'), ('2', '2', '2'), ('3', '3', '3'), ('4', '4', '4'), ('5', '5', '5'), ('6', '6', '6'), ('7', '7', '7'), ('8', '8', '8');
-analyze table tstring with 2 topn, 3 buckets;
+analyze table tstring all columns with 2 topn, 3 buckets;
 drop table if exists tdatetime;
 create table tdatetime(a datetime, b datetime, c datetime, index singular(a), index multi(b, c));
 insert into tdatetime values ('2001-01-01', '2001-01-01', '2001-01-01'), ('2001-01-02', '2001-01-02', '2001-01-02'), ('2001-01-03', '2001-01-03', '2001-01-03'), ('2001-01-04', '2001-01-04', '2001-01-04');
-analyze table tdatetime with 2 topn, 3 buckets;
+analyze table tdatetime all columns with 2 topn, 3 buckets;
 drop table if exists tprefix;
 create table tprefix(a varchar(64), b varchar(64), index prefixa(a(2)));
 insert into tprefix values ('111', '111'), ('222', '222'), ('333', '333'), ('444', '444'), ('555', '555'), ('666', '666');
-analyze table tprefix with 2 topn, 3 buckets;
+analyze table tprefix all columns with 2 topn, 3 buckets;
 drop table if exists ct1;
 create table ct1 (a int, pk varchar(10), primary key(pk) clustered);
 insert into ct1 values (1, '1'), (2, '2'), (3, '3'), (4, '4'), (5, '5'), (6, '6'), (7, '7'), (8, '8');
-analyze table ct1 with 2 topn, 3 buckets;
+analyze table ct1 all columns with 2 topn, 3 buckets;
 drop table if exists ct2;
 create table ct2 (a int, b int, c int, primary key(a, b) clustered);
 insert into ct2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8);
-analyze table ct2 with 2 topn, 3 buckets;
+analyze table ct2 all columns with 2 topn, 3 buckets;
 --sorted_result
 select stats_ver from mysql.stats_histograms where table_id in (select TIDB_TABLE_ID from information_schema.tables where TABLE_SCHEMA = 'planner__cardinality__selectivity');
 --sorted_result
@@ -110,16 +110,16 @@ set tidb_analyze_version=2;
 drop table if exists topn_before_hist;
 create table topn_before_hist(a int, index idx(a));
 insert into topn_before_hist values(1), (1), (1), (1), (3), (3), (4), (5), (6);
-analyze table topn_before_hist with 2 topn, 3 buckets;
+analyze table topn_before_hist all columns with 2 topn, 3 buckets;
 create table topn_after_hist(a int, index idx(a));
 insert into topn_after_hist values(2), (2), (3), (4), (5), (7), (7), (7), (7);
-analyze table topn_after_hist with 2 topn, 3 buckets;
+analyze table topn_after_hist all columns with 2 topn, 3 buckets;
 create table topn_before_hist_no_index(a int);
 insert into topn_before_hist_no_index values(1), (1), (1), (1), (3), (3), (4), (5), (6);
-analyze table topn_before_hist_no_index with 2 topn, 3 buckets;
+analyze table topn_before_hist_no_index all columns with 2 topn, 3 buckets;
 create table topn_after_hist_no_index(a int);
 insert into topn_after_hist_no_index values(2), (2), (3), (4), (5), (7), (7), (7), (7);
-analyze table topn_after_hist_no_index with 2 topn, 3 buckets;
+analyze table topn_after_hist_no_index all columns with 2 topn, 3 buckets;
 --sorted_result
 show stats_topn where db_name = 'planner__cardinality__selectivity';
 --sorted_result
@@ -645,14 +645,17 @@ insert into t values ('tw', 0);
 insert into t values ('tw', 0);
 insert into t values ('tw', 0);
 insert into t values ('tw', 0);
-analyze table t;
+analyze table t all columns;
 explain select * from t where a = 'tw' and b < 0;
+set @@tidb_opt_fix_control = '47400:on';
+explain select * from t where a = 'tw' and b < 0;
+set @@tidb_opt_fix_control = '47400:off';
 
 # TestSelectCombinedLowBound
 drop table if exists t;
 create table t(id int auto_increment, kid int, pid int, primary key(id), key(kid, pid));
 insert into t (kid, pid) values (1,2), (1,3), (1,4),(1, 11), (1, 12), (1, 13), (1, 14), (2, 2), (2, 3), (2, 4);
-analyze table t;
+analyze table t all columns;
 explain select * from t where kid = 1;
 
 # TestDefaultSelectivityForStrMatch

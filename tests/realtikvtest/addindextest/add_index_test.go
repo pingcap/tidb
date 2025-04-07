@@ -15,23 +15,19 @@
 package addindextest
 
 import (
-	"context"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	"github.com/pingcap/tidb/pkg/ddl/util/callback"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
-	"github.com/pingcap/tidb/tests/realtikvtest/addindextestutil"
+	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/tikv"
 )
 
 func init() {
@@ -46,8 +42,8 @@ func TestCreateNonUniqueIndex(t *testing.T) {
 		{2, 5, 8, 11, 14, 17, 20, 23, 26},
 		{3, 6, 9, 12, 15, 18, 21, 24, 27},
 	}
-	ctx := addindextestutil.InitTest(t)
-	addindextestutil.TestOneColFrame(ctx, colIDs, addindextestutil.AddIndexNonUnique)
+	ctx := testutils.InitTest(t)
+	testutils.TestOneColFrame(ctx, colIDs, testutils.AddIndexNonUnique)
 }
 
 func TestCreateUniqueIndex(t *testing.T) {
@@ -56,18 +52,18 @@ func TestCreateUniqueIndex(t *testing.T) {
 		{2, 9, 11, 17},
 		{3, 12, 25},
 	}
-	ctx := addindextestutil.InitTest(t)
-	addindextestutil.TestOneColFrame(ctx, colIDs, addindextestutil.AddIndexUnique)
+	ctx := testutils.InitTest(t)
+	testutils.TestOneColFrame(ctx, colIDs, testutils.AddIndexUnique)
 }
 
 func TestCreatePrimaryKey(t *testing.T) {
-	ctx := addindextestutil.InitTest(t)
-	addindextestutil.TestOneIndexFrame(ctx, 0, addindextestutil.AddIndexPK)
+	ctx := testutils.InitTest(t)
+	testutils.TestOneIndexFrame(ctx, 0, testutils.AddIndexPK)
 }
 
 func TestCreateGenColIndex(t *testing.T) {
-	ctx := addindextestutil.InitTest(t)
-	addindextestutil.TestOneIndexFrame(ctx, 29, addindextestutil.AddIndexGenCol)
+	ctx := testutils.InitTest(t)
+	testutils.TestOneIndexFrame(ctx, 29, testutils.AddIndexGenCol)
 }
 
 func TestCreateMultiColsIndex(t *testing.T) {
@@ -94,8 +90,8 @@ func TestCreateMultiColsIndex(t *testing.T) {
 			{18, 21, 24, 27},
 		}
 	}
-	ctx := addindextestutil.InitTest(t)
-	addindextestutil.TestTwoColsFrame(ctx, coliIDs, coljIDs, addindextestutil.AddIndexMultiCols)
+	ctx := testutils.InitTest(t)
+	testutils.TestTwoColsFrame(ctx, coliIDs, coljIDs, testutils.AddIndexMultiCols)
 }
 
 func TestAddForeignKeyWithAutoCreateIndex(t *testing.T) {
@@ -159,72 +155,21 @@ func TestAddUKWithSmallIntHandles(t *testing.T) {
 	tk.MustContainErrMsg("alter table t add unique index uk(b)", "Duplicate entry '1' for key 't.uk'")
 }
 
-func alwaysRemoveFirstJobID(ids []int64) ([]int64, error) {
-	return ids[1:], nil
-}
-
-func TestLitBackendCtxMgr(t *testing.T) {
-	ctx := context.Background()
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	sortPath := t.TempDir()
-	staleJobDir := filepath.Join(sortPath, "100")
-	staleJobDir2 := filepath.Join(sortPath, "101")
-	err := os.MkdirAll(staleJobDir, 0o700)
-	require.NoError(t, err)
-	err = os.MkdirAll(staleJobDir2, 0o700)
-	require.NoError(t, err)
-
-	mgr := ingest.NewLitBackendCtxMgr(sortPath, 1024*1024*1024, alwaysRemoveFirstJobID)
-
-	ok, err := mgr.CheckMoreTasksAvailable(ctx)
-	require.NoError(t, err)
-	require.True(t, ok)
-
-	// due to alwaysRemoveFirstJobID, the first jobID will be removed
-	require.NoDirExists(t, staleJobDir)
-	require.DirExists(t, staleJobDir2)
-
-	jobID := int64(102)
-	discovery := store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
-	backendCtx, err := mgr.Register(ctx, jobID, false, nil, discovery, "TestLitBackendCtxMgr")
-	require.NoError(t, err)
-	require.NotNil(t, backendCtx)
-
-	expectedDir := filepath.Join(sortPath, "102")
-	require.DirExists(t, staleJobDir2)
-	require.DirExists(t, expectedDir)
-
-	bc, ok := mgr.Load(jobID)
-	require.True(t, ok)
-	require.Equal(t, backendCtx, bc)
-	_, ok = mgr.Load(101)
-	require.False(t, ok)
-
-	mgr.Unregister(jobID)
-	require.NoDirExists(t, expectedDir)
-	_, ok = mgr.Load(jobID)
-	require.False(t, ok)
-}
-
 func TestAddUniqueDuplicateIndexes(t *testing.T) {
-	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=1;`)
 	tk.MustExec("create table t(a int DEFAULT '-13202', b varchar(221) NOT NULL DEFAULT 'duplicatevalue', " +
 		"c int NOT NULL DEFAULT '0');")
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
-	d := dom.DDL()
-	originalCallback := d.GetHook()
-	defer d.SetHook(originalCallback)
-	callback := &callback.TestDDLCallback{}
-
 	tk1.Exec("INSERT INTO t VALUES (-18585,'duplicatevalue',0);")
 
-	onJobUpdatedExportedFunc := func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			_, err := tk1.Exec("delete from t where c = 0;")
@@ -232,9 +177,7 @@ func TestAddUniqueDuplicateIndexes(t *testing.T) {
 			_, err = tk1.Exec("insert INTO t VALUES (-18585,'duplicatevalue',1);")
 			assert.NoError(t, err)
 		}
-	}
-	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
-	d.SetHook(callback)
+	})
 
 	tk3 := testkit.NewTestKit(t, store)
 	tk3.MustExec("use test")
@@ -253,4 +196,19 @@ func TestAddUniqueDuplicateIndexes(t *testing.T) {
 	tk.MustExec("admin check table t;")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/mockDMLExecutionStateBeforeImport"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateBeforeMerge"))
+}
+
+func TestAddIndexOnGB18030Bin(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t (
+		a varchar(198) COLLATE gb18030_bin NOT NULL,
+		b varchar(178) COLLATE gb18030_bin NOT NULL,
+		PRIMARY KEY (b,a),
+		KEY k1 (b,a),
+		KEY k2 (b)
+	) ENGINE=InnoDB DEFAULT CHARSET=gb18030 COLLATE=gb18030_bin;`)
+	tk.MustExec("insert into t values ('a', 'b');")
+	tk.MustExec("admin check table t;")
 }

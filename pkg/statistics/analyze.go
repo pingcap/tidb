@@ -61,6 +61,9 @@ func (h *AnalyzeTableID) Equals(t *AnalyzeTableID) bool {
 }
 
 // AnalyzeResult is used to represent analyze result.
+// In version2 analyze, we use the following structure to represent the analyze result.
+// It represents the list of analyze result for all columns when isIndex is 0.
+// Also represents the list of analyze result for all indexes when idIndex is 1.
 type AnalyzeResult struct {
 	Hist    []*Histogram
 	Cms     []*CMSketch
@@ -84,10 +87,16 @@ type AnalyzeResults struct {
 	Err      error
 	ExtStats *ExtendedStatsColl
 	Job      *AnalyzeJob
+	// Ars: combine the analyze result of all columns and the analyze result of indexes.
+	// (In stats version2)
+	// For example:
+	// If the tableA (c1, c2, c3) has indexes (c1, c2), (c2, c3), the result will be:
+	// Ars: [AnalyzeResult1[c1, c2, c3], AnalyzeResult2[c1_c2, c2_c3]]
 	Ars      []*AnalyzeResult
 	TableID  AnalyzeTableID
 	Count    int64
 	StatsVer int
+	// Snapshot is the snapshot timestamp when we start the analysis job.
 	Snapshot uint64
 	// BaseCount is the original count in mysql.stats_meta at the beginning of analyze.
 	BaseCount int64
@@ -108,7 +117,10 @@ type AnalyzeResults struct {
 	// take care of those table-level fields.
 	// In conclusion, when saving the analyze result for mv index, we need to store the index stats, as for the
 	// table-level fields, we only need to update the version.
-	ForMVIndex bool
+	//
+	// The global index has only one key range, so an independent task is used to process it.
+	// Global index needs to update only the version at the table-level fields, just like mv index.
+	ForMVIndexOrGlobalIndex bool
 }
 
 // DestroyAndPutToPool destroys the result and put it to the pool.

@@ -25,8 +25,9 @@ go_test(
     embed = [":deadlockhistory"],
     flaky = True,
     deps = [
+        "//pkg/meta/model",
         "//pkg/parser",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "@com_github_pingcap_kvproto//pkg/deadlock",

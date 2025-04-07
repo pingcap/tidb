@@ -24,7 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -46,7 +47,7 @@ func createMetaBundleSuite() *metaBundleSuite {
 	s := new(metaBundleSuite)
 	s.policy1 = &model.PolicyInfo{
 		ID:   11,
-		Name: model.NewCIStr("p1"),
+		Name: ast.NewCIStr("p1"),
 		PlacementSettings: &model.PlacementSettings{
 			PrimaryRegion: "r1",
 			Regions:       "r1,r2",
@@ -55,7 +56,7 @@ func createMetaBundleSuite() *metaBundleSuite {
 	}
 	s.policy2 = &model.PolicyInfo{
 		ID:   12,
-		Name: model.NewCIStr("p2"),
+		Name: ast.NewCIStr("p2"),
 		PlacementSettings: &model.PlacementSettings{
 			PrimaryRegion: "r2",
 			Regions:       "r1,r2",
@@ -64,7 +65,7 @@ func createMetaBundleSuite() *metaBundleSuite {
 	}
 	s.policy3 = &model.PolicyInfo{
 		ID:   13,
-		Name: model.NewCIStr("p3"),
+		Name: ast.NewCIStr("p3"),
 		PlacementSettings: &model.PlacementSettings{
 			LeaderConstraints: "[+region=bj]",
 		},
@@ -72,58 +73,58 @@ func createMetaBundleSuite() *metaBundleSuite {
 	}
 	s.tbl1 = &model.TableInfo{
 		ID:   101,
-		Name: model.NewCIStr("t1"),
+		Name: ast.NewCIStr("t1"),
 		PlacementPolicyRef: &model.PolicyRefInfo{
 			ID:   11,
-			Name: model.NewCIStr("p1"),
+			Name: ast.NewCIStr("p1"),
 		},
 		Partition: &model.PartitionInfo{
 			Definitions: []model.PartitionDefinition{
 				{
 					ID:   1000,
-					Name: model.NewCIStr("par0"),
+					Name: ast.NewCIStr("par0"),
 				},
 				{
 					ID:                 1001,
-					Name:               model.NewCIStr("par1"),
-					PlacementPolicyRef: &model.PolicyRefInfo{ID: 12, Name: model.NewCIStr("p2")},
+					Name:               ast.NewCIStr("par1"),
+					PlacementPolicyRef: &model.PolicyRefInfo{ID: 12, Name: ast.NewCIStr("p2")},
 				},
 				{
 					ID:   1002,
-					Name: model.NewCIStr("par2"),
+					Name: ast.NewCIStr("par2"),
 				},
 			},
 		},
 	}
 	s.tbl2 = &model.TableInfo{
 		ID:   102,
-		Name: model.NewCIStr("t2"),
+		Name: ast.NewCIStr("t2"),
 		Partition: &model.PartitionInfo{
 			Definitions: []model.PartitionDefinition{
 				{
 					ID:                 1000,
-					Name:               model.NewCIStr("par0"),
-					PlacementPolicyRef: &model.PolicyRefInfo{ID: 11, Name: model.NewCIStr("p1")},
+					Name:               ast.NewCIStr("par0"),
+					PlacementPolicyRef: &model.PolicyRefInfo{ID: 11, Name: ast.NewCIStr("p1")},
 				},
 				{
 					ID:   1001,
-					Name: model.NewCIStr("par1"),
+					Name: ast.NewCIStr("par1"),
 				},
 				{
 					ID:   1002,
-					Name: model.NewCIStr("par2"),
+					Name: ast.NewCIStr("par2"),
 				},
 			},
 		},
 	}
 	s.tbl3 = &model.TableInfo{
 		ID:                 103,
-		Name:               model.NewCIStr("t3"),
-		PlacementPolicyRef: &model.PolicyRefInfo{ID: 13, Name: model.NewCIStr("p3")},
+		Name:               ast.NewCIStr("t3"),
+		PlacementPolicyRef: &model.PolicyRefInfo{ID: 13, Name: ast.NewCIStr("p3")},
 	}
 	s.tbl4 = &model.TableInfo{
 		ID:   104,
-		Name: model.NewCIStr("t4"),
+		Name: ast.NewCIStr("t4"),
 	}
 	return s
 }
@@ -131,7 +132,7 @@ func createMetaBundleSuite() *metaBundleSuite {
 func (s *metaBundleSuite) prepareMeta(t *testing.T, store kv.Storage) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 		require.NoError(t, m.CreatePolicy(s.policy1))
 		require.NoError(t, m.CreatePolicy(s.policy2))
 		require.NoError(t, m.CreatePolicy(s.policy3))
@@ -149,7 +150,7 @@ func TestNewTableBundle(t *testing.T) {
 	s.prepareMeta(t, store)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 
 		// tbl1
 		bundle, err := placement.NewTableBundle(m, s.tbl1)
@@ -185,7 +186,7 @@ func TestNewPartitionBundle(t *testing.T) {
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 
 		// tbl1.par0
 		bundle, err := placement.NewPartitionBundle(m, s.tbl1.Partition.Definitions[0])
@@ -211,7 +212,7 @@ func TestNewPartitionListBundles(t *testing.T) {
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 
 		bundles, err := placement.NewPartitionListBundles(m, s.tbl1.Partition.Definitions)
 		require.NoError(t, err)
@@ -243,7 +244,7 @@ func TestNewFullTableBundles(t *testing.T) {
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMeta(txn)
+		m := meta.NewMutator(txn)
 
 		bundles, err := placement.NewFullTableBundles(m, s.tbl1)
 		require.NoError(t, err)

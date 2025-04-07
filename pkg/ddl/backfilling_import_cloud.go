@@ -18,71 +18,115 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 )
 
 type cloudImportExecutor struct {
-	taskexecutor.EmptyStepExecutor
-	job           *model.Job
-	index         *model.IndexInfo
-	ptbl          table.PhysicalTable
-	bc            ingest.BackendCtx
-	cloudStoreURI string
+	taskexecutor.BaseStepExecutor
+	job             *model.Job
+	store           kv.Storage
+	indexes         []*model.IndexInfo
+	ptbl            table.PhysicalTable
+	cloudStoreURI   string
+	backendCtx      ingest.BackendCtx
+	backend         *local.Backend
+	taskConcurrency int
 }
 
 func newCloudImportExecutor(
 	job *model.Job,
-	index *model.IndexInfo,
+	store kv.Storage,
+	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
-	bcGetter func() (ingest.BackendCtx, error),
 	cloudStoreURI string,
+	taskConcurrency int,
 ) (*cloudImportExecutor, error) {
-	bc, err := bcGetter()
-	if err != nil {
-		return nil, err
-	}
 	return &cloudImportExecutor{
-		job:           job,
-		index:         index,
-		ptbl:          ptbl,
-		bc:            bc,
-		cloudStoreURI: cloudStoreURI,
+		job:             job,
+		store:           store,
+		indexes:         indexes,
+		ptbl:            ptbl,
+		cloudStoreURI:   cloudStoreURI,
+		taskConcurrency: taskConcurrency,
 	}, nil
 }
 
-func (*cloudImportExecutor) Init(ctx context.Context) error {
+func (m *cloudImportExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor init subtask exec env")
+	cfg, bd, err := ingest.CreateLocalBackend(ctx, m.store, m.job, false, m.taskConcurrency)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	bCtx, err := ingest.NewBackendCtxBuilder(ctx, m.store, m.job).Build(cfg, bd)
+	if err != nil {
+		bd.Close()
+		return err
+	}
+	m.backend = bd
+	m.backendCtx = bCtx
 	return nil
 }
 
 func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("cloud import executor run subtask")
 
-	sm, err := decodeBackfillSubTaskMeta(subtask.Meta)
+	sm, err := decodeBackfillSubTaskMeta(ctx, m.cloudStoreURI, subtask.Meta)
 	if err != nil {
 		return err
 	}
-
-	local := m.bc.GetLocalBackend()
+	local := m.backendCtx.GetLocalBackend()
 	if local == nil {
 		return errors.Errorf("local backend not found")
 	}
-	_, engineUUID := backend.MakeUUID(m.ptbl.Meta().Name.L, m.index.ID)
+
+	var (
+		currentIdx *model.IndexInfo
+		idxID      int64
+	)
+	switch len(sm.EleIDs) {
+	case 1:
+		for _, idx := range m.indexes {
+			if idx.ID == sm.EleIDs[0] {
+				currentIdx = idx
+				idxID = idx.ID
+				break
+			}
+		}
+	case 0:
+		// maybe this subtask is generated from an old version TiDB
+		if len(m.indexes) == 1 {
+			currentIdx = m.indexes[0]
+		}
+		idxID = m.indexes[0].ID
+	default:
+		return errors.Errorf("unexpected EleIDs count %v", sm.EleIDs)
+	}
+
+	_, engineUUID := backend.MakeUUID(m.ptbl.Meta().Name.L, idxID)
 
 	all := external.SortedKVMeta{}
 	for _, g := range sm.MetaGroups {
 		all.Merge(g)
 	}
 
+	// compatible with old version task meta
+	jobKeys := sm.RangeJobKeys
+	if jobKeys == nil {
+		jobKeys = sm.RangeSplitKeys
+	}
 	err = local.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
 			StorageURI:    m.cloudStoreURI,
@@ -90,32 +134,46 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			StatFiles:     sm.StatFiles,
 			StartKey:      all.StartKey,
 			EndKey:        all.EndKey,
+			JobKeys:       jobKeys,
 			SplitKeys:     sm.RangeSplitKeys,
 			TotalFileSize: int64(all.TotalKVSize),
 			TotalKVCount:  0,
 			CheckHotspot:  true,
+			MemCapacity:   m.GetResource().Mem.Capacity(),
 		},
 		TS: sm.TS,
 	}, engineUUID)
 	if err != nil {
 		return err
 	}
-	local.WorkerConcurrency = subtask.Concurrency * 2
 	err = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
-	if common.ErrFoundDuplicateKeys.Equal(err) {
-		err = convertToKeyExistsErr(err, m.index, m.ptbl.Meta())
+	failpoint.Inject("mockCloudImportRunSubtaskError", func(_ failpoint.Value) {
+		err = context.DeadlineExceeded
+	})
+	if err == nil {
+		return nil
 	}
-	return err
+
+	if currentIdx != nil {
+		return ingest.TryConvertToKeyExistsErr(err, currentIdx, m.ptbl.Meta())
+	}
+
+	// cannot fill the index name for subtask generated from an old version TiDB
+	tErr, ok := errors.Cause(err).(*terror.Error)
+	if !ok {
+		return err
+	}
+	if tErr.ID() != common.ErrFoundDuplicateKeys.ID() {
+		return err
+	}
+	return kv.ErrKeyExists
 }
 
 func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor clean up subtask env")
-	// cleanup backend context
-	ingest.LitBackCtxMgr.Unregister(m.job.ID)
-	return nil
-}
-
-func (*cloudImportExecutor) OnFinished(ctx context.Context, _ *proto.Subtask) error {
-	logutil.Logger(ctx).Info("cloud import executor finish subtask")
+	if m.backendCtx != nil {
+		m.backendCtx.Close()
+	}
+	m.backend.Close()
 	return nil
 }

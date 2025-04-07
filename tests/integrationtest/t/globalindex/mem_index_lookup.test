@@ -1,11 +1,10 @@
-set tidb_enable_global_index=true;
-
 --echo # IntHandle
 drop table if exists t;
 CREATE TABLE `t` (
   `a` int(11) DEFAULT NULL,
   `b` int(11) DEFAULT NULL,
-  UNIQUE KEY `idx1` (`b`)
+  UNIQUE KEY `idx` (`a`) GLOBAL,
+  UNIQUE KEY `idx1` (`b`) GLOBAL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`a`) PARTITIONS 5;
 
@@ -18,7 +17,7 @@ explain select * from t use index(idx1) where b > 2;
 --sorted_result
 select * from t use index(idx1) where b > 2;
 
---replace_regex /in\(_tidb_pid, [0-9]+\)/in(_tidb_pid, pid0)/
+--replace_regex /_tidb_tid, [0-9]+\)/_tidb_tid, tid0)/
 explain select * from t partition(p0) use index(idx1) where b <= 2;
 --sorted_result
 select * from t partition(p0) use index(idx1) where b <= 2;
@@ -27,10 +26,24 @@ explain select * from t partition(p1) use index(idx1) where b <= 2 and a = 10;
 --sorted_result
 select * from t partition(p1) use index(idx1) where b <= 2 and a = 10;
 
---replace_regex /in\(_tidb_pid, [0-9]+, [0-9]+\)/in(_tidb_pid, pid0, pid1)/
+--replace_regex /_tidb_tid, [0-9]+, [0-9]+\)/_tidb_tid, tid0, tid1)/
 explain select * from t partition(p0, p1) use index(idx1) where b <= 2;
 --sorted_result
 select * from t partition(p0, p1) use index(idx1) where b <= 2;
+
+explain select * from t use index(idx) where a > 2;
+--sorted_result
+select * from t use index(idx) where a > 2;
+
+--replace_regex /_tidb_tid, [0-9]+\)/_tidb_tid, tid0)/
+explain select * from t partition(p0) use index(idx) where a <= 2;
+--sorted_result
+select * from t partition(p0) use index(idx) where a <= 2;
+
+--replace_regex /_tidb_tid, [0-9]+, [0-9]+\)/_tidb_tid, tid0, tid1)/
+explain select * from t partition(p0, p1) use index(idx) where a <= 2;
+--sorted_result
+select * from t partition(p0, p1) use index(idx) where a <= 2;
 
 rollback;
 
@@ -40,7 +53,7 @@ CREATE TABLE `t` (
   `a` year(4) primary key clustered,
   `b` int(11) DEFAULT NULL,
   `c` int(11) DEFAULT NULL,
-  UNIQUE KEY `idx1` (`b`)
+  UNIQUE KEY `idx1` (`b`) GLOBAL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`a`) PARTITIONS 5;
 
@@ -53,7 +66,7 @@ explain select * from t use index(idx1) where b > 2;
 --sorted_result
 select * from t use index(idx1) where b > 2;
 
---replace_regex /in\(_tidb_pid, [0-9]+\)/in(_tidb_pid, pid0)/
+--replace_regex /_tidb_tid, [0-9]+\)/_tidb_tid, tid0)/
 explain select * from t partition(p0) use index(idx1) where b <= 2;
 --sorted_result
 select * from t partition(p0) use index(idx1) where b <= 2;
@@ -62,10 +75,25 @@ explain select * from t partition(p1) use index(idx1) where b <= 2 and a = 2010;
 --sorted_result
 select * from t partition(p1) use index(idx1) where b <= 2 and a = 2010;
 
---replace_regex /in\(_tidb_pid, [0-9]+, [0-9]+\)/in(_tidb_pid, pid0, pid1)/
+--replace_regex /_tidb_tid, [0-9]+, [0-9]+\)/_tidb_tid, tid0, tid1)/
 explain select * from t partition(p0, p1) use index(idx1) where b <= 2;
 --sorted_result
 select * from t partition(p0, p1) use index(idx1) where b <= 2;
+
+explain select * from t use index(idx) where a > 2002;
+--sorted_result
+select * from t use index(idx) where a > 2002;
+
+--replace_regex /_tidb_tid, [0-9]+\)/_tidb_tid, tid0)/
+explain select * from t partition(p0) use index(idx) where a <= 2002;
+--sorted_result
+select * from t partition(p0) use index(idx) where a <= 2002;
+
+--replace_regex /_tidb_tid, [0-9]+, [0-9]+\)/_tidb_tid, tid0, tid1)/
+explain select * from t partition(p0, p1) use index(idx) where a <= 2002;
+--sorted_result
+select * from t partition(p0, p1) use index(idx) where a <= 2002;
+
 
 rollback;
 

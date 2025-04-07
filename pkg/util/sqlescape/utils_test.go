@@ -96,8 +96,6 @@ func TestEscapeBackslash(t *testing.T) {
 		},
 	}
 	for _, v := range tests {
-		// copy iterator variable into a new variable, see issue #27779
-		v := v
 		t.Run(v.name, func(t *testing.T) {
 			require.Equal(t, v.output, escapeBytesBackslash(nil, v.input))
 			require.Equal(t, v.output, escapeStringBackslash(nil, string(v.input)))
@@ -402,8 +400,6 @@ func TestEscapeSQL(t *testing.T) {
 		},
 	}
 	for _, v := range tests {
-		// copy iterator variable into a new variable, see issue #27779
-		v := v
 		t.Run(v.name, func(t *testing.T) {
 			r3 := new(strings.Builder)
 			r1, e1 := escapeSQL(v.input, v.params...)
@@ -468,25 +464,25 @@ func TestEscapeString(t *testing.T) {
 }
 
 func BenchmarkEscapeString(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		escapeSQL("select %?", "3")
 	}
 }
 
 func BenchmarkUnderlyingString(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		escapeSQL("select %?", myStr("3"))
 	}
 }
 
 func BenchmarkEscapeInt(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		escapeSQL("select %?", 3)
 	}
 }
 
 func BenchmarkUnderlyingInt(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		escapeSQL("select %?", myInt(3))
 	}
 }

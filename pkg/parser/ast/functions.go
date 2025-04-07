@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/types"
 )
 
@@ -310,13 +309,9 @@ const (
 	AesEncrypt               = "aes_encrypt"
 	Compress                 = "compress"
 	Decode                   = "decode"
-	DesDecrypt               = "des_decrypt"
-	DesEncrypt               = "des_encrypt"
 	Encode                   = "encode"
-	Encrypt                  = "encrypt"
 	MD5                      = "md5"
-	OldPassword              = "old_password"
-	PasswordFunc             = "password_func"
+	PasswordFunc             = "password"
 	RandomBytes              = "random_bytes"
 	SHA1                     = "sha1"
 	SHA                      = "sha"
@@ -348,6 +343,7 @@ const (
 	JSONMergePreserve = "json_merge_preserve"
 	JSONPretty        = "json_pretty"
 	JSONQuote         = "json_quote"
+	JSONSchemaValid   = "json_schema_valid"
 	JSONSearch        = "json_search"
 	JSONStorageFree   = "json_storage_free"
 	JSONStorageSize   = "json_storage_size"
@@ -355,12 +351,22 @@ const (
 	JSONKeys          = "json_keys"
 	JSONLength        = "json_length"
 
+	// vector functions (tidb extension)
+	VecDims                 = "vec_dims"
+	VecL1Distance           = "vec_l1_distance"
+	VecL2Distance           = "vec_l2_distance"
+	VecNegativeInnerProduct = "vec_negative_inner_product"
+	VecCosineDistance       = "vec_cosine_distance"
+	VecL2Norm               = "vec_l2_norm"
+	VecFromText             = "vec_from_text"
+	VecAsText               = "vec_as_text"
+
 	// TiDB internal function.
 	TiDBDecodeKey       = "tidb_decode_key"
+	TiDBMVCCInfo        = "tidb_mvcc_info"
+	TiDBEncodeRecordKey = "tidb_encode_record_key"
+	TiDBEncodeIndexKey  = "tidb_encode_index_key"
 	TiDBDecodeBase64Key = "tidb_decode_base64_key"
-
-	// MVCC information fetching function.
-	GetMvccInfo = "get_mvcc_info"
 
 	// Sequence function.
 	NextVal = "nextval"
@@ -379,9 +385,9 @@ const (
 type FuncCallExpr struct {
 	funcNode
 	Tp     FuncCallExprType
-	Schema model.CIStr
+	Schema CIStr
 	// FnName is the function name.
-	FnName model.CIStr
+	FnName CIStr
 	// Args is the function args.
 	Args []ExprNode
 }

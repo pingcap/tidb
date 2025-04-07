@@ -366,3 +366,59 @@ func TestNonTransactionalWithCheckConstraint(t *testing.T) {
 	err = tk.ExecToErr("batch limit 1 insert into t select * from (select 1, 2) tmp")
 	require.EqualError(t, err, "Non-transactional DML, table name not found in join")
 }
+
+func TestNonTransactionalDMLWorkWithForeignKey(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// t1 is the parent table, t2 is the child table, t3 is a helper table.
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2, t3")
+	tk.MustExec("create table t1(a int, b int, key(a), key(b))")
+	tk.MustExec("create table t2(a int, b int, foreign key (a) references t1(a), key(b))")
+	tk.MustExec("create table t3(a int, b int, key(a))")
+
+	cleanFn := func() {
+		tk.MustExec("truncate t3")
+		tk.MustExec("truncate t2")
+		// Cannot truncate t1 because it is the parent table
+		tk.MustExec("delete from t1")
+	}
+
+	// The check should work for INSERT
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t1 values (%d, %d)", i, i))
+		tk.MustExec(fmt.Sprintf("insert into t3 values (%d, %d)", i, i))
+	}
+	tk.MustExec("DELETE FROM t1 WHERE a = 55")
+	tk.MustContainErrMsg("BATCH ON a LIMIT 10 INSERT INTO t2 SELECT * FROM t3", "Cannot add or update a child row: a foreign key constraint fails")
+	// Though it failed, some data is still inserted
+	tk.MustQuery("select count(*) from t2").Check(testkit.Rows("50"))
+	cleanFn()
+
+	// The check should work for UPDATE
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t1 values (%d, %d)", i, i))
+	}
+	tk.MustExec("DELETE FROM t1 WHERE a = 55")
+	for i := 0; i < 100; i++ {
+		if i != 55 {
+			tk.MustExec(fmt.Sprintf("insert into t2 values (%d, %d)", i, i))
+		}
+	}
+	tk.MustContainErrMsg("BATCH ON b LIMIT 10 UPDATE t2 SET a = a + 1", "Cannot add or update a child row: a foreign key constraint fails")
+	tk.MustQuery("select min(a) from t2").Check(testkit.Rows("1"))
+	cleanFn()
+
+	// The check should work for DELETE
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t1 values (%d, %d)", i, i))
+	}
+	tk.MustExec("DELETE FROM t1 WHERE a = 55")
+	for i := 56; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t2 values (%d, %d)", i, i))
+	}
+	tk.MustContainErrMsg("BATCH ON b LIMIT 10 DELETE FROM t1", "Cannot delete or update a parent row: a foreign key constraint fails")
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("49"))
+	cleanFn()
+}

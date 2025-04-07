@@ -27,8 +27,9 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/table"
@@ -281,7 +282,7 @@ func (e *ShowExec) fetchRangesPlacementPlocy(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			policy, ok := e.is.PolicyByName(model.NewCIStr(policyName))
+			policy, ok := e.is.PolicyByName(ast.NewCIStr(policyName))
 			if !ok {
 				return errors.Errorf("Policy with name '%s' not found", policyName)
 			}
@@ -302,7 +303,7 @@ func (e *ShowExec) fetchAllDBPlacements(ctx context.Context, scheduleState map[i
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 
 	dbs := e.is.AllSchemaNames()
-	slices.SortFunc(dbs, func(i, j model.CIStr) int { return cmp.Compare(i.O, j.O) })
+	slices.SortFunc(dbs, func(i, j ast.CIStr) int { return cmp.Compare(i.O, j.O) })
 
 	for _, dbName := range dbs {
 		if checker != nil && e.Ctx().GetSessionVars().User != nil && !checker.DBIsVisible(activeRoles, dbName.O) {
@@ -331,9 +332,12 @@ func (e *ShowExec) fetchAllDBPlacements(ctx context.Context, scheduleState map[i
 
 func (e *ShowExec) fetchDBScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, db *model.DBInfo) (infosync.PlacementScheduleState, error) {
 	state := infosync.PlacementScheduleStateScheduled
-	for _, table := range e.is.SchemaTables(db.Name) {
-		tbl := table.Meta()
-		schedule, err := fetchTableScheduleState(ctx, scheduleState, tbl)
+	tblInfos, err := e.is.SchemaSimpleTableInfos(ctx, db.Name)
+	if err != nil {
+		return state, errors.Trace(err)
+	}
+	for _, tbl := range tblInfos {
+		schedule, err := e.fetchTableScheduleStateByTableID(ctx, scheduleState, tbl.ID)
 		if err != nil {
 			return state, err
 		}
@@ -355,19 +359,18 @@ func (e *ShowExec) fetchAllTablePlacements(ctx context.Context, scheduleState ma
 	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 
 	dbs := e.is.AllSchemaNames()
-	slices.SortFunc(dbs, func(i, j model.CIStr) int { return cmp.Compare(i.O, j.O) })
+	slices.SortFunc(dbs, func(i, j ast.CIStr) int { return cmp.Compare(i.O, j.O) })
 
-	for _, dbName := range dbs {
+	tbls := e.is.ListTablesWithSpecialAttribute(infoschemacontext.AllSpecialAttribute)
+	for _, db := range tbls {
 		tableRowSets := make([]tableRowSet, 0)
-
-		for _, tbl := range e.is.SchemaTables(dbName) {
-			tblInfo := tbl.Meta()
-			if checker != nil && !checker.RequestVerification(activeRoles, dbName.O, tblInfo.Name.O, "", mysql.AllPrivMask) {
+		for _, tblInfo := range db.TableInfos {
+			if checker != nil && !checker.RequestVerification(activeRoles, db.DBName.O, tblInfo.Name.O, "", mysql.AllPrivMask) {
 				continue
 			}
 
 			var rows [][]any
-			ident := ast.Ident{Schema: dbName, Name: tblInfo.Name}
+			ident := ast.Ident{Schema: db.DBName, Name: tblInfo.Name}
 			tblPlacement, err := e.getTablePlacement(tblInfo)
 			if err != nil {
 				return err
@@ -458,6 +461,27 @@ func (e *ShowExec) getPolicyPlacement(policyRef *model.PolicyRefInfo) (settings 
 	return policy.PlacementSettings, nil
 }
 
+// fetchTableScheduleStateByTableID fetches the schedule state of a table by its ID.
+// Only fetch the table info if the schedule state is still scheduled.
+func (e *ShowExec) fetchTableScheduleStateByTableID(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, id int64) (infosync.PlacementScheduleState, error) {
+	state := infosync.PlacementScheduleStateScheduled
+
+	schedule, err := fetchScheduleState(ctx, scheduleState, id)
+	if err != nil {
+		return state, err
+	}
+	state = accumulateState(state, schedule)
+	if state != infosync.PlacementScheduleStateScheduled {
+		return state, nil
+	}
+
+	table, ok := e.is.TableByID(ctx, id)
+	if !ok {
+		return state, errors.Errorf("Table with ID '%d' not found", id)
+	}
+	return fetchTablePartitionScheduleState(ctx, scheduleState, table.Meta(), state)
+}
+
 func fetchScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, id int64) (infosync.PlacementScheduleState, error) {
 	if s, ok := scheduleState[id]; ok {
 		return s, nil
@@ -475,6 +499,23 @@ func fetchPartitionScheduleState(ctx context.Context, scheduleState map[int64]in
 	return fetchScheduleState(ctx, scheduleState, part.ID)
 }
 
+func fetchTablePartitionScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, table *model.TableInfo, state infosync.PlacementScheduleState) (infosync.PlacementScheduleState, error) {
+	if table.GetPartitionInfo() != nil {
+		for _, part := range table.GetPartitionInfo().Definitions {
+			schedule, err := fetchScheduleState(ctx, scheduleState, part.ID)
+			if err != nil {
+				return infosync.PlacementScheduleStatePending, err
+			}
+			state = accumulateState(state, schedule)
+			if state != infosync.PlacementScheduleStateScheduled {
+				break
+			}
+		}
+	}
+
+	return state, nil
+}
+
 func fetchTableScheduleState(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState, table *model.TableInfo) (infosync.PlacementScheduleState, error) {
 	state := infosync.PlacementScheduleStateScheduled
 
@@ -487,20 +528,7 @@ func fetchTableScheduleState(ctx context.Context, scheduleState map[int64]infosy
 		return state, nil
 	}
 
-	if table.GetPartitionInfo() != nil {
-		for _, part := range table.GetPartitionInfo().Definitions {
-			schedule, err = fetchScheduleState(ctx, scheduleState, part.ID)
-			if err != nil {
-				return infosync.PlacementScheduleStatePending, err
-			}
-			state = accumulateState(state, schedule)
-			if state != infosync.PlacementScheduleStateScheduled {
-				break
-			}
-		}
-	}
-
-	return schedule, nil
+	return fetchTablePartitionScheduleState(ctx, scheduleState, table, state)
 }
 
 func accumulateState(curr, news infosync.PlacementScheduleState) infosync.PlacementScheduleState {

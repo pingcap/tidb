@@ -24,12 +24,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -42,6 +43,7 @@ import (
 
 const (
 	tableNameGlobalStatus                    = "global_status"
+	tableNameGlobalVariables                 = "global_variables"
 	tableNameSessionStatus                   = "session_status"
 	tableNameSetupActors                     = "setup_actors"
 	tableNameSetupObjects                    = "setup_objects"
@@ -110,6 +112,7 @@ var tableIDMap = map[string]int64{
 	tableNameSessionVariables:                autoid.PerformanceSchemaDBID + 31,
 	tableNameSessionConnectAttrs:             autoid.PerformanceSchemaDBID + 32,
 	tableNameSessionAccountConnectAttrs:      autoid.PerformanceSchemaDBID + 33,
+	tableNameGlobalVariables:                 autoid.PerformanceSchemaDBID + 34,
 }
 
 // perfSchemaTable stands for the fake table all its data is in the memory.
@@ -129,7 +132,7 @@ func IsPredefinedTable(tableName string) bool {
 	return ok
 }
 
-func tableFromMeta(allocs autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
+func tableFromMeta(allocs autoid.Allocators, _ func() (pools.Resource, error), meta *model.TableInfo) (table.Table, error) {
 	if f, ok := pluginTable[meta.Name.L]; ok {
 		ret, err := f(allocs, meta)
 		return ret, err
@@ -204,6 +207,11 @@ func (vt *perfSchemaTable) Type() table.Type {
 // Indices implements table.Table Indices interface.
 func (vt *perfSchemaTable) Indices() []table.Index {
 	return vt.indices
+}
+
+// DeletableIndices implements table.Table DeletableIndices interface.
+func (vt *perfSchemaTable) DeletableIndices() []table.Index {
+	return nil
 }
 
 // GetPartitionedTable implements table.Table GetPartitionedTable interface.

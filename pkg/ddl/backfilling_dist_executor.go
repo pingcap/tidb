@@ -19,18 +19,15 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -49,6 +46,8 @@ type BackfillTaskMeta struct {
 
 // BackfillSubTaskMeta is the sub-task meta for backfilling index.
 type BackfillSubTaskMeta struct {
+	external.BaseExternalMeta
+
 	PhysicalTableID int64 `json:"physical_table_id"`
 
 	// Used by read index step.
@@ -56,22 +55,51 @@ type BackfillSubTaskMeta struct {
 	RowEnd   []byte `json:"row_end"`
 
 	// Used by global sort write & ingest step.
-	RangeSplitKeys [][]byte `json:"range_split_keys,omitempty"`
-	DataFiles      []string `json:"data-files,omitempty"`
-	StatFiles      []string `json:"stat-files,omitempty"`
-	TS             uint64   `json:"ts,omitempty"`
+	RangeJobKeys   [][]byte `json:"range_job_keys,omitempty" external:"true"`
+	RangeSplitKeys [][]byte `json:"range_split_keys,omitempty" external:"true"`
+	DataFiles      []string `json:"data-files,omitempty" external:"true"`
+	StatFiles      []string `json:"stat-files,omitempty" external:"true"`
+	// TS is used to make sure subtasks are idempotent.
+	// TODO(tangenta): support local sort.
+	TS uint64 `json:"ts,omitempty"`
 	// Each group of MetaGroups represents a different index kvs meta.
-	MetaGroups []*external.SortedKVMeta `json:"meta_groups,omitempty"`
+	MetaGroups []*external.SortedKVMeta `json:"meta_groups,omitempty" external:"true"`
+	// EleIDs stands for the index/column IDs to backfill with distributed framework.
+	// After the subtask is finished, EleIDs should have the same length as
+	// MetaGroups, and they are in the same order.
+	EleIDs []int64 `json:"ele_ids,omitempty" external:"true"`
+
 	// Only used for adding one single index.
 	// Keep this for compatibility with v7.5.
-	external.SortedKVMeta `json:",inline"`
+	external.SortedKVMeta `json:",inline" external:"true"`
 }
 
-func decodeBackfillSubTaskMeta(raw []byte) (*BackfillSubTaskMeta, error) {
+// Marshal marshals the backfill subtask meta to JSON.
+func (m *BackfillSubTaskMeta) Marshal() ([]byte, error) {
+	return m.BaseExternalMeta.Marshal(m)
+}
+
+func decodeBackfillSubTaskMeta(ctx context.Context, cloudStorageURI string, raw []byte) (*BackfillSubTaskMeta, error) {
 	var subtask BackfillSubTaskMeta
 	err := json.Unmarshal(raw, &subtask)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+
+	if cloudStorageURI != "" && subtask.ExternalPath != "" {
+		// read external meta to storage when using global sort
+		backend, err := storage.ParseBackend(cloudStorageURI, nil)
+		if err != nil {
+			return nil, err
+		}
+		extStore, err := storage.NewWithDefaultOpt(ctx, backend)
+		if err != nil {
+			return nil, err
+		}
+		defer extStore.Close()
+		if err := subtask.ReadJSONFromExternalStorage(ctx, extStore, &subtask); err != nil {
+			return nil, errors.Trace(err)
+		}
 	}
 
 	// For compatibility with old version TiDB.
@@ -86,13 +114,32 @@ func decodeBackfillSubTaskMeta(raw []byte) (*BackfillSubTaskMeta, error) {
 	return &subtask, nil
 }
 
-func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
+func writeExternalBackfillSubTaskMeta(ctx context.Context, cloudStorageURI string, subtask *BackfillSubTaskMeta, externalPath string) error {
+	if cloudStorageURI == "" {
+		return nil
+	}
+	backend, err := storage.ParseBackend(cloudStorageURI, nil)
+	if err != nil {
+		return err
+	}
+	extStore, err := storage.NewWithDefaultOpt(ctx, backend)
+	if err != nil {
+		return err
+	}
+	defer extStore.Close()
+	subtask.ExternalPath = externalPath
+	return subtask.WriteJSONToExternalStorage(ctx, extStore, subtask)
+}
+
+func (s *backfillDistExecutor) newBackfillStepExecutor(
 	stage proto.Step,
 ) (execute.StepExecutor, error) {
 	jobMeta := &s.taskMeta.Job
 	ddlObj := s.d
 
-	_, tblIface, err := ddlObj.getTableByTxn((*asAutoIDRequirement)(ddlObj.ddlCtx), jobMeta.SchemaID, jobMeta.TableID)
+	// TODO getTableByTxn is using DDL ctx which is never cancelled except when shutdown.
+	// we should move this operation out of GetStepExecutor, and put into Init.
+	_, tblIface, err := ddlObj.getTableByTxn(ddlObj.ddlCtx.getAutoIDRequirement(), jobMeta.SchemaID, jobMeta.TableID)
 	if err != nil {
 		return nil, err
 	}
@@ -117,61 +164,33 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 		jc := ddlObj.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
 		ddlObj.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
 		ddlObj.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexExecutor(ddlObj, jobMeta, indexInfos, tbl, jc, s.getBackendCtx, cloudStorageURI, estRowSize)
+		return newReadIndexExecutor(ddlObj, jobMeta, indexInfos, tbl, jc, cloudStorageURI, estRowSize)
 	case proto.BackfillStepMergeSort:
 		return newMergeSortExecutor(jobMeta.ID, len(indexInfos), tbl, cloudStorageURI)
 	case proto.BackfillStepWriteAndIngest:
 		if len(cloudStorageURI) == 0 {
 			return nil, errors.Errorf("local import does not have write & ingest step")
 		}
-		return newCloudImportExecutor(jobMeta, indexInfos[0], tbl, s.getBackendCtx, cloudStorageURI)
+		return newCloudImportExecutor(jobMeta, ddlObj.store, indexInfos, tbl, cloudStorageURI, s.GetTaskBase().Concurrency)
 	default:
 		// should not happen, caller has checked the stage
 		return nil, errors.Errorf("unknown step %d for job %d", stage, jobMeta.ID)
 	}
 }
 
-func (s *backfillDistExecutor) getBackendCtx() (ingest.BackendCtx, error) {
-	job := &s.taskMeta.Job
-	unique, err := decodeIndexUniqueness(job)
-	if err != nil {
-		return nil, err
-	}
-	ddlObj := s.d
-	discovery := ddlObj.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
-
-	return ingest.LitBackCtxMgr.Register(s.BaseTaskExecutor.Ctx(), job.ID, unique, ddlObj.etcdCli, discovery, job.ReorgMeta.ResourceGroupName)
-}
-
-func decodeIndexUniqueness(job *model.Job) (bool, error) {
-	unique := make([]bool, 1)
-	err := job.DecodeArgs(&unique[0])
-	if err != nil {
-		err = job.DecodeArgs(&unique)
-	}
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	// We only support adding multiple unique indexes or multiple non-unique indexes,
-	// we use the first index uniqueness here.
-	return unique[0], nil
-}
-
 type backfillDistExecutor struct {
 	*taskexecutor.BaseTaskExecutor
-	d         *ddl
-	task      *proto.Task
-	taskTable taskexecutor.TaskTable
-	taskMeta  *BackfillTaskMeta
-	jobID     int64
+	d        *ddl
+	task     *proto.Task
+	taskMeta *BackfillTaskMeta
+	jobID    int64
 }
 
-func newBackfillDistExecutor(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable, d *ddl) taskexecutor.TaskExecutor {
+func newBackfillDistExecutor(ctx context.Context, task *proto.Task, param taskexecutor.Param, d *ddl) taskexecutor.TaskExecutor {
 	s := &backfillDistExecutor{
-		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(ctx, id, task, taskTable),
+		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(ctx, task, param),
 		d:                d,
 		task:             task,
-		taskTable:        taskTable,
 	}
 	s.BaseTaskExecutor.Extension = s
 	return s
@@ -196,7 +215,7 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor, error) {
 	switch task.Step {
 	case proto.BackfillStepReadIndex, proto.BackfillStepMergeSort, proto.BackfillStepWriteAndIngest:
-		return s.newBackfillSubtaskExecutor(task.Step)
+		return s.newBackfillStepExecutor(task.Step)
 	default:
 		return nil, errors.Errorf("unknown backfill step %d for task %d", task.Step, task.ID)
 	}
@@ -204,17 +223,6 @@ func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task) (execute.StepEx
 
 func (*backfillDistExecutor) IsIdempotent(*proto.Subtask) bool {
 	return true
-}
-
-func isRetryableError(err error) bool {
-	originErr := errors.Cause(err)
-	if tErr, ok := originErr.(*terror.Error); ok {
-		sqlErr := terror.ToSQLError(tErr)
-		_, ok := dbterror.ReorgRetryableErrCodes[sqlErr.Code]
-		return ok
-	}
-	// can't retry Unknown err.
-	return false
 }
 
 func (*backfillDistExecutor) IsRetryableError(err error) bool {

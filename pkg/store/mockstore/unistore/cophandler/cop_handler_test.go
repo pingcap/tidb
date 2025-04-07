@@ -118,7 +118,7 @@ func prepareTestTableData(keyNumber int, tableID int64) (*data, error) {
 	for i := 0; i < keyNumber; i++ {
 		datum := types.MakeDatums(i, "abc", 10.0)
 		rows[int64(i)] = datum
-		rowEncodedData, err := tablecodec.EncodeRow(stmtCtx.TimeZone(), datum, colIds, nil, nil, encoder)
+		rowEncodedData, err := tablecodec.EncodeRow(stmtCtx.TimeZone(), datum, colIds, nil, nil, nil, encoder)
 		if err != nil {
 			return nil, err
 		}
@@ -265,8 +265,7 @@ func (dagBuilder *dagBuilder) addSelection(expr *tipb.Expr) *dagBuilder {
 	dagBuilder.executors = append(dagBuilder.executors, &tipb.Executor{
 		Tp: tipb.ExecType_TypeSelection,
 		Selection: &tipb.Selection{
-			Conditions:       []*tipb.Expr{expr},
-			XXX_unrecognized: nil,
+			Conditions: []*tipb.Expr{expr},
 		},
 	})
 	return dagBuilder

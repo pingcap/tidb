@@ -18,12 +18,14 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
+	goerrors "errors"
 	"io"
+	"sort"
 	"sync"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
@@ -126,16 +128,13 @@ func openAndGetFirstElem[
 	}
 
 	for i, f := range openers {
-		i := i
-		f := f
 		wg.Go(func() error {
 			rd, err := f()
-			switch err {
-			case nil:
-			case io.EOF:
-				// will leave a nil reader in `mayNilReaders`
-				return nil
-			default:
+			if err != nil {
+				if goerrors.Is(err, io.EOF) {
+					// will leave a nil reader in `mayNilReaders`
+					return nil
+				}
 				return err
 			}
 			mayNilReaders[i] = rd
@@ -154,7 +153,7 @@ func openAndGetFirstElem[
 		}
 		rd := *rp
 		e, err := rd.next()
-		if err == io.EOF {
+		if goerrors.Is(err, io.EOF) {
 			_ = rd.close()
 			mayNilReaders[j] = nil
 			continue
@@ -299,13 +298,13 @@ func (i *mergeIter[T, R]) next() (closeReaderIdx int, ok bool) {
 		rd := *i.readers[i.lastReaderIdx]
 		e, err := rd.next()
 
-		switch err {
-		case nil:
+		switch {
+		case err == nil:
 			if i.checkHotspot && i.lastReaderIdx == i.lastHotspotIdx {
 				i.elemFromHotspot = &e
 			}
 			heap.Push(&i.h, mergeHeapElem[T]{elem: e, readerIdx: i.lastReaderIdx})
-		case io.EOF:
+		case goerrors.Is(err, io.EOF):
 			closeErr := rd.close()
 			if closeErr != nil {
 				i.logger.Warn("failed to close reader",
@@ -525,7 +524,6 @@ func NewMergeKVIter(
 	)
 
 	for i := range paths {
-		i := i
 		readerOpeners = append(readerOpeners, func() (*kvReaderProxy, error) {
 			rd, err := newKVReader(ctx, paths[i], exStorage, pathsStartOffset[i], readBufferSize)
 			if err != nil {
@@ -796,10 +794,15 @@ func NewMergePropIter(
 	multiStat []MultipleFilesStat,
 	exStorage storage.ExternalStorage,
 ) (*MergePropIter, error) {
+	// sort the multiStat by minKey
+	// otherwise, if the number of readers is less than the weight, the kv may not in order
+	sort.Slice(multiStat, func(i, j int) bool {
+		return bytes.Compare(multiStat[i].MinKey, multiStat[j].MinKey) < 0
+	})
+
 	closeReaderFlag := false
 	readerOpeners := make([]readerOpenerFn[*rangeProperty, mergePropBaseIter], 0, len(multiStat))
 	for _, m := range multiStat {
-		m := m
 		readerOpeners = append(readerOpeners, func() (*mergePropBaseIter, error) {
 			baseIter, err := newMergePropBaseIter(ctx, m, exStorage)
 			if err != nil {

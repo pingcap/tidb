@@ -17,6 +17,8 @@ package util
 import (
 	"bufio"
 	"bytes"
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,7 +32,17 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/protoadapt"
 )
+
+// ByteNumOneGiB shows how many bytes one GiB contains
+const ByteNumOneGiB int64 = 1024 * 1024 * 1024
+
+// ByteToGiB converts Byte to GiB
+func ByteToGiB(bytes float64) float64 {
+	return bytes / float64(ByteNumOneGiB)
+}
 
 // SliceToMap converts slice to map
 // nolint:unused
@@ -84,21 +96,6 @@ func GetJSON(client *http.Client, url string, v any) error {
 	return errors.Trace(json.NewDecoder(resp.Body).Decode(v))
 }
 
-// ChanMap creates a channel which applies the function over the input Channel.
-// Hint of Resource Leakage:
-// In golang, channel isn't an interface so we must create a goroutine for handling the inputs.
-// Hence the input channel must be closed properly or this function may leak a goroutine.
-func ChanMap[T, R any](c <-chan T, f func(T) R) <-chan R {
-	outCh := make(chan R)
-	go func() {
-		defer close(outCh)
-		for item := range c {
-			outCh <- f(item)
-		}
-	}()
-	return outCh
-}
-
 // Str2Int64Map converts a string to a map[int64]struct{}.
 func Str2Int64Map(str string) map[int64]struct{} {
 	strs := strings.Split(str, ",")
@@ -121,9 +118,8 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL boo
 	logFields = append(logFields, zap.String("cost_time", strconv.FormatFloat(costTime.Seconds(), 'f', -1, 64)+"s"))
 	execDetail := info.StmtCtx.GetExecDetails()
 	logFields = append(logFields, execDetail.ToZapFields()...)
-	if copTaskInfo := info.StmtCtx.CopTasksDetails(); copTaskInfo != nil {
-		logFields = append(logFields, copTaskInfo.ToZapFields()...)
-	}
+	copTaskInfo := info.StmtCtx.CopTasksDetails()
+	logFields = append(logFields, copTaskInfo.ToZapFields()...)
 	if statsInfo := info.StatsInfo(info.Plan); len(statsInfo) > 0 {
 		var buf strings.Builder
 		firstComma := false
@@ -184,7 +180,8 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL boo
 // PrintableASCII detects if b is a printable ASCII character.
 // Ref to:http://facweb.cs.depaul.edu/sjost/it212/documents/ascii-pr.htm
 func PrintableASCII(b byte) bool {
-	if b < 32 || b > 127 {
+	// MySQL think 127(0x7f) is not printalbe.
+	if b < 32 || b >= 127 {
 		return false
 	}
 
@@ -192,12 +189,23 @@ func PrintableASCII(b byte) bool {
 }
 
 // FmtNonASCIIPrintableCharToHex turns non-printable-ASCII characters into Hex
-func FmtNonASCIIPrintableCharToHex(str string) string {
+func FmtNonASCIIPrintableCharToHex(str string, maxBytesToShow int, displayDeleteCharater bool) string {
 	var b bytes.Buffer
-	b.Grow(len(str) * 2)
-	for i := 0; i < len(str); i++ {
+	b.Grow(maxBytesToShow * 2)
+	for i := range len(str) {
+		if i >= maxBytesToShow {
+			b.WriteString("...")
+			break
+		}
+
 		if PrintableASCII(str[i]) {
 			b.WriteByte(str[i])
+			continue
+		}
+
+		// In MySQL, 0x7f will not display in `Cannot convert string` error msg.
+		// But it will displayed in `duplicate entry` error msg.
+		if str[i] == 0x7f && !displayDeleteCharater {
 			continue
 		}
 
@@ -271,7 +279,7 @@ func ReadLine(reader *bufio.Reader, maxLineSize int) ([]byte, error) {
 // maxLineSize specifies the maximum size of a single line.
 func ReadLines(reader *bufio.Reader, count int, maxLineSize int) ([][]byte, error) {
 	lines := make([][]byte, 0, count)
-	for i := 0; i < count; i++ {
+	for range count {
 		line, err := ReadLine(reader, maxLineSize)
 		if err == io.EOF && len(lines) > 0 {
 			return lines, nil
@@ -304,4 +312,76 @@ func GetRecoverError(r any) error {
 		return errors.Trace(err)
 	}
 	return errors.Errorf("%v", r)
+}
+
+// ProtoV1Clone clones a V1 proto message.
+func ProtoV1Clone[T protoadapt.MessageV1](p T) T {
+	return protoadapt.MessageV1Of(proto.Clone(protoadapt.MessageV2Of(p))).(T)
+}
+
+// CheckIfSameCluster reads PD addresses registered in etcd from two sources, to
+// check if there are common addresses in both sources. If there are common
+// addresses, the first return value is true which means we have confidence that
+// the two sources are in the same cluster. If there are no common addresses, the
+// first return value is false, which means 1) the two sources are in different
+// clusters, or 2) the two sources may be in the same cluster but the getter
+// function does not return the common addresses.
+//
+// The getters should keep the same format of the returned addresses, like both
+// have URL scheme or not.
+//
+// The second and third return values are the PD addresses from the first and
+// second getters respectively. The fourth return value is the error occurred.
+func CheckIfSameCluster(
+	ctx context.Context,
+	pdAddrsGetter, pdAddrsGetter2 func(context.Context) ([]string, error),
+) (_ bool, addrs, addrs2 []string, err error) {
+	addrs, err = pdAddrsGetter(ctx)
+	if err != nil {
+		return false, nil, nil, errors.Trace(err)
+	}
+	addrsMap := make(map[string]struct{}, len(addrs))
+	for _, a := range addrs {
+		addrsMap[a] = struct{}{}
+	}
+
+	addrs2, err = pdAddrsGetter2(ctx)
+	if err != nil {
+		return false, nil, nil, errors.Trace(err)
+	}
+	for _, a := range addrs2 {
+		if _, ok := addrsMap[a]; ok {
+			return true, addrs, addrs2, nil
+		}
+	}
+	return false, addrs, addrs2, nil
+}
+
+// GetPDsAddrWithoutScheme returns a function that read all PD nodes' first etcd
+// client URL by SQL query. This is done by query INFORMATION_SCHEMA.CLUSTER_INFO
+// table and its executor memtableRetriever.dataForTiDBClusterInfo.
+func GetPDsAddrWithoutScheme(db *sql.DB) func(context.Context) ([]string, error) {
+	return func(ctx context.Context) ([]string, error) {
+		rows, err := db.QueryContext(ctx, "SELECT STATUS_ADDRESS FROM INFORMATION_SCHEMA.CLUSTER_INFO WHERE TYPE = 'pd'")
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		defer rows.Close()
+		var ret []string
+		for rows.Next() {
+			var addr string
+			err = rows.Scan(&addr)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+
+			// if intersection is not empty, we can say URLs from TiDB and PD are from the
+			// same cluster. See comments above pdTiDBFromSameClusterCheckItem struct.
+			ret = append(ret, addr)
+		}
+		if err = rows.Err(); err != nil {
+			return nil, errors.Trace(err)
+		}
+		return ret, nil
+	}
 }

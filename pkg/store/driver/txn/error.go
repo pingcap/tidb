@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -39,6 +39,8 @@ import (
 	"go.uber.org/zap"
 )
 
+// genKeyExistsError is the fallback path when can't extract key columns for
+// kv.GenKeyExistsErr.
 func genKeyExistsError(name string, value string, err error) error {
 	if err != nil {
 		logutil.BgLogger().Info("extractKeyExistsErr meets error", zap.Error(err))
@@ -58,10 +60,10 @@ func ExtractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.Tabl
 		if pkInfo := tblInfo.GetPkColInfo(); pkInfo != nil {
 			if mysql.HasUnsignedFlag(pkInfo.GetFlag()) {
 				handleStr := strconv.FormatUint(uint64(handle.IntValue()), 10)
-				return genKeyExistsError(name, handleStr, nil)
+				return kv.GenKeyExistsErr([]string{handleStr}, name)
 			}
 		}
-		return genKeyExistsError(name, handle.String(), nil)
+		return kv.GenKeyExistsErr([]string{handle.String()}, name)
 	}
 
 	if len(value) == 0 {
@@ -103,11 +105,11 @@ func ExtractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.Tabl
 			str = str[:col.Length]
 		}
 		if types.IsBinaryStr(&tblInfo.Columns[col.Offset].FieldType) || types.IsTypeBit(&tblInfo.Columns[col.Offset].FieldType) {
-			str = util.FmtNonASCIIPrintableCharToHex(str)
+			str = util.FmtNonASCIIPrintableCharToHex(str, len(str), true)
 		}
 		valueStr = append(valueStr, str)
 	}
-	return genKeyExistsError(name, strings.Join(valueStr, "-"), nil)
+	return kv.GenKeyExistsErr(valueStr, name)
 }
 
 // ExtractKeyExistsErrFromIndex returns a ErrKeyExists error from a index key.
@@ -143,7 +145,7 @@ func ExtractKeyExistsErrFromIndex(key kv.Key, value []byte, tblInfo *model.Table
 			return genKeyExistsError(name, key.String(), err)
 		}
 		if types.IsBinaryStr(colInfo[i].Ft) || types.IsTypeBit(colInfo[i].Ft) {
-			str = util.FmtNonASCIIPrintableCharToHex(str)
+			str = util.FmtNonASCIIPrintableCharToHex(str, len(str), true)
 		}
 		valueStr = append(valueStr, str)
 	}

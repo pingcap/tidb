@@ -15,10 +15,29 @@
 package initstats
 
 import (
+	"fmt"
+	"sync/atomic"
+	"time"
+
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
+
+// InitStatsPercentage is the percentage of the table to load stats.
+var InitStatsPercentage atomicutil.Float64
+
+var (
+	sampleLoggerFactory = logutil.SampleLoggerFactory(time.Minute, 1, zap.String(logutil.LogFieldCategory, "stats"))
+)
+
+// SingletonStatsSamplerLogger with category "stats" is used to log statistic related messages.
+// It is used to sample the log to avoid too many logs.
+// Do not use it to log the message that is not related to statistics.
+func singletonStatsSamplerLogger() *zap.Logger {
+	return sampleLoggerFactory()
+}
 
 // Task represents the range of the table for loading stats.
 type Task struct {
@@ -27,25 +46,53 @@ type Task struct {
 }
 
 // RangeWorker is used to load stats concurrently by the range of table id.
+//
+//nolint:fieldalignment
 type RangeWorker struct {
-	dealFunc func(task Task) error
-	taskChan chan Task
+	progressLogger *zap.Logger
 
-	wg util.WaitGroupWrapper
+	taskName        string
+	taskChan        chan Task
+	processTask     func(task Task) error
+	taskCnt         uint64
+	completeTaskCnt atomic.Uint64
+
+	totalPercentage     float64
+	totalPercentageStep float64
+
+	concurrency int
+	wg          util.WaitGroupWrapper
 }
 
 // NewRangeWorker creates a new RangeWorker.
-func NewRangeWorker(dealFunc func(task Task) error) *RangeWorker {
-	return &RangeWorker{
-		dealFunc: dealFunc,
-		taskChan: make(chan Task, 1),
+func NewRangeWorker(
+	taskName string,
+	processTask func(task Task) error,
+	concurrency int,
+	maxTid,
+	initStatsStep uint64,
+	totalPercentageStep float64,
+) *RangeWorker {
+	taskCnt := uint64(1)
+	if maxTid > initStatsStep*2 {
+		taskCnt = maxTid / initStatsStep
 	}
+	worker := &RangeWorker{
+		taskName:            taskName,
+		processTask:         processTask,
+		concurrency:         concurrency,
+		taskChan:            make(chan Task, 1),
+		taskCnt:             taskCnt,
+		totalPercentage:     InitStatsPercentage.Load(),
+		totalPercentageStep: totalPercentageStep,
+	}
+	worker.progressLogger = singletonStatsSamplerLogger()
+	return worker
 }
 
 // LoadStats loads stats concurrently when to init stats
 func (ls *RangeWorker) LoadStats() {
-	concurrency := getConcurrency()
-	for n := 0; n < concurrency; n++ {
+	for n := 0; n < ls.concurrency; n++ {
 		ls.wg.Run(func() {
 			ls.loadStats()
 		})
@@ -54,8 +101,14 @@ func (ls *RangeWorker) LoadStats() {
 
 func (ls *RangeWorker) loadStats() {
 	for task := range ls.taskChan {
-		if err := ls.dealFunc(task); err != nil {
+		if err := ls.processTask(task); err != nil {
 			logutil.BgLogger().Error("load stats failed", zap.Error(err))
+		}
+		if ls.progressLogger != nil {
+			completeTaskCnt := ls.completeTaskCnt.Add(1)
+			taskPercentage := float64(completeTaskCnt)/float64(ls.taskCnt)*ls.totalPercentageStep + ls.totalPercentage
+			InitStatsPercentage.Store(taskPercentage)
+			ls.progressLogger.Info(fmt.Sprintf("load %s [%d/%d]", ls.taskName, completeTaskCnt, ls.taskCnt))
 		}
 	}
 }

@@ -16,6 +16,7 @@ package core
 
 import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/util/intset"
 )
 
@@ -32,21 +33,21 @@ func findCTEs(
 	visited *intset.FastIntSet,
 	isRootTree bool,
 ) {
-	if cteReader, ok := p.(*LogicalCTE); ok {
-		cte := cteReader.cte
+	if cteReader, ok := p.(*logicalop.LogicalCTE); ok {
+		cte := cteReader.Cte
 		if !isRootTree {
 			// Set it to false since it's referenced by other CTEs.
-			cte.isOuterMostCTE = false
+			cte.IsOuterMostCTE = false
 		}
 		if visited.Has(cte.IDForStorage) {
 			return
 		}
 		visited.Insert(cte.IDForStorage)
 		// Set it when we meet it first time.
-		cte.isOuterMostCTE = isRootTree
-		findCTEs(cte.seedPartLogicalPlan, visited, false)
-		if cte.recursivePartLogicalPlan != nil {
-			findCTEs(cte.recursivePartLogicalPlan, visited, false)
+		cte.IsOuterMostCTE = isRootTree
+		findCTEs(cte.SeedPartLogicalPlan, visited, false)
+		if cte.RecursivePartLogicalPlan != nil {
+			findCTEs(cte.RecursivePartLogicalPlan, visited, false)
 		}
 		return
 	}

@@ -1,7 +1,7 @@
 # Extension Authentication Plugin
 
 - Author: [Yaoming Zhan](http://github.com/yzhan1)
-- Discussion PR: TBD
+- Discussion PR: [#53494](https://github.com/pingcap/tidb/pull/53494)
 - Tracking Issue: https://github.com/pingcap/tidb/issues/53181
 
 ## Table of Contents
@@ -175,9 +175,7 @@ The above interfaces and parameters should give the users all information they n
 The feature needs to be compatible with existing user related statements and options, such as `CREATE USER`, `ALTER USER`, `SET PASSWORD`.
 However, it will not work with existing functionalities such as password expiry and password validation. Users can implement their own password validation logic inside the `GenerateAuthString` implementation.
 
-It will also not work with `CREATE VIEW SQL SECURITY DEFINER` since the view is created with the privileges of the view creator, and if the creator is an auth plugin user, the plugin will not be able to check the privileges of the view creator because it
-does not have the `tls.ConnectionState` information for the definer to pass into `VerifyPrivilege`. This means we should not allow any users to create a view with `SQL SECURITY DEFINER` where the definer is an auth plugin user.
-However, if the plugin implementation does not have `VerifyPrivilege` and `VerifyDynamicPrivilege` implemented, the view creation with an auth plugin user as the definer will still be allowed, since we will have everything needed for the authorization check.
+There are some cases where the `VerifyPrivilege` and `VerifyDynamicPrivilege` functions of the plugin will not be executed - when executing one statement requires validating the privileges of another user which is not the current session's user. For example, when auth plugin user `u1` creates a view with `CREATE VIEW SQL SECURITY DEFINER u1`, the view is created based on the privileges of `u1`. Later, when another user `u2` runs a `SELECT` on the view, TiDB will not be able to check the privileges of `u1` because it does not have the `tls.ConnectionState` information for `u1` to pass into `VerifyPrivilege`. This means we will only check the existing privileges inside TiDB's `mysql` database for cases like this. Another case is when the current user attempts to run `SET PASSWORD`/`ALTER USER` for other users, TiDB needs to check if the other users have `SUPER_USER` or `RESTRICTED_USER_ADMIN` privileges.
 
 ## Test Design
 
@@ -204,7 +202,7 @@ We will implement client to server tests to test out scenarios where MySQL users
 
 This feature should integrate well with all the existing test cases since it is an additional functionality. Existing tests related to authentication and authorization should continue to pass since they are not using auth plugins.
 
-We should add tests to verify that users cannot create views with `SQL SECURITY DEFINER` where the definer is an auth plugin user and the plugin implementation has `VerifyPrivilege` and `VerifyDynamicPrivilege` set, as mentioned in the compatibility section.
+We should add tests to verify that for cases mentioned in the compatibility section and make sure `VerifyPrivilege` and `VerifyDynamicPrivilege` are not called.
 
 ### Benchmark Tests
 
@@ -216,7 +214,7 @@ If a user is using an auth plugin, the SQL privilege status in TiDB might not re
 
 The design does not account for implementing the same level of proxy user support as in MySQL auth plugin, since currently TiDB does not support [proxy users](https://dev.mysql.com/doc/extending-mysql/8.0/en/writing-authentication-plugins-proxy-users.html) yet. Also existing support for password expiry and validation will not work, as mentioned in the earlier section.
 
-Also, users cannot create views with `SQL SECURITY DEFINER` where the definer is an auth plugin user because we will lack the `tls.ConnectionState` information for the definer to pass into `VerifyPrivilege`, unless the plugin implementation does not have `VerifyPrivilege` and `VerifyDynamicPrivilege` implemented.
+Another restriction is the limitation due to lacking the `tls.ConnectionState` required for privilege verification. Refer to compatibility section for more details.
 
 ## Investigation & Alternatives
 

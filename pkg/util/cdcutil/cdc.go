@@ -26,7 +26,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -183,7 +182,7 @@ func (c checkCDCClient) checkpointTSFor(ctx context.Context, cf changefeed) (uin
 		if err != nil {
 			return 0, err
 		}
-		return mathutil.Max(cts, info.Start), nil
+		return max(cts, info.Start), nil
 	default:
 		// This changefeed may be noise, ignore it.
 		log.Warn("Ignoring invalid changefeed.", zap.Any("changefeed", cf), zap.String("state", info.State))

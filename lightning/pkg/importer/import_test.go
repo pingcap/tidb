@@ -31,9 +31,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/types"
 	tmock "github.com/pingcap/tidb/pkg/util/mock"
 	router "github.com/pingcap/tidb/pkg/util/table-router"
@@ -221,7 +221,7 @@ func TestPreCheckFailed(t *testing.T) {
 		dbMetas:          make([]*mydump.MDDatabaseMeta, 0),
 	}
 	cpdb := panicCheckpointDB{}
-	theCheckBuilder := NewPrecheckItemBuilder(cfg, make([]*mydump.MDDatabaseMeta, 0), preInfoGetter, cpdb, nil)
+	theCheckBuilder := NewPrecheckItemBuilder(cfg, make([]*mydump.MDDatabaseMeta, 0), preInfoGetter, cpdb, nil, db)
 	ctl := &Controller{
 		cfg:                 cfg,
 		saveCpCh:            make(chan saveCp),

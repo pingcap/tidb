@@ -17,10 +17,8 @@ package expression
 import (
 	"bytes"
 	goJSON "encoding/json"
-	"strconv"
 	"strings"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -477,7 +475,14 @@ func (b *builtinJSONQuoteSig) vecEvalString(ctx EvalContext, input *chunk.Chunk,
 			result.AppendNull()
 			continue
 		}
-		result.AppendString(strconv.Quote(buf.GetString(i)))
+		buffer := &bytes.Buffer{}
+		encoder := goJSON.NewEncoder(buffer)
+		encoder.SetEscapeHTML(false)
+		err = encoder.Encode(buf.GetString(i))
+		if err != nil {
+			return err
+		}
+		result.AppendString(string(bytes.TrimSuffix(buffer.Bytes(), []byte("\n"))))
 	}
 	return nil
 }
@@ -560,20 +565,28 @@ func (b *builtinJSONSearchSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, 
 				return errIncorrectArgs.GenWithStackByArgs("ESCAPE")
 			}
 		}
+
+		var isNull bool
 		var pathExprs []types.JSONPathExpression
 		if pathBufs != nil {
 			pathExprs = make([]types.JSONPathExpression, 0, len(b.args)-4)
 			for j := 0; j < len(b.args)-4; j++ {
 				if pathBufs[j].IsNull(i) {
+					isNull = true
 					break
 				}
 				pathExpr, err := types.ParseJSONPathExpr(pathBufs[j].GetString(i))
 				if err != nil {
-					return types.ErrInvalidJSONPath.GenWithStackByArgs(pathBufs[j].GetString(i))
+					return err
 				}
 				pathExprs = append(pathExprs, pathExpr)
 			}
 		}
+		if isNull {
+			result.AppendNull()
+			continue
+		}
+
 		bj, isNull, err := jsonBuf.GetJSON(i).Search(containType, searchBuf.GetString(i), escape, pathExprs)
 		if err != nil {
 			return err
@@ -650,8 +663,7 @@ func (b *builtinJSONObjectSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, 
 			var value types.BinaryJSON
 			for j := 0; j < nr; j++ {
 				if keyCol.IsNull(j) {
-					err := errors.New("JSON documents may not contain NULL member names")
-					return err
+					return types.ErrJSONDocumentNULLKey
 				}
 				key = keyCol.GetString(j)
 				if valueCol.IsNull(j) {
@@ -729,7 +741,7 @@ func (b *builtinJSONArrayInsertSig) vecEvalJSON(ctx EvalContext, input *chunk.Ch
 			}
 			pathExpr, err = types.ParseJSONPathExpr(pathBufs[j].GetString(i))
 			if err != nil {
-				return types.ErrInvalidJSONPath.GenWithStackByArgs(pathBufs[j].GetString(i))
+				return err
 			}
 			if pathExpr.CouldMatchMultipleValues() {
 				return types.ErrInvalidJSONPathMultipleSelection
@@ -792,11 +804,6 @@ func (b *builtinJSONKeys2ArgsSig) vecEvalJSON(ctx EvalContext, input *chunk.Chun
 		}
 
 		jsonItem := jsonBuf.GetJSON(i)
-		if jsonItem.TypeCode != types.JSONTypeCodeObject {
-			result.AppendNull()
-			continue
-		}
-
 		res, exists := jsonItem.Extract([]types.JSONPathExpression{pathExpr})
 		if !exists || res.TypeCode != types.JSONTypeCodeObject {
 			result.AppendNull()
@@ -1152,7 +1159,7 @@ func (b *builtinJSONContainsPathSig) vecEvalInt(ctx EvalContext, input *chunk.Ch
 		}
 		containType := strings.ToLower(typeBuf.GetString(i))
 		if containType != types.JSONContainsPathAll && containType != types.JSONContainsPathOne {
-			return types.ErrInvalidJSONContainsPathType
+			return types.ErrJSONBadOneOrAllArg.GenWithStackByArgs("json_contains_path")
 		}
 		obj := jsonBuf.GetJSON(i)
 		contains := int64(1)

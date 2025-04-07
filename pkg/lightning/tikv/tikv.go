@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/tikv/client-go/v2/util"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"

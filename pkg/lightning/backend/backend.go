@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"go.uber.org/zap"
 )
 
@@ -71,11 +71,19 @@ type EngineFileSize struct {
 
 // LocalWriterConfig defines the configuration to open a LocalWriter
 type LocalWriterConfig struct {
-	// is the chunk KV written to this LocalWriter sent in order
-	// only needed for local backend, can omit for tidb backend
-	IsKVSorted bool
-	// only needed for tidb backend, can omit for local backend
-	TableName string
+	// Local backend specified configuration
+	Local struct {
+		// is the chunk KV written to this LocalWriter sent in order
+		IsKVSorted bool
+		// MemCacheSize specifies the estimated memory cache limit used by this local
+		// writer. It has higher priority than BackendConfig.LocalWriterMemCacheSize if
+		// set.
+		MemCacheSize int64
+	}
+	// TiDB backend specified configuration
+	TiDB struct {
+		TableName string
+	}
 }
 
 // EngineConfig defines configuration used for open engine
@@ -90,7 +98,10 @@ type EngineConfig struct {
 	// when opening the engine, instead of removing it.
 	KeepSortDir bool
 	// TS is the preset timestamp of data in the engine. When it's 0, the used TS
-	// will be set lazily.
+	// will be set lazily. This is used by local backend. This field will be written
+	// to engineMeta.TS and take effect in below cases:
+	// - engineManager.openEngine
+	// - engineManager.closeEngine only for an external engine
 	TS uint64
 }
 
@@ -109,18 +120,20 @@ type LocalEngineConfig struct {
 
 // ExternalEngineConfig is the configuration used for local backend external engine.
 type ExternalEngineConfig struct {
-	StorageURI      string
-	DataFiles       []string
-	StatFiles       []string
-	StartKey        []byte
-	EndKey          []byte
-	SplitKeys       [][]byte
-	RegionSplitSize int64
+	StorageURI string
+	DataFiles  []string
+	StatFiles  []string
+	StartKey   []byte
+	EndKey     []byte
+	JobKeys    [][]byte
+	SplitKeys  [][]byte
 	// TotalFileSize can be an estimated value.
 	TotalFileSize int64
 	// TotalKVCount can be an estimated value.
 	TotalKVCount int64
 	CheckHotspot bool
+	// MemCapacity is the memory capacity for the whole subtask.
+	MemCapacity int64
 }
 
 // CheckCtx contains all parameters used in CheckRequirements
@@ -134,9 +147,13 @@ type TargetInfoGetter interface {
 	// the database name is filled.
 	FetchRemoteDBModels(ctx context.Context) ([]*model.DBInfo, error)
 
-	// FetchRemoteTableModels obtains the models of all tables given the schema
-	// name. The returned table info does not need to be precise if the encoder,
-	// is not requiring them, but must at least fill in the following fields for
+	// FetchRemoteTableModels obtains the TableInfo of given tables under the schema
+	// name. It returns a map whose key is the table name in lower case and value is
+	// the TableInfo. If the table does not exist, it will not be included in the
+	// map.
+	//
+	// The returned table info does not need to be precise if the encoder, is not
+	// requiring them, but must at least fill in the following fields for
 	// TablesFromMeta to succeed:
 	//  - Name
 	//  - State (must be model.StatePublic)
@@ -146,7 +163,7 @@ type TargetInfoGetter interface {
 	//     * State (must be model.StatePublic)
 	//     * Offset (must be 0, 1, 2, ...)
 	//  - PKIsHandle (true = do not generate _tidb_rowid)
-	FetchRemoteTableModels(ctx context.Context, schemaName string) ([]*model.TableInfo, error)
+	FetchRemoteTableModels(ctx context.Context, schemaName string, tableNames []string) (map[string]*model.TableInfo, error)
 
 	// CheckRequirements performs the check whether the backend satisfies the version requirements
 	CheckRequirements(ctx context.Context, checkCtx *CheckCtx) error
@@ -200,9 +217,6 @@ type Backend interface {
 	// very expensive operation and should only be used in some rare situation
 	// (e.g. preparing to resolve a disk quota violation).
 	FlushAllEngines(ctx context.Context) error
-
-	// ResetEngine clears all written KV pairs in this opened engine.
-	ResetEngine(ctx context.Context, engineUUID uuid.UUID) error
 
 	// LocalWriter obtains a thread-local EngineWriter for writing rows into the given engine.
 	LocalWriter(ctx context.Context, cfg *LocalWriterConfig, engineUUID uuid.UUID) (EngineWriter, error)
@@ -305,13 +319,6 @@ func (engine *OpenedEngine) Flush(ctx context.Context) error {
 // LocalWriter returns a writer that writes to the local backend.
 func (engine *OpenedEngine) LocalWriter(ctx context.Context, cfg *LocalWriterConfig) (EngineWriter, error) {
 	return engine.backend.LocalWriter(ctx, cfg, engine.uuid)
-}
-
-// SetTS sets the TS of the engine. In most cases if the caller wants to specify
-// TS it should use the TS field in EngineConfig. This method is only used after
-// a ResetEngine.
-func (engine *OpenedEngine) SetTS(ts uint64) {
-	engine.config.TS = ts
 }
 
 // UnsafeCloseEngine closes the engine without first opening it.

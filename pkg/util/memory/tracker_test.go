@@ -66,14 +66,14 @@ func TestConsume(t *testing.T) {
 
 	waitGroup := sync.WaitGroup{}
 	waitGroup.Add(10)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
 			defer waitGroup.Done()
 			tracker.Consume(10)
 		}()
 	}
 	waitGroup.Add(10)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
 			defer waitGroup.Done()
 			tracker.Consume(-10)
@@ -120,14 +120,14 @@ func TestRelease(t *testing.T) {
 	}
 	waitGroup := sync.WaitGroup{}
 	waitGroup.Add(10)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
 			defer waitGroup.Done()
 			tracker.Consume(10)
 		}()
 	}
 	waitGroup.Add(10)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
 			defer waitGroup.Done()
 			tracker.Release(10)
@@ -392,7 +392,7 @@ func TestMaxConsumed(t *testing.T) {
 
 	ts := []*Tracker{r, c1, c2, cc1}
 	var consumed, maxConsumed int64
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tracker := ts[rand.Intn(len(ts))]
 		b := rand.Int63n(1000) - 500
 		if consumed+b < 0 {
@@ -551,18 +551,18 @@ func TestOOMActionPriority(t *testing.T) {
 	tracker.actionMuForHardLimit.actionOnExceed = nil
 	n := 100
 	actions := make([]*mockAction, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		actions[i] = &mockAction{priority: int64(i)}
 	}
 
 	randomShuffle := make([]int, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		randomShuffle[i] = i
 		pos := rand.Int() % (i + 1)
 		randomShuffle[i], randomShuffle[pos] = randomShuffle[pos], randomShuffle[i]
 	}
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		tracker.FallbackOldAndSetNewAction(actions[randomShuffle[i]])
 	}
 	for i := n - 1; i >= 0; i-- {
