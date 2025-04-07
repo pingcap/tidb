@@ -244,13 +244,13 @@ func TestInitStatsMemTraceWithoutLite(t *testing.T) {
 	testInitStatsMemTraceFunc(t, false)
 }
 
-func TestInitStatsMemTraceWithConcurrrencyLite(t *testing.T) {
+func TestInitStatsMemTraceWithConcurrencyLite(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
 	testInitStatsMemTraceFunc(t, true)
 }
 
-func TestInitStatsMemTraceWithoutConcurrrencyLite(t *testing.T) {
+func TestInitStatsMemTraceWithoutConcurrencyLite(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
 	testInitStatsMemTraceFunc(t, false)
