@@ -1900,7 +1900,7 @@ func (do *Domain) SysSessionPool() util.DestroyableSessionPool {
 }
 
 // AdvancedSysSessionPool is a more powerful session pool that returns a wrapped session which can detect
-// some miss-use of the session to avoid potential bugs.
+// some misuse of the session to avoid potential bugs.
 // It is recommended to use this pool instead of `sysSessionPool`.
 func (do *Domain) AdvancedSysSessionPool() syssession.Pool {
 	return do.advancedSysSessionPool
