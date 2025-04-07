@@ -284,6 +284,8 @@ func TestValidator(t *testing.T) {
 		// issue 45674
 		{"alter table t2 add (b int)", true, nil},
 		{"alter table t2 add (b int)", false, infoschema.ErrTableNotExists.GenWithStackByArgs("test", "t2")},
+		{"create index x on t2(x)", true, nil},
+		{"create index x on t2(x)", false, infoschema.ErrTableNotExists.GenWithStackByArgs("test", "t2")},
 	}
 
 	store := testkit.CreateMockStore(t)
