@@ -370,12 +370,15 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.
 		}
 		dataFiles := kvMeta.GetDataFiles()
 		dataFileLen := len(dataFiles)
-		avgFilesPerNode := (dataFileLen + nodeCnt - 1) / nodeCnt
-		step := min(external.MergeSortFileCountStep, avgFilesPerNode)
+		step := external.MergeSortFileCountStep
+		if nodeCnt > 0 {
+			avgFilesPerNode := (dataFileLen + nodeCnt - 1) / nodeCnt
+			step = min(step, avgFilesPerNode)
+		}
 		lastBatch := false
 		for start := 0; start < dataFileLen; start += step {
 			rest := dataFileLen - start
-			if !lastBatch && (start/step)%nodeCnt == 0 && rest < step*nodeCnt {
+			if nodeCnt > 0 && !lastBatch && (start/step)%nodeCnt == 0 && rest < step*nodeCnt {
 				step = (rest + (nodeCnt - 1)) / nodeCnt // ceiling division
 				lastBatch = true
 			}
