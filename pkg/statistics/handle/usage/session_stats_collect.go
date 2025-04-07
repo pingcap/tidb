@@ -45,8 +45,8 @@ var (
 	// dumpStatsMaxDuration is the max duration since last update.
 	dumpStatsMaxDuration = 5 * time.Minute
 
-	// batchInsertSize is the batch size used by internal SQL to insert values to some system table.
-	batchInsertSize = 10
+	// batchInsertSize is the batch size used by internal SQL to insert values to stats usage table.
+	batchInsertSize = 8192
 )
 
 // needDumpStatsDelta checks whether to dump stats delta.
@@ -319,6 +319,11 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 // DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
 func (s *statsUsageImpl) DumpColStatsUsageToKV() error {
 	defer util.Recover(metrics.LabelStats, "DumpColStatsUsageToKV", nil, false)
+	start := time.Now()
+	defer func() {
+		dur := time.Since(start)
+		metrics.StatsUsageUpdateHistogram.Observe(dur.Seconds())
+	}()
 	s.SweepSessionStatsList()
 	colMap := s.SessionStatsUsage().GetUsageAndReset()
 	defer func() {
