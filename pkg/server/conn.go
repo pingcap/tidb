@@ -1340,6 +1340,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 		}
 	}
 	ctx, trace := tracing.NewTrace(ctx, cc.tracebuf)
+	tracing.Log(ctx, getLastStmtInConn{cc}.String())
 	token := cc.server.getToken()
 	defer func() {
 		tracebuf := trace.Close()

@@ -15,12 +15,12 @@
 package tracing
 
 import (
-	"sync"
-	"time"
 	"context"
 	"encoding/json"
 	"fmt"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )

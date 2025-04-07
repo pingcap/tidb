@@ -297,7 +297,7 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 		if planCounter == 0 {
 			planCounter = -1
 		}
-		tmpPhysical, tmpCost, tmpErr := physicalOptimize(oneLogic, &planCounter)
+		tmpPhysical, tmpCost, tmpErr := physicalOptimize(ctx, oneLogic, &planCounter)
 		if tmpErr != nil {
 			err = tmpErr
 			return false
@@ -338,7 +338,7 @@ func VolcanoOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, lo
 	if planCounter == 0 {
 		planCounter = -1
 	}
-	physical, cost, err := physicalOptimize(logic, &planCounter)
+	physical, cost, err := physicalOptimize(ctx, logic, &planCounter)
 	if err != nil {
 		return nil, nil, 0, err
 	}
@@ -1067,6 +1067,7 @@ func normalizeOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan)
 }
 
 func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, error) {
+	defer tracing.StartRegion(ctx, "logicalOptimize").End()
 	if logic.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(logic.SCtx())
 		defer debugtrace.LeaveContextCommon(logic.SCtx())
@@ -1094,7 +1095,9 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 		}
 		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
 		var planChanged bool
+		reg := tracing.StartRegion(ctx, "rule.Optimize:"+rule.Name())
 		logic, planChanged, err = rule.Optimize(ctx, logic, opt)
+		reg.End()
 		if err != nil {
 			return nil, err
 		}
@@ -1108,7 +1111,9 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 	// Trigger the interaction rule
 	for i, rule := range againRuleList {
 		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
+		reg := tracing.StartRegion(ctx, "rule.Optimize:"+rule.Name())
 		logic, _, err = rule.Optimize(ctx, logic, opt)
+		reg.End()
 		if err != nil {
 			return nil, err
 		}
@@ -1123,7 +1128,8 @@ func isLogicalRuleDisabled(r base.LogicalOptRule) bool {
 	return disabled
 }
 
-func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (plan base.PhysicalPlan, cost float64, err error) {
+func physicalOptimize(ctx context.Context, logic base.LogicalPlan, planCounter *base.PlanCounterTp) (plan base.PhysicalPlan, cost float64, err error) {
+	defer tracing.StartRegion(ctx, "physicalOptimize").End()
 	if logic.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(logic.SCtx())
 		defer debugtrace.LeaveContextCommon(logic.SCtx())

@@ -34,6 +34,7 @@ const (
 	PhaseAsyncEnd   Phase = "e"
 	PhaseFlowBegin  Phase = "s"
 	PhaseFlowEnd    Phase = "f"
+	PhaseInstant    Phase = "i"
 )
 
 func getTraceContext(ctx context.Context) (traceContext, bool) {
@@ -62,7 +63,7 @@ type Span struct {
 // StartSpan starts a trace event with the given name. The Span ends when its Done method is called.
 func StartSpan(ctx context.Context, name string) Span {
 	tc, ok := getTraceContext(ctx)
-	if !ok {
+	if !ok || tc.t == nil {
 		return Span{}
 	}
 
@@ -75,6 +76,21 @@ func StartSpan(ctx context.Context, name string) Span {
 	}
 	tc.t.record(event)
 	return Span{traceContext: tc, name: name}
+}
+
+func Log(ctx context.Context, name string) {
+	tc, ok := getTraceContext(ctx)
+	if !ok || tc.t == nil {
+		return
+	}
+	event := Event{
+		Name:  name,
+		Phase: PhaseInstant,
+		Ts:    time.Now().UnixMicro(),
+		PID:   tc.t.pid,
+		TID:   tc.tid,
+	}
+	tc.t.record(event)
 }
 
 func (s *Span) Done() {
@@ -145,7 +161,7 @@ type Flow struct {
 
 func StartFlow(ctx context.Context, name string) Flow {
 	tc, ok := getTraceContext(ctx)
-	if !ok {
+	if !ok || tc.t == nil {
 		return Flow{}
 	}
 
@@ -184,7 +200,7 @@ var (
 	nextID  atomic.Uint64
 )
 
-func getNextTID() uint64 {
+func GetNextTID() uint64 {
 	return nextTID.Add(1)
 }
 
@@ -213,28 +229,24 @@ func NewTrace(ctx context.Context, buf []Event) (context.Context, *Trace) {
 	t := &Trace{
 		events: buf,
 	}
-	ctx = context.WithValue(ctx, traceKey{}, traceContext{t, getNextTID()})
+	ctx = context.WithValue(ctx, traceKey{}, traceContext{t, GetNextTID()})
 	return ctx, t
 }
 
-func WithTrace(ctx context.Context, t *Trace) context.Context {
-	tc, ok := getTraceContext(ctx)
-	if !ok {
-		return context.WithValue(ctx, traceKey{}, traceContext{t, getNextTID()})
+func WithTraceContext(ctx context.Context, t *Trace, tid uint64) context.Context {
+	if t == nil {
+		tc, ok := getTraceContext(ctx)
+		if ok {
+			t = tc.t
+		}
 	}
-	return context.WithValue(ctx, traceKey{}, traceContext{t, tc.tid})
-}
-
-// SetTID associates the context with a new Thread ID. The Chrome trace viewer associates each
-// trace event with a thread, and doesn't expect events with the same thread id to happen at the
-// same time.
-func SetTID(ctx context.Context) context.Context {
-	_, ok := getTraceContext(ctx)
-	if ok {
-		// Has trace context already
-		return ctx
+	if tid == 0 {
+		tc, ok := getTraceContext(ctx)
+		if ok {
+			tid = tc.tid
+		}
 	}
-	return context.WithValue(ctx, traceKey{}, traceContext{tid: getNextTID()})
+	return context.WithValue(ctx, traceKey{}, traceContext{t, tid})
 }
 
 func (t *Trace) record(ev Event) {

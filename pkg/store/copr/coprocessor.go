@@ -85,6 +85,7 @@ type CopClient struct {
 
 // Send builds the request and gets the coprocessor iterator response.
 func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables any, option *kv.ClientSendOption) kv.Response {
+	defer tracing.StartRegion(ctx, "CopClient.Send").End()
 	vars, ok := variables.(*tikv.Variables)
 	if !ok {
 		return copErrorResponse{errors.Errorf("unsupported variables:%+v", variables)}
@@ -152,7 +153,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		if tryRowHint {
 			buildOpt.rowHints = hints
 		}
-		tasksFromRanges, err := buildCopTasks(bo, keyRanges, buildOpt)
+		tasksFromRanges, err := buildCopTasks(ctx, bo, keyRanges, buildOpt)
 		if err != nil {
 			return err
 		}
@@ -331,10 +332,10 @@ type buildCopTaskOpt struct {
 	ignoreTiKVClientReadTimeout bool
 }
 
-func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*copTask, error) {
+func buildCopTasks(ctx context.Context, bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*copTask, error) {
 	req, cache, eventCb, hints := opt.req, opt.cache, opt.eventCb, opt.rowHints
 	start := time.Now()
-	defer tracing.StartRegion(bo.GetCtx(), "copr.buildCopTasks").End()
+	defer tracing.StartRegion(ctx, "copr.buildCopTasks").End()
 	cmdType := tikvrpc.CmdCop
 	if req.StoreType == kv.TiDB {
 		return buildTiDBMemCopTasks(ranges, req)
@@ -777,6 +778,7 @@ type copResponse struct {
 	err      error
 	respSize int64
 	respTime time.Duration
+	flow     tracing.Flow
 }
 
 type copTaskResult struct {
@@ -840,7 +842,9 @@ func init() {
 // run is a worker function that get a copTask from channel, handle it and
 // send the result back.
 func (worker *copIteratorWorker) run(ctx context.Context) {
+	r := tracing.StartRegion(ctx, "copIteratorWorker.run")
 	defer func() {
+		r.End()
 		failpoint.Inject("ticase-4169", func(val failpoint.Value) {
 			if val.(bool) {
 				worker.memTracker.Consume(10 * MockResponseSizeForTest)
@@ -862,7 +866,7 @@ func (worker *copIteratorWorker) run(ctx context.Context) {
 		if worker.respChan != nil {
 			// When a task is finished by the worker, send a finCopResp into channel to notify the copIterator that
 			// there is a task finished.
-			worker.sendToRespCh(finCopResp, worker.respChan)
+			worker.sendToRespCh(ctx, finCopResp, worker.respChan)
 		}
 		if task.respChan != nil {
 			close(task.respChan)
@@ -879,6 +883,7 @@ func (it *copIterator) open(ctx context.Context, tryCopLiteWorker *atomic2.Uint3
 	if len(it.tasks) == 1 && tryCopLiteWorker != nil && tryCopLiteWorker.CompareAndSwap(0, 1) {
 		// For a query, only one `copIterator` can use `liteWorker`, otherwise it will affect the performance of multiple cop iterators executed concurrently,
 		// see more detail in TestQueryWithConcurrentSmallCop.
+		ctx = tracing.WithTraceContext(ctx, nil, tracing.GetNextTID())
 		it.liteWorker = &liteCopIteratorWorker{
 			ctx:              ctx,
 			worker:           newCopIteratorWorker(it, nil),
@@ -892,6 +897,7 @@ func (it *copIterator) open(ctx context.Context, tryCopLiteWorker *atomic2.Uint3
 	if it.smallTaskConcurrency > 0 {
 		smallTaskCh = make(chan *copTask, 1)
 	}
+	ctx1 := tracing.WithTraceContext(ctx, nil, tracing.GetNextTID())
 	// Start it.concurrency number of workers to handle cop requests.
 	for i := 0; i < it.concurrency+it.smallTaskConcurrency; i++ {
 		ch := taskCh
@@ -899,7 +905,7 @@ func (it *copIterator) open(ctx context.Context, tryCopLiteWorker *atomic2.Uint3
 			ch = smallTaskCh
 		}
 		worker := newCopIteratorWorker(it, ch)
-		go worker.run(ctx)
+		go worker.run(ctx1)
 	}
 	taskSender := &copIteratorTaskSender{
 		taskCh:      taskCh,
@@ -985,6 +991,10 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 		select {
 		case resp, ok = <-respCh:
 			memTrackerConsumeResp(it.memTracker, resp)
+			if ok {
+				resp.flow.Done(ctx)
+			}
+			defer tracing.StartRegion(ctx, "copIterator.recvFromRespCh").End()
 			return
 		case <-it.finishCh:
 			exit = true
@@ -1048,9 +1058,13 @@ func (sender *copIteratorTaskSender) sendToTaskCh(t *copTask, sendTo chan<- *cop
 	return
 }
 
-func (worker *copIteratorWorker) sendToRespCh(resp *copResponse, respCh chan<- *copResponse) (exit bool) {
+func (worker *copIteratorWorker) sendToRespCh(ctx context.Context, resp *copResponse, respCh chan<- *copResponse) (exit bool) {
+	defer tracing.StartRegion(ctx, "copIteratorWorker.sendToRespCh").End()
+	flow := tracing.StartFlow(ctx, "copIteratorWorker.sendToRespChFlow->")
+	resp.flow = flow
 	select {
 	case respCh <- resp:
+
 	case <-worker.finishCh:
 		exit = true
 	}
@@ -1078,6 +1092,8 @@ const MockResponseSizeForTest = 100 * 1024 * 1024
 // Next returns next coprocessor result.
 // NOTE: Use nil to indicate finish, so if the returned ResultSubset is not nil, reader should continue to call Next().
 func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
+	defer tracing.StartRegion(ctx, "copIterator.Next").End()
+
 	var (
 		resp   *copResponse
 		ok     bool
@@ -1174,6 +1190,8 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 }
 
 func (w *liteCopIteratorWorker) liteSendReq(ctx context.Context, it *copIterator) (resp *copResponse) {
+	defer tracing.StartRegion(ctx, "liteCopIteratorWorker.liteSendReq").End()
+
 	defer func() {
 		r := recover()
 		if r != nil {
@@ -1194,7 +1212,7 @@ func (w *liteCopIteratorWorker) liteSendReq(ctx context.Context, it *copIterator
 	for len(it.tasks) > 0 {
 		curTask := it.tasks[0]
 		bo := chooseBackoffer(w.ctx, backoffermap, curTask, worker)
-		result, err := worker.handleTaskOnce(bo, curTask)
+		result, err := worker.handleTaskOnce(ctx, bo, curTask)
 		if err != nil {
 			resp = &copResponse{err: errors.Trace(err)}
 			worker.checkRespOOM(resp)
@@ -1294,7 +1312,7 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 				zap.Stack("stack trace"))
 			resp := &copResponse{err: util2.GetRecoverError(r)}
 			// if panic has happened, not checkRespOOM to avoid another panic.
-			worker.sendToRespCh(resp, respCh)
+			worker.sendToRespCh(ctx, resp, respCh)
 		}
 	}()
 	remainTasks := []*copTask{task}
@@ -1302,19 +1320,19 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 	for len(remainTasks) > 0 {
 		curTask := remainTasks[0]
 		bo := chooseBackoffer(ctx, backoffermap, curTask, worker)
-		result, err := worker.handleTaskOnce(bo, curTask)
+		result, err := worker.handleTaskOnce(ctx, bo, curTask)
 		if err != nil {
 			resp := &copResponse{err: errors.Trace(err)}
 			worker.checkRespOOM(resp)
-			worker.sendToRespCh(resp, respCh)
+			worker.sendToRespCh(ctx, resp, respCh)
 			return
 		}
 		if result != nil {
 			if result.resp != nil {
-				worker.sendToRespCh(result.resp, respCh)
+				worker.sendToRespCh(ctx, result.resp, respCh)
 			}
 			for _, resp := range result.batchRespList {
-				worker.sendToRespCh(resp, respCh)
+				worker.sendToRespCh(ctx, resp, respCh)
 			}
 		}
 		if worker.finished() {
@@ -1330,7 +1348,8 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 
 // handleTaskOnce handles single copTask, successful results are send to channel.
 // If error happened, returns error. If region split or meet lock, returns the remain tasks.
-func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*copTaskResult, error) {
+func (worker *copIteratorWorker) handleTaskOnce(ctx context.Context, bo *Backoffer, task *copTask) (*copTaskResult, error) {
+	defer tracing.StartRegion(ctx, "copIteratorWorker.handleTaskOnce").End()
 	failpoint.Inject("handleTaskOnceError", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil, errors.New("mock handleTaskOnce error"))
@@ -1420,8 +1439,12 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		req.ReplicaReadType = options.GetTiKVReplicaReadType(kv.ReplicaReadFollower)
 		ops = append(ops, tikv.WithMatchStores([]uint64{*task.redirect2Replica}))
 	}
+
+	t := tracing.StartRegion(ctx, "kvclient.SendReqCtx")
 	resp, rpcCtx, storeAddr, err := worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), req, task.region,
 		timeout, getEndPointType(task.storeType), task.storeAddr, ops...)
+	t.End()
+
 	err = derr.ToTiDBErr(err)
 	if worker.req.RunawayChecker != nil {
 		err = worker.req.RunawayChecker.CheckThresholds(nil, 0, err)
@@ -1450,10 +1473,10 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 
 	var result *copTaskResult
 	if worker.req.Paging.Enable {
-		result, err = worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, costTime)
+		result, err = worker.handleCopPagingResult(ctx, bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, costTime)
 	} else {
 		// Handles the response for non-paging copTask.
-		result, err = worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, costTime)
+		result, err = worker.handleCopResponse(ctx, bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, costTime)
 	}
 	if req.ReadType != "" && result != nil {
 		for _, remain := range result.remains {
@@ -1522,8 +1545,10 @@ func appendScanDetail(logStr string, columnFamily string, scanInfo *kvrpcpb.Scan
 	return logStr
 }
 
-func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, costTime time.Duration) (*copTaskResult, error) {
-	result, err := worker.handleCopResponse(bo, rpcCtx, resp, cacheKey, cacheValue, task, costTime)
+func (worker *copIteratorWorker) handleCopPagingResult(ctx context.Context, bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, costTime time.Duration) (*copTaskResult, error) {
+	defer tracing.StartRegion(ctx, "copIteratorWorker.handleCopPagingResult").End()
+
+	result, err := worker.handleCopResponse(ctx, bo, rpcCtx, resp, cacheKey, cacheValue, task, costTime)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1557,7 +1582,9 @@ func (worker *copIteratorWorker) handleCopPagingResult(bo *Backoffer, rpcCtx *ti
 // returns more tasks when that happens, or handles the response if no error.
 // if we're handling coprocessor paging response, lastRange is the range of last
 // successful response, otherwise it's nil.
-func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, costTime time.Duration) (*copTaskResult, error) {
+func (worker *copIteratorWorker) handleCopResponse(ctx context.Context, bo *Backoffer, rpcCtx *tikv.RPCContext, resp *copResponse, cacheKey []byte, cacheValue *coprCacheValue, task *copTask, costTime time.Duration) (*copTaskResult, error) {
+	defer tracing.StartRegion(ctx, "copIteratorWorker.handleCopResponse").End()
+
 	if ver := resp.pbResp.GetLatestBucketsVersion(); task.bucketsVer < ver {
 		worker.store.GetRegionCache().UpdateBucketsIfNeeded(task.region, ver)
 	}
@@ -1573,7 +1600,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			return nil, errors.Trace(err)
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
-		remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
+		remains, err := buildCopTasks(ctx, bo, task.ranges, &buildCopTaskOpt{
 			req:                         worker.req,
 			cache:                       worker.store.GetRegionCache(),
 			respChan:                    false,
@@ -1583,14 +1610,14 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		if err != nil {
 			return nil, err
 		}
-		return worker.handleBatchRemainsOnErr(bo, rpcCtx, remains, resp.pbResp, task)
+		return worker.handleBatchRemainsOnErr(ctx, bo, rpcCtx, remains, resp.pbResp, task)
 	}
 	if lockErr := resp.pbResp.GetLocked(); lockErr != nil {
 		if err := worker.handleLockErr(bo, lockErr, task); err != nil {
 			return nil, err
 		}
 		task.meetLockFallback = true
-		return worker.handleBatchRemainsOnErr(bo, rpcCtx, []*copTask{task}, resp.pbResp, task)
+		return worker.handleBatchRemainsOnErr(ctx, bo, rpcCtx, []*copTask{task}, resp.pbResp, task)
 	}
 	if otherErr := resp.pbResp.GetOtherError(); otherErr != "" {
 		err := errors.Errorf("other error: %s", otherErr)
@@ -1632,7 +1659,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 
 	worker.checkRespOOM(resp)
 	result := &copTaskResult{resp: resp}
-	batchRespList, batchRemainTasks, err := worker.handleBatchCopResponse(bo, rpcCtx, resp.pbResp, task.batchTaskList)
+	batchRespList, batchRemainTasks, err := worker.handleBatchCopResponse(ctx, bo, rpcCtx, resp.pbResp, task.batchTaskList)
 	if err != nil {
 		return result, err
 	}
@@ -1641,13 +1668,13 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	return result, nil
 }
 
-func (worker *copIteratorWorker) handleBatchRemainsOnErr(bo *Backoffer, rpcCtx *tikv.RPCContext, remains []*copTask, resp *coprocessor.Response, task *copTask) (*copTaskResult, error) {
+func (worker *copIteratorWorker) handleBatchRemainsOnErr(ctx context.Context, bo *Backoffer, rpcCtx *tikv.RPCContext, remains []*copTask, resp *coprocessor.Response, task *copTask) (*copTaskResult, error) {
 	if len(task.batchTaskList) == 0 {
 		return &copTaskResult{remains: remains}, nil
 	}
 	batchedTasks := task.batchTaskList
 	task.batchTaskList = nil
-	batchRespList, remainTasks, err := worker.handleBatchCopResponse(bo, rpcCtx, resp, batchedTasks)
+	batchRespList, remainTasks, err := worker.handleBatchCopResponse(ctx, bo, rpcCtx, resp, batchedTasks)
 	if err != nil {
 		return nil, err
 	}
@@ -1659,7 +1686,7 @@ func (worker *copIteratorWorker) handleBatchRemainsOnErr(bo *Backoffer, rpcCtx *
 
 // handle the batched cop response.
 // tasks will be changed, so the input tasks should not be used after calling this function.
-func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *tikv.RPCContext, resp *coprocessor.Response,
+func (worker *copIteratorWorker) handleBatchCopResponse(ctx context.Context, bo *Backoffer, rpcCtx *tikv.RPCContext, resp *coprocessor.Response,
 	tasks map[uint64]*batchedCopTask) (batchRespList []*copResponse, remainTasks []*copTask, err error) {
 	if len(tasks) == 0 {
 		return nil, nil, nil
@@ -1714,7 +1741,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
 				return batchRespList, nil, errors.Trace(err)
 			}
-			remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
+			remains, err := buildCopTasks(ctx, bo, task.ranges, &buildCopTaskOpt{
 				req:                         worker.req,
 				cache:                       worker.store.GetRegionCache(),
 				respChan:                    false,

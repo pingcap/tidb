@@ -2527,6 +2527,7 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 	if !active {
 		return &s.txn, nil
 	}
+
 	_, err := sessiontxn.GetTxnManager(s).ActivateTxn()
 	s.SetMemoryFootprintChangeHook()
 	return &s.txn, err
