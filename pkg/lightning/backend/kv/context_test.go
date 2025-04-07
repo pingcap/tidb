@@ -250,17 +250,8 @@ func TestLitTableMutateContext(t *testing.T) {
 		stats, ok := tblCtx.GetStatisticsSupport()
 		require.True(t, ok)
 		// test for `UpdatePhysicalTableDelta` and `GetColumnSize`
-		stats.UpdatePhysicalTableDelta(123, 5, 2, variable.DeltaColsMap{1: 2, 3: 4})
-		r := tblCtx.GetColumnSize(123)
-		require.Equal(t, map[int64]int64{1: 2, 3: 4}, r)
-		stats.UpdatePhysicalTableDelta(123, 8, 2, variable.DeltaColsMap{3: 5, 4: 3})
-		r = tblCtx.GetColumnSize(123)
-		require.Equal(t, map[int64]int64{1: 2, 3: 9, 4: 3}, r)
-		// the result should be a cloned value
-		r[1] = 100
-		require.Equal(t, map[int64]int64{1: 2, 3: 9, 4: 3}, tblCtx.GetColumnSize(123))
-		// test gets a non-existed table
-		require.Empty(t, tblCtx.GetColumnSize(456))
+		stats.UpdatePhysicalTableDelta(123, 5, 2)
+		stats.UpdatePhysicalTableDelta(123, 8, 2)
 	}
 
 	// test for default

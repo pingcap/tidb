@@ -123,8 +123,8 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 	return
 }
 
-// SaveTableStatsToStorage saves the stats of a table to storage.
-func SaveTableStatsToStorage(sctx sessionctx.Context,
+// SaveAnalyzeResultToStorage saves the analyze result to the storage.
+func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 	results *statistics.AnalyzeResults, analyzeSnapshot bool) (statsVer uint64, err error) {
 	needDumpFMS := results.TableID.IsPartitionTable()
 	tableID := results.TableID.GetStatisticsID()
@@ -324,11 +324,11 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 	return
 }
 
-// SaveStatsToStorage saves the stats to storage.
+// SaveColOrIdxStatsToStorage saves the column or index statistics to the storage.
 // If count is negative, both count and modify count would not be used and not be written to the table. Unless, corresponding
 // fields in the stats_meta table will be updated.
 // TODO: refactor to reduce the number of parameters
-func SaveStatsToStorage(
+func SaveColOrIdxStatsToStorage(
 	sctx sessionctx.Context,
 	tableID int64,
 	count, modifyCount int64,
@@ -478,7 +478,7 @@ func InsertColStats2KV(
 			continue
 		}
 
-		// If this stats exists, we insert histogram meta first, the distinct_count will always be one.
+		// If this stats doest not exist, we insert histogram meta first, the distinct_count will always be one.
 		if _, err = util.ExecWithCtx(
 			ctx, sctx,
 			`insert into mysql.stats_histograms
@@ -521,7 +521,7 @@ func InsertTableStats2KV(
 	}
 	if _, err = util.ExecWithCtx(
 		ctx, sctx,
-		"insert into mysql.stats_meta (version, table_id) values(%?, %?)",
+		"insert ignore into mysql.stats_meta (version, table_id) values(%?, %?)",
 		startTS, physicalID,
 	); err != nil {
 		return 0, errors.Trace(err)
@@ -529,7 +529,7 @@ func InsertTableStats2KV(
 	for _, col := range info.Columns {
 		if _, err = util.ExecWithCtx(
 			ctx, sctx,
-			`insert into mysql.stats_histograms
+			`insert ignore into mysql.stats_histograms
 				(table_id, is_index, hist_id, distinct_count, version)
 			values (%?, 0, %?, 0, %?)`,
 			physicalID, col.ID, startTS,
@@ -540,7 +540,7 @@ func InsertTableStats2KV(
 	for _, idx := range info.Indices {
 		if _, err = util.ExecWithCtx(
 			ctx, sctx,
-			`insert into mysql.stats_histograms
+			`insert ignore into mysql.stats_histograms
 				(table_id, is_index, hist_id, distinct_count, version)
 			values(%?, 1, %?, 0, %?)`,
 			physicalID, idx.ID, startTS,

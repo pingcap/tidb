@@ -108,8 +108,8 @@ type IndexUsage interface {
 
 // StatsHistory is used to manage historical stats.
 type StatsHistory interface {
-	// RecordHistoricalStatsMeta records stats meta of the specified version to stats_meta_history.
-	RecordHistoricalStatsMeta(tableID int64, version uint64, source string, enforce bool)
+	// RecordHistoricalStatsMeta records the historical stats meta in mysql.stats_meta_history one by one.
+	RecordHistoricalStatsMeta(version uint64, source string, enforce bool, tableIDs ...int64)
 
 	// CheckHistoricalStatsEnable check whether historical stats is enabled.
 	CheckHistoricalStatsEnable() (enable bool, err error)
@@ -342,12 +342,12 @@ type StatsReadWriter interface {
 	// ReloadExtendedStatistics drops the cache for extended statistics and reload data from mysql.stats_extended.
 	ReloadExtendedStatistics() error
 
-	// SaveStatsToStorage save the stats data to the storage.
-	SaveStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
+	// SaveColOrIdxStatsToStorage save the column or index stats to storage.
+	SaveColOrIdxStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
 		cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool, source string) (err error)
 
-	// SaveTableStatsToStorage saves the stats of a table to storage.
-	SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error)
+	// SaveAnalyzeResultToStorage saves the analyze result to the storage.
+	SaveAnalyzeResultToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error)
 
 	// SaveMetaToStorage saves the stats meta of a table to storage.
 	SaveMetaToStorage(tableID, count, modifyCount int64, source string) (err error)

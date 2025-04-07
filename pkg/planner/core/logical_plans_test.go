@@ -115,7 +115,7 @@ func createPlannerSuite() (s *plannerSuite) {
 	}
 	ctx.GetSessionVars().CurrentDB = "test"
 	do := domain.NewMockDomain()
-	if err := do.CreateStatsHandle(ctx, initStatsCtx); err != nil {
+	if err := do.CreateStatsHandle(context.Background(), initStatsCtx); err != nil {
 		panic(fmt.Sprintf("create mock context panic: %+v", err))
 	}
 	domain.BindDomain(ctx, do)
@@ -2538,7 +2538,7 @@ func TestPruneColumnsForDelete(t *testing.T) {
 			ret := make([][]string, 0, len(deletePlan.TblColPosInfos))
 			for _, colsLayout := range deletePlan.TblColPosInfos {
 				innerRet := make([]string, 0, len(colsLayout.IndexesRowLayout)*2+2)
-				if colsLayout.ExtraPartialRowOption.IndexesRowLayout == nil {
+				if colsLayout.IndexesRowLayout == nil {
 					sb.Reset()
 					fmt.Fprintf(&sb, "no column-pruning happened")
 					innerRet = append(innerRet, sb.String())

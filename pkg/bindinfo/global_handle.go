@@ -110,7 +110,7 @@ type GlobalBindingHandle interface {
 
 // globalBindingHandle is used to handle all global sql bind operations.
 type globalBindingHandle struct {
-	sPool util.SessionPool
+	sPool util.DestroyableSessionPool
 
 	fuzzyBindingCache atomic.Value
 
@@ -150,7 +150,7 @@ const (
 )
 
 // NewGlobalBindingHandle creates a new GlobalBindingHandle.
-func NewGlobalBindingHandle(sPool util.SessionPool) GlobalBindingHandle {
+func NewGlobalBindingHandle(sPool util.DestroyableSessionPool) GlobalBindingHandle {
 	handle := &globalBindingHandle{sPool: sPool}
 	handle.Reset()
 	return handle
@@ -683,6 +683,9 @@ func (h *globalBindingHandle) callWithSCtx(wrapTxn bool, f func(sctx sessionctx.
 	defer func() {
 		if err == nil { // only recycle when no error
 			h.sPool.Put(resource)
+		} else {
+			// Note: Otherwise, the session will be leaked.
+			h.sPool.Destroy(resource)
 		}
 	}()
 	sctx := resource.(sessionctx.Context)

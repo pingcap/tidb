@@ -9,7 +9,6 @@ go_library(
         "job.go",
         "kv_encode.go",
         "precheck.go",
-        "progress.go",
         "table_import.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/executor/importer",

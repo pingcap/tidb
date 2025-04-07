@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
@@ -2165,6 +2166,7 @@ func TestIssue48257(t *testing.T) {
 
 	// 1. test sync load
 	tk.MustExec("create table t(a int)")
+	testutil.HandleNextDDLEventWithTxn(h)
 	tk.MustExec("insert into t value(1)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
@@ -2190,6 +2192,7 @@ func TestIssue48257(t *testing.T) {
 	// 2. test async load
 	tk.MustExec("set tidb_stats_load_sync_wait = 0")
 	tk.MustExec("create table t1(a int)")
+	testutil.HandleNextDDLEventWithTxn(h)
 	tk.MustExec("insert into t1 value(1)")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))

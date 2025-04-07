@@ -1576,6 +1576,12 @@ func rehash(oldHashValue uint64, rehashBuf []byte, hash hash.Hash64) uint64 {
 	return hash.Sum64()
 }
 
+func issue59377Intest(err *error) {
+	failpoint.Inject("Issue59377", func() {
+		*err = errors.New("Random failpoint error is triggered")
+	})
+}
+
 func triggerIntest(errProbability int) error {
 	failpoint.Inject("slowWorkers", func(val failpoint.Value) {
 		if val.(bool) {

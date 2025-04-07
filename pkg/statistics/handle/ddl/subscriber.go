@@ -304,9 +304,9 @@ func (h subscriber) recordHistoricalStatsMeta(
 	return history.RecordHistoricalStatsMeta(
 		ctx,
 		sctx,
-		id,
 		startTS,
 		util.StatsMetaHistorySourceSchemaChange,
+		id,
 	)
 }
 
@@ -315,7 +315,7 @@ func (h subscriber) delayedDeleteStats4PhysicalID(
 	sctx sessionctx.Context,
 	id int64,
 ) error {
-	startTS, err2 := storage.UpdateStatsMetaVersionForGC(ctx, sctx, id)
+	startTS, err2 := storage.UpdateStatsMetaVersion(ctx, sctx, id)
 	if err2 != nil {
 		return errors.Trace(err2)
 	}
@@ -413,9 +413,7 @@ func updateGlobalTableStats4DropPartition(
 		ctx,
 		sctx,
 		startTS,
-		variable.TableDelta{Count: count, Delta: delta},
-		globalTableInfo.ID,
-		isLocked,
+		storage.NewDeltaUpdate(globalTableInfo.ID, variable.TableDelta{Count: count, Delta: delta}, isLocked),
 	))
 }
 
@@ -597,9 +595,7 @@ func updateGlobalTableStats4TruncatePartition(
 		ctx,
 		sctx,
 		startTS,
-		variable.TableDelta{Count: count, Delta: delta},
-		globalTableInfo.ID,
-		isLocked,
+		storage.NewDeltaUpdate(globalTableInfo.ID, variable.TableDelta{Count: count, Delta: delta}, isLocked),
 	)
 	if err != nil {
 		fields := truncatePartitionsLogFields(

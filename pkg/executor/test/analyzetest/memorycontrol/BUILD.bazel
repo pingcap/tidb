@@ -15,6 +15,7 @@ go_test(
         "//pkg/executor",
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
+        "//pkg/statistics/handle/ddl/testutil",
         "//pkg/testkit",
         "//pkg/util",
         "@com_github_pingcap_failpoint//:failpoint",

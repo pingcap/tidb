@@ -250,3 +250,27 @@ func TestReorganizePartitionRollback(t *testing.T) {
 	// test then add index should success
 	tk.MustExec("alter table t1 add index idx_kc (k, c)")
 }
+
+func TestUpdateDuringAddColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (c1 int, c2 int) partition by hash (c1) partitions 16")
+	tk.MustExec("insert t1 values (1, 1), (2, 2)")
+	tk.MustExec("create table t2 (c1 int, c2 int) partition by hash (c1) partitions 16")
+	tk.MustExec("insert t2 values (1, 3), (2, 5)")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+		if job.SchemaState == model.StateWriteOnly {
+			tk2.MustExec("update t1, t2 set t1.c1 = 8, t2.c2 = 10 where t1.c2 = t2.c1")
+			tk2.MustQuery("select * from t1").Sort().Check(testkit.Rows("8 1", "8 2"))
+			tk2.MustQuery("select * from t2").Sort().Check(testkit.Rows("1 10", "2 10"))
+		}
+	})
+
+	tk.MustExec("alter table t1 add column c3 bigint default 9")
+
+	tk.MustQuery("select * from t1").Sort().Check(testkit.Rows("8 1 9", "8 2 9"))
+}
