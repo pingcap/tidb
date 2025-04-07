@@ -41,7 +41,6 @@ go_library(
     deps = [
         "//pkg/expression",
         "//pkg/expression/aggregation",
-        "//pkg/expression/exprctx",
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/meta/model",

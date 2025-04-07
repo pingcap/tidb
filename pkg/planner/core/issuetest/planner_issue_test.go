@@ -167,20 +167,20 @@ FROM
 INNER JOIN
     (SELECT 1 AS c1, 100 AS c3 UNION SELECT NULL AS c1, NULL AS c3) AS base2
 ON base.c1 <=> base2.c1;
-`).Check(testkit.Rows("Projection 2.00 root  Column#5, Column#6, Column#11, Column#12",
-		"└─HashJoin 2.00 root  inner join, equal:[nulleq(Column#11, Column#5)]",
-		"  ├─HashAgg(Build) 2.00 root  group by:Column#5, Column#6, funcs:firstrow(Column#5)->Column#5, funcs:firstrow(Column#6)->Column#6",
-		"  │ └─Union 2.00 root  ",
-		"  │   ├─HashAgg 1.00 root  group by:1, funcs:firstrow(1)->Column#1, funcs:firstrow(\"Alice\")->Column#2",
-		"  │   │ └─TableDual 1.00 root  rows:1",
-		"  │   └─Projection 1.00 root  <nil>->Column#5, Bob->Column#6",
-		"  │     └─TableDual 1.00 root  rows:1",
-		"  └─HashAgg(Probe) 2.00 root  group by:Column#11, Column#12, funcs:firstrow(Column#11)->Column#11, funcs:firstrow(Column#12)->Column#12",
-		"    └─Union 2.00 root  ",
-		"      ├─Projection 1.00 root  1->Column#11, 100->Column#12",
-		"      │ └─TableDual 1.00 root  rows:1",
-		"      └─Projection 1.00 root  <nil>->Column#11, <nil>->Column#12",
-		"        └─TableDual 1.00 root  rows:1"))
+`).Check(testkit.Rows(
+		"HashJoin 2.00 root  inner join, equal:[nulleq(Column#5, Column#11)]",
+		"├─HashAgg(Build) 2.00 root  group by:Column#5, Column#6, funcs:firstrow(Column#5)->Column#5, funcs:firstrow(Column#6)->Column#6",
+		"│ └─Union 2.00 root  ",
+		"│   ├─HashAgg 1.00 root  group by:1, funcs:firstrow(1)->Column#1, funcs:firstrow(\"Alice\")->Column#2",
+		"│   │ └─TableDual 1.00 root  rows:1",
+		"│   └─Projection 1.00 root  <nil>->Column#5, Bob->Column#6",
+		"│     └─TableDual 1.00 root  rows:1",
+		"└─HashAgg(Probe) 2.00 root  group by:Column#11, Column#12, funcs:firstrow(Column#11)->Column#11, funcs:firstrow(Column#12)->Column#12",
+		"  └─Union 2.00 root  ",
+		"    ├─Projection 1.00 root  1->Column#11, 100->Column#12",
+		"    │ └─TableDual 1.00 root  rows:1",
+		"    └─Projection 1.00 root  <nil>->Column#11, <nil>->Column#12",
+		"      └─TableDual 1.00 root  rows:1"))
 	tk.MustQuery(`SELECT
     base.c1,
     base.c2,

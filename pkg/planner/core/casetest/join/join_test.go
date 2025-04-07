@@ -113,6 +113,7 @@ func TestJoinWithNullEQ(t *testing.T) {
 		"    └─TableReader_21(Probe) 9990.00 root  data:Selection_20",
 		"      └─Selection_20 9990.00 cop[tikv]  not(isnull(test.t1.v1))",
 		"        └─TableFullScan_19 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+
 	// https://github.com/pingcap/tidb/issues/60322
 	tk.MustExec("CREATE TABLE tt0(c0 BOOL );")
 	tk.MustExec("CREATE TABLE tt1(c0 CHAR );")
@@ -122,17 +123,16 @@ func TestJoinWithNullEQ(t *testing.T) {
          LEFT JOIN (SELECT (0) AS col_0
                           FROM tt0) as subQuery1 ON ((subQuery1.col_0) = (tt1.c0))
          INNER JOIN tt0 ON (subQuery1.col_0 <=> tt0.c0);`).Check(testkit.Rows(
-		"Projection_14 125000000.00 root  test.tt1.c0, Column#5, test.tt0.c0",
-		"└─HashJoin_16 125000000.00 root  CARTESIAN inner join, other cond:nulleq(Column#5, test.tt0.c0)",
-		"  ├─TableReader_18(Build) 10000.00 root  data:TableFullScan_17",
-		"  │ └─TableFullScan_17 10000.00 cop[tikv] table:tt0 keep order:false, stats:pseudo",
-		"  └─HashJoin_20(Probe) 12500.00 root  left outer join, left side:Projection_21, equal:[eq(Column#8, Column#9)]",
-		"    ├─Projection_21(Build) 10000.00 root  test.tt1.c0, cast(test.tt1.c0, double BINARY)->Column#8",
-		"    │ └─TableReader_23 10000.00 root  data:TableFullScan_22",
-		"    │   └─TableFullScan_22 10000.00 cop[tikv] table:tt1 keep order:false, stats:pseudo",
-		"    └─Projection_24(Probe) 10000.00 root  0->Column#5, 0->Column#9",
-		"      └─TableReader_26 10000.00 root  data:TableFullScan_25",
-		"        └─TableFullScan_25 10000.00 cop[tikv] table:tt0 keep order:false, stats:pseudo"))
+		"HashJoin_13 15625.00 root  inner join, equal:[nulleq(Column#5, test.tt0.c0)]",
+		"├─TableReader_25(Build) 10000.00 root  data:TableFullScan_24",
+		"│ └─TableFullScan_24 10000.00 cop[tikv] table:tt0 keep order:false, stats:pseudo",
+		"└─HashJoin_17(Probe) 12500.00 root  left outer join, left side:Projection_18, equal:[eq(Column#8, Column#9)]",
+		"  ├─Projection_18(Build) 10000.00 root  test.tt1.c0, cast(test.tt1.c0, double BINARY)->Column#8",
+		"  │ └─TableReader_20 10000.00 root  data:TableFullScan_19",
+		"  │   └─TableFullScan_19 10000.00 cop[tikv] table:tt1 keep order:false, stats:pseudo",
+		"  └─Projection_21(Probe) 10000.00 root  0->Column#5, 0->Column#9",
+		"    └─TableReader_23 10000.00 root  data:TableFullScan_22",
+		"      └─TableFullScan_22 10000.00 cop[tikv] table:tt0 keep order:false, stats:pseudo"))
 	tk.MustQuery(`SELECT * FROM tt1
          LEFT JOIN (SELECT (0) AS col_0
                           FROM tt0) as subQuery1 ON ((subQuery1.col_0) = (tt1.c0))
