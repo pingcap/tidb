@@ -276,7 +276,7 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 			logutil.Logger(ctx).Error("close importer failed", zap.Error(err))
 		}
 	}()
-	selectedChunkCh := make(chan importer.QueryChunk, 1)
+	selectedChunkCh := make(chan importer.QueryChunk, e.controller.ThreadCnt)
 	ti.SetSelectedChunkCh(selectedChunkCh)
 
 	var importResult *importer.JobImportResult
