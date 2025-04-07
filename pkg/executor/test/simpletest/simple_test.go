@@ -527,7 +527,7 @@ partition by range (a) (
 	tk.MustExec("insert into test_drop_gstats values (1), (5), (11), (15), (21), (25)")
 	require.Nil(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test_drop_gstats"), ast.NewCIStr("test_drop_gstats"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test_drop_gstats"), model.NewCIStr("test_drop_gstats"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	globalID := tblInfo.ID
