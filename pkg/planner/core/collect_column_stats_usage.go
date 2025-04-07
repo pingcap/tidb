@@ -294,13 +294,8 @@ func CollectColumnStatsUsage(lp base.LogicalPlan) (
 	*intset.FastIntSet,
 	map[int64][]int64,
 ) {
-<<<<<<< HEAD
-	collector := newColumnStatsUsageCollector(histNeeded, lp.SCtx().GetSessionVars().IsPlanReplayerCaptureEnabled())
-	collector.collectFromPlan(lp)
-=======
 	collector := newColumnStatsUsageCollector(lp.SCtx().GetSessionVars().IsPlanReplayerCaptureEnabled())
-	collector.collectFromPlan(nil, lp)
->>>>>>> dfc00356e56 (planner: stats async load only load real predicate columns (#59117))
+	collector.collectFromPlan(lp)
 	if collector.collectVisitedTable {
 		recordTableRuntimeStats(lp.SCtx(), collector.visitedtbls)
 	}

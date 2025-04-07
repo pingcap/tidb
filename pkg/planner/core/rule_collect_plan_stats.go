@@ -44,16 +44,8 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 		return plan, planChanged, nil
 	}
 	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait.Load()
-<<<<<<< HEAD
-	histNeeded := syncWait > 0
-	predicateColumns, visitedPhysTblIDs, tid2pids := CollectColumnStatsUsage(plan, histNeeded)
-=======
 	syncLoadEnabled := syncWait > 0
-	predicateColumns, visitedPhysTblIDs, tid2pids, opNum := CollectColumnStatsUsage(plan)
-	// opNum is collected via the common stats load rule, some operators may be cleaned like proj for later rule.
-	// so opNum is not that accurate, but it's enough for the memo hashmap's init capacity.
-	plan.SCtx().GetSessionVars().StmtCtx.OperatorNum = opNum
->>>>>>> dfc00356e56 (planner: stats async load only load real predicate columns (#59117))
+	predicateColumns, visitedPhysTblIDs, tid2pids := CollectColumnStatsUsage(plan)
 	if len(predicateColumns) > 0 {
 		plan.SCtx().UpdateColStatsUsage(maps.Keys(predicateColumns))
 	}
