@@ -94,6 +94,9 @@ func checkColumnStatsUsageForStatsLoad(t *testing.T, is infoschema.InfoSchema, l
 	predicateCols, _, expandedPartitions := CollectColumnStatsUsage(lp)
 	loadItems := make([]model.StatsLoadItem, 0, len(predicateCols))
 	cols := make([]string, 0, len(loadItems))
+	for tblColID, fullLoad := range predicateCols {
+		loadItems = append(loadItems, model.StatsLoadItem{TableItemID: tblColID, FullLoad: fullLoad})
+	}
 	for _, item := range loadItems {
 		col := getStatsLoadItem(t, is, item, comment)
 		cols = append(cols, col)
