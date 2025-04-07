@@ -153,8 +153,10 @@ type Domain struct {
 	m               syncutil.Mutex
 	SchemaValidator SchemaValidator
 	schemaLease     time.Duration
-	sysSessionPool  util.SessionPool
-	exit            chan struct{}
+	// Note: If you no longer need the session, you must call Destroy to release it.
+	// Otherwise, the session will be leaked. Because there is a strong reference from the domain to the session.
+	sysSessionPool util.DestroyableSessionPool
+	exit           chan struct{}
 	// `etcdClient` must be used when keyspace is not set, or when the logic to each etcd path needs to be separated by keyspace.
 	etcdClient *clientv3.Client
 	// autoidClient is used when there are tables with AUTO_ID_CACHE=1, it is the client to the autoid service.
@@ -1299,6 +1301,10 @@ func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Dura
 				})
 				infosync.DeleteInternalSession(r)
 			},
+			func(r pools.Resource) {
+				intest.Assert(r != nil)
+				infosync.DeleteInternalSession(r)
+			},
 		),
 		statsLease:        statsLease,
 		schemaLease:       schemaLease,
@@ -1783,7 +1789,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 }
 
 // SysSessionPool returns the system session pool.
-func (do *Domain) SysSessionPool() util.SessionPool {
+func (do *Domain) SysSessionPool() util.DestroyableSessionPool {
 	return do.sysSessionPool
 }
 
@@ -1833,6 +1839,9 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 		return err
 	}
 	do.privHandle = privileges.NewHandle(sctx.GetRestrictedSQLExecutor())
+	if err := do.privHandle.Update(); err != nil {
+		return errors.Trace(err)
+	}
 
 	var watchCh clientv3.WatchChan
 	duration := 5 * time.Minute
@@ -2281,7 +2290,7 @@ func (do *Domain) StatsHandle() *handle.Handle {
 }
 
 // CreateStatsHandle is used only for test.
-func (do *Domain) CreateStatsHandle(ctx, initStatsCtx sessionctx.Context) error {
+func (do *Domain) CreateStatsHandle(ctx context.Context, initStatsCtx sessionctx.Context) error {
 	h, err := handle.NewHandle(
 		ctx,
 		initStatsCtx,
@@ -2317,20 +2326,19 @@ func (do *Domain) SetStatsUpdating(val bool) {
 
 // LoadAndUpdateStatsLoop loads and updates stats info.
 func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context, initStatsCtx sessionctx.Context) error {
-	if err := do.UpdateTableStatsLoop(ctxs[0], initStatsCtx); err != nil {
+	if err := do.UpdateTableStatsLoop(initStatsCtx); err != nil {
 		return err
 	}
-	do.StartLoadStatsSubWorkers(ctxs[1:])
+	do.StartLoadStatsSubWorkers(ctxs)
 	return nil
 }
 
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop.
 // It will also start a goroutine to analyze tables automatically.
 // It should be called only once in BootstrapSession.
-func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) error {
-	ctx.GetSessionVars().InRestrictedSQL = true
+func (do *Domain) UpdateTableStatsLoop(initStatsCtx sessionctx.Context) error {
 	statsHandle, err := handle.NewHandle(
-		ctx,
+		do.ctx,
 		initStatsCtx,
 		do.statsLease,
 		do.InfoSchema(),
@@ -2481,7 +2489,7 @@ func (do *Domain) initStats(ctx context.Context) {
 	}
 	initstats.InitStatsPercentage.Store(100)
 	if err != nil {
-		logutil.BgLogger().Error("init stats info failed", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)), zap.Error(err))
+		logutil.ErrVerboseLogger().Error("init stats info failed", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)), zap.Error(err))
 	} else {
 		logutil.BgLogger().Info("init stats info time", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)))
 	}
@@ -2543,7 +2551,7 @@ func (do *Domain) asyncLoadHistogram() {
 		case <-cleanupTicker.C:
 			err = statsHandle.LoadNeededHistograms(do.InfoSchema())
 			if err != nil {
-				logutil.BgLogger().Warn("load histograms failed", zap.Error(err))
+				logutil.ErrVerboseLogger().Warn("load histograms failed", zap.Error(err))
 			}
 		case <-do.exit:
 			return
