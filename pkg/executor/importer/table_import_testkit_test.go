@@ -16,8 +16,6 @@ package importer_test
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"os"
 	"testing"
 
@@ -28,12 +26,14 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 )
