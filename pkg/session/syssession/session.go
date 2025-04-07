@@ -81,11 +81,11 @@ func (noopOwnerHook) onResignOwner(sessionctx.Context) error { return nil }
 //     Ownership can be transferred using `TransferOwner`.
 //     The session can be closed via `Close` or `OwnerClose`, which resets the owner to `nil`.
 //
-//   - `inuse`: A counter tracking the number of ongoing operations on the session.
-//     `session.OwnerWithSctx(caller, fn)` increments `inuse` at the start of an operation
+//   - `inUse`: A counter tracking the number of ongoing operations on the session.
+//     `session.OwnerWithSctx(caller, fn)` increments `inUse` at the start of an operation
 //     and decrements it upon completion.
-//     When `inuse == 0`, the session is idle, allowing ownership transfer or closure.
-//     When `inuse > 0`, ongoing operations exist, leading to:
+//     When `inUse == 0`, the session is idle, allowing ownership transfer or closure.
+//     When `inUse > 0`, ongoing operations exist, leading to:
 //     `session.TransferOwner` failing to prevent concurrent access by different owners.
 //     `session.Close` triggering a panic in tests, but logging a warning in production.
 //
@@ -107,7 +107,7 @@ type session struct {
 	// inUse is the counter to record how many operations are on going on the session.
 	// When `EnterOperation` is called, it will increase the counter.
 	// When the operation is finished, it will decrease the counter.
-	inuse uint64
+	inUse uint64
 	// avoidReuse will be marked as true when some panics detected.
 	// When it is true, the session should not be reused to avoid unexpected behavior.
 	avoidReuse bool
@@ -201,7 +201,7 @@ func (s *session) OwnerMarkAvoidReuse(caller sessionOwner) {
 func (s *session) Inuse() uint64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.inuse
+	return s.inUse
 }
 
 // CheckNoPendingTxn checks whether some txn is not committed or pending for TSO.
@@ -260,7 +260,7 @@ func (s *session) EnterOperation(caller sessionOwner) (SessionContext, func(), e
 		return nil, nil, err
 	}
 
-	s.inuse++
+	s.inUse++
 	exit := false
 	return s.sctx, func() {
 		r := recover()
@@ -282,7 +282,7 @@ func (s *session) EnterOperation(caller sessionOwner) (SessionContext, func(), e
 		}
 
 		exit = true
-		s.inuse--
+		s.inUse--
 		if s.owner != caller {
 			s.reportErrorWithoutLock(
 				"ExitOperation error: session owner transferred when executing operation",
@@ -348,10 +348,10 @@ func (s *session) doCloseWithoutLock(seq uint64) {
 		)
 	}
 
-	if s.inuse > 0 {
+	if s.inUse > 0 {
 		s.reportErrorWithoutLock(
 			"session owner is still in use when closing",
-			zap.Uint64("inuse", s.inuse),
+			zap.Uint64("inUse", s.inUse),
 			zap.Uint64("seq", seq),
 		)
 	}
@@ -360,8 +360,8 @@ func (s *session) doCloseWithoutLock(seq uint64) {
 // checkNotInuseWithoutLock returns an error if the session is still in use.
 // It should be called with the protection of the mutex.
 func (s *session) checkNotInuseWithoutLock(errMsgPrefix string) error {
-	if s.inuse > 0 {
-		return errors.Errorf("%ssession is still inuse: %d", errMsgPrefix, s.inuse)
+	if s.inUse > 0 {
+		return errors.Errorf("%ssession is still inUse: %d", errMsgPrefix, s.inUse)
 	}
 	return nil
 }

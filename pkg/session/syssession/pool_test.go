@@ -186,7 +186,7 @@ func TestSessionPoolPut(t *testing.T) {
 	require.Equal(t, 1, len(p.pool))
 	require.Same(t, p, se2.internal.Owner())
 
-	// Put a Session that is inuse
+	// Put a Session that is inUse
 	se = getCachedSessionFromPool(sctx)
 	require.Equal(t, 0, len(p.pool))
 	_, _, err := se.internal.EnterOperation(se)

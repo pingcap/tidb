@@ -193,7 +193,7 @@ func TestNewInternalSession(t *testing.T) {
 	require.NotNil(t, se)
 	require.Same(t, owner, se.owner)
 	require.Same(t, sctx, se.sctx)
-	require.Zero(t, se.inuse)
+	require.Zero(t, se.inUse)
 	require.False(t, se.avoidReuse)
 	owner.AssertExpectations(t)
 
@@ -337,14 +337,14 @@ func TestInternalSessionTransferOwner(t *testing.T) {
 	require.Nil(t, se.Owner())
 	require.True(t, se.IsClosed())
 
-	// inuse session should not transfer the owner
+	// inUse session should not transfer the owner
 	se = mockInternalSession(t, sctx, owner1)
 	_, exit, err := se.EnterOperation(owner1)
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), se.Inuse())
 	err = se.TransferOwner(owner1, owner2)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "session is still inuse: 1")
+	require.Contains(t, err.Error(), "session is still inUse: 1")
 	require.Same(t, owner1, se.Owner())
 	require.False(t, se.IsClosed())
 
@@ -444,7 +444,7 @@ func TestInternalSessionClose(t *testing.T) {
 		owner.AssertExpectations(t)
 		sctx.AssertExpectations(t)
 
-		// inuse > 0 when close
+		// inUse > 0 when close
 		se = mockInternalSession(t, sctx, owner)
 		_, exit, err := se.EnterOperation(owner)
 		require.NoError(t, err)
@@ -475,7 +475,7 @@ func TestInternalSessionEnterOperation(t *testing.T) {
 	owner := &mockOwner{}
 	se := mockInternalSession(t, sctx, owner)
 
-	// test EnterOperation will add inuse
+	// test EnterOperation will add inUse
 	gotSctx, exit1, err := se.EnterOperation(owner)
 	require.NoError(t, err)
 	require.Same(t, sctx, gotSctx)
@@ -491,7 +491,7 @@ func TestInternalSessionEnterOperation(t *testing.T) {
 	require.Same(t, sctx, gotSctx)
 	require.Equal(t, uint64(3), se.Inuse())
 
-	// test exit will decrease inuse
+	// test exit will decrease inUse
 	exit1()
 	require.Equal(t, uint64(2), se.Inuse())
 
@@ -563,7 +563,7 @@ func TestInternalSessionEnterOperation(t *testing.T) {
 	owner.AssertExpectations(t)
 	sctx.AssertExpectations(t)
 
-	// The exit should still work to decrease inuse
+	// The exit should still work to decrease inUse
 	WithSuppressAssert(exit4)
 	require.Equal(t, uint64(1), se.Inuse())
 	WithSuppressAssert(exit5)
