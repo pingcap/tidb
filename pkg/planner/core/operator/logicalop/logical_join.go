@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
@@ -1235,6 +1236,23 @@ func (p *LogicalJoin) PreferAny(joinFlags ...uint) bool {
 	return false
 }
 
+func convertIntoEqCond(ctx exprctx.ExprContext, funcName string, arg0, arg1 *expression.Column) (expression.Expression, bool) {
+	switch funcName {
+	case ast.EQ:
+	case ast.NullEQ:
+		// When we find that the join condition includes `NullEQ`  ,
+		// we need to additionally check whether these two columns are physical columns.
+		// Otherwise, it may lead to inaccurate results.
+		if arg0.OrigName == "" || arg0.OrigName == "" {
+			return nil, false
+		}
+	default:
+		return nil, false
+	}
+	cond := expression.NewFunctionInternal(ctx, funcName, types.NewFieldType(mysql.TypeTiny), arg0, arg1)
+	return cond, true
+}
+
 // ExtractOnCondition divide conditions in CNF of join node into 4 groups.
 // These conditions can be where conditions, join conditions, or collection of both.
 // If deriveLeft/deriveRight is set, we would try to derive more conditions for left/right plan.
@@ -1281,10 +1299,9 @@ func (p *LogicalJoin) ExtractOnCondition(
 							rightCond = append(rightCond, notNullExpr)
 						}
 					}
-					switch binop.FuncName.L {
-					case ast.EQ, ast.NullEQ:
-						cond := expression.NewFunctionInternal(ctx.GetExprCtx(), binop.FuncName.L, types.NewFieldType(mysql.TypeTiny), arg0, arg1)
-						eqCond = append(eqCond, cond.(*expression.ScalarFunction))
+					newEqCond, ok := convertIntoEqCond(ctx.GetExprCtx(), binop.FuncName.L, arg0, arg1)
+					if ok {
+						eqCond = append(eqCond, newEqCond.(*expression.ScalarFunction))
 						continue
 					}
 				}
