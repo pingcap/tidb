@@ -55,7 +55,7 @@ func child(ctx context.Context) {
 }
 
 func worker(ch chan *msg, wg *sync.WaitGroup) {
-	ctx := SetTID(context.Background())
+	ctx := WithTraceContext(context.Background(), nil, GetNextTID())
 	for {
 		msg, ok := <-ch
 		if !ok {
@@ -68,7 +68,7 @@ func worker(ch chan *msg, wg *sync.WaitGroup) {
 }
 
 func handleMsg(ctx context.Context, msg *msg) {
-	ctx = WithTrace(ctx, msg.span.GetTrace())
+	ctx = WithTraceContext(ctx, msg.span.GetTrace(), 0)
 	span := StartSpan(ctx, "handleMsg")
 	flow := StartFlow(ctx, "flow->test")
 	defer span.Done()
