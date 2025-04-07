@@ -280,6 +280,9 @@ func TestValidator(t *testing.T) {
 		{"select * from t tablesample bernoulli(10 rows);", false, expression.ErrInvalidTableSample},
 		{"select * from t tablesample bernoulli(23 percent) repeatable (23);", false, expression.ErrInvalidTableSample},
 		{"select * from t tablesample system() repeatable (10);", false, expression.ErrInvalidTableSample},
+
+		// issue 45674
+		{"alter table t2 add (b int)", false, nil},
 	}
 
 	store := testkit.CreateMockStore(t)

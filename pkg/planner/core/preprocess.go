@@ -160,7 +160,7 @@ const (
 	// inTxnRetry is set when visiting in transaction retry.
 	inTxnRetry
 	// inCreateOrDropTable is set when visiting create/drop table/view/sequence,
-	// rename table, alter table add foreign key, and BR restore.
+	// rename table, alter table, and BR restore.
 	// TODO need a better name to clarify it's meaning
 	inCreateOrDropTable
 	// parentIsJoin is set when visiting node's parent is join.
@@ -299,6 +299,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.stmtTp = TypeCreate
 		p.checkCreateIndexGrammar(node)
 	case *ast.AlterTableStmt:
+		p.flag |= inCreateOrDropTable
 		p.stmtTp = TypeAlter
 		p.resolveAlterTableStmt(node)
 		p.checkAlterTableGrammar(node)
