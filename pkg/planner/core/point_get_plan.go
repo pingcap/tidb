@@ -411,6 +411,7 @@ func (p *PointGetPlan) PrunePartitions(sctx sessionctx.Context) bool {
 	return false
 }
 
+// Rebuild reads the used datum from PlanContext and rebuilds the plan.
 func (p *PointGetPlan) Rebuild(pctx base.PlanContext) error {
 	if p.HandleConstant != nil {
 		sc := pctx.GetSessionVars().StmtCtx

@@ -21,14 +21,18 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 	"unsafe"
 
+	"github.com/opentracing/basictracer-go"
+	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/stretchr/testify/require"
 )
 
@@ -437,4 +441,79 @@ type visit struct {
 	a1  unsafe.Pointer
 	a2  unsafe.Pointer
 	typ reflect.Type
+}
+
+func TestComparePointGet(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE sbtest1 (" +
+		"`id` int NOT NULL AUTO_INCREMENT," +
+		"`k` int NOT NULL DEFAULT '0'," +
+		"`c` char(120) NOT NULL DEFAULT ''," +
+		"`pad` char(60) NOT NULL DEFAULT ''," +
+		"PRIMARY KEY (`id`)," +
+		"UNIQUE KEY `uk_1` (`k`)," +
+		"UNIQUE KEY `uk_2` (`c`, `pad`))")
+	tk.MustExec("insert into sbtest1 values (123, 1, 'a', 'b')")
+	tk.MustExec("insert into sbtest1 values (124, 2, 'c', 'd')")
+
+	// test correctness after the optimization
+
+	tk.MustExec(`prepare stmt1 from 'select * from sbtest1 where id = ?'`)
+	tk.MustExec("set @a = 123")
+	tk.MustQuery("execute stmt1 using @a").Check(testkit.Rows("123 1 a b"))
+	tk.MustExec("set @a = 124")
+	tk.MustQuery("execute stmt1 using @a").Check(testkit.Rows("124 2 c d"))
+	tk.MustExec("set @a = '123'")
+	tk.MustQuery("execute stmt1 using @a").Check(testkit.Rows("123 1 a b"))
+	tk.MustExec("set @a = '124'")
+	tk.MustQuery("execute stmt1 using @a").Check(testkit.Rows("124 2 c d"))
+	tk.MustExec(`prepare stmt2 from 'select * from sbtest1 where k = ?'`)
+	tk.MustExec("set @a = 1")
+	tk.MustQuery("execute stmt2 using @a").Check(testkit.Rows("123 1 a b"))
+	tk.MustExec("set @a = 2")
+	tk.MustQuery("execute stmt2 using @a").Check(testkit.Rows("124 2 c d"))
+	tk.MustExec(`prepare stmt3 from 'select * from sbtest1 where pad = ? and c = ?'`)
+	tk.MustExec("set @a1 = 'a', @a2 = 'b'")
+	tk.MustQuery("execute stmt3 using @a2, @a1").Check(testkit.Rows("123 1 a b"))
+	tk.MustExec("set @a1 = 'c', @a2 = 'd'")
+	tk.MustQuery("execute stmt3 using @a2, @a1").Check(testkit.Rows("124 2 c d"))
+
+	ctx := context.Background()
+	repeat := 10_000
+	collectedSpans := make([]basictracer.RawSpan, repeat)
+	sp1 := tracing.NewRecordedTrace("test", func(sp basictracer.RawSpan) {
+		if sp.Operation != "planner.Optimize" {
+			return
+		}
+		collectedSpans = append(collectedSpans, sp)
+	})
+	ctx = opentracing.ContextWithSpan(ctx, sp1)
+
+	duration := time.Duration(0)
+	for range repeat {
+		tk.MustQueryWithContext(ctx, "select * from sbtest1 where id = 123")
+	}
+	// TODO(lance6716): why 2 times?
+	require.Len(t, collectedSpans, 2*repeat)
+	for _, s := range collectedSpans {
+		duration += s.Duration
+	}
+	avg := duration / time.Duration(repeat)
+	t.Logf("average optimize time for point get: %v", avg)
+
+	tk.MustExec("set @a = 123")
+	collectedSpans = collectedSpans[:0]
+	for range repeat {
+		tk.MustQueryWithContext(ctx, "execute stmt1 using @a")
+	}
+	require.Len(t, collectedSpans, repeat)
+	duration = 0
+	for _, s := range collectedSpans {
+		duration += s.Duration
+	}
+	avgPrepared := duration / time.Duration(repeat)
+	t.Logf("average optimize time for point get with prepared statement: %v", avgPrepared)
+	require.Less(t, avgPrepared, avg)
 }
