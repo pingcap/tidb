@@ -45,7 +45,7 @@ var (
 	// dumpStatsMaxDuration is the max duration since last update.
 	dumpStatsMaxDuration = 5 * time.Minute
 
-	// batchInsertSize is the batch size used by internal SQL to insert values to some system table.
+	// batchInsertSize is the batch size used by internal SQL to insert values to stats usage table.
 	batchInsertSize = 8192
 )
 
