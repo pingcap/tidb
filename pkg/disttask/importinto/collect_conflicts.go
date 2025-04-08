@@ -38,7 +38,15 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-const handleMapEntryShallowSize = int64(unsafe.Sizeof("") + unsafe.Sizeof(true))
+const (
+	// we use this size as a hint to the map size for the conflict rows which is
+	// from index KV conflict and ingested to downstream.
+	// as conflict row might generate more than one conflict KV, and its data KV
+	// might not be ingested to downstream, so we choose a small value for its init
+	// size.
+	initMapSizeForConflictedRows = 128
+	handleMapEntryShallowSize    = int64(unsafe.Sizeof("") + unsafe.Sizeof(true))
+)
 
 // MaxConflictRowFileSize is the maximum size of the conflict row file.
 // exported for testing.
@@ -104,7 +112,7 @@ func (e *collectConflictsStepExecutor) RunSubtask(ctx context.Context, subtask *
 			potentialConflictRowsDueToIndex += int(ci.Count)
 		}
 	}
-	potentialConflictRowsDueToIndex = min(potentialConflictRowsDueToIndex, 128)
+	potentialConflictRowsDueToIndex = min(potentialConflictRowsDueToIndex, initMapSizeForConflictedRows)
 	e.resetForNewSubtask(subtask.ID, potentialConflictRowsDueToIndex)
 	if err = e.switchConflictRowFile(ctx); err != nil {
 		return errors.Trace(err)

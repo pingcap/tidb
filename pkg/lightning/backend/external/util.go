@@ -363,6 +363,7 @@ func getSpeed(n uint64, dur float64, isBytes bool) string {
 }
 
 // remove all duplicates inside sorted array in place, i.e. input elements will be changed.
+// TODO consider use the input slice to store the duplicated items to save memory.
 func removeDuplicates[E any](elements []E, keyGetter func(*E) []byte, record bool) ([]E, []E, int) {
 	if len(elements) <= 1 {
 		return elements, []E{}, 0
@@ -402,6 +403,7 @@ func removeDuplicates[E any](elements []E, keyGetter func(*E) []byte, record boo
 // remove all duplicates inside sorted array in place if the duplicate count is
 // more than 2, and keep the first two duplicates.
 // we also return the total number of duplicates as the third return value.
+// TODO consider use the input slice to store the duplicated items to save memory.
 func removeDuplicatesMoreThanTwo[E any](elements []E, compareValGetter func(*E) []byte) ([]E, []E, int) {
 	if len(elements) <= 1 {
 		return elements, []E{}, 0
