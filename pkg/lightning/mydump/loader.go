@@ -391,22 +391,23 @@ type ExtendColumnData struct {
 	Values  []string
 }
 
-// ParallelProcess is a helper function to parallel process files, used for both lightning and IMPORT INTO.
-// The order of the output slice is same as the input slice.
-func ParallelProcess[T any](
+// ParallelProcess is a helper function to parallel process inputs
+// and keep the order of the outputs same as the inputs.
+// It's used for both lightning and IMPORT INTO.
+func ParallelProcess[T, R any](
 	ctx context.Context,
-	files []RawFile,
-	workerCount int,
-	hdl func(ctx context.Context, f RawFile) (T, error),
+	inputs []R,
+	concurrency int,
+	hdl func(ctx context.Context, f R) (T, error),
 ) ([]T, error) {
-	// In some tests, the passed workerCount may be zero.
-	workerCount = max(workerCount, 1)
-	res := make([]T, len(files))
+	// In some tests, the passed concurrency may be zero.
+	concurrency = max(concurrency, 1)
+	outputs := make([]T, len(inputs))
 
 	eg, egCtx := errgroup.WithContext(ctx)
-	eg.SetLimit(workerCount)
+	eg.SetLimit(concurrency)
 
-	for i, file := range files {
+	for i, input := range inputs {
 		eg.Go(func() error {
 			select {
 			case <-egCtx.Done():
@@ -414,11 +415,11 @@ func ParallelProcess[T any](
 			default:
 			}
 
-			v, err := hdl(egCtx, file)
+			v, err := hdl(egCtx, input)
 			if err != nil {
 				return err
 			}
-			res[i] = v
+			outputs[i] = v
 			return nil
 		})
 	}
@@ -426,7 +427,7 @@ func ParallelProcess[T any](
 	if err := eg.Wait(); err != nil {
 		return nil, errors.Trace(err)
 	}
-	return res, nil
+	return outputs, nil
 }
 
 // setup the `s.loader.dbs` slice by scanning all *.sql files inside `dir`.
