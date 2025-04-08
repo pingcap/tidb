@@ -38,6 +38,9 @@ func (mgr *TaskManager) InitMeta(ctx context.Context, tidbID string, role string
 // InitMetaSession insert the manager information into dist_framework_meta.
 // if the record exists, update the cpu_count and role.
 func (*TaskManager) InitMetaSession(ctx context.Context, se sessionctx.Context, execID string, role string) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
 	cpuCount := cpu.GetCPUCount()
 	_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
 		insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
@@ -53,6 +56,9 @@ func (*TaskManager) InitMetaSession(ctx context.Context, se sessionctx.Context, 
 // Don't update role for we only update it in `set global tidb_service_scope`.
 // if not there might has a data race.
 func (mgr *TaskManager) RecoverMeta(ctx context.Context, execID string, role string) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
 	cpuCount := cpu.GetCPUCount()
 	_, err := mgr.ExecuteSQLWithNewSession(ctx, `
 		insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
