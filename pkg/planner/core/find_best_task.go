@@ -192,6 +192,9 @@ func enumeratePhysicalPlans4Task(
 		switch logicalPlan := p.Self().(type) {
 		case *logicalop.LogicalJoin, *logicalop.LogicalAggregation:
 			// TODO(hawkingrei): FD should be maintained as logical prop instead of constructing it in physical phase
+			if !p.SCtx().GetSessionVars().InRestrictedSQL {
+				fmt.Println("wwz")
+			}
 			fd = logicalPlan.ExtractFD()
 		}
 	}
@@ -220,6 +223,9 @@ func enumeratePhysicalPlans4Task(
 		}
 
 		// Combine the best child tasks with parent physical plan.
+		if p, ok := pp.(*PhysicalHashJoin); ok {
+			p.SetFD(fd)
+		}
 		curTask := pp.Attach2Task(childTasks...)
 		if curTask.Invalid() {
 			continue

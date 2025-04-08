@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
@@ -1504,6 +1505,12 @@ type PhysicalHashJoin struct {
 
 	// for runtime filter
 	runtimeFilterList []*RuntimeFilter `plan-cache-clone:"must-nil"` // plan with runtime filter is not cached
+
+	fd *fd.FDSet
+}
+
+func (p *PhysicalHashJoin) SetFD(fd *fd.FDSet) {
+	p.fd = fd
 }
 
 // CanUseHashJoinV2 returns true if current join is supported by hash join v2
