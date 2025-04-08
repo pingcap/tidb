@@ -8,6 +8,12 @@
     ]
   },
   {
+    "name": "TestQ9",
+    "cases": [
+      "explain format='brief' SELECT nation, o_year, SUM(amount) AS sum_profit FROM (SELECT n_name AS nation, EXTRACT(YEAR FROM o_orderdate) AS o_year, l_extendedprice * (1 - l_discount) - ps_supplycost * l_quantity AS amount FROM part, supplier, lineitem, partsupp, orders, nation WHERE s_suppkey = l_suppkey AND ps_suppkey = l_suppkey AND ps_partkey = l_partkey AND p_partkey = l_partkey AND o_orderkey = l_orderkey AND s_nationkey = n_nationkey AND p_name LIKE '%dim%') AS profit GROUP BY nation, o_year ORDER BY nation, o_year DESC;"
+    ]
+  },
+  {
     "name": "TestQ13",
     "cases": [
       "explain format='brief' select c_count, count(*) as custdist from ( select c_custkey, count(o_orderkey) as c_count from customer left outer join orders on c_custkey = o_custkey and o_comment not like '%pending%deposits%' group by c_custkey ) c_orders group by c_count order by custdist desc, c_count desc;"
