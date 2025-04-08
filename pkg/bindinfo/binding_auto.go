@@ -74,12 +74,11 @@ func newBindingAuto(sPool util.DestroyableSessionPool) BindingAuto {
 func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collation string) ([]*BindingPlanInfo, error) {
 	// parse and normalize sqlOrDigest
 	// if the length is 64 and it has no " ", treat it as a digest.
-	var whereCond, originalSQL string
+	var whereCond string
 	sqlOrDigest = strings.TrimSpace(sqlOrDigest)
 	if len(sqlOrDigest) == 64 && !strings.Contains(sqlOrDigest, " ") {
 		whereCond = "where sql_digest = %?"
 	} else {
-		originalSQL = sqlOrDigest
 		p := parser.New()
 		stmtNode, err := p.ParseOneStmt(sqlOrDigest, charset, collation)
 		if err != nil {
@@ -117,7 +116,6 @@ func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collatio
 			bindingLogger().Error("get plan execution info failed", zap.String("plan_digest", binding.PlanDigest), zap.Error(err))
 			continue
 		}
-		binding.Source = "history plan"
 		autoBinding := &BindingPlanInfo{Binding: binding}
 		if pInfo != nil && pInfo.ExecCount > 0 { // pInfo could be nil when stmt_stats' data is incomplete.
 			autoBinding.Plan = pInfo.Plan
@@ -132,16 +130,6 @@ func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collatio
 		}
 		bindingPlans = append(bindingPlans, autoBinding)
 	}
-
-	// explore new plans via cost factors.
-	genedPlans, err := generateBindingPlans(ba.sPool, currentDB, originalSQL)
-	if err != nil {
-		return nil, fmt.Errorf("failed to generate new binding plans: %w", err)
-	}
-
-	// TODO: run these generated plans to get there execution info for recommendation.
-
-	bindingPlans = append(bindingPlans, genedPlans...)
 
 	FillRecommendation(bindingPlans)
 
@@ -257,6 +245,11 @@ func FillRecommendation(bindings []*BindingPlanInfo) {
 	}
 
 	FillRecommendationViaLLM(bindings)
+}
+
+// FillRecommendationViaLLM fills the recommendation field for each binding plan via LLM.
+func FillRecommendationViaLLM([]*BindingPlanInfo) {
+	// TODO
 }
 
 // IsSimplePointPlan checks whether the plan is a simple point plan.
