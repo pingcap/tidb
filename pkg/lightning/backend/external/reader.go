@@ -202,6 +202,6 @@ func readOneFile(
 	output.size += size
 	output.droppedSizePerFile = append(output.droppedSizePerFile, droppedSize)
 	output.mu.Unlock()
-	log.FromContext(ctx).Info("read one file dropped size", zap.String("data-file-name", dataFile), zap.Int("dropped size", droppedSize))
+	rd.byteReader.logger.Info("read one file dropped size", zap.String("data-file-name", dataFile), zap.Int("dropped size", droppedSize))
 	return nil
 }
