@@ -182,7 +182,9 @@ func (b *encodedKVGroupBatch) add(kvs *kv.Pairs) error {
 	for _, pair := range kvs.Pairs {
 		if tablecodec.IsRecordKey(pair.Key) {
 			b.dataKVs = append(b.dataKVs, pair)
-			b.groupChecksum.UpdateOneDataKV(pair)
+			if b.groupChecksum != nil {
+				b.groupChecksum.UpdateOneDataKV(pair)
+			}
 		} else {
 			indexID, err := tablecodec.DecodeIndexID(pair.Key)
 			if err != nil {
@@ -192,7 +194,9 @@ func (b *encodedKVGroupBatch) add(kvs *kv.Pairs) error {
 				b.indexKVs[indexID] = make([]common.KvPair, 0, b.count)
 			}
 			b.indexKVs[indexID] = append(b.indexKVs[indexID], pair)
-			b.groupChecksum.UpdateOneIndexKV(indexID, pair)
+			if b.groupChecksum != nil {
+				b.groupChecksum.UpdateOneIndexKV(indexID, pair)
+			}
 		}
 	}
 
@@ -293,13 +297,16 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 			}
 		}
 		kvGroupBatch := newEncodedKVGroupBatch(p.keyspace, recordCount)
+		if p.groupChecksum == nil {
+			kvGroupBatch.groupChecksum = nil
+		}
 
-		if p.groupChecksum != nil {
-			for _, kvs := range rowBatch {
-				if err := kvGroupBatch.add(kvs); err != nil {
-					return errors.Trace(err)
-				}
+		for _, kvs := range rowBatch {
+			if err := kvGroupBatch.add(kvs); err != nil {
+				return errors.Trace(err)
 			}
+		}
+		if p.groupChecksum != nil {
 			p.groupChecksum.Add(kvGroupBatch.groupChecksum)
 		}
 
@@ -357,7 +364,10 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 }
 
 func (p *chunkEncoder) summaryFields() []zap.Field {
-	mergedChecksum := p.groupChecksum.MergedChecksum()
+	var mergedChecksum verify.KVChecksum
+	if p.groupChecksum != nil {
+		mergedChecksum = p.groupChecksum.MergedChecksum()
+	}
 	return []zap.Field{
 		zap.Duration("readDur", p.readTotalDur),
 		zap.Duration("encodeDur", p.encodeTotalDur),
@@ -522,8 +532,16 @@ func (p *dataDeliver) deliverLoop(ctx context.Context) error {
 			if metrics != nil {
 				metrics.BlockDeliverSecondsHistogram.Observe(deliverDur.Seconds())
 
-				dataSize, indexSize := kvBatch.groupChecksum.DataAndIndexSumSize()
-				dataKVCnt, indexKVCnt := kvBatch.groupChecksum.DataAndIndexSumKVS()
+				var (
+					dataSize, indexSize   uint64
+					dataKVCnt, indexKVCnt uint64
+				)
+
+				if kvBatch.groupChecksum != nil {
+					dataSize, indexSize = kvBatch.groupChecksum.DataAndIndexSumSize()
+					dataKVCnt, indexKVCnt = kvBatch.groupChecksum.DataAndIndexSumKVS()
+				}
+
 				dataKVBytesHist.Observe(float64(dataSize))
 				dataKVPairsHist.Observe(float64(dataKVCnt))
 				indexKVBytesHist.Observe(float64(indexSize))
@@ -572,18 +590,22 @@ func newQueryChunkProcessor(
 		dataWriter:    dataWriter,
 		indexWriter:   indexWriter,
 	}
+	enc := newChunkEncoder(
+		chunkName,
+		queryRowEncodeReader(chunkCh),
+		-1,
+		deliver.sendEncodedData,
+		chunkLogger,
+		encoder,
+		keyspace,
+	)
+	if groupChecksum == nil {
+		enc.groupChecksum = nil
+	}
 	return &baseChunkProcessor{
-		sourceType: DataSourceTypeQuery,
-		deliver:    deliver,
-		enc: newChunkEncoder(
-			chunkName,
-			queryRowEncodeReader(chunkCh),
-			-1,
-			deliver.sendEncodedData,
-			chunkLogger,
-			encoder,
-			keyspace,
-		),
+		sourceType:    DataSourceTypeQuery,
+		deliver:       deliver,
+		enc:           enc,
 		logger:        chunkLogger,
 		groupChecksum: groupChecksum,
 	}
