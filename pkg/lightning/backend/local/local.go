@@ -51,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -1094,87 +1093,6 @@ func (local *Backend) generateJobForRange(
 	return jobs, nil
 }
 
-// startWorker creates a worker that reads from the job channel and processes.
-// startWorker will return nil if it's expected to stop, where the cases are all
-// jobs are finished or the context canceled because other components report
-// error. It will return not nil error when it actively stops. startWorker must
-// call job.done() if it does not put the job into jobOutCh.
-func (local *Backend) startWorker(
-	ctx context.Context,
-	jobInCh, jobOutCh chan *regionJob,
-	afterExecuteJob func([]*metapb.Peer),
-	jobWg *sync.WaitGroup,
-) error {
-	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Set(0)
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case job, ok := <-jobInCh:
-			if !ok {
-				return nil
-			}
-
-			var peers []*metapb.Peer
-			// in unit test, we may not have the real peers
-			if job.region != nil && job.region.Region != nil {
-				peers = job.region.Region.GetPeers()
-			}
-			failpoint.InjectCall("beforeExecuteRegionJob", ctx)
-			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Inc()
-			err := local.executeJob(ctx, job)
-			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Dec()
-
-			if afterExecuteJob != nil {
-				afterExecuteJob(peers)
-			}
-			switch job.stage {
-			case regionScanned, wrote, ingested:
-				select {
-				case <-ctx.Done():
-					job.done(jobWg)
-					return nil
-				case jobOutCh <- job:
-				}
-			case needRescan:
-				jobs, err2 := local.generateJobForRange(
-					ctx,
-					job.ingestData,
-					[]common.Range{job.keyRange},
-					job.regionSplitSize,
-					job.regionSplitKeys,
-				)
-				if err2 != nil {
-					// Don't need to put the job back to retry, because generateJobForRange
-					// has done the retry internally. Here just done for the "needRescan"
-					// job and exit directly.
-					job.done(jobWg)
-					return err2
-				}
-				// 1 "needRescan" job becomes len(jobs) "regionScanned" jobs.
-				newJobCnt := len(jobs) - 1
-				for newJobCnt > 0 {
-					job.ref(jobWg)
-					newJobCnt--
-				}
-				for _, j := range jobs {
-					j.lastRetryableErr = job.lastRetryableErr
-					select {
-					case <-ctx.Done():
-						j.done(jobWg)
-						// don't exit here, we mark done for each job and exit in the outer loop
-					case jobOutCh <- j:
-					}
-				}
-			}
-
-			if err != nil {
-				return err
-			}
-		}
-	}
-}
-
 func (*Backend) isRetryableImportTiKVError(err error) bool {
 	err = errors.Cause(err)
 	// io.EOF is not retryable in normal case
@@ -1227,24 +1145,6 @@ func (local *Backend) executeJob(
 	ctx context.Context,
 	job *regionJob,
 ) error {
-	failpoint.Inject("WriteToTiKVNotEnoughDiskSpace", func(_ failpoint.Value) {
-		failpoint.Return(
-			errors.New("the remaining storage capacity of TiKV is less than 10%%; please increase the storage capacity of TiKV and try again"))
-	})
-	if local.ShouldCheckTiKV {
-		for _, peer := range job.region.Region.GetPeers() {
-			store, err := local.pdHTTPCli.GetStore(ctx, peer.StoreId)
-			if err != nil {
-				log.FromContext(ctx).Warn("failed to get StoreInfo from pd http api", zap.Error(err))
-				continue
-			}
-			err = checkDiskAvail(ctx, store)
-			if err != nil {
-				return err
-			}
-		}
-	}
-
 	for {
 		err := local.writeToTiKV(ctx, job)
 		if err != nil {
@@ -1536,15 +1436,28 @@ func (local *Backend) doImport(
 		failpoint.Goto("afterStartWorker")
 	})
 
+	toCh := jobToWorkerCh
+	var afterExecuteJob func([]*metapb.Peer)
+	if balancer != nil {
+		toCh = balancer.innerJobToWorkerCh
+		afterExecuteJob = balancer.releaseStoreLoad
+	}
 	for i := 0; i < local.WorkerConcurrency; i++ {
+		worker := &opRegionJobWorker{
+			regionJobBaseWorker: &regionJobBaseWorker{
+				pdHTTPCli:        local.pdHTTPCli,
+				metrics:          local.metrics,
+				jobInCh:          toCh,
+				jobOutCh:         jobFromWorkerCh,
+				jobWg:            &jobWg,
+				checkTiKVSpace:   local.ShouldCheckTiKV,
+				doRunJobFn:       local.executeJob,
+				afterRunJobFn:    afterExecuteJob,
+				regenerateJobsFn: local.generateJobForRange,
+			},
+		}
 		workGroup.Go(func() error {
-			toCh := jobToWorkerCh
-			var afterExecuteJob func([]*metapb.Peer)
-			if balancer != nil {
-				toCh = balancer.innerJobToWorkerCh
-				afterExecuteJob = balancer.releaseStoreLoad
-			}
-			return local.startWorker(workerCtx, toCh, jobFromWorkerCh, afterExecuteJob, &jobWg)
+			return worker.run(workerCtx)
 		})
 	}
 
