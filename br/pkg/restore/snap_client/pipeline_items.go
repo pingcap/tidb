@@ -406,7 +406,7 @@ func (rc *SnapClient) registerUpdateMetaAndLoadStats(
 			log.Info("start update metas", zap.Stringer("table", oldTable.Info.Name), zap.Stringer("db", oldTable.DB.Name))
 			// the total kvs contains the index kvs, but the stats meta needs the count of rows
 			count := int64(oldTable.TotalKvs / uint64(len(oldTable.Info.Indices)+1))
-			if statsErr = buffer.TryUpdateMetas(c, statsHandler, tbl.Table.ID, count); statsErr != nil {
+			if statsErr = buffer.TryUpdateMetas(c, statsHandler, tbl.Table.ID, count, false); statsErr != nil {
 				log.Error("update stats meta failed", zap.Error(statsErr))
 				return statsErr
 			}
