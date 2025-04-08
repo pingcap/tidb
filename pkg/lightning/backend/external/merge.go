@@ -19,6 +19,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -149,6 +150,10 @@ func (op *MergeOperator) Close() error {
 
 func (op *MergeOperator) onError(err error) {
 	op.errCh <- err
+}
+
+func (op *MergeOperator) hasError() bool {
+	return op.firstErr.Load() != nil
 }
 
 // Done returns the done channel of the operator.
@@ -291,6 +296,10 @@ func mergeOverlappingFilesInternal(
 	onClose OnCloseFunc,
 	checkHotspot bool,
 ) (err error) {
+	failpoint.Inject("mergeOverlappingFilesInternal", func() {
+		failpoint.Return(errors.New("mock error"))
+	})
+
 	task := log.BeginTask(logutil.Logger(ctx).With(
 		zap.String("writer-id", writerID),
 		zap.Int("file-count", len(paths)),

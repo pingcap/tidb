@@ -624,7 +624,7 @@ func TestWorkerWithError(t *testing.T) {
 	local := &Backend{
 		writeLimiter: newStoreWriteLimiter(0),
 	}
-	local.WorkerConcurrency.Store(4)
+	local.SetConcurrency(4)
 
 	worker := newJobWorker(
 		workerCtx, workGroup, &jobWg,

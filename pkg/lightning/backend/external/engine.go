@@ -303,6 +303,20 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	sortRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("sort")
 	sortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("sort")
 
+	failpoint.Inject("mockLoadBatchRegionData", func(_ failpoint.Value) {
+		data := e.buildIngestData(nil, nil, nil)
+		select {
+		case <-ctx.Done():
+			failpoint.Return(ctx.Err())
+		case outCh <- common.DataAndRanges{
+			Data: data,
+		}:
+			e.generatedData = append(e.generatedData, data)
+		}
+
+		failpoint.Return(nil)
+	})
+
 	startKey := jobKeys[0]
 	endKey := jobKeys[len(jobKeys)-1]
 	readStart := time.Now()
@@ -428,11 +442,6 @@ func (e *Engine) checkConcurrencyChange(ctx context.Context, currBatchSize int) 
 		return currBatchSize
 	}
 
-	logutil.Logger(ctx).Info("load ingest data batch size change",
-		zap.Int("prev batchSize", currBatchSize),
-		zap.Int("new batchSize", newBatchSize),
-	)
-
 	tick := time.NewTicker(time.Second)
 	defer func() {
 		tick.Stop()
@@ -445,7 +454,9 @@ OUTER:
 			return currBatchSize
 		case <-tick.C:
 			for _, data := range e.generatedData {
-				if data.refCnt.Load() > 0 {
+				// We can't rely on refCnt to check if the data is released, because
+				// the refCnt is zero when the data is not used.
+				if !data.released.Load() {
 					break
 				}
 			}
@@ -453,6 +464,11 @@ OUTER:
 			break OUTER
 		}
 	}
+
+	logutil.Logger(ctx).Info("load ingest data batch size change",
+		zap.Int("prev batchSize", currBatchSize),
+		zap.Int("new batchSize", newBatchSize),
+	)
 
 	return newBatchSize
 }
@@ -630,6 +646,7 @@ type MemoryIngestData struct {
 	ts     uint64
 
 	memBuf          []*membuf.Buffer
+	released        atomic.Bool
 	refCnt          *atomic.Int64
 	importedKVSize  *atomic.Int64
 	importedKVCount *atomic.Int64
@@ -842,6 +859,7 @@ func (m *MemoryIngestData) DecRef() {
 		for _, b := range m.memBuf {
 			b.Destroy()
 		}
+		m.released.Store(true)
 	}
 }
 

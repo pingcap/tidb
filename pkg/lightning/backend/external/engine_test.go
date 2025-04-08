@@ -17,14 +17,17 @@ package external
 import (
 	"context"
 	"path"
+	"sync"
 	"testing"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sync/errgroup"
 )
 
 func testGetFirstAndLastKey(
@@ -346,4 +349,69 @@ func TestGetRegionSplitKeys(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, len(tc.splitKeys), len(res))
 	}
+}
+
+func TestChangeEngineConcurrency(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/mockLoadBatchRegionData", "return(true)")
+
+	e := &Engine{jobKeys: make([][]byte, 32)}
+	e.workerConcurrency.Store(4)
+
+	ctx := context.Background()
+	outCh := make(chan common.DataAndRanges, 4)
+
+	var eg errgroup.Group
+
+	// Load the data
+	eg.Go(func() error {
+		defer close(outCh)
+		return e.LoadIngestData(ctx, outCh)
+	})
+
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
+
+	eg.Go(func() error {
+		wg.Wait()
+		// Consume the data after concurrency changed
+		for data := range outCh {
+			// mock generate job
+			data.Data.IncRef()
+			data.Data.IncRef()
+			// mock job finish
+			data.Data.DecRef()
+			data.Data.DecRef()
+		}
+		return nil
+	})
+
+	e.UpdateConcurrency(1)
+	wg.Done()
+
+	// Should not be blocked
+	require.NoError(t, eg.Wait())
+}
+
+func TestChangeEngineConcurrencyWithCancel(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/mockLoadBatchRegionData", "return(true)")
+
+	e := &Engine{jobKeys: make([][]byte, 32)}
+	e.workerConcurrency.Store(4)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	outCh := make(chan common.DataAndRanges, 16)
+
+	var eg errgroup.Group
+
+	// Load the data and didn't consume it
+	eg.Go(func() error {
+		defer close(outCh)
+		return e.LoadIngestData(ctx, outCh)
+	})
+
+	e.UpdateConcurrency(1)
+	cancel()
+
+	// Should not be blocked
+	require.Error(t, eg.Wait())
 }

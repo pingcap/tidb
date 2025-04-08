@@ -508,11 +508,12 @@ func (c *BackendConfig) adjust() {
 	c.MaxOpenFiles = max(c.MaxOpenFiles, openFilesLowerThreshold)
 }
 
+// SetConcurrency sets the concurrency of the backend
 func (c *BackendConfig) SetConcurrency(concurrency int) {
 	c.WorkerConcurrency.Store(int32(concurrency))
 }
 
-// Concurrency get the current concurrency of the backend
+// Concurrency gets the current concurrency of the backend
 func (c *BackendConfig) Concurrency() int {
 	return int(c.WorkerConcurrency.Load())
 }
