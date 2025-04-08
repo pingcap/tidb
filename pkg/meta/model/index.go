@@ -272,7 +272,7 @@ func FindIndexInfoByID(indices []*IndexInfo, id int64) *IndexInfo {
 // IndexColumn provides index column info.
 type IndexColumn struct {
 	Name   ast.CIStr `json:"name"`   // Index column name
-	Offset int       `json:"offset"` // Index column offset in table
+	Offset int       `json:"offset"` // Index column offset in TableInfo.Columns
 	// Length of prefix when using column prefix
 	// for indexing;
 	// UnspecifedLength if not using prefix indexing
