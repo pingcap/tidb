@@ -24,7 +24,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -66,9 +65,11 @@ import (
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -83,10 +84,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
+	pdHttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
-
-var etcdDialTimeout = 5 * time.Second
 
 // ShowExec represents a show executor.
 type ShowExec struct {
@@ -267,6 +267,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowAnalyzeStatus(ctx)
 	case ast.ShowRegions:
 		return e.fetchShowTableRegions(ctx)
+	case ast.ShowDistributions:
+		return e.fetchShowDistributions(ctx)
 	case ast.ShowBuiltins:
 		return e.fetchShowBuiltins()
 	case ast.ShowBackups:
@@ -2113,6 +2115,47 @@ func (e *ShowExec) appendRow(row []any) {
 	}
 }
 
+func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
+	tb, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	physicalIDs := []int64{}
+	if pi := tb.Meta().GetPartitionInfo(); pi != nil {
+		for _, name := range e.Table.PartitionNames {
+			pid, err := tables.FindPartitionByName(tb.Meta(), name.L)
+			if err != nil {
+				return err
+			}
+			physicalIDs = append(physicalIDs, pid)
+		}
+		if len(physicalIDs) == 0 {
+			for _, p := range pi.Definitions {
+				physicalIDs = append(physicalIDs, p.ID)
+			}
+		}
+	} else {
+		if len(e.Table.PartitionNames) != 0 {
+			return plannererrors.ErrPartitionClauseOnNonpartitioned
+		}
+		physicalIDs = append(physicalIDs, tb.Meta().ID)
+	}
+	distributions := make([]*pdHttp.RegionDistribution, 0)
+	var resp *pdHttp.RegionDistributions
+	for _, pid := range physicalIDs {
+		startKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid))
+		endKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid+1))
+		// todo： support engine type
+		resp, err = infosync.GetRegionDistributionByKeyRange(ctx, startKey, endKey, "")
+		if err != nil {
+			return err
+		}
+		distributions = append(distributions, resp.RegionDistributions...)
+	}
+	e.fillDistributionsToChunk(distributions)
+	return nil
+}
+
 func (e *ShowExec) fetchShowTableRegions(ctx context.Context) error {
 	store := e.Ctx().GetStore()
 	tikvStore, ok := store.(helper.Storage)
@@ -2158,7 +2201,7 @@ func (e *ShowExec) fetchShowTableRegions(ctx context.Context) error {
 		physicalIDs = append(physicalIDs, tb.Meta().ID)
 	}
 
-	// Get table regions from from pd, not from regionCache, because the region cache maybe outdated.
+	// Get table regions from pd, not from regionCache, because the region cache maybe outdated.
 	var regions []regionMeta
 	if len(e.IndexName.L) != 0 {
 		// show table * index * region
@@ -2268,6 +2311,24 @@ func getTableIndexRegions(indexInfo *model.IndexInfo, physicalIDs []int64, tikvS
 		regions = append(regions, rs...)
 	}
 	return regions, nil
+}
+
+func (e *ShowExec) fillDistributionsToChunk(distributions []*pdHttp.RegionDistribution) {
+	for _, dis := range distributions {
+		e.result.AppendUint64(0, dis.StoreID)
+		e.result.AppendString(1, dis.EngineType)
+		e.result.AppendInt64(2, int64(dis.RegionLeaderCount))
+		e.result.AppendInt64(3, int64(dis.RegionPeerCount))
+		e.result.AppendUint64(4, dis.RegionWriteBytes)
+		e.result.AppendUint64(5, dis.RegionWriteKeys)
+		e.result.AppendUint64(6, dis.RegionWriteQuery)
+		e.result.AppendUint64(7, dis.RegionLeaderReadBytes)
+		e.result.AppendUint64(8, dis.RegionLeaderReadKeys)
+		e.result.AppendUint64(9, dis.RegionLeaderReadQuery)
+		e.result.AppendUint64(10, dis.RegionPeerReadBytes)
+		e.result.AppendUint64(11, dis.RegionPeerReadKeys)
+		e.result.AppendUint64(12, dis.RegionPeerReadQuery)
+	}
 }
 
 func (e *ShowExec) fillRegionsToChunk(regions []showTableRegionRowItem) {
