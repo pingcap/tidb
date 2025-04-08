@@ -34,7 +34,7 @@ import (
 
 // KVEncoder encodes a row of data into a KV pair.
 type KVEncoder interface {
-	Encode(row []types.Datum, rowID int64) (*kv.Pairs, error)
+	Encode(row []types.Datum, rowID int64, fields []*types.FieldType) (*kv.Pairs, error)
 	// GetColumnSize returns the size of each column in the current encoder.
 	GetColumnSize() map[int64]int64
 	io.Closer
@@ -48,6 +48,12 @@ type tableKVEncoder struct {
 	columnsAndUserVars []*ast.ColumnNameOrUserVar
 	fieldMappings      []*FieldMapping
 	insertColumns      []*table.Column
+	// Following cache use to avoid `runtime.makeslice`.
+	insertColumnRowCache    []types.Datum
+	insertColumnFieldsCache []*types.FieldType
+	rowCache                []types.Datum
+	hasValueCache           []bool
+	needCastCache           []bool
 }
 
 var _ KVEncoder = &tableKVEncoder{}
@@ -77,13 +83,13 @@ func NewTableKVEncoder(
 }
 
 // Encode implements the KVEncoder interface.
-func (en *tableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, error) {
+func (en *tableKVEncoder) Encode(row []types.Datum, rowID int64, fields []*types.FieldType) (*kv.Pairs, error) {
 	// we ignore warnings when encoding rows now, but warnings uses the same memory as parser, since the input
 	// row []types.Datum share the same underlying buf, and when doing CastValue, we're using hack.String/hack.Slice.
 	// when generating error such as mysql.ErrDataOutOfRange, the data will be part of the error, causing the buf
 	// unable to release. So we truncate the warnings here.
 	defer en.TruncateWarns()
-	record, err := en.parserData2TableData(row, rowID)
+	record, err := en.parserData2TableData(row, rowID, fields)
 	if err != nil {
 		return nil, err
 	}
@@ -96,8 +102,16 @@ func (en *tableKVEncoder) GetColumnSize() map[int64]int64 {
 }
 
 // todo merge with code in load_data.go
-func (en *tableKVEncoder) parserData2TableData(parserData []types.Datum, rowID int64) ([]types.Datum, error) {
-	row := make([]types.Datum, 0, len(en.insertColumns))
+func (en *tableKVEncoder) parserData2TableData(parserData []types.Datum, rowID int64, parseFields []*types.FieldType) ([]types.Datum, error) {
+	if cap(en.insertColumnRowCache) < len(en.insertColumns) {
+		en.insertColumnRowCache = make([]types.Datum, 0, len(en.insertColumns))
+	}
+	if cap(en.insertColumnFieldsCache) < len(en.insertColumns) {
+		en.insertColumnFieldsCache = make([]*types.FieldType, 0, len(en.insertColumns))
+	}
+
+	row := en.insertColumnRowCache[:0]
+	fields := en.insertColumnFieldsCache[:0]
 	setVar := func(name string, col *types.Datum) {
 		// User variable names are not case-sensitive
 		// https://dev.mysql.com/doc/refman/8.0/en/user-variables.html
@@ -118,11 +132,14 @@ func (en *tableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 
 			// If some columns is missing and their type is time and has not null flag, they should be set as current time.
 			if types.IsTypeTime(en.fieldMappings[i].Column.GetType()) && mysql.HasNotNullFlag(en.fieldMappings[i].Column.GetFlag()) {
-				row = append(row, types.NewTimeDatum(types.CurrentTime(en.fieldMappings[i].Column.GetType())))
+				col := en.fieldMappings[i].Column
+				row = append(row, types.NewTimeDatum(types.CurrentTime(col.GetType())))
+				fields = append(fields, &col.FieldType)
 				continue
 			}
 
 			row = append(row, types.NewDatum(nil))
+			fields = append(fields, nil)
 			continue
 		}
 
@@ -132,6 +149,9 @@ func (en *tableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 		}
 
 		row = append(row, parserData[i])
+		if i < len(parseFields) {
+			fields = append(fields, parseFields[i])
+		}
 	}
 	for i := 0; i < len(en.columnAssignments); i++ {
 		// eval expression of `SET` clause
@@ -140,10 +160,11 @@ func (en *tableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 			return nil, err
 		}
 		row = append(row, d)
+		fields = append(fields, nil)
 	}
 
 	// a new row buffer will be allocated in getRow
-	newRow, err := en.getRow(row, rowID)
+	newRow, err := en.getRow(row, rowID, fields)
 	if err != nil {
 		return nil, err
 	}
@@ -155,34 +176,58 @@ func (en *tableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 // The input values from these two statements are datums instead of
 // expressions which are used in `insert into set x=y`.
 // copied from InsertValues
-func (en *tableKVEncoder) getRow(vals []types.Datum, rowID int64) ([]types.Datum, error) {
-	row := make([]types.Datum, len(en.Columns))
-	hasValue := make([]bool, len(en.Columns))
-	for i := 0; i < len(en.insertColumns); i++ {
-		casted, err := table.CastColumnValue(en.SessionCtx.GetExprCtx(), vals[i], en.insertColumns[i].ToInfo(), false, false)
-		if err != nil {
-			return nil, err
-		}
-
-		offset := en.insertColumns[i].Offset
-		row[offset] = casted
-		hasValue[offset] = true
+func (en *tableKVEncoder) getRow(vals []types.Datum, rowID int64, fields []*types.FieldType) ([]types.Datum, error) {
+	rowLen := len(en.Columns)
+	if len(en.rowCache) < rowLen || len(en.hasValueCache) < rowLen || len(en.needCastCache) < rowLen {
+		en.rowCache = make([]types.Datum, rowLen)
+		en.hasValueCache = make([]bool, rowLen)
+		en.needCastCache = make([]bool, rowLen)
+	}
+	row := en.rowCache[:rowLen]
+	hasValue := en.hasValueCache[:rowLen]
+	needCast := en.needCastCache[:rowLen]
+	for i := range row {
+		row[i] = types.Datum{}
+	}
+	for i := range hasValue {
+		hasValue[i] = false
+	}
+	for i := range needCast {
+		needCast[i] = false
 	}
 
-	return en.fillRow(row, hasValue, rowID)
+	for i := 0; i < len(en.insertColumns); i++ {
+		insertCol := en.insertColumns[i].ToInfo()
+		offset := en.insertColumns[i].Offset
+		if i < len(fields) && fields[i] != nil && insertCol.FieldType.Equal(fields[i]) {
+			row[offset] = vals[i]
+		} else {
+			casted, err := table.CastColumnValue(en.SessionCtx.GetExprCtx(), vals[i], insertCol, false, false)
+			if err != nil {
+				return nil, err
+			}
+			row[offset] = casted
+		}
+		hasValue[offset] = true
+		needCast[offset] = !(en.Columns[offset].ToInfo().FieldType.Equal(&insertCol.FieldType))
+	}
+
+	return en.fillRow(row, hasValue, needCast, rowID)
 }
 
-func (en *tableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int64) ([]types.Datum, error) {
+func (en *tableKVEncoder) fillRow(row []types.Datum, hasValue, needCast []bool, rowID int64) ([]types.Datum, error) {
 	var value types.Datum
 	var err error
 
 	record := en.GetOrCreateRecord()
 	for i, col := range en.Columns {
 		var theDatum *types.Datum
+		doCast := true
 		if hasValue[i] {
 			theDatum = &row[i]
+			doCast = needCast[i]
 		}
-		value, err = en.ProcessColDatum(col, rowID, theDatum)
+		value, err = en.ProcessColDatum(col, rowID, theDatum, doCast)
 		if err != nil {
 			return nil, en.LogKVConvertFailed(row, i, col.ToInfo(), err)
 		}

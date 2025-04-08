@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -48,19 +49,20 @@ var (
 )
 
 type rowToEncode struct {
-	row   []types.Datum
-	rowID int64
+	row    []types.Datum
+	rowID  int64
+	fields []*types.FieldType
 	// endOffset represents the offset after the current row in encode reader.
 	// it will be negative if the data source is not file.
 	endOffset int64
 	resetFn   func()
 }
 
-type encodeReaderFn func(ctx context.Context) (data rowToEncode, closed bool, err error)
+type encodeReaderFn func(ctx context.Context, row []types.Datum) (data rowToEncode, closed bool, err error)
 
 // parserEncodeReader wraps a mydump.Parser as a encodeReaderFn.
 func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) encodeReaderFn {
-	return func(context.Context) (data rowToEncode, closed bool, err error) {
+	return func(context.Context, []types.Datum) (data rowToEncode, closed bool, err error) {
 		readPos, _ := parser.Pos()
 		if readPos >= endOffset {
 			closed = true
@@ -91,30 +93,64 @@ func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) 
 	}
 }
 
-// queryRowEncodeReader wraps a QueryRow channel as a encodeReaderFn.
-func queryRowEncodeReader(rowCh <-chan QueryRow) encodeReaderFn {
-	return func(ctx context.Context) (data rowToEncode, closed bool, err error) {
+type queryChunkEncodeReader struct {
+	chunkCh  <-chan QueryChunk
+	queryChk QueryChunk
+	cursor   int
+	numRows  int
+}
+
+func (r *queryChunkEncodeReader) readRow(ctx context.Context, row []types.Datum) (data rowToEncode, closed bool, err error) {
+	if r.queryChk.Chk == nil || r.cursor >= r.numRows {
 		select {
 		case <-ctx.Done():
 			err = ctx.Err()
 			return
-		case row, ok := <-rowCh:
+		case queryChk, ok := <-r.chunkCh:
 			if !ok {
 				closed = true
 				return
 			}
-			data = rowToEncode{
-				row:       row.Data,
-				rowID:     row.ID,
-				endOffset: -1,
-				resetFn:   func() {},
-			}
-			return
+			r.queryChk = queryChk
+			r.cursor = 0
+			r.numRows = r.queryChk.Chk.NumRows()
 		}
+	}
+
+	chkRow := r.queryChk.Chk.GetRow(r.cursor)
+	chkRow.Len()
+	rowLen := chkRow.Len()
+	if len(row) < rowLen {
+		row = make([]types.Datum, rowLen)
+	} else {
+		row = row[:rowLen]
+		for i := range row {
+			row[i] = types.Datum{}
+		}
+	}
+	row = chkRow.GetDatumRowWithBuffer(r.queryChk.Fields, row)
+
+	r.cursor++
+	data = rowToEncode{
+		row:       row,
+		rowID:     r.queryChk.Offset + int64(r.cursor),
+		fields:    r.queryChk.Fields,
+		endOffset: -1,
+		resetFn:   func() {},
+	}
+	return
+}
+
+// queryRowEncodeReader wraps a queryChunkEncodeReader as a encodeReaderFn.
+func queryRowEncodeReader(chunkCh <-chan QueryChunk) encodeReaderFn {
+	reader := queryChunkEncodeReader{chunkCh: chunkCh}
+	return func(ctx context.Context, row []types.Datum) (data rowToEncode, closed bool, err error) {
+		return reader.readRow(ctx, row)
 	}
 }
 
 type encodedKVGroupBatch struct {
+	count    int
 	dataKVs  []common.KvPair
 	indexKVs map[int64][]common.KvPair // indexID -> pairs
 
@@ -134,8 +170,10 @@ func (b *encodedKVGroupBatch) reset() {
 	b.memBuf = nil
 }
 
-func newEncodedKVGroupBatch(keyspace []byte) *encodedKVGroupBatch {
+func newEncodedKVGroupBatch(keyspace []byte, count int) *encodedKVGroupBatch {
 	return &encodedKVGroupBatch{
+		count:         count,
+		dataKVs:       make([]common.KvPair, 0, count),
 		indexKVs:      make(map[int64][]common.KvPair, 8),
 		groupChecksum: verify.NewKVGroupChecksumWithKeyspace(keyspace),
 	}
@@ -146,14 +184,21 @@ func (b *encodedKVGroupBatch) add(kvs *kv.Pairs) error {
 	for _, pair := range kvs.Pairs {
 		if tablecodec.IsRecordKey(pair.Key) {
 			b.dataKVs = append(b.dataKVs, pair)
-			b.groupChecksum.UpdateOneDataKV(pair)
+			if b.groupChecksum != nil {
+				b.groupChecksum.UpdateOneDataKV(pair)
+			}
 		} else {
 			indexID, err := tablecodec.DecodeIndexID(pair.Key)
 			if err != nil {
 				return errors.Trace(err)
 			}
+			if len(b.indexKVs[indexID]) == 0 {
+				b.indexKVs[indexID] = make([]common.KvPair, 0, b.count)
+			}
 			b.indexKVs[indexID] = append(b.indexKVs[indexID], pair)
-			b.groupChecksum.UpdateOneIndexKV(indexID, pair)
+			if b.groupChecksum != nil {
+				b.groupChecksum.UpdateOneIndexKV(indexID, pair)
+			}
 		}
 	}
 
@@ -242,15 +287,28 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		p.encodeTotalDur += encodeDur
 		p.readTotalDur += readDur
 
-		kvGroupBatch := newEncodedKVGroupBatch(p.keyspace)
+		recordCount := 0
+		for _, kvs := range rowBatch {
+			for _, pair := range kvs.Pairs {
+				if tablecodec.IsRecordKey(pair.Key) {
+					recordCount++
+					break
+				}
+			}
+		}
+		kvGroupBatch := newEncodedKVGroupBatch(p.keyspace, recordCount)
+		if p.groupChecksum == nil {
+			kvGroupBatch.groupChecksum = nil
+		}
 
 		for _, kvs := range rowBatch {
 			if err := kvGroupBatch.add(kvs); err != nil {
 				return errors.Trace(err)
 			}
 		}
-
-		p.groupChecksum.Add(kvGroupBatch.groupChecksum)
+		if p.groupChecksum != nil {
+			p.groupChecksum.Add(kvGroupBatch.groupChecksum)
+		}
 
 		if err := p.sendFn(ctx, kvGroupBatch); err != nil {
 			return err
@@ -258,7 +316,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 
 		// the ownership of rowBatch is transferred to the receiver of sendFn, we should
 		// not touch it anymore.
-		rowBatch = make([]*kv.Pairs, 0, MinDeliverRowCnt)
+		rowBatch = make([]*kv.Pairs, 0, max(MinDeliverRowCnt, len(rowBatch)))
 		rowBatchByteSize = 0
 		rowCount = 0
 		readDur = 0
@@ -266,9 +324,10 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		return nil
 	}
 
+	var readRowCache []types.Datum
 	for {
 		readDurStart := time.Now()
-		data, closed, err := p.readFn(ctx)
+		data, closed, err := p.readFn(ctx, readRowCache)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -278,7 +337,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		readDur += time.Since(readDurStart)
 
 		encodeDurStart := time.Now()
-		kvs, encodeErr := p.encoder.Encode(data.row, data.rowID)
+		kvs, encodeErr := p.encoder.Encode(data.row, data.rowID, data.fields)
 		currOffset = data.endOffset
 		data.resetFn()
 		if encodeErr != nil {
@@ -298,13 +357,17 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 				return err
 			}
 		}
+		readRowCache = data.row
 	}
 
 	return recordSendReset()
 }
 
 func (p *chunkEncoder) summaryFields() []zap.Field {
-	mergedChecksum := p.groupChecksum.MergedChecksum()
+	var mergedChecksum verify.KVChecksum
+	if p.groupChecksum != nil {
+		mergedChecksum = p.groupChecksum.MergedChecksum()
+	}
 	return []zap.Field{
 		zap.Duration("readDur", p.readTotalDur),
 		zap.Duration("encodeDur", p.encodeTotalDur),
@@ -469,8 +532,16 @@ func (p *dataDeliver) deliverLoop(ctx context.Context) error {
 			if metrics != nil {
 				metrics.BlockDeliverSecondsHistogram.Observe(deliverDur.Seconds())
 
-				dataSize, indexSize := kvBatch.groupChecksum.DataAndIndexSumSize()
-				dataKVCnt, indexKVCnt := kvBatch.groupChecksum.DataAndIndexSumKVS()
+				var (
+					dataSize, indexSize   uint64
+					dataKVCnt, indexKVCnt uint64
+				)
+
+				if kvBatch.groupChecksum != nil {
+					dataSize, indexSize = kvBatch.groupChecksum.DataAndIndexSumSize()
+					dataKVCnt, indexKVCnt = kvBatch.groupChecksum.DataAndIndexSumKVS()
+				}
+
 				dataKVBytesHist.Observe(float64(dataSize))
 				dataKVPairsHist.Observe(float64(dataKVCnt))
 				indexKVBytesHist.Observe(float64(indexSize))
@@ -493,14 +564,15 @@ func (p *dataDeliver) summaryFields() []zap.Field {
 	}
 }
 
-// QueryRow is a row from query result.
-type QueryRow struct {
-	ID   int64
-	Data []types.Datum
+// QueryChunk is a chunk from query result.
+type QueryChunk struct {
+	Fields []*types.FieldType
+	Chk    *chunk.Chunk
+	Offset int64
 }
 
 func newQueryChunkProcessor(
-	rowCh chan QueryRow,
+	chunkCh chan QueryChunk,
 	encoder KVEncoder,
 	keyspace []byte,
 	logger *zap.Logger,
@@ -518,18 +590,22 @@ func newQueryChunkProcessor(
 		dataWriter:    dataWriter,
 		indexWriter:   indexWriter,
 	}
+	enc := newChunkEncoder(
+		chunkName,
+		queryRowEncodeReader(chunkCh),
+		-1,
+		deliver.sendEncodedData,
+		chunkLogger,
+		encoder,
+		keyspace,
+	)
+	if groupChecksum == nil {
+		enc.groupChecksum = nil
+	}
 	return &baseChunkProcessor{
-		sourceType: DataSourceTypeQuery,
-		deliver:    deliver,
-		enc: newChunkEncoder(
-			chunkName,
-			queryRowEncodeReader(rowCh),
-			-1,
-			deliver.sendEncodedData,
-			chunkLogger,
-			encoder,
-			keyspace,
-		),
+		sourceType:    DataSourceTypeQuery,
+		deliver:       deliver,
+		enc:           enc,
 		logger:        chunkLogger,
 		groupChecksum: groupChecksum,
 	}
