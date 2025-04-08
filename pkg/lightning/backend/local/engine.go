@@ -1033,7 +1033,7 @@ var _ common.IngestData = (*Engine)(nil)
 
 // GetFirstAndLastKey reads the first and last key in range [lowerBound, upperBound)
 // in the engine. Empty upperBound means unbounded.
-func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []byte, error) {
+func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) (firstKey, lastKey []byte, err error) {
 	if len(upperBound) == 0 {
 		// we use empty slice for unbounded upper bound, but it means max value in pebble
 		// so reset to nil
@@ -1058,12 +1058,12 @@ func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []by
 	if !hasKey {
 		return nil, nil, nil
 	}
-	firstKey := append([]byte{}, iter.Key()...)
+	firstKey = append([]byte{}, iter.Key()...)
 	iter.Last()
 	if iter.Error() != nil {
 		return nil, nil, errors.Annotate(iter.Error(), "failed to seek to the last key")
 	}
-	lastKey := append([]byte{}, iter.Key()...)
+	lastKey = append([]byte{}, iter.Key()...)
 	return firstKey, lastKey, nil
 }
 
@@ -1536,7 +1536,7 @@ func (h *sstIterHeap) Pop() any {
 }
 
 // Next implements common.Iterator.
-func (h *sstIterHeap) Next() ([]byte, []byte, error) {
+func (h *sstIterHeap) Next() (key, val []byte, err error) {
 	for {
 		if len(h.iters) == 0 {
 			return nil, nil, nil

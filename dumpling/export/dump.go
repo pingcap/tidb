@@ -831,7 +831,7 @@ func (d *Dumper) sendTaskToChan(tctx *tcontext.Context, task Task, taskChan chan
 	}
 }
 
-func (d *Dumper) selectMinAndMaxIntValue(tctx *tcontext.Context, conn *BaseConn, db, tbl, field string) (*big.Int, *big.Int, error) {
+func (d *Dumper) selectMinAndMaxIntValue(tctx *tcontext.Context, conn *BaseConn, db, tbl, field string) (minv, maxv *big.Int, err error) {
 	conf, zero := d.conf, &big.Int{}
 	query := fmt.Sprintf("SELECT MIN(`%s`),MAX(`%s`) FROM `%s`.`%s`",
 		escapeString(field), escapeString(field), escapeString(db), escapeString(tbl))
@@ -842,7 +842,7 @@ func (d *Dumper) selectMinAndMaxIntValue(tctx *tcontext.Context, conn *BaseConn,
 
 	var smin sql.NullString
 	var smax sql.NullString
-	err := conn.QuerySQL(tctx, func(rows *sql.Rows) error {
+	err = conn.QuerySQL(tctx, func(rows *sql.Rows) error {
 		err := rows.Scan(&smin, &smax)
 		rows.Close()
 		return err
@@ -855,8 +855,8 @@ func (d *Dumper) selectMinAndMaxIntValue(tctx *tcontext.Context, conn *BaseConn,
 		return zero, zero, errors.Errorf("no invalid min/max value found in query %s", query)
 	}
 
-	maxv := new(big.Int)
-	minv := new(big.Int)
+	maxv = new(big.Int)
+	minv = new(big.Int)
 	var ok bool
 	if maxv, ok = maxv.SetString(smax.String, 10); !ok {
 		return zero, zero, errors.Errorf("fail to convert max value %s in query %s", smax.String, query)

@@ -494,7 +494,7 @@ func genHintTblForSingleJoinNode(
 	return qbOffset, guessQBOffset, &ast.HintTable{DBName: *dbName, TableName: *tableName}
 }
 
-func extractTableAsName(p base.PhysicalPlan) (*ast.CIStr, *ast.CIStr) {
+func extractTableAsName(p base.PhysicalPlan) (db *ast.CIStr, table *ast.CIStr) {
 	if len(p.Children()) > 1 {
 		return nil, nil
 	}

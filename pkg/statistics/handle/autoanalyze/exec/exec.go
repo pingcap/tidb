@@ -127,7 +127,7 @@ func ParseAutoAnalyzeRatio(ratio string) float64 {
 
 // ParseAutoAnalysisWindow parses the time window for auto analysis.
 // It parses the times in UTC location.
-func ParseAutoAnalysisWindow(start, end string) (time.Time, time.Time, error) {
+func ParseAutoAnalysisWindow(start, end string) (_, _ time.Time, err error) {
 	if start == "" {
 		start = vardef.DefAutoAnalyzeStartTime
 	}

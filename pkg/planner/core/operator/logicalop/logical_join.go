@@ -1336,7 +1336,7 @@ func (p *LogicalJoin) ExtractOnCondition(
 // children of join, whatever the join type is; if false, push it down to inner child of outer join,
 // and both children of non-outer-join.
 func (p *LogicalJoin) pushDownConstExpr(expr expression.Expression, leftCond []expression.Expression,
-	rightCond []expression.Expression, filterCond bool) ([]expression.Expression, []expression.Expression) {
+	rightCond []expression.Expression, filterCond bool) (_, _ []expression.Expression) {
 	switch p.JoinType {
 	case LeftOuterJoin, LeftOuterSemiJoin, AntiLeftOuterSemiJoin:
 		if filterCond {

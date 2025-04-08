@@ -34,6 +34,7 @@ var (
 	StatsHealthyGauge         *prometheus.GaugeVec
 	StatsDeltaLoadHistogram   prometheus.Histogram
 	StatsDeltaUpdateHistogram prometheus.Histogram
+	StatsUsageUpdateHistogram prometheus.Histogram
 
 	HistoricalStatsCounter        *prometheus.CounterVec
 	PlanReplayerTaskCounter       *prometheus.CounterVec
@@ -159,6 +160,15 @@ func InitStatsMetrics() {
 			Subsystem: "statistics",
 			Name:      "stats_delta_update_duration_seconds",
 			Help:      "Bucketed histogram of processing time for the background stats_meta update job",
+			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 24), // 10ms ~ 24h
+		},
+	)
+	StatsUsageUpdateHistogram = NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "statistics",
+			Name:      "stats_usage_update_duration_seconds",
+			Help:      "Bucketed histogram of processing time for the background stats usage update job",
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 24), // 10ms ~ 24h
 		},
 	)
