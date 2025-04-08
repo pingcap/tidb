@@ -1490,7 +1490,8 @@ func (local *Backend) doImport(
 	// 3. the main goroutine can see the error and exit after workGroup.Wait().
 
 	var (
-		workGroup, workerCtx = util.NewErrorGroupWithRecoverWithCtx(ctx)
+		workGroup, subCtx = util.NewErrorGroupWithRecoverWithCtx(ctx)
+		workerCtx, cancel = context.WithCancel(subCtx)
 		// jobToWorkerCh and jobFromWorkerCh are unbuffered so jobs will not be
 		// owned by them.
 		jobToWorkerCh   = make(chan *regionJob)
@@ -1591,7 +1592,11 @@ func (local *Backend) doImport(
 		local.workers.Delete(engine.ID())
 	}()
 
-	_ = worker.Open()
+	if err := worker.Open(); err != nil {
+		cancel()
+		_ = workGroup.Wait()
+		return errors.Trace(err)
+	}
 
 	failpoint.Label("afterStartWorker")
 

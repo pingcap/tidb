@@ -17,8 +17,8 @@ package external
 import (
 	"context"
 	"path"
-	"sync"
 	"testing"
+	"time"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -368,12 +368,11 @@ func TestChangeEngineConcurrency(t *testing.T) {
 		return e.LoadIngestData(ctx, outCh)
 	})
 
-	wg := &sync.WaitGroup{}
-	wg.Add(1)
+	// Change concurrency after the channel is filled
+	time.Sleep(time.Second)
+	e.UpdateConcurrency(1)
 
 	eg.Go(func() error {
-		wg.Wait()
-		// Consume the data after concurrency changed
 		for data := range outCh {
 			// mock generate job
 			data.Data.IncRef()
@@ -384,9 +383,6 @@ func TestChangeEngineConcurrency(t *testing.T) {
 		}
 		return nil
 	})
-
-	e.UpdateConcurrency(1)
-	wg.Done()
 
 	// Should not be blocked
 	require.NoError(t, eg.Wait())
