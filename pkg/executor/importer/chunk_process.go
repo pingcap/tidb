@@ -292,13 +292,14 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		}
 		kvGroupBatch := newEncodedKVGroupBatch(p.keyspace, recordCount)
 
-		for _, kvs := range rowBatch {
-			if err := kvGroupBatch.add(kvs); err != nil {
-				return errors.Trace(err)
+		if p.groupChecksum != nil {
+			for _, kvs := range rowBatch {
+				if err := kvGroupBatch.add(kvs); err != nil {
+					return errors.Trace(err)
+				}
 			}
+			p.groupChecksum.Add(kvGroupBatch.groupChecksum)
 		}
-
-		p.groupChecksum.Add(kvGroupBatch.groupChecksum)
 
 		if err := p.sendFn(ctx, kvGroupBatch); err != nil {
 			return err

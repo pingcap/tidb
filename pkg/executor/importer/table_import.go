@@ -662,12 +662,17 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 	for i := 0; i < ti.ThreadCnt; i++ {
 		eg.Go(func() error {
 			chunkCheckpoint := checkpoints.ChunkCheckpoint{}
-			chunkChecksum := verify.NewKVGroupChecksumWithKeyspace(ti.keyspace)
+			var chunkChecksum *verify.KVGroupChecksum
+			if ti.Checksum != config.OpLevelOff {
+				chunkChecksum = verify.NewKVGroupChecksumWithKeyspace(ti.keyspace)
+			}
 			progress := NewProgress()
 			defer func() {
 				mu.Lock()
 				defer mu.Unlock()
-				checksum.Add(chunkChecksum)
+				if chunkChecksum != nil {
+					checksum.Add(chunkChecksum)
+				}
 				for k, v := range progress.GetColSize() {
 					colSizeMap[k] += v
 				}
