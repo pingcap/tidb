@@ -282,11 +282,13 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		p.readTotalDur += readDur
 
 		recordCount := 0
-		for _, kvs := range rowBatch {
-			for _, pair := range kvs.Pairs {
-				if tablecodec.IsRecordKey(pair.Key) {
-					recordCount++
-					break
+		if p.groupChecksum != nil {
+			for _, kvs := range rowBatch {
+				for _, pair := range kvs.Pairs {
+					if tablecodec.IsRecordKey(pair.Key) {
+						recordCount++
+						break
+					}
 				}
 			}
 		}
