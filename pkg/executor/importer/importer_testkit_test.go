@@ -331,9 +331,9 @@ func TestProcessChunkWith(t *testing.T) {
 		}
 		ti := getTableImporter(ctx, t, store, "t", "", nil)
 		defer ti.Backend().CloseEngineMgr()
-		rowsCh := make(chan importer.QueryRow, 3)
+		chkCh := make(chan importer.QueryChunk, 3)
 		for i := 1; i <= 3; i++ {
-			rowsCh <- importer.QueryRow{
+			chkCh <- importer.QueryChunk{
 				ID: int64(i),
 				Data: []types.Datum{
 					types.NewIntDatum(int64((i-1)*3 + 1)),
@@ -342,8 +342,8 @@ func TestProcessChunkWith(t *testing.T) {
 				},
 			}
 		}
-		close(rowsCh)
-		ti.SetSelectedRowCh(rowsCh)
+		close(chkCh)
+		ti.SetSelectedChunkCh(chkCh)
 		kvWriter := mock.NewMockEngineWriter(ctrl)
 		kvWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 		progress := importer.NewProgress()
