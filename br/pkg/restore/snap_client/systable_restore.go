@@ -129,7 +129,14 @@ var unRecoverableTable = map[string]map[string]struct{}{
 	},
 }
 
+var unRecoverableSchema = map[string]struct{}{
+	mysql.WorkloadSchema: {},
+}
+
 func isUnrecoverableTable(schemaName string, tableName string) bool {
+	if _, ok := unRecoverableSchema[schemaName]; ok {
+		return true
+	}
 	tableMap, ok := unRecoverableTable[schemaName]
 	if !ok {
 		return false
@@ -159,7 +166,7 @@ func isPlanReplayerTables(schemaName string, tableName string) bool {
 // RestoreSystemSchemas restores the system schema(i.e. the `mysql` schema).
 // Detail see https://github.com/pingcap/br/issues/679#issuecomment-762592254.
 func (rc *SnapClient) RestoreSystemSchemas(ctx context.Context, f filter.Filter) (rerr error) {
-	sysDBs := []string{mysql.SystemDB, mysql.SysDB}
+	sysDBs := []string{mysql.SystemDB, mysql.SysDB, mysql.WorkloadSchema}
 	for _, sysDB := range sysDBs {
 		err := rc.restoreSystemSchema(ctx, f, sysDB)
 		if err != nil {
@@ -181,7 +188,7 @@ func (rc *SnapClient) restoreSystemSchema(ctx context.Context, f filter.Filter, 
 	}()
 
 	if !f.MatchSchema(sysDB) || !rc.withSysTable {
-		log.Debug("system database filtered out", zap.String("database", sysDB))
+		log.Info("system database filtered out", zap.String("database", sysDB))
 		return nil
 	}
 	originDatabase, ok := rc.databases[temporaryDB.O]

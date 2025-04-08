@@ -207,6 +207,8 @@ func (t IndexType) String() string {
 		return "HYPO"
 	case IndexTypeHNSW:
 		return "HNSW"
+	case IndexTypeInverted:
+		return "INVERTED"
 	default:
 		return ""
 	}
@@ -220,6 +222,7 @@ const (
 	IndexTypeRtree
 	IndexTypeHypo
 	IndexTypeHNSW
+	IndexTypeInverted
 )
 
 // ReferOptionType is the type for refer options.

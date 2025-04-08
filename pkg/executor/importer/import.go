@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -51,6 +52,7 @@ import (
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -81,20 +83,30 @@ const (
 	// 0 means no limit
 	unlimitedWriteSpeed = config.ByteSize(0)
 
-	characterSetOption          = "character_set"
-	fieldsTerminatedByOption    = "fields_terminated_by"
-	fieldsEnclosedByOption      = "fields_enclosed_by"
-	fieldsEscapedByOption       = "fields_escaped_by"
-	fieldsDefinedNullByOption   = "fields_defined_null_by"
-	linesTerminatedByOption     = "lines_terminated_by"
-	skipRowsOption              = "skip_rows"
-	splitFileOption             = "split_file"
-	diskQuotaOption             = "disk_quota"
-	threadOption                = "thread"
-	maxWriteSpeedOption         = "max_write_speed"
-	checksumTableOption         = "checksum_table"
-	recordErrorsOption          = "record_errors"
-	detachedOption              = "detached"
+	characterSetOption        = "character_set"
+	fieldsTerminatedByOption  = "fields_terminated_by"
+	fieldsEnclosedByOption    = "fields_enclosed_by"
+	fieldsEscapedByOption     = "fields_escaped_by"
+	fieldsDefinedNullByOption = "fields_defined_null_by"
+	linesTerminatedByOption   = "lines_terminated_by"
+	skipRowsOption            = "skip_rows"
+	splitFileOption           = "split_file"
+	diskQuotaOption           = "disk_quota"
+	threadOption              = "thread"
+	maxWriteSpeedOption       = "max_write_speed"
+	checksumTableOption       = "checksum_table"
+	recordErrorsOption        = "record_errors"
+	detachedOption            = "detached"
+	// if 'import mode' enabled, TiKV will:
+	//  - set level0_stop_writes_trigger = max(old, 1 << 30)
+	//  - set level0_slowdown_writes_trigger = max(old, 1 << 30)
+	//  - set soft_pending_compaction_bytes_limit = 0,
+	//  - set hard_pending_compaction_bytes_limit = 0,
+	//  - will not trigger flow control when SST count in L0 is large
+	//  - will not trigger region split, it might cause some region became
+	//    very large and be a hotspot, might cause latency spike.
+	//
+	// default false for local sort, true for global sort.
 	disableTiKVImportModeOption = "disable_tikv_import_mode"
 	cloudStorageURIOption       = "cloud_storage_uri"
 	disablePrecheckOption       = "disable_precheck"
@@ -229,6 +241,7 @@ type Plan struct {
 	DiskQuota             config.ByteSize
 	Checksum              config.PostOpLevel
 	ThreadCnt             int
+	MaxNodeCnt            int
 	MaxWriteSpeed         config.ByteSize
 	SplitFile             bool
 	MaxRecordedErrors     int64
@@ -751,6 +764,13 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		p.ForceMergeStep = true
 	}
 
+	if sv, ok := seCtx.GetSessionVars().GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
+		p.MaxNodeCnt = variable.TidbOptInt(sv, 0)
+		if p.MaxNodeCnt == -1 { // -1 means calculate automatically
+			p.MaxNodeCnt = ddl.GetDXFDefaultMaxNodeCntAuto(seCtx.GetStore())
+		}
+	}
+
 	// when split-file is set, data file will be split into chunks of 256 MiB.
 	// skip_rows should be 0 or 1, we add this restriction to simplify skip_rows
 	// logic, so we only need to skip on the first chunk for each data file.
@@ -781,6 +801,9 @@ func (p *Plan) adjustOptions(targetNodeCPUCnt int) {
 		log.L().Info("adjust IMPORT INTO thread count",
 			zap.Int("before", p.ThreadCnt), zap.Int("after", limit))
 		p.ThreadCnt = limit
+	}
+	if p.IsGlobalSort() {
+		p.DisableTiKVImportMode = true
 	}
 }
 
@@ -950,16 +973,16 @@ func (e *LoadDataController) GetFieldCount() int {
 // GenerateCSVConfig generates a CSV config for parser from LoadDataWorker.
 func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
 	csvConfig := &config.CSVConfig{
-		Separator: e.FieldsTerminatedBy,
+		FieldsTerminatedBy: e.FieldsTerminatedBy,
 		// ignore optionally enclosed
-		Delimiter:   e.FieldsEnclosedBy,
-		Terminator:  e.LinesTerminatedBy,
-		NotNull:     false,
-		Null:        e.FieldNullDef,
-		Header:      false,
-		TrimLastSep: false,
-		EscapedBy:   e.FieldsEscapedBy,
-		StartingBy:  e.LinesStartingBy,
+		FieldsEnclosedBy:   e.FieldsEnclosedBy,
+		LinesTerminatedBy:  e.LinesTerminatedBy,
+		NotNull:            false,
+		FieldNullDefinedBy: e.FieldNullDef,
+		Header:             false,
+		TrimLastEmptyField: false,
+		FieldsEscapedBy:    e.FieldsEscapedBy,
+		LinesStartingBy:    e.LinesStartingBy,
 	}
 	if !e.InImportInto {
 		// for load data
@@ -1004,6 +1027,7 @@ func (e *LoadDataController) InitDataStore(ctx context.Context) error {
 	}
 	return nil
 }
+
 func (*LoadDataController) initExternalStore(ctx context.Context, u *url.URL, target string) (storage.ExternalStorage, error) {
 	b, err2 := storage.ParseBackendFromURL(u, nil)
 	if err2 != nil {
@@ -1341,20 +1365,13 @@ func (e *LoadDataController) CreateColAssignSimpleExprs(ctx expression.BuildCont
 	return res, allWarnings, nil
 }
 
-func (e *LoadDataController) getBackendWorkerConcurrency() int {
-	// suppose cpu:mem ratio 1:2(true in most case), and we assign 1G per concurrency,
-	// so we can use 2 * threadCnt as concurrency. write&ingest step is mostly
-	// IO intensive, so CPU usage is below ThreadCnt in our tests.
-	return e.ThreadCnt * 2
-}
-
 func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.BackendConfig {
 	backendConfig := local.BackendConfig{
 		PDAddr:                 pdAddr,
 		LocalStoreDir:          dataDir,
 		MaxConnPerStore:        config.DefaultRangeConcurrency,
 		ConnCompressType:       config.CompressionNone,
-		WorkerConcurrency:      e.getBackendWorkerConcurrency(),
+		WorkerConcurrency:      e.ThreadCnt,
 		KVWriteBatchSize:       config.KVWriteBatchSize,
 		RegionSplitBatchSize:   config.DefaultRegionSplitBatchSize,
 		RegionSplitConcurrency: runtime.GOMAXPROCS(0),

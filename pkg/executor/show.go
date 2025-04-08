@@ -116,6 +116,7 @@ type ShowExec struct {
 	Extended    bool // Used for `show extended columns from ...`
 
 	ImportJobID *int64
+	SQLOrDigest string // Used for SHOW PLAN FOR <SQL or Digest>
 }
 
 type showTableRegionRowItem struct {
@@ -259,6 +260,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowBind()
 	case ast.ShowBindingCacheStatus:
 		return e.fetchShowBindingCacheStatus(ctx)
+	case ast.ShowPlanForSQL:
+		return e.fetchPlanForSQL()
 	case ast.ShowAnalyzeStatus:
 		return e.fetchShowAnalyzeStatus(ctx)
 	case ast.ShowRegions:
@@ -324,7 +327,7 @@ func (e *ShowExec) fetchShowBind() error {
 		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
 		bindings = handle.GetAllSessionBindings()
 	} else {
-		bindings = domain.GetDomain(e.Ctx()).BindHandle().GetAllGlobalBindings()
+		bindings = domain.GetDomain(e.Ctx()).BindingHandle().GetAllBindings()
 	}
 	// Remove the invalid bindings.
 	parser := parser.New()
@@ -370,6 +373,37 @@ func (e *ShowExec) fetchShowBind() error {
 	return nil
 }
 
+func (e *ShowExec) fetchPlanForSQL() error {
+	bindingHandle := domain.GetDomain(e.Ctx()).BindingHandle()
+	charset, collation := e.Ctx().GetSessionVars().GetCharsetInfo()
+	currentDB := e.Ctx().GetSessionVars().CurrentDB
+	plans, err := bindingHandle.ShowPlansForSQL(currentDB, e.SQLOrDigest, charset, collation)
+	if err != nil {
+		return err
+	}
+	for _, p := range plans {
+		hintStr, err := p.Binding.Hint.Restore()
+		if err != nil {
+			return err
+		}
+
+		e.appendRow([]any{
+			p.Binding.OriginalSQL,
+			hintStr,
+			p.Plan,
+			p.PlanDigest,
+			p.AvgLatency,
+			float64(p.ExecTimes),
+			p.AvgScanRows,
+			p.AvgReturnedRows,
+			p.LatencyPerReturnRow,
+			p.ScanRowsPerReturnRow,
+			p.Recommend,
+			p.Reason})
+	}
+	return nil
+}
+
 func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 	exec := e.Ctx().GetRestrictedSQLExecutor()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBindInfo)
@@ -381,9 +415,9 @@ func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 
-	handle := domain.GetDomain(e.Ctx()).BindHandle()
+	handle := domain.GetDomain(e.Ctx()).BindingHandle()
 
-	bindings := handle.GetAllGlobalBindings()
+	bindings := handle.GetAllBindings()
 	numBindings := 0
 	for _, binding := range bindings {
 		if binding.IsBindingEnabled() {
@@ -595,7 +629,7 @@ func (e *ShowExec) fetchShowTables(ctx context.Context) error {
 	for _, v := range showInfos {
 		// Test with mysql.AllPrivMask means any privilege would be OK.
 		// TODO: Should consider column privileges, which also make a table visible.
-		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, v.Name.O, "", mysql.AllPrivMask) {
+		if checker != nil && !checker.RequestVerification(activeRoles, e.DBName.O, v.Name.O, "", mysql.AllPrivMask&(^mysql.CreateTMPTablePriv)) {
 			continue
 		} else if fieldFilter != "" && v.Name.L != fieldFilter {
 			continue
@@ -1755,7 +1789,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 		`SELECT plugin, Account_locked, user_attributes->>'$.metadata', Token_issuer,
         Password_reuse_history, Password_reuse_time, Password_expired, Password_lifetime,
         user_attributes->>'$.Password_locking.failed_login_attempts',
-        user_attributes->>'$.Password_locking.password_lock_time_days', authentication_string
+        user_attributes->>'$.Password_locking.password_lock_time_days', authentication_string,
+        Max_user_connections
 		FROM %n.%n WHERE User=%? AND Host=%?`,
 		mysql.SystemDB, mysql.UserTable, userName, strings.ToLower(hostName))
 	if err != nil {
@@ -1835,6 +1870,12 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	}
 	authData := rows[0].GetString(10)
 
+	maxUserConnections := rows[0].GetInt64(11)
+	maxUserConnectionsStr := ""
+	if maxUserConnections > 0 {
+		maxUserConnectionsStr = fmt.Sprintf(" WITH MAX_USER_CONNECTIONS %d", maxUserConnections)
+	}
+
 	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, `SELECT Priv FROM %n.%n WHERE User=%? AND Host=%?`, mysql.SystemDB, mysql.GlobalPrivTable, userName, hostName)
 	if err != nil {
 		return errors.Trace(err)
@@ -1857,8 +1898,8 @@ func (e *ShowExec) fetchShowCreateUser(ctx context.Context) error {
 	}
 
 	// FIXME: the returned string is not escaped safely
-	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s %s ACCOUNT %s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s%s%s%s",
-		e.User.Username, e.User.Hostname, authPlugin, authStr, require, tokenIssuer, passwordExpiredStr, accountLocked, passwordHistory, passwordReuseInterval, failedLoginAttempts, passwordLockTimeDays, userAttributes)
+	showStr := fmt.Sprintf("CREATE USER '%s'@'%s' IDENTIFIED WITH '%s'%s REQUIRE %s%s%s %s ACCOUNT %s PASSWORD HISTORY %s PASSWORD REUSE INTERVAL %s%s%s%s",
+		e.User.Username, e.User.Hostname, authPlugin, authStr, require, tokenIssuer, maxUserConnectionsStr, passwordExpiredStr, accountLocked, passwordHistory, passwordReuseInterval, failedLoginAttempts, passwordLockTimeDays, userAttributes)
 	e.appendRow([]any{showStr})
 	return nil
 }

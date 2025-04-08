@@ -2205,8 +2205,11 @@ func (b *builtinLpadSig) evalString(ctx EvalContext, row chunk.Row) (string, boo
 	}
 	padLength := len(padStr)
 
-	if targetLength < 0 || targetLength > b.tp.GetFlen() || (byteLength < targetLength && padLength == 0) {
+	if targetLength < 0 || targetLength > b.tp.GetFlen() {
 		return "", true, nil
+	}
+	if byteLength < targetLength && padLength == 0 {
+		return "", false, nil
 	}
 
 	if tailLen := targetLength - byteLength; tailLen > 0 {
@@ -2253,8 +2256,11 @@ func (b *builtinLpadUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (string,
 	}
 	padLength := len([]rune(padStr))
 
-	if targetLength < 0 || targetLength*4 > b.tp.GetFlen() || (runeLength < targetLength && padLength == 0) {
+	if targetLength < 0 || targetLength*4 > b.tp.GetFlen() {
 		return "", true, nil
+	}
+	if runeLength < targetLength && padLength == 0 {
+		return "", false, nil
 	}
 
 	if tailLen := targetLength - runeLength; tailLen > 0 {
@@ -2329,8 +2335,11 @@ func (b *builtinRpadSig) evalString(ctx EvalContext, row chunk.Row) (string, boo
 	}
 	padLength := len(padStr)
 
-	if targetLength < 0 || targetLength > b.tp.GetFlen() || (byteLength < targetLength && padLength == 0) {
+	if targetLength < 0 || targetLength > b.tp.GetFlen() {
 		return "", true, nil
+	}
+	if byteLength < targetLength && padLength == 0 {
+		return "", false, nil
 	}
 
 	if tailLen := targetLength - byteLength; tailLen > 0 {
@@ -2377,8 +2386,11 @@ func (b *builtinRpadUTF8Sig) evalString(ctx EvalContext, row chunk.Row) (string,
 	}
 	padLength := len([]rune(padStr))
 
-	if targetLength < 0 || targetLength*4 > b.tp.GetFlen() || (runeLength < targetLength && padLength == 0) {
+	if targetLength < 0 || targetLength*4 > b.tp.GetFlen() {
 		return "", true, nil
+	}
+	if runeLength < targetLength && padLength == 0 {
+		return "", false, nil
 	}
 
 	if tailLen := targetLength - runeLength; tailLen > 0 {

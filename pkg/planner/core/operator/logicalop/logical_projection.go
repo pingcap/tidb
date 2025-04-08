@@ -36,7 +36,7 @@ import (
 type LogicalProjection struct {
 	LogicalSchemaProducer `hash64-equals:"true"`
 
-	Exprs []expression.Expression `hash64-equals:"true"`
+	Exprs []expression.Expression `hash64-equals:"true" shallow-ref:"true"`
 
 	// CalculateNoDelay indicates this Projection is the root Plan and should be
 	// calculated without delay and will not return any result to client.
@@ -407,6 +407,10 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 	for idx, expr := range p.Exprs {
 		switch x := expr.(type) {
 		case *expression.Column:
+			//  column projected as a new column again.
+			if int(x.UniqueID) != outputColsUniqueIDsArray[idx] {
+				fds.AddEquivalence(intset.NewFastIntSet(int(x.UniqueID)), intset.NewFastIntSet(outputColsUniqueIDsArray[idx]))
+			}
 			continue
 		case *expression.CorrelatedColumn:
 			// t1(a,b,c), t2(m,n)
@@ -461,7 +465,7 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 				// the dependent columns in scalar function should be also considered as output columns as well.
 				outputColsUniqueIDs.Insert(int(one.UniqueID))
 			}
-			notnull := util.IsNullRejected(p.SCtx(), p.Schema(), x)
+			notnull := util.IsNullRejected(p.SCtx(), p.Schema(), x, true)
 			if notnull || determinants.SubsetOf(fds.NotNullCols) {
 				notnullColsUniqueIDs.Insert(scalarUniqueID)
 			}
@@ -598,9 +602,9 @@ func (p *LogicalProjection) AppendExpr(expr expression.Expression) *expression.C
 }
 
 // breakDownPredicates breaks down predicates into two sets: canBePushed and cannotBePushed. It also maps columns to projection schema.
-func breakDownPredicates(p *LogicalProjection, predicates []expression.Expression) ([]expression.Expression, []expression.Expression) {
-	canBePushed := make([]expression.Expression, 0, len(predicates))
-	canNotBePushed := make([]expression.Expression, 0, len(predicates))
+func breakDownPredicates(p *LogicalProjection, predicates []expression.Expression) (canBePushed, canNotBePushed []expression.Expression) {
+	canBePushed = make([]expression.Expression, 0, len(predicates))
+	canNotBePushed = make([]expression.Expression, 0, len(predicates))
 	exprCtx := p.SCtx().GetExprCtx()
 	for _, cond := range predicates {
 		substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(exprCtx, cond, p.Schema(), p.Exprs, true)

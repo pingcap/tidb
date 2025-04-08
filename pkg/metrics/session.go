@@ -39,6 +39,7 @@ var (
 	PessimisticDMLDurationByAttempt    *prometheus.HistogramVec
 	ResourceGroupQueryTotalCounter     *prometheus.CounterVec
 	FairLockingUsageCount              *prometheus.CounterVec
+	PessimisticLockKeysDuration        prometheus.Histogram
 )
 
 // InitSessionMetrics initializes session metrics.
@@ -227,6 +228,16 @@ func InitSessionMetrics() {
 			Name:      "transaction_fair_locking_usage",
 			Help:      "The counter of statements and transactions in which fair locking is used or takes effect",
 		}, []string{LblType})
+
+	// Moved from client-go module to tidb, to keep consistency with history versions, keep the subsystem name "tikvclient"
+	PessimisticLockKeysDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "tikvclient",
+			Name:      "pessimistic_lock_keys_duration",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 19), // 1ms ~ 262s, The default value of innodb_lock_wait_timeout is 50s
+			Help:      "tidb txn pessimistic lock keys duration",
+		})
 }
 
 // Label constants.

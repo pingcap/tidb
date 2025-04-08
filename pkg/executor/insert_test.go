@@ -17,6 +17,7 @@ package executor_test
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -425,7 +426,9 @@ func TestInsertRuntimeStat(t *testing.T) {
 	stats.BasicRuntimeStats.Record(5*time.Second, 1)
 	require.Equal(t, "prepare: 3s, check_insert: {total_time: 2s, mem_insert_time: 1s, prefetch: 1s}", stats.String())
 	require.Equal(t, stats.Clone().String(), stats.String())
-	stats.Merge(stats.Clone())
+	newStats := stats.Clone()
+	newStats.(*executor.InsertRuntimeStat).BasicRuntimeStats.Record(5*time.Second, 1)
+	stats.Merge(newStats)
 	require.Equal(t, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s}", stats.String())
 	stats.FKCheckTime = time.Second
 	require.Equal(t, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s, fk_check: 1s}", stats.String())
@@ -702,4 +705,19 @@ func TestInsertNullInNonStrictMode(t *testing.T) {
 	tk.MustExec("update t1 set col1 = null where id = 3")
 	tk.MustExec("insert ignore t1 VALUES (4, 4) ON DUPLICATE KEY UPDATE col1 = null")
 	tk.MustQuery("select * from t1").Check(testkit.RowsWithSep("|", "1|", "2|", "3|", "4|", "5|"))
+}
+
+func TestInsertLargeRow(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	ver := tk.MustQuery("select tidb_version()").Rows()[0][0].(string)
+	if !strings.Contains(ver, "Store: unistore") {
+		t.Skipf("Only support 'Store: unistore'\n%s", ver)
+	}
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, b longtext)")
+	tk.MustExec("set tidb_txn_entry_size_limit = 1<<23")
+	// the unistore arena blocksize is 8MB (8388608 bytes), so Unistore cannot handle larger rows than that!
+	// since a row cannot span multiple arena blocks.
+	tk.MustContainErrMsg("insert into t values (1, REPEAT('t',8388493))", "unistore lock entry too big")
 }

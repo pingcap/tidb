@@ -120,6 +120,7 @@ const (
 		Password_expired		ENUM('N','Y') NOT NULL DEFAULT 'N',
 		Password_last_changed	TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
 		Password_lifetime		SMALLINT UNSIGNED DEFAULT NULL,
+		Max_user_connections 	INT UNSIGNED NOT NULL DEFAULT 0,
 		PRIMARY KEY (Host, User),
 		KEY i_user (User));`
 	// CreateGlobalPrivTable is the SQL statement creates Global scope privilege table in system db.
@@ -221,11 +222,12 @@ const (
 
 	// CreateStatsMetaTable stores the meta of table statistics.
 	CreateStatsMetaTable = `CREATE TABLE IF NOT EXISTS mysql.stats_meta (
-		version 		BIGINT(64) UNSIGNED NOT NULL,
-		table_id 		BIGINT(64) NOT NULL,
-		modify_count	BIGINT(64) NOT NULL DEFAULT 0,
-		count 			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
-		snapshot        BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		version 					BIGINT(64) UNSIGNED NOT NULL,
+		table_id 					BIGINT(64) NOT NULL,
+		modify_count				BIGINT(64) NOT NULL DEFAULT 0,
+		count 						BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		snapshot        			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		last_stats_histograms_version 	BIGINT(64) UNSIGNED DEFAULT NULL,
 		INDEX idx_ver(version),
 		UNIQUE INDEX tbl(table_id)
 	);`
@@ -294,8 +296,8 @@ const (
 
 	// CreateBindInfoTable stores the sql bind info which is used to update globalBindCache.
 	CreateBindInfoTable = `CREATE TABLE IF NOT EXISTS mysql.bind_info (
-		original_sql TEXT NOT NULL,
-		bind_sql TEXT NOT NULL,
+		original_sql LONGTEXT NOT NULL,
+		bind_sql LONGTEXT NOT NULL,
 		default_db TEXT NOT NULL,
 		status TEXT NOT NULL,
 		create_time TIMESTAMP(3) NOT NULL,
@@ -303,10 +305,11 @@ const (
 		charset TEXT NOT NULL,
 		collation TEXT NOT NULL,
 		source VARCHAR(10) NOT NULL DEFAULT 'unknown',
-		sql_digest varchar(64),
-		plan_digest varchar(64),
+		sql_digest varchar(64) DEFAULT NULL,
+		plan_digest varchar(64) DEFAULT NULL,
 		INDEX sql_index(original_sql(700),default_db(68)) COMMENT "accelerate the speed when add global binding query",
-		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
+		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time",
+		UNIQUE INDEX digest_index(plan_digest, sql_digest) COMMENT "avoid duplicated records"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateRoleEdgesTable stores the role and user relationship information.
@@ -600,6 +603,8 @@ const (
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
 		modify_params json,
+		max_node_count INT DEFAULT 0,
+		extra_params json,
 		key(state),
 		UNIQUE KEY task_key(task_key)
 	);`
@@ -622,6 +627,8 @@ const (
 		target_scope VARCHAR(256) DEFAULT "",
 		error BLOB,
 		modify_params json,
+		max_node_count INT DEFAULT 0,
+		extra_params json,
 		key(state),
 		UNIQUE KEY task_key(task_key)
 	);`
@@ -759,7 +766,7 @@ const (
        extra json,                -- for the cloud env to save more info like RU, cost_saving, ...
        index idx_create(created_at),
        index idx_update(updated_at),
-       unique index idx(schema_name, table_name, index_columns))`
+       unique index idx(schema_name, table_name, index_columns));`
 
 	// CreateKernelOptionsTable is a table to store kernel options for tidb.
 	CreateKernelOptionsTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_kernel_options (
@@ -769,7 +776,18 @@ const (
         updated_at datetime,
         status varchar(128),
         description text,
-        primary key(module, name))`
+        primary key(module, name));`
+
+	// CreateTiDBWorkloadValuesTable is a table to store workload-based learning values for tidb.
+	CreateTiDBWorkloadValuesTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_workload_values (
+		id bigint(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+		version bigint(20) NOT NULL,
+		category varchar(64) NOT NULL,
+		type varchar(64) NOT NULL,
+		table_id bigint(20) NOT NULL,
+		value json NOT NULL,
+		index idx_version_category_type (version, category, type),
+		index idx_table_id (table_id));`
 )
 
 // CreateTimers is a table to store all timers for tidb
@@ -859,6 +877,8 @@ const (
 	tidbDefOOMAction = "default_oom_action"
 	// The variable name in mysql.tidb table and it records the current DDLTableVersion
 	tidbDDLTableVersion = "ddl_table_version"
+	// The variable name in mysql.tidb table and it records the cluster id of this cluster
+	tidbClusterID = "cluster_id"
 	// Const for TiDB server version 2.
 	version2  = 2
 	version3  = 3
@@ -1242,11 +1262,33 @@ const (
 
 	// Add index on user field for some mysql tables.
 	version241 = 241
+
+	// version 242
+	//   insert `cluster_id` into the `mysql.tidb` table.
+	//   Add workload-based learning system tables
+	version242 = 242
+
+	// Add max_node_count column to tidb_global_task and tidb_global_task_history.
+	// Add extra_params to tidb_global_task and tidb_global_task_history.
+	version243 = 243
+
+	// version244 add Max_user_connections into mysql.user.
+	version244 = 244
+
+	// version245 updates column types of mysql.bind_info.
+	version245 = 245
+
+	// version246 adds new unique index for mysql.bind_info.
+	version246 = 246
+
+	// version 247
+	// Add last_stats_histograms_version to mysql.stats_meta.
+	version247 = 247
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version241
+var currentBootstrapVersion int64 = version247
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1423,6 +1465,12 @@ var (
 		upgradeToVer239,
 		upgradeToVer240,
 		upgradeToVer241,
+		upgradeToVer242,
+		upgradeToVer243,
+		upgradeToVer244,
+		upgradeToVer245,
+		upgradeToVer246,
+		upgradeToVer247,
 	}
 )
 
@@ -3318,6 +3366,117 @@ func upgradeToVer241(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.default_roles ADD INDEX i_user (user)", dbterror.ErrDupKeyName)
 }
 
+// writeClusterID writes cluster id into mysql.tidb
+func writeClusterID(s sessiontypes.Session) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
+	defer cancel()
+
+	clusterID := s.GetDomain().(*domain.Domain).GetPDClient().GetClusterID(ctx)
+
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, "TiDB Cluster ID.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
+		mysql.SystemDB,
+		mysql.TiDBTable,
+		tidbClusterID,
+		clusterID,
+		clusterID,
+	)
+}
+
+func upgradeToVer242(s sessiontypes.Session, ver int64) {
+	if ver >= version242 {
+		return
+	}
+	writeClusterID(s)
+	mustExecute(s, CreateTiDBWorkloadValuesTable)
+}
+
+func upgradeToVer243(s sessiontypes.Session, ver int64) {
+	if ver >= version243 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN max_node_count INT DEFAULT 0 AFTER `modify_params`;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN extra_params json AFTER max_node_count;", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN extra_params json AFTER max_node_count;", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer244(s sessiontypes.Session, ver int64) {
+	if ver >= version244 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Max_user_connections` INT UNSIGNED NOT NULL DEFAULT 0 AFTER `Password_lifetime`")
+}
+
+func upgradeToVer245(s sessiontypes.Session, ver int64) {
+	if ver >= version245 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info MODIFY COLUMN original_sql LONGTEXT NOT NULL")
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info MODIFY COLUMN bind_sql LONGTEXT NOT NULL")
+}
+
+func upgradeToVer246(s sessiontypes.Session, ver int64) {
+	if ver >= version246 {
+		return
+	}
+
+	// log duplicated digests that will be set to null.
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx,
+		`select plan_digest, sql_digest from mysql.bind_info group by plan_digest, sql_digest having count(1) > 1`)
+	if err != nil {
+		logutil.BgLogger().Fatal("failed to get duplicated plan and sql digests", zap.Error(err))
+		return
+	}
+	req := rs.NewChunk(nil)
+	duplicatedDigests := make(map[string]struct{})
+	for {
+		err = rs.Next(ctx, req)
+		if err != nil {
+			logutil.BgLogger().Fatal("failed to get duplicated plan and sql digests", zap.Error(err))
+			return
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		for i := 0; i < req.NumRows(); i++ {
+			planDigest, sqlDigest := req.GetRow(i).GetString(0), req.GetRow(i).GetString(1)
+			duplicatedDigests[sqlDigest+", "+planDigest] = struct{}{}
+		}
+		req.Reset()
+	}
+	if err := rs.Close(); err != nil {
+		logutil.BgLogger().Warn("failed to close record set", zap.Error(err))
+	}
+	if len(duplicatedDigests) > 0 {
+		digestList := make([]string, 0, len(duplicatedDigests))
+		for k := range duplicatedDigests {
+			digestList = append(digestList, "("+k+")")
+		}
+		logutil.BgLogger().Warn("set the following (plan digest, sql digest) in mysql.bind_info to null " +
+			"for adding new unique index: " + strings.Join(digestList, ", "))
+	}
+
+	// to avoid the failure of adding the unique index, remove duplicated rows on these 2 digest columns first.
+	// in most cases, there should be no duplicated rows, since now we only store one binding for each sql_digest.
+	// compared with upgrading failure, it's OK to set these 2 columns to null.
+	doReentrantDDL(s, `UPDATE mysql.bind_info SET plan_digest=null, sql_digest=null
+                       WHERE (plan_digest, sql_digest) in (
+                         select plan_digest, sql_digest from mysql.bind_info
+                         group by plan_digest, sql_digest having count(1) > 1)`)
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info MODIFY COLUMN sql_digest VARCHAR(64) DEFAULT NULL")
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info MODIFY COLUMN plan_digest VARCHAR(64) DEFAULT NULL")
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD UNIQUE INDEX digest_index(plan_digest, sql_digest)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer247(s sessiontypes.Session, ver int64) {
+	if ver >= version247 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN last_stats_histograms_version bigint unsigned DEFAULT NULL", infoschema.ErrColumnExists)
+}
+
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
 func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
@@ -3472,6 +3631,8 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateIndexAdvisorTable)
 	// create mysql.tidb_kernel_options
 	mustExecute(s, CreateKernelOptionsTable)
+	// create mysql.tidb_workload_values
+	mustExecute(s, CreateTiDBWorkloadValuesTable)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
@@ -3570,6 +3731,8 @@ func doDMLWorks(s sessiontypes.Session) {
 	writeStmtSummaryVars(s)
 
 	writeDDLTableVersion(s)
+
+	writeClusterID(s)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err := s.ExecuteInternal(ctx, "COMMIT")

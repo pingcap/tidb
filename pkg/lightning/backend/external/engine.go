@@ -17,6 +17,7 @@ package external
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"sort"
 	"sync"
 	"time"
@@ -24,17 +25,55 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/docker/go-units"
 	"github.com/jfcg/sorty/v2"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
+
+// writeStepMemShareCount defines the number of shares of memory per job worker.
+// For each job worker, the memory it can use is determined by cpu:mem ratio, say
+// a 16c32G machine, each worker can use 2G memory.
+// And for the memory corresponding to each job worker, we divide into below and
+// total 6.5 shares:
+//   - one share used by HTTP and GRPC buf, such as loadBatchRegionData, write TiKV
+//   - one share used by loadBatchRegionData to store loaded data batch A
+//   - one share used by generateAndSendJob for handle loaded data batch B
+//   - one share used by the active job on job worker
+//   - 2.5 share for others, and burst allocation to avoid OOM
+//
+// the share size 'SS' determines the max data size 'RangeS' for a split-range
+// which is split out by RangeSplitter.
+// split-range is intersected with region to generate range job which is handled
+// by range job worker, and each range job corresponding to one ingested SST on TiKV.
+// our goal here is to load as many data as possible to make all range job workers
+// fully parallelized, while minimizing the number of SSTs (too many SST file, say
+// 500K, will cause TiKV slow down when ingest), i.e. to make RangeS larger, and
+// also try to make the SST be more even, so we calculate RangeS by:
+//   - RS = region size
+//   - let TempRangeS = SS
+//   - if TempRangeS < RS, RangeS = RS / ceil(RS / TempRangeS) + 1,
+//     trailing 1 is for RS divided by odd number.
+//   - else RangeS = floor(TempRangeS / RS) * RS.
+//
+// RangeS for different region size and cpu:mem ratio, the number in parentheses
+// is the number of SST files per region:
+//
+//	|   RS  | RangeS        | RangeS        |
+//	|       | cpu:mem=1:1.7 | cpu:mem=1:3.5 |
+//	|-------|---------------|---------------|
+//	|   96M |       192M(1) |       480M(1) |
+//	|  256M |       256M(1) |       512M(1) |
+//	|  512M |       256M(2) |       512M(1) |
+const writeStepMemShareCount = 6.5
 
 // during test on ks3, we found that we can open about 8000 connections to ks3,
 // bigger than that, we might receive "connection reset by peer" error, and
@@ -98,7 +137,6 @@ type Engine struct {
 	endKey            []byte
 	jobKeys           [][]byte
 	splitKeys         [][]byte
-	regionSplitSize   int64
 	smallBlockBufPool *membuf.Pool
 	largeBlockBufPool *membuf.Pool
 
@@ -110,8 +148,7 @@ type Engine struct {
 	// this flag also affects the strategy of loading data, either:
 	// 	less load routine + check and read hotspot file concurrently (add-index uses this one)
 	// 	more load routine + read each file using 1 reader (import-into uses this one)
-	checkHotspot          bool
-	mergerIterConcurrency int
+	checkHotspot bool
 
 	keyAdapter         common.KeyAdapter
 	duplicateDetection bool
@@ -125,12 +162,12 @@ type Engine struct {
 
 	importedKVSize  *atomic.Int64
 	importedKVCount *atomic.Int64
+	memLimit        int
 }
 
 var _ common.Engine = (*Engine)(nil)
 
 const (
-	memLimit       = 12 * units.GiB
 	smallBlockSize = units.MiB
 )
 
@@ -152,7 +189,12 @@ func NewExternalEngine(
 	totalKVSize int64,
 	totalKVCount int64,
 	checkHotspot bool,
+	memCapacity int64,
 ) common.Engine {
+	// at most 3 batches can be loaded in memory, see writeStepMemShareCount.
+	memLimit := int(float64(memCapacity) / writeStepMemShareCount * 3)
+	logutil.BgLogger().Info("create external engine",
+		zap.String("memLimitForLoadRange", units.BytesSize(float64(memLimit))))
 	memLimiter := membuf.NewLimiter(memLimit)
 	return &Engine{
 		storage:    storage,
@@ -183,6 +225,7 @@ func NewExternalEngine(
 		totalKVCount:       totalKVCount,
 		importedKVSize:     atomic.NewInt64(0),
 		importedKVCount:    atomic.NewInt64(0),
+		memLimit:           memLimit,
 	}
 }
 
@@ -232,8 +275,11 @@ func getFilesReadConcurrency(
 		return nil, nil, err
 	}
 	startOffs, endOffs := offsets[0], offsets[1]
+	totalFileSize := uint64(0)
 	for i := range statsFiles {
-		expectedConc := (endOffs[i] - startOffs[i]) / uint64(ConcurrentReaderBufferSizePerConc)
+		size := endOffs[i] - startOffs[i]
+		totalFileSize += size
+		expectedConc := size / uint64(ConcurrentReaderBufferSizePerConc)
 		// let the stat internals cover the [startKey, endKey) since seekPropsOffsets
 		// always return an offset that is less than or equal to the key.
 		expectedConc += 1
@@ -256,6 +302,8 @@ func getFilesReadConcurrency(
 			)
 		}
 	}
+	logutil.Logger(ctx).Info("estimated file size of this range group",
+		zap.String("totalSize", units.BytesSize(float64(totalFileSize))))
 	return result, startOffs, nil
 }
 
@@ -270,6 +318,7 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	startKey := jobKeys[0]
 	endKey := jobKeys[len(jobKeys)-1]
 	readStart := time.Now()
+	// read all data in range [startKey, endKey)
 	err := readAllData(
 		ctx,
 		e.storage,
@@ -295,13 +344,19 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	sortStart := time.Now()
 	oldSortyGor := sorty.MaxGor
 	sorty.MaxGor = uint64(e.workerConcurrency * 2)
+	var dupKey atomic.Pointer[[]byte]
 	sorty.Sort(len(e.memKVsAndBuffers.keys), func(i, k, r, s int) bool {
-		if bytes.Compare(e.memKVsAndBuffers.keys[i], e.memKVsAndBuffers.keys[k]) < 0 { // strict comparator like < or >
+		cmp := bytes.Compare(e.memKVsAndBuffers.keys[i], e.memKVsAndBuffers.keys[k])
+		if cmp < 0 { // strict comparator like < or >
 			if r != s {
 				e.memKVsAndBuffers.keys[r], e.memKVsAndBuffers.keys[s] = e.memKVsAndBuffers.keys[s], e.memKVsAndBuffers.keys[r]
 				e.memKVsAndBuffers.values[r], e.memKVsAndBuffers.values[s] = e.memKVsAndBuffers.values[s], e.memKVsAndBuffers.values[r]
 			}
 			return true
+		}
+		if cmp == 0 && i != k {
+			cloned := append([]byte(nil), e.memKVsAndBuffers.keys[i]...)
+			dupKey.Store(&cloned)
 		}
 		return false
 	})
@@ -311,6 +366,9 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	logutil.Logger(ctx).Info("sorting in loadBatchRegionData",
 		zap.Duration("cost time", time.Since(sortStart)))
 
+	if k := dupKey.Load(); k != nil {
+		return errors.Errorf("duplicate key found: %s", hex.EncodeToString(*k))
+	}
 	readAndSortSecond := time.Since(readStart).Seconds()
 	readAndSortDurHist.Observe(readAndSortSecond)
 
@@ -348,18 +406,10 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 		prev = cur
 	}
 	// last range key may be a nextKey so we should try to remove the trailing 0 if decoding failed
-	nextKey := false
 	lastKey := jobKeys[len(jobKeys)-1]
-	cur, err4 := e.keyAdapter.Decode(nil, lastKey)
-	if err4 != nil && lastKey[len(lastKey)-1] == 0 {
-		nextKey = true
-		cur, err4 = e.keyAdapter.Decode(nil, lastKey[:len(lastKey)-1])
-	}
+	cur, err4 := e.tryDecodeEndKey(lastKey)
 	if err4 != nil {
 		return err4
-	}
-	if nextKey {
-		cur = kv.Key(cur).Next()
 	}
 	ranges = append(ranges, common.Range{
 		Start: prev,
@@ -386,13 +436,14 @@ func (e *Engine) LoadIngestData(
 	outCh chan<- common.DataAndRanges,
 ) error {
 	// try to make every worker busy for each batch
-	regionBatchSize := e.workerConcurrency
+	rangeBatchSize := e.workerConcurrency
 	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
-		regionBatchSize = val.(int)
+		rangeBatchSize = val.(int)
 	})
-	for start := 0; start < len(e.jobKeys)-1; start += regionBatchSize {
+	logutil.Logger(ctx).Info("load ingest data", zap.Int("batchSize", rangeBatchSize))
+	for start := 0; start < len(e.jobKeys)-1; start += rangeBatchSize {
 		// want to generate N ranges, so we need N+1 keys
-		end := min(1+start+regionBatchSize, len(e.jobKeys))
+		end := min(1+start+rangeBatchSize, len(e.jobKeys))
 		err := e.loadBatchRegionData(ctx, e.jobKeys[start:end], outCh)
 		if err != nil {
 			return err
@@ -438,41 +489,62 @@ func (e *Engine) GetKeyRange() (startKey []byte, endKey []byte, err error) {
 		return e.startKey, e.endKey, nil
 	}
 
-	// when duplicate detection feature is enabled, the end key comes from
-	// DupDetectKeyAdapter.Encode or Key.Next(). We try to decode it and check the
-	// error.
-
-	start, err := e.keyAdapter.Decode(nil, e.startKey)
+	startKey, err = e.keyAdapter.Decode(nil, e.startKey)
 	if err != nil {
 		return nil, nil, err
 	}
-	end, err := e.keyAdapter.Decode(nil, e.endKey)
-	if err == nil {
-		return start, end, nil
-	}
-	// handle the case that end key is from Key.Next()
-	if e.endKey[len(e.endKey)-1] != 0 {
-		return nil, nil, err
-	}
-	endEncoded := e.endKey[:len(e.endKey)-1]
-	end, err = e.keyAdapter.Decode(nil, endEncoded)
+	endKey, err = e.tryDecodeEndKey(e.endKey)
 	if err != nil {
 		return nil, nil, err
 	}
-	return start, kv.Key(end).Next(), nil
+	return startKey, endKey, nil
 }
 
 // GetRegionSplitKeys implements common.Engine.
 func (e *Engine) GetRegionSplitKeys() ([][]byte, error) {
 	splitKeys := make([][]byte, len(e.splitKeys))
+	var (
+		err      error
+		splitKey []byte
+	)
 	for i, k := range e.splitKeys {
-		var err error
-		splitKeys[i], err = e.keyAdapter.Decode(nil, k)
+		if i < len(e.splitKeys)-1 {
+			splitKey, err = e.keyAdapter.Decode(nil, k)
+		} else {
+			splitKey, err = e.tryDecodeEndKey(k)
+		}
 		if err != nil {
 			return nil, err
 		}
+		splitKeys[i] = splitKey
 	}
 	return splitKeys, nil
+}
+
+// tryDecodeEndKey tries to decode the key from two sources.
+// When duplicate detection feature is enabled, the **end key** comes from
+// DupDetectKeyAdapter.Encode or Key.Next(). We try to decode it and check the
+// error.
+func (e Engine) tryDecodeEndKey(key []byte) (decoded []byte, err error) {
+	decoded, err = e.keyAdapter.Decode(nil, key)
+	if err == nil {
+		return
+	}
+	if _, ok := e.keyAdapter.(common.NoopKeyAdapter); ok {
+		// NoopKeyAdapter.Decode always return nil error
+		intest.Assert(false, "Unreachable code path")
+		return nil, err
+	}
+	// handle the case that end key is from Key.Next()
+	if key[len(key)-1] != 0 {
+		return nil, err
+	}
+	key = key[:len(key)-1]
+	decoded, err = e.keyAdapter.Decode(nil, key)
+	if err != nil {
+		return nil, err
+	}
+	return kv.Key(decoded).Next(), nil
 }
 
 // Close implements common.Engine.
@@ -491,7 +563,7 @@ func (e *Engine) Close() error {
 
 // Reset resets the memory buffer pool.
 func (e *Engine) Reset() error {
-	memLimiter := membuf.NewLimiter(memLimit)
+	memLimiter := membuf.NewLimiter(e.memLimit)
 	if e.smallBlockBufPool != nil {
 		e.smallBlockBufPool.Destroy()
 		e.smallBlockBufPool = membuf.NewPool(

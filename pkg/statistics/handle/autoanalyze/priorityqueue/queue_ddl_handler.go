@@ -159,9 +159,9 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 	tableInfo, idxes := event.GetAddIndexInfo()
 
 	intest.AssertFunc(func() bool {
-		// Vector index has a separate job type. We should not see vector index here.
+		// Columnar index has a separate job type. We should not see columnar index here.
 		for _, idx := range idxes {
-			if idx.VectorInfo != nil {
+			if idx.IsColumnarIndex() {
 				return false
 			}
 		}

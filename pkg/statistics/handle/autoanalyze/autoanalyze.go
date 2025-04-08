@@ -64,13 +64,14 @@ type statsAnalyze struct {
 
 // NewStatsAnalyze creates a new StatsAnalyze.
 func NewStatsAnalyze(
+	ctx context.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 	ddlNotifier *notifier.DDLNotifier,
 ) statstypes.StatsAnalyze {
 	// Usually, we should only create the refresher when auto-analyze priority queue is enabled.
 	// But to allow users to enable auto-analyze priority queue on the fly, we need to create the refresher here.
-	r := refresher.NewRefresher(statsHandle, sysProcTracker, ddlNotifier)
+	r := refresher.NewRefresher(ctx, statsHandle, sysProcTracker, ddlNotifier)
 	return &statsAnalyze{
 		statsHandle:    statsHandle,
 		sysProcTracker: sysProcTracker,
@@ -380,7 +381,7 @@ func CheckAutoAnalyzeWindow(sctx sessionctx.Context) bool {
 	return ok
 }
 
-func checkAutoAnalyzeWindow(parameters map[string]string) (time.Time, time.Time, bool) {
+func checkAutoAnalyzeWindow(parameters map[string]string) (_, _ time.Time, _ bool) {
 	start, end, err := exec.ParseAutoAnalysisWindow(
 		parameters[vardef.TiDBAutoAnalyzeStartTime],
 		parameters[vardef.TiDBAutoAnalyzeEndTime],
@@ -572,8 +573,8 @@ func tryAutoAnalyzeTable(
 	// Whether the table needs to analyze or not, we need to check the indices of the table.
 	for _, idx := range tblInfo.Indices {
 		if idxStats := statsTbl.GetIdx(idx.ID); idxStats == nil && !statsTbl.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true) && idx.State == model.StatePublic {
-			// Vector index doesn't need stats yet.
-			if idx.VectorInfo != nil {
+			// Columnar index doesn't need stats yet.
+			if idx.IsColumnarIndex() {
 				continue
 			}
 			sqlWithIdx := sql + " index %n"
@@ -713,8 +714,8 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 		if idx.State != model.StatePublic || statsutil.IsSpecialGlobalIndex(idx, tblInfo) {
 			continue
 		}
-		// Vector index doesn't need stats yet.
-		if idx.VectorInfo != nil {
+		// Columnar index doesn't need stats yet.
+		if idx.IsColumnarIndex() {
 			continue
 		}
 		// Collect all the partition names that need to analyze.

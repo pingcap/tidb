@@ -17,7 +17,11 @@ package external
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	goerrors "errors"
 	"io"
+	"path"
+	"reflect"
 	"slices"
 	"sort"
 	"strconv"
@@ -32,6 +36,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap/zapcore"
+)
+
+const (
+	metaName = "meta.json"
 )
 
 // seekPropsOffsets reads the statistic files to find the largest offset of
@@ -64,7 +72,7 @@ func seekPropsOffsets(
 		eg.Go(func() error {
 			r, err2 := newStatsReader(egCtx, exStorage, paths[i], 250*1024)
 			if err2 != nil {
-				if err2 == io.EOF {
+				if goerrors.Is(err2, io.EOF) {
 					return nil
 				}
 				return errors.Trace(err2)
@@ -76,16 +84,15 @@ func seekPropsOffsets(
 
 			p, err3 := r.nextProp()
 			for {
-				switch err3 {
-				case nil:
-				case io.EOF:
-					// fill the rest of the offsets with the last offset
-					currOffset := offsetsPerFile[i][keyIdx]
-					for keyIdx++; keyIdx < len(starts); keyIdx++ {
-						offsetsPerFile[i][keyIdx] = currOffset
+				if err3 != nil {
+					if goerrors.Is(err3, io.EOF) {
+						// fill the rest of the offsets with the last offset
+						currOffset := offsetsPerFile[i][keyIdx]
+						for keyIdx++; keyIdx < len(starts); keyIdx++ {
+							offsetsPerFile[i][keyIdx] = currOffset
+						}
+						return nil
 					}
-					return nil
-				default:
 					return errors.Trace(err3)
 				}
 				propKey := kv.Key(p.firstKey)
@@ -344,4 +351,114 @@ func getSpeed(n uint64, dur float64, isBytes bool) string {
 		return units.BytesSize(float64(n) / dur)
 	}
 	return strconv.FormatFloat(float64(n)/dur, 'f', 4, 64)
+}
+
+// marshalWithOverride marshals the provided struct with the ability to override
+func marshalWithOverride(src any, hideCond func(f reflect.StructField) bool) ([]byte, error) {
+	v := reflect.ValueOf(src)
+	if v.Kind() == reflect.Ptr {
+		if v.IsNil() {
+			return json.Marshal(src)
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return json.Marshal(src)
+	}
+	t := v.Type()
+	var fields []reflect.StructField
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		newTag := f.Tag
+		if hideCond(f) {
+			newTag = `json:"-"`
+		}
+		fields = append(fields, reflect.StructField{
+			Name:      f.Name,
+			Type:      f.Type,
+			Tag:       newTag,
+			Offset:    f.Offset,
+			Anonymous: f.Anonymous,
+		})
+	}
+	newType := reflect.StructOf(fields)
+	newVal := reflect.New(newType).Elem()
+	j := 0
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		newVal.Field(j).Set(v.Field(i))
+		j++
+	}
+	return json.Marshal(newVal.Interface())
+}
+
+// marshalInternalFields marshal all fields except those with external:"true" tag.
+func marshalInternalFields(src any) ([]byte, error) {
+	return marshalWithOverride(src, func(f reflect.StructField) bool {
+		return f.Tag.Get("external") == "true"
+	})
+}
+
+// marshalExternalFields marshal all fields with external:"true" tag.
+func marshalExternalFields(src any) ([]byte, error) {
+	return marshalWithOverride(src, func(f reflect.StructField) bool {
+		return f.Tag.Get("external") != "true"
+	})
+}
+
+// BaseExternalMeta is the base meta of external meta.
+type BaseExternalMeta struct {
+	// ExternalPath is the path to the external storage where the external meta is stored.
+	ExternalPath string
+}
+
+// Marshal serializes the provided alias to JSON.
+// Usage: If ExternalPath is set, marshals using internal meta; otherwise marshals the alias directly.
+func (m BaseExternalMeta) Marshal(alias any) ([]byte, error) {
+	if m.ExternalPath == "" {
+		return json.Marshal(alias)
+	}
+	return marshalInternalFields(alias)
+}
+
+// WriteJSONToExternalStorage writes the serialized external meta JSON to external storage.
+// Usage: Store external meta after appropriate modifications.
+func (m BaseExternalMeta) WriteJSONToExternalStorage(ctx context.Context, store storage.ExternalStorage, a any) error {
+	if m.ExternalPath == "" {
+		return nil
+	}
+	data, err := marshalExternalFields(a)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return store.WriteFile(ctx, m.ExternalPath, data)
+}
+
+// ReadJSONFromExternalStorage reads and unmarshals JSON from external storage into the provided alias.
+// Usage: Retrieve external meta for further processing.
+func (m BaseExternalMeta) ReadJSONFromExternalStorage(ctx context.Context, store storage.ExternalStorage, a any) error {
+	if m.ExternalPath == "" {
+		return nil
+	}
+	data, err := store.ReadFile(ctx, m.ExternalPath)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return json.Unmarshal(data, a)
+}
+
+// PlanMetaPath returns the path of the plan meta file.
+func PlanMetaPath(taskID int64, step string, idx int) string {
+	return path.Join(strconv.FormatInt(taskID, 10), "plan", step, strconv.Itoa(idx), metaName)
+}
+
+// SubtaskMetaPath returns the path of the subtask meta file.
+func SubtaskMetaPath(taskID int64, subtaskID int64) string {
+	return path.Join(strconv.FormatInt(taskID, 10), strconv.FormatInt(subtaskID, 10), metaName)
 }

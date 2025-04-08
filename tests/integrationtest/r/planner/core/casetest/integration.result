@@ -1209,8 +1209,8 @@ explain format = 'brief' select floor(dt.rn/2) rownum, count(c1) from (select @r
 id	estRows	task	access object	operator info
 Sort	1.00	root		Column#6
 └─Projection	1.00	root		floor(div(cast(Column#4, decimal(20,0) BINARY), 2))->Column#6, Column#5
-  └─HashAgg	1.00	root		group by:Column#13, funcs:count(Column#11)->Column#5, funcs:firstrow(Column#12)->Column#4
-    └─Projection	10000.00	root		planner__core__casetest__integration.t1.c1->Column#11, Column#4->Column#12, floor(div(cast(Column#4, decimal(20,0) BINARY), 2))->Column#13
+  └─HashAgg	1.00	root		group by:Column#14, funcs:count(Column#12)->Column#5, funcs:firstrow(Column#13)->Column#4
+    └─Projection	10000.00	root		planner__core__casetest__integration.t1.c1->Column#12, Column#4->Column#13, floor(div(cast(Column#4, decimal(20,0) BINARY), 2))->Column#14
       └─Projection	10000.00	root		setvar(rownum, plus(getvar(rownum), 1))->Column#4, planner__core__casetest__integration.t1.c1
         └─HashJoin	10000.00	root		CARTESIAN inner join
           ├─Projection(Build)	1.00	root		setvar(rownum, -1)->Column#1
@@ -1220,15 +1220,15 @@ Sort	1.00	root		Column#6
 explain format = 'brief' select @n:=@n+1 as e from ta group by e;
 id	estRows	task	access object	operator info
 Projection	1.00	root		setvar(n, plus(getvar(n), 1))->Column#4
-└─HashAgg	1.00	root		group by:Column#8, funcs:firstrow(1)->Column#7
-  └─Projection	10000.00	root		setvar(n, plus(cast(getvar(n), double BINARY), 1))->Column#8
+└─HashAgg	1.00	root		group by:Column#9, funcs:firstrow(1)->Column#7
+  └─Projection	10000.00	root		setvar(n, plus(cast(getvar(n), double BINARY), 1))->Column#9
     └─TableReader	10000.00	root		data:TableFullScan
       └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 explain format = 'brief' select @n:=@n+a as e from ta group by e;
 id	estRows	task	access object	operator info
 Projection	8000.00	root		setvar(n, plus(getvar(n), cast(planner__core__casetest__integration.ta.a, double BINARY)))->Column#4
-└─HashAgg	8000.00	root		group by:Column#7, funcs:firstrow(Column#6)->planner__core__casetest__integration.ta.a
-  └─Projection	10000.00	root		planner__core__casetest__integration.ta.a->Column#6, setvar(n, plus(getvar(n), cast(planner__core__casetest__integration.ta.a, double BINARY)))->Column#7
+└─HashAgg	8000.00	root		group by:Column#8, funcs:firstrow(Column#7)->planner__core__casetest__integration.ta.a
+  └─Projection	10000.00	root		planner__core__casetest__integration.ta.a->Column#7, setvar(n, plus(getvar(n), cast(planner__core__casetest__integration.ta.a, double BINARY)))->Column#8
     └─TableReader	10000.00	root		data:TableFullScan
       └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 explain format = 'brief' select * from (select @n:=@n+1 as e from ta) tt group by e;
@@ -1245,14 +1245,14 @@ HashAgg	8000.00	root		group by:Column#4, funcs:firstrow(Column#4)->Column#4
     └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 explain format = 'brief' select a from ta group by @n:=@n+1;
 id	estRows	task	access object	operator info
-HashAgg	1.00	root		group by:Column#5, funcs:firstrow(Column#4)->planner__core__casetest__integration.ta.a
-└─Projection	10000.00	root		planner__core__casetest__integration.ta.a->Column#4, setvar(n, plus(getvar(n), 1))->Column#5
+HashAgg	1.00	root		group by:Column#6, funcs:firstrow(Column#5)->planner__core__casetest__integration.ta.a
+└─Projection	10000.00	root		planner__core__casetest__integration.ta.a->Column#5, setvar(n, plus(getvar(n), 1))->Column#6
   └─TableReader	10000.00	root		data:TableFullScan
     └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 explain format = 'brief' select a from ta group by @n:=@n+a;
 id	estRows	task	access object	operator info
-HashAgg	8000.00	root		group by:Column#5, funcs:firstrow(Column#4)->planner__core__casetest__integration.ta.a
-└─Projection	10000.00	root		planner__core__casetest__integration.ta.a->Column#4, setvar(n, plus(getvar(n), cast(planner__core__casetest__integration.ta.a, double BINARY)))->Column#5
+HashAgg	8000.00	root		group by:Column#6, funcs:firstrow(Column#5)->planner__core__casetest__integration.ta.a
+└─Projection	10000.00	root		planner__core__casetest__integration.ta.a->Column#5, setvar(n, plus(getvar(n), cast(planner__core__casetest__integration.ta.a, double BINARY)))->Column#6
   └─TableReader	10000.00	root		data:TableFullScan
     └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 set sql_mode=default;
@@ -1418,7 +1418,33 @@ create table t1 (a int, b int);
 create table t2_part (a int, b int, key(a)) partition by hash(a) partitions 4;
 set @@tidb_skip_missing_partition_stats = off;
 set @@tidb_opt_fix_control = "";
-explain select /*+ TIDB_INLJ(t2_part@sel_2) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
+explain select /*+ TIDB_INLJ(t2_part@sel_2), set_var(tidb_hash_join_version=legacy) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
+id	estRows	task	access object	operator info
+HashJoin_19	2658.67	root		anti semi join, left side:TableReader_22, equal:[eq(planner__core__casetest__integration.t1.a, planner__core__casetest__integration.t2_part.a)]
+├─PartitionUnion_23(Build)	13293.33	root		
+│ ├─TableReader_31	3323.33	root		data:Projection_25
+│ │ └─Projection_25	3323.33	cop[tikv]		planner__core__casetest__integration.t2_part.a
+│ │   └─Selection_30	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
+│ │     └─TableFullScan_29	10000.00	cop[tikv]	table:t2_part, partition:p0	keep order:false, stats:pseudo
+│ ├─TableReader_39	3323.33	root		data:Projection_33
+│ │ └─Projection_33	3323.33	cop[tikv]		planner__core__casetest__integration.t2_part.a
+│ │   └─Selection_38	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
+│ │     └─TableFullScan_37	10000.00	cop[tikv]	table:t2_part, partition:p1	keep order:false, stats:pseudo
+│ ├─TableReader_47	3323.33	root		data:Projection_41
+│ │ └─Projection_41	3323.33	cop[tikv]		planner__core__casetest__integration.t2_part.a
+│ │   └─Selection_46	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
+│ │     └─TableFullScan_45	10000.00	cop[tikv]	table:t2_part, partition:p2	keep order:false, stats:pseudo
+│ └─TableReader_55	3323.33	root		data:Projection_49
+│   └─Projection_49	3323.33	cop[tikv]		planner__core__casetest__integration.t2_part.a
+│     └─Selection_54	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
+│       └─TableFullScan_53	10000.00	cop[tikv]	table:t2_part, partition:p3	keep order:false, stats:pseudo
+└─TableReader_22(Probe)	3323.33	root		data:Selection_21
+  └─Selection_21	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t1.b, 10)
+    └─TableFullScan_20	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Level	Code	Message
+Warning	1105	disable dynamic pruning due to t2_part has no global stats
+Warning	1815	Optimizer Hint /*+ INL_JOIN(t2_part) */ or /*+ TIDB_INLJ(t2_part) */ is inapplicable
+explain select /*+ TIDB_INLJ(t2_part@sel_2), set_var(tidb_hash_join_version=optimized) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
 id	estRows	task	access object	operator info
 HashJoin_19	2658.67	root		anti semi join, left side:TableReader_23, equal:[eq(planner__core__casetest__integration.t1.a, planner__core__casetest__integration.t2_part.a)]
 ├─PartitionUnion_24(Build)	13293.33	root		

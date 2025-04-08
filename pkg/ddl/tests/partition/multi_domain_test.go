@@ -234,6 +234,8 @@ func TestMultiSchemaDropListColumnsDefaultPartition(t *testing.T) {
 			tkNO.MustContainErrMsg(`insert into t values (101,101,101)`, "[kv:1062]Duplicate entry '101' for key 't.a_2'")
 			tkNO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1 1", "101 101 101", "102 102 102", "2 2 2"))
 			tkO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("101 101 101", "102 102 102"))
+			tkO.MustQuery(`select a from t where c = "2"`).Sort().Check(testkit.Rows())
+			tkNO.MustQuery(`select a from t where c = "2"`).Sort().Check(testkit.Rows("2"))
 		case "delete only":
 			// tkNO see non-readable/non-writable p0 partition, and should try to read from p1
 			// in case there is something written to overlapping p1
@@ -257,8 +259,10 @@ func TestMultiSchemaDropListColumnsDefaultPartition(t *testing.T) {
 			tkNO.MustQuery(`select * from t where a in (1,2,3)`).Sort().Check(testkit.Rows("3 3 3"))
 			tkNO.MustQuery(`select * from t where a < 100`).Sort().Check(testkit.Rows("3 3 3"))
 
-			tkNO.MustQuery(`select * from t where c = "2"`).Sort().Check(testkit.Rows("2 2 2"))
+			tkNO.MustQuery(`select * from t where c = "2"`).Sort().Check(testkit.Rows())
+			tkNO.MustQuery(`select a from t where c = "2"`).Sort().Check(testkit.Rows())
 			tkNO.MustQuery(`select * from t where b = "3"`).Sort().Check(testkit.Rows("3 3 3"))
+			tkO.MustQuery(`select * from t where c = "2"`).Sort().Check(testkit.Rows())
 			// TODO: Test update and delete!
 			// TODO: test key, hash and list partition without default partition :)
 			// Should we see the partition or not?!?
@@ -455,8 +459,8 @@ func TestMultiSchemaPartitionByGlobalIndex(t *testing.T) {
 			// Global Index, to replace the existing one.
 			tkO.MustContainErrMsg(`insert into t values (1,2,3)`, "[kv:1062]Duplicate entry '2' for key 't.idx_b")
 			tkNO.MustContainErrMsg(`insert into t values (1,2,3)`, "[kv:1062]Duplicate entry '2' for key 't.idx_b")
-			tkO.MustContainErrMsg(`insert into t values (101,101,101)`, "[kv:1062]Duplicate entry '101' for key 't.idx_b")
-			tkNO.MustContainErrMsg(`insert into t values (101,101,101)`, "[kv:1062]Duplicate entry '101' for key 't.idx_b")
+			tkO.MustContainErrMsg(`insert into t values (101,101,101)`, "[kv:1062]Duplicate entry '101")
+			tkNO.MustContainErrMsg(`insert into t values (101,101,101)`, "[kv:1062]Duplicate entry '101")
 			tkNO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1 1", "101 101 101", "102 102 102", "2 2 2"))
 			tkNO.MustQuery(`select * from t where a < 1000`).Sort().Check(testkit.Rows("1 1 1", "101 101 101", "102 102 102", "2 2 2"))
 			tkNO.MustQuery(`select * from t where a > 0`).Sort().Check(testkit.Rows("1 1 1", "101 101 101", "102 102 102", "2 2 2"))
@@ -474,10 +478,10 @@ func TestMultiSchemaPartitionByGlobalIndex(t *testing.T) {
 			// Both tkO and tkNO uses the original table/partitions,
 			// but tkO should also update the newly created
 			// Global Index, and tkNO should only delete from it.
-			tkO.MustContainErrMsg(`insert into t values (1,1,1)`, "[kv:1062]Duplicate entry '1' for key 't.idx_b")
-			tkNO.MustContainErrMsg(`insert into t values (1,1,1)`, "[kv:1062]Duplicate entry '1' for key 't.idx_b")
-			tkO.MustContainErrMsg(`insert into t values (101,101,101)`, "[kv:1062]Duplicate entry '101' for key 't.idx_b")
-			tkNO.MustContainErrMsg(`insert into t values (101,101,101)`, "[kv:1062]Duplicate entry '101' for key 't.idx_b")
+			tkO.MustContainErrMsg(`insert into t values (1,1,1)`, "[kv:1062]Duplicate entry '1")
+			tkNO.MustContainErrMsg(`insert into t values (1,1,1)`, "[kv:1062]Duplicate entry '1")
+			tkO.MustContainErrMsg(`insert into t values (101,101,101)`, "[kv:1062]Duplicate entry '101")
+			tkNO.MustContainErrMsg(`insert into t values (101,101,101)`, "[kv:1062]Duplicate entry '101")
 			tkNO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1 1", "101 101 101", "102 102 102", "2 2 2", "3 3 3", "4 4 4"))
 			tkO.MustQuery(`select * from t`).Sort().Check(testkit.Rows("1 1 1", "101 101 101", "102 102 102", "2 2 2", "3 3 3", "4 4 4"))
 			logutil.BgLogger().Info("insert into t values (5,5,5)")

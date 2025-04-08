@@ -40,14 +40,14 @@ import (
 type LogicalAggregation struct {
 	LogicalSchemaProducer `hash64-equals:"true"`
 
-	AggFuncs     []*aggregation.AggFuncDesc `hash64-equals:"true"`
-	GroupByItems []expression.Expression    `hash64-equals:"true"`
+	AggFuncs     []*aggregation.AggFuncDesc `hash64-equals:"true" shallow-ref:"true"`
+	GroupByItems []expression.Expression    `hash64-equals:"true" shallow-ref:"true"`
 
 	// PreferAggType And PreferAggToCop stores aggregation hint information.
 	PreferAggType  uint
 	PreferAggToCop bool
 
-	PossibleProperties [][]*expression.Column `hash64-equals:"true"`
+	PossibleProperties [][]*expression.Column `hash64-equals:"true" shallow-ref:"true"`
 	InputCount         float64                // InputCount is the input count of this plan.
 
 	// NoCopPushDown indicates if planner must not push this agg down to coprocessor.
@@ -393,7 +393,7 @@ func (la *LogicalAggregation) ExtractFD() *fd.FDSet {
 				determinants.Insert(int(one.UniqueID))
 				groupByColsOutputCols.Insert(int(one.UniqueID))
 			}
-			notnull := util.IsNullRejected(la.SCtx(), la.Schema(), x)
+			notnull := util.IsNullRejected(la.SCtx(), la.Schema(), x, true)
 			if notnull || determinants.SubsetOf(fds.NotNullCols) {
 				notnullColsUniqueIDs.Insert(scalarUniqueID)
 			}
@@ -574,9 +574,7 @@ func (la *LogicalAggregation) DistinctArgsMeetsProperty() bool {
 // For example,
 // (a > 1 or avg(b) > 1) and (a < 3), and `avg(b) > 1` can't be pushed-down.
 // Then condsToPush: a < 3, ret: a > 1 or avg(b) > 1
-func (la *LogicalAggregation) pushDownCNFPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) ([]expression.Expression, []expression.Expression) {
-	var condsToPush []expression.Expression
-	var ret []expression.Expression
+func (la *LogicalAggregation) pushDownCNFPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) (condsToPush, ret []expression.Expression) {
 	subCNFItem := expression.SplitCNFItems(cond)
 	if len(subCNFItem) == 1 {
 		return la.pushDownPredicatesForAggregation(subCNFItem[0], groupByColumns, exprsOriginal)
@@ -599,7 +597,7 @@ func (la *LogicalAggregation) pushDownCNFPredicatesForAggregation(cond expressio
 // For example,
 // (a > 1 and avg(b) > 1) or (a < 3), and `avg(b) > 1` can't be pushed-down.
 // Then condsToPush: (a < 3) and (a > 1), ret: (a > 1 and avg(b) > 1) or (a < 3)
-func (la *LogicalAggregation) pushDownDNFPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) ([]expression.Expression, []expression.Expression) {
+func (la *LogicalAggregation) pushDownDNFPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) (_, _ []expression.Expression) {
 	subDNFItem := expression.SplitDNFItems(cond)
 	if len(subDNFItem) == 1 {
 		return la.pushDownPredicatesForAggregation(subDNFItem[0], groupByColumns, exprsOriginal)
@@ -627,9 +625,7 @@ func (la *LogicalAggregation) pushDownDNFPredicatesForAggregation(cond expressio
 }
 
 // splitCondForAggregation splits the condition into those who can be pushed and others.
-func (la *LogicalAggregation) splitCondForAggregation(predicates []expression.Expression) ([]expression.Expression, []expression.Expression) {
-	var condsToPush []expression.Expression
-	var ret []expression.Expression
+func (la *LogicalAggregation) splitCondForAggregation(predicates []expression.Expression) (condsToPush, ret []expression.Expression) {
 	exprsOriginal := make([]expression.Expression, 0, len(la.AggFuncs))
 	for _, fun := range la.AggFuncs {
 		exprsOriginal = append(exprsOriginal, fun.Args[0])
@@ -649,9 +645,7 @@ func (la *LogicalAggregation) splitCondForAggregation(predicates []expression.Ex
 }
 
 // pushDownPredicatesForAggregation split a condition to two parts, can be pushed-down or can not be pushed-down below aggregation.
-func (la *LogicalAggregation) pushDownPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) ([]expression.Expression, []expression.Expression) {
-	var condsToPush []expression.Expression
-	var ret []expression.Expression
+func (la *LogicalAggregation) pushDownPredicatesForAggregation(cond expression.Expression, groupByColumns *expression.Schema, exprsOriginal []expression.Expression) (condsToPush, ret []expression.Expression) {
 	switch cond.(type) {
 	case *expression.Constant:
 		condsToPush = append(condsToPush, cond)
@@ -705,7 +699,7 @@ func (la *LogicalAggregation) CanPullUp() bool {
 	}
 	for _, f := range la.AggFuncs {
 		for _, arg := range f.Args {
-			expr, err := expression.EvaluateExprWithNull(la.SCtx().GetExprCtx(), la.Children()[0].Schema(), arg)
+			expr, err := expression.EvaluateExprWithNull(la.SCtx().GetExprCtx(), la.Children()[0].Schema(), arg, true)
 			if err != nil {
 				return false
 			}

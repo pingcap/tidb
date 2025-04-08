@@ -16,6 +16,7 @@ go_library(
         "//pkg/config",
         "//pkg/lightning/common",
         "//pkg/lightning/log",
+        "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/util",
         "//pkg/util/table-filter",

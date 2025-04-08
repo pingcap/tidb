@@ -70,6 +70,9 @@ type LazyTxn struct {
 
 	// mark the txn enables lazy uniqueness check in pessimistic transactions.
 	lazyUniquenessCheckEnabled bool
+
+	// commit ts of the last successful transaction, to ensure ordering of TS
+	lastCommitTS uint64
 }
 
 // GetTableInfo returns the cached index name.
@@ -431,7 +434,16 @@ func (txn *LazyTxn) Commit(ctx context.Context) error {
 		}
 	})
 
-	return txn.Transaction.Commit(ctx)
+	err := txn.Transaction.Commit(ctx)
+	if err == nil {
+		txn.lastCommitTS = txn.Transaction.CommitTS()
+		failpoint.Inject("mockFutureCommitTS", func(val failpoint.Value) {
+			if ts, ok := val.(int); ok {
+				txn.lastCommitTS = uint64(ts)
+			}
+		})
+	}
+	return err
 }
 
 // Rollback overrides the Transaction interface.
@@ -658,10 +670,13 @@ func (txnFailFuture) Wait() (uint64, error) {
 
 // txnFuture is a promise, which promises to return a txn in future.
 type txnFuture struct {
-	future    oracle.Future
-	store     kv.Storage
-	txnScope  string
-	pipelined bool
+	future                          oracle.Future
+	store                           kv.Storage
+	txnScope                        string
+	pipelined                       bool
+	pipelinedFlushConcurrency       int
+	pipelinedResolveLockConcurrency int
+	pipelinedWriteThrottleRatio     float64
 }
 
 func (tf *txnFuture) wait() (kv.Transaction, error) {
@@ -678,7 +693,14 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 	}
 
 	if tf.pipelined {
-		options = append(options, tikv.WithDefaultPipelinedTxn())
+		options = append(
+			options,
+			tikv.WithPipelinedTxn(
+				tf.pipelinedFlushConcurrency,
+				tf.pipelinedResolveLockConcurrency,
+				tf.pipelinedWriteThrottleRatio,
+			),
+		)
 	}
 
 	return tf.store.Begin(options...)

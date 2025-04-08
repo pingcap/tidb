@@ -326,7 +326,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		} else {
 			// CachedPlan type is already checked in last step
 			pointGetPlan := a.Plan.(*plannercore.PointGetPlan)
-			exec.Recreated(pointGetPlan)
+			exec.Recreated(pointGetPlan, a.Ctx)
 			a.PsStmt.PointGet.Executor = exec
 			executor = exec
 		}
@@ -465,12 +465,16 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			if a.retryCount > 0 {
 				metrics.StatementPessimisticRetryCount.Observe(float64(a.retryCount))
 			}
-			lockKeysCnt := a.Ctx.GetSessionVars().StmtCtx.LockKeysCount
-			if lockKeysCnt > 0 {
-				metrics.StatementLockKeysCount.Observe(float64(lockKeysCnt))
+			execDetails := a.Ctx.GetSessionVars().StmtCtx.GetExecDetails()
+			if execDetails.LockKeysDetail != nil {
+				if execDetails.LockKeysDetail.LockKeys > 0 {
+					metrics.StatementLockKeysCount.Observe(float64(execDetails.LockKeysDetail.LockKeys))
+				}
+				if a.Ctx.GetSessionVars().StmtCtx.PessimisticLockStarted() && execDetails.LockKeysDetail.TotalTime > 0 {
+					metrics.PessimisticLockKeysDuration.Observe(execDetails.LockKeysDetail.TotalTime.Seconds())
+				}
 			}
 
-			execDetails := a.Ctx.GetSessionVars().StmtCtx.GetExecDetails()
 			if err == nil && execDetails.LockKeysDetail != nil &&
 				(execDetails.LockKeysDetail.AggressiveLockNewCount > 0 || execDetails.LockKeysDetail.AggressiveLockDerivedCount > 0) {
 				a.Ctx.GetSessionVars().TxnCtx.FairLockingUsed = true
@@ -1419,7 +1423,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		sessVars.StmtCtx.SetPlan(a.Plan)
 	}
 
-	a.updateMPPNetworkTraffic()
+	a.updateNetworkTrafficStatsAndMetrics()
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
@@ -1800,16 +1804,34 @@ func GetResultRowsCount(stmtCtx *stmtctx.StatementContext, p base.Plan) int64 {
 	return runtimeStatsColl.GetPlanActRows(p.ID())
 }
 
-func (a *ExecStmt) updateMPPNetworkTraffic() {
+func (a *ExecStmt) updateNetworkTrafficStatsAndMetrics() {
+	hasMPPTraffic := a.updateMPPNetworkTraffic()
+	tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey)
+	if tikvExecDetailRaw != nil {
+		tikvExecDetail := tikvExecDetailRaw.(*util.ExecDetails)
+		executor_metrics.ExecutorNetworkTransmissionSentTiKVTotal.Add(float64(tikvExecDetail.UnpackedBytesSentKVTotal))
+		executor_metrics.ExecutorNetworkTransmissionSentTiKVCrossZone.Add(float64(tikvExecDetail.UnpackedBytesSentKVCrossZone))
+		executor_metrics.ExecutorNetworkTransmissionReceivedTiKVTotal.Add(float64(tikvExecDetail.UnpackedBytesReceivedKVTotal))
+		executor_metrics.ExecutorNetworkTransmissionReceivedTiKVCrossZone.Add(float64(tikvExecDetail.UnpackedBytesReceivedKVCrossZone))
+		if hasMPPTraffic {
+			executor_metrics.ExecutorNetworkTransmissionSentTiFlashTotal.Add(float64(tikvExecDetail.UnpackedBytesSentMPPTotal))
+			executor_metrics.ExecutorNetworkTransmissionSentTiFlashCrossZone.Add(float64(tikvExecDetail.UnpackedBytesSentMPPCrossZone))
+			executor_metrics.ExecutorNetworkTransmissionReceivedTiFlashTotal.Add(float64(tikvExecDetail.UnpackedBytesReceivedMPPTotal))
+			executor_metrics.ExecutorNetworkTransmissionReceivedTiFlashCrossZone.Add(float64(tikvExecDetail.UnpackedBytesReceivedMPPCrossZone))
+		}
+	}
+}
+
+func (a *ExecStmt) updateMPPNetworkTraffic() bool {
 	sessVars := a.Ctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	runtimeStatsColl := stmtCtx.RuntimeStatsColl
 	if runtimeStatsColl == nil {
-		return
+		return false
 	}
 	tiflashNetworkStats := runtimeStatsColl.GetStmtCopRuntimeStats().TiflashNetworkStats
 	if tiflashNetworkStats == nil {
-		return
+		return false
 	}
 	var tikvExecDetail *util.ExecDetails
 	tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey)
@@ -1820,6 +1842,7 @@ func (a *ExecStmt) updateMPPNetworkTraffic() {
 
 	tikvExecDetail = tikvExecDetailRaw.(*util.ExecDetails)
 	tiflashNetworkStats.UpdateTiKVExecDetails(tikvExecDetail)
+	return true
 }
 
 // getFlatPlan generates a FlatPhysicalPlan from the plan stored in stmtCtx.plan,
@@ -2221,8 +2244,7 @@ func (a *ExecStmt) observeStmtFinishedForTopSQL() {
 	}
 }
 
-func (a *ExecStmt) getSQLPlanDigest() ([]byte, []byte) {
-	var sqlDigest, planDigest []byte
+func (a *ExecStmt) getSQLPlanDigest() (sqlDigest, planDigest []byte) {
 	vars := a.Ctx.GetSessionVars()
 	if _, d := vars.StmtCtx.SQLDigest(); d != nil {
 		sqlDigest = d.Bytes()

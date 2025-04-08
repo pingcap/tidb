@@ -502,23 +502,23 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 }
 
 func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Executor {
-	noMVIndexOrPrefixIndexOrVectorIndex := true
+	noMVIndexOrPrefixIndexOrColumnarIndex := true
 	for _, idx := range v.IndexInfos {
-		if idx.MVIndex || idx.VectorInfo != nil {
-			noMVIndexOrPrefixIndexOrVectorIndex = false
+		if idx.MVIndex || idx.IsColumnarIndex() {
+			noMVIndexOrPrefixIndexOrColumnarIndex = false
 			break
 		}
 		for _, col := range idx.Columns {
 			if col.Length != types.UnspecifiedLength {
-				noMVIndexOrPrefixIndexOrVectorIndex = false
+				noMVIndexOrPrefixIndexOrColumnarIndex = false
 				break
 			}
 		}
-		if !noMVIndexOrPrefixIndexOrVectorIndex {
+		if !noMVIndexOrPrefixIndexOrColumnarIndex {
 			break
 		}
 	}
-	if b.ctx.GetSessionVars().FastCheckTable && noMVIndexOrPrefixIndexOrVectorIndex {
+	if b.ctx.GetSessionVars().FastCheckTable && noMVIndexOrPrefixIndexOrColumnarIndex {
 		e := &FastCheckTableExec{
 			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 			dbName:       v.DBName,
@@ -683,8 +683,8 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) exec.Ex
 		b.err = errors.Errorf("secondary index `%v` is not found in table `%v`", v.IndexName, v.Table.Name.O)
 		return nil
 	}
-	if index.Meta().VectorInfo != nil {
-		b.err = errors.Errorf("vector index `%v` is not supported for cleanup index", v.IndexName)
+	if index.Meta().IsColumnarIndex() {
+		b.err = errors.Errorf("columnar index `%v` is not supported for cleanup index", v.IndexName)
 		return nil
 	}
 	e := &CleanupIndexExec{
@@ -900,6 +900,7 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) exec.Executor {
 		Extended:              v.Extended,
 		Extractor:             v.Extractor,
 		ImportJobID:           v.ImportJobID,
+		SQLOrDigest:           v.SQLOrDigest,
 	}
 	if e.Tp == ast.ShowMasterStatus || e.Tp == ast.ShowBinlogStatus {
 		// show master status need start ts.
@@ -1547,7 +1548,7 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) exec.
 	return e
 }
 
-func collectColumnIndexFromExpr(expr expression.Expression, leftColumnSize int, leftColumnIndex []int, rightColumnIndex []int) ([]int, []int) {
+func collectColumnIndexFromExpr(expr expression.Expression, leftColumnSize int, leftColumnIndex []int, rightColumnIndex []int) (_, _ []int) {
 	switch x := expr.(type) {
 	case *expression.Column:
 		colIndex := x.Index
@@ -1570,9 +1571,9 @@ func collectColumnIndexFromExpr(expr expression.Expression, leftColumnSize int, 
 	}
 }
 
-func extractUsedColumnsInJoinOtherCondition(expr expression.CNFExprs, leftColumnSize int) ([]int, []int) {
-	leftColumnIndex := make([]int, 0, 1)
-	rightColumnIndex := make([]int, 0, 1)
+func extractUsedColumnsInJoinOtherCondition(expr expression.CNFExprs, leftColumnSize int) (leftColumnIndex, rightColumnIndex []int) {
+	leftColumnIndex = make([]int, 0, 1)
+	rightColumnIndex = make([]int, 0, 1)
 	for _, subExpr := range expr {
 		leftColumnIndex, rightColumnIndex = collectColumnIndexFromExpr(subExpr, leftColumnSize, leftColumnIndex, rightColumnIndex)
 	}
@@ -1613,6 +1614,7 @@ func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.
 		HashJoinCtxV2: &join.HashJoinCtxV2{
 			OtherCondition: joinOtherCondition,
 		},
+		IsGA: plannercore.IsGAForHashJoinV2(v.JoinType, v.LeftJoinKeys, v.IsNullEQ, v.LeftNAJoinKeys),
 	}
 	e.HashJoinCtxV2.SessCtx = b.ctx
 	e.HashJoinCtxV2.JoinType = v.JoinType
@@ -2156,24 +2158,35 @@ func (b *executorBuilder) getSnapshot() (kv.Snapshot, error) {
 		return nil, err
 	}
 
-	sessVars := b.ctx.GetSessionVars()
+	InitSnapshotWithSessCtx(snapshot, b.ctx, &b.readReplicaScope)
+	return snapshot, nil
+}
+
+// InitSnapshotWithSessCtx initialize snapshot using session context
+func InitSnapshotWithSessCtx(snapshot kv.Snapshot, ctx sessionctx.Context, txnReplicaReadTypePtr *string) {
+	sessVars := ctx.GetSessionVars()
 	replicaReadType := sessVars.GetReplicaRead()
-	snapshot.SetOption(kv.ReadReplicaScope, b.readReplicaScope)
+	var txnReplicaReadType string
+	if txnReplicaReadTypePtr == nil {
+		txnManager := sessiontxn.GetTxnManager(ctx)
+		txnReplicaReadType = txnManager.GetReadReplicaScope()
+	} else {
+		txnReplicaReadType = *txnReplicaReadTypePtr
+	}
+	snapshot.SetOption(kv.ReadReplicaScope, txnReplicaReadType)
 	snapshot.SetOption(kv.TaskID, sessVars.StmtCtx.TaskID)
 	snapshot.SetOption(kv.TiKVClientReadTimeout, sessVars.GetTiKVClientReadTimeout())
 	snapshot.SetOption(kv.ResourceGroupName, sessVars.StmtCtx.ResourceGroupName)
 	snapshot.SetOption(kv.ExplicitRequestSourceType, sessVars.ExplicitRequestSourceType)
 
-	if replicaReadType.IsClosestRead() && b.readReplicaScope != kv.GlobalTxnScope {
+	if replicaReadType.IsClosestRead() && txnReplicaReadType != kv.GlobalTxnScope {
 		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
 			{
 				Key:   placement.DCLabelKey,
-				Value: b.readReplicaScope,
+				Value: txnReplicaReadType,
 			},
 		})
 	}
-
-	return snapshot, nil
 }
 
 func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Executor {
@@ -5343,7 +5356,11 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 			b.inSelectLockStmt = false
 		}()
 	}
-	handles, isTableDual := plan.PrunePartitionsAndValues(b.ctx)
+	handles, isTableDual, err := plan.PrunePartitionsAndValues(b.ctx)
+	if err != nil {
+		b.err = err
+		return nil
+	}
 	if isTableDual {
 		// No matching partitions
 		return &TableDualExec{

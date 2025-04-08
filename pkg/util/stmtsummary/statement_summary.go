@@ -19,7 +19,6 @@ import (
 	"cmp"
 	"container/list"
 	"fmt"
-	"maps"
 	"math"
 	"slices"
 	"strconv"
@@ -30,7 +29,6 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
@@ -347,40 +345,43 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 	key.Init(sei.SchemaName, sei.Digest, sei.PrevSQLDigest, sei.PlanDigest, sei.ResourceGroupName)
 
 	var exist bool
-	// Enclose the block in a function to ensure the lock will always be released.
-	summary, beginTime := func() (*stmtSummaryByDigest, int64) {
-		ssMap.Lock()
-		defer ssMap.Unlock()
 
-		// Check again. Statements could be added before disabling the flag and after Clear().
-		if !ssMap.Enabled() {
-			return nil, 0
-		}
-		if sei.IsInternal && !ssMap.EnabledInternal() {
-			return nil, 0
-		}
+	// Using a global lock here instead of fine-grained locks because:
+	// 1. The critical sections are very short, making lock overhead potentially higher
+	// than the protected code execution time.
+	// 2. Previous implementation with layered locks reveals significant contention and
+	// poorer performance in benchmarks.
+	// A single coarse-grained lock reduces overall contention and may provide better
+	// performance in this specific case.
+	ssMap.Lock()
+	defer ssMap.Unlock()
 
-		if ssMap.beginTimeForCurInterval+intervalSeconds <= now {
-			// `beginTimeForCurInterval` is a multiple of intervalSeconds, so that when the interval is a multiple
-			// of 60 (or 600, 1800, 3600, etc), begin time shows 'XX:XX:00', not 'XX:XX:01'~'XX:XX:59'.
-			ssMap.beginTimeForCurInterval = now / intervalSeconds * intervalSeconds
-		}
+	// Check again. Statements could be added before disabling the flag and after Clear().
+	if !ssMap.Enabled() {
+		return
+	}
+	if sei.IsInternal && !ssMap.EnabledInternal() {
+		return
+	}
 
-		beginTime := ssMap.beginTimeForCurInterval
-		var value kvcache.Value
-		value, exist = ssMap.summaryMap.Get(key)
-		var summary *stmtSummaryByDigest
-		if !exist {
-			// Lazy initialize it to release ssMap.mutex ASAP.
-			summary = new(stmtSummaryByDigest)
-			ssMap.summaryMap.Put(key, summary)
-		} else {
-			summary = value.(*stmtSummaryByDigest)
-		}
-		summary.isInternal = summary.isInternal && sei.IsInternal
-		return summary, beginTime
-	}()
-	// Lock a single entry, not the whole cache.
+	if ssMap.beginTimeForCurInterval+intervalSeconds <= now {
+		// `beginTimeForCurInterval` is a multiple of intervalSeconds, so that when the interval is a multiple
+		// of 60 (or 600, 1800, 3600, etc), begin time shows 'XX:XX:00', not 'XX:XX:01'~'XX:XX:59'.
+		ssMap.beginTimeForCurInterval = now / intervalSeconds * intervalSeconds
+	}
+
+	beginTime := ssMap.beginTimeForCurInterval
+	var value kvcache.Value
+	value, exist = ssMap.summaryMap.Get(key)
+	var summary *stmtSummaryByDigest
+	if !exist {
+		// Lazy initialize it to release ssMap.mutex ASAP.
+		summary = new(stmtSummaryByDigest)
+		ssMap.summaryMap.Put(key, summary)
+	} else {
+		summary = value.(*stmtSummaryByDigest)
+	}
+	summary.isInternal = summary.isInternal && sei.IsInternal
 	if summary != nil {
 		summary.add(sei, beginTime, intervalSeconds, historySize)
 	}
@@ -429,59 +430,6 @@ func (ssMap *stmtSummaryByDigestMap) clearHistory() {
 		ssbd.history = newHistory
 		ssbd.Unlock()
 	}
-}
-
-// BindableStmt is a wrapper struct for a statement that is extracted from statements_summary and can be
-// created binding on.
-type BindableStmt struct {
-	Schema    string
-	Query     string
-	PlanHint  string
-	Charset   string
-	Collation string
-	Users     map[string]struct{} // which users have processed this stmt
-}
-
-// GetMoreThanCntBindableStmt gets users' select/update/delete SQLs that occurred more than the specified count.
-func (ssMap *stmtSummaryByDigestMap) GetMoreThanCntBindableStmt(cnt int64) []*BindableStmt {
-	ssMap.Lock()
-	values := ssMap.summaryMap.Values()
-	ssMap.Unlock()
-
-	stmts := make([]*BindableStmt, 0, len(values))
-	for _, value := range values {
-		ssbd := value.(*stmtSummaryByDigest)
-		func() {
-			ssbd.Lock()
-			defer ssbd.Unlock()
-			if ssbd.initialized && (ssbd.stmtType == "Select" || ssbd.stmtType == "Delete" || ssbd.stmtType == "Update" || ssbd.stmtType == "Insert" || ssbd.stmtType == "Replace") {
-				if ssbd.history.Len() > 0 {
-					ssElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
-					ssElement.Lock()
-
-					// Empty auth users means that it is an internal queries.
-					if len(ssElement.authUsers) > 0 && (int64(ssbd.history.Len()) > cnt || ssElement.execCount > cnt) {
-						stmt := &BindableStmt{
-							Schema:    ssbd.schemaName,
-							Query:     ssElement.sampleSQL,
-							PlanHint:  ssElement.planHint,
-							Charset:   ssElement.charset,
-							Collation: ssElement.collation,
-							Users:     maps.Clone(ssElement.authUsers),
-						}
-						// If it is SQL command prepare / execute, the ssElement.sampleSQL is `execute ...`, we should get the original select query.
-						// If it is binary protocol prepare / execute, ssbd.normalizedSQL should be same as ssElement.sampleSQL.
-						if ssElement.prepared {
-							stmt.Query = ssbd.normalizedSQL
-						}
-						stmts = append(stmts, stmt)
-					}
-					ssElement.Unlock()
-				}
-			}
-		}()
-	}
-	return stmts
 }
 
 // SetEnabled enables or disables statement summary
@@ -577,33 +525,6 @@ func (ssMap *stmtSummaryByDigestMap) maxSQLLength() int {
 	return int(ssMap.optMaxSQLLength.Load())
 }
 
-// GetBindableStmtFromCluster gets users' select/update/delete SQL.
-func GetBindableStmtFromCluster(rows []chunk.Row) *BindableStmt {
-	for _, row := range rows {
-		user := row.GetString(3)
-		stmtType := row.GetString(0)
-		if user != "" && (stmtType == "Select" || stmtType == "Delete" || stmtType == "Update" || stmtType == "Insert" || stmtType == "Replace") {
-			// Empty auth users means that it is an internal queries.
-			stmt := &BindableStmt{
-				Schema:    row.GetString(1), //schemaName
-				Query:     row.GetString(5), //sampleSQL
-				PlanHint:  row.GetString(8), //planHint
-				Charset:   row.GetString(6), //charset
-				Collation: row.GetString(7), //collation
-			}
-			// If it is SQL command prepare / execute, we should remove the arguments
-			// If it is binary protocol prepare / execute, ssbd.normalizedSQL should be same as ssElement.sampleSQL.
-			if row.GetInt64(4) == 1 {
-				if idx := strings.LastIndex(stmt.Query, "[arguments:"); idx != -1 {
-					stmt.Query = stmt.Query[:idx]
-				}
-			}
-			return stmt
-		}
-	}
-	return nil
-}
-
 // newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo.
 func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, _ int64, _ int64, _ int) {
 	// Use "," to separate table names to support FIND_IN_SET.
@@ -641,6 +562,8 @@ func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, _ int64, _ int64, _ int
 
 func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, intervalSeconds int64, historySize int) {
 	// Enclose this block in a function to ensure the lock will always be released.
+	warningCount := int(sei.StmtCtx.WarningCount())
+	affectedRows := sei.StmtCtx.AffectedRows()
 	ssElement, isElementNew := func() (*stmtSummaryByDigestElement, bool) {
 		ssbd.Lock()
 		defer ssbd.Unlock()
@@ -648,7 +571,7 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, interva
 		if !ssbd.initialized {
 			ssbd.init(sei, beginTime, intervalSeconds, historySize)
 		}
-		ssbd.cumulative.add(sei)
+		ssbd.cumulative.add(sei, warningCount, affectedRows)
 
 		var ssElement *stmtSummaryByDigestElement
 		isElementNew := true
@@ -664,7 +587,7 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, interva
 		}
 		if isElementNew {
 			// If the element is new created, `ssElement.add(sei)` should be done inside the lock of `ssbd`.
-			ssElement = newStmtSummaryByDigestElement(sei, beginTime, intervalSeconds)
+			ssElement = newStmtSummaryByDigestElement(sei, beginTime, intervalSeconds, warningCount, affectedRows)
 			if ssElement == nil {
 				return nil, isElementNew
 			}
@@ -682,7 +605,7 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, interva
 
 	// Lock a single entry, not the whole `ssbd`.
 	if !isElementNew {
-		ssElement.add(sei, intervalSeconds)
+		ssElement.add(sei, intervalSeconds, warningCount, affectedRows)
 	}
 }
 
@@ -748,12 +671,12 @@ func newStmtSummaryStats(sei *StmtExecInfo) *stmtSummaryStats {
 	}
 }
 
-func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64) *stmtSummaryByDigestElement {
+func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64, warningCount int, affectedRows uint64) *stmtSummaryByDigestElement {
 	ssElement := &stmtSummaryByDigestElement{
 		beginTime:        beginTime,
 		stmtSummaryStats: *newStmtSummaryStats(sei),
 	}
-	ssElement.add(sei, intervalSeconds)
+	ssElement.add(sei, intervalSeconds, warningCount, affectedRows)
 	return ssElement
 }
 
@@ -775,7 +698,7 @@ func (ssElement *stmtSummaryByDigestElement) onExpire(intervalSeconds int64) {
 	}
 }
 
-func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo) {
+func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affectedRows uint64) {
 	// add user to auth users set
 	if len(sei.User) > 0 {
 		ssStats.authUsers[sei.User] = struct{}{}
@@ -785,7 +708,7 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo) {
 	if !sei.Succeed {
 		ssStats.sumErrors++
 	}
-	ssStats.sumWarnings += int(sei.StmtCtx.WarningCount())
+	ssStats.sumWarnings += warningCount
 
 	// latency
 	ssStats.sumLatency += sei.TotalLatency
@@ -943,7 +866,7 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo) {
 	}
 
 	// other
-	ssStats.sumAffectedRows += sei.StmtCtx.AffectedRows()
+	ssStats.sumAffectedRows += affectedRows
 	ssStats.sumMem += sei.MemMax
 	if sei.MemMax > ssStats.maxMem {
 		ssStats.maxMem = sei.MemMax
@@ -987,13 +910,13 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo) {
 	ssStats.StmtRUSummary.Add(sei.RUDetail)
 }
 
-func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeconds int64) {
+func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeconds int64, warningCount int, affectedRows uint64) {
 	ssElement.Lock()
 	defer ssElement.Unlock()
 
 	// refreshInterval may change anytime, update endTime ASAP.
 	ssElement.endTime = ssElement.beginTime + intervalSeconds
-	ssElement.stmtSummaryStats.add(sei)
+	ssElement.stmtSummaryStats.add(sei, warningCount, affectedRows)
 }
 
 // Truncate SQL to maxSQLLength.

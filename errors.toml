@@ -2946,6 +2946,16 @@ error = '''
 Cannot set resource group for a role
 '''
 
+["schema:8258"]
+error = '''
+Table %s is in mode %s
+'''
+
+["schema:8259"]
+error = '''
+Invalid mode set from (or by default) %s to %s for table %s
+'''
+
 ["server:1040"]
 error = '''
 Too many connections
@@ -2974,6 +2984,11 @@ Got a packet bigger than 'max_allowed_packet' bytes
 ["server:1184"]
 error = '''
 Aborted connection %d to db: '%-.192s' user: '%-.48s' host: '%-.255s' (%-.64s)
+'''
+
+["server:1203"]
+error = '''
+User %-.64s has exceeded the 'max_user_connections' resource
 '''
 
 ["server:1251"]

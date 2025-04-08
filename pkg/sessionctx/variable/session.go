@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -764,6 +765,7 @@ type SessionVars struct {
 	Concurrency
 	MemQuota
 	BatchSize
+	PipelinedDMLConfig
 	// DMLBatchSize indicates the number of rows batch-committed for a statement.
 	// It will be used when using LOAD DATA or BatchInsert or BatchDelete is on.
 	DMLBatchSize        int
@@ -865,6 +867,9 @@ type SessionVars struct {
 
 	// SnapshotTS is used for reading history data. For simplicity, SnapshotTS only supports distsql request.
 	SnapshotTS uint64
+
+	// LastCommitTS is the commit_ts of the last successful transaction in this session.
+	LastCommitTS uint64
 
 	// TxnReadTS is used for staleness transaction, it provides next staleness transaction startTS.
 	TxnReadTS *TxnReadTS
@@ -979,6 +984,10 @@ type SessionVars struct {
 
 	// TiFlashQuerySpillRatio is the percentage threshold to trigger auto spill in TiFlash if TiFlashMaxQueryMemoryPerNode is set
 	TiFlashQuerySpillRatio float64
+
+	// TiFlashHashJoinVersion controls the hash join version in TiFlash.
+	// "optimized" enables hash join v2, while "legacy" uses the original version.
+	TiFlashHashJoinVersion string
 
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
@@ -1689,6 +1698,9 @@ type SessionVars struct {
 
 	// CacheStmtExecInfo is a cache for the statement execution information, used to reduce the overhead of memory allocation.
 	CacheStmtExecInfo *stmtsummary.StmtExecInfo
+
+	// BulkDMLEnabled indicates whether to enable bulk DML in pipelined mode.
+	BulkDMLEnabled bool
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.
@@ -1813,8 +1825,11 @@ func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
 		sc = &s.cachedStmtCtx[1]
 	}
 	if s.RefCountOfStmtCtx.TryFreeze() {
-		sc.Reset()
+		succ := sc.Reset()
 		s.RefCountOfStmtCtx.UnFreeze()
+		if !succ {
+			sc = stmtctx.NewStmtCtx()
+		}
 	} else {
 		sc = stmtctx.NewStmtCtx()
 	}
@@ -2157,6 +2172,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableClusteredIndex:          vardef.DefTiDBEnableClusteredIndex,
 		EnableParallelApply:           vardef.DefTiDBEnableParallelApply,
 		ShardAllocateStep:             vardef.DefTiDBShardAllocateStep,
+		EnablePointGetCache:           vardef.DefTiDBPointGetCache,
 		PartitionPruneMode:            *atomic2.NewString(vardef.DefTiDBPartitionPruneMode),
 		TxnScope:                      kv.NewDefaultTxnScopeVar(),
 		EnabledRateLimitAction:        vardef.DefTiDBEnableRateLimitAction,
@@ -2234,12 +2250,14 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.TiFlashMaxBytesBeforeExternalSort = vardef.DefTiFlashMaxBytesBeforeExternalSort
 	vars.TiFlashMaxQueryMemoryPerNode = vardef.DefTiFlashMemQuotaQueryPerNode
 	vars.TiFlashQuerySpillRatio = vardef.DefTiFlashQuerySpillRatio
+	vars.TiFlashHashJoinVersion = vardef.DefTiFlashHashJoinVersion
 	vars.MPPStoreFailTTL = vardef.DefTiDBMPPStoreFailTTL
 	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
 	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
 	vars.MemTracker.IsRootTrackerOfSess = true
 	vars.MemTracker.Killer = &vars.SQLKiller
 	vars.StatsLoadSyncWait.Store(vardef.StatsLoadSyncWait.Load())
+	vars.UseHashJoinV2 = joinversion.IsOptimizedVersion(vardef.DefTiDBHashJoinVersion)
 
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {
@@ -2823,7 +2841,6 @@ func (s *SessionVars) EncodeSessionStates(_ context.Context, sessionStates *sess
 	sessionStates.SequenceLatestValues = s.SequenceState.GetAllStates()
 	sessionStates.FoundInPlanCache = s.PrevFoundInPlanCache
 	sessionStates.FoundInBinding = s.PrevFoundInBinding
-	sessionStates.ResourceGroupName = s.ResourceGroupName
 	sessionStates.HypoIndexes = s.HypoIndexes
 	sessionStates.HypoTiFlashReplicas = s.HypoTiFlashReplicas
 
@@ -2859,7 +2876,6 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	s.SequenceState.SetAllStates(sessionStates.SequenceLatestValues)
 	s.FoundInPlanCache = sessionStates.FoundInPlanCache
 	s.FoundInBinding = sessionStates.FoundInBinding
-	s.SetResourceGroupName(sessionStates.ResourceGroupName)
 	s.HypoIndexes = sessionStates.HypoIndexes
 	s.HypoTiFlashReplicas = sessionStates.HypoTiFlashReplicas
 
@@ -2955,9 +2971,6 @@ type Concurrency struct {
 
 	// IdleTransactionTimeout indicates the maximum time duration a transaction could be idle, unit is second.
 	IdleTransactionTimeout int
-
-	// BulkDMLEnabled indicates whether to enable bulk DML in pipelined mode.
-	BulkDMLEnabled bool
 }
 
 // SetIndexLookupConcurrency set the number of concurrent index lookup worker.
@@ -3153,6 +3166,20 @@ type BatchSize struct {
 
 	// MinPagingSize defines the max size used by the coprocessor paging protocol.
 	MaxPagingSize int
+}
+
+// PipelinedDMLConfig defines the configuration for pipelined DML.
+type PipelinedDMLConfig struct {
+	// PipelinedFLushConcurrency indicates the number of concurrent worker for pipelined flush.
+	PipelinedFlushConcurrency int
+
+	// PipelinedResolveLockConcurrency indicates the number of concurrent worker for pipelined resolve lock.
+	PipelinedResolveLockConcurrency int
+
+	// PipelinedWriteThrottleRatio defines how the flush process is throttled
+	// by adding sleep intervals between flushes, to avoid overwhelming the storage layer.
+	// It is defined as: throttle_ratio =  T_sleep / (T_sleep + T_flush)
+	PipelinedWriteThrottleRatio float64
 }
 
 const (

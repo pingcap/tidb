@@ -65,6 +65,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/mock/gomock"
 )
 
@@ -1249,6 +1250,10 @@ func (m *mockPDClient) GetLeaderAddr() string {
 	return m.leaderAddr
 }
 
+func (m *mockPDClient) WithCallerComponent(_ caller.Component) pd.Client {
+	return m
+}
+
 func (s *tableRestoreSuite) TestCheckClusterRegion() {
 	type testCase struct {
 		stores         pdhttp.StoresInfo
@@ -2188,14 +2193,14 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			Mydumper: config.MydumperRuntime{
 				ReadBlockSize: config.ReadBlockSize,
 				CSV: config.CSVConfig{
-					Separator:         ",",
-					Delimiter:         `"`,
-					Header:            ca.hasHeader,
-					HeaderSchemaMatch: true,
-					NotNull:           false,
-					Null:              []string{`\N`},
-					EscapedBy:         `\`,
-					TrimLastSep:       false,
+					FieldsTerminatedBy: ",",
+					FieldsEnclosedBy:   `"`,
+					Header:             ca.hasHeader,
+					HeaderSchemaMatch:  true,
+					NotNull:            false,
+					FieldNullDefinedBy: []string{`\N`},
+					FieldsEscapedBy:    `\`,
+					TrimLastEmptyField: false,
 				},
 				IgnoreColumns: ca.ignoreColumns,
 			},
@@ -2224,14 +2229,14 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 			DataCharacterSet:       "gb18030",
 			DataInvalidCharReplace: string(utf8.RuneError),
 			CSV: config.CSVConfig{
-				Separator:         "，",
-				Delimiter:         `"`,
-				Header:            true,
-				HeaderSchemaMatch: true,
-				NotNull:           false,
-				Null:              []string{`\N`},
-				EscapedBy:         `\`,
-				TrimLastSep:       false,
+				FieldsTerminatedBy: "，",
+				FieldsEnclosedBy:   `"`,
+				Header:             true,
+				HeaderSchemaMatch:  true,
+				NotNull:            false,
+				FieldNullDefinedBy: []string{`\N`},
+				FieldsEscapedBy:    `\`,
+				TrimLastEmptyField: false,
 			},
 			IgnoreColumns: nil,
 		},

@@ -15,9 +15,11 @@
 package cascades
 
 import (
+	"github.com/bits-and-blooms/bitset"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base/cascadesctx"
 	"github.com/pingcap/tidb/pkg/planner/cascades/memo"
+	"github.com/pingcap/tidb/pkg/planner/cascades/rule"
 	"github.com/pingcap/tidb/pkg/planner/cascades/task"
 	corebase "github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -60,6 +62,14 @@ func (c *Optimizer) GetMemo() *memo.Memo {
 	return c.ctx.GetMemo()
 }
 
+// SetRules set a series of allowed rule ids.
+func (c *Optimizer) SetRules(ids []uint) {
+	ctx := c.ctx.(*Context)
+	for _, id := range ids {
+		ctx.ruleMask.Set(id)
+	}
+}
+
 // Context includes all the context stuff when go through memo optimizing.
 type Context struct {
 	// pctx variable awareness.
@@ -68,6 +78,8 @@ type Context struct {
 	mm *memo.Memo
 	// task pool management.
 	scheduler base.Scheduler
+	// rule mask.
+	ruleMask *bitset.BitSet
 }
 
 // NewContext returns a new memo context responsible for manage all the stuff in cascades opt.
@@ -78,6 +90,8 @@ func NewContext(pctx corebase.PlanContext) *Context {
 		mm: memo.NewMemo(pctx.GetSessionVars().StmtCtx.OperatorNum),
 		// task pool management.
 		scheduler: task.NewSimpleTaskScheduler(),
+		// new rule mask.
+		ruleMask: bitset.New(uint(rule.XFMaximumRuleLength)).SetAll(),
 	}
 }
 
@@ -102,4 +116,9 @@ func (c *Context) PushTask(task base.Task) {
 // GetMemo returns the basic memo structure.
 func (c *Context) GetMemo() *memo.Memo {
 	return c.mm
+}
+
+// GetRuleMask implements the cascades context interface.`
+func (c *Context) GetRuleMask() *bitset.BitSet {
+	return c.ruleMask
 }

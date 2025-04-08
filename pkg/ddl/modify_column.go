@@ -50,10 +50,10 @@ import (
 	"go.uber.org/zap"
 )
 
-func hasVectorIndexColumn(tblInfo *model.TableInfo, col *model.ColumnInfo) bool {
+func hasColumnarIndexColumn(tblInfo *model.TableInfo, col *model.ColumnInfo) bool {
 	indexesToChange := FindRelatedIndexesToChange(tblInfo, col.Name)
 	for _, idx := range indexesToChange {
-		if idx.IndexInfo.VectorInfo != nil {
+		if idx.IndexInfo.IsColumnarIndex() {
 			return true
 		}
 	}
@@ -117,7 +117,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("table is partition table"))
 	}
-	if hasVectorIndexColumn(tblInfo, oldCol) {
+	if hasColumnarIndexColumn(tblInfo, oldCol) {
 		return ver, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("vector indexes on the column"))
 	}
 
@@ -642,7 +642,7 @@ func doReorgWorkForModifyColumn(w *worker, jobCtx *jobContext, job *model.Job, t
 		// Use old column name to generate less confusing error messages.
 		changingColCpy := changingCol.Clone()
 		changingColCpy.Name = oldCol.Name
-		return w.updateCurrentElement(jobCtx.stepCtx, tbl, reorgInfo)
+		return w.updateCurrentElement(jobCtx, tbl, reorgInfo)
 	})
 	if err != nil {
 		if dbterror.ErrPausedDDLJob.Equal(err) {
@@ -812,7 +812,7 @@ func GetModifiableColumnJob(
 		if t.Meta().Partition != nil {
 			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("table is partition table")
 		}
-		if hasVectorIndexColumn(t.Meta(), col.ColumnInfo) {
+		if hasColumnarIndexColumn(t.Meta(), col.ColumnInfo) {
 			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("vector indexes on the column")
 		}
 	}
@@ -1134,7 +1134,7 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 		if !modified {
 			return
 		}
-		err = checkIndexInModifiableColumns(columns, indexInfo.Columns, indexInfo.VectorInfo != nil)
+		err = checkIndexInModifiableColumns(columns, indexInfo.Columns, indexInfo.GetColumnarIndexType())
 		if err != nil {
 			return
 		}
@@ -1167,7 +1167,7 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 	return nil
 }
 
-func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn, isVectorIndex bool) error {
+func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn, columnarIndexType model.ColumnarIndexType) error {
 	for _, ic := range idxColumns {
 		col := model.FindColumnInfo(columns, ic.Name.L)
 		if col == nil {
@@ -1180,7 +1180,7 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*mo
 			// if the type is still prefixable and larger than old prefix length.
 			prefixLength = ic.Length
 		}
-		if err := checkIndexColumn(col, prefixLength, false, isVectorIndex); err != nil {
+		if err := checkIndexColumn(col, prefixLength, false, columnarIndexType); err != nil {
 			return err
 		}
 	}

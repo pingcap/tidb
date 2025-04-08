@@ -18,7 +18,6 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -26,14 +25,12 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -70,7 +67,7 @@ func TestBootstrap(t *testing.T) {
 	require.NotEqual(t, 0, req.NumRows())
 
 	rows := statistics.RowToDatums(req.GetRow(0), r.Fields())
-	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil)
+	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil, 0)
 	r.Close()
 
 	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "anyhost"}, []byte(""), []byte(""), nil))
@@ -204,7 +201,7 @@ func TestBootstrapWithError(t *testing.T) {
 
 	row := req.GetRow(0)
 	rows := statistics.RowToDatums(row, r.Fields())
-	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil)
+	match(t, rows, `%`, "root", "", "mysql_native_password", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "Y", "N", "Y", "Y", "Y", "Y", "Y", nil, nil, nil, "", "N", time.Now(), nil, 0)
 	require.NoError(t, r.Close())
 
 	MustExec(t, se, "USE test")
@@ -240,6 +237,8 @@ func TestBootstrapWithError(t *testing.T) {
 
 	// Check tidb_ttl_table_status table
 	MustExec(t, se, "SELECT * from mysql.tidb_ttl_table_status")
+	// Check mysql.tidb_workload_values table
+	MustExec(t, se, "SELECT * from mysql.tidb_workload_values")
 }
 
 func TestDDLTableCreateBackfillTable(t *testing.T) {
@@ -586,53 +585,6 @@ func TestStmtSummary(t *testing.T) {
 	require.NoError(t, r.Close())
 }
 
-func TestUpdateDuplicateBindInfo(t *testing.T) {
-	ctx := context.Background()
-	store, dom := CreateStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
-	defer dom.Close()
-	se := CreateSessionAndSetID(t, store)
-	MustExec(t, se, "alter table mysql.bind_info drop column if exists plan_digest")
-	MustExec(t, se, "alter table mysql.bind_info drop column if exists sql_digest")
-
-	MustExec(t, se, `insert into mysql.bind_info values('select * from t', 'select /*+ use_index(t, idx_a)*/ * from t', 'test', 'enabled', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
-	// The latest one.
-	MustExec(t, se, `insert into mysql.bind_info values('select * from test . t', 'select /*+ use_index(t, idx_b)*/ * from test.t', 'test', 'enabled', '2021-01-04 14:50:58.257', '2021-01-09 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
-
-	MustExec(t, se, `insert into mysql.bind_info values('select * from t where a < ?', 'select * from t use index(idx) where a < 1', 'test', 'deleted', '2021-06-04 17:04:43.333', '2021-06-04 17:04:43.335', 'utf8', 'utf8_general_ci', 'manual')`)
-	MustExec(t, se, `insert into mysql.bind_info values('select * from t where a < ?', 'select * from t ignore index(idx) where a < 1', 'test', 'enabled', '2021-06-04 17:04:43.335', '2021-06-04 17:04:43.335', 'utf8', 'utf8_general_ci', 'manual')`)
-	MustExec(t, se, `insert into mysql.bind_info values('select * from test . t where a <= ?', 'select * from test.t use index(idx) where a <= 1', '', 'deleted', '2021-06-04 17:04:43.345', '2021-06-04 17:04:45.334', 'utf8', 'utf8_general_ci', 'manual')`)
-	MustExec(t, se, `insert into mysql.bind_info values('select * from test . t where a <= ?', 'select * from test.t ignore index(idx) where a <= 1', '', 'enabled', '2021-06-04 17:04:45.334', '2021-06-04 17:04:45.334', 'utf8', 'utf8_general_ci', 'manual')`)
-
-	upgradeToVer67(se, version66)
-
-	r := MustExecToRecodeSet(t, se, `select original_sql, bind_sql, default_db, status, create_time from mysql.bind_info where source != 'builtin' order by create_time`)
-	req := r.NewChunk(nil)
-	require.NoError(t, r.Next(ctx, req))
-	require.Equal(t, 3, req.NumRows())
-	row := req.GetRow(0)
-	require.Equal(t, "select * from `test` . `t`", row.GetString(0))
-	require.Equal(t, "SELECT /*+ use_index(`t` `idx_b`)*/ * FROM `test`.`t`", row.GetString(1))
-	require.Equal(t, "", row.GetString(2))
-	require.Equal(t, bindinfo.StatusEnabled, row.GetString(3))
-	require.Equal(t, "2021-01-04 14:50:58.257", row.GetTime(4).String())
-	row = req.GetRow(1)
-	require.Equal(t, "select * from `test` . `t` where `a` < ?", row.GetString(0))
-	require.Equal(t, "SELECT * FROM `test`.`t` IGNORE INDEX (`idx`) WHERE `a` < 1", row.GetString(1))
-	require.Equal(t, "", row.GetString(2))
-	require.Equal(t, bindinfo.StatusEnabled, row.GetString(3))
-	require.Equal(t, "2021-06-04 17:04:43.335", row.GetTime(4).String())
-	row = req.GetRow(2)
-	require.Equal(t, "select * from `test` . `t` where `a` <= ?", row.GetString(0))
-	require.Equal(t, "SELECT * FROM `test`.`t` IGNORE INDEX (`idx`) WHERE `a` <= 1", row.GetString(1))
-	require.Equal(t, "", row.GetString(2))
-	require.Equal(t, bindinfo.StatusEnabled, row.GetString(3))
-	require.Equal(t, "2021-06-04 17:04:45.334", row.GetTime(4).String())
-
-	require.NoError(t, r.Close())
-	MustExec(t, se, "delete from mysql.bind_info where original_sql = 'select * from test . t'")
-}
-
 func TestUpgradeClusteredIndexDefaultValue(t *testing.T) {
 	store, dom := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -918,33 +870,6 @@ func testIndexMergeUpgradeFrom400To540(t *testing.T, enable bool) {
 	} else {
 		require.Equal(t, int64(0), row.GetInt64(0))
 	}
-}
-
-func TestUpgradeToVer85(t *testing.T) {
-	ctx := context.Background()
-	store, dom := CreateStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
-	defer dom.Close()
-	se := CreateSessionAndSetID(t, store)
-	MustExec(t, se, "alter table mysql.bind_info drop column if exists plan_digest")
-	MustExec(t, se, "alter table mysql.bind_info drop column if exists sql_digest")
-
-	MustExec(t, se, `insert into mysql.bind_info values('select * from t', 'select /*+ use_index(t, idx_a)*/ * from t', 'test', 'using', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
-	MustExec(t, se, `insert into mysql.bind_info values('select * from t1', 'select /*+ use_index(t1, idx_a)*/ * from t1', 'test', 'enabled', '2021-01-05 14:50:58.257', '2021-01-05 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
-	MustExec(t, se, `insert into mysql.bind_info values('select * from t2', 'select /*+ use_index(t2, idx_a)*/ * from t2', 'test', 'disabled', '2021-01-06 14:50:58.257', '2021-01-06 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
-	MustExec(t, se, `insert into mysql.bind_info values('select * from t3', 'select /*+ use_index(t3, idx_a)*/ * from t3', 'test', 'deleted', '2021-01-07 14:50:58.257', '2021-01-07 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
-	MustExec(t, se, `insert into mysql.bind_info values('select * from t4', 'select /*+ use_index(t4, idx_a)*/ * from t4', 'test', 'invalid', '2021-01-08 14:50:58.257', '2021-01-08 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
-	upgradeToVer85(se, version84)
-
-	r := MustExecToRecodeSet(t, se, `select count(*) from mysql.bind_info where status = 'enabled'`)
-	req := r.NewChunk(nil)
-	require.NoError(t, r.Next(ctx, req))
-	require.Equal(t, 1, req.NumRows())
-	row := req.GetRow(0)
-	require.Equal(t, int64(2), row.GetInt64(0))
-
-	require.NoError(t, r.Close())
-	MustExec(t, se, "delete from mysql.bind_info where default_db = 'test'")
 }
 
 func TestTiDBEnablePagingVariable(t *testing.T) {
@@ -2003,90 +1928,6 @@ func TestTiDBUpgradeToVer170(t *testing.T) {
 	dom.Close()
 }
 
-func TestTiDBBindingInListToVer175(t *testing.T) {
-	ctx := context.Background()
-	store, dom := CreateStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
-
-	// bootstrap as version174
-	ver174 := version174
-	seV174 := CreateSessionAndSetID(t, store)
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMutator(txn)
-	err = m.FinishBootstrap(int64(ver174))
-	require.NoError(t, err)
-	revertVersionAndVariables(t, seV174, ver174)
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-	store.SetOption(StoreBootstrappedKey, nil)
-
-	// create some bindings at version174
-	MustExec(t, seV174, "use test")
-	MustExec(t, seV174, "create table t (a int, b int, c int, key(c))")
-	_, digest := parser.NormalizeDigestForBinding("SELECT * FROM `test`.`t` WHERE `a` IN (1,2,3)")
-	MustExec(t, seV174, fmt.Sprintf("insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ... )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:35.319', 'utf8', 'utf8_general_ci', 'manual', '%s', '')", digest.String()))
-	_, digest = parser.NormalizeDigestForBinding("SELECT * FROM `test`.`t` WHERE `a` IN (1)")
-	MustExec(t, seV174, fmt.Sprintf("insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:36.319', 'utf8', 'utf8_general_ci', 'manual', '%s', '')", digest.String()))
-	_, digest = parser.NormalizeDigestForBinding("SELECT * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3)")
-	MustExec(t, seV174, fmt.Sprintf("insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? ) and `b` in ( ... )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:37.319', '2023-09-13 14:41:38.319', 'utf8', 'utf8_general_ci', 'manual', '%s', '')", digest.String()))
-
-	showBindings := func(s sessiontypes.Session) (records []string) {
-		MustExec(t, s, "admin reload bindings")
-		res := MustExecToRecodeSet(t, s, "show global bindings")
-		chk := res.NewChunk(nil)
-		for {
-			require.NoError(t, res.Next(ctx, chk))
-			if chk.NumRows() == 0 {
-				break
-			}
-			for i := 0; i < chk.NumRows(); i++ {
-				originalSQL := chk.GetRow(i).GetString(0)
-				bindSQL := chk.GetRow(i).GetString(1)
-				records = append(records, fmt.Sprintf("%s:%s", bindSQL, originalSQL))
-			}
-		}
-		require.NoError(t, res.Close())
-		sort.Strings(records)
-		return
-	}
-	bindings := showBindings(seV174)
-	// on ver174, `in (1)` and `in (1,2,3)` have different normalized results: `in (?)` and `in (...)`
-	require.Equal(t, []string{"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3):select * from `test` . `t` where `a` in ( ? ) and `b` in ( ... )",
-		"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1):select * from `test` . `t` where `a` in ( ? )",
-		"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1,2,3):select * from `test` . `t` where `a` in ( ... )"}, bindings)
-
-	// upgrade to ver175
-	dom.Close()
-	domCurVer, err := BootstrapSession(store)
-	require.NoError(t, err)
-	defer domCurVer.Close()
-	seCurVer := CreateSessionAndSetID(t, store)
-	ver, err := getBootstrapVersion(seCurVer)
-	require.NoError(t, err)
-	require.Equal(t, currentBootstrapVersion, ver)
-
-	// `in (?)` becomes to `in ( ... )`
-	bindings = showBindings(seCurVer)
-	require.Equal(t, []string{"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3):select * from `test` . `t` where `a` in ( ... ) and `b` in ( ... )",
-		"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1):select * from `test` . `t` where `a` in ( ... )"}, bindings)
-
-	planFromBinding := func(s sessiontypes.Session, q string) {
-		MustExec(t, s, q)
-		res := MustExecToRecodeSet(t, s, "select @@last_plan_from_binding")
-		chk := res.NewChunk(nil)
-		require.NoError(t, res.Next(ctx, chk))
-		require.Equal(t, int64(1), chk.GetRow(0).GetInt64(0))
-		require.NoError(t, res.Close())
-	}
-	planFromBinding(seCurVer, "select * from test.t where a in (1)")
-	planFromBinding(seCurVer, "select * from test.t where a in (1,2,3)")
-	planFromBinding(seCurVer, "select * from test.t where a in (1,2,3,4,5,6,7)")
-	planFromBinding(seCurVer, "select * from test.t where a in (1,2,3,4,5,6,7) and b in(1)")
-	planFromBinding(seCurVer, "select * from test.t where a in (1,2,3,4,5,6,7) and b in(1,2,3,4)")
-	planFromBinding(seCurVer, "select * from test.t where a in (7) and b in(1,2,3,4)")
-}
-
 func TestTiDBUpgradeToVer176(t *testing.T) {
 	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
@@ -2703,4 +2544,103 @@ func TestGetFuncName(t *testing.T) {
 			t.Errorf("Expected error 'function is nil', got: %v", err)
 		}
 	})
+}
+
+func TestWriteClusterIDToMySQLTiDBWhenUpgradingTo242(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// `cluster_id` is inserted for a new TiDB cluster.
+	se := CreateSessionAndSetID(t, store)
+	r := MustExecToRecodeSet(t, se, `select VARIABLE_VALUE from mysql.tidb where VARIABLE_NAME='cluster_id'`)
+	req := r.NewChunk(nil)
+	err := r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	require.NotEmpty(t, req.GetRow(0).GetBytes(0))
+	require.NoError(t, r.Close())
+	se.Close()
+
+	// bootstrap as version241
+	ver241 := version241
+	seV241 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver241))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV241, ver241)
+	// remove the cluster_id entry from mysql.tidb table
+	MustExec(t, seV241, "delete from mysql.tidb where variable_name='cluster_id'")
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	store.SetOption(StoreBootstrappedKey, nil)
+	ver, err := getBootstrapVersion(seV241)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver241), ver)
+	seV241.Close()
+
+	// upgrade to current version
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err = getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// check if the cluster_id has been set in the `mysql.tidb` table during upgrade
+	r = MustExecToRecodeSet(t, seCurVer, `select VARIABLE_VALUE from mysql.tidb where VARIABLE_NAME='cluster_id'`)
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	require.NotEmpty(t, req.GetRow(0).GetBytes(0))
+	require.NoError(t, r.Close())
+	seCurVer.Close()
+}
+
+func TestBindInfoUniqueIndex(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// bootstrap as version245
+	ver245 := version245
+	seV245 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver245))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV245, ver245)
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	store.SetOption(StoreBootstrappedKey, nil)
+
+	// remove the unique index on mysql.bind_info for testing
+	MustExec(t, seV245, "alter table mysql.bind_info drop index digest_index")
+
+	// insert duplicated values into mysql.bind_info
+	for _, sqlDigest := range []string{"null", "'x'", "'y'"} {
+		for _, planDigest := range []string{"null", "'x'", "'y'"} {
+			insertStmt := fmt.Sprintf(`insert into mysql.bind_info values (
+             "sql", "bind_sql", "db", "disabled", NOW(), NOW(), "", "", "", %s, %s)`,
+				sqlDigest, planDigest)
+			MustExec(t, seV245, insertStmt)
+			MustExec(t, seV245, insertStmt)
+		}
+	}
+
+	// upgrade to current version
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
 }

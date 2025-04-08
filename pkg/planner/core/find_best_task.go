@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -69,7 +70,7 @@ func GetPropByOrderByItems(items []*util.ByItems) (*property.PhysicalProperty, b
 
 // GetPropByOrderByItemsContainScalarFunc will check if this sort property can be pushed or not. In order to simplify the
 // problem, we only consider the case that all expression are columns or some special scalar functions.
-func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (*property.PhysicalProperty, bool, bool) {
+func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (_ *property.PhysicalProperty, _, _ bool) {
 	propItems := make([]property.SortItem, 0, len(items))
 	onlyColumn := true
 	for _, item := range items {
@@ -186,7 +187,14 @@ func enumeratePhysicalPlans4Task(
 	if _, ok := p.Self().(*logicalop.LogicalSequence); ok {
 		iteration = iterateChildPlan4LogicalSequence
 	}
-
+	var fd *funcdep.FDSet
+	if addEnforcer {
+		switch logicalPlan := p.Self().(type) {
+		case *logicalop.LogicalJoin, *logicalop.LogicalAggregation:
+			// TODO(hawkingrei): FD should be maintained as logical prop instead of constructing it in physical phase
+			fd = logicalPlan.ExtractFD()
+		}
+	}
 	for _, pp := range physicalPlans {
 		timeStampNow := p.GetLogicalTS4TaskMap()
 		savedPlanID := p.SCtx().GetSessionVars().PlanID.Load()
@@ -224,7 +232,7 @@ func enumeratePhysicalPlans4Task(
 
 		// Enforce curTask property
 		if addEnforcer {
-			curTask = enforceProperty(prop, curTask, p.Plan.SCtx())
+			curTask = enforceProperty(prop, curTask, p.Plan.SCtx(), fd)
 		}
 
 		// Optimize by shuffle executor to running in parallel manner.
@@ -566,7 +574,6 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 		}
 		newProp = prop
 	}
-
 	var cnt int64
 	var curTask base.Task
 	if bestTask, cnt, err = enumeratePhysicalPlans4Task(p, plansFitsProp, newProp, false, planCounter, opt); err != nil {
@@ -629,7 +636,7 @@ func findBestTask4LogicalMemTable(lp base.LogicalPlan, prop *property.PhysicalPr
 		}
 		if prop.CanAddEnforcer {
 			*prop = *oldProp
-			t = enforceProperty(prop, t, p.Plan.SCtx())
+			t = enforceProperty(prop, t, p.Plan.SCtx(), nil)
 			prop.CanAddEnforcer = true
 		}
 	}()
@@ -708,6 +715,28 @@ func compareGlobalIndex(lhs, rhs *candidatePath) int {
 	return compareBool(lhs.path.Index.Global, rhs.path.Index.Global)
 }
 
+func compareCorrRatio(lhs, rhs *candidatePath) (int, float64) {
+	lhsCorrRatio, rhsCorrRatio := 0.0, 0.0
+	// CorrCountAfterAccess tracks the "CountAfterAccess" only including the most selective index column, thus
+	// lhs/rhsCorrRatio represents the "risk" of the CountAfterAccess value - lower value means less risk that
+	// we do NOT know about actual correlation between indexed columns
+	// TODO - corrCountAfterAccess is only currently used to compete 2 indexes - since they are the only paths
+	// that potentially go through expBackOffEstimation
+	if lhs.path.CorrCountAfterAccess > 0 && rhs.path.CorrCountAfterAccess > 0 {
+		lhsCorrRatio = lhs.path.CorrCountAfterAccess / lhs.path.CountAfterAccess
+		rhsCorrRatio = rhs.path.CorrCountAfterAccess / rhs.path.CountAfterAccess
+	}
+	// lhs has lower risk
+	if lhsCorrRatio < rhsCorrRatio && lhs.path.CountAfterAccess < rhs.path.CountAfterAccess {
+		return 1, lhsCorrRatio
+	}
+	// rhs has lower risk
+	if rhsCorrRatio < lhsCorrRatio && rhs.path.CountAfterAccess < lhs.path.CountAfterAccess {
+		return -1, rhsCorrRatio
+	}
+	return 0, 0
+}
+
 // compareCandidates is the core of skyline pruning, which is used to decide which candidate path is better.
 // The first return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
 // The 2nd return value indicates whether the "better path" is missing statistics or not.
@@ -752,6 +781,8 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 	matchResult, globalResult := compareBool(lhs.isMatchProp, rhs.isMatchProp), compareGlobalIndex(lhs, rhs)
 	accessResult, comparable1 := util.CompareCol2Len(lhs.accessCondsColMap, rhs.accessCondsColMap)
 	scanResult, comparable2 := compareIndexBack(lhs, rhs)
+	// TODO: corrResult is not added to sum to limit change to existing logic. Further testing required.
+	corrResult, _ := compareCorrRatio(lhs, rhs)
 	sum := accessResult + scanResult + matchResult + globalResult
 
 	// First rules apply when an index doesn't have statistics and another object (index or table) has statistics
@@ -788,10 +819,12 @@ func compareCandidates(sctx base.PlanContext, statsTbl *statistics.Table, tableI
 		prop.ExpectedCnt == math.MaxFloat64 { // Limit may affect access row count
 		threshold := float64(fixcontrol.GetIntWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix45132, 1000))
 		if threshold > 0 { // set it to 0 to disable this rule
-			if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold {
+			// corrResult is included to ensure we don't preference to a higher risk plan given that
+			// this rule does not check the other criteria included below.
+			if lhs.path.CountAfterAccess/rhs.path.CountAfterAccess > threshold && corrResult <= 0 {
 				return -1, rhsPseudo // right wins - also return whether it has statistics (pseudo) or not
 			}
-			if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold {
+			if rhs.path.CountAfterAccess/lhs.path.CountAfterAccess > threshold && corrResult >= 0 {
 				return 1, lhsPseudo // left wins - also return whether it has statistics (pseudo) or not
 			}
 		}
@@ -1395,7 +1428,7 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 		}
 		if prop.CanAddEnforcer {
 			*prop = *oldProp
-			t = enforceProperty(prop, t, ds.Plan.SCtx())
+			t = enforceProperty(prop, t, ds.Plan.SCtx(), nil)
 			prop.CanAddEnforcer = true
 		}
 
@@ -1516,6 +1549,11 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 				canConvertPointGet = false
 			}
 			if canConvertPointGet && len(path.Ranges) > 1 {
+				// if LIST COLUMNS/RANGE COLUMNS partitioned, and any of the partitioning columns are string based
+				// and having non-binary collations, then we currently cannot support BatchPointGet,
+				// since the candidate.path.Ranges already have been converted to SortKey, meaning we cannot use it
+				// for PartitionLookup/PartitionPruning currently.
+
 				// TODO: This is now implemented, but to decrease
 				// the impact of supporting plan cache for patitioning,
 				// this is not yet enabled.
@@ -2385,7 +2423,7 @@ func (is *PhysicalIndexScan) addPushedDownSelection(copTask *CopTask, p *logical
 		return err
 	}
 
-	if indexConds != nil {
+	if len(indexConds) != 0 {
 		var selectivity float64
 		if path.CountAfterAccess > 0 {
 			selectivity = path.CountAfterIndex / path.CountAfterAccess
@@ -2586,13 +2624,14 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			ts.AnnIndexExtra = &VectorIndexExtra{
 				IndexInfo: candidate.path.Index,
 				PushDownQueryInfo: &tipb.ANNQueryInfo{
-					QueryType:      tipb.ANNQueryType_OrderBy,
-					DistanceMetric: tipb.VectorDistanceMetric(distanceMetricPB),
-					TopK:           prop.VectorProp.TopK,
-					ColumnName:     ts.Table.Columns[candidate.path.Index.Columns[0].Offset].Name.L,
-					ColumnId:       prop.VectorProp.Column.ID,
-					IndexId:        candidate.path.Index.ID,
-					RefVecF32:      prop.VectorProp.Vec.SerializeTo(nil),
+					QueryType:          tipb.ANNQueryType_OrderBy,
+					DistanceMetric:     tipb.VectorDistanceMetric(distanceMetricPB),
+					TopK:               prop.VectorProp.TopK,
+					ColumnName:         ts.Table.Columns[candidate.path.Index.Columns[0].Offset].Name.L,
+					DeprecatedColumnId: &prop.VectorProp.Column.ID, // deprecated field, will be removed after TiFlash supports the new field.
+					IndexId:            candidate.path.Index.ID,
+					RefVecF32:          prop.VectorProp.Vec.SerializeTo(nil),
+					Column:             *tidbutil.ColumnToProto(prop.VectorProp.Column.ToInfo(), false, false),
 				},
 			}
 			ts.SetStats(util.DeriveLimitStats(ts.StatsInfo(), float64(prop.VectorProp.TopK)))
@@ -2995,10 +3034,12 @@ func getOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 	rowCount := path.CountAfterAccess
 	is.initSchema(append(path.FullIdxCols, ds.CommonHandleCols...), !isSingleScan)
 
-	// If (1) there exists an index whose selectivity is smaller than the threshold,
-	// and (2) there is Selection on the IndexScan, we don't use the ExpectedCnt to
+	// If (1) tidb_opt_ordering_index_selectivity_threshold is enabled (not 0)
+	// and (2) there exists an index whose selectivity is smaller than or equal to the threshold,
+	// and (3) there is Selection on the IndexScan, we don't use the ExpectedCnt to
 	// adjust the estimated row count of the IndexScan.
-	ignoreExpectedCnt := ds.AccessPathMinSelectivity < ds.SCtx().GetSessionVars().OptOrderingIdxSelThresh &&
+	ignoreExpectedCnt := ds.SCtx().GetSessionVars().OptOrderingIdxSelThresh != 0 &&
+		ds.AccessPathMinSelectivity <= ds.SCtx().GetSessionVars().OptOrderingIdxSelThresh &&
 		len(path.IndexFilters)+len(path.TableFilters) > 0
 
 	if (isMatchProp || prop.IsSortItemEmpty()) && prop.ExpectedCnt < ds.StatsInfo().RowCount && !ignoreExpectedCnt {
@@ -3054,7 +3095,7 @@ func findBestTask4LogicalCTE(lp base.LogicalPlan, prop *property.PhysicalPropert
 		t = rt
 	}
 	if prop.CanAddEnforcer {
-		t = enforceProperty(prop, t, p.Plan.SCtx())
+		t = enforceProperty(prop, t, p.Plan.SCtx(), nil)
 	}
 	return t, 1, nil
 }

@@ -114,6 +114,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	parserutil "github.com/pingcap/tidb/pkg/util/parser"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/sem"
@@ -231,8 +232,6 @@ type session struct {
 	// Used to wait for all async commit background jobs to finish.
 	commitWaitGroup sync.WaitGroup
 }
-
-var parserPool = &sync.Pool{New: func() any { return parser.New() }}
 
 // AddTableLock adds table lock to the session lock map.
 func (s *session) AddTableLock(locks []model.TableLockTpInfo) {
@@ -927,6 +926,20 @@ func (s *session) CommitTxn(ctx context.Context) error {
 		s.sessionVars.StmtCtx.MergeExecDetails(nil, commitDetail)
 	}
 
+	if err == nil && s.txn.lastCommitTS > 0 {
+		// lastCommitTS could be the same, e.g. when the txn is considered readonly
+		if s.txn.lastCommitTS < s.sessionVars.LastCommitTS {
+			logutil.BgLogger().Error("check lastCommitTS failed",
+				zap.Uint64("sessionLastCommitTS", s.sessionVars.LastCommitTS),
+				zap.Uint64("txnLastCommitTS", s.txn.lastCommitTS),
+				zap.String("sql", redact.String(s.sessionVars.EnableRedactLog, s.sessionVars.StmtCtx.OriginalSQL)),
+			)
+			return fmt.Errorf("txn commit_ts:%d is before session last_commit_ts:%d",
+				s.txn.lastCommitTS, s.sessionVars.LastCommitTS)
+		}
+		s.sessionVars.LastCommitTS = s.txn.lastCommitTS
+	}
+
 	// record the TTLInsertRows in the metric
 	metrics.TTLInsertRowsCount.Add(float64(s.sessionVars.TxnCtx.InsertTTLRowsCount))
 
@@ -1376,9 +1389,10 @@ var _ sqlexec.SQLParser = &session{}
 
 func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.ParseParam) ([]ast.StmtNode, []error, error) {
 	defer tracing.StartRegion(ctx, "ParseSQL").End()
-
-	p := parserPool.Get().(*parser.Parser)
-	defer parserPool.Put(p)
+	p := parserutil.GetParser()
+	defer func() {
+		parserutil.DestoryParser(p)
+	}()
 
 	sqlMode := s.sessionVars.SQLMode
 	if s.isInternal() {
@@ -2627,6 +2641,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			TiFlashMaxBytesBeforeExternalSort:    vars.TiFlashMaxBytesBeforeExternalSort,
 			TiFlashMaxQueryMemoryPerNode:         vars.TiFlashMaxQueryMemoryPerNode,
 			TiFlashQuerySpillRatio:               vars.TiFlashQuerySpillRatio,
+			TiFlashHashJoinVersion:               vars.TiFlashHashJoinVersion,
 
 			DistSQLConcurrency:            vars.DistSQLScanConcurrency(),
 			ReplicaReadType:               vars.GetReplicaRead(),
@@ -3597,16 +3612,6 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 			failToLoadOrParseSQLFile = true
 		}
 	}
-	// A sub context for update table stats, and other contexts for concurrent stats loading.
-	cnt := 1 + concurrency
-	syncStatsCtxs, err := createSessions(store, cnt)
-	if err != nil {
-		return nil, err
-	}
-	subCtxs := make([]sessionctx.Context, cnt)
-	for i := 0; i < cnt; i++ {
-		subCtxs[i] = sessionctx.Context(syncStatsCtxs[i])
-	}
 
 	// setup extract Handle
 	extractWorkers := 1
@@ -3625,7 +3630,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if err != nil {
 		return nil, err
 	}
-	if err = dom.LoadAndUpdateStatsLoop(subCtxs, initStatsCtx); err != nil {
+	if err = dom.LoadAndUpdateStatsLoop(concurrency, initStatsCtx); err != nil {
 		return nil, err
 	}
 
@@ -4016,10 +4021,13 @@ func (s *session) PrepareTSFuture(ctx context.Context, future oracle.Future, sco
 	})
 
 	s.txn.changeToPending(&txnFuture{
-		future:    future,
-		store:     s.store,
-		txnScope:  scope,
-		pipelined: s.usePipelinedDmlOrWarn(ctx),
+		future:                          future,
+		store:                           s.store,
+		txnScope:                        scope,
+		pipelined:                       s.usePipelinedDmlOrWarn(ctx),
+		pipelinedFlushConcurrency:       s.GetSessionVars().PipelinedFlushConcurrency,
+		pipelinedResolveLockConcurrency: s.GetSessionVars().PipelinedResolveLockConcurrency,
+		pipelinedWriteThrottleRatio:     s.GetSessionVars().PipelinedWriteThrottleRatio,
 	})
 	return nil
 }
@@ -4381,6 +4389,7 @@ func (s *session) EncodeSessionStates(ctx context.Context,
 	if err := s.sessionVars.EncodeSessionStates(ctx, sessionStates); err != nil {
 		return err
 	}
+	sessionStates.ResourceGroupName = s.sessionVars.ResourceGroupName
 
 	hasRestrictVarPriv := false
 	checker := privilege.GetPrivilegeManager(s)
@@ -4457,6 +4466,25 @@ func (s *session) DecodeSessionStates(ctx context.Context,
 		if err := s.sessionVars.SetSystemVar(name, val); err != nil {
 			logutil.Logger(ctx).Warn("set session variable during decoding session states error",
 				zap.String("name", name), zap.String("value", val), zap.Error(err))
+		}
+	}
+
+	// Put resource group privilege check from sessionVars to session to avoid circular dependency.
+	if sessionStates.ResourceGroupName != s.sessionVars.ResourceGroupName {
+		hasPriv := true
+		if vardef.EnableResourceControlStrictMode.Load() {
+			checker := privilege.GetPrivilegeManager(s)
+			if checker != nil {
+				hasRgAdminPriv := checker.RequestDynamicVerification(s.sessionVars.ActiveRoles, "RESOURCE_GROUP_ADMIN", false)
+				hasRgUserPriv := checker.RequestDynamicVerification(s.sessionVars.ActiveRoles, "RESOURCE_GROUP_USER", false)
+				hasPriv = hasRgAdminPriv || hasRgUserPriv
+			}
+		}
+		if hasPriv {
+			s.sessionVars.SetResourceGroupName(sessionStates.ResourceGroupName)
+		} else {
+			logutil.Logger(ctx).Warn("set session states error, no privilege to set resource group, skip changing resource group",
+				zap.String("source_resource_group", s.sessionVars.ResourceGroupName), zap.String("target_resource_group", sessionStates.ResourceGroupName))
 		}
 	}
 

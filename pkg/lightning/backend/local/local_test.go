@@ -41,7 +41,6 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -52,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -1790,6 +1790,7 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 		456,
 		789,
 		true,
+		16*units.GiB,
 	)
 
 	jobCh := make(chan *regionJob, 9)
@@ -2332,6 +2333,7 @@ func TestExternalEngine(t *testing.T) {
 		SplitKeys:     [][]byte{keys[0], keys[50], endKey},
 		TotalFileSize: int64(config.SplitRegionSize) + 1,
 		TotalKVCount:  int64(config.SplitRegionKeys) + 1,
+		MemCapacity:   8 * units.GiB,
 	}
 	engineUUID := uuid.New()
 	hook := &recordScanRegionsHook{}

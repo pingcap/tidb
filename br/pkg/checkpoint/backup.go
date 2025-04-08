@@ -37,8 +37,8 @@ const (
 	CheckpointLockPathForBackup    = CheckpointBackupDir + "/checkpoint.lock"
 )
 
-func flushPositionForBackup() flushPosition {
-	return flushPosition{
+func flushPathForBackup() flushPath {
+	return flushPath{
 		CheckpointDataDir:     CheckpointDataDirForBackup,
 		CheckpointChecksumDir: CheckpointChecksumDirForBackup,
 		CheckpointLockPath:    CheckpointLockPathForBackup,
@@ -57,7 +57,7 @@ func StartCheckpointBackupRunnerForTest(
 	tick time.Duration,
 	timer GlobalTimer,
 ) (*CheckpointRunner[BackupKeyType, BackupValueType], error) {
-	checkpointStorage, err := newExternalCheckpointStorage(ctx, storage, timer)
+	checkpointStorage, err := newExternalCheckpointStorage(ctx, storage, timer, flushPathForBackup())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -74,7 +74,7 @@ func StartCheckpointRunnerForBackup(
 	cipher *backuppb.CipherInfo,
 	timer GlobalTimer,
 ) (*CheckpointRunner[BackupKeyType, BackupValueType], error) {
-	checkpointStorage, err := newExternalCheckpointStorage(ctx, storage, timer)
+	checkpointStorage, err := newExternalCheckpointStorage(ctx, storage, timer, flushPathForBackup())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -27,6 +27,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -43,6 +44,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	disthandle "github.com/pingcap/tidb/pkg/disttask/framework/handle"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
@@ -54,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema/perfschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	lcom "github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -81,6 +85,8 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/cgroup"
+	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
@@ -99,7 +105,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
-	"github.com/pingcap/tidb/pkg/workloadbasedlearning"
+	"github.com/pingcap/tidb/pkg/workloadlearning"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
@@ -158,8 +164,10 @@ type Domain struct {
 	m               syncutil.Mutex
 	SchemaValidator SchemaValidator
 	schemaLease     time.Duration
-	sysSessionPool  util.SessionPool
-	exit            chan struct{}
+	// Note: If you no longer need the session, you must call Destroy to release it.
+	// Otherwise, the session will be leaked. Because there is a strong reference from the domain to the session.
+	sysSessionPool util.DestroyableSessionPool
+	exit           chan struct{}
 	// `etcdClient` must be used when keyspace is not set, or when the logic to each etcd path needs to be separated by keyspace.
 	etcdClient *clientv3.Client
 	// autoidClient is used when there are tables with AUTO_ID_CACHE=1, it is the client to the autoid service.
@@ -1297,7 +1305,7 @@ func (do *Domain) Close() {
 	}
 
 	do.sysSessionPool.Close()
-	variable.UnregisterStatistics(do.BindHandle())
+	variable.UnregisterStatistics(do.BindingHandle())
 	if do.onClose != nil {
 		do.onClose()
 	}
@@ -1345,6 +1353,10 @@ func NewDomainWithEtcdClient(store kv.Storage, schemaLease time.Duration, statsL
 				})
 				infosync.DeleteInternalSession(r)
 			},
+			func(r pools.Resource) {
+				intest.Assert(r != nil)
+				infosync.DeleteInternalSession(r)
+			},
 		),
 		statsLease:        statsLease,
 		schemaLease:       schemaLease,
@@ -1363,7 +1375,8 @@ func NewDomainWithEtcdClient(store kv.Storage, schemaLease time.Duration, statsL
 	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, config.GetGlobalConfig().TiDBEnableExitCheck)
 	do.SchemaValidator = NewSchemaValidator(schemaLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
-	do.memoryUsageAlarmHandle = memoryusagealarm.NewMemoryUsageAlarmHandle(do.exit)
+	do.memoryUsageAlarmHandle = memoryusagealarm.NewMemoryUsageAlarmHandle(do.exit,
+		&memoryusagealarm.TiDBConfigProvider{})
 	do.serverMemoryLimitHandle = servermemorylimit.NewServerMemoryLimitHandle(do.exit)
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sysproctrack.TrackProc)}
 	do.initDomainSysVars()
@@ -1748,7 +1761,12 @@ func (do *Domain) InitDistTaskLoop() error {
 	do.cancelFns.mu.Lock()
 	do.cancelFns.fns = append(do.cancelFns.fns, cancel)
 	do.cancelFns.mu.Unlock()
-	executorManager, err := taskexecutor.NewManager(managerCtx, serverID, taskManager)
+	nodeRes, err := calculateNodeResource()
+	if err != nil {
+		return err
+	}
+	disthandle.SetNodeResource(nodeRes)
+	executorManager, err := taskexecutor.NewManager(managerCtx, serverID, taskManager, nodeRes)
 	if err != nil {
 		return err
 	}
@@ -1763,12 +1781,56 @@ func (do *Domain) InitDistTaskLoop() error {
 		defer func() {
 			storage.SetTaskManager(nil)
 		}()
-		do.distTaskFrameworkLoop(ctx, taskManager, executorManager, serverID)
+		do.distTaskFrameworkLoop(ctx, taskManager, executorManager, serverID, nodeRes)
 	}, "distTaskFrameworkLoop")
 	return nil
 }
 
-func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, executorManager *taskexecutor.Manager, serverID string) {
+func calculateNodeResource() (*proto.NodeResource, error) {
+	logger := logutil.ErrVerboseLogger()
+	totalMem, err := memory.MemTotal()
+	if err != nil {
+		// should not happen normally, as in main function of tidb-server, we assert
+		// that memory.MemTotal() will not fail.
+		return nil, err
+	}
+	totalCPU := cpu.GetCPUCount()
+	if totalCPU <= 0 || totalMem <= 0 {
+		return nil, errors.Errorf("invalid cpu or memory, cpu: %d, memory: %d", totalCPU, totalMem)
+	}
+	cgroupLimit, version, err := cgroup.GetCgroupMemLimit()
+	// ignore the error of cgroup.GetCgroupMemLimit, as it's not a must-success step.
+	if err == nil && version == cgroup.V2 {
+		// see cgroup.detectMemLimitInV2 for more details.
+		// below are some real memory limits tested on GCP:
+		// node-spec  real-limit  percent
+		// 16c32g        27.83Gi    87%
+		// 32c64g        57.36Gi    89.6%
+		// we use 'limit', not totalMem for adjust, as totalMem = min(physical-mem, 'limit')
+		// content of 'memory.max' might be 'max', so we use the min of them.
+		adjustedMem := min(totalMem, uint64(float64(cgroupLimit)*0.88))
+		logger.Info("adjust memory limit for cgroup v2",
+			zap.String("before", units.BytesSize(float64(totalMem))),
+			zap.String("after", units.BytesSize(float64(adjustedMem))))
+		totalMem = adjustedMem
+	}
+	var totalDisk uint64
+	cfg := config.GetGlobalConfig()
+	sz, err := lcom.GetStorageSize(cfg.TempDir)
+	if err != nil {
+		logger.Warn("get storage size failed, use tidb_ddl_disk_quota instead", zap.Error(err))
+		totalDisk = vardef.DDLDiskQuota.Load()
+	} else {
+		totalDisk = sz.Capacity
+	}
+	logger.Info("initialize node resource",
+		zap.Int("total-cpu", totalCPU),
+		zap.String("total-mem", units.BytesSize(float64(totalMem))),
+		zap.String("total-disk", units.BytesSize(float64(totalDisk))))
+	return proto.NewNodeResource(totalCPU, int64(totalMem), totalDisk), nil
+}
+
+func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, executorManager *taskexecutor.Manager, serverID string, nodeRes *proto.NodeResource) {
 	err := executorManager.Start()
 	if err != nil {
 		logutil.BgLogger().Error("dist task executor manager start failed", zap.Error(err))
@@ -1786,7 +1848,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		if schedulerManager != nil && schedulerManager.Initialized() {
 			return
 		}
-		schedulerManager = scheduler.NewManager(ctx, taskManager, serverID)
+		schedulerManager = scheduler.NewManager(ctx, taskManager, serverID, nodeRes)
 		schedulerManager.Start()
 	}
 	stopSchedulerMgrIfNeeded := func() {
@@ -1814,7 +1876,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 }
 
 // SysSessionPool returns the system session pool.
-func (do *Domain) SysSessionPool() util.SessionPool {
+func (do *Domain) SysSessionPool() util.DestroyableSessionPool {
 	return do.sysSessionPool
 }
 
@@ -1884,6 +1946,35 @@ func decodePrivilegeEvent(resp clientv3.WatchResponse) PrivilegeEvent {
 	return msg
 }
 
+func batchReadMoreData(ch clientv3.WatchChan, event PrivilegeEvent) PrivilegeEvent {
+	timer := time.NewTimer(5 * time.Millisecond)
+	defer timer.Stop()
+	const maxBatchSize = 128
+	for i := 0; i < maxBatchSize; i++ {
+		select {
+		case resp, ok := <-ch:
+			if !ok {
+				return event
+			}
+			tmp := decodePrivilegeEvent(resp)
+			if tmp.All {
+				event.All = true
+			} else {
+				if !event.All {
+					event.UserList = append(event.UserList, tmp.UserList...)
+				}
+			}
+			succ := timer.Reset(5 * time.Millisecond)
+			if !succ {
+				break
+			}
+		case <-timer.C:
+			return event
+		}
+	}
+	return event
+}
+
 // LoadPrivilegeLoop create a goroutine loads privilege tables in a loop, it
 // should be called only once in BootstrapSession.
 func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
@@ -1893,7 +1984,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 	if err != nil {
 		return err
 	}
-	do.privHandle = privileges.NewHandle(sctx.GetRestrictedSQLExecutor(), sctx.GetSessionVars().GlobalVarsAccessor)
+	do.privHandle = privileges.NewHandle(do.SysSessionPool(), sctx.GetSessionVars().GlobalVarsAccessor)
 
 	var watchCh clientv3.WatchChan
 	duration := 5 * time.Minute
@@ -1910,19 +2001,15 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 
 		var count int
 		for {
-			var err error
+			var event PrivilegeEvent
 			select {
 			case <-do.exit:
 				return
 			case resp, ok := <-watchCh:
 				if ok {
 					count = 0
-					event := decodePrivilegeEvent(resp)
-					if event.All {
-						err = do.privHandle.UpdateAll()
-					} else {
-						err = do.privHandle.Update(event.UserList)
-					}
+					event = decodePrivilegeEvent(resp)
+					event = batchReadMoreData(watchCh, event)
 				} else {
 					if do.ctx.Err() == nil {
 						logutil.BgLogger().Error("load privilege loop watch channel closed")
@@ -1931,11 +2018,15 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 						if count > 10 {
 							time.Sleep(time.Duration(count) * time.Second)
 						}
+						continue
 					}
 				}
 			case <-time.After(duration):
-				err = do.privHandle.UpdateAll()
+				event.All = true
+				event = batchReadMoreData(watchCh, event)
 			}
+
+			err := privReloadEvent(do.privHandle, &event)
 			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
 				logutil.BgLogger().Error("load privilege failed", zap.Error(err))
@@ -1943,6 +2034,18 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 		}
 	}, "loadPrivilegeInLoop")
 	return nil
+}
+
+func privReloadEvent(h *privileges.Handle, event *PrivilegeEvent) (err error) {
+	switch {
+	case !vardef.AccelerateUserCreationUpdate.Load():
+		err = h.UpdateAll()
+	case event.All:
+		err = h.UpdateAllActive()
+	default:
+		err = h.Update(event.UserList)
+	}
+	return
 }
 
 // LoadSysVarCacheLoop create a goroutine loads sysvar cache in a loop,
@@ -2069,20 +2172,20 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 	return do.privHandle
 }
 
-// BindHandle returns domain's bindHandle.
-func (do *Domain) BindHandle() bindinfo.GlobalBindingHandle {
+// BindingHandle returns domain's bindHandle.
+func (do *Domain) BindingHandle() bindinfo.BindingHandle {
 	v := do.bindHandle.Load()
 	if v == nil {
 		return nil
 	}
-	return v.(bindinfo.GlobalBindingHandle)
+	return v.(bindinfo.BindingHandle)
 }
 
 // InitBindingHandle create a goroutine loads BindInfo in a loop, it should
 // be called only once in BootstrapSession.
 func (do *Domain) InitBindingHandle() error {
-	do.bindHandle.Store(bindinfo.NewGlobalBindingHandle(do.sysSessionPool))
-	err := do.BindHandle().LoadFromStorageToCache(true)
+	do.bindHandle.Store(bindinfo.NewBindingHandle(do.sysSessionPool))
+	err := do.BindingHandle().LoadFromStorageToCache(true)
 	if err != nil || bindinfo.Lease == 0 {
 		return err
 	}
@@ -2113,11 +2216,11 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 		for {
 			select {
 			case <-do.exit:
-				do.BindHandle().Close()
+				do.BindingHandle().Close()
 				owner.Close()
 				return
 			case <-bindWorkerTicker.C:
-				bindHandle := do.BindHandle()
+				bindHandle := do.BindingHandle()
 				err := bindHandle.LoadFromStorageToCache(false)
 				if err != nil {
 					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
@@ -2126,7 +2229,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				if !owner.IsOwner() {
 					continue
 				}
-				err := do.BindHandle().GCGlobalBinding()
+				err := do.BindingHandle().GCBinding()
 				if err != nil {
 					logutil.BgLogger().Error("GC bind record failed", zap.Error(err))
 				}
@@ -2339,12 +2442,11 @@ func (do *Domain) StatsHandle() *handle.Handle {
 }
 
 // CreateStatsHandle is used only for test.
-func (do *Domain) CreateStatsHandle(ctx, initStatsCtx sessionctx.Context) error {
+func (do *Domain) CreateStatsHandle(ctx context.Context, initStatsCtx sessionctx.Context) error {
 	h, err := handle.NewHandle(
 		ctx,
 		initStatsCtx,
 		do.statsLease,
-		do.InfoSchema(),
 		do.sysSessionPool,
 		&do.sysProcesses,
 		do.ddlNotifier,
@@ -2374,24 +2476,22 @@ func (do *Domain) SetStatsUpdating(val bool) {
 }
 
 // LoadAndUpdateStatsLoop loads and updates stats info.
-func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context, initStatsCtx sessionctx.Context) error {
-	if err := do.UpdateTableStatsLoop(ctxs[0], initStatsCtx); err != nil {
+func (do *Domain) LoadAndUpdateStatsLoop(concurrency int, initStatsCtx sessionctx.Context) error {
+	if err := do.UpdateTableStatsLoop(initStatsCtx); err != nil {
 		return err
 	}
-	do.StartLoadStatsSubWorkers(ctxs[1:])
+	do.StartLoadStatsSubWorkers(concurrency)
 	return nil
 }
 
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop.
 // It will also start a goroutine to analyze tables automatically.
 // It should be called only once in BootstrapSession.
-func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) error {
-	ctx.GetSessionVars().InRestrictedSQL = true
+func (do *Domain) UpdateTableStatsLoop(initStatsCtx sessionctx.Context) error {
 	statsHandle, err := handle.NewHandle(
-		ctx,
+		do.ctx,
 		initStatsCtx,
 		do.statsLease,
-		do.InfoSchema(),
 		do.sysSessionPool,
 		&do.sysProcesses,
 		do.ddlNotifier,
@@ -2499,13 +2599,13 @@ func quitStatsOwner(do *Domain, mgr owner.Manager) {
 }
 
 // StartLoadStatsSubWorkers starts sub workers with new sessions to load stats concurrently.
-func (do *Domain) StartLoadStatsSubWorkers(ctxList []sessionctx.Context) {
+func (do *Domain) StartLoadStatsSubWorkers(concurrency int) {
 	statsHandle := do.StatsHandle()
-	for _, ctx := range ctxList {
+	for i := 0; i < concurrency; i++ {
 		do.wg.Add(1)
-		go statsHandle.SubLoadWorker(ctx, do.exit, do.wg)
+		go statsHandle.SubLoadWorker(do.exit, do.wg)
 	}
-	logutil.BgLogger().Info("start load stats sub workers", zap.Int("worker count", len(ctxList)))
+	logutil.BgLogger().Info("start load stats sub workers", zap.Int("workerCount", concurrency))
 }
 
 // NewOwnerManager returns the owner manager for use outside of the domain.
@@ -2540,7 +2640,7 @@ func (do *Domain) initStats(ctx context.Context) {
 	}
 	initstats.InitStatsPercentage.Store(100)
 	if err != nil {
-		logutil.BgLogger().Error("init stats info failed", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)), zap.Error(err))
+		logutil.ErrVerboseLogger().Error("init stats info failed", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)), zap.Error(err))
 	} else {
 		logutil.BgLogger().Info("init stats info time", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)))
 	}
@@ -2602,7 +2702,7 @@ func (do *Domain) asyncLoadHistogram() {
 		case <-cleanupTicker.C:
 			err = statsHandle.LoadNeededHistograms(do.InfoSchema())
 			if err != nil {
-				logutil.BgLogger().Warn("load histograms failed", zap.Error(err))
+				statslogutil.StatsErrVerboseSampleLogger().Warn("Load histograms failed", zap.Error(err))
 			}
 		case <-do.exit:
 			return
@@ -2932,10 +3032,7 @@ func (do *Domain) notifyUpdatePrivilege(event PrivilegeEvent) error {
 		return nil
 	}
 
-	if event.All {
-		return do.PrivilegeHandle().UpdateAll()
-	}
-	return do.PrivilegeHandle().Update(event.UserList)
+	return privReloadEvent(do.PrivilegeHandle(), &event)
 }
 
 // NotifyUpdateSysVarCache updates the sysvar cache key in etcd, which other TiDB
@@ -3387,11 +3484,12 @@ func (do *Domain) planCacheEvictTrigger() {
 
 // SetupWorkloadBasedLearningWorker sets up all of the workload based learning workers.
 func (do *Domain) SetupWorkloadBasedLearningWorker() {
-	wbLearningHandle := workloadbasedlearning.NewWorkloadBasedLearningHandle()
+	wbLearningHandle := workloadlearning.NewWorkloadLearningHandle(do.sysSessionPool)
+	wbCacheWorker := workloadlearning.NewWLCacheWorker(do.sysSessionPool)
 	// Start the workload based learning worker to analyze the read workload by statement_summary.
 	do.wg.Run(
 		func() {
-			do.readTableCostWorker(wbLearningHandle)
+			do.readTableCostWorker(wbLearningHandle, wbCacheWorker)
 		},
 		"readTableCostWorker",
 	)
@@ -3399,7 +3497,7 @@ func (do *Domain) SetupWorkloadBasedLearningWorker() {
 }
 
 // readTableCostWorker is a background worker that periodically analyze the read path table cost by statement_summary.
-func (do *Domain) readTableCostWorker(wbLearningHandle *workloadbasedlearning.Handle) {
+func (do *Domain) readTableCostWorker(wbLearningHandle *workloadlearning.Handle, wbCacheWorker *workloadlearning.WLCacheWorker) {
 	// Recover the panic and log the error when worker exit.
 	defer util.Recover(metrics.LabelDomain, "readTableCostWorker", nil, false)
 	readTableCostTicker := time.NewTicker(vardef.WorkloadBasedLearningInterval.Load())
@@ -3411,7 +3509,8 @@ func (do *Domain) readTableCostWorker(wbLearningHandle *workloadbasedlearning.Ha
 		select {
 		case <-readTableCostTicker.C:
 			if vardef.EnableWorkloadBasedLearning.Load() && do.statsOwner.IsOwner() {
-				wbLearningHandle.HandleReadTableCost()
+				wbLearningHandle.HandleTableReadCost(do.InfoSchema())
+				wbCacheWorker.UpdateTableReadCostCache()
 			}
 		case <-do.exit:
 			return

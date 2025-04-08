@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -721,8 +722,9 @@ func TestShowCreateTable(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`CREATE USER tsct1, tsct2`)
+	tk.MustExec(`CREATE USER tsct1, tsct2, tsct3`)
 	tk.MustExec(`GRANT select ON mysql.* to tsct2`)
+	tk.MustExec(`GRANT create temporary tables on mysql.* to tsct3`)
 
 	// should fail
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "tsct1", Hostname: "localhost", AuthUsername: "tsct1", AuthHostname: "%"}, nil, nil, nil))
@@ -732,6 +734,12 @@ func TestShowCreateTable(t *testing.T) {
 	// should pass
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "tsct2", Hostname: "localhost", AuthUsername: "tsct2", AuthHostname: "%"}, nil, nil, nil))
 	tk.MustExec(`SHOW CREATE TABLE mysql.user`)
+
+	// should fail
+	// https://github.com/pingcap/tidb/issues/29281
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "tsct3", Hostname: "localhost", AuthUsername: "tsct3", AuthHostname: "%"}, nil, nil, nil))
+	err = tk.ExecToErr(`SHOW CREATE TABLE mysql.user`)
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrTableaccessDenied))
 }
 
 func TestAnalyzeTable(t *testing.T) {
@@ -1659,9 +1667,7 @@ func TestCreateTmpTablesPriv(t *testing.T) {
 	tk.MustExec(createStmt)
 	tk.MustExec(dropStmt)
 	tk.Session().Auth(&auth.UserIdentity{Username: "vcreate_tmp_all", Hostname: "localhost"}, nil, nil, nil)
-	// TODO: issue #29280 to be fixed.
-	//err = tk.ExecToErr(createStmt)
-	//require.EqualError(t, err, "[planner:1044]Access denied for user 'vcreate_tmp_all'@'%' to database 'test'")
+	tk.MustExec(createStmt)
 
 	tests := []struct {
 		sql     string
@@ -1736,11 +1742,10 @@ func TestCreateTmpTablesPriv(t *testing.T) {
 		{
 			sql: "show create table tmp",
 		},
-		// TODO: issue #29281 to be fixed.
-		//{
-		//	sql: "show create table t",
-		//	errcode: mysql.ErrTableaccessDenied,
-		//},
+		{
+			sql:     "show create table t",
+			errcode: mysql.ErrTableaccessDenied,
+		},
 		{
 			sql:     "drop sequence tmp",
 			errcode: mysql.ErrTableaccessDenied,
@@ -2134,6 +2139,7 @@ func TestEnsureActiveUserCoverage(t *testing.T) {
 		{"set password for test = 'test2'", false},
 		{"show create user test", false},
 		{"create user test1", false},
+		{"grant select on test.* to test1", false},
 		{"show grants", true},
 		{"show grants for 'test'@'%'", true},
 	}
@@ -2150,4 +2156,44 @@ func TestEnsureActiveUserCoverage(t *testing.T) {
 		}
 		require.Equal(t, c.visited, visited, comment)
 	}
+}
+
+func TestSQLVariableAccelerateUserCreationUpdate(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+	tk := testkit.NewTestKit(t, store)
+	dom := domain.GetDomain(tk.Session())
+	// 1. check the default variable value
+	tk.MustQuery("select @@global.tidb_accelerate_user_creation_update").Check(testkit.Rows("0"))
+	// trigger priv reload
+	tk.MustExec("create user aaa")
+	handle := dom.PrivilegeHandle()
+	handle.CheckFullData(t, true)
+	priv := handle.Get()
+	require.False(t, priv.RequestVerification(nil, "bbb", "%", "test", "", "", mysql.SelectPriv))
+
+	// 2. change the variable and check
+	tk.MustExec("set @@global.tidb_accelerate_user_creation_update = on")
+	tk.MustQuery("select @@global.tidb_accelerate_user_creation_update").Check(testkit.Rows("1"))
+	require.True(t, vardef.AccelerateUserCreationUpdate.Load())
+	tk.MustExec("create user bbb")
+	handle.CheckFullData(t, false)
+	// trigger priv reload, but data for bbb is not really loaded
+	tk.MustExec("grant select on test.* to bbb")
+	priv = handle.Get()
+	// data for bbb is not loaded, because that user is not active
+	// So this is **counterintuitive**, but it's still the expected behavior.
+	require.False(t, priv.RequestVerification(nil, "bbb", "%", "test", "", "", mysql.SelectPriv))
+	tk1 := testkit.NewTestKit(t, store)
+	// if user bbb login, everything works as expected
+	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "bbb", Hostname: "localhost"}, nil, nil, nil))
+	priv = handle.Get()
+	require.True(t, priv.RequestVerification(nil, "bbb", "%", "test", "", "", mysql.SelectPriv))
+
+	// 3. change the variable and check again
+	tk.MustExec("set @@global.tidb_accelerate_user_creation_update = off")
+	tk.MustQuery("select @@global.tidb_accelerate_user_creation_update").Check(testkit.Rows("0"))
+	tk.MustExec("drop user aaa")
+	handle.CheckFullData(t, true)
+	priv = handle.Get()
+	require.True(t, priv.RequestVerification(nil, "bbb", "%", "test", "", "", mysql.SelectPriv))
 }

@@ -245,20 +245,20 @@ func TestEstimationForUnknownValues(t *testing.T) {
 
 	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(9, 30))
 	require.NoError(t, err)
-	require.Equal(t, 12.2, count)
+	require.Equal(t, 7.2, count)
 
 	count, err = cardinality.GetRowCountByColumnRanges(sctx, &statsTbl.HistColl, colID, getRange(9, math.MaxInt64))
 	require.NoError(t, err)
-	require.Equal(t, 12.2, count)
+	require.Equal(t, 7.2, count)
 
 	idxID := table.Meta().Indices[0].ID
-	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(30, 30))
+	count, _, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(30, 30))
 	require.NoError(t, err)
 	require.Equal(t, 0.1, count)
 
-	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(9, 30))
+	count, _, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(9, 30))
 	require.NoError(t, err)
-	require.Equal(t, 10.0, count)
+	require.Equal(t, 7.0, count)
 
 	testKit.MustExec("truncate table t")
 	testKit.MustExec("insert into t values (null, null)")
@@ -286,7 +286,7 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	require.Equal(t, 1.0, count)
 
 	idxID = table.Meta().Indices[0].ID
-	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(2, 2))
+	count, _, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(2, 2))
 	require.NoError(t, err)
 	require.Equal(t, 0.0, count)
 }
@@ -403,11 +403,11 @@ func TestEstimationUniqueKeyEqualConds(t *testing.T) {
 
 	sctx := mock.NewContext()
 	idxID := table.Meta().Indices[0].ID
-	count, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(7, 7))
+	count, _, err := cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(7, 7))
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
 
-	count, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(6, 6))
+	count, _, err = cardinality.GetRowCountByIndexRanges(sctx, &statsTbl.HistColl, idxID, getRange(6, 6))
 	require.NoError(t, err)
 	require.Equal(t, 1.0, count)
 
@@ -511,12 +511,12 @@ func TestSelectivity(t *testing.T) {
 		{
 			exprs:                    "a >= 1 and c > 1 and a < 2",
 			selectivity:              0.00617283950,
-			selectivityAfterIncrease: 0.006378600823045267,
+			selectivityAfterIncrease: 0.014506172839506172,
 		},
 		{
 			exprs:                    "a >= 1 and c >= 1 and a < 2",
 			selectivity:              0.01234567901,
-			selectivityAfterIncrease: 0.012551440329218106,
+			selectivityAfterIncrease: 0.018518518518518517,
 		},
 		{
 			exprs:                    "d = 0 and e = 1",
@@ -531,7 +531,7 @@ func TestSelectivity(t *testing.T) {
 		{
 			exprs:                    "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
 			selectivity:              5.870830440255832e-05,
-			selectivityAfterIncrease: 0.005967078189300412,
+			selectivityAfterIncrease: 0.21916666666666668,
 		},
 		{
 			exprs:                    longExpr,
@@ -1037,12 +1037,12 @@ func TestIssue39593(t *testing.T) {
 	sctx := testKit.Session()
 	idxID := tblInfo.Indices[0].ID
 	vals := []int64{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20}
-	count, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals))
+	count, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals))
 	require.NoError(t, err)
 	// estimated row count without any changes
 	require.Equal(t, float64(360), count)
 	statsTbl.RealtimeCount *= 10
-	count, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals))
+	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals))
 	require.NoError(t, err)
 	// estimated row count after mock modify on the table
 	require.Equal(t, float64(3600), count)
@@ -1127,7 +1127,7 @@ func TestOrderingIdxSelectivityThreshold(t *testing.T) {
 
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int primary key , b int, c int, index ib(b), index ic(c))")
+	testKit.MustExec("create table t(a int primary key , b int, c int, d int, index ib(b), index ic(c))")
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	is := dom.InfoSchema()
@@ -1138,7 +1138,7 @@ func TestOrderingIdxSelectivityThreshold(t *testing.T) {
 	// Mock the stats:
 	// total row count 100000
 	// column a: PK, from 0 to 100000, NDV 100000
-	// column b, c: from 0 to 10000, each value has 10 rows, NDV 10000
+	// column b, c, d: from 0 to 10000, each value has 10 rows, NDV 10000
 	// indexes are created on (b), (c) respectively
 	mockStatsTbl := mockStatsTable(tblInfo, 100000)
 	pkColValues, err := generateIntDatum(1, 100000)
@@ -1158,7 +1158,7 @@ func TestOrderingIdxSelectivityThreshold(t *testing.T) {
 		idxValues = append(idxValues, types.NewBytesDatum(b))
 	}
 
-	for i := 2; i <= 3; i++ {
+	for i := 2; i <= 4; i++ {
 		mockStatsTbl.SetCol(int64(i), &statistics.Column{
 			Histogram:         *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)),
 			Info:              tblInfo.Columns[i-1],

@@ -45,8 +45,8 @@ var (
 	// dumpStatsMaxDuration is the max duration since last update.
 	dumpStatsMaxDuration = 5 * time.Minute
 
-	// batchInsertSize is the batch size used by internal SQL to insert values to some system table.
-	batchInsertSize = 10
+	// batchInsertSize is the batch size used by internal SQL to insert values to stats usage table.
+	batchInsertSize = 8192
 )
 
 // needDumpStatsDelta checks whether to dump stats delta.
@@ -55,15 +55,11 @@ var (
 // 3. If the stats delta haven't been dumped in the past hour, then return true.
 // 4. If the table stats is pseudo or empty or `Modify Count / Table Count` exceeds the threshold.
 func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bool, id int64, item variable.TableDelta, currentTime time.Time) bool {
-	tbl, ok := s.statsHandle.TableInfoByID(is, id)
+	tableItem, ok := s.statsHandle.TableItemByID(is, id)
 	if !ok {
 		return false
 	}
-	dbInfo, ok := infoschema.SchemaByTable(is, tbl.Meta())
-	if !ok {
-		return false
-	}
-	if util.IsMemOrSysDB(dbInfo.Name.L) {
+	if util.IsMemOrSysDB(tableItem.DBName.L) {
 		return false
 	}
 	if dumpAll {
@@ -76,8 +72,8 @@ func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bo
 		// Dump the stats to kv at least once 5 minutes.
 		return true
 	}
-	statsTbl := s.statsHandle.GetPartitionStats(tbl.Meta(), id)
-	if statsTbl.Pseudo || statsTbl.RealtimeCount == 0 || float64(item.Count)/float64(statsTbl.RealtimeCount) > DumpStatsDeltaRatio {
+	statsTbl := s.statsHandle.GetPartitionStatsByID(is, id)
+	if statsTbl == nil || statsTbl.Pseudo || statsTbl.RealtimeCount == 0 || float64(item.Count)/float64(statsTbl.RealtimeCount) > DumpStatsDeltaRatio {
 		// Dump the stats when there are many modifications.
 		return true
 	}
@@ -105,7 +101,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 		s.SessionTableDelta().Merge(deltaMap)
 	}()
 	if time.Since(start) > tooSlowThreshold {
-		statslogutil.SingletonStatsSamplerLogger().Warn("Sweeping session list is too slow",
+		statslogutil.StatsSampleLogger().Warn("Sweeping session list is too slow",
 			zap.Int("tableCount", len(deltaMap)),
 			zap.Duration("duration", time.Since(start)))
 	}
@@ -142,7 +138,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 				batchUpdates = append(batchUpdates, storage.NewDeltaUpdate(id, item, false))
 			}
 			if time.Since(batchStart) > tooSlowThreshold {
-				statslogutil.SingletonStatsSamplerLogger().Warn("Collecting batch updates is too slow",
+				statslogutil.StatsSampleLogger().Warn("Collecting batch updates is too slow",
 					zap.Int("tableCount", len(batchUpdates)),
 					zap.Duration("duration", time.Since(batchStart)))
 			}
@@ -177,7 +173,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 			}
 
 			if time.Since(batchStart) > tooSlowThreshold {
-				statslogutil.SingletonStatsSamplerLogger().Warn("Dumping batch updates is too slow",
+				statslogutil.StatsSampleLogger().Warn("Dumping batch updates is too slow",
 					zap.Int("tableCount", len(batchUpdates)),
 					zap.Duration("duration", time.Since(batchStart)))
 			}
@@ -200,7 +196,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 		s.statsHandle.RecordHistoricalStatsMeta(statsVersion, "flush stats", false, unlockedTableIDs...)
 		// Log a warning if recording historical stats meta takes too long, as it can be slow for large table counts
 		if time.Since(startRecordHistoricalStatsMeta) > time.Minute*15 {
-			statslogutil.SingletonStatsSamplerLogger().Warn("Recording historical stats meta is too slow",
+			statslogutil.StatsSampleLogger().Warn("Recording historical stats meta is too slow",
 				zap.Int("tableCount", len(batchUpdates)),
 				zap.Duration("duration", time.Since(startRecordHistoricalStatsMeta)))
 		}
@@ -242,8 +238,8 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 		// Add psychical table ID.
 		allTableIDs = append(allTableIDs, update.TableID)
 		// Add parent table ID if it's a partition table.
-		if tbl, _, _ := is.FindTableByPartitionID(update.TableID); tbl != nil {
-			allTableIDs = append(allTableIDs, tbl.Meta().ID)
+		if tblID, ok := is.TableIDByPartitionID(update.TableID); ok {
+			allTableIDs = append(allTableIDs, tblID)
 		}
 	}
 
@@ -260,9 +256,8 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 			continue
 		}
 
-		tbl, _, _ := is.FindTableByPartitionID(update.TableID)
-		if tbl != nil { // It's a partition table.
-			tableID := tbl.Meta().ID
+		tableID, ok := is.TableIDByPartitionID(update.TableID)
+		if ok { // It's a partition table.
 			isTableLocked := false
 			isPartitionLocked := false
 
@@ -319,6 +314,11 @@ func (s *statsUsageImpl) dumpStatsDeltaToKV(
 // DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
 func (s *statsUsageImpl) DumpColStatsUsageToKV() error {
 	defer util.Recover(metrics.LabelStats, "DumpColStatsUsageToKV", nil, false)
+	start := time.Now()
+	defer func() {
+		dur := time.Since(start)
+		metrics.StatsUsageUpdateHistogram.Observe(dur.Seconds())
+	}()
 	s.SweepSessionStatsList()
 	colMap := s.SessionStatsUsage().GetUsageAndReset()
 	defer func() {

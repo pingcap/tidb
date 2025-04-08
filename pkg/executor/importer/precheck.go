@@ -46,7 +46,7 @@ var GetEtcdClient = getEtcdClient
 //   - when import from file
 //     1. there is no active job on the target table
 //     2. the total file size > 0
-//     3. if global sort, thread count >= 16 and have required privileges
+//     3. if global sort, check required privileges
 //   - target table should be empty
 //   - no CDC or PiTR tasks running
 //
@@ -62,11 +62,6 @@ func (e *LoadDataController) CheckRequirements(ctx context.Context, conn sqlexec
 		}
 		if err := e.checkTotalFileSize(); err != nil {
 			return err
-		}
-		// run global sort with < 8 thread might OOM on ingest step
-		// TODO: remove this limit after control memory usage.
-		if e.IsGlobalSort() && e.ThreadCnt < 8 {
-			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("global sort requires at least 8 threads")
 		}
 	}
 	if err := e.checkTableEmpty(ctx, conn); err != nil {

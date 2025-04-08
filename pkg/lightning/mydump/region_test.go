@@ -171,14 +171,14 @@ func TestMakeTableRegionsSplitLargeFile(t *testing.T) {
 			ReadBlockSize: config.ReadBlockSize,
 			MaxRegionSize: 1,
 			CSV: config.CSVConfig{
-				Separator:         ",",
-				Delimiter:         "",
-				Header:            true,
-				HeaderSchemaMatch: true,
-				TrimLastSep:       false,
-				NotNull:           false,
-				Null:              []string{"NULL"},
-				EscapedBy:         `\`,
+				FieldsTerminatedBy: ",",
+				FieldsEnclosedBy:   "",
+				Header:             true,
+				HeaderSchemaMatch:  true,
+				TrimLastEmptyField: false,
+				NotNull:            false,
+				FieldNullDefinedBy: []string{"NULL"},
+				FieldsEscapedBy:    `\`,
 			},
 			StrictFormat: true,
 			Filter:       []string{"*.*"},
@@ -277,14 +277,14 @@ func TestSplitLargeFile(t *testing.T) {
 		Mydumper: config.MydumperRuntime{
 			ReadBlockSize: config.ReadBlockSize,
 			CSV: config.CSVConfig{
-				Separator:         ",",
-				Delimiter:         "",
-				Header:            true,
-				HeaderSchemaMatch: true,
-				TrimLastSep:       false,
-				NotNull:           false,
-				Null:              []string{"NULL"},
-				EscapedBy:         `\`,
+				FieldsTerminatedBy: ",",
+				FieldsEnclosedBy:   "",
+				Header:             true,
+				HeaderSchemaMatch:  true,
+				TrimLastEmptyField: false,
+				NotNull:            false,
+				FieldNullDefinedBy: []string{"NULL"},
+				FieldsEscapedBy:    `\`,
 			},
 			StrictFormat: true,
 			Filter:       []string{"*.*"},
@@ -334,14 +334,14 @@ func TestSplitLargeFileNoNewLineAtEOF(t *testing.T) {
 		Mydumper: config.MydumperRuntime{
 			ReadBlockSize: config.ReadBlockSize,
 			CSV: config.CSVConfig{
-				Separator:         ",",
-				Delimiter:         "",
-				Header:            true,
-				HeaderSchemaMatch: true,
-				TrimLastSep:       false,
-				NotNull:           false,
-				Null:              []string{"NULL"},
-				EscapedBy:         `\`,
+				FieldsTerminatedBy: ",",
+				FieldsEnclosedBy:   "",
+				Header:             true,
+				HeaderSchemaMatch:  true,
+				TrimLastEmptyField: false,
+				NotNull:            false,
+				FieldNullDefinedBy: []string{"NULL"},
+				FieldsEscapedBy:    `\`,
 			},
 			StrictFormat:  true,
 			Filter:        []string{"*.*"},
@@ -390,8 +390,8 @@ func TestSplitLargeFileWithCustomTerminator(t *testing.T) {
 		Mydumper: config.MydumperRuntime{
 			ReadBlockSize: config.ReadBlockSize,
 			CSV: config.CSVConfig{
-				Separator:  "|+|",
-				Terminator: "|+|\n",
+				FieldsTerminatedBy: "|+|",
+				LinesTerminatedBy:  "|+|\n",
 			},
 			StrictFormat:  true,
 			Filter:        []string{"*.*"},
@@ -438,14 +438,14 @@ func TestSplitLargeFileOnlyOneChunk(t *testing.T) {
 		Mydumper: config.MydumperRuntime{
 			ReadBlockSize: config.ReadBlockSize,
 			CSV: config.CSVConfig{
-				Separator:         ",",
-				Delimiter:         "",
-				Header:            true,
-				HeaderSchemaMatch: true,
-				TrimLastSep:       false,
-				NotNull:           false,
-				Null:              []string{"NULL"},
-				EscapedBy:         `\`,
+				FieldsTerminatedBy: ",",
+				FieldsEnclosedBy:   "",
+				Header:             true,
+				HeaderSchemaMatch:  true,
+				TrimLastEmptyField: false,
+				NotNull:            false,
+				FieldNullDefinedBy: []string{"NULL"},
+				FieldsEscapedBy:    `\`,
 			},
 			StrictFormat:  true,
 			Filter:        []string{"*.*"},
@@ -516,7 +516,7 @@ func TestSplitLargeFileSeekInsideCRLF(t *testing.T) {
 		Mydumper: config.MydumperRuntime{
 			ReadBlockSize: config.ReadBlockSize,
 			CSV: config.CSVConfig{
-				Separator: ",",
+				FieldsTerminatedBy: ",",
 			},
 			StrictFormat:  true,
 			Filter:        []string{"*.*"},
@@ -553,7 +553,7 @@ func TestSplitLargeFileSeekInsideCRLF(t *testing.T) {
 
 	// set terminator to "\r\n"
 
-	cfg.Mydumper.CSV.Terminator = "\r\n"
+	cfg.Mydumper.CSV.LinesTerminatedBy = "\r\n"
 	divideConfig = NewDataDivideConfig(cfg, 1, ioWorker, store, meta)
 	// pos is contained in expectedOffsets
 	expectedOffsets := [][]int64{{0, 6}, {6, 12}}
