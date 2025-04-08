@@ -187,6 +187,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 							PrepStmt: prepStmt,
 							Stmt:     prepStmt.PreparedAst.Stmt,
 						}
+						sessVars.FoundInPlanCache = true
 						return execPlan, pointGet.OutputNames(), nil
 					}
 				}

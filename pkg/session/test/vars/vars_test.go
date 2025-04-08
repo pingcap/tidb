@@ -349,6 +349,7 @@ func TestPrepareExecuteWithSQLHints(t *testing.T) {
 		check func(*hint.StmtHints)
 	}
 
+	// TODO(lance6716): fix it
 	hintChecks := []hintCheck{
 		{
 			hint: "MEMORY_QUOTA(1024 MB)",
