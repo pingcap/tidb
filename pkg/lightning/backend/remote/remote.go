@@ -112,8 +112,8 @@ func NewBackendConfig(cfg *config.Config, keyspaceName, resourceGroupName, taskT
 		DuplicateResolution: cfg.TikvImporter.DuplicateResolution,
 		DupeDetectEnabled:   cfg.Conflict.Strategy != config.NoneOnDup,
 		DuplicateDetectOpt:  common.DupDetectOpt{ReportErrOnDup: cfg.Conflict.Strategy == config.ErrorOnDup},
-		ChunkSize:           cfg.TikvImporter.ChunkSize,
-		ChunkCacheDir:       cfg.TikvImporter.ChunkCacheDir,
+		ChunkSize:           cfg.TikvImporter.RemoteChunkSize,
+		ChunkCacheDir:       cfg.TikvImporter.RemoteChunkCacheDir,
 	}
 }
 

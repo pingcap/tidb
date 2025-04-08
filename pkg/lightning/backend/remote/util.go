@@ -99,7 +99,7 @@ func sendRequest(ctx context.Context, httpClient *http.Client, method, url strin
 
 	if resp.StatusCode != http.StatusOK {
 		msg, _ := io.ReadAll(resp.Body)
-		return nil, common.ErrRequestRemoteWorker.FastGenByArgs(resp.StatusCode, string(msg))
+		return nil, common.ErrRemoteRequestRemoteWorker.FastGenByArgs(resp.StatusCode, string(msg))
 	}
 	return io.ReadAll(resp.Body)
 }

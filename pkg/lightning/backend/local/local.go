@@ -1528,7 +1528,20 @@ func (local *Backend) CleanupEngine(ctx context.Context, engineUUID uuid.UUID) e
 
 // GetDupeController returns a new dupe controller.
 func (local *Backend) GetDupeController(dupeConcurrency int, errorMgr *errormanager.ErrorManager) *DupeController {
-	return NewDupeController(dupeConcurrency, errorMgr, local.splitCli, local.tikvCli, local.tikvCodec, local.engineMgr.getDuplicateDB(), local.engineMgr.getKeyAdapter(), local.importClientFactory, local.ResourceGroupName, local.TaskType, true)
+	return &DupeController{
+		splitCli:            local.splitCli,
+		tikvCli:             local.tikvCli,
+		tikvCodec:           local.tikvCodec,
+		errorMgr:            errorMgr,
+		dupeConcurrency:     dupeConcurrency,
+		duplicateDB:         local.engineMgr.getDuplicateDB(),
+		keyAdapter:          local.engineMgr.getKeyAdapter(),
+		importClientFactory: local.importClientFactory,
+		resourceGroupName:   local.ResourceGroupName,
+		taskType:            local.TaskType,
+
+		collectRemoteDupRows: true,
+	}
 }
 
 // UnsafeImportAndReset forces the backend to import the content of an engine

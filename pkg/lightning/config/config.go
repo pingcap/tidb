@@ -1127,8 +1127,8 @@ type TikvImporter struct {
 	PausePDSchedulerScope PausePDSchedulerScope `toml:"pause-pd-scheduler-scope" json:"pause-pd-scheduler-scope"`
 	BlockSize             ByteSize              `toml:"block-size" json:"block-size"`
 
-	ChunkSize     int    `toml:"chunk-size" json:"chunk-size"`
-	ChunkCacheDir string `toml:"chunk-cache-dir" json:"chunk-cache-dir"`
+	RemoteChunkSize     int    `toml:"chunk-size" json:"chunk-size"`
+	RemoteChunkCacheDir string `toml:"chunk-cache-dir" json:"chunk-cache-dir"`
 }
 
 func (t *TikvImporter) adjust() error {
@@ -1553,7 +1553,7 @@ func NewConfig() *Config {
 			LogicalImportBatchSize:  ByteSize(defaultLogicalImportBatchSize),
 			LogicalImportBatchRows:  defaultLogicalImportBatchRows,
 			LogicalImportPrepStmt:   defaultLogicalImportPrepStmt,
-			ChunkSize:               defaultRemoteBackendChunkSize,
+			RemoteChunkSize:         defaultRemoteBackendChunkSize,
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,

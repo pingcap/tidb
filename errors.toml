@@ -621,24 +621,24 @@ error = '''
 invalid schema statement: '%s'
 '''
 
-["Lightning:Restore:ErrLoadDataTaskCanceled"]
-error = '''
-load data task %s is canceled, error: %s
-'''
-
-["Lightning:Restore:ErrLoadDataTaskNotFound"]
-error = '''
-load data task %s not found in remote worker
-'''
-
 ["Lightning:Restore:ErrOpenDuplicateDB"]
 error = '''
 open duplicate db error
 '''
 
-["Lightning:Restore:ErrRequestRemoteWorker"]
+["Lightning:Restore:ErrRemoteLoadDataTaskCanceled"]
 error = '''
-request remote worker error, status code: %d, message: %s
+[remote bakcend] load data task %s is canceled, error: %s
+'''
+
+["Lightning:Restore:ErrRemoteLoadDataTaskNotFound"]
+error = '''
+[remote bakcend] load data task %s is not found in remote worker
+'''
+
+["Lightning:Restore:ErrRemoteRequestRemoteWorker"]
+error = '''
+[remote bakcend] request remote worker error, status code: %d, message: %s
 '''
 
 ["Lightning:Restore:ErrResolveDuplicateRows"]

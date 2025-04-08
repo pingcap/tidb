@@ -269,7 +269,7 @@ func (c *chunkSender) putChunkToRemote(ctx context.Context, chunk *chunk) error 
 func (c *chunkSender) handlePutChunkResult(ctx context.Context, result *PutChunkResult, expectedChunkID uint64) error {
 	if result.Canceled {
 		c.logger.Error("failed to put chunk, task is canceled", zap.String("error", result.Error))
-		return common.ErrLoadDataTaskCanceled.FastGenByArgs(c.e.loadDataTaskID, result.Error)
+		return common.ErrRemoteLoadDataTaskCanceled.FastGenByArgs(c.e.loadDataTaskID, result.Error)
 	}
 
 	if result.HandledChunkID != expectedChunkID {
@@ -299,7 +299,7 @@ func (c *chunkSender) handlePutChunkResult(ctx context.Context, result *PutChunk
 			}
 			if result.Canceled {
 				c.logger.Error("failed to put chunk, task is canceled", zap.String("error", result.Error))
-				return common.ErrLoadDataTaskCanceled.FastGenByArgs(c.e.loadDataTaskID, result.Error)
+				return common.ErrRemoteLoadDataTaskCanceled.FastGenByArgs(c.e.loadDataTaskID, result.Error)
 			}
 
 			nextChunkID = result.HandledChunkID + 1
@@ -344,16 +344,16 @@ func (c *chunkSender) sendFlushToRemote(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 
-		if result.Canceled || result.Error != "" {
-			c.logger.Error("failed to flush",
-				zap.Bool("canceled", result.Canceled),
-				zap.String("error", result.Error))
-			return common.ErrLoadDataTaskCanceled.FastGenByArgs(c.e.loadDataTaskID, result.Error)
-		}
-
 		if result.Finished {
 			c.logger.Info("load data task finished")
 			return nil
+		}
+
+		if result.Canceled {
+			c.logger.Error("failed to flush",
+				zap.Bool("canceled", result.Canceled),
+				zap.String("error", result.Error))
+			return common.ErrRemoteLoadDataTaskCanceled.FastGenByArgs(c.e.loadDataTaskID, result.Error)
 		}
 
 		// Make sure all chunks are flushed in remote worker.
