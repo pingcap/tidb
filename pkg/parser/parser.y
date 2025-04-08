@@ -364,6 +364,7 @@ import (
 	clustered             "CLUSTERED"
 	coalesce              "COALESCE"
 	collation             "COLLATION"
+	columnar              "COLUMNAR"
 	columns               "COLUMNS"
 	columnFormat          "COLUMN_FORMAT"
 	comment               "COMMENT"
@@ -589,6 +590,7 @@ import (
 	rowCount              "ROW_COUNT"
 	rowFormat             "ROW_FORMAT"
 	rtree                 "RTREE"
+	rule                  "RULE"
 	san                   "SAN"
 	savepoint             "SAVEPOINT"
 	second                "SECOND"
@@ -736,6 +738,7 @@ import (
 	inplace               "INPLACE"
 	instant               "INSTANT"
 	internal              "INTERNAL"
+	inverted              "INVERTED"
 	ioReadBandwidth       "IO_READ_BANDWIDTH"
 	ioWriteBandwidth      "IO_WRITE_BANDWIDTH"
 	jsonArrayagg          "JSON_ARRAYAGG"
@@ -864,6 +867,8 @@ import (
 	ddl                        "DDL"
 	dependency                 "DEPENDENCY"
 	depth                      "DEPTH"
+	distribute                 "DISTRIBUTE"
+	distribution               "DISTRIBUTION"
 	distributions              "DISTRIBUTIONS"
 	dry                        "DRY"
 	histogramsInFlight         "HISTOGRAMS_IN_FLIGHT"
@@ -1009,6 +1014,7 @@ import (
 	DeleteFromStmt             "DELETE FROM statement"
 	DeleteWithoutUsingStmt     "Normal DELETE statement"
 	DeleteWithUsingStmt        "DELETE USING statement"
+	DistributeTableStmt        "Distribute table statement"
 	EmptyStmt                  "empty statement"
 	ExecuteStmt                "Execute statement"
 	ExplainStmt                "EXPLAIN statement"
@@ -1149,7 +1155,8 @@ import (
 	ConstraintElem                         "table constraint element"
 	ConstraintKeywordOpt                   "Constraint Keyword or empty"
 	ConstraintVectorIndex                  "vector index"
-	ConstraintWithVectorIndex              "table constraint with vector index"
+	ConstraintColumnarIndex                "columnar index"
+	ConstraintWithColumnarIndex            "table constraint with columnar index"
 	CreateSequenceOptionListOpt            "create sequence list opt"
 	CreateTableOptionListOpt               "create table option list opt"
 	CreateTableSelectOpt                   "Select/Union statement in CREATE TABLE ... SELECT"
@@ -1657,6 +1664,7 @@ import (
 %precedence function
 %precedence constraint
 %precedence vectorType
+%precedence columnar
 
 /* A dummy token to force the priority of TableRef production in a join. */
 %left tableRefPriority
@@ -2278,15 +2286,7 @@ AlterTableSpec:
 			NewConstraints: constraints,
 		}
 	}
-|	"ADD" Constraint
-	{
-		constraint := $2.(*ast.Constraint)
-		$$ = &ast.AlterTableSpec{
-			Tp:         ast.AlterTableAddConstraint,
-			Constraint: constraint,
-		}
-	}
-|	"ADD" ConstraintVectorIndex
+|	"ADD" ConstraintWithColumnarIndex
 	{
 		constraint := $2.(*ast.Constraint)
 		$$ = &ast.AlterTableSpec{
@@ -3175,6 +3175,25 @@ FlashbackDatabaseStmt:
 		$$ = &ast.FlashBackDatabaseStmt{
 			DBName:  ast.NewCIStr($3),
 			NewName: $4,
+		}
+	}
+
+/*******************************************************************
+ *
+ *  Distribute Table Statement
+ *
+ *  Example:
+ *      DISTRIBUTE TABLE table_name Partitions(p0,p1) Engine = tikv Rule=leader;
+ *
+ *******************************************************************/
+DistributeTableStmt:
+	"DISTRIBUTE" "TABLE" TableName PartitionNameListOpt "RULE" EqOrAssignmentEq Identifier "ENGINE" EqOrAssignmentEq Identifier
+	{
+		$$ = &ast.DistributeTableStmt{
+			Table:          $3.(*ast.TableName),
+			PartitionNames: $4.([]ast.CIStr),
+			Rule:           ast.NewCIStr($7),
+			Engine:         ast.NewCIStr($10),
 		}
 	}
 
@@ -4275,13 +4294,22 @@ CreateIndexStmt:
 		}
 
 		keyType := $2.(ast.IndexKeyType)
-		isVectorIndex := keyType == ast.IndexKeyTypeVector
-		if isVectorIndex && indexOption.Tp == ast.IndexTypeInvalid {
-			indexOption.Tp = ast.IndexTypeHNSW
+		{
+			isVectorIndex := keyType == ast.IndexKeyTypeVector
+			if isVectorIndex && indexOption.Tp == ast.IndexTypeInvalid {
+				indexOption.Tp = ast.IndexTypeHNSW
+			}
+			if (isVectorIndex && indexOption.Tp != ast.IndexTypeHNSW) || (!isVectorIndex && indexOption.Tp == ast.IndexTypeHNSW) {
+				yylex.AppendError(ErrSyntax)
+				return 1
+			}
 		}
-		if (isVectorIndex && indexOption.Tp != ast.IndexTypeHNSW) || (!isVectorIndex && indexOption.Tp == ast.IndexTypeHNSW) {
-			yylex.AppendError(ErrSyntax)
-			return 1
+		{
+			isColumnarIndex := keyType == ast.IndexKeyTypeColumnar
+			if (isColumnarIndex && indexOption.Tp != ast.IndexTypeInverted) || (!isColumnarIndex && indexOption.Tp == ast.IndexTypeInverted) {
+				yylex.AppendError(ErrSyntax)
+				return 1
+			}
 		}
 		partSpecs := $10.([]*ast.IndexPartSpecification)
 		if keyType == ast.IndexKeyTypeVector {
@@ -4383,6 +4411,10 @@ IndexKeyTypeOpt:
 |	"VECTOR"
 	{
 		$$ = ast.IndexKeyTypeVector
+	}
+|	"COLUMNAR"
+	{
+		$$ = ast.IndexKeyTypeColumnar
 	}
 
 /**************************************AlterDatabaseStmt***************************************
@@ -6779,6 +6811,10 @@ IndexTypeName:
 	{
 		$$ = ast.IndexTypeHNSW
 	}
+|	"INVERTED"
+	{
+		$$ = ast.IndexTypeInverted
+	}
 
 IndexInvisible:
 	"VISIBLE"
@@ -6893,6 +6929,7 @@ UnReservedKeyword:
 |	"ROLE"
 |	"ROLLBACK"
 |	"ROLLUP"
+|	"RULE"
 |	"SESSION"
 |	"SIGNED"
 |	"SHARD_ROW_ID_BITS"
@@ -7170,6 +7207,7 @@ UnReservedKeyword:
 |	"OLTP_READ_ONLY"
 |	"OLTP_WRITE_ONLY"
 |	"VECTOR"
+|	"COLUMNAR"
 |	"TPCH_10"
 |	"WITH_SYS_TABLE"
 |	"WAIT_TIFLASH_READY"
@@ -7194,6 +7232,8 @@ TiDBKeyword:
 |	"DDL"
 |	"DEPENDENCY"
 |	"DEPTH"
+|	"DISTRIBUTE"
+|	"DISTRIBUTION"
 |	"DISTRIBUTIONS"
 |	"JOBS"
 |	"JOB"
@@ -7252,6 +7292,7 @@ NotKeywordToken:
 |	"INPLACE"
 |	"INSTANT"
 |	"INTERNAL"
+|	"INVERTED"
 |	"LOG"
 |	"MIN"
 |	"MAX"
@@ -11735,6 +11776,11 @@ ShowStmt:
 			ImportJobID: &v,
 		}
 	}
+|	"SHOW" "DISTRIBUTION" "JOB" Int64Num
+	{
+		v := $4.(int64)
+		$$ = &ast.ShowStmt{Tp: ast.ShowDistributionJobs, DistributionJobID: &v}
+	}
 |	"SHOW" "CREATE" "PROCEDURE" TableName
 	{
 		$$ = &ast.ShowStmt{
@@ -12089,6 +12135,10 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowPlanForSQL, SQLOrDigest: $3}
 	}
+|	"DISTRIBUTION" "JOBS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowDistributionJobs}
+	}
 
 ShowLikeOrWhereOpt:
 	{
@@ -12321,6 +12371,7 @@ Statement:
 |	AddQueryWatchStmt
 |	CreateSequenceStmt
 |	CreateStatisticsStmt
+|	DistributeTableStmt
 |	DoStmt
 |	DropDatabaseStmt
 |	DropIndexStmt
@@ -12524,17 +12575,48 @@ ConstraintVectorIndex:
 		$$ = c
 	}
 
-ConstraintWithVectorIndex:
-	ConstraintKeywordOpt ConstraintElem
+// ConstraintColumnarIndex does not put in Constraint to resolve syntax conflicts.
+ConstraintColumnarIndex:
+	"COLUMNAR" "INDEX" IfNotExists IndexNameAndTypeOpt '(' IndexPartSpecificationList ')' IndexOptionList
 	{
-		cst := $2.(*ast.Constraint)
-		if $1 != nil {
-			cst.Name = $1.(string)
-			cst.IsEmptyIndex = len(cst.Name) == 0
+		c := &ast.Constraint{
+			IfNotExists:  $3.(bool),
+			Tp:           ast.ConstraintColumnar,
+			Keys:         $6.([]*ast.IndexPartSpecification),
+			Name:         $4.([]interface{})[0].(*ast.NullString).String,
+			IsEmptyIndex: $4.([]interface{})[0].(*ast.NullString).Empty,
 		}
-		$$ = cst
+
+		if $8 != nil {
+			c.Option = $8.(*ast.IndexOption)
+		}
+		if indexType := $4.([]interface{})[1]; indexType != nil {
+			if c.Option == nil {
+				c.Option = &ast.IndexOption{}
+			}
+			c.Option.Tp = indexType.(ast.IndexType)
+		}
+		if c.Option == nil {
+			c.Option = &ast.IndexOption{Tp: ast.IndexTypeInverted}
+		} else if c.Option.Tp == ast.IndexTypeInvalid {
+			c.Option.Tp = ast.IndexTypeInverted
+		}
+		if c.Option.Tp != ast.IndexTypeInverted {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+
+		if len(c.Keys) != 1 || c.Keys[0].Column == nil {
+			yylex.AppendError(ErrSyntax)
+			return 1
+		}
+		$$ = c
 	}
+
+ConstraintWithColumnarIndex:
+	Constraint
 |	ConstraintVectorIndex
+|	ConstraintColumnarIndex
 	{
 		$$ = $1.(*ast.Constraint)
 	}
@@ -12545,7 +12627,7 @@ CheckConstraintKeyword:
 
 TableElement:
 	ColumnDef
-|	ConstraintWithVectorIndex
+|	ConstraintWithColumnarIndex
 
 TableElementList:
 	TableElement

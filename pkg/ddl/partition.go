@@ -2372,9 +2372,9 @@ func removeTiFlashAvailablePartitionIDs(tblInfo *model.TableInfo, pids []int64) 
 	tblInfo.TiFlashReplica.AvailablePartitionIDs = ids
 }
 
-func replaceTruncatePartitions(job *model.Job, t *meta.Mutator, tblInfo *model.TableInfo, oldIDs, newIDs []int64) ([]model.PartitionDefinition, []model.PartitionDefinition, error) {
-	oldDefinitions := make([]model.PartitionDefinition, 0, len(oldIDs))
-	newDefinitions := make([]model.PartitionDefinition, 0, len(oldIDs))
+func replaceTruncatePartitions(job *model.Job, t *meta.Mutator, tblInfo *model.TableInfo, oldIDs, newIDs []int64) (oldDefinitions, newDefinitions []model.PartitionDefinition, err error) {
+	oldDefinitions = make([]model.PartitionDefinition, 0, len(oldIDs))
+	newDefinitions = make([]model.PartitionDefinition, 0, len(oldIDs))
 	pi := tblInfo.Partition
 	for i, id := range oldIDs {
 		for defIdx := range pi.Definitions {
