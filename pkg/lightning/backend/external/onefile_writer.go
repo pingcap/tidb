@@ -329,6 +329,7 @@ func (w *OneFileWriter) closeImpl(ctx context.Context) (err error) {
 	return nil
 }
 
+// caller should make sure the buf is large enough to hold the encoded data.
 func encodeToBuf(buf, key, value []byte) {
 	keyLen := len(key)
 	binary.BigEndian.AppendUint64(buf[:0], uint64(keyLen))

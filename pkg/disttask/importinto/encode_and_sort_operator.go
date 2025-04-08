@@ -272,28 +272,18 @@ type genKVIndex struct {
 }
 
 func getIndicesGenKV(tblInfo *model.TableInfo) map[int64]genKVIndex {
-	var nonClusteredPK *model.IndexInfo
 	res := make(map[int64]genKVIndex, len(tblInfo.Indices))
 	for _, idxInfo := range tblInfo.Indices {
 		// all public non-primary index generates index KVs
 		if idxInfo.State != model.StatePublic {
 			continue
 		}
-		if idxInfo.Primary {
-			if !tblInfo.HasClusteredIndex() {
-				nonClusteredPK = idxInfo
-			}
+		if idxInfo.Primary && tblInfo.HasClusteredIndex() {
 			continue
 		}
 		res[idxInfo.ID] = genKVIndex{
 			name:   idxInfo.Name.L,
 			unique: idxInfo.Unique,
-		}
-	}
-	if nonClusteredPK != nil {
-		res[nonClusteredPK.ID] = genKVIndex{
-			name:   nonClusteredPK.Name.L,
-			unique: nonClusteredPK.Unique,
 		}
 	}
 	return res

@@ -185,6 +185,7 @@ func (e *collectConflictsStepExecutor) switchConflictRowFile(ctx context.Context
 	}
 	e.conflictRowFileSeq++
 	filename := getConflictRowFileName(e.taskID, e.currSubtaskID, e.conflictRowFileSeq)
+	e.logger.Info("switch conflict row file", zap.String("filename", filename))
 	writer, err := e.tableImporter.GlobalSortStore.Create(ctx, filename, &storage.WriterOption{
 		Concurrency: 20,
 		PartSize:    external.MinUploadPartSize,

@@ -148,6 +148,9 @@ func (h *baseConflictKVHandler) deleteKeysWithRetry(ctx context.Context, pairs [
 	})
 }
 
+// we are deleting keys related to a single row in one transaction, and a normal
+// 'insert SQL' will also generate this mount of data, so we shouldn't meet the
+// 'transaction too large' issue in normal case.
 func (h *baseConflictKVHandler) deleteKeys(ctx context.Context, pairs []common.KvPair) (err error) {
 	if err = h.refreshSnapshotAsNeeded(); err != nil {
 		return errors.Trace(err)

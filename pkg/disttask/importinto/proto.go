@@ -128,9 +128,9 @@ func (gci *KVGroupConflictInfos) addConflictInfo(kvGroup string, other *common.C
 
 // CollectConflictsStepMeta is the meta of collect conflicts step.
 type CollectConflictsStepMeta struct {
-	external.BaseExternalMeta `json:"base"`
-	Infos                     KVGroupConflictInfos `json:"infos" external:"true"`
-	RecordedDataKVConflicts   int64                `json:"recorded-data-kv-conflicts,omitempty"`
+	external.BaseExternalMeta
+	Infos                   KVGroupConflictInfos `json:"infos" external:"true"`
+	RecordedDataKVConflicts int64                `json:"recorded-data-kv-conflicts,omitempty"`
 	// Checksum is the checksum of all conflicts rows.
 	Checksum *Checksum `json:"checksum,omitempty"`
 	// ConflictedRowCount is the count of all conflicted rows.
@@ -150,8 +150,8 @@ func (m *CollectConflictsStepMeta) Marshal() ([]byte, error) {
 
 // ConflictResolutionStepMeta is the meta of conflict resolution step.
 type ConflictResolutionStepMeta struct {
-	external.BaseExternalMeta `json:"base"`
-	Infos                     KVGroupConflictInfos `json:"infos" external:"true"`
+	external.BaseExternalMeta
+	Infos KVGroupConflictInfos `json:"infos" external:"true"`
 }
 
 // Marshal marshals the conflict resolution step meta to JSON.
