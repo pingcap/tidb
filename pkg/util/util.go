@@ -335,8 +335,8 @@ func ProtoV1Clone[T protoadapt.MessageV1](p T) T {
 func CheckIfSameCluster(
 	ctx context.Context,
 	pdAddrsGetter, pdAddrsGetter2 func(context.Context) ([]string, error),
-) (bool, []string, []string, error) {
-	addrs, err := pdAddrsGetter(ctx)
+) (_ bool, addrs, addrs2 []string, err error) {
+	addrs, err = pdAddrsGetter(ctx)
 	if err != nil {
 		return false, nil, nil, errors.Trace(err)
 	}
@@ -345,7 +345,7 @@ func CheckIfSameCluster(
 		addrsMap[a] = struct{}{}
 	}
 
-	addrs2, err := pdAddrsGetter2(ctx)
+	addrs2, err = pdAddrsGetter2(ctx)
 	if err != nil {
 		return false, nil, nil, errors.Trace(err)
 	}

@@ -965,6 +965,8 @@ func (w *worker) runOneJobStep(
 		ver, err = onLockTables(jobCtx, job)
 	case model.ActionUnlockTable:
 		ver, err = onUnlockTables(jobCtx, job)
+	case model.ActionAlterTableMode:
+		ver, err = onAlterTableMode(jobCtx, job)
 	case model.ActionSetTiFlashReplica:
 		ver, err = w.onSetTableFlashReplica(jobCtx, job)
 	case model.ActionUpdateTiFlashReplicaStatus:
