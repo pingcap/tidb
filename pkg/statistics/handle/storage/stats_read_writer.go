@@ -252,12 +252,12 @@ func (s *statsReadWriter) SaveMetaToStorage(
 }
 
 // SaveMetasToStorage saves the stats meta of tables to storage.
-func (s *statsReadWriter) SaveMetasToStorage(metaUpdates []statstypes.MetaUpdate) (err error) {
+func (s *statsReadWriter) SaveMetasToStorage(metaUpdates []statstypes.MetaUpdate, refreshLastHistVer bool) (err error) {
 	if len(metaUpdates) == 0 {
 		return nil
 	}
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		return SaveMetasToStorage(sctx, metaUpdates)
+		return SaveMetasToStorage(sctx, metaUpdates, refreshLastHistVer)
 	}, util.FlagWrapTxn)
 	// NOTE: recording historical stats meta is deprecated.
 	return

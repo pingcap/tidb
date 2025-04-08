@@ -403,16 +403,25 @@ func SaveMetaToStorage(
 func SaveMetasToStorage(
 	sctx sessionctx.Context,
 	metaUpdates []statstypes.MetaUpdate,
+	refreshLastHistVer bool,
 ) (err error) {
 	version, err := util.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	var sql string
 	values := make([]string, 0, len(metaUpdates))
-	for _, metaUpdate := range metaUpdates {
-		values = append(values, fmt.Sprintf("(%d, %d, %d, %d)", version, metaUpdate.PhysicalID, metaUpdate.Count, metaUpdate.ModifyCount))
+	if refreshLastHistVer {
+		for _, metaUpdate := range metaUpdates {
+			values = append(values, fmt.Sprintf("(%d, %d, %d, %d, %d)", version, metaUpdate.PhysicalID, metaUpdate.Count, metaUpdate.ModifyCount, version))
+		}
+		sql = fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count, modify_count, last_stats_histograms_version) values %s", strings.Join(values, ","))
+	} else {
+		for _, metaUpdate := range metaUpdates {
+			values = append(values, fmt.Sprintf("(%d, %d, %d, %d)", version, metaUpdate.PhysicalID, metaUpdate.Count, metaUpdate.ModifyCount))
+		}
+		sql = fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count, modify_count) values %s", strings.Join(values, ","))
 	}
-	sql := fmt.Sprintf("replace into mysql.stats_meta (version, table_id, count, modify_count) values %s", strings.Join(values, ","))
 	_, err = util.Exec(sctx, sql)
 	return
 }
