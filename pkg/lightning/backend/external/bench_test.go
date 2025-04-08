@@ -851,6 +851,7 @@ func readAllDataFormS3(StorageURI string, startKey, endKey []byte, dataFiles, st
 	if err != nil {
 		panic(err)
 	}
+	output.build(ctx)
 }
 
 var (
