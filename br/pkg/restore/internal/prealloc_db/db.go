@@ -86,7 +86,8 @@ func (db *DB) ExecDDL(ctx context.Context, ddlJob *model.Job) error {
 		}
 		return errors.Trace(err)
 	case model.ActionCreateTable:
-		err = db.se.CreateTable(ctx, ast.NewCIStr(ddlJob.SchemaName), tableInfo)
+		infoCloned := tableInfo.Clone()
+		err = db.se.CreateTable(ctx, ast.NewCIStr(ddlJob.SchemaName), infoCloned)
 		if err != nil {
 			log.Error("create table failed",
 				zap.Stringer("db", dbInfo.Name),

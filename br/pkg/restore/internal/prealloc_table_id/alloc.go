@@ -31,11 +31,12 @@ type Allocator interface {
 
 // PreallocIDs mantains the state of preallocated table IDs.
 type PreallocIDs struct {
-	mu    sync.Mutex
-	start int64
-	end   int64
-	used  map[int64]struct{}
-	next  int64
+	mu              sync.Mutex
+	start           int64
+	rewriteBoundary int64
+	end             int64
+	used            map[int64]struct{}
+	next            int64
 }
 
 // New collects the requirement of prealloc IDs and return a
@@ -47,20 +48,33 @@ func New(tables []*metautil.Table) *PreallocIDs {
 		}
 	}
 
-	maxv := int64(0)
+	maxID := int64(0)
+	count := int64(0)
 
 	for _, t := range tables {
-		maxv += 1
+		count += 1
+		if t.Info.ID > maxID && t.Info.ID < insaneTableIDThreshold {
+			maxID = t.Info.ID
+		}
 
 		if t.Info.Partition != nil && t.Info.Partition.Definitions != nil {
-			maxv += int64(len(t.Info.Partition.Definitions))
+			count += int64(len(t.Info.Partition.Definitions))
+			for _, part := range t.Info.Partition.Definitions {
+				if part.ID > maxID && part.ID < insaneTableIDThreshold {
+					maxID = part.ID
+				}
+			}
 		}
 	}
+	if maxID+1 > insaneTableIDThreshold || maxID+count+1 > insaneTableIDThreshold {
+		return nil
+	}
 	return &PreallocIDs{
-		start: math.MaxInt64,
-		end:   maxv,
-		used:  make(map[int64]struct{}),
-		next:  math.MaxInt64,
+		start:           math.MaxInt64,
+		rewriteBoundary: maxID + 1,
+		end:             maxID + count + 1,
+		used:            make(map[int64]struct{}, count),
+		next:            math.MaxInt64,
 	}
 }
 
@@ -89,6 +103,9 @@ func (p *PreallocIDs) Alloc(m Allocator) error {
 	if p.end == 0 {
 		return nil
 	}
+	if p.start < p.end {
+		return errors.Errorf("prealloc table ID should be empty")
+	}
 
 	alloced, err := m.AdvanceGlobalIDs(int(p.end))
 	if err != nil {
@@ -105,7 +122,7 @@ func (p *PreallocIDs) allocID(originalID int64) (int64, error) {
 		return 0, errors.Errorf("no available IDs")
 	}
 
-	if originalID >= p.start && originalID < p.end {
+	if originalID >= p.start && originalID < p.rewriteBoundary {
 		if _, exists := p.used[originalID]; !exists {
 			p.used[originalID] = struct{}{}
 			return originalID, nil
