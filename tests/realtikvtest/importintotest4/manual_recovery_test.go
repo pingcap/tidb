@@ -28,7 +28,8 @@ import (
 	"github.com/tikv/client-go/v2/util"
 )
 
-func (s *mockGCSSuite) runTaskToAwaitingState() (context.Context, *proto.Task) {
+func (s *mockGCSSuite) runTaskToAwaitingState() (context.Context, int64, *proto.Task) {
+	s.T().Helper()
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "table_test")
 	s.server.CreateObject(fakestorage.Object{
@@ -56,11 +57,11 @@ func (s *mockGCSSuite) runTaskToAwaitingState() (context.Context, *proto.Task) {
 	s.Len(rows, 1)
 	s.EqualValues("awaiting-resolution", rows[0][5])
 	s.Contains(rows[0][8].(string), "incorrect DOUBLE value")
-	return ctx, task
+	return ctx, int64(jobID), task
 }
 
 func (s *mockGCSSuite) TestResolutionFailTheTask() {
-	ctx, task := s.runTaskToAwaitingState()
+	ctx, _, task := s.runTaskToAwaitingState()
 	s.tk.MustExec(fmt.Sprintf("update mysql.tidb_global_task set state='reverting' where id=%d", task.ID))
 	_, err := handle.WaitTask(ctx, task.ID, func(t *proto.TaskBase) bool {
 		return t.State == proto.TaskStateReverted
@@ -69,8 +70,18 @@ func (s *mockGCSSuite) TestResolutionFailTheTask() {
 	s.tk.MustQuery("select * from t").Check(testkit.Rows())
 }
 
+func (s *mockGCSSuite) TestResolutionCancelTheTask() {
+	ctx, jobID, task := s.runTaskToAwaitingState()
+	s.tk.MustExec(fmt.Sprintf("cancel import job %d", jobID))
+	_, err := handle.WaitTask(ctx, task.ID, func(t *proto.TaskBase) bool {
+		return t.State == proto.TaskStateReverted
+	})
+	s.NoError(err)
+	s.tk.MustQuery("select * from t").Check(testkit.Rows())
+}
+
 func (s *mockGCSSuite) TestResolutionSuccessAfterManualChangeData() {
-	ctx, task := s.runTaskToAwaitingState()
+	ctx, _, task := s.runTaskToAwaitingState()
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "resolution", Name: "a.csv"},
 		Content:     []byte("1,2"),
