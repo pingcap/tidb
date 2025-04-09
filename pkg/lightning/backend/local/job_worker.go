@@ -18,19 +18,14 @@ import (
 	"context"
 	"sync"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/lightning/common"
-	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/metrics"
-	pdhttp "github.com/tikv/pd/client/http"
-	"go.uber.org/zap"
 )
 
 type regionJobBaseWorker struct {
-	pdHTTPCli      pdhttp.Client
 	metrics        *metric.Common
 	jobInCh        chan *regionJob
 	jobOutCh       chan *regionJob
@@ -71,7 +66,7 @@ func (w *regionJobBaseWorker) run(ctx context.Context) error {
 			}
 			failpoint.InjectCall("beforeExecuteRegionJob", ctx)
 			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Inc()
-			err := w.runJob(ctx, job)
+			err := w.doRunJobFn(ctx, job)
 			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Dec()
 
 			if w.afterRunJobFn != nil {
@@ -123,27 +118,6 @@ func (w *regionJobBaseWorker) run(ctx context.Context) error {
 			}
 		}
 	}
-}
-
-func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error {
-	failpoint.Inject("WriteToTiKVNotEnoughDiskSpace", func(_ failpoint.Value) {
-		failpoint.Return(
-			errors.New("the remaining storage capacity of TiKV is less than 10%%; please increase the storage capacity of TiKV and try again"))
-	})
-	if w.checkTiKVSpace {
-		for _, peer := range job.region.Region.GetPeers() {
-			store, err := w.pdHTTPCli.GetStore(ctx, peer.StoreId)
-			if err != nil {
-				log.FromContext(ctx).Warn("failed to get StoreInfo from pd http api", zap.Error(err))
-				continue
-			}
-			err = checkDiskAvail(ctx, store)
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return w.doRunJobFn(ctx, job)
 }
 
 type opRegionJobWorker struct {

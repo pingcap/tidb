@@ -1145,6 +1145,24 @@ func (local *Backend) executeJob(
 	ctx context.Context,
 	job *regionJob,
 ) error {
+	failpoint.Inject("WriteToTiKVNotEnoughDiskSpace", func(_ failpoint.Value) {
+		failpoint.Return(
+			errors.New("the remaining storage capacity of TiKV is less than 10%%; please increase the storage capacity of TiKV and try again"))
+	})
+	if local.ShouldCheckTiKV {
+		for _, peer := range job.region.Region.GetPeers() {
+			store, err := local.pdHTTPCli.GetStore(ctx, peer.StoreId)
+			if err != nil {
+				log.FromContext(ctx).Warn("failed to get StoreInfo from pd http api", zap.Error(err))
+				continue
+			}
+			err = checkDiskAvail(ctx, store)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
 	for {
 		err := local.writeToTiKV(ctx, job)
 		if err != nil {
@@ -1445,7 +1463,6 @@ func (local *Backend) doImport(
 	for i := 0; i < local.WorkerConcurrency; i++ {
 		worker := &opRegionJobWorker{
 			regionJobBaseWorker: &regionJobBaseWorker{
-				pdHTTPCli:        local.pdHTTPCli,
 				metrics:          local.metrics,
 				jobInCh:          toCh,
 				jobOutCh:         jobFromWorkerCh,
