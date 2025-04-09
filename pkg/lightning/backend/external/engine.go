@@ -442,6 +442,11 @@ func (e *Engine) checkConcurrencyChange(ctx context.Context, currBatchSize int) 
 		return currBatchSize
 	}
 
+	logutil.Logger(ctx).Info("wait ingest data batch size change",
+		zap.Int("prev batch size", currBatchSize),
+		zap.Int("new batch size", newBatchSize),
+	)
+
 	tick := time.NewTicker(time.Second)
 	defer func() {
 		tick.Stop()
@@ -465,9 +470,9 @@ OUTER:
 		}
 	}
 
-	logutil.Logger(ctx).Info("load ingest data batch size change",
-		zap.Int("prev batchSize", currBatchSize),
-		zap.Int("new batchSize", newBatchSize),
+	logutil.Logger(ctx).Info("load ingest data batch size changed",
+		zap.Int("prev batch size", currBatchSize),
+		zap.Int("new batch size", newBatchSize),
 	)
 
 	return newBatchSize

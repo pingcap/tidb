@@ -238,6 +238,8 @@ func (p *WorkerPool[T, R]) Tune(numWorkers int32, wait bool) {
 			wg.Wait()
 		}
 	}
+	logutil.BgLogger().Info("tune worker pool",
+		zap.Int32("from", p.numWorkers), zap.Int32("to", numWorkers))
 	p.numWorkers = numWorkers
 }
 

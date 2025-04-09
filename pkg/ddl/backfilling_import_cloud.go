@@ -203,9 +203,9 @@ func (m *cloudImportExecutor) TaskMetaModified(ctx context.Context, newMeta []by
 // ResourceModified change the concurrency for ingest
 func (m *cloudImportExecutor) ResourceModified(ctx context.Context, newResource *proto.StepResource) error {
 	logutil.Logger(ctx).Info("cloud import executor update resource")
-	newConcurrency := int(newResource.CPU.Capacity())
+	newConcurrency := int(newResource.CPU.Capacity()) * 2
 	if newConcurrency != m.backend.Concurrency() {
-		return m.backend.UpdateConcurrency(m.engineUUID, newConcurrency)
+		return m.backend.UpdateConcurrency(ctx, m.engineUUID, newConcurrency)
 	}
 	return nil
 }
