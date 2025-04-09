@@ -189,9 +189,8 @@ func TestSessionPoolPut(t *testing.T) {
 	// Put a Session that is inUse
 	se = getCachedSessionFromPool(sctx)
 	require.Equal(t, 0, len(p.pool))
-	_, _, err := se.internal.EnterOperation(se)
+	_, exit, err := se.internal.EnterOperation(se)
 	require.NoError(t, err)
-	sctx.On("Close").Once()
 	WithSuppressAssert(func() {
 		p.Put(se)
 	})
@@ -199,6 +198,8 @@ func TestSessionPoolPut(t *testing.T) {
 	require.False(t, se.IsOwner())
 	require.True(t, se.IsInternalClosed())
 	require.Equal(t, 0, len(p.pool))
+	sctx.On("Close").Once()
+	WithSuppressAssert(exit)
 	sctx.AssertExpectations(t)
 
 	// Put a Session that avoids reusing
