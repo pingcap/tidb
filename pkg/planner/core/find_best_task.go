@@ -262,7 +262,7 @@ func enumeratePhysicalPlans4Task(
 		// index_join, index_hash_join, index_merge_join, we should chase the most efficient
 		// one among them.
 		// todo: extend suitLogicalJoinHint to be a normal logicalOperator's interface to handle the hint related stuff.
-		if suitLogicalJoinHint(p.Self(), prop, curTask.Plan()) {
+		if suitLogicalJoinHint(p.Self(), curTask.Plan()) {
 			// curTask is a preferred physic plan, compare cost with previous preferred one and cache the low-cost one.
 			if curIsBetter, err := compareTaskCost(curTask, preferTask, opt); err != nil {
 				return nil, 0, err
