@@ -1004,7 +1004,7 @@ var defaultConf = Config{
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
 		HeaderTimeout: 5,
-		Fallbackable:  false,
+		Fallbackable:  true,
 	},
 	PreparedPlanCache: PreparedPlanCache{
 		Enabled:          true,

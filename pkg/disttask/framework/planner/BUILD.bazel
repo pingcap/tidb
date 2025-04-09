@@ -28,6 +28,7 @@ go_test(
     deps = [
         ":planner",
         "//pkg/disttask/framework/mock",
+        "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/storage",
         "//pkg/kv",
         "//pkg/testkit",

@@ -111,8 +111,9 @@ const (
 	cloudStorageURIOption       = "cloud_storage_uri"
 	disablePrecheckOption       = "disable_precheck"
 	// used for test
-	maxEngineSizeOption = "__max_engine_size"
-	forceMergeStep      = "__force_merge_step"
+	maxEngineSizeOption  = "__max_engine_size"
+	forceMergeStep       = "__force_merge_step"
+	manualRecoveryOption = "__manual_recovery"
 )
 
 var (
@@ -136,6 +137,7 @@ var (
 		disableTiKVImportModeOption: false,
 		maxEngineSizeOption:         true,
 		forceMergeStep:              false,
+		manualRecoveryOption:        false,
 		cloudStorageURIOption:       true,
 		disablePrecheckOption:       false,
 	}
@@ -268,6 +270,8 @@ type Plan struct {
 	TotalFileSize int64
 	// used in tests to force enable merge-step when using global sort.
 	ForceMergeStep bool
+	// see ManualRecovery in proto.ExtraParams
+	ManualRecovery bool
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
@@ -762,6 +766,9 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 	if _, ok := specifiedOptions[forceMergeStep]; ok {
 		p.ForceMergeStep = true
+	}
+	if _, ok := specifiedOptions[manualRecoveryOption]; ok {
+		p.ManualRecovery = true
 	}
 
 	if sv, ok := seCtx.GetSessionVars().GetSystemVar(vardef.TiDBMaxDistTaskNodes); ok {
