@@ -347,7 +347,7 @@ func (p *PointGetPlan) LoadTableStats(ctx sessionctx.Context) {
 // if done Partition pruning (else not needed, can use GetPartitionIdxByRow() instead)
 // error
 // TODO: Also supporting BatchPointGet? Problem is that partition ID must be mapped to handle/IndexValue.
-func needsPartitionPruning(sctx sessionctx.Context, tblInfo *model.TableInfo, pt table.PartitionedTable, dbName string, indexInfo *model.IndexInfo, indexCols []*expression.Column, indexValues []types.Datum, conds []expression.Expression, partitionNames []ast.CIStr) ([]int, bool, error) {
+func needsPartitionPruning(sctx sessionctx.Context, tblInfo *model.TableInfo, pt table.PartitionedTable, dbName string, indexInfo *model.IndexInfo, indexCols []*expression.Column, indexValues []types.Datum, conds []expression.Expression, partitionNames []pmodel.CIStr) ([]int, bool, error) {
 	for i := range indexValues {
 		if tblInfo.Columns[indexInfo.Columns[i].Offset].FieldType.EvalType() != types.ETString ||
 			indexValues[i].Collation() == tblInfo.Columns[indexInfo.Columns[i].Offset].GetCollate() {
@@ -373,7 +373,7 @@ func needsPartitionPruning(sctx sessionctx.Context, tblInfo *model.TableInfo, pt
 		partNameSlice = append(partNameSlice, &types.FieldName{
 			ColName:     tblCol.Name,
 			TblName:     tblInfo.Name,
-			DBName:      ast.NewCIStr(dbName),
+			DBName:      pmodel.NewCIStr(dbName),
 			OrigTblName: tblInfo.Name,
 			OrigColName: tblCol.Name,
 		})
