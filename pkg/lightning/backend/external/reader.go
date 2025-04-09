@@ -72,7 +72,7 @@ func readAllData(
 		task.End(zap.ErrorLevel, err)
 	}()
 
-	concurrences, startOffsets, err := getFilesReadConcurrency(
+	concurrences, startOffsets, err, notSkip := getFilesReadConcurrency(
 		ctx,
 		store,
 		statsFiles,
@@ -105,10 +105,10 @@ func readAllData(
 					if !ok {
 						return nil
 					}
-					//if !notSkip[fileIdx] {
-					// skip the file if it is not in the range
-					//continue
-					//}
+					if !notSkip[fileIdx] {
+						// skip the file if it is not in the range
+						continue
+					}
 					err2 := readOneFile(
 						egCtx,
 						store,
