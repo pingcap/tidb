@@ -199,6 +199,10 @@ func readOneFile(
 		cntAllKeys++
 		if bytes.Compare(k, startKey) < 0 {
 			droppedSize += len(k) + len(v)
+			rd.byteReader.logger.Info("drop key",
+				zap.String("dropped key", hex.EncodeToString(k)),
+				zap.String("data file name", dataFile),
+			)
 			cntDropped++
 			continue
 		}
