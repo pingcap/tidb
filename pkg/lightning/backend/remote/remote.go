@@ -232,5 +232,5 @@ func (*writer) Flushed() bool {
 
 // GetDupeController returns a new dupe controller.
 func (*Backend) GetDupeController(dupeConcurrency int, errorMgr *errormanager.ErrorManager) *local.DupeController {
-	return local.NewDupeController(dupeConcurrency, errorMgr, nil, nil, nil, nil, nil, nil, "", "", false)
+	return local.NewDupeControllerForRemoteBackend(dupeConcurrency, errorMgr, nil, nil, nil, nil, nil, nil, "", "", false)
 }
