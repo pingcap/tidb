@@ -10,7 +10,11 @@ go_test(
     data = glob(["testdata/**"]),
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 7,
+=======
+    shard_count = 8,
+>>>>>>> 9d75367aa3c (planner: avoid join reorder when to meet NULLEQ in the EQCond (#60416))
     deps = [
         "//pkg/parser",
         "//pkg/planner",
