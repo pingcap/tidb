@@ -344,10 +344,15 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	begin := time.Now()
 	region := j.region.Region
 
-	firstKey, lastKey, err := j.ingestData.GetFirstAndLastKey(j.keyRange.Start, j.keyRange.End)
+	localEngine := j.ingestData.(*Engine)
+	firstKey, lastKey, iter, err := localEngine.GetFirstAndLastKeyAndIter(
+		ctx, j.keyRange.Start, j.keyRange.End, bufferPool,
+	)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	defer iter.Close()
+
 	if firstKey == nil {
 		j.convertStageTo(ingested)
 		log.FromContext(ctx).Debug("keys within region is empty, skip doIngest",
@@ -492,12 +497,8 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		return nil
 	}
 
-	iter := j.ingestData.NewIter(ctx, j.keyRange.Start, j.keyRange.End, bufferPool)
-	//nolint: errcheck
-	defer iter.Close()
-
 	var remainingStartKey []byte
-	for iter.First(); iter.Valid(); iter.Next() {
+	for ; iter.Valid(); iter.Next() {
 		k, v := iter.Key(), iter.Value()
 		kvSize := int64(len(k) + len(v))
 		// here we reuse the `*sst.Pair`s to optimize object allocation

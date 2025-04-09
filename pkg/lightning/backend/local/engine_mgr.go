@@ -383,6 +383,23 @@ func (em *engineManager) closeEngine(
 		return errors.Trace(err)
 	}
 	engine.wg.Wait()
+	// print SST ranges
+	ssts, err := engine.db.Load().SSTables()
+	if err != nil {
+		log.FromContext(ctx).Error("failed to get SSTables", zap.Error(err))
+	} else {
+		for i, sstInLevel := range ssts {
+			log.FromContext(ctx).Info("sstable in level",
+				zap.Int("level", i),
+				zap.Int("sstable count", len(sstInLevel)),
+			)
+			for _, sst := range sstInLevel {
+				log.FromContext(ctx).Info("sstable",
+					zap.Binary("smallest key", sst.Smallest.UserKey),
+					zap.Binary("largest key", sst.Largest.UserKey))
+			}
+		}
+	}
 	return engine.ingestErr.Get()
 }
 

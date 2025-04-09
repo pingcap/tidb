@@ -1080,6 +1080,43 @@ func (e *Engine) NewIter(
 	)
 }
 
+func (e *Engine) GetFirstAndLastKeyAndIter(
+	ctx context.Context,
+	lowerBound, upperBound []byte,
+	bufPool *membuf.Pool,
+) ([]byte, []byte, common.ForwardIter, error) {
+	if len(upperBound) == 0 {
+		// we use empty slice for unbounded upper bound, but it means max value in pebble
+		// so reset to nil
+		upperBound = nil
+	}
+	opt := &pebble.IterOptions{
+		LowerBound: lowerBound,
+		UpperBound: upperBound,
+	}
+	iter := e.newKVIter(ctx, opt, bufPool.NewBuffer())
+	hasKey := iter.Last()
+	if !hasKey {
+		iter.Close()
+		return nil, nil, nil, nil
+	}
+
+	if iter.Error() != nil {
+		iter.Close()
+		return nil, nil, nil, errors.Annotate(iter.Error(), "failed to seek to the last key")
+	}
+	lastKey := append([]byte{}, iter.Key()...)
+
+	iter.First()
+	if iter.Error() != nil {
+		iter.Close()
+		return nil, nil, nil, errors.Annotate(iter.Error(), "failed to read the first key")
+	}
+
+	firstKey := append([]byte{}, iter.Key()...)
+	return firstKey, lastKey, iter, nil
+}
+
 // GetTS implements IngestData interface.
 func (e *Engine) GetTS() uint64 {
 	return e.TS
