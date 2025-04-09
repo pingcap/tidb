@@ -80,24 +80,19 @@ func GetRegionDistributionByKeyRange(ctx context.Context, startKey []byte, endKe
 	if is.pdHTTPCli == nil {
 		return nil, errs.ErrClientGetLeader.FastGenByArgs("http cli is nil")
 	}
-	return is.pdHTTPCli.GetRegionDistributionByKeyRange(ctx, pd.NewKeyRange(startKey, endKey), "")
+	return is.pdHTTPCli.GetRegionDistributionByKeyRange(ctx, pd.NewKeyRange(startKey, endKey), engine)
 }
 
 // GetSchedulerConfig is used to get the configuration of the specified scheduler from PD.
-func GetSchedulerConfig(ctx context.Context, schedulerName string) ([]map[string]any, error) {
+func GetSchedulerConfig(ctx context.Context, schedulerName string) (any, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return nil, err
 	}
 	if is.pdHTTPCli == nil {
-		return nil, errs.ErrClientGetLeader.FastGenByArgs(schedulerName)
+		return nil, errs.ErrClientGetLeader.FastGenByArgs("http cli is nil")
 	}
-	config, err := is.pdHTTPCli.GetSchedulerConfig(ctx, schedulerName)
-	jobs, ok := config.([]map[string]any)
-	if !ok {
-		return nil, errs.ErrClientGetLeader.FastGenByArgs(config)
-	}
-	return jobs, err
+	return is.pdHTTPCli.GetSchedulerConfig(ctx, schedulerName)
 }
 
 // CreateSchedulerConfigWithInput is used to create a scheduler with the specified input.

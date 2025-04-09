@@ -26,6 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/tikv/pd/client/errs"
 	pdhttp "github.com/tikv/pd/client/http"
 )
 
@@ -66,14 +68,27 @@ func (e *DistributeTableExec) Next(ctx context.Context, chk *chunk.Chunk) error 
 	if err != nil {
 		return err
 	}
-	jobs, err := infosync.GetSchedulerConfig(ctx, schedulerName)
+	config, err := infosync.GetSchedulerConfig(ctx, schedulerName)
+	configs, ok := config.([]any)
+	if !ok {
+		return errs.ErrClientProtoUnmarshal.FastGenByArgs(config)
+	}
+	jobs := make([]map[string]any, 0, len(configs))
+	for _, cfg := range configs {
+		job, ok := cfg.(map[string]any)
+		if !ok {
+			return errs.ErrClientProtoUnmarshal.FastGenByArgs(cfg)
+		}
+		jobs = append(jobs, job)
+	}
 	if err != nil {
 		return err
 	}
 	alias := e.getAlias()
 	for _, job := range jobs {
 		if job["alias"] == alias && job["engine"] == e.engine.String() && job["rule"] == e.rule.String() {
-			chk.AppendUint64(0, job["job-id"].(uint64))
+			chk.AppendUint64(0, uint64(job["job-id"].(float64)))
+			break
 		}
 	}
 	return nil
@@ -84,8 +99,15 @@ func (e *DistributeTableExec) distributeTable(ctx context.Context) error {
 	input["alias"] = e.getAlias()
 	input["engine"] = e.engine.String()
 	input["rule"] = e.rule.String()
-	input["start-key"] = e.keyRanges[0].StartKey
-	input["end-key"] = e.keyRanges[0].EndKey
+	startKeys := make([]string, 0, len(e.keyRanges))
+	endKeys := make([]string, 0, len(e.keyRanges))
+	for _, r := range e.keyRanges {
+		startKey, endKey := r.EscapeAsUTF8Str()
+		startKeys = append(startKeys, startKey)
+		endKeys = append(endKeys, endKey)
+	}
+	input["start-key"] = strings.Join(startKeys, ",")
+	input["end-key"] = strings.Join(endKeys, ",")
 	return infosync.CreateSchedulerConfigWithInput(ctx, schedulerName, input)
 }
 
@@ -121,8 +143,9 @@ func (e *DistributeTableExec) getKeyRanges() ([]*pdhttp.KeyRange, error) {
 	}
 
 	ranges := make([]*pdhttp.KeyRange, 0, len(physicalIDs))
-	for _, id := range physicalIDs {
-		startKey, endKey := tablecodec.GetTableHandleKeyRange(id)
+	for _, pid := range physicalIDs {
+		startKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid))
+		endKey := codec.EncodeBytes([]byte{}, tablecodec.GenTablePrefix(pid+1))
 		r := pdhttp.NewKeyRange(startKey, endKey)
 		ranges = append(ranges, r)
 	}

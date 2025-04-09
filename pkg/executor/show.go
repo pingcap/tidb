@@ -24,6 +24,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -84,6 +85,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/tikv/pd/client/errs"
 	pdHttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
@@ -2468,13 +2470,26 @@ func handleImportJobInfo(ctx context.Context, info *importer.JobInfo, result *ch
 const balanceRangeScheduler = "balance-range-scheduler"
 
 func (e *ShowExec) fetchShowDistributionJobs(ctx context.Context) error {
-	jobs, err := infosync.GetSchedulerConfig(ctx, balanceRangeScheduler)
+	config, err := infosync.GetSchedulerConfig(ctx, balanceRangeScheduler)
 	if err != nil {
 		return err
 	}
+	configs, ok := config.([]any)
+	if !ok {
+		// it means that no any jobs
+		return nil
+	}
+	jobs := make([]map[string]any, 0, len(configs))
+	for _, cfg := range configs {
+		job, ok := cfg.(map[string]any)
+		if !ok {
+			return errs.ErrClientProtoUnmarshal.FastGenByArgs(cfg)
+		}
+		jobs = append(jobs, job)
+	}
 	if e.DistributionJobID != nil {
 		for _, job := range jobs {
-			jobID, ok := job["job-id"].(uint64)
+			jobID, ok := job["job-id"].(float64)
 			if ok && *e.DistributionJobID == int64(jobID) {
 				fillDistributionJobToChunk(ctx, job, e.result)
 				break
@@ -2492,20 +2507,50 @@ func (e *ShowExec) fetchShowDistributionJobs(ctx context.Context) error {
 func fillDistributionJobToChunk(ctx context.Context, job map[string]any, result *chunk.Chunk) {
 	// alias is combined by db_name,table_name,partition_name
 	alias := strings.Split(job["alias"].(string), ".")
+	logutil.Logger(ctx).Info("fillDistributionJobToChunk", zap.String("alias", job["alias"].(string)))
 	if len(alias) != 3 {
 		logutil.Logger(ctx).Debug("alias does not belong to tidb", zap.String("alias", job["alias"].(string)))
 		return
 	}
-	result.AppendUint64(0, job["job-id"].(uint64))
+	result.AppendUint64(0, uint64(job["job-id"].(float64)))
 	result.AppendString(1, alias[0])
 	result.AppendString(2, alias[1])
 	result.AppendString(3, alias[2])
 	result.AppendString(4, job["engine"].(string))
 	result.AppendString(5, job["rule"].(string))
 	result.AppendString(6, job["status"].(string))
-	result.AppendTime(7, types.NewTime(types.FromGoTime(job["create-time"].(time.Time)), mysql.TypeDatetime, types.DefaultFsp))
-	result.AppendTime(8, types.NewTime(types.FromGoTime(job["start-time"].(time.Time)), mysql.TypeDatetime, types.DefaultFsp))
-	result.AppendTime(9, types.NewTime(types.FromGoTime(job["finish-time"].(time.Time)), mysql.TypeDatetime, types.DefaultFsp))
+	layout := "2006-01-02T15:04:05.999999-07:00" // RFC3339 with microseconds
+	if create, ok := job["create"]; ok {
+		logutil.Logger(ctx).Info("fillDistributionJobToChunk", zap.String("create", create.(string)))
+		creatTime, err := time.Parse(layout, create.(string))
+		if err != nil {
+			logutil.Logger(ctx).Error("parse time failed", zap.String("time", job["start"].(string)))
+			return
+		}
+		result.AppendTime(7, types.NewTime(types.FromGoTime(creatTime), mysql.TypeDatetime, types.DefaultFsp))
+	} else {
+		result.AppendNull(7)
+	}
+	if create, ok := job["start"]; ok {
+		creatTime, err := time.Parse(layout, create.(string))
+		if err != nil {
+			logutil.Logger(ctx).Error("parse time failed", zap.String("time", job["start"].(string)))
+			return
+		}
+		result.AppendTime(8, types.NewTime(types.FromGoTime(creatTime), mysql.TypeDatetime, types.DefaultFsp))
+	} else {
+		result.AppendNull(8)
+	}
+	if create, ok := job["finish"]; ok {
+		creatTime, err := time.Parse(layout, create.(string))
+		if err != nil {
+			logutil.Logger(ctx).Error("parse time failed", zap.String("time", job["start"].(string)))
+			return
+		}
+		result.AppendTime(9, types.NewTime(types.FromGoTime(creatTime), mysql.TypeDatetime, types.DefaultFsp))
+	} else {
+		result.AppendNull(9)
+	}
 }
 
 // fetchShowImportJobs fills the result with the schema:
