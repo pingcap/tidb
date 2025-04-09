@@ -216,6 +216,7 @@ go_library(
         "//pkg/util/dbterror",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/dbterror/plannererrors",
+        "//pkg/util/dbutil",
         "//pkg/util/deadlockhistory",
         "//pkg/util/disk",
         "//pkg/util/disttask",

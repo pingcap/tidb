@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
 )
 
 // FKCheck indicates the foreign key constraint checker.
@@ -384,6 +385,9 @@ func buildOnDeleteOrUpdateFKTrigger(ctx base.PlanContext, is infoschema.InfoSche
 	if fk == nil || fk.Version < 1 {
 		return nil, nil, nil
 	}
+	if err := checkFKChildTablMode(is, referredFK); err != nil {
+		return nil, nil, err
+	}
 	var fkReferOption ast.ReferOptionType
 	if fk.State != model.StatePublic {
 		fkReferOption = ast.ReferOptionRestrict
@@ -506,4 +510,17 @@ func buildFKCascade(ctx base.PlanContext, tp FKCascadeType, referredFK *model.Re
 	}
 	fkCascade.FKIdx = indexForFK
 	return fkCascade, nil
+}
+
+// checkFKChildTablMode will check FK child table mode is TableModeNormal or not
+// when planbuilder will build FKTriggers for insert on replace/update/delete statement.
+func checkFKChildTablMode(is infoschema.InfoSchema, referredFK *model.ReferredFKInfo) error {
+	childTableInfo, err := is.TableInfoByName(referredFK.ChildSchema, referredFK.ChildTable)
+	if err != nil {
+		return err
+	}
+	if err = dbutil.CheckTableModeIsNormal(childTableInfo.Name, childTableInfo.Mode); err != nil {
+		return err
+	}
+	return nil
 }
