@@ -84,7 +84,7 @@ func readAllData(
 	}
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
-	readConn := 1000
+	readConn := 4
 	readConn = min(readConn, len(dataFiles))
 	taskCh := make(chan int)
 	output.memKVBuffers = make([]*membuf.Buffer, readConn*2)
@@ -105,10 +105,10 @@ func readAllData(
 					if !ok {
 						return nil
 					}
-					if !notSkip[fileIdx] {
-						// skip the file if it is not in the range
-						continue
-					}
+					//if !notSkip[fileIdx] {
+					//	// skip the file if it is not in the range
+					//	continue
+					//}
 					err2 := readOneFile(
 						egCtx,
 						store,
@@ -130,6 +130,10 @@ func readAllData(
 	}
 
 	for fileIdx := range dataFiles {
+		if !notSkip[fileIdx] {
+			// skip the file if it is not in the range
+			continue
+		}
 		select {
 		case <-egCtx.Done():
 			return eg.Wait()
