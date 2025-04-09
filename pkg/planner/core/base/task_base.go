@@ -34,8 +34,6 @@ type Task interface {
 	ConvertToRootTask(ctx PlanContext) Task
 	// MemoryUsage returns the memory usage of current task.
 	MemoryUsage() int64
-	// Warnings returns the warnings of current task.
-	// Warnings() []error
 }
 
 // InvalidTask is just a common invalid singleton instance initialized by core's empty RootTask.
