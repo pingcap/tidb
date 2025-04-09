@@ -1563,9 +1563,6 @@ func (local *Backend) doImport(
 	if err != nil && !common.IsContextCanceledError(err) {
 		log.FromContext(ctx).Error("do import meets error", zap.Error(err))
 	}
-	localEngine := engine.(*Engine)
-	metrcsStr := localEngine.db.Load().Metrics().String()
-	log.FromContext(ctx).Info("sstable metrics", zap.String("metrics", metrcsStr))
 	return err
 }
 
