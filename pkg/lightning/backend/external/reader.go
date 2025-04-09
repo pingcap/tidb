@@ -88,6 +88,7 @@ func readAllData(
 	readConn = min(readConn, len(dataFiles))
 	taskCh := make(chan int)
 	output.memKVBuffers = make([]*membuf.Buffer, readConn*2)
+	log.FromContext(ctx).Info("read file go routine num", zap.Int("readConn", readConn))
 	for readIdx := 0; readIdx < readConn; readIdx++ {
 		readIdx := readIdx
 		eg.Go(func() error {
