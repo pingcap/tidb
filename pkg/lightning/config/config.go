@@ -163,7 +163,7 @@ func (d *DBStore) adjust(
 	s *Security,
 	tlsObj *common.TLS,
 ) error {
-	if i.Backend == BackendLocal || i.Backend == BackendRemote {
+	if i.IsPhysicalBackend() {
 		if d.BuildStatsConcurrency == 0 {
 			d.BuildStatsConcurrency = defaultBuildStatsConcurrency
 		}
@@ -226,7 +226,7 @@ func (d *DBStore) adjust(
 		return common.ErrInvalidConfig.GenWithStack("unsupported `tidb.tls` config %s", d.TLS)
 	}
 
-	mustHaveInternalConnections := (i.Backend == BackendLocal || i.Backend == BackendRemote)
+	mustHaveInternalConnections := i.IsPhysicalBackend()
 	// automatically determine the TiDB port & PD address from TiDB settings
 	if mustHaveInternalConnections && (d.Port <= 0 || len(d.PdAddr) == 0) {
 		var settings tidbcfg.Config
@@ -367,7 +367,7 @@ func (l *Lightning) adjust(i *TikvImporter) {
 		}
 		// RegionConcurrency > NumCPU is meaningless for local backend.
 		cpuCount := runtime.NumCPU()
-		if l.RegionConcurrency > cpuCount && i.Backend == BackendLocal {
+		if l.RegionConcurrency > cpuCount && i.IsLocalBackend() {
 			l.RegionConcurrency = cpuCount
 		}
 	}
@@ -1447,9 +1447,9 @@ func (c *Conflict) adjust(i *TikvImporter) error {
 			"%s cannot be used with tikv-importer.duplicate-resolution",
 			strategyConfigFrom)
 	}
-	if c.Strategy == IgnoreOnDup && i.Backend == BackendLocal {
+	if c.Strategy == IgnoreOnDup && i.IsPhysicalBackend() {
 		return common.ErrInvalidConfig.GenWithStack(
-			`%s cannot be set to "ignore" when use tikv-importer.backend = "local"`,
+			`%s cannot be set to "ignore" when use tikv-importer.backend = "local" or "remote"`,
 			strategyConfigFrom)
 	}
 	if c.PrecheckConflictBeforeImport && i.Backend == BackendTiDB {
@@ -1693,21 +1693,21 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 }
 
 // IsTiDBBackend returns true if using TiDB backend.
-func (cfg *Config) IsTiDBBackend() bool {
-	return cfg.TikvImporter.Backend == BackendTiDB
+func (t *TikvImporter) IsTiDBBackend() bool {
+	return t.Backend == BackendTiDB
 }
 
 // IsLocalBackend returns true if using local backend.
-func (cfg *Config) IsLocalBackend() bool {
-	return cfg.TikvImporter.Backend == BackendLocal
+func (t *TikvImporter) IsLocalBackend() bool {
+	return t.Backend == BackendLocal
 }
 
 // IsRemoteBackend returns true if using remote backend.
-func (cfg *Config) IsRemoteBackend() bool {
-	return cfg.TikvImporter.Backend == BackendRemote
+func (t *TikvImporter) IsRemoteBackend() bool {
+	return t.Backend == BackendRemote
 }
 
 // IsPhysicalBackend returns true if using physical import.
-func (cfg *Config) IsPhysicalBackend() bool {
-	return cfg.IsLocalBackend() || cfg.IsRemoteBackend()
+func (t *TikvImporter) IsPhysicalBackend() bool {
+	return t.IsLocalBackend() || t.IsRemoteBackend()
 }

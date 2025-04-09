@@ -458,7 +458,7 @@ func NewImportControllerWithPauser(
 	p.Status.backend = cfg.TikvImporter.Backend
 
 	var metaBuilder metaMgrBuilder
-	isSSTImport := cfg.IsPhysicalBackend()
+	isSSTImport := cfg.TikvImporter.IsPhysicalBackend()
 	switch {
 	case isSSTImport && cfg.TikvImporter.ParallelImport:
 		metaBuilder = &dbMetaMgrBuilder{
@@ -476,7 +476,7 @@ func NewImportControllerWithPauser(
 	}
 
 	var wrapper backend.TargetInfoGetter
-	if cfg.IsPhysicalBackend() {
+	if cfg.TikvImporter.IsPhysicalBackend() {
 		wrapper = local.NewTargetInfoGetter(tls, db, pdHTTPCli)
 	} else {
 		wrapper = tidb.NewTargetInfoGetter(db)
@@ -634,7 +634,7 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	// For physical backend, we need DBInfo.ID to operate the global autoid allocator.
-	if rc.cfg.IsPhysicalBackend() {
+	if rc.cfg.TikvImporter.IsPhysicalBackend() {
 		dbs, err := tikv.FetchRemoteDBModelsFromTLS(ctx, rc.tls)
 		if err != nil {
 			return errors.Trace(err)
@@ -726,7 +726,7 @@ func verifyCheckpoint(cfg *config.Config, taskCp *checkpoints.TaskCheckpoint) er
 			return common.ErrInvalidCheckpoint.GenWithStack(errorFmt, "mydumper.data-source-dir", cfg.Mydumper.SourceDir, taskCp.SourceDir)
 		}
 
-		if cfg.TikvImporter.Backend == config.BackendLocal && cfg.TikvImporter.SortedKVDir != taskCp.SortedKVDir {
+		if cfg.TikvImporter.IsPhysicalBackend() && cfg.TikvImporter.SortedKVDir != taskCp.SortedKVDir {
 			return common.ErrInvalidCheckpoint.GenWithStack(errorFmt, "mydumper.sorted-kv-dir", cfg.TikvImporter.SortedKVDir, taskCp.SortedKVDir)
 		}
 	}
@@ -989,7 +989,7 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 
 	var switchModeChan <-chan time.Time
 	// tidb backend don't need to switch tikv to import mode
-	if rc.cfg.IsPhysicalBackend() && rc.cfg.Cron.SwitchMode.Duration > 0 {
+	if rc.cfg.TikvImporter.IsPhysicalBackend() && rc.cfg.Cron.SwitchMode.Duration > 0 {
 		switchModeTicker := time.NewTicker(rc.cfg.Cron.SwitchMode.Duration)
 		cancelFuncs = append(cancelFuncs, func(bool) { switchModeTicker.Stop() })
 		cancelFuncs = append(cancelFuncs, func(do bool) {
@@ -1002,7 +1002,7 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 
 	var checkQuotaChan <-chan time.Time
 	// only local storage has disk quota concern.
-	if rc.cfg.TikvImporter.Backend == config.BackendLocal && rc.cfg.Cron.CheckDiskQuota.Duration > 0 {
+	if rc.cfg.TikvImporter.IsLocalBackend() && rc.cfg.Cron.CheckDiskQuota.Duration > 0 {
 		checkQuotaTicker := time.NewTicker(rc.cfg.Cron.CheckDiskQuota.Duration)
 		cancelFuncs = append(cancelFuncs, func(bool) { checkQuotaTicker.Stop() })
 		checkQuotaChan = checkQuotaTicker.C
@@ -1014,7 +1014,7 @@ func (rc *Controller) buildRunPeriodicActionAndCancelFunc(ctx context.Context, s
 					f()
 				}
 			}()
-			if rc.cfg.Cron.SwitchMode.Duration > 0 && rc.cfg.IsPhysicalBackend() {
+			if rc.cfg.Cron.SwitchMode.Duration > 0 && rc.cfg.TikvImporter.IsPhysicalBackend() {
 				rc.tikvModeSwitcher.ToImportMode(ctx)
 			}
 			start := time.Now()
@@ -1284,7 +1284,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 	// output error summary
 	defer rc.outputErrorSummary()
 
-	if rc.cfg.IsLocalBackend() && rc.cfg.Conflict.Strategy != config.NoneOnDup {
+	if rc.cfg.TikvImporter.IsLocalBackend() && rc.cfg.Conflict.Strategy != config.NoneOnDup {
 		subCtx, cancel := context.WithCancel(ctx)
 		exitCh, err := rc.keepPauseGCForDupeRes(subCtx)
 		if err != nil {
@@ -1322,7 +1322,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 	var kvStore tidbkv.Storage
 	var etcdCli *clientv3.Client
 
-	if rc.cfg.IsPhysicalBackend() {
+	if rc.cfg.TikvImporter.IsPhysicalBackend() {
 		var (
 			restoreFn pdutil.UndoFunc
 			err       error
@@ -1780,7 +1780,7 @@ func (rc *Controller) enforceDiskQuota(ctx context.Context) {
 
 func (rc *Controller) setGlobalVariables(ctx context.Context) error {
 	// skip for tidb backend to be compatible with MySQL
-	if rc.cfg.IsTiDBBackend() {
+	if rc.cfg.TikvImporter.IsTiDBBackend() {
 		return nil
 	}
 	// set new collation flag base on tidb config
@@ -1875,7 +1875,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 	if rc.status != nil {
 		rc.status.TotalFileSize.Store(estimatedSizeResult.SizeWithoutIndex)
 	}
-	if rc.cfg.IsPhysicalBackend() {
+	if rc.cfg.TikvImporter.IsPhysicalBackend() {
 		pdAddrs := rc.pdCli.GetServiceDiscovery().GetServiceURLs()
 		pdController, err := pdutil.NewPdController(
 			ctx, pdAddrs, rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption(),
@@ -1920,7 +1920,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 				needCheck = taskCheckpoints == nil
 			}
 			if needCheck {
-				if rc.cfg.IsLocalBackend() {
+				if rc.cfg.TikvImporter.IsLocalBackend() {
 					err = rc.localResource(ctx)
 					if err != nil {
 						return common.ErrCheckLocalResource.Wrap(err).GenWithStackByArgs()
