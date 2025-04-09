@@ -384,7 +384,7 @@ func TestTableModeFKTables(t *testing.T) {
 	tk.MustExec(`insert into child_update_set_default values(3333333, 333333)`)
 	tk.MustExec(`insert into parent_4 values(4, 'parent_4'),(5, 'parent_5')`)
 	tk.MustExec(`insert into child_update_set_null values(444, 4), (555, 5)`)
-	//
+	// Set table mode to import for all child tables
 	dbInfo, ok := domain.InfoSchema().SchemaByName(ast.NewCIStr("test"))
 	require.True(t, ok)
 	for _, tbl := range childTables {
