@@ -28,10 +28,10 @@ path_to_add := $(addsuffix /bin,$(subst :,/bin:,$(GOPATH))):$(PWD)/tools/bin
 export PATH := $(path_to_add):$(PATH)
 
 GO              := GO111MODULE=on go
-BUILD_FLAG	:= -tags codes
+BUILD_FLAG      ?= -tags codes
 GOEXPERIMENT=
 ifeq ("${ENABLE_FIPS}", "1")
-	BUILD_FLAG = -tags codes,boringcrypto
+	BUILD_FLAG  ?= -tags codes,boringcrypto
 	GOEXPERIMENT = GOEXPERIMENT=boringcrypto
 endif
 GOBUILD         := $(GOEXPERIMENT) $(GO) build $(BUILD_FLAG)
