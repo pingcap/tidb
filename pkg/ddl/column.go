@@ -65,10 +65,10 @@ func InitAndAddColumnToTable(tblInfo *model.TableInfo, colInfo *model.ColumnInfo
 	return colInfo
 }
 
-func checkAddColumn(t *meta.Mutator, job *model.Job) (*model.TableInfo, *model.ColumnInfo, *model.ColumnInfo,
-	*ast.ColumnPosition, bool /* ifNotExists */, error) {
+func checkAddColumn(t *meta.Mutator, job *model.Job) (tblInfo *model.TableInfo, columnInfo *model.ColumnInfo, col *model.ColumnInfo,
+	pos *ast.ColumnPosition, _ bool /* ifNotExists */, err error) {
 	schemaID := job.SchemaID
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
+	tblInfo, err = GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return nil, nil, nil, nil, false, errors.Trace(err)
 	}
@@ -80,7 +80,7 @@ func checkAddColumn(t *meta.Mutator, job *model.Job) (*model.TableInfo, *model.C
 	}
 	col, pos, ifNotExists := args.Col, args.Pos, args.IgnoreExistenceErr
 
-	columnInfo := model.FindColumnInfo(tblInfo.Columns, col.Name.L)
+	columnInfo = model.FindColumnInfo(tblInfo.Columns, col.Name.L)
 	if columnInfo != nil {
 		if columnInfo.State == model.StatePublic {
 			// We already have a column with the same column name.

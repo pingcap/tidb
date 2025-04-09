@@ -332,7 +332,11 @@ go_test(
         "delete_test.go",
         "detach_integration_test.go",
         "detach_test.go",
+<<<<<<< HEAD
         "distribute_table_test.go",
+=======
+        "distributions_test.go",
+>>>>>>> master
         "distsql_test.go",
         "executor_failpoint_test.go",
         "executor_pkg_test.go",

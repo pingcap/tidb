@@ -118,7 +118,7 @@ func setupWorker(ctx context.Context, t *testing.T, addr string, dom *domain.Dom
 	wrk := setupWorkerForTest(ctx, etcdCli, dom, id, testWorker)
 
 	t.Cleanup(func() {
-		wrk.stop()
+		wrk.setRepositoryDest(ctx, "")
 	})
 
 	return wrk
@@ -897,13 +897,16 @@ func TestOwnerRandomDown(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		var err error
+		found := false
 		for _, wrk := range workers {
 			if wrk.owner.IsOwner() {
+				found = true
 				_, err = wrk.getSnapID(ctx)
 				break
 			}
 		}
-		return err == nil
+
+		return found && err == nil
 	}, time.Minute, 100*time.Millisecond)
 
 	// let us randomly stop the owner
@@ -921,11 +924,10 @@ func TestOwnerRandomDown(t *testing.T) {
 
 				if j%3 == 0 {
 					// tidb is shutdown somehow
-					wrk.stop()
-
-					require.Eventually(t, func() bool {
+					require.NoError(t, wrk.setRepositoryDest(ctx, ""))
+					eventuallyWithLock(t, wrk, func() bool {
 						return wrk.cancel == nil
-					}, time.Minute, 100*time.Millisecond)
+					})
 				} else if j%3 == 1 {
 					// immediate unexpected owner down due to bad network or crash
 					wrk.owner.CampaignCancel()
@@ -951,6 +953,8 @@ func TestOwnerRandomDown(t *testing.T) {
 		// new owner elected
 		require.Eventually(t, func() bool {
 			return slice.AnyOf(workers, func(i int) bool {
+				workers[i].Lock()
+				defer workers[i].Unlock()
 				return workers[i].cancel != nil &&
 					workers[i].owner.IsOwner() && i != oldOwnerIdx
 			})
@@ -959,6 +963,8 @@ func TestOwnerRandomDown(t *testing.T) {
 		// new snapshot taken
 		require.Eventually(t, func() bool {
 			return slice.AnyOf(workers, func(i int) bool {
+				workers[i].Lock()
+				defer workers[i].Unlock()
 				if workers[i].cancel == nil {
 					return false
 				}
@@ -969,15 +975,15 @@ func TestOwnerRandomDown(t *testing.T) {
 
 		// recover stopped owner
 		for idx, wrk := range workers {
-			if wrk.cancel == nil {
-				require.NoError(t, wrk.setRepositoryDest(ctx, "table"))
-			}
+			require.NoError(t, wrk.setRepositoryDest(ctx, "table"))
 			if idx == breakOwnerIdx {
 				require.Nil(t, wrk.owner.CampaignOwner(3))
 			}
 		}
 		require.Eventually(t, func() bool {
 			return slice.AllOf(workers, func(i int) bool {
+				workers[i].Lock()
+				defer workers[i].Unlock()
 				return workers[i].cancel != nil &&
 					workers[i].owner != nil
 			})
@@ -1017,11 +1023,11 @@ func TestRecoverSnapID(t *testing.T) {
 		return err == nil && snapID > 0
 	}, time.Minute, 100*time.Millisecond)
 
+	require.NoError(t, worker.setRepositoryDest(ctx, ""))
 	// wait for worker to stop
-	worker.stop()
-	require.Eventually(t, func() bool {
+	eventuallyWithLock(t, worker, func() bool {
 		return worker.cancel == nil
-	}, time.Second*10, time.Millisecond*100)
+	})
 
 	// setup a new etcd cluster and a new worker
 	etcd2 := setupEtcd(t)

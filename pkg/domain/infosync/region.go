@@ -71,6 +71,18 @@ func GetReplicationState(ctx context.Context, startKey []byte, endKey []byte) (P
 	return st, nil
 }
 
+// GetRegionDistributionByKeyRange is used to get the region distributions by given key range from PD.
+func GetRegionDistributionByKeyRange(ctx context.Context, startKey []byte, endKey []byte, engine string) (*pd.RegionDistributions, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+	if is.pdHTTPCli == nil {
+		return nil, errs.ErrClientGetLeader.FastGenByArgs("http cli is nil")
+	}
+	return is.pdHTTPCli.GetRegionDistributionByKeyRange(ctx, pd.NewKeyRange(startKey, endKey), "")
+}
+
 // GetSchedulerConfig is used to get the configuration of the specified scheduler from PD.
 func GetSchedulerConfig(ctx context.Context, schedulerName string) ([]map[string]any, error) {
 	is, err := getGlobalInfoSyncer()
