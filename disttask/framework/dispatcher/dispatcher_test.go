@@ -84,14 +84,18 @@ func TestGetInstance(t *testing.T) {
 	serverIDs := []string{"10.123.124.10:32457", "[ABCD:EF01:2345:6789:ABCD:EF01:2345:6789]:65535"}
 	mockedAllServerInfos = map[string]*infosync.ServerInfo{
 		uuids[0]: {
-			ID:   uuids[0],
-			IP:   "10.123.124.10",
-			Port: 32457,
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID:   uuids[0],
+				IP:   "10.123.124.10",
+				Port: 32457,
+			},
 		},
 		uuids[1]: {
-			ID:   uuids[1],
-			IP:   "ABCD:EF01:2345:6789:ABCD:EF01:2345:6789",
-			Port: 65535,
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID:   uuids[1],
+				IP:   "ABCD:EF01:2345:6789:ABCD:EF01:2345:6789",
+				Port: 65535,
+			},
 		},
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
