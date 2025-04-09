@@ -211,7 +211,6 @@ func readOneFile(
 			continue
 		}
 		if bytes.Compare(k, endKey) >= 0 {
-			cntDropped++
 			break
 		}
 		// TODO(lance6716): we are copying every KV from rd's buffer to memBuf, can we
