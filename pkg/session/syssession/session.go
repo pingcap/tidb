@@ -49,6 +49,13 @@ type sessionOwner interface {
 	onResignOwner(sessionctx.Context) error
 }
 
+func resignOwnerAndCloseSctx(owner sessionOwner, sctx SessionContext) error {
+	intest.AssertNotNil(owner)
+	intest.AssertNotNil(sctx)
+	defer sctx.Close()
+	return owner.onResignOwner(sctx)
+}
+
 func objectStr(obj any) string {
 	if obj == nil {
 		return "<nil>"
@@ -283,6 +290,23 @@ func (s *session) EnterOperation(caller sessionOwner) (SessionContext, func(), e
 
 		exit = true
 		s.inUse--
+		if s.owner == nil && s.inUse == 0 {
+			// `s.owner == nil` here indicates the session is closed, but to avoid data race
+			// it did not call `s.sctx.Close()` in `doCloseWithoutLock` before.
+			// So when the `inUse` decreased to 0, we need to call `s.sctx.Close()` make sure the session is closed.
+			// The first argument `resignOwnerAndCloseSctx` is the owner that should call the hook `resignOwner`,
+			// and we use the `caller` here which is exactly the owner before session closing.
+			if err := resignOwnerAndCloseSctx(caller, s.sctx); err != nil {
+				s.reportErrorWithoutLock(
+					"ExitOperation error: error occurs when close context and resigning the owner",
+					zap.Error(err),
+					zap.Uint64("seqStart", seqStart),
+					zap.Uint64("seqEnd", seqEnd),
+					zap.String("caller", objectStr(caller)),
+				)
+			}
+		}
+
 		if s.owner != caller {
 			s.reportErrorWithoutLock(
 				"ExitOperation error: session owner transferred when executing operation",
@@ -337,22 +361,25 @@ func (s *session) doCloseWithoutLock(seq uint64) {
 
 	defer func() {
 		s.owner = nil
-		s.sctx.Close()
 	}()
 
-	if err := s.owner.onResignOwner(s.sctx); err != nil {
-		s.reportErrorWithoutLock(
-			"error occurs when resigning the owner",
-			zap.Uint64("seq", seq),
-			zap.Error(err),
-		)
-	}
-
 	if s.inUse > 0 {
+		// `s.inUse > 0` indicates some operation(s) are still ongoing on the session.
+		// Though unexpected, it's better to avoid unnecessary data race here to postpone
+		// the `p.sctx.Close` after all operations are finished (i.e. `s.inuse` decreased to 0).
 		s.reportErrorWithoutLock(
 			"session owner is still in use when closing",
 			zap.Uint64("inUse", s.inUse),
 			zap.Uint64("seq", seq),
+		)
+		return
+	}
+
+	if err := resignOwnerAndCloseSctx(s.owner, s.sctx); err != nil {
+		s.reportErrorWithoutLock(
+			"error occurs when close context and resigning the owner",
+			zap.Uint64("seq", seq),
+			zap.Error(err),
 		)
 	}
 }

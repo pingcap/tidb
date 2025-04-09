@@ -225,6 +225,43 @@ func mockSession(t *testing.T, sctx *mockSessionContext) *Session {
 	return se
 }
 
+func TestResignOwnerAndCloseSctx(t *testing.T) {
+	sctx := &mockSessionContext{}
+	owner := &mockOwner{}
+
+	// success case
+	owner.On("onResignOwner", sctx).Return(nil).Once()
+	sctx.On("Close").Once()
+	require.NoError(t, resignOwnerAndCloseSctx(owner, sctx))
+	owner.AssertExpectations(t)
+	sctx.AssertExpectations(t)
+
+	// onResignOwner returns an error, should also close the session
+	owner.On("onResignOwner", sctx).Return(errors.New("mockErr")).Once()
+	sctx.On("Close").Once()
+	require.EqualError(t, resignOwnerAndCloseSctx(owner, sctx), "mockErr")
+	owner.AssertExpectations(t)
+	sctx.AssertExpectations(t)
+
+	// onResignOwner panics, should also close the session
+	owner.On("onResignOwner", sctx).Panic("mockPanic").Once()
+	sctx.On("Close").Once()
+	require.PanicsWithValue(t, "mockPanic", func() {
+		_ = resignOwnerAndCloseSctx(owner, sctx)
+	})
+	owner.AssertExpectations(t)
+	sctx.AssertExpectations(t)
+
+	// Close panics
+	owner.On("onResignOwner", sctx).Return(nil).Once()
+	sctx.On("Close").Panic("mockClosePanic")
+	require.PanicsWithValue(t, "mockClosePanic", func() {
+		_ = resignOwnerAndCloseSctx(owner, sctx)
+	})
+	owner.AssertExpectations(t)
+	sctx.AssertExpectations(t)
+}
+
 func TestInternalSessionTransferOwner(t *testing.T) {
 	sctx := &mockSessionContext{}
 	// TransferOwner success
@@ -446,19 +483,34 @@ func TestInternalSessionClose(t *testing.T) {
 
 		// inUse > 0 when close
 		se = mockInternalSession(t, sctx, owner)
-		_, exit, err := se.EnterOperation(owner)
+		_, exit1, err := se.EnterOperation(owner)
 		require.NoError(t, err)
 		require.Equal(t, uint64(1), se.Inuse())
-		owner.On("onResignOwner", sctx).Return(nil).Once()
-		sctx.On("Close").Once()
+		_, exit2, err := se.EnterOperation(owner)
+		require.NoError(t, err)
+		require.Equal(t, uint64(2), se.Inuse())
+		_, exit3, err := se.EnterOperation(owner)
+		require.NoError(t, err)
+		require.Equal(t, uint64(3), se.Inuse())
+		// should not call `sctx.Close()` when inuse > 0 to avoid some data race
 		WithSuppressAssert(func() {
 			closeFn(se, owner)
 		})
 		require.True(t, se.IsClosed())
 		require.Nil(t, se.Owner())
-		owner.AssertExpectations(t)
+		// sctx.Close should not be called when inuse > 0 after exit
+		require.Equal(t, uint64(3), se.Inuse())
+		WithSuppressAssert(exit1)
+		require.Equal(t, uint64(2), se.Inuse())
+		WithSuppressAssert(exit3)
+		require.Equal(t, uint64(1), se.Inuse())
+		// sctx.Close should be called after inuse decreased to 0
+		owner.On("onResignOwner", sctx).Return(nil).Once()
+		sctx.On("Close").Once()
+		WithSuppressAssert(exit2)
+		require.Zero(t, se.Inuse())
 		sctx.AssertExpectations(t)
-		WithSuppressAssert(exit)
+		owner.AssertExpectations(t)
 	}
 
 	testWithErrorMock(func(se *session, owner *mockOwner) {
@@ -535,6 +587,7 @@ func TestInternalSessionEnterOperation(t *testing.T) {
 	WithSuppressAssert(func() {
 		gotSctx, exit, err := se.EnterOperation(owner)
 		require.Error(t, err)
+		require.Contains(t, err.Error(), "session is closed")
 		require.Nil(t, gotSctx)
 		require.Nil(t, exit)
 		require.Equal(t, uint64(0), se.Inuse())
@@ -555,19 +608,28 @@ func TestInternalSessionEnterOperation(t *testing.T) {
 	require.Equal(t, uint64(2), se.Inuse())
 
 	// Close the session before exit
-	owner.On("onResignOwner", sctx).Return(nil).Once()
-	sctx.On("Close").Once()
 	WithSuppressAssert(se.Close)
 	require.True(t, se.IsClosed())
 	require.Equal(t, uint64(2), se.Inuse())
-	owner.AssertExpectations(t)
-	sctx.AssertExpectations(t)
+	require.True(t, se.IsClosed())
+
+	// new EnterOperation should be rejected after close but inuse > 0
+	WithSuppressAssert(func() {
+		_, _, err = se.EnterOperation(owner)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "session is closed")
+	})
 
 	// The exit should still work to decrease inUse
 	WithSuppressAssert(exit4)
 	require.Equal(t, uint64(1), se.Inuse())
+	// when inuse > 0, the session should not call sctx.Close() even if onResignOwner fails
+	owner.On("onResignOwner", sctx).Return(errors.New("mockErr")).Once()
+	sctx.On("Close").Once()
 	WithSuppressAssert(exit5)
 	require.Equal(t, uint64(0), se.Inuse())
+	owner.AssertExpectations(t)
+	sctx.AssertExpectations(t)
 }
 
 func TestInternalSessionOwnerWithSctx(t *testing.T) {
