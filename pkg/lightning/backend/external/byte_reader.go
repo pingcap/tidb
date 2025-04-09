@@ -31,7 +31,7 @@ import (
 var (
 	// ConcurrentReaderBufferSizePerConc is the buffer size for concurrent reader per
 	// concurrency.
-	ConcurrentReaderBufferSizePerConc = int(16 * size.MB)
+	ConcurrentReaderBufferSizePerConc = int(32 * size.MB)
 	// in readAllData, expected concurrency less than this value will not use
 	// concurrent reader.
 	readAllDataConcThreshold = uint64(4)
