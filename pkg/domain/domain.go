@@ -1383,6 +1383,7 @@ func NewDomainWithEtcdClient(store kv.Storage, schemaLease time.Duration, statsL
 			return nil, err
 		}
 		sctx, ok := r.(syssession.SessionContext)
+		intest.Assert(ok, "type: %T should be cast to syssession.SessionContext", r)
 		if !ok {
 			return nil, errors.Errorf("type: %T cannot be cast to syssession.SessionContext", r)
 		}
