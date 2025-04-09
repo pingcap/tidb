@@ -54,6 +54,7 @@ func NewConstraint(label string) (pd.LabelConstraint, error) {
 		return r, fmt.Errorf("%w: %s", ErrInvalidConstraintFormat, label)
 	}
 
+	// Does not allow adding rule of tiflash.
 	if op == pd.In && key == EngineLabelKey && strings.ToLower(val) == EngineLabelTiFlash {
 		return r, fmt.Errorf("%w: %s", ErrUnsupportedConstraint, label)
 	}

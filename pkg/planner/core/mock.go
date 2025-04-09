@@ -17,6 +17,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -426,7 +427,7 @@ func MockContext() *mock.Context {
 	ctx.GetSessionVars().CurrentDB = "test"
 	ctx.GetSessionVars().DivPrecisionIncrement = variable.DefDivPrecisionIncrement
 	do := domain.NewMockDomain()
-	if err := do.CreateStatsHandle(ctx, initStatsCtx); err != nil {
+	if err := do.CreateStatsHandle(context.Background(), initStatsCtx); err != nil {
 		panic(fmt.Sprintf("create mock context panic: %+v", err))
 	}
 	domain.BindDomain(ctx, do)

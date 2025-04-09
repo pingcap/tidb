@@ -88,12 +88,19 @@ func TestAnalysisPriorityQueue(t *testing.T) {
 	defer pq.Close()
 
 	t.Run("Initialize", func(t *testing.T) {
-		err := pq.Initialize()
+		// With timeout context
+		cancellableContext, cancel := context.WithTimeout(ctx, 100*time.Second)
+		// Cancel the context to test the error handling
+		cancel()
+		err := pq.Initialize(cancellableContext)
+		require.ErrorIs(t, err, context.Canceled)
+
+		err = pq.Initialize(ctx)
 		require.NoError(t, err)
 		require.True(t, pq.IsInitialized())
 
 		// Test double initialization
-		err = pq.Initialize()
+		err = pq.Initialize(ctx)
 		require.NoError(t, err)
 	})
 
@@ -140,7 +147,7 @@ func TestRefreshLastAnalysisDuration(t *testing.T) {
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
 	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
 	defer pq.Close()
-	require.NoError(t, pq.Initialize())
+	require.NoError(t, pq.Initialize(ctx))
 
 	// Check current jobs
 	isEmpty, err := pq.IsEmpty()
@@ -218,7 +225,7 @@ func testProcessDMLChanges(t *testing.T, partitioned bool) {
 
 	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
 	defer pq.Close()
-	require.NoError(t, pq.Initialize())
+	require.NoError(t, pq.Initialize(ctx))
 
 	// Check current jobs.
 	job1, err := pq.Pop()
@@ -310,7 +317,7 @@ func TestProcessDMLChangesWithRunningJobs(t *testing.T) {
 
 	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
 	defer pq.Close()
-	require.NoError(t, pq.Initialize())
+	require.NoError(t, pq.Initialize(ctx))
 
 	// Check there are no running jobs.
 	runningJobs := pq.GetRunningJobs()
@@ -393,7 +400,7 @@ func TestRequeueMustRetryJobs(t *testing.T) {
 
 	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
 	defer pq.Close()
-	require.NoError(t, pq.Initialize())
+	require.NoError(t, pq.Initialize(context.Background()))
 
 	job, err := pq.Pop()
 	require.NoError(t, err)
@@ -442,7 +449,7 @@ func TestProcessDMLChangesWithLockedTables(t *testing.T) {
 
 	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
 	defer pq.Close()
-	require.NoError(t, pq.Initialize())
+	require.NoError(t, pq.Initialize(context.Background()))
 
 	schema := pmodel.NewCIStr("test")
 	tbl1, err := dom.InfoSchema().TableByName(ctx, schema, pmodel.NewCIStr("t1"))
@@ -505,7 +512,7 @@ func TestProcessDMLChangesWithLockedPartitionsAndDynamicPruneMode(t *testing.T) 
 
 	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
 	defer pq.Close()
-	require.NoError(t, pq.Initialize())
+	require.NoError(t, pq.Initialize(context.Background()))
 
 	schema := pmodel.NewCIStr("test")
 	tbl, err := dom.InfoSchema().TableByName(ctx, schema, pmodel.NewCIStr("t1"))
@@ -572,7 +579,7 @@ func TestProcessDMLChangesWithLockedPartitionsAndStaticPruneMode(t *testing.T) {
 
 	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
 	defer pq.Close()
-	require.NoError(t, pq.Initialize())
+	require.NoError(t, pq.Initialize(ctx))
 
 	// Check current jobs.
 	job, err := pq.Peek()
@@ -611,7 +618,7 @@ func TestPQCanBeClosedAndReInitialized(t *testing.T) {
 	handle := dom.StatsHandle()
 	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
 	defer pq.Close()
-	require.NoError(t, pq.Initialize())
+	require.NoError(t, pq.Initialize(context.Background()))
 
 	// Close the priority queue.
 	pq.Close()
@@ -620,7 +627,7 @@ func TestPQCanBeClosedAndReInitialized(t *testing.T) {
 	require.False(t, pq.IsInitialized())
 
 	// Re-initialize the priority queue.
-	require.NoError(t, pq.Initialize())
+	require.NoError(t, pq.Initialize(context.Background()))
 
 	// Check if the priority queue is initialized.
 	require.True(t, pq.IsInitialized())
@@ -645,7 +652,7 @@ func TestPQHandlesTableDeletionGracefully(t *testing.T) {
 	require.NoError(t, handle.Update(ctx, dom.InfoSchema()))
 	pq := priorityqueue.NewAnalysisPriorityQueue(handle)
 	defer pq.Close()
-	require.NoError(t, pq.Initialize())
+	require.NoError(t, pq.Initialize(ctx))
 
 	// Check the priority queue is not empty.
 	l, err := pq.Len()

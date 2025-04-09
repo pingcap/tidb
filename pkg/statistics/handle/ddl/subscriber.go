@@ -315,7 +315,7 @@ func (h subscriber) delayedDeleteStats4PhysicalID(
 	sctx sessionctx.Context,
 	id int64,
 ) error {
-	startTS, err2 := storage.UpdateStatsMetaVersionForGC(ctx, sctx, id)
+	startTS, err2 := storage.UpdateStatsMetaVersion(ctx, sctx, id)
 	if err2 != nil {
 		return errors.Trace(err2)
 	}
