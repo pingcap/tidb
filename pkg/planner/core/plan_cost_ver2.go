@@ -204,7 +204,11 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableRangeScanCostFactor)
 	} else {
 		// This is a table full scan
-		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableFullScanCostFactor)
+		if p.StoreType == kv.TiFlash {
+			p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableTiFlashScanCostFactor)
+		} else {
+			p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableFullScanCostFactor)
+		}
 	}
 	return p.PlanCostVer2, nil
 }
@@ -231,6 +235,8 @@ func (p *PhysicalIndexReader) GetPlanCostVer2(taskType property.TaskType, option
 
 	p.PlanCostVer2 = costusage.DivCostVer2(costusage.SumCostVer2(childCost, netCost), concurrency)
 	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexReaderCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -266,6 +272,8 @@ func (p *PhysicalTableReader) GetPlanCostVer2(taskType property.TaskType, option
 		!hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) { // show the real cost in explain-statements
 		p.PlanCostVer2 = costusage.DivCostVer2(p.PlanCostVer2, 1000000000)
 	}
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableReaderCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -327,6 +335,10 @@ func (p *PhysicalIndexLookUpReader) GetPlanCostVer2(taskType property.TaskType, 
 	}
 
 	p.PlanCostInit = true
+	if p.PushedLimit != nil && tableRows <= float64(p.PushedLimit.Count) {
+		// Multiply by limit cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().LimitCostFactor)
+	}
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexLookupCostFactor)
 	return p.PlanCostVer2, nil
@@ -386,6 +398,8 @@ func (p *PhysicalIndexMergeReader) GetPlanCostVer2(taskType property.TaskType, o
 	// todo: refine the cost computation out from cost model.
 	if p.PushedLimit != nil {
 		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, 0.99)
+		// Multiply by limit cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().LimitCostFactor)
 	}
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model

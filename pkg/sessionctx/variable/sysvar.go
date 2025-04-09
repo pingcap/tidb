@@ -2063,6 +2063,14 @@ var defaultSysVars = []*SysVar{
 		s.IndexScanCostFactor = tidbOptFloat64(val, vardef.DefOptIndexScanCostFactor)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptIndexReaderCostFactor, Value: strconv.FormatFloat(vardef.DefOptIndexReaderCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.IndexReaderCostFactor = tidbOptFloat64(val, vardef.DefOptIndexReaderCostFactor)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptTableReaderCostFactor, Value: strconv.FormatFloat(vardef.DefOptTableReaderCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.TableReaderCostFactor = tidbOptFloat64(val, vardef.DefOptTableReaderCostFactor)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptTableFullScanCostFactor, Value: strconv.FormatFloat(vardef.DefOptTableFullScanCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
 		s.TableFullScanCostFactor = tidbOptFloat64(val, vardef.DefOptTableFullScanCostFactor)
 		return nil
@@ -2073,6 +2081,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptTableRowIDScanCostFactor, Value: strconv.FormatFloat(vardef.DefOptTableRowIDScanCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
 		s.TableRowIDScanCostFactor = tidbOptFloat64(val, vardef.DefOptTableRowIDScanCostFactor)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptTableTiFlashScanCostFactor, Value: strconv.FormatFloat(vardef.DefOptTableTiFlashScanCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.TableTiFlashScanCostFactor = tidbOptFloat64(val, vardef.DefOptTableTiFlashScanCostFactor)
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptIndexLookupCostFactor, Value: strconv.FormatFloat(vardef.DefOptIndexLookupCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
@@ -2089,6 +2101,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptTopNCostFactor, Value: strconv.FormatFloat(vardef.DefOptTopNCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
 		s.TopNCostFactor = tidbOptFloat64(val, vardef.DefOptTopNCostFactor)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptLimitCostFactor, Value: strconv.FormatFloat(vardef.DefOptLimitCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.LimitCostFactor = tidbOptFloat64(val, vardef.DefOptLimitCostFactor)
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptStreamAggCostFactor, Value: strconv.FormatFloat(vardef.DefOptStreamAggCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
