@@ -48,11 +48,11 @@ type tableKVEncoder struct {
 	columnsAndUserVars []*ast.ColumnNameOrUserVar
 	fieldMappings      []*FieldMapping
 	insertColumns      []*table.Column
+	needCast           []bool
 	// Following cache use to avoid `runtime.makeslice`.
 	insertColumnRowCache []types.Datum
 	rowCache             []types.Datum
 	hasValueCache        []bool
-	needCastCache        []bool
 }
 
 var _ KVEncoder = &tableKVEncoder{}
@@ -72,12 +72,22 @@ func NewTableKVEncoder(
 		return nil, err
 	}
 
+	needCast := make([]bool, len(baseKVEncoder.Columns))
+	for i := 0; i < len(ti.InsertColumns); i++ {
+		insertCol := ti.InsertColumns[i].ToInfo()
+		offset := ti.InsertColumns[i].Offset
+		if offset < len(needCast) {
+			needCast[offset] = !(baseKVEncoder.Columns[offset].ToInfo().FieldType.Equal(&insertCol.FieldType))
+		}
+	}
+
 	return &tableKVEncoder{
 		BaseKVEncoder:      baseKVEncoder,
 		columnAssignments:  colAssignExprs,
 		columnsAndUserVars: ti.ColumnsAndUserVars,
 		fieldMappings:      ti.FieldMappings,
 		insertColumns:      ti.InsertColumns,
+		needCast:           needCast,
 	}, nil
 }
 
@@ -165,22 +175,17 @@ func (en *tableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 // copied from InsertValues
 func (en *tableKVEncoder) getRow(vals []types.Datum, rowID int64) ([]types.Datum, error) {
 	rowLen := len(en.Columns)
-	if len(en.rowCache) < rowLen || len(en.hasValueCache) < rowLen || len(en.needCastCache) < rowLen {
+	if len(en.rowCache) < rowLen || len(en.hasValueCache) < rowLen {
 		en.rowCache = make([]types.Datum, rowLen)
 		en.hasValueCache = make([]bool, rowLen)
-		en.needCastCache = make([]bool, rowLen)
 	}
 	row := en.rowCache[:rowLen]
 	hasValue := en.hasValueCache[:rowLen]
-	needCast := en.needCastCache[:rowLen]
 	for i := range row {
 		row[i] = types.Datum{}
 	}
 	for i := range hasValue {
 		hasValue[i] = false
-	}
-	for i := range needCast {
-		needCast[i] = false
 	}
 
 	for i := 0; i < len(en.insertColumns); i++ {
@@ -193,13 +198,12 @@ func (en *tableKVEncoder) getRow(vals []types.Datum, rowID int64) ([]types.Datum
 		offset := en.insertColumns[i].Offset
 		row[offset] = casted
 		hasValue[offset] = true
-		needCast[offset] = !(en.Columns[offset].ToInfo().FieldType.Equal(&insertCol.FieldType))
 	}
 
-	return en.fillRow(row, hasValue, needCast, rowID)
+	return en.fillRow(row, hasValue, rowID)
 }
 
-func (en *tableKVEncoder) fillRow(row []types.Datum, hasValue, needCast []bool, rowID int64) ([]types.Datum, error) {
+func (en *tableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int64) ([]types.Datum, error) {
 	var value types.Datum
 	var err error
 
@@ -209,7 +213,7 @@ func (en *tableKVEncoder) fillRow(row []types.Datum, hasValue, needCast []bool, 
 		doCast := true
 		if hasValue[i] {
 			theDatum = &row[i]
-			doCast = needCast[i]
+			doCast = en.needCast[i]
 		}
 		value, err = en.ProcessColDatum(col, rowID, theDatum, doCast)
 		if err != nil {
