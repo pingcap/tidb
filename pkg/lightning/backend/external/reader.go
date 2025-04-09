@@ -175,6 +175,8 @@ func readOneFile(
 	size := 0
 	droppedSize := 0
 
+	cntAllKeys := 0
+	var firstKey, lastKey []byte
 	for {
 		k, v, err := rd.nextKV()
 		if err != nil {
@@ -183,12 +185,17 @@ func readOneFile(
 			}
 			return err
 		}
+		if cntAllKeys == 0 {
+			copy(firstKey, k)
+		}
+		copy(lastKey, k)
+		cntAllKeys++
 		if bytes.Compare(k, startKey) < 0 {
 			droppedSize += len(k) + len(v)
 			continue
 		}
 		if bytes.Compare(k, endKey) >= 0 {
-			break
+			continue
 		}
 		// TODO(lance6716): we are copying every KV from rd's buffer to memBuf, can we
 		// directly read into memBuf?
@@ -203,8 +210,14 @@ func readOneFile(
 	output.size += size
 	output.droppedSizePerFile = append(output.droppedSizePerFile, droppedSize)
 	output.mu.Unlock()
-	//if droppedSize != 0 {
-	//	rd.byteReader.logger.Info("read one file dropped size", zap.String("data-file-name", dataFile), zap.Int("dropped size", droppedSize))
-	//}
+	if droppedSize != 0 {
+		rd.byteReader.logger.Info("readOneFile",
+			zap.String("first key", hex.EncodeToString(firstKey)),
+			zap.String("last key", hex.EncodeToString(lastKey)),
+			zap.Int("keyNumInFile", cntAllKeys),
+			zap.Int("dropped size", droppedSize),
+			zap.String("data-file-name", dataFile),
+		)
+	}
 	return nil
 }
