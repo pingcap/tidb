@@ -16,11 +16,9 @@ package ddl
 
 import (
 	"context"
-	"reflect"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -67,14 +65,10 @@ func (om *ownerManager) Start(ctx context.Context, store kv.Storage) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	failpoint.InjectCall("injectEtcdClient", &cli)
 	if cli == nil {
 		return errors.New("etcd client is nil, maybe the server is not started with PD")
 	}
-	// nil in unit tests
-	if store != nil && !reflect.ValueOf(store).IsNil() {
-		etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(store.GetCodec()))
-	}
+	etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(store.GetCodec()))
 	om.id = uuid.New().String()
 	om.etcdCli = cli
 	om.ownerMgr = owner.NewOwnerManager(ctx, om.etcdCli, Prompt, om.id, DDLOwnerKey)
