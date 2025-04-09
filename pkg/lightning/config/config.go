@@ -1245,6 +1245,26 @@ func (t *TikvImporter) adjust() error {
 	return nil
 }
 
+// IsTiDBBackend returns true if using TiDB backend.
+func (t *TikvImporter) IsTiDBBackend() bool {
+	return t.Backend == BackendTiDB
+}
+
+// IsLocalBackend returns true if using local backend.
+func (t *TikvImporter) IsLocalBackend() bool {
+	return t.Backend == BackendLocal
+}
+
+// IsRemoteBackend returns true if using remote backend.
+func (t *TikvImporter) IsRemoteBackend() bool {
+	return t.Backend == BackendRemote
+}
+
+// IsPhysicalBackend returns true if using physical import.
+func (t *TikvImporter) IsPhysicalBackend() bool {
+	return t.IsLocalBackend() || t.IsRemoteBackend()
+}
+
 // Checkpoint is the config for checkpoint.
 type Checkpoint struct {
 	Schema           string                    `toml:"schema" json:"schema"`
@@ -1691,24 +1711,4 @@ func (cfg *Config) Adjust(ctx context.Context) error {
 		return err
 	}
 	return cfg.Conflict.adjust(&cfg.TikvImporter)
-}
-
-// IsTiDBBackend returns true if using TiDB backend.
-func (t *TikvImporter) IsTiDBBackend() bool {
-	return t.Backend == BackendTiDB
-}
-
-// IsLocalBackend returns true if using local backend.
-func (t *TikvImporter) IsLocalBackend() bool {
-	return t.Backend == BackendLocal
-}
-
-// IsRemoteBackend returns true if using remote backend.
-func (t *TikvImporter) IsRemoteBackend() bool {
-	return t.Backend == BackendRemote
-}
-
-// IsPhysicalBackend returns true if using physical import.
-func (t *TikvImporter) IsPhysicalBackend() bool {
-	return t.IsLocalBackend() || t.IsRemoteBackend()
 }
