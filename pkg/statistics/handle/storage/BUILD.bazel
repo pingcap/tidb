@@ -32,6 +32,11 @@ go_library(
         "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/usage/predicatecolumn",
         "//pkg/statistics/handle/util",
+<<<<<<< HEAD
+=======
+        "//pkg/statistics/util",
+        "//pkg/table",
+>>>>>>> fe3f47b1d76 (stats: use `GetColOriginDefaultValue` to get default value of a column (#60438))
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/compress",
