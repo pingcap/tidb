@@ -250,7 +250,6 @@ func newChunkEncoder(
 func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 	var (
 		encodedBytesCounter, encodedRowsCounter prometheus.Counter
-		readDur, encodeDur                      time.Duration
 		rowCount                                int
 		rowBatch                                = make([]*kv.Pairs, 0, MinDeliverRowCnt)
 		rowBatchByteSize                        uint64
@@ -278,12 +277,10 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		}
 
 		if metrics != nil {
-			metrics.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())
-			metrics.RowReadSecondsHistogram.Observe(readDur.Seconds())
+			//metrics.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())
+			//metrics.RowReadSecondsHistogram.Observe(readDur.Seconds())
 			encodedRowsCounter.Add(float64(rowCount))
 		}
-		p.encodeTotalDur += encodeDur
-		p.readTotalDur += readDur
 
 		recordCount := 0
 		if p.groupChecksum != nil {
@@ -319,14 +316,11 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		rowBatch = make([]*kv.Pairs, 0, max(MinDeliverRowCnt, len(rowBatch)))
 		rowBatchByteSize = 0
 		rowCount = 0
-		readDur = 0
-		encodeDur = 0
 		return nil
 	}
 
 	var readRowCache []types.Datum
 	for {
-		readDurStart := time.Now()
 		data, closed, err := p.readFn(ctx, readRowCache)
 		if err != nil {
 			return errors.Trace(err)
@@ -334,9 +328,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		if closed {
 			break
 		}
-		readDur += time.Since(readDurStart)
 
-		encodeDurStart := time.Now()
 		kvs, encodeErr := p.encoder.Encode(data.row, data.rowID)
 		currOffset = data.endOffset
 		data.resetFn()
@@ -344,7 +336,6 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 			// todo: record and ignore encode error if user set max-errors param
 			return common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(p.chunkName, data.endOffset)
 		}
-		encodeDur += time.Since(encodeDurStart)
 
 		rowCount++
 		rowBatch = append(rowBatch, kvs)
@@ -369,8 +360,6 @@ func (p *chunkEncoder) summaryFields() []zap.Field {
 		mergedChecksum = p.groupChecksum.MergedChecksum()
 	}
 	return []zap.Field{
-		zap.Duration("readDur", p.readTotalDur),
-		zap.Duration("encodeDur", p.encodeTotalDur),
 		zap.Object("checksum", &mergedChecksum),
 	}
 }

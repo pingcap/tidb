@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
@@ -292,13 +293,17 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 		chkSize := e.selectExec.InitCap()
 		maxChkSize := e.selectExec.MaxChunkSize()
 		var idAllocator int64
+		var readDur time.Duration
+		begin := time.Now()
 		for {
 			// rows will be consumed concurrently, we cannot use chunk pool in session ctx.
+			readBegin := time.Now()
 			chk := chunk.New(e.selectExec.RetFieldTypes(), chkSize, maxChkSize)
 			err := exec.Next(egCtx, e.selectExec, chk)
 			if err != nil {
 				return err
 			}
+			readDur += time.Since(readBegin)
 			if chk.NumRows() == 0 {
 				break
 			}
@@ -317,6 +322,7 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 				chkSize = min(chkSize, maxChkSize)
 			}
 		}
+		logutil.Logger(ctx).Info("read chunk from select statement finish", zap.Duration("read-time", readDur), zap.Duration("total-time", time.Since(begin)))
 		return nil
 	})
 	if err := eg.Wait(); err != nil {
