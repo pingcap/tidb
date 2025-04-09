@@ -1371,6 +1371,21 @@ func TestGetGlobalKeyspaceName(t *testing.T) {
 	})
 }
 
+func TestGetGlobalTiKVWorkerURL(t *testing.T) {
+	conf := NewConfig()
+	require.Empty(t, conf.TiKVWorkerURL)
+
+	UpdateGlobal(func(conf *Config) {
+		conf.TiKVWorkerURL = "http://tikv-worker-0:10080"
+	})
+
+	require.Equal(t, "http://tikv-worker-0:10080", GetGlobalConfig().TiKVWorkerURL)
+
+	UpdateGlobal(func(conf *Config) {
+		conf.TiKVWorkerURL = ""
+	})
+}
+
 func TestAutoScalerConfig(t *testing.T) {
 	conf := NewConfig()
 	require.False(t, conf.UseAutoScaler)
