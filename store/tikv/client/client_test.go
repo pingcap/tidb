@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/tidb/store/tikv/config"
 	"github.com/pingcap/tidb/store/tikv/tikvrpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -466,4 +467,16 @@ func (s *testClientSuite) TestBatchCommandsBuilder(c *C) {
 	c.Assert(len(builder.requestIDs), Equals, 0)
 	c.Assert(len(builder.forwardingReqs), Equals, 0)
 	c.Assert(builder.idAlloc, Not(Equals), 0)
+}
+
+func (s *testClientSuite) TestGetConnAfterClose(c *C) {
+	client := NewRPCClient(config.Security{})
+
+	addr := "127.0.0.1:6379"
+	connArray, err := client.getConnArray(addr, true)
+	c.Assert(err, IsNil)
+	c.Assert(client.Close(), IsNil)
+	conn := connArray.Get()
+	state := conn.GetState()
+	c.Assert(state, Equals, connectivity.Shutdown)
 }

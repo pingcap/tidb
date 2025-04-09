@@ -586,14 +586,10 @@ func (ssbd *stmtSummaryByDigest) toCurrentDatum(beginTimeForCurInterval int64, u
 
 	// `ssElement` is lazy expired, so expired elements could also be read.
 	// `beginTime` won't change since `ssElement` is created, so locking is not needed here.
-	isAuthed := true
-	if user != nil && !isSuper {
-		_, isAuthed = ssElement.authUsers[user.Username]
-	}
-	if ssElement == nil || ssElement.beginTime < beginTimeForCurInterval || !isAuthed {
+	if ssElement == nil || ssElement.beginTime < beginTimeForCurInterval {
 		return nil
 	}
-	return ssElement.toDatum(ssbd)
+	return ssElement.toDatum(ssbd, user, isSuper)
 }
 
 func (ssbd *stmtSummaryByDigest) toHistoryDatum(historySize int, user *auth.UserIdentity, isSuper bool) [][]types.Datum {
@@ -602,12 +598,9 @@ func (ssbd *stmtSummaryByDigest) toHistoryDatum(historySize int, user *auth.User
 
 	rows := make([][]types.Datum, 0, len(ssElements))
 	for _, ssElement := range ssElements {
-		isAuthed := true
-		if user != nil && !isSuper {
-			_, isAuthed = ssElement.authUsers[user.Username]
-		}
-		if isAuthed {
-			rows = append(rows, ssElement.toDatum(ssbd))
+		row := ssElement.toDatum(ssbd, user, isSuper)
+		if len(row) > 0 {
+			rows = append(rows, row)
 		}
 	}
 	return rows
@@ -868,9 +861,17 @@ func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeco
 	ssElement.sumWriteSQLRespTotal += sei.StmtExecDetails.WriteSQLRespDuration
 }
 
-func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest) []types.Datum {
+func (ssElement *stmtSummaryByDigestElement) toDatum(ssbd *stmtSummaryByDigest, user *auth.UserIdentity, isSuper bool) []types.Datum {
 	ssElement.Lock()
 	defer ssElement.Unlock()
+
+	isAuthed := true
+	if user != nil && !isSuper {
+		_, isAuthed = ssElement.authUsers[user.Username]
+	}
+	if !isAuthed {
+		return nil
+	}
 
 	plan, err := plancodec.DecodePlan(ssElement.samplePlan)
 	if err != nil {

@@ -2264,11 +2264,13 @@ func (e *TiFlashSystemTableRetriever) initialize(sctx sessionctx.Context, tiflas
 					if err != nil {
 						return errors.Trace(err)
 					}
-					_, err = util.InternalHTTPClient().Do(req)
+					var tmp *http.Response
+					tmp, err = util.InternalHTTPClient().Do(req)
 					if err != nil {
 						sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 						continue
 					}
+					defer terror.Call(tmp.Body.Close)
 					e.instanceInfos = append(e.instanceInfos, tiflashInstanceInfo{
 						id:  id,
 						url: url,

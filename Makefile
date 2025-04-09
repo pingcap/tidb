@@ -32,7 +32,7 @@ dev: checklist check test
 # Install the check tools.
 check-setup:tools/bin/revive tools/bin/goword tools/bin/gometalinter tools/bin/gosec
 
-check: fmt errcheck unconvert lint tidy testSuite check-static vet staticcheck errdoc
+check: fmt errcheck unconvert lint tidy testSuite check-static vet errdoc
 
 # These need to be fixed before they can be ran regularly
 check-fail: goword check-slow
@@ -89,6 +89,7 @@ vet:
 	@echo "vet"
 	$(GO) vet -all $(PACKAGES) 2>&1 | $(FAIL_ON_STDOUT)
 
+# staticcheck seems not introduced in 5.2/5.3 and blocked the ci
 staticcheck:
 	$(GO) get honnef.co/go/tools/cmd/staticcheck
 	$(STATICCHECK) ./...

@@ -1464,6 +1464,60 @@ func (s *testRegionCacheSuite) TestSwitchPeerWhenNoLeader(c *C) {
 	}
 }
 
+func (s *testRegionCacheSuite) TestRemoveIntersectingRegions(c *C) {
+	// Split at "b", "c", "d", "e"
+	regions := s.cluster.AllocIDs(4)
+	regions = append([]uint64{s.region1}, regions...)
+
+	peers := [][]uint64{{s.peer1, s.peer2}}
+	for i := 0; i < 4; i++ {
+		peers = append(peers, s.cluster.AllocIDs(2))
+	}
+
+	for i := 0; i < 4; i++ {
+		s.cluster.Split(regions[i], regions[i+1], []byte{'b' + byte(i)}, peers[i+1], peers[i+1][0])
+	}
+
+	for ch := 'a'; ch <= 'e'; ch++ {
+		loc, err := s.cache.LocateKey(s.bo, []byte{byte(ch)})
+		c.Assert(err, IsNil)
+		c.Assert(loc.Region.GetID(), Equals, regions[ch-'a'])
+	}
+
+	// merge all except the last region together
+	for i := 1; i <= 3; i++ {
+		s.cluster.Merge(regions[0], regions[i])
+	}
+
+	// Now the region cache contains stale information
+	loc, err := s.cache.LocateKey(s.bo, []byte{'c'})
+	c.Assert(err, IsNil)
+	c.Assert(loc.Region.GetID(), Not(Equals), regions[0]) // This is incorrect, but is expected
+	loc, err = s.cache.LocateKey(s.bo, []byte{'e'})
+	c.Assert(err, IsNil)
+	c.Assert(loc.Region.GetID(), Equals, regions[4]) // 'e' is not merged yet, so it's still correct
+
+	// If we insert the new region into the cache, the old intersecting regions will be removed.
+	// And the result will be correct.
+	region, err := s.cache.loadRegion(s.bo, []byte("c"), false)
+	c.Assert(err, IsNil)
+	c.Assert(region.GetID(), Equals, regions[0])
+	s.cache.insertRegionToCache(region)
+	loc, err = s.cache.LocateKey(s.bo, []byte{'c'})
+	c.Assert(err, IsNil)
+	c.Assert(loc.Region.GetID(), Equals, regions[0])
+
+	// Now, we merge the last region. This case tests against how we handle the empty end_key.
+	s.cluster.Merge(regions[0], regions[4])
+	region, err = s.cache.loadRegion(s.bo, []byte("e"), false)
+	c.Assert(err, IsNil)
+	c.Assert(loc.Region.GetID(), Equals, regions[0])
+	s.cache.insertRegionToCache(region)
+	loc, err = s.cache.LocateKey(s.bo, []byte{'e'})
+	c.Assert(err, IsNil)
+	c.Assert(loc.Region.GetID(), Equals, regions[0])
+}
+
 func BenchmarkOnRequestFail(b *testing.B) {
 	/*
 			This benchmark simulate many concurrent requests call OnSendRequestFail method

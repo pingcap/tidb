@@ -265,8 +265,8 @@
       {
         "SQL": "select * from t where a = 1 and ((b = 1) or (b = 2 and c = 3));",
         "Plan": [
-          "TableReader_6 1.71 root  data:TableRangeScan_5",
-          "└─TableRangeScan_5 1.71 cop[tikv] table:t range:[1 1,1 1], [1 2 3,1 2 3], keep order:false"
+          "TableReader_6 2.00 root  data:TableRangeScan_5",
+          "└─TableRangeScan_5 2.00 cop[tikv] table:t range:[1 1,1 1], [1 2 3,1 2 3], keep order:false"
         ],
         "Result": [
           "1 1 1"
@@ -293,8 +293,8 @@
       {
         "SQL": "select * from t use index(primary) where ((a = 1) or (a = 2 and b = 2)) and c = 3;",
         "Plan": [
-          "TableReader_7 0.68 root  data:Selection_6",
-          "└─Selection_6 0.68 cop[tikv]  eq(test.t.c, 3), or(eq(test.t.a, 1), and(eq(test.t.a, 2), eq(test.t.b, 2)))",
+          "TableReader_7 0.75 root  data:Selection_6",
+          "└─Selection_6 0.75 cop[tikv]  eq(test.t.c, 3), or(eq(test.t.a, 1), and(eq(test.t.a, 2), eq(test.t.b, 2)))",
           "  └─TableRangeScan_5 2.00 cop[tikv] table:t range:[1,1], [2,2], keep order:false"
         ],
         "Result": [
@@ -304,7 +304,7 @@
       {
         "SQL": "select * from t where (a,b) in ((1,1),(2,2)) and c > 2 and (a,b,c) in ((1,1,1),(2,2,3));",
         "Plan": [
-          "Selection_6 0.44 root  gt(test.t.c, 2), or(and(eq(test.t.a, 1), eq(test.t.b, 1)), and(eq(test.t.a, 2), eq(test.t.b, 2)))",
+          "Selection_6 0.56 root  gt(test.t.c, 2), or(and(eq(test.t.a, 1), eq(test.t.b, 1)), and(eq(test.t.a, 2), eq(test.t.b, 2)))",
           "└─Batch_Point_Get_5 2.00 root table:t, clustered index:PRIMARY(a, b, c) keep order:false, desc:false"
         ],
         "Result": [
@@ -314,8 +314,8 @@
       {
         "SQL": "select * from t where (a,b) in ((1,1),(2,2)) and c > 2;",
         "Plan": [
-          "TableReader_6 1.19 root  data:TableRangeScan_5",
-          "└─TableRangeScan_5 1.19 cop[tikv] table:t range:(1 1 2,1 1 +inf], (2 2 2,2 2 +inf], keep order:false"
+          "TableReader_6 1.00 root  data:TableRangeScan_5",
+          "└─TableRangeScan_5 1.00 cop[tikv] table:t range:(1 1 2,1 1 +inf], (2 2 2,2 2 +inf], keep order:false"
         ],
         "Result": [
           "2 2 3"
@@ -324,8 +324,8 @@
       {
         "SQL": "select * from t where ((a = 1 and b = 1) or (a = 2 and b = 2)) and c > 2;",
         "Plan": [
-          "TableReader_6 1.19 root  data:TableRangeScan_5",
-          "└─TableRangeScan_5 1.19 cop[tikv] table:t range:(1 1 2,1 1 +inf], (2 2 2,2 2 +inf], keep order:false"
+          "TableReader_6 1.00 root  data:TableRangeScan_5",
+          "└─TableRangeScan_5 1.00 cop[tikv] table:t range:(1 1 2,1 1 +inf], (2 2 2,2 2 +inf], keep order:false"
         ],
         "Result": [
           "2 2 3"
@@ -364,8 +364,8 @@
       {
         "SQL": "select * from t2 where t='aaaa';",
         "Plan": [
-          "TableReader_7 1.00 root  data:Selection_6",
-          "└─Selection_6 1.00 cop[tikv]  eq(test.t2.t, \"aaaa\")",
+          "TableReader_7 0.00 root  data:Selection_6",
+          "└─Selection_6 0.00 cop[tikv]  eq(test.t2.t, \"aaaa\")",
           "  └─TableRangeScan_5 2.00 cop[tikv] table:t2 range:[0,+inf], keep order:false"
         ],
         "Result": [
@@ -375,8 +375,8 @@
       {
         "SQL": "select * from t2 where t='aaaa' or t = 'a';",
         "Plan": [
-          "TableReader_7 1.60 root  data:Selection_6",
-          "└─Selection_6 1.60 cop[tikv]  or(eq(test.t2.t, \"aaaa\"), eq(test.t2.t, \"a\"))",
+          "TableReader_7 0.80 root  data:Selection_6",
+          "└─Selection_6 0.80 cop[tikv]  or(eq(test.t2.t, \"aaaa\"), eq(test.t2.t, \"a\"))",
           "  └─TableRangeScan_5 2.00 cop[tikv] table:t2 range:[0,+inf], keep order:false"
         ],
         "Result": [

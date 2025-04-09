@@ -520,6 +520,121 @@
     ]
   },
   {
+    "Name": "TestUsingAndNaturalJoinSchema",
+    "Cases": [
+      {
+        "SQL": "select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) natural join (t3 natural join t4);",
+        "Res": [
+          "3 1 2 1 1 3 11 3",
+          "3 1 2 1 1 3 2 3"
+        ]
+      },
+      {
+        "SQL": "select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) join (t3 natural join t4) using (b);",
+        "Res": [
+          "10 1 2 1 1 3 11 3",
+          "10 1 2 1 1 3 2 3",
+          "3 1 2 1 1 3 11 3",
+          "3 1 2 1 1 3 2 3"
+        ]
+      },
+      {
+        "SQL": "select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) join (t3 natural join t4) using (c);",
+        "Res": [
+          "3 1 2 1 1 3 11 3",
+          "3 1 2 1 1 3 2 3"
+        ]
+      },
+      {
+        "SQL": "select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) join (t3 natural join t4) using (c,b);",
+        "Res": [
+          "3 1 2 1 1 3 11 3",
+          "3 1 2 1 1 3 2 3"
+        ]
+      },
+      {
+        "SQL": "select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) left outer join (t3 natural join t4) using (b);",
+        "Res": [
+          "10 1 2 1 1 3 11 3",
+          "10 1 2 1 1 3 2 3",
+          "3 1 2 1 1 3 11 3",
+          "3 1 2 1 1 3 2 3"
+        ]
+      },
+      {
+        "SQL": "select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) left outer join (t3 natural join t4) using (c);",
+        "Res": [
+          "10 1 2 1 <nil> <nil> <nil> <nil>",
+          "3 1 2 1 1 3 11 3",
+          "3 1 2 1 1 3 2 3"
+        ]
+      },
+      {
+        "SQL": "select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) left outer join (t3 natural join t4) using (c,b);",
+        "Res": [
+          "10 1 2 1 <nil> <nil> <nil> <nil>",
+          "3 1 2 1 1 3 11 3",
+          "3 1 2 1 1 3 2 3"
+        ]
+      },
+      {
+        "SQL": "select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) right outer join (t3 natural join t4) using (b);",
+        "Res": [
+          "10 1 2 1 1 3 11 3",
+          "10 1 2 1 1 3 2 3",
+          "3 1 2 1 1 3 11 3",
+          "3 1 2 1 1 3 2 3"
+        ]
+      },
+      {
+        "SQL": "select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) right outer join (t3 natural join t4) using (c);",
+        "Res": [
+          "3 1 2 1 1 3 11 3",
+          "3 1 2 1 1 3 2 3"
+        ]
+      },
+      {
+        "SQL": "select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) right outer join (t3 natural join t4) using (c,b);",
+        "Res": [
+          "3 1 2 1 1 3 11 3",
+          "3 1 2 1 1 3 2 3"
+        ]
+      },
+      {
+        "SQL": "select * from (t1 natural join t2) natural join (t3 natural join t4);",
+        "Res": [
+          "1 3 2 11",
+          "1 3 2 2"
+        ]
+      },
+      {
+        "SQL": "select * from (t1 natural join t2) join (t3 natural join t4) using (b);",
+        "Res": [
+          "1 10 2 3 11",
+          "1 10 2 3 2",
+          "1 3 2 3 11",
+          "1 3 2 3 2"
+        ]
+      },
+      {
+        "SQL": "select * from (t1 natural join t2) left outer join (t3 natural join t4) using (b);",
+        "Res": [
+          "1 10 2 3 11",
+          "1 10 2 3 2",
+          "1 3 2 3 11",
+          "1 3 2 3 2"
+        ]
+      },
+      {
+        "SQL": "select * from (t1 natural join t2) right outer join (t3 natural join t4) using (c,b);",
+        "Res": [
+          "3 1 11 2",
+          "3 1 2 2"
+        ]
+      }
+    ]
+  },
+  {
     "Name": "TestIndexScanWithYearCol",
     "Cases": [
       {

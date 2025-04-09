@@ -1,0 +1,102 @@
+# These tests test the aggregate function's behavior according to collation.
+# The result of min/max of enum/set is wrong, please fix them soon.
+
+# prepare database
+create database collation_agg_func;
+use collation_agg_func;
+
+create table t(id int, value varchar(20) charset utf8mb4 collate utf8mb4_general_ci, value1 varchar(20) charset utf8mb4 collate utf8mb4_bin);
+insert into t values (1, 'abc', 'abc '),(4, 'Abc', 'abc'),(3,'def', 'def '), (5, 'abc', 'ABC');
+
+# group_concat
+desc format='brief' select group_concat(value order by 1) from t;
+select group_concat(value order by 1) from t;
+desc format='brief' select group_concat(value) from t;
+select group_concat(value) from t;
+desc format='brief' select group_concat(value collate utf8mb4_bin) from t;
+select group_concat(value collate utf8mb4_bin) from t;
+desc format='brief' select group_concat(distinct value order by 1) from t;
+select upper(group_concat(distinct value order by 1)) from t;
+desc format='brief' select group_concat(distinct value collate utf8mb4_bin order by 1) from t;
+select upper(group_concat(distinct value collate utf8mb4_bin order by 1)) from t;
+desc format='brief' select group_concat(distinct value) from t;
+select upper(group_concat(distinct value)) from t;
+desc format='brief' select group_concat(distinct value collate utf8mb4_bin) from t;
+select upper(group_concat(distinct value collate utf8mb4_bin)) from t;
+
+# count(distinct)
+desc format='brief' select count(distinct value) from t;
+select count(distinct value) from t;
+desc format='brief' select count(distinct value collate utf8mb4_bin) from t;
+select count(distinct value collate utf8mb4_bin) from t;
+desc format='brief' select count(distinct value, value1) from t;
+select count(distinct value, value1) from t;
+desc format='brief' select count(distinct value collate utf8mb4_bin, value1) from t;
+select count(distinct value collate utf8mb4_bin, value1) from t;
+
+# approxCountDistinct
+desc format='brief' select approx_count_distinct(value) from t;
+select approx_count_distinct(value) from t;
+desc format='brief' select approx_count_distinct(value collate utf8mb4_bin) from t;
+select approx_count_distinct(value collate utf8mb4_bin) from t;
+desc format='brief' select approx_count_distinct(value, value1) from t;
+select approx_count_distinct(value, value1) from t;
+desc format='brief' select approx_count_distinct(value collate utf8mb4_bin, value1) from t;
+select approx_count_distinct(value collate utf8mb4_bin, value1) from t;
+
+# minMax
+create table tt(a char(10), b enum('a', 'B', 'c'), c set('a', 'B', 'c'), d json) collate utf8mb4_general_ci;
+insert into tt values ("a", "a", "a", JSON_OBJECT("a", "a"));
+--error 1265
+insert into tt values ("A", "A", "A", JSON_OBJECT("A", "A"));
+--error 1265
+insert into tt values ("b", "b", "b", JSON_OBJECT("b", "b"));
+insert into tt values ("B", "B", "B", JSON_OBJECT("B", "B"));
+insert into tt values ("c", "c", "c", JSON_OBJECT("c", "c"));
+--error 1265
+insert into tt values ("C", "C", "C", JSON_OBJECT("C", "C"));
+split table tt by (0), (1), (2), (3), (4), (5);
+desc format='brief' select min(a) from tt;
+select min(a) from tt;
+desc format='brief' select min(a collate utf8mb4_bin) from tt;
+select min(a collate utf8mb4_bin) from tt;
+desc format='brief' select max(a) from tt;
+select max(a) from tt;
+desc format='brief' select max(a collate utf8mb4_bin) from tt;
+select max(a collate utf8mb4_bin) from tt;
+desc format='brief' select min(b) from tt;
+select min(b) from tt;
+desc format='brief' select min(b collate utf8mb4_bin) from tt;
+# Fix me later.
+# select min(b collate utf8mb4_bin) from tt;
+desc format='brief' select max(b) from tt;
+select max(b) from tt;
+desc format='brief' select max(b collate utf8mb4_bin) from tt;
+# Fix me later.
+# select max(b collate utf8mb4_bin) from tt;
+desc format='brief' select min(c) from tt;
+select min(c) from tt;
+desc format='brief' select min(c collate utf8mb4_bin) from tt;
+# Fix me later.
+# select min(c collate utf8mb4_bin) from tt;
+desc format='brief' select max(c) from tt;
+select max(c) from tt;
+desc format='brief' select max(c collate utf8mb4_bin) from tt;
+# Fix me later.
+# select max(c collate utf8mb4_bin) from tt;
+desc format='brief' select min(d) from tt;
+select min(d) from tt;
+--error 1253
+desc format='brief' select min(d collate utf8mb4_bin) from tt;
+--error 1253
+select min(d collate utf8mb4_bin) from tt;
+desc format='brief' select max(d) from tt;
+select max(d) from tt;
+--error 1253
+desc format='brief' select max(d collate utf8mb4_bin) from tt;
+--error 1253
+select max(d collate utf8mb4_bin) from tt;
+
+# cleanup environment
+drop database collation_agg_func;
+use test
