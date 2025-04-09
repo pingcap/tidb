@@ -1874,16 +1874,14 @@ func (t *partitionedTable) RemoveRecord(ctx table.MutateContext, txn kv.Transact
 		if t.Meta().HasClusteredIndex() {
 			return t.getPartition(newFrom).removeRecord(ctx, txn, h, r, opt)
 		}
-		var found map[string][]byte
 		encodedRecordID := codec.EncodeInt(nil, h.IntValue())
 		newFromKey := tablecodec.EncodeRowKey(newFrom, encodedRecordID)
 
-		found, err = txn.BatchGet(context.Background(), []kv.Key{newFromKey})
+		val, err := getKeyInTxn(context.Background(), txn, newFromKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
-
-		if val, ok := found[string(newFromKey)]; ok {
+		if len(val) > 0 {
 			same, err := dataEqRec(ctx.GetExprCtx().GetEvalCtx().Location(), t.Meta(), r, val)
 			if err != nil || !same {
 				return errors.Trace(err)
