@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/dedicated"
 	"github.com/pingcap/tidb/pkg/util/israce"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
@@ -63,6 +64,10 @@ func GetTiDBInfo() string {
 	if versioninfo.TiDBEnterpriseExtensionGitHash != "" {
 		enterpriseVersion = fmt.Sprintf("\nEnterprise Extension Commit Hash: %s", versioninfo.TiDBEnterpriseExtensionGitHash)
 	}
+	dedicatedVersion := ""
+	if dedicated.Enabled {
+		dedicatedVersion = "\nDedicated Build: true"
+	}
 	return fmt.Sprintf("Release Version: %s\n"+
 		"Edition: %s\n"+
 		"Git Commit Hash: %s\n"+
@@ -72,7 +77,8 @@ func GetTiDBInfo() string {
 		"Race Enabled: %v\n"+
 		"Check Table Before Drop: %v\n"+
 		"Store: %s"+
-		"%s",
+		enterpriseVersion+
+		dedicatedVersion,
 		mysql.TiDBReleaseVersion,
 		versioninfo.TiDBEdition,
 		versioninfo.TiDBGitHash,
@@ -82,7 +88,6 @@ func GetTiDBInfo() string {
 		israce.RaceEnabled,
 		config.CheckTableBeforeDrop,
 		config.GetGlobalConfig().Store,
-		enterpriseVersion,
 	)
 }
 

@@ -29,6 +29,7 @@ import (
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/store/driver/options"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/dedicated"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -430,6 +431,9 @@ func (txn *tikvTxn) generateWriteConflictForLockedWithConflict(lockCtx *kv.LockC
 // TODO: Update the methods' signatures in client-go to avoid this adaptor functions.
 // TODO: Rename aggressive locking in client-go to fair locking.
 func (txn *tikvTxn) StartFairLocking() error {
+	if dedicated.Enabled {
+		return dedicated.ErrNotSupported.GenWithStackByArgs("fair-locking")
+	}
 	txn.KVTxn.StartAggressiveLocking()
 	return nil
 }

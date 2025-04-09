@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/parser/mysql",
+        "//pkg/util/dedicated",
         "//pkg/util/israce",
         "//pkg/util/logutil",
         "//pkg/util/versioninfo",
