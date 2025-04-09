@@ -204,7 +204,7 @@ func readOneFile(
 		}
 		if bytes.Compare(k, endKey) >= 0 {
 			cntDropped++
-			continue
+			break
 		}
 		// TODO(lance6716): we are copying every KV from rd's buffer to memBuf, can we
 		// directly read into memBuf?
