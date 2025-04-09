@@ -186,8 +186,10 @@ func readOneFile(
 			return err
 		}
 		if cntAllKeys == 0 {
+			firstKey = make([]byte, len(k))
 			copy(firstKey, k)
 		}
+		lastKey = make([]byte, len(k))
 		copy(lastKey, k)
 		cntAllKeys++
 		if bytes.Compare(k, startKey) < 0 {
@@ -215,6 +217,7 @@ func readOneFile(
 			zap.String("first key", hex.EncodeToString(firstKey)),
 			zap.String("last key", hex.EncodeToString(lastKey)),
 			zap.Int("keyNumInFile", cntAllKeys),
+			zap.Int("keyNumInMemBuf", len(keys)),
 			zap.Int("dropped size", droppedSize),
 			zap.String("data-file-name", dataFile),
 		)
