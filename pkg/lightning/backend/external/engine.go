@@ -268,12 +268,13 @@ func getFilesReadConcurrency(
 	storage storage.ExternalStorage,
 	statsFiles []string,
 	startKey, endKey []byte,
-) ([]uint64, []uint64, error) {
+) ([]uint64, []uint64, error, []bool) {
 	result := make([]uint64, len(statsFiles))
 	offsets, err := seekPropsOffsets(ctx, []kv.Key{startKey, endKey}, statsFiles, storage)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, err, nil
 	}
+	notSkip := make([]bool, len(statsFiles))
 	startOffs, endOffs := offsets[0], offsets[1]
 	totalFileSize := uint64(0)
 	var fileNeedToBeRead []string
@@ -281,6 +282,7 @@ func getFilesReadConcurrency(
 		size := endOffs[i] - startOffs[i]
 		if size != 0 {
 			fileNeedToBeRead = append(fileNeedToBeRead, statsFiles[i]+fmt.Sprintf(" size=%d", size))
+			notSkip[i] = true
 		}
 		totalFileSize += size
 		expectedConc := size / uint64(ConcurrentReaderBufferSizePerConc)
@@ -312,7 +314,7 @@ func getFilesReadConcurrency(
 	)
 	logutil.Logger(ctx).Info("estimated file size of this range group",
 		zap.Uint64("totalSize", totalFileSize))
-	return result, startOffs, nil
+	return result, startOffs, nil, notSkip
 }
 
 func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outCh chan<- common.DataAndRanges) error {
