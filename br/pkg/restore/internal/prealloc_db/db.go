@@ -282,20 +282,6 @@ func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table,
 	return nil
 }
 
-func (db *DB) sortTables(tables []*metautil.Table) []*metautil.Table {
-	var reusable, nonReusable []*metautil.Table
-	start, end := db.preallocedIDs.GetIDRange()
-
-	for _, tbl := range tables {
-		if tbl.Info.ID >= start && tbl.Info.ID < end {
-			reusable = append(reusable, tbl)
-		} else {
-			nonReusable = append(nonReusable, tbl)
-		}
-	}
-	return append(reusable, nonReusable...)
-}
-
 // CreateTables execute a internal CREATE TABLES.
 func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 	ddlTables map[restore.UniqueTableName]bool, supportPolicy bool, policyMap *sync.Map) error {
@@ -304,8 +290,7 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 	}
 	if batchSession, ok := db.se.(glue.BatchCreateTableSession); ok {
 		clonedInfos := make(map[string][]*model.TableInfo)
-		sortedTables := db.sortTables(tables)
-		for _, table := range sortedTables {
+		for _, table := range tables {
 			if !supportPolicy {
 				log.Info("set placementPolicyRef to nil when target tidb not support policy",
 					zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))
@@ -331,7 +316,7 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 			}
 		}
 
-		for _, table := range sortedTables {
+		for _, table := range tables {
 			err := db.CreateTablePostRestore(ctx, table, ddlTables)
 			if err != nil {
 				return errors.Trace(err)
