@@ -221,6 +221,7 @@ func readOneFile(
 			zap.String("last key", hex.EncodeToString(lastKey)),
 			zap.Int("keyNumInFile", cntAllKeys),
 			zap.Int("keyNumInMemBuf", len(keys)),
+			zap.Int("dropped num", cntDropped),
 			zap.Int("dropped size", droppedSize),
 			zap.String("data-file-name", dataFile),
 		)
