@@ -89,7 +89,6 @@ func (p *PreallocIDs) GetIDRange() (int64, int64) {
 
 // preallocTableIDs peralloc the id for [start, end)
 func (p *PreallocIDs) Alloc(m Allocator) error {
-
 	if p.count == 0 {
 		return nil
 	}
