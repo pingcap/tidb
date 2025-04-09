@@ -49,9 +49,8 @@ var (
 )
 
 type rowToEncode struct {
-	row    []types.Datum
-	rowID  int64
-	fields []*types.FieldType
+	row   []types.Datum
+	rowID int64
 	// endOffset represents the offset after the current row in encode reader.
 	// it will be negative if the data source is not file.
 	endOffset int64
@@ -134,7 +133,6 @@ func (r *queryChunkEncodeReader) readRow(ctx context.Context, row []types.Datum)
 	data = rowToEncode{
 		row:       row,
 		rowID:     r.queryChk.Offset + int64(r.cursor),
-		fields:    r.queryChk.Fields,
 		endOffset: -1,
 		resetFn:   func() {},
 	}
@@ -288,11 +286,13 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		p.readTotalDur += readDur
 
 		recordCount := 0
-		for _, kvs := range rowBatch {
-			for _, pair := range kvs.Pairs {
-				if tablecodec.IsRecordKey(pair.Key) {
-					recordCount++
-					break
+		if p.groupChecksum != nil {
+			for _, kvs := range rowBatch {
+				for _, pair := range kvs.Pairs {
+					if tablecodec.IsRecordKey(pair.Key) {
+						recordCount++
+						break
+					}
 				}
 			}
 		}
@@ -337,7 +337,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		readDur += time.Since(readDurStart)
 
 		encodeDurStart := time.Now()
-		kvs, encodeErr := p.encoder.Encode(data.row, data.rowID, data.fields)
+		kvs, encodeErr := p.encoder.Encode(data.row, data.rowID)
 		currOffset = data.endOffset
 		data.resetFn()
 		if encodeErr != nil {
