@@ -221,9 +221,10 @@ func (c *chunkSender) chunkSenderLoop(ctx context.Context) {
 
 // putEmptyChunk sends an empty chunk to remote worker to get remote worker's state.
 //
-// The remote worker will not accept the empty chunk and just return the latest
-// handled chunk id and flushed chunk id. If the remote worker restarts, the
-// remote worker may not have the latest flushed chunk id, so we can retry sending chunks.
+// The remote worker will not accept the empty chunk and just return the
+// `FlushedChunkID` and `HandledChunkID`. If the remote worker restarts, the
+// remote worker may return the unexpected `HandledChunkID`, and we need to
+// retry sending chunks.
 func (c *chunkSender) putEmptyChunk(ctx context.Context) error {
 	chunk := &chunk{id: c.getLastChunkID(), data: nil}
 	return c.putChunkToRemote(ctx, chunk)
@@ -263,9 +264,9 @@ func (c *chunkSender) putChunkToRemote(ctx context.Context, chunk *chunk) error 
 //
 // Chunks are sent to remote workers in sequence according to chunk id. The remote
 // worker should return the `FlushedChunkID` and `HandledChunkID`. If the remote worker
-// restarts, the `FlushedChunkID` may be less than the `expectedChunkID`, and remote
-// worker will reject the new chunk. In this case, we need to retry sending chunks
-// from the `FlushedChunkID` to the `expectedChunkID`.
+// restarts, the `HandledChunkID` may be less than the `expectedChunkID`, and remote
+// worker will reject the new chunk.
+// In this case, we need to retry sending chunks from the `FlushedChunkID` to the `expectedChunkID`.
 func (c *chunkSender) handlePutChunkResult(ctx context.Context, result *PutChunkResult, expectedChunkID uint64) error {
 	if result.Canceled {
 		c.logger.Error("failed to put chunk, task is canceled", zap.String("error", result.Error))
