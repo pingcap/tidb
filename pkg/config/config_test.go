@@ -1376,10 +1376,10 @@ func TestGetGlobalTiKVWorkerURL(t *testing.T) {
 	require.Empty(t, conf.TiKVWorkerURL)
 
 	UpdateGlobal(func(conf *Config) {
-		conf.TiKVWorkerURL = "http://tikv-worker-0:10080"
+		conf.TiKVWorkerURL = "tikv-worker-0:10080"
 	})
 
-	require.Equal(t, "http://tikv-worker-0:10080", GetGlobalConfig().TiKVWorkerURL)
+	require.Equal(t, "tikv-worker-0:10080", GetGlobalConfig().TiKVWorkerURL)
 
 	UpdateGlobal(func(conf *Config) {
 		conf.TiKVWorkerURL = ""
