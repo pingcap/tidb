@@ -72,7 +72,7 @@ func readAllData(
 		task.End(zap.ErrorLevel, err)
 	}()
 
-	concurrences, startOffsets, err, _ := getFilesReadConcurrency(
+	concurrences, startOffsets, err := getFilesReadConcurrency(
 		ctx,
 		store,
 		statsFiles,
