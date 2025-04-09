@@ -1427,6 +1427,7 @@ func TestIssue33728(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, "[planner:8135]invalid as of timestamp: as of timestamp cannot be NULL", err.Error())
 
+<<<<<<< HEAD:executor/stale_txn_test.go
 	err = tk.ExecToErr("start transaction read only as of timestamp NULL")
 	require.Error(t, err)
 	require.Equal(t, "[planner:8135]invalid as of timestamp: as of timestamp cannot be NULL", err.Error())
@@ -1450,4 +1451,231 @@ func TestIssue31954(t *testing.T) {
 
 	tk.MustQuery("select (select v from t1 as of timestamp @a where id=1) as v").
 		Check(testkit.Rows("10"))
+=======
+	// Insert row #1
+	tk.MustExec("insert into t values (1, 10)")
+	time.Sleep(1000 * time.Millisecond)
+	firstTime := time.Now().Add(-500 * time.Millisecond)
+	// Retrieve current TSO from store's Oracle instead of @@tidb_current_ts.
+	externalTS, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	if err != nil {
+		t.Fatalf("failed to get TSO: %v", err)
+	}
+
+	time.Sleep(1000 * time.Millisecond)
+	// Insert row #2
+	tk.MustExec("insert into t values (2, 20)")
+	row2CreatedTime := time.Now()
+	time.Sleep(1000 * time.Millisecond)
+	secondTime := time.Now().Add(-500 * time.Millisecond)
+
+	staleReadMethods := []struct {
+		name   string
+		setup  func()
+		query  string
+		clean  func()
+		expect []string
+	}{
+		{
+			name: "tidb_read_staleness",
+			setup: func() {
+				row2CreatedElapsed := int(time.Since(row2CreatedTime).Seconds())
+				staleness := row2CreatedElapsed + 1 // The time `now - staleness(second)` is between row1 and row2.
+				tk.MustExec(fmt.Sprintf("set @@tidb_read_staleness='-%d'", staleness))
+			},
+			query: "select * from t",
+			clean: func() {
+				tk.MustExec("set @@tidb_read_staleness=''")
+			},
+			expect: []string{"1 10"},
+		},
+		{
+			name:   "AS OF TIMESTAMP sees only first row",
+			setup:  func() {},
+			query:  fmt.Sprintf("SELECT * FROM t AS OF TIMESTAMP '%s'", firstTime.Format("2006-1-2 15:04:05.000")),
+			clean:  func() {},
+			expect: []string{"1 10"},
+		},
+		{
+			name:   "AS OF TIMESTAMP sees both rows (using secondTime)",
+			setup:  func() {},
+			query:  fmt.Sprintf("SELECT * FROM t AS OF TIMESTAMP '%s'", secondTime.Format("2006-1-2 15:04:05.000")),
+			clean:  func() {},
+			expect: []string{"1 10", "2 20"},
+		},
+		/*
+			We cannot test TIDB_BOUNDED_STALENESS here because it relies
+			on the update of safe ts, which cannot be controlled by the test
+			{
+				name:   "AS OF TIMESTAMP with TIDB_BOUNDED_STALENESS",
+				setup:  func() {},
+				query:  "select * from t as of timestamp tidb_bounded_staleness(TIMESTAMPADD(SECOND, -5, NOW()), TIMESTAMPADD(SECOND, -1, NOW()))",
+				clean:  func() {},
+				expect: []string{"1 10", "2 20"},
+			},
+		*/
+		{
+			name: "SET TRANSACTION",
+			setup: func() {
+				tk.MustExec(fmt.Sprintf("SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'", firstTime.Format("2006-1-2 15:04:05.000")))
+			},
+			query:  "select * from t",
+			clean:  func() {},
+			expect: []string{"1 10"},
+		},
+		{
+			name: "external ts read",
+			setup: func() {
+				tk.MustExec("set @@tidb_enable_external_ts_read=1")
+				tk.MustExec(fmt.Sprintf("set @@global.tidb_external_ts=%d", externalTS))
+				externalTS++
+			},
+			query: "select * from t",
+			clean: func() {
+				tk.MustExec("set @@tidb_enable_external_ts_read=0")
+				// cannot set it
+				// tk.MustExec("set @@global.tidb_external_ts=0")
+			},
+			expect: []string{"1 10"},
+		},
+		{
+			name: "tidb_snapshot",
+			setup: func() {
+				tk.MustExec(fmt.Sprintf("set @@tidb_snapshot='%s'", firstTime.Format("2006-1-2 15:04:05.000")))
+			},
+			query: "select * from t",
+			clean: func() {
+				tk.MustExec("set @@tidb_snapshot=''")
+			},
+			expect: []string{"1 10"},
+		},
+	}
+
+	labelSettings := []struct {
+		name   string
+		labels map[string]string
+	}{
+		{
+			name:   "no labels",
+			labels: map[string]string{},
+		},
+		{
+			name: "with DC label",
+			labels: map[string]string{
+				placement.DCLabelKey: "bj",
+			},
+		},
+		{
+			name: "with Zone label",
+			labels: map[string]string{
+				"dc": "dc1",
+			},
+		},
+		{
+			name: "with Rack label",
+			labels: map[string]string{
+				"rack": "rack1",
+			},
+		},
+		{
+			name: "with multiple labels",
+			labels: map[string]string{
+				placement.DCLabelKey: "bj",
+				"dc":                 "dc1",
+				"rack":               "rack1",
+			},
+		},
+	}
+
+	replicaReadSettings := []string{
+		"leader",
+		"follower",
+		"closest-replicas",
+		"closest-adaptive",
+	}
+
+	transactionModes := []struct {
+		name  string
+		start func()
+		check func()
+	}{
+		{
+			name: "START TRANSACTION READ ONLY AS OF",
+			start: func() {
+				tk.MustExec(fmt.Sprintf("START TRANSACTION READ ONLY AS OF TIMESTAMP '%s'", firstTime.Format("2006-1-2 15:04:05.000")))
+			},
+			check: func() {
+				result := tk.MustQuery("select * from t")
+				result.Check(testkit.Rows("1 10"))
+				tk.MustExec("commit")
+			},
+		},
+		{
+			name: "SET TRANSACTION then BEGIN",
+			start: func() {
+				tk.MustExec(fmt.Sprintf("SET TRANSACTION READ ONLY AS OF TIMESTAMP '%s'", firstTime.Format("2006-1-2 15:04:05.000")))
+				tk.MustExec("BEGIN")
+			},
+			check: func() {
+				result := tk.MustQuery("select * from t")
+				result.Check(testkit.Rows("1 10"))
+				tk.MustExec("commit")
+			},
+		},
+		/*
+			    We cannot test TIDB_BOUNDED_STALENESS here because it relies
+				on the update of safe ts, which cannot be controlled by the test
+			{
+				name: "TIDB_BOUNDED_STALENESS TXN",
+				start: func() {
+					tk.MustExec("START TRANSACTION READ ONLY AS OF TIMESTAMP TIDB_BOUNDED_STALENESS(TIMESTAMPADD(SECOND, -5, NOW()), TIMESTAMPADD(SECOND, -1, NOW()))")
+				},
+				check: func() {
+					result := tk.MustQuery("select * from t")
+					result.Check(testkit.Rows("1 10", "2 20"))
+					tk.MustExec("commit")
+				},
+			},
+		*/
+	}
+
+	// Test all combinations
+	for _, label := range labelSettings {
+		t.Run(label.name, func(t *testing.T) {
+			// Update global config with current label setting
+			conf := *config.GetGlobalConfig()
+			conf.Labels = label.labels
+			config.StoreGlobalConfig(&conf)
+
+			for _, replicaRead := range replicaReadSettings {
+				t.Run(replicaRead, func(t *testing.T) {
+					// Set replica read mode
+					tk.MustExec(fmt.Sprintf("set @@tidb_replica_read='%s'", replicaRead))
+
+					for _, method := range staleReadMethods {
+						t.Run(method.name, func(t *testing.T) {
+							// Setup stale read method
+							defer method.clean()
+							method.setup()
+
+							// Execute query and verify results
+							result := tk.MustQuery(method.query)
+							result.Check(testkit.Rows(method.expect...))
+
+							// Cleanup
+						})
+					}
+
+					for _, txnMode := range transactionModes {
+						t.Run(txnMode.name, func(t *testing.T) {
+							tk.MustExec(fmt.Sprintf("set @@tidb_replica_read='%s'", replicaRead))
+							txnMode.start()
+							txnMode.check()
+						})
+					}
+				})
+			}
+		})
+	}
+>>>>>>> 80d6b5683c5 (infosync: refactor server config into dynamic and static sections (#58473)):tests/realtikvtest/txntest/stale_read_test.go
 }

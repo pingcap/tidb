@@ -29,6 +29,12 @@ import (
 	"net/http/httptest"
 	"net/http/httputil"
 	"sort"
+<<<<<<< HEAD:server/http_handler_test.go
+=======
+	"strconv"
+	"strings"
+	"sync"
+>>>>>>> 80d6b5683c5 (infosync: refactor server config into dynamic and static sections (#58473)):pkg/server/handler/tests/http_handler_test.go
 	"testing"
 	"time"
 
@@ -1104,8 +1110,431 @@ func TestWriteDBTablesData(t *testing.T) {
 	err = decoder.Decode(&ti)
 	require.NoError(t, err)
 	require.Equal(t, 2, len(ti))
+<<<<<<< HEAD:server/http_handler_test.go
 	require.Equal(t, ti[0].ID, tbs[0].Meta().ID)
 	require.Equal(t, ti[1].ID, tbs[1].Meta().ID)
 	require.Equal(t, ti[0].Name.String(), tbs[0].Meta().Name.String())
 	require.Equal(t, ti[1].Name.String(), tbs[1].Meta().Name.String())
+=======
+	require.Equal(t, ti[0].ID, tbs[0].ID)
+	require.Equal(t, ti[1].ID, tbs[1].ID)
+	require.Equal(t, ti[0].Name.String(), tbs[0].Name.String())
+	require.Equal(t, ti[1].Name.String(), tbs[1].Name.String())
+}
+
+func TestSetLabels(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	testUpdateLabels := func(labels, expected map[string]string) {
+		buffer := bytes.NewBuffer([]byte{})
+		require.Nil(t, json.NewEncoder(buffer).Encode(labels))
+		resp, err := ts.PostStatus("/labels", "application/json", buffer)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		defer func() {
+			require.NoError(t, resp.Body.Close())
+		}()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		newLabels := config.GetGlobalConfig().Labels
+		require.Equal(t, newLabels, expected)
+	}
+
+	labels := map[string]string{
+		"zone": "us-west-1",
+		"test": "123",
+	}
+	testUpdateLabels(labels, labels)
+
+	updated := map[string]string{
+		"zone": "bj-1",
+	}
+	labels["zone"] = "bj-1"
+	testUpdateLabels(updated, labels)
+
+	// reset the global variable
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Labels = map[string]string{}
+	})
+}
+
+func TestSetLabelsWithEtcd(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	time.Sleep(time.Second)
+	integration.BeforeTestExternal(t)
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+	client := cluster.RandClient()
+	infosync.SetEtcdClient(client)
+	ts.domain.InfoSyncer().Restart(ctx)
+
+	testUpdateLabels := func(labels, expected map[string]string) {
+		buffer := bytes.NewBuffer([]byte{})
+		require.Nil(t, json.NewEncoder(buffer).Encode(labels))
+		resp, err := ts.PostStatus("/labels", "application/json", buffer)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		defer func() {
+			require.NoError(t, resp.Body.Close())
+		}()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		newLabels := config.GetGlobalConfig().Labels
+		require.Equal(t, newLabels, expected)
+		servers, err := infosync.GetAllServerInfo(ctx)
+		require.NoError(t, err)
+		for _, server := range servers {
+			for k, expectV := range expected {
+				v, ok := server.Labels[k]
+				require.True(t, ok)
+				require.Equal(t, expectV, v)
+			}
+			return
+		}
+		require.Fail(t, "no server found")
+	}
+
+	labels := map[string]string{
+		"zone": "us-west-1",
+		"test": "123",
+	}
+	testUpdateLabels(labels, labels)
+
+	updated := map[string]string{
+		"zone": "bj-1",
+	}
+	labels["zone"] = "bj-1"
+	testUpdateLabels(updated, labels)
+
+	// reset the global variable
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Labels = map[string]string{}
+	})
+}
+
+func TestSetLabelsConcurrentWithGetLabel(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	testUpdateLabels := func() {
+		labels := map[string]string{}
+		labels["zone"] = fmt.Sprintf("z-%v", rand.Intn(100000))
+		buffer := bytes.NewBuffer([]byte{})
+		require.Nil(t, json.NewEncoder(buffer).Encode(labels))
+		resp, err := ts.PostStatus("/labels", "application/json", buffer)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		defer func() {
+			require.NoError(t, resp.Body.Close())
+		}()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		newLabels := config.GetGlobalConfig().Labels
+		require.Equal(t, newLabels, labels)
+	}
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				config.GetGlobalConfig().GetTiKVConfig()
+			}
+		}
+	}()
+	for i := 0; i < 100; i++ {
+		testUpdateLabels()
+	}
+	close(done)
+
+	// reset the global variable
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Labels = map[string]string{}
+	})
+}
+
+func TestUpgrade(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	resp, err := ts.FetchStatus("/upgrade/start")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	// test upgrade start
+	resp, err = ts.PostStatus("/upgrade/start", "application/x-www-form-urlencoded", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	b, err := httputil.DumpResponse(resp, true)
+	require.NoError(t, err)
+	require.Greater(t, len(b), 0)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, "\"success!\"", string(body))
+	// check the result
+	se, err := session.CreateSession(ts.store)
+	require.NoError(t, err)
+	isUpgrading, err := session.IsUpgradingClusterState(se)
+	require.NoError(t, err)
+	require.True(t, isUpgrading)
+
+	// Do start upgrade again.
+	resp, err = ts.PostStatus("/upgrade/start", "application/x-www-form-urlencoded", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	b, err = httputil.DumpResponse(resp, true)
+	require.NoError(t, err)
+	require.Greater(t, len(b), 0)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, "\"It's a duplicated operation and the cluster is already in upgrading state.\"", string(body))
+	// check the result
+	se, err = session.CreateSession(ts.store)
+	require.NoError(t, err)
+	isUpgrading, err = session.IsUpgradingClusterState(se)
+	require.NoError(t, err)
+	require.True(t, isUpgrading)
+
+	// test upgrade show
+	testUpgradeShow(t, ts)
+	// check the cluster state
+	se, err = session.CreateSession(ts.store)
+	require.NoError(t, err)
+	isUpgrading, err = session.IsUpgradingClusterState(se)
+	require.NoError(t, err)
+	require.True(t, isUpgrading)
+
+	// test upgrade finish
+	resp, err = ts.PostStatus("/upgrade/finish", "application/x-www-form-urlencoded", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	b, err = httputil.DumpResponse(resp, true)
+	require.NoError(t, err)
+	require.Greater(t, len(b), 0)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, "\"success!\"", string(body))
+	// check the result
+	se, err = session.CreateSession(ts.store)
+	require.NoError(t, err)
+	isUpgrading, err = session.IsUpgradingClusterState(se)
+	require.NoError(t, err)
+	require.False(t, isUpgrading)
+
+	// test upgrade show failed
+	resp, err = ts.PostStatus("/upgrade/show", "application/x-www-form-urlencoded", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	b, err = httputil.DumpResponse(resp, true)
+	require.NoError(t, err)
+	require.Greater(t, len(b), 0)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, "\"The cluster state is normal.\"\"success!\"", string(body))
+
+	// Do finish upgrade again.
+	resp, err = ts.PostStatus("/upgrade/finish", "application/x-www-form-urlencoded", nil)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	b, err = httputil.DumpResponse(resp, true)
+	require.NoError(t, err)
+	require.Greater(t, len(b), 0)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, "\"It's a duplicated operation and the cluster is already in normal state.\"", string(body))
+	// check the result
+	se, err = session.CreateSession(ts.store)
+	require.NoError(t, err)
+	isUpgrading, err = session.IsUpgradingClusterState(se)
+	require.NoError(t, err)
+	require.False(t, isUpgrading)
+}
+
+func testUpgradeShow(t *testing.T, ts *basicHTTPHandlerTestSuite) {
+	do, err := session.GetDomain(ts.store)
+	require.NoError(t, err)
+	ddlID := do.DDL().GetID()
+	// check the result for upgrade show
+	mockedAllServerInfos := map[string]*infosync.ServerInfo{
+		"s0": {
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID:           ddlID,
+				IP:           "127.0.0.1",
+				Port:         4000,
+				JSONServerID: 0,
+				ServerVersionInfo: infosync.ServerVersionInfo{
+					Version: "ver",
+					GitHash: "hash",
+				},
+			},
+		},
+		"s2": {
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID:           "ID2",
+				IP:           "127.0.0.1",
+				Port:         4002,
+				JSONServerID: 2,
+				ServerVersionInfo: infosync.ServerVersionInfo{
+					Version: "ver2",
+					GitHash: "hash2",
+				},
+			},
+		},
+		"s1": {
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID:           "ID1",
+				IP:           "127.0.0.1",
+				Port:         4001,
+				JSONServerID: 1,
+				ServerVersionInfo: infosync.ServerVersionInfo{
+					Version: "ver",
+					GitHash: "hash",
+				},
+			},
+		},
+	}
+	makeFailpointRes := func(v any) string {
+		bytes, err := json.Marshal(v)
+		require.NoError(t, err)
+		return fmt.Sprintf("return(`%s`)", string(bytes))
+	}
+	checkSimpleServerInfo := func(sInfo handler.SimpleServerInfo) {
+		key := fmt.Sprintf("s%d", sInfo.JSONServerID)
+		val, ok := mockedAllServerInfos[key]
+		require.True(t, ok)
+		require.Equal(t, val.Version, sInfo.Version)
+		require.Equal(t, val.GitHash, sInfo.GitHash)
+		require.Equal(t, val.IP, sInfo.IP)
+		require.Equal(t, val.Port, sInfo.Port)
+	}
+	checkUpgradeShow := func(serverNum, upgradedPercent, diffInfos int) {
+		resp, err := ts.PostStatus("/upgrade/show", "application/x-www-form-urlencoded", nil)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		b, err := httputil.DumpResponse(resp, true)
+		require.NoError(t, err)
+		require.Greater(t, len(b), 0)
+		decoder := json.NewDecoder(resp.Body)
+		clusterInfo := handler.ClusterUpgradeInfo{}
+		err = decoder.Decode(&clusterInfo)
+		require.NoError(t, err)
+		require.NoError(t, resp.Body.Close())
+		require.Equal(t, ddlID, clusterInfo.OwnerID)
+		require.Equal(t, serverNum, clusterInfo.ServersNum)
+		require.Equal(t, upgradedPercent, clusterInfo.UpgradedPercent)
+		require.Equal(t, diffInfos, len(clusterInfo.AllServersDiffInfos))
+		if diffInfos > 0 {
+			require.False(t, clusterInfo.IsAllUpgraded)
+			for _, info := range clusterInfo.AllServersDiffInfos {
+				checkSimpleServerInfo(info)
+			}
+		} else {
+			require.True(t, clusterInfo.IsAllUpgraded)
+		}
+	}
+
+	// test upgrade show for 1 server
+	checkUpgradeShow(1, 100, 0)
+	// test upgrade show for 3 servers
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
+	defer failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo")
+	// test upgrade show again with 3 different version servers
+	checkUpgradeShow(3, 33, 3)
+	// test upgrade show again with 3 servers of the same version
+	mockedAllServerInfos["s2"].Version = mockedAllServerInfos["s0"].Version
+	mockedAllServerInfos["s2"].GitHash = mockedAllServerInfos["s0"].GitHash
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
+	checkUpgradeShow(3, 100, 0)
+}
+
+func TestIssue52608(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+
+	ts.startServer(t)
+	defer ts.stopServer(t)
+	on, addr := mppcoordmanager.InstanceMPPCoordinatorManager.GetServerAddr()
+	require.Equal(t, on, true)
+	require.Equal(t, addr[:10], "127.0.0.1:")
+>>>>>>> 80d6b5683c5 (infosync: refactor server config into dynamic and static sections (#58473)):pkg/server/handler/tests/http_handler_test.go
+}
+
+func TestSetLabelsConcurrentWithStoreTopology(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	time.Sleep(time.Second)
+	integration.BeforeTestExternal(t)
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+	client := cluster.RandClient()
+	infosync.SetEtcdClient(client)
+
+	ts.domain.InfoSyncer().Restart(ctx)
+	ts.domain.InfoSyncer().RestartTopology(ctx)
+
+	testUpdateLabels := func() {
+		labels := map[string]string{}
+		labels["zone"] = fmt.Sprintf("z-%v", rand.Intn(100000))
+		buffer := bytes.NewBuffer([]byte{})
+		require.Nil(t, json.NewEncoder(buffer).Encode(labels))
+		resp, err := ts.PostStatus("/labels", "application/json", buffer)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		defer func() {
+			require.NoError(t, resp.Body.Close())
+		}()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		newLabels := config.GetGlobalConfig().Labels
+		require.Equal(t, newLabels, labels)
+	}
+	testStoreTopology := func() {
+		require.NoError(t, ts.domain.InfoSyncer().StoreTopologyInfo(context.Background()))
+	}
+
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				testStoreTopology()
+			}
+		}
+	}()
+	for i := 0; i < 100; i++ {
+		testUpdateLabels()
+	}
+	close(done)
+	wg.Wait()
+
+	// reset the global variable
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Labels = map[string]string{}
+	})
 }

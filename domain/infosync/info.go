@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -93,8 +94,21 @@ var ErrPrometheusAddrIsNotSet = dbterror.ClassDomain.NewStd(errno.ErrPrometheusA
 
 // InfoSyncer stores server info to etcd when the tidb-server starts and delete when tidb-server shuts down.
 type InfoSyncer struct {
+<<<<<<< HEAD:domain/infosync/info.go
 	etcdCli        *clientv3.Client
 	info           *ServerInfo
+=======
+	// `etcdClient` must be used when keyspace is not set, or when the logic to each etcd path needs to be separated by keyspace.
+	etcdCli *clientv3.Client
+	// `unprefixedEtcdCli` will never set the etcd namespace prefix by keyspace.
+	// It is only used in storeMinStartTS and RemoveMinStartTS now.
+	// It must be used when the etcd path isn't needed to separate by keyspace.
+	// See keyspace RFC: https://github.com/pingcap/tidb/pull/39685
+	unprefixedEtcdCli *clientv3.Client
+	pdHTTPCli         pdhttp.Client
+	info              atomic.Pointer[ServerInfo]
+
+>>>>>>> 80d6b5683c5 (infosync: refactor server config into dynamic and static sections (#58473)):pkg/domain/infosync/info.go
 	serverInfoPath string
 	minStartTS     uint64
 	minStartTSPath string
@@ -111,9 +125,12 @@ type InfoSyncer struct {
 	tiflashPlacementManager TiFlashPlacementManager
 }
 
-// ServerInfo is server static information.
-// It will not be updated when tidb-server running. So please only put static information in ServerInfo struct.
+// ServerInfo represents the server's basic information.
+// It consists of two sections: static and dynamic.
+// The static information is generated during the startup of the TiDB server and should never be modified while the TiDB server is running.
+// The dynamic information can be updated while the TiDB server is running and should be synchronized with PD's etcd.
 type ServerInfo struct {
+<<<<<<< HEAD:domain/infosync/info.go
 	ServerVersionInfo
 	ID             string            `json:"ddl_id"`
 	IP             string            `json:"ip"`
@@ -126,9 +143,18 @@ type ServerInfo struct {
 	// ServerID is a function, to always retrieve latest serverID from `Domain`,
 	//   which will be changed on occasions such as connection to PD is restored after broken.
 	ServerIDGetter func() uint64 `json:"-"`
+=======
+	StaticServerInfo
+	DynamicServerInfo
+}
+>>>>>>> 80d6b5683c5 (infosync: refactor server config into dynamic and static sections (#58473)):pkg/domain/infosync/info.go
 
-	// JSONServerID is `serverID` for json marshal/unmarshal ONLY.
-	JSONServerID uint64 `json:"server_id"`
+// clone the ServerInfo.
+func (info *ServerInfo) clone() *ServerInfo {
+	return &ServerInfo{
+		StaticServerInfo:  info.StaticServerInfo,
+		DynamicServerInfo: *info.DynamicServerInfo.clone(),
+	}
 }
 
 // Marshal `ServerInfo` into bytes.
@@ -150,6 +176,40 @@ func (info *ServerInfo) Unmarshal(v []byte) error {
 		return info.JSONServerID
 	}
 	return nil
+}
+
+// StaticServerInfo is server static information.
+// It will not be updated when tidb-server running. So please only put static information in ServerInfo struct.
+// DO NOT edit it after tidb-server started.
+type StaticServerInfo struct {
+	ServerVersionInfo
+	ID             string `json:"ddl_id"`
+	IP             string `json:"ip"`
+	Port           uint   `json:"listening_port"`
+	StatusPort     uint   `json:"status_port"`
+	Lease          string `json:"lease"`
+	StartTimestamp int64  `json:"start_timestamp"`
+	// ServerID is a function, to always retrieve latest serverID from `Domain`,
+	// which will be changed on occasions such as connection to PD is restored after broken.
+	ServerIDGetter func() uint64 `json:"-"`
+
+	// JSONServerID is `serverID` for json marshal/unmarshal ONLY.
+	JSONServerID uint64 `json:"server_id"`
+}
+
+// DynamicServerInfo represents the dynamic information of the server.
+// Please note that it may change when TiDB is running.
+// To update the dynamic server information, use `InfoSyncer.cloneDynamicServerInfo` to obtain a copy of the dynamic server info.
+// After making modifications, use `InfoSyncer.setDynamicServerInfo` to update the dynamic server information.
+type DynamicServerInfo struct {
+	Labels map[string]string `json:"labels"`
+}
+
+// clone the DynamicServerInfo.
+func (d *DynamicServerInfo) clone() *DynamicServerInfo {
+	return &DynamicServerInfo{
+		Labels: maps.Clone(d.Labels),
+	}
 }
 
 // ServerVersionInfo is the server version and git_hash.
@@ -178,11 +238,21 @@ func setGlobalInfoSyncer(is *InfoSyncer) {
 // GlobalInfoSyncerInit return a new InfoSyncer. It is exported for testing.
 func GlobalInfoSyncerInit(ctx context.Context, id string, serverIDGetter func() uint64, etcdCli *clientv3.Client, skipRegisterToDashBoard bool) (*InfoSyncer, error) {
 	is := &InfoSyncer{
+<<<<<<< HEAD:domain/infosync/info.go
 		etcdCli:        etcdCli,
 		info:           getServerInfo(id, serverIDGetter),
 		serverInfoPath: fmt.Sprintf("%s/%s", ServerInformationPath, id),
 		minStartTSPath: fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
+=======
+		etcdCli:           etcdCli,
+		unprefixedEtcdCli: unprefixedEtcdCli,
+		pdHTTPCli:         pdHTTPCli,
+		serverInfoPath:    fmt.Sprintf("%s/%s", ServerInformationPath, id),
+		minStartTSPath:    fmt.Sprintf("%s/%s", ServerMinStartTSPath, id),
+		infoCache:         infoCache,
+>>>>>>> 80d6b5683c5 (infosync: refactor server config into dynamic and static sections (#58473)):pkg/domain/infosync/info.go
 	}
+	is.info.Store(getServerInfo(id, serverIDGetter))
 	err := is.init(ctx, skipRegisterToDashBoard)
 	if err != nil {
 		return nil, err
@@ -276,7 +346,7 @@ func GetServerInfo() (*ServerInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	return is.info, nil
+	return is.info.Load(), nil
 }
 
 // GetServerInfoByID gets specified server static information from etcd.
@@ -289,8 +359,9 @@ func GetServerInfoByID(ctx context.Context, id string) (*ServerInfo, error) {
 }
 
 func (is *InfoSyncer) getServerInfoByID(ctx context.Context, id string) (*ServerInfo, error) {
-	if is.etcdCli == nil || id == is.info.ID {
-		return is.info, nil
+	localInfo := is.info.Load()
+	if is.etcdCli == nil || id == localInfo.ID {
+		return localInfo, nil
 	}
 	key := fmt.Sprintf("%s/%s", ServerInformationPath, id)
 	infoMap, err := getInfo(ctx, is.etcdCli, key, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
@@ -322,10 +393,38 @@ func UpdateTiFlashTableSyncProgress(ctx context.Context, tid int64, progress flo
 	if is.etcdCli == nil {
 		return nil
 	}
+<<<<<<< HEAD:domain/infosync/info.go
 	key := fmt.Sprintf("%s/%v", TiFlashTableSyncProgressPath, tid)
 	// truncate progress with 2 decimal digits so that it will not be rounded to 1 when the progress is 0.995
 	progressString := types.TruncateFloatToString(progress, 2)
 	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key, progressString)
+=======
+	dynamicInfo := is.cloneDynamicServerInfo()
+	changed := false
+	for k, v := range labels {
+		if dynamicInfo.Labels[k] != v {
+			changed = true
+			dynamicInfo.Labels[k] = v
+		}
+	}
+	if !changed {
+		return nil
+	}
+	info := is.getLocalServerInfo().clone()
+	info.DynamicServerInfo = *dynamicInfo
+	infoBuf, err := info.Marshal()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	str := string(hack.String(infoBuf))
+	err = util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, is.serverInfoPath, str, clientv3.WithLease(is.session.Lease()))
+	if err != nil {
+		return err
+	}
+	// update the dynamic info in the global info syncer after put etcd success.
+	is.setDynamicServerInfo(dynamicInfo)
+	return nil
+>>>>>>> 80d6b5683c5 (infosync: refactor server config into dynamic and static sections (#58473)):pkg/domain/infosync/info.go
 }
 
 // DeleteTiFlashTableSyncProgress is used to delete the tiflash table replica sync progress.
@@ -512,7 +611,8 @@ func PutRuleBundlesWithDefaultRetry(ctx context.Context, bundles []*placement.Bu
 func (is *InfoSyncer) getAllServerInfo(ctx context.Context) (map[string]*ServerInfo, error) {
 	allInfo := make(map[string]*ServerInfo)
 	if is.etcdCli == nil {
-		allInfo[is.info.ID] = getServerInfo(is.info.ID, is.info.ServerIDGetter)
+		info := is.info.Load()
+		allInfo[info.ID] = getServerInfo(info.ID, info.ServerIDGetter)
 		return allInfo, nil
 	}
 	allInfo, err := getInfo(ctx, is.etcdCli, ServerInformationPath, keyOpDefaultRetryCnt, keyOpDefaultTimeout, clientv3.WithPrefix())
@@ -527,7 +627,8 @@ func (is *InfoSyncer) StoreServerInfo(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
 	}
-	infoBuf, err := is.info.Marshal()
+	info := is.info.Load()
+	infoBuf, err := info.Marshal()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -557,7 +658,7 @@ type TopologyInfo struct {
 	Labels         map[string]string `json:"labels"`
 }
 
-func (is *InfoSyncer) getTopologyInfo() TopologyInfo {
+func (info *ServerInfo) asTopologyInfo() TopologyInfo {
 	s, err := os.Executable()
 	if err != nil {
 		s = ""
@@ -566,28 +667,29 @@ func (is *InfoSyncer) getTopologyInfo() TopologyInfo {
 	return TopologyInfo{
 		ServerVersionInfo: ServerVersionInfo{
 			Version: mysql.TiDBReleaseVersion,
-			GitHash: is.info.ServerVersionInfo.GitHash,
+			GitHash: info.ServerVersionInfo.GitHash,
 		},
-		IP:             is.info.IP,
-		StatusPort:     is.info.StatusPort,
+		IP:             info.IP,
+		StatusPort:     info.StatusPort,
 		DeployPath:     dir,
-		StartTimestamp: is.info.StartTimestamp,
-		Labels:         is.info.Labels,
+		StartTimestamp: info.StartTimestamp,
+		Labels:         info.Labels,
 	}
 }
 
-// StoreTopologyInfo  stores the topology of tidb to etcd.
+// StoreTopologyInfo stores the topology of tidb to etcd.
 func (is *InfoSyncer) StoreTopologyInfo(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
 	}
-	topologyInfo := is.getTopologyInfo()
+	info := is.info.Load()
+	topologyInfo := info.asTopologyInfo()
 	infoBuf, err := json.Marshal(topologyInfo)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	str := string(hack.String(infoBuf))
-	key := fmt.Sprintf("%s/%s/info", TopologyInformationPath, net.JoinHostPort(is.info.IP, strconv.Itoa(int(is.info.Port))))
+	key := fmt.Sprintf("%s/%s/info", TopologyInformationPath, net.JoinHostPort(info.IP, strconv.Itoa(int(info.Port))))
 	// Note: no lease is required here.
 	err = util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key, str)
 	if err != nil {
@@ -739,7 +841,8 @@ func (is *InfoSyncer) newTopologySessionAndStoreServerInfo(ctx context.Context, 
 	if is.etcdCli == nil {
 		return nil
 	}
-	logPrefix := fmt.Sprintf("[topology-syncer] %s/%s", TopologyInformationPath, net.JoinHostPort(is.info.IP, strconv.Itoa(int(is.info.Port))))
+	info := is.getLocalServerInfo()
+	logPrefix := fmt.Sprintf("[topology-syncer] %s/%s", TopologyInformationPath, net.JoinHostPort(info.IP, strconv.Itoa(int(info.Port))))
 	session, err := util2.NewSession(ctx, logPrefix, is.etcdCli, retryCnt, TopologySessionTTL)
 	if err != nil {
 		return err
@@ -754,12 +857,33 @@ func (is *InfoSyncer) updateTopologyAliveness(ctx context.Context) error {
 	if is.etcdCli == nil {
 		return nil
 	}
-	key := fmt.Sprintf("%s/%s/ttl", TopologyInformationPath, net.JoinHostPort(is.info.IP, strconv.Itoa(int(is.info.Port))))
+	info := is.getLocalServerInfo()
+	key := fmt.Sprintf("%s/%s/ttl", TopologyInformationPath, net.JoinHostPort(info.IP, strconv.Itoa(int(info.Port))))
 	return util.PutKVToEtcd(ctx, is.etcdCli, keyOpDefaultRetryCnt, key,
 		fmt.Sprintf("%v", time.Now().UnixNano()),
 		clientv3.WithLease(is.topologySession.Lease()))
 }
 
+<<<<<<< HEAD:domain/infosync/info.go
+=======
+// RemoveTopologyInfo remove self server topology information from etcd.
+func (is *InfoSyncer) RemoveTopologyInfo() {
+	if is.etcdCli == nil {
+		return
+	}
+	info := is.info.Load()
+	prefix := fmt.Sprintf(
+		"%s/%s",
+		TopologyInformationPath,
+		net.JoinHostPort(info.IP, strconv.Itoa(int(info.Port))),
+	)
+	err := util.DeleteKeysWithPrefixFromEtcd(prefix, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
+	if err != nil {
+		logutil.BgLogger().Error("remove topology info failed", zap.Error(err))
+	}
+}
+
+>>>>>>> 80d6b5683c5 (infosync: refactor server config into dynamic and static sections (#58473)):pkg/domain/infosync/info.go
 // GetPrometheusAddr gets prometheus Address
 func GetPrometheusAddr() (string, error) {
 	is, err := getGlobalInfoSyncer()
@@ -887,6 +1011,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 	cfg := config.GetGlobalConfig()
 	info := &ServerInfo{
+<<<<<<< HEAD:domain/infosync/info.go
 		ID:             id,
 		IP:             cfg.AdvertiseAddress,
 		Port:           cfg.Port,
@@ -896,6 +1021,20 @@ func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 		StartTimestamp: time.Now().Unix(),
 		Labels:         cfg.Labels,
 		ServerIDGetter: serverIDGetter,
+=======
+		StaticServerInfo: StaticServerInfo{
+			ID:             id,
+			IP:             cfg.AdvertiseAddress,
+			Port:           cfg.Port,
+			StatusPort:     cfg.Status.StatusPort,
+			Lease:          cfg.Lease,
+			StartTimestamp: time.Now().Unix(),
+			ServerIDGetter: serverIDGetter,
+		},
+		DynamicServerInfo: DynamicServerInfo{
+			Labels: maps.Clone(cfg.Labels),
+		},
+>>>>>>> 80d6b5683c5 (infosync: refactor server config into dynamic and static sections (#58473)):pkg/domain/infosync/info.go
 	}
 	info.Version = mysql.ServerVersion
 	info.GitHash = versioninfo.TiDBGitHash
@@ -1117,6 +1256,9 @@ func DeleteInternalSession(se interface{}) {
 }
 
 // SetEtcdClient is only used for test.
+// SetEtcdClient is not thread-safe and may cause data race with the initialization of the domain.
+// Because this usage is test-only, we don't need to introduce a lock or atomic variable for it.
+// Use it after the domain initialization is done.
 func SetEtcdClient(etcdCli *clientv3.Client) {
 	is, err := getGlobalInfoSyncer()
 
@@ -1135,3 +1277,175 @@ func GetEtcdClient() *clientv3.Client {
 	}
 	return is.etcdCli
 }
+<<<<<<< HEAD:domain/infosync/info.go
+=======
+
+// GetPDScheduleConfig gets the schedule information from pd
+func GetPDScheduleConfig(ctx context.Context) (map[string]any, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return is.scheduleManager.GetScheduleConfig(ctx)
+}
+
+// SetPDScheduleConfig sets the schedule information for pd
+func SetPDScheduleConfig(ctx context.Context, config map[string]any) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return is.scheduleManager.SetScheduleConfig(ctx, config)
+}
+
+// TiProxyServerInfo is the server info for TiProxy.
+type TiProxyServerInfo struct {
+	Version        string `json:"version"`
+	GitHash        string `json:"git_hash"`
+	IP             string `json:"ip"`
+	Port           string `json:"port"`
+	StatusPort     string `json:"status_port"`
+	StartTimestamp int64  `json:"start_timestamp"`
+}
+
+// GetTiProxyServerInfo gets all TiProxy servers information from etcd.
+func GetTiProxyServerInfo(ctx context.Context) (map[string]*TiProxyServerInfo, error) {
+	failpoint.Inject("mockGetTiProxyServerInfo", func(val failpoint.Value) {
+		res := make(map[string]*TiProxyServerInfo)
+		err := json.Unmarshal([]byte(val.(string)), &res)
+		failpoint.Return(res, err)
+	})
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+	return is.getTiProxyServerInfo(ctx)
+}
+
+func (is *InfoSyncer) getTiProxyServerInfo(ctx context.Context) (map[string]*TiProxyServerInfo, error) {
+	// In test.
+	if is.etcdCli == nil {
+		return nil, nil
+	}
+
+	var err error
+	var resp *clientv3.GetResponse
+	allInfo := make(map[string]*TiProxyServerInfo)
+	for i := 0; i < keyOpDefaultRetryCnt; i++ {
+		if ctx.Err() != nil {
+			return nil, errors.Trace(ctx.Err())
+		}
+		childCtx, cancel := context.WithTimeout(ctx, keyOpDefaultTimeout)
+		resp, err = is.etcdCli.Get(childCtx, TopologyTiProxy, clientv3.WithPrefix())
+		cancel()
+		if err != nil {
+			logutil.BgLogger().Info("get key failed", zap.String("key", TopologyTiProxy), zap.Error(err))
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		for _, kv := range resp.Kvs {
+			key := string(kv.Key)
+			if !strings.HasSuffix(key, infoSuffix) {
+				continue
+			}
+			addr := key[len(TopologyTiProxy)+1 : len(key)-len(infoSuffix)]
+			var info TiProxyServerInfo
+			err = json.Unmarshal(kv.Value, &info)
+			if err != nil {
+				logutil.BgLogger().Info("unmarshal key failed", zap.String("key", key), zap.ByteString("value", kv.Value),
+					zap.Error(err))
+				return nil, errors.Trace(err)
+			}
+			allInfo[addr] = &info
+		}
+		return allInfo, nil
+	}
+	return nil, errors.Trace(err)
+}
+
+// TiCDCInfo is the server info for TiCDC.
+type TiCDCInfo struct {
+	ID             string `json:"id"`
+	Address        string `json:"address"`
+	Version        string `json:"version"`
+	GitHash        string `json:"git-hash"`
+	DeployPath     string `json:"deploy-path"`
+	StartTimestamp int64  `json:"start-timestamp"`
+	ClusterID      string `json:"cluster-id"`
+}
+
+// GetTiCDCServerInfo gets all TiCDC servers information from etcd.
+func GetTiCDCServerInfo(ctx context.Context) ([]*TiCDCInfo, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+	return is.getTiCDCServerInfo(ctx)
+}
+
+func (is *InfoSyncer) getTiCDCServerInfo(ctx context.Context) ([]*TiCDCInfo, error) {
+	// In test.
+	if is.etcdCli == nil {
+		return nil, nil
+	}
+
+	var err error
+	var resp *clientv3.GetResponse
+	allInfo := make([]*TiCDCInfo, 0)
+	for i := 0; i < keyOpDefaultRetryCnt; i++ {
+		if ctx.Err() != nil {
+			return nil, errors.Trace(ctx.Err())
+		}
+		childCtx, cancel := context.WithTimeout(ctx, keyOpDefaultTimeout)
+		resp, err = is.etcdCli.Get(childCtx, TopologyTiCDC, clientv3.WithPrefix())
+		cancel()
+		if err != nil {
+			logutil.BgLogger().Info("get key failed", zap.String("key", TopologyTiCDC), zap.Error(err))
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		for _, kv := range resp.Kvs {
+			key := string(kv.Key)
+			keyParts := strings.Split(key, "/")
+			if len(keyParts) < 3 {
+				logutil.BgLogger().Info("invalid ticdc key", zap.String("key", key))
+				continue
+			}
+			clusterID := keyParts[1]
+
+			var info TiCDCInfo
+			err := json.Unmarshal(kv.Value, &info)
+			if err != nil {
+				logutil.BgLogger().Info("unmarshal key failed", zap.String("key", key), zap.ByteString("value", kv.Value),
+					zap.Error(err))
+				return nil, errors.Trace(err)
+			}
+			info.Version = strings.TrimPrefix(info.Version, "v")
+			info.ClusterID = clusterID
+			allInfo = append(allInfo, &info)
+		}
+		return allInfo, nil
+	}
+	return nil, errors.Trace(err)
+}
+
+// getLocalServerInfo returns the local server info.
+func (is *InfoSyncer) getLocalServerInfo() *ServerInfo {
+	return is.info.Load()
+}
+
+// cloneDynamicServerInfo returns a clone of the dynamic server info.
+func (is *InfoSyncer) cloneDynamicServerInfo() *DynamicServerInfo {
+	return is.info.Load().DynamicServerInfo.clone()
+}
+
+// setDynamicServerInfo updates the dynamic server info.
+func (is *InfoSyncer) setDynamicServerInfo(ds *DynamicServerInfo) {
+	staticInfo := is.info.Load()
+	newInfo := &ServerInfo{
+		StaticServerInfo:  staticInfo.StaticServerInfo,
+		DynamicServerInfo: *ds,
+	}
+	is.info.Store(newInfo)
+}
+>>>>>>> 80d6b5683c5 (infosync: refactor server config into dynamic and static sections (#58473)):pkg/domain/infosync/info.go
