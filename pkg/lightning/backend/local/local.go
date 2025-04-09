@@ -1164,32 +1164,53 @@ func (local *Backend) executeJob(
 	}
 
 	for {
-		err := local.writeToTiKV(ctx, job)
-		if err != nil {
-			if !local.isRetryableImportTiKVError(err) {
-				return err
+		// the job might in wrote stage if it comes from retry
+		if job.stage == regionScanned {
+			// writes the data to TiKV and mark this job as wrote stage.
+			// we don't need to do cleanup for the pairs written to TiKV if encounters
+			// an error, TiKV will take the responsibility to do so.
+			// TODO: let client-go provide a high-level write interface.
+			res, err := local.doWrite(ctx, job)
+			if err != nil {
+				if !local.isRetryableImportTiKVError(err) {
+					return err
+				}
+				// currently only one case will restart write
+				if strings.Contains(err.Error(), "RequestTooNew") {
+					// TiKV hasn't synced the newest region info with PD, it's ok to
+					// rewrite without rescan.
+					job.convertStageTo(regionScanned)
+				} else {
+					job.convertStageTo(needRescan)
+				}
+				job.lastRetryableErr = err
+				log.FromContext(ctx).Warn("meet retryable error when writing to TiKV",
+					log.ShortError(err), zap.Stringer("job stage", job.stage))
+				return nil
 			}
-			// if it's retryable error, we retry from scanning region
-			log.FromContext(ctx).Warn("meet retryable error when writing to TiKV",
-				log.ShortError(err), zap.Stringer("job stage", job.stage))
-			job.lastRetryableErr = err
-			return nil
+			if res.emptyJob {
+				job.convertStageTo(ingested)
+			} else {
+				job.writeResult = res
+				job.convertStageTo(wrote)
+			}
 		}
 
-		err = local.ingest(ctx, job)
-		if err != nil {
-			if !local.isRetryableImportTiKVError(err) {
-				return err
+		// if the job is empty, it might go to ingested stage directly.
+		if job.stage == wrote {
+			err := local.ingest(ctx, job)
+			if err != nil {
+				if !local.isRetryableImportTiKVError(err) {
+					return err
+				}
+				log.FromContext(ctx).Warn("meet retryable error when ingesting",
+					log.ShortError(err), zap.Stringer("job stage", job.stage))
+				job.lastRetryableErr = err
+				return nil
 			}
-			log.FromContext(ctx).Warn("meet retryable error when ingesting",
-				log.ShortError(err), zap.Stringer("job stage", job.stage))
-			job.lastRetryableErr = err
-			return nil
 		}
-		// if the job.stage successfully converted into "ingested", it means
-		// these data are ingested into TiKV so we handle remaining data.
-		// For other job.stage, the job should be sent back to caller to retry
-		// later.
+		// if the stage is not ingested, it means some error happened, the job should
+		// be sent back to caller to retry later, else we handle remaining data.
 		if job.stage != ingested {
 			return nil
 		}

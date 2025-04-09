@@ -122,6 +122,10 @@ type regionJob struct {
 }
 
 type tikvWriteResult struct {
+	// means there is no data inside this job
+	emptyJob bool
+
+	// this field might be modified in-place to remove SSTs that are ingested successfully.
 	sstMeta           []*sst.SSTMeta
 	count             int64
 	totalBytes        int64
@@ -292,29 +296,6 @@ func (j *regionJob) done(wg *sync.WaitGroup) {
 	}
 }
 
-// writeToTiKV writes the data to TiKV and mark this job as wrote stage.
-// if any write logic has error, writeToTiKV will set job to a proper stage and return nil.
-// if any underlying logic has error, writeToTiKV will return an error.
-// we don't need to do cleanup for the pairs written to tikv if encounters an error,
-// tikv will take the responsibility to do so.
-// TODO: let client-go provide a high-level write interface.
-func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
-	err := local.doWrite(ctx, j)
-	if err == nil {
-		return nil
-	}
-	if !common.IsRetryableError(err) {
-		return err
-	}
-	// currently only one case will restart write
-	if strings.Contains(err.Error(), "RequestTooNew") {
-		j.convertStageTo(regionScanned)
-		return err
-	}
-	j.convertStageTo(needRescan)
-	return err
-}
-
 func newWriteRequest(meta *sst.SSTMeta, resourceGroupName, taskType string) *sst.WriteRequest {
 	return &sst.WriteRequest{
 		Chunk: &sst.WriteRequest_Meta{
@@ -330,11 +311,7 @@ func newWriteRequest(meta *sst.SSTMeta, resourceGroupName, taskType string) *sst
 	}
 }
 
-func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
-	if j.stage != regionScanned {
-		return nil
-	}
-
+func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResult, error) {
 	failpoint.Inject("fakeRegionJobs", func() {
 		front := j.injected[0]
 		j.injected = j.injected[1:]
@@ -361,16 +338,15 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 
 	firstKey, lastKey, err := j.ingestData.GetFirstAndLastKey(j.keyRange.Start, j.keyRange.End)
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	if firstKey == nil {
-		j.convertStageTo(ingested)
 		log.FromContext(ctx).Debug("keys within region is empty, skip doIngest",
 			logutil.Key("start", j.keyRange.Start),
 			logutil.Key("regionStart", region.StartKey),
 			logutil.Key("end", j.keyRange.End),
 			logutil.Key("regionEnd", region.EndKey))
-		return nil
+		return &tikvWriteResult{emptyJob: true}, nil
 	}
 
 	firstKey = codec.EncodeBytes([]byte{}, firstKey)
@@ -416,12 +392,12 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	for _, peer := range region.GetPeers() {
 		cli, err := clientFactory.create(ctx, peer.StoreId)
 		if err != nil {
-			return annotateErr(err, peer, "when create client")
+			return nil, annotateErr(err, peer, "when create client")
 		}
 
 		wstream, err := cli.Write(ctx)
 		if err != nil {
-			return annotateErr(err, peer, "when open write stream")
+			return nil, annotateErr(err, peer, "when open write stream")
 		}
 
 		failpoint.Inject("mockWritePeerErr", func() {
@@ -431,7 +407,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 
 		// Bind uuid for this write request
 		if err = wstream.Send(req); err != nil {
-			return annotateErr(err, peer, "when send meta")
+			return nil, annotateErr(err, peer, "when send meta")
 		}
 		clients = append(clients, wstream)
 		allPeers = append(allPeers, peer)
@@ -449,7 +425,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		return true
 	}, "TS used in import should in [now-1d, now+1h], but got %d", dataCommitTS)
 	if dataCommitTS == 0 {
-		return errors.New("data commitTS is 0")
+		return nil, errors.New("data commitTS is 0")
 	}
 	req.Chunk = &sst.WriteRequest_Batch{
 		Batch: &sst.WriteBatch{
@@ -523,7 +499,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 
 		if size >= kvBatchSize {
 			if err := flushKVs(); err != nil {
-				return errors.Trace(err)
+				return nil, errors.Trace(err)
 			}
 			count = 0
 			size = 0
@@ -548,12 +524,12 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	}
 
 	if iter.Error() != nil {
-		return errors.Trace(iter.Error())
+		return nil, errors.Trace(iter.Error())
 	}
 
 	if count > 0 {
 		if err := flushKVs(); err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
 		count = 0
 		size = 0
@@ -564,10 +540,10 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	for i, wStream := range clients {
 		resp, closeErr := wStream.CloseAndRecv()
 		if closeErr != nil {
-			return annotateErr(closeErr, allPeers[i], "when close write stream")
+			return nil, annotateErr(closeErr, allPeers[i], "when close write stream")
 		}
 		if resp.Error != nil {
-			return annotateErr(errors.New("resp error: "+resp.Error.Message), allPeers[i], "when close write stream")
+			return nil, annotateErr(errors.New("resp error: "+resp.Error.Message), allPeers[i], "when close write stream")
 		}
 		if leaderID == region.Peers[i].GetId() {
 			leaderPeerMetas = resp.Metas
@@ -587,7 +563,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 			logutil.Region(region), logutil.Leader(j.region.Leader),
 			zap.Uint64("leader_id", leaderID), logutil.SSTMeta(meta),
 			zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", totalSize))
-		return common.ErrNoLeader.GenWithStackByArgs(region.Id, leaderID)
+		return nil, common.ErrNoLeader.GenWithStackByArgs(region.Id, leaderID)
 	}
 
 	takeTime := time.Since(begin)
@@ -599,14 +575,12 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		m.SSTSecondsHistogram.WithLabelValues(metric.SSTProcessWrite).Observe(takeTime.Seconds())
 	}
 
-	j.writeResult = &tikvWriteResult{
+	return &tikvWriteResult{
 		sstMeta:           leaderPeerMetas,
 		count:             totalCount,
 		totalBytes:        totalSize,
 		remainingStartKey: remainingStartKey,
-	}
-	j.convertStageTo(wrote)
-	return nil
+	}, nil
 }
 
 // ingest tries to finish the regionJob.
@@ -615,10 +589,6 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 // if any underlying logic has error, ingest will return an error to let caller
 // handle it.
 func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
-	if j.stage != wrote {
-		return nil
-	}
-
 	failpoint.Inject("fakeRegionJobs", func() {
 		front := j.injected[0]
 		j.injected = j.injected[1:]
