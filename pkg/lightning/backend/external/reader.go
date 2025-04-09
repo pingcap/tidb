@@ -176,6 +176,7 @@ func readOneFile(
 	droppedSize := 0
 
 	cntAllKeys := 0
+	cntDropped := 0
 	var firstKey, lastKey []byte
 	for {
 		k, v, err := rd.nextKV()
@@ -194,9 +195,11 @@ func readOneFile(
 		cntAllKeys++
 		if bytes.Compare(k, startKey) < 0 {
 			droppedSize += len(k) + len(v)
+			cntDropped++
 			continue
 		}
 		if bytes.Compare(k, endKey) >= 0 {
+			cntDropped++
 			continue
 		}
 		// TODO(lance6716): we are copying every KV from rd's buffer to memBuf, can we
