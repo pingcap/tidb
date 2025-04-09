@@ -49,7 +49,7 @@ func runSQL(t *testing.T, ctx sessionctx.Context, is infoschema.InfoSchema, sql 
 	}
 	nodeW := resolve.NewNodeW(stmt)
 	err = core.Preprocess(context.Background(), ctx, nodeW, append(opts, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))...)
-	require.Truef(t, terror.ErrorEqual(err, terr), "sql: %s, err:%v", sql, err)
+	require.Truef(t, terror.ErrorEqual(err, terr), "sql: %s, err:%v, terr:%v", sql, err, terr)
 }
 
 func TestValidator(t *testing.T) {
@@ -280,6 +280,12 @@ func TestValidator(t *testing.T) {
 		{"select * from t tablesample bernoulli(10 rows);", false, expression.ErrInvalidTableSample},
 		{"select * from t tablesample bernoulli(23 percent) repeatable (23);", false, expression.ErrInvalidTableSample},
 		{"select * from t tablesample system() repeatable (10);", false, expression.ErrInvalidTableSample},
+
+		// issue 45674
+		{"alter table t2 add (b int)", true, nil},
+		{"alter table t2 add (b int)", false, infoschema.ErrTableNotExists.GenWithStackByArgs("test", "t2")},
+		{"create index x on t2(x)", true, nil},
+		{"create index x on t2(x)", false, infoschema.ErrTableNotExists.GenWithStackByArgs("test", "t2")},
 	}
 
 	store := testkit.CreateMockStore(t)
