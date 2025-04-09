@@ -211,6 +211,10 @@ func readOneFile(
 			continue
 		}
 		if bytes.Compare(k, endKey) >= 0 {
+			rd.byteReader.logger.Info("break scan loop",
+				zap.String("key", hex.EncodeToString(k)),
+				zap.String("data file name", dataFile),
+			)
 			break
 		}
 		// TODO(lance6716): we are copying every KV from rd's buffer to memBuf, can we
