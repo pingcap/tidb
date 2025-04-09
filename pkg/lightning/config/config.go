@@ -1127,8 +1127,8 @@ type TikvImporter struct {
 	PausePDSchedulerScope PausePDSchedulerScope `toml:"pause-pd-scheduler-scope" json:"pause-pd-scheduler-scope"`
 	BlockSize             ByteSize              `toml:"block-size" json:"block-size"`
 
-	RemoteChunkSize     int    `toml:"chunk-size" json:"chunk-size"`
-	RemoteChunkCacheDir string `toml:"chunk-cache-dir" json:"chunk-cache-dir"`
+	RemoteChunkSize     int    `toml:"remote-chunk-size" json:"remote-chunk-size"`
+	RemoteChunkCacheDir string `toml:"remote-chunk-cache-dir" json:"remote-chunk-cache-dir"`
 }
 
 func (t *TikvImporter) adjust() error {
@@ -1137,6 +1137,7 @@ func (t *TikvImporter) adjust() error {
 	}
 
 	t.Backend = strings.ToLower(t.Backend)
+	// TODO(zeminzhou): Disable the use of remote backend until we finish it.
 	if t.Backend == BackendRemote {
 		return common.ErrInvalidConfig.GenWithStack(`tikv-importer.backend = "remote" is not supported`)
 	}

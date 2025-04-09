@@ -1079,8 +1079,8 @@ type DupeController struct {
 	collectRemoteDupRows bool
 }
 
-// NewDupeController creates a new DupeController.
-func NewDupeController(
+// NewDupeControllerForRemoteBackend creates a new DupeController for remote backend.
+func NewDupeControllerForRemoteBackend(
 	dupeConcurrency int,
 	errorMgr *errormanager.ErrorManager,
 	splitCli split.SplitClient,
@@ -1142,8 +1142,10 @@ func (local *DupeController) CollectRemoteDuplicateRows(
 		logger.End(zap.ErrorLevel, err)
 	}()
 
+	// For remote bakcend, the remote worker make sure that the data is already globally ordered before ingest to TiKV.
+	// So remote backend don't need  collect duplicate rows from TiKV.
 	if !local.collectRemoteDupRows {
-		logger.Warn("[detect-dupe] skipping remote duplicate detection due to configuration")
+		logger.Info("[detect-dupe] skipping remote duplicate detection due to configuration")
 		return false, nil
 	}
 	duplicateManager, err := NewDupeDetector(tbl, tableName, local.splitCli, local.tikvCli, local.tikvCodec,
