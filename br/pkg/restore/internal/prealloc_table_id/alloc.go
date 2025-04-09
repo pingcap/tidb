@@ -5,7 +5,7 @@ package prealloctableid
 import (
 	"fmt"
 	"math"
-	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -31,13 +31,11 @@ type Allocator interface {
 
 // PreallocIDs mantains the state of preallocated table IDs.
 type PreallocIDs struct {
-	mu             sync.Mutex
 	start          int64
 	reusableBorder int64
 	end            int64
 	count          int64
-	used           map[int64]struct{}
-	next           int64
+	next           atomic.Int64
 }
 
 // New collects the requirement of prealloc IDs and return a
@@ -73,16 +71,12 @@ func New(tables []*metautil.Table) *PreallocIDs {
 		start:          math.MaxInt64,
 		reusableBorder: maxID + 1,
 		count:          count,
-		used:           make(map[int64]struct{}, count),
-		next:           math.MaxInt64,
+		next:           atomic.Int64{},
 	}
 }
 
 // String implements fmt.Stringer.
 func (p *PreallocIDs) String() string {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	if p.start >= p.end {
 		return fmt.Sprintf("ID:empty(end=%d)", p.end)
 	}
@@ -90,15 +84,11 @@ func (p *PreallocIDs) String() string {
 }
 
 func (p *PreallocIDs) GetIDRange() (int64, int64) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
 	return p.start, p.end
 }
 
 // preallocTableIDs peralloc the id for [start, end)
 func (p *PreallocIDs) Alloc(m Allocator) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
 
 	if p.count == 0 {
 		return nil
@@ -111,47 +101,31 @@ func (p *PreallocIDs) Alloc(m Allocator) error {
 	if err != nil {
 		return err
 	}
-	if p.reusableBorder <= currentID+1 {
-		p.reusableBorder = currentID + 1
+	p.start = currentID + 1
+
+	if p.reusableBorder <= p.start {
+		p.reusableBorder = p.start
 	}
-	idRnage := p.reusableBorder - (currentID + 1) + p.count
-	if _, err := m.AdvanceGlobalIDs(int(idRnage)); err != nil {
+	idRange := p.reusableBorder - p.start + p.count
+	if _, err := m.AdvanceGlobalIDs(int(idRange)); err != nil {
 		return err
 	}
 
-	p.start = currentID + 1
-	p.end = p.start + idRnage
-	p.next = p.reusableBorder
+	p.end = p.start + idRange
+	p.next.Store(p.reusableBorder)
 	return nil
 }
 
 func (p *PreallocIDs) allocID(originalID int64) (int64, error) {
-	if int64(len(p.used)) >= p.end-p.start {
+	if originalID >= p.start && originalID < p.reusableBorder {
+		return originalID, nil
+	}
+
+	rewriteID := p.next.Add(1) - 1
+	if rewriteID >= p.end {
 		return 0, errors.Errorf("no available IDs")
 	}
-
-	if originalID >= p.start && originalID < p.reusableBorder {
-		if _, exists := p.used[originalID]; !exists {
-			p.used[originalID] = struct{}{}
-			return originalID, nil
-		}
-	}
-
-	start := p.next
-	for {
-		current := p.next
-		p.next = (current+1-p.reusableBorder)%(p.end-p.reusableBorder) + p.reusableBorder
-
-		if _, exists := p.used[current]; !exists {
-			p.used[current] = struct{}{}
-			return current, nil
-		}
-		if p.next == start {
-			break
-		}
-	}
-
-	return 0, errors.Errorf("no available IDs")
+	return rewriteID, nil
 }
 
 func (p *PreallocIDs) RewriteTableInfo(info *model.TableInfo) (*model.TableInfo, error) {
@@ -159,9 +133,6 @@ func (p *PreallocIDs) RewriteTableInfo(info *model.TableInfo) (*model.TableInfo,
 		return nil, errors.Errorf("table info is nil")
 	}
 	infoCopy := info.Clone()
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
 
 	newID, err := p.allocID(info.ID)
 	if err != nil {
