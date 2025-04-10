@@ -1509,10 +1509,6 @@ type PhysicalHashJoin struct {
 	fd *fd.FDSet
 }
 
-func (p *PhysicalHashJoin) SetFD(fd *fd.FDSet) {
-	p.fd = fd
-}
-
 // CanUseHashJoinV2 returns true if current join is supported by hash join v2
 func (p *PhysicalHashJoin) CanUseHashJoinV2() bool {
 	return canUseHashJoinV2(p.JoinType, p.LeftJoinKeys, p.IsNullEQ, p.LeftNAJoinKeys)

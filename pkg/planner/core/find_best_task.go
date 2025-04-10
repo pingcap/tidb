@@ -223,9 +223,6 @@ func enumeratePhysicalPlans4Task(
 		}
 
 		// Combine the best child tasks with parent physical plan.
-		if p, ok := pp.(*PhysicalHashJoin); ok {
-			p.SetFD(fd)
-		}
 		curTask := pp.Attach2Task(childTasks...)
 		if curTask.Invalid() {
 			continue
