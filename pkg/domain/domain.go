@@ -3419,7 +3419,7 @@ func (do *Domain) serverIDKeeper() {
 
 // StartTTLJobManager creates and starts the ttl job manager
 func (do *Domain) StartTTLJobManager() {
-	ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store, do.etcdClient, do.ddl.OwnerManager().IsOwner)
+	ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.advancedSysSessionPool, do.store, do.etcdClient, do.ddl.OwnerManager().IsOwner)
 	do.ttlJobManager.Store(ttlJobManager)
 	ttlJobManager.Start()
 }

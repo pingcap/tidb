@@ -25,10 +25,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/timer/api"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -37,14 +37,14 @@ import (
 )
 
 type tableTimerStoreCore struct {
-	pool     util.DestroyableSessionPool
+	pool     syssession.Pool
 	dbName   string
 	tblName  string
 	notifier api.TimerWatchEventNotifier
 }
 
 // NewTableTimerStore create a new timer store based on table
-func NewTableTimerStore(clusterID uint64, pool util.DestroyableSessionPool, dbName, tblName string, etcd *clientv3.Client) *api.TimerStore {
+func NewTableTimerStore(clusterID uint64, pool syssession.Pool, dbName, tblName string, etcd *clientv3.Client) *api.TimerStore {
 	var notifier api.TimerWatchEventNotifier
 	if etcd != nil {
 		notifier = NewEtcdNotifier(clusterID, etcd)
@@ -62,7 +62,13 @@ func NewTableTimerStore(clusterID uint64, pool util.DestroyableSessionPool, dbNa
 	}
 }
 
-func (s *tableTimerStoreCore) Create(ctx context.Context, record *api.TimerRecord) (string, error) {
+func (s *tableTimerStoreCore) withSctx(fn func(sessionctx.Context) error) error {
+	return s.withSession(func(se *syssession.Session) error {
+		return se.WithSessionContext(fn)
+	})
+}
+
+func (s *tableTimerStoreCore) Create(ctx context.Context, record *api.TimerRecord) (timerID string, _ error) {
 	if record == nil {
 		return "", errors.New("timer should not be nil")
 	}
@@ -83,24 +89,28 @@ func (s *tableTimerStoreCore) Create(ctx context.Context, record *api.TimerRecor
 		return "", err
 	}
 
-	sctx, back, err := s.takeSession()
-	if err != nil {
-		return "", err
-	}
-	defer back()
+	err := s.withSession(func(se *syssession.Session) (internalErr error) {
+		timerID, internalErr = s.createWithSession(ctx, se, record)
+		return
+	})
 
+	return timerID, err
+}
+
+func (s *tableTimerStoreCore) createWithSession(
+	ctx context.Context, se *syssession.Session, record *api.TimerRecord,
+) (string, error) {
 	sql, args, err := buildInsertTimerSQL(s.dbName, s.tblName, record)
 	if err != nil {
 		return "", err
 	}
 
-	exec := sctx.GetSQLExecutor()
-	_, err = executeSQL(ctx, exec, sql, args...)
+	_, err = executeSQL(ctx, se, sql, args...)
 	if err != nil {
 		return "", err
 	}
 
-	rows, err := executeSQL(ctx, exec, "select @@last_insert_id")
+	rows, err := executeSQL(ctx, se, "select @@last_insert_id")
 	if err != nil {
 		return "", err
 	}
@@ -110,13 +120,17 @@ func (s *tableTimerStoreCore) Create(ctx context.Context, record *api.TimerRecor
 	return timerID, nil
 }
 
-func (s *tableTimerStoreCore) List(ctx context.Context, cond api.Cond) ([]*api.TimerRecord, error) {
-	sctx, back, err := s.takeSession()
-	if err != nil {
-		return nil, err
-	}
-	defer back()
+func (s *tableTimerStoreCore) List(ctx context.Context, cond api.Cond) (r []*api.TimerRecord, _ error) {
+	err := s.withSctx(func(sctx sessionctx.Context) (internalErr error) {
+		r, internalErr = s.listWithSctx(ctx, sctx, cond)
+		return
+	})
+	return r, err
+}
 
+func (s *tableTimerStoreCore) listWithSctx(
+	ctx context.Context, sctx sessionctx.Context, cond api.Cond,
+) ([]*api.TimerRecord, error) {
 	if sessVars := sctx.GetSessionVars(); !sessVars.GetEnableIndexMerge() {
 		// Enable index merge is used to make sure filtering timers with tags quickly.
 		// Currently, we are using multi-value index to index tags for timers which requires index merge enabled.
@@ -237,21 +251,22 @@ func (s *tableTimerStoreCore) List(ctx context.Context, cond api.Cond) ([]*api.T
 }
 
 func (s *tableTimerStoreCore) Update(ctx context.Context, timerID string, update *api.TimerUpdate) error {
-	sctx, back, err := s.takeSession()
-	if err != nil {
-		return err
-	}
-	defer back()
+	return s.withSession(func(se *syssession.Session) error {
+		return s.updateWithSession(ctx, se, timerID, update)
+	})
+}
 
-	exec := sctx.GetSQLExecutor()
-	err = runInTxn(ctx, exec, func() error {
+func (s *tableTimerStoreCore) updateWithSession(
+	ctx context.Context, se *syssession.Session, timerID string, update *api.TimerUpdate,
+) error {
+	err := runInTxn(ctx, se, func() error {
 		/* #nosec G202: SQL string concatenation */
 		getCheckColsSQL := fmt.Sprintf(
 			"SELECT EVENT_ID, VERSION, SCHED_POLICY_TYPE, SCHED_POLICY_EXPR FROM %s WHERE ID=%%?",
 			indentString(s.dbName, s.tblName),
 		)
 
-		rows, err := executeSQL(ctx, exec, getCheckColsSQL, timerID)
+		rows, err := executeSQL(ctx, se, getCheckColsSQL, timerID)
 		if err != nil {
 			return err
 		}
@@ -277,7 +292,7 @@ func (s *tableTimerStoreCore) Update(ctx context.Context, timerID string, update
 			return err
 		}
 
-		if _, err = executeSQL(ctx, exec, updateSQL, args...); err != nil {
+		if _, err = executeSQL(ctx, se, updateSQL, args...); err != nil {
 			return err
 		}
 
@@ -292,21 +307,24 @@ func (s *tableTimerStoreCore) Update(ctx context.Context, timerID string, update
 	return nil
 }
 
-func (s *tableTimerStoreCore) Delete(ctx context.Context, timerID string) (bool, error) {
-	sctx, back, err := s.takeSession()
-	if err != nil {
-		return false, err
-	}
-	defer back()
+func (s *tableTimerStoreCore) Delete(ctx context.Context, timerID string) (ok bool, _ error) {
+	err := s.withSession(func(se *syssession.Session) (internalErr error) {
+		ok, internalErr = s.deleteWithSession(ctx, se, timerID)
+		return
+	})
+	return ok, err
+}
 
-	exec := sctx.GetSQLExecutor()
+func (s *tableTimerStoreCore) deleteWithSession(
+	ctx context.Context, se *syssession.Session, timerID string,
+) (bool, error) {
 	deleteSQL, args := buildDeleteTimerSQL(s.dbName, s.tblName, timerID)
-	_, err = executeSQL(ctx, exec, deleteSQL, args...)
+	_, err := executeSQL(ctx, se, deleteSQL, args...)
 	if err != nil {
 		return false, err
 	}
 
-	rows, err := executeSQL(ctx, exec, "SELECT ROW_COUNT()")
+	rows, err := executeSQL(ctx, se, "SELECT ROW_COUNT()")
 	if err != nil {
 		return false, err
 	}
@@ -330,68 +348,45 @@ func (s *tableTimerStoreCore) Close() {
 	s.notifier.Close()
 }
 
-func (s *tableTimerStoreCore) takeSession() (sessionctx.Context, func(), error) {
-	r, err := s.pool.Get()
-	if err != nil {
-		return nil, nil, err
-	}
-
-	success := false
-	defer func() {
-		if !success {
-			s.pool.Destroy(r)
-		}
-	}()
-
-	sctx, ok := r.(sessionctx.Context)
-	if !ok {
-		return nil, nil, errors.New("session is not the type sessionctx.Context")
-	}
-
+func (s *tableTimerStoreCore) withSession(fn func(*syssession.Session) error) error {
 	ctx := context.Background()
-
-	exec := sctx.GetSQLExecutor()
-	// rollback first to terminate unexpected transactions
-	if _, err = executeSQL(ctx, exec, "ROLLBACK"); err != nil {
-		return nil, nil, err
-	}
-
-	// we should force to set time zone to UTC to make sure time operations are consistent.
-	rows, err := executeSQL(ctx, exec, "SELECT @@time_zone")
-	if err != nil {
-		return nil, nil, err
-	}
-
-	if len(rows) == 0 || rows[0].Len() == 0 {
-		return nil, nil, errors.New("failed to get original time zone of session")
-	}
-
-	if _, err = executeSQL(ctx, exec, "SET @@time_zone='UTC'"); err != nil {
-		return nil, nil, err
-	}
-
-	originalTimeZone := rows[0].GetString(0)
-	back := func() {
-		if _, err := executeSQL(ctx, exec, "ROLLBACK"); err != nil {
-			// Though this branch is rarely to be called because "ROLLBACK" will always be successfully, we still need
-			// to handle it here to make sure the code is strong.
-			terror.Log(err)
-			// call `Destroy` to make sure the resource is released to avoid memory leak
-			s.pool.Destroy(r)
-			return
+	return s.pool.WithSession(func(se *syssession.Session) error {
+		// rollback first to terminate unexpected transactions
+		if _, err := executeSQL(ctx, se, "ROLLBACK"); err != nil {
+			return err
+		}
+		// we should force to set time zone to UTC to make sure time operations are consistent.
+		rows, err := executeSQL(ctx, se, "SELECT @@time_zone")
+		if err != nil {
+			return err
 		}
 
-		if _, err = executeSQL(ctx, exec, "SET @@time_zone=%?", originalTimeZone); err != nil {
-			terror.Log(err)
-			s.pool.Destroy(r)
-			return
+		if len(rows) == 0 || rows[0].Len() == 0 {
+			return errors.New("failed to get original time zone of session")
+		}
+		originalTimeZone := rows[0].GetString(0)
+
+		if _, err = executeSQL(ctx, se, "SET @@time_zone='UTC'"); err != nil {
+			return err
 		}
 
-		s.pool.Put(r)
-	}
+		defer func() {
+			if _, err := executeSQL(ctx, se, "ROLLBACK"); err != nil {
+				// Though `pool.WithSession` will discard a not committed transaction.
+				// We still rollback back here to make sure the assertion passes in `Pool.Put`.
+				terror.Log(err)
+				se.Close()
+				return
+			}
 
-	success = true
-	return sctx, back, nil
+			if _, err = executeSQL(ctx, se, "SET @@time_zone=%?", originalTimeZone); err != nil {
+				terror.Log(err)
+				se.Close()
+				return
+			}
+		}()
+		return fn(se)
+	})
 }
 
 func checkUpdateConstraints(update *api.TimerUpdate, eventID string, version uint64, policy api.SchedPolicyType, expr string) error {
