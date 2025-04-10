@@ -1773,6 +1773,9 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 	dataFiles, statFiles, err := external.MockExternalEngine(memStore, keys, value)
 	require.NoError(t, err)
 
+	codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{})
+	require.NoError(t, err)
+
 	extEngine := external.NewExternalEngine(
 		memStore,
 		dataFiles,
@@ -1791,6 +1794,7 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 		789,
 		true,
 		16*units.GiB,
+		codec,
 	)
 
 	jobCh := make(chan *regionJob, 9)

@@ -331,6 +331,7 @@ func (em *engineManager) closeEngine(
 			externalCfg.TotalKVCount,
 			externalCfg.CheckHotspot,
 			externalCfg.MemCapacity,
+			em.GetTiKVCodec(),
 		)
 		em.externalEngine[engineUUID] = externalEngine
 		return nil

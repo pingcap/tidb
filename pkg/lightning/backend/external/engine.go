@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -130,13 +131,18 @@ func (b *memKVsAndBuffers) build(ctx context.Context) {
 
 // Engine stored sorted key/value pairs in an external storage.
 type Engine struct {
-	storage           storage.ExternalStorage
-	dataFiles         []string
-	statsFiles        []string
-	startKey          []byte
-	endKey            []byte
-	jobKeys           [][]byte
-	splitKeys         [][]byte
+	storage    storage.ExternalStorage
+	dataFiles  []string
+	statsFiles []string
+
+	// all theses keys have no keyspace prefix, add when using them.
+	startKey  []byte
+	endKey    []byte
+	splitKeys [][]byte
+
+	// jobKeys has no keyspace prefix, add except loading data
+	jobKeys [][]byte
+
 	smallBlockBufPool *membuf.Pool
 	largeBlockBufPool *membuf.Pool
 
@@ -163,6 +169,8 @@ type Engine struct {
 	importedKVSize  *atomic.Int64
 	importedKVCount *atomic.Int64
 	memLimit        int
+
+	tikvCodec tikv.Codec
 }
 
 var _ common.Engine = (*Engine)(nil)
@@ -190,6 +198,7 @@ func NewExternalEngine(
 	totalKVCount int64,
 	checkHotspot bool,
 	memCapacity int64,
+	tikvCodec tikv.Codec,
 ) common.Engine {
 	// at most 3 batches can be loaded in memory, see writeStepMemShareCount.
 	memLimit := int(float64(memCapacity) / writeStepMemShareCount * 3)
@@ -226,6 +235,7 @@ func NewExternalEngine(
 		importedKVSize:     atomic.NewInt64(0),
 		importedKVCount:    atomic.NewInt64(0),
 		memLimit:           memLimit,
+		tikvCodec:          tikvCodec,
 	}
 }
 
@@ -390,32 +400,15 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	e.memKVsAndBuffers.size = 0
 
 	ranges := make([]common.Range, 0, len(jobKeys)-1)
-	prev, err2 := e.keyAdapter.Decode(nil, jobKeys[0])
-	if err2 != nil {
-		return err
-	}
-	for i := 1; i < len(jobKeys)-1; i++ {
-		cur, err3 := e.keyAdapter.Decode(nil, jobKeys[i])
-		if err3 != nil {
-			return err3
-		}
+	for i := 0; i < len(jobKeys)-1; i++ {
 		ranges = append(ranges, common.Range{
-			Start: prev,
-			End:   cur,
+			Start: jobKeys[i],
+			End:   jobKeys[i+1],
 		})
-		prev = cur
 	}
-	// last range key may be a nextKey so we should try to remove the trailing 0 if decoding failed
-	lastKey := jobKeys[len(jobKeys)-1]
-	cur, err4 := e.tryDecodeEndKey(lastKey)
-	if err4 != nil {
-		return err4
+	if err := e.rewriteDataAndRanges(data, ranges, e.tikvCodec, e.keyAdapter); err != nil {
+		return errors.Trace(err)
 	}
-	ranges = append(ranges, common.Range{
-		Start: prev,
-		End:   cur,
-	})
-
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -424,6 +417,43 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 		SortedRanges: ranges,
 	}:
 	}
+	return nil
+}
+
+// rewriteDataAndRanges rewrites both the ranges and datas
+// it use the tikvCodec to add prefix to the decoded keys and encoded values.
+func (e *Engine) rewriteDataAndRanges(data *MemoryIngestData, ranges []common.Range, tikvCodec tikv.Codec, keyAdapter common.KeyAdapter) error {
+	prefix := tikvCodec.EncodeKey(nil)
+
+	for i := range ranges {
+		startKey, err := keyAdapter.Decode(nil, ranges[i].Start)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		var endKey []byte
+		// last range key may be a nextKey so we should try to remove the trailing 0 if decoding failed
+		if i == len(ranges)-1 {
+			endKey, err = e.tryDecodeEndKey(ranges[i].End)
+		} else {
+			endKey, err = keyAdapter.Decode(nil, ranges[i].End)
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		ranges[i].Start = tikvCodec.EncodeKey(startKey)
+		ranges[i].End = tikvCodec.EncodeKey(endKey)
+	}
+
+	for i := range data.keys {
+		var err error
+		data.keys[i], err = keyAdapter.AddPrefix(data.keys[i], prefix)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	return nil
 }
 
@@ -485,6 +515,13 @@ func (e *Engine) ID() string {
 
 // GetKeyRange implements common.Engine.
 func (e *Engine) GetKeyRange() (startKey []byte, endKey []byte, err error) {
+	defer func() {
+		if err == nil {
+			startKey = e.tikvCodec.EncodeKey(startKey)
+			endKey = e.tikvCodec.EncodeKey(startKey)
+		}
+	}()
+
 	if _, ok := e.keyAdapter.(common.NoopKeyAdapter); ok {
 		return e.startKey, e.endKey, nil
 	}
@@ -501,10 +538,17 @@ func (e *Engine) GetKeyRange() (startKey []byte, endKey []byte, err error) {
 }
 
 // GetRegionSplitKeys implements common.Engine.
-func (e *Engine) GetRegionSplitKeys() ([][]byte, error) {
-	splitKeys := make([][]byte, len(e.splitKeys))
+func (e *Engine) GetRegionSplitKeys() (splitKeys [][]byte, err error) {
+	defer func() {
+		if err == nil {
+			for i := range splitKeys {
+				splitKeys[i] = e.tikvCodec.EncodeKey(splitKeys[i])
+			}
+		}
+	}()
+
+	splitKeys = make([][]byte, len(e.splitKeys))
 	var (
-		err      error
 		splitKey []byte
 	)
 	for i, k := range e.splitKeys {
