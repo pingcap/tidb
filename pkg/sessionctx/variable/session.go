@@ -1021,6 +1021,25 @@ type SessionVars struct {
 	// concurrencyFactor is the CPU cost of additional one goroutine.
 	concurrencyFactor float64
 
+	// Optimizer cost model factors for each physical operator
+	IndexScanCostFactor        float64
+	IndexReaderCostFactor      float64
+	TableReaderCostFactor      float64
+	TableFullScanCostFactor    float64
+	TableRangeScanCostFactor   float64
+	TableRowIDScanCostFactor   float64
+	TableTiFlashScanCostFactor float64
+	IndexLookupCostFactor      float64
+	IndexMergeCostFactor       float64
+	SortCostFactor             float64
+	TopNCostFactor             float64
+	LimitCostFactor            float64
+	StreamAggCostFactor        float64
+	HashAggCostFactor          float64
+	MergeJoinCostFactor        float64
+	HashJoinCostFactor         float64
+	IndexJoinCostFactor        float64
+
 	// enableForceInlineCTE is used to enable/disable force inline CTE.
 	enableForceInlineCTE bool
 
@@ -2110,6 +2129,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		RetryLimit:                    DefTiDBRetryLimit,
 		DisableTxnAutoRetry:           DefTiDBDisableTxnAutoRetry,
 		DDLReorgPriority:              kv.PriorityLow,
+<<<<<<< HEAD
 		allowInSubqToJoinAndAgg:       DefOptInSubqToJoinAndAgg,
 		preferRangeScan:               DefOptPreferRangeScan,
 		EnableCorrelationAdjustment:   DefOptEnableCorrelationAdjustment,
@@ -2128,6 +2148,43 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		concurrencyFactor:             DefOptConcurrencyFactor,
 		enableForceInlineCTE:          DefOptForceInlineCTE,
 		EnableVectorizedExpression:    DefEnableVectorizedExpression,
+=======
+		allowInSubqToJoinAndAgg:       vardef.DefOptInSubqToJoinAndAgg,
+		preferRangeScan:               vardef.DefOptPreferRangeScan,
+		EnableCorrelationAdjustment:   vardef.DefOptEnableCorrelationAdjustment,
+		LimitPushDownThreshold:        vardef.DefOptLimitPushDownThreshold,
+		CorrelationThreshold:          vardef.DefOptCorrelationThreshold,
+		CorrelationExpFactor:          vardef.DefOptCorrelationExpFactor,
+		cpuFactor:                     vardef.DefOptCPUFactor,
+		copCPUFactor:                  vardef.DefOptCopCPUFactor,
+		CopTiFlashConcurrencyFactor:   vardef.DefOptTiFlashConcurrencyFactor,
+		networkFactor:                 vardef.DefOptNetworkFactor,
+		scanFactor:                    vardef.DefOptScanFactor,
+		descScanFactor:                vardef.DefOptDescScanFactor,
+		seekFactor:                    vardef.DefOptSeekFactor,
+		memoryFactor:                  vardef.DefOptMemoryFactor,
+		diskFactor:                    vardef.DefOptDiskFactor,
+		concurrencyFactor:             vardef.DefOptConcurrencyFactor,
+		IndexScanCostFactor:           vardef.DefOptIndexScanCostFactor,
+		IndexReaderCostFactor:         vardef.DefOptIndexReaderCostFactor,
+		TableReaderCostFactor:         vardef.DefOptTableReaderCostFactor,
+		TableFullScanCostFactor:       vardef.DefOptTableFullScanCostFactor,
+		TableRangeScanCostFactor:      vardef.DefOptTableRangeScanCostFactor,
+		TableRowIDScanCostFactor:      vardef.DefOptTableRowIDScanCostFactor,
+		TableTiFlashScanCostFactor:    vardef.DefOptTableTiFlashScanCostFactor,
+		IndexLookupCostFactor:         vardef.DefOptIndexLookupCostFactor,
+		IndexMergeCostFactor:          vardef.DefOptIndexMergeCostFactor,
+		SortCostFactor:                vardef.DefOptSortCostFactor,
+		TopNCostFactor:                vardef.DefOptTopNCostFactor,
+		LimitCostFactor:               vardef.DefOptLimitCostFactor,
+		StreamAggCostFactor:           vardef.DefOptStreamAggCostFactor,
+		HashAggCostFactor:             vardef.DefOptHashAggCostFactor,
+		MergeJoinCostFactor:           vardef.DefOptMergeJoinCostFactor,
+		HashJoinCostFactor:            vardef.DefOptHashJoinCostFactor,
+		IndexJoinCostFactor:           vardef.DefOptIndexJoinCostFactor,
+		enableForceInlineCTE:          vardef.DefOptForceInlineCTE,
+		EnableVectorizedExpression:    vardef.DefEnableVectorizedExpression,
+>>>>>>> d46ecaa4c30 (planner: add optimizer cost factors (#60333))
 		CommandValue:                  uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold:   DefTiDBOptJoinReorderThreshold,
 		SlowQueryFile:                 config.GetGlobalConfig().Log.SlowQueryFile,
