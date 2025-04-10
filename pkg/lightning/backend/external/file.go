@@ -40,13 +40,13 @@ func NewKeyValueStore(
 	ctx context.Context,
 	dataWriter storage.ExternalFileWriter,
 	rangePropertiesCollector *rangePropertiesCollector,
-) (*KeyValueStore, error) {
+) *KeyValueStore {
 	kvStore := &KeyValueStore{
 		dataWriter: dataWriter,
 		ctx:        ctx,
 		rc:         rangePropertiesCollector,
 	}
-	return kvStore, nil
+	return kvStore
 }
 
 // addEncodedData saves encoded key-value pairs to the KeyValueStore.
