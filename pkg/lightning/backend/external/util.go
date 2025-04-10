@@ -17,6 +17,7 @@ package external
 import (
 	"bytes"
 	"context"
+	"go.uber.org/zap"
 	"io"
 	"slices"
 	"sort"
@@ -48,9 +49,12 @@ func seekPropsOffsets(
 	paths []string,
 	exStorage storage.ExternalStorage,
 ) (_ [][]uint64, err error) {
+	skipOpen := make([]bool, len(paths))
+	skipOpenNum := 0
 	logger := logutil.Logger(ctx)
 	task := log.BeginTask(logger, "seek props offsets")
 	defer func() {
+		task.Info("skip open", zap.Int("skip-open", skipOpenNum))
 		task.End(zapcore.ErrorLevel, err)
 	}()
 
@@ -76,6 +80,11 @@ func seekPropsOffsets(
 			curKey := starts[keyIdx]
 
 			p, err3 := r.nextProp()
+			if kv.Key(p.firstKey).Cmp(starts[len(starts)-1]) > 0 {
+				skipOpen[i] = true
+				skipOpenNum++
+				return nil
+			}
 			for {
 				switch err3 {
 				case nil:
