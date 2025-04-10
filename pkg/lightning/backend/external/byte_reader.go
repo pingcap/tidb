@@ -326,6 +326,7 @@ func (r *byteReader) closeConcurrentReader() (reloadCnt, offsetInOldBuffer int) 
 		zap.Int("reloadCnt", r.concurrentReader.reloadCnt),
 		zap.Int("dropBytes", r.concurrentReader.bufSizePerConc*(len(r.curBuf)-r.curBufIdx)-r.curBufOffset),
 		zap.Int("curBufIdx", r.curBufIdx),
+		zap.String("fileName", r.concurrentReader.filename),
 	)
 	failpoint.Inject("assertReloadAtMostOnce", func() {
 		if r.concurrentReader.reloadCnt > 1 {

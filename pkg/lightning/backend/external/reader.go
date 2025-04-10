@@ -47,6 +47,14 @@ func readAllData(
 		zap.String("start-key", hex.EncodeToString(startKey)),
 		zap.String("end-key", hex.EncodeToString(endKey)),
 	)
+	log.FromContext(ctx).Info("readAllData info",
+		zap.String("start-key", string(startKey)),
+		zap.String("end-key", string(endKey)),
+		zap.String("startKey", hex.EncodeToString(startKey)),
+		zap.String("endKey", hex.EncodeToString(endKey)),
+		zap.Strings("dataFiles", dataFiles),
+		zap.Strings("statsFiles", statsFiles),
+	)
 	defer func() {
 		if err != nil {
 			output.keysPerFile = nil
@@ -64,7 +72,7 @@ func readAllData(
 		task.End(zap.ErrorLevel, err)
 	}()
 
-	concurrences, startOffsets, err := getFilesReadConcurrency(
+	concurrences, startOffsets, err, _ := getFilesReadConcurrency(
 		ctx,
 		store,
 		statsFiles,
@@ -80,6 +88,7 @@ func readAllData(
 	readConn = min(readConn, len(dataFiles))
 	taskCh := make(chan int)
 	output.memKVBuffers = make([]*membuf.Buffer, readConn*2)
+	task.Info("read file go routine num", zap.Int("readConn", readConn))
 	for readIdx := 0; readIdx < readConn; readIdx++ {
 		readIdx := readIdx
 		eg.Go(func() error {
@@ -96,6 +105,10 @@ func readAllData(
 					if !ok {
 						return nil
 					}
+					//if !notSkip[fileIdx] {
+					//	// skip the file if it is not in the range
+					//	continue
+					//}
 					err2 := readOneFile(
 						egCtx,
 						store,
@@ -117,6 +130,9 @@ func readAllData(
 	}
 
 	for fileIdx := range dataFiles {
+		//if !notSkip[fileIdx] {
+		//	continue
+		//}
 		select {
 		case <-egCtx.Done():
 			return eg.Wait()
@@ -166,6 +182,9 @@ func readOneFile(
 	size := 0
 	droppedSize := 0
 
+	cntAllKeys := 0
+	cntDropped := 0
+	var firstKey, lastKey []byte
 	for {
 		k, v, err := rd.nextKV()
 		if err != nil {
@@ -174,11 +193,27 @@ func readOneFile(
 			}
 			return err
 		}
+		if cntAllKeys == 0 {
+			firstKey = make([]byte, len(k))
+			copy(firstKey, k)
+		}
+		lastKey = make([]byte, len(k))
+		copy(lastKey, k)
+		cntAllKeys++
 		if bytes.Compare(k, startKey) < 0 {
 			droppedSize += len(k) + len(v)
+			//rd.byteReader.logger.Info("drop key",
+			//	zap.String("dropped key", hex.EncodeToString(k)),
+			//	zap.String("data file name", dataFile),
+			//)
+			cntDropped++
 			continue
 		}
 		if bytes.Compare(k, endKey) >= 0 {
+			//rd.byteReader.logger.Info("break scan loop",
+			//	zap.String("key", hex.EncodeToString(k)),
+			//	zap.String("data file name", dataFile),
+			//)
 			break
 		}
 		// TODO(lance6716): we are copying every KV from rd's buffer to memBuf, can we
@@ -194,5 +229,14 @@ func readOneFile(
 	output.size += size
 	output.droppedSizePerFile = append(output.droppedSizePerFile, droppedSize)
 	output.mu.Unlock()
+	//rd.byteReader.logger.Info("readOneFile",
+	//	zap.String("first key", hex.EncodeToString(firstKey)),
+	//	zap.String("last key", hex.EncodeToString(lastKey)),
+	//	zap.Int("keyNumInFile", cntAllKeys),
+	//	zap.Int("keyNumInMemBuf", len(keys)),
+	//	zap.Int("dropped num", cntDropped),
+	//	zap.Int("dropped size", droppedSize),
+	//	zap.String("data-file-name", dataFile),
+	//)
 	return nil
 }
