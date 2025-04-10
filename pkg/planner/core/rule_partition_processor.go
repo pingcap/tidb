@@ -517,6 +517,10 @@ func (s *PartitionProcessor) processHashOrKeyPartition(ds *logicalop.DataSource,
 		return nil, err
 	}
 	if used != nil {
+		if !ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+			return ds, nil
+		}
+
 		return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi), opt)
 	}
 	tableDual := logicalop.LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.QueryBlockOffset())

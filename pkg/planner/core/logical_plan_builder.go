@@ -4467,7 +4467,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				})
 				b.optFlag = b.optFlag | rule.FlagPartitionProcessor
 				if usePartitionProcessor {
-					b.optFlag = b.optFlag | rule.FlagPartitionProcessor
 					b.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode = false
 					if isDynamicEnabled {
 						b.ctx.GetSessionVars().StmtCtx.AppendWarning(
