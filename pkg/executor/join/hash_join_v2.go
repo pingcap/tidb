@@ -878,7 +878,7 @@ func (e *HashJoinV2Exec) waitJoinWorkers(start time.Time) {
 	if !e.ProbeSideTupleFetcher.probeFetchSkipped {
 		// only scan the row table if probe fetch is not skipped
 		// probe fetch is skipped if
-		// 1. there is some error during build/probe stage
+		// 1. there is some error during build stage
 		// 2. the hash table is empty
 		// in both cases, there is no need to scan the row table again
 		if e.ProbeWorkers[0] != nil && e.ProbeWorkers[0].JoinProbe.NeedScanRowTable() {
