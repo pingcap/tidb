@@ -105,10 +105,6 @@ func readAllData(
 					if !ok {
 						return nil
 					}
-					//if !notSkip[fileIdx] {
-					//	// skip the file if it is not in the range
-					//	continue
-					//}
 					err2 := readOneFile(
 						egCtx,
 						store,
