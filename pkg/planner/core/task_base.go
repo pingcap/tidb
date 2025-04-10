@@ -41,7 +41,7 @@ type RootTask struct {
 	p       base.PhysicalPlan
 	isEmpty bool // isEmpty indicates if this task contains a dual table and returns empty data.
 	// TODO: The flag 'isEmpty' is only checked by Projection and UnionAll. We should support more cases in the future.
-
+	needEnforce bool
 	// For copTask and rootTask, when we compose physical tree bottom-up, index join need some special info
 	// fetched from underlying ds which built index range or table range based on these runtime constant.
 	IndexJoinInfo *IndexJoinInfo
@@ -136,6 +136,7 @@ type MppTask struct {
 	// So physical plan be like: PhysicalHashAgg -> PhysicalSelection -> TableReader -> ExchangeSender -> PhysicalTableScan(mpp tiflash)
 	rootTaskConds []expression.Expression
 	tblColHists   *statistics.HistColl
+	needEnforce   bool
 }
 
 // Count implements Task interface.

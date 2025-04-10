@@ -1590,7 +1590,10 @@ func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.
 	if b.err != nil {
 		return nil
 	}
+	return b.buildHashJoinV2FromChildExecs(leftExec, rightExec, v)
+}
 
+func (b *executorBuilder) buildHashJoinV2FromChildExecs(leftExec, rightExec exec.Executor, v *plannercore.PhysicalHashJoin) *join.HashJoinV2Exec {
 	joinOtherCondition := v.OtherConditions
 	joinLeftCondition := v.LeftConditions
 	joinRightCondition := v.RightConditions
@@ -1765,7 +1768,10 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) exec.Ex
 	if b.err != nil {
 		return nil
 	}
+	return b.buildHashJoinFromChildExecs(leftExec, rightExec, v)
+}
 
+func (b *executorBuilder) buildHashJoinFromChildExecs(leftExec, rightExec exec.Executor, v *plannercore.PhysicalHashJoin) *join.HashJoinV1Exec {
 	e := &join.HashJoinV1Exec{
 		BaseExecutor:          exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), leftExec, rightExec),
 		ProbeSideTupleFetcher: &join.ProbeSideTupleFetcherV1{},
@@ -4486,6 +4492,11 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		exec := builder.buildStreamAggFromChildExec(childExec, v)
 		err = exec.OpenSelf()
 		return exec, err
+	case *plannercore.PhysicalHashJoin:
+		// since merge join is rarely used now, we can only support hash join now.
+		// we separate the child build flow out because we want to pass down the runtime constant --- lookupContents.
+		// todo: support hash join in index join inner side.
+		return nil, errors.New("Wrong plan type for dataReaderBuilder")
 	case *mockPhysicalIndexReader:
 		return v.e, nil
 	}
