@@ -96,10 +96,15 @@ func (noopOwnerHook) onResignOwner(sessionctx.Context) error { return nil }
 //     `session.TransferOwner` failing to prevent concurrent access by different owners.
 //     `session.Close` triggering a panic in tests, but logging a warning in production.
 //
+//   - `unsafe`: A counter to detect race conditions in thread-unsafe operations.
+//     When `s.unsafe == 0`, it means no thread-unsafe operations are in progress (expected case).
+//     When `s.unsafe == 1`, it means a thread-unsafe operation is in progress (expected case).
+//     When `s.unsafe > 1`, it means race detected for a progressing thread-unsafe operation (unexpected case),
+//     and only the first operation is allowed to execute at this time.
+//
 //   - `seq`: A monotonically increasing `uint64` used for logging and debugging.
 //     It provides a unique sequence number for each operation.
-//     In `EnterOperation`, `seq` increments to mark an operation’s start and increments again
-//     upon completion.
+//     In `EnterOperation`, `seq` increments to mark an operation’s start and increments again upon completion.
 //     These sequence numbers help track operation order and diagnose unexpected behaviors.
 type session struct {
 	mu sync.Mutex
@@ -115,6 +120,26 @@ type session struct {
 	// When `EnterOperation` is called, it will increase the counter.
 	// When the operation is finished, it will decrease the counter.
 	inUse uint64
+	// `unsafe` is used to detect race conditions in thread-unsafe operations.
+	// - `s.unsafe == 0` means no thread-unsafe operations are in progress (expected).
+	// - `s.unsafe == 1` means a thread-unsafe operation is in progress (expected).
+	// - `s.unsafe > 1` means race detected for a progressing thread-unsafe operation (unexpected).
+	//    The value `s.unsafe - 1` indicates how many thread-unsafe operations are conflicted with the first one.
+	//    Only the first operation is allowed to execute at this time.
+	//
+	// Below is an explanation of how this value changes in both expected and unexpected scenarios:
+	//
+	// - **Expected scenario**: All thread-unsafe methods are called sequentially.
+	//   - `unsafe` increases from `0` to `1` when an operation begins and decreases back to `0` when it completes.
+	//
+	// - **Unexpected scenario**: Multiple threads invoke thread-unsafe methods concurrently.
+	//   1. The first thread starts execution, incrementing `unsafe` (`inuse == 1` at this point).
+	//   2. A second thread attempts to start execution, also incrementing `unsafe`.
+	//      Since a race condition is detected (`inuse > 0`), the operation is rejected and an error is returned.
+	//      The second thread does not decrement `unsafe`, leaving `inuse == 2` after it exits.
+	//   3. When the first thread completes, it also detects the race condition (`inuse == 2`).
+	//      Then it logs a message indicating the issue and resets `inuse` to `0`.
+	unsafe uint64
 	// avoidReuse will be marked as true when some panics detected.
 	// When it is true, the session should not be reused to avoid unexpected behavior.
 	avoidReuse bool
@@ -241,7 +266,7 @@ func (s *session) OwnerResetState(ctx context.Context, caller sessionOwner) erro
 // OwnerWithSctx executes the input function with the session context.
 func (s *session) OwnerWithSctx(caller sessionOwner, fn func(SessionContext) error) error {
 	intest.AssertNotNil(fn)
-	sctx, exit, err := s.EnterOperation(caller)
+	sctx, exit, err := s.EnterOperation(caller, false)
 	if err != nil {
 		return err
 	}
@@ -254,7 +279,7 @@ func (s *session) OwnerWithSctx(caller sessionOwner, fn func(SessionContext) err
 // and if the session is closed or the caller is not the owner, it will return an error.
 // If the operation is entered successfully,
 // it will return the internal SessionContext for further usage and a function to exit the operation.
-func (s *session) EnterOperation(caller sessionOwner) (SessionContext, func(), error) {
+func (s *session) EnterOperation(caller sessionOwner, threadSafe bool) (SessionContext, func(), error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	seqStart := s.seqIncWithoutLock()
@@ -267,17 +292,45 @@ func (s *session) EnterOperation(caller sessionOwner) (SessionContext, func(), e
 		return nil, nil, err
 	}
 
+	if !threadSafe {
+		s.unsafe++
+		if s.unsafe > 1 {
+			msg := "EnterOperation error: race detected for concurrent thread-unsafe operations"
+			s.reportErrorWithoutLock(
+				msg,
+				zap.Uint64("seqStart", seqStart),
+				zap.Uint64("unsafeCnt", s.unsafe),
+				zap.String("caller", objectStr(caller)),
+			)
+			return nil, nil, errors.New(msg)
+		}
+	}
 	s.inUse++
 	exit := false
 	return s.sctx, func() {
-		r := recover()
-		if r != nil {
+		var seqEnd uint64
+		if r := recover(); r != nil {
 			s.OwnerMarkAvoidReuse(caller)
+			defer func() {
+				// If the outside code panics, we should also panic in defer function.
+				// The panic from business has higher priority to throw than the one from the assertions.
+				logutil.BgLogger().Error(
+					"EnterOperation error: panic occurs, avoid to use session again",
+					zap.Any("panic", r),
+					zap.Uint64("seqStart", seqStart),
+					zap.Uint64("seqEnd", seqEnd),
+					zap.String("sctx", objectStr(s.sctx)),
+					zap.String("caller", objectStr(caller)),
+					zap.String("owner", objectStr(s.owner)),
+					zap.Stack("stack"),
+				)
+				panic(r)
+			}()
 		}
 
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		seqEnd := s.seqIncWithoutLock()
+		seqEnd = s.seqIncWithoutLock()
 		if exit {
 			s.reportErrorWithoutLock(
 				"EnterOperation error: multiple exits for the same operation",
@@ -290,6 +343,12 @@ func (s *session) EnterOperation(caller sessionOwner) (SessionContext, func(), e
 
 		exit = true
 		s.inUse--
+		unsafeCnt := uint64(0)
+		if !threadSafe {
+			unsafeCnt = s.unsafe
+			s.unsafe = 0
+		}
+
 		if s.owner == nil && s.inUse == 0 {
 			// `s.owner == nil` here indicates the session is closed, but to avoid data race
 			// it did not call `s.sctx.Close()` in `doCloseWithoutLock` before.
@@ -315,18 +374,15 @@ func (s *session) EnterOperation(caller sessionOwner) (SessionContext, func(), e
 				zap.String("caller", objectStr(caller)),
 			)
 		}
-		if r != nil {
-			logutil.BgLogger().Error(
-				"EnterOperation error: panic occurs, avoid to use session again",
-				zap.Any("panic", r),
+
+		if unsafeCnt > 1 {
+			s.reportErrorWithoutLock(
+				"ExitOperation error: race detected for concurrent thread-unsafe operations",
 				zap.Uint64("seqStart", seqStart),
 				zap.Uint64("seqEnd", seqEnd),
-				zap.String("sctx", objectStr(s.sctx)),
+				zap.Uint64("unsafeCnt", unsafeCnt),
 				zap.String("caller", objectStr(caller)),
-				zap.String("owner", objectStr(s.owner)),
-				zap.Stack("stack"),
 			)
-			panic(r)
 		}
 	}, nil
 }
@@ -461,7 +517,7 @@ func (s *Session) WithSessionContext(fn func(sessionctx.Context) error) error {
 
 // Execute implements the SQLExecutor.Execute interface.
 func (s *Session) Execute(ctx context.Context, sql string) ([]sqlexec.RecordSet, error) {
-	sctx, exit, err := s.internal.EnterOperation(s)
+	sctx, exit, err := s.internal.EnterOperation(s, false)
 	if err != nil {
 		return nil, err
 	}
@@ -471,7 +527,7 @@ func (s *Session) Execute(ctx context.Context, sql string) ([]sqlexec.RecordSet,
 
 // ExecuteInternal implements the SQLExecutor.ExecuteInternal interface.
 func (s *Session) ExecuteInternal(ctx context.Context, sql string, args ...any) (sqlexec.RecordSet, error) {
-	sctx, exit, err := s.internal.EnterOperation(s)
+	sctx, exit, err := s.internal.EnterOperation(s, false)
 	if err != nil {
 		return nil, err
 	}
@@ -481,7 +537,7 @@ func (s *Session) ExecuteInternal(ctx context.Context, sql string, args ...any) 
 
 // ExecuteStmt implements the SQLExecutor.ExecuteStmt interface.
 func (s *Session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
-	sctx, exit, err := s.internal.EnterOperation(s)
+	sctx, exit, err := s.internal.EnterOperation(s, false)
 	if err != nil {
 		return nil, err
 	}
@@ -496,7 +552,7 @@ func (s *Session) GetSQLExecutor() sqlexec.SQLExecutor {
 
 // ParseWithParams implements the RestrictedSQLExecutor.ParseWithParams interface.
 func (s *Session) ParseWithParams(ctx context.Context, sql string, args ...any) (ast.StmtNode, error) {
-	sctx, exit, err := s.internal.EnterOperation(s)
+	sctx, exit, err := s.internal.EnterOperation(s, false)
 	if err != nil {
 		return nil, err
 	}
@@ -507,7 +563,7 @@ func (s *Session) ParseWithParams(ctx context.Context, sql string, args ...any) 
 // ExecRestrictedStmt implements the RestrictedSQLExecutor.ExecutePreparedStmt interface.
 func (s *Session) ExecRestrictedStmt(ctx context.Context, stmt ast.StmtNode, opts ...sqlexec.OptionFuncAlias,
 ) ([]chunk.Row, []*resolve.ResultField, error) {
-	sctx, exit, err := s.internal.EnterOperation(s)
+	sctx, exit, err := s.internal.EnterOperation(s, false)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -518,7 +574,7 @@ func (s *Session) ExecRestrictedStmt(ctx context.Context, stmt ast.StmtNode, opt
 // ExecRestrictedSQL implements the RestrictedSQLExecutor.ExecRestrictedSQL interface.
 func (s *Session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...any,
 ) ([]chunk.Row, []*resolve.ResultField, error) {
-	sctx, exit, err := s.internal.EnterOperation(s)
+	sctx, exit, err := s.internal.EnterOperation(s, false)
 	if err != nil {
 		return nil, nil, err
 	}
