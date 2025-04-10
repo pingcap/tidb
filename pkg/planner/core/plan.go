@@ -54,11 +54,9 @@ func enforceProperty(p *property.PhysicalProperty, tsk base.Task, ctx base.PlanC
 	if p.IsSortItemEmpty() || tsk.Invalid() {
 		return tsk
 	}
-	// once enforce is conducted in the plan, we need to make sure that the plan is a root task first.
 	if p.TaskTp != property.MppTaskType {
 		tsk = tsk.ConvertToRootTask(ctx)
 	}
-	// 看起来我们无法从 task 里面知道里面的 p 是不是带着这个 prop 的。
 	sortReqProp := &property.PhysicalProperty{TaskTp: property.RootTaskType, SortItems: p.SortItems, ExpectedCnt: math.MaxFloat64}
 	sort := PhysicalSort{
 		ByItems:       make([]*util.ByItems, 0, len(p.SortItems)),

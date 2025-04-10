@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -172,6 +173,7 @@ func enumeratePhysicalPlans4Task(
 	p *logicalop.BaseLogicalPlan,
 	physicalPlans []base.PhysicalPlan,
 	prop *property.PhysicalProperty,
+	addEnforcer bool,
 	planCounter *base.PlanCounterTp,
 	opt *optimizetrace.PhysicalOptimizeOp,
 ) (base.Task, int64, error) {
@@ -185,14 +187,14 @@ func enumeratePhysicalPlans4Task(
 	if _, ok := p.Self().(*logicalop.LogicalSequence); ok {
 		iteration = iterateChildPlan4LogicalSequence
 	}
-	//var fd *funcdep.FDSet
-	//if addEnforcer {
-	switch logicalPlan := p.Self().(type) {
-	case *logicalop.LogicalJoin, *logicalop.LogicalAggregation:
-		// TODO(hawkingrei): FD should be maintained as logical prop instead of constructing it in physical phase
-		_ = logicalPlan.ExtractFD()
+	var fd *funcdep.FDSet
+	if addEnforcer {
+		switch logicalPlan := p.Self().(type) {
+		case *logicalop.LogicalJoin, *logicalop.LogicalAggregation:
+			// TODO(hawkingrei): FD should be maintained as logical prop instead of constructing it in physical phase
+			fd = logicalPlan.ExtractFD()
+		}
 	}
-	//}
 	for _, pp := range physicalPlans {
 		timeStampNow := p.GetLogicalTS4TaskMap()
 		savedPlanID := p.SCtx().GetSessionVars().PlanID.Load()
@@ -574,7 +576,7 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 	}
 	var cnt int64
 	var curTask base.Task
-	if bestTask, cnt, err = enumeratePhysicalPlans4Task(p, plansFitsProp, newProp, planCounter, opt); err != nil {
+	if bestTask, cnt, err = enumeratePhysicalPlans4Task(p, plansFitsProp, newProp, false, planCounter, opt); err != nil {
 		return nil, 0, err
 	}
 	cntPlan += cnt
@@ -582,7 +584,7 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 		goto END
 	}
 
-	curTask, cnt, err = enumeratePhysicalPlans4Task(p, plansNeedEnforce, newProp, planCounter, opt)
+	curTask, cnt, err = enumeratePhysicalPlans4Task(p, plansNeedEnforce, newProp, true, planCounter, opt)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -596,10 +598,6 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 		return nil, 0, err
 	} else if curIsBetter {
 		bestTask = curTask
-	}
-	// Enforce curTask property
-	if addEnforcer {
-		curTask = enforceProperty(prop, curTask, p.Plan.SCtx(), fd)
 	}
 END:
 	p.StoreTask(prop, bestTask)
