@@ -107,6 +107,9 @@ func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, inde
 		if columnarIndexType == model.ColumnarIndexTypeVector && col.FieldType.GetType() != mysql.TypeTiDBVectorFloat32 {
 			return nil, false, dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs(fmt.Sprintf("only support vector type, but this is type: %s", col.FieldType.String()))
 		}
+		if columnarIndexType == model.ColumnarIndexTypeInverted && !types.IsTypeStoredAsInteger(col.FieldType.GetType()) {
+			return nil, false, dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs(fmt.Sprintf("only support integer type, but this is type: %s", col.FieldType.String()))
+		}
 
 		// return error in strict sql mode
 		if err := checkIndexColumn(col, ip.Length, ctx != nil && (!ctx.GetSQLMode().HasStrictMode() || ctx.SuppressTooLongIndexErr()), columnarIndexType); err != nil {
@@ -355,7 +358,11 @@ func BuildIndexInfo(
 		}
 		idxInfo.VectorInfo = vectorInfo
 	case model.ColumnarIndexTypeInverted:
-		// do nothing now
+		invertedInfo, err := buildInvertedInfoWithCheck(indexPartSpecifications, tblInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		idxInfo.InvertedInfo = invertedInfo
 	}
 
 	var err error
@@ -442,6 +449,41 @@ func buildVectorInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 		Dimension:      uint64(colInfo.FieldType.GetFlen()),
 		DistanceMetric: distanceMetric,
 	}, exprStr, nil
+}
+
+func buildInvertedInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecification,
+	tblInfo *model.TableInfo) (*model.InvertedIndexInfo, error) {
+	if len(indexPartSpecifications) != 1 {
+		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("only support one column")
+	}
+
+	idxPart := indexPartSpecifications[0]
+	if idxPart.Column == nil {
+		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported no column")
+	}
+	colInfo := findColumnByName(idxPart.Column.Name.L, tblInfo)
+	if colInfo == nil {
+		return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(idxPart.Column.Name, tblInfo.Name)
+	}
+
+	// check duplicated columnar index on the same column
+	for _, idx := range tblInfo.Indices {
+		if idx.InvertedInfo == nil {
+			continue
+		}
+		if idxCol := idx.FindColumnByName(colInfo.Name.L); idxCol == nil {
+			continue
+		}
+		if idx.Tp == ast.IndexTypeInverted {
+			return nil, dbterror.ErrDupKeyName.GenWithStack(fmt.Sprintf("inverted columnar index %s already exist on column %s", idx.Name, colInfo.Name))
+		}
+	}
+
+	// It's used for build buildIndexColumns.
+	idxPart.Column = &ast.ColumnName{Name: colInfo.Name}
+	idxPart.Length = types.UnspecifiedLength
+
+	return model.FieldTypeToInvertedIndexInfo(colInfo.FieldType, colInfo.ID), nil
 }
 
 // AddIndexColumnFlag aligns the column flags of columns in TableInfo to IndexInfo.
@@ -544,7 +586,7 @@ func validateAlterIndexVisibility(ctx sessionctx.Context, indexName ast.CIStr, i
 		}
 	}
 	if idx.IsColumnarIndex() {
-		return false, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set vector index invisible")
+		return false, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set columnar index invisible")
 	}
 	return false, nil
 }
