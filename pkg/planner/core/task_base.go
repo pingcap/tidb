@@ -41,6 +41,7 @@ type RootTask struct {
 	p       base.PhysicalPlan
 	isEmpty bool // isEmpty indicates if this task contains a dual table and returns empty data.
 	// TODO: The flag 'isEmpty' is only checked by Projection and UnionAll. We should support more cases in the future.
+
 	// For copTask and rootTask, when we compose physical tree bottom-up, index join need some special info
 	// fetched from underlying ds which built index range or table range based on these runtime constant.
 	IndexJoinInfo *IndexJoinInfo

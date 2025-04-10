@@ -599,6 +599,7 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 	} else if curIsBetter {
 		bestTask = curTask
 	}
+
 END:
 	p.StoreTask(prop, bestTask)
 	return bestTask, cntPlan, nil
