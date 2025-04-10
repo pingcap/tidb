@@ -178,17 +178,18 @@ func ReadParquetFileRowCountByFile(
 		ctx:            ctx,
 		path:           fileMeta.Path,
 	}
+
+	//nolint: errcheck
+	defer wrapper.Close()
+
 	res := new(preader.ParquetReader)
 	res.NP = 1
 	res.PFile = wrapper
 	if err = res.ReadFooter(); err != nil {
 		return 0, err
 	}
-	numRows := res.Footer.NumRows
-	if err = wrapper.Close(); err != nil {
-		return 0, err
-	}
-	return numRows, nil
+
+	return res.Footer.NumRows, nil
 }
 
 // NewParquetParser generates a parquet parser.
