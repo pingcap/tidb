@@ -1922,7 +1922,13 @@ func TestDoImport(t *testing.T) {
 				{
 					keyRange:   common.Range{Start: []byte{'a'}, End: []byte{'b'}},
 					ingestData: &Engine{},
-					injected:   getSuccessInjectedBehaviour(),
+					injected: append([]injectedBehaviour{
+						{
+							write: injectedWriteBehaviour{
+								err: status.Error(codes.Unknown, "RequestTooNew"),
+							},
+						},
+					}, getSuccessInjectedBehaviour()...),
 				},
 			},
 		},
