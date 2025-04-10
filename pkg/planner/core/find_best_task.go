@@ -192,9 +192,6 @@ func enumeratePhysicalPlans4Task(
 		switch logicalPlan := p.Self().(type) {
 		case *logicalop.LogicalJoin, *logicalop.LogicalAggregation:
 			// TODO(hawkingrei): FD should be maintained as logical prop instead of constructing it in physical phase
-			if !p.SCtx().GetSessionVars().InRestrictedSQL {
-				fmt.Println("wwz")
-			}
 			fd = logicalPlan.ExtractFD()
 		}
 	}
