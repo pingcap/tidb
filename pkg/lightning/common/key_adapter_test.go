@@ -210,3 +210,41 @@ func TestMinRowID(t *testing.T) {
 		require.True(t, bytes.Compare(bs, shouldBeMin) >= 0)
 	}
 }
+
+func TestAddPrefix(t *testing.T) {
+	key := randBytes(32)
+	rowID := randBytes(8)
+
+	tc := []struct {
+		prefix []byte
+		keyAdapter KeyAdapter
+	}{
+		{
+			[]byte("prefix"),
+			NoopKeyAdapter{},
+		},
+		{
+			[]byte(nil),
+			NoopKeyAdapter{},
+		},
+		{
+			[]byte("prefix"),
+			DupDetectKeyAdapter{},
+		},
+		{
+			[]byte(nil),
+			DupDetectKeyAdapter{},
+		},
+	}
+
+	for _, test := range tc {
+		t.Run(string(test.prefix), func(t *testing.T) {
+			keyAdapter := test.keyAdapter
+			encodedKey := keyAdapter.Encode(nil, key, rowID)
+			encodedKeyWithPrefix := keyAdapter.Encode(nil, append(test.prefix, key...), rowID)
+			encodedKeyAddPrefix, err := keyAdapter.AddPrefix(encodedKey, test.prefix)
+			require.NoError(t, err)
+			require.Equal(t, encodedKeyAddPrefix, encodedKeyWithPrefix)
+		})
+	}		
+}
