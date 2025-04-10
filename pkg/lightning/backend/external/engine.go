@@ -17,7 +17,6 @@ package external
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -268,22 +267,25 @@ func getFilesReadConcurrency(
 	storage storage.ExternalStorage,
 	statsFiles []string,
 	startKey, endKey []byte,
-) ([]uint64, []uint64, error, []bool) {
+) ([]uint64, []uint64, error, []bool, int) {
 	result := make([]uint64, len(statsFiles))
-	offsets, err := seekPropsOffsets(ctx, []kv.Key{startKey, endKey}, statsFiles, storage)
+	offsets, err, skipOpen, readConn := seekPropsOffsets(ctx, []kv.Key{startKey, endKey}, statsFiles, storage)
 	if err != nil {
-		return nil, nil, err, nil
+		return nil, nil, err, nil, 0
 	}
-	notSkip := make([]bool, len(statsFiles))
-	var fileNeedToBeRead []string
+	//notSkip := make([]bool, len(statsFiles))
+	//var fileNeedToBeRead []string
 	startOffs, endOffs := offsets[0], offsets[1]
 	totalFileSize := uint64(0)
 	for i := range statsFiles {
-		size := endOffs[i] - startOffs[i]
-		if size != 0 {
-			fileNeedToBeRead = append(fileNeedToBeRead, statsFiles[i]+fmt.Sprintf(" size=%d", size))
-			notSkip[i] = true
+		if skipOpen[i] {
+			continue
 		}
+		size := endOffs[i] - startOffs[i]
+		//if size != 0 {
+		//	fileNeedToBeRead = append(fileNeedToBeRead, statsFiles[i]+fmt.Sprintf(" size=%d", size))
+		//	notSkip[i] = true
+		//}
 		totalFileSize += size
 		expectedConc := size / uint64(ConcurrentReaderBufferSizePerConc)
 		// let the stat internals cover the [startKey, endKey) since seekPropsOffsets
@@ -308,13 +310,13 @@ func getFilesReadConcurrency(
 			)
 		}
 	}
-	logutil.Logger(ctx).Info("found files to read",
-		zap.Int("filesCount", len(fileNeedToBeRead)),
-		zap.Strings("files", fileNeedToBeRead),
-	)
+	//logutil.Logger(ctx).Info("found files to read",
+	//	zap.Int("filesCount", len(fileNeedToBeRead)),
+	//	zap.Strings("files", fileNeedToBeRead),
+	//)
 	logutil.Logger(ctx).Info("estimated file size of this range group",
 		zap.Uint64("totalSize", totalFileSize))
-	return result, startOffs, nil, notSkip
+	return result, startOffs, nil, skipOpen, readConn
 }
 
 func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outCh chan<- common.DataAndRanges) error {

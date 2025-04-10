@@ -48,7 +48,7 @@ func seekPropsOffsets(
 	starts []kv.Key,
 	paths []string,
 	exStorage storage.ExternalStorage,
-) (_ [][]uint64, err error) {
+) (_ [][]uint64, err error, _ []bool, _ int) {
 	skipOpen := make([]bool, len(paths))
 	skipOpenNum := 0
 	logger := logutil.Logger(ctx)
@@ -120,7 +120,7 @@ func seekPropsOffsets(
 	}
 
 	if err = eg.Wait(); err != nil {
-		return nil, err
+		return nil, err, nil, 0
 	}
 
 	// TODO(lance6716): change the caller so we don't need to transpose the result
@@ -131,7 +131,7 @@ func seekPropsOffsets(
 			offsetsPerKey[i][j] = offsetsPerFile[j][i]
 		}
 	}
-	return offsetsPerKey, nil
+	return offsetsPerKey, nil, skipOpen, len(paths) - skipOpenNum
 }
 
 // GetAllFileNames returns data file paths and stat file paths. Both paths are
