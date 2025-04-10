@@ -135,12 +135,12 @@ type Engine struct {
 	dataFiles  []string
 	statsFiles []string
 
-	// all theses keys have no keyspace prefix, add when using them.
+	// all theses keys have no keyspace prefix, add when using.
 	startKey  []byte
 	endKey    []byte
 	splitKeys [][]byte
 
-	// jobKeys has no keyspace prefix, add except loading data
+	// jobKeys has no keyspace prefix, add except loading data.
 	jobKeys [][]byte
 
 	smallBlockBufPool *membuf.Pool
