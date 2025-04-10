@@ -1870,7 +1870,24 @@ func (t *partitionedTable) RemoveRecord(ctx table.MutateContext, txn kv.Transact
 		if err != nil || newFrom == 0 {
 			return errors.Trace(err)
 		}
-		return t.getPartition(newFrom).removeRecord(ctx, txn, h, r, opt)
+
+		if t.Meta().HasClusteredIndex() {
+			return t.getPartition(newFrom).removeRecord(ctx, txn, h, r, opt)
+		}
+		encodedRecordID := codec.EncodeInt(nil, h.IntValue())
+		newFromKey := tablecodec.EncodeRowKey(newFrom, encodedRecordID)
+
+		val, err := getKeyInTxn(context.Background(), txn, newFromKey)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if len(val) > 0 {
+			same, err := dataEqRec(ctx.GetExprCtx().GetEvalCtx().Location(), t.Meta(), r, val)
+			if err != nil || !same {
+				return errors.Trace(err)
+			}
+			return t.getPartition(newFrom).removeRecord(ctx, txn, h, r, opt)
+		}
 	}
 	return nil
 }
@@ -2042,39 +2059,62 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 			keys = append(keys, newToKey)
 		}
 	}
-	if len(keys) > 0 {
+	var newFromVal, newToVal []byte
+	switch len(keys) {
+	case 0:
+	// No lookup
+	case 1:
+		val, err := getKeyInTxn(context.Background(), txn, keys[0])
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if newFrom != 0 {
+			newFromVal = val
+		}
+		if !deleteOnly && newTo != 0 {
+			newToVal = val
+		}
+	default:
 		found, err = txn.BatchGet(context.Background(), keys)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		if len(newFromKey) > 0 {
+			if val, ok := found[string(newFromKey)]; ok {
+				newFromVal = val
+			}
+		}
+		if len(newToKey) > 0 {
+			if val, ok := found[string(newToKey)]; ok {
+				newToVal = val
+			}
+		}
 	}
 	var newToKeyAndValIsSame *bool
-	if newFrom != 0 {
-		if val, ok := found[string(newFromKey)]; ok {
-			var same bool
-			same, err = dataEqRec(ctx.GetExprCtx().GetEvalCtx().Location(), t.Meta(), currData, val)
+	if len(newFromVal) > 0 {
+		var same bool
+		same, err = dataEqRec(ctx.GetExprCtx().GetEvalCtx().Location(), t.Meta(), currData, newFromVal)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if same {
+			// Always do Remove+Add, to always have the indexes in-sync,
+			// since the indexes might not been created yet, i.e. not backfilled yet.
+			err = t.getPartition(newFrom).RemoveRecord(ctx, txn, h, currData)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if same {
-				// Always do Remove+Add, to always have the indexes in-sync,
-				// since the indexes might not been created yet, i.e. not backfilled yet.
-				err = t.getPartition(newFrom).RemoveRecord(ctx, txn, h, currData)
-				if err != nil {
-					return errors.Trace(err)
-				}
-			}
-			if newTo == newFrom {
-				newToKeyAndValIsSame = &same
-			}
+		}
+		if newTo == newFrom {
+			newToKeyAndValIsSame = &same
 		}
 	}
 	if deleteOnly || newTo == 0 {
 		return finishFunc(err, nil)
 	}
-	if val, ok := found[string(newToKey)]; ok {
+	if len(newToVal) > 0 {
 		if newToKeyAndValIsSame == nil {
-			same, err := dataEqRec(ctx.GetExprCtx().GetEvalCtx().Location(), t.Meta(), currData, val)
+			same, err := dataEqRec(ctx.GetExprCtx().GetEvalCtx().Location(), t.Meta(), currData, newToVal)
 			if err != nil {
 				return errors.Trace(err)
 			}

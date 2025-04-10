@@ -70,7 +70,7 @@ func genHash64EqualsForLogicalOps(x any) ([]byte, error) {
 	c.write("// Hash64 implements the Hash64Equals interface.")
 	c.write("func (op *%v) Hash64(h base.Hasher) {", vType.Name())
 	c.write("h.HashString(%v)", logicalOpName2PlanCodecString(vType.Name()))
-	for i := 0; i < vType.NumField(); i++ {
+	for i := range vType.NumField() {
 		f := vType.Field(i)
 		if !isHash64EqualsField(f) {
 			continue
@@ -95,7 +95,7 @@ func genHash64EqualsForLogicalOps(x any) ([]byte, error) {
 	c.write("if op == nil { return op2 == nil }")
 	c.write("if op2 == nil { return false }")
 	hasValidField := false
-	for i := 0; i < vType.NumField(); i++ {
+	for i := range vType.NumField() {
 		f := vType.Field(i)
 		if !isHash64EqualsField(f) {
 			continue

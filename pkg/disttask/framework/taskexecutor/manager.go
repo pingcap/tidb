@@ -262,7 +262,7 @@ func (m *Manager) handleRevertingTask(taskID int64) error {
 // we need to re-insert the metadata.
 func (m *Manager) recoverMetaLoop() {
 	defer tidbutil.Recover(metrics.LabelDomain, "recoverMetaLoop", m.recoverMetaLoop, false)
-	ticker := time.NewTicker(recoverMetaInterval * 1000)
+	ticker := time.NewTicker(recoverMetaInterval)
 	for {
 		select {
 		case <-m.ctx.Done():

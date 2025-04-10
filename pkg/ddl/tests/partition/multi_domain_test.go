@@ -2338,6 +2338,7 @@ func TestBackfillConcurrentDML(t *testing.T) {
 	}
 
 	callback := func(vals []byte) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillNonClustered", func(vals []byte) {
 		m, err := tablecodec.DecodeRowWithMapNew(vals, columnFt, time.UTC, nil)
 		require.NoError(t, err)
 		var col1 int64
