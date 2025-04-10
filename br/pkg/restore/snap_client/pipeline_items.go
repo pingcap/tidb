@@ -298,7 +298,7 @@ func (rc *SnapClient) registerValidateChecksum(
 	})
 }
 
-const statsMetaItemBufferSize = 10000
+const statsMetaItemBufferSize = 3000
 
 type statsMetaItemBuffer struct {
 	sync.Mutex
