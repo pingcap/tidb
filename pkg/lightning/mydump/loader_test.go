@@ -1178,7 +1178,11 @@ func testSampleParquetDataSize(t *testing.T, count int) {
 	err = store.WriteFile(ctx, fileName, bf.Bytes())
 	require.NoError(t, err)
 
-	rowCount, rowSize, err := md.ReadParquetRowCountAndSizeByFile(ctx, store, md.SourceFileMeta{
+	rowSize, err := md.SampleParquetRowSize(ctx, md.SourceFileMeta{
+		Path: fileName,
+	}, store)
+	require.NoError(t, err)
+	rowCount, err := md.ReadParquetFileRowCountByFile(ctx, store, md.SourceFileMeta{
 		Path: fileName,
 	})
 

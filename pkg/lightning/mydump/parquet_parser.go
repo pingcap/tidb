@@ -160,9 +160,9 @@ func OpenParquetReader(
 	}, nil
 }
 
-// ReadParquetFileRowCount reads the parquet file row count.
+// ReadParquetFileRowCountByFile reads the parquet file row count.
 // It is a special func to fetch parquet file row count fast.
-func ReadParquetFileRowCount(
+func ReadParquetFileRowCountByFile(
 	ctx context.Context,
 	store storage.ExternalStorage,
 	fileMeta SourceFileMeta,
@@ -189,51 +189,6 @@ func ReadParquetFileRowCount(
 		return 0, err
 	}
 	return numRows, nil
-}
-
-// ReadParquetRowCountAndSizeByFile reads the parquet file row count and average row size through fileMeta.
-func ReadParquetRowCountAndSizeByFile(
-	ctx context.Context,
-	store storage.ExternalStorage,
-	fileMeta SourceFileMeta,
-) (numberRows int64, rowSize float64, err error) {
-	reader, err := store.Open(ctx, fileMeta.Path, nil)
-	if err != nil {
-		return 0, 0, errors.Trace(err)
-	}
-	parser, err := NewParquetParser(ctx, store, reader, fileMeta.Path)
-	if err != nil {
-		return 0, 0, errors.Trace(err)
-	}
-	defer func() {
-		_ = parser.Close()
-	}()
-
-	numberRows = parser.Reader.Footer.NumRows
-	if numberRows == 0 {
-		return numberRows, 0, nil
-	}
-
-	sampledRowSize, sampledRowCont := 0, 0
-	for {
-		err = parser.ReadRow()
-		if err != nil {
-			if errors.Cause(err) == io.EOF {
-				break
-			}
-			return 0, 0, err
-		}
-		lastRow := parser.LastRow()
-		sampledRowCont++
-		sampledRowSize += lastRow.Length
-		parser.RecycleRow(lastRow)
-		if sampledRowSize > maxSampleParquetDataSize || sampledRowCont > maxSampleParquetRowCount {
-			break
-		}
-	}
-	rowSize = float64(sampledRowSize) / float64(sampledRowCont)
-
-	return numberRows, rowSize, nil
 }
 
 // NewParquetParser generates a parquet parser.
