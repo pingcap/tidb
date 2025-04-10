@@ -312,8 +312,9 @@ func (s *session) EnterOperation(caller sessionOwner, threadSafe bool) (SessionC
 		if r := recover(); r != nil {
 			s.OwnerMarkAvoidReuse(caller)
 			defer func() {
-				// If the outside code panics, we should also panic in defer function.
-				// The panic from business has higher priority to throw than the one from the assertions.
+				// The panic is from the proxied internal operation.
+				// If it happens, the defer function should also panic here to keep the same behavior as directly called.
+				// The panic from internal operation has higher priority to throw than the one from the assertions.
 				logutil.BgLogger().Error(
 					"EnterOperation error: panic occurs, avoid to use session again",
 					zap.Any("panic", r),
