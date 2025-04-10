@@ -1471,12 +1471,14 @@ func (local *Backend) doImport(
 		}
 	})
 
+	var (
+		toCh            = jobToWorkerCh
+		afterExecuteJob func([]*metapb.Peer)
+	)
 	failpoint.Inject("skipStartWorker", func() {
 		failpoint.Goto("afterStartWorker")
 	})
 
-	toCh := jobToWorkerCh
-	var afterExecuteJob func([]*metapb.Peer)
 	if balancer != nil {
 		toCh = balancer.innerJobToWorkerCh
 		afterExecuteJob = balancer.releaseStoreLoad
@@ -1484,11 +1486,9 @@ func (local *Backend) doImport(
 	for i := 0; i < local.WorkerConcurrency; i++ {
 		worker := &opRegionJobWorker{
 			regionJobBaseWorker: &regionJobBaseWorker{
-				metrics:          local.metrics,
 				jobInCh:          toCh,
 				jobOutCh:         jobFromWorkerCh,
 				jobWg:            &jobWg,
-				checkTiKVSpace:   local.ShouldCheckTiKV,
 				doRunJobFn:       local.executeJob,
 				afterRunJobFn:    afterExecuteJob,
 				regenerateJobsFn: local.generateJobForRange,

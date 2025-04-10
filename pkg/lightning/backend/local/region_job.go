@@ -315,12 +315,11 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResu
 	failpoint.Inject("fakeRegionJobs", func() {
 		front := j.injected[0]
 		j.injected = j.injected[1:]
-		j.writeResult = front.write.result
 		err := front.write.err
 		if err == nil {
 			j.convertStageTo(wrote)
 		}
-		failpoint.Return(err)
+		failpoint.Return(front.write.result, err)
 	})
 
 	var cancel context.CancelFunc
@@ -402,7 +401,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResu
 
 		failpoint.Inject("mockWritePeerErr", func() {
 			err = errors.Errorf("mock write peer error")
-			failpoint.Return(annotateErr(err, peer, "when open write stream"))
+			failpoint.Return(nil, annotateErr(err, peer, "when open write stream"))
 		})
 
 		// Bind uuid for this write request

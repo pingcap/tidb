@@ -21,16 +21,13 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/lightning/common"
-	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/metrics"
 )
 
 type regionJobBaseWorker struct {
-	metrics        *metric.Common
-	jobInCh        chan *regionJob
-	jobOutCh       chan *regionJob
-	jobWg          *sync.WaitGroup
-	checkTiKVSpace bool
+	jobInCh  chan *regionJob
+	jobOutCh chan *regionJob
+	jobWg    *sync.WaitGroup
 
 	doRunJobFn func(ctx context.Context, job *regionJob) error
 	// called after the job is executed, success or not.
