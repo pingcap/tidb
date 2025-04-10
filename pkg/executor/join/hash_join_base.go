@@ -64,6 +64,7 @@ type probeSideTupleFetcherBase struct {
 	probeResultChs     []chan *chunk.Chunk
 	requiredRows       int64
 	joinResultChannel  chan *hashjoinWorkerResult
+	probeFetchSkipped  bool
 }
 
 func (fetcher *probeSideTupleFetcherBase) initializeForProbeBase(concurrency uint, joinResultChannel chan *hashjoinWorkerResult) {
@@ -191,6 +192,7 @@ func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Conte
 			skipProbe := wait4BuildSide(isBuildEmpty, checkSpill, canSkipIfBuildEmpty, needScanAfterProbeDone, hashJoinCtx)
 			if skipProbe {
 				// there is no need to probe, so just return
+				fetcher.probeFetchSkipped = true
 				return
 			}
 			hasWaitedForBuild = true
