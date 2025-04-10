@@ -276,9 +276,6 @@ func getFilesReadConcurrency(
 	startOffs, endOffs := offsets[0], offsets[1]
 	totalFileSize := uint64(0)
 	for i := range statsFiles {
-		if skipOpen[i] {
-			continue
-		}
 		size := endOffs[i] - startOffs[i]
 		totalFileSize += size
 		expectedConc := size / uint64(ConcurrentReaderBufferSizePerConc)
