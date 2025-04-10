@@ -1050,6 +1050,18 @@ func (do *Domain) refreshMDLCheckTableInfo(ctx context.Context) {
 	}
 }
 
+func (do *Domain) resetErrorMetricLoop() {
+	ticker := time.Tick(time.Hour)
+	for {
+		select {
+		case <-ticker:
+			metrics.RetryableErrorCount.Reset()
+		case <-do.exit:
+			return
+		}
+	}
+}
+
 func (do *Domain) mdlCheckLoop() {
 	ticker := time.Tick(mdlCheckLookDuration)
 	var saveMaxSchemaVersion int64
@@ -1537,6 +1549,7 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 	do.wg.Run(func() {
 		do.loadSchemaInLoop(do.ctx)
 	}, "loadSchemaInLoop")
+	do.wg.Run(do.resetErrorMetricLoop, "resetErrorMetricLoop")
 	do.wg.Run(do.mdlCheckLoop, "mdlCheckLoop")
 	do.wg.Run(do.topNSlowQueryLoop, "topNSlowQueryLoop")
 	do.wg.Run(do.infoSyncerKeeper, "infoSyncerKeeper")
