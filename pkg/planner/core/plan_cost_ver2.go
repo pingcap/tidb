@@ -167,10 +167,7 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
 		}
 	}
-	hasFullRangeScan := true
-	if len(p.Ranges) > 0 {
-		hasFullRangeScan = ranger.HasFullRange(p.Ranges, unsignedIntHandle)
-	}
+	hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
 
 	// Apply TiFlash startup cost to prefer TiKV for small table scans
 	if p.StoreType == kv.TiFlash {
