@@ -121,8 +121,9 @@ func (t *RootTask) MemoryUsage() (sum int64) {
 type MppTask struct {
 	p base.PhysicalPlan
 
-	partTp   property.MPPPartitionType
-	hashCols []*property.MPPPartitionColumn
+	partTp       property.MPPPartitionType
+	hashCols     []*property.MPPPartitionColumn
+	lossHashProp *property.PhysicalProperty
 
 	// rootTaskConds record filters of TableScan that cannot be pushed down to TiFlash.
 

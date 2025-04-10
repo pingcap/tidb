@@ -178,73 +178,26 @@ CREATE TABLE orders (
 	testkit.SetTiFlashReplica(t, dom, "test", "part")
 	testkit.SetTiFlashReplica(t, dom, "test", "partsupp")
 	testkit.SetTiFlashReplica(t, dom, "test", "supplier")
-	tk.MustQuery(`explain select
-	nation,
-	o_year,
-	sum(amount) as sum_profit
-from
-	(
-		select
-			n_name as nation,
-			extract(year from o_orderdate) as o_year,
-			l_extendedprice * (1 - l_discount) - ps_supplycost * l_quantity as amount
-		from
-			part,
-			supplier,
-			lineitem,
-			partsupp,
-			orders,
-			nation
-		where
-			s_suppkey = l_suppkey
-			and ps_suppkey = l_suppkey
-			and ps_partkey = l_partkey
-			and p_partkey = l_partkey
-			and o_orderkey = l_orderkey
-			and s_nationkey = n_nationkey
-			and p_name like '%dim%'
-	) as profit
-group by
-	nation,
-	o_year
-order by
-	nation,
-	o_year desc;`).Check(testkit.Rows(
-		"Sort_28 8000.00 root  test.nation.n_name, Column#52:desc",
-		"└─Projection_30 8000.00 root  test.nation.n_name, Column#52, Column#54",
-		"  └─HashAgg_34 8000.00 root  group by:Column#65, Column#66, funcs:sum(Column#64)->Column#54, funcs:firstrow(Column#65)->test.nation.n_name, funcs:firstrow(Column#66)->Column#52",
-		"    └─Projection_209 24414.06 root  minus(mul(test.lineitem.l_extendedprice, minus(1, test.lineitem.l_discount)), mul(test.partsupp.ps_supplycost, test.lineitem.l_quantity))->Column#64, test.nation.n_name->Column#65, extract(YEAR, test.orders.o_orderdate)->Column#66",
-		"      └─HashJoin_50 24414.06 root  inner join, equal:[eq(test.supplier.s_nationkey, test.nation.n_nationkey)]",
-		"        ├─TableReader_200(Build) 10000.00 root  MppVersion: 3, data:ExchangeSender_199",
-		"        │ └─ExchangeSender_199 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-		"        │   └─TableFullScan_198 10000.00 mpp[tiflash] table:nation keep order:false, stats:pseudo",
-		"        └─HashJoin_85(Probe) 19531.25 root  inner join, equal:[eq(test.lineitem.l_orderkey, test.orders.o_orderkey)]",
-		"          ├─TableReader_195(Build) 10000.00 root  MppVersion: 3, data:ExchangeSender_194",
-		"          │ └─ExchangeSender_194 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-		"          │   └─TableFullScan_193 10000.00 mpp[tiflash] table:orders keep order:false, stats:pseudo",
-		"          └─HashJoin_135(Probe) 15625.00 root  inner join, equal:[eq(test.lineitem.l_suppkey, test.partsupp.ps_suppkey) eq(test.lineitem.l_partkey, test.partsupp.ps_partkey)]",
-		"            ├─TableReader_190(Build) 10000.00 root  MppVersion: 3, data:ExchangeSender_189",
-		"            │ └─ExchangeSender_189 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-		"            │   └─TableFullScan_188 10000.00 mpp[tiflash] table:partsupp keep order:false, stats:pseudo",
-		"            └─TableReader_151(Probe) 12500.00 root  MppVersion: 3, data:ExchangeSender_150",
-		"              └─ExchangeSender_150 12500.00 mpp[tiflash]  ExchangeType: PassThrough",
-		"                └─Projection_149 12500.00 mpp[tiflash]  test.lineitem.l_orderkey, test.lineitem.l_partkey, test.lineitem.l_suppkey, test.lineitem.l_quantity, test.lineitem.l_extendedprice, test.lineitem.l_discount, test.supplier.s_nationkey, test.supplier.s_suppkey",
-		"                  └─HashJoin_137 12500.00 mpp[tiflash]  inner join, equal:[eq(test.lineitem.l_suppkey, test.supplier.s_suppkey)]",
-		"                    ├─ExchangeReceiver_65(Build) 10000.00 mpp[tiflash]  ",
-		"                    │ └─ExchangeSender_64 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.lineitem.l_suppkey, collate: binary]",
-		"                    │   └─Projection_63 10000.00 mpp[tiflash]  test.lineitem.l_orderkey, test.lineitem.l_partkey, test.lineitem.l_suppkey, test.lineitem.l_quantity, test.lineitem.l_extendedprice, test.lineitem.l_discount",
-		"                    │     └─HashJoin_55 10000.00 mpp[tiflash]  inner join, equal:[eq(test.part.p_partkey, test.lineitem.l_partkey)]",
-		"                    │       ├─ExchangeReceiver_59(Build) 8000.00 mpp[tiflash]  ",
-		"                    │       │ └─ExchangeSender_58 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.part.p_partkey, collate: binary]",
-		"                    │       │   └─Selection_57 8000.00 mpp[tiflash]  like(test.part.p_name, \"%dim%\", 92)",
-		"                    │       │     └─TableFullScan_56 10000.00 mpp[tiflash] table:part pushed down filter:empty, keep order:false, stats:pseudo",
-		"                    │       └─ExchangeReceiver_62(Probe) 10000.00 mpp[tiflash]  ",
-		"                    │         └─ExchangeSender_61 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.lineitem.l_partkey, collate: binary]",
-		"                    │           └─TableFullScan_60 10000.00 mpp[tiflash] table:lineitem keep order:false, stats:pseudo",
-		"                    └─ExchangeReceiver_68(Probe) 10000.00 mpp[tiflash]  ",
-		"                      └─ExchangeSender_67 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.supplier.s_suppkey, collate: binary]",
-		"                        └─TableFullScan_66 10000.00 mpp[tiflash] table:supplier keep order:false, stats:pseudo"))
+	integrationSuiteData := GetTPCHSuiteData()
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Result []string
+		}
+	)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i := 0; i < len(input); i++ {
+		testdata.OnRecord(func() {
+			output[i].SQL = input[i]
+		})
+		testdata.OnRecord(func() {
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
+		})
+		tk.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
+	}
 }
+
 func TestQ13(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
