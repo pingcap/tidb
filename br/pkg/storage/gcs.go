@@ -457,20 +457,24 @@ func (s *GCSStorage) Reset(ctx context.Context) error {
 	s.cancelAndCloseGCSClients()
 
 	clientCtx, clientCancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	defer close(done)
-	go func() {
-		select {
-		case <-done:
-		case <-ctx.Done():
-			clientCancel()
-		}
-	}()
-
-	s.clients = make([]*storage.Client, gcsClientCnt)
-	firstErr := atomic.NewError(nil)
+	s.clients = make([]*storage.Client, 0, gcsClientCnt)
 	wg := util.WaitGroupWrapper{}
-	for i := range s.clients {
+	cliCh := make(chan *storage.Client)
+	wg.RunWithLog(func() {
+		for range gcsClientCnt {
+			select {
+			case cli := <-cliCh:
+				s.clients = append(s.clients, cli)
+			case <-ctx.Done():
+				clientCancel()
+				return
+			case <-clientCtx.Done():
+				return
+			}
+		}
+	})
+	firstErr := atomic.NewError(nil)
+	for range gcsClientCnt {
 		wg.RunWithLog(func() {
 			client, err := storage.NewClient(clientCtx, s.clientOps...)
 			if err != nil {
@@ -479,7 +483,10 @@ func (s *GCSStorage) Reset(ctx context.Context) error {
 				return
 			}
 			client.SetRetry(storage.WithErrorFunc(shouldRetry), storage.WithPolicy(storage.RetryAlways))
-			s.clients[i] = client
+			select {
+			case cliCh <- client:
+			case <-clientCtx.Done():
+			}
 		})
 	}
 	wg.Wait()
