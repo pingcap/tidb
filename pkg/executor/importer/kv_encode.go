@@ -81,13 +81,33 @@ func NewTableKVEncoder(
 			needCast[offset] = !(baseKVEncoder.Columns[offset].ToInfo().FieldType.Equal(&insertCol.FieldType))
 		}
 	}
+	inputTps := make([]*types.FieldType, 0, len(ti.InsertColumns))
+	for i := 0; i < len(ti.FieldMappings); i++ {
+		if i >= len(ti.inputFieldTypes) {
+			if ti.FieldMappings[i].Column == nil {
+				continue
+			}
+			// If some columns is missing and their type is time and has not null flag, they should be set as current time.
+			if types.IsTypeTime(ti.FieldMappings[i].Column.GetType()) && mysql.HasNotNullFlag(ti.FieldMappings[i].Column.GetFlag()) {
+				inputTps = append(inputTps, &ti.FieldMappings[i].Column.FieldType)
+				continue
+			}
+			inputTps = append(inputTps, types.NewFieldType(types.KindNull))
+			continue
+		}
+		if ti.FieldMappings[i].Column == nil {
+			continue
+		}
+		inputTps = append(inputTps, ti.inputFieldTypes[i])
+	}
+
 	inputNeedCast := make([]bool, len(ti.InsertColumns))
 	for i := range inputNeedCast {
-		if i >= len(ti.inputFieldTypes) {
+		if i >= len(inputTps) {
 			inputNeedCast[i] = true
 			continue
 		}
-		inputTp := ti.inputFieldTypes[i]
+		inputTp := inputTps[i]
 		insertTp := ti.InsertColumns[i].ToInfo().FieldType
 		inputNeedCast[i] = !(insertTp.Equal(inputTp))
 		if inputNeedCast[i] && insertTp.EvalType() == inputTp.EvalType() && ti.DisableCast {
