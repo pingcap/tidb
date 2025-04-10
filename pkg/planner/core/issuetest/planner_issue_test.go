@@ -299,5 +299,12 @@ func TestIssueABC(t *testing.T) {
   b int DEFAULT NULL,
   PRIMARY KEY (a) /*T![clustered_index] CLUSTERED */
 );`)
-	tk.MustQuery(`explain select /*+ INL_JOIN(t2) */ t2.c+1 from (select a, b+2 as c from t) as t2 join s where t2.a = s.a;`).Check(testkit.Rows())
+	tk.MustQuery(`explain select /*+ INL_JOIN(t2) */ t2.c+1 from (select a, b+2 as c from t) as t2 join s where t2.a = s.a;`).Check(testkit.Rows(
+		"Projection_9 12500.00 root  plus(Column#3, 1)->Column#6",
+		"└─IndexJoin_18 12500.00 root  inner join, inner:Projection_14, outer key:test.s.a, inner key:test.t.a, equal cond:eq(test.s.a, test.t.a)",
+		"  ├─TableReader_33(Build) 10000.00 root  data:TableFullScan_32",
+		"  │ └─TableFullScan_32 10000.00 cop[tikv] table:s keep order:false, stats:pseudo",
+		"  └─Projection_14(Probe) 100000000.00 root  test.t.a, plus(test.t.b, 2)->Column#3",
+		"    └─TableReader_13 10000.00 root  data:TableRangeScan_12",
+		"      └─TableRangeScan_12 10000.00 cop[tikv] table:t range: decided by [test.s.a], keep order:false, stats:pseudo"))
 }

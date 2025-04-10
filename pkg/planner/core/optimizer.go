@@ -1106,7 +1106,9 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 			againRuleList = append(againRuleList, interactionRule)
 		}
 	}
-
+	if !logic.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	// Trigger the interaction rule
 	for i, rule := range againRuleList {
 		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
