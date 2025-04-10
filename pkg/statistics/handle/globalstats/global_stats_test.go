@@ -784,7 +784,7 @@ func TestGlobalStats(t *testing.T) {
 	// And we should get the result that global-stats is used instead of pseudo-stats.
 	tk.MustQuery("explain format = 'brief' select * from t partition(p1) where a > 15;").Check(testkit.Rows(
 		"IndexReader 2.00 root partition:p1 index:IndexRangeScan",
-		"└─IndexRangeScan 2.00 cop[tikv] table:t, index:a(a) range:(15,+inf], keep order:false"))
+		"└─IndexRangeScan 2.00 cop[tikv] table:t, partition:p1, index:a(a) range:(15,+inf], keep order:false"))
 
 	// Even if we have global-stats, we will not use it when the switch is set to `static`.
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
@@ -994,9 +994,32 @@ func TestMergeGlobalStatsForCMSketch(t *testing.T) {
 	tk.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (6), (null), (11), (12), (13), (14), (15), (16), (17), (18), (19), (19)")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("explain select * from t where a = 1").Check(
-		testkit.Rows("TableReader_7 1.00 root partition:p0 data:Selection_6",
-			"└─Selection_6 1.00 cop[tikv]  eq(test.t.a, 1)",
-			"  └─TableFullScan_5 18.00 cop[tikv] table:t keep order:false"))
+		testkit.Rows("TableReader_9 1.00 root partition:p0 data:Selection_8",
+			"└─Selection_8 1.00 cop[tikv]  eq(test.t.a, 1)",
+			"  └─TableFullScan_7 18.00 cop[tikv] table:t, partition:p0 keep order:false"))
+}
+
+func TestEmptyHists(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (
+	id int,
+	fname varchar(30),
+	lname varchar(30),
+	signed date
+)
+partition by hash( month(signed) )
+partitions 12;`)
+	tk.MustExec(`truncate table mysql.stats_histograms`)
+	se := tk.Session().(sessionctx.Context)
+	infoSchema := dom.InfoSchema()
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tk.MustExec("set @@tidb_enable_async_merge_global_stats=ON;")
+	dom.StatsHandle().MergePartitionStats2GlobalStatsByTableID(se, core.GetAnalyzeOptionDefaultV2ForTest(), infoSchema, &types.GlobalStatsInfo{StatsVersion: 2}, tbl.Meta().ID)
+	tk.MustExec("set @@tidb_enable_async_merge_global_stats=OFF;")
+	dom.StatsHandle().MergePartitionStats2GlobalStatsByTableID(se, core.GetAnalyzeOptionDefaultV2ForTest(), infoSchema, &types.GlobalStatsInfo{StatsVersion: 2}, tbl.Meta().ID)
 }
 
 func TestEmptyHists(t *testing.T) {
