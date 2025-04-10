@@ -787,7 +787,7 @@ func (e *HashJoinV2Exec) initializeForProbe() {
 	e.joinResultCh = make(chan *hashjoinWorkerResult, e.Concurrency+1)
 	e.ProbeSideTupleFetcher.initializeForProbeBase(e.Concurrency, e.joinResultCh)
 	e.ProbeSideTupleFetcher.canSkipProbeIfHashTableIsEmpty = e.canSkipProbeIfHashTableIsEmpty()
-	e.ProbeSideTupleFetcher.probeFetchSkipped = false
+	e.ProbeSideTupleFetcher.canSkipScanRowTable = false
 
 	for i := uint(0); i < e.Concurrency; i++ {
 		e.ProbeWorkers[i].initializeForProbe(e.ProbeSideTupleFetcher.probeChkResourceCh, e.ProbeSideTupleFetcher.probeResultChs[i], e)
@@ -875,12 +875,7 @@ func (e *HashJoinV2Exec) waitJoinWorkers(start time.Time) {
 		}
 	}
 
-	if !e.ProbeSideTupleFetcher.probeFetchSkipped {
-		// only scan the row table if probe fetch is not skipped
-		// probe fetch is skipped if
-		// 1. there is some error during build stage
-		// 2. the hash table is empty
-		// in both cases, there is no need to scan the row table again
+	if !e.ProbeSideTupleFetcher.canSkipScanRowTable {
 		if e.ProbeWorkers[0] != nil && e.ProbeWorkers[0].JoinProbe.NeedScanRowTable() {
 			for i := uint(0); i < e.Concurrency; i++ {
 				var workerID = i
