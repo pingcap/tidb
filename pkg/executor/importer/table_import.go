@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/promutil"
@@ -228,6 +229,8 @@ type TableImporter struct {
 	regionSplitKeys int64
 	diskQuota       int64
 	diskQuotaLock   *syncutil.RWMutex
+
+	inputFieldTypes []*types.FieldType
 
 	chunkCh chan QueryChunk
 }
@@ -607,6 +610,10 @@ func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
 // SetSelectedChunkCh sets the channel to receive selected rows.
 func (ti *TableImporter) SetSelectedChunkCh(ch chan QueryChunk) {
 	ti.chunkCh = ch
+}
+
+func (ti *TableImporter) SetInputFieldTypes(tps []*types.FieldType) {
+	ti.inputFieldTypes = tps
 }
 
 func (ti *TableImporter) closeAndCleanupEngine(engine *backend.OpenedEngine) {

@@ -279,6 +279,7 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	}()
 	selectedChunkCh := make(chan importer.QueryChunk, e.controller.ThreadCnt)
 	ti.SetSelectedChunkCh(selectedChunkCh)
+	ti.SetInputFieldTypes(e.selectExec.RetFieldTypes())
 
 	var importResult *importer.JobImportResult
 	eg, egCtx := errgroup.WithContext(ctx)

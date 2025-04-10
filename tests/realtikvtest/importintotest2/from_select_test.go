@@ -179,3 +179,30 @@ func (s *mockGCSSuite) TestImportFromSelectNonEmpty() {
 	s.Contains(s.tk.Session().LastMessage(), "Records: 4,")
 	s.tk.MustQuery("select * from dst").Sort().Check(testkit.Rows("10 cccccc", "11 dddddd", "4 aaaaaa", "5 bbbbbb", "6 cccccc", "7 dddddd", "8 aaaaaa", "9 bbbbbb"))
 }
+
+func (s *mockGCSSuite) TestImportFromSkipCast() {
+	s.prepareAndUseDB("from_select")
+	s.tk.MustExec(`create table target(
+		ac varchar(50) NOT NULL DEFAULT '',
+		ccy varchar(50) NOT NULL DEFAULT '',
+		num1 varchar(50) NOT NULL DEFAULT '',
+		PRIMARY KEY (ac))`)
+	s.tk.MustExec(`create table source(
+		ac varchar(25) NOT NULL DEFAULT '',
+		ccy varchar(3) NOT NULL DEFAULT '',
+		num1 int(11),
+		PRIMARY KEY (ac))`)
+	s.tk.MustExec("set @@tidb_skip_utf8_check = '1';")
+	s.tk.MustExec("insert into source values ('test', 't', 12), ('a\xc5z', 'te', NULL)")
+	s.tk.MustExec("set @@tidb_skip_utf8_check = '0';")
+
+	s.tk.MustExec(`import into target from
+(
+			select
+  				rpad(AC,25,' ') AS AC,
+ 				rpad(CCY,3,' ') AS CCY,
+				max(concat(' ',lpad(ifnull(NUM1,'0'),9,'0'),'.')) AS NUM1
+			from source
+			group by ac, ccy
+		) with disable_cast`)
+}

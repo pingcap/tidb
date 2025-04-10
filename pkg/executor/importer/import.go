@@ -98,6 +98,7 @@ const (
 	disableTiKVImportModeOption = "disable_tikv_import_mode"
 	cloudStorageURIOption       = "cloud_storage_uri"
 	disablePrecheckOption       = "disable_precheck"
+	disableCast                 = "disable_cast"
 	// used for test
 	maxEngineSizeOption = "__max_engine_size"
 	forceMergeStep      = "__force_merge_step"
@@ -126,6 +127,7 @@ var (
 		forceMergeStep:              false,
 		cloudStorageURIOption:       true,
 		disablePrecheckOption:       false,
+		disableCast:                 false,
 	}
 
 	csvOnlyOptions = map[string]struct{}{
@@ -143,6 +145,7 @@ var (
 		threadOption:          {},
 		disablePrecheckOption: {},
 		checksumTableOption:   {},
+		disableCast:           {},
 	}
 
 	// LoadDataReadBlockSize is exposed for test.
@@ -238,6 +241,7 @@ type Plan struct {
 	MaxEngineSize         config.ByteSize
 	CloudStorageURI       string
 	DisablePrecheck       bool
+	DisableCast           bool
 
 	// used for checksum in physical mode
 	DistSQLScanConcurrency int
@@ -747,6 +751,9 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 	if _, ok := specifiedOptions[disablePrecheckOption]; ok {
 		p.DisablePrecheck = true
+	}
+	if _, ok := specifiedOptions[disableCast]; ok {
+		p.DisableCast = true
 	}
 	if _, ok := specifiedOptions[forceMergeStep]; ok {
 		p.ForceMergeStep = true

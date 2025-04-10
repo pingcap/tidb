@@ -48,6 +48,7 @@ type tableKVEncoder struct {
 	columnsAndUserVars []*ast.ColumnNameOrUserVar
 	fieldMappings      []*FieldMapping
 	insertColumns      []*table.Column
+	inputNeedCast      []bool
 	needCast           []bool
 	// Following cache use to avoid `runtime.makeslice`.
 	insertColumnRowCache []types.Datum
@@ -80,6 +81,19 @@ func NewTableKVEncoder(
 			needCast[offset] = !(baseKVEncoder.Columns[offset].ToInfo().FieldType.Equal(&insertCol.FieldType))
 		}
 	}
+	inputNeedCast := make([]bool, len(ti.InsertColumns))
+	for i := range inputNeedCast {
+		if i >= len(ti.inputFieldTypes) {
+			inputNeedCast[i] = true
+			continue
+		}
+		inputTp := ti.inputFieldTypes[i]
+		insertTp := ti.InsertColumns[i].ToInfo().FieldType
+		inputNeedCast[i] = !(insertTp.Equal(inputTp))
+		if inputNeedCast[i] && insertTp.EvalType() == inputTp.EvalType() && ti.DisableCast {
+			inputNeedCast[i] = false
+		}
+	}
 
 	return &tableKVEncoder{
 		BaseKVEncoder:      baseKVEncoder,
@@ -87,6 +101,7 @@ func NewTableKVEncoder(
 		columnsAndUserVars: ti.ColumnsAndUserVars,
 		fieldMappings:      ti.FieldMappings,
 		insertColumns:      ti.InsertColumns,
+		inputNeedCast:      inputNeedCast,
 		needCast:           needCast,
 	}, nil
 }
@@ -188,15 +203,19 @@ func (en *tableKVEncoder) getRow(vals []types.Datum, rowID int64) ([]types.Datum
 		hasValue[i] = false
 	}
 
+	var err error
 	for i := 0; i < len(en.insertColumns); i++ {
 		insertCol := en.insertColumns[i].ToInfo()
-		casted, err := table.CastColumnValue(en.SessionCtx.GetExprCtx(), vals[i], insertCol, false, false)
-		if err != nil {
-			return nil, err
+		offset := en.insertColumns[i].Offset
+		if en.inputNeedCast[i] {
+			row[offset], err = table.CastColumnValue(en.SessionCtx.GetExprCtx(), vals[i], insertCol, false, false)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			row[offset] = vals[i]
 		}
 
-		offset := en.insertColumns[i].Offset
-		row[offset] = casted
 		hasValue[offset] = true
 	}
 
