@@ -72,7 +72,7 @@ func readAllData(
 		task.End(zap.ErrorLevel, err)
 	}()
 
-	concurrences, startOffsets, err, notSkip := getFilesReadConcurrency(
+	concurrences, startOffsets, err, _ := getFilesReadConcurrency(
 		ctx,
 		store,
 		statsFiles,
@@ -84,7 +84,7 @@ func readAllData(
 	}
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
-	readConn := 4
+	readConn := 1000
 	readConn = min(readConn, len(dataFiles))
 	taskCh := make(chan int)
 	output.memKVBuffers = make([]*membuf.Buffer, readConn*2)
@@ -130,9 +130,9 @@ func readAllData(
 	}
 
 	for fileIdx := range dataFiles {
-		if !notSkip[fileIdx] {
-			continue
-		}
+		//if !notSkip[fileIdx] {
+		//	continue
+		//}
 		select {
 		case <-egCtx.Done():
 			return eg.Wait()
