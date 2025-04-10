@@ -25,8 +25,10 @@ import (
 )
 
 func TestListPartitionPruning(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune"))
+	}()
 
 	store := testkit.CreateMockStore(t)
 
@@ -73,9 +75,10 @@ func TestListPartitionPruning(t *testing.T) {
 }
 
 func TestPartitionTableExplain(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
-
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune"))
+	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -266,4 +269,21 @@ func TestGeneratedColumnWithPartition(t *testing.T) {
 	`)
 	tk.MustExec(`INSERT INTO tp (id, c1) VALUES (0, 1)`)
 	tk.MustExec(`select /*+ FORCE_INDEX(tp, idx) */id from tp where c2 = 2 group by id having id in (0)`)
+}
+
+func TestIssue56266(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t(a int primary key, b int);`)
+	tk.MustExec(`create table tlist (a int) partition by list (a) (
+    partition p0 values in (0, 1, 2),
+    partition p1 values in (3, 4, 5),
+    partition p2 values in (6, 7, 8),
+    partition p3 values in (9, 10, 11));`)
+	tk.MustQuery(`explain format='brief' select 1 from t left join tlist on tlist.a=t.a where t.a in (12, 13);`).Check(testkit.Rows(
+		"Projection 2.00 root  1->Column#5",
+		"└─HashJoin 2.00 root  left outer join, left side:Batch_Point_Get, equal:[eq(test.t.a, test.tlist.a)]",
+		"  ├─TableDual(Build) 0.00 root  rows:0",
+		"  └─Batch_Point_Get(Probe) 2.00 root table:t handle:[12 13], keep order:false, desc:false"))
 }
