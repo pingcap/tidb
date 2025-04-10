@@ -299,7 +299,7 @@ func TestLocatePartition(t *testing.T) {
 		tk0.MustQuery("explain format = 'brief' select id, type from t where  type = 'WatchEvent';").Check(testkit.Rows(""+
 			`TableReader 2.00 root partition:watch_event data:Selection`,
 			`└─Selection 2.00 cop[tikv]  eq(test.t.type, "WatchEvent")`,
-			`  └─TableFullScan 3.00 cop[tikv] table:t keep order:false`))
+			`  └─TableFullScan 3.00 cop[tikv] table:t, partition:watch_event keep order:false`))
 	}
 
 	run := func(num int) {
@@ -3179,7 +3179,7 @@ func TestExplainPartition(t *testing.T) {
 	tk.MustQuery(`EXPLAIN FORMAT = 'brief' SELECT * FROM t WHERE a = 3`).Check(testkit.Rows(""+
 		`TableReader 1.00 root partition:p0 data:Selection`,
 		`└─Selection 1.00 cop[tikv]  eq(test.t.a, 3)`,
-		`  └─TableFullScan 6.00 cop[tikv] table:t keep order:false`))
+		`  └─TableFullScan 6.00 cop[tikv] table:t, partition:p0 keep order:false`))
 	tk.MustExec(`drop table t`)
 
 	tk.MustExec(`CREATE TABLE t (a int unsigned primary key, b int) PARTITION BY hash(a) PARTITIONS 3`)
@@ -3227,7 +3227,7 @@ func TestPartitionCoverage(t *testing.T) {
 	tk.MustExec(`set tidb_partition_prune_mode = 'dynamic'`)
 	tk.MustQuery(`explain format='brief' ` + query).Check(testkit.Rows(""+
 		"TableReader 2.00 root partition:p1 data:TableRangeScan",
-		"└─TableRangeScan 2.00 cop[tikv] table:t range:[1 1,1 1], [2 1,2 1], keep order:true"))
+		"└─TableRangeScan 2.00 cop[tikv] table:t, partition:p1 range:[1 1,1 1], [2 1,2 1], keep order:true"))
 	tk.MustQuery(query).Check(testkit.Rows("1 1", "2 1"))
 
 	query = `select * from t where a = 1 and b in (1,2)`
@@ -3247,15 +3247,11 @@ func TestPartitionCoverage(t *testing.T) {
 
 	tk.MustExec(`create table t (a int) partition by range (a) (partition p values less than (10))`)
 	tk.MustExec(`insert into t values (1)`)
-	tk.MustQuery(`explain format='brief' select * from t where a = 10`).Check(testkit.Rows(""+
-		"TableReader 10.00 root partition:dual data:Selection",
-		"└─Selection 10.00 cop[tikv]  eq(test.t.a, 10)",
-		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+	tk.MustQuery(`explain format='brief' select * from t where a = 10`).Check(testkit.Rows("" +
+		"TableDual 0.00 root  rows:0"))
 	tk.MustExec(`analyze table t all columns`)
-	tk.MustQuery(`explain format='brief' select * from t where a = 10`).Check(testkit.Rows(""+
-		`TableReader 1.00 root partition:dual data:Selection`,
-		`└─Selection 1.00 cop[tikv]  eq(test.t.a, 10)`,
-		`  └─TableFullScan 1.00 cop[tikv] table:t keep order:false`))
+	tk.MustQuery(`explain format='brief' select * from t where a = 10`).Check(testkit.Rows("" +
+		`TableDual 0.00 root  rows:0`))
 	tk.MustQuery(`select * from t where a = 10`).Check(testkit.Rows())
 
 	tk.MustExec(`drop table t`)
@@ -3274,7 +3270,7 @@ func TestPartitionCoverage(t *testing.T) {
 	tk.MustExec(`insert into t19141 values (1), (2), (3), (4)`)
 	tk.MustQuery(`explain format = 'brief' select * from t19141 partition (p0)`).Check(testkit.Rows(""+
 		"TableReader 10000.00 root partition:p0 data:TableFullScan",
-		"└─TableFullScan 10000.00 cop[tikv] table:t19141 keep order:false, stats:pseudo"))
+		"└─TableFullScan 10000.00 cop[tikv] table:t19141, partition:p0 keep order:false, stats:pseudo"))
 	tk.MustQuery(`select * from t19141 partition (p0)`).Sort().Check(testkit.Rows("4"))
 	tk.MustQuery(`select * from t19141 partition (p0) where c_int = 1`).Sort().Check(testkit.Rows())
 	tk.MustExec(`update t19141 partition (p0) set c_int = -c_int where c_int = 1`)

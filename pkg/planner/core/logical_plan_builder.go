@@ -4446,14 +4446,16 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if tblName.L == "" {
 		tblName = tn.Name
 	}
-
+	hasGlobal := slices.ContainsFunc(tableInfo.Indices, func(idx *model.IndexInfo) bool {
+		return idx.Global
+	})
 	if tableInfo.GetPartitionInfo() != nil {
 		// If `UseDynamicPruneMode` already been false, then we don't need to check whether execute `flagPartitionProcessor`
 		// otherwise we need to check global stats initialized for each partition table
-		if !b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
+		if !b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() && !hasGlobal {
 			b.optFlag = b.optFlag | rule.FlagPartitionProcessor
 		} else {
-			if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode {
+			if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode && !hasGlobal {
 				b.optFlag = b.optFlag | rule.FlagPartitionProcessor
 			} else {
 				h := domain.GetDomain(b.ctx).StatsHandle()
@@ -4474,9 +4476,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 						}
 					}
 				})
-
-				if usePartitionProcessor {
+				if !hasGlobal {
 					b.optFlag = b.optFlag | rule.FlagPartitionProcessor
+				}
+				if usePartitionProcessor {
 					b.ctx.GetSessionVars().StmtCtx.UseDynamicPruneMode = false
 					if isDynamicEnabled {
 						b.ctx.GetSessionVars().StmtCtx.AppendWarning(
@@ -4763,7 +4766,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if dirty || tableInfo.TempTableType == model.TempTableLocal || tableInfo.TableCacheStatusType == model.TableCacheStatusEnable {
 		us := logicalop.LogicalUnionScan{HandleCols: handleCols}.Init(b.ctx, b.getSelectOffset())
 		us.SetChildren(ds)
-		if tableInfo.Partition != nil && b.optFlag&rule.FlagPartitionProcessor == 0 {
+		if tableInfo.Partition != nil && !hasGlobal {
 			// Adding ExtraPhysTblIDCol for UnionScan (transaction buffer handling)
 			// Not using old static prune mode
 			// Single TableReader for all partitions, needs the PhysTblID from storage

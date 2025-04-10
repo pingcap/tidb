@@ -141,19 +141,23 @@ explain format = 'brief' select /*+ TIDB_INLJ(t2) */ * from tt t1, tt t2 where t
 id	estRows	task	access object	operator info
 HashJoin	25000.00	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.tt.a, planner__core__casetest__physicalplantest__physical_plan.tt.a)]
 ├─PartitionUnion(Build)	20000.00	root		
-│ ├─UnionScan	10000.00	root		
-│ │ └─TableReader	10000.00	root		data:TableFullScan
-│ │   └─TableFullScan	10000.00	cop[tikv]	table:t2, partition:p0	keep order:false, stats:pseudo
-│ └─UnionScan	10000.00	root		
-│   └─TableReader	10000.00	root		data:TableFullScan
-│     └─TableFullScan	10000.00	cop[tikv]	table:t2, partition:p1	keep order:false, stats:pseudo
+│ ├─Projection	10000.00	root		planner__core__casetest__physicalplantest__physical_plan.tt.a
+│ │ └─UnionScan	10000.00	root		
+│ │   └─TableReader	10000.00	root		data:TableFullScan
+│ │     └─TableFullScan	10000.00	cop[tikv]	table:t2, partition:p0	keep order:false, stats:pseudo
+│ └─Projection	10000.00	root		planner__core__casetest__physicalplantest__physical_plan.tt.a
+│   └─UnionScan	10000.00	root		
+│     └─TableReader	10000.00	root		data:TableFullScan
+│       └─TableFullScan	10000.00	cop[tikv]	table:t2, partition:p1	keep order:false, stats:pseudo
 └─PartitionUnion(Probe)	20000.00	root		
-  ├─UnionScan	10000.00	root		
-  │ └─TableReader	10000.00	root		data:TableFullScan
-  │   └─TableFullScan	10000.00	cop[tikv]	table:t1, partition:p0	keep order:false, stats:pseudo
-  └─UnionScan	10000.00	root		
-    └─TableReader	10000.00	root		data:TableFullScan
-      └─TableFullScan	10000.00	cop[tikv]	table:t1, partition:p1	keep order:false, stats:pseudo
+  ├─Projection	10000.00	root		planner__core__casetest__physicalplantest__physical_plan.tt.a
+  │ └─UnionScan	10000.00	root		
+  │   └─TableReader	10000.00	root		data:TableFullScan
+  │     └─TableFullScan	10000.00	cop[tikv]	table:t1, partition:p0	keep order:false, stats:pseudo
+  └─Projection	10000.00	root		planner__core__casetest__physicalplantest__physical_plan.tt.a
+    └─UnionScan	10000.00	root		
+      └─TableReader	10000.00	root		data:TableFullScan
+        └─TableFullScan	10000.00	cop[tikv]	table:t1, partition:p1	keep order:false, stats:pseudo
 rollback;
 set tidb_cost_model_version=DEFAULT;
 set @@tidb_partition_prune_mode=DEFAULT;

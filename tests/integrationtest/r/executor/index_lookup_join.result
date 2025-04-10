@@ -543,7 +543,7 @@ IndexJoin	1.25	root		inner join, inner:TableReader, outer key:executor__index_lo
 │     └─Selection	1.00	cop[tikv]		eq(executor__index_lookup_join.t2.postfiller, 1)
 │       └─TableFullScan	2.00	cop[tikv]	table:t2	keep order:false
 └─TableReader(Probe)	1.00	root	partition:all	data:TableRangeScan
-  └─TableRangeScan	1.00	cop[tikv]	table:t1	range: decided by [eq(executor__index_lookup_join.t1.id, executor__index_lookup_join.t2.prefiller)], keep order:false, stats:pseudo
+  └─TableRangeScan	1.00	cop[tikv]	table:t1, partition:p0	range: decided by [eq(executor__index_lookup_join.t1.id, executor__index_lookup_join.t2.prefiller)], keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 select /* +INL_JOIN(t1,t2) */ t1.id, t1.pc from t1 where id in ( select prefiller from t2 where t2.postfiller = 1 );

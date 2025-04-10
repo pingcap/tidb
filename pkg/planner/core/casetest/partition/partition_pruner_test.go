@@ -17,6 +17,7 @@ package partition
 import (
 	"bytes"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,8 +32,10 @@ import (
 )
 
 func TestHashPartitionPruner(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune"))
+	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_partition")
@@ -89,7 +92,7 @@ func getPartitionInfoFromPlan(plan []string) string {
 	info := testTablePartitionInfo{}
 	for _, row := range plan {
 		partitions := coretestsdk.GetFieldValue("partition:", row)
-		if partitions != "" {
+		if partitions != "" && info.Partitions != partitions {
 			info.Partitions = partitions
 			continue
 		}
@@ -116,14 +119,21 @@ func getPartitionInfoFromPlan(plan []string) string {
 }
 
 func checkPrunePartitionInfo(c *testing.T, query string, infos1 string, plan []string) {
+	if strings.Contains(infos1, ": dual") && slices.ContainsFunc(plan, func(s string) bool {
+		return strings.Contains(s, "TableDual")
+	}) {
+		return
+	}
 	infos2 := getPartitionInfoFromPlan(plan)
 	comment := fmt.Sprintf("the query is: %v, the plan is:\n%v", query, strings.Join(plan, "\n"))
 	require.Equal(c, infos1, infos2, comment)
 }
 
 func TestListColumnsPartitionPruner(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune"))
+	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set tidb_cost_model_version=2")

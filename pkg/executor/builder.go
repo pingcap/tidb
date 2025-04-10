@@ -4057,7 +4057,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) e
 		return ret
 	}
 
-	if is.Index.Global {
+	if _, ok := ret.table.(table.PartitionedTable); is.Index.Global && ok {
 		ret.partitionIDMap, err = getPartitionIDsAfterPruning(b.ctx, ret.table.(table.PartitionedTable), v.PlanPartInfo)
 		if err != nil {
 			b.err = err
@@ -4243,7 +4243,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 		return ret
 	}
 
-	if is.Index.Global {
+	if _, ok := ret.table.(table.PartitionedTable); is.Index.Global && ok {
 		ret.partitionIDMap, err = getPartitionIDsAfterPruning(b.ctx, ret.table.(table.PartitionedTable), v.PlanPartInfo)
 		if err != nil {
 			b.err = err
@@ -4828,7 +4828,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 	}
 
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-	if is.Index.Global {
+	if _, ok := e.table.(table.PartitionedTable); is.Index.Global && ok {
 		e.partitionIDMap, err = getPartitionIDsAfterPruning(builder.ctx, e.table.(table.PartitionedTable), v.PlanPartInfo)
 		if err != nil {
 			return nil, err
@@ -4890,7 +4890,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 	}
 
 	is := v.IndexPlans[0].(*plannercore.PhysicalIndexScan)
-	if is.Index.Global {
+	if _, ok := e.table.(table.PartitionedTable); is.Index.Global && ok {
 		e.partitionIDMap, err = getPartitionIDsAfterPruning(builder.ctx, e.table.(table.PartitionedTable), v.PlanPartInfo)
 		if err != nil {
 			return nil, err
@@ -4904,7 +4904,6 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 		}
 		return e, err
 	}
-
 	tbl, _ := builder.executorBuilder.is.TableByID(ctx, tbInfo.ID)
 	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, v.PlanPartInfo, lookUpContents)
 	if err != nil {
