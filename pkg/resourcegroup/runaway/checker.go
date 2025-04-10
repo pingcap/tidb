@@ -189,40 +189,43 @@ func (r *Checker) BeforeCopRequest(req *tikvrpc.Request) error {
 	if r.markedByQueryWatchRule && r.watchAction == rmpb.RunawayAction_CoolDown {
 		req.ResourceControlContext.OverridePriority = 1 // set priority to lowest
 	}
+	// If group settings are not available, skip this part.
+	if r.settings == nil {
+		return nil
+	}
 	// If group settings are available, verify if it matches any rules in the settings.
-	if r.settings != nil {
-		now := time.Now()
-		// Check and ensure the deadline exists.
-		exceedCause := r.exceedsThresholds(now, nil, 0)
-		// Only set timeout when the query has not been marked as runaway yet.
-		if !r.isMarkedByIdentifyInRunawaySettings() && len(exceedCause) == 0 {
-			if r.settings.Action == rmpb.RunawayAction_Kill {
-				until := r.deadline.Sub(now)
-				// if the execution time is close to the threshold, set a timeout
-				if !r.deadline.IsZero() && until < tikv.ReadTimeoutMedium {
-					req.Context.MaxExecutionDurationMs = uint64(until.Milliseconds())
-				}
+	now := time.Now()
+	// Check and ensure the deadline exists.
+	exceedCause := r.exceedsThresholds(now, nil, 0)
+	// Only set timeout when the query has not been marked as runaway yet.
+	if !r.isMarkedByIdentifyInRunawaySettings() && len(exceedCause) == 0 {
+		if r.settings.Action == rmpb.RunawayAction_Kill {
+			until := r.deadline.Sub(now)
+			// if the execution time is close to the threshold, set a timeout
+			if !r.deadline.IsZero() && until < tikv.ReadTimeoutMedium {
+				req.Context.MaxExecutionDurationMs = uint64(until.Milliseconds())
 			}
-			return nil
 		}
-		// Try to mark the query as runaway, it's safe to call this method concurrently.
-		// So it's possible that the query has already been marked as runaway in `CheckThresholds`.
-		r.markRunawayByIdentifyInRunawaySettings(&now, exceedCause)
-		// Take action if needed.
-		switch r.settings.Action {
-		case rmpb.RunawayAction_Kill:
-			return exeerrors.ErrResourceGroupQueryRunawayInterrupted.FastGenByArgs(exceedCause)
-		case rmpb.RunawayAction_CoolDown:
-			req.ResourceControlContext.OverridePriority = 1 // set priority to lowest
-			return nil
-		case rmpb.RunawayAction_SwitchGroup:
-			if switchGroupName := r.checkSwitchGroupName(r.settings.SwitchGroupName); len(switchGroupName) != 0 {
-				req.ResourceControlContext.ResourceGroupName = switchGroupName
-			}
-			return nil
-		default:
-			return nil
+		return nil
+	}
+	// Try to mark the query as runaway, it's safe to call this method concurrently.
+	// So it's possible that the query has already been marked as runaway in `CheckThresholds`.
+	r.markRunawayByIdentifyInRunawaySettings(&now, exceedCause)
+	// Take action if needed.
+	switch r.settings.Action {
+	case rmpb.RunawayAction_Kill:
+		// Return an error to interrupt the query immediately.
+		return exeerrors.ErrResourceGroupQueryRunawayInterrupted.FastGenByArgs(exceedCause)
+	case rmpb.RunawayAction_CoolDown:
+		// Set priority to the lowest.
+		req.ResourceControlContext.OverridePriority = 1
+	case rmpb.RunawayAction_SwitchGroup:
+		// Switch to the specified resource group.
+		if switchGroupName := r.checkSwitchGroupName(r.settings.SwitchGroupName); len(switchGroupName) != 0 {
+			req.ResourceControlContext.ResourceGroupName = switchGroupName
 		}
+	default:
+		// Noop.
 	}
 	return nil
 }
@@ -355,12 +358,14 @@ func (r *Checker) CheckThresholds(ruDetail *util.RUDetails, processKeys int64, e
 	atomic.AddInt64(&r.totalProcessedKeys, processKeys)
 	totalProcessedKeys := atomic.LoadInt64(&r.totalProcessedKeys)
 	exceedCause := r.exceedsThresholds(checkTime, ruDetail, totalProcessedKeys)
-	// No need to mark as runaway if the query is not exceeded any threshold.
+	// No need to mark as runaway if the query doesn't exceed any threshold.
 	if len(exceedCause) == 0 {
 		return err
 	}
+	// Try to mark the query as runaway, it's safe to call this method concurrently.
+	// So it's possible that the query has already been marked as runaway in `BeforeCopRequest`.
 	r.markRunawayByIdentifyInRunawaySettings(&now, exceedCause)
-	// Other actions will be handled in `BeforeCopRequest` since they need to modify the request.
+	// Other actions will be handled in `BeforeCopRequest` later since they need to modify the request.
 	if r.settings.Action == rmpb.RunawayAction_Kill {
 		return exeerrors.ErrResourceGroupQueryRunawayInterrupted.FastGenByArgs(exceedCause)
 	}
