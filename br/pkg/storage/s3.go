@@ -982,7 +982,7 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 		maxCnt = int64(len(p))
 	}
 	n, err = r.reader.Read(p[:maxCnt])
-	if err == nil && rand.Float64() < 0.01 {
+	if err == nil && rand.Float64() < 0.1 {
 		n = rand.Intn(int(maxCnt))
 		err = io.ErrUnexpectedEOF
 	}
@@ -1013,7 +1013,7 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 		}
 		retryCnt++
 		n, err = r.reader.Read(p[:maxCnt])
-		if err == nil && rand.Float64() < 0.01 {
+		if err == nil && rand.Float64() < 0.1 {
 			n = rand.Intn(int(maxCnt))
 			err = io.ErrUnexpectedEOF
 		}
