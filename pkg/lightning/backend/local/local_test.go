@@ -1773,7 +1773,7 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 	dataFiles, statFiles, err := external.MockExternalEngine(memStore, keys, value)
 	require.NoError(t, err)
 
-	codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{})
+	tikvCodec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{})
 	require.NoError(t, err)
 
 	extEngine := external.NewExternalEngine(
@@ -1794,7 +1794,7 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 		789,
 		true,
 		16*units.GiB,
-		codec,
+		tikvCodec,
 	)
 
 	jobCh := make(chan *regionJob, 9)
@@ -2341,6 +2341,8 @@ func TestExternalEngine(t *testing.T) {
 	}
 	engineUUID := uuid.New()
 	hook := &recordScanRegionsHook{}
+	tikvCodec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{})
+	require.NoError(t, err)
 	local := &Backend{
 		BackendConfig: BackendConfig{
 			WorkerConcurrency: 2,
@@ -2349,7 +2351,8 @@ func TestExternalEngine(t *testing.T) {
 		splitCli: initTestSplitClient([][]byte{
 			keys[0], keys[50], endKey,
 		}, hook),
-		pdCli: &mockPdClient{},
+		pdCli:     &mockPdClient{},
+		tikvCodec: tikvCodec,
 	}
 	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
 	require.NoError(t, err)

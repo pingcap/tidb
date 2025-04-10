@@ -216,7 +216,7 @@ func TestAddPrefix(t *testing.T) {
 	rowID := randBytes(8)
 
 	tc := []struct {
-		prefix []byte
+		prefix     []byte
 		keyAdapter KeyAdapter
 	}{
 		{
@@ -246,5 +246,5 @@ func TestAddPrefix(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, encodedKeyAddPrefix, encodedKeyWithPrefix)
 		})
-	}		
+	}
 }
