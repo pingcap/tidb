@@ -79,6 +79,7 @@ func seekPropsOffsets(
 			keyIdx := 0
 			curKey := starts[keyIdx]
 
+			var lastProp *rangeProperty
 			p, err3 := r.nextProp()
 			if kv.Key(p.firstKey).Cmp(starts[len(starts)-1]) > 0 {
 				skipOpen[i] = true
@@ -94,6 +95,10 @@ func seekPropsOffsets(
 					for keyIdx++; keyIdx < len(starts); keyIdx++ {
 						offsetsPerFile[i][keyIdx] = currOffset
 					}
+					if lastProp != nil && kv.Key(lastProp.lastKey).Cmp(starts[0]) < 0 {
+						skipOpen[i] = true
+						skipOpenNum++
+					}
 					return nil
 				default:
 					return errors.Trace(err3)
@@ -108,6 +113,7 @@ func seekPropsOffsets(
 					curKey = starts[keyIdx]
 				}
 				offsetsPerFile[i][keyIdx] = p.offset
+				lastProp = p
 				p, err3 = r.nextProp()
 			}
 		})
