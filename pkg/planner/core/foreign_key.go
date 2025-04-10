@@ -519,8 +519,5 @@ func checkFKChildTableMode(is infoschema.InfoSchema, referredFK *model.ReferredF
 	if err != nil {
 		return err
 	}
-	if err = dbutil.CheckTableModeIsNormal(childTableInfo.Name, childTableInfo.Mode); err != nil {
-		return err
-	}
-	return nil
+	return dbutil.CheckTableModeIsNormal(childTableInfo.Name, childTableInfo.Mode)
 }
