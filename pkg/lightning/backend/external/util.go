@@ -54,7 +54,7 @@ func seekPropsOffsets(
 	logger := logutil.Logger(ctx)
 	task := log.BeginTask(logger, "seek props offsets")
 	defer func() {
-		task.Info("skip open", zap.Int("skip-open", skipOpenNum))
+		task.Info("files can be skipped", zap.Int("skip-open", skipOpenNum))
 		task.End(zapcore.ErrorLevel, err)
 	}()
 
