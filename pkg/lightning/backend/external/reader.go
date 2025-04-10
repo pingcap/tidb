@@ -130,10 +130,9 @@ func readAllData(
 	}
 
 	for fileIdx := range dataFiles {
-		if !notSkip[fileIdx] {
-			// skip the file if it is not in the range
-			continue
-		}
+		//if !notSkip[fileIdx] {
+		//	continue
+		//}
 		select {
 		case <-egCtx.Done():
 			return eg.Wait()
