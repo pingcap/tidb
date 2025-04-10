@@ -1224,6 +1224,10 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		if path.StoreType != kv.TiFlash && prop.IsFlashProp() {
 			continue
 		}
+		// Use Inverted Index can not be used as access path index.
+		if path.Index != nil && path.Index.InvertedInfo != nil {
+			continue
+		}
 		if len(path.PartialAlternativeIndexPaths) > 0 {
 			// OR normal index merge path, try to determine every index partial path for this property.
 			candidate := convergeIndexMergeCandidate(ds, path, prop)
@@ -2615,6 +2619,23 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	if ts.KeepOrder && ts.StoreType == kv.TiFlash && (ts.Desc || ds.SCtx().GetSessionVars().TiFlashFastScan) {
 		// TiFlash fast mode(https://github.com/pingcap/tidb/pull/35851) does not keep order in TableScan
 		return base.InvalidTask, nil
+	}
+	// When the the store type is TiFlash, we will try to set the UsedColumnarIndexes.
+	// FIXME: Now it is a naive implementation, we will refine it based on selectivity and cost in the future.
+	if ts.StoreType == kv.TiFlash {
+		for _, index := range ts.Table.Indices {
+			if index.State == model.StatePublic && index.InvertedInfo != nil {
+				ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, &tipb.ColumnarIndexInfo{
+					IndexType: tipb.ColumnarIndexType_TypeInverted,
+					Index: &tipb.ColumnarIndexInfo_InvertedQueryInfo{
+						InvertedQueryInfo: &tipb.InvertedQueryInfo{
+							IndexId:  index.ID,
+							ColumnId: index.InvertedInfo.ColumnID,
+						},
+					},
+				})
+			}
+		}
 	}
 
 	// In disaggregated tiflash mode, only MPP is allowed, cop and batchCop is deprecated.
