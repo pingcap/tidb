@@ -251,7 +251,10 @@ func TestCompressedMakeSourceFileRegion(t *testing.T) {
 	ctx := context.Background()
 	store, err := storage.NewLocalStorage(".")
 	assert.NoError(t, err)
-	fileInfo.FileMeta.RealSize = EstimateRealSizeForFile(ctx, fileInfo.FileMeta, store)
+	compressRatio, err := SampleFileCompressRatio(ctx, fileInfo.FileMeta, store)
+	require.NoError(t, err)
+	fileInfo.FileMeta.RealSize = int64(compressRatio * float64(fileInfo.FileMeta.FileSize))
+
 	divideConfig := &DataDivideConfig{
 		ColumnCnt: colCnt,
 		TableMeta: meta,
