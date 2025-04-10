@@ -361,7 +361,7 @@ explain format='brief' select * from t where a < 3;
 id	estRows	task	access object	operator info
 TableReader	1.00	root	partition:p0	data:Selection
 └─Selection	1.00	cop[tikv]		lt(executor__partition__table.t.a, 3)
-  └─TableFullScan	3.00	cop[tikv]	table:t	keep order:false
+  └─TableFullScan	3.00	cop[tikv]	table:t, partition:p0	keep order:false
 select * from t where a < 3;
 a
 2
@@ -389,14 +389,14 @@ explain format='brief' select * from t where a < 3;
 id	estRows	task	access object	operator info
 TableReader	1.00	root	partition:p1	data:Selection
 └─Selection	1.00	cop[tikv]		lt(executor__partition__table.t.a, 3)
-  └─TableFullScan	3.00	cop[tikv]	table:t	keep order:false
+  └─TableFullScan	3.00	cop[tikv]	table:t, partition:p1	keep order:false
 select * from t where a < 3;
 a
 explain format='brief' select * from t where a < 8;
 id	estRows	task	access object	operator info
 TableReader	2.00	root	partition:p1	data:Selection
 └─Selection	2.00	cop[tikv]		lt(executor__partition__table.t.a, 8)
-  └─TableFullScan	3.00	cop[tikv]	table:t	keep order:false
+  └─TableFullScan	3.00	cop[tikv]	table:t, partition:p1	keep order:false
 select * from t where a < 8;
 a
 7
@@ -416,14 +416,14 @@ explain format='brief' select * from t where a < 3;
 id	estRows	task	access object	operator info
 TableReader	1.00	root	partition:p1	data:Selection
 └─Selection	1.00	cop[tikv]		lt(executor__partition__table.t.a, 3)
-  └─TableFullScan	3.00	cop[tikv]	table:t	keep order:false
+  └─TableFullScan	3.00	cop[tikv]	table:t, partition:p1	keep order:false
 select * from t where a < 3;
 a
 explain format='brief' select * from t where a < 8;
 id	estRows	task	access object	operator info
 TableReader	2.00	root	partition:p1	data:Selection
 └─Selection	2.00	cop[tikv]		lt(executor__partition__table.t.a, 8)
-  └─TableFullScan	3.00	cop[tikv]	table:t	keep order:false
+  └─TableFullScan	3.00	cop[tikv]	table:t, partition:p1	keep order:false
 select * from t where a < 8;
 a
 7
@@ -491,7 +491,7 @@ explain format='brief' select * from t where a > 7;
 id	estRows	task	access object	operator info
 TableReader	3333.33	root	partition:p2	data:Selection
 └─Selection	3333.33	cop[tikv]		gt(executor__partition__table.t.a, 7)
-  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─TableFullScan	10000.00	cop[tikv]	table:t, partition:p2	keep order:false, stats:pseudo
 select * from t where a > 7;
 a	b
 rollback;

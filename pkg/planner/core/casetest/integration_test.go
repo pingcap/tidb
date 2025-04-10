@@ -454,15 +454,15 @@ func TestIssue52023(t *testing.T) {
 	tk.MustQuery(`explain format='brief' select * from t where a = 5`).Check(testkit.Rows(""+
 		"TableReader 1.00 root partition:P4 data:Selection",
 		"└─Selection 1.00 cop[tikv]  eq(cast(test.t.a, double BINARY), 5)",
-		"  └─TableFullScan 1.00 cop[tikv] table:t keep order:false"))
+		"  └─TableFullScan 1.00 cop[tikv] table:t, partition:P4 keep order:false"))
 	tk.MustQuery(`explain format='brief' select * from t where a IN (5,55)`).Check(testkit.Rows(""+
 		"TableReader 1.00 root partition:P4 data:Selection",
 		"└─Selection 1.00 cop[tikv]  or(eq(cast(test.t.a, double BINARY), 5), eq(cast(test.t.a, double BINARY), 55))",
-		"  └─TableFullScan 1.00 cop[tikv] table:t keep order:false"))
+		"  └─TableFullScan 1.00 cop[tikv] table:t, partition:P4 keep order:false"))
 	tk.MustQuery(`explain format='brief' select * from t where a IN (0x5,55)`).Check(testkit.Rows(""+
 		"TableReader 1.00 root partition:P4 data:Selection",
 		"└─Selection 1.00 cop[tikv]  or(eq(test.t.a, \"0x05\"), eq(cast(test.t.a, double BINARY), 55))",
-		"  └─TableFullScan 1.00 cop[tikv] table:t keep order:false"))
+		"  └─TableFullScan 1.00 cop[tikv] table:t, partition:P4 keep order:false"))
 }
 
 func TestTiFlashExtraColumnPrune(t *testing.T) {

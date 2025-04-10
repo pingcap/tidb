@@ -3900,7 +3900,7 @@ desc format='brief' select * from t where a < '2000-01-01';
 id	estRows	task	access object	operator info
 TableReader	1.00	root	partition:p1	data:Selection
 └─Selection	1.00	cop[tikv]		lt(planner__core__integration.t.a, 2000-01-01 00:00:00.000000)
-  └─TableFullScan	2.00	cop[tikv]	table:t	keep order:false
+  └─TableFullScan	2.00	cop[tikv]	table:t, partition:p1	keep order:false
 drop user if exists test;
 create user test;
 grant select on test1111 to test@'%';
@@ -4256,7 +4256,7 @@ explain format = 'brief' select * from t where c = 1 and id = c;
 id	estRows	task	access object	operator info
 TableReader	1.00	root	partition:p0	data:Selection
 └─Selection	1.00	cop[tikv]		eq(planner__core__integration.t.c, 1), eq(planner__core__integration.t.id, 1)
-  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─TableFullScan	10000.00	cop[tikv]	table:t, partition:p0	keep order:false, stats:pseudo
 drop table if exists sbtest;
 CREATE TABLE sbtest (
 id int(10) unsigned NOT NULL AUTO_INCREMENT,

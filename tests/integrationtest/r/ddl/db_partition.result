@@ -117,7 +117,7 @@ explain format='brief' select * from t where a = "aa" collate utf8mb4_general_ci
 id	estRows	task	access object	operator info
 TableReader	4.00	root	partition:p2	data:Selection
 └─Selection	4.00	cop[tikv]		eq(ddl__db_partition.t.a, "aa")
-  └─TableFullScan	22.00	cop[tikv]	table:t	keep order:false
+  └─TableFullScan	22.00	cop[tikv]	table:t, partition:p2	keep order:false
 select * from t where a = "aa" collate utf8mb4_general_ci;
 a
 AA
@@ -128,7 +128,7 @@ explain format='brief' select * from t where a = "aa" collate utf8mb4_bin;
 id	estRows	task	access object	operator info
 TableReader	17.60	root	partition:p2	data:Selection
 └─Selection	17.60	cop[tikv]		eq(ddl__db_partition.t.a, "aa")
-  └─TableFullScan	22.00	cop[tikv]	table:t	keep order:false
+  └─TableFullScan	22.00	cop[tikv]	table:t, partition:p2	keep order:false
 select * from t where a = "aa" collate utf8mb4_bin;
 a
 aa
@@ -136,7 +136,7 @@ explain format='brief' select * from t where a = "ä" collate utf8mb4_bin;
 id	estRows	task	access object	operator info
 TableReader	17.60	root	partition:p1	data:Selection
 └─Selection	17.60	cop[tikv]		eq(ddl__db_partition.t.a, "ä")
-  └─TableFullScan	22.00	cop[tikv]	table:t	keep order:false
+  └─TableFullScan	22.00	cop[tikv]	table:t, partition:p1	keep order:false
 select * from t where a = "ä" collate utf8mb4_bin;
 a
 ä
@@ -144,7 +144,7 @@ explain format='brief' select * from t where a = "b" collate utf8mb4_bin;
 id	estRows	task	access object	operator info
 TableReader	17.60	root	partition:p5	data:Selection
 └─Selection	17.60	cop[tikv]		eq(ddl__db_partition.t.a, "b")
-  └─TableFullScan	22.00	cop[tikv]	table:t	keep order:false
+  └─TableFullScan	22.00	cop[tikv]	table:t, partition:p5	keep order:false
 select * from t where a = "b" collate utf8mb4_bin;
 a
 b
@@ -478,7 +478,7 @@ explain format = 'brief' select * from t where a is null;
 id	estRows	task	access object	operator info
 TableReader	1.00	root	partition:p1	data:Selection
 └─Selection	1.00	cop[tikv]		isnull(ddl__db_partition.t.a)
-  └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
+  └─TableFullScan	6.00	cop[tikv]	table:t, partition:p1	keep order:false
 explain format = 'brief' select * from t where a = 3;
 id	estRows	task	access object	operator info
 Point_Get	1.00	root	table:t, partition:p1, index:a(a)	
@@ -541,7 +541,7 @@ explain format = 'brief' select * from t where a is null;
 id	estRows	task	access object	operator info
 TableReader	1.00	root	partition:p1	data:Selection
 └─Selection	1.00	cop[tikv]		isnull(ddl__db_partition.t.a)
-  └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
+  └─TableFullScan	6.00	cop[tikv]	table:t, partition:p1	keep order:false
 select * from t where a is null;
 b	a
 NULL	NULL
@@ -565,7 +565,7 @@ explain format = 'brief' select * from t where a = "3";
 id	estRows	task	access object	operator info
 TableReader	1.00	root	partition:p1	data:Selection
 └─Selection	1.00	cop[tikv]		eq(ddl__db_partition.t.a, "3")
-  └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
+  └─TableFullScan	6.00	cop[tikv]	table:t, partition:p1	keep order:false
 select * from t where a = "3";
 b	a
 3	3
@@ -576,7 +576,7 @@ explain format = 'brief' select * from t where a = "4";
 id	estRows	task	access object	operator info
 TableReader	1.00	root	partition:p0	data:Selection
 └─Selection	1.00	cop[tikv]		eq(ddl__db_partition.t.a, "4")
-  └─TableFullScan	6.00	cop[tikv]	table:t	keep order:false
+  └─TableFullScan	6.00	cop[tikv]	table:t, partition:p0	keep order:false
 explain format = 'brief' select * from t where a between "3" and "4";
 id	estRows	task	access object	operator info
 TableReader	2.00	root	partition:p0,p1	data:Selection
@@ -1964,9 +1964,9 @@ C
 d
 desc select * from t11 where a = 'b';
 id	estRows	task	access object	operator info
-TableReader_7	1.00	root	partition:p0	data:Selection_6
-└─Selection_6	1.00	cop[tikv]		eq(test_db_with_partition_const.t11.a, "b")
-  └─TableFullScan_5	5.00	cop[tikv]	table:t11	keep order:false
+TableReader_8	1.00	root	partition:p0	data:Selection_7
+└─Selection_7	1.00	cop[tikv]		eq(test_db_with_partition_const.t11.a, "b")
+  └─TableFullScan_6	5.00	cop[tikv]	table:t11, partition:p0	keep order:false
 drop table if exists global_partition_table;
 create global temporary table global_partition_table (a int, b int) partition by hash(a) partitions 3 ON COMMIT DELETE ROWS;
 Error 1562 (HY000): Cannot create temporary table with partitions

@@ -136,7 +136,7 @@ id	estRows	task	access object	operator info
 MergeJoin	1.00	root		inner join, left key:executor__index_lookup_merge_join.t1.c_int, right key:executor__index_lookup_merge_join.t2.c_int, other cond:lt(executor__index_lookup_merge_join.t1.c_str, executor__index_lookup_merge_join.t2.c_str)
 ├─TableReader(Build)	1.00	root	partition:p0	data:Selection
 │ └─Selection	1.00	cop[tikv]		not(isnull(executor__index_lookup_merge_join.t2.c_str))
-│   └─TableFullScan	1.00	cop[tikv]	table:t2	keep order:true
+│   └─TableFullScan	1.00	cop[tikv]	table:t2, partition:p0	keep order:true
 └─TableReader(Probe)	1.00	root	partition:all	data:Selection
   └─Selection	1.00	cop[tikv]		not(isnull(executor__index_lookup_merge_join.t1.c_str))
     └─TableFullScan	1.00	cop[tikv]	table:t1	keep order:true
@@ -151,7 +151,7 @@ id	estRows	task	access object	operator info
 IndexHashJoin	1.00	root		inner join, inner:TableReader, outer key:executor__index_lookup_merge_join.t2.c_int, inner key:executor__index_lookup_merge_join.t1.c_int, equal cond:eq(executor__index_lookup_merge_join.t2.c_int, executor__index_lookup_merge_join.t1.c_int), other cond:lt(executor__index_lookup_merge_join.t1.c_str, executor__index_lookup_merge_join.t2.c_str)
 ├─TableReader(Build)	1.00	root	partition:p0	data:Selection
 │ └─Selection	1.00	cop[tikv]		not(isnull(executor__index_lookup_merge_join.t2.c_str))
-│   └─TableFullScan	1.00	cop[tikv]	table:t2	keep order:false
+│   └─TableFullScan	1.00	cop[tikv]	table:t2, partition:p0	keep order:false
 └─TableReader(Probe)	1.00	root	partition:all	data:Selection
   └─Selection	1.00	cop[tikv]		not(isnull(executor__index_lookup_merge_join.t1.c_str))
     └─TableRangeScan	1.00	cop[tikv]	table:t1	range: decided by [executor__index_lookup_merge_join.t2.c_int], keep order:false
@@ -163,7 +163,7 @@ id	estRows	task	access object	operator info
 IndexJoin	1.00	root		inner join, inner:TableReader, outer key:executor__index_lookup_merge_join.t2.c_int, inner key:executor__index_lookup_merge_join.t1.c_int, equal cond:eq(executor__index_lookup_merge_join.t2.c_int, executor__index_lookup_merge_join.t1.c_int), other cond:lt(executor__index_lookup_merge_join.t1.c_str, executor__index_lookup_merge_join.t2.c_str)
 ├─TableReader(Build)	1.00	root	partition:p0	data:Selection
 │ └─Selection	1.00	cop[tikv]		not(isnull(executor__index_lookup_merge_join.t2.c_str))
-│   └─TableFullScan	1.00	cop[tikv]	table:t2	keep order:false
+│   └─TableFullScan	1.00	cop[tikv]	table:t2, partition:p0	keep order:false
 └─TableReader(Probe)	1.00	root	partition:all	data:Selection
   └─Selection	1.00	cop[tikv]		not(isnull(executor__index_lookup_merge_join.t1.c_str))
     └─TableRangeScan	1.00	cop[tikv]	table:t1	range: decided by [executor__index_lookup_merge_join.t2.c_int], keep order:false
