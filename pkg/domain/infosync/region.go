@@ -78,7 +78,7 @@ func GetRegionDistributionByKeyRange(ctx context.Context, startKey []byte, endKe
 		return nil, err
 	}
 	if is.pdHTTPCli == nil {
-		return nil, errs.ErrClientGetLeader.FastGenByArgs("http cli is nil")
+		return nil, errs.ErrClientGetLeader.FastGenByArgs("pd http cli is nil")
 	}
 	return is.pdHTTPCli.GetRegionDistributionByKeyRange(ctx, pd.NewKeyRange(startKey, endKey), engine)
 }
@@ -90,7 +90,7 @@ func GetSchedulerConfig(ctx context.Context, schedulerName string) (any, error) 
 		return nil, err
 	}
 	if is.pdHTTPCli == nil {
-		return nil, errs.ErrClientGetLeader.FastGenByArgs("http cli is nil")
+		return nil, errs.ErrClientGetLeader.FastGenByArgs("pd http cli is nil")
 	}
 	return is.pdHTTPCli.GetSchedulerConfig(ctx, schedulerName)
 }

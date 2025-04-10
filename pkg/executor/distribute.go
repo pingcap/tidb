@@ -85,11 +85,17 @@ func (e *DistributeTableExec) Next(ctx context.Context, chk *chunk.Chunk) error 
 		return err
 	}
 	alias := e.getAlias()
+	jobID := float64(-1)
 	for _, job := range jobs {
-		if job["alias"] == alias && job["engine"] == e.engine.String() && job["rule"] == e.rule.String() {
-			chk.AppendUint64(0, uint64(job["job-id"].(float64)))
-			break
+		if job["alias"] == alias && job["engine"] == e.engine.String() && job["rule"] == e.rule.String() && job["status"] != "finish" {
+			id := job["job-id"].(float64)
+			if id > jobID {
+				jobID = id
+			}
 		}
+	}
+	if jobID != -1 {
+		chk.AppendUint64(0, uint64(jobID))
 	}
 	return nil
 }
@@ -139,6 +145,11 @@ func (e *DistributeTableExec) getKeyRanges() ([]*pdhttp.KeyRange, error) {
 				return nil, err
 			}
 			physicalIDs = append(physicalIDs, pid)
+		}
+		if len(physicalIDs) == 0 {
+			for _, p := range pi.Definitions {
+				physicalIDs = append(physicalIDs, p.ID)
+			}
 		}
 	}
 

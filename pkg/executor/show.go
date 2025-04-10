@@ -2491,31 +2491,39 @@ func (e *ShowExec) fetchShowDistributionJobs(ctx context.Context) error {
 		for _, job := range jobs {
 			jobID, ok := job["job-id"].(float64)
 			if ok && *e.DistributionJobID == int64(jobID) {
-				fillDistributionJobToChunk(ctx, job, e.result)
+				if err := fillDistributionJobToChunk(ctx, job, e.result); err != nil {
+					return err
+				}
 				break
 			}
 		}
 	} else {
 		for _, job := range jobs {
-			fillDistributionJobToChunk(ctx, job, e.result)
+			if err := fillDistributionJobToChunk(ctx, job, e.result); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
 // fillDistributionJobToChunk fills the distribution job to the chunk
-func fillDistributionJobToChunk(ctx context.Context, job map[string]any, result *chunk.Chunk) {
-	// alias is combined by db_name,table_name,partition_name
+func fillDistributionJobToChunk(ctx context.Context, job map[string]any, result *chunk.Chunk) error {
+	// alias is {db_name}.{table_name}.{partition_name}
 	alias := strings.Split(job["alias"].(string), ".")
 	logutil.Logger(ctx).Info("fillDistributionJobToChunk", zap.String("alias", job["alias"].(string)))
 	if len(alias) != 3 {
-		logutil.Logger(ctx).Debug("alias does not belong to tidb", zap.String("alias", job["alias"].(string)))
-		return
+		return errs.ErrClientProtoUnmarshal.FastGenByArgs(fmt.Sprintf("alias:%s is invalid", job["alias"].(string)))
 	}
 	result.AppendUint64(0, uint64(job["job-id"].(float64)))
 	result.AppendString(1, alias[0])
 	result.AppendString(2, alias[1])
-	result.AppendString(3, alias[2])
+	// partition name maybe empty when the table is not partitioned
+	if alias[2] == "" {
+		result.AppendNull(3)
+	} else {
+		result.AppendString(3, alias[2])
+	}
 	result.AppendString(4, job["engine"].(string))
 	result.AppendString(5, job["rule"].(string))
 	result.AppendString(6, job["status"].(string))
@@ -2524,33 +2532,31 @@ func fillDistributionJobToChunk(ctx context.Context, job map[string]any, result 
 		logutil.Logger(ctx).Info("fillDistributionJobToChunk", zap.String("create", create.(string)))
 		creatTime, err := time.Parse(layout, create.(string))
 		if err != nil {
-			logutil.Logger(ctx).Error("parse time failed", zap.String("time", job["start"].(string)))
-			return
+			return err
 		}
 		result.AppendTime(7, types.NewTime(types.FromGoTime(creatTime), mysql.TypeDatetime, types.DefaultFsp))
 	} else {
 		result.AppendNull(7)
 	}
-	if create, ok := job["start"]; ok {
-		creatTime, err := time.Parse(layout, create.(string))
+	if start, ok := job["start"]; ok {
+		creatTime, err := time.Parse(layout, start.(string))
 		if err != nil {
-			logutil.Logger(ctx).Error("parse time failed", zap.String("time", job["start"].(string)))
-			return
+			return err
 		}
 		result.AppendTime(8, types.NewTime(types.FromGoTime(creatTime), mysql.TypeDatetime, types.DefaultFsp))
 	} else {
 		result.AppendNull(8)
 	}
-	if create, ok := job["finish"]; ok {
-		creatTime, err := time.Parse(layout, create.(string))
+	if finish, ok := job["finish"]; ok {
+		creatTime, err := time.Parse(layout, finish.(string))
 		if err != nil {
-			logutil.Logger(ctx).Error("parse time failed", zap.String("time", job["start"].(string)))
-			return
+			return err
 		}
 		result.AppendTime(9, types.NewTime(types.FromGoTime(creatTime), mysql.TypeDatetime, types.DefaultFsp))
 	} else {
 		result.AppendNull(9)
 	}
+	return nil
 }
 
 // fetchShowImportJobs fills the result with the schema:

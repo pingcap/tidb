@@ -50,6 +50,7 @@ func (cli *MockDistributePDCli) GetSchedulerConfig(ctx context.Context, schedule
 func (cli *MockDistributePDCli) CreateSchedulerWithInput(ctx context.Context, name string, input map[string]any) error {
 	args := cli.Called(ctx, name, input)
 	input["job-id"] = uint64(len(cli.jobs) + 1)
+	input["status"] = "pending"
 	cli.jobs = append(cli.jobs, input)
 	return args.Error(0)
 }
@@ -93,6 +94,7 @@ func TestShowDistributionJobs(t *testing.T) {
 			now.Add(-time.Minute).Format("2006-01-02 15:04:05"),
 			now.Add(-time.Second*30).Format("2006-01-02 15:04:05"))))
 
+	tk.MustQuery("show distribution jobs where `job_id`=1").Check(tk.MustQuery("show distribution jobs").Rows())
 	tk.MustQuery("show distribution jobs where `job_id`=1").Check(tk.MustQuery("show distribution job 1").Rows())
 	tk.MustQuery("show distribution jobs where `job_id`=0").Check(tk.MustQuery("show distribution job 0").Rows())
 }
@@ -136,17 +138,20 @@ func TestDistributeTable(t *testing.T) {
 		"rule":   "leader",
 	}
 	tk.MustExec("create table t1(a int)")
-	mockCreateSchedulerWithInput(table, partition, "balance-range-scheduler", config)
 	mockGetSchedulerConfig("balance-range-scheduler")
+	mockCreateSchedulerWithInput(table, partition, "balance-range-scheduler", config)
 	tk.MustQuery(fmt.Sprintf("distribute table %s rule=leader engine=tikv", table)).Check(testkit.Rows("1"))
+	// create new scheduler with the same inputs
+	mockCreateSchedulerWithInput(table, partition, "balance-range-scheduler", config)
+	tk.MustQuery(fmt.Sprintf("distribute table %s rule=leader engine=tikv", table)).Check(testkit.Rows("2"))
 
 	// test for incorrect arguments
 	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule=leader engine=tiflash", table),
-		"[planner:1210]Incorrect arguments to tiflash only supports learner")
+		"[planner:1210]Incorrect arguments to the rule of tiflash must be learner")
 	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule=leader engine=titan", table),
-		"[planner:1210]Incorrect arguments to engine must be one of tikv, tiflash")
+		"[planner:1210]Incorrect arguments to engine must be tikv or tiflash")
 	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule=witness engine=tikv", table),
-		"[planner:1210]Incorrect arguments to rule must be one of leader, follower, learner")
+		"[planner:1210]Incorrect arguments to rule must be leader, follower or learner")
 }
 
 func TestShowTableDistributions(t *testing.T) {

@@ -2219,8 +2219,6 @@ func (s *session) validateStatementReadOnlyInStaleness(stmtNode ast.StmtNode) er
 	switch v := node.(type) {
 	case *ast.SplitRegionStmt:
 		return nil
-	case *ast.DistributeTableStmt:
-		return nil
 	case *ast.SelectStmt:
 		// select lock statement needs start a transaction which will be conflict to stale read,
 		// we forbid select lock statement in stale read for now.
