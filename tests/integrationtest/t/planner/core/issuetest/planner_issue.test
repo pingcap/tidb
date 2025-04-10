@@ -568,3 +568,14 @@ create table t1(a int, b int, index idx(a, b));
 create table t2(a int, b int, index idx(a));
 explain select /*+ merge_join(t1) */ * from t1 join t2 on t1.a=t2.a and t2.b=t1.b;
 explain select /*+ no_hash_join(t1), no_index_join(t1,t2), no_index_hash_join(t1,t2) */ * from t1 join t2 on t1.a=t2.a and t2.b=t1.b;
+
+# TestIssue59427
+drop table if exists t;
+create table t(a int, b int, c int, primary key(a,b), key ib(b));
+explain format = brief select * from t use index (ib) where a = 1 and b = 1;
+explain format = brief select /*+ use_index(t, ib) */ * from t where a = 1 and b = 1;
+explain format = brief update t use index (ib) set c = 1 where a = 1 and b = 1;
+explain format = brief update /*+ use_index(t, ib) */ t set c = 1 where a = 1 and b = 1;
+explain format = brief delete from t use index (ib) where a = 1 and b = 1;
+explain format = brief delete /*+ use_index(t, ib) */ from t where a = 1 and b = 1;
+
