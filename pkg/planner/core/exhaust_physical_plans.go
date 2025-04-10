@@ -1016,8 +1016,8 @@ func enumerateIndexJoinByOuterIdx(p *logicalop.LogicalJoin, prop *property.Physi
 	}
 	// computed the avgInnerRowCnt
 	var avgInnerRowCnt float64
-	if outerChild.StatsInfo().RowCount > 0 {
-		avgInnerRowCnt = p.EqualCondOutCnt / outerChild.StatsInfo().RowCount
+	if count := outerChild.StatsInfo().RowCount; count > 0 {
+		avgInnerRowCnt = p.EqualCondOutCnt / count
 	}
 	indexJoinProp := &property.IndexJoinRuntimeProp{
 		OtherConditions: p.OtherConditions,
