@@ -470,10 +470,6 @@ func (rm *Manager) RemoveRunawayResourceGroupWatch(groupName string) error {
 	if err != nil {
 		return errors.Annotate(err, "get watch records by resource group failed")
 	}
-	if len(records) == 0 {
-		return errors.Errorf("no runaway watch found for resource group: %s", groupName)
-	}
-
 	for _, record := range records {
 		if err := handleRunawayWatchDone(rm.sysSessionPool, record); err != nil {
 			return errors.Annotatef(err, "remove watch for resource group %s failed", groupName)
