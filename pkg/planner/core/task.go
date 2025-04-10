@@ -15,7 +15,6 @@
 package core
 
 import (
-	"fmt"
 	"math"
 
 	"github.com/pingcap/errors"
@@ -440,10 +439,6 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 	}
 	if p.mppShuffleJoin {
 		// protection check is case of some bugs
-		if p.fd != nil {
-			fmt.Println("wtf:", p.fd.String())
-		}
-
 		if len(lTask.hashCols) != len(rTask.hashCols) || len(lTask.hashCols) == 0 {
 			if len(lTask.hashCols) < len(rTask.hashCols) && lTask.lossHashProp != nil && len(lTask.lossHashProp.MPPPartitionCols) == len(rTask.hashCols) {
 				lTask = lTask.enforceExchangerImpl(lTask.lossHashProp)
