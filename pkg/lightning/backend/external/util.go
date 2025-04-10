@@ -81,7 +81,7 @@ func seekPropsOffsets(
 
 			var lastProp *rangeProperty
 			p, err3 := r.nextProp()
-			if kv.Key(p.firstKey).Cmp(starts[len(starts)-1]) > 0 {
+			if p != nil && kv.Key(p.firstKey).Cmp(starts[len(starts)-1]) > 0 {
 				skipOpen[i] = true
 				skipOpenNum++
 				return nil
