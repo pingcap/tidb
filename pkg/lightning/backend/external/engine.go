@@ -405,6 +405,7 @@ func (e *Engine) loadRangeBatch(ctx context.Context, jobKeys [][]byte, outCh cha
 		zap.Int("droppedSize", e.memKVsAndBuffers.droppedSize),
 		zap.Int("loadedKVs", len(e.memKVsAndBuffers.kvs)),
 		zap.String("loadedSize", units.HumanSize(float64(e.memKVsAndBuffers.size))),
+		zap.Stringer("onDup", e.onDup),
 		zap.Int("dupCount", dupCount),
 		zap.Int("recordedDupCount", len(dups)),
 		zap.Int("totalRecordedDupCount", e.recordedDupCnt),

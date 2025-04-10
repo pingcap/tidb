@@ -27,8 +27,8 @@ import (
 )
 
 var (
-	// DefaultReadBufferSize default read buf size of KVReader, this buf is split
-	// into 3 parts, 2 for prefetch from storage, 1 for read by user.
+	// DefaultReadBufferSize is the default read buf size of KVReader, this buf
+	// is split into 3 parts, 2 for prefetch from storage, 1 for read by user.
 	DefaultReadBufferSize = 64 * units.KiB
 )
 
