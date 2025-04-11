@@ -29,6 +29,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -136,12 +137,13 @@ func (handle *Handle) analyzeBasedOnStatementStats() ([]*TableReadCostMetrics, t
 	exec := sctx.GetRestrictedSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnWorkloadLearning)
 
-	// Get records from ClusterTableTiDBStatementsStats
+	// Step2: extract metrics from ClusterTableTiDBStatementsStats
 	// TODO: use constant for table name and field name/values
 	sql := `SELECT DIGEST, DIGEST_TEXT, PLAN, EXEC_COUNT
 	        FROM INFORMATION_SCHEMA.CLUSTER_TIDB_STATEMENTS_STATS
 	        WHERE LOWER(STMT_TYPE) = 'Select'
 	        AND SUMMARY_END_TIME >= '%?'`
+	// Step2.1: get latest snapshot record from ClusterTableTiDBStatementsStats
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql, endTime.Format("2006-01-02 15:04:05"))
 	if err != nil {
 		logutil.ErrVerboseLogger().Warn("Failed to query CLUSTER_TIDB_STATEMENTS_STATS table",
@@ -149,8 +151,27 @@ func (handle *Handle) analyzeBasedOnStatementStats() ([]*TableReadCostMetrics, t
 			zap.Error(err))
 		return nil, startTime, startTime
 	}
+	for _, row := range rows {
+		digest := row.GetString(0)
+		sql := row.GetString(1)
+		planString := row.GetString(2)
+		endTimeExecCount := row.GetInt64(3)
+		// forbidden the cross db query by abstract table name from digest_text
+		crossDB, err := checkCrossDB(sql)
+		if err != nil {
+			logutil.ErrVerboseLogger().Warn("failed to check cross db", zap.Error(err))
+			continue
+		}
+		if crossDB {
+			// Now, we cannot recognize the scan time in plan text if the query from the different dbs.
+			// So now we just ignore this kind of case
+			continue
+		}
+		// Step2.2: extract scan-time, memory-usage from PLAN
+	}
 
-	// forbidden the cross db query by abstract table name from digest_text
+	// Step3: compute the frequency of each table by endTimeExecCount-startTimeExecCount
+	// Step4: compute the table cost metrics by table scan time / total scan time + table mem usage / total mem usage
 
 	// TODO: Execute the SQL and get results
 	// For now, let's define the structure we expect from parsing the plan
@@ -308,4 +329,44 @@ func (handle *Handle) SaveTableReadCostMetrics(metrics map[ast.CIStr]*TableReadC
 	if err != nil {
 		logutil.BgLogger().Warn("commit txn failed when saving table cost metrics", zap.Error(err))
 	}
+}
+
+func checkCrossDB(sql string) (bool, error) {
+	p := parser.New()
+	// notes: this is only use for check whether query cross db, so the charset and collation doesn't matter in here.
+	stmtNodes, _, err := p.Parse(sql, "", "")
+	if err != nil {
+		return false, err
+	}
+
+	extractor := &TableNameExtractor{}
+	if len(stmtNodes) != 1 {
+		// TODO: support multi-statement in one single statement_record
+		return false, nil
+	}
+	for _, stmt := range stmtNodes {
+		stmt.Accept(extractor)
+		if len(extractor.DBs) > 1 {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+type TableNameExtractor struct {
+	DBs map[string]struct{}
+}
+
+func (e *TableNameExtractor) Enter(n ast.Node) (ast.Node, bool) {
+	if table, ok := n.(*ast.TableName); ok {
+		if e.DBs == nil {
+			e.DBs = make(map[string]struct{})
+		}
+		e.DBs[table.Schema.L] = struct{}{}
+	}
+	return n, false
+}
+
+func (e *TableNameExtractor) Leave(n ast.Node) (ast.Node, bool) {
+	return n, true
 }
