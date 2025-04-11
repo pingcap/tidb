@@ -106,8 +106,8 @@ func FindIdxInfo(dom *domain.Domain, dbName, tbName, idxName string) *model.Inde
 // SubStates is a slice of SchemaState.
 type SubStates = []model.SchemaState
 
-// TestMatchCancelState is used to test whether the cancel state matches.
-func TestMatchCancelState(t *testing.T, job *model.Job, cancelState any, sql string) bool {
+// MatchCancelState is used to test whether the cancel state matches.
+func MatchCancelState(t *testing.T, job *model.Job, cancelState any, sql string) bool {
 	switch v := cancelState.(type) {
 	case model.SchemaState:
 		if job.Type == model.ActionMultiSchemaChange {
@@ -134,9 +134,8 @@ func TestMatchCancelState(t *testing.T, job *model.Job, cancelState any, sql str
 	}
 }
 
-func testCheckTableState(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, state model.SchemaState) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+func checkTableState(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, state model.SchemaState) {
+	require.NoError(t, kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, false, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
 		info, err := m.GetTable(dbInfo.ID, tblInfo.ID)
 		require.NoError(t, err)
@@ -152,10 +151,9 @@ func testCheckTableState(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, t
 	}))
 }
 
-// TestCheckTableMode checks the table mode of a table in the store.
-func TestCheckTableMode(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, mode model.TableMode) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	err := kv.RunInNewTxn(ctx, store, false, func(_ context.Context, txn kv.Transaction) error {
+// CheckTableMode checks the table mode of a table in the store.
+func CheckTableMode(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, mode model.TableMode) {
+	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, false, func(_ context.Context, txn kv.Transaction) error {
 		tt := meta.NewMutator(txn)
 		info, err := tt.GetTable(dbInfo.ID, tblInfo.ID)
 		require.NoError(t, err)
@@ -166,8 +164,8 @@ func TestCheckTableMode(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tb
 	require.NoError(t, err)
 }
 
-// TestSetTableMode sets the table mode of a table in the store.
-func TestSetTableMode(
+// SetTableMode sets the table mode of a table in the store.
+func SetTableMode(
 	ctx sessionctx.Context,
 	t *testing.T,
 	store kv.Storage,
@@ -183,8 +181,8 @@ func TestSetTableMode(
 	}
 	err := de.AlterTableMode(ctx, args)
 	if err == nil {
-		testCheckTableState(t, store, dbInfo, tblInfo, model.StatePublic)
-		TestCheckTableMode(t, store, dbInfo, tblInfo, mode)
+		checkTableState(t, store, dbInfo, tblInfo, model.StatePublic)
+		CheckTableMode(t, store, dbInfo, tblInfo, mode)
 	}
 
 	return err

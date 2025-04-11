@@ -1684,7 +1684,7 @@ func TestForeignKeyWithTableMode(t *testing.T) {
 	require.True(t, ok)
 	for _, tbl := range childTables {
 		tblInfo := getTableInfo(t, domain, "test", tbl)
-		testutil.TestSetTableMode(ctx, t, store, de, dbInfo, tblInfo, model.TableModeImport)
+		testutil.SetTableMode(ctx, t, store, de, dbInfo, tblInfo, model.TableModeImport)
 	}
 
 	// Test operations for each reference option type
@@ -1700,7 +1700,7 @@ func TestForeignKeyWithTableMode(t *testing.T) {
 	// set table mode to normal, expect all operations are allowed
 	for _, tbl := range childTables {
 		tblInfo := getTableInfo(t, domain, "test", tbl)
-		testutil.TestSetTableMode(ctx, t, store, de, dbInfo, tblInfo, model.TableModeNormal)
+		testutil.SetTableMode(ctx, t, store, de, dbInfo, tblInfo, model.TableModeNormal)
 	}
 	tk.MustExec("delete from parent_1 where id = 1")
 	tk.MustQuery("select * from child_delete_cascade").Check(testkit.Rows())
