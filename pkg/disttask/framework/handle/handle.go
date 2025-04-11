@@ -24,7 +24,10 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/backoff"
+	"github.com/pingcap/tidb/pkg/util/cgroup"
+	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -250,8 +253,43 @@ func SetNodeResource(rc *proto.NodeResource) {
 	nodeResource.Store(rc)
 }
 
+// CalculateNodeResource calculates the node resource.
+func CalculateNodeResource() (*proto.NodeResource, error) {
+	logger := logutil.BgLogger()
+	totalMem, err := memory.MemTotal()
+	if err != nil {
+		// should not happen normally, as in main function of tidb-server, we assert
+		// that memory.MemTotal() will not fail.
+		return nil, err
+	}
+	totalCPU := cpu.GetCPUCount()
+	if totalCPU <= 0 || totalMem <= 0 {
+		return nil, errors.Errorf("invalid cpu or memory, cpu: %d, memory: %d", totalCPU, totalMem)
+	}
+	cgroupLimit, version, err := cgroup.GetCgroupMemLimit()
+	// ignore the error of cgroup.GetCgroupMemLimit, as it's not a must-success step.
+	if err == nil && version == cgroup.V2 {
+		// see cgroup.detectMemLimitInV2 for more details.
+		// below are some real memory limits tested on GCP:
+		// node-spec  real-limit  percent
+		// 16c32g        27.83Gi    87%
+		// 32c64g        57.36Gi    89.6%
+		// we use 'limit', not totalMem for adjust, as totalMem = min(physical-mem, 'limit')
+		// content of 'memory.max' might be 'max', so we use the min of them.
+		adjustedMem := min(totalMem, uint64(float64(cgroupLimit)*0.88))
+		logger.Info("adjust memory limit for cgroup v2",
+			zap.String("before", units.BytesSize(float64(totalMem))),
+			zap.String("after", units.BytesSize(float64(adjustedMem))))
+		totalMem = adjustedMem
+	}
+	logger.Info("initialize node resource",
+		zap.Int("total-cpu", totalCPU),
+		zap.String("total-mem", units.BytesSize(float64(totalMem))))
+	return proto.NewNodeResource(totalCPU, int64(totalMem)), nil
+}
+
 func init() {
 	// domain will init this var at runtime, we store it here for test, as some
 	// test might not start domain.
-	nodeResource.Store(proto.NewNodeResource(8, 16*units.GiB, 100*units.GiB))
+	nodeResource.Store(proto.NewNodeResource(8, 16*units.GiB))
 }
