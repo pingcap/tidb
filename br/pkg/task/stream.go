@@ -1161,6 +1161,11 @@ func RunStreamRestore(
 	ctx, cancelFn := context.WithCancel(c)
 	defer cancelFn()
 
+	// check if filter is specified and error out early since we don't support PiTR with filters
+	if cfg.ExplicitFilter {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "PITR operation does not support table filter")
+	}
+
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("task.RunStreamRestore", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
