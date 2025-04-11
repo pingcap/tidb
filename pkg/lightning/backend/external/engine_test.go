@@ -16,16 +16,18 @@ package external
 
 import (
 	"context"
-	"fmt"
 	"path"
 	"testing"
+	"time"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sync/errgroup"
 )
 
 func testGetFirstAndLastKey(
@@ -214,32 +216,6 @@ func TestSplit(t *testing.T) {
 	}
 }
 
-func TestGetAdjustedConcurrency(t *testing.T) {
-	genFiles := func(n int) []string {
-		files := make([]string, 0, n)
-		for i := 0; i < n; i++ {
-			files = append(files, fmt.Sprintf("file%d", i))
-		}
-		return files
-	}
-	e := &Engine{
-		checkHotspot:      true,
-		workerConcurrency: 32,
-		dataFiles:         genFiles(100),
-	}
-	require.Equal(t, 8, e.getAdjustedConcurrency())
-	e.dataFiles = genFiles(8000)
-	require.Equal(t, 1, e.getAdjustedConcurrency())
-
-	e.checkHotspot = false
-	e.dataFiles = genFiles(10)
-	require.Equal(t, 32, e.getAdjustedConcurrency())
-	e.dataFiles = genFiles(100)
-	require.Equal(t, 10, e.getAdjustedConcurrency())
-	e.dataFiles = genFiles(10000)
-	require.Equal(t, 1, e.getAdjustedConcurrency())
-}
-
 func TestTryDecodeEndKey(t *testing.T) {
 	encodedRowID := common.EncodeIntRowID(1)
 	e := &Engine{}
@@ -350,4 +326,65 @@ func TestGetRegionSplitKeys(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, len(tc.splitKeys), len(res))
 	}
+}
+
+func TestChangeEngineConcurrency(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/mockLoadBatchRegionData", "return(true)")
+
+	e := &Engine{jobKeys: make([][]byte, 32)}
+	e.workerConcurrency.Store(4)
+
+	ctx := context.Background()
+	outCh := make(chan common.DataAndRanges, 4)
+
+	var eg errgroup.Group
+
+	// Load the data
+	eg.Go(func() error {
+		defer close(outCh)
+		return e.LoadIngestData(ctx, outCh)
+	})
+
+	// Change concurrency after the channel is filled
+	time.Sleep(time.Second)
+	e.UpdateResource(1, 1<<10)
+
+	eg.Go(func() error {
+		for data := range outCh {
+			// mock generate job
+			data.Data.IncRef()
+			data.Data.IncRef()
+			// mock job finish
+			data.Data.DecRef()
+			data.Data.DecRef()
+		}
+		return nil
+	})
+
+	// Should not be blocked
+	require.NoError(t, eg.Wait())
+}
+
+func TestChangeEngineConcurrencyWithCancel(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/mockLoadBatchRegionData", "return(true)")
+
+	e := &Engine{jobKeys: make([][]byte, 32)}
+	e.workerConcurrency.Store(4)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	outCh := make(chan common.DataAndRanges, 16)
+
+	var eg errgroup.Group
+
+	// Load the data and didn't consume it
+	eg.Go(func() error {
+		defer close(outCh)
+		return e.LoadIngestData(ctx, outCh)
+	})
+
+	e.UpdateResource(1, 1<<10)
+	cancel()
+
+	// Should not be blocked
+	require.Error(t, eg.Wait())
 }

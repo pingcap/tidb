@@ -16,7 +16,9 @@ package ddl
 
 import (
 	"context"
+	"encoding/json"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
@@ -44,6 +46,7 @@ type cloudImportExecutor struct {
 	backendCtx      ingest.BackendCtx
 	backend         *local.Backend
 	taskConcurrency int
+	engineUUID      uuid.UUID
 }
 
 func newCloudImportExecutor(
@@ -146,6 +149,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if err != nil {
 		return err
 	}
+	m.engineUUID = engineUUID
 	err = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	failpoint.Inject("mockCloudImportRunSubtaskError", func(_ failpoint.Value) {
 		err = context.DeadlineExceeded
@@ -175,5 +179,33 @@ func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
 		m.backendCtx.Close()
 	}
 	m.backend.Close()
+	return nil
+}
+
+// TaskMetaModified changes the max write speed for ingest
+func (m *cloudImportExecutor) TaskMetaModified(ctx context.Context, newMeta []byte) error {
+	logutil.Logger(ctx).Info("cloud import executor update task meta")
+	newTaskMeta := &BackfillTaskMeta{}
+	if err := json.Unmarshal(newMeta, newTaskMeta); err != nil {
+		return errors.Trace(err)
+	}
+
+	newMaxWriteSpeed := newTaskMeta.Job.ReorgMeta.GetMaxWriteSpeed()
+	if newMaxWriteSpeed != m.job.ReorgMeta.GetMaxWriteSpeed() {
+		m.job.ReorgMeta.SetMaxWriteSpeed(newMaxWriteSpeed)
+		if m.backend != nil {
+			m.backend.UpdateWriteSpeedLimit(newMaxWriteSpeed)
+		}
+	}
+	return nil
+}
+
+// ResourceModified change the concurrency for ingest
+func (m *cloudImportExecutor) ResourceModified(ctx context.Context, newResource *proto.StepResource) error {
+	logutil.Logger(ctx).Info("cloud import executor update resource")
+	newConcurrency := int(newResource.CPU.Capacity())
+	if newConcurrency != m.backend.Concurrency() {
+		return m.backend.UpdateResource(ctx, m.engineUUID, newConcurrency, newResource.Mem.Capacity())
+	}
 	return nil
 }

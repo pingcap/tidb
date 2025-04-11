@@ -120,17 +120,26 @@ func TestTunePoolSize(t *testing.T) {
 		seed := time.Now().UnixNano()
 		rnd := rand.New(rand.NewSource(seed))
 		t.Logf("seed: %d", seed)
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			wait := rnd.Intn(2) == 0
 			larger := pool.Cap() + rnd.Int31n(10) + 2
 			pool.Tune(larger, wait)
-			require.Equal(t, larger, pool.Cap())
+			require.EqualValues(t, larger, pool.Cap())
 			smaller := pool.Cap() / 2
 			pool.Tune(smaller, wait)
-			require.Equal(t, smaller, pool.Cap())
+			require.EqualValues(t, smaller, pool.Cap())
 		}
 		pool.Release()
 		pool.Wait()
+	})
+
+	t.Run("change pool size before start", func(t *testing.T) {
+		pool := NewWorkerPool[int64Task]("test", util.UNKNOWN, 10, createMyWorker)
+		pool.Tune(5, true)
+		pool.Start(context.Background())
+		pool.Release()
+		pool.Wait()
+		require.EqualValues(t, 5, pool.Cap())
 	})
 
 	t.Run("context done when reduce pool size and wait", func(t *testing.T) {
