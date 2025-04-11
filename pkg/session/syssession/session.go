@@ -101,6 +101,10 @@ func (noopOwnerHook) onResignOwner(sessionctx.Context) error { return nil }
 //     In `EnterOperation`, `seq` increments to mark an operation’s start and increments again
 //     upon completion.
 //     These sequence numbers help track operation order and diagnose unexpected behaviors.
+//
+// The conventions for methods in `session`:
+//   - The methods which have the uppercase prefix can be accessed by the other structs such as `Session` and `Pool`.
+//   - The methods which have the lowercase prefix are private even to the other structs in the same package.
 type session struct {
 	mu sync.Mutex
 	// sctx is the raw state of the session.
