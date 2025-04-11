@@ -381,6 +381,10 @@ func (s *FDSet) addEquivalence(eqs intset.FastIntSet) {
 		// {} --> {a} + {a,b,c} --> {a,b,c} leading to extension {} --> {a,b,c}
 		s.AddConstants(eqClosure)
 	}
+	// the new equiv closure should share the same not-null attribute with the existed ones.
+	if s.NotNullCols.Intersects(eqClosure) {
+		s.MakeNotNull(eqClosure)
+	}
 }
 
 // AddEquivalence take two column id as parameters, establish a strict equivalence between
@@ -400,6 +404,12 @@ func (s *FDSet) AddEquivalence(from, to intset.FastIntSet) {
 		return
 	}
 	s.addEquivalence(from.Union(to))
+}
+
+// AddEquivalenceUnion add an equivalence union to fdSet.
+func (s *FDSet) AddEquivalenceUnion(union intset.FastIntSet) {
+	// no check for trivial equivalence, since it's a union of multiple equivalent columns.
+	s.addEquivalence(union)
 }
 
 // AddConstants adds a strict FD to the source which indicates that each of the given column
@@ -1173,7 +1183,6 @@ func (s *FDSet) makeEquivMap(detCols, projectedCols intset.FastIntSet) map[int]i
 // String returns format string of this FDSet.
 func (s *FDSet) String() string {
 	var builder strings.Builder
-
 	for i := range s.fdEdges {
 		if i != 0 {
 			builder.WriteString(", ")
