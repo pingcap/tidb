@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"unique"
 
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -34,11 +35,11 @@ const maxColumnNameSize = 256
 // Info contains information of a column
 type Info struct {
 	DefaultValue any
-	Schema       string
-	Table        string
-	OrgTable     string
-	Name         string
-	OrgName      string
+	Schema       unique.Handle[string]
+	Table        unique.Handle[string]
+	OrgTable     unique.Handle[string]
+	Name         unique.Handle[string]
+	OrgName      unique.Handle[string]
 	ColumnLength uint32
 	Charset      uint16
 	Flag         uint16
@@ -60,7 +61,7 @@ func (column *Info) dump(buffer []byte, d *ResultEncoder, withDefault bool) []by
 	if d == nil {
 		d = NewResultEncoder(charset.CharsetUTF8MB4)
 	}
-	nameDump, orgnameDump := []byte(column.Name), []byte(column.OrgName)
+	nameDump, orgnameDump := []byte(column.Name.Value()), []byte(column.OrgName.Value())
 	if len(nameDump) > maxColumnNameSize {
 		nameDump = nameDump[0:maxColumnNameSize]
 	}
@@ -68,9 +69,9 @@ func (column *Info) dump(buffer []byte, d *ResultEncoder, withDefault bool) []by
 		orgnameDump = orgnameDump[0:maxColumnNameSize]
 	}
 	buffer = dump.LengthEncodedString(buffer, []byte("def"))
-	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta([]byte(column.Schema)))
-	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta([]byte(column.Table)))
-	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta([]byte(column.OrgTable)))
+	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta([]byte(column.Schema.Value())))
+	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta([]byte(column.Table.Value())))
+	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta([]byte(column.OrgTable.Value())))
 	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta(nameDump))
 	buffer = dump.LengthEncodedString(buffer, d.EncodeMeta(orgnameDump))
 
@@ -180,14 +181,14 @@ func DumpTextRow(buffer []byte, columns []*Info, row chunk.Row, d *ResultEncoder
 			buffer = dump.LengthEncodedString(buffer, tmp)
 		case mysql.TypeFloat:
 			prec := -1
-			if columns[i].Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec && col.Table == "" {
+			if columns[i].Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec && col.Table.Value() == "" {
 				prec = int(col.Decimal)
 			}
 			tmp = util.AppendFormatFloat(tmp[:0], float64(row.GetFloat32(i)), prec, 32)
 			buffer = dump.LengthEncodedString(buffer, tmp)
 		case mysql.TypeDouble:
 			prec := types.UnspecifiedLength
-			if col.Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec && col.Table == "" {
+			if col.Decimal > 0 && int(col.Decimal) != mysql.NotFixedDec && col.Table.Value() == "" {
 				prec = int(col.Decimal)
 			}
 			tmp = util.AppendFormatFloat(tmp[:0], row.GetFloat64(i), prec, 64)
