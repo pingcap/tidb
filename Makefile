@@ -209,15 +209,6 @@ else
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./cmd/tidb-server
 endif
 
-.PHONY: ng_server
-ng_server:
-ifeq ($(TARGET), "")
-	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' \
-	-ldflags '-X "github.com/pingcap/tidb/pkg/config.storeEngineGeneration=cloud"' -o bin/tidb-server ./cmd/tidb-server
-else
-	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./cmd/tidb-server
-endif
-
 .PHONY: server_debug
 server_debug:
 ifeq ($(TARGET), "")
