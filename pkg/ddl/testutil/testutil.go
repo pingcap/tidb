@@ -152,6 +152,7 @@ func testCheckTableState(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, t
 	}))
 }
 
+// TestCheckTableMode checks the table mode of a table in the store.
 func TestCheckTableMode(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, mode model.TableMode) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
@@ -165,6 +166,7 @@ func TestCheckTableMode(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tb
 	require.NoError(t, err)
 }
 
+// TestSetTableMode sets the table mode of a table in the store.
 func TestSetTableMode(
 	ctx sessionctx.Context,
 	t *testing.T,
