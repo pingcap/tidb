@@ -298,7 +298,7 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	sortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("sort")
 
 	failpoint.Inject("mockLoadBatchRegionData", func(_ failpoint.Value) {
-		data := e.buildIngestData(nil, nil, nil)
+		data := e.buildIngestData(nil, nil)
 		select {
 		case <-ctx.Done():
 			failpoint.Return(ctx.Err())
