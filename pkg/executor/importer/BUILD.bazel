@@ -99,11 +99,7 @@ go_test(
     embed = [":importer"],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 28,
-=======
     shard_count = 26,
->>>>>>> cc8d9cbbd4d (lignthing/importinto: parallel reading files infos from data store (#59382))
     deps = [
         "//br/pkg/errors",
         "//br/pkg/mock",

@@ -621,20 +621,7 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, f RawFile) (*File
 
 	switch res.Type {
 	case SourceTypeSQL, SourceTypeCSV:
-<<<<<<< HEAD
-		if info.FileMeta.Compression != CompressionNone {
-			compressRatio, err2 := SampleFileCompressRatio(ctx, info.FileMeta, s.loader.GetStore())
-			if err2 != nil {
-				logger.Error("fail to calculate data file compress ratio", zap.String("category", "loader"),
-					zap.String("schema", res.Schema), zap.String("table", res.Name), zap.Stringer("type", res.Type))
-			} else {
-				info.FileMeta.RealSize = int64(compressRatio * float64(info.FileMeta.FileSize))
-			}
-		}
-		s.tableDatas = append(s.tableDatas, info)
-=======
 		info.FileMeta.RealSize = EstimateRealSizeForFile(ctx, info.FileMeta, s.loader.GetStore())
->>>>>>> cc8d9cbbd4d (lignthing/importinto: parallel reading files infos from data store (#59382))
 	case SourceTypeParquet:
 		var (
 			totalRowCount int64
