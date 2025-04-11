@@ -72,7 +72,7 @@ func exampleStep2Str(s Step) string {
 // - local sort: StepInit -> ImportStepImport -> ImportStepPostProcess -> StepDone
 // - global sort:
 // StepInit -> ImportStepEncodeAndSort -> ImportStepMergeSort -> ImportStepWriteAndIngest
-// -> ImportStepPostProcess -> StepDone
+// -> ImportStepCollectConflicts -> ImportStepConflictResolution -> ImportStepPostProcess -> StepDone
 const (
 	// ImportStepImport we sort source data and ingest it into TiKV in this step.
 	ImportStepImport Step = 1
@@ -87,6 +87,15 @@ const (
 	ImportStepMergeSort Step = 4
 	// ImportStepWriteAndIngest write sorted kv into TiKV and ingest it.
 	ImportStepWriteAndIngest Step = 5
+	// ImportStepCollectConflicts collect conflicts info, this step doesn't mutate
+	// downstream data, so it's idempotent, and we can collect a correct checksum
+	// for conflict rows.
+	ImportStepCollectConflicts Step = 6
+	// ImportStepConflictResolution resolve detected conflicts.
+	// during other steps of global sort, we will detect conflicts and record them
+	// in external storage, if any conflicts are detected, we will resolve them
+	// here. so there might be 0 subtasks in this step.
+	ImportStepConflictResolution Step = 7
 )
 
 func importIntoStep2Str(s Step) string {
@@ -101,6 +110,10 @@ func importIntoStep2Str(s Step) string {
 		return "merge-sort"
 	case ImportStepWriteAndIngest:
 		return "ingest"
+	case ImportStepCollectConflicts:
+		return "collect-conflicts"
+	case ImportStepConflictResolution:
+		return "conflict-resolution"
 	default:
 		return fmt.Sprintf("unknown step %d", s)
 	}

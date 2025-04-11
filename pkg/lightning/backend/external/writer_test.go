@@ -135,16 +135,16 @@ func TestWriter(t *testing.T) {
 	})
 
 	bufSize := rand.Intn(100) + 1
-	kvReader, err := newKVReader(ctx, "/test/0/0", memStore, 0, bufSize)
+	kvReader, err := NewKVReader(ctx, "/test/0/0", memStore, 0, bufSize)
 	require.NoError(t, err)
 	for i := 0; i < kvCnt; i++ {
-		key, value, err := kvReader.nextKV()
+		key, value, err := kvReader.NextKV()
 		require.NoError(t, err)
 		require.Equal(t, kvs[i].Key, key)
 		require.Equal(t, kvs[i].Val, value)
 	}
-	_, _, err = kvReader.nextKV()
-	require.ErrorIs(t, err, io.EOF)
+	_, _, err = kvReader.NextKV()
+	require.Equal(t, io.EOF, err)
 	require.NoError(t, kvReader.Close())
 
 	statReader, err := newStatsReader(ctx, memStore, "/test/0_stat/0", bufSize)

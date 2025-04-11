@@ -20,6 +20,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/stretchr/testify/require"
 )
@@ -40,43 +41,32 @@ func testNewIter(
 	t *testing.T,
 	data common.IngestData,
 	lowerBound, upperBound []byte,
-	expectedKeys, expectedValues [][]byte,
+	expectedKVs []kvPair,
+	bufPool *membuf.Pool,
 ) {
 	ctx := context.Background()
-	iter := data.NewIter(ctx, lowerBound, upperBound, nil)
-	var (
-		keys, values [][]byte
-	)
+	iter := data.NewIter(ctx, lowerBound, upperBound, bufPool)
+	var kvs []kvPair
 	for iter.First(); iter.Valid(); iter.Next() {
 		require.NoError(t, iter.Error())
-		keys = append(keys, iter.Key())
-		values = append(values, iter.Value())
+		kvs = append(kvs, kvPair{key: iter.Key(), value: iter.Value()})
 	}
 	require.NoError(t, iter.Error())
 	require.NoError(t, iter.Close())
-	require.Equal(t, expectedKeys, keys)
-	require.Equal(t, expectedValues, values)
+	require.Equal(t, expectedKVs, kvs)
 }
 
 func TestMemoryIngestData(t *testing.T) {
-	keys := [][]byte{
-		[]byte("key1"),
-		[]byte("key2"),
-		[]byte("key3"),
-		[]byte("key4"),
-		[]byte("key5"),
-	}
-	values := [][]byte{
-		[]byte("value1"),
-		[]byte("value2"),
-		[]byte("value3"),
-		[]byte("value4"),
-		[]byte("value5"),
+	kvs := []kvPair{
+		{key: []byte("key1"), value: []byte("value1")},
+		{key: []byte("key2"), value: []byte("value2")},
+		{key: []byte("key3"), value: []byte("value3")},
+		{key: []byte("key4"), value: []byte("value4")},
+		{key: []byte("key5"), value: []byte("value5")},
 	}
 	data := &MemoryIngestData{
-		keys:   keys,
-		values: values,
-		ts:     123,
+		kvs: kvs,
+		ts:  123,
 	}
 
 	require.EqualValues(t, 123, data.GetTS())
@@ -88,10 +78,11 @@ func TestMemoryIngestData(t *testing.T) {
 	testGetFirstAndLastKey(t, data, []byte("key0"), []byte("key1"), nil, nil)
 	testGetFirstAndLastKey(t, data, []byte("key6"), []byte("key9"), nil, nil)
 
-	testNewIter(t, data, nil, nil, keys, values)
-	testNewIter(t, data, []byte("key1"), []byte("key6"), keys, values)
-	testNewIter(t, data, []byte("key2"), []byte("key5"), keys[1:4], values[1:4])
-	testNewIter(t, data, []byte("key25"), []byte("key35"), keys[2:3], values[2:3])
+	// MemoryIngestData without duplicate detection feature does not need pool
+	testNewIter(t, data, nil, nil, kvs, nil)
+	testNewIter(t, data, []byte("key1"), []byte("key6"), kvs, nil)
+	testNewIter(t, data, []byte("key2"), []byte("key5"), kvs[1:4], nil)
+	testNewIter(t, data, []byte("key25"), []byte("key35"), kvs[2:3], nil)
 	testNewIter(t, data, []byte("key25"), []byte("key26"), nil, nil)
 	testNewIter(t, data, []byte("key0"), []byte("key1"), nil, nil)
 	testNewIter(t, data, []byte("key6"), []byte("key9"), nil, nil)
@@ -99,34 +90,27 @@ func TestMemoryIngestData(t *testing.T) {
 	data = &MemoryIngestData{
 		ts: 234,
 	}
-	encodedKeys := make([][]byte, 0, len(keys)*2)
-	encodedValues := make([][]byte, 0, len(values)*2)
-	duplicatedKeys := make([][]byte, 0, len(keys)*2)
-	duplicatedValues := make([][]byte, 0, len(values)*2)
+	encodedKVs := make([]kvPair, 0, len(kvs)*2)
+	duplicatedKVs := make([]kvPair, 0, len(kvs)*2)
 
-	for i := range keys {
-		encodedKey := slices.Clone(keys[i])
-		encodedKeys = append(encodedKeys, encodedKey)
-		encodedValues = append(encodedValues, values[i])
+	for i := range kvs {
+		encodedKey := slices.Clone(kvs[i].key)
+		encodedKVs = append(encodedKVs, kvPair{key: encodedKey, value: kvs[i].value})
 		if i%2 == 0 {
 			continue
 		}
 
 		// duplicatedKeys will be like key2_0, key2_1, key4_0, key4_1
-		duplicatedKeys = append(duplicatedKeys, encodedKey)
-		duplicatedValues = append(duplicatedValues, values[i])
+		duplicatedKVs = append(duplicatedKVs, kvPair{key: encodedKey, value: kvs[i].value})
 
-		encodedKey = slices.Clone(keys[i])
-		encodedKeys = append(encodedKeys, encodedKey)
-		newValues := make([]byte, len(values[i])+1)
-		copy(newValues, values[i])
-		newValues[len(values[i])] = 1
-		encodedValues = append(encodedValues, newValues)
-		duplicatedKeys = append(duplicatedKeys, encodedKey)
-		duplicatedValues = append(duplicatedValues, newValues)
+		encodedKey = slices.Clone(kvs[i].key)
+		newValues := make([]byte, len(kvs[i].value)+1)
+		copy(newValues, kvs[i].value)
+		newValues[len(kvs[i].value)] = 1
+		encodedKVs = append(encodedKVs, kvPair{key: encodedKey, value: newValues})
+		duplicatedKVs = append(duplicatedKVs, kvPair{key: encodedKey, value: newValues})
 	}
-	data.keys = encodedKeys
-	data.values = encodedValues
+	data.kvs = encodedKVs
 
 	require.EqualValues(t, 234, data.GetTS())
 	testGetFirstAndLastKey(t, data, nil, nil, []byte("key1"), []byte("key5"))
