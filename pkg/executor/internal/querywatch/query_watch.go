@@ -202,7 +202,13 @@ func ExecDropQueryWatch(sctx sessionctx.Context, s *ast.DropQueryWatchStmt) erro
 	case s.GroupNameStr.String() != "":
 		return do.RunawayManager().RemoveRunawayResourceGroupWatch(s.GroupNameStr.String())
 	case s.GroupNameExpr != nil:
-		return do.RunawayManager().RemoveRunawayResourceGroupWatch(s.GroupNameExpr.Text())
+		userVars := sctx.GetSessionVars().UserVars
+		if v, ok := userVars.GetUserVarVal(s.GroupNameExpr.(*ast.VariableExpr).Name); ok {
+			if groupName, err := v.ToString(); err == nil {
+				return do.RunawayManager().RemoveRunawayResourceGroupWatch(groupName)
+			}
+		}
+		return errors.Errorf("invalid group name variable")
 	default:
 		return do.RunawayManager().RemoveRunawayWatch(s.IntValue)
 	}

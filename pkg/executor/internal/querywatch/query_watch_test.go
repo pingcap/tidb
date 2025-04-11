@@ -169,6 +169,17 @@ func TestQueryWatch(t *testing.T) {
 	require.Nil(t, rs)
 	r = tk.MustQuery("select * from information_schema.runaway_watches where resource_group_name = 'rg1'")
 	require.Equal(t, 0, len(r.Rows()))
+	// test user variable
+	r = tk.MustQuery("select * from information_schema.runaway_watches where resource_group_name = 'rg2'")
+	require.Equal(t, 1, len(r.Rows()))
+	rs, err = tk.Exec("SET @rg=rg2")
+	require.NoError(t, err)
+	require.Nil(t, rs)
+	rs, err = tk.Exec("query watch remove resource group @rg")
+	require.NoError(t, err)
+	require.Nil(t, rs)
+	r = tk.MustQuery("select * from information_schema.runaway_watches where resource_group_name = 'rg2'")
+	require.Equal(t, 0, len(r.Rows()))
 	// test remove by id
 	rs, err = tk.Exec("query watch remove 1")
 	require.NoError(t, err)
