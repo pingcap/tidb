@@ -86,7 +86,7 @@ func (w *regionJobBaseWorker) run(ctx context.Context) error {
 					job.regionSplitKeys,
 				)
 				if err2 != nil {
-					// Don't need to put the job back to retry, because generateJobForRange
+					// Don't need to put the job back to retry, because regenerateJobsFn
 					// has done the retry internally. Here just done for the "needRescan"
 					// job and exit directly.
 					job.done(w.jobWg)

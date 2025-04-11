@@ -44,6 +44,12 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		}
 	}
 
+	// all below tests are for basic functionality of the worker, there are other
+	// tests inside local_test.go.
+	// to fully run a region job, we also need the job retryer and the routine to
+	// receive executed job, so we will not check some invariants, like jobWg must
+	// be 0 after run.
+
 	t.Run("run on closed channel", func(t *testing.T) {
 		w := newWorker()
 		close(w.jobInCh)
