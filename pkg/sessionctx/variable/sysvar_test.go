@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/util/dedicated"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -1605,7 +1606,7 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 		{
 			vardef.TiDBPessimisticTransactionFairLocking,
 			BoolToOnOff(vardef.DefTiDBPessimisticTransactionFairLocking),
-			vardef.On,
+			BoolToOnOff(!dedicated.Enabled),
 		},
 	}
 	for _, v := range vars {

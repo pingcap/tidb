@@ -103,6 +103,7 @@ go_library(
         "//pkg/util/dbterror",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/dbterror/plannererrors",
+        "//pkg/util/dedicated",
         "//pkg/util/execdetails",
         "//pkg/util/intest",
         "//pkg/util/logutil",

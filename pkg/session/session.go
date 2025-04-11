@@ -109,6 +109,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/dedicated"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -4535,6 +4536,9 @@ func (s *session) NewStmtIndexUsageCollector() *indexusage.StmtIndexUsageCollect
 
 // usePipelinedDmlOrWarn returns the current statement can be executed as a pipelined DML.
 func (s *session) usePipelinedDmlOrWarn(ctx context.Context) bool {
+	if dedicated.Enabled {
+		return false
+	}
 	if !s.sessionVars.BulkDMLEnabled {
 		return false
 	}
