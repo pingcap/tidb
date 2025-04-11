@@ -143,16 +143,7 @@ func TestBackfillOperators(t *testing.T) {
 		}
 		pTbl := tbl.(table.PhysicalTable)
 		index := tables.NewIndex(pTbl.GetPhysicalID(), tbl.Meta(), idxInfo)
-<<<<<<< HEAD
 		mockBackendCtx := &ingest.MockBackendCtx{}
-=======
-		cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, 0)
-		require.NoError(t, err)
-		defer bd.Close()
-		bcCtx, err := ingest.NewBackendCtxBuilder(ctx, store, realJob).Build(cfg, bd)
-		require.NoError(t, err)
-		defer bcCtx.Close()
->>>>>>> d51e00e5bbf (globalsort: reduce number of SST ingested into TiKV (#59870) (#60045))
 		mockEngine := ingest.NewMockEngineInfo(nil)
 		mockEngine.SetHook(onWrite)
 
@@ -196,16 +187,7 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 	ctx := context.Background()
 	opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
 	defer cancel()
-<<<<<<< HEAD
 	mockBackendCtx := &ingest.MockBackendCtx{}
-=======
-	cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, 0)
-	require.NoError(t, err)
-	defer bd.Close()
-	bcCtx, err := ingest.NewBackendCtxBuilder(ctx, store, realJob).Build(cfg, bd)
-	require.NoError(t, err)
-	defer bcCtx.Close()
->>>>>>> d51e00e5bbf (globalsort: reduce number of SST ingested into TiKV (#59870) (#60045))
 	mockEngine := ingest.NewMockEngineInfo(nil)
 	mockEngine.SetHook(func(key, val []byte) {})
 
@@ -240,16 +222,7 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 	regionCnt := 10
 	tbl, idxInfo, startKey, endKey, _ := prepare(t, tk, dom, regionCnt)
 	sessPool := newSessPoolForTest(t, store)
-<<<<<<< HEAD
 	mockBackendCtx := &ingest.MockBackendCtx{}
-=======
-	cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, 0)
-	require.NoError(t, err)
-	defer bd.Close()
-	bcCtx, err := ingest.NewBackendCtxBuilder(context.Background(), store, realJob).Build(cfg, bd)
-	require.NoError(t, err)
-	defer bcCtx.Close()
->>>>>>> d51e00e5bbf (globalsort: reduce number of SST ingested into TiKV (#59870) (#60045))
 	mockEngine := ingest.NewMockEngineInfo(nil)
 	mockEngine.SetHook(func(_, _ []byte) {})
 
@@ -431,16 +404,7 @@ func TestTuneWorkerPoolSize(t *testing.T) {
 		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
 		pTbl := tbl.(table.PhysicalTable)
 		index := tables.NewIndex(pTbl.GetPhysicalID(), tbl.Meta(), idxInfo)
-<<<<<<< HEAD
 		mockBackendCtx := &ingest.MockBackendCtx{}
-=======
-		cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, 0)
-		require.NoError(t, err)
-		defer bd.Close()
-		bcCtx, err := ingest.NewBackendCtxBuilder(context.Background(), store, realJob).Build(cfg, bd)
-		require.NoError(t, err)
-		defer bcCtx.Close()
->>>>>>> d51e00e5bbf (globalsort: reduce number of SST ingested into TiKV (#59870) (#60045))
 		mockEngine := ingest.NewMockEngineInfo(nil)
 		ingestOp := ddl.NewIndexIngestOperator(opCtx, copCtx, mockBackendCtx, sessPool, pTbl, []table.Index{index},
 			[]ingest.Engine{mockEngine}, nil, 2, nil,

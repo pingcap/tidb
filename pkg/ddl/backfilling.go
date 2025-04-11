@@ -736,30 +736,12 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 		hasUnique = hasUnique || indexInfo.Unique
 	}
 
-<<<<<<< HEAD
 	//nolint: forcetypeassert
 	discovery := dc.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
 	importConc := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 	maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault()
 	bcCtx, err := ingest.LitBackCtxMgr.Register(
-		ctx, job.ID, hasUnique, nil, discovery, job.ReorgMeta.ResourceGroupName, importConc, maxWriteSpeed, job.RealStartTS)
-=======
-	var (
-		cfg *local.BackendConfig
-		bd  *local.Backend
-		err error
-	)
-	if config.GetGlobalConfig().Store == config.StoreTypeTiKV {
-		cfg, bd, err = ingest.CreateLocalBackend(ctx, dc.store, job, false, 0)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		defer bd.Close()
-	}
-	bcCtx, err := ingest.NewBackendCtxBuilder(ctx, dc.store, job).
-		WithCheckpointManagerParam(sessPool, reorgInfo.PhysicalTableID).
-		Build(cfg, bd)
->>>>>>> d51e00e5bbf (globalsort: reduce number of SST ingested into TiKV (#59870) (#60045))
+		ctx, job.ID, hasUnique, nil, discovery, job.ReorgMeta.ResourceGroupName, importConc, maxWriteSpeed, job.RealStartTS, 0)
 	if err != nil {
 		return errors.Trace(err)
 	}
