@@ -22,13 +22,18 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+<<<<<<< HEAD:br/pkg/lightning/mydump/loader_test.go
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	md "github.com/pingcap/tidb/br/pkg/lightning/mydump"
+=======
+	"github.com/pingcap/failpoint"
+>>>>>>> cc8d9cbbd4d (lignthing/importinto: parallel reading files infos from data store (#59382)):pkg/lightning/mydump/loader_test.go
 	"github.com/pingcap/tidb/br/pkg/storage"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	router "github.com/pingcap/tidb/pkg/util/table-router"
@@ -959,7 +964,7 @@ func TestInputWithSpecialChars(t *testing.T) {
 	}, mdl.GetDatabases())
 }
 
-func TestMaxScanFilesOption(t *testing.T) {
+func TestMDLoaderSetupOption(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	memStore := storage.NewMemStorage()
@@ -990,6 +995,7 @@ func TestMaxScanFilesOption(t *testing.T) {
 
 	mdl, err = md.NewMyDumpLoaderWithStore(ctx, cfg, memStore,
 		md.WithMaxScanFiles(maxScanFilesCount),
+		md.WithScanFileConcurrency(16),
 	)
 	require.NoError(t, err)
 	require.NotNil(t, mdl)
@@ -1003,6 +1009,7 @@ func TestMaxScanFilesOption(t *testing.T) {
 	maxScanFilesCount = 100
 	mdl, err = md.NewMyDumpLoaderWithStore(ctx, cfg, memStore,
 		md.WithMaxScanFiles(maxScanFilesCount),
+		md.WithScanFileConcurrency(0),
 	)
 	require.EqualError(t, err, common.ErrTooManySourceFiles.Error())
 	require.NotNil(t, mdl)
@@ -1108,6 +1115,21 @@ func TestSampleFileCompressRatio(t *testing.T) {
 	require.InDelta(t, ratio, 5000.0/float64(bf.Len()), 1e-5)
 }
 
+func TestEstimateFileSize(t *testing.T) {
+	err := failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage", "return(250)")
+	require.NoError(t, err)
+	defer func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage")
+	}()
+	fileMeta := md.SourceFileMeta{Compression: md.CompressionNone, FileSize: 100}
+	require.Equal(t, int64(100), md.EstimateRealSizeForFile(context.Background(), fileMeta, nil))
+	fileMeta.Compression = md.CompressionGZ
+	require.Equal(t, int64(250), md.EstimateRealSizeForFile(context.Background(), fileMeta, nil))
+	err = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage", `return("test err")`)
+	require.NoError(t, err)
+	require.Equal(t, int64(100), md.EstimateRealSizeForFile(context.Background(), fileMeta, nil))
+}
+
 func testSampleParquetDataSize(t *testing.T, count int) {
 	s := newTestMydumpLoaderSuite(t)
 	store, err := storage.NewLocalStorage(s.sourceDir)
@@ -1174,3 +1196,49 @@ func TestSampleParquetDataSize(t *testing.T) {
 	t.Run("count=1000", func(t *testing.T) { testSampleParquetDataSize(t, 1000) })
 	t.Run("count=0", func(t *testing.T) { testSampleParquetDataSize(t, 0) })
 }
+<<<<<<< HEAD:br/pkg/lightning/mydump/loader_test.go
+=======
+
+func TestSetupOptions(t *testing.T) {
+	// those functions are only used in other components, add this to avoid they
+	// be deleted mistakenly.
+	_ = md.WithMaxScanFiles
+	_ = md.ReturnPartialResultOnError
+	_ = md.WithFileIterator
+}
+
+func TestParallelProcess(t *testing.T) {
+	hdl := func(ctx context.Context, f md.RawFile) (string, error) {
+		return strings.ToLower(f.Path), nil
+	}
+
+	letters := []rune("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+	randomString := func() string {
+		b := make([]rune, 10)
+		for i := range b {
+			b[i] = letters[rand.Intn(len(letters))]
+		}
+		return string(b)
+	}
+
+	oneTest := func(length int, concurrency int) {
+		original := make([]md.RawFile, length)
+		for i := range length {
+			original[i] = md.RawFile{Path: randomString()}
+		}
+
+		res, err := md.ParallelProcess(context.Background(), original, concurrency, hdl)
+		require.NoError(t, err)
+
+		for i, s := range original {
+			require.Equal(t, strings.ToLower(s.Path), res[i])
+		}
+	}
+
+	oneTest(10, 0)
+	oneTest(10, 4)
+	oneTest(10, 16)
+	oneTest(1, 10)
+	oneTest(2, 2)
+}
+>>>>>>> cc8d9cbbd4d (lignthing/importinto: parallel reading files infos from data store (#59382)):pkg/lightning/mydump/loader_test.go
