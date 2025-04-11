@@ -19,7 +19,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"math"
-	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -88,31 +87,38 @@ func (p *LogicalPlan) writeExternalPlanMeta(planCtx planner.PlanCtx, specs []pla
 	if !planCtx.GlobalSort {
 		return nil
 	}
-	// write external meta when using global sort
-	controller, err := buildControllerForPlan(p)
+	store, err := importer.GetSortStore(planCtx.Ctx, p.Plan.CloudStorageURI)
 	if err != nil {
 		return err
 	}
-	if err := controller.InitDataFiles(planCtx.Ctx); err != nil {
-		return err
-	}
+	defer store.Close()
 
 	for i, spec := range specs {
 		externalPath := external.PlanMetaPath(planCtx.TaskID, proto.Step2Str(proto.ImportInto, planCtx.NextTaskStep), i+1)
 		switch sp := spec.(type) {
 		case *ImportSpec:
 			sp.ImportStepMeta.ExternalPath = externalPath
-			if err := sp.ImportStepMeta.WriteJSONToExternalStorage(planCtx.Ctx, controller.GlobalSortStore, sp.ImportStepMeta); err != nil {
+			if err := sp.ImportStepMeta.WriteJSONToExternalStorage(planCtx.Ctx, store, sp.ImportStepMeta); err != nil {
 				return err
 			}
 		case *MergeSortSpec:
 			sp.MergeSortStepMeta.ExternalPath = externalPath
-			if err := sp.MergeSortStepMeta.WriteJSONToExternalStorage(planCtx.Ctx, controller.GlobalSortStore, sp.MergeSortStepMeta); err != nil {
+			if err := sp.MergeSortStepMeta.WriteJSONToExternalStorage(planCtx.Ctx, store, sp.MergeSortStepMeta); err != nil {
 				return err
 			}
 		case *WriteIngestSpec:
 			sp.WriteIngestStepMeta.ExternalPath = externalPath
-			if err := sp.WriteIngestStepMeta.WriteJSONToExternalStorage(planCtx.Ctx, controller.GlobalSortStore, sp.WriteIngestStepMeta); err != nil {
+			if err := sp.WriteIngestStepMeta.WriteJSONToExternalStorage(planCtx.Ctx, store, sp.WriteIngestStepMeta); err != nil {
+				return err
+			}
+		case *CollectConflictsSpec:
+			sp.CollectConflictsStepMeta.ExternalPath = externalPath
+			if err := sp.CollectConflictsStepMeta.WriteJSONToExternalStorage(planCtx.Ctx, store, sp.CollectConflictsStepMeta); err != nil {
+				return err
+			}
+		case *ConflictResolutionSpec:
+			sp.ConflictResolutionStepMeta.ExternalPath = externalPath
+			if err := sp.ConflictResolutionStepMeta.WriteJSONToExternalStorage(planCtx.Ctx, store, sp.ConflictResolutionStepMeta); err != nil {
 				return err
 			}
 		}
@@ -177,6 +183,24 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 		}
 
 		addSpecs(specs)
+	case proto.ImportStepCollectConflicts:
+		specs, err := generateCollectConflictsSpecs(planCtx, p)
+		if err != nil {
+			return nil, err
+		}
+		if err = p.writeExternalPlanMeta(planCtx, specs); err != nil {
+			return nil, err
+		}
+		addSpecs(specs)
+	case proto.ImportStepConflictResolution:
+		specs, err := generateConflictResolutionSpecs(planCtx, p)
+		if err != nil {
+			return nil, err
+		}
+		if err = p.writeExternalPlanMeta(planCtx, specs); err != nil {
+			return nil, err
+		}
+		addSpecs(specs)
 	case proto.ImportStepPostProcess:
 		physicalPlan.AddProcessor(planner.ProcessorSpec{
 			ID: len(inputLinks),
@@ -229,6 +253,26 @@ func (s *MergeSortSpec) ToSubtaskMeta(planner.PlanCtx) ([]byte, error) {
 	return s.MergeSortStepMeta.Marshal()
 }
 
+// CollectConflictsSpec is the specification of a conflict resolution pipeline.
+type CollectConflictsSpec struct {
+	*CollectConflictsStepMeta
+}
+
+// ToSubtaskMeta converts the conflict resolution spec to subtask meta.
+func (s *CollectConflictsSpec) ToSubtaskMeta(planner.PlanCtx) ([]byte, error) {
+	return s.CollectConflictsStepMeta.Marshal()
+}
+
+// ConflictResolutionSpec is the specification of a conflict resolution pipeline.
+type ConflictResolutionSpec struct {
+	*ConflictResolutionStepMeta
+}
+
+// ToSubtaskMeta converts the conflict resolution spec to subtask meta.
+func (s *ConflictResolutionSpec) ToSubtaskMeta(planner.PlanCtx) ([]byte, error) {
+	return s.ConflictResolutionStepMeta.Marshal()
+}
+
 // PostProcessSpec is the specification of a post process pipeline.
 type PostProcessSpec struct {
 	// for checksum request
@@ -247,6 +291,17 @@ func (*PostProcessSpec) ToSubtaskMeta(planCtx planner.PlanCtx) ([]byte, error) {
 		}
 		subtaskMetas = append(subtaskMetas, &subtaskMeta)
 	}
+	deletedRowsChecksum := verify.NewKVChecksum()
+	tooManyConflictsFromIndex := false
+	for _, bs := range planCtx.PreviousSubtaskMetas[proto.ImportStepCollectConflicts] {
+		var subtaskMeta CollectConflictsStepMeta
+		if err := json.Unmarshal(bs, &subtaskMeta); err != nil {
+			return nil, errors.Trace(err)
+		}
+		checksum := verify.MakeKVChecksum(subtaskMeta.Checksum.Size, subtaskMeta.Checksum.KVs, subtaskMeta.Checksum.Sum)
+		deletedRowsChecksum.Add(&checksum)
+		tooManyConflictsFromIndex = tooManyConflictsFromIndex || subtaskMeta.TooManyConflictsFromIndex
+	}
 	localChecksum := verify.NewKVGroupChecksumForAdd()
 	maxIDs := make(map[autoid.AllocatorType]int64, 3)
 	for _, subtaskMeta := range subtaskMetas {
@@ -262,15 +317,13 @@ func (*PostProcessSpec) ToSubtaskMeta(planCtx planner.PlanCtx) ([]byte, error) {
 	}
 	c := localChecksum.GetInnerChecksums()
 	postProcessStepMeta := &PostProcessStepMeta{
-		Checksum: make(map[int64]Checksum, len(c)),
-		MaxIDs:   maxIDs,
+		Checksum:                  make(map[int64]Checksum, len(c)),
+		DeletedRowsChecksum:       *newFromKVChecksum(deletedRowsChecksum),
+		TooManyConflictsFromIndex: tooManyConflictsFromIndex,
+		MaxIDs:                    maxIDs,
 	}
 	for id, cksum := range c {
-		postProcessStepMeta.Checksum[id] = Checksum{
-			Size: cksum.SumSize(),
-			KVs:  cksum.SumKVS(),
-			Sum:  cksum.Sum(),
-		}
+		postProcessStepMeta.Checksum[id] = *newFromKVChecksum(cksum)
 	}
 	return json.Marshal(postProcessStepMeta)
 }
@@ -349,19 +402,22 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.
 	result := make([]planner.PipelineSpec, 0, 16)
 
 	ctx := planCtx.Ctx
-	controller, err := buildControllerForPlan(p)
+	store, err := importer.GetSortStore(ctx, p.Plan.CloudStorageURI)
 	if err != nil {
 		return nil, err
 	}
-	if err := controller.InitDataStore(ctx); err != nil {
-		return nil, err
-	}
+	defer store.Close()
 
-	kvMetas, err := getSortedKVMetasOfEncodeStep(planCtx.Ctx, planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort], controller.GlobalSortStore)
+	kvMetas, err := getSortedKVMetasOfEncodeStep(planCtx.Ctx, planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort], store)
 	if err != nil {
 		return nil, err
 	}
 	for kvGroup, kvMeta := range kvMetas {
+		if len(kvMeta.MultipleFilesStats) == 0 {
+			// it's possible for non-unique indices when all rows are duplicated
+			logutil.Logger(planCtx.Ctx).Info("skip merge-sort for empty kv group", zap.String("kv-group", kvGroup))
+			continue
+		}
 		if !p.Plan.ForceMergeStep && skipMergeSort(kvGroup, kvMeta.MultipleFilesStats) {
 			logutil.Logger(planCtx.Ctx).Info("skip merge sort for kv group",
 				zap.Int64("task-id", planCtx.TaskID),
@@ -425,6 +481,11 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 
 	specs := make([]planner.PipelineSpec, 0, 16)
 	for kvGroup, kvMeta := range kvMetas {
+		if len(kvMeta.MultipleFilesStats) == 0 {
+			// it's possible for non-unique indices when all rows are duplicated
+			logutil.Logger(ctx).Info("skip ingest for empty kv group", zap.String("kv-group", kvGroup))
+			continue
+		}
 		specsForOneSubtask, err3 := splitForOneSubtask(ctx, controller.GlobalSortStore, kvGroup, kvMeta, ts)
 		if err3 != nil {
 			return nil, err3
@@ -535,7 +596,7 @@ func getSortedKVMetasOfEncodeStep(ctx context.Context, subTaskMetas [][]byte, st
 	res := make(map[string]*external.SortedKVMeta, 1+len(indexKVMetas))
 	res[dataKVGroup] = dataKVMeta
 	for indexID, item := range indexKVMetas {
-		res[strconv.Itoa(int(indexID))] = item
+		res[IndexID2KVGroup(indexID)] = item
 	}
 	return res, nil
 }
@@ -620,4 +681,113 @@ func getRangeSplitter(
 		regionSplitSize,
 		regionSplitKeys,
 	)
+}
+
+func generateCollectConflictsSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {
+	store, err := importer.GetSortStore(planCtx.Ctx, p.Plan.CloudStorageURI)
+	if err != nil {
+		return nil, err
+	}
+	defer store.Close()
+	groupConflictInfos, err := collectConflictInfos(planCtx.Ctx, store, planCtx)
+	if err != nil {
+		return nil, err
+	}
+	// skip this step if no conflict
+	if len(groupConflictInfos.ConflictInfos) == 0 {
+		return []planner.PipelineSpec{}, nil
+	}
+	var recordedDataKVConflicts int64
+	if info, ok := groupConflictInfos.ConflictInfos[dataKVGroup]; ok {
+		recordedDataKVConflicts = int64(info.Count)
+	}
+	return []planner.PipelineSpec{
+		&CollectConflictsSpec{
+			CollectConflictsStepMeta: &CollectConflictsStepMeta{
+				Infos:                   *groupConflictInfos,
+				RecordedDataKVConflicts: recordedDataKVConflicts,
+			},
+		},
+	}, nil
+}
+
+func generateConflictResolutionSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {
+	store, err := importer.GetSortStore(planCtx.Ctx, p.Plan.CloudStorageURI)
+	if err != nil {
+		return nil, err
+	}
+	defer store.Close()
+	groupConflictInfos, err := collectConflictInfos(planCtx.Ctx, store, planCtx)
+	if err != nil {
+		return nil, err
+	}
+	// skip this step if no conflict
+	if len(groupConflictInfos.ConflictInfos) == 0 {
+		return []planner.PipelineSpec{}, nil
+	}
+	return []planner.PipelineSpec{
+		&ConflictResolutionSpec{
+			ConflictResolutionStepMeta: &ConflictResolutionStepMeta{
+				Infos: *groupConflictInfos,
+			},
+		},
+	}, nil
+}
+
+func collectConflictInfos(ctx context.Context, store storage.ExternalStorage, planCtx planner.PlanCtx) (*KVGroupConflictInfos, error) {
+	m := &KVGroupConflictInfos{}
+	for _, subTaskMeta := range planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort] {
+		var stepMeta ImportStepMeta
+		err := json.Unmarshal(subTaskMeta, &stepMeta)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if stepMeta.RecordedConflictKVCount <= 0 {
+			continue
+		}
+		if stepMeta.ExternalPath != "" {
+			if err = stepMeta.ReadJSONFromExternalStorage(ctx, store, &stepMeta); err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		m.addDataConflictInfo(&stepMeta.SortedDataMeta.ConflictInfo)
+		for indexID, kvMeta := range stepMeta.SortedIndexMetas {
+			// non-unique index don't have conflict info, to simplify the logic,
+			// we merge them all
+			m.addIndexConflictInfo(indexID, &kvMeta.ConflictInfo)
+		}
+	}
+	for _, subTaskMeta := range planCtx.PreviousSubtaskMetas[proto.ImportStepMergeSort] {
+		var stepMeta MergeSortStepMeta
+		err := json.Unmarshal(subTaskMeta, &stepMeta)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if stepMeta.RecordedConflictKVCount <= 0 {
+			continue
+		}
+		if stepMeta.ExternalPath != "" {
+			if err = stepMeta.ReadJSONFromExternalStorage(ctx, store, &stepMeta); err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		m.addConflictInfo(stepMeta.KVGroup, &stepMeta.SortedKVMeta.ConflictInfo)
+	}
+	for _, subTaskMeta := range planCtx.PreviousSubtaskMetas[proto.ImportStepWriteAndIngest] {
+		var stepMeta WriteIngestStepMeta
+		err := json.Unmarshal(subTaskMeta, &stepMeta)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if stepMeta.RecordedConflictKVCount <= 0 {
+			continue
+		}
+		if stepMeta.ExternalPath != "" {
+			if err = stepMeta.ReadJSONFromExternalStorage(ctx, store, &stepMeta); err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		m.addConflictInfo(stepMeta.KVGroup, &stepMeta.SortedKVMeta.ConflictInfo)
+	}
+	return m, nil
 }

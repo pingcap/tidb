@@ -67,6 +67,7 @@ type importStepExecutor struct {
 	importCtx    context.Context
 	importCancel context.CancelFunc
 	wg           sync.WaitGroup
+	indicesGenKV map[int64]genKVIndex
 }
 
 func getTableImporter(
@@ -248,11 +249,7 @@ func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subt
 	defer sharedVars.mu.Unlock()
 	subtaskMeta.Checksum = map[int64]Checksum{}
 	for id, c := range sharedVars.Checksum.GetInnerChecksums() {
-		subtaskMeta.Checksum[id] = Checksum{
-			Sum:  c.Sum(),
-			KVs:  c.SumKVS(),
-			Size: c.SumSize(),
-		}
+		subtaskMeta.Checksum[id] = *newFromKVChecksum(c)
 	}
 	subtaskMeta.Result = Result{
 		LoadedRowCnt: dataKVCount,
@@ -266,6 +263,7 @@ func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subt
 	}
 	subtaskMeta.SortedDataMeta = sharedVars.SortedDataMeta
 	subtaskMeta.SortedIndexMetas = sharedVars.SortedIndexMetas
+	subtaskMeta.RecordedConflictKVCount = sharedVars.RecordedConflictKVCount
 	// if using global sort, write the external meta to external storage.
 	if s.tableImporter.IsGlobalSort() {
 		subtaskMeta.ExternalPath = external.SubtaskMetaPath(s.taskID, subtask.ID)
@@ -303,6 +301,8 @@ type mergeSortStepExecutor struct {
 	// 	max(max-merged-files * max-file-size / max-part-num(10000), min-part-size)
 	dataKVPartSize  int64
 	indexKVPartSize int64
+
+	indicesGenKV map[int64]genKVIndex
 }
 
 var _ execute.StepExecutor = &mergeSortStepExecutor{}
@@ -359,6 +359,11 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	if sm.KVGroup != dataKVGroup {
 		partSize = m.indexKVPartSize
 	}
+	onDup, err := getOnDupForKVGroup(m.indicesGenKV, sm.KVGroup)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	err = external.MergeOverlappingFiles(
 		logutil.WithFields(ctx, zap.String("kv-group", sm.KVGroup), zap.Int64("subtask-id", subtask.ID)),
 		sm.DataFiles,
@@ -368,7 +373,9 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		external.DefaultOneWriterBlockSize,
 		onClose,
 		subtask.Concurrency,
-		false)
+		false,
+		onDup,
+	)
 	logger.Info(
 		"merge sort finished",
 		zap.Uint64("total-kv-size", m.subtaskSortedKVMeta.TotalKVSize),
@@ -385,6 +392,7 @@ func (m *mergeSortStepExecutor) OnFinished(ctx context.Context, subtask *proto.S
 		return errors.Trace(err)
 	}
 	subtaskMeta.SortedKVMeta = *m.subtaskSortedKVMeta
+	subtaskMeta.RecordedConflictKVCount = subtaskMeta.SortedKVMeta.ConflictInfo.Count
 	subtaskMeta.ExternalPath = external.SubtaskMetaPath(m.taskID, subtask.ID)
 	if err := subtaskMeta.WriteJSONToExternalStorage(ctx, m.controller.GlobalSortStore, subtaskMeta); err != nil {
 		return errors.Trace(err)
@@ -399,6 +407,27 @@ func (m *mergeSortStepExecutor) OnFinished(ctx context.Context, subtask *proto.S
 	return nil
 }
 
+func getOnDupForKVGroup(indicesGenKV map[int64]genKVIndex, kvGroup string) (common.OnDuplicateKey, error) {
+	if kvGroup == dataKVGroup {
+		return common.OnDuplicateKeyRecord, nil
+	}
+
+	indexID, err2 := kvGroup2IndexID(kvGroup)
+	if err2 != nil {
+		// shouldn't happen
+		return common.OnDuplicateKeyIgnore, errors.Trace(err2)
+	}
+	info, ok := indicesGenKV[indexID]
+	if !ok {
+		// shouldn't happen
+		return common.OnDuplicateKeyIgnore, errors.Errorf("unknown index %d", indexID)
+	}
+	if info.unique {
+		return common.OnDuplicateKeyRecord, nil
+	}
+	return common.OnDuplicateKeyRemove, nil
+}
+
 type writeAndIngestStepExecutor struct {
 	execute.StepExecFrameworkInfo
 
@@ -407,6 +436,8 @@ type writeAndIngestStepExecutor struct {
 	logger        *zap.Logger
 	tableImporter *importer.TableImporter
 	store         tidbkv.Storage
+
+	indicesGenKV map[int64]genKVIndex
 }
 
 var _ execute.StepExecutor = &writeAndIngestStepExecutor{}
@@ -448,6 +479,11 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	if jobKeys == nil {
 		jobKeys = sm.RangeSplitKeys
 	}
+	onDup, err := getOnDupForKVGroup(e.indicesGenKV, sm.KVGroup)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
 			StorageURI:    e.taskMeta.Plan.CloudStorageURI,
@@ -461,6 +497,8 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 			TotalKVCount:  0,
 			CheckHotspot:  false,
 			MemCapacity:   e.GetResource().Mem.Capacity(),
+			OnDup:         onDup,
+			FilePrefix:    subtaskPrefix(e.taskID, subtask.ID),
 		},
 		TS: sm.TS,
 	}, engineUUID)
@@ -479,20 +517,25 @@ func (e *writeAndIngestStepExecutor) OnFinished(ctx context.Context, subtask *pr
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)
 	}
-	if subtaskMeta.KVGroup != dataKVGroup {
-		return nil
-	}
 
 	// only data kv group has loaded row count
 	_, engineUUID := backend.MakeUUID("", subtask.ID)
 	localBackend := e.tableImporter.Backend()
-	_, kvCount := localBackend.GetExternalEngineKVStatistics(engineUUID)
-	subtaskMeta.Result.LoadedRowCnt = uint64(kvCount)
+	if subtaskMeta.KVGroup == dataKVGroup {
+		// only set row count for data kv group
+		_, kvCount := localBackend.GetExternalEngineKVStatistics(engineUUID)
+		subtaskMeta.Result.LoadedRowCnt = uint64(kvCount)
+	}
+	subtaskMeta.ConflictInfo = localBackend.GetExternalEngineConflictInfo(engineUUID)
+	subtaskMeta.RecordedConflictKVCount = subtaskMeta.ConflictInfo.Count
 	err := localBackend.CleanupEngine(ctx, engineUUID)
 	if err != nil {
 		e.logger.Warn("failed to cleanup engine", zap.Error(err))
 	}
-
+	subtaskMeta.ExternalPath = external.SubtaskMetaPath(e.taskID, subtask.ID)
+	if err := subtaskMeta.WriteJSONToExternalStorage(ctx, e.tableImporter.GlobalSortStore, subtaskMeta); err != nil {
+		return errors.Trace(err)
+	}
 	newMeta, err := subtaskMeta.Marshal()
 	if err != nil {
 		return errors.Trace(err)
@@ -545,7 +588,8 @@ func (p *postProcessStepExecutor) RunSubtask(ctx context.Context, subtask *proto
 
 type importExecutor struct {
 	*taskexecutor.BaseTaskExecutor
-	store tidbkv.Storage
+	store        tidbkv.Storage
+	indicesGenKV map[int64]genKVIndex
 }
 
 // NewImportExecutor creates a new import task executor.
@@ -586,23 +630,42 @@ func (e *importExecutor) GetStepExecutor(task *proto.Task) (execute.StepExecutor
 		zap.Int64("task-id", task.ID),
 		zap.String("step", proto.Step2Str(task.Type, task.Step)),
 	)
+	indicesGenKV := getIndicesGenKV(taskMeta.Plan.TableInfo)
+	logger.Info("got indices that generate kv", zap.Any("indices", indicesGenKV))
 
 	switch task.Step {
 	case proto.ImportStepImport, proto.ImportStepEncodeAndSort:
 		return &importStepExecutor{
+			taskID:       task.ID,
+			taskMeta:     &taskMeta,
+			logger:       logger,
+			store:        e.store,
+			indicesGenKV: indicesGenKV,
+		}, nil
+	case proto.ImportStepMergeSort:
+		return &mergeSortStepExecutor{
+			taskID:       task.ID,
+			taskMeta:     &taskMeta,
+			logger:       logger,
+			indicesGenKV: indicesGenKV,
+		}, nil
+	case proto.ImportStepWriteAndIngest:
+		return &writeAndIngestStepExecutor{
+			taskID:       task.ID,
+			taskMeta:     &taskMeta,
+			logger:       logger,
+			store:        e.store,
+			indicesGenKV: indicesGenKV,
+		}, nil
+	case proto.ImportStepCollectConflicts:
+		return &collectConflictsStepExecutor{
 			taskID:   task.ID,
 			taskMeta: &taskMeta,
 			logger:   logger,
 			store:    e.store,
 		}, nil
-	case proto.ImportStepMergeSort:
-		return &mergeSortStepExecutor{
-			taskID:   task.ID,
-			taskMeta: &taskMeta,
-			logger:   logger,
-		}, nil
-	case proto.ImportStepWriteAndIngest:
-		return &writeAndIngestStepExecutor{
+	case proto.ImportStepConflictResolution:
+		return &conflictResolutionStepExecutor{
 			taskID:   task.ID,
 			taskMeta: &taskMeta,
 			logger:   logger,
