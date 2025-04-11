@@ -1391,6 +1391,19 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 		planCounter.Dec(1)
 		return nil, 1, nil
 	}
+	// if prop is require an index join's probe side, check the inner pattern admission here.
+	if prop.IndexJoinProp != nil {
+		pass := admitIndexJoinInnerChildPattern(lp)
+		if !pass {
+			// even enforce hint can not work with this.
+			return base.InvalidTask, 0, nil
+		}
+		// when datasource leaf is in index join's inner side, build the task out with old
+		// index join build logic, we can't merge this with normal datasource's index range
+		// because normal index range is built on expression EQ/IN. while index join's inner
+		// has its special runtime constants detecting and filling logic.
+		return getBestIndexJoinInnerTaskByProp(ds, prop, opt, planCounter)
+	}
 	if ds.IsForUpdateRead && ds.SCtx().GetSessionVars().TxnCtx.IsExplicit {
 		hasPointGetPath := false
 		for _, path := range ds.PossibleAccessPaths {

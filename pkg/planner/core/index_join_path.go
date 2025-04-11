@@ -17,6 +17,8 @@ package core
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"strings"
 	"unsafe"
 
@@ -628,6 +630,43 @@ func getIndexJoinIntPKPathInfo(ds *logicalop.DataSource, innerJoinKeys, outerJoi
 		}
 	}
 	return keyOff2IdxOff, newOuterJoinKeys, ranges, chosenPath, true
+}
+
+// getBestIndexJoinInnerTaskByProp tries to build the best inner child task from ds for index join by the given property.
+func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.PhysicalProperty,
+	opt *optimizetrace.PhysicalOptimizeOp, planCounter *base.PlanCounterTp) (base.Task, int64, error) {
+	// the below code is quite similar from the original logic
+	// reason1: we need to leverage original indexPathInfo down related logic to build constant range for index plan.
+	// reason2: the ranges from TS and IS couldn't be directly used to derive the stats' estimation, it's not real.
+	// reason3: skyline pruning should prune the possible index path which could feel the runtime EQ access conditions.
+	cntPlan := int64(0)
+	innerTSCopTask := buildDataSource2TableScanByIndexJoinProp(ds, prop)
+	if !innerTSCopTask.Invalid() {
+		cntPlan++
+		planCounter.Dec(1)
+		if planCounter.Empty() {
+			// planCounter is counted to end, just return this one.
+			return innerTSCopTask, cntPlan, nil
+		}
+	}
+	innerISCopTask := buildDataSource2IndexScanByIndexJoinProp(ds, prop)
+	if !innerISCopTask.Invalid() {
+		cntPlan++
+		planCounter.Dec(1)
+		if planCounter.Empty() {
+			// planCounter is counted to end, just return this one.
+			return innerISCopTask, cntPlan, nil
+		}
+	}
+	// if we can see the both, compare the cost.
+	leftIsBetter, err := compareTaskCost(innerTSCopTask, innerISCopTask, opt)
+	if err != nil {
+		return base.InvalidTask, 0, err
+	}
+	if leftIsBetter {
+		return innerTSCopTask, cntPlan, nil
+	}
+	return innerISCopTask, cntPlan, nil
 }
 
 // getBestIndexJoinPathResultByProp tries to iterate all possible access paths of the inner child and builds
