@@ -135,6 +135,7 @@ func TestMatchCancelState(t *testing.T, job *model.Job, cancelState any, sql str
 }
 
 func testCheckTableState(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, state model.SchemaState) {
+	//nolint:revive
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
@@ -154,6 +155,7 @@ func testCheckTableState(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, t
 
 // TestCheckTableMode checks the table mode of a table in the store.
 func TestCheckTableMode(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, mode model.TableMode) {
+	//nolint:revive
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		tt := meta.NewMutator(txn)
