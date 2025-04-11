@@ -69,6 +69,10 @@ func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 		maxPhysicalID = max(physicalID, maxPhysicalID)
 		newHistColl := *statistics.NewHistColl(physicalID, true, row.GetInt64(3), row.GetInt64(2), 4, 4)
 		snapshot := row.GetUint64(4)
+		lastAnalyzeVersion, lastStatsHistUpdateVersion := snapshot, snapshot
+		if !row.IsNull(5) {
+			lastStatsHistUpdateVersion = max(lastStatsHistUpdateVersion, row.GetUint64(5))
+		}
 		tbl := &statistics.Table{
 			HistColl:              newHistColl,
 			Version:               row.GetUint64(0),
@@ -81,8 +85,8 @@ func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 			// So if we don't initialize LastAnalyzeVersion with the snapshot here,
 			// it will stay at 0 and auto-analyze won't be able to detect that the table has been analyzed.
 			// But in the future, we maybe will create some records for _row_id, see:
-			// https://github.com/pingcap/tidb/issues/51098
-			LastAnalyzeVersion: snapshot,
+			LastAnalyzeVersion:   lastAnalyzeVersion,
+			LastStatsHistVersion: lastStatsHistUpdateVersion,
 		}
 		cache.Put(physicalID, tbl) // put this table again since it is updated
 	}
@@ -95,7 +99,7 @@ func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 
 func (h *Handle) initStatsMeta(ctx context.Context) (statstypes.StatsCache, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
-	sql := "select HIGH_PRIORITY version, table_id, modify_count, count, snapshot from mysql.stats_meta"
+	sql := "select HIGH_PRIORITY version, table_id, modify_count, count, snapshot, last_stats_histograms_version from mysql.stats_meta"
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return nil, errors.Trace(err)
