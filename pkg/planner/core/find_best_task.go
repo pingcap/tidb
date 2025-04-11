@@ -540,6 +540,14 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 		planCounter.Dec(1)
 		return bestTask, 1, nil
 	}
+	// if prop is require an index join's probe side, check the inner pattern admission here.
+	if prop.IndexJoinProp != nil {
+		pass := admitIndexJoinInnerChildPattern(lp)
+		if !pass {
+			// even enforce hint can not work with this.
+			return base.InvalidTask, 0, nil
+		}
+	}
 
 	canAddEnforcer := prop.CanAddEnforcer
 
