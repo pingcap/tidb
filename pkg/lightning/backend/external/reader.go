@@ -142,7 +142,7 @@ func readOneFile(
 
 	ts := time.Now()
 
-	rd, err := newKVReader(ctx, dataFile, storage, startOffset, 64*1024)
+	rd, err := newKVReader(ctx, dataFile, storage, startOffset, 512)
 	if err != nil {
 		return err
 	}
