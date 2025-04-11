@@ -27,7 +27,6 @@ import (
 )
 
 func TestDistsqlPartitionTableConcurrency(t *testing.T) {
-	t.Skip("tmp test")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
