@@ -29,6 +29,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -172,6 +173,27 @@ func TestTiFlashQuerySpillRatio(t *testing.T) {
 	require.Equal(t, "0.85", val)
 	require.Nil(t, sv.SetSessionFromHook(vars, "0.75")) // sets
 	require.Equal(t, 0.75, vars.TiFlashQuerySpillRatio)
+}
+
+func TestTiFlashHashJoinVersion(t *testing.T) {
+	vars := NewSessionVars(nil)
+	sv := GetSysVar(vardef.TiFlashHashJoinVersion)
+	// set error value
+	_, err := sv.Validation(vars, "invalid", "invalid", vardef.ScopeSession)
+	require.NotNil(t, err)
+	// set valid value
+	_, err = sv.Validation(vars, "legacy", "legacy", vardef.ScopeSession)
+	require.NoError(t, err)
+	_, err = sv.Validation(vars, "optimized", "optimized", vardef.ScopeSession)
+	require.NoError(t, err)
+	_, err = sv.Validation(vars, "Legacy", "Legacy", vardef.ScopeSession)
+	require.NoError(t, err)
+	_, err = sv.Validation(vars, "Optimized", "Optimized", vardef.ScopeSession)
+	require.NoError(t, err)
+	_, err = sv.Validation(vars, "LegaCy", "LegaCy", vardef.ScopeSession)
+	require.NoError(t, err)
+	_, err = sv.Validation(vars, "OptimiZed", "OptimiZed", vardef.ScopeSession)
+	require.NoError(t, err)
 }
 
 func TestCollationServer(t *testing.T) {
@@ -1776,6 +1798,8 @@ func TestEnableWindowFunction(t *testing.T) {
 
 func TestTiDBHashJoinVersion(t *testing.T) {
 	vars := NewSessionVars(nil)
+	// test the default value
+	require.Equal(t, joinversion.IsOptimizedVersion(vardef.DefTiDBHashJoinVersion), vars.UseHashJoinV2)
 	sv := GetSysVar(vardef.TiDBHashJoinVersion)
 	// set error value
 	_, err := sv.Validation(vars, "invalid", "invalid", vardef.ScopeSession)

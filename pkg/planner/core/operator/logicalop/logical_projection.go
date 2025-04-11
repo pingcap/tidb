@@ -94,11 +94,9 @@ func (p *LogicalProjection) HashCode() []byte {
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
 func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
-	for _, expr := range p.Exprs {
-		if expression.HasAssignSetVarFunc(expr) {
-			_, child := p.BaseLogicalPlan.PredicatePushDown(nil, opt)
-			return predicates, child
-		}
+	if slices.ContainsFunc(p.Exprs, expression.HasAssignSetVarFunc) {
+		_, child := p.BaseLogicalPlan.PredicatePushDown(nil, opt)
+		return predicates, child
 	}
 	canBePushed, canNotBePushed := breakDownPredicates(p, predicates)
 	remained, child := p.BaseLogicalPlan.PredicatePushDown(canBePushed, opt)
@@ -145,8 +143,8 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, op
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && !expression.ExprHasSetVarOrSleep(p.Exprs[i]) {
 			prunedColumns = append(prunedColumns, p.Schema().Columns[i])
-			p.Schema().Columns = append(p.Schema().Columns[:i], p.Schema().Columns[i+1:]...)
-			p.Exprs = append(p.Exprs[:i], p.Exprs[i+1:]...)
+			p.Schema().Columns = slices.Delete(p.Schema().Columns, i, i+1)
+			p.Exprs = slices.Delete(p.Exprs, i, i+1)
 		}
 	}
 	logicaltrace.AppendColumnPruneTraceStep(p, prunedColumns, opt)
@@ -192,10 +190,8 @@ func (p *LogicalProjection) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *
 	if topNLogicalPlan != nil {
 		topN = topNLogicalPlan.(*LogicalTopN)
 	}
-	for _, expr := range p.Exprs {
-		if expression.HasAssignSetVarFunc(expr) {
-			return p.BaseLogicalPlan.PushDownTopN(topN, opt)
-		}
+	if slices.ContainsFunc(p.Exprs, expression.HasAssignSetVarFunc) {
+		return p.BaseLogicalPlan.PushDownTopN(topN, opt)
 	}
 	if topN != nil {
 		exprCtx := p.SCtx().GetExprCtx()
@@ -216,7 +212,7 @@ func (p *LogicalProjection) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *
 		for i := len(topN.ByItems) - 1; i >= 0; i-- {
 			switch topN.ByItems[i].Expr.(type) {
 			case *expression.Constant, *expression.CorrelatedColumn:
-				topN.ByItems = append(topN.ByItems[:i], topN.ByItems[i+1:]...)
+				topN.ByItems = slices.Delete(topN.ByItems, i, i+1)
 			}
 		}
 
@@ -602,9 +598,9 @@ func (p *LogicalProjection) AppendExpr(expr expression.Expression) *expression.C
 }
 
 // breakDownPredicates breaks down predicates into two sets: canBePushed and cannotBePushed. It also maps columns to projection schema.
-func breakDownPredicates(p *LogicalProjection, predicates []expression.Expression) ([]expression.Expression, []expression.Expression) {
-	canBePushed := make([]expression.Expression, 0, len(predicates))
-	canNotBePushed := make([]expression.Expression, 0, len(predicates))
+func breakDownPredicates(p *LogicalProjection, predicates []expression.Expression) (canBePushed, canNotBePushed []expression.Expression) {
+	canBePushed = make([]expression.Expression, 0, len(predicates))
+	canNotBePushed = make([]expression.Expression, 0, len(predicates))
 	exprCtx := p.SCtx().GetExprCtx()
 	for _, cond := range predicates {
 		substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(exprCtx, cond, p.Schema(), p.Exprs, true)

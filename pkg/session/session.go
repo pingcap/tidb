@@ -1391,7 +1391,7 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 	defer tracing.StartRegion(ctx, "ParseSQL").End()
 	p := parserutil.GetParser()
 	defer func() {
-		parserutil.DestoryParser(p)
+		parserutil.DestroyParser(p)
 	}()
 
 	sqlMode := s.sessionVars.SQLMode
@@ -2641,6 +2641,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			TiFlashMaxBytesBeforeExternalSort:    vars.TiFlashMaxBytesBeforeExternalSort,
 			TiFlashMaxQueryMemoryPerNode:         vars.TiFlashMaxQueryMemoryPerNode,
 			TiFlashQuerySpillRatio:               vars.TiFlashQuerySpillRatio,
+			TiFlashHashJoinVersion:               vars.TiFlashHashJoinVersion,
 
 			DistSQLConcurrency:            vars.DistSQLScanConcurrency(),
 			ReplicaReadType:               vars.GetReplicaRead(),

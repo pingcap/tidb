@@ -298,8 +298,8 @@
         "Plan": [
           "Projection 6393.60 root  Column#21, minus(test.t2.b2, 5)->Column#22",
           "└─Selection 6393.60 root  gt(minus(test.t2.b2, 5), 1)",
-          "  └─HashAgg 7992.00 root  group by:Column#26, funcs:count(Column#24)->Column#21, funcs:firstrow(Column#25)->test.t2.b2",
-          "    └─Projection 12487.50 root  test.t2.a2->Column#24, test.t2.b2->Column#25, minus(test.t2.b2, 5)->Column#26",
+          "  └─HashAgg 7992.00 root  group by:Column#27, funcs:count(Column#25)->Column#21, funcs:firstrow(Column#26)->test.t2.b2",
+          "    └─Projection 12487.50 root  test.t2.a2->Column#25, test.t2.b2->Column#26, minus(test.t2.b2, 5)->Column#27",
           "      └─HashJoin 12487.50 root  inner join, equal:[eq(test.t1.a1, test.t2.a2)]",
           "        ├─TableReader(Build) 9990.00 root  data:Selection",
           "        │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a1))",

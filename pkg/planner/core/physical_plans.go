@@ -21,6 +21,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -964,6 +965,8 @@ type PhysicalTableScan struct {
 	maxWaitTimeMs     int
 
 	AnnIndexExtra *VectorIndexExtra `plan-cache-clone:"must-nil"` // MPP plan should not be cached.
+	// UsedColumnarIndexes is used to store the used columnar index for the table scan.
+	UsedColumnarIndexes []*tipb.ColumnarIndexInfo `plan-cache-clone:"must-nil"`
 }
 
 // VectorIndexExtra is the extra information for vector index.
@@ -1001,6 +1004,11 @@ func (ts *PhysicalTableScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, 
 	for _, rf := range ts.runtimeFilterList {
 		clonedRF := rf.Clone()
 		clonedScan.runtimeFilterList = append(clonedScan.runtimeFilterList, clonedRF)
+	}
+	clonedScan.UsedColumnarIndexes = make([]*tipb.ColumnarIndexInfo, 0, len(ts.UsedColumnarIndexes))
+	for _, colIdx := range ts.UsedColumnarIndexes {
+		colIdxClone := *colIdx
+		clonedScan.UsedColumnarIndexes = append(clonedScan.UsedColumnarIndexes, &colIdxClone)
 	}
 	return clonedScan, nil
 }
@@ -1503,6 +1511,38 @@ func (p *PhysicalHashJoin) CanUseHashJoinV2() bool {
 	return canUseHashJoinV2(p.JoinType, p.LeftJoinKeys, p.IsNullEQ, p.LeftNAJoinKeys)
 }
 
+// CanTiFlashUseHashJoinV2 returns if current join is supported by hash join v2 in TiFlash
+func (p *PhysicalHashJoin) CanTiFlashUseHashJoinV2(sctx base.PlanContext) bool {
+	vars := sctx.GetSessionVars()
+	if !joinversion.IsOptimizedVersion(vars.TiFlashHashJoinVersion) {
+		return false
+	}
+	// spill is not supported yet
+	if vars.TiFlashMaxBytesBeforeExternalJoin > 0 || (vars.TiFlashMaxQueryMemoryPerNode > 0 && vars.TiFlashQuerySpillRatio > 0) {
+		return false
+	}
+	switch p.JoinType {
+	case logicalop.InnerJoin:
+		// null aware join is not supported yet
+		if len(p.LeftNAJoinKeys) > 0 {
+			return false
+		}
+		// cross join is not supported
+		if len(p.LeftJoinKeys) == 0 {
+			return false
+		}
+		// NullEQ is not supported yet
+		for _, value := range p.IsNullEQ {
+			if value {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
 // Clone implements op.PhysicalPlan interface.
 func (p *PhysicalHashJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
 	cloned := new(PhysicalHashJoin)
@@ -1626,6 +1666,8 @@ type PhysicalIndexJoin struct {
 	// InnerHashKeys indicates the inner keys used to build hash table during
 	// execution. InnerJoinKeys is the prefix of InnerHashKeys.
 	InnerHashKeys []*expression.Column
+	// EqualConditions stores the equal conditions for logical join's original EqualConditions.
+	EqualConditions []*expression.ScalarFunction `plan-cache-clone:"shallow"`
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -1849,7 +1891,7 @@ func (p *PhysicalExpand) Clone(newCtx base.PlanContext) (base.PhysicalPlan, erro
 	for _, one := range p.GroupingSets {
 		clonedGroupingSets = append(clonedGroupingSets, one.Clone())
 	}
-	np.GroupingSets = p.GroupingSets
+	np.GroupingSets = clonedGroupingSets
 	return np, nil
 }
 

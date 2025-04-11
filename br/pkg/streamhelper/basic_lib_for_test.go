@@ -36,6 +36,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -676,7 +677,7 @@ func newTestEnv(c *fakeCluster, t *testing.T) *testEnv {
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
 			Name:    "whole",
-			StartTs: 5,
+			StartTs: 0,
 		},
 		Ranges: rngs,
 	}
@@ -781,7 +782,7 @@ func (t *testEnv) putTask() {
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
 			Name:    "whole",
-			StartTs: 5,
+			StartTs: 0,
 		},
 		Ranges: rngs,
 	}
@@ -898,6 +899,10 @@ func (p *mockPDClient) GetAllStores(ctx context.Context, opts ...opt.GetStoreOpt
 
 func (p *mockPDClient) GetClusterID(ctx context.Context) uint64 {
 	return 1
+}
+
+func (p *mockPDClient) WithCallerComponent(_ caller.Component) pd.Client {
+	return p
 }
 
 func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *router.Region {

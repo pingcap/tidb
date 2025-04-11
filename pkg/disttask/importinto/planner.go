@@ -58,6 +58,13 @@ type LogicalPlan struct {
 	ChunkMap          map[int32][]importer.Chunk
 }
 
+// GetTaskExtraParams implements the planner.LogicalPlan interface.
+func (p *LogicalPlan) GetTaskExtraParams() proto.ExtraParams {
+	return proto.ExtraParams{
+		ManualRecovery: p.Plan.ManualRecovery,
+	}
+}
+
 // ToTaskMeta converts the logical plan to task meta.
 func (p *LogicalPlan) ToTaskMeta() ([]byte, error) {
 	taskMeta := TaskMeta{
@@ -152,7 +159,7 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 		if err != nil {
 			return nil, err
 		}
-		if p.writeExternalPlanMeta(planCtx, specs) != nil {
+		if err := p.writeExternalPlanMeta(planCtx, specs); err != nil {
 			return nil, err
 		}
 
@@ -162,7 +169,7 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 		if err != nil {
 			return nil, err
 		}
-		if p.writeExternalPlanMeta(planCtx, specs) != nil {
+		if err := p.writeExternalPlanMeta(planCtx, specs); err != nil {
 			return nil, err
 		}
 
@@ -172,7 +179,7 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 		if err != nil {
 			return nil, err
 		}
-		if p.writeExternalPlanMeta(planCtx, specs) != nil {
+		if err := p.writeExternalPlanMeta(planCtx, specs); err != nil {
 			return nil, err
 		}
 

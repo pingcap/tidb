@@ -596,12 +596,13 @@ func indexJoinPathRemoveUselessEQIn(buildTmp *indexJoinPathTmp, idxCols []*expre
 	return notKeyEqAndIn, nil
 }
 
-func getIndexJoinIntPKPathInfo(ds *logicalop.DataSource, innerJoinKeys, outerJoinKeys []*expression.Column) (
-	keyOff2IdxOff []int, newOuterJoinKeys []*expression.Column, ranges ranger.Ranges, ok bool) {
+func getIndexJoinIntPKPathInfo(ds *logicalop.DataSource, innerJoinKeys, outerJoinKeys []*expression.Column,
+	checkPathValid func(path *util.AccessPath) bool) (
+	keyOff2IdxOff []int, newOuterJoinKeys []*expression.Column, ranges ranger.Ranges, chosenPath *util.AccessPath, ok bool) {
 	pkMatched := false
 	pkCol := ds.GetPKIsHandleCol()
 	if pkCol == nil {
-		return nil, nil, nil, false
+		return nil, nil, nil, nil, false
 	}
 	keyOff2IdxOff = make([]int, len(innerJoinKeys))
 	newOuterJoinKeys = make([]*expression.Column, 0)
@@ -616,10 +617,64 @@ func getIndexJoinIntPKPathInfo(ds *logicalop.DataSource, innerJoinKeys, outerJoi
 		newOuterJoinKeys = append(newOuterJoinKeys, outerJoinKeys[i])
 	}
 	if !pkMatched {
-		return nil, nil, nil, false
+		return nil, nil, nil, nil, false
 	}
 	ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(pkCol.RetType.GetFlag()))
-	return keyOff2IdxOff, newOuterJoinKeys, ranges, true
+	// compute the matchProp which require the int table path first.
+	for _, path := range ds.PossibleAccessPaths {
+		if checkPathValid(path) {
+			chosenPath = path
+			break
+		}
+	}
+	return keyOff2IdxOff, newOuterJoinKeys, ranges, chosenPath, true
+}
+
+// getBestIndexJoinPathResultByProp tries to iterate all possible access paths of the inner child and builds
+// index join path for each access path based on push-down indexIndexProp. It returns the best index join path result and the mapping.
+func getBestIndexJoinPathResultByProp(
+	innerDS *logicalop.DataSource,
+	indexJoinProp *property.IndexJoinRuntimeProp,
+	checkPathValid func(path *util.AccessPath) bool) (*indexJoinPathResult, []int) {
+	indexJoinInfo := &indexJoinPathInfo{
+		joinOtherConditions:   indexJoinProp.OtherConditions, // other conditions is for complete last col non-eq range
+		outerJoinKeys:         indexJoinProp.OuterJoinKeys,
+		innerJoinKeys:         indexJoinProp.InnerJoinKeys,
+		innerPushedConditions: innerDS.PushedDownConds,
+		innerSchema:           innerDS.Schema(),
+		innerStats:            innerDS.StatsInfo(),
+	}
+	var bestResult *indexJoinPathResult
+	for _, path := range innerDS.PossibleAccessPaths {
+		if checkPathValid(path) {
+			// here we still wrap indexJoinPathInfo to call index indexJoinPathBuild to get the chosen path result.
+			result, emptyRange, err := indexJoinPathBuild(innerDS.SCtx(), path, indexJoinInfo, false)
+			if emptyRange {
+				return nil, nil
+			}
+			if err != nil {
+				logutil.BgLogger().Warn("build index join failed", zap.Error(err))
+				continue
+			}
+			if indexJoinPathCompare(bestResult, result) {
+				bestResult = result
+			}
+		}
+	}
+	if bestResult == nil || bestResult.chosenPath == nil {
+		return nil, nil
+	}
+	keyOff2IdxOff := make([]int, len(indexJoinProp.InnerJoinKeys))
+	for i := range keyOff2IdxOff {
+		keyOff2IdxOff[i] = -1
+	}
+	// reverse idxOff2KeyOff as keyOff2IdxOff, from the perspective of inner join key, we could easily get the offset of index col.
+	for idxOff, keyOff := range bestResult.idxOff2KeyOff {
+		if keyOff != -1 {
+			keyOff2IdxOff[keyOff] = idxOff
+		}
+	}
+	return bestResult, keyOff2IdxOff
 }
 
 // getBestIndexJoinPathResult tries to iterate all possible access paths of the inner child and builds
@@ -660,6 +715,7 @@ func getBestIndexJoinPathResult(
 	for i := range keyOff2IdxOff {
 		keyOff2IdxOff[i] = -1
 	}
+	// reverse idxOff2KeyOff as keyOff2IdxOff, from the perspective of inner join key, we could easily get the offset of index col.
 	for idxOff, keyOff := range bestResult.idxOff2KeyOff {
 		if keyOff != -1 {
 			keyOff2IdxOff[keyOff] = idxOff
