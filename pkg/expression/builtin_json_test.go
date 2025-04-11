@@ -395,7 +395,7 @@ func TestJSONMemberOf(t *testing.T) {
 		expected any
 		err      error
 	}{
-		{[]any{`1`, `a:1`}, 1, types.ErrInvalidJSONText},
+		{[]any{`1`, `a:1`}, 1, types.ErrInvalidJSONTextInParam},
 
 		{[]any{1, `[1, 2]`}, 1, nil},
 		{[]any{1, `[1]`}, 1, nil},
@@ -473,8 +473,8 @@ func TestJSONContains(t *testing.T) {
 		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.a[3]"}, nil, nil},
 		{[]any{`{"a": [1, 2, {"aa": "xx"}]}`, `1`, "$.a[2].b"}, nil, nil},
 		// For issue 9957: test 'argument 1 and 2 as valid json object'
-		{[]any{`[1,2,[1,3]]`, `a:1`}, 1, types.ErrInvalidJSONText},
-		{[]any{`a:1`, `1`}, 1, types.ErrInvalidJSONText},
+		{[]any{`[1,2,[1,3]]`, `a:1`}, 1, types.ErrInvalidJSONTextInParam},
+		{[]any{`a:1`, `1`}, 1, types.ErrInvalidJSONTextInParam},
 	}
 	for _, tt := range tbl {
 		args := types.MakeDatums(tt.input...)
@@ -516,8 +516,8 @@ func TestJSONOverlaps(t *testing.T) {
 		expected any
 		err      error
 	}{
-		{[]any{`[1,2,[1,3]]`, `a:1`}, 1, types.ErrInvalidJSONText},
-		{[]any{`a:1`, `1`}, 1, types.ErrInvalidJSONText},
+		{[]any{`[1,2,[1,3]]`, `a:1`}, 1, types.ErrInvalidJSONTextInParam},
+		{[]any{`a:1`, `1`}, 1, types.ErrInvalidJSONTextInParam},
 		{[]any{nil, `1`}, nil, nil},
 		{[]any{`1`, nil}, nil, nil},
 
@@ -862,8 +862,8 @@ func TestJSONArrayAppend(t *testing.T) {
 		{[]any{`[]`, `$`, nil}, `[null]`, nil},
 		{[]any{`{}`, `$`, nil}, `[{}, null]`, nil},
 		// Bad arguments.
-		{[]any{`asdf`, `$`, nil}, nil, types.ErrInvalidJSONText},
-		{[]any{``, `$`, nil}, nil, types.ErrInvalidJSONText},
+		{[]any{`asdf`, `$`, nil}, nil, types.ErrInvalidJSONTextInParam},
+		{[]any{``, `$`, nil}, nil, types.ErrInvalidJSONTextInParam},
 		{[]any{`{"a": 1, "b": [2, 3], "c": 4}`, `$.d`}, nil, ErrIncorrectParameterCount},
 		{[]any{`{"a": 1, "b": [2, 3], "c": 4}`, `$.c`, `y`, `$.b`}, nil, ErrIncorrectParameterCount},
 		{[]any{`{"a": 1, "b": [2, 3], "c": 4}`, nil, nil}, nil, nil},
@@ -1014,8 +1014,8 @@ func TestJSONArrayInsert(t *testing.T) {
 		{[]any{`[]`, `$[0]`, nil}, `[null]`, true, nil},
 		{[]any{`{}`, `$[0]`, nil}, `{}`, true, nil},
 		// Bad arguments
-		{[]any{`asdf`, `$`, nil}, nil, false, types.ErrInvalidJSONText},
-		{[]any{``, `$`, nil}, nil, false, types.ErrInvalidJSONText},
+		{[]any{`asdf`, `$`, nil}, nil, false, types.ErrInvalidJSONTextInParam},
+		{[]any{``, `$`, nil}, nil, false, types.ErrInvalidJSONTextInParam},
 		{[]any{`{"a": 1, "b": [2, 3], "c": 4}`, `$.d`}, nil, false, ErrIncorrectParameterCount},
 		{[]any{`{"a": 1, "b": [2, 3], "c": 4}`, `$.c`, `y`, `$.b`}, nil, false, ErrIncorrectParameterCount},
 		{[]any{`{"a": 1, "b": [2, 3], "c": 4}`, nil, nil}, nil, true, nil},
