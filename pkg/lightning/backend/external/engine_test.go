@@ -370,7 +370,7 @@ func TestChangeEngineConcurrency(t *testing.T) {
 
 	// Change concurrency after the channel is filled
 	time.Sleep(time.Second)
-	e.UpdateConcurrency(1)
+	e.UpdateResource(1, 1<<10)
 
 	eg.Go(func() error {
 		for data := range outCh {
@@ -405,7 +405,7 @@ func TestChangeEngineConcurrencyWithCancel(t *testing.T) {
 		return e.LoadIngestData(ctx, outCh)
 	})
 
-	e.UpdateConcurrency(1)
+	e.UpdateResource(1, 1<<10)
 	cancel()
 
 	// Should not be blocked

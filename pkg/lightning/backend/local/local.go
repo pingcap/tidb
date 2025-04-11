@@ -771,10 +771,10 @@ func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, factory impor
 	return true, nil
 }
 
-// UpdateConcurrency update the concurrency of current running job.
+// UpdateResource update the concurrency of current running job.
 // The engineUUID is used to get corresponding engine.
 // If there is no running job, or the concurrency change is not allowed, it will return an error.
-func (local *Backend) UpdateConcurrency(ctx context.Context, engineUUID uuid.UUID, concurrency int) error {
+func (local *Backend) UpdateResource(ctx context.Context, engineUUID uuid.UUID, concurrency int, memCapacity int64) error {
 	engine, ok := local.engineMgr.getExternalEngine(engineUUID)
 	if !ok {
 		return goerrors.New("changing concurrency is only supported on external engine")
@@ -789,12 +789,14 @@ func (local *Backend) UpdateConcurrency(ctx context.Context, engineUUID uuid.UUI
 	e, _ := engine.(*external.Engine)
 	worker, _ := v.(*jobOperator)
 	worker.TuneWorkerPoolSize(int32(concurrency), true)
-	local.WorkerConcurrency.Store(int32(concurrency))
-	e.UpdateConcurrency(concurrency)
+	e.UpdateResource(concurrency, memCapacity)
+	local.SetConcurrency(concurrency)
 
 	log.FromContext(ctx).Info("update concurrency finished",
 		zap.String("engine", engine.ID()),
-		zap.Int("concurrency", concurrency))
+		zap.Int("concurrency", concurrency),
+		zap.Int64("memCapacity", memCapacity),
+	)
 
 	return nil
 }

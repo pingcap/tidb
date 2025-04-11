@@ -430,7 +430,9 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	return nil
 }
 
-// checkConcurrencyChange is used to check concurrency change and wait all previous data consumed
+// checkConcurrencyChange is used to check concurrency change.
+// Before the concurrency change, we need to make sure all previous data is consumed
+// and create new memory pool
 func (e *Engine) checkConcurrencyChange(ctx context.Context, currBatchSize int) int {
 	newBatchSize := int(e.workerConcurrency.Load())
 	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
@@ -458,17 +460,25 @@ OUTER:
 		case <-ctx.Done():
 			return currBatchSize
 		case <-tick.C:
+			allReleased := true
 			for _, data := range e.generatedData {
 				// We can't rely on refCnt to check if the data is released, because
 				// the refCnt is zero when the data is not used.
 				if !data.released.Load() {
+					allReleased = false
 					break
 				}
 			}
-			e.generatedData = e.generatedData[:0]
-			break OUTER
+
+			if allReleased {
+				e.generatedData = e.generatedData[:0]
+				break OUTER
+			}
 		}
 	}
+
+	// Now we can safely reset the memory pool.
+	e.Reset()
 
 	logutil.Logger(ctx).Info("load ingest data batch size changed",
 		zap.Int("prev batch size", currBatchSize),
@@ -519,9 +529,12 @@ func (e *Engine) buildIngestData(keys, values [][]byte, buf []*membuf.Buffer) *M
 	}
 }
 
-// UpdateConcurrency changes the concurrency of this engine.
-func (e *Engine) UpdateConcurrency(concurrency int) {
+// UpdateResource changes the concurrency of this engine.
+func (e *Engine) UpdateResource(concurrency int, memCapacity int64) {
 	e.workerConcurrency.Store(int32(concurrency))
+	e.memLimit = int(float64(memCapacity) / writeStepMemShareCount * 3)
+	logutil.BgLogger().Info("set new memlimit for load range data",
+		zap.String("memLimit", units.BytesSize(float64(e.memLimit))))
 }
 
 // KVStatistics returns the total kv size and total kv count.
