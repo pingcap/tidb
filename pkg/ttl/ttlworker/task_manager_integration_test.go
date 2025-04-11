@@ -51,8 +51,8 @@ func TestParallelLockNewTask(t *testing.T) {
 	require.NoError(t, err)
 
 	sessionFactory := sessionFactory(t, dom)
-	se := sessionFactory()
-	defer se.Close()
+	se, closeSe := sessionFactory()
+	defer closeSe()
 
 	now := se.Now()
 
@@ -61,7 +61,7 @@ func TestParallelLockNewTask(t *testing.T) {
 	m := ttlworker.NewTaskManager(context.Background(), nil, isc, "test-id", store)
 
 	// insert and lock a new task
-	sql, args, err := cache.InsertIntoTTLTask(tk.Session(), "test-job", testTable.Meta().ID, 1, nil, nil, now, now)
+	sql, args, err := cache.InsertIntoTTLTask(tk.Session().GetSessionVars().Location(), "test-job", testTable.Meta().ID, 1, nil, nil, now, now)
 	require.NoError(t, err)
 	_, err = tk.Session().ExecuteInternal(ctx, sql, args...)
 	require.NoError(t, err)
@@ -84,7 +84,7 @@ func TestParallelLockNewTask(t *testing.T) {
 	testStart := time.Now()
 	for time.Since(testStart) < testDuration {
 		now := se.Now()
-		sql, args, err := cache.InsertIntoTTLTask(tk.Session(), "test-job", testTable.Meta().ID, 1, nil, nil, now, now)
+		sql, args, err := cache.InsertIntoTTLTask(tk.Session().GetSessionVars().Location(), "test-job", testTable.Meta().ID, 1, nil, nil, now, now)
 		require.NoError(t, err)
 		_, err = tk.Session().ExecuteInternal(ctx, sql, args...)
 		require.NoError(t, err)
@@ -98,8 +98,8 @@ func TestParallelLockNewTask(t *testing.T) {
 			scanManagerID := fmt.Sprintf("test-ttl-manager-%d", j)
 			wg.Add(1)
 			go func() {
-				se := sessionFactory()
-				defer se.Close()
+				se, closeSe := sessionFactory()
+				defer closeSe()
 
 				isc := cache.NewInfoSchemaCache(time.Minute)
 				require.NoError(t, isc.Update(se))
@@ -155,12 +155,16 @@ func TestParallelSchedule(t *testing.T) {
 		m.SetScanWorkers4Test(workers)
 		scheduleWg.Add(1)
 		go func() {
-			se := sessionFactory()
+			se, closeSe := sessionFactory()
+			defer closeSe()
+
 			m.RescheduleTasks(se, se.Now())
 			scheduleWg.Done()
 		}()
 		finishTasks = append(finishTasks, func() {
-			se := sessionFactory()
+			se, closeSe := sessionFactory()
+			defer closeSe()
+
 			for _, task := range m.GetRunningTasks() {
 				require.Nil(t, task.Context().Err(), fmt.Sprintf("%s %d", managerID, task.ScanID))
 				task.SetResult(nil)
@@ -200,7 +204,9 @@ func TestTaskScheduleExpireHeartBeat(t *testing.T) {
 	scanWorker.Start()
 	m := ttlworker.NewTaskManager(context.Background(), nil, cache.NewInfoSchemaCache(time.Second), "task-manager-1", store)
 	m.SetScanWorkers4Test([]ttlworker.Worker{scanWorker})
-	se := sessionFactory()
+	se, closeSe := sessionFactory()
+	defer closeSe()
+
 	now := se.Now()
 	m.RescheduleTasks(se, now)
 	tk.MustQuery("select status,owner_id from mysql.tidb_ttl_task").Check(testkit.Rows("running task-manager-1"))
@@ -210,18 +216,25 @@ func TestTaskScheduleExpireHeartBeat(t *testing.T) {
 	scanWorker2.Start()
 	m2 := ttlworker.NewTaskManager(context.Background(), nil, cache.NewInfoSchemaCache(time.Second), "task-manager-2", store)
 	m2.SetScanWorkers4Test([]ttlworker.Worker{scanWorker2})
-	m2.RescheduleTasks(sessionFactory(), now.Add(time.Hour))
+
+	se1, closeSe1 := sessionFactory()
+	defer closeSe1()
+	m2.RescheduleTasks(se1, now.Add(time.Hour))
 	tk.MustQuery("select status,owner_id from mysql.tidb_ttl_task").Check(testkit.Rows("running task-manager-2"))
 
 	// another task manager shouldn't fetch this task if it has finished
 	task := m2.GetRunningTasks()[0]
 	task.SetResult(nil)
-	m2.CheckFinishedTask(sessionFactory(), now)
+	se2, closeSe2 := sessionFactory()
+	defer closeSe2()
+	m2.CheckFinishedTask(se2, now)
 	scanWorker3 := ttlworker.NewMockScanWorker(t)
 	scanWorker3.Start()
 	m3 := ttlworker.NewTaskManager(context.Background(), nil, cache.NewInfoSchemaCache(time.Second), "task-manager-3", store)
 	m3.SetScanWorkers4Test([]ttlworker.Worker{scanWorker3})
-	m3.RescheduleTasks(sessionFactory(), now.Add(time.Hour))
+	se3, closeSe3 := sessionFactory()
+	defer closeSe3()
+	m3.RescheduleTasks(se3, now.Add(time.Hour))
 	tk.MustQuery("select status,owner_id from mysql.tidb_ttl_task").Check(testkit.Rows("finished task-manager-2"))
 }
 
@@ -244,9 +257,12 @@ func TestTaskMetrics(t *testing.T) {
 	scanWorker.Start()
 	m := ttlworker.NewTaskManager(context.Background(), nil, cache.NewInfoSchemaCache(time.Minute), "task-manager-1", store)
 	m.SetScanWorkers4Test([]ttlworker.Worker{scanWorker})
-	se := sessionFactory()
+	se, closeSe := sessionFactory()
+	defer closeSe()
 	now := se.Now()
-	m.RescheduleTasks(sessionFactory(), now)
+	se2, closeSe2 := sessionFactory()
+	defer closeSe2()
+	m.RescheduleTasks(se2, now)
 	tk.MustQuery("select status,owner_id from mysql.tidb_ttl_task").Check(testkit.Rows("running task-manager-1"))
 
 	m.ReportMetrics()
@@ -266,7 +282,8 @@ func TestRescheduleWithError(t *testing.T) {
 	sql := fmt.Sprintf("insert into mysql.tidb_ttl_task(job_id,table_id,scan_id,expire_time,created_time) values ('test-job', %d, %d, NOW(), NOW())", 613, 1)
 	tk.MustExec(sql)
 
-	se := sessionFactory()
+	se, closeSe := sessionFactory()
+	defer closeSe()
 	now := se.Now()
 
 	// schedule in a task manager
@@ -276,7 +293,9 @@ func TestRescheduleWithError(t *testing.T) {
 	m.SetScanWorkers4Test([]ttlworker.Worker{scanWorker})
 	notify := make(chan struct{})
 	go func() {
-		m.RescheduleTasks(sessionFactory(), now)
+		se, closeSe := sessionFactory()
+		defer closeSe()
+		m.RescheduleTasks(se, now)
 		notify <- struct{}{}
 	}()
 	timeout, cancel := context.WithTimeout(context.Background(), time.Second*5)
@@ -320,7 +339,8 @@ func TestTTLRunningTasksLimitation(t *testing.T) {
 		m.SetScanWorkers4Test(workers)
 		scheduleWg.Add(1)
 		go func() {
-			se := sessionFactory()
+			se, closeSe := sessionFactory()
+			defer closeSe()
 			m.RescheduleTasks(se, se.Now())
 			scheduleWg.Done()
 		}()
@@ -361,7 +381,7 @@ func TestShrinkScanWorkerAndResignOwner(t *testing.T) {
 	defer ttlworker.SetWaitWorkerStopTimeoutForTest(time.Second)()
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	pool := wrapPoolForTest(dom.SysSessionPool())
+	pool := wrapPoolForTest(dom.AdvancedSysSessionPool())
 	defer pool.AssertNoSessionInUse(t)
 	waitAndStopTTLManager(t, dom)
 	tk := testkit.NewTestKit(t, store)
@@ -378,7 +398,8 @@ func TestShrinkScanWorkerAndResignOwner(t *testing.T) {
 		tk.MustExec(sql)
 	}
 
-	se := sessionFactory()
+	se, closeSe := sessionFactory()
+	defer closeSe()
 	now := se.Now()
 
 	m := ttlworker.NewTaskManager(context.Background(), pool, cache.NewInfoSchemaCache(time.Minute), "scan-manager-1", store)
@@ -540,11 +561,12 @@ func TestShrinkScanWorkerAndResignOwner(t *testing.T) {
 
 func TestTaskCancelledAfterHeartbeatTimeout(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	pool := wrapPoolForTest(dom.SysSessionPool())
+	pool := wrapPoolForTest(dom.AdvancedSysSessionPool())
 	waitAndStopTTLManager(t, dom)
 	tk := testkit.NewTestKit(t, store)
 	sessionFactory := sessionFactory(t, dom)
-	se := sessionFactory()
+	se, closeSe := sessionFactory()
+	defer closeSe()
 	// make sure tk has the same timezone as the session to ensure the following assertings are correct
 	tk.MustExec("set @@time_zone=?", se.GetSessionVars().TimeZone.String())
 
@@ -641,7 +663,7 @@ func TestTaskCancelledAfterHeartbeatTimeout(t *testing.T) {
 
 func TestHeartBeatErrorNotBlockOthers(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	pool := wrapPoolForTest(dom.SysSessionPool())
+	pool := wrapPoolForTest(dom.AdvancedSysSessionPool())
 	defer pool.AssertNoSessionInUse(t)
 	waitAndStopTTLManager(t, dom)
 	tk := testkit.NewTestKit(t, store)
@@ -657,7 +679,8 @@ func TestHeartBeatErrorNotBlockOthers(t *testing.T) {
 		tk.MustExec(sql)
 	}
 
-	se := sessionFactory()
+	se, closeSe := sessionFactory()
+	defer closeSe()
 	now := se.Now()
 
 	m := ttlworker.NewTaskManager(context.Background(), pool, cache.NewInfoSchemaCache(time.Minute), "task-manager-1", store)
