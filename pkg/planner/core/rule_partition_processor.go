@@ -517,10 +517,6 @@ func (s *PartitionProcessor) processHashOrKeyPartition(ds *logicalop.DataSource,
 		return nil, err
 	}
 	if used != nil {
-		if !ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-			return ds, nil
-		}
-
 		return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi), opt)
 	}
 	tableDual := logicalop.LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.QueryBlockOffset())
@@ -896,6 +892,9 @@ func (s *PartitionProcessor) prune(ds *logicalop.DataSource, opt *optimizetrace.
 		return s.processHashOrKeyPartition(ds, pi, opt)
 	case ast.PartitionTypeList:
 		return s.processListPartition(ds, pi, opt)
+	}
+	if !ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+
 	}
 
 	return s.makeUnionAllChildren(ds, pi, fullRange(len(pi.Definitions)), opt)
@@ -1970,6 +1969,9 @@ func (s *PartitionProcessor) makeUnionAllChildren(ds *logicalop.DataSource, pi *
 		// No need for the union all.
 		appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, children[0], children, opt)
 		return children[0], nil
+	}
+	if !ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		return ds, nil
 	}
 	unionAll := logicalop.LogicalPartitionUnionAll{}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	unionAll.SetChildren(children...)
