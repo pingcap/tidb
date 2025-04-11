@@ -991,7 +991,7 @@ func TestMergeGlobalStatsForCMSketch(t *testing.T) {
 	tk.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (6), (null), (11), (12), (13), (14), (15), (16), (17), (18), (19), (19)")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("explain select * from t where a = 1").Check(
-		testkit.Rows("TableReader_7 1.00 root partition:p0 data:Selection_6",
-			"└─Selection_6 1.00 cop[tikv]  eq(test.t.a, 1)",
-			"  └─TableFullScan_5 18.00 cop[tikv] table:t keep order:false"))
+		testkit.Rows("TableReader_9 1.00 root partition:p0 data:Selection_8",
+			"└─Selection_8 1.00 cop[tikv]  eq(test.t.a, 1)",
+			"  └─TableFullScan_7 18.00 cop[tikv] table:t, partition:p0 keep order:false]"))
 }
