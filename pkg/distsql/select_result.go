@@ -310,6 +310,23 @@ type selectResult struct {
 	paging             bool
 }
 
+func (r *selectResult) handleCopStats(resultSubset kv.ResultSubset, duration time.Duration) error {
+	if resultSubset == nil {
+		return nil
+	}
+	hasStats, ok := resultSubset.(CopRuntimeStats)
+	if ok {
+		copStats := hasStats.GetCopRuntimeStats()
+		if copStats != nil {
+			if err := r.updateCopRuntimeStats(ctx, copStats, resultSubset.RespTime()); err != nil {
+				return err
+			}
+			r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, duration)
+		}
+	}
+	return nil
+}
+
 func (r *selectResult) fetchResp(ctx context.Context) error {
 	for {
 		r.respChkIdx = 0
@@ -318,6 +335,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		duration := time.Since(startTime)
 		r.fetchDuration += duration
 		if err != nil {
+			r.handleCopStats(resultSubset, duration)
 			return errors.Trace(err)
 		}
 		if r.selectResp != nil {
@@ -359,15 +377,8 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 
 		r.partialCount++
 
-		hasStats, ok := resultSubset.(CopRuntimeStats)
-		if ok {
-			copStats := hasStats.GetCopRuntimeStats()
-			if copStats != nil {
-				if err := r.updateCopRuntimeStats(ctx, copStats, resultSubset.RespTime()); err != nil {
-					return err
-				}
-				r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, duration)
-			}
+		if err := r.handleCopStats(resultSubset, duration); err != nil {
+			return err
 		}
 		if len(r.selectResp.Chunks) != 0 {
 			break
