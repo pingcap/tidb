@@ -325,7 +325,14 @@ func TestGetRegionSplitKeys(t *testing.T) {
 	key1 := []byte("1234")
 	key2 := []byte("1235")
 	key3 := []byte("1236")
-	e := &Engine{}
+	tikvCodec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: 1, Name: "keyspace"})
+	key1WithPrefix := tikvCodec.EncodeKey(key1)
+	key2WithPrefix := tikvCodec.EncodeKey(key2)
+	key3WithPrefix := tikvCodec.EncodeKey(key3)
+	require.NoError(t, err)
+	e := &Engine{
+		tikvCodec: tikvCodec,
+	}
 
 	e.keyAdapter = common.DupDetectKeyAdapter{}
 	encodedKey1 := e.keyAdapter.Encode(nil, key1, common.EncodeIntRowID(1))
@@ -341,12 +348,12 @@ func TestGetRegionSplitKeys(t *testing.T) {
 		{
 			[][]byte{encodedKey1, encodedKey2, encodedKey3},
 			true,
-			[][]byte{key1, key2, key3},
+			[][]byte{key1WithPrefix, key2WithPrefix, key3WithPrefix},
 		},
 		{
 			[][]byte{encodedKey1, encodedKey2, encodedKey3Next},
 			true,
-			[][]byte{key1, key2, kv.Key(key3).Next()},
+			[][]byte{key1WithPrefix, key2WithPrefix, tikvCodec.EncodeKey(kv.Key(key3).Next())},
 		},
 		{
 			[][]byte{encodedKey1, encodedKey2Next, encodedKey3Next},
