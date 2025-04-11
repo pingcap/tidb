@@ -73,6 +73,10 @@ LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBGitHash=$(shell 
 LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBGitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
 LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBEdition=$(TIDB_EDITION)"
 
+ifeq ("${NEXT_GEN}", "1")
+	LDFLAGS += -X "github.com/pingcap/tidb/pkg/config.storeEngineGeneration=cloud"
+endif
+
 EXTENSION_FLAG =
 ifeq ($(shell if [ -f pkg/extension/enterprise/.git ]; then echo "true"; fi),true)
 	EXTENSION_FLAG += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBEnterpriseExtensionGitHash=$(shell cd pkg/extension/enterprise && git rev-parse HEAD)"

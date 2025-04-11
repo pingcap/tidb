@@ -63,7 +63,7 @@ func GetTiDBInfo() string {
 	if versioninfo.TiDBEnterpriseExtensionGitHash != "" {
 		enterpriseVersion = fmt.Sprintf("\nEnterprise Extension Commit Hash: %s", versioninfo.TiDBEnterpriseExtensionGitHash)
 	}
-	return fmt.Sprintf("Release Version: %s\n"+
+	info := fmt.Sprintf("Release Version: %s\n"+
 		"Edition: %s\n"+
 		"Git Commit Hash: %s\n"+
 		"Git Branch: %s\n"+
@@ -84,6 +84,10 @@ func GetTiDBInfo() string {
 		config.GetGlobalConfig().Store,
 		enterpriseVersion,
 	)
+	if config.IsCloudStore() {
+		info += "\nNext Generation"
+	}
+	return info
 }
 
 // checkValidity checks whether cols and every data have the same length.
