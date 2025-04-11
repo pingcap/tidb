@@ -14,29 +14,29 @@ insert into t values (3, 'c');
 Error 1062 (23000): Duplicate entry 'c' for key 't.idx'
 explain format='brief' select * from t use index(idx) where lower(b) = 'c';
 id	estRows	task	access object	operator info
-Projection	1.00	root		globalindex__expression_index.t.a, globalindex__expression_index.t.b
-└─Point_Get	1.00	root	table:t, index:idx(lower(`b`))	
+TableReader	8000.00	root	partition:all	data:Selection
+└─Selection	8000.00	cop[tikv]		eq(lower(globalindex__expression_index.t.b), "c")
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t use index(idx) where lower(b) = 'c';
 a	b
 3	C
 explain format='brief' select * from t use index(idx) where lower(b) > 'c' order by lower(b);
 id	estRows	task	access object	operator info
-Projection	3333.33	root		globalindex__expression_index.t.a, globalindex__expression_index.t.b
-└─Projection	3333.33	root		globalindex__expression_index.t.a, globalindex__expression_index.t.b, lower(globalindex__expression_index.t.b)
-  └─IndexLookUp	3333.33	root	partition:all	
-    ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:t, index:idx(lower(`b`))	range:("c",+inf], keep order:true, stats:pseudo
-    └─TableRowIDScan(Probe)	3333.33	cop[tikv]	table:t	keep order:false, stats:pseudo
+Projection	8000.00	root		globalindex__expression_index.t.a, globalindex__expression_index.t.b
+└─Sort	8000.00	root		Column#5
+  └─Projection	8000.00	root		globalindex__expression_index.t.a, globalindex__expression_index.t.b, lower(globalindex__expression_index.t.b)->Column#5
+    └─TableReader	8000.00	root	partition:all	data:Selection
+      └─Selection	8000.00	cop[tikv]		gt(lower(globalindex__expression_index.t.b), "c")
+        └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t use index(idx) where lower(b) > 'c' order by lower(b);
 a	b
 4	d
 5	x
 explain format='brief' select * from t partition(p0) use index(idx) where lower(b) > 'c';
 id	estRows	task	access object	operator info
-Projection	3333.33	root	NULL	globalindex__expression_index.t.a, globalindex__expression_index.t.b
-└─IndexLookUp	3333.33	root	partition:p0	NULL
-  ├─Selection(Build)	3333.33	cop[tikv]	NULL	in(_tidb_tid, tid0)
-  │ └─IndexRangeScan	3333.33	cop[tikv]	table:t, index:idx(lower(`b`))	range:("c",+inf], keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	3333.33	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	8000.00	root	partition:p0	data:Selection
+└─Selection	8000.00	cop[tikv]	NULL	gt(lower(globalindex__expression_index.t.b), "c")
+  └─TableFullScan	10000.00	cop[tikv]	table:t, partition:p0	keep order:false, stats:pseudo
 select * from t partition(p0) use index(idx) where lower(b) > 'c';
 a	b
 5	x
