@@ -1472,8 +1472,7 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 		// index join build logic, we can't merge this with normal datasource's index range
 		// because normal index range is built on expression EQ/IN. while index join's inner
 		// has its special runtime constants detecting and filling logic.
-		task, err := getBestIndexJoinInnerTaskByProp(ds, prop, opt, planCounter)
-		return task, 0, err
+		return getBestIndexJoinInnerTaskByProp(ds, prop, opt, planCounter)
 	}
 	var cnt int64
 	var unenforcedTask base.Task
