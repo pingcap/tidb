@@ -1096,17 +1096,15 @@ func admitIndexJoinInnerChildPattern(p base.LogicalPlan) bool {
 		if x.PreferStoreType&h.PreferTiFlash != 0 {
 			return false
 		}
-		return true
 	case *logicalop.LogicalProjection, *logicalop.LogicalSelection, *logicalop.LogicalAggregation:
 		if !p.SCtx().GetSessionVars().EnableINLJoinInnerMultiPattern {
 			return false
 		}
-		return true
 	case *logicalop.LogicalUnionScan:
-		return true
 	default: // index join inner side couldn't allow join, sort, limit, etc. todo: open it.
 		return false
 	}
+	return true
 }
 
 func extractIndexJoinInnerChildPattern(p *logicalop.LogicalJoin, innerChild base.LogicalPlan) *indexJoinInnerChildWrapper {
