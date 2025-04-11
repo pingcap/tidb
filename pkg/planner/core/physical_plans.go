@@ -965,6 +965,8 @@ type PhysicalTableScan struct {
 	maxWaitTimeMs     int
 
 	AnnIndexExtra *VectorIndexExtra `plan-cache-clone:"must-nil"` // MPP plan should not be cached.
+	// UsedColumnarIndexes is used to store the used columnar index for the table scan.
+	UsedColumnarIndexes []*tipb.ColumnarIndexInfo `plan-cache-clone:"must-nil"`
 }
 
 // VectorIndexExtra is the extra information for vector index.
@@ -1002,6 +1004,11 @@ func (ts *PhysicalTableScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, 
 	for _, rf := range ts.runtimeFilterList {
 		clonedRF := rf.Clone()
 		clonedScan.runtimeFilterList = append(clonedScan.runtimeFilterList, clonedRF)
+	}
+	clonedScan.UsedColumnarIndexes = make([]*tipb.ColumnarIndexInfo, 0, len(ts.UsedColumnarIndexes))
+	for _, colIdx := range ts.UsedColumnarIndexes {
+		colIdxClone := *colIdx
+		clonedScan.UsedColumnarIndexes = append(clonedScan.UsedColumnarIndexes, &colIdxClone)
 	}
 	return clonedScan, nil
 }
@@ -1890,7 +1897,7 @@ func (p *PhysicalExpand) Clone(newCtx base.PlanContext) (base.PhysicalPlan, erro
 	for _, one := range p.GroupingSets {
 		clonedGroupingSets = append(clonedGroupingSets, one.Clone())
 	}
-	np.GroupingSets = p.GroupingSets
+	np.GroupingSets = clonedGroupingSets
 	return np, nil
 }
 

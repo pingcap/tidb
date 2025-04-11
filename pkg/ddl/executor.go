@@ -1825,8 +1825,7 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			case ast.ConstraintVector:
 				err = e.createColumnarIndex(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option, constr.IfNotExists, model.ColumnarIndexTypeVector)
 			case ast.ConstraintColumnar:
-				err = dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("not currently supported")
-				// 	err = e.createColumnarIndex(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option, constr.IfNotExists, model.ColumnarIndexTypeInverted)
+				err = e.createColumnarIndex(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option, constr.IfNotExists, model.ColumnarIndexTypeInverted)
 			default:
 				// Nothing to do now.
 			}
@@ -4521,13 +4520,14 @@ func getIdentKey(ident ast.Ident) string {
 	return fmt.Sprintf("%s.%s", ident.Schema.L, ident.Name.L)
 }
 
-func getAnonymousIndexPrefix(columnarIndexType model.ColumnarIndexType) string {
-	switch columnarIndexType {
-	case model.ColumnarIndexTypeVector:
+// getAnonymousIndexPrefix returns the prefix for anonymous index name.
+// Column name of vector index IndexPartSpecifications is nil,
+// so we need a different prefix to distinguish between vector index and expression index.
+func getAnonymousIndexPrefix(isVector bool) string {
+	if isVector {
 		return "vector_index"
-	default:
-		return "expression_index"
 	}
+	return "expression_index"
 }
 
 // GetName4AnonymousIndex returns a valid name for anonymous index.
@@ -4684,7 +4684,7 @@ func checkIndexNameAndColumns(ctx *metabuild.Context, t table.Table, indexName a
 	indexPartSpecifications []*ast.IndexPartSpecification, columnarIndexType model.ColumnarIndexType, ifNotExists bool) (ast.CIStr, []*model.ColumnInfo, error) {
 	// Deal with anonymous index.
 	if len(indexName.L) == 0 {
-		colName := ast.NewCIStr(getAnonymousIndexPrefix(columnarIndexType))
+		colName := ast.NewCIStr(getAnonymousIndexPrefix(columnarIndexType == model.ColumnarIndexTypeVector))
 		if indexPartSpecifications[0].Column != nil {
 			colName = indexPartSpecifications[0].Column.Name
 		}
@@ -4729,10 +4729,10 @@ func checkIndexNameAndColumns(ctx *metabuild.Context, t table.Table, indexName a
 
 func checkTableTypeForColumnarIndex(tblInfo *model.TableInfo) error {
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
-		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Vector Index")
+		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("create columnar index")
 	}
 	if tblInfo.TempTableType != model.TempTableNone {
-		return dbterror.ErrOptOnTemporaryTable.FastGenByArgs("vector index")
+		return dbterror.ErrOptOnTemporaryTable.FastGenByArgs("columnar index")
 	}
 	if tblInfo.GetPartitionInfo() != nil {
 		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported partition table")
@@ -4761,10 +4761,16 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	// Do some checks here to fast fail the DDL job.
 	var funcExpr string
-	if columnarIndexType == model.ColumnarIndexTypeVector {
-		_, funcExpr, err = buildVectorInfoWithCheck(indexPartSpecifications, tblInfo)
-		if err != nil {
+	switch columnarIndexType {
+	case model.ColumnarIndexTypeInverted:
+		if _, err := buildInvertedInfoWithCheck(indexPartSpecifications, tblInfo); err != nil {
+			return errors.Trace(err)
+		}
+	case model.ColumnarIndexTypeVector:
+		if _, funcExpr, err = buildVectorInfoWithCheck(indexPartSpecifications, tblInfo); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -4866,8 +4872,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	case ast.IndexKeyTypeFullText, ast.IndexKeyTypeSpatial:
 		return dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT and SPATIAL index is not supported")
 	case ast.IndexKeyTypeColumnar:
-		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("not currently supported")
-		// return e.createColumnarIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists, model.ColumnarIndexTypeInverted)
+		return e.createColumnarIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists, model.ColumnarIndexTypeInverted)
 	case ast.IndexKeyTypeVector:
 		return e.createColumnarIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists, model.ColumnarIndexTypeVector)
 	}
@@ -4879,6 +4884,15 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 
 	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 		return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Index"))
+	}
+
+	if indexOption != nil {
+		switch indexOption.Tp {
+		case ast.IndexTypeHNSW:
+			return dbterror.ErrUnsupportedIndexType.GenWithStackByArgs("HNSW")
+		case ast.IndexTypeInverted:
+			return dbterror.ErrUnsupportedIndexType.GenWithStackByArgs("INVERTED")
+		}
 	}
 	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
 	indexName, hiddenCols, err := checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, model.ColumnarIndexTypeNA, ifNotExists)
