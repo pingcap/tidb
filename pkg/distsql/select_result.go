@@ -310,7 +310,7 @@ type selectResult struct {
 	paging             bool
 }
 
-func (r *selectResult) handleCopStats(resultSubset kv.ResultSubset, duration time.Duration) error {
+func (r *selectResult) handleCopStats(ctx context.Context, resultSubset kv.ResultSubset, duration time.Duration) error {
 	if resultSubset == nil {
 		return nil
 	}
@@ -335,7 +335,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		duration := time.Since(startTime)
 		r.fetchDuration += duration
 		if err != nil {
-			r.handleCopStats(resultSubset, duration)
+			r.handleCopStats(ctx, resultSubset, duration)
 			return errors.Trace(err)
 		}
 		if r.selectResp != nil {
@@ -377,7 +377,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 
 		r.partialCount++
 
-		if err := r.handleCopStats(resultSubset, duration); err != nil {
+		if err := r.handleCopStats(ctx, resultSubset, duration); err != nil {
 			return err
 		}
 		if len(r.selectResp.Chunks) != 0 {
