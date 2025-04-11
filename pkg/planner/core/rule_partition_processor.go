@@ -84,6 +84,9 @@ func (s *PartitionProcessor) rewriteDataSource(lp base.LogicalPlan, opt *optimiz
 	case *logicalop.DataSource:
 		return s.prune(p, opt)
 	case *logicalop.LogicalUnionScan:
+		if lp.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+			return lp, nil
+		}
 		ds := p.Children()[0]
 		ds, err := s.prune(ds.(*logicalop.DataSource), opt)
 		if err != nil {
@@ -892,6 +895,9 @@ func (s *PartitionProcessor) prune(ds *logicalop.DataSource, opt *optimizetrace.
 		return s.processHashOrKeyPartition(ds, pi, opt)
 	case ast.PartitionTypeList:
 		return s.processListPartition(ds, pi, opt)
+	}
+	if ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		return ds, nil
 	}
 
 	return s.makeUnionAllChildren(ds, pi, fullRange(len(pi.Definitions)), opt)
@@ -1953,8 +1959,10 @@ func (s *PartitionProcessor) makeUnionAllChildren(ds *logicalop.DataSource, pi *
 		}
 	}
 	s.checkHintsApplicable(ds, partitionNameSet)
+	if !ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("Static partition pruning mode")
+	}
 
-	ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("Static partition pruning mode")
 	if len(children) == 0 {
 		// No result after table pruning.
 		tableDual := logicalop.LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.QueryBlockOffset())
@@ -1966,6 +1974,9 @@ func (s *PartitionProcessor) makeUnionAllChildren(ds *logicalop.DataSource, pi *
 		// No need for the union all.
 		appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, children[0], children, opt)
 		return children[0], nil
+	}
+	if ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		return ds, nil
 	}
 	unionAll := logicalop.LogicalPartitionUnionAll{}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	unionAll.SetChildren(children...)
