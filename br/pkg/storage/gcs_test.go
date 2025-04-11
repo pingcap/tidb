@@ -9,12 +9,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
-<<<<<<< HEAD
-=======
 	"net/http"
 	"net/http/httptest"
-	"net/url"
->>>>>>> 7424255fef7 (external store: use separate ctx for GCS clients (#60402))
 	"os"
 	"testing"
 	"time"
@@ -576,14 +572,6 @@ func TestSpeedReadManyFiles(t *testing.T) {
 	require.NoError(t, eg.Wait())
 	t.Logf("read %d large files cost %v", len(testFiles), time.Since(now))
 }
-<<<<<<< HEAD
-=======
-
-func TestGCSShouldRetry(t *testing.T) {
-	require.True(t, shouldRetry(&url.Error{Err: goerrors.New("http2: server sent GOAWAY and closed the connectiont"), Op: "Get", URL: "https://storage.googleapis.com/storage/v1/"}))
-	require.True(t, shouldRetry(&url.Error{Err: goerrors.New("http2: client connection lost"), Op: "Get", URL: "https://storage.googleapis.com/storage/v1/"}))
-	require.True(t, shouldRetry(&url.Error{Err: io.EOF, Op: "Get", URL: "https://storage.googleapis.com/storage/v1/"}))
-}
 
 func TestCtxUsage(t *testing.T) {
 	httpSvr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
@@ -611,4 +599,3 @@ func TestCtxUsage(t *testing.T) {
 	// before the fix, it's context canceled error
 	require.ErrorContains(t, err, "invalid_request")
 }
->>>>>>> 7424255fef7 (external store: use separate ctx for GCS clients (#60402))
