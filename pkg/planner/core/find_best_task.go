@@ -1288,9 +1288,12 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		fixcontrol.Fix52869,
 		false,
 	)
+	// is preferRangeRatio is set, check index selectivity
+	preferRangeRatio := ds.SCtx().GetSessionVars().PreferRangeRatio
+	idxMissingStats = idxMissingStats || ds.TableStats.HistColl.Pseudo
 	if preferRange {
 		// Override preferRange with the following limitations to scope
-		preferRange = preferMerge || idxMissingStats || ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1
+		preferRange = ds.AccessPathMinIndexSel < preferRangeRatio || preferMerge || idxMissingStats
 	}
 	if preferRange && len(candidates) > 1 {
 		// If a candidate path is TiFlash-path or forced-path or MV index or global index, we just keep them. For other
@@ -1298,13 +1301,20 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		preferredPaths := make([]*candidatePath, 0, len(candidates))
 		var hasRangeScanPath bool
 		for _, c := range candidates {
-			if c.path.Forced || c.path.StoreType == kv.TiFlash || (c.path.Index != nil && (c.path.Index.Global || c.path.Index.MVIndex)) {
+			if c.path.Forced || c.path.StoreType == kv.TiFlash || (c.path.Index != nil && ((c.path.Index.Global && c.isMatchProp) || c.path.Index.MVIndex)) {
 				preferredPaths = append(preferredPaths, c)
 				continue
 			}
 			if !c.path.IsFullScanRange(ds.TableInfo) {
-				// Preference plans with equals/IN predicates or where there is more filtering in the index than against the table
-				indexFilters := c.path.EqOrInCondCount > 0 || len(c.path.TableFilters) < len(c.path.IndexFilters)
+				// Preference plans with equals/IN predicates or where there is more matching index filtering than table filtering
+				totalIndexFilters := len(c.path.IndexFilters) + len(c.path.AccessConds)
+				totalIndexSelectivity := c.path.CountAfterAccess / ds.StatsInfo().RowCount
+				if c.path.CountAfterIndex > 0 {
+					totalIndexSelectivity = c.path.CountAfterIndex / ds.StatsInfo().RowCount
+				}
+				indexFilters := c.path.EqOrInCondCount > 0 ||
+					(len(c.path.AccessConds) > 0 && len(c.path.TableFilters) < totalIndexFilters &&
+						((idxMissingStats && totalIndexFilters > 1) || totalIndexSelectivity < preferRangeRatio))
 				if preferMerge || (indexFilters && (prop.IsSortItemEmpty() || c.isMatchProp)) {
 					preferredPaths = append(preferredPaths, c)
 					hasRangeScanPath = true
