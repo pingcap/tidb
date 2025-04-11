@@ -447,6 +447,7 @@ type BackendConfig struct {
 	ShouldCheckTiKV    bool
 	DupeDetectEnabled  bool
 	DuplicateDetectOpt common.DupDetectOpt
+	TiKVWorkerURL      string
 	// max write speed in bytes per second to each store(burst is allowed), 0 means no limit
 	StoreWriteBWLimit int
 	// When TiKV is in normal mode, ingesting too many SSTs will cause TiKV write stall.
