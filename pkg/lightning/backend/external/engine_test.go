@@ -21,11 +21,13 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 func testGetFirstAndLastKey(
@@ -323,7 +325,14 @@ func TestGetRegionSplitKeys(t *testing.T) {
 	key1 := []byte("1234")
 	key2 := []byte("1235")
 	key3 := []byte("1236")
-	e := &Engine{}
+	tikvCodec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: 1, Name: "keyspace"})
+	key1WithPrefix := tikvCodec.EncodeKey(key1)
+	key2WithPrefix := tikvCodec.EncodeKey(key2)
+	key3WithPrefix := tikvCodec.EncodeKey(key3)
+	require.NoError(t, err)
+	e := &Engine{
+		tikvCodec: tikvCodec,
+	}
 
 	e.keyAdapter = common.DupDetectKeyAdapter{}
 	encodedKey1 := e.keyAdapter.Encode(nil, key1, common.EncodeIntRowID(1))
@@ -339,12 +348,12 @@ func TestGetRegionSplitKeys(t *testing.T) {
 		{
 			[][]byte{encodedKey1, encodedKey2, encodedKey3},
 			true,
-			[][]byte{key1, key2, key3},
+			[][]byte{key1WithPrefix, key2WithPrefix, key3WithPrefix},
 		},
 		{
 			[][]byte{encodedKey1, encodedKey2, encodedKey3Next},
 			true,
-			[][]byte{key1, key2, kv.Key(key3).Next()},
+			[][]byte{key1WithPrefix, key2WithPrefix, tikvCodec.EncodeKey(kv.Key(key3).Next())},
 		},
 		{
 			[][]byte{encodedKey1, encodedKey2Next, encodedKey3Next},
@@ -372,5 +381,85 @@ func TestGetRegionSplitKeys(t *testing.T) {
 		res, err := e.GetRegionSplitKeys()
 		require.NoError(t, err)
 		require.Equal(t, len(tc.splitKeys), len(res))
+	}
+}
+
+func TestRewriteDataAndRanges(t *testing.T) {
+	mockCodec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: 1, Name: "keyspace"})
+	require.NoError(t, err)
+
+	rawKeys := [][]byte{
+		[]byte("key1"),
+		[]byte("key2"),
+		[]byte("key3"),
+	}
+
+	testCases := []struct {
+		name       string
+		keyAdapter common.KeyAdapter
+	}{
+		{
+			name:       "NoopKeyAdapter",
+			keyAdapter: common.NoopKeyAdapter{},
+		},
+		{
+			name:       "DupDetectKeyAdapter",
+			keyAdapter: common.DupDetectKeyAdapter{},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			e := &Engine{
+				keyAdapter: tc.keyAdapter,
+			}
+
+			encodedRowID := common.EncodeIntRowID(1)
+			encodedKeys := make([][]byte, len(rawKeys))
+			for i, key := range rawKeys {
+				encodedKeys[i] = e.keyAdapter.Encode(nil, key, encodedRowID)
+			}
+
+			expectedKeys := make([][]byte, len(rawKeys))
+			for i, key := range rawKeys {
+				expectedKeys[i] = e.keyAdapter.Encode(nil, mockCodec.EncodeKey(key), encodedRowID)
+			}
+
+			data := &MemoryIngestData{
+				keys: make([][]byte, len(encodedKeys)),
+			}
+			copy(data.keys, encodedKeys)
+
+			// Create the last end key using Next()
+			lastEndKey := kv.Key(encodedKeys[2]).Next()
+			ranges := []common.Range{
+				{Start: encodedKeys[0], End: encodedKeys[1]},
+				{Start: encodedKeys[1], End: encodedKeys[2]},
+				{Start: encodedKeys[2], End: lastEndKey},
+			}
+
+			rawLastKey, err := e.tryDecodeEndKey(lastEndKey)
+			require.NoError(t, err)
+
+			expectedRanges := []common.Range{
+				{Start: mockCodec.EncodeKey(rawKeys[0]), End: mockCodec.EncodeKey(rawKeys[1])},
+				{Start: mockCodec.EncodeKey(rawKeys[1]), End: mockCodec.EncodeKey(rawKeys[2])},
+				{Start: mockCodec.EncodeKey(rawKeys[2]), End: mockCodec.EncodeKey(rawLastKey)},
+			}
+
+			err = e.rewriteDataAndRanges(data, ranges, mockCodec, e.keyAdapter)
+			require.NoError(t, err)
+
+			require.Equal(t, len(expectedKeys), len(data.keys))
+			for i, key := range data.keys {
+				require.Equal(t, expectedKeys[i], key)
+			}
+
+			require.Equal(t, len(expectedRanges), len(ranges))
+			for i, r := range ranges {
+				require.Equal(t, expectedRanges[i].Start, r.Start)
+				require.Equal(t, expectedRanges[i].End, r.End)
+			}
+		})
 	}
 }
