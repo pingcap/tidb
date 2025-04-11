@@ -177,7 +177,7 @@ func enumeratePhysicalPlans4Task(
 	planCounter *base.PlanCounterTp,
 	opt *optimizetrace.PhysicalOptimizeOp,
 ) (base.Task, int64, error) {
-	var bestTask base.Task = base.InvalidTask
+	var bestTask, preferTask = base.InvalidTask, base.InvalidTask
 	var curCntPlan, cntPlan int64
 	var err error
 	childTasks := make([]base.Task, 0, p.ChildLen())
@@ -249,13 +249,33 @@ func enumeratePhysicalPlans4Task(
 			break
 		}
 		appendCandidate4PhysicalOptimizeOp(opt, p, curTask.Plan(), prop)
-		// Get the most efficient one.
+
+		// Get the most efficient one only by low-cost priority among all valid plans.
 		if curIsBetter, err := compareTaskCost(curTask, bestTask, opt); err != nil {
 			return nil, 0, err
 		} else if curIsBetter {
 			bestTask = curTask
 		}
+
+		// Get the most preferred and efficient one by hint and low-cost priority.
+		// since hint applicable plan may greater than 1, like inl_join can suit for:
+		// index_join, index_hash_join, index_merge_join, we should chase the most efficient
+		// one among them.
+		// todo: extend suitLogicalJoinHint to be a normal logicalOperator's interface to handle the hint related stuff.
+		if suitLogicalJoinHint(p.Self(), curTask.Plan()) {
+			// curTask is a preferred physic plan, compare cost with previous preferred one and cache the low-cost one.
+			if curIsBetter, err := compareTaskCost(curTask, preferTask, opt); err != nil {
+				return nil, 0, err
+			} else if curIsBetter {
+				preferTask = curTask
+			}
+		}
 	}
+	// there is a valid preferred low-cost physical one, return it.
+	if !preferTask.Invalid() {
+		return preferTask, cntPlan, nil
+	}
+	// return the normal lowest-cost physical one.
 	return bestTask, cntPlan, nil
 }
 
@@ -1202,6 +1222,10 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 	for _, path := range ds.PossibleAccessPaths {
 		// We should check whether the possible access path is valid first.
 		if path.StoreType != kv.TiFlash && prop.IsFlashProp() {
+			continue
+		}
+		// Use Inverted Index can not be used as access path index.
+		if path.Index != nil && path.Index.InvertedInfo != nil {
 			continue
 		}
 		if len(path.PartialAlternativeIndexPaths) > 0 {
@@ -2595,6 +2619,23 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	if ts.KeepOrder && ts.StoreType == kv.TiFlash && (ts.Desc || ds.SCtx().GetSessionVars().TiFlashFastScan) {
 		// TiFlash fast mode(https://github.com/pingcap/tidb/pull/35851) does not keep order in TableScan
 		return base.InvalidTask, nil
+	}
+	// When the the store type is TiFlash, we will try to set the UsedColumnarIndexes.
+	// FIXME: Now it is a naive implementation, we will refine it based on selectivity and cost in the future.
+	if ts.StoreType == kv.TiFlash {
+		for _, index := range ts.Table.Indices {
+			if index.State == model.StatePublic && index.InvertedInfo != nil {
+				ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, &tipb.ColumnarIndexInfo{
+					IndexType: tipb.ColumnarIndexType_TypeInverted,
+					Index: &tipb.ColumnarIndexInfo_InvertedQueryInfo{
+						InvertedQueryInfo: &tipb.InvertedQueryInfo{
+							IndexId:  index.ID,
+							ColumnId: index.InvertedInfo.ColumnID,
+						},
+					},
+				})
+			}
+		}
 	}
 
 	// In disaggregated tiflash mode, only MPP is allowed, cop and batchCop is deprecated.

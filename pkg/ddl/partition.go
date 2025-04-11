@@ -3755,11 +3755,6 @@ type reorgPartitionWorker struct {
 	writeColOffsetMap map[int64]int
 	maxOffset         int
 	reorgedTbl        table.PartitionedTable
-	// Only used for non-clustered tables, since we need to re-generate _tidb_rowid,
-	// and check if the old _tidb_rowid was already written or not.
-	// If the old _tidb_rowid already exists, then the row is already backfilled (double written)
-	// and can be skipped. Otherwise, we will insert it and generate index entries.
-	oldKeys []kv.Key
 }
 
 func newReorgPartitionWorker(i int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *ReorgContext) (*reorgPartitionWorker, error) {
@@ -3826,46 +3821,88 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 		// i.e. concurrently written by StateWriteOnly or StateWriteReorganization.
 		// and if so, skip it.
 		var found map[string][]byte
-		if len(w.oldKeys) > 0 {
+		lockKey := make([]byte, 0, tablecodec.RecordRowKeyLen)
+		lockKey = append(lockKey, handleRange.startKey[:tablecodec.TableSplitKeyLen]...)
+		if !w.table.Meta().HasClusteredIndex() && len(w.rowRecords) > 0 {
+			failpoint.InjectCall("PartitionBackfillNonClustered", w.rowRecords[0].vals)
 			// we must check if old IDs already been written,
 			// i.e. double written by StateWriteOnly or StateWriteReorganization.
-			// TODO: while waiting for BatchGet to check for duplicate, do another round of reads in parallel?
-			found, err = txn.BatchGet(ctx, w.oldKeys)
+
+			// TODO: test how to use PresumeKeyNotExists/NeedConstraintCheckInPrewrite/DO_CONSTRAINT_CHECK
+			// to delay the check until commit.
+			// And handle commit errors and fall back to this method of checking all keys to see if we need to skip any.
+			newKeys := make([]kv.Key, 0, len(w.rowRecords))
+			for i := range w.rowRecords {
+				newKeys = append(newKeys, w.rowRecords[i].key)
+			}
+			found, err = txn.BatchGet(ctx, newKeys)
 			if err != nil {
 				return errors.Trace(err)
 			}
-		}
 
-		for i, prr := range w.rowRecords {
+			// TODO: Add test that kills (like `kill -9`) the currently running
+			// ddl owner, to see how it handles re-running this backfill when some batches has
+			// committed and reorgInfo has not been updated, so it needs to redo some batches.
+		}
+		tmpRow := make([]types.Datum, len(w.reorgedTbl.Cols()))
+
+		for _, prr := range w.rowRecords {
 			taskCtx.scanCount++
 			key := prr.key
+			lockKey = lockKey[:tablecodec.TableSplitKeyLen]
+			lockKey = append(lockKey, key[tablecodec.TableSplitKeyLen:]...)
+			// Lock the *old* key, since there can still be concurrent update happening on
+			// the rows from fetchRowColVals(). If we cannot lock the keys in this
+			// transaction and succeed when committing, then another transaction did update
+			// the same key, and we will fail and retry. When retrying, this key would be found
+			// through BatchGet and skipped.
+			// TODO: would it help to accumulate the keys in a slice and then only call this once?
+			err = txn.LockKeys(context.Background(), new(kv.LockCtx), lockKey)
+			if err != nil {
+				return errors.Trace(err)
+			}
 
-			// w.oldKeys is only set for non-clustered tables, in w.fetchRowColVals().
-			if len(w.oldKeys) > 0 {
-				if _, ok := found[string(w.oldKeys[i])]; ok {
-					// Already filled, i.e. double written earlier by concurrent DML
+			if vals, ok := found[string(key)]; ok {
+				if len(vals) == len(prr.vals) && bytes.Equal(vals, prr.vals) {
+					// Already backfilled or double written earlier by concurrent DML
 					continue
 				}
-
-				// Check if we can lock the old key, since there can still be concurrent update
-				// happening on the rows from fetchRowColVals(), if we cannot lock the keys in this
-				// transaction and succeed when committing, then another transaction did update
-				// the same key, and we will fail and retry. When retrying, this key would be found
-				// through BatchGet and skipped.
-				err = txn.LockKeys(context.Background(), new(kv.LockCtx), w.oldKeys[i])
+				// Not same row, due to earlier EXCHANGE PARTITION.
+				// Update the current read row by Remove it and Add it back (which will give it a new _tidb_rowid)
+				// which then also will be used as unique id in the new partition.
+				var h kv.Handle
+				var currPartID int64
+				currPartID, h, err = tablecodec.DecodeRecordKey(lockKey)
 				if err != nil {
 					return errors.Trace(err)
 				}
-
-				// Due to EXCHANGE PARTITION, the existing _tidb_rowid may collide between partitions!
-				// Generate new _tidb_rowid.
-				recordID, err := tables.AllocHandle(w.ctx, w.tblCtx, w.reorgedTbl)
+				_, err = w.rowDecoder.DecodeTheExistedColumnMap(w.exprCtx, h, prr.vals, w.loc, w.rowMap)
 				if err != nil {
 					return errors.Trace(err)
 				}
-
-				// tablecodec.prefixLen is not exported, but is just TableSplitKeyLen + 2
-				key = tablecodec.EncodeRecordKey(key[:tablecodec.TableSplitKeyLen+2], recordID)
+				for _, col := range w.table.WritableCols() {
+					d, ok := w.rowMap[col.ID]
+					if !ok {
+						return dbterror.ErrUnsupportedReorganizePartition.GenWithStackByArgs()
+					}
+					tmpRow[col.Offset] = d
+				}
+				// Use RemoveRecord/AddRecord to keep the indexes in-sync!
+				pt := w.table.GetPartitionedTable().GetPartition(currPartID)
+				err = pt.RemoveRecord(w.tblCtx, txn, h, tmpRow)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				h, err = pt.AddRecord(w.tblCtx, txn, tmpRow)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				w.cleanRowMap()
+				// tablecodec.prefixLen is not exported, but is just TableSplitKeyLen + 2 ("_r")
+				key = tablecodec.EncodeRecordKey(key[:tablecodec.TableSplitKeyLen+2], h)
+				// OK to only do txn.Set() for the new partition, and defer creating the indexes,
+				// since any DML changes the record it will also update or create the indexes,
+				// by doing RemoveRecord+UpdateRecord
 			}
 			err = txn.Set(key, prr.vals)
 			if err != nil {
@@ -3882,8 +3919,6 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 
 func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBackfillTask) (kv.Key, bool, error) {
 	w.rowRecords = w.rowRecords[:0]
-	isClustered := w.reorgedTbl.Meta().IsCommonHandle || w.reorgedTbl.Meta().PKIsHandle
-	w.oldKeys = w.oldKeys[:0]
 	startTime := time.Now()
 
 	// taskDone means that the added handle is out of taskRange.endHandle.
@@ -3925,12 +3960,6 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 			newKey := tablecodec.EncodeTablePrefix(p.GetPhysicalID())
 			newKey = append(newKey, recordKey[tablecodec.TableSplitKeyLen:]...)
 			w.rowRecords = append(w.rowRecords, &rowRecord{key: newKey, vals: rawRow})
-
-			if !isClustered {
-				oldKey := newKey[:tablecodec.TableSplitKeyLen]
-				oldKey = append(oldKey, recordKey[tablecodec.TableSplitKeyLen:]...)
-				w.oldKeys = append(w.oldKeys, oldKey)
-			}
 
 			w.cleanRowMap()
 			lastAccessedHandle = recordKey
