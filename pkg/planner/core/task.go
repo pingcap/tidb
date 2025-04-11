@@ -440,7 +440,13 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 	if p.mppShuffleJoin {
 		// protection check is case of some bugs
 		if len(lTask.hashCols) != len(rTask.hashCols) || len(lTask.hashCols) == 0 {
-			return base.InvalidTask
+			if len(lTask.hashCols) < len(rTask.hashCols) && lTask.backupHashProp != nil && len(lTask.backupHashProp.MPPPartitionCols) == len(rTask.hashCols) {
+				lTask = lTask.enforceExchangerImpl(lTask.backupHashProp)
+			} else if len(lTask.hashCols) > len(rTask.hashCols) && rTask.backupHashProp != nil && len(rTask.backupHashProp.MPPPartitionCols) == len(lTask.hashCols) {
+				rTask = rTask.enforceExchangerImpl(rTask.backupHashProp)
+			} else {
+				return base.InvalidTask
+			}
 		}
 		lTask, rTask = p.convertPartitionKeysIfNeed(lTask, rTask)
 	}
@@ -2694,7 +2700,11 @@ func (t *MppTask) needEnforceExchanger(prop *property.PhysicalProperty, fd *func
 		}
 		// for example, if already partitioned by hash(B,C), then same (A,B,C) must distribute on a same node.
 		if fd != nil && len(t.hashCols) != 0 {
-			return prop.NeedMPPExchangeByEquivalence(t.hashCols, fd)
+			if prop.NeedMPPExchangeByEquivalence(t.hashCols, fd) {
+				return true
+			}
+			t.backupHashProp = prop
+			return false
 		}
 		if len(prop.MPPPartitionCols) != len(t.hashCols) {
 			return true
