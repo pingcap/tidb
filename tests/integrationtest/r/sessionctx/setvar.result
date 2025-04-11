@@ -1713,3 +1713,63 @@ select @@max_execution_time;
 @@max_execution_time
 2000
 set @@global.max_execution_time=default;
+set @@max_execution_time=2000;
+select @@max_execution_time;
+@@max_execution_time
+2000
+explain select /*+ set_var(max_execution_time=100) */ @@max_execution_time;
+id	estRows	task	access object	operator info
+Projection_3	1.00	root		100->Column#1
+└─TableDual_4	1.00	root		rows:1
+select @@max_execution_time;
+@@max_execution_time
+2000
+drop table if exists t;
+create table t(a int);
+create global binding for select * from t where a = 1 and sleep(0.1) using select /*+ SET_VAR(max_execution_time=1000) */ * from t where a = 1 and sleep(0.1);
+select * from t where a = 1 and sleep(0.1);
+a
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+select @@max_execution_time;
+@@max_execution_time
+2000
+explain select * from t where a = 1 and sleep(0.1);
+id	estRows	task	access object	operator info
+Selection_5	8.00	root		sleep(0.1)
+└─TableReader_8	10.00	root		data:Selection_7
+  └─Selection_7	10.00	cop[tikv]		eq(sessionctx__setvar.t.a, 1)
+    └─TableFullScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+select @@max_execution_time;
+@@max_execution_time
+2000
+select /*+ SET_VAR(max_execution_time=1234) */ * from t where a = 1 and sleep(0.1);
+a
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+select @@max_execution_time;
+@@max_execution_time
+2000
+insert into t values(1);
+set @@max_execution_time=0;
+drop global binding for select * from t where a = 2 and sleep(0.1);
+create global binding for select * from t where a = 1 and sleep(0.1) using select /*+ SET_VAR(max_execution_time=500) */ * from t where a = 1 and sleep(0.1);
+select /*+ SET_VAR(max_execution_time=4000) */ * from t where a = 1 and sleep(1);
+Error 3024 (HY000): Query execution was interrupted, maximum statement execution time exceeded
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+explain analyze select /*+ SET_VAR(max_execution_time=4000) */ * from t where a = 1 and sleep(1);
+Error 3024 (HY000): Query execution was interrupted, maximum statement execution time exceeded
+select @@last_plan_from_binding;
+@@last_plan_from_binding
+1
+drop global binding for select * from t where a = 2 and sleep(0.1);
+select /*+ set_var(max_execution_time=500), set_var(max_execution_time=1000) */ @@max_execution_time;
+@@max_execution_time
+500
