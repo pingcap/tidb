@@ -1472,3 +1472,30 @@ func TestS3ReadFileRetryable(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, strings.Contains(err.Error(), errMsg))
 }
+
+func TestOpenRangeMismatchErrorMsg(t *testing.T) {
+	s := createS3Suite(t)
+	ctx := aws.BackgroundContext()
+	start, end := int64(10), int64(30)
+
+	s.s3.EXPECT().
+		GetObjectWithContext(ctx, gomock.Any()).
+		DoAndReturn(func(context.Context, *s3.GetObjectInput, ...request.Option) (*s3.GetObjectOutput, error) {
+			return &s3.GetObjectOutput{
+				ContentRange: aws.String("bytes 10-20/20"),
+			}, nil
+		})
+	reader, err := s.storage.Open(ctx, "test", &ReaderOption{StartOffset: &start, EndOffset: &end})
+	require.ErrorContains(t, err, "expected range: bytes=10-29, got: bytes 10-20/20")
+	require.Nil(t, reader)
+
+	s.s3.EXPECT().
+		GetObjectWithContext(ctx, gomock.Any()).
+		DoAndReturn(func(context.Context, *s3.GetObjectInput, ...request.Option) (*s3.GetObjectOutput, error) {
+			return &s3.GetObjectOutput{}, nil
+		})
+	reader, err = s.storage.Open(ctx, "test", &ReaderOption{StartOffset: &start, EndOffset: &end})
+	// other function will throw error
+	require.ErrorContains(t, err, "ContentRange is empty")
+	require.Nil(t, reader)
+}
