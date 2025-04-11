@@ -2703,7 +2703,6 @@ func (t *MppTask) needEnforceExchanger(prop *property.PhysicalProperty, fd *func
 			if prop.NeedMPPExchangeByEquivalence(t.hashCols, fd) {
 				return true
 			}
-			// We need to update the lossHashCols.
 			t.backupHashProp = prop
 			return false
 		}
