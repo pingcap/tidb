@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	disthandle "github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
@@ -1699,6 +1700,11 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 
 // InitDistTaskLoop initializes the distributed task framework.
 func (do *Domain) InitDistTaskLoop() error {
+	rc, err := disthandle.CalculateNodeResource()
+	if err != nil {
+		return err
+	}
+	disthandle.SetNodeResource(rc)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 	failpoint.Inject("MockDisableDistTask", func(val failpoint.Value) {
 		if val.(bool) {
