@@ -22,16 +22,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -1686,7 +1684,7 @@ func TestForeignKeyWithTableMode(t *testing.T) {
 	require.True(t, ok)
 	for _, tbl := range childTables {
 		tblInfo := getTableInfo(t, domain, "test", tbl)
-		setTableModeTest(ctx, t, store, de, dbInfo, tblInfo, model.TableModeImport)
+		testutil.TestSetTableMode(ctx, t, store, de, dbInfo, tblInfo, model.TableModeImport)
 	}
 
 	// Test operations for each reference option type
@@ -1702,7 +1700,7 @@ func TestForeignKeyWithTableMode(t *testing.T) {
 	// set table mode to normal, expect all operations are allowed
 	for _, tbl := range childTables {
 		tblInfo := getTableInfo(t, domain, "test", tbl)
-		setTableModeTest(ctx, t, store, de, dbInfo, tblInfo, model.TableModeNormal)
+		testutil.TestSetTableMode(ctx, t, store, de, dbInfo, tblInfo, model.TableModeNormal)
 	}
 	tk.MustExec("delete from parent_1 where id = 1")
 	tk.MustQuery("select * from child_delete_cascade").Check(testkit.Rows())
@@ -1716,58 +1714,4 @@ func TestForeignKeyWithTableMode(t *testing.T) {
 	tk.MustQuery("select * from child_update_set_null").Check(testkit.Rows("444 <nil>", "555 5"))
 	tk.MustExec("insert into parent_4 values (5, 'parent_55') on duplicate key update id =55")
 	tk.MustQuery("select * from child_update_set_null").Check(testkit.Rows("444 <nil>", "555 <nil>"))
-}
-
-func setTableModeTest(
-	ctx sessionctx.Context,
-	t *testing.T,
-	store kv.Storage,
-	de ddl.Executor,
-	dbInfo *model.DBInfo,
-	tblInfo *model.TableInfo,
-	mode model.TableMode,
-) error {
-	args := &model.AlterTableModeArgs{
-		TableMode: mode,
-		SchemaID:  dbInfo.ID,
-		TableID:   tblInfo.ID,
-	}
-	err := de.AlterTableMode(ctx, args)
-	if err == nil {
-		testCheckTableState(t, store, dbInfo, tblInfo, model.StatePublic)
-		checkTableModeTest(t, store, dbInfo, tblInfo, mode)
-	}
-
-	return err
-}
-
-func testCheckTableState(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, state model.SchemaState) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMutator(txn)
-		info, err := m.GetTable(dbInfo.ID, tblInfo.ID)
-		require.NoError(t, err)
-
-		if state == model.StateNone {
-			require.NoError(t, err)
-			return nil
-		}
-
-		require.Equal(t, info.Name, tblInfo.Name)
-		require.Equal(t, info.State, state)
-		return nil
-	}))
-}
-
-func checkTableModeTest(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, mode model.TableMode) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		tt := meta.NewMutator(txn)
-		info, err := tt.GetTable(dbInfo.ID, tblInfo.ID)
-		require.NoError(t, err)
-		require.NotNil(t, info)
-		require.Equal(t, mode, info.Mode)
-		return nil
-	})
-	require.NoError(t, err)
 }

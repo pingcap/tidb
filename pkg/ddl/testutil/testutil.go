@@ -20,13 +20,16 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -129,4 +132,58 @@ func TestMatchCancelState(t *testing.T, job *model.Job, cancelState any, sql str
 	default:
 		return false
 	}
+}
+
+func testCheckTableState(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, state model.SchemaState) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	require.NoError(t, kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		info, err := m.GetTable(dbInfo.ID, tblInfo.ID)
+		require.NoError(t, err)
+
+		if state == model.StateNone {
+			require.NoError(t, err)
+			return nil
+		}
+
+		require.Equal(t, info.Name, tblInfo.Name)
+		require.Equal(t, info.State, state)
+		return nil
+	}))
+}
+
+func TestCheckTableMode(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, mode model.TableMode) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
+		tt := meta.NewMutator(txn)
+		info, err := tt.GetTable(dbInfo.ID, tblInfo.ID)
+		require.NoError(t, err)
+		require.NotNil(t, info)
+		require.Equal(t, mode, info.Mode)
+		return nil
+	})
+	require.NoError(t, err)
+}
+
+func TestSetTableMode(
+	ctx sessionctx.Context,
+	t *testing.T,
+	store kv.Storage,
+	de ddl.Executor,
+	dbInfo *model.DBInfo,
+	tblInfo *model.TableInfo,
+	mode model.TableMode,
+) error {
+	args := &model.AlterTableModeArgs{
+		TableMode: mode,
+		SchemaID:  dbInfo.ID,
+		TableID:   tblInfo.ID,
+	}
+	err := de.AlterTableMode(ctx, args)
+	if err == nil {
+		testCheckTableState(t, store, dbInfo, tblInfo, model.StatePublic)
+		TestCheckTableMode(t, store, dbInfo, tblInfo, mode)
+	}
+
+	return err
 }
