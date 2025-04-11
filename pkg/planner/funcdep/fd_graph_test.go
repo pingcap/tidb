@@ -330,3 +330,37 @@ func TestFDSet_AddEquivalence(t *testing.T) {
 	require.Equal(t, "(1-4)", fd.EquivalenceCols()[0].String())
 	require.Equal(t, "(1-6)", fd.ConstantCols().String())
 }
+
+func TestFindCommonEquivClasses(t *testing.T) {
+	fd1 := &FDSet{}
+	// fd1 is with equivalence classes for {1,2} and {3,4}
+	fd1.addEquivalence(intset.NewFastIntSet(1, 2))
+	fd1.addEquivalence(intset.NewFastIntSet(3, 4))
+
+	fd2 := &FDSet{}
+	// fd2 is with equivalence classes for {1,3} and {2,4}
+	fd2.addEquivalence(intset.NewFastIntSet(1, 3))
+	fd2.addEquivalence(intset.NewFastIntSet(2, 4))
+
+	fd3 := &FDSet{}
+	// fd3 is with equivalence classes for {1} and {3,4}
+	fd3.addEquivalence(intset.NewFastIntSet(1))
+	fd3.addEquivalence(intset.NewFastIntSet(3, 4))
+
+	// find common equivalence classes between fd1 and fd2.
+	res := FindCommonEquivClasses([]*FDSet{fd1, fd2})
+	require.Equal(t, 0, len(res))
+
+	// find common equivalence classes between fd2 and fd3.
+	res = FindCommonEquivClasses([]*FDSet{fd2, fd3})
+	require.Equal(t, 0, len(res))
+
+	// find common equivalence classes between fd1 and fd3.
+	res = FindCommonEquivClasses([]*FDSet{fd1, fd3})
+	require.Equal(t, 1, len(res))
+	require.Equal(t, "(3,4)", res[0].String())
+
+	// find common equivalence classes between fd1, fd2 and fd3.
+	res = FindCommonEquivClasses([]*FDSet{fd1, fd2, fd3})
+	require.Equal(t, 0, len(res))
+}
