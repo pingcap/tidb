@@ -395,6 +395,7 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		concurrency,
 		r.GetResource(),
 		rowCntListener,
+		r.backend.GetTiKVCodec(),
 	)
 }
 
