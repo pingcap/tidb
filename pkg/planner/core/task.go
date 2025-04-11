@@ -440,10 +440,10 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 	if p.mppShuffleJoin {
 		// protection check is case of some bugs
 		if len(lTask.hashCols) != len(rTask.hashCols) || len(lTask.hashCols) == 0 {
-			if len(lTask.hashCols) < len(rTask.hashCols) && lTask.lossHashProp != nil && len(lTask.lossHashProp.MPPPartitionCols) == len(rTask.hashCols) {
-				lTask = lTask.enforceExchangerImpl(lTask.lossHashProp)
-			} else if len(lTask.hashCols) > len(rTask.hashCols) && rTask.lossHashProp != nil && len(rTask.lossHashProp.MPPPartitionCols) == len(lTask.hashCols) {
-				rTask = rTask.enforceExchangerImpl(rTask.lossHashProp)
+			if len(lTask.hashCols) < len(rTask.hashCols) && lTask.backupHashProp != nil && len(lTask.backupHashProp.MPPPartitionCols) == len(rTask.hashCols) {
+				lTask = lTask.enforceExchangerImpl(lTask.backupHashProp)
+			} else if len(lTask.hashCols) > len(rTask.hashCols) && rTask.backupHashProp != nil && len(rTask.backupHashProp.MPPPartitionCols) == len(lTask.hashCols) {
+				rTask = rTask.enforceExchangerImpl(rTask.backupHashProp)
 			} else {
 				return base.InvalidTask
 			}
@@ -2704,8 +2704,7 @@ func (t *MppTask) needEnforceExchanger(prop *property.PhysicalProperty, fd *func
 				return true
 			}
 			// We need to update the lossHashCols.
-
-			t.lossHashProp = prop
+			t.backupHashProp = prop
 			return false
 		}
 		if len(prop.MPPPartitionCols) != len(t.hashCols) {

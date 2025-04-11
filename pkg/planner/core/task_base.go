@@ -121,9 +121,13 @@ func (t *RootTask) MemoryUsage() (sum int64) {
 type MppTask struct {
 	p base.PhysicalPlan
 
-	partTp       property.MPPPartitionType
-	hashCols     []*property.MPPPartitionColumn
-	lossHashProp *property.PhysicalProperty
+	partTp   property.MPPPartitionType
+	hashCols []*property.MPPPartitionColumn
+	// backupHashProp is used to store the hash partitioning information before `NeedMPPExchangeByEquivalence`.
+	// because `NeedMPPExchangeByEquivalence` will change the hash partitioning information.
+	// Having different numbers of MPP partitions in the child nodes of a join can lead to invalid tasks,
+	// which ultimately result in incorrect plan parameters.
+	backupHashProp *property.PhysicalProperty
 
 	// rootTaskConds record filters of TableScan that cannot be pushed down to TiFlash.
 
