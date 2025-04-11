@@ -84,6 +84,9 @@ func (s *PartitionProcessor) rewriteDataSource(lp base.LogicalPlan, opt *optimiz
 	case *logicalop.DataSource:
 		return s.prune(p, opt)
 	case *logicalop.LogicalUnionScan:
+		if lp.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+			return lp, nil
+		}
 		ds := p.Children()[0]
 		ds, err := s.prune(ds.(*logicalop.DataSource), opt)
 		if err != nil {
@@ -1956,8 +1959,10 @@ func (s *PartitionProcessor) makeUnionAllChildren(ds *logicalop.DataSource, pi *
 		}
 	}
 	s.checkHintsApplicable(ds, partitionNameSet)
+	if !ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("Static partition pruning mode")
+	}
 
-	ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("Static partition pruning mode")
 	if len(children) == 0 {
 		// No result after table pruning.
 		tableDual := logicalop.LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.QueryBlockOffset())
