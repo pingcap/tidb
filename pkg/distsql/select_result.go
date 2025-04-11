@@ -335,7 +335,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		duration := time.Since(startTime)
 		r.fetchDuration += duration
 		if err != nil {
-			r.handleCopStats(ctx, resultSubset, duration)
+			r.handleCopStats(ctx, resultSubset, duration) //nolint:errcheck
 			return errors.Trace(err)
 		}
 		if r.selectResp != nil {
