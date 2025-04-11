@@ -42,7 +42,11 @@ go_test(
     embed = [":storage"],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 22,
+=======
+    shard_count = 24,
+>>>>>>> 27f8ff3840f (dxf: use global entry_size_limit when executing SQLs (#59516))
     deps = [
         "//pkg/config",
         "//pkg/disttask/framework/proto",
