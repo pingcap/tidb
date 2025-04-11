@@ -309,12 +309,24 @@ func TryToGetCheckpointTaskInfo(
 }
 
 type CheckpointIngestIndexRepairSQL struct {
+<<<<<<< HEAD
 	IndexID    int64        `json:"index-id"`
 	SchemaName pmodel.CIStr `json:"schema-name"`
 	TableName  pmodel.CIStr `json:"table-name"`
 	IndexName  string       `json:"index-name"`
 	AddSQL     string       `json:"add-sql"`
 	AddArgs    []any        `json:"add-args"`
+=======
+	IndexID    int64     `json:"index-id"`
+	SchemaName ast.CIStr `json:"schema-name"`
+	TableName  ast.CIStr `json:"table-name"`
+	IndexName  string    `json:"index-name"`
+	AddSQL     string    `json:"add-sql"`
+	AddArgs    []any     `json:"add-args"`
+
+	OldIndexIDFound bool `json:"-"`
+	IndexRepaired   bool `json:"-"`
+>>>>>>> e7d7cdc600e (br: concurrently repairing indexes (#59159))
 }
 
 type CheckpointIngestIndexRepairSQLs struct {
