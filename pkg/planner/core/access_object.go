@@ -499,6 +499,10 @@ func (p *PhysicalIndexMergeReader) accessObject(sctx base.PlanContext) base.Acce
 	if !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return DynamicPartitionAccessObjects(nil)
 	}
+	// If index merge is single scan, we don't need to access the table.
+	if p.IdxMergeIsSingleScan {
+		return DynamicPartitionAccessObjects(nil)
+	}
 	ts := p.TablePlans[0].(*PhysicalTableScan)
 	asName := ""
 	if ts.TableAsName != nil && len(ts.TableAsName.O) > 0 {

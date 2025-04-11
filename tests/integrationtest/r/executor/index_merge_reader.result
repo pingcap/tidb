@@ -104,10 +104,9 @@ IndexMerge_9	1106.67	root		type: union
 explain select /*+ use_index_merge(t1, c1, c2, c3) */ * from t1 where c1 < 10 and c2 < 10 and c3 < 10;
 id	estRows	task	access object	operator info
 IndexMerge_9	367.05	root		type: intersection
-├─IndexRangeScan_5(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-├─IndexRangeScan_6(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-├─IndexRangeScan_7(Build)	3323.33	cop[tikv]	table:t1, index:c3(c3)	range:[-inf,10), keep order:false, stats:pseudo
-└─TableRowIDScan_8(Probe)	367.05	cop[tikv]	table:t1	keep order:false, stats:pseudo
+├─IndexRangeScan_5	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+├─IndexRangeScan_6	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+└─IndexRangeScan_7	3323.33	cop[tikv]	table:t1, index:c3(c3)	range:[-inf,10), keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < -1) and c3 < 10;
 c1	c2	c3	pk
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 10) and c3 < 10;
@@ -198,10 +197,9 @@ IndexMerge_9	1106.67	root		type: union
 explain select /*+ use_index_merge(t1, c1, c2, c3) */ * from t1 where c1 < 10 and c2 < 10 and c3 < 10;
 id	estRows	task	access object	operator info
 IndexMerge_9	367.05	root		type: intersection
-├─IndexRangeScan_5(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-├─IndexRangeScan_6(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-├─IndexRangeScan_7(Build)	3323.33	cop[tikv]	table:t1, index:c3(c3)	range:[-inf,10), keep order:false, stats:pseudo
-└─TableRowIDScan_8(Probe)	367.05	cop[tikv]	table:t1	keep order:false, stats:pseudo
+├─IndexRangeScan_5	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+├─IndexRangeScan_6	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+└─IndexRangeScan_7	3323.33	cop[tikv]	table:t1, index:c3(c3)	range:[-inf,10), keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < -1) and c3 < 10;
 c1	c2	c3	pk
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 10) and c3 < 10;
@@ -519,9 +517,8 @@ explain format='brief' select /*+ use_index_merge(t1, primary, idx1, idx2) */ c1
 id	estRows	task	access object	operator info
 Projection	1104.45	root		executor__index_merge_reader.t1.c1
 └─IndexMerge	1104.45	root		type: intersection
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:idx1(c1)	range:[-inf,1024), keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t1, index:idx2(c2)	range:[-inf,1024), keep order:false, stats:pseudo
-  └─TableRowIDScan(Probe)	1104.45	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  ├─IndexRangeScan	3323.33	cop[tikv]	table:t1, index:idx1(c1)	range:[-inf,1024), keep order:false, stats:pseudo
+  └─IndexRangeScan	3323.33	cop[tikv]	table:t1, index:idx2(c2)	range:[-inf,1024), keep order:false, stats:pseudo
 set global tidb_mem_oom_action='CANCEL';
 set @@tidb_mem_quota_query = 4000;
 select /*+ use_index_merge(t1, primary, idx1, idx2) */ c1 from t1 where c1 < 1024 and c2 < 1024;

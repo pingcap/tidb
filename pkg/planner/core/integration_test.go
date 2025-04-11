@@ -2579,3 +2579,80 @@ func TestAggregationInWindowFunctionPushDownToTiFlash(t *testing.T) {
 	}
 	tk.MustQuery("explain select sum(v) over w as res1, count(v) over w as res2, avg(v) over w as res3, min(v) over w as res4, max(v) over w as res5 from t window w as (partition by p order by o);").CheckAt([]int{0, 2, 4}, rows)
 }
+
+func TestIndexMergeEliminateTableScan(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec(`create table t (id int,
+		a int,
+		b varchar(20),
+		c int,
+		PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
+		index idx_a(a),
+		index idx_b(b)
+	)`)
+
+	result := tk.MustQuery("explain format='brief' SELECT /*+ USE_INDEX_MERGE(t, idx_a, idx_b) */ a, b, c FROM t WHERE a > 5 AND b > 'aaa'")
+	result.Check(testkit.Rows(
+		"IndexMerge 1111.11 root  type: intersection",
+		"├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t, index:idx_a(a) range:(5,+inf], keep order:false, stats:pseudo",
+		"├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t, index:idx_b(b) range:(\"aaa\",+inf], keep order:false, stats:pseudo",
+		"└─TableRowIDScan(Probe) 1111.11 cop[tikv] table:t keep order:false, stats:pseudo"))
+
+	result = tk.MustQuery("explain format='brief' SELECT /*+ USE_INDEX_MERGE(t, idx_a, idx_b) */ b, a FROM t WHERE a > 5 AND b > 'aaa'")
+	result.Check(testkit.Rows(
+		"Projection 1111.11 root  test.t.b, test.t.a",
+		"└─IndexMerge 1111.11 root  type: intersection",
+		"  ├─IndexRangeScan 3333.33 cop[tikv] table:t, index:idx_a(a) range:(5,+inf], keep order:false, stats:pseudo",
+		"  └─IndexRangeScan 3333.33 cop[tikv] table:t, index:idx_b(b) range:(\"aaa\",+inf], keep order:false, stats:pseudo"))
+
+	result = tk.MustQuery("explain format='brief' SELECT /*+ USE_INDEX_MERGE(t, idx_a, idx_b) */ a FROM t WHERE a > 5 AND b > 'aaa' limit 10")
+	result.Check(testkit.Rows(
+		"Limit 10.00 root  offset:0, count:10",
+		"└─IndexMerge 10.00 root  type: intersection",
+		"  ├─IndexRangeScan 30.00 cop[tikv] table:t, index:idx_a(a) range:(5,+inf], keep order:false, stats:pseudo",
+		"  └─IndexRangeScan 30.00 cop[tikv] table:t, index:idx_b(b) range:(\"aaa\",+inf], keep order:false, stats:pseudo"))
+
+	result = tk.MustQuery("explain format='brief' SELECT /*+ USE_INDEX_MERGE(t, idx_a, idx_b) */ a, b, b+10 FROM t WHERE a > 5 AND b > 'aaa'")
+	result.Check(testkit.Rows(
+		"Projection 1111.11 root  test.t.a, test.t.b, plus(cast(test.t.b, double BINARY), 10)->Column#5",
+		"└─IndexMerge 1111.11 root  type: intersection",
+		"  ├─IndexRangeScan 3333.33 cop[tikv] table:t, index:idx_a(a) range:(5,+inf], keep order:false, stats:pseudo",
+		"  └─IndexRangeScan 3333.33 cop[tikv] table:t, index:idx_b(b) range:(\"aaa\",+inf], keep order:false, stats:pseudo"))
+
+	result = tk.MustQuery("explain format='brief' SELECT /*+ USE_INDEX_MERGE(t, idx_a, idx_b) */ a, b, c FROM t WHERE a > 5 AND b > 'aaa' ORDER BY c")
+	result.Check(testkit.Rows(
+		"Sort 1111.11 root  test.t.c",
+		"└─IndexMerge 1111.11 root  type: intersection",
+		"  ├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t, index:idx_a(a) range:(5,+inf], keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t, index:idx_b(b) range:(\"aaa\",+inf], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) 1111.11 cop[tikv] table:t keep order:false, stats:pseudo"))
+
+	tk.MustExec("SET SESSION tidb_opt_fix_control = '51584:OFF';")
+	result = tk.MustQuery("explain format='brief' SELECT /*+ USE_INDEX_MERGE(t, idx_a, idx_b) */ b, a FROM t WHERE a > 5 AND b > 'aaa'")
+	result.Check(testkit.Rows(
+		"Projection 1111.11 root  test.t.b, test.t.a",
+		"└─IndexMerge 1111.11 root  type: intersection",
+		"  ├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t, index:idx_a(a) range:(5,+inf], keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t, index:idx_b(b) range:(\"aaa\",+inf], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) 1111.11 cop[tikv] table:t keep order:false, stats:pseudo"))
+
+	result = tk.MustQuery("explain format='brief' SELECT /*+ USE_INDEX_MERGE(t, idx_a, idx_b) */ a, c FROM t WHERE a > 5 AND b > 'aaa' limit 10")
+	result.Check(testkit.Rows(
+		"Projection 10.00 root  test.t.a, test.t.c",
+		"└─IndexMerge 10.00 root  type: intersection, limit embedded(offset:0, count:10)",
+		"  ├─IndexRangeScan(Build) 30.00 cop[tikv] table:t, index:idx_a(a) range:(5,+inf], keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan(Build) 30.00 cop[tikv] table:t, index:idx_b(b) range:(\"aaa\",+inf], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) 10.00 cop[tikv] table:t keep order:false, stats:pseudo"))
+
+	result = tk.MustQuery("explain format='brief' SELECT /*+ USE_INDEX_MERGE(t, idx_a, idx_b) */ a, b, b+10 FROM t WHERE a > 5 AND b > 'aaa'")
+	result.Check(testkit.Rows(
+		"Projection 1111.11 root  test.t.a, test.t.b, plus(cast(test.t.b, double BINARY), 10)->Column#5",
+		"└─IndexMerge 1111.11 root  type: intersection",
+		"  ├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t, index:idx_a(a) range:(5,+inf], keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan(Build) 3333.33 cop[tikv] table:t, index:idx_b(b) range:(\"aaa\",+inf], keep order:false, stats:pseudo",
+		"  └─TableRowIDScan(Probe) 1111.11 cop[tikv] table:t keep order:false, stats:pseudo"))
+}
