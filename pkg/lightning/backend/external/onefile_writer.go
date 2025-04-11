@@ -95,8 +95,8 @@ func (w *OneFileWriter) Init(ctx context.Context, partSize int64) (err error) {
 	if err != nil {
 		return err
 	}
-	w.kvStore, err = NewKeyValueStore(ctx, w.dataWriter, w.rc)
-	return err
+	w.kvStore = NewKeyValueStore(ctx, w.dataWriter, w.rc)
+	return nil
 }
 
 // WriteRow implements ingest.Writer.
