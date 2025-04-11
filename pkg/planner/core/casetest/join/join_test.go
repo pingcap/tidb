@@ -41,31 +41,35 @@ func TestSemiJoinOrder(t *testing.T) {
 	tk.MustQuery("select /*+ HASH_JOIN_BUILD(t2@sel_2) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(result)
 	tk.MustQuery("explain format = 'brief' select  /*+ HASH_JOIN_BUILD(t1) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
 		"Sort 7992.00 root  test.t1.col0, test.t1.col1",
-		"└─HashJoin 7992.00 root  semi join, left side:TableReader, equal:[eq(test.t1.col0, test.t2.col0)]",
-		"  ├─TableReader(Build) 9990.00 root  data:Selection",
-		"  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.col0))",
-		"  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-		"  └─TableReader(Probe) 9990.00 root  data:Selection",
-		"    └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.col0))",
-		"      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"))
-	tk.MustQuery("show warnings").Check(testkit.Rows())
-	tk.MustQuery("explain format = 'brief' select  /*+ HASH_JOIN_BUILD(t2@sel_2) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
-		"Sort 7992.00 root  test.t1.col0, test.t1.col1",
-		"└─HashJoin 7992.00 root  semi join, left side:TableReader, equal:[eq(test.t1.col0, test.t2.col0)]",
+		"└─HashJoin 7992.00 root  semi join, equal:[eq(test.t1.col0, test.t2.col0)]",
 		"  ├─TableReader(Build) 9990.00 root  data:Selection",
 		"  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.col0))",
 		"  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
 		"  └─TableReader(Probe) 9990.00 root  data:Selection",
 		"    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.col0))",
 		"      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
-	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for semi join, please check the hint",
+		"Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for semi join, please check the hint"))
+	tk.MustQuery("explain format = 'brief' select  /*+ HASH_JOIN_BUILD(t2@sel_2) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
+		"Sort 7992.00 root  test.t1.col0, test.t1.col1",
+		"└─HashJoin 7992.00 root  semi join, equal:[eq(test.t1.col0, test.t2.col0)]",
+		"  ├─TableReader(Build) 9990.00 root  data:Selection",
+		"  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.col0))",
+		"  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+		"  └─TableReader(Probe) 9990.00 root  data:Selection",
+		"    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.col0))",
+		"      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for semi join, please check the hint",
+		"Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for semi join, please check the hint"))
 	tk.MustExec("set tidb_hash_join_version=legacy")
 	tk.MustQuery("select * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(result)
 	tk.MustQuery("select /*+ HASH_JOIN_BUILD(t1) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(result)
 	tk.MustQuery("select /*+ HASH_JOIN_BUILD(t2@sel_2) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(result)
 	tk.MustQuery("explain format = 'brief' select  /*+ HASH_JOIN_BUILD(t1) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
 		"Sort 7992.00 root  test.t1.col0, test.t1.col1",
-		"└─HashJoin 7992.00 root  semi join, left side:TableReader, equal:[eq(test.t1.col0, test.t2.col0)]",
+		"└─HashJoin 7992.00 root  semi join, equal:[eq(test.t1.col0, test.t2.col0)]",
 		"  ├─TableReader(Build) 9990.00 root  data:Selection",
 		"  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.col0))",
 		"  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
@@ -73,11 +77,11 @@ func TestSemiJoinOrder(t *testing.T) {
 		"    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.col0))",
 		"      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1815 The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for semi join with hash join version 1. Please remove these hints",
-		"Warning 1815 The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for semi join with hash join version 1. Please remove these hints"))
+		"Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for semi join, please check the hint",
+		"Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for semi join, please check the hint"))
 	tk.MustQuery("explain format = 'brief' select  /*+ HASH_JOIN_BUILD(t2@sel_2) */ * from t1 where exists (select 1 from t2 where t1.col0 = t2.col0) order by t1.col0, t1.col1;").Check(testkit.Rows(
 		"Sort 7992.00 root  test.t1.col0, test.t1.col1",
-		"└─HashJoin 7992.00 root  semi join, left side:TableReader, equal:[eq(test.t1.col0, test.t2.col0)]",
+		"└─HashJoin 7992.00 root  semi join, equal:[eq(test.t1.col0, test.t2.col0)]",
 		"  ├─TableReader(Build) 9990.00 root  data:Selection",
 		"  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.col0))",
 		"  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
@@ -85,8 +89,8 @@ func TestSemiJoinOrder(t *testing.T) {
 		"    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.col0))",
 		"      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1815 The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for semi join with hash join version 1. Please remove these hints",
-		"Warning 1815 The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for semi join with hash join version 1. Please remove these hints"))
+		"Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for semi join, please check the hint",
+		"Warning 1815 We can't use the HASH_JOIN_BUILD or HASH_JOIN_PROBE hint for semi join, please check the hint"))
 }
 
 func TestJoinWithNullEQ(t *testing.T) {
@@ -97,7 +101,7 @@ func TestJoinWithNullEQ(t *testing.T) {
 	tk.MustExec("create table t1(id int, v1 int, v2 int, v3 int);")
 	tk.MustExec(" create table t2(id int, v1 int, v2 int, v3 int);")
 	tk.MustQuery("explain select t1.id from t1 join t2 on t1.v1 = t2.v2 intersect select t1.id from t1 join t2 on t1.v1 = t2.v2;").Check(testkit.Rows(
-		"HashJoin_15 6393.60 root  semi join, left side:HashAgg_16, equal:[nulleq(test.t1.id, test.t1.id)]",
+		"HashJoin_15 6393.60 root  semi join, equal:[nulleq(test.t1.id, test.t1.id)]",
 		"├─HashJoin_26(Build) 12487.50 root  inner join, equal:[eq(test.t1.v1, test.t2.v2)]",
 		"│ ├─TableReader_33(Build) 9990.00 root  data:Selection_32",
 		"│ │ └─Selection_32 9990.00 cop[tikv]  not(isnull(test.t2.v2))",
@@ -126,7 +130,7 @@ func TestJoinWithNullEQ(t *testing.T) {
 		"HashJoin_13 15625.00 root  inner join, equal:[nulleq(Column#5, test.tt0.c0)]",
 		"├─TableReader_25(Build) 10000.00 root  data:TableFullScan_24",
 		"│ └─TableFullScan_24 10000.00 cop[tikv] table:tt0 keep order:false, stats:pseudo",
-		"└─HashJoin_17(Probe) 12500.00 root  left outer join, left side:Projection_18, equal:[eq(Column#8, Column#9)]",
+		"└─HashJoin_17(Probe) 12500.00 root  left outer join, equal:[eq(Column#8, Column#9)]",
 		"  ├─Projection_18(Build) 10000.00 root  test.tt1.c0, cast(test.tt1.c0, double BINARY)->Column#8",
 		"  │ └─TableReader_20 10000.00 root  data:TableFullScan_19",
 		"  │   └─TableFullScan_19 10000.00 cop[tikv] table:tt1 keep order:false, stats:pseudo",
