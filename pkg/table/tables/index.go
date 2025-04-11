@@ -292,6 +292,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		}
 
 		var value []byte
+		var tempValue []byte
 		if allowOverwriteOfOldGlobalIndex {
 			// In DeleteReorganization, overwrite Global Index keys pointing to
 			// old dropped/truncated partitions.
@@ -319,9 +320,18 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		} else if c.tblInfo.TempTableType != model.TempTableNone {
 			// Always check key for temporary table because it does not write to TiKV
 			value, err = txn.Get(ctx, key)
-		} else if opt.DupKeyCheck() == table.DupKeyCheckLazy && !keyIsTempIdxKey {
+		} else if keyIsTempIdxKey || len(tempKey) > 0 {
 			// For temp index keys, we can't get the temp value from memory buffer, even if the lazy check is enabled.
 			// Otherwise, it may cause the temp index value to be overwritten, leading to data inconsistency.
+			value, err = txn.Get(ctx, key)
+			if len(tempKey) > 0 {
+				var tempErr error
+				tempValue, tempErr = txn.Get(ctx, tempKey)
+				if tempErr != nil && !kv.IsErrNotFound(tempErr) {
+					return nil, tempErr
+				}
+			}
+		} else if opt.DupKeyCheck() == table.DupKeyCheckLazy {
 			value, err = txn.GetMemBuffer().GetLocal(ctx, key)
 		} else {
 			value, err = txn.Get(ctx, key)
@@ -366,7 +376,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			}
 			if len(tempKey) > 0 {
 				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: true}
-				val = tempVal.Encode(value)
+				val = tempVal.Encode(tempValue)
 				if lazyCheck && needPresumeNotExists {
 					err = txn.GetMemBuffer().SetWithFlags(tempKey, val, kv.SetPresumeKeyNotExists)
 				} else {
