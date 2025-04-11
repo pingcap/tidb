@@ -540,6 +540,7 @@ type PointGetExecutorCache struct {
 	// Notice that we should only cache the PointGetExecutor that have a snapshot with MaxTS in it.
 	// If the current plan is not PointGet or does not use MaxTS optimization, this value should be nil here.
 	Executor any
+	Plan     *PointGetPlan
 }
 
 // PlanCacheStmt store prepared ast from PrepareExec and other related fields
