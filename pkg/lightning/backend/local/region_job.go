@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/metrics"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -306,6 +307,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	if !common.IsRetryableError(err) {
 		return err
 	}
+	metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 	// currently only one case will restart write
 	if strings.Contains(err.Error(), "RequestTooNew") {
 		j.convertStageTo(regionScanned)
@@ -650,6 +652,7 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 			if common.IsContextCanceledError(err) {
 				return err
 			}
+			metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 			log.FromContext(ctx).Warn("meet underlying error, will retry ingest",
 				log.ShortError(err), logutil.SSTMetas(j.writeResult.sstMeta),
 				logutil.Region(j.region.Region), logutil.Leader(j.region.Leader))
@@ -669,6 +672,7 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 				logutil.Key("end", j.keyRange.End))
 			return nil
 		}
+		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 		log.FromContext(ctx).Warn("meet error and will doIngest region again",
 			logutil.ShortError(j.lastRetryableErr),
 			j.region.ToZapFields(),

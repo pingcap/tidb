@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/prefetch"
 	"go.uber.org/zap"
 )
@@ -551,6 +552,7 @@ func (r *ks3ObjectReader) Read(p []byte) (n int, err error) {
 	// TODO: maybe we should use !errors.Is(err, io.EOF) here to avoid error lint, but currently, pingcap/errors
 	// doesn't implement this method yet.
 	for err != nil && errors.Cause(err) != io.EOF && retryCnt < maxErrorRetries { //nolint:errorlint
+		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 		log.L().Warn(
 			"read s3 object failed, will retry",
 			zap.String("file", r.name),
