@@ -186,19 +186,164 @@ func TestTableScanCostWithForce(t *testing.T) {
 
 	// Test TableFullScan with and without FORCE INDEX
 	rs := tk.MustQuery("explain analyze format=verbose select * from t").Rows()
-	planCost1 := rs[0][2].(string)
+	planCost1, err1 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err1)
 	rs = tk.MustQuery("explain analyze format=verbose select * from t force index(PRIMARY)").Rows()
-	planCost2 := rs[0][2].(string)
+	planCost2, err2 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err2)
 
 	// Query with FORCE should be more expensive than query without
 	require.Less(t, planCost1, planCost2)
 
 	// Test TableRangeScan with and without FORCE INDEX
 	rs = tk.MustQuery("explain analyze format=verbose select * from t where a > 1").Rows()
-	planCost1 = rs[0][2].(string)
+	planCost1, err1 = strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err1)
 	rs = tk.MustQuery("explain analyze format=verbose select * from t force index(PRIMARY) where a > 1").Rows()
-	planCost2 = rs[0][2].(string)
+	planCost2, err2 = strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err2)
 
 	// Query costs should be equal since FORCE cost penalty does not apply to range scan
 	require.Equal(t, planCost1, planCost2)
+}
+
+func TestOptimizerCostFactors(t *testing.T) {
+	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	defer func() {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		dom.StatsHandle().Clear()
+	}()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, primary key (a), key(b))")
+
+	// Insert some data
+	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)")
+
+	// Analyze table to update statistics
+	tk.MustExec("analyze table t")
+
+	// Test tableFullScan cost factor increase
+	tk.MustExec("set @@session.tidb_opt_table_full_scan_cost_factor=1")
+	rs := tk.MustQuery("explain analyze format=verbose select * from t ignore index(b)").Rows()
+	planCost1, err1 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err1)
+	tk.MustExec("set @@session.tidb_opt_table_full_scan_cost_factor=10")
+	rs = tk.MustQuery("explain analyze format=verbose select * from t ignore index(b)").Rows()
+	planCost2, err2 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err2)
+	// 1st query should be more cheaper than 2nd query
+	require.Less(t, planCost1, planCost2)
+
+	// Test tableFullScan cost factor decrease
+	tk.MustExec("set @@session.tidb_opt_table_full_scan_cost_factor=0.1")
+	rs = tk.MustQuery("explain analyze format=verbose select * from t ignore index(b)").Rows()
+	planCost3, err3 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err3)
+	// 3rd query should be more cheaper than 1st query
+	require.Less(t, planCost3, planCost1)
+	// Reset to default
+	tk.MustExec("set @@session.tidb_opt_table_full_scan_cost_factor=1")
+
+	// Test tableRangeScan cost factor increase
+	tk.MustExec("set @@session.tidb_opt_table_range_scan_cost_factor=1")
+	rs = tk.MustQuery("explain analyze format=verbose select * from t use index(PRIMARY) where a > 3").Rows()
+	planCost1, err1 = strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err1)
+	tk.MustExec("set @@session.tidb_opt_table_range_scan_cost_factor=10")
+	rs = tk.MustQuery("explain analyze format=verbose select * from t use index(PRIMARY) where a > 3").Rows()
+	planCost2, err2 = strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err2)
+	// 1st query should be more cheaper than 2nd query
+	require.Less(t, planCost1, planCost2)
+
+	// Test tableRangeScan cost factor decrease
+	tk.MustExec("set @@session.tidb_opt_table_range_scan_cost_factor=0.1")
+	rs = tk.MustQuery("explain analyze format=verbose select * from t use index(PRIMARY) where a > 3").Rows()
+	planCost3, err3 = strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err3)
+	// 3rd query should be more cheaper than 1st query
+	require.Less(t, planCost3, planCost1)
+
+	// Reset to default
+	tk.MustExec("set @@session.tidb_opt_table_range_scan_cost_factor=1")
+
+	// Test IndexScan cost factor increase
+	tk.MustExec("set @@session.tidb_opt_index_scan_cost_factor=1")
+	rs = tk.MustQuery("explain analyze format=verbose select * from t use index(b) where b > 3").Rows()
+	planCost1, err1 = strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err1)
+	tk.MustExec("set @@session.tidb_opt_index_scan_cost_factor=10")
+	rs = tk.MustQuery("explain analyze format=verbose select * from t use index(b) where b > 3").Rows()
+	planCost2, err2 = strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err2)
+	// 1st query should be more cheaper than 2nd query
+	require.Less(t, planCost1, planCost2)
+
+	// Test IndexScan cost factor decrease
+	tk.MustExec("set @@session.tidb_opt_index_scan_cost_factor=0.1")
+	rs = tk.MustQuery("explain analyze format=verbose select * from t use index(b) where b > 3").Rows()
+	planCost3, err3 = strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err3)
+	// 3rd query should be more cheaper than 1st query
+	require.Less(t, planCost3, planCost1)
+
+	// Reset to default
+	tk.MustExec("set @@session.tidb_opt_index_scan_cost_factor=1")
+
+	// Test StreamAgg cost factor increase
+	tk.MustExec("set @@session.tidb_opt_stream_agg_cost_factor=1")
+	// Set HashAgg cost factor higher to isolate testing to StreamAgg
+	tk.MustExec("set @@session.tidb_opt_hash_agg_cost_factor=100")
+	rs = tk.MustQuery("explain analyze format=verbose select b, count(*) from t use index(b) group by b").Rows()
+	planCost1, err1 = strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err1)
+	tk.MustExec("set @@session.tidb_opt_stream_agg_cost_factor=10")
+	rs = tk.MustQuery("explain analyze format=verbose select b, count(*) from t use index(b) group by b").Rows()
+	planCost2, err2 = strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err2)
+	// 1st query should be more cheaper than 2nd query
+	require.Less(t, planCost1, planCost2)
+
+	// Test StreamAgg cost factor decrease
+	tk.MustExec("set @@session.tidb_opt_stream_agg_cost_factor=0.1")
+	rs = tk.MustQuery("explain analyze format=verbose select b, count(*) from t use index(b) group by b").Rows()
+	planCost3, err3 = strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err3)
+	// 3rd query should be more cheaper than 1st query
+	require.Less(t, planCost3, planCost1)
+
+	// Reset to default
+	tk.MustExec("set @@session.tidb_opt_stream_agg_cost_factor=1")
+	tk.MustExec("set @@session.tidb_opt_hash_agg_cost_factor=1")
+
+	// Test HashAgg cost factor increase
+	tk.MustExec("set @@session.tidb_opt_hash_agg_cost_factor=1")
+	// Set StreamAgg cost factor higher to isolate testing to HashAgg
+	tk.MustExec("set @@session.tidb_opt_stream_agg_cost_factor=100")
+	rs = tk.MustQuery("explain analyze format=verbose select b, count(*) from t ignore index(b) group by b").Rows()
+	planCost1, err1 = strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err1)
+	tk.MustExec("set @@session.tidb_opt_hash_agg_cost_factor=10")
+	rs = tk.MustQuery("explain analyze format=verbose select b, count(*) from t ignore index(b) group by b").Rows()
+	planCost2, err2 = strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err2)
+	// 1st query should be more cheaper than 2nd query
+	require.Less(t, planCost1, planCost2)
+
+	// Test HashAgg cost factor decrease
+	tk.MustExec("set @@session.tidb_opt_hash_agg_cost_factor=0.1")
+	rs = tk.MustQuery("explain analyze format=verbose select b, count(*) from t ignore index(b) group by b").Rows()
+	planCost3, err3 = strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err3)
+	// 3rd query should be more cheaper than 1st query
+	require.Less(t, planCost3, planCost1)
+
+	// Reset to default
+	tk.MustExec("set @@session.tidb_opt_stream_agg_cost_factor=1")
+	tk.MustExec("set @@session.tidb_opt_hash_agg_cost_factor=1")
 }
