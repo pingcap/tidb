@@ -637,7 +637,6 @@ func TestOptimizerCostFactors(t *testing.T) {
 	// Reset to default
 	tk.MustExec("set @@session.tidb_opt_index_merge_cost_factor=1")
 }
-
 func TestTiFlashCostFactors(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
