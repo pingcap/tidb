@@ -797,6 +797,7 @@ MergeJoin_8	12475.01	root		inner join, left key:test.t1.a, test.t1.b, right key:
 └─IndexReader_39(Probe)	9980.01	root		index:Selection_38
   └─Selection_38	9980.01	cop[tikv]		not(isnull(test.t1.b))
     └─IndexFullScan_37	9990.00	cop[tikv]	table:t1, index:idx(a, b)	keep order:true, stats:pseudo
+<<<<<<< HEAD
 drop table if exists t, t1;
 create table t(a int);
 create table t1(a int primary key, b int, index idx(b));
@@ -815,6 +816,8 @@ Projection_9	12.50	root		test.t.a, test.t1.a, test.t1.b
 select /*+ inl_join(t1), use_index(t1, idx) */ * from t join t1 on t.a = t1.a and t1.b = 123;
 a	a	b
 2	2	123
+=======
+>>>>>>> 6b11f6cce8 (.)
 drop table if exists t;
 create table t (id int unique key, c int);
 insert into t values (1, 10);
