@@ -585,6 +585,10 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 	// prop should be read only because its cached hashcode might be not consistent
 	// when it is changed. So we clone a new one for the temporary changes.
 	newProp := prop.CloneEssentialFields()
+	// here newProp is used as another complete copy for enforcer, fill indexJoinProp manually.
+	// for childProp := prop.CloneEssentialFields(), we do not clone indexJoinProp childProp for by default.
+	// and only call admitIndexJoinProp to inherit the indexJoinProp for special pattern operators.
+	newProp.IndexJoinProp = prop.IndexJoinProp
 	var plansFitsProp, plansNeedEnforce []base.PhysicalPlan
 	var hintWorksWithProp bool
 	// Maybe the plan can satisfy the required property,
