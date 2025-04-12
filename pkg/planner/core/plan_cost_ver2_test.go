@@ -236,7 +236,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select * from t ignore index(b)").Rows()
 	planCost2, err2 := strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err2)
-	// 1st query should be more cheaper than 2nd query
+	// 1st query should be cheaper than 2nd query
 	require.Less(t, planCost1, planCost2)
 
 	// Test tableFullScan cost factor decrease
@@ -244,7 +244,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select * from t ignore index(b)").Rows()
 	planCost3, err3 := strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err3)
-	// 3rd query should be more cheaper than 1st query
+	// 3rd query should be cheaper than 1st query
 	require.Less(t, planCost3, planCost1)
 	// Reset to default
 	tk.MustExec("set @@session.tidb_opt_table_full_scan_cost_factor=1")
@@ -258,7 +258,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select * from t ignore index(b)").Rows()
 	planCost2, err2 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err2)
-	// 1st query should be more cheaper than 2nd query
+	// 1st query should be cheaper than 2nd query
 	require.Less(t, planCost1, planCost2)
 
 	// Test tableReader cost factor decrease
@@ -266,7 +266,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select * from t ignore index(b)").Rows()
 	planCost3, err3 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err3)
-	// 3rd query should be more cheaper than 1st query
+	// 3rd query should be cheaper than 1st query
 	require.Less(t, planCost3, planCost1)
 	// Reset to default
 	tk.MustExec("set @@session.tidb_opt_table_reader_cost_factor=1")
@@ -280,7 +280,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select * from t use index(PRIMARY) where a > 3").Rows()
 	planCost2, err2 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err2)
-	// 1st query should be more cheaper than 2nd query
+	// 1st query should be cheaper than 2nd query
 	require.Less(t, planCost1, planCost2)
 
 	// Test tableRangeScan cost factor decrease
@@ -288,7 +288,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select * from t use index(PRIMARY) where a > 3").Rows()
 	planCost3, err3 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err3)
-	// 3rd query should be more cheaper than 1st query
+	// 3rd query should be cheaper than 1st query
 	require.Less(t, planCost3, planCost1)
 
 	// Reset to default
@@ -305,7 +305,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select b from t use index(b) where b > 3").Rows()
 	planCost2, err2 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err2)
-	// 1st query should be more cheaper than 2nd query
+	// 1st query should be cheaper than 2nd query
 	require.Less(t, planCost1, planCost2)
 
 	// Test IndexScan cost factor decrease
@@ -313,7 +313,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select b from t use index(b) where b > 3").Rows()
 	planCost3, err3 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err3)
-	// 3rd query should be more cheaper than 1st query
+	// 3rd query should be cheaper than 1st query
 	require.Less(t, planCost3, planCost1)
 
 	// Reset to default
@@ -331,7 +331,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select b from t use index(b) where b > 3").Rows()
 	planCost2, err2 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err2)
-	// 1st query should be more cheaper than 2nd query
+	// 1st query should be cheaper than 2nd query
 	require.Less(t, planCost1, planCost2)
 
 	// Test IndexReader cost factor decrease
@@ -339,7 +339,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select b from t use index(b) where b > 3").Rows()
 	planCost3, err3 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err3)
-	// 3rd query should be more cheaper than 1st query
+	// 3rd query should be cheaper than 1st query
 	require.Less(t, planCost3, planCost1)
 
 	// Reset to default
@@ -348,7 +348,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 
 	// Test IndexLookup cost factor increase
 	tk.MustExec("set @@session.tidb_opt_index_lookup_cost_factor=1")
-	// Increase table scan cost factor to isolate testing to IndexScan
+	// Increase table scan cost factor to isolate testing to IndexLookup
 	tk.MustExec("set @@session.tidb_opt_table_full_scan_cost_factor=100")
 	rs = tk.MustQuery("explain format=verbose select * from t use index(b) where b > 3").Rows()
 	planCost1, err1 = strconv.ParseFloat(rs[0][2].(string), 64)
@@ -357,7 +357,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select * from t use index(b) where b > 3").Rows()
 	planCost2, err2 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err2)
-	// 1st query should be more cheaper than 2nd query
+	// 1st query should be cheaper than 2nd query
 	require.Less(t, planCost1, planCost2)
 
 	// Test IndexLookup cost factor decrease
@@ -365,7 +365,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select * from t use index(b) where b > 3").Rows()
 	planCost3, err3 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err3)
-	// 3rd query should be more cheaper than 1st query
+	// 3rd query should be cheaper than 1st query
 	require.Less(t, planCost3, planCost1)
 
 	// Reset to default
@@ -374,7 +374,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 
 	// Test TableRowIDScan cost factor increase
 	tk.MustExec("set @@session.tidb_opt_table_rowid_scan_cost_factor=1")
-	// Increase table scan cost factor to isolate testing to IndexScan
+	// Increase table scan cost factor to isolate testing to TableRowIDScan
 	tk.MustExec("set @@session.tidb_opt_table_full_scan_cost_factor=100")
 	rs = tk.MustQuery("explain format=verbose select * from t use index(b) where b > 3").Rows()
 	planCost1, err1 = strconv.ParseFloat(rs[0][2].(string), 64)
@@ -383,15 +383,15 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select * from t use index(b) where b > 3").Rows()
 	planCost2, err2 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err2)
-	// 1st query should be more cheaper than 2nd query
+	// 1st query should be cheaper than 2nd query
 	require.Less(t, planCost1, planCost2)
 
-	// Test IndexLookup cost factor decrease
+	// Test TableRowID cost factor decrease
 	tk.MustExec("set @@session.tidb_opt_table_rowid_scan_cost_factor=0.1")
 	rs = tk.MustQuery("explain format=verbose select * from t use index(b) where b > 3").Rows()
 	planCost3, err3 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err3)
-	// 3rd query should be more cheaper than 1st query
+	// 3rd query should be cheaper than 1st query
 	require.Less(t, planCost3, planCost1)
 
 	// Reset to default
@@ -409,7 +409,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select * from t use index(b) where b > 3 order by b limit 1").Rows()
 	planCost2, err2 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err2)
-	// 1st query should be more cheaper than 2nd query
+	// 1st query should be cheaper than 2nd query
 	require.Less(t, planCost1, planCost2)
 
 	// Test Limit cost factor decrease
@@ -417,7 +417,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select * from t use index(b) where b > 3 order by b limit 1").Rows()
 	planCost3, err3 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err3)
-	// 3rd query should be more cheaper than 1st query
+	// 3rd query should be cheaper than 1st query
 	require.Less(t, planCost3, planCost1)
 
 	// Reset to default
@@ -435,7 +435,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select * from t use index(b) where b > 3 order by b limit 1").Rows()
 	planCost2, err2 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err2)
-	// 1st query should be more cheaper than 2nd query
+	// 1st query should be cheaper than 2nd query
 	require.Less(t, planCost1, planCost2)
 
 	// Test TopN cost factor decrease
@@ -443,7 +443,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select * from t use index(b) where b > 3 order by b limit 1").Rows()
 	planCost3, err3 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err3)
-	// 3rd query should be more cheaper than 1st query
+	// 3rd query should be cheaper than 1st query
 	require.Less(t, planCost3, planCost1)
 
 	// Reset to default
@@ -461,7 +461,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select /*+ STREAM_AGG() */ b, count(*) from t use index(b) group by b").Rows()
 	planCost2, err2 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err2)
-	// 1st query should be more cheaper than 2nd query
+	// 1st query should be cheaper than 2nd query
 	require.Less(t, planCost1, planCost2)
 
 	// Test StreamAgg cost factor decrease
@@ -469,7 +469,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select /*+ STREAM_AGG() */ b, count(*) from t use index(b) group by b").Rows()
 	planCost3, err3 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err3)
-	// 3rd query should be more cheaper than 1st query
+	// 3rd query should be cheaper than 1st query
 	require.Less(t, planCost3, planCost1)
 
 	// Reset to default
@@ -487,7 +487,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select /*+ HASH_AGG() */ b, count(*) from t ignore index(b) group by b").Rows()
 	planCost2, err2 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err2)
-	// 1st query should be more cheaper than 2nd query
+	// 1st query should be cheaper than 2nd query
 	require.Less(t, planCost1, planCost2)
 
 	// Test HashAgg cost factor decrease
@@ -495,7 +495,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select /*+ HASH_AGG() */ b, count(*) from t ignore index(b) group by b").Rows()
 	planCost3, err3 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err3)
-	// 3rd query should be more cheaper than 1st query
+	// 3rd query should be cheaper than 1st query
 	require.Less(t, planCost3, planCost1)
 
 	// Reset to default
@@ -511,7 +511,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select * from t order by c").Rows()
 	planCost2, err2 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err2)
-	// 1st query should be more cheaper than 2nd query
+	// 1st query should be cheaper than 2nd query
 	require.Less(t, planCost1, planCost2)
 
 	// Test Sort cost factor decrease
@@ -519,7 +519,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select * from t order by c").Rows()
 	planCost3, err3 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err3)
-	// 3rd query should be more cheaper than 1st query
+	// 3rd query should be cheaper than 1st query
 	require.Less(t, planCost3, planCost1)
 
 	// Reset to default
@@ -537,7 +537,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select /*+ INL_JOIN(t1, t2) */ * from t as t1 inner join t as t2 on t1.b = t2.b").Rows()
 	planCost2, err2 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err2)
-	// 1st query should be more cheaper than 2nd query
+	// 1st query should be cheaper than 2nd query
 	require.Less(t, planCost1, planCost2)
 
 	// Test IndexJoin cost factor decrease
@@ -545,7 +545,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select /*+ INL_JOIN(t1, t2) */ * from t as t1 inner join t as t2 on t1.b = t2.b").Rows()
 	planCost3, err3 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err3)
-	// 3rd query should be more cheaper than 1st query
+	// 3rd query should be cheaper than 1st query
 	require.Less(t, planCost3, planCost1)
 
 	// Reset to default
@@ -565,7 +565,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select /*+ MERGE_JOIN(t1, t2) */ * from t as t1 inner join t as t2 on t1.b = t2.b").Rows()
 	planCost2, err2 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err2)
-	// 1st query should be more cheaper than 2nd query
+	// 1st query should be cheaper than 2nd query
 	require.Less(t, planCost1, planCost2)
 
 	// Test MergeJoin cost factor decrease
@@ -573,7 +573,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select /*+ MERGE_JOIN(t1, t2) */ * from t as t1 inner join t as t2 on t1.b = t2.b").Rows()
 	planCost3, err3 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err3)
-	// 3rd query should be more cheaper than 1st query
+	// 3rd query should be cheaper than 1st query
 	require.Less(t, planCost3, planCost1)
 
 	// Reset to default
@@ -593,7 +593,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select/*+ HASH_JOIN(@sel_1 t1@sel_1, t2) */ * from t as t1 inner join t as t2 on t1.c = t2.c").Rows()
 	planCost2, err2 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err2)
-	// 1st query should be more cheaper than 2nd query
+	// 1st query should be cheaper than 2nd query
 	require.Less(t, planCost1, planCost2)
 
 	// Test HashJoin cost factor decrease
@@ -601,7 +601,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select /*+ HASH_JOIN(@sel_1 t1@sel_1, t2) */ * from t as t1 inner join t as t2 on t1.c = t2.c").Rows()
 	planCost3, err3 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err3)
-	// 3rd query should be more cheaper than 1st query
+	// 3rd query should be cheaper than 1st query
 	require.Less(t, planCost3, planCost1)
 
 	// Reset to default
@@ -623,7 +623,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select /*+ USE_INDEX_MERGE(t, b, ic) */ * from t where b > 4 and c > 4").Rows()
 	planCost2, err2 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err2)
-	// 1st query should be more cheaper than 2nd query
+	// 1st query should be cheaper than 2nd query
 	require.Less(t, planCost1, planCost2)
 
 	// Test index merge cost factor decrease
@@ -631,7 +631,7 @@ func TestOptimizerCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select /*+ USE_INDEX_MERGE(t, b, ic) */ * from t where b > 4 and c > 4").Rows()
 	planCost3, err3 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err3)
-	// 3rd query should be more cheaper than 1st query
+	// 3rd query should be cheaper than 1st query
 	require.Less(t, planCost3, planCost1)
 
 	// Reset to default
@@ -663,7 +663,7 @@ func TestTiFlashCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select /*+ READ_FROM_STORAGE(TIFLASH) */ * from t").Rows()
 	planCost2, err2 := strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err2)
-	// 1st query should be more cheaper than 2nd query
+	// 1st query should be cheaper than 2nd query
 	require.Less(t, planCost1, planCost2)
 
 	// Test TiFlash cost factor decrease
@@ -671,7 +671,7 @@ func TestTiFlashCostFactors(t *testing.T) {
 	rs = tk.MustQuery("explain format=verbose select /*+ READ_FROM_STORAGE(TIFLASH) */ * from t").Rows()
 	planCost3, err3 := strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err3)
-	// 3rd query should be more cheaper than 1st query
+	// 3rd query should be cheaper than 1st query
 	require.Less(t, planCost3, planCost1)
 	// Reset to default
 	tk.MustExec("set @@session.tidb_opt_table_tiflash_scan_cost_factor=1")
