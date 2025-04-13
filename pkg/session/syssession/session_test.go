@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -376,7 +377,7 @@ func TestInternalSessionTransferOwner(t *testing.T) {
 
 	// inUse session should not transfer the owner
 	se = mockInternalSession(t, sctx, owner1)
-	_, exit, err := se.EnterOperation(owner1)
+	_, exit, err := se.EnterOperation(owner1, false)
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), se.Inuse())
 	err = se.TransferOwner(owner1, owner2)
@@ -483,13 +484,13 @@ func TestInternalSessionClose(t *testing.T) {
 
 		// inUse > 0 when close
 		se = mockInternalSession(t, sctx, owner)
-		_, exit1, err := se.EnterOperation(owner)
+		_, exit1, err := se.EnterOperation(owner, false)
 		require.NoError(t, err)
 		require.Equal(t, uint64(1), se.Inuse())
-		_, exit2, err := se.EnterOperation(owner)
+		_, exit2, err := se.EnterOperation(owner, true)
 		require.NoError(t, err)
 		require.Equal(t, uint64(2), se.Inuse())
-		_, exit3, err := se.EnterOperation(owner)
+		_, exit3, err := se.EnterOperation(owner, true)
 		require.NoError(t, err)
 		require.Equal(t, uint64(3), se.Inuse())
 		// should not call `sctx.Close()` when inuse > 0 to avoid some data race
@@ -528,17 +529,17 @@ func TestInternalSessionEnterOperation(t *testing.T) {
 	se := mockInternalSession(t, sctx, owner)
 
 	// test EnterOperation will add inUse
-	gotSctx, exit1, err := se.EnterOperation(owner)
+	gotSctx, exit1, err := se.EnterOperation(owner, true)
 	require.NoError(t, err)
 	require.Same(t, sctx, gotSctx)
 	require.Equal(t, uint64(1), se.Inuse())
 
-	gotSctx, exit2, err := se.EnterOperation(owner)
+	gotSctx, exit2, err := se.EnterOperation(owner, false)
 	require.NoError(t, err)
 	require.Same(t, sctx, gotSctx)
 	require.Equal(t, uint64(2), se.Inuse())
 
-	gotSctx, exit3, err := se.EnterOperation(owner)
+	gotSctx, exit3, err := se.EnterOperation(owner, true)
 	require.NoError(t, err)
 	require.Same(t, sctx, gotSctx)
 	require.Equal(t, uint64(3), se.Inuse())
@@ -562,7 +563,7 @@ func TestInternalSessionEnterOperation(t *testing.T) {
 
 	// call with an invalid owner should report an error
 	WithSuppressAssert(func() {
-		gotSctx, exit, err := se.EnterOperation(&mockOwner{})
+		gotSctx, exit, err := se.EnterOperation(&mockOwner{}, false)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "caller is not the owner")
 		require.Nil(t, gotSctx)
@@ -572,7 +573,7 @@ func TestInternalSessionEnterOperation(t *testing.T) {
 
 	// call with a nil owner should report an error
 	WithSuppressAssert(func() {
-		gotSctx, exit, err := se.EnterOperation(nil)
+		gotSctx, exit, err := se.EnterOperation(nil, false)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "caller is not the owner")
 		require.Nil(t, gotSctx)
@@ -585,7 +586,7 @@ func TestInternalSessionEnterOperation(t *testing.T) {
 	sctx.On("Close").Once()
 	se.Close()
 	WithSuppressAssert(func() {
-		gotSctx, exit, err := se.EnterOperation(owner)
+		gotSctx, exit, err := se.EnterOperation(owner, false)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "session is closed")
 		require.Nil(t, gotSctx)
@@ -597,12 +598,12 @@ func TestInternalSessionEnterOperation(t *testing.T) {
 
 	// close the session after enter operation
 	se = mockInternalSession(t, sctx, owner)
-	gotSctx, exit4, err := se.EnterOperation(owner)
+	gotSctx, exit4, err := se.EnterOperation(owner, true)
 	require.NoError(t, err)
 	require.Same(t, sctx, gotSctx)
 	require.Equal(t, uint64(1), se.Inuse())
 
-	gotSctx, exit5, err := se.EnterOperation(owner)
+	gotSctx, exit5, err := se.EnterOperation(owner, true)
 	require.NoError(t, err)
 	require.Same(t, sctx, gotSctx)
 	require.Equal(t, uint64(2), se.Inuse())
@@ -615,7 +616,7 @@ func TestInternalSessionEnterOperation(t *testing.T) {
 
 	// new EnterOperation should be rejected after close but inuse > 0
 	WithSuppressAssert(func() {
-		_, _, err = se.EnterOperation(owner)
+		_, _, err = se.EnterOperation(owner, false)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "session is closed")
 	})
@@ -694,7 +695,7 @@ func TestInternalSessionAvoidReuse(t *testing.T) {
 	require.False(t, se.IsAvoidReuse())
 
 	execute := func(do func()) {
-		gotSctx, exit, err := se.EnterOperation(owner)
+		gotSctx, exit, err := se.EnterOperation(owner, false)
 		require.NoError(t, err)
 		require.Same(t, sctx, gotSctx)
 		defer exit()
@@ -1076,4 +1077,280 @@ func TestSessionAvoidReuse(t *testing.T) {
 	require.False(t, s.internal.avoidReuse)
 	s2.AvoidReuse()
 	require.False(t, s.internal.avoidReuse)
+}
+
+func TestInternalSessionUnThreadSafeOperations(t *testing.T) {
+	sctx := &mockSessionContext{}
+	owner := &mockOwner{}
+	se := mockInternalSession(t, sctx, owner)
+
+	enterThreadSafeOperation := func() func() {
+		inUse, unsafe := se.inUse, se.unsafe
+		gotSctx, exit, err := se.EnterOperation(owner, true)
+		require.NoError(t, err)
+		require.Same(t, sctx, gotSctx)
+		require.NotNil(t, exit)
+		require.Equal(t, inUse+1, se.inUse)
+		require.Equal(t, unsafe, se.unsafe)
+		return exit
+	}
+
+	enterFirstThreadUnsafeOperation := func() func() {
+		inUse, unsafe := se.inUse, se.unsafe
+		gotSctx, exit, err := se.EnterOperation(owner, false)
+		require.NoError(t, err)
+		require.Same(t, sctx, gotSctx)
+		require.NotNil(t, exit)
+		require.Equal(t, inUse+1, se.inUse)
+		require.Equal(t, unsafe+1, se.unsafe)
+		return exit
+	}
+
+	enterThreadUnsafeOperationExpectError := func() {
+		inUse, unsafe := se.inUse, se.unsafe
+		WithSuppressAssert(func() {
+			gotSctx, exit, err := se.EnterOperation(owner, false)
+			require.EqualError(t, err, "EnterOperation error: race detected for concurrent thread-unsafe operations")
+			require.Nil(t, gotSctx)
+			require.Nil(t, exit)
+			require.Equal(t, inUse, se.inUse)
+			require.Equal(t, unsafe+1, se.unsafe)
+		})
+	}
+
+	// multiple thread-safe operations should be allowed
+	exit1 := enterThreadSafeOperation()
+	exit2 := enterThreadSafeOperation()
+
+	// the first thread-unsafe operation should be allowed
+	exitUnsafe := enterFirstThreadUnsafeOperation()
+
+	// next thread-unsafe operation should return error
+	enterThreadUnsafeOperationExpectError()
+
+	// net thread safe operation should still success
+	exit3 := enterThreadSafeOperation()
+
+	// next thread-unsafe operation should return error
+	enterThreadUnsafeOperationExpectError()
+
+	// exit
+	require.Equal(t, uint64(4), se.inUse)
+	require.Equal(t, uint64(3), se.unsafe)
+	exit1()
+	require.Equal(t, uint64(3), se.inUse)
+	require.Equal(t, uint64(3), se.unsafe)
+	exit3()
+	require.Equal(t, uint64(2), se.inUse)
+	require.Equal(t, uint64(3), se.unsafe)
+	WithSuppressAssert(exitUnsafe)
+	require.Equal(t, uint64(1), se.inUse)
+	require.Equal(t, uint64(0), se.unsafe)
+	exit2()
+	require.Equal(t, uint64(0), se.inUse)
+	require.Equal(t, uint64(0), se.unsafe)
+
+	// new thread-unsafe operation should be allowed when after previous exits
+	exitUnsafe = enterThreadSafeOperation()
+	exitUnsafe()
+	require.Equal(t, uint64(0), se.inUse)
+	require.Equal(t, uint64(0), se.unsafe)
+
+	// when panic happens, the session should also decrease `inUse` and `unsafe`
+	func() {
+		defer func() {
+			require.Equal(t, uint64(0), se.inUse)
+			require.Equal(t, uint64(0), se.unsafe)
+			r := recover()
+			require.Equal(t, "mockPanic", r)
+		}()
+
+		exitUnsafe = enterFirstThreadUnsafeOperation()
+		defer exitUnsafe()
+		require.Equal(t, uint64(1), se.inUse)
+		require.Equal(t, uint64(1), se.unsafe)
+		enterThreadUnsafeOperationExpectError()
+		require.Equal(t, uint64(1), se.inUse)
+		require.Equal(t, uint64(2), se.unsafe)
+		panic("mockPanic")
+	}()
+}
+
+func TestSessionThreadUnsafeOperations(t *testing.T) {
+	sctx := &mockSessionContext{}
+	se := mockSession(t, sctx)
+	ctx := context.WithValue(context.Background(), "a", "b")
+	ch := make(chan bool)
+	waitCh := func(inOp bool) {
+		select {
+		case fromOp, ok := <-ch:
+			require.True(t, ok)
+			require.True(t, inOp != fromOp)
+			return
+		case <-time.After(10 * time.Second):
+			require.FailNow(t, "timed out")
+		}
+	}
+
+	sendCh := func(fromOp bool) {
+		select {
+		case ch <- fromOp:
+		case <-time.After(10 * time.Second):
+			require.FailNow(t, "timed out")
+		}
+	}
+
+	called := false
+	onCalled := func(_ mock.Arguments) {
+		require.False(t, called)
+		called = true
+		require.Equal(t, uint64(1), se.internal.Inuse())
+		sendCh(true)
+		waitCh(true)
+	}
+
+	operations := []struct {
+		name string
+		call func(first bool) error
+	}{
+		{
+			name: "WithSessionContext",
+			call: func(first bool) error {
+				err := se.WithSessionContext(func(got sessionctx.Context) error {
+					require.Same(t, sctx, got)
+					onCalled(nil)
+					return nil
+				})
+				if first {
+					require.True(t, called)
+				}
+				return err
+			},
+		},
+		{
+			name: "Execute",
+			call: func(first bool) error {
+				if first {
+					sctx.On("Execute", ctx, "select 1").
+						Run(onCalled).
+						Return(nil, nil).
+						Once()
+				}
+				_, err := se.Execute(ctx, "select 1")
+				sctx.AssertExpectations(t)
+				return err
+			},
+		},
+		{
+			name: "ExecuteInternal",
+			call: func(first bool) error {
+				if first {
+					sctx.On("ExecuteInternal", ctx, "select 1", []any(nil)).
+						Run(onCalled).
+						Return(nil, nil).
+						Once()
+				}
+				_, err := se.ExecuteInternal(ctx, "select 1")
+				sctx.AssertExpectations(t)
+				return err
+			},
+		},
+		{
+			name: "ExecuteStmt",
+			call: func(first bool) error {
+				n := &ast.SelectStmt{}
+				if first {
+					sctx.On("ExecuteStmt", ctx, n).
+						Run(onCalled).
+						Return(nil, nil).
+						Once()
+				}
+				_, err := se.ExecuteStmt(ctx, n)
+				sctx.AssertExpectations(t)
+				return err
+			},
+		},
+		{
+			name: "ParseWithParams",
+			call: func(first bool) error {
+				if first {
+					sctx.On("ParseWithParams", ctx, "select 1", []any(nil)).
+						Run(onCalled).
+						Return(nil, nil).
+						Once()
+				}
+				_, err := se.ParseWithParams(ctx, "select 1")
+				sctx.AssertExpectations(t)
+				return err
+			},
+		},
+		{
+			name: "ExecRestrictedStmt",
+			call: func(first bool) error {
+				n := &ast.SelectStmt{}
+				if first {
+					sctx.On("ExecRestrictedStmt", ctx, n, []sqlexec.OptionFuncAlias(nil)).
+						Run(onCalled).
+						Return(nil, nil, nil).
+						Once()
+				}
+				_, _, err := se.ExecRestrictedStmt(ctx, n)
+				sctx.AssertExpectations(t)
+				return err
+			},
+		},
+		{
+			name: "ExecRestrictedSQL",
+			call: func(first bool) error {
+				if first {
+					sctx.On("ExecRestrictedSQL", ctx, []sqlexec.OptionFuncAlias(nil), "select 1", []any(nil)).
+						Run(onCalled).
+						Return(nil, nil, nil).
+						Once()
+				}
+				_, _, err := se.ExecRestrictedSQL(ctx, nil, "select 1")
+				sctx.AssertExpectations(t)
+				return err
+			},
+		},
+	}
+
+	for i, op := range operations {
+		t.Run(op.name, func(t *testing.T) {
+			WithSuppressAssert(func() {
+				called = false
+				require.Zero(t, se.internal.inUse)
+				require.Zero(t, se.internal.unsafe)
+				// the first operation should be allowed
+				go func() {
+					require.NoError(t, op.call(true))
+					require.True(t, called)
+					sendCh(true)
+				}()
+				waitCh(false)
+				require.Equal(t, uint64(1), se.internal.inUse)
+				require.Equal(t, uint64(1), se.internal.unsafe)
+				// other operations should return errors
+				for j := 0; j < 3; j++ {
+					next := i + j
+					if next >= len(operations) {
+						next = len(operations) - 1
+					}
+					require.EqualError(
+						t, operations[next].call(false),
+						"EnterOperation error: race detected for concurrent thread-unsafe operations",
+					)
+					require.Equal(t, uint64(1), se.internal.inUse)
+					require.Equal(t, uint64(j+2), se.internal.unsafe)
+				}
+
+				// notify first op to continue
+				sendCh(false)
+				// wait first op exit
+				waitCh(false)
+				require.Zero(t, se.internal.inUse)
+				require.Zero(t, se.internal.unsafe)
+			})
+		})
+	}
 }

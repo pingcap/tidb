@@ -495,6 +495,8 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 		MPPPartitionCols:      p.MPPPartitionCols,
 		RejectSort:            p.RejectSort,
 		CTEProducerStatus:     p.CTEProducerStatus,
+		// we default not to clone basic indexJoinProp by default.
+		// and only call admitIndexJoinProp to inherit the indexJoinProp for special pattern operators.
 	}
 	return prop
 }
