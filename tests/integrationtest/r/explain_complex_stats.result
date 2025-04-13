@@ -27,8 +27,8 @@ UNIQUE KEY aid (aid,dic),
 KEY ip (ip),
 KEY cm (cm)
 );
-select sleep(1);
-sleep(1)
+select sleep(5);
+sleep(5)
 0
 load stats 's/explain_complex_stats_dt.json';
 drop table if exists st;
@@ -56,8 +56,8 @@ PRIMARY KEY (id),
 KEY t (t),
 KEY icd (cm,ds)
 );
-select sleep(1);
-sleep(1)
+select sleep(5);
+sleep(5)
 0
 load stats 's/explain_complex_stats_st.json';
 drop table if exists dd;
@@ -77,8 +77,8 @@ KEY ip (ip),
 KEY pi (aid,dim),
 KEY t (t)
 );
-select sleep(1);
-sleep(1)
+select sleep(5);
+sleep(5)
 0
 load stats 's/explain_complex_stats_dd.json';
 drop table if exists pp;
@@ -111,8 +111,8 @@ KEY cid (cid),
 KEY ps (ps),
 KEY sp (uid,pi)
 );
-select sleep(1);
-sleep(1)
+select sleep(5);
+sleep(5)
 0
 load stats 's/explain_complex_stats_pp.json';
 drop table if exists rr;
@@ -126,8 +126,8 @@ t int(13) DEFAULT NULL comment '[[range=1478180000,1480275300]]',
 bm tinyint(1) DEFAULT '0' comment '[[set=0,1]]',
 PRIMARY KEY (aid,dic)
 );
-select sleep(1);
-sleep(1)
+select sleep(5);
+sleep(5)
 0
 load stats 's/explain_complex_stats_rr.json';
 show stats_histograms where db_name = 'explain_complext_stats' and table_name = 'dt' and column_name = 'cm';

@@ -27,7 +27,7 @@ CREATE TABLE dt (
   KEY ip (ip),
   KEY cm (cm)
 );
-select sleep(1);
+select sleep(5);
 load stats 's/explain_complex_stats_dt.json';
 
 drop table if exists st;
@@ -55,7 +55,7 @@ CREATE TABLE st (
   KEY t (t),
   KEY icd (cm,ds)
 );
-select sleep(1);
+select sleep(5);
 load stats 's/explain_complex_stats_st.json';
 
 drop table if exists dd;
@@ -75,7 +75,7 @@ CREATE TABLE dd (
   KEY pi (aid,dim),
   KEY t (t)
 );
-select sleep(1);
+select sleep(5);
 load stats 's/explain_complex_stats_dd.json';
 
 drop table if exists pp;
@@ -108,7 +108,7 @@ CREATE TABLE pp (
   KEY ps (ps),
   KEY sp (uid,pi)
 );
-select sleep(1);
+select sleep(5);
 load stats 's/explain_complex_stats_pp.json';
 
 drop table if exists rr;
@@ -122,7 +122,7 @@ CREATE TABLE rr (
   bm tinyint(1) DEFAULT '0' comment '[[set=0,1]]',
   PRIMARY KEY (aid,dic)
 );
-select sleep(1);
+select sleep(5);
 load stats 's/explain_complex_stats_rr.json';
 
 # The following ones doesn't have its column stats.
