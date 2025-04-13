@@ -92,7 +92,6 @@ func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (_ *property.
 }
 
 func findBestTask4LogicalTableDual(lp base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
-	// if prop is require an index join's probe side, check the inner pattern admission here.
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
 		return base.InvalidTask, 0, nil
@@ -117,7 +116,6 @@ func findBestTask4LogicalTableDual(lp base.LogicalPlan, prop *property.PhysicalP
 }
 
 func findBestTask4LogicalShow(lp base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
-	// if prop is require an index join's probe side, check the inner pattern admission here.
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
 		return base.InvalidTask, 0, nil
@@ -135,7 +133,6 @@ func findBestTask4LogicalShow(lp base.LogicalPlan, prop *property.PhysicalProper
 }
 
 func findBestTask4LogicalShowDDLJobs(lp base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
-	// if prop is require an index join's probe side, check the inner pattern admission here.
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
 		return base.InvalidTask, 0, nil
@@ -653,7 +650,6 @@ END:
 }
 
 func findBestTask4LogicalMemTable(lp base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
-	// if prop is require an index join's probe side, check the inner pattern admission here.
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
 		return base.InvalidTask, 0, nil
@@ -3153,7 +3149,6 @@ func getOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 }
 
 func findBestTask4LogicalCTE(lp base.LogicalPlan, prop *property.PhysicalProperty, counter *base.PlanCounterTp, pop *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
-	// if prop is require an index join's probe side, check the inner pattern admission here.
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
 		return base.InvalidTask, 0, nil
@@ -3192,7 +3187,6 @@ func findBestTask4LogicalCTE(lp base.LogicalPlan, prop *property.PhysicalPropert
 }
 
 func findBestTask4LogicalCTETable(lp base.LogicalPlan, prop *property.PhysicalProperty, _ *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
-	// if prop is require an index join's probe side, check the inner pattern admission here.
 	if prop.IndexJoinProp != nil {
 		// even enforce hint can not work with this.
 		return base.InvalidTask, 0, nil
