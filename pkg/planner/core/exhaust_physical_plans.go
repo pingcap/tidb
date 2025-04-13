@@ -54,6 +54,11 @@ func exhaustPhysicalPlans4LogicalUnionScan(lp base.LogicalPlan, prop *property.P
 		return nil, true, nil
 	}
 	childProp := prop.CloneEssentialFields()
+	childProp = admitIndexJoinProp(childProp, prop)
+	if childProp == nil {
+		// even hint can not work with this. index join prop is not satisfied in mpp task type.
+		return nil, false, nil
+	}
 	// here we just pass down the keep order property to the child.
 	// cuz, in union scan exec, it will feel the underlying tableReader or indexReader to get the keepOrder.
 	us := PhysicalUnionScan{
@@ -1084,6 +1089,27 @@ type indexJoinInnerChildWrapper struct {
 	ds             *logicalop.DataSource
 	hasDitryWrite  bool
 	zippedChildren []base.LogicalPlan
+}
+
+// admitIndexJoinInnerChildPattern is used to check whether current physical choosing is under an index join's
+// probe side. If it is, and we ganna check the original inner pattern check here to keep compatible with the old.
+// the @first bool indicate whether current logical plan is valid of index join inner side.
+func admitIndexJoinInnerChildPattern(p base.LogicalPlan) bool {
+	switch x := p.GetBaseLogicalPlan().(*logicalop.BaseLogicalPlan).Self().(type) {
+	case *logicalop.DataSource:
+		// DS that prefer tiFlash reading couldn't walk into index join.
+		if x.PreferStoreType&h.PreferTiFlash != 0 {
+			return false
+		}
+	case *logicalop.LogicalProjection, *logicalop.LogicalSelection, *logicalop.LogicalAggregation:
+		if !p.SCtx().GetSessionVars().EnableINLJoinInnerMultiPattern {
+			return false
+		}
+	case *logicalop.LogicalUnionScan:
+	default: // index join inner side couldn't allow join, sort, limit, etc. todo: open it.
+		return false
+	}
+	return true
 }
 
 func extractIndexJoinInnerChildPattern(p *logicalop.LogicalJoin, innerChild base.LogicalPlan) *indexJoinInnerChildWrapper {
@@ -2756,6 +2782,7 @@ func exhaustPhysicalPlans4LogicalProjection(lp base.LogicalPlan, prop *property.
 	}
 
 	ret := make([]base.PhysicalPlan, 0, len(newProps))
+	newProps = admitIndexJoinProps(newProps, prop)
 	for _, newProp := range newProps {
 		proj := PhysicalProjection{
 			Exprs:            p.Exprs,
@@ -3110,6 +3137,12 @@ func getEnforcedStreamAggs(la *logicalop.LogicalAggregation, prop *property.Phys
 		SortItems:      property.SortItemsFromCols(la.GetGroupByCols(), desc),
 	}
 	if !prop.IsPrefix(childProp) {
+		// empty
+		return enforcedAggs
+	}
+	childProp = admitIndexJoinProp(childProp, prop)
+	if childProp == nil {
+		// empty
 		return enforcedAggs
 	}
 	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType}
@@ -3122,6 +3155,8 @@ func getEnforcedStreamAggs(la *logicalop.LogicalAggregation, prop *property.Phys
 	} else if !la.PreferAggToCop {
 		taskTypes = append(taskTypes, property.RootTaskType)
 	}
+	// only admit special types for index join prop
+	taskTypes = admitIndexJoinTypes(taskTypes, prop)
 	for _, taskTp := range taskTypes {
 		copiedChildProperty := new(property.PhysicalProperty)
 		*copiedChildProperty = *childProp // It's ok to not deep copy the "cols" field.
@@ -3169,6 +3204,10 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 	childProp := &property.PhysicalProperty{
 		ExpectedCnt: math.Max(prop.ExpectedCnt*la.InputCount/la.StatsInfo().RowCount, prop.ExpectedCnt),
 	}
+	childProp = admitIndexJoinProp(childProp, prop)
+	if childProp == nil {
+		return nil
+	}
 
 	for _, possibleChildProperty := range la.PossibleProperties {
 		childProp.SortItems = property.SortItemsFromCols(possibleChildProperty[:len(groupByCols)], desc)
@@ -3194,6 +3233,7 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 		if !la.CanPushToCop(kv.TiKV) && !la.CanPushToCop(kv.TiFlash) {
 			taskTypes = []property.TaskType{property.RootTaskType}
 		}
+		taskTypes = admitIndexJoinTypes(taskTypes, prop)
 		for _, taskTp := range taskTypes {
 			copiedChildProperty := new(property.PhysicalProperty)
 			*copiedChildProperty = *childProp // It's ok to not deep copy the "cols" field.
@@ -3462,7 +3502,7 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 	if prop.IsFlashProp() {
 		taskTypes = []property.TaskType{prop.TaskTp}
 	}
-
+	taskTypes = admitIndexJoinTypes(taskTypes, prop)
 	for _, taskTp := range taskTypes {
 		if taskTp == property.MppTaskType {
 			mppAggs := tryToGetMppHashAggs(la, prop)
@@ -3470,7 +3510,13 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 				hashAggs = append(hashAggs, mppAggs...)
 			}
 		} else {
-			agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp, CTEProducerStatus: prop.CTEProducerStatus})
+			childProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64, TaskTp: taskTp, CTEProducerStatus: prop.CTEProducerStatus}
+			// mainly to fill indexJoinProp to childProp.
+			childProp = admitIndexJoinProp(childProp, prop)
+			if childProp == nil {
+				continue
+			}
+			agg := NewPhysicalHashAgg(la, la.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), childProp)
 			agg.SetSchema(la.Schema().Clone())
 			hashAggs = append(hashAggs, agg)
 		}
@@ -3504,6 +3550,64 @@ func exhaustPhysicalPlans4LogicalAggregation(lp base.LogicalPlan, prop *property
 	return aggs, !(preferStream || preferHash), nil
 }
 
+func admitIndexJoinTypes(types []property.TaskType, prop *property.PhysicalProperty) []property.TaskType {
+	if prop.TaskTp == property.MppTaskType {
+		// if the parent prop is mppTask, we assume it couldn't contain indexJoinProp by default,
+		// which is guaranteed by the parent physical plans enumeration.
+		return types
+	}
+	// only admit root & cop task type to push down indexJoinProp.
+	if prop.IndexJoinProp != nil {
+		newTypes := types[:0]
+		for _, tp := range types {
+			if tp != property.MppTaskType {
+				newTypes = append(newTypes, tp)
+			}
+		}
+		types = newTypes
+	}
+	return types
+}
+
+func admitIndexJoinProps(children []*property.PhysicalProperty, prop *property.PhysicalProperty) []*property.PhysicalProperty {
+	if prop.TaskTp == property.MppTaskType {
+		// if the parent prop is mppTask, we assume it couldn't contain indexJoinProp by default,
+		// which is guaranteed by the parent physical plans enumeration.
+		return children
+	}
+	// only admit root & cop task type to push down indexJoinProp.
+	if prop.IndexJoinProp != nil {
+		newChildren := children[:0]
+		for _, child := range children {
+			if child.TaskTp != property.MppTaskType {
+				child.IndexJoinProp = prop.IndexJoinProp
+				// only admit non-mpp task prop.
+				newChildren = append(newChildren, child)
+			}
+		}
+		children = newChildren
+	}
+	return children
+}
+
+func admitIndexJoinProp(child, prop *property.PhysicalProperty) *property.PhysicalProperty {
+	if prop.TaskTp == property.MppTaskType {
+		// if the parent prop is mppTask, we assume it couldn't contain indexJoinProp by default,
+		// which is guaranteed by the parent physical plans enumeration.
+		return child
+	}
+	// only admit root & cop task type to push down indexJoinProp.
+	if prop.IndexJoinProp != nil {
+		if child.TaskTp != property.MppTaskType {
+			child.IndexJoinProp = prop.IndexJoinProp
+		} else {
+			// only admit non-mpp task prop.
+			child = nil
+		}
+	}
+	return child
+}
+
 func exhaustPhysicalPlans4LogicalSelection(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	p := lp.(*logicalop.LogicalSelection)
 	newProps := make([]*property.PhysicalProperty, 0, 2)
@@ -3519,6 +3623,7 @@ func exhaustPhysicalPlans4LogicalSelection(lp base.LogicalPlan, prop *property.P
 	}
 
 	ret := make([]base.PhysicalPlan, 0, len(newProps))
+	newProps = admitIndexJoinProps(newProps, prop)
 	for _, newProp := range newProps {
 		sel := PhysicalSelection{
 			Conditions: p.Conditions,
