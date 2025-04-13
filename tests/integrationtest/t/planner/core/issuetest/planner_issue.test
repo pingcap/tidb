@@ -574,8 +574,17 @@ drop table if exists t;
 create table t(a int, b int, c int, primary key(a,b), key ib(b));
 explain format = brief select * from t use index (ib) where a = 1 and b = 1;
 explain format = brief select /*+ use_index(t, ib) */ * from t where a = 1 and b = 1;
+explain format = brief select * from t as tt use index (ib) where a = 1 and b = 1;
+explain format = brief select /*+ use_index(tt, ib) */ * from t as tt where a = 1 and b = 1;
 explain format = brief update t use index (ib) set c = 1 where a = 1 and b = 1;
 explain format = brief update /*+ use_index(t, ib) */ t set c = 1 where a = 1 and b = 1;
 explain format = brief delete from t use index (ib) where a = 1 and b = 1;
 explain format = brief delete /*+ use_index(t, ib) */ from t where a = 1 and b = 1;
+create database if not exists test_59427;
+create table test_59427.t(a int, b int, c int, primary key(a,b), key ib(b));
+explain format = brief select * from test_59427.t use index (ib) where a = 1 and b = 1;
+explain format = brief select /*+ use_index(test_59427.t, ib) */ * from test_59427.t where a = 1 and b = 1;
+explain format = brief select * from test_59427.t as tt use index (ib) where a = 1 and b = 1;
+explain format = brief select /*+ use_index(test_59427.tt, ib) */ * from test_59427.t as tt where a = 1 and b = 1;
+drop database if exists test_59427;
 

@@ -839,7 +839,22 @@ IndexLookUp	1.00	root
   └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = brief select /*+ use_index(t, ib) */ * from t where a = 1 and b = 1;
 id	estRows	task	access object	operator info
-Point_Get	1.00	root	table:t, index:PRIMARY(a, b)	
+IndexLookUp	1.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	1.00	cop[tikv]		eq(test.t.a, 1)
+  └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = brief select * from t as tt use index (ib) where a = 1 and b = 1;
+id	estRows	task	access object	operator info
+IndexLookUp	1.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tt, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	1.00	cop[tikv]		eq(test.t.a, 1)
+  └─TableRowIDScan	10.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
+explain format = brief select /*+ use_index(tt, ib) */ * from t as tt where a = 1 and b = 1;
+id	estRows	task	access object	operator info
+IndexLookUp	1.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tt, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	1.00	cop[tikv]		eq(test.t.a, 1)
+  └─TableRowIDScan	10.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
 explain format = brief update t use index (ib) set c = 1 where a = 1 and b = 1;
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
@@ -850,7 +865,10 @@ Update	N/A	root		N/A
 explain format = brief update /*+ use_index(t, ib) */ t set c = 1 where a = 1 and b = 1;
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
-└─Point_Get	1.00	root	table:t, index:PRIMARY(a, b)	
+└─IndexLookUp	1.00	root		
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+  └─Selection(Probe)	1.00	cop[tikv]		eq(test.t.a, 1)
+    └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = brief delete from t use index (ib) where a = 1 and b = 1;
 id	estRows	task	access object	operator info
 Delete	N/A	root		N/A
@@ -861,4 +879,34 @@ Delete	N/A	root		N/A
 explain format = brief delete /*+ use_index(t, ib) */ from t where a = 1 and b = 1;
 id	estRows	task	access object	operator info
 Delete	N/A	root		N/A
-└─Point_Get	1.00	root	table:t, index:PRIMARY(a, b)	
+└─IndexLookUp	1.00	root		
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+  └─Selection(Probe)	1.00	cop[tikv]		eq(test.t.a, 1)
+    └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+create database if not exists test_59427;
+create table test_59427.t(a int, b int, c int, primary key(a,b), key ib(b));
+explain format = brief select * from test_59427.t use index (ib) where a = 1 and b = 1;
+id	estRows	task	access object	operator info
+IndexLookUp	1.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	1.00	cop[tikv]		eq(test_59427.t.a, 1)
+  └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = brief select /*+ use_index(test_59427.t, ib) */ * from test_59427.t where a = 1 and b = 1;
+id	estRows	task	access object	operator info
+IndexLookUp	1.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	1.00	cop[tikv]		eq(test_59427.t.a, 1)
+  └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = brief select * from test_59427.t as tt use index (ib) where a = 1 and b = 1;
+id	estRows	task	access object	operator info
+IndexLookUp	1.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tt, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	1.00	cop[tikv]		eq(test_59427.t.a, 1)
+  └─TableRowIDScan	10.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
+explain format = brief select /*+ use_index(test_59427.tt, ib) */ * from test_59427.t as tt where a = 1 and b = 1;
+id	estRows	task	access object	operator info
+IndexLookUp	1.00	root		
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:tt, index:ib(b)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	1.00	cop[tikv]		eq(test_59427.t.a, 1)
+  └─TableRowIDScan	10.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
+drop database if exists test_59427;
