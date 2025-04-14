@@ -1493,7 +1493,7 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 			}
 			if canConvertPointGet && len(path.Ranges) > 1 {
 				// TODO: This is now implemented, but to decrease
-				// the impact of supporting plan cache for patitioning,
+				// the impact of supporting plan cache for partitioning,
 				// this is not yet enabled.
 				// TODO: just remove this if block and update/add tests...
 				// We can only build batch point get for hash partitions on a simple column now. This is
