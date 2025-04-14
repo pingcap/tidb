@@ -7865,3 +7865,66 @@ func TestVector(t *testing.T) {
 
 	RunTest(t, table, false)
 }
+
+func TestSecondaryEngineAttribute(t *testing.T) {
+	table := []testCase{
+		// Valid Partition-level SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE TABLE t (id INT) PARTITION BY RANGE (id) (" +
+				"PARTITION p0 VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value\"}'," +
+				"PARTITION p1 VALUES LESS THAN (20) SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value2\"}')",
+			true,
+			"CREATE TABLE `t` (`id` INT) PARTITION BY RANGE (`id`) (" +
+				"PARTITION `p0` VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE= '{\"key\":\"value\"}'," +
+				"PARTITION `p1` VALUES LESS THAN (20) SECONDARY_ENGINE_ATTRIBUTE= '{\"key\":\"value2\"}')",
+		},
+
+		// Valid Table-level SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE TABLE t (id INT) SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value\"}'",
+			true,
+			"CREATE TABLE `t` (`id` INT) SECONDARY_ENGINE_ATTRIBUTE= '{\"key\":\"value\"}'",
+		},
+
+		// Valid Table-level and Partition-level SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE TABLE t (id INT) SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value\"}' PARTITION BY RANGE (id) (" +
+				"PARTITION p0 VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"partition_value\"}')",
+			true,
+			"CREATE TABLE `t` (`id` INT) SECONDARY_ENGINE_ATTRIBUTE= '{\"key\":\"value\"}' PARTITION BY RANGE (`id`) (" +
+				"PARTITION `p0` VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE= '{\"key\":\"partition_value\"}')",
+		},
+
+		// Missing value for SECONDARY_ENGINE_ATTRIBUTE at Partition-level
+		{
+			"CREATE TABLE t (id INT) PARTITION BY RANGE (id) (" +
+				"PARTITION p0 VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE=)",
+			false,
+			"",
+		},
+
+		// Missing value for SECONDARY_ENGINE_ATTRIBUTE at Table-level
+		{
+			"CREATE TABLE t (id INT) SECONDARY_ENGINE_ATTRIBUTE=",
+			false,
+			"",
+		},
+
+		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE at Partition-level
+		{
+			"CREATE TABLE t (id INT) PARTITION BY RANGE (id) (" +
+				"PARTITION p0 VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE)",
+			false,
+			"",
+		},
+
+		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE at Table-level
+		{
+			"CREATE TABLE t (id INT) SECONDARY_ENGINE_ATTRIBUTE",
+			false,
+			"",
+		},
+	}
+
+	RunTest(t, table, false)
+}
