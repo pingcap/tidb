@@ -72,7 +72,7 @@ func readAllData(
 		task.End(zap.ErrorLevel, err)
 	}()
 
-	concurrences, startOffsets, err, _, readConn1 := getFilesReadConcurrency(
+	concurrences, startOffsets, err, skipOpen, readConn1 := getFilesReadConcurrency(
 		ctx,
 		store,
 		statsFiles,
@@ -82,7 +82,7 @@ func readAllData(
 	if err != nil {
 		return err
 	}
-	log.FromContext(ctx).Info("readConn1", zap.Int("readConn1", readConn1))
+	log.FromContext(ctx).Info("readConn1", zap.Int("readConn1", readConn1), zap.Int("fileNum", len(skipOpen)))
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 	readConn := 1000
 	//readConn = min(readConn, readConn1)
@@ -127,9 +127,9 @@ func readAllData(
 	}
 
 	for fileIdx := range dataFiles {
-		//if skipOpen[fileIdx] {
-		//	continue
-		//}
+		if skipOpen[fileIdx] {
+			continue
+		}
 		select {
 		case <-egCtx.Done():
 			return eg.Wait()
