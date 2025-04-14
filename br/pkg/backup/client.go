@@ -1082,7 +1082,7 @@ func (bc *Client) BuildProgressRangeTree(ctx context.Context, ranges []rtree.Key
 			// Note1: put the range without files since it is already persisted in the external storage.
 			// Note2: give up the files if there are already overlapped ranges because the overlapped files
 			// have been flushed into metafile.
-			if pr.Res.PutForce(rg.StartKey, rg.EndKey, nil, false) {
+			if pr != nil && pr.Res.PutForce(rg.StartKey, rg.EndKey, nil, false) {
 				crc, kvs, bytes := utils.SummaryFiles(rg.Files)
 				if err := metaWriter.Send(rg.Files, metautil.AppendDataFile); err != nil {
 					return errors.Trace(err)
