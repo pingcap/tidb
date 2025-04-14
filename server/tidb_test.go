@@ -2678,3 +2678,917 @@ func TestRcReadCheckTS(t *testing.T) {
 	// As the `defaultLockTTL` is 3s and it's difficult to change it here, the lock
 	// test is implemented in the uft test cases.
 }
+<<<<<<< HEAD:server/tidb_test.go
+=======
+
+type connEventLogs struct {
+	sync.Mutex
+	types []extension.ConnEventTp
+	infos []extension.ConnEventInfo
+}
+
+func (l *connEventLogs) add(tp extension.ConnEventTp, info *extension.ConnEventInfo) {
+	l.Lock()
+	defer l.Unlock()
+	l.types = append(l.types, tp)
+	l.infos = append(l.infos, *info)
+}
+
+func (l *connEventLogs) reset() {
+	l.Lock()
+	defer l.Unlock()
+	l.types = l.types[:0]
+	l.infos = l.infos[:0]
+}
+
+func (l *connEventLogs) check(fn func()) {
+	l.Lock()
+	defer l.Unlock()
+	fn()
+}
+
+func (l *connEventLogs) waitEvent(tp extension.ConnEventTp) error {
+	totalSleep := 0
+	for {
+		l.Lock()
+		if l.types[len(l.types)-1] == tp {
+			l.Unlock()
+			return nil
+		}
+		l.Unlock()
+		if totalSleep >= 10000 {
+			break
+		}
+		time.Sleep(time.Millisecond * 100)
+		totalSleep += 100
+	}
+	return errors.New("timeout")
+}
+
+func TestExtensionConnEvent(t *testing.T) {
+	defer extension.Reset()
+	extension.Reset()
+
+	logs := &connEventLogs{}
+	require.NoError(t, extension.Register("test", extension.WithSessionHandlerFactory(func() *extension.SessionHandler {
+		return &extension.SessionHandler{
+			OnConnectionEvent: logs.add,
+		}
+	})))
+	require.NoError(t, extension.Setup())
+
+	ts := servertestkit.CreateTidbTestSuite(t)
+	// servertestkit.CreateTidbTestSuite create an inner connection, so wait the previous connection closed
+	require.NoError(t, logs.waitEvent(extension.ConnDisconnected))
+
+	// test for login success
+	logs.reset()
+	db, err := sql.Open("mysql", ts.GetDSN())
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+	defer func() {
+		_ = conn.Close()
+	}()
+
+	var expectedConn2 variable.ConnectionInfo
+	require.NoError(t, logs.waitEvent(extension.ConnHandshakeAccepted))
+	logs.check(func() {
+		require.Equal(t, []extension.ConnEventTp{
+			extension.ConnConnected,
+			extension.ConnHandshakeAccepted,
+		}, logs.types)
+		conn1 := logs.infos[0]
+		require.Equal(t, "127.0.0.1", conn1.ClientIP)
+		require.Equal(t, "127.0.0.1", conn1.ServerIP)
+		require.Empty(t, conn1.User)
+		require.Empty(t, conn1.DB)
+		require.Equal(t, int(ts.Port), conn1.ServerPort)
+		require.NotEqual(t, conn1.ServerPort, conn1.ClientPort)
+		require.NotEmpty(t, conn1.ConnectionID)
+		require.Nil(t, conn1.ActiveRoles)
+		require.NoError(t, conn1.Error)
+		require.Empty(t, conn1.SessionAlias)
+
+		expectedConn2 = *(conn1.ConnectionInfo)
+		expectedConn2.User = "root"
+		expectedConn2.DB = "test"
+		require.Equal(t, []*auth.RoleIdentity{}, logs.infos[1].ActiveRoles)
+		require.Nil(t, logs.infos[1].Error)
+		require.Equal(t, expectedConn2, *(logs.infos[1].ConnectionInfo))
+		require.Empty(t, logs.infos[1].SessionAlias)
+	})
+
+	_, err = conn.ExecContext(context.TODO(), "create role r1@'%'")
+	require.NoError(t, err)
+	_, err = conn.ExecContext(context.TODO(), "grant r1 TO root")
+	require.NoError(t, err)
+	_, err = conn.ExecContext(context.TODO(), "set role all")
+	require.NoError(t, err)
+	_, err = conn.ExecContext(context.TODO(), "set @@tidb_session_alias='alias123'")
+	require.NoError(t, err)
+
+	require.NoError(t, conn.Close())
+	require.NoError(t, db.Close())
+	require.NoError(t, logs.waitEvent(extension.ConnDisconnected))
+	logs.check(func() {
+		require.Equal(t, 3, len(logs.infos))
+		require.Equal(t, 1, len(logs.infos[2].ActiveRoles))
+		require.Equal(t, auth.RoleIdentity{
+			Username: "r1",
+			Hostname: "%",
+		}, *logs.infos[2].ActiveRoles[0])
+		require.Nil(t, logs.infos[2].Error)
+		require.Equal(t, expectedConn2, *(logs.infos[2].ConnectionInfo))
+		require.Equal(t, "alias123", logs.infos[2].SessionAlias)
+	})
+
+	// test for login failed
+	logs.reset()
+	cfg := mysql.NewConfig()
+	cfg.User = "noexist"
+	cfg.Net = "tcp"
+	cfg.Addr = fmt.Sprintf("127.0.0.1:%d", ts.Port)
+	cfg.DBName = "test"
+
+	db, err = sql.Open("mysql", cfg.FormatDSN())
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	_, err = db.Conn(context.Background())
+	require.Error(t, err)
+	require.NoError(t, logs.waitEvent(extension.ConnDisconnected))
+	logs.check(func() {
+		require.Equal(t, []extension.ConnEventTp{
+			extension.ConnConnected,
+			extension.ConnHandshakeRejected,
+			extension.ConnDisconnected,
+		}, logs.types)
+		conn1 := logs.infos[0]
+		require.Equal(t, "127.0.0.1", conn1.ClientIP)
+		require.Equal(t, "127.0.0.1", conn1.ServerIP)
+		require.Empty(t, conn1.User)
+		require.Empty(t, conn1.DB)
+		require.Equal(t, int(ts.Port), conn1.ServerPort)
+		require.NotEqual(t, conn1.ServerPort, conn1.ClientPort)
+		require.NotEmpty(t, conn1.ConnectionID)
+		require.Nil(t, conn1.ActiveRoles)
+		require.NoError(t, conn1.Error)
+		require.Empty(t, conn1.SessionAlias)
+
+		expectedConn2 = *(conn1.ConnectionInfo)
+		expectedConn2.User = "noexist"
+		expectedConn2.DB = "test"
+		require.Equal(t, []*auth.RoleIdentity{}, logs.infos[1].ActiveRoles)
+		require.EqualError(t, logs.infos[1].Error, "[server:1045]Access denied for user 'noexist'@'127.0.0.1' (using password: NO)")
+		require.Equal(t, expectedConn2, *(logs.infos[1].ConnectionInfo))
+		require.Empty(t, logs.infos[2].SessionAlias)
+	})
+}
+
+func TestSandBoxMode(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	qctx, err := ts.Tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, nil)
+	require.NoError(t, err)
+	_, err = Execute(context.Background(), qctx, "create user testuser;")
+	require.NoError(t, err)
+	qctx.Session.Auth(&auth.UserIdentity{Username: "testuser", AuthUsername: "testuser", AuthHostname: "%"}, nil, nil, nil)
+
+	alterPwdStmts := []string{
+		"set password = '1234';",
+		"alter user testuser identified by '1234';",
+		"alter user current_user() identified by '1234';",
+	}
+
+	for _, alterPwdStmt := range alterPwdStmts {
+		require.False(t, qctx.Session.InSandBoxMode())
+		_, err = Execute(context.Background(), qctx, "select 1;")
+		require.NoError(t, err)
+
+		qctx.Session.EnableSandBoxMode()
+		require.True(t, qctx.Session.InSandBoxMode())
+		_, err = Execute(context.Background(), qctx, "select 1;")
+		require.Error(t, err)
+		_, err = Execute(context.Background(), qctx, "alter user testuser identified with 'mysql_native_password';")
+		require.Error(t, err)
+		_, err = Execute(context.Background(), qctx, alterPwdStmt)
+		require.NoError(t, err)
+		_, err = Execute(context.Background(), qctx, "select 1;")
+		require.NoError(t, err)
+	}
+}
+
+// See: https://github.com/pingcap/tidb/issues/40979
+// Reusing memory of `chunk.Chunk` may cause some systems variable's memory value to be modified unexpectedly.
+func TestChunkReuseCorruptSysVarString(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	db, err := sql.Open("mysql", ts.GetDSN())
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, conn.Close())
+	}()
+
+	rs, err := conn.QueryContext(context.Background(), "show tables in test")
+	ts.Rows(t, rs)
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(context.Background(), "set @@time_zone=(select 'Asia/Shanghai')")
+	require.NoError(t, err)
+
+	rs, err = conn.QueryContext(context.Background(), "select TIDB_TABLE_ID from information_schema.tables where TABLE_SCHEMA='aaaa'")
+	ts.Rows(t, rs)
+	require.NoError(t, err)
+
+	rs, err = conn.QueryContext(context.Background(), "select @@time_zone")
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, rs.Close())
+	}()
+
+	rows := ts.Rows(t, rs)
+	require.Equal(t, 1, len(rows))
+	require.Equal(t, "Asia/Shanghai", rows[0])
+}
+
+func TestTiDBIdleTransactionTimeout(t *testing.T) {
+	ts := servertestkit.CreateTidbTestTopSQLSuite(t)
+	cases := []func(dbt *testkit.DBTestKit){}
+	// Test simple txn.
+	cases = append(cases, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("use test;")
+		dbt.MustExec("create table t1 (id int key);")
+		dbt.MustExec("set @@tidb_idle_transaction_timeout = 1")
+		tx, err := dbt.GetDB().Begin()
+		require.NoError(t, err)
+		rows, err := tx.Query("select * from t1;")
+		require.NoError(t, err)
+		ts.CheckRows(t, rows, "")
+		time.Sleep(1500 * time.Millisecond)
+		_, err = tx.Query("select * from t1;")
+		require.Error(t, err)
+		require.Equal(t, "invalid connection", err.Error())
+	})
+	// Test raw conn.
+	cases = append(cases, func(dbt *testkit.DBTestKit) {
+		ctx := context.Background()
+		dbt.MustExec("use test;")
+		dbt.MustExec("create table t2 (id int key);")
+		dbt.MustExec("set @@tidb_idle_transaction_timeout = 1")
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, "begin")
+		require.NoError(t, err)
+		rows, err := conn.QueryContext(ctx, "select * from t2;")
+		require.NoError(t, err)
+		ts.CheckRows(t, rows, "")
+		time.Sleep(1500 * time.Millisecond)
+		_, err = conn.QueryContext(ctx, "select * from t2;")
+		require.Error(t, err)
+		require.Equal(t, "invalid connection", err.Error())
+	})
+	// Test txn write.
+	cases = append(cases, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("use test;")
+		dbt.MustExec("create table t3 (id int key);")
+		dbt.MustExec("set @@tidb_idle_transaction_timeout = 1")
+		tx, err := dbt.GetDB().Begin()
+		require.NoError(t, err)
+		_, err = tx.Exec("insert into t3 values (1)")
+		require.NoError(t, err)
+		time.Sleep(1500 * time.Millisecond)
+		_, err = tx.Exec("commit")
+		require.Error(t, err)
+		require.Equal(t, "invalid connection", err.Error())
+		rows := dbt.MustQuery("select * from t3;")
+		ts.CheckRows(t, rows, "")
+	})
+	// Test autocommit=0.
+	cases = append(cases, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("use test;")
+		dbt.MustExec("create table t4 (id int key);")
+		dbt.MustExec("set @@tidb_idle_transaction_timeout = 1")
+		ctx := context.Background()
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, "set @@autocommit=0")
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, "insert into t4 values (1)")
+		require.NoError(t, err)
+		time.Sleep(1500 * time.Millisecond)
+		_, err = conn.ExecContext(ctx, "commit")
+		require.Error(t, err)
+		require.Equal(t, "invalid connection", err.Error())
+		rows := dbt.MustQuery("select * from t4;")
+		ts.CheckRows(t, rows, "")
+	})
+	// Test autocommit=1.
+	cases = append(cases, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("use test;")
+		dbt.MustExec("create table t5 (id int key);")
+		dbt.MustExec("set @@tidb_idle_transaction_timeout = 1")
+		ctx := context.Background()
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, "set @@autocommit=1")
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, "insert into t5 values (1)")
+		require.NoError(t, err)
+		time.Sleep(1500 * time.Millisecond)
+		_, err = conn.ExecContext(ctx, "insert into t5 values (2)")
+		require.NoError(t, err)
+		rows := dbt.MustQuery("select * from t5;")
+		ts.CheckRows(t, rows, "1\n2")
+	})
+	// Test sleep stmt in txn.
+	cases = append(cases, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("use test;")
+		dbt.MustExec("create table t6 (id int key);")
+		dbt.MustExec("set @@tidb_idle_transaction_timeout = 1")
+		tx, err := dbt.GetDB().Begin()
+		require.NoError(t, err)
+		_, err = tx.Exec("insert into t6 values (1)")
+		require.NoError(t, err)
+		rows, err := tx.Query("select sleep(1.5)")
+		require.NoError(t, err)
+		ts.CheckRows(t, rows, "0")
+		_, err = tx.Exec("commit")
+		require.NoError(t, err)
+		rows = dbt.MustQuery("select * from t6;")
+		ts.CheckRows(t, rows, "1")
+	})
+	// Test sleep stmt in raw conn.
+	cases = append(cases, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("use test;")
+		dbt.MustExec("create table t7 (id int key);")
+		dbt.MustExec("set @@tidb_idle_transaction_timeout = 1")
+		ctx := context.Background()
+		conn, err := dbt.GetDB().Conn(ctx)
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, "begin")
+		require.NoError(t, err)
+		_, err = conn.ExecContext(ctx, "insert into t7 values (1)")
+		require.NoError(t, err)
+		rows, err := conn.QueryContext(ctx, "select sleep(1.5)")
+		require.NoError(t, err)
+		ts.CheckRows(t, rows, "0")
+		_, err = conn.ExecContext(ctx, "commit")
+		require.NoError(t, err)
+		rows = dbt.MustQuery("select * from t7;")
+		ts.CheckRows(t, rows, "1")
+	})
+	// Test many sleep stmts in txn.
+	cases = append(cases, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("use test;")
+		dbt.MustExec("create table t8 (id int key);")
+		dbt.MustExec("set @@tidb_idle_transaction_timeout = 1")
+		tx, err := dbt.GetDB().Begin()
+		require.NoError(t, err)
+		_, err = tx.Exec("insert into t8 values (1)")
+		require.NoError(t, err)
+		rows, err := tx.Query("select sleep(0.5)")
+		require.NoError(t, err)
+		ts.CheckRows(t, rows, "0")
+		_, err = tx.Exec("insert into t8 values (2)")
+		require.NoError(t, err)
+		rows, err = tx.Query("select sleep(0.5)")
+		require.NoError(t, err)
+		ts.CheckRows(t, rows, "0")
+		_, err = tx.Exec("insert into t8 values (3)")
+		require.NoError(t, err)
+		rows, err = tx.Query("select sleep(0.5)")
+		require.NoError(t, err)
+		ts.CheckRows(t, rows, "0")
+		_, err = tx.Exec("commit")
+		require.NoError(t, err)
+		rows = dbt.MustQuery("select * from t8;")
+		ts.CheckRows(t, rows, "1\n2\n3")
+	})
+
+	var wg sync.WaitGroup
+	for _, ca := range cases {
+		wg.Add(1)
+		go func(fn func(dbt *testkit.DBTestKit)) {
+			defer wg.Done()
+			ts.RunTests(t, nil, fn)
+		}(ca)
+	}
+	// Test release lock.
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		db1, err := sql.Open("mysql", ts.GetDSN(nil))
+		require.NoError(t, err)
+		db2, err := sql.Open("mysql", ts.GetDSN(nil))
+		require.NoError(t, err)
+		defer func() {
+			err := db1.Close()
+			require.NoError(t, err)
+			err = db2.Close()
+			require.NoError(t, err)
+		}()
+		ctx := context.Background()
+		conn1, err := db1.Conn(ctx)
+		require.NoError(t, err)
+		_, err = conn1.ExecContext(ctx, "create table t (id int key);")
+		require.NoError(t, err)
+		_, err = conn1.ExecContext(ctx, "set @@tidb_idle_transaction_timeout = 1")
+		require.NoError(t, err)
+		_, err = conn1.ExecContext(ctx, "insert into t values (1)")
+		require.NoError(t, err)
+		_, err = conn1.ExecContext(ctx, "begin")
+		require.NoError(t, err)
+		_, err = conn1.ExecContext(ctx, "select * from t for update")
+		require.NoError(t, err)
+		_, err = conn1.ExecContext(ctx, "insert into t values (2)")
+		require.NoError(t, err)
+		go func() {
+			defer wg.Done()
+			conn2, err := db2.Conn(ctx)
+			require.NoError(t, err)
+			_, err = conn2.ExecContext(ctx, "set @@tidb_idle_transaction_timeout = 1")
+			require.NoError(t, err)
+			_, err = conn2.ExecContext(ctx, "begin")
+			require.NoError(t, err)
+			_, err = conn2.ExecContext(ctx, "select * from t for update")
+			require.NoError(t, err)
+			_, err = conn2.ExecContext(ctx, "insert into t values (3)")
+			require.NoError(t, err)
+			_, err = conn2.ExecContext(ctx, "commit")
+			require.NoError(t, err)
+			rows, err := db2.QueryContext(ctx, "select * from t")
+			require.NoError(t, err)
+			ts.CheckRows(t, rows, "1\n3")
+		}()
+		time.Sleep(1500 * time.Millisecond)
+		_, err = conn1.ExecContext(ctx, "commit")
+		require.Error(t, err)
+		require.Equal(t, "invalid connection", err.Error())
+		rows, err := db1.QueryContext(ctx, "select * from t where id=2")
+		require.NoError(t, err)
+		ts.CheckRows(t, rows, "")
+	}()
+
+	// wait all test case finished.
+	wg.Wait()
+}
+
+type mockProxyProtocolProxy struct {
+	frontend      string
+	backend       string
+	clientAddr    string
+	backendIsSock bool
+	ln            net.Listener
+	run           atomic.Bool
+	runChan       chan struct{}
+}
+
+func newMockProxyProtocolProxy(frontend, backend, clientAddr string, backendIsSock bool) *mockProxyProtocolProxy {
+	return &mockProxyProtocolProxy{
+		frontend:      frontend,
+		backend:       backend,
+		clientAddr:    clientAddr,
+		backendIsSock: backendIsSock,
+		ln:            nil,
+		runChan:       make(chan struct{}),
+	}
+}
+
+func (p *mockProxyProtocolProxy) ListenAddr() net.Addr {
+	return p.ln.Addr()
+}
+
+func (p *mockProxyProtocolProxy) Run() (err error) {
+	p.run.Store(true)
+	p.ln, err = net.Listen("tcp", p.frontend)
+	if err != nil {
+		return err
+	}
+	close(p.runChan)
+	for p.run.Load() {
+		conn, err := p.ln.Accept()
+		if err != nil {
+			break
+		}
+		go p.onConn(conn)
+	}
+	return nil
+}
+
+func (p *mockProxyProtocolProxy) Close() error {
+	p.run.Store(false)
+	if p.ln != nil {
+		return p.ln.Close()
+	}
+	return nil
+}
+
+func (p *mockProxyProtocolProxy) connectToBackend() (net.Conn, error) {
+	if p.backendIsSock {
+		return net.Dial("unix", p.backend)
+	}
+	return net.Dial("tcp", p.backend)
+}
+
+func (p *mockProxyProtocolProxy) onConn(conn net.Conn) {
+	bconn, err := p.connectToBackend()
+	if err != nil {
+		conn.Close()
+		fmt.Println(err)
+	}
+	defer bconn.Close()
+	ppHeader := p.generateProxyProtocolHeaderV2("tcp4", p.clientAddr, p.frontend)
+	bconn.Write(ppHeader)
+	p.proxyPipe(conn, bconn)
+}
+
+func (p *mockProxyProtocolProxy) proxyPipe(p1, p2 io.ReadWriteCloser) {
+	defer p1.Close()
+	defer p2.Close()
+
+	// start proxy
+	p1die := make(chan struct{})
+	go func() { io.Copy(p1, p2); close(p1die) }()
+
+	p2die := make(chan struct{})
+	go func() { io.Copy(p2, p1); close(p2die) }()
+
+	// wait for proxy termination
+	select {
+	case <-p1die:
+	case <-p2die:
+	}
+}
+
+func (p *mockProxyProtocolProxy) generateProxyProtocolHeaderV2(network, srcAddr, dstAddr string) []byte {
+	var (
+		proxyProtocolV2Sig = []byte{0x0D, 0x0A, 0x0D, 0x0A, 0x00, 0x0D, 0x0A, 0x51, 0x55, 0x49, 0x54, 0x0A}
+		v2CmdPos           = 12
+		v2FamlyPos         = 13
+	)
+	saddr, _ := net.ResolveTCPAddr(network, srcAddr)
+	daddr, _ := net.ResolveTCPAddr(network, dstAddr)
+	buffer := make([]byte, 1024)
+	copy(buffer, proxyProtocolV2Sig)
+	// Command
+	buffer[v2CmdPos] = 0x21
+	// Famly
+	if network == "tcp4" {
+		buffer[v2FamlyPos] = 0x11
+		binary.BigEndian.PutUint16(buffer[14:14+2], 12)
+		copy(buffer[16:16+4], []byte(saddr.IP.To4()))
+		copy(buffer[20:20+4], []byte(daddr.IP.To4()))
+		binary.BigEndian.PutUint16(buffer[24:24+2], uint16(saddr.Port))
+		binary.BigEndian.PutUint16(buffer[26:26+2], uint16(saddr.Port))
+		return buffer[0:28]
+	} else if network == "tcp6" {
+		buffer[v2FamlyPos] = 0x21
+		binary.BigEndian.PutUint16(buffer[14:14+2], 36)
+		copy(buffer[16:16+16], []byte(saddr.IP.To16()))
+		copy(buffer[32:32+16], []byte(daddr.IP.To16()))
+		binary.BigEndian.PutUint16(buffer[48:48+2], uint16(saddr.Port))
+		binary.BigEndian.PutUint16(buffer[50:50+2], uint16(saddr.Port))
+		return buffer[0:52]
+	}
+	return buffer
+}
+
+func TestProxyProtocolWithIpFallbackable(t *testing.T) {
+	cfg := util2.NewTestConfig()
+	cfg.Port = 4999
+	cfg.Status.ReportStatus = false
+	// Setup proxy protocol config
+	cfg.ProxyProtocol.Networks = "*"
+	cfg.ProxyProtocol.Fallbackable = true
+
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	// Prepare Server
+	server2.RunInGoTestChan = make(chan struct{})
+	server, err := server2.NewServer(cfg, ts.Tidbdrv)
+	require.NoError(t, err)
+	server.SetDomain(ts.Domain)
+	go func() {
+		err := server.Run(nil)
+		require.NoError(t, err)
+	}()
+	time.Sleep(time.Millisecond * 100)
+	defer func() {
+		server.Close()
+	}()
+	<-server2.RunInGoTestChan
+	require.NotNil(t, server.Listener())
+	require.Nil(t, server.Socket())
+
+	// Prepare Proxy
+	ppProxy := newMockProxyProtocolProxy("127.0.0.1:5000", "127.0.0.1:4999", "192.168.1.2:60055", false)
+	go func() {
+		ppProxy.Run()
+	}()
+	time.Sleep(time.Millisecond * 100)
+	defer func() {
+		ppProxy.Close()
+	}()
+	<-ppProxy.runChan
+	cli := testserverclient.NewTestServerClient()
+	cli.Port = testutil.GetPortFromTCPAddr(ppProxy.ListenAddr())
+	cli.WaitUntilServerCanConnect()
+
+	cli.RunTests(t,
+		func(config *mysql.Config) {
+			config.User = "root"
+		},
+		func(dbt *testkit.DBTestKit) {
+			rows := dbt.MustQuery("SHOW PROCESSLIST;")
+			records := cli.Rows(t, rows)
+			require.Contains(t, records[0], "192.168.1.2:60055")
+		},
+	)
+
+	cli2 := testserverclient.NewTestServerClient()
+	cli2.Port = 4999
+	cli2.RunTests(t,
+		func(config *mysql.Config) {
+			config.User = "root"
+		},
+		func(dbt *testkit.DBTestKit) {
+			rows := dbt.MustQuery("SHOW PROCESSLIST;")
+			records := cli.Rows(t, rows)
+			require.Contains(t, records[0], "127.0.0.1:")
+		},
+	)
+}
+
+func TestProxyProtocolWithIpNoFallbackable(t *testing.T) {
+	cfg := util2.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.ReportStatus = false
+	// Setup proxy protocol config
+	cfg.ProxyProtocol.Networks = "*"
+	cfg.ProxyProtocol.Fallbackable = false
+
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	// Prepare Server
+	server2.RunInGoTestChan = make(chan struct{})
+	server, err := server2.NewServer(cfg, ts.Tidbdrv)
+	require.NoError(t, err)
+	server.SetDomain(ts.Domain)
+	go func() {
+		err := server.Run(nil)
+		require.NoError(t, err)
+	}()
+	<-server2.RunInGoTestChan
+	defer func() {
+		server.Close()
+	}()
+
+	require.NotNil(t, server.Listener())
+	require.Nil(t, server.Socket())
+
+	cli := testserverclient.NewTestServerClient()
+	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	dsn := cli.GetDSN(func(config *mysql.Config) {
+		config.User = "root"
+		config.DBName = "test"
+	})
+	db, err := sql.Open("mysql", dsn)
+	require.Nil(t, err)
+	err = db.Ping()
+	require.NotNil(t, err)
+	db.Close()
+}
+
+func TestConnectionWillNotLeak(t *testing.T) {
+	cfg := util2.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.ReportStatus = false
+	// Setup proxy protocol config
+	cfg.ProxyProtocol.Networks = "*"
+	cfg.ProxyProtocol.Fallbackable = false
+
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	cli := testserverclient.NewTestServerClient()
+	cli.Port = testutil.GetPortFromTCPAddr(ts.Server.ListenAddr())
+	dsn := cli.GetDSN(func(config *mysql.Config) {
+		config.User = "root"
+		config.DBName = "test"
+	})
+	db, err := sql.Open("mysql", dsn)
+	require.Nil(t, err)
+	db.SetMaxOpenConns(100)
+	db.SetMaxIdleConns(0)
+
+	// create 100 connections
+	conns := make([]*sql.Conn, 0, 100)
+	for len(conns) < 100 {
+		conn, err := db.Conn(context.Background())
+		require.NoError(t, err)
+		conns = append(conns, conn)
+	}
+	require.Eventually(t, func() bool {
+		runtime.GC()
+		return server2.ConnectionInMemCounterForTest.Load() == int64(100)
+	}, time.Minute, time.Millisecond*100)
+
+	// run a simple query on each connection and close it
+	// this cannot ensure the connection will not leak for any kinds of requests
+	var wg sync.WaitGroup
+	for _, conn := range conns {
+		wg.Add(1)
+		go func() {
+			rows, err := conn.QueryContext(context.Background(), "SELECT 2023")
+			require.NoError(t, err)
+			var result int
+			require.True(t, rows.Next())
+			require.NoError(t, rows.Scan(&result))
+			require.Equal(t, result, 2023)
+			require.NoError(t, rows.Close())
+			// `db.Close` will not close already grabbed connection, so it's still needed to close the connection here.
+			require.NoError(t, conn.Close())
+			wg.Done()
+		}()
+	}
+	wg.Wait()
+
+	require.NoError(t, db.Close())
+	require.Eventually(t, func() bool {
+		runtime.GC()
+		count := server2.ConnectionInMemCounterForTest.Load()
+		return count == 0
+	}, time.Minute, time.Millisecond*100)
+}
+
+func TestPrepareCount(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	qctx, err := ts.Tidbdrv.OpenCtx(uint64(0), 0, uint8(tmysql.DefaultCollationID), "test", nil, nil)
+	require.NoError(t, err)
+	prepareCnt := atomic.LoadInt64(&variable.PreparedStmtCount)
+	ctx := context.Background()
+	_, err = Execute(ctx, qctx, "use test;")
+	require.NoError(t, err)
+	_, err = Execute(ctx, qctx, "drop table if exists t1")
+	require.NoError(t, err)
+	_, err = Execute(ctx, qctx, "create table t1 (id int)")
+	require.NoError(t, err)
+	stmt, _, _, err := qctx.Prepare("insert into t1 values (?)")
+	require.NoError(t, err)
+	require.Equal(t, prepareCnt+1, atomic.LoadInt64(&variable.PreparedStmtCount))
+	require.NoError(t, err)
+	err = qctx.GetStatement(stmt.ID()).Close()
+	require.NoError(t, err)
+	require.Equal(t, prepareCnt, atomic.LoadInt64(&variable.PreparedStmtCount))
+	require.NoError(t, qctx.Close())
+}
+
+func TestSQLModeIsLoadedBeforeQuery(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTestSQLModeIsLoadedBeforeQuery(t)
+}
+
+func TestConnectionCount(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTestConnectionCount(t)
+}
+
+func TestTypeAndCharsetOfSendLongData(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+	ts.RunTestTypeAndCharsetOfSendLongData(t)
+}
+
+func TestIssue53634(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuiteWithDDLLease(t, "20s")
+	ts.RunTestIssue53634(t)
+}
+
+func TestIssue54254(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuiteWithDDLLease(t, "20s")
+	ts.RunTestIssue54254(t)
+}
+
+func TestAuthSocket(t *testing.T) {
+	defer server2.ClearOSUserForAuthSocket()
+
+	cfg := util2.NewTestConfig()
+	cfg.Socket = filepath.Join(t.TempDir(), "authsock.sock")
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	ts := servertestkit.CreateTidbTestSuiteWithCfg(t, cfg)
+	ts.WaitUntilServerCanConnect()
+
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("CREATE USER 'u1'@'%' IDENTIFIED WITH auth_socket;")
+		dbt.MustExec("CREATE USER 'u2'@'%' IDENTIFIED WITH auth_socket AS 'sockuser'")
+		dbt.MustExec("CREATE USER 'sockuser'@'%' IDENTIFIED WITH auth_socket;")
+	})
+
+	// network login should be denied
+	for _, uname := range []string{"u1", "u2", "u3"} {
+		server2.MockOSUserForAuthSocket(uname)
+		db, err := sql.Open("mysql", ts.GetDSN(func(config *mysql.Config) {
+			config.User = uname
+		}))
+		require.NoError(t, err)
+		_, err = db.Conn(context.TODO())
+		require.EqualError(t,
+			err,
+			fmt.Sprintf("Error 1045 (28000): Access denied for user '%s'@'127.0.0.1' (using password: NO)", uname),
+		)
+		require.NoError(t, db.Close())
+	}
+
+	socketAuthConf := func(user string) func(*mysql.Config) {
+		return func(config *mysql.Config) {
+			config.User = user
+			config.Net = "unix"
+			config.Addr = cfg.Socket
+			config.DBName = ""
+		}
+	}
+
+	server2.MockOSUserForAuthSocket("sockuser")
+
+	// mysql username that is different with the OS user should be rejected.
+	db, err := sql.Open("mysql", ts.GetDSN(socketAuthConf("u1")))
+	require.NoError(t, err)
+	_, err = db.Conn(context.TODO())
+	require.EqualError(t, err, "Error 1045 (28000): Access denied for user 'u1'@'localhost' (using password: YES)")
+	require.NoError(t, db.Close())
+
+	// mysql username that is the same with the OS user should be accepted.
+	ts.RunTests(t, socketAuthConf("sockuser"), func(dbt *testkit.DBTestKit) {
+		rows := dbt.MustQuery("select current_user();")
+		ts.CheckRows(t, rows, "sockuser@%")
+	})
+
+	// When a user is created with `IDENTIFIED WITH auth_socket AS ...`.
+	// It should be accepted when username or as string is the same with OS user.
+	ts.RunTests(t, socketAuthConf("u2"), func(dbt *testkit.DBTestKit) {
+		rows := dbt.MustQuery("select current_user();")
+		ts.CheckRows(t, rows, "u2@%")
+	})
+
+	server2.MockOSUserForAuthSocket("u2")
+	ts.RunTests(t, socketAuthConf("u2"), func(dbt *testkit.DBTestKit) {
+		rows := dbt.MustQuery("select current_user();")
+		ts.CheckRows(t, rows, "u2@%")
+	})
+}
+
+func TestBatchGetTypeForRowExpr(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	// single columns
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("use test;")
+		dbt.MustExec("create table t1 (id varchar(255) collate utf8mb4_general_ci, primary key (id));")
+		dbt.MustExec("insert into t1 values ('a'), ('c');")
+
+		conn, err := dbt.GetDB().Conn(context.Background())
+		require.NoError(t, err)
+		defer func() {
+			require.NoError(t, conn.Close())
+		}()
+		_, err = conn.ExecContext(context.Background(), "set @@session.collation_connection = 'utf8mb4_general_ci'")
+		require.NoError(t, err)
+		stmt, err := conn.PrepareContext(context.Background(), "select * from t1 where id in (?, ?)")
+		require.NoError(t, err)
+		rows, err := stmt.Query("A", "C")
+		require.NoError(t, err)
+		ts.CheckRows(t, rows, "a\nc")
+	})
+
+	// multiple columns
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("use test;")
+		dbt.MustExec("create table t2 (id1 varchar(255) collate utf8mb4_general_ci, id2 varchar(255) collate utf8mb4_general_ci, primary key (id1, id2));")
+		dbt.MustExec("insert into t2 values ('a', 'b'), ('c', 'd');")
+
+		conn, err := dbt.GetDB().Conn(context.Background())
+		require.NoError(t, err)
+		defer func() {
+			require.NoError(t, conn.Close())
+		}()
+		conn.ExecContext(context.Background(), "set @@session.collation_connection = 'utf8mb4_general_ci'")
+		stmt, err := conn.PrepareContext(context.Background(), "select * from t2 where (id1, id2) in ((?, ?), (?, ?))")
+		require.NoError(t, err)
+		rows, err := stmt.Query("A", "B", "C", "D")
+		require.NoError(t, err)
+		ts.CheckRows(t, rows, "a b\nc d")
+	})
+}
+>>>>>>> 1f9bdd65a5e (planner: fix the issue that the type of `BatchGet` with multiple columns is incorrect (#60524)):pkg/server/tests/commontest/tidb_test.go
