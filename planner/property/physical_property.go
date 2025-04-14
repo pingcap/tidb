@@ -94,8 +94,34 @@ type MPPPartitionColumn struct {
 	CollateID int32
 }
 
+<<<<<<< HEAD:planner/property/physical_property.go
 func (partitionCol *MPPPartitionColumn) hashCode(ctx *stmtctx.StatementContext) []byte {
 	hashcode := partitionCol.Col.HashCode(ctx)
+=======
+// ResolveIndices resolve index for MPPPartitionColumn
+func (partitionCol *MPPPartitionColumn) ResolveIndices(schema *expression.Schema) (*MPPPartitionColumn, error) {
+	newColExpr, err := partitionCol.Col.ResolveIndices(schema)
+	if err != nil {
+		return nil, err
+	}
+	newCol, _ := newColExpr.(*expression.Column)
+	return &MPPPartitionColumn{
+		Col:       newCol,
+		CollateID: partitionCol.CollateID,
+	}, nil
+}
+
+// Clone makes a copy of MPPPartitionColumn.
+func (partitionCol *MPPPartitionColumn) Clone() *MPPPartitionColumn {
+	return &MPPPartitionColumn{
+		Col:       partitionCol.Col.Clone().(*expression.Column),
+		CollateID: partitionCol.CollateID,
+	}
+}
+
+func (partitionCol *MPPPartitionColumn) hashCode() []byte {
+	hashcode := partitionCol.Col.HashCode()
+>>>>>>> 43d47e4e1d7 (planner: fix bug in `PhysicalExchangeSender::ResolveIndicesItself` (#60520)):pkg/planner/property/physical_property.go
 	if partitionCol.CollateID < 0 {
 		// collateId < 0 means new collation is not enabled
 		hashcode = codec.EncodeInt(hashcode, int64(partitionCol.CollateID))
