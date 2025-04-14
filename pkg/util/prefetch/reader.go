@@ -20,6 +20,8 @@ import (
 	"sync"
 )
 
+var PrintLog = false
+
 // Reader is a reader that prefetches data from the underlying reader.
 type Reader struct {
 	r            io.ReadCloser
@@ -62,6 +64,7 @@ func (r *Reader) run() {
 		case r.bufCh <- buf:
 		}
 		if err != nil {
+			//logutil.BgLogger().Error("read error", zap.Error(err))
 			r.err = err
 			close(r.bufCh)
 			return
@@ -77,7 +80,9 @@ func (r *Reader) Read(data []byte) (int, error) {
 			b, ok := <-r.bufCh
 			if !ok {
 				if total > 0 {
-					return total, nil
+					//PrintLog = true
+					//logutil.BgLogger().Error("set printlog = true", zap.Error(r.err), zap.Int("total", total), zap.Any("data-buf-len", len(data)))
+					return total, io.ErrUnexpectedEOF
 				}
 				return 0, r.err
 			}
