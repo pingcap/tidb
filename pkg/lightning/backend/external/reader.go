@@ -231,6 +231,7 @@ func readOneFile(
 		zap.String("last key", hex.EncodeToString(lastKey)),
 		zap.Int("traversedKeyNum", cntAllKeys),
 		zap.Int("matchedKeyNum", len(keys)),
+		zap.Int("matchedKeySize", size),
 		zap.Int("dropped num", cntDropped),
 		zap.Int("dropped size", droppedSize),
 		zap.String("data-file-name", dataFile),
