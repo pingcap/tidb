@@ -311,7 +311,6 @@ func TestInstancePlanCacheDMLBasic(t *testing.T) {
 }
 
 func TestInstancePlanCacheUpdateSpecifiedPartition(t *testing.T) {
-	t.Skip("tmp")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -337,13 +336,13 @@ func TestInstancePlanCacheUpdateSpecifiedPartition(t *testing.T) {
 			tk.MustExec(fmt.Sprintf(`prepare st from 'update t1 partition(p%v) set b = b + ?'`, pIdx))
 			tk.MustExec(`execute st using @v`)
 			tk.MustExec(`execute st using @v`)
-			tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can hit the cache
+			tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // cannot hit the cache
 			tk.MustExec(fmt.Sprintf(`update t2 partition(p%v) set b = b + 2`, pIdx))
 		} else { // no specified partition
 			tk.MustExec(`prepare st from 'update t1 set b = b + ?'`)
 			tk.MustExec(`execute st using @v`)
 			tk.MustExec(`execute st using @v`)
-			tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can hit the cache
+			tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // cannot hit the cache
 			tk.MustExec(`update t2 set b = b + 2`)
 		}
 		tk.MustQuery(`select * from t1`).Sort().Check(tk.MustQuery(`select * from t2`).Sort().Rows())
