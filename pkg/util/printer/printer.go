@@ -85,7 +85,7 @@ func GetTiDBInfo() string {
 		enterpriseVersion,
 	)
 	if config.IsCloudStore() {
-		info += "\nNext Generation"
+		info += "\nCloud Store: true"
 	}
 	return info
 }
