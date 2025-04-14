@@ -28,6 +28,7 @@ CREATE TABLE dt (
   KEY cm (cm)
 );
 select sleep(5);
+show stats_meta;
 load stats 's/explain_complex_stats_dt.json';
 
 drop table if exists st;
@@ -56,6 +57,7 @@ CREATE TABLE st (
   KEY icd (cm,ds)
 );
 select sleep(5);
+show stats_meta;
 load stats 's/explain_complex_stats_st.json';
 
 drop table if exists dd;
@@ -76,6 +78,7 @@ CREATE TABLE dd (
   KEY t (t)
 );
 select sleep(5);
+show stats_meta;
 load stats 's/explain_complex_stats_dd.json';
 
 drop table if exists pp;
@@ -109,6 +112,7 @@ CREATE TABLE pp (
   KEY sp (uid,pi)
 );
 select sleep(5);
+show stats_meta;
 load stats 's/explain_complex_stats_pp.json';
 
 drop table if exists rr;
@@ -123,6 +127,7 @@ CREATE TABLE rr (
   PRIMARY KEY (aid,dic)
 );
 select sleep(5);
+show stats_meta;
 load stats 's/explain_complex_stats_rr.json';
 
 # The following ones doesn't have its column stats.
