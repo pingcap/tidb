@@ -113,7 +113,7 @@ func readAllData(
 						startKey,
 						endKey,
 						startOffsets[fileIdx],
-						concurrences[fileIdx],
+						concurrences[fileIdx]*2,
 						smallBlockBuf,
 						largeBlockBuf,
 						output,
