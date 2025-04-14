@@ -16,11 +16,16 @@ package local
 
 import (
 	"context"
+	"io"
 	"sync"
 	"testing"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
+	ingestclimock "github.com/pingcap/tidb/pkg/ingestor/ingestcli/mock"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 func TestRegionJobBaseWorker(t *testing.T) {
@@ -29,7 +34,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 			jobInCh:  make(chan *regionJob, 10),
 			jobOutCh: make(chan *regionJob, 10),
 			jobWg:    &sync.WaitGroup{},
-			doRunJobFn: func(ctx context.Context, job *regionJob) error {
+			runJobFn: func(ctx context.Context, job *regionJob) error {
 				job.convertStageTo(ingested)
 				return nil
 			},
@@ -67,7 +72,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 
 	t.Run("regenerate jobs", func(t *testing.T) {
 		w := newWorker()
-		w.doRunJobFn = func(ctx context.Context, job *regionJob) error {
+		w.runJobFn = func(ctx context.Context, job *regionJob) error {
 			job.convertStageTo(needRescan)
 			return nil
 		}
@@ -76,5 +81,134 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		close(w.jobInCh)
 		require.NoError(t, w.run(context.Background()))
 		require.Equal(t, 3, len(w.jobOutCh))
+	})
+}
+
+func TestIsRetryableTiKVWriteError(t *testing.T) {
+	w := &regionJobBaseWorker{}
+	require.True(t, w.isRetryableImportTiKVError(io.EOF))
+	require.True(t, w.isRetryableImportTiKVError(errors.Trace(io.EOF)))
+}
+
+func TestCloudRegionJobWorker(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockIngestCli := ingestclimock.NewMockClient(ctrl)
+
+	cloudW := &cloudRegionJobWorker{
+		regionJobBaseWorker: &regionJobBaseWorker{},
+		ingestCli:           mockIngestCli,
+		writeBatchSize:      8,
+		bufPool:             nil,
+	}
+	cloudW.regionJobBaseWorker.writeFn = cloudW.write
+	cloudW.regionJobBaseWorker.ingestFn = cloudW.ingest
+	cloudW.regionJobBaseWorker.runJobFn = cloudW.runJob
+
+	t.Run("empty job", func(t *testing.T) {
+		job := &regionJob{
+			keyRange:   common.Range{Start: []byte("a"), End: []byte("z")},
+			stage:      regionScanned,
+			ingestData: mockIngestData{},
+		}
+		writeRes, err := cloudW.write(context.Background(), job)
+		require.NoError(t, err)
+		require.True(t, writeRes.emptyJob)
+		require.True(t, ctrl.Satisfied())
+	})
+
+	t.Run("failed to create ingest client", func(t *testing.T) {
+		job := &regionJob{
+			keyRange:   common.Range{Start: []byte("a"), End: []byte("z")},
+			stage:      regionScanned,
+			ingestData: mockIngestData{{[]byte("a"), []byte("a")}},
+		}
+		mockIngestCli.EXPECT().WriteClient(gomock.Any()).Return(nil, errors.New("mock error"))
+		writeRes, err := cloudW.write(context.Background(), job)
+		require.ErrorContains(t, err, "mock error")
+		require.Nil(t, writeRes)
+		require.True(t, ctrl.Satisfied())
+	})
+
+	t.Run("failed to write data", func(t *testing.T) {
+		job := &regionJob{
+			keyRange:   common.Range{Start: []byte("a"), End: []byte("z")},
+			stage:      regionScanned,
+			ingestData: mockIngestData{{[]byte("a"), []byte("a")}},
+		}
+		writeCli := ingestclimock.NewMockWriteClient(ctrl)
+		mockIngestCli.EXPECT().WriteClient(gomock.Any()).Return(writeCli, nil)
+		writeCli.EXPECT().Write(gomock.Any(), gomock.Any()).Return(errors.New("mock error"))
+		writeRes, err := cloudW.write(context.Background(), job)
+		require.ErrorContains(t, err, "mock error")
+		require.Nil(t, writeRes)
+		require.True(t, ctrl.Satisfied())
+	})
+
+	t.Run("failed to closeAndRecv", func(t *testing.T) {
+		job := &regionJob{
+			keyRange:   common.Range{Start: []byte("a"), End: []byte("z")},
+			stage:      regionScanned,
+			ingestData: mockIngestData{{[]byte("a"), []byte("a")}},
+		}
+		writeCli := ingestclimock.NewMockWriteClient(ctrl)
+		mockIngestCli.EXPECT().WriteClient(gomock.Any()).Return(writeCli, nil)
+		writeCli.EXPECT().Write(gomock.Any(), gomock.Any()).Return(nil)
+		writeCli.EXPECT().CloseAndRecv(gomock.Any()).Return(nil, errors.New("mock error"))
+		resp, err := cloudW.write(context.Background(), job)
+		require.ErrorContains(t, err, "mock error")
+		require.Nil(t, resp)
+		require.True(t, ctrl.Satisfied())
+	})
+
+	t.Run("write data success, and we have trailing pairs after iteration loop", func(t *testing.T) {
+		job := &regionJob{
+			keyRange: common.Range{Start: []byte("a"), End: []byte("z")},
+			stage:    regionScanned,
+			ingestData: mockIngestData{
+				{[]byte("aa"), []byte("aaaa")},
+				{[]byte("ab"), []byte("abab")},
+				{[]byte("ac"), []byte("acac")},
+			},
+		}
+		writeCli := ingestclimock.NewMockWriteClient(ctrl)
+		mockIngestCli.EXPECT().WriteClient(gomock.Any()).Return(writeCli, nil)
+		writeCli.EXPECT().Write(gomock.Any(), gomock.Any()).Return(nil)
+		writeCli.EXPECT().Write(gomock.Any(), gomock.Any()).Return(nil)
+		writeCli.EXPECT().CloseAndRecv(gomock.Any()).Return(&ingestcli.WriteResponse{SSTFile: "the-file"}, nil)
+		res, err := cloudW.write(context.Background(), job)
+		require.NoError(t, err)
+		require.EqualValues(t, 3, res.count)
+		require.EqualValues(t, 18, res.totalBytes)
+		require.Equal(t, "the-file", res.sstFile)
+		require.True(t, ctrl.Satisfied())
+	})
+
+	t.Run("ingest failed", func(t *testing.T) {
+		job := &regionJob{
+			keyRange:    common.Range{Start: []byte("a"), End: []byte("z")},
+			stage:       wrote,
+			ingestData:  mockIngestData{},
+			writeResult: &tikvWriteResult{sstFile: "the-file"},
+		}
+		mockIngestCli.EXPECT().Ingest(gomock.Any(), gomock.Any()).Return(errors.New("mock error"))
+		err := cloudW.ingest(context.Background(), job)
+		require.ErrorContains(t, err, "mock error")
+		require.Equal(t, needRescan, job.stage)
+		require.True(t, ctrl.Satisfied())
+	})
+
+	t.Run("ingest success", func(t *testing.T) {
+		job := &regionJob{
+			keyRange:    common.Range{Start: []byte("a"), End: []byte("z")},
+			stage:       wrote,
+			ingestData:  mockIngestData{},
+			writeResult: &tikvWriteResult{sstFile: "the-file"},
+		}
+		mockIngestCli.EXPECT().Ingest(gomock.Any(), gomock.Any()).Return(nil)
+		err := cloudW.ingest(context.Background(), job)
+		require.NoError(t, err)
+		require.Equal(t, ingested, job.stage)
+		require.True(t, ctrl.Satisfied())
 	})
 }

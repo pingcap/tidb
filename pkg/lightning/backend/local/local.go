@@ -19,7 +19,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
-	"io"
 	"math"
 	"net"
 	"path/filepath"
@@ -38,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/version"
+	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
@@ -1093,19 +1093,6 @@ func (local *Backend) generateJobForRange(
 	return jobs, nil
 }
 
-func (*Backend) isRetryableImportTiKVError(err error) bool {
-	err = errors.Cause(err)
-	// io.EOF is not retryable in normal case
-	// but on TiKV restart, if we're writing to TiKV(through GRPC)
-	// it might return io.EOF(it's GRPC Unavailable in most case),
-	// we need to retry on this error.
-	// see SendMsg in https://pkg.go.dev/google.golang.org/grpc#ClientStream
-	if err == io.EOF {
-		return true
-	}
-	return common.IsRetryableError(err)
-}
-
 func checkDiskAvail(ctx context.Context, store *pdhttp.StoreInfo) error {
 	logger := log.FromContext(ctx)
 	capacity, err := units.RAMInBytes(store.Status.Capacity)
@@ -1135,92 +1122,6 @@ func checkDiskAvail(ctx context.Context, store *pdhttp.StoreInfo) error {
 			storeType, store.Store.Address, storeType)
 	}
 	return nil
-}
-
-// executeJob handles a regionJob and tries to convert it to ingested stage.
-// If non-retryable error occurs, it will return the error.
-// If retryable error occurs, it will return nil and caller should check the stage
-// of the regionJob to determine what to do with it.
-func (local *Backend) executeJob(
-	ctx context.Context,
-	job *regionJob,
-) error {
-	failpoint.Inject("WriteToTiKVNotEnoughDiskSpace", func(_ failpoint.Value) {
-		failpoint.Return(
-			errors.New("the remaining storage capacity of TiKV is less than 10%%; please increase the storage capacity of TiKV and try again"))
-	})
-	if local.ShouldCheckTiKV {
-		for _, peer := range job.region.Region.GetPeers() {
-			store, err := local.pdHTTPCli.GetStore(ctx, peer.StoreId)
-			if err != nil {
-				log.FromContext(ctx).Warn("failed to get StoreInfo from pd http api", zap.Error(err))
-				continue
-			}
-			err = checkDiskAvail(ctx, store)
-			if err != nil {
-				return err
-			}
-		}
-	}
-
-	for {
-		// the job might in wrote stage if it comes from retry
-		if job.stage == regionScanned {
-			// writes the data to TiKV and mark this job as wrote stage.
-			// we don't need to do cleanup for the pairs written to TiKV if encounters
-			// an error, TiKV will take the responsibility to do so.
-			// TODO: let client-go provide a high-level write interface.
-			res, err := local.doWrite(ctx, job)
-			if err != nil {
-				if !local.isRetryableImportTiKVError(err) {
-					return err
-				}
-				// currently only one case will restart write
-				if strings.Contains(err.Error(), "RequestTooNew") {
-					// TiKV hasn't synced the newest region info with PD, it's ok to
-					// rewrite without rescan.
-					job.convertStageTo(regionScanned)
-				} else {
-					job.convertStageTo(needRescan)
-				}
-				job.lastRetryableErr = err
-				log.FromContext(ctx).Warn("meet retryable error when writing to TiKV",
-					log.ShortError(err), zap.Stringer("job stage", job.stage))
-				return nil
-			}
-			if res.emptyJob {
-				job.convertStageTo(ingested)
-			} else {
-				job.writeResult = res
-				job.convertStageTo(wrote)
-			}
-		}
-
-		// if the job is empty, it might go to ingested stage directly.
-		if job.stage == wrote {
-			err := local.ingest(ctx, job)
-			if err != nil {
-				if !local.isRetryableImportTiKVError(err) {
-					return err
-				}
-				log.FromContext(ctx).Warn("meet retryable error when ingesting",
-					log.ShortError(err), zap.Stringer("job stage", job.stage))
-				job.lastRetryableErr = err
-				return nil
-			}
-		}
-		// if the stage is not ingested, it means some error happened, the job should
-		// be sent back to caller to retry later, else we handle remaining data.
-		if job.stage != ingested {
-			return nil
-		}
-
-		if job.writeResult == nil || job.writeResult.remainingStartKey == nil {
-			return nil
-		}
-		job.keyRange.Start = job.writeResult.remainingStartKey
-		job.convertStageTo(regionScanned)
-	}
 }
 
 // ImportEngine imports an engine to TiKV.
@@ -1484,16 +1385,7 @@ func (local *Backend) doImport(
 		afterExecuteJob = balancer.releaseStoreLoad
 	}
 	for i := 0; i < local.WorkerConcurrency; i++ {
-		worker := &opRegionJobWorker{
-			regionJobBaseWorker: &regionJobBaseWorker{
-				jobInCh:          toCh,
-				jobOutCh:         jobFromWorkerCh,
-				jobWg:            &jobWg,
-				doRunJobFn:       local.executeJob,
-				afterRunJobFn:    afterExecuteJob,
-				regenerateJobsFn: local.generateJobForRange,
-			},
-		}
+		worker := local.newRegionJobWorker(toCh, jobFromWorkerCh, &jobWg, afterExecuteJob)
 		workGroup.Go(func() error {
 			return worker.run(workerCtx)
 		})
@@ -1538,6 +1430,43 @@ func (local *Backend) doImport(
 		log.FromContext(ctx).Error("do import meets error", zap.Error(err))
 	}
 	return err
+}
+
+func (local *Backend) newRegionJobWorker(
+	toCh, jobFromWorkerCh chan *regionJob,
+	jobWg *sync.WaitGroup,
+	afterExecuteJob func([]*metapb.Peer),
+) regionJobWorker {
+	base := &regionJobBaseWorker{
+		jobInCh:          toCh,
+		jobOutCh:         jobFromWorkerCh,
+		jobWg:            jobWg,
+		afterRunJobFn:    afterExecuteJob,
+		regenerateJobsFn: local.generateJobForRange,
+	}
+	if tidbconfig.IsCloudStore() {
+		cloudW := &cloudRegionJobWorker{
+			// TODO fill the cli
+			ingestCli:      nil,
+			writeBatchSize: local.KVWriteBatchSize,
+			bufPool:        local.engineMgr.getBufferPool(),
+		}
+		base.writeFn = cloudW.write
+		base.ingestFn = cloudW.ingest
+		base.runJobFn = cloudW.runJob
+		cloudW.regionJobBaseWorker = base
+		return cloudW
+	}
+
+	opWorker := &opRegionJobWorker{
+		checkTiKVSpace: local.ShouldCheckTiKV,
+		pdHTTPCli:      local.pdHTTPCli,
+	}
+	base.writeFn = local.doWrite
+	base.ingestFn = local.ingest
+	base.runJobFn = opWorker.runJob
+	opWorker.regionJobBaseWorker = base
+	return opWorker
 }
 
 // GetImportedKVCount returns the number of imported KV pairs of some engine.
