@@ -65,10 +65,10 @@ func InitAndAddColumnToTable(tblInfo *model.TableInfo, colInfo *model.ColumnInfo
 	return colInfo
 }
 
-func checkAddColumn(t *meta.Mutator, job *model.Job) (*model.TableInfo, *model.ColumnInfo, *model.ColumnInfo,
-	*ast.ColumnPosition, bool /* ifNotExists */, error) {
+func checkAddColumn(t *meta.Mutator, job *model.Job) (tblInfo *model.TableInfo, columnInfo *model.ColumnInfo, col *model.ColumnInfo,
+	pos *ast.ColumnPosition, _ bool /* ifNotExists */, err error) {
 	schemaID := job.SchemaID
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
+	tblInfo, err = GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return nil, nil, nil, nil, false, errors.Trace(err)
 	}
@@ -80,7 +80,7 @@ func checkAddColumn(t *meta.Mutator, job *model.Job) (*model.TableInfo, *model.C
 	}
 	col, pos, ifNotExists := args.Col, args.Pos, args.IgnoreExistenceErr
 
-	columnInfo := model.FindColumnInfo(tblInfo.Columns, col.Name.L)
+	columnInfo = model.FindColumnInfo(tblInfo.Columns, col.Name.L)
 	if columnInfo != nil {
 		if columnInfo.State == model.StatePublic {
 			// We already have a column with the same column name.
@@ -1107,12 +1107,12 @@ func isColumnWithIndex(colName string, indices []*model.IndexInfo) bool {
 
 func isColumnCanDropWithIndex(colName string, indices []*model.IndexInfo) error {
 	for _, indexInfo := range indices {
-		if indexInfo.Primary || len(indexInfo.Columns) > 1 || indexInfo.VectorInfo != nil {
+		if indexInfo.Primary || len(indexInfo.Columns) > 1 || indexInfo.IsColumnarIndex() {
 			for _, col := range indexInfo.Columns {
 				if col.Name.L == colName {
 					errMsg := "with composite index covered or Primary Key covered now"
-					if indexInfo.VectorInfo != nil {
-						errMsg = "with Vector Key covered now"
+					if indexInfo.IsColumnarIndex() {
+						errMsg = "with Columnar Index covered now"
 					}
 					return dbterror.ErrCantDropColWithIndex.GenWithStack("can't drop column %s "+errMsg, colName)
 				}

@@ -120,10 +120,9 @@ func TestVersion(t *testing.T) {
 	require.NoError(t, err)
 	tableInfo1 := tbl1.Meta()
 	h, err := handle.NewHandle(
-		testKit.Session(),
+		context.Background(),
 		testKit2.Session(),
 		time.Millisecond,
-		is,
 		do.SysSessionPool(),
 		do.SysProcTracker(),
 		do.DDLNotifier(),

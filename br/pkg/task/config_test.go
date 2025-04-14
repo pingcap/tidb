@@ -36,6 +36,7 @@ import (
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	"google.golang.org/grpc/keepalive"
 )
 
@@ -61,6 +62,10 @@ func (m mockPDClient) GetAllStores(ctx context.Context, opts ...opt.GetStoreOpti
 	return []*metapb.Store{}, nil
 }
 
+func (m mockPDClient) WithCallerComponent(_ caller.Component) pd.Client {
+	return m
+}
+
 func TestConfigureRestoreClient(t *testing.T) {
 	cfg := Config{
 		Concurrency: 1024,
@@ -71,7 +76,7 @@ func TestConfigureRestoreClient(t *testing.T) {
 	restoreCfg := &RestoreConfig{
 		Config:              cfg,
 		RestoreCommonConfig: restoreComCfg,
-		DdlBatchSize:        127,
+		DdlBatchSize:        128,
 	}
 	client := snapclient.NewRestoreClient(mockPDClient{}, nil, nil, keepalive.ClientParameters{})
 	ctx := context.Background()
@@ -86,8 +91,7 @@ func TestAdjustRestoreConfigForStreamRestore(t *testing.T) {
 	restoreCfg.adjustRestoreConfigForStreamRestore()
 	require.Equal(t, restoreCfg.PitrBatchCount, uint32(defaultPiTRBatchCount))
 	require.Equal(t, restoreCfg.PitrBatchSize, uint32(defaultPiTRBatchSize))
-	require.Equal(t, restoreCfg.PitrConcurrency, uint32(defaultPiTRConcurrency))
-	require.Equal(t, restoreCfg.Concurrency, restoreCfg.PitrConcurrency)
+	require.Equal(t, restoreCfg.PitrConcurrency, uint32(defaultPiTRConcurrency)+1)
 }
 
 func TestCheckRestoreDBAndTable(t *testing.T) {

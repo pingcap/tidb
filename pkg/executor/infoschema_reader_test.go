@@ -16,7 +16,9 @@ package executor_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"math/rand"
 	"os"
 	"strconv"
 	"strings"
@@ -25,6 +27,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -559,6 +562,10 @@ func TestTablesTable(t *testing.T) {
 			tableMetas = append(tableMetas, &tableMeta{schema: schemaName, table: tableName, id: res.String()})
 		}
 	}
+
+	// test table mode
+	tk.MustQuery(`select tidb_table_mode from information_schema.tables where table_schema = 'db1' and
+		table_name = 't1'`).Check(testkit.Rows("Normal"))
 
 	// Predicates are extracted in CNF, so we separate the test cases by the number of disjunctions in the predicate.
 
@@ -1283,4 +1290,31 @@ func TestIndexUsageWithData(t *testing.T) {
 
 		checkIndexUsage(startQuery, endQuery)
 	})
+}
+
+func TestKeyspaceMeta(t *testing.T) {
+	keyspaceID := rand.Uint32() >> 8
+	keyspaceName := fmt.Sprintf("keyspace-%d", keyspaceID)
+	cfg := map[string]string{
+		"key_a": "a",
+		"key_b": "b",
+	}
+
+	keyspaceMeta := &keyspacepb.KeyspaceMeta{
+		Id:     keyspaceID,
+		Name:   keyspaceName,
+		Config: cfg,
+	}
+
+	store := testkit.CreateMockStore(t, mockstore.WithKeyspaceMeta(keyspaceMeta))
+	tk := testkit.NewTestKit(t, store)
+
+	rows := tk.MustQuery("select * from information_schema.keyspace_meta").Rows()
+	require.Equal(t, 1, len(rows))
+	require.Equal(t, keyspaceMeta.Name, rows[0][0])
+	require.Equal(t, fmt.Sprintf("%d", keyspaceMeta.Id), rows[0][1])
+	actualCfg := make(map[string]string)
+	err := json.Unmarshal([]byte(rows[0][2].(string)), &actualCfg)
+	require.Nil(t, err)
+	require.Equal(t, cfg, actualCfg)
 }

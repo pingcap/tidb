@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -77,7 +78,7 @@ var workloadTables = []repositoryTable{
 			DB_VER JSON NULL COMMENT 'Versions of TiDB, TiKV, PD at the moment',
 			WR_VER int unsigned NULL COMMENT 'Version to identify the compatibility of workload schema between releases.',
 			SOURCE VARCHAR(20) NULL COMMENT 'The program that initializes the snaphost. ',
-			ERROR TEXT DEFAULT NULL COMMENT 'extra messages are written if anything happens to block that snapshots.')`, WorkloadSchema, histSnapshotsTable),
+			ERROR TEXT DEFAULT NULL COMMENT 'extra messages are written if anything happens to block that snapshots.')`, mysql.WorkloadSchema, histSnapshotsTable),
 		"",
 	},
 	{"INFORMATION_SCHEMA", "TIDB_INDEX_USAGE", snapshotTable, "", "", "", ""},
@@ -307,7 +308,6 @@ func (w *worker) startRepository(ctx context.Context) func() {
 	// TODO: add another txn type
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	return func() {
-		w.owner = w.newOwner(ownerKey, promptKey)
 		if err := w.owner.CampaignOwner(); err != nil {
 			logutil.BgLogger().Error("repository could not campaign for owner", zap.NamedError("err", err))
 		}
@@ -369,6 +369,7 @@ func (w *worker) start() error {
 		return errUnsupportedEtcdRequired.GenWithStackByArgs()
 	}
 
+	w.owner = w.newOwner(ownerKey, promptKey)
 	_ = stmtsummary.StmtSummaryByDigestMap.SetHistoryEnabled(false)
 	ctx, cancel := context.WithCancel(context.Background())
 	w.cancel = cancel

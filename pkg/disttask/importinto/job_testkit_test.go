@@ -53,7 +53,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 	}
 	bytes, err := json.Marshal(taskMeta)
 	require.NoError(t, err)
-	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(111), proto.ImportInto, 1, "", 0, bytes)
+	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(111), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, bytes)
 	require.NoError(t, err)
 	importStepMetas := []*importinto.ImportStepMeta{
 		{
@@ -73,9 +73,9 @@ func TestGetTaskImportedRows(t *testing.T) {
 		testutil.CreateSubTask(t, manager, taskID, proto.ImportStepImport,
 			"", bytes, proto.ImportInto, 11)
 	}
-	rows, err := importinto.GetTaskImportedRows(ctx, 111)
+	runInfo, err := importinto.GetRuntimeInfoForJob(ctx, 111)
 	require.NoError(t, err)
-	require.Equal(t, uint64(3), rows)
+	require.Equal(t, uint64(3), runInfo.ImportRows)
 
 	// global sort
 	taskMeta = importinto.TaskMeta{
@@ -85,7 +85,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 	}
 	bytes, err = json.Marshal(taskMeta)
 	require.NoError(t, err)
-	taskID, err = manager.CreateTask(ctx, importinto.TaskKey(222), proto.ImportInto, 1, "", 0, bytes)
+	taskID, err = manager.CreateTask(ctx, importinto.TaskKey(222), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, bytes)
 	require.NoError(t, err)
 	ingestStepMetas := []*importinto.WriteIngestStepMeta{
 		{
@@ -105,7 +105,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 		testutil.CreateSubTask(t, manager, taskID, proto.ImportStepWriteAndIngest,
 			"", bytes, proto.ImportInto, 11)
 	}
-	rows, err = importinto.GetTaskImportedRows(ctx, 222)
+	runInfo, err = importinto.GetRuntimeInfoForJob(ctx, 222)
 	require.NoError(t, err)
-	require.Equal(t, uint64(33), rows)
+	require.Equal(t, uint64(33), runInfo.ImportRows)
 }

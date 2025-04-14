@@ -175,6 +175,20 @@ var defaultSysVars = []*SysVar{
 		s.TiFlashQuerySpillRatio = tidbOptFloat64(val, vardef.DefTiFlashQuerySpillRatio)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiFlashHashJoinVersion, Value: vardef.DefTiFlashHashJoinVersion, Type: vardef.TypeStr,
+		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ vardef.ScopeFlag) (string, error) {
+			lowerValue := strings.ToLower(normalizedValue)
+			if lowerValue != joinversion.HashJoinVersionLegacy && lowerValue != joinversion.HashJoinVersionOptimized {
+				err := fmt.Errorf("incorrect value: `%s`. %s options: %s", originalValue, vardef.TiFlashHashJoinVersion, joinversion.HashJoinVersionLegacy+", "+joinversion.HashJoinVersionOptimized)
+				return normalizedValue, err
+			}
+			return normalizedValue, nil
+		},
+		SetSession: func(s *SessionVars, val string) error {
+			s.TiFlashHashJoinVersion = val
+			return nil
+		},
+	},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableTiFlashPipelineMode, Type: vardef.TypeBool, Value: BoolToOnOff(vardef.DefTiDBEnableTiFlashPipelineMode), SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 		vardef.TiFlashEnablePipelineMode.Store(TiDBOptOn(s))
 		return nil
@@ -708,6 +722,11 @@ var defaultSysVars = []*SysVar{
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		return (*SetPDClientDynamicOption.Load())(vardef.PDEnableFollowerHandleRegion, val)
 	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableBatchQueryRegion, Value: BoolToOnOff(vardef.DefTiDBEnableBatchQueryRegion), Type: vardef.TypeBool, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
+		return BoolToOnOff(vardef.EnableBatchQueryRegion.Load()), nil
+	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		return (*SetPDClientDynamicOption.Load())(vardef.TiDBEnableBatchQueryRegion, val)
+	}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableLocalTxn, Value: BoolToOnOff(vardef.DefTiDBEnableLocalTxn), Hidden: true, Type: vardef.TypeBool, Depended: true, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
 		return BoolToOnOff(vardef.EnableLocalTxn.Load()), nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
@@ -786,6 +805,10 @@ var defaultSysVars = []*SysVar{
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBMaxDeltaSchemaCount, Value: strconv.Itoa(vardef.DefTiDBMaxDeltaSchemaCount), Type: vardef.TypeUnsigned, MinValue: 100, MaxValue: 16384, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		// It's a global variable, but it also wants to be cached in server.
 		vardef.SetMaxDeltaSchemaCount(TidbOptInt64(val, vardef.DefTiDBMaxDeltaSchemaCount))
+		return nil
+	}},
+	{Scope: vardef.ScopeSession, Name: vardef.TiDBEnablePointGetCache, Value: BoolToOnOff(vardef.DefTiDBPointGetCache), Hidden: true, Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnablePointGetCache = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBScatterRegion, Value: vardef.DefTiDBScatterRegion, PossibleValues: []string{vardef.ScatterOff, vardef.ScatterTable, vardef.ScatterGlobal}, Type: vardef.TypeStr,
@@ -994,6 +1017,14 @@ var defaultSysVars = []*SysVar{
 		}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
 			vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxNoReplacement.FastGenByArgs(vardef.TiDBAutoAnalyzePartitionBatchSize))
 			return normalizedValue, nil
+		},
+	},
+	{Scope: vardef.ScopeGlobal, Name: vardef.MaxUserConnections, Value: strconv.FormatUint(vardef.DefMaxUserConnections, 10), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: 100000,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			vardef.MaxUserConnectionsValue.Store(uint32(TidbOptInt64(val, vardef.DefMaxUserConnections)))
+			return nil
+		}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return strconv.FormatUint(uint64(vardef.MaxUserConnectionsValue.Load()), 10), nil
 		},
 	},
 	// variable for top SQL feature.
@@ -2026,6 +2057,74 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptDiskFactor, Value: strconv.FormatFloat(vardef.DefOptDiskFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
 		s.diskFactor = tidbOptFloat64(val, vardef.DefOptDiskFactor)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptIndexScanCostFactor, Value: strconv.FormatFloat(vardef.DefOptIndexScanCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.IndexScanCostFactor = tidbOptFloat64(val, vardef.DefOptIndexScanCostFactor)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptIndexReaderCostFactor, Value: strconv.FormatFloat(vardef.DefOptIndexReaderCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.IndexReaderCostFactor = tidbOptFloat64(val, vardef.DefOptIndexReaderCostFactor)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptTableReaderCostFactor, Value: strconv.FormatFloat(vardef.DefOptTableReaderCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.TableReaderCostFactor = tidbOptFloat64(val, vardef.DefOptTableReaderCostFactor)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptTableFullScanCostFactor, Value: strconv.FormatFloat(vardef.DefOptTableFullScanCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.TableFullScanCostFactor = tidbOptFloat64(val, vardef.DefOptTableFullScanCostFactor)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptTableRangeScanCostFactor, Value: strconv.FormatFloat(vardef.DefOptTableRangeScanCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.TableRangeScanCostFactor = tidbOptFloat64(val, vardef.DefOptTableRangeScanCostFactor)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptTableRowIDScanCostFactor, Value: strconv.FormatFloat(vardef.DefOptTableRowIDScanCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.TableRowIDScanCostFactor = tidbOptFloat64(val, vardef.DefOptTableRowIDScanCostFactor)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptTableTiFlashScanCostFactor, Value: strconv.FormatFloat(vardef.DefOptTableTiFlashScanCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.TableTiFlashScanCostFactor = tidbOptFloat64(val, vardef.DefOptTableTiFlashScanCostFactor)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptIndexLookupCostFactor, Value: strconv.FormatFloat(vardef.DefOptIndexLookupCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.IndexLookupCostFactor = tidbOptFloat64(val, vardef.DefOptIndexLookupCostFactor)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptIndexMergeCostFactor, Value: strconv.FormatFloat(vardef.DefOptIndexMergeCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.IndexMergeCostFactor = tidbOptFloat64(val, vardef.DefOptIndexMergeCostFactor)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptSortCostFactor, Value: strconv.FormatFloat(vardef.DefOptSortCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.SortCostFactor = tidbOptFloat64(val, vardef.DefOptSortCostFactor)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptTopNCostFactor, Value: strconv.FormatFloat(vardef.DefOptTopNCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.TopNCostFactor = tidbOptFloat64(val, vardef.DefOptTopNCostFactor)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptLimitCostFactor, Value: strconv.FormatFloat(vardef.DefOptLimitCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.LimitCostFactor = tidbOptFloat64(val, vardef.DefOptLimitCostFactor)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptStreamAggCostFactor, Value: strconv.FormatFloat(vardef.DefOptStreamAggCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.StreamAggCostFactor = tidbOptFloat64(val, vardef.DefOptStreamAggCostFactor)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptHashAggCostFactor, Value: strconv.FormatFloat(vardef.DefOptHashAggCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.HashAggCostFactor = tidbOptFloat64(val, vardef.DefOptHashAggCostFactor)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptMergeJoinCostFactor, Value: strconv.FormatFloat(vardef.DefOptMergeJoinCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.MergeJoinCostFactor = tidbOptFloat64(val, vardef.DefOptMergeJoinCostFactor)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptHashJoinCostFactor, Value: strconv.FormatFloat(vardef.DefOptHashJoinCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.HashJoinCostFactor = tidbOptFloat64(val, vardef.DefOptHashJoinCostFactor)
+		return nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptIndexJoinCostFactor, Value: strconv.FormatFloat(vardef.DefOptIndexJoinCostFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
+		s.IndexJoinCostFactor = tidbOptFloat64(val, vardef.DefOptIndexJoinCostFactor)
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptimizerEnableNewOnlyFullGroupByCheck, Value: BoolToOnOff(vardef.DefTiDBOptimizerEnableNewOFGB), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
@@ -3450,6 +3549,15 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{
+		Scope:      vardef.ScopeGlobal | vardef.ScopeSession,
+		Name:       vardef.TiDBPipelinedDmlResourcePolicy,
+		Value:      vardef.DefTiDBPipelinedDmlResourcePolicy,
+		Type:       vardef.TypeStr,
+		SetSession: setPipelinedDmlResourcePolicy,
+		// because the special character in custom syntax cannot be correctly handled in set_var hint
+		IsHintUpdatableVerified: true,
+	},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)
@@ -3489,5 +3597,111 @@ func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {
 		return err
 	}
 	s.TiFlashComputeDispatchPolicy = p
+	return nil
+}
+
+func setPipelinedDmlResourcePolicy(s *SessionVars, val string) error {
+	// ensure the value is trimmed and lowercased
+	val = strings.TrimSpace(val)
+	lowVal := strings.ToLower(val)
+	switch lowVal {
+	case vardef.StrategyStandard:
+		s.PipelinedDMLConfig.PipelinedFlushConcurrency = vardef.DefaultFlushConcurrency
+		s.PipelinedDMLConfig.PipelinedResolveLockConcurrency = vardef.DefaultResolveConcurrency
+		s.PipelinedDMLConfig.PipelinedWriteThrottleRatio = 0
+	case vardef.StrategyConservative:
+		s.PipelinedDMLConfig.PipelinedFlushConcurrency = vardef.ConservativeFlushConcurrency
+		s.PipelinedDMLConfig.PipelinedResolveLockConcurrency = vardef.ConservativeResolveConcurrency
+		s.PipelinedDMLConfig.PipelinedWriteThrottleRatio = 0
+	default:
+		// Create a temporary config to hold new values to avoid partial application
+		newConfig := PipelinedDMLConfig{
+			PipelinedFlushConcurrency:       vardef.DefaultFlushConcurrency,
+			PipelinedResolveLockConcurrency: vardef.DefaultResolveConcurrency,
+			PipelinedWriteThrottleRatio:     0,
+		}
+
+		// More flexible custom format validation
+		if !strings.HasPrefix(lowVal, vardef.StrategyCustom) {
+			return ErrWrongValueForVar.FastGenByArgs(vardef.TiDBPipelinedDmlResourcePolicy, val)
+		}
+
+		// Extract everything after "custom"
+		remaining := strings.TrimSpace(lowVal[len(vardef.StrategyCustom):])
+		if len(remaining) < 2 || !strings.HasPrefix(remaining, "{") || !strings.HasSuffix(remaining, "}") {
+			return ErrWrongValueForVar.FastGenByArgs(vardef.TiDBPipelinedDmlResourcePolicy, val)
+		}
+
+		// Extract and trim content between brackets
+		content := strings.TrimSpace(remaining[1 : len(remaining)-1])
+		if content == "" {
+			return ErrWrongValueForVar.FastGenByArgs(vardef.TiDBPipelinedDmlResourcePolicy, val)
+		}
+
+		// Split parameters
+		rawParams := strings.Split(content, ",")
+		for _, rawParam := range rawParams {
+			param := strings.TrimSpace(rawParam)
+			if param == "" {
+				return ErrWrongValueForVar.FastGenByArgs(vardef.TiDBPipelinedDmlResourcePolicy, val)
+			}
+
+			// Split key-values
+			parts := strings.FieldsFunc(param, func(r rune) bool {
+				return r == '=' || r == ':'
+			})
+
+			if len(parts) != 2 {
+				return ErrWrongValueForVar.FastGenByArgs(vardef.TiDBPipelinedDmlResourcePolicy, val)
+			}
+
+			key := strings.TrimSpace(parts[0])
+			value := strings.TrimSpace(parts[1])
+
+			switch key {
+			case "concurrency":
+				concurrency, err := strconv.ParseInt(value, 10, 64)
+				if err != nil || concurrency < vardef.MinPipelinedDMLConcurrency || concurrency > vardef.MaxPipelinedDMLConcurrency {
+					logutil.BgLogger().Warn(
+						"invalid concurrency value in pipelined DML resource policy",
+						zap.String("value", val),
+						zap.String("concurrency", value),
+						zap.Error(err),
+					)
+					return ErrWrongValueForVar.FastGenByArgs(vardef.TiDBPipelinedDmlResourcePolicy, val)
+				}
+				newConfig.PipelinedFlushConcurrency = int(concurrency)
+			case "resolve_concurrency":
+				concurrency, err := strconv.ParseInt(value, 10, 64)
+				if err != nil || concurrency < vardef.MinPipelinedDMLConcurrency || concurrency > vardef.MaxPipelinedDMLConcurrency {
+					logutil.BgLogger().Warn(
+						"invalid resolve_concurrency value in pipelined DML resource policy",
+						zap.String("value", val),
+						zap.String("resolve_concurrency", value),
+						zap.Error(err),
+					)
+					return ErrWrongValueForVar.FastGenByArgs(vardef.TiDBPipelinedDmlResourcePolicy, val)
+				}
+				newConfig.PipelinedResolveLockConcurrency = int(concurrency)
+			case "write_throttle_ratio":
+				ratio, err := strconv.ParseFloat(value, 64)
+				if err != nil || ratio < 0 || ratio >= 1 {
+					logutil.BgLogger().Warn(
+						"invalid write_throttle_ratio value in pipelined DML resource policy",
+						zap.String("value", val),
+						zap.String("write_throttle_ratio", value),
+						zap.Error(err),
+					)
+					return ErrWrongValueForVar.FastGenByArgs(vardef.TiDBPipelinedDmlResourcePolicy, val)
+				}
+				newConfig.PipelinedWriteThrottleRatio = ratio
+			default:
+				return ErrWrongValueForVar.FastGenByArgs(vardef.TiDBPipelinedDmlResourcePolicy, val)
+			}
+		}
+
+		// Only apply changes after all validation passed
+		s.PipelinedDMLConfig = newConfig
+	}
 	return nil
 }

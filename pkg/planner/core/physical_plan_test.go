@@ -592,11 +592,44 @@ func TestAvoidColumnEvaluatorForProjBelowUnion(t *testing.T) {
 	tk.MustExec(`set tidb_window_concurrency = 100;`)
 
 	testCases := []string{
-		`select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) order by a, b, c;`,
+		`select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) x order by a, b, c;`,
 		`select a+1, b+1 from (select cc1 as a, cc2 as b from t1 union select cc2, cc1 from t1) tmp`,
 	}
 
 	for _, sql := range testCases {
 		checkResult(sql)
 	}
+}
+
+func TestExchangeSenderResolveIndices(t *testing.T) {
+	schemaCols1 := make([]*expression.Column, 0, 4)
+	schemaCols1 = append(schemaCols1, &expression.Column{UniqueID: 1})
+	schemaCols1 = append(schemaCols1, &expression.Column{UniqueID: 2})
+	schemaCols1 = append(schemaCols1, &expression.Column{UniqueID: 3})
+	schemaCols1 = append(schemaCols1, &expression.Column{UniqueID: 4})
+	schema1 := expression.NewSchema(schemaCols1...)
+
+	schemaCols2 := make([]*expression.Column, 0, 2)
+	schemaCols2 = append(schemaCols2, &expression.Column{UniqueID: 3})
+	schemaCols2 = append(schemaCols2, &expression.Column{UniqueID: 4})
+	schema2 := expression.NewSchema(schemaCols2...)
+
+	partitionCol1 := &property.MPPPartitionColumn{Col: &expression.Column{UniqueID: 4}}
+
+	// two exchange sender share the same MPPPartitionColumn
+	exchangeSender1 := &core.PhysicalExchangeSender{
+		HashCols: []*property.MPPPartitionColumn{partitionCol1},
+	}
+	exchangeSender2 := &core.PhysicalExchangeSender{
+		HashCols: []*property.MPPPartitionColumn{partitionCol1},
+	}
+
+	err := exchangeSender1.ResolveIndicesItselfWithSchema(schema1)
+	require.NoError(t, err)
+
+	err = exchangeSender2.ResolveIndicesItselfWithSchema(schema2)
+	require.NoError(t, err)
+
+	// after resolving, the partition col in two different exchange sender should have different index
+	require.NotEqual(t, exchangeSender1.HashCols[0].Col.Index, exchangeSender2.HashCols[0].Col.Index)
 }

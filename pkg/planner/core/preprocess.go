@@ -160,7 +160,7 @@ const (
 	// inTxnRetry is set when visiting in transaction retry.
 	inTxnRetry
 	// inCreateOrDropTable is set when visiting create/drop table/view/sequence,
-	// rename table, alter table add foreign key, and BR restore.
+	// rename table, alter table add foreign key, alter table in prepare stmt, and BR restore.
 	// TODO need a better name to clarify it's meaning
 	inCreateOrDropTable
 	// parentIsJoin is set when visiting node's parent is join.
@@ -297,9 +297,15 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkRenameTableGrammar(node)
 	case *ast.CreateIndexStmt:
 		p.stmtTp = TypeCreate
+		if p.flag&inPrepare != 0 {
+			p.flag |= inCreateOrDropTable
+		}
 		p.checkCreateIndexGrammar(node)
 	case *ast.AlterTableStmt:
 		p.stmtTp = TypeAlter
+		if p.flag&inPrepare != 0 {
+			p.flag |= inCreateOrDropTable
+		}
 		p.resolveAlterTableStmt(node)
 		p.checkAlterTableGrammar(node)
 	case *ast.CreateDatabaseStmt:
@@ -391,7 +397,9 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 	case *ast.TableSource:
 		isModeOracle := p.sctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
-		if _, ok := node.Source.(*ast.SelectStmt); ok && !isModeOracle && len(node.AsName.L) == 0 {
+		_, isSelectStmt := node.Source.(*ast.SelectStmt)
+		_, isSetOprStmt := node.Source.(*ast.SetOprStmt)
+		if (isSelectStmt || isSetOprStmt) && !isModeOracle && len(node.AsName.L) == 0 {
 			p.err = dbterror.ErrDerivedMustHaveAlias.GenWithStackByArgs()
 		}
 		if v, ok := node.Source.(*ast.TableName); ok && v.TableSample != nil {

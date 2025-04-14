@@ -205,6 +205,10 @@ type clientConn struct {
 	ppEnabled bool
 }
 
+type userResourceLimits struct {
+	connections int
+}
+
 func (cc *clientConn) getCtx() *TiDBContext {
 	cc.ctx.RLock()
 	defer cc.ctx.RUnlock()
@@ -375,6 +379,7 @@ func (cc *clientConn) Close() error {
 	//
 	// TODO: avoid calling this function multiple times. It's not intuitive that a connection can be closed multiple
 	// times.
+
 	cc.server.rwlock.Lock()
 	delete(cc.server.clients, cc.connectionID)
 	cc.server.rwlock.Unlock()
@@ -797,6 +802,11 @@ func (cc *clientConn) openSessionAndDoAuth(authData []byte, authPlugin string, z
 	}
 
 	host, port, err := cc.PeerHost(hasPassword, false)
+	if err != nil {
+		return err
+	}
+
+	err = cc.checkUserConnectionCount(host)
 	if err != nil {
 		return err
 	}
@@ -1853,7 +1863,10 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		var tableID int64
 		switch v := p.(type) {
 		case *plannercore.PointGetPlan:
-			v.PrunePartitions(sctx)
+			isTableDual, err0 := v.PrunePartitions(sctx)
+			if err0 != nil || isTableDual {
+				return err0
+			}
 			tableID = executor.GetPhysID(v.TblInfo, v.PartitionIdx)
 			if v.IndexInfo != nil {
 				resetStmtCtxFn()
@@ -1867,7 +1880,10 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 				rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(tableID, v.Handle))
 			}
 		case *plannercore.BatchPointGetPlan:
-			_, isTableDual := v.PrunePartitionsAndValues(sctx)
+			_, isTableDual, err1 := v.PrunePartitionsAndValues(sctx)
+			if err1 != nil {
+				return err1
+			}
 			if isTableDual {
 				return nil
 			}
