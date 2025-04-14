@@ -296,13 +296,11 @@ func (w *cloudRegionJobWorker) write(ctx context.Context, job *regionJob) (*tikv
 
 	for iter.First(); iter.Valid(); iter.Next() {
 		k, v := iter.Key(), iter.Value()
-		kvSize := int64(len(k) + len(v))
-		// here we reuse the `*sst.Pair`s to optimize object allocation
 		pairs = append(pairs, &sst.Pair{
 			Key:   k,
 			Value: v,
 		})
-		size += kvSize
+		size += int64(len(k) + len(v))
 
 		if size >= w.writeBatchSize {
 			in := &ingestcli.WriteRequest{
@@ -358,7 +356,9 @@ func (w *cloudRegionJobWorker) ingest(ctx context.Context, j *regionJob) error {
 	if err != nil {
 		// TODO, we should let outer logic handle stage transition, currently, OP
 		//  worker need a lot of change before we can do it, will refactor it later.
-		j.convertStageOnIngestErrorForCloud(err)
+
+		// TODO: choose target stage based on error.
+		j.convertStageTo(needRescan)
 		log.FromContext(ctx).Warn("meet error and handle the job later",
 			zap.Stringer("job stage", j.stage),
 			logutil.ShortError(j.lastRetryableErr),

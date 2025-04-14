@@ -128,11 +128,11 @@ type tikvWriteResult struct {
 	totalBytes        int64
 	remainingStartKey []byte
 
-	// below two fields are for OP generation store engine.
+	// below fields are for OP generation store engine.
 	// this field might be modified in-place to remove SSTs that are ingested successfully.
 	sstMeta []*sst.SSTMeta
 
-	// for cloud generation store engine
+	// below fields are for cloud generation store engine.
 	// the filename of the written sst file by tikv-worker.
 	sstFile string
 }
@@ -299,12 +299,6 @@ func (j *regionJob) done(wg *sync.WaitGroup) {
 	if wg != nil {
 		wg.Done()
 	}
-}
-
-func (j *regionJob) convertStageOnIngestErrorForCloud(_ error) bool {
-	// TODO: choose target stage based on error.
-	j.convertStageTo(needRescan)
-	return false
 }
 
 func newWriteRequest(meta *sst.SSTMeta, resourceGroupName, taskType string) *sst.WriteRequest {
