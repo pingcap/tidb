@@ -16,6 +16,8 @@ package ddl
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -25,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
@@ -53,12 +56,12 @@ func (h *ddlHandlerImpl) HandleDDLEvent(ctx context.Context, sctx sessionctx.Con
 	// Ideally, we shouldn't allow any errors to be ignored, but for now, some queries can fail.
 	// Temporarily ignore the error and we need to check all queries to ensure they are correct.
 	if err := h.sub.handle(ctx, sctx, s); err != nil {
-		// intest.Assert(
-		// 	errors.ErrorEqual(err, context.Canceled) ||
-		// 		strings.Contains(err.Error(), "mock handleTaskOnce error") ||
-		// 		strings.Contains(err.Error(), "session pool closed"),
-		// 	fmt.Sprintf("handle ddl event failed, err: %v", err),
-		// )
+		intest.Assert(
+			errors.ErrorEqual(err, context.Canceled) ||
+				strings.Contains(err.Error(), "mock handleTaskOnce error") ||
+				strings.Contains(err.Error(), "session pool closed"),
+			fmt.Sprintf("handle ddl event failed, err: %v", err),
+		)
 		statslogutil.StatsLogger().Warn(
 			"Failed to handle DDL event",
 			zap.String("event", s.String()),
