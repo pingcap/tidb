@@ -269,37 +269,54 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 			buffer.WriteString(runtimeFilter.ExplainInfo(false))
 		}
 	}
+
+	annIndexes := make([]string, 0, len(p.UsedColumnarIndexes))
+	invertedIndexes := make([]string, 0, len(p.UsedColumnarIndexes))
 	for _, idx := range p.UsedColumnarIndexes {
-		if idx != nil && idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeVector && idx.QueryInfo != nil {
-			buffer.WriteString(", annIndex:")
-			buffer.WriteString(idx.QueryInfo.GetAnnQueryInfo().GetDistanceMetric().String())
-			buffer.WriteString("(")
-			buffer.WriteString(idx.QueryInfo.GetAnnQueryInfo().GetColumnName())
-			buffer.WriteString("..")
+		if idx == nil {
+			continue
+		}
+		if idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeVector && idx.QueryInfo != nil {
+			var annIndexBuffer strings.Builder
+			annIndexBuffer.WriteString(idx.QueryInfo.GetAnnQueryInfo().GetDistanceMetric().String())
+			annIndexBuffer.WriteString("(")
+			annIndexBuffer.WriteString(idx.QueryInfo.GetAnnQueryInfo().GetColumnName())
+			annIndexBuffer.WriteString("..")
 			if normalized {
-				buffer.WriteString("[?]")
+				annIndexBuffer.WriteString("[?]")
 			} else {
 				v, _, err := types.ZeroCopyDeserializeVectorFloat32(idx.QueryInfo.GetAnnQueryInfo().RefVecF32)
 				if err != nil {
-					buffer.WriteString("[?]")
+					annIndexBuffer.WriteString("[?]")
 				} else {
-					buffer.WriteString(v.TruncatedString())
+					annIndexBuffer.WriteString(v.TruncatedString())
 				}
 			}
-			buffer.WriteString(", limit:")
+			annIndexBuffer.WriteString(", limit:")
 			if normalized {
-				buffer.WriteString("?")
+				annIndexBuffer.WriteString("?")
 			} else {
-				buffer.WriteString(fmt.Sprint(idx.QueryInfo.GetAnnQueryInfo().TopK))
+				annIndexBuffer.WriteString(fmt.Sprint(idx.QueryInfo.GetAnnQueryInfo().TopK))
 			}
-			buffer.WriteString(")")
+			annIndexBuffer.WriteString(")")
 
 			if idx.QueryInfo.GetAnnQueryInfo().GetEnableDistanceProj() {
-				buffer.WriteString("->")
+				annIndexBuffer.WriteString("->")
 				cols := p.Schema().Columns
-				buffer.WriteString(cols[len(cols)-1].String())
+				annIndexBuffer.WriteString(cols[len(cols)-1].String())
 			}
+			annIndexes = append(annIndexes, annIndexBuffer.String())
+		} else if idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeInverted && idx.QueryInfo != nil {
+			invertedIndexes = append(invertedIndexes, idx.IndexInfo.Name.L)
 		}
+	}
+	if len(annIndexes) > 0 {
+		buffer.WriteString(", annIndex:")
+		buffer.WriteString(strings.Join(annIndexes, ", "))
+	}
+	if len(invertedIndexes) > 0 {
+		buffer.WriteString(", invertedindex:")
+		buffer.WriteString(strings.Join(invertedIndexes, ", "))
 	}
 
 	return buffer.String()
