@@ -1058,7 +1058,6 @@
         ]
       },
       {
-      {
         "Query": "explain format = 'brief' select * from t where d >= 9950 order by c limit 1",
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
