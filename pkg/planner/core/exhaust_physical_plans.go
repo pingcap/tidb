@@ -3151,10 +3151,6 @@ func getEnforcedStreamAggs(la *logicalop.LogicalAggregation, prop *property.Phys
 		CanAddEnforcer: true,
 		SortItems:      property.SortItemsFromCols(la.GetGroupByCols(), desc),
 	}
-	childProp = admitIndexJoinProp(childProp, prop)
-	if childProp == nil {
-		return nil
-	}
 	if !prop.IsPrefix(childProp) {
 		// empty
 		return enforcedAggs
