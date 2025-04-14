@@ -1032,14 +1032,8 @@ func TestOrderingIdxSelectivityThreshold(t *testing.T) {
 
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-<<<<<<< HEAD
-	testKit.MustExec("create table t(a int primary key , b int, c int, index ib(b), index ic(c))")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
-=======
 	testKit.MustExec("create table t(a int primary key , b int, c int, d int, index ib(b), index ic(c))")
-	err := statstestutil.HandleNextDDLEventWithTxn(h)
-	require.NoError(t, err)
->>>>>>> b503b1167ca (planner: change the semantic of `tidb_opt_ordering_index_selectivity_threshold` from `<` to `<=` (#60255))
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	is := dom.InfoSchema()
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
@@ -1068,13 +1062,8 @@ func TestOrderingIdxSelectivityThreshold(t *testing.T) {
 		idxValues = append(idxValues, types.NewBytesDatum(b))
 	}
 
-<<<<<<< HEAD
-	for i := 2; i <= 3; i++ {
-		mockStatsTbl.Columns[int64(i)] = &statistics.Column{
-=======
 	for i := 2; i <= 4; i++ {
-		mockStatsTbl.SetCol(int64(i), &statistics.Column{
->>>>>>> b503b1167ca (planner: change the semantic of `tidb_opt_ordering_index_selectivity_threshold` from `<` to `<=` (#60255))
+		mockStatsTbl.Columns[int64(i)] = &statistics.Column{
 			Histogram:         *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)),
 			Info:              tblInfo.Columns[i-1],
 			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
