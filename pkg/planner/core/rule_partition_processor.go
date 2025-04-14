@@ -1970,13 +1970,14 @@ func (s *PartitionProcessor) makeUnionAllChildren(ds *logicalop.DataSource, pi *
 		appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, tableDual, children, opt)
 		return tableDual, nil
 	}
-	if ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		return ds, nil
-	}
+
 	if len(children) == 1 {
 		// No need for the union all.
 		appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, children[0], children, opt)
 		return children[0], nil
+	}
+	if ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		return ds, nil
 	}
 	unionAll := logicalop.LogicalPartitionUnionAll{}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	unionAll.SetChildren(children...)

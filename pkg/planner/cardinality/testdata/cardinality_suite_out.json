@@ -873,94 +873,49 @@
       {
         "SQL": "explain format = 'brief' select * from t where a <= 500",
         "Result": [
-          "PartitionUnion 3340.00 root  ",
-          "├─TableReader 1670.00 root partition:p0,p1 data:Selection",
-          "│ └─Selection 1670.00 cop[tikv]  le(test.t.a, 500)",
-          "│   └─TableFullScan 2000.00 cop[tikv] table:t, partition:p0 keep order:false",
-          "└─TableReader 1670.00 root partition:p0,p1 data:Selection",
-          "  └─Selection 1670.00 cop[tikv]  le(test.t.a, 500)",
-          "    └─TableFullScan 2000.00 cop[tikv] table:t, partition:p1 keep order:false"
+          "TableReader 1670.00 root partition:p0,p1 data:Selection",
+          "└─Selection 1670.00 cop[tikv]  le(test.t.a, 500)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a >= 300 and a <= 900",
         "Result": [
-          "PartitionUnion 8000.00 root  ",
-          "├─TableReader 2000.00 root partition:p0,p1,p2,p3 data:Selection",
-          "│ └─Selection 2000.00 cop[tikv]  ge(test.t.a, 300), le(test.t.a, 900)",
-          "│   └─TableFullScan 2000.00 cop[tikv] table:t, partition:p0 keep order:false",
-          "├─TableReader 2000.00 root partition:p0,p1,p2,p3 data:Selection",
-          "│ └─Selection 2000.00 cop[tikv]  ge(test.t.a, 300), le(test.t.a, 900)",
-          "│   └─TableFullScan 2000.00 cop[tikv] table:t, partition:p1 keep order:false",
-          "├─TableReader 2000.00 root partition:p0,p1,p2,p3 data:Selection",
-          "│ └─Selection 2000.00 cop[tikv]  ge(test.t.a, 300), le(test.t.a, 900)",
-          "│   └─TableFullScan 2000.00 cop[tikv] table:t, partition:p2 keep order:false",
-          "└─TableReader 2000.00 root partition:p0,p1,p2,p3 data:Selection",
-          "  └─Selection 2000.00 cop[tikv]  ge(test.t.a, 300), le(test.t.a, 900)",
-          "    └─TableFullScan 2000.00 cop[tikv] table:t, partition:p3 keep order:false"
+          "TableReader 2000.00 root partition:p0,p1,p2,p3 data:Selection",
+          "└─Selection 2000.00 cop[tikv]  ge(test.t.a, 300), le(test.t.a, 900)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a >= 900",
         "Result": [
-          "PartitionUnion 2000.00 root  ",
-          "├─TableReader 1000.00 root partition:p3,p4 data:Selection",
-          "│ └─Selection 1000.00 cop[tikv]  ge(test.t.a, 900)",
-          "│   └─TableFullScan 2000.00 cop[tikv] table:t, partition:p3 keep order:false",
-          "└─TableReader 1000.00 root partition:p3,p4 data:Selection",
-          "  └─Selection 1000.00 cop[tikv]  ge(test.t.a, 900)",
-          "    └─TableFullScan 2000.00 cop[tikv] table:t, partition:p4 keep order:false"
+          "TableReader 1000.00 root partition:p3,p4 data:Selection",
+          "└─Selection 1000.00 cop[tikv]  ge(test.t.a, 900)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a > 900",
         "Result": [
-          "PartitionUnion 2000.00 root  ",
-          "├─TableReader 1000.00 root partition:p3,p4 data:Selection",
-          "│ └─Selection 1000.00 cop[tikv]  gt(test.t.a, 900)",
-          "│   └─TableFullScan 2000.00 cop[tikv] table:t, partition:p3 keep order:false",
-          "└─TableReader 1000.00 root partition:p3,p4 data:Selection",
-          "  └─Selection 1000.00 cop[tikv]  gt(test.t.a, 900)",
-          "    └─TableFullScan 2000.00 cop[tikv] table:t, partition:p4 keep order:false"
+          "TableReader 1000.00 root partition:p3,p4 data:Selection",
+          "└─Selection 1000.00 cop[tikv]  gt(test.t.a, 900)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a >= 300",
         "Result": [
-          "PartitionUnion 10000.00 root  ",
-          "├─TableReader 2000.00 root partition:all data:Selection",
-          "│ └─Selection 2000.00 cop[tikv]  ge(test.t.a, 300)",
-          "│   └─TableFullScan 2000.00 cop[tikv] table:t, partition:p0 keep order:false",
-          "├─TableReader 2000.00 root partition:all data:Selection",
-          "│ └─Selection 2000.00 cop[tikv]  ge(test.t.a, 300)",
-          "│   └─TableFullScan 2000.00 cop[tikv] table:t, partition:p1 keep order:false",
-          "├─TableReader 2000.00 root partition:all data:Selection",
-          "│ └─Selection 2000.00 cop[tikv]  ge(test.t.a, 300)",
-          "│   └─TableFullScan 2000.00 cop[tikv] table:t, partition:p2 keep order:false",
-          "├─TableReader 2000.00 root partition:all data:Selection",
-          "│ └─Selection 2000.00 cop[tikv]  ge(test.t.a, 300)",
-          "│   └─TableFullScan 2000.00 cop[tikv] table:t, partition:p3 keep order:false",
-          "└─TableReader 2000.00 root partition:all data:Selection",
-          "  └─Selection 2000.00 cop[tikv]  ge(test.t.a, 300)",
-          "    └─TableFullScan 2000.00 cop[tikv] table:t, partition:p4 keep order:false"
+          "TableReader 2000.00 root partition:all data:Selection",
+          "└─Selection 2000.00 cop[tikv]  ge(test.t.a, 300)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a <= 900",
         "Result": [
-          "PartitionUnion 8000.00 root  ",
-          "├─TableReader 2000.00 root partition:p0,p1,p2,p3 data:Selection",
-          "│ └─Selection 2000.00 cop[tikv]  le(test.t.a, 900)",
-          "│   └─TableFullScan 2000.00 cop[tikv] table:t, partition:p0 keep order:false",
-          "├─TableReader 2000.00 root partition:p0,p1,p2,p3 data:Selection",
-          "│ └─Selection 2000.00 cop[tikv]  le(test.t.a, 900)",
-          "│   └─TableFullScan 2000.00 cop[tikv] table:t, partition:p1 keep order:false",
-          "├─TableReader 2000.00 root partition:p0,p1,p2,p3 data:Selection",
-          "│ └─Selection 2000.00 cop[tikv]  le(test.t.a, 900)",
-          "│   └─TableFullScan 2000.00 cop[tikv] table:t, partition:p2 keep order:false",
-          "└─TableReader 2000.00 root partition:p0,p1,p2,p3 data:Selection",
-          "  └─Selection 2000.00 cop[tikv]  le(test.t.a, 900)",
-          "    └─TableFullScan 2000.00 cop[tikv] table:t, partition:p3 keep order:false"
+          "TableReader 2000.00 root partition:p0,p1,p2,p3 data:Selection",
+          "└─Selection 2000.00 cop[tikv]  le(test.t.a, 900)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
@@ -982,13 +937,9 @@
       {
         "SQL": "explain format = 'brief' select * from t where a > 900 and a < 1100",
         "Result": [
-          "PartitionUnion 1665.55 root  ",
-          "├─TableReader 832.77 root partition:p3,p4 data:Selection",
-          "│ └─Selection 832.77 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1100)",
-          "│   └─TableFullScan 2000.00 cop[tikv] table:t, partition:p3 keep order:false",
-          "└─TableReader 832.77 root partition:p3,p4 data:Selection",
-          "  └─Selection 832.77 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1100)",
-          "    └─TableFullScan 2000.00 cop[tikv] table:t, partition:p4 keep order:false"
+          "TableReader 832.77 root partition:p3,p4 data:Selection",
+          "└─Selection 832.77 cop[tikv]  gt(test.t.a, 900), lt(test.t.a, 1100)",
+          "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
