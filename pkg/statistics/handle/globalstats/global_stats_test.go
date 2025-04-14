@@ -993,5 +993,5 @@ func TestMergeGlobalStatsForCMSketch(t *testing.T) {
 	tk.MustQuery("explain select * from t where a = 1").Check(
 		testkit.Rows("TableReader_9 1.00 root partition:p0 data:Selection_8",
 			"└─Selection_8 1.00 cop[tikv]  eq(test.t.a, 1)",
-			"  └─TableFullScan_7 18.00 cop[tikv] table:t, partition:p0 keep order:false]"))
+			"  └─TableFullScan_7 18.00 cop[tikv] table:t, partition:p0 keep order:false"))
 }
