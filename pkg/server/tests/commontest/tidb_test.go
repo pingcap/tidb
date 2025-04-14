@@ -3167,3 +3167,46 @@ func TestAuthSocket(t *testing.T) {
 		ts.CheckRows(t, rows, "u2@%")
 	})
 }
+
+func TestBatchGetTypeForRowExpr(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	// single columns
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("use test;")
+		dbt.MustExec("create table t1 (id varchar(255) collate utf8mb4_general_ci, primary key (id));")
+		dbt.MustExec("insert into t1 values ('a'), ('c');")
+
+		conn, err := dbt.GetDB().Conn(context.Background())
+		require.NoError(t, err)
+		defer func() {
+			require.NoError(t, conn.Close())
+		}()
+		_, err = conn.ExecContext(context.Background(), "set @@session.collation_connection = 'utf8mb4_general_ci'")
+		require.NoError(t, err)
+		stmt, err := conn.PrepareContext(context.Background(), "select * from t1 where id in (?, ?)")
+		require.NoError(t, err)
+		rows, err := stmt.Query("A", "C")
+		require.NoError(t, err)
+		ts.CheckRows(t, rows, "a\nc")
+	})
+
+	// multiple columns
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("use test;")
+		dbt.MustExec("create table t2 (id1 varchar(255) collate utf8mb4_general_ci, id2 varchar(255) collate utf8mb4_general_ci, primary key (id1, id2));")
+		dbt.MustExec("insert into t2 values ('a', 'b'), ('c', 'd');")
+
+		conn, err := dbt.GetDB().Conn(context.Background())
+		require.NoError(t, err)
+		defer func() {
+			require.NoError(t, conn.Close())
+		}()
+		conn.ExecContext(context.Background(), "set @@session.collation_connection = 'utf8mb4_general_ci'")
+		stmt, err := conn.PrepareContext(context.Background(), "select * from t2 where (id1, id2) in ((?, ?), (?, ?))")
+		require.NoError(t, err)
+		rows, err := stmt.Query("A", "B", "C", "D")
+		require.NoError(t, err)
+		ts.CheckRows(t, rows, "a b\nc d")
+	})
+}
