@@ -206,12 +206,12 @@ func NewExternalEngine(
 		smallBlockBufPool: membuf.NewPool(
 			membuf.WithBlockNum(0),
 			membuf.WithPoolMemoryLimiter(memLimiter),
-			membuf.WithBlockSize(8*smallBlockSize),
+			membuf.WithBlockSize(smallBlockSize),
 		),
 		largeBlockBufPool: membuf.NewPool(
 			membuf.WithBlockNum(0),
 			membuf.WithPoolMemoryLimiter(memLimiter),
-			membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
+			membuf.WithBlockSize(2*ConcurrentReaderBufferSizePerConc),
 		),
 		checkHotspot:       checkHotspot,
 		keyAdapter:         keyAdapter,
