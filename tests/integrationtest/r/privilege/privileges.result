@@ -732,3 +732,13 @@ Database
 INFORMATION_SCHEMA
 tmpdb
 create temporary table tmpdb.tmp(id int);
+use privilege__privileges;
+DROP USER IF EXISTS foo;
+CREATE USER foo;
+GRANT CREATE VIEW ON privilege__privileges.* TO foo;
+DROP VIEW IF EXISTS v, v1;
+CREATE VIEW v AS SELECT 1;
+CREATE OR REPLACE VIEW v AS SELECT 1, 1;
+Error 1142 (42000): DROP command denied to user 'foo'@'%' for table 'v'
+CREATE OR REPLACE VIEW v1 AS SELECT 1, 1;
+Error 1142 (42000): DROP command denied to user 'foo'@'%' for table 'v1'
