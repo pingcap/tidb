@@ -275,7 +275,8 @@ func (p *PhysicalTableScan) ToPB(ctx *base.BuildPBContext, storeType kv.StoreTyp
 
 	for _, idx := range p.UsedColumnarIndexes {
 		if idx != nil && idx.QueryInfo != nil {
-			tsExec.UsedColumnarIndexes = append(tsExec.UsedColumnarIndexes, idx.QueryInfo)
+			queryInfoCopy := *idx.QueryInfo
+			tsExec.UsedColumnarIndexes = append(tsExec.UsedColumnarIndexes, &queryInfoCopy)
 		}
 	}
 
@@ -321,7 +322,8 @@ func (p *PhysicalTableScan) partitionTableScanToPBForFlash(ctx *base.BuildPBCont
 
 	for _, idx := range p.UsedColumnarIndexes {
 		if idx != nil && idx.QueryInfo != nil {
-			ptsExec.UsedColumnarIndexes = append(ptsExec.UsedColumnarIndexes, idx.QueryInfo)
+			queryInfoCopy := *idx.QueryInfo
+			ptsExec.UsedColumnarIndexes = append(ptsExec.UsedColumnarIndexes, &queryInfoCopy)
 		}
 	}
 

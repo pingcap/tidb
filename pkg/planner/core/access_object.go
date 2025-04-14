@@ -286,6 +286,9 @@ func (p *PhysicalTableScan) AccessObject() base.AccessObject {
 	if len(p.UsedColumnarIndexes) > 0 {
 		res.Indexes = make([]IndexAccess, 0, len(p.UsedColumnarIndexes))
 		for _, idx := range p.UsedColumnarIndexes {
+			if idx == nil || idx.IndexInfo == nil {
+				continue
+			}
 			index := IndexAccess{
 				Name: idx.IndexInfo.Name.O,
 			}

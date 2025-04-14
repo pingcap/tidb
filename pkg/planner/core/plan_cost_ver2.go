@@ -180,6 +180,9 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 	}
 
 	for _, idx := range p.UsedColumnarIndexes {
+		if idx == nil || idx.QueryInfo == nil {
+			continue
+		}
 		if idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeVector && idx.QueryInfo == nil {
 			p.PlanCostVer2 = costusage.NewCostVer2(option, defaultVer2Factors.ANNIndexNoTopK, defaultVer2Factors.ANNIndexNoTopK.Value, func() string {
 				return fmt.Sprintf("ann-index-no-topk(%v)", defaultVer2Factors.ANNIndexNoTopK)
