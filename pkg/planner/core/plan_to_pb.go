@@ -16,7 +16,6 @@ package core
 
 import (
 	"fmt"
-	"math"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -274,18 +273,10 @@ func (p *PhysicalTableScan) ToPB(ctx *base.BuildPBContext, storeType kv.StoreTyp
 		tsExec.PushedDownFilterConditions = conditions
 	}
 
-	if p.AnnIndexExtra != nil && p.AnnIndexExtra.PushDownQueryInfo != nil && p.AnnIndexExtra.PushDownQueryInfo.TopK != math.MaxUint32 {
-		annQueryCopy := *p.AnnIndexExtra.PushDownQueryInfo
-		tsExec.UsedColumnarIndexes = append(tsExec.UsedColumnarIndexes, &tipb.ColumnarIndexInfo{
-			IndexType: tipb.ColumnarIndexType_TypeVector,
-			Index: &tipb.ColumnarIndexInfo_AnnQueryInfo{
-				AnnQueryInfo: &annQueryCopy,
-			},
-		})
-	}
-
-	if len(p.UsedColumnarIndexes) > 0 {
-		tsExec.UsedColumnarIndexes = append(tsExec.UsedColumnarIndexes, p.UsedColumnarIndexes...)
+	for _, idx := range p.UsedColumnarIndexes {
+		if idx != nil && idx.QueryInfo != nil {
+			tsExec.UsedColumnarIndexes = append(tsExec.UsedColumnarIndexes, idx.QueryInfo)
+		}
 	}
 
 	var err error
@@ -328,18 +319,10 @@ func (p *PhysicalTableScan) partitionTableScanToPBForFlash(ctx *base.BuildPBCont
 
 	ptsExec.Desc = p.Desc
 
-	if p.AnnIndexExtra != nil && p.AnnIndexExtra.PushDownQueryInfo != nil && p.AnnIndexExtra.PushDownQueryInfo.TopK != math.MaxUint32 {
-		annQueryCopy := *p.AnnIndexExtra.PushDownQueryInfo
-		ptsExec.UsedColumnarIndexes = append(ptsExec.UsedColumnarIndexes, &tipb.ColumnarIndexInfo{
-			IndexType: tipb.ColumnarIndexType_TypeVector,
-			Index: &tipb.ColumnarIndexInfo_AnnQueryInfo{
-				AnnQueryInfo: &annQueryCopy,
-			},
-		})
-	}
-
-	if len(p.UsedColumnarIndexes) > 0 {
-		ptsExec.UsedColumnarIndexes = append(ptsExec.UsedColumnarIndexes, p.UsedColumnarIndexes...)
+	for _, idx := range p.UsedColumnarIndexes {
+		if idx != nil && idx.QueryInfo != nil {
+			ptsExec.UsedColumnarIndexes = append(ptsExec.UsedColumnarIndexes, idx.QueryInfo)
+		}
 	}
 
 	executorID := p.ExplainID().String()

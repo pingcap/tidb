@@ -179,17 +179,17 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 		}
 	}
 
-	if p.AnnIndexExtra != nil {
-		if p.AnnIndexExtra.PushDownQueryInfo == nil {
+	for _, idx := range p.UsedColumnarIndexes {
+		if idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeVector && idx.QueryInfo == nil {
 			p.PlanCostVer2 = costusage.NewCostVer2(option, defaultVer2Factors.ANNIndexNoTopK, defaultVer2Factors.ANNIndexNoTopK.Value, func() string {
 				return fmt.Sprintf("ann-index-no-topk(%v)", defaultVer2Factors.ANNIndexNoTopK)
 			})
-		} else {
+		} else if idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeVector {
 			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, costusage.NewCostVer2(option, defaultVer2Factors.ANNIndexStart, rows*defaultVer2Factors.ANNIndexStart.Value, func() string {
 				return fmt.Sprintf("ann-index-start(%v*%v)", rows, defaultVer2Factors.ANNIndexStart)
 			}))
-			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, costusage.NewCostVer2(option, defaultVer2Factors.ANNIndexScanRow, float64(p.AnnIndexExtra.PushDownQueryInfo.TopK)*defaultVer2Factors.ANNIndexScanRow.Value, func() string {
-				return fmt.Sprintf("ann-index-topk(%v*%v)", p.AnnIndexExtra.PushDownQueryInfo.TopK, defaultVer2Factors.ANNIndexScanRow)
+			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, costusage.NewCostVer2(option, defaultVer2Factors.ANNIndexScanRow, float64(idx.QueryInfo.GetAnnQueryInfo().TopK)*defaultVer2Factors.ANNIndexScanRow.Value, func() string {
+				return fmt.Sprintf("ann-index-topk(%v*%v)", idx.QueryInfo.GetAnnQueryInfo().TopK, defaultVer2Factors.ANNIndexScanRow)
 			}))
 		}
 	}
