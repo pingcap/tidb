@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -115,6 +116,7 @@ type WriterBuilder struct {
 	propKeysDist    uint64
 	onClose         OnCloseFunc
 	keyDupeEncoding bool
+	tikvCodec       tikv.Codec
 }
 
 // NewWriterBuilder creates a WriterBuilder.
@@ -179,6 +181,12 @@ func (b *WriterBuilder) SetGroupOffset(offset int) *WriterBuilder {
 	return b
 }
 
+// SetTiKVCodec sets the tikv codec of the writer.
+func (b *WriterBuilder) SetTiKVCodec(codec tikv.Codec) *WriterBuilder {
+	b.tikvCodec = codec
+	return b
+}
+
 // Build builds a new Writer. The files writer will create are under the prefix
 // of "{prefix}/{writerID}".
 func (b *WriterBuilder) Build(
@@ -215,6 +223,7 @@ func (b *WriterBuilder) Build(
 		multiFileStats: make([]MultipleFilesStat, 1),
 		fileMinKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
 		fileMaxKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
+		tikvCodec:      b.tikvCodec,
 	}
 	ret.multiFileStats[0].Filenames = make([][2]string, 0, multiFileStatNum)
 
@@ -354,10 +363,15 @@ type Writer struct {
 	maxKey    tidbkv.Key
 	totalSize uint64
 	totalCnt  uint64
+
+	tikvCodec tikv.Codec
 }
 
 // WriteRow implements ingest.Writer.
 func (w *Writer) WriteRow(ctx context.Context, key, val []byte, handle tidbkv.Handle) error {
+	if w.tikvCodec != nil {
+		key = w.tikvCodec.EncodeKey(key)
+	}
 	keyAdapter := w.keyAdapter
 
 	var rowID []byte
