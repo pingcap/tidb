@@ -16,10 +16,12 @@ package core
 
 import (
 	"cmp"
+	"math"
 	"slices"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -31,7 +33,7 @@ import (
 // income = (1 - selectivity) * restColumnCount * tableRowCount, greater is better
 
 const (
-	selectivityThreshold = 0.7
+	selectivityThreshold = 0.6
 	// The default now of number of rows in a pack of TiFlash
 	tiflashDataPackSize  = 8192
 	columnCountThreshold = 3
@@ -45,54 +47,27 @@ type expressionGroup struct {
 	selectivity float64
 }
 
-// predicatePushDownToTableScan is used find the selection just above the table scan
-// and try to push down the predicates to the table scan.
-// Used for TiFlash late materialization.
-func predicatePushDownToTableScan(sctx base.PlanContext, plan base.PhysicalPlan) base.PhysicalPlan {
-	switch p := plan.(type) {
-	case *PhysicalSelection:
-		if physicalTableScan, ok := plan.Children()[0].(*PhysicalTableScan); ok && physicalTableScan.StoreType == kv.TiFlash {
-			// Only when the the store type is TiFlash, we will try to push down predicates.
-			predicatePushDownToTableScanImpl(sctx, p, physicalTableScan)
-			if len(p.Conditions) == 0 {
-				return p.Children()[0]
-			}
-		} else if !ok {
-			newChildren := make([]base.PhysicalPlan, 0, len(plan.Children()))
-			for _, child := range plan.Children() {
-				newChildren = append(newChildren, predicatePushDownToTableScan(sctx, child))
-			}
-			plan.SetChildren(newChildren...)
-		}
-	case *PhysicalTableReader:
-		p.tablePlan = predicatePushDownToTableScan(sctx, p.tablePlan)
-	default:
-		if len(plan.Children()) > 0 {
-			newChildren := make([]base.PhysicalPlan, 0, len(plan.Children()))
-			for _, child := range plan.Children() {
-				newChildren = append(newChildren, predicatePushDownToTableScan(sctx, child))
-			}
-			plan.SetChildren(newChildren...)
-		}
-	}
-	return plan
-}
-
 // transformColumnsToCode is used to transform the columns to a string of "0" and "1".
 // @param: cols: the columns of a Expression
-// @param: totalColumnCount: the total number of columns in the tablescan
+// @param: tableColumns: the total number of columns in the tablescan
 // @example:
 //
 //			  the columns of tablescan are [a, b, c, d, e, f, g, h]
 //			  the expression are ["a > 1", "c > 1", "e > 1 or g > 1"]
-//	          so the columns of the expression are [a, c, e, g] and the totalColumnCount is 8
+//	          so the columns of the expression are [a, c, e, g] and the tableColumns is 8
 //	          the return value is "10101010"
 //
 // @return: the string of "0" and "1"
-func transformColumnsToCode(cols []*expression.Column, totalColumnCount int) string {
-	code := make([]byte, totalColumnCount)
+func transformColumnsToCode(cols []*expression.Column, tableColumns int) string {
+	if len(cols) == 0 {
+		return "0"
+	}
+
+	code := make([]byte, tableColumns)
 	for _, col := range cols {
-		code[col.Index] = '1'
+		if col.ID < int64(tableColumns) && col.ID >= 0 {
+			code[col.ID] = '1'
+		}
 	}
 	return string(code)
 }
@@ -104,7 +79,7 @@ func transformColumnsToCode(cols []*expression.Column, totalColumnCount int) str
 // @example: conds = [a > 1, b > 1, a > 2, c > 1, a > 3, b > 2], return = [[a > 3, a > 2, a > 1], [b > 2, b > 1], [c > 1]]
 // @note: when the selectivity of one group is larger than the threshold, we will remove it from the returned result.
 // @note: when the number of columns of one group is larger than the threshold, we will remove it from the returned result.
-func groupByColumnsSortBySelectivity(sctx base.PlanContext, conds []expression.Expression, physicalTableScan *PhysicalTableScan) []expressionGroup {
+func groupByColumnsSortBySelectivity(sctx base.PlanContext, conds []expression.Expression, ts *PhysicalTableScan) []expressionGroup {
 	// Create a map to store the groupMap of conditions keyed by the columns
 	groupMap := make(map[string][]expression.Expression)
 
@@ -112,31 +87,25 @@ func groupByColumnsSortBySelectivity(sctx base.PlanContext, conds []expression.E
 	for _, cond := range conds {
 		// If excuting light cost condition first,
 		// the rows needed to be exucuted by the heavy cost condition will be reduced.
-		// So if the cond contains heavy cost functions, skip it.
+		// So if the cond contains heavy cost functions, skip it to reduce the cost of calculating the selectivity.
 		if withHeavyCostFunctionForTiFlashPrefetch(cond) {
 			continue
 		}
 
+		// If the number of columns is larger than columnCountThreshold,
+		// the possibility of the selectivity of the condition is larger than the threshold is very small.
+		// Skip.
 		columns := expression.ExtractColumns(cond)
-
-		var code string
-		if len(columns) == 0 {
-			code = "0"
-		} else if len(columns) <= columnCountThreshold {
-			code = transformColumnsToCode(columns, len(physicalTableScan.Columns))
-		} else {
-			// If the number of columns is larger than columnCountThreshold,
-			// the possibility of the selectivity of the condition is larger than the threshold is very small.
-			// So we skip it to reduce the cost of calculating the selectivity.
-			continue
+		if len(columns) <= columnCountThreshold {
+			code := transformColumnsToCode(columns, len(ts.Table.Columns))
+			groupMap[code] = append(groupMap[code], cond)
 		}
-		groupMap[code] = append(groupMap[code], cond)
 	}
 
 	// Estimate the selectivity of each group and check if it is larger than the selectivityThreshold
 	var exprGroups []expressionGroup
 	for _, group := range groupMap {
-		selectivity, _, err := cardinality.Selectivity(sctx, physicalTableScan.tblColHists, group, nil)
+		selectivity, _, err := cardinality.Selectivity(sctx, ts.tblColHists, group, nil)
 		if err != nil {
 			logutil.BgLogger().Warn("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
 			continue
@@ -158,11 +127,15 @@ func groupByColumnsSortBySelectivity(sctx base.PlanContext, conds []expression.E
 }
 
 // withHeavyCostFunctionForTiFlashPrefetch is used to check if the condition contain heavy cost functions.
-// @param: cond: condition of PhysicalSelection to be checked
+// @param: cond: filter condition
 // @note: heavy cost functions are functions that may cause a lot of memory allocation or disk IO.
 func withHeavyCostFunctionForTiFlashPrefetch(cond expression.Expression) bool {
-	if binop, ok := cond.(*expression.ScalarFunction); ok {
-		switch binop.FuncName.L {
+	if sf, ok := cond.(*expression.ScalarFunction); ok {
+		switch sf.FuncName.L {
+		case ast.LogicAnd, ast.LogicOr:
+			return withHeavyCostFunctionForTiFlashPrefetch(sf.GetArgs()[0]) && withHeavyCostFunctionForTiFlashPrefetch(sf.GetArgs()[1])
+		case ast.UnaryNot:
+			return withHeavyCostFunctionForTiFlashPrefetch(sf.GetArgs()[0])
 		// JSON functions
 		case ast.JSONArray,
 			ast.JSONArrayAppend,
@@ -211,46 +184,29 @@ func withHeavyCostFunctionForTiFlashPrefetch(cond expression.Expression) bool {
 	return false
 }
 
-// removeSpecificExprsFromSelection is used to remove the conditions that needed to be pushed down.
-// @param: physicalSelection: the PhysicalSelection to be modified
-// @param: exprs: the conditions to be removed
-func removeSpecificExprsFromSelection(physicalSelection *PhysicalSelection, exprs []expression.Expression) {
-	conditions := physicalSelection.Conditions
-	for i := len(conditions) - 1; i >= 0; i-- {
-		if expression.Contains(physicalSelection.SCtx().GetExprCtx().GetEvalCtx(), exprs, conditions[i]) {
-			conditions = append(conditions[:i], conditions[i+1:]...)
-		}
-	}
-	physicalSelection.Conditions = conditions
-}
-
-// predicatePushDownToTableScanImpl is used to push down the some filter conditions of the selection to the tablescan.
+// predicatePushDownToTableScan is used to push down the some filter conditions to the tablescan.
 // @param: sctx: the session context
-// @param: physicalSelection: the PhysicalSelection containing the conditions to be pushed down
-// @param: physicalTableScan: the PhysicalTableScan to be pushed down to
-func predicatePushDownToTableScanImpl(sctx base.PlanContext, physicalSelection *PhysicalSelection, physicalTableScan *PhysicalTableScan) {
+// @param: conds: the filter conditions
+// @param: ts: the PhysicalTableScan to be pushed down to
+func predicatePushDownToTableScan(sctx base.PlanContext, conds []expression.Expression, ts *PhysicalTableScan) {
 	// When the table is small, there is no need to push down the conditions.
-	if physicalTableScan.tblColHists.RealtimeCount <= tiflashDataPackSize || physicalTableScan.KeepOrder {
-		return
-	}
-	conds := physicalSelection.Conditions
-	if len(conds) == 0 {
+	if ts.tblColHists.RealtimeCount <= tiflashDataPackSize || ts.KeepOrder || len(conds) == 0 {
 		return
 	}
 
 	// group the conditions by columns and sort them by selectivity
-	sortedConds := groupByColumnsSortBySelectivity(sctx, conds, physicalTableScan)
+	sortedConds := groupByColumnsSortBySelectivity(sctx, conds, ts)
 
 	selectedConds := make([]expression.Expression, 0, len(conds))
 	selectedIncome := 0.0
 	selectedColumnCount := 0
 	selectedSelectivity := 1.0
-	totalColumnCount := len(physicalTableScan.Columns)
-	tableRowCount := physicalTableScan.StatsInfo().RowCount
+	totalColumnCount := len(ts.Columns)
+	tableRowCount := ts.StatsInfo().RowCount
 
 	for _, exprGroup := range sortedConds {
 		mergedConds := append(selectedConds, exprGroup.exprs...)
-		selectivity, _, err := cardinality.Selectivity(sctx, physicalTableScan.tblColHists, mergedConds, nil)
+		selectivity, _, err := cardinality.Selectivity(sctx, ts.tblColHists, mergedConds, nil)
 		if err != nil {
 			logutil.BgLogger().Warn("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
 			continue
@@ -274,17 +230,134 @@ func predicatePushDownToTableScanImpl(sctx base.PlanContext, physicalSelection *
 	if len(selectedConds) == 0 {
 		return
 	}
-	logutil.BgLogger().Debug("planner: push down conditions to table scan", zap.String("table", physicalTableScan.Table.Name.L), zap.String("conditions", string(expression.SortedExplainExpressionList(sctx.GetExprCtx().GetEvalCtx(), selectedConds))))
-	PushedDown(physicalSelection, physicalTableScan, selectedConds, selectedSelectivity)
-}
-
-// PushedDown is used to push down the selected conditions from PhysicalSelection to PhysicalTableScan.
-// Used in unit test, so it is exported.
-func PushedDown(sel *PhysicalSelection, ts *PhysicalTableScan, selectedConds []expression.Expression, selectedSelectivity float64) {
-	// remove the pushed down conditions from selection
-	removeSpecificExprsFromSelection(sel, selectedConds)
+	logutil.BgLogger().Debug("planner: push down conditions to table scan", zap.String("table", ts.Table.Name.L), zap.String("conditions", string(expression.SortedExplainExpressionList(sctx.GetExprCtx().GetEvalCtx(), selectedConds))))
 	// add the pushed down conditions to table scan
 	ts.LateMaterializationFilterCondition = selectedConds
+	ts.lateMaterializationSelectivity = selectedSelectivity
 	// Update the row count of table scan after pushing down the conditions.
-	ts.StatsInfo().RowCount *= selectedSelectivity
+	ts.SetStats(ts.StatsInfo().Scale(selectedSelectivity))
+}
+
+// isPredicateSimpleCompare is used to check if the condition is a simple comparison predicate
+// which only contains >, >=, =, !=, <=, <, in.
+func isPredicateSimpleCompare(cond expression.Expression) bool {
+	if sf, ok := cond.(*expression.ScalarFunction); ok {
+		switch sf.FuncName.L {
+		case ast.EQ, ast.GE, ast.LE, ast.LT, ast.GT, ast.In:
+			return true
+		case ast.LogicAnd, ast.LogicOr:
+			return isPredicateSimpleCompare(sf.GetArgs()[0]) && isPredicateSimpleCompare(sf.GetArgs()[1])
+		case ast.UnaryNot:
+			return isPredicateSimpleCompare(sf.GetArgs()[0])
+		}
+	}
+	return false
+}
+
+// handleTiFlashPredicatePushDown is used to handle the TiFlash predicate push down.
+// 1. Whether to use the inverted index.
+// 2. Whether to push down the conditions to the table scan.
+func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan, indexHints []*ast.IndexHint) {
+	// Consider use index hints
+	indexMap := make(map[string]int, len(ts.Table.Indices))
+	for _, hint := range indexHints {
+		if hint.HintScope != ast.HintForScan {
+			continue
+		}
+
+		switch hint.HintType {
+		case ast.HintUse:
+			for _, name := range hint.IndexNames {
+				if indexMap[name.O] != math.MaxInt {
+					indexMap[name.O] += 1
+				}
+			}
+		case ast.HintIgnore:
+			for _, name := range hint.IndexNames {
+				if indexMap[name.O] != math.MaxInt {
+					indexMap[name.O] -= 1
+				}
+			}
+		case ast.HintForce:
+			for _, name := range hint.IndexNames {
+				indexMap[name.O] = math.MaxInt
+			}
+		default:
+			continue
+		}
+	}
+
+	indexedColumnNameToIndexInfoMap := make(map[string]*model.IndexInfo, len(ts.Table.Indices))
+	for _, index := range ts.Table.Indices {
+		if index.State == model.StatePublic && index.InvertedInfo != nil {
+			if len(indexHints) > 0 && indexMap[index.Name.O] <= 0 {
+				continue
+			}
+			// inverted index only support one column
+			indexedColumnNameToIndexInfoMap[index.Columns[0].Name.O] = index
+		}
+	}
+
+	selected := make(map[string]bool, len(indexedColumnNameToIndexInfoMap))
+	matchInvertedIndexConditions := make(map[int]bool, len(ts.filterCondition))
+	for i, cond := range ts.filterCondition {
+		// 1. The predicate only contains >, >=, =, !=, <=, <, in.
+		if !isPredicateSimpleCompare(cond) {
+			continue
+		}
+		// 2. The columns of predicate all have inverted index.
+		allHaveInvertedIndex := true
+		columns := expression.ExtractColumns(cond)
+		for _, col := range columns {
+			if _, ok := indexedColumnNameToIndexInfoMap[col.OrigName]; !ok {
+				allHaveInvertedIndex = false
+				break
+			}
+		}
+		if !allHaveInvertedIndex {
+			continue
+		}
+		// 3. The selectivity of the predicate is less than 60%.
+		selectivity, _, err := cardinality.Selectivity(ts.SCtx(), ts.tblColHists, []expression.Expression{cond}, nil)
+		if err != nil {
+			logutil.BgLogger().Debug("calculate selectivity failed", zap.Error(err))
+			continue
+		}
+		if selectivity > selectivityThreshold {
+			continue
+		}
+		// all passed, add the columns to selected
+		for _, col := range columns {
+			selected[col.OrigName] = true
+		}
+		matchInvertedIndexConditions[i] = true
+	}
+
+	for colName := range selected {
+		if index, ok := indexedColumnNameToIndexInfoMap[colName]; ok {
+			ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildInvertedIndexExtra(index))
+		}
+	}
+
+	for colName, index := range indexedColumnNameToIndexInfoMap {
+		if _, ok := selected[colName]; !ok && indexMap[index.Name.O] == math.MaxInt {
+			// if the index is not used, but the index hint is force use, add it to the used indexes
+			ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildInvertedIndexExtra(index))
+		}
+	}
+
+	// if EnableLateMaterialization is set, try to push down some predicates to table scan
+	if pctx.GetSessionVars().EnableLateMaterialization && !pctx.GetSessionVars().TiFlashFastScan {
+		remaining := make([]expression.Expression, 0, len(ts.filterCondition)-len(matchInvertedIndexConditions))
+		for i, cond := range ts.filterCondition {
+			if _, ok := matchInvertedIndexConditions[i]; !ok {
+				remaining = append(remaining, cond)
+			}
+		}
+		predicatePushDownToTableScan(pctx, remaining, ts)
+	}
+	if pctx.GetSessionVars().EnableLateMaterialization && pctx.GetSessionVars().TiFlashFastScan {
+		sc := pctx.GetSessionVars().StmtCtx
+		sc.AppendWarning(errors.NewNoStackError("FastScan is not compatible with late materialization, late materialization is disabled"))
+	}
 }
