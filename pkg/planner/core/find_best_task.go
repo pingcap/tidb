@@ -2706,14 +2706,13 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			ts.AnnIndexExtra = &VectorIndexExtra{
 				IndexInfo: candidate.path.Index,
 				PushDownQueryInfo: &tipb.ANNQueryInfo{
-					QueryType:          tipb.ANNQueryType_OrderBy,
-					DistanceMetric:     tipb.VectorDistanceMetric(distanceMetricPB),
-					TopK:               prop.VectorProp.TopK,
-					ColumnName:         ts.Table.Columns[candidate.path.Index.Columns[0].Offset].Name.L,
-					DeprecatedColumnId: &prop.VectorProp.Column.ID, // deprecated field, will be removed after TiFlash supports the new field.
-					IndexId:            candidate.path.Index.ID,
-					RefVecF32:          prop.VectorProp.Vec.SerializeTo(nil),
-					Column:             *tidbutil.ColumnToProto(prop.VectorProp.Column.ToInfo(), false, false),
+					QueryType:      tipb.ANNQueryType_OrderBy,
+					DistanceMetric: tipb.VectorDistanceMetric(distanceMetricPB),
+					TopK:           prop.VectorProp.TopK,
+					ColumnName:     ts.Table.Columns[candidate.path.Index.Columns[0].Offset].Name.L,
+					IndexId:        candidate.path.Index.ID,
+					RefVecF32:      prop.VectorProp.Vec.SerializeTo(nil),
+					Column:         *tidbutil.ColumnToProto(prop.VectorProp.Column.ToInfo(), true, true),
 				},
 			}
 			ts.SetStats(util.DeriveLimitStats(ts.StatsInfo(), float64(prop.VectorProp.TopK)))
