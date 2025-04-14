@@ -25,7 +25,7 @@ func buildVectorIndexExtra(
 	distanceMetric tipb.VectorDistanceMetric,
 	topk uint32,
 	columnName string,
-	indexID int64,
+	columnID int64,
 	refVec []byte,
 	column *tipb.ColumnInfo,
 ) *ColumnarIndexExtra {
@@ -35,32 +35,29 @@ func buildVectorIndexExtra(
 			IndexType: tipb.ColumnarIndexType_TypeVector,
 			Index: &tipb.ColumnarIndexInfo_AnnQueryInfo{
 				AnnQueryInfo: &tipb.ANNQueryInfo{
-					QueryType:      queryType,
-					DistanceMetric: distanceMetric,
-					TopK:           topk,
-					ColumnName:     columnName,
-					IndexId:        indexID,
-					RefVecF32:      refVec,
-					Column:         *column,
+					QueryType:          queryType,
+					DistanceMetric:     distanceMetric,
+					TopK:               topk,
+					ColumnName:         columnName,
+					DeprecatedColumnId: &columnID, // deprecated field, will be removed after TiFlash supports the new field.
+					IndexId:            indexInfo.ID,
+					RefVecF32:          refVec,
+					Column:             *column,
 				},
 			},
 		},
 	}
 }
 
-func buildInvertedIndexExtra(
-	indexInfo *model.IndexInfo,
-	columnID int64,
-	indexID int64,
-) *ColumnarIndexExtra {
+func buildInvertedIndexExtra(indexInfo *model.IndexInfo) *ColumnarIndexExtra {
 	return &ColumnarIndexExtra{
 		IndexInfo: indexInfo,
 		QueryInfo: &tipb.ColumnarIndexInfo{
 			IndexType: tipb.ColumnarIndexType_TypeInverted,
 			Index: &tipb.ColumnarIndexInfo_InvertedQueryInfo{
 				InvertedQueryInfo: &tipb.InvertedQueryInfo{
-					IndexId:  indexID,
-					ColumnId: columnID,
+					IndexId:  indexInfo.ID,
+					ColumnId: indexInfo.InvertedInfo.ColumnID,
 				},
 			},
 		},

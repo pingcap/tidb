@@ -1553,7 +1553,7 @@ func constructDS2TableScanTask(
 	}
 	ts.PlanPartInfo = copTask.physPlanPartInfo
 	selStats := ts.StatsInfo().Scale(selectivity)
-	ts.addPushedDownSelection(copTask, selStats)
+	ts.addPushedDownSelection(copTask, selStats, ds.AstIndexHints)
 	return copTask
 }
 
