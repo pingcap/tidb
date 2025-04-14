@@ -545,15 +545,6 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 	if prop == nil {
 		return nil, 1, nil
 	}
-	// if prop is require an index join's probe side, check the inner pattern admission here.
-	if prop.IndexJoinProp != nil {
-		pass := admitIndexJoinInnerChildPattern(lp)
-		if !pass {
-			// even enforce hint can not work with this.
-			return base.InvalidTask, 0, nil
-		}
-		// todo: consider dirty write compatible with index merge join.
-	}
 	// Look up the task with this prop in the task map.
 	// It's used to reduce double counting.
 	bestTask = p.GetTask(prop)
