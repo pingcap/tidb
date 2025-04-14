@@ -330,7 +330,6 @@ func (w *cloudRegionJobWorker) write(ctx context.Context, job *regionJob) (*tikv
 		}
 		totalCount += int64(len(pairs))
 		totalSize += size
-		size = 0
 		pairs = pairs[:0]
 		iter.ReleaseBuf()
 	}
