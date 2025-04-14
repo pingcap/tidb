@@ -226,14 +226,14 @@ func readOneFile(
 	output.size += size
 	output.droppedSizePerFile = append(output.droppedSizePerFile, droppedSize)
 	output.mu.Unlock()
-	//rd.byteReader.logger.Info("readOneFile",
-	//	zap.String("first key", hex.EncodeToString(firstKey)),
-	//	zap.String("last key", hex.EncodeToString(lastKey)),
-	//	zap.Int("keyNumInFile", cntAllKeys),
-	//	zap.Int("keyNumInMemBuf", len(keys)),
-	//	zap.Int("dropped num", cntDropped),
-	//	zap.Int("dropped size", droppedSize),
-	//	zap.String("data-file-name", dataFile),
-	//)
+	rd.byteReader.logger.Info("readOneFile",
+		zap.String("first key", hex.EncodeToString(firstKey)),
+		zap.String("last key", hex.EncodeToString(lastKey)),
+		zap.Int("traversedKeyNum", cntAllKeys),
+		zap.Int("matchedKeyNum", len(keys)),
+		zap.Int("dropped num", cntDropped),
+		zap.Int("dropped size", droppedSize),
+		zap.String("data-file-name", dataFile),
+	)
 	return nil
 }
