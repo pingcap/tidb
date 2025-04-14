@@ -206,7 +206,7 @@ func NewExternalEngine(
 		smallBlockBufPool: membuf.NewPool(
 			membuf.WithBlockNum(0),
 			membuf.WithPoolMemoryLimiter(memLimiter),
-			membuf.WithBlockSize(smallBlockSize),
+			membuf.WithBlockSize(8*smallBlockSize),
 		),
 		largeBlockBufPool: membuf.NewPool(
 			membuf.WithBlockNum(0),
