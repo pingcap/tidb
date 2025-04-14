@@ -30,9 +30,6 @@ KEY cm (cm)
 select sleep(5);
 sleep(5)
 0
-show stats_meta;
-Db_name	Table_name	Partition_name	Update_time	Modify_count	Row_count	Last_analyze_time
-explain_complex_stats	dt		2025-04-14 12:42:11	0	0	NULL
 load stats 's/explain_complex_stats_dt.json';
 drop table if exists st;
 CREATE TABLE st (
@@ -62,10 +59,6 @@ KEY icd (cm,ds)
 select sleep(5);
 sleep(5)
 0
-show stats_meta;
-Db_name	Table_name	Partition_name	Update_time	Modify_count	Row_count	Last_analyze_time
-explain_complex_stats	dt		2025-04-14 12:42:18	0	2000	2025-04-14 12:42:18
-explain_complex_stats	st		2025-04-14 12:42:18	0	0	NULL
 load stats 's/explain_complex_stats_st.json';
 drop table if exists dd;
 CREATE TABLE dd (
@@ -87,11 +80,6 @@ KEY t (t)
 select sleep(5);
 sleep(5)
 0
-show stats_meta;
-Db_name	Table_name	Partition_name	Update_time	Modify_count	Row_count	Last_analyze_time
-explain_complex_stats	dt		2025-04-14 12:42:18	0	2000	2025-04-14 12:42:18
-explain_complex_stats	st		2025-04-14 12:42:25	0	1999	2025-04-14 12:42:25
-explain_complex_stats	dd		2025-04-14 12:42:25	0	0	NULL
 load stats 's/explain_complex_stats_dd.json';
 drop table if exists pp;
 CREATE TABLE pp (
@@ -126,12 +114,6 @@ KEY sp (uid,pi)
 select sleep(5);
 sleep(5)
 0
-show stats_meta;
-Db_name	Table_name	Partition_name	Update_time	Modify_count	Row_count	Last_analyze_time
-explain_complex_stats	dt		2025-04-14 12:42:18	0	2000	2025-04-14 12:42:18
-explain_complex_stats	st		2025-04-14 12:42:25	0	1999	2025-04-14 12:42:25
-explain_complex_stats	dd		2025-04-14 12:42:31	0	2000	2025-04-14 12:42:31
-explain_complex_stats	pp		2025-04-14 12:42:32	0	0	NULL
 load stats 's/explain_complex_stats_pp.json';
 drop table if exists rr;
 CREATE TABLE rr (
@@ -147,13 +129,6 @@ PRIMARY KEY (aid,dic)
 select sleep(5);
 sleep(5)
 0
-show stats_meta;
-Db_name	Table_name	Partition_name	Update_time	Modify_count	Row_count	Last_analyze_time
-explain_complex_stats	dt		2025-04-14 12:42:18	0	2000	2025-04-14 12:42:18
-explain_complex_stats	st		2025-04-14 12:42:25	0	1999	2025-04-14 12:42:25
-explain_complex_stats	dd		2025-04-14 12:42:31	0	2000	2025-04-14 12:42:31
-explain_complex_stats	pp		2025-04-14 12:42:38	0	2000	2025-04-14 12:42:38
-explain_complex_stats	rr		2025-04-14 12:42:38	0	0	NULL
 load stats 's/explain_complex_stats_rr.json';
 show stats_histograms where db_name = 'explain_complext_stats' and table_name = 'dt' and column_name = 'cm';
 Db_name	Table_name	Partition_name	Column_name	Is_index	Update_time	Distinct_count	Null_count	Avg_col_size	Correlation	Load_status	Total_mem_usage	Hist_mem_usage	Topn_mem_usage	Cms_mem_usage
