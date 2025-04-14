@@ -61,7 +61,7 @@ func (s *FixSizeBatchBudgets) shrink(minRemain int64, utimeMilli int64) (reclaim
 				b.Unlock()
 			}
 		} else {
-			if b.Capacity.Load() > 0 && b.LastUsedTimeSec*Kilo+DefShrinkFastAllocDurMilli <= utimeMilli && b.TryLock() {
+			if b.Capacity.Load() > 0 && b.LastUsedTimeSec*Kilo+DefFastAllocPoolShrinkDurMilli <= utimeMilli && b.TryLock() {
 				if toReclaim := b.Capacity.Load(); b.Used.Load() <= 0 && toReclaim > 0 {
 					b.Capacity.Add(-toReclaim)
 					reclaimed += toReclaim
@@ -92,20 +92,23 @@ func (b *ConcurrentBudget) Clear() int64 {
 	return budgetCap
 }
 
-func (b *ConcurrentBudget) Reserve(newCap int64) (err error) {
+func (b *ConcurrentBudget) Reserve(newCap int64) (err error, duration time.Duration) {
 	b.Lock()
+	startTime := time.Now()
 	//
 	extra := max(newCap, b.Used.Add(0), b.Capacity.Load()) - b.Capacity.Load()
 	if err = b.pool.allocate(extra); err == nil {
 		b.Capacity.Add(extra)
 	}
 	//
+	duration = time.Since(startTime)
 	b.Unlock()
-	return err
+	return
 }
 
-func (b *ConcurrentBudget) PullFromUpstream() (err error) {
+func (b *ConcurrentBudget) PullFromUpstream() (err error, duration time.Duration) {
 	b.Lock()
+	startTime := time.Now()
 	//
 	x := b.Used.Add(0) - b.Capacity.Load()
 	if x > 0 {
@@ -115,12 +118,14 @@ func (b *ConcurrentBudget) PullFromUpstream() (err error) {
 		}
 	}
 	//
+	duration = time.Since(startTime)
 	b.Unlock()
-	return err
+	return
 }
 
-func (b *ConcurrentBudget) PullFromUpstreamV2(maxSize int64) (err error) {
+func (b *ConcurrentBudget) PullFromUpstreamV2(maxSize int64) (err error, duration time.Duration) {
 	b.Lock()
+	startTime := time.Now()
 	//
 	used, cap := b.Used.Add(0), b.Capacity.Load()
 	if diff := used - cap; diff > 0 {
@@ -130,8 +135,9 @@ func (b *ConcurrentBudget) PullFromUpstreamV2(maxSize int64) (err error) {
 		}
 	}
 	//
+	duration = time.Since(startTime)
 	b.Unlock()
-	return err
+	return
 }
 
 func (m *MemArbitrator) AutoRun(
@@ -213,14 +219,10 @@ func (m *MemArbitrator) updateAvoidSize() {
 	}
 	avoidSize := max(
 		0,
-		m.heapController.heapInuse.Load()+m.heapController.stackInuse.Load()-m.avoidance.trackedSize.Load(), // out of control size
+		m.heapController.heapInuse.Load()+m.heapController.stackInuse.Load()-m.avoidance.heapTracked.Load(), // out of control size
 		m.mu.limit-capacity,
 	)
 	m.avoidance.size.Store(avoidSize)
-}
-
-func (m *MemArbitrator) avoidSize() int64 {
-	return m.avoidance.size.Load()
 }
 
 func (m *MemArbitrator) weakWake() {
@@ -311,6 +313,7 @@ func (m *MemArbitrator) tryStorePoolMediumCapacity(utimeMilli int64, cap int64) 
 			memState = &s
 		} else {
 			memState = &RuntimeMemStateV1{
+				Version:       1,
 				PoolMediumCap: cap,
 			}
 		}
@@ -391,6 +394,7 @@ func (m *MemArbitrator) updateMemMagnification(utimeMilli int64) (updatedPreProf
 
 			if lastMemState := m.lastMemState(); lastMemState != nil && newRatio < lastMemState.Magnif {
 				memState := RuntimeMemStateV1{
+					Version:       1,
 					Magnif:        newRatio,
 					PoolMediumCap: m.poolMediumQuota(),
 				}
@@ -497,8 +501,8 @@ func (m *MemArbitrator) recordDebugProfile() (f DebugFields) {
 		zap.Int64("root-pool-num", m.RootPoolNum()),
 		zap.Int64("fast-alloc-cap", m.fastAllocPoolCap()),
 		zap.Int64("fast-alloc-used", m.fastAlloc.lastMemUsed),
-		zap.Int64("mem-tracked", m.avoidance.trackedSize.Load()),
-		zap.Int64("out-of-control", m.avoidSize()),
+		zap.Int64("heap-tracked", m.avoidance.heapTracked.Load()),
+		zap.Int64("out-of-control", m.avoidance.size.Load()),
 		zap.Int64("reserved-buffer", m.buffer.size.Load()),
 		zap.Int64("alloc-task-num", m.TaskNum()),
 		zap.Int64("pending-alloc-size", m.PendingAllocSize()),
@@ -542,7 +546,7 @@ func (m *MemArbitrator) updateTrackedMemStats() {
 				return true
 			}
 			if ctx := e.ctx.Load(); ctx.available() {
-				memUsed := ctx.arbitrateHelper.MemoryUsed()
+				memUsed := ctx.arbitrateHelper.HeapInuse()
 				totalMemUsed += memUsed
 				maxMemUsed = max(maxMemUsed, memUsed)
 			}
@@ -556,12 +560,12 @@ func (m *MemArbitrator) updateTrackedMemStats() {
 	fastAllocUsed := m.fastAllocUsed()
 	totalMemUsed += fastAllocUsed
 
-	m.avoidance.trackedSize.Store(totalMemUsed)
+	m.avoidance.heapTracked.Store(totalMemUsed)
 	m.avoidance.lastUpdateUtimeMilli.Store(nowUnixMilli())
 }
 
 func (m *MemArbitrator) tryShrinkFastAllocPool(minRemain, holderMinRemain int64, utimeMilli int64) bool {
-	if m.fastAlloc.lastShrinkUtimeMilli.Load()+DefShrinkFastAllocDurMilli <= utimeMilli {
+	if m.fastAlloc.lastShrinkUtimeMilli.Load()+DefFastAllocPoolShrinkDurMilli <= utimeMilli {
 		m.shrinkFastAllocPool(minRemain, holderMinRemain, utimeMilli)
 		return true
 	}
@@ -825,7 +829,7 @@ func (m *MemArbitrator) killTopnEntry(required int64) (newKillNum int, reclaimed
 				}
 
 				if ctx := entry.ctx.Load(); ctx.available() {
-					memoryUsed := ctx.arbitrateHelper.MemoryUsed()
+					memoryUsed := ctx.arbitrateHelper.HeapInuse()
 
 					if memoryUsed <= 0 {
 						continue
@@ -930,7 +934,7 @@ func (m *MemArbitrator) initPoolFastAlloc(allocAlignSize, shardNum int64, holder
 			return errArbitrateFailError
 		}
 
-		if m.mu.allocated > m.mu.limit-m.avoidSize()-s.request {
+		if m.mu.allocated > m.mu.limit-m.avoidance.size.Load()-s.request {
 			m.execMetrics.fastAlloc.fail++
 			return errArbitrateFailError
 		}
@@ -990,9 +994,9 @@ func nextPow2(n uint64) uint64 {
 }
 
 type ArbitrateHelper interface {
-	Kill() bool        // kill by arbitrator only when meeting oom risk
-	Interrupt() bool   // interrupt/cancel by arbitrator
-	MemoryUsed() int64 // heap memory usage
+	Kill() bool       // kill by arbitrator only when meeting oom risk
+	Interrupt() bool  // interrupt/cancel by arbitrator
+	HeapInuse() int64 // heap memory usage
 }
 
 type Context struct { // immutable after created
@@ -1073,7 +1077,7 @@ func (m *MemArbitrator) AllocQuotaFromGlobalMemArbitrator(uid uint64, req int64,
 			b.LastUsedTimeSec = m.UnixTimeSec
 		}
 		if b.Used.Add(req) > b.Capacity.Load() {
-			if err := b.PullFromUpstream(); err != nil {
+			if err, _ := b.PullFromUpstream(); err != nil {
 				return err
 			}
 		}

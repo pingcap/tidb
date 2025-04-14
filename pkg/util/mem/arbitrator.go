@@ -65,10 +65,8 @@ const DefHeapReclaimCheckDuration = time.Second * 1
 const DefHeapReclaimCheckMaxDuration = time.Second * 5
 const DefCheckOOMRatio float64 = 0.95
 const DefCheckSafeRatio float64 = 0.9
-const DefKillByFastAllocritySafeRatio float64 = 0.85
 const DefTickDurMilli = Kilo * 1
 const DefTrackMemStatsDurMilli = Kilo * 1
-const DefShrinkFastAllocDurMilli = Kilo * 5
 const DefMaxLimit int64 = 5e15
 const DefMax int64 = 9e15
 const DefServerlimitSmallLimitNum = 1000
@@ -83,6 +81,7 @@ const DefPoolReservedQuota int64 = 4 * MB
 const DefFastAllocPoolAllocAlignSize int64 = DefPoolReservedQuota + MB
 const DefFastAllocPoolShardNum int64 = 256
 const DefFastAllocPoolholderShardNum int64 = 64
+const DefFastAllocPoolShrinkDurMilli = Kilo * 5
 const DefPoolStatusShards uint64 = 128
 const DefPoolQuotaShards int = 27 // quota >= BaseQuotaUnit * 2^(max_shards - 2) will be put into the last shard
 const prime64 uint64 = 1099511628211
@@ -381,10 +380,7 @@ type rootPoolEntry struct {
 
 	request struct {
 		// mutable for ResourcePool
-		quota        int64
-		startTime    time.Time
-		lastAllocDur time.Duration
-
+		quota int64
 		// arbitrator is able to send result for windup
 		resultCh chan ArbitrateResult
 	}
@@ -629,8 +625,6 @@ func (m *MemArbitrator) blockingAllocate(entry *rootPoolEntry, requestedBytes in
 func (m *MemArbitrator) prepareAlloc(entry *rootPoolEntry, requestedBytes int64) {
 	{
 		entry.request.quota = requestedBytes
-		entry.request.startTime = now()
-
 		m.addTask(entry)
 		m.notifer.WeakWake()
 	}
@@ -660,9 +654,7 @@ func (m *MemArbitrator) waitAlloc(entry *rootPoolEntry) ArbitrateResult {
 	}
 
 	m.tasks.pendingAlloc.Add(-entry.request.quota)
-
 	entry.request.quota = 0
-	entry.request.lastAllocDur = time.Since(entry.request.startTime)
 
 	return res
 }
@@ -746,7 +738,7 @@ type MemArbitrator struct {
 	avoidance struct {
 		lastUpdateUtimeMilli atomic.Int64
 		size                 atomic.Int64
-		trackedSize          atomic.Int64
+		heapTracked          atomic.Int64
 		//
 		memMagnif struct {
 			sync.Mutex
@@ -1861,7 +1853,7 @@ func (m *MemArbitrator) arbitrate(target *rootPoolEntry) (bool, int64) {
 	}
 
 	for {
-		ok, reclaimed := m.allocateFromArbitrator(remainBytes, m.reservedBuffer()+m.avoidSize())
+		ok, reclaimed := m.allocateFromArbitrator(remainBytes, m.reservedBuffer()+m.avoidance.size.Load())
 		reclaimedBytes += reclaimed
 		remainBytes -= reclaimed
 		if ok {
