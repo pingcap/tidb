@@ -86,6 +86,7 @@ func (rc *SnapClient) CreateTablesTest(
 	for i, t := range tables {
 		tbMapping[t.Info.Name.String()] = i
 	}
+	rc.AllocTableIDs(context.Background(), tables)
 	createdTables, err := rc.CreateTables(context.TODO(), tables, newTS)
 	if err != nil {
 		return nil, nil, err
