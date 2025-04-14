@@ -189,7 +189,7 @@ func TestSessionPoolPut(t *testing.T) {
 	// Put a Session that is inUse
 	se = getCachedSessionFromPool(sctx)
 	require.Equal(t, 0, len(p.pool))
-	_, exit, err := se.internal.EnterOperation(se)
+	_, exit, err := se.internal.EnterOperation(se, false)
 	require.NoError(t, err)
 	WithSuppressAssert(func() {
 		p.Put(se)

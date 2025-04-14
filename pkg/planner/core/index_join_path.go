@@ -700,32 +700,32 @@ func getBestIndexJoinInnerTaskByProp(ds *logicalop.DataSource, prop *property.Ph
 	// the below code is quite similar from the original logic
 	// reason1: we need to leverage original indexPathInfo down related logic to build constant range for index plan.
 	// reason2: the ranges from TS and IS couldn't be directly used to derive the stats' estimation, it's not real.
-	// reason3: skyline pruning should prune the possible index path which could feel the runtime EQ access conditions.
-	cntPlan := int64(0)
+	// reason3: skyline pruning should not prune the possible index path which could feel the runtime EQ access conditions.
 	innerTSCopTask := buildDataSource2TableScanByIndexJoinProp(ds, prop)
 	if !innerTSCopTask.Invalid() {
-		cntPlan++
 		planCounter.Dec(1)
 		if planCounter.Empty() {
-			return innerTSCopTask, cntPlan, nil
+			// planCounter is counted to end, just return this one.
+			return innerTSCopTask, 1, nil
 		}
 	}
 	innerISCopTask := buildDataSource2IndexScanByIndexJoinProp(ds, prop)
 	if !innerISCopTask.Invalid() {
-		cntPlan++
 		planCounter.Dec(1)
 		if planCounter.Empty() {
-			return innerISCopTask, cntPlan, nil
+			// planCounter is counted to end, just return this one.
+			return innerISCopTask, 1, nil
 		}
 	}
+	// if we can see the both, compare the cost.
 	leftIsBetter, err := compareTaskCost(innerTSCopTask, innerISCopTask, opt)
 	if err != nil {
 		return base.InvalidTask, 0, err
 	}
 	if leftIsBetter {
-		return innerTSCopTask, cntPlan, nil
+		return innerTSCopTask, 1, nil
 	}
-	return innerISCopTask, cntPlan, nil
+	return innerISCopTask, 1, nil
 }
 
 // getBestIndexJoinPathResultByProp tries to iterate all possible access paths of the inner child and builds

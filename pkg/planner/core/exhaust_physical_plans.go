@@ -1104,17 +1104,15 @@ func admitIndexJoinInnerChildPattern(p base.LogicalPlan) bool {
 		if x.PreferStoreType&h.PreferTiFlash != 0 {
 			return false
 		}
-		return true
 	case *logicalop.LogicalProjection, *logicalop.LogicalSelection, *logicalop.LogicalAggregation:
 		if !p.SCtx().GetSessionVars().EnableINLJoinInnerMultiPattern {
 			return false
 		}
-		return true
 	case *logicalop.LogicalUnionScan:
-		return true
-	default: // index join inner side couldn't allow join, sort, limit, etc. todo @Arenatlx: open it.
+	default: // index join inner side couldn't allow join, sort, limit, etc. todo: open it.
 		return false
 	}
+	return true
 }
 
 func extractIndexJoinInnerChildPattern(p *logicalop.LogicalJoin, innerChild base.LogicalPlan) *indexJoinInnerChildWrapper {
@@ -3158,6 +3156,12 @@ func getEnforcedStreamAggs(la *logicalop.LogicalAggregation, prop *property.Phys
 		return nil
 	}
 	if !prop.IsPrefix(childProp) {
+		// empty
+		return enforcedAggs
+	}
+	childProp = admitIndexJoinProp(childProp, prop)
+	if childProp == nil {
+		// empty
 		return enforcedAggs
 	}
 	taskTypes := []property.TaskType{property.CopSingleReadTaskType, property.CopMultiReadTaskType}
@@ -3170,6 +3174,7 @@ func getEnforcedStreamAggs(la *logicalop.LogicalAggregation, prop *property.Phys
 	} else if !la.PreferAggToCop {
 		taskTypes = append(taskTypes, property.RootTaskType)
 	}
+	// only admit special types for index join prop
 	taskTypes = admitIndexJoinTypes(taskTypes, prop)
 	for _, taskTp := range taskTypes {
 		copiedChildProperty := new(property.PhysicalProperty)
