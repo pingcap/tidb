@@ -122,6 +122,7 @@ type MPPPartitionColumn struct {
 	CollateID int32
 }
 
+// ResolveIndices resolve index for MPPPartitionColumn
 func (partitionCol *MPPPartitionColumn) ResolveIndices(schema *expression.Schema) (*MPPPartitionColumn, error) {
 	newColExpr, err := partitionCol.Col.ResolveIndices(schema)
 	if err != nil {
