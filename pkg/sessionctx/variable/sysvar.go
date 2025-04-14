@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/oracle/oracles"
 	tikvcliutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
@@ -1587,6 +1588,16 @@ var defaultSysVars = []*SysVar{
 				interval := time.Duration(vardef.LowResolutionTSOUpdateInterval.Load()) * time.Millisecond
 				return SetLowResolutionTSOUpdateInterval(interval)
 			}
+			return nil
+		},
+	},
+	{
+		Scope: vardef.ScopeGlobal,
+		Name:  vardef.TiDBEnableTSValidation,
+		Value: BoolToOnOff(vardef.DefTiDBEnableTSValidation),
+		Type:  vardef.TypeBool,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			oracles.EnableTSValidation.Store(TiDBOptOn(val))
 			return nil
 		},
 	},
