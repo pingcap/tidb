@@ -278,6 +278,9 @@ func TestIssue56266(t *testing.T) {
     partition p1 values in (3, 4, 5),
     partition p2 values in (6, 7, 8),
     partition p3 values in (9, 10, 11));`)
-	//tk.MustExec("set global tidb_skip_missing_partition_stats = 0")
-	tk.MustQuery(`explain select 1 from t left join tlist on tlist.a=t.a where t.a in (12, 13);`).Check(testkit.Rows())
+	tk.MustQuery(`explain format='brief' select 1 from t left join tlist on tlist.a=t.a where t.a in (12, 13);`).Check(testkit.Rows(
+		"Projection 2.00 root  1->Column#5",
+		"└─HashJoin 2.00 root  left outer join, left side:Batch_Point_Get, equal:[eq(test.t.a, test.tlist.a)]",
+		"  ├─TableDual(Build) 0.00 root  rows:0",
+		"  └─Batch_Point_Get(Probe) 2.00 root table:t handle:[12 13], keep order:false, desc:false"))
 }
