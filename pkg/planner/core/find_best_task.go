@@ -97,14 +97,6 @@ func findBestTask4LogicalTableDual(lp base.LogicalPlan, prop *property.PhysicalP
 		return base.InvalidTask, 0, nil
 	}
 	p := lp.(*logicalop.LogicalTableDual)
-	// if prop is require an index join's probe side, check the inner pattern admission here.
-	if prop.IndexJoinProp != nil {
-		pass := admitIndexJoinInnerChildPattern(lp)
-		if !pass {
-			// even enforce hint can not work with this.
-			return base.InvalidTask, 0, nil
-		}
-	}
 	// If the required property is not empty and the row count > 1,
 	// we cannot ensure this required property.
 	// But if the row count is 0 or 1, we don't need to care about the property.
@@ -129,14 +121,6 @@ func findBestTask4LogicalShow(lp base.LogicalPlan, prop *property.PhysicalProper
 		return base.InvalidTask, 0, nil
 	}
 	p := lp.(*logicalop.LogicalShow)
-	// if prop is require an index join's probe side, check the inner pattern admission here.
-	if prop.IndexJoinProp != nil {
-		pass := admitIndexJoinInnerChildPattern(lp)
-		if !pass {
-			// even enforce hint can not work with this.
-			return base.InvalidTask, 0, nil
-		}
-	}
 	if !prop.IsSortItemEmpty() || planCounter.Empty() {
 		return base.InvalidTask, 0, nil
 	}
@@ -154,14 +138,6 @@ func findBestTask4LogicalShowDDLJobs(lp base.LogicalPlan, prop *property.Physica
 		return base.InvalidTask, 0, nil
 	}
 	p := lp.(*logicalop.LogicalShowDDLJobs)
-	// if prop is require an index join's probe side, check the inner pattern admission here.
-	if prop.IndexJoinProp != nil {
-		pass := admitIndexJoinInnerChildPattern(lp)
-		if !pass {
-			// even enforce hint can not work with this.
-			return base.InvalidTask, 0, nil
-		}
-	}
 	if !prop.IsSortItemEmpty() || planCounter.Empty() {
 		return base.InvalidTask, 0, nil
 	}
@@ -688,14 +664,6 @@ func findBestTask4LogicalMemTable(lp base.LogicalPlan, prop *property.PhysicalPr
 		return base.InvalidTask, 0, nil
 	}
 	p := lp.(*logicalop.LogicalMemTable)
-	// if prop is require an index join's probe side, check the inner pattern admission here.
-	if prop.IndexJoinProp != nil {
-		pass := admitIndexJoinInnerChildPattern(lp)
-		if !pass {
-			// even enforce hint can not work with this.
-			return base.InvalidTask, 0, nil
-		}
-	}
 	if prop.MPPPartitionTp != property.AnyType {
 		return base.InvalidTask, 0, nil
 	}
@@ -1459,20 +1427,6 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 	if prop == nil {
 		planCounter.Dec(1)
 		return nil, 1, nil
-	}
-	// if prop is require an index join's probe side, check the inner pattern admission here.
-	// 这边不用特殊操作，都是看 indexJoinProp 才自动化操作的，只要在 enumerate index join 通过 variable
-	// 控制是走传统的 pattern assert 的方式直接构建，还是通过 enumerate physical 配合 indexJoinProp
-	// 下传就行。
-	if prop.IndexJoinProp != nil {
-		pass := admitIndexJoinInnerChildPattern(lp)
-		if !pass {
-			// even enforce hint can not work with this.
-			return base.InvalidTask, 0, nil
-		}
-		// when datasource leaf is in index join's inner side.
-		// 老得那边分 index path 和 table path 是因为底层构建的东西不一致，这里是为了兼容老的逻辑
-		return getBestIndexJoinInnerTaskByProp(ds, prop, opt, planCounter)
 	}
 	if ds.IsForUpdateRead && ds.SCtx().GetSessionVars().TxnCtx.IsExplicit {
 		hasPointGetPath := false
@@ -3209,14 +3163,6 @@ func findBestTask4LogicalCTE(lp base.LogicalPlan, prop *property.PhysicalPropert
 		return base.InvalidTask, 0, nil
 	}
 	p := lp.(*logicalop.LogicalCTE)
-	// if prop is require an index join's probe side, check the inner pattern admission here.
-	if prop.IndexJoinProp != nil {
-		pass := admitIndexJoinInnerChildPattern(lp)
-		if !pass {
-			// even enforce hint can not work with this.
-			return base.InvalidTask, 0, nil
-		}
-	}
 	if p.ChildLen() > 0 {
 		return p.BaseLogicalPlan.FindBestTask(prop, counter, pop)
 	}
@@ -3255,14 +3201,6 @@ func findBestTask4LogicalCTETable(lp base.LogicalPlan, prop *property.PhysicalPr
 		return base.InvalidTask, 0, nil
 	}
 	p := lp.(*logicalop.LogicalCTETable)
-	// if prop is require an index join's probe side, check the inner pattern admission here.
-	if prop.IndexJoinProp != nil {
-		pass := admitIndexJoinInnerChildPattern(lp)
-		if !pass {
-			// even enforce hint can not work with this.
-			return base.InvalidTask, 0, nil
-		}
-	}
 	if !prop.IsSortItemEmpty() {
 		return base.InvalidTask, 0, nil
 	}
