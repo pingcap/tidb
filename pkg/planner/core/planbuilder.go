@@ -1146,17 +1146,15 @@ func isForUpdateReadSelectLock(lock *ast.SelectLockInfo) bool {
 		lock.LockType == ast.SelectLockForUpdateWaitN
 }
 
-func isTiKVIndexByName(idxName string, tblInfo *model.TableInfo) bool {
+func isTiKVIndexByName(indexInfo *model.IndexInfo, tblInfo *model.TableInfo) bool {
+	if indexInfo == nil {
+		return false
+	}
 	// when the PKIsHandle of table is true, the primary key is not in the indices list.
-	if idxName == "primary" && tblInfo.PKIsHandle {
+	if indexInfo.Name.L == "primary" && tblInfo.PKIsHandle {
 		return true
 	}
-	for _, index := range tblInfo.Indices {
-		if index.Name.L == idxName {
-			return !index.IsColumnarIndex()
-		}
-	}
-	return false
+	return !indexInfo.IsColumnarIndex()
 }
 
 func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
@@ -1195,6 +1193,8 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	check = check && ctx.GetSessionVars().ConnectionID > 0
 	var latestIndexes map[int64]*model.IndexInfo
 	var err error
+	// Inverted Index can not be used as access path index.
+	invertedIndexes := make(map[string]struct{})
 
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
@@ -1216,6 +1216,10 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 					continue
 				}
 			}
+			if index.InvertedInfo != nil {
+				invertedIndexes[index.Name.L] = struct{}{}
+				continue
+			}
 			if index.IsColumnarIndex() {
 				// Because the value of `TiFlashReplica.Available` changes as the user modify replica, it is not ideal if the state of index changes accordingly.
 				// So the current way to use the columnar indexes is to require the TiFlash Replica to be available.
@@ -1223,7 +1227,6 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 					continue
 				}
 				path := genTiFlashPath(tblInfo)
-				path.StoreType = kv.TiFlash
 				path.Index = index
 				publicPaths = append(publicPaths, path)
 				continue
@@ -1293,7 +1296,11 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				available = append(available, path)
 			}
 		}
+
 		for _, idxName := range hint.IndexNames {
+			if _, ok := invertedIndexes[idxName.L]; ok {
+				continue
+			}
 			path := getPathByIndexName(publicPaths, idxName, tblInfo)
 			if path == nil {
 				err := plannererrors.ErrKeyDoesNotExist.FastGenByArgs(idxName, tblInfo.Name)
@@ -1309,7 +1316,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				ignored = append(ignored, path)
 				continue
 			}
-			if isTiKVIndexByName(idxName.L, tblInfo) && !isolationReadEnginesHasTiKV {
+			if isTiKVIndexByName(path.Index, tblInfo) && !isolationReadEnginesHasTiKV {
 				engineVals, _ := ctx.GetSessionVars().GetSystemVar(vardef.TiDBIsolationReadEngines)
 				err := fmt.Errorf("TiDB doesn't support index '%v' in the isolation read engines(value: '%v')", idxName, engineVals)
 				if i < indexHintsLen {
