@@ -85,6 +85,7 @@ func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 			// So if we don't initialize LastAnalyzeVersion with the snapshot here,
 			// it will stay at 0 and auto-analyze won't be able to detect that the table has been analyzed.
 			// But in the future, we maybe will create some records for _row_id, see:
+			// https://github.com/pingcap/tidb/issues/51098
 			LastAnalyzeVersion:   lastAnalyzeVersion,
 			LastStatsHistVersion: lastStatsHistUpdateVersion,
 		}
