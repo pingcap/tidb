@@ -1288,6 +1288,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 		planCtx.builder.ctx.GetSessionVars().StmtCtx.SetHintWarning(
 			"NO_DECORRELATE() is inapplicable because there are no correlated columns.")
 		noDecorrelate = false
+		planCtx.builder.disableSubQueryPreprocessing = true
 	}
 
 	if planCtx.builder.disableSubQueryPreprocessing || len(coreusage.ExtractCorrelatedCols4LogicalPlan(np)) > 0 || hasCTEConsumerInSubPlan(np) {
