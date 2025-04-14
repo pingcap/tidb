@@ -48,6 +48,7 @@ import (
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/store/driver/options"
 	util2 "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -56,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tidb/pkg/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/tikv/client-go/v2/config/retry"
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -1425,6 +1427,13 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	err = derr.ToTiDBErr(err)
 	if worker.req.RunawayChecker != nil {
 		err = worker.req.RunawayChecker.CheckThresholds(nil, 0, err)
+	}
+	if _, _err_ := failpoint.Eval(_curpkg_("issue58756")); _err_ == nil {
+		if worker.req.MaxExecutionTime == 1501 {
+			time.Sleep(time.Second)
+			err = exeerrors.ErrMaxExecTimeExceeded.GenWithStackByArgs()
+			bo.Backoff(retry.BoTxnLockFast, errors.New("issue58756"))
+		}
 	}
 	if err != nil {
 		if task.storeType == kv.TiDB {
