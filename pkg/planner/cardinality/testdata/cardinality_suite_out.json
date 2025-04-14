@@ -1193,16 +1193,6 @@
         ]
       },
       {
-        "Query": "explain format = 'brief' select * from t where a < 1000 and c < 100 limit 1",
-        "Result": [
-          "Limit 1.00 root  offset:0, count:1",
-          "└─TableReader 1.00 root  data:Limit",
-          "  └─Limit 1.00 cop[tikv]  offset:0, count:1",
-          "    └─Selection 1.00 cop[tikv]  lt(test.t.c, 100)",
-          "      └─TableRangeScan 100.00 cop[tikv] table:t range:[-inf,1000), keep order:false, stats:pseudo"
-        ]
-      },
-      {
         "Query": "explain format = 'brief' select * from t where d >= 9950 order by c limit 1",
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
