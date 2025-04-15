@@ -85,8 +85,8 @@ func readAllData(
 	log.FromContext(ctx).Info("readConn1", zap.Int("readConn1", readConn1), zap.Int("fileNum", len(skipOpen)))
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 	readConn := 1000
-	//readConn = min(readConn, readConn1)
-	readConn = min(readConn, len(dataFiles))
+	readConn = min(readConn, readConn1)
+	//readConn = min(readConn, len(dataFiles))
 	taskCh := make(chan int)
 	output.memKVBuffers = make([]*membuf.Buffer, readConn*2)
 	task.Info("read file go routine num", zap.Int("readConn", readConn))
@@ -127,9 +127,9 @@ func readAllData(
 	}
 
 	for fileIdx := range dataFiles {
-		//if skipOpen[fileIdx] {
-		//	continue
-		//}
+		if skipOpen[fileIdx] {
+			continue
+		}
 		select {
 		case <-egCtx.Done():
 			return eg.Wait()
@@ -236,6 +236,7 @@ func readOneFile(
 		zap.Int("dropped num", cntDropped),
 		zap.Int("dropped size", droppedSize),
 		zap.String("data-file-name", dataFile),
+		zap.Duration("read+handle duration", time.Since(ts)),
 	)
 	return nil
 }

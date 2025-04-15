@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -288,6 +289,12 @@ func (r *byteReader) reload() error {
 		}
 	}
 
+	ts := time.Now()
+	defer func() {
+		r.logger.Info("reload reader time",
+			zap.Duration("duration", time.Since(ts)),
+		)
+	}()
 	if r.concurrentReader.now {
 		r.concurrentReader.reloadCnt++
 		buffers, err := r.concurrentReader.reader.read(r.concurrentReader.largeBuf)
