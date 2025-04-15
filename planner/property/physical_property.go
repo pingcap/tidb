@@ -94,8 +94,8 @@ type MPPPartitionColumn struct {
 	CollateID int32
 }
 
-func (partitionCol *MPPPartitionColumn) hashCode() []byte {
-	hashcode := partitionCol.Col.HashCode()
+func (partitionCol *MPPPartitionColumn) hashCode(ctx *stmtctx.StatementContext) []byte {
+	hashcode := partitionCol.Col.HashCode(ctx)
 	if partitionCol.CollateID < 0 {
 		// collateId < 0 means new collation is not enabled
 		hashcode = codec.EncodeInt(hashcode, int64(partitionCol.CollateID))
