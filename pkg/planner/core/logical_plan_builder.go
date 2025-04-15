@@ -3836,13 +3836,13 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	l := sel.LockInfo
 	if l != nil && l.LockType != ast.SelectLockNone {
 		var tableList []*ast.TableName
-		var isLockTables bool
+		var isExplicitSetTablesNames bool
 		if len(l.Tables) == 0 {
 			nodeW := resolve.NewNodeWWithCtx(sel.From, b.resolveCtx)
 			tableList = ExtractTableList(nodeW, false)
 		} else {
+			isExplicitSetTablesNames = true
 			tableList = l.Tables
-			isLockTables = true
 		}
 		for _, tName := range tableList {
 			// CTE has no *model.HintedTable, we need to skip it.
@@ -3850,7 +3850,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 			if tNameW == nil {
 				continue
 			}
-			if isLockTables {
+			if isExplicitSetTablesNames {
 				b.ctx.GetSessionVars().StmtCtx.LockTableIDs[tNameW.TableInfo.ID] = struct{}{}
 			}
 			dbName := tName.Schema.L
