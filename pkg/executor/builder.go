@@ -4056,7 +4056,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) e
 		return ret
 	}
 
-	if is.Index.Global {
+	if _, ok := ret.table.(table.PartitionedTable); is.Index.Global && ok {
 		ret.partitionIDMap, err = getPartitionIDsAfterPruning(b.ctx, ret.table.(table.PartitionedTable), v.PlanPartInfo)
 		if err != nil {
 			b.err = err
