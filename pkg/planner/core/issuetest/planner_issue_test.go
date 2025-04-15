@@ -268,5 +268,6 @@ func TestIssueABC(t *testing.T) {
 partition p0 values less than (4),
 partition p1 values less than (7),
 partition p2 values less than (10));`)
-	tk.MustQuery(`explain format='brief' select avg(id), max(id), min(id) from p partition(p0) use index(idx) group by c;`).Check(testkit.Rows())
+	tk.MustExec(`create table t (id int, c int);`)
+	tk.MustQuery(`select * from p partition(p1) inner join t on p.id = t.id;`).Check(testkit.Rows())
 }
