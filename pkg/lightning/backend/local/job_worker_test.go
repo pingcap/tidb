@@ -38,7 +38,6 @@ func TestRegionJobBaseWorker(t *testing.T) {
 				return nil
 			},
 			writeFn: func(ctx context.Context, job *regionJob) (*tikvWriteResult, error) {
-				job.convertStageTo(wrote)
 				return &tikvWriteResult{}, nil
 			},
 			ingestFn: func(ctx context.Context, job *regionJob) error {
