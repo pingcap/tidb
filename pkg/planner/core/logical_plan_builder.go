@@ -3838,9 +3838,11 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		var tableList []*ast.TableName
 		var isExplicitSetTablesNames bool
 		if len(l.Tables) == 0 {
+			// It's for stmt like `select xxx from table t, t1 where t.a = t1.a for update`
 			nodeW := resolve.NewNodeWWithCtx(sel.From, b.resolveCtx)
 			tableList = ExtractTableList(nodeW, false)
 		} else {
+			// It's for stmt like `select xxx from table t, t1 where t.a = t1.a for update of t`
 			isExplicitSetTablesNames = true
 			tableList = l.Tables
 		}
