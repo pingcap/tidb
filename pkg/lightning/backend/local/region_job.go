@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
@@ -642,6 +643,7 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 
 	for retry := 0; retry < maxRetryTimes; retry++ {
 		resp, err := local.doIngest(ctx, j)
+		err = injectfailpoint.DXFRandomErrorWithOnePercentWrapper(err)
 		if err == nil && resp.GetError() == nil {
 			j.convertStageTo(ingested)
 			return nil
