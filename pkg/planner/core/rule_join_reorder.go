@@ -57,7 +57,12 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 	// If the variable `tidb_opt_advanced_join_hint` is false and the join node has the join method hint, we will not split the current join node to join reorder process.
 	if !isJoin || (join.PreferJoinType > uint(0) && !p.SCtx().GetSessionVars().EnableAdvancedJoinHint) || join.StraightJoin ||
 		(join.JoinType != logicalop.InnerJoin && join.JoinType != logicalop.LeftOuterJoin && join.JoinType != logicalop.RightOuterJoin) ||
-		((join.JoinType == logicalop.LeftOuterJoin || join.JoinType == logicalop.RightOuterJoin) && join.EqualConditions == nil) {
+		((join.JoinType == logicalop.LeftOuterJoin || join.JoinType == logicalop.RightOuterJoin) && join.EqualConditions == nil) ||
+		// with NullEQ in the EQCond, the join order needs to consider the transitivity of null and avoid the wrong result.
+		// so we skip the join order when to meet the NullEQ in the EQCond
+		(slices.ContainsFunc(join.EqualConditions, func(e *expression.ScalarFunction) bool {
+			return e.FuncName.L == ast.NullEQ
+		})) {
 		if joinOrderHintInfo != nil {
 			// The leading hint can not work for some reasons. So clear it in the join node.
 			join.HintInfo = nil
