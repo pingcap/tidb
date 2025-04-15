@@ -367,21 +367,13 @@ func (p *PhysicalSelection) ResolveIndices() (err error) {
 	return nil
 }
 
-<<<<<<< HEAD:planner/core/resolve_indices.go
 // ResolveIndices implements Plan interface.
 func (p *PhysicalExchangeSender) ResolveIndices() (err error) {
 	err = p.basePhysicalPlan.ResolveIndices()
 	if err != nil {
 		return err
 	}
-	for i, col := range p.HashCols {
-		colExpr, err1 := col.Col.ResolveIndices(p.children[0].Schema())
-		if err1 != nil {
-			return err1
-=======
-// ResolveIndicesItself resolve indices for PhysicalPlan itself
-func (p *PhysicalExchangeSender) ResolveIndicesItself() (err error) {
-	return p.ResolveIndicesItselfWithSchema(p.Children()[0].Schema())
+	return p.ResolveIndicesItselfWithSchema(p.children[0].Schema())
 }
 
 // ResolveIndicesItselfWithSchema is added for test usage
@@ -390,7 +382,6 @@ func (p *PhysicalExchangeSender) ResolveIndicesItselfWithSchema(inputSchema *exp
 		newHashCol, err := hashCol.ResolveIndices(inputSchema)
 		if err != nil {
 			return err
->>>>>>> 43d47e4e1d7 (planner: fix bug in `PhysicalExchangeSender::ResolveIndicesItself` (#60520)):pkg/planner/core/resolve_indices.go
 		}
 		p.HashCols[i] = newHashCol
 	}
