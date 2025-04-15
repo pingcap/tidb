@@ -3853,6 +3853,8 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 				continue
 			}
 			if isExplicitSetTablesNames {
+				// If `LockTableIDs` map is empty, it will lock all records from all tables.
+				// Besides, it will only lock the metioned in `of` part.
 				b.ctx.GetSessionVars().StmtCtx.LockTableIDs[tNameW.TableInfo.ID] = struct{}{}
 			}
 			dbName := tName.Schema.L
