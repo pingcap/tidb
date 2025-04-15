@@ -797,7 +797,6 @@ MergeJoin_8	12475.01	root		inner join, left key:test.t1.a, test.t1.b, right key:
 └─IndexReader_39(Probe)	9980.01	root		index:Selection_38
   └─Selection_38	9980.01	cop[tikv]		not(isnull(test.t1.b))
     └─IndexFullScan_37	9990.00	cop[tikv]	table:t1, index:idx(a, b)	keep order:true, stats:pseudo
-<<<<<<< HEAD
 drop table if exists t, t1;
 create table t(a int);
 create table t1(a int primary key, b int, index idx(b));
@@ -826,7 +825,6 @@ _tidb_rowid
 1
 2
 3
-=======
 drop table if exists t;
 create table t(a int, b int, c int, primary key(a,b), key ib(b));
 explain format = brief select * from t use index (ib) where a = 1 and b = 1;
@@ -908,4 +906,3 @@ IndexLookUp	1.00	root
 └─Selection(Probe)	1.00	cop[tikv]		eq(test_59427.t.a, 1)
   └─TableRowIDScan	10.00	cop[tikv]	table:tt	keep order:false, stats:pseudo
 drop database if exists test_59427;
->>>>>>> 22f4110211b (planner: add comments style hints check for the fast path (#60516))

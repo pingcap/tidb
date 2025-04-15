@@ -1604,7 +1604,7 @@ func indexIsAvailableByHints(
 		}
 		hintDBName := h.Tables[0].DBName
 		if hintDBName.L == "" {
-			hintDBName = ast.NewCIStr(currentDB)
+			hintDBName = pmodel.NewCIStr(currentDB)
 		}
 		// The table name matching logic from getPossibleAccessPaths()
 		if h.Tables[0].TableName.L == tblAlias &&
