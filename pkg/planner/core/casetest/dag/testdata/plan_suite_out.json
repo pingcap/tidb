@@ -36,7 +36,7 @@
       },
       {
         "SQL": "select * from t where t.c = 1 and t.e = 1 order by t.e limit 1",
-        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)]), Table(t))->TopN([test.t.e],0,1)"
+        "Best": "IndexLookUp(Index(t.c_d_e)[[1,1]]->Sel([eq(test.t.e, 1)])->TopN([test.t.e],0,1), Table(t))"
       },
       {
         "SQL": "select * from t where t.c = 1 and t.e = 1 order by t.d limit 1",

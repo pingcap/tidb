@@ -446,6 +446,8 @@ type IndexLookUpExecutor struct {
 	ranges  []*ranger.Range
 	dagPB   *tipb.DAGRequest
 	startTS uint64
+	// Offset of the table handle in the index when embedded TopN is enabled.
+	handleInIndexIdx []int
 	// handleIdx is the index of handle, which is only used for case of keeping order.
 	handleIdx       []int
 	handleCols      []*expression.Column
@@ -500,6 +502,9 @@ type IndexLookUpExecutor struct {
 	colLens         []int
 	// PushedLimit is used to skip the preceding and tailing handles when Limit is sunk into IndexLookUpReader.
 	PushedLimit *plannercore.PushedDownLimit
+
+	// PushedTopN is used to skip the preceding and tailing handles when TopN is sunk into IndexLookUpReader.
+	PushedTopN *plannercore.PushedDownTopN
 
 	stats *IndexLookUpRunTimeStats
 
@@ -709,6 +714,51 @@ func (e *IndexLookUpExecutor) getRetTpsForIndexReader() []*types.FieldType {
 	return tps
 }
 
+// getRetTps4PushedDownTopN is used to get the return types for pushed down TopN.
+func (e *IndexLookUpExecutor) getRetTps4PushedDownTopN() []*types.FieldType {
+	columns := e.idxPlans[len(e.idxPlans)-1].Schema().Columns
+	tps := make([]*types.FieldType, len(e.dagPB.OutputOffsets))
+	for i, colidx := range e.dagPB.OutputOffsets {
+		tps[i] = columns[colidx].GetType(e.ectx.GetEvalCtx())
+	}
+	return tps
+}
+
+// getRetTpsForPushedDownTopN is used to get the return types for pushed down TopN.
+func (e *IndexLookUpExecutor) getRetTpsForPushedDownTopN() []*types.FieldType {
+	columns := e.idxPlans[len(e.idxPlans)-1].Schema().Columns
+	tps := make([]*types.FieldType, 0, len(e.byItems))
+	exprs := make([]expression.Expression, len(e.byItems))
+
+	// Extract expressions and their corresponding types from byItems.
+	for i, byItem := range e.byItems {
+		exprs[i] = byItem.Expr
+		tps = append(tps, byItem.Expr.GetType(e.ectx.GetEvalCtx()))
+	}
+
+	// Create a map to track existing Column indexes in exprs.
+	existingCols := make(map[int]struct{})
+	for _, expr := range exprs {
+		if col, isCol := expr.(*expression.Column); isCol {
+			existingCols[col.Index] = struct{}{}
+		}
+	}
+	indexMap := make(map[uint32]int)
+	for newIndex, oldIndex := range e.dagPB.OutputOffsets {
+		indexMap[oldIndex] = newIndex
+	}
+	// Process handleIdx. If a handle column is already present in exprs, skip it.
+	if len(e.handleInIndexIdx) > 0 {
+		for _, idx := range e.handleInIndexIdx {
+			if _, exists := existingCols[indexMap[uint32(idx)]]; !exists {
+				tps = append(tps, columns[idx].GetType(e.ectx.GetEvalCtx()))
+			}
+		}
+	}
+
+	return tps
+}
+
 // startIndexWorker launch a background goroutine to fetch handles, submit lookup-table tasks to the pool.
 func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSize int) error {
 	if e.RuntimeStats() != nil {
@@ -722,13 +772,20 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 	if e.partitionTableMode {
 		kvRanges = e.partitionKVRanges
 	}
-	// When len(kvrange) = 1, no sorting is required,
+	// When len(kvrange) = 1 and PushedTopN == nil , no sorting is required,
 	// so remove byItems and non-necessary output columns
-	if len(kvRanges) == 1 {
+	if len(kvRanges) == 1 && e.PushedTopN == nil {
 		e.dagPB.OutputOffsets = e.dagPB.OutputOffsets[len(e.byItems):]
 		e.byItems = nil
 	}
-	tps := e.getRetTpsForIndexReader()
+
+	var tps []*types.FieldType
+	if e.PushedTopN != nil {
+		tps = e.getRetTps4PushedDownTopN()
+	} else {
+		tps = e.getRetTpsForIndexReader()
+	}
+
 	idxID := e.getIndexPlanRootID()
 	e.idxWorkerWg.Add(1)
 	e.pool.submit(func() {
@@ -743,6 +800,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			maxBatchSize:    e.indexLookupSize,
 			maxChunkSize:    e.MaxChunkSize(),
 			PushedLimit:     e.PushedLimit,
+			PushedTopN:      e.PushedTopN,
 		}
 		var builder distsql.RequestBuilder
 		builder.SetDAGRequest(e.dagPB).
@@ -801,6 +859,26 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 			// e.Schema() not the output schema for indexReader, and we put byItems related column at first in `buildIndexReq`, so use nil here.
 			ssr := distsql.NewSortedSelectResults(e.ectx.GetEvalCtx(), results, nil, e.byItems, e.memTracker)
 			results = []distsql.SelectResult{ssr}
+		}
+		if e.PushedTopN != nil {
+			topn, ok := e.idxPlans[len(e.idxPlans)-1].(*plannercore.PhysicalTopN)
+			if !ok {
+				worker.syncErr(errors.Errorf("unexpected topn type: %T, expected PushedDownTopN", e.PushedTopN))
+				return
+			}
+			tsr := distsql.NewTopnSelectResults(
+				e.ectx.GetEvalCtx(),
+				results,
+				topn.Schema(),
+				e.byItems,
+				e.memTracker,
+				int(e.PushedTopN.Offset),
+				int(e.PushedTopN.Count),
+				worker.maxBatchSize,
+				e.handleInIndexIdx,
+				e.dagPB.OutputOffsets,
+			)
+			results = []distsql.SelectResult{tsr}
 		}
 		ctx1, cancel := context.WithCancel(ctx)
 		// this error is synced in fetchHandles(), don't sync it again
@@ -1021,6 +1099,8 @@ type indexWorker struct {
 	*checkIndexValue
 	// PushedLimit is used to skip the preceding and tailing handles when Limit is sunk into IndexLookUpReader.
 	PushedLimit *plannercore.PushedDownLimit
+	// PushedTopN is used to skip the preceding and tailing handles when Limit is sunk into IndexLookUpReader.
+	PushedTopN *plannercore.PushedDownTopN
 	// scannedKeys indicates how many keys be scanned
 	scannedKeys uint64
 }
@@ -1031,6 +1111,48 @@ func (w *indexWorker) syncErr(err error) {
 	w.resultCh <- &lookupTableTask{
 		doneCh: doneCh,
 	}
+}
+
+// calculateHandleOffset computes the handle offset for TopNPushedDown
+// It returns the positions of handle columns in the result set
+func (w *indexWorker) calculateHandleOffset() []int {
+	// If not a TopN query, return nil to let caller use default offset
+	if w.PushedTopN == nil {
+		return nil
+	}
+
+	// For TopN, we need to get the handle from the index, and the handle may not be in the byItems.
+	// So we need to add the handle to the byItems.
+	indexMap := make(map[uint32]int)
+	for newIndex, oldIndex := range w.idxLookup.dagPB.OutputOffsets {
+		indexMap[oldIndex] = newIndex
+	}
+
+	// Track which handle columns are already in byItems and their positions
+	handleInByItems := make(map[int]int) // handleIdx -> byItems position
+	for i, item := range w.idxLookup.byItems {
+		if col, isCol := item.Expr.(*expression.Column); isCol {
+			for _, handleIdx := range w.idxLookup.handleInIndexIdx {
+				if newIdx, exists := indexMap[uint32(handleIdx)]; exists && newIdx == col.Index {
+					handleInByItems[handleIdx] = i
+				}
+			}
+		}
+	}
+
+	// Add handle columns in the original handleInIndexIdx order
+	handleOffset := make([]int, 0, len(w.idxLookup.handleInIndexIdx))
+	appendIdx := 0
+	for _, handleIdx := range w.idxLookup.handleInIndexIdx {
+		if byItemPos, exists := handleInByItems[handleIdx]; exists {
+			handleOffset = append(handleOffset, byItemPos)
+		} else if _, exists := indexMap[uint32(handleIdx)]; exists {
+			handleOffset = append(handleOffset, len(w.idxLookup.byItems)+appendIdx)
+			appendIdx++
+		}
+	}
+
+	return handleOffset
 }
 
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
@@ -1047,7 +1169,16 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 			}
 		}
 	}()
-	chk := w.idxLookup.AllocPool.Alloc(w.idxLookup.getRetTpsForIndexReader(), w.idxLookup.MaxChunkSize(), w.idxLookup.MaxChunkSize())
+
+	var tps []*types.FieldType
+	handleOffset := []int{}
+	if w.PushedTopN != nil {
+		tps = w.idxLookup.getRetTpsForPushedDownTopN()
+		handleOffset = w.calculateHandleOffset()
+	} else {
+		tps = w.idxLookup.getRetTpsForIndexReader()
+	}
+	chk := w.idxLookup.AllocPool.Alloc(tps, w.idxLookup.MaxChunkSize(), w.idxLookup.MaxChunkSize())
 	idxID := w.idxLookup.getIndexPlanRootID()
 	if w.idxLookup.stmtRuntimeStatsColl != nil {
 		if idxID != w.idxLookup.ID() && w.idxLookup.stats != nil {
@@ -1061,7 +1192,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 			break
 		}
 		startTime := time.Now()
-		handles, retChunk, err := w.extractTaskHandles(ctx, chk, result)
+		handles, retChunk, err := w.extractTaskHandles(ctx, chk, result, handleOffset)
 		finishFetch := time.Now()
 		if err != nil {
 			w.syncErr(err)
@@ -1107,22 +1238,26 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 	return nil
 }
 
-func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult) (
+func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, idxResult distsql.SelectResult, handleOffset []int) (
 	handles []kv.Handle, retChk *chunk.Chunk, err error) {
 	numColsWithoutPid := chk.NumCols()
-	ok, err := w.idxLookup.needPartitionHandle(getHandleFromIndex)
-	if err != nil {
-		return nil, nil, err
+	if handleOffset == nil {
+		handleOffset = make([]int, 0, len(w.idxLookup.handleCols))
 	}
-	if ok {
-		numColsWithoutPid = numColsWithoutPid - 1
-	}
-	handleOffset := make([]int, 0, len(w.idxLookup.handleCols))
-	for i := range w.idxLookup.handleCols {
-		handleOffset = append(handleOffset, numColsWithoutPid-len(w.idxLookup.handleCols)+i)
-	}
-	if len(handleOffset) == 0 {
-		handleOffset = []int{numColsWithoutPid - 1}
+	if w.idxLookup.PushedTopN == nil {
+		ok, err := w.idxLookup.needPartitionHandle(getHandleFromIndex)
+		if err != nil {
+			return nil, nil, err
+		}
+		if ok {
+			numColsWithoutPid = numColsWithoutPid - 1
+		}
+		for i := range w.idxLookup.handleCols {
+			handleOffset = append(handleOffset, numColsWithoutPid-len(w.idxLookup.handleCols)+i)
+		}
+		if len(handleOffset) == 0 {
+			handleOffset = []int{numColsWithoutPid - 1}
+		}
 	}
 	// PushedLimit would always be nil for CheckIndex or CheckTable, we add this check just for insurance.
 	checkLimit := (w.PushedLimit != nil) && (w.checkIndexValue == nil)

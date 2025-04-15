@@ -50,8 +50,8 @@ Limit_11	1.00	root		offset:0, count:1
     └─TableRangeScan_13	333.33	cop[tikv]	table:t	range:[-inf,10), keep order:true, stats:pseudo
 explain select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
 id	estRows	task	access object	operator info
-TopN_9	1.00	root		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
-└─IndexLookUp_16	1.00	root		
+Projection_7	1.00	root		planner__core__casetest__hint__hint.t1.a, planner__core__casetest__hint__hint.t1.b
+└─IndexLookUp_16	1.00	root		topn embedded(offset:0, count:1)
   ├─TopN_15(Build)	1.00	cop[tikv]		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
   │ └─IndexRangeScan_13	3323.33	cop[tikv]	table:t1, index:idx_a(a)	range:[-inf,10), keep order:false, stats:pseudo
   └─TableRowIDScan_14(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -206,29 +206,29 @@ TopN_8	1.00	root		planner__core__casetest__hint__hint.t.a, offset:0, count:1
     └─TableRangeScan_13	3333.33	cop[tikv]	table:t	range:[-inf,10), keep order:false, stats:pseudo
 explain select /*+ no_order_index(t1, idx_a) use_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
 id	estRows	task	access object	operator info
-TopN_9	1.00	root		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
-└─IndexLookUp_18	1.00	root		
+Projection_7	1.00	root		planner__core__casetest__hint__hint.t1.a, planner__core__casetest__hint__hint.t1.b
+└─IndexLookUp_18	1.00	root		topn embedded(offset:0, count:1)
   ├─TopN_17(Build)	1.00	cop[tikv]		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
   │ └─IndexRangeScan_13	3323.33	cop[tikv]	table:t1, index:idx_a(a)	range:[-inf,10), keep order:false, stats:pseudo
   └─TableRowIDScan_14(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select /*+ no_order_index(t1, idx_a) */ * from t1 use index(idx_a) where a<10 order by a limit 1;
 id	estRows	task	access object	operator info
-TopN_9	1.00	root		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
-└─IndexLookUp_18	1.00	root		
+Projection_7	1.00	root		planner__core__casetest__hint__hint.t1.a, planner__core__casetest__hint__hint.t1.b
+└─IndexLookUp_18	1.00	root		topn embedded(offset:0, count:1)
   ├─TopN_17(Build)	1.00	cop[tikv]		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
   │ └─IndexRangeScan_13	3323.33	cop[tikv]	table:t1, index:idx_a(a)	range:[-inf,10), keep order:false, stats:pseudo
   └─TableRowIDScan_14(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select /*+ no_order_index(t1, idx_a) force_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
 id	estRows	task	access object	operator info
-TopN_9	1.00	root		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
-└─IndexLookUp_18	1.00	root		
+Projection_7	1.00	root		planner__core__casetest__hint__hint.t1.a, planner__core__casetest__hint__hint.t1.b
+└─IndexLookUp_18	1.00	root		topn embedded(offset:0, count:1)
   ├─TopN_17(Build)	1.00	cop[tikv]		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
   │ └─IndexRangeScan_13	3323.33	cop[tikv]	table:t1, index:idx_a(a)	range:[-inf,10), keep order:false, stats:pseudo
   └─TableRowIDScan_14(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain select /*+ no_order_index(t1, idx_a) */ * from t1 force index(idx_a) where a<10 order by a limit 1;
 id	estRows	task	access object	operator info
-TopN_9	1.00	root		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
-└─IndexLookUp_18	1.00	root		
+Projection_7	1.00	root		planner__core__casetest__hint__hint.t1.a, planner__core__casetest__hint__hint.t1.b
+└─IndexLookUp_18	1.00	root		topn embedded(offset:0, count:1)
   ├─TopN_17(Build)	1.00	cop[tikv]		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
   │ └─IndexRangeScan_13	3323.33	cop[tikv]	table:t1, index:idx_a(a)	range:[-inf,10), keep order:false, stats:pseudo
   └─TableRowIDScan_14(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -254,8 +254,8 @@ Limit_13	1.00	root		offset:0, count:1
     └─TableRangeScan_15	333.33	cop[tikv]	table:t	range:[-inf,10), keep order:true, stats:pseudo
 explain select /*+ qb_name(qb, v) no_order_index(t1@qb, idx_a) */ * from v;
 id	estRows	task	access object	operator info
-TopN_11	1.00	root		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
-└─IndexLookUp_18	1.00	root		
+Projection_9	1.00	root		planner__core__casetest__hint__hint.t1.a, planner__core__casetest__hint__hint.t1.b
+└─IndexLookUp_18	1.00	root		topn embedded(offset:0, count:1)
   ├─TopN_17(Build)	1.00	cop[tikv]		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
   │ └─IndexRangeScan_15	3323.33	cop[tikv]	table:t1, index:idx_a(a)	range:[-inf,10), keep order:false, stats:pseudo
   └─TableRowIDScan_16(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -304,8 +304,8 @@ HashAgg_29	2.00	root		group by:Column#8, Column#9, funcs:firstrow(Column#8)->Col
     └─CTEFullScan_36	0.80	root	CTE:cte	data:CTE_0
 CTE_0	0.80	root		Non-Recursive CTE
 └─Selection_18(Seed Part)	0.80	root		or(lt(planner__core__casetest__hint__hint.t1.a, 18), gt(planner__core__casetest__hint__hint.t1.b, 1))
-  └─TopN_21	1.00	root		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
-    └─IndexLookUp_28	1.00	root		
+  └─Projection_19	1.00	root		planner__core__casetest__hint__hint.t1.a, planner__core__casetest__hint__hint.t1.b
+    └─IndexLookUp_28	1.00	root		topn embedded(offset:0, count:1)
       ├─TopN_27(Build)	1.00	cop[tikv]		planner__core__casetest__hint__hint.t1.a, offset:0, count:1
       │ └─IndexRangeScan_25	3323.33	cop[tikv]	table:t1, index:idx_a(a)	range:[-inf,10), keep order:false, stats:pseudo
       └─TableRowIDScan_26(Probe)	1.00	cop[tikv]	table:t1	keep order:false, stats:pseudo

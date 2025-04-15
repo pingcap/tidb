@@ -1195,6 +1195,59 @@ func (p *PhysicalTopN) pushLimitDownToTiDBCop(copTsk *CopTask) (base.Task, bool)
 	return attachPlan2Task(p, rootTask), true
 }
 
+func (p *PhysicalTopN) sinkIntoIndexLookUp(t base.Task) bool {
+	root := t.(*RootTask)
+	reader, isDoubleRead := root.GetPlan().(*PhysicalIndexLookUpReader)
+	proj, isProj := root.GetPlan().(*PhysicalProjection)
+	if !isDoubleRead && !isProj {
+		return false
+	}
+	if isProj {
+		reader, isDoubleRead = proj.Children()[0].(*PhysicalIndexLookUpReader)
+		if !isDoubleRead {
+			return false
+		}
+	}
+
+	// We can sink TopN into IndexLookUpReader only if tablePlan contains no Selection.
+	ts, isTableScan := reader.tablePlan.(*PhysicalTableScan)
+	if !isTableScan {
+		return false
+	}
+	//If the table has partition, we cannot sink TopN into IndexLookUpReader. We can solve this problem in the future.
+	if ts.Table.Partition != nil && ts.Table.Partition.Enable {
+		return false
+	}
+	if p.Schema().Len() != reader.Schema().Len() {
+		extraProj := PhysicalProjection{
+			Exprs: expression.Column2Exprs(p.schema.Columns),
+		}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), nil)
+		extraProj.SetSchema(p.schema)
+		// If the root.p is already a Projection. We left the optimization for the later Projection Elimination.
+		extraProj.SetChildren(root.GetPlan())
+		root.SetPlan(extraProj)
+	}
+	// components/tidb_query_executors/src/runner.rs Invalid output offset (schema has 4 columns, access index 4)
+	if len(reader.schema.Columns) < len(ts.GetTblCols()) && ts.GetTblCols()[len(ts.GetTblCols())-1].ID == -1 {
+		reader.schema.Columns = append(reader.schema.Columns, ts.GetTblCols()[len(ts.GetTblCols())-1])
+	}
+	reader.PushedTopN = &PushedDownTopN{
+		Offset: p.Offset,
+		Count:  p.Count,
+	}
+	originStats := ts.StatsInfo()
+	ts.SetStats(p.StatsInfo())
+	if originStats != nil {
+		// keep the original stats version
+		ts.StatsInfo().StatsVersion = originStats.StatsVersion
+	}
+	reader.SetStats(p.StatsInfo())
+	if isProj {
+		proj.SetStats(p.StatsInfo())
+	}
+	return true
+}
+
 // Attach2Task implements the PhysicalPlan interface.
 func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 	t := tasks[0].Copy()
@@ -1202,6 +1255,7 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 	for _, item := range p.ByItems {
 		cols = append(cols, expression.ExtractColumns(item.Expr)...)
 	}
+	sunk := false
 	needPushDown := len(cols) > 0
 	if copTask, ok := t.(*CopTask); ok && needPushDown && copTask.getStoreType() == kv.TiDB && len(copTask.rootTaskConds) == 0 {
 		newTask, changed := p.pushLimitDownToTiDBCop(copTask)
@@ -1225,6 +1279,13 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 					return t
 				}
 				return attachPlan2Task(newGlobalTopN, rootTask)
+			}
+			// Sink the task into index look up reader and convert to root task.
+			// This optimization can be disabled if needed.
+			fixValue := fixcontrol.GetBoolWithDefault(p.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix57941, true)
+			if fixValue {
+				t = copTask.ConvertToRootTask(p.SCtx())
+				sunk = p.sinkIntoIndexLookUp(t)
 			}
 		} else {
 			// It works for both normal index scan and index merge scan.
@@ -1253,6 +1314,9 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 			}
 			return attachPlan2Task(newGlobalTopN, rootTask)
 		}
+	}
+	if sunk {
+		return t
 	}
 	rootTask := t.ConvertToRootTask(p.SCtx())
 	// Skip TopN with partition on the root. This is a derived topN and window function

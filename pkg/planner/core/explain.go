@@ -367,6 +367,14 @@ func (p *PhysicalIndexLookUpReader) ExplainInfo() string {
 		str.WriteString(strconv.FormatUint(p.PushedLimit.Count, 10))
 		str.WriteString(")")
 	}
+	// The children can be inferred by the relation symbol.
+	if p.PushedTopN != nil {
+		str.WriteString("topn embedded(offset:")
+		str.WriteString(strconv.FormatUint(p.PushedTopN.Offset, 10))
+		str.WriteString(", count:")
+		str.WriteString(strconv.FormatUint(p.PushedTopN.Count, 10))
+		str.WriteString(")")
+	}
 	return str.String()
 }
 

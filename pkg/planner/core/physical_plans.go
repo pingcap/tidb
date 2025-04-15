@@ -458,12 +458,28 @@ type PushedDownLimit struct {
 	Count  uint64
 }
 
+// PushedDownTopN is the TopN operator pushed down into PhysicalIndexLookUpReader.
+type PushedDownTopN struct {
+	Offset uint64
+	Count  uint64
+}
+
 // Clone clones this pushed-down list.
 func (p *PushedDownLimit) Clone() *PushedDownLimit {
 	if p == nil {
 		return nil
 	}
 	cloned := new(PushedDownLimit)
+	*cloned = *p
+	return cloned
+}
+
+// Clone clones this pushed-down topN.
+func (p *PushedDownTopN) Clone() *PushedDownTopN {
+	if p == nil {
+		return nil
+	}
+	cloned := new(PushedDownTopN)
 	*cloned = *p
 	return cloned
 }
@@ -477,6 +493,17 @@ func (p *PushedDownLimit) MemoryUsage() (sum int64) {
 	}
 
 	return pushedDownLimitSize
+}
+
+const pushedDownTopNSize = size.SizeOfUint64 * 2
+
+// MemoryUsage return the memory usage of PushedDownLimit
+func (p *PushedDownTopN) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+
+	return pushedDownTopNSize
 }
 
 // PhysicalIndexLookUpReader is the index look up reader in tidb. It's used in case of double reading.
@@ -494,6 +521,9 @@ type PhysicalIndexLookUpReader struct {
 	ExtraHandleCol *expression.Column
 	// PushedLimit is used to avoid unnecessary table scan tasks of IndexLookUpReader.
 	PushedLimit *PushedDownLimit
+
+	// PushedTopN is used to avoid unnecessary table scan tasks of IndexLookUpReader.
+	PushedTopN *PushedDownTopN
 
 	CommonHandleCols []*expression.Column
 
@@ -531,6 +561,9 @@ func (p *PhysicalIndexLookUpReader) Clone(newCtx base.PlanContext) (base.Physica
 	}
 	if p.PushedLimit != nil {
 		cloned.PushedLimit = p.PushedLimit.Clone()
+	}
+	if p.PushedTopN != nil {
+		cloned.PushedTopN = p.PushedTopN.Clone()
 	}
 	if len(p.CommonHandleCols) != 0 {
 		cloned.CommonHandleCols = make([]*expression.Column, 0, len(p.CommonHandleCols))
@@ -605,7 +638,9 @@ func (p *PhysicalIndexLookUpReader) MemoryUsage() (sum int64) {
 	if p.PushedLimit != nil {
 		sum += p.PushedLimit.MemoryUsage()
 	}
-
+	if p.PushedTopN != nil {
+		sum += p.PushedTopN.MemoryUsage()
+	}
 	// since IndexPlans and TablePlans are the flats of indexPlan and tablePlan, so we don't count it
 	for _, col := range p.CommonHandleCols {
 		sum += col.MemoryUsage()
@@ -967,6 +1002,11 @@ type PhysicalTableScan struct {
 	AnnIndexExtra *VectorIndexExtra `plan-cache-clone:"must-nil"` // MPP plan should not be cached.
 	// UsedColumnarIndexes is used to store the used columnar index for the table scan.
 	UsedColumnarIndexes []*tipb.ColumnarIndexInfo `plan-cache-clone:"must-nil"`
+}
+
+// GetTblCols returns the table columns.
+func (ts *PhysicalTableScan) GetTblCols() []*expression.Column {
+	return ts.tblCols
 }
 
 // VectorIndexExtra is the extra information for vector index.

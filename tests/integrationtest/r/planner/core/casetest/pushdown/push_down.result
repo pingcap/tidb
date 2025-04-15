@@ -35,6 +35,113 @@ Limit	1.00	root		offset:2, count:1
     └─Selection	3.00	cop[tikv]		gt(planner__core__casetest__pushdown__push_down.tbl.a, 1)
       └─TableRowIDScan	3.75	cop[tikv]	table:tbl	keep order:false
 set tidb_cost_model_version=2;
+set @@session.tidb_executor_concurrency = 4;
+set @@session.tidb_hash_join_concurrency = 5;
+set @@session.tidb_distsql_scan_concurrency = 15;
+drop table if exists tbl;
+create table tbl(a int, b int, c int, key idx_b_c(b,c));
+insert into tbl values(1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5);
+analyze table tbl all columns;
+explain format = 'brief' select * from tbl use index(idx_b_c) where b > 1 order by c desc limit 2,1;
+id	estRows	task	access object	operator info
+Projection	1.00	root		planner__core__casetest__pushdown__push_down.tbl.a, planner__core__casetest__pushdown__push_down.tbl.b, planner__core__casetest__pushdown__push_down.tbl.c
+└─IndexLookUp	1.00	root		topn embedded(offset:2, count:1)
+  ├─TopN(Build)	3.00	cop[tikv]		planner__core__casetest__pushdown__push_down.tbl.c:desc, offset:0, count:3
+  │ └─IndexRangeScan	4.00	cop[tikv]	table:tbl, index:idx_b_c(b, c)	range:(1,+inf], keep order:false
+  └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:tbl	keep order:false
+explain format = 'brief' select * from tbl use index(idx_b_c) where c > 1 order by b*10 desc limit 2,1;
+id	estRows	task	access object	operator info
+Projection	1.00	root		planner__core__casetest__pushdown__push_down.tbl.a, planner__core__casetest__pushdown__push_down.tbl.b, planner__core__casetest__pushdown__push_down.tbl.c
+└─IndexLookUp	1.00	root		topn embedded(offset:2, count:1)
+  ├─TopN(Build)	3.00	cop[tikv]		mul(planner__core__casetest__pushdown__push_down.tbl.b, 10):desc, offset:0, count:3
+  │ └─Selection	4.00	cop[tikv]		gt(planner__core__casetest__pushdown__push_down.tbl.c, 1)
+  │   └─IndexFullScan	5.00	cop[tikv]	table:tbl, index:idx_b_c(b, c)	keep order:false
+  └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:tbl	keep order:false
+explain format = 'brief' select * from tbl use index(idx_b_c) where b > 1 and c > 1 order by b*c desc limit 2,1;
+id	estRows	task	access object	operator info
+Projection	1.00	root		planner__core__casetest__pushdown__push_down.tbl.a, planner__core__casetest__pushdown__push_down.tbl.b, planner__core__casetest__pushdown__push_down.tbl.c
+└─IndexLookUp	1.00	root		topn embedded(offset:2, count:1)
+  ├─TopN(Build)	3.00	cop[tikv]		mul(planner__core__casetest__pushdown__push_down.tbl.b, planner__core__casetest__pushdown__push_down.tbl.c):desc, offset:0, count:3
+  │ └─Selection	3.20	cop[tikv]		gt(planner__core__casetest__pushdown__push_down.tbl.c, 1)
+  │   └─IndexRangeScan	4.00	cop[tikv]	table:tbl, index:idx_b_c(b, c)	range:(1,+inf], keep order:false
+  └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:tbl	keep order:false
+explain format = 'brief' select * from tbl use index(idx_b_c) where b > 1 order by _tidb_rowid desc limit 2,1;
+id	estRows	task	access object	operator info
+Projection	1.00	root		planner__core__casetest__pushdown__push_down.tbl.a, planner__core__casetest__pushdown__push_down.tbl.b, planner__core__casetest__pushdown__push_down.tbl.c
+└─IndexLookUp	1.00	root		topn embedded(offset:2, count:1)
+  ├─TopN(Build)	3.00	cop[tikv]		planner__core__casetest__pushdown__push_down.tbl._tidb_rowid:desc, offset:0, count:3
+  │ └─IndexRangeScan	4.00	cop[tikv]	table:tbl, index:idx_b_c(b, c)	range:(1,+inf], keep order:false
+  └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:tbl	keep order:false
+drop table if exists tbl_cluster_int;
+create table tbl_cluster_int(id int primary key clustered, a int, b int, c int, key idx_b_c(b,c));
+insert into tbl_cluster_int values(1,1,1,1),(2,2,2,2),(3,3,3,3),(4,4,4,4),(5,5,5,5);
+analyze table tbl_cluster_int all columns;
+explain format = 'brief' select * from tbl_cluster_int use index(idx_b_c) where b > 1 order by c desc limit 2,1;
+id	estRows	task	access object	operator info
+IndexLookUp	1.00	root		topn embedded(offset:2, count:1)
+├─TopN(Build)	3.00	cop[tikv]		planner__core__casetest__pushdown__push_down.tbl_cluster_int.c:desc, offset:0, count:3
+│ └─IndexRangeScan	4.00	cop[tikv]	table:tbl_cluster_int, index:idx_b_c(b, c)	range:(1,+inf], keep order:false
+└─TableRowIDScan(Probe)	1.00	cop[tikv]	table:tbl_cluster_int	keep order:false
+explain format = 'brief' select * from tbl_cluster_int use index(idx_b_c) where c > 1 order by b*10 desc limit 2,1;
+id	estRows	task	access object	operator info
+IndexLookUp	1.00	root		topn embedded(offset:2, count:1)
+├─TopN(Build)	3.00	cop[tikv]		mul(planner__core__casetest__pushdown__push_down.tbl_cluster_int.b, 10):desc, offset:0, count:3
+│ └─Selection	4.00	cop[tikv]		gt(planner__core__casetest__pushdown__push_down.tbl_cluster_int.c, 1)
+│   └─IndexFullScan	5.00	cop[tikv]	table:tbl_cluster_int, index:idx_b_c(b, c)	keep order:false
+└─TableRowIDScan(Probe)	1.00	cop[tikv]	table:tbl_cluster_int	keep order:false
+explain format = 'brief' select * from tbl_cluster_int use index(idx_b_c) where b > 1 and c > 1 order by b*c desc limit 2,1;
+id	estRows	task	access object	operator info
+IndexLookUp	1.00	root		topn embedded(offset:2, count:1)
+├─TopN(Build)	3.00	cop[tikv]		mul(planner__core__casetest__pushdown__push_down.tbl_cluster_int.b, planner__core__casetest__pushdown__push_down.tbl_cluster_int.c):desc, offset:0, count:3
+│ └─Selection	3.20	cop[tikv]		gt(planner__core__casetest__pushdown__push_down.tbl_cluster_int.c, 1)
+│   └─IndexRangeScan	4.00	cop[tikv]	table:tbl_cluster_int, index:idx_b_c(b, c)	range:(1,+inf], keep order:false
+└─TableRowIDScan(Probe)	1.00	cop[tikv]	table:tbl_cluster_int	keep order:false
+explain format = 'brief' select * from tbl_cluster_int use index(idx_b_c) where b > 1 order by id desc limit 2,1;
+id	estRows	task	access object	operator info
+IndexLookUp	1.00	root		topn embedded(offset:2, count:1)
+├─TopN(Build)	3.00	cop[tikv]		planner__core__casetest__pushdown__push_down.tbl_cluster_int.id:desc, offset:0, count:3
+│ └─IndexRangeScan	4.00	cop[tikv]	table:tbl_cluster_int, index:idx_b_c(b, c)	range:(1,+inf], keep order:false
+└─TableRowIDScan(Probe)	1.00	cop[tikv]	table:tbl_cluster_int	keep order:false
+explain format = 'brief' select * from tbl_cluster_int use index(idx_b_c) where b > 1 order by b*c, c*10 limit 2,1;
+id	estRows	task	access object	operator info
+IndexLookUp	1.00	root		topn embedded(offset:2, count:1)
+├─TopN(Build)	3.00	cop[tikv]		mul(planner__core__casetest__pushdown__push_down.tbl_cluster_int.b, planner__core__casetest__pushdown__push_down.tbl_cluster_int.c), mul(planner__core__casetest__pushdown__push_down.tbl_cluster_int.c, 10), offset:0, count:3
+│ └─IndexRangeScan	4.00	cop[tikv]	table:tbl_cluster_int, index:idx_b_c(b, c)	range:(1,+inf], keep order:false
+└─TableRowIDScan(Probe)	1.00	cop[tikv]	table:tbl_cluster_int	keep order:false
+explain format = 'brief' select * from tbl_cluster_int use index(idx_b_c) where b > 1 order by abs(c-b), pow(c,2) limit 2,1;
+id	estRows	task	access object	operator info
+IndexLookUp	1.00	root		topn embedded(offset:2, count:1)
+├─TopN(Build)	3.00	cop[tikv]		abs(minus(planner__core__casetest__pushdown__push_down.tbl_cluster_int.c, planner__core__casetest__pushdown__push_down.tbl_cluster_int.b)), pow(cast(planner__core__casetest__pushdown__push_down.tbl_cluster_int.c, double BINARY), 2), offset:0, count:3
+│ └─IndexRangeScan	4.00	cop[tikv]	table:tbl_cluster_int, index:idx_b_c(b, c)	range:(1,+inf], keep order:false
+└─TableRowIDScan(Probe)	1.00	cop[tikv]	table:tbl_cluster_int	keep order:false
+drop table if exists tbl_cluster_comp;
+create table tbl_cluster_comp(a int, b int, c int, d int, primary key clustered(a, b), key idx_c_d(c,d));
+insert into tbl_cluster_comp values(1,1,1,1),(2,2,2,2),(3,3,3,3),(4,4,4,4),(5,5,5,5);
+analyze table tbl_cluster_comp all columns;
+explain format = 'brief' select * from tbl_cluster_comp use index(idx_c_d) where c > 1 order by d desc limit 2,1;
+id	estRows	task	access object	operator info
+Projection	1.00	root		planner__core__casetest__pushdown__push_down.tbl_cluster_comp.a, planner__core__casetest__pushdown__push_down.tbl_cluster_comp.b, planner__core__casetest__pushdown__push_down.tbl_cluster_comp.c, planner__core__casetest__pushdown__push_down.tbl_cluster_comp.d
+└─IndexLookUp	1.00	root		topn embedded(offset:2, count:1)
+  ├─TopN(Build)	3.00	cop[tikv]		planner__core__casetest__pushdown__push_down.tbl_cluster_comp.d:desc, offset:0, count:3
+  │ └─IndexRangeScan	4.00	cop[tikv]	table:tbl_cluster_comp, index:idx_c_d(c, d)	range:(1,+inf], keep order:false
+  └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:tbl_cluster_comp	keep order:false
+explain format = 'brief' select * from tbl_cluster_comp use index(idx_c_d) where d > 1 order by c*10 desc limit 2,1;
+id	estRows	task	access object	operator info
+Projection	1.00	root		planner__core__casetest__pushdown__push_down.tbl_cluster_comp.a, planner__core__casetest__pushdown__push_down.tbl_cluster_comp.b, planner__core__casetest__pushdown__push_down.tbl_cluster_comp.c, planner__core__casetest__pushdown__push_down.tbl_cluster_comp.d
+└─IndexLookUp	1.00	root		topn embedded(offset:2, count:1)
+  ├─TopN(Build)	3.00	cop[tikv]		mul(planner__core__casetest__pushdown__push_down.tbl_cluster_comp.c, 10):desc, offset:0, count:3
+  │ └─Selection	4.00	cop[tikv]		gt(planner__core__casetest__pushdown__push_down.tbl_cluster_comp.d, 1)
+  │   └─IndexFullScan	5.00	cop[tikv]	table:tbl_cluster_comp, index:idx_c_d(c, d)	keep order:false
+  └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:tbl_cluster_comp	keep order:false
+explain format = 'brief' select * from tbl_cluster_comp use index(idx_c_d) where c > 1 and d > 1 order by c*d desc limit 2,1;
+id	estRows	task	access object	operator info
+Projection	1.00	root		planner__core__casetest__pushdown__push_down.tbl_cluster_comp.a, planner__core__casetest__pushdown__push_down.tbl_cluster_comp.b, planner__core__casetest__pushdown__push_down.tbl_cluster_comp.c, planner__core__casetest__pushdown__push_down.tbl_cluster_comp.d
+└─IndexLookUp	1.00	root		topn embedded(offset:2, count:1)
+  ├─TopN(Build)	3.00	cop[tikv]		mul(planner__core__casetest__pushdown__push_down.tbl_cluster_comp.c, planner__core__casetest__pushdown__push_down.tbl_cluster_comp.d):desc, offset:0, count:3
+  │ └─Selection	3.20	cop[tikv]		gt(planner__core__casetest__pushdown__push_down.tbl_cluster_comp.d, 1)
+  │   └─IndexRangeScan	4.00	cop[tikv]	table:tbl_cluster_comp, index:idx_c_d(c, d)	range:(1,+inf], keep order:false
+  └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:tbl_cluster_comp	keep order:false
+set tidb_cost_model_version=2;
 drop table if exists t;
 create table t (a int, b real, i int, id int, value decimal(6,3), name char(128), d decimal(6,3), s char(128), t datetime, c bigint as ((a+1)) virtual, e real as ((b+a)));
 create table t2(a json);
