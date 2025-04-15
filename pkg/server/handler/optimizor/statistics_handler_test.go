@@ -346,3 +346,61 @@ func TestStatsPriorityQueueAPI(t *testing.T) {
 	require.Empty(t, snapshot.CurrentJobs)
 	require.Empty(t, snapshot.MustRetryTables)
 }
+
+// fix issue 53966
+func TestLoadNullStatsFile(t *testing.T) {
+	// Setting up the mock store
+	store := testkit.CreateMockStore(t)
+
+	// Creating a new TiDB driver and client
+	driver := server2.NewTiDBDriver(store)
+	client := testserverclient.NewTestServerClient()
+	cfg := util.NewTestConfig()
+	cfg.Port = client.Port
+	cfg.Status.StatusPort = client.StatusPort
+	cfg.Status.ReportStatus = true
+	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
+
+	// Creating and running the server
+	server, err := server2.NewServer(cfg, driver)
+	require.NoError(t, err)
+	defer server.Close()
+
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+	server.SetDomain(dom)
+	go func() {
+		err := server.Run(nil)
+		require.NoError(t, err)
+	}()
+	<-server2.RunInGoTestChan
+	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
+	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
+	client.WaitUntilServerOnline()
+
+	// Creating the stats file
+	path := "/tmp/stats.json"
+	fp, err := os.Create(path)
+	require.NoError(t, err)
+	require.NotNil(t, fp)
+	defer func() {
+		require.NoError(t, fp.Close())
+		require.NoError(t, os.Remove(path))
+	}()
+	fp.Write([]byte("null"))
+	require.NoError(t, err)
+
+	// Connecting to the database and executing SQL commands
+	db, err := sql.Open("mysql", client.GetDSN(func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params["sql_mode"] = "''"
+	}))
+	require.NoError(t, err, "Error connecting")
+	tk := testkit.NewDBTestKit(t, db)
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+	tk.MustExec("use test")
+	tk.MustExec(fmt.Sprintf("load stats '%s'", path))
+}
