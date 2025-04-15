@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
-	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -347,13 +346,7 @@ func TestQBHintHandlerDuplicateObjects(t *testing.T) {
 func TestOptimizerCostFactorHints(t *testing.T) {
 	// This test covers a subset of the cost factorst - using hints to increase the cost factor
 	// of a specific plan type. The test is not exhaustive and does not cover all cost factors.
-	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
-	defer func() {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t")
-		dom.StatsHandle().Clear()
-	}()
+	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
