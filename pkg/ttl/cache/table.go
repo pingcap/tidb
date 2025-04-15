@@ -198,6 +198,14 @@ func SetMockExpireTime(ctx context.Context, tm time.Time) context.Context {
 	return context.WithValue(ctx, mockExpireTimeKey{}, tm)
 }
 
+// FullName returns the full name of the table
+func (t *PhysicalTable) FullName() string {
+	if t.Partition.L != "" {
+		return fmt.Sprintf("%s.%s.%s", t.Schema.O, t.Name.O, t.Partition.O)
+	}
+	return fmt.Sprintf("%s.%s", t.Schema.O, t.Name.O)
+}
+
 // EvalExpireTime returns the expired time.
 func EvalExpireTime(now time.Time, interval string, unit ast.TimeUnitType) (time.Time, error) {
 	// Firstly, we should use the UTC time zone to compute the expired time to avoid time shift caused by DST.

@@ -603,11 +603,6 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 
 	if cancelJobs {
 		if len(m.runningJobs) > 0 {
-<<<<<<< HEAD
-			for _, job := range m.runningJobs {
-				logutil.Logger(m.ctx).Info(fmt.Sprintf("cancel job because %s", cancelReason), zap.String("jobID", job.id))
-
-=======
 			// reverse iteration so that we could remove the job safely in the loop
 			for i := len(m.runningJobs) - 1; i >= 0; i-- {
 				job := m.runningJobs[i]
@@ -618,7 +613,6 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 					zap.String("table", job.tbl.FullName()),
 				)
 				logger.Info(fmt.Sprintf("cancel job because %s", cancelReason))
->>>>>>> b7aafa67ec2 (ttl: fix the issue that the TTL jobs are skipped or handled multiple times in one iteration (#59348))
 				summary, err := summarizeErr(errors.New(cancelReason))
 				if err != nil {
 					logutil.Logger(m.ctx).Warn("fail to summarize job", zap.Error(err))

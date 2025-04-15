@@ -1624,7 +1624,6 @@ func TestTimerJobAfterDropTable(t *testing.T) {
 	require.True(t, job.Finished)
 }
 
-<<<<<<< HEAD
 func TestJobHeartBeatFailNotBlockOthers(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	waitAndStopTTLManager(t, dom)
@@ -1666,7 +1665,8 @@ func TestJobHeartBeatFailNotBlockOthers(t *testing.T) {
 	tk.MustQuery("select table_id, current_job_owner_hb_time from mysql.tidb_ttl_table_status").Sort().Check(testkit.Rows(
 		fmt.Sprintf("%d %s", testTable1.Meta().ID, now.Add(-2*time.Hour).Format(time.DateTime)),
 		fmt.Sprintf("%d %s", testTable2.Meta().ID, now.Format(time.DateTime))))
-=======
+}
+
 func TestIterationOfRunningJob(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	waitAndStopTTLManager(t, dom)
@@ -1696,5 +1696,4 @@ func TestIterationOfRunningJob(t *testing.T) {
 
 	// Now all the jobs should have been removed
 	require.Len(t, m.RunningJobs(), 0)
->>>>>>> b7aafa67ec2 (ttl: fix the issue that the TTL jobs are skipped or handled multiple times in one iteration (#59348))
 }
