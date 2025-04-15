@@ -880,8 +880,10 @@ func (s *PartitionProcessor) prune(ds *logicalop.DataSource, opt *optimizetrace.
 	// PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from ds.AllConds, the condition
 	// like 'not (a != 1)' would not be handled so we need to convert it to 'a = 1', which can be handled when building range.
 	// TODO: there may be a better way to push down Not once for all.
-	for i, cond := range ds.AllConds {
-		ds.AllConds[i] = expression.PushDownNot(ds.SCtx().GetExprCtx(), cond)
+	if !ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		for i, cond := range ds.AllConds {
+			ds.AllConds[i] = expression.PushDownNot(ds.SCtx().GetExprCtx(), cond)
+		}
 	}
 	// Try to locate partition directly for hash partition.
 	// TODO: See if there is a way to remove conditions that does not

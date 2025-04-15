@@ -259,3 +259,17 @@ func TestIssue59902(t *testing.T) {
 			"        └─Selection 1.00 cop[tikv]  not(isnull(test.t2.a))",
 			"          └─IndexRangeScan 1.00 cop[tikv] table:t2, index:idx(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"))
 }
+
+func TestIssueABC(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec(`CREATE TABLE customers (
+id bigint(20),
+name char(10) DEFAULT NULL,
+custinfo json DEFAULT NULL,
+KEY idx(id),
+UNIQUE KEY zips ((cast(json_extract(custinfo, _utf8'$.zipcode') as unsigned array))) GLOBAL
+) PARTITION BY HASH (id) PARTITIONS 5;`)
+	tk.MustQuery(`explain select * from customers where (1 member of (custinfo->'$.zipcode'));`).Check(testkit.Rows())
+}
