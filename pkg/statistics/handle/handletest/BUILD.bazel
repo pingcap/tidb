@@ -9,7 +9,11 @@ go_test(
     ],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 37,
+=======
+    shard_count = 35,
+>>>>>>> 25dde1c45d1 (stats: use an alternative function to read the bound from `BLOB` stored in `mysql.stats_buckets`. (#59791))
     deps = [
         "//pkg/config",
         "//pkg/domain",
