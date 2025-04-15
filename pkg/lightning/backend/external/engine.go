@@ -120,6 +120,7 @@ func (b *memKVsAndBuffers) build(ctx context.Context) {
 		zap.Int("sumKVCnt", sumKVCnt),
 		zap.Int("droppedSize", b.droppedSize),
 		zap.Int("totalReadBytes", totalReadBytes),
+		zap.Ints("readBytesPerFile", b.readBytesPerFile),
 	)
 
 	b.keys = make([][]byte, 0, sumKVCnt)
