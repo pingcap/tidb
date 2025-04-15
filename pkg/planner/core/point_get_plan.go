@@ -1598,6 +1598,8 @@ func indexIsAvailableByHints(
 			continue
 		}
 		if len(h.Tables) != 1 {
+			// This should not happen. See HintIndexList in hintparser.y.
+			intest.Assert(false)
 			continue
 		}
 		hintDBName := h.Tables[0].DBName
