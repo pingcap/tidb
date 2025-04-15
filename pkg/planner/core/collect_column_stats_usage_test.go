@@ -80,7 +80,7 @@ func getStatsLoadItem(t *testing.T, is infoschema.InfoSchema, item model.StatsLo
 }
 
 func checkColumnStatsUsageForPredicates(t *testing.T, is infoschema.InfoSchema, lp base.LogicalPlan, expected []string, comment string) {
-	tblColIDs, _, _ := CollectColumnStatsUsage(lp, false)
+	tblColIDs, _, _ := CollectColumnStatsUsage(lp)
 	cols := make([]string, 0, len(tblColIDs))
 	for tblColID := range tblColIDs {
 		col := getColumnName(t, is, tblColID, comment)
@@ -91,12 +91,12 @@ func checkColumnStatsUsageForPredicates(t *testing.T, is infoschema.InfoSchema, 
 }
 
 func checkColumnStatsUsageForStatsLoad(t *testing.T, is infoschema.InfoSchema, lp base.LogicalPlan, expectedCols []string, expectedParts map[string][]string, comment string) {
-	predicateCols, _, expandedPartitions := CollectColumnStatsUsage(lp, true)
+	predicateCols, _, expandedPartitions := CollectColumnStatsUsage(lp)
 	loadItems := make([]model.StatsLoadItem, 0, len(predicateCols))
+	cols := make([]string, 0, len(loadItems))
 	for tblColID, fullLoad := range predicateCols {
 		loadItems = append(loadItems, model.StatsLoadItem{TableItemID: tblColID, FullLoad: fullLoad})
 	}
-	cols := make([]string, 0, len(loadItems))
 	for _, item := range loadItems {
 		col := getStatsLoadItem(t, is, item, comment)
 		cols = append(cols, col)

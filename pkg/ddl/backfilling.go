@@ -741,7 +741,7 @@ func (dc *ddlCtx) runAddIndexInLocalIngestMode(
 	importConc := job.ReorgMeta.GetConcurrencyOrDefault(int(variable.GetDDLReorgWorkerCounter()))
 	maxWriteSpeed := job.ReorgMeta.GetMaxWriteSpeedOrDefault()
 	bcCtx, err := ingest.LitBackCtxMgr.Register(
-		ctx, job.ID, hasUnique, nil, discovery, job.ReorgMeta.ResourceGroupName, importConc, maxWriteSpeed, job.RealStartTS)
+		ctx, job.ID, hasUnique, nil, discovery, job.ReorgMeta.ResourceGroupName, importConc, maxWriteSpeed, job.RealStartTS, 0)
 	if err != nil {
 		return errors.Trace(err)
 	}

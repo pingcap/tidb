@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	disthandle "github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
@@ -1699,6 +1700,11 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 
 // InitDistTaskLoop initializes the distributed task framework.
 func (do *Domain) InitDistTaskLoop() error {
+	rc, err := disthandle.CalculateNodeResource()
+	if err != nil {
+		return err
+	}
+	disthandle.SetNodeResource(rc)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 	failpoint.Inject("MockDisableDistTask", func(val failpoint.Value) {
 		if val.(bool) {
@@ -2290,7 +2296,7 @@ func (do *Domain) StatsHandle() *handle.Handle {
 }
 
 // CreateStatsHandle is used only for test.
-func (do *Domain) CreateStatsHandle(ctx, initStatsCtx sessionctx.Context) error {
+func (do *Domain) CreateStatsHandle(ctx context.Context, initStatsCtx sessionctx.Context) error {
 	h, err := handle.NewHandle(
 		ctx,
 		initStatsCtx,
@@ -2326,20 +2332,19 @@ func (do *Domain) SetStatsUpdating(val bool) {
 
 // LoadAndUpdateStatsLoop loads and updates stats info.
 func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context, initStatsCtx sessionctx.Context) error {
-	if err := do.UpdateTableStatsLoop(ctxs[0], initStatsCtx); err != nil {
+	if err := do.UpdateTableStatsLoop(initStatsCtx); err != nil {
 		return err
 	}
-	do.StartLoadStatsSubWorkers(ctxs[1:])
+	do.StartLoadStatsSubWorkers(ctxs)
 	return nil
 }
 
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop.
 // It will also start a goroutine to analyze tables automatically.
 // It should be called only once in BootstrapSession.
-func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) error {
-	ctx.GetSessionVars().InRestrictedSQL = true
+func (do *Domain) UpdateTableStatsLoop(initStatsCtx sessionctx.Context) error {
 	statsHandle, err := handle.NewHandle(
-		ctx,
+		do.ctx,
 		initStatsCtx,
 		do.statsLease,
 		do.InfoSchema(),

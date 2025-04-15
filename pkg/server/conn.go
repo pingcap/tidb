@@ -1852,7 +1852,10 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		var tableID int64
 		switch v := p.(type) {
 		case *plannercore.PointGetPlan:
-			v.PrunePartitions(sctx)
+			isTableDual, err0 := v.PrunePartitions(sctx)
+			if err0 != nil || isTableDual {
+				return err0
+			}
 			tableID = executor.GetPhysID(v.TblInfo, v.PartitionIdx)
 			if v.IndexInfo != nil {
 				resetStmtCtxFn()
@@ -1866,7 +1869,10 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 				rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(tableID, v.Handle))
 			}
 		case *plannercore.BatchPointGetPlan:
-			_, isTableDual := v.PrunePartitionsAndValues(sctx)
+			_, isTableDual, err1 := v.PrunePartitionsAndValues(sctx)
+			if err1 != nil {
+				return err1
+			}
 			if isTableDual {
 				return nil
 			}

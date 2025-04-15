@@ -527,3 +527,37 @@ CREATE TABLE `tl6e913fb9` (
   KEY `idx_65` (`col_36`(5))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 with cte_192 ( col_1101,col_1102,col_1103,col_1104 ) AS ( select  /*+ use_index_merge( tl6e913fb9 ) */   replace( tl6e913fb9.col_36 , tl6e913fb9.col_36 , tl6e913fb9.col_36 ) as r0 , space( 0 ) as r1 , min( distinct  tl6e913fb9.col_36 ) as r2 , count( distinct  tl6e913fb9.col_36 ) as r3 from tl6e913fb9 where tl6e913fb9.col_36 between 'n92ok$B%W#UU%O' and '()c=KVQ=T%-vzGJ' and tl6e913fb9.col_36 in ( 'T+kf' ,'Lvluod2H' ,'3#Omx@pC^fFkeH' ,'=b$z' ) group by tl6e913fb9.col_36  having tl6e913fb9.col_36 = 'xjV@' or IsNull( tl6e913fb9.col_36 ) ) ( select 1,col_1101,col_1102,col_1103,col_1104 from cte_192 where not( IsNull( cte_192.col_1102 ) ) order by 1,2,3,4,5 limit 72850972 );
+
+# TestIssue59926
+drop table if exists t;
+create table t(a int, primary key (a));
+insert into t values(1), (2);
+# safe to directly compare the output since the data is stored in one region. so the output is ordered in fact
+select * from t t1 left join t t2 on t1.a=t2.a limit 1, 1;
+# the limit is push down across the join node
+explain select * from t t1 left join t t2 on t1.a=t2.a limit 1, 1;
+
+# TestIssue20710
+drop table if exists t1, t2;
+create table t1(a int, b int, index idx(a, b));
+create table t2(a int, b int, index idx(a));
+explain select /*+ merge_join(t1) */ * from t1 join t2 on t1.a=t2.a and t2.b=t1.b;
+explain select /*+ no_hash_join(t1), no_index_join(t1,t2), no_index_hash_join(t1,t2) */ * from t1 join t2 on t1.a=t2.a and t2.b=t1.b;
+
+# TestIssue59762
+drop table if exists t, t1;
+create table t(a int);
+create table t1(a int primary key, b int, index idx(b));
+insert into t values(1), (2), (123);
+insert into t1 values(2, 123), (123, 2);
+set tidb_opt_fix_control='44855:on';
+explain select /*+ inl_join(t1), use_index(t1, idx) */ * from t join t1 on t.a = t1.a and t1.b = 123;
+select /*+ inl_join(t1), use_index(t1, idx) */ * from t join t1 on t.a = t1.a and t1.b = 123;
+
+# TestIssue58581
+drop table if exists t;
+create table t (id int unique key, c int);
+insert into t values (1, 10);
+insert into t values (2, 20);
+insert into t values (3, 30);
+select _tidb_rowid from t where id in (1, 2, 3);
