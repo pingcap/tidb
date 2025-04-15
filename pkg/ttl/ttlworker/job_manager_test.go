@@ -217,6 +217,11 @@ func (m *JobManager) ReportMetrics(se session.Session) {
 	m.reportMetrics(se)
 }
 
+// ID returns the id of JobManager
+func (m *JobManager) ID() string {
+	return m.id
+}
+
 // CheckNotOwnJob is an exported version of checkNotOwnJob
 func (m *JobManager) CheckNotOwnJob() {
 	m.checkNotOwnJob()

@@ -1107,10 +1107,10 @@ func (em *ErrorManager) Output() string {
 	t := table.NewWriter()
 	t.AppendHeader(table.Row{"#", "Error Type", "Error Count", "Error Data Table"})
 	t.SetColumnConfigs([]table.ColumnConfig{
-		{Name: "#", WidthMax: 6},
-		{Name: "Error Type", WidthMax: 20},
-		{Name: "Error Count", WidthMax: 12},
-		{Name: "Error Data Table", WidthMax: 42},
+		{Name: "#"},
+		{Name: "Error Type"},
+		{Name: "Error Count"},
+		{Name: "Error Data Table"},
 	})
 	t.SetRowPainter(func(table.Row) text.Colors {
 		return text.Colors{text.FgRed}
