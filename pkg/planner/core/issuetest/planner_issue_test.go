@@ -259,3 +259,14 @@ func TestIssue59902(t *testing.T) {
 			"        └─Selection 1.00 cop[tikv]  not(isnull(test.t2.a))",
 			"          └─IndexRangeScan 1.00 cop[tikv] table:t2, index:idx(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"))
 }
+
+func TestIssueABC(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec(`create table p (id int, c int, unique index idx(id) global) partition by range (c) (
+partition p0 values less than (4),
+partition p1 values less than (7),
+partition p2 values less than (10));`)
+	tk.MustQuery(`explain format='brief' select avg(id), max(id), min(id) from p partition(p0) use index(idx) group by c;`).Check(testkit.Rows())
+}
