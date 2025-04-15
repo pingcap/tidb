@@ -3845,16 +3845,17 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 			isLockTables = true
 		}
 		for _, tName := range tableList {
-			dbName := tName.Schema.L
-			if dbName == "" {
-				dbName = b.ctx.GetSessionVars().CurrentDB
-			}
+			// CTE has no *model.HintedTable, we need to skip it.
 			tNameW := b.resolveCtx.GetTableName(tName)
 			if tNameW == nil {
 				continue
 			}
 			if isLockTables {
 				b.ctx.GetSessionVars().StmtCtx.LockTableIDs[tNameW.TableInfo.ID] = struct{}{}
+			}
+			dbName := tName.Schema.L
+			if dbName == "" {
+				dbName = b.ctx.GetSessionVars().CurrentDB
 			}
 			var authErr error
 			if user := b.ctx.GetSessionVars().User; user != nil {
