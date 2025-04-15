@@ -1332,9 +1332,9 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 
 	// global index must not use partition pruning optimization, as LogicalPartitionAll not suitable for global index.
 	// ignore global index if flagPartitionProcessor exists.
-	if hasFlagPartitionProcessor {
-		available = removeGlobalIndexPaths(available)
-	}
+	//if hasFlagPartitionProcessor {
+	//	available = removeGlobalIndexPaths(available)
+	//}
 
 	// If we have got "FORCE" or "USE" index hint but got no available index,
 	// we have to use table scan.
