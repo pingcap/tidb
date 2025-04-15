@@ -1094,13 +1094,19 @@ func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace"))
 	}()
-	jobCh := make(chan *regionJob, 1)
-	jobCh <- &regionJob{}
-	jobOutCh := make(chan *regionJob, 1)
-	err := bak.startWorker(context.Background(), jobCh, jobOutCh, nil, nil)
+	worker := &opRegionJobWorker{
+		regionJobBaseWorker: &regionJobBaseWorker{
+			jobInCh:          make(chan *regionJob, 1),
+			jobOutCh:         make(chan *regionJob, 1),
+			doRunJobFn:       bak.executeJob,
+			regenerateJobsFn: bak.generateJobForRange,
+		},
+	}
+	worker.jobInCh <- &regionJob{}
+	err := worker.run(context.Background())
 	require.Error(t, err)
 	require.Regexp(t, "the remaining storage capacity of TiKV.*", err.Error())
-	require.Len(t, jobCh, 0)
+	require.Len(t, worker.jobInCh, 0)
 }
 
 func TestLocalIsRetryableTiKVWriteError(t *testing.T) {
@@ -1298,7 +1304,15 @@ func TestCheckPeersBusy(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := local.startWorker(ctx, jobCh, jobOutCh, nil, nil)
+		worker := &opRegionJobWorker{
+			regionJobBaseWorker: &regionJobBaseWorker{
+				jobInCh:          jobCh,
+				jobOutCh:         jobOutCh,
+				doRunJobFn:       local.executeJob,
+				regenerateJobsFn: local.generateJobForRange,
+			},
+		}
+		err := worker.run(ctx)
 		require.NoError(t, err)
 	}()
 
@@ -1405,7 +1419,16 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := local.startWorker(ctx, jobCh, jobOutCh, nil, &jobWg)
+		worker := &opRegionJobWorker{
+			regionJobBaseWorker: &regionJobBaseWorker{
+				jobInCh:          jobCh,
+				jobOutCh:         jobOutCh,
+				jobWg:            &jobWg,
+				doRunJobFn:       local.executeJob,
+				regenerateJobsFn: local.generateJobForRange,
+			},
+		}
+		err := worker.run(ctx)
 		require.NoError(t, err)
 	}()
 
@@ -1505,7 +1528,16 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := local.startWorker(ctx, jobCh, jobOutCh, nil, &jobWg)
+		worker := &opRegionJobWorker{
+			regionJobBaseWorker: &regionJobBaseWorker{
+				jobInCh:          jobCh,
+				jobOutCh:         jobOutCh,
+				jobWg:            &jobWg,
+				doRunJobFn:       local.executeJob,
+				regenerateJobsFn: local.generateJobForRange,
+			},
+		}
+		err := worker.run(ctx)
 		require.NoError(t, err)
 	}()
 
@@ -1626,7 +1658,16 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := local.startWorker(ctx, jobCh, jobOutCh, nil, &jobWg)
+		worker := &opRegionJobWorker{
+			regionJobBaseWorker: &regionJobBaseWorker{
+				jobInCh:          jobCh,
+				jobOutCh:         jobOutCh,
+				jobWg:            &jobWg,
+				doRunJobFn:       local.executeJob,
+				regenerateJobsFn: local.generateJobForRange,
+			},
+		}
+		err := worker.run(ctx)
 		require.NoError(t, err)
 	}()
 
@@ -1881,7 +1922,13 @@ func TestDoImport(t *testing.T) {
 				{
 					keyRange:   common.Range{Start: []byte{'a'}, End: []byte{'b'}},
 					ingestData: &Engine{},
-					injected:   getSuccessInjectedBehaviour(),
+					injected: append([]injectedBehaviour{
+						{
+							write: injectedWriteBehaviour{
+								err: status.Error(codes.Unknown, "RequestTooNew"),
+							},
+						},
+					}, getSuccessInjectedBehaviour()...),
 				},
 			},
 		},

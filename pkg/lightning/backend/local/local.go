@@ -51,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -1095,87 +1094,6 @@ func (local *Backend) generateJobForRange(
 	return jobs, nil
 }
 
-// startWorker creates a worker that reads from the job channel and processes.
-// startWorker will return nil if it's expected to stop, where the cases are all
-// jobs are finished or the context canceled because other components report
-// error. It will return not nil error when it actively stops. startWorker must
-// call job.done() if it does not put the job into jobOutCh.
-func (local *Backend) startWorker(
-	ctx context.Context,
-	jobInCh, jobOutCh chan *regionJob,
-	afterExecuteJob func([]*metapb.Peer),
-	jobWg *sync.WaitGroup,
-) error {
-	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Set(0)
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case job, ok := <-jobInCh:
-			if !ok {
-				return nil
-			}
-
-			var peers []*metapb.Peer
-			// in unit test, we may not have the real peers
-			if job.region != nil && job.region.Region != nil {
-				peers = job.region.Region.GetPeers()
-			}
-			failpoint.InjectCall("beforeExecuteRegionJob", ctx)
-			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Inc()
-			err := local.executeJob(ctx, job)
-			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Dec()
-
-			if afterExecuteJob != nil {
-				afterExecuteJob(peers)
-			}
-			switch job.stage {
-			case regionScanned, wrote, ingested:
-				select {
-				case <-ctx.Done():
-					job.done(jobWg)
-					return nil
-				case jobOutCh <- job:
-				}
-			case needRescan:
-				jobs, err2 := local.generateJobForRange(
-					ctx,
-					job.ingestData,
-					[]common.Range{job.keyRange},
-					job.regionSplitSize,
-					job.regionSplitKeys,
-				)
-				if err2 != nil {
-					// Don't need to put the job back to retry, because generateJobForRange
-					// has done the retry internally. Here just done for the "needRescan"
-					// job and exit directly.
-					job.done(jobWg)
-					return err2
-				}
-				// 1 "needRescan" job becomes len(jobs) "regionScanned" jobs.
-				newJobCnt := len(jobs) - 1
-				for newJobCnt > 0 {
-					job.ref(jobWg)
-					newJobCnt--
-				}
-				for _, j := range jobs {
-					j.lastRetryableErr = job.lastRetryableErr
-					select {
-					case <-ctx.Done():
-						j.done(jobWg)
-						// don't exit here, we mark done for each job and exit in the outer loop
-					case jobOutCh <- j:
-					}
-				}
-			}
-
-			if err != nil {
-				return err
-			}
-		}
-	}
-}
-
 func (*Backend) isRetryableImportTiKVError(err error) bool {
 	err = errors.Cause(err)
 	// io.EOF is not retryable in normal case
@@ -1247,32 +1165,53 @@ func (local *Backend) executeJob(
 	}
 
 	for {
-		err := local.writeToTiKV(ctx, job)
-		if err != nil {
-			if !local.isRetryableImportTiKVError(err) {
-				return err
+		// the job might in wrote stage if it comes from retry
+		if job.stage == regionScanned {
+			// writes the data to TiKV and mark this job as wrote stage.
+			// we don't need to do cleanup for the pairs written to TiKV if encounters
+			// an error, TiKV will take the responsibility to do so.
+			// TODO: let client-go provide a high-level write interface.
+			res, err := local.doWrite(ctx, job)
+			if err != nil {
+				if !local.isRetryableImportTiKVError(err) {
+					return err
+				}
+				// currently only one case will restart write
+				if strings.Contains(err.Error(), "RequestTooNew") {
+					// TiKV hasn't synced the newest region info with PD, it's ok to
+					// rewrite without rescan.
+					job.convertStageTo(regionScanned)
+				} else {
+					job.convertStageTo(needRescan)
+				}
+				job.lastRetryableErr = err
+				log.FromContext(ctx).Warn("meet retryable error when writing to TiKV",
+					log.ShortError(err), zap.Stringer("job stage", job.stage))
+				return nil
 			}
-			// if it's retryable error, we retry from scanning region
-			log.FromContext(ctx).Warn("meet retryable error when writing to TiKV",
-				log.ShortError(err), zap.Stringer("job stage", job.stage))
-			job.lastRetryableErr = err
-			return nil
+			if res.emptyJob {
+				job.convertStageTo(ingested)
+			} else {
+				job.writeResult = res
+				job.convertStageTo(wrote)
+			}
 		}
 
-		err = local.ingest(ctx, job)
-		if err != nil {
-			if !local.isRetryableImportTiKVError(err) {
-				return err
+		// if the job is empty, it might go to ingested stage directly.
+		if job.stage == wrote {
+			err := local.ingest(ctx, job)
+			if err != nil {
+				if !local.isRetryableImportTiKVError(err) {
+					return err
+				}
+				log.FromContext(ctx).Warn("meet retryable error when ingesting",
+					log.ShortError(err), zap.Stringer("job stage", job.stage))
+				job.lastRetryableErr = err
+				return nil
 			}
-			log.FromContext(ctx).Warn("meet retryable error when ingesting",
-				log.ShortError(err), zap.Stringer("job stage", job.stage))
-			job.lastRetryableErr = err
-			return nil
 		}
-		// if the job.stage successfully converted into "ingested", it means
-		// these data are ingested into TiKV so we handle remaining data.
-		// For other job.stage, the job should be sent back to caller to retry
-		// later.
+		// if the stage is not ingested, it means some error happened, the job should
+		// be sent back to caller to retry later, else we handle remaining data.
 		if job.stage != ingested {
 			return nil
 		}
@@ -1533,19 +1472,31 @@ func (local *Backend) doImport(
 		}
 	})
 
+	var (
+		toCh            = jobToWorkerCh
+		afterExecuteJob func([]*metapb.Peer)
+	)
 	failpoint.Inject("skipStartWorker", func() {
 		failpoint.Goto("afterStartWorker")
 	})
 
+	if balancer != nil {
+		toCh = balancer.innerJobToWorkerCh
+		afterExecuteJob = balancer.releaseStoreLoad
+	}
 	for i := 0; i < local.WorkerConcurrency; i++ {
+		worker := &opRegionJobWorker{
+			regionJobBaseWorker: &regionJobBaseWorker{
+				jobInCh:          toCh,
+				jobOutCh:         jobFromWorkerCh,
+				jobWg:            &jobWg,
+				doRunJobFn:       local.executeJob,
+				afterRunJobFn:    afterExecuteJob,
+				regenerateJobsFn: local.generateJobForRange,
+			},
+		}
 		workGroup.Go(func() error {
-			toCh := jobToWorkerCh
-			var afterExecuteJob func([]*metapb.Peer)
-			if balancer != nil {
-				toCh = balancer.innerJobToWorkerCh
-				afterExecuteJob = balancer.releaseStoreLoad
-			}
-			return local.startWorker(workerCtx, toCh, jobFromWorkerCh, afterExecuteJob, &jobWg)
+			return worker.run(workerCtx)
 		})
 	}
 
