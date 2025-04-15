@@ -739,7 +739,8 @@ type Performance struct {
 	// of init stats the optimizer may make bad decisions due to pseudo stats.
 	ForceInitStats bool `toml:"force-init-stats" json:"force-init-stats"`
 
-	// ConcurrentlyInitStats indicates whether to use concurrency to init stats.
+	// Deprecated: This setting has no effect, as stats are now always initialized concurrently.
+	// ConcurrentlyInitStats indicates whether to use concurrency for initializing stats.
 	ConcurrentlyInitStats bool `toml:"concurrently-init-stats" json:"concurrently-init-stats"`
 
 	// Deprecated: this config will not have any effect
@@ -999,12 +1000,13 @@ var defaultConf = Config{
 		EnableLoadFMSketch:                false,
 		LiteInitStats:                     true,
 		ForceInitStats:                    true,
-		ConcurrentlyInitStats:             true,
+		// Deprecated: Stats are always initialized concurrently.
+		ConcurrentlyInitStats: true,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
 		HeaderTimeout: 5,
-		Fallbackable:  false,
+		Fallbackable:  true,
 	},
 	PreparedPlanCache: PreparedPlanCache{
 		Enabled:          true,

@@ -231,6 +231,7 @@ func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt any, args [
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
+	//nolint:forcetypeassert
 	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
 	if err != nil {
 		action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(ctx, sessiontxn.StmtErrAfterQuery, err)
@@ -240,6 +241,7 @@ func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt any, args [
 
 		if retryable && action == sessiontxn.StmtActionRetryReady {
 			cc.ctx.GetSessionVars().RetryInfo.Retrying = true
+			//nolint:forcetypeassert
 			_, err = cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
 			cc.ctx.GetSessionVars().RetryInfo.Retrying = false
 			return err
@@ -254,6 +256,7 @@ func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt any, args [
 		defer func() {
 			cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}()
+		//nolint:forcetypeassert
 		_, err = cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
 		// We append warning after the retry because `ResetContextOfStmt` may be called during the retry, which clears warnings.
 		cc.ctx.GetSessionVars().StmtCtx.AppendError(prevErr)

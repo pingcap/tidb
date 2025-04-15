@@ -884,6 +884,9 @@ const (
 	ConstraintFulltext
 	ConstraintCheck
 	ConstraintVector
+	// ConstraintColumnar is used for columnar index.
+	// Vector index is also a kind of columnar index, but vector index is added before columnar index.
+	// So we keep vector index as a separate type for compatibility.
 	ConstraintColumnar
 )
 

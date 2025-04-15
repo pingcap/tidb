@@ -1217,3 +1217,28 @@ func TestIssue58870(t *testing.T) {
 	require.Nil(t, err)
 	require.Nil(t, rs)
 }
+func TestIssue57528(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec("set @@tidb_enable_collect_execution_info=1")
+	tk.MustExec(`use test`)
+	tk.MustExec(`CREATE TABLE customer (
+	  c_id int(11) NOT NULL,
+	  c_discount int(11) DEFAULT NULL,
+	  PRIMARY KEY (c_id))`)
+	tk.MustExec(`insert into customer values (1, 2)`)
+	tk.MustExec(`prepare stmt from 'SELECT c_discount FROM customer WHERE c_id = ?'`)
+	tk.MustExec(`set @c_id=1`)
+	tk.MustQuery(`execute stmt using @c_id`).Check(testkit.Rows("2"))
+	tk.MustQuery(`execute stmt using @c_id`).Check(testkit.Rows("2"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can use the cached plan
+
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0")
+	defer func() {
+		tk.MustExec("set @@tidb_enable_collect_execution_info=1")
+	}()
+	tk.MustQuery(`execute stmt using @c_id`).Check(testkit.Rows("2"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can use the cached plan
+}

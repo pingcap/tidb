@@ -54,18 +54,21 @@ func TestOptions(t *testing.T) {
 	require.Equal(t, AddRecordOpt{
 		commonMutateOpt: commonMutateOpt{ctx: ctx},
 		isUpdate:        true,
+		genRecordID:     true,
 		reserveAutoID:   12,
 	}, *addOpt)
 	require.Equal(t, CreateIdxOpt{commonMutateOpt: commonMutateOpt{ctx: ctx}}, *(addOpt.GetCreateIdxOpt()))
 	// NewUpdateRecordOpt without option
 	updateOpt := NewUpdateRecordOpt()
 	require.Equal(t, UpdateRecordOpt{}, *updateOpt)
-	require.Equal(t, AddRecordOpt{isUpdate: true}, *(updateOpt.GetAddRecordOpt()))
+	require.Equal(t, AddRecordOpt{isUpdate: true, genRecordID: true}, *(updateOpt.GetAddRecordOpt()))
+	require.Equal(t, AddRecordOpt{isUpdate: true, genRecordID: false}, *(updateOpt.GetAddRecordOptKeepRecordID()))
 	require.Equal(t, CreateIdxOpt{}, *(updateOpt.GetCreateIdxOpt()))
 	// NewUpdateRecordOpt with options
 	updateOpt = NewUpdateRecordOpt(WithCtx(ctx))
 	require.Equal(t, UpdateRecordOpt{commonMutateOpt: commonMutateOpt{ctx: ctx}}, *updateOpt)
-	require.Equal(t, AddRecordOpt{commonMutateOpt: commonMutateOpt{ctx: ctx}, isUpdate: true}, *(updateOpt.GetAddRecordOpt()))
+	require.Equal(t, AddRecordOpt{commonMutateOpt: commonMutateOpt{ctx: ctx}, isUpdate: true, genRecordID: true}, *(updateOpt.GetAddRecordOpt()))
+	require.Equal(t, AddRecordOpt{commonMutateOpt: commonMutateOpt{ctx: ctx}, isUpdate: true, genRecordID: false}, *(updateOpt.GetAddRecordOptKeepRecordID()))
 	require.Equal(t, CreateIdxOpt{commonMutateOpt: commonMutateOpt{ctx: ctx}}, *(updateOpt.GetCreateIdxOpt()))
 	// NewCreateIdxOpt without option
 	createIdxOpt := NewCreateIdxOpt()

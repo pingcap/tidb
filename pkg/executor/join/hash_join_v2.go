@@ -704,6 +704,11 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 		e.prepared = false
 		return err
 	}
+	return e.OpenSelf()
+}
+
+// OpenSelf opens hash join itself and initializes the hash join context.
+func (e *HashJoinV2Exec) OpenSelf() error {
 	e.prepared = false
 	e.inRestore = false
 	needScanRowTableAfterProbeDone := e.ProbeWorkers[0].JoinProbe.NeedScanRowTable()
@@ -787,6 +792,7 @@ func (e *HashJoinV2Exec) initializeForProbe() {
 	e.joinResultCh = make(chan *hashjoinWorkerResult, e.Concurrency+1)
 	e.ProbeSideTupleFetcher.initializeForProbeBase(e.Concurrency, e.joinResultCh)
 	e.ProbeSideTupleFetcher.canSkipProbeIfHashTableIsEmpty = e.canSkipProbeIfHashTableIsEmpty()
+	e.ProbeSideTupleFetcher.canSkipScanRowTable = false
 
 	for i := uint(0); i < e.Concurrency; i++ {
 		e.ProbeWorkers[i].initializeForProbe(e.ProbeSideTupleFetcher.probeChkResourceCh, e.ProbeSideTupleFetcher.probeResultChs[i], e)
@@ -874,14 +880,16 @@ func (e *HashJoinV2Exec) waitJoinWorkers(start time.Time) {
 		}
 	}
 
-	if e.ProbeWorkers[0] != nil && e.ProbeWorkers[0].JoinProbe.NeedScanRowTable() {
-		for i := uint(0); i < e.Concurrency; i++ {
-			var workerID = i
-			e.workerWg.RunWithRecover(func() {
-				e.ProbeWorkers[workerID].scanRowTableAfterProbeDone()
-			}, e.handleJoinWorkerPanic)
+	if !e.ProbeSideTupleFetcher.canSkipScanRowTable {
+		if e.ProbeWorkers[0] != nil && e.ProbeWorkers[0].JoinProbe.NeedScanRowTable() {
+			for i := uint(0); i < e.Concurrency; i++ {
+				var workerID = i
+				e.workerWg.RunWithRecover(func() {
+					e.ProbeWorkers[workerID].scanRowTableAfterProbeDone()
+				}, e.handleJoinWorkerPanic)
+			}
+			e.workerWg.Wait()
 		}
-		e.workerWg.Wait()
 	}
 }
 

@@ -121,9 +121,8 @@ func FindPredicateType(bc base.PlanContext, expr expression.Expression) (*expres
 				}
 			}
 			return col, inListPredicate
-		} else {
-			return nil, otherPredicate
 		}
+		return nil, otherPredicate
 	default:
 		return nil, otherPredicate
 	}

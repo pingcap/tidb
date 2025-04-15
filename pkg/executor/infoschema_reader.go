@@ -237,6 +237,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromPlanCache(ctx, sctx, false)
 		case infoschema.ClusterTableTiDBPlanCache:
 			err = e.setDataFromPlanCache(ctx, sctx, true)
+		case infoschema.TableKeyspaceMeta:
+			err = e.setDataForKeyspaceMeta(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -727,6 +729,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 			shardingInfo,          // TIDB_ROW_ID_SHARDING_INFO
 			pkType,                // TIDB_PK_TYPE
 			policyName,            // TIDB_PLACEMENT_POLICY_NAME
+			table.Mode.String(),   // TIDB_TABLE_MODE
 		)
 		rows = append(rows, record)
 		e.recordMemoryConsume(record)
@@ -757,6 +760,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 			nil,                   // TIDB_ROW_ID_SHARDING_INFO
 			pkType,                // TIDB_PK_TYPE
 			nil,                   // TIDB_PLACEMENT_POLICY_NAME
+			nil,                   // TIDB_TABLE_MODE
 		)
 		rows = append(rows, record)
 		e.recordMemoryConsume(record)
@@ -861,6 +865,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 					nil,                   // TIDB_ROW_ID_SHARDING_INFO
 					nil,                   // TIDB_PK_TYPE
 					nil,                   // TIDB_PLACEMENT_POLICY_NAME
+					nil,                   // TIDB_TABLE_MODE
 				)
 				rows = append(rows, record)
 				e.recordMemoryConsume(record)
@@ -2604,10 +2609,8 @@ func dataForAnalyzeStatusHelper(ctx context.Context, e *memtableRetriever, sctx 
 func getRemainDurationForAnalyzeStatusHelper(
 	ctx context.Context,
 	sctx sessionctx.Context, startTime *types.Time,
-	dbName, tableName, partitionName string, processedRows int64) (*time.Duration, float64, float64, error) {
-	var remainingDuration = time.Duration(0)
-	var percentage = 0.0
-	var totalCnt = float64(0)
+	dbName, tableName, partitionName string, processedRows int64) (_ *time.Duration, percentage, totalCnt float64, err error) {
+	remainingDuration := time.Duration(0)
 	if startTime != nil {
 		start, err := startTime.GoTime(time.UTC)
 		if err != nil {
@@ -4090,6 +4093,43 @@ func (e *memtableRetriever) setDataFromPlanCache(_ context.Context, sctx session
 
 	e.rows = rows
 	return nil
+}
+
+func (e *memtableRetriever) setDataForKeyspaceMeta(sctx sessionctx.Context) (err error) {
+	meta := sctx.GetStore().GetCodec().GetKeyspaceMeta()
+	var (
+		keyspaceName string
+		keyspaceID   string
+		keyspaceCfg  []byte
+	)
+
+	if meta != nil {
+		keyspaceName = meta.Name
+		keyspaceID = fmt.Sprintf("%d", meta.Id)
+		if len(meta.Config) > 0 {
+			keyspaceCfg, err = json.Marshal(meta.Config)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	row := make([]types.Datum, 3)
+	// Keyspace name
+	row[0] = types.NewStringDatum(keyspaceName)
+	// Keyspace ID
+	row[1] = types.NewStringDatum(keyspaceID)
+	// Keyspace config
+	var bj types.BinaryJSON
+	if len(keyspaceCfg) > 0 {
+		err = bj.UnmarshalJSON(keyspaceCfg)
+		if err != nil {
+			return err
+		}
+	}
+	row[2] = types.NewJSONDatum(bj)
+	e.rows = [][]types.Datum{row}
+	return
 }
 
 func checkRule(rule *label.Rule) (dbName, tableName string, partitionName string, err error) {
