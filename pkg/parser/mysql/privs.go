@@ -257,7 +257,7 @@ const (
 	CreateRolePriv
 	// DropRolePriv is the privilege to drop a role.
 	DropRolePriv
-	// CreateTMPTablePriv is the privilege to create a temporary table.
+	// CreateTMPTablePriv is the privilege to create a local temporary table.
 	CreateTMPTablePriv
 	// LockTablesPriv is the privilege to lock tables.
 	LockTablesPriv

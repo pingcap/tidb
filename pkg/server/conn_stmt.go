@@ -231,6 +231,7 @@ func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt any, args [
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
+	//nolint:forcetypeassert
 	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
 	if err != nil {
 		action, txnErr := sessiontxn.GetTxnManager(&cc.ctx).OnStmtErrorForNextAction(ctx, sessiontxn.StmtErrAfterQuery, err)
@@ -240,6 +241,7 @@ func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt any, args [
 
 		if retryable && action == sessiontxn.StmtActionRetryReady {
 			cc.ctx.GetSessionVars().RetryInfo.Retrying = true
+			//nolint:forcetypeassert
 			_, err = cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
 			cc.ctx.GetSessionVars().RetryInfo.Retrying = false
 			return err
@@ -254,6 +256,7 @@ func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt any, args [
 		defer func() {
 			cc.ctx.GetSessionVars().IsolationReadEngines[kv.TiFlash] = struct{}{}
 		}()
+		//nolint:forcetypeassert
 		_, err = cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
 		// We append warning after the retry because `ResetContextOfStmt` may be called during the retry, which clears warnings.
 		cc.ctx.GetSessionVars().StmtCtx.AppendError(prevErr)
@@ -385,8 +388,14 @@ func (cc *clientConn) executeWithCursor(ctx context.Context, stmt PreparedStatem
 		action := memory.NewActionWithPriority(rowContainer.ActionSpill(), memory.DefCursorFetchSpillPriority)
 		vars.MemTracker.FallbackOldAndSetNewAction(action)
 	}
+	// store the rowContainer in the statement right after it's created, so that even if the logic in defer is not triggered,
+	// the rowContainer will be released when the statement is closed.
+	stmt.StoreRowContainer(rowContainer)
 	defer func() {
 		if err != nil {
+			// if the execution panic, it'll not reach this branch. The `rowContainer` will be released in the `stmt.Close`.
+			stmt.StoreRowContainer(nil)
+
 			rowContainer.GetMemTracker().Detach()
 			rowContainer.GetDiskTracker().Detach()
 			errCloseRowContainer := rowContainer.Close()
@@ -424,7 +433,6 @@ func (cc *clientConn) executeWithCursor(ctx context.Context, stmt PreparedStatem
 	if cl, ok := crs.(resultset.FetchNotifier); ok {
 		cl.OnFetchReturned()
 	}
-	stmt.StoreRowContainer(rowContainer)
 
 	err = cc.writeExecuteResultWithCursor(ctx, stmt, crs)
 	return false, err
@@ -448,16 +456,13 @@ func (cc *clientConn) executeWithLazyCursor(ctx context.Context, stmt PreparedSt
 
 // writeExecuteResultWithCursor will store the `ResultSet` in `stmt` and send the column info to the client. The logic is shared between
 // lazy cursor fetch and normal(eager) cursor fetch.
-func (cc *clientConn) writeExecuteResultWithCursor(ctx context.Context, stmt PreparedStatement, rs resultset.CursorResultSet) error {
-	var err error
-
+func (cc *clientConn) writeExecuteResultWithCursor(ctx context.Context, stmt PreparedStatement, rs resultset.CursorResultSet) (err error) {
 	stmt.StoreResultSet(rs)
 	stmt.SetCursorActive(true)
 	defer func() {
 		if err != nil {
 			// the resultSet and rowContainer have been closed in former "defer" statement.
 			stmt.StoreResultSet(nil)
-			stmt.StoreRowContainer(nil)
 			stmt.SetCursorActive(false)
 		}
 	}()

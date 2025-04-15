@@ -27,9 +27,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
@@ -120,8 +120,8 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 	return
 }
 
-// SaveTableStatsToStorage saves the stats of a table to storage.
-func SaveTableStatsToStorage(sctx sessionctx.Context,
+// SaveAnalyzeResultToStorage saves the analyze result to the storage.
+func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 	results *statistics.AnalyzeResults, analyzeSnapshot bool) (statsVer uint64, err error) {
 	needDumpFMS := results.TableID.IsPartitionTable()
 	tableID := results.TableID.GetStatisticsID()
@@ -172,11 +172,12 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 			count = 0
 		}
 		if _, err = util.Exec(sctx,
-			"replace into mysql.stats_meta (version, table_id, count, snapshot) values (%?, %?, %?, %?)",
+			"replace into mysql.stats_meta (version, table_id, count, snapshot, last_stats_histograms_version) values (%?, %?, %?, %?, %?)",
 			version,
 			tableID,
 			count,
 			snapShot,
+			version,
 		); err != nil {
 			return 0, err
 		}
@@ -185,7 +186,8 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 		// 1-2. There's already an existing record for this table, and we are handling stats for mv index now.
 		// In this case, we only update the version. See comments for AnalyzeResults.ForMVIndex for more details.
 		if _, err = util.Exec(sctx,
-			"update mysql.stats_meta set version=%? where table_id=%?",
+			"update mysql.stats_meta set version=%?, last_stats_histograms_version=%? where table_id=%?",
+			version,
 			version,
 			tableID,
 		); err != nil {
@@ -225,18 +227,18 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 				zap.Int64("count", cnt))
 		}
 		if _, err = util.Exec(sctx,
-			"update mysql.stats_meta set version=%?, modify_count=%?, count=%?, snapshot=%? where table_id=%?",
+			"update mysql.stats_meta set version=%?, modify_count=%?, count=%?, snapshot=%?, last_stats_histograms_version=%? where table_id=%?",
 			version,
 			modifyCnt,
 			cnt,
 			results.Snapshot,
+			version,
 			tableID,
 		); err != nil {
 			return 0, err
 		}
 		statsVer = version
 	}
-	cache.TableRowStatsCache.Invalidate(tableID)
 	// 2. Save histograms.
 	for _, result := range results.Ars {
 		for i, hg := range result.Hist {
@@ -315,11 +317,11 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 	return
 }
 
-// SaveStatsToStorage saves the stats to storage.
+// SaveColOrIdxStatsToStorage saves the column or index statistics to the storage.
 // If count is negative, both count and modify count would not be used and not be written to the table. Unless, corresponding
 // fields in the stats_meta table will be updated.
 // TODO: refactor to reduce the number of parameters
-func SaveStatsToStorage(
+func SaveColOrIdxStatsToStorage(
 	sctx sessionctx.Context,
 	tableID int64,
 	count, modifyCount int64,
@@ -337,10 +339,9 @@ func SaveStatsToStorage(
 
 	// If the count is less than 0, then we do not want to update the modify count and count.
 	if count >= 0 {
-		_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
-		cache.TableRowStatsCache.Invalidate(tableID)
+		_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count, last_stats_histograms_version) values (%?, %?, %?, %?, %?)", version, tableID, count, modifyCount, version)
 	} else {
-		_, err = util.Exec(sctx, "update mysql.stats_meta set version = %? where table_id = %?", version, tableID)
+		_, err = util.Exec(sctx, "update mysql.stats_meta set version = %?, last_stats_histograms_version = %? where table_id = %?", version, version, tableID)
 	}
 	if err != nil {
 		return 0, err
@@ -379,17 +380,22 @@ func SaveStatsToStorage(
 	return
 }
 
-// SaveMetaToStorage will save stats_meta to storage.
+// SaveMetaToStorage will save stats_meta to storage and update last stats histograms version.
 func SaveMetaToStorage(
 	sctx sessionctx.Context,
-	tableID, count, modifyCount int64) (statsVer uint64, err error) {
+	tableID, count, modifyCount int64,
+	refreshLastHistVer bool,
+) (statsVer uint64, err error) {
 	version, err := util.GetStartTS(sctx)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
+	if refreshLastHistVer {
+		_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count, last_stats_histograms_version) values (%?, %?, %?, %?, %?)", version, tableID, count, modifyCount, version)
+	} else {
+		_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
+	}
 	statsVer = version
-	cache.TableRowStatsCache.Invalidate(tableID)
 	return
 }
 
@@ -410,8 +416,8 @@ func InsertColStats2KV(
 	// First of all, we update the version.
 	_, err = util.ExecWithCtx(
 		ctx, sctx,
-		"update mysql.stats_meta set version = %? where table_id = %?",
-		startTS, physicalID,
+		"update mysql.stats_meta set version = %?, last_stats_histograms_version = %? where table_id = %?",
+		startTS, startTS, physicalID,
 	)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -439,8 +445,7 @@ func InsertColStats2KV(
 	}
 	count := req.GetRow(0).GetInt64(0)
 	for _, colInfo := range colInfos {
-		value := types.NewDatum(colInfo.GetOriginDefaultValue())
-		value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), &colInfo.FieldType)
+		value, err := table.GetColOriginDefaultValue(sctx.GetExprCtx(), colInfo)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -501,8 +506,8 @@ func InsertTableStats2KV(
 	}
 	if _, err = util.ExecWithCtx(
 		ctx, sctx,
-		"insert ignore into mysql.stats_meta (version, table_id) values(%?, %?)",
-		startTS, physicalID,
+		"insert ignore into mysql.stats_meta (version, table_id, last_stats_histograms_version) values(%?, %?, %?)",
+		startTS, physicalID, startTS,
 	); err != nil {
 		return 0, errors.Trace(err)
 	}

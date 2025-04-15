@@ -45,21 +45,21 @@ const (
 )
 const (
 	// The type of workload-based learning
-	tableCostType = "TableCost"
+	tableReadCost = "TableReadCost"
 )
 
 // Handle The entry point for all workload-based learning related tasks
 type Handle struct {
-	sysSessionPool util.SessionPool
+	sysSessionPool util.DestroyableSessionPool
 }
 
 // NewWorkloadLearningHandle Create a new WorkloadLearningHandle
 // WorkloadLearningHandle is Singleton pattern
-func NewWorkloadLearningHandle(pool util.SessionPool) *Handle {
+func NewWorkloadLearningHandle(pool util.DestroyableSessionPool) *Handle {
 	return &Handle{pool}
 }
 
-// HandleReadTableCost Start a new round of analysis of all historical read queries.
+// HandleTableReadCost Start a new round of analysis of all historical table read queries.
 // According to abstracted table cost metrics, calculate the percentage of read scan time and memory usage for each table.
 // The result will be saved to the table "mysql.tidb_workload_values".
 // Dataflow
@@ -72,7 +72,7 @@ func NewWorkloadLearningHandle(pool util.SessionPool) *Handle {
 //
 // 4. Calculate table cost for each table, table cost = table scan time / total scan time + table mem usage / total mem usage
 // 5. Save all table cost metrics[per table](scan time, table cost, etc) to table "mysql.tidb_workload_values"
-func (handle *Handle) HandleReadTableCost(infoSchema infoschema.InfoSchema) {
+func (handle *Handle) HandleTableReadCost(infoSchema infoschema.InfoSchema) {
 	// step1: abstract middle table cost metrics from every record in statement_summary
 	middleMetrics, startTime, endTime := handle.analyzeBasedOnStatementStats()
 	if len(middleMetrics) == 0 {
@@ -80,7 +80,7 @@ func (handle *Handle) HandleReadTableCost(infoSchema infoschema.InfoSchema) {
 	}
 	// step2: group by tablename, sum(table-scan-time), sum(table-mem-usage), sum(read-frequency)
 	// step3: calculate the total scan time and total memory usage
-	tableNameToMetrics := make(map[ast.CIStr]*ReadTableCostMetrics)
+	tableNameToMetrics := make(map[ast.CIStr]*TableReadCostMetrics)
 	totalScanTime := 0.0
 	totalMemUsage := 0.0
 	for _, middleMetric := range middleMetrics {
@@ -100,28 +100,28 @@ func (handle *Handle) HandleReadTableCost(infoSchema infoschema.InfoSchema) {
 	}
 	// step4: calculate the percentage of scan time and memory usage for each table
 	for _, metric := range tableNameToMetrics {
-		metric.TableCost = metric.TableScanTime/totalScanTime + metric.TableMemUsage/totalMemUsage
+		metric.TableReadCost = metric.TableScanTime/totalScanTime + metric.TableMemUsage/totalMemUsage
 	}
 	// step5: save the table cost metrics to table "mysql.tidb_workload_values"
-	handle.SaveReadTableCostMetrics(tableNameToMetrics, startTime, endTime, infoSchema)
+	handle.SaveTableReadCostMetrics(tableNameToMetrics, startTime, endTime, infoSchema)
 }
 
-func (*Handle) analyzeBasedOnStatementSummary() []*ReadTableCostMetrics {
+func (*Handle) analyzeBasedOnStatementSummary() []*TableReadCostMetrics {
 	// step1: get all record from statement_summary
 	// step2: abstract table cost metrics from each record
 	return nil
 }
 
 // TODO
-func (*Handle) analyzeBasedOnStatementStats() ([]*ReadTableCostMetrics, time.Time, time.Time) {
+func (*Handle) analyzeBasedOnStatementStats() (middleMetrics []*TableReadCostMetrics, startTime, endTime time.Time) {
 	// step1: get all record from statement_stats
 	// step2: abstract table cost metrics from each record
 	// TODO change the mock value
 	return nil, time.Now(), time.Now()
 }
 
-// SaveReadTableCostMetrics table cost metrics, workload-based start and end time, version,
-func (handle *Handle) SaveReadTableCostMetrics(metrics map[ast.CIStr]*ReadTableCostMetrics,
+// SaveTableReadCostMetrics table cost metrics, workload-based start and end time, version,
+func (handle *Handle) SaveTableReadCostMetrics(metrics map[ast.CIStr]*TableReadCostMetrics,
 	_, _ time.Time, infoSchema infoschema.InfoSchema) {
 	// TODO save the workload job info such as start end time into workload_jobs table
 	// step1: create a new session, context, txn for saving table cost metrics
@@ -130,8 +130,14 @@ func (handle *Handle) SaveReadTableCostMetrics(metrics map[ast.CIStr]*ReadTableC
 		logutil.BgLogger().Warn("get system session failed when saving table cost metrics", zap.Error(err))
 		return
 	}
-	// TODO to destroy the error session instead of put it back to the pool
-	defer handle.sysSessionPool.Put(se)
+	defer func() {
+		if err == nil { // only recycle when no error
+			handle.sysSessionPool.Put(se)
+		} else {
+			// Note: Otherwise, the session will be leaked.
+			handle.sysSessionPool.Destroy(se)
+		}
+	}()
 	sctx := se.(sessionctx.Context)
 	exec := sctx.GetRestrictedSQLExecutor()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnWorkloadLearning)
@@ -164,7 +170,7 @@ func (handle *Handle) SaveReadTableCostMetrics(metrics map[ast.CIStr]*ReadTableC
 				zap.Float64("table_scan_time", metric.TableScanTime),
 				zap.Float64("table_mem_usage", metric.TableMemUsage),
 				zap.Int64("read_frequency", metric.ReadFrequency),
-				zap.Float64("table_cost", metric.TableCost),
+				zap.Float64("table_read_cost", metric.TableReadCost),
 				zap.Error(err))
 			continue
 		}
@@ -176,12 +182,12 @@ func (handle *Handle) SaveReadTableCostMetrics(metrics map[ast.CIStr]*ReadTableC
 				zap.Float64("table_scan_time", metric.TableScanTime),
 				zap.Float64("table_mem_usage", metric.TableMemUsage),
 				zap.Int64("read_frequency", metric.ReadFrequency),
-				zap.Float64("table_cost", metric.TableCost),
+				zap.Float64("table_read_cost", metric.TableReadCost),
 				zap.Error(err))
 			continue
 		}
 		sqlescape.MustFormatSQL(sql, "(%?, %?, %?, %?, %?)",
-			version, feedbackCategory, tableCostType, tbl.Meta().ID, json.RawMessage(metricBytes))
+			version, feedbackCategory, tableReadCost, tbl.Meta().ID, json.RawMessage(metricBytes))
 		// TODO check the txn record limit
 		if i%batchInsertSize == batchInsertSize-1 {
 			_, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())

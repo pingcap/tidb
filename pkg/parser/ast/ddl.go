@@ -14,9 +14,6 @@
 package ast
 
 import (
-	"fmt"
-	"strings"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -887,6 +884,10 @@ const (
 	ConstraintFulltext
 	ConstraintCheck
 	ConstraintVector
+	// ConstraintColumnar is used for columnar index.
+	// Vector index is also a kind of columnar index, but vector index is added before columnar index.
+	// So we keep vector index as a separate type for compatibility.
+	ConstraintColumnar
 )
 
 // Constraint is constraint for table definition.
@@ -961,6 +962,11 @@ func (n *Constraint) Restore(ctx *format.RestoreCtx) error {
 		return nil
 	case ConstraintVector:
 		ctx.WriteKeyWord("VECTOR INDEX")
+		if n.IfNotExists {
+			ctx.WriteKeyWord(" IF NOT EXISTS")
+		}
+	case ConstraintColumnar:
+		ctx.WriteKeyWord("COLUMNAR INDEX")
 		if n.IfNotExists {
 			ctx.WriteKeyWord(" IF NOT EXISTS")
 		}
@@ -1852,6 +1858,7 @@ const (
 	IndexKeyTypeSpatial
 	IndexKeyTypeFullText
 	IndexKeyTypeVector
+	IndexKeyTypeColumnar
 )
 
 // CreateIndexStmt is a statement to create an index.
@@ -1883,6 +1890,8 @@ func (n *CreateIndexStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("FULLTEXT ")
 	case IndexKeyTypeVector:
 		ctx.WriteKeyWord("VECTOR ")
+	case IndexKeyTypeColumnar:
+		ctx.WriteKeyWord("COLUMNAR ")
 	}
 	ctx.WriteKeyWord("INDEX ")
 	if n.IfNotExists {
@@ -2257,7 +2266,7 @@ type ResourceGroupOption struct {
 	Tp                ResourceUnitType
 	StrValue          string
 	UintValue         uint64
-	BoolValue         bool
+	Burstable         BurstableType
 	RunawayOptionList []*ResourceGroupRunawayOption
 	BackgroundOptions []*ResourceGroupBackgroundOption
 }
@@ -2268,6 +2277,7 @@ const (
 	// RU mode
 	ResourceRURate ResourceUnitType = iota
 	ResourcePriority
+	ResourceBurstable
 	// Raw mode
 	ResourceUnitCPU
 	ResourceUnitIOReadBandwidth
@@ -2275,8 +2285,17 @@ const (
 
 	// Options
 	ResourceBurstableOpiton
+	ResourceUnlimitedOption
 	ResourceGroupRunaway
 	ResourceGroupBackground
+)
+
+type BurstableType int
+
+const (
+	BurstableDisable BurstableType = iota
+	BurstableModerated
+	BurstableUnlimited
 )
 
 func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
@@ -2284,7 +2303,7 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 	case ResourceRURate:
 		ctx.WriteKeyWord("RU_PER_SEC ")
 		ctx.WritePlain("= ")
-		if n.BoolValue {
+		if n.Burstable == BurstableUnlimited {
 			ctx.WriteKeyWord("UNLIMITED")
 		} else {
 			ctx.WritePlainf("%d", n.UintValue)
@@ -2305,10 +2324,17 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("IO_WRITE_BANDWIDTH ")
 		ctx.WritePlain("= ")
 		ctx.WriteString(n.StrValue)
-	case ResourceBurstableOpiton:
+	case ResourceBurstable:
 		ctx.WriteKeyWord("BURSTABLE ")
 		ctx.WritePlain("= ")
-		ctx.WritePlain(strings.ToUpper(fmt.Sprintf("%v", n.BoolValue)))
+		switch n.Burstable {
+		case BurstableDisable:
+			ctx.WritePlain("OFF")
+		case BurstableModerated:
+			ctx.WritePlain("MODERATED")
+		case BurstableUnlimited:
+			ctx.WritePlain("UNLIMITED")
+		}
 	case ResourceGroupRunaway:
 		ctx.WritePlain("QUERY_LIMIT ")
 		ctx.WritePlain("= ")

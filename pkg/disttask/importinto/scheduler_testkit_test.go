@@ -17,9 +17,11 @@ package importinto_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -68,8 +70,8 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 			DisableTiKVImportMode: true,
 		},
 		Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
-		EligibleInstances: []*infosync.ServerInfo{{ID: "1"}},
-		ChunkMap:          map[int32][]importinto.Chunk{1: {{Path: "gs://test-load/1.csv"}}},
+		EligibleInstances: []*infosync.ServerInfo{{StaticServerInfo: infosync.StaticServerInfo{ID: "1"}}},
+		ChunkMap:          map[int32][]importer.Chunk{1: {{Path: "gs://test-load/1.csv"}}},
 	}
 	bs, err := logicalPlan.ToTaskMeta()
 	require.NoError(t, err)
@@ -86,7 +88,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	require.NoError(t, err)
 	taskMeta, err := json.Marshal(task)
 	require.NoError(t, err)
-	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", 0, taskMeta)
+	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, taskMeta)
 	require.NoError(t, err)
 	task.ID = taskID
 
@@ -144,6 +146,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	require.NoError(t, err)
 	task.Meta = bs
 	require.NoError(t, importer.StartJob(ctx, conn, jobID, importer.JobStepImporting))
+	task.State = proto.TaskStateReverting
 	task.Error = errors.New("met error")
 	require.NoError(t, ext.OnDone(ctx, d, task))
 	require.NoError(t, err)
@@ -160,6 +163,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	require.NoError(t, err)
 	task.Meta = bs
 	require.NoError(t, importer.StartJob(ctx, conn, jobID, importer.JobStepImporting))
+	task.State = proto.TaskStateReverting
 	task.Error = errors.New("cancelled by user")
 	require.NoError(t, ext.OnDone(ctx, d, task))
 	require.NoError(t, err)
@@ -169,6 +173,22 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 }
 
 func TestSchedulerExtGlobalSort(t *testing.T) {
+	host := "127.0.0.1"
+	port := uint16(4443)
+	opt := fakestorage.Options{
+		Scheme:     "http",
+		Host:       host,
+		Port:       port,
+		PublicHost: host,
+	}
+	gcsEndpoint := fmt.Sprintf("http://%s:%d/storage/v1/", host, port)
+	sortStorageURI := fmt.Sprintf("gs://sort-bucket/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
+	server, err := fakestorage.NewServerWithOptions(opt)
+	defer server.Stop()
+	require.NoError(t, err)
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sort-bucket"})
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "test-load"})
+
 	// Domain start scheduler manager automatically, we need to disable it as
 	// we test import task management in this case.
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
@@ -196,7 +216,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	logicalPlan := &importinto.LogicalPlan{
 		JobID: jobID,
 		Plan: importer.Plan{
-			Path:   "gs://test-load/*.csv",
+			Path:   fmt.Sprintf("gs://test-load/*.csv?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint),
 			Format: "csv",
 			DBName: "test",
 			TableInfo: &model.TableInfo{
@@ -204,12 +224,12 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 				State: model.StatePublic,
 			},
 			DisableTiKVImportMode: true,
-			CloudStorageURI:       "gs://sort-bucket",
+			CloudStorageURI:       sortStorageURI,
 			InImportInto:          true,
 		},
 		Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
-		EligibleInstances: []*infosync.ServerInfo{{ID: "1"}},
-		ChunkMap: map[int32][]importinto.Chunk{
+		EligibleInstances: []*infosync.ServerInfo{{StaticServerInfo: infosync.StaticServerInfo{ID: "1"}}},
+		ChunkMap: map[int32][]importer.Chunk{
 			1: {{Path: "gs://test-load/1.csv"}},
 			2: {{Path: "gs://test-load/2.csv"}},
 		},
@@ -229,7 +249,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	require.NoError(t, err)
 	taskMeta, err := json.Marshal(task)
 	require.NoError(t, err)
-	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", 0, taskMeta)
+	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(jobID), proto.ImportInto, 1, "", 0, proto.ExtraParams{}, taskMeta)
 	require.NoError(t, err)
 	task.ID = taskID
 

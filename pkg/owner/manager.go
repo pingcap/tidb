@@ -458,10 +458,8 @@ func (m *ownerManager) GetOwnerID(ctx context.Context) (string, error) {
 	return string(ownerID), errors.Trace(err)
 }
 
-func getOwnerInfo(ctx context.Context, etcdCli *clientv3.Client, ownerPath string) (string, []byte, OpType, int64, int64, error) {
-	var op OpType
+func getOwnerInfo(ctx context.Context, etcdCli *clientv3.Client, ownerPath string) (ownerKey string, ownerID []byte, op OpType, currRevision, _ int64, err error) {
 	var resp *clientv3.GetResponse
-	var err error
 	logger := logutil.BgLogger().With(zap.String("key", ownerPath))
 	for i := 0; i < 3; i++ {
 		if err = ctx.Err(); err != nil {
@@ -484,8 +482,6 @@ func getOwnerInfo(ctx context.Context, etcdCli *clientv3.Client, ownerPath strin
 	if len(resp.Kvs) == 0 {
 		return "", nil, op, 0, 0, concurrency.ErrElectionNoLeader
 	}
-
-	var ownerID []byte
 	ownerID, op = splitOwnerValues(resp.Kvs[0].Value)
 	logger.Info("get owner", zap.ByteString("owner key", resp.Kvs[0].Key),
 		zap.ByteString("ownerID", ownerID), zap.Stringer("op", op))
@@ -597,7 +593,7 @@ func (m *ownerManager) watchOwner(ctx context.Context, etcdSession *concurrency.
 			}
 			if resp.Canceled {
 				metrics.WatchOwnerCounter.WithLabelValues(m.prompt, metrics.Cancelled).Inc()
-				logger.Info("watch canceled, no owner")
+				logger.Info("watch canceled, no owner", zap.Error(resp.Err()))
 				return errors.Errorf("watch canceled, key: %v", key)
 			}
 

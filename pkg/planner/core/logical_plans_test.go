@@ -114,7 +114,7 @@ func createPlannerSuite() (s *plannerSuite) {
 	}
 	ctx.GetSessionVars().CurrentDB = "test"
 	do := domain.NewMockDomain()
-	if err := do.CreateStatsHandle(ctx, initStatsCtx); err != nil {
+	if err := do.CreateStatsHandle(context.Background(), initStatsCtx); err != nil {
 		panic(fmt.Sprintf("create mock context panic: %+v", err))
 	}
 	ctx.BindDomain(do)
@@ -1406,7 +1406,7 @@ func TestVisitInfo(t *testing.T) {
 		{
 			sql: `show create table test.ttt`,
 			ans: []visitInfo{
-				{mysql.AllPrivMask, "test", "ttt", "", nil, false, nil, false},
+				{mysql.AllPrivMask & (^mysql.CreateTMPTablePriv), "test", "ttt", "", nil, false, nil, false},
 			},
 		},
 		{

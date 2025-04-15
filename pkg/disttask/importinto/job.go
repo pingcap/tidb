@@ -28,8 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/util"
@@ -39,12 +37,12 @@ import (
 // SubmitStandaloneTask submits a task to the distribute framework that only runs on the current node.
 // when import from server-disk, pass engine checkpoints too, as scheduler might run on another
 // node where we can't access the data files.
-func SubmitStandaloneTask(ctx context.Context, plan *importer.Plan, stmt string, ecp map[int32]*checkpoints.EngineCheckpoint) (int64, *proto.TaskBase, error) {
+func SubmitStandaloneTask(ctx context.Context, plan *importer.Plan, stmt string, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
 	serverInfo, err := infosync.GetServerInfo()
 	if err != nil {
 		return 0, nil, err
 	}
-	return doSubmitTask(ctx, plan, stmt, serverInfo, toChunkMap(ecp))
+	return doSubmitTask(ctx, plan, stmt, serverInfo, chunkMap)
 }
 
 // SubmitTask submits a task to the distribute framework that runs on all managed nodes.
@@ -52,7 +50,7 @@ func SubmitTask(ctx context.Context, plan *importer.Plan, stmt string) (int64, *
 	return doSubmitTask(ctx, plan, stmt, nil, nil)
 }
 
-func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instance *infosync.ServerInfo, chunkMap map[int32][]Chunk) (int64, *proto.TaskBase, error) {
+func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instance *infosync.ServerInfo, chunkMap map[int32][]importer.Chunk) (int64, *proto.TaskBase, error) {
 	var instances []*infosync.ServerInfo
 	if instance != nil {
 		instances = append(instances, instance)
@@ -106,8 +104,6 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 		return 0, nil, err
 	}
 
-	metrics.UpdateMetricsForAddTask(task)
-
 	logutil.BgLogger().Info("job submitted to task queue",
 		zap.Int64("job-id", jobID),
 		zap.Int64("task-id", task.ID),
@@ -118,50 +114,64 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 	return jobID, task, nil
 }
 
-// GetTaskImportedRows gets the number of imported rows of a job.
-// Note: for finished job, we can get the number of imported rows from task meta.
-func GetTaskImportedRows(ctx context.Context, jobID int64) (uint64, error) {
+// RuntimeInfo is the runtime information of the task for corresponding job.
+type RuntimeInfo struct {
+	Status     proto.TaskState
+	ImportRows uint64
+	ErrorMsg   string
+}
+
+// GetRuntimeInfoForJob get the corresponding DXF task runtime info for the job.
+func GetRuntimeInfoForJob(ctx context.Context, jobID int64) (*RuntimeInfo, error) {
 	taskManager, err := storage.GetTaskManager()
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	taskKey := TaskKey(jobID)
 	task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	taskMeta := TaskMeta{}
 	if err = json.Unmarshal(task.Meta, &taskMeta); err != nil {
-		return 0, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	var importedRows uint64
 	if taskMeta.Plan.CloudStorageURI == "" {
 		subtasks, err := taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepImport)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		for _, subtask := range subtasks {
 			var subtaskMeta ImportStepMeta
 			if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
-				return 0, errors.Trace(err2)
+				return nil, errors.Trace(err2)
 			}
 			importedRows += subtaskMeta.Result.LoadedRowCnt
 		}
 	} else {
 		subtasks, err := taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepWriteAndIngest)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		for _, subtask := range subtasks {
 			var subtaskMeta WriteIngestStepMeta
 			if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
-				return 0, errors.Trace(err2)
+				return nil, errors.Trace(err2)
 			}
 			importedRows += subtaskMeta.Result.LoadedRowCnt
 		}
 	}
-	return importedRows, nil
+	var errMsg string
+	if task.Error != nil {
+		errMsg = task.Error.Error()
+	}
+	return &RuntimeInfo{
+		Status:     task.State,
+		ImportRows: importedRows,
+		ErrorMsg:   errMsg,
+	}, nil
 }
 
 // TaskKey returns the task key for a job.

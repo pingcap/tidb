@@ -276,7 +276,16 @@ func (p *PhysicalTableScan) ToPB(ctx *base.BuildPBContext, storeType kv.StoreTyp
 
 	if p.AnnIndexExtra != nil && p.AnnIndexExtra.PushDownQueryInfo != nil && p.AnnIndexExtra.PushDownQueryInfo.TopK != math.MaxUint32 {
 		annQueryCopy := *p.AnnIndexExtra.PushDownQueryInfo
-		tsExec.AnnQuery = &annQueryCopy
+		tsExec.UsedColumnarIndexes = append(tsExec.UsedColumnarIndexes, &tipb.ColumnarIndexInfo{
+			IndexType: tipb.ColumnarIndexType_TypeVector,
+			Index: &tipb.ColumnarIndexInfo_AnnQueryInfo{
+				AnnQueryInfo: &annQueryCopy,
+			},
+		})
+	}
+
+	if len(p.UsedColumnarIndexes) > 0 {
+		tsExec.UsedColumnarIndexes = append(tsExec.UsedColumnarIndexes, p.UsedColumnarIndexes...)
 	}
 
 	var err error
@@ -321,7 +330,16 @@ func (p *PhysicalTableScan) partitionTableScanToPBForFlash(ctx *base.BuildPBCont
 
 	if p.AnnIndexExtra != nil && p.AnnIndexExtra.PushDownQueryInfo != nil && p.AnnIndexExtra.PushDownQueryInfo.TopK != math.MaxUint32 {
 		annQueryCopy := *p.AnnIndexExtra.PushDownQueryInfo
-		ptsExec.AnnQuery = &annQueryCopy
+		ptsExec.UsedColumnarIndexes = append(ptsExec.UsedColumnarIndexes, &tipb.ColumnarIndexInfo{
+			IndexType: tipb.ColumnarIndexType_TypeVector,
+			Index: &tipb.ColumnarIndexInfo_AnnQueryInfo{
+				AnnQueryInfo: &annQueryCopy,
+			},
+		})
+	}
+
+	if len(p.UsedColumnarIndexes) > 0 {
+		ptsExec.UsedColumnarIndexes = append(ptsExec.UsedColumnarIndexes, p.UsedColumnarIndexes...)
 	}
 
 	executorID := p.ExplainID().String()

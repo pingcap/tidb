@@ -237,6 +237,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromPlanCache(ctx, sctx, false)
 		case infoschema.ClusterTableTiDBPlanCache:
 			err = e.setDataFromPlanCache(ctx, sctx, true)
+		case infoschema.TableKeyspaceMeta:
+			err = e.setDataForKeyspaceMeta(sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -682,12 +684,14 @@ func (e *memtableRetriever) setDataFromOneTable(
 
 		var rowCount, avgRowLength, dataLength, indexLength uint64
 		if useStatsCache {
-			if table.GetPartitionInfo() == nil {
-				err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
-				if err != nil {
-					return rows, err
-				}
-			} else {
+			// Even for partitioned tables, we must update the stats cache for the main table itself.
+			// This is necessary because the global index length from the table also needs to be included.
+			// For further details, see: https://github.com/pingcap/tidb/issues/54173
+			err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
+			if err != nil {
+				return rows, err
+			}
+			if table.GetPartitionInfo() != nil {
 				// needs to update all partitions for partition table.
 				for _, pi := range table.GetPartitionInfo().Definitions {
 					err := cache.TableRowStatsCache.UpdateByID(sctx, pi.ID)
@@ -725,6 +729,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 			shardingInfo,          // TIDB_ROW_ID_SHARDING_INFO
 			pkType,                // TIDB_PK_TYPE
 			policyName,            // TIDB_PLACEMENT_POLICY_NAME
+			table.Mode.String(),   // TIDB_TABLE_MODE
 		)
 		rows = append(rows, record)
 		e.recordMemoryConsume(record)
@@ -755,6 +760,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 			nil,                   // TIDB_ROW_ID_SHARDING_INFO
 			pkType,                // TIDB_PK_TYPE
 			nil,                   // TIDB_PLACEMENT_POLICY_NAME
+			nil,                   // TIDB_TABLE_MODE
 		)
 		rows = append(rows, record)
 		e.recordMemoryConsume(record)
@@ -859,6 +865,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 					nil,                   // TIDB_ROW_ID_SHARDING_INFO
 					nil,                   // TIDB_PK_TYPE
 					nil,                   // TIDB_PLACEMENT_POLICY_NAME
+					nil,                   // TIDB_TABLE_MODE
 				)
 				rows = append(rows, record)
 				e.recordMemoryConsume(record)
@@ -1078,6 +1085,32 @@ func (e *hugeMemTableRetriever) setDataForColumnsWithOneTable(
 	return len(e.rows) >= e.batch
 }
 
+// Ref link https://github.com/mysql/mysql-server/blob/6b6d3ed3d5c6591b446276184642d7d0504ecc86/sql/dd/dd_table.cc#L411
+func getNumericPrecision(ft *types.FieldType, colLen int) int {
+	switch ft.GetType() {
+	case mysql.TypeTiny:
+		return 3
+	case mysql.TypeShort:
+		return 5
+	case mysql.TypeInt24:
+		// It's a MySQL bug, ref link https://bugs.mysql.com/bug.php?id=69042
+		if mysql.HasUnsignedFlag(ft.GetFlag()) {
+			return 8
+		}
+		return 7
+	case mysql.TypeLong:
+		return 10
+	case mysql.TypeLonglong:
+		if mysql.HasUnsignedFlag(ft.GetFlag()) {
+			return 20
+		}
+		return 19
+	case mysql.TypeBit, mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
+		return colLen
+	}
+	return 0
+}
+
 func (e *hugeMemTableRetriever) dataForColumnsInTable(
 	ctx context.Context,
 	sctx sessionctx.Context,
@@ -1164,7 +1197,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(
 		} else if types.IsTypeFractionable(ft.GetType()) {
 			datetimePrecision = decimal
 		} else if types.IsTypeNumeric(ft.GetType()) {
-			numericPrecision = colLen
+			numericPrecision = getNumericPrecision(ft, colLen)
 			if ft.GetType() != mysql.TypeFloat && ft.GetType() != mysql.TypeDouble {
 				numericScale = decimal
 			} else if decimal != -1 {
@@ -1219,6 +1252,7 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(
 			strings.ToLower(privileges.PrivToString(priv, mysql.AllColumnPrivs, mysql.Priv2Str)), // PRIVILEGES
 			columnDesc.Comment,      // COLUMN_COMMENT
 			col.GeneratedExprString, // GENERATION_EXPRESSION
+			nil,                     // SRS_ID
 		)
 		e.rows = append(e.rows, record)
 	}
@@ -2575,10 +2609,8 @@ func dataForAnalyzeStatusHelper(ctx context.Context, e *memtableRetriever, sctx 
 func getRemainDurationForAnalyzeStatusHelper(
 	ctx context.Context,
 	sctx sessionctx.Context, startTime *types.Time,
-	dbName, tableName, partitionName string, processedRows int64) (*time.Duration, float64, float64, error) {
-	var remainingDuration = time.Duration(0)
-	var percentage = 0.0
-	var totalCnt = float64(0)
+	dbName, tableName, partitionName string, processedRows int64) (_ *time.Duration, percentage, totalCnt float64, err error) {
+	remainingDuration := time.Duration(0)
 	if startTime != nil {
 		start, err := startTime.GoTime(time.UTC)
 		if err != nil {
@@ -3818,9 +3850,10 @@ func (e *memtableRetriever) setDataFromRunawayWatches(sctx sessionctx.Context) e
 
 // used in resource_groups
 const (
-	burstableStr      = "YES"
-	burstdisableStr   = "NO"
-	unlimitedFillRate = "UNLIMITED"
+	burstableModeratedStr = "YES(MODERATED)"
+	burstableUnlimitedStr = "YES(UNLIMITED)"
+	burstdisableStr       = "NO"
+	unlimitedFillRate     = "UNLIMITED"
 )
 
 func (e *memtableRetriever) setDataFromResourceGroups() error {
@@ -3903,8 +3936,12 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 
 		switch group.Mode {
 		case rmpb.GroupMode_RUMode:
-			if group.RUSettings.RU.Settings.BurstLimit < 0 {
-				burstable = burstableStr
+			// When the burst limit is less than 0, it means burstable or unlimited.
+			switch group.RUSettings.RU.Settings.BurstLimit {
+			case -1:
+				burstable = burstableUnlimitedStr
+			case -2:
+				burstable = burstableModeratedStr
 			}
 			row := types.MakeDatums(
 				group.Name,
@@ -4056,6 +4093,43 @@ func (e *memtableRetriever) setDataFromPlanCache(_ context.Context, sctx session
 
 	e.rows = rows
 	return nil
+}
+
+func (e *memtableRetriever) setDataForKeyspaceMeta(sctx sessionctx.Context) (err error) {
+	meta := sctx.GetStore().GetCodec().GetKeyspaceMeta()
+	var (
+		keyspaceName string
+		keyspaceID   string
+		keyspaceCfg  []byte
+	)
+
+	if meta != nil {
+		keyspaceName = meta.Name
+		keyspaceID = fmt.Sprintf("%d", meta.Id)
+		if len(meta.Config) > 0 {
+			keyspaceCfg, err = json.Marshal(meta.Config)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	row := make([]types.Datum, 3)
+	// Keyspace name
+	row[0] = types.NewStringDatum(keyspaceName)
+	// Keyspace ID
+	row[1] = types.NewStringDatum(keyspaceID)
+	// Keyspace config
+	var bj types.BinaryJSON
+	if len(keyspaceCfg) > 0 {
+		err = bj.UnmarshalJSON(keyspaceCfg)
+		if err != nil {
+			return err
+		}
+	}
+	row[2] = types.NewJSONDatum(bj)
+	e.rows = [][]types.Datum{row}
+	return
 }
 
 func checkRule(rule *label.Rule) (dbName, tableName string, partitionName string, err error) {

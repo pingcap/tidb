@@ -8,6 +8,7 @@ import (
 	goerrors "errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path"
 	"strings"
@@ -109,8 +110,9 @@ type GCSStorage struct {
 	clientCnt int64
 	clientOps []option.ClientOption
 
-	handles []*storage.BucketHandle
-	clients []*storage.Client
+	handles      []*storage.BucketHandle
+	clients      []*storage.Client
+	clientCancel context.CancelFunc
 }
 
 // CopyFrom implements Copier.
@@ -239,7 +241,7 @@ func (s *GCSStorage) Open(ctx context.Context, path string, o *ReaderOption) (Ex
 
 	attrs, err := handle.Attrs(ctx)
 	if err != nil {
-		if errors.Cause(err) == storage.ErrObjectNotExist { // nolint:errorlint
+		if goerrors.Is(err, storage.ErrObjectNotExist) {
 			return nil, errors.Annotatef(err,
 				"the object doesn't exist, file info: input.bucket='%s', input.key='%s'",
 				s.gcs.Bucket, path)
@@ -256,7 +258,7 @@ func (s *GCSStorage) Open(ctx context.Context, path string, o *ReaderOption) (Ex
 			pos = *o.StartOffset
 		}
 		if o.EndOffset != nil {
-			endPos = *o.EndOffset
+			endPos = min(endPos, *o.EndOffset)
 		}
 		prefetchSize = o.PrefetchSize
 	}
@@ -365,6 +367,7 @@ func (s *GCSStorage) Rename(ctx context.Context, oldFileName, newFileName string
 
 // Close implements ExternalStorage interface.
 func (s *GCSStorage) Close() {
+	s.clientCancel()
 	for _, client := range s.clients {
 		if err := client.Close(); err != nil {
 			log.Warn("failed to close gcs client", zap.Error(err))
@@ -446,37 +449,71 @@ skipHandleCred:
 	return ret, nil
 }
 
-// Reset resets the GCS storage.
+// Reset resets the GCS storage. Reset should not be used concurrently with
+// Close.
 func (s *GCSStorage) Reset(ctx context.Context) error {
 	logutil.Logger(ctx).Info("resetting gcs storage")
 
-	for _, client := range s.clients {
-		_ = client.Close()
-	}
+	s.cancelAndCloseGCSClients()
 
-	s.clients = make([]*storage.Client, gcsClientCnt)
-	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
-	for i := range s.clients {
-		eg.Go(func() error {
-			client, err := storage.NewClient(egCtx, s.clientOps...)
+	clientCtx, clientCancel := context.WithCancel(context.Background())
+	s.clients = make([]*storage.Client, 0, gcsClientCnt)
+	wg := util.WaitGroupWrapper{}
+	cliCh := make(chan *storage.Client)
+	wg.RunWithLog(func() {
+		for range gcsClientCnt {
+			select {
+			case cli := <-cliCh:
+				s.clients = append(s.clients, cli)
+			case <-ctx.Done():
+				clientCancel()
+				return
+			case <-clientCtx.Done():
+				return
+			}
+		}
+	})
+	firstErr := atomic.NewError(nil)
+	for range gcsClientCnt {
+		wg.RunWithLog(func() {
+			client, err := storage.NewClient(clientCtx, s.clientOps...)
 			if err != nil {
-				return errors.Trace(err)
+				firstErr.CompareAndSwap(nil, err)
+				clientCancel()
+				return
 			}
 			client.SetRetry(storage.WithErrorFunc(shouldRetry), storage.WithPolicy(storage.RetryAlways))
-			s.clients[i] = client
-			return nil
+			select {
+			case cliCh <- client:
+			case <-clientCtx.Done():
+			}
 		})
 	}
-	err := eg.Wait()
-	if err != nil {
+	wg.Wait()
+	if err := firstErr.Load(); err != nil {
+		s.cancelAndCloseGCSClients()
 		return errors.Trace(err)
 	}
 
+	s.clientCancel = clientCancel
 	s.handles = make([]*storage.BucketHandle, gcsClientCnt)
 	for i := range s.handles {
 		s.handles[i] = s.clients[i].Bucket(s.gcs.Bucket)
 	}
 	return nil
+}
+
+func (s *GCSStorage) cancelAndCloseGCSClients() {
+	if s.clientCancel != nil {
+		s.clientCancel()
+		s.clientCancel = nil
+	}
+
+	for _, client := range s.clients {
+		if client != nil {
+			_ = client.Close()
+		}
+	}
 }
 
 func shouldRetry(err error) bool {
@@ -504,11 +541,22 @@ func shouldRetry(err error) bool {
 		}
 	}
 
+	// workaround for https://github.com/googleapis/google-cloud-go/issues/7090
+	// seems it's a bug of golang net/http: https://github.com/golang/go/issues/53472
+	if e := (&url.Error{}); goerrors.As(err, &e) {
+		if goerrors.Is(e.Err, io.EOF) {
+			return true
+		}
+	}
+
 	errMsg := err.Error()
 	// workaround for strange unknown errors
 	retryableErrMsg := []string{
 		"http2: client connection force closed via ClientConn.Close",
 		"broken pipe",
+		"http2: client connection lost",
+		// See https://stackoverflow.com/questions/45209168/http2-server-sent-goaway-and-closed-the-connection-laststreamid-1999 for details.
+		"http2: server sent GOAWAY",
 	}
 
 	for _, msg := range retryableErrMsg {
@@ -534,6 +582,7 @@ type gcsObjectReader struct {
 	name      string
 	objHandle *storage.ObjectHandle
 	reader    io.ReadCloser
+	// [pos, endPos) is the range of the file to read.
 	pos       int64
 	endPos    int64
 	totalSize int64
@@ -548,10 +597,7 @@ type gcsObjectReader struct {
 // Read implement the io.Reader interface.
 func (r *gcsObjectReader) Read(p []byte) (n int, err error) {
 	if r.reader == nil {
-		length := int64(-1)
-		if r.endPos != r.totalSize {
-			length = r.endPos - r.pos
-		}
+		length := r.endPos - r.pos
 		rc, err := r.objHandle.NewRangeReader(r.ctx, r.pos, length)
 		if err != nil {
 			return 0, errors.Annotatef(err,
@@ -560,7 +606,7 @@ func (r *gcsObjectReader) Read(p []byte) (n int, err error) {
 		}
 		r.reader = rc
 		if r.prefetchSize > 0 {
-			r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+			r.reader = prefetch.NewReader(r.reader, length, r.prefetchSize)
 		}
 	}
 	n, err = r.reader.Read(p)
@@ -620,7 +666,7 @@ func (r *gcsObjectReader) Seek(offset int64, whence int) (int64, error) {
 	}
 	r.reader = rc
 	if r.prefetchSize > 0 {
-		r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+		r.reader = prefetch.NewReader(r.reader, r.endPos-r.pos, r.prefetchSize)
 	}
 
 	return realOffset, nil
