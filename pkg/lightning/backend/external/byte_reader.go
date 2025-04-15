@@ -293,6 +293,7 @@ func (r *byteReader) reload() error {
 		defer func() {
 			r.logger.Info("reload reader time",
 				zap.Duration("duration", time.Since(ts)),
+				zap.String("fileName", r.concurrentReader.filename),
 			)
 		}()
 		r.concurrentReader.reloadCnt++
