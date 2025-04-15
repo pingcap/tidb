@@ -127,9 +127,9 @@ func readAllData(
 	}
 
 	for fileIdx := range dataFiles {
-		if skipOpen[fileIdx] {
-			continue
-		}
+		//if skipOpen[fileIdx] {
+		//	continue
+		//}
 		select {
 		case <-egCtx.Done():
 			return eg.Wait()
