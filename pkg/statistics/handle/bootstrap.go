@@ -68,21 +68,26 @@ func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 		physicalID = row.GetInt64(1)
 		maxPhysicalID = max(physicalID, maxPhysicalID)
 		newHistColl := *statistics.NewHistColl(physicalID, row.GetInt64(3), row.GetInt64(2), 4, 4)
+		// During the initialization phase, we need to initialize LastAnalyzeVersion with the snapshot,
+		// which ensures that we don't duplicate the auto-analyze of a particular type of table.
+		// When the predicate columns feature is turned on, if a table has neither predicate columns nor indexes,
+		// then auto-analyze will only analyze the _row_id and refresh stats_meta,
+		// but since we don't have any histograms or topn's created for _row_id at the moment.
+		// So if we don't initialize LastAnalyzeVersion with the snapshot here,
+		// it will stay at 0 and auto-analyze won't be able to detect that the table has been analyzed.
+		// But in the future, we maybe will create some records for _row_id, see:
+		// https://github.com/pingcap/tidb/issues/51098
 		snapshot := row.GetUint64(4)
+		lastAnalyzeVersion, lastStatsHistUpdateVersion := snapshot, snapshot
+		if !row.IsNull(5) {
+			lastStatsHistUpdateVersion = max(lastStatsHistUpdateVersion, row.GetUint64(5))
+		}
 		tbl := &statistics.Table{
 			HistColl:              newHistColl,
 			Version:               row.GetUint64(0),
 			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMapWithoutSize(),
-			// During the initialization phase, we need to initialize LastAnalyzeVersion with the snapshot,
-			// which ensures that we don't duplicate the auto-analyze of a particular type of table.
-			// When the predicate columns feature is turned on, if a table has neither predicate columns nor indexes,
-			// then auto-analyze will only analyze the _row_id and refresh stats_meta,
-			// but since we don't have any histograms or topn's created for _row_id at the moment.
-			// So if we don't initialize LastAnalyzeVersion with the snapshot here,
-			// it will stay at 0 and auto-analyze won't be able to detect that the table has been analyzed.
-			// But in the future, we maybe will create some records for _row_id, see:
-			// https://github.com/pingcap/tidb/issues/51098
-			LastAnalyzeVersion: snapshot,
+			LastAnalyzeVersion:    lastAnalyzeVersion,
+			LastStatsHistVersion:  lastStatsHistUpdateVersion,
 		}
 		cache.Put(physicalID, tbl) // put this table again since it is updated
 	}
@@ -95,7 +100,7 @@ func (*Handle) initStatsMeta4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 
 func (h *Handle) initStatsMeta(ctx context.Context) (statstypes.StatsCache, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
-	sql := "select HIGH_PRIORITY version, table_id, modify_count, count, snapshot from mysql.stats_meta"
+	sql := "select HIGH_PRIORITY version, table_id, modify_count, count, snapshot, last_stats_histograms_version from mysql.stats_meta"
 	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -599,17 +604,11 @@ func (h *Handle) initStatsBuckets(cache statstypes.StatsCache, totalMemory uint6
 	if IsFullCacheFunc(cache, totalMemory) {
 		return nil
 	}
-	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		err := h.initStatsBucketsConcurrently(cache, totalMemory, initstats.GetConcurrency())
-		if err != nil {
-			return errors.Trace(err)
-		}
-	} else {
-		err := h.initStatsBucketsConcurrently(cache, totalMemory, 1)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	err := h.initStatsBucketsConcurrently(cache, totalMemory, initstats.GetConcurrency())
+	if err != nil {
+		return errors.Trace(err)
 	}
+
 	tables := cache.Values()
 	for _, table := range tables {
 		table.CalcPreScalar()
@@ -750,25 +749,17 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 	}
 	statslogutil.StatsLogger().Info("complete to load the meta")
 	initstats.InitStatsPercentage.Store(initStatsPercentageInterval)
-	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		err = h.initStatsHistogramsConcurrently(is, cache, totalMemory, initstats.GetConcurrency())
-	} else {
-		err = h.initStatsHistogramsConcurrently(is, cache, totalMemory, 1)
-	}
-	statslogutil.StatsLogger().Info("complete to load the histogram")
+	err = h.initStatsHistogramsConcurrently(is, cache, totalMemory, initstats.GetConcurrency())
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		err = h.initStatsTopNConcurrently(cache, totalMemory, initstats.GetConcurrency())
-	} else {
-		err = h.initStatsTopNConcurrently(cache, totalMemory, 1)
-	}
-	initstats.InitStatsPercentage.Store(initStatsPercentageInterval * 2)
-	statslogutil.StatsLogger().Info("complete to load the topn")
+	statslogutil.StatsLogger().Info("complete to load the histogram")
+	err = h.initStatsTopNConcurrently(cache, totalMemory, initstats.GetConcurrency())
 	if err != nil {
 		return err
 	}
+	initstats.InitStatsPercentage.Store(initStatsPercentageInterval * 2)
+	statslogutil.StatsLogger().Info("complete to load the topn")
 	if loadFMSketch {
 		err = h.initStatsFMSketch(cache)
 		if err != nil {
