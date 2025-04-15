@@ -138,28 +138,17 @@ func TestExistedTables(t *testing.T) {
 	sqlTmp := strings.ReplaceAll(tmp, "'", "''")
 	executor.ResetGlobalBRIEQueueForTest()
 	tk.MustExec("use test;")
-<<<<<<< HEAD
 	for i := 0; i < 5; i++ {
-=======
-	for i := 0; i < 10; i++ {
->>>>>>> f47130249bb (br: Add pre-check of duplicate table in the downstream (#55044))
 		tableName := fmt.Sprintf("foo%d", i)
 		tk.MustExec(fmt.Sprintf("create table %s(pk int primary key auto_increment, v varchar(255));", tableName))
 		tk.MustExec(fmt.Sprintf("insert into %s(v) values %s;", tableName, strings.TrimSuffix(strings.Repeat("('hello, world'),", 100), ",")))
 	}
 
-<<<<<<< HEAD
 	// full backup
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		backupQuery := fmt.Sprintf("BACKUP DATABASE * TO 'local://%s/full'", sqlTmp)
-=======
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		backupQuery := fmt.Sprintf("BACKUP DATABASE * TO 'local://%s'", sqlTmp)
->>>>>>> f47130249bb (br: Add pre-check of duplicate table in the downstream (#55044))
 		_ = tk.MustQuery(backupQuery)
 	}()
 	select {
@@ -171,11 +160,7 @@ func TestExistedTables(t *testing.T) {
 	done = make(chan struct{})
 	go func() {
 		defer close(done)
-<<<<<<< HEAD
 		restoreQuery := fmt.Sprintf("RESTORE DATABASE * FROM 'local://%s/full'", sqlTmp)
-=======
-		restoreQuery := fmt.Sprintf("RESTORE DATABASE * FROM 'local://%s'", sqlTmp)
->>>>>>> f47130249bb (br: Add pre-check of duplicate table in the downstream (#55044))
 		res, err := tk.Exec(restoreQuery)
 		require.NoError(t, err)
 
@@ -188,7 +173,6 @@ func TestExistedTables(t *testing.T) {
 	case <-done:
 	}
 
-<<<<<<< HEAD
 	// db level backup
 	done = make(chan struct{})
 	go func() {
@@ -363,9 +347,6 @@ func TestExistedTablesOfIncremental_2(t *testing.T) {
 	_ = tk.MustQuery(restoreIncrementalQuery)
 
 	for i := 0; i < 5; i++ {
-=======
-	for i := 0; i < 10; i++ {
->>>>>>> f47130249bb (br: Add pre-check of duplicate table in the downstream (#55044))
 		tableName := fmt.Sprintf("foo%d", i)
 		tk.MustExec(fmt.Sprintf("drop table %s;", tableName))
 	}
