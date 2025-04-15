@@ -3835,13 +3835,32 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	}
 	l := sel.LockInfo
 	if l != nil && l.LockType != ast.SelectLockNone {
-		for _, tName := range l.Tables {
-			// CTE has no *model.HintedTable, we need to skip it.
-			tNameW := b.resolveCtx.GetTableName(tName)
-			if tNameW == nil {
+		var tableList []*ast.TableName
+		var isLockTables bool
+		if len(l.Tables) == 0 {
+			nodeW := resolve.NewNodeWWithCtx(sel.From, b.resolveCtx)
+			tableList = ExtractTableList(nodeW, false)
+		} else {
+			tableList = l.Tables
+			isLockTables = true
+		}
+		for _, t := range tableList {
+			dbName := t.Schema.L
+			if dbName == "" {
+				dbName = b.ctx.GetSessionVars().CurrentDB
+			}
+			tw := b.resolveCtx.GetTableName(t)
+			if tw == nil {
 				continue
 			}
-			b.ctx.GetSessionVars().StmtCtx.LockTableIDs[tNameW.TableInfo.ID] = struct{}{}
+			if isLockTables {
+				b.ctx.GetSessionVars().StmtCtx.LockTableIDs[tw.TableInfo.ID] = struct{}{}
+			}
+			var authErr error
+			if user := b.ctx.GetSessionVars().User; user != nil {
+				authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT with locking clause", user.AuthUsername, user.AuthHostname, tw.Name.L)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv|mysql.UpdatePriv|mysql.LockTablesPriv, dbName, tw.Name.L, "", authErr)
 		}
 		p, err = b.buildSelectLock(p, l)
 		if err != nil {
