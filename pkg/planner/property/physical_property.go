@@ -93,8 +93,6 @@ type MPPPartitionColumn struct {
 	CollateID int32
 }
 
-<<<<<<< HEAD
-=======
 // ResolveIndices resolve index for MPPPartitionColumn
 func (partitionCol *MPPPartitionColumn) ResolveIndices(schema *expression.Schema) (*MPPPartitionColumn, error) {
 	newColExpr, err := partitionCol.Col.ResolveIndices(schema)
@@ -108,15 +106,6 @@ func (partitionCol *MPPPartitionColumn) ResolveIndices(schema *expression.Schema
 	}, nil
 }
 
-// Clone makes a copy of MPPPartitionColumn.
-func (partitionCol *MPPPartitionColumn) Clone() *MPPPartitionColumn {
-	return &MPPPartitionColumn{
-		Col:       partitionCol.Col.Clone().(*expression.Column),
-		CollateID: partitionCol.CollateID,
-	}
-}
-
->>>>>>> 43d47e4e1d7 (planner: fix bug in `PhysicalExchangeSender::ResolveIndicesItself` (#60520))
 func (partitionCol *MPPPartitionColumn) hashCode() []byte {
 	hashcode := partitionCol.Col.HashCode()
 	if partitionCol.CollateID < 0 {
