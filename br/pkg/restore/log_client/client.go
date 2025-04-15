@@ -1717,7 +1717,6 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 	return eg.Wait()
 }
 
-<<<<<<< HEAD
 type LogFilesIterWithSplitHelper struct {
 	iter   LogIter
 	helper *logsplit.LogSplitHelper
@@ -1765,7 +1764,8 @@ func (splitIter *LogFilesIterWithSplitHelper) TryNext(ctx context.Context) iter.
 	res := iter.Emit(splitIter.buffer[splitIter.next])
 	splitIter.next += 1
 	return res
-=======
+}
+
 func PutRawKvWithRetry(ctx context.Context, client *rawkv.RawKVBatchClient, key, value []byte, originTs uint64) error {
 	err := utils.WithRetry(ctx, func() error {
 		return client.Put(ctx, key, value, originTs)
@@ -1774,5 +1774,4 @@ func PutRawKvWithRetry(ctx context.Context, client *rawkv.RawKVBatchClient, key,
 		return errors.Errorf("failed to put raw kv after retry")
 	}
 	return nil
->>>>>>> 3a378c8e384 (br: add retry for raw kv client put (#58963))
 }
