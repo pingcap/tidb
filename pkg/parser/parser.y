@@ -150,6 +150,7 @@ import (
 	from              "FROM"
 	fulltext          "FULLTEXT"
 	generated         "GENERATED"
+	geometryType      "GEOMETRY"
 	grant             "GRANT"
 	group             "GROUP"
 	groups            "GROUPS"
@@ -630,6 +631,7 @@ import (
 	sqlTsiSecond          "SQL_TSI_SECOND"
 	sqlTsiWeek            "SQL_TSI_WEEK"
 	sqlTsiYear            "SQL_TSI_YEAR"
+	srid		      "SRID"
 	start                 "START"
 	statsAutoRecalc       "STATS_AUTO_RECALC"
 	statsColChoice        "STATS_COL_CHOICE"
@@ -3772,6 +3774,10 @@ ColumnOption:
 |	"AUTO_RANDOM" AutoRandomOpt
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionAutoRandom, AutoRandOpt: $2.(ast.AutoRandomOption)}
+	}
+|	"SRID" NUM
+	{
+		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionSrid, Srid: uint32($2.(int64))}
 	}
 
 AutoRandomOpt:
@@ -7197,6 +7203,7 @@ UnReservedKeyword:
 |	"PASSWORD_LOCK_TIME"
 |	"DIGEST"
 |	"REUSE" %prec lowerThanEq
+|	"SRID"
 |	"DECLARE"
 |	"HANDLER"
 |	"FOUND"
@@ -9105,6 +9112,14 @@ CastType:
 		tp := types.NewFieldType(mysql.TypeTiDBVectorFloat32)
 		tp.SetFlen($3.(int))
 		tp.SetDecimal(0)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		$$ = tp
+	}
+|	"GEOMETRY"
+	{
+		tp := types.NewFieldType(mysql.TypeGeometry)
+		tp.AddFlag(mysql.BinaryFlag)
 		tp.SetCharset(charset.CharsetBin)
 		tp.SetCollate(charset.CollationBin)
 		$$ = tp
@@ -13380,6 +13395,14 @@ StringType:
 		tp := types.NewFieldType(mysql.TypeTiDBVectorFloat32)
 		tp.SetFlen($3.(int))
 		tp.SetDecimal(0)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		$$ = tp
+	}
+|	"GEOMETRY"
+	{
+		tp := types.NewFieldType(mysql.TypeGeometry)
+		tp.AddFlag(mysql.BinaryFlag)
 		tp.SetCharset(charset.CharsetBin)
 		tp.SetCollate(charset.CollationBin)
 		$$ = tp
