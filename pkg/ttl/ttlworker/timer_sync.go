@@ -415,7 +415,7 @@ func getTTLTableStatus(ctx context.Context, se session.Session, tblInfo *model.T
 		return nil, nil
 	}
 
-	return cache.RowToTableStatus(se, rows[0])
+	return cache.RowToTableStatus(se.GetSessionVars().Location(), rows[0])
 }
 
 // getTTLSchedulePolicy returns the timer's schedule policy and expression for a TTL job

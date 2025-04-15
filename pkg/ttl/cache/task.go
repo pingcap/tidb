@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -122,9 +121,8 @@ type TTLTaskState struct {
 }
 
 // RowToTTLTask converts a row into TTL task
-func RowToTTLTask(se session.Session, row chunk.Row) (*TTLTask, error) {
+func RowToTTLTask(timeZone *time.Location, row chunk.Row) (*TTLTask, error) {
 	var err error
-	timeZone := se.GetSessionVars().Location()
 
 	task := &TTLTask{
 		JobID:   row.GetString(0),

@@ -567,7 +567,7 @@ func TestSubmitJob(t *testing.T) {
 	sql, args := cache.SelectFromTTLTableStatusWithID(physicalID)
 	rows, err := se.ExecuteSQL(ctx, sql, args...)
 	require.NoError(t, err)
-	tableStatus, err := cache.RowToTableStatus(se, rows[0])
+	tableStatus, err := cache.RowToTableStatus(se.GetSessionVars().Location(), rows[0])
 	require.NoError(t, err)
 	require.Equal(t, physicalID, tableStatus.TableID)
 	require.Equal(t, tableID, tableStatus.ParentTableID)
@@ -616,7 +616,7 @@ func TestRescheduleJobs(t *testing.T) {
 	sql, args := cache.SelectFromTTLTableStatusWithID(table.Meta().ID)
 	rows, err := se.ExecuteSQL(ctx, sql, args...)
 	require.NoError(t, err)
-	tableStatus, err := cache.RowToTableStatus(se, rows[0])
+	tableStatus, err := cache.RowToTableStatus(se.GetSessionVars().Location(), rows[0])
 	require.NoError(t, err)
 
 	originalJobID := tableStatus.CurrentJobID
@@ -635,7 +635,7 @@ func TestRescheduleJobs(t *testing.T) {
 	sql, args = cache.SelectFromTTLTableStatusWithID(table.Meta().ID)
 	rows, err = se.ExecuteSQL(ctx, sql, args...)
 	require.NoError(t, err)
-	tableStatus, err = cache.RowToTableStatus(se, rows[0])
+	tableStatus, err = cache.RowToTableStatus(se.GetSessionVars().Location(), rows[0])
 	require.NoError(t, err)
 
 	// but the orignal job should be inherited
@@ -687,7 +687,7 @@ func TestRescheduleJobsAfterTableDropped(t *testing.T) {
 			sql, args := cache.SelectFromTTLTableStatusWithID(table.Meta().ID)
 			rows, err := se.ExecuteSQL(ctx, sql, args...)
 			require.NoError(t, err)
-			tableStatus, err := cache.RowToTableStatus(se, rows[0])
+			tableStatus, err := cache.RowToTableStatus(se.GetSessionVars().Location(), rows[0])
 			require.NoError(t, err)
 			require.Equal(t, "manager-1", tableStatus.CurrentJobOwnerID)
 			// there is already a task
@@ -743,7 +743,7 @@ func TestJobTimeout(t *testing.T) {
 	sql, args := cache.SelectFromTTLTableStatusWithID(table.Meta().ID)
 	rows, err := se.ExecuteSQL(ctx, sql, args...)
 	require.NoError(t, err)
-	tableStatus, err := cache.RowToTableStatus(se, rows[0])
+	tableStatus, err := cache.RowToTableStatus(se.GetSessionVars().Location(), rows[0])
 	require.NoError(t, err)
 
 	require.NotEmpty(t, tableStatus.CurrentJobID)
@@ -768,7 +768,7 @@ func TestJobTimeout(t *testing.T) {
 	sql, args = cache.SelectFromTTLTableStatusWithID(table.Meta().ID)
 	rows, err = se.ExecuteSQL(ctx, sql, args...)
 	require.NoError(t, err)
-	newTableStatus, err := cache.RowToTableStatus(se, rows[0])
+	newTableStatus, err := cache.RowToTableStatus(se.GetSessionVars().Location(), rows[0])
 	require.NoError(t, err)
 	require.Equal(t, "manager-2", newTableStatus.CurrentJobOwnerID)
 	require.Equal(t, tableStatus.CurrentJobID, newTableStatus.CurrentJobID)
@@ -1004,7 +1004,7 @@ func TestJobMetrics(t *testing.T) {
 	sql, args := cache.SelectFromTTLTableStatusWithID(table.Meta().ID)
 	rows, err := se.ExecuteSQL(ctx, sql, args...)
 	require.NoError(t, err)
-	tableStatus, err := cache.RowToTableStatus(se, rows[0])
+	tableStatus, err := cache.RowToTableStatus(se.GetSessionVars().Location(), rows[0])
 	require.NoError(t, err)
 
 	require.NotEmpty(t, tableStatus.CurrentJobID)

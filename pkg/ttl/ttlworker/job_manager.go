@@ -555,7 +555,7 @@ j:
 		allFinished := true
 		allTasks := make([]*cache.TTLTask, 0, len(rows))
 		for _, r := range rows {
-			task, err := cache.RowToTTLTask(se, r)
+			task, err := cache.RowToTTLTask(se.GetSessionVars().Location(), r)
 			if err != nil {
 				logutil.Logger(m.ctx).Warn("fail to read task", zap.Error(err), zap.String("jobID", job.id))
 				continue j
@@ -883,7 +883,7 @@ func (m *JobManager) getTableStatusForUpdateNotWait(ctx context.Context, se sess
 		}
 	}
 
-	return cache.RowToTableStatus(se, rows[0])
+	return cache.RowToTableStatus(se.GetSessionVars().Location(), rows[0])
 }
 
 func (m *JobManager) appendLockedJob(id string, se session.Session, createTime time.Time, expireTime time.Time, tableID int64) (*ttlJob, error) {

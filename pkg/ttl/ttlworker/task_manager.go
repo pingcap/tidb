@@ -387,7 +387,7 @@ func (m *taskManager) peekWaitingScanTasks(se session.Session, now time.Time) ([
 
 	tasks := make([]*cache.TTLTask, 0, len(rows))
 	for _, r := range rows {
-		task, err := cache.RowToTTLTask(se, r)
+		task, err := cache.RowToTTLTask(se.GetSessionVars().Location(), r)
 		if err != nil {
 			return nil, err
 		}
@@ -496,7 +496,7 @@ func (m *taskManager) syncTaskFromTable(se session.Session, jobID string, scanID
 	if len(rows) == 0 {
 		return nil, errors.Errorf("didn't find task with jobID: %s, scanID: %d", jobID, scanID)
 	}
-	task, err := cache.RowToTTLTask(se, rows[0])
+	task, err := cache.RowToTTLTask(se.GetSessionVars().Location(), rows[0])
 	if err != nil {
 		return nil, err
 	}
@@ -685,7 +685,7 @@ func (m *taskManager) checkInvalidTask(se session.Session) {
 			task.cancel()
 			continue
 		}
-		t, err := cache.RowToTTLTask(se, rows[0])
+		t, err := cache.RowToTTLTask(se.GetSessionVars().Location(), rows[0])
 		if err != nil {
 			task.taskLogger(l).Warn("fail to get task", zap.Error(err))
 			task.cancel()
