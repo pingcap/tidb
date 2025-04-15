@@ -19,6 +19,9 @@ import "github.com/pingcap/tidb/dumpling/context"
 // WriteRequest is the request to write KV to storage layer.
 type WriteRequest struct {
 	ClusterID string
+	TaskID    string
+	ChunkID   int64
+	Data      []byte
 }
 
 // WriteResponse is the response of Write.
@@ -28,10 +31,12 @@ type WriteResponse struct {
 
 // IngestRequest is the request to ingest SST to storage layer.
 type IngestRequest struct {
+	TaskID string
 }
 
 // IngestResponse is the response of Ingest.
 type IngestResponse struct {
+	FileName string
 }
 
 // WriteClient is the client for writing KV to storage layer.
