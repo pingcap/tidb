@@ -311,7 +311,7 @@ func (rc *SnapClient) GoUpdateMetaAndLoadStats(
 							)
 							return errors.Trace(err)
 						}
-						if statsErr = statsHandler.SaveMetaToStorage(newDefID, count, 0, "br restore"); statsErr != nil {
+						if statsErr = statsHandler.SaveMetaToStorage(newDefID, count, 0, "br restore", false); statsErr != nil {
 							log.Error("update stats meta failed", zap.Int64("downstream table id", tbl.Table.ID), zap.Int64("downstream partition id", newDefID), zap.Error(statsErr))
 						}
 					}
@@ -319,7 +319,7 @@ func (rc *SnapClient) GoUpdateMetaAndLoadStats(
 			}
 			// the total kvs contains the index kvs, but the stats meta needs the count of rows
 			count := int64(oldTable.TotalKvs / uint64(len(oldTable.Info.Indices)+1))
-			if statsErr = statsHandler.SaveMetaToStorage(tbl.Table.ID, count, 0, "br restore"); statsErr != nil {
+			if statsErr = statsHandler.SaveMetaToStorage(tbl.Table.ID, count, 0, "br restore", false); statsErr != nil {
 				log.Error("update stats meta failed", zap.Int64("downstream table id", tbl.Table.ID), zap.Error(statsErr))
 			}
 		}

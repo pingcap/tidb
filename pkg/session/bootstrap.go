@@ -213,11 +213,12 @@ const (
 
 	// CreateStatsMetaTable stores the meta of table statistics.
 	CreateStatsMetaTable = `CREATE TABLE IF NOT EXISTS mysql.stats_meta (
-		version 		BIGINT(64) UNSIGNED NOT NULL,
-		table_id 		BIGINT(64) NOT NULL,
-		modify_count	BIGINT(64) NOT NULL DEFAULT 0,
-		count 			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
-		snapshot        BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		version 					BIGINT(64) UNSIGNED NOT NULL,
+		table_id 					BIGINT(64) NOT NULL,
+		modify_count				BIGINT(64) NOT NULL DEFAULT 0,
+		count 						BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		snapshot        			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		last_stats_histograms_version 	BIGINT(64) UNSIGNED DEFAULT NULL,
 		INDEX idx_ver(version),
 		UNIQUE INDEX tbl(table_id)
 	);`
@@ -1229,14 +1230,20 @@ const (
 	// ...
 	// [version220, version238] is the version range reserved for patches of 8.5.x
 	// ...
+	// version221
+	// Update mysql.tidb_pitr_id_map.
 	version221 = 221
+
+	// version 222
+	// Add last_stats_histograms_version to mysql.stats_meta.
+	version222 = 222
 
 	// next version should start with 239
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version221
+var currentBootstrapVersion int64 = version222
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1413,6 +1420,7 @@ var (
 		upgradeToVer219,
 		upgradeToVer220,
 		upgradeToVer221,
+		upgradeToVer222,
 	}
 )
 
@@ -3318,6 +3326,13 @@ func upgradeToVer221(s sessiontypes.Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateRestoreRegistryTable)
+}
+
+func upgradeToVer222(s sessiontypes.Session, ver int64) {
+	if ver >= version222 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN last_stats_histograms_version bigint unsigned DEFAULT NULL", infoschema.ErrColumnExists)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.

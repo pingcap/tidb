@@ -112,7 +112,7 @@ func (s *statsReadWriter) UpdateStatsMetaVersionForGC(physicalID int64) (err err
 	}()
 
 	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		startTS, err := UpdateStatsMetaVersion(util.StatsCtx, sctx, physicalID)
+		startTS, err := UpdateStatsMetaVerAndLastHistUpdateVer(util.StatsCtx, sctx, physicalID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -159,7 +159,7 @@ func (s *statsReadWriter) handleSlowStatsSaving(tableID int64, start time.Time) 
 	// Update stats meta to avoid other nodes missing the delta update.
 	statsVer := uint64(0)
 	err := util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		startTS, err := UpdateStatsMetaVersion(util.StatsCtx, sctx, tableID)
+		startTS, err := UpdateStatsMetaVerAndLastHistUpdateVer(util.StatsCtx, sctx, tableID)
 		failpoint.Inject("failToSaveStats", func(val failpoint.Value) {
 			if val.(bool) {
 				err = errors.New("mock update stats meta version failed")
@@ -264,9 +264,6 @@ func (s *statsReadWriter) SaveColOrIdxStatsToStorage(
 		return err
 	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
-<<<<<<< HEAD
-		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, source, false)
-=======
 		// Check if saving was slow and update stats version if needed
 		version, err2 := s.handleSlowStatsSaving(tableID, start)
 		if err2 != nil {
@@ -275,17 +272,24 @@ func (s *statsReadWriter) SaveColOrIdxStatsToStorage(
 		if version != 0 {
 			statsVer = version
 		}
-		s.statsHandler.RecordHistoricalStatsMeta(statsVer, source, false, tableID)
->>>>>>> f46af10f08 (statistics: improve handling for slow stats updates and logging (#59887) (#60125))
+		s.statsHandler.RecordHistoricalStatsMeta(tableID, statsVer, source, false)
 	}
 	return
 }
 
 // SaveMetaToStorage saves stats meta to the storage.
-func (s *statsReadWriter) SaveMetaToStorage(tableID, count, modifyCount int64, source string) (err error) {
+// Use the param `refreshLastHistVer` to indicate whether we need to update the last_histograms_versions in stats_meta table.
+func (s *statsReadWriter) SaveMetaToStorage(
+	tableID, count, modifyCount int64,
+	source string,
+	refreshLastHistVer bool,
+) (err error) {
 	var statsVer uint64
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		statsVer, err = SaveMetaToStorage(sctx, tableID, count, modifyCount)
+		statsVer, err = SaveMetaToStorage(sctx, tableID, count, modifyCount, refreshLastHistVer)
+		if err != nil {
+			return err
+		}
 		return err
 	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
@@ -747,7 +751,7 @@ func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physical
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return s.SaveMetaToStorage(tbl.PhysicalID, tbl.RealtimeCount, tbl.ModifyCount, util.StatsMetaHistorySourceLoadStats)
+	return s.SaveMetaToStorage(tbl.PhysicalID, tbl.RealtimeCount, tbl.ModifyCount, util.StatsMetaHistorySourceLoadStats, true)
 }
 
 // SaveColumnStatsUsageToStorage saves column statistics usage information for a table into mysql.column_stats_usage.
