@@ -388,6 +388,7 @@ func TestOptimizerCostFactorHints(t *testing.T) {
 	// Test tableRangeScan cost factor increase
 	// Set index scan and table full scan cost factor variables to isolate testing to TableRangeScan
 	tk.MustExec("set @@session.tidb_opt_index_scan_cost_factor=100")
+	tk.MustExec("set @@session.tidb_opt_table_full_scan_cost_factor=100")
 	rs = tk.MustQuery("explain format=verbose select * from t where a > 3").Rows()
 	planCost1, err1 = strconv.ParseFloat(rs[0][2].(string), 64)
 	require.Nil(t, err1)
@@ -415,7 +416,6 @@ func TestOptimizerCostFactorHints(t *testing.T) {
 	tk.MustExec("set @@session.tidb_opt_table_full_scan_cost_factor=1")
 
 	// Test IndexReadercost factor increase
-	tk.MustExec("set @@session.tidb_opt_index_reader_cost_factor=1")
 	// Increase table scan cost factor variable to isolate testing to IndexReader
 	tk.MustExec("set @@session.tidb_opt_table_full_scan_cost_factor=100")
 	rs = tk.MustQuery("explain format=verbose select b from t where b > 3").Rows()
