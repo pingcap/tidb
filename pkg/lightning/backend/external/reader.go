@@ -225,6 +225,7 @@ func readOneFile(
 	output.valuesPerFile = append(output.valuesPerFile, values)
 	output.size += size
 	output.droppedSizePerFile = append(output.droppedSizePerFile, droppedSize)
+	output.readBytesPerFile = append(output.readBytesPerFile, rd.byteReader.totalReadBytes)
 	output.mu.Unlock()
 	rd.byteReader.logger.Info("readOneFile",
 		zap.String("first key", hex.EncodeToString(firstKey)),

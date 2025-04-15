@@ -97,6 +97,7 @@ type memKVsAndBuffers struct {
 	keysPerFile        [][][]byte
 	valuesPerFile      [][][]byte
 	droppedSizePerFile []int
+	readBytesPerFile   []int
 }
 
 func (b *memKVsAndBuffers) build(ctx context.Context) {
@@ -110,9 +111,16 @@ func (b *memKVsAndBuffers) build(ctx context.Context) {
 	}
 	b.droppedSizePerFile = nil
 
+	totalReadBytes := 0
+	for _, rb := range b.readBytesPerFile {
+		totalReadBytes += rb
+	}
+
 	logutil.Logger(ctx).Info("building memKVsAndBuffers",
 		zap.Int("sumKVCnt", sumKVCnt),
-		zap.Int("droppedSize", b.droppedSize))
+		zap.Int("droppedSize", b.droppedSize),
+		zap.Int("totalReadBytes", totalReadBytes),
+	)
 
 	b.keys = make([][]byte, 0, sumKVCnt)
 	b.values = make([][]byte, 0, sumKVCnt)

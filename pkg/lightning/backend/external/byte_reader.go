@@ -64,7 +64,8 @@ type byteReader struct {
 		reloadCnt int
 	}
 
-	logger *zap.Logger
+	totalReadBytes int
+	logger         *zap.Logger
 }
 
 func openStoreReaderAndSeek(
@@ -296,6 +297,9 @@ func (r *byteReader) reload() error {
 		r.curBuf = buffers
 		r.curBufIdx = 0
 		r.curBufOffset = 0
+		for i := range r.curBuf {
+			r.totalReadBytes += len(r.curBuf[i])
+		}
 		return nil
 	}
 	// when not using concurrentReader, len(curBuf) == 1
@@ -304,6 +308,7 @@ func (r *byteReader) reload() error {
 		switch err {
 		case io.EOF:
 			// move curBufIdx so following read will also find EOF
+			r.totalReadBytes += n
 			r.curBufIdx = len(r.curBuf)
 			return err
 		case io.ErrUnexpectedEOF:
@@ -318,6 +323,7 @@ func (r *byteReader) reload() error {
 	}
 	r.curBufIdx = 0
 	r.curBufOffset = 0
+	r.totalReadBytes += n
 	return nil
 }
 
