@@ -68,10 +68,6 @@ func (h *ddlHandlerImpl) HandleDDLEvent(ctx context.Context, sctx sessionctx.Con
 			zap.Error(err),
 		)
 	}
-	statslogutil.StatsLogger().Info(
-		"Handle DDL event",
-		zap.String("event", s.String()),
-	)
 	return nil
 }
 
