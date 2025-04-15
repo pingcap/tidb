@@ -298,9 +298,8 @@ func ChangeGlobalStatsID(
 	return nil
 }
 
-// UpdateStatsMetaVersionForGC updates the version of stats_meta to be deleted
-// soon.
-func UpdateStatsMetaVersionForGC(
+// UpdateStatsMetaVerAndLastHistUpdateVer updates the version to the newest TS for a table.
+func UpdateStatsMetaVerAndLastHistUpdateVer(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	physicalID int64,
@@ -312,8 +311,8 @@ func UpdateStatsMetaVersionForGC(
 	if _, err = statsutil.ExecWithCtx(
 		ctx,
 		sctx,
-		"update mysql.stats_meta set version=%? where table_id =%?",
-		startTS, physicalID,
+		"update mysql.stats_meta set version=%?, last_stats_histograms_version=%? where table_id =%?",
+		startTS, startTS, physicalID,
 	); err != nil {
 		return 0, errors.Trace(err)
 	}

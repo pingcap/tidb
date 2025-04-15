@@ -44,8 +44,8 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 		return plan, planChanged, nil
 	}
 	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait.Load()
-	histNeeded := syncWait > 0
-	predicateColumns, visitedPhysTblIDs, tid2pids := CollectColumnStatsUsage(plan, histNeeded)
+	syncLoadEnabled := syncWait > 0
+	predicateColumns, visitedPhysTblIDs, tid2pids := CollectColumnStatsUsage(plan)
 	if len(predicateColumns) > 0 {
 		plan.SCtx().UpdateColStatsUsage(maps.Keys(predicateColumns))
 	}
@@ -62,10 +62,7 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 		tblID2TblInfo[int64(physicalTblID)] = tblInfo
 	})
 
-	c.markAtLeastOneFullStatsLoadForEachTable(plan.SCtx(), visitedPhysTblIDs, tblID2TblInfo, predicateColumns, histNeeded)
-	if !histNeeded {
-		return plan, planChanged, nil
-	}
+	c.markAtLeastOneFullStatsLoadForEachTable(plan.SCtx(), visitedPhysTblIDs, tblID2TblInfo, predicateColumns, syncLoadEnabled)
 	histNeededColumns := make([]model.StatsLoadItem, 0, len(predicateColumns))
 	for item, fullLoad := range predicateColumns {
 		histNeededColumns = append(histNeededColumns, model.StatsLoadItem{TableItemID: item, FullLoad: fullLoad})
@@ -79,10 +76,19 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 
 	histNeededIndices := collectSyncIndices(plan.SCtx(), append(histNeededColumns, dependingVirtualCols...), tblID2TblInfo)
 	histNeededItems := collectHistNeededItems(histNeededColumns, histNeededIndices)
+	// TODO: this part should be removed once we don't support the static pruning mode.
 	histNeededItems = c.expandStatsNeededColumnsForStaticPruning(histNeededItems, tid2pids)
-	if len(histNeededItems) > 0 {
+	if len(histNeededItems) == 0 {
+		return plan, planChanged, nil
+	}
+	if syncLoadEnabled {
 		err := RequestLoadStats(plan.SCtx(), histNeededItems, syncWait)
 		return plan, planChanged, err
+	}
+	// We are loading some unnecessary items here since the static pruning hasn't happened yet.
+	// It's not easy to solve the problem and the static pruning is being deprecated, so we just leave it here.
+	for _, item := range histNeededItems {
+		asyncload.AsyncLoadHistogramNeededItems.Insert(item.TableItemID, item.FullLoad)
 	}
 	return plan, planChanged, nil
 }
@@ -250,11 +256,11 @@ func RequestLoadStats(ctx base.PlanContext, neededHistItems []model.StatsLoadIte
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
 		if variable.StatsLoadPseudoTimeout.Load() {
-			logutil.BgLogger().Warn("RequestLoadStats failed", zap.Error(err))
+			logutil.ErrVerboseLogger().Warn("RequestLoadStats failed", zap.Error(err))
 			stmtCtx.AppendWarning(err)
 			return nil
 		}
-		logutil.BgLogger().Warn("RequestLoadStats failed", zap.Error(err))
+		logutil.ErrVerboseLogger().Warn("RequestLoadStats failed", zap.Error(err))
 		return err
 	}
 	return nil

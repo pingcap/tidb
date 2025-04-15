@@ -14298,7 +14298,7 @@
               "exemplar": true,
               "expr": "tidb_domain_infoschema_v2_cache_size{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}",
               "interval": "",
-              "legendFormat": "used",
+              "legendFormat": "{{instance}} used",
               "refId": "A"
             },
             {
@@ -14306,7 +14306,7 @@
               "expr": "tidb_domain_infoschema_v2_cache_limit{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}",
               "hide": false,
               "interval": "",
-              "legendFormat": "limit",
+              "legendFormat": "{{instance}} limit",
               "refId": "B"
             }
           ],
@@ -17911,16 +17911,24 @@
               "expr": "histogram_quantile(0.99, sum(rate(tidb_statistics_stats_delta_update_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
               "interval": "",
               "intervalFactor": 2,
-              "legendFormat": "99",
+              "legendFormat": "stats-meta-99",
               "queryType": "randomWalk",
               "refId": "A"
+            },
+            {
+              "exemplar": true,
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_statistics_stats_usage_update_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "stats-usage-99",
+              "refId": "B"
             }
           ],
           "thresholds": [],
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Stats Meta Updating Duration",
+          "title": "Stats Meta/Usage Updating Duration",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -22581,7 +22589,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "avg(tidb_server_ttl_watermark_delay{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"schedule\"}) by (type, name)",
+              "expr": "max(tidb_server_ttl_watermark_delay{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"schedule\"}) by (type, name)",
               "interval": "",
               "legendFormat": "{{ name }}",
               "queryType": "randomWalk",

@@ -1834,26 +1834,6 @@ func NewHandle(sctx sqlexec.RestrictedSQLExecutor) *Handle {
 
 // ensureActiveUser ensure that the specific user data is loaded in-memory.
 func (h *Handle) ensureActiveUser(user string) error {
-	_, exist := h.activeUsers.Load(user)
-	if exist {
-		return nil
-	}
-
-	var data immutable
-	err := data.loadSomeUsers(h.sctx, user)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for {
-		old := h.Get()
-		swapped := h.priv.CompareAndSwap(old, old.merge(&data))
-		if swapped {
-			break
-		}
-	}
-	h.activeUsers.Store(user, struct{}{})
-
 	return nil
 }
 

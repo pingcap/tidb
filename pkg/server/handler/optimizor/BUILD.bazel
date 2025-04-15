@@ -43,7 +43,7 @@ go_test(
         "statistics_handler_test.go",
     ],
     flaky = True,
-    shard_count = 7,
+    shard_count = 8,
     deps = [
         ":optimizor",
         "//pkg/config",
