@@ -1453,7 +1453,7 @@ func (local *Backend) newRegionJobWorker(
 		}
 		base.writeFn = cloudW.write
 		base.ingestFn = cloudW.ingest
-		base.runJobFn = cloudW.runJob
+		base.preRunJobFn = cloudW.preRunJob
 		cloudW.regionJobBaseWorker = base
 		return cloudW
 	}
@@ -1464,7 +1464,7 @@ func (local *Backend) newRegionJobWorker(
 	}
 	base.writeFn = local.doWrite
 	base.ingestFn = local.ingest
-	base.runJobFn = opWorker.runJob
+	base.preRunJobFn = opWorker.preRunJob
 	opWorker.regionJobBaseWorker = base
 	return opWorker
 }

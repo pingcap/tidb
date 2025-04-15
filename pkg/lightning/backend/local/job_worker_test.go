@@ -34,7 +34,14 @@ func TestRegionJobBaseWorker(t *testing.T) {
 			jobInCh:  make(chan *regionJob, 10),
 			jobOutCh: make(chan *regionJob, 10),
 			jobWg:    &sync.WaitGroup{},
-			runJobFn: func(ctx context.Context, job *regionJob) error {
+			preRunJobFn: func(ctx context.Context, job *regionJob) error {
+				return nil
+			},
+			writeFn: func(ctx context.Context, job *regionJob) (*tikvWriteResult, error) {
+				job.convertStageTo(wrote)
+				return &tikvWriteResult{}, nil
+			},
+			ingestFn: func(ctx context.Context, job *regionJob) error {
 				job.convertStageTo(ingested)
 				return nil
 			},
@@ -63,7 +70,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 
 	t.Run("send job to out channel after run job", func(t *testing.T) {
 		w := newWorker()
-		job := &regionJob{}
+		job := &regionJob{stage: regionScanned, ingestData: mockIngestData{}}
 		w.jobInCh <- job
 		close(w.jobInCh)
 		require.NoError(t, w.run(context.Background()))
@@ -72,11 +79,11 @@ func TestRegionJobBaseWorker(t *testing.T) {
 
 	t.Run("regenerate jobs", func(t *testing.T) {
 		w := newWorker()
-		w.runJobFn = func(ctx context.Context, job *regionJob) error {
+		w.ingestFn = func(ctx context.Context, job *regionJob) error {
 			job.convertStageTo(needRescan)
 			return nil
 		}
-		job := &regionJob{}
+		job := &regionJob{stage: regionScanned, ingestData: mockIngestData{}}
 		w.jobInCh <- job
 		close(w.jobInCh)
 		require.NoError(t, w.run(context.Background()))
@@ -103,7 +110,7 @@ func TestCloudRegionJobWorker(t *testing.T) {
 	}
 	cloudW.regionJobBaseWorker.writeFn = cloudW.write
 	cloudW.regionJobBaseWorker.ingestFn = cloudW.ingest
-	cloudW.regionJobBaseWorker.runJobFn = cloudW.runJob
+	cloudW.regionJobBaseWorker.preRunJobFn = cloudW.preRunJob
 
 	t.Run("empty job", func(t *testing.T) {
 		job := &regionJob{

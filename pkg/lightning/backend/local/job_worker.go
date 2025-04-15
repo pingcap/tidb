@@ -46,9 +46,9 @@ type regionJobBaseWorker struct {
 	jobOutCh chan *regionJob
 	jobWg    *sync.WaitGroup
 
-	writeFn  func(ctx context.Context, j *regionJob) (*tikvWriteResult, error)
-	ingestFn func(ctx context.Context, j *regionJob) error
-	runJobFn func(ctx context.Context, job *regionJob) error
+	writeFn     func(ctx context.Context, job *regionJob) (*tikvWriteResult, error)
+	ingestFn    func(ctx context.Context, job *regionJob) error
+	preRunJobFn func(ctx context.Context, job *regionJob) error
 	// called after the job is executed, success or not.
 	afterRunJobFn func([]*metapb.Peer)
 	// if the region info is stale, we need to generate new jobs based on the old
@@ -82,7 +82,7 @@ func (w *regionJobBaseWorker) run(ctx context.Context) error {
 			}
 			failpoint.InjectCall("beforeExecuteRegionJob", ctx)
 			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Inc()
-			err := w.runJobFn(ctx, job)
+			err := w.runJob(ctx, job)
 			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Dec()
 
 			if w.afterRunJobFn != nil {
@@ -140,7 +140,11 @@ func (w *regionJobBaseWorker) run(ctx context.Context) error {
 // If non-retryable error occurs, it will return the error.
 // If retryable error occurs, it will return nil and caller should check the stage
 // of the regionJob to determine what to do with it.
-func (w *regionJobBaseWorker) doRunJob(ctx context.Context, job *regionJob) error {
+func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error {
+	if err := w.preRunJobFn(ctx, job); err != nil {
+		return err
+	}
+
 	for {
 		// the job might in wrote stage if it comes from retry
 		if job.stage == regionScanned {
@@ -221,7 +225,7 @@ type opRegionJobWorker struct {
 	pdHTTPCli      pdhttp.Client
 }
 
-func (w *opRegionJobWorker) runJob(ctx context.Context, job *regionJob) error {
+func (w *opRegionJobWorker) preRunJob(ctx context.Context, job *regionJob) error {
 	failpoint.Inject("WriteToTiKVNotEnoughDiskSpace", func(_ failpoint.Value) {
 		failpoint.Return(
 			errors.New("the remaining storage capacity of TiKV is less than 10%%; please increase the storage capacity of TiKV and try again"))
@@ -239,7 +243,7 @@ func (w *opRegionJobWorker) runJob(ctx context.Context, job *regionJob) error {
 			}
 		}
 	}
-	return w.regionJobBaseWorker.doRunJob(ctx, job)
+	return nil
 }
 
 type cloudRegionJobWorker struct {
@@ -249,10 +253,10 @@ type cloudRegionJobWorker struct {
 	bufPool        *membuf.Pool
 }
 
-func (w *cloudRegionJobWorker) runJob(ctx context.Context, job *regionJob) error {
+func (*cloudRegionJobWorker) preRunJob(_ context.Context, _ *regionJob) error {
 	// cloud engine use cloud storage, such as S3, to hold data, so no need to check
 	// disk fullness.
-	return w.regionJobBaseWorker.doRunJob(ctx, job)
+	return nil
 }
 
 // we don't need to limit write speed as we write to tikv-worker.
