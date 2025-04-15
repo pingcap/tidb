@@ -638,6 +638,100 @@ func TestOptimizerCostFactors(t *testing.T) {
 	tk.MustExec("set @@session.tidb_opt_index_merge_cost_factor=1")
 }
 
+func TestOptimizerCostFactorHints(t *testing.T) {
+	// This test covers a subset of the cost factors in the previous test - using hints to
+	// increase the cost factor of a specific plan type. The test is not exhaustive and
+	// does not cover all cost factors.
+	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	defer func() {
+		tk := testkit.NewTestKit(t, store)
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		dom.StatsHandle().Clear()
+	}()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, primary key (a), key(b))")
+	// Insert some data
+	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)")
+	// Analyze table to update statistics
+	tk.MustExec("analyze table t")
+
+	// Test tableFullScan cost factor increase via hint
+	// Set index scan cost factor variable to isolate testing to TableFullScan
+	tk.MustExec("set @@session.tidb_opt_index_scan_cost_factor=100")
+	rs := tk.MustQuery("explain format=verbose select * from t").Rows()
+	planCost1, err1 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err1)
+	rs = tk.MustQuery("explain format=verbose select /*+ SET_VAR(tidb_opt_table_full_scan_cost_factor=2) */ * from t").Rows()
+	planCost2, err2 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err2)
+	// 1st query should be cheaper than 2nd query
+	require.Less(t, planCost1, planCost2)
+	// Reset to index scan to default
+	tk.MustExec("set @@session.tidb_opt_index_scan_cost_factor=1")
+
+	// Test tableReader cost factor increase via hint
+	// Set index scan cost factor variable to isolate testing to TableReader
+	tk.MustExec("set @@session.tidb_opt_index_scan_cost_factor=100")
+	rs = tk.MustQuery("explain format=verbose select * from t").Rows()
+	planCost1, err1 = strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err1)
+	rs = tk.MustQuery("explain format=verbose select /*+ SET_VAR(tidb_opt_table_reader_cost_factor=2) */ * from t").Rows()
+	planCost2, err2 = strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err2)
+	// 1st query should be cheaper than 2nd query
+	require.Less(t, planCost1, planCost2)
+	// Reset to index scan variable to default
+	tk.MustExec("set @@session.tidb_opt_index_scan_cost_factor=1")
+
+	// Test tableRangeScan cost factor increase
+	// Set index scan and table full scan cost factor variables to isolate testing to TableRangeScan
+	tk.MustExec("set @@session.tidb_opt_index_scan_cost_factor=100")
+	rs = tk.MustQuery("explain format=verbose select * from t where a > 3").Rows()
+	planCost1, err1 = strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err1)
+	rs = tk.MustQuery("explain format=verbose select /*+ SET_VAR(tidb_opt_table_range_scan_cost_factor=2) */ * from t where a > 3").Rows()
+	planCost2, err2 = strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err2)
+	// 1st query should be cheaper than 2nd query
+	require.Less(t, planCost1, planCost2)
+	// Reset to index and table full scan variables to default
+	tk.MustExec("set @@session.tidb_opt_index_scan_cost_factor=1")
+	tk.MustExec("set @@session.tidb_opt_table_full_scan_cost_factor=1")
+
+	// Test IndexScan cost factor increase
+	// Increase table scan cost factor to isolate testing to IndexScan
+	tk.MustExec("set @@session.tidb_opt_table_full_scan_cost_factor=100")
+	rs = tk.MustQuery("explain format=verbose select b from t where b > 3").Rows()
+	planCost1, err1 = strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err1)
+	rs = tk.MustQuery("explain format=verbose select /*+ SET_VAR(tidb_opt_index_scan_cost_factor=2) */ b from t where b > 3").Rows()
+	planCost2, err2 = strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err2)
+	// 1st query should be cheaper than 2nd query
+	require.Less(t, planCost1, planCost2)
+	// Reset table full scan variable to default
+	tk.MustExec("set @@session.tidb_opt_table_full_scan_cost_factor=1")
+
+	// Test IndexReadercost factor increase
+	tk.MustExec("set @@session.tidb_opt_index_reader_cost_factor=1")
+	// Increase table scan cost factor variable to isolate testing to IndexReader
+	tk.MustExec("set @@session.tidb_opt_table_full_scan_cost_factor=100")
+	rs = tk.MustQuery("explain format=verbose select b from t where b > 3").Rows()
+	planCost1, err1 = strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err1)
+	rs = tk.MustQuery("explain format=verbose select  /*+ SET_VAR(tidb_opt_index_reader_cost_factor=2) */ b from t where b > 3").Rows()
+	planCost2, err2 = strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err2)
+	// 1st query should be cheaper than 2nd query
+	require.Less(t, planCost1, planCost2)
+	// Reset table scan cost factor variable to default
+	tk.MustExec("set @@session.tidb_opt_table_full_scan_cost_factor=1")
+}
+
 func TestTiFlashCostFactors(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -673,7 +767,19 @@ func TestTiFlashCostFactors(t *testing.T) {
 	require.Nil(t, err3)
 	// 3rd query should be cheaper than 1st query
 	require.Less(t, planCost3, planCost1)
-	// Reset to default
+
+	// Reset TiFlash cost factor to default
 	tk.MustExec("set @@session.tidb_opt_table_tiflash_scan_cost_factor=1")
+
+	// Test TiFlash cost factor increase via hint
+	rs = tk.MustQuery("explain format=verbose select /*+ SET_VAR(tidb_opt_table_tiflash_scan_cost_factor=2) */ * from t").Rows()
+	planCost4, err4 := strconv.ParseFloat(rs[0][2].(string), 64)
+	require.Nil(t, err4)
+	// 1st query should be cheaper than 4th query
+	require.Less(t, planCost1, planCost4)
+
+	// Reset table scan cost factor to default
 	tk.MustExec("set @@session.tidb_opt_table_full_scan_cost_factor=1")
+	// Reset TiFlash cop to default
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=OFF")
 }
