@@ -712,7 +712,7 @@ func TestMultiSchemaDropUniqueIndex(t *testing.T) {
 func getTableAndPartitionIDs(t *testing.T, tk *testkit.TestKit) (parts []int64) {
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	if tbl.Meta().Partition == nil {
 		return []int64{tbl.Meta().ID}
@@ -730,7 +730,7 @@ func getTableAndPartitionIDs(t *testing.T, tk *testkit.TestKit) (parts []int64) 
 func getAddingPartitionIDs(t *testing.T, tk *testkit.TestKit) (parts []int64) {
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	if tbl.Meta().Partition == nil {
 		return nil
@@ -747,7 +747,7 @@ func getAddingPartitionIDs(t *testing.T, tk *testkit.TestKit) (parts []int64) {
 func checkTableAndIndexEntries(t *testing.T, tk *testkit.TestKit, originalIDs []int64) {
 	ctx := tk.Session()
 	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	currTableID := tbl.Meta().ID
 	indexes := make([]int64, 0, len(tbl.Meta().Indices))
@@ -883,9 +883,6 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 		res := tkO.MustQuery(`select *, _tidb_rowid from t`)
 		logutil.BgLogger().Info("Query result before DDL", zap.String("result", res.String()))
 	}
-<<<<<<< HEAD
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", hookFunc)
-=======
 
 	verStart := domNonOwner.InfoSchema().SchemaMetaVersion()
 	hookChan := make(chan *model.Job)
@@ -896,8 +893,7 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 		logutil.BgLogger().Info("XXXXXXXXXXX Hook released", zap.String("job.State", job.State.String()), zap.String("job.SchemaState", job.SchemaState.String()))
 	}
 	// Notice that the job.SchemaState is not committed yet, so the table will still be in the previous state!
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", hookFunc)
->>>>>>> 13fe7ab0301 (ddl: Non clustered reorg duplicate  tidb rowid fix (#60132))
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", hookFunc)
 	alterChan := make(chan error)
 	go func() {
 		if backfillDML != "" {
@@ -965,7 +961,7 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 		verCurr++
 		hookChan <- nil
 	}
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter")
 	logutil.BgLogger().Info("XXXXXXXXXXX states loop done")
 	if !tbl.Meta().HasClusteredIndex() {
 		// Debug prints, so it is possible to verify possible newly generated _tidb_rowid's
@@ -1746,7 +1742,7 @@ func exchangeAllPartitionsToGetDuplicateTiDBRowIDs(t *testing.T, tk *testkit.Tes
 	ctx := tk.Session()
 	dom := domain.GetDomain(ctx)
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	// make all partitions to be EXCHANGED, so they have duplicated _tidb_rowid's between
 	// the partitions
@@ -1876,7 +1872,7 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 		ctx := tkO.Session()
 		dom := domain.GetDomain(ctx)
 		is := dom.InfoSchema()
-		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+		tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 		require.NoError(t, err)
 		hasUniqueKey = tbl.Meta().HasClusteredIndex()
 		if !hasUniqueKey {
@@ -2106,7 +2102,7 @@ func TestIssue58692(t *testing.T) {
 	var i atomic.Int32
 	i.Store(3)
 	done := make(chan struct{})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
 		tk2 := testkit.NewTestKit(t, store)
 		tmp := i.Add(1)
 		tk2.MustExec(fmt.Sprintf("insert into test.t values (%d, %d)", tmp, tmp))
@@ -2133,7 +2129,7 @@ func TestDuplicateRowsNoPK(t *testing.T) {
 
 	tk.MustExec("create table t (a int, b int, key idx (a)) partition by hash(a) partitions 2")
 	tk.MustExec("insert into t (a, b) values (1, 1)")
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
 		if job.SchemaState != model.StateDeleteReorganization {
 			return
 		}
@@ -2157,7 +2153,7 @@ func TestDuplicateRowsPK59680(t *testing.T) {
 
 	tk.MustExec("create table t (a int, b int, primary key (a) nonclustered) partition by hash(a) partitions 2")
 	tk.MustExec("insert into t (a, b) values (1, 1)")
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
 		if job.SchemaState != model.StateDeleteReorganization {
 			return
 		}
@@ -2184,7 +2180,7 @@ func TestIssue58864(t *testing.T) {
 	var i atomic.Int32
 	i.Store(1)
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
 		if job.State != model.JobStateDone {
 			return
 		}
@@ -2477,7 +2473,7 @@ func TestBackfillConcurrentDML(t *testing.T) {
 	var i atomic.Int32
 	i.Store(0)
 
-	tbl, err := tk.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl, err := tk.Session().GetInfoSchema().TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 
 	columnFt := make(map[int64]*types.FieldType)
@@ -2668,7 +2664,7 @@ func TestBackfillConcurrentDMLRange(t *testing.T) {
 	var i atomic.Int32
 	i.Store(0)
 
-	tbl, err := tk.Session().GetInfoSchema().TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl, err := tk.Session().GetInfoSchema().TableInfoByName(pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 
 	columnFt := make(map[int64]*types.FieldType)
@@ -2677,16 +2673,18 @@ func TestBackfillConcurrentDMLRange(t *testing.T) {
 		columnFt[col.ID] = &col.FieldType
 	}
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func() {
 		// TODO: start a transaction to be committed during backfill
 		tk2 := testkit.NewTestKit(t, store)
 		tk2.MustExec("use test")
-		switch job.SchemaState {
-		case model.StateNone:
+		res := tk2.MustQuery(`select schema_state from information_schema.DDL_JOBS where table_name = 't' order by job_id desc limit 1`)
+		schemaState := res.Rows()[0][0].(string)
+		switch schemaState {
+		case model.StateNone.String():
 		// start
-		case model.StateDeleteOnly:
-		case model.StateWriteOnly:
-		case model.StateWriteReorganization:
+		case model.StateDeleteOnly.String():
+		case model.StateWriteOnly.String():
+		case model.StateWriteReorganization.String():
 			// Before backfill!
 			// First write to new partition p0, so should keep its _tidb_rowid (1-5)
 			// These should be skipped by backfill since _tidb_rowid AND row is the same.
@@ -2714,7 +2712,7 @@ func TestBackfillConcurrentDMLRange(t *testing.T) {
 			tk2.MustExec("delete from t where a = 103")
 			tk2.MustExec("update t set b = b + 100 where a = 108")
 			tk2.MustExec("delete from t where a = 109")
-		case model.StateDeleteReorganization:
+		case model.StateDeleteReorganization.String():
 			// Using the same rows, but now using the new partitions
 			// Will it find the same rows in the old partitions?
 			// TODO: How to check it?
@@ -2724,10 +2722,10 @@ func TestBackfillConcurrentDMLRange(t *testing.T) {
 			tk2.MustExec("delete from t where a = 105")
 			tk2.MustExec("update t set b = b + 100 where a = 110")
 			tk2.MustExec("delete from t where a = 111")
-		case model.StatePublic:
+		case model.StatePublic.String():
 			// Last
 		default:
-			require.FailNow(t, "unexpected schema state: %v", job.SchemaState)
+			require.FailNow(t, "unexpected schema state: %v", schemaState)
 		}
 	})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/PartitionBackfillNonClustered", func(vals []byte) {
@@ -3087,7 +3085,7 @@ func TestNonClusteredUpdateReorgUpdate(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, primary key (a) nonclustered) partition by hash(a) partitions 2")
 	tk.MustExec("insert into t (a, b) values (1,1),(2,2)")
 	exchangeAllPartitionsToGetDuplicateTiDBRowIDs(t, tk)
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
 		// So the table is actually in WriteOnly, before backfill!
 		if job.SchemaState != model.StateWriteReorganization {
 			return
