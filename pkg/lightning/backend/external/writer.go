@@ -536,10 +536,7 @@ func (w *Writer) flushSortedKVs(ctx context.Context) (string, string, error) {
 		}
 	}()
 	w.rc.reset()
-	kvStore, err := NewKeyValueStore(ctx, dataWriter, w.rc)
-	if err != nil {
-		return "", "", err
-	}
+	kvStore := NewKeyValueStore(ctx, dataWriter, w.rc)
 
 	for _, pair := range w.kvLocations {
 		err = kvStore.addEncodedData(w.kvBuffer.GetSlice(pair))

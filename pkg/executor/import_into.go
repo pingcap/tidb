@@ -201,7 +201,7 @@ func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chun
 	}); err != nil {
 		return err
 	}
-	FillOneImportJobInfo(info, req, unknownImportedRowCount)
+	FillOneImportJobInfo(req, info, unknownImportedRowCount)
 	return nil
 }
 

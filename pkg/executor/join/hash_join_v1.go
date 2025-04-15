@@ -170,6 +170,11 @@ func (e *HashJoinV1Exec) Open(ctx context.Context) error {
 		e.Prepared = false
 		return err
 	}
+	return e.OpenSelf()
+}
+
+// OpenSelf opens join itself and initializes the hash join context.
+func (e *HashJoinV1Exec) OpenSelf() error {
 	e.Prepared = false
 	if e.HashJoinCtxV1.memTracker != nil {
 		e.HashJoinCtxV1.memTracker.Reset()

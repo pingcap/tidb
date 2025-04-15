@@ -218,6 +218,8 @@ const (
 	TableTiDBIndexUsage = "TIDB_INDEX_USAGE"
 	// TableTiDBPlanCache is the plan cache table.
 	TableTiDBPlanCache = "TIDB_PLAN_CACHE"
+	// TableKeyspaceMeta is the table to show the keyspace meta.
+	TableKeyspaceMeta = "KEYSPACE_META"
 )
 
 const (
@@ -346,6 +348,7 @@ var tableIDMap = map[string]int64{
 	ClusterTableTiDBPlanCache:            autoid.InformationSchemaDBID + 97,
 	TableTiDBStatementsStats:             autoid.InformationSchemaDBID + 98,
 	ClusterTableTiDBStatementsStats:      autoid.InformationSchemaDBID + 99,
+	TableKeyspaceMeta:                    autoid.InformationSchemaDBID + 100,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1851,6 +1854,12 @@ var tablePlanCache = []columnInfo{
 	{name: "LAST_ACTIVE_TIME", tp: mysql.TypeDatetime, size: 19},
 }
 
+var tableKeyspaceMetaCols = []columnInfo{
+	{name: "KEYSPACE_NAME", tp: mysql.TypeVarchar, size: 128},
+	{name: "KEYSPACE_ID", tp: mysql.TypeVarchar, size: 64},
+	{name: "CONFIG", tp: mysql.TypeJSON, size: types.UnspecifiedLength},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -2496,6 +2505,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableKeywords:                           tableKeywords,
 	TableTiDBIndexUsage:                     tableTiDBIndexUsage,
 	TableTiDBPlanCache:                      tablePlanCache,
+	TableKeyspaceMeta:                       tableKeyspaceMetaCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, _ func() (pools.Resource, error), meta *model.TableInfo) (table.Table, error) {

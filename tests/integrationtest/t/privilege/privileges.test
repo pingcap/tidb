@@ -990,3 +990,27 @@ create temporary table tmpdb.tmp(id int);
 disconnect test_user;
 connection default;
 
+# TestIssue60469
+use privilege__privileges;
+DROP USER IF EXISTS foo;
+CREATE USER foo;
+DROP VIEW IF EXISTS v, v1;
+GRANT SELECT ON privilege__privileges.* TO foo;
+
+connect (foo, localhost, foo,,privilege__privileges);
+--error 1142
+CREATE OR REPLACE VIEW v AS SELECT 1;
+
+connection default;
+GRANT CREATE VIEW ON privilege__privileges.* TO foo;
+
+connection foo;
+CREATE VIEW v AS SELECT 1;
+--error 1142
+CREATE OR REPLACE VIEW v AS SELECT 1, 1;
+--error 1142
+CREATE OR REPLACE VIEW v1 AS SELECT 1, 1;
+
+disconnect foo;
+connection default;
+

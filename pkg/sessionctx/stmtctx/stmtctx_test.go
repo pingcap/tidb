@@ -442,11 +442,11 @@ func TestStmtCtxID(t *testing.T) {
 
 func TestIssue58600(t *testing.T) {
 	sc := stmtctx.NewStmtCtx()
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/sessionctx/stmtctx/afterAffectedRowsLocked", func(sc *stmtctx.StatementContext) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/sessionctx/stmtctx/afterFoundRowsLocked", func(sc *stmtctx.StatementContext) {
 		// no panic when call sc.Reset()
 		assert.False(t, sc.Reset())
 	})
-	sc.AffectedRows()
+	sc.FoundRows()
 }
 
 func TestErrCtx(t *testing.T) {

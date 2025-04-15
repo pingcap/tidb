@@ -604,17 +604,11 @@ func (h *Handle) initStatsBuckets(cache statstypes.StatsCache, totalMemory uint6
 	if IsFullCacheFunc(cache, totalMemory) {
 		return nil
 	}
-	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		err := h.initStatsBucketsConcurrently(cache, totalMemory, initstats.GetConcurrency())
-		if err != nil {
-			return errors.Trace(err)
-		}
-	} else {
-		err := h.initStatsBucketsConcurrently(cache, totalMemory, 1)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	err := h.initStatsBucketsConcurrently(cache, totalMemory, initstats.GetConcurrency())
+	if err != nil {
+		return errors.Trace(err)
 	}
+
 	tables := cache.Values()
 	for _, table := range tables {
 		table.CalcPreScalar()
@@ -755,25 +749,17 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 	}
 	statslogutil.StatsLogger().Info("complete to load the meta")
 	initstats.InitStatsPercentage.Store(initStatsPercentageInterval)
-	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		err = h.initStatsHistogramsConcurrently(is, cache, totalMemory, initstats.GetConcurrency())
-	} else {
-		err = h.initStatsHistogramsConcurrently(is, cache, totalMemory, 1)
-	}
-	statslogutil.StatsLogger().Info("complete to load the histogram")
+	err = h.initStatsHistogramsConcurrently(is, cache, totalMemory, initstats.GetConcurrency())
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if config.GetGlobalConfig().Performance.ConcurrentlyInitStats {
-		err = h.initStatsTopNConcurrently(cache, totalMemory, initstats.GetConcurrency())
-	} else {
-		err = h.initStatsTopNConcurrently(cache, totalMemory, 1)
-	}
-	initstats.InitStatsPercentage.Store(initStatsPercentageInterval * 2)
-	statslogutil.StatsLogger().Info("complete to load the topn")
+	statslogutil.StatsLogger().Info("complete to load the histogram")
+	err = h.initStatsTopNConcurrently(cache, totalMemory, initstats.GetConcurrency())
 	if err != nil {
 		return err
 	}
+	initstats.InitStatsPercentage.Store(initStatsPercentageInterval * 2)
+	statslogutil.StatsLogger().Info("complete to load the topn")
 	if loadFMSketch {
 		err = h.initStatsFMSketch(cache)
 		if err != nil {

@@ -211,7 +211,7 @@ func getBindingPlanDigest(sctx sessionctx.Context, schema, bindingSQL string) (p
 	vars.CurrentDB = schema
 
 	p := utilparser.GetParser()
-	defer utilparser.DestoryParser(p)
+	defer utilparser.DestroyParser(p)
 	p.SetSQLMode(vars.SQLMode)
 	p.SetParserConfig(vars.BuildParserConfig())
 

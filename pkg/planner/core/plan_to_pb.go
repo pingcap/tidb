@@ -284,6 +284,10 @@ func (p *PhysicalTableScan) ToPB(ctx *base.BuildPBContext, storeType kv.StoreTyp
 		})
 	}
 
+	if len(p.UsedColumnarIndexes) > 0 {
+		tsExec.UsedColumnarIndexes = append(tsExec.UsedColumnarIndexes, p.UsedColumnarIndexes...)
+	}
+
 	var err error
 	tsExec.RuntimeFilterList, err = RuntimeFilterListToPB(ctx, p.runtimeFilterList, ctx.GetClient())
 	if err != nil {
@@ -332,6 +336,10 @@ func (p *PhysicalTableScan) partitionTableScanToPBForFlash(ctx *base.BuildPBCont
 				AnnQueryInfo: &annQueryCopy,
 			},
 		})
+	}
+
+	if len(p.UsedColumnarIndexes) > 0 {
+		ptsExec.UsedColumnarIndexes = append(ptsExec.UsedColumnarIndexes, p.UsedColumnarIndexes...)
 	}
 
 	executorID := p.ExplainID().String()

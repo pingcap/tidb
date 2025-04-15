@@ -35,6 +35,14 @@ func DXFRandomErrorWithOnePercent() error {
 	return nil
 }
 
+// DXFRandomErrorWithOnePerThousand returns an error with probability 0.001. It controls the DXF's failpoint.
+func DXFRandomErrorWithOnePerThousand() error {
+	failpoint.Inject("DXFRandomError", func() {
+		failpoint.Return(RandomError(0.001, errors.Errorf("injected random error, caller: %s", getFunctionName())))
+	})
+	return nil
+}
+
 // RandomError returns an error with the given probability.
 func RandomError(probability float64, err error) error {
 	if rand.Float64() < probability {

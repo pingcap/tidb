@@ -283,14 +283,8 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	}
 	pds := strings.Split(tidbCfg.Path, ",")
 
-	// build common config and override for specific task if needed
+	// build common config
 	cfg := task.DefaultConfig()
-	switch s.Kind {
-	case ast.BRIEKindBackup:
-		cfg.OverrideDefaultForBackup()
-	default:
-	}
-
 	cfg.PD = pds
 	cfg.TLS = tlsCfg
 
@@ -796,14 +790,14 @@ func (gs *tidbGlueSession) CreateDatabase(_ context.Context, schema *model.DBInf
 }
 
 // CreateTable implements glue.Session
-func (gs *tidbGlueSession) CreateTable(_ context.Context, dbName ast.CIStr, table *model.TableInfo, cs ...ddl.CreateTableOption) error {
-	return BRIECreateTable(gs.se, dbName, table, "", cs...)
+func (gs *tidbGlueSession) CreateTable(_ context.Context, dbName ast.CIStr, clonedTable *model.TableInfo, cs ...ddl.CreateTableOption) error {
+	return BRIECreateTable(gs.se, dbName, clonedTable, "", cs...)
 }
 
 // CreateTables implements glue.BatchCreateTableSession.
 func (gs *tidbGlueSession) CreateTables(_ context.Context,
-	tables map[string][]*model.TableInfo, cs ...ddl.CreateTableOption) error {
-	return BRIECreateTables(gs.se, tables, "", cs...)
+	clonedTables map[string][]*model.TableInfo, cs ...ddl.CreateTableOption) error {
+	return BRIECreateTables(gs.se, clonedTables, "", cs...)
 }
 
 // CreatePlacementPolicy implements glue.Session

@@ -63,7 +63,7 @@ func ParseExpression(expr string) (node ast.ExprNode, err error) {
 	charset, collation := charset.GetDefaultCharsetAndCollate()
 	parse := parserutil.GetParser()
 	defer func() {
-		parserutil.DestoryParser(parse)
+		parserutil.DestroyParser(parse)
 	}()
 	stmts, _, err := parse.ParseSQL(expr,
 		parser.CharsetConnection(charset),

@@ -80,9 +80,8 @@ func (w *OneFileWriter) initWriter(ctx context.Context, partSize int64) (
 		Concurrency: maxUploadWorkersPerThread,
 		PartSize:    MinUploadPartSize})
 	if err != nil {
-		w.logger.Info("create stat writer failed",
-			zap.Error(err))
-		err = w.dataWriter.Close(ctx)
+		w.logger.Info("create stat writer failed", zap.Error(err))
+		_ = w.dataWriter.Close(ctx)
 		return err
 	}
 	w.logger.Info("one file writer", zap.String("data-file", w.dataFile), zap.String("stat-file", w.statFile))
@@ -96,8 +95,8 @@ func (w *OneFileWriter) Init(ctx context.Context, partSize int64) (err error) {
 	if err != nil {
 		return err
 	}
-	w.kvStore, err = NewKeyValueStore(ctx, w.dataWriter, w.rc)
-	return err
+	w.kvStore = NewKeyValueStore(ctx, w.dataWriter, w.rc)
+	return nil
 }
 
 // WriteRow implements ingest.Writer.
@@ -185,15 +184,15 @@ func (w *OneFileWriter) closeImpl(ctx context.Context) (err error) {
 	// 2. close data writer.
 	err1 := w.dataWriter.Close(ctx)
 	if err1 != nil {
-		w.logger.Error("Close data writer failed", zap.Error(err))
 		err = err1
+		w.logger.Error("Close data writer failed", zap.Error(err))
 		return
 	}
 	// 3. close stat writer.
 	err2 := w.statWriter.Close(ctx)
 	if err2 != nil {
-		w.logger.Error("Close stat writer failed", zap.Error(err))
 		err = err2
+		w.logger.Error("Close stat writer failed", zap.Error(err))
 		return
 	}
 	return nil

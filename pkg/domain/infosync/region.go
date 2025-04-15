@@ -17,6 +17,7 @@ package infosync
 import (
 	"context"
 
+	"github.com/tikv/pd/client/errs"
 	pd "github.com/tikv/pd/client/http"
 )
 
@@ -68,4 +69,16 @@ func GetReplicationState(ctx context.Context, startKey []byte, endKey []byte) (P
 		st = PlacementScheduleStatePending
 	}
 	return st, nil
+}
+
+// GetRegionDistributionByKeyRange is used to get the region distributions by given key range from PD.
+func GetRegionDistributionByKeyRange(ctx context.Context, startKey []byte, endKey []byte, engine string) (*pd.RegionDistributions, error) {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return nil, err
+	}
+	if is.pdHTTPCli == nil {
+		return nil, errs.ErrClientGetLeader.FastGenByArgs("pd client not found")
+	}
+	return is.pdHTTPCli.GetRegionDistributionByKeyRange(ctx, pd.NewKeyRange(startKey, endKey), engine)
 }

@@ -43,8 +43,8 @@ func FindColumnByName(cols []*model.ColumnInfo, name string) *model.ColumnInfo {
 // involved in the statement,and then checks whether the table mode is normal. However,
 // for some statements, `tableNameW` is not recorded as those table might not exists,
 // such as for rename table DDL in the `ResolveContext`, so these statements
-// require special handling during the DDL execution phase. Also, the check used
-// in optimize phase.
+// require special handling during the DDL execution phase.
+// Also, the check is used in optimize phase and build FK trigger phase.
 func CheckTableModeIsNormal(tableName ast.CIStr, tableMode model.TableMode) error {
 	if tableMode != model.TableModeNormal {
 		return infoschema.ErrProtectedTableMode.FastGenByArgs(tableName, tableMode)

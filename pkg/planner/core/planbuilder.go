@@ -3183,6 +3183,24 @@ func buildShowDDLJobsFields() (*expression.Schema, types.NameSlice) {
 	return schema.col2Schema(), schema.names
 }
 
+func buildTableDistributionSchema() (*expression.Schema, types.NameSlice) {
+	schema := newColumnsWithNames(13)
+	schema.Append(buildColumnWithName("", "STORE_ID", mysql.TypeLonglong, 4))
+	schema.Append(buildColumnWithName("", "STORE_TYPE", mysql.TypeVarchar, 64))
+	schema.Append(buildColumnWithName("", "REGION_LEADER_COUNT", mysql.TypeLonglong, 4))
+	schema.Append(buildColumnWithName("", "REGION_PEER_COUNT", mysql.TypeLonglong, 4))
+	schema.Append(buildColumnWithName("", "REGION_WRITE_BYTES", mysql.TypeLonglong, 4))
+	schema.Append(buildColumnWithName("", "REGION_WRITE_KEYS", mysql.TypeLonglong, 4))
+	schema.Append(buildColumnWithName("", "REGION_WRITE_QUERY", mysql.TypeLonglong, 4))
+	schema.Append(buildColumnWithName("", "REGION_LEADER_READ_BYTES", mysql.TypeLonglong, 4))
+	schema.Append(buildColumnWithName("", "REGION_LEADER_READ_KEYS", mysql.TypeLonglong, 4))
+	schema.Append(buildColumnWithName("", "REGION_LEADER_READ_QUERY", mysql.TypeLonglong, 4))
+	schema.Append(buildColumnWithName("", "REGION_PEER_READ_BYTES", mysql.TypeLonglong, 4))
+	schema.Append(buildColumnWithName("", "REGION_PEER_READ_KEYS", mysql.TypeLonglong, 4))
+	schema.Append(buildColumnWithName("", "REGION_PEER_READ_QUERY", mysql.TypeLonglong, 4))
+	return schema.col2Schema(), schema.names
+}
+
 func buildTableRegionsSchema() (*expression.Schema, types.NameSlice) {
 	schema := newColumnsWithNames(13)
 	schema.Append(buildColumnWithName("", "REGION_ID", mysql.TypeLonglong, 4))
@@ -5181,12 +5199,21 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		if len(v.Cols) != schema.Len() {
 			return nil, dbterror.ErrViewWrongList
 		}
+		var authCreateErr, authDropErr error
 		if user := b.ctx.GetSessionVars().User; user != nil {
-			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", user.AuthUsername,
+			authCreateErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("CREATE VIEW", user.AuthUsername,
 				user.AuthHostname, v.ViewName.Name.L)
+			if v.OrReplace {
+				authDropErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DROP", user.AuthUsername,
+					user.AuthHostname, v.ViewName.Name.L)
+			}
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateViewPriv, v.ViewName.Schema.L,
-			v.ViewName.Name.L, "", authErr)
+			v.ViewName.Name.L, "", authCreateErr)
+		if v.OrReplace {
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DropPriv, v.ViewName.Schema.L,
+				v.ViewName.Name.L, "", authDropErr)
+		}
 		if v.Definer.CurrentUser && b.ctx.GetSessionVars().User != nil {
 			v.Definer = b.ctx.GetSessionVars().User
 		}
@@ -5586,6 +5613,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		return buildShowWarningsSchema()
 	case ast.ShowRegions:
 		return buildTableRegionsSchema()
+	case ast.ShowDistributions:
+		return buildTableDistributionSchema()
 	case ast.ShowEngines:
 		names = []string{"Engine", "Support", "Comment", "Transactions", "XA", "Savepoints"}
 	case ast.ShowConfig:

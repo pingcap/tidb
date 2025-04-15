@@ -179,37 +179,36 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		taskCh <- src
 	}
 	for i := 0; i < concurrency; i++ {
-		wg.Run(func() {
-			util.WithRecovery(func() {
-				for {
-					if fail := failure.Load(); fail {
-						return
-					}
-					select {
-					case src := <-taskCh:
-						err1 := e.checkIndexHandle(ctx, src)
-						if err1 == nil && src.index.MVIndex {
-							for offset, idx := range e.indexInfos {
-								if idx.ID == src.index.ID {
-									err1 = e.checkTableRecord(ctx, offset)
-									break
-								}
+		wg.RunWithRecover(func() {
+			for {
+				if fail := failure.Load(); fail {
+					return
+				}
+				select {
+				case src := <-taskCh:
+					err1 := e.checkIndexHandle(ctx, src)
+					if err1 == nil && src.index.MVIndex {
+						for offset, idx := range e.indexInfos {
+							if idx.ID == src.index.ID {
+								err1 = e.checkTableRecord(ctx, offset)
+								break
 							}
 						}
-						if err1 != nil {
-							failure.Store(true)
-							logutil.Logger(ctx).Info("check index handle failed", zap.Error(err1))
-							return
-						}
-					case <-e.exitCh:
-						return
-					default:
+					}
+					if err1 != nil {
+						failure.Store(true)
+						logutil.Logger(ctx).Info("check index handle failed", zap.Error(err1))
 						return
 					}
+				case <-e.exitCh:
+					return
+				default:
+					return
 				}
-			}, e.handlePanic)
-		})
+			}
+		}, e.handlePanic)
 	}
+
 	wg.Wait()
 	select {
 	case err := <-e.retCh:
