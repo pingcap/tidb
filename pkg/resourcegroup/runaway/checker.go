@@ -50,9 +50,6 @@ type Checker struct {
 	// watchAction is the specified watch action for the runaway query.
 	// If it's not given, the action defined in `settings` will be used.
 	watchAction rmpb.RunawayAction
-	// watchSwitchGroupName is the specified switch group name for its corresponding runaway action.
-	// If it's not given, the switch group name defined in `settings` will be used.
-	watchSwitchGroupName string
 
 	// mutable fields below
 	// using total processed_keys to accumulate all coprocessor tasks.
@@ -284,7 +281,6 @@ func (r *Checker) markRunawayByIdentifyInRunawaySettings(now *time.Time, exceedC
 func (r *Checker) markRunawayByQueryWatchRule(action rmpb.RunawayAction, switchGroupName, exceedCause string) {
 	r.markedByQueryWatchRule = true
 	r.watchAction = action
-	r.watchSwitchGroupName = switchGroupName
 	now := time.Now()
 	r.markRunaway("watch", action, switchGroupName, &now, exceedCause)
 }
