@@ -840,9 +840,14 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			if err != nil {
 				log.Warn("failed to remove checkpoint data for compacted restore", zap.Error(err))
 			}
-			err = cfg.snapshotCheckpointMetaManager.RemoveCheckpointData(c)
-			if err != nil {
-				log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
+			// Skip removing snapshot checkpoint data if this is a pure log restore
+			// (i.e. restoring only from log backup without a base snapshot backup),
+			// since snapshotCheckpointMetaManager would be nil in that case
+			if cfg.snapshotCheckpointMetaManager != nil {
+				err = cfg.snapshotCheckpointMetaManager.RemoveCheckpointData(c)
+				if err != nil {
+					log.Warn("failed to remove checkpoint data for snapshot restore", zap.Error(err))
+				}
 			}
 		} else {
 			err = cfg.snapshotCheckpointMetaManager.RemoveCheckpointData(c)

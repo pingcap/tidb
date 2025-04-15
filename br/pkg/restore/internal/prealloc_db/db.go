@@ -86,7 +86,8 @@ func (db *DB) ExecDDL(ctx context.Context, ddlJob *model.Job) error {
 		}
 		return errors.Trace(err)
 	case model.ActionCreateTable:
-		err = db.se.CreateTable(ctx, ast.NewCIStr(ddlJob.SchemaName), tableInfo)
+		infoCloned := tableInfo.Clone()
+		err = db.se.CreateTable(ctx, ast.NewCIStr(ddlJob.SchemaName), infoCloned)
 		if err != nil {
 			log.Error("create table failed",
 				zap.Stringer("db", dbInfo.Name),
@@ -284,28 +285,30 @@ func (db *DB) CreateTablePostRestore(ctx context.Context, table *metautil.Table,
 // CreateTables execute a internal CREATE TABLES.
 func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 	ddlTables map[restore.UniqueTableName]bool, supportPolicy bool, policyMap *sync.Map) error {
+	if db.preallocedIDs == nil {
+		return errors.New("preallocedIDs is nil")
+	}
 	if batchSession, ok := db.se.(glue.BatchCreateTableSession); ok {
-		// Modify the table ID inplace, would this be too dangerous?
 		clonedInfos := make(map[string][]*model.TableInfo)
 		for _, table := range tables {
-			infoClone, err := db.preallocedIDs.RewriteTableInfo(table.Info)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			clonedInfos[table.DB.Name.L] = append(clonedInfos[table.DB.Name.L], infoClone)
 			if !supportPolicy {
 				log.Info("set placementPolicyRef to nil when target tidb not support policy",
 					zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))
 				table.Info.ClearPlacement()
 			} else {
-				if err := db.ensureTablePlacementPolicies(ctx, infoClone, policyMap); err != nil {
+				if err := db.ensureTablePlacementPolicies(ctx, table.Info, policyMap); err != nil {
 					return errors.Trace(err)
 				}
 			}
 
-			if ttlInfo := infoClone.TTLInfo; ttlInfo != nil {
+			if ttlInfo := table.Info.TTLInfo; ttlInfo != nil {
 				ttlInfo.Enable = false
 			}
+			infoClone, err := db.preallocedIDs.RewriteTableInfo(table.Info)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			clonedInfos[table.DB.Name.L] = append(clonedInfos[table.DB.Name.L], infoClone)
 		}
 		if len(clonedInfos) > 0 {
 			if err := batchSession.CreateTables(ctx, clonedInfos, ddl.WithIDAllocated(true)); err != nil {
@@ -326,24 +329,24 @@ func (db *DB) CreateTables(ctx context.Context, tables []*metautil.Table,
 // CreateTable executes a CREATE TABLE SQL.
 func (db *DB) CreateTable(ctx context.Context, table *metautil.Table,
 	ddlTables map[restore.UniqueTableName]bool, supportPolicy bool, policyMap *sync.Map) error {
-	infoClone, err := db.preallocedIDs.RewriteTableInfo(table.Info)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	if !supportPolicy {
 		log.Info("set placementPolicyRef to nil when target tidb not support policy",
 			zap.Stringer("table", table.Info.Name), zap.Stringer("db", table.DB.Name))
 		table.Info.ClearPlacement()
 	} else {
-		if err := db.ensureTablePlacementPolicies(ctx, infoClone, policyMap); err != nil {
+		if err := db.ensureTablePlacementPolicies(ctx, table.Info, policyMap); err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	if ttlInfo := infoClone.TTLInfo; ttlInfo != nil {
+	if ttlInfo := table.Info.TTLInfo; ttlInfo != nil {
 		ttlInfo.Enable = false
 	}
 
+	infoClone, err := db.preallocedIDs.RewriteTableInfo(table.Info)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	err = db.se.CreateTable(ctx, table.DB.Name, infoClone, ddl.WithIDAllocated(true))
 	if err != nil {
 		log.Error("create table failed",

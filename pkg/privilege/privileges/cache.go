@@ -56,7 +56,7 @@ var (
 	tablePrivMask          = computePrivMask(mysql.AllTablePrivs)
 )
 
-const globalDBVisible = mysql.CreatePriv | mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.ShowDBPriv | mysql.DropPriv | mysql.AlterPriv | mysql.IndexPriv | mysql.CreateViewPriv | mysql.ShowViewPriv | mysql.GrantPriv | mysql.TriggerPriv | mysql.ReferencesPriv | mysql.ExecutePriv
+const globalDBVisible = mysql.CreatePriv | mysql.SelectPriv | mysql.InsertPriv | mysql.UpdatePriv | mysql.DeletePriv | mysql.ShowDBPriv | mysql.DropPriv | mysql.AlterPriv | mysql.IndexPriv | mysql.CreateViewPriv | mysql.ShowViewPriv | mysql.GrantPriv | mysql.TriggerPriv | mysql.ReferencesPriv | mysql.ExecutePriv | mysql.CreateTMPTablePriv
 
 const (
 	sqlLoadRoleGraph        = "SELECT HIGH_PRIORITY FROM_USER, FROM_HOST, TO_USER, TO_HOST FROM mysql.role_edges"
@@ -256,9 +256,6 @@ type roleGraphEdgesTable struct {
 
 // Find method is used to find role from table
 func (g roleGraphEdgesTable) Find(user, host string) bool {
-	if host == "" {
-		host = "%"
-	}
 	if g.roleList == nil {
 		return false
 	}
@@ -267,6 +264,10 @@ func (g roleGraphEdgesTable) Find(user, host string) bool {
 		Hostname: host,
 	}
 	_, ok := g.roleList[key]
+	if !ok && key.Hostname == "" {
+		key.Hostname = "%"
+		_, ok = g.roleList[key]
+	}
 	return ok
 }
 

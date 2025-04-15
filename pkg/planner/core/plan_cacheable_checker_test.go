@@ -418,18 +418,8 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		"select /*+ use_index(t1, idx_b) */ * from t where a > 1 and b < 2", // hint
 		"select /*+ use_index(t, idx_b) */ * from t1 where a > 1 and b < 2", // hint & partitioned
 
-		"select * from (select * from test.t) t",        // sub-query
-		"select * from (select * from test.t1) t",       // sub-query & partitioned
-		"insert into test.t values(1, 1, 1, 1)",         // insert
-		"insert into test.t1 values(1, 1)",              // insert & partitioned
-		"insert into t(a, b) select a, b from test.t",   // insert into select
-		"insert into t1(a, b) select a, b from test.t1", // insert into select & partitioned
-		"update test.t set a = 1 where b = 2",           // update
-		"update test.t1 set a = 1 where b = 2",          // update & partitioned
-		"delete from test.t where b = 1",                // delete
-		"delete from test.t1 where b = 1",               // delete & partitioned
-		"select * from test.t for update",               // lock
-		"select * from test.t1 for update",              // lock & partitioned
+		"select * from (select * from test.t) t",  // sub-query
+		"select * from (select * from test.t1) t", // sub-query & partitioned
 
 		// uncorrelated sub-query
 		"select * from test.t where a in (select a from t)",
@@ -441,6 +431,19 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		"select * from test.t1 where a in (select a from test.t where a > t1.a)",
 	}
 
+	supportedDML := []string{
+		"select * from test.t for update",               // lock
+		"select * from test.t1 for update",              // lock & partitioned
+		"insert into test.t values(1, 1, 1, 1)",         // insert
+		"insert into test.t1 values(1, 1)",              // insert & partitioned
+		"insert into t(a, b) select a, b from test.t",   // insert into select
+		"insert into t1(a, b) select a, b from test.t1", // insert into select & partitioned
+		"update test.t set a = 1 where b = 2",           // update
+		"update test.t1 set a = 1 where b = 2",          // update & partitioned
+		"delete from test.t where b = 1",                // delete
+		"delete from test.t1 where b = 1",               // delete & partitioned
+	}
+
 	sctx := tk.Session()
 	for i, q := range unsupported {
 		stmt, err := p.ParseOneStmt(q, charset, collation)
@@ -450,6 +453,13 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 	}
 
 	for _, q := range supported {
+		stmt, err := p.ParseOneStmt(q, charset, collation)
+		require.NoError(t, err)
+		ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx.GetPlanCtx(), stmt, is)
+		require.True(t, ok)
+	}
+
+	for _, q := range supportedDML {
 		stmt, err := p.ParseOneStmt(q, charset, collation)
 		require.NoError(t, err)
 		ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx.GetPlanCtx(), stmt, is)

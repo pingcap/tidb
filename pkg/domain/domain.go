@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	disthandle "github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -69,6 +70,7 @@ import (
 	metrics2 "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
@@ -163,8 +165,13 @@ type Domain struct {
 	m               syncutil.Mutex
 	SchemaValidator SchemaValidator
 	schemaLease     time.Duration
+	// advancedSysSessionPool is a more powerful session pool that returns a wrapped session which can detect
+	// some misuse of the session to avoid potential bugs.
+	// It is recommended to use this pool instead of `sysSessionPool`.
+	advancedSysSessionPool *syssession.AdvancedSessionPool
 	// Note: If you no longer need the session, you must call Destroy to release it.
 	// Otherwise, the session will be leaked. Because there is a strong reference from the domain to the session.
+	// Deprecated: Use `advancedSysSessionPool` instead.
 	sysSessionPool util.DestroyableSessionPool
 	exit           chan struct{}
 	// `etcdClient` must be used when keyspace is not set, or when the logic to each etcd path needs to be separated by keyspace.
@@ -1304,6 +1311,7 @@ func (do *Domain) Close() {
 	}
 
 	do.sysSessionPool.Close()
+	do.advancedSysSessionPool.Close()
 	variable.UnregisterStatistics(do.BindingHandle())
 	if do.onClose != nil {
 		do.onClose()
@@ -1369,6 +1377,18 @@ func NewDomainWithEtcdClient(store kv.Storage, schemaLease time.Duration, statsL
 		mdlCheckCh: make(chan struct{}),
 	}
 
+	do.advancedSysSessionPool = syssession.NewAdvancedSessionPool(capacity, func() (syssession.SessionContext, error) {
+		r, err := factory()
+		if err != nil {
+			return nil, err
+		}
+		sctx, ok := r.(syssession.SessionContext)
+		intest.Assert(ok, "type: %T should be cast to syssession.SessionContext", r)
+		if !ok {
+			return nil, errors.Errorf("type: %T cannot be cast to syssession.SessionContext", r)
+		}
+		return sctx, nil
+	})
 	do.infoCache = infoschema.NewCache(do, int(vardef.SchemaVersionCacheLimit.Load()))
 	do.stopAutoAnalyze.Store(false)
 	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, config.GetGlobalConfig().TiDBEnableExitCheck)
@@ -1764,6 +1784,7 @@ func (do *Domain) InitDistTaskLoop() error {
 	if err != nil {
 		return err
 	}
+	disthandle.SetNodeResource(nodeRes)
 	executorManager, err := taskexecutor.NewManager(managerCtx, serverID, taskManager, nodeRes)
 	if err != nil {
 		return err
@@ -1874,8 +1895,16 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 }
 
 // SysSessionPool returns the system session pool.
+// Deprecated: Use AdvancedSysSessionPool instead.
 func (do *Domain) SysSessionPool() util.DestroyableSessionPool {
 	return do.sysSessionPool
+}
+
+// AdvancedSysSessionPool is a more powerful session pool that returns a wrapped session which can detect
+// some misuse of the session to avoid potential bugs.
+// It is recommended to use this pool instead of `sysSessionPool`.
+func (do *Domain) AdvancedSysSessionPool() syssession.Pool {
+	return do.advancedSysSessionPool
 }
 
 // SysProcTracker returns the system processes tracker.
@@ -2440,12 +2469,11 @@ func (do *Domain) StatsHandle() *handle.Handle {
 }
 
 // CreateStatsHandle is used only for test.
-func (do *Domain) CreateStatsHandle(ctx, initStatsCtx sessionctx.Context) error {
+func (do *Domain) CreateStatsHandle(ctx context.Context, initStatsCtx sessionctx.Context) error {
 	h, err := handle.NewHandle(
 		ctx,
 		initStatsCtx,
 		do.statsLease,
-		do.InfoSchema(),
 		do.sysSessionPool,
 		&do.sysProcesses,
 		do.ddlNotifier,
@@ -2475,24 +2503,22 @@ func (do *Domain) SetStatsUpdating(val bool) {
 }
 
 // LoadAndUpdateStatsLoop loads and updates stats info.
-func (do *Domain) LoadAndUpdateStatsLoop(ctxs []sessionctx.Context, initStatsCtx sessionctx.Context) error {
-	if err := do.UpdateTableStatsLoop(ctxs[0], initStatsCtx); err != nil {
+func (do *Domain) LoadAndUpdateStatsLoop(concurrency int, initStatsCtx sessionctx.Context) error {
+	if err := do.UpdateTableStatsLoop(initStatsCtx); err != nil {
 		return err
 	}
-	do.StartLoadStatsSubWorkers(ctxs[1:])
+	do.StartLoadStatsSubWorkers(concurrency)
 	return nil
 }
 
 // UpdateTableStatsLoop creates a goroutine loads stats info and updates stats info in a loop.
 // It will also start a goroutine to analyze tables automatically.
 // It should be called only once in BootstrapSession.
-func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) error {
-	ctx.GetSessionVars().InRestrictedSQL = true
+func (do *Domain) UpdateTableStatsLoop(initStatsCtx sessionctx.Context) error {
 	statsHandle, err := handle.NewHandle(
-		ctx,
+		do.ctx,
 		initStatsCtx,
 		do.statsLease,
-		do.InfoSchema(),
 		do.sysSessionPool,
 		&do.sysProcesses,
 		do.ddlNotifier,
@@ -2600,13 +2626,13 @@ func quitStatsOwner(do *Domain, mgr owner.Manager) {
 }
 
 // StartLoadStatsSubWorkers starts sub workers with new sessions to load stats concurrently.
-func (do *Domain) StartLoadStatsSubWorkers(ctxList []sessionctx.Context) {
+func (do *Domain) StartLoadStatsSubWorkers(concurrency int) {
 	statsHandle := do.StatsHandle()
-	for _, ctx := range ctxList {
+	for i := 0; i < concurrency; i++ {
 		do.wg.Add(1)
-		go statsHandle.SubLoadWorker(ctx, do.exit, do.wg)
+		go statsHandle.SubLoadWorker(do.exit, do.wg)
 	}
-	logutil.BgLogger().Info("start load stats sub workers", zap.Int("worker count", len(ctxList)))
+	logutil.BgLogger().Info("start load stats sub workers", zap.Int("workerCount", concurrency))
 }
 
 // NewOwnerManager returns the owner manager for use outside of the domain.
@@ -2703,7 +2729,7 @@ func (do *Domain) asyncLoadHistogram() {
 		case <-cleanupTicker.C:
 			err = statsHandle.LoadNeededHistograms(do.InfoSchema())
 			if err != nil {
-				logutil.ErrVerboseLogger().Warn("load histograms failed", zap.Error(err))
+				statslogutil.StatsErrVerboseSampleLogger().Warn("Load histograms failed", zap.Error(err))
 			}
 		case <-do.exit:
 			return
@@ -3486,10 +3512,11 @@ func (do *Domain) planCacheEvictTrigger() {
 // SetupWorkloadBasedLearningWorker sets up all of the workload based learning workers.
 func (do *Domain) SetupWorkloadBasedLearningWorker() {
 	wbLearningHandle := workloadlearning.NewWorkloadLearningHandle(do.sysSessionPool)
+	wbCacheWorker := workloadlearning.NewWLCacheWorker(do.sysSessionPool)
 	// Start the workload based learning worker to analyze the read workload by statement_summary.
 	do.wg.Run(
 		func() {
-			do.readTableCostWorker(wbLearningHandle)
+			do.readTableCostWorker(wbLearningHandle, wbCacheWorker)
 		},
 		"readTableCostWorker",
 	)
@@ -3497,7 +3524,7 @@ func (do *Domain) SetupWorkloadBasedLearningWorker() {
 }
 
 // readTableCostWorker is a background worker that periodically analyze the read path table cost by statement_summary.
-func (do *Domain) readTableCostWorker(wbLearningHandle *workloadlearning.Handle) {
+func (do *Domain) readTableCostWorker(wbLearningHandle *workloadlearning.Handle, wbCacheWorker *workloadlearning.WLCacheWorker) {
 	// Recover the panic and log the error when worker exit.
 	defer util.Recover(metrics.LabelDomain, "readTableCostWorker", nil, false)
 	readTableCostTicker := time.NewTicker(vardef.WorkloadBasedLearningInterval.Load())
@@ -3509,7 +3536,8 @@ func (do *Domain) readTableCostWorker(wbLearningHandle *workloadlearning.Handle)
 		select {
 		case <-readTableCostTicker.C:
 			if vardef.EnableWorkloadBasedLearning.Load() && do.statsOwner.IsOwner() {
-				wbLearningHandle.HandleReadTableCost(do.InfoSchema())
+				wbLearningHandle.HandleTableReadCost(do.InfoSchema())
+				wbCacheWorker.UpdateTableReadCostCache()
 			}
 		case <-do.exit:
 			return

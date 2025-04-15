@@ -10041,7 +10041,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "histogram_quantile(0.999, sum(rate(tidb_tikvclient_cop_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le, instance))",
+              "expr": "histogram_quantile(0.999, sum(rate(tidb_tikvclient_request_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", store!=\"0\", scope=\"false\", type=\"Cop\"}[1m])) by (le,instance))",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{instance}}",
@@ -16325,6 +16325,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
+          "decimals": 0,
           "title": "Task Status",
           "tooltip": {
             "shared": true,
@@ -16346,7 +16347,8 @@
               "logBase": 1,
               "max": null,
               "min": null,
-              "show": true
+              "show": true,
+              "decimals": 0
             },
             {
               "format": "short",
@@ -18425,16 +18427,24 @@
               "expr": "histogram_quantile(0.99, sum(rate(tidb_statistics_stats_delta_update_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
               "interval": "",
               "intervalFactor": 2,
-              "legendFormat": "99",
+              "legendFormat": "stats-meta-99",
               "queryType": "randomWalk",
               "refId": "A"
+            },
+            {
+              "exemplar": true,
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_statistics_stats_usage_update_duration_seconds_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "stats-usage-99",
+              "refId": "B"
             }
           ],
           "thresholds": [],
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Stats Meta Updating Duration",
+          "title": "Stats Meta/Usage Updating Duration",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -23717,7 +23727,9 @@
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "The total coprocessor response size between each tidb and tikv",
           "fieldConfig": {
-            "defaults": {},
+            "defaults": {
+              "unit": "KiBs"
+            },
             "overrides": []
           },
           "fill": 0,
@@ -23787,7 +23799,7 @@
           "yaxes": [
             {
               "$$hashKey": "object:394",
-              "format": "binBps",
+              "format": "KiBs",
               "label": "",
               "logBase": 1,
               "max": null,
@@ -23817,7 +23829,9 @@
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "Histogram of coprocessor response size in bytes between tidb and tikv",
           "fieldConfig": {
-            "defaults": {},
+            "defaults": {
+              "unit": "kbytes"
+            },
             "overrides": []
           },
           "fill": 0,
@@ -23914,7 +23928,7 @@
           "yaxes": [
             {
               "$$hashKey": "object:394",
-              "format": "bytes",
+              "format": "kbytes",
               "label": "",
               "logBase": 1,
               "max": null,
@@ -25245,7 +25259,7 @@
             "align": false,
             "alignLevel": null
           }
-        }        
+        }
       ],
       "title": "Network Transmission",
       "type": "row"

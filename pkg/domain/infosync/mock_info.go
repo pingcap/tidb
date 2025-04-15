@@ -85,14 +85,18 @@ func (m *MockGlobalServerInfoManager) getServerInfo(id string, serverIDGetter fu
 
 	// TODO: each mock server can have different config
 	info := &ServerInfo{
-		ID:             id,
-		IP:             cfg.AdvertiseAddress,
-		Port:           m.mockServerPort,
-		StatusPort:     cfg.Status.StatusPort,
-		Lease:          cfg.Lease,
-		StartTimestamp: time.Now().Unix(),
-		Labels:         cfg.Labels,
-		ServerIDGetter: serverIDGetter,
+		StaticServerInfo: StaticServerInfo{
+			ID:             id,
+			IP:             cfg.AdvertiseAddress,
+			Port:           m.mockServerPort,
+			StatusPort:     cfg.Status.StatusPort,
+			Lease:          cfg.Lease,
+			StartTimestamp: time.Now().Unix(),
+			ServerIDGetter: serverIDGetter,
+		},
+		DynamicServerInfo: DynamicServerInfo{
+			Labels: cfg.Labels,
+		},
 	}
 
 	m.mockServerPort++

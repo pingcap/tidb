@@ -39,6 +39,42 @@ import (
 	"go.uber.org/zap"
 )
 
+// writeStepMemShareCount defines the number of shares of memory per job worker.
+// For each job worker, the memory it can use is determined by cpu:mem ratio, say
+// a 16c32G machine, each worker can use 2G memory.
+// And for the memory corresponding to each job worker, we divide into below and
+// total 6.5 shares:
+//   - one share used by HTTP and GRPC buf, such as loadBatchRegionData, write TiKV
+//   - one share used by loadBatchRegionData to store loaded data batch A
+//   - one share used by generateAndSendJob for handle loaded data batch B
+//   - one share used by the active job on job worker
+//   - 2.5 share for others, and burst allocation to avoid OOM
+//
+// the share size 'SS' determines the max data size 'RangeS' for a split-range
+// which is split out by RangeSplitter.
+// split-range is intersected with region to generate range job which is handled
+// by range job worker, and each range job corresponding to one ingested SST on TiKV.
+// our goal here is to load as many data as possible to make all range job workers
+// fully parallelized, while minimizing the number of SSTs (too many SST file, say
+// 500K, will cause TiKV slow down when ingest), i.e. to make RangeS larger, and
+// also try to make the SST be more even, so we calculate RangeS by:
+//   - RS = region size
+//   - let TempRangeS = SS
+//   - if TempRangeS < RS, RangeS = RS / ceil(RS / TempRangeS) + 1,
+//     trailing 1 is for RS divided by odd number.
+//   - else RangeS = floor(TempRangeS / RS) * RS.
+//
+// RangeS for different region size and cpu:mem ratio, the number in parentheses
+// is the number of SST files per region:
+//
+//	|   RS  | RangeS        | RangeS        |
+//	|       | cpu:mem=1:1.7 | cpu:mem=1:3.5 |
+//	|-------|---------------|---------------|
+//	|   96M |       192M(1) |       480M(1) |
+//	|  256M |       256M(1) |       512M(1) |
+//	|  512M |       256M(2) |       512M(1) |
+const writeStepMemShareCount = 6.5
+
 // during test on ks3, we found that we can open about 8000 connections to ks3,
 // bigger than that, we might receive "connection reset by peer" error, and
 // the read speed will be very slow, still investigating the reason.
@@ -50,9 +86,8 @@ import (
 const maxCloudStorageConnections = 1000
 
 type memKVsAndBuffers struct {
-	mu     sync.Mutex
-	keys   [][]byte
-	values [][]byte
+	mu  sync.Mutex
+	kvs []kvPair
 	// memKVBuffers contains two types of buffer, first half are used for small block
 	// buffer, second half are used for large one.
 	memKVBuffers []*membuf.Buffer
@@ -60,14 +95,13 @@ type memKVsAndBuffers struct {
 	droppedSize  int
 
 	// temporary fields to store KVs to reduce slice allocations.
-	keysPerFile        [][][]byte
-	valuesPerFile      [][][]byte
+	kvsPerFile         [][]kvPair
 	droppedSizePerFile []int
 }
 
 func (b *memKVsAndBuffers) build(ctx context.Context) {
 	sumKVCnt := 0
-	for _, keys := range b.keysPerFile {
+	for _, keys := range b.kvsPerFile {
 		sumKVCnt += len(keys)
 	}
 	b.droppedSize = 0
@@ -80,16 +114,12 @@ func (b *memKVsAndBuffers) build(ctx context.Context) {
 		zap.Int("sumKVCnt", sumKVCnt),
 		zap.Int("droppedSize", b.droppedSize))
 
-	b.keys = make([][]byte, 0, sumKVCnt)
-	b.values = make([][]byte, 0, sumKVCnt)
-	for i := range b.keysPerFile {
-		b.keys = append(b.keys, b.keysPerFile[i]...)
-		b.keysPerFile[i] = nil
-		b.values = append(b.values, b.valuesPerFile[i]...)
-		b.valuesPerFile[i] = nil
+	b.kvs = make([]kvPair, 0, sumKVCnt)
+	for i := range b.kvsPerFile {
+		b.kvs = append(b.kvs, b.kvsPerFile[i]...)
+		b.kvsPerFile[i] = nil
 	}
-	b.keysPerFile = nil
-	b.valuesPerFile = nil
+	b.kvsPerFile = nil
 }
 
 // Engine stored sorted key/value pairs in an external storage.
@@ -126,12 +156,12 @@ type Engine struct {
 
 	importedKVSize  *atomic.Int64
 	importedKVCount *atomic.Int64
+	memLimit        int
 }
 
 var _ common.Engine = (*Engine)(nil)
 
 const (
-	memLimit       = 12 * units.GiB
 	smallBlockSize = units.MiB
 )
 
@@ -153,7 +183,12 @@ func NewExternalEngine(
 	totalKVSize int64,
 	totalKVCount int64,
 	checkHotspot bool,
+	memCapacity int64,
 ) common.Engine {
+	// at most 3 batches can be loaded in memory, see writeStepMemShareCount.
+	memLimit := int(float64(memCapacity) / writeStepMemShareCount * 3)
+	logutil.BgLogger().Info("create external engine",
+		zap.String("memLimitForLoadRange", units.BytesSize(float64(memLimit))))
 	memLimiter := membuf.NewLimiter(memLimit)
 	return &Engine{
 		storage:    storage,
@@ -184,6 +219,7 @@ func NewExternalEngine(
 		totalKVCount:       totalKVCount,
 		importedKVSize:     atomic.NewInt64(0),
 		importedKVCount:    atomic.NewInt64(0),
+		memLimit:           memLimit,
 	}
 }
 
@@ -233,8 +269,11 @@ func getFilesReadConcurrency(
 		return nil, nil, err
 	}
 	startOffs, endOffs := offsets[0], offsets[1]
+	totalFileSize := uint64(0)
 	for i := range statsFiles {
-		expectedConc := (endOffs[i] - startOffs[i]) / uint64(ConcurrentReaderBufferSizePerConc)
+		size := endOffs[i] - startOffs[i]
+		totalFileSize += size
+		expectedConc := size / uint64(ConcurrentReaderBufferSizePerConc)
 		// let the stat internals cover the [startKey, endKey) since seekPropsOffsets
 		// always return an offset that is less than or equal to the key.
 		expectedConc += 1
@@ -257,6 +296,8 @@ func getFilesReadConcurrency(
 			)
 		}
 	}
+	logutil.Logger(ctx).Info("estimated file size of this range group",
+		zap.String("totalSize", units.BytesSize(float64(totalFileSize))))
 	return result, startOffs, nil
 }
 
@@ -271,6 +312,7 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	startKey := jobKeys[0]
 	endKey := jobKeys[len(jobKeys)-1]
 	readStart := time.Now()
+	// read all data in range [startKey, endKey)
 	err := readAllData(
 		ctx,
 		e.storage,
@@ -297,17 +339,16 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	oldSortyGor := sorty.MaxGor
 	sorty.MaxGor = uint64(e.workerConcurrency * 2)
 	var dupKey atomic.Pointer[[]byte]
-	sorty.Sort(len(e.memKVsAndBuffers.keys), func(i, k, r, s int) bool {
-		cmp := bytes.Compare(e.memKVsAndBuffers.keys[i], e.memKVsAndBuffers.keys[k])
+	sorty.Sort(len(e.memKVsAndBuffers.kvs), func(i, k, r, s int) bool {
+		cmp := bytes.Compare(e.memKVsAndBuffers.kvs[i].key, e.memKVsAndBuffers.kvs[k].key)
 		if cmp < 0 { // strict comparator like < or >
 			if r != s {
-				e.memKVsAndBuffers.keys[r], e.memKVsAndBuffers.keys[s] = e.memKVsAndBuffers.keys[s], e.memKVsAndBuffers.keys[r]
-				e.memKVsAndBuffers.values[r], e.memKVsAndBuffers.values[s] = e.memKVsAndBuffers.values[s], e.memKVsAndBuffers.values[r]
+				e.memKVsAndBuffers.kvs[r], e.memKVsAndBuffers.kvs[s] = e.memKVsAndBuffers.kvs[s], e.memKVsAndBuffers.kvs[r]
 			}
 			return true
 		}
 		if cmp == 0 && i != k {
-			cloned := append([]byte(nil), e.memKVsAndBuffers.keys[i]...)
+			cloned := append([]byte(nil), e.memKVsAndBuffers.kvs[i].key...)
 			dupKey.Store(&cloned)
 		}
 		return false
@@ -330,14 +371,12 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	sortRateHist.Observe(float64(size) / 1024.0 / 1024.0 / sortSecond)
 
 	data := e.buildIngestData(
-		e.memKVsAndBuffers.keys,
-		e.memKVsAndBuffers.values,
+		e.memKVsAndBuffers.kvs,
 		e.memKVsAndBuffers.memKVBuffers,
 	)
 
 	// release the reference of e.memKVsAndBuffers
-	e.memKVsAndBuffers.keys = nil
-	e.memKVsAndBuffers.values = nil
+	e.memKVsAndBuffers.kvs = nil
 	e.memKVsAndBuffers.memKVBuffers = nil
 	e.memKVsAndBuffers.size = 0
 
@@ -388,13 +427,14 @@ func (e *Engine) LoadIngestData(
 	outCh chan<- common.DataAndRanges,
 ) error {
 	// try to make every worker busy for each batch
-	regionBatchSize := e.workerConcurrency
+	rangeBatchSize := e.workerConcurrency
 	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
-		regionBatchSize = val.(int)
+		rangeBatchSize = val.(int)
 	})
-	for start := 0; start < len(e.jobKeys)-1; start += regionBatchSize {
+	logutil.Logger(ctx).Info("load ingest data", zap.Int("batchSize", rangeBatchSize))
+	for start := 0; start < len(e.jobKeys)-1; start += rangeBatchSize {
 		// want to generate N ranges, so we need N+1 keys
-		end := min(1+start+regionBatchSize, len(e.jobKeys))
+		end := min(1+start+rangeBatchSize, len(e.jobKeys))
 		err := e.loadBatchRegionData(ctx, e.jobKeys[start:end], outCh)
 		if err != nil {
 			return err
@@ -403,14 +443,13 @@ func (e *Engine) LoadIngestData(
 	return nil
 }
 
-func (e *Engine) buildIngestData(keys, values [][]byte, buf []*membuf.Buffer) *MemoryIngestData {
+func (e *Engine) buildIngestData(kvs []kvPair, buf []*membuf.Buffer) *MemoryIngestData {
 	return &MemoryIngestData{
 		keyAdapter:         e.keyAdapter,
 		duplicateDetection: e.duplicateDetection,
 		duplicateDB:        e.duplicateDB,
 		dupDetectOpt:       e.dupDetectOpt,
-		keys:               keys,
-		values:             values,
+		kvs:                kvs,
 		ts:                 e.ts,
 		memBuf:             buf,
 		refCnt:             atomic.NewInt64(0),
@@ -514,7 +553,7 @@ func (e *Engine) Close() error {
 
 // Reset resets the memory buffer pool.
 func (e *Engine) Reset() error {
-	memLimiter := membuf.NewLimiter(memLimit)
+	memLimiter := membuf.NewLimiter(e.memLimit)
 	if e.smallBlockBufPool != nil {
 		e.smallBlockBufPool.Destroy()
 		e.smallBlockBufPool = membuf.NewPool(
@@ -541,9 +580,8 @@ type MemoryIngestData struct {
 	duplicateDB        *pebble.DB
 	dupDetectOpt       common.DupDetectOpt
 
-	keys   [][]byte
-	values [][]byte
-	ts     uint64
+	kvs []kvPair
+	ts  uint64
 
 	memBuf          []*membuf.Buffer
 	refCnt          *atomic.Int64
@@ -557,26 +595,26 @@ func (m *MemoryIngestData) firstAndLastKeyIndex(lowerBound, upperBound []byte) (
 	firstKeyIdx := 0
 	if len(lowerBound) > 0 {
 		lowerBound = m.keyAdapter.Encode(nil, lowerBound, common.MinRowID)
-		firstKeyIdx = sort.Search(len(m.keys), func(i int) bool {
-			return bytes.Compare(lowerBound, m.keys[i]) <= 0
+		firstKeyIdx = sort.Search(len(m.kvs), func(i int) bool {
+			return bytes.Compare(lowerBound, m.kvs[i].key) <= 0
 		})
-		if firstKeyIdx == len(m.keys) {
+		if firstKeyIdx == len(m.kvs) {
 			return -1, -1
 		}
 	}
 
-	lastKeyIdx := len(m.keys) - 1
+	lastKeyIdx := len(m.kvs) - 1
 	if len(upperBound) > 0 {
 		upperBound = m.keyAdapter.Encode(nil, upperBound, common.MinRowID)
-		i := sort.Search(len(m.keys), func(i int) bool {
-			reverseIdx := len(m.keys) - 1 - i
-			return bytes.Compare(upperBound, m.keys[reverseIdx]) > 0
+		i := sort.Search(len(m.kvs), func(i int) bool {
+			reverseIdx := len(m.kvs) - 1 - i
+			return bytes.Compare(upperBound, m.kvs[reverseIdx].key) > 0
 		})
-		if i == len(m.keys) {
+		if i == len(m.kvs) {
 			// should not happen
 			return -1, -1
 		}
-		lastKeyIdx = len(m.keys) - 1 - i
+		lastKeyIdx = len(m.kvs) - 1 - i
 	}
 	return firstKeyIdx, lastKeyIdx
 }
@@ -587,11 +625,11 @@ func (m *MemoryIngestData) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]
 	if firstKeyIdx < 0 || firstKeyIdx > lastKeyIdx {
 		return nil, nil, nil
 	}
-	firstKey, err := m.keyAdapter.Decode(nil, m.keys[firstKeyIdx])
+	firstKey, err := m.keyAdapter.Decode(nil, m.kvs[firstKeyIdx].key)
 	if err != nil {
 		return nil, nil, err
 	}
-	lastKey, err := m.keyAdapter.Decode(nil, m.keys[lastKeyIdx])
+	lastKey, err := m.keyAdapter.Decode(nil, m.kvs[lastKeyIdx].key)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -599,8 +637,7 @@ func (m *MemoryIngestData) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]
 }
 
 type memoryDataIter struct {
-	keys   [][]byte
-	values [][]byte
+	kvs []kvPair
 
 	firstKeyIdx int
 	lastKeyIdx  int
@@ -629,12 +666,12 @@ func (m *memoryDataIter) Next() bool {
 
 // Key implements ForwardIter.
 func (m *memoryDataIter) Key() []byte {
-	return m.keys[m.curIdx]
+	return m.kvs[m.curIdx].key
 }
 
 // Value implements ForwardIter.
 func (m *memoryDataIter) Value() []byte {
-	return m.values[m.curIdx]
+	return m.kvs[m.curIdx].value
 }
 
 // Close implements ForwardIter.
@@ -723,8 +760,7 @@ func (m *MemoryIngestData) NewIter(
 ) common.ForwardIter {
 	firstKeyIdx, lastKeyIdx := m.firstAndLastKeyIndex(lowerBound, upperBound)
 	iter := &memoryDataIter{
-		keys:        m.keys,
-		values:      m.values,
+		kvs:         m.kvs,
 		firstKeyIdx: firstKeyIdx,
 		lastKeyIdx:  lastKeyIdx,
 	}
@@ -753,8 +789,7 @@ func (m *MemoryIngestData) IncRef() {
 // DecRef implements IngestData.DecRef.
 func (m *MemoryIngestData) DecRef() {
 	if m.refCnt.Dec() == 0 {
-		m.keys = nil
-		m.values = nil
+		m.kvs = nil
 		for _, b := range m.memBuf {
 			b.Destroy()
 		}
@@ -765,5 +800,4 @@ func (m *MemoryIngestData) DecRef() {
 func (m *MemoryIngestData) Finish(totalBytes, totalCount int64) {
 	m.importedKVSize.Add(totalBytes)
 	m.importedKVCount.Add(totalCount)
-
 }

@@ -163,6 +163,7 @@ go_test(
         "@com_github_tikv_pd_client//:client",
         "@com_github_tikv_pd_client//http",
         "@com_github_tikv_pd_client//opt",
+        "@com_github_tikv_pd_client//pkg/caller",
         "@org_golang_google_grpc//keepalive",
     ],
 )

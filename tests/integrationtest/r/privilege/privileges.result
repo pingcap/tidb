@@ -722,3 +722,26 @@ Error 1227 (42000): Access denied; you need (at least one of) the CREATE USER pr
 alter user test account unlock;
 Error 1227 (42000): Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation
 alter user u59677 identified by 'abcde';
+drop database if exists tmpdb;
+create database tmpdb;
+drop user test_user;
+create user test_user;
+grant create temporary tables on tmpdb.* to test_user;
+show databases;
+Database
+INFORMATION_SCHEMA
+tmpdb
+create temporary table tmpdb.tmp(id int);
+use privilege__privileges;
+DROP USER IF EXISTS foo;
+CREATE USER foo;
+DROP VIEW IF EXISTS v, v1;
+GRANT SELECT ON privilege__privileges.* TO foo;
+CREATE OR REPLACE VIEW v AS SELECT 1;
+Error 1142 (42000): CREATE VIEW command denied to user 'foo'@'%' for table 'v'
+GRANT CREATE VIEW ON privilege__privileges.* TO foo;
+CREATE VIEW v AS SELECT 1;
+CREATE OR REPLACE VIEW v AS SELECT 1, 1;
+Error 1142 (42000): DROP command denied to user 'foo'@'%' for table 'v'
+CREATE OR REPLACE VIEW v1 AS SELECT 1, 1;
+Error 1142 (42000): DROP command denied to user 'foo'@'%' for table 'v1'

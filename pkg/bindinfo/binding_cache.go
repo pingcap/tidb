@@ -60,7 +60,7 @@ func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad bool) (err error) 
 		timeCondition = ""
 	} else {
 		lastUpdateTime = u.lastUpdateTime.Load().(types.Time)
-		timeCondition = fmt.Sprintf("WHERE update_time>'%s'", lastUpdateTime.String())
+		timeCondition = fmt.Sprintf("USE INDEX (time_index) WHERE update_time>'%s'", lastUpdateTime.String())
 	}
 	condition := fmt.Sprintf(`%s ORDER BY update_time, create_time`, timeCondition)
 	bindings, err := readBindingsFromStorage(u.sPool, condition)

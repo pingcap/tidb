@@ -293,9 +293,29 @@ func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBRepl
 			existingDBReplace.DbID = newID
 		}
 
+		// db replace in `TableMappingManager` has no name yet, it is determined by baseMap.
+		// TODO: update the name of the db replace that is not exists in baseMap.
+		// Now it is OK because user tables' name is not used.
+		if existingDBReplace.Name == "" {
+			if baseDBReplace, exists := baseMap[upDBID]; exists && baseDBReplace.Name != "" {
+				existingDBReplace.Name = baseDBReplace.Name
+			}
+		}
+
 		for upTableID, existingTableReplace := range existingDBReplace.TableMap {
 			if newID, exists := tm.globalIdMap[upTableID]; exists {
 				existingTableReplace.TableID = newID
+			}
+
+			// table replace in `TableMappingManager` has no name yet, it is determined by baseMap.
+			// TODO: update the name of the table replace that is not exists in baseMap.
+			// Now it is OK because user tables' name is not used.
+			if existingTableReplace.Name == "" {
+				if baseDBReplace, dbExists := baseMap[upDBID]; dbExists {
+					if baseTableReplace, tableExists := baseDBReplace.TableMap[upTableID]; tableExists && baseTableReplace.Name != "" {
+						existingTableReplace.Name = baseTableReplace.Name
+					}
+				}
 			}
 
 			for partUpID := range existingTableReplace.PartitionMap {
@@ -515,10 +535,12 @@ func ExtractValue(e *kv.Entry, cf string) ([]byte, error) {
 		if err := rawWriteCFValue.ParseFrom(e.Value); err != nil {
 			return nil, errors.Trace(err)
 		}
-		if rawWriteCFValue.HasShortValue() {
-			return rawWriteCFValue.shortValue, nil
+		// have to be consistent with rewrite_meta_rawkv.go otherwise value like p/xxx/xxx will fall through
+		// and fail to parse
+		if rawWriteCFValue.IsDelete() || rawWriteCFValue.IsRollback() || !rawWriteCFValue.HasShortValue() {
+			return nil, nil
 		}
-		return nil, nil
+		return rawWriteCFValue.GetShortValue(), nil
 	default:
 		return nil, errors.Errorf("unsupported column family: %s", cf)
 	}

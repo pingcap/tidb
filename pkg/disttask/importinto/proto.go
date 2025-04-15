@@ -50,9 +50,10 @@ type TaskMeta struct {
 // Scheduler will split the task into subtasks(FileInfos -> Chunks)
 // All the field should be serializable.
 type ImportStepMeta struct {
+	external.BaseExternalMeta
 	// this is the engine ID, not the id in tidb_background_subtask table.
 	ID       int32
-	Chunks   []importer.Chunk
+	Chunks   []importer.Chunk   `external:"true"`
 	Checksum map[int64]Checksum // see KVGroupChecksum for definition of map key.
 	Result   Result
 	// MaxIDs stores the max id that have been used during encoding for each allocator type.
@@ -60,9 +61,14 @@ type ImportStepMeta struct {
 	// NewPanickingAllocators for more info.
 	MaxIDs map[autoid.AllocatorType]int64
 
-	SortedDataMeta *external.SortedKVMeta
+	SortedDataMeta *external.SortedKVMeta `external:"true"`
 	// SortedIndexMetas is a map from index id to its sorted kv meta.
-	SortedIndexMetas map[int64]*external.SortedKVMeta
+	SortedIndexMetas map[int64]*external.SortedKVMeta `external:"true"`
+}
+
+// Marshal marshals the import step meta to JSON.
+func (m *ImportStepMeta) Marshal() ([]byte, error) {
+	return m.BaseExternalMeta.Marshal(m)
 }
 
 const (
@@ -73,24 +79,36 @@ const (
 
 // MergeSortStepMeta is the meta of merge sort step.
 type MergeSortStepMeta struct {
+	external.BaseExternalMeta
 	// KVGroup is the group name of the sorted kv, either dataKVGroup or index-id.
 	KVGroup               string   `json:"kv-group"`
-	DataFiles             []string `json:"data-files"`
-	external.SortedKVMeta `json:"sorted-kv-meta"`
+	DataFiles             []string `json:"data-files" external:"true"`
+	external.SortedKVMeta `external:"true"`
+}
+
+// Marshal marshal the merge sort step meta to JSON.
+func (m *MergeSortStepMeta) Marshal() ([]byte, error) {
+	return m.BaseExternalMeta.Marshal(m)
 }
 
 // WriteIngestStepMeta is the meta of write and ingest step.
 // only used when global sort is enabled.
 type WriteIngestStepMeta struct {
+	external.BaseExternalMeta
 	KVGroup               string `json:"kv-group"`
-	external.SortedKVMeta `json:"sorted-kv-meta"`
-	DataFiles             []string `json:"data-files"`
-	StatFiles             []string `json:"stat-files"`
-	RangeJobKeys          [][]byte `json:"range-job-keys"`
-	RangeSplitKeys        [][]byte `json:"range-split-keys"`
+	external.SortedKVMeta `json:"sorted-kv-meta" external:"true"`
+	DataFiles             []string `json:"data-files" external:"true"`
+	StatFiles             []string `json:"stat-files" external:"true"`
+	RangeJobKeys          [][]byte `json:"range-job-keys" external:"true"`
+	RangeSplitKeys        [][]byte `json:"range-split-keys" external:"true"`
 	TS                    uint64   `json:"ts"`
 
 	Result Result
+}
+
+// Marshal marshals the write ingest step meta to JSON.
+func (m *WriteIngestStepMeta) Marshal() ([]byte, error) {
+	return m.BaseExternalMeta.Marshal(m)
 }
 
 // PostProcessStepMeta is the meta of post process step.

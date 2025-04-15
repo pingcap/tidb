@@ -608,7 +608,7 @@ func NewBackend(
 	}
 
 	// The following copies tikv.NewTxnClient without creating yet another pdClient.
-	spkv, err = tikvclient.NewEtcdSafePointKV(strings.Split(config.PDAddr, ","), tls.TLSConfig())
+	spkv, err = tikvclient.NewEtcdSafePointKV(pdAddrs, tls.TLSConfig())
 	if err != nil {
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
@@ -1598,11 +1598,6 @@ func (local *Backend) GetImportedKVCount(engineUUID uuid.UUID) int64 {
 func (local *Backend) GetExternalEngineKVStatistics(engineUUID uuid.UUID) (
 	totalKVSize int64, totalKVCount int64) {
 	return local.engineMgr.getExternalEngineKVStatistics(engineUUID)
-}
-
-// ResetEngine reset the engine and reclaim the space.
-func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error {
-	return local.engineMgr.resetEngine(ctx, engineUUID, false)
 }
 
 // ResetEngineSkipAllocTS is like ResetEngine but the inner TS of the engine is

@@ -17,7 +17,6 @@ package bindinfo_test
 import (
 	"context"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -261,8 +260,6 @@ func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {
 
 	// Simulate creating bindings on other machines
 	_, sqlDigest := parser.NormalizeDigestForBinding("select * from `test` . `t` where `a` > ?")
-	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT /*+ USE_INDEX(`t` `idx_a`)*/ * FROM `test`.`t` WHERE `a` > 10', 'test', 'deleted', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.SourceManual + "', '" + sqlDigest.String() + "', '')")
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT /*+ USE_INDEX(`t` `idx_a`)*/ * FROM `test`.`t` WHERE `a` > 10', 'test', 'enabled', '2000-01-02 09:00:00', '2000-01-02 09:00:00', '', '','" +
 		bindinfo.SourceManual + "', '" + sqlDigest.String() + "', '')")
 	tk.MustExec("set binding disabled for select * from t where a > 10")
@@ -275,8 +272,6 @@ func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {
 	utilCleanBindingEnv(tk)
 
 	// Simulate creating bindings on other machines
-	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT * FROM `test`.`t` WHERE `a` > 10', 'test', 'deleted', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.SourceManual + "', '" + sqlDigest.String() + "', '')")
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT * FROM `test`.`t` WHERE `a` > 10', 'test', 'disabled', '2000-01-02 09:00:00', '2000-01-02 09:00:00', '', '','" +
 		bindinfo.SourceManual + "', '" + sqlDigest.String() + "', '')")
 	tk.MustExec("set binding enabled for select * from t where a > 10")
@@ -874,21 +869,6 @@ func TestBindingQueryInList(t *testing.T) {
 		require.NoError(t, dom.BindingHandle().LoadFromStorageToCache(true))
 		require.Equal(t, len(tk.MustQuery(`show global bindings`).Rows()), 0)
 	}
-}
-
-func TestTooLongBinding(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec(`use test`)
-	tk.MustExec(`create table t (a int)`)
-	predicates := make([]string, 0, 65535)
-	for i := 0; i < cap(predicates); i++ {
-		predicates = append(predicates, fmt.Sprintf("t.a=%d", i))
-	}
-	bindingSQL := fmt.Sprintf("create global binding using select * from t where %s", strings.Join(predicates, " or "))
-	err := tk.ExecToErr(bindingSQL)
-	require.ErrorContains(t, err, "Data too long")
 }
 
 // TestBindingInListWithSingleLiteral tests sql with "IN (Lit)", fixes #44298

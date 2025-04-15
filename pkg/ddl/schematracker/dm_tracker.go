@@ -425,7 +425,7 @@ func (d *SchemaTracker) createIndex(
 		indexName,
 		false,
 		unique,
-		false,
+		model.ColumnarIndexTypeNA,
 		indexPartSpecifications,
 		indexOption,
 		model.StatePublic,
@@ -870,7 +870,7 @@ func (d *SchemaTracker) createPrimaryKey(
 		indexName,
 		true,
 		true,
-		false,
+		model.ColumnarIndexTypeNA,
 		indexPartSpecifications,
 		indexOption,
 		model.StatePublic,
@@ -1115,6 +1115,11 @@ func (*SchemaTracker) LockTables(_ sessionctx.Context, _ *ast.LockTablesStmt) er
 
 // UnlockTables implements the DDL interface, it's no-op in DM's case.
 func (*SchemaTracker) UnlockTables(_ sessionctx.Context, _ []model.TableLockTpInfo) error {
+	return nil
+}
+
+// AlterTableMode implements the DDL interface, it's no-op in DM's case.
+func (*SchemaTracker) AlterTableMode(_ sessionctx.Context, _ *model.AlterTableModeArgs) error {
 	return nil
 }
 

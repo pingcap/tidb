@@ -5,6 +5,7 @@ package prealloctableid_test
 import (
 	"context"
 	"fmt"
+	"math"
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -21,6 +22,8 @@ import (
 
 type testAllocator int64
 
+const InsaneTableIDThreshold = math.MaxUint32
+
 func (t *testAllocator) GetGlobalID() (int64, error) {
 	return int64(*t), nil
 }
@@ -31,79 +34,29 @@ func (t *testAllocator) AdvanceGlobalIDs(n int) (int64, error) {
 	return old, nil
 }
 
-func checkBatchAlloc(ret map[string][]*model.TableInfo, tables []*metautil.Table, from, end int64) error {
-	originalTables := make(map[string]*model.TableInfo)
-	originalIDs := make(map[int64]struct{})
-	for _, tbl := range tables {
-		ti := tbl.Info
-		originalTables[ti.Name.O] = ti
-		originalIDs[ti.ID] = struct{}{}
-		if ti.Partition != nil {
-			for _, p := range ti.Partition.Definitions {
-				originalIDs[p.ID] = struct{}{}
-			}
-		}
+func checkBatchAlloc(ret map[string]*model.TableInfo, tables []*metautil.Table, current, reusable int64) error {
+	if len(ret) != len(tables) {
+		return errors.Errorf("expect %d tables, but got %d", len(tables), len(ret))
 	}
 
-	allocated := make(map[int64]struct{})
-	totalNewTables := 0
-	for _, infos := range ret {
-		for _, info := range infos {
-			totalNewTables++
-			if !validateID(info.ID, from, end, allocated, originalIDs) {
-				return errors.Errorf("table ID %d is invalid", info.ID)
-			}
-			if info.Partition != nil {
-				for _, p := range info.Partition.Definitions {
-					if !validateID(p.ID, from, end, allocated, originalIDs) {
-						return errors.Errorf("table partition ID %d is invalid", p.ID)
-					}
-				}
-			}
-
-			originalInfo, exists := originalTables[info.Name.O]
-			if !exists {
-				return errors.Errorf("table %s not found", info.Name.O)
-			}
-			originalPartitions := 0
-			if originalInfo.Partition != nil {
-				originalPartitions = len(originalInfo.Partition.Definitions)
-			}
-
-			newPartitions := 0
-			if info.Partition != nil {
-				newPartitions = len(info.Partition.Definitions)
-			}
-			if newPartitions != originalPartitions {
-				return errors.Errorf("table %s partition count mismatch, expect %d, got %d", info.Name.O, originalPartitions, newPartitions)
-			}
+	for _, t := range tables {
+		if _, ok := ret[t.Info.Name.L]; !ok {
+			return errors.Errorf("table %s not found in the result", t.Info.Name)
 		}
-	}
 
-	if totalNewTables != len(tables) {
-		return errors.Errorf("table count mismatch, expect %d, got %d", len(tables), totalNewTables)
+		retInfo := ret[t.Info.Name.L]
+		if t.Info.ID > current && t.Info.ID < InsaneTableIDThreshold && retInfo.ID != t.Info.ID {
+			return errors.Errorf("expect table %s ID to be %d, but got %d", t.Info.Name, t.Info.ID, retInfo.ID)
+		}
+		if (t.Info.ID <= current || t.Info.ID >= InsaneTableIDThreshold) && retInfo.ID < reusable {
+			return errors.Errorf("expect table %s ID to be greater than %d, but got %d", t.Info.Name, current, retInfo.ID)
+		}
 	}
 	return nil
 }
 
-func validateID(id, from, end int64, allocated map[int64]struct{}, originalIDs map[int64]struct{}) bool {
-	if id < from || id >= end {
-		return false
-	}
-	if _, exists := allocated[id]; exists {
-		return false
-	}
-	allocated[id] = struct{}{}
-	if id >= from && id < end {
-		if _, existed := originalIDs[id]; existed {
-			return true
-		}
-	}
-	return true
-}
-
-func BatchAlloc(tables []*metautil.Table, p *prealloctableid.PreallocIDs) (map[string][]*model.TableInfo, error) {
-	clonedInfos := make(map[string][]*model.TableInfo, len(tables))
+func BatchAlloc(tables []*metautil.Table, p *prealloctableid.PreallocIDs) (map[string]*model.TableInfo, error) {
+	clonedInfos := make(map[string]*model.TableInfo, len(tables))
 	if len(tables) == 0 {
 		return clonedInfos, nil
 	}
@@ -113,7 +66,7 @@ func BatchAlloc(tables []*metautil.Table, p *prealloctableid.PreallocIDs) (map[s
 		if err != nil {
 			return nil, err
 		}
-		clonedInfos[t.DB.Name.L] = append(clonedInfos[t.DB.Name.L], infoClone)
+		clonedInfos[t.Info.Name.L] = infoClone
 	}
 
 	return clonedInfos, nil
@@ -124,7 +77,7 @@ func TestAllocator(t *testing.T) {
 		tableIDs       []int64
 		partitions     map[int64][]int64
 		hasAllocatedTo int64
-		allocedRange   [2]int64
+		reusableBorder int64
 		msg            string
 	}
 
@@ -132,59 +85,65 @@ func TestAllocator(t *testing.T) {
 		{
 			tableIDs:       []int64{},
 			hasAllocatedTo: 20,
-			allocedRange:   [2]int64{21, 20},
+			reusableBorder: 0,
 			msg:            "ID:empty(end=0)",
 		},
 		{
 			tableIDs:       []int64{1, 2, 15, 6, 7},
 			hasAllocatedTo: 6,
-			allocedRange:   [2]int64{7, 12},
-			msg:            "ID:[7,12)",
+			reusableBorder: 16,
+			msg:            "ID:[7,21)",
 		},
 		{
 			tableIDs:       []int64{4, 6, 9, 2},
 			hasAllocatedTo: 1,
-			allocedRange:   [2]int64{2, 6},
-			msg:            "ID:[2,6)",
+			reusableBorder: 10,
+			msg:            "ID:[2,14)",
 		},
 		{
-			tableIDs:       []int64{3, 3, 3, 3},
+			tableIDs:       []int64{1, 2, 3, 4},
 			hasAllocatedTo: 5,
-			allocedRange:   [2]int64{6, 10},
+			reusableBorder: 6,
 			msg:            "ID:[6,10)",
 		},
 		{
-			tableIDs:       []int64{7, 7, 8, 8},
+			tableIDs:       []int64{2, 3, 4, 5},
 			hasAllocatedTo: 5,
-			allocedRange:   [2]int64{6, 20},
+			reusableBorder: 6,
+			msg:            "ID:[6,10)",
+		},
+		{
+			tableIDs:       []int64{10, 7, 8, 9},
+			hasAllocatedTo: 5,
+			reusableBorder: 13,
 			partitions: map[int64][]int64{
-				7: {8, 9, 10, 11, 12},
+				7: {2, 3, 4, 11, 12},
 			},
-			msg: "ID:[6,20)",
+			msg: "ID:[6,22)",
 		},
 		{
 			tableIDs:       []int64{1, 2, 5, 6, 1 << 50, 1<<50 + 2479},
 			hasAllocatedTo: 3,
-			allocedRange:   [2]int64{4, 10},
-			msg:            "ID:[4,10)",
+			reusableBorder: 7,
+			msg:            "ID:[4,13)",
 		},
 		{
 			tableIDs:       []int64{11, 22, 5, 6, 7},
 			hasAllocatedTo: 6,
-			allocedRange:   [2]int64{7, 17},
+			reusableBorder: 23,
 			partitions: map[int64][]int64{
 				7: {8, 9, 10, 11, 12},
 			},
-			msg: "ID:[7,17)",
+			msg: "ID:[7,33)",
 		},
 		{
 			tableIDs:       []int64{1, 2, 9000005, 7, 17, 130},
 			hasAllocatedTo: 9,
-			allocedRange:   [2]int64{10, 21},
+			reusableBorder: 9000006,
 			partitions: map[int64][]int64{
 				7: {8, 9, 10, 11, 12},
 			},
-			msg: "ID:[10,21)",
+			msg: "ID:[10,9000017)",
 		},
 	}
 
@@ -213,7 +172,7 @@ func TestAllocator(t *testing.T) {
 		allocator := testAllocator(c.hasAllocatedTo)
 		ids.Alloc(&allocator)
 		alloc, err := BatchAlloc(tables, ids)
-		require.NoError(t, checkBatchAlloc(alloc, tables, c.allocedRange[0], c.allocedRange[1]))
+		require.NoError(t, checkBatchAlloc(alloc, tables, c.hasAllocatedTo, c.reusableBorder))
 		require.NoError(t, err)
 		require.Equal(t, c.msg, ids.String())
 	}
