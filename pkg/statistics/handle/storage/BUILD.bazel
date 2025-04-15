@@ -32,6 +32,7 @@ go_library(
         "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/usage/predicatecolumn",
         "//pkg/statistics/handle/util",
+        "//pkg/table",
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/compress",
@@ -58,7 +59,7 @@ go_test(
         "stats_read_writer_test.go",
     ],
     flaky = True,
-    shard_count = 27,
+    shard_count = 28,
     deps = [
         ":storage",
         "//pkg/domain",
