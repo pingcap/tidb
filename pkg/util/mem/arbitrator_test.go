@@ -3,8 +3,10 @@ package mem
 import (
 	"container/list"
 	"errors"
+	"fmt"
 	"math"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -419,13 +421,15 @@ func (m *MemArbitrator) frontTaskEntryForTest() (entry *rootPoolEntry) {
 
 func (m *MemArbitrator) checkTaskExec(task pairSuccessFail, cancelByStandardMode int64, cancel numByAllMode) {
 	t := testState
-	require.Equal(t, m.execMetrics.task, task)
+	require.Equal(t, m.execMetrics.task.pairSuccessFail, task)
 	s := int64(0)
 	for i := minArbitrateMemPriority; i < maxArbitrateMemPriority; i++ {
-		s += (m.execMetrics.taskSuccess[i])
+		s += m.execMetrics.task.successByPriority[i]
 	}
-	if m.workMode() != ArbitratorModeDisable {
+	if m.workMode() == ArbitratorModePriority {
 		require.Equal(t, s, task.success)
+	} else {
+		require.True(t, 0 == s)
 	}
 	require.True(t, m.execMetrics.cancel == execMetricsCancel{
 		standardMode: cancelByStandardMode,
@@ -1078,7 +1082,7 @@ func TestMemArbitratorSwitchMode(t *testing.T) {
 
 		require.True(t, m.allocated() == alloced)
 		require.Equal(t, m.waitAlloc(entry2), ArbitrateOk)
-		require.True(t, m.execMetrics.task == pairSuccessFail{5, 1})
+		require.True(t, m.execMetrics.task.pairSuccessFail == pairSuccessFail{5, 1})
 
 		m.cleanupNotifer()
 	}
@@ -1182,7 +1186,7 @@ func TestMemArbitrator(t *testing.T) {
 			require.Equal(t, pool1.Capacity(), pool1AlignSize)
 			require.Equal(t, entry1.arbitratorMu.quota, pool1AlignSize)
 			require.False(t, m.notiferIsAwake())
-			require.True(t, m.execMetrics.task == pairSuccessFail{1, 0})
+			require.True(t, m.execMetrics.task.pairSuccessFail == pairSuccessFail{1, 0})
 			require.Equal(t, execMetricsCancel{}, m.execMetrics.cancel)
 			m.cleanupNotifer()
 			m.checkEntryForTest(entry1)
@@ -1897,7 +1901,7 @@ func TestMemArbitrator(t *testing.T) {
 			require.True(t, e1.arbitratorMu.quotaShard != e2.arbitratorMu.quotaShard)
 			require.True(t, e1.arbitratorMu.quotaShard != e3.arbitratorMu.quotaShard)
 			require.True(t, e2.arbitratorMu.quotaShard != e3.arbitratorMu.quotaShard)
-			require.True(t, m.execMetrics.task == pairSuccessFail{3, 0})
+			require.True(t, m.execMetrics.task.pairSuccessFail == pairSuccessFail{3, 0})
 
 			e1.ctx.Load().arbitrateHelper.(*arbitrateHelperForTest).heapUsedCB = func() int64 {
 				return 1009
@@ -2090,7 +2094,7 @@ func TestMemArbitrator(t *testing.T) {
 				MockLogs{0, 7, 1}, // free speed is too low; start to kill; make task failed; restart check;
 			}, tMetrics)
 			require.True(t, m.waitAlloc(e2) == ArbitrateFail)
-			require.True(t, m.execMetrics.task == pairSuccessFail{0, 1})
+			require.True(t, m.execMetrics.task.pairSuccessFail == pairSuccessFail{0, 1})
 			require.True(t, tMetrics.execMetricsAction == m.execMetrics.action)
 			require.Equal(t, execMetricsRisk{1, 1, numByPriority{1}}, m.execMetrics.execMetricsRisk)
 			require.Equal(t, map[uint64]int{e2.pool.uid: 1}, killEvent)
@@ -2504,71 +2508,6 @@ func TestMemArbitrator(t *testing.T) {
 	}
 }
 
-// func TestBench(t *testing.T) {
-// 	m := newMemArbitrator(16, -1 /*unlimit*/, 1*KB)
-// 	m.SetWorkMode(ArbitratorModeDisable)
-// 	m.UpdateLimit(1000)
-
-// 	// test manager runner no dead lock
-// 	for r := 0; r < 1; r += 1 {
-// 		m.AutoRun(nil, nil, nil, 1, 21, time.Millisecond*5)
-// 		managerLimit := rootAllocAlignBytes * 40
-// 		poolLimit := rootAllocAlignBytes * 10
-// 		poolAllocUnit := rootAllocAlignBytes / 2
-
-// 		// set manager limit to `managerLimit - poolLimit`: reserve resource for at least one pool.
-// 		m.updateLimit(uint64(managerLimit - poolLimit))
-
-// 		ch1 := make(chan struct{})
-
-// 		var wg sync.WaitGroup
-// 		for i := 0; i < 200; i += 1 {
-// 			pool := newResourcePoolForTest("", -1, 1)
-// 			pool.name = fmt.Sprintf("pool-%d", pool.Uid())
-
-// 			wg.Add(1)
-// 			go func() {
-// 				<-ch1
-// 				entry, err := m.addRootPool(RootPoolConfig{
-// 					Pool:                        pool,
-// 					Reclaimer:                   nil,
-// 					PreferManagerReservedBudget: true,
-// 				})
-// 				if err != nil {
-// 					panic(err)
-// 				}
-// 				b := pool.CreateBudget()
-// 				for j := 0; j < 200; j += 1 {
-// 					if !pool.StartWithOutOfMemoryAction(m, nil) {
-// 						panic(fmt.Errorf("failed to init root pool with session-id %s", pool.name))
-// 					}
-// 					n := poolLimit / poolAllocUnit
-// 					for j := int64(0); j < n; j += 1 {
-// 						require.NoError(t,
-// 							b.Grow(poolAllocUnit))
-// 					}
-// 					b.Clear()
-// 					{
-// 						m.cleanupEntryReservedBytes(entry, false)
-// 						m.notifer.Wake()
-// 					}
-// 				}
-// 				pool.Stop()
-// 				m.RemoveRootPoolByID(pool.uid)
-// 				wg.Done()
-// 			}()
-// 		}
-// 		close(ch1)
-// 		wg.Wait()
-
-// 		require.True(t, m.Stop())
-// 		debugCheck(t, m, nil)
-// 		require.Equal(t, m.tasksCount(), 0)
-// 		require.Equal(t, m.cleanupMu.fifoTasks.size(), 0)
-// 		require.False(t, m.notiferIsAwake())
-// 	}
-// }
-
 func TestBasicUtils(t *testing.T) {
 	testState = t
 
@@ -2689,5 +2628,195 @@ func TestBasicUtils(t *testing.T) {
 				require.True(t, nextPow2(x-1) == x)
 			}
 		}
+	}
+}
+
+func TestBench(t *testing.T) {
+	testState = t
+
+	m := newMemArbitrator(
+		4*GB,
+		DefPoolStatusShards, DefPoolQuotaShards,
+		64*KB, /* 64k ~ */
+		&memStateRecorderForTest{
+			load: func() (*RuntimeMemStateV1, error) {
+				return nil, nil
+			},
+			store: func(*RuntimeMemStateV1) error {
+				return nil
+			}},
+	)
+	m.SetWorkMode(ArbitratorModeStandard)
+	m.initPoolFastAlloc(4, 4, 1)
+	const N = 3000
+	{
+		m.asyncRun(DefTaskTickDur)
+		cancelPool := atomic.Int64{}
+		killedPool := atomic.Int64{}
+		ch1 := make(chan struct{})
+		var wg sync.WaitGroup
+		for i := 0; i < N; i += 1 {
+
+			wg.Add(1)
+			go func() {
+				<-ch1
+
+				root, err := m.EmplaceRootPool(uint64(i))
+				require.NoError(t, err)
+				cancelCh := make(chan struct{})
+				cancelEvent := 0
+				killed := false
+				ctx := NewContext(
+					cancelCh,
+					0,
+					0,
+					&arbitrateHelperForTest{
+						cancelCh: cancelCh,
+						heapUsedCB: func() int64 {
+							return 0
+						},
+						killCB: func() {
+							cancelEvent++
+							killed = true
+						},
+						interruptCB: func() {
+							cancelEvent++
+						},
+					},
+					ArbitrateMemPriorityHigh,
+					false,
+					true,
+				)
+				if !root.StartWithMemArbitratorContext(m, ctx) {
+					panic(fmt.Errorf("failed to init root pool with session-id %d", root.Pool.uid))
+				}
+
+				b := ConcurrentBudget{pool: root.Pool}
+
+				for j := 0; j < 200; j += 1 {
+					if b.Used.Add(m.limit()/150) > b.Capacity.Load() {
+						_, _ = b.PullFromUpstream()
+					}
+					if cancelEvent != 0 {
+						if killed {
+							killedPool.Add(1)
+						} else {
+							cancelPool.Add(1)
+						}
+						break
+					}
+				}
+				m.ResetRootPoolByID(uint64(i), b.Used.Load(), true)
+				wg.Done()
+			}()
+		}
+		close(ch1)
+		wg.Wait()
+
+		require.True(t, m.rootPoolNum.Load() == N)
+		require.True(t, killedPool.Load() == 0)
+		require.True(t, cancelPool.Load() == N)
+		for i := 0; i < N; i += 1 {
+			m.RemoveRootPoolByID(uint64(i))
+		}
+		m.stopForTest()
+		m.checkEntryForTest()
+		require.True(t, m.execMetrics.task.fail == N)
+		require.True(t, m.execMetrics.cancel.standardMode == N)
+		m.resetExecMetrics()
+	}
+
+	m.SetWorkMode(ArbitratorModePriority)
+	{
+		m.asyncRun(DefTaskTickDur)
+		cancelPool := atomic.Int64{}
+		killedPool := atomic.Int64{}
+		ch1 := make(chan struct{})
+		var wg sync.WaitGroup
+		for i := 0; i < N; i += 1 {
+
+			wg.Add(1)
+			go func() {
+				<-ch1
+
+				root, err := m.EmplaceRootPool(uint64(i))
+				require.NoError(t, err)
+				cancelCh := make(chan struct{})
+				cancelEvent := 0
+				killed := false
+
+				prio := ArbitrateMemPriorityHigh
+				p := i % 6
+				if p < 2 {
+					prio = ArbitrateMemPriorityLow
+				} else if p < 4 {
+					prio = ArbitrateMemPriorityMedium
+				}
+				waitAverse := true
+				if p%2 == 0 {
+					waitAverse = false
+				}
+
+				ctx := NewContext(
+					cancelCh,
+					0,
+					0,
+					&arbitrateHelperForTest{
+						cancelCh: cancelCh,
+						heapUsedCB: func() int64 {
+							return 0
+						},
+						killCB: func() {
+							cancelEvent++
+							killed = true
+						},
+						interruptCB: func() {
+							cancelEvent++
+						},
+					},
+					prio,
+					waitAverse,
+					true,
+				)
+
+				if !root.StartWithMemArbitratorContext(m, ctx) {
+					panic(fmt.Errorf("failed to init root pool with session-id %d", root.Pool.uid))
+				}
+
+				b := ConcurrentBudget{pool: root.Pool}
+
+				for j := 0; j < 200; j += 1 {
+					if b.Used.Add(m.limit()/150) > b.Capacity.Load() {
+						_, _ = b.PullFromUpstream()
+					}
+					if cancelEvent != 0 {
+						if killed {
+							killedPool.Add(1)
+						} else {
+							cancelPool.Add(1)
+						}
+						break
+					}
+				}
+				m.ResetRootPoolByID(uint64(i), b.Used.Load(), true)
+				wg.Done()
+			}()
+		}
+		close(ch1)
+		wg.Wait()
+
+		require.True(t, m.rootPoolNum.Load() == N)
+		require.True(t, killedPool.Load() == 0)
+		require.True(t, cancelPool.Load() != 0)
+		for i := 0; i < N; i += 1 {
+			m.RemoveRootPoolByID(uint64(i))
+		}
+		m.stopForTest()
+		m.checkEntryForTest()
+		require.True(t, m.execMetrics.task.fail >= N/2)
+		require.Equal(t, m.execMetrics.task.fail,
+			m.execMetrics.cancel.waitAverse+m.execMetrics.cancel.priorityMode[ArbitrateMemPriorityLow]+m.execMetrics.cancel.priorityMode[ArbitrateMemPriorityMedium]+m.execMetrics.cancel.priorityMode[ArbitrateMemPriorityHigh])
+		require.True(t, m.execMetrics.cancel.waitAverse == N/2)
+		m.resetExecMetrics()
 	}
 }

@@ -10,8 +10,6 @@ import (
 
 var ResourcePoolID = uint64(0)
 
-// ResourcePool
-
 type ResourcePool struct {
 	mu struct {
 		syncutil.Mutex
@@ -246,10 +244,11 @@ func (p *ResourcePool) Limit() int64 {
 	return p.limit
 }
 
-func (p *ResourcePool) IsStopped() bool {
+func (p *ResourcePool) IsStopped() (res bool) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.mu.stopped
+	res = p.mu.stopped
+	p.mu.Unlock()
+	return
 }
 
 func (p *ResourcePool) Stop() (released int64) {
@@ -599,11 +598,6 @@ func (p *ResourcePool) increaseBudget(request int64) error {
 	}
 
 	return p.mu.budget.Grow(request)
-}
-
-func roundSize(sz int64, poolAllocationSize int64) int64 {
-	chunks := (sz + poolAllocationSize - 1) / poolAllocationSize
-	return chunks * poolAllocationSize
 }
 
 func (p *ResourcePool) roundSize(sz int64) int64 {

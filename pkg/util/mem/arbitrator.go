@@ -11,9 +11,7 @@
 package mem
 
 import (
-	"container/list"
 	"fmt"
-	"math/bits"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -136,131 +134,6 @@ var ArbitratorModeStandardNames = []string{ArbitratorModeStandardName, Arbitrato
 
 func (m ArbitratorWorkMode) String() string {
 	return ArbitratorModeStandardNames[m]
-}
-
-type WrapList[V any] struct {
-	base list.List
-	end  WrapListElement
-	num  int64
-}
-
-type WrapListElement struct {
-	base *list.Element
-}
-
-func (w *WrapListElement) valid() bool {
-	return w.base != nil
-}
-
-func (w *WrapListElement) reset() {
-	w.base = nil
-}
-
-func (l *WrapList[V]) init() {
-	l.base.Init()
-	l.base.PushBack(nil)
-	l.end = WrapListElement{l.base.Back()}
-}
-
-func (l *WrapList[V]) moveToFront(e WrapListElement) {
-	l.base.MoveToFront(e.base)
-}
-
-func (l *WrapList[V]) remove(e WrapListElement) {
-	e.base.Value = nil
-	l.base.MoveToBack(e.base)
-	l.num--
-}
-
-func (l *WrapList[V]) front() (res V) {
-	if l.num == 0 {
-		return
-	}
-	return l.base.Front().Value.(V)
-}
-
-func (l *WrapList[V]) popFront() (res V) {
-	if l.num == 0 {
-		return
-	}
-	e := l.base.Front()
-	res = e.Value.(V)
-	l.remove(WrapListElement{e})
-	return
-}
-
-func (l *WrapList[V]) size() int64 {
-	return l.num
-}
-
-func (l *WrapList[V]) empty() bool {
-	return l.num == 0
-}
-
-func (l *WrapList[V]) pushBack(v V) WrapListElement {
-	var x *list.Element
-	if l.size()+1 == int64(l.base.Len()) {
-		x = l.base.InsertBefore(v, l.end.base)
-	} else {
-		x = l.base.Back()
-		l.base.MoveBefore(x, l.end.base)
-		x.Value = v
-	}
-	l.num++
-	return WrapListElement{x}
-}
-
-// Notifer is used for multiple producer & single consumer
-type Notifer struct {
-	C     chan struct{}
-	awake int32
-}
-
-func NewNotifer() Notifer {
-	return Notifer{
-		C: make(chan struct{}, 1),
-	}
-}
-
-// return previous awake status
-func (n *Notifer) setNotAwake() bool {
-	return atomic.SwapInt32(&n.awake, 0) != 0
-}
-
-// Wait only can be invoked by single consumer
-func (n *Notifer) Wait() {
-	<-n.C
-	n.setNotAwake()
-}
-
-// return previous awake status
-func (n *Notifer) setAwake() bool {
-	return atomic.SwapInt32(&n.awake, 1) != 0
-}
-
-// Wake notify producer if necessary
-func (n *Notifer) Wake() {
-	n.wake()
-}
-
-// Wake notify producer if necessary
-func (n *Notifer) wake() {
-	// 1 -> 1: do nothing
-	// 0 -> 1: send signal
-	if !n.setAwake() {
-		n.C <- struct{}{}
-	}
-}
-
-func (n *Notifer) isAwake() bool {
-	return atomic.LoadInt32(&n.awake) != 0
-}
-
-func (n *Notifer) WeakWake() {
-	if n.isAwake() {
-		return
-	}
-	n.wake()
 }
 
 func (m *MemArbitrator) taskNumByPriority(priority ArbitrateMemPriority) int64 {
@@ -452,13 +325,6 @@ type entryMap struct {
 	}
 }
 
-func getQuotaShard(quota int64, maxQuotaShard int) int {
-	p := uint64(quota) / uint64(BaseQuotaUnit)
-	pos := bits.Len64(uint64(p))
-	pos = min(pos, maxQuotaShard-1)
-	return pos
-}
-
 // controlled by arbitrator
 func (p *entryMap) delete(entry *rootPoolEntry) {
 	uid := entry.pool.uid
@@ -502,33 +368,6 @@ func (p *entryMap) addQuota(entry *rootPoolEntry, delta int64) {
 		entry.arbitratorMu.quotaShard = newShard
 		entry.arbitratorMu.quotaShard.entries[uid] = entry
 	}
-}
-
-func HashStr(key string) uint64 {
-	hashKey := initHashKey
-	for _, c := range key {
-		hashKey *= prime64
-		hashKey ^= uint64(c)
-	}
-	return hashKey
-}
-
-func shardIndexByUID(key uint64, shardsMask uint64) uint64 {
-	const step = 8
-	const stepMask uint64 = uint64(1)<<step - 1
-
-	hashKey := initHashKey
-	{
-		// handle significant last 8 bits
-		hashKey ^= (key & stepMask)
-		hashKey *= prime64
-		key >>= step
-	}
-	{
-		hashKey ^= key
-		hashKey *= prime64
-	}
-	return hashKey & shardsMask
 }
 
 func (m *entryMap) getStatusShard(key uint64) *entryMapShard {
@@ -670,18 +509,14 @@ type PoolAllocProfile struct {
 	MaxPoolAllocUnit int64 // limit / 100
 }
 
-// type holder64Bytes struct {
-// 	_ [64]byte
-// }
+type holder64Bytes [64]byte
 
 type MemArbitrator struct {
 	mu struct {
 		sync.Mutex
-		// _         holder64Bytes
-
+		_         holder64Bytes
 		allocated int64 // allocated mem quota
-
-		// _         holder64Bytes
+		_         holder64Bytes
 
 		limit     int64 // hard limit of mem quota
 		threshold struct {
@@ -758,7 +593,7 @@ type MemArbitrator struct {
 		fifoTasks WrapList[*rootPoolEntry]
 	}
 
-	buffer buffer
+	buffer buffer // only works under `ArbitratorModePriority`
 
 	poolAllocStats struct {
 		sync.RWMutex
@@ -792,8 +627,6 @@ type MemArbitrator struct {
 
 	mode ArbitratorWorkMode
 
-	execMetrics execMetrics
-
 	actions MemArbitratorActions
 
 	notifer Notifer
@@ -801,6 +634,8 @@ type MemArbitrator struct {
 	debug struct {
 		now func() time.Time
 	}
+
+	execMetrics execMetrics
 }
 
 type buffer struct {
@@ -859,8 +694,10 @@ type execMetricsCancel struct {
 }
 
 type execMetrics struct {
-	task        pairSuccessFail // all work modes
-	taskSuccess numByPriority   // work mode: standard, priority
+	task struct {
+		pairSuccessFail                 // all work modes
+		successByPriority numByPriority // work mode priority
+	}
 
 	cancel    execMetricsCancel
 	fastAlloc fastAllocPoolExecMetrics
@@ -872,9 +709,9 @@ func (m *MemArbitrator) ExecMetrics() map[string]int64 {
 	return map[string]int64{
 		"task-success":                    m.execMetrics.task.success,
 		"task-fail":                       m.execMetrics.task.fail,
-		"task-success-prio-low":           m.execMetrics.taskSuccess[ArbitrateMemPriorityLow],
-		"task-success-prio-medium":        m.execMetrics.taskSuccess[ArbitrateMemPriorityMedium],
-		"task-success-prio-high":          m.execMetrics.taskSuccess[ArbitrateMemPriorityHigh],
+		"task-success-prio-low":           m.execMetrics.task.successByPriority[ArbitrateMemPriorityLow],
+		"task-success-prio-medium":        m.execMetrics.task.successByPriority[ArbitrateMemPriorityMedium],
+		"task-success-prio-high":          m.execMetrics.task.successByPriority[ArbitrateMemPriorityHigh],
 		"action-gc":                       m.execMetrics.action.gc,
 		"action-update-runtime-mem-stats": m.execMetrics.action.updateRuntimeMemStats,
 		"action-recordmemstate-success":   m.execMetrics.action.recordMemState.success,
@@ -882,11 +719,11 @@ func (m *MemArbitrator) ExecMetrics() map[string]int64 {
 		"fastAlloc-success":               m.execMetrics.fastAlloc.success,
 		"fastAlloc-fail":                  m.execMetrics.fastAlloc.fail,
 		"fastAlloc-shrink":                m.execMetrics.fastAlloc.shrink,
-		"memRisk":                         m.execMetrics.execMetricsRisk.memRisk,
-		"oomRisk":                         m.execMetrics.execMetricsRisk.oomRisk,
-		"oomKill-prio-low":                m.execMetrics.execMetricsRisk.oomKill[ArbitrateMemPriorityLow],
-		"oomKill-prio-medium":             m.execMetrics.execMetricsRisk.oomKill[ArbitrateMemPriorityMedium],
-		"oomKill-prio-high":               m.execMetrics.execMetricsRisk.oomKill[ArbitrateMemPriorityHigh],
+		"memRisk":                         m.execMetrics.memRisk,
+		"oomRisk":                         m.execMetrics.oomRisk,
+		"oomKill-prio-low":                m.execMetrics.oomKill[ArbitrateMemPriorityLow],
+		"oomKill-prio-medium":             m.execMetrics.oomKill[ArbitrateMemPriorityMedium],
+		"oomKill-prio-high":               m.execMetrics.oomKill[ArbitrateMemPriorityHigh],
 	}
 }
 
@@ -1503,7 +1340,7 @@ func (m *MemArbitrator) removeRootPoolEntry(entry *rootPoolEntry) bool {
 		entry.stateMu.Unlock()
 	}
 
-	// do not aquire the lock of root pool; make the alloc task failed in arbitrator;
+	// make the alloc task failed in arbitrator;
 	{
 		m.cleanupMu.Lock()
 		//
@@ -1511,8 +1348,9 @@ func (m *MemArbitrator) removeRootPoolEntry(entry *rootPoolEntry) bool {
 		//
 		m.cleanupMu.Unlock()
 	}
-	// aquiure the lock of root pool and stop it forcibly
+	// aquiure the lock of root pool and clean up
 	entry.pool.Stop()
+	// any new lock of root pool must have sensed the exec state is idle
 
 	return true
 }
@@ -1763,10 +1601,9 @@ func (m *MemArbitrator) doReclaimMemByPriority(target *rootPoolEntry, remainByte
 					continue
 				}
 				if ctx := entry.ctx.Load(); ctx.available() {
-					ctx.stop(false)
-					m.execMetrics.cancel.priorityMode[prio]++
-
 					if m.removeTask(entry) {
+						m.execMetrics.cancel.priorityMode[prio]++
+						ctx.stop(false)
 						entry.windUp(0, ArbitrateFail)
 					}
 					m.addUnderCancel(entry, entry.arbitratorMu.quota, m.innerTime())
@@ -1996,9 +1833,12 @@ func (m *MemArbitrator) doExecuteFirstTask() (exec bool) {
 			exec = true
 
 			if m.removeTask(entry) {
+				if m.execMu.mode == ArbitratorModePriority {
+					m.execMetrics.task.successByPriority[entry.taskMu.fifoByPriority.priority]++
+				}
 				m.entryMap.addQuota(entry, reclaimedBytes)
+				// wind up & publish the result
 				entry.windUp(reclaimedBytes, ArbitrateOk)
-				m.execMetrics.taskSuccess[entry.taskMu.fifoByPriority.priority]++
 			} else {
 				// subscription task may have been canceled
 				m.release(reclaimedBytes)

@@ -173,19 +173,6 @@ func (m *MemArbitrator) autoRun(
 	return m.asyncRun(taskTickDur)
 }
 
-func calcRatio(x, y int64) (zMilli int64) {
-	zMilli = x * Kilo / y
-	return
-}
-
-func multiRatio(x, yMilli int64) int64 {
-	return x * yMilli / Kilo
-}
-
-func intoRatio(x float64) (zMilli int64) {
-	zMilli = int64(x * Kilo)
-	return
-}
 
 func (m *MemArbitrator) refreshRuntimeMemStats() {
 	if m.actions.UpdateRuntimeMemStats != nil {
@@ -598,14 +585,6 @@ func (m *MemArbitrator) shrinkFastAllocPool(minRemain, holderMinRemain int64, ut
 	m.fastAlloc.lastShrinkUtimeMilli.Store(nowUnixMilli())
 }
 
-func nowUnixMilli() int64 {
-	return time.Now().UnixMilli()
-}
-
-func now() time.Time {
-	return time.Now()
-}
-
 func (m *MemArbitrator) hasNoMemRisk() bool {
 	return int64(m.heapController.heapAlloc.Load()) < m.mu.threshold.risk
 }
@@ -978,20 +957,7 @@ func (m *MemArbitrator) initPoolFastAlloc(allocAlignSize, shardNum int64, holder
 	}
 }
 
-func nextPow2(n uint64) uint64 {
-	if n == 0 {
-		return 1
-	}
-	n--
-	n |= n >> 1
-	n |= n >> 2
-	n |= n >> 4
-	n |= n >> 8
-	n |= n >> 16
-	n |= n >> 32
-	n++
-	return n
-}
+
 
 type ArbitrateHelper interface {
 	Kill() bool       // kill by arbitrator only when meeting oom risk
