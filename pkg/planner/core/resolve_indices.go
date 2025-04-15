@@ -505,7 +505,7 @@ func (p *PhysicalSelection) ResolveIndices() (err error) {
 
 // ResolveIndicesItself resolve indices for PhysicalPlan itself
 func (p *PhysicalExchangeSender) ResolveIndicesItself() (err error) {
-	return p.ResolveIndicesItselfWithSchema(p.children()[0].Schema())
+	return p.ResolveIndicesItselfWithSchema(p.children[0].Schema())
 }
 
 // ResolveIndicesItselfWithSchema is added for test usage
