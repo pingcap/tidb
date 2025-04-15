@@ -2126,6 +2126,7 @@ func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	physicalIDs := []int64{}
+	partitonNames := make([]string, 0)
 	if pi := tb.Meta().GetPartitionInfo(); pi != nil {
 		for _, name := range e.Table.PartitionNames {
 			pid, err := tables.FindPartitionByName(tb.Meta(), name.L)
@@ -2133,10 +2134,12 @@ func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 				return err
 			}
 			physicalIDs = append(physicalIDs, pid)
+			partitonNames = append(partitonNames, name.L)
 		}
 		if len(physicalIDs) == 0 {
 			for _, p := range pi.Definitions {
 				physicalIDs = append(physicalIDs, p.ID)
+				partitonNames = append(partitonNames, p.Name.L)
 			}
 		}
 	} else {
@@ -2144,6 +2147,7 @@ func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 			return plannererrors.ErrPartitionClauseOnNonpartitioned
 		}
 		physicalIDs = append(physicalIDs, tb.Meta().ID)
+		partitonNames = append(partitonNames, tb.Meta().Name.L)
 	}
 	distributions := make([]*pdHttp.RegionDistribution, 0)
 	var resp *pdHttp.RegionDistributions
@@ -2157,7 +2161,7 @@ func (e *ShowExec) fetchShowDistributions(ctx context.Context) error {
 		}
 		distributions = append(distributions, resp.RegionDistributions...)
 	}
-	e.fillDistributionsToChunk(distributions)
+	e.fillDistributionsToChunk(partitonNames, distributions)
 	return nil
 }
 
@@ -2318,21 +2322,22 @@ func getTableIndexRegions(indexInfo *model.IndexInfo, physicalIDs []int64, tikvS
 	return regions, nil
 }
 
-func (e *ShowExec) fillDistributionsToChunk(distributions []*pdHttp.RegionDistribution) {
-	for _, dis := range distributions {
-		e.result.AppendUint64(0, dis.StoreID)
-		e.result.AppendString(1, dis.EngineType)
-		e.result.AppendInt64(2, int64(dis.RegionLeaderCount))
-		e.result.AppendInt64(3, int64(dis.RegionPeerCount))
-		e.result.AppendUint64(4, dis.RegionWriteBytes)
-		e.result.AppendUint64(5, dis.RegionWriteKeys)
-		e.result.AppendUint64(6, dis.RegionWriteQuery)
-		e.result.AppendUint64(7, dis.RegionLeaderReadBytes)
-		e.result.AppendUint64(8, dis.RegionLeaderReadKeys)
-		e.result.AppendUint64(9, dis.RegionLeaderReadQuery)
-		e.result.AppendUint64(10, dis.RegionPeerReadBytes)
-		e.result.AppendUint64(11, dis.RegionPeerReadKeys)
-		e.result.AppendUint64(12, dis.RegionPeerReadQuery)
+func (e *ShowExec) fillDistributionsToChunk(partitionNams []string, distributions []*pdHttp.RegionDistribution) {
+	for idx, dis := range distributions {
+		e.result.AppendString(0, partitionNams[idx])
+		e.result.AppendUint64(1, dis.StoreID)
+		e.result.AppendString(2, dis.EngineType)
+		e.result.AppendInt64(3, int64(dis.RegionLeaderCount))
+		e.result.AppendInt64(4, int64(dis.RegionPeerCount))
+		e.result.AppendUint64(5, dis.RegionWriteBytes)
+		e.result.AppendUint64(6, dis.RegionWriteKeys)
+		e.result.AppendUint64(7, dis.RegionWriteQuery)
+		e.result.AppendUint64(8, dis.RegionLeaderReadBytes)
+		e.result.AppendUint64(9, dis.RegionLeaderReadKeys)
+		e.result.AppendUint64(10, dis.RegionLeaderReadQuery)
+		e.result.AppendUint64(11, dis.RegionPeerReadBytes)
+		e.result.AppendUint64(12, dis.RegionPeerReadKeys)
+		e.result.AppendUint64(13, dis.RegionPeerReadQuery)
 	}
 }
 

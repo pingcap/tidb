@@ -155,7 +155,6 @@ func TestDistributeTable(t *testing.T) {
 }
 
 func TestShowTableDistributions(t *testing.T) {
-	re := require.New(t)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -195,9 +194,8 @@ func TestShowTableDistributions(t *testing.T) {
 	})
 	tk.MustExec("create table t1(a int)")
 	mockGetDistributions("t1", "", distributions)
-	ret := tk.MustQuery("show table t1 distributions").Rows()
-	re.Len(ret, 1)
-	re.Len(ret[0], 13)
+	tk.MustQuery("show table t1 distributions").Check(testkit.Rows("t1 1 tikv 1 3 100 10 1 " +
+		"1000 100 10 1000 10000 100"))
 
 	// test for partition table distributions
 	tk.MustExec("create table tp1 (id int) PARTITION BY RANGE (id) (" +
@@ -207,8 +205,8 @@ func TestShowTableDistributions(t *testing.T) {
 		")")
 	mockGetDistributions("tp1", "p0", distributions)
 	mockGetDistributions("tp1", "p1", distributions)
-	tk.MustQuery("show table tp1 partition(p0) distributions").Check(testkit.Rows("1 tikv 1 3 100 10 1 " +
+	tk.MustQuery("show table tp1 partition(p0) distributions").Check(testkit.Rows("p0 1 tikv 1 3 100 10 1 " +
 		"1000 100 10 1000 10000 100"))
-	tk.MustQuery("show table tp1 partition(p0,p1) distributions").Check(testkit.Rows("1 tikv 1 3 100 10 1 "+
-		"1000 100 10 1000 10000 100", "1 tikv 1 3 100 10 1 1000 100 10 1000 10000 100"))
+	tk.MustQuery("show table tp1 partition(p0,p1) distributions").Check(testkit.Rows("p0 1 tikv 1 3 100 10 1 "+
+		"1000 100 10 1000 10000 100", "p1 1 tikv 1 3 100 10 1 1000 100 10 1000 10000 100"))
 }

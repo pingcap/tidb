@@ -3187,7 +3187,8 @@ func buildShowDDLJobsFields() (*expression.Schema, types.NameSlice) {
 }
 
 func buildTableDistributionSchema() (*expression.Schema, types.NameSlice) {
-	schema := newColumnsWithNames(13)
+	schema := newColumnsWithNames(14)
+	schema.Append(buildColumnWithName("", "PARTITION_NAME", mysql.TypeVarchar, 4))
 	schema.Append(buildColumnWithName("", "STORE_ID", mysql.TypeLonglong, 4))
 	schema.Append(buildColumnWithName("", "STORE_TYPE", mysql.TypeVarchar, 64))
 	schema.Append(buildColumnWithName("", "REGION_LEADER_COUNT", mysql.TypeLonglong, 4))

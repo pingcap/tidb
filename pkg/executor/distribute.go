@@ -87,7 +87,9 @@ func (e *DistributeTableExec) Next(ctx context.Context, chk *chunk.Chunk) error 
 	alias := e.getAlias()
 	jobID := float64(-1)
 	for _, job := range jobs {
-		if job["alias"] == alias && job["engine"] == e.engine.String() && job["rule"] == e.rule.String() && job["status"] != "finish" {
+		// PD will ensure all the alias of uncompleted job are different.
+		// PD return err if the some job alredy exist in the scheduler.
+		if job["alias"] == alias && job["engine"] == e.engine.String() && job["rule"] == e.rule.String() && job["status"] != "finished" {
 			id := job["job-id"].(float64)
 			if id > jobID {
 				jobID = id
