@@ -17,9 +17,6 @@ package external
 import (
 	"context"
 	"fmt"
-	"io"
-	"time"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/membuf"
@@ -27,6 +24,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
+	"io"
+	"time"
 )
 
 var (
@@ -289,13 +288,13 @@ func (r *byteReader) reload() error {
 		}
 	}
 
-	ts := time.Now()
-	defer func() {
-		r.logger.Info("reload reader time",
-			zap.Duration("duration", time.Since(ts)),
-		)
-	}()
 	if r.concurrentReader.now {
+		ts := time.Now()
+		defer func() {
+			r.logger.Info("reload reader time",
+				zap.Duration("duration", time.Since(ts)),
+			)
+		}()
 		r.concurrentReader.reloadCnt++
 		buffers, err := r.concurrentReader.reader.read(r.concurrentReader.largeBuf)
 		if err != nil {
