@@ -400,9 +400,8 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			}
 			continue
 		}
-		if keyIsTempIdxKey && !tempIdxVal.IsEmpty() {
-			value = tempIdxVal.Current().Value
-		}
+		// temp index key should have been handled by FetchDuplicatedHandleForTempIndexKey.
+		intest.Assert(!hasTempKey)
 		handle, err := tablecodec.DecodeHandleInIndexValue(value)
 		if err != nil {
 			return nil, err
@@ -410,26 +409,6 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		return handle, kv.ErrKeyExists
 	}
 	return nil, nil
-}
-
-func needPresumeKeyNotExistsFlag(ctx context.Context, txn kv.Transaction, key, tempKey kv.Key,
-	h kv.Handle, keyIsTempIdxKey bool) (needFlag bool, err error) {
-	var uniqueTempKey kv.Key
-	if keyIsTempIdxKey {
-		uniqueTempKey = key
-	} else if len(tempKey) > 0 {
-		uniqueTempKey = tempKey
-	} else {
-		return true, nil
-	}
-	foundKey, dupHandle, err := FetchDuplicatedHandle(ctx, uniqueTempKey, true, txn)
-	if err != nil {
-		return false, err
-	}
-	if foundKey && dupHandle != nil && !dupHandle.Equal(h) {
-		return false, kv.ErrKeyExists
-	}
-	return false, nil
 }
 
 // Delete removes the entry for handle h and indexedValues from KV index.
