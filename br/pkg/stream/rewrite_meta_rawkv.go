@@ -19,6 +19,8 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"maps"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -31,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"go.uber.org/zap"
-	"maps"
 )
 
 type UpstreamID = int64

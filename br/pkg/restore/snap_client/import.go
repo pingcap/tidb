@@ -24,6 +24,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"slices"
+
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -49,7 +51,6 @@ import (
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"slices"
 )
 
 type KvMode int

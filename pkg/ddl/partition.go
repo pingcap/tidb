@@ -24,6 +24,8 @@ import (
 	"strings"
 	"time"
 
+	"slices"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -67,7 +69,6 @@ import (
 	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
-	"slices"
 )
 
 const (

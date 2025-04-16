@@ -23,10 +23,11 @@ import (
 	"testing"
 	"time"
 
+	"slices"
+
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
-	"slices"
 )
 
 func TestIssue49736Partition(t *testing.T) {

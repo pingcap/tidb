@@ -30,9 +30,10 @@ import (
 	"testing"
 	"time"
 
+	"slices"
+
 	"github.com/BurntSushi/toml"
 	"github.com/stretchr/testify/require"
-	"slices"
 )
 
 func startMockServer(t *testing.T, statusCode int, content string) (*httptest.Server, string, int) {

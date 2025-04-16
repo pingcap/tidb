@@ -6,12 +6,13 @@ import (
 	"context"
 	"testing"
 
+	"slices"
+
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/stretchr/testify/require"
-	"slices"
 )
 
 func TestGetCheckpointOfTask(t *testing.T) {

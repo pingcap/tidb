@@ -18,8 +18,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"slices"
+
+	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
 type repairInfo struct {

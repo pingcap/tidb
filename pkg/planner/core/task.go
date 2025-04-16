@@ -17,6 +17,8 @@ package core
 import (
 	"math"
 
+	"slices"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -43,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/zap"
-	"slices"
 )
 
 // HeavyFunctionNameMap stores function names that is worth to do HeavyFunctionOptimize.

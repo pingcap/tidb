@@ -19,11 +19,12 @@ import (
 	"sync"
 	"time"
 
+	"slices"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
-	"slices"
 )
 
 // MockGlobalServerInfoManagerEntry is a mock global ServerInfoManager entry.

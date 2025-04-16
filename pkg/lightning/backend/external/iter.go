@@ -23,6 +23,8 @@ import (
 	"sort"
 	"sync"
 
+	"slices"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
@@ -30,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
-	"slices"
 )
 
 type heapElem interface {

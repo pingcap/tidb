@@ -5,6 +5,8 @@ package checksum
 import (
 	"context"
 
+	"slices"
+
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -19,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
-	"slices"
 )
 
 // ExecutorBuilder is used to build a "kv.Request".

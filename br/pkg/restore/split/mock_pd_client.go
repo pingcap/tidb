@@ -9,6 +9,9 @@ import (
 	"sync"
 	"time"
 
+	"maps"
+	"slices"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -23,8 +26,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/status"
-	"maps"
-	"slices"
 )
 
 // TODO consilodate TestClient and MockPDClientForSplit and FakePDClient

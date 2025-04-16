@@ -18,6 +18,8 @@ import (
 	"context"
 	"strings"
 
+	"maps"
+
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -29,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	pdhttp "github.com/tikv/pd/client/http"
-	"maps"
 )
 
 // SourceFile defines a mock source file.

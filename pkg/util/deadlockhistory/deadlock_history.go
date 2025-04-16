@@ -20,13 +20,14 @@ import (
 	"sync"
 	"time"
 
+	"slices"
+
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/zap"
-	"slices"
 )
 
 const (

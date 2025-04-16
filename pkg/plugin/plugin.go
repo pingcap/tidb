@@ -24,6 +24,9 @@ import (
 	"time"
 	"unsafe"
 
+	"maps"
+	"slices"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -31,8 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
-	"maps"
-	"slices"
 )
 
 // pluginGlobal holds all global variables for plugin.

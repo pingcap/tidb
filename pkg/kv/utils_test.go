@@ -19,9 +19,10 @@ import (
 	"strconv"
 	"testing"
 
+	"slices"
+
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/stretchr/testify/assert"
-	"slices"
 )
 
 func TestIncInt64(t *testing.T) {

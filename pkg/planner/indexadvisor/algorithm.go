@@ -19,9 +19,10 @@ import (
 	"strings"
 	"time"
 
+	"slices"
+
 	"github.com/google/uuid"
 	s "github.com/pingcap/tidb/pkg/util/set"
-	"slices"
 )
 
 /*

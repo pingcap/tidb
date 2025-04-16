@@ -19,6 +19,8 @@ import (
 	"encoding/json"
 	"strings"
 
+	"slices"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -42,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
-	"slices"
 )
 
 /***

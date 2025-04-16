@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"slices"
+
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
@@ -41,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
-	"slices"
 )
 
 type requiredRowsDataSource struct {

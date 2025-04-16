@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"slices"
+
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
@@ -34,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
-	"slices"
 )
 
 func TestCheckpointMetaForBackup(t *testing.T) {

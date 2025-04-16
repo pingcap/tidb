@@ -20,9 +20,10 @@ import (
 	"fmt"
 	"unsafe"
 
+	"slices"
+
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"slices"
 )
 
 var defaultEndian = binary.LittleEndian

@@ -19,11 +19,12 @@ import (
 	"strings"
 	"sync"
 
+	"slices"
+
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"slices"
 )
 
 var (

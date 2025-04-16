@@ -24,12 +24,13 @@ import (
 	"testing"
 	"time"
 
+	"slices"
+
 	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/stretchr/testify/require"
-	"slices"
 )
 
 func randBytes(n int) []byte {

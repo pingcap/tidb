@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"testing"
 
+	"slices"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -32,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
-	"slices"
 )
 
 func toNullableTypes(tps []*types.FieldType) []*types.FieldType {

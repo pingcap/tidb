@@ -17,6 +17,8 @@ package extension_test
 import (
 	"testing"
 
+	"slices"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -27,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/stretchr/testify/require"
-	"slices"
 )
 
 func TestSetupExtensions(t *testing.T) {

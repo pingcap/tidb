@@ -26,6 +26,8 @@ import (
 	"testing"
 	"time"
 
+	"slices"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
@@ -33,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
-	"slices"
 )
 
 func TestHashAggRuntimeStat(t *testing.T) {

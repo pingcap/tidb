@@ -34,6 +34,8 @@ import (
 	"testing"
 	"time"
 
+	"slices"
+
 	mysqlcursor "github.com/YangKeao/go-mysql-driver"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
@@ -55,7 +57,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"golang.org/x/text/encoding/simplifiedchinese"
-	"slices"
 )
 
 //revive:disable:exported

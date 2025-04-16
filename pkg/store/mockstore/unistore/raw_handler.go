@@ -19,9 +19,10 @@ import (
 	"context"
 	"sync"
 
+	"slices"
+
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/lockstore"
-	"slices"
 )
 
 type rawHandler struct {

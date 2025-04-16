@@ -22,13 +22,14 @@ import (
 	"time"
 	"unsafe"
 
+	"slices"
+
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/duration"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
-	"slices"
 )
 
 // ExtraHandleID is the column ID of column which we need to append to schema to occupy the handle's position

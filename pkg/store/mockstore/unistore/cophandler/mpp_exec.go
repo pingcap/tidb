@@ -24,6 +24,8 @@ import (
 	"sync"
 	"time"
 
+	"slices"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
@@ -43,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikvrpc"
-	"slices"
 )
 
 var (

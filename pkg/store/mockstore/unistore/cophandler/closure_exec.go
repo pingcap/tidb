@@ -21,6 +21,8 @@ import (
 	"sort"
 	"time"
 
+	"slices"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -40,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"slices"
 )
 
 const chunkMaxRows = 1024

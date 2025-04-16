@@ -18,8 +18,9 @@ import (
 	"context"
 	"sync"
 
-	pd "github.com/tikv/pd/client/http"
 	"maps"
+
+	pd "github.com/tikv/pd/client/http"
 )
 
 // ScheduleManager manages schedule configs

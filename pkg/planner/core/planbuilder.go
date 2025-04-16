@@ -23,6 +23,9 @@ import (
 	"strconv"
 	"strings"
 
+	"maps"
+	"slices"
+
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -74,8 +77,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
-	"maps"
-	"slices"
 )
 
 type visitInfo struct {

@@ -25,6 +25,9 @@ import (
 	"time"
 	"unicode"
 
+	"maps"
+	"slices"
+
 	"github.com/bits-and-blooms/bitset"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -79,8 +82,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
-	"maps"
-	"slices"
 )
 
 const (

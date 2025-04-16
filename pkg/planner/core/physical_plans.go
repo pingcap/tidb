@@ -20,6 +20,8 @@ import (
 	"strings"
 	"unsafe"
 
+	"slices"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -52,7 +54,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
-	"slices"
 )
 
 //go:generate go run ./generator/plan_cache/plan_clone_generator.go -- plan_clone_generated.go

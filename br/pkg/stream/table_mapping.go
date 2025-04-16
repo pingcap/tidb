@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"sort"
 
+	"maps"
+
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -28,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"maps"
 )
 
 const InitialTempId int64 = 0

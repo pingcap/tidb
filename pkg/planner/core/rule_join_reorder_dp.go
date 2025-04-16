@@ -17,12 +17,13 @@ package core
 import (
 	"math/bits"
 
+	"slices"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"slices"
 )
 
 type joinReorderDPSolver struct {

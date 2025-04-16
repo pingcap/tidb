@@ -26,6 +26,8 @@ import (
 	"syscall"
 	"time"
 
+	"slices"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -71,7 +73,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
-	"slices"
 )
 
 const notSpecified = -1

@@ -28,6 +28,8 @@ import (
 	"strings"
 	"sync"
 
+	"maps"
+
 	"github.com/joho/sqltocsv"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -40,7 +42,6 @@ import (
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"go.uber.org/zap"
-	"maps"
 )
 
 // CheckpointStatus is the status of a checkpoint.

@@ -20,6 +20,8 @@ import (
 	"os"
 	"time"
 
+	"slices"
+
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/pingcap/errors"
 	pclog "github.com/pingcap/log"
@@ -28,7 +30,6 @@ import (
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"slices"
 )
 
 const (

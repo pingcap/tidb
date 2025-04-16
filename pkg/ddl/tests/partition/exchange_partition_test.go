@@ -19,8 +19,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/testkit"
 	"slices"
+
+	"github.com/pingcap/tidb/pkg/testkit"
 )
 
 func TestExchangeRangeColumnsPartition(t *testing.T) {

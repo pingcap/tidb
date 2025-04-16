@@ -27,6 +27,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"maps"
+	"slices"
+
 	"github.com/docker/go-units"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
@@ -117,8 +120,6 @@ import (
 	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
-	"maps"
-	"slices"
 )
 
 var (

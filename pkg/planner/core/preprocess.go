@@ -20,6 +20,8 @@ import (
 	"math"
 	"strings"
 
+	"slices"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -53,7 +55,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
-	"slices"
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.

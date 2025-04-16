@@ -19,6 +19,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"slices"
+
 	"github.com/dgraph-io/ristretto"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -28,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
-	"slices"
 )
 
 // BindingCacheUpdater maintains the binding cache and provide update APIs.

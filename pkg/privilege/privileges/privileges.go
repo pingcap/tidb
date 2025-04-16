@@ -26,6 +26,8 @@ import (
 	"sync"
 	"time"
 
+	"slices"
+
 	jwtRepo "github.com/lestrrat-go/jwx/v2/jwt"
 	"github.com/lestrrat-go/jwx/v2/jwt/openid"
 	"github.com/pingcap/tidb/pkg/extension"
@@ -48,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
-	"slices"
 )
 
 // SkipWithGrant causes the server to start without using the privilege system at all.

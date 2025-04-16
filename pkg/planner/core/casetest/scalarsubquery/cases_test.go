@@ -18,10 +18,11 @@ import (
 	"fmt"
 	"testing"
 
+	"slices"
+
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
-	"slices"
 )
 
 func TestExplainNonEvaledSubquery(t *testing.T) {

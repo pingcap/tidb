@@ -22,9 +22,10 @@ import (
 	"strings"
 	"sync"
 
+	"slices"
+
 	"github.com/pingcap/errors"
 	"go.uber.org/atomic"
-	"slices"
 )
 
 type memFile struct {

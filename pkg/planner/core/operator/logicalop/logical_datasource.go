@@ -18,6 +18,8 @@ import (
 	"bytes"
 	"fmt"
 
+	"slices"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -42,7 +44,6 @@ import (
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
-	"slices"
 )
 
 // DataSource represents a tableScan without condition push down.

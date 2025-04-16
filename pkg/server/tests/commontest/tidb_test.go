@@ -31,6 +31,8 @@ import (
 	"testing"
 	"time"
 
+	"slices"
+
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -65,7 +67,6 @@ import (
 	"go.opencensus.io/stats/view"
 	gorm_mysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
-	"slices"
 )
 
 func TestVectorTypeTextProtocol(t *testing.T) {

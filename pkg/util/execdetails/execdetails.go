@@ -26,13 +26,14 @@ import (
 	"sync/atomic"
 	"time"
 
+	"maps"
+
 	"github.com/influxdata/tdigest"
 	"github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
-	"maps"
 )
 
 // ExecDetails contains execution detail information.

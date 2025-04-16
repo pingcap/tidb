@@ -24,6 +24,8 @@ import (
 	"testing"
 	"unsafe"
 
+	"slices"
+
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -44,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/stretchr/testify/require"
-	"slices"
 )
 
 type visit struct {

@@ -22,6 +22,8 @@ import (
 	"strconv"
 	"testing"
 
+	"slices"
+
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -41,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client/http"
-	"slices"
 )
 
 type bundleCheck struct {

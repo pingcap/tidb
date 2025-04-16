@@ -23,6 +23,8 @@ import (
 	"testing"
 	"time"
 
+	"slices"
+
 	"github.com/docker/go-units"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -36,7 +38,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/mock/gomock"
-	"slices"
 )
 
 type tidbNode struct {

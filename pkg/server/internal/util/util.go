@@ -42,9 +42,10 @@ import (
 	"net/http"
 	"strconv"
 
+	"slices"
+
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"slices"
 )
 
 // ParseNullTermString parses a null terminated string.

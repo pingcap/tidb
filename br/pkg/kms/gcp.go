@@ -7,7 +7,7 @@ import (
 	"hash/crc32"
 	"strings"
 
-	"cloud.google.com/go/kms/apiv1"
+	kms "cloud.google.com/go/kms/apiv1"
 	"cloud.google.com/go/kms/apiv1/kmspb"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"

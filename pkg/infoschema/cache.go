@@ -19,13 +19,14 @@ import (
 	"sync"
 	"time"
 
+	"slices"
+
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
-	"slices"
 )
 
 // InfoCache handles information schema, including getting and setting.

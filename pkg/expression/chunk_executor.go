@@ -15,6 +15,8 @@
 package expression
 
 import (
+	"slices"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -22,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
-	"slices"
 )
 
 // Vectorizable checks whether a list of expressions can employ vectorized execution.

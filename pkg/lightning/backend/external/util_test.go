@@ -19,10 +19,11 @@ import (
 	"encoding/json"
 	"testing"
 
+	"slices"
+
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/stretchr/testify/require"
-	"slices"
 )
 
 func TestSeekPropsOffsets(t *testing.T) {

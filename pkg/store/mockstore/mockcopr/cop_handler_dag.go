@@ -20,6 +20,8 @@ import (
 	"io"
 	"time"
 
+	"slices"
+
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -48,7 +50,6 @@ import (
 	"github.com/tikv/client-go/v2/testutils"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
-	"slices"
 )
 
 var dummySlice = make([]byte, 0)

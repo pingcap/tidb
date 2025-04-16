@@ -27,6 +27,8 @@ import (
 	"time"
 	"unsafe"
 
+	"slices"
+
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -65,7 +67,6 @@ import (
 	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
-	"slices"
 )
 
 // Maximum total sleep time(in ms) for kv/cop commands.

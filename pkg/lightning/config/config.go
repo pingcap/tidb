@@ -30,6 +30,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"slices"
+
 	"github.com/BurntSushi/toml"
 	"github.com/docker/go-units"
 	gomysql "github.com/go-sql-driver/mysql"
@@ -44,7 +46,6 @@ import (
 	router "github.com/pingcap/tidb/pkg/util/table-router"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
-	"slices"
 )
 
 // constants for config items

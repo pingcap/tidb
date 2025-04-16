@@ -20,6 +20,8 @@ import (
 	"sort"
 	"strings"
 
+	"maps"
+
 	"github.com/pingcap/errors"
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -27,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"maps"
 )
 
 // Hint flags listed here are used by PlanBuilder.subQueryHintFlags.

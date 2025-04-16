@@ -20,6 +20,8 @@ import (
 	"slices"
 	"strings"
 
+	maps0 "maps"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -28,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/atomic"
 	"golang.org/x/exp/maps"
-	maps0 "maps"
 )
 
 const (

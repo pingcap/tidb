@@ -22,6 +22,8 @@ import (
 	"sync"
 	"time"
 
+	"slices"
+
 	"github.com/cockroachdb/pebble"
 	"github.com/docker/go-units"
 	"github.com/jfcg/sorty/v2"
@@ -37,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
-	"slices"
 )
 
 // writeStepMemShareCount defines the number of shares of memory per job worker.

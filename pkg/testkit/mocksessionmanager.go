@@ -18,6 +18,8 @@ import (
 	"crypto/tls"
 	"sync"
 
+	"maps"
+
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -26,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/session/txninfo"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"maps"
 )
 
 // MockSessionManager is a mocked session manager which is used for test.

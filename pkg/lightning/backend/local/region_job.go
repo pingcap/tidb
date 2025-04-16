@@ -25,6 +25,8 @@ import (
 	"sync"
 	"time"
 
+	"slices"
+
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -47,7 +49,6 @@ import (
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"slices"
 )
 
 type jobStageTp string

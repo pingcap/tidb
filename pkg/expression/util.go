@@ -25,6 +25,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"slices"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
@@ -43,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
-	"slices"
 )
 
 // cowExprRef is a copy-on-write slice ref util using in `ColumnSubstitute`

@@ -32,13 +32,14 @@ import (
 	"bytes"
 	"math"
 
+	"slices"
+
 	"github.com/pingcap/badger"
 	"github.com/pingcap/badger/y"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/kverrors"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/mvcc"
-	"slices"
 )
 
 // NewDBReader returns a new *DBReader.

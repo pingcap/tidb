@@ -23,6 +23,8 @@ import (
 	"strings"
 	"testing"
 
+	"slices"
+
 	"github.com/DATA-DOG/go-sqlmock"
 	mysql_sql_driver "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
@@ -37,7 +39,6 @@ import (
 	"github.com/stretchr/testify/require"
 	pqt_buf_src "github.com/xitongsys/parquet-go-source/buffer"
 	pqtwriter "github.com/xitongsys/parquet-go/writer"
-	"slices"
 )
 
 type colDef struct {

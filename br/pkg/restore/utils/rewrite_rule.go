@@ -18,6 +18,8 @@ import (
 	"bytes"
 	"strings"
 
+	"slices"
+
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
@@ -31,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
-	"slices"
 )
 
 // AppliedFile has two types for now.

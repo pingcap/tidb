@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"slices"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -33,7 +35,6 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
-	"slices"
 )
 
 // StoreID: [1, storeCount]

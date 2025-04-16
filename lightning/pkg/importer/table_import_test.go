@@ -26,6 +26,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"slices"
+
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
@@ -67,7 +69,6 @@ import (
 	pdhttp "github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/mock/gomock"
-	"slices"
 )
 
 const (

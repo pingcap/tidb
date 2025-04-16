@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"slices"
 
+	"maps"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -29,7 +31,6 @@ import (
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
-	"maps"
 )
 
 // extractJoinGroup extracts all the join nodes connected with continuous

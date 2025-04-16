@@ -47,6 +47,8 @@ import (
 	"time"
 	"unsafe"
 
+	"maps"
+
 	"github.com/blacktear23/go-proxyprotocol"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -78,7 +80,6 @@ import (
 	uatomic "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
-	"maps"
 )
 
 var (

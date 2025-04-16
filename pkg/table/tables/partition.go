@@ -26,6 +26,8 @@ import (
 	"sync"
 	"time"
 
+	"slices"
+
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -50,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"go.uber.org/zap"
-	"slices"
 )
 
 const (

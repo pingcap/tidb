@@ -19,11 +19,12 @@ import (
 	"strings"
 	"testing"
 
+	"slices"
+
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
-	"slices"
 )
 
 func TestRevokeGlobal(t *testing.T) {
