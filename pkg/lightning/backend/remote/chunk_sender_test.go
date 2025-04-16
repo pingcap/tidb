@@ -66,7 +66,7 @@ func (h *mockHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if uint64(chunkID) != h.receivedChunkID+1 {
-			result := PutChunkResult{
+			result := PutChunkResponse{
 				FlushedChunkID: h.flushedChunkID,
 				HandledChunkID: h.receivedChunkID,
 			}
@@ -102,7 +102,7 @@ func (h *mockHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				// Update the received chunk id if the chunk is not empty
 				h.receivedChunkID = uint64(chunkID)
 			}
-			result := PutChunkResult{
+			result := PutChunkResponse{
 				FlushedChunkID: h.flushedChunkID,
 				HandledChunkID: h.receivedChunkID,
 			}
@@ -129,7 +129,7 @@ func (h *mockHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			flush:     true,
 		}
 
-		result := FlushResult{
+		result := FlushResponse{
 			FlushedChunkID: h.flushedChunkID,
 		}
 		bytes, err := json.Marshal(result)
