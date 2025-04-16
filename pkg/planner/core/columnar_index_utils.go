@@ -25,7 +25,6 @@ func buildVectorIndexExtra(
 	distanceMetric tipb.VectorDistanceMetric,
 	topk uint32,
 	columnName string,
-	columnID int64,
 	indexID int64,
 	refVec []byte,
 	column *tipb.ColumnInfo,

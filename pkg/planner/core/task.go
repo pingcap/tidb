@@ -1055,14 +1055,14 @@ func tryReturnDistanceFromIndex(local *PhysicalTopN, global *PhysicalTopN, child
 	}
 
 	orderByCol, _ := local.ByItems[0].Expr.(*expression.Column)
-	var ann_query_info *ColumnarIndexExtra
+	var annQueryInfo *ColumnarIndexExtra
 	for _, idx := range tableScan.UsedColumnarIndexes {
 		if idx != nil && idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeVector && idx.QueryInfo != nil {
-			ann_query_info = idx
+			annQueryInfo = idx
 			break
 		}
 	}
-	if ann_query_info == nil {
+	if annQueryInfo == nil {
 		return false
 	}
 
@@ -1079,7 +1079,7 @@ func tryReturnDistanceFromIndex(local *PhysicalTopN, global *PhysicalTopN, child
 			continue
 		}
 		flag := expression.HasColumnWithCondition(projExpr, func(col *expression.Column) bool {
-			return col.ID == ann_query_info.QueryInfo.GetAnnQueryInfo().GetColumn().ColumnId
+			return col.ID == annQueryInfo.QueryInfo.GetAnnQueryInfo().GetColumn().ColumnId
 		})
 		if flag {
 			isVecColumnInUse = true
@@ -1106,7 +1106,7 @@ func tryReturnDistanceFromIndex(local *PhysicalTopN, global *PhysicalTopN, child
 	// remove the vector column in order to read distance directly by virtualDistanceCol
 	vectorIdx := -1
 	for i, col := range tableScan.Columns {
-		if col.ID == ann_query_info.QueryInfo.GetAnnQueryInfo().GetColumn().ColumnId {
+		if col.ID == annQueryInfo.QueryInfo.GetAnnQueryInfo().GetColumn().ColumnId {
 			vectorIdx = i
 			break
 		}
@@ -1116,7 +1116,7 @@ func tryReturnDistanceFromIndex(local *PhysicalTopN, global *PhysicalTopN, child
 	}
 
 	// set the EnableDistanceProj to modify the read process of tiflash.
-	ann_query_info.QueryInfo.GetAnnQueryInfo().EnableDistanceProj = true
+	annQueryInfo.QueryInfo.GetAnnQueryInfo().EnableDistanceProj = true
 
 	// append the distance column to the last position in columns and schema.
 	tableScan.Columns = slices.Delete(tableScan.Columns, vectorIdx, vectorIdx+1)
