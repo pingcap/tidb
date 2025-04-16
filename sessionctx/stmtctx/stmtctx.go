@@ -244,18 +244,19 @@ type StatementContext struct {
 	MaxRowID  int64
 
 	// Copied from SessionVars.TimeZone.
-	TimeZone         *time.Location
-	Priority         mysql.PriorityEnum
-	NotFillCache     bool
-	MemTracker       *memory.Tracker
-	DiskTracker      *disk.Tracker
-	IsTiFlash        atomic2.Bool
-	RuntimeStatsColl *execdetails.RuntimeStatsColl
-	TableIDs         []int64
-	IndexNames       []string
-	StmtType         string
-	OriginalSQL      string
-	digestMemo       struct {
+	TimeZone          *time.Location
+	Priority          mysql.PriorityEnum
+	NotFillCache      bool
+	MemTracker        *memory.Tracker
+	DiskTracker       *disk.Tracker
+	ResourceGroupName string
+	IsTiFlash         atomic2.Bool
+	RuntimeStatsColl  *execdetails.RuntimeStatsColl
+	TableIDs          []int64
+	IndexNames        []string
+	StmtType          string
+	OriginalSQL       string
+	digestMemo        struct {
 		sync.Once
 		normalized string
 		digest     *parser.Digest

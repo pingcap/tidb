@@ -149,7 +149,7 @@ func decodeBinaryOperator(op *tipb.ExplainOperator, indent string, isLastChild, 
 	if hasRuntimeStats {
 		actRows = strconv.FormatInt(int64(op.ActRows), 10)
 		execInfo = op.RootBasicExecInfo
-		groupExecInfo := strings.Join(op.RootGroupExecInfo, ",")
+		groupExecInfo := strings.Join(op.RootGroupExecInfo, ", ")
 		if len(groupExecInfo) > 0 {
 			if len(execInfo) > 0 {
 				execInfo += ", "
