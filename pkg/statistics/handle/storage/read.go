@@ -653,6 +653,9 @@ func CleanFakeItemsForShowHistInFlights(statsCache statstypes.StatsCache) int {
 }
 
 func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.StatsHandle, col model.TableItemID, loadFMSketch bool, fullLoad bool) (err error) {
+	// Regardless of whether the load is successful or not, we must remove the item from the async load list.
+	// The principle is to load the histogram for each column at most once in async load, as we already have a retry mechanism in the sync load.
+	defer asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 	statsTbl, ok := statsHandle.Get(col.TableID)
 	if !ok {
 		// This could happen when the table is dropped after the async load is triggered.
@@ -661,7 +664,6 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 			zap.Int64("tableID", col.TableID),
 			zap.Int64("columnID", col.ID),
 		)
-		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 		return nil
 	}
 	// When lite-init-stats is disabled, we cannot store the column info in the ColAndIdxExistenceMap.
@@ -676,7 +678,6 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 			zap.Int64("tableID", col.TableID),
 			zap.Int64("columnID", col.ID),
 		)
-		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 		return nil
 	}
 	tblInfo := tbl.Meta()
@@ -688,7 +689,6 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 			zap.Int64("tableID", col.TableID),
 			zap.Int64("columnID", col.ID),
 		)
-		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 		return nil
 	}
 
@@ -705,7 +705,6 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 				Updated: []*statistics.Table{statsTbl},
 			})
 		}
-		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 		return nil
 	}
 
@@ -718,7 +717,6 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 				zap.Int64("columnID", col.ID),
 			)
 		}
-		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 		return err
 	}
 	var (
@@ -763,7 +761,6 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 			zap.Int64("tableID", col.TableID),
 			zap.Int64("columnID", col.ID),
 		)
-		asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 		return nil
 	}
 	statsTbl = statsTbl.Copy()
@@ -782,7 +779,6 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 	statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
 		Updated: []*statistics.Table{statsTbl},
 	})
-	asyncload.AsyncLoadHistogramNeededItems.Delete(col)
 	if col.IsSyncLoadFailed {
 		statslogutil.StatsLogger().Warn("Column histogram loaded asynchronously after sync load failure",
 			zap.Int64("tableID", colHist.PhysicalID),
