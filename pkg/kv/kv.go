@@ -192,7 +192,10 @@ type MemBuffer interface {
 	// BatchGet gets values from the memory buffer.
 	BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error)
 
-	// GetSnapshot returns a snapshot of the MemBuffer, used in in-txn read.
+	// GetSnapshot returns a snapshot of the MemBuffer, used to read a txn's self written data while avoid seeing the current statement's mutations.
+	// The MemBufferSnapshot is thread safe so you can write to MemBuffer while read from the snapshot in other threads,
+	// it's valid until the current statement is finished.
+	// More details: https://github.com/tikv/client-go/blob/183817ac811590a022df5ae14ad2beecf4e91855/internal/unionstore/union_store.go#L254-L287
 	GetSnapshot() MemBufferSnapshot
 }
 

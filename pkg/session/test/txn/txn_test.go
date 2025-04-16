@@ -510,6 +510,7 @@ func TestMemDBRaceInUnionExec(t *testing.T) {
 	tk.MustExec("use test")
 	tables := 5
 	for i := 0; i < tables; i++ {
+		tk.MustExec(fmt.Sprintf("drop table if exists t%d", i))
 		tk.MustExec(fmt.Sprintf("create table t%d(id int primary key, v int)", i))
 	}
 

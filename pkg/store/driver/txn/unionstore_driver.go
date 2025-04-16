@@ -212,7 +212,8 @@ func (s *MemBufferSnapshot) Get(ctx context.Context, key kv.Key) ([]byte, error)
 
 // Len implements the BatchBufferGetter interface
 func (s *MemBufferSnapshot) Len() int {
-	return 0
+	// return 1 to avoid some code treat it as an empty snapshot.
+	return 1
 }
 
 // BatchGet gets multiple keys from MemBufferSnapshot
