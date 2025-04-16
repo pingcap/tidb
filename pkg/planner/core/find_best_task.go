@@ -2854,10 +2854,12 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 	rowCount := path.CountAfterAccess
 	is.initSchema(append(path.FullIdxCols, ds.commonHandleCols...), !isSingleScan)
 
-	// If (1) there exists an index whose selectivity is smaller than the threshold,
-	// and (2) there is Selection on the IndexScan, we don't use the ExpectedCnt to
+	// If (1) tidb_opt_ordering_index_selectivity_threshold is enabled (not 0)
+	// and (2) there exists an index whose selectivity is smaller than or equal to the threshold,
+	// and (3) there is Selection on the IndexScan, we don't use the ExpectedCnt to
 	// adjust the estimated row count of the IndexScan.
-	ignoreExpectedCnt := ds.accessPathMinSelectivity < ds.SCtx().GetSessionVars().OptOrderingIdxSelThresh &&
+	ignoreExpectedCnt := ds.SCtx().GetSessionVars().OptOrderingIdxSelThresh != 0 &&
+		ds.accessPathMinSelectivity <= ds.SCtx().GetSessionVars().OptOrderingIdxSelThresh &&
 		len(path.IndexFilters)+len(path.TableFilters) > 0
 
 	if (isMatchProp || prop.IsSortItemEmpty()) && prop.ExpectedCnt < ds.StatsInfo().RowCount && !ignoreExpectedCnt {
