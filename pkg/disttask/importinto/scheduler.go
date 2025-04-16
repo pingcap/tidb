@@ -267,6 +267,25 @@ func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 		if err = job2Step(ctx, logger, taskMeta, importer.JobStepImporting); err != nil {
 			return nil, err
 		}
+	case proto.ImportStepCollectConflicts, proto.ImportStepConflictResolution:
+		encodeAndSortMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepEncodeAndSort)
+		if err != nil {
+			return nil, err
+		}
+		mergeSortMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepMergeSort)
+		if err != nil {
+			return nil, err
+		}
+		ingestMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepWriteAndIngest)
+		if err != nil {
+			return nil, err
+		}
+		previousSubtaskMetas[proto.ImportStepEncodeAndSort] = encodeAndSortMetas
+		previousSubtaskMetas[proto.ImportStepMergeSort] = mergeSortMetas
+		previousSubtaskMetas[proto.ImportStepWriteAndIngest] = ingestMetas
+		if err = job2Step(ctx, logger, taskMeta, importer.JobStepResolvingConflicts); err != nil {
+			return nil, err
+		}
 	case proto.ImportStepPostProcess:
 		sch.switchTiKV2NormalMode(ctx, task, logger)
 		failpoint.Inject("clearLastSwitchTime", func() {
@@ -287,7 +306,12 @@ func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 		if err != nil {
 			return nil, err
 		}
+		conflictResMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepCollectConflicts)
+		if err != nil {
+			return nil, err
+		}
 		previousSubtaskMetas[step] = metas
+		previousSubtaskMetas[proto.ImportStepCollectConflicts] = conflictResMetas
 		logger.Info("move to post-process step ", zap.Any("result", taskMeta.Result))
 	case proto.StepDone:
 		return nil, nil
@@ -361,9 +385,8 @@ func (*ImportSchedulerExt) GetEligibleInstances(_ context.Context, task *proto.T
 }
 
 // IsRetryableErr implements scheduler.Extension interface.
-func (*ImportSchedulerExt) IsRetryableErr(error) bool {
-	// TODO: check whether the error is retryable.
-	return false
+func (*ImportSchedulerExt) IsRetryableErr(err error) bool {
+	return common.IsRetryableError(err)
 }
 
 // GetNextStep implements scheduler.Extension interface.
@@ -378,7 +401,11 @@ func (sch *ImportSchedulerExt) GetNextStep(task *proto.TaskBase) proto.Step {
 		return proto.ImportStepMergeSort
 	case proto.ImportStepMergeSort:
 		return proto.ImportStepWriteAndIngest
-	case proto.ImportStepImport, proto.ImportStepWriteAndIngest:
+	case proto.ImportStepWriteAndIngest:
+		return proto.ImportStepCollectConflicts
+	case proto.ImportStepCollectConflicts:
+		return proto.ImportStepConflictResolution
+	case proto.ImportStepImport, proto.ImportStepConflictResolution:
 		return proto.ImportStepPostProcess
 	default:
 		// current step must be ImportStepPostProcess
@@ -613,6 +640,24 @@ func getLoadedRowCountOnGlobalSort(handle storage.TaskHandle, task *proto.Task) 
 			return 0, errors.Trace(err)
 		}
 		loadedRowCount += subtaskMeta.Result.LoadedRowCnt
+	}
+	metas, err = handle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepCollectConflicts)
+	if err != nil {
+		return 0, err
+	}
+	for _, bs := range metas {
+		var subtaskMeta CollectConflictsStepMeta
+		if err = json.Unmarshal(bs, &subtaskMeta); err != nil {
+			return 0, errors.Trace(err)
+		}
+		if subtaskMeta.TooManyConflictsFromIndex {
+			// in this case, we can't get the exact conflicted row count, so we
+			// keep the original.
+			continue
+		}
+		// 'left row count' = 'ingested data KV count' - 'conflicted row count due to index conflict only'
+		//                  = 'ingested data KV count' - ('total conflicted row count' - 'recorded data KV conflicts')
+		loadedRowCount -= uint64(subtaskMeta.ConflictedRowCount) - uint64(subtaskMeta.RecordedDataKVConflicts)
 	}
 	return loadedRowCount, nil
 }

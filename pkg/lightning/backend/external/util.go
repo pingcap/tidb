@@ -17,7 +17,10 @@ package external
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
+	"path"
+	"reflect"
 	"slices"
 	"sort"
 	"strconv"
@@ -25,13 +28,19 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap/zapcore"
+)
+
+const (
+	metaName = "meta.json"
 )
 
 // seekPropsOffsets reads the statistic files to find the largest offset of
@@ -158,6 +167,9 @@ func GetAllFileNames(
 
 // CleanUpFiles delete all data and stat files under one subDir.
 func CleanUpFiles(ctx context.Context, store storage.ExternalStorage, subDir string) error {
+	failpoint.Inject("skipCleanUpFiles", func() {
+		failpoint.Return(nil)
+	})
 	dataNames, statNames, err := GetAllFileNames(ctx, store, subDir)
 	if err != nil {
 		return err
@@ -259,6 +271,7 @@ type SortedKVMeta struct {
 	TotalKVSize        uint64              `json:"total-kv-size"`
 	TotalKVCnt         uint64              `json:"total-kv-cnt"`
 	MultipleFilesStats []MultipleFilesStat `json:"multiple-files-stats"`
+	ConflictInfo       common.ConflictInfo `json:"conflict-info"`
 }
 
 // NewSortedKVMeta creates a SortedKVMeta from a WriterSummary. If the summary
@@ -273,6 +286,7 @@ func NewSortedKVMeta(summary *WriterSummary) *SortedKVMeta {
 		TotalKVSize:        summary.TotalSize,
 		TotalKVCnt:         summary.TotalCnt,
 		MultipleFilesStats: summary.MultipleFilesStats,
+		ConflictInfo:       summary.ConflictInfo,
 	}
 }
 
@@ -292,6 +306,7 @@ func (m *SortedKVMeta) Merge(other *SortedKVMeta) {
 	m.TotalKVCnt += other.TotalKVCnt
 
 	m.MultipleFilesStats = append(m.MultipleFilesStats, other.MultipleFilesStats...)
+	m.ConflictInfo.Merge(&other.ConflictInfo)
 }
 
 // MergeSummary merges the WriterSummary into this SortedKVMeta.
@@ -345,4 +360,195 @@ func getSpeed(n uint64, dur float64, isBytes bool) string {
 		return units.BytesSize(float64(n) / dur)
 	}
 	return strconv.FormatFloat(float64(n)/dur, 'f', 4, 64)
+}
+
+// remove all duplicates inside sorted array in place, i.e. input elements will be changed.
+// TODO consider use the input slice to store the duplicated items to save memory.
+func removeDuplicates[E any](elements []E, keyGetter func(*E) []byte, record bool) ([]E, []E, int) {
+	if len(elements) <= 1 {
+		return elements, []E{}, 0
+	}
+	pivotIdx, fillIdx := 0, 0
+	pivot := keyGetter(&elements[pivotIdx])
+	var dups []E
+	dupCount := 0
+	if record {
+		dups = make([]E, 0, 2)
+	}
+	for idx := 1; idx <= len(elements); idx++ {
+		var key []byte
+		if idx < len(elements) {
+			key = keyGetter(&elements[idx])
+			if bytes.Compare(pivot, key) == 0 {
+				continue
+			}
+		}
+		if idx > pivotIdx+1 {
+			if record {
+				dups = append(dups, elements[pivotIdx:idx]...)
+			}
+			dupCount += idx - pivotIdx
+		} else {
+			if pivotIdx != fillIdx {
+				elements[fillIdx] = elements[pivotIdx]
+			}
+			fillIdx++
+		}
+		pivotIdx = idx
+		pivot = key
+	}
+	return elements[:fillIdx], dups, dupCount
+}
+
+// remove all duplicates inside sorted array in place if the duplicate count is
+// more than 2, and keep the first two duplicates.
+// we also return the total number of duplicates as the third return value.
+// TODO consider use the input slice to store the duplicated items to save memory.
+func removeDuplicatesMoreThanTwo[E any](elements []E, compareValGetter func(*E) []byte) ([]E, []E, int) {
+	if len(elements) <= 1 {
+		return elements, []E{}, 0
+	}
+	pivotIdx, fillIdx := 0, 0
+	pivot := compareValGetter(&elements[pivotIdx])
+	var totalDup int
+	dups := make([]E, 0, 2)
+	for idx := 1; idx <= len(elements); idx++ {
+		var key []byte
+		if idx < len(elements) {
+			key = compareValGetter(&elements[idx])
+			if bytes.Compare(pivot, key) == 0 {
+				continue
+			}
+		}
+		dupCount := idx - pivotIdx
+		if dupCount >= 2 {
+			totalDup += dupCount
+			// keep the first two duplicates, and remove the rest
+			for startIdx := pivotIdx; startIdx < pivotIdx+2; startIdx++ {
+				if startIdx != fillIdx {
+					elements[fillIdx] = elements[startIdx]
+				}
+				fillIdx++
+			}
+			dups = append(dups, elements[pivotIdx+2:idx]...)
+		} else {
+			if pivotIdx != fillIdx {
+				elements[fillIdx] = elements[pivotIdx]
+			}
+			fillIdx++
+		}
+		pivotIdx = idx
+		pivot = key
+	}
+	return elements[:fillIdx], dups, totalDup
+}
+
+// marshalWithOverride marshals the provided struct with the ability to override
+func marshalWithOverride(src any, hideCond func(f reflect.StructField) bool) ([]byte, error) {
+	v := reflect.ValueOf(src)
+	if v.Kind() == reflect.Ptr {
+		if v.IsNil() {
+			return json.Marshal(src)
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return json.Marshal(src)
+	}
+	t := v.Type()
+	var fields []reflect.StructField
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		newTag := f.Tag
+		if hideCond(f) {
+			newTag = `json:"-"`
+		}
+		fields = append(fields, reflect.StructField{
+			Name:      f.Name,
+			Type:      f.Type,
+			Tag:       newTag,
+			Offset:    f.Offset,
+			Anonymous: f.Anonymous,
+		})
+	}
+	newType := reflect.StructOf(fields)
+	newVal := reflect.New(newType).Elem()
+	j := 0
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		newVal.Field(j).Set(v.Field(i))
+		j++
+	}
+	return json.Marshal(newVal.Interface())
+}
+
+// marshalInternalFields marshal all fields except those with external:"true" tag.
+func marshalInternalFields(src any) ([]byte, error) {
+	return marshalWithOverride(src, func(f reflect.StructField) bool {
+		return f.Tag.Get("external") == "true"
+	})
+}
+
+// marshalExternalFields marshal all fields with external:"true" tag.
+func marshalExternalFields(src any) ([]byte, error) {
+	return marshalWithOverride(src, func(f reflect.StructField) bool {
+		return f.Tag.Get("external") != "true"
+	})
+}
+
+// BaseExternalMeta is the base meta of external meta.
+type BaseExternalMeta struct {
+	// ExternalPath is the path to the external storage where the external meta is stored.
+	ExternalPath string
+}
+
+// Marshal serializes the provided alias to JSON.
+// Usage: If ExternalPath is set, marshals using internal meta; otherwise marshals the alias directly.
+func (m BaseExternalMeta) Marshal(alias any) ([]byte, error) {
+	if m.ExternalPath == "" {
+		return json.Marshal(alias)
+	}
+	return marshalInternalFields(alias)
+}
+
+// WriteJSONToExternalStorage writes the serialized external meta JSON to external storage.
+// Usage: Store external meta after appropriate modifications.
+func (m BaseExternalMeta) WriteJSONToExternalStorage(ctx context.Context, store storage.ExternalStorage, a any) error {
+	if m.ExternalPath == "" {
+		return nil
+	}
+	data, err := marshalExternalFields(a)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return store.WriteFile(ctx, m.ExternalPath, data)
+}
+
+// ReadJSONFromExternalStorage reads and unmarshals JSON from external storage into the provided alias.
+// Usage: Retrieve external meta for further processing.
+func (m BaseExternalMeta) ReadJSONFromExternalStorage(ctx context.Context, store storage.ExternalStorage, a any) error {
+	if m.ExternalPath == "" {
+		return nil
+	}
+	data, err := store.ReadFile(ctx, m.ExternalPath)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return json.Unmarshal(data, a)
+}
+
+// PlanMetaPath returns the path of the plan meta file.
+func PlanMetaPath(taskID int64, step string, idx int) string {
+	return path.Join(strconv.FormatInt(taskID, 10), "plan", step, strconv.Itoa(idx), metaName)
+}
+
+// SubtaskMetaPath returns the path of the subtask meta file.
+func SubtaskMetaPath(taskID int64, subtaskID int64) string {
+	return path.Join(strconv.FormatInt(taskID, 10), strconv.FormatInt(subtaskID, 10), metaName)
 }

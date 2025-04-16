@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -44,6 +45,91 @@ func urlEqual(t *testing.T, expected, actual string) {
 	require.Equal(t, urlExpected.Query(), urlGot.Query())
 	urlExpected.RawQuery, urlGot.RawQuery = "", ""
 	require.Equal(t, urlExpected.String(), urlGot.String())
+}
+
+func (s *mockGCSSuite) checkExternalFields(taskID int64, externalMetaCleanedUp bool) {
+	s.T().Helper()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "taskManager")
+	mgr, err := storage.GetTaskManager()
+	s.NoError(err)
+	task, err := mgr.GetTaskByIDWithHistory(ctx, taskID)
+	s.NoError(err)
+	taskMeta := importinto.TaskMeta{}
+	s.NoError(json.Unmarshal(task.Meta, &taskMeta))
+	store, err := importer.GetSortStore(ctx, taskMeta.Plan.CloudStorageURI)
+	s.NoError(err)
+	defer store.Close()
+
+	for _, step := range []proto.Step{
+		proto.ImportStepEncodeAndSort,
+		proto.ImportStepMergeSort,
+		proto.ImportStepWriteAndIngest,
+		proto.ImportStepCollectConflicts,
+		proto.ImportStepConflictResolution,
+	} {
+		subtasks, err := mgr.GetSubtasksWithHistory(ctx, taskID, step)
+		s.NoError(err)
+		for _, subtask := range subtasks {
+			switch step {
+			case proto.ImportStepEncodeAndSort:
+				var subtaskMeta importinto.ImportStepMeta
+				s.NoError(json.Unmarshal(subtask.Meta, &subtaskMeta))
+				testutils.AssertExternalField(s.T(), &subtaskMeta)
+				s.NotEmpty(subtaskMeta.ExternalPath)
+				if !externalMetaCleanedUp {
+					s.NoError(subtaskMeta.BaseExternalMeta.ReadJSONFromExternalStorage(ctx, store, &subtaskMeta))
+					sum := subtaskMeta.SortedDataMeta.ConflictInfo.Count
+					for _, m := range subtaskMeta.SortedIndexMetas {
+						sum += m.ConflictInfo.Count
+					}
+					s.EqualValues(subtaskMeta.RecordedConflictKVCount, sum)
+				}
+			case proto.ImportStepMergeSort:
+				var subtaskMeta importinto.MergeSortStepMeta
+				s.NoError(json.Unmarshal(subtask.Meta, &subtaskMeta))
+				testutils.AssertExternalField(s.T(), &subtaskMeta)
+				s.NotEmpty(subtaskMeta.ExternalPath)
+				if !externalMetaCleanedUp {
+					s.NoError(subtaskMeta.BaseExternalMeta.ReadJSONFromExternalStorage(ctx, store, &subtaskMeta))
+					s.EqualValues(subtaskMeta.ConflictInfo.Count, subtaskMeta.RecordedConflictKVCount)
+				}
+			case proto.ImportStepWriteAndIngest:
+				var subtaskMeta importinto.WriteIngestStepMeta
+				s.NoError(json.Unmarshal(subtask.Meta, &subtaskMeta))
+				testutils.AssertExternalField(s.T(), &subtaskMeta)
+				s.NotEmpty(subtaskMeta.ExternalPath)
+				if !externalMetaCleanedUp {
+					s.NoError(subtaskMeta.BaseExternalMeta.ReadJSONFromExternalStorage(ctx, store, &subtaskMeta))
+					s.EqualValues(subtaskMeta.ConflictInfo.Count, subtaskMeta.RecordedConflictKVCount)
+				}
+			case proto.ImportStepCollectConflicts:
+				var subtaskMeta importinto.CollectConflictsStepMeta
+				s.NoError(json.Unmarshal(subtask.Meta, &subtaskMeta))
+				testutils.AssertExternalField(s.T(), &subtaskMeta)
+				s.NotEmpty(subtaskMeta.ExternalPath)
+				if !externalMetaCleanedUp {
+					s.NoError(subtaskMeta.BaseExternalMeta.ReadJSONFromExternalStorage(ctx, store, &subtaskMeta))
+					info, ok := subtaskMeta.Infos.ConflictInfos["data"]
+					if !ok {
+						s.Zero(subtaskMeta.RecordedDataKVConflicts)
+					} else {
+						s.EqualValues(info.Count, subtaskMeta.RecordedDataKVConflicts)
+					}
+				}
+			case proto.ImportStepConflictResolution:
+				var subtaskMeta importinto.ConflictResolutionStepMeta
+				s.NoError(json.Unmarshal(subtask.Meta, &subtaskMeta))
+				testutils.AssertExternalField(s.T(), &subtaskMeta)
+				s.NotEmpty(subtaskMeta.ExternalPath)
+				if !externalMetaCleanedUp {
+					s.NoError(subtaskMeta.BaseExternalMeta.ReadJSONFromExternalStorage(ctx, store, &subtaskMeta))
+				}
+			default:
+				s.Failf("unexpected step", "%v", step)
+			}
+		}
+	}
 }
 
 func (s *mockGCSSuite) TestGlobalSortBasic() {
@@ -96,6 +182,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	taskMeta := importinto.TaskMeta{}
 	s.NoError(json.Unmarshal(task.Meta, &taskMeta))
 	urlEqual(s.T(), redactedSortStorageURI, taskMeta.Plan.CloudStorageURI)
+	require.True(s.T(), taskMeta.Plan.DisableTiKVImportMode)
 
 	// merge-sort data kv
 	s.tk.MustExec("truncate table t")
@@ -114,9 +201,11 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	s.Len(result, 1)
 	jobID, err = strconv.Atoi(result[0][0].(string))
 	s.NoError(err)
+	var taskID int64
 	s.Eventually(func() bool {
 		task, err2 = taskManager.GetTaskByKeyWithHistory(ctx, importinto.TaskKey(int64(jobID)))
 		s.NoError(err2)
+		taskID = task.ID
 		return task.State == proto.TaskStateReverted
 	}, 30*time.Second, 300*time.Millisecond)
 	// check all sorted data cleaned up
@@ -125,6 +214,9 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	_, files, err = s.server.ListObjectsWithOptions("sorted", fakestorage.ListOptions{Prefix: "import"})
 	s.NoError(err)
 	s.Len(files, 0)
+
+	// check subtask external field
+	s.checkExternalFields(taskID, true)
 }
 
 func (s *mockGCSSuite) TestGlobalSortMultiFiles() {

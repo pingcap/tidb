@@ -11,6 +11,7 @@ go_test(
     deps = [
         "//br/pkg/storage",
         "//pkg/config",
+        "//pkg/ddl",
         "//pkg/ddl/util/callback",
         "//pkg/disttask/framework/scheduler",
         "//pkg/kv",
@@ -22,6 +23,7 @@ go_test(
         "//pkg/testkit",
         "//pkg/types",
         "//tests/realtikvtest",
+        "//tests/realtikvtest/testutils",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
         "@com_github_phayes_freeport//:freeport",
         "@com_github_pingcap_failpoint//:failpoint",

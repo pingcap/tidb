@@ -1585,8 +1585,8 @@ YmJiYg==,bnVsbA==
 
 	parser, err := mydump.NewCSVParser(context.Background(), &cfg.CSV, mydump.NewStringReader(inputData), int64(config.ReadBlockSize), ioWorkersForCSV, false, charsetConvertor)
 	require.NoError(t, err)
-	readedRows := [][]string{{"aaaa", "1"}, {"bbbb", "null"}, {"", "2"}}
-	for _, r := range readedRows {
+	readRows := [][]string{{"aaaa", "1"}, {"bbbb", "null"}, {`\N`, "2"}}
+	for _, r := range readRows {
 		require.NoError(t, parser.ReadRow())
 		require.EqualValues(t, convertRow(r...), parser.LastRow().Row)
 	}
