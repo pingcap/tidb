@@ -709,13 +709,13 @@ WHERE 16739493649928310215 MEMBER OF (derived_table.col_60767)
 OR NOT (JSON_CONTAINS(derived_table.col_60767, '6019730272580550835'));
 id	estRows	task	access object	operator info
 Projection_11	6.00	root		1->Column#18
-└─HashJoin_13	6.00	root		inner join, equal:[eq(test.tceb7972c.col_19, Column#19)]
-  ├─TableReader_16(Build)	4.80	root	partition:all	data:Selection_15
-  │ └─Selection_15	4.80	cop[tikv]		or(json_memberof(cast(16739493649928310215, json BINARY), test.tceb7972c.col_17), not(istrue_with_null(json_contains(test.tceb7972c.col_17, cast("6019730272580550835", json BINARY)))))
-  │   └─TableFullScan_14	6.00	cop[tikv]	table:tceb7972c	keep order:false, stats:partial[col_17:missing]
-  └─Projection_17(Probe)	10000.00	root		cast(test.t61a85298.col_71, double BINARY)->Column#19
-    └─TableReader_19	10000.00	root		data:TableFullScan_18
-      └─TableFullScan_18	10000.00	cop[tikv]	table:t61a85298	keep order:false, stats:pseudo
+└─HashJoin_19	6.00	root		inner join, equal:[eq(test.tceb7972c.col_19, Column#19)]
+  ├─TableReader_22(Build)	4.80	root	partition:all	data:Selection_21
+  │ └─Selection_21	4.80	cop[tikv]		or(json_memberof(cast(16739493649928310215, json BINARY), test.tceb7972c.col_17), not(istrue_with_null(json_contains(test.tceb7972c.col_17, cast("6019730272580550835", json BINARY)))))
+  │   └─TableFullScan_20	6.00	cop[tikv]	table:tceb7972c	keep order:false, stats:partial[col_17:missing]
+  └─Projection_24(Probe)	10000.00	root		cast(test.t61a85298.col_71, double BINARY)->Column#19
+    └─TableReader_26	10000.00	root		data:TableFullScan_25
+      └─TableFullScan_25	10000.00	cop[tikv]	table:t61a85298	keep order:false, stats:pseudo
 drop table if exists t0, t1;
 CREATE TABLE t0(c0 int);
 CREATE TABLE t1(c0 int);
@@ -782,12 +782,12 @@ set tidb_opt_fix_control='44855:on';
 explain select /*+ inl_join(t1), use_index(t1, idx) */ * from t join t1 on t.a = t1.a and t1.b = 123;
 id	estRows	task	access object	operator info
 Projection_9	12.50	root		test.t.a, test.t1.a, test.t1.b
-└─IndexJoin_12	12.50	root		inner join, inner:IndexReader_11, outer key:test.t.a, inner key:test.t1.a, equal cond:eq(test.t.a, test.t1.a)
-  ├─TableReader_20(Build)	9990.00	root		data:Selection_19
-  │ └─Selection_19	9990.00	cop[tikv]		not(isnull(test.t.a))
-  │   └─TableFullScan_18	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-  └─IndexReader_11(Probe)	12.50	root		index:IndexRangeScan_10
-    └─IndexRangeScan_10	12.50	cop[tikv]	table:t1, index:idx(b)	range: decided by [eq(test.t1.a, test.t.a) eq(test.t1.b, 123)], keep order:false, stats:pseudo
+└─IndexJoin_13	12.50	root		inner join, inner:IndexReader_24, outer key:test.t.a, inner key:test.t1.a, equal cond:eq(test.t.a, test.t1.a)
+  ├─TableReader_23(Build)	9990.00	root		data:Selection_22
+  │ └─Selection_22	9990.00	cop[tikv]		not(isnull(test.t.a))
+  │   └─TableFullScan_21	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─IndexReader_24(Probe)	12.50	root		index:IndexRangeScan_20
+    └─IndexRangeScan_20	12.50	cop[tikv]	table:t1, index:idx(b)	range: decided by [eq(test.t1.a, test.t.a) eq(test.t1.b, 123)], keep order:false, stats:pseudo
 select /*+ inl_join(t1), use_index(t1, idx) */ * from t join t1 on t.a = t1.a and t1.b = 123;
 a	a	b
 2	2	123
@@ -799,13 +799,13 @@ a	a
 2	2
 explain select * from t t1 left join t t2 on t1.a=t2.a limit 1, 1;
 id	estRows	task	access object	operator info
-IndexJoin_15	1.25	root		left outer join, inner:TableReader_12, left side:Limit_22, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)
-├─Limit_22(Build)	1.00	root		offset:1, count:1
-│ └─TableReader_26	2.00	root		data:Limit_25
-│   └─Limit_25	2.00	cop[tikv]		offset:0, count:2
-│     └─TableFullScan_24	2.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─TableReader_12(Probe)	1.00	root		data:TableRangeScan_11
-  └─TableRangeScan_11	1.00	cop[tikv]	table:t2	range: decided by [test.t.a], keep order:false, stats:pseudo
+IndexJoin_11	1.25	root		left outer join, inner:TableReader_22, left side:Limit_16, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)
+├─Limit_16(Build)	1.00	root		offset:1, count:1
+│ └─TableReader_20	2.00	root		data:Limit_19
+│   └─Limit_19	2.00	cop[tikv]		offset:0, count:2
+│     └─TableFullScan_18	2.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─TableReader_22(Probe)	1.00	root		data:TableRangeScan_21
+  └─TableRangeScan_21	1.00	cop[tikv]	table:t2	range: decided by [test.t.a], keep order:false, stats:pseudo
 drop table if exists t1, t2;
 create table t1(a int, b int, index idx(a, b));
 create table t2(a int, b int, index idx(a));
@@ -822,10 +822,10 @@ MergeJoin_8	12475.01	root		inner join, left key:test.t1.a, test.t1.b, right key:
 explain select /*+ no_hash_join(t1), no_index_join(t1,t2), no_index_hash_join(t1,t2) */ * from t1 join t2 on t1.a=t2.a and t2.b=t1.b;
 id	estRows	task	access object	operator info
 MergeJoin_8	12475.01	root		inner join, left key:test.t1.a, test.t1.b, right key:test.t2.a, test.t2.b
-├─Sort_51(Build)	9980.01	root		test.t2.a, test.t2.b
-│ └─TableReader_46	9980.01	root		data:Selection_45
-│   └─Selection_45	9980.01	cop[tikv]		not(isnull(test.t2.a)), not(isnull(test.t2.b))
-│     └─TableFullScan_44	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─IndexReader_39(Probe)	9980.01	root		index:Selection_38
-  └─Selection_38	9980.01	cop[tikv]		not(isnull(test.t1.b))
-    └─IndexFullScan_37	9990.00	cop[tikv]	table:t1, index:idx(a, b)	keep order:true, stats:pseudo
+├─Sort_31(Build)	9980.01	root		test.t2.a, test.t2.b
+│ └─TableReader_26	9980.01	root		data:Selection_25
+│   └─Selection_25	9980.01	cop[tikv]		not(isnull(test.t2.a)), not(isnull(test.t2.b))
+│     └─TableFullScan_24	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─IndexReader_19(Probe)	9980.01	root		index:Selection_18
+  └─Selection_18	9980.01	cop[tikv]		not(isnull(test.t1.b))
+    └─IndexFullScan_17	9990.00	cop[tikv]	table:t1, index:idx(a, b)	keep order:true, stats:pseudo

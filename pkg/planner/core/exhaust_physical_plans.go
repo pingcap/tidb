@@ -2135,6 +2135,10 @@ func recordIndexJoinHintWarnings(lp base.LogicalPlan, prop *property.PhysicalPro
 	if !ok {
 		return nil
 	}
+	if !p.PreferAny(h.PreferRightAsINLJInner, h.PreferRightAsINLHJInner, h.PreferRightAsINLMJInner,
+		h.PreferLeftAsINLJInner, h.PreferLeftAsINLHJInner, h.PreferLeftAsINLMJInner) {
+		return nil // no force index join hints
+	}
 	// Cannot find any valid index join plan with these force hints.
 	// Print warning message if any hints cannot work.
 	// If the required property is not empty, we will enforce it and try the hint again.

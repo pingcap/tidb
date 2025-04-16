@@ -202,7 +202,6 @@ func (p *PhysicalIndexHashJoin) Attach2Task(tasks ...base.Task) base.Task {
 	if p.SCtx().GetSessionVars().EnhanceIndexJoinBuildV2 {
 		return indexHashJoinAttach2TaskV2(p, tasks...)
 	}
-	// todo: feel index jon build v2
 	return indexHashJoinAttach2TaskV1(p, tasks...)
 }
 
@@ -237,7 +236,6 @@ func (p *PhysicalIndexJoin) Attach2Task(tasks ...base.Task) base.Task {
 	if p.SCtx().GetSessionVars().EnhanceIndexJoinBuildV2 {
 		return indexJoinAttach2TaskV2(p, tasks...)
 	}
-	// todo: feel index jon build v2
 	return indexJoinAttach2TaskV1(p, tasks...)
 }
 

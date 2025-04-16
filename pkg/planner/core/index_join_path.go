@@ -214,7 +214,6 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 		}
 		lastColPos, accesses, remained = indexJoinPathUpdateTmpRange(sctx, buildTmp, tempRangeRes, accesses, remained)
 		mutableRange := indexJoinPathNewMutableRange(sctx, indexJoinInfo, accesses, tempRangeRes.ranges, path)
-
 		ret := indexJoinPathConstructResult(indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, lastColPos)
 		return ret, false, nil
 	}
