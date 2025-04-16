@@ -145,6 +145,9 @@ func (*EmptyRowCntListener) Written(_ int) {}
 // SetTotal implements RowCountListener.
 func (*EmptyRowCntListener) SetTotal(_ int) {}
 
+// MockDMLExecutionBeforeScan is only used for test.
+var MockDMLExecutionBeforeScan func()
+
 // NewAddIndexIngestPipeline creates a pipeline for adding index in ingest mode.
 func NewAddIndexIngestPipeline(
 	ctx *OperatorCtx,
@@ -180,12 +183,27 @@ func NewAddIndexIngestPipeline(
 		rm = nil
 	}
 
+<<<<<<< HEAD
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, cpMgr)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt, cpMgr,
 		reorgMeta.GetBatchSizeOrDefault(int(variable.GetDDLReorgBatchSize())), rm)
 	ingestOp := NewIndexIngestOperator(ctx, copCtx, backendCtx, sessPool,
 		tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta, cpMgr, rowCntListener)
 	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, cpMgr, rowCntListener)
+=======
+	failpoint.Inject("mockDMLExecutionBeforeScan", func(_ failpoint.Value) {
+		if MockDMLExecutionBeforeScan != nil {
+			MockDMLExecutionBeforeScan()
+		}
+	})
+
+	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, backendCtx)
+	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt,
+		reorgMeta.GetBatchSize(), rm, backendCtx)
+	ingestOp := NewIndexIngestOperator(ctx, copCtx, sessPool,
+		tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta)
+	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, rowCntListener)
+>>>>>>> 2a5047b817b (tables: always append temp index values for unique index (#60340))
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, ingestOp)
