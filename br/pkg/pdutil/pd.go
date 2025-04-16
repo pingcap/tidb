@@ -771,6 +771,10 @@ func pauseSchedulerByKeyRangeWithTTL(
 	ttl time.Duration,
 ) (<-chan struct{}, string, error) {
 	var encodedKeyRangeRule = []KeyRangeRule{}
+	done := make(chan struct{})
+	if len(keyRange) == 0 {
+		return done, "", nil
+	}
 	for _, keyPair := range keyRange {
 		var rule KeyRangeRule
 		rule.StartKeyHex = hex.EncodeToString(keyPair[0])
@@ -789,7 +793,6 @@ func pauseSchedulerByKeyRangeWithTTL(
 		// See https://github.com/tikv/pd/blob/783d060861cef37c38cbdcab9777fe95c17907fe/server/schedule/labeler/rules.go#L169.
 		Data: encodedKeyRangeRule,
 	}
-	done := make(chan struct{})
 
 	if err := pdHTTPCli.SetRegionLabelRule(ctx, rule); err != nil {
 		close(done)
