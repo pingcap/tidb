@@ -271,36 +271,39 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 			buffer.WriteString(runtimeFilter.ExplainInfo(false))
 		}
 	}
-	if p.AnnIndexExtra != nil && p.AnnIndexExtra.PushDownQueryInfo != nil {
-		buffer.WriteString(", annIndex:")
-		buffer.WriteString(p.AnnIndexExtra.PushDownQueryInfo.GetDistanceMetric().String())
-		buffer.WriteString("(")
-		buffer.WriteString(p.AnnIndexExtra.PushDownQueryInfo.GetColumnName())
-		buffer.WriteString("..")
-		if normalized {
-			buffer.WriteString("[?]")
-		} else {
-			v, _, err := types.ZeroCopyDeserializeVectorFloat32(p.AnnIndexExtra.PushDownQueryInfo.RefVecF32)
-			if err != nil {
+	for _, idx := range p.UsedColumnarIndexes {
+		if idx != nil && idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeVector && idx.QueryInfo != nil {
+			buffer.WriteString(", annIndex:")
+			buffer.WriteString(idx.QueryInfo.GetAnnQueryInfo().GetDistanceMetric().String())
+			buffer.WriteString("(")
+			buffer.WriteString(idx.QueryInfo.GetAnnQueryInfo().GetColumnName())
+			buffer.WriteString("..")
+			if normalized {
 				buffer.WriteString("[?]")
 			} else {
-				buffer.WriteString(v.TruncatedString())
+				v, _, err := types.ZeroCopyDeserializeVectorFloat32(idx.QueryInfo.GetAnnQueryInfo().RefVecF32)
+				if err != nil {
+					buffer.WriteString("[?]")
+				} else {
+					buffer.WriteString(v.TruncatedString())
+				}
+			}
+			buffer.WriteString(", limit:")
+			if normalized {
+				buffer.WriteString("?")
+			} else {
+				buffer.WriteString(fmt.Sprint(idx.QueryInfo.GetAnnQueryInfo().TopK))
+			}
+			buffer.WriteString(")")
+
+			if p.AnnIndexExtra.PushDownQueryInfo.EnableDistanceProj {
+				buffer.WriteString("->")
+				cols := p.Schema().Columns
+				buffer.WriteString(cols[len(cols)-1].String())
 			}
 		}
-		buffer.WriteString(", limit:")
-		if normalized {
-			buffer.WriteString("?")
-		} else {
-			buffer.WriteString(fmt.Sprint(p.AnnIndexExtra.PushDownQueryInfo.TopK))
-		}
-		buffer.WriteString(")")
-
-		if p.AnnIndexExtra.PushDownQueryInfo.EnableDistanceProj {
-			buffer.WriteString("->")
-			cols := p.Schema().Columns
-			buffer.WriteString(cols[len(cols)-1].String())
-		}
 	}
+
 	return buffer.String()
 }
 
