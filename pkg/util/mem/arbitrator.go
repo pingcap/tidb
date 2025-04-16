@@ -1601,9 +1601,11 @@ func (m *MemArbitrator) doReclaimMemByPriority(target *rootPoolEntry, remainByte
 					continue
 				}
 				if ctx := entry.ctx.Load(); ctx.available() {
+
+					m.execMetrics.cancel.priorityMode[prio]++
+					ctx.stop(false)
+
 					if m.removeTask(entry) {
-						m.execMetrics.cancel.priorityMode[prio]++
-						ctx.stop(false)
 						entry.windUp(0, ArbitrateFail)
 					}
 					m.addUnderCancel(entry, entry.arbitratorMu.quota, m.innerTime())
@@ -1790,7 +1792,7 @@ func (m *MemArbitrator) doCancelPendingTasks(prio ArbitrateMemPriority, waitAver
 			m.tasks.Unlock()
 		}
 
-		for i := 0; i < size; i++ {
+		for i := range size {
 			entry := entries[i]
 			if ctx := entry.ctx.Load(); ctx.available() {
 				ctx.stop(false)

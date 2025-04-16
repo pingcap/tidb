@@ -2814,9 +2814,11 @@ func TestBench(t *testing.T) {
 		m.stopForTest()
 		m.checkEntryForTest()
 		require.True(t, m.execMetrics.task.fail >= N/2)
-		require.Equal(t, m.execMetrics.task.fail,
+		require.Equal(t, cancelPool.Load(),
 			m.execMetrics.cancel.waitAverse+m.execMetrics.cancel.priorityMode[ArbitrateMemPriorityLow]+m.execMetrics.cancel.priorityMode[ArbitrateMemPriorityMedium]+m.execMetrics.cancel.priorityMode[ArbitrateMemPriorityHigh])
 		require.True(t, m.execMetrics.cancel.waitAverse == N/2)
+		// under priority mode, arbitrator may cancel pool which is not waiting for alloc
+		require.GreaterOrEqual(t, cancelPool.Load(), m.execMetrics.task.fail)
 		m.resetExecMetrics()
 	}
 }
