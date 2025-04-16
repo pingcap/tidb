@@ -358,6 +358,9 @@ func (r *byteReader) closeConcurrentReader() (reloadCnt, offsetInOldBuffer int) 
 }
 
 func (r *byteReader) Close() error {
+	r.logger.Info("reader close",
+		zap.Int("totalReadBytes", r.totalReadBytes),
+	)
 	if r.concurrentReader.now {
 		r.closeConcurrentReader()
 	}
