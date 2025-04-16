@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -38,6 +39,7 @@ import (
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
@@ -1421,11 +1423,11 @@ func TestPITRIDMap(t *testing.T) {
 	ctx := context.Background()
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
-	tk.Exec(session.CreatePITRIDMap)
+	tk.MustExec(session.CreatePITRIDMap)
 	g := gluetidb.New()
 	se, err := g.CreateSession(s.Mock.Storage)
 	require.NoError(t, err)
-	client := logclient.TEST_NewLogClient(123, 1, 2, 3, nil, se)
+	client := logclient.TEST_NewLogClient(123, 1, 2, 3, s.Mock.Domain, se)
 	baseTableMappingManager := &stream.TableMappingManager{
 		DBReplaceMap: getDBMap(),
 	}
@@ -1434,7 +1436,61 @@ func TestPITRIDMap(t *testing.T) {
 	newSchemaReplaces, err := client.TEST_initSchemasMap(ctx, 1)
 	require.NoError(t, err)
 	require.Nil(t, newSchemaReplaces)
-	client2 := logclient.TEST_NewLogClient(123, 1, 2, 4, nil, se)
+	client2 := logclient.TEST_NewLogClient(123, 1, 2, 4, s.Mock.Domain, se)
+	newSchemaReplaces, err = client2.TEST_initSchemasMap(ctx, 2)
+	require.NoError(t, err)
+	require.Nil(t, newSchemaReplaces)
+	newSchemaReplaces, err = client.TEST_initSchemasMap(ctx, 2)
+	require.NoError(t, err)
+
+	require.Equal(t, len(baseTableMappingManager.DBReplaceMap), len(newSchemaReplaces))
+	for _, dbMap := range newSchemaReplaces {
+		baseDbMap := baseTableMappingManager.DBReplaceMap[dbMap.IdMap.UpstreamId]
+		require.NotNil(t, baseDbMap)
+		require.Equal(t, baseDbMap.DbID, dbMap.IdMap.DownstreamId)
+		require.Equal(t, baseDbMap.Name, dbMap.Name)
+		require.Equal(t, len(baseDbMap.TableMap), len(dbMap.Tables))
+		for _, tableMap := range dbMap.Tables {
+			baseTableMap := baseDbMap.TableMap[tableMap.IdMap.UpstreamId]
+			require.NotNil(t, baseTableMap)
+			require.Equal(t, baseTableMap.TableID, tableMap.IdMap.DownstreamId)
+			require.Equal(t, baseTableMap.Name, tableMap.Name)
+			require.Equal(t, len(baseTableMap.PartitionMap), len(tableMap.Partitions))
+			for _, partitionMap := range tableMap.Partitions {
+				basePartitionMap, exist := baseTableMap.PartitionMap[partitionMap.UpstreamId]
+				require.True(t, exist)
+				require.Equal(t, basePartitionMap, partitionMap.DownstreamId)
+			}
+		}
+	}
+}
+
+func TestPITRIDMapOnStorage(t *testing.T) {
+	ctx := context.Background()
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	tk := testkit.NewTestKit(t, s.Mock.Storage)
+	tk.MustExec("DROP TABLE IF EXISTS mysql.tidb_pitr_id_map")
+	g := gluetidb.New()
+	se, err := g.CreateSession(s.Mock.Storage)
+	require.NoError(t, err)
+	client := logclient.TEST_NewLogClient(123, 1, 2, 3, s.Mock.Domain, se)
+	backend, err := storage.ParseBackend("local://"+filepath.ToSlash(t.TempDir()), nil)
+	require.NoError(t, err)
+	err = client.SetStorage(ctx, backend, nil)
+	require.NoError(t, err)
+	baseTableMappingManager := &stream.TableMappingManager{
+		DBReplaceMap: getDBMap(),
+	}
+	err = client.TEST_saveIDMap(ctx, baseTableMappingManager, nil)
+	require.NoError(t, err)
+	newSchemaReplaces, err := client.TEST_initSchemasMap(ctx, 1)
+	require.NoError(t, err)
+	require.Nil(t, newSchemaReplaces)
+	client2 := logclient.TEST_NewLogClient(123, 1, 2, 4, s.Mock.Domain, se)
+	backend2, err := storage.ParseBackend("local://"+filepath.ToSlash(t.TempDir()+"/temp_another"), nil)
+	require.NoError(t, err)
+	err = client2.SetStorage(ctx, backend2, nil)
+	require.NoError(t, err)
 	newSchemaReplaces, err = client2.TEST_initSchemasMap(ctx, 2)
 	require.NoError(t, err)
 	require.Nil(t, newSchemaReplaces)
