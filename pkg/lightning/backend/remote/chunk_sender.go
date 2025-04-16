@@ -28,9 +28,11 @@ import (
 	"go.uber.org/zap"
 )
 
-// PutChunkResult is json data that returned by remote server PUT API.
-type PutChunkResult struct {
+// PutChunkResponse is json data that returned by remote server PUT API.
+type PutChunkResponse struct {
+	// The chunks that remote worker has flushed.
 	FlushedChunkID uint64 `json:"flushed-chunk-id"`
+	// The chunks that remote worker has recevied.
 	HandledChunkID uint64 `json:"handled-chunk-id"`
 	// When the remote worker terminates with an error, or the client sends a
 	// cleanup request, the `Canceled` will be set to true.
@@ -41,8 +43,8 @@ type PutChunkResult struct {
 	Error    string `json:"error"`
 }
 
-// FlushResult is json data that returned by remote server POST API.
-type FlushResult struct {
+// FlushResponse is json data that returned by remote server POST API.
+type FlushResponse struct {
 	FlushedChunkID uint64 `json:"flushed-chunk-id"`
 	Canceled       bool   `json:"canceled"`
 	Finished       bool   `json:"finished"`
@@ -56,26 +58,26 @@ type chunk struct {
 }
 
 type chunkTask struct {
-	// For flush, resp is used to notify the completion of the flush.
-	// For put chunk, resp is used to receive chunkID allocated by chunkSenderLoop,
+	// For flush, resultCh is used to notify the completion of the flush.
+	// For put chunk, resultCh is used to receive chunkID allocated by chunkSenderLoop,
 	// but receiving a chunkID does not mean that the chunk has been sent to the
 	// remote worker.
-	resp  chan uint64
-	flush bool
-	data  []byte
+	resultCh chan uint64
+	flush    bool
+	data     []byte
 }
 
 func newChunkTask(data []byte, flush bool) *chunkTask {
 	return &chunkTask{
-		resp:  make(chan uint64, 1),
-		flush: flush,
-		data:  data,
+		resultCh: make(chan uint64, 1),
+		flush:    flush,
+		data:     data,
 	}
 }
 
 func (t *chunkTask) done(chunkID uint64) {
-	t.resp <- chunkID
-	close(t.resp)
+	t.resultCh <- chunkID
+	close(t.resultCh)
 }
 
 type chunkSender struct {
@@ -150,7 +152,7 @@ func (c *chunkSender) submit(ctx context.Context, data []byte, flush bool) (uint
 	select {
 	case <-ctx.Done():
 		return 0, ctx.Err()
-	case newChunkID := <-task.resp:
+	case newChunkID := <-task.resultCh:
 		return newChunkID, nil
 	case <-c.loopDoneChan:
 		return 0, c.err
@@ -246,13 +248,13 @@ func (c *chunkSender) putChunkToRemote(ctx context.Context, chunk *chunk) error 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	result := new(PutChunkResult)
-	err = json.Unmarshal(data, result)
+	resp := new(PutChunkResponse)
+	err = json.Unmarshal(data, resp)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	err = c.handlePutChunkResult(ctx, result, chunk.id)
+	err = c.handlePutChunkResponse(ctx, resp, chunk.id)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -260,26 +262,26 @@ func (c *chunkSender) putChunkToRemote(ctx context.Context, chunk *chunk) error 
 	return nil
 }
 
-// handlePutChunkResult handles the result of put chunk request.
+// handlePutChunkResponse handles the response of put chunk request.
 //
 // Chunks are sent to remote workers in sequence according to chunk id. The remote
 // worker should return the `FlushedChunkID` and `HandledChunkID`. If the remote worker
 // restarts, the `HandledChunkID` may be less than the `expectedChunkID`, and remote
 // worker will reject the new chunk.
 // In this case, we need to retry sending chunks from the `FlushedChunkID` to the `expectedChunkID`.
-func (c *chunkSender) handlePutChunkResult(ctx context.Context, result *PutChunkResult, expectedChunkID uint64) error {
-	if result.Canceled {
-		c.logger.Error("failed to put chunk, task is canceled", zap.String("error", result.Error))
-		return common.ErrRemoteLoadDataTaskCanceled.FastGenByArgs(c.e.loadDataTaskID, result.Error)
+func (c *chunkSender) handlePutChunkResponse(ctx context.Context, resp *PutChunkResponse, expectedChunkID uint64) error {
+	if resp.Canceled {
+		c.logger.Error("failed to put chunk, task is canceled", zap.String("error", resp.Error))
+		return common.ErrRemoteLoadDataTaskCanceled.FastGenByArgs(c.e.loadDataTaskID, resp.Error)
 	}
 
-	if result.HandledChunkID != expectedChunkID {
+	if resp.HandledChunkID != expectedChunkID {
 		c.logger.Info("remote worker may restart, retry to put chunk",
 			zap.Uint64("expected chunkID", expectedChunkID),
-			zap.Uint64("handled chunkID", result.HandledChunkID),
-			zap.Uint64("flushed chunkID", result.FlushedChunkID))
+			zap.Uint64("handled chunkID", resp.HandledChunkID),
+			zap.Uint64("flushed chunkID", resp.FlushedChunkID))
 
-		nextChunkID := result.HandledChunkID + 1
+		nextChunkID := resp.HandledChunkID + 1
 		for nextChunkID <= expectedChunkID {
 			url := fmt.Sprintf(putChunkURL, c.e.addr, c.e.clusterID, c.e.loadDataTaskID, c.id, nextChunkID)
 
@@ -293,24 +295,24 @@ func (c *chunkSender) handlePutChunkResult(ctx context.Context, result *PutChunk
 			if err != nil {
 				return errors.Trace(err)
 			}
-			result = new(PutChunkResult)
-			err = json.Unmarshal(data, result)
+			resp = new(PutChunkResponse)
+			err = json.Unmarshal(data, resp)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if result.Canceled {
-				c.logger.Error("failed to put chunk, task is canceled", zap.String("error", result.Error))
-				return common.ErrRemoteLoadDataTaskCanceled.FastGenByArgs(c.e.loadDataTaskID, result.Error)
+			if resp.Canceled {
+				c.logger.Error("failed to put chunk, task is canceled", zap.String("error", resp.Error))
+				return common.ErrRemoteLoadDataTaskCanceled.FastGenByArgs(c.e.loadDataTaskID, resp.Error)
 			}
 
-			nextChunkID = result.HandledChunkID + 1
+			nextChunkID = resp.HandledChunkID + 1
 		}
 	}
 
 	flushedChunkID := c.flushedChunkID.Load()
 	// We can clean the cache of chunks that the remote worker has flushed.
 	lastFlushedChunkID := flushedChunkID + 1
-	for lastFlushedChunkID <= result.FlushedChunkID {
+	for lastFlushedChunkID <= resp.FlushedChunkID {
 		err := c.chunksCache.clean(lastFlushedChunkID)
 		if err != nil {
 			c.logger.Info("failed to clean chunk cache",
@@ -320,7 +322,7 @@ func (c *chunkSender) handlePutChunkResult(ctx context.Context, result *PutChunk
 		lastFlushedChunkID++
 	}
 
-	c.flushedChunkID.Store(result.FlushedChunkID)
+	c.flushedChunkID.Store(resp.FlushedChunkID)
 	return nil
 }
 
@@ -339,42 +341,42 @@ func (c *chunkSender) sendFlushToRemote(ctx context.Context) error {
 			return errors.Trace(err)
 		}
 
-		result := new(FlushResult)
-		err = json.Unmarshal(data, result)
+		resp := new(FlushResponse)
+		err = json.Unmarshal(data, resp)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
-		if result.Finished {
+		if resp.Finished {
 			c.logger.Info("load data task finished")
 			return nil
 		}
 
-		if result.Canceled {
+		if resp.Canceled {
 			c.logger.Error("failed to flush",
-				zap.Bool("canceled", result.Canceled),
-				zap.String("error", result.Error))
-			return common.ErrRemoteLoadDataTaskCanceled.FastGenByArgs(c.e.loadDataTaskID, result.Error)
+				zap.Bool("canceled", resp.Canceled),
+				zap.String("error", resp.Error))
+			return common.ErrRemoteLoadDataTaskCanceled.FastGenByArgs(c.e.loadDataTaskID, resp.Error)
 		}
 
 		// Make sure all chunks are flushed in remote worker.
-		if result.FlushedChunkID == c.getLastChunkID() {
+		if resp.FlushedChunkID == c.getLastChunkID() {
 			// Clean the cache of chunks that have been flushed and update the state.
 			flushedChunkID := c.flushedChunkID.Load()
 			lastFlushedChunkID := flushedChunkID + 1
-			for lastFlushedChunkID <= result.FlushedChunkID {
+			for lastFlushedChunkID <= resp.FlushedChunkID {
 				err := c.chunksCache.clean(lastFlushedChunkID)
 				if err != nil {
 					c.logger.Warn("failed to clean chunk cache", zap.Uint64("chunkID", lastFlushedChunkID), zap.Error(err))
 				}
 				lastFlushedChunkID++
 			}
-			c.flushedChunkID.Store(result.FlushedChunkID)
+			c.flushedChunkID.Store(resp.FlushedChunkID)
 			return nil
 		}
 
 		// The remote worker missed some chunks, we need to retry putting chunks.
-		// We put an empty chunk to get the `PutChunkResult` to start the put chunk process.
+		// We put an empty chunk to get the `PutChunkResponse` to start the put chunk process.
 		// Then we flush again.
 		err = c.putEmptyChunk(ctx)
 		if err != nil {

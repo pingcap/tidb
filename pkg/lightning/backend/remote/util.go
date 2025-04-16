@@ -23,7 +23,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -35,22 +34,14 @@ const (
 	maxDuplicateBatchSize = 4 << 20
 	taskExitsMsg          = "task exists"
 
-	// The format of load data task id: ${keyspaceID}-${importTaskID}-${tableID}-${engineID}
-	loadDataTaskIDFormat = "%d-%d-%d-%d"
-
 	sleepDuration = 3 * time.Second
 	retryCount    = 6000 // 3s * 6000 = 5h
 
 	updateFlushedChunkDuration = 10 * time.Second
 )
 
-// genLoadDataTaskID generates a load data task ID based on the provided parameters.
-func genLoadDataTaskID(keyspaceID uint32, importTaskID int64, cfg *backend.EngineConfig) string {
-	return fmt.Sprintf(loadDataTaskIDFormat, keyspaceID, importTaskID, cfg.TableInfo.ID, cfg.Remote.EngineID)
-}
-
-// retryableHTTPStatusCode checks if the given HTTP status code is retryable.
-func retryableHTTPStatusCode(statusCode int) bool {
+// isRetryableHTTPStatusCode checks if the given HTTP status code is retryable.
+func isRetryableHTTPStatusCode(statusCode int) bool {
 	return statusCode == http.StatusServiceUnavailable || // 503
 		statusCode == http.StatusInternalServerError || // 500
 		statusCode == http.StatusRequestTimeout // 408
@@ -70,7 +61,7 @@ func sendRequestWithRetry(ctx context.Context, httpClient *http.Client, method, 
 			return nil, err
 		}
 		resp, err = httpClient.Do(req)
-		if err != nil || retryableHTTPStatusCode(resp.StatusCode) {
+		if err != nil || isRetryableHTTPStatusCode(resp.StatusCode) {
 			statusCode := 0
 			if resp != nil {
 				statusCode = resp.StatusCode
