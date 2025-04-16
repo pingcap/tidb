@@ -264,7 +264,6 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 			remained = append(remained, colAccesses...)
 		}
 		mutableRange := indexJoinPathNewMutableRange(sctx, indexJoinInfo, accesses, tempRangeRes.ranges, path)
-
 		ret := indexJoinPathConstructResult(indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, lastColPos)
 		return ret, false, nil
 	}
@@ -305,7 +304,6 @@ func indexJoinPathCompare(best, current *indexJoinPathResult) (curIsBetter bool)
 	// since the NDV of outer join keys are not considered, and the detached access conditions
 	// may contain expressions like `t1.a > t2.a`. It's pretty hard to evaluate the join selectivity
 	// of these non-column-equal conditions, so I prefer to keep these heuristic rules simple at least for now.
-	// group ndv 越大，一次 fetch 扫的 rows 就会更多。
 	if current.usedColsNDV < best.usedColsNDV || (current.usedColsNDV == best.usedColsNDV && current.usedColsLen <= best.usedColsLen) {
 		return false
 	}
@@ -325,7 +323,6 @@ func indexJoinPathConstructResult(
 	if stats := indexJoinInfo.innerStats; stats != nil && stats.StatsVersion != statistics.PseudoVersion {
 		innerNDV, _ = cardinality.EstimateColsNDVWithMatchedLen(path.IdxCols[:usedColsLen], indexJoinInfo.innerSchema, stats)
 	}
-
 	idxOff2KeyOff := make([]int, len(buildTmp.curIdxOff2KeyOff))
 	copy(idxOff2KeyOff, buildTmp.curIdxOff2KeyOff)
 	return &indexJoinPathResult{
@@ -490,7 +487,6 @@ func indexJoinPathTmpInit(
 	indexJoinInfo *indexJoinPathInfo,
 	idxCols []*expression.Column,
 	colLens []int) *indexJoinPathTmp {
-	// inner join key 的 schema
 	tmpSchema := expression.NewSchema(indexJoinInfo.innerJoinKeys...)
 	buildTmp := new(indexJoinPathTmp)
 	buildTmp.curIdxOff2KeyOff = make([]int, len(idxCols))
@@ -906,7 +902,6 @@ func appendTailTemplateRange(originRanges ranger.Ranges, rangeMaxSize int64) (ra
 	if rangeMaxSize > 0 && originRanges.MemUsage()+(types.EmptyDatumSize*2+16)*int64(len(originRanges)) > rangeMaxSize {
 		return originRanges, true
 	}
-	// 直接在原始 range 后面加上一个空的 datum
 	for _, ran := range originRanges {
 		ran.LowVal = append(ran.LowVal, types.Datum{})
 		ran.HighVal = append(ran.HighVal, types.Datum{})
