@@ -2671,15 +2671,7 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	if ts.StoreType == kv.TiFlash {
 		for _, index := range ts.Table.Indices {
 			if index.State == model.StatePublic && index.InvertedInfo != nil {
-				ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, &tipb.ColumnarIndexInfo{
-					IndexType: tipb.ColumnarIndexType_TypeInverted,
-					Index: &tipb.ColumnarIndexInfo_InvertedQueryInfo{
-						InvertedQueryInfo: &tipb.InvertedQueryInfo{
-							IndexId:  index.ID,
-							ColumnId: index.InvertedInfo.ColumnID,
-						},
-					},
-				})
+				ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildInvertedIndexExtra(candidate.path.Index, index.InvertedInfo.ColumnID, index.ID))
 			}
 		}
 	}
@@ -2708,19 +2700,17 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			distanceMetricPB := tipb.VectorDistanceMetric_value[string(distanceMetric)]
 			intest.Assert(distanceMetricPB != 0, "unexpected distance metric")
 
-			ts.AnnIndexExtra = &VectorIndexExtra{
-				IndexInfo: candidate.path.Index,
-				PushDownQueryInfo: &tipb.ANNQueryInfo{
-					QueryType:          tipb.ANNQueryType_OrderBy,
-					DistanceMetric:     tipb.VectorDistanceMetric(distanceMetricPB),
-					TopK:               prop.VectorProp.TopK,
-					ColumnName:         ts.Table.Columns[candidate.path.Index.Columns[0].Offset].Name.L,
-					DeprecatedColumnId: &prop.VectorProp.Column.ID, // deprecated field, will be removed after TiFlash supports the new field.
-					IndexId:            candidate.path.Index.ID,
-					RefVecF32:          prop.VectorProp.Vec.SerializeTo(nil),
-					Column:             *tidbutil.ColumnToProto(prop.VectorProp.Column.ToInfo(), false, false),
-				},
-			}
+			ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildVectorIndexExtra(
+				candidate.path.Index,
+				tipb.ANNQueryType_OrderBy,
+				tipb.VectorDistanceMetric(distanceMetricPB),
+				prop.VectorProp.TopK,
+				ts.Table.Columns[candidate.path.Index.Columns[0].Offset].Name.L,
+				prop.VectorProp.Column.ID,
+				candidate.path.Index.ID,
+				prop.VectorProp.Vec.SerializeTo(nil),
+				tidbutil.ColumnToProto(prop.VectorProp.Column.ToInfo(), false, false),
+			))
 			ts.SetStats(util.DeriveLimitStats(ts.StatsInfo(), float64(prop.VectorProp.TopK)))
 		}
 		// ********************************** future deprecated start **************************/
