@@ -22,6 +22,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -42,9 +43,13 @@ type mockHTTPHandler struct {
 	ch              chan receivedReq
 	receivedChunkID uint64
 	flushedChunkID  uint64
+	mu              sync.Mutex
 }
 
 func (h *mockHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
 	query := r.URL.Query()
 	taskID := query.Get("task_id")
 
@@ -164,6 +169,7 @@ func genMockEngine(ctx context.Context, clusterID uint64, loadDataTaskID, addr s
 func genHTTPServer(ch chan receivedReq) (*http.Server, *mockHTTPHandler, string, error) {
 	handler := &mockHTTPHandler{
 		ch: ch,
+		mu: sync.Mutex{},
 	}
 
 	// get a random free port
@@ -200,10 +206,10 @@ func TestChunkSender(t *testing.T) {
 	}()
 
 	engine := genMockEngine(ctx, clusterID, loadDataTaskID, addr)
-	chunkCache, err := newChunksCache(loadDataTaskID, writerID, "")
+	chunksStore, err := newChunksStore(loadDataTaskID, writerID, "")
 	require.NoError(t, err)
 
-	sender := newChunkSender(ctx, 1, engine, chunkCache)
+	sender := newChunkSender(ctx, 1, engine, chunksStore)
 	require.NotNil(t, sender)
 
 	// Test putChunk normally
@@ -224,7 +230,9 @@ func TestChunkSender(t *testing.T) {
 	verfiyRequest(t, ch, clusterID, loadDataTaskID, writerID, chunkID, []byte("chunk2"), false)
 
 	// restart the remote worker
+	handler.mu.Lock()
 	handler.receivedChunkID = 1
+	handler.mu.Unlock()
 	// chunkSender should retput `chunk2`
 	err = sender.flush(ctx)
 	require.NoError(t, err)
