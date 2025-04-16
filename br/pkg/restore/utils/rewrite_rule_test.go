@@ -659,7 +659,7 @@ func TestSetTimeRangeFilterRace(t *testing.T) {
 	resultChan := make(chan *import_sstpb.RewriteRule, numGoroutines)
 
 	// Launch multiple goroutines to concurrently call SetTimeRangeFilter
-	for i := 0; i < numGoroutines; i++ {
+	for range numGoroutines {
 		go func() {
 			// Each goroutine creates its own rule
 			rule := &import_sstpb.RewriteRule{}
@@ -673,7 +673,7 @@ func TestSetTimeRangeFilterRace(t *testing.T) {
 	}
 
 	// Wait for all goroutines to complete and check results
-	for i := 0; i < numGoroutines; i++ {
+	for range numGoroutines {
 		rule := <-resultChan
 		require.NotNil(t, rule)
 		// Verify the rule was correctly modified

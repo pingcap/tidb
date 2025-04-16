@@ -3440,7 +3440,7 @@ func upgradeToVer246(s sessiontypes.Session, ver int64) {
 		if req.NumRows() == 0 {
 			break
 		}
-		for i := 0; i < req.NumRows(); i++ {
+		for i := range req.NumRows() {
 			planDigest, sqlDigest := req.GetRow(i).GetString(0), req.GetRow(i).GetString(1)
 			duplicatedDigests[sqlDigest+", "+planDigest] = struct{}{}
 		}

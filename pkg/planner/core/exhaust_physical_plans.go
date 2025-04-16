@@ -708,7 +708,7 @@ func completePhysicalIndexJoin(physic *PhysicalIndexJoin, rt *RootTask, innerS, 
 						innerHashKeys = append(innerHashKeys, lhs) // nozero
 					}
 					// if not, this EQ function is useless, keep it in new other conditions.
-					newOtherConds = append(newOtherConds[:i], newOtherConds[i+1:]...)
+					newOtherConds = slices.Delete(newOtherConds, i, i+1)
 				}
 			}
 		default:

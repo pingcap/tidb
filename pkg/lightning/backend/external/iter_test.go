@@ -470,14 +470,8 @@ func TestMemoryUsageWhenHotspotChange(t *testing.T) {
 			propKeysDist: 2,
 		}
 		rc.reset()
-<<<<<<< HEAD
 		kvStore := NewKeyValueStore(ctx, writer, rc)
-		for j := 0; j < 1000; j++ {
-=======
-		kvStore, err := NewKeyValueStore(ctx, writer, rc)
-		require.NoError(t, err)
 		for range 1000 {
->>>>>>> 6ef89523cb (*: modernize code via go modernize --fix)
 			key := fmt.Sprintf("key%06d", cur)
 			val := fmt.Sprintf("value%06d", cur)
 			err = kvStore.addEncodedData(getEncodedData([]byte(key), []byte(val)))

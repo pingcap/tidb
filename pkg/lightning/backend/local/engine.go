@@ -1058,20 +1058,12 @@ func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) (firstKey, la
 	if !hasKey {
 		return nil, nil, nil
 	}
-<<<<<<< HEAD
-	firstKey = append([]byte{}, iter.Key()...)
-=======
-	firstKey := slices.Clone(iter.Key())
->>>>>>> 6ef89523cb (*: modernize code via go modernize --fix)
+	firstKey = slices.Clone(iter.Key())
 	iter.Last()
 	if iter.Error() != nil {
 		return nil, nil, errors.Annotate(iter.Error(), "failed to seek to the last key")
 	}
-<<<<<<< HEAD
-	lastKey = append([]byte{}, iter.Key()...)
-=======
-	lastKey := slices.Clone(iter.Key())
->>>>>>> 6ef89523cb (*: modernize code via go modernize --fix)
+	lastKey = slices.Clone(iter.Key())
 	return firstKey, lastKey, nil
 }
 

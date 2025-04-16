@@ -349,11 +349,7 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 			return true
 		}
 		if cmp == 0 && i != k {
-<<<<<<< HEAD
-			cloned := append([]byte(nil), e.memKVsAndBuffers.kvs[i].key...)
-=======
-			cloned := slices.Clone(e.memKVsAndBuffers.keys[i])
->>>>>>> 6ef89523cb (*: modernize code via go modernize --fix)
+			cloned := slices.Clone(e.memKVsAndBuffers.kvs[i].key)
 			dupKey.Store(&cloned)
 		}
 		return false

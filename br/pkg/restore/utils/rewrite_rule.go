@@ -118,17 +118,7 @@ func SetTimeRangeFilter(tableRules *RewriteRules,
 	var ignoreBeforeTs uint64
 	switch {
 	case strings.Contains(cfName, DefaultCFName):
-<<<<<<< HEAD
-		ignoreBeforeTs = tableRules.ShiftStartTs
-		if ignoreBeforeTs > tableRules.StartTs {
-			// for default cf, shift start ts could less than start ts
-			// this could happen when large kv txn happen after small kv txn.
-			// use the start ts to filter out irrelevant data for default cf is more safe
-			ignoreBeforeTs = tableRules.StartTs
-		}
-=======
-		ignoreBeforeTs = min(r.ShiftStartTs, r.StartTs)
->>>>>>> 6ef89523cb (*: modernize code via go modernize --fix)
+		ignoreBeforeTs = min(tableRules.ShiftStartTs, tableRules.StartTs)
 	case strings.Contains(cfName, WriteCFName):
 		ignoreBeforeTs = tableRules.StartTs
 	default:

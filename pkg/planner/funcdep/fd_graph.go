@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"slices"
 )
 
 type fdEdge struct {

@@ -210,7 +210,7 @@ CREATE TABLE lineitem (
 		}
 	)
 	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i := 0; i < len(input); i++ {
+	for i := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = input[i]
 		})
