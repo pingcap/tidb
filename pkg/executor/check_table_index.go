@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	poolutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
@@ -378,7 +379,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 	indexColNames := make([]string, len(idxInfo.Columns))
 	if useMVIndex {
 		tblCol := tblMeta.Columns[idxInfo.Columns[0].Offset]
-		// We use a unique name as the column name
+		// TODO(joechenrh): use a random generated name as the column name
 		indexColNames[0] = "_mv_index_from_subquery"
 		generatedExpr = tblCol.GeneratedExprString
 	} else {
@@ -546,11 +547,11 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 	if meetError {
 		groupByKey := fmt.Sprintf("((cast(%s as signed) - %d) %% %d)", md5Handle, offset, mod)
 		indexSQL := fmt.Sprintf(
-			"select %s, %s, %s from %s use index(`%s`) where %s = 0 order by %s",
-			handleColumns, indexColumns, md5HandleAndIndexCol, tblName, idxInfo.Name, groupByKey, handleColumns)
+			"select %s, %s, %s from %s where %s = 0 order by %s",
+			handleColumns, indexColumns, md5HandleAndIndexCol, fromForIndex, groupByKey, handleColumns)
 		tableSQL := fmt.Sprintf(
-			"select /*+ read_from_storage(tikv[%s]) */ %s, %s, %s from %s use index() where %s = 0 order by %s",
-			tblName, handleColumns, indexColumns, md5HandleAndIndexCol, tblName, groupByKey, handleColumns)
+			"select /*+ read_from_storage(tikv[%s]) */ %s, %s, %s from %s where %s = 0 order by %s",
+			tblName, handleColumns, indexColumns, md5HandleAndIndexCol, fromForTable, groupByKey, handleColumns)
 
 		idxRow, err := queryToRow(se, indexSQL)
 		if err != nil {
@@ -581,9 +582,14 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		}
 		getValueFromRow := func(row chunk.Row) ([]types.Datum, error) {
 			valueDatum := make([]types.Datum, 0)
-			for i, t := range idxInfo.Columns {
-				valueDatum = append(valueDatum, row.GetDatum(i+len(pkCols), &tblMeta.Columns[t.Offset].FieldType))
+			if useMVIndex {
+				valueDatum = append(valueDatum, row.GetDatum(len(pkCols), types.NewFieldType(mysql.TypeLong)))
+			} else {
+				for i, t := range idxInfo.Columns {
+					valueDatum = append(valueDatum, row.GetDatum(i+len(pkCols), &tblMeta.Columns[t.Offset].FieldType))
+				}
 			}
+
 			return valueDatum, nil
 		}
 
