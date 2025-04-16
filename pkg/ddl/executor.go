@@ -2041,6 +2041,7 @@ func (e *executor) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase
 	}
 	tbInfo := t.Meta()
 	var actionType model.ActionType
+	hint := ""
 	switch tp {
 	case autoid.AutoRandomType:
 		pkCol := tbInfo.GetPkColInfo()
@@ -2053,10 +2054,13 @@ func (e *executor) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase
 			return errors.Trace(dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(errMsg))
 		}
 		actionType = model.ActionRebaseAutoRandomBase
+		hint = "AUTO_RANDOM_BASE"
 	case autoid.RowIDAllocType:
 		actionType = model.ActionRebaseAutoID
+		hint = "AUTO_INCREMENT"
 	case autoid.AutoIncrementType:
 		actionType = model.ActionRebaseAutoID
+		hint = "AUTO_INCREMENT"
 	default:
 		panic(fmt.Sprintf("unimplemented rebase autoid type %s", tp))
 	}
@@ -2068,8 +2072,8 @@ func (e *executor) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase
 		}
 		if newBase != newBaseTemp {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(
-				errors.NewNoStackErrorf("Can't reset AUTO_INCREMENT to %d without FORCE option, using %d instead",
-					newBase, newBaseTemp,
+				errors.NewNoStackErrorf("Your specified '%d' is ignored and triggered automatic rebasing. %s has been updated to %d.",
+					newBase, hint, newBaseTemp,
 				))
 		}
 		newBase = newBaseTemp
