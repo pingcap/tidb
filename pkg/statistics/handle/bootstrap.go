@@ -711,14 +711,14 @@ func (h *Handle) InitStatsLite(ctx context.Context) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	statslogutil.StatsLogger().Info("Complete to load the stats meta in the lite mode", zap.Duration("duration", time.Since(start)))
+	statslogutil.StatsLogger().Info("Complete loading the stats meta in the lite mode", zap.Duration("duration", time.Since(start)))
 	start = time.Now()
 	err = h.initStatsHistogramsLite(ctx, cache)
 	if err != nil {
 		cache.Close()
 		return errors.Trace(err)
 	}
-	statslogutil.StatsLogger().Info("Complete to load the histogram in the lite mode", zap.Duration("duration", time.Since(start)))
+	statslogutil.StatsLogger().Info("Complete loading the histogram in the lite mode", zap.Duration("duration", time.Since(start)))
 	h.Replace(cache)
 	return nil
 }
@@ -751,32 +751,32 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 	if err != nil {
 		return errors.Trace(err)
 	}
-	statslogutil.StatsLogger().Info("Complete to load the stats meta", zap.Duration("duration", time.Since(start)))
+	statslogutil.StatsLogger().Info("Complete loading the stats meta", zap.Duration("duration", time.Since(start)))
 	initstats.InitStatsPercentage.Store(initStatsPercentageInterval)
 	start = time.Now()
 	err = h.initStatsHistogramsConcurrently(is, cache, totalMemory, initstats.GetConcurrency())
 	if err != nil {
 		return errors.Trace(err)
 	}
-	statslogutil.StatsLogger().Info("Complete to load the histogram", zap.Duration("duration", time.Since(start)))
+	statslogutil.StatsLogger().Info("Complete loading the histogram", zap.Duration("duration", time.Since(start)))
 	err = h.initStatsTopNConcurrently(cache, totalMemory, initstats.GetConcurrency())
 	if err != nil {
 		return err
 	}
 	initstats.InitStatsPercentage.Store(initStatsPercentageInterval * 2)
 	start = time.Now()
-	statslogutil.StatsLogger().Info("Complete to load the topn", zap.Duration("duration", time.Since(start)))
+	statslogutil.StatsLogger().Info("Complete loading the topn", zap.Duration("duration", time.Since(start)))
 	if loadFMSketch {
 		start = time.Now()
 		err = h.initStatsFMSketch(cache)
 		if err != nil {
 			return err
 		}
-		statslogutil.StatsLogger().Info("Complete to load the FM Sketch", zap.Duration("duration", time.Since(start)))
+		statslogutil.StatsLogger().Info("Complete loading the FM Sketch", zap.Duration("duration", time.Since(start)))
 	}
 	start = time.Now()
 	err = h.initStatsBuckets(cache, totalMemory)
-	statslogutil.StatsLogger().Info("Complete to load the bucket", zap.Duration("duration", time.Since(start)))
+	statslogutil.StatsLogger().Info("Complete loading the bucket", zap.Duration("duration", time.Since(start)))
 	if err != nil {
 		return errors.Trace(err)
 	}
