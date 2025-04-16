@@ -24,16 +24,17 @@ import (
 	"github.com/pingcap/errors"
 )
 
-// cacheData holds the data and metadata for a chunk.
-type cacheData struct {
-	chunkData []byte
-	size      int
-	checksum  uint32
+// chunkInfo holds the data and metadata for a chunk.
+type chunkInfo struct {
+	// data is empty when we store the chunk into file.
+	data     []byte
+	size     int
+	checksum uint32
 }
 
-// chunksCache is a simple cache for chunks.
-type chunksCache struct {
-	chunks  map[uint64]cacheData // chunkID -> cacheData
+// chunksStore is a simple store to put/get chunks.
+type chunksStore struct {
+	chunks  map[uint64]chunkInfo // chunkID -> chunkInfo
 	baseDir string
 	// If `useMemory` is true, chunkData will be stored in memory.
 	// Otherwise, the chunk data will be stored in a file.
@@ -43,37 +44,40 @@ type chunksCache struct {
 	useMemory bool
 }
 
-// newChunksCache creates a new chunksCache.
-func newChunksCache(loadDataTaskID string, writerID uint64, basePath string) (*chunksCache, error) {
+// newChunksStore creates a new chunksStore.
+func newChunksStore(loadDataTaskID string, writerID uint64, basePath string) (*chunksStore, error) {
 	if len(basePath) == 0 {
-		return &chunksCache{
-			chunks:    map[uint64]cacheData{},
+		return &chunksStore{
+			chunks:    map[uint64]chunkInfo{},
 			useMemory: true,
 		}, nil
 	}
 
 	baseDir := filepath.Join(basePath, loadDataTaskID, strconv.FormatUint(writerID, 10))
 	// cleanup the directory if it exists
-	_ = os.RemoveAll(baseDir)
-
-	err := os.MkdirAll(baseDir, 0o750)
+	err := os.RemoveAll(baseDir)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
-	return &chunksCache{
-		chunks:  map[uint64]cacheData{},
+
+	err = os.MkdirAll(baseDir, 0o750)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &chunksStore{
+		chunks:  map[uint64]chunkInfo{},
 		baseDir: baseDir,
 	}, nil
 }
 
 // get retrieves the chunk data for the given chunkID.
-func (c *chunksCache) get(chunkID uint64) ([]byte, error) {
+func (c *chunksStore) get(chunkID uint64) ([]byte, error) {
 	meta, ok := c.chunks[chunkID]
 	if !ok {
 		return nil, errors.Errorf("chunk-%d not found", chunkID)
 	}
 	if c.useMemory {
-		return meta.chunkData, nil
+		return meta.data, nil
 	}
 
 	fileName := c.getChunkFilePath(chunkID)
@@ -95,21 +99,21 @@ func (c *chunksCache) get(chunkID uint64) ([]byte, error) {
 }
 
 // put stores the chunk data for the given chunkID.
-func (c *chunksCache) put(chunkID uint64, buf []byte) error {
+func (c *chunksStore) put(chunkID uint64, buf []byte) error {
 	if c.useMemory {
-		c.chunks[chunkID] = cacheData{chunkData: buf}
+		c.chunks[chunkID] = chunkInfo{data: buf}
 		return nil
 	}
 
 	checksum := crc32.ChecksumIEEE(buf)
-	c.chunks[chunkID] = cacheData{size: len(buf), checksum: checksum}
+	c.chunks[chunkID] = chunkInfo{size: len(buf), checksum: checksum}
 
 	fileName := c.getChunkFilePath(chunkID)
 	return os.WriteFile(fileName, buf, 0o600)
 }
 
 // clean removes the chunk data for the given chunkID.
-func (c *chunksCache) clean(chunkID uint64) error {
+func (c *chunksStore) clean(chunkID uint64) error {
 	delete(c.chunks, chunkID)
 	if c.useMemory {
 		return nil
@@ -119,8 +123,8 @@ func (c *chunksCache) clean(chunkID uint64) error {
 	return os.Remove(fileName)
 }
 
-// close cleans up the cache.
-func (c *chunksCache) close() error {
+// close cleans up the chunks.
+func (c *chunksStore) close() error {
 	c.chunks = nil
 	if c.useMemory {
 		return nil
@@ -130,6 +134,6 @@ func (c *chunksCache) close() error {
 }
 
 // getChunkFilePath returns the file path for the given chunkID.
-func (c *chunksCache) getChunkFilePath(chunkID uint64) string {
+func (c *chunksStore) getChunkFilePath(chunkID uint64) string {
 	return filepath.Join(c.baseDir, fmt.Sprintf("chunk-%d", chunkID))
 }

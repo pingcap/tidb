@@ -21,47 +21,54 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestChunksCache(t *testing.T) {
-	testChunksCache(t, "")
+func TestChunksStore(t *testing.T) {
+	testChunksStore(t, "")
 	basePath := os.TempDir()
-	testChunksCache(t, basePath)
+	testChunksStore(t, basePath)
 }
 
-func testChunksCache(t *testing.T, basePath string) {
-	// Create a new cache
+func testChunksStore(t *testing.T, basePath string) {
+	// Create a new store
 	taskID := "test-task"
-	chunksCache, err := newChunksCache(taskID, 1, basePath)
+
+	chunksStore, err := newChunksStore(taskID, 1, basePath)
 	require.NoError(t, err)
 
+	// Get a non-existent chunk
+	_, err = chunksStore.get(0)
+	require.Error(t, err)
+	_, err = chunksStore.get(1)
+	require.Error(t, err)
+
 	chunk0 := []byte("chunk0")
-	err = chunksCache.put(0, chunk0)
+	err = chunksStore.put(0, chunk0)
 	require.NoError(t, err)
 
 	chunk1 := []byte("chunk1")
-	err = chunksCache.put(1, chunk1)
+	err = chunksStore.put(1, chunk1)
 	require.NoError(t, err)
 
 	// Get the chunks
-	chunk0Got, err := chunksCache.get(0)
+	chunk0Got, err := chunksStore.get(0)
 	require.NoError(t, err)
 	require.Equal(t, chunk0, chunk0Got)
 
-	chunk1Got, err := chunksCache.get(1)
+	chunk1Got, err := chunksStore.get(1)
 	require.NoError(t, err)
 	require.Equal(t, chunk1, chunk1Got)
 
 	// Clean the chunks
-	err = chunksCache.clean(0)
+	err = chunksStore.clean(0)
 	require.NoError(t, err)
-	_, err = chunksCache.get(0)
+	_, err = chunksStore.get(0)
 	require.Error(t, err)
 
-	err = chunksCache.clean(1)
+	err = chunksStore.clean(1)
 	require.NoError(t, err)
-	_, err = chunksCache.get(1)
+	_, err = chunksStore.get(1)
 	require.Error(t, err)
 
 	// Close the cache
-	err = chunksCache.close()
+	err = chunksStore.close()
 	require.NoError(t, err)
 }

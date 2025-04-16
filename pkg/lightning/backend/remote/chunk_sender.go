@@ -85,7 +85,7 @@ type chunkSender struct {
 
 	e           *engine
 	httpClient  *http.Client
-	chunksCache *chunksCache
+	chunksStore *chunksStore
 	logger      log.Logger
 
 	// the chunk id that remote worker has flushed
@@ -101,7 +101,7 @@ type chunkSender struct {
 	err error
 }
 
-func newChunkSender(ctx context.Context, id uint64, engine *engine, chunksCache *chunksCache) *chunkSender {
+func newChunkSender(ctx context.Context, id uint64, engine *engine, chunksStore *chunksStore) *chunkSender {
 	// The ctx is used to control the life of the `chunkSenderLoop`.
 	ctx, cancel := context.WithCancel(ctx)
 	c := &chunkSender{
@@ -109,7 +109,7 @@ func newChunkSender(ctx context.Context, id uint64, engine *engine, chunksCache 
 
 		e:           engine,
 		httpClient:  engine.httpClient,
-		chunksCache: chunksCache,
+		chunksStore: chunksStore,
 		logger:      engine.logger.With(zap.Uint64("sender", id)),
 
 		flushedChunkID: atomic.Uint64{},
@@ -174,9 +174,9 @@ func (c *chunkSender) getFlushedChunkID() uint64 {
 func (c *chunkSender) chunkSenderLoop(ctx context.Context) {
 	defer func() {
 		close(c.loopDoneChan)
-		err := c.chunksCache.close()
+		err := c.chunksStore.close()
 		if err != nil {
-			c.logger.Warn("failed to close chunk cache", zap.Error(err))
+			c.logger.Warn("failed to close chunk store", zap.Error(err))
 		}
 	}()
 
@@ -236,7 +236,7 @@ func (c *chunkSender) putChunkToRemote(ctx context.Context, chunk *chunk) error 
 	if len(chunk.data) != 0 {
 		// Cache the chunk data to avoid the data being lost when the remote worker restarts.
 		// If the remote worker restarts, we can retry sending chunks from cache.
-		err := c.chunksCache.put(chunk.id, chunk.data)
+		err := c.chunksStore.put(chunk.id, chunk.data)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -285,7 +285,7 @@ func (c *chunkSender) handlePutChunkResponse(ctx context.Context, resp *PutChunk
 		for nextChunkID <= expectedChunkID {
 			url := fmt.Sprintf(putChunkURL, c.e.addr, c.e.clusterID, c.e.loadDataTaskID, c.id, nextChunkID)
 
-			buf, err := c.chunksCache.get(nextChunkID)
+			buf, err := c.chunksStore.get(nextChunkID)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -313,7 +313,7 @@ func (c *chunkSender) handlePutChunkResponse(ctx context.Context, resp *PutChunk
 	// We can clean the cache of chunks that the remote worker has flushed.
 	lastFlushedChunkID := flushedChunkID + 1
 	for lastFlushedChunkID <= resp.FlushedChunkID {
-		err := c.chunksCache.clean(lastFlushedChunkID)
+		err := c.chunksStore.clean(lastFlushedChunkID)
 		if err != nil {
 			c.logger.Info("failed to clean chunk cache",
 				zap.Uint64("chunkID", lastFlushedChunkID),
@@ -365,7 +365,7 @@ func (c *chunkSender) sendFlushToRemote(ctx context.Context) error {
 			flushedChunkID := c.flushedChunkID.Load()
 			lastFlushedChunkID := flushedChunkID + 1
 			for lastFlushedChunkID <= resp.FlushedChunkID {
-				err := c.chunksCache.clean(lastFlushedChunkID)
+				err := c.chunksStore.clean(lastFlushedChunkID)
 				if err != nil {
 					c.logger.Warn("failed to clean chunk cache", zap.Uint64("chunkID", lastFlushedChunkID), zap.Error(err))
 				}
