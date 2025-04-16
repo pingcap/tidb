@@ -1132,7 +1132,6 @@ func removeConditions(ectx expression.EvalContext, conditions, condsToRemove []e
 func AppendConditionsIfNotExist(ectx expression.EvalContext, conditions, condsToAppend []expression.Expression) []expression.Expression {
 	shouldAppend := make([]expression.Expression, 0, len(condsToAppend))
 	for _, cond := range condsToAppend {
-		// 因为有些 index col len 问题导致的条件会 duplicated，所以这里是用 contains 去重
 		if !expression.Contains(ectx, conditions, cond) {
 			shouldAppend = append(shouldAppend, cond)
 		}

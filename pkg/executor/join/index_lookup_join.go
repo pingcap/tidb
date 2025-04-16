@@ -684,9 +684,6 @@ func (iw *innerWorker) sortAndDedupLookUpContents(lookUpContents []*IndexJoinLoo
 		if cmp != 0 || iw.nextColCompareFilters == nil {
 			return cmp
 		}
-		// 哦！在 join keys 相等的情况下，我们还需要比较下一列。下一列我们从 last index col 所包含的范围 func 的 affected cols 的顺序来。
-		// 这里我们只传 join keys 来 fetch 其实问题就不大了，因为范围条件的引入，我们希望底层可以 fetch 的更少，所以这里相当于是去重了 lookup
-		// contents，之前我想的是每个 row 都 fetch，看起来底层要支持 last col 范围扫，这里如果要去重就必须要考虑这个 affected cols。
 		return iw.nextColCompareFilters.CompareRow(i.Row, j.Row)
 	})
 	deDupedLookupKeys := lookUpContents[:1]

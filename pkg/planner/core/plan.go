@@ -206,7 +206,6 @@ func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx base.PlanContext) *P
 	return shuffle
 }
 
-// 这里就是显示的问题，inner 端需要自底向上构建上来，因为这里会乘以 outer rows
 func getEstimatedProbeCntFromProbeParents(probeParents []base.PhysicalPlan) float64 {
 	res := float64(1)
 	for _, pp := range probeParents {

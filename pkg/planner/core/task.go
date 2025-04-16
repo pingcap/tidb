@@ -59,6 +59,8 @@ var HeavyFunctionNameMap = map[string]struct{}{
 }
 
 func attachPlan2Task(p base.PhysicalPlan, t base.Task) base.Task {
+	// since almost all current physical plan will be attached to bottom encapsulated task.
+	// we do the stats inheritance here for all the index join inner task.
 	inheritStatsFromBottomTaskForIndexJoinInner(p, t)
 	switch v := t.(type) {
 	case *CopTask:

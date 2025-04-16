@@ -862,7 +862,6 @@ func constructIndexJoin(
 		OuterHashKeys:    outerHashKeys,
 		InnerHashKeys:    innerHashKeys,
 	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), p.QueryBlockOffset(), chReqProps...)
-	// 这里为什么要感知孩子选什么样的 path 呢？
 	if path != nil {
 		join.IdxColLens = path.IdxColLens
 	}
@@ -1043,7 +1042,6 @@ func enumerateIndexJoinByOuterIdx(p *logicalop.LogicalJoin, prop *property.Physi
 // or match some part of on index. If so we will choose the best one and construct a index join.
 func getIndexJoinByOuterIdx(p *logicalop.LogicalJoin, prop *property.PhysicalProperty, outerIdx int) (joins []base.PhysicalPlan) {
 	outerChild, innerChild := p.Children()[outerIdx], p.Children()[1-outerIdx]
-	// 需要 same order
 	all, _ := prop.AllSameOrder()
 	// If the order by columns are not all from outer child, index join cannot promise the order.
 	if !prop.AllColsFromSchema(outerChild.Schema()) || !all {
@@ -1127,7 +1125,6 @@ childLoop:
 	for curChild := innerChild; curChild != nil; curChild = nextChild(curChild) {
 		switch child := curChild.(type) {
 		case *logicalop.DataSource:
-			// 这里要看到 ds，因为需要 assert 到 ds 的 range scan 才能算有效的 index join
 			wrapper.ds = child
 			break childLoop
 		case *logicalop.LogicalProjection, *logicalop.LogicalSelection, *logicalop.LogicalAggregation:
@@ -1317,7 +1314,7 @@ func buildIndexJoinInner2TableScan(
 	ds := wrapper.ds
 	var tblPath *util.AccessPath
 	for _, path := range ds.PossibleAccessPaths {
-		if path.IsTablePath() && path.StoreType == kv.TiKV { // ds 里面找一个 tikv 的 table path
+		if path.IsTablePath() && path.StoreType == kv.TiKV {
 			tblPath = path
 			break
 		}
@@ -1330,21 +1327,17 @@ func buildIndexJoinInner2TableScan(
 	var innerTask, innerTask2 base.Task
 	var indexJoinResult *indexJoinPathResult
 	if ds.TableInfo.IsCommonHandle {
-		// 拿到 index join res 和 innerKeyOffset 到 index col 的映射
 		indexJoinResult, keyOff2IdxOff = getBestIndexJoinPathResult(p, ds, innerJoinKeys, outerJoinKeys, func(path *util.AccessPath) bool { return path.IsCommonHandlePath })
 		if indexJoinResult == nil {
 			return nil
 		}
-		// 这里需要 outer join keys，因为要打印 range 信息，就是那个 decided by:
 		rangeInfo := indexJoinPathRangeInfo(p.SCtx(), outerJoinKeys, indexJoinResult)
-		// 这里构建 inner task
 		innerTask = constructInnerTableScanTask(p, prop, wrapper, indexJoinResult.chosenRanges.Range(), rangeInfo, false, false, avgInnerRowCnt)
 		// The index merge join's inner plan is different from index join, so we
 		// should construct another inner plan for it.
 		// Because we can't keep order for union scan, if there is a union scan in inner task,
 		// we can't construct index merge join.
 		if !wrapper.hasDitryWrite {
-			// 因为 index join 要保持 outer join key 的顺序，所以这里要保持 inner join key 的顺序
 			innerTask2 = constructInnerTableScanTask(p, prop, wrapper, indexJoinResult.chosenRanges.Range(), rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
 		}
 		ranges = indexJoinResult.chosenRanges
@@ -1986,7 +1979,6 @@ func filterIndexJoinBySessionVars(sc base.PlanContext, indexJoins []base.Physica
 	if sc.GetSessionVars().EnableIndexMergeJoin {
 		return indexJoins
 	}
-	// 太 hack 了吧，卧槽
 	for i := len(indexJoins) - 1; i >= 0; i-- {
 		if _, ok := indexJoins[i].(*PhysicalIndexMergeJoin); ok {
 			indexJoins = append(indexJoins[:i], indexJoins[i+1:]...)
@@ -2105,14 +2097,12 @@ func tryToGetIndexJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty
 		stmtCtx.SetHintWarning("Some INL_MERGE_JOIN and NO_INDEX_MERGE_JOIN hints conflict, NO_INDEX_MERGE_JOIN may be ignored")
 	}
 
-	// 这里只要 index join 枚举出来了，就会直接 return 符合 hint 的，但是 v2 里面枚举出来的只是空壳 index join
 	candidates, canForced = handleForceIndexJoinHints(p, prop, candidates)
 	if canForced {
 		return candidates, canForced
 	}
 	candidates = handleFilterIndexJoinHints(p, candidates)
 	// todo: if any variables banned it, why bother to generate it first?
-	// 最后才把 index merge 给 filter 掉的，不要生成不就完了吗
 	return filterIndexJoinBySessionVars(p.SCtx(), candidates), false
 }
 
@@ -3519,7 +3509,6 @@ func getHashAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.Ph
 	if prop.IsFlashProp() {
 		taskTypes = []property.TaskType{prop.TaskTp}
 	}
-
 	taskTypes = admitIndexJoinTypes(taskTypes, prop)
 	for _, taskTp := range taskTypes {
 		if taskTp == property.MppTaskType {
