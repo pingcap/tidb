@@ -759,12 +759,12 @@ func (h *Handle) InitStats(ctx context.Context, is infoschema.InfoSchema) (err e
 		return errors.Trace(err)
 	}
 	statslogutil.StatsLogger().Info("Complete loading the histogram", zap.Duration("duration", time.Since(start)))
+	start = time.Now()
 	err = h.initStatsTopNConcurrently(cache, totalMemory, initstats.GetConcurrency())
 	if err != nil {
 		return err
 	}
 	initstats.InitStatsPercentage.Store(initStatsPercentageInterval * 2)
-	start = time.Now()
 	statslogutil.StatsLogger().Info("Complete loading the topn", zap.Duration("duration", time.Since(start)))
 	if loadFMSketch {
 		start = time.Now()
