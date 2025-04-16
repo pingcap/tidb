@@ -296,7 +296,7 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 			}
 			buffer.WriteString(")")
 
-			if p.AnnIndexExtra.PushDownQueryInfo.EnableDistanceProj {
+			if idx.QueryInfo.GetAnnQueryInfo().GetEnableDistanceProj() {
 				buffer.WriteString("->")
 				cols := p.Schema().Columns
 				buffer.WriteString(cols[len(cols)-1].String())

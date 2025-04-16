@@ -16,6 +16,7 @@ package core
 
 import (
 	"math"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -43,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
@@ -1020,7 +1022,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv
 		orderByCol.Index = len(bottomProj.Exprs) - 1
 
 		// try to Check and modify plan when it is possible to not scanning vector column at all.
-		tryEnableVectorSearchDistanceProjection(topN, newGlobalTopN, childPlan, bottomProj)
+		tryReturnDistanceFromIndex(topN, newGlobalTopN, childPlan, bottomProj)
 
 		return topN, newGlobalTopN
 	}
@@ -1034,7 +1036,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv
 	return topN, newGlobalTopN
 }
 
-// tryEnableVectorSearchDistanceProjection checks whether the vector in the plan can be removed and a distance column will be added.
+// tryReturnDistanceFromIndex checks whether the vector in the plan can be removed and a distance column will be added.
 // Consider this situation sql statement: select id from t order by vec_distance(vec, '[1,2,3]') limit x
 // The plan like:
 //
@@ -1046,16 +1048,24 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv
 //
 // DataSource(id, dis) -> TopN(by dis) -> Projection2(id)
 // └─Schema: id, dis
-func tryEnableVectorSearchDistanceProjection(local *PhysicalTopN, global *PhysicalTopN, childPlan base.PhysicalPlan, proj *PhysicalProjection) bool {
+func tryReturnDistanceFromIndex(local *PhysicalTopN, global *PhysicalTopN, childPlan base.PhysicalPlan, proj *PhysicalProjection) bool {
 	tableScan, ok := childPlan.(*PhysicalTableScan)
 	if !ok {
 		return false
 	}
 
 	orderByCol, _ := local.ByItems[0].Expr.(*expression.Column)
-	if tableScan.AnnIndexExtra == nil {
+	var ann_query_info *ColumnarIndexExtra
+	for _, idx := range tableScan.UsedColumnarIndexes {
+		if idx != nil && idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeVector && idx.QueryInfo != nil {
+			ann_query_info = idx
+			break
+		}
+	}
+	if ann_query_info == nil {
 		return false
 	}
+
 	// If the vector column is only used in the VectorSearch and no where
 	// else, then it can be eliminated in TableScan.
 	if orderByCol.Index < 0 || orderByCol.Index >= len(proj.Exprs) {
@@ -1069,7 +1079,7 @@ func tryEnableVectorSearchDistanceProjection(local *PhysicalTopN, global *Physic
 			continue
 		}
 		flag := expression.HasColumnWithCondition(projExpr, func(col *expression.Column) bool {
-			return col.ID == tableScan.AnnIndexExtra.PushDownQueryInfo.GetColumn().ColumnId
+			return col.ID == ann_query_info.QueryInfo.GetAnnQueryInfo().GetColumn().ColumnId
 		})
 		if flag {
 			isVecColumnInUse = true
@@ -1096,7 +1106,7 @@ func tryEnableVectorSearchDistanceProjection(local *PhysicalTopN, global *Physic
 	// remove the vector column in order to read distance directly by virtualDistanceCol
 	vectorIdx := -1
 	for i, col := range tableScan.Columns {
-		if col.ID == tableScan.AnnIndexExtra.PushDownQueryInfo.GetColumn().ColumnId {
+		if col.ID == ann_query_info.QueryInfo.GetAnnQueryInfo().GetColumn().ColumnId {
 			vectorIdx = i
 			break
 		}
@@ -1106,16 +1116,17 @@ func tryEnableVectorSearchDistanceProjection(local *PhysicalTopN, global *Physic
 	}
 
 	// set the EnableDistanceProj to modify the read process of tiflash.
-	tableScan.AnnIndexExtra.PushDownQueryInfo.EnableDistanceProj = true
+	ann_query_info.QueryInfo.GetAnnQueryInfo().EnableDistanceProj = true
 
 	// append the distance column to the last position in columns and schema.
-	tableScan.Columns = append(tableScan.Columns[:vectorIdx], tableScan.Columns[vectorIdx+1:]...)
+	tableScan.Columns = slices.Delete(tableScan.Columns, vectorIdx, vectorIdx+1)
 	tableScan.Columns = append(tableScan.Columns, virtualDistanceColInfo)
 
-	tableScan.Schema().Columns = append(tableScan.Schema().Columns[:vectorIdx], tableScan.Schema().Columns[vectorIdx+1:]...)
+	tableScan.Schema().Columns = slices.Delete(tableScan.Schema().Columns, vectorIdx, vectorIdx+1)
 	tableScan.Schema().Append(virtualDistanceCol)
 
-	// remove the projection plan
+	// The children of topN are currently projections. After optimization, we no longer
+	// need the projection and directly set the children to tablescan.
 	local.SetChildren(tableScan)
 
 	// modify the topN's ByItem
