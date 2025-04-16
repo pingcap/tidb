@@ -608,10 +608,10 @@ select * from t1 join t2 on t1.id = t2.id where (t1.a <= 3 and (t1.b >= 3 and t1
 id	a	b	id	a	b
 select * from t1 left join t2 on true where (t1.a <=1 or t1.a <= 3 and (t1.b >=3 and t1.b <= 5)) and (t2.a >= 6 and t2.a <= 8) and t2.b>=7 and t2.id>=7 order by t1.id,t1.a;
 id	a	b	id	a	b
-1	1	1	8	8	8
 1	1	1	7	7	7
-3	3	3	8	8	8
+1	1	1	8	8	8
 3	3	3	7	7	7
+3	3	3	8	8	8
 select * from t1 where a <= 1;
 id	a	b
 1	1	1
@@ -764,9 +764,9 @@ id	a	b	id	a	b
 3	3	3	3	3	3
 select * from t1 join t2 on true where t1.a=5 and t2.a BETWEEN 6 AND 8 and t2.b >= 6;
 id	a	b	id	a	b
-5	5	5	6	6	6
-5	5	5	7	7	7
 5	5	5	8	8	8
+5	5	5	7	7	7
+5	5	5	6	6	6
 select count(*) from t1 join t2 on t1.b = t2.b where t1.a BETWEEN 1 AND 2 and t2.a BETWEEN 1 AND 6 and t1.b BETWEEN 1 AND 6;
 count(*)
 2
@@ -882,3 +882,41 @@ abc	2
 select * from t where b = 2;
 a	b
 abc	2
+select * from t where b in (1,2);
+a	b
+Ab	1
+abc	2
+explain select * from t where b in (1,2);
+id	estRows	task	access object	operator info
+PartitionUnion_8	3.00	root		
+├─Batch_Point_Get_9	2.00	root	table:t, partition:p1, index:PRIMARY(b)	keep order:false, desc:false
+└─Batch_Point_Get_10	1.00	root	table:t, partition:p2, index:PRIMARY(b)	keep order:false, desc:false
+select * from t where b in (1,2) and a like '%a%';
+a	b
+abc	2
+explain select * from t where b in (1,2) and a like '%a%';
+id	estRows	task	access object	operator info
+PartitionUnion_8	2.40	root		
+├─Selection_10	1.60	root		like(issue42135.t.a, "%a%", 92)
+│ └─Batch_Point_Get_9	2.00	root	table:t, partition:p1, index:PRIMARY(b)	keep order:false, desc:false
+└─Selection_12	0.80	root		like(issue42135.t.a, "%a%", 92)
+  └─Batch_Point_Get_11	1.00	root	table:t, partition:p2, index:PRIMARY(b)	keep order:false, desc:false
+set @@tidb_partition_prune_mode=Default;
+select * from t where b in (1,2);
+a	b
+Ab	1
+abc	2
+explain select * from t where b in (1,2);
+id	estRows	task	access object	operator info
+IndexLookUp_7	2.00	root	partition:p1,p2	
+├─IndexRangeScan_5(Build)	2.00	cop[tikv]	table:t, index:PRIMARY(b)	range:[1,1], [2,2], keep order:false, stats:pseudo
+└─TableRowIDScan_6(Probe)	2.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t where b in (1,2) and a like '%a%';
+a	b
+abc	2
+explain select * from t where b in (1,2) and a like '%a%';
+id	estRows	task	access object	operator info
+IndexLookUp_8	1.60	root	partition:p1,p2	
+├─IndexRangeScan_5(Build)	2.00	cop[tikv]	table:t, index:PRIMARY(b)	range:[1,1], [2,2], keep order:false, stats:pseudo
+└─Selection_7(Probe)	1.60	cop[tikv]		like(issue42135.t.a, "%a%", 92)
+  └─TableRowIDScan_6	2.00	cop[tikv]	table:t	keep order:false, stats:pseudo

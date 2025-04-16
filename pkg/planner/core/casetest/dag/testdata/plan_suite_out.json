@@ -112,7 +112,7 @@
       },
       {
         "SQL": "select * from (select * from t use index() order by b) t left join t t1 on t.a=t1.a limit 10",
-        "Best": "IndexJoin{TableReader(Table(t)->Limit)->Limit->TableReader(Table(t))}(test.t.a,test.t.a)->Limit"
+        "Best": "IndexJoin{TableReader(Table(t)->Limit)->Limit->TableReader(Table(t))}(test.t.a,test.t.a)"
       },
       {
         "SQL": "select * from ((SELECT 1 a,3 b) UNION (SELECT 2,1) ORDER BY (SELECT 2)) t order by a,b",
@@ -177,7 +177,7 @@
       },
       {
         "SQL": "select * from t t1 left join t t2 on t1.b = t2.a where 1 = 1 limit 1",
-        "Best": "IndexJoin{TableReader(Table(t)->Limit)->Limit->TableReader(Table(t))}(test.t.b,test.t.a)->Limit"
+        "Best": "IndexJoin{TableReader(Table(t)->Limit)->Limit->TableReader(Table(t))}(test.t.b,test.t.a)"
       },
       {
         "SQL": "select * from t t1 join t t2 on t1.b = t2.a and t1.c = 1 and t1.d = 1 and t1.e = 1 order by t1.a limit 1",

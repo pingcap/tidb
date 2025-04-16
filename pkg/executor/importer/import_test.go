@@ -28,12 +28,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -230,22 +228,6 @@ func TestASTArgsFromStmt(t *testing.T) {
 	require.Equal(t, astArgs.ColumnsAndUserVars, importIntoStmt.ColumnsAndUserVars)
 }
 
-func TestGetFileRealSize(t *testing.T) {
-	err := failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage", "return(250)")
-	require.NoError(t, err)
-	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage")
-	}()
-	fileMeta := mydump.SourceFileMeta{Compression: mydump.CompressionNone, FileSize: 100}
-	c := &LoadDataController{logger: log.L()}
-	require.Equal(t, int64(100), c.getFileRealSize(context.Background(), fileMeta, nil))
-	fileMeta.Compression = mydump.CompressionGZ
-	require.Equal(t, int64(250), c.getFileRealSize(context.Background(), fileMeta, nil))
-	err = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/mydump/SampleFileCompressPercentage", `return("test err")`)
-	require.NoError(t, err)
-	require.Equal(t, int64(100), c.getFileRealSize(context.Background(), fileMeta, nil))
-}
-
 func urlEqual(t *testing.T, expected, actual string) {
 	urlExpected, err := url.Parse(expected)
 	require.NoError(t, err)
@@ -311,19 +293,6 @@ func TestGetLocalBackendCfg(t *testing.T) {
 	cfg = c.getLocalBackendCfg("http://1.1.1.1:1234", "/tmp")
 	require.Greater(t, cfg.RaftKV2SwitchModeDuration, time.Duration(0))
 	require.Equal(t, config.DefaultSwitchTiKVModeInterval, cfg.RaftKV2SwitchModeDuration)
-}
-
-func TestGetBackendWorkerConcurrency(t *testing.T) {
-	c := &LoadDataController{
-		Plan: &Plan{
-			ThreadCnt: 3,
-		},
-	}
-	require.Equal(t, 6, c.getBackendWorkerConcurrency())
-	c.Plan.CloudStorageURI = "xxx"
-	require.Equal(t, 6, c.getBackendWorkerConcurrency())
-	c.Plan.ThreadCnt = 123
-	require.Equal(t, 246, c.getBackendWorkerConcurrency())
 }
 
 func TestSupportedSuffixForServerDisk(t *testing.T) {

@@ -484,7 +484,9 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 		serverInfos := make(map[string]*infosync.ServerInfo, len(versions))
 		for i, v := range versions {
 			serverInfos[fmt.Sprintf("node%d", i)] = &infosync.ServerInfo{
-				ServerVersionInfo: infosync.ServerVersionInfo{Version: v}}
+				StaticServerInfo: infosync.StaticServerInfo{
+					ServerVersionInfo: infosync.ServerVersionInfo{Version: v},
+				}}
 		}
 		bytes, err := json.Marshal(serverInfos)
 		require.NoError(t, err)

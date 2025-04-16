@@ -72,11 +72,22 @@ type Table struct {
 	// 1. Initialized by snapshot when loading stats_meta.
 	// 2. Updated by the analysis time of a specific column or index when loading the histogram of the column or index.
 	LastAnalyzeVersion uint64
+	// LastStatsHistVersion is the mvcc version of the last update of histograms.
+	// It differs from LastAnalyzeVersion because it can be influenced by some DDL.
+	// e.g. When we execute ALTER TABLE ADD COLUMN, there'll be new record inserted into mysql.stats_histograms.
+	//      We need to load the corresponding one into memory too.
+	// It's used to skip redundant loading of stats, i.e, if the cached stats is already update-to-date with mysql.stats_xxx tables,
+	// and the schema of the table does not change, we don't need to load the stats for this table again.
+	// Stats' sync load/async load should not change this field since they are not table-level update.
+	// It's hard to deal with the upgrade compatibility of this field, the field will not take effect unless
+	// auto analyze or DDL happened on the table.
+	LastStatsHistVersion uint64
 	// TblInfoUpdateTS is the UpdateTS of the TableInfo used when filling this struct.
 	// It is the schema version of the corresponding table. It is used to skip redundant
 	// loading of stats, i.e, if the cached stats is already update-to-date with mysql.stats_xxx tables,
 	// and the schema of the table does not change, we don't need to load the stats for this
 	// table again.
+	// TODO: it can be removed now that we've have LastAnalyseVersion and LastStatsHistVersion.
 	TblInfoUpdateTS uint64
 
 	IsPkIsHandle bool
@@ -91,13 +102,13 @@ type ColAndIdxExistenceMap struct {
 	idxAnalyzed map[int64]bool
 }
 
-// DeleteColAnalyzed deletes the column with the given id.
-func (m *ColAndIdxExistenceMap) DeleteColAnalyzed(id int64) {
+// DeleteColNotFound deletes the column with the given id.
+func (m *ColAndIdxExistenceMap) DeleteColNotFound(id int64) {
 	delete(m.colAnalyzed, id)
 }
 
-// DeleteIdxAnalyzed deletes the index with the given id.
-func (m *ColAndIdxExistenceMap) DeleteIdxAnalyzed(id int64) {
+// DeleteIdxNotFound deletes the index with the given id.
+func (m *ColAndIdxExistenceMap) DeleteIdxNotFound(id int64) {
 	delete(m.idxAnalyzed, id)
 }
 
@@ -119,6 +130,8 @@ func (m *ColAndIdxExistenceMap) SetChecked() {
 //  3. We have it and its statistics.
 //
 // To figure out three status, we use HasAnalyzed's TRUE value to represents the status 3. The Has's FALSE to represents the status 1.
+// Begin from v8.5.2, the 1. case becomes a nearly invalid case. It's just a middle state between happening of the DDL and the completion of the stats' ddl handler.
+// But we may need to deal with the 1. for the upgrade compatibility.
 func (m *ColAndIdxExistenceMap) HasAnalyzed(id int64, isIndex bool) bool {
 	if isIndex {
 		analyzed, ok := m.idxAnalyzed[id]
@@ -342,13 +355,15 @@ func (coll *HistColl) IdxNum() int {
 }
 
 // DelCol deletes the column with the given id.
-func (coll *HistColl) DelCol(id int64) {
-	delete(coll.columns, id)
+func (t *Table) DelCol(id int64) {
+	delete(t.columns, id)
+	t.ColAndIdxExistenceMap.DeleteColNotFound(id)
 }
 
 // DelIdx deletes the index with the given id.
-func (coll *HistColl) DelIdx(id int64) {
-	delete(coll.indices, id)
+func (t *Table) DelIdx(id int64) {
+	delete(t.indices, id)
+	t.ColAndIdxExistenceMap.DeleteIdxNotFound(id)
 }
 
 // StableOrderColSlice returns a slice of columns in stable order.
@@ -607,10 +622,11 @@ func (t *Table) Copy() *Table {
 		newHistColl.indices[id] = idx.Copy()
 	}
 	nt := &Table{
-		HistColl:           newHistColl,
-		Version:            t.Version,
-		TblInfoUpdateTS:    t.TblInfoUpdateTS,
-		LastAnalyzeVersion: t.LastAnalyzeVersion,
+		HistColl:             newHistColl,
+		Version:              t.Version,
+		TblInfoUpdateTS:      t.TblInfoUpdateTS,
+		LastAnalyzeVersion:   t.LastAnalyzeVersion,
+		LastStatsHistVersion: t.LastStatsHistVersion,
 	}
 	if t.ExtendedStats != nil {
 		newExtStatsColl := &ExtendedStatsColl{
@@ -649,6 +665,7 @@ func (t *Table) ShallowCopy() *Table {
 		ExtendedStats:         t.ExtendedStats,
 		ColAndIdxExistenceMap: t.ColAndIdxExistenceMap,
 		LastAnalyzeVersion:    t.LastAnalyzeVersion,
+		LastStatsHistVersion:  t.LastStatsHistVersion,
 	}
 	return nt
 }

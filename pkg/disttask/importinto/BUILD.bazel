@@ -18,6 +18,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/logutil",
+        "//br/pkg/membuf",
         "//br/pkg/storage",
         "//br/pkg/utils",
         "//pkg/config",
@@ -89,7 +90,7 @@ go_test(
     embed = [":importinto"],
     flaky = True,
     race = "on",
-    shard_count = 17,
+    shard_count = 18,
     deps = [
         "//br/pkg/storage",
         "//pkg/ddl",

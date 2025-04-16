@@ -9,6 +9,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
@@ -569,4 +571,31 @@ func TestSpeedReadManyFiles(t *testing.T) {
 	}
 	require.NoError(t, eg.Wait())
 	t.Logf("read %d large files cost %v", len(testFiles), time.Since(now))
+}
+
+func TestCtxUsage(t *testing.T) {
+	httpSvr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer httpSvr.Close()
+
+	ctx := context.Background()
+	gcs := &backuppb.GCS{
+		Endpoint:      httpSvr.URL,
+		Bucket:        "test",
+		Prefix:        "prefix",
+		StorageClass:  "NEARLINE",
+		PredefinedAcl: "private",
+		CredentialsBlob: fmt.Sprintf(`
+{
+	"type":"external_account",
+	"audience":"//iam.googleapis.com/projects/1234567890123/locations/global/workloadIdentityPools/my-pool/providers/my-provider",
+	"subject_token_type":"urn:ietf:params:oauth:token-type:access_token",
+	"credential_source":{"url":"%s"}
+}`, httpSvr.URL),
+	}
+	stg, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{})
+	require.NoError(t, err)
+
+	_, err = stg.FileExists(ctx, "key")
+	// before the fix, it's context canceled error
+	require.ErrorContains(t, err, "invalid_request")
 }
