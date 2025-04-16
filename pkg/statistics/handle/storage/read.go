@@ -791,6 +791,10 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsHandle statstypes.
 // loadNeededIndexHistograms loads the necessary index histograms.
 // It is similar to loadNeededColumnHistograms, but for index.
 func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema, statsHandle statstypes.StatsHandle, idx model.TableItemID, loadFMSketch bool) (err error) {
+	// Regardless of whether the load is successful or not, we must remove the item from the async load list.
+	// The principle is to load the histogram for each index at most once in async load, as we already have a retry mechanism in the sync load.
+	defer asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
+
 	tbl, ok := statsHandle.Get(idx.TableID)
 	if !ok {
 		// This could happen when the table is dropped after the async load is triggered.
@@ -799,12 +803,10 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 			zap.Int64("tableID", idx.TableID),
 			zap.Int64("indexID", idx.ID),
 		)
-		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 		return nil
 	}
 	_, loadNeeded := tbl.IndexIsLoadNeeded(idx.ID)
 	if !loadNeeded {
-		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 		return nil
 	}
 	hgMeta, statsVer, err := HistMetaFromStorageWithHighPriority(sctx, &idx, nil)
@@ -816,7 +818,6 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 				zap.Int64("indexID", idx.ID),
 			)
 		}
-		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 		return err
 	}
 	tblInfo, ok := statsHandle.TableInfoByID(is, idx.TableID)
@@ -827,7 +828,6 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 			zap.Int64("tableID", idx.TableID),
 			zap.Int64("indexID", idx.ID),
 		)
-		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 		return nil
 	}
 	idxInfo := tblInfo.Meta().FindIndexByID(idx.ID)
@@ -838,7 +838,6 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 			zap.Int64("tableID", idx.TableID),
 			zap.Int64("indexID", idx.ID),
 		)
-		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 		return nil
 	}
 	hg, err := HistogramFromStorageWithPriority(sctx, idx.TableID, idx.ID, types.NewFieldType(mysql.TypeBlob), hgMeta.NDV, 1, hgMeta.LastUpdateVersion, hgMeta.NullCount, hgMeta.TotColSize, hgMeta.Correlation, kv.PriorityHigh)
@@ -875,7 +874,6 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 			zap.Int64("tableID", idx.TableID),
 			zap.Int64("indexID", idx.ID),
 		)
-		asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 		return nil
 	}
 	tbl = tbl.Copy()
@@ -887,7 +885,6 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, is infoschema.InfoSchema
 	statsHandle.UpdateStatsCache(statstypes.CacheUpdate{
 		Updated: []*statistics.Table{tbl},
 	})
-	asyncload.AsyncLoadHistogramNeededItems.Delete(idx)
 	if idx.IsSyncLoadFailed {
 		statslogutil.StatsLogger().Warn("Index histogram loaded asynchronously after sync load failure",
 			zap.Int64("tableID", idx.TableID),
