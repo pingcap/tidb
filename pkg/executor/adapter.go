@@ -665,7 +665,7 @@ func (a *ExecStmt) handleStmtForeignKeyTrigger(ctx context.Context, e exec.Execu
 		// then the fk cascade executor can't read the mem-buffer changed by the ExecStmt.
 		a.Ctx.StmtCommit(ctx)
 		// `StmtCommit` will change the snapshot of the MemBuffer, so we need to get a new one.
-		// TODO: support getting the latest snapshot without commit the statement, so that the foregin-key statement can be safely rolled back and retried.
+		// TODO: support getting the latest snapshot without commit the statement, so that the foreign-key statement can be safely rolled back and retried.
 		txn, _ := a.Ctx.Txn(false)
 		if txn != nil && !txn.IsReadOnly() {
 			a.Ctx.GetSessionVars().StmtCtx.MemBufferSnapshot = txn.GetMemBuffer().GetSnapshot()
