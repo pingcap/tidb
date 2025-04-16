@@ -180,6 +180,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 			tempKey         []byte
 			keyVer          byte
 			keyIsTempIdxKey bool
+			hasTempKey      bool
 		)
 		if !opt.FromBackFill {
 			key, tempKey, keyVer = GenTempIdxKeyByState(c.idxInfo, key)
@@ -187,6 +188,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 				key, tempKey = tempKey, nil
 				keyIsTempIdxKey = true
 			}
+			hasTempKey = keyIsTempIdxKey || len(tempKey) > 0
 		}
 
 		if opt.Untouched {
@@ -232,7 +234,11 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 
 		if !distinct || skipCheck || opt.Untouched {
 			val := idxVal
+<<<<<<< HEAD
 			if opt.Untouched && (keyIsTempIdxKey || len(tempKey) > 0) {
+=======
+			if untouched && hasTempKey {
+>>>>>>> 2a5047b817b (tables: always append temp index values for unique index (#60340))
 				// Untouched key-values never occur in the storage and the temp index is not public.
 				// It is unnecessary to write the untouched temp index key-values.
 				continue
@@ -267,6 +273,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 		}
 
 		var value []byte
+<<<<<<< HEAD
 		if c.tblInfo.TempTableType != model.TempTableNone {
 			// Always check key for temporary table because it does not write to TiKV
 			value, err = txn.Get(ctx, key)
@@ -274,22 +281,71 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 			// For temp index keys, we can't get the temp value from memory buffer, even if the lazy check is enabled.
 			// Otherwise, it may cause the temp index value to be overwritten, leading to data inconsistency.
 			value, err = txn.GetMemBuffer().Get(ctx, key)
+=======
+		var tempIdxVal tablecodec.TempIndexValue
+		if allowOverwriteOfOldGlobalIndex {
+			// In DeleteReorganization, overwrite Global Index keys pointing to
+			// old dropped/truncated partitions.
+			// Note that a partitioned table cannot be temporary table
+			value, err = txn.Get(ctx, key)
+			if err == nil && len(value) != 0 {
+				handle, errPart := tablecodec.DecodeHandleInIndexValue(value)
+				if errPart != nil {
+					return nil, errPart
+				}
+				if partHandle, ok := handle.(kv.PartitionHandle); ok {
+					for _, id := range c.tblInfo.Partition.IDsInDDLToIgnore() {
+						if id == partHandle.PartitionID {
+							// Simply overwrite it
+							err = txn.SetAssertion(key, kv.SetAssertUnknown)
+							if err != nil {
+								return nil, err
+							}
+							value = nil
+							break
+						}
+					}
+				}
+			}
+		} else if c.tblInfo.TempTableType != model.TempTableNone {
+			// Always check key for temporary table because it does not write to TiKV
+			value, err = txn.Get(ctx, key)
+		} else if hasTempKey {
+			// For temp index keys, we can't get the temp value from memory buffer, even if the lazy check is enabled.
+			// Otherwise, it may cause the temp index value to be overwritten, leading to data inconsistency.
+			var foundKey bool
+			var dupHandle kv.Handle
+			if keyIsTempIdxKey {
+				foundKey, dupHandle, value, err = FetchDuplicatedHandleForTempIndexKey(ctx, key, distinct, txn)
+			} else if len(tempKey) > 0 {
+				foundKey, dupHandle, value, err = FetchDuplicatedHandleForTempIndexKey(ctx, tempKey, distinct, txn)
+			}
+			if err != nil {
+				return nil, err
+			}
+			if foundKey && dupHandle != nil && !dupHandle.Equal(h) {
+				return dupHandle, kv.ErrKeyExists
+			}
+			if len(value) > 0 {
+				tempIdxVal, err = tablecodec.DecodeTempIndexValue(value)
+				if err != nil {
+					return nil, err
+				}
+			}
+		} else if opt.DupKeyCheck() == table.DupKeyCheckLazy {
+			value, err = txn.GetMemBuffer().GetLocal(ctx, key)
+>>>>>>> 2a5047b817b (tables: always append temp index values for unique index (#60340))
 		} else {
 			value, err = txn.Get(ctx, key)
 		}
 		if err != nil && !kv.IsErrNotFound(err) {
 			return nil, err
 		}
-		var tempIdxVal tablecodec.TempIndexValue
-		if len(value) > 0 && keyIsTempIdxKey {
-			tempIdxVal, err = tablecodec.DecodeTempIndexValue(value)
-			if err != nil {
-				return nil, err
-			}
-		}
+
 		// The index key value is not found or deleted.
 		if err != nil || len(value) == 0 || (!tempIdxVal.IsEmpty() && tempIdxVal.Current().Delete) {
 			val := idxVal
+<<<<<<< HEAD
 			lazyCheck := sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil
 			if keyIsTempIdxKey {
 				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: true}
@@ -307,6 +363,29 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 				}
 				if !vars.ConstraintCheckInPlacePessimistic && vars.TxnCtx.IsPessimistic && vars.InTxn() &&
 					!vars.InRestrictedSQL && vars.ConnectionID > 0 {
+=======
+			lazyCheck := opt.DupKeyCheck() == table.DupKeyCheckLazy && err != nil
+			if hasTempKey {
+				if keyIsTempIdxKey {
+					tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: true}
+					val = tempVal.Encode(value)
+				}
+				err = txn.GetMemBuffer().Set(key, val)
+				if err != nil {
+					return nil, err
+				}
+				if len(tempKey) > 0 {
+					tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: true}
+					val = tempVal.Encode(value)
+					err = txn.GetMemBuffer().Set(tempKey, val)
+					if err != nil {
+						return nil, err
+					}
+				}
+			} else if lazyCheck {
+				flags := []kv.FlagsOp{kv.SetPresumeKeyNotExists}
+				if opt.PessimisticLazyDupKeyCheck() == table.DupKeyCheckInPrewrite && txn.IsPessimistic() {
+>>>>>>> 2a5047b817b (tables: always append temp index values for unique index (#60340))
 					flags = append(flags, kv.SetNeedConstraintCheckInPrewrite)
 				}
 				err = txn.GetMemBuffer().SetWithFlags(key, val, flags...)
@@ -316,6 +395,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 			if err != nil {
 				return nil, err
 			}
+<<<<<<< HEAD
 			if len(tempKey) > 0 {
 				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: true}
 				val = tempVal.Encode(value)
@@ -329,6 +409,10 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 				}
 			}
 			if opt.IgnoreAssertion {
+=======
+
+			if ignoreAssertion {
+>>>>>>> 2a5047b817b (tables: always append temp index values for unique index (#60340))
 				continue
 			}
 			if lazyCheck && !txn.IsPessimistic() {
@@ -341,6 +425,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 			}
 			continue
 		}
+<<<<<<< HEAD
 		if c.idxInfo.Global && len(value) != 0 && !bytes.Equal(value, idxVal) {
 			val := idxVal
 			err = txn.GetMemBuffer().Set(key, val)
@@ -354,6 +439,11 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 			value = tempIdxVal.Current().Value
 		}
 		handle, err := tablecodec.DecodeHandleInUniqueIndexValue(value, c.tblInfo.IsCommonHandle)
+=======
+		// temp index key should have been handled by FetchDuplicatedHandleForTempIndexKey.
+		intest.Assert(!hasTempKey)
+		handle, err := tablecodec.DecodeHandleInIndexValue(value)
+>>>>>>> 2a5047b817b (tables: always append temp index values for unique index (#60340))
 		if err != nil {
 			return nil, err
 		}
@@ -362,6 +452,7 @@ func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue
 	return nil, nil
 }
 
+<<<<<<< HEAD
 func needPresumeKeyNotExistsFlag(ctx context.Context, txn kv.Transaction, key, tempKey kv.Key,
 	h kv.Handle, keyIsTempIdxKey bool, isCommon bool, tblID int64) (needFlag bool, err error) {
 	var uniqueTempKey kv.Key
@@ -382,6 +473,8 @@ func needPresumeKeyNotExistsFlag(ctx context.Context, txn kv.Transaction, key, t
 	return false, nil
 }
 
+=======
+>>>>>>> 2a5047b817b (tables: always append temp index values for unique index (#60340))
 // Delete removes the entry for handle h and indexedValues from KV index.
 func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle) error {
 	indexedValues := c.getIndexedValue(indexedValue)
@@ -539,7 +632,11 @@ func (c *index) Exist(sc *stmtctx.StatementContext, txn kv.Transaction, indexedV
 		if len(tempKey) > 0 {
 			key = tempKey
 		}
+<<<<<<< HEAD
 		foundKey, dupHandle, err := FetchDuplicatedHandle(context.TODO(), key, distinct, txn, c.tblInfo.ID, c.tblInfo.IsCommonHandle)
+=======
+		foundKey, dupHandle, err := FetchDuplicatedHandle(context.TODO(), key, distinct, txn)
+>>>>>>> 2a5047b817b (tables: always append temp index values for unique index (#60340))
 		if err != nil || !foundKey {
 			return false, nil, err
 		}
@@ -553,9 +650,16 @@ func (c *index) Exist(sc *stmtctx.StatementContext, txn kv.Transaction, indexedV
 
 // FetchDuplicatedHandle is used to find the duplicated row's handle for a given unique index key.
 func FetchDuplicatedHandle(ctx context.Context, key kv.Key, distinct bool,
+<<<<<<< HEAD
 	txn kv.Transaction, tableID int64, isCommon bool) (foundKey bool, dupHandle kv.Handle, err error) {
 	if tablecodec.IsTempIndexKey(key) {
 		return fetchDuplicatedHandleForTempIndexKey(ctx, key, distinct, txn, tableID, isCommon)
+=======
+	txn kv.Transaction) (foundKey bool, dupHandle kv.Handle, err error) {
+	if tablecodec.IsTempIndexKey(key) {
+		foundKey, dupHandle, _, err := FetchDuplicatedHandleForTempIndexKey(ctx, key, distinct, txn)
+		return foundKey, dupHandle, err
+>>>>>>> 2a5047b817b (tables: always append temp index values for unique index (#60340))
 	}
 	// The index key is not from temp index.
 	val, err := getKeyInTxn(ctx, txn, key)
@@ -569,31 +673,39 @@ func FetchDuplicatedHandle(ctx context.Context, key kv.Key, distinct bool,
 	return true, nil, nil
 }
 
+<<<<<<< HEAD
 func fetchDuplicatedHandleForTempIndexKey(ctx context.Context, tempKey kv.Key, distinct bool,
 	txn kv.Transaction, tableID int64, isCommon bool) (foundKey bool, dupHandle kv.Handle, err error) {
+=======
+// FetchDuplicatedHandleForTempIndexKey is used to find the duplicated row's handle for a given unique index key.
+// It is used when the index key is from temp index.
+// The function will check the temp index key first, if not found, it will check the origin index key.
+func FetchDuplicatedHandleForTempIndexKey(ctx context.Context, tempKey kv.Key, distinct bool,
+	txn kv.Transaction) (foundKey bool, dupHandle kv.Handle, oldVal []byte, err error) {
+>>>>>>> 2a5047b817b (tables: always append temp index values for unique index (#60340))
 	tempRawVal, err := getKeyInTxn(ctx, txn, tempKey)
 	if err != nil {
-		return false, nil, err
+		return false, nil, tempRawVal, err
 	}
 	if tempRawVal == nil {
 		originKey := tempKey.Clone()
 		tablecodec.TempIndexKey2IndexKey(originKey)
 		originVal, err := getKeyInTxn(ctx, txn, originKey)
 		if err != nil || originVal == nil {
-			return false, nil, err
+			return false, nil, nil, err
 		}
 		if distinct {
 			originHandle, err := tablecodec.DecodeHandleInUniqueIndexValue(originVal, isCommon)
 			if err != nil {
-				return false, nil, err
+				return false, nil, nil, err
 			}
-			return true, originHandle, err
+			return true, originHandle, nil, err
 		}
-		return false, nil, nil
+		return false, nil, nil, nil
 	}
 	tempVal, err := tablecodec.DecodeTempIndexValue(tempRawVal)
 	if err != nil {
-		return false, nil, err
+		return false, nil, tempRawVal, err
 	}
 	curElem := tempVal.Current()
 	if curElem.Delete {
@@ -601,36 +713,42 @@ func fetchDuplicatedHandleForTempIndexKey(ctx context.Context, tempKey kv.Key, d
 		tablecodec.TempIndexKey2IndexKey(originKey)
 		originVal, err := getKeyInTxn(ctx, txn, originKey)
 		if err != nil || originVal == nil {
-			return false, nil, err
+			return false, nil, tempRawVal, err
 		}
 		if distinct {
 			originHandle, err := tablecodec.DecodeHandleInUniqueIndexValue(originVal, isCommon)
 			if err != nil {
-				return false, nil, err
+				return false, nil, tempRawVal, err
 			}
 			if originHandle.Equal(curElem.Handle) {
 				// The key has been deleted. This is not a duplicated key.
-				return false, nil, nil
+				return false, nil, tempRawVal, nil
 			}
 			// The inequality means multiple modifications happened in the same key.
 			// We use the handle in origin index value to check if the row exists.
+			tableID := tablecodec.DecodeTableID(tempKey)
 			recPrefix := tablecodec.GenTableRecordPrefix(tableID)
 			rowKey := tablecodec.EncodeRecordKey(recPrefix, originHandle)
 			rowVal, err := getKeyInTxn(ctx, txn, rowKey)
 			if err != nil || rowVal == nil {
-				return false, nil, err
+				return false, nil, tempRawVal, err
 			}
 			// The row exists. This is the duplicated key.
-			return true, originHandle, nil
+			return true, originHandle, tempRawVal, nil
 		}
-		return false, nil, nil
+		return false, nil, tempRawVal, nil
 	}
 	// The value in temp index is not the delete marker.
 	if distinct {
+<<<<<<< HEAD
 		h, err := tablecodec.DecodeHandleInUniqueIndexValue(curElem.Value, isCommon)
 		return true, h, err
+=======
+		h, err := tablecodec.DecodeHandleInIndexValue(curElem.Value)
+		return true, h, tempRawVal, err
+>>>>>>> 2a5047b817b (tables: always append temp index values for unique index (#60340))
 	}
-	return true, nil, nil
+	return true, nil, tempRawVal, nil
 }
 
 // getKeyInTxn gets the value of the key in the transaction, and ignore the ErrNotExist error.
