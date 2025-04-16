@@ -237,7 +237,7 @@ func (b *ttlDelRetryBuffer) DoRetry(do func(*ttlDelRetryItem) [][]types.Datum) t
 	l := b.list.Len()
 	// When `retryInterval==0`, to avoid the infinite retries, limit the max loop to the buffer length.
 	// It means one item only has one chance to retry in one `DoRetry` invoking.
-	for i := 0; i < l; i++ {
+	for range l {
 		ele := b.list.Front()
 		if ele == nil {
 			break

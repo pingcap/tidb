@@ -32,6 +32,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/stretchr/testify/require"
+	"slices"
 )
 
 func startMockServer(t *testing.T, statusCode int, content string) (*httptest.Server, string, int) {
@@ -1334,7 +1335,7 @@ func TestAdjustTikvImporter(t *testing.T) {
 }
 
 func TestCreateSeveralConfigsWithDifferentFilters(t *testing.T) {
-	originalDefaultCfg := append([]string{}, GetDefaultFilter()...)
+	originalDefaultCfg := slices.Clone(GetDefaultFilter())
 	cfg1 := NewConfig()
 	require.NoError(t, cfg1.LoadFromTOML([]byte(`
 		[mydumper]

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
+	"slices"
 )
 
 func TestRevokeGlobal(t *testing.T) {
@@ -106,13 +107,7 @@ func TestRevokeTableScope(t *testing.T) {
 			row := rows[0]
 			require.Len(t, row, 1)
 			op := v.SetString()
-			found := false
-			for _, p := range executor.SetFromString(fmt.Sprintf("%s", row[0])) {
-				if op == p {
-					found = true
-					break
-				}
-			}
+			found := slices.Contains(executor.SetFromString(fmt.Sprintf("%s", row[0])), op)
 			require.False(t, found, "%s", mysql.Priv2SetStr[v])
 		} else {
 			//delete row when last prv , updated by issue #38421

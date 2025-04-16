@@ -42,6 +42,7 @@ import (
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"slices"
 )
 
 // DataSource represents a tableScan without condition push down.
@@ -199,8 +200,8 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 				continue
 			}
 			prunedColumns = append(prunedColumns, ds.Schema().Columns[i])
-			ds.Schema().Columns = append(ds.Schema().Columns[:i], ds.Schema().Columns[i+1:]...)
-			ds.Columns = append(ds.Columns[:i], ds.Columns[i+1:]...)
+			ds.Schema().Columns = slices.Delete(ds.Schema().Columns, i, i+1)
+			ds.Columns = slices.Delete(ds.Columns, i, i+1)
 		}
 	}
 	logicaltrace.AppendColumnPruneTraceStep(ds, prunedColumns, opt)

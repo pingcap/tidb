@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"go.uber.org/atomic"
+	"maps"
 )
 
 // errors created by Watcher
@@ -116,9 +117,7 @@ func (w *Watcher) Add(name string) error {
 	}
 
 	w.names[name] = struct{}{}
-	for fp, fi := range fileList {
-		w.files[fp] = fi
-	}
+	maps.Copy(w.files, fileList)
 
 	return nil
 }
@@ -293,9 +292,7 @@ func (w *Watcher) listForAll() map[string]os.FileInfo {
 			case w.Errors <- err:
 			}
 		}
-		for fp, fi := range fl {
-			fileList[fp] = fi
-		}
+		maps.Copy(fileList, fl)
 	}
 
 	return fileList

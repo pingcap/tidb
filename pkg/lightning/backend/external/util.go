@@ -367,7 +367,7 @@ func marshalWithOverride(src any, hideCond func(f reflect.StructField) bool) ([]
 	}
 	t := v.Type()
 	var fields []reflect.StructField
-	for i := 0; i < t.NumField(); i++ {
+	for i := range t.NumField() {
 		f := t.Field(i)
 		if !f.IsExported() {
 			continue
@@ -387,7 +387,7 @@ func marshalWithOverride(src any, hideCond func(f reflect.StructField) bool) ([]
 	newType := reflect.StructOf(fields)
 	newVal := reflect.New(newType).Elem()
 	j := 0
-	for i := 0; i < t.NumField(); i++ {
+	for i := range t.NumField() {
 		f := t.Field(i)
 		if !f.IsExported() {
 			continue

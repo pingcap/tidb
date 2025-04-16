@@ -230,11 +230,11 @@ func buildTableAndFiles(name string, tableID, fileCount int) (*model.TableInfo, 
 	}
 
 	mockFiles := make([]*backuppb.File, 0, fileCount)
-	for i := 0; i < fileCount; i++ {
+	for i := range fileCount {
 		mockFiles = append(mockFiles, &backuppb.File{
 			Name:     fmt.Sprintf("%d-%d.sst", tableID, i),
-			StartKey: tablecodec.EncodeRowKey(tblID, []byte(fmt.Sprintf("%09d", i))),
-			EndKey:   tablecodec.EncodeRowKey(tblID, []byte(fmt.Sprintf("%09d", i+1))),
+			StartKey: tablecodec.EncodeRowKey(tblID, fmt.Appendf(nil, "%09d", i)),
+			EndKey:   tablecodec.EncodeRowKey(tblID, fmt.Appendf(nil, "%09d", i+1)),
 		})
 	}
 	return mockTbl, mockFiles

@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/zap"
+	"slices"
 )
 
 // HeavyFunctionNameMap stores function names that is worth to do HeavyFunctionOptimize.
@@ -881,7 +882,7 @@ func (p *PhysicalLimit) sinkIntoIndexMerge(t base.Task) bool {
 	}
 	needProj := p.schema.Len() != root.GetPlan().Schema().Len()
 	if !needProj {
-		for i := 0; i < p.schema.Len(); i++ {
+		for i := range p.schema.Len() {
 			if !p.schema.Columns[i].EqualColumn(root.GetPlan().Schema().Columns[i]) {
 				needProj = true
 				break
@@ -1037,12 +1038,7 @@ func ContainHeavyFunction(expr expression.Expression) bool {
 	if _, ok := HeavyFunctionNameMap[sf.FuncName.L]; ok {
 		return true
 	}
-	for _, arg := range sf.GetArgs() {
-		if ContainHeavyFunction(arg) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(sf.GetArgs(), ContainHeavyFunction)
 }
 
 // canPushToIndexPlan checks if this TopN can be pushed to the index side of copTask.
@@ -1989,7 +1985,7 @@ func RemoveUnnecessaryFirstRow(
 				}
 			}
 			if canOptimize {
-				partialSchema.Columns = append(partialSchema.Columns[:partialCursor], partialSchema.Columns[partialCursor+1:]...)
+				partialSchema.Columns = slices.Delete(partialSchema.Columns, partialCursor, partialCursor+1)
 				continue
 			}
 		}

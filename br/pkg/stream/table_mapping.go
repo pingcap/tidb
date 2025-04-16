@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"maps"
 )
 
 const InitialTempId int64 = 0
@@ -280,9 +281,7 @@ func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBRepl
 		for tableUpID, baseTableReplace := range baseDBReplace.TableMap {
 			tm.globalIdMap[tableUpID] = baseTableReplace.TableID
 
-			for partUpID, basePartDownID := range baseTableReplace.PartitionMap {
-				tm.globalIdMap[partUpID] = basePartDownID
-			}
+			maps.Copy(tm.globalIdMap, baseTableReplace.PartitionMap)
 		}
 	}
 

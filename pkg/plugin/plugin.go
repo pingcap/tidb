@@ -31,6 +31,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
+	"maps"
+	"slices"
 )
 
 // pluginGlobal holds all global variables for plugin.
@@ -57,11 +59,9 @@ func (p *plugins) clone() *plugins {
 		dyingPlugins: make([]Plugin, len(p.dyingPlugins)),
 	}
 	for key, value := range p.plugins {
-		np.plugins[key] = append([]Plugin(nil), value...)
+		np.plugins[key] = slices.Clone(value)
 	}
-	for key, value := range p.versions {
-		np.versions[key] = value
-	}
+	maps.Copy(np.versions, p.versions)
 	copy(np.dyingPlugins, p.dyingPlugins)
 	return np
 }
@@ -144,9 +144,7 @@ func Load(ctx context.Context, cfg Config) (err error) {
 	}
 
 	// Setup component version info for plugin running env.
-	for component, version := range cfg.EnvVersion {
-		tiPlugins.versions[component] = version
-	}
+	maps.Copy(tiPlugins.versions, cfg.EnvVersion)
 
 	// Load plugin dl & manifest.
 	for _, pluginID := range cfg.Plugins {

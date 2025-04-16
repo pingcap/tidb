@@ -184,7 +184,7 @@ func TestCacheSnapShot(t *testing.T) {
 	memBuffer := txn.GetMemBuffer()
 	require.NoError(t, err)
 	var keys []kv.Key
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		keys = append(keys, []byte(string(rune(i))))
 	}
 	err = memBuffer.Set(keys[0], []byte("1111"))

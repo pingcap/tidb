@@ -22,14 +22,13 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
+	"slices"
 )
 
 // Vectorizable checks whether a list of expressions can employ vectorized execution.
 func Vectorizable(exprs []Expression) bool {
-	for _, expr := range exprs {
-		if HasGetSetVarFunc(expr) {
-			return false
-		}
+	if slices.ContainsFunc(exprs, HasGetSetVarFunc) {
+		return false
 	}
 	return checkSequenceFunction(exprs)
 }
@@ -76,12 +75,7 @@ func HasGetSetVarFunc(expr Expression) bool {
 	if scalaFunc.FuncName.L == ast.GetVar {
 		return true
 	}
-	for _, arg := range scalaFunc.GetArgs() {
-		if HasGetSetVarFunc(arg) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(scalaFunc.GetArgs(), HasGetSetVarFunc)
 }
 
 // HasAssignSetVarFunc checks whether an expression contains SetVar function and assign a value
@@ -97,12 +91,7 @@ func HasAssignSetVarFunc(expr Expression) bool {
 			}
 		}
 	}
-	for _, arg := range scalaFunc.GetArgs() {
-		if HasAssignSetVarFunc(arg) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(scalaFunc.GetArgs(), HasAssignSetVarFunc)
 }
 
 // VectorizedExecute evaluates a list of expressions column by column and append their results to "output" Chunk.
@@ -179,7 +168,7 @@ func evalOneVec(ctx EvalContext, expr Expression, input *chunk.Chunk, output *ch
 			n := input.NumRows()
 			buf := chunk.NewColumn(ft, n)
 			buf.ReserveEnum(n)
-			for i := 0; i < n; i++ {
+			for i := range n {
 				if result.IsNull(i) {
 					buf.AppendNull()
 				} else {
@@ -199,7 +188,7 @@ func evalOneVec(ctx EvalContext, expr Expression, input *chunk.Chunk, output *ch
 			n := input.NumRows()
 			buf := chunk.NewColumn(ft, n)
 			buf.ReserveSet(n)
-			for i := 0; i < n; i++ {
+			for i := range n {
 				if result.IsNull(i) {
 					buf.AppendNull()
 				} else {
@@ -457,13 +446,13 @@ func VectorizedFilterConsiderNull(ctx EvalContext, vecEnabled bool, filters []Ex
 	unselected := allocZeroSlice(selectedLength)
 	defer deallocateZeroSlice(unselected)
 	// unselected[i] == 1 means that the i-th row is not selected
-	for i := 0; i < selectedLength; i++ {
+	for i := range selectedLength {
 		unselected[i] = 1
 	}
 	for _, ind := range sel {
 		unselected[ind] = 0
 	}
-	for i := 0; i < selectedLength; i++ {
+	for i := range selectedLength {
 		if selected[i] && unselected[i] == 1 {
 			selected[i] = false
 		}

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/stretchr/testify/require"
+	"slices"
 )
 
 func TestSetupExtensions(t *testing.T) {
@@ -101,7 +102,7 @@ func TestRegisterExtensionWithDyncPrivs(t *testing.T) {
 	defer extension.Reset()
 
 	origDynPrivs := privileges.GetDynamicPrivileges()
-	origDynPrivs = append([]string{}, origDynPrivs...)
+	origDynPrivs = slices.Clone(origDynPrivs)
 
 	extension.Reset()
 	require.NoError(t, extension.Register("test", extension.WithCustomDynPrivs([]string{"priv1", "priv2"})))

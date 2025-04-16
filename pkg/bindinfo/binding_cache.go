@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
+	"slices"
 )
 
 // BindingCacheUpdater maintains the binding cache and provide update APIs.
@@ -165,7 +166,7 @@ func (b *digestBiMapImpl) Del(sqlDigest string) {
 	for i := range digestList { // remove sqlDigest from this list
 		if digestList[i] == sqlDigest {
 			// Deleting binding is a low-frequently operation, so the O(n) performance is enough.
-			digestList = append(digestList[:i], digestList[i+1:]...)
+			digestList = slices.Delete(digestList, i, i+1)
 			break
 		}
 	}

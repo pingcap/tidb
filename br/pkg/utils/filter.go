@@ -16,8 +16,9 @@ package utils
 
 import (
 	"fmt"
-	"sort"
 	"strings"
+
+	"slices"
 
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 )
@@ -88,7 +89,7 @@ func (t *PiTRIdTracker) String() string {
 			tableIDs = append(tableIDs, tableID)
 		}
 		// Sort for consistent output
-		sort.Slice(tableIDs, func(i, j int) bool { return tableIDs[i] < tableIDs[j] })
+		slices.Sort(tableIDs)
 		for i, tableID := range tableIDs {
 			if i > 0 {
 				result.WriteString(", ")

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace/logicaltrace"
 	"github.com/pingcap/tidb/pkg/types"
+	"slices"
 )
 
 var _ base.HashEquals = &LogicalSchemaProducer{}

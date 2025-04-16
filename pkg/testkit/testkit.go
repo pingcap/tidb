@@ -285,7 +285,7 @@ func (tk *TestKit) MustPartitionByList(sql string, partitions []string, args ...
 		}
 		for index, partition := range partitions {
 			if !ok && strings.Contains(rs.rows[i][3], "partition:"+partition) {
-				partitions = append(partitions[:index], partitions[index+1:]...)
+				partitions = slices.Delete(partitions, index, index+1)
 			}
 		}
 	}

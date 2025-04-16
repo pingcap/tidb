@@ -421,7 +421,7 @@ func TestParamList(t *testing.T) {
 	ctx := NewEvalContext(
 		WithParamList(paramList),
 	)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		val, err := ctx.GetParamValue(i)
 		require.NoError(t, err)
 		require.Equal(t, int64(i+1), val.GetInt64())
@@ -430,7 +430,7 @@ func TestParamList(t *testing.T) {
 	// after reset the paramList and append new one, the value is still persisted
 	paramList.Reset()
 	paramList.Append(types.NewDatum(4))
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		val, err := ctx.GetParamValue(i)
 		require.NoError(t, err)
 		require.Equal(t, int64(i+1), val.GetInt64())

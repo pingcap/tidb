@@ -3045,7 +3045,7 @@ func upgradeToVer175(s sessiontypes.Session, ver int64) {
 		if req.NumRows() == 0 {
 			break
 		}
-		for i := 0; i < req.NumRows(); i++ {
+		for i := range req.NumRows() {
 			originalNormalizedSQL, bindSQL := req.GetRow(i).GetString(0), req.GetRow(i).GetString(1)
 			newNormalizedSQL := parser.NormalizeForBinding(bindSQL, false)
 			// update `in (?)` to `in (...)`

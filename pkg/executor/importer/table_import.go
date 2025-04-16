@@ -665,7 +665,7 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 		checksum = verify.NewKVGroupChecksumWithKeyspace(ti.keyspace)
 	)
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
-	for i := 0; i < ti.ThreadCnt; i++ {
+	for range ti.ThreadCnt {
 		eg.Go(func() error {
 			chunkCheckpoint := checkpoints.ChunkCheckpoint{}
 			chunkChecksum := verify.NewKVGroupChecksumWithKeyspace(ti.keyspace)
@@ -890,7 +890,7 @@ func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logge
 		se.GetSessionVars().SetDistSQLScanConcurrency(distSQLScanConcurrencyBak)
 	}()
 	ctx = util.WithInternalSourceType(checkCtx, tidbkv.InternalImportInto)
-	for i := 0; i < maxErrorRetryCount; i++ {
+	for i := range maxErrorRetryCount {
 		txnErr = func() error {
 			// increase backoff weight
 			if err := setBackoffWeight(se, plan, logger); err != nil {

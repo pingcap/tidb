@@ -35,6 +35,7 @@ import (
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"slices"
 )
 
 // LogicalAggregation represents an aggregate plan.

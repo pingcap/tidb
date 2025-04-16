@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/atomic"
 	"golang.org/x/exp/maps"
+	maps0 "maps"
 )
 
 const (
@@ -628,9 +629,7 @@ func (t *Table) Copy() *Table {
 			Stats:             make(map[string]*ExtendedStatsItem),
 			LastUpdateVersion: t.ExtendedStats.LastUpdateVersion,
 		}
-		for name, item := range t.ExtendedStats.Stats {
-			newExtStatsColl.Stats[name] = item
-		}
+		maps0.Copy(newExtStatsColl.Stats, t.ExtendedStats.Stats)
 		nt.ExtendedStats = newExtStatsColl
 	}
 	if t.ColAndIdxExistenceMap != nil {

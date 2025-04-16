@@ -74,10 +74,7 @@ func MergeAndRewriteFileRanges(
 	}
 
 	// RawKV does not have data in write CF.
-	totalRegions := writeCFFile
-	if defaultCFFile > writeCFFile {
-		totalRegions = defaultCFFile
-	}
+	totalRegions := max(defaultCFFile, writeCFFile)
 
 	// Check if files are overlapped
 	rangeTree := rtree.NewRangeStatsTree()

@@ -1107,7 +1107,7 @@ func buildPlacementAffects(oldIDs []int64, newIDs []int64) []*model.AffectedOpti
 	}
 
 	affects := make([]*model.AffectedOption, len(oldIDs))
-	for i := 0; i < len(oldIDs); i++ {
+	for i := range oldIDs {
 		affects[i] = &model.AffectedOption{
 			OldTableID: oldIDs[i],
 			TableID:    newIDs[i],

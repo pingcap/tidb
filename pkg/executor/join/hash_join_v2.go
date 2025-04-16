@@ -74,7 +74,7 @@ func (htc *hashTableContext) reset() {
 func (htc *hashTableContext) getAllMemoryUsageInHashTable() int64 {
 	partNum := len(htc.hashTable.tables)
 	totalMemoryUsage := int64(0)
-	for i := 0; i < partNum; i++ {
+	for i := range partNum {
 		mem := htc.hashTable.getPartitionMemoryUsage(i)
 		totalMemoryUsage += mem
 	}
@@ -83,7 +83,7 @@ func (htc *hashTableContext) getAllMemoryUsageInHashTable() int64 {
 
 func (htc *hashTableContext) clearHashTable() {
 	partNum := len(htc.hashTable.tables)
-	for i := 0; i < partNum; i++ {
+	for i := range partNum {
 		htc.hashTable.clearPartitionSegments(i)
 	}
 }
@@ -223,7 +223,7 @@ func (htc *hashTableContext) tryToSpill(rowTables []*rowTable, spillHelper *hash
 
 func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber uint, spillHelper *hashJoinSpillHelper) (int, error) {
 	rowTables := make([]*rowTable, partitionNumber)
-	for i := 0; i < int(partitionNumber); i++ {
+	for i := range int(partitionNumber) {
 		rowTables[i] = newRowTable()
 	}
 
@@ -251,7 +251,7 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber uint, spi
 	}
 
 	taggedBits := uint8(maxTaggedBits)
-	for i := 0; i < int(partitionNumber); i++ {
+	for i := range int(partitionNumber) {
 		for _, seg := range rowTables[i].segments {
 			taggedBits = min(taggedBits, seg.taggedBits)
 		}
@@ -376,7 +376,7 @@ func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks, start 
 
 	chunkNum := inDisk.NumChunks()
 
-	for i := 0; i < chunkNum; i++ {
+	for i := range chunkNum {
 		select {
 		case <-w.HashJoinCtx.closeCh:
 			return
@@ -495,7 +495,7 @@ func (b *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestore(inDisk *chun
 
 	hasErr := false
 	chunkNum := inDisk.NumChunks()
-	for i := 0; i < chunkNum; i++ {
+	for i := range chunkNum {
 		_, ok := <-syncCh
 		if !ok {
 			break
@@ -1241,7 +1241,7 @@ func (e *HashJoinV2Exec) createTasks(buildTaskCh chan<- *buildTask, totalSegment
 
 	partitionStartIndex := make([]int, len(subTables))
 	partitionSegmentLength := make([]int, len(subTables))
-	for i := 0; i < len(subTables); i++ {
+	for i := range subTables {
 		partitionStartIndex[i] = 0
 		partitionSegmentLength[i] = len(subTables[i].rowData.segments)
 	}
@@ -1393,7 +1393,7 @@ func (e *HashJoinV2Exec) controlWorkersForRestore(chunkNum int, syncCh chan *chu
 		close(waitForController)
 	}()
 
-	for i := 0; i < chunkNum; i++ {
+	for range chunkNum {
 		if e.finished.Load() {
 			return
 		}

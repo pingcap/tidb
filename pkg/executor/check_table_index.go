@@ -178,6 +178,7 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	for _, src := range e.srcs {
 		taskCh <- src
 	}
+<<<<<<< HEAD
 	for i := 0; i < concurrency; i++ {
 		wg.RunWithRecover(func() {
 			for {
@@ -192,6 +193,24 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 							if idx.ID == src.index.ID {
 								err1 = e.checkTableRecord(ctx, offset)
 								break
+=======
+	for range concurrency {
+		wg.Run(func() {
+			util.WithRecovery(func() {
+				for {
+					if fail := failure.Load(); fail {
+						return
+					}
+					select {
+					case src := <-taskCh:
+						err1 := e.checkIndexHandle(ctx, src)
+						if err1 == nil && src.index.MVIndex {
+							for offset, idx := range e.indexInfos {
+								if idx.ID == src.index.ID {
+									err1 = e.checkTableRecord(ctx, offset)
+									break
+								}
+>>>>>>> 6ef89523cb (*: modernize code via go modernize --fix)
 							}
 						}
 					}

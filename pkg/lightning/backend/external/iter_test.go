@@ -295,7 +295,7 @@ func testMergeIterSwitchMode(t *testing.T, f func([]byte, int) []byte) {
 		Key: make([]byte, keySize),
 		Val: make([]byte, valueSize),
 	}
-	for i := 0; i < kvCount; i++ {
+	for i := range kvCount {
 		kvs[0].Key = f(kvs[0].Key, i)
 		_, err := rand.Read(kvs[0].Val[0:])
 		require.NoError(t, err)
@@ -460,7 +460,7 @@ func TestMemoryUsageWhenHotspotChange(t *testing.T) {
 	cur := 0
 	largeChunk := make([]byte, 10*1024*1024)
 	filenames := make([]string, 0, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		filename := fmt.Sprintf("/test%06d", i)
 		filenames = append(filenames, filename)
 		writer, err := store.Create(ctx, filename, nil)
@@ -470,8 +470,14 @@ func TestMemoryUsageWhenHotspotChange(t *testing.T) {
 			propKeysDist: 2,
 		}
 		rc.reset()
+<<<<<<< HEAD
 		kvStore := NewKeyValueStore(ctx, writer, rc)
 		for j := 0; j < 1000; j++ {
+=======
+		kvStore, err := NewKeyValueStore(ctx, writer, rc)
+		require.NoError(t, err)
+		for range 1000 {
+>>>>>>> 6ef89523cb (*: modernize code via go modernize --fix)
 			key := fmt.Sprintf("key%06d", cur)
 			val := fmt.Sprintf("value%06d", cur)
 			err = kvStore.addEncodedData(getEncodedData([]byte(key), []byte(val)))
@@ -689,7 +695,7 @@ func TestMergePropBaseIter(t *testing.T) {
 	}
 	iter, err := newMergePropBaseIter(ctx, multiStat, store)
 	require.NoError(t, err)
-	for i := 0; i < fileNum; i++ {
+	for i := range fileNum {
 		p, err := iter.next()
 		require.NoError(t, err)
 		require.EqualValues(t, i, p.firstKey[0])

@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"slices"
 )
 
 // writeStepMemShareCount defines the number of shares of memory per job worker.
@@ -348,7 +349,11 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 			return true
 		}
 		if cmp == 0 && i != k {
+<<<<<<< HEAD
 			cloned := append([]byte(nil), e.memKVsAndBuffers.kvs[i].key...)
+=======
+			cloned := slices.Clone(e.memKVsAndBuffers.keys[i])
+>>>>>>> 6ef89523cb (*: modernize code via go modernize --fix)
 			dupKey.Store(&cloned)
 		}
 		return false

@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"maps"
 )
 
 // RangerContext is the context used to build range.
@@ -44,8 +45,6 @@ func (r *RangerContext) Detach(staticExprCtx exprctx.BuildContext) *RangerContex
 	newCtx := *r
 	newCtx.ExprCtx = staticExprCtx
 	newCtx.OptimizerFixControl = make(map[uint64]string, len(r.OptimizerFixControl))
-	for k, v := range r.OptimizerFixControl {
-		newCtx.OptimizerFixControl[k] = v
-	}
+	maps.Copy(newCtx.OptimizerFixControl, r.OptimizerFixControl)
 	return &newCtx
 }

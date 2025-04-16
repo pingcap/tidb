@@ -44,6 +44,7 @@ import (
 	router "github.com/pingcap/tidb/pkg/util/table-router"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"slices"
 )
 
 // constants for config items
@@ -123,7 +124,7 @@ var (
 // It clones the original default filter,
 // so that the original value won't be changed when the returned slice's element is changed.
 func GetDefaultFilter() []string {
-	return append([]string{}, defaultFilter...)
+	return slices.Clone(defaultFilter)
 }
 
 // DBStore is the database connection information.
@@ -1010,13 +1011,7 @@ func (m *MydumperRuntime) adjustFilePath() error {
 		m.SourceDir = u.String()
 	}
 
-	found := false
-	for _, t := range supportedStorageTypes {
-		if u.Scheme == t {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(supportedStorageTypes, u.Scheme)
 	if !found {
 		return common.ErrInvalidConfig.GenWithStack(
 			"unsupported data-source-dir url '%s', supported storage types are %s",
@@ -1315,7 +1310,7 @@ func (d Duration) MarshalText() ([]byte, error) {
 
 // MarshalJSON implements json.Marshaler.
 func (d *Duration) MarshalJSON() ([]byte, error) {
-	return []byte(fmt.Sprintf(`"%s"`, d.Duration)), nil
+	return fmt.Appendf(nil, `"%s"`, d.Duration), nil
 }
 
 // Charset defines character set

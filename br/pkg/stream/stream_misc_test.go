@@ -11,6 +11,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/stretchr/testify/require"
+	"slices"
 )
 
 func TestGetCheckpointOfTask(t *testing.T) {
@@ -62,7 +63,7 @@ func TestMetadataHelperReadFile(t *testing.T) {
 	// write data at first
 	err = s.WriteFile(ctx, filename1, data1)
 	require.NoError(t, err)
-	err = s.WriteFile(ctx, filename2, append(append([]byte{}, data1...), data2...))
+	err = s.WriteFile(ctx, filename2, slices.Concat(data1, data2))
 	require.NoError(t, err)
 
 	helper.InitCacheEntry(filename2, 2)

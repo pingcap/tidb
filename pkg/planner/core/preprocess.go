@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
+	"slices"
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.
@@ -1596,11 +1597,9 @@ func (p *preprocessor) stmtType() string {
 
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
-		for _, cte := range p.preprocessWith.cteCanUsed {
-			if cte == tn.Name.L {
-				p.preprocessWith.UpdateCTEConsumerCount(tn.Name.L)
-				return
-			}
+		if slices.Contains(p.preprocessWith.cteCanUsed, tn.Name.L) {
+			p.preprocessWith.UpdateCTEConsumerCount(tn.Name.L)
+			return
 		}
 
 		currentDB := p.sctx.GetSessionVars().CurrentDB

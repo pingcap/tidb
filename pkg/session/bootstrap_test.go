@@ -327,7 +327,7 @@ func TestUpgrade(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, 0, req.NumRows())
 	require.Equal(t, 1, row.Len())
-	require.Equal(t, []byte(fmt.Sprintf("%d", currentBootstrapVersion)), row.GetBytes(0))
+	require.Equal(t, fmt.Appendf(nil, "%d", currentBootstrapVersion), row.GetBytes(0))
 	require.NoError(t, r.Close())
 
 	se1 := CreateSessionAndSetID(t, store)
@@ -374,7 +374,7 @@ func TestUpgrade(t *testing.T) {
 	require.NotEqual(t, 0, req.NumRows())
 	row = req.GetRow(0)
 	require.Equal(t, 1, row.Len())
-	require.Equal(t, []byte(fmt.Sprintf("%d", currentBootstrapVersion)), row.GetBytes(0))
+	require.Equal(t, fmt.Appendf(nil, "%d", currentBootstrapVersion), row.GetBytes(0))
 	require.NoError(t, r.Close())
 
 	ver, err = getBootstrapVersion(se2)
@@ -395,7 +395,7 @@ func TestUpgrade(t *testing.T) {
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
 	rowCnt := req.NumRows()
-	for i := 0; i < rowCnt; i++ {
+	for i := range rowCnt {
 		jobType := req.GetRow(i).GetString(3) // get job type.
 		// Should not use multi-schema change in bootstrap DDL because the job arguments may be changed.
 		require.False(t, strings.Contains(jobType, "multi-schema"))
@@ -1119,7 +1119,7 @@ func TestTiDBCostModelUpgradeFrom300To650(t *testing.T) {
 }
 
 func TestTiDBCostModelUpgradeFrom610To650(t *testing.T) {
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		func() {
 			ctx := context.Background()
 			store, dom := CreateStoreAndBootstrap(t)
@@ -1415,7 +1415,7 @@ func TestTiDBGlobalVariablesDefaultValueUpgradeFrom630To660(t *testing.T) {
 }
 
 func TestTiDBStoreBatchSizeUpgradeFrom650To660(t *testing.T) {
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		func() {
 			ctx := context.Background()
 			store, dom := CreateStoreAndBootstrap(t)
@@ -1928,6 +1928,92 @@ func TestTiDBUpgradeToVer170(t *testing.T) {
 	dom.Close()
 }
 
+<<<<<<< HEAD
+=======
+func TestTiDBBindingInListToVer175(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// bootstrap as version174
+	ver174 := version174
+	seV174 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver174))
+	require.NoError(t, err)
+	revertVersionAndVariables(t, seV174, ver174)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	store.SetOption(StoreBootstrappedKey, nil)
+
+	// create some bindings at version174
+	MustExec(t, seV174, "use test")
+	MustExec(t, seV174, "create table t (a int, b int, c int, key(c))")
+	_, digest := parser.NormalizeDigestForBinding("SELECT * FROM `test`.`t` WHERE `a` IN (1,2,3)")
+	MustExec(t, seV174, fmt.Sprintf("insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ... )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:35.319', 'utf8', 'utf8_general_ci', 'manual', '%s', '')", digest.String()))
+	_, digest = parser.NormalizeDigestForBinding("SELECT * FROM `test`.`t` WHERE `a` IN (1)")
+	MustExec(t, seV174, fmt.Sprintf("insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:36.319', 'utf8', 'utf8_general_ci', 'manual', '%s', '')", digest.String()))
+	_, digest = parser.NormalizeDigestForBinding("SELECT * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3)")
+	MustExec(t, seV174, fmt.Sprintf("insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? ) and `b` in ( ... )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:37.319', '2023-09-13 14:41:38.319', 'utf8', 'utf8_general_ci', 'manual', '%s', '')", digest.String()))
+
+	showBindings := func(s sessiontypes.Session) (records []string) {
+		MustExec(t, s, "admin reload bindings")
+		res := MustExecToRecodeSet(t, s, "show global bindings")
+		chk := res.NewChunk(nil)
+		for {
+			require.NoError(t, res.Next(ctx, chk))
+			if chk.NumRows() == 0 {
+				break
+			}
+			for i := range chk.NumRows() {
+				originalSQL := chk.GetRow(i).GetString(0)
+				bindSQL := chk.GetRow(i).GetString(1)
+				records = append(records, fmt.Sprintf("%s:%s", bindSQL, originalSQL))
+			}
+		}
+		require.NoError(t, res.Close())
+		sort.Strings(records)
+		return
+	}
+	bindings := showBindings(seV174)
+	// on ver174, `in (1)` and `in (1,2,3)` have different normalized results: `in (?)` and `in (...)`
+	require.Equal(t, []string{"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3):select * from `test` . `t` where `a` in ( ? ) and `b` in ( ... )",
+		"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1):select * from `test` . `t` where `a` in ( ? )"}, bindings)
+
+	// upgrade to ver175
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// `in (?)` becomes to `in ( ... )`
+	bindings = showBindings(seCurVer)
+	require.Equal(t, []string{"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3):select * from `test` . `t` where `a` in ( ... ) and `b` in ( ... )",
+		"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1):select * from `test` . `t` where `a` in ( ... )"}, bindings)
+
+	planFromBinding := func(s sessiontypes.Session, q string) {
+		MustExec(t, s, q)
+		res := MustExecToRecodeSet(t, s, "select @@last_plan_from_binding")
+		chk := res.NewChunk(nil)
+		require.NoError(t, res.Next(ctx, chk))
+		require.Equal(t, int64(1), chk.GetRow(0).GetInt64(0))
+		require.NoError(t, res.Close())
+	}
+	planFromBinding(seCurVer, "select * from test.t where a in (1)")
+	planFromBinding(seCurVer, "select * from test.t where a in (1,2,3)")
+	planFromBinding(seCurVer, "select * from test.t where a in (1,2,3,4,5,6,7)")
+	planFromBinding(seCurVer, "select * from test.t where a in (1,2,3,4,5,6,7) and b in(1)")
+	planFromBinding(seCurVer, "select * from test.t where a in (1,2,3,4,5,6,7) and b in(1,2,3,4)")
+	planFromBinding(seCurVer, "select * from test.t where a in (7) and b in(1,2,3,4)")
+}
+
+>>>>>>> 6ef89523cb (*: modernize code via go modernize --fix)
 func TestTiDBUpgradeToVer176(t *testing.T) {
 	store, do := CreateStoreAndBootstrap(t)
 	defer func() {
@@ -2008,7 +2094,7 @@ func TestWriteDDLTableVersionToMySQLTiDB(t *testing.T) {
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
 	require.Equal(t, 1, req.NumRows())
-	require.Equal(t, []byte(fmt.Sprintf("%d", ddlTableVer)), req.GetRow(0).GetBytes(0))
+	require.Equal(t, fmt.Appendf(nil, "%d", ddlTableVer), req.GetRow(0).GetBytes(0))
 	require.NoError(t, r.Close())
 	dom.Close()
 }
@@ -2055,7 +2141,7 @@ func TestWriteDDLTableVersionToMySQLTiDBWhenUpgradingTo178(t *testing.T) {
 	err = r.Next(ctx, req)
 	require.NoError(t, err)
 	require.Equal(t, 1, req.NumRows())
-	require.Equal(t, []byte(fmt.Sprintf("%d", ddlTableVer)), req.GetRow(0).GetBytes(0))
+	require.Equal(t, fmt.Appendf(nil, "%d", ddlTableVer), req.GetRow(0).GetBytes(0))
 	require.NoError(t, r.Close())
 }
 
