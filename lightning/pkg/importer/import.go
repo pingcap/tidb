@@ -70,7 +70,7 @@ import (
 	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
-	"github.com/tikv/pd/client/retry"
+	"github.com/tikv/pd/client/pkg/retry"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
