@@ -1,6 +1,8 @@
 package ingestcli
 
 import (
+	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -31,14 +33,26 @@ func (w *writeClient) Write(ctx context.Context, in *WriteRequest) error {
 		w.tikvWorkerURL, w.clusterID, w.taskID, in.ChunkID)
 
 	// TODO: pass retry counter metrics.
-	_, err := sendRequest(ctx, w.httpClient, "PUT", url, in.Data, nil)
-	if err != nil {
-		return err
+	var buf bytes.Buffer
+	for _, pair := range in.Pairs {
+		keyLen := uint16(len(pair.Key))
+		if err := binary.Write(&buf, binary.BigEndian, keyLen); err != nil {
+			return err
+		}
+		buf.Write(pair.Key)
+		valLen := uint32(len(pair.Value))
+		if err := binary.Write(&buf, binary.BigEndian, valLen); err != nil {
+			return err
+		}
+		buf.Write(pair.Value)
 	}
-	return nil
+
+	data := buf.Bytes()
+	_, err := sendRequest(ctx, w.httpClient, "PUT", url, data, nil)
+	return err
 }
 
-func (w *writeClient) Close(ctx context.Context) (*WriteResponse, error) {
+func (w *writeClient) CloseAndRecv(ctx context.Context) (*WriteResponse, error) {
 	url := fmt.Sprintf("%s/write_sst?cluster_id=%d&task_id=%s&build=true&compression=zstd",
 		w.tikvWorkerURL, w.clusterID, w.taskID)
 
@@ -74,6 +88,6 @@ type FileNameResult struct {
 	FileName string `json:"file_name"`
 }
 
-func (c *client) Ingest(ctx context.Context, in *IngestRequest) (*IngestResponse, error) {
-	return nil, nil
+func (c *client) Ingest(ctx context.Context, in *IngestRequest) error {
+	return nil
 }

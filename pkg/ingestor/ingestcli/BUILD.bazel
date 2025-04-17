@@ -10,10 +10,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/ingestor/ingestcli",
     visibility = ["//visibility:public"],
     deps = [
-        "//dumpling/context",
-        "//pkg/lightning/log",
-        "@com_github_pkg_errors//:errors",
-        "@com_github_prometheus_client_golang//prometheus",
-        "@org_uber_go_zap//:zap",
+        "//br/pkg/restore/split",
+        "@com_github_pingcap_kvproto//pkg/import_sstpb",
     ],
 )

@@ -123,13 +123,18 @@ type regionJob struct {
 
 type tikvWriteResult struct {
 	// means there is no data inside this job
-	emptyJob bool
-
-	// this field might be modified in-place to remove SSTs that are ingested successfully.
-	sstMeta           []*sst.SSTMeta
+	emptyJob          bool
 	count             int64
 	totalBytes        int64
 	remainingStartKey []byte
+
+	// below fields are for OP generation store engine.
+	// this field might be modified in-place to remove SSTs that are ingested successfully.
+	sstMeta []*sst.SSTMeta
+
+	// below fields are for cloud generation store engine.
+	// the filename of the written sst file by tikv-worker.
+	sstFile string
 }
 
 type injectedBehaviour struct {

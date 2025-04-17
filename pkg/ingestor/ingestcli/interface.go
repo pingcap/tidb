@@ -14,13 +14,18 @@
 
 package ingestcli
 
-import "context"
+import (
+	"context"
+
+	"github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
+)
 
 // WriteRequest is the request to write KV to storage layer.
 type WriteRequest struct {
 	ClusterID string
 	ChunkID   int64
-	Data      []byte
+	Pairs     []*import_sstpb.Pair
 }
 
 // WriteResponse is the response of Write.
@@ -30,12 +35,8 @@ type WriteResponse struct {
 
 // IngestRequest is the request to ingest SST to storage layer.
 type IngestRequest struct {
-	TaskID string
-}
-
-// IngestResponse is the response of Ingest.
-type IngestResponse struct {
-	FileName string
+	Region  *split.RegionInfo
+	SSTFile string
 }
 
 // WriteClient is the client for writing KV to storage layer.
@@ -44,9 +45,12 @@ type IngestResponse struct {
 type WriteClient interface {
 	// Write KV to storage layer.
 	Write(ctx context.Context, in *WriteRequest) error
-	// Close the client, get the response and close the client.
-	// the response should contain the SST info
-	Close(ctx context.Context) (*WriteResponse, error)
+	// CloseAndRecv the client, get the response and close the client.
+	// the response should contain the SST info.
+	// we name it this way to mimic GRPC stream, and to avoid confusion with normal
+	// Close method which should always be called after creation, but in here,
+	// it's not a must.
+	CloseAndRecv(ctx context.Context) (*WriteResponse, error)
 }
 
 // Client is the interface to write KV and ingest SST to storage layer.
@@ -64,5 +68,5 @@ type Client interface {
 	// WriteClient returns a WriteClient to write KV to storage layer.
 	WriteClient(ctx context.Context) (WriteClient, error)
 	// Ingest ingests the SST to storage layer.
-	Ingest(ctx context.Context, in *IngestRequest) (*IngestResponse, error)
+	Ingest(ctx context.Context, in *IngestRequest) error
 }
