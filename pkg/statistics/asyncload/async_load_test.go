@@ -239,7 +239,7 @@ func TestLoadCorruptedStatistics(t *testing.T) {
 	tableInfo := tbl.Meta()
 	tableID := tableInfo.ID
 	// Corrupt the statistics.
-	testKit.MustExec("update mysql.stats_buckets set upper_bound = 'who knows what it is' where table_id = ?;", tableID)
+	testKit.MustExec("UPDATE mysql.stats_buckets SET upper_bound = 'who knows what it is' WHERE table_id = ?;", tableID)
 	// This will add the table to the AsyncLoadHistogramNeededItems.
 	testKit.MustExec("SELECT * FROM t1 WHERE b = 2;")
 
