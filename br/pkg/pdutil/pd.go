@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
-	"github.com/tikv/pd/client/retry"
+	"github.com/tikv/pd/client/pkg/retry"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )

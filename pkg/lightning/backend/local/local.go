@@ -60,7 +60,7 @@ import (
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
-	"github.com/tikv/pd/client/retry"
+	"github.com/tikv/pd/client/pkg/retry"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
