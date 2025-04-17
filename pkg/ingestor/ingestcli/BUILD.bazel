@@ -2,8 +2,18 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "ingestcli",
-    srcs = ["interface.go"],
+    srcs = [
+        "client.go",
+        "interface.go",
+        "util.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/ingestor/ingestcli",
     visibility = ["//visibility:public"],
-    deps = ["//dumpling/context"],
+    deps = [
+        "//dumpling/context",
+        "//pkg/lightning/log",
+        "@com_github_pkg_errors//:errors",
+        "@com_github_prometheus_client_golang//prometheus",
+        "@org_uber_go_zap//:zap",
+    ],
 )
