@@ -386,10 +386,10 @@ func SaveMetasToStorage(
 	sctx sessionctx.Context,
 	refreshLastHistVer bool,
 	metaUpdates []statstypes.MetaUpdate,
-) (err error) {
+) (statsVer uint64, err error) {
 	version, err := util.GetStartTS(sctx)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	var sql string
 	values := make([]string, 0, len(metaUpdates))
@@ -407,7 +407,7 @@ func SaveMetasToStorage(
 			"on duplicate key update version = values(version), modify_count = values(modify_count), count = values(count)", strings.Join(values, ","))
 	}
 	_, err = util.Exec(sctx, sql)
-	return
+	return version, errors.Trace(err)
 }
 
 // InsertColStats2KV insert a record to stats_histograms with distinct_count 1

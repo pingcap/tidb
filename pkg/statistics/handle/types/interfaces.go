@@ -359,7 +359,7 @@ type StatsReadWriter interface {
 	// SaveMetasToStorage saves the stats meta of a table to storage.
 	// Use the param `refreshLastHistVer` to indicate whether we need to update the last_histograms_versions in stats_meta table.
 	// Set it to true if the column/index stats is updated.
-	SaveMetasToStorage(needRefreshLastHistVer bool, metaUpdates ...MetaUpdate) (err error)
+	SaveMetasToStorage(source string, needRefreshLastHistVer bool, metaUpdates ...MetaUpdate) (err error)
 
 	// UpdateStatsMetaVersionForGC updates the version of mysql.stats_meta,
 	// ensuring it is greater than the last garbage collection (GC) time.
