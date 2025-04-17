@@ -42,7 +42,6 @@ func PrintTiDBInfo() {
 		zap.String("Git Commit Hash", versioninfo.TiDBGitHash),
 		zap.String("Git Branch", versioninfo.TiDBGitBranch),
 		zap.String("UTC Build Time", versioninfo.TiDBBuildTS),
-		zap.String("GoVersion", buildVersion),
 		zap.Bool("Race Enabled", israce.RaceEnabled),
 		zap.Bool("Check Table Before Drop", config.CheckTableBeforeDrop),
 	}
@@ -68,7 +67,6 @@ func GetTiDBInfo() string {
 		"Git Commit Hash: %s\n"+
 		"Git Branch: %s\n"+
 		"UTC Build Time: %s\n"+
-		"GoVersion: %s\n"+
 		"Race Enabled: %v\n"+
 		"Check Table Before Drop: %v\n"+
 		"Store: %s"+
@@ -78,7 +76,6 @@ func GetTiDBInfo() string {
 		versioninfo.TiDBGitHash,
 		versioninfo.TiDBGitBranch,
 		versioninfo.TiDBBuildTS,
-		buildVersion,
 		israce.RaceEnabled,
 		config.CheckTableBeforeDrop,
 		config.GetGlobalConfig().Store,

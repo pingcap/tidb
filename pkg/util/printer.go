@@ -1,4 +1,4 @@
-// Copyright 2022 PingCAP, Inc.
+// Copyright 2022 PingCAP, Inc.db
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -13,44 +13,3 @@
 // limitations under the License.
 
 package util
-
-import (
-	"fmt"
-	"runtime"
-
-	"github.com/pingcap/log"
-	"go.uber.org/zap"
-)
-
-// Version information.
-var (
-	Version   = "None"
-	BuildTS   = "None"
-	GitHash   = "None"
-	GitBranch = "None"
-)
-
-// GetRawInfo do what its name tells
-// nolint:unused
-func GetRawInfo(app string) string {
-	info := ""
-	info += fmt.Sprintf("App Name: %s\n", app)
-	info += fmt.Sprintf("Release Version: %s\n", Version)
-	info += fmt.Sprintf("Git Commit Hash: %s\n", GitHash)
-	info += fmt.Sprintf("Git Branch: %s\n", GitBranch)
-	info += fmt.Sprintf("UTC Build Time: %s\n", BuildTS)
-	info += fmt.Sprintf("Go Version: %s\n", runtime.Version())
-	return info
-}
-
-// PrintInfo prints the app's basic information in log
-// nolint:unused
-func PrintInfo(app string) {
-	log.Info("Welcome to "+app,
-		zap.String("Release Version", Version),
-		zap.String("Git Commit Hash", GitHash),
-		zap.String("Git Branch", GitBranch),
-		zap.String("UTC Build Time", BuildTS),
-		zap.String("Go Version", runtime.Version()),
-	)
-}
