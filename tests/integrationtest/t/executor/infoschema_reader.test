@@ -365,3 +365,5 @@ create table t29 like t20;
 
 SELECT table_schema, table_name,data_length FROM information_schema.TABLES
 WHERE (TABLE_NAME IN ('t10','t11','t12','t13','t14','t15','t16','t17','t18','t19','t20','t21','t22','t23','t24','t25','t26','t27','t28','t29'));
+drop database test1;
+drop database test2;

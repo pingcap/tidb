@@ -513,3 +513,5 @@ test2	t26	0
 test2	t27	0
 test2	t28	0
 test2	t29	0
+drop database test1;
+drop database test2;
