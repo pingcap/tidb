@@ -693,10 +693,11 @@ func findTableAndSchemaByName(
 		}
 	}
 
-	sort.Slice(schemaAndTbls, func(i, j int) bool {
-		vi, vj := schemaAndTbls[i], schemaAndTbls[j]
-		return vi.schema.L < vj.schema.L ||
-			(vi.schema.L == vj.schema.L && vi.table.Name.L < vj.table.Name.L)
+	slices.SortFunc(schemaAndTbls, func(a, b schemaAndTable) int {
+		if a.schema.L == b.schema.L {
+			return strings.Compare(a.table.Name.L, b.table.Name.L)
+		}
+		return strings.Compare(a.schema.L, b.schema.L)
 	})
 	schemaSlice := make([]ast.CIStr, 0, len(schemaAndTbls))
 	tableSlice := make([]*model.TableInfo, 0, len(schemaAndTbls))
