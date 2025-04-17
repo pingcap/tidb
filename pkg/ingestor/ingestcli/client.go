@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/pingcap/tidb/dumpling/context"
+	"context"
 )
 
 var _ WriteClient = &writeClient{}
@@ -13,20 +13,22 @@ var _ WriteClient = &writeClient{}
 type writeClient struct {
 	tikvWorkerURL string
 	clusterID     uint64
+	taskID        string
 	httpClient    *http.Client
 }
 
-func newWriteClient(tikvWorkerURL string, clusterID uint64, httpClient *http.Client) *writeClient {
+func newWriteClient(tikvWorkerURL string, clusterID uint64, taskID string, httpClient *http.Client) *writeClient {
 	return &writeClient{
 		tikvWorkerURL: tikvWorkerURL,
 		clusterID:     clusterID,
+		taskID:        taskID,
 		httpClient:    httpClient,
 	}
 }
 
 func (w *writeClient) Write(ctx context.Context, in *WriteRequest) error {
 	url := fmt.Sprintf("%s/write_sst?cluster_id=%d&task_id=%s&chunk_id=%d",
-		w.tikvWorkerURL, w.clusterID, in.TaskID, in.ChunkID)
+		w.tikvWorkerURL, w.clusterID, w.taskID, in.ChunkID)
 
 	// TODO: pass retry counter metrics.
 	_, err := sendRequest(ctx, w.httpClient, "PUT", url, in.Data, nil)
@@ -37,31 +39,11 @@ func (w *writeClient) Write(ctx context.Context, in *WriteRequest) error {
 }
 
 func (w *writeClient) Close(ctx context.Context) (*WriteResponse, error) {
-	return nil, nil
-}
-
-var _ Client = &client{}
-
-type client struct {
-	tikvWorkerURL string
-	clusterID     uint64
-	httpClient    *http.Client
-}
-
-func (c *client) WriteClient(ctx context.Context) (WriteClient, error) {
-	return newWriteClient(c.tikvWorkerURL, c.clusterID, c.httpClient), nil
-}
-
-type FileNameResult struct {
-	FileName string `json:"file_name"`
-}
-
-func (c *client) Ingest(ctx context.Context, in *IngestRequest) (*IngestResponse, error) {
 	url := fmt.Sprintf("%s/write_sst?cluster_id=%d&task_id=%s&build=true&compression=zstd",
-		c.tikvWorkerURL, c.clusterID, in.TaskID)
+		w.tikvWorkerURL, w.clusterID, w.taskID)
 
 	// TODO: pass retry counter metrics.
-	data, err := sendRequest(ctx, c.httpClient, "POST", url, nil, nil)
+	data, err := sendRequest(ctx, w.httpClient, "POST", url, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -72,5 +54,26 @@ func (c *client) Ingest(ctx context.Context, in *IngestRequest) (*IngestResponse
 		return nil, err
 	}
 
-	return &IngestResponse{FileName: result.FileName}, nil
+	return &WriteResponse{SSTFile: result.FileName}, nil
+}
+
+var _ Client = &client{}
+
+type client struct {
+	tikvWorkerURL string
+	clusterID     uint64
+	taskID        string
+	httpClient    *http.Client
+}
+
+func (c *client) WriteClient(ctx context.Context) (WriteClient, error) {
+	return newWriteClient(c.tikvWorkerURL, c.clusterID, c.taskID, c.httpClient), nil
+}
+
+type FileNameResult struct {
+	FileName string `json:"file_name"`
+}
+
+func (c *client) Ingest(ctx context.Context, in *IngestRequest) (*IngestResponse, error) {
+	return nil, nil
 }

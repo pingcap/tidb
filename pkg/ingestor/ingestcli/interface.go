@@ -14,12 +14,11 @@
 
 package ingestcli
 
-import "github.com/pingcap/tidb/dumpling/context"
+import "context"
 
 // WriteRequest is the request to write KV to storage layer.
 type WriteRequest struct {
 	ClusterID string
-	TaskID    string
 	ChunkID   int64
 	Data      []byte
 }

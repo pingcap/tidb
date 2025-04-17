@@ -2,11 +2,11 @@ package ingestcli
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"time"
 
-	"github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
