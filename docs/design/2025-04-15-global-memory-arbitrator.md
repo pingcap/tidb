@@ -49,7 +49,7 @@ A centralized global `Memory Resource Arbitrator` (aka `mem-arbitrator` or `arbi
 
 ### Functional Specs
 
-The original config [tidb_server_memory_limit](https://docs.pingcap.com/tidb/stable/system-variables/#tidb_server_memory_limit-new-in-v640) is still the most important hard constraint. `arbitrator` introduces config `soft-limit`, which indicates the upper limit of global memory quota.
+The original config [tidb_server_memory_limit](https://docs.pingcap.com/tidb/stable/system-variables/#tidb_server_memory_limit-new-in-v640) (aka `server-limit`) is still the most important hard constraint. `arbitrator` introduces config `soft-limit`, which indicates the upper limit of global memory quota.
 
 When facing an `OOM Risk`, the `arbitrator` will use the `KILL` method to protect the memory safety. For other abnormal situations, it only choose the `CANCEL` method.
 
@@ -188,6 +188,22 @@ Ensure the successful execution of important SQL
 #### Memory Resource Arbitrator
 
 ![pic1](./imgs/mem-arbitrator.png)
+
+The `mem-arbitrator` use the common TiDB property `server-limit` as the basic logical memory quota hard limit. The mem quota of arbitrator consists of **4** parts: `allocated`, `available`, `buffer`, `out-of-control`.
+
+- `allocated`:
+
+- The arbitrator has a unique memory pool high-priority-pool with the highest privilege. When it uses up all the budget, it can allocate memory quota from the arbitrator directly without Arbitrate Process.
+
+- buffer: used to avoid the gap between logical memory used and actual memory consumed. The larger the value, the more secure it is for the arbitrator to manage a large memory quota.
+- The value of buffer can also affect the behavior of arbitrator. Bigger buffer can bring positive effects to memory safety but also may cause negative effects on memory resource utilization. The default way is to calculate the size of buffer space dynamically by timed interval.
+  - buffer = max(SQL mem usage) / Duration
+- normal quota
+- out-of-control
+
+The arbitrator controls a set of root memory pools. If any root pool needs to increase its mem quota, it should apply to the arbitrator and wait for responses synchronously.
+
+##### out-of-control
 
 - The arbitrator controls a set of root memory pools. If any root pool needs to increase its mem quota, it should apply to the arbitrator and wait for responses synchronously.
 - The basic properties of  Arbitrator:
