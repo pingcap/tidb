@@ -4244,12 +4244,25 @@ func (n *DynamicCalibrateResourceOption) Accept(v Visitor) (Node, bool) {
 // DropQueryWatchStmt is a statement to drop a runaway watch item.
 type DropQueryWatchStmt struct {
 	stmtNode
-	IntValue int64
+	IntValue      int64
+	GroupNameStr  CIStr
+	GroupNameExpr ExprNode
 }
 
 func (n *DropQueryWatchStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("QUERY WATCH REMOVE ")
-	ctx.WritePlainf("%d", n.IntValue)
+	switch {
+	case n.GroupNameStr.String() != "":
+		ctx.WriteKeyWord("RESOURCE GROUP ")
+		ctx.WriteName(n.GroupNameStr.String())
+	case n.GroupNameExpr != nil:
+		ctx.WriteKeyWord("RESOURCE GROUP ")
+		if err := n.GroupNameExpr.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore expr: [%v]", n.GroupNameExpr)
+		}
+	default:
+		ctx.WritePlainf("%d", n.IntValue)
+	}
 	return nil
 }
 

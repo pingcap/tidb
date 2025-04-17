@@ -931,8 +931,8 @@ func (w *worker) runOneJobStep(
 		ver, err = w.onCreateIndex(jobCtx, job, false)
 	case model.ActionAddPrimaryKey:
 		ver, err = w.onCreateIndex(jobCtx, job, true)
-	case model.ActionAddVectorIndex:
-		ver, err = w.onCreateVectorIndex(jobCtx, job)
+	case model.ActionAddColumnarIndex:
+		ver, err = w.onCreateColumnarIndex(jobCtx, job)
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		ver, err = onDropIndex(jobCtx, job)
 	case model.ActionRenameIndex:
@@ -965,6 +965,8 @@ func (w *worker) runOneJobStep(
 		ver, err = onLockTables(jobCtx, job)
 	case model.ActionUnlockTable:
 		ver, err = onUnlockTables(jobCtx, job)
+	case model.ActionAlterTableMode:
+		ver, err = onAlterTableMode(jobCtx, job)
 	case model.ActionSetTiFlashReplica:
 		ver, err = w.onSetTableFlashReplica(jobCtx, job)
 	case model.ActionUpdateTiFlashReplicaStatus:

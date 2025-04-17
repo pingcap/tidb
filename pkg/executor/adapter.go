@@ -326,7 +326,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 		} else {
 			// CachedPlan type is already checked in last step
 			pointGetPlan := a.Plan.(*plannercore.PointGetPlan)
-			exec.Recreated(pointGetPlan)
+			exec.Recreated(pointGetPlan, a.Ctx)
 			a.PsStmt.PointGet.Executor = exec
 			executor = exec
 		}
@@ -465,12 +465,16 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			if a.retryCount > 0 {
 				metrics.StatementPessimisticRetryCount.Observe(float64(a.retryCount))
 			}
-			lockKeysCnt := a.Ctx.GetSessionVars().StmtCtx.LockKeysCount
-			if lockKeysCnt > 0 {
-				metrics.StatementLockKeysCount.Observe(float64(lockKeysCnt))
+			execDetails := a.Ctx.GetSessionVars().StmtCtx.GetExecDetails()
+			if execDetails.LockKeysDetail != nil {
+				if execDetails.LockKeysDetail.LockKeys > 0 {
+					metrics.StatementLockKeysCount.Observe(float64(execDetails.LockKeysDetail.LockKeys))
+				}
+				if a.Ctx.GetSessionVars().StmtCtx.PessimisticLockStarted() && execDetails.LockKeysDetail.TotalTime > 0 {
+					metrics.PessimisticLockKeysDuration.Observe(execDetails.LockKeysDetail.TotalTime.Seconds())
+				}
 			}
 
-			execDetails := a.Ctx.GetSessionVars().StmtCtx.GetExecDetails()
 			if err == nil && execDetails.LockKeysDetail != nil &&
 				(execDetails.LockKeysDetail.AggressiveLockNewCount > 0 || execDetails.LockKeysDetail.AggressiveLockDerivedCount > 0) {
 				a.Ctx.GetSessionVars().TxnCtx.FairLockingUsed = true
@@ -558,12 +562,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			return nil, err
 		}
 		if len(switchGroupName) > 0 {
-			group, err := rm.ResourceGroupCtl.GetResourceGroup(switchGroupName)
-			if err != nil || group == nil {
-				logutil.BgLogger().Debug("invalid switch resource group", zap.String("switch-group-name", switchGroupName), zap.Error(err))
-			} else {
-				stmtCtx.ResourceGroupName = switchGroupName
-			}
+			stmtCtx.ResourceGroupName = switchGroupName
 		}
 	}
 	ctx = a.observeStmtBeginForTopSQL(ctx)
@@ -2160,6 +2159,12 @@ func (a *ExecStmt) updatePrevStmt() {
 }
 
 func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Context {
+	if !topsqlstate.TopSQLEnabled() && IsFastPlan(a.Plan) {
+		// To reduce the performance impact on fast plan.
+		// Drop them does not cause notable accuracy issue in TopSQL.
+		return ctx
+	}
+
 	vars := a.Ctx.GetSessionVars()
 	sc := vars.StmtCtx
 	normalizedSQL, sqlDigest := sc.SQLDigest()
@@ -2173,11 +2178,6 @@ func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Contex
 	}
 	stats := a.Ctx.GetStmtStats()
 	if !topsqlstate.TopSQLEnabled() {
-		// To reduce the performance impact on fast plan.
-		// Drop them does not cause notable accuracy issue in TopSQL.
-		if IsFastPlan(a.Plan) {
-			return ctx
-		}
 		// Always attach the SQL and plan info uses to catch the running SQL when Top SQL is enabled in execution.
 		if stats != nil {
 			stats.OnExecutionBegin(sqlDigestByte, planDigestByte)
@@ -2240,8 +2240,7 @@ func (a *ExecStmt) observeStmtFinishedForTopSQL() {
 	}
 }
 
-func (a *ExecStmt) getSQLPlanDigest() ([]byte, []byte) {
-	var sqlDigest, planDigest []byte
+func (a *ExecStmt) getSQLPlanDigest() (sqlDigest, planDigest []byte) {
 	vars := a.Ctx.GetSessionVars()
 	if _, d := vars.StmtCtx.SQLDigest(); d != nil {
 		sqlDigest = d.Bytes()

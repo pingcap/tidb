@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -984,6 +985,10 @@ type SessionVars struct {
 	// TiFlashQuerySpillRatio is the percentage threshold to trigger auto spill in TiFlash if TiFlashMaxQueryMemoryPerNode is set
 	TiFlashQuerySpillRatio float64
 
+	// TiFlashHashJoinVersion controls the hash join version in TiFlash.
+	// "optimized" enables hash join v2, while "legacy" uses the original version.
+	TiFlashHashJoinVersion string
+
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
 
@@ -1030,6 +1035,25 @@ type SessionVars struct {
 	diskFactor float64
 	// concurrencyFactor is the CPU cost of additional one goroutine.
 	concurrencyFactor float64
+
+	// Optimizer cost model factors for each physical operator
+	IndexScanCostFactor        float64
+	IndexReaderCostFactor      float64
+	TableReaderCostFactor      float64
+	TableFullScanCostFactor    float64
+	TableRangeScanCostFactor   float64
+	TableRowIDScanCostFactor   float64
+	TableTiFlashScanCostFactor float64
+	IndexLookupCostFactor      float64
+	IndexMergeCostFactor       float64
+	SortCostFactor             float64
+	TopNCostFactor             float64
+	LimitCostFactor            float64
+	StreamAggCostFactor        float64
+	HashAggCostFactor          float64
+	MergeJoinCostFactor        float64
+	HashJoinCostFactor         float64
+	IndexJoinCostFactor        float64
 
 	// enableForceInlineCTE is used to enable/disable force inline CTE.
 	enableForceInlineCTE bool
@@ -2138,6 +2162,23 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		memoryFactor:                  vardef.DefOptMemoryFactor,
 		diskFactor:                    vardef.DefOptDiskFactor,
 		concurrencyFactor:             vardef.DefOptConcurrencyFactor,
+		IndexScanCostFactor:           vardef.DefOptIndexScanCostFactor,
+		IndexReaderCostFactor:         vardef.DefOptIndexReaderCostFactor,
+		TableReaderCostFactor:         vardef.DefOptTableReaderCostFactor,
+		TableFullScanCostFactor:       vardef.DefOptTableFullScanCostFactor,
+		TableRangeScanCostFactor:      vardef.DefOptTableRangeScanCostFactor,
+		TableRowIDScanCostFactor:      vardef.DefOptTableRowIDScanCostFactor,
+		TableTiFlashScanCostFactor:    vardef.DefOptTableTiFlashScanCostFactor,
+		IndexLookupCostFactor:         vardef.DefOptIndexLookupCostFactor,
+		IndexMergeCostFactor:          vardef.DefOptIndexMergeCostFactor,
+		SortCostFactor:                vardef.DefOptSortCostFactor,
+		TopNCostFactor:                vardef.DefOptTopNCostFactor,
+		LimitCostFactor:               vardef.DefOptLimitCostFactor,
+		StreamAggCostFactor:           vardef.DefOptStreamAggCostFactor,
+		HashAggCostFactor:             vardef.DefOptHashAggCostFactor,
+		MergeJoinCostFactor:           vardef.DefOptMergeJoinCostFactor,
+		HashJoinCostFactor:            vardef.DefOptHashJoinCostFactor,
+		IndexJoinCostFactor:           vardef.DefOptIndexJoinCostFactor,
 		enableForceInlineCTE:          vardef.DefOptForceInlineCTE,
 		EnableVectorizedExpression:    vardef.DefEnableVectorizedExpression,
 		CommandValue:                  uint32(mysql.ComSleep),
@@ -2167,6 +2208,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableClusteredIndex:          vardef.DefTiDBEnableClusteredIndex,
 		EnableParallelApply:           vardef.DefTiDBEnableParallelApply,
 		ShardAllocateStep:             vardef.DefTiDBShardAllocateStep,
+		EnablePointGetCache:           vardef.DefTiDBPointGetCache,
 		PartitionPruneMode:            *atomic2.NewString(vardef.DefTiDBPartitionPruneMode),
 		TxnScope:                      kv.NewDefaultTxnScopeVar(),
 		EnabledRateLimitAction:        vardef.DefTiDBEnableRateLimitAction,
@@ -2244,12 +2286,14 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.TiFlashMaxBytesBeforeExternalSort = vardef.DefTiFlashMaxBytesBeforeExternalSort
 	vars.TiFlashMaxQueryMemoryPerNode = vardef.DefTiFlashMemQuotaQueryPerNode
 	vars.TiFlashQuerySpillRatio = vardef.DefTiFlashQuerySpillRatio
+	vars.TiFlashHashJoinVersion = vardef.DefTiFlashHashJoinVersion
 	vars.MPPStoreFailTTL = vardef.DefTiDBMPPStoreFailTTL
 	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
 	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
 	vars.MemTracker.IsRootTrackerOfSess = true
 	vars.MemTracker.Killer = &vars.SQLKiller
 	vars.StatsLoadSyncWait.Store(vardef.StatsLoadSyncWait.Load())
+	vars.UseHashJoinV2 = joinversion.IsOptimizedVersion(vardef.DefTiDBHashJoinVersion)
 
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {

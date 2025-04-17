@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
 	utilhint "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -243,6 +244,22 @@ func CheckTableLock(ctx tablelock.TableLockReadContext, is infoschema.InfoSchema
 		}
 		if err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// CheckTableMode checks if the table is accessible by table mode, only TableModeNormal can be accessed.
+func CheckTableMode(node *resolve.NodeW) error {
+	// First make exceptions for stmt that only visit table meta;
+	// For example, `describe <table_name>` and `show create table <table_name>`;
+	switch node.Node.(type) {
+	case *ast.ShowStmt, *ast.ExplainStmt:
+	default:
+		for _, tblNameW := range node.GetResolveContext().GetTableNames() {
+			if err := dbutil.CheckTableModeIsNormal(tblNameW.Name, tblNameW.TableInfo.Mode); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -885,7 +902,8 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 			joinKeys = x.RightJoinKeys
 			probChild = child0
 		}
-		if len(joinKeys) > 0 { // Not cross join
+
+		if len(joinKeys) > 0 && !x.CanTiFlashUseHashJoinV2(sctx) { // Not cross join and can not use hash join v2 in tiflash
 			buildHelper := fineGrainedShuffleHelper{shuffleTarget: joinBuild, plans: []*physicalop.BasePhysicalPlan{}}
 			buildHelper.plans = append(buildHelper.plans, &x.BasePhysicalPlan)
 			buildHelper.joinKeys = joinKeys

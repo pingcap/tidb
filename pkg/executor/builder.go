@@ -504,7 +504,7 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Executor {
 	noMVIndexOrPrefixIndexOrColumnarIndex := true
 	for _, idx := range v.IndexInfos {
-		if idx.MVIndex || idx.IsTiFlashLocalIndex() {
+		if idx.MVIndex || idx.IsColumnarIndex() {
 			noMVIndexOrPrefixIndexOrColumnarIndex = false
 			break
 		}
@@ -683,7 +683,7 @@ func (b *executorBuilder) buildCleanupIndex(v *plannercore.CleanupIndex) exec.Ex
 		b.err = errors.Errorf("secondary index `%v` is not found in table `%v`", v.IndexName, v.Table.Name.O)
 		return nil
 	}
-	if index.Meta().IsTiFlashLocalIndex() {
+	if index.Meta().IsColumnarIndex() {
 		b.err = errors.Errorf("columnar index `%v` is not supported for cleanup index", v.IndexName)
 		return nil
 	}
@@ -900,6 +900,7 @@ func (b *executorBuilder) buildShow(v *plannercore.PhysicalShow) exec.Executor {
 		Extended:              v.Extended,
 		Extractor:             v.Extractor,
 		ImportJobID:           v.ImportJobID,
+		SQLOrDigest:           v.SQLOrDigest,
 	}
 	if e.Tp == ast.ShowMasterStatus || e.Tp == ast.ShowBinlogStatus {
 		// show master status need start ts.
@@ -1547,7 +1548,7 @@ func (b *executorBuilder) buildMergeJoin(v *plannercore.PhysicalMergeJoin) exec.
 	return e
 }
 
-func collectColumnIndexFromExpr(expr expression.Expression, leftColumnSize int, leftColumnIndex []int, rightColumnIndex []int) ([]int, []int) {
+func collectColumnIndexFromExpr(expr expression.Expression, leftColumnSize int, leftColumnIndex []int, rightColumnIndex []int) (_, _ []int) {
 	switch x := expr.(type) {
 	case *expression.Column:
 		colIndex := x.Index
@@ -1570,9 +1571,9 @@ func collectColumnIndexFromExpr(expr expression.Expression, leftColumnSize int, 
 	}
 }
 
-func extractUsedColumnsInJoinOtherCondition(expr expression.CNFExprs, leftColumnSize int) ([]int, []int) {
-	leftColumnIndex := make([]int, 0, 1)
-	rightColumnIndex := make([]int, 0, 1)
+func extractUsedColumnsInJoinOtherCondition(expr expression.CNFExprs, leftColumnSize int) (leftColumnIndex, rightColumnIndex []int) {
+	leftColumnIndex = make([]int, 0, 1)
+	rightColumnIndex = make([]int, 0, 1)
 	for _, subExpr := range expr {
 		leftColumnIndex, rightColumnIndex = collectColumnIndexFromExpr(subExpr, leftColumnSize, leftColumnIndex, rightColumnIndex)
 	}
@@ -1589,7 +1590,10 @@ func (b *executorBuilder) buildHashJoinV2(v *plannercore.PhysicalHashJoin) exec.
 	if b.err != nil {
 		return nil
 	}
+	return b.buildHashJoinV2FromChildExecs(leftExec, rightExec, v)
+}
 
+func (b *executorBuilder) buildHashJoinV2FromChildExecs(leftExec, rightExec exec.Executor, v *plannercore.PhysicalHashJoin) *join.HashJoinV2Exec {
 	joinOtherCondition := v.OtherConditions
 	joinLeftCondition := v.LeftConditions
 	joinRightCondition := v.RightConditions
@@ -1764,7 +1768,10 @@ func (b *executorBuilder) buildHashJoin(v *plannercore.PhysicalHashJoin) exec.Ex
 	if b.err != nil {
 		return nil
 	}
+	return b.buildHashJoinFromChildExecs(leftExec, rightExec, v)
+}
 
+func (b *executorBuilder) buildHashJoinFromChildExecs(leftExec, rightExec exec.Executor, v *plannercore.PhysicalHashJoin) *join.HashJoinV1Exec {
 	e := &join.HashJoinV1Exec{
 		BaseExecutor:          exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), leftExec, rightExec),
 		ProbeSideTupleFetcher: &join.ProbeSideTupleFetcherV1{},
@@ -2157,24 +2164,35 @@ func (b *executorBuilder) getSnapshot() (kv.Snapshot, error) {
 		return nil, err
 	}
 
-	sessVars := b.ctx.GetSessionVars()
+	InitSnapshotWithSessCtx(snapshot, b.ctx, &b.readReplicaScope)
+	return snapshot, nil
+}
+
+// InitSnapshotWithSessCtx initialize snapshot using session context
+func InitSnapshotWithSessCtx(snapshot kv.Snapshot, ctx sessionctx.Context, txnReplicaReadTypePtr *string) {
+	sessVars := ctx.GetSessionVars()
 	replicaReadType := sessVars.GetReplicaRead()
-	snapshot.SetOption(kv.ReadReplicaScope, b.readReplicaScope)
+	var txnReplicaReadType string
+	if txnReplicaReadTypePtr == nil {
+		txnManager := sessiontxn.GetTxnManager(ctx)
+		txnReplicaReadType = txnManager.GetReadReplicaScope()
+	} else {
+		txnReplicaReadType = *txnReplicaReadTypePtr
+	}
+	snapshot.SetOption(kv.ReadReplicaScope, txnReplicaReadType)
 	snapshot.SetOption(kv.TaskID, sessVars.StmtCtx.TaskID)
 	snapshot.SetOption(kv.TiKVClientReadTimeout, sessVars.GetTiKVClientReadTimeout())
 	snapshot.SetOption(kv.ResourceGroupName, sessVars.StmtCtx.ResourceGroupName)
 	snapshot.SetOption(kv.ExplicitRequestSourceType, sessVars.ExplicitRequestSourceType)
 
-	if replicaReadType.IsClosestRead() && b.readReplicaScope != kv.GlobalTxnScope {
+	if replicaReadType.IsClosestRead() && txnReplicaReadType != kv.GlobalTxnScope {
 		snapshot.SetOption(kv.MatchStoreLabels, []*metapb.StoreLabel{
 			{
 				Key:   placement.DCLabelKey,
-				Value: b.readReplicaScope,
+				Value: txnReplicaReadType,
 			},
 		})
 	}
-
-	return snapshot, nil
 }
 
 func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Executor {
@@ -2343,7 +2361,8 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			strings.ToLower(infoschema.TableTiDBIndexUsage),
 			strings.ToLower(infoschema.TableTiDBPlanCache),
 			strings.ToLower(infoschema.ClusterTableTiDBPlanCache),
-			strings.ToLower(infoschema.ClusterTableTiDBIndexUsage):
+			strings.ToLower(infoschema.ClusterTableTiDBIndexUsage),
+			strings.ToLower(infoschema.TableKeyspaceMeta):
 			memTracker := memory.NewTracker(v.ID(), -1)
 			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
 			return &MemTableReaderExec{
@@ -4474,6 +4493,11 @@ func (builder *dataReaderBuilder) buildExecutorForIndexJoinInternal(ctx context.
 		exec := builder.buildStreamAggFromChildExec(childExec, v)
 		err = exec.OpenSelf()
 		return exec, err
+	case *plannercore.PhysicalHashJoin:
+		// since merge join is rarely used now, we can only support hash join now.
+		// we separate the child build flow out because we want to pass down the runtime constant --- lookupContents.
+		// todo: support hash join in index join inner side.
+		return nil, errors.New("Wrong plan type for dataReaderBuilder")
 	case *mockPhysicalIndexReader:
 		return v.e, nil
 	}

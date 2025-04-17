@@ -533,7 +533,7 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName ast.CIStr, tableNam
 func checkColumnarIndexIfNeedTiFlashReplica(store kv.Storage, dbName ast.CIStr, tblInfo *model.TableInfo) error {
 	var hasColumnarIndex bool
 	for _, idx := range tblInfo.Indices {
-		if idx.IsTiFlashLocalIndex() {
+		if idx.IsColumnarIndex() {
 			hasColumnarIndex = true
 			break
 		}
@@ -1233,7 +1233,7 @@ func BuildTableInfo(
 	foreignKeyID := tbInfo.MaxForeignKeyID
 	for _, constr := range constraints {
 		var hiddenCols []*model.ColumnInfo
-		if constr.Tp != ast.ConstraintVector {
+		if constr.Tp != ast.ConstraintVector && constr.Tp != ast.ConstraintColumnar {
 			// Build hidden columns if necessary.
 			hiddenCols, err = buildHiddenColumnInfoWithCheck(ctx, constr.Keys, ast.NewCIStr(constr.Name), tbInfo, tblColumns)
 			if err != nil {
@@ -1307,8 +1307,9 @@ func BuildTableInfo(
 		}
 
 		var (
-			indexName               = constr.Name
-			primary, unique, vector bool
+			indexName         = constr.Name
+			primary, unique   bool
+			columnarIndexType = model.ColumnarIndexTypeNA
 		)
 
 		// Check if the index is primary, unique or vector.
@@ -1323,7 +1324,12 @@ func BuildTableInfo(
 			if constr.Option.Visibility == ast.IndexVisibilityInvisible {
 				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set vector index invisible")
 			}
-			vector = true
+			columnarIndexType = model.ColumnarIndexTypeVector
+		case ast.ConstraintColumnar:
+			if constr.Option.Visibility == ast.IndexVisibilityInvisible {
+				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set columnar index invisible")
+			}
+			columnarIndexType = model.ColumnarIndexTypeInverted
 		}
 
 		// check constraint
@@ -1396,7 +1402,7 @@ func BuildTableInfo(
 			ast.NewCIStr(indexName),
 			primary,
 			unique,
-			vector,
+			columnarIndexType,
 			constr.Keys,
 			constr.Option,
 			model.StatePublic,
@@ -1561,7 +1567,7 @@ func addIndexForForeignKey(ctx *metabuild.Context, tbInfo *model.TableInfo) erro
 				Length: types.UnspecifiedLength,
 			})
 		}
-		idxInfo, err := BuildIndexInfo(ctx, tbInfo, idxName, false, false, false, keys, nil, model.StatePublic)
+		idxInfo, err := BuildIndexInfo(ctx, tbInfo, idxName, false, false, model.ColumnarIndexTypeNA, keys, nil, model.StatePublic)
 		if err != nil {
 			return errors.Trace(err)
 		}
