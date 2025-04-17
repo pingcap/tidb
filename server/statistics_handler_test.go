@@ -46,9 +46,11 @@ func TestDumpStatsAPI(t *testing.T) {
 	server, err := NewServer(cfg, driver)
 	require.NoError(t, err)
 	defer server.Close()
+	if RunInGoTest && isClosed(RunInGoTestChan) {
+		RunInGoTestChan = make(chan struct{})
+	}
 	go func() {
-		err := server.Run(nil)
-		require.NoError(t, err)
+		require.NoError(t, server.Run(nil))
 	}()
 	<-RunInGoTestChan
 	client.port = getPortFromTCPAddr(server.listener.Addr())
