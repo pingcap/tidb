@@ -231,6 +231,7 @@ func TestLoadCorruptedStatistics(t *testing.T) {
 	handle := dom.StatsHandle()
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
 	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
+	// Only collect the histogram buckets.
 	testKit.MustExec("ANALYZE TABLE t1 ALL COLUMNS WITH 0 TOPN;")
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
