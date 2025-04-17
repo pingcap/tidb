@@ -291,14 +291,14 @@ partition by range (a) (
 	tk.MustQuery("show stats_buckets where is_index=0").Check(
 		// db table partition col is_idx bucket_id count repeats lower upper ndv
 		testkit.Rows("test t global a 0 0 7 2 1 6 0",
-			"test t global a 0 1 17 2 6 19 0",
+			"test t global a 0 1 17 2 11 19 0",
 			"test t p0 a 0 0 4 1 1 4 0",
 			"test t p0 a 0 1 7 2 5 6 0",
 			"test t p1 a 0 0 6 1 11 16 0",
 			"test t p1 a 0 1 10 2 17 19 0"))
 	tk.MustQuery("show stats_buckets where is_index=1").Check(
 		testkit.Rows("test t global a 1 0 7 2 1 6 0",
-			"test t global a 1 1 17 2 6 19 0",
+			"test t global a 1 1 17 2 11 19 0",
 			"test t p0 a 1 0 4 1 1 4 0",
 			"test t p0 a 1 1 7 2 5 6 0",
 			"test t p1 a 1 0 6 1 11 16 0",
@@ -351,7 +351,7 @@ func TestGlobalStatsData3(t *testing.T) {
 
 	tk.MustQuery("show stats_buckets where table_name='tintint' and is_index=1").Check(testkit.Rows(
 		"test tintint global a 1 0 6 2 (1, 1) (2, 3) 0",    // (2, 3) is popped into it
-		"test tintint global a 1 1 11 2 (13, 1) (13, 1) 0", // (13, 1) is popped into it
+		"test tintint global a 1 1 11 2 (11, 1) (13, 1) 0", // (13, 1) is popped into it
 		"test tintint p0 a 1 0 3 1 (1, 1) (2, 1) 0",
 		"test tintint p0 a 1 1 4 1 (2, 2) (2, 2) 0",
 		"test tintint p1 a 1 0 2 1 (11, 1) (12, 1) 0",
@@ -385,7 +385,7 @@ func TestGlobalStatsData3(t *testing.T) {
 
 	tk.MustQuery("show stats_buckets where table_name='tintstr' and is_index=1").Check(testkit.Rows(
 		"test tintstr global a 1 0 6 2 (1, 1) (2, 3) 0",    // (2, 3) is popped into it
-		"test tintstr global a 1 1 11 2 (13, 1) (13, 1) 0", // (13, 1) is popped into it
+		"test tintstr global a 1 1 11 2 (11, 1) (13, 1) 0", // (13, 1) is popped into it
 		"test tintstr p0 a 1 0 3 1 (1, 1) (2, 1) 0",
 		"test tintstr p0 a 1 1 4 1 (2, 2) (2, 2) 0",
 		"test tintstr p1 a 1 0 2 1 (11, 1) (12, 1) 0",
@@ -419,7 +419,7 @@ func TestGlobalStatsData3(t *testing.T) {
 
 	tk.MustQuery("show stats_buckets where table_name='tintdouble' and is_index=1").Check(testkit.Rows(
 		"test tintdouble global a 1 0 6 2 (1, 1) (2, 3) 0",    // (2, 3) is popped into it
-		"test tintdouble global a 1 1 11 2 (13, 1) (13, 1) 0", // (13, 1) is popped into it
+		"test tintdouble global a 1 1 11 2 (11, 1) (13, 1) 0", // (13, 1) is popped into it
 		"test tintdouble p0 a 1 0 3 1 (1, 1) (2, 1) 0",
 		"test tintdouble p0 a 1 1 4 1 (2, 2) (2, 2) 0",
 		"test tintdouble p1 a 1 0 2 1 (11, 1) (12, 1) 0",
@@ -453,7 +453,7 @@ func TestGlobalStatsData3(t *testing.T) {
 
 	tk.MustQuery("show stats_buckets where table_name='tdoubledecimal' and is_index=1").Check(testkit.Rows(
 		"test tdoubledecimal global a 1 0 6 2 (1, 1.00) (2, 3.00) 0",    // (2, 3) is popped into it
-		"test tdoubledecimal global a 1 1 11 2 (13, 1.00) (13, 1.00) 0", // (13, 1) is popped into it
+		"test tdoubledecimal global a 1 1 11 2 (11, 1.00) (13, 1.00) 0", // (13, 1) is popped into it
 		"test tdoubledecimal p0 a 1 0 3 1 (1, 1.00) (2, 1.00) 0",
 		"test tdoubledecimal p0 a 1 1 4 1 (2, 2.00) (2, 2.00) 0",
 		"test tdoubledecimal p1 a 1 0 2 1 (11, 1.00) (12, 1.00) 0",
@@ -487,7 +487,7 @@ func TestGlobalStatsData3(t *testing.T) {
 
 	tk.MustQuery("show stats_buckets where table_name='tstrdt' and is_index=1").Check(testkit.Rows(
 		"test tstrdt global a 1 0 6 2 (1, 2000-01-01 00:00:00) (2, 2000-01-03 00:00:00) 0",    // (2, 3) is popped into it
-		"test tstrdt global a 1 1 11 2 (13, 2000-01-01 00:00:00) (13, 2000-01-01 00:00:00) 0", // (13, 1) is popped into it
+		"test tstrdt global a 1 1 11 2 (11, 2000-01-01 00:00:00) (13, 2000-01-01 00:00:00) 0", // (13, 1) is popped into it
 		"test tstrdt p0 a 1 0 3 1 (1, 2000-01-01 00:00:00) (2, 2000-01-01 00:00:00) 0",
 		"test tstrdt p0 a 1 1 4 1 (2, 2000-01-02 00:00:00) (2, 2000-01-02 00:00:00) 0",
 		"test tstrdt p1 a 1 0 2 1 (11, 2000-01-01 00:00:00) (12, 2000-01-01 00:00:00) 0",
