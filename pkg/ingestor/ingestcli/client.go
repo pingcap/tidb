@@ -2,12 +2,11 @@ package ingestcli
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net/http"
-
-	"context"
 )
 
 var _ WriteClient = &writeClient{}
