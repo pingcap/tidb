@@ -334,3 +334,34 @@ select table_name from information_schema.statistics where table_name = 'a' and 
 select table_name from information_schema.statistics where table_schema = 'a' and table_schema = 'b';
 select table_name from information_schema.referential_constraints where table_name = 'a' and table_name = 'b';
 select table_name from information_schema.referential_constraints where constraint_schema = 'a' and constraint_schema = 'b';
+
+drop database if exists test1;
+create database test1;
+use test1;
+create table t10(id int);
+create table t11 like t10;
+create table t12 like t10;
+create table t13 like t10;
+create table t14 like t10;
+create table t15 like t10;
+create table t16 like t10;
+create table t17 like t10;
+create table t18 like t10;
+create table t19 like t10;
+
+drop database if exists test2;
+create database test2;
+use test2;
+create table t20(id int);
+create table t21 like t20;
+create table t22 like t20;
+create table t23 like t20;
+create table t24 like t20;
+create table t25 like t20;
+create table t26 like t20;
+create table t27 like t20;
+create table t28 like t20;
+create table t29 like t20;
+
+SELECT table_schema, table_name,data_length FROM information_schema.TABLES
+WHERE (TABLE_NAME IN ('t10','t11','t12','t13','t14','t15','t16','t17','t18','t19','t20','t21','t22','t23','t24','t25','t26','t27','t28','t29'));
