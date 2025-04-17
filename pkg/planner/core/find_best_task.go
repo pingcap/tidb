@@ -287,6 +287,11 @@ func enumeratePhysicalPlans4Task(
 	if !preferTask.Invalid() {
 		return preferTask, cntPlan, nil
 	}
+	// if there is no valid preferred low-cost physical one, return the normal low one.
+	// if the hint is specified without any valid plan, we should also record the warnings.
+	if err := recordIndexJoinHintWarnings(p, prop); err != nil {
+		return nil, 0, err
+	}
 	// return the normal lowest-cost physical one.
 	return bestTask, cntPlan, nil
 }
