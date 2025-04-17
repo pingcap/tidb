@@ -72,7 +72,7 @@ var (
 	DDLTransitOneStepOpHist prometheus.Observer
 	DDLLockVerDurationHist  prometheus.Observer
 	DDLCleanMDLInfoHist     prometheus.Observer
-	RetryableErrorCount     *prometheus.GaugeVec
+	RetryableErrorCount     *prometheus.CounterVec
 
 	CreateDDLInstance = "create_ddl_instance"
 	CreateDDL         = "create_ddl"
@@ -198,11 +198,11 @@ func InitDDLMetrics() {
 		Buckets:   prometheus.ExponentialBuckets(0.05, 2, 20),
 	}, []string{LblType})
 
-	RetryableErrorCount = NewGaugeVec(prometheus.GaugeOpts{
+	RetryableErrorCount = NewCounterVec(prometheus.CounterOpts{
 		Namespace: "tidb",
 		Subsystem: "ddl",
-		Name:      "retryable_error_cnt",
-		Help:      "Gauge of retryable error count during ddl.",
+		Name:      "retryable_error_total",
+		Help:      "Retryable error count during ddl.",
 	}, []string{LblType})
 
 	// those metrics are for diagnose performance issues of running multiple DDLs

@@ -16302,7 +16302,7 @@
       "targets": [
         {
           "exemplar": true,
-          "expr": "tidb_ddl_retryable_error_cnt{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
+          "expr": "sum(increase(tidb_ddl_retryable_error_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[2m])) by (type)",
           "format": "time_series",
           "interval": "",
           "intervalFactor": 2,
