@@ -101,7 +101,7 @@ func TestCloudRegionJobWorker(t *testing.T) {
 	defer ctrl.Finish()
 	mockIngestCli := ingestclimock.NewMockClient(ctrl)
 
-	cloudW := &cloudRegionJobWorker{
+	cloudW := &objStoreRegionJobWorker{
 		regionJobBaseWorker: &regionJobBaseWorker{},
 		ingestCli:           mockIngestCli,
 		writeBatchSize:      8,

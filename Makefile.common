@@ -74,7 +74,7 @@ LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBGitBranch=$(shel
 LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBEdition=$(TIDB_EDITION)"
 
 ifeq ("${NEXT_GEN}", "1")
-	LDFLAGS += -X "github.com/pingcap/tidb/pkg/config.storeEngineGeneration=cloud"
+	LDFLAGS += -X "github.com/pingcap/tidb/pkg/config.storeEngineGeneration=object"
 endif
 
 EXTENSION_FLAG =
