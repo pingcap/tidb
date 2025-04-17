@@ -125,7 +125,7 @@ func (f *FlushSubscriber) Drop() {
 // HandleErrors execute the handlers over all pending errors.
 // Note that the handler may cannot handle the pending errors, at that time,
 // you can fetch the errors via `PendingErrors` call.
-func (f *FlushSubscriber) HandleErrors(ctx context.Context) {
+func (f *FlushSubscriber) HandleErrors() {
 	for id, sub := range f.subscriptions {
 		err := sub.loadError()
 		if err != nil {
@@ -133,6 +133,7 @@ func (f *FlushSubscriber) HandleErrors(ctx context.Context) {
 			log.Warn("Meet error.", zap.String("category", "log backup flush subscriber"),
 				logutil.ShortError(err), zap.Bool("can-retry?", retry), zap.Uint64("store", id))
 			if retry {
+				log.Info("retry connecting to store to add subscription")
 				sub.connect(f.masterCtx, f.dialer)
 			}
 		}
