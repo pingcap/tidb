@@ -120,6 +120,7 @@ func (d *diskRootImpl) PreCheckUsage() error {
 	failpoint.Inject("mockIngestCheckEnvFailed", func(_ failpoint.Value) {
 		failpoint.Return(dbterror.ErrIngestCheckEnvFailed.FastGenByArgs("mock error"))
 	})
+	logutil.BgLogger().Warn("[issue58437] diskRootImpl PreCheckUsage()")
 	err := os.MkdirAll(d.path, 0700)
 	if err != nil {
 		return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(err.Error())
