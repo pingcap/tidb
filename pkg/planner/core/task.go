@@ -1112,7 +1112,7 @@ func tryReturnDistanceFromIndex(local *PhysicalTopN, global *PhysicalTopN, child
 		}
 	}
 	if vectorIdx == -1 {
-		panic("vector column not found in tableScan, please check the creation of tableScan.")
+		return false
 	}
 
 	// set the EnableDistanceProj to modify the read process of tiflash.
