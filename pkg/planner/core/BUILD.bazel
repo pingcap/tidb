@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "access_object.go",
         "collect_column_stats_usage.go",
+        "columnar_index_utils.go",
         "common_plans.go",
         "core_init.go",
         "debugtrace.go",
@@ -166,6 +167,7 @@ go_library(
         "//pkg/util/dbterror",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/dbterror/plannererrors",
+        "//pkg/util/dbutil",
         "//pkg/util/disjointset",
         "//pkg/util/domainutil",
         "//pkg/util/execdetails",

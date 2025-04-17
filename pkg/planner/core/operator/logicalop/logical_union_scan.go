@@ -83,7 +83,7 @@ func (p *LogicalUnionScan) PredicatePushDown(predicates []expression.Expression,
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
 func (p *LogicalUnionScan) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
-	for i := 0; i < p.HandleCols.NumCols(); i++ {
+	for i := range p.HandleCols.NumCols() {
 		parentUsedCols = append(parentUsedCols, p.HandleCols.GetCol(i))
 	}
 	for _, col := range p.Schema().Columns {

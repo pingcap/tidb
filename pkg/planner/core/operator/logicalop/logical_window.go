@@ -386,7 +386,7 @@ func (p *LogicalWindow) DeriveStats(childStats []*property.StatsInfo, selfSchema
 		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
 	})
 	childLen := selfSchema.Len() - len(p.WindowFuncDescs)
-	for i := 0; i < childLen; i++ {
+	for i := range childLen {
 		id := selfSchema.Columns[i].UniqueID
 		p.StatsInfo().ColNDVs[id] = childProfile.ColNDVs[id]
 	}

@@ -167,8 +167,7 @@ func (p *PhysicalIndexMergeJoin) Attach2Task(tasks ...base.Task) base.Task {
 	return t
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalIndexHashJoin) Attach2Task(tasks ...base.Task) base.Task {
+func indexHashJoinAttach2TaskV1(p *PhysicalIndexHashJoin, tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	if p.InnerChildIdx == 1 {
 		p.SetChildren(outerTask.Plan(), p.innerPlan)
@@ -180,8 +179,28 @@ func (p *PhysicalIndexHashJoin) Attach2Task(tasks ...base.Task) base.Task {
 	return t
 }
 
+func indexHashJoinAttach2TaskV2(p *PhysicalIndexHashJoin, tasks ...base.Task) base.Task {
+	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
+	innerTask := tasks[p.InnerChildIdx].ConvertToRootTask(p.SCtx())
+	// only fill the wrapped physical index join is ok.
+	completePhysicalIndexJoin(&p.PhysicalIndexJoin, innerTask.(*RootTask), innerTask.Plan().Schema(), outerTask.Plan().Schema(), true)
+	if p.InnerChildIdx == 1 {
+		p.SetChildren(outerTask.Plan(), innerTask.Plan())
+	} else {
+		p.SetChildren(innerTask.Plan(), outerTask.Plan())
+	}
+	t := &RootTask{}
+	t.SetPlan(p)
+	return t
+}
+
 // Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalIndexJoin) Attach2Task(tasks ...base.Task) base.Task {
+func (p *PhysicalIndexHashJoin) Attach2Task(tasks ...base.Task) base.Task {
+	// todo: feel index jon build v2
+	return indexHashJoinAttach2TaskV1(p, tasks...)
+}
+
+func indexJoinAttach2TaskV1(p *PhysicalIndexJoin, tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	if p.InnerChildIdx == 1 {
 		p.SetChildren(outerTask.Plan(), p.innerPlan)
@@ -191,6 +210,26 @@ func (p *PhysicalIndexJoin) Attach2Task(tasks ...base.Task) base.Task {
 	t := &RootTask{}
 	t.SetPlan(p)
 	return t
+}
+
+func indexJoinAttach2TaskV2(p *PhysicalIndexJoin, tasks ...base.Task) base.Task {
+	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
+	innerTask := tasks[p.InnerChildIdx].ConvertToRootTask(p.SCtx())
+	completePhysicalIndexJoin(p, innerTask.(*RootTask), innerTask.Plan().Schema(), outerTask.Plan().Schema(), true)
+	if p.InnerChildIdx == 1 {
+		p.SetChildren(outerTask.Plan(), innerTask.Plan())
+	} else {
+		p.SetChildren(innerTask.Plan(), outerTask.Plan())
+	}
+	t := &RootTask{}
+	t.SetPlan(p)
+	return t
+}
+
+// Attach2Task implements PhysicalPlan interface.
+func (p *PhysicalIndexJoin) Attach2Task(tasks ...base.Task) base.Task {
+	// todo: feel index jon build v2
+	return indexJoinAttach2TaskV1(p, tasks...)
 }
 
 // RowSize for cost model ver2 is simplified, always use this function to calculate row size.
@@ -252,7 +291,7 @@ func needConvert(tp *types.FieldType, rtp *types.FieldType) bool {
 	return true
 }
 
-func negotiateCommonType(lType, rType *types.FieldType) (*types.FieldType, bool, bool) {
+func negotiateCommonType(lType, rType *types.FieldType) (_ *types.FieldType, _, _ bool) {
 	commonType := types.AggFieldType([]*types.FieldType{lType, rType})
 	if commonType.GetType() == mysql.TypeNewDecimal {
 		lExtend := 0
@@ -305,7 +344,7 @@ func appendExpr(p *PhysicalProjection, expr expression.Expression) *expression.C
 
 // TiFlash join require that partition key has exactly the same type, while TiDB only guarantee the partition key is the same catalog,
 // so if the partition key type is not exactly the same, we need add a projection below the join or exchanger if exists.
-func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *MppTask) (*MppTask, *MppTask) {
+func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *MppTask) (_, _ *MppTask) {
 	lp := lTask.p
 	if _, ok := lp.(*PhysicalExchangeReceiver); ok {
 		lp = lp.Children()[0].Children()[0]
@@ -392,16 +431,42 @@ func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *MppTask) (*M
 	return lTask, rTask
 }
 
+func (p *PhysicalHashJoin) enforceExchangerByBackup(task *MppTask, idx int, expectedCols int) *MppTask {
+	if backupHashProp := p.GetChildReqProps(idx); backupHashProp != nil {
+		if len(backupHashProp.MPPPartitionCols) == expectedCols {
+			return task.enforceExchangerImpl(backupHashProp)
+		}
+	}
+	return nil
+}
+
 func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
-	rTask, rok := tasks[1].(*MppTask)
-	lTask, lok := tasks[0].(*MppTask)
+	const (
+		left  = 0
+		right = 1
+	)
+	rTask, rok := tasks[right].(*MppTask)
+	lTask, lok := tasks[left].(*MppTask)
 	if !lok || !rok {
 		return base.InvalidTask
 	}
 	if p.mppShuffleJoin {
-		// protection check is case of some bugs
-		if len(lTask.hashCols) != len(rTask.hashCols) || len(lTask.hashCols) == 0 {
+		if len(lTask.hashCols) == 0 || len(rTask.hashCols) == 0 {
+			// if the hash columns are empty, this is very likely a bug.
 			return base.InvalidTask
+		}
+		if len(lTask.hashCols) != len(rTask.hashCols) {
+			// if the hash columns are not the same, The most likely scenario is that
+			// they have undergone exchange optimization, removing some hash columns.
+			// In this case, we need to restore them on the side that is missing.
+			if len(lTask.hashCols) < len(rTask.hashCols) {
+				lTask = p.enforceExchangerByBackup(lTask, left, len(rTask.hashCols))
+			} else {
+				rTask = p.enforceExchangerByBackup(rTask, right, len(lTask.hashCols))
+			}
+			if lTask == nil || rTask == nil {
+				return base.InvalidTask
+			}
 		}
 		lTask, rTask = p.convertPartitionKeysIfNeed(lTask, rTask)
 	}
@@ -878,9 +943,7 @@ func (p *NominalSort) Attach2Task(tasks ...base.Task) base.Task {
 	return t
 }
 
-func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv.StoreType) (*PhysicalTopN, *PhysicalTopN) {
-	var newGlobalTopN *PhysicalTopN
-
+func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv.StoreType) (topN, newGlobalTopN *PhysicalTopN) {
 	fixValue := fixcontrol.GetBoolWithDefault(p.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix56318, true)
 	// HeavyFunctionOptimize: if TopN's ByItems is a HeavyFunction (currently mainly for Vector Search), we will change
 	// the ByItems in order to reuse the function result.
@@ -980,7 +1043,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv
 		return topN, newGlobalTopN
 	}
 
-	topN := PhysicalTopN{
+	topN = PhysicalTopN{
 		ByItems:     newByItems,
 		PartitionBy: newPartitionBy,
 		Count:       newCount,

@@ -107,6 +107,9 @@ func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, inde
 		if columnarIndexType == model.ColumnarIndexTypeVector && col.FieldType.GetType() != mysql.TypeTiDBVectorFloat32 {
 			return nil, false, dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs(fmt.Sprintf("only support vector type, but this is type: %s", col.FieldType.String()))
 		}
+		if columnarIndexType == model.ColumnarIndexTypeInverted && !types.IsTypeStoredAsInteger(col.FieldType.GetType()) {
+			return nil, false, dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs(fmt.Sprintf("only support integer type, but this is type: %s", col.FieldType.String()))
+		}
 
 		// return error in strict sql mode
 		if err := checkIndexColumn(col, ip.Length, ctx != nil && (!ctx.GetSQLMode().HasStrictMode() || ctx.SuppressTooLongIndexErr()), columnarIndexType); err != nil {
@@ -355,7 +358,11 @@ func BuildIndexInfo(
 		}
 		idxInfo.VectorInfo = vectorInfo
 	case model.ColumnarIndexTypeInverted:
-		// do nothing now
+		invertedInfo, err := buildInvertedInfoWithCheck(indexPartSpecifications, tblInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		idxInfo.InvertedInfo = invertedInfo
 	}
 
 	var err error
@@ -442,6 +449,41 @@ func buildVectorInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 		Dimension:      uint64(colInfo.FieldType.GetFlen()),
 		DistanceMetric: distanceMetric,
 	}, exprStr, nil
+}
+
+func buildInvertedInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecification,
+	tblInfo *model.TableInfo) (*model.InvertedIndexInfo, error) {
+	if len(indexPartSpecifications) != 1 {
+		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("only support one column")
+	}
+
+	idxPart := indexPartSpecifications[0]
+	if idxPart.Column == nil {
+		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported no column")
+	}
+	colInfo := findColumnByName(idxPart.Column.Name.L, tblInfo)
+	if colInfo == nil {
+		return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(idxPart.Column.Name, tblInfo.Name)
+	}
+
+	// check duplicated columnar index on the same column
+	for _, idx := range tblInfo.Indices {
+		if idx.InvertedInfo == nil {
+			continue
+		}
+		if idxCol := idx.FindColumnByName(colInfo.Name.L); idxCol == nil {
+			continue
+		}
+		if idx.Tp == ast.IndexTypeInverted {
+			return nil, dbterror.ErrDupKeyName.GenWithStack(fmt.Sprintf("inverted columnar index %s already exist on column %s", idx.Name, colInfo.Name))
+		}
+	}
+
+	// It's used for build buildIndexColumns.
+	idxPart.Column = &ast.ColumnName{Name: colInfo.Name}
+	idxPart.Length = types.UnspecifiedLength
+
+	return model.FieldTypeToInvertedIndexInfo(colInfo.FieldType, colInfo.ID), nil
 }
 
 // AddIndexColumnFlag aligns the column flags of columns in TableInfo to IndexInfo.
@@ -544,7 +586,7 @@ func validateAlterIndexVisibility(ctx sessionctx.Context, indexName ast.CIStr, i
 		}
 	}
 	if idx.IsColumnarIndex() {
-		return false, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set vector index invisible")
+		return false, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set columnar index invisible")
 	}
 	return false, nil
 }
@@ -1790,10 +1832,9 @@ func checkInvisibleIndexesOnPK(tblInfo *model.TableInfo, indexInfos []*model.Ind
 	return nil
 }
 
-func checkRenameIndex(t *meta.Mutator, job *model.Job) (*model.TableInfo, ast.CIStr, ast.CIStr, error) {
-	var from, to ast.CIStr
+func checkRenameIndex(t *meta.Mutator, job *model.Job) (tblInfo *model.TableInfo, from, to ast.CIStr, err error) {
 	schemaID := job.SchemaID
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
+	tblInfo, err = GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return nil, from, to, errors.Trace(err)
 	}
@@ -2893,7 +2934,7 @@ func (w *worker) updateDistTaskRowCount(taskKey string, jobID int64) {
 	w.getReorgCtx(jobID).setRowCount(rowCount)
 }
 
-func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysicalTableID int64) (int64, kv.Key, kv.Key, error) {
+func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysicalTableID int64) (pid int64, startKey, endKey kv.Key, err error) {
 	pi := t.Meta().GetPartitionInfo()
 	if pi == nil {
 		return 0, nil, nil, nil
@@ -2905,8 +2946,6 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 	// REORGANIZE PARTITION - (re)create indexes on partitions to be added (3)
 	// REORGANIZE PARTITION - Update new Global indexes with data from non-touched partitions (4)
 	// (i.e. pi.Definitions - pi.DroppingDefinitions)
-	var pid int64
-	var err error
 	if bytes.Equal(reorg.currElement.TypeKey, meta.IndexElementKey) {
 		// case 1, 3 or 4
 		if len(pi.AddingDefinitions) == 0 {
@@ -2972,7 +3011,6 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 		}
 	})
 
-	var startKey, endKey kv.Key
 	if reorg.mergingTmpIdx {
 		elements := reorg.elements
 		firstElemTempID := tablecodec.TempIndexPrefix | elements[0].ID

@@ -122,6 +122,19 @@ type MPPPartitionColumn struct {
 	CollateID int32
 }
 
+// ResolveIndices resolve index for MPPPartitionColumn
+func (partitionCol *MPPPartitionColumn) ResolveIndices(schema *expression.Schema) (*MPPPartitionColumn, error) {
+	newColExpr, err := partitionCol.Col.ResolveIndices(schema)
+	if err != nil {
+		return nil, err
+	}
+	newCol, _ := newColExpr.(*expression.Column)
+	return &MPPPartitionColumn{
+		Col:       newCol,
+		CollateID: partitionCol.CollateID,
+	}, nil
+}
+
 // Clone makes a copy of MPPPartitionColumn.
 func (partitionCol *MPPPartitionColumn) Clone() *MPPPartitionColumn {
 	return &MPPPartitionColumn{
@@ -495,6 +508,8 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 		MPPPartitionCols:      p.MPPPartitionCols,
 		RejectSort:            p.RejectSort,
 		CTEProducerStatus:     p.CTEProducerStatus,
+		// we default not to clone basic indexJoinProp by default.
+		// and only call admitIndexJoinProp to inherit the indexJoinProp for special pattern operators.
 	}
 	return prop
 }
