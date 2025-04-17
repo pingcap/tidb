@@ -26,7 +26,6 @@ func retryableHTTPStatusCode(statusCode int) bool {
 
 func sendRequestWithRetry(ctx context.Context, httpClient *http.Client,
 	method, url string, data []byte, retryCounter prometheus.Counter) (*http.Response, error) {
-
 	var (
 		req  *http.Request
 		resp *http.Response
@@ -62,7 +61,6 @@ func sendRequestWithRetry(ctx context.Context, httpClient *http.Client,
 
 func sendRequest(ctx context.Context, httpClient *http.Client,
 	method, url string, data []byte, retryCounter prometheus.Counter) ([]byte, error) {
-
 	resp, err := sendRequestWithRetry(ctx, httpClient, method, url, data, retryCounter)
 	if err != nil {
 		return nil, err
