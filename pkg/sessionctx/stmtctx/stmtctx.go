@@ -253,6 +253,7 @@ type StatementContext struct {
 	InSelectStmt           bool
 	InLoadDataStmt         bool
 	InExplainStmt          bool
+	LogicalPlan            interface{}
 	InExplainAnalyzeStmt   bool
 	ExplainFormat          string
 	InCreateOrAlterStmt    bool
