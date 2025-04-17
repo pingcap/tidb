@@ -217,3 +217,54 @@ func TestLoadStatisticsAfterIndexDrop(t *testing.T) {
 		require.NotEqual(t, tableID, item.TableItemID.TableID)
 	}
 }
+
+func TestLoadCorruptedStatistics(t *testing.T) {
+	// Use real tikv to enable the sync and async load.
+	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+	testKit := testkit.NewTestKit(t, store)
+	// Turn off the sync load.
+	testKit.MustExec("SET @@tidb_stats_load_sync_wait = 0;")
+	testKit.MustExec("use test")
+	testKit.MustExec("DROP TABLE IF EXISTS t1")
+	testKit.MustExec("CREATE TABLE t1 (a INT, b INT, c INT, INDEX idx_b (b));")
+	testKit.MustExec("INSERT INTO t1 VALUES (1,3,0), (2,2,0), (3,2,0);")
+	handle := dom.StatsHandle()
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
+	testKit.MustExec("ANALYZE TABLE t1 ALL COLUMNS WITH 0 TOPN;")
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	tableID := tableInfo.ID
+	// Corrupt the statistics.
+	testKit.MustExec("update mysql.stats_buckets set upper_bound = 'who knows what it is' where table_id = ?;", tableID)
+	// This will add the table to the AsyncLoadHistogramNeededItems.
+	testKit.MustExec("SELECT * FROM t1 WHERE b = 2;")
+
+	require.Eventually(t, func() bool {
+		// Check the table is in the items.
+		items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
+		found := false
+		for _, item := range items {
+			if item.TableItemID.TableID == tableID {
+				found = true
+				break
+			}
+		}
+		return found
+	}, 5*time.Second, 2*time.Second,
+		"table %d should be in the items", tableID,
+	)
+
+	// Drop the index.
+	testKit.MustExec("ALTER TABLE t1 DROP INDEX idx_b;")
+	err = handle.LoadNeededHistograms(dom.InfoSchema())
+	require.NoError(t, err)
+
+	// Check the table is removed from the items.
+	items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
+	for _, item := range items {
+		require.NotEqual(t, tableID, item.TableItemID.TableID)
+	}
+}
