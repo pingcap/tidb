@@ -258,11 +258,8 @@ func TestLoadCorruptedStatistics(t *testing.T) {
 		"table %d should be in the items", tableID,
 	)
 
-	// Drop the index.
-	testKit.MustExec("ALTER TABLE t1 DROP INDEX idx_b;")
 	err = handle.LoadNeededHistograms(dom.InfoSchema())
 	require.NoError(t, err)
-
 	// Check the table is removed from the items.
 	items := asyncload.AsyncLoadHistogramNeededItems.AllItems()
 	for _, item := range items {
