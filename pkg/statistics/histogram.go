@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -1014,7 +1013,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	boundL := histL - histWidth
 	boundR := histR + histWidth
 
-	var leftPercent, rightPercent, rowCount, numValuesOutOfBound float64
+	var leftPercent, rightPercent, rowCount float64
 	if debugTrace {
 		defer func() {
 			debugtrace.RecordAnyValuesWithNames(sctx,
@@ -1061,20 +1060,15 @@ func (hg *Histogram) OutOfRangeRowCount(
 			// Calculate the percentage of "the shaded area" on the right side.
 			rightPercent = (math.Pow(boundR-actualL, 2) - math.Pow(boundR-actualR, 2)) / math.Pow(histWidth, 2)
 		}
-		histRangePerValue := float64(0)
-		if histNDV > 0 {
-			histRangePerValue = histWidth / float64(histNDV)
-		}
-		numValuesOutOfBound = (boundR - histR) / histRangePerValue
 	}
 
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
 	rowCount = totalPercent * hg.NotNullCount()
+
 	// oneValue assumes "one value qualies", and is used as either an Upper & lower bound.
 	oneValue := rowCount
 	if histNDV > 0 {
 		oneValue = hg.NotNullCount() / float64(histNDV)
-		numValuesOutOfBound = max(oneValue, totalPercent*numValuesOutOfBound)
 	}
 
 	if !allowUseModifyCount {
@@ -1095,11 +1089,8 @@ func (hg *Histogram) OutOfRangeRowCount(
 		}
 		// Attempt to account for the added rows - but not more than the totalPercent
 		outOfRangeAdded := addedRows * totalPercent
-		if numValuesOutOfBound > 0 {
-			rowCount = min(rowCount, numValuesOutOfBound)
-		} else {
-			rowCount = max(rowCount, outOfRangeAdded)
-		}
+		// Return the max of each estimate - with a minimum of one value.
+		rowCount = max(rowCount, outOfRangeAdded, oneValue)
 	}
 
 	// Use modifyCount as a final bound

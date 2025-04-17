@@ -345,7 +345,9 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 			histNDV := idx.NDV
 			// Exclude the TopN in Stats Version 2
 			if idx.StatsVer == statistics.Version2 {
-				c := coll.GetCol(idx.Histogram.ID)
+				colIDs := coll.Idx2ColUniqueIDs[idx.Histogram.ID]
+				// Retrieve column statistics for the 1st index column
+				c := coll.GetCol(colIDs[0])
 				// If this is single column predicate - use the column's information rather than index.
 				// Index histograms are converted to string. Column uses original type - which can be more accurate for out of range
 				isSingleColRange := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == 1
@@ -353,6 +355,7 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 					histNDV = c.Histogram.NDV - int64(c.TopN.Num())
 					count += c.Histogram.OutOfRangeRowCount(sctx, &indexRange.LowVal[0], &indexRange.HighVal[0], realtimeRowCount, modifyCount, histNDV)
 				} else {
+					// TODO: Extend original datatype out-of-range estimation to multi-column
 					histNDV -= int64(idx.TopN.Num())
 					count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, histNDV)
 				}
