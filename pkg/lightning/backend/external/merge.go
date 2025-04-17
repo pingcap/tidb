@@ -60,7 +60,9 @@ func MergeOverlappingFiles(
 		zap.Int("file-count", len(paths)),
 		zap.Int("file-groups", len(dataFilesSlice)),
 		zap.Int("concurrency", concurrency),
-		zap.Int64("part-size", partSize))
+		zap.Int64("part-size", partSize),
+		zap.Strings("files", paths),
+	)
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(concurrency)
 	for _, files := range dataFilesSlice {

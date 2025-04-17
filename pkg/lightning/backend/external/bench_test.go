@@ -949,3 +949,39 @@ func BenchmarkReadAllDataFormS3TotalRandom(b *testing.B) {
 		readAllDataFormS3(storageURI, startKey, endKey, dataFiles, statsFiles)
 	}
 }
+
+func TestMockMergeSort(t *testing.T) {
+	ctx := context.Background()
+	storeBackend, err := storage.ParseBackend(storageURI, nil)
+	if err != nil {
+		panic(err)
+	}
+	store, err := storage.NewWithDefaultOpt(ctx, storeBackend)
+	if err != nil {
+		panic(err)
+	}
+	paths := []string{"path1", "path2"}
+	checkHotspot := true
+	mergeSortCon := 8
+	mergeOutput := "test_merge_sort"
+	totalSize := atomic.NewUint64(0)
+	partSize := int64(5 * size.MB)
+	onClose := func(s *WriterSummary) {
+		totalSize.Add(s.TotalSize)
+	}
+
+	now := time.Now()
+	err = MergeOverlappingFiles(
+		ctx,
+		paths, //
+		store,
+		partSize, //
+		mergeOutput,
+		DefaultBlockSize,
+		onClose,
+		mergeSortCon, //
+		checkHotspot,
+	)
+	require.NoError(t, err)
+	logutil.BgLogger().Log(zap.InfoLevel, "merge sort", zap.String("time", time.Since(now).String()))
+}
