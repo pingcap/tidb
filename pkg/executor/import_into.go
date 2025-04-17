@@ -330,6 +330,14 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	return nil
 }
 
+// Close implements the Executor interface.
+func (e *ImportIntoExec) Close() error {
+	if e.controller != nil {
+		e.controller.Close()
+	}
+	return e.BaseExecutor.Close()
+}
+
 // ImportIntoActionExec represents a import into action executor.
 type ImportIntoActionExec struct {
 	exec.BaseExecutor

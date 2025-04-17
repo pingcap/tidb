@@ -525,6 +525,9 @@ func (ti *TableImporter) Backend() *local.Backend {
 
 // Close implements the io.Closer interface.
 func (ti *TableImporter) Close() error {
+	if ti.LoadDataController != nil {
+		ti.LoadDataController.Close()
+	}
 	ti.backend.Close()
 	return nil
 }
