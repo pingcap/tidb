@@ -230,19 +230,19 @@ func (s *statsReadWriter) SaveColOrIdxStatsToStorage(
 	return
 }
 
-// SaveMetasToStorage saves stats meta to the storage.
+// SaveMetaToStorage saves stats meta to the storage.
 // Use the param `refreshLastHistVer` to indicate whether we need to update the last_histograms_versions in stats_meta table.
-func (s *statsReadWriter) SaveMetasToStorage(
+func (s *statsReadWriter) SaveMetaToStorage(
 	source string,
 	refreshLastHistVer bool,
 	metaUpdates ...statstypes.MetaUpdate,
 ) (err error) {
 	if len(metaUpdates) == 0 {
-		return nil
+		return errors.Errorf("meta updates is empty")
 	}
 	var statsVer uint64
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		statsVer, err = SaveMetasToStorage(sctx, refreshLastHistVer, metaUpdates)
+		statsVer, err = SaveMetaToStorage(sctx, refreshLastHistVer, metaUpdates)
 		return err
 	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
@@ -676,7 +676,7 @@ func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physical
 	var outerErr error
 	tbl.ForEachColumnImmutable(func(_ int64, col *statistics.Column) bool {
 		// loadStatsFromJSON doesn't support partition table now.
-		// The table level count and modify_count would be overridden by the SaveMetasToStorage below, so we don't need
+		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
 		// to care about them here.
 		if err := s.SaveColOrIdxStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 0, &col.Histogram, col.CMSketch, col.TopN, int(col.GetStatsVer()), false, util.StatsMetaHistorySourceLoadStats); err != nil {
 			outerErr = err
@@ -689,7 +689,7 @@ func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physical
 	}
 	tbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
 		// loadStatsFromJSON doesn't support partition table now.
-		// The table level count and modify_count would be overridden by the SaveMetasToStorage below, so we don't need
+		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
 		// to care about them here.
 		if err := s.SaveColOrIdxStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 1, &idx.Histogram, idx.CMSketch, idx.TopN, int(idx.GetStatsVer()), false, util.StatsMetaHistorySourceLoadStats); err != nil {
 			outerErr = err
@@ -708,7 +708,7 @@ func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physical
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return s.SaveMetasToStorage(util.StatsMetaHistorySourceLoadStats, true, statstypes.MetaUpdate{
+	return s.SaveMetaToStorage(util.StatsMetaHistorySourceLoadStats, true, statstypes.MetaUpdate{
 		PhysicalID:  tbl.PhysicalID,
 		Count:       tbl.RealtimeCount,
 		ModifyCount: tbl.ModifyCount,

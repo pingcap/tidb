@@ -381,12 +381,12 @@ func SaveColOrIdxStatsToStorage(
 	return
 }
 
-// SaveMetasToStorage will batch save stats_meta to storage.
-func SaveMetasToStorage(
+// SaveMetaToStorage will batch save stats_meta to storage.
+func SaveMetaToStorage(
 	sctx sessionctx.Context,
 	refreshLastHistVer bool,
 	metaUpdates []statstypes.MetaUpdate,
-) (statsVer uint64, err error) {
+) (uint64, error) {
 	version, err := util.GetStartTS(sctx)
 	if err != nil {
 		return 0, errors.Trace(err)

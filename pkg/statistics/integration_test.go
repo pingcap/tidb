@@ -625,7 +625,7 @@ func TestLastAnalyzeVersionNotChangedWithAsyncStatsLoad(t *testing.T) {
 	require.Equal(t, "<nil>", result.Rows()[0][6])
 }
 
-func TestSaveMetasToStorage(t *testing.T) {
+func TestSaveMetaToStorage(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tableCount := 10
@@ -644,7 +644,7 @@ func TestSaveMetasToStorage(t *testing.T) {
 		tableIDs = append(tableIDs, fmt.Sprintf("%d", tableInfo.ID))
 	}
 	statsHandler := dom.StatsHandle()
-	err := statsHandler.SaveMetasToStorage("test", false, metaUpdates...)
+	err := statsHandler.SaveMetaToStorage("test", false, metaUpdates...)
 	require.NoError(t, err)
 	rows := tk.MustQuery(
 		fmt.Sprintf(
@@ -678,7 +678,7 @@ func TestSaveMetasToStorage(t *testing.T) {
 		metaUpdates[i].ModifyCount = metaUpdates[i].Count
 		metaUpdates[i].Count += metaUpdates[i].ModifyCount
 	}
-	err = statsHandler.SaveMetasToStorage("test", true, metaUpdates...)
+	err = statsHandler.SaveMetaToStorage("test", true, metaUpdates...)
 	require.NoError(t, err)
 	rows = tk.MustQuery(
 		fmt.Sprintf(

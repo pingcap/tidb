@@ -324,7 +324,7 @@ type PartitionStatisticLoadTask struct {
 // PersistFunc is used to persist JSONTable in the partition level.
 type PersistFunc func(ctx context.Context, jsonTable *statsutil.JSONTable, physicalID int64) error
 
-// MetaUpdate records a partition-level meta update.
+// MetaUpdate records a meta update for a partition or table.
 type MetaUpdate struct {
 	PhysicalID  int64
 	Count       int64
@@ -356,10 +356,10 @@ type StatsReadWriter interface {
 	// SaveAnalyzeResultToStorage saves the analyze result to the storage.
 	SaveAnalyzeResultToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error)
 
-	// SaveMetasToStorage saves the stats meta of a table to storage.
+	// SaveMetaToStorage saves the stats meta of a table to storage.
 	// Use the param `refreshLastHistVer` to indicate whether we need to update the last_histograms_versions in stats_meta table.
 	// Set it to true if the column/index stats is updated.
-	SaveMetasToStorage(source string, needRefreshLastHistVer bool, metaUpdates ...MetaUpdate) (err error)
+	SaveMetaToStorage(source string, needRefreshLastHistVer bool, metaUpdates ...MetaUpdate) (err error)
 
 	// UpdateStatsMetaVersionForGC updates the version of mysql.stats_meta,
 	// ensuring it is greater than the last garbage collection (GC) time.

@@ -298,7 +298,7 @@ func (rc *SnapClient) GoUpdateMetaAndLoadStats(
 			log.Info("start update metas", zap.Stringer("table", oldTable.Info.Name), zap.Stringer("db", oldTable.DB.Name))
 			// the total kvs contains the index kvs, but the stats meta needs the count of rows
 			count := int64(oldTable.TotalKvs / uint64(len(oldTable.Info.Indices)+1))
-			if statsErr = statsHandler.SaveMetasToStorage("br restore", false, statstypes.MetaUpdate{
+			if statsErr = statsHandler.SaveMetaToStorage("br restore", false, statstypes.MetaUpdate{
 				PhysicalID:  tbl.Table.ID,
 				Count:       count,
 				ModifyCount: 0,
