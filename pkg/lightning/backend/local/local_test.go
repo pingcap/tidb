@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"io"
 	"math"
 	"math/rand"
 	"path"
@@ -1094,28 +1093,18 @@ func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace"))
 	}()
-	worker := &opRegionJobWorker{
-		regionJobBaseWorker: &regionJobBaseWorker{
-			jobInCh:          make(chan *regionJob, 1),
-			jobOutCh:         make(chan *regionJob, 1),
-			doRunJobFn:       bak.executeJob,
-			regenerateJobsFn: bak.generateJobForRange,
-		},
-	}
-	worker.jobInCh <- &regionJob{}
+	toCh := make(chan *regionJob, 1)
+	worker := bak.newRegionJobWorker(toCh, make(chan *regionJob, 1), nil, nil)
+
+	toCh <- &regionJob{}
 	err := worker.run(context.Background())
 	require.Error(t, err)
 	require.Regexp(t, "the remaining storage capacity of TiKV.*", err.Error())
-	require.Len(t, worker.jobInCh, 0)
-}
-
-func TestLocalIsRetryableTiKVWriteError(t *testing.T) {
-	l := Backend{}
-	require.True(t, l.isRetryableImportTiKVError(io.EOF))
-	require.True(t, l.isRetryableImportTiKVError(errors.Trace(io.EOF)))
+	require.Len(t, toCh, 0)
 }
 
 // mockIngestData must be ordered on the first element of each [2][]byte.
+// there cannot be duplicated items.
 type mockIngestData [][2][]byte
 
 func (m mockIngestData) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []byte, error) {
@@ -1150,13 +1139,18 @@ func (m mockIngestData) getFirstAndLastKeyIdx(lowerBound, upperBound []byte) (in
 		if i == 0 {
 			return -1, -1
 		}
-		last = i - 1
+		if i == len(m) || !bytes.Equal(upperBound, m[i][1]) {
+			last = i - 1
+		} else {
+			last = i
+		}
 	}
 	return first, last
 }
 
 type mockIngestIter struct {
-	data                     mockIngestData
+	data mockIngestData
+	// [startIdx, endIdx)
 	startIdx, endIdx, curIdx int
 }
 
@@ -1184,7 +1178,7 @@ func (m *mockIngestIter) ReleaseBuf() {}
 
 func (m mockIngestData) NewIter(_ context.Context, lowerBound, upperBound []byte, _ *membuf.Pool) common.ForwardIter {
 	i, j := m.getFirstAndLastKeyIdx(lowerBound, upperBound)
-	return &mockIngestIter{data: m, startIdx: i, endIdx: j, curIdx: i}
+	return &mockIngestIter{data: m, startIdx: i, endIdx: j + 1, curIdx: i}
 }
 
 func (m mockIngestData) GetTS() uint64 { return oracle.GoTimeToTS(time.Now()) }
@@ -1304,14 +1298,7 @@ func TestCheckPeersBusy(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		worker := &opRegionJobWorker{
-			regionJobBaseWorker: &regionJobBaseWorker{
-				jobInCh:          jobCh,
-				jobOutCh:         jobOutCh,
-				doRunJobFn:       local.executeJob,
-				regenerateJobsFn: local.generateJobForRange,
-			},
-		}
+		worker := local.newRegionJobWorker(jobCh, jobOutCh, nil, nil)
 		err := worker.run(ctx)
 		require.NoError(t, err)
 	}()
@@ -1419,15 +1406,7 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		worker := &opRegionJobWorker{
-			regionJobBaseWorker: &regionJobBaseWorker{
-				jobInCh:          jobCh,
-				jobOutCh:         jobOutCh,
-				jobWg:            &jobWg,
-				doRunJobFn:       local.executeJob,
-				regenerateJobsFn: local.generateJobForRange,
-			},
-		}
+		worker := local.newRegionJobWorker(jobCh, jobOutCh, &jobWg, nil)
 		err := worker.run(ctx)
 		require.NoError(t, err)
 	}()
@@ -1528,15 +1507,7 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		worker := &opRegionJobWorker{
-			regionJobBaseWorker: &regionJobBaseWorker{
-				jobInCh:          jobCh,
-				jobOutCh:         jobOutCh,
-				jobWg:            &jobWg,
-				doRunJobFn:       local.executeJob,
-				regenerateJobsFn: local.generateJobForRange,
-			},
-		}
+		worker := local.newRegionJobWorker(jobCh, jobOutCh, &jobWg, nil)
 		err := worker.run(ctx)
 		require.NoError(t, err)
 	}()
@@ -1658,15 +1629,7 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		worker := &opRegionJobWorker{
-			regionJobBaseWorker: &regionJobBaseWorker{
-				jobInCh:          jobCh,
-				jobOutCh:         jobOutCh,
-				jobWg:            &jobWg,
-				doRunJobFn:       local.executeJob,
-				regenerateJobsFn: local.generateJobForRange,
-			},
-		}
+		worker := local.newRegionJobWorker(jobCh, jobOutCh, &jobWg, nil)
 		err := worker.run(ctx)
 		require.NoError(t, err)
 	}()
