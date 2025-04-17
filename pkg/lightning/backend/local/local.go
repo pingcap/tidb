@@ -1445,8 +1445,8 @@ func (local *Backend) newRegionJobWorker(
 		afterRunJobFn:    afterExecuteJob,
 		regenerateJobsFn: local.generateJobForRange,
 	}
-	if tidbconfig.IsCloudStore() {
-		cloudW := &cloudRegionJobWorker{
+	if tidbconfig.IsObjectStore() {
+		cloudW := &objStoreRegionJobWorker{
 			// TODO fill the cli
 			ingestCli:      nil,
 			writeBatchSize: local.KVWriteBatchSize,
@@ -1459,7 +1459,7 @@ func (local *Backend) newRegionJobWorker(
 		return cloudW
 	}
 
-	opWorker := &opRegionJobWorker{
+	opWorker := &blkStoreRegionJobWorker{
 		checkTiKVSpace: local.ShouldCheckTiKV,
 		pdHTTPCli:      local.pdHTTPCli,
 	}

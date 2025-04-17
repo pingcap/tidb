@@ -219,13 +219,14 @@ func (*regionJobBaseWorker) isRetryableImportTiKVError(err error) bool {
 	return common.IsRetryableError(err)
 }
 
-type opRegionJobWorker struct {
+// blkStoreRegionJobWorker is the retion job worker for block storage engine.
+type blkStoreRegionJobWorker struct {
 	*regionJobBaseWorker
 	checkTiKVSpace bool
 	pdHTTPCli      pdhttp.Client
 }
 
-func (w *opRegionJobWorker) preRunJob(ctx context.Context, job *regionJob) error {
+func (w *blkStoreRegionJobWorker) preRunJob(ctx context.Context, job *regionJob) error {
 	failpoint.Inject("WriteToTiKVNotEnoughDiskSpace", func(_ failpoint.Value) {
 		failpoint.Return(
 			errors.New("the remaining storage capacity of TiKV is less than 10%%; please increase the storage capacity of TiKV and try again"))
@@ -246,21 +247,22 @@ func (w *opRegionJobWorker) preRunJob(ctx context.Context, job *regionJob) error
 	return nil
 }
 
-type cloudRegionJobWorker struct {
+// objStoreRegionJobWorker is the region job worker for object storage engine.
+type objStoreRegionJobWorker struct {
 	*regionJobBaseWorker
 	ingestCli      ingestcli.Client
 	writeBatchSize int64
 	bufPool        *membuf.Pool
 }
 
-func (*cloudRegionJobWorker) preRunJob(_ context.Context, _ *regionJob) error {
+func (*objStoreRegionJobWorker) preRunJob(_ context.Context, _ *regionJob) error {
 	// cloud engine use cloud storage, such as S3, to hold data, so no need to check
 	// disk fullness.
 	return nil
 }
 
 // we don't need to limit write speed as we write to tikv-worker.
-func (w *cloudRegionJobWorker) write(ctx context.Context, job *regionJob) (*tikvWriteResult, error) {
+func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*tikvWriteResult, error) {
 	firstKey, _, err := job.ingestData.GetFirstAndLastKey(job.keyRange.Start, job.keyRange.End)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -350,7 +352,7 @@ func (w *cloudRegionJobWorker) write(ctx context.Context, job *regionJob) (*tikv
 	}, nil
 }
 
-func (w *cloudRegionJobWorker) ingest(ctx context.Context, j *regionJob) error {
+func (w *objStoreRegionJobWorker) ingest(ctx context.Context, j *regionJob) error {
 	in := &ingestcli.IngestRequest{
 		Region:  j.region,
 		SSTFile: j.writeResult.sstFile,
