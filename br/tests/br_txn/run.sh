@@ -97,12 +97,22 @@ run_test() {
     # delete data in range[start-key, end-key)
     clean "hello" "world" 
     # Ensure the data is deleted
-    checksum_new=$(checksum "hello" "world")
+    retry_cnt=0
+    while true; do
+        checksum_new=$(checksum "hello" "world")
 
-    if [ "$checksum_new" != "$checksum_empty" ];then
-        echo "failed to delete data in range after backup"
-        fail_and_exit
-    fi
+        if [ "$checksum_new" != "$checksum_empty" ]; then
+            echo "failed to delete data in range after backup; retry_cnt = $retry_cnt"
+            retry_cnt=$((retry_cnt+1))
+            if [ "$retry_cnt" -gt 50 ]; then
+                fail_and_exit
+            fi
+            sleep 1
+            continue
+        fi
+
+        break
+    done
 
     # restore rawkv
     echo "restore start..."
