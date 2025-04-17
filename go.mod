@@ -61,7 +61,7 @@ require (
 	github.com/gordonklaus/ineffassign v0.1.0
 	github.com/gorilla/mux v1.8.1
 	github.com/gostaticanalysis/forcetypeassert v0.2.0
-	github.com/grafana/pyroscope-go v1.2.1
+	github.com/grafana/pyroscope-go v1.2.2
 	github.com/grpc-ecosystem/go-grpc-middleware v1.4.0
 	github.com/hashicorp/go-version v1.7.0
 	github.com/jedib0t/go-pretty/v6 v6.2.2
@@ -75,7 +75,7 @@ require (
 	github.com/klauspost/compress v1.18.0
 	github.com/ks3sdklib/aws-sdk-go v1.2.9
 	github.com/lestrrat-go/jwx/v2 v2.0.21
-	github.com/mgechev/revive v1.8.0
+	github.com/mgechev/revive v1.9.0
 	github.com/ngaut/pools v0.0.0-20180318154953-b7bc8c42aac7
 	github.com/ngaut/sync2 v0.0.0-20141008032647-7a24ed77b2ef
 	github.com/nishanths/predeclared v0.2.2
