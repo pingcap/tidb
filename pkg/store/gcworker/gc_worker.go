@@ -58,21 +58,24 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/rangetask"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
+	pdgc "github.com/tikv/pd/client/clients/gc"
+	"github.com/tikv/pd/client/constants"
 	"go.uber.org/zap"
 )
 
 // GCWorker periodically triggers GC process on tikv server.
 type GCWorker struct {
-	uuid               string
-	desc               string
-	store              kv.Storage
-	tikvStore          tikv.Storage
-	pdClient           pd.Client
-	gcIsRunning        bool
-	lastFinish         time.Time
-	cancel             context.CancelFunc
-	done               chan error
-	regionLockResolver tikv.RegionLockResolver
+	uuid                 string
+	desc                 string
+	store                kv.Storage
+	tikvStore            tikv.Storage
+	pdClient             pd.Client
+	pdGCControllerClient pdgc.InternalController
+	gcIsRunning          bool
+	lastFinish           time.Time
+	cancel               context.CancelFunc
+	done                 chan error
+	regionLockResolver   tikv.RegionLockResolver
 }
 
 // NewGCWorker creates a GCWorker instance.
@@ -92,15 +95,16 @@ func NewGCWorker(store kv.Storage, pdClient pd.Client) (*GCWorker, error) {
 	uuid := strconv.FormatUint(ver.Ver, 16)
 	resolverIdentifier := fmt.Sprintf("gc-worker-%s", uuid)
 	worker := &GCWorker{
-		uuid:               uuid,
-		desc:               fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
-		store:              store,
-		tikvStore:          tikvStore,
-		pdClient:           pdClient,
-		gcIsRunning:        false,
-		lastFinish:         time.Now(),
-		regionLockResolver: tikv.NewRegionLockResolver(resolverIdentifier, tikvStore),
-		done:               make(chan error),
+		uuid:                 uuid,
+		desc:                 fmt.Sprintf("host:%s, pid:%d, start at %s", hostName, os.Getpid(), time.Now()),
+		store:                store,
+		tikvStore:            tikvStore,
+		pdClient:             pdClient,
+		pdGCControllerClient: pdClient.GetGCInternalController(uint32(store.GetCodec().GetKeyspaceID())),
+		gcIsRunning:          false,
+		lastFinish:           time.Now(),
+		regionLockResolver:   tikv.NewRegionLockResolver(resolverIdentifier, tikvStore),
+		done:                 make(chan error),
 	}
 	variable.RegisterStatistics(worker)
 	return worker, nil
@@ -170,7 +174,7 @@ const (
 	tidbGCSafePoint   = "tidb_gc_safe_point"
 )
 
-var gcSafePointCacheInterval = tikv.GcSafePointCacheInterval
+var txnSafePointSyncWaitTime = tikv.GcSafePointCacheInterval
 
 var gcVariableComments = map[string]string{
 	gcLeaderUUIDKey:      "Current GC worker leader UUID. (DO NOT EDIT)",
@@ -182,7 +186,7 @@ var gcVariableComments = map[string]string{
 	gcSafePointKey:       "All versions after safe point can be accessed. (DO NOT EDIT)",
 	gcConcurrencyKey:     "How many goroutines used to do GC parallel, [1, 128], default 2",
 	gcEnableKey:          "Current GC enable status",
-	gcModeKey:            "Mode of GC, \"central\" or \"distributed\"",
+	gcModeKey:            "Mode of GC, \"central\" or \"distributed\". (Obsolete and no longer effective, the actual GC procedure is always \"distributed\")",
 	gcAutoConcurrencyKey: "Let TiDB pick the concurrency automatically. If set false, tikv_gc_concurrency will be used",
 	gcScanLockModeKey:    "Mode of scanning locks, \"physical\" or \"legacy\".(Deprecated)",
 }
@@ -389,7 +393,10 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 	// If `keyspace-name` is set, the TiDB node will only do its own delete range, and will not calculate gc safe point and resolve locks.
 	// Note that when `keyspace-name` is set, `checkLeader` will be done within the key space.
 	// Therefore only one TiDB node in each key space will be responsible to do delete range.
-	if w.store.GetCodec().GetKeyspace() != nil {
+	// TODO: Use result of AdvanceTxnSafePoint instead, which makes it unnecessary to manually check the config.
+	const cfgGCManagementType = "gc_management_type"
+	const cfgGCManagementTypeKeyspaceLevel = "keyspace_level"
+	if keyspaceMeta := w.store.GetCodec().GetKeyspaceMeta(); keyspaceMeta != nil && keyspaceMeta.Config[cfgGCManagementType] == cfgGCManagementTypeKeyspaceLevel {
 		err = w.runKeyspaceGCJob(ctx, concurrency)
 		if err != nil {
 			return errors.Trace(err)
@@ -498,7 +505,7 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 	if err != nil || !ok {
 		return false, 0, errors.Trace(err)
 	}
-	newSafePoint, newSafePointValue, err := w.calcNewSafePoint(ctx, now)
+	newSafePoint, newSafePointValue, err := w.calcNewTxnSafePoint(ctx, now)
 	if err != nil || newSafePoint == nil {
 		return false, 0, errors.Trace(err)
 	}
@@ -511,53 +518,6 @@ func (w *GCWorker) checkPrepare(ctx context.Context) (bool, uint64, error) {
 		return false, 0, errors.Trace(err)
 	}
 	return true, newSafePointValue, nil
-}
-
-func (w *GCWorker) calcGlobalMinStartTS(ctx context.Context) (uint64, error) {
-	kvs, err := w.tikvStore.GetSafePointKV().GetWithPrefix(infosync.ServerMinStartTSPath)
-	if err != nil {
-		return 0, err
-	}
-
-	var globalMinStartTS uint64 = math.MaxUint64
-	for _, v := range kvs {
-		minStartTS, err := strconv.ParseUint(string(v.Value), 10, 64)
-		if err != nil {
-			logutil.Logger(ctx).Warn("parse minStartTS failed", zap.Error(err))
-			continue
-		}
-		if minStartTS < globalMinStartTS {
-			globalMinStartTS = minStartTS
-		}
-	}
-	return globalMinStartTS, nil
-}
-
-// calcNewSafePoint uses the current global transaction min start timestamp to calculate the new safe point.
-func (w *GCWorker) calcSafePointByMinStartTS(ctx context.Context, safePoint uint64) uint64 {
-	globalMinStartTS, err := w.calcGlobalMinStartTS(ctx)
-	if err != nil {
-		logutil.Logger(ctx).Warn("get all minStartTS failed", zap.Error(err))
-		return safePoint
-	}
-
-	// If the lock.ts <= max_ts(safePoint), it will be collected and resolved by the gc worker,
-	// the locks of ongoing pessimistic transactions could be resolved by the gc worker and then
-	// the transaction is aborted, decrement the value by 1 to avoid this.
-	globalMinStartAllowedTS := globalMinStartTS
-	if globalMinStartTS > 0 {
-		globalMinStartAllowedTS = globalMinStartTS - 1
-	}
-
-	if globalMinStartAllowedTS < safePoint {
-		logutil.Logger(ctx).Info("gc safepoint blocked by a running session", zap.String("category", "gc worker"),
-			zap.String("uuid", w.uuid),
-			zap.Uint64("globalMinStartTS", globalMinStartTS),
-			zap.Uint64("globalMinStartAllowedTS", globalMinStartAllowedTS),
-			zap.Uint64("safePoint", safePoint))
-		safePoint = globalMinStartAllowedTS
-	}
-	return safePoint
 }
 
 func (w *GCWorker) getOracleTime() (time.Time, error) {
@@ -675,7 +635,7 @@ func (w *GCWorker) validateGCLifeTime(lifeTime time.Duration) (time.Duration, er
 	return gcMinLifeTime, err
 }
 
-func (w *GCWorker) calcNewSafePoint(ctx context.Context, now time.Time) (*time.Time, uint64, error) {
+func (w *GCWorker) calcNewTxnSafePoint(ctx context.Context, now time.Time) (*time.Time, uint64, error) {
 	lifeTime, err := w.loadDurationWithDefault(gcLifeTimeKey, gcDefaultLifeTime)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
@@ -686,33 +646,51 @@ func (w *GCWorker) calcNewSafePoint(ctx context.Context, now time.Time) (*time.T
 	}
 	metrics.GCConfigGauge.WithLabelValues(gcLifeTimeKey).Set(lifeTime.Seconds())
 
-	lastSafePoint, err := w.loadTime(gcSafePointKey)
+	// The target value we try to advance the txn safe point.
+	target := oracle.GoTimeToTS(now.Add(-*lifeTime))
+
+	newTxnSafePoint, err := w.advanceTxnSafePoint(ctx, target)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
-
-	safePointValue := w.calcSafePointByMinStartTS(ctx, oracle.GoTimeToTS(now.Add(-*lifeTime)))
-	safePointValue, err = w.setGCWorkerServiceSafePoint(ctx, safePointValue)
-	if err != nil {
-		return nil, 0, errors.Trace(err)
-	}
-
-	// safepoint is recorded in time.Time format which strips the logical part of the timestamp.
-	// To prevent the GC worker from keeping working due to the loss of logical part when the
-	// safe point isn't changed, we should compare them in time.Time format.
-	safePoint := oracle.GetTimeFromTS(safePointValue)
-	// We should never decrease safePoint.
-	if lastSafePoint != nil && !safePoint.After(*lastSafePoint) {
-		logutil.BgLogger().Info("last safe point is later than current one."+
-			"No need to gc."+
-			"This might be caused by manually enlarging gc lifetime",
-			zap.String("category", "gc worker"),
-			zap.String("leaderTick on", w.uuid),
-			zap.Time("last safe point", *lastSafePoint),
-			zap.Time("current safe point", safePoint))
+	if newTxnSafePoint == 0 {
 		return nil, 0, nil
 	}
-	return &safePoint, safePointValue, nil
+
+	// safe point is recorded in time.Time format which strips the logical part of the timestamp.
+	// To prevent the GC worker from keeping working due to the loss of logical part when the
+	// safe point isn't changed, we should compare them in time.Time format.
+	txnSafePointTime := oracle.GetTimeFromTS(newTxnSafePoint)
+	// We should never decrease safePoint.
+	return &txnSafePointTime, newTxnSafePoint, nil
+}
+
+func (w *GCWorker) advanceTxnSafePoint(ctx context.Context, target uint64) (newTxnSafePoint uint64, err error) {
+	result, err := w.pdGCControllerClient.AdvanceTxnSafePoint(ctx, target)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+
+	if result.NewTxnSafePoint <= result.OldTxnSafePoint {
+		logutil.BgLogger().Info("txn safe point not advanced, GC will be skipped. this may be caused by GC being blocked, or user enlarged GC life time.",
+			zap.String("category", "gc worker"),
+			zap.String("uuid", w.uuid),
+			zap.Uint64("target", target),
+			zap.Uint64("oldTxnSafePoint", result.OldTxnSafePoint),
+			zap.Uint64("newTxnSafePoint", result.NewTxnSafePoint),
+			zap.String("blockerDesc", result.BlockerDescription))
+		return 0, nil
+	} else if result.NewTxnSafePoint != target {
+		logutil.BgLogger().Info("txn safe point not advanced to the expected value",
+			zap.String("category", "gc worker"),
+			zap.String("uuid", w.uuid),
+			zap.Uint64("target", target),
+			zap.Uint64("oldTxnSafePoint", result.OldTxnSafePoint),
+			zap.Uint64("newTxnSafePoint", result.NewTxnSafePoint),
+			zap.String("blockerDesc", result.BlockerDescription))
+	}
+
+	return result.NewTxnSafePoint, nil
 }
 
 // setGCWorkerServiceSafePoint sets the given safePoint as TiDB's service safePoint to PD, and returns the current minimal
@@ -746,62 +724,76 @@ func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency g
 	})
 	metrics.GCWorkerCounter.WithLabelValues("run_job").Inc()
 
-	err := w.resolveLocks(ctx, safePoint, concurrency.v)
+	// ----------*--------------------*--------------------> time
+	//                                ^ Txn safe point (not synced)
+	//           ^ GC safe point (last value)
+
+	// The txn safe point should be guaranteed to be synchronized over all necessary components after
+	// `txnSafePointSyncWaitTime`. We wait for that time before performing any operation about the GC.
+	time.Sleep(txnSafePointSyncWaitTime)
+
+	// ----------*--------------------*--------------------> time
+	//                                ^ Txn safe point (synced)
+	//           ^ GC safe point (last value)
+
+	// Resolve locks: make all transactions that started before the txn safe point to be determined, as a step to
+	// prevent those transactions from running.
+	// safePoint used as the txn safe point conceptually.
+	txnSafePoint := safePoint
+	err := w.resolveLocks(ctx, txnSafePoint, concurrency.v)
 	if err != nil {
 		logutil.Logger(ctx).Error("resolve locks returns an error", zap.String("category", "gc worker"),
 			zap.String("uuid", w.uuid),
+			zap.Uint64("txnSafePoint", txnSafePoint),
 			zap.Error(err))
 		metrics.GCJobFailureCounter.WithLabelValues("resolve_lock").Inc()
 		return errors.Trace(err)
 	}
 
-	// Save safe point to pd.
-	err = w.saveSafePoint(w.tikvStore.GetSafePointKV(), safePoint)
-	if err != nil {
-		logutil.Logger(ctx).Error("failed to save safe point to PD", zap.String("category", "gc worker"),
-			zap.String("uuid", w.uuid),
-			zap.Error(err))
-		metrics.GCJobFailureCounter.WithLabelValues("save_safe_point").Inc()
-		return errors.Trace(err)
-	}
-	// Sleep to wait for all other tidb instances update their safepoint cache.
-	time.Sleep(gcSafePointCacheInterval)
+	// After both synchronizing the txn safe point and resolving locks, next all component should guarantee that no more
+	// transaction started before the txn safe point should proceed.
+	// The following steps are all about clearing data, and the safePoint is used as the GC safe point conceptually.
+	gcSafePoint := safePoint
 
-	err = w.deleteRanges(ctx, safePoint, concurrency)
+	// ----------*--------------------*--------------------> time
+	//                                ^ Txn safe point (synced)
+	//                                ^ GC safe point (updated)
+
+	// Delete ranges: delete those data that are continuous in range caused by dropping/truncating tables or indices.
+
+	err = w.deleteRanges(ctx, gcSafePoint, concurrency)
 	if err != nil {
 		logutil.Logger(ctx).Error("delete range returns an error", zap.String("category", "gc worker"),
 			zap.String("uuid", w.uuid),
+			zap.Uint64("gcSafePoint", gcSafePoint),
 			zap.Error(err))
 		metrics.GCJobFailureCounter.WithLabelValues("delete_range").Inc()
 		return errors.Trace(err)
 	}
-	err = w.redoDeleteRanges(ctx, safePoint, concurrency)
+	err = w.redoDeleteRanges(ctx, gcSafePoint, concurrency)
 	if err != nil {
 		logutil.Logger(ctx).Error("redo-delete range returns an error", zap.String("category", "gc worker"),
 			zap.String("uuid", w.uuid),
+			zap.Uint64("gcSafePoint", gcSafePoint),
 			zap.Error(err))
 		metrics.GCJobFailureCounter.WithLabelValues("redo_delete_range").Inc()
 		return errors.Trace(err)
 	}
 
-	if w.checkUseDistributedGC() {
-		err = w.uploadSafePointToPD(ctx, safePoint)
-		if err != nil {
-			logutil.Logger(ctx).Error("failed to upload safe point to PD", zap.String("category", "gc worker"),
-				zap.String("uuid", w.uuid),
-				zap.Error(err))
-			metrics.GCJobFailureCounter.WithLabelValues("upload_safe_point").Inc()
-			return errors.Trace(err)
-		}
-	} else {
-		err = w.doGC(ctx, safePoint, concurrency.v)
-		if err != nil {
-			logutil.Logger(ctx).Error("do GC returns an error", zap.String("category", "gc worker"),
-				zap.String("uuid", w.uuid),
-				zap.Error(err))
-			metrics.GCJobFailureCounter.WithLabelValues("gc").Inc()
-			return errors.Trace(err)
-		}
+	// Next, broadcast the GC safe point to acknowledge TiKV and TiFlash (and possibly other storage types in the
+	// future) that the snapshots before the GC safe point can be safely dropped.
+
+	// ----------*--------------------*--------------------> time
+	//                                ^ Txn safe point (synced)
+	//                                ^ GC safe point (broadcasted)
+
+	err = w.broadcastGCSafePoint(ctx, gcSafePoint)
+	if err != nil {
+		logutil.Logger(ctx).Error("failed to upload safe point to PD", zap.String("category", "gc worker"),
+			zap.String("uuid", w.uuid),
+			zap.Error(err))
+		metrics.GCJobFailureCounter.WithLabelValues("upload_safe_point").Inc()
+		return errors.Trace(err)
 	}
 
 	return nil
@@ -1185,7 +1177,7 @@ func (w *GCWorker) checkUseDistributedGC() bool {
 			zap.Error(err))
 		metrics.GCJobFailureCounter.WithLabelValues("check_gc_mode").Inc()
 	} else if strings.EqualFold(mode, gcModeCentral) {
-		logutil.BgLogger().Warn("distributed mode will be used as central mode is deprecated", zap.String("category", "gc worker"))
+		logutil.BgLogger().Warn("user configured to use central mode GC, which is no longer available. distributed mode will still be used", zap.String("category", "gc worker"))
 	} else if !strings.EqualFold(mode, gcModeDistributed) {
 		logutil.BgLogger().Warn("distributed mode will be used", zap.String("category", "gc worker"),
 			zap.String("invalid gc mode", mode))
@@ -1234,36 +1226,25 @@ func (w *GCWorker) resolveLocks(
 
 const gcOneRegionMaxBackoff = 20000
 
-func (w *GCWorker) uploadSafePointToPD(ctx context.Context, safePoint uint64) error {
-	var newSafePoint uint64
-	var err error
-
-	bo := tikv.NewBackofferWithVars(ctx, gcOneRegionMaxBackoff, nil)
-	for {
-		newSafePoint, err = w.pdClient.UpdateGCSafePoint(ctx, safePoint)
-		if err != nil {
-			if errors.Cause(err) == context.Canceled {
-				return errors.Trace(err)
-			}
-			err = bo.Backoff(tikv.BoPDRPC(), errors.Errorf("failed to upload safe point to PD, err: %v", err))
-			if err != nil {
-				return errors.Trace(err)
-			}
-			continue
-		}
-		break
-	}
-
-	if newSafePoint != safePoint {
-		logutil.Logger(ctx).Warn("PD rejected safe point", zap.String("category", "gc worker"),
+func (w *GCWorker) broadcastGCSafePoint(ctx context.Context, gcSafePoint uint64) error {
+	result, err := w.pdGCControllerClient.AdvanceGCSafePoint(ctx, gcSafePoint)
+	if err != nil {
+		logutil.Logger(ctx).Error("failed to broadcast gc safe point", zap.String("category", "gc worker"),
 			zap.String("uuid", w.uuid),
-			zap.Uint64("our safe point", safePoint),
-			zap.Uint64("using another safe point", newSafePoint))
-		return errors.Errorf("PD rejected our safe point %v but is using another safe point %v", safePoint, newSafePoint)
+			zap.Uint64("gcSafePoint", gcSafePoint),
+			zap.Error(err))
+		return errors.Trace(err)
 	}
-	logutil.Logger(ctx).Info("sent safe point to PD", zap.String("category", "gc worker"),
-		zap.String("uuid", w.uuid),
-		zap.Uint64("safe point", safePoint))
+
+	if result.NewGCSafePoint != gcSafePoint {
+		logutil.Logger(ctx).Warn("gc safe point not advanced to the expected value",
+			zap.String("category", "gc worker"),
+			zap.String("uuid", w.uuid),
+			zap.Uint64("target", gcSafePoint),
+			zap.Uint64("oldGCSafePoint", result.OldGCSafePoint),
+			zap.Uint64("newGCSafePoint", result.NewGCSafePoint))
+	}
+
 	return nil
 }
 
@@ -1750,38 +1731,8 @@ func getGCRules(ids []int64, rules map[string]*label.Rule) []string {
 // RunGCJob sends GC command to KV. It is exported for kv api, do not use it with GCWorker at the same time.
 // only use for test
 func RunGCJob(ctx context.Context, regionLockResolver tikv.RegionLockResolver, s tikv.Storage, pd pd.Client, safePoint uint64, identifier string, concurrency int) error {
-	gcWorker := &GCWorker{
-		tikvStore:          s,
-		uuid:               identifier,
-		pdClient:           pd,
-		regionLockResolver: regionLockResolver,
-	}
-
-	if concurrency <= 0 {
-		return errors.Errorf("[gc worker] gc concurrency should greater than 0, current concurrency: %v", concurrency)
-	}
-
-	safePoint, err := gcWorker.setGCWorkerServiceSafePoint(ctx, safePoint)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	err = gcWorker.resolveLocks(ctx, safePoint, concurrency)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	err = gcWorker.saveSafePoint(gcWorker.tikvStore.GetSafePointKV(), safePoint)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// Sleep to wait for all other tidb instances update their safepoint cache.
-	time.Sleep(gcSafePointCacheInterval)
-	err = gcWorker.doGC(ctx, safePoint, concurrency)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
+	// Centralized GC is no longer available. Redirect to the distributed version silently.
+	return RunDistributedGCJob(ctx, regionLockResolver, s, pd, safePoint, identifier, concurrency)
 }
 
 // RunDistributedGCJob notifies TiKVs to do GC. It is exported for kv api, do not use it with GCWorker at the same time.
@@ -1789,30 +1740,29 @@ func RunGCJob(ctx context.Context, regionLockResolver tikv.RegionLockResolver, s
 // Param concurrency specifies the concurrency of resolveLocks phase.
 func RunDistributedGCJob(ctx context.Context, regionLockResolver tikv.RegionLockResolver, s tikv.Storage, pd pd.Client, safePoint uint64, identifier string, concurrency int) error {
 	gcWorker := &GCWorker{
-		tikvStore:          s,
-		uuid:               identifier,
-		pdClient:           pd,
-		regionLockResolver: regionLockResolver,
+		tikvStore:            s,
+		uuid:                 identifier,
+		pdClient:             pd,
+		pdGCControllerClient: pd.GetGCInternalController(constants.NullKeyspaceID),
+		regionLockResolver:   regionLockResolver,
 	}
 
-	safePoint, err := gcWorker.setGCWorkerServiceSafePoint(ctx, safePoint)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	err = gcWorker.resolveLocks(ctx, safePoint, concurrency)
+	newTxnSafePoint, err := gcWorker.advanceTxnSafePoint(ctx, safePoint)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	// Save safe point to pd.
-	err = gcWorker.saveSafePoint(gcWorker.tikvStore.GetSafePointKV(), safePoint)
+	// Sync txn safe point
+	time.Sleep(txnSafePointSyncWaitTime)
+
+	err = gcWorker.resolveLocks(ctx, newTxnSafePoint, concurrency)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Sleep to wait for all other tidb instances update their safepoint cache.
-	time.Sleep(gcSafePointCacheInterval)
 
-	err = gcWorker.uploadSafePointToPD(ctx, safePoint)
+	gcSafePoint := newTxnSafePoint
+
+	err = gcWorker.broadcastGCSafePoint(ctx, gcSafePoint)
 	if err != nil {
 		return errors.Trace(err)
 	}
