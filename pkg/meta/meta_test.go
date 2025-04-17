@@ -1150,6 +1150,7 @@ func TestInfoSchemaMiscFieldsCorrectnessAfterBootstrap(t *testing.T) {
 			RefSchema: ast.NewCIStr("t1"),
 			RefTable:  ast.NewCIStr("parent"),
 			Version:   1,
+			RefCols:   []ast.CIStr{ast.NewCIStr("id")},
 		}},
 		PlacementPolicyRef: &model.PolicyRefInfo{
 			ID:   policy.ID,
