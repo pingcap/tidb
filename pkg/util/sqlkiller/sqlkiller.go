@@ -18,6 +18,7 @@ import (
 	"math/rand"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -39,6 +40,8 @@ const (
 	// so that errors in client can be correctly converted to tidb errors.
 )
 
+const checkConnectionAliveDur time.Duration = time.Second
+
 // SQLKiller is used to kill a query.
 type SQLKiller struct {
 	Signal killSignal
@@ -51,6 +54,9 @@ type SQLKiller struct {
 	// InWriteResultSet is used to indicate whether the query is currently calling clientConn.writeResultSet().
 	// If the query is in writeResultSet and Finish() can acquire rs.finishLock, we can assume the query is waiting for the client to receive data from the server over network I/O.
 	InWriteResultSet atomic.Bool
+
+	lastCheckTime     atomic.Pointer[time.Time]
+	IsConnectionAlive atomic.Pointer[func() bool]
 }
 
 // SendKillSignal sends a kill signal to the query.
@@ -122,6 +128,20 @@ func (killer *SQLKiller) HandleSignal() error {
 			}
 		}
 	})
+
+	// Checks if the connection is alive.
+	// For performance reasons, the check interval should be at least `checkConnectionAliveDur`(1 second).
+	fn := killer.IsConnectionAlive.Load()
+	ts := killer.lastCheckTime.Load()
+	if fn != nil && (ts == nil || time.Since(*ts) > checkConnectionAliveDur) {
+		now := time.Now()
+		killer.lastCheckTime.Store(&now)
+		// Skip the first time.
+		if ts != nil && !(*fn)() {
+			atomic.CompareAndSwapUint32(&killer.Signal, 0, QueryInterrupted)
+		}
+	}
+
 	status := atomic.LoadUint32(&killer.Signal)
 	err := killer.getKillError(status)
 	if status == ServerMemoryExceeded {

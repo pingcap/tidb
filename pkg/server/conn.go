@@ -2076,9 +2076,21 @@ func (cc *clientConn) handleStmt(
 				//nolint: errcheck
 				rs.Finish()
 			})
+		fn := func() bool {
+			b := make([]byte, 1)
+			cc.bufReadConn.SetReadDeadline(time.Now().Add(30 * time.Microsecond))
+			_, err = cc.bufReadConn.Read(b)
+			if terror.ErrorEqual(err, io.EOF) {
+				return false
+			}
+			cc.bufReadConn.SetReadDeadline(time.Time{})
+			return true
+		}
+		cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(&fn)
 		cc.ctx.GetSessionVars().SQLKiller.InWriteResultSet.Store(true)
 		defer cc.ctx.GetSessionVars().SQLKiller.InWriteResultSet.Store(false)
 		defer cc.ctx.GetSessionVars().SQLKiller.ClearFinishFunc()
+		defer cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(nil)
 		if retryable, err := cc.writeResultSet(ctx, rs, false, status, 0); err != nil {
 			return retryable, err
 		}

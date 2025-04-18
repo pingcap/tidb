@@ -38,6 +38,7 @@ package server
 import (
 	"context"
 	"encoding/binary"
+	"io"
 	"runtime/trace"
 	"strconv"
 	"time"
@@ -50,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/server/internal/dump"
 	"github.com/pingcap/tidb/pkg/server/internal/parse"
@@ -231,6 +233,20 @@ func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt any, args [
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
+
+	fn := func() bool {
+		b := make([]byte, 1)
+		cc.bufReadConn.SetReadDeadline(time.Now().Add(30*time.Microsecond))
+		_, err := cc.bufReadConn.Read(b)
+		if terror.ErrorEqual(err, io.EOF) {
+			return false
+		}
+		cc.bufReadConn.SetReadDeadline(time.Time{})
+		return true
+	}
+	cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(&fn)
+	defer cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(nil)
+
 	//nolint:forcetypeassert
 	retryable, err := cc.executePreparedStmtAndWriteResult(ctx, stmt.(PreparedStatement), args, useCursor)
 	if err != nil {

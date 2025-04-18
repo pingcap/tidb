@@ -109,12 +109,11 @@ func (ds *pubSubDataSink) run() error {
 	for {
 		select {
 		case task := <-ds.sendTaskCh:
-			ctx, cancel := context.WithDeadline(ds.ctx, task.deadline)
+			ctx, _ := context.WithDeadline(ds.ctx, task.deadline) // nolint: lostcancel
 			var err error
 
 			start := time.Now()
 			go util.WithRecovery(func() {
-				defer cancel()
 				err = ds.doSend(ctx, task.data)
 
 				if err != nil {
