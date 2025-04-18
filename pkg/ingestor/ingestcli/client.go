@@ -61,7 +61,7 @@ func (w *writeClient) CloseAndRecv(ctx context.Context) (*WriteResponse, error) 
 		return nil, err
 	}
 
-	result := new(FileNameResult)
+	result := new(fileNameResult)
 	err = json.Unmarshal(data, result)
 	if err != nil {
 		return nil, err
@@ -83,7 +83,7 @@ func (c *client) WriteClient(ctx context.Context) (WriteClient, error) {
 	return newWriteClient(c.tikvWorkerURL, c.clusterID, c.taskID, c.httpClient), nil
 }
 
-type FileNameResult struct {
+type fileNameResult struct {
 	FileName string `json:"file_name"`
 }
 
