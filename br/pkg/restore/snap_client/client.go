@@ -124,6 +124,8 @@ type SnapClient struct {
 	// use db pool to speed up restoration in BR binary mode.
 	dbPool []*tidallocdb.DB
 
+	preallocedIDs *tidalloc.PreallocIDs
+
 	dom *domain.Domain
 
 	// correspond to --tidb-placement-mode config.
@@ -297,6 +299,9 @@ func (rc *SnapClient) SetPlacementPolicyMode(withPlacementPolicy string) {
 // the download stage.
 func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Table) error {
 	preallocedTableIDs := tidalloc.New(tables)
+	if preallocedTableIDs == nil {
+		return errors.Errorf("failed to pre-alloc table IDs")
+	}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	err := kv.RunInNewTxn(ctx, rc.GetDomain().Store(), true, func(_ context.Context, txn kv.Transaction) error {
 		return preallocedTableIDs.Alloc(meta.NewMutator(txn))
@@ -312,7 +317,23 @@ func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Tabl
 	if rc.db != nil {
 		rc.db.RegisterPreallocatedIDs(preallocedTableIDs)
 	}
+	rc.preallocedIDs = preallocedTableIDs
 	return nil
+}
+
+func (rc *SnapClient) GetPreAllocedTableIDRange() ([2]int64, error) {
+	if rc.preallocedIDs == nil {
+		return [2]int64{}, errors.Errorf("No preAlloced IDs")
+	}
+
+	start, end := rc.preallocedIDs.GetIDRange()
+
+	if start >= end {
+		log.Warn("PreAlloced IDs range is empty, no table to restore")
+		return [2]int64{start, end}, nil
+	}
+
+	return [2]int64{start, end}, nil
 }
 
 // InitCheckpoint initialize the checkpoint status for the cluster. If the cluster is
@@ -411,7 +432,7 @@ func (rc *SnapClient) InitCheckpoint(
 		rc.restoreUUID = restoreID
 		// a nil config means undo function
 		if config != nil {
-			meta.SchedulersConfig = &pdutil.ClusterConfig{Schedulers: config.Schedulers, ScheduleCfg: config.ScheduleCfg}
+			meta.SchedulersConfig = &pdutil.ClusterConfig{Schedulers: config.Schedulers, ScheduleCfg: config.ScheduleCfg, RuleID: config.RuleID}
 		}
 		if err := snapshotCheckpointMetaManager.SaveCheckpointMetadata(ctx, meta); err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
