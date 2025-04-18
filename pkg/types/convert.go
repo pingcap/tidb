@@ -499,14 +499,20 @@ func floatStrToIntStr(validFloat string, oriStr string) (intStr string, _ error)
 		intCnt = len(digits)
 		digits = append(digits, validFloat[dotIdx+1:eIdx]...)
 	}
-	exp, err := strconv.Atoi(validFloat[eIdx+1:])
-	if err != nil {
-		if digits[0] == '-' {
-			intStr = minIntStr
-		} else {
-			intStr = maxUintStr
+	var exp int
+	var err error
+	if eIdx == len(validFloat)-1 { // '5e'
+		exp = 0
+	} else {
+		exp, err = strconv.Atoi(validFloat[eIdx+1:])
+		if err != nil {
+			if digits[0] == '-' {
+				intStr = minIntStr
+			} else {
+				intStr = maxUintStr
+			}
+			return intStr, ErrOverflow.GenWithStackByArgs("BIGINT", oriStr)
 		}
-		return intStr, ErrOverflow.GenWithStackByArgs("BIGINT", oriStr)
 	}
 	intCnt += exp
 	if exp >= 0 && (intCnt > 21 || intCnt < 0) {
@@ -733,6 +739,7 @@ func getValidFloatPrefix(ctx Context, s string, isFuncCast bool) (valid string, 
 				break
 			}
 			eIdx = i
+			validLen = i + 1
 		} else if c == '\u0000' {
 			s = s[:validLen]
 			break
