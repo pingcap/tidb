@@ -24,6 +24,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/mock/mocklocal"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -107,7 +108,7 @@ func TestEngineManager(t *testing.T) {
 
 func TestGetExternalEngineKVStatistics(t *testing.T) {
 	em := &engineManager{
-		externalEngine: map[uuid.UUID]common.Engine{},
+		externalEngine: map[uuid.UUID]engineapi.Engine{},
 	}
 	// non existent uuid
 	size, count := em.getExternalEngineKVStatistics(uuid.New())

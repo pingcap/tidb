@@ -35,6 +35,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -100,7 +101,7 @@ func (j jobStageTp) String() string {
 // to a region. The keyRange may be changed when processing because of writing
 // partial data to TiKV or region split.
 type regionJob struct {
-	keyRange common.Range
+	keyRange engineapi.Range
 	// TODO: check the keyRange so that it's always included in region
 	region *split.RegionInfo
 	// stage should be updated only by convertStageTo
@@ -108,7 +109,7 @@ type regionJob struct {
 	// writeResult is available only in wrote and ingested stage
 	writeResult *tikvWriteResult
 
-	ingestData      common.IngestData
+	ingestData      engineapi.IngestData
 	regionSplitSize int64
 	regionSplitKeys int64
 	metrics         *metric.Common
@@ -145,7 +146,7 @@ type injectedIngestBehaviour struct {
 
 func newRegionJob(
 	region *split.RegionInfo,
-	data common.IngestData,
+	data engineapi.IngestData,
 	jobStart []byte,
 	jobEnd []byte,
 	regionSplitSize int64,
@@ -161,7 +162,7 @@ func newRegionJob(
 		zap.Binary("regionEnd", region.Region.GetEndKey()),
 		zap.Reflect("peers", region.Region.GetPeers()))
 	return &regionJob{
-		keyRange:        common.Range{Start: jobStart, End: jobEnd},
+		keyRange:        engineapi.Range{Start: jobStart, End: jobEnd},
 		region:          region,
 		stage:           regionScanned,
 		ingestData:      data,
@@ -180,8 +181,8 @@ func newRegionJob(
 // - sortedRegions can cover sortedJobRanges
 func newRegionJobs(
 	sortedRegions []*split.RegionInfo,
-	data common.IngestData,
-	sortedJobRanges []common.Range,
+	data engineapi.IngestData,
+	sortedJobRanges []engineapi.Range,
 	regionSplitSize int64,
 	regionSplitKeys int64,
 	metrics *metric.Common,
