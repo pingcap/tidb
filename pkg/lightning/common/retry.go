@@ -43,6 +43,8 @@ var retryableErrorMsgList = []string{
 	"coprocessor task terminated due to exceeding the deadline",
 	// fix https://github.com/pingcap/tidb/issues/51383
 	"rate: wait",
+	// Mock error during test
+	"injected random error",
 }
 
 func isRetryableFromErrorMessage(err error) bool {

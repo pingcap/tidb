@@ -15,6 +15,7 @@
 package injectfailpoint
 
 import (
+	"io"
 	"math/rand"
 	"runtime"
 
@@ -35,12 +36,33 @@ func DXFRandomErrorWithOnePercent() error {
 	return nil
 }
 
+// DXFRandomErrorWithOnePercentWrapper returns an error with probability 0.01. It controls the DXF's failpoint.
+func DXFRandomErrorWithOnePercentWrapper(err error) error {
+	if err != nil {
+		return err
+	}
+	failpoint.Inject("DXFRandomError", func() {
+		failpoint.Return(RandomError(0.01, errors.Errorf("injected random error, caller: %s", getFunctionName())))
+	})
+	return nil
+}
+
 // DXFRandomErrorWithOnePerThousand returns an error with probability 0.001. It controls the DXF's failpoint.
 func DXFRandomErrorWithOnePerThousand() error {
 	failpoint.Inject("DXFRandomError", func() {
 		failpoint.Return(RandomError(0.001, errors.Errorf("injected random error, caller: %s", getFunctionName())))
 	})
 	return nil
+}
+
+func RandomErrorForReadWithOnePerPercent(n int, err error) (int, error) {
+	failpoint.Inject("DXFRandomError", func() {
+		if rand.Float64() > 0.01 {
+			failpoint.Return(n, err)
+		}
+		failpoint.Return(rand.Intn(n), io.ErrUnexpectedEOF)
+	})
+	return n, err
 }
 
 // RandomError returns an error with the given probability.
