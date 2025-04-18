@@ -28,6 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	poolutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -64,6 +66,14 @@ type CheckTableExec struct {
 }
 
 var _ exec.Executor = &CheckTableExec{}
+
+const (
+	// mvIndexCRC32Sum is the aggregated column from subquery for MVIndex check.
+	mvIndexCRC32Sum = "_mv_index_crc32_column"
+
+	// mvIndexArrayColumn is the concated json array from subquery.
+	mvIndexArrayColumn = "_mv_index_array_column"
+)
 
 // Open implements the Executor Open interface.
 func (e *CheckTableExec) Open(ctx context.Context) error {
@@ -307,6 +317,27 @@ func (e *FastCheckTableExec) createWorker() workerpool.Worker[checkIndexTask, wo
 	return &checkIndexWorker{sctx: e.Ctx(), dbName: e.dbName, table: e.table, indexInfos: e.indexInfos, e: e}
 }
 
+func extractHandleColumnsAndType(
+	tblMeta *model.TableInfo,
+) (string, int, []*types.FieldType) {
+	var pkCols []string
+	var pkTypes []*types.FieldType
+	switch {
+	case tblMeta.IsCommonHandle:
+		pkColsInfo := tblMeta.GetPrimaryKey().Columns
+		for _, colInfo := range pkColsInfo {
+			pkCols = append(pkCols, ColumnName(colInfo.Name.O))
+			pkTypes = append(pkTypes, &tblMeta.Columns[colInfo.Offset].FieldType)
+		}
+	case tblMeta.PKIsHandle:
+		pkCols = append(pkCols, ColumnName(tblMeta.GetPkName().O))
+	default: // support decoding _tidb_rowid.
+		pkCols = append(pkCols, ColumnName(model.ExtraHandleName.O))
+	}
+
+	return strings.Join(pkCols, ","), len(pkCols), pkTypes
+}
+
 type checkIndexWorker struct {
 	sctx       sessionctx.Context
 	dbName     string
@@ -353,39 +384,43 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 
 	tblMeta := w.table.Meta()
 	tblName := TableName(w.e.dbName, tblMeta.Name.String())
+	handleCols, numPkCols, pkTypes := extractHandleColumnsAndType(tblMeta)
 
-	var pkCols []string
-	var pkTypes []*types.FieldType
-	switch {
-	case tblMeta.IsCommonHandle:
-		pkColsInfo := tblMeta.GetPrimaryKey().Columns
-		for _, colInfo := range pkColsInfo {
-			pkCols = append(pkCols, ColumnName(colInfo.Name.O))
-			pkTypes = append(pkTypes, &tblMeta.Columns[colInfo.Offset].FieldType)
-		}
-	case tblMeta.PKIsHandle:
-		pkCols = append(pkCols, ColumnName(tblMeta.GetPkName().O))
-	default: // support decoding _tidb_rowid.
-		pkCols = append(pkCols, ColumnName(model.ExtraHandleName.O))
-	}
-	handleColumns := strings.Join(pkCols, ",")
+	var (
+		// generatedExpr is string like "cast(extractExpr as unsigned array)"
+		generatedExpr string
+		extractExpr   string
+		useMVIndex    = idxInfo.MVIndex
 
-	indexColNames := make([]string, len(idxInfo.Columns))
-	for i, col := range idxInfo.Columns {
-		tblCol := tblMeta.Columns[col.Offset]
-		if tblCol.IsVirtualGenerated() && tblCol.Hidden {
-			indexColNames[i] = tblCol.GeneratedExprString
-		} else {
-			indexColNames[i] = ColumnName(col.Name.O)
+		indexCols string
+	)
+
+	if useMVIndex {
+		tblCol := tblMeta.Columns[idxInfo.Columns[0].Offset]
+		indexCols = mvIndexCRC32Sum
+
+		generatedExpr = strings.ToLower(tblCol.GeneratedExprString)
+		start := strings.Index(generatedExpr, "cast(")
+		end := strings.LastIndex(generatedExpr, "as")
+		extractExpr = generatedExpr[start+5 : end]
+	} else {
+		indexColNames := make([]string, len(idxInfo.Columns))
+		for i, col := range idxInfo.Columns {
+			tblCol := tblMeta.Columns[col.Offset]
+			if tblCol.IsVirtualGenerated() && tblCol.Hidden {
+				indexColNames[i] = tblCol.GeneratedExprString
+			} else {
+				indexColNames[i] = ColumnName(col.Name.O)
+			}
 		}
+		indexCols = strings.Join(indexColNames, ",")
 	}
-	indexColumns := strings.Join(indexColNames, ",")
 
 	// CheckSum of (handle + index columns).
-	md5HandleAndIndexCol := fmt.Sprintf("crc32(md5(concat_ws(0x2, %s, %s)))", handleColumns, indexColumns)
+	md5HandleAndIndexCol := fmt.Sprintf("crc32(md5(concat_ws(0x2, %s, %s)))", handleCols, indexCols)
 
 	// Used to group by and order.
-	md5Handle := fmt.Sprintf("crc32(md5(concat_ws(0x2, %s)))", handleColumns)
+	md5Handle := fmt.Sprintf("crc32(md5(concat_ws(0x2, %s)))", handleCols)
 
 	tableRowCntToCheck := int64(0)
 
@@ -408,6 +443,22 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		return
 	}
 
+	fromForTable := fmt.Sprintf("%s use index()", tblName)
+	fromForIndex := fmt.Sprintf("%s use index(`%s`)", tblName, idxInfo.Name)
+	if useMVIndex {
+		// For mv index, we will use subquery to aggregate all values corresponding to the same handle.
+		// The query will be like:
+		// 	index scan: select handle, JSON_SUM(xxx as array) from t use index()
+		//  table scan: select handle, SUM(CRC32(CAST(xxx as array))) from t use index(`idx`) group by handle
+		fromForTable = fmt.Sprintf("(select %s, %s as %s from %s use index()) tmp",
+			handleCols, strings.Replace(generatedExpr, "cast", "json_sum", 1), indexCols, tblName)
+		fromForIndex = fmt.Sprintf("(select /*+ force_index(`%s`, `%s`) */ %s, SUM(CRC32(%s)) as %s from %s group by %s) tmp",
+			tblName, idxInfo.Name, handleCols, generatedExpr, indexCols, tblName, handleCols)
+	}
+
+	indexCtx := plannercore.WithForceMVIndexScan(w.e.contextCtx, true)
+	tableCtx := w.e.contextCtx
+
 	times := 0
 	const maxTimes = 10
 	for tableRowCntToCheck > lookupCheckThreshold || !checkOnce {
@@ -424,11 +475,11 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		checkOnce = true
 
 		tblQuery := fmt.Sprintf(
-			"select /*+ read_from_storage(tikv[%s]) */ bit_xor(%s), %s, count(*) from %s use index() where %s = 0 group by %s",
-			tblName, md5HandleAndIndexCol, groupByKey, tblName, whereKey, groupByKey)
+			"select /*+ read_from_storage(tikv[%s]) */ bit_xor(%s), %s, count(*) from %s where %s = 0 group by %s",
+			tblName, md5HandleAndIndexCol, groupByKey, fromForTable, whereKey, groupByKey)
 		idxQuery := fmt.Sprintf(
-			"select bit_xor(%s), %s, count(*) from %s use index(`%s`) where %s = 0 group by %s",
-			md5HandleAndIndexCol, groupByKey, tblName, idxInfo.Name, whereKey, groupByKey)
+			"select bit_xor(%s), %s, count(*) from %s where %s = 0 group by %s",
+			md5HandleAndIndexCol, groupByKey, fromForIndex, whereKey, groupByKey)
 
 		logutil.BgLogger().Info(
 			"fast check table by group",
@@ -440,7 +491,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		)
 
 		// compute table side checksum.
-		tableChecksum, err := getCheckSum(w.e.contextCtx, se, tblQuery)
+		tableChecksum, err := getCheckSum(tableCtx, se, tblQuery)
 		if err != nil {
 			trySaveErr(err)
 			return
@@ -450,7 +501,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		})
 
 		// compute index side checksum.
-		indexChecksum, err := getCheckSum(w.e.contextCtx, se, idxQuery)
+		indexChecksum, err := getCheckSum(indexCtx, se, idxQuery)
 		if err != nil {
 			trySaveErr(err)
 			return
@@ -503,12 +554,12 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		mod *= bucketSize
 	}
 
-	queryToRow := func(se sessionctx.Context, sql string) ([]chunk.Row, error) {
-		rs, err := se.GetSQLExecutor().ExecuteInternal(ctx, sql)
+	queryToRow := func(qCtx context.Context, se sessionctx.Context, sql string) ([]chunk.Row, error) {
+		rs, err := se.GetSQLExecutor().ExecuteInternal(qCtx, sql)
 		if err != nil {
 			return nil, err
 		}
-		row, err := sqlexec.DrainRecordSet(ctx, rs, 4096)
+		row, err := sqlexec.DrainRecordSet(qCtx, rs, 4096)
 		if err != nil {
 			return nil, err
 		}
@@ -520,20 +571,29 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 	}
 
 	if meetError {
+		if useMVIndex {
+			// If meet error, concat json array to string and output it the query.
+			fromForTable = fmt.Sprintf("(select %s, %s as %s, %s as %s from %s use index()) tmp",
+				handleCols, extractExpr, mvIndexArrayColumn, strings.Replace(generatedExpr, "cast", "JSON_SUM", 1), indexCols, tblName)
+			fromForIndex = fmt.Sprintf("(select /*+ force_index(`%s`, `%s`) */ %s, JSON_ARRAYAGG(%s) as %s, SUM(CRC32(%s)) as %s from %s group by %s) tmp",
+				tblName, idxInfo.Name, handleCols, generatedExpr, mvIndexArrayColumn, generatedExpr, indexCols, tblName, handleCols)
+			indexCols = mvIndexArrayColumn
+		}
+
 		groupByKey := fmt.Sprintf("((cast(%s as signed) - %d) %% %d)", md5Handle, offset, mod)
 		indexSQL := fmt.Sprintf(
-			"select %s, %s, %s from %s use index(`%s`) where %s = 0 order by %s",
-			handleColumns, indexColumns, md5HandleAndIndexCol, tblName, idxInfo.Name, groupByKey, handleColumns)
+			"select %s, %s, %s from %s where %s = 0",
+			handleCols, indexCols, md5HandleAndIndexCol, fromForIndex, groupByKey)
 		tableSQL := fmt.Sprintf(
-			"select /*+ read_from_storage(tikv[%s]) */ %s, %s, %s from %s use index() where %s = 0 order by %s",
-			tblName, handleColumns, indexColumns, md5HandleAndIndexCol, tblName, groupByKey, handleColumns)
+			"select /*+ read_from_storage(tikv[%s]) */ %s, %s, %s from %s where %s = 0 order by %s",
+			tblName, handleCols, indexCols, md5HandleAndIndexCol, fromForTable, groupByKey, handleCols)
 
-		idxRow, err := queryToRow(se, indexSQL)
+		idxRow, err := queryToRow(indexCtx, se, indexSQL)
 		if err != nil {
 			trySaveErr(err)
 			return
 		}
-		tblRow, err := queryToRow(se, tableSQL)
+		tblRow, err := queryToRow(tableCtx, se, tableSQL)
 		if err != nil {
 			trySaveErr(err)
 			return
@@ -557,9 +617,14 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		}
 		getValueFromRow := func(row chunk.Row) ([]types.Datum, error) {
 			valueDatum := make([]types.Datum, 0)
-			for i, t := range idxInfo.Columns {
-				valueDatum = append(valueDatum, row.GetDatum(i+len(pkCols), &tblMeta.Columns[t.Offset].FieldType))
+			if useMVIndex {
+				valueDatum = append(valueDatum, row.GetDatum(numPkCols, types.NewFieldType(mysql.TypeJSON)))
+			} else {
+				for i, t := range idxInfo.Columns {
+					valueDatum = append(valueDatum, row.GetDatum(i+numPkCols, &tblMeta.Columns[t.Offset].FieldType))
+				}
 			}
+
 			return valueDatum, nil
 		}
 
@@ -594,7 +659,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		}
 
 		getCheckSum := func(row chunk.Row) uint64 {
-			return row.GetUint64(len(pkCols) + len(idxInfo.Columns))
+			return row.GetUint64(numPkCols + len(idxInfo.Columns))
 		}
 
 		var handle kv.Handle

@@ -1499,7 +1499,8 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			er.disableFoldCounter--
 		}
 	case *ast.FuncCastExpr:
-		if v.Tp.IsArray() && !er.allowBuildCastArray {
+		forceMVIndexScan := GetForceMVIndexScan(er.ctx)
+		if v.Tp.IsArray() && !er.allowBuildCastArray && !forceMVIndexScan {
 			er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions")
 			return retNode, false
 		}
@@ -1532,7 +1533,51 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			castFunction.SetRepertoire(expression.ASCII)
 		}
 
+		// Rewrite cast(col as UNSIGNED ARRAY) / cast(col->path as UNSIGNED ARRAY) as virtual(col)
+		// The logic is copied from generateMVIndexMergePartialPaths4And.
+		if forceMVIndexScan && v.Tp.IsArray() {
+			sf, _ := castFunction.(*expression.ScalarFunction)
+			if ds, ok := er.planCtx.plan.(*logicalop.DataSource); ok {
+				evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
+				for _, index := range ds.TableInfo.Indices {
+					if !index.MVIndex {
+						continue
+					}
+					if idxCols, ok := PrepareIdxColsAndUnwrapArrayType(
+						ds.Table.Meta(),
+						index,
+						ds.TblCols,
+						false,
+					); ok {
+						for _, idxCol := range idxCols {
+							if idxCol.VirtualExpr == nil {
+								continue
+							}
+							targetJSONPath, _ := unwrapJSONCast(idxCol.VirtualExpr)
+							if ok && targetJSONPath.Equal(evalCtx, sf.GetArgs()[0]) {
+								castFunction = idxCol.Clone()
+								castFunction.GetType(evalCtx).SetArray(false)
+								goto OUTER
+							}
+						}
+					}
+				}
+			}
+		}
+	OUTER:
 		er.ctxStack[len(er.ctxStack)-1] = castFunction
+		er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
+	case *ast.JSONSumExpr:
+		arg := er.ctxStack[len(er.ctxStack)-1]
+		jsonSumFunction, err := expression.BuildJSONSumFunctionWithCheck(er.sctx, arg, v.Tp)
+		if err != nil {
+			er.err = err
+			return retNode, false
+		}
+
+		jsonSumFunction.SetCoercibility(expression.CoercibilityNumeric)
+		jsonSumFunction.SetRepertoire(expression.ASCII)
+		er.ctxStack[len(er.ctxStack)-1] = jsonSumFunction
 		er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
 	case *ast.PatternLikeOrIlikeExpr:
 		er.patternLikeOrIlikeToExpression(v)

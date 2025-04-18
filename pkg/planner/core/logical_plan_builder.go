@@ -3679,6 +3679,27 @@ func (b *PlanBuilder) TableHints() *h.PlanHints {
 	return b.tableHintInfo[len(b.tableHintInfo)-1]
 }
 
+type forceMVIndexOption struct{}
+
+var forceMVIndexOptionKey forceMVIndexOption
+
+// WithForceMVIndexScan controls how the rewriter process MV Index.
+// If it's true, it indicated we want to rewrite cast(... as ... array).
+// NOTE: It should only be used in fast admin check table,
+// see check_table_index.go for more details.
+func WithForceMVIndexScan(ctx context.Context, force bool) context.Context {
+	return context.WithValue(ctx, forceMVIndexOptionKey, force)
+}
+
+// GetForceMVIndexScan check whether the force MV index scan option is set.
+func GetForceMVIndexScan(ctx context.Context) bool {
+	force := false
+	if opt := ctx.Value(forceMVIndexOptionKey); opt != nil {
+		force = opt.(bool)
+	}
+	return force
+}
+
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p base.LogicalPlan, err error) {
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
@@ -4624,6 +4645,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	copy(allPaths, possiblePaths)
 
 	countCnt := len(columns) + 1 // +1 for an extra handle column
+	forceMVIndexScan := GetForceMVIndexScan(ctx) == true
 	ds := logicalop.DataSource{
 		DBName:                 dbName,
 		TableAsName:            asName,
@@ -4641,11 +4663,18 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		PreferPartitions:       make(map[int][]ast.CIStr),
 		IS:                     b.is,
 		IsForUpdateRead:        b.isForUpdateRead,
+		EnableMVIndexScan:      forceMVIndexScan,
 	}.Init(b.ctx, b.getSelectOffset())
 	var handleCols util.HandleCols
 	schema := expression.NewSchema(make([]*expression.Column, 0, countCnt)...)
 	names := make([]*types.FieldName, 0, countCnt)
 	for i, col := range columns {
+		retType := col.FieldType.Clone()
+		// TODO(joechenrh): we must discard array type when building DataSource, which is a bit ugly...
+		if forceMVIndexScan {
+			retType.SetArray(false)
+		}
+
 		ds.Columns = append(ds.Columns, col.ToInfo())
 		names = append(names, &types.FieldName{
 			DBName:      dbName,
@@ -4659,7 +4688,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		newCol := &expression.Column{
 			UniqueID: sessionVars.AllocPlanColumnID(),
 			ID:       col.ID,
-			RetType:  col.FieldType.Clone(),
+			RetType:  retType,
 			OrigName: names[i].String(),
 			IsHidden: col.Hidden,
 		}
