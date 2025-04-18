@@ -100,6 +100,7 @@ func (p *LogicalPlan) writeExternalPlanMeta(planCtx planner.PlanCtx, specs []pla
 	if err != nil {
 		return err
 	}
+	defer controller.Close()
 	if err := controller.InitDataFiles(planCtx.Ctx); err != nil {
 		return err
 	}
@@ -313,6 +314,7 @@ func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.Pipeli
 		if err2 != nil {
 			return nil, err2
 		}
+		defer controller.Close()
 		if err2 = controller.InitDataFiles(pCtx.Ctx); err2 != nil {
 			return nil, err2
 		}
@@ -360,6 +362,7 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.
 	if err != nil {
 		return nil, err
 	}
+	defer controller.Close()
 	if err := controller.InitDataStore(ctx); err != nil {
 		return nil, err
 	}
@@ -399,6 +402,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 	if err2 != nil {
 		return nil, err2
 	}
+	defer controller.Close()
 	if err2 = controller.InitDataStore(ctx); err2 != nil {
 		return nil, err2
 	}

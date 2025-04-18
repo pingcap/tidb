@@ -307,7 +307,10 @@ func TestProcessChunkWith(t *testing.T) {
 		}
 		ti := getTableImporter(ctx, t, store, "t", fileName, []*plannercore.LoadDataOpt{
 			{Name: "skip_rows", Value: expression.NewInt64Const(1)}})
-		defer ti.Backend().CloseEngineMgr()
+		defer func() {
+			ti.LoadDataController.Close()
+			ti.Backend().CloseEngineMgr()
+		}()
 		kvWriter := mock.NewMockEngineWriter(ctrl)
 		kvWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 		checksum := verify.NewKVGroupChecksumWithKeyspace(keyspace)
@@ -324,7 +327,10 @@ func TestProcessChunkWith(t *testing.T) {
 			Chunk:    mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
 		}
 		ti := getTableImporter(ctx, t, store, "t", "", nil)
-		defer ti.Backend().CloseEngineMgr()
+		defer func() {
+			ti.LoadDataController.Close()
+			ti.Backend().CloseEngineMgr()
+		}()
 		rowsCh := make(chan importer.QueryRow, 3)
 		for i := 1; i <= 3; i++ {
 			rowsCh <- importer.QueryRow{
@@ -365,7 +371,10 @@ func TestPopulateChunks(t *testing.T) {
 	require.NoError(t, os.WriteFile(path.Join(tidbCfg.TempDir, "test-03.csv"),
 		[]byte("9,9,9\n10,10,10\n"), 0o644))
 	ti := getTableImporter(ctx, t, store, "t", fmt.Sprintf("%s/test-*.csv", tidbCfg.TempDir), []*plannercore.LoadDataOpt{{Name: "__max_engine_size", Value: expression.NewStrConst("20")}})
-	defer ti.Backend().CloseEngineMgr()
+	defer func() {
+		ti.LoadDataController.Close()
+		ti.Backend().CloseEngineMgr()
+	}()
 	require.NoError(t, ti.InitDataFiles(ctx))
 	engines, err := ti.PopulateChunks(ctx)
 	require.NoError(t, err)
