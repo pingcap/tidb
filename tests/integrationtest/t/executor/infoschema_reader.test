@@ -320,8 +320,6 @@ drop table if exists t;
 create table t (c text);
 alter table t add index idx_t (c(16));
 select SUB_PART from information_schema.statistics where TABLE_SCHEMA = 'executor__infoschema_reader' and TABLE_NAME = 't';
-<<<<<<< HEAD
-=======
 
 # Query should return nothing when WHERE clauses are always false.
 # https://github.com/pingcap/tidb/issues/57345
@@ -368,4 +366,3 @@ SELECT table_schema, table_name,data_length FROM information_schema.TABLES
 WHERE (TABLE_NAME IN ('t10','t11','t12','t13','t14','t15','t16','t17','t18','t19','t20','t21','t22','t23','t24','t25','t26','t27','t28','t29'));
 drop database test1;
 drop database test2;
->>>>>>> 4e792885146 (executor: fix schema-table inconsistent issue in `IS.tables` (#60638))

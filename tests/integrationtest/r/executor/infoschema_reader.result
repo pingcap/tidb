@@ -445,8 +445,6 @@ alter table t add index idx_t (c(16));
 select SUB_PART from information_schema.statistics where TABLE_SCHEMA = 'executor__infoschema_reader' and TABLE_NAME = 't';
 SUB_PART
 16
-<<<<<<< HEAD
-=======
 select table_name from information_schema.columns where table_name = 'a' and table_name = 'b';
 table_name
 select table_name from information_schema.columns where table_schema = 'a' and table_schema = 'b';
@@ -518,4 +516,3 @@ test2	t28	0
 test2	t29	0
 drop database test1;
 drop database test2;
->>>>>>> 4e792885146 (executor: fix schema-table inconsistent issue in `IS.tables` (#60638))
