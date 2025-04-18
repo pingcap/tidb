@@ -481,8 +481,6 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 		waitGroup.Done()
 	}()
 
-	consumedMemory := int64(0)
-
 	for {
 		select {
 		case <-e.finishCh:
@@ -498,24 +496,22 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 		err = exec.Next(ctx, e.Children(0), chk)
 		if err != nil {
 			e.finalOutputCh <- &AfFinalResult{err: err}
-			e.memTracker.Consume(-consumedMemory)
+			e.memTracker.Consume(-mSize)
 			return
 		}
 
 		if chk.NumRows() == 0 {
-			e.memTracker.Consume(-consumedMemory)
+			e.memTracker.Consume(-mSize)
 			return
 		}
 
 		failpoint.Inject("ConsumeRandomPanic", nil)
-		memDelta := chk.MemoryUsage() - mSize
-		consumedMemory += memDelta
-		e.memTracker.Consume(memDelta)
+		e.memTracker.Consume(chk.MemoryUsage() - mSize)
 		e.inflightChunkSync.Add(1)
 		input.giveBackCh <- chk
 
 		if hasError := e.spillIfNeed(); hasError {
-			e.memTracker.Consume(-consumedMemory)
+			e.memTracker.Consume(-mSize)
 			return
 		}
 	}
@@ -559,8 +555,7 @@ func (e *HashAggExec) spill() {
 func (e *HashAggExec) waitPartialWorkerAndCloseOutputChs(waitGroup *sync.WaitGroup) {
 	waitGroup.Wait()
 	close(e.inputCh)
-	for input := range e.inputCh {
-		e.memTracker.Consume(-input.chk.MemoryUsage())
+	for range e.inputCh {
 	}
 	for _, ch := range e.partialOutputChs {
 		close(ch)
