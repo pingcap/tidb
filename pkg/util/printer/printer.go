@@ -84,8 +84,8 @@ func GetTiDBInfo() string {
 		config.GetGlobalConfig().Store,
 		enterpriseVersion,
 	)
-	if config.IsCloudStore() {
-		info += "\nCloud Store: true"
+	if config.IsObjectStore() {
+		info += "\nData Storage: Object Storage"
 	}
 	return info
 }
