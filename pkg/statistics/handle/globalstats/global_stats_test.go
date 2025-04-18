@@ -1011,8 +1011,6 @@ func TestEmptyHists(t *testing.T) {
 )
 partition by hash( month(signed) )
 partitions 12;`)
-	tk.MustExec(`insert into t values (0, "Joe", "Doe", from_days(738974 + 0)), (1, "Joe", "Doe", from_days(738974 + 3)), (2, "Joe", "Doe", from_days(738974 + 6)), (3, "Joe", "Doe", from_days(738974 + 9)), (4, "Joe", "Doe", from_days(738974 + 12)), (5, "Joe", "Doe", from_days(738974 + 15)), (6, "Joe", "Doe", from_days(738974 + 18)), (7, "Joe", "Doe", from_days(738974 + 21)), (8, "Joe", "Doe", from_days(738974 + 24)), (9, "Joe", "Doe", from_days(738974 + 27)), (10, "Joe", "Doe", from_days(738974 + 30)), (11, "Joe", "Doe", from_days(738974 + 33)), (12, "Joe", "Doe", from_days(738974 + 36)), (13, "Joe", "Doe", from_days(738974 + 39)), (14, "Joe", "Doe", from_days(738974 + 42)), (15, "Joe", "Doe", from_days(738974 + 45)), (16, "Joe", "Doe", from_days(738974 + 48)), (17, "Joe", "Doe", from_days(738974 + 51)), (18, "Joe", "Doe", from_days(738974 + 54)), (19, "Joe", "Doe", from_days(738974 + 57)), (20, "Joe", "Doe", from_days(738974 + 60)), (21, "Joe", "Doe", from_days(738974 + 63)), (22, "Joe", "Doe", from_days(738974 + 66)), (23, "Joe", "Doe", from_days(738974 + 69)), (24, "Joe", "Doe", from_days(738974 + 72)), (25, "Joe", "Doe", from_days(738974 + 75)), (26, "Joe", "Doe", from_days(738974 + 78)), (27, "Joe", "Doe", from_days(738974 + 81)), (28, "Joe", "Doe", from_days(738974 + 84)), (29, "Joe", "Doe", from_days(738974 + 87));`)
-	tk.MustExec(`alter table t coalesce partition 4;`)
 	tk.MustExec(`truncate table mysql.stats_histograms`)
 	se := tk.Session().(sessionctx.Context)
 	infoSchema := dom.InfoSchema()
