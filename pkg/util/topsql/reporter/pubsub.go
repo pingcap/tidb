@@ -109,7 +109,7 @@ func (ds *pubSubDataSink) run() error {
 	for {
 		select {
 		case task := <-ds.sendTaskCh:
-			ctx, _ := context.WithDeadline(ds.ctx, task.deadline)
+			ctx, rcancel := context.WithDeadline(ds.ctx, task.deadline)
 			// use a cancel cause context to return error safely
 			var cancel context.CancelCauseFunc
 			ctx, cancel = context.WithCancelCause(ctx)
@@ -131,6 +131,8 @@ func (ds *pubSubDataSink) run() error {
 			// In order to clean up resources as quickly as possible, we let that closure run in an individual goroutine,
 			// and wait for timeout here.
 			<-ctx.Done()
+			// useless, it is called to prevent linter error
+			rcancel()
 
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				logutil.BgLogger().Warn(
