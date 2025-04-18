@@ -106,6 +106,7 @@ func findBestTask4LogicalTableDual(lp base.LogicalPlan, prop *property.PhysicalP
 	dual := PhysicalTableDual{
 		RowCount: p.RowCount,
 	}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
+	dual.names = p.OutputNames()
 	dual.SetSchema(p.Schema())
 	planCounter.Dec(1)
 	appendCandidate4PhysicalOptimizeOp(opt, p, dual, prop)
