@@ -1093,6 +1093,7 @@ func (rc *LogClient) generateDBReplacesFromFullBackupStorage(
 func (rc *LogClient) GetBaseIDMap(
 	ctx context.Context,
 	cfg *GetIDMapConfig,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 ) (map[stream.UpstreamID]*stream.DBReplace, error) {
 	var (
 		err        error
@@ -1103,7 +1104,7 @@ func (rc *LogClient) GetBaseIDMap(
 	// this is a retry, id map saved last time, load it from external storage
 	if cfg.LoadSavedIDMap {
 		log.Info("try to load previously saved pitr id maps")
-		dbMaps, err = rc.loadSchemasMap(ctx, rc.restoreTS)
+		dbMaps, err = rc.loadSchemasMap(ctx, rc.restoreTS, logCheckpointMetaManager)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1113,7 +1114,7 @@ func (rc *LogClient) GetBaseIDMap(
 	// schemas map whose `restore-ts`` is the task's `start-ts`.
 	if len(dbMaps) <= 0 && cfg.FullBackupStorageConfig == nil {
 		log.Info("try to load pitr id maps of the previous task", zap.Uint64("start-ts", rc.startTS))
-		dbMaps, err = rc.loadSchemasMap(ctx, rc.startTS)
+		dbMaps, err = rc.loadSchemasMap(ctx, rc.startTS, logCheckpointMetaManager)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

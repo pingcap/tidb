@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -40,6 +41,15 @@ func (rc *LogClient) pitrIDMapTableExists() bool {
 	return rc.dom.InfoSchema().TableExists(ast.NewCIStr("mysql"), ast.NewCIStr("tidb_pitr_id_map"))
 }
 
+func (rc *LogClient) tryGetCheckpointStorage(
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
+) storage.ExternalStorage {
+	if !rc.useCheckpoint {
+		return nil
+	}
+	return logCheckpointMetaManager.TryGetStorage()
+}
+
 // saveIDMap saves the id mapping information.
 func (rc *LogClient) saveIDMap(
 	ctx context.Context,
@@ -47,13 +57,18 @@ func (rc *LogClient) saveIDMap(
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 ) error {
 	dbmaps := manager.ToProto()
-	if rc.pitrIDMapTableExists() {
+	if checkpointStorage := rc.tryGetCheckpointStorage(logCheckpointMetaManager); checkpointStorage != nil {
+		log.Info("checkpoint storage is specified, load pitr id map from the checkpoint storage.")
+		if err := rc.saveIDMap2Storage(ctx, checkpointStorage, dbmaps); err != nil {
+			return errors.Trace(err)
+		}
+	} else if rc.pitrIDMapTableExists() {
 		if err := rc.saveIDMap2Table(ctx, dbmaps); err != nil {
 			return errors.Trace(err)
 		}
 	} else {
 		log.Info("the table mysql.tidb_pitr_id_map does not exist, maybe the cluster version is old.")
-		if err := rc.saveIDMap2Storage(ctx, dbmaps); err != nil {
+		if err := rc.saveIDMap2Storage(ctx, rc.storage, dbmaps); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -69,10 +84,14 @@ func (rc *LogClient) saveIDMap(
 	return nil
 }
 
-func (rc *LogClient) saveIDMap2Storage(ctx context.Context, dbMaps []*backuppb.PitrDBMap) error {
+func (rc *LogClient) saveIDMap2Storage(
+	ctx context.Context,
+	storage storage.ExternalStorage,
+	dbMaps []*backuppb.PitrDBMap,
+) error {
 	clusterID := rc.GetClusterID(ctx)
 	metaFileName := pitrIDMapsFilename(clusterID, rc.restoreTS)
-	metaWriter := metautil.NewMetaWriter(rc.storage, metautil.MetaFileSize, false, metaFileName, nil)
+	metaWriter := metautil.NewMetaWriter(storage, metautil.MetaFileSize, false, metaFileName, nil)
 	metaWriter.Update(func(m *backuppb.BackupMeta) {
 		m.ClusterId = clusterID
 		m.DbMaps = dbMaps
@@ -109,29 +128,30 @@ func (rc *LogClient) saveIDMap2Table(ctx context.Context, dbMaps []*backuppb.Pit
 func (rc *LogClient) loadSchemasMap(
 	ctx context.Context,
 	restoredTS uint64,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 ) ([]*backuppb.PitrDBMap, error) {
+	if checkpointStorage := rc.tryGetCheckpointStorage(logCheckpointMetaManager); checkpointStorage != nil {
+		log.Info("checkpoint storage is specified, load pitr id map from the checkpoint storage.")
+		dbMaps, err := rc.loadSchemasMapFromStorage(ctx, checkpointStorage, restoredTS)
+		return dbMaps, errors.Trace(err)
+	}
 	if rc.pitrIDMapTableExists() {
 		dbMaps, err := rc.loadSchemasMapFromTable(ctx, restoredTS)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return dbMaps, nil
+		return dbMaps, errors.Trace(err)
 	}
 	log.Info("the table mysql.tidb_pitr_id_map does not exist, maybe the cluster version is old.")
-	dbMaps, err := rc.loadSchemasMapFromStorage(ctx, restoredTS)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return dbMaps, nil
+	dbMaps, err := rc.loadSchemasMapFromStorage(ctx, rc.storage, restoredTS)
+	return dbMaps, errors.Trace(err)
 }
 
 func (rc *LogClient) loadSchemasMapFromStorage(
 	ctx context.Context,
+	storage storage.ExternalStorage,
 	restoredTS uint64,
 ) ([]*backuppb.PitrDBMap, error) {
 	clusterID := rc.GetClusterID(ctx)
 	metaFileName := pitrIDMapsFilename(clusterID, restoredTS)
-	exist, err := rc.storage.FileExists(ctx, metaFileName)
+	exist, err := storage.FileExists(ctx, metaFileName)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to check filename:%s ", metaFileName)
 	}
@@ -140,7 +160,7 @@ func (rc *LogClient) loadSchemasMapFromStorage(
 		return nil, nil
 	}
 
-	metaData, err := rc.storage.ReadFile(ctx, metaFileName)
+	metaData, err := storage.ReadFile(ctx, metaFileName)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

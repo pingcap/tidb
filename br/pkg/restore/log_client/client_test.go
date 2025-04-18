@@ -1336,7 +1336,7 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 	{
 		client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), fakeSession{})
 		cfg := &logclient.GetIDMapConfig{LoadSavedIDMap: false}
-		_, err := client.GetBaseIDMap(ctx, cfg)
+		_, err := client.GetBaseIDMap(ctx, cfg, nil)
 		require.Error(t, err)
 		require.Regexp(t, "failed to get pitr id map from mysql.tidb_pitr_id_map.* [2, 1]", err.Error())
 	}
@@ -1344,7 +1344,7 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 	{
 		client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), fakeSession{})
 		cfg := &logclient.GetIDMapConfig{LoadSavedIDMap: true}
-		_, err := client.GetBaseIDMap(ctx, cfg)
+		_, err := client.GetBaseIDMap(ctx, cfg, nil)
 		require.Error(t, err)
 		require.Regexp(t, "failed to get pitr id map from mysql.tidb_pitr_id_map.* [1, 1]", err.Error())
 	}
@@ -1358,7 +1358,7 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 		require.NoError(t, err)
 		client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), se)
 		cfg := &logclient.GetIDMapConfig{LoadSavedIDMap: true}
-		_, err = client.GetBaseIDMap(ctx, cfg)
+		_, err = client.GetBaseIDMap(ctx, cfg, nil)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "miss upstream table information at `start-ts`(1) but the full backup path is not specified")
 	}
@@ -1433,14 +1433,14 @@ func TestPITRIDMap(t *testing.T) {
 	}
 	err = client.TEST_saveIDMap(ctx, baseTableMappingManager, nil)
 	require.NoError(t, err)
-	newSchemaReplaces, err := client.TEST_initSchemasMap(ctx, 1)
+	newSchemaReplaces, err := client.TEST_initSchemasMap(ctx, 1, nil)
 	require.NoError(t, err)
 	require.Nil(t, newSchemaReplaces)
 	client2 := logclient.TEST_NewLogClient(123, 1, 2, 4, s.Mock.Domain, se)
-	newSchemaReplaces, err = client2.TEST_initSchemasMap(ctx, 2)
+	newSchemaReplaces, err = client2.TEST_initSchemasMap(ctx, 2, nil)
 	require.NoError(t, err)
 	require.Nil(t, newSchemaReplaces)
-	newSchemaReplaces, err = client.TEST_initSchemasMap(ctx, 2)
+	newSchemaReplaces, err = client.TEST_initSchemasMap(ctx, 2, nil)
 	require.NoError(t, err)
 
 	require.Equal(t, len(baseTableMappingManager.DBReplaceMap), len(newSchemaReplaces))
@@ -1483,7 +1483,7 @@ func TestPITRIDMapOnStorage(t *testing.T) {
 	}
 	err = client.TEST_saveIDMap(ctx, baseTableMappingManager, nil)
 	require.NoError(t, err)
-	newSchemaReplaces, err := client.TEST_initSchemasMap(ctx, 1)
+	newSchemaReplaces, err := client.TEST_initSchemasMap(ctx, 1, nil)
 	require.NoError(t, err)
 	require.Nil(t, newSchemaReplaces)
 	client2 := logclient.TEST_NewLogClient(123, 1, 2, 4, s.Mock.Domain, se)
@@ -1491,10 +1491,67 @@ func TestPITRIDMapOnStorage(t *testing.T) {
 	require.NoError(t, err)
 	err = client2.SetStorage(ctx, backend2, nil)
 	require.NoError(t, err)
-	newSchemaReplaces, err = client2.TEST_initSchemasMap(ctx, 2)
+	newSchemaReplaces, err = client2.TEST_initSchemasMap(ctx, 2, nil)
 	require.NoError(t, err)
 	require.Nil(t, newSchemaReplaces)
-	newSchemaReplaces, err = client.TEST_initSchemasMap(ctx, 2)
+	newSchemaReplaces, err = client.TEST_initSchemasMap(ctx, 2, nil)
+	require.NoError(t, err)
+
+	require.Equal(t, len(baseTableMappingManager.DBReplaceMap), len(newSchemaReplaces))
+	for _, dbMap := range newSchemaReplaces {
+		baseDbMap := baseTableMappingManager.DBReplaceMap[dbMap.IdMap.UpstreamId]
+		require.NotNil(t, baseDbMap)
+		require.Equal(t, baseDbMap.DbID, dbMap.IdMap.DownstreamId)
+		require.Equal(t, baseDbMap.Name, dbMap.Name)
+		require.Equal(t, len(baseDbMap.TableMap), len(dbMap.Tables))
+		for _, tableMap := range dbMap.Tables {
+			baseTableMap := baseDbMap.TableMap[tableMap.IdMap.UpstreamId]
+			require.NotNil(t, baseTableMap)
+			require.Equal(t, baseTableMap.TableID, tableMap.IdMap.DownstreamId)
+			require.Equal(t, baseTableMap.Name, tableMap.Name)
+			require.Equal(t, len(baseTableMap.PartitionMap), len(tableMap.Partitions))
+			for _, partitionMap := range tableMap.Partitions {
+				basePartitionMap, exist := baseTableMap.PartitionMap[partitionMap.UpstreamId]
+				require.True(t, exist)
+				require.Equal(t, basePartitionMap, partitionMap.DownstreamId)
+			}
+		}
+	}
+}
+
+func TestPITRIDMapOnCheckpointStorage(t *testing.T) {
+	ctx := context.Background()
+	s := utiltest.CreateRestoreSchemaSuite(t)
+	tk := testkit.NewTestKit(t, s.Mock.Storage)
+	tk.MustExec(session.CreatePITRIDMap)
+	g := gluetidb.New()
+	se, err := g.CreateSession(s.Mock.Storage)
+	require.NoError(t, err)
+	client := logclient.TEST_NewLogClient(123, 1, 2, 3, s.Mock.Domain, se)
+	client.SetUseCheckpoint()
+	stg, err := storage.NewLocalStorage("local://" + filepath.ToSlash(t.TempDir()))
+	require.NoError(t, err)
+	logCheckpointMetaManager := checkpoint.NewLogStorageMetaManager(
+		stg, nil, 123, "test")
+	defer logCheckpointMetaManager.Close()
+	baseTableMappingManager := &stream.TableMappingManager{
+		DBReplaceMap: getDBMap(),
+	}
+	err = client.TEST_saveIDMap(ctx, baseTableMappingManager, logCheckpointMetaManager)
+	require.NoError(t, err)
+	newSchemaReplaces, err := client.TEST_initSchemasMap(ctx, 1, logCheckpointMetaManager)
+	require.NoError(t, err)
+	require.Nil(t, newSchemaReplaces)
+	client2 := logclient.TEST_NewLogClient(123, 1, 2, 4, s.Mock.Domain, se)
+	stg, err = storage.NewLocalStorage("local://" + filepath.ToSlash(t.TempDir()) + "/temp_another")
+	require.NoError(t, err)
+	logCheckpointMetaManager2 := checkpoint.NewLogStorageMetaManager(
+		stg, nil, 123, "test")
+	defer logCheckpointMetaManager.Close()
+	newSchemaReplaces, err = client2.TEST_initSchemasMap(ctx, 2, logCheckpointMetaManager2)
+	require.NoError(t, err)
+	require.Nil(t, newSchemaReplaces)
+	newSchemaReplaces, err = client.TEST_initSchemasMap(ctx, 2, logCheckpointMetaManager)
 	require.NoError(t, err)
 
 	require.Equal(t, len(baseTableMappingManager.DBReplaceMap), len(newSchemaReplaces))

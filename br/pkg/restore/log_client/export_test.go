@@ -73,8 +73,9 @@ func (rc *LogClient) TEST_saveIDMap(
 func (rc *LogClient) TEST_initSchemasMap(
 	ctx context.Context,
 	restoreTS uint64,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 ) ([]*backuppb.PitrDBMap, error) {
-	return rc.loadSchemasMap(ctx, restoreTS)
+	return rc.loadSchemasMap(ctx, restoreTS, logCheckpointMetaManager)
 }
 
 // readStreamMetaByTS is used for streaming task. collect all meta file by TS, it is for test usage.
