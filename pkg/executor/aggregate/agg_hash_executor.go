@@ -480,6 +480,9 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 		}
 		waitGroup.Done()
 	}()
+
+	consumedMemory := int64(0)
+
 	for {
 		select {
 		case <-e.finishCh:
@@ -495,22 +498,23 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 		err = exec.Next(ctx, e.Children(0), chk)
 		if err != nil {
 			e.finalOutputCh <- &AfFinalResult{err: err}
-			e.memTracker.Consume(-mSize)
 			return
 		}
 
 		if chk.NumRows() == 0 {
-			e.memTracker.Consume(-mSize)
+			e.memTracker.Consume(-consumedMemory)
 			return
 		}
 
 		failpoint.Inject("ConsumeRandomPanic", nil)
-		e.memTracker.Consume(chk.MemoryUsage() - mSize)
+		memDelta := chk.MemoryUsage() - mSize
+		consumedMemory += memDelta
+		e.memTracker.Consume(memDelta)
 		e.inflightChunkSync.Add(1)
 		input.giveBackCh <- chk
 
 		if hasError := e.spillIfNeed(); hasError {
-			e.memTracker.Consume(-mSize)
+			e.memTracker.Consume(-consumedMemory)
 			return
 		}
 	}
