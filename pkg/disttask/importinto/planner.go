@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
@@ -352,7 +353,6 @@ func skipMergeSort(kvGroup string, stats []external.MultipleFilesStat) bool {
 }
 
 func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {
-	step := external.MergeSortFileCountStep
 	result := make([]planner.PipelineSpec, 0, 16)
 
 	ctx := planCtx.Ctx
@@ -376,19 +376,18 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.
 			continue
 		}
 		dataFiles := kvMeta.GetDataFiles()
-		length := len(dataFiles)
-		for start := 0; start < length; start += step {
-			end := start + step
-			if end > length {
-				end = length
-			}
-			result = append(result, &MergeSortSpec{
-				MergeSortStepMeta: &MergeSortStepMeta{
-					KVGroup:   kvGroup,
-					DataFiles: dataFiles[start:end],
-				},
+		scheduler.SplitItemsEvenlyToWorkers(
+			dataFiles,
+			planCtx.ExecuteNodesCnt,
+			external.MergeSortFileCountStep,
+			func(files []string) {
+				result = append(result, &MergeSortSpec{
+					MergeSortStepMeta: &MergeSortStepMeta{
+						KVGroup:   kvGroup,
+						DataFiles: files,
+					},
+				})
 			})
-		}
 	}
 	return result, nil
 }
