@@ -1252,6 +1252,7 @@ func (local *Backend) executeJob(
 			if !local.isRetryableImportTiKVError(err) {
 				return err
 			}
+			metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 			// if it's retryable error, we retry from scanning region
 			log.FromContext(ctx).Warn("meet retryable error when writing to TiKV",
 				log.ShortError(err), zap.Stringer("job stage", job.stage))
@@ -1264,6 +1265,7 @@ func (local *Backend) executeJob(
 			if !local.isRetryableImportTiKVError(err) {
 				return err
 			}
+			metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 			log.FromContext(ctx).Warn("meet retryable error when ingesting",
 				log.ShortError(err), zap.Stringer("job stage", job.stage))
 			job.lastRetryableErr = err
