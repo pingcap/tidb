@@ -1144,7 +1144,7 @@ func TestCreateTableWithVectorIndex(t *testing.T) {
 		require.Equal(t, replicaCnt, tbl.Meta().TiFlashReplica.Count)
 		indexes := tbl.Meta().Indices
 		require.Equal(t, 2, len(indexes))
-		require.Equal(t, ast.IndexTypeHNSW, indexes[0].Tp)
+		require.Equal(t, ast.IndexTypeVector, indexes[0].Tp)
 		require.Equal(t, model.DistanceMetricCosine, indexes[0].VectorInfo.DistanceMetric)
 		require.Equal(t, "vector_index", tbl.Meta().Indices[0].Name.O)
 		require.Equal(t, "vector_index_2", tbl.Meta().Indices[1].Name.O)
@@ -1187,7 +1187,7 @@ func TestCreateTableWithVectorIndex(t *testing.T) {
 
 	// a vector index with invisible
 	tk.MustContainErrMsg("create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HNSW INVISIBLE)",
-		"Unsupported set vector index invisible")
+		"[ddl:8200]INVISIBLE can not be used in VECTOR INDEX")
 }
 
 func TestCreateTableWithColumnarIndex(t *testing.T) {
@@ -1196,7 +1196,7 @@ func TestCreateTableWithColumnarIndex(t *testing.T) {
 	tk.MustExec("use test")
 
 	checkCreateTableWithColumnarIdx := func(replicaCnt uint64) {
-		tk.MustExec("create table t(a int, b int, c int, columnar index idx(b));")
+		tk.MustExec("create table t(a int, b int, c int, columnar index idx(b) using inverted);")
 		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 		require.NoError(t, err)
 		require.Equal(t, replicaCnt, tbl.Meta().TiFlashReplica.Count)
@@ -1215,7 +1215,7 @@ func TestCreateTableWithColumnarIndex(t *testing.T) {
 	replicas, err := infoschema.GetTiFlashStoreCount(tk.Session().GetStore())
 	require.NoError(t, err)
 	require.Equal(t, uint64(0), replicas)
-	tk.MustContainErrMsg("create table t(a int, b int, c int, columnar index idx(b));",
+	tk.MustContainErrMsg("create table t(a int, b int, c int, columnar index idx(b) using inverted);",
 		"Unsupported add columnar index: unsupported TiFlash store count is 0")
 
 	// test TiFlash store count is 2
@@ -1226,22 +1226,22 @@ func TestCreateTableWithColumnarIndex(t *testing.T) {
 	checkCreateTableWithColumnarIdx(1)
 
 	// test unsupported table types
-	tk.MustContainErrMsg("create temporary table t(a int, b int, c int, columnar index idx(b));", "`set TiFlash replica` is unsupported on temporary tables.")
+	tk.MustContainErrMsg("create temporary table t(a int, b int, c int, columnar index idx(b) using inverted);", "`set TiFlash replica` is unsupported on temporary tables.")
 	// global and local temporary table using different way to handle, so we have two test cases.
-	tk.MustContainErrMsg("create global temporary table t(a int, b int, c int, columnar index idx(b)) on commit delete rows;",
+	tk.MustContainErrMsg("create global temporary table t(a int, b int, c int, columnar index idx(b) using inverted) on commit delete rows;",
 		"`set TiFlash replica` is unsupported on temporary tables.")
-	tk.MustContainErrMsg("create table pt(id bigint, b int, c int, columnar index idx(b)) partition by range(id) (partition p0 values less than (20), partition p1 values less than (100));",
+	tk.MustContainErrMsg("create table pt(id bigint, b int, c int, columnar index idx(b) using inverted) partition by range(id) (partition p0 values less than (20), partition p1 values less than (100));",
 		"Unsupported add columnar index: unsupported partition table")
-	tk.MustContainErrMsg("create table t(a int, b int, c char(210) CHARACTER SET gbk COLLATE gbk_bin, columnar index idx(b));",
+	tk.MustContainErrMsg("create table t(a int, b int, c char(210) CHARACTER SET gbk COLLATE gbk_bin, columnar index idx(b) using inverted);",
 		"Unsupported `set TiFlash replica` settings for table contains gbk charset")
-	tk.MustContainErrMsg("create table mysql.t(a int, b int, c int, columnar index idx(b));",
+	tk.MustContainErrMsg("create table mysql.t(a int, b int, c int, columnar index idx(b) using inverted);",
 		"Unsupported `set TiFlash replica` settings for system table and memory table")
-	tk.MustContainErrMsg("create table information_schema.t(a int, b int, c int, columnar index idx(b));",
+	tk.MustContainErrMsg("create table information_schema.t(a int, b int, c int, columnar index idx(b) using inverted);",
 		"Unsupported `set TiFlash replica` settings for system table and memory table")
 
 	// a columnar index with invisible
-	tk.MustContainErrMsg("create table t(a int, b int, c int, columnar index idx(b) INVISIBLE)",
-		"Unsupported set columnar index invisible")
+	tk.MustContainErrMsg("create table t(a int, b int, c int, columnar index idx(b) using inverted INVISIBLE)",
+		"[ddl:8200]INVISIBLE can not be used in INVERTED INDEX")
 }
 
 func TestAddVectorIndexSimple(t *testing.T) {
@@ -1276,7 +1276,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	tk.MustContainErrMsg("alter table t add vector index idx((VEC_COSINE_DISTANCE(b))) USING HNSW COMMENT 'b comment';",
 		"unsupported empty TiFlash replica, the replica is nil")
 	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
-	tk.MustContainErrMsg("alter table t add key idx(a) USING HNSW;", "Unsupported index type")
+	tk.MustContainErrMsg("alter table t add key idx(a) USING HNSW;", "[ddl:8200]'USING HNSW' can be only used for VECTOR INDEX")
 	// for a wrong column
 	tk.MustContainErrMsg("alter table t add vector index ((vec_cosine_distance(n))) USING HNSW;", "[schema:1054]Unknown column 'n' in 't'")
 	// for wrong functions
@@ -1325,7 +1325,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	require.NoError(t, err)
 	indexes = tbl.Meta().Indices
 	require.Equal(t, 1, len(indexes))
-	require.Equal(t, ast.IndexTypeHNSW, indexes[0].Tp)
+	require.Equal(t, ast.IndexTypeVector, indexes[0].Tp)
 	require.Equal(t, model.DistanceMetricCosine, indexes[0].VectorInfo.DistanceMetric)
 	// test row count
 	jobs, err := getJobsBySQL(tk.Session(), "tidb_ddl_history", "order by job_id desc limit 1")
@@ -1351,7 +1351,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 		"Unsupported multi schema change for add columnar index")
 
 	// test alter index visibility
-	tk.MustContainErrMsg("alter table t alter index idx invisible", "Unsupported set columnar index invisible")
+	tk.MustContainErrMsg("alter table t alter index idx invisible", "[ddl:8200]INVISIBLE can not be used in VECTOR INDEX")
 	query := "select distinct index_name, is_visible from information_schema.statistics where table_schema = 'test' and table_name = 't' order by index_name"
 	tk.MustQuery(query).Check(testkit.Rows("idx YES"))
 	tk.MustExec("alter table t alter index idx visible")
@@ -1389,7 +1389,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	require.NoError(t, err)
 	indexes = tbl.Meta().Indices
 	require.Equal(t, 1, len(indexes))
-	require.Equal(t, ast.IndexTypeHNSW, indexes[0].Tp)
+	require.Equal(t, ast.IndexTypeVector, indexes[0].Tp)
 	require.Equal(t, model.DistanceMetricCosine, indexes[0].VectorInfo.DistanceMetric)
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 [1,2.1,3.3]"))
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
@@ -1415,7 +1415,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	require.Equal(t, 1, len(tbl.Meta().Indices))
 	idx := tbl.Meta().Indices[0]
 	require.Equal(t, "vector_index", idx.Name.O)
-	require.Equal(t, ast.IndexTypeHNSW, idx.Tp)
+	require.Equal(t, ast.IndexTypeVector, idx.Tp)
 	require.Equal(t, model.DistanceMetricL2, idx.VectorInfo.DistanceMetric)
 	tk.MustExec("alter table t add key vector_index_2(a);")
 	tk.MustExec("alter table t add vector index ((VEC_COSINE_DISTANCE(b))) USING HNSW;")
@@ -1460,7 +1460,7 @@ func TestAddColumnarIndexSimple(t *testing.T) {
 	tk.MustContainErrMsg("alter table t add columnar index idx(a) USING INVERTED COMMENT 'b comment';",
 		"unsupported empty TiFlash replica, the replica is nil")
 	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
-	tk.MustContainErrMsg("alter table t add key idx(d) USING INVERTED;", "Unsupported index type")
+	tk.MustContainErrMsg("alter table t add key idx(d) USING INVERTED;", "[ddl:8200]'USING INVERTED' can be only used for COLUMNAR INDEX")
 	// for a wrong column
 	tk.MustContainErrMsg("alter table t add columnar index (n) USING INVERTED;", "[schema:1054]Unknown column 'n' in 't'")
 	// for wrong data type
@@ -1515,7 +1515,7 @@ func TestAddColumnarIndexSimple(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
 		"  `b` int(11) DEFAULT NULL,\n" +
-		"  INVERTED INDEX `idx`(`a`) COMMENT 'a comment'\n" +
+		"  COLUMNAR INDEX `idx`(`a`) USING INVERTED COMMENT 'a comment'\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// test multi-schema change for unsupported operations
@@ -1525,7 +1525,7 @@ func TestAddColumnarIndexSimple(t *testing.T) {
 		"Unsupported multi schema change for add columnar index")
 
 	// test alter index visibility
-	tk.MustContainErrMsg("alter table t alter index idx invisible", "Unsupported set columnar index invisible")
+	tk.MustContainErrMsg("alter table t alter index idx invisible", "[ddl:8200]INVISIBLE can not be used in INVERTED INDEX")
 	query := "select distinct index_name, is_visible from information_schema.statistics where table_schema = 'test' and table_name = 't' order by index_name"
 	tk.MustQuery(query).Check(testkit.Rows("idx YES"))
 	tk.MustExec("alter table t alter index idx visible")
@@ -1567,7 +1567,7 @@ func TestAddColumnarIndexSimple(t *testing.T) {
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) NOT NULL,\n" +
 		"  `b` int(11) DEFAULT NULL,\n" +
-		"  INVERTED INDEX `idx`(`b`) COMMENT 'b comment'\n" +
+		"  COLUMNAR INDEX `idx`(`b`) USING INVERTED COMMENT 'b comment'\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 
 	// test multi-schema change for dropping indexes
