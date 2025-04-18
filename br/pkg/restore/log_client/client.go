@@ -589,8 +589,9 @@ func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
 	}
 	if exists {
 		// we need to load the checkpoint data for the following restore
-		_, err = sstCheckpointMetaManager.LoadCheckpointData(ctx, func(tableID int64, v checkpoint.RestoreValueType) {
+		_, err = sstCheckpointMetaManager.LoadCheckpointData(ctx, func(tableID int64, v checkpoint.RestoreValueType) error {
 			sstCheckpointSets[v.Name] = struct{}{}
+			return nil
 		})
 		if err != nil {
 			return nil, errors.Trace(err)

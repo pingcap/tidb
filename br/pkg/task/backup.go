@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
-	"github.com/pingcap/tidb/br/pkg/checksum"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
@@ -392,6 +391,8 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
+	isIncrementalBackup := cfg.LastBackupTS > 0
+	skipChecksum := !cfg.Checksum || isIncrementalBackup
 	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 	if err != nil {
 		return errors.Trace(err)
@@ -438,10 +439,12 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 
-	client := backup.NewBackupClient(ctx, mgr)
+	client := backup.NewTableBackupClient(ctx, mgr)
 
 	// set cipher only for checkpoint
 	client.SetCipher(&cfg.CipherInfo)
+	// set skip checksum status
+	client.SetSkipChecksum(skipChecksum)
 
 	opts := storage.ExternalStorageOptions{
 		NoCredentials:            cfg.NoCreds,
@@ -486,7 +489,6 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 
 	// use lastBackupTS as safePoint if exists
-	isIncrementalBackup := cfg.LastBackupTS > 0
 	if isIncrementalBackup {
 		sp.BackupTS = cfg.LastBackupTS
 	}
@@ -651,7 +653,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 
 	if cfg.UseCheckpoint {
-		if err = client.StartCheckpointRunner(ctx, cfgHash, backupTS, ranges, safePointID, progressCallBack); err != nil {
+		if err = client.StartCheckpointRunner(ctx, cfgHash, backupTS, safePointID, progressCallBack); err != nil {
 			return errors.Trace(err)
 		}
 		defer func() {
@@ -686,7 +688,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	})
 
 	metawriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
-	err = client.BackupRanges(ctx, ranges, req, uint(cfg.Concurrency), cfg.ReplicaReadLabel, metawriter, progressCallBack)
+	checksumMap, err := client.BackupRanges(ctx, ranges, req, uint(cfg.Concurrency), cfg.ReplicaReadLabel, metawriter, progressCallBack)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -698,7 +700,6 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 
-	skipChecksum := !cfg.Checksum || isIncrementalBackup
 	checksumProgress := int64(schemas.Len())
 	if skipChecksum {
 		checksumProgress = 1
@@ -714,7 +715,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	schemasConcurrency := min(cfg.TableConcurrency, uint(schemas.Len()))
 
 	err = schemas.BackupSchemas(
-		ctx, metawriter, client.GetCheckpointRunner(), mgr.GetStorage(), statsHandle, backupTS, schemasConcurrency, cfg.ChecksumConcurrency, skipChecksum, updateCh)
+		ctx, metawriter, client.GetCheckpointRunner(), mgr.GetStorage(), statsHandle, backupTS, checksumMap, schemasConcurrency, cfg.ChecksumConcurrency, skipChecksum, updateCh)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -730,13 +731,6 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	// Checksum has finished, close checksum progress.
 	updateCh.Close()
 
-	if !skipChecksum {
-		// Check if checksum from files matches checksum from coprocessor.
-		err = checksum.FastChecksum(ctx, metawriter.Backupmeta(), client.GetStorage(), &cfg.CipherInfo)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
 	archiveSize := metawriter.ArchiveSize()
 	g.Record(summary.BackupDataSize, archiveSize)
 	//backup from tidb will fetch a general Size issue https://github.com/pingcap/tidb/issues/27247
@@ -749,7 +743,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 func getProgressCountOfRanges(
 	ctx context.Context,
 	mgr *conn.Mgr,
-	ranges []rtree.Range,
+	ranges []rtree.KeyRange,
 ) (int, backup.ProgressUnit, error) {
 	if len(ranges) > 1000 {
 		return len(ranges), backup.UnitRange, nil
