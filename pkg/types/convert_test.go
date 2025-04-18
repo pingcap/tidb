@@ -903,7 +903,7 @@ func TestGetValidInt(t *testing.T) {
 		{"1.", "1", false},
 		{".1", "0", false},
 		{"", "0", true},
-		{"123e+", "123", true},
+		{"123e+", "123e", true},
 		{"123de", "123", true},
 	}
 	ctx = ctx.WithFlags(DefaultStmtFlags)
