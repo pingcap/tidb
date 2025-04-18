@@ -3808,6 +3808,7 @@ func exhaustPhysicalPlans4LogicalCTE(lp base.LogicalPlan, prop *property.Physica
 		pcte.storageSender = PhysicalExchangeSender{
 			ExchangeType: tipb.ExchangeType_Broadcast,
 		}.Init(p.SCtx(), p.StatsInfo())
+		pcte.sink = PhysicalCTESink{IDForStorage: p.Cte.IDForStorage}.Init(p.SCtx(), p.StatsInfo())
 	}
 	pcte.SetSchema(p.Schema())
 	pcte.SetChildrenReqProps([]*property.PhysicalProperty{prop.CloneEssentialFields()})

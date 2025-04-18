@@ -1843,6 +1843,27 @@ func (p *PhysicalExchangeReceiver) MemoryUsage() (sum int64) {
 	return
 }
 
+type PhysicalCTESource struct {
+	physicalSchemaProducer
+
+	IDForStorage int
+	Tasks        []*kv.MPPTask
+	frags        []*Fragment
+}
+
+// Clone implements op.PhysicalPlan interface.
+func (p *PhysicalCTESource) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
+	np := new(PhysicalCTESource)
+	np.SetSCtx(newCtx)
+	base, err := p.physicalSchemaProducer.cloneWithSelf(newCtx, np)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	np.physicalSchemaProducer = *base
+	np.IDForStorage = p.IDForStorage
+	return np, nil
+}
+
 // PhysicalExpand is used to expand underlying data sources to feed different grouping sets.
 type PhysicalExpand struct {
 	// data after repeat-OP will generate a new grouping-ID column to indicate what grouping set is it for.
@@ -1931,11 +1952,14 @@ func (p *PhysicalExpand) MemoryUsage() (sum int64) {
 type PhysicalExchangeSender struct {
 	physicalop.BasePhysicalPlan
 
+	// TargetTasks are the tasks that this fragment will send data to.
+	// Tasks held by itself will send data to the TargetTasks.
 	TargetTasks          []*kv.MPPTask
 	TargetCTEReaderTasks [][]*kv.MPPTask
 	ExchangeType         tipb.ExchangeType
 	HashCols             []*property.MPPPartitionColumn
-	// Tasks is the mpp task for current PhysicalExchangeSender.
+	// Tasks record actual tasks that this fragment has.
+	// It will tell which nodes this fragment is running on.
 	Tasks           []*kv.MPPTask
 	CompressionMode vardef.ExchangeCompressionMode
 }
@@ -1967,6 +1991,68 @@ func (p *PhysicalExchangeSender) MemoryUsage() (sum int64) {
 		sum += hCol.MemoryUsage()
 	}
 	return
+}
+
+func (p *PhysicalExchangeSender) GetCompressionMode() vardef.ExchangeCompressionMode {
+	return p.CompressionMode
+}
+
+func (p *PhysicalExchangeSender) GetSelfTasks() []*kv.MPPTask {
+	return p.Tasks
+}
+
+func (p *PhysicalExchangeSender) SetSelfTasks(tasks []*kv.MPPTask) {
+	p.Tasks = tasks
+}
+
+func (p *PhysicalExchangeSender) SetTargetTasks(tasks []*kv.MPPTask) {
+	p.TargetTasks = tasks
+}
+
+func (p *PhysicalExchangeSender) AppendTargetTasks(tasks []*kv.MPPTask) {
+	p.TargetTasks = append(p.TargetTasks, tasks...)
+}
+
+type PhysicalCTESink struct {
+	physicalop.BasePhysicalPlan
+
+	IDForStorage    int
+	TargetTasks     []*kv.MPPTask
+	Tasks           []*kv.MPPTask
+	CompressionMode vardef.ExchangeCompressionMode
+}
+
+func (p *PhysicalCTESink) GetCompressionMode() vardef.ExchangeCompressionMode {
+	return p.CompressionMode
+}
+
+func (p *PhysicalCTESink) GetSelfTasks() []*kv.MPPTask {
+	return p.Tasks
+}
+
+func (p *PhysicalCTESink) SetSelfTasks(tasks []*kv.MPPTask) {
+	p.Tasks = tasks
+}
+
+func (p *PhysicalCTESink) SetTargetTasks(tasks []*kv.MPPTask) {
+	p.TargetTasks = tasks
+}
+
+func (p *PhysicalCTESink) AppendTargetTasks(tasks []*kv.MPPTask) {
+	p.TargetTasks = append(p.TargetTasks, tasks...)
+}
+
+func (p *PhysicalCTESink) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
+	np := new(PhysicalCTESink)
+	np.SetSCtx(newCtx)
+	base, err := p.BasePhysicalPlan.CloneWithSelf(newCtx, np)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	np.BasePhysicalPlan = *base
+	np.CompressionMode = p.CompressionMode
+	np.IDForStorage = p.IDForStorage
+	return np, nil
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -2800,6 +2886,9 @@ type PhysicalCTE struct {
 
 	readerReceiver *PhysicalExchangeReceiver
 	storageSender  *PhysicalExchangeSender
+
+	sink   *PhysicalCTESink
+	source *PhysicalCTESource
 }
 
 // PhysicalCTETable is for CTE table.
@@ -2874,6 +2963,20 @@ func (p *PhysicalCTE) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) 
 			return nil, err
 		}
 		cloned.readerReceiver = clonedReceiver.(*PhysicalExchangeReceiver)
+	}
+	if p.sink != nil {
+		clonedSink, err := p.sink.Clone(newCtx)
+		if err != nil {
+			return nil, err
+		}
+		cloned.sink = clonedSink.(*PhysicalCTESink)
+	}
+	if p.source != nil {
+		clonedSource, err := p.source.Clone(newCtx)
+		if err != nil {
+			return nil, err
+		}
+		cloned.source = clonedSource.(*PhysicalCTESource)
 	}
 	return cloned, nil
 }
