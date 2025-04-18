@@ -2406,6 +2406,11 @@ error = '''
 The target table %-.100s of the %s is not updatable
 '''
 
+["planner:1305"]
+error = '''
+%s %s does not exist
+'''
+
 ["planner:1345"]
 error = '''
 EXPLAIN/SHOW can not be issued; lacking privileges for underlying table
