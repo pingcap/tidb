@@ -12,8 +12,8 @@ go_library(
     deps = [
         "//br/pkg/restore/split",
         "//pkg/lightning/log",
+        "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/import_sstpb",
-        "@com_github_pkg_errors//:errors",
         "@com_github_prometheus_client_golang//prometheus",
         "@org_uber_go_zap//:zap",
     ],
