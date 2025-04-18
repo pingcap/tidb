@@ -264,8 +264,8 @@ type objStoreRegionJobWorker struct {
 }
 
 func (*objStoreRegionJobWorker) preRunJob(_ context.Context, _ *regionJob) error {
-	// cloud engine use cloud storage, such as S3, to hold data, so no need to check
-	// disk fullness.
+	// cloud engine use cloud storage, such as S3, to hold data, it's assumed to
+	// have unlimited available space, so no need to check disk fullness.
 	return nil
 }
 
