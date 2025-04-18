@@ -428,11 +428,14 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 		increaseFactor := idx.GetIncreaseFactor(realtimeRowCount)
 		return outOfRangeFullNDV(float64(idx.Histogram.NDV), idx.TotalRowCount(), notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
 	}
-	skewEstimate := idx.Histogram.NotNullCount() - (histNDV - 1)
+	// Calculate the worst case selectivity assuming the value is skewed within the remaining values not in TopN.
+	skewEstimate := (idx.Histogram.NotNullCount() - float64(idx.TopN.TotalCount())) - (histNDV - 1)
+	// skewRatio determines how much of the potential skew should be considered
 	skewRatio := sctx.GetSessionVars().SkewRatio
-	// calculate the average histogram rows (which excludes topN) and NDV that excluded topN
+	// Calculate the average histogram rows (which excludes topN) and NDV that excluded topN
 	avgRowEstimate := idx.Histogram.NotNullCount() / histNDV
-	return avgRowEstimate + ((skewEstimate - avgRowEstimate) * skewRatio)
+	// Return the average estimate plus the skewed estimate
+	return avgRowEstimate + max(0, ((skewEstimate-avgRowEstimate)*skewRatio))
 }
 
 // expBackoffEstimation estimate the multi-col cases following the Exponential Backoff. See comment below for details.
