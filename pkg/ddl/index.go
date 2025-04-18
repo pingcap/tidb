@@ -380,8 +380,6 @@ func BuildIndexInfo(
 		if indexOption.Tp == ast.IndexTypeInvalid {
 			// Use btree as default index type.
 			idxInfo.Tp = ast.IndexTypeBtree
-		} else if columnarIndexType != model.ColumnarIndexTypeVector && indexOption.Tp == ast.IndexTypeHNSW {
-			return nil, dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("Only support vector index with HNSW type, but it's non-vector index")
 		} else {
 			idxInfo.Tp = indexOption.Tp
 		}
