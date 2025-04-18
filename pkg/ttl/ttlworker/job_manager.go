@@ -27,6 +27,7 @@ import (
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	ttltablestore "github.com/pingcap/tidb/pkg/timer/tablestore"
@@ -34,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/client"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/session"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -101,7 +101,7 @@ type JobManager struct {
 	// `scanWorkers` and `delWorkers` can be modified by setting variables at any time
 	baseWorker
 
-	sessPool util.DestroyableSessionPool
+	sessPool syssession.Pool
 
 	// id is the ddl id of this instance
 	id string
@@ -129,7 +129,7 @@ type JobManager struct {
 }
 
 // NewJobManager creates a new ttl job manager
-func NewJobManager(id string, sessPool util.DestroyableSessionPool, store kv.Storage, etcdCli *clientv3.Client, leaderFunc func() bool) (manager *JobManager) {
+func NewJobManager(id string, sessPool syssession.Pool, store kv.Storage, etcdCli *clientv3.Client, leaderFunc func() bool) (manager *JobManager) {
 	manager = &JobManager{}
 	manager.id = id
 	manager.store = store
@@ -164,11 +164,13 @@ func (m *JobManager) isLeader() bool {
 }
 
 func (m *JobManager) jobLoop() error {
-	se, err := getSession(m.sessPool)
-	if err != nil {
-		return err
-	}
+	defer func() {
+		logutil.Logger(m.ctx).Info("ttlJobManager loop exited.")
+	}()
+	return withSession(m.sessPool, m.jobLoopWithSession)
+}
 
+func (m *JobManager) jobLoopWithSession(se session.Session) (err error) {
 	timerStore := ttltablestore.NewTableTimerStore(1, m.sessPool, "mysql", "tidb_timers", m.etcd)
 	jobRequestCh := make(chan *SubmitTTLManagerJobRequest)
 	adapter := NewManagerJobAdapter(m.store, m.sessPool, jobRequestCh)
@@ -178,7 +180,6 @@ func (m *JobManager) jobLoop() error {
 		timerRT.Pause()
 		timerStore.Close()
 		err = multierr.Combine(err, multierr.Combine(m.taskManager.resizeScanWorkers(0), m.taskManager.resizeDelWorkers(0)))
-		se.Close()
 		logutil.Logger(m.ctx).Info("ttlJobManager loop exited.")
 	}()
 
@@ -554,7 +555,7 @@ j:
 		allFinished := true
 		allTasks := make([]*cache.TTLTask, 0, len(rows))
 		for _, r := range rows {
-			task, err := cache.RowToTTLTask(se, r)
+			task, err := cache.RowToTTLTask(se.GetSessionVars().Location(), r)
 			if err != nil {
 				logutil.Logger(m.ctx).Warn("fail to read task", zap.Error(err), zap.String("jobID", job.id))
 				continue j
@@ -830,7 +831,7 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 			return errors.Wrap(err, "split scan ranges")
 		}
 		for scanID, r := range ranges {
-			sql, args, err = cache.InsertIntoTTLTask(se, jobID, table.ID, scanID, r.Start, r.End, expireTime, now)
+			sql, args, err = cache.InsertIntoTTLTask(se.GetSessionVars().Location(), jobID, table.ID, scanID, r.Start, r.End, expireTime, now)
 			if err != nil {
 				return errors.Wrap(err, "encode scan task")
 			}
@@ -882,7 +883,7 @@ func (m *JobManager) getTableStatusForUpdateNotWait(ctx context.Context, se sess
 		}
 	}
 
-	return cache.RowToTableStatus(se, rows[0])
+	return cache.RowToTableStatus(se.GetSessionVars().Location(), rows[0])
 }
 
 func (m *JobManager) appendLockedJob(id string, se session.Session, createTime time.Time, expireTime time.Time, tableID int64) (*ttlJob, error) {
@@ -1217,38 +1218,45 @@ type SubmitTTLManagerJobRequest struct {
 
 type managerJobAdapter struct {
 	store     kv.Storage
-	sessPool  util.SessionPool
+	sessPool  syssession.Pool
 	requestCh chan<- *SubmitTTLManagerJobRequest
 }
 
 // NewManagerJobAdapter creates a managerJobAdapter
-func NewManagerJobAdapter(store kv.Storage, sessPool util.SessionPool, requestCh chan<- *SubmitTTLManagerJobRequest) TTLJobAdapter {
+func NewManagerJobAdapter(store kv.Storage, sessPool syssession.Pool, requestCh chan<- *SubmitTTLManagerJobRequest) TTLJobAdapter {
 	return &managerJobAdapter{store: store, sessPool: sessPool, requestCh: requestCh}
 }
 
-func (a *managerJobAdapter) CanSubmitJob(tableID, physicalID int64) bool {
-	se, err := getSession(a.sessPool)
+func (a *managerJobAdapter) CanSubmitJob(tableID, physicalID int64) (ok bool) {
+	err := withSession(a.sessPool, func(se session.Session) (internalErr error) {
+		ok, internalErr = a.canSubmitJobWithSession(tableID, physicalID, se)
+		return
+	})
+
 	if err != nil {
-		terror.Log(err)
+		logutil.BgLogger().Error("fail to check whether can submit job", zap.Error(err))
 		return false
 	}
-	defer se.Close()
 
+	return ok
+}
+
+func (a *managerJobAdapter) canSubmitJobWithSession(tableID, physicalID int64, se session.Session) (bool, error) {
 	is := se.GetDomainInfoSchema().(infoschema.InfoSchema)
 	tbl, ok := is.TableByID(context.Background(), tableID)
 	if !ok {
-		return false
+		return false, nil
 	}
 
 	tblInfo := tbl.Meta()
 	ttlInfo := tblInfo.TTLInfo
 	if ttlInfo == nil || !ttlInfo.Enable {
-		return false
+		return false, nil
 	}
 
 	if physicalID != tableID {
 		if par := tbl.GetPartitionedTable(); par == nil || par.GetPartition(physicalID) == nil {
-			return false
+			return false, nil
 		}
 	}
 
@@ -1258,7 +1266,13 @@ func (a *managerJobAdapter) CanSubmitJob(tableID, physicalID int64) bool {
 	selectTasksCntSQL := "select LOW_PRIORITY COUNT(1) FROM mysql.tidb_ttl_task WHERE status IN ('waiting', 'running')"
 	rs, err := se.ExecuteSQL(ctx, selectTasksCntSQL)
 	if err == nil && len(rs) == 0 {
-		err = errors.New("selectTasksCntSQL returns no row")
+		logutil.BgLogger().Error(
+			"selectTasksCntSQL returns no row",
+			zap.Int64("physicalID", physicalID),
+			zap.Int64("tableID", tableID),
+			zap.String("SQL", selectTasksCntSQL),
+		)
+		return false, nil
 	}
 
 	if err != nil {
@@ -1269,7 +1283,7 @@ func (a *managerJobAdapter) CanSubmitJob(tableID, physicalID int64) bool {
 			zap.Int64("tableID", tableID),
 			zap.String("SQL", selectTasksCntSQL),
 		)
-		return false
+		return false, err
 	}
 
 	cnt := rs[0].GetInt64(0)
@@ -1282,10 +1296,10 @@ func (a *managerJobAdapter) CanSubmitJob(tableID, physicalID int64) bool {
 			zap.Int64("count", cnt),
 			zap.Int("limit", tasksLimit),
 		)
-		return false
+		return false, nil
 	}
 
-	return true
+	return true, nil
 }
 
 func (a *managerJobAdapter) SubmitJob(ctx context.Context, tableID, physicalID int64, requestID string, _ time.Time) (*TTLJobTrace, error) {
@@ -1317,12 +1331,21 @@ func (a *managerJobAdapter) SubmitJob(ctx context.Context, tableID, physicalID i
 }
 
 func (a *managerJobAdapter) GetJob(ctx context.Context, tableID, physicalID int64, requestID string) (*TTLJobTrace, error) {
-	se, err := getSession(a.sessPool)
+	var job *TTLJobTrace
+	err := withSession(a.sessPool, func(se session.Session) (internalErr error) {
+		job, internalErr = a.getJobWithSession(ctx, se, tableID, physicalID, requestID)
+		return
+	})
+
 	if err != nil {
+		logutil.BgLogger().Error("fail to get job", zap.Error(err))
 		return nil, err
 	}
-	defer se.Close()
 
+	return job, nil
+}
+
+func (a *managerJobAdapter) getJobWithSession(ctx context.Context, se session.Session, tableID, physicalID int64, requestID string) (*TTLJobTrace, error) {
 	rows, err := se.ExecuteSQL(
 		ctx,
 		"select summary_text, status from mysql.tidb_ttl_job_history where table_id=%? AND parent_table_id=%? AND job_id=%?",
@@ -1362,19 +1385,16 @@ func (a *managerJobAdapter) GetJob(ctx context.Context, tableID, physicalID int6
 	return &jobTrace, nil
 }
 
-func (a *managerJobAdapter) Now() (time.Time, error) {
-	se, err := getSession(a.sessPool)
-	if err != nil {
-		return time.Time{}, err
-	}
-	defer se.Close()
-
-	tz, err := se.GlobalTimeZone(context.TODO())
-	if err != nil {
-		return time.Time{}, err
-	}
-
-	return se.Now().In(tz), nil
+func (a *managerJobAdapter) Now() (now time.Time, _ error) {
+	err := withSession(a.sessPool, func(se session.Session) error {
+		tz, err := se.GlobalTimeZone(context.TODO())
+		if err != nil {
+			return err
+		}
+		now = se.Now().In(tz)
+		return nil
+	})
+	return now, err
 }
 
 func (m *JobManager) jobLogger(job *ttlJob) *zap.Logger {

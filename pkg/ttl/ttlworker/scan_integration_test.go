@@ -81,7 +81,7 @@ func TestCancelWhileScan(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			ttlTask.DoScan(ctx, delCh, dom.SysSessionPool())
+			ttlTask.DoScan(ctx, delCh, dom.AdvancedSysSessionPool())
 		}()
 
 		// randomly sleep for a while and cancel the scan

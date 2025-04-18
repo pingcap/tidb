@@ -22,7 +22,6 @@ go_library(
         "//pkg/parser/charset",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
-        "//pkg/sessionctx",
         "//pkg/table/tables",
         "//pkg/tablecodec",
         "//pkg/ttl/session",
