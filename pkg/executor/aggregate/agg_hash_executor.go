@@ -498,6 +498,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 		err = exec.Next(ctx, e.Children(0), chk)
 		if err != nil {
 			e.finalOutputCh <- &AfFinalResult{err: err}
+			e.memTracker.Consume(-consumedMemory)
 			return
 		}
 
