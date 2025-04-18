@@ -34,6 +34,10 @@ type KeyAdapter interface {
 
 	// EncodedLen returns the encoded key length.
 	EncodedLen(key []byte, rowID []byte) int
+
+	// AddPrefix adds a prefix to the encoded key to make it as if the original key had a prefix.
+	// Encode(prefix, key) = AddPrefix(Encode(key), prefix)
+	AddPrefix(encodedKey []byte, prefix []byte) ([]byte, error)
 }
 
 func reallocBytes(b []byte, n int) []byte {
@@ -64,6 +68,11 @@ func (NoopKeyAdapter) EncodedLen(key []byte, _ []byte) int {
 	return len(key)
 }
 
+// AddPrefix implements KeyAdapter.
+func (NoopKeyAdapter) AddPrefix(encodedKey []byte, prefix []byte) ([]byte, error) {
+	return append(prefix, encodedKey...), nil
+}
+
 var _ KeyAdapter = NoopKeyAdapter{}
 
 // DupDetectKeyAdapter is a key adapter that appends rowID to the key to avoid
@@ -80,17 +89,36 @@ func (DupDetectKeyAdapter) Encode(dst []byte, key []byte, rowID []byte) []byte {
 	return dst
 }
 
-// Decode implements KeyAdapter.
-func (DupDetectKeyAdapter) Decode(dst []byte, data []byte) ([]byte, error) {
+// extractKeyComponents extracts the components from an encoded key.
+// Returns:
+// - the encoded prefix (data[:len(data)-tailLen])
+// - the rowID portion
+// - the tail length
+// - any error encountered
+func extractKeyComponents(data []byte) ([]byte, []byte, int, error) {
 	if len(data) < 2 {
-		return nil, errors.New("insufficient bytes to decode value")
+		return nil, nil, 0, errors.New("insufficient bytes to decode value")
 	}
 	rowIDLen := uint16(data[len(data)-2])<<8 | uint16(data[len(data)-1])
 	tailLen := int(rowIDLen + 2)
 	if len(data) < tailLen {
-		return nil, errors.New("insufficient bytes to decode value")
+		return nil, nil, 0, errors.New("insufficient bytes to decode value")
 	}
-	_, key, err := codec.DecodeBytes(data[:len(data)-tailLen], dst[len(dst):cap(dst)])
+
+	encodedPrefix := data[:len(data)-tailLen]
+	rowID := data[len(data)-tailLen : len(data)-2]
+
+	return encodedPrefix, rowID, tailLen, nil
+}
+
+// Decode implements KeyAdapter.
+func (DupDetectKeyAdapter) Decode(dst []byte, data []byte) ([]byte, error) {
+	encodedPrefix, _, _, err := extractKeyComponents(data)
+	if err != nil {
+		return nil, err
+	}
+
+	_, key, err := codec.DecodeBytes(encodedPrefix, dst[len(dst):cap(dst)])
 	if err != nil {
 		return nil, err
 	}
@@ -103,6 +131,29 @@ func (DupDetectKeyAdapter) Decode(dst []byte, data []byte) ([]byte, error) {
 	}
 	// New slice is allocated, append key to dst manually.
 	return append(dst, key...), nil
+}
+
+// AddPrefix transforms an existing encoded key from DupDetectKeyAdapter
+// to make it as if the original key had a prefix
+// NOTE: this implementation is a hack, but we will remove it in the future
+func (DupDetectKeyAdapter) AddPrefix(encodedKey []byte, prefix []byte) ([]byte, error) {
+	encodedPrefix, rowID, _, err := extractKeyComponents(encodedKey)
+	if err != nil {
+		return nil, err
+	}
+
+	var originalKey []byte
+	_, originalKey, err = codec.DecodeBytes(encodedPrefix, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	prefixedKey := make([]byte, 0, len(prefix)+len(originalKey))
+	prefixedKey = append(prefixedKey, prefix...)
+	prefixedKey = append(prefixedKey, originalKey...)
+
+	adapter := DupDetectKeyAdapter{}
+	return adapter.Encode(nil, prefixedKey, rowID), nil
 }
 
 // EncodedLen implements KeyAdapter.
