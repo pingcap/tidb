@@ -299,6 +299,9 @@ func (rc *SnapClient) SetPlacementPolicyMode(withPlacementPolicy string) {
 // the download stage.
 func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Table) error {
 	preallocedTableIDs := tidalloc.New(tables)
+	if preallocedTableIDs == nil {
+		return errors.Errorf("failed to pre-alloc table IDs")
+	}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	err := kv.RunInNewTxn(ctx, rc.GetDomain().Store(), true, func(_ context.Context, txn kv.Transaction) error {
 		return preallocedTableIDs.Alloc(meta.NewMutator(txn))
