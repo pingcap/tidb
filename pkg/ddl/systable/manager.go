@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/session"
+	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
@@ -48,6 +49,8 @@ type Manager interface {
 	// HasFlashbackClusterJob checks if there is any flashback cluster job.
 	// minJobID has the same meaning as in GetMinJobID.
 	HasFlashbackClusterJob(ctx context.Context, minJobID int64) (bool, error)
+	// SetJobRowCount sets the row count of the job with the given jobID.
+	SetJobRowCount(ctx context.Context, jobID int64, rowCount int64) error
 }
 
 type manager struct {
@@ -106,6 +109,15 @@ func (*manager) GetJobBytesByIDWithSe(ctx context.Context, se *session.Session, 
 	return rows[0].GetBytes(0), nil
 }
 
+func (*manager) setJobBytes(ctx context.Context, se *session.Session, jobID int64, jobBytes []byte) error {
+	sql := fmt.Sprintf(`update mysql.tidb_ddl_job set job_meta = %s where job_id = %d`, util.WrapKey2String(jobBytes), jobID)
+	_, err := se.Execute(ctx, sql, "set-job-meta-by-id")
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
 func (mgr *manager) GetMDLVer(ctx context.Context, jobID int64) (int64, error) {
 	var ver int64
 	if err := mgr.withNewSession(func(se *session.Session) error {
@@ -162,4 +174,31 @@ func (mgr *manager) HasFlashbackClusterJob(ctx context.Context, minJobID int64) 
 		return false, err
 	}
 	return hasFlashbackClusterJob, nil
+}
+
+// SetJobRowCount sets the row count of the job with the given jobID.
+func (mgr *manager) SetJobRowCount(ctx context.Context, jobID int64, rowCount int64) error {
+	job := model.Job{}
+	return mgr.withNewSession(func(se *session.Session) error {
+		bytes, err := mgr.GetJobBytesByIDWithSe(ctx, se, jobID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		err = job.Decode(bytes)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if job.RowCount != rowCount {
+			job.RowCount = rowCount
+			jobBytes, err := job.Encode(false)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			err = mgr.setJobBytes(ctx, se, jobID, jobBytes)
+			if err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
+	})
 }

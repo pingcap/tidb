@@ -877,6 +877,36 @@ func (w *worker) runOneJobStep(
 					}
 				}
 			})
+
+			stopUpdatingJobRowCnt := make(chan struct{})
+			defer close(stopUpdatingJobRowCnt)
+			w.wg.Run(func() {
+				ticker := time.NewTicker(3 * time.Second)
+				defer ticker.Stop()
+				var prevRowCnt int64
+				for {
+					select {
+					case <-stopUpdatingJobRowCnt:
+						return
+					case <-ticker.C:
+						rgCtx := jobCtx.oldDDLCtx.getReorgCtx(job.ID)
+						if rgCtx == nil {
+							continue
+						}
+						latestRowCnt := rgCtx.getRowCount()
+						if latestRowCnt == prevRowCnt {
+							continue
+						}
+						err := sysTblMgr.SetJobRowCount(w.workCtx, job.ID, latestRowCnt)
+						if err != nil {
+							logutil.DDLLogger().Warn("set job row count failed",
+								zap.Int64("job_id", job.ID),
+								zap.Error(err))
+						}
+						prevRowCnt = latestRowCnt
+					}
+				}
+			})
 		}
 	}
 	// When upgrading from a version where the ReorgMeta fields did not exist in the DDL job information,
