@@ -430,13 +430,15 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx session
 			hists = append(hists, h)
 			topn = append(topn, t)
 		}
-		select {
-		case a.histogramAndTopn <- mergeItem[*StatsWrapper]{
-			NewStatsWrapper(hists, topn), i,
-		}:
-		case <-a.cpuWorkerExitChan:
-			statslogutil.StatsLogger().Warn("ioWorker detects CPUWorker has exited")
-			return nil
+		if !(len(hists) == 0 && len(topn) == 0) {
+			select {
+			case a.histogramAndTopn <- mergeItem[*StatsWrapper]{
+				NewStatsWrapper(hists, topn), i,
+			}:
+			case <-a.cpuWorkerExitChan:
+				statslogutil.StatsLogger().Warn("ioWorker detects CPUWorker has exited")
+				return nil
+			}
 		}
 	}
 	return nil
