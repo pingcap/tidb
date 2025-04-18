@@ -2023,6 +2023,10 @@ var defaultSysVars = []*SysVar{
 		s.CorrelationExpFactor = int(TidbOptInt64(val, vardef.DefOptCorrelationExpFactor))
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptSkewRatio, Value: strconv.FormatFloat(vardef.DefOptSkewRatio, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1, SetSession: func(s *SessionVars, val string) error {
+		s.SkewRatio = tidbOptFloat64(val, vardef.DefOptSkewRatio)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptCPUFactor, Value: strconv.FormatFloat(vardef.DefOptCPUFactor, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: math.MaxUint64, SetSession: func(s *SessionVars, val string) error {
 		s.cpuFactor = tidbOptFloat64(val, vardef.DefOptCPUFactor)
 		return nil

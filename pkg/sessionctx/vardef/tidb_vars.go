@@ -323,6 +323,9 @@ const (
 	// TiDBOptCorrelationExpFactor is an exponential factor to control heuristic approach when tidb_opt_correlation_threshold is not satisfied.
 	TiDBOptCorrelationExpFactor = "tidb_opt_correlation_exp_factor"
 
+	// TiDBOptSkewRatio controls the amount of skew is applied to equal predicate estimation when a value is not found in TopN/buckets.
+	TiDBOptSkewRatio = "tidb_opt_skew_ratio"
+
 	// TiDBOptCPUFactor is the CPU cost of processing one expression for one row.
 	TiDBOptCPUFactor = "tidb_opt_cpu_factor"
 	// TiDBOptCopCPUFactor is the CPU cost of processing one expression for one row in coprocessor.
@@ -1317,6 +1320,7 @@ const (
 	DefOptLimitPushDownThreshold            = 100
 	DefOptCorrelationThreshold              = 0.9
 	DefOptCorrelationExpFactor              = 1
+	DefOptSkewRatio                         = 0.0
 	DefOptCPUFactor                         = 3.0
 	DefOptCopCPUFactor                      = 3.0
 	DefOptTiFlashConcurrencyFactor          = 24.0

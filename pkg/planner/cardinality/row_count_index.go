@@ -428,8 +428,11 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 		increaseFactor := idx.GetIncreaseFactor(realtimeRowCount)
 		return outOfRangeFullNDV(float64(idx.Histogram.NDV), idx.TotalRowCount(), notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
 	}
-	// return the average histogram rows (which excludes topN) and NDV that excluded topN
-	return idx.Histogram.NotNullCount() / histNDV
+	skewEstimate := idx.Histogram.NotNullCount() - (histNDV - 1)
+	skewRatio := sctx.GetSessionVars().SkewRatio
+	// calculate the average histogram rows (which excludes topN) and NDV that excluded topN
+	avgRowEstimate := idx.Histogram.NotNullCount() / histNDV
+	return avgRowEstimate + ((skewEstimate - avgRowEstimate) * skewRatio)
 }
 
 // expBackoffEstimation estimate the multi-col cases following the Exponential Backoff. See comment below for details.
