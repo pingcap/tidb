@@ -2251,6 +2251,9 @@ func (p *PhysicalHashAgg) MemoryUsage() (sum int64) {
 
 // NewPhysicalHashAgg creates a new PhysicalHashAgg from a LogicalAggregation.
 func NewPhysicalHashAgg(la *logicalop.LogicalAggregation, newStats *property.StatsInfo, prop *property.PhysicalProperty) *PhysicalHashAgg {
+	if !la.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	newGbyItems := make([]expression.Expression, len(la.GroupByItems))
 	copy(newGbyItems, la.GroupByItems)
 	newAggFuncs := make([]*aggregation.AggFuncDesc, len(la.AggFuncs))

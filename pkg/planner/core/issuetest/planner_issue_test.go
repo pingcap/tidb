@@ -259,3 +259,29 @@ func TestIssue59902(t *testing.T) {
 			"        └─Selection 1.00 cop[tikv]  not(isnull(test.t2.a))",
 			"          └─IndexRangeScan 1.00 cop[tikv] table:t2, index:idx(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"))
 }
+
+func TestABC(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec(`CREATE TABLE mysql_3 (
+    col_int_auto_increment INT(10) AUTO_INCREMENT,
+    col_pk_char CHAR(60) NOT NULL,
+    col_pk_date DATE NOT NULL,
+    col_datetime DATETIME,
+    col_int INT,
+    col_date DATE,
+    PRIMARY KEY (col_int_auto_increment, col_pk_char, col_datetime, col_int, col_date)
+);`)
+	tk.MustQuery(`SELECT *
+FROM mysql_3 t1
+WHERE EXISTS
+    (SELECT DISTINCT a1.*
+     FROM mysql_3 a1
+     WHERE (a1.col_pk_char NOT IN
+              (SELECT a1.col_pk_char
+               FROM mysql_3 a1 NATURAL
+               RIGHT JOIN mysql_3 a2
+               WHERE t1.col_pk_date IS NULL
+               GROUP BY a1.col_pk_char)) )`).Check(testkit.Rows())
+}
