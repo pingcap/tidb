@@ -531,8 +531,7 @@ func (b *jsonSumFunctionSig) evalInt(ctx EvalContext, row chunk.Row) (res int64,
 			sum += int64(crc32.ChecksumIEEE([]byte(fmt.Sprintf("%v", item))))
 		}
 	}
-	// Manually inject error data
-	return sum + 1, false, nil
+	return sum, false, nil
 }
 
 type castAsArrayFunctionClass struct {

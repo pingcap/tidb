@@ -3681,14 +3681,17 @@ type unfoldOption struct{}
 
 var unfoldOptionKey unfoldOption
 
-// WithJSONOption controls the rewriter unfold operation.
+// WithForceMVIndexScan controls how the rewriter process MV Index.
 // If it's true, it indicated we want to unfold cast(... as ... array).
-// NOTE!!! It should only be used in restricted SQL (admin check table).
-func WithUnfoldOption(ctx context.Context, unfold bool) context.Context {
+// NOTE: It should only be used in fast admin check table,
+//
+//	see check_table_index.go for more details.
+func WithForceMVIndexScan(ctx context.Context, unfold bool) context.Context {
 	return context.WithValue(ctx, unfoldOptionKey, unfold)
 }
 
-func GetUnfoldOption(ctx context.Context) bool {
+// GetForceMVIndexScan check whether the force MV index scan option is set.
+func GetForceMVIndexScan(ctx context.Context) bool {
 	unfold := false
 	if opt := ctx.Value(unfoldOptionKey); opt != nil {
 		unfold = opt.(bool)
@@ -3697,7 +3700,6 @@ func GetUnfoldOption(ctx context.Context) bool {
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p base.LogicalPlan, err error) {
-	ctx = WithUnfoldOption(ctx, true)
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
 	defer func() {
@@ -4614,7 +4616,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			}
 		}
 	}
-	splitJSONArray := GetUnfoldOption(ctx) == true
+	splitJSONArray := GetForceMVIndexScan(ctx) == true
 	ds := logicalop.DataSource{
 		DBName:              dbName,
 		TableAsName:         asName,

@@ -1498,8 +1498,8 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			er.disableFoldCounter--
 		}
 	case *ast.FuncCastExpr:
-		unfold := GetUnfoldOption(er.ctx)
-		if v.Tp.IsArray() && !er.allowBuildCastArray && !unfold {
+		forceMVIndexScan := GetForceMVIndexScan(er.ctx)
+		if v.Tp.IsArray() && !er.allowBuildCastArray && !forceMVIndexScan {
 			er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions")
 			return retNode, false
 		}
@@ -1534,7 +1534,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 
 		// Rewrite cast(col as UNSIGNED ARRAY) / cast(col->path as UNSIGNED ARRAY) as virtual(col)
 		// The logic is copied from generateMVIndexMergePartialPaths4And.
-		if unfold {
+		if forceMVIndexScan && v.Tp.IsArray() {
 			sf, _ := castFunction.(*expression.ScalarFunction)
 			if ds, ok := er.planCtx.plan.(*logicalop.DataSource); ok {
 				evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
