@@ -46,24 +46,3 @@ func (t StoreType) Valid() bool {
 func StoreTypeList() []StoreType {
 	return []StoreType{StoreTypeTiKV, StoreTypeUniStore, StoreTypeMockTiKV}
 }
-
-const (
-	// in this generation, TiKV store all data in its own block storage, i.e. disk
-	// or EBS, and each MVCC KV will have 3 replica normally.
-	storeEngineGenerationBlockStore = "block"
-	// in this generation, TiKV store all data in object storage, such as S3.
-	// we only write one object to the storage for each MVCC KV, and use object
-	// storage infrastructure to make sure high availability. TiKV will load data
-	// from object storage when needed.
-	storeEngineGenerationObjectStore = "object"
-)
-
-// this var will be set at compile time.
-var storeEngineGeneration = storeEngineGenerationBlockStore
-
-// IsObjectStore returns true if the store engine is based on object storage.
-// currently, we use same TiDB code base for both block and object storage, we
-// will use this method to distinguish them and run different code path.
-func IsObjectStore() bool {
-	return storeEngineGeneration == storeEngineGenerationObjectStore
-}
