@@ -664,6 +664,14 @@ func (a *ExecStmt) handleStmtForeignKeyTrigger(ctx context.Context, e exec.Execu
 		// Since `UnionScanExec` use `SnapshotIter` and `SnapshotGetter` to read txn mem-buffer, if we don't do `StmtCommit`,
 		// then the fk cascade executor can't read the mem-buffer changed by the ExecStmt.
 		a.Ctx.StmtCommit(ctx)
+		// `StmtCommit` will change the snapshot of the MemBuffer, so we need to get a new one.
+		// TODO: support getting the latest snapshot without commit the statement, so that the foreign-key statement can be safely rolled back and retried.
+		txn, _ := a.Ctx.Txn(false)
+		if txn != nil && !txn.IsReadOnly() {
+			a.Ctx.GetSessionVars().StmtCtx.MemBufferSnapshot = txn.GetMemBuffer().GetSnapshot()
+		} else {
+			a.Ctx.GetSessionVars().StmtCtx.MemBufferSnapshot = nil
+		}
 	}
 	err := a.handleForeignKeyTrigger(ctx, e, 1)
 	if err != nil {
@@ -761,6 +769,13 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 		// Call `StmtCommit` uses to flush the fk cascade executor change into txn mem-buffer,
 		// then the later fk cascade executors can see the mem-buffer changes.
 		a.Ctx.StmtCommit(ctx)
+		txn, _ := a.Ctx.Txn(false)
+		if txn != nil && !txn.IsReadOnly() {
+			a.Ctx.GetSessionVars().StmtCtx.MemBufferSnapshot = txn.GetMemBuffer().GetSnapshot()
+		} else {
+			a.Ctx.GetSessionVars().StmtCtx.MemBufferSnapshot = nil
+		}
+
 		err = a.handleForeignKeyTrigger(ctx, e, depth+1)
 		if err != nil {
 			return err
@@ -939,7 +954,6 @@ func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e exec.
 	}()
 
 	isFirstAttempt := true
-
 	for {
 		startTime := time.Now()
 		rs, err := a.runPessimisticSelectForUpdate(ctx, e)
@@ -1170,6 +1184,9 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	a.retryCount++
 	a.retryStartTime = time.Now()
 
+	// Rollback the statement change before retry it.
+	// Call it before `OnStmtRetry` to ensure that the MemBuffer's snapshot is fetched after rollback.
+	a.Ctx.StmtRollback(ctx, true)
 	err = txnManager.OnStmtRetry(ctx)
 	if err != nil {
 		return nil, err
@@ -1190,8 +1207,6 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 	if err != nil {
 		return nil, err
 	}
-	// Rollback the statement change before retry it.
-	a.Ctx.StmtRollback(ctx, true)
 	a.Ctx.GetSessionVars().StmtCtx.ResetForRetry()
 	a.Ctx.GetSessionVars().RetryInfo.ResetOffset()
 
