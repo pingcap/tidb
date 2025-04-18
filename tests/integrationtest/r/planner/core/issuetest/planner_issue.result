@@ -97,10 +97,10 @@ set autocommit=OFF;
 explain update ads_txn s set aml_cntpr_accno = trim(acpayr_accno) where s._tidb_rowid between 1 and 100000;
 id	estRows	task	access object	operator info
 Update_5	N/A	root		N/A
-└─Projection_6	8000.00	root		planner__core__issuetest__planner_issue.ads_txn.cusno, planner__core__issuetest__planner_issue.ads_txn.txn_dt, planner__core__issuetest__planner_issue.ads_txn.unn_trno, planner__core__issuetest__planner_issue.ads_txn.aml_cntpr_accno, planner__core__issuetest__planner_issue.ads_txn.acpayr_accno, planner__core__issuetest__planner_issue.ads_txn._tidb_rowid
-  └─SelectLock_7	8000.00	root		for update 0
-    └─TableReader_9	10000.00	root	partition:all	data:TableRangeScan_8
-      └─TableRangeScan_8	10000.00	cop[tikv]	table:s	range:[1,100000], keep order:false, stats:pseudo
+└─Projection_9	8000.00	root		planner__core__issuetest__planner_issue.ads_txn.cusno, planner__core__issuetest__planner_issue.ads_txn.txn_dt, planner__core__issuetest__planner_issue.ads_txn.unn_trno, planner__core__issuetest__planner_issue.ads_txn.aml_cntpr_accno, planner__core__issuetest__planner_issue.ads_txn.acpayr_accno, planner__core__issuetest__planner_issue.ads_txn._tidb_rowid
+  └─SelectLock_10	8000.00	root		for update 0
+    └─TableReader_12	10000.00	root	partition:all	data:TableRangeScan_11
+      └─TableRangeScan_11	10000.00	cop[tikv]	table:s	range:[1,100000], keep order:false, stats:pseudo
 CREATE TABLE tb1 (cid INT, code INT, class VARCHAR(10));
 CREATE TABLE tb2 (cid INT, code INT, class VARCHAR(10));
 UPDATE tb1, (SELECT code AS cid, code, MAX(class) AS class FROM tb2 GROUP BY code) tb3 SET tb1.cid = tb3.cid, tb1.code = tb3.code, tb1.class = tb3.class;
@@ -708,14 +708,14 @@ JOIN tceb7972c ON tceb7972c.col_19 = t61a85298.col_71
 WHERE 16739493649928310215 MEMBER OF (derived_table.col_60767)
 OR NOT (JSON_CONTAINS(derived_table.col_60767, '6019730272580550835'));
 id	estRows	task	access object	operator info
-Projection_11	6.00	root		1->Column#18
-└─HashJoin_13	6.00	root		inner join, equal:[eq(test.tceb7972c.col_19, Column#19)]
-  ├─TableReader_16(Build)	4.80	root	partition:all	data:Selection_15
-  │ └─Selection_15	4.80	cop[tikv]		or(json_memberof(cast(16739493649928310215, json BINARY), test.tceb7972c.col_17), not(istrue_with_null(json_contains(test.tceb7972c.col_17, cast("6019730272580550835", json BINARY)))))
-  │   └─TableFullScan_14	6.00	cop[tikv]	table:tceb7972c	keep order:false, stats:partial[col_17:missing]
-  └─Projection_17(Probe)	10000.00	root		cast(test.t61a85298.col_71, double BINARY)->Column#19
-    └─TableReader_19	10000.00	root		data:TableFullScan_18
-      └─TableFullScan_18	10000.00	cop[tikv]	table:t61a85298	keep order:false, stats:pseudo
+Projection_15	6.00	root		1->Column#18
+└─HashJoin_17	6.00	root		inner join, equal:[eq(test.tceb7972c.col_19, Column#19)]
+  ├─TableReader_20(Build)	4.80	root	partition:all	data:Selection_19
+  │ └─Selection_19	4.80	cop[tikv]		or(json_memberof(cast(16739493649928310215, json BINARY), test.tceb7972c.col_17), not(istrue_with_null(json_contains(test.tceb7972c.col_17, cast("6019730272580550835", json BINARY)))))
+  │   └─TableFullScan_18	6.00	cop[tikv]	table:tceb7972c	keep order:false, stats:partial[col_17:missing]
+  └─Projection_21(Probe)	10000.00	root		cast(test.t61a85298.col_71, double BINARY)->Column#19
+    └─TableReader_23	10000.00	root		data:TableFullScan_22
+      └─TableFullScan_22	10000.00	cop[tikv]	table:t61a85298	keep order:false, stats:pseudo
 drop table if exists t0, t1;
 CREATE TABLE t0(c0 int);
 CREATE TABLE t1(c0 int);

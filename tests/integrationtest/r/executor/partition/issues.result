@@ -265,13 +265,13 @@ join t on c.txt_account_id = t.txn_account_id
 and t.broker = '0009'
 and c.occur_trade_date = '2022-11-17';
 id	estRows	task	access object	operator info
-IndexJoin_22	1.00	root		inner join, inner:TableReader_21, outer key:executor__partition__issues.t.txn_account_id, inner key:executor__partition__issues.c.txt_account_id, equal cond:eq(executor__partition__issues.t.txn_account_id, executor__partition__issues.c.txt_account_id)
-├─TableReader_27(Build)	1.00	root		data:Selection_26
-│ └─Selection_26	1.00	cop[tikv]		eq(executor__partition__issues.t.broker, "0009")
-│   └─TableFullScan_25	1.00	cop[tikv]	table:t	keep order:false
-└─TableReader_21(Probe)	1.00	root	partition:all	data:Selection_20
-  └─Selection_20	1.00	cop[tikv]		eq(executor__partition__issues.c.occur_trade_date, 2022-11-17 00:00:00.000000)
-    └─TableRangeScan_19	1.00	cop[tikv]	table:c	range: decided by [eq(executor__partition__issues.c.txt_account_id, executor__partition__issues.t.txn_account_id) eq(executor__partition__issues.c.occur_trade_date, 2022-11-17 00:00:00.000000)], keep order:false
+IndexJoin_25	1.00	root		inner join, inner:TableReader_24, outer key:executor__partition__issues.t.txn_account_id, inner key:executor__partition__issues.c.txt_account_id, equal cond:eq(executor__partition__issues.t.txn_account_id, executor__partition__issues.c.txt_account_id)
+├─TableReader_30(Build)	1.00	root		data:Selection_29
+│ └─Selection_29	1.00	cop[tikv]		eq(executor__partition__issues.t.broker, "0009")
+│   └─TableFullScan_28	1.00	cop[tikv]	table:t	keep order:false
+└─TableReader_24(Probe)	1.00	root	partition:all	data:Selection_23
+  └─Selection_23	1.00	cop[tikv]		eq(executor__partition__issues.c.occur_trade_date, 2022-11-17 00:00:00.000000)
+    └─TableRangeScan_22	1.00	cop[tikv]	table:c	range: decided by [eq(executor__partition__issues.c.txt_account_id, executor__partition__issues.t.txn_account_id) eq(executor__partition__issues.c.occur_trade_date, 2022-11-17 00:00:00.000000)], keep order:false
 select
 /*+ inl_join(c) */
 c.occur_amount
@@ -302,13 +302,13 @@ join t on c.txt_account_id = t.txn_account_id
 and t.broker = '0009'
 and c.occur_trade_date = '2022-11-17' and c.serial_id = t.serial_id;
 id	estRows	task	access object	operator info
-IndexJoin_20	0.80	root		inner join, inner:TableReader_19, outer key:executor__partition__issues.t.txn_account_id, executor__partition__issues.t.serial_id, inner key:executor__partition__issues.c.txt_account_id, executor__partition__issues.c.serial_id, equal cond:eq(executor__partition__issues.t.serial_id, executor__partition__issues.c.serial_id), eq(executor__partition__issues.t.txn_account_id, executor__partition__issues.c.txt_account_id)
-├─TableReader_25(Build)	0.80	root		data:Selection_24
-│ └─Selection_24	0.80	cop[tikv]		eq(executor__partition__issues.t.broker, "0009"), not(isnull(executor__partition__issues.t.serial_id))
-│   └─TableFullScan_23	1.00	cop[tikv]	table:t	keep order:false, stats:partial[serial_id:missing]
-└─TableReader_19(Probe)	0.80	root	partition:all	data:Selection_18
-  └─Selection_18	0.80	cop[tikv]		eq(executor__partition__issues.c.occur_trade_date, 2022-11-17 00:00:00.000000)
-    └─TableRangeScan_17	0.80	cop[tikv]	table:c	range: decided by [eq(executor__partition__issues.c.txt_account_id, executor__partition__issues.t.txn_account_id) eq(executor__partition__issues.c.serial_id, executor__partition__issues.t.serial_id) eq(executor__partition__issues.c.occur_trade_date, 2022-11-17 00:00:00.000000)], keep order:false
+IndexJoin_23	0.80	root		inner join, inner:TableReader_22, outer key:executor__partition__issues.t.txn_account_id, executor__partition__issues.t.serial_id, inner key:executor__partition__issues.c.txt_account_id, executor__partition__issues.c.serial_id, equal cond:eq(executor__partition__issues.t.serial_id, executor__partition__issues.c.serial_id), eq(executor__partition__issues.t.txn_account_id, executor__partition__issues.c.txt_account_id)
+├─TableReader_28(Build)	0.80	root		data:Selection_27
+│ └─Selection_27	0.80	cop[tikv]		eq(executor__partition__issues.t.broker, "0009"), not(isnull(executor__partition__issues.t.serial_id))
+│   └─TableFullScan_26	1.00	cop[tikv]	table:t	keep order:false, stats:partial[serial_id:missing]
+└─TableReader_22(Probe)	0.80	root	partition:all	data:Selection_21
+  └─Selection_21	0.80	cop[tikv]		eq(executor__partition__issues.c.occur_trade_date, 2022-11-17 00:00:00.000000)
+    └─TableRangeScan_20	0.80	cop[tikv]	table:c	range: decided by [eq(executor__partition__issues.c.txt_account_id, executor__partition__issues.t.txn_account_id) eq(executor__partition__issues.c.serial_id, executor__partition__issues.t.serial_id) eq(executor__partition__issues.c.occur_trade_date, 2022-11-17 00:00:00.000000)], keep order:false
 set @@tidb_opt_advanced_join_hint=default;
 set tidb_partition_prune_mode=default;
 drop table if exists t;
@@ -321,16 +321,16 @@ insert into t values (9223372036854775807), (9223372036854775808), (922337203685
 analyze table t;
 desc SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN 9223372036854775807 AND 9223372036854775808;
 id	estRows	task	access object	operator info
-TableReader_6	2.00	root	partition:p2,p3	data:TableRangeScan_5
-└─TableRangeScan_5	2.00	cop[tikv]	table:t	range:[9223372036854775807,9223372036854775808], keep order:false
+TableReader_9	2.00	root	partition:p2,p3	data:TableRangeScan_8
+└─TableRangeScan_8	2.00	cop[tikv]	table:t	range:[9223372036854775807,9223372036854775808], keep order:false
 SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN 9223372036854775807 AND 9223372036854775808;
 col_51
 9223372036854775807
 9223372036854775808
 explain select * from t where col_51 between 9223372036854775812 and 9223372036854775813;
 id	estRows	task	access object	operator info
-TableReader_6	2.00	root	partition:p3,p4	data:TableRangeScan_5
-└─TableRangeScan_5	2.00	cop[tikv]	table:t	range:[9223372036854775812,9223372036854775813], keep order:false
+TableReader_9	2.00	root	partition:p3,p4	data:TableRangeScan_8
+└─TableRangeScan_8	2.00	cop[tikv]	table:t	range:[9223372036854775812,9223372036854775813], keep order:false
 select * from t where col_51 between 9223372036854775812 and 9223372036854775813;
 col_51
 9223372036854775812
@@ -345,8 +345,8 @@ insert into t values (9223372036854775807), (-9223372036854775808);
 analyze table t;
 desc SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN -9223372036854775808 AND 9223372036854775807;
 id	estRows	task	access object	operator info
-TableReader_6	2.00	root	partition:all	data:TableFullScan_5
-└─TableFullScan_5	2.00	cop[tikv]	table:t	keep order:false
+TableReader_12	2.00	root	partition:all	data:TableFullScan_11
+└─TableFullScan_11	2.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN -9223372036854775808 AND 9223372036854775807;
 col_51
 -9223372036854775808
@@ -361,8 +361,8 @@ insert into t values (9223372036854775807), (9223372036854775808), (922337203685
 analyze table t;
 desc SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN 9223372036854775807 AND 9223372036854775808;
 id	estRows	task	access object	operator info
-TableReader_6	2.00	root	partition:p2	data:TableRangeScan_5
-└─TableRangeScan_5	2.00	cop[tikv]	table:t	range:[9223372036854775807,9223372036854775808], keep order:false
+TableReader_7	2.00	root	partition:p2	data:TableRangeScan_6
+└─TableRangeScan_6	2.00	cop[tikv]	table:t, partition:p2	range:[9223372036854775807,9223372036854775808], keep order:false
 SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN 9223372036854775807 AND 9223372036854775808;
 col_51
 9223372036854775807
@@ -377,8 +377,8 @@ insert into t values (9223372036854775807), (-9223372036854775808);
 analyze table t;
 desc SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN -9223372036854775808 AND 9223372036854775807;
 id	estRows	task	access object	operator info
-TableReader_6	2.00	root	partition:all	data:TableFullScan_5
-└─TableFullScan_5	2.00	cop[tikv]	table:t	keep order:false
+TableReader_11	2.00	root	partition:all	data:TableFullScan_10
+└─TableFullScan_10	2.00	cop[tikv]	table:t	keep order:false
 SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN -9223372036854775808 AND 9223372036854775807;
 col_51
 -9223372036854775808
@@ -392,26 +392,26 @@ INSERT INTO `t` VALUES (-1), (11), (-128), (39), (-46), (38), (-102), (-99), (-8
 analyze table t all columns;
 explain select * from t where col_29 between -2 and -1;
 id	estRows	task	access object	operator info
-TableReader_7	1.00	root	partition:p1,p2	data:Selection_6
-└─Selection_6	1.00	cop[tikv]		ge(executor__partition__issues.t.col_29, -2), le(executor__partition__issues.t.col_29, -1)
-  └─TableFullScan_5	48.00	cop[tikv]	table:t	keep order:false
+TableReader_10	1.00	root	partition:p1,p2	data:Selection_9
+└─Selection_9	1.00	cop[tikv]		ge(executor__partition__issues.t.col_29, -2), le(executor__partition__issues.t.col_29, -1)
+  └─TableFullScan_8	48.00	cop[tikv]	table:t	keep order:false
 select * from t where col_29 between -2 and -1;
 col_29
 -1
 explain select * from t where col_29 between -2 and 0;
 id	estRows	task	access object	operator info
-TableReader_7	2.00	root	partition:p0,p1,p2	data:Selection_6
-└─Selection_6	2.00	cop[tikv]		ge(executor__partition__issues.t.col_29, -2), le(executor__partition__issues.t.col_29, 0)
-  └─TableFullScan_5	48.00	cop[tikv]	table:t	keep order:false
+TableReader_11	2.00	root	partition:p0,p1,p2	data:Selection_10
+└─Selection_10	2.00	cop[tikv]		ge(executor__partition__issues.t.col_29, -2), le(executor__partition__issues.t.col_29, 0)
+  └─TableFullScan_9	48.00	cop[tikv]	table:t	keep order:false
 select * from t where col_29 between -2 and 0;
 col_29
 -1
 0
 explain select * from t where col_29 between -2 and 1;
 id	estRows	task	access object	operator info
-TableReader_7	3.00	root	partition:p0,p1,p2	data:Selection_6
-└─Selection_6	3.00	cop[tikv]		ge(executor__partition__issues.t.col_29, -2), le(executor__partition__issues.t.col_29, 1)
-  └─TableFullScan_5	48.00	cop[tikv]	table:t	keep order:false
+TableReader_11	3.00	root	partition:p0,p1,p2	data:Selection_10
+└─Selection_10	3.00	cop[tikv]		ge(executor__partition__issues.t.col_29, -2), le(executor__partition__issues.t.col_29, 1)
+  └─TableFullScan_9	48.00	cop[tikv]	table:t	keep order:false
 select * from t where col_29 between -2 and 1;
 col_29
 -1
@@ -419,9 +419,9 @@ col_29
 1
 explain select * from t where col_29 between -7 and -6;
 id	estRows	task	access object	operator info
-TableReader_7	1.00	root	partition:p0,p6	data:Selection_6
-└─Selection_6	1.00	cop[tikv]		ge(executor__partition__issues.t.col_29, -7), le(executor__partition__issues.t.col_29, -6)
-  └─TableFullScan_5	48.00	cop[tikv]	table:t	keep order:false
+TableReader_10	1.00	root	partition:p0,p6	data:Selection_9
+└─Selection_9	1.00	cop[tikv]		ge(executor__partition__issues.t.col_29, -7), le(executor__partition__issues.t.col_29, -6)
+  └─TableFullScan_8	48.00	cop[tikv]	table:t	keep order:false
 select * from t where col_29 between -7 and -6;
 col_29
 -6

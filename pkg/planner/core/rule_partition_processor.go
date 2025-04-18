@@ -84,6 +84,9 @@ func (s *PartitionProcessor) rewriteDataSource(lp base.LogicalPlan, opt *optimiz
 	case *logicalop.DataSource:
 		return s.prune(p, opt)
 	case *logicalop.LogicalUnionScan:
+		if lp.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+			return lp, nil
+		}
 		ds := p.Children()[0]
 		ds, err := s.prune(ds.(*logicalop.DataSource), opt)
 		if err != nil {
@@ -874,11 +877,26 @@ func (s *PartitionProcessor) prune(ds *logicalop.DataSource, opt *optimizetrace.
 	if pi == nil {
 		return ds, nil
 	}
+	if ds.TableInfo.Indices != nil {
+		for _, hint := range ds.AstIndexHints {
+			for _, indexName := range hint.IndexNames {
+				if slices.ContainsFunc(ds.TableInfo.Indices, func(idx *model.IndexInfo) bool {
+					return idx.Name.L == indexName.L
+				}) {
+					// If the index is specified in the hint, we should not prune the partition.
+					return ds, nil
+				}
+			}
+		}
+	}
+
 	// PushDownNot here can convert condition 'not (a != 1)' to 'a = 1'. When we build range from ds.AllConds, the condition
 	// like 'not (a != 1)' would not be handled so we need to convert it to 'a = 1', which can be handled when building range.
 	// TODO: there may be a better way to push down Not once for all.
-	for i, cond := range ds.AllConds {
-		ds.AllConds[i] = expression.PushDownNot(ds.SCtx().GetExprCtx(), cond)
+	if !ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		for i, cond := range ds.AllConds {
+			ds.AllConds[i] = expression.PushDownNot(ds.SCtx().GetExprCtx(), cond)
+		}
 	}
 	// Try to locate partition directly for hash partition.
 	// TODO: See if there is a way to remove conditions that does not
@@ -892,6 +910,9 @@ func (s *PartitionProcessor) prune(ds *logicalop.DataSource, opt *optimizetrace.
 		return s.processHashOrKeyPartition(ds, pi, opt)
 	case ast.PartitionTypeList:
 		return s.processListPartition(ds, pi, opt)
+	}
+	if ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		return ds, nil
 	}
 
 	return s.makeUnionAllChildren(ds, pi, fullRange(len(pi.Definitions)), opt)
@@ -1953,7 +1974,6 @@ func (s *PartitionProcessor) makeUnionAllChildren(ds *logicalop.DataSource, pi *
 		}
 	}
 	s.checkHintsApplicable(ds, partitionNameSet)
-
 	ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("Static partition pruning mode")
 	if len(children) == 0 {
 		// No result after table pruning.
@@ -1962,10 +1982,14 @@ func (s *PartitionProcessor) makeUnionAllChildren(ds *logicalop.DataSource, pi *
 		appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, tableDual, children, opt)
 		return tableDual, nil
 	}
+
 	if len(children) == 1 {
 		// No need for the union all.
 		appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, children[0], children, opt)
 		return children[0], nil
+	}
+	if ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		return ds, nil
 	}
 	unionAll := logicalop.LogicalPartitionUnionAll{}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	unionAll.SetChildren(children...)

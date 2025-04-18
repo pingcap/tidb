@@ -392,7 +392,7 @@ func TestInstancePlanCachePartitioning(t *testing.T) {
 	// Same partition works, due to pruning is not affected
 	tk.MustExec(`set @a=4`)
 	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("4 d"))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 
 	tk.MustExec(`set @@tidb_partition_prune_mode='static'`)
 	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("4 d"))
