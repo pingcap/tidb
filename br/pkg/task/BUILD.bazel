@@ -23,7 +23,6 @@ go_library(
         "//br/pkg/backup",
         "//br/pkg/backup/prepare_snap",
         "//br/pkg/checkpoint",
-        "//br/pkg/checksum",
         "//br/pkg/common",
         "//br/pkg/config",
         "//br/pkg/conn",

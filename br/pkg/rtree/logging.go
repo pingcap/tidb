@@ -12,16 +12,16 @@ import (
 )
 
 // String formats a range to a string.
-func (rg Range) String() string {
+func (rg KeyRange) String() string {
 	return fmt.Sprintf("[%s, %s)", redact.Key(rg.StartKey), redact.Key(rg.EndKey))
 }
 
 // ZapRanges make zap fields for logging Range slice.
-func ZapRanges(ranges []Range) zapcore.Field {
+func ZapRanges(ranges []KeyRange) zapcore.Field {
 	return zap.Object("ranges", rangesMarshaler(ranges))
 }
 
-type rangesMarshaler []Range
+type rangesMarshaler []KeyRange
 
 func (rs rangesMarshaler) MarshalLogArray(encoder zapcore.ArrayEncoder) error {
 	for _, r := range rs {
@@ -38,23 +38,5 @@ func (rs rangesMarshaler) MarshalLogObject(encoder zapcore.ObjectEncoder) error 
 		elements = append(elements, r.String())
 	}
 	_ = encoder.AddArray("ranges", logutil.AbbreviatedArrayMarshaler(elements))
-
-	totalKV := uint64(0)
-	totalBytes := uint64(0)
-	totalSize := uint64(0)
-	totalFile := 0
-	for _, r := range rs {
-		for _, f := range r.Files {
-			totalKV += f.GetTotalKvs()
-			totalBytes += f.GetTotalBytes()
-			totalSize += f.GetSize_()
-		}
-		totalFile += len(r.Files)
-	}
-
-	encoder.AddInt("totalFiles", totalFile)
-	encoder.AddUint64("totalKVs", totalKV)
-	encoder.AddUint64("totalBytes", totalBytes)
-	encoder.AddUint64("totalSize", totalSize)
 	return nil
 }

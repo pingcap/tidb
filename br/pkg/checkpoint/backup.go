@@ -61,7 +61,7 @@ func StartCheckpointBackupRunnerForTest(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	runner := newCheckpointRunner[BackupKeyType, BackupValueType](
+	runner := newCheckpointRunner(
 		checkpointStorage, cipher, valueMarshalerForBackup)
 
 	runner.startCheckpointMainLoop(ctx, tick, tick, tick, tick)
@@ -94,19 +94,19 @@ func StartCheckpointRunnerForBackup(
 func AppendForBackup(
 	ctx context.Context,
 	r *CheckpointRunner[BackupKeyType, BackupValueType],
-	groupKey BackupKeyType,
 	startKey []byte,
 	endKey []byte,
 	files []*backuppb.File,
 ) error {
 	return r.Append(ctx, &CheckpointMessage[BackupKeyType, BackupValueType]{
-		GroupKey: groupKey,
 		Group: []BackupValueType{
 			{
 				Range: &rtree.Range{
-					StartKey: startKey,
-					EndKey:   endKey,
-					Files:    files,
+					KeyRange: rtree.KeyRange{
+						StartKey: startKey,
+						EndKey:   endKey,
+					},
+					Files: files,
 				},
 			},
 		},
@@ -119,19 +119,18 @@ func WalkCheckpointFileForBackup(
 	ctx context.Context,
 	s storage.ExternalStorage,
 	cipher *backuppb.CipherInfo,
-	fn func(BackupKeyType, BackupValueType),
+	fn func(BackupKeyType, BackupValueType) error,
 ) (time.Duration, error) {
 	return walkCheckpointFile(ctx, s, cipher, CheckpointDataDirForBackup, fn)
 }
 
 type CheckpointMetadataForBackup struct {
-	GCServiceId string        `json:"gc-service-id"`
-	ConfigHash  []byte        `json:"config-hash"`
-	BackupTS    uint64        `json:"backup-ts"`
-	Ranges      []rtree.Range `json:"ranges"`
+	GCServiceId string `json:"gc-service-id"`
+	ConfigHash  []byte `json:"config-hash"`
+	BackupTS    uint64 `json:"backup-ts"`
 
-	CheckpointChecksum map[int64]*ChecksumItem    `json:"-"`
-	CheckpointDataMap  map[string]rtree.RangeTree `json:"-"`
+	CheckpointChecksum    map[int64]*ChecksumItem `json:"-"`
+	LoadCheckpointDataMap bool                    `json:"-"`
 }
 
 // load checkpoint metadata from the external storage
