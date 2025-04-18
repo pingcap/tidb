@@ -33,6 +33,11 @@ var (
 	defaultReadBufferSize = 64 * units.KiB
 )
 
+// kvReader reads a file in sorted KV format.
+// the format is as follows:
+//   - <kv-pair-block><kv-pair-block>....
+//   - each <kv-pair-block> is <key-len><value-len><key><value>
+//   - <key-len> and <value-len> are uint64 in big-endian
 type kvReader struct {
 	byteReader *byteReader
 }
