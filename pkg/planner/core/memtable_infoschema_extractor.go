@@ -692,11 +692,6 @@ func findTableAndSchemaByName(
 			schemaAndTbls = append(schemaAndTbls, schemaAndTable{s, tblInfo})
 		}
 	}
-<<<<<<< HEAD
-	schemaSlice := make([]pmodel.CIStr, 0, len(tableMap))
-	tableSlice := make([]*model.TableInfo, 0, len(tableMap))
-	for _, st := range tableMap {
-=======
 
 	slices.SortFunc(schemaAndTbls, func(a, b schemaAndTable) int {
 		if a.schema.L == b.schema.L {
@@ -704,10 +699,9 @@ func findTableAndSchemaByName(
 		}
 		return strings.Compare(a.schema.L, b.schema.L)
 	})
-	schemaSlice := make([]ast.CIStr, 0, len(schemaAndTbls))
+	schemaSlice := make([]pmodel.CIStr, 0, len(schemaAndTbls))
 	tableSlice := make([]*model.TableInfo, 0, len(schemaAndTbls))
 	for _, st := range schemaAndTbls {
->>>>>>> 4e792885146 (executor: fix schema-table inconsistent issue in `IS.tables` (#60638))
 		schemaSlice = append(schemaSlice, st.schema)
 		tableSlice = append(tableSlice, st.table)
 	}
