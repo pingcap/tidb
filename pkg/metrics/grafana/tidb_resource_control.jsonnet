@@ -672,7 +672,7 @@ local SuccessfulKVRequestWaitDurationPanel = graphPanel.new(
   legend_current=true,
   legend_alignAsTable=true,
   legend_values=true,
-  format="short",
+  format="s",
   description="The metrics about successful kv request wait duration.",
 ).addTarget(
   prometheus.target(
