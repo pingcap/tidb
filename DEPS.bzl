@@ -7050,13 +7050,13 @@ def go_deps():
         name = "com_github_tikv_pd_client",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-        sha256 = "dfdbe965c495b9d72444cd31bde8c80b903903efc3bf278ce7edabcbda235c17",
-        strip_prefix = "github.com/bufferflies/pd/client@v0.0.0-20250417134249-574de9363e45",
+        sha256 = "0cb2e26900fdcfb2299f7770c5a541e868e9003a8c4c1361000c2f5af4e6a5fd",
+        strip_prefix = "github.com/bufferflies/pd/client@v0.0.0-20250418020152-0c0c76e7a34d",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/bufferflies/pd/client/com_github_bufferflies_pd_client-v0.0.0-20250417134249-574de9363e45.zip",
-            "http://ats.apps.svc/gomod/github.com/bufferflies/pd/client/com_github_bufferflies_pd_client-v0.0.0-20250417134249-574de9363e45.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/bufferflies/pd/client/com_github_bufferflies_pd_client-v0.0.0-20250417134249-574de9363e45.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/bufferflies/pd/client/com_github_bufferflies_pd_client-v0.0.0-20250417134249-574de9363e45.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/bufferflies/pd/client/com_github_bufferflies_pd_client-v0.0.0-20250418020152-0c0c76e7a34d.zip",
+            "http://ats.apps.svc/gomod/github.com/bufferflies/pd/client/com_github_bufferflies_pd_client-v0.0.0-20250418020152-0c0c76e7a34d.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/bufferflies/pd/client/com_github_bufferflies_pd_client-v0.0.0-20250418020152-0c0c76e7a34d.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/bufferflies/pd/client/com_github_bufferflies_pd_client-v0.0.0-20250418020152-0c0c76e7a34d.zip",
         ],
     )
     go_repository(

@@ -324,7 +324,7 @@ require (
 replace (
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
-	github.com/tikv/pd/client => github.com/bufferflies/pd/client v0.0.0-20250417134249-574de9363e45
+	github.com/tikv/pd/client => github.com/bufferflies/pd/client v0.0.0-20250418020152-0c0c76e7a34d
 
 	// TODO: `sourcegraph.com/sourcegraph/appdash` has been archived, and the original host has been removed.
 	// Please remove these dependencies.
