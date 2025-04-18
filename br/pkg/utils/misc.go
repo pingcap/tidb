@@ -27,9 +27,11 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
 	"go.uber.org/multierr"
@@ -235,4 +237,20 @@ func FlattenValues[K comparable, V any](m map[K][]V) []V {
 		result = append(result, v...)
 	}
 	return result
+}
+
+func SummaryFiles(files []*backuppb.File) (crc, kvs, bytes uint64) {
+	cfCount := make(map[string]int)
+	for _, f := range files {
+		cfCount[f.Cf] += 1
+		summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
+		summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
+		crc ^= f.Crc64Xor
+		kvs += f.TotalKvs
+		bytes += f.TotalBytes
+	}
+	for cf, count := range cfCount {
+		summary.CollectInt(fmt.Sprintf("%s CF files", cf), count)
+	}
+	return crc, kvs, bytes
 }

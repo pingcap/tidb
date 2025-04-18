@@ -51,7 +51,7 @@ func DefaultTickDurationConfig() tickDurationConfig {
 type MetaManager[K KeyType, SV, LV ValueType, M any] interface {
 	fmt.Stringer
 
-	LoadCheckpointData(context.Context, func(K, LV)) (time.Duration, error)
+	LoadCheckpointData(context.Context, func(K, LV) error) (time.Duration, error)
 	LoadCheckpointChecksum(context.Context) (map[int64]*ChecksumItem, time.Duration, error)
 	LoadCheckpointMetadata(context.Context) (*M, error)
 	SaveCheckpointMetadata(context.Context, *M) error
@@ -149,7 +149,7 @@ func (manager *TableMetaManager[K, SV, LV, M]) Close() {
 // and return the total time cost in the past executions
 func (manager *TableMetaManager[K, SV, LV, M]) LoadCheckpointData(
 	ctx context.Context,
-	fn func(K, LV),
+	fn func(K, LV) error,
 ) (time.Duration, error) {
 	execCtx := manager.se.GetSessionCtx().GetRestrictedSQLExecutor()
 	return selectCheckpointData(ctx, execCtx, manager.dbName, fn)
@@ -316,7 +316,7 @@ func (manager *StorageMetaManager[K, SV, LV, M]) Close() {}
 
 func (manager *StorageMetaManager[K, SV, LV, M]) LoadCheckpointData(
 	ctx context.Context,
-	fn func(K, LV),
+	fn func(K, LV) error,
 ) (time.Duration, error) {
 	return walkCheckpointFile(ctx, manager.storage, manager.cipher, getCheckpointDataDirByName(manager.taskName), fn)
 }

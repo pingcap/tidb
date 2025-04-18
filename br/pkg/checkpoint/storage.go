@@ -226,7 +226,7 @@ func selectCheckpointData[K KeyType, V ValueType](
 	ctx context.Context,
 	execCtx sqlexec.RestrictedSQLExecutor,
 	dbName string,
-	fn func(groupKey K, value V),
+	fn func(groupKey K, value V) error,
 ) (time.Duration, error) {
 	// records the total time cost in the past executions
 	var pastDureTime time.Duration = 0
