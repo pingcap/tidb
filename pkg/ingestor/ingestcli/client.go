@@ -28,22 +28,28 @@ var _ WriteClient = &writeClient{}
 type writeClient struct {
 	tikvWorkerURL string
 	clusterID     uint64
-	taskID        string
+	taskID        int64
 	httpClient    *http.Client
+
+	chunkID int // maintained internally.
 }
 
-func newWriteClient(tikvWorkerURL string, clusterID uint64, taskID string, httpClient *http.Client) *writeClient {
+func newWriteClient(tikvWorkerURL string, clusterID uint64, taskID int64, httpClient *http.Client) *writeClient {
 	return &writeClient{
 		tikvWorkerURL: tikvWorkerURL,
 		clusterID:     clusterID,
 		taskID:        taskID,
 		httpClient:    httpClient,
+		chunkID:       1, // start from 1.
 	}
 }
 
 func (w *writeClient) Write(ctx context.Context, in *WriteRequest) error {
-	url := fmt.Sprintf("%s/write_sst?cluster_id=%d&task_id=%s&chunk_id=%d",
-		w.tikvWorkerURL, w.clusterID, w.taskID, in.ChunkID)
+	defer func() {
+		w.chunkID++
+	}()
+	url := fmt.Sprintf("%s/write_sst?cluster_id=%d&task_id=%d&chunk_id=%d",
+		w.tikvWorkerURL, w.clusterID, w.taskID, w.chunkID)
 
 	// TODO: pass retry counter metrics.
 	var buf bytes.Buffer
@@ -66,7 +72,7 @@ func (w *writeClient) Write(ctx context.Context, in *WriteRequest) error {
 }
 
 func (w *writeClient) CloseAndRecv(ctx context.Context) (*WriteResponse, error) {
-	url := fmt.Sprintf("%s/write_sst?cluster_id=%d&task_id=%s&build=true&compression=zstd",
+	url := fmt.Sprintf("%s/write_sst?cluster_id=%d&task_id=%d&build=true&compression=zstd",
 		w.tikvWorkerURL, w.clusterID, w.taskID)
 
 	// TODO: pass retry counter metrics.
@@ -89,12 +95,23 @@ var _ Client = &client{}
 type client struct {
 	tikvWorkerURL string
 	clusterID     uint64
-	taskID        string
 	httpClient    *http.Client
+
+	currentTaskID int64
+}
+
+// NewClient creates a new Client instance.
+func NewClient(tikvWorkerURL string, clusterID uint64, httpClient *http.Client) Client {
+	return &client{
+		tikvWorkerURL: tikvWorkerURL,
+		clusterID:     clusterID,
+		httpClient:    httpClient,
+	}
 }
 
 func (c *client) WriteClient(ctx context.Context) (WriteClient, error) {
-	return newWriteClient(c.tikvWorkerURL, c.clusterID, c.taskID, c.httpClient), nil
+	c.currentTaskID++
+	return newWriteClient(c.tikvWorkerURL, c.clusterID, c.currentTaskID, c.httpClient), nil
 }
 
 type fileNameResult struct {
@@ -102,5 +119,6 @@ type fileNameResult struct {
 }
 
 func (c *client) Ingest(ctx context.Context, in *IngestRequest) error {
+	// TODO(tangenta): implement when the tikv worker API is ready.
 	return nil
 }

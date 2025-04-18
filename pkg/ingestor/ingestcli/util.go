@@ -21,15 +21,15 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
 var (
-	sleepDuration = 3 * time.Second
-	retryCount    = 6000 // 3s * 6000 = 5h
+	sleepDuration = 100 * time.Millisecond
+	retryCount    = 5 // 100ms * 5 = 500ms
 )
 
 func retryableHTTPStatusCode(statusCode int) bool {
@@ -45,11 +45,11 @@ func sendRequestWithRetry(ctx context.Context, httpClient *http.Client,
 		resp *http.Response
 		err  error
 	)
-	for retry := 0; retry < retryCount; retry++ {
+	for range retryCount {
 		body := bytes.NewReader(data)
 		req, err = http.NewRequestWithContext(ctx, method, url, body)
 		if err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		resp, err = httpClient.Do(req)
 		if err != nil || retryableHTTPStatusCode(resp.StatusCode) {
@@ -70,7 +70,7 @@ func sendRequestWithRetry(ctx context.Context, httpClient *http.Client,
 		}
 		break
 	}
-	return resp, err
+	return resp, errors.Trace(err)
 }
 
 func sendRequest(ctx context.Context, httpClient *http.Client,
@@ -82,7 +82,7 @@ func sendRequest(ctx context.Context, httpClient *http.Client,
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, errors.Errorf("failed to send request to remote worker, url: %s, status code: %s", url, resp.Status)
+		return nil, errors.Errorf("failed to send request to tikv worker, url: %s, status code: %s", url, resp.Status)
 	}
 	return io.ReadAll(resp.Body)
 }

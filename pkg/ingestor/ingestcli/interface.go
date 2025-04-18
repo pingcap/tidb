@@ -24,7 +24,6 @@ import (
 // WriteRequest is the request to write KV to storage layer.
 type WriteRequest struct {
 	ClusterID string
-	ChunkID   int64
 	Pairs     []*import_sstpb.Pair
 }
 
