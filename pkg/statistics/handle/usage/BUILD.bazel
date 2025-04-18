@@ -15,6 +15,7 @@ go_library(
         "//pkg/metrics",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
+        "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/storage",
         "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/usage/indexusage",
@@ -26,6 +27,7 @@ go_library(
         "//pkg/util/sqlescape",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@org_uber_go_zap//:zap",
     ],
 )
 
@@ -42,7 +44,7 @@ go_test(
     shard_count = 10,
     deps = [
         "//pkg/meta/model",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/statistics/handle/usage/indexusage",
         "//pkg/testkit",
         "@com_github_stretchr_testify//require",

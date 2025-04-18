@@ -30,9 +30,6 @@ import (
 // TODO: The collected predicate columns will be used to decide whether to load statistics for the columns. And we need some special handling for partition table
 // when the prune mode is static. We can remove such handling when the static partition pruning is totally deprecated.
 type columnStatsUsageCollector struct {
-	// histNeeded indicates whether to collect histogram-needed columns.
-	// TODO: It's used for the special handling for partition table when the prune mode is static. We can remove such handling when the static partition pruning is totally deprecated.
-	histNeeded bool
 	// predicateCols records predicate columns.
 	// The bool value indicates whether we need a full stats for it.
 	// If its value is false, we just need the least meta info(like NDV) of the column in this SQL.
@@ -63,10 +60,9 @@ type columnStatsUsageCollector struct {
 	operatorNum uint64
 }
 
-func newColumnStatsUsageCollector(histNeeded bool, enabledPlanCapture bool) *columnStatsUsageCollector {
+func newColumnStatsUsageCollector(enabledPlanCapture bool) *columnStatsUsageCollector {
 	set := intset.NewFastIntSet()
 	collector := &columnStatsUsageCollector{
-		histNeeded: histNeeded,
 		// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
 		cols:               make([]*expression.Column, 0, 8),
 		visitedPhysTblIDs:  &set,
@@ -141,7 +137,7 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedCo
 		c.visitedtbls[tblID] = struct{}{}
 	}
 	c.visitedPhysTblIDs.Insert(int(tblID))
-	if tblID != ds.PhysicalTableID && c.histNeeded {
+	if tblID != ds.PhysicalTableID {
 		c.tblID2PartitionIDs[tblID] = append(c.tblID2PartitionIDs[tblID], ds.PhysicalTableID)
 	}
 	for _, col := range ds.Schema().Columns {
@@ -318,13 +314,13 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 // Third return value: the visited partition IDs. Used for static partition pruning.
 // Forth return value: the number of operators in the logical plan.
 // TODO: remove the third return value when the static partition pruning is totally deprecated.
-func CollectColumnStatsUsage(lp base.LogicalPlan, histNeeded bool) (
+func CollectColumnStatsUsage(lp base.LogicalPlan) (
 	map[model.TableItemID]bool,
 	*intset.FastIntSet,
 	map[int64][]int64,
 	uint64,
 ) {
-	collector := newColumnStatsUsageCollector(histNeeded, lp.SCtx().GetSessionVars().IsPlanReplayerCaptureEnabled())
+	collector := newColumnStatsUsageCollector(lp.SCtx().GetSessionVars().IsPlanReplayerCaptureEnabled())
 	collector.collectFromPlan(nil, lp)
 	if collector.collectVisitedTable {
 		recordTableRuntimeStats(lp.SCtx(), collector.visitedtbls)

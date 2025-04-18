@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
@@ -36,7 +36,7 @@ func getTblInfoByPhyID(t *testing.T, is infoschema.InfoSchema, physicalTblID int
 		tblInfo := tbl.Meta()
 		return tblInfo, tblInfo.Name.L
 	}
-	db, exists := is.SchemaByName(pmodel.NewCIStr("test"))
+	db, exists := is.SchemaByName(ast.NewCIStr("test"))
 	require.True(t, exists)
 	tblInfos, err := is.SchemaTableInfos(context.Background(), db.Name)
 	require.NoError(t, err)
@@ -80,7 +80,7 @@ func getStatsLoadItem(t *testing.T, is infoschema.InfoSchema, item model.StatsLo
 }
 
 func checkColumnStatsUsageForPredicates(t *testing.T, is infoschema.InfoSchema, lp base.LogicalPlan, expected []string, comment string) {
-	tblColIDs, _, _, _ := CollectColumnStatsUsage(lp, false)
+	tblColIDs, _, _, _ := CollectColumnStatsUsage(lp)
 	cols := make([]string, 0, len(tblColIDs))
 	for tblColID := range tblColIDs {
 		col := getColumnName(t, is, tblColID, comment)
@@ -91,7 +91,7 @@ func checkColumnStatsUsageForPredicates(t *testing.T, is infoschema.InfoSchema, 
 }
 
 func checkColumnStatsUsageForStatsLoad(t *testing.T, is infoschema.InfoSchema, lp base.LogicalPlan, expectedCols []string, expectedParts map[string][]string, comment string) {
-	predicateCols, _, expandedPartitions, _ := CollectColumnStatsUsage(lp, true)
+	predicateCols, _, expandedPartitions, _ := CollectColumnStatsUsage(lp)
 	loadItems := make([]model.StatsLoadItem, 0, len(predicateCols))
 	for tblColID, fullLoad := range predicateCols {
 		loadItems = append(loadItems, model.StatsLoadItem{TableItemID: tblColID, FullLoad: fullLoad})

@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -37,14 +37,14 @@ import (
 )
 
 type tableTimerStoreCore struct {
-	pool     util.SessionPool
+	pool     util.DestroyableSessionPool
 	dbName   string
 	tblName  string
 	notifier api.TimerWatchEventNotifier
 }
 
 // NewTableTimerStore create a new timer store based on table
-func NewTableTimerStore(clusterID uint64, pool util.SessionPool, dbName, tblName string, etcd *clientv3.Client) *api.TimerStore {
+func NewTableTimerStore(clusterID uint64, pool util.DestroyableSessionPool, dbName, tblName string, etcd *clientv3.Client) *api.TimerStore {
 	var notifier api.TimerWatchEventNotifier
 	if etcd != nil {
 		notifier = NewEtcdNotifier(clusterID, etcd)
@@ -137,7 +137,7 @@ func (s *tableTimerStoreCore) List(ctx context.Context, cond api.Cond) ([]*api.T
 		return nil, err
 	}
 
-	tidbTimeZone, err := sctx.GetSessionVars().GetGlobalSystemVar(ctx, variable.TimeZone)
+	tidbTimeZone, err := sctx.GetSessionVars().GetGlobalSystemVar(ctx, vardef.TimeZone)
 	if err != nil {
 		return nil, err
 	}
@@ -330,15 +330,16 @@ func (s *tableTimerStoreCore) Close() {
 	s.notifier.Close()
 }
 
-func (s *tableTimerStoreCore) takeSession() (_ sessionctx.Context, _ func(), err error) {
+func (s *tableTimerStoreCore) takeSession() (sessionctx.Context, func(), error) {
 	r, err := s.pool.Get()
 	if err != nil {
 		return nil, nil, err
 	}
 
+	success := false
 	defer func() {
-		if err != nil {
-			s.pool.Put(r)
+		if !success {
+			s.pool.Destroy(r)
 		}
 	}()
 
@@ -371,24 +372,25 @@ func (s *tableTimerStoreCore) takeSession() (_ sessionctx.Context, _ func(), err
 
 	originalTimeZone := rows[0].GetString(0)
 	back := func() {
-		if _, err = executeSQL(ctx, exec, "ROLLBACK"); err != nil {
+		if _, err := executeSQL(ctx, exec, "ROLLBACK"); err != nil {
 			// Though this branch is rarely to be called because "ROLLBACK" will always be successfully, we still need
 			// to handle it here to make sure the code is strong.
 			terror.Log(err)
-			// call `r.Close()` to make sure the resource is released to avoid memory leak
-			r.Close()
+			// call `Destroy` to make sure the resource is released to avoid memory leak
+			s.pool.Destroy(r)
 			return
 		}
 
 		if _, err = executeSQL(ctx, exec, "SET @@time_zone=%?", originalTimeZone); err != nil {
 			terror.Log(err)
-			r.Close()
+			s.pool.Destroy(r)
 			return
 		}
 
 		s.pool.Put(r)
 	}
 
+	success = true
 	return sctx, back, nil
 }
 

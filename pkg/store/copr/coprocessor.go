@@ -42,7 +42,7 @@ import (
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	copr_metrics "github.com/pingcap/tidb/pkg/store/copr/metrics"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -1110,9 +1110,17 @@ func (it *copIterator) Next(ctx context.Context) (kv.ResultSubset, error) {
 	failpoint.InjectCall("CtxCancelBeforeReceive", ctx)
 	if it.liteWorker != nil {
 		resp = it.liteWorker.liteSendReq(ctx, it)
+		// after lite handle 1 task, reset tryCopLiteWorker to 0 to make future request can reuse copLiteWorker.
+		it.liteWorker.tryCopLiteWorker.CompareAndSwap(1, 0)
 		if resp == nil {
 			it.actionOnExceed.close()
 			return nil, nil
+		}
+		if len(it.tasks) > 0 && len(it.liteWorker.batchCopRespList) == 0 && resp.err == nil {
+			// if there are remain tasks to be processed, we need to run worker concurrently to avoid blocking.
+			// see more detail in https://github.com/pingcap/tidb/issues/58658 and TestDMLWithLiteCopWorker.
+			it.liteWorker.runWorkerConcurrently(it)
+			it.liteWorker = nil
 		}
 		it.actionOnExceed.destroyTokenIfNeeded(func() {})
 		memTrackerConsumeResp(it.memTracker, resp)
@@ -1198,10 +1206,6 @@ func (w *liteCopIteratorWorker) liteSendReq(ctx context.Context, it *copIterator
 		} else {
 			it.tasks = it.tasks[1:]
 		}
-		if len(it.tasks) == 0 {
-			// if all tasks are finished, reset tryCopLiteWorker to 0 to make future request can reuse copLiteWorker.
-			w.tryCopLiteWorker.Store(0)
-		}
 		if result != nil {
 			if result.resp != nil {
 				w.batchCopRespList = result.batchRespList
@@ -1215,6 +1219,34 @@ func (w *liteCopIteratorWorker) liteSendReq(ctx context.Context, it *copIterator
 		}
 	}
 	return nil
+}
+
+func (w *liteCopIteratorWorker) runWorkerConcurrently(it *copIterator) {
+	taskCh := make(chan *copTask, 1)
+	worker := w.worker
+	worker.taskCh = taskCh
+	it.wg.Add(1)
+	go worker.run(w.ctx)
+
+	if it.respChan == nil {
+		// If it.respChan is nil, we will read the response from task.respChan,
+		// but task.respChan maybe nil when rebuilding cop task, so we need to create respChan for the task.
+		for i := range it.tasks {
+			if it.tasks[i].respChan == nil {
+				it.tasks[i].respChan = make(chan *copResponse, 2)
+			}
+		}
+	}
+
+	taskSender := &copIteratorTaskSender{
+		taskCh:   taskCh,
+		wg:       &it.wg,
+		tasks:    it.tasks,
+		finishCh: it.finishCh,
+		sendRate: it.sendRate,
+		respChan: it.respChan,
+	}
+	go taskSender.run(it.req.ConnID, it.req.RunawayChecker)
 }
 
 // HasUnconsumedCopRuntimeStats indicate whether has unconsumed CopRuntimeStats.
@@ -1325,7 +1357,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 
 	replicaRead := worker.req.ReplicaRead
 	rgName := worker.req.ResourceGroupName
-	if task.storeType == kv.TiFlash && !variable.EnableResourceControl.Load() {
+	if task.storeType == kv.TiFlash && !vardef.EnableResourceControl.Load() {
 		// By calling variable.EnableGlobalResourceControlFunc() and setting global variables,
 		// tikv/client-go can sense whether the rg function is enabled
 		// But for tiflash, it check if rgName is empty to decide if resource control is enabled or not.
@@ -1379,7 +1411,6 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	} else if worker.req.IsStaleness {
 		req.EnableStaleWithMixedReplicaRead()
 	}
-	staleRead := req.GetStaleRead()
 	ops := make([]tikv.StoreSelectorOption, 0, 2)
 	if len(worker.req.MatchStoreLabels) > 0 {
 		ops = append(ops, tikv.WithMatchLabels(worker.req.MatchStoreLabels))
@@ -1413,15 +1444,8 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		worker.logTimeCopTask(costTime, task, bo, copResp)
 	}
 
-	storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
-	isInternal := util.IsRequestSourceInternal(&task.requestSource)
-	scope := metrics.LblGeneral
-	if isInternal {
-		scope = metrics.LblInternal
-	}
-	metrics.TiKVCoprocessorHistogram.WithLabelValues(storeID, strconv.FormatBool(staleRead), scope).Observe(costTime.Seconds())
 	if copResp != nil {
-		tidbmetrics.DistSQLCoprRespBodySize.WithLabelValues(storeAddr).Observe(float64(len(copResp.Data)))
+		tidbmetrics.DistSQLCoprRespBodySize.WithLabelValues(storeAddr).Observe(float64(len(copResp.Data) / 1024))
 	}
 
 	var result *copTaskResult
@@ -1966,6 +1990,9 @@ func (worker *copIteratorWorker) collectCopRuntimeStats(copStats *CopRuntimeStat
 }
 
 func (worker *copIteratorWorker) collectKVClientRuntimeStats(copStats *CopRuntimeStats, bo *Backoffer, rpcCtx *tikv.RPCContext) {
+	if rpcCtx != nil {
+		copStats.CalleeAddress = rpcCtx.Addr
+	}
 	if worker.kvclient.Stats == nil {
 		return
 	}
@@ -1982,9 +2009,6 @@ func (worker *copIteratorWorker) collectKVClientRuntimeStats(copStats *CopRuntim
 			copStats.BackoffTimes[backoff] = backoffTimes[backoff]
 			copStats.BackoffSleep[backoff] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
 		}
-	}
-	if rpcCtx != nil {
-		copStats.CalleeAddress = rpcCtx.Addr
 	}
 }
 

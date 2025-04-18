@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/timer/tablestore"
@@ -455,17 +455,17 @@ func checkTimersNotChange(t *testing.T, cli timerapi.TimerClient, timers ...*tim
 
 func getPhysicalTableInfo(t *testing.T, do *domain.Domain, db, table, partition string) (string, *cache.PhysicalTable) {
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr(db), model.NewCIStr(table))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr(db), ast.NewCIStr(table))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
-	physical, err := cache.NewPhysicalTable(model.NewCIStr(db), tblInfo, model.NewCIStr(partition))
+	physical, err := cache.NewPhysicalTable(ast.NewCIStr(db), tblInfo, ast.NewCIStr(partition))
 	require.NoError(t, err)
 	return fmt.Sprintf("/tidb/ttl/physical_table/%d/%d", tblInfo.ID, physical.ID), physical
 }
 
 func checkTimerWithTableMeta(t *testing.T, do *domain.Domain, cli timerapi.TimerClient, db, table, partition string, watermark time.Time) *timerapi.TimerRecord {
 	is := do.InfoSchema()
-	dbInfo, ok := is.SchemaByName(model.NewCIStr(db))
+	dbInfo, ok := is.SchemaByName(ast.NewCIStr(db))
 	require.True(t, ok)
 
 	key, physical := getPhysicalTableInfo(t, do, db, table, partition)

@@ -23,8 +23,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
@@ -339,7 +339,7 @@ func TestRenewLease(t *testing.T) {
 	se := tk.Session()
 	tk.MustExec("create table cache_renew_t (id int)")
 	tk.MustExec("alter table cache_renew_t cache")
-	tbl, err := se.GetInfoSchema().(infoschema.InfoSchema).TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("cache_renew_t"))
+	tbl, err := se.GetInfoSchema().(infoschema.InfoSchema).TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("cache_renew_t"))
 	require.NoError(t, err)
 	var i int
 	tk.MustExec("select * from cache_renew_t")
@@ -536,7 +536,7 @@ func TestRenewLeaseABAFailPoint(t *testing.T) {
 
 	// Mock reading from another TiDB instance: write lock -> read lock
 	is := tk2.Session().GetInfoSchema().(infoschema.InfoSchema)
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t_lease"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_lease"))
 	require.NoError(t, err)
 	lease := oracle.GoTimeToTS(time.Now().Add(20 * time.Second)) // A big enough future time
 	tk2.MustExec("update mysql.table_cache_meta set lock_type = 'READ', lease = ? where tid = ?", lease, tbl.Meta().ID)

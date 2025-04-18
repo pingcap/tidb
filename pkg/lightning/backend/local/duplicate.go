@@ -600,7 +600,7 @@ func (m *dupeDetector) RecordIndexConflictError(ctx context.Context, stream DupK
 
 // RetrieveKeyAndValueFromErrFoundDuplicateKeys retrieves the key and value
 // from ErrFoundDuplicateKeys error.
-func RetrieveKeyAndValueFromErrFoundDuplicateKeys(err error) ([]byte, []byte, error) {
+func RetrieveKeyAndValueFromErrFoundDuplicateKeys(err error) (key, value []byte, _ error) {
 	if !common.ErrFoundDuplicateKeys.Equal(err) {
 		return nil, nil, err
 	}

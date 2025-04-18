@@ -20,13 +20,16 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -72,7 +75,7 @@ func ExecMultiSQLInGoroutine(s kv.Storage, dbName string, multiSQL []string, don
 // ExtractAllTableHandles extracts all handles of a given table.
 func ExtractAllTableHandles(se sessiontypes.Session, dbName, tbName string) ([]int64, error) {
 	dom := domain.GetDomain(se)
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr(tbName))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tbName))
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +95,7 @@ func ExtractAllTableHandles(se sessiontypes.Session, dbName, tbName string) ([]i
 
 // FindIdxInfo is to get IndexInfo by index name.
 func FindIdxInfo(dom *domain.Domain, dbName, tbName, idxName string) *model.IndexInfo {
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr(dbName), pmodel.NewCIStr(tbName))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tbName))
 	if err != nil {
 		logutil.DDLLogger().Warn("cannot find table", zap.String("dbName", dbName), zap.String("tbName", tbName))
 		return nil
@@ -103,8 +106,8 @@ func FindIdxInfo(dom *domain.Domain, dbName, tbName, idxName string) *model.Inde
 // SubStates is a slice of SchemaState.
 type SubStates = []model.SchemaState
 
-// TestMatchCancelState is used to test whether the cancel state matches.
-func TestMatchCancelState(t *testing.T, job *model.Job, cancelState any, sql string) bool {
+// MatchCancelState is used to test whether the cancel state matches.
+func MatchCancelState(t *testing.T, job *model.Job, cancelState any, sql string) bool {
 	switch v := cancelState.(type) {
 	case model.SchemaState:
 		if job.Type == model.ActionMultiSchemaChange {
@@ -129,4 +132,58 @@ func TestMatchCancelState(t *testing.T, job *model.Job, cancelState any, sql str
 	default:
 		return false
 	}
+}
+
+func checkTableState(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, state model.SchemaState) {
+	require.NoError(t, kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, false, func(_ context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		info, err := m.GetTable(dbInfo.ID, tblInfo.ID)
+		require.NoError(t, err)
+
+		if state == model.StateNone {
+			require.NoError(t, err)
+			return nil
+		}
+
+		require.Equal(t, info.Name, tblInfo.Name)
+		require.Equal(t, info.State, state)
+		return nil
+	}))
+}
+
+// CheckTableMode checks the table mode of a table in the store.
+func CheckTableMode(t *testing.T, store kv.Storage, dbInfo *model.DBInfo, tblInfo *model.TableInfo, mode model.TableMode) {
+	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, false, func(_ context.Context, txn kv.Transaction) error {
+		tt := meta.NewMutator(txn)
+		info, err := tt.GetTable(dbInfo.ID, tblInfo.ID)
+		require.NoError(t, err)
+		require.NotNil(t, info)
+		require.Equal(t, mode, info.Mode)
+		return nil
+	})
+	require.NoError(t, err)
+}
+
+// SetTableMode sets the table mode of a table in the store.
+func SetTableMode(
+	ctx sessionctx.Context,
+	t *testing.T,
+	store kv.Storage,
+	de ddl.Executor,
+	dbInfo *model.DBInfo,
+	tblInfo *model.TableInfo,
+	mode model.TableMode,
+) error {
+	args := &model.AlterTableModeArgs{
+		TableMode: mode,
+		SchemaID:  dbInfo.ID,
+		TableID:   tblInfo.ID,
+	}
+	err := de.AlterTableMode(ctx, args)
+	if err == nil {
+		checkTableState(t, store, dbInfo, tblInfo, model.StatePublic)
+		CheckTableMode(t, store, dbInfo, tblInfo, mode)
+	}
+
+	return err
 }

@@ -45,7 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
 	serverutil "github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -663,7 +663,7 @@ func TestGetSessionVarsWaitTimeout(t *testing.T) {
 		},
 	}
 	cc.SetCtx(tc)
-	require.Equal(t, uint64(variable.DefWaitTimeout), cc.getSessionVarsWaitTimeout(context.Background()))
+	require.Equal(t, uint64(vardef.DefWaitTimeout), cc.getSessionVarsWaitTimeout(context.Background()))
 }
 
 func mapIdentical(m1, m2 map[string]string) bool {
@@ -872,7 +872,7 @@ func TestPrefetchPointKeys4Update(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	cc.SetCtx(&TiDBContext{Session: tk.Session()})
 	ctx := context.Background()
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
 	tk.MustExec("use test")
 	tk.MustExec("create table prefetch (a int, b int, c int, primary key (a, b))")
 	tk.MustExec("insert prefetch values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
@@ -921,7 +921,7 @@ func TestPrefetchPointKeys4Delete(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	cc.SetCtx(&TiDBContext{Session: tk.Session()})
 	ctx := context.Background()
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
 	tk.MustExec("use test")
 	tk.MustExec("create table prefetch (a int, b int, c int, primary key (a, b))")
 	tk.MustExec("insert prefetch values (1, 1, 1), (2, 2, 2), (3, 3, 3)")

@@ -36,6 +36,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -177,6 +178,11 @@ func (t trivialFlushStream) SendMsg(m any) error {
 
 func (t trivialFlushStream) RecvMsg(m any) error {
 	return nil
+}
+
+func (f *fakeStore) FlushNow(ctx context.Context, in *logbackup.FlushNowRequest, opts ...grpc.CallOption) (*logbackup.FlushNowResponse, error) {
+	f.flush()
+	return &logbackup.FlushNowResponse{Results: []*logbackup.FlushResult{{TaskName: "Universe", Success: true}}}, nil
 }
 
 func (f *fakeStore) GetID() uint64 {
@@ -671,7 +677,7 @@ func newTestEnv(c *fakeCluster, t *testing.T) *testEnv {
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
 			Name:    "whole",
-			StartTs: 5,
+			StartTs: 0,
 		},
 		Ranges: rngs,
 	}
@@ -727,7 +733,7 @@ func (t *testEnv) ClearV3GlobalCheckpointForTask(ctx context.Context, taskName s
 	return nil
 }
 
-func (t *testEnv) PauseTask(ctx context.Context, taskName string) error {
+func (t *testEnv) PauseTask(ctx context.Context, taskName string, _ ...streamhelper.PauseTaskOption) error {
 	t.taskCh <- streamhelper.TaskEvent{
 		Type: streamhelper.EventPause,
 		Name: taskName,
@@ -776,7 +782,7 @@ func (t *testEnv) putTask() {
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
 			Name:    "whole",
-			StartTs: 5,
+			StartTs: 0,
 		},
 		Ranges: rngs,
 	}
@@ -893,6 +899,10 @@ func (p *mockPDClient) GetAllStores(ctx context.Context, opts ...opt.GetStoreOpt
 
 func (p *mockPDClient) GetClusterID(ctx context.Context) uint64 {
 	return 1
+}
+
+func (p *mockPDClient) WithCallerComponent(_ caller.Component) pd.Client {
+	return p
 }
 
 func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *router.Region {

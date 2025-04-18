@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "vardef",
+    srcs = [
+        "sysvar.go",
+        "tidb_vars.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/sessionctx/vardef",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config",
+        "//pkg/executor/join/joinversion",
+        "//pkg/parser/mysql",
+        "//pkg/util/memory",
+        "//pkg/util/paging",
+        "//pkg/util/size",
+        "@com_github_pingcap_tipb//go-tipb",
+        "@org_uber_go_atomic//:atomic",
+    ],
+)

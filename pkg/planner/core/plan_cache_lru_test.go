@@ -316,7 +316,7 @@ func TestLRUPCSetCapacity(t *testing.T) {
 	require.Nil(t, root)
 
 	err = lru.SetCapacity(0)
-	require.Error(t, err, "capacity of LRU cache should be at least 1")
+	require.ErrorContains(t, err, "capacity of LRU cache should be at least 1")
 }
 
 func TestIssue37914(t *testing.T) {

@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -32,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -51,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
@@ -161,7 +160,7 @@ const (
 	// inTxnRetry is set when visiting in transaction retry.
 	inTxnRetry
 	// inCreateOrDropTable is set when visiting create/drop table/view/sequence,
-	// rename table, alter table add foreign key, and BR restore.
+	// rename table, alter table add foreign key, alter table in prepare stmt, and BR restore.
 	// TODO need a better name to clarify it's meaning
 	inCreateOrDropTable
 	// parentIsJoin is set when visiting node's parent is join.
@@ -298,9 +297,15 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.checkRenameTableGrammar(node)
 	case *ast.CreateIndexStmt:
 		p.stmtTp = TypeCreate
+		if p.flag&inPrepare != 0 {
+			p.flag |= inCreateOrDropTable
+		}
 		p.checkCreateIndexGrammar(node)
 	case *ast.AlterTableStmt:
 		p.stmtTp = TypeAlter
+		if p.flag&inPrepare != 0 {
+			p.flag |= inCreateOrDropTable
+		}
 		p.resolveAlterTableStmt(node)
 		p.checkAlterTableGrammar(node)
 	case *ast.CreateDatabaseStmt:
@@ -392,7 +397,9 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		}
 	case *ast.TableSource:
 		isModeOracle := p.sctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
-		if _, ok := node.Source.(*ast.SelectStmt); ok && !isModeOracle && len(node.AsName.L) == 0 {
+		_, isSelectStmt := node.Source.(*ast.SelectStmt)
+		_, isSetOprStmt := node.Source.(*ast.SetOprStmt)
+		if (isSelectStmt || isSetOprStmt) && !isModeOracle && len(node.AsName.L) == 0 {
 			p.err = dbterror.ErrDerivedMustHaveAlias.GenWithStackByArgs()
 		}
 		if v, ok := node.Source.(*ast.TableName); ok && v.TableSample != nil {
@@ -516,7 +523,7 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 	if currentDB == "" {
 		return nil, errors.Trace(plannererrors.ErrNoDB)
 	}
-	sName := pmodel.NewCIStr(currentDB)
+	sName := ast.NewCIStr(currentDB)
 	is := p.ensureInfoSchema()
 
 	// for 'SHOW CREATE VIEW/SEQUENCE ...' statement, ignore local temporary tables.
@@ -594,8 +601,8 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 	aliasChecker := &aliasChecker{}
 	originNode.Accept(aliasChecker)
 	hintedNode.Accept(aliasChecker)
-	originSQL := parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(originNode, defaultDB, originNode.Text()), false)
-	hintedSQL := parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(hintedNode, defaultDB, hintedNode.Text()), false)
+	originSQL, _ := bindinfo.NormalizeStmtForBinding(originNode, defaultDB, false)
+	hintedSQL, _ := bindinfo.NormalizeStmtForBinding(hintedNode, defaultDB, false)
 	if originSQL != hintedSQL {
 		p.err = errors.Errorf("hinted sql and origin sql don't match when hinted sql erase the hint info, after erase hint info, originSQL:%s, hintedSQL:%s", originSQL, hintedSQL)
 	}
@@ -874,7 +881,7 @@ func (p *preprocessor) checkAdminCheckTableGrammar(stmt *ast.AdminStmt) {
 
 func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 	if stmt.ReferTable != nil {
-		schema := pmodel.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
+		schema := ast.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
 		if stmt.ReferTable.Schema.String() != "" {
 			schema = stmt.ReferTable.Schema
 		}
@@ -1050,7 +1057,7 @@ func (p *preprocessor) checkDropTableGrammar(stmt *ast.DropTableStmt) {
 }
 
 func (p *preprocessor) checkDropTemporaryTableGrammar(stmt *ast.DropTableStmt) {
-	currentDB := pmodel.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
+	currentDB := ast.NewCIStr(p.sctx.GetSessionVars().CurrentDB)
 	for _, t := range stmt.Tables {
 		if util.IsInCorrectIdentifierName(t.Name.String()) {
 			p.err = dbterror.ErrWrongTableName.GenWithStackByArgs(t.Name.String())
@@ -1115,7 +1122,7 @@ func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[string]any) 
 		if tabName.L == "" {
 			if tableNode, ok := ts.Source.(*ast.TableName); ok {
 				if tableNode.Schema.L != "" {
-					tabName = pmodel.NewCIStr(fmt.Sprintf("%s.%s", tableNode.Schema.L, tableNode.Name.L))
+					tabName = ast.NewCIStr(fmt.Sprintf("%s.%s", tableNode.Schema.L, tableNode.Name.L))
 				} else {
 					tabName = tableNode.Name
 				}
@@ -1602,7 +1609,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 			return
 		}
 
-		tn.Schema = pmodel.NewCIStr(currentDB)
+		tn.Schema = ast.NewCIStr(currentDB)
 	}
 
 	if p.flag&inCreateOrDropTable > 0 {
@@ -1640,7 +1647,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	}
 
 	if !p.skipLockMDL() {
-		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.ctx, p.sctx.GetPlanCtx(), pmodel.NewCIStr(tn.Schema.L), table, p.ensureInfoSchema())
+		table, err = tryLockMDLAndUpdateSchemaIfNecessary(p.ctx, p.sctx.GetPlanCtx(), ast.NewCIStr(tn.Schema.L), table, p.ensureInfoSchema())
 		if err != nil {
 			p.err = err
 			return
@@ -1701,7 +1708,7 @@ func (p *preprocessor) resolveShowStmt(node *ast.ShowStmt) {
 			node.DBName = p.sctx.GetSessionVars().CurrentDB
 		}
 	} else if node.Table != nil && node.Table.Schema.L == "" {
-		node.Table.Schema = pmodel.NewCIStr(node.DBName)
+		node.Table.Schema = ast.NewCIStr(node.DBName)
 	}
 	if node.User != nil && node.User.CurrentUser {
 		// Fill the Username and Hostname with the current user.
@@ -1746,7 +1753,7 @@ func (p *preprocessor) resolveAlterTableStmt(node *ast.AlterTableStmt) {
 		if spec.Tp == ast.AlterTableAddConstraint && spec.Constraint.Refer != nil {
 			table := spec.Constraint.Refer.Table
 			if table.Schema.L == "" && node.Table.Schema.L != "" {
-				table.Schema = pmodel.NewCIStr(node.Table.Schema.L)
+				table.Schema = ast.NewCIStr(node.Table.Schema.L)
 			}
 			if spec.Constraint.Tp == ast.ConstraintForeignKey {
 				// when foreign_key_checks is off, should ignore err when refer table is not exists.
@@ -1861,7 +1868,7 @@ func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
 	return false
 }
 
-func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanContext, dbName pmodel.CIStr, tbl table.Table, is infoschema.InfoSchema) (retTbl table.Table, err error) {
+func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanContext, dbName ast.CIStr, tbl table.Table, is infoschema.InfoSchema) (retTbl table.Table, err error) {
 	skipLock := false
 	shouldLockMDL := false
 	var lockedID int64
@@ -2025,7 +2032,7 @@ type aliasChecker struct{}
 func (*aliasChecker) Enter(in ast.Node) (ast.Node, bool) {
 	if deleteStmt, ok := in.(*ast.DeleteStmt); ok {
 		// 1. check the tableRefs of deleteStmt to find the alias
-		var aliases []*pmodel.CIStr
+		var aliases []*ast.CIStr
 		if deleteStmt.TableRefs != nil && deleteStmt.TableRefs.TableRefs != nil {
 			tableRefs := deleteStmt.TableRefs.TableRefs
 			if val := getTableRefsAlias(tableRefs.Left); val != nil {
@@ -2054,7 +2061,7 @@ func (*aliasChecker) Enter(in ast.Node) (ast.Node, bool) {
 	return in, false
 }
 
-func getTableRefsAlias(tableRefs ast.ResultSetNode) *pmodel.CIStr {
+func getTableRefsAlias(tableRefs ast.ResultSetNode) *ast.CIStr {
 	switch v := tableRefs.(type) {
 	case *ast.Join:
 		if v.Left != nil {

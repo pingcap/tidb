@@ -16,6 +16,8 @@ package filter
 
 import (
 	"strings"
+
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 )
 
 var (
@@ -29,6 +31,8 @@ var (
 	MetricSchemaName = "METRICS_SCHEMA"
 	// InspectionSchemaName is the `INSPECTION_SCHEMA` database name
 	InspectionSchemaName = "INSPECTION_SCHEMA"
+	// WorkloadSchemaName is the `WORKLOAD_SCHEMA` database name
+	WorkloadSchemaName = strings.ToUpper(mysql.WorkloadSchema)
 )
 
 // IsSystemSchema checks whether schema is system schema or not.
@@ -39,6 +43,7 @@ func IsSystemSchema(schema string) bool {
 	case DMHeartbeatSchema, // do not create table in it manually
 		"SYS",   // https://dev.mysql.com/doc/refman/8.0/en/sys-schema.html
 		"MYSQL", // the name of system database.
+		WorkloadSchemaName,
 		InformationSchemaName,
 		InspectionSchemaName,
 		PerformanceSchemaName,

@@ -45,17 +45,20 @@
                               "id": "mappings",
                               "value": [
                                  {
-                                    "options": {
-                                       "0": {
-                                          "index": 1,
-                                          "text": "false"
-                                       },
-                                       "1": {
-                                          "index": 0,
-                                          "text": "true"
-                                       }
-                                    },
-                                    "type": "value"
+                                    "from": "0",
+                                    "text": "Off",
+                                    "to": "2147483647",
+                                    "type": 2
+                                 },
+                                 {
+                                    "text": "Moderated",
+                                    "type": 1,
+                                    "value": "-2"
+                                 },
+                                 {
+                                    "text": "Unlimited",
+                                    "type": 1,
+                                    "value": "-1"
                                  }
                               ]
                            }
@@ -79,7 +82,7 @@
                      "legendFormat": "{{resource_group}}"
                   },
                   {
-                     "expr": "max by (resource_group, type) (resource_manager_server_group_config{type=\"ru_capacity\"}) < bool 0",
+                     "expr": "max by (resource_group, type) (resource_manager_server_group_config{type=\"ru_capacity\"})",
                      "format": "time_series",
                      "instant": true,
                      "intervalFactor": 2,

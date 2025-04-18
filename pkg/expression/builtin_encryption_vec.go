@@ -29,6 +29,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -900,7 +901,7 @@ func (b *builtinValidatePasswordStrengthSig) vecEvalInt(ctx EvalContext, input *
 	i64s := result.Int64s()
 	globalVars := vars.GlobalVarsAccessor
 	enableValidation := false
-	validation, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordEnable)
+	validation, err := globalVars.GetGlobalSysVar(vardef.ValidatePasswordEnable)
 	if err != nil {
 		return err
 	}

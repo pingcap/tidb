@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -47,11 +47,11 @@ func TestGCOldVersion(t *testing.T) {
 	require.NoError(t, err)
 	oldIS := dom.InfoSchema()
 
-	t1, err := oldIS.TableInfoByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	t1, err := oldIS.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
-	t2, err := oldIS.TableInfoByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	t2, err := oldIS.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
-	t3, err := oldIS.TableInfoByName(model.NewCIStr("test"), model.NewCIStr("t3"))
+	t3, err := oldIS.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t3"))
 	require.NoError(t, err)
 
 	s := store.(helper.Storage)
@@ -91,11 +91,11 @@ func TestGCOldVersion(t *testing.T) {
 	require.False(t, ok)
 	_, ok = oldIS.TableByID(context.Background(), t3.ID)
 	require.False(t, ok)
-	_, err = oldIS.TableInfoByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+	_, err = oldIS.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.Error(t, err)
-	_, err = oldIS.TableInfoByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	_, err = oldIS.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t2"))
 	require.Error(t, err)
-	_, err = oldIS.TableInfoByName(model.NewCIStr("test"), model.NewCIStr("t3"))
+	_, err = oldIS.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("t3"))
 	require.Error(t, err)
 
 	// GC will not delete the current schema version.

@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
@@ -135,11 +135,11 @@ func (e *tidbChecksumExecutor) Checksum(ctx context.Context, tableInfo *checkpoi
 	if err == nil && backoffWeight < DefaultBackoffWeight {
 		task.Info("increase tidb_backoff_weight", zap.Int("original", backoffWeight), zap.Int("new", DefaultBackoffWeight))
 		// increase backoff weight
-		if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET SESSION %s = '%d';", variable.TiDBBackOffWeight, DefaultBackoffWeight)); err != nil {
+		if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET SESSION %s = '%d';", vardef.TiDBBackOffWeight, DefaultBackoffWeight)); err != nil {
 			task.Warn("set tidb_backoff_weight failed", zap.Error(err))
 		} else {
 			defer func() {
-				if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET SESSION %s = '%d';", variable.TiDBBackOffWeight, backoffWeight)); err != nil {
+				if _, err := conn.ExecContext(ctx, fmt.Sprintf("SET SESSION %s = '%d';", vardef.TiDBBackOffWeight, backoffWeight)); err != nil {
 					task.Warn("recover tidb_backoff_weight failed", zap.Error(err))
 				}
 			}()

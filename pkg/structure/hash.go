@@ -208,13 +208,20 @@ func (t *TxStructure) HGetLastN(key []byte, num int) ([]HashPair, error) {
 
 // HClear removes the hash value of the key.
 func (t *TxStructure) HClear(key []byte) error {
+	var keys []kv.Key
 	err := t.IterateHash(key, func(field []byte, _ []byte) error {
 		k := t.encodeHashDataKey(key, field)
-		return errors.Trace(t.readWriter.Delete(k))
+		keys = append(keys, k)
+		return nil
 	})
-
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	for _, k := range keys {
+		if err := t.readWriter.Delete(k); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	return nil
@@ -244,6 +251,34 @@ func (t *TxStructure) IterateHash(key []byte, fn func(k []byte, v []byte) error)
 			return errors.Trace(err)
 		}
 
+		err = it.Next()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
+}
+
+// IterateHashWithBoundedKey iterates all the fields and values in hash with a bounded key.
+func (t *TxStructure) IterateHashWithBoundedKey(hashStartKey []byte, hashEndKey []byte, fn func(k []byte, f []byte, v []byte) error) error {
+	hashStartKey = t.hashDataKeyPrefix(hashStartKey)
+	hashEndKey = t.hashDataKeyPrefix(hashEndKey)
+	it, err := t.reader.Iter(hashStartKey, hashEndKey)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	var field []byte
+	var key []byte
+	for it.Valid() {
+		key, field, err = t.decodeHashDataKey(it.Key())
+		if err != nil {
+			continue
+		}
+		if err = fn(key, field, it.Value()); err != nil {
+			return errors.Trace(err)
+		}
 		err = it.Next()
 		if err != nil {
 			return errors.Trace(err)

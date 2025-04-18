@@ -175,9 +175,11 @@ func getKeyProp(tp *types.FieldType) *keyProp {
 	}
 }
 
+// newTableMeta initializes a new joinTableMeta structure.
+// It calculates various metadata about the join table, such as row length, key properties, and column order.
 // buildKeyIndex is the build key column index based on buildSchema, should not be nil
-// otherConditionColIndex is the column index that will be used in other condition, if no other condition, will be nil
-// columnsNeedConvertToRow is the column index that need to be converted to row, should not be nil
+// columnsUsedByOtherCondition is the column index that will be used in other condition, if no other condition, will be nil
+// outputColumns is the column index that is needed generate join result, if outputColumns is nil, all the build column will be used to generate join results
 // needUsedFlag is true for outer/semi join that use outer to build
 func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes []*types.FieldType, columnsUsedByOtherCondition []int, outputColumns []int, needUsedFlag bool) *joinTableMeta {
 	meta := &joinTableMeta{}
@@ -211,13 +213,59 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 		}
 	}
 
+	setupJoinKeys(meta, buildKeyIndex, buildKeyTypes, probeKeyTypes)
+
+	if meta.isJoinKeysInlined {
+		for _, index := range buildKeyIndex {
+			updateMeta(index)
+		}
+	}
+
+	if !meta.isFixedLength {
+		meta.rowLength = 0
+	}
+
+	savedColumnNum := len(columnsNeedToBeSaved)
+
+	setupColumnOrder(meta, buildKeyIndex, buildTypes, columnsUsedByOtherCondition, outputColumns, savedColumnNum)
+
+	if needUsedFlag {
+		meta.colOffsetInNullMap = 1
+		// If needUsedFlag == true, during probe stage, the usedFlag will be accessed by both read/write operator,
+		// so atomic read/write is required. We want to keep this atomic operator inside the access of nullmap,
+		// then the nullMapLength should be 4 bytes alignment since the smallest unit of atomic.LoadUint32 is UInt32
+		meta.nullMapLength = ((savedColumnNum + 1 + 31) / 32) * 4
+	} else {
+		meta.colOffsetInNullMap = 0
+		meta.nullMapLength = (savedColumnNum + 7) / 8
+	}
+	meta.rowDataOffset = -1
+	if meta.isJoinKeysInlined {
+		if meta.isJoinKeysFixedLength {
+			meta.rowDataOffset = sizeOfNextPtr + meta.nullMapLength
+		} else {
+			meta.rowDataOffset = sizeOfNextPtr + meta.nullMapLength + sizeOfElementSize
+		}
+	} else {
+		if meta.isJoinKeysFixedLength {
+			meta.rowDataOffset = sizeOfNextPtr + meta.nullMapLength + meta.joinKeysLength
+		}
+	}
+	if meta.isJoinKeysFixedLength && !meta.isJoinKeysInlined {
+		meta.fakeKeyByte = make([]byte, meta.joinKeysLength)
+	}
+	return meta
+}
+
+func setupJoinKeys(meta *joinTableMeta, buildKeyIndex []int, buildKeyTypes, probeKeyTypes []*types.FieldType) {
 	meta.isJoinKeysFixedLength = true
 	meta.joinKeysLength = 0
 	meta.isJoinKeysInlined = true
-	keyIndexMap := make(map[int]struct{})
 	meta.serializeModes = make([]codec.SerializeMode, 0, len(buildKeyIndex))
 	isAllKeyInteger := true
 	varLengthKeyNumber := 0
+	keyIndexMap := make(map[int]struct{})
+
 	for index, keyIndex := range buildKeyIndex {
 		keyType := buildKeyTypes[index]
 		prop := getKeyProp(keyType)
@@ -231,13 +279,12 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 			meta.isJoinKeysInlined = false
 		}
 		if prop.isKeyInteger {
-			buildUnsigned := prop.isKeyUnsigned
 			probeKeyProp := getKeyProp(probeKeyTypes[index])
 			if !probeKeyProp.isKeyInteger {
-				panic("build key is integer but probe key is not integer, should not happens")
+				panic("build key is integer but probe key is not integer, should not happen")
 			}
-			probeUnsigned := probeKeyProp.isKeyUnsigned
-			if (buildUnsigned && !probeUnsigned) || (probeUnsigned && !buildUnsigned) {
+			if prop.isKeyUnsigned != probeKeyProp.isKeyUnsigned {
+				// for mixed signed and unsigned integer, an extra sign flag is needed
 				meta.serializeModes = append(meta.serializeModes, codec.NeedSignFlag)
 				meta.isJoinKeysInlined = false
 				if meta.isJoinKeysFixedLength {
@@ -248,11 +295,10 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 				meta.serializeModes = append(meta.serializeModes, codec.Normal)
 			}
 		} else {
-			if !prop.isKeyInteger {
-				isAllKeyInteger = false
-			}
+			isAllKeyInteger = false
 			if prop.keyLength == chunk.VarElemLen {
-				// keep var column by default for var length column
+				// keep var column by default for var length column, otherwise,
+				// if there are 2 var columns, row [a, aa] and row [aa, a] can not be distinguished
 				meta.serializeModes = append(meta.serializeModes, codec.KeepVarColumnLength)
 			} else {
 				meta.serializeModes = append(meta.serializeModes, codec.Normal)
@@ -260,6 +306,7 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 		}
 		keyIndexMap[keyIndex] = struct{}{}
 	}
+
 	if !meta.isJoinKeysFixedLength {
 		meta.joinKeysLength = -1
 	}
@@ -276,18 +323,23 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 				}
 			}
 		}
+	}
+
+	if isAllKeyInteger && len(buildKeyIndex) == 1 && meta.serializeModes[0] != codec.NeedSignFlag {
+		meta.keyMode = OneInt64
 	} else {
-		for _, index := range buildKeyIndex {
-			updateMeta(index)
+		if meta.isJoinKeysFixedLength {
+			meta.keyMode = FixedSerializedKey
+		} else {
+			meta.keyMode = VariableSerializedKey
 		}
 	}
-	if !meta.isFixedLength {
-		meta.rowLength = 0
-	}
-	// construct the column order
-	meta.rowColumnsOrder = make([]int, 0, len(columnsNeedToBeSaved))
-	meta.columnsSize = make([]int, 0, len(columnsNeedToBeSaved))
-	usedColumnMap := make(map[int]struct{}, len(columnsNeedToBeSaved))
+}
+
+func setupColumnOrder(meta *joinTableMeta, buildKeyIndex []int, buildTypes []*types.FieldType, columnsUsedByOtherCondition []int, outputColumns []int, savedColumnLength int) {
+	meta.rowColumnsOrder = make([]int, 0, savedColumnLength)
+	meta.columnsSize = make([]int, 0, savedColumnLength)
+	usedColumnMap := make(map[int]struct{}, savedColumnLength)
 
 	updateColumnOrder := func(index int) {
 		if _, ok := usedColumnMap[index]; !ok {
@@ -320,39 +372,4 @@ func newTableMeta(buildKeyIndex []int, buildTypes, buildKeyTypes, probeKeyTypes 
 			updateColumnOrder(index)
 		}
 	}
-	if isAllKeyInteger && len(buildKeyIndex) == 1 && meta.serializeModes[0] != codec.NeedSignFlag {
-		meta.keyMode = OneInt64
-	} else {
-		if meta.isJoinKeysFixedLength {
-			meta.keyMode = FixedSerializedKey
-		} else {
-			meta.keyMode = VariableSerializedKey
-		}
-	}
-	if needUsedFlag {
-		meta.colOffsetInNullMap = 1
-		// If needUsedFlag == true, during probe stage, the usedFlag will be accessed by both read/write operator,
-		// so atomic read/write is required. We want to keep this atomic operator inside the access of nullmap,
-		// then the nullMapLength should be 4 bytes alignment since the smallest unit of atomic.LoadUint32 is UInt32
-		meta.nullMapLength = ((len(columnsNeedToBeSaved) + 1 + 31) / 32) * 4
-	} else {
-		meta.colOffsetInNullMap = 0
-		meta.nullMapLength = (len(columnsNeedToBeSaved) + 7) / 8
-	}
-	meta.rowDataOffset = -1
-	if meta.isJoinKeysInlined {
-		if meta.isJoinKeysFixedLength {
-			meta.rowDataOffset = sizeOfNextPtr + meta.nullMapLength
-		} else {
-			meta.rowDataOffset = sizeOfNextPtr + meta.nullMapLength + sizeOfElementSize
-		}
-	} else {
-		if meta.isJoinKeysFixedLength {
-			meta.rowDataOffset = sizeOfNextPtr + meta.nullMapLength + meta.joinKeysLength
-		}
-	}
-	if meta.isJoinKeysFixedLength && !meta.isJoinKeysInlined {
-		meta.fakeKeyByte = make([]byte, meta.joinKeysLength)
-	}
-	return meta
 }

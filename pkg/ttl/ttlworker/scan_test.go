@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -141,9 +141,9 @@ func (w *mockScanWorker) SetExecuteSQL(fn func(ctx context.Context, sql string, 
 }
 
 func TestScanWorkerSchedule(t *testing.T) {
-	origLimit := variable.TTLScanBatchSize.Load()
-	variable.TTLScanBatchSize.Store(5)
-	defer variable.TTLScanBatchSize.Store(origLimit)
+	origLimit := vardef.TTLScanBatchSize.Load()
+	vardef.TTLScanBatchSize.Store(5)
+	defer vardef.TTLScanBatchSize.Store(origLimit)
 
 	tbl := newMockTTLTbl(t, "t1")
 	w := NewMockScanWorker(t)
@@ -191,9 +191,9 @@ func TestScanWorkerSchedule(t *testing.T) {
 }
 
 func TestScanWorkerScheduleWithFailedTask(t *testing.T) {
-	origLimit := variable.TTLScanBatchSize.Load()
-	variable.TTLScanBatchSize.Store(5)
-	defer variable.TTLScanBatchSize.Store(origLimit)
+	origLimit := vardef.TTLScanBatchSize.Load()
+	vardef.TTLScanBatchSize.Store(5)
+	defer vardef.TTLScanBatchSize.Store(origLimit)
 
 	tbl := newMockTTLTbl(t, "t1")
 	w := NewMockScanWorker(t)
@@ -309,12 +309,12 @@ func (t *mockScanTask) selectSQL(i int) string {
 
 func (t *mockScanTask) runDoScanForTest(delTaskCnt int, errString string) *ttlScanTaskExecResult {
 	t.ttlScanTask.statistics.Reset()
-	origLimit := variable.TTLScanBatchSize.Load()
-	variable.TTLScanBatchSize.Store(3)
+	origLimit := vardef.TTLScanBatchSize.Load()
+	vardef.TTLScanBatchSize.Store(3)
 	origRetryInterval := scanTaskExecuteSQLRetryInterval
 	scanTaskExecuteSQLRetryInterval = time.Millisecond
 	defer func() {
-		variable.TTLScanBatchSize.Store(origLimit)
+		vardef.TTLScanBatchSize.Store(origLimit)
 		scanTaskExecuteSQLRetryInterval = origRetryInterval
 	}()
 
@@ -554,3 +554,21 @@ func TestScanTaskCancelStmt(t *testing.T) {
 	task.ctx, cancel = context.WithCancel(context.Background())
 	testCancel(context.Background(), cancel)
 }
+
+// NewTTLScanTask creates a new TTL scan task for test.
+func NewTTLScanTask(ctx context.Context, tbl *cache.PhysicalTable, ttlTask *cache.TTLTask) *ttlScanTask {
+	return &ttlScanTask{
+		ctx:        ctx,
+		tbl:        tbl,
+		TTLTask:    ttlTask,
+		statistics: &ttlStatistics{},
+	}
+}
+
+// DoScan is an exported version of `doScan` for test.
+func (t *ttlScanTask) DoScan(ctx context.Context, delCh chan<- *TTLDeleteTask, sessPool util.SessionPool) *ttlScanTaskExecResult {
+	return t.doScan(ctx, delCh, sessPool)
+}
+
+// TTLDeleteTask is an exported version of `ttlDeleteTask` for test.
+type TTLDeleteTask = ttlDeleteTask

@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
@@ -134,7 +135,7 @@ func init() {
 	action := &globalPanicOnExceed{}
 	GlobalMemoryUsageTracker = memory.NewGlobalTracker(memory.LabelForGlobalMemory, -1)
 	GlobalMemoryUsageTracker.SetActionOnExceed(action)
-	GlobalDiskUsageTracker = disk.NewGlobalTrcaker(memory.LabelForGlobalStorage, -1)
+	GlobalDiskUsageTracker = disk.NewGlobalTracker(memory.LabelForGlobalStorage, -1)
 	GlobalDiskUsageTracker.SetActionOnExceed(action)
 	GlobalAnalyzeMemoryTracker = memory.NewTracker(memory.LabelForGlobalAnalyzeMemory, -1)
 	GlobalAnalyzeMemoryTracker.SetActionOnExceed(action)
@@ -306,9 +307,6 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikv
 	}
 	lockCtx := tikvstore.NewLockCtx(forUpdateTS, lockWaitTime, seVars.StmtCtx.GetLockWaitStartTime())
 	lockCtx.Killed = &seVars.SQLKiller.Signal
-	lockCtx.PessimisticLockWaited = &seVars.StmtCtx.PessimisticLockWaited
-	lockCtx.LockKeysDuration = &seVars.StmtCtx.LockKeysDuration
-	lockCtx.LockKeysCount = &seVars.StmtCtx.LockKeysCount
 	lockCtx.LockExpired = &seVars.TxnCtx.LockExpire
 	lockCtx.ResourceGroupTagger = func(req *kvrpcpb.PessimisticLockRequest) []byte {
 		if req == nil {
@@ -976,12 +974,12 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.InitMemTracker(memory.LabelForSQLText, -1)
 	}
 	logOnQueryExceedMemQuota := domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota
-	switch variable.OOMAction.Load() {
-	case variable.OOMActionCancel:
+	switch vardef.OOMAction.Load() {
+	case vardef.OOMActionCancel:
 		action := &memory.PanicOnExceed{ConnID: vars.ConnectionID, Killer: vars.MemTracker.Killer}
 		action.SetLogHook(logOnQueryExceedMemQuota)
 		vars.MemTracker.SetActionOnExceed(action)
-	case variable.OOMActionLog:
+	case vardef.OOMActionLog:
 		fallthrough
 	default:
 		action := &memory.LogOnExceed{ConnID: vars.ConnectionID}
@@ -992,7 +990,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.MemTracker.AttachTo(vars.MemTracker)
 	sc.InitDiskTracker(memory.LabelForSQLText, -1)
 	globalConfig := config.GetGlobalConfig()
-	if variable.EnableTmpStorageOnOOM.Load() && sc.DiskTracker != nil {
+	if vardef.EnableTmpStorageOnOOM.Load() && sc.DiskTracker != nil {
 		sc.DiskTracker.AttachTo(vars.DiskTracker)
 		if GlobalDiskUsageTracker != nil {
 			vars.DiskTracker.AttachTo(GlobalDiskUsageTracker)
@@ -1007,7 +1005,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.InitSQLDigest(prepareStmt.NormalizedSQL, prepareStmt.SQLDigest)
 		// For `execute stmt` SQL, should reset the SQL digest with the prepare SQL digest.
 		goCtx := context.Background()
-		if variable.EnablePProfSQLCPU.Load() && len(prepareStmt.NormalizedSQL) > 0 {
+		if vardef.EnablePProfSQLCPU.Load() && len(prepareStmt.NormalizedSQL) > 0 {
 			goCtx = pprof.WithLabels(goCtx, pprof.Labels("sql", FormatSQL(prepareStmt.NormalizedSQL).String()))
 			pprof.SetGoroutineLabels(goCtx)
 		}
@@ -1156,7 +1154,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	)
 
 	vars.PlanCacheParams.Reset()
-	if priority := mysql.PriorityEnum(atomic.LoadInt32(&variable.ForcePriority)); priority != mysql.NoPriority {
+	if priority := mysql.PriorityEnum(atomic.LoadInt32(&vardef.ForcePriority)); priority != mysql.NoPriority {
 		sc.Priority = priority
 	}
 	if vars.StmtCtx.LastInsertIDSet {

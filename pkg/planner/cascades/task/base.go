@@ -21,7 +21,7 @@ import (
 
 // BaseTask is base task wrapper structure for encapsulating basic things.
 type BaseTask struct {
-	ctx cascadesctx.CascadesContext
+	ctx cascadesctx.Context
 }
 
 // Push pushes a new task into inside stack.

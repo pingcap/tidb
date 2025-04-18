@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -336,8 +336,8 @@ func TestReplaceLog(t *testing.T) {
 	// Make some dangling index.
 	ctx := testkit.NewSession(t, store)
 	is := domain.InfoSchema()
-	dbName := model.NewCIStr("test")
-	tblName := model.NewCIStr("testLog")
+	dbName := ast.NewCIStr("test")
+	tblName := ast.NewCIStr("testLog")
 	tbl, err := is.TableByName(context.Background(), dbName, tblName)
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
@@ -368,7 +368,7 @@ func TestRebaseIfNeeded(t *testing.T) {
 	tk.MustExec(`insert into t (b) values (1);`)
 
 	ctx := testkit.NewSession(t, store)
-	tbl, err := domain.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := domain.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	require.Nil(t, sessiontxn.NewTxn(context.Background(), ctx))
 	txn, err := ctx.Txn(true)

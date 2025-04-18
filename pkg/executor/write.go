@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -456,7 +456,7 @@ func checkRowForExchangePartition(sctx sessionctx.Context, row []types.Datum, tb
 	if err != nil {
 		return err
 	}
-	if variable.EnableCheckConstraint.Load() {
+	if vardef.EnableCheckConstraint.Load() {
 		if err = table.CheckRowConstraintWithDatum(evalCtx, pt.WritableConstraint(), row); err != nil {
 			// TODO: make error include ExchangePartition info.
 			return err

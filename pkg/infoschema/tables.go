@@ -41,9 +41,9 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -218,6 +218,8 @@ const (
 	TableTiDBIndexUsage = "TIDB_INDEX_USAGE"
 	// TableTiDBPlanCache is the plan cache table.
 	TableTiDBPlanCache = "TIDB_PLAN_CACHE"
+	// TableKeyspaceMeta is the table to show the keyspace meta.
+	TableKeyspaceMeta = "KEYSPACE_META"
 )
 
 const (
@@ -346,6 +348,7 @@ var tableIDMap = map[string]int64{
 	ClusterTableTiDBPlanCache:            autoid.InformationSchemaDBID + 97,
 	TableTiDBStatementsStats:             autoid.InformationSchemaDBID + 98,
 	ClusterTableTiDBStatementsStats:      autoid.InformationSchemaDBID + 99,
+	TableKeyspaceMeta:                    autoid.InformationSchemaDBID + 100,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -371,7 +374,7 @@ type columnInfo struct {
 func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 	mCharset := charset.CharsetBin
 	mCollation := charset.CharsetBin
-	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeBlob || col.tp == mysql.TypeLongBlob || col.tp == mysql.TypeEnum {
+	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeMediumBlob || col.tp == mysql.TypeBlob || col.tp == mysql.TypeLongBlob || col.tp == mysql.TypeEnum {
 		mCharset = charset.CharsetUTF8MB4
 		mCollation = charset.CollationUTF8MB4
 	}
@@ -379,12 +382,21 @@ func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 	fieldType.SetType(col.tp)
 	fieldType.SetCharset(mCharset)
 	fieldType.SetCollate(mCollation)
-	fieldType.SetFlen(col.size)
+	switch col.tp {
+	case mysql.TypeBlob:
+		fieldType.SetFlen(1 << 16)
+	case mysql.TypeMediumBlob:
+		fieldType.SetFlen(1 << 24)
+	case mysql.TypeLongBlob:
+		fieldType.SetFlen(1 << 32)
+	default:
+		fieldType.SetFlen(col.size)
+	}
 	fieldType.SetDecimal(col.decimal)
 	fieldType.SetFlag(col.flag)
 	fieldType.SetElems(col.enumElems)
 	return &model.ColumnInfo{
-		Name:         pmodel.NewCIStr(col.name),
+		Name:         ast.NewCIStr(col.name),
 		FieldType:    fieldType,
 		State:        model.StatePublic,
 		DefaultValue: col.deflt,
@@ -396,7 +408,7 @@ func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
 	cols := make([]*model.ColumnInfo, 0, len(cs))
 	primaryIndices := make([]*model.IndexInfo, 0, 1)
 	tblInfo := &model.TableInfo{
-		Name:    pmodel.NewCIStr(tableName),
+		Name:    ast.NewCIStr(tableName),
 		State:   model.StatePublic,
 		Charset: mysql.DefaultCharset,
 		Collate: mysql.DefaultCollationName,
@@ -411,12 +423,12 @@ func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
 				tblInfo.IsCommonHandle = true
 				tblInfo.CommonHandleVersion = 1
 				index := &model.IndexInfo{
-					Name:    pmodel.NewCIStr("primary"),
+					Name:    ast.NewCIStr("primary"),
 					State:   model.StatePublic,
 					Primary: true,
 					Unique:  true,
 					Columns: []*model.IndexColumn{
-						{Name: pmodel.NewCIStr(c.name), Offset: offset, Length: types.UnspecifiedLength}},
+						{Name: ast.NewCIStr(c.name), Offset: offset, Length: types.UnspecifiedLength}},
 				}
 				primaryIndices = append(primaryIndices, index)
 				tblInfo.Indices = primaryIndices
@@ -466,31 +478,33 @@ var tablesCols = []columnInfo{
 	{name: "TIDB_ROW_ID_SHARDING_INFO", tp: mysql.TypeVarchar, size: 255},
 	{name: "TIDB_PK_TYPE", tp: mysql.TypeVarchar, size: 64},
 	{name: "TIDB_PLACEMENT_POLICY_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "TIDB_TABLE_MODE", tp: mysql.TypeVarchar, size: 16},
 }
 
 // See: http://dev.mysql.com/doc/refman/5.7/en/information-schema-columns-table.html
 var columnsCols = []columnInfo{
-	{name: "TABLE_CATALOG", tp: mysql.TypeVarchar, size: 512},
+	{name: "TABLE_CATALOG", tp: mysql.TypeVarchar, size: 64},
 	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64},
 	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
 	{name: "COLUMN_NAME", tp: mysql.TypeVarchar, size: 64},
-	{name: "ORDINAL_POSITION", tp: mysql.TypeLonglong, size: 21},
-	{name: "COLUMN_DEFAULT", tp: mysql.TypeBlob, size: 196606},
+	{name: "ORDINAL_POSITION", tp: mysql.TypeLong, flag: mysql.UnsignedFlag},
+	{name: "COLUMN_DEFAULT", tp: mysql.TypeBlob},
 	{name: "IS_NULLABLE", tp: mysql.TypeVarchar, size: 3},
-	{name: "DATA_TYPE", tp: mysql.TypeVarchar, size: 64},
-	{name: "CHARACTER_MAXIMUM_LENGTH", tp: mysql.TypeLonglong, size: 21},
-	{name: "CHARACTER_OCTET_LENGTH", tp: mysql.TypeLonglong, size: 21},
-	{name: "NUMERIC_PRECISION", tp: mysql.TypeLonglong, size: 21},
-	{name: "NUMERIC_SCALE", tp: mysql.TypeLonglong, size: 21},
-	{name: "DATETIME_PRECISION", tp: mysql.TypeLonglong, size: 21},
-	{name: "CHARACTER_SET_NAME", tp: mysql.TypeVarchar, size: 32},
-	{name: "COLLATION_NAME", tp: mysql.TypeVarchar, size: 32},
-	{name: "COLUMN_TYPE", tp: mysql.TypeBlob, size: 196606},
+	{name: "DATA_TYPE", tp: mysql.TypeLongBlob},
+	{name: "CHARACTER_MAXIMUM_LENGTH", tp: mysql.TypeLonglong},
+	{name: "CHARACTER_OCTET_LENGTH", tp: mysql.TypeLonglong},
+	{name: "NUMERIC_PRECISION", tp: mysql.TypeLonglong, flag: mysql.UnsignedFlag},
+	{name: "NUMERIC_SCALE", tp: mysql.TypeLonglong, flag: mysql.UnsignedFlag},
+	{name: "DATETIME_PRECISION", tp: mysql.TypeLong, flag: mysql.UnsignedFlag},
+	{name: "CHARACTER_SET_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "COLLATION_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "COLUMN_TYPE", tp: mysql.TypeMediumBlob},
 	{name: "COLUMN_KEY", tp: mysql.TypeVarchar, size: 3},
-	{name: "EXTRA", tp: mysql.TypeVarchar, size: 45},
-	{name: "PRIVILEGES", tp: mysql.TypeVarchar, size: 80},
-	{name: "COLUMN_COMMENT", tp: mysql.TypeVarchar, size: 1024},
-	{name: "GENERATION_EXPRESSION", tp: mysql.TypeBlob, size: 589779, flag: mysql.NotNullFlag},
+	{name: "EXTRA", tp: mysql.TypeVarchar, size: 256},
+	{name: "PRIVILEGES", tp: mysql.TypeVarchar, size: 154},
+	{name: "COLUMN_COMMENT", tp: mysql.TypeBlob},
+	{name: "GENERATION_EXPRESSION", tp: mysql.TypeLongBlob, flag: mysql.NotNullFlag},
+	{name: "SRS_ID", tp: mysql.TypeLong, flag: mysql.UnsignedFlag},
 }
 
 var columnStatisticsCols = []columnInfo{
@@ -931,6 +945,14 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogKVTotal, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogPDTotal, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogBackoffTotal, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogUnpackedBytesSentTiKVTotal, tp: mysql.TypeLonglong, size: 20},
+	{name: variable.SlowLogUnpackedBytesReceivedTiKVTotal, tp: mysql.TypeLonglong, size: 20},
+	{name: variable.SlowLogUnpackedBytesSentTiKVCrossZone, tp: mysql.TypeLonglong, size: 20},
+	{name: variable.SlowLogUnpackedBytesReceivedTiKVCrossZone, tp: mysql.TypeLonglong, size: 20},
+	{name: variable.SlowLogUnpackedBytesSentTiFlashTotal, tp: mysql.TypeLonglong, size: 20},
+	{name: variable.SlowLogUnpackedBytesReceivedTiFlashTotal, tp: mysql.TypeLonglong, size: 20},
+	{name: variable.SlowLogUnpackedBytesSentTiFlashCrossZone, tp: mysql.TypeLonglong, size: 20},
+	{name: variable.SlowLogUnpackedBytesReceivedTiFlashCrossZone, tp: mysql.TypeLonglong, size: 20},
 	{name: variable.SlowLogWriteSQLRespTotal, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogResultRows, tp: mysql.TypeLonglong, size: 22},
 	{name: variable.SlowLogWarnings, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
@@ -1088,7 +1110,6 @@ var tableTiDBServersInfoCols = []columnInfo{
 	{name: "LEASE", tp: mysql.TypeVarchar, size: 64},
 	{name: "VERSION", tp: mysql.TypeVarchar, size: 64},
 	{name: "GIT_HASH", tp: mysql.TypeVarchar, size: 64},
-	{name: "BINLOG_STATUS", tp: mysql.TypeVarchar, size: 64},
 	{name: "LABELS", tp: mysql.TypeVarchar, size: 128},
 }
 
@@ -1393,6 +1414,14 @@ var tableStatementsSummaryCols = []columnInfo{
 	{name: stmtsummary.ResourceGroupName, tp: mysql.TypeVarchar, size: 64, comment: "Bind resource group name"},
 	{name: stmtsummary.PlanCacheUnqualifiedStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag, comment: "The number of times that these statements are not supported by the plan cache"},
 	{name: stmtsummary.PlanCacheUnqualifiedLastReasonStr, tp: mysql.TypeBlob, size: types.UnspecifiedLength, comment: "The last reason why the statement is not supported by the plan cache"},
+	{name: stmtsummary.SumUnpackedBytesSentTiKVTotalStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes sent to tikv"},
+	{name: stmtsummary.SumUnpackedBytesReceivedTiKVTotalStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes received from tikv"},
+	{name: stmtsummary.SumUnpackedBytesSentTiKVCrossZoneStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes sent to tikv cross zone"},
+	{name: stmtsummary.SumUnpackedBytesReceivedTiKVCrossZoneStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes received from tikv cross zone"},
+	{name: stmtsummary.SumUnpackedBytesSentTiFlashTotalStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes sent to tiflash"},
+	{name: stmtsummary.SumUnpackedBytesReceivedTiFlashTotalStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes received from tiflash"},
+	{name: stmtsummary.SumUnpackedBytesSentTiFlashCrossZoneStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes sent to tiflash cross zone"},
+	{name: stmtsummary.SumUnpackedBytesReceiveTiFlashCrossZoneStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes received from tiflash cross zone"},
 }
 
 var tableTiDBStatementsStatsCols = []columnInfo{
@@ -1464,6 +1493,14 @@ var tableTiDBStatementsStatsCols = []columnInfo{
 	{name: stmtsummary.RequestUnitWriteStr, tp: mysql.TypeDouble, flag: mysql.NotNullFlag | mysql.UnsignedFlag, size: 22, comment: "Total write request-unit cost of these statements"},
 	{name: stmtsummary.QueuedRcTimeStr, tp: mysql.TypeLonglong, size: 22, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total time waiting for available request-units"},
 	{name: stmtsummary.ResourceGroupName, tp: mysql.TypeVarchar, size: 64, comment: "Bind resource group name"},
+	{name: stmtsummary.UnpackedBytesSentTiKVTotalStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes sent to tikv"},
+	{name: stmtsummary.UnpackedBytesReceivedTiKVTotalStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes received from tikv"},
+	{name: stmtsummary.UnpackedBytesSentTiKVCrossZoneStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes sent to tikv cross zone"},
+	{name: stmtsummary.UnpackedBytesReceivedTiKVCrossZoneStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes received from tikv cross zone"},
+	{name: stmtsummary.UnpackedBytesSentTiFlashTotalStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes sent to tiflash"},
+	{name: stmtsummary.UnpackedBytesReceivedTiFlashTotalStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes received from tiflash"},
+	{name: stmtsummary.UnpackedBytesSentTiFlashCrossZoneStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes sent to tiflash cross zone"},
+	{name: stmtsummary.UnpackedBytesReceiveTiFlashCrossZoneStr, tp: mysql.TypeLonglong, size: 20, flag: mysql.NotNullFlag | mysql.UnsignedFlag, comment: "Total bytes received from tiflash cross zone"},
 }
 
 var tableStorageStatsCols = []columnInfo{
@@ -1817,6 +1854,12 @@ var tablePlanCache = []columnInfo{
 	{name: "LAST_ACTIVE_TIME", tp: mysql.TypeDatetime, size: 19},
 }
 
+var tableKeyspaceMetaCols = []columnInfo{
+	{name: "KEYSPACE_NAME", tp: mysql.TypeVarchar, size: 128},
+	{name: "KEYSPACE_ID", tp: mysql.TypeVarchar, size: 64},
+	{name: "CONFIG", tp: mysql.TypeJSON, size: types.UnspecifiedLength},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -1826,7 +1869,7 @@ var tablePlanCache = []columnInfo{
 //
 // The returned nil indicates that sharding information is not suitable for the table(for example, when the table is a View).
 // This function is exported for unit test.
-func GetShardingInfo(dbInfo pmodel.CIStr, tableInfo *model.TableInfo) any {
+func GetShardingInfo(dbInfo ast.CIStr, tableInfo *model.TableInfo) any {
 	if tableInfo == nil || tableInfo.IsView() || util.IsMemOrSysDB(dbInfo.L) {
 		return nil
 	}
@@ -2462,6 +2505,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableKeywords:                           tableKeywords,
 	TableTiDBIndexUsage:                     tableTiDBIndexUsage,
 	TableTiDBPlanCache:                      tablePlanCache,
+	TableKeyspaceMeta:                       tableKeyspaceMetaCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, _ func() (pools.Resource, error), meta *model.TableInfo) (table.Table, error) {
@@ -2470,7 +2514,7 @@ func createInfoSchemaTable(_ autoid.Allocators, _ func() (pools.Resource, error)
 		columns[i] = table.ToColumn(col)
 	}
 	tp := table.VirtualTable
-	if IsClusterTableByName(util.InformationSchemaName.O, meta.Name.O) {
+	if IsClusterTableByName(util.InformationSchemaName.L, meta.Name.L) {
 		tp = table.ClusterTable
 	}
 	return &infoschemaTable{meta: meta, cols: columns, tp: tp}, nil

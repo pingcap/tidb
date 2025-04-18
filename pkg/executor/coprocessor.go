@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -44,7 +43,7 @@ func copHandlerCtx(ctx context.Context, req *coprocessor.Request) context.Contex
 		return ctx
 	}
 
-	traceInfo := &model.TraceInfo{
+	traceInfo := &tracing.TraceInfo{
 		ConnectionID: source.ConnectionId,
 		SessionAlias: source.SessionAlias,
 	}

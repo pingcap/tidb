@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/baseimpl"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -39,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/zap"
 )
 
@@ -164,8 +167,7 @@ func (p *PhysicalIndexMergeJoin) Attach2Task(tasks ...base.Task) base.Task {
 	return t
 }
 
-// Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalIndexHashJoin) Attach2Task(tasks ...base.Task) base.Task {
+func indexHashJoinAttach2TaskV1(p *PhysicalIndexHashJoin, tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	if p.InnerChildIdx == 1 {
 		p.SetChildren(outerTask.Plan(), p.innerPlan)
@@ -177,8 +179,28 @@ func (p *PhysicalIndexHashJoin) Attach2Task(tasks ...base.Task) base.Task {
 	return t
 }
 
+func indexHashJoinAttach2TaskV2(p *PhysicalIndexHashJoin, tasks ...base.Task) base.Task {
+	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
+	innerTask := tasks[p.InnerChildIdx].ConvertToRootTask(p.SCtx())
+	// only fill the wrapped physical index join is ok.
+	completePhysicalIndexJoin(&p.PhysicalIndexJoin, innerTask.(*RootTask), innerTask.Plan().Schema(), outerTask.Plan().Schema(), true)
+	if p.InnerChildIdx == 1 {
+		p.SetChildren(outerTask.Plan(), innerTask.Plan())
+	} else {
+		p.SetChildren(innerTask.Plan(), outerTask.Plan())
+	}
+	t := &RootTask{}
+	t.SetPlan(p)
+	return t
+}
+
 // Attach2Task implements PhysicalPlan interface.
-func (p *PhysicalIndexJoin) Attach2Task(tasks ...base.Task) base.Task {
+func (p *PhysicalIndexHashJoin) Attach2Task(tasks ...base.Task) base.Task {
+	// todo: feel index jon build v2
+	return indexHashJoinAttach2TaskV1(p, tasks...)
+}
+
+func indexJoinAttach2TaskV1(p *PhysicalIndexJoin, tasks ...base.Task) base.Task {
 	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
 	if p.InnerChildIdx == 1 {
 		p.SetChildren(outerTask.Plan(), p.innerPlan)
@@ -188,6 +210,26 @@ func (p *PhysicalIndexJoin) Attach2Task(tasks ...base.Task) base.Task {
 	t := &RootTask{}
 	t.SetPlan(p)
 	return t
+}
+
+func indexJoinAttach2TaskV2(p *PhysicalIndexJoin, tasks ...base.Task) base.Task {
+	outerTask := tasks[1-p.InnerChildIdx].ConvertToRootTask(p.SCtx())
+	innerTask := tasks[p.InnerChildIdx].ConvertToRootTask(p.SCtx())
+	completePhysicalIndexJoin(p, innerTask.(*RootTask), innerTask.Plan().Schema(), outerTask.Plan().Schema(), true)
+	if p.InnerChildIdx == 1 {
+		p.SetChildren(outerTask.Plan(), innerTask.Plan())
+	} else {
+		p.SetChildren(innerTask.Plan(), outerTask.Plan())
+	}
+	t := &RootTask{}
+	t.SetPlan(p)
+	return t
+}
+
+// Attach2Task implements PhysicalPlan interface.
+func (p *PhysicalIndexJoin) Attach2Task(tasks ...base.Task) base.Task {
+	// todo: feel index jon build v2
+	return indexJoinAttach2TaskV1(p, tasks...)
 }
 
 // RowSize for cost model ver2 is simplified, always use this function to calculate row size.
@@ -208,8 +250,8 @@ func (p *PhysicalHashJoin) Attach2Task(tasks ...base.Task) base.Task {
 	if p.storeTp == kv.TiFlash {
 		return p.attach2TaskForTiFlash(tasks...)
 	}
-	lTask := tasks[0].ConvertToRootTask(p.SCtx())
 	rTask := tasks[1].ConvertToRootTask(p.SCtx())
+	lTask := tasks[0].ConvertToRootTask(p.SCtx())
 	p.SetChildren(lTask.Plan(), rTask.Plan())
 	task := &RootTask{}
 	task.SetPlan(p)
@@ -249,7 +291,7 @@ func needConvert(tp *types.FieldType, rtp *types.FieldType) bool {
 	return true
 }
 
-func negotiateCommonType(lType, rType *types.FieldType) (*types.FieldType, bool, bool) {
+func negotiateCommonType(lType, rType *types.FieldType) (_ *types.FieldType, _, _ bool) {
 	commonType := types.AggFieldType([]*types.FieldType{lType, rType})
 	if commonType.GetType() == mysql.TypeNewDecimal {
 		lExtend := 0
@@ -302,7 +344,7 @@ func appendExpr(p *PhysicalProjection, expr expression.Expression) *expression.C
 
 // TiFlash join require that partition key has exactly the same type, while TiDB only guarantee the partition key is the same catalog,
 // so if the partition key type is not exactly the same, we need add a projection below the join or exchanger if exists.
-func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *MppTask) (*MppTask, *MppTask) {
+func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *MppTask) (_, _ *MppTask) {
 	lp := lTask.p
 	if _, ok := lp.(*PhysicalExchangeReceiver); ok {
 		lp = lp.Children()[0].Children()[0]
@@ -373,7 +415,7 @@ func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *MppTask) (*M
 			TaskTp:           property.MppTaskType,
 			MPPPartitionTp:   property.HashType,
 			MPPPartitionCols: lPartKeys,
-		})
+		}, nil)
 		lTask = nlTask
 	}
 	if rChanged {
@@ -383,22 +425,48 @@ func (p *PhysicalHashJoin) convertPartitionKeysIfNeed(lTask, rTask *MppTask) (*M
 			TaskTp:           property.MppTaskType,
 			MPPPartitionTp:   property.HashType,
 			MPPPartitionCols: rPartKeys,
-		})
+		}, nil)
 		rTask = nrTask
 	}
 	return lTask, rTask
 }
 
+func (p *PhysicalHashJoin) enforceExchangerByBackup(task *MppTask, idx int, expectedCols int) *MppTask {
+	if backupHashProp := p.GetChildReqProps(idx); backupHashProp != nil {
+		if len(backupHashProp.MPPPartitionCols) == expectedCols {
+			return task.enforceExchangerImpl(backupHashProp)
+		}
+	}
+	return nil
+}
+
 func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
-	lTask, lok := tasks[0].(*MppTask)
-	rTask, rok := tasks[1].(*MppTask)
+	const (
+		left  = 0
+		right = 1
+	)
+	rTask, rok := tasks[right].(*MppTask)
+	lTask, lok := tasks[left].(*MppTask)
 	if !lok || !rok {
 		return base.InvalidTask
 	}
 	if p.mppShuffleJoin {
-		// protection check is case of some bugs
-		if len(lTask.hashCols) != len(rTask.hashCols) || len(lTask.hashCols) == 0 {
+		if len(lTask.hashCols) == 0 || len(rTask.hashCols) == 0 {
+			// if the hash columns are empty, this is very likely a bug.
 			return base.InvalidTask
+		}
+		if len(lTask.hashCols) != len(rTask.hashCols) {
+			// if the hash columns are not the same, The most likely scenario is that
+			// they have undergone exchange optimization, removing some hash columns.
+			// In this case, we need to restore them on the side that is missing.
+			if len(lTask.hashCols) < len(rTask.hashCols) {
+				lTask = p.enforceExchangerByBackup(lTask, left, len(rTask.hashCols))
+			} else {
+				rTask = p.enforceExchangerByBackup(rTask, right, len(lTask.hashCols))
+			}
+			if lTask == nil || rTask == nil {
+				return base.InvalidTask
+			}
 		}
 		lTask, rTask = p.convertPartitionKeysIfNeed(lTask, rTask)
 	}
@@ -498,8 +566,8 @@ func (p *PhysicalHashJoin) attach2TaskForMpp(tasks ...base.Task) base.Task {
 }
 
 func (p *PhysicalHashJoin) attach2TaskForTiFlash(tasks ...base.Task) base.Task {
-	lTask, lok := tasks[0].(*CopTask)
 	rTask, rok := tasks[1].(*CopTask)
+	lTask, lok := tasks[0].(*CopTask)
 	if !lok || !rok {
 		return p.attach2TaskForMpp(tasks...)
 	}
@@ -875,9 +943,7 @@ func (p *NominalSort) Attach2Task(tasks ...base.Task) base.Task {
 	return t
 }
 
-func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv.StoreType) (*PhysicalTopN, *PhysicalTopN) {
-	var newGlobalTopN *PhysicalTopN
-
+func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv.StoreType) (topN, newGlobalTopN *PhysicalTopN) {
 	fixValue := fixcontrol.GetBoolWithDefault(p.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix56318, true)
 	// HeavyFunctionOptimize: if TopN's ByItems is a HeavyFunction (currently mainly for Vector Search), we will change
 	// the ByItems in order to reuse the function result.
@@ -977,7 +1043,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan base.PhysicalPlan, storeTp kv
 		return topN, newGlobalTopN
 	}
 
-	topN := PhysicalTopN{
+	topN = PhysicalTopN{
 		ByItems:     newByItems,
 		PartitionBy: newPartitionBy,
 		Count:       newCount,
@@ -1087,7 +1153,75 @@ func (p *PhysicalTopN) canPushDownToTiFlash(mppTask *MppTask) bool {
 	return true
 }
 
-// Attach2Task implements physical plan
+// For https://github.com/pingcap/tidb/issues/51723,
+// This function only supports `CLUSTER_SLOW_QUERY`,
+// it will change plan from
+// TopN -> TableReader -> TableFullScan[cop] to
+// TopN -> TableReader -> Limit[cop] -> TableFullScan[cop] + keepOrder
+func (p *PhysicalTopN) pushLimitDownToTiDBCop(copTsk *CopTask) (base.Task, bool) {
+	if copTsk.indexPlan != nil || copTsk.tablePlan == nil {
+		return nil, false
+	}
+
+	var (
+		selOnTblScan   *PhysicalSelection
+		selSelectivity float64
+		tblScan        *PhysicalTableScan
+		err            error
+		ok             bool
+	)
+
+	copTsk.tablePlan, err = copTsk.tablePlan.Clone(p.SCtx())
+	if err != nil {
+		return nil, false
+	}
+	finalTblScanPlan := copTsk.tablePlan
+	for len(finalTblScanPlan.Children()) > 0 {
+		selOnTblScan, _ = finalTblScanPlan.(*PhysicalSelection)
+		finalTblScanPlan = finalTblScanPlan.Children()[0]
+	}
+
+	if tblScan, ok = finalTblScanPlan.(*PhysicalTableScan); !ok {
+		return nil, false
+	}
+
+	// Check the table is `CLUSTER_SLOW_QUERY` or not.
+	if tblScan.Table.Name.O != infoschema.ClusterTableSlowLog {
+		return nil, false
+	}
+
+	colsProp, ok := GetPropByOrderByItems(p.ByItems)
+	if !ok {
+		return nil, false
+	}
+	if len(colsProp.SortItems) != 1 || !colsProp.SortItems[0].Col.Equal(p.SCtx().GetExprCtx().GetEvalCtx(), tblScan.HandleCols.GetCol(0)) {
+		return nil, false
+	}
+	if selOnTblScan != nil && tblScan.StatsInfo().RowCount > 0 {
+		selSelectivity = selOnTblScan.StatsInfo().RowCount / tblScan.StatsInfo().RowCount
+	}
+	tblScan.Desc = colsProp.SortItems[0].Desc
+	tblScan.KeepOrder = true
+
+	childProfile := copTsk.Plan().StatsInfo()
+	newCount := p.Offset + p.Count
+	stats := util.DeriveLimitStats(childProfile, float64(newCount))
+	pushedLimit := PhysicalLimit{
+		Count: newCount,
+	}.Init(p.SCtx(), stats, p.QueryBlockOffset())
+	pushedLimit.SetSchema(copTsk.tablePlan.Schema())
+	copTsk = attachPlan2Task(pushedLimit, copTsk).(*CopTask)
+	child := pushedLimit.Children()[0]
+	child.SetStats(child.StatsInfo().ScaleByExpectCnt(float64(newCount)))
+	if selSelectivity > 0 && selSelectivity < 1 {
+		scaledRowCount := child.StatsInfo().RowCount / selSelectivity
+		tblScan.SetStats(tblScan.StatsInfo().ScaleByExpectCnt(scaledRowCount))
+	}
+	rootTask := copTsk.ConvertToRootTask(p.SCtx())
+	return attachPlan2Task(p, rootTask), true
+}
+
+// Attach2Task implements the PhysicalPlan interface.
 func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 	t := tasks[0].Copy()
 	cols := make([]*expression.Column, 0, len(p.ByItems))
@@ -1095,6 +1229,12 @@ func (p *PhysicalTopN) Attach2Task(tasks ...base.Task) base.Task {
 		cols = append(cols, expression.ExtractColumns(item.Expr)...)
 	}
 	needPushDown := len(cols) > 0
+	if copTask, ok := t.(*CopTask); ok && needPushDown && copTask.getStoreType() == kv.TiDB && len(copTask.rootTaskConds) == 0 {
+		newTask, changed := p.pushLimitDownToTiDBCop(copTask)
+		if changed {
+			return newTask
+		}
+	}
 	if copTask, ok := t.(*CopTask); ok && needPushDown && p.canPushDownToTiKV(copTask) && len(copTask.rootTaskConds) == 0 {
 		// If all columns in topN are from index plan, we push it to index plan, otherwise we finish the index plan and
 		// push it to table plan.
@@ -1526,7 +1666,8 @@ func BuildFinalModeAggregation(
 			if aggFunc.Name == ast.AggFuncAvg {
 				cntAgg := aggFunc.Clone()
 				cntAgg.Name = ast.AggFuncCount
-				err := cntAgg.TypeInfer(sctx.GetExprCtx())
+				exprCtx := sctx.GetExprCtx()
+				err := cntAgg.TypeInfer(exprCtx)
 				if err != nil { // must not happen
 					partial = nil
 					final = original
@@ -1536,7 +1677,11 @@ func BuildFinalModeAggregation(
 				// we must call deep clone in this case, to avoid sharing the arguments.
 				sumAgg := aggFunc.Clone()
 				sumAgg.Name = ast.AggFuncSum
-				sumAgg.TypeInfer4AvgSum(sumAgg.RetTp)
+				if err = sumAgg.TypeInfer4AvgSum(exprCtx.GetEvalCtx(), aggFunc.RetTp); err != nil {
+					partial = nil
+					final = original
+					return
+				}
 				partial.Schema.Columns[partialCursor-1].RetType = sumAgg.RetTp
 				partial.AggFuncs = append(partial.AggFuncs, cntAgg, sumAgg)
 			} else if aggFunc.Name == ast.AggFuncApproxCountDistinct || aggFunc.Name == ast.AggFuncGroupConcat {
@@ -1591,13 +1736,14 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 	newSchema.NullableUK = p.schema.NullableUK
 	newAggFuncs := make([]*aggregation.AggFuncDesc, 0, 2*len(p.AggFuncs))
 	exprs := make([]expression.Expression, 0, 2*len(p.schema.Columns))
+	exprCtx := p.SCtx().GetExprCtx()
 	// add agg functions schema
 	for i, aggFunc := range p.AggFuncs {
 		if aggFunc.Name == ast.AggFuncAvg {
 			// inset a count(column)
 			avgCount := aggFunc.Clone()
 			avgCount.Name = ast.AggFuncCount
-			err := avgCount.TypeInfer(p.SCtx().GetExprCtx())
+			err := avgCount.TypeInfer(exprCtx)
 			if err != nil { // must not happen
 				return nil
 			}
@@ -1610,7 +1756,9 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 			// insert a sum(column)
 			avgSum := aggFunc.Clone()
 			avgSum.Name = ast.AggFuncSum
-			avgSum.TypeInfer4AvgSum(avgSum.RetTp)
+			if err = avgSum.TypeInfer4AvgSum(exprCtx.GetEvalCtx(), aggFunc.RetTp); err != nil {
+				return nil
+			}
 			newAggFuncs = append(newAggFuncs, avgSum)
 			avgSumCol := &expression.Column{
 				UniqueID: p.schema.Columns[i].UniqueID,
@@ -1618,9 +1766,9 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 			}
 			newSchema.Append(avgSumCol)
 			// avgSumCol/(case when avgCountCol=0 then 1 else avgCountCol end)
-			eq := expression.NewFunctionInternal(p.SCtx().GetExprCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), avgCountCol, expression.NewZero())
-			caseWhen := expression.NewFunctionInternal(p.SCtx().GetExprCtx(), ast.Case, avgCountCol.RetType, eq, expression.NewOne(), avgCountCol)
-			divide := expression.NewFunctionInternal(p.SCtx().GetExprCtx(), ast.Div, avgSumCol.RetType, avgSumCol, caseWhen)
+			eq := expression.NewFunctionInternal(exprCtx, ast.EQ, types.NewFieldType(mysql.TypeTiny), avgCountCol, expression.NewZero())
+			caseWhen := expression.NewFunctionInternal(exprCtx, ast.Case, avgCountCol.RetType, eq, expression.NewOne(), avgCountCol)
+			divide := expression.NewFunctionInternal(exprCtx, ast.Div, avgSumCol.RetType, avgSumCol, caseWhen)
 			divide.(*expression.ScalarFunction).RetType = p.schema.Columns[i].RetType
 			exprs = append(exprs, divide)
 		} else {
@@ -2335,7 +2483,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 		return t
 	case MppScalar:
 		prop := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.SinglePartitionType}
-		if !mpp.needEnforceExchanger(prop) {
+		if !mpp.needEnforceExchanger(prop, nil) {
 			// On the one hand: when the low layer already satisfied the single partition layout, just do the all agg computation in the single node.
 			return p.attach2TaskForMpp1Phase(mpp)
 		}
@@ -2378,7 +2526,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 			}
 
 			exProp := &property.PhysicalProperty{TaskTp: property.MppTaskType, ExpectedCnt: math.MaxFloat64, MPPPartitionTp: property.HashType, MPPPartitionCols: partitionCols}
-			newMpp := mpp.enforceExchanger(exProp)
+			newMpp := mpp.enforceExchanger(exProp, nil)
 			attachPlan2Task(middle, newMpp)
 			mpp = newMpp
 			if partialHashAgg, ok := partial.(*PhysicalHashAgg); ok && len(partitionCols) != 0 {
@@ -2387,7 +2535,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...base.Task) base.Task {
 		}
 
 		// prop here still be the first generated single-partition requirement.
-		newMpp := mpp.enforceExchanger(prop)
+		newMpp := mpp.enforceExchanger(prop, nil)
 		attachPlan2Task(final, newMpp)
 		if proj == nil {
 			proj = PhysicalProjection{
@@ -2558,7 +2706,7 @@ func tryExpandVirtualColumn(p base.PhysicalPlan) {
 	}
 }
 
-func (t *MppTask) needEnforceExchanger(prop *property.PhysicalProperty) bool {
+func (t *MppTask) needEnforceExchanger(prop *property.PhysicalProperty, fd *funcdep.FDSet) bool {
 	switch prop.MPPPartitionTp {
 	case property.AnyType:
 		return false
@@ -2570,9 +2718,10 @@ func (t *MppTask) needEnforceExchanger(prop *property.PhysicalProperty) bool {
 		if t.partTp != property.HashType {
 			return true
 		}
-		// TODO: consider equalivant class
-		// TODO: `prop.IsSubsetOf` is enough, instead of equal.
 		// for example, if already partitioned by hash(B,C), then same (A,B,C) must distribute on a same node.
+		if fd != nil && len(t.hashCols) != 0 {
+			return prop.NeedMPPExchangeByEquivalence(t.hashCols, fd)
+		}
 		if len(prop.MPPPartitionCols) != len(t.hashCols) {
 			return true
 		}
@@ -2585,8 +2734,8 @@ func (t *MppTask) needEnforceExchanger(prop *property.PhysicalProperty) bool {
 	}
 }
 
-func (t *MppTask) enforceExchanger(prop *property.PhysicalProperty) *MppTask {
-	if !t.needEnforceExchanger(prop) {
+func (t *MppTask) enforceExchanger(prop *property.PhysicalProperty, fd *funcdep.FDSet) *MppTask {
+	if !t.needEnforceExchanger(prop, fd) {
 		return t
 	}
 	return t.Copy().(*MppTask).enforceExchangerImpl(prop)
@@ -2619,4 +2768,21 @@ func (t *MppTask) enforceExchangerImpl(prop *property.PhysicalProperty) *MppTask
 		partTp:   prop.MPPPartitionTp,
 		hashCols: prop.MPPPartitionCols,
 	}
+}
+
+// IndexJoinInfo is generated by index join's inner ds, which will build their own index choice based
+// the indexJoinProp pushed down by index join. While index join still need some feedback by this kind
+// choice info to make index join runtime compatible, like IdxColLens will help truncate the index key
+// to construct suitable lookup contents. KeyOff2IdxOff will help ds to quickly locate the index column
+// from lookup contents. Ranges will be used to rebuild the underlying index range if there is any parameter
+// affecting the index join's inner range. CompareFilters will be used to quickly evaluate the last-col's
+// non-eq range.
+// This kind of IndexJoinInfo will be wrapped as a part of CopTask or RootTask, which will be passed upward
+// to targeted indexJoin to complete the physicalIndexJoin's detail: ref:
+type IndexJoinInfo struct {
+	// The following fields are used to keep index join aware of inner plan's index/pk choice.
+	IdxColLens     []int
+	KeyOff2IdxOff  []int
+	Ranges         ranger.MutableRanges
+	CompareFilters *ColWithCmpFuncManager
 }

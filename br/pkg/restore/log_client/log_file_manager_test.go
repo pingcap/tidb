@@ -23,6 +23,7 @@ import (
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -55,7 +56,7 @@ func wr(start, end uint64, minBegin uint64) *backuppb.DataFileInfo {
 		MinTs:                 start,
 		MaxTs:                 end,
 		MinBeginTsInDefaultCf: minBegin,
-		Cf:                    stream.WriteCF,
+		Cf:                    consts.WriteCF,
 	}
 }
 
@@ -66,7 +67,7 @@ func dr(start, end uint64) *backuppb.DataFileInfo {
 		Path:  fmt.Sprintf("write-%06d", id),
 		MinTs: start,
 		MaxTs: end,
-		Cf:    stream.DefaultCF,
+		Cf:    consts.DefaultCF,
 	}
 }
 
@@ -491,7 +492,7 @@ func testFileManagerWithMeta(t *testing.T, m metaMaker) {
 				),
 			).Item
 		} else {
-			data, err := fm.LoadDDLFilesAndCountDMLFiles(ctx)
+			data, err := fm.LoadDDLFiles(ctx)
 			req.NoError(err)
 			r = data
 		}
@@ -618,8 +619,8 @@ func TestReadAllEntries(t *testing.T) {
 	data, file := generateKvData()
 	fm := logclient.TEST_NewLogFileManager(35, 75, 25, &logclient.FakeStreamMetadataHelper{Data: data})
 	{
-		file.Cf = stream.WriteCF
-		kvEntries, nextKvEntries, err := fm.ReadAllEntries(ctx, file, 50)
+		file.Cf = consts.WriteCF
+		kvEntries, nextKvEntries, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 50)
 		require.NoError(t, err)
 		require.Equal(t, []*logclient.KvEntryWithTS{
 			encodekvEntryWithTS("mDDL", 37),
@@ -631,8 +632,8 @@ func TestReadAllEntries(t *testing.T) {
 		}, nextKvEntries)
 	}
 	{
-		file.Cf = stream.DefaultCF
-		kvEntries, nextKvEntries, err := fm.ReadAllEntries(ctx, file, 50)
+		file.Cf = consts.DefaultCF
+		kvEntries, nextKvEntries, err := fm.ReadFilteredEntriesFromFiles(ctx, file, 50)
 		require.NoError(t, err)
 		require.Equal(t, []*logclient.KvEntryWithTS{
 			encodekvEntryWithTS("mDDL", 27),

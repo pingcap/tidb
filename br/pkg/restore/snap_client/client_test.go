@@ -36,7 +36,7 @@ import (
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -49,12 +49,12 @@ func TestCreateTables(t *testing.T) {
 	m := mc
 	g := gluetidb.New()
 	client := snapclient.NewRestoreClient(m.PDClient, m.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
-	err := client.Init(g, m.Storage)
+	err := client.InitConnections(g, m.Storage)
 	require.NoError(t, err)
 
 	info, err := m.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoError(t, err)
-	dbSchema, isExist := info.SchemaByName(pmodel.NewCIStr("test"))
+	dbSchema, isExist := info.SchemaByName(ast.NewCIStr("test"))
 	require.True(t, isExist)
 
 	client.SetBatchDdlSize(1)
@@ -66,10 +66,10 @@ func TestCreateTables(t *testing.T) {
 			DB: dbSchema,
 			Info: &model.TableInfo{
 				ID:   int64(i),
-				Name: pmodel.NewCIStr("test" + strconv.Itoa(i)),
+				Name: ast.NewCIStr("test" + strconv.Itoa(i)),
 				Columns: []*model.ColumnInfo{{
 					ID:        1,
-					Name:      pmodel.NewCIStr("id"),
+					Name:      ast.NewCIStr("id"),
 					FieldType: *intField,
 					State:     model.StatePublic,
 				}},
@@ -120,7 +120,7 @@ func TestNeedCheckTargetClusterFresh(t *testing.T) {
 
 	g := gluetidb.New()
 	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
-	err := client.Init(g, cluster.Storage)
+	err := client.InitConnections(g, cluster.Storage)
 	require.NoError(t, err)
 
 	// not set filter and first run with checkpoint
@@ -150,13 +150,13 @@ func TestCheckTargetClusterFresh(t *testing.T) {
 
 	g := gluetidb.New()
 	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
-	err := client.Init(g, cluster.Storage)
+	err := client.InitConnections(g, cluster.Storage)
 	require.NoError(t, err)
 
 	ctx := context.Background()
 	require.NoError(t, client.CheckTargetClusterFresh(ctx))
 
-	require.NoError(t, client.CreateDatabases(ctx, []*metautil.Database{{Info: &model.DBInfo{Name: pmodel.NewCIStr("user_db")}}}))
+	require.NoError(t, client.CreateDatabases(ctx, []*metautil.Database{{Info: &model.DBInfo{Name: ast.NewCIStr("user_db")}}}))
 	require.True(t, berrors.ErrRestoreNotFreshCluster.Equal(client.CheckTargetClusterFresh(ctx)))
 }
 
@@ -167,13 +167,13 @@ func TestCheckTargetClusterFreshWithTable(t *testing.T) {
 
 	g := gluetidb.New()
 	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
-	err := client.Init(g, cluster.Storage)
+	err := client.InitConnections(g, cluster.Storage)
 	require.NoError(t, err)
 
 	ctx := context.Background()
 	info, err := cluster.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoError(t, err)
-	dbSchema, isExist := info.SchemaByName(pmodel.NewCIStr("test"))
+	dbSchema, isExist := info.SchemaByName(ast.NewCIStr("test"))
 	require.True(t, isExist)
 	intField := types.NewFieldType(mysql.TypeLong)
 	intField.SetCharset("binary")
@@ -181,10 +181,10 @@ func TestCheckTargetClusterFreshWithTable(t *testing.T) {
 		DB: dbSchema,
 		Info: &model.TableInfo{
 			ID:   int64(1),
-			Name: pmodel.NewCIStr("t"),
+			Name: ast.NewCIStr("t"),
 			Columns: []*model.ColumnInfo{{
 				ID:        1,
-				Name:      pmodel.NewCIStr("id"),
+				Name:      ast.NewCIStr("id"),
 				FieldType: *intField,
 				State:     model.StatePublic,
 			}},
@@ -202,7 +202,7 @@ func TestInitFullClusterRestore(t *testing.T) {
 	cluster := mc
 	g := gluetidb.New()
 	client := snapclient.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, split.DefaultTestKeepaliveCfg)
-	err := client.Init(g, cluster.Storage)
+	err := client.InitConnections(g, cluster.Storage)
 	require.NoError(t, err)
 
 	// explicit filter
@@ -347,5 +347,50 @@ func TestSetSpeedLimit(t *testing.T) {
 	require.Less(t, recordStores.len(), len(mockStores))
 	for i := 0; i < recordStores.len(); i++ {
 		require.Equal(t, mockStores[i].Id, recordStores.get(i))
+	}
+}
+
+func TestSortTablesBySchemaID(t *testing.T) {
+	// Create test tables with different schema IDs in mixed order
+	tables := []*metautil.Table{
+		createTestTable(2, 3),
+		createTestTable(1, 2),
+		createTestTable(3, 5),
+		createTestTable(1, 1),
+		createTestTable(2, 4),
+		createTestTable(3, 6),
+		createTestTable(6, 7),
+	}
+
+	sorted := snapclient.SortTablesBySchemaID(tables)
+
+	require.Len(t, sorted, 7, "Should have 7 tables after sorting")
+
+	expectedSchemaIDs := []int64{1, 1, 2, 2, 3, 3, 6}
+	expectedTableIDs := []int64{1, 2, 3, 4, 5, 6, 7}
+	actualSchemaIDs := make([]int64, 7)
+	actualTableIDs := make([]int64, 7)
+	for i, table := range sorted {
+		actualSchemaIDs[i] = table.DB.ID
+		actualTableIDs[i] = table.Info.ID
+	}
+
+	require.Equal(t, expectedSchemaIDs, actualSchemaIDs, "Tables should be sorted by schema ID")
+	require.Equal(t, expectedTableIDs, actualTableIDs, "Tables should be sorted by table ID")
+}
+
+// Helper function to create a test table with given IDs
+func createTestTable(schemaID, tableID int64) *metautil.Table {
+	dbInfo := &model.DBInfo{
+		ID: schemaID,
+	}
+
+	tableInfo := &model.TableInfo{
+		ID: tableID,
+	}
+
+	return &metautil.Table{
+		DB:   dbInfo,
+		Info: tableInfo,
 	}
 }

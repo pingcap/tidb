@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -29,7 +29,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type testAllocator int64
+
+func (t *testAllocator) GetGlobalID() (int64, error) {
+	return int64(*t), nil
+}
+
+func (t *testAllocator) AdvanceGlobalIDs(n int) (int64, error) {
+	old := int64(*t)
+	*t = testAllocator(int64(*t) + int64(n))
+	return old, nil
+}
+
 func TestRestoreAutoIncID(t *testing.T) {
+	allocator := testAllocator(0)
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
 	tk.MustExec("use test")
@@ -47,9 +60,9 @@ func TestRestoreAutoIncID(t *testing.T) {
 	// Get schemas of db and table
 	info, err := s.Mock.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoErrorf(t, err, "Error get snapshot info schema: %s", err)
-	dbInfo, exists := info.SchemaByName(pmodel.NewCIStr("test"))
+	dbInfo, exists := info.SchemaByName(ast.NewCIStr("test"))
 	require.Truef(t, exists, "Error get db info")
-	tableInfo, err := info.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("\"t\""))
+	tableInfo, err := info.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("\"t\""))
 	require.NoErrorf(t, err, "Error get table info: %s", err)
 	table := metautil.Table{
 		Info: tableInfo.Meta(),
@@ -77,6 +90,15 @@ func TestRestoreAutoIncID(t *testing.T) {
 	err = db.CreateDatabase(context.Background(), table.DB, false, nil)
 	require.NoErrorf(t, err, "Error create empty charset db: %s %s", err, s.Mock.DSN)
 	uniqueMap := make(map[restore.UniqueTableName]bool)
+
+	preallocId := func(tables []*metautil.Table) {
+		ids := prealloctableid.New(tables)
+		ids.Alloc(&allocator)
+		db.RegisterPreallocatedIDs(ids)
+		allocator += testAllocator(len(tables))
+	}
+
+	preallocId([]*metautil.Table{&table})
 	err = db.CreateTable(context.Background(), &table, uniqueMap, false, nil)
 	require.NoErrorf(t, err, "Error create table: %s %s", err, s.Mock.DSN)
 
@@ -88,6 +110,7 @@ func TestRestoreAutoIncID(t *testing.T) {
 
 	// try again, failed due to table exists.
 	table.Info.AutoIncID = globalAutoID + 200
+	preallocId([]*metautil.Table{&table})
 	err = db.CreateTable(context.Background(), &table, uniqueMap, false, nil)
 	require.NoError(t, err)
 	// Check if AutoIncID is not altered.
@@ -98,6 +121,7 @@ func TestRestoreAutoIncID(t *testing.T) {
 	// try again, success because we use alter sql in unique map.
 	table.Info.AutoIncID = globalAutoID + 300
 	uniqueMap[restore.UniqueTableName{DB: "test", Table: "\"t\""}] = true
+	preallocId([]*metautil.Table{&table})
 	err = db.CreateTable(context.Background(), &table, uniqueMap, false, nil)
 	require.NoError(t, err)
 	// Check if AutoIncID is altered to globalAutoID + 300.
@@ -182,12 +206,12 @@ func prepareAllocTables(
 
 	info, err := dom.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoError(t, err)
-	dbInfo, exists := info.SchemaByName(pmodel.NewCIStr("test"))
+	dbInfo, exists := info.SchemaByName(ast.NewCIStr("test"))
 	require.True(t, exists)
 	tableInfos = make([]*metautil.Table, 0, 4)
 	for i := 1; i <= len(createTableSQLs); i += 1 {
 		tableName := fmt.Sprintf("t%d", i)
-		tableInfo, err := info.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr(tableName))
+		tableInfo, err := info.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(tableName))
 		require.NoError(t, err)
 		tableInfos = append(tableInfos, &metautil.Table{
 			DB:   dbInfo.Clone(),
@@ -221,7 +245,7 @@ func cloneTableInfos(
 		for i := int64(0); i < int64(len(createTableSQLs)); i += 1 {
 			newTableInfo := originTableInfos[i].Info.Clone()
 			newTableInfo.ID = id + i + 1
-			newTableInfo.Name = pmodel.NewCIStr(fmt.Sprintf("%s%d", prefix, i+1))
+			newTableInfo.Name = ast.NewCIStr(fmt.Sprintf("%s%d", prefix, i+1))
 			tableInfos = append(tableInfos, &metautil.Table{
 				DB:   originTableInfos[i].DB.Clone(),
 				Info: newTableInfo,
@@ -240,7 +264,7 @@ func fakePolicyInfo(ident byte) *model.PolicyInfo {
 	id := int64(ident)
 	uid := uint64(ident)
 	str := string(ident)
-	cistr := pmodel.NewCIStr(str)
+	cistr := ast.NewCIStr(str)
 	return &model.PolicyInfo{
 		PlacementSettings: &model.PlacementSettings{
 			Followers: uid,
@@ -283,6 +307,7 @@ func TestPolicyMode(t *testing.T) {
 		ID:   fakepolicy2.ID,
 		Name: fakepolicy2.Name,
 	}
+
 	err = db.CreateTables(ctx, tableInfos, nil, true, policyMap)
 	require.NoError(t, err)
 	for _, checkFn := range checkTableSQLs {
@@ -318,7 +343,7 @@ func TestPolicyMode(t *testing.T) {
 	policyMap.Store(fakepolicy1.Name.L, fakepolicy1)
 	err = db.CreateDatabase(ctx, &model.DBInfo{
 		ID:      20000,
-		Name:    pmodel.NewCIStr("test_db"),
+		Name:    ast.NewCIStr("test_db"),
 		Charset: "utf8mb4",
 		Collate: "utf8mb4_bin",
 		State:   model.StatePublic,
@@ -349,7 +374,7 @@ func TestUpdateMetaVersion(t *testing.T) {
 	db.Session().Execute(ctx, "insert into test.t values (1),(2),(3);")
 	info, err := s.Mock.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoError(t, err)
-	tableInfo, err := info.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tableInfo, err := info.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	restoreTS := uint64(0)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
@@ -371,11 +396,12 @@ func TestUpdateMetaVersion(t *testing.T) {
 }
 
 func TestCreateTablesInDb(t *testing.T) {
+	allocator := testAllocator(0)
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	info, err := s.Mock.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoErrorf(t, err, "Error get snapshot info schema: %s", err)
 
-	dbSchema, isExist := info.SchemaByName(pmodel.NewCIStr("test"))
+	dbSchema, isExist := info.SchemaByName(ast.NewCIStr("test"))
 	require.True(t, isExist)
 
 	tables := make([]*metautil.Table, 4)
@@ -387,10 +413,10 @@ func TestCreateTablesInDb(t *testing.T) {
 			DB: dbSchema,
 			Info: &model.TableInfo{
 				ID:   int64(i),
-				Name: pmodel.NewCIStr("test" + strconv.Itoa(i)),
+				Name: ast.NewCIStr("test" + strconv.Itoa(i)),
 				Columns: []*model.ColumnInfo{{
 					ID:        1,
-					Name:      pmodel.NewCIStr("id"),
+					Name:      ast.NewCIStr("id"),
 					FieldType: *intField,
 					State:     model.StatePublic,
 				}},
@@ -403,11 +429,20 @@ func TestCreateTablesInDb(t *testing.T) {
 	db, _, err := preallocdb.NewDB(gluetidb.New(), s.Mock.Storage, "STRICT")
 	require.NoError(t, err)
 
+	preallocId := func(tables []*metautil.Table) {
+		ids := prealloctableid.New(tables)
+		ids.Alloc(&allocator)
+		db.RegisterPreallocatedIDs(ids)
+		allocator += testAllocator(len(tables))
+	}
+
+	preallocId(tables)
 	err = db.CreateTables(context.Background(), tables, ddlJobMap, false, nil)
 	require.NoError(t, err)
 }
 
 func TestDDLJobMap(t *testing.T) {
+	allocator := testAllocator(0)
 	ctx := context.Background()
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
@@ -427,17 +462,17 @@ func TestDDLJobMap(t *testing.T) {
 
 	info, err := s.Mock.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoError(t, err)
-	dbInfo, exists := info.SchemaByName(pmodel.NewCIStr("test"))
+	dbInfo, exists := info.SchemaByName(ast.NewCIStr("test"))
 	require.True(t, exists)
-	tableInfo1, err := info.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
+	tableInfo1, err := info.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
-	tableInfo2, err := info.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"))
+	tableInfo2, err := info.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
-	tableInfo3, err := info.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t3"))
+	tableInfo3, err := info.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t3"))
 	require.NoError(t, err)
-	tableInfo4, err := info.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t4"))
+	tableInfo4, err := info.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t4"))
 	require.NoError(t, err)
-	tableInfo5, err := info.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t5"))
+	tableInfo5, err := info.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t5"))
 	require.NoError(t, err)
 
 	toBeCorrectedTables := map[restore.UniqueTableName]bool{
@@ -448,6 +483,20 @@ func TestDDLJobMap(t *testing.T) {
 		{DB: "test", Table: "t5"}: true,
 	}
 
+	preallocId := func(tables []*metautil.Table) {
+		ids := prealloctableid.New(tables)
+		ids.Alloc(&allocator)
+		db.RegisterPreallocatedIDs(ids)
+		allocator += testAllocator(len(tables))
+	}
+
+	preallocId([]*metautil.Table{
+		{DB: dbInfo.Clone(), Info: tableInfo1.Meta().Clone()},
+		{DB: dbInfo.Clone(), Info: tableInfo2.Meta().Clone()},
+		{DB: dbInfo.Clone(), Info: tableInfo3.Meta().Clone()},
+		{DB: dbInfo.Clone(), Info: tableInfo4.Meta().Clone()},
+		{DB: dbInfo.Clone(), Info: tableInfo5.Meta().Clone()},
+	})
 	err = db.CreateTablePostRestore(ctx, &metautil.Table{DB: dbInfo.Clone(), Info: tableInfo1.Meta().Clone()}, toBeCorrectedTables)
 	require.NoError(t, err)
 	err = db.CreateTablePostRestore(ctx, &metautil.Table{DB: dbInfo.Clone(), Info: tableInfo2.Meta().Clone()}, toBeCorrectedTables)
@@ -501,7 +550,7 @@ func TestDB_ExecDDL2(t *testing.T) {
 			BinlogInfo: &model.HistoryInfo{
 				DBInfo: &model.DBInfo{
 					ID:      20000,
-					Name:    pmodel.NewCIStr("test_db"),
+					Name:    ast.NewCIStr("test_db"),
 					Charset: "utf8mb4",
 					Collate: "utf8mb4_bin",
 					State:   model.StatePublic,
@@ -515,13 +564,13 @@ func TestDB_ExecDDL2(t *testing.T) {
 			BinlogInfo: &model.HistoryInfo{
 				TableInfo: &model.TableInfo{
 					ID:      20000,
-					Name:    pmodel.NewCIStr("t1"),
+					Name:    ast.NewCIStr("t1"),
 					Charset: "utf8mb4",
 					Collate: "utf8mb4_bin",
 					Columns: []*model.ColumnInfo{
 						{
 							ID:        1,
-							Name:      pmodel.NewCIStr("id"),
+							Name:      ast.NewCIStr("id"),
 							FieldType: *fieldType,
 							State:     model.StatePublic,
 							Version:   2,
@@ -551,6 +600,7 @@ func TestDB_ExecDDL2(t *testing.T) {
 
 func TestCreateTableConsistent(t *testing.T) {
 	ctx := context.Background()
+	allocator := testAllocator(0)
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
 	tk.MustExec("use test")
@@ -564,15 +614,22 @@ func TestCreateTableConsistent(t *testing.T) {
 	getTableInfo := func(name string) (*model.DBInfo, *model.TableInfo) {
 		info, err := s.Mock.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 		require.NoError(t, err)
-		dbInfo, exists := info.SchemaByName(pmodel.NewCIStr("test"))
+		dbInfo, exists := info.SchemaByName(ast.NewCIStr("test"))
 		require.True(t, exists)
-		tableInfo, err := info.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr(name))
+		tableInfo, err := info.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(name))
 		require.NoError(t, err)
 		return dbInfo, tableInfo.Meta()
 	}
 	tk.MustExec("create sequence test.s increment by 1 minvalue = 10;")
 	dbInfo, seqInfo := getTableInfo("s")
 	tk.MustExec("drop sequence test.s;")
+
+	preallocId := func(tables []*metautil.Table) {
+		ids := prealloctableid.New(tables)
+		ids.Alloc(&allocator)
+		db.RegisterPreallocatedIDs(ids)
+		allocator += testAllocator(len(tables))
+	}
 
 	newSeqInfo := seqInfo.Clone()
 	newSeqInfo.ID += 100
@@ -582,6 +639,8 @@ func TestCreateTableConsistent(t *testing.T) {
 			Info: newSeqInfo,
 		},
 	}
+
+	preallocId(newTables)
 	err = db.CreateTables(ctx, newTables, nil, false, nil)
 	require.NoError(t, err)
 	r11 := tk.MustQuery("select nextval(s)").Rows()
@@ -592,6 +651,7 @@ func TestCreateTableConsistent(t *testing.T) {
 	newSeqInfo = seqInfo.Clone()
 	newSeqInfo.ID += 100
 	newTable := &metautil.Table{DB: dbInfo.Clone(), Info: newSeqInfo}
+	preallocId([]*metautil.Table{newTable})
 	err = db.CreateTable(ctx, newTable, nil, false, nil)
 	require.NoError(t, err)
 	r21 := tk.MustQuery("select nextval(s)").Rows()
@@ -623,6 +683,7 @@ func TestCreateTableConsistent(t *testing.T) {
 			Info: newViewInfo,
 		},
 	}
+	preallocId(newTables)
 	err = db.CreateTables(ctx, newTables, nil, false, nil)
 	require.NoError(t, err)
 	r11 = tk.MustQuery("show create table t;").Rows()
@@ -634,11 +695,13 @@ func TestCreateTableConsistent(t *testing.T) {
 	newTblInfo = tblInfo.Clone()
 	newTblInfo.ID += 200
 	newTable = &metautil.Table{DB: dbInfo.Clone(), Info: newTblInfo}
+	preallocId([]*metautil.Table{newTable})
 	err = db.CreateTable(ctx, newTable, nil, false, nil)
 	require.NoError(t, err)
 	newViewInfo = viewInfo.Clone()
 	newViewInfo.ID += 200
 	newTable = &metautil.Table{DB: dbInfo.Clone(), Info: newViewInfo}
+	preallocId([]*metautil.Table{newTable})
 	err = db.CreateTable(ctx, newTable, nil, false, nil)
 	require.NoError(t, err)
 

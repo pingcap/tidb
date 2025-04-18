@@ -103,7 +103,7 @@ func MergePartitionStats2GlobalStats(
 	histIDs []int64,
 ) (globalStats *GlobalStats, err error) {
 	if sc.GetSessionVars().EnableAsyncMergeGlobalStats {
-		statslogutil.SingletonStatsSamplerLogger().Info("use async merge global stats",
+		statslogutil.StatsSampleLogger().Info("use async merge global stats",
 			zap.Int64("tableID", globalTableInfo.ID),
 			zap.String("table", globalTableInfo.Name.L),
 		)
@@ -117,7 +117,7 @@ func MergePartitionStats2GlobalStats(
 		}
 		return worker.Result(), nil
 	}
-	statslogutil.SingletonStatsSamplerLogger().Info("use blocking merge global stats",
+	statslogutil.StatsSampleLogger().Info("use blocking merge global stats",
 		zap.Int64("tableID", globalTableInfo.ID),
 		zap.String("table", globalTableInfo.Name.L),
 	)
@@ -354,7 +354,7 @@ func blockingMergePartitionStats2GlobalStats(
 
 		// Merge histogram.
 		globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc.GetSessionVars().StmtCtx, allHg[i], poppedTopN,
-			int64(opts[ast.AnalyzeOptNumBuckets]), isIndex)
+			int64(opts[ast.AnalyzeOptNumBuckets]), isIndex, sc.GetSessionVars().AnalyzeVersion)
 		if err != nil {
 			return
 		}
@@ -379,7 +379,7 @@ func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *
 			continue
 		}
 		// fms for global stats doesn't need to dump to kv.
-		err = statsHandle.SaveStatsToStorage(gid,
+		err = statsHandle.SaveColOrIdxStatsToStorage(gid,
 			globalStats.Count,
 			globalStats.ModifyCount,
 			info.IsIndex,
@@ -387,7 +387,6 @@ func WriteGlobalStatsToStorage(statsHandle statstypes.StatsHandle, globalStats *
 			cms,
 			topN,
 			info.StatsVersion,
-			1,
 			true,
 			util.StatsMetaHistorySourceAnalyze,
 		)

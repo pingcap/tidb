@@ -941,6 +941,7 @@ const (
 	ErrConstraintNotFound                                    = 3940
 	ErUserAccessDeniedForUserAccountBlockedByPasswordLock    = 3955
 	ErrDependentByCheckConstraint                            = 3959
+	ErrEngineAttributeNotSupported                           = 3981
 	ErrJSONInBooleanContext                                  = 3986
 	ErrTableWithoutPrimaryKey                                = 3750
 	// MariaDB errors.
@@ -1136,6 +1137,8 @@ const (
 	ErrDDLSetting                         = 8246
 	ErrIngestFailed                       = 8247
 	ErrIngestCheckEnvFailed               = 8256
+	ErrProtectedTableMode                 = 8258
+	ErrInvalidTableModeSet                = 8259
 
 	ErrCannotPauseDDLJob  = 8260
 	ErrCannotResumeDDLJob = 8261
@@ -1156,6 +1159,10 @@ const (
 	ErrResourceGroupQueryRunawayQuarantine    = 8254
 	ErrResourceGroupInvalidBackgroundTaskName = 8255
 	ErrResourceGroupInvalidForRole            = 8257
+
+	// Reserved for future use.
+	ErrEngineAttributeInvalidFormat = 8270
+	ErrStorageClassInvalidSpec      = 8271
 
 	// TiKV/PD/TiFlash errors.
 	ErrPDServerTimeout           = 9001

@@ -238,7 +238,7 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 		outerCtx:      e.OuterCtx,
 		taskCh:        taskCh,
 		ctx:           e.Ctx(),
-		executorChk:   e.AllocPool.Alloc(e.InnerCtx.RowTypes, e.MaxChunkSize(), e.MaxChunkSize()),
+		executorChk:   e.AllocPool.Alloc(e.InnerCtx.RowTypes, e.InitCap(), e.MaxChunkSize()),
 		indexRanges:   copiedRanges,
 		keyOff2IdxOff: e.KeyOff2IdxOff,
 		stats:         innerStats,
@@ -453,7 +453,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	}
 	maxChunkSize := ow.ctx.GetSessionVars().MaxChunkSize
 	for requiredRows > task.outerResult.Len() {
-		chk := ow.executor.NewChunkWithCapacity(ow.OuterCtx.RowTypes, maxChunkSize, maxChunkSize)
+		chk := ow.executor.NewChunkWithCapacity(ow.OuterCtx.RowTypes, requiredRows, maxChunkSize)
 		chk = chk.SetRequiredRows(requiredRows, maxChunkSize)
 		err := exec.Next(ctx, ow.executor, chk)
 		if err != nil {
@@ -632,15 +632,15 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*IndexJoi
 	return lookUpContents, nil
 }
 
-func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, rowIdx int) ([]types.Datum, []types.Datum, error) {
+func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, rowIdx int) (dLookupKey, dHashKey []types.Datum, err error) {
 	if task.outerMatch != nil && !task.outerMatch[chkIdx][rowIdx] {
 		return nil, nil, nil
 	}
 	outerRow := task.outerResult.GetChunk(chkIdx).GetRow(rowIdx)
 	sc := iw.ctx.GetSessionVars().StmtCtx
 	keyLen := len(iw.KeyCols)
-	dLookupKey := make([]types.Datum, 0, keyLen)
-	dHashKey := make([]types.Datum, 0, len(iw.HashCols))
+	dLookupKey = make([]types.Datum, 0, keyLen)
+	dHashKey = make([]types.Datum, 0, len(iw.HashCols))
 	for i, hashCol := range iw.outerCtx.HashCols {
 		outerValue := outerRow.GetDatum(hashCol, iw.outerCtx.RowTypes[hashCol])
 		// Join-on-condition can be promised to be equal-condition in

@@ -1053,9 +1053,8 @@ func (e *MetricTableExtractor) Extract(ctx base.PlanContext,
 	return remained
 }
 
-func (e *MetricTableExtractor) getTimeRange(start, end int64) (time.Time, time.Time) {
+func (e *MetricTableExtractor) getTimeRange(start, end int64) (startTime, endTime time.Time) {
 	const defaultMetricQueryDuration = 10 * time.Minute
-	var startTime, endTime time.Time
 	if start == 0 && end == 0 {
 		endTime = time.Now()
 		return endTime.Add(-defaultMetricQueryDuration), endTime

@@ -20,7 +20,6 @@ go_library(
         "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/charset",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/sessionctx",
@@ -59,7 +58,6 @@ go_test(
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/parser/ast",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/server",
         "//pkg/session",
@@ -77,6 +75,7 @@ go_test(
         "@com_github_tikv_pd_client//:client",
         "@com_github_tikv_pd_client//clients/router",
         "@com_github_tikv_pd_client//opt",
+        "@com_github_tikv_pd_client//pkg/caller",
         "@org_uber_go_goleak//:goleak",
     ],
 )

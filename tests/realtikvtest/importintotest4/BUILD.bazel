@@ -6,12 +6,14 @@ go_test(
     srcs = [
         "global_sort_test.go",
         "main_test.go",
+        "manual_recovery_test.go",
         "split_file_test.go",
     ],
     flaky = True,
     race = "on",
     deps = [
         "//pkg/config",
+        "//pkg/disttask/framework/handle",
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/storage",
         "//pkg/disttask/framework/testutil",
@@ -22,6 +24,7 @@ go_test(
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
         "//tests/realtikvtest",
+        "//tests/realtikvtest/testutils",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
         "@com_github_stretchr_testify//require",
         "@com_github_stretchr_testify//suite",

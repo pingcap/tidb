@@ -139,6 +139,40 @@ connection default;
 REVOKE SELECT on test_rc.* FROM resource_group_admin;
 REVOKE SELECT on test_rc.* FROM resource_group_user;
 DROP DATABASE test_rc;
+DROP USER resource_group_admin;
+DROP USER resource_group_user;
+DROP RESOURCE GROUP test;
+
+# TestSetSessionStatesPriv
+CREATE USER resource_group_user;
+CREATE USER no_resource_group;
+
+connection default;
+CREATE RESOURCE GROUP test RU_PER_SEC = 666;
+GRANT RESOURCE_GROUP_USER ON *.* TO resource_group_user;
+
+connect (no_resource_group,localhost,no_resource_group,,);
+SET SESSION_STATES '{"rs-group":"test"}';
+SELECT CURRENT_RESOURCE_GROUP();
+
+connect (resource_group_user,localhost,resource_group_user,,);
+SET SESSION_STATES '{"rs-group":"test"}';
+SELECT CURRENT_RESOURCE_GROUP();
+
+connection default;
+set @@global.tidb_resource_control_strict_mode = 0;
+
+connection no_resource_group;
+SET SESSION_STATES '{"rs-group":"test"}';
+SELECT CURRENT_RESOURCE_GROUP();
+
+disconnect resource_group_user;
+disconnect no_resource_group;
+connection default;
+set @@global.tidb_resource_control_strict_mode = default;
+DROP RESOURCE GROUP test;
+DROP USER resource_group_user;
+DROP USER no_resource_group;
 
 # TestGrantReferences
 CREATE SCHEMA IF NOT EXISTS privilege__privileges;
@@ -833,6 +867,21 @@ connection default;
 
 set global tidb_enable_resource_control = default;
 
+# TestTraffic
+CREATE USER traffic_test;
+connect (traffic_test,localhost,traffic_test,,);
+connection traffic_test;
+--error 1227
+traffic capture to '/tmp' duration='1s';
+--error 1227
+traffic replay from '/tmp' user='traffic_test';
+--error 1227
+cancel traffic jobs;
+--error 1227
+show traffic jobs;
+disconnect traffic_test;
+connection default;
+
 # TestAdmin
 create table privilege__privileges.admin(a int, KEY idx_a (`a`));
 create user without_super;
@@ -898,3 +947,97 @@ with t_f as (
 
 disconnect u53490;
 connection default;
+
+# TestIssue59552
+drop user if exists u1;
+create user u1;
+create role 'aa@bb';
+grant 'aa@bb' to u1;
+show grants for u1;
+drop user u1;
+drop role 'aa@bb';
+
+# TestIssue59677
+create user u59677 identified by '123456';
+connect (u59677,localhost,u59677,123456,);
+-- error 1227
+alter user u59677 identified with 'native_password';
+-- error 1227
+alter user test password expire never;
+-- error 1227
+alter user test failed_login_attempts 10;
+-- error 1227
+alter user test comment 'some comment';
+-- error 1227
+alter user test attribute '{"foo": "bar"}';
+-- error 1227
+alter user test with max_user_connections 5;
+-- error 1227
+alter user test account unlock;
+alter user u59677 identified by 'abcde';
+disconnect u59677;
+connection default;
+
+# TestIssue29280
+drop database if exists tmpdb;
+create database tmpdb;
+drop user test_user;
+create user test_user;
+grant create temporary tables on tmpdb.* to test_user;
+connect (test_user, localhost, test_user,,);
+show databases;
+create temporary table tmpdb.tmp(id int);
+disconnect test_user;
+connection default;
+
+# TestIssue60468
+use privilege__privileges;
+DROP TABLE IF EXISTS t, t1;
+CREATE TABLE t (x INT);
+INSERT INTO t VALUES (100);
+CREATE TABLE t1 (x INT);
+
+DROP USER IF EXISTS foo;
+CREATE USER foo;
+GRANT SELECT ON *.* TO foo;
+
+connect (foo, localhost, foo,,privilege__privileges);
+--error 1142
+SELECT * FROM t FOR UPDATE;
+disconnect foo;
+
+connection default;
+GRANT DELETE ON privilege__privileges.t TO foo;
+
+connect (foo, localhost, foo,,privilege__privileges);
+SELECT * FROM t FOR UPDATE;
+--error 1142
+SELECT * FROM t, t1 where t.x = t1.x FOR UPDATE;
+SELECT * FROM t, t1 where t.x = t1.x FOR UPDATE OF t;
+disconnect foo;
+connection default;
+
+# TestIssue60469
+use privilege__privileges;
+DROP USER IF EXISTS foo;
+CREATE USER foo;
+DROP VIEW IF EXISTS v, v1;
+GRANT SELECT ON privilege__privileges.* TO foo;
+
+connect (foo, localhost, foo,,privilege__privileges);
+--error 1142
+CREATE OR REPLACE VIEW v AS SELECT 1;
+
+connection default;
+GRANT CREATE VIEW ON privilege__privileges.* TO foo;
+
+connection foo;
+CREATE VIEW v AS SELECT 1;
+--error 1142
+CREATE OR REPLACE VIEW v AS SELECT 1, 1;
+--error 1142
+CREATE OR REPLACE VIEW v1 AS SELECT 1, 1;
+
+disconnect foo;
+connection default;
+

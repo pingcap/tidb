@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -41,6 +42,12 @@ type AccessPath struct {
 	// CountAfterAccess is the row count after we apply range seek and before we use other filter to filter data.
 	// For index merge path, CountAfterAccess is the row count after partial paths and before we apply table filters.
 	CountAfterAccess float64
+	// CorrCountAfterAccess is the row count after only applying the most filtering index columns.
+	// against the index. This is used when we don't have a full index statistics
+	// and we need to use the exponential backoff to estimate the row count.
+	// Case CorrCountAfterAccess > 0 : we use the exponential backoff to estimate the row count (such as we don't have a full index statistics)
+	// Default CorrCountAfterAccess = 0 : we use index of table estimate row coun directly (such as table full scan, point get etc)
+	CorrCountAfterAccess float64
 	// CountAfterIndex is the row count after we apply filters on index and before we apply the table filters.
 	CountAfterIndex float64
 	AccessConds     []expression.Expression
@@ -132,6 +139,7 @@ func (path *AccessPath) Clone() *AccessPath {
 		ConstCols:                    slices.Clone(path.ConstCols),
 		Ranges:                       CloneRanges(path.Ranges),
 		CountAfterAccess:             path.CountAfterAccess,
+		CorrCountAfterAccess:         path.CorrCountAfterAccess,
 		CountAfterIndex:              path.CountAfterIndex,
 		AccessConds:                  CloneExprs(path.AccessConds),
 		EqCondCount:                  path.EqCondCount,
@@ -194,6 +202,7 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 	}
 	access = make([]expression.Expression, len(path.IdxCols)-eqOrInCount)
 	used := make([]bool, len(path.TableFilters))
+	usedCnt := 0
 	for i := eqOrInCount; i < len(path.IdxCols); i++ {
 		matched := false
 		for j, filter := range path.TableFilters {
@@ -217,6 +226,7 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 			access[i-eqOrInCount] = filter
 			if path.IdxColLens[i] == types.UnspecifiedLength {
 				used[j] = true
+				usedCnt++
 			}
 			break
 		}
@@ -225,6 +235,7 @@ func (path *AccessPath) SplitCorColAccessCondFromFilters(ctx planctx.PlanContext
 			break
 		}
 	}
+	remained = make([]expression.Expression, 0, len(used)-usedCnt)
 	for i, ok := range used {
 		if !ok {
 			remained = append(remained, path.TableFilters[i]) // nozero
@@ -402,4 +413,19 @@ func (path *AccessPath) GetCol2LenFromAccessConds(ctx planctx.PlanContext) Col2L
 		return ExtractCol2Len(ctx.GetExprCtx().GetEvalCtx(), path.AccessConds, nil, nil)
 	}
 	return ExtractCol2Len(ctx.GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
+}
+
+// IsFullScanRange checks that a table scan does not have any filtering such that it can limit the range of
+// the table scan.
+func (path *AccessPath) IsFullScanRange(tableInfo *model.TableInfo) bool {
+	var unsignedIntHandle bool
+	if path.IsIntHandlePath && tableInfo.PKIsHandle {
+		if pkColInfo := tableInfo.GetPkColInfo(); pkColInfo != nil {
+			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+		}
+	}
+	if ranger.HasFullRange(path.Ranges, unsignedIntHandle) {
+		return true
+	}
+	return false
 }

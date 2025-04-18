@@ -25,9 +25,10 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
@@ -61,7 +62,7 @@ func TestEnableAutoAnalyzePriorityQueue(t *testing.T) {
 	tk.MustExec("insert into t values (1)")
 	// Enable auto analyze priority queue.
 	tk.MustExec("SET GLOBAL tidb_enable_auto_analyze_priority_queue=ON")
-	require.True(t, variable.EnableAutoAnalyzePriorityQueue.Load())
+	require.True(t, vardef.EnableAutoAnalyzePriorityQueue.Load())
 	h := dom.StatsHandle()
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
@@ -209,7 +210,7 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	// Auto analyze when global ver is 1.
 	h.HandleAutoAnalyze()
 	require.NoError(t, h.Update(context.Background(), is))
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	statsTbl1 := h.GetTableStats(tbl.Meta())
 	// Check that all the version of t's stats are 1.
@@ -248,7 +249,7 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is = do.InfoSchema()
-	tbl2, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("tt"))
+	tbl2, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tt"))
 	require.NoError(t, err)
 	require.NoError(t, h.Update(context.Background(), is))
 	h.HandleAutoAnalyze()
@@ -275,7 +276,7 @@ func TestTableAnalyzed(t *testing.T) {
 	testKit.MustExec("insert into t values (1)")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
@@ -459,14 +460,18 @@ func makeFailpointRes(t *testing.T, v any) string {
 func getMockedServerInfo() map[string]*infosync.ServerInfo {
 	mockedAllServerInfos := map[string]*infosync.ServerInfo{
 		"s1": {
-			ID:   "s1",
-			IP:   "127.0.0.1",
-			Port: 4000,
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID:   "s1",
+				IP:   "127.0.0.1",
+				Port: 4000,
+			},
 		},
 		"s2": {
-			ID:   "s2",
-			IP:   "127.0.0.2",
-			Port: 4000,
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID:   "s2",
+				IP:   "127.0.0.2",
+				Port: 4000,
+			},
 		},
 	}
 	return mockedAllServerInfos
@@ -654,7 +659,7 @@ func TestAutoAnalyzeWithVectorIndex(t *testing.T) {
 	dom := domain.GetDomain(tk.Session())
 	h := dom.StatsHandle()
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
 		statistics.AutoAnalyzeMinCnt = 1000
@@ -665,7 +670,7 @@ func TestAutoAnalyzeWithVectorIndex(t *testing.T) {
 	tk.MustExec("insert into t values(1, '[1, 2]', '[1, 3, 4]', '[1, 4, 5, 6]')")
 	tk.MustExec("SET GLOBAL tidb_enable_auto_analyze_priority_queue=off")
 	tk.MustExec("analyze table t all columns")
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl := h.GetTableStats(tableInfo)

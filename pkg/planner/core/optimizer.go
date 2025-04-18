@@ -36,8 +36,8 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/cascades"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -48,10 +48,12 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
 	utilhint "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -218,7 +220,7 @@ func VisitInfo4PrivCheck(ctx context.Context, is infoschema.InfoSchema, node ast
 func needCheckTmpTablePriv(ctx context.Context, is infoschema.InfoSchema, v visitInfo) bool {
 	if v.db != "" && v.table != "" {
 		// Other statements on local temporary tables except `CREATE` do not check any privileges.
-		tb, err := is.TableByName(ctx, pmodel.NewCIStr(v.db), pmodel.NewCIStr(v.table))
+		tb, err := is.TableByName(ctx, ast.NewCIStr(v.db), ast.NewCIStr(v.table))
 		// If the table doesn't exist, we do not report errors to avoid leaking the existence of the table.
 		if err == nil && tb.Meta().TempTableType == model.TempTableLocal {
 			return false
@@ -242,6 +244,22 @@ func CheckTableLock(ctx tablelock.TableLockReadContext, is infoschema.InfoSchema
 		}
 		if err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// CheckTableMode checks if the table is accessible by table mode, only TableModeNormal can be accessed.
+func CheckTableMode(node *resolve.NodeW) error {
+	// First make exceptions for stmt that only visit table meta;
+	// For example, `describe <table_name>` and `show create table <table_name>`;
+	switch node.Node.(type) {
+	case *ast.ShowStmt, *ast.ExplainStmt:
+	default:
+		for _, tblNameW := range node.GetResolveContext().GetTableNames() {
+			if err := dbutil.CheckTableModeIsNormal(tblNameW.Name, tblNameW.TableInfo.Mode); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -275,18 +293,43 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
-	planCounter := base.PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
-	if planCounter == 0 {
-		planCounter = -1
-	}
-	// todo: add cascadesOptimize(logic)
+	logic.ExtractFD()
 
-	physical, cost, err := physicalOptimize(logic, &planCounter)
+	var cas *cascades.Optimizer
+	if cas, err = cascades.NewOptimizer(logic); err == nil {
+		defer cas.Destroy()
+		err = cas.Execute()
+	}
 	if err != nil {
 		return nil, nil, 0, err
 	}
-	finalPlan := postOptimize(ctx, sctx, physical)
+	var (
+		physical base.PhysicalPlan
+		cost     = math.MaxFloat64
+	)
+	// At current phase, cascades just iterate every logic plan out for feeding physicalOptimize.
+	// TODO: In the near future, physicalOptimize will be refactored as receiving *Group as param directly.
+	cas.GetMemo().NewIterator().Each(func(oneLogic base.LogicalPlan) bool {
+		planCounter := base.PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
+		if planCounter == 0 {
+			planCounter = -1
+		}
+		tmpPhysical, tmpCost, tmpErr := physicalOptimize(oneLogic, &planCounter)
+		if tmpErr != nil {
+			err = tmpErr
+			return false
+		}
+		if tmpCost < cost {
+			physical = tmpPhysical
+			cost = tmpCost
+		}
+		return true
+	})
+	if err != nil {
+		return nil, nil, 0, err
+	}
 
+	finalPlan := postOptimize(ctx, sctx, physical)
 	if sessVars.StmtCtx.EnableOptimizerCETrace {
 		refineCETrace(sctx)
 	}
@@ -650,7 +693,7 @@ const (
 type fineGrainedShuffleHelper struct {
 	shuffleTarget shuffleTarget
 	plans         []*physicalop.BasePhysicalPlan
-	joinKeysCount int
+	joinKeys      []*expression.Column
 }
 
 type tiflashClusterInfoStatus uint8
@@ -669,7 +712,7 @@ type tiflashClusterInfo struct {
 func (h *fineGrainedShuffleHelper) clear() {
 	h.shuffleTarget = unknown
 	h.plans = h.plans[:0]
-	h.joinKeysCount = 0
+	h.joinKeys = nil
 }
 
 func (h *fineGrainedShuffleHelper) updateTarget(t shuffleTarget, p *physicalop.BasePhysicalPlan) {
@@ -821,7 +864,7 @@ func inferFineGrainedShuffleStreamCountForWindow(ctx context.Context, sctx base.
 
 func setDefaultStreamCount(streamCountInfo *tiflashClusterInfo) {
 	(*streamCountInfo).itemStatus = initialized
-	(*streamCountInfo).itemValue = variable.DefStreamCountWhenMaxThreadsNotSet
+	(*streamCountInfo).itemValue = vardef.DefStreamCountWhenMaxThreadsNotSet
 }
 
 func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext, plan base.PhysicalPlan, helper *fineGrainedShuffleHelper, streamCountInfo *tiflashClusterInfo, tiflashServerCountInfo *tiflashClusterInfo) {
@@ -867,10 +910,11 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 			joinKeys = x.RightJoinKeys
 			probChild = child0
 		}
-		if len(joinKeys) > 0 { // Not cross join
+
+		if len(joinKeys) > 0 && !x.CanTiFlashUseHashJoinV2(sctx) { // Not cross join and can not use hash join v2 in tiflash
 			buildHelper := fineGrainedShuffleHelper{shuffleTarget: joinBuild, plans: []*physicalop.BasePhysicalPlan{}}
 			buildHelper.plans = append(buildHelper.plans, &x.BasePhysicalPlan)
-			buildHelper.joinKeysCount = len(joinKeys)
+			buildHelper.joinKeys = joinKeys
 			setupFineGrainedShuffleInternal(ctx, sctx, buildChild, &buildHelper, streamCountInfo, tiflashServerCountInfo)
 		} else {
 			buildHelper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: []*physicalop.BasePhysicalPlan{}}
@@ -900,7 +944,19 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx base.PlanContext,
 				}
 			case joinBuild:
 				// Support hashJoin only when shuffle hash keys equals to join keys due to tiflash implementations
-				if len(x.HashCols) != helper.joinKeysCount {
+				if len(x.HashCols) != len(helper.joinKeys) {
+					break
+				}
+				// Check the shuffle key should be equal to joinKey, otherwise the shuffle hash code may not be equal to
+				// actual join hash code due to type cast
+				applyFlag := true
+				for i, joinKey := range helper.joinKeys {
+					if !x.HashCols[i].Col.EqualColumn(joinKey) {
+						applyFlag = false
+						break
+					}
+				}
+				if !applyFlag {
 					break
 				}
 				applyFlag, streamCount := checkFineGrainedShuffleForJoinAgg(ctx, sctx, streamCountInfo, tiflashServerCountInfo, exchangeColCount, 600) // 600: performance test result
@@ -1097,7 +1153,7 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 		debugtrace.EnterContextCommon(logic.SCtx())
 		defer debugtrace.LeaveContextCommon(logic.SCtx())
 	}
-	if _, err := logic.RecursiveDeriveStats(nil); err != nil {
+	if _, _, err := logic.RecursiveDeriveStats(nil); err != nil {
 		return nil, 0, err
 	}
 

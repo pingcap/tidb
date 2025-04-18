@@ -44,7 +44,7 @@ go_test(
         "//pkg/lightning/mydump",
         "//pkg/lightning/verification",
         "//pkg/meta/model",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/testkit/testsetup",
         "@com_github_data_dog_go_sqlmock//:go-sqlmock",
         "@com_github_pingcap_errors//:errors",

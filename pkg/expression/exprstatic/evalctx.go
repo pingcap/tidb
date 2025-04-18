@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
@@ -227,10 +228,10 @@ func NewEvalContext(opt ...EvalCtxOption) *EvalContext {
 		evalCtxState: evalCtxState{
 			currentTime:           &timeOnce{},
 			sqlMode:               defaultSQLMode,
-			maxAllowedPacket:      variable.DefMaxAllowedPacket,
-			enableRedactLog:       variable.DefTiDBRedactLog,
-			defaultWeekFormatMode: variable.DefDefaultWeekFormat,
-			divPrecisionIncrement: variable.DefDivPrecisionIncrement,
+			maxAllowedPacket:      vardef.DefMaxAllowedPacket,
+			enableRedactLog:       vardef.DefTiDBRedactLog,
+			defaultWeekFormatMode: vardef.DefDefaultWeekFormat,
+			divPrecisionIncrement: vardef.DefDivPrecisionIncrement,
 		},
 	}
 
@@ -418,19 +419,19 @@ func (ctx *EvalContext) loadSessionVarsInternal(
 	for name, val := range sysVars {
 		name = strings.ToLower(name)
 		switch name {
-		case variable.TimeZone:
+		case vardef.TimeZone:
 			opts = append(opts, WithLocation(sessionVars.Location()))
-		case variable.SQLModeVar:
+		case vardef.SQLModeVar:
 			opts = append(opts, WithSQLMode(sessionVars.SQLMode))
-		case variable.Timestamp:
+		case vardef.Timestamp:
 			opts = append(opts, WithCurrentTime(ctx.currentTimeFuncFromStringVal(val)))
-		case variable.MaxAllowedPacket:
+		case vardef.MaxAllowedPacket:
 			opts = append(opts, WithMaxAllowedPacket(sessionVars.MaxAllowedPacket))
-		case variable.TiDBRedactLog:
+		case vardef.TiDBRedactLog:
 			opts = append(opts, WithEnableRedactLog(sessionVars.EnableRedactLog))
-		case variable.DefaultWeekFormat:
+		case vardef.DefaultWeekFormat:
 			opts = append(opts, WithDefaultWeekFormatMode(val))
-		case variable.DivPrecisionIncrement:
+		case vardef.DivPrecisionIncrement:
 			opts = append(opts, WithDivPrecisionIncrement(sessionVars.DivPrecisionIncrement))
 		}
 	}
@@ -439,7 +440,7 @@ func (ctx *EvalContext) loadSessionVarsInternal(
 
 func (ctx *EvalContext) currentTimeFuncFromStringVal(val string) func() (time.Time, error) {
 	return func() (time.Time, error) {
-		if val == variable.DefTimestamp {
+		if val == vardef.DefTimestamp {
 			return time.Now(), nil
 		}
 
@@ -460,9 +461,9 @@ func newSessionVarsWithSystemVariables(vars map[string]string) (*variable.Sessio
 		// `charset_connection` and `collation_connection` will overwrite each other.
 		// To make the result more determinate, just set them at last step in order:
 		// `charset_connection` first, then `collation_connection`.
-		case variable.CharacterSetConnection:
+		case vardef.CharacterSetConnection:
 			cs = []string{name, val}
-		case variable.CollationConnection:
+		case vardef.CollationConnection:
 			col = []string{name, val}
 		default:
 			if err := sessionVars.SetSystemVar(name, val); err != nil {

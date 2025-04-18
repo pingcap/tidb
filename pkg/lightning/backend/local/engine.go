@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
@@ -46,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/tikv/client-go/v2/tikv"
@@ -1033,7 +1033,7 @@ var _ common.IngestData = (*Engine)(nil)
 
 // GetFirstAndLastKey reads the first and last key in range [lowerBound, upperBound)
 // in the engine. Empty upperBound means unbounded.
-func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []byte, error) {
+func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) (firstKey, lastKey []byte, err error) {
 	if len(upperBound) == 0 {
 		// we use empty slice for unbounded upper bound, but it means max value in pebble
 		// so reset to nil
@@ -1058,12 +1058,12 @@ func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []by
 	if !hasKey {
 		return nil, nil, nil
 	}
-	firstKey := append([]byte{}, iter.Key()...)
+	firstKey = append([]byte{}, iter.Key()...)
 	iter.Last()
 	if iter.Error() != nil {
 		return nil, nil, errors.Annotate(iter.Error(), "failed to seek to the last key")
 	}
-	lastKey := append([]byte{}, iter.Key()...)
+	lastKey = append([]byte{}, iter.Key()...)
 	return firstKey, lastKey, nil
 }
 
@@ -1423,6 +1423,16 @@ func newSSTWriter(path string, blockSize int) (*sstable.Writer, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	// Logic to ensure the default block size is set to 16KB.
+	// If a smaller block size is used (e.g., 4KB, the default for Pebble),
+	// a single large SST file may generate a disproportionately large index block,
+	// potentially causing a memory spike and leading to an Out of Memory (OOM) scenario.
+	// If the user specifies a smaller block size, respect their choice.
+	if blockSize <= 0 {
+		blockSize = config.DefaultBlockSize
+	}
+
 	writable := objstorageprovider.NewFileWritable(f)
 	writer := sstable.NewWriter(writable, sstable.WriterOptions{
 		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
@@ -1526,7 +1536,7 @@ func (h *sstIterHeap) Pop() any {
 }
 
 // Next implements common.Iterator.
-func (h *sstIterHeap) Next() ([]byte, []byte, error) {
+func (h *sstIterHeap) Next() (key, val []byte, err error) {
 	for {
 		if len(h.iters) == 0 {
 			return nil, nil, nil

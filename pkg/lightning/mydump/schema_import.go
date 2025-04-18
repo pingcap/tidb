@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -388,21 +387,21 @@ func createIfNotExistsStmt(p *parser.Parser, createTable, dbName, tblName string
 	for _, stmt := range stmts {
 		switch node := stmt.(type) {
 		case *ast.CreateDatabaseStmt:
-			node.Name = model.NewCIStr(dbName)
+			node.Name = ast.NewCIStr(dbName)
 			node.IfNotExists = true
 		case *ast.DropDatabaseStmt:
-			node.Name = model.NewCIStr(dbName)
+			node.Name = ast.NewCIStr(dbName)
 			node.IfExists = true
 		case *ast.CreateTableStmt:
-			node.Table.Schema = model.NewCIStr(dbName)
-			node.Table.Name = model.NewCIStr(tblName)
+			node.Table.Schema = ast.NewCIStr(dbName)
+			node.Table.Name = ast.NewCIStr(tblName)
 			node.IfNotExists = true
 		case *ast.CreateViewStmt:
-			node.ViewName.Schema = model.NewCIStr(dbName)
-			node.ViewName.Name = model.NewCIStr(tblName)
+			node.ViewName.Schema = ast.NewCIStr(dbName)
+			node.ViewName.Name = ast.NewCIStr(tblName)
 		case *ast.DropTableStmt:
-			node.Tables[0].Schema = model.NewCIStr(dbName)
-			node.Tables[0].Name = model.NewCIStr(tblName)
+			node.Tables[0].Schema = ast.NewCIStr(dbName)
+			node.Tables[0].Name = ast.NewCIStr(tblName)
 			node.IfExists = true
 		}
 		if err := stmt.Restore(ctx); err != nil {

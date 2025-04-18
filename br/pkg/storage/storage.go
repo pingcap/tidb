@@ -116,6 +116,16 @@ type ReaderOption struct {
 	PrefetchSize int
 }
 
+type Copier interface {
+	// CopyFrom copies a object to the current external storage by the specification.
+	CopyFrom(ctx context.Context, e ExternalStorage, spec CopySpec) error
+}
+
+type CopySpec struct {
+	From string
+	To   string
+}
+
 // ExternalStorage represents a kind of file system storage.
 type ExternalStorage interface {
 	// WriteFile writes a complete file to storage, similar to os.WriteFile, but WriteFile should be atomic

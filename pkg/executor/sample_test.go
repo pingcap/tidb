@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -42,7 +42,7 @@ func TestTableSampleBasic(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := createSampleTestkit(t, store)
 	tk.MustExec("create table t (a int);")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
 	tk.MustQuery("select * from t tablesample regions();").Check(testkit.Rows())
 
 	tk.MustExec("insert into t values (0), (1000), (2000);")

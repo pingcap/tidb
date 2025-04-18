@@ -19,6 +19,7 @@ import (
 	"crypto/tls"
 	"sync"
 
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 )
 
@@ -26,18 +27,18 @@ var statisticsList []Statistics
 var statisticsListLock sync.RWMutex
 
 // DefaultStatusVarScopeFlag is the default scope of status variables.
-var DefaultStatusVarScopeFlag = ScopeGlobal | ScopeSession
+var DefaultStatusVarScopeFlag = vardef.ScopeGlobal | vardef.ScopeSession
 
 // StatusVal is the value of the corresponding status variable.
 type StatusVal struct {
-	Scope ScopeFlag
+	Scope vardef.ScopeFlag
 	Value any
 }
 
 // Statistics is the interface of statistics.
 type Statistics interface {
 	// GetScope gets the status variables scope.
-	GetScope(status string) ScopeFlag
+	GetScope(status string) vardef.ScopeFlag
 	// Stats returns the statistics status variables.
 	Stats(*SessionVars) (map[string]any, error)
 }
@@ -129,16 +130,16 @@ var tlsVersionString = map[uint16]string{
 }
 
 var defaultStatus = map[string]*StatusVal{
-	"Ssl_cipher":      {ScopeGlobal | ScopeSession, ""},
-	"Ssl_cipher_list": {ScopeGlobal | ScopeSession, ""},
-	"Ssl_verify_mode": {ScopeGlobal | ScopeSession, 0},
-	"Ssl_version":     {ScopeGlobal | ScopeSession, ""},
+	"Ssl_cipher":      {vardef.ScopeGlobal | vardef.ScopeSession, ""},
+	"Ssl_cipher_list": {vardef.ScopeGlobal | vardef.ScopeSession, ""},
+	"Ssl_verify_mode": {vardef.ScopeGlobal | vardef.ScopeSession, 0},
+	"Ssl_version":     {vardef.ScopeGlobal | vardef.ScopeSession, ""},
 }
 
 type defaultStatusStat struct {
 }
 
-func (s defaultStatusStat) GetScope(status string) ScopeFlag {
+func (s defaultStatusStat) GetScope(status string) vardef.ScopeFlag {
 	return defaultStatus[status].Scope
 }
 

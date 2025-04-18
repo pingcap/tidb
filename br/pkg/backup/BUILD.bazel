@@ -79,7 +79,7 @@ go_test(
         "//br/pkg/storage",
         "//br/pkg/utils",
         "//pkg/meta/model",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "//pkg/util/table-filter",

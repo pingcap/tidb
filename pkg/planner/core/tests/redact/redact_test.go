@@ -68,7 +68,7 @@ func TestRedactExplain(t *testing.T) {
 			"  └─Point_Get_8 1.00 root table:t handle:‹1›"))
 	// expression partition key
 	tk.MustQuery("explain select *, row_number() over (partition by deptid+1) FROM employee").Check(testkit.Rows(
-		"TableReader_31 10000.00 root  MppVersion: 2, data:ExchangeSender_30",
+		"TableReader_31 10000.00 root  MppVersion: 3, data:ExchangeSender_30",
 		"└─ExchangeSender_30 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"  └─Projection_7 10000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, Column#7, stream_count: 8",
 		"    └─Window_29 10000.00 mpp[tiflash]  row_number()->Column#7 over(partition by Column#6 rows between current row and current row), stream_count: 8",
@@ -141,7 +141,7 @@ func TestRedactExplain(t *testing.T) {
 			"  └─Point_Get_8 1.00 root table:t handle:?"))
 	// expression partition key
 	tk.MustQuery("explain select *, row_number() over (partition by deptid+1) FROM employee").Check(testkit.Rows(
-		"TableReader_31 10000.00 root  MppVersion: 2, data:ExchangeSender_30",
+		"TableReader_31 10000.00 root  MppVersion: 3, data:ExchangeSender_30",
 		"└─ExchangeSender_30 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"  └─Projection_7 10000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, Column#7, stream_count: 8",
 		"    └─Window_29 10000.00 mpp[tiflash]  row_number()->Column#7 over(partition by Column#6 rows between current row and current row), stream_count: 8",
@@ -251,7 +251,7 @@ func TestRedactTiFlash(t *testing.T) {
 	tk.MustExec(`set @@tidb_max_tiflash_threads=20`)
 	tk.MustExec("set session tidb_redact_log=ON")
 	tk.MustQuery("explain select *, first_value(v) over (partition by p order by o range between 3 preceding and 0 following) as a from test.first_range;").Check(testkit.Rows(
-		"TableReader_23 10000.00 root  MppVersion: 2, data:ExchangeSender_22",
+		"TableReader_23 10000.00 root  MppVersion: 3, data:ExchangeSender_22",
 		"└─ExchangeSender_22 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"  └─Window_21 10000.00 mpp[tiflash]  first_value(test.first_range.v)->Column#8 over(partition by test.first_range.p order by test.first_range.o range between ? preceding and ? following), stream_count: 20",
 		"    └─Sort_13 10000.00 mpp[tiflash]  test.first_range.p, test.first_range.o, stream_count: 20",
@@ -260,7 +260,7 @@ func TestRedactTiFlash(t *testing.T) {
 		"          └─TableFullScan_10 10000.00 mpp[tiflash] table:first_range keep order:false, stats:pseudo"))
 	tk.MustExec("set session tidb_redact_log=MARKER")
 	tk.MustQuery("explain select *, first_value(v) over (partition by p order by o range between 3 preceding and 0 following) as a from test.first_range;").Check(testkit.Rows(
-		"TableReader_23 10000.00 root  MppVersion: 2, data:ExchangeSender_22",
+		"TableReader_23 10000.00 root  MppVersion: 3, data:ExchangeSender_22",
 		"└─ExchangeSender_22 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
 		"  └─Window_21 10000.00 mpp[tiflash]  first_value(test.first_range.v)->Column#8 over(partition by test.first_range.p order by test.first_range.o range between ‹3› preceding and ‹0› following), stream_count: 20",
 		"    └─Sort_13 10000.00 mpp[tiflash]  test.first_range.p, test.first_range.o, stream_count: 20",

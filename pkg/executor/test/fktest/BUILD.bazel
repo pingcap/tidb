@@ -19,7 +19,6 @@ go_test(
         "//pkg/parser/ast",
         "//pkg/parser/auth",
         "//pkg/parser/format",
-        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",

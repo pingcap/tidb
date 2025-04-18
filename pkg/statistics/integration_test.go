@@ -25,7 +25,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	metamodel "github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -50,7 +50,7 @@ func TestChangeVerTo2Behavior(t *testing.T) {
 	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b")
 	tk.MustExec("analyze table t")
 	is := dom.InfoSchema()
-	tblT, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tblT, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	h := dom.StatsHandle()
 	require.NoError(t, h.Update(context.Background(), is))
@@ -140,7 +140,7 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b")
 	tk.MustExec("analyze table t")
 	is := dom.InfoSchema()
-	tblT, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tblT, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	h := dom.StatsHandle()
 	require.NoError(t, h.Update(context.Background(), is))
@@ -267,7 +267,7 @@ func TestNULLOnFullSampling(t *testing.T) {
 	)
 	tk.MustExec("analyze table t with 2 topn")
 	is := dom.InfoSchema()
-	tblT, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tblT, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	h := dom.StatsHandle()
 	require.NoError(t, h.Update(context.Background(), is))
@@ -462,7 +462,7 @@ func TestColumnStatsLazyLoad(t *testing.T) {
 	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b")
 	tk.MustExec("analyze table t")
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	c1 := tblInfo.Columns[0]
@@ -485,7 +485,7 @@ func TestUpdateNotLoadIndexFMSketch(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("analyze table t")
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.Indices[0]
@@ -528,7 +528,7 @@ func TestTableLastAnalyzeVersion(t *testing.T) {
 	require.NoError(t, err)
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(context.Background(), is))
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	statsTbl, found := h.Get(tbl.Meta().ID)
 	require.True(t, found)
@@ -537,7 +537,7 @@ func TestTableLastAnalyzeVersion(t *testing.T) {
 	// Only alter table should not set the last_analyze_version
 	tk.MustExec("alter table t add column b int default 0")
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
@@ -547,7 +547,7 @@ func TestTableLastAnalyzeVersion(t *testing.T) {
 	require.Equal(t, uint64(0), statsTbl.LastAnalyzeVersion)
 	tk.MustExec("alter table t add index idx(a)")
 	is = dom.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	e := <-h.DDLEventCh()
 	require.Equal(t, metamodel.ActionAddIndex, e.GetType())
 	require.Equal(t, 0, len(h.DDLEventCh()))

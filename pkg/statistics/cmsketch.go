@@ -135,7 +135,7 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 }
 
 // NewCMSketchAndTopN returns a new CM sketch with TopN elements, the estimate NDV and the scale ratio.
-func NewCMSketchAndTopN(d, w int32, sample [][]byte, numTop uint32, rowCount uint64) (*CMSketch, *TopN, uint64, uint64) {
+func NewCMSketchAndTopN(d, w int32, sample [][]byte, numTop uint32, rowCount uint64) (c *CMSketch, t *TopN, estimateNDV, scaleRatio uint64) {
 	if rowCount == 0 || len(sample) == 0 {
 		return nil, nil, 0, 0
 	}
@@ -143,9 +143,9 @@ func NewCMSketchAndTopN(d, w int32, sample [][]byte, numTop uint32, rowCount uin
 	// rowCount is not a accurate value when fast analyzing
 	// In some cases, if user triggers fast analyze when rowCount is close to sampleSize, unexpected bahavior might happen.
 	rowCount = max(rowCount, uint64(len(sample)))
-	estimateNDV, scaleRatio := calculateEstimateNDV(helper, rowCount)
+	estimateNDV, scaleRatio = calculateEstimateNDV(helper, rowCount)
 	defaultVal := calculateDefaultVal(helper, estimateNDV, scaleRatio, rowCount)
-	c, t := buildCMSAndTopN(helper, d, w, scaleRatio, defaultVal)
+	c, t = buildCMSAndTopN(helper, d, w, scaleRatio, defaultVal)
 	return c, t, estimateNDV, scaleRatio
 }
 
@@ -607,6 +607,19 @@ func (c *TopN) Copy() *TopN {
 	return &TopN{
 		TopN: topN,
 	}
+}
+
+// MinCount returns the minimum count in the TopN.
+func (c *TopN) MinCount() uint64 {
+	if c == nil || len(c.TopN) == 0 {
+		return 0
+	}
+	// Initialize to the first value in TopN
+	minCount := c.TopN[0].Count
+	for _, t := range c.TopN {
+		minCount = min(minCount, t.Count)
+	}
+	return minCount
 }
 
 // TopNMeta stores the unit of the TopN.

@@ -643,8 +643,9 @@ func (e *IndexLookUpExecutor) startWorkers(ctx context.Context, initBatchSize in
 	// so fetching index and getting table data can run concurrently.
 	e.workerCtx, e.cancelFunc = context.WithCancel(ctx)
 	e.pool = &workerPool{
-		TolerablePendingTasks: 1,
-		MaxWorkers:            int32(max(1, e.indexLookupConcurrency)),
+		needSpawn: func(workers, tasks uint32) bool {
+			return workers < uint32(e.indexLookupConcurrency) && tasks > 1
+		},
 	}
 	if err := e.startIndexWorker(ctx, initBatchSize); err != nil {
 		return err
@@ -732,6 +733,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, initBatchSiz
 	e.idxWorkerWg.Add(1)
 	e.pool.submit(func() {
 		defer trace.StartRegion(ctx, "IndexLookUpIndexTask").End()
+		growWorkerStack16K()
 		worker := &indexWorker{
 			idxLookup:       e,
 			finished:        e.finished,
@@ -1090,6 +1092,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 				case <-e.finished:
 					return
 				default:
+					growWorkerStack16K()
 					execTableTask(e, task)
 				}
 			})

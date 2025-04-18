@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tblctx"
@@ -146,6 +146,7 @@ func (opt *commonMutateOpt) PessimisticLazyDupKeyCheck() PessimisticLazyDupKeyCh
 type AddRecordOpt struct {
 	commonMutateOpt
 	isUpdate      bool
+	genRecordID   bool
 	reserveAutoID int
 }
 
@@ -161,6 +162,12 @@ func NewAddRecordOpt(opts ...AddRecordOption) *AddRecordOpt {
 // IsUpdate indicates whether the `AddRecord` operation is in an update statement.
 func (opt *AddRecordOpt) IsUpdate() bool {
 	return opt.isUpdate
+}
+
+// GenerateRecordID indicates whether the `AddRecord` operation should generate new _tidb_rowid.
+// Used in normal Update.
+func (opt *AddRecordOpt) GenerateRecordID() bool {
+	return opt.genRecordID
 }
 
 // ReserveAutoID indicates the auto id count that should be reserved.
@@ -201,6 +208,11 @@ func (opt *UpdateRecordOpt) SkipWriteUntouchedIndices() bool {
 
 // GetAddRecordOpt creates a AddRecordOpt.
 func (opt *UpdateRecordOpt) GetAddRecordOpt() *AddRecordOpt {
+	return &AddRecordOpt{commonMutateOpt: opt.commonMutateOpt, isUpdate: true, genRecordID: true}
+}
+
+// GetAddRecordOptKeepRecordID creates a AddRecordOpt.
+func (opt *UpdateRecordOpt) GetAddRecordOptKeepRecordID() *AddRecordOpt {
 	return &AddRecordOpt{commonMutateOpt: opt.commonMutateOpt, isUpdate: true}
 }
 
@@ -309,6 +321,7 @@ type isUpdate struct{}
 
 func (i isUpdate) applyAddRecordOpt(opt *AddRecordOpt) {
 	opt.isUpdate = true
+	opt.genRecordID = true
 }
 
 // skipWriteUntouchedIndices implements UpdateRecordOption.
@@ -510,7 +523,7 @@ type PartitionedTable interface {
 	GetPartitionIdxByRow(expression.EvalContext, []types.Datum) (int, error)
 	GetAllPartitionIDs() []int64
 	GetPartitionColumnIDs() []int64
-	GetPartitionColumnNames() []pmodel.CIStr
+	GetPartitionColumnNames() []ast.CIStr
 	CheckForExchangePartition(ctx expression.EvalContext, pi *model.PartitionInfo, r []types.Datum, partID, ntID int64) error
 }
 

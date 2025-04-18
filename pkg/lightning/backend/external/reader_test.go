@@ -23,10 +23,10 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
@@ -154,6 +154,6 @@ func TestReadLargeFile(t *testing.T) {
 	err = readAllData(ctx, memStore, datas, stats, startKey, endKey, smallBlockBufPool, largeBlockBufPool, output)
 	require.NoError(t, err)
 	output.build(ctx)
-	require.Equal(t, startKey, output.keys[0])
-	require.Equal(t, maxKey, output.keys[len(output.keys)-1])
+	require.Equal(t, startKey, output.kvs[0].key)
+	require.Equal(t, maxKey, output.kvs[len(output.kvs)-1].key)
 }

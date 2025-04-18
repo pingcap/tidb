@@ -23,7 +23,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 	"unsafe"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -1189,6 +1189,8 @@ func (d *Datum) convertToString(ctx Context, target *FieldType) (Datum, error) {
 		// https://github.com/pingcap/tidb/issues/31124.
 		// Consider converting to uint first.
 		val, err := d.GetBinaryLiteral().ToInt(ctx)
+		// The length of BIT is limited to 64, so this function will never fail / truncated.
+		intest.AssertNoError(err)
 		if err != nil {
 			s = d.GetBinaryLiteral().ToString()
 		} else {
@@ -2431,16 +2433,11 @@ func (ds *datumsSorter) Swap(i, j int) {
 	ds.datums[i], ds.datums[j] = ds.datums[j], ds.datums[i]
 }
 
-var strBuilderPool = sync.Pool{New: func() any { return &strings.Builder{} }}
-
 // DatumsToString converts several datums to formatted string.
 func DatumsToString(datums []Datum, handleSpecialValue bool) (string, error) {
 	n := len(datums)
-	builder := strBuilderPool.Get().(*strings.Builder)
-	defer func() {
-		builder.Reset()
-		strBuilderPool.Put(builder)
-	}()
+	builder := &strings.Builder{}
+	builder.Grow(8 * n)
 	if n > 1 {
 		builder.WriteString("(")
 	}

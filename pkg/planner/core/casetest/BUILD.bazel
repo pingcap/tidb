@@ -18,7 +18,7 @@ go_test(
         "//pkg/errno",
         "//pkg/meta/model",
         "//pkg/parser",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/planner/core",
         "//pkg/planner/core/base",
         "//pkg/planner/core/operator/logicalop",

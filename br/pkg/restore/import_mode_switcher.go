@@ -139,7 +139,7 @@ func (switcher *ImportModeSwitcher) GoSwitchToImportMode(
 	}
 
 	// Create a new context for the goroutine
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(ctx)
 	switcher.cancel = cancel
 
 	// [important!] switch tikv mode into import at the beginning
@@ -176,7 +176,7 @@ func (switcher *ImportModeSwitcher) GoSwitchToImportMode(
 	return nil
 }
 
-// RestorePreWork executes some prepare work before restore.
+// RestorePreWork switches to import mode and removes pd schedulers if needed
 // TODO make this function returns a restore post work.
 func RestorePreWork(
 	ctx context.Context,

@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
@@ -155,7 +154,7 @@ func GetSessionForTest(pool util.SessionPool) (session.Session, error) {
 // LockJob is an exported version of lockNewJob for test
 func (m *JobManager) LockJob(ctx context.Context, se session.Session, table *cache.PhysicalTable, now time.Time, createJobID string, checkInterval bool) (*TTLJob, error) {
 	if createJobID == "" {
-		return m.lockHBTimeoutJob(ctx, se, table, now)
+		return m.lockHBTimeoutJob(ctx, se, table.ID, table.TableInfo.ID, now)
 	}
 	return m.lockNewJob(ctx, se, table, now, createJobID, checkInterval)
 }
@@ -203,6 +202,16 @@ func (m *JobManager) UpdateHeartBeat(ctx context.Context, se session.Session, no
 
 func (m *JobManager) UpdateHeartBeatForJob(ctx context.Context, se session.Session, now time.Time, job *ttlJob) error {
 	return m.updateHeartBeatForJob(ctx, se, now, job)
+}
+
+// SetLastReportDelayMetricsTime sets the lastReportDelayMetricsTime for test
+func (m *JobManager) SetLastReportDelayMetricsTime(t time.Time) {
+	m.lastReportDelayMetricsTime = t
+}
+
+// GetLastReportDelayMetricsTime returns the lastReportDelayMetricsTime for test
+func (m *JobManager) GetLastReportDelayMetricsTime() time.Time {
+	return m.lastReportDelayMetricsTime
 }
 
 // ReportMetrics is an exported version of reportMetrics
@@ -280,8 +289,8 @@ func TestReadyForLockHBTimeoutJobTables(t *testing.T) {
 			tables := m.readyForLockHBTimeoutJobTables(se.Now())
 			if c.shouldSchedule {
 				assert.Len(t, tables, 1)
-				assert.Equal(t, tbl.ID, tables[0].ID)
-				assert.Equal(t, tbl.ID, tables[0].TableInfo.ID)
+				assert.Equal(t, tbl.ID, tables[0].TableID)
+				assert.Equal(t, tbl.ID, tables[0].ParentTableID)
 			} else {
 				assert.Len(t, tables, 0)
 			}
@@ -393,7 +402,7 @@ func TestLockTable(t *testing.T) {
 	oldJobExpireTime := now.Add(-time.Hour)
 	oldJobStartTime := now.Add(-30 * time.Minute)
 
-	testPhysicalTable := &cache.PhysicalTable{ID: 1, Schema: pmodel.NewCIStr("test"), TableInfo: &model.TableInfo{ID: 1, Name: pmodel.NewCIStr("t1"), TTLInfo: &model.TTLInfo{ColumnName: pmodel.NewCIStr("test"), IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitMinute), JobInterval: "1h"}}}
+	testPhysicalTable := &cache.PhysicalTable{ID: 1, Schema: ast.NewCIStr("test"), TableInfo: &model.TableInfo{ID: 1, Name: ast.NewCIStr("t1"), TTLInfo: &model.TTLInfo{ColumnName: ast.NewCIStr("test"), IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitMinute), JobInterval: "1h"}}}
 
 	type executeInfo struct {
 		sql  string
@@ -633,7 +642,7 @@ func TestLockTable(t *testing.T) {
 			if c.isCreate {
 				job, err = m.lockNewJob(context.Background(), se, c.table, now, "new-job-id", c.checkInterval)
 			} else {
-				job, err = m.lockHBTimeoutJob(context.Background(), se, c.table, now)
+				job, err = m.lockHBTimeoutJob(context.Background(), se, c.table.ID, c.table.TableInfo.ID, now)
 			}
 			require.Equal(t, len(c.sqls), sqlCounter)
 			if c.hasError {
@@ -644,8 +653,8 @@ func TestLockTable(t *testing.T) {
 				assert.NotNil(t, job)
 				assert.Equal(t, "test-id", job.ownerID)
 				assert.Equal(t, cache.JobStatusRunning, job.status)
-				assert.NotNil(t, job.tbl)
-				assert.Same(t, c.table, job.tbl)
+				assert.NotEmpty(t, job.tableID)
+				assert.Equal(t, c.table.ID, job.tableID)
 				if c.isCreate {
 					assert.Equal(t, "new-job-id", job.id)
 					assert.Equal(t, now, job.createTime)
@@ -670,7 +679,7 @@ func TestLocalJobs(t *testing.T) {
 	m := NewJobManager("test-id", nil, nil, nil, nil)
 	m.sessPool = newMockSessionPool(t, tbl1, tbl2)
 
-	m.runningJobs = []*ttlJob{{tbl: tbl1, id: "1"}, {tbl: tbl2, id: "2"}}
+	m.runningJobs = []*ttlJob{{tableID: tbl1.ID, id: "1"}, {tableID: tbl2.ID, id: "2"}}
 	m.tableStatusCache.Tables = map[int64]*cache.TableStatus{
 		tbl1.ID: {
 			CurrentJobOwnerID: m.id,

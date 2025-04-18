@@ -472,7 +472,8 @@ create table t2_part (a int, b int, key(a)) partition by hash(a) partitions 4;
 set @@tidb_skip_missing_partition_stats = off;
 set @@tidb_opt_fix_control = "";
 --enable_warnings
-explain select /*+ TIDB_INLJ(t2_part@sel_2) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
+explain select /*+ TIDB_INLJ(t2_part@sel_2), set_var(tidb_hash_join_version=legacy) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
+explain select /*+ TIDB_INLJ(t2_part@sel_2), set_var(tidb_hash_join_version=optimized) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
 --disable_warnings
 set @@tidb_opt_fix_control = "44262:ON";
 --enable_warnings

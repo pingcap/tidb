@@ -132,14 +132,14 @@ HashAgg_7	100.00	290007.67	root		group by:Column#7, funcs:sum(Column#6)->Column#
     └─TableFullScan_11	100.00	250038.77	cop[tikv]	table:t	keep order:false
 explain format='verbose' select /*+ use_index(t, primary), hash_agg() */ sum(a) from t group by b, b+1;
 id	estRows	estCost	task	access object	operator info
-HashAgg_7	100.00	304977.67	root		group by:Column#8, Column#9, funcs:sum(Column#7)->Column#4
-└─Projection_13	100.00	272740.67	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#7, planner__core__plan_cost_ver2.t.b->Column#8, plus(planner__core__plan_cost_ver2.t.b, 1)->Column#9
+HashAgg_7	100.00	304977.67	root		group by:Column#10, Column#9, funcs:sum(Column#8)->Column#4
+└─Projection_13	100.00	272740.67	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#8, planner__core__plan_cost_ver2.t.b->Column#9, plus(planner__core__plan_cost_ver2.t.b, 1)->Column#10
   └─TableReader_12	100.00	262710.77	root		data:TableFullScan_11
     └─TableFullScan_11	100.00	250038.77	cop[tikv]	table:t	keep order:false
 explain format='verbose' select /*+ use_index(t, primary), hash_agg() */ sum(a) from t group by b, b+1, b+2;
 id	estRows	estCost	task	access object	operator info
-HashAgg_7	100.00	319947.67	root		group by:Column#10, Column#11, Column#9, funcs:sum(Column#8)->Column#4
-└─Projection_13	100.00	277730.67	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#8, planner__core__plan_cost_ver2.t.b->Column#9, plus(planner__core__plan_cost_ver2.t.b, 1)->Column#10, plus(planner__core__plan_cost_ver2.t.b, 2)->Column#11
+HashAgg_7	100.00	319947.67	root		group by:Column#11, Column#12, Column#13, funcs:sum(Column#10)->Column#4
+└─Projection_13	100.00	277730.67	root		cast(planner__core__plan_cost_ver2.t.a, decimal(10,0) BINARY)->Column#10, planner__core__plan_cost_ver2.t.b->Column#11, plus(planner__core__plan_cost_ver2.t.b, 1)->Column#12, plus(planner__core__plan_cost_ver2.t.b, 2)->Column#13
   └─TableReader_12	100.00	262710.77	root		data:TableFullScan_11
     └─TableFullScan_11	100.00	250038.77	cop[tikv]	table:t	keep order:false
 explain format='verbose' select /*+ use_index(t, primary), stream_agg() */ sum(a) from t group by b;
@@ -254,7 +254,7 @@ explain format='true_card_cost' select * from t;
 Error 1105 (HY000): 'explain format=true_card_cost' cannot work without 'analyze', please use 'explain analyze format=true_card_cost'
 explain analyze format='true_card_cost' select * from t where a<3;
 id	estRows	estCost	costFormula	actRows	task	access object	execution info	operator info	memory	disk
-TableReader_7	3323.33	13580.23	(((cpu(0*filters(1)*tikv_cpu_factor(49.9))) + ((scan(1*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(32)*tikv_scan_factor(40.7))))) + (net(0*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00	0	root		<execution_info>	<operator_info>	<memory>	<disk>
-└─Selection_6	3323.33	203703.50	(cpu(0*filters(1)*tikv_cpu_factor(49.9))) + ((scan(1*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(32)*tikv_scan_factor(40.7))))	0	cop[tikv]		<execution_info>	<operator_info>	<memory>	<disk>
-  └─TableFullScan_5	10000.00	203703.50	(scan(1*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(32)*tikv_scan_factor(40.7)))	0	cop[tikv]	table:t	<execution_info>	<operator_info>	<memory>	<disk>
+TableReader_7	3323.33	13580.23	((((cpu(0*filters(1)*tikv_cpu_factor(49.9))) + (((scan(1*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(32)*tikv_scan_factor(40.7))))*1.00)) + (net(0*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00)*1.00	0	root		<execution_info>	<operator_info>	<memory>	<disk>
+└─Selection_6	3323.33	203703.50	(cpu(0*filters(1)*tikv_cpu_factor(49.9))) + (((scan(1*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(32)*tikv_scan_factor(40.7))))*1.00)	0	cop[tikv]		<execution_info>	<operator_info>	<memory>	<disk>
+  └─TableFullScan_5	10000.00	203703.50	((scan(1*logrowsize(32)*tikv_scan_factor(40.7))) + (scan(1000*logrowsize(32)*tikv_scan_factor(40.7))))*1.00	0	cop[tikv]	table:t	<execution_info>	<operator_info>	<memory>	<disk>
 set @@tidb_cost_model_version=DEFAULT;

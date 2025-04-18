@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
@@ -85,7 +85,7 @@ func NewSchemaValidator(lease time.Duration, do *Domain) SchemaValidator {
 	return &schemaValidator{
 		isStarted:        true,
 		lease:            lease,
-		deltaSchemaInfos: make([]deltaSchemaInfo, 0, variable.DefTiDBMaxDeltaSchemaCount),
+		deltaSchemaInfos: make([]deltaSchemaInfo, 0, vardef.DefTiDBMaxDeltaSchemaCount),
 		do:               do,
 	}
 }
@@ -172,6 +172,8 @@ func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, cha
 }
 
 func (s *schemaValidator) IsLeaseExpired() bool {
+	s.mux.Lock()
+	defer s.mux.Unlock()
 	return time.Now().After(s.latestSchemaExpire)
 }
 
@@ -259,7 +261,7 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedPhysicalTa
 
 		// When disabling MDL -> enabling MDL, the old transaction's needCheckSchema is true, we need to check it.
 		// When enabling MDL -> disabling MDL, the old transaction's needCheckSchema is false, so still need to check it, and variable EnableMDL is false now.
-		if needCheckSchema || !variable.EnableMDL.Load() {
+		if needCheckSchema || !vardef.EnableMDL.Load() {
 			changed := s.isRelatedTablesChanged(schemaVer, relatedPhysicalTableIDs)
 			if changed {
 				return nil, ResultFail
@@ -277,7 +279,7 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedPhysicalTa
 }
 
 func (s *schemaValidator) enqueue(schemaVersion int64, change *transaction.RelatedSchemaChange) {
-	maxCnt := int(variable.GetMaxDeltaSchemaCount())
+	maxCnt := int(vardef.GetMaxDeltaSchemaCount())
 	if maxCnt <= 0 {
 		logutil.BgLogger().Info("the schema validator enqueue", zap.Int("delta max count", maxCnt))
 		return

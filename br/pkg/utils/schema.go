@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 )
 
@@ -32,31 +32,39 @@ func EncloseDBAndTable(database, table string) string {
 }
 
 // IsTemplateSysDB checks wheterh the dbname is temporary system database(__TiDB_BR_Temporary_mysql or __TiDB_BR_Temporary_sys).
-func IsTemplateSysDB(dbname pmodel.CIStr) bool {
+func IsTemplateSysDB(dbname ast.CIStr) bool {
 	return dbname.O == temporaryDBNamePrefix+mysql.SystemDB || dbname.O == temporaryDBNamePrefix+mysql.SysDB
 }
 
 // IsSysDB tests whether the database is system DB.
 // Currently, both `mysql` and `sys` are system DB.
 func IsSysDB(dbLowerName string) bool {
-	return dbLowerName == mysql.SystemDB || dbLowerName == mysql.SysDB
+	return dbLowerName == mysql.SystemDB || dbLowerName == mysql.SysDB || dbLowerName == mysql.WorkloadSchema
 }
 
 // TemporaryDBName makes a 'private' database name.
-func TemporaryDBName(db string) pmodel.CIStr {
-	return pmodel.NewCIStr(temporaryDBNamePrefix + db)
+func TemporaryDBName(db string) ast.CIStr {
+	return ast.NewCIStr(temporaryDBNamePrefix + db)
 }
 
-// GetSysDBName get the original name of system DB
-func GetSysDBName(tempDB pmodel.CIStr) (string, bool) {
-	if ok := strings.HasPrefix(tempDB.O, temporaryDBNamePrefix); !ok {
-		return tempDB.O, false
+// StripTempDBPrefixIfNeeded get the original name of system DB
+func StripTempDBPrefixIfNeeded(tempDB string) (string, bool) {
+	if ok := strings.HasPrefix(tempDB, temporaryDBNamePrefix); !ok {
+		return tempDB, false
 	}
-	return tempDB.O[len(temporaryDBNamePrefix):], true
+	return tempDB[len(temporaryDBNamePrefix):], true
+}
+
+// IsSysOrTempSysDB tests whether the database is system DB or prefixed with temp.
+func IsSysOrTempSysDB(db string) bool {
+	if name, ok := StripTempDBPrefixIfNeeded(db); IsSysDB(name) && ok {
+		return true
+	}
+	return false
 }
 
 // GetSysDBCIStrName get the CIStr name of system DB
-func GetSysDBCIStrName(tempDB pmodel.CIStr) (pmodel.CIStr, bool) {
+func GetSysDBCIStrName(tempDB ast.CIStr) (ast.CIStr, bool) {
 	if ok := strings.HasPrefix(tempDB.O, temporaryDBNamePrefix); !ok {
 		return tempDB, false
 	}

@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/channel"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -284,7 +284,7 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.dataInDisk = chunk.NewDataInDiskByChunks(exec.RetTypes(e.Children(0)))
 
 	e.tmpChkForSpill = exec.TryNewCacheChunk(e.Children(0))
-	if vars := e.Ctx().GetSessionVars(); vars.TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load() {
+	if vars := e.Ctx().GetSessionVars(); vars.TrackAggregateMemoryUsage && vardef.EnableTmpStorageOnOOM.Load() {
 		if e.diskTracker != nil {
 			e.diskTracker.Reset()
 		} else {
@@ -398,7 +398,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) error {
 
 	e.inflightChunkSync = &sync.WaitGroup{}
 
-	isTrackerEnabled := e.Ctx().GetSessionVars().TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load()
+	isTrackerEnabled := e.Ctx().GetSessionVars().TrackAggregateMemoryUsage && vardef.EnableTmpStorageOnOOM.Load()
 	isParallelHashAggSpillEnabled := e.Ctx().GetSessionVars().EnableParallelHashaggSpill
 
 	baseRetTypeNum := len(e.RetFieldTypes())

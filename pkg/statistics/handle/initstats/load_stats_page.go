@@ -46,40 +46,53 @@ type Task struct {
 }
 
 // RangeWorker is used to load stats concurrently by the range of table id.
+//
+//nolint:fieldalignment
 type RangeWorker struct {
-	dealFunc            func(task Task) error
-	taskChan            chan Task
-	logger              *zap.Logger
-	taskName            string
-	wg                  util.WaitGroupWrapper
-	taskCnt             uint64
-	completeTaskCnt     atomic.Uint64
+	progressLogger *zap.Logger
+
+	taskName        string
+	taskChan        chan Task
+	processTask     func(task Task) error
+	taskCnt         uint64
+	completeTaskCnt atomic.Uint64
+
 	totalPercentage     float64
 	totalPercentageStep float64
+
+	concurrency int
+	wg          util.WaitGroupWrapper
 }
 
 // NewRangeWorker creates a new RangeWorker.
-func NewRangeWorker(taskName string, dealFunc func(task Task) error, maxTid, initStatsStep uint64, totalPercentageStep float64) *RangeWorker {
+func NewRangeWorker(
+	taskName string,
+	processTask func(task Task) error,
+	concurrency int,
+	maxTid,
+	initStatsStep uint64,
+	totalPercentageStep float64,
+) *RangeWorker {
 	taskCnt := uint64(1)
 	if maxTid > initStatsStep*2 {
 		taskCnt = maxTid / initStatsStep
 	}
 	worker := &RangeWorker{
 		taskName:            taskName,
-		dealFunc:            dealFunc,
+		processTask:         processTask,
+		concurrency:         concurrency,
 		taskChan:            make(chan Task, 1),
 		taskCnt:             taskCnt,
 		totalPercentage:     InitStatsPercentage.Load(),
 		totalPercentageStep: totalPercentageStep,
 	}
-	worker.logger = singletonStatsSamplerLogger()
+	worker.progressLogger = singletonStatsSamplerLogger()
 	return worker
 }
 
 // LoadStats loads stats concurrently when to init stats
 func (ls *RangeWorker) LoadStats() {
-	concurrency := getConcurrency()
-	for n := 0; n < concurrency; n++ {
+	for n := 0; n < ls.concurrency; n++ {
 		ls.wg.Run(func() {
 			ls.loadStats()
 		})
@@ -88,14 +101,14 @@ func (ls *RangeWorker) LoadStats() {
 
 func (ls *RangeWorker) loadStats() {
 	for task := range ls.taskChan {
-		if err := ls.dealFunc(task); err != nil {
+		if err := ls.processTask(task); err != nil {
 			logutil.BgLogger().Error("load stats failed", zap.Error(err))
 		}
-		if ls.logger != nil {
+		if ls.progressLogger != nil {
 			completeTaskCnt := ls.completeTaskCnt.Add(1)
 			taskPercentage := float64(completeTaskCnt)/float64(ls.taskCnt)*ls.totalPercentageStep + ls.totalPercentage
 			InitStatsPercentage.Store(taskPercentage)
-			ls.logger.Info(fmt.Sprintf("load %s [%d/%d]", ls.taskName, completeTaskCnt, ls.taskCnt))
+			ls.progressLogger.Info(fmt.Sprintf("load %s [%d/%d]", ls.taskName, completeTaskCnt, ls.taskCnt))
 		}
 	}
 }

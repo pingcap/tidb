@@ -126,11 +126,23 @@ func New() *Parser {
 	p := &Parser{
 		cache: make([]yySymType, 200),
 	}
-	p.EnableWindowFunc(true)
-	p.SetStrictDoubleTypeCheck(true)
-	mode, _ := mysql.GetSQLMode(mysql.DefaultSQLMode)
-	p.SetSQLMode(mode)
+	p.reset()
 	return p
+}
+
+// Reset resets the parser.
+func (parser *Parser) Reset() {
+	clear(parser.cache)
+	parser.reset()
+}
+
+func (parser *Parser) reset() {
+	parser.explicitCharset = false
+	parser.strictDoubleFieldType = false
+	parser.EnableWindowFunc(true)
+	parser.SetStrictDoubleTypeCheck(true)
+	mode, _ := mysql.GetSQLMode(mysql.DefaultSQLMode)
+	parser.SetSQLMode(mode)
 }
 
 // SetStrictDoubleTypeCheck enables/disables strict double type check.

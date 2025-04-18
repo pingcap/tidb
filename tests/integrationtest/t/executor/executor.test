@@ -1408,6 +1408,10 @@ select a from (select 1 a) `x`, (select 2 a) `x`;
 select x.a from (select 1 a) `x`, (select 2 a) `x`;
 -- error 1248
 select a from (select 1 a), (select 2 a);
+-- error 1248
+select * from (select 1 union select 1);
+-- error 1248
+select * from (select 1 INTERSECT select 1);
 set sql_mode = 'oracle';
 select a, b from (select 1 a) ``, (select 2 b) ``;
 select a, b from (select 1 a) `x`, (select 2 b) `x`;
@@ -1420,6 +1424,8 @@ select a from (select 1 a) `x`, (select 2 a) `x`;
 select x.a from (select 1 a) `x`, (select 2 a) `x`;
 -- error 1052
 select a from (select 1 a), (select 2 a);
+select * from (select 1 union select 1);
+select * from (select 1 INTERSECT select 1);
 set sql_mode = default;
 
 # TestSelectHashPartitionTable

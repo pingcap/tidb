@@ -243,8 +243,8 @@ func TestCrossDBBindingGC(t *testing.T) {
 	updateTime := time.Now().Add(-(15 * bindinfo.Lease))
 	updateTimeStr := types.NewTime(types.FromGoTime(updateTime), mysql.TypeTimestamp, 3).String()
 	tk.MustExec(fmt.Sprintf("update mysql.bind_info set update_time = '%v' where source != 'builtin'", updateTimeStr))
-	bindHandle := bindinfo.NewGlobalBindingHandle(&mockSessionPool{tk.Session()})
-	require.NoError(t, bindHandle.GCGlobalBinding())
+	bindHandle := bindinfo.NewBindingHandle(&mockSessionPool{tk.Session()})
+	require.NoError(t, bindHandle.GCBinding())
 	tk.MustQuery(`select bind_sql, status from mysql.bind_info where source != 'builtin'`).Check(testkit.Rows()) // empty after GC
 }
 
@@ -341,5 +341,7 @@ func (p *mockSessionPool) Get() (pools.Resource, error) {
 }
 
 func (p *mockSessionPool) Put(pools.Resource) {}
+
+func (p *mockSessionPool) Destroy(pools.Resource) {}
 
 func (p *mockSessionPool) Close() {}

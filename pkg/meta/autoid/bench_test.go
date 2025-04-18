@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 )
 
@@ -45,11 +45,11 @@ func BenchmarkAllocator_Alloc(b *testing.B) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
-		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: pmodel.NewCIStr("a")})
+		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: ast.NewCIStr("a")})
 		if err != nil {
 			return err
 		}
-		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: pmodel.NewCIStr("t")})
+		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: ast.NewCIStr("t")})
 		if err != nil {
 			return err
 		}
@@ -85,7 +85,7 @@ func BenchmarkAllocator_SequenceAlloc(b *testing.B) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
-		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: pmodel.NewCIStr("a")})
+		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("a")})
 		if err != nil {
 			return err
 		}
@@ -100,7 +100,7 @@ func BenchmarkAllocator_SequenceAlloc(b *testing.B) {
 		}
 		seqTable := &model.TableInfo{
 			ID:       1,
-			Name:     pmodel.NewCIStr("seq"),
+			Name:     ast.NewCIStr("seq"),
 			Sequence: seq,
 		}
 		sequenceBase = seq.Start - 1

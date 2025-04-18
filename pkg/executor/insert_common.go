@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -204,7 +204,7 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	e := base.insertCommon()
 	sessVars := e.Ctx().GetSessionVars()
 	batchSize := sessVars.DMLBatchSize
-	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && variable.EnableBatchDML.Load() && batchSize > 0
+	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && vardef.EnableBatchDML.Load() && batchSize > 0
 
 	e.lazyFillAutoID = true
 	evalRowFunc := e.fastEvalRow
@@ -458,7 +458,7 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 
 	sessVars := e.Ctx().GetSessionVars()
 	batchSize := sessVars.DMLBatchSize
-	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && variable.EnableBatchDML.Load() && batchSize > 0
+	batchInsert := sessVars.BatchInsert && !sessVars.InTxn() && vardef.EnableBatchDML.Load() && batchSize > 0
 	memUsageOfRows := int64(0)
 	memUsageOfExtraCols := int64(0)
 	memTracker := e.memTracker
@@ -1174,7 +1174,7 @@ func (e *InsertValues) handleDuplicateKey(ctx context.Context, txn kv.Transactio
 		}
 		return true, nil
 	}
-	_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn, e.Table.Meta().ID)
+	_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn)
 	if err != nil {
 		return false, err
 	}
@@ -1532,10 +1532,8 @@ func (e *InsertRuntimeStat) Clone() execdetails.RuntimeStats {
 		snapshotStats := e.SnapshotRuntimeStats.Clone()
 		newRs.SnapshotRuntimeStats = snapshotStats
 	}
-	if e.BasicRuntimeStats != nil {
-		basicStats := e.BasicRuntimeStats.Clone()
-		newRs.BasicRuntimeStats = basicStats.(*execdetails.BasicRuntimeStats)
-	}
+	// BasicRuntimeStats is unique for all executor instances mapping to the same plan id
+	newRs.BasicRuntimeStats = e.BasicRuntimeStats
 	if e.AllocatorRuntimeStats != nil {
 		newRs.AllocatorRuntimeStats = e.AllocatorRuntimeStats.Clone()
 	}
@@ -1556,13 +1554,8 @@ func (e *InsertRuntimeStat) Merge(other execdetails.RuntimeStats) {
 			e.SnapshotRuntimeStats.Merge(tmp.SnapshotRuntimeStats)
 		}
 	}
-	if tmp.BasicRuntimeStats != nil {
-		if e.BasicRuntimeStats == nil {
-			basicStats := tmp.BasicRuntimeStats.Clone()
-			e.BasicRuntimeStats = basicStats.(*execdetails.BasicRuntimeStats)
-		} else {
-			e.BasicRuntimeStats.Merge(tmp.BasicRuntimeStats)
-		}
+	if tmp.BasicRuntimeStats != nil && e.BasicRuntimeStats == nil {
+		e.BasicRuntimeStats = tmp.BasicRuntimeStats
 	}
 	if tmp.AllocatorRuntimeStats != nil {
 		if e.AllocatorRuntimeStats == nil {

@@ -22,7 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/kv"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -33,12 +33,12 @@ func TestPessimisticUpdatePKLazyCheck(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	testUpdatePKLazyCheck(t, tk, variable.ClusteredIndexDefModeOn)
-	testUpdatePKLazyCheck(t, tk, variable.ClusteredIndexDefModeOff)
-	testUpdatePKLazyCheck(t, tk, variable.ClusteredIndexDefModeIntOnly)
+	testUpdatePKLazyCheck(t, tk, vardef.ClusteredIndexDefModeOn)
+	testUpdatePKLazyCheck(t, tk, vardef.ClusteredIndexDefModeOff)
+	testUpdatePKLazyCheck(t, tk, vardef.ClusteredIndexDefModeIntOnly)
 }
 
-func testUpdatePKLazyCheck(t *testing.T, tk *testkit.TestKit, clusteredIndex variable.ClusteredIndexDefMode) {
+func testUpdatePKLazyCheck(t *testing.T, tk *testkit.TestKit, clusteredIndex vardef.ClusteredIndexDefMode) {
 	tk.Session().GetSessionVars().EnableClusteredIndex = clusteredIndex
 	tk.MustExec(`drop table if exists upk`)
 	tk.MustExec(`create table upk (a int, b int, c int, primary key (a, b))`)

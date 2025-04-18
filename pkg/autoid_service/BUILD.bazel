@@ -34,7 +34,7 @@ go_test(
     flaky = True,
     shard_count = 3,
     deps = [
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/store/mockstore",
         "//pkg/testkit",
         "@com_github_pingcap_kvproto//pkg/autoid",

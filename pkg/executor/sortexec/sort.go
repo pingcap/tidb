@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/channel"
@@ -35,6 +35,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 )
+
+// ResultChannelCapacity shows the capacity of `resultChannel`
+const ResultChannelCapacity = 10
 
 // SortExec represents sorting executor.
 type SortExec struct {
@@ -87,9 +90,6 @@ type SortExec struct {
 
 		resultChannel chan rowWithError
 
-		// Ensure that workers and fetcher have exited
-		closeSync chan struct{}
-
 		spillHelper *parallelSortSpillHelper
 		spillAction *parallelSortSpillAction
 	}
@@ -101,7 +101,6 @@ type SortExec struct {
 func (e *SortExec) closeChannels() {
 	close(e.Parallel.resultChannel)
 	close(e.Parallel.chunkChannel)
-	close(e.Parallel.closeSync)
 }
 
 // Close implements the Executor Close interface.
@@ -125,7 +124,6 @@ func (e *SortExec) Close() error {
 			for range e.Parallel.chunkChannel {
 				e.Parallel.fetcherAndWorkerSyncer.Done()
 			}
-			<-e.Parallel.closeSync
 		}
 
 		// Ensure that `generateResult()` has exited,
@@ -155,7 +153,7 @@ func (e *SortExec) Close() error {
 func (e *SortExec) Open(ctx context.Context) error {
 	e.fetched = &atomic.Bool{}
 	e.fetched.Store(false)
-	e.enableTmpStorageOnOOM = variable.EnableTmpStorageOnOOM.Load()
+	e.enableTmpStorageOnOOM = vardef.EnableTmpStorageOnOOM.Load()
 	e.finishCh = make(chan struct{}, 1)
 
 	// To avoid duplicated initialization for TopNExec.
@@ -176,8 +174,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.Parallel.chunkChannel = make(chan *chunkWithMemoryUsage, e.Ctx().GetSessionVars().ExecutorConcurrency)
 		e.Parallel.fetcherAndWorkerSyncer = &sync.WaitGroup{}
 		e.Parallel.sortedRowsIters = make([]*chunk.Iterator4Slice, len(e.Parallel.workers))
-		e.Parallel.resultChannel = make(chan rowWithError, 10)
-		e.Parallel.closeSync = make(chan struct{})
+		e.Parallel.resultChannel = make(chan rowWithError, ResultChannelCapacity)
 		e.Parallel.merger = newMultiWayMerger(&memorySource{sortedRowsIters: e.Parallel.sortedRowsIters}, e.lessRow)
 		e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e), e.finishCh, e.lessRow, e.Parallel.resultChannel)
 		e.Parallel.spillAction = newParallelSortSpillDiskAction(e.Parallel.spillHelper)
@@ -432,7 +429,6 @@ func (e *SortExec) generateResult(waitGroups ...*util.WaitGroupWrapper) {
 	for _, waitGroup := range waitGroups {
 		waitGroup.Wait()
 	}
-	close(e.Parallel.closeSync)
 
 	defer func() {
 		if r := recover(); r != nil {

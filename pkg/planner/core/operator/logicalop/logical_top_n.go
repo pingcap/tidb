@@ -83,7 +83,8 @@ func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column, opt *op
 	child := lt.Children()[0]
 	var cols []*expression.Column
 
-	lt.InlineProjection(parentUsedCols, opt)
+	snapParentUsedCols := make([]*expression.Column, 0, len(parentUsedCols))
+	snapParentUsedCols = append(snapParentUsedCols, parentUsedCols...)
 
 	lt.ByItems, cols = pruneByItems(lt, lt.ByItems, opt)
 	parentUsedCols = append(parentUsedCols, cols...)
@@ -92,6 +93,15 @@ func (lt *LogicalTopN) PruneColumns(parentUsedCols []*expression.Column, opt *op
 	if err != nil {
 		return nil, err
 	}
+	// If the length of parentUsedCols is 0, it means that the parent plan does not need this plan to output related
+	// results, such as: select count(*) from t
+	// So we set the schema of topN to 0. After inlineprojection, the schema of topN will be set to the shortest column
+	// in its child plan, and this column will not be used later.
+	if len(snapParentUsedCols) == 0 {
+		lt.SetSchema(nil)
+	}
+	lt.InlineProjection(snapParentUsedCols, opt)
+
 	return lt, nil
 }
 
@@ -118,12 +128,16 @@ func (lt *LogicalTopN) BuildKeyInfo(selfSchema *expression.Schema, childSchema [
 // RecursiveDeriveStats inherits BaseLogicalPlan.LogicalPlan.<10th> implementation.
 
 // DeriveStats implement base.LogicalPlan.<11th> interface.
-func (lt *LogicalTopN) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema) (*property.StatsInfo, error) {
-	if lt.StatsInfo() != nil {
-		return lt.StatsInfo(), nil
+func (lt *LogicalTopN) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
+	var reload bool
+	if len(reloads) == 1 {
+		reload = reloads[0]
+	}
+	if !reload && lt.StatsInfo() != nil {
+		return lt.StatsInfo(), false, nil
 	}
 	lt.SetStats(util.DeriveLimitStats(childStats[0], float64(lt.Count)))
-	return lt.StatsInfo(), nil
+	return lt.StatsInfo(), true, nil
 }
 
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.

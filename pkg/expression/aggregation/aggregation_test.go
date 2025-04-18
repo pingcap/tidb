@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -40,7 +41,7 @@ func createAggFuncSuite() (s *mockAggFuncSuite) {
 	s = new(mockAggFuncSuite)
 	s.ctx = mock.NewContext()
 	s.ctx.GetSessionVars().GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
-	s.ctx.GetSessionVars().DivPrecisionIncrement = variable.DefDivPrecisionIncrement
+	s.ctx.GetSessionVars().DivPrecisionIncrement = vardef.DefDivPrecisionIncrement
 	s.rows = make([]chunk.Row, 0, 5050)
 	for i := 1; i <= 100; i++ {
 		for j := 0; j < i; j++ {

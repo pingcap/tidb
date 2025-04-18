@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -38,6 +38,7 @@ import (
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 )
 
 func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *router.Region {
@@ -109,6 +110,10 @@ func (c *mockPDClient) GetStore(_ context.Context, storeID uint64) (*metapb.Stor
 
 func (c *mockPDClient) GetClusterID(_ context.Context) uint64 {
 	return 1
+}
+
+func (c *mockPDClient) WithCallerComponent(_ caller.Component) pd.Client {
+	return c
 }
 
 type mockTiKVStore struct {
@@ -246,9 +251,9 @@ func createTTLTableWithSQL(t *testing.T, tk *testkit.TestKit, name string, sql s
 	tk.MustExec(sql)
 	is, ok := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema)
 	require.True(t, ok)
-	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(name))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(name))
 	require.NoError(t, err)
-	ttlTbl, err := cache.NewPhysicalTable(model.NewCIStr("test"), tbl.Meta(), model.NewCIStr(""))
+	ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tbl.Meta(), ast.NewCIStr(""))
 	require.NoError(t, err)
 	return ttlTbl
 }

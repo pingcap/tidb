@@ -106,15 +106,16 @@ func (t AdvancerExt) toTaskEvent(ctx context.Context, event *clientv3.Event) (Ta
 				"invalid event type or prefix: type=%s, prefix=%s", event.Type, prefix)
 	}
 
-	te.Info = new(backuppb.StreamBackupTaskInfo)
-	if err := proto.Unmarshal(event.Kv.Value, te.Info); err != nil {
-		return TaskEvent{}, err
-	}
-
-	var err error
-	te.Ranges, err = t.MetaDataClient.TaskByInfo(*te.Info).Ranges(ctx)
-	if err != nil {
-		return TaskEvent{}, err
+	if prefix == PrefixOfTask() {
+		te.Info = new(backuppb.StreamBackupTaskInfo)
+		if err := proto.Unmarshal(event.Kv.Value, te.Info); err != nil {
+			return TaskEvent{}, errors.Trace(err)
+		}
+		var err error
+		te.Ranges, err = t.MetaDataClient.TaskByInfo(*te.Info).Ranges(ctx)
+		if err != nil {
+			return TaskEvent{}, errors.Trace(err)
+		}
 	}
 
 	return te, nil

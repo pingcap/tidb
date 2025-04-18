@@ -13,7 +13,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/executor",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/statistics",
         "//pkg/statistics/handle/ddl/testutil",
         "//pkg/testkit",

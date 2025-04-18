@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/expropt"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -1070,7 +1069,7 @@ func BuildGetVarFunction(ctx BuildContext, expr Expression, retType *types.Field
 		retType = builtinRetTp
 	}
 	sf := &ScalarFunction{
-		FuncName: model.NewCIStr(ast.GetVar),
+		FuncName: ast.NewCIStr(ast.GetVar),
 		RetType:  retType,
 		Function: f,
 	}

@@ -1510,6 +1510,10 @@ func jsonUnquoteFunctionBenefitsFromPushedDown(sf *ScalarFunction) bool {
 // Projections are not pushed down to tikv by default, thus we need to check strictly here to avoid potential performance degradation.
 // Note: virtual column is not considered here, since this function cares performance instead of functionality
 func ProjectionBenefitsFromPushedDown(exprs []Expression, inputSchemaLen int) bool {
+	// In debug usage, we need to force push down projections to tikv to check tikv expression behavior.
+	failpoint.Inject("forcePushDownTiKV", func() {
+		failpoint.Return(true)
+	})
 	allColRef := true
 	colRefCount := 0
 	for _, expr := range exprs {
@@ -2161,4 +2165,20 @@ func binaryDurationWithMS(pos int, paramValues []byte,
 	microSecond := binary.LittleEndian.Uint32(paramValues[pos : pos+4])
 	pos += 4
 	return pos, fmt.Sprintf("%s.%06d", dur, microSecond)
+}
+
+// IsConstNull is used to check whether the expression is a constant null expression.
+// For example, `1 > NULL` is a constant null expression.
+// Now we just assume that the first argrument is a column,
+// the second argument is a constant null.
+func IsConstNull(expr Expression) bool {
+	if e, ok := expr.(*ScalarFunction); ok {
+		switch e.FuncName.L {
+		case ast.LT, ast.LE, ast.GT, ast.GE, ast.EQ, ast.NE:
+			if constExpr, ok := e.GetArgs()[1].(*Constant); ok && constExpr.Value.IsNull() && constExpr.DeferredExpr == nil {
+				return true
+			}
+		}
+	}
+	return false
 }

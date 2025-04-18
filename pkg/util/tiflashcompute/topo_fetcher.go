@@ -24,6 +24,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -36,36 +37,9 @@ var _ TopoFetcher = &AWSTopoFetcher{}
 var _ TopoFetcher = &TestTopoFetcher{}
 
 const (
-	// MockASStr is string value for mock AutoScaler.
-	MockASStr = "mock"
-	// AWSASStr is string value for aws AutoScaler.
-	AWSASStr = "aws"
-	// GCPASStr is string value for gcp AutoScaler.
-	GCPASStr = "gcp"
-	// TestASStr is string value for test AutoScaler.
-	TestASStr = "test"
-	// InvalidASStr is string value for invalid AutoScaler.
-	InvalidASStr = "invalid"
-)
-
-const (
-	// MockASType is int value for mock AutoScaler.
-	MockASType int = iota
-	// AWSASType is int value for aws AutoScaler.
-	AWSASType
-	// GCPASType is int value for gcp AutoScaler.
-	GCPASType
-	// TestASType is for local tidb test AutoScaler.
-	TestASType
-	// InvalidASType is int value for invalid check.
-	InvalidASType
-)
-
-const (
 	// DefAWSAutoScalerAddr is the default address for AWS AutoScaler.
-	DefAWSAutoScalerAddr = "tiflash-autoscale-lb.tiflash-autoscale.svc.cluster.local:8081"
+
 	// DefASStr default AutoScaler.
-	DefASStr = AWSASStr
 
 	awsFixedPoolHTTPPath    = "sharedfixedpool"
 	awsFetchHTTPPath        = "resume-and-get-topology"
@@ -109,28 +83,6 @@ type TopoFetcher interface {
 	RecoveryAndGetTopo(recovery RecoveryType, oriCNCnt int) ([]string, error)
 }
 
-// IsValidAutoScalerConfig return true if user config of autoscaler type is valid.
-func IsValidAutoScalerConfig(typ string) bool {
-	t := getAutoScalerType(typ)
-	return t == MockASType || t == AWSASType || t == GCPASType
-}
-
-// getAutoScalerType return topo fetcher type.
-func getAutoScalerType(typ string) int {
-	switch typ {
-	case MockASStr:
-		return MockASType
-	case AWSASStr:
-		return AWSASType
-	case GCPASStr:
-		return GCPASType
-	case TestASStr:
-		return TestASType
-	default:
-		return InvalidASType
-	}
-}
-
 // InitGlobalTopoFetcher init globalTopoFetcher if is in disaggregated-tiflash mode. It's not thread-safe.
 func InitGlobalTopoFetcher(typ string, addr string, clusterID string, isFixedPool bool) (err error) {
 	logutil.BgLogger().Info("init globalTopoFetcher", zap.String("type", typ), zap.String("addr", addr),
@@ -139,20 +91,20 @@ func InitGlobalTopoFetcher(typ string, addr string, clusterID string, isFixedPoo
 		return errors.Errorf("ClusterID(%s) or AutoScaler(%s) addr is empty", clusterID, addr)
 	}
 
-	ft := getAutoScalerType(typ)
+	ft := config.GetAutoScalerType(typ)
 	switch ft {
-	case MockASType:
+	case config.MockASType:
 		globalTopoFetcher = NewMockAutoScalerFetcher(addr)
-	case AWSASType:
+	case config.AWSASType:
 		globalTopoFetcher = NewAWSAutoScalerFetcher(addr, clusterID, isFixedPool)
-	case GCPASType:
+	case config.GCPASType:
 		err = errors.Errorf("topo fetch not implemented yet(%s)", typ)
-	case TestASType:
+	case config.TestASType:
 		globalTopoFetcher = NewTestAutoScalerFetcher()
 	default:
 		globalTopoFetcher = nil
 		err = errors.Errorf("unexpected topo fetch type. expect: %s or %s or %s, got %s",
-			MockASStr, AWSASStr, GCPASStr, typ)
+			config.MockASStr, config.AWSASStr, config.GCPASStr, typ)
 	}
 	return err
 }

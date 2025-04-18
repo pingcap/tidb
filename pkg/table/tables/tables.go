@@ -306,6 +306,9 @@ func GetWritableIndexByName(idxName string, t table.Table) table.Index {
 		if !IsIndexWritable(idx) {
 			continue
 		}
+		if idx.Meta().IsColumnarIndex() {
+			continue
+		}
 		if idxName == idx.Meta().Name.L {
 			return idx
 		}
@@ -547,6 +550,9 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 		if t.meta.IsCommonHandle && idx.Meta().Primary {
 			continue
 		}
+		if idx.Meta().IsColumnarIndex() {
+			continue
+		}
 		for _, ic := range idx.Meta().Columns {
 			if !touched[ic.Offset] {
 				continue
@@ -564,6 +570,9 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 	createIdxOpt := opt.GetCreateIdxOpt()
 	for _, idx := range t.Indices() {
 		if !IsIndexWritable(idx) {
+			continue
+		}
+		if idx.Meta().IsColumnarIndex() {
 			continue
 		}
 		if t.meta.IsCommonHandle && idx.Meta().Primary {
@@ -697,10 +706,12 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 
 	var hasRecordID bool
 	cols := t.Cols()
-	// opt.IsUpdate is a flag for update.
+	// opt.GenerateRecordID is used for normal update.
 	// If handle ID is changed when update, update will remove the old record first, and then call `AddRecord` to add a new record.
-	// Currently, only insert can set _tidb_rowid, update can not update _tidb_rowid.
-	if len(r) > len(cols) && !opt.IsUpdate() {
+	// Currently, insert can set _tidb_rowid.
+	// Update can only update _tidb_rowid during reorganize partition, to keep the generated _tidb_rowid
+	// the same between the old/new sets of partitions, where possible.
+	if len(r) > len(cols) && !opt.GenerateRecordID() {
 		// The last value is _tidb_rowid.
 		recordID = kv.IntHandle(r[len(r)-1].GetInt64())
 		hasRecordID = true
@@ -924,6 +935,9 @@ func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r
 	skipCheck := opt.DupKeyCheck() == table.DupKeyCheckSkip
 	for _, v := range t.Indices() {
 		if !IsIndexWritable(v) {
+			continue
+		}
+		if v.Meta().IsColumnarIndex() {
 			continue
 		}
 		if t.meta.IsCommonHandle && v.Meta().Primary {
@@ -1185,6 +1199,9 @@ func (t *TableCommon) removeRowIndices(ctx table.MutateContext, txn kv.Transacti
 		if v.Meta().Primary && (t.Meta().IsCommonHandle || t.Meta().PKIsHandle) {
 			continue
 		}
+		if v.Meta().IsColumnarIndex() {
+			continue
+		}
 		var vals []types.Datum
 		if opt.HasIndexesLayout() {
 			vals, err = fetchIndexRow(v.Meta(), rec, nil, opt.GetIndexLayout(v.Meta().ID))
@@ -1368,7 +1385,7 @@ func AllocHandleIDs(ctx context.Context, mctx table.MutateContext, t table.Table
 	meta := t.Meta()
 	base, maxID, err := t.Allocators(mctx).Get(autoid.RowIDAllocType).Alloc(ctx, n, 1, 1)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, errors.Trace(err)
 	}
 	if meta.ShardRowIDBits > 0 {
 		shardFmt := autoid.NewShardIDFormat(types.NewFieldType(mysql.TypeLonglong), meta.ShardRowIDBits, autoid.RowIDBitLength)
