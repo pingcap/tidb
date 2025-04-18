@@ -175,11 +175,6 @@ func NewAddIndexIngestPipeline(
 	}
 	srcChkPool := createChunkPool(copCtx, reorgMeta)
 	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
-	rm := reorgMeta
-	if rm.UseCloudStorage {
-		// param cannot be modified at runtime for global sort right now.
-		rm = nil
-	}
 
 	failpoint.Inject("mockDMLExecutionBeforeScan", func(_ failpoint.Value) {
 		if MockDMLExecutionBeforeScan != nil {
@@ -189,7 +184,7 @@ func NewAddIndexIngestPipeline(
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, backendCtx)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt,
-		reorgMeta.GetBatchSize(), rm, backendCtx)
+		reorgMeta.GetBatchSize(), reorgMeta, backendCtx)
 	ingestOp := NewIndexIngestOperator(ctx, copCtx, sessPool,
 		tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta)
 	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, rowCntListener)
@@ -255,7 +250,7 @@ func NewWriteIndexToExternalStoragePipeline(
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, nil)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt,
-		reorgMeta.GetBatchSize(), nil, nil)
+		reorgMeta.GetBatchSize(), reorgMeta, nil)
 	writeOp := NewWriteExternalStoreOperator(
 		ctx, copCtx, sessPool, jobID, subtaskID,
 		tbl, indexes, extStore, srcChkPool, writerCnt,

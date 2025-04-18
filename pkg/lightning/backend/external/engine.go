@@ -136,6 +136,8 @@ type Engine struct {
 
 	memKVsAndBuffers memKVsAndBuffers
 
+	generatedData []*MemoryIngestData
+
 	// checkHotspot is true means we will check hotspot file when using MergeKVIter.
 	// if hotspot file is detected, we will use multiple readers to read data.
 	// if it's false, MergeKVIter will read each file using 1 reader.
@@ -148,7 +150,7 @@ type Engine struct {
 	duplicateDetection bool
 	duplicateDB        *pebble.DB
 	dupDetectOpt       common.DupDetectOpt
-	workerConcurrency  int
+	workerConcurrency  atomic.Int32
 	ts                 uint64
 
 	totalKVSize  int64
@@ -213,7 +215,7 @@ func NewExternalEngine(
 		duplicateDetection: duplicateDetection,
 		duplicateDB:        duplicateDB,
 		dupDetectOpt:       dupDetectOpt,
-		workerConcurrency:  workerConcurrency,
+		workerConcurrency:  *atomic.NewInt32(int32(workerConcurrency)),
 		ts:                 ts,
 		totalKVSize:        totalKVSize,
 		totalKVCount:       totalKVCount,
@@ -241,20 +243,6 @@ func split[T any](in []T, groupNum int) [][]T {
 		}
 	}
 	return ret
-}
-
-func (e *Engine) getAdjustedConcurrency() int {
-	if e.checkHotspot {
-		// estimate we will open at most 8000 files, so if e.dataFiles is small we can
-		// try to concurrently process ranges.
-		adjusted := maxCloudStorageConnections / len(e.dataFiles)
-		if adjusted == 0 {
-			return 1
-		}
-		return min(adjusted, 8)
-	}
-	adjusted := min(e.workerConcurrency, maxCloudStorageConnections/len(e.dataFiles))
-	return max(adjusted, 1)
 }
 
 func getFilesReadConcurrency(
@@ -309,6 +297,20 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	sortRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("sort")
 	sortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("sort")
 
+	failpoint.Inject("mockLoadBatchRegionData", func(_ failpoint.Value) {
+		data := e.buildIngestData(nil, nil)
+		select {
+		case <-ctx.Done():
+			failpoint.Return(ctx.Err())
+		case outCh <- common.DataAndRanges{
+			Data: data,
+		}:
+			e.generatedData = append(e.generatedData, data)
+		}
+
+		failpoint.Return(nil)
+	})
+
 	startKey := jobKeys[0]
 	endKey := jobKeys[len(jobKeys)-1]
 	readStart := time.Now()
@@ -337,7 +339,7 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 
 	sortStart := time.Now()
 	oldSortyGor := sorty.MaxGor
-	sorty.MaxGor = uint64(e.workerConcurrency * 2)
+	sorty.MaxGor = uint64(e.workerConcurrency.Load() * 2)
 	var dupKey atomic.Pointer[[]byte]
 	sorty.Sort(len(e.memKVsAndBuffers.kvs), func(i, k, r, s int) bool {
 		cmp := bytes.Compare(e.memKVsAndBuffers.kvs[i].key, e.memKVsAndBuffers.kvs[k].key)
@@ -414,8 +416,67 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 		Data:         data,
 		SortedRanges: ranges,
 	}:
+		e.generatedData = append(e.generatedData, data)
 	}
 	return nil
+}
+
+// checkConcurrencyChange is used to check concurrency change.
+// Before the concurrency change, we need to make sure all previous data is consumed
+// and create new memory pool
+func (e *Engine) checkConcurrencyChange(ctx context.Context, currBatchSize int) int {
+	newBatchSize := int(e.workerConcurrency.Load())
+	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
+		currBatchSize = val.(int)
+		newBatchSize = currBatchSize
+	})
+
+	if newBatchSize == currBatchSize {
+		return currBatchSize
+	}
+
+	logutil.Logger(ctx).Info("wait ingest data batch size change",
+		zap.Int("prev batch size", currBatchSize),
+		zap.Int("new batch size", newBatchSize),
+	)
+
+	tick := time.NewTicker(time.Second)
+	defer func() {
+		tick.Stop()
+	}()
+
+OUTER:
+	for {
+		select {
+		case <-ctx.Done():
+			return currBatchSize
+		case <-tick.C:
+			allReleased := true
+			for _, data := range e.generatedData {
+				// We can't rely on refCnt to check if the data is released, because
+				// the refCnt is zero when the data is not used.
+				if !data.released.Load() {
+					allReleased = false
+					break
+				}
+			}
+
+			if allReleased {
+				e.generatedData = e.generatedData[:0]
+				break OUTER
+			}
+		}
+	}
+
+	// Now we can safely reset the memory pool.
+	e.Reset()
+
+	logutil.Logger(ctx).Info("load ingest data batch size changed",
+		zap.Int("prev batch size", currBatchSize),
+		zap.Int("new batch size", newBatchSize),
+	)
+
+	return newBatchSize
 }
 
 // LoadIngestData loads the data from the external storage to memory in [start,
@@ -427,18 +488,18 @@ func (e *Engine) LoadIngestData(
 	outCh chan<- common.DataAndRanges,
 ) error {
 	// try to make every worker busy for each batch
-	rangeBatchSize := e.workerConcurrency
-	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
-		rangeBatchSize = val.(int)
-	})
-	logutil.Logger(ctx).Info("load ingest data", zap.Int("batchSize", rangeBatchSize))
-	for start := 0; start < len(e.jobKeys)-1; start += rangeBatchSize {
+	currBatchSize := int(e.workerConcurrency.Load())
+	logutil.Logger(ctx).Info("load ingest data", zap.Int("current batchSize", currBatchSize))
+
+	for start := 0; start < len(e.jobKeys)-1; {
+		currBatchSize = e.checkConcurrencyChange(ctx, currBatchSize)
 		// want to generate N ranges, so we need N+1 keys
-		end := min(1+start+rangeBatchSize, len(e.jobKeys))
+		end := min(1+start+currBatchSize, len(e.jobKeys))
 		err := e.loadBatchRegionData(ctx, e.jobKeys[start:end], outCh)
 		if err != nil {
 			return err
 		}
+		start += currBatchSize
 	}
 	return nil
 }
@@ -456,6 +517,14 @@ func (e *Engine) buildIngestData(kvs []kvPair, buf []*membuf.Buffer) *MemoryInge
 		importedKVSize:     e.importedKVSize,
 		importedKVCount:    e.importedKVCount,
 	}
+}
+
+// UpdateResource changes the concurrency of this engine.
+func (e *Engine) UpdateResource(concurrency int, memCapacity int64) {
+	e.workerConcurrency.Store(int32(concurrency))
+	e.memLimit = int(float64(memCapacity) / writeStepMemShareCount * 3)
+	logutil.BgLogger().Info("set new memlimit for load range data",
+		zap.String("memLimit", units.BytesSize(float64(e.memLimit))))
 }
 
 // KVStatistics returns the total kv size and total kv count.
@@ -584,6 +653,7 @@ type MemoryIngestData struct {
 	ts  uint64
 
 	memBuf          []*membuf.Buffer
+	released        atomic.Bool
 	refCnt          *atomic.Int64
 	importedKVSize  *atomic.Int64
 	importedKVCount *atomic.Int64
@@ -793,6 +863,7 @@ func (m *MemoryIngestData) DecRef() {
 		for _, b := range m.memBuf {
 			b.Destroy()
 		}
+		m.released.Store(true)
 	}
 }
 
