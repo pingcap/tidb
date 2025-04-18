@@ -3679,26 +3679,25 @@ func (b *PlanBuilder) TableHints() *h.PlanHints {
 	return b.tableHintInfo[len(b.tableHintInfo)-1]
 }
 
-type unfoldOption struct{}
+type forceMVIndexOption struct{}
 
-var unfoldOptionKey unfoldOption
+var forceMVIndexOptionKey forceMVIndexOption
 
 // WithForceMVIndexScan controls how the rewriter process MV Index.
-// If it's true, it indicated we want to unfold cast(... as ... array).
+// If it's true, it indicated we want to rewrite cast(... as ... array).
 // NOTE: It should only be used in fast admin check table,
-//
-//	see check_table_index.go for more details.
-func WithForceMVIndexScan(ctx context.Context, unfold bool) context.Context {
-	return context.WithValue(ctx, unfoldOptionKey, unfold)
+// see check_table_index.go for more details.
+func WithForceMVIndexScan(ctx context.Context, force bool) context.Context {
+	return context.WithValue(ctx, forceMVIndexOptionKey, force)
 }
 
 // GetForceMVIndexScan check whether the force MV index scan option is set.
 func GetForceMVIndexScan(ctx context.Context) bool {
-	unfold := false
-	if opt := ctx.Value(unfoldOptionKey); opt != nil {
-		unfold = opt.(bool)
+	force := false
+	if opt := ctx.Value(forceMVIndexOptionKey); opt != nil {
+		force = opt.(bool)
 	}
-	return unfold
+	return force
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p base.LogicalPlan, err error) {

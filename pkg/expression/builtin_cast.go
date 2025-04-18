@@ -514,7 +514,7 @@ func (b *jsonSumFunctionSig) evalInt(ctx EvalContext, row chunk.Row) (res int64,
 	if f == nil {
 		return 0, false, ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("CAST-ing data to array of %s", ft.String()))
 	}
-	var sum int64 = 0
+	var sum int64
 	if val.TypeCode != types.JSONTypeCodeArray {
 		item, err := f(fakeSctx, val, ft)
 		if err != nil {
@@ -2555,7 +2555,7 @@ func BuildCastFunction(ctx BuildContext, expr Expression, tp *types.FieldType) (
 }
 
 // BuildJSONSumFunctionWithCheck builds a CAST ScalarFunction from the Expression and return error if any.
-func BuildJSONSumFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.FieldType, inUnion bool, isExplicitCharset bool) (res Expression, err error) {
+func BuildJSONSumFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression, err error) {
 	argType := expr.GetType(ctx.GetEvalCtx())
 	// If source argument's nullable, then target type should be nullable
 	if !mysql.HasNotNullFlag(argType.GetFlag()) {

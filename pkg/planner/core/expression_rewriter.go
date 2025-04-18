@@ -1569,7 +1569,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
 	case *ast.JSONSumExpr:
 		arg := er.ctxStack[len(er.ctxStack)-1]
-		jsonSumFunction, err := expression.BuildJSONSumFunctionWithCheck(er.sctx, arg, v.Tp, false, v.ExplicitCharSet)
+		jsonSumFunction, err := expression.BuildJSONSumFunctionWithCheck(er.sctx, arg, v.Tp)
 		if err != nil {
 			er.err = err
 			return retNode, false

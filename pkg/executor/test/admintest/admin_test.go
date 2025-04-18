@@ -2175,8 +2175,8 @@ func TestAdminCheckMVIndex(t *testing.T) {
 		sctx.Store = store
 		ctx := sctx.GetTableCtx()
 		is := domain.InfoSchema()
-		dbName := pmodel.NewCIStr("test")
-		tblName := pmodel.NewCIStr("t")
+		dbName := ast.NewCIStr("test")
+		tblName := ast.NewCIStr("t")
 		tbl, err := is.TableByName(context.Background(), dbName, tblName)
 		require.NoError(t, err)
 		tblInfo := tbl.Meta()
