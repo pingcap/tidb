@@ -23,6 +23,8 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -269,7 +271,100 @@ func TestVectorIndex(t *testing.T) {
 	tk.MustExecToErr("select * from t use index(vecIdx1) where a = 5 order by vec_cosine_distance(d, '[1,1,1,1]') limit 1")
 }
 
-func TestAnalyzeVectorIndex(t *testing.T) {
+func TestInvertedIndex(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
+
+	tk.MustExec("create table t (a int, b bigint, c tinyint, d smallint unsigned, columnar index idx_a (a) using inverted, columnar index idx_b (b) using inverted);")
+	tk.MustExec("alter table t add columnar index idx_c (c) USING inverted;")
+	tk.MustExec("alter table t add columnar index idx_d (d) USING inverted;")
+	tk.MustExec("insert into t values (1, 1, 1, 1), (2, 2, 2, 2), (3, 3, 3, 3), (4, 4, 4, 4);")
+	dom := domain.GetDomain(tk.Session())
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+
+	var findTableScan func(p base.Plan) *core.PhysicalTableScan
+	findTableScan = func(p base.Plan) *core.PhysicalTableScan {
+		if p == nil {
+			return nil
+		}
+		switch v := p.(type) {
+		case *core.PhysicalTableScan:
+			return v
+		case *core.PhysicalTableReader:
+			for _, child := range v.TablePlans {
+				if ts := findTableScan(child); ts != nil {
+					return ts
+				}
+			}
+			return nil
+		default:
+			physicayPlan := p.(base.PhysicalPlan)
+			for _, child := range physicayPlan.Children() {
+				if ts := findTableScan(child); ts != nil {
+					return ts
+				}
+			}
+			return nil
+		}
+	}
+
+	// force index
+	{
+		sqls := []string{
+			"select * from t force index(idx_a) where a > 0",
+			"select * from t force index(idx_b) where b < 0",
+			"select * from t force index(idx_c) where c = 0",
+			"select * from t force index(idx_d) where d != 0",
+		}
+		indexes := []string{"idx_a", "idx_b", "idx_c", "idx_d"}
+		for i, sql := range sqls {
+			tk.MustExec(sql)
+			info := tk.Session().ShowProcess()
+			require.NotNil(t, info)
+			p, ok := info.Plan.(base.Plan)
+			require.True(t, ok)
+
+			ts := findTableScan(p)
+			require.NotNil(t, ts)
+			require.Equal(t, 1, len(ts.UsedColumnarIndexes))
+			require.Equal(t, indexes[i], ts.UsedColumnarIndexes[0].IndexInfo.Name.O)
+		}
+	}
+
+	// ignore index
+	{
+		sqls := []string{
+			"select * from t ignore index(idx_a) where a = 1",
+			"select * from t ignore index(idx_b) where b = 2",
+			"select * from t ignore index(idx_c) where c = 3",
+			"select * from t ignore index(idx_d) where d < 1",
+		}
+		for _, sql := range sqls {
+			tk.MustExec(sql)
+			info := tk.Session().ShowProcess()
+			require.NotNil(t, info)
+			p, ok := info.Plan.(base.Plan)
+			require.True(t, ok)
+
+			ts := findTableScan(p)
+			require.NotNil(t, ts)
+			require.Equal(t, 0, len(ts.UsedColumnarIndexes))
+		}
+	}
+}
+
+func TestAnalyzeColumnarIndex(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -282,8 +377,8 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 		tiflash.StatusServer.Close()
 		tiflash.Unlock()
 	}()
-	tk.MustExec(`create table t(a int, b vector(2), c vector(3), j json, index(a))`)
-	tk.MustExec("insert into t values(1, '[1, 0]', '[1, 0, 0]', '{\"a\": 1}')")
+	tk.MustExec(`create table t(a int, b vector(2), c datetime, j json, index(a))`)
+	tk.MustExec("insert into t values(1, '[1, 0]', '2022-01-01 12:00:00', '{\"a\": 1}')")
 	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
@@ -294,7 +389,7 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 	tk.MustExec("alter table t add vector index idx((VEC_COSINE_DISTANCE(b))) USING HNSW")
-	tk.MustExec("alter table t add vector index idx2((VEC_COSINE_DISTANCE(c))) USING HNSW")
+	tk.MustExec("alter table t add columnar index idx2(c) USING INVERTED")
 
 	tk.MustUseIndex("select * from t use index(idx) order by vec_cosine_distance(b, '[1, 0]') limit 1", "idx")
 	tk.MustUseIndex("select * from t order by vec_cosine_distance(b, '[1, 0]') limit 1", "idx")
