@@ -592,7 +592,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (*tikvWriteResu
 // set job to a proper stage with nil error returned.
 // if any underlying logic has error, ingest will return an error to let caller
 // handle it.
-func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
+func (local *Backend) ingest(ctx context.Context, j *regionJob) (res *ingestResult) {
 	failpoint.Inject("fakeRegionJobs", func() {
 		front := j.injected[0]
 		j.injected = j.injected[1:]
@@ -601,55 +601,43 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 	})
 
 	if len(j.writeResult.sstMeta) == 0 {
-		j.convertStageTo(ingested)
-		return nil
+		return &ingestResult{nextStage: ingested}
 	}
 
 	if m, ok := metric.FromContext(ctx); ok {
 		begin := time.Now()
 		defer func() {
-			if err == nil {
+			if res.ingestErr == nil {
 				m.SSTSecondsHistogram.WithLabelValues(metric.SSTProcessIngest).Observe(time.Since(begin).Seconds())
 			}
 		}()
 	}
 
+	var lastRetriedErr error
 	for retry := 0; retry < maxRetryTimes; retry++ {
 		resp, err := local.doIngest(ctx, j)
-		if err == nil && resp.GetError() == nil {
-			j.convertStageTo(ingested)
-			return nil
-		}
 		if err != nil {
 			if common.IsContextCanceledError(err) {
-				return err
+				return &ingestResult{
+					nextStage: wrote,
+					ingestErr: err,
+				}
 			}
 			log.FromContext(ctx).Warn("meet underlying error, will retry ingest",
 				log.ShortError(err), logutil.SSTMetas(j.writeResult.sstMeta),
 				logutil.Region(j.region.Region), logutil.Leader(j.region.Leader))
-			j.lastRetryableErr = err
+			lastRetriedErr = err
 			continue
 		}
-		canContinue, err := j.convertStageOnIngestError(resp)
-		if common.IsContextCanceledError(err) {
-			return err
+		if resp.GetError() == nil {
+			return &ingestResult{nextStage: ingested}
 		}
-		if !canContinue {
-			log.FromContext(ctx).Warn("meet error and handle the job later",
-				zap.Stringer("job stage", j.stage),
-				logutil.ShortError(j.lastRetryableErr),
-				j.region.ToZapFields(),
-				logutil.Key("start", j.keyRange.Start),
-				logutil.Key("end", j.keyRange.End))
-			return nil
-		}
-		log.FromContext(ctx).Warn("meet error and will doIngest region again",
-			logutil.ShortError(j.lastRetryableErr),
-			j.region.ToZapFields(),
-			logutil.Key("start", j.keyRange.Start),
-			logutil.Key("end", j.keyRange.End))
+		return convertPBError2IngestResult(j, resp.GetError())
 	}
-	return nil
+	return &ingestResult{
+		nextStage: wrote,
+		ingestErr: lastRetriedErr,
+	}
 }
 
 func (local *Backend) checkWriteStall(
@@ -765,7 +753,7 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 			}
 			resp, err = cli.Ingest(ctx, req)
 		}
-		if resp.GetError() != nil || err != nil {
+		if err != nil || resp.GetError() != nil {
 			// remove finished sstMetas
 			j.writeResult.sstMeta = j.writeResult.sstMeta[start:]
 			return resp, errors.Trace(err)
@@ -784,33 +772,35 @@ func (local *Backend) GetWriteSpeedLimit() int {
 	return local.writeLimiter.Limit()
 }
 
+type ingestResult struct {
+	nextStage jobStageTp
+	// if nextStage = regionScanned, the new region info is extracted from the PB
+	// error
+	newRegion *split.RegionInfo
+	ingestErr error
+}
+
 // convertStageOnIngestError will try to fix the error contained in ingest response.
 // Return (_, error) when another error occurred.
 // Return (true, nil) when the job can retry ingesting immediately.
 // Return (false, nil) when the job should be put back to queue.
-func (j *regionJob) convertStageOnIngestError(
-	resp *sst.IngestResponse,
-) (bool, error) {
-	if resp.GetError() == nil {
-		return true, nil
-	}
-
+func convertPBError2IngestResult(job *regionJob, errPb *errorpb.Error) *ingestResult {
 	var newRegion *split.RegionInfo
-	switch errPb := resp.GetError(); {
+	res := &ingestResult{
+		nextStage: needRescan,
+	}
+	switch {
 	case errPb.NotLeader != nil:
-		j.lastRetryableErr = common.ErrKVNotLeader.GenWithStack(errPb.GetMessage())
-
 		// meet a problem that the region leader+peer are all updated but the return
 		// error is only "NotLeader", we should update the whole region info.
-		j.convertStageTo(needRescan)
-		return false, nil
+		res.ingestErr = common.ErrKVNotLeader.GenWithStack(errPb.GetMessage())
 	case errPb.EpochNotMatch != nil:
-		j.lastRetryableErr = common.ErrKVEpochNotMatch.GenWithStack(errPb.GetMessage())
+		res.ingestErr = common.ErrKVEpochNotMatch.GenWithStack(errPb.GetMessage())
 
 		if currentRegions := errPb.GetEpochNotMatch().GetCurrentRegions(); currentRegions != nil {
 			var currentRegion *metapb.Region
 			for _, r := range currentRegions {
-				if insideRegion(r, j.writeResult.sstMeta) {
+				if insideRegion(r, job.writeResult.sstMeta) {
 					currentRegion = r
 					break
 				}
@@ -818,7 +808,7 @@ func (j *regionJob) convertStageOnIngestError(
 			if currentRegion != nil {
 				var newLeader *metapb.Peer
 				for _, p := range currentRegion.Peers {
-					if p.GetStoreId() == j.region.Leader.GetStoreId() {
+					if p.GetStoreId() == job.region.Leader.GetStoreId() {
 						newLeader = p
 						break
 					}
@@ -832,46 +822,36 @@ func (j *regionJob) convertStageOnIngestError(
 			}
 		}
 		if newRegion != nil {
-			j.region = newRegion
-			j.convertStageTo(regionScanned)
-			return false, nil
+			res.newRegion = newRegion
+			res.nextStage = regionScanned
+			return nil
 		}
-		j.convertStageTo(needRescan)
-		return false, nil
 	case strings.Contains(errPb.Message, "raft: proposal dropped"):
-		j.lastRetryableErr = common.ErrKVRaftProposalDropped.GenWithStack(errPb.GetMessage())
-
-		j.convertStageTo(needRescan)
-		return false, nil
+		res.ingestErr = common.ErrKVRaftProposalDropped.GenWithStack(errPb.GetMessage())
 	case errPb.ServerIsBusy != nil:
-		j.lastRetryableErr = common.ErrKVServerIsBusy.GenWithStack(errPb.GetMessage())
-
-		return false, nil
+		res.ingestErr = common.ErrKVServerIsBusy.GenWithStack(errPb.GetMessage())
+		res.nextStage = wrote
 	case errPb.RegionNotFound != nil:
-		j.lastRetryableErr = common.ErrKVRegionNotFound.GenWithStack(errPb.GetMessage())
-
-		j.convertStageTo(needRescan)
-		return false, nil
+		res.ingestErr = common.ErrKVRegionNotFound.GenWithStack(errPb.GetMessage())
 	case errPb.ReadIndexNotReady != nil:
-		j.lastRetryableErr = common.ErrKVReadIndexNotReady.GenWithStack(errPb.GetMessage())
-
 		// this error happens when this region is splitting, the error might be:
 		//   read index not ready, reason can not read index due to split, region 64037
 		// we have paused schedule, but it's temporary,
 		// if next request takes a long time, there's chance schedule is enabled again
 		// or on key range border, another engine sharing this region tries to split this
 		// region may cause this error too.
-		j.convertStageTo(needRescan)
-		return false, nil
+		res.ingestErr = common.ErrKVReadIndexNotReady.GenWithStack(errPb.GetMessage())
 	case errPb.DiskFull != nil:
-		j.lastRetryableErr = common.ErrKVIngestFailed.GenWithStack(errPb.GetMessage())
-
-		return false, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
+		// TODO ErrKVIngestFailed is an retryable error, but it shouldn't retry
+		// when disk is full. we won't change the old behavior in this PR.
+		res.ingestErr = common.ErrKVIngestFailed.GenWithStack(errPb.GetMessage())
+		res.nextStage = wrote
+	default:
+		// all others doIngest error, such as stale command, etc. we'll retry it again from writeAndIngestByRange
+		res.ingestErr = common.ErrKVIngestFailed.GenWithStack(errPb.GetMessage())
+		res.nextStage = regionScanned
 	}
-	// all others doIngest error, such as stale command, etc. we'll retry it again from writeAndIngestByRange
-	j.lastRetryableErr = common.ErrKVIngestFailed.GenWithStack(resp.GetError().GetMessage())
-	j.convertStageTo(regionScanned)
-	return false, nil
+	return nil
 }
 
 type regionJobRetryHeap []*regionJob

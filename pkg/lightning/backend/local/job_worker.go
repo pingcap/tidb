@@ -47,7 +47,7 @@ type regionJobBaseWorker struct {
 	jobWg    *sync.WaitGroup
 
 	writeFn     func(ctx context.Context, job *regionJob) (*tikvWriteResult, error)
-	ingestFn    func(ctx context.Context, job *regionJob) error
+	ingestFn    func(ctx context.Context, job *regionJob) *ingestResult
 	preRunJobFn func(ctx context.Context, job *regionJob) error
 	// called after the job is executed, success or not.
 	afterRunJobFn func([]*metapb.Peer)
@@ -180,14 +180,22 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 
 		// if the job is empty, it might go to ingested stage directly.
 		if job.stage == wrote {
-			err := w.ingestFn(ctx, job)
-			if err != nil {
-				if !w.isRetryableImportTiKVError(err) {
-					return err
+			res := w.ingestFn(ctx, job)
+
+			job.convertStageTo(res.nextStage)
+			if res.nextStage == regionScanned {
+				job.region = res.newRegion
+			}
+			if res.ingestErr != nil {
+				if !w.isRetryableImportTiKVError(res.ingestErr) {
+					return res.ingestErr
 				}
-				log.FromContext(ctx).Warn("meet retryable error when ingesting",
-					log.ShortError(err), zap.Stringer("job stage", job.stage))
-				job.lastRetryableErr = err
+				log.FromContext(ctx).Warn("meet retryable error when ingesting, will handle the job later",
+					log.ShortError(res.ingestErr), zap.Stringer("job stage", job.stage),
+					job.region.ToZapFields(),
+					logutil.Key("start", job.keyRange.Start),
+					logutil.Key("end", job.keyRange.End))
+				job.lastRetryableErr = res.ingestErr
 				return nil
 			}
 		}
@@ -352,26 +360,25 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 	}, nil
 }
 
-func (w *objStoreRegionJobWorker) ingest(ctx context.Context, j *regionJob) error {
+func (w *objStoreRegionJobWorker) ingest(ctx context.Context, j *regionJob) *ingestResult {
 	in := &ingestcli.IngestRequest{
 		Region:  j.region,
 		SSTFile: j.writeResult.sstFile,
 	}
 	err := w.ingestCli.Ingest(ctx, in)
 	if err != nil {
-		// TODO, we should let outer logic handle stage transition, currently, OP
-		//  worker need a lot of change before we can do it, will refactor it later.
-
-		// TODO: choose target stage based on error.
-		j.convertStageTo(needRescan)
 		log.FromContext(ctx).Warn("meet error and handle the job later",
 			zap.Stringer("job stage", j.stage),
-			logutil.ShortError(j.lastRetryableErr),
+			logutil.ShortError(err),
 			j.region.ToZapFields(),
 			logutil.Key("start", j.keyRange.Start),
 			logutil.Key("end", j.keyRange.End))
-		return err
+
+		// TODO: choose target stage based on error.
+		return &ingestResult{
+			nextStage: needRescan,
+			ingestErr: err,
+		}
 	}
-	j.convertStageTo(ingested)
-	return nil
+	return &ingestResult{nextStage: ingested}
 }
