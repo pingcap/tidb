@@ -607,7 +607,7 @@ type MemArbitrator struct {
 		lastStoreUtimeMilli atomic.Int64
 	}
 
-	fastAlloc struct {
+	awaitFree struct {
 		pool   *ResourcePool
 		budget FixSizeBatchBudgets // use quota and track
 		holder FixSizeBatchBudgets // hold quota but not use
