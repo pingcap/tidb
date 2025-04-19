@@ -480,6 +480,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 		}
 		waitGroup.Done()
 	}()
+
 	for {
 		select {
 		case <-e.finishCh:
@@ -554,8 +555,7 @@ func (e *HashAggExec) spill() {
 func (e *HashAggExec) waitPartialWorkerAndCloseOutputChs(waitGroup *sync.WaitGroup) {
 	waitGroup.Wait()
 	close(e.inputCh)
-	for input := range e.inputCh {
-		e.memTracker.Consume(-input.chk.MemoryUsage())
+	for range e.inputCh {
 	}
 	for _, ch := range e.partialOutputChs {
 		close(ch)
