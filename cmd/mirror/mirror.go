@@ -361,6 +361,10 @@ def go_deps():
 `, repoName)
 		fmt.Printf(`        build_file_proto_mode = "%s",
 `, buildFileProtoModeForRepo(repoName))
+		if strings.HasPrefix(repoName, "com_github_pingcap") || strings.HasPrefix(repoName, "com_github_tikv") {
+			fmt.Printf(`        build_tags = ["dedicated"],
+`)
+		}
 		dumpBuildNamingConventionArgsForRepo(repoName)
 		expectedVPCPrivateURL := formatVPCPrivateURL(replaced.Path, replaced.Version)
 		expectedCDNURL := formatCDNURL(replaced.Path, replaced.Version)
