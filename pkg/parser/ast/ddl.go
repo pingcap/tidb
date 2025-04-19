@@ -883,10 +883,9 @@ const (
 	ConstraintForeignKey
 	ConstraintFulltext
 	ConstraintCheck
+	// ConstraintVector is only used in AST.
+	// It will be rewritten into ConstraintColumnar after preprocessor phase.
 	ConstraintVector
-	// ConstraintColumnar is used for columnar index.
-	// Vector index is also a kind of columnar index, but vector index is added before columnar index.
-	// So we keep vector index as a separate type for compatibility.
 	ConstraintColumnar
 )
 
@@ -1857,6 +1856,8 @@ const (
 	IndexKeyTypeUnique
 	IndexKeyTypeSpatial
 	IndexKeyTypeFullText
+	// IndexKeyTypeVector is only used in AST.
+	// It will be rewritten into IndexKeyTypeColumnar after preprocessor phase.
 	IndexKeyTypeVector
 	IndexKeyTypeColumnar
 )

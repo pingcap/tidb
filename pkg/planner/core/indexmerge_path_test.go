@@ -502,5 +502,5 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 
 func TestAnalyzeColumnarIndex(t *testing.T) {
 	testAnalyzeTiFlashIndex("create table t(a int, b int, c int, j json, index(a)); alter table t set tiflash replica 2 location labels 'a','b';",
-		"alter table t add columnar index idx(b); alter table t add columnar index idx2(c) using INVERTED;", t)
+		"alter table t add columnar index idx(b) using inverted; alter table t add columnar index idx2(c) using INVERTED;", t)
 }
