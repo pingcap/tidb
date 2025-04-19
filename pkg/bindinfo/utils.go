@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unique"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -203,12 +204,12 @@ func getBindingPlanDigest(sctx sessionctx.Context, schema, bindingSQL string) (p
 	}()
 
 	vars := sctx.GetSessionVars()
-	defer func(originalBaseline bool, originalDB string) {
+	defer func(originalBaseline bool, originalDB unique.Handle[string]) {
 		vars.UsePlanBaselines = originalBaseline
 		vars.CurrentDB = originalDB
 	}(vars.UsePlanBaselines, vars.CurrentDB)
 	vars.UsePlanBaselines = false
-	vars.CurrentDB = schema
+	vars.CurrentDB = unique.Make(schema)
 
 	p := utilparser.GetParser()
 	defer utilparser.DestroyParser(p)
