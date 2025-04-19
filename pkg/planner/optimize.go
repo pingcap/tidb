@@ -216,16 +216,6 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 	}()
 
 	warns = warns[:0]
-	for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
-		oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
-		if err != nil {
-			sessVars.StmtCtx.AppendWarning(err)
-		}
-		sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
-	}
-	if len(sessVars.StmtCtx.StmtHints.SetVars) > 0 {
-		sessVars.StmtCtx.SetSkipPlanCache("SET_VAR is used in the SQL")
-	}
 
 	if _, isolationReadContainTiKV := sessVars.IsolationReadEngines[kv.TiKV]; isolationReadContainTiKV {
 		var fp base.Plan
@@ -234,6 +224,21 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 			fp = fpv.Plan
 		} else {
 			fp = core.TryFastPlan(pctx, node)
+			if fp != nil {
+				// If fast plan exists, we bind the setvar hint for execution phase's usage.
+				if len(sessVars.StmtCtx.SetVarHintRestore) == 0 {
+					for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
+						oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
+						if err != nil {
+							sessVars.StmtCtx.AppendWarning(err)
+						}
+						sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
+					}
+					if len(sessVars.StmtCtx.StmtHints.SetVars) > 0 {
+						sessVars.StmtCtx.SetSkipPlanCache("SET_VAR is used in the SQL")
+					}
+				}
+			}
 		}
 		if fp != nil {
 			return fp, fp.OutputNames(), nil
@@ -282,13 +287,15 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 				setVarHintChecker, hypoIndexChecker(ctx, is),
 				sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
 			sessVars.StmtCtx.StmtHints = curStmtHints
-			// update session var by hint /set_var/
-			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
-				oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
-				if err != nil {
-					sessVars.StmtCtx.AppendWarning(err)
+			if len(sessVars.StmtCtx.SetVarHintRestore) == 0 {
+				// update session var by hint /set_var/
+				for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
+					oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
+					if err != nil {
+						sessVars.StmtCtx.AppendWarning(err)
+					}
+					sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
 				}
-				sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
 			}
 			plan, curNames, _, err := optimize(ctx, pctx, node, is)
 			if err != nil {
@@ -319,17 +326,24 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 		hint.BindHint(stmtNode, originHints)
 	}
 
-	// postpone Warmup because binding may change the behaviour, like pipelined DML
-	if err = pctx.AdviseTxnWarmup(); err != nil {
-		return nil, nil, err
-	}
-
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace && bestPlanFromBind != nil {
 		core.DebugTraceBestBinding(pctx, chosenBinding.Hint)
 	}
 	// No plan found from the bindings, or the bindings are ignored.
 	if bestPlan == nil {
 		sessVars.StmtCtx.StmtHints = originStmtHints
+		if len(sessVars.StmtCtx.SetVarHintRestore) == 0 {
+			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
+				oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
+				if err != nil {
+					sessVars.StmtCtx.AppendWarning(err)
+				}
+				sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
+			}
+			if len(sessVars.StmtCtx.StmtHints.SetVars) > 0 {
+				sessVars.StmtCtx.SetSkipPlanCache("SET_VAR is used in the SQL")
+			}
+		}
 		bestPlan, names, _, err = optimize(ctx, pctx, node, is)
 		if err != nil {
 			return nil, nil, err
@@ -454,6 +468,10 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer debugtrace.LeaveContextCommon(sctx)
+	}
+
+	if err := sctx.AdviseTxnWarmup(); err != nil {
+		return nil, nil, 0, err
 	}
 
 	// build logical plan
