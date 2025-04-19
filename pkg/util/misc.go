@@ -588,6 +588,7 @@ func initInternalClient() {
 	}
 	internalHTTPSchema = "https"
 	internalHTTPClient = &http.Client{
+		Timeout:   5 * time.Minute,
 		Transport: &http.Transport{TLSClientConfig: tlsCfg},
 	}
 }
