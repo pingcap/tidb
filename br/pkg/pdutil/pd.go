@@ -352,7 +352,7 @@ func (p *PdController) ResumeRegionLabelRule(ctx context.Context, ruleID string)
 		return
 	}
 	ruleRet, err := p.pdHTTPCli.GetRegionLabelRulesByIDs(ctx, []string{ruleID})
-	if err != nil || len(ruleRet) == 0{
+	if err != nil || len(ruleRet) == 0 {
 		log.Warn("failed to get the region label rule, the rule may have been removed", zap.String("rule-id", ruleID))
 		return
 	}
