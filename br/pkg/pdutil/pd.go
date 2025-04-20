@@ -364,7 +364,6 @@ func (p *PdController) ResumeRegionLabelRule(ctx context.Context, ruleID string)
 		log.Warn("failed to delete region label rule, the rule will be removed after ttl expires",
 			zap.String("rule-id", rule.ID), zap.Error(err))
 	}
-	return
 }
 
 func (p *PdController) resumeSchedulerWith(ctx context.Context, schedulers []string) (err error) {
