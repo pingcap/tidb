@@ -26,12 +26,10 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/summary"
-	"github.com/pingcap/tidb/pkg/tablecodec"
 	"go.uber.org/zap"
 )
 
@@ -60,35 +58,6 @@ func getSortedPhysicalTables(createdTables []*CreatedTable) []*PhysicalTable {
 		return physicalTables[a].NewPhysicalID < physicalTables[b].NewPhysicalID
 	})
 	return physicalTables
-}
-
-// mapTableToFiles makes a map that mapping table ID to its backup files.
-// aware that one file can and only can hold one table.
-func mapTableToFiles(files []*backuppb.File) (map[int64][]*backuppb.File, int) {
-	result := map[int64][]*backuppb.File{}
-	// count the write cf file that hint for split key slice size
-	maxSplitKeyCount := 0
-	for _, file := range files {
-		tableID := tablecodec.DecodeTableID(file.GetStartKey())
-		tableEndID := tablecodec.DecodeTableID(file.GetEndKey())
-		if tableID != tableEndID {
-			log.Panic("key range spread between many files.",
-				zap.String("file name", file.Name),
-				logutil.Key("startKey", file.StartKey),
-				logutil.Key("endKey", file.EndKey))
-		}
-		if tableID == 0 {
-			log.Panic("invalid table key of file",
-				zap.String("file name", file.Name),
-				logutil.Key("startKey", file.StartKey),
-				logutil.Key("endKey", file.EndKey))
-		}
-		result[tableID] = append(result[tableID], file)
-		if file.Cf == restoreutils.WriteCFName {
-			maxSplitKeyCount += 1
-		}
-	}
-	return result, maxSplitKeyCount
 }
 
 // filterOutFiles filters out files that exist in the checkpoint set.

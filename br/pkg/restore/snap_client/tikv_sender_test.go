@@ -32,47 +32,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMapTableToFiles(t *testing.T) {
-	filesOfTable1 := []*backuppb.File{
-		{
-			Name:     "table1-1.sst",
-			StartKey: tablecodec.EncodeTablePrefix(1),
-			EndKey:   tablecodec.EncodeTablePrefix(1),
-			Cf:       restoreutils.WriteCFName,
-		},
-		{
-			Name:     "table1-2.sst",
-			StartKey: tablecodec.EncodeTablePrefix(1),
-			EndKey:   tablecodec.EncodeTablePrefix(1),
-			Cf:       restoreutils.WriteCFName,
-		},
-		{
-			Name:     "table1-3.sst",
-			StartKey: tablecodec.EncodeTablePrefix(1),
-			EndKey:   tablecodec.EncodeTablePrefix(1),
-		},
-	}
-	filesOfTable2 := []*backuppb.File{
-		{
-			Name:     "table2-1.sst",
-			StartKey: tablecodec.EncodeTablePrefix(2),
-			EndKey:   tablecodec.EncodeTablePrefix(2),
-			Cf:       restoreutils.WriteCFName,
-		},
-		{
-			Name:     "table2-2.sst",
-			StartKey: tablecodec.EncodeTablePrefix(2),
-			EndKey:   tablecodec.EncodeTablePrefix(2),
-		},
-	}
-
-	result, hintSplitKeyCount := snapclient.MapTableToFiles(append(filesOfTable2, filesOfTable1...))
-
-	require.Equal(t, filesOfTable1, result[1])
-	require.Equal(t, filesOfTable2, result[2])
-	require.Equal(t, 3, hintSplitKeyCount)
-}
-
 func newPartitionID(ids []int64) *model.PartitionInfo {
 	definitions := make([]model.PartitionDefinition, 0, len(ids))
 	for i, id := range ids {
