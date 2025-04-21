@@ -152,7 +152,7 @@ func ToTiDBErr(err error) error {
 
 	var gcTooEarly *tikverr.ErrGCTooEarly
 	if stderrs.As(err, &gcTooEarly) {
-		return ErrGCTooEarly.GenWithStackByArgs(gcTooEarly.TxnStartTS, gcTooEarly.GCSafePoint)
+		return ErrGCTooEarly.GenWithStackByArgs(gcTooEarly.TxnStartTS, gcTooEarly.TxnStartTSTime, gcTooEarly.TxnSafePoint, gcTooEarly.TxnSafePointTime)
 	}
 
 	if stderrs.Is(err, tikverr.ErrTiKVStaleCommand) {

@@ -1432,16 +1432,6 @@ func (w *GCWorker) checkLeader(ctx context.Context) (bool, error) {
 	return false, nil
 }
 
-func (w *GCWorker) saveSafePoint(kv tikv.SafePointKV, t uint64) error {
-	s := strconv.FormatUint(t, 10)
-	err := kv.Put(tikv.GcSavedSafePoint, s)
-	if err != nil {
-		logutil.BgLogger().Error("save safepoint failed", zap.Error(err))
-		return errors.Trace(err)
-	}
-	return nil
-}
-
 func (w *GCWorker) saveTime(key string, t time.Time) error {
 	err := w.saveValueToSysTable(key, t.Format(tikvutil.GCTimeFormat))
 	return errors.Trace(err)
