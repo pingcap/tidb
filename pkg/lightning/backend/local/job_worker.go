@@ -310,7 +310,7 @@ func (w *cloudRegionJobWorker) write(ctx context.Context, job *regionJob) (*tikv
 			in := &ingestcli.WriteRequest{
 				Pairs: pairs,
 			}
-			if err := writeCli.Write(ctx, in); err != nil {
+			if err := writeCli.WriteChunk(in); err != nil {
 				return nil, errors.Trace(err)
 			}
 			totalCount += int64(len(pairs))
@@ -329,7 +329,7 @@ func (w *cloudRegionJobWorker) write(ctx context.Context, job *regionJob) (*tikv
 		in := &ingestcli.WriteRequest{
 			Pairs: pairs,
 		}
-		if err := writeCli.Write(ctx, in); err != nil {
+		if err := writeCli.WriteChunk(in); err != nil {
 			return nil, errors.Trace(err)
 		}
 		totalCount += int64(len(pairs))
@@ -338,7 +338,7 @@ func (w *cloudRegionJobWorker) write(ctx context.Context, job *regionJob) (*tikv
 		iter.ReleaseBuf()
 	}
 
-	resp, err := writeCli.CloseAndRecv(ctx)
+	resp, err := writeCli.Close()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

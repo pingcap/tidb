@@ -15,12 +15,16 @@
 package ingestcli
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"golang.org/x/sync/errgroup"
 )
 
 var _ WriteClient = &writeClient{}
@@ -30,64 +34,121 @@ type writeClient struct {
 	clusterID     uint64
 	taskID        int64
 	httpClient    *http.Client
+	commitTS      uint64
 
-	chunkID int // maintained internally.
+	eg          errgroup.Group
+	inited      bool
+	errCh       chan error
+	writer      *io.PipeWriter
+	reader      *io.PipeReader
+	sstFilePath string
 }
 
+// newWriteClient creates a writeClient. It is caller's responsibility to call Close() when it meets an error.
 func newWriteClient(tikvWorkerURL string, clusterID uint64, taskID int64, httpClient *http.Client) *writeClient {
 	return &writeClient{
 		tikvWorkerURL: tikvWorkerURL,
 		clusterID:     clusterID,
 		taskID:        taskID,
 		httpClient:    httpClient,
-		chunkID:       1, // start from 1.
 	}
 }
 
-func (w *writeClient) Write(ctx context.Context, in *WriteRequest) error {
+func (w *writeClient) init(ctx context.Context) error {
+	intest.Assert(!w.inited)
 	defer func() {
-		w.chunkID++
+		w.inited = true
 	}()
-	url := fmt.Sprintf("%s/write_sst?cluster_id=%d&task_id=%d&chunk_id=%d",
-		w.tikvWorkerURL, w.clusterID, w.taskID, w.chunkID)
-
-	// TODO: pass retry counter metrics.
-	var buf bytes.Buffer
-	for _, pair := range in.Pairs {
-		keyLen := uint16(len(pair.Key))
-		if err := binary.Write(&buf, binary.BigEndian, keyLen); err != nil {
-			return err
-		}
-		buf.Write(pair.Key)
-		valLen := uint32(len(pair.Value))
-		if err := binary.Write(&buf, binary.BigEndian, valLen); err != nil {
-			return err
-		}
-		buf.Write(pair.Value)
+	pr, pw := io.Pipe()
+	url := fmt.Sprintf("%s/write_sst?cluster_id=%d&commit_ts=%d",
+		w.tikvWorkerURL, w.clusterID, w.commitTS)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, pr)
+	if err != nil {
+		return errors.Trace(err)
 	}
-
-	data := buf.Bytes()
-	_, err := sendRequest(ctx, w.httpClient, "PUT", url, data, nil)
-	return err
+	req.Header.Set("Content-Type", "application/octet-stream")
+	w.errCh = make(chan error, 1)
+	w.startChunkedHTTPRequest(req)
+	w.reader = pr
+	w.writer = pw
+	return nil
 }
 
-func (w *writeClient) CloseAndRecv(ctx context.Context) (*WriteResponse, error) {
-	url := fmt.Sprintf("%s/write_sst?cluster_id=%d&task_id=%d&build=true&compression=zstd",
-		w.tikvWorkerURL, w.clusterID, w.taskID)
+func (w *writeClient) startChunkedHTTPRequest(req *http.Request) {
+	w.eg.Go(func() error {
+		defer close(w.errCh)
+		resp, err := w.httpClient.Do(req)
+		if err != nil {
+			w.errCh <- err
+			return errors.Trace(err)
+		}
+		defer resp.Body.Close()
 
-	// TODO: pass retry counter metrics.
-	data, err := sendRequest(ctx, w.httpClient, "POST", url, nil, nil)
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			return fmt.Errorf("failed to send chunked request: %s", string(body))
+		}
+		data, err := io.ReadAll(resp.Body)
+		if err != nil {
+			w.errCh <- err
+			return errors.Trace(err)
+		}
+		result := new(sstFileResult)
+		err = json.Unmarshal(data, result)
+		if err != nil {
+			w.errCh <- err
+			return errors.Trace(err)
+		}
+		w.sstFilePath = result.SSTFile
+		return nil
+	})
+}
+
+func (w *writeClient) checkErrBeforeWrite() error {
+	select {
+	case err := <-w.errCh:
+		return err
+	default:
+		return nil
+	}
+}
+
+func (w *writeClient) WriteChunk(req *WriteRequest) error {
+	err := w.checkErrBeforeWrite()
+	if err != nil {
+		return err
+	}
+	for _, pair := range req.Pairs {
+		keyLen := uint16(len(pair.Key))
+		if err := binary.Write(w.writer, binary.BigEndian, keyLen); err != nil {
+			return errors.Trace(err)
+		}
+		if _, err := w.writer.Write(pair.Key); err != nil {
+			return errors.Trace(err)
+		}
+		valLen := uint32(len(pair.Value))
+		if err := binary.Write(w.writer, binary.BigEndian, valLen); err != nil {
+			return errors.Trace(err)
+		}
+		if _, err := w.writer.Write(pair.Value); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func (w *writeClient) Close() (*WriteResponse, error) {
+	if err := w.writer.Close(); err != nil {
+		return nil, err
+	}
+	err := w.eg.Wait()
 	if err != nil {
 		return nil, err
 	}
-
-	result := new(fileNameResult)
-	err = json.Unmarshal(data, result)
-	if err != nil {
+	if err := w.reader.Close(); err != nil {
 		return nil, err
 	}
-
-	return &WriteResponse{SSTFile: result.FileName}, nil
+	return &WriteResponse{SSTFile: w.sstFilePath}, nil
 }
 
 var _ Client = &client{}
@@ -111,11 +172,13 @@ func NewClient(tikvWorkerURL string, clusterID uint64, httpClient *http.Client) 
 
 func (c *client) WriteClient(ctx context.Context) (WriteClient, error) {
 	c.currentTaskID++
-	return newWriteClient(c.tikvWorkerURL, c.clusterID, c.currentTaskID, c.httpClient), nil
+	cli := newWriteClient(c.tikvWorkerURL, c.clusterID, c.currentTaskID, c.httpClient)
+	cli.init(ctx)
+	return cli, nil
 }
 
-type fileNameResult struct {
-	FileName string `json:"file_name"`
+type sstFileResult struct {
+	SSTFile string `json:"sst_file"`
 }
 
 func (c *client) Ingest(ctx context.Context, in *IngestRequest) error {
