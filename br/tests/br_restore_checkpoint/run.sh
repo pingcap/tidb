@@ -169,7 +169,7 @@ if [ $count -ne 0 ]; then
     exit 1
 fi
 run_sql 'select count(*) from mysql.tidb_pitr_id_map;'
-check_contains "count(*): 1"
+check_contains "count(*): 0"
 count=$(ls $TEST_DIR/$PREFIX/checkpoints/pitr_id_maps | wc -l)
 if [ $count -ne 0 ]; then
     echo 'the number of pitr id map is $count instead of 0'
