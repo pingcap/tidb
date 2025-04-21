@@ -874,8 +874,6 @@ func (j *regionJob) convertStageOnIngestError(
 		j.convertStageTo(needRescan)
 		return false, nil
 	case errPb.DiskFull != nil:
-		j.lastRetryableErr = common.ErrKVDiskFull.GenWithStack(errPb.GetMessage())
-
 		return false, common.ErrKVDiskFull.GenWithStack(errPb.GetMessage())
 	}
 	// all others doIngest error, such as stale command, etc. we'll retry it again from writeAndIngestByRange
