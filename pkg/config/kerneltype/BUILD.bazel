@@ -1,0 +1,12 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "kerneltype",
+    srcs = [
+        "classic.go",
+        "doc.go",
+        "nextgen.go",  #keep
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/config/kerneltype",
+    visibility = ["//visibility:public"],
+)
