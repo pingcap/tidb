@@ -1410,17 +1410,14 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	if expBucketNumber == 0 {
 		return nil, errors.Errorf("expBucketNumber can not be zero")
 	}
-<<<<<<< HEAD
 	// minValue is used to calc the bucket lower.
 	var minValue *types.Datum
-=======
 	// The empty hists is danger to merge. we cannot get the table information from histograms
 	// The empty hists is very rare. The DDL event was not processed, and in the previous analyze,
 	// this column was not marked as "predict," resulting in it not being analyzed.
 	if len(hists) == 0 {
 		return nil, nil
 	}
->>>>>>> 9806098a9ee (stats: panic in the MergePartitionHist2GlobalHist (#56676))
 	for _, hist := range hists {
 		totColSize += hist.TotColSize
 		totNull += hist.NullCount
@@ -1441,17 +1438,12 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			}
 		}
 	}
-<<<<<<< HEAD
 
-	bucketNumber += int64(len(popedTopN))
-=======
 	// If all the hist and the topn is empty, return a empty hist.
-	if bucketNumber+len(popedTopN) == 0 {
+	if bucketNumber+int64(len(popedTopN)) == 0 {
 		return NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, 0, totColSize), nil
 	}
-
-	bucketNumber += len(popedTopN)
->>>>>>> 9806098a9ee (stats: panic in the MergePartitionHist2GlobalHist (#56676))
+	bucketNumber += int64(len(popedTopN))
 	buckets := make([]*bucket4Merging, 0, bucketNumber)
 	globalBuckets := make([]*bucket4Merging, 0, expBucketNumber)
 
