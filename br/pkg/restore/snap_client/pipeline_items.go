@@ -85,6 +85,7 @@ type PipelineContext struct {
 	LogProgress         bool
 	ChecksumConcurrency uint
 	StatsConcurrency    uint
+	AutoAnalyze         bool
 
 	// pipeline item tool client
 	KvClient   kv.Client
@@ -119,7 +120,7 @@ func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext
 	}
 
 	// pipeline update meta and load stats
-	postHandleCh = rc.GoUpdateMetaAndLoadStats(ctx, plCtx.ExtStorage, postHandleCh, errCh, updateCh, plCtx.StatsConcurrency, plCtx.LoadStats)
+	postHandleCh = rc.GoUpdateMetaAndLoadStats(ctx, plCtx.ExtStorage, postHandleCh, errCh, updateCh, plCtx.StatsConcurrency, plCtx.AutoAnalyze, plCtx.LoadStats)
 
 	// pipeline wait Tiflash synced
 	if plCtx.WaitTiflashReady {
@@ -252,6 +253,7 @@ func (rc *SnapClient) GoUpdateMetaAndLoadStats(
 	errCh chan<- error,
 	updateCh glue.Progress,
 	statsConcurrency uint,
+	autoAnalyze bool,
 	loadStats bool,
 ) chan *CreatedTable {
 	log.Info("Start to update meta then load stats")
@@ -297,7 +299,11 @@ func (rc *SnapClient) GoUpdateMetaAndLoadStats(
 			log.Info("start update metas", zap.Stringer("table", oldTable.Info.Name), zap.Stringer("db", oldTable.DB.Name))
 			// the total kvs contains the index kvs, but the stats meta needs the count of rows
 			count := int64(oldTable.TotalKvs / uint64(len(oldTable.Info.Indices)+1))
-			if statsErr = statsHandler.SaveMetaToStorage(tbl.Table.ID, count, 0, "br restore", false); statsErr != nil {
+			modifyCount := int64(0)
+			if autoAnalyze {
+				modifyCount = count
+			}
+			if statsErr = statsHandler.SaveMetaToStorage(tbl.Table.ID, count, modifyCount, "br restore", false); statsErr != nil {
 				log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(statsErr))
 			}
 		}
