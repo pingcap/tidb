@@ -2838,7 +2838,7 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain("= ")
 		ctx.WriteKeyWord("NULL")
 	case TableOptionSecondaryEngineAttribute:
-		ctx.WriteKeyWord("SECONDARY_ENGINE_ATTRIBUTE")
+		ctx.WriteKeyWord("SECONDARY_ENGINE_ATTRIBUTE ")
 		ctx.WritePlain("= ")
 		ctx.WriteString(n.StrValue)
 	case TableOptionInsertMethod:
