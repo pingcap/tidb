@@ -1086,14 +1086,12 @@ func (p *LogicalJoin) ExtractUsedCols(parentUsedCols []*expression.Column) (left
 	// leftChild schema = t1.a(t2.a) + and others
 	// rightChild schema = t3 related + and others
 	if join, ok := lChild.(*LogicalJoin); ok {
-		if join.FullSchema != nil {
-			lFullSchema = join.FullSchema
-		}
+		lFullSchema = join.FullSchema
+
 	}
 	if join, ok := rChild.(*LogicalJoin); ok {
-		if join.FullSchema != nil {
-			rFullSchema = join.FullSchema
-		}
+		rFullSchema = join.FullSchema
+
 	}
 	for _, col := range parentUsedCols {
 		if (lSchema != nil && lSchema.Contains(col)) ||
@@ -1103,7 +1101,6 @@ func (p *LogicalJoin) ExtractUsedCols(parentUsedCols []*expression.Column) (left
 			(rFullSchema != nil && rFullSchema.Contains(col)) {
 			rightCols = append(rightCols, col)
 		}
-
 	}
 	return leftCols, rightCols
 }
