@@ -237,9 +237,7 @@ func (s *statsReadWriter) SaveMetaToStorage(
 	refreshLastHistVer bool,
 	metaUpdates ...statstypes.MetaUpdate,
 ) (err error) {
-	if len(metaUpdates) == 0 {
-		return errors.Errorf("meta updates is empty")
-	}
+	intest.Assert(len(metaUpdates) > 0, "meta updates is empty")
 	var statsVer uint64
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		statsVer, err = SaveMetaToStorage(sctx, refreshLastHistVer, metaUpdates)
