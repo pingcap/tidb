@@ -36,7 +36,7 @@ ifeq ("${ENABLE_FIPS}", "1")
 endif
 
 ifeq ("${NEXT_GEN}", "1")
-	BUILD_FLAG += $(BUILD_FLAG),nextgen
+	BUILD_FLAG := $(BUILD_FLAG),nextgen
 endif
 
 GOBUILD         := $(GOEXPERIMENT) $(GO) build $(BUILD_FLAG)
