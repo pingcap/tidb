@@ -4,6 +4,7 @@ go_library(
     name = "utils",
     srcs = [
         "backoff.go",
+        "common.go",
         "db.go",
         "dyn_pprof_other.go",
         "dyn_pprof_unix.go",
@@ -33,6 +34,7 @@ go_library(
         "//br/pkg/summary",
         "//pkg/errno",
         "//pkg/kv",
+        "//pkg/meta",
         "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
