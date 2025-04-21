@@ -1254,8 +1254,14 @@ loopWrite:
 					continue
 				}
 			}
+			if err != nil {
+				log.FromContext(ctx).Warn("batch ingest fail after retry, will retry import full range", log.ShortError(err),
+					logutil.Region(region.Region), zap.Reflect("meta", ingestMetas))
+				return errors.Trace(err)
+			}
 		}
 
+<<<<<<< HEAD
 		if err != nil {
 			log.L().Warn("write and ingest region, will retry import full range", log.ShortError(err),
 				logutil.Region(region.Region), logutil.Key("start", start),
@@ -1265,6 +1271,13 @@ loopWrite:
 			engine.importedKVCount.Add(rangeStats.count)
 			engine.finishedRanges.add(finishedRange)
 			metric.BytesCounter.WithLabelValues(metric.BytesStateImported).Add(float64(rangeStats.totalBytes))
+=======
+		engine.importedKVSize.Add(rangeStats.totalBytes)
+		engine.importedKVCount.Add(rangeStats.count)
+		engine.finishedRanges.add(finishedRange)
+		if local.metrics != nil {
+			local.metrics.BytesCounter.WithLabelValues(metric.BytesStateImported).Add(float64(rangeStats.totalBytes))
+>>>>>>> 3e693f8a3a3 (local backend: fix sst skip ingest when multiIngest=false and exhausted retry count (#50282))
 		}
 		return errors.Trace(err)
 	}
