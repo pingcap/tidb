@@ -149,8 +149,7 @@ type injectedWriteBehaviour struct {
 }
 
 type injectedIngestBehaviour struct {
-	nextStage jobStageTp
-	err       error
+	err error
 }
 
 func newRegionJob(
@@ -595,7 +594,6 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 	failpoint.Inject("fakeRegionJobs", func() {
 		front := j.injected[0]
 		j.injected = j.injected[1:]
-		j.convertStageTo(front.ingest.nextStage)
 		failpoint.Return(front.ingest.err)
 	})
 
@@ -765,16 +763,9 @@ func (local *Backend) GetWriteSpeedLimit() int {
 	return local.writeLimiter.Limit()
 }
 
-type ingestResult struct {
-	nextStage jobStageTp
-	// if nextStage = regionScanned, the new region info is extracted from the PB
-	// error
-	newRegion *split.RegionInfo
-	ingestErr error
-}
-
 // ingestAPIError is the converted error when we call Ingest or MultiIngest successfully,
 // but the server return some logic error, i.e. errorpb.Error.
+// TODO: better move to ingestcli pkg, but the split.RegionInfo might cause import cycle.
 type ingestAPIError struct {
 	// the converted internal error
 	err error
@@ -787,11 +778,17 @@ func (e *ingestAPIError) Error() string {
 	return e.err.Error()
 }
 
+// Cause is used for pingcap/errors.Cause
 func (e *ingestAPIError) Cause() error {
 	return e.err
 }
 
-func convertPBError2Error(job *regionJob, errPb *errorpb.Error) error {
+// Unwrap is used for golang/errors.Is and As
+func (e *ingestAPIError) Unwrap() error {
+	return e.err
+}
+
+func convertPBError2Error(job *regionJob, errPb *errorpb.Error) *ingestAPIError {
 	var newRegion *split.RegionInfo
 	res := &ingestAPIError{}
 	switch {
@@ -852,16 +849,14 @@ func convertPBError2Error(job *regionJob, errPb *errorpb.Error) error {
 	return res
 }
 
+// the input error must be an retryable error
 func getNextStageOnIngestError(err error) (*split.RegionInfo, jobStageTp) {
 	var theErr *ingestAPIError
 	if goerrors.As(err, &theErr) {
 		switch {
 		case goerrors.Is(theErr.err, common.ErrKVIngestFailed):
 			return nil, regionScanned
-		case goerrors.Is(theErr.err, common.ErrKVServerIsBusy) ||
-			goerrors.Is(theErr.err, common.ErrKVDiskFull):
-			// TODO it shouldn't retry when disk is full. we won't change the old
-			// behavior in this PR.
+		case goerrors.Is(theErr.err, common.ErrKVServerIsBusy):
 			return nil, wrote
 		default:
 			if theErr.newRegion != nil {
@@ -870,7 +865,8 @@ func getNextStageOnIngestError(err error) (*split.RegionInfo, jobStageTp) {
 			return nil, needRescan
 		}
 	}
-	// we failed to call Ingest or MultiIngest, such as network errors
+	// we failed to call Ingest or MultiIngest on some retryable errors, such as
+	// network errors
 	return nil, wrote
 }
 

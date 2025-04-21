@@ -378,7 +378,7 @@ func (w *objStoreRegionJobWorker) ingest(ctx context.Context, j *regionJob) erro
 			logutil.Key("end", j.keyRange.End))
 
 		// TODO: choose target stage based on error.
-		return err
+		return &ingestAPIError{err: err}
 	}
 	return nil
 }
