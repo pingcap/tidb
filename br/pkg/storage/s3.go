@@ -985,7 +985,7 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 	}
 	n, err = r.reader.Read(p[:maxCnt])
 	n, err = injectfailpoint.RandomErrorForReadWithOnePerPercent(n, err)
-	if rand.Intn(5) == 0 {
+	if r.prefetchSize > 0 && rand.Intn(5) == 0 {
 		n, err = rand.Intn(n), io.ErrUnexpectedEOF
 	}
 	// TODO: maybe we should use !errors.Is(err, io.EOF) here to avoid error lint, but currently, pingcap/errors
