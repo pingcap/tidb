@@ -47,7 +47,7 @@ type regionJobBaseWorker struct {
 	jobWg    *sync.WaitGroup
 
 	writeFn     func(ctx context.Context, job *regionJob) (*tikvWriteResult, error)
-	ingestFn    func(ctx context.Context, job *regionJob) *ingestResult
+	ingestFn    func(ctx context.Context, job *regionJob) error
 	preRunJobFn func(ctx context.Context, job *regionJob) error
 	// called after the job is executed, success or not.
 	afterRunJobFn func([]*metapb.Peer)
@@ -180,24 +180,27 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 
 		// if the job is empty, it might go to ingested stage directly.
 		if job.stage == wrote {
-			res := w.ingestFn(ctx, job)
-
-			job.convertStageTo(res.nextStage)
-			if res.nextStage == regionScanned {
-				job.region = res.newRegion
-			}
-			if res.ingestErr != nil {
-				if !w.isRetryableImportTiKVError(res.ingestErr) {
-					return res.ingestErr
+			err := w.ingestFn(ctx, job)
+			if err != nil {
+				if !w.isRetryableImportTiKVError(err) {
+					return err
 				}
+
+				newRegion, nextStage := getNextStageOnIngestError(err)
+				job.convertStageTo(nextStage)
+				if newRegion != nil {
+					job.region = newRegion
+				}
+				job.lastRetryableErr = err
+
 				log.FromContext(ctx).Warn("meet retryable error when ingesting, will handle the job later",
-					log.ShortError(res.ingestErr), zap.Stringer("job stage", job.stage),
+					log.ShortError(err), zap.Stringer("job stage", job.stage),
 					job.region.ToZapFields(),
 					logutil.Key("start", job.keyRange.Start),
 					logutil.Key("end", job.keyRange.End))
-				job.lastRetryableErr = res.ingestErr
 				return nil
 			}
+			job.convertStageTo(ingested)
 		}
 		// if the stage is not ingested, it means some error happened, the job should
 		// be sent back to caller to retry later, else we handle remaining data.
@@ -360,7 +363,7 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 	}, nil
 }
 
-func (w *objStoreRegionJobWorker) ingest(ctx context.Context, j *regionJob) *ingestResult {
+func (w *objStoreRegionJobWorker) ingest(ctx context.Context, j *regionJob) error {
 	in := &ingestcli.IngestRequest{
 		Region:  j.region,
 		SSTFile: j.writeResult.sstFile,
@@ -375,10 +378,7 @@ func (w *objStoreRegionJobWorker) ingest(ctx context.Context, j *regionJob) *ing
 			logutil.Key("end", j.keyRange.End))
 
 		// TODO: choose target stage based on error.
-		return &ingestResult{
-			nextStage: needRescan,
-			ingestErr: err,
-		}
+		return err
 	}
-	return &ingestResult{nextStage: ingested}
+	return nil
 }
