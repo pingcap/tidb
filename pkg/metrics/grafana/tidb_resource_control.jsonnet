@@ -635,7 +635,7 @@ local TotalKVRequestCountPanel = graphPanel.new(
   )
 ).addTarget(
   prometheus.target(
-    'sum(rate(resource_manager_client_request_success_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (instance, name) + sum(rate(resource_manager_client_request_fail{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) by (instance, name)',
+    'sum(rate(resource_manager_client_request_success_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m])) + sum(rate(resource_manager_client_request_fail{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$tidb_instance"}[1m]))',
     legendFormat="total",
   )
 );
