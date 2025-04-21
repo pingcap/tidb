@@ -977,8 +977,8 @@ func (p *preprocessor) checkCreateTableGrammar(stmt *ast.CreateTableStmt) {
 		// FIXME: a temp error noticing 'not implemented' (issue 4754)
 		// Note: if we implement it later, please clear it's MDL related tables for
 		// it like what CREATE VIEW does.
-		p.err = errors.New("'CREATE TABLE ... SELECT' is not implemented yet")
-		return
+		// p.err = errors.New("'CREATE TABLE ... SELECT' is not implemented yet")
+		// return
 	} else if len(stmt.Cols) == 0 && stmt.ReferTable == nil {
 		p.err = dbterror.ErrTableMustHaveColumns
 		return

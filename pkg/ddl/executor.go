@@ -1036,7 +1036,15 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 		onExist = OnExistIgnore
 	}
 
-	return e.CreateTableWithInfo(ctx, schema.Name, tbInfo, involvingRef, WithOnExist(onExist))
+	err = e.CreateTableWithInfo(ctx, schema.Name, tbInfo, involvingRef, WithOnExist(onExist))
+	if err != nil {
+		return err
+	}
+	if s.Select != nil {
+		// Insert values to a nonpublic table
+		// TODO: implement this
+	}
+	return nil
 }
 
 // createTableWithInfoJob returns the table creation job.
