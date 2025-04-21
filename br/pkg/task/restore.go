@@ -879,7 +879,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if backupMeta.IsRawKv && backupMeta.IsTxnKv {
+	if backupMeta.IsRawKv || backupMeta.IsTxnKv {
 		return errors.Annotate(berrors.ErrRestoreModeMismatch, "cannot do transactional restore from raw/txn kv data")
 	}
 	if cfg.CheckRequirements {

@@ -246,10 +246,8 @@ func GetPartitionByName(tableInfo *model.TableInfo, name ast.CIStr) (int64, erro
 	if tableInfo.Partition == nil {
 		return 0, errors.Errorf("the table %s[id=%d] does not have parition", tableInfo.Name.O, tableInfo.ID)
 	}
-	for _, def := range tableInfo.Partition.Definitions {
-		if def.Name == name {
-			return def.ID, nil
-		}
+	if partID := tableInfo.Partition.GetPartitionIDByName(name.L); partID > 0 {
+		return partID, nil
 	}
 	return 0, errors.Errorf("partition is not found in the table %s[id=%d]", tableInfo.Name.O, tableInfo.ID)
 }

@@ -62,9 +62,7 @@ if [ "${load_mark}" -ne "22" ]; then
     exit 1
 fi
 
-for i in $(seq $DB_COUNT); do
-    run_sql "DROP DATABASE $DB${i};"
-done
+run_sql "DROP DATABASE ${DB}1;"
 
 rm -f $LOG
 run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB" --log-file $LOG --load-stats=false || cat $LOG
