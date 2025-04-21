@@ -658,7 +658,7 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 			continue
 		}
 		canContinue, err := j.convertStageOnIngestError(resp)
-		if common.IsContextCanceledError(err) {
+		if err != nil {
 			return err
 		}
 		if !canContinue {
@@ -705,6 +705,16 @@ func (local *Backend) checkWriteStall(
 // doIngest send ingest commands to TiKV based on regionJob.writeResult.sstMeta.
 // When meet error, it will remove finished sstMetas before return.
 func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestResponse, error) {
+	failpoint.Inject("diskFullOnIngest", func() {
+		failpoint.Return(&sst.IngestResponse{
+			Error: &errorpb.Error{
+				Message: "propose failed: tikv disk full, cmd diskFullOpt={:?}, leader diskUsage={:?}",
+				DiskFull: &errorpb.DiskFull{
+					StoreId: []uint64{1},
+				},
+			},
+		}, nil)
+	})
 	failpoint.Inject("doIngestFailed", func() {
 		failpoint.Return(nil, errors.New("injected error"))
 	})
@@ -812,7 +822,7 @@ func (local *Backend) GetWriteSpeedLimit() int {
 }
 
 // convertStageOnIngestError will try to fix the error contained in ingest response.
-// Return (_, error) when another error occurred.
+// Return (_, error) when the Ingest API error be a non-retryable error.
 // Return (true, nil) when the job can retry ingesting immediately.
 // Return (false, nil) when the job should be put back to queue.
 func (j *regionJob) convertStageOnIngestError(
@@ -891,9 +901,9 @@ func (j *regionJob) convertStageOnIngestError(
 		j.convertStageTo(needRescan)
 		return false, nil
 	case errPb.DiskFull != nil:
-		j.lastRetryableErr = common.ErrKVIngestFailed.GenWithStack(errPb.GetMessage())
+		j.lastRetryableErr = common.ErrKVDiskFull.GenWithStack(errPb.GetMessage())
 
-		return false, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
+		return false, common.ErrKVDiskFull.GenWithStack(errPb.GetMessage())
 	}
 	// all others doIngest error, such as stale command, etc. we'll retry it again from writeAndIngestByRange
 	j.lastRetryableErr = common.ErrKVIngestFailed.GenWithStack(resp.GetError().GetMessage())
