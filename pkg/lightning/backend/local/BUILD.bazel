@@ -30,7 +30,7 @@ go_library(
         "//br/pkg/restore/split",
         "//br/pkg/storage",
         "//br/pkg/version",
-        "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/distsql",
         "//pkg/infoschema",
         "//pkg/ingestor/ingestcli",
