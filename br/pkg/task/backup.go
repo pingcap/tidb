@@ -123,7 +123,7 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 	flags.Uint32(flagConcurrency, 4,
 		"Controls how many backup requests are sent out in parallel to one TiKV node. "+
 			"This doesn't directly impact performance — keeping the default is fine in most cases. "+
-			"Use 'tikv.backup.num-threads' to adjust actual backup throughput.")
+			"Change TiKV's 'backup.num-threads' to adjust actual backup throughput.")
 
 	flags.Uint(flagTableConcurrency, backup.DefaultSchemaConcurrency, "The size of a BR thread pool used for backup table metas, "+
 		"including tableInfo/checksum and stats.")
