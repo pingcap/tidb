@@ -316,7 +316,7 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240515191416-fc5f0ca64291 // indirect
 	google.golang.org/protobuf v1.36.6
 	gopkg.in/inf.v0 v0.9.1 // indirect
-	gopkg.in/natefinch/lumberjack.v2 v2.2.1
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/apimachinery v0.29.11 // indirect
 	k8s.io/klog/v2 v2.120.1 // indirect
@@ -336,3 +336,9 @@ replace (
 	sourcegraph.com/sourcegraph/appdash => github.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
 	sourcegraph.com/sourcegraph/appdash-data => github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )
+
+replace github.com/pingcap/kvproto => github.com/MyonKeminta/kvproto v0.0.0-20250311094808-d79890a8c4af
+
+replace github.com/tikv/pd/client => github.com/MyonKeminta/pd/client v0.0.0-20250417085901-68c5cb78d5bb
+
+replace github.com/tikv/client-go/v2 => github.com/MyonKeminta/client-go/v2 v2.0.0-20250421090431-36677b28aad7

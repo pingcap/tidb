@@ -67,7 +67,7 @@ type Storage interface {
 	SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error)
 	GetLockResolver() *txnlock.LockResolver
 	GetSafePointKV() tikv.SafePointKV
-	UpdateSPCache(cachedSP uint64, cachedTime time.Time)
+	UpdateTxnSafePointCache(txnSafePoint uint64, now time.Time)
 	SetOracle(oracle oracle.Oracle)
 	SetTiKVClient(client tikv.Client)
 	GetTiKVClient() tikv.Client

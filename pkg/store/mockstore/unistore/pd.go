@@ -32,6 +32,7 @@ import (
 	us "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
+	pdgc "github.com/tikv/pd/client/clients/gc"
 	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/clients/tso"
 	"github.com/tikv/pd/client/opt"
@@ -119,6 +120,14 @@ func (c *pdClient) GetLocalTSAsync(ctx context.Context, dcLocation string) tso.T
 
 func (c *pdClient) GetServiceDiscovery() sd.ServiceDiscovery {
 	return NewMockPDServiceDiscovery(c.addrs)
+}
+
+func (c *pdClient) GetGCInternalController(keyspaceID uint32) pdgc.InternalController {
+	panic("unimplemented")
+}
+
+func (c *pdClient) GetGCStatesClient(keyspaceID uint32) pdgc.GCStatesClient {
+	panic("unimplemented")
 }
 
 var (
