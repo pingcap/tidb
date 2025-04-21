@@ -642,7 +642,7 @@ func (rs *S3Storage) doReadFile(ctx context.Context, file string) ([]byte, error
 		data, readErr = io.ReadAll(result.Body)
 		// close the body of response since data has been already read out
 		result.Body.Close()
-		readErr = injectfailpoint.DXFRandomErrorWithOnePercent()
+		readErr = injectfailpoint.DXFRandomErrorWithOnePercentWrapper(readErr)
 		// for unit test
 		failpoint.Inject("read-s3-body-failed", func(_ failpoint.Value) {
 			log.Info("original error", zap.Error(readErr))
