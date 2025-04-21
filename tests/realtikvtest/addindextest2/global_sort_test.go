@@ -444,7 +444,7 @@ func TestAlterJobOnDXWithGlobalSort(t *testing.T) {
 
 	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1")
 	tk.MustExec("set @@tidb_ddl_reorg_batch_size = 32")
-	tk.MustExec("set global tidb_ddl_reorg_max_write_speed = 16")
+	tk.MustExec("set global tidb_ddl_reorg_max_write_speed = '256MiB'")
 	t.Cleanup(func() {
 		tk.MustExec("set global tidb_ddl_reorg_max_write_speed = 0")
 	})
@@ -474,12 +474,11 @@ func TestAlterJobOnDXWithGlobalSort(t *testing.T) {
 				return modified.Load()
 			}, 20*time.Second, 100*time.Millisecond)
 			require.Equal(t, 256, reorgMeta.GetBatchSize())
-			modified.Store(false)
 		})
 	})
 
-	tk.MustExec("alter table gsort add index idx(a);")
+	tk.MustExec("alter table gsort add index idx(a)")
 	require.True(t, pipeClosed)
 	require.True(t, modified.Load())
-	tk.MustExec("admin check index gsort idx;")
+	tk.MustExec("admin check index gsort idx")
 }
