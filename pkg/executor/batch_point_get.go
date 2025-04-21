@@ -230,14 +230,13 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	}
 	if txn.Valid() {
 		lock := e.tblInfo.Lock
-		snapshot := e.Ctx().GetSessionVars().StmtCtx.MemBufferSnapshot
-		println(fmt.Sprintf("DBG Build batch get for snapshot, %v", snapshot))
+		memBufferSnapshot := e.Ctx().GetSessionVars().StmtCtx.MemBufferSnapshot
 		if e.lock {
-			batchGetter = driver.NewBufferSnapshotBatchGetter(snapshot, &PessimisticLockCacheGetter{txnCtx: txnCtx}, e.snapshot)
+			batchGetter = driver.NewBufferSnapshotBatchGetter(memBufferSnapshot, &PessimisticLockCacheGetter{txnCtx: txnCtx}, e.snapshot)
 		} else if lock != nil && (lock.Tp == ast.TableLockRead || lock.Tp == ast.TableLockReadOnly) && e.Ctx().GetSessionVars().EnablePointGetCache {
 			batchGetter = newCacheBatchGetter(e.Ctx(), e.tblInfo.ID, e.snapshot)
-		} else if snapshot != nil {
-			batchGetter = driver.NewBufferSnapshotBatchGetter(snapshot, nil, e.snapshot)
+		} else if memBufferSnapshot != nil {
+			batchGetter = driver.NewBufferSnapshotBatchGetter(memBufferSnapshot, nil, e.snapshot)
 		}
 	}
 

@@ -137,13 +137,13 @@ func (b *BufferBatchGetter) BatchGet(ctx context.Context, keys []kv.Key) (map[st
 // In order to directly call NewBufferBatchGetter in client-go
 // We need to implement the interface (transaction.BatchBufferGetter) in client-go for tikvBatchBufferGetter
 type tikvBatchBufferSnapshotGetter struct {
-	tidbMiddleCache    Getter
-	tidbSnapshotBuffer kv.MemBufferSnapshot
+	tidbMiddleCache   Getter
+	memBufferSnapshot kv.MemBufferSnapshot
 }
 
 func (b tikvBatchBufferSnapshotGetter) Get(ctx context.Context, k []byte) ([]byte, error) {
 	// Get from buffer
-	val, err := b.tidbSnapshotBuffer.Get(ctx, k)
+	val, err := b.memBufferSnapshot.Get(ctx, k)
 	if err == nil || !kv.IsErrNotFound(err) || b.tidbMiddleCache == nil {
 		if kv.IsErrNotFound(err) {
 			err = tikverr.ErrNotExist
@@ -164,9 +164,9 @@ func (b tikvBatchBufferSnapshotGetter) Get(ctx context.Context, k []byte) ([]byt
 
 func (b tikvBatchBufferSnapshotGetter) BatchGet(ctx context.Context, keys [][]byte) (map[string][]byte, error) {
 	bufferValues := make(map[string][]byte, len(keys))
-	if b.tidbSnapshotBuffer != nil {
+	if b.memBufferSnapshot != nil {
 		for _, key := range keys {
-			val, err := b.tidbSnapshotBuffer.Get(ctx, key)
+			val, err := b.memBufferSnapshot.Get(ctx, key)
 			if err != nil {
 				if kv.IsErrNotFound(err) {
 					continue
@@ -197,7 +197,7 @@ func (b tikvBatchBufferSnapshotGetter) BatchGet(ctx context.Context, keys [][]by
 
 // NewBufferSnapshotBatchGetter creates a new BufferBatchGetter.
 func NewBufferSnapshotBatchGetter(bufferSnapshot kv.MemBufferSnapshot, middleCache Getter, snapshot BatchGetter) *BufferSnapshotBatchGetter {
-	tikvBuffer := tikvBatchBufferSnapshotGetter{tidbMiddleCache: middleCache, tidbSnapshotBuffer: bufferSnapshot}
+	tikvBuffer := tikvBatchBufferSnapshotGetter{tidbMiddleCache: middleCache, memBufferSnapshot: bufferSnapshot}
 	tikvSnapshot := tikvBatchGetter{snapshot}
 	return &BufferSnapshotBatchGetter{tikvBufferBatchGetter: *transaction.NewBufferSnapshotBatchGetter(tikvBuffer, tikvSnapshot)}
 }
