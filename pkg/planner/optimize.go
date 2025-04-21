@@ -16,6 +16,7 @@ package planner
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"math/rand"
 	"sync"
@@ -463,6 +464,9 @@ func optimize(ctx context.Context, sctx planctx.PlanContext, node *resolve.NodeW
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
 	builder.Init(sctx, is, hintProcessor)
+	if !sctx.GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	p, err := buildLogicalPlan(ctx, sctx, node, builder)
 	if err != nil {
 		return nil, nil, 0, err

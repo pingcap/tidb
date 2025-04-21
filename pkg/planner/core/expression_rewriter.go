@@ -274,6 +274,9 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalP
 }
 
 func rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScalar bool) (expression.Expression, base.LogicalPlan, error) {
+	if rewriter.sctx.GetEvalCtx().CurrentDB() == "test" {
+		fmt.Println("wwz")
+	}
 	planCtx := rewriter.planCtx
 	// sourceTable is only used to build simple expression with one table
 	// when planCtx is present, sourceTable should be nil.
