@@ -134,3 +134,8 @@ func (m *mergeSortExecutor) onFinished(ctx context.Context, subtask *proto.Subta
 	subtask.Meta = newMeta
 	return nil
 }
+
+func (m *mergeSortExecutor) ResourceModified(_ context.Context, newResource *proto.StepResource) error {
+	// Will be added in the future PR
+	return nil
+}

@@ -177,3 +177,15 @@ func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
 	m.backend.Close()
 	return nil
 }
+
+// TaskMetaModified changes the max write speed for ingest
+func (m *cloudImportExecutor) TaskMetaModified(ctx context.Context, newMeta []byte) error {
+	// Will be added in the future PR
+	return nil
+}
+
+// ResourceModified change the concurrency for ingest
+func (m *cloudImportExecutor) ResourceModified(ctx context.Context, newResource *proto.StepResource) error {
+	// Will be added in the future PR
+	return nil
+}
