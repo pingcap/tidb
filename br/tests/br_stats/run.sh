@@ -39,7 +39,7 @@ dump_db2_cnt=$(cat $LOG | grep "dump stats to json" | grep "${DB}2" | wc -l)
 dump_mark=$((${dump_cnt}+10*${dump_db1_cnt}+100*${dump_db2_cnt}))
 echo "dump stats count: ${dump_cnt}; db1 count: ${dump_db1_cnt}; db2 count: ${dump_db2_cnt}; dump mark: ${dump_mark}"
 
-if [ "${dump_mark}" -ne "112" ]; then
+if [ "${dump_mark}" -ne "123" ]; then
     echo "TEST: [$TEST_NAME] fail on dump stats"
     echo $(cat $LOG | grep "dump stats to json")
     exit 1
@@ -56,7 +56,7 @@ load_db1_cnt=$(cat $LOG | grep "restore statistic data done" | grep "${DB}1" | w
 load_mark=$((${load_cnt}+10*${load_db1_cnt}))
 echo "load stats count: ${load_cnt}; db1 count: ${load_db1_cnt}; load mark: ${load_mark}"
 
-if [ "${load_mark}" -ne "11" ]; then
+if [ "${load_mark}" -ne "22" ]; then
     echo "TEST: [$TEST_NAME] fail on load stats"
     echo $(cat $LOG | grep "restore statistic data done")
     exit 1
