@@ -235,13 +235,12 @@ func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt any, args [
 	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
 
 	fn := func() bool {
-		b := make([]byte, 1)
 		cc.mu.Lock()
 		err1 := cc.bufReadConn.SetReadDeadline(time.Now().Add(30 * time.Microsecond))
 		if err1 != nil {
 			return true
 		}
-		_, err1 = cc.bufReadConn.Read(b)
+		_, err1 = cc.bufReadConn.Peek(1)
 		if terror.ErrorEqual(err1, io.EOF) {
 			return false
 		}

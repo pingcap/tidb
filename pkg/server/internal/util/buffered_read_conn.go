@@ -40,3 +40,8 @@ func NewBufferedReadConn(conn net.Conn) *BufferedReadConn {
 func (conn BufferedReadConn) Read(b []byte) (n int, err error) {
 	return conn.rb.Read(b)
 }
+
+// Peek reads data from the connection.
+func (conn BufferedReadConn) Peek(n int) ([]byte, error) {
+	return conn.rb.Peek(n)
+}
