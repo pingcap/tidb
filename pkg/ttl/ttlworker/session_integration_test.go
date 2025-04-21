@@ -22,17 +22,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ngaut/pools"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
+	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 )
 
 type fault interface {
@@ -81,14 +79,15 @@ func newFaultWithFilter(filter func(string) bool, f fault) *faultWithFilter {
 // sessionWithFault is a session which will fail to execute SQL after successfully executing several SQLs. It's designed
 // to trigger every possible branch of returning error from `Execute`
 type sessionWithFault struct {
-	sessionctx.Context
-
-	fault *atomic.Pointer[fault]
+	syssession.SessionContext
+	closed bool
+	fault  *atomic.Pointer[fault]
 }
 
 // Close implements pools.Resource
 func (s *sessionWithFault) Close() {
-	s.Context.(pools.Resource).Close()
+	s.closed = true
+	s.SessionContext.Close()
 }
 
 // GetSQLExecutor implements sessionctx.Context.
@@ -101,7 +100,7 @@ func (s *sessionWithFault) Execute(ctx context.Context, sql string) ([]sqlexec.R
 	if s.shouldFault(sql) {
 		return nil, errors.New("fault in test")
 	}
-	return s.Context.GetSQLExecutor().Execute(ctx, sql)
+	return s.SessionContext.GetSQLExecutor().Execute(ctx, sql)
 }
 
 // ExecuteStmt implements sqlexec.SQLExecutor.
@@ -109,14 +108,14 @@ func (s *sessionWithFault) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNod
 	if s.shouldFault(stmtNode.Text()) {
 		return nil, errors.New("fault in test")
 	}
-	return s.Context.GetSQLExecutor().ExecuteStmt(ctx, stmtNode)
+	return s.SessionContext.GetSQLExecutor().ExecuteStmt(ctx, stmtNode)
 }
 
 func (s *sessionWithFault) ExecuteInternal(ctx context.Context, sql string, args ...any) (sqlexec.RecordSet, error) {
 	if s.shouldFault(sql) {
 		return nil, errors.New("fault in test")
 	}
-	return s.Context.GetSQLExecutor().ExecuteInternal(ctx, sql, args...)
+	return s.SessionContext.GetSQLExecutor().ExecuteInternal(ctx, sql, args...)
 }
 
 func (s *sessionWithFault) shouldFault(sql string) bool {
@@ -129,39 +128,39 @@ func (s *sessionWithFault) shouldFault(sql string) bool {
 }
 
 type faultSessionPool struct {
-	util.DestroyableSessionPool
-
-	fault *atomic.Pointer[fault]
+	t *testing.T
+	syssession.Pool
+	sp           syssession.Pool
+	fault        *atomic.Pointer[fault]
+	onSysSession func(*syssession.Session)
 }
 
-func newFaultSessionPool(sp util.DestroyableSessionPool) *faultSessionPool {
+func newFaultSessionPool(t *testing.T, sp syssession.Pool) *faultSessionPool {
 	return &faultSessionPool{
-		DestroyableSessionPool: sp,
-		fault:                  &atomic.Pointer[fault]{},
+		t:     t,
+		sp:    sp,
+		fault: &atomic.Pointer[fault]{},
 	}
 }
 
-// Get implements util.SessionPool.
-func (f *faultSessionPool) Get() (pools.Resource, error) {
-	resource, err := f.DestroyableSessionPool.Get()
-	if err != nil {
-		return nil, err
-	}
-
-	return &sessionWithFault{
-		Context: resource.(sessionctx.Context),
-		fault:   f.fault,
-	}, nil
-}
-
-// Put implements util.SessionPool.
-func (f *faultSessionPool) Put(se pools.Resource) {
-	f.DestroyableSessionPool.Put(se.(*sessionWithFault).Context.(pools.Resource))
-}
-
-// Destroy implements util.DestroyableSessionPool.
-func (f *faultSessionPool) Destroy(se pools.Resource) {
-	f.DestroyableSessionPool.Destroy(se.(*sessionWithFault).Context.(pools.Resource))
+func (f *faultSessionPool) WithSession(fn func(*syssession.Session) error) error {
+	return f.sp.WithSession(func(se *syssession.Session) error {
+		require.NoError(f.t, se.ResetSctxForTest(func(sctx syssession.SessionContext) syssession.SessionContext {
+			return &sessionWithFault{
+				SessionContext: sctx,
+				fault:          f.fault,
+			}
+		}))
+		defer func() {
+			require.NoError(f.t, se.ResetSctxForTest(func(sctx syssession.SessionContext) syssession.SessionContext {
+				return sctx.(*sessionWithFault).SessionContext
+			}))
+		}()
+		if f.onSysSession != nil {
+			f.onSysSession(se)
+		}
+		return fn(se)
+	})
 }
 
 func (f *faultSessionPool) setFault(ft fault) {
@@ -174,39 +173,193 @@ func (f *faultSessionPool) setFault(ft fault) {
 }
 
 func TestGetSessionWithFault(t *testing.T) {
+	origAttachStats, origDetachStats := ttlworker.AttachStatsCollector, ttlworker.DetachStatsCollector
+	defer func() {
+		ttlworker.AttachStatsCollector = origAttachStats
+		ttlworker.DetachStatsCollector = origDetachStats
+	}()
+
 	_, dom := testkit.CreateMockStoreAndDomain(t)
+	pool := newFaultSessionPool(t, dom.AdvancedSysSessionPool())
 
-	pool := newFaultSessionPool(dom.SysSessionPool())
+	var sysSe *syssession.Session
+	pool.onSysSession = func(se *syssession.Session) {
+		require.Nil(t, sysSe)
+		sysSe = se
+		// set some session variables to make sure to test all variables setting/restore
+		delete(se.InternalSctxForTest().GetSessionVars().IsolationReadEngines, kv.TiFlash)
+		se.InternalSctxForTest().GetSessionVars().Enable1PC = false
+		se.InternalSctxForTest().GetSessionVars().EnableAsyncCommit = false
+	}
 
-	for i := 0; i < 50; i++ {
-		pool.setFault(newFaultWithFilter(func(sql string) bool {
-			// skip some local only sql, ref `getSession()` in `session.go`
-			if strings.HasPrefix(sql, "set tidb_") || strings.HasPrefix(sql, "set @@") {
-				return false
+	type mockAttached struct{ sqlexec.SQLExecutor }
+	var attached *mockAttached
+	var detached sqlexec.SQLExecutor
+	ttlworker.AttachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+		require.Nil(t, attached)
+		require.Nil(t, detached)
+		attached = &mockAttached{SQLExecutor: s}
+		return attached
+	}
+	ttlworker.DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+		require.NotNil(t, attached)
+		require.Same(t, attached, s)
+		require.Nil(t, detached)
+		detached = attached.SQLExecutor
+		return detached
+	}
+
+	prepareFaults := []struct {
+		sql   string
+		panic bool
+	}{
+		{sql: "set tidb_retry_limit=0"},
+		{sql: "set tidb_retry_limit=0", panic: true},
+		{sql: "set tidb_enable_1pc=ON"},
+		{sql: "set tidb_enable_async_commit=ON"},
+		{sql: "ROLLBACK"},
+		{sql: "set @@time_zone='UTC'"},
+		{sql: "select @@tidb_isolation_read_engines"},
+		{sql: "set tidb_isolation_read_engines='tikv,tiflash,tidb'"},
+	}
+
+	for _, f := range prepareFaults {
+		t.Run(f.sql, func(t *testing.T) {
+			sysSe, attached, detached = nil, nil, nil
+			pool.setFault(newFaultWithFilter(func(sql string) bool {
+				if f.panic && sql == f.sql {
+					panic(sql)
+				}
+				return sql == f.sql
+			}, newFaultAfterCount(0)))
+			if f.panic {
+				require.PanicsWithValue(t, f.sql, func() {
+					_ = ttlworker.WithSessionForTest(pool, func(se session.Session) error {
+						require.FailNow(t, f.sql, "should not reach here")
+						return nil
+					})
+				})
+			} else {
+				err := ttlworker.WithSessionForTest(pool, func(se session.Session) error {
+					require.FailNow(t, f.sql, "should not reach here")
+					return nil
+				})
+				require.Error(t, err)
 			}
-			return true
-		}, newFaultAfterCount(i)))
+			require.NotNil(t, sysSe)
+			// check the session should have been detached
+			exec := sysSe.InternalSctxForTest().GetSQLExecutor()
+			require.Same(t, detached.(*sessionWithFault).SessionContext.GetSQLExecutor(), exec)
+			// check the session should be closed instead of put back due to the fault
+			require.True(t, sysSe.IsInternalClosed())
+		})
+	}
 
-		se, err := ttlworker.GetSessionForTest(pool)
-		logutil.BgLogger().Info("get session", zap.Int("error after count", i), zap.Bool("session is nil", se == nil), zap.Bool("error is nil", err == nil))
-		require.True(t, se != nil || err != nil)
+	t.Run("use error", func(t *testing.T) {
+		sysSe, attached, detached = nil, nil, nil
+		pool.setFault(newFaultWithFilter(func(sql string) bool { return false }, newFaultAfterCount(0)))
+		err := ttlworker.WithSessionForTest(pool, func(session.Session) error {
+			require.NotNil(t, attached)
+			require.Nil(t, detached)
+			return errors.New("mockErr1")
+		})
+		require.EqualError(t, err, "mockErr1")
+		require.NotNil(t, sysSe)
+		// check the session should have been attached and detached
+		exec := sysSe.InternalSctxForTest().GetSQLExecutor()
+		require.Same(t, attached.SQLExecutor.(*sessionWithFault).SessionContext.GetSQLExecutor(), exec)
+		require.Same(t, detached.(*sessionWithFault).SessionContext.GetSQLExecutor(), exec)
+		// check the session should be closed instead of put back due to the fault
+		require.True(t, sysSe.IsInternalClosed())
+	})
+
+	t.Run("use panic", func(t *testing.T) {
+		sysSe, attached, detached = nil, nil, nil
+		pool.setFault(newFaultWithFilter(func(sql string) bool { return false }, newFaultAfterCount(0)))
+		require.PanicsWithValue(t, "mockPanic1", func() {
+			_ = ttlworker.WithSessionForTest(pool, func(session.Session) error {
+				require.NotNil(t, attached)
+				require.Nil(t, detached)
+				panic("mockPanic1")
+			})
+		})
+		require.NotNil(t, sysSe)
+		// check the session should have been attached and detached
+		exec := sysSe.InternalSctxForTest().GetSQLExecutor()
+		require.Same(t, attached.SQLExecutor.(*sessionWithFault).SessionContext.GetSQLExecutor(), exec)
+		require.Same(t, detached.(*sessionWithFault).SessionContext.GetSQLExecutor(), exec)
+		// check the session should be closed instead of put back due to the fault
+		require.True(t, sysSe.IsInternalClosed())
+	})
+
+	restoreFaults := []struct {
+		prefix string
+		panic  bool
+	}{
+		{prefix: "set tidb_retry_limit="},
+		{prefix: "set tidb_retry_limit=", panic: true},
+		{prefix: "set tidb_enable_1pc="},
+		{prefix: "set tidb_enable_async_commit="},
+		{prefix: "set @@time_zone="},
+		{prefix: "set tidb_isolation_read_engines="},
+	}
+
+	for _, f := range restoreFaults {
+		t.Run(f.prefix, func(t *testing.T) {
+			sysSe, attached, detached = nil, nil, nil
+			afterPrepare := false
+			pool.setFault(newFaultWithFilter(func(sql string) bool {
+				if !afterPrepare {
+					return false
+				}
+				if f.panic && strings.HasPrefix(sql, f.prefix) {
+					panic(f.prefix)
+				}
+				return strings.HasPrefix(sql, f.prefix)
+			}, newFaultAfterCount(0)))
+			if f.panic {
+				require.PanicsWithValue(t, f.prefix, func() {
+					_ = ttlworker.WithSessionForTest(pool, func(se session.Session) error {
+						require.NotNil(t, attached)
+						require.Nil(t, detached)
+						require.False(t, afterPrepare)
+						afterPrepare = true
+						return nil
+					})
+				})
+			} else {
+				require.NoError(t, ttlworker.WithSessionForTest(pool, func(se session.Session) error {
+					require.NotNil(t, attached)
+					require.Nil(t, detached)
+					require.False(t, afterPrepare)
+					afterPrepare = true
+					return nil
+				}))
+			}
+			require.NotNil(t, sysSe)
+			// check With function has been called
+			require.True(t, afterPrepare)
+			// check the session should have been attached and detached
+			exec := sysSe.InternalSctxForTest().GetSQLExecutor()
+			require.Same(t, attached.SQLExecutor.(*sessionWithFault).SessionContext.GetSQLExecutor(), exec)
+			require.Same(t, detached.(*sessionWithFault).SessionContext.GetSQLExecutor(), exec)
+			// check the session should be closed instead of put back due to the fault
+			require.True(t, sysSe.IsInternalClosed())
+		})
 	}
 }
 
 func TestNewScanSession(t *testing.T) {
 	_, dom := testkit.CreateMockStoreAndDomain(t)
-	pool := newFaultSessionPool(dom.SysSessionPool())
+	pool := newFaultSessionPool(t, dom.AdvancedSysSessionPool())
 	pool.setFault(newFaultWithFilter(func(s string) bool { return false }, newFaultAfterCount(0)))
-	se, err := ttlworker.GetSessionForTest(pool)
-	require.NoError(t, err)
-
-	_, err = se.ExecuteSQL(context.Background(), "set @@tidb_distsql_scan_concurrency=123")
-	require.NoError(t, err)
-	require.Equal(t, 123, se.GetSessionVars().DistSQLScanConcurrency())
-
-	_, err = se.ExecuteSQL(context.Background(), "set @@tidb_enable_paging=ON")
-	require.NoError(t, err)
-	require.True(t, se.GetSessionVars().EnablePaging)
+	var sysSe *syssession.Session
+	pool.onSysSession = func(se *syssession.Session) {
+		require.Nil(t, sysSe)
+		sysSe = se
+		se.InternalSctxForTest().GetSessionVars().SetDistSQLScanConcurrency(123)
+		se.InternalSctxForTest().GetSessionVars().EnablePaging = true
+	}
 
 	for _, errSQL := range []string{
 		"",
@@ -214,42 +367,75 @@ func TestNewScanSession(t *testing.T) {
 		"set @@tidb_enable_paging=OFF",
 	} {
 		t.Run("test err in SQL: "+errSQL, func(t *testing.T) {
-			var faultCnt atomic.Int64
+			sysSe = nil
 			pool.setFault(newFaultWithFilter(func(s string) bool {
-				if s == errSQL && s != "" {
-					faultCnt.Add(1)
-					return true
-				}
-				return false
+				return s != "" && s == errSQL
 			}, newFaultAfterCount(0)))
-			tblSe, restore, err := ttlworker.NewScanSession(se, &cache.PhysicalTable{}, time.Now())
-			if errSQL == "" {
-				// success case
-				require.NoError(t, err)
-				require.NotNil(t, tblSe)
-				require.NotNil(t, restore)
-				require.Same(t, se, tblSe.Session)
-				require.Equal(t, int64(0), faultCnt.Load())
 
-				// NewScanSession should override @@dist_sql_scan_concurrency and @@tidb_enable_paging
-				require.Equal(t, 1, se.GetSessionVars().DistSQLScanConcurrency())
-				require.False(t, se.GetSessionVars().EnablePaging)
-
-				// restore should restore the session variables
-				restore()
+			called := false
+			require.NoError(t, ttlworker.WithSessionForTest(pool, func(se session.Session) error {
+				require.False(t, called)
+				tblSe, restore, err := ttlworker.NewScanSession(se, &cache.PhysicalTable{}, time.Now())
+				called = true
+				if errSQL == "" {
+					// success case
+					require.NoError(t, err)
+					require.NotNil(t, tblSe)
+					require.NotNil(t, restore)
+					require.Same(t, se, tblSe.Session)
+					// NewScanSession should override @@dist_sql_scan_concurrency and @@tidb_enable_paging
+					require.Equal(t, 1, se.GetSessionVars().DistSQLScanConcurrency())
+					require.False(t, se.GetSessionVars().EnablePaging)
+					// restore should restore the session variables
+					restore()
+				} else {
+					// fault case
+					require.EqualError(t, err, "fault in test")
+					require.Nil(t, tblSe)
+					require.Nil(t, restore)
+				}
+				// Not matter returns an error or not, the session should be closed
 				require.Equal(t, 123, se.GetSessionVars().DistSQLScanConcurrency())
 				require.True(t, se.GetSessionVars().EnablePaging)
-			} else {
-				// error case
-				require.Equal(t, int64(1), faultCnt.Load())
-				require.EqualError(t, err, "fault in test")
-				require.Nil(t, tblSe)
-				require.Nil(t, restore)
+				return nil
+			}))
+			require.True(t, called)
+			// internal should not close
+			require.False(t, sysSe.IsInternalClosed())
+		})
+	}
 
-				// NewScanSession should not change session state if error occurs
+	// error in restore
+	for _, prefixSQL := range []string{
+		"set @@tidb_distsql_scan_concurrency=",
+		"set @@tidb_enable_paging=",
+	} {
+		sysSe = nil
+		called := false
+		pool.setFault(newFaultWithFilter(func(s string) bool {
+			return called && strings.HasPrefix(s, prefixSQL)
+		}, newFaultAfterCount(0)))
+		require.NoError(t, ttlworker.WithSessionForTest(pool, func(se session.Session) error {
+			require.False(t, called)
+			tblSe, restore, err := ttlworker.NewScanSession(se, &cache.PhysicalTable{}, time.Now())
+			called = true
+			require.NoError(t, err)
+			require.NotNil(t, tblSe)
+			require.Equal(t, 1, se.GetSessionVars().DistSQLScanConcurrency())
+			require.False(t, se.GetSessionVars().EnablePaging)
+			// restore should return error
+			require.EqualError(t, restore(), "fault in test")
+			// other session variables should be restored
+			if !strings.Contains(prefixSQL, "tidb_distsql_scan_concurrency") {
 				require.Equal(t, 123, se.GetSessionVars().DistSQLScanConcurrency())
+			}
+			if !strings.Contains(prefixSQL, "tidb_enable_paging") {
 				require.True(t, se.GetSessionVars().EnablePaging)
 			}
-		})
+			return nil
+		}))
+		require.True(t, called)
+		// internal should be closed because restore failed
+		require.True(t, sysSe.IsInternalClosed())
 	}
 }
