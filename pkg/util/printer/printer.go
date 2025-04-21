@@ -85,13 +85,8 @@ func GetTiDBInfo() string {
 		config.GetGlobalConfig().Store,
 		enterpriseVersion,
 	)
-<<<<<<< HEAD
-	if config.IsObjectStore() {
-		info += "\nData Storage: Object Storage"
-=======
 	if kerneltype.IsNextGen() {
 		info += "\nKernel Type: Next Generation"
->>>>>>> c0658002ba6 (*: add kernel type and build for next gen (#60668))
 	}
 	return info
 }

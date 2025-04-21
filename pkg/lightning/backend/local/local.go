@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/version"
-	tidbconfig "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
@@ -1445,7 +1445,7 @@ func (local *Backend) newRegionJobWorker(
 		afterRunJobFn:    afterExecuteJob,
 		regenerateJobsFn: local.generateJobForRange,
 	}
-	if tidbconfig.IsObjectStore() {
+	if kerneltype.IsNextGen() {
 		cloudW := &objStoreRegionJobWorker{
 			// TODO fill the cli
 			ingestCli:      nil,
