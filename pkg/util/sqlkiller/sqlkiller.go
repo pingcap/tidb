@@ -132,14 +132,8 @@ func (killer *SQLKiller) HandleSignal() error {
 	// Checks if the connection is alive.
 	// For performance reasons, the check interval should be at least `checkConnectionAliveDur`(1 second).
 	fn := killer.IsConnectionAlive.Load()
-	ts := killer.lastCheckTime.Load()
-	if fn != nil && (ts == nil || time.Since(*ts) > checkConnectionAliveDur) {
-		now := time.Now()
-		killer.lastCheckTime.Store(&now)
-		// Skip the first time.
-		if ts != nil && !(*fn)() {
-			atomic.CompareAndSwapUint32(&killer.Signal, 0, QueryInterrupted)
-		}
+	if fn != nil && !(*fn)() {
+		atomic.CompareAndSwapUint32(&killer.Signal, 0, QueryInterrupted)
 	}
 
 	status := atomic.LoadUint32(&killer.Signal)

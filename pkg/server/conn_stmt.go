@@ -236,7 +236,7 @@ func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt any, args [
 
 	fn := func() bool {
 		b := make([]byte, 1)
-		cc.bufReadConn.SetReadDeadline(time.Now().Add(30*time.Microsecond))
+		cc.bufReadConn.SetReadDeadline(time.Now().Add(30 * time.Microsecond))
 		_, err := cc.bufReadConn.Read(b)
 		if terror.ErrorEqual(err, io.EOF) {
 			return false
