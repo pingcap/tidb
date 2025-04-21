@@ -3701,6 +3701,7 @@ func GetForceMVIndexScan(ctx context.Context) bool {
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p base.LogicalPlan, err error) {
+	ctx = WithForceMVIndexScan(ctx, true)
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
 	defer func() {

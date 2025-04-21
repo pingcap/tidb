@@ -69,10 +69,12 @@ var _ exec.Executor = &CheckTableExec{}
 
 const (
 	// mvIndexCRC32Sum is the aggregated column from subquery for MVIndex check.
-	mvIndexCRC32Sum = "_mv_index_crc32_column"
+	mvIndexCRC32Sum = "_crc32_sum_column"
 
-	// mvIndexArrayColumn is the concated json array from subquery.
-	mvIndexArrayColumn = "_mv_index_array_column"
+	// mvJSONColumn is the json array to output in error message.
+	// For table scan, it's read directly from the table,
+	// for index scan, it's concated from all the values of the same handle.
+	mvJSONColumn = "_generated_json_column"
 )
 
 // Open implements the Executor Open interface.
@@ -572,12 +574,12 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 
 	if meetError {
 		if useMVIndex {
-			// If meet error, concat json array to string and output it the query.
+			// If meet error, output original json in the subquery as well.
 			fromForTable = fmt.Sprintf("(select %s, %s as %s, %s as %s from %s use index()) tmp",
-				handleCols, extractExpr, mvIndexArrayColumn, strings.Replace(generatedExpr, "cast", "JSON_SUM", 1), indexCols, tblName)
-			fromForIndex = fmt.Sprintf("(select /*+ force_index(`%s`, `%s`) */ %s, JSON_ARRAYAGG(%s) as %s, SUM(CRC32(%s)) as %s from %s group by %s) tmp",
-				tblName, idxInfo.Name, handleCols, generatedExpr, mvIndexArrayColumn, generatedExpr, indexCols, tblName, handleCols)
-			indexCols = mvIndexArrayColumn
+				handleCols, extractExpr, mvJSONColumn, strings.Replace(generatedExpr, "cast", "JSON_SUM", 1), indexCols, tblName)
+			fromForIndex = fmt.Sprintf("(select /*+ force_index(`%[1]s`, `%[2]s`) */ %[3]s, JSON_ARRAYAGG(%[4]s) as %[5]s, SUM(CRC32(%[4]s)) as %[6]s from %[1]s group by %[3]s) tmp",
+				tblName, idxInfo.Name, handleCols, generatedExpr, mvJSONColumn, indexCols)
+			indexCols = mvJSONColumn
 		}
 
 		groupByKey := fmt.Sprintf("((cast(%s as signed) - %d) %% %d)", md5Handle, offset, mod)
