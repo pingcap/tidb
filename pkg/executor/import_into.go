@@ -201,7 +201,7 @@ func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chun
 	}); err != nil {
 		return err
 	}
-	FillOneImportJobInfo(info, req, unknownImportedRowCount)
+	FillOneImportJobInfo(req, info, unknownImportedRowCount)
 	return nil
 }
 
@@ -328,6 +328,14 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	// TODO: change it after spec is ready.
 	stmtCtx.SetMessage(fmt.Sprintf("Records: %d, ID: %s", importResult.Affected, importID))
 	return nil
+}
+
+// Close implements the Executor interface.
+func (e *ImportIntoExec) Close() error {
+	if e.controller != nil {
+		e.controller.Close()
+	}
+	return e.BaseExecutor.Close()
 }
 
 // ImportIntoActionExec represents a import into action executor.

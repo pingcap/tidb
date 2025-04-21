@@ -1887,6 +1887,25 @@ func ExprsToStringsForDisplay(ctx EvalContext, exprs []Expression) []string {
 	return strs
 }
 
+// HasColumnWithCondition tries to retrieve the expression (column or function) if it contains the target column.
+func HasColumnWithCondition(e Expression, cond func(*Column) bool) bool {
+	return hasColumnWithCondition(e, cond)
+}
+
+func hasColumnWithCondition(e Expression, cond func(*Column) bool) bool {
+	switch v := e.(type) {
+	case *Column:
+		return cond(v)
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			if hasColumnWithCondition(arg, cond) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // ConstExprConsiderPlanCache indicates whether the expression can be considered as a constant expression considering planCache.
 // If the expression is in plan cache, it should have a const level `ConstStrict` because it can be shared across statements.
 // If the expression is not in plan cache, `ConstOnlyInContext` is enough because it is only used in one statement.

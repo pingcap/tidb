@@ -1201,6 +1201,8 @@ AAAAAAAAAAAA5gm5Mg==
 		{"query watch add SQL SIMILAR to 'select 1'", false, ""},
 		{"query watch add SQL TEXT SIMILAR 'select 1'", false, ""},
 		{"query watch remove 1", true, "QUERY WATCH REMOVE 1"},
+		{"query watch remove resource group rg1", true, "QUERY WATCH REMOVE RESOURCE GROUP `rg1`"},
+		{"query watch remove resource group @rg", true, "QUERY WATCH REMOVE RESOURCE GROUP @`rg`"},
 		{"query watch remove", false, ""},
 
 		// for issue 34325, "replace into" with hints

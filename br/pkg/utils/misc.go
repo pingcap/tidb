@@ -27,9 +27,11 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -250,4 +252,20 @@ func GetPartitionByName(tableInfo *model.TableInfo, name ast.CIStr) (int64, erro
 		}
 	}
 	return 0, errors.Errorf("partition is not found in the table %s[id=%d]", tableInfo.Name.O, tableInfo.ID)
+}
+
+func SummaryFiles(files []*backuppb.File) (crc, kvs, bytes uint64) {
+	cfCount := make(map[string]int)
+	for _, f := range files {
+		cfCount[f.Cf] += 1
+		summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
+		summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
+		crc ^= f.Crc64Xor
+		kvs += f.TotalKvs
+		bytes += f.TotalBytes
+	}
+	for cf, count := range cfCount {
+		summary.CollectInt(fmt.Sprintf("%s CF files", cf), count)
+	}
+	return crc, kvs, bytes
 }

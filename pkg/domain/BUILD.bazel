@@ -59,6 +59,7 @@ go_library(
         "//pkg/planner/core/metrics",
         "//pkg/privilege/privileges",
         "//pkg/resourcegroup/runaway",
+        "//pkg/session/syssession",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/sysproctrack",

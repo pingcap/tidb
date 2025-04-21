@@ -52,6 +52,8 @@ const (
 	loadGlobalVarsSQL            = `SELECT HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (` // + nameList + ")"
 	// KeyOpDefaultTimeout is the default timeout for each key operation.
 	KeyOpDefaultTimeout = 2 * time.Second
+	// KeyOpDefaultRetryCnt is the default retry times for each key operation.
+	KeyOpDefaultRetryCnt = 5
 	// KeyOpRetryInterval is the interval between two key operations.
 	KeyOpRetryInterval = 30 * time.Millisecond
 	// DDLAllSchemaVersions is the path on etcd that is used to store all servers current schema versions.

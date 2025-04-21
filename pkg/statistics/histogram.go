@@ -1443,6 +1443,12 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	if expBucketNumber == 0 {
 		return nil, errors.Errorf("expBucketNumber can not be zero")
 	}
+	// The empty hists is danger to merge. we cannot get the table information from histograms
+	// The empty hists is very rare. The DDL event was not processed, and in the previous analyze,
+	// this column was not marked as "predict," resulting in it not being analyzed.
+	if len(hists) == 0 {
+		return nil, nil
+	}
 	for _, hist := range hists {
 		totColSize += hist.TotColSize
 		totNull += hist.NullCount
@@ -1452,7 +1458,6 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			totCount += hist.Buckets[hist.Len()-1].Count
 		}
 	}
-
 	// If all the hist and the topn is empty, return a empty hist.
 	if bucketNumber+len(popedTopN) == 0 {
 		return NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, 0, totColSize), nil

@@ -405,6 +405,15 @@ func (m *mergeSortStepExecutor) onFinished(ctx context.Context, subtask *proto.S
 	return nil
 }
 
+// Cleanup implements the StepExecutor.Cleanup interface.
+func (m *mergeSortStepExecutor) Cleanup(ctx context.Context) (err error) {
+	m.logger.Info("cleanup subtask env")
+	if m.controller != nil {
+		m.controller.Close()
+	}
+	return m.BaseStepExecutor.Cleanup(ctx)
+}
+
 type writeAndIngestStepExecutor struct {
 	taskexecutor.BaseStepExecutor
 
