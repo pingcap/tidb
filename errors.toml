@@ -471,6 +471,11 @@ error = '''
 server is busy
 '''
 
+["Lightning:KV:StoreDiskFull"]
+error = '''
+store disk full
+'''
+
 ["Lightning:Loader:ErrInvalidSchemaFile"]
 error = '''
 invalid schema file
