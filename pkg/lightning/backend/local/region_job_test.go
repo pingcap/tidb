@@ -168,7 +168,7 @@ func TestIsIngestRetryable(t *testing.T) {
 	}
 	clone = job
 	_, err = (&clone).convertStageOnIngestError(resp)
-	require.ErrorContains(t, err, "non-retryable error")
+	require.ErrorContains(t, err, "DiskFull")
 
 	// a general error is retryable from writing
 
