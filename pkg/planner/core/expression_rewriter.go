@@ -1533,7 +1533,9 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			castFunction.SetRepertoire(expression.ASCII)
 		}
 
-		// Rewrite cast(col as UNSIGNED ARRAY) / cast(col->path as UNSIGNED ARRAY) as virtual(col)
+		// If we want to use MV Index scan, we have to do the following rewrite:
+		// 	cast(col as UNSIGNED ARRAY) --> virtual_col
+		// , where virtual_col is the column built by MV Index.
 		// The logic is copied from generateMVIndexMergePartialPaths4And.
 		if forceMVIndexScan && v.Tp.IsArray() {
 			sf, _ := castFunction.(*expression.ScalarFunction)

@@ -1152,7 +1152,12 @@ func isForUpdateReadSelectLock(lock *ast.SelectLockInfo) bool {
 		lock.LockType == ast.SelectLockForUpdateWaitN
 }
 
-func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
+func getPossibleAccessPaths(
+	ctx base.PlanContext,
+	tableHints *hint.PlanHints,
+	indexHints []*ast.IndexHint,
+	tbl table.Table, dbName, tblName ast.CIStr,
+	check, hasFlagPartitionProcessor, forceMVIndex bool) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
@@ -1350,7 +1355,7 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 			allMVIIndexPath = false
 		}
 	}
-	if allMVIIndexPath {
+	if allMVIIndexPath && !forceMVIndex {
 		available = append(available, tablePath)
 	}
 

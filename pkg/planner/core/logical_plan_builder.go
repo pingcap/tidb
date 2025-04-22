@@ -3683,12 +3683,12 @@ type forceMVIndexOption struct{}
 
 var forceMVIndexOptionKey forceMVIndexOption
 
-// WithForceMVIndexScan controls how the rewriter process MV Index.
-// If it's true, it indicated we want to rewrite cast(... as ... array).
+// WithForceMVIndexScan controls how the optimizer process MV Index.
+// If it's true, it indicated we want to use MV Index for scan.
 // NOTE: It should only be used in fast admin check table,
 // see check_table_index.go for more details.
-func WithForceMVIndexScan(ctx context.Context, force bool) context.Context {
-	return context.WithValue(ctx, forceMVIndexOptionKey, force)
+func WithForceMVIndexScan(ctx context.Context) context.Context {
+	return context.WithValue(ctx, forceMVIndexOptionKey, true)
 }
 
 // GetForceMVIndexScan check whether the force MV index scan option is set.
@@ -3701,7 +3701,7 @@ func GetForceMVIndexScan(ctx context.Context) bool {
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p base.LogicalPlan, err error) {
-	ctx = WithForceMVIndexScan(ctx, true)
+	ctx = WithForceMVIndexScan(ctx)
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
 	defer func() {
@@ -4513,7 +4513,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		return nil, plannererrors.ErrPartitionClauseOnNonpartitioned
 	}
 
-	possiblePaths, err := getPossibleAccessPaths(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName, b.isForUpdateRead, b.optFlag&rule.FlagPartitionProcessor > 0)
+	// If forceMVIndexScan is true, it means:
+	// 1. it's possible to build MV Index scan.
+	// 2. We should NEVER add table scan to possible access path, otherwise
+	//    we can't guarentee index scan is choosen after cost estimation.
+	forceMVIndexScan := GetForceMVIndexScan(ctx) == true
+	possiblePaths, err := getPossibleAccessPaths(b.ctx, b.TableHints(), tn.IndexHints, tbl, dbName, tblName, b.isForUpdateRead, b.optFlag&rule.FlagPartitionProcessor > 0, forceMVIndexScan)
 	if err != nil {
 		return nil, err
 	}
@@ -4646,7 +4651,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	copy(allPaths, possiblePaths)
 
 	countCnt := len(columns) + 1 // +1 for an extra handle column
-	forceMVIndexScan := GetForceMVIndexScan(ctx) == true
 	ds := logicalop.DataSource{
 		DBName:                 dbName,
 		TableAsName:            asName,

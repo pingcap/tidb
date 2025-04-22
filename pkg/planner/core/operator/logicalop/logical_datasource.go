@@ -111,7 +111,8 @@ type DataSource struct {
 	// such as (tidb_shard(a), a ...), the fields are more than 2
 	ContainExprPrefixUk bool
 
-	// EnableMVIndexScan is used for some internal SQL, to force using MVIndex scan.
+	// EnableMVIndexScan indicates whether we can build index scan from MV Index.
+	// Currently it's only used by internal SQL, more specifically, admin check table.
 	EnableMVIndexScan bool
 
 	// ColsRequiringFullLen is the columns that must be fetched with full length.
