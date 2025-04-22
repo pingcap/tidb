@@ -29,10 +29,7 @@ func TestWriteClientWriteChunk(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
-		expected := []byte{
-			0x00, 0x03, 'k', 'e', 'y',
-			0x00, 0x00, 0x00, 0x05, 'v', 'a', 'l', 'u', 'e',
-		}
+		expected := []byte("\x00\x03key\x00\x00\x00\x05value")
 		require.Equal(t, expected, body)
 		w.WriteHeader(http.StatusOK)
 		_, err = w.Write([]byte(`{"sst_file": "mock_sst_file.sst"}`))

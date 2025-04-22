@@ -26,8 +26,7 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/errorpb"
-	"github.com/pingcap/tidb/pkg/util/intest"
-	"golang.org/x/sync/errgroup"
+	"github.com/pingcap/tidb/pkg/util"
 )
 
 var _ WriteClient = &writeClient{}
@@ -39,15 +38,14 @@ type writeClient struct {
 	httpClient    *http.Client
 	commitTS      uint64
 
-	eg          errgroup.Group
-	inited      bool
+	eg          *util.ErrorGroupWithRecover
 	errCh       chan error
 	writer      *io.PipeWriter
 	reader      *io.PipeReader
 	sstFilePath string
 }
 
-// newWriteClient creates a writeClient. It is caller's responsibility to call Close() when it meets an error.
+// newWriteClient creates a writeClient.
 func newWriteClient(
 	tikvWorkerURL string,
 	clusterID uint64,
@@ -59,14 +57,11 @@ func newWriteClient(
 		clusterID:     clusterID,
 		commitTS:      commitTS,
 		httpClient:    httpClient,
+		eg:            util.NewErrorGroupWithRecover(),
 	}
 }
 
 func (w *writeClient) init(ctx context.Context) error {
-	intest.Assert(!w.inited)
-	defer func() {
-		w.inited = true
-	}()
 	pr, pw := io.Pipe()
 	url := fmt.Sprintf("%s/write_sst?cluster_id=%d&commit_ts=%d",
 		w.tikvWorkerURL, w.clusterID, w.commitTS)
@@ -161,16 +156,12 @@ func (w *writeClient) Recv() (*WriteResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := w.reader.Close(); err != nil {
-		return nil, err
-	}
 	return &WriteResponse{SSTFile: w.sstFilePath}, nil
 }
 
 func (w *writeClient) Close() {
 	w.writer.Close()
 	w.eg.Wait()
-	w.reader.Close()
 }
 
 var _ Client = &client{}
@@ -232,5 +223,5 @@ type PBError struct {
 
 // Error implements the error.
 func (re *PBError) Error() string {
-	return re.Err.String()
+	return re.Err.GetMessage()
 }
