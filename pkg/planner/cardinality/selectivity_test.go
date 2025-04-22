@@ -1466,3 +1466,42 @@ func TestBuiltinInEstWithoutStats(t *testing.T) {
 		require.False(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
 	}
 }
+
+func TestSkewRatio(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, index idx(a))")
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tb.Meta()
+
+	// Insert enough rows to produce a single skewed value.
+	testKit.MustExec("insert into t values (1), (1), (1), (1), (2), (3), (4), (5)")
+	// Do not collect topn to ensure that test will not find value in topn.
+	testKit.MustExec(`analyze table t with 0 topn`)
+	h := dom.StatsHandle()
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+
+	sctx := testKit.Session()
+	idxID := tblInfo.Indices[0].ID
+	statsTbl := h.GetTableStats(tb.Meta())
+	// Search for the value "6" which will not be found in the histogram buckets, and since
+	// there are NO topN values - the value will be considered skewed based upon skew ratio.
+	testKit.MustExec("set @@session.tidb_opt_skew_ratio = 0")
+	count, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	require.NoError(t, err)
+	require.Equal(t, float64(1.6), count)
+	testKit.MustExec("set @@session.tidb_opt_skew_ratio = 0.5")
+	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	require.NoError(t, err)
+	require.Equal(t, float64(2.8), count)
+	testKit.MustExec("set @@session.tidb_opt_skew_ratio = 1")
+	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	require.NoError(t, err)
+	require.Equal(t, float64(4), count)
+	testKit.MustExec("set @@session.tidb_opt_skew_ratio = 0")
+}
