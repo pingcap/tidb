@@ -132,6 +132,7 @@ run_test() {
     fi
     check_contains "restore mode mismatch"
 
+    checksum_new=$(checksum "hello" "world")
     if [ "$checksum_new" != "$checksum_empty" ]; then
         echo "not empty after restore failed"
         fail_and_exit
