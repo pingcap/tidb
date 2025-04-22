@@ -185,11 +185,22 @@ func (w *regionJobBaseWorker) runJob(ctx context.Context, job *regionJob) error 
 				if !w.isRetryableImportTiKVError(err) {
 					return err
 				}
-				log.FromContext(ctx).Warn("meet retryable error when ingesting",
-					log.ShortError(err), zap.Stringer("job stage", job.stage))
+
+				newRegion, nextStage := getNextStageOnIngestError(err)
+				job.convertStageTo(nextStage)
+				if newRegion != nil {
+					job.region = newRegion
+				}
 				job.lastRetryableErr = err
+
+				log.FromContext(ctx).Warn("meet retryable error when ingesting, will handle the job later",
+					log.ShortError(err), zap.Stringer("job stage", job.stage),
+					job.region.ToZapFields(),
+					logutil.Key("start", job.keyRange.Start),
+					logutil.Key("end", job.keyRange.End))
 				return nil
 			}
+			job.convertStageTo(ingested)
 		}
 		// if the stage is not ingested, it means some error happened, the job should
 		// be sent back to caller to retry later, else we handle remaining data.
@@ -256,8 +267,8 @@ type objStoreRegionJobWorker struct {
 }
 
 func (*objStoreRegionJobWorker) preRunJob(_ context.Context, _ *regionJob) error {
-	// cloud engine use cloud storage, such as S3, to hold data, so no need to check
-	// disk fullness.
+	// cloud engine use cloud storage, such as S3, to hold data, it's assumed to
+	// have unlimited available space, so no need to check disk fullness.
 	return nil
 }
 
@@ -359,19 +370,15 @@ func (w *objStoreRegionJobWorker) ingest(ctx context.Context, j *regionJob) erro
 	}
 	err := w.ingestCli.Ingest(ctx, in)
 	if err != nil {
-		// TODO, we should let outer logic handle stage transition, currently, OP
-		//  worker need a lot of change before we can do it, will refactor it later.
-
-		// TODO: choose target stage based on error.
-		j.convertStageTo(needRescan)
 		log.FromContext(ctx).Warn("meet error and handle the job later",
 			zap.Stringer("job stage", j.stage),
-			logutil.ShortError(j.lastRetryableErr),
+			logutil.ShortError(err),
 			j.region.ToZapFields(),
 			logutil.Key("start", j.keyRange.Start),
 			logutil.Key("end", j.keyRange.End))
-		return err
+
+		// TODO: choose target stage based on error.
+		return &ingestAPIError{err: err}
 	}
-	j.convertStageTo(ingested)
 	return nil
 }
