@@ -1466,7 +1466,9 @@ func getAnyFileKeyFromTables(tables []*metautil.Table) []byte {
 	for _, table := range tables {
 		for _, files := range table.FilesOfPhysicals {
 			for _, f := range files {
-				return f.StartKey
+				if len(f.StartKey) > 0 {
+					return f.StartKey
+				}
 			}
 		}
 	}

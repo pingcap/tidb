@@ -132,6 +132,11 @@ run_test() {
     fi
     check_contains "restore mode mismatch"
 
+    if [ "$checksum_new" != "$checksum_empty" ]; then
+        echo "not empty after restore failed"
+        fail_and_exit
+    fi
+
     # restore rawkv
     echo "restore start..."
     run_br --pd $PD_ADDR restore txn -s "local://$BACKUP_DIR" 

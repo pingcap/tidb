@@ -143,6 +143,11 @@ run_test() {
     fi
     check_contains "restore mode mismatch"
 
+    if [ "$checksum_new" != "$checksum_empty" ]; then
+        echo "not empty after restore failed"
+        fail_and_exit
+    fi
+
     # restore rawkv
     echo "restore start..."
     run_br --pd $PD_ADDR restore raw -s "local://$BACKUP_DIR" --start 31 --end 3130303030303030 --format hex --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"
