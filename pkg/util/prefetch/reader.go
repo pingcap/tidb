@@ -82,7 +82,7 @@ func (r *Reader) Read(data []byte) (int, error) {
 				if total > 0 {
 					//PrintLog = true
 					//logutil.BgLogger().Error("set printlog = true", zap.Error(r.err), zap.Int("total", total), zap.Any("data-buf-len", len(data)))
-					return total, io.ErrUnexpectedEOF
+					return total, nil
 				}
 				return 0, r.err
 			}
