@@ -273,6 +273,7 @@ func (w *cloudRegionJobWorker) write(ctx context.Context, job *regionJob) (*tikv
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	defer writeCli.Close()
 	dataCommitTS := job.ingestData.GetTS()
 	intest.AssertFunc(func() bool {
 		timeOfTS := oracle.GetTimeFromTS(dataCommitTS)
@@ -310,7 +311,7 @@ func (w *cloudRegionJobWorker) write(ctx context.Context, job *regionJob) (*tikv
 			in := &ingestcli.WriteRequest{
 				Pairs: pairs,
 			}
-			if err := writeCli.WriteChunk(in); err != nil {
+			if err := writeCli.Write(in); err != nil {
 				return nil, errors.Trace(err)
 			}
 			totalCount += int64(len(pairs))
@@ -329,7 +330,7 @@ func (w *cloudRegionJobWorker) write(ctx context.Context, job *regionJob) (*tikv
 		in := &ingestcli.WriteRequest{
 			Pairs: pairs,
 		}
-		if err := writeCli.WriteChunk(in); err != nil {
+		if err := writeCli.Write(in); err != nil {
 			return nil, errors.Trace(err)
 		}
 		totalCount += int64(len(pairs))
@@ -338,7 +339,7 @@ func (w *cloudRegionJobWorker) write(ctx context.Context, job *regionJob) (*tikv
 		iter.ReleaseBuf()
 	}
 
-	resp, err := writeCli.Close()
+	resp, err := writeCli.Recv()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

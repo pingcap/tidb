@@ -40,8 +40,9 @@ func TestWriteClientWriteChunk(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newWriteClient(server.URL, 12345, 1, server.Client())
+	client := newWriteClient(server.URL, 12345, server.Client(), 67890)
 	client.commitTS = 67890
+	defer client.Close()
 	err := client.init(context.Background())
 	require.NoError(t, err)
 
@@ -50,10 +51,10 @@ func TestWriteClientWriteChunk(t *testing.T) {
 			{Key: []byte("key"), Value: []byte("value")},
 		},
 	}
-	err = client.WriteChunk(req)
+	err = client.Write(req)
 	require.NoError(t, err)
 
-	resp, err := client.Close()
+	resp, err := client.Recv()
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	require.Equal(t, "mock_sst_file.sst", resp.SSTFile)

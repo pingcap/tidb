@@ -15,6 +15,7 @@
 package ingestcli
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -22,7 +23,9 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"golang.org/x/sync/errgroup"
 )
@@ -45,11 +48,16 @@ type writeClient struct {
 }
 
 // newWriteClient creates a writeClient. It is caller's responsibility to call Close() when it meets an error.
-func newWriteClient(tikvWorkerURL string, clusterID uint64, taskID int64, httpClient *http.Client) *writeClient {
+func newWriteClient(
+	tikvWorkerURL string,
+	clusterID uint64,
+	httpClient *http.Client,
+	commitTS uint64,
+) *writeClient {
 	return &writeClient{
 		tikvWorkerURL: tikvWorkerURL,
 		clusterID:     clusterID,
-		taskID:        taskID,
+		commitTS:      commitTS,
 		httpClient:    httpClient,
 	}
 }
@@ -72,6 +80,10 @@ func (w *writeClient) init(ctx context.Context) error {
 	w.reader = pr
 	w.writer = pw
 	return nil
+}
+
+type sstFileResult struct {
+	SSTFile string `json:"sst_file"`
 }
 
 func (w *writeClient) startChunkedHTTPRequest(req *http.Request) {
@@ -113,31 +125,35 @@ func (w *writeClient) checkErrBeforeWrite() error {
 	}
 }
 
-func (w *writeClient) WriteChunk(req *WriteRequest) error {
+func (w *writeClient) Write(req *WriteRequest) error {
 	err := w.checkErrBeforeWrite()
 	if err != nil {
 		return err
 	}
+	var buf bytes.Buffer
 	for _, pair := range req.Pairs {
 		keyLen := uint16(len(pair.Key))
-		if err := binary.Write(w.writer, binary.BigEndian, keyLen); err != nil {
+		if err := binary.Write(&buf, binary.BigEndian, keyLen); err != nil {
 			return errors.Trace(err)
 		}
-		if _, err := w.writer.Write(pair.Key); err != nil {
+		if _, err := buf.Write(pair.Key); err != nil {
 			return errors.Trace(err)
 		}
 		valLen := uint32(len(pair.Value))
-		if err := binary.Write(w.writer, binary.BigEndian, valLen); err != nil {
+		if err := binary.Write(&buf, binary.BigEndian, valLen); err != nil {
 			return errors.Trace(err)
 		}
-		if _, err := w.writer.Write(pair.Value); err != nil {
+		if _, err := buf.Write(pair.Value); err != nil {
 			return errors.Trace(err)
 		}
+	}
+	if _, err := w.writer.Write(buf.Bytes()); err != nil {
+		return errors.Trace(err)
 	}
 	return nil
 }
 
-func (w *writeClient) Close() (*WriteResponse, error) {
+func (w *writeClient) Recv() (*WriteResponse, error) {
 	if err := w.writer.Close(); err != nil {
 		return nil, err
 	}
@@ -151,37 +167,70 @@ func (w *writeClient) Close() (*WriteResponse, error) {
 	return &WriteResponse{SSTFile: w.sstFilePath}, nil
 }
 
+func (w *writeClient) Close() {
+	w.writer.Close()
+	w.eg.Wait()
+	w.reader.Close()
+}
+
 var _ Client = &client{}
 
 type client struct {
 	tikvWorkerURL string
 	clusterID     uint64
 	httpClient    *http.Client
-
-	currentTaskID int64
+	commitTS      uint64
 }
 
 // NewClient creates a new Client instance.
-func NewClient(tikvWorkerURL string, clusterID uint64, httpClient *http.Client) Client {
+func NewClient(tikvWorkerURL string, clusterID uint64, httpClient *http.Client, commitTS uint64) Client {
 	return &client{
 		tikvWorkerURL: tikvWorkerURL,
 		clusterID:     clusterID,
 		httpClient:    httpClient,
+		commitTS:      commitTS,
 	}
 }
 
 func (c *client) WriteClient(ctx context.Context) (WriteClient, error) {
-	c.currentTaskID++
-	cli := newWriteClient(c.tikvWorkerURL, c.clusterID, c.currentTaskID, c.httpClient)
-	cli.init(ctx)
-	return cli, nil
-}
-
-type sstFileResult struct {
-	SSTFile string `json:"sst_file"`
+	cli := newWriteClient(c.tikvWorkerURL, c.clusterID, c.httpClient, c.commitTS)
+	err := cli.init(ctx)
+	return cli, err
 }
 
 func (c *client) Ingest(ctx context.Context, in *IngestRequest) error {
-	// TODO(tangenta): implement when the tikv worker API is ready.
+	ri := in.Region.Region
+	url := fmt.Sprintf("%s/ingest_s3?cluster_id=%d&file_name=%s&region_id=%d&epoch_version=%d",
+		c.tikvWorkerURL, c.clusterID, in.SSTFile, ri.Id, ri.RegionEpoch.Version)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		var pbErr errorpb.Error
+		if err := proto.Unmarshal(body, &pbErr); err != nil {
+			return fmt.Errorf("failed to unmarshal error(%s): %s", string(body), err)
+		}
+		return &PBError{Err: &pbErr}
+	}
 	return nil
+}
+
+// PBError is a implementation of error.
+type PBError struct {
+	Err *errorpb.Error
+}
+
+// Error implements the error.
+func (re *PBError) Error() string {
+	return re.Err.String()
 }
