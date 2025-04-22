@@ -131,6 +131,16 @@ run_test() {
         fail_and_exit
     fi
 
+    # failed on restore full
+    echo "restore full start..."
+    restore_fail=0
+    run_br --pd $PD_ADDR restore full -s "local://$BACKUP_DIR" --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef" || restore_fail=1
+    if [ $restore_fail -ne 1 ]; then
+        echo 'full restore from raw backup data success'
+        exit 1
+    fi
+    check_contains "restore mode mismatch"
+
     # restore rawkv
     echo "restore start..."
     run_br --pd $PD_ADDR restore raw -s "local://$BACKUP_DIR" --start 31 --end 3130303030303030 --format hex --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef"

@@ -120,6 +120,16 @@ run_test() {
         break
     done
 
+    # failed on restore full
+    echo "restore full start..."
+    restore_fail=0
+    run_br --pd $PD_ADDR restore full -s "local://$BACKUP_DIR" || restore_fail=1
+    if [ $restore_fail -ne 1 ]; then
+        echo 'full restore from txn backup data success'
+        exit 1
+    fi
+    check_contains "restore mode mismatch"
+
     # restore rawkv
     echo "restore start..."
     run_br --pd $PD_ADDR restore txn -s "local://$BACKUP_DIR" 
