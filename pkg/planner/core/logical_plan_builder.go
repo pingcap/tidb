@@ -404,8 +404,15 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 	}
 	plan4Agg.SetOutputNames(names)
 	plan4Agg.SetChildren(p)
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	if rollupExpand != nil {
 		// append gid and gpos as the group keys if any.
+		if !p.SCtx().GetSessionVars().InRestrictedSQL {
+			fmt.Println("bug here here !!!!!!!")
+		}
+
 		plan4Agg.GroupByItems = append(gbyItems, rollupExpand.GID)
 		if rollupExpand.GPos != nil {
 			plan4Agg.GroupByItems = append(plan4Agg.GroupByItems, rollupExpand.GPos)
@@ -414,6 +421,9 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 		plan4Agg.GroupByItems = gbyItems
 	}
 	plan4Agg.SetSchema(schema4Agg)
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	return plan4Agg, aggIndexMap, nil
 }
 
@@ -951,6 +961,9 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 				}
 				if ret {
 					continue
+				}
+				if !b.ctx.GetSessionVars().InRestrictedSQL {
+					fmt.Println("wwz")
 				}
 				// If there is condition which is always false, return dual plan directly.
 				dual := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())

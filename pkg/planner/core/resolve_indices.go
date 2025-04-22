@@ -15,6 +15,8 @@
 package core
 
 import (
+	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -586,6 +588,9 @@ func (p *basePhysicalAgg) ResolveIndices() (err error) {
 				return err
 			}
 		}
+	}
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
 	}
 	for i, item := range p.GroupByItems {
 		p.GroupByItems[i], err = item.ResolveIndices(p.Children()[0].Schema())

@@ -15,6 +15,7 @@
 package logicalop
 
 import (
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -77,6 +78,9 @@ func (p *LogicalTableDual) PredicatePushDown(predicates []expression.Expression,
 
 // PruneColumns implements base.LogicalPlan.<2nd> interface.
 func (p *LogicalTableDual) PruneColumns(parentUsedCols []*expression.Column, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, error) {
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	used := expression.GetUsedList(p.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, p.Schema())
 	prunedColumns := make([]*expression.Column, 0)
 	for i := len(used) - 1; i >= 0; i-- {

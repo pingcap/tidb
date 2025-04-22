@@ -89,6 +89,9 @@ func rewriteAstExprWithPlanCtx(sctx base.PlanContext, expr ast.ExprNode, schema 
 	}
 	b, savedBlockNames := NewPlanBuilder().Init(sctx, is, hint.NewQBHintHandler(nil))
 	b.allowBuildCastArray = allowCastArray
+	if !sctx.GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	fakePlan := logicalop.LogicalTableDual{}.Init(sctx, 0)
 	if schema != nil {
 		fakePlan.SetSchema(schema)
