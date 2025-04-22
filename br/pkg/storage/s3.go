@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/url"
 	"path"
 	"regexp"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/prefetch"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
@@ -641,6 +643,7 @@ func (rs *S3Storage) doReadFile(ctx context.Context, file string) ([]byte, error
 		data, readErr = io.ReadAll(result.Body)
 		// close the body of response since data has been already read out
 		result.Body.Close()
+		readErr = injectfailpoint.DXFRandomErrorWithOnePercentWrapper(readErr)
 		// for unit test
 		failpoint.Inject("read-s3-body-failed", func(_ failpoint.Value) {
 			log.Info("original error", zap.Error(readErr))
@@ -981,6 +984,10 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 		maxCnt = int64(len(p))
 	}
 	n, err = r.reader.Read(p[:maxCnt])
+	n, err = injectfailpoint.RandomErrorForReadWithOnePerPercent(n, err)
+	if r.prefetchSize > 0 && rand.Intn(5) == 0 {
+		n, err = rand.Intn(n), io.ErrUnexpectedEOF
+	}
 	// TODO: maybe we should use !errors.Is(err, io.EOF) here to avoid error lint, but currently, pingcap/errors
 	// doesn't implement this method yet.
 	for err != nil && errors.Cause(err) != io.EOF && r.ctx.Err() == nil && retryCnt < maxErrorRetries { //nolint:errorlint

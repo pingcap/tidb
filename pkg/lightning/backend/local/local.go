@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
+	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
@@ -1248,6 +1249,7 @@ func (local *Backend) executeJob(
 
 	for {
 		err := local.writeToTiKV(ctx, job)
+		err = injectfailpoint.DXFRandomErrorWithOnePercentWrapper(err)
 		if err != nil {
 			if !local.isRetryableImportTiKVError(err) {
 				return err
@@ -1260,6 +1262,7 @@ func (local *Backend) executeJob(
 		}
 
 		err = local.ingest(ctx, job)
+		err = injectfailpoint.DXFRandomErrorWithOnePercentWrapper(err)
 		if err != nil {
 			if !local.isRetryableImportTiKVError(err) {
 				return err
