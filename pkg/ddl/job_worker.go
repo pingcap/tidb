@@ -144,10 +144,11 @@ type worker struct {
 	workCtx context.Context
 	wg      tidbutil.WaitGroupWrapper
 
-	sessPool        *sess.Pool    // sessPool is used to new sessions to execute SQL in ddl package.
-	sess            *sess.Session // sess is used and only used in running DDL job.
-	delRangeManager delRangeManager
-	seqAllocator    *atomic.Uint64
+	sessPool         *sess.Pool    // sessPool is used to new sessions to execute SQL in ddl package.
+	sess             *sess.Session // sess is used and only used in running DDL job.
+	sessForJobUpdate *sess.Session // use a separate session to update tidb_ddl_jobs to avoid potential conflicts when running reorg job for a long time.
+	delRangeManager  delRangeManager
+	seqAllocator     *atomic.Uint64
 
 	*ddlCtx
 }
@@ -213,6 +214,9 @@ func (w *worker) Close() {
 	if w.sess != nil {
 		w.sessPool.Put(w.sess.Session())
 	}
+	if w.sessForJobUpdate != nil {
+		w.sessPool.Put(w.sessForJobUpdate.Session())
+	}
 	w.wg.Wait()
 	logutil.DDLLogger().Info("DDL worker closed", zap.Stringer("worker", w),
 		zap.Duration("take time", time.Since(startTime)))
@@ -272,7 +276,15 @@ func (w *worker) updateDDLJob(jobCtx *jobContext, job *model.Job, updateRawArgs 
 		jobCtx.logger.Info("meet something wrong before update DDL job, shouldn't update raw args",
 			zap.String("job", job.String()))
 	}
-	return errors.Trace(updateDDLJob2Table(w.workCtx, w.sess, job, updateRawArgs))
+	// To avoid potential write-conflict with other routines that update mysql.tidb_ddl_jobs,
+	// we use another session here. The commit order should be:
+	//   worker.sess.Commit() -> worker.sessForJobUpdate.Commit()
+	// The latter unlikely fails at most time. Even if it fails,
+	// it will lead to a false-positive DDL job, without affecting the data correctness.
+	failpoint.Inject("mockUpdateDDLJobFailed", func(_ failpoint.Value) {
+		failpoint.Return(errors.New("mock update ddl jobs failed"))
+	})
+	return errors.Trace(updateDDLJob2Table(w.workCtx, w.sessForJobUpdate, job, updateRawArgs))
 }
 
 // registerMDLInfo registers metadata lock info.
@@ -400,7 +412,10 @@ func (w *worker) finishDDLJob(jobCtx *jobContext, job *model.Job) (err error) {
 
 func (w *worker) deleteDDLJob(job *model.Job) error {
 	sql := fmt.Sprintf("delete from mysql.tidb_ddl_job where job_id = %d", job.ID)
-	_, err := w.sess.Execute(context.Background(), sql, "delete_job")
+	failpoint.Inject("mockDeleteDDLJobFailed", func(_ failpoint.Value) {
+		failpoint.Return(errors.New("mock delete job failed"))
+	})
+	_, err := w.sessForJobUpdate.Execute(context.Background(), sql, "delete_job")
 	return errors.Trace(err)
 }
 
@@ -482,7 +497,6 @@ func (w *worker) handleJobDone(jobCtx *jobContext, job *model.Job) error {
 		w.sess.Rollback()
 		return err
 	}
-
 	err = w.sess.Commit(w.workCtx)
 	if err != nil {
 		return err
@@ -618,18 +632,18 @@ func (w *worker) transitOneJobStep(
 		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 		return 0, err
 	}
-	err = w.updateDDLJob(jobCtx, job, updateRawArgs)
-	failpoint.InjectCall("afterUpdateJobToTable", job, &err)
-	if err = w.handleUpdateJobError(jobCtx, job, err); err != nil {
-		w.sess.Rollback()
-		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
-		return 0, err
-	}
 	// reset the SQL digest to make topsql work right.
 	w.sess.GetSessionVars().StmtCtx.ResetSQLDigest(job.Query)
 	err = w.sess.Commit(w.workCtx)
 	jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 	if err != nil {
+		return 0, err
+	}
+	err = w.updateDDLJob(jobCtx, job, updateRawArgs)
+	failpoint.InjectCall("afterUpdateJobToTable", job, &err)
+	if err = w.handleUpdateJobError(jobCtx, job, err); err != nil {
+		w.sess.Rollback()
+		jobCtx.unlockSchemaVersion(jobCtx, job.ID)
 		return 0, err
 	}
 	jobCtx.addUnSynced(job.ID)

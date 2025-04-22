@@ -120,3 +120,17 @@ func (mr *MockManagerMockRecorder) HasFlashbackClusterJob(arg0, arg1 any) *gomoc
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HasFlashbackClusterJob", reflect.TypeOf((*MockManager)(nil).HasFlashbackClusterJob), arg0, arg1)
 }
+
+// SetJobRowCount mocks base method.
+func (m *MockManager) SetJobRowCount(arg0 context.Context, arg1, arg2 int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SetJobRowCount", arg0, arg1, arg2)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SetJobRowCount indicates an expected call of SetJobRowCount.
+func (mr *MockManagerMockRecorder) SetJobRowCount(arg0, arg1, arg2 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetJobRowCount", reflect.TypeOf((*MockManager)(nil).SetJobRowCount), arg0, arg1, arg2)
+}

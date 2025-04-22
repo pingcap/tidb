@@ -3124,3 +3124,24 @@ func TestCreateIndexWithChangeMaxIndexLength(t *testing.T) {
 	tk.MustExec("create table t(id int, a json DEFAULT NULL, b varchar(2) DEFAULT NULL);")
 	tk.MustGetErrMsg("CREATE INDEX idx_test on t ((cast(a as char(2000) array)),b);", "[ddl:1071]Specified key was too long (2000 bytes); max key length is 1000 bytes")
 }
+
+func TestDDLJobDeleteFailed(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockDeleteDDLJobFailed", "1*return")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1);")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockDeleteDDLJobFailed", "1*return")
+	tk.MustExec("alter table t add index idx(a);")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockDeleteDDLJobFailed", "1*return")
+	tk.MustExec("alter table t add column b int;")
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockUpdateDDLJobFailed", "1*return")
+	tk.MustGetErrMsg("create table t1 (a int);", "[schema:1050]Table 't1' already exists")
+	tk.MustExec("insert into t1 values (1);")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockUpdateDDLJobFailed", "1*return")
+	tk.MustExec("alter table t1 add index idx(a);")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockUpdateDDLJobFailed", "1*return")
+	tk.MustExec("alter table t1 add column b int;")
+}
