@@ -1332,21 +1332,38 @@ func (fse fakeSQLExecutor) ExecRestrictedSQL(_ context.Context, _ []sqlexec.Opti
 
 func TestInitSchemasReplaceForDDL(t *testing.T) {
 	ctx := context.Background()
+	path := filepath.ToSlash(t.TempDir())
+	backend, err := storage.ParseBackend("local://"+path, nil)
+	require.NoError(t, err)
+	stg, err := storage.New(ctx, backend, nil)
+	require.NoError(t, err)
 
 	{
 		client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), fakeSession{})
+		client.SetStorage(ctx, backend, nil)
 		cfg := &logclient.GetIDMapConfig{LoadSavedIDMap: false}
-		_, err := client.GetBaseIDMap(ctx, cfg, nil)
+		err := stg.WriteFile(ctx, logclient.PitrIDMapsFilename(123, 2), []byte(""))
+		require.NoError(t, err)
+		err = stg.WriteFile(ctx, logclient.PitrIDMapsFilename(123, 1), []byte("123"))
+		require.NoError(t, err)
+		_, err = client.GetBaseIDMap(ctx, cfg, nil)
 		require.Error(t, err)
-		require.Regexp(t, "failed to get pitr id map from mysql.tidb_pitr_id_map.* [2, 1]", err.Error())
+		require.Contains(t, err.Error(), "proto: wrong")
+		err = stg.DeleteFile(ctx, logclient.PitrIDMapsFilename(123, 1))
+		require.NoError(t, err)
 	}
 
 	{
 		client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), fakeSession{})
+		client.SetStorage(ctx, backend, nil)
 		cfg := &logclient.GetIDMapConfig{LoadSavedIDMap: true}
-		_, err := client.GetBaseIDMap(ctx, cfg, nil)
+		err := stg.WriteFile(ctx, logclient.PitrIDMapsFilename(123, 2), []byte("123"))
+		require.NoError(t, err)
+		_, err = client.GetBaseIDMap(ctx, cfg, nil)
 		require.Error(t, err)
-		require.Regexp(t, "failed to get pitr id map from mysql.tidb_pitr_id_map.* [1, 1]", err.Error())
+		require.Contains(t, err.Error(), "proto: wrong")
+		err = stg.DeleteFile(ctx, logclient.PitrIDMapsFilename(123, 2))
+		require.NoError(t, err)
 	}
 
 	{
@@ -1356,7 +1373,7 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 		g := gluetidb.New()
 		se, err := g.CreateSession(s.Mock.Storage)
 		require.NoError(t, err)
-		client := logclient.TEST_NewLogClient(123, 1, 2, 1, domain.NewMockDomain(), se)
+		client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, se)
 		cfg := &logclient.GetIDMapConfig{LoadSavedIDMap: true}
 		_, err = client.GetBaseIDMap(ctx, cfg, nil)
 		require.Error(t, err)

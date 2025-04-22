@@ -28,7 +28,10 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 )
 
-var FilterFilesByRegion = filterFilesByRegion
+var (
+	FilterFilesByRegion = filterFilesByRegion
+	PitrIDMapsFilename  = pitrIDMapsFilename
+)
 
 func (metaname *MetaName) Meta() Meta {
 	return metaname.meta
