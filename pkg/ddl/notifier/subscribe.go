@@ -178,6 +178,10 @@ func (n *DDLNotifier) start() {
 var ProcessEventsBatchSize = 1024
 
 func (n *DDLNotifier) processEvents(ctx context.Context) error {
+	start := time.Now()
+	defer func() {
+		logutil.Logger(ctx).Info("processEvents", zap.Duration("duration", time.Since(start)))
+	}()
 	s, err := n.sysSessionPool.Get()
 	if err != nil {
 		return errors.Trace(err)
