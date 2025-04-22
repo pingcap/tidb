@@ -6780,10 +6780,6 @@ IndexTypeName:
 	{
 		$$ = ast.IndexTypeHypo
 	}
-|	"VECTOR"
-	{
-		$$ = ast.IndexTypeVector
-	}
 |	"HNSW"
 	{
 		$$ = ast.IndexTypeHNSW
