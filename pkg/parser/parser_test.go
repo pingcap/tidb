@@ -7875,15 +7875,15 @@ func TestSecondaryEngineAttribute(t *testing.T) {
 				"PARTITION p1 VALUES LESS THAN (20) SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value2\"}')",
 			true,
 			"CREATE TABLE `t` (`id` INT) PARTITION BY RANGE (`id`) (" +
-				"PARTITION `p0` VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE= '{\"key\":\"value\"}'," +
-				"PARTITION `p1` VALUES LESS THAN (20) SECONDARY_ENGINE_ATTRIBUTE= '{\"key\":\"value2\"}')",
+				"PARTITION `p0` VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value\"}'," +
+				"PARTITION `p1` VALUES LESS THAN (20) SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value2\"}')",
 		},
 
 		// Valid Table-level SECONDARY_ENGINE_ATTRIBUTE
 		{
 			"CREATE TABLE t (id INT) SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value\"}'",
 			true,
-			"CREATE TABLE `t` (`id` INT) SECONDARY_ENGINE_ATTRIBUTE= '{\"key\":\"value\"}'",
+			"CREATE TABLE `t` (`id` INT) SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value\"}'",
 		},
 
 		// Valid Table-level and Partition-level SECONDARY_ENGINE_ATTRIBUTE
@@ -7891,8 +7891,8 @@ func TestSecondaryEngineAttribute(t *testing.T) {
 			"CREATE TABLE t (id INT) SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value\"}' PARTITION BY RANGE (id) (" +
 				"PARTITION p0 VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"partition_value\"}')",
 			true,
-			"CREATE TABLE `t` (`id` INT) SECONDARY_ENGINE_ATTRIBUTE= '{\"key\":\"value\"}' PARTITION BY RANGE (`id`) (" +
-				"PARTITION `p0` VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE= '{\"key\":\"partition_value\"}')",
+			"CREATE TABLE `t` (`id` INT) SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value\"}' PARTITION BY RANGE (`id`) (" +
+				"PARTITION `p0` VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"partition_value\"}')",
 		},
 
 		// Missing value for SECONDARY_ENGINE_ATTRIBUTE at Partition-level
