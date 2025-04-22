@@ -139,6 +139,7 @@ func newFileCheckpointsDB(t *testing.T, addIndexBySQL bool) *checkpoints.FileChe
 		Key:      checkpoints.ChunkCheckpointKey{Path: "/tmp/path/1.sql", Offset: 0},
 		Checksum: verification.MakeKVChecksum(4491, 586, 486070148917),
 		Pos:      55904,
+		RealPos:  53902,
 		RowID:    681,
 	}
 	ccm.MergeInto(cpd)
