@@ -361,6 +361,9 @@ const (
 	VecFromText             = "vec_from_text"
 	VecAsText               = "vec_as_text"
 
+	// FTS functions (tidb extension)
+	FTSMatchWord = "fts_match_word"
+
 	// TiDB internal function.
 	TiDBDecodeKey       = "tidb_decode_key"
 	TiDBMVCCInfo        = "tidb_mvcc_info"
