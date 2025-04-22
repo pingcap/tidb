@@ -619,7 +619,8 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 			}
 			log.FromContext(ctx).Warn("meet underlying error, will retry ingest",
 				log.ShortError(err), logutil.SSTMetas(j.writeResult.sstMeta),
-				logutil.Region(j.region.Region), logutil.Leader(j.region.Leader))
+				logutil.Region(j.region.Region), logutil.Leader(j.region.Leader),
+				zap.Int("retry", retry))
 			lastRetriedErr = err
 			continue
 		}
