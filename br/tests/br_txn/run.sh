@@ -22,6 +22,8 @@ export ENABLE_ENCRYPTION_CHECK
 
 set -eux
 
+res_file="$TEST_DIR/sql_res.$TEST_NAME.txt"
+
 # restart service without tiflash
 source $UTILS_DIR/run_services
 start_services --no-tiflash
@@ -123,7 +125,7 @@ run_test() {
     # failed on restore full
     echo "restore full start..."
     restore_fail=0
-    run_br --pd $PD_ADDR restore full -s "local://$BACKUP_DIR" || restore_fail=1
+    run_br --pd $PD_ADDR restore full -s "local://$BACKUP_DIR" > $res_file 2>&1 || restore_fail=1
     if [ $restore_fail -ne 1 ]; then
         echo 'full restore from txn backup data success'
         exit 1
