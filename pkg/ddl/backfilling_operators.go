@@ -224,9 +224,9 @@ func NewWriteIndexToExternalStoragePipeline(
 		ctx, copCtx, sessPool, jobID, subtaskID, tbl, indexes, extStore, srcChkPool, writerCnt, onClose, memSizePerIndex, reorgMeta)
 	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, totalRowCount, metricCounter)
 
-	operator.Compose[TableScanTask](srcOp, scanOp)
-	operator.Compose[IndexRecordChunk](scanOp, writeOp)
-	operator.Compose[IndexWriteResult](writeOp, sinkOp)
+	operator.Compose(srcOp, scanOp)
+	operator.Compose(scanOp, writeOp)
+	operator.Compose(writeOp, sinkOp)
 
 	logutil.Logger(ctx).Info("build add index cloud storage operators",
 		zap.Int64("jobID", jobID),
@@ -528,7 +528,8 @@ func NewWriteExternalStoreOperator(
 					SetOnCloseFunc(onClose).
 					SetKeyDuplicationEncoding(index.Meta().Unique).
 					SetMemorySizeLimit(memoryQuota).
-					SetGroupOffset(i)
+					SetGroupOffset(i).
+					SetOnDup(common.OnDuplicateKeyError)
 				writerID := uuid.New().String()
 				prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
 				writer := builder.Build(store, prefix, writerID)
@@ -550,7 +551,7 @@ func NewWriteExternalStoreOperator(
 			}
 		})
 	return &WriteExternalStoreOperator{
-		AsyncOperator: operator.NewAsyncOperator[IndexRecordChunk, IndexWriteResult](ctx, pool),
+		AsyncOperator: operator.NewAsyncOperator(ctx, pool),
 	}
 }
 

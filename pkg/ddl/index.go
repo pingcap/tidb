@@ -1956,6 +1956,9 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 			}
 			//nolint:forcetypeassert
 			discovery := w.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
+			if reorgInfo.ReorgMeta.UseCloudStorage {
+				return nil
+			}
 			return checkDuplicateForUniqueIndex(w.ctx, t, reorgInfo, discovery)
 		}
 	}
