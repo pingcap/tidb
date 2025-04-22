@@ -2077,8 +2077,7 @@ func (cc *clientConn) handleStmt(
 				rs.Finish()
 			})
 		fn := func() bool {
-			if cc.bufReadConn != nil {
-				cc.mu.Lock()
+			if cc.bufReadConn != nil && cc.mu.TryLock() {
 				defer cc.mu.Unlock()
 				err1 := cc.bufReadConn.SetReadDeadline(time.Now().Add(30 * time.Microsecond))
 				if err1 != nil {
