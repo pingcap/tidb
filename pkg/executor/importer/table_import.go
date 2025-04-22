@@ -230,7 +230,7 @@ type TableImporter struct {
 	diskQuota       int64
 	diskQuotaLock   *syncutil.RWMutex
 
-	rowCh chan QueryRow
+	chunkCh chan QueryChunk
 }
 
 type storeHelper struct {
@@ -631,9 +631,9 @@ func (ti *TableImporter) CheckDiskQuota(ctx context.Context) {
 	}
 }
 
-// SetSelectedRowCh sets the channel to receive selected rows.
-func (ti *TableImporter) SetSelectedRowCh(ch chan QueryRow) {
-	ti.rowCh = ch
+// SetSelectedChunkCh sets the channel to receive selected rows.
+func (ti *TableImporter) SetSelectedChunkCh(ch chan QueryChunk) {
+	ti.chunkCh = ch
 }
 
 func (ti *TableImporter) closeAndCleanupEngine(engine *backend.OpenedEngine) {

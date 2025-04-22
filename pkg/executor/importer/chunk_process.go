@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -99,18 +100,25 @@ func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) 
 	}
 }
 
-// queryRowEncodeReader wraps a QueryRow channel as a encodeReaderFn.
-func queryRowEncodeReader(rowCh <-chan QueryRow) encodeReaderFn {
-	return func(ctx context.Context) (data rowToEncode, closed bool, err error) {
+type queryChunkEncodeReader struct {
+	chunkCh <-chan QueryChunk
+	currChk QueryChunk
+	cursor  int
+	numRows int
+}
+
+func (r *queryChunkEncodeReader) readRow(ctx context.Context) (data rowToEncode, closed bool, err error) {
+	if r.currChk.Chk == nil || r.cursor >= r.numRows {
 		select {
 		case <-ctx.Done():
 			err = ctx.Err()
 			return
-		case row, ok := <-rowCh:
+		case currChk, ok := <-r.chunkCh:
 			if !ok {
 				closed = true
 				return
 			}
+<<<<<<< HEAD
 			data = rowToEncode{
 				row:       row.Data,
 				rowID:     row.ID,
@@ -119,7 +127,30 @@ func queryRowEncodeReader(rowCh <-chan QueryRow) encodeReaderFn {
 				resetFn:   func() {},
 			}
 			return
+=======
+			r.currChk = currChk
+			r.cursor = 0
+			r.numRows = r.currChk.Chk.NumRows()
+>>>>>>> 23e5a09fd91 (executor: tiny optimize import into from select performance (#60384))
 		}
+	}
+
+	row := r.currChk.Chk.GetRow(r.cursor)
+	r.cursor++
+	data = rowToEncode{
+		row:       row.GetDatumRow(r.currChk.Fields),
+		rowID:     r.currChk.RowIDOffset + int64(r.cursor),
+		endOffset: -1,
+		resetFn:   func() {},
+	}
+	return
+}
+
+// queryRowEncodeReader wraps a queryChunkEncodeReader as a encodeReaderFn.
+func queryRowEncodeReader(chunkCh <-chan QueryChunk) encodeReaderFn {
+	reader := queryChunkEncodeReader{chunkCh: chunkCh}
+	return func(ctx context.Context) (data rowToEncode, closed bool, err error) {
+		return reader.readRow(ctx)
 	}
 }
 
@@ -504,15 +535,21 @@ func (p *dataDeliver) summaryFields() []zap.Field {
 	}
 }
 
-// QueryRow is a row from query result.
-type QueryRow struct {
-	ID   int64
-	Data []types.Datum
+// QueryChunk is a chunk from query result.
+type QueryChunk struct {
+	Fields      []*types.FieldType
+	Chk         *chunk.Chunk
+	RowIDOffset int64
 }
 
 func newQueryChunkProcessor(
+<<<<<<< HEAD
 	rowCh chan QueryRow,
 	encoder *TableKVEncoder,
+=======
+	chunkCh chan QueryChunk,
+	encoder KVEncoder,
+>>>>>>> 23e5a09fd91 (executor: tiny optimize import into from select performance (#60384))
 	keyspace []byte,
 	logger *zap.Logger,
 	diskQuotaLock *syncutil.RWMutex,
@@ -534,7 +571,7 @@ func newQueryChunkProcessor(
 		deliver:    deliver,
 		enc: newChunkEncoder(
 			chunkName,
-			queryRowEncodeReader(rowCh),
+			queryRowEncodeReader(chunkCh),
 			-1,
 			deliver.sendEncodedData,
 			chunkLogger,
