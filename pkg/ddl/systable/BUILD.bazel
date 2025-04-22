@@ -11,6 +11,7 @@ go_library(
     deps = [
         "//pkg/ddl/logutil",
         "//pkg/ddl/session",
+        "//pkg/ddl/util",
         "//pkg/meta/model",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",

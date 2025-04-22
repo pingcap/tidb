@@ -46,6 +46,7 @@ go_library(
         "index_presplit.go",
         "job_scheduler.go",
         "job_submitter.go",
+        "job_updater.go",
         "job_worker.go",
         "metabuild.go",
         "mock.go",
