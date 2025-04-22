@@ -36,7 +36,6 @@ func TestAdminCheckTableCorrupted(t *testing.T) {
 	memBuffer := txn.GetMemBuffer()
 	handle := memBuffer.Staging()
 	it := memBuffer.SnapshotIter(nil, nil)
-	require.NoError(t, err)
 	for it.Valid() {
 		if tablecodec.IsRecordKey(it.Key()) && len(it.Value()) > 0 {
 			value := make([]byte, len(it.Value()))
@@ -44,7 +43,7 @@ func TestAdminCheckTableCorrupted(t *testing.T) {
 			copy(key, it.Key())
 			copy(value, it.Value())
 			key[len(key)-1] += 1
-			memBuffer.Set(key, value)
+			require.Nil(t, memBuffer.Set(key, value))
 		}
 		err = it.Next()
 		require.NoError(t, err)
