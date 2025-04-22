@@ -2077,20 +2077,20 @@ func (cc *clientConn) handleStmt(
 				rs.Finish()
 			})
 		fn := func() bool {
-			cc.mu.Lock()
-			err1 := cc.bufReadConn.SetReadDeadline(time.Now().Add(30 * time.Microsecond))
-			if err1 != nil {
-				return true
+			if cc.bufReadConn != nil {
+				cc.mu.Lock()
+				defer cc.mu.Unlock()
+				err1 := cc.bufReadConn.SetReadDeadline(time.Now().Add(30 * time.Microsecond))
+				if err1 != nil {
+					return true
+				}
+				// nolint:errcheck
+				defer cc.bufReadConn.SetDeadline(time.Time{})
+				_, err1 = cc.bufReadConn.Peek(1)
+				if terror.ErrorEqual(err1, io.EOF) {
+					return false
+				}
 			}
-			_, err1 = cc.bufReadConn.Peek(1)
-			if terror.ErrorEqual(err1, io.EOF) {
-				return false
-			}
-			err1 = cc.bufReadConn.SetReadDeadline(time.Time{})
-			if err1 != nil {
-				return true
-			}
-			cc.mu.Unlock()
 			return true
 		}
 		cc.ctx.GetSessionVars().SQLKiller.IsConnectionAlive.Store(&fn)
