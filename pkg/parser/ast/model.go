@@ -207,6 +207,8 @@ func (t IndexType) String() string {
 		return "HYPO"
 	case IndexTypeHNSW:
 		return "HNSW"
+	case IndexTypeVector:
+		return "VECTOR"
 	case IndexTypeInverted:
 		return "INVERTED"
 	default:
@@ -221,8 +223,11 @@ const (
 	IndexTypeHash
 	IndexTypeRtree
 	IndexTypeHypo
+	// IndexTypeHNSW is only used in AST.
+	// It will be rewritten into IndexTypeVector after preprocessor phase.
 	IndexTypeHNSW
 	IndexTypeInverted
+	IndexTypeVector
 )
 
 // ReferOptionType is the type for refer options.
