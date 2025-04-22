@@ -21,7 +21,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,7 +32,7 @@ func TestWriteClientWriteChunk(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
-		expected := []byte("\x00\x03key\x00\x00\x00\x05value")
+		expected := []byte("\x03\x00key\x05\x00\x00\x00value")
 		require.Equal(t, expected, body)
 		w.WriteHeader(http.StatusOK)
 		_, err = w.Write([]byte(`{"sst_file": "mock_sst_file.sst"}`))
@@ -55,4 +58,60 @@ func TestWriteClientWriteChunk(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	require.Equal(t, "mock_sst_file.sst", resp.SSTFile)
+}
+
+func TestClientWriteServerError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("internal server error"))
+	}))
+	defer server.Close()
+
+	client := newWriteClient(server.URL, 12345, server.Client(), 67890)
+	err := client.init(context.Background())
+	require.NoError(t, err)
+
+	req := &WriteRequest{Pairs: []*import_sstpb.Pair{{Key: []byte("key"), Value: []byte("value")}}}
+	err = client.Write(req)
+	require.NoError(t, err) // Error only return when pipeWriter is closed?
+
+	_, err = client.Recv()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "internal server error")
+}
+
+func TestClientIngest(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/ingest_s3", r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, 12345, server.Client(), 67890)
+	req := &IngestRequest{
+		SSTFile: "test.sst",
+		Region:  &split.RegionInfo{Region: &metapb.Region{Id: 1, RegionEpoch: &metapb.RegionEpoch{Version: 1}}},
+	}
+	err := client.Ingest(context.Background(), req)
+	require.NoError(t, err)
+}
+
+func TestClientIngestError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		pbErr := &errorpb.Error{Message: "test error"}
+		data, err := pbErr.Marshal()
+		require.NoError(t, err)
+		w.Write(data)
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, 12345, server.Client(), 67890)
+	req := &IngestRequest{
+		SSTFile: "test.sst",
+		Region:  &split.RegionInfo{Region: &metapb.Region{Id: 1, RegionEpoch: &metapb.RegionEpoch{Version: 1}}},
+	}
+	err := client.Ingest(context.Background(), req)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "test error")
 }

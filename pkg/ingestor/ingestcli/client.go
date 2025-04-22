@@ -92,7 +92,12 @@ func (w *writeClient) startChunkedHTTPRequest(req *http.Request) {
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
+			body, err1 := io.ReadAll(resp.Body)
+			if err1 != nil {
+				w.errCh <- err
+				return fmt.Errorf("failed to readAll response: %s", err1.Error())
+			}
+			w.errCh <- err
 			return fmt.Errorf("failed to send chunked request: %s", string(body))
 		}
 		data, err := io.ReadAll(resp.Body)
@@ -128,14 +133,14 @@ func (w *writeClient) Write(req *WriteRequest) error {
 	var buf bytes.Buffer
 	for _, pair := range req.Pairs {
 		keyLen := uint16(len(pair.Key))
-		if err := binary.Write(&buf, binary.BigEndian, keyLen); err != nil {
+		if err := binary.Write(&buf, binary.LittleEndian, keyLen); err != nil {
 			return errors.Trace(err)
 		}
 		if _, err := buf.Write(pair.Key); err != nil {
 			return errors.Trace(err)
 		}
 		valLen := uint32(len(pair.Value))
-		if err := binary.Write(&buf, binary.BigEndian, valLen); err != nil {
+		if err := binary.Write(&buf, binary.LittleEndian, valLen); err != nil {
 			return errors.Trace(err)
 		}
 		if _, err := buf.Write(pair.Value); err != nil {
