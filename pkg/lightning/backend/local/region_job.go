@@ -672,7 +672,7 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 				logutil.Key("end", j.keyRange.End))
 			return nil
 		}
-		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
+		metrics.RetryableErrorCount.WithLabelValues(j.lastRetryableErr.Error()).Inc()
 		log.FromContext(ctx).Warn("meet error and will doIngest region again",
 			logutil.ShortError(j.lastRetryableErr),
 			j.region.ToZapFields(),
