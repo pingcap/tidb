@@ -4,6 +4,8 @@ go_library(
     name = "util",
     srcs = [
         "buffered_read_conn.go",
+        "buffered_read_conn_linux.go",
+        "buffered_read_conn_windows.go",
         "util.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/server/internal/util",
