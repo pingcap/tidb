@@ -143,7 +143,7 @@ fi
 # check the pitr id map is saved in the log storage
 count=$(ls $TEST_DIR/$PREFIX/log/pitr_id_maps | wc -l)
 if [ $count -ne 1 ]; then
-    echo 'the number of pitr id map is $count instead of 1'
+    echo "the number of pitr id map is $count instead of 1"
     exit 1
 fi
 
@@ -165,14 +165,14 @@ fi
 # check the pitr id map is saved in the checkpoint storage
 count=$(ls $TEST_DIR/$PREFIX/log/pitr_id_maps | wc -l)
 if [ $count -ne 0 ]; then
-    echo 'the number of pitr id map is $count instead of 0'
+    echo "the number of pitr id map is $count instead of 0"
     exit 1
 fi
 run_sql 'select count(*) from mysql.tidb_pitr_id_map;'
 check_contains "count(*): 0"
 count=$(ls $TEST_DIR/$PREFIX/checkpoints/pitr_id_maps | wc -l)
-if [ $count -ne 0 ]; then
-    echo 'the number of pitr id map is $count instead of 0'
+if [ $count -ne 1 ]; then
+    echo "the number of pitr id map is $count instead of 1"
     exit 1
 fi
 
