@@ -26,6 +26,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
@@ -1768,7 +1769,6 @@ func tryGetPkHandleCol(tblInfo *model.TableInfo, allColSchema *expression.Schema
 	}
 	return nil, nil, false
 }
-
 func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbName ast.CIStr, tbl table.Table, indices []table.Index) ([]base.Plan, []*model.IndexInfo, error) {
 	tblInfo := tbl.Meta()
 	// get index information
@@ -5221,59 +5221,30 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, v.ReferTable.Schema.L,
 				v.ReferTable.Name.L, "", authErr)
 		}
-		switch selectStmt := v.Select.(type) {
-		case *ast.SelectStmt:
-			logicalPlan, err := b.buildSelect(ctx, selectStmt)
-			if err != nil {
+
+		if v.Select != nil {
+			if err := checkCreateTableAsSelect(v); err != nil {
 				return nil, err
 			}
-			schema := logicalPlan.Schema()
-			names := logicalPlan.OutputNames()
-			if v.Cols == nil {
-				// Order of columns is the same as the order of [cols from select stmt]
-				v.Cols = make([]*ast.ColumnDef, len(schema.Columns))
-				for i, name := range names {
-					v.Cols[i] = &ast.ColumnDef{
-						Name: &ast.ColumnName{
-							Name: name.ColName,
-						},
-						Tp: schema.Columns[i].RetType,
-					}
+			switch selectStmt := v.Select.(type) {
+			case *ast.SelectStmt:
+				logicalPlan, err := b.buildSelect(ctx, selectStmt)
+				if err != nil {
+					return nil, err
 				}
-			} else {
-				// Compatible with MySQL order of columns
-				// colName -> (namesIndex,ColsIndex)
-				// if IndexArr[1] != -1,it means the column is explicitly specified when creating the table, then the column is used.
-				colMap := make(map[string][2]int)
-				for i, name := range names {
-					colMap[name.ColName.L] = [2]int{i, -1}
+				if err = buildColsFromPlan(v, logicalPlan); err != nil {
+					return nil, err
 				}
-				// First: check col which is explicitly specified and not in the [cols from select stmt],add it to the newCols
-				newCols := make([]*ast.ColumnDef, 0, len(schema.Columns))
-				for i, col := range v.Cols {
-					if arr, exists := colMap[col.Name.Name.L]; !exists {
-						newCols = append(newCols, col)
-					} else {
-						// The type which is explicitly specified is used as the basis
-						arr[1] = i
-						colMap[col.Name.Name.L] = arr
-					}
+			case *ast.SetOprStmt:
+				logicalPlan, err := b.buildSetOpr(ctx, selectStmt)
+				if err != nil {
+					return nil, err
 				}
-				// Second: add the remaining cols to the newCols
-				for i, name := range names {
-					// If the column is explicitly specified when creating the table
-					if colMap[name.ColName.L][1] != -1 {
-						newCols = append(newCols, v.Cols[colMap[name.ColName.L][1]])
-					} else {
-						newCols = append(newCols, &ast.ColumnDef{
-							Name: &ast.ColumnName{
-								Name: name.ColName,
-							},
-							Tp: schema.Columns[i].RetType,
-						})
-					}
+				if err = buildColsFromPlan(v, logicalPlan); err != nil {
+					return nil, err
 				}
-				v.Cols = newCols
+			default:
+				return nil, errors.New("unsupported select stmt type: " + reflect.TypeOf(selectStmt).String())
 			}
 		}
 	case *ast.CreateViewStmt:
@@ -5472,6 +5443,84 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 	}
 	p := &DDL{Statement: node}
 	return p, nil
+}
+
+func buildColsFromPlan(v *ast.CreateTableStmt, logicalPlan base.LogicalPlan) error {
+	schema := logicalPlan.Schema()
+	names := logicalPlan.OutputNames()
+	log.Info("schema", zap.Any("schema", schema))
+	log.Info("names", zap.Any("names", names))
+	if v.Cols == nil {
+		// Order of columns is the same as the order of [cols from select stmt]
+		v.Cols = make([]*ast.ColumnDef, len(schema.Columns))
+		for i, name := range names {
+			v.Cols[i] = &ast.ColumnDef{
+				Name: &ast.ColumnName{
+					Name: name.ColName,
+				},
+				Tp:      schema.Columns[i].RetType,
+				Options: []*ast.ColumnOption{},
+			}
+			log.Info("v.Cols[i]", zap.Any("v.Cols[i]", v.Cols[i]))
+			if schema.Columns[i].RetType.GetType() == mysql.TypeVarString {
+				// TODO: change VarString to Varchar
+				// v.Cols[i].Tp.SetFlen(schema.Columns[i].RetType.GetFlen())
+				// v.Cols[i].Tp.SetDecimal(schema.Columns[i].RetType.GetDecimal())
+			}
+		}
+	} else {
+		// Compatible with MySQL order of columns
+		// colName -> (namesIndex,ColsIndex)
+		// if IndexArr[1] != -1,it means the column is explicitly specified when creating the table, then the column is used.
+		colMap := make(map[string][2]int)
+		for i, name := range names {
+			colMap[name.ColName.L] = [2]int{i, -1}
+		}
+		// First: check col which is explicitly specified and not in the [cols from select stmt],add it to the newCols
+		newCols := make([]*ast.ColumnDef, 0, len(schema.Columns))
+		for i, col := range v.Cols {
+			if arr, exists := colMap[col.Name.Name.L]; !exists {
+				log.Info("col.Options", zap.Any("col.Options.", col.Options))
+				// if NOT NULL is set,throw error
+				for _, opt := range col.Options {
+					if opt.Tp == ast.ColumnOptionNotNull {
+						return table.ErrNoDefaultValue.GenWithStackByArgs(col.Name.Name.L)
+					}
+				}
+				newCols = append(newCols, col)
+			} else {
+				// The type which is explicitly specified is used as the basis
+				arr[1] = i
+				colMap[col.Name.Name.L] = arr
+			}
+		}
+		// Second: add the remaining cols to the newCols
+		for i, name := range names {
+			// If the column is explicitly specified when creating the table
+			if colMap[name.ColName.L][1] != -1 {
+				newCols = append(newCols, v.Cols[colMap[name.ColName.L][1]])
+			} else {
+				newCols = append(newCols, &ast.ColumnDef{
+					Name: &ast.ColumnName{
+						Name: name.ColName,
+					},
+					Tp: schema.Columns[i].RetType,
+				})
+			}
+		}
+		v.Cols = newCols
+	}
+	return nil
+}
+func checkCreateTableAsSelect(v *ast.CreateTableStmt) error {
+	// check foreign key
+	log.Info("v.ReferTable", zap.Any("v.ReferTable", v.ReferTable))
+	for _, constraint := range v.Constraints {
+		if constraint.Tp == ast.ConstraintForeignKey {
+			return plannererrors.ErrForeignKeyWithAtomicCreateSelect
+		}
+	}
+	return nil
 }
 
 const (
