@@ -873,3 +873,25 @@ select json_search('{"h": "i"}', 'all', 'i', '\\', NULL);
 json_search('{"h": "i"}', 'all', 'i', '\\', NULL)
 NULL
 set tidb_enable_vectorized_expression = default;
+drop table if exists intTable;
+CREATE TABLE intTable(i INT PRIMARY KEY, j JSON, KEY mvi((CAST(j AS UNSIGNED ARRAY))));
+insert into intTable values(1, "[5, 7]"), (4, "[0, 8]");
+select json_sum_crc32(j AS UNSIGNED ARRAY) as sum_crc32 from intTable;
+sum_crc32
+4017124912
+8302376500
+drop table if exists doubleTable;
+CREATE TABLE doubleTable(i INT, j JSON, INDEX mvi((CAST(j AS double ARRAY))));
+insert into doubleTable values (1, null), (2, "[2.1, 3.2]");
+select json_sum_crc32(j AS double ARRAY) as sum_crc32 from doubleTable;
+sum_crc32
+NULL
+2637479025
+drop table if exists charTable;
+CREATE TABLE charTable(i INT, j JSON, INDEX mvi((CAST(j AS char(10) ARRAY))));
+insert into charTable values (2, '["a"]'), (4, null), (3, '["c"]');
+select json_sum_crc32(j AS char(10) ARRAY) from charTable;
+json_sum_crc32(j AS char(10) ARRAY)
+3904355907
+NULL
+112844655

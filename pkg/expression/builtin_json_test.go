@@ -16,6 +16,7 @@ package expression
 
 import (
 	"fmt"
+	"hash/crc32"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -124,30 +125,33 @@ func TestJSONUnquote(t *testing.T) {
 }
 
 func TestJSONSumCrc32(t *testing.T) {
+	checksumFunc := func(vals []any) int64 {
+		var sum int64
+		for _, v := range vals {
+			sum += int64(crc32.ChecksumIEEE(fmt.Appendf(nil, "%v", v)))
+		}
+		return sum
+	}
+
 	ctx := createContext(t)
 	tbl := []struct {
-		input    any
-		expected any
-		tp       *types.FieldType
+		input []any
+		tp    *types.FieldType
 	}{
 		{
 			[]any{int64(-1), int64(2), int64(3)},
-			3101005010,
 			types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).SetArray(true).BuildP(),
 		},
 		{
 			[]any{int64(1), int64(2), int64(3)},
-			4505025631,
 			types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).AddFlag(mysql.UnsignedFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).SetArray(true).BuildP(),
 		},
 		{
 			[]any{"a", "b", "c"},
-			5925539243,
 			types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).SetFlen(10).SetArray(true).BuildP(),
 		},
 		{
 			[]any{1.1, 2.2, 3.3},
-			4453038788,
 			types.NewFieldTypeBuilder().SetType(mysql.TypeDouble).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).SetArray(true).BuildP(),
 		},
 	}
@@ -157,7 +161,7 @@ func TestJSONSumCrc32(t *testing.T) {
 
 		val, _, err := f.EvalInt(ctx, chunk.Row{})
 		require.NoError(t, err, tt.input)
-		require.EqualValues(t, tt.expected, val)
+		require.EqualValues(t, checksumFunc(tt.input), val)
 
 	}
 }
