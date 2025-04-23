@@ -15,11 +15,11 @@
 package domainutil
 
 import (
+	"slices"
 	"strings"
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"slices"
 )
 
 type repairInfo struct {

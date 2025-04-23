@@ -17,12 +17,12 @@ package checksum
 import (
 	"bytes"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 
 	encrypt2 "github.com/pingcap/tidb/pkg/util/encrypt"
 	"github.com/stretchr/testify/require"
-	"slices"
 )
 
 func TestChecksumReadAt(t *testing.T) {
