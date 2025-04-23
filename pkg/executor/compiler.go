@@ -339,6 +339,11 @@ func getStmtDbLabel(stmtNode ast.StmtNode, resolveCtx *resolve.Context) map[stri
 			dbLabel := x.Table.Schema.O
 			dbLabelSet[dbLabel] = struct{}{}
 		}
+	case *ast.DistributeTableStmt:
+		if x.Table != nil {
+			dbLabel := x.Table.Schema.O
+			dbLabelSet[dbLabel] = struct{}{}
+		}
 	case *ast.NonTransactionalDMLStmt:
 		if x.ShardColumn != nil {
 			dbLabel := x.ShardColumn.Schema.O
