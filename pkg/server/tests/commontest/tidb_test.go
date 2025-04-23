@@ -3404,6 +3404,7 @@ func TestIssue57531(t *testing.T) {
 	}
 	ts := servertestkit.CreateTidbTestSuite(t)
 
+	var rsCnt int
 	for i := range 2 {
 		ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
 			var conn *sql.Conn
@@ -3436,12 +3437,12 @@ func TestIssue57531(t *testing.T) {
 			time.Sleep(200 * time.Millisecond)
 
 			// have two sessions
-			len := 0
+			rsCnt = 0
 			rs := dbt.MustQuery("show processlist")
 			for rs.Next() {
-				len++
+				rsCnt++
 			}
-			require.Equal(t, len, 2)
+			require.Equal(t, rsCnt, 2)
 
 			// close tcp connection
 			netConn.Close()
@@ -3451,12 +3452,12 @@ func TestIssue57531(t *testing.T) {
 
 		// the `select sleep(300)` is killed
 		ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
-			len := 0
+			rsCnt = 0
 			rs := dbt.MustQuery("show processlist")
 			for rs.Next() {
-				len++
+				rsCnt++
 			}
-			require.Equal(t, len, 1)
+			require.Equal(t, rsCnt, 1)
 		})
 	}
 }
