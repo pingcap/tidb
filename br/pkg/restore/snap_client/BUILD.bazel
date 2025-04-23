@@ -44,6 +44,7 @@ go_library(
         "//pkg/metrics",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
+        "//pkg/statistics/handle/types",
         "//pkg/tablecodec",
         "//pkg/util",
         "//pkg/util/codec",
