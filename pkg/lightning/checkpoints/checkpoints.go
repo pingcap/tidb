@@ -1020,7 +1020,7 @@ func (cpdb *MySQLCheckpointsDB) InsertEngineCheckpoints(ctx context.Context,
 				_, err = chunkStmt.ExecContext(
 					c, tableName, engineID,
 					value.Key.Path, value.Key.Offset, value.FileMeta.Type, value.FileMeta.Compression,
-					value.FileMeta.SortKey, value.FileMeta.FileSize, columnPerm, value.Chunk.Offset, value.Chunk.EndOffset,
+					value.FileMeta.SortKey, value.FileMeta.FileSize, columnPerm, value.Chunk.Offset, value.Chunk.RealOffset, value.Chunk.EndOffset,
 					value.Chunk.PrevRowIDMax, value.Chunk.RowIDMax, value.Timestamp,
 				)
 				if err != nil {
