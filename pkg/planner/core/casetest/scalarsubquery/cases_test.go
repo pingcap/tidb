@@ -16,12 +16,12 @@ package scalarsubquery
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
-	"slices"
 )
 
 func TestExplainNonEvaledSubquery(t *testing.T) {

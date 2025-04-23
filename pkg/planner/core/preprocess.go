@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -53,7 +54,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
-	"slices"
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.

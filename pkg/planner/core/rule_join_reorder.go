@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -29,7 +30,6 @@ import (
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
-	"maps"
 )
 
 // extractJoinGroup extracts all the join nodes connected with continuous

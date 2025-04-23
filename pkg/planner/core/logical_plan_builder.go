@@ -17,8 +17,10 @@ package core
 import (
 	"context"
 	"fmt"
+	"maps"
 	"math"
 	"math/bits"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -79,8 +81,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
-	"maps"
-	"slices"
 )
 
 const (

@@ -17,6 +17,7 @@ package core_test
 import (
 	"fmt"
 	"math/rand"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
-	"slices"
 )
 
 func TestIssue49736Partition(t *testing.T) {
