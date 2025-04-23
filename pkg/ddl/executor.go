@@ -1035,23 +1035,39 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	if s.IfNotExists {
 		onExist = OnExistIgnore
 	}
-	logutil.DDLLogger().Info("create table with info job", zap.Any("args.SelectText", s.Select.Text()))
-
-	// hack in debug
+	var sql string
 	var res strings.Builder
-	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags|format.RestoreTiDBSpecialComment|format.RestoreWithTTLEnableOff, &res)
-	if err := s.Select.Restore(restoreCtx); err != nil {
-		return err
-	}
-	selectSql := res.String()
-	logutil.DDLLogger().Info("create table with info job", zap.String("selectText", selectSql))
-	err = e.CreateTableWithInfo(ctx, schema.Name, tbInfo, involvingRef, WithOnExist(onExist), WithSelectText(selectSql))
-	if err != nil {
-		return err
-	}
+
 	if s.Select != nil {
+		// logutil.DDLLogger().Info("create table with info job", zap.Any("args.SelectText", s.Select.Text()))
+
+		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &res)
+		if err := s.Select.Restore(restoreCtx); err != nil {
+			return err
+		}
+		sql = fmt.Sprintf("insert into %s.%s  %s", schema.Name.L, s.Table.Name.L, res.String())
+		// logutil.DDLLogger().Info("create table with info job", zap.String("sql", sql))
 		// Insert values to a nonpublic table
 		// TODO: implement this
+	}
+	// now WithSql(sql) is ignored
+	err = e.CreateTableWithInfo(ctx, schema.Name, tbInfo, involvingRef, WithOnExist(onExist), WithSql(sql))
+	if sql != "" {
+		var sctx sessionctx.Context
+		sctx, err = e.sessPool.Get()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer e.sessPool.Put(sctx)
+		logutil.DDLLogger().Info("create table with info job", zap.String("sql", sql))
+		_, err = sctx.GetSQLExecutor().ExecuteInternal(e.ctx, sql)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -1150,10 +1166,10 @@ func (e *executor) createTableWithInfoJob(
 		OldViewTblID:   oldViewTblID,
 		FKCheck:        ctx.GetSessionVars().ForeignKeyChecks,
 	}
-	if cfg.SelectText != "" {
-		args.SelectText = cfg.SelectText
+	if cfg.Sql != "" {
+		args.Sql = cfg.Sql
 	}
-	logutil.DDLLogger().Info("create table with info job", zap.Any("args.SelectText", args.SelectText))
+	logutil.DDLLogger().Info("create table with info job", zap.Any("args.Sql", args.Sql))
 	return NewJobWrapperWithArgs(job, args, cfg.IDAllocated), nil
 }
 
@@ -1223,7 +1239,7 @@ func (e *executor) CreateTableWithInfo(
 	cs ...CreateTableOption,
 ) (err error) {
 	c := GetCreateTableConfig(cs)
-	logutil.DDLLogger().Info("create table with info job", zap.Any("args.SelectText", c.SelectText))
+	logutil.DDLLogger().Info("create table with info job", zap.Any("args.Sql", c.Sql))
 	jobW, err := e.createTableWithInfoJob(ctx, dbName, tbInfo, involvingRef, c)
 	if err != nil {
 		return err

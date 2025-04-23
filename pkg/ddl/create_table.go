@@ -173,9 +173,9 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 	if len(tbInfo.ForeignKeys) > 0 {
 		return w.createTableWithForeignKeys(jobCtx, job, args)
 	}
-	if args.SelectText != "" {
-		return w.createTableWithSelect(jobCtx, job, args)
-	}
+	// if args.Sql != "" {
+	// 	return w.createTableWithSelect(jobCtx, job, args)
+	// }
 
 	tbInfo, err = createTable(jobCtx, job, args)
 	if err != nil {
@@ -191,7 +191,6 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 	return ver, errors.Trace(err)
@@ -201,12 +200,7 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 func (w *worker) createTableWithSelect(jobCtx *jobContext, job *model.Job, args *model.CreateTableArgs) (ver int64, err error) {
 	tbInfo := args.TableInfo
 	// 1. create sql
-	dbInfo, exist := w.sess.GetDomainInfoSchema().TableInfoByID(tbInfo.DBID)
-	if !exist {
-		return ver, errors.New("database not found")
-	}
-	dbname := dbInfo.Name.L
-	sql := fmt.Sprintf("import into %s.%s from %s", dbname, tbInfo.Name.L, args.SelectText)
+	sql := args.Sql
 	logutil.DDLLogger().Info("import into table from", zap.String("sql", sql), zap.Any("args.TableInfo.State", args.TableInfo.State))
 
 	// 2. prepare sessionPool
@@ -215,13 +209,11 @@ func (w *worker) createTableWithSelect(jobCtx *jobContext, job *model.Job, args 
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-	_, err = sctx.GetSQLExecutor().ExecuteInternal(jobCtx.stepCtx, fmt.Sprintf("use %s", dbname))
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 	defer w.sessPool.Put(sctx)
-
-	// the state change is similar to createTableWithForeignKeys()
+	// this state change is error now,due to table is not exists before asyncNotifyEvent
 	switch tbInfo.State {
 	case model.StateNone:
 		tbInfo, err = createTable(jobCtx, job, args)

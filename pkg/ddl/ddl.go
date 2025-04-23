@@ -121,8 +121,8 @@ type CreateTableConfig struct {
 	// IDs in backed up KVs.
 	IDAllocated bool
 
-	// SelectText is the text of the select statement used for CTAS.
-	SelectText string
+	// Sql is the sql statement used for CTAS.
+	Sql string
 }
 
 // CreateTableOption is the option for creating table.
@@ -155,9 +155,9 @@ func WithIDAllocated(idAllocated bool) CreateTableOption {
 	}
 }
 
-func WithSelectText(selectText string) CreateTableOption {
+func WithSql(sql string) CreateTableOption {
 	return func(cfg *CreateTableConfig) {
-		cfg.SelectText = selectText
+		cfg.Sql = sql
 	}
 }
 
