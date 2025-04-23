@@ -22,7 +22,7 @@ import (
 
 func TestInsertAndDelete(t *testing.T) {
 	sl := NewSessionStatsList()
-	var items []*SessionStatsItem
+	items := make([]*SessionStatsItem, 0, 5)
 	for range 5 {
 		items = append(items, sl.NewSessionStatsItem())
 	}
