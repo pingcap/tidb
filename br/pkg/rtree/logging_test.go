@@ -32,7 +32,7 @@ func TestLogRanges(t *testing.T) {
 	for _, cs := range cases {
 		ranges := make([]rtree.KeyRange, cs.count)
 		for j := range cs.count {
-			ranges[j] = newRange([]byte(fmt.Sprintf("%d", j)), []byte(fmt.Sprintf("%d", j+1))).KeyRange
+			ranges[j] = newRange(fmt.Appendf(nil, "%d", j), fmt.Appendf(nil, "%d", j+1)).KeyRange
 		}
 		out, err := encoder.EncodeEntry(zapcore.Entry{}, []zap.Field{rtree.ZapRanges(ranges)})
 		require.NoError(t, err)
