@@ -22,6 +22,7 @@ import (
 
 	encrypt2 "github.com/pingcap/tidb/pkg/util/encrypt"
 	"github.com/stretchr/testify/require"
+	"slices"
 )
 
 func TestChecksumReadAt(t *testing.T) {
@@ -110,7 +111,7 @@ func testDeleteOneByte(t *testing.T, encrypt bool) {
 	fc := func(b []byte, offset int) []byte {
 		if offset < deletePos && offset+len(b) >= deletePos {
 			pos := deletePos - offset
-			b = append(b[:pos-1], b[pos:]...)
+			b = slices.Delete(b, pos-1, pos)
 		}
 		return b
 	}

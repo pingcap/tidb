@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
+	"maps"
 )
 
 // ExecDetails contains execution detail information.
@@ -1122,9 +1123,7 @@ func (context *TiFlashScanContext) Clone() TiFlashScanContext {
 		invertedIdxIndexedRows:        context.invertedIdxIndexedRows,
 		invertedIdxSearchSelectedRows: context.invertedIdxSearchSelectedRows,
 	}
-	for k, v := range context.regionsOfInstance {
-		newContext.regionsOfInstance[k] = v
-	}
+	maps.Copy(newContext.regionsOfInstance, context.regionsOfInstance)
 	return newContext
 }
 

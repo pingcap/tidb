@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	rangerctx "github.com/pingcap/tidb/pkg/util/ranger/context"
+	"slices"
 )
 
 // RangeType is alias for int.
@@ -873,7 +874,7 @@ func (r *builder) newBuildFromPatternLike(
 		r.err = errors.Trace(err)
 		return getFullRange()
 	}
-	sortKeyWithoutTrim := append([]byte{}, sortKeyPointWithoutTrim.value.GetBytes()...)
+	sortKeyWithoutTrim := slices.Clone(sortKeyPointWithoutTrim.value.GetBytes())
 	endPoint := &point{value: types.MaxValueDatum(), excl: true}
 	for i := len(sortKeyWithoutTrim) - 1; i >= 0; i-- {
 		// Make the end point value more than the start point value,
