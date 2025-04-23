@@ -16,7 +16,6 @@ package generic_test
 
 import (
 	"slices"
-	"sort"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/util/generic"
