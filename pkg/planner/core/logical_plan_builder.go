@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math"
 	"math/bits"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -920,7 +921,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 	return nil
 }
 
-func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, where ast.ExprNode, aggMapper map[*ast.AggregateFuncExpr]int) (base.LogicalPlan, error) {
+func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, where ast.ExprNode, groupby []expression.Expression, aggMapper map[*ast.AggregateFuncExpr]int) (base.LogicalPlan, error) {
 	b.optFlag |= rule.FlagPredicatePushDown
 	b.optFlag |= rule.FlagDeriveTopNFromWindow
 	b.optFlag |= rule.FlagPredicateSimplification
@@ -967,8 +968,32 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 				}
 				// If there is condition which is always false, return dual plan directly.
 				dual := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-				dual.SetOutputNames(p.OutputNames())
-				dual.SetSchema(p.Schema())
+				outputNames := p.OutputNames()
+				schema := p.Schema()
+				for _, gbyExpr := range groupby {
+					if groupbyCol, ok := gbyExpr.(*expression.Column); ok {
+						if slices.ContainsFunc(p.Schema().Columns, func(col *expression.Column) bool {
+							return groupbyCol.EqualColumn(col)
+						}) {
+							continue
+						}
+						// If the group by column is not in the schema, we need to add it to the dual plan.
+						name := getName(p.Children()[0].Schema(), p.Children()[0].OutputNames(), groupbyCol)
+						if name != nil {
+							schema.Append(groupbyCol)
+							outputNames = append(outputNames, name)
+							continue
+						}
+						name = getName(p.Children()[1].Schema(), p.Children()[1].OutputNames(), groupbyCol)
+						if name != nil {
+							schema.Append(groupbyCol)
+							outputNames = append(outputNames, name)
+							continue
+						}
+					}
+				}
+				dual.SetOutputNames(outputNames)
+				dual.SetSchema(schema)
 				return dual, nil
 			}
 			cnfExpres = append(cnfExpres, item)
@@ -993,6 +1018,19 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 	selection.Conditions = cnfExpres
 	selection.SetChildren(p)
 	return selection, nil
+}
+
+func getName(schema *expression.Schema, names types.NameSlice, column *expression.Column) *types.FieldName {
+	if schema == nil {
+		return nil
+	}
+	idx := slices.IndexFunc(schema.Columns, func(col *expression.Column) bool {
+		return col.EqualColumn(column)
+	})
+	if idx < 0 {
+		return nil
+	}
+	return names[idx]
 }
 
 // buildProjectionFieldNameFromColumns builds the field name, table name and database name when field expression is a column reference.
@@ -2891,6 +2929,9 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 		idx, err := expression.FindFieldName(g.names, v.Name)
 		if idx < 0 || !g.inExpr {
 			var index int
+			if !g.ctx.GetSessionVars().InRestrictedSQL {
+				fmt.Println("wwz")
+			}
 			index, g.err = resolveFromSelectFields(v, g.fields, false)
 			if g.err != nil {
 				g.err = plannererrors.ErrAmbiguous.GenWithStackByArgs(v.Name.Name.L, clauseMsg[groupByClause])
@@ -3769,8 +3810,13 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 			return nil, err
 		}
 	}
-
+	if !b.ctx.GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	p, err = b.buildTableRefs(ctx, sel.From)
+	if !b.ctx.GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -3844,7 +3890,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	defer func() { b.allNames = b.allNames[:len(b.allNames)-1] }()
 
 	if sel.Where != nil {
-		p, err = b.buildSelection(ctx, p, sel.Where, nil)
+		p, err = b.buildSelection(ctx, p, sel.Where, gbyCols, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -3934,7 +3980,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 
 	if sel.Having != nil {
 		b.curClause = havingClause
-		p, err = b.buildSelection(ctx, p, sel.Having.Expr, havingMap)
+		p, err = b.buildSelection(ctx, p, sel.Having.Expr, gbyCols, havingMap)
 		if err != nil {
 			return nil, err
 		}
@@ -5540,7 +5586,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 
 	oldSchemaLen := p.Schema().Len()
 	if update.Where != nil {
-		p, err = b.buildSelection(ctx, p, update.Where, nil)
+		p, err = b.buildSelection(ctx, p, update.Where, nil, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -5948,7 +5994,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 
 	// For explicit column usage, should use the all-public columns.
 	if ds.Where != nil {
-		p, err = b.buildSelection(ctx, p, ds.Where, nil)
+		p, err = b.buildSelection(ctx, p, ds.Where, nil, nil)
 		if err != nil {
 			return nil, err
 		}

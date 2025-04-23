@@ -1529,7 +1529,7 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 		}
 		ret = p
 		if as.Where != nil {
-			ret, err = b.buildSelection(ctx, p, as.Where, nil)
+			ret, err = b.buildSelection(ctx, p, as.Where, nil, nil)
 			if err != nil {
 				return nil, err
 			}
@@ -3586,13 +3586,13 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 		show.Pattern.Expr = &ast.ColumnNameExpr{
 			Name: &ast.ColumnName{Name: p.OutputNames()[0].ColName},
 		}
-		np, err = b.buildSelection(ctx, np, show.Pattern, nil)
+		np, err = b.buildSelection(ctx, np, show.Pattern, nil, nil)
 		if err != nil {
 			return nil, err
 		}
 	}
 	if show.Where != nil {
-		np, err = b.buildSelection(ctx, np, show.Where, nil)
+		np, err = b.buildSelection(ctx, np, show.Where, nil, nil)
 		if err != nil {
 			return nil, err
 		}
