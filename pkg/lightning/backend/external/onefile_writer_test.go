@@ -35,6 +35,33 @@ import (
 	"golang.org/x/exp/rand"
 )
 
+func TestOnefileWriterDupError(t *testing.T) {
+	ctx := context.Background()
+	memStore := storage.NewMemStorage()
+
+	writer := NewWriterBuilder().
+		SetPropSizeDistance(100).
+		SetPropKeysDistance(2).
+		SetOnDup(common.OnDuplicateKeyError).
+		BuildOneFile(memStore, "/test", "0")
+
+	require.NoError(t, writer.Init(ctx, 1*1024*1024))
+	kvCnt := 10
+	kvs := make([]common.KvPair, kvCnt)
+	for i := 0; i < kvCnt; i++ {
+		kvs[i].Key = []byte(strconv.Itoa(i))
+		kvs[i].Val = []byte(strconv.Itoa(i * i))
+	}
+
+	for _, item := range kvs {
+		require.NoError(t, writer.WriteRow(ctx, item.Key, item.Val))
+	}
+	// write duplicate key
+	err := writer.WriteRow(ctx, kvs[0].Key, kvs[0].Val)
+	require.Error(t, err)
+	require.True(t, common.ErrFoundDuplicateKeys.Equal(err))
+}
+
 func TestOnefileWriterBasic(t *testing.T) {
 	seed := time.Now().Unix()
 	rand.Seed(uint64(seed))
@@ -108,12 +135,12 @@ func TestOnefileWriterStat(t *testing.T) {
 	// 3. read stat file and check result.
 	for _, kvCnt := range kvCntArr {
 		for _, distance := range distanceCntArr {
-			checkOneFileWriterStatWithDistance(t, kvCnt, distance, DefaultMemSizeLimit, "test"+strconv.Itoa(int(distance)))
+			checkOneFileWriterStatWithDistance(t, kvCnt, distance, "test"+strconv.Itoa(int(distance)))
 		}
 	}
 }
 
-func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance uint64, memSizeLimit uint64, prefix string) {
+func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance uint64, prefix string) {
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
 	writer := NewWriterBuilder().
@@ -213,6 +240,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		nil,
 		true,
 		common.OnDuplicateKeyIgnore,
+		nil,
 	))
 
 	kvs := make([]kvPair, 0, kvCount)
@@ -318,6 +346,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 		onClose,
 		true,
 		common.OnDuplicateKeyIgnore,
+		nil,
 	))
 
 	bufSize := rand.Intn(100) + 1

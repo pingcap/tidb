@@ -517,6 +517,10 @@ func NewWriteExternalStoreOperator(
 	memoryQuota uint64,
 	reorgMeta *model.DDLReorgMeta,
 ) *WriteExternalStoreOperator {
+	onDuplicateKey := common.OnDuplicateKeyError
+	failpoint.Inject("ignoreReadIndexDupKey", func() {
+		onDuplicateKey = common.OnDuplicateKeyIgnore
+	})
 	pool := workerpool.NewWorkerPool(
 		"WriteExternalStoreOperator",
 		util.DDL,
@@ -529,7 +533,8 @@ func NewWriteExternalStoreOperator(
 					SetKeyDuplicationEncoding(index.Meta().Unique).
 					SetMemorySizeLimit(memoryQuota).
 					SetGroupOffset(i).
-					SetOnDup(common.OnDuplicateKeyError)
+					SetOnDup(onDuplicateKey).
+					SetTable(tbl)
 				writerID := uuid.New().String()
 				prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
 				writer := builder.Build(store, prefix, writerID)

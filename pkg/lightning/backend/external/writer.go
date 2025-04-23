@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
@@ -55,6 +56,12 @@ var (
 	MergeSortOverlapThreshold int64 = 4000
 	// MergeSortFileCountStep is the step of file count when we split the sorted kv files.
 	MergeSortFileCountStep = 4000
+)
+
+var (
+	// NewErrFoundConflictRecords generate an error ErrFoundDataConflictRecords / ErrFoundIndexConflictRecords
+	// according to key and value.
+	NewErrFoundConflictRecords func(key []byte, value []byte, tbl table.Table) error
 )
 
 const (
@@ -153,6 +160,9 @@ type WriterBuilder struct {
 	onClose         OnCloseFunc
 	keyDupeEncoding bool
 	onDup           common.OnDuplicateKey
+
+	// for log
+	tbl table.Table
 }
 
 // NewWriterBuilder creates a WriterBuilder.
@@ -164,6 +174,12 @@ func NewWriterBuilder() *WriterBuilder {
 		propKeysDist: defaultPropKeysDist,
 		onClose:      dummyOnCloseFunc,
 	}
+}
+
+// SetTable sets the related table of this writer
+func (b *WriterBuilder) SetTable(tbl table.Table) *WriterBuilder {
+	b.tbl = tbl
+	return b
 }
 
 // SetMemorySizeLimit sets the memory size limit of the writer. When accumulated
@@ -232,9 +248,6 @@ func (b *WriterBuilder) Build(
 ) *Writer {
 	filenamePrefix := filepath.Join(prefix, writerID)
 	keyAdapter := common.KeyAdapter(common.NoopKeyAdapter{})
-	if b.keyDupeEncoding {
-		keyAdapter = common.DupDetectKeyAdapter{}
-	}
 	p := membuf.NewPool(
 		membuf.WithBlockNum(0),
 		membuf.WithBlockSize(b.blockSize),
@@ -260,6 +273,7 @@ func (b *WriterBuilder) Build(
 		multiFileStats: make([]MultipleFilesStat, 1),
 		fileMinKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
 		fileMaxKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
+		tbl:            b.tbl,
 	}
 	ret.multiFileStats[0].Filenames = make([][2]string, 0, multiFileStatNum)
 
@@ -291,6 +305,7 @@ func (b *WriterBuilder) BuildOneFile(
 		onClose:        b.onClose,
 		closed:         false,
 		onDup:          b.onDup,
+		tbl:            b.tbl,
 	}
 	return ret
 }
@@ -403,6 +418,9 @@ type Writer struct {
 	totalCnt  uint64
 	// duplicate key's statistics.
 	conflictInfo common.ConflictInfo
+
+	// for log
+	tbl table.Table
 }
 
 // WriteRow implements ingest.Writer.
@@ -535,14 +553,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			w.kvLocations, _, dupCnt = removeDuplicates(w.kvLocations, w.getKeyByLoc, false)
 			w.kvSize = w.calculateKVSize()
 		case common.OnDuplicateKeyError:
-			decodedKey, err := w.keyAdapter.Decode(nil, dupKey)
-			if err != nil {
-				logger.Warn("Fail to decode duplicate key",
-					zap.Error(err),
-					zap.ByteString("dup key", dupKey),
-				)
-			}
-			return common.ErrFoundDuplicateKeys.FastGenByArgs(decodedKey, dupValue)
+			return NewErrFoundConflictRecords(dupKey, dupValue, w.tbl)
 		}
 	}
 

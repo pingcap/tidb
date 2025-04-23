@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -49,6 +50,7 @@ func MergeOverlappingFiles(ctx context.Context,
 	concurrency int,
 	checkHotspot bool,
 	onDup common.OnDuplicateKey,
+	tbl table.Table,
 ) error {
 	dataFilesSlice := splitDataFiles(paths, concurrency)
 	// during encode&sort step, the writer-limit is aligned to block size, so we
@@ -78,6 +80,7 @@ func MergeOverlappingFiles(ctx context.Context,
 				onClose,
 				checkHotspot,
 				onDup,
+				tbl,
 			)
 		})
 	}
@@ -143,6 +146,7 @@ func mergeOverlappingFilesInternal(
 	onClose OnCloseFunc,
 	checkHotspot bool,
 	onDup common.OnDuplicateKey,
+	tbl table.Table,
 ) (err error) {
 	task := log.BeginTask(logutil.Logger(ctx).With(
 		zap.String("writer-id", writerID),
@@ -169,6 +173,7 @@ func mergeOverlappingFilesInternal(
 		SetBlockSize(blockSize).
 		SetOnCloseFunc(onClose).
 		SetOnDup(onDup).
+		SetTable(tbl).
 		BuildOneFile(store, newFilePrefix, writerID)
 	err = writer.Init(ctx, partSize)
 	if err != nil {

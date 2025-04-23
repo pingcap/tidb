@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/distsql"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -63,6 +64,10 @@ const (
 	maxDupCollectAttemptTimes       = 5
 	defaultRecordConflictErrorBatch = 1024
 )
+
+func init() {
+	external.NewErrFoundConflictRecords = newErrFoundConflictRecords
+}
 
 type pendingIndexHandles struct {
 	// all 4 slices should have exactly the same length.
@@ -613,6 +618,9 @@ func RetrieveKeyAndValueFromErrFoundDuplicateKeys(err error) ([]byte, []byte, er
 // newErrFoundConflictRecords generate an error ErrFoundDataConflictRecords / ErrFoundIndexConflictRecords
 // according to key and value.
 func newErrFoundConflictRecords(key []byte, value []byte, tbl table.Table) error {
+	if tbl == nil {
+		return common.ErrFoundDuplicateKeys.FastGenByArgs(key, value)
+	}
 	sessionOpts := encode.SessionOptions{
 		SQLMode: mysql.ModeStrictAllTables,
 	}

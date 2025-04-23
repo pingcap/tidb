@@ -100,6 +100,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		subtask.Concurrency,
 		true,
 		common.OnDuplicateKeyError,
+		m.ptbl,
 	)
 }
 

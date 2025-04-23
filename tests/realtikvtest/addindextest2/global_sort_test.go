@@ -107,16 +107,21 @@ func getTaskID(t *testing.T, tk *testkit.TestKit) int64 {
 	return id
 }
 
-func TestGlobalSortBasic(t *testing.T) {
-	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
+func prepareGcsAndServer(t *testing.T) (uri string, server *fakestorage.Server) {
+	host, port, uri := genStorageURI(t)
 	opt := fakestorage.Options{
 		Scheme:     "http",
-		Host:       gcsHost,
-		Port:       gcsPort,
-		PublicHost: gcsHost,
+		Host:       host,
+		Port:       port,
+		PublicHost: host,
 	}
 	server, err := fakestorage.NewServerWithOptions(opt)
 	require.NoError(t, err)
+	return uri, server
+}
+
+func TestGlobalSortBasic(t *testing.T) {
+	cloudStorageURI, server := prepareGcsAndServer(t)
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
@@ -182,15 +187,7 @@ func TestGlobalSortBasic(t *testing.T) {
 }
 
 func TestGlobalSortMultiSchemaChange(t *testing.T) {
-	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
-	opt := fakestorage.Options{
-		Scheme:     "http",
-		Host:       gcsHost,
-		Port:       gcsPort,
-		PublicHost: gcsHost,
-	}
-	server, err := fakestorage.NewServerWithOptions(opt)
-	require.NoError(t, err)
+	cloudStorageURI, server := prepareGcsAndServer(t)
 	t.Cleanup(server.Stop)
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
@@ -242,15 +239,7 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 }
 
 func TestAddIndexIngestShowReorgTp(t *testing.T) {
-	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
-	opt := fakestorage.Options{
-		Scheme:     "http",
-		Host:       gcsHost,
-		Port:       gcsPort,
-		PublicHost: gcsHost,
-	}
-	server, err := fakestorage.NewServerWithOptions(opt)
-	require.NoError(t, err)
+	cloudStorageURI, server := prepareGcsAndServer(t)
 	t.Cleanup(server.Stop)
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
@@ -280,15 +269,7 @@ func TestAddIndexIngestShowReorgTp(t *testing.T) {
 }
 
 func TestGlobalSortDuplicateErrMsg(t *testing.T) {
-	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
-	opt := fakestorage.Options{
-		Scheme:     "http",
-		Host:       gcsHost,
-		Port:       gcsPort,
-		PublicHost: gcsHost,
-	}
-	server, err := fakestorage.NewServerWithOptions(opt)
-	require.NoError(t, err)
+	cloudStorageURI, server := prepareGcsAndServer(t)
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
@@ -312,15 +293,7 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 }
 
 func TestIngestUseGivenTS(t *testing.T) {
-	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
-	opt := fakestorage.Options{
-		Scheme:     "http",
-		Host:       gcsHost,
-		Port:       gcsPort,
-		PublicHost: gcsHost,
-	}
-	server, err := fakestorage.NewServerWithOptions(opt)
-	require.NoError(t, err)
+	cloudStorageURI, server := prepareGcsAndServer(t)
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 	t.Cleanup(server.Stop)
 
@@ -357,7 +330,7 @@ func TestIngestUseGivenTS(t *testing.T) {
 	presetTS := oracle.GoTimeToTS(time.Now())
 	failpointTerm := fmt.Sprintf(`return(%d)`, presetTS)
 
-	err = failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockTSForGlobalSort", failpointTerm)
+	err := failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockTSForGlobalSort", failpointTerm)
 	require.NoError(t, err)
 
 	tk.MustExec("create table t (a int);")

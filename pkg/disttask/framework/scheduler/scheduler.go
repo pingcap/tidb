@@ -541,7 +541,7 @@ var FailTaskDirectlyInTest = true
 
 func (s *BaseScheduler) revertOnSubtaskErr(taskErr error) error {
 	task := *s.GetTask()
-	if intest.InTest && FailTaskDirectlyInTest {
+	if task.Type == proto.Backfill || intest.InTest && FailTaskDirectlyInTest {
 		if err := s.taskMgr.RevertTask(s.ctx, task.ID, task.State, taskErr); err != nil {
 			return err
 		}
