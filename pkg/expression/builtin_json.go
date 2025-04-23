@@ -38,7 +38,6 @@ import (
 var (
 	_ functionClass = &jsonTypeFunctionClass{}
 	_ functionClass = &jsonSumFunctionClass{}
-	_ functionClass = &jsonSetFunctionClass{}
 	_ functionClass = &jsonExtractFunctionClass{}
 	_ functionClass = &jsonUnquoteFunctionClass{}
 	_ functionClass = &jsonQuoteFunctionClass{}
@@ -195,7 +194,7 @@ func (c *jsonSumFunctionClass) verifyArgs(ctx EvalContext, args []Expression) er
 	}
 
 	if args[0].GetType(ctx).EvalType() != types.ETJson {
-		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_sum_crc32 of array")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_sum_crc32")
 	}
 
 	return nil
@@ -230,7 +229,7 @@ func (b *builtinJSONSumSig) evalInt(ctx EvalContext, row chunk.Row) (res int64, 
 	}
 
 	if val.TypeCode != types.JSONTypeCodeArray {
-		return 0, false, ErrInvalidTypeForJSON.GenWithStackByArgs(1, "type should be JSONTypeCodeArray")
+		return 0, false, ErrInvalidTypeForJSON.GenWithStackByArgs(1, "json_sum_crc32")
 	}
 
 	ft := b.tp.ArrayType()
@@ -245,7 +244,7 @@ func (b *builtinJSONSumSig) evalInt(ctx EvalContext, row chunk.Row) (res int64, 
 		if err != nil {
 			return 0, false, err
 		}
-		sum += int64(crc32.ChecksumIEEE([]byte(fmt.Sprintf("%v", item))))
+		sum += int64(crc32.ChecksumIEEE(fmt.Appendf(nil, "%v", item)))
 
 	}
 

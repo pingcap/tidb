@@ -940,6 +940,7 @@ var funcs = map[string]functionClass{
 
 	// json functions
 	ast.JSONType:          &jsonTypeFunctionClass{baseFunctionClass{ast.JSONType, 1, 1}},
+	ast.JSONSumCrc32:      &jsonSumFunctionClass{baseFunctionClass{ast.JSONSumCrc32, 1, 1}},
 	ast.JSONExtract:       &jsonExtractFunctionClass{baseFunctionClass{ast.JSONExtract, 2, -1}},
 	ast.JSONUnquote:       &jsonUnquoteFunctionClass{baseFunctionClass{ast.JSONUnquote, 1, 1}},
 	ast.JSONSet:           &jsonSetFunctionClass{baseFunctionClass{ast.JSONSet, 3, -1}},
