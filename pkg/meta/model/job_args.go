@@ -213,6 +213,8 @@ type CreateTableArgs struct {
 	OldViewTblID   int64 `json:"old_view_tbl_id,omitempty"`
 	// used for create table.
 	FKCheck bool `json:"fk_check,omitempty"`
+	// used for CTAS
+	SelectText string `json:"select_text,omitempty"`
 }
 
 func (a *CreateTableArgs) getArgsV1(job *Job) []any {

@@ -974,12 +974,12 @@ func TestCreateTableAsSelect(t *testing.T) {
 		errno.ErrForeignKeyWithAtomicCreateSelect)
 
 	// Case 12: Create table with generated columns (TODO)
-	// tk.MustExec("create table t12 as select id, b, concat('item-', id) as gen_col from t1;")
-	// tk.MustQuery("show create table t12").Check(testkit.Rows("t12 CREATE TABLE `t12` (\n" +
-	// 	"  `id` int(11) NOT NULL,\n" +
-	// 	"  `b` int(11) DEFAULT NULL,\n" +
-	// 	"  `gen_col` varchar(16) DEFAULT NULL\n" +
-	// 	") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("create table t12 as select id, b, concat('item-', id) as gen_col from t1;")
+	tk.MustQuery("show create table t12").Check(testkit.Rows("t12 CREATE TABLE `t12` (\n" +
+		"  `id` int(11) NOT NULL,\n" +
+		"  `b` int(11) DEFAULT NULL,\n" +
+		"  `gen_col` varchar(25) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	// tk.MustQuery("select * from t12").Check(testkit.Rows("1 1 item-1", "2 2 item-2", "3 3 item-3"))
 
 	// Case 13: Create table with different column order than source

@@ -1035,8 +1035,17 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	if s.IfNotExists {
 		onExist = OnExistIgnore
 	}
+	logutil.DDLLogger().Info("create table with info job", zap.Any("args.SelectText", s.Select.Text()))
 
-	err = e.CreateTableWithInfo(ctx, schema.Name, tbInfo, involvingRef, WithOnExist(onExist))
+	// hack in debug
+	var res strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags|format.RestoreTiDBSpecialComment|format.RestoreWithTTLEnableOff, &res)
+	if err := s.Select.Restore(restoreCtx); err != nil {
+		return err
+	}
+	selectSql := res.String()
+	logutil.DDLLogger().Info("create table with info job", zap.String("selectText", selectSql))
+	err = e.CreateTableWithInfo(ctx, schema.Name, tbInfo, involvingRef, WithOnExist(onExist), WithSelectText(selectSql))
 	if err != nil {
 		return err
 	}
@@ -1141,6 +1150,10 @@ func (e *executor) createTableWithInfoJob(
 		OldViewTblID:   oldViewTblID,
 		FKCheck:        ctx.GetSessionVars().ForeignKeyChecks,
 	}
+	if cfg.SelectText != "" {
+		args.SelectText = cfg.SelectText
+	}
+	logutil.DDLLogger().Info("create table with info job", zap.Any("args.SelectText", args.SelectText))
 	return NewJobWrapperWithArgs(job, args, cfg.IDAllocated), nil
 }
 
@@ -1210,7 +1223,7 @@ func (e *executor) CreateTableWithInfo(
 	cs ...CreateTableOption,
 ) (err error) {
 	c := GetCreateTableConfig(cs)
-
+	logutil.DDLLogger().Info("create table with info job", zap.Any("args.SelectText", c.SelectText))
 	jobW, err := e.createTableWithInfoJob(ctx, dbName, tbInfo, involvingRef, c)
 	if err != nil {
 		return err

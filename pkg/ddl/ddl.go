@@ -120,6 +120,9 @@ type CreateTableConfig struct {
 	// by BR now. By reusing IDs BR can save a lot of works such as rewriting table
 	// IDs in backed up KVs.
 	IDAllocated bool
+
+	// SelectText is the text of the select statement used for CTAS.
+	SelectText string
 }
 
 // CreateTableOption is the option for creating table.
@@ -149,6 +152,12 @@ func WithOnExist(o OnExist) CreateTableOption {
 func WithIDAllocated(idAllocated bool) CreateTableOption {
 	return func(cfg *CreateTableConfig) {
 		cfg.IDAllocated = idAllocated
+	}
+}
+
+func WithSelectText(selectText string) CreateTableOption {
+	return func(cfg *CreateTableConfig) {
+		cfg.SelectText = selectText
 	}
 }
 

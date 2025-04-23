@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -42,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -171,6 +173,9 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 	if len(tbInfo.ForeignKeys) > 0 {
 		return w.createTableWithForeignKeys(jobCtx, job, args)
 	}
+	if args.SelectText != "" {
+		return w.createTableWithSelect(jobCtx, job, args)
+	}
 
 	tbInfo, err = createTable(jobCtx, job, args)
 	if err != nil {
@@ -189,6 +194,92 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
+	return ver, errors.Trace(err)
+
+}
+
+func (w *worker) createTableWithSelect(jobCtx *jobContext, job *model.Job, args *model.CreateTableArgs) (ver int64, err error) {
+	tbInfo := args.TableInfo
+	// 1. create sql
+	dbInfo, exist := w.sess.GetDomainInfoSchema().TableInfoByID(tbInfo.DBID)
+	if !exist {
+		return ver, errors.New("database not found")
+	}
+	dbname := dbInfo.Name.L
+	sql := fmt.Sprintf("import into %s.%s from %s", dbname, tbInfo.Name.L, args.SelectText)
+	logutil.DDLLogger().Info("import into table from", zap.String("sql", sql), zap.Any("args.TableInfo.State", args.TableInfo.State))
+
+	// 2. prepare sessionPool
+	var sctx sessionctx.Context
+	sctx, err = w.sessPool.Get()
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	_, err = sctx.GetSQLExecutor().ExecuteInternal(jobCtx.stepCtx, fmt.Sprintf("use %s", dbname))
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	defer w.sessPool.Put(sctx)
+
+	// the state change is similar to createTableWithForeignKeys()
+	switch tbInfo.State {
+	case model.StateNone:
+		tbInfo, err = createTable(jobCtx, job, args)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// none -> delete only
+		tbInfo.State = model.StateDeleteOnly
+		if ver, err = updateVersionAndTableInfo(jobCtx, job, tbInfo, true); err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateDeleteOnly
+	case model.StateDeleteOnly:
+		// delete only -> write only
+		log.Info("create table in DeleteOnly state")
+		tbInfo.State = model.StateWriteOnly
+		if ver, err = updateVersionAndTableInfo(jobCtx, job, tbInfo, true); err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateWriteOnly
+	case model.StateWriteOnly:
+		// write only -> WriteReorganization
+		_, err = sctx.GetSQLExecutor().ExecuteInternal(jobCtx.stepCtx, sql)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+
+		log.Info("create table in WriteOnly state")
+		tbInfo.State = model.StateWriteReorganization
+		if ver, err = updateVersionAndTableInfo(jobCtx, job, tbInfo, true); err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StateWriteReorganization
+
+	case model.StateWriteReorganization:
+		log.Info("create table in WriteReorganization state")
+		tbInfo.State = model.StatePublic
+		if ver, err = updateVersionAndTableInfo(jobCtx, job, tbInfo, true); err != nil {
+			return ver, errors.Trace(err)
+		}
+		job.SchemaState = model.StatePublic
+	case model.StatePublic:
+		log.Info("create table in Public state")
+		if ver, err = updateVersionAndTableInfo(jobCtx, job, tbInfo, true); err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Notify the event
+		createTableEvent := notifier.NewCreateTableEvent(tbInfo)
+		err = asyncNotifyEvent(jobCtx, createTableEvent, job, noSubJob, w.sess)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		// Finish the job
+		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
+
+	default:
+		return ver, errors.Trace(dbterror.ErrInvalidDDLJob.GenWithStackByArgs("table", tbInfo.State))
+	}
 	return ver, errors.Trace(err)
 }
 

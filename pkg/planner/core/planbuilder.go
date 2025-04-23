@@ -5223,10 +5223,14 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		}
 
 		if v.Select != nil {
+			// PTAL: Why v.Select.Text() = "" ?
+			log.Info("v.Text()", zap.Any("v.Text()", v.Text()))
+			log.Info("create table with info job", zap.Any("v.Select", v.Select.Text()))
 			if err := checkCreateTableAsSelect(v); err != nil {
 				return nil, err
 			}
 			switch selectStmt := v.Select.(type) {
+			// simple select statement
 			case *ast.SelectStmt:
 				logicalPlan, err := b.buildSelect(ctx, selectStmt)
 				if err != nil {
@@ -5235,6 +5239,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 				if err = buildColsFromPlan(v, logicalPlan); err != nil {
 					return nil, err
 				}
+				// union
 			case *ast.SetOprStmt:
 				logicalPlan, err := b.buildSetOpr(ctx, selectStmt)
 				if err != nil {
@@ -5454,6 +5459,7 @@ func buildColsFromPlan(v *ast.CreateTableStmt, logicalPlan base.LogicalPlan) err
 		// Order of columns is the same as the order of [cols from select stmt]
 		v.Cols = make([]*ast.ColumnDef, len(schema.Columns))
 		for i, name := range names {
+			checkRetType(schema.Columns[i].RetType)
 			v.Cols[i] = &ast.ColumnDef{
 				Name: &ast.ColumnName{
 					Name: name.ColName,
@@ -5462,11 +5468,6 @@ func buildColsFromPlan(v *ast.CreateTableStmt, logicalPlan base.LogicalPlan) err
 				Options: []*ast.ColumnOption{},
 			}
 			log.Info("v.Cols[i]", zap.Any("v.Cols[i]", v.Cols[i]))
-			if schema.Columns[i].RetType.GetType() == mysql.TypeVarString {
-				// TODO: change VarString to Varchar
-				// v.Cols[i].Tp.SetFlen(schema.Columns[i].RetType.GetFlen())
-				// v.Cols[i].Tp.SetDecimal(schema.Columns[i].RetType.GetDecimal())
-			}
 		}
 	} else {
 		// Compatible with MySQL order of columns
@@ -5500,6 +5501,7 @@ func buildColsFromPlan(v *ast.CreateTableStmt, logicalPlan base.LogicalPlan) err
 			if colMap[name.ColName.L][1] != -1 {
 				newCols = append(newCols, v.Cols[colMap[name.ColName.L][1]])
 			} else {
+				checkRetType(schema.Columns[i].RetType)
 				newCols = append(newCols, &ast.ColumnDef{
 					Name: &ast.ColumnName{
 						Name: name.ColName,
@@ -5511,6 +5513,18 @@ func buildColsFromPlan(v *ast.CreateTableStmt, logicalPlan base.LogicalPlan) err
 		v.Cols = newCols
 	}
 	return nil
+}
+
+// checkRetType checks the type of the column and changes it (eg. VarString -> Varchar)
+func checkRetType(fieldType *types.FieldType) {
+	if fieldType.GetType() == mysql.TypeVarString {
+		// change VarString to Varchar
+		// charset and collate are set behind the scenes
+		fieldType.SetType(mysql.TypeVarchar)
+		fieldType.SetCharset("")
+		fieldType.SetCollate("")
+	}
+
 }
 func checkCreateTableAsSelect(v *ast.CreateTableStmt) error {
 	// check foreign key
