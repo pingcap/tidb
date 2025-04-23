@@ -428,14 +428,23 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 		increaseFactor := idx.GetIncreaseFactor(realtimeRowCount)
 		return outOfRangeFullNDV(float64(idx.Histogram.NDV), idx.TotalRowCount(), notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
 	}
-	// Calculate the worst case selectivity assuming the value is skewed within the remaining values not in TopN.
-	skewEstimate := (idx.Histogram.NotNullCount() - float64(idx.TopN.TotalCount())) - (histNDV - 1)
-	// skewRatio determines how much of the potential skew should be considered
-	skewRatio := sctx.GetSessionVars().SkewRatio
 	// Calculate the average histogram rows (which excludes topN) and NDV that excluded topN
 	avgRowEstimate := idx.Histogram.NotNullCount() / histNDV
-	// Return the average estimate plus the skewed estimate
-	return avgRowEstimate + max(0, ((skewEstimate-avgRowEstimate)*skewRatio))
+	skewEstimate := float64(0)
+	// skewRatio determines how much of the potential skew should be considered
+	skewRatio := sctx.GetSessionVars().SkewRatio
+	if skewRatio > 0 {
+		// Calculate the worst case selectivity assuming the value is skewed within the remaining values not in TopN.
+		skewEstimate = (idx.Histogram.NotNullCount() - float64(idx.TopN.TotalCount())) - (histNDV - 1)
+		minTopN, _ := getTopNMinMax(idx.TopN)
+		if minTopN > 0 {
+			// The skewEstimate should not be larger than the minimum TopN value.
+			skewEstimate = min(skewEstimate, float64(minTopN))
+		}
+		// Add a "ratio" of the skewEstimate to adjust the average row estimate.
+		return avgRowEstimate + max(0, (skewEstimate-avgRowEstimate)*skewRatio)
+	}
+	return avgRowEstimate
 }
 
 // expBackoffEstimation estimate the multi-col cases following the Exponential Backoff. See comment below for details.
@@ -595,4 +604,23 @@ func getOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int 
 		}
 	}
 	return len(ran.LowVal)
+}
+
+func getTopNMinMax(topN *statistics.TopN) (minN, maxN uint64) {
+	if topN == nil || len(topN.TopN) == 0 {
+		return 0, 0
+	}
+
+	minN = topN.TopN[0].Count
+	maxN = minN
+
+	for _, meta := range topN.TopN {
+		if meta.Count < minN {
+			minN = meta.Count
+		}
+		if meta.Count > maxN {
+			maxN = meta.Count
+		}
+	}
+	return minN, maxN
 }
