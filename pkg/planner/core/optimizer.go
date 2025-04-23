@@ -276,9 +276,6 @@ func checkStableResultMode(sctx base.PlanContext) bool {
 // The returned logical plan is necessary for generating plans for Common Table Expressions (CTEs).
 func doOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, logic base.LogicalPlan) (
 	base.LogicalPlan, base.PhysicalPlan, float64, error) {
-	if !sctx.GetSessionVars().InRestrictedSQL {
-		fmt.Println("wwz")
-	}
 	if sctx.GetSessionVars().GetSessionVars().EnableCascadesPlanner {
 		return CascadesOptimize(ctx, sctx, flag, logic)
 	}
@@ -1113,9 +1110,6 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 			continue
 		}
 		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
-		if !logic.SCtx().GetSessionVars().InRestrictedSQL {
-			fmt.Println("wwz")
-		}
 		var planChanged bool
 		logic, planChanged, err = rule.Optimize(ctx, logic, opt)
 		if err != nil {

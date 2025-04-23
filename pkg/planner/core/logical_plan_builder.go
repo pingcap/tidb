@@ -405,15 +405,8 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 	}
 	plan4Agg.SetOutputNames(names)
 	plan4Agg.SetChildren(p)
-	if !p.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("wwz")
-	}
 	if rollupExpand != nil {
 		// append gid and gpos as the group keys if any.
-		if !p.SCtx().GetSessionVars().InRestrictedSQL {
-			fmt.Println("bug here here !!!!!!!")
-		}
-
 		plan4Agg.GroupByItems = append(gbyItems, rollupExpand.GID)
 		if rollupExpand.GPos != nil {
 			plan4Agg.GroupByItems = append(plan4Agg.GroupByItems, rollupExpand.GPos)
@@ -422,9 +415,6 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, 
 		plan4Agg.GroupByItems = gbyItems
 	}
 	plan4Agg.SetSchema(schema4Agg)
-	if !p.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("wwz")
-	}
 	return plan4Agg, aggIndexMap, nil
 }
 
@@ -2929,9 +2919,6 @@ func (g *gbyResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 		idx, err := expression.FindFieldName(g.names, v.Name)
 		if idx < 0 || !g.inExpr {
 			var index int
-			if !g.ctx.GetSessionVars().InRestrictedSQL {
-				fmt.Println("wwz")
-			}
 			index, g.err = resolveFromSelectFields(v, g.fields, false)
 			if g.err != nil {
 				g.err = plannererrors.ErrAmbiguous.GenWithStackByArgs(v.Name.Name.L, clauseMsg[groupByClause])
@@ -3527,9 +3514,6 @@ func allColFromExprNode(p base.LogicalPlan, n ast.Node, names map[*types.FieldNa
 
 func (b *PlanBuilder) resolveGbyExprs(ctx context.Context, p base.LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) (base.LogicalPlan, []expression.Expression, bool, error) {
 	b.curClause = groupByClause
-	if !p.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("wwz")
-	}
 	exprs := make([]expression.Expression, 0, len(gby.Items))
 	resolver := &gbyResolver{
 		ctx:        b.ctx,
@@ -3810,13 +3794,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 			return nil, err
 		}
 	}
-	if !b.ctx.GetSessionVars().InRestrictedSQL {
-		fmt.Println("wwz")
-	}
 	p, err = b.buildTableRefs(ctx, sel.From)
-	if !b.ctx.GetSessionVars().InRestrictedSQL {
-		fmt.Println("wwz")
-	}
 	if err != nil {
 		return nil, err
 	}

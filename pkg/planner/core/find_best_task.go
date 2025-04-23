@@ -97,9 +97,6 @@ func findBestTask4LogicalTableDual(lp base.LogicalPlan, prop *property.PhysicalP
 		return base.InvalidTask, 0, nil
 	}
 	p := lp.(*logicalop.LogicalTableDual)
-	if !p.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("wwz")
-	}
 	// If the required property is not empty and the row count > 1,
 	// we cannot ensure this required property.
 	// But if the row count is 0 or 1, we don't need to care about the property.
@@ -109,7 +106,6 @@ func findBestTask4LogicalTableDual(lp base.LogicalPlan, prop *property.PhysicalP
 	dual := PhysicalTableDual{
 		RowCount: p.RowCount,
 	}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
-	dual.names = p.OutputNames()
 	dual.SetSchema(p.Schema())
 	planCounter.Dec(1)
 	appendCandidate4PhysicalOptimizeOp(opt, p, dual, prop)
