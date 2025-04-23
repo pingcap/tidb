@@ -16,7 +16,10 @@ package util
 
 import (
 	"bufio"
+	"io"
 	"net"
+	"sync"
+	"time"
 )
 
 // DefaultReaderSize is the default size of bufio.Reader.
@@ -26,11 +29,13 @@ const DefaultReaderSize = 16 * 1024
 type BufferedReadConn struct {
 	net.Conn
 	rb *bufio.Reader
+	mu *sync.Mutex
 }
 
 // NewBufferedReadConn creates a BufferedReadConn.
 func NewBufferedReadConn(conn net.Conn) *BufferedReadConn {
 	return &BufferedReadConn{
+		mu:   &sync.Mutex{},
 		Conn: conn,
 		rb:   bufio.NewReaderSize(conn, DefaultReaderSize),
 	}
@@ -39,4 +44,33 @@ func NewBufferedReadConn(conn net.Conn) *BufferedReadConn {
 // Read reads data from the connection.
 func (conn BufferedReadConn) Read(b []byte) (n int, err error) {
 	return conn.rb.Read(b)
+}
+
+// Peek peeks from the connection.
+func (conn BufferedReadConn) Peek(n int) ([]byte, error) {
+	return conn.rb.Peek(n)
+}
+
+// IsAlive use syscall to detect the connection is alive or not.
+// return value < 0, means unknow
+// return value = 0, means not alive
+// return value = 1, means still alive
+func (conn BufferedReadConn) IsAlive() int {
+	if conn.mu.TryLock() {
+		defer conn.mu.Unlock()
+		err := conn.SetReadDeadline(time.Now().Add(30 * time.Microsecond))
+		if err != nil {
+			return -1
+		}
+		// nolint:errcheck
+		defer conn.SetReadDeadline(time.Time{})
+		_, err = conn.Peek(1)
+		if err == io.EOF {
+			return 0
+		} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			return 1
+		}
+		return -1
+	}
+	return -1
 }
