@@ -146,6 +146,7 @@ func (opt *commonMutateOpt) PessimisticLazyDupKeyCheck() PessimisticLazyDupKeyCh
 type AddRecordOpt struct {
 	commonMutateOpt
 	isUpdate      bool
+	genRecordID   bool
 	reserveAutoID int
 }
 
@@ -161,6 +162,12 @@ func NewAddRecordOpt(opts ...AddRecordOption) *AddRecordOpt {
 // IsUpdate indicates whether the `AddRecord` operation is in an update statement.
 func (opt *AddRecordOpt) IsUpdate() bool {
 	return opt.isUpdate
+}
+
+// GenerateRecordID indicates whether the `AddRecord` operation should generate new _tidb_rowid.
+// Used in normal Update.
+func (opt *AddRecordOpt) GenerateRecordID() bool {
+	return opt.genRecordID
 }
 
 // ReserveAutoID indicates the auto id count that should be reserved.
@@ -201,6 +208,11 @@ func (opt *UpdateRecordOpt) SkipWriteUntouchedIndices() bool {
 
 // GetAddRecordOpt creates a AddRecordOpt.
 func (opt *UpdateRecordOpt) GetAddRecordOpt() *AddRecordOpt {
+	return &AddRecordOpt{commonMutateOpt: opt.commonMutateOpt, isUpdate: true, genRecordID: true}
+}
+
+// GetAddRecordOptKeepRecordID creates a AddRecordOpt.
+func (opt *UpdateRecordOpt) GetAddRecordOptKeepRecordID() *AddRecordOpt {
 	return &AddRecordOpt{commonMutateOpt: opt.commonMutateOpt, isUpdate: true}
 }
 
@@ -309,6 +321,7 @@ type isUpdate struct{}
 
 func (i isUpdate) applyAddRecordOpt(opt *AddRecordOpt) {
 	opt.isUpdate = true
+	opt.genRecordID = true
 }
 
 // skipWriteUntouchedIndices implements UpdateRecordOption.
