@@ -71,7 +71,7 @@ func New(
 
 // Run starts the generator.
 func (g *TestCaseGenerator) Run() {
-	for i := 0; i < g.parallelism; i++ {
+	for range g.parallelism {
 		g.wg.Add(1)
 		go g.runWorker()
 	}
