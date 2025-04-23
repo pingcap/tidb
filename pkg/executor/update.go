@@ -19,7 +19,6 @@ import (
 	"context"
 	"fmt"
 	"runtime/trace"
-	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -167,7 +166,7 @@ func (e *UpdateExec) mergeNonGenerated(row, newData []types.Datum) error {
 				}
 			}
 		} else {
-			mergedData = slices.Clone(newTableData)
+			mergedData = append([]types.Datum{}, newTableData...)
 		}
 
 		memDelta := e.mergedRowData[content.TblID].Set(handle, mergedData)
@@ -425,7 +424,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 				txn.SetOption(kv.RPCInterceptor, sc.KvExecCounter.RPCInterceptor())
 			}
 		}
-		for rowIdx := range chk.NumRows() {
+		for rowIdx := 0; rowIdx < chk.NumRows(); rowIdx++ {
 			chunkRow := chk.GetRow(rowIdx)
 			datumRow := chunkRow.GetDatumRow(fields)
 			// precomputes handles

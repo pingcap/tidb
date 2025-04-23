@@ -33,7 +33,7 @@ func TestDistsqlPartitionTableConcurrency(t *testing.T) {
 	tk.MustExec("drop table if exists t1, t2, t3")
 	tk.MustExec("create table t1(id int primary key , val int)")
 	partitions := make([]string, 0, 20)
-	for i := range 20 {
+	for i := 0; i < 20; i++ {
 		pid := i + 1
 		partitions = append(partitions, fmt.Sprintf("PARTITION p%d VALUES LESS THAN (%d00)", pid, pid))
 	}
@@ -43,7 +43,7 @@ func TestDistsqlPartitionTableConcurrency(t *testing.T) {
 	tk.MustExec("create table t3(id int primary key, val int)" +
 		"partition by range(id)" +
 		"(" + strings.Join(partitions, ",") + ")")
-	for i := range 20 {
+	for i := 0; i < 20; i++ {
 		for _, tbl := range []string{"t1", "t2", "t3"} {
 			tk.MustExec(fmt.Sprintf("insert into %s values(%d, %d)", tbl, i*50, i*50))
 		}

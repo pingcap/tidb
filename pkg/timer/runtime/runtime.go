@@ -366,14 +366,20 @@ func (rt *TimerGroupRuntime) setTryTriggerTimer(t *time.Timer, lastTryTriggerTim
 
 func (rt *TimerGroupRuntime) getNextTryTriggerDuration(lastTryTriggerTime time.Time) time.Duration {
 	now := rt.nowFunc()
-	sinceLastTrigger := max(now.Sub(lastTryTriggerTime), 0)
+	sinceLastTrigger := now.Sub(lastTryTriggerTime)
+	if sinceLastTrigger < 0 {
+		sinceLastTrigger = 0
+	}
 
 	maxDuration := maxTriggerEventInterval - sinceLastTrigger
 	if maxDuration <= 0 {
 		return time.Duration(0)
 	}
 
-	minDuration := max(minTriggerEventInterval-sinceLastTrigger, 0)
+	minDuration := minTriggerEventInterval - sinceLastTrigger
+	if minDuration < 0 {
+		minDuration = 0
+	}
 
 	duration := maxDuration
 	rt.cache.iterTryTriggerTimers(func(_ *api.TimerRecord, tryTriggerTime time.Time, _ *time.Time) bool {

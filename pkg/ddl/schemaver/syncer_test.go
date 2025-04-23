@@ -57,7 +57,7 @@ func TestSyncerSimple(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	syncers := make([]schemaver.Syncer, 0, 2)
-	for i := range 2 {
+	for i := 0; i < 2; i++ {
 		id := strconv.Itoa(i + 1)
 		schemaVerSyncer := schemaver.NewEtcdSyncer(cli, id)
 		require.NoError(t, schemaVerSyncer.Init(ctx))
@@ -175,7 +175,7 @@ func TestPutKVToEtcdMono(t *testing.T) {
 	require.NoError(t, err)
 
 	eg := util.NewErrorGroupWithRecover()
-	for range 30 {
+	for i := 0; i < 30; i++ {
 		eg.Go(func() error {
 			err := util2.PutKVToEtcdMono(ctx, cli, 1, "testKey", strconv.Itoa(5))
 			return err
@@ -185,7 +185,7 @@ func TestPutKVToEtcdMono(t *testing.T) {
 	require.Error(t, eg.Wait())
 
 	eg = util.NewErrorGroupWithRecover()
-	for range 30 {
+	for i := 0; i < 30; i++ {
 		eg.Go(func() error {
 			err := util2.PutKVToEtcd(ctx, cli, 1, "testKey", strconv.Itoa(5))
 			return err

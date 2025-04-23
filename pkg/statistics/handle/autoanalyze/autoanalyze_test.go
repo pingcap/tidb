@@ -619,10 +619,10 @@ func TestSkipAutoAnalyzeOutsideTheAvailableTime(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	ttStart := time.Now().Add(-2 * time.Hour)
 	ttEnd := time.Now().Add(-1 * time.Hour)
-	for i := range 2 {
+	for i := 0; i < 2; i++ {
 		dbName := fmt.Sprintf("db%d", i)
 		tk.MustExec(fmt.Sprintf("create database %s", dbName))
-		for j := range 2 {
+		for j := 0; j < 2; j++ {
 			tableName := fmt.Sprintf("table%d", j)
 			tk.MustExec(fmt.Sprintf("create table %s.%s (a int)", dbName, tableName))
 		}

@@ -17,7 +17,6 @@
 package cache
 
 import (
-	"maps"
 	"strconv"
 	"strings"
 	"time"
@@ -78,7 +77,9 @@ func (c *StatsTableRowCache) UpdateByID(sctx sessionctx.Context, id int64) error
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.tableRows[id] = tableRows[id]
-	maps.Copy(c.colLength, colLength)
+	for k, v := range colLength {
+		c.colLength[k] = v
+	}
 	return nil
 }
 
@@ -167,7 +168,10 @@ func getColLengthTables(sctx sessionctx.Context, tableIDs ...int64) (map[tableHi
 	for _, row := range rows {
 		tableID := row.GetInt64(0)
 		histID := row.GetInt64(1)
-		totalSize := max(row.GetInt64(2), 0)
+		totalSize := row.GetInt64(2)
+		if totalSize < 0 {
+			totalSize = 0
+		}
 		colLengthMap[tableHistID{tableID: tableID, histID: histID}] = uint64(totalSize)
 	}
 	return colLengthMap, nil

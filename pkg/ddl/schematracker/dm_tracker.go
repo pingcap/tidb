@@ -20,7 +20,6 @@ package schematracker
 
 import (
 	"context"
-	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -558,7 +557,7 @@ func (d *SchemaTracker) dropColumn(_ sessionctx.Context, ti ast.Ident, spec *ast
 			continue
 		}
 
-		idx.Columns = slices.Delete(idx.Columns, i, i+1)
+		idx.Columns = append(idx.Columns[:i], idx.Columns[i+1:]...)
 		if len(idx.Columns) == 0 {
 			continue
 		}
@@ -816,7 +815,13 @@ func (d *SchemaTracker) dropTablePartitions(_ sessionctx.Context, ident ast.Iden
 
 	newDefs := make([]model.PartitionDefinition, 0, len(tblInfo.Partition.Definitions)-len(partNames))
 	for _, def := range tblInfo.Partition.Definitions {
-		found := slices.Contains(partNames, def.Name.L)
+		found := false
+		for _, partName := range partNames {
+			if def.Name.L == partName {
+				found = true
+				break
+			}
+		}
 		if !found {
 			newDefs = append(newDefs, def)
 		}
@@ -1110,6 +1115,11 @@ func (*SchemaTracker) LockTables(_ sessionctx.Context, _ *ast.LockTablesStmt) er
 
 // UnlockTables implements the DDL interface, it's no-op in DM's case.
 func (*SchemaTracker) UnlockTables(_ sessionctx.Context, _ []model.TableLockTpInfo) error {
+	return nil
+}
+
+// AlterTableMode implements the DDL interface, it's no-op in DM's case.
+func (*SchemaTracker) AlterTableMode(_ sessionctx.Context, _ *model.AlterTableModeArgs) error {
 	return nil
 }
 

@@ -454,7 +454,7 @@ func TestGlobalPrivValueRequireStr(t *testing.T) {
 
 func checkUserRecord(t *testing.T, x, y []privileges.UserRecord) {
 	require.Equal(t, len(x), len(y))
-	for i := range x {
+	for i := 0; i < len(x); i++ {
 		require.Equal(t, x[i].User, y[i].User)
 		require.Equal(t, x[i].Host, y[i].Host)
 	}

@@ -189,7 +189,7 @@ func TestTiFlashNoRedundantPDRules(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
 
-	rpcClient, pdClient, cluster, err := unistore.New("", nil)
+	rpcClient, pdClient, cluster, err := unistore.New("", nil, nil)
 	require.NoError(t, err)
 	defer func() {
 		rpcClient.Close()
@@ -537,7 +537,7 @@ func TestTiFlashMassiveReplicaAvailable(t *testing.T) {
 	tk := testkit.NewTestKit(t, s.store)
 
 	tk.MustExec("use test")
-	for i := range 100 {
+	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("drop table if exists ddltiflash%v", i))
 		tk.MustExec(fmt.Sprintf("create table ddltiflash%v(z int)", i))
 		tk.MustExec(fmt.Sprintf("alter table ddltiflash%v set tiflash replica 1", i))
@@ -545,7 +545,7 @@ func TestTiFlashMassiveReplicaAvailable(t *testing.T) {
 
 	time.Sleep(ddl.PollTiFlashInterval * 10)
 	// Should get schema right now
-	for i := range 100 {
+	for i := 0; i < 100; i++ {
 		CheckTableAvailableWithTableName(s.dom, t, 1, []string{}, "test", fmt.Sprintf("ddltiflash%v", i))
 	}
 }
@@ -586,7 +586,7 @@ func TestSetPlacementRuleWithGCWorker(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
 
-	rpcClient, pdClient, cluster, err := unistore.New("", nil)
+	rpcClient, pdClient, cluster, err := unistore.New("", nil, nil)
 	defer func() {
 		rpcClient.Close()
 		pdClient.Close()
@@ -706,7 +706,7 @@ func TestTiFlashBackoffer(t *testing.T) {
 
 	// Test converge
 	backoff.Put(2)
-	for range 20 {
+	for i := 0; i < 20; i++ {
 		backoff.Tick(2)
 	}
 	require.Equal(t, maxTick, mustGet(2).Threshold)
@@ -853,7 +853,7 @@ func TestTiFlashBatchRateLimiter(t *testing.T) {
 	threshold := 2
 	tk.MustExec("create database tiflash_ddl_limit")
 	tk.MustExec(fmt.Sprintf("set SESSION tidb_batch_pending_tiflash_count=%v", threshold))
-	for i := range threshold {
+	for i := 0; i < threshold; i++ {
 		tk.MustExec(fmt.Sprintf("create table tiflash_ddl_limit.t%v(z int)", i))
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/PollTiFlashReplicaStatusReplaceCurAvailableValue", `return(false)`))
@@ -871,7 +871,7 @@ func TestTiFlashBatchRateLimiter(t *testing.T) {
 	// There must be one table with no TiFlashReplica.
 	check := func(expected int, total int) {
 		cnt := 0
-		for i := range total {
+		for i := 0; i < total; i++ {
 			tb, err := s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("tiflash_ddl_limit"), ast.NewCIStr(fmt.Sprintf("t%v", i)))
 			require.NoError(t, err)
 			if tb.Meta().TiFlashReplica != nil {
@@ -1212,19 +1212,19 @@ func TestTiFlashProgressAvailableList(t *testing.T) {
 	tbls := make([]table.Table, tableCount)
 
 	tk.MustExec("use test")
-	for i := range tableCount {
+	for i := 0; i < tableCount; i++ {
 		tableNames[i] = fmt.Sprintf("ddltiflash%d", i)
 		tk.MustExec(fmt.Sprintf("drop table if exists %s", tableNames[i]))
 		tk.MustExec(fmt.Sprintf("create table %s(z int)", tableNames[i]))
 		tk.MustExec(fmt.Sprintf("alter table %s set tiflash replica 1", tableNames[i]))
 	}
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable * 3)
-	for i := range tableCount {
+	for i := 0; i < tableCount; i++ {
 		CheckTableAvailableWithTableName(s.dom, t, 1, []string{}, "test", tableNames[i])
 	}
 
 	// After available, reset TiFlash sync status.
-	for i := range tableCount {
+	for i := 0; i < tableCount; i++ {
 		var err error
 		tbls[i], err = s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(tableNames[i]))
 		require.NoError(t, err)
@@ -1239,7 +1239,7 @@ func TestTiFlashProgressAvailableList(t *testing.T) {
 	time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
 	// Not all table have updated progress
 	UpdatedTableCount := 0
-	for i := range tableCount {
+	for i := 0; i < tableCount; i++ {
 		progress, isExist := infosync.GetTiFlashProgressFromCache(tbls[i].Meta().ID)
 		require.True(t, isExist)
 		if progress == 0 {
@@ -1248,12 +1248,12 @@ func TestTiFlashProgressAvailableList(t *testing.T) {
 	}
 	require.NotEqual(t, tableCount, UpdatedTableCount)
 	require.NotEqual(t, 0, UpdatedTableCount)
-	for range tableCount {
+	for i := 0; i < tableCount; i++ {
 		time.Sleep(ddl.PollTiFlashInterval * RoundToBeAvailable)
 	}
 	// All table have updated progress
 	UpdatedTableCount = 0
-	for i := range tableCount {
+	for i := 0; i < tableCount; i++ {
 		progress, isExist := infosync.GetTiFlashProgressFromCache(tbls[i].Meta().ID)
 		require.True(t, isExist)
 		if progress == 0 {

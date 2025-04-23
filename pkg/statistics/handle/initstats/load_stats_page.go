@@ -92,7 +92,7 @@ func NewRangeWorker(
 
 // LoadStats loads stats concurrently when to init stats
 func (ls *RangeWorker) LoadStats() {
-	for range ls.concurrency {
+	for n := 0; n < ls.concurrency; n++ {
 		ls.wg.Run(func() {
 			ls.loadStats()
 		})

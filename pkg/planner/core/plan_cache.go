@@ -115,7 +115,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 
 	// step 3: add metadata lock and check each table's schema version
 	schemaNotMatch := false
-	for i := range stmt.dbName {
+	for i := 0; i < len(stmt.dbName); i++ {
 		tbl, ok := is.TableByID(ctx, stmt.tbls[i].Meta().ID)
 		if !ok {
 			tblByName, err := is.TableByName(context.Background(), stmt.dbName[i], stmt.tbls[i].Meta().Name)

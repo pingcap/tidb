@@ -49,7 +49,7 @@ func TestXFormedOperatorShouldDeriveTheirStatsOwn(t *testing.T) {
 	// we just left cascades to it to xform and generate a join operator.
 	tk.MustExec("INSERT INTO t1 (a1, b1, c1) VALUES (1, 2, 3), (4, NULL, 5),  (NULL, 6, 7),  (8, 9, NULL),  (10, 11, 12);")
 	tk.MustExec("INSERT INTO t2 values (1,1),(2,2),(3,3)")
-	for range 10 {
+	for i := 0; i < 10; i++ {
 		tk.MustExec("INSERT INTO t2 select * from t2")
 	}
 	tk.MustExec("analyze table t1, t2")

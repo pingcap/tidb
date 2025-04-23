@@ -80,7 +80,7 @@ type latches struct {
 
 func newLatches() *latches {
 	l := &latches{}
-	for i := range 256 {
+	for i := 0; i < 256; i++ {
 		l.slots[i] = map[uint64]*sync.WaitGroup{}
 	}
 	return l
@@ -536,7 +536,7 @@ func (rm *StandAloneRegionManager) initialSplit(root *metapb.Region) {
 
 func (rm *StandAloneRegionManager) allocIDs(n int) ([]uint64, error) {
 	ids := make([]uint64, n)
-	for i := range n {
+	for i := 0; i < n; i++ {
 		id, err := rm.pdc.AllocID(context.Background())
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -590,7 +590,7 @@ func (s *sampler) shrinkIfNeeded() {
 	if s.length < len(s.samples) {
 		return
 	}
-	for i := range len(s.samples) / 2 {
+	for i := 0; i < len(s.samples)/2; i++ {
 		s.samples[i], s.samples[i*2] = s.samples[i*2], s.samples[i]
 	}
 	s.length /= 2

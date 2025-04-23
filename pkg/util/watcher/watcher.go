@@ -15,7 +15,6 @@
 package watcher
 
 import (
-	"maps"
 	"os"
 	"path/filepath"
 	"sync"
@@ -117,7 +116,9 @@ func (w *Watcher) Add(name string) error {
 	}
 
 	w.names[name] = struct{}{}
-	maps.Copy(w.files, fileList)
+	for fp, fi := range fileList {
+		w.files[fp] = fi
+	}
 
 	return nil
 }
@@ -292,7 +293,9 @@ func (w *Watcher) listForAll() map[string]os.FileInfo {
 			case w.Errors <- err:
 			}
 		}
-		maps.Copy(fileList, fl)
+		for fp, fi := range fl {
+			fileList[fp] = fi
+		}
 	}
 
 	return fileList

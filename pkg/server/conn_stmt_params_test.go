@@ -50,7 +50,7 @@ func decodeAndParse(typectx types.Context, args []expression.Expression, boundPa
 		return err
 	}
 
-	for i := range args {
+	for i := 0; i < len(args); i++ {
 		args[i] = parsedArgs[i]
 	}
 	return
@@ -341,7 +341,7 @@ func expectedDatetimeExecuteResult(t *testing.T, c *mockConn, time types.Time, w
 		require.NoError(t, err)
 		require.NoError(t, conn.writePacket(data))
 
-		for range warnCount {
+		for i := 0; i < warnCount; i++ {
 			conn.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("any error"))
 		}
 		require.NoError(t, conn.writeEOF(context.Background(), mysql.ServerStatusAutocommit))

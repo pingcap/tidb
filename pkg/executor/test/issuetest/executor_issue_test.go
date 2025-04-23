@@ -152,7 +152,7 @@ func TestIssue28650(t *testing.T) {
 	sqls := make([]string, 2)
 	wg.Run(func() {
 		inElems := make([]string, 1000)
-		for i := range inElems {
+		for i := 0; i < len(inElems); i++ {
 			inElems[i] = fmt.Sprintf("wm_%dbDgAAwCD-v1QB%dxky-g_dxxQCw", rand.Intn(100), rand.Intn(100))
 		}
 		sqls[0] = fmt.Sprintf(sql, "inl_join", strings.Join(inElems, "\",\""))
@@ -160,7 +160,7 @@ func TestIssue28650(t *testing.T) {
 	})
 
 	tk.MustExec("insert into t1 select rand()*400;")
-	for range 10 {
+	for i := 0; i < 10; i++ {
 		tk.MustExec("insert into t1 select rand()*400 from t1;")
 	}
 	tk.MustExec("SET GLOBAL tidb_mem_oom_action = 'CANCEL'")
@@ -339,7 +339,7 @@ func TestIndexJoin31494(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("set @@tidb_mem_quota_query=2097152;")
 	// This bug will be reproduced in 10 times.
-	for range 10 {
+	for i := 0; i < 10; i++ {
 		err := tk.QueryToErr("select /*+ inl_join(t1) */ * from t1 right join t2 on t1.b=t2.b;")
 		require.Error(t, err)
 		require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
@@ -569,7 +569,7 @@ func TestIssueRaceWhenBuildingExecutorConcurrently(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, index idx_a(a), index idx_b(b))")
-	for i := range 2000 {
+	for i := 0; i < 2000; i++ {
 		v := i * 100
 		tk.MustExec("insert into t values(?, ?, ?)", v, v, v)
 	}
@@ -721,7 +721,7 @@ func TestIndexReaderIssue53871AndIssue54160(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (id int key auto_increment, b int, c int, index idx (b), index idx2(c))")
 	tk.MustExec(" insert into t () values (), (), (), (), (), (), (), ();")
-	for range 9 {
+	for i := 0; i < 9; i++ {
 		tk.MustExec("insert into t (b) select b from t;")
 	}
 	tk.MustExec(`update t set b = rand() * 10000, c = rand() * 10000;`)
@@ -767,7 +767,7 @@ func TestIssue55881(t *testing.T) {
 	// set tidb_executor_concurrency to 1 to let the issue happens with high probability.
 	tk.MustExec("set tidb_executor_concurrency=1;")
 	// this is a random issue, so run it 100 times to increase the probability of the issue.
-	for range 100 {
+	for i := 0; i < 100; i++ {
 		tk.MustQuery("with cte as (select * from aaa) select id, (select id from (select * from aaa where aaa.id != bbb.id union all select * from cte union all select * from cte) d limit 1)," +
 			"(select max(value) from (select * from cte union all select * from cte union all select * from aaa where aaa.id > bbb.id) x) from bbb;")
 	}

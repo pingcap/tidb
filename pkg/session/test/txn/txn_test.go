@@ -355,13 +355,13 @@ func TestErrorRollback(t *testing.T) {
 	wg.Add(cnt)
 	num := 20
 
-	for range cnt {
+	for i := 0; i < cnt; i++ {
 		go func() {
 			defer wg.Done()
 			tk := testkit.NewTestKit(t, store)
 			tk.MustExec("use test")
 			tk.MustExec("set @@session.tidb_retry_limit = 100")
-			for range num {
+			for j := 0; j < num; j++ {
 				_, _ = tk.Exec("insert into t_rollback values (1, 1)")
 				tk.MustExec("update t_rollback set c2 = c2 + 1 where c1 = 0")
 			}
@@ -492,7 +492,7 @@ func TestMemBufferCleanupMemoryLeak(t *testing.T) {
 	tk.MustExec("set session tidb_mem_quota_query=10240")
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values(?)", key2)
-	for range 100 {
+	for i := 0; i < 100; i++ {
 		// The insert statement will fail because of the duplicate key error.
 		err := tk.ExecToErr("insert into t values(?), (?)", key1, key2)
 		require.Error(t, err)

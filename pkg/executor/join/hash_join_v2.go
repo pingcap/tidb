@@ -74,7 +74,7 @@ func (htc *hashTableContext) reset() {
 func (htc *hashTableContext) getAllMemoryUsageInHashTable() int64 {
 	partNum := len(htc.hashTable.tables)
 	totalMemoryUsage := int64(0)
-	for i := range partNum {
+	for i := 0; i < partNum; i++ {
 		mem := htc.hashTable.getPartitionMemoryUsage(i)
 		totalMemoryUsage += mem
 	}
@@ -83,7 +83,7 @@ func (htc *hashTableContext) getAllMemoryUsageInHashTable() int64 {
 
 func (htc *hashTableContext) clearHashTable() {
 	partNum := len(htc.hashTable.tables)
-	for i := range partNum {
+	for i := 0; i < partNum; i++ {
 		htc.hashTable.clearPartitionSegments(i)
 	}
 }
@@ -223,7 +223,7 @@ func (htc *hashTableContext) tryToSpill(rowTables []*rowTable, spillHelper *hash
 
 func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber uint, spillHelper *hashJoinSpillHelper) (int, error) {
 	rowTables := make([]*rowTable, partitionNumber)
-	for i := range int(partitionNumber) {
+	for i := 0; i < int(partitionNumber); i++ {
 		rowTables[i] = newRowTable()
 	}
 
@@ -251,7 +251,7 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber uint, spi
 	}
 
 	taggedBits := uint8(maxTaggedBits)
-	for i := range int(partitionNumber) {
+	for i := 0; i < int(partitionNumber); i++ {
 		for _, seg := range rowTables[i].segments {
 			taggedBits = min(taggedBits, seg.taggedBits)
 		}
@@ -376,7 +376,7 @@ func (w *ProbeWorkerV2) restoreAndProbe(inDisk *chunk.DataInDiskByChunks, start 
 
 	chunkNum := inDisk.NumChunks()
 
-	for i := range chunkNum {
+	for i := 0; i < chunkNum; i++ {
 		select {
 		case <-w.HashJoinCtx.closeCh:
 			return
@@ -495,7 +495,7 @@ func (b *BuildWorkerV2) splitPartitionAndAppendToRowTableForRestore(inDisk *chun
 
 	hasErr := false
 	chunkNum := inDisk.NumChunks()
-	for i := range chunkNum {
+	for i := 0; i < chunkNum; i++ {
 		_, ok := <-syncCh
 		if !ok {
 			break
@@ -704,6 +704,11 @@ func (e *HashJoinV2Exec) Open(ctx context.Context) error {
 		e.prepared = false
 		return err
 	}
+	return e.OpenSelf()
+}
+
+// OpenSelf opens hash join itself and initializes the hash join context.
+func (e *HashJoinV2Exec) OpenSelf() error {
 	e.prepared = false
 	e.inRestore = false
 	needScanRowTableAfterProbeDone := e.ProbeWorkers[0].JoinProbe.NeedScanRowTable()
@@ -787,6 +792,8 @@ func (e *HashJoinV2Exec) initializeForProbe() {
 	e.joinResultCh = make(chan *hashjoinWorkerResult, e.Concurrency+1)
 	e.ProbeSideTupleFetcher.initializeForProbeBase(e.Concurrency, e.joinResultCh)
 	e.ProbeSideTupleFetcher.canSkipProbeIfHashTableIsEmpty = e.canSkipProbeIfHashTableIsEmpty()
+	// set buildSuccess to false by default, it will be set to true if build finishes successfully
+	e.ProbeSideTupleFetcher.buildSuccess = false
 
 	for i := uint(0); i < e.Concurrency; i++ {
 		e.ProbeWorkers[i].initializeForProbe(e.ProbeSideTupleFetcher.probeChkResourceCh, e.ProbeSideTupleFetcher.probeResultChs[i], e)
@@ -824,6 +831,8 @@ func (e *HashJoinV2Exec) startProbeJoinWorkers(ctx context.Context) {
 		if err != nil {
 			return
 		}
+		// in restore, there is no standalone probe fetcher goroutine, so set buildSuccess here
+		e.ProbeSideTupleFetcher.buildSuccess = true
 	}
 
 	for i := uint(0); i < e.Concurrency; i++ {
@@ -874,14 +883,17 @@ func (e *HashJoinV2Exec) waitJoinWorkers(start time.Time) {
 		}
 	}
 
-	if e.ProbeWorkers[0] != nil && e.ProbeWorkers[0].JoinProbe.NeedScanRowTable() {
-		for i := uint(0); i < e.Concurrency; i++ {
-			var workerID = i
-			e.workerWg.RunWithRecover(func() {
-				e.ProbeWorkers[workerID].scanRowTableAfterProbeDone()
-			}, e.handleJoinWorkerPanic)
+	if e.ProbeSideTupleFetcher.buildSuccess {
+		// only scan row table if build is successful
+		if e.ProbeWorkers[0] != nil && e.ProbeWorkers[0].JoinProbe.NeedScanRowTable() {
+			for i := uint(0); i < e.Concurrency; i++ {
+				var workerID = i
+				e.workerWg.RunWithRecover(func() {
+					e.ProbeWorkers[workerID].scanRowTableAfterProbeDone()
+				}, e.handleJoinWorkerPanic)
+			}
+			e.workerWg.Wait()
 		}
-		e.workerWg.Wait()
 	}
 }
 
@@ -1045,6 +1057,8 @@ func (w *ProbeWorkerV2) getNewJoinResult() (bool, *hashjoinWorkerResult) {
 func (e *HashJoinV2Exec) reset() {
 	e.resetProbeStatus()
 	e.releaseDisk()
+	// set buildSuccess to false by default, it will be set to true if build finishes successfully
+	e.ProbeSideTupleFetcher.buildSuccess = false
 	e.resetHashTableContextForRestore()
 	e.spillHelper.setCanSpillFlag(true)
 	if e.HashJoinCtxV2.stats != nil {
@@ -1233,7 +1247,7 @@ func (e *HashJoinV2Exec) createTasks(buildTaskCh chan<- *buildTask, totalSegment
 
 	partitionStartIndex := make([]int, len(subTables))
 	partitionSegmentLength := make([]int, len(subTables))
-	for i := range subTables {
+	for i := 0; i < len(subTables); i++ {
 		partitionStartIndex[i] = 0
 		partitionSegmentLength[i] = len(subTables[i].rowData.segments)
 	}
@@ -1385,7 +1399,7 @@ func (e *HashJoinV2Exec) controlWorkersForRestore(chunkNum int, syncCh chan *chu
 		close(waitForController)
 	}()
 
-	for range chunkNum {
+	for i := 0; i < chunkNum; i++ {
 		if e.finished.Load() {
 			return
 		}

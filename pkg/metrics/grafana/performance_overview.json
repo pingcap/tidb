@@ -2211,7 +2211,7 @@
               "format": "time_series",
               "interval": "",
               "intervalFactor": 2,
-              "legendFormat": "{{instance}}",
+              "legendFormat": "{{instance}} {{resource_group}}",
               "refId": "A",
               "step": 30
             },

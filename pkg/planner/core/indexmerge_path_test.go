@@ -134,7 +134,7 @@ func TestMultiMVIndexRandom(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`create table t1(pk int auto_increment primary key, a json, b json, c int, d int, index idx((cast(a as %v array))), index idx2((cast(b as %v array)), c), index idx3(c, d), index idx4(d))`, testCase.indexType, testCase.indexType))
 		nRows := 20
 		rows := make([]string, 0, nRows)
-		for range nRows {
+		for i := 0; i < nRows; i++ {
 			va1, va2, vb1, vb2, vc, vd := randMVIndexValue(testCase.insertValOpts), randMVIndexValue(testCase.insertValOpts), randMVIndexValue(testCase.insertValOpts), randMVIndexValue(testCase.insertValOpts), rand.Intn(testCase.insertValOpts.distinct), rand.Intn(testCase.insertValOpts.distinct)
 			if testCase.indexType == "date" {
 				rows = append(rows, fmt.Sprintf(`(json_array(cast(%v as date), cast(%v as date)),  json_array(cast(%v as date), cast(%v as date)), %v, %v)`, va1, va2, vb1, vb2, vc, vd))
@@ -157,7 +157,7 @@ func TestMultiMVIndexRandom(t *testing.T) {
 		}
 		nQueries := 20
 		tk.MustExec(`set @@tidb_opt_fix_control = "45798:on"`)
-		for i := range nQueries {
+		for i := 0; i < nQueries; i++ {
 			cnf := true
 			if i >= 10 {
 				// cnf
@@ -205,7 +205,7 @@ func TestMVIndexRandom(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`create table t(a int, j json, index kj((cast(j as %v array))))`, testCase.indexType))
 		nRows := 20
 		rows := make([]string, 0, nRows)
-		for range nRows {
+		for i := 0; i < nRows; i++ {
 			va, v1, v2 := rand.Intn(testCase.insertValOpts.distinct), randMVIndexValue(testCase.insertValOpts), randMVIndexValue(testCase.insertValOpts)
 			if testCase.indexType == "date" {
 				rows = append(rows, fmt.Sprintf(`(%v, json_array(cast(%v as date), cast(%v as date)))`, va, v1, v2))
@@ -222,7 +222,7 @@ func TestMVIndexRandom(t *testing.T) {
 		}
 		nQueries := 20
 		tk.MustExec(`set @@tidb_opt_fix_control = "45798:on"`)
-		for range nQueries {
+		for i := 0; i < nQueries; i++ {
 			conds, conds4PlanCache, params := randMVIndexConds(rand.Intn(3)+1, testCase.queryValsOpts, randJColName, randNColName)
 			r1 := tk.MustQuery("select /*+ ignore_index(t, kj) */ * from t where " + conds).Sort()
 			tk.MustQuery("select /*+ use_index_merge(t, kj) */ * from t where " + conds).Sort().Check(r1.Rows())
@@ -279,7 +279,7 @@ func TestPlanCacheMVIndex(t *testing.T) {
   KEY f_item_ids ((cast(f_item_ids as unsigned array))),
   KEY short_link ((cast(short_link as char(1000) array)),country))`)
 
-	for i := range 50 {
+	for i := 0; i < 50; i++ {
 		var insertVals []string
 		insertVals = append(insertVals, fmt.Sprintf("'%v'", i))                                                                            // item_pk varbinary(255) NOT NULL,
 		insertVals = append(insertVals, fmt.Sprintf("'%v'", i))                                                                            // item_id varchar(45) DEFAULT NULL,
@@ -329,7 +329,7 @@ func TestPlanCacheMVIndex(t *testing.T) {
 		return vs[rand.Intn(len(vs))]
 	}
 
-	for range 50 {
+	for i := 0; i < 50; i++ {
 		check(true, `select * from ti where (? member of (short_link)) and (ti.country = ?)`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)))
 		check(true, `select * from ti where (? member of (f_profile_ids) AND (ti.m_item_set_id = ?) AND (ti.country = ?))`, fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(30)), fmt.Sprintf("'%v'", rand.Intn(3)))
 		check(true, `select * from ti where (? member of (short_link))`, fmt.Sprintf("'%v'", rand.Intn(30)))
@@ -354,7 +354,7 @@ func TestPlanCacheMVIndex(t *testing.T) {
 }
 
 func randMVIndexCondsXNF4MemberOf(nConds int, valOpts randMVIndexValOpts, CNF bool, randJCol, randNCol func() string) (conds, conds4PlanCache string, params []string) {
-	for i := range nConds {
+	for i := 0; i < nConds; i++ {
 		if i > 0 {
 			if CNF {
 				conds += " AND "
@@ -373,7 +373,7 @@ func randMVIndexCondsXNF4MemberOf(nConds int, valOpts randMVIndexValOpts, CNF bo
 }
 
 func randMVIndexConds(nConds int, valOpts randMVIndexValOpts, randJCol, randNCol func() string) (conds, conds4PlanCache string, params []string) {
-	for i := range nConds {
+	for i := 0; i < nConds; i++ {
 		if i > 0 {
 			if rand.Intn(5) < 1 { // OR
 				conds += " OR "
@@ -414,8 +414,8 @@ func randMVIndexCond(condType int, valOpts randMVIndexValOpts, randJCol, randNCo
 
 func randArray(opts randMVIndexValOpts) string {
 	n := rand.Intn(5) // n can be 0
-	vals := make([]string, 0, n)
-	for range n {
+	var vals []string
+	for i := 0; i < n; i++ {
 		vals = append(vals, randMVIndexValue(opts))
 	}
 	return "[" + strings.Join(vals, ", ") + "]"
@@ -441,7 +441,7 @@ func randMVIndexValue(opts randMVIndexValOpts) string {
 	return ""
 }
 
-func TestAnalyzeVectorIndex(t *testing.T) {
+func testAnalyzeTiFlashIndex(createTableSQL, createIndexSQL string, t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -454,16 +454,15 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 		tiflash.StatusServer.Close()
 		tiflash.Unlock()
 	}()
-	tk.MustExec(`create table t(a int, b vector(2), c vector(3), j json, index(a))`)
-	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
+
+	tk.MustExec(createTableSQL)
 	tblInfo, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tblInfo.Meta().ID, true)
 	require.NoError(t, err)
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
-	tk.MustExec("alter table t add vector index idx((VEC_COSINE_DISTANCE(b))) USING HNSW")
-	tk.MustExec("alter table t add vector index idx2((VEC_COSINE_DISTANCE(c))) USING HNSW")
+	tk.MustExec(createIndexSQL)
 
 	tk.MustExec("set tidb_analyze_version=2")
 	tk.MustExec("analyze table t")
@@ -494,4 +493,14 @@ func TestAnalyzeVectorIndex(t *testing.T) {
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Warning 1105 analyzing columnar index is not supported, skip idx",
 		"Warning 1105 analyzing columnar index is not supported, skip idx2"))
+}
+
+func TestAnalyzeVectorIndex(t *testing.T) {
+	testAnalyzeTiFlashIndex("create table t(a int, b vector(2), c vector(3), j json, index(a)); alter table t set tiflash replica 2 location labels 'a','b';",
+		"alter table t add vector index idx((VEC_COSINE_DISTANCE(b))) USING HNSW; alter table t add vector index idx2((VEC_COSINE_DISTANCE(c))) USING HNSW;", t)
+}
+
+func TestAnalyzeColumnarIndex(t *testing.T) {
+	testAnalyzeTiFlashIndex("create table t(a int, b int, c int, j json, index(a)); alter table t set tiflash replica 2 location labels 'a','b';",
+		"alter table t add columnar index idx(b) using inverted; alter table t add columnar index idx2(c) using INVERTED;", t)
 }

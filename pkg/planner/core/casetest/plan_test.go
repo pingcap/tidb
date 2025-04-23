@@ -174,7 +174,7 @@ func TestPlanDigest4InList(t *testing.T) {
 		"select * from t where a in (1, 2, 3);",
 		"select a in (1, 2, 3) from t;",
 	}
-	for i := range queriesGroup1 {
+	for i := 0; i < len(queriesGroup1); i++ {
 		query1 := queriesGroup1[i]
 		query2 := queriesGroup2[i]
 		t.Run(query1+" vs "+query2, func(t *testing.T) {
@@ -212,7 +212,7 @@ func TestIssue47634(t *testing.T) {
 		"explain select /*+ inl_join(t4) */ * from t3 join t4 on t3.b = t4.b where t4.a = 2;",
 		"explain select /*+ inl_join(t5) */ * from t3 join t5 on t3.b = t5.b where t5.a = 2;",
 	}
-	for i := range queriesGroup1 {
+	for i := 0; i < len(queriesGroup1); i++ {
 		query1 := queriesGroup1[i]
 		query2 := queriesGroup2[i]
 		t.Run(query1+" vs "+query2, func(t *testing.T) {

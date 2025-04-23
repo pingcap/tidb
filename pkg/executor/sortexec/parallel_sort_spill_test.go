@@ -95,14 +95,14 @@ func TestParallelSortSpillDisk(t *testing.T) {
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(sortCase, schema)
 	exe := buildSortExec(sortCase, dataSource)
-	for range 10 {
+	for i := 0; i < 10; i++ {
 		oneSpillCase(t, nil, sortCase, schema, dataSource)
 		oneSpillCase(t, exe, sortCase, schema, dataSource)
 	}
 
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit2)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	for range 10 {
+	for i := 0; i < 10; i++ {
 		inMemoryThenSpill(t, ctx, nil, sortCase, schema, dataSource)
 		inMemoryThenSpill(t, ctx, exe, sortCase, schema, dataSource)
 	}
@@ -131,14 +131,14 @@ func TestParallelSortSpillDiskFailpoint(t *testing.T) {
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(sortCase, schema)
 	exe := buildSortExec(sortCase, dataSource)
-	for range 20 {
+	for i := 0; i < 20; i++ {
 		failpointNoMemoryDataTest(t, nil, sortCase, dataSource)
 		failpointNoMemoryDataTest(t, exe, sortCase, dataSource)
 	}
 
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit2)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	for range 20 {
+	for i := 0; i < 20; i++ {
 		failpointDataInMemoryThenSpillTest(t, ctx, nil, sortCase, dataSource)
 		failpointDataInMemoryThenSpillTest(t, ctx, exe, sortCase, dataSource)
 	}
@@ -162,7 +162,7 @@ func TestIssue59655(t *testing.T) {
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(sortCase, schema)
 	exe := buildSortExec(sortCase, dataSource)
-	for range 20 {
+	for i := 0; i < 20; i++ {
 		failpointNoMemoryDataTest(t, nil, sortCase, dataSource)
 		failpointNoMemoryDataTest(t, exe, sortCase, dataSource)
 	}

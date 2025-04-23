@@ -372,7 +372,7 @@ func (h *taskZoneInfoHelper) init(allTiFlashZoneInfo map[string]string) {
 
 func (h *taskZoneInfoHelper) tryQuickFillWithUncertainZones(exec *tipb.Executor, slots int, sameZoneFlags []bool) (bool, []bool) {
 	if exec.ExecutorId == nil || len(h.currentTaskZone) == 0 {
-		for range slots {
+		for i := 0; i < slots; i++ {
 			sameZoneFlags = append(sameZoneFlags, true)
 		}
 		return true, sameZoneFlags
@@ -385,7 +385,7 @@ func (h *taskZoneInfoHelper) tryQuickFillWithUncertainZones(exec *tipb.Executor,
 	// For CTE exchange nodes, data is passed locally, set all to true
 	if (exec.Tp == tipb.ExecType_TypeExchangeSender && len(exec.ExchangeSender.UpstreamCteTaskMeta) != 0) ||
 		(exec.Tp == tipb.ExecType_TypeExchangeReceiver && len(exec.ExchangeReceiver.OriginalCtePrdocuerTaskMeta) != 0) {
-		for range slots {
+		for i := 0; i < slots; i++ {
 			sameZoneFlags = append(sameZoneFlags, true)
 		}
 		return true, sameZoneFlags
@@ -423,13 +423,13 @@ func (h *taskZoneInfoHelper) inferSameZoneFlag(exec *tipb.Executor, encodedTaskM
 
 	if len(zoneInfos) != slots {
 		// This branch is for safety purpose, not expected
-		for range slots {
+		for i := 0; i < slots; i++ {
 			sameZoneFlags = append(sameZoneFlags, true)
 		}
 		return sameZoneFlags
 	}
 
-	for i := range slots {
+	for i := 0; i < slots; i++ {
 		sameZoneFlags = append(sameZoneFlags, len(zoneInfos[i]) == 0 || h.currentTaskZone == zoneInfos[i])
 	}
 	return sameZoneFlags

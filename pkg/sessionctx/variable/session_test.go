@@ -494,7 +494,7 @@ func TestGetReuseChunk(t *testing.T) {
 	chk1 = sessVars.GetChunkAllocator().Alloc(fieldTypes, initCap, initCap)
 	require.NotNil(t, chk1)
 	chunkReuseMap[chk1] = struct{}{}
-	for i := range chk1.NumCols() {
+	for i := 0; i < chk1.NumCols(); i++ {
 		columnReuseMap[chk1.Column(i)] = struct{}{}
 	}
 	require.True(t, sessVars.GetUseChunkAlloc())
@@ -504,7 +504,7 @@ func TestGetReuseChunk(t *testing.T) {
 	require.NotNil(t, chkres1)
 	_, exist := chunkReuseMap[chkres1]
 	require.True(t, exist)
-	for i := range chkres1.NumCols() {
+	for i := 0; i < chkres1.NumCols(); i++ {
 		_, exist := columnReuseMap[chkres1.Column(i)]
 		require.True(t, exist)
 	}

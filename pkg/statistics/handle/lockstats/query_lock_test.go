@@ -136,11 +136,11 @@ func executeQueryLockedTables(exec *mock.MockRestrictedSQLExecutor, numRows int,
 	}
 
 	c := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, numRows)
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		c.AppendInt64(0, int64(i+1))
 	}
-	rows := make([]chunk.Row, 0, numRows)
-	for i := range numRows {
+	var rows []chunk.Row
+	for i := 0; i < numRows; i++ {
 		rows = append(rows, c.GetRow(i))
 	}
 	exec.EXPECT().ExecRestrictedSQL(

@@ -734,7 +734,10 @@ func (t *Time) Add(ctx Context, d Duration) (Time, error) {
 		tm.setSecond(0)
 		tm.setMicrosecond(0)
 	}
-	fsp := max(d.Fsp, t.Fsp())
+	fsp := t.Fsp()
+	if d.Fsp > fsp {
+		fsp = d.Fsp
+	}
 	ret := NewTime(tm.coreTime, t.Type(), fsp)
 	return ret, ret.Check(ctx)
 }

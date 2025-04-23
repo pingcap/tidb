@@ -684,7 +684,7 @@ func (h *Helper) GetRegionsTableInfo(regionsInfo *pd.RegionsInfo, is infoschema.
 	tables := h.GetTablesInfoWithKeyRange(is, filter)
 
 	regions := make([]*pd.RegionInfo, 0, len(regionsInfo.Regions))
-	for i := range regionsInfo.Regions {
+	for i := 0; i < len(regionsInfo.Regions); i++ {
 		regions = append(regions, &regionsInfo.Regions[i])
 	}
 

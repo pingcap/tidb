@@ -211,7 +211,10 @@ func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64, lea
 				_lease = ts
 			}
 		case CachedTableLockRead:
-			newLease := max(ts, lease)
+			newLease := ts
+			if newLease < lease { // Never, never decrease lease
+				newLease = lease
+			}
 			// Change from READ to INTEND
 			if _, err = h.execSQL(ctx,
 				"update mysql.table_cache_meta set lock_type='INTEND', oldReadLease=%?, lease=%? where tid=%?",

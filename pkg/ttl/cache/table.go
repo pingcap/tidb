@@ -672,7 +672,7 @@ func GetNextBytesHandleDatum(key kv.Key, recordPrefix []byte) (d types.Datum) {
 		}
 	}
 
-	for range brokenGroupEmptyBytes {
+	for i := 0; i < brokenGroupEmptyBytes; i++ {
 		if encodedVal[brokenGroupEndIdx] > 0 {
 			break
 		}

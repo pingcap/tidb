@@ -51,7 +51,7 @@ func TestGetDDLJobs(t *testing.T) {
 	jobs := make([]*model.Job, cnt)
 	ctx := context.Background()
 	var currJobs2 []*model.Job
-	for i := range cnt {
+	for i := 0; i < cnt; i++ {
 		jobs[i] = &model.Job{
 			ID:       int64(i),
 			SchemaID: 1,
@@ -181,7 +181,7 @@ func TestCreateViewConcurrently(t *testing.T) {
 		}
 	})
 	var eg errgroup.Group
-	for range 5 {
+	for i := 0; i < 5; i++ {
 		eg.Go(func() error {
 			newTk := testkit.NewTestKit(t, store)
 			_, err := newTk.Exec("use test")

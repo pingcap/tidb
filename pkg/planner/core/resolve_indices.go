@@ -150,9 +150,9 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 	// column sets are **NOT** always ordered, see comment: https://github.com/pingcap/tidb/pull/45831#discussion_r1481031471
 	// we are using mapping mechanism instead of moving j forward.
 	marked := make([]bool, mergedSchema.Len())
-	for i := range colsNeedResolving {
+	for i := 0; i < colsNeedResolving; i++ {
 		findIdx := -1
-		for j := range mergedSchema.Columns {
+		for j := 0; j < len(mergedSchema.Columns); j++ {
 			if !p.schema.Columns[i].EqualColumn(mergedSchema.Columns[j]) || marked[j] {
 				continue
 			}
@@ -469,7 +469,7 @@ func (p *PhysicalIndexMergeReader) ResolveIndices() (err error) {
 			return err
 		}
 	}
-	for i := range p.partialPlans {
+	for i := 0; i < len(p.partialPlans); i++ {
 		err = p.partialPlans[i].ResolveIndices()
 		if err != nil {
 			return err
@@ -507,12 +507,17 @@ func (p *PhysicalSelection) ResolveIndices() (err error) {
 
 // ResolveIndicesItself resolve indices for PhysicalPlan itself
 func (p *PhysicalExchangeSender) ResolveIndicesItself() (err error) {
-	for i, col := range p.HashCols {
-		colExpr, err1 := col.Col.ResolveIndices(p.Children()[0].Schema())
-		if err1 != nil {
-			return err1
+	return p.ResolveIndicesItselfWithSchema(p.Children()[0].Schema())
+}
+
+// ResolveIndicesItselfWithSchema is added for test usage
+func (p *PhysicalExchangeSender) ResolveIndicesItselfWithSchema(inputSchema *expression.Schema) (err error) {
+	for i, hashCol := range p.HashCols {
+		newHashCol, err := hashCol.ResolveIndices(inputSchema)
+		if err != nil {
+			return err
 		}
-		p.HashCols[i].Col, _ = colExpr.(*expression.Column)
+		p.HashCols[i] = newHashCol
 	}
 	return
 }
@@ -631,7 +636,7 @@ func (p *PhysicalWindow) ResolveIndices() (err error) {
 	if err != nil {
 		return err
 	}
-	for i := range len(p.Schema().Columns) - len(p.WindowFuncDescs) {
+	for i := 0; i < len(p.Schema().Columns)-len(p.WindowFuncDescs); i++ {
 		col := p.Schema().Columns[i]
 		newCol, err := col.ResolveIndices(p.Children()[0].Schema())
 		if err != nil {

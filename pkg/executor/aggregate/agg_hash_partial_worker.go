@@ -224,7 +224,7 @@ func (w *HashAggPartialWorker) getPartialResultsOfEachRow(groupKey [][]byte, fin
 	allMemDelta := int64(0)
 	w.partialResultsBuffer = w.partialResultsBuffer[0:0]
 
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		finalWorkerIdx := int(murmur3.Sum32(groupKey[i])) % finalConcurrency
 		tmp, ok := mapper[finalWorkerIdx][string(hack.String(groupKey[i]))]
 
@@ -275,7 +275,7 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, chk *
 	rows := make([]chunk.Row, 1)
 	allMemDelta := int64(0)
 	exprCtx := ctx.GetExprCtx()
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		partialResult := partialResultOfEachRow[i]
 		rows[0] = chk.GetRow(i)
 		for j, af := range w.aggFuncs {
@@ -292,7 +292,7 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, chk *
 }
 
 func (w *HashAggPartialWorker) shuffleIntermData(finalConcurrency int) {
-	for i := range finalConcurrency {
+	for i := 0; i < finalConcurrency; i++ {
 		w.outputChs[i] <- &w.partialResultsMap[i]
 	}
 }
@@ -301,7 +301,7 @@ func (w *HashAggPartialWorker) prepareForSpill() {
 	if !w.isSpillPrepared {
 		w.tmpChksForSpill = make([]*chunk.Chunk, spilledPartitionNum)
 		w.spilledChunksIO = make([]*chunk.DataInDiskByChunks, spilledPartitionNum)
-		for i := range spilledPartitionNum {
+		for i := 0; i < spilledPartitionNum; i++ {
 			w.tmpChksForSpill[i] = w.spillHelper.getNewSpillChunkFunc()
 			w.spilledChunksIO[i] = chunk.NewDataInDiskByChunks(w.spillHelper.spillChunkFieldTypes)
 			if w.spillHelper.diskTracker != nil {
@@ -377,7 +377,7 @@ func (w *HashAggPartialWorker) spillDataToDiskImpl() error {
 
 // Some tmp chunks may no be full, so we need to manually trigger the spill action.
 func (w *HashAggPartialWorker) spillRemainingDataToDisk() error {
-	for i := range spilledPartitionNum {
+	for i := 0; i < spilledPartitionNum; i++ {
 		if w.tmpChksForSpill[i].NumRows() > 0 {
 			err := w.spilledChunksIO[i].Add(w.tmpChksForSpill[i])
 			if err != nil {

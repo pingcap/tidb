@@ -15,7 +15,6 @@
 package extension_test
 
 import (
-	"slices"
 	"testing"
 
 	"github.com/pingcap/errors"
@@ -102,7 +101,7 @@ func TestRegisterExtensionWithDyncPrivs(t *testing.T) {
 	defer extension.Reset()
 
 	origDynPrivs := privileges.GetDynamicPrivileges()
-	origDynPrivs = slices.Clone(origDynPrivs)
+	origDynPrivs = append([]string{}, origDynPrivs...)
 
 	extension.Reset()
 	require.NoError(t, extension.Register("test", extension.WithCustomDynPrivs([]string{"priv1", "priv2"})))

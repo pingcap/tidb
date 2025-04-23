@@ -589,7 +589,7 @@ func (c *cachedTableRenewLease) stop(_ context.Context) {
 }
 
 func (c *cachedTableRenewLease) commitTSCheck(commitTS uint64) bool {
-	for i := range c.lease {
+	for i := 0; i < len(c.lease); i++ {
 		lease := atomic.LoadUint64(&c.lease[i])
 		if commitTS >= lease {
 			// Txn fails to commit because the write lease is expired.
@@ -1391,7 +1391,7 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 	defer tracing.StartRegion(ctx, "ParseSQL").End()
 	p := parserutil.GetParser()
 	defer func() {
-		parserutil.DestoryParser(p)
+		parserutil.DestroyParser(p)
 	}()
 
 	sqlMode := s.sessionVars.SQLMode
@@ -2641,6 +2641,7 @@ func (s *session) GetDistSQLCtx() *distsqlctx.DistSQLContext {
 			TiFlashMaxBytesBeforeExternalSort:    vars.TiFlashMaxBytesBeforeExternalSort,
 			TiFlashMaxQueryMemoryPerNode:         vars.TiFlashMaxQueryMemoryPerNode,
 			TiFlashQuerySpillRatio:               vars.TiFlashQuerySpillRatio,
+			TiFlashHashJoinVersion:               vars.TiFlashHashJoinVersion,
 
 			DistSQLConcurrency:            vars.DistSQLScanConcurrency(),
 			ReplicaReadType:               vars.GetReplicaRead(),
@@ -3589,7 +3590,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if err != nil {
 		return nil, err
 	}
-	for i := range int(planReplayerWorkerCnt) {
+	for i := 0; i < int(planReplayerWorkerCnt); i++ {
 		planReplayerWorkersSctx[i] = pworkerSes[i]
 	}
 	// setup plan replayer handle
@@ -3766,7 +3767,7 @@ func createSessions4DistExecution(store kv.Storage, cnt int) ([]*session, error)
 func createSessionsImpl(store kv.Storage, cnt int, createSessionImpl func(kv.Storage) (*session, error)) ([]*session, error) {
 	// Then we can create new dom
 	ses := make([]*session, cnt)
-	for i := range cnt {
+	for i := 0; i < cnt; i++ {
 		se, err := createSessionImpl(store)
 		if err != nil {
 			return nil, err

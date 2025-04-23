@@ -26,7 +26,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -1335,7 +1334,7 @@ func TestAdjustTikvImporter(t *testing.T) {
 }
 
 func TestCreateSeveralConfigsWithDifferentFilters(t *testing.T) {
-	originalDefaultCfg := slices.Clone(GetDefaultFilter())
+	originalDefaultCfg := append([]string{}, GetDefaultFilter()...)
 	cfg1 := NewConfig()
 	require.NoError(t, cfg1.LoadFromTOML([]byte(`
 		[mydumper]

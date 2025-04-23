@@ -449,7 +449,7 @@ func flattenTreePlan(plan base.PhysicalPlan, plans []base.PhysicalPlan) []base.P
 func flattenPushDownPlan(p base.PhysicalPlan) []base.PhysicalPlan {
 	plans := make([]base.PhysicalPlan, 0, 5)
 	plans = flattenTreePlan(p, plans)
-	for i := range len(plans) / 2 {
+	for i := 0; i < len(plans)/2; i++ {
 		j := len(plans) - i - 1
 		plans[i], plans[j] = plans[j], plans[i]
 	}

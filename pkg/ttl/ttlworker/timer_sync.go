@@ -27,10 +27,10 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
@@ -51,7 +51,7 @@ type TTLTimerData struct {
 
 // TTLTimersSyncer is used to sync timers for ttl
 type TTLTimersSyncer struct {
-	pool           util.SessionPool
+	pool           syssession.Pool
 	cli            timerapi.TimerClient
 	key2Timers     map[string]*timerapi.TimerRecord
 	lastPullTimers time.Time
@@ -62,7 +62,7 @@ type TTLTimersSyncer struct {
 }
 
 // NewTTLTimerSyncer creates a new TTLTimersSyncer
-func NewTTLTimerSyncer(pool util.SessionPool, cli timerapi.TimerClient) *TTLTimersSyncer {
+func NewTTLTimerSyncer(pool syssession.Pool, cli timerapi.TimerClient) *TTLTimersSyncer {
 	return &TTLTimersSyncer{
 		pool:        pool,
 		cli:         cli,
@@ -82,34 +82,33 @@ func (g *TTLTimersSyncer) SetDelayDeleteInterval(interval time.Duration) {
 // ManualTriggerTTLTimer triggers a TTL job for a physical table which returns a function to wait the job done.
 // This returned function returns a bool value to indicates whether the job is finished.
 func (g *TTLTimersSyncer) ManualTriggerTTLTimer(ctx context.Context, tbl *cache.PhysicalTable) (func() (string, bool, error), error) {
-	se, err := getSession(g.pool)
-	if err != nil {
-		return nil, err
-	}
-	defer se.Close()
+	var timerID string
+	var reqID string
+	err := withSession(g.pool, func(se session.Session) error {
+		timer, err := g.syncOneTimer(ctx, se, tbl.Schema, tbl.TableInfo, tbl.PartitionDef, true)
+		if err != nil {
+			return err
+		}
 
-	timer, err := g.syncOneTimer(ctx, se, tbl.Schema, tbl.TableInfo, tbl.PartitionDef, true)
-	if err != nil {
-		return nil, err
-	}
+		timerID = timer.ID
+		reqID, err = g.cli.ManualTriggerEvent(ctx, timer.ID)
+		if err != nil {
+			return err
+		}
 
-	reqID, err := g.cli.ManualTriggerEvent(ctx, timer.ID)
+		return nil
+	})
+
 	if err != nil {
 		return nil, err
 	}
 
 	return func() (string, bool, error) {
-		se, err = getSession(g.pool)
-		if err != nil {
-			return "", false, err
-		}
-		defer se.Close()
-
-		if err = ctx.Err(); err != nil {
+		if err := ctx.Err(); err != nil {
 			return "", false, err
 		}
 
-		timer, err = g.cli.GetTimerByID(ctx, timer.ID)
+		timer, err := g.cli.GetTimerByID(ctx, timerID)
 		if err != nil {
 			return "", false, err
 		}
@@ -130,12 +129,21 @@ func (g *TTLTimersSyncer) ManualTriggerTTLTimer(ctx context.Context, tbl *cache.
 		}
 
 		jobID := timer.ManualEventID
-		rows, err := se.ExecuteSQL(ctx, "select 1 from mysql.tidb_ttl_job_history where job_id=%?", jobID)
+		found := false
+		err = withSession(g.pool, func(se session.Session) error {
+			rows, err := se.ExecuteSQL(ctx, "select 1 from mysql.tidb_ttl_job_history where job_id=%?", jobID)
+			if err != nil {
+				return err
+			}
+			found = len(rows) > 0
+			return nil
+		})
+
 		if err != nil {
 			return "", false, err
 		}
 
-		if len(rows) == 0 {
+		if !found {
 			return "", false, nil
 		}
 
@@ -185,21 +193,22 @@ func (g *TTLTimersSyncer) SyncTimers(ctx context.Context, is infoschema.InfoSche
 		g.lastPullTimers = g.nowFunc()
 	}
 
-	se, err := getSession(g.pool)
+	currentTimerKeys := make(map[string]struct{})
+	err := withSession(g.pool, func(se session.Session) error {
+		ch := is.ListTablesWithSpecialAttribute(infoschemacontext.TTLAttribute)
+		for _, v := range ch {
+			for _, tblInfo := range v.TableInfos {
+				for _, key := range g.syncTimersForTable(ctx, se, v.DBName, tblInfo) {
+					currentTimerKeys[key] = struct{}{}
+				}
+			}
+		}
+		return nil
+	})
+
 	if err != nil {
 		logutil.BgLogger().Error("failed to sync TTL timers", zap.Error(err))
 		return
-	}
-	defer se.Close()
-
-	currentTimerKeys := make(map[string]struct{})
-	ch := is.ListTablesWithSpecialAttribute(infoschemacontext.TTLAttribute)
-	for _, v := range ch {
-		for _, tblInfo := range v.TableInfos {
-			for _, key := range g.syncTimersForTable(ctx, se, v.DBName, tblInfo) {
-				currentTimerKeys[key] = struct{}{}
-			}
-		}
 	}
 
 	for key, timer := range g.key2Timers {
@@ -406,7 +415,7 @@ func getTTLTableStatus(ctx context.Context, se session.Session, tblInfo *model.T
 		return nil, nil
 	}
 
-	return cache.RowToTableStatus(se, rows[0])
+	return cache.RowToTableStatus(se.GetSessionVars().Location(), rows[0])
 }
 
 // getTTLSchedulePolicy returns the timer's schedule policy and expression for a TTL job

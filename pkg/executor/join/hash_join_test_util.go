@@ -232,7 +232,7 @@ func buildJoinKeyStringDatums(num int) []any {
 	return datums
 }
 
-func buildLeftAndRightDataSource(ctx sessionctx.Context, leftCols []*expression.Column, rightCols []*expression.Column, hasSel bool) (*testutil.MockDataSource, *testutil.MockDataSource) {
+func buildLeftAndRightDataSource(ctx sessionctx.Context, leftCols []*expression.Column, rightCols []*expression.Column, hasSel bool) (_, _ *testutil.MockDataSource) {
 	leftSchema := expression.NewSchema(leftCols...)
 	rightSchema := expression.NewSchema(rightCols...)
 
@@ -322,7 +322,7 @@ func checkResults(t *testing.T, fieldTypes []*types.FieldType, actualResult []ch
 	require.Equal(t, len(expectedResult), len(actualResult))
 	cmp := generateCMPFunc(fieldTypes)
 
-	for i := range actualResult {
+	for i := 0; i < len(actualResult); i++ {
 		x := cmp(actualResult[i], expectedResult[i])
 		require.Equal(t, 0, x, "result index = "+strconv.Itoa(i))
 	}

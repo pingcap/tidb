@@ -42,7 +42,7 @@ func subTestSchemaValidatorGeneral(t *testing.T) {
 	validator := NewSchemaValidator(lease, nil).(*schemaValidator)
 	require.True(t, validator.IsStarted())
 
-	for range 3 {
+	for i := 0; i < 3; i++ {
 		// Reload can run arbitrarily, at any time.
 		item := <-leaseGrantCh
 		validator.Update(item.leaseGrantTS, item.oldVer, item.schemaVer, nil)

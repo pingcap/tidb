@@ -177,7 +177,7 @@ func TestTableRangesToKVRanges(t *testing.T) {
 			EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xd, 0x5f, 0x72, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x23},
 		},
 	}
-	for i := range expect {
+	for i := 0; i < len(expect); i++ {
 		require.Equal(t, expect[i], actual[i])
 	}
 }
@@ -721,7 +721,7 @@ func TestTableRangesToKVRangesWithFbs(t *testing.T) {
 		},
 	}
 
-	for i := range actual {
+	for i := 0; i < len(actual); i++ {
 		require.Equal(t, expect[i], actual[i])
 	}
 }
@@ -742,7 +742,7 @@ func TestIndexRangesToKVRangesWithFbs(t *testing.T) {
 			EndKey:   kv.Key{0x74, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x5f, 0x69, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x3, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x5},
 		},
 	}
-	for i := range actual.FirstPartitionRange() {
+	for i := 0; i < len(actual.FirstPartitionRange()); i++ {
 		require.Equal(t, expect[i], actual.FirstPartitionRange()[i])
 	}
 }

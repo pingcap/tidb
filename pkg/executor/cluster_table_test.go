@@ -222,7 +222,7 @@ select 10;`
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Log.SlowQueryFile = fileName4
 	})
-	for k := range 2 {
+	for k := 0; k < 2; k++ {
 		// k = 0 for normal files
 		// k = 1 for compressed files
 		var fileNames []string

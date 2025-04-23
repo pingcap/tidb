@@ -74,7 +74,7 @@ func TestOptionalEvalPropProviders(t *testing.T) {
 	var verifyNoProvider func(ctx exprctx.EvalContext)
 	var verifyProvider func(ctx exprctx.EvalContext, val exprctx.OptionalEvalPropProvider)
 
-	for i := range exprctx.OptPropsCnt {
+	for i := 0; i < exprctx.OptPropsCnt; i++ {
 		key := exprctx.OptionalEvalPropKey(i)
 		switch key {
 		case exprctx.OptPropCurrentUser:

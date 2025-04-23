@@ -15,7 +15,7 @@
 package generic_test
 
 import (
-	"slices"
+	"sort"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/util/generic"
@@ -57,6 +57,6 @@ func TestSyncMap(t *testing.T) {
 	sm.Store(1, "a")
 	sm.Store(3, "c")
 	keys := sm.Keys()
-	slices.Sort(keys)
+	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
 	require.Equal(t, []int64{1, 2, 3}, keys)
 }

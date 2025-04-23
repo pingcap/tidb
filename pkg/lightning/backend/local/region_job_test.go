@@ -25,8 +25,8 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
@@ -60,7 +60,7 @@ func TestIsIngestRetryable(t *testing.T) {
 	}
 	job := regionJob{
 		stage: wrote,
-		keyRange: common.Range{
+		keyRange: engineapi.Range{
 			Start: []byte{1},
 			End:   []byte{3},
 		},
@@ -168,7 +168,7 @@ func TestIsIngestRetryable(t *testing.T) {
 	}
 	clone = job
 	_, err = (&clone).convertStageOnIngestError(resp)
-	require.ErrorContains(t, err, "non-retryable error")
+	require.ErrorContains(t, err, "DiskFull")
 
 	// a general error is retryable from writing
 
@@ -198,7 +198,7 @@ func TestRegionJobRetryer(t *testing.T) {
 		retryer.run()
 	}()
 
-	for range 8 {
+	for i := 0; i < 8; i++ {
 		go func() {
 			job := &regionJob{
 				waitUntil: time.Now().Add(time.Hour),
@@ -215,7 +215,7 @@ func TestRegionJobRetryer(t *testing.T) {
 	}
 
 	job := &regionJob{
-		keyRange: common.Range{
+		keyRange: engineapi.Range{
 			Start: []byte("123"),
 		},
 		waitUntil: time.Now().Add(-time.Second),
@@ -250,7 +250,7 @@ func TestRegionJobRetryer(t *testing.T) {
 	}()
 
 	job = &regionJob{
-		keyRange: common.Range{
+		keyRange: engineapi.Range{
 			Start: []byte("123"),
 		},
 		waitUntil: time.Now().Add(-time.Second),
@@ -261,7 +261,7 @@ func TestRegionJobRetryer(t *testing.T) {
 	time.Sleep(3 * time.Second)
 	// now retryer is sending to putBackCh, but putBackCh is blocked
 	job = &regionJob{
-		keyRange: common.Range{
+		keyRange: engineapi.Range{
 			Start: []byte("456"),
 		},
 		waitUntil: time.Now().Add(-time.Second),
@@ -284,7 +284,7 @@ func TestRegionJobRetryer(t *testing.T) {
 	}()
 
 	job = &regionJob{
-		keyRange: common.Range{
+		keyRange: engineapi.Range{
 			Start: []byte("123"),
 		},
 		waitUntil: time.Now().Add(-time.Second),
@@ -299,7 +299,7 @@ func TestRegionJobRetryer(t *testing.T) {
 func TestNewRegionJobs(t *testing.T) {
 	buildRegion := func(regionKeys [][]byte) []*split.RegionInfo {
 		ret := make([]*split.RegionInfo, 0, len(regionKeys)-1)
-		for i := range len(regionKeys) - 1 {
+		for i := 0; i < len(regionKeys)-1; i++ {
 			ret = append(ret, &split.RegionInfo{
 				Region: &metapb.Region{
 					StartKey: codec.EncodeBytes(nil, regionKeys[i]),
@@ -309,10 +309,10 @@ func TestNewRegionJobs(t *testing.T) {
 		}
 		return ret
 	}
-	buildJobRanges := func(jobRangeKeys [][]byte) []common.Range {
-		ret := make([]common.Range, 0, len(jobRangeKeys)-1)
-		for i := range len(jobRangeKeys) - 1 {
-			ret = append(ret, common.Range{
+	buildJobRanges := func(jobRangeKeys [][]byte) []engineapi.Range {
+		ret := make([]engineapi.Range, 0, len(jobRangeKeys)-1)
+		for i := 0; i < len(jobRangeKeys)-1; i++ {
+			ret = append(ret, engineapi.Range{
 				Start: jobRangeKeys[i],
 				End:   jobRangeKeys[i+1],
 			})
@@ -483,7 +483,7 @@ func TestStoreBalancerPick(t *testing.T) {
 		jonDone <- struct{}{}
 	}()
 
-	for range 3 {
+	for i := 0; i < 3; i++ {
 		<-jonDone
 	}
 	checkStoreScoreZero(t, b)
@@ -593,7 +593,7 @@ func TestUpdateAndGetLimiterConcurrencySafety(t *testing.T) {
 
 	var wg sync.WaitGroup
 	concurrentRoutines := 100
-	for i := range concurrentRoutines {
+	for i := 0; i < concurrentRoutines; i++ {
 		wg.Add(2)
 		go func(limit int) {
 			defer wg.Done()

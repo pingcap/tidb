@@ -33,22 +33,22 @@ func TestConcurrentResetAndCheckThresholds(t *testing.T) {
 	processKeys := int64(10)
 
 	// Goroutines for CheckThresholds
-	for range numGoroutines {
+	for i := 0; i < numGoroutines; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for range 100 {
+			for j := 0; j < 100; j++ {
 				_ = checker.CheckThresholds(&util.RUDetails{}, processKeys, nil)
 			}
 		}()
 	}
 
 	// Goroutines for ResetTotalProcessedKeys
-	for range numGoroutines {
+	for i := 0; i < numGoroutines; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for range 100 {
+			for j := 0; j < 100; j++ {
 				checker.ResetTotalProcessedKeys()
 				time.Sleep(time.Millisecond) // simulate some delay
 			}

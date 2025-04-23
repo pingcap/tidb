@@ -29,9 +29,9 @@ import (
 )
 
 func TestNewCopContextSingleIndex(t *testing.T) {
+	var mockColInfos []*model.ColumnInfo
 	colCnt := 6
-	mockColInfos := make([]*model.ColumnInfo, 0, colCnt)
-	for i := range colCnt {
+	for i := 0; i < colCnt; i++ {
 		mockColInfos = append(mockColInfos, &model.ColumnInfo{
 			ID:        int64(i),
 			Offset:    i,

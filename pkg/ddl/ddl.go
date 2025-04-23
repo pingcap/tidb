@@ -609,7 +609,7 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 			// Try sending the event to the channel with a backoff strategy to avoid blocking indefinitely.
 			// Since most unit tests don't consume events, we make a few attempts and then give up rather
 			// than blocking the DDL job forever on a full channel.
-			for range 10 {
+			for i := 0; i < 10; i++ {
 				select {
 				case ch <- e:
 					break forLoop
@@ -1306,8 +1306,7 @@ func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 	return info, nil
 }
 
-func get2JobsFromTable(sess *sess.Session) (*model.Job, *model.Job, error) {
-	var generalJob, reorgJob *model.Job
+func get2JobsFromTable(sess *sess.Session) (generalJob, reorgJob *model.Job, err error) {
 	ctx := context.Background()
 	jobs, err := getJobsBySQL(ctx, sess, JobTable, "not reorg order by job_id limit 1")
 	if err != nil {

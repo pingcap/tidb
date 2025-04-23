@@ -34,7 +34,7 @@ func genTestDecimals() {
 	if flag {
 		return
 	}
-	for range numTestDec {
+	for i := 0; i < numTestDec; i++ {
 		f := rand.Float64()
 		digits := rand.Int()%12 + 1
 		offset := rand.Int()%digits + 1
@@ -69,7 +69,7 @@ func BenchmarkRound(b *testing.B) {
 		{input: "999999999", scale: -9},
 	}
 
-	for i := range tests {
+	for i := 0; i < len(tests); i++ {
 		err := tests[i].inputDec.FromString([]byte(tests[i].input))
 		if err != nil {
 			b.Fatal(err)
@@ -78,19 +78,19 @@ func BenchmarkRound(b *testing.B) {
 
 	b.StartTimer()
 	for n := 0; n < b.N; n++ {
-		for i := range tests {
+		for i := 0; i < len(tests); i++ {
 			err := tests[i].inputDec.Round(&roundTo, tests[i].scale, ModeHalfUp)
 			if err != nil {
 				b.Fatal(err)
 			}
 		}
-		for i := range tests {
+		for i := 0; i < len(tests); i++ {
 			err := tests[i].inputDec.Round(&roundTo, tests[i].scale, ModeTruncate)
 			if err != nil {
 				b.Fatal(err)
 			}
 		}
-		for i := range tests {
+		for i := 0; i < len(tests); i++ {
 			err := tests[i].inputDec.Round(&roundTo, tests[i].scale, ModeCeiling)
 			if err != nil {
 				b.Fatal(err)
@@ -103,7 +103,7 @@ func BenchmarkToFloat64New(b *testing.B) {
 	genTestDecimals()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		for j := range numTestDec {
+		for j := 0; j < numTestDec; j++ {
 			f, _ := testDec[j].ToFloat64()
 			_ = f
 		}
@@ -114,7 +114,7 @@ func BenchmarkToFloat64Old(b *testing.B) {
 	genTestDecimals()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		for j := range numTestDec {
+		for j := 0; j < numTestDec; j++ {
 			f, _ := strconv.ParseFloat(testDec[j].String(), 64)
 			_ = f
 		}

@@ -31,7 +31,6 @@ package dbreader
 import (
 	"bytes"
 	"math"
-	"slices"
 
 	"github.com/pingcap/badger"
 	"github.com/pingcap/badger/y"
@@ -136,11 +135,11 @@ func (r *DBReader) GetIter() *badger.Iterator {
 // GetExtraIter returns the extra *badger.Iterator of a *DBReader.
 func (r *DBReader) GetExtraIter() *badger.Iterator {
 	if r.extraIter == nil {
-		rbStartKey := slices.Clone(r.StartKey)
+		rbStartKey := append([]byte{}, r.StartKey...)
 		if len(rbStartKey) != 0 {
 			rbStartKey[0]++
 		}
-		rbEndKey := slices.Clone(r.EndKey)
+		rbEndKey := append([]byte{}, r.EndKey...)
 		if len(rbEndKey) != 0 {
 			rbEndKey[0]++
 		}

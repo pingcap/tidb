@@ -181,9 +181,9 @@ func (e *IndexLookUpMergeJoin) startWorkers(ctx context.Context) {
 	resultCh := make(chan *lookUpMergeJoinTask, concurrency)
 	e.resultCh = resultCh
 	e.joinChkResourceCh = make([]chan *chunk.Chunk, concurrency)
-	for i := range concurrency {
+	for i := 0; i < concurrency; i++ {
 		e.joinChkResourceCh[i] = make(chan *chunk.Chunk, numResChkHold)
-		for range numResChkHold {
+		for j := 0; j < numResChkHold; j++ {
 			e.joinChkResourceCh[i] <- chunk.NewChunkWithCapacity(e.RetFieldTypes(), e.MaxChunkSize())
 		}
 	}
@@ -193,7 +193,7 @@ func (e *IndexLookUpMergeJoin) startWorkers(ctx context.Context) {
 	e.WorkerWg.Add(1)
 	go e.newOuterWorker(resultCh, innerCh).run(workerCtx, e.WorkerWg, e.cancelFunc)
 	e.WorkerWg.Add(concurrency)
-	for i := range concurrency {
+	for i := 0; i < concurrency; i++ {
 		go e.newInnerMergeWorker(innerCh, i).run(workerCtx, e.WorkerWg, e.cancelFunc)
 	}
 }
@@ -425,7 +425,7 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 	if imw.outerMergeCtx.Filter != nil {
 		task.outerMatch = make([][]bool, numOuterChks)
 		exprCtx := imw.ctx.GetExprCtx()
-		for i := range numOuterChks {
+		for i := 0; i < numOuterChks; i++ {
 			chk := task.outerResult.GetChunk(i)
 			task.outerMatch[i] = make([]bool, chk.NumRows())
 			task.outerMatch[i], err = expression.VectorizedFilter(exprCtx.GetEvalCtx(), imw.ctx.GetSessionVars().EnableVectorizedExpression, imw.outerMergeCtx.Filter, chunk.NewIterator4Chunk(chk), task.outerMatch[i])
@@ -436,9 +436,9 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 	}
 	task.memTracker.Consume(int64(cap(task.outerMatch)))
 	task.outerOrderIdx = make([]chunk.RowPtr, 0, task.outerResult.Len())
-	for i := range numOuterChks {
+	for i := 0; i < numOuterChks; i++ {
 		numRow := task.outerResult.GetChunk(i).NumRows()
-		for j := range numRow {
+		for j := 0; j < numRow; j++ {
 			task.outerOrderIdx = append(task.outerOrderIdx, chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(j)})
 		}
 	}
@@ -482,7 +482,7 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 	// So at the end, we should generate the ascending deDupedLookUpContents to build the correct range for inner read.
 	if imw.Desc {
 		lenKeys := len(dLookUpKeys)
-		for i := range lenKeys / 2 {
+		for i := 0; i < lenKeys/2; i++ {
 			dLookUpKeys[i], dLookUpKeys[lenKeys-i-1] = dLookUpKeys[lenKeys-i-1], dLookUpKeys[i]
 		}
 	}
@@ -640,7 +640,7 @@ func (imw *innerMergeWorker) compare(outerRow, innerRow chunk.Row) (int, error) 
 func (imw *innerMergeWorker) constructDatumLookupKeys(task *lookUpMergeJoinTask) ([]*IndexJoinLookUpContent, error) {
 	numRows := len(task.outerOrderIdx)
 	dLookUpKeys := make([]*IndexJoinLookUpContent, 0, numRows)
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		dLookUpKey, err := imw.constructDatumLookupKey(task, task.outerOrderIdx[i])
 		if err != nil {
 			return nil, err

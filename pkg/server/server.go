@@ -34,7 +34,6 @@ import (
 	"crypto/tls"
 	"fmt"
 	"io"
-	"maps"
 	"net"
 	"net/http"         //nolint:goimports
 	_ "net/http/pprof" // #nosec G108 for pprof
@@ -813,9 +812,13 @@ func (s *Server) checkConnectionCount() error {
 // ShowProcessList implements the SessionManager interface.
 func (s *Server) ShowProcessList() map[uint64]*util.ProcessInfo {
 	rs := make(map[uint64]*util.ProcessInfo)
-	maps.Copy(rs, s.getUserProcessList())
+	for connID, pi := range s.getUserProcessList() {
+		rs[connID] = pi
+	}
 	if s.dom != nil {
-		maps.Copy(rs, s.dom.SysProcTracker().GetSysProcessList())
+		for connID, pi := range s.dom.SysProcTracker().GetSysProcessList() {
+			rs[connID] = pi
+		}
 	}
 	return rs
 }
@@ -1002,7 +1005,9 @@ func (s *Server) DrainClients(drainWait time.Duration, cancelWait time.Duration)
 	conns := make(map[uint64]*clientConn)
 
 	s.rwlock.Lock()
-	maps.Copy(conns, s.clients)
+	for k, v := range s.clients {
+		conns[k] = v
+	}
 	s.rwlock.Unlock()
 
 	allDone := make(chan struct{})

@@ -299,9 +299,9 @@ func (e *HashAggExec) initForUnparallelExec() {
 func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrency int, ctx sessionctx.Context) {
 	memUsage := int64(0)
 
-	for i := range partialConcurrency {
+	for i := 0; i < partialConcurrency; i++ {
 		partialResultsMap := make([]aggfuncs.AggPartialResultMapper, finalConcurrency)
-		for i := range finalConcurrency {
+		for i := 0; i < finalConcurrency; i++ {
 			partialResultsMap[i] = make(aggfuncs.AggPartialResultMapper)
 		}
 
@@ -329,7 +329,7 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 		memUsage += e.partialWorkers[i].chk.MemoryUsage()
 
 		e.partialWorkers[i].partialResultNumInRow = e.partialWorkers[i].getPartialResultSliceLenConsiderByteAlign()
-		for j := range finalConcurrency {
+		for j := 0; j < finalConcurrency; j++ {
 			e.partialWorkers[i].BInMaps[j] = 0
 		}
 
@@ -352,7 +352,7 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 }
 
 func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
-	for i := range finalConcurrency {
+	for i := 0; i < finalConcurrency; i++ {
 		e.finalWorkers[i] = HashAggFinalWorker{
 			baseHashAggWorker:          newBaseHashAggWorker(e.finishCh, e.FinalAggFuncs, e.MaxChunkSize(), e.memTracker),
 			partialResultMap:           make(aggfuncs.AggPartialResultMapper),
@@ -406,7 +406,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) error {
 	// Intermediate result for aggregate function also need to be spilled,
 	// so the number of spillChunkFieldTypes should be added 1.
 	spillChunkFieldTypes := make([]*types.FieldType, baseRetTypeNum+1)
-	for i := range baseRetTypeNum {
+	for i := 0; i < baseRetTypeNum; i++ {
 		spillChunkFieldTypes[i] = types.NewFieldType(mysql.TypeVarString)
 	}
 
@@ -757,7 +757,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		allMemDelta := int64(0)
 		sel := make([]int, 0, e.childResult.NumRows())
 		var tmpBuf [1]chunk.Row
-		for j := range e.childResult.NumRows() {
+		for j := 0; j < e.childResult.NumRows(); j++ {
 			groupKey := string(e.groupKeyBuffer[j]) // do memory copy here, because e.groupKeyBuffer may be reused.
 			if !e.groupSet.Exist(groupKey) {
 				if atomic.LoadUint32(&e.inSpillMode) == 1 && e.groupSet.Count() > 0 {
@@ -796,7 +796,7 @@ func (e *HashAggExec) spillUnprocessedData(isFullChk bool) (err error) {
 	if isFullChk {
 		return e.dataInDisk.Add(e.childResult)
 	}
-	for i := range e.childResult.NumRows() {
+	for i := 0; i < e.childResult.NumRows(); i++ {
 		e.tmpChkForSpill.AppendRow(e.childResult.GetRow(i))
 		if e.tmpChkForSpill.IsFull() {
 			err = e.dataInDisk.Add(e.tmpChkForSpill)

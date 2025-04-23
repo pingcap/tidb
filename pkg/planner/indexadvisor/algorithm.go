@@ -16,7 +16,6 @@ package indexadvisor
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -66,7 +65,7 @@ func (aa *autoAdmin) recordCandidates(currentCandidates s.Set[Index]) {
 }
 
 func (aa *autoAdmin) calculateBestIndexes(querySet s.Set[Query],
-	indexableColSet s.Set[Column]) (s.Set[Index], s.Set[Index], error) {
+	indexableColSet s.Set[Column]) (currentBestIndexes, allCandidates s.Set[Index], err error) {
 	if aa.option.MaxNumIndexes == 0 {
 		return nil, nil, nil
 	}
@@ -79,7 +78,7 @@ func (aa *autoAdmin) calculateBestIndexes(querySet s.Set[Query],
 		return nil, nil, err
 	}
 
-	currentBestIndexes := s.NewSet[Index]()
+	currentBestIndexes = s.NewSet[Index]()
 	for currentMaxIndexWidth := 1; currentMaxIndexWidth <= aa.option.MaxIndexWidth; currentMaxIndexWidth++ {
 		aa.recordCandidates(potentialIndexes)
 		candidates, err := aa.selectIndexCandidates(querySet, potentialIndexes)
@@ -104,7 +103,7 @@ func (aa *autoAdmin) calculateBestIndexes(querySet s.Set[Query],
 		}
 	}
 
-	currentBestIndexes, err := aa.heuristicMergeIndexes(currentBestIndexes, querySet)
+	currentBestIndexes, err = aa.heuristicMergeIndexes(currentBestIndexes, querySet)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -149,7 +148,7 @@ func (aa *autoAdmin) calculateBestIndexes(querySet s.Set[Query],
 		}
 	}
 
-	allCandidates := aa.allCandidates
+	allCandidates = aa.allCandidates
 	aa.allCandidates = nil
 	return currentBestIndexes, allCandidates, nil
 }
@@ -357,7 +356,7 @@ func (aa *autoAdmin) createMultiColumnIndexes(indexableColsSet s.Set[Column], in
 		tableColsSet := s.ListToSet[Column](columns...)
 		indexColsSet := s.ListToSet[Column](index.Columns...)
 		for _, column := range s.DiffSet(s.AndSet(tableColsSet, indexableColsSet), indexColsSet).ToList() {
-			cols := slices.Clone(index.Columns)
+			cols := append([]Column{}, index.Columns...)
 			cols = append(cols, column)
 			multiColumnCandidates.Add(Index{
 				SchemaName: index.SchemaName,
@@ -437,7 +436,7 @@ func (aa *autoAdmin) selectIndexCandidates(querySet s.Set[Query], potentialIndex
 
 		bestPerQuery := 3 // keep 3 best indexes for each single-query
 		bestQueryIndexes := s.NewSet[Index]()
-		for range bestPerQuery {
+		for i := 0; i < bestPerQuery; i++ {
 			best, err := aa.enumerateCombinations(tmpQuerySet, indexes, 1)
 			if err != nil {
 				return nil, err

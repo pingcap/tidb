@@ -419,18 +419,18 @@ func TestStmtSummaryIssue35340(t *testing.T) {
 	tk := s.newTestKitWithRoot(t)
 	tk.MustExec("set global tidb_stmt_summary_refresh_interval=1800")
 	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 3000")
-	for i := range 100 {
+	for i := 0; i < 100; i++ {
 		user := "user" + strconv.Itoa(i)
 		tk.MustExec(fmt.Sprintf("create user '%v'@'localhost'", user))
 	}
 	tk.MustExec("flush privileges")
 	var wg sync.WaitGroup
-	for range 10 {
+	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			tk := s.newTestKitWithRoot(t)
-			for j := range 100 {
+			for j := 0; j < 100; j++ {
 				user := "user" + strconv.Itoa(j)
 				require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
 					Username: user,
@@ -730,7 +730,7 @@ select * from t1;
 	for _, quota := range memQuotas {
 		checkFn(quota)
 	}
-	for range 100 {
+	for i := 0; i < 100; i++ {
 		quota := rand.Int()%8192 + 1
 		checkFn(quota)
 	}
@@ -1103,7 +1103,7 @@ func TestQuickBinding(t *testing.T) {
 		prepStmt = fmt.Sprintf("prepare st from '%v'", sql)
 		nParam := strings.Count(sql, "?")
 		var x, y []string
-		for i := range nParam {
+		for i := 0; i < nParam; i++ {
 			x = append(x, fmt.Sprintf("@a%d=%v", i, randValue()))
 			y = append(y, fmt.Sprintf("@a%d", i))
 		}
@@ -1124,7 +1124,7 @@ func TestQuickBinding(t *testing.T) {
 
 		// normal test
 		sqlWithoutHint := removeHint(tc.template)
-		for range 5 {
+		for i := 0; i < 5; i++ {
 			stmtsummary.StmtSummaryByDigestMap.Clear()
 			testSQL := fillValues(sqlWithoutHint)
 			tk.MustExec(testSQL)
@@ -1134,7 +1134,7 @@ func TestQuickBinding(t *testing.T) {
 		}
 
 		// test with prepared / execute protocol
-		for range 5 {
+		for i := 0; i < 5; i++ {
 			stmtsummary.StmtSummaryByDigestMap.Clear()
 			prepStmt, setStmt, execStmt := genPrepSQL(tc.template)
 			tk.MustExec(prepStmt)
@@ -1165,7 +1165,7 @@ func TestQuickBinding(t *testing.T) {
 
 			// normal test
 			sqlWithoutHint := removeHint(temp)
-			for range 5 {
+			for i := 0; i < 5; i++ {
 				stmtsummary.StmtSummaryByDigestMap.Clear()
 				testSQL := fillValues(sqlWithoutHint)
 				tk.MustExec(testSQL)
@@ -1252,6 +1252,41 @@ func TestStmtSummaryShowPlanForSQL(t *testing.T) {
 	require.Contains(t, result[2], "TableReader")
 	require.Equal(t, result[5], "1") // exec_count
 	require.Equal(t, result[7], "1") // avg_returned_rows
+}
+
+func TestStmtSummaryShowPlanForSQL2(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, c varchar(10), key(a), key(b))`)
+
+	tk.MustExec(`create global binding using select /*+ use_index(t, a) */ a from t where b=1`)
+	tk.MustQuery(`select a from test.t where b=1`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+
+	rs := tk.MustQuery(`show plan for "select a from test.t where b=1"`).Rows()[0]
+	require.Contains(t, rs[2], "index:a(a)")
+	require.Equal(t, rs[5], "1") // exec_count
+	tk.MustQuery(`select a from test.t where b=1`).Check(testkit.Rows())
+	rs = tk.MustQuery(`show plan for "select a from test.t where b=1"`).Rows()[0]
+	require.Equal(t, rs[5], "2") // exec_count
+
+	tk.MustExec(`create global binding using select /*+ use_index(t, b) */ a from test.t where b=1`)
+	tk.MustQuery(`select a from test.t where b=1`).Check(testkit.Rows())
+	rs = tk.MustQuery(`show plan for "select a from test.t where b=2"`).Rows()[0]
+	require.Contains(t, rs[2], "index:b(b)")
+	require.Equal(t, rs[5], "1") // exec_count
+	tk.MustQuery(`select a from test.t where b=1`).Check(testkit.Rows())
+	rs = tk.MustQuery(`show plan for "select a from test.t where b=2"`).Rows()[0]
+	require.Equal(t, rs[5], "2") // exec_count
 }
 
 func TestCreateBindingFromHistory(t *testing.T) {
@@ -1794,7 +1829,7 @@ func testIndexUsageTable(t *testing.T, clusterTable bool) {
 	tk.MustExec("create table t1(id1 int unique, id2 int unique)")
 	tk.MustExec("create table t2(id1 int unique, id2 int unique)")
 
-	for i := range 100 {
+	for i := 0; i < 100; i++ {
 		for j := 1; j <= 2; j++ {
 			tk.MustExec(fmt.Sprintf("insert into t%d values (?, ?)", j), i, i)
 		}
@@ -1890,7 +1925,7 @@ func TestUnusedIndexView(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id1 int unique, id2 int unique)")
-	for i := range 100 {
+	for i := 0; i < 100; i++ {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
 	tk.MustExec("analyze table t")
@@ -1932,7 +1967,7 @@ func TestMDLViewIDConflict(t *testing.T) {
 	bigID := tbl.Meta().ID * 10
 	bigTableName := ""
 	// set a hard limitation on 10000 to avoid using too much resource
-	for i := range 10000 {
+	for i := 0; i < 10000; i++ {
 		bigTableName = fmt.Sprintf("t%d", i)
 		tk.MustExec(fmt.Sprintf("create table %s(a int);", bigTableName))
 

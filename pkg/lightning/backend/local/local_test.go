@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -190,7 +191,7 @@ func TestRangeProperties(t *testing.T) {
 	collector := newRangePropertiesCollector()
 	for _, p := range cases {
 		v := make([]byte, p.vLen)
-		for range p.count {
+		for i := 0; i < p.count; i++ {
 			_ = collector.Add(pebble.InternalKey{UserKey: p.key, Trailer: uint64(pebble.InternalKeyKindSet)}, v)
 		}
 	}
@@ -243,10 +244,10 @@ func TestRangeProperties(t *testing.T) {
 		return true
 	})
 
-	fullRange := common.Range{Start: []byte("a"), End: []byte("z")}
+	fullRange := engineapi.Range{Start: []byte("a"), End: []byte("z")}
 	ranges := splitRangeBySizeProps(fullRange, sizeProps, 2*defaultPropSizeIndexDistance, defaultPropKeysIndexDistance*5/2)
 
-	require.Equal(t, []common.Range{
+	require.Equal(t, []engineapi.Range{
 		{Start: []byte("a"), End: []byte("e")},
 		{Start: []byte("e"), End: []byte("k")},
 		{Start: []byte("k"), End: []byte("mm")},
@@ -255,7 +256,7 @@ func TestRangeProperties(t *testing.T) {
 	}, ranges)
 
 	ranges = splitRangeBySizeProps(fullRange, sizeProps, 2*defaultPropSizeIndexDistance, defaultPropKeysIndexDistance)
-	require.Equal(t, []common.Range{
+	require.Equal(t, []engineapi.Range{
 		{Start: []byte("a"), End: []byte("e")},
 		{Start: []byte("e"), End: []byte("h")},
 		{Start: []byte("h"), End: []byte("k")},
@@ -299,9 +300,9 @@ func TestRangePropertiesWithPebble(t *testing.T) {
 	}
 	writeOpt := &pebble.WriteOptions{Sync: false}
 	value := make([]byte, 100)
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		wb := db.NewBatch()
-		for j := range 100 {
+		for j := 0; j < 100; j++ {
 			key := make([]byte, 8)
 			valueLen := rand.Intn(50)
 			binary.BigEndian.PutUint64(key, uint64(i*100+j))
@@ -373,7 +374,7 @@ func testLocalWriter(t *testing.T, needSort bool, partitialSort bool) {
 	ctx := context.Background()
 	var kvs []common.KvPair
 	value := make([]byte, 128)
-	for i := range 16 {
+	for i := 0; i < 16; i++ {
 		binary.BigEndian.PutUint64(value[i*8:], uint64(i))
 	}
 	var keys [][]byte
@@ -514,12 +515,12 @@ func TestLocalIngestLoop(t *testing.T) {
 	count := 500
 	var metaSeqLock sync.Mutex
 	maxMetaSeq := int32(0)
-	for range concurrency {
+	for i := 0; i < concurrency; i++ {
 		go func() {
 			defer wg.Done()
 			flushCnt := rand.Int31n(10) + 1
 			seq := int32(0)
-			for i := range count {
+			for i := 0; i < count; i++ {
 				size := int64(rand.Int31n(50) + 1)
 				m := &sstMeta{totalSize: size, totalCount: 1}
 				atomic.AddInt64(&totalSize, size)
@@ -556,10 +557,10 @@ func TestLocalIngestLoop(t *testing.T) {
 	require.Equal(t, atomic.LoadInt32(&maxMetaSeq), f.finishedMetaSeq.Load())
 }
 
-func makeRanges(input []string) []common.Range {
-	ranges := make([]common.Range, 0, len(input)/2)
+func makeRanges(input []string) []engineapi.Range {
+	ranges := make([]engineapi.Range, 0, len(input)/2)
 	for i := 0; i < len(input)-1; i += 2 {
-		ranges = append(ranges, common.Range{Start: []byte(input[i]), End: []byte(input[i+1])})
+		ranges = append(ranges, engineapi.Range{Start: []byte(input[i]), End: []byte(input[i+1])})
 	}
 	return ranges
 }
@@ -627,9 +628,9 @@ func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 
 func TestMergeSSTs(t *testing.T) {
 	kvs := make([][]common.KvPair, 0, 5)
-	for i := range 5 {
+	for i := 0; i < 5; i++ {
 		var pairs []common.KvPair
-		for j := range 10 {
+		for j := 0; j < 10; j++ {
 			var kv common.KvPair
 			kv.Key = make([]byte, 16)
 			key := i*100 + j
@@ -645,9 +646,9 @@ func TestMergeSSTs(t *testing.T) {
 
 func TestMergeSSTsDuplicated(t *testing.T) {
 	kvs := make([][]common.KvPair, 0, 5)
-	for i := range 4 {
+	for i := 0; i < 4; i++ {
 		var pairs []common.KvPair
-		for j := range 10 {
+		for j := 0; j < 10; j++ {
 			var kv common.KvPair
 			kv.Key = make([]byte, 16)
 			key := i*100 + j
@@ -1176,7 +1177,7 @@ func (m *mockIngestIter) Error() error { return nil }
 
 func (m *mockIngestIter) ReleaseBuf() {}
 
-func (m mockIngestData) NewIter(_ context.Context, lowerBound, upperBound []byte, _ *membuf.Pool) common.ForwardIter {
+func (m mockIngestData) NewIter(_ context.Context, lowerBound, upperBound []byte, _ *membuf.Pool) engineapi.ForwardIter {
 	i, j := m.getFirstAndLastKeyIdx(lowerBound, upperBound)
 	return &mockIngestIter{data: m, startIdx: i, endIdx: j, curIdx: i}
 }
@@ -1245,7 +1246,7 @@ func TestCheckPeersBusy(t *testing.T) {
 	jobCh := make(chan *regionJob, 10)
 
 	retryJob := &regionJob{
-		keyRange: common.Range{Start: []byte("a"), End: []byte("b")},
+		keyRange: engineapi.Range{Start: []byte("a"), End: []byte("b")},
 		region: &split.RegionInfo{
 			Region: &metapb.Region{
 				Id: 1,
@@ -1265,7 +1266,7 @@ func TestCheckPeersBusy(t *testing.T) {
 	jobCh <- retryJob
 
 	jobCh <- &regionJob{
-		keyRange: common.Range{Start: []byte("b"), End: []byte("")},
+		keyRange: engineapi.Range{Start: []byte("b"), End: []byte("")},
 		region: &split.RegionInfo{
 			Region: &metapb.Region{
 				Id: 4,
@@ -1369,7 +1370,7 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 	jobCh := make(chan *regionJob, 10)
 
 	staleJob := &regionJob{
-		keyRange: common.Range{Start: []byte("a"), End: []byte("b")},
+		keyRange: engineapi.Range{Start: []byte("a"), End: []byte("b")},
 		region: &split.RegionInfo{
 			Region: &metapb.Region{
 				Id: 1,
@@ -1467,7 +1468,7 @@ func TestPartialWriteIngestErrorWontPanic(t *testing.T) {
 	jobCh := make(chan *regionJob, 10)
 
 	partialWriteJob := &regionJob{
-		keyRange: common.Range{Start: []byte("a"), End: []byte("c")},
+		keyRange: engineapi.Range{Start: []byte("a"), End: []byte("c")},
 		region: &split.RegionInfo{
 			Region: &metapb.Region{
 				Id: 1,
@@ -1580,7 +1581,7 @@ func TestPartialWriteIngestBusy(t *testing.T) {
 	jobCh := make(chan *regionJob, 10)
 
 	partialWriteJob := &regionJob{
-		keyRange: common.Range{Start: []byte("a"), End: []byte("c")},
+		keyRange: engineapi.Range{Start: []byte("a"), End: []byte("c")},
 		region: &split.RegionInfo{
 			Region: &metapb.Region{
 				Id: 1,
@@ -1736,7 +1737,7 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Len(t, jobCh, 10)
-	for i := range 9 {
+	for i := 0; i < 9; i++ {
 		job := <-jobCh
 		require.Equal(t, []byte{byte(i + 1)}, job.keyRange.Start)
 		require.Equal(t, []byte{byte(i + 2)}, job.keyRange.End)
@@ -1805,7 +1806,7 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Len(t, jobCh, 9)
-	for i := range 9 {
+	for i := 0; i < 9; i++ {
 		job := <-jobCh
 		require.Equal(t, []byte{byte(i + 1)}, job.keyRange.Start)
 		require.Equal(t, []byte{byte(i + 2)}, job.keyRange.End)
@@ -1879,7 +1880,7 @@ func TestDoImport(t *testing.T) {
 		{"a", "b"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'a'}, End: []byte{'b'}},
+					keyRange:   engineapi.Range{Start: []byte{'a'}, End: []byte{'b'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
 				},
@@ -1888,7 +1889,7 @@ func TestDoImport(t *testing.T) {
 		{"b", "c"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'b'}, End: []byte{'c'}},
+					keyRange:   engineapi.Range{Start: []byte{'b'}, End: []byte{'c'}},
 					ingestData: &Engine{},
 					injected: []injectedBehaviour{
 						{
@@ -1922,12 +1923,12 @@ func TestDoImport(t *testing.T) {
 		{"c", "d"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'c'}, End: []byte{'c', '2'}},
+					keyRange:   engineapi.Range{Start: []byte{'c'}, End: []byte{'c', '2'}},
 					ingestData: &Engine{},
 					injected:   getNeedRescanWhenIngestBehaviour(),
 				},
 				{
-					keyRange:   common.Range{Start: []byte{'c', '2'}, End: []byte{'d'}},
+					keyRange:   engineapi.Range{Start: []byte{'c', '2'}, End: []byte{'d'}},
 					ingestData: &Engine{},
 					injected: []injectedBehaviour{
 						{
@@ -1943,7 +1944,7 @@ func TestDoImport(t *testing.T) {
 		{"c", "c2"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'c'}, End: []byte{'c', '2'}},
+					keyRange:   engineapi.Range{Start: []byte{'c'}, End: []byte{'c', '2'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
 				},
@@ -1952,7 +1953,7 @@ func TestDoImport(t *testing.T) {
 		{"c2", "d"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'c', '2'}, End: []byte{'d'}},
+					keyRange:   engineapi.Range{Start: []byte{'c', '2'}, End: []byte{'d'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
 				},
@@ -1984,7 +1985,7 @@ func TestDoImport(t *testing.T) {
 		{"a", "b"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'a'}, End: []byte{'b'}},
+					keyRange:   engineapi.Range{Start: []byte{'a'}, End: []byte{'b'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
 				},
@@ -2006,12 +2007,12 @@ func TestDoImport(t *testing.T) {
 		{"a", "b"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'a'}, End: []byte{'a', '2'}},
+					keyRange:   engineapi.Range{Start: []byte{'a'}, End: []byte{'a', '2'}},
 					ingestData: &Engine{},
 					injected:   getNeedRescanWhenIngestBehaviour(),
 				},
 				{
-					keyRange:   common.Range{Start: []byte{'a', '2'}, End: []byte{'b'}},
+					keyRange:   engineapi.Range{Start: []byte{'a', '2'}, End: []byte{'b'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
 				},
@@ -2020,7 +2021,7 @@ func TestDoImport(t *testing.T) {
 		{"b", "c"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'b'}, End: []byte{'c'}},
+					keyRange:   engineapi.Range{Start: []byte{'b'}, End: []byte{'c'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
 				},
@@ -2029,7 +2030,7 @@ func TestDoImport(t *testing.T) {
 		{"c", "d"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'c'}, End: []byte{'d'}},
+					keyRange:   engineapi.Range{Start: []byte{'c'}, End: []byte{'d'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
 				},
@@ -2052,7 +2053,7 @@ func TestDoImport(t *testing.T) {
 		{"a", "b"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'a'}, End: []byte{'b'}},
+					keyRange:   engineapi.Range{Start: []byte{'a'}, End: []byte{'b'}},
 					ingestData: &Engine{},
 					retryCount: MaxWriteAndIngestRetryTimes - 1,
 					injected:   getSuccessInjectedBehaviour(),
@@ -2062,7 +2063,7 @@ func TestDoImport(t *testing.T) {
 		{"b", "c"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'b'}, End: []byte{'c'}},
+					keyRange:   engineapi.Range{Start: []byte{'b'}, End: []byte{'c'}},
 					ingestData: &Engine{},
 					retryCount: MaxWriteAndIngestRetryTimes - 1,
 					injected:   getSuccessInjectedBehaviour(),
@@ -2072,7 +2073,7 @@ func TestDoImport(t *testing.T) {
 		{"c", "d"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'c'}, End: []byte{'d'}},
+					keyRange:   engineapi.Range{Start: []byte{'c'}, End: []byte{'d'}},
 					ingestData: &Engine{},
 					retryCount: MaxWriteAndIngestRetryTimes - 2,
 					injected: []injectedBehaviour{
@@ -2115,7 +2116,7 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 		{"c", "d"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'c'}, End: []byte{'c', '2'}},
+					keyRange:   engineapi.Range{Start: []byte{'c'}, End: []byte{'c', '2'}},
 					ingestData: &Engine{},
 					injected:   getNeedRescanWhenIngestBehaviour(),
 					retryCount: MaxWriteAndIngestRetryTimes,
@@ -2130,7 +2131,7 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 					},
 				},
 				{
-					keyRange:   common.Range{Start: []byte{'c', '2'}, End: []byte{'d'}},
+					keyRange:   engineapi.Range{Start: []byte{'c', '2'}, End: []byte{'d'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
 					retryCount: MaxWriteAndIngestRetryTimes,
@@ -2149,7 +2150,7 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 		{"c", "c2"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'c'}, End: []byte{'c', '2'}},
+					keyRange:   engineapi.Range{Start: []byte{'c'}, End: []byte{'c', '2'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
 					region: &split.RegionInfo{
@@ -2208,7 +2209,7 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 		{"c", "d"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'c'}, End: []byte{'d'}},
+					keyRange:   engineapi.Range{Start: []byte{'c'}, End: []byte{'d'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
 				},
@@ -2217,7 +2218,7 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 		{"d", "e"}: {
 			jobs: []*regionJob{
 				{
-					keyRange:   common.Range{Start: []byte{'d'}, End: []byte{'e'}},
+					keyRange:   engineapi.Range{Start: []byte{'d'}, End: []byte{'e'}},
 					ingestData: &Engine{},
 					injected:   getSuccessInjectedBehaviour(),
 				},
@@ -2313,8 +2314,8 @@ func TestExternalEngine(t *testing.T) {
 	keys := make([][]byte, 100)
 	values := make([][]byte, 100)
 	for i := range keys {
-		keys[i] = fmt.Appendf(nil, "key%06d", i)
-		values[i] = fmt.Appendf(nil, "value%06d", i)
+		keys[i] = []byte(fmt.Sprintf("key%06d", i))
+		values[i] = []byte(fmt.Sprintf("value%06d", i))
 	}
 	// simple append 0x00
 	endKey := make([]byte, len(keys[99])+1)
@@ -2356,7 +2357,7 @@ func TestExternalEngine(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		for range 7 {
+		for i := 0; i < 7; i++ {
 			jobs = append(jobs, <-jobToWorkerCh)
 			testJobWg.Done()
 		}
@@ -2381,7 +2382,7 @@ func TestExternalEngine(t *testing.T) {
 	sort.Slice(jobs, func(i, j int) bool {
 		return bytes.Compare(jobs[i].keyRange.Start, jobs[j].keyRange.Start) < 0
 	})
-	expectedKeyRanges := []common.Range{
+	expectedKeyRanges := []engineapi.Range{
 		{Start: keys[0], End: keys[20]},
 		{Start: keys[20], End: keys[30]},
 		{Start: keys[30], End: keys[50]},
@@ -2521,11 +2522,11 @@ func TestTotalMemoryConsume(t *testing.T) {
 	require.NoError(t, err)
 	// write about 150 MiB data
 	val := make([]byte, 35)
-	for i := range 1024 * 1024 {
+	for i := 0; i < 1024*1024; i++ {
 		err = unsortedWriter.AppendRows(ctx, []string{"a", "b", "c"}, kv.MakeRowsFromKvPairs([]common.KvPair{
-			{Key: fmt.Appendf(nil, "key_a_%09d", i), Val: val},
-			{Key: fmt.Appendf(nil, "key_b_%09d", i), Val: val},
-			{Key: fmt.Appendf(nil, "key_c_%09d", i), Val: val},
+			{Key: []byte(fmt.Sprintf("key_a_%09d", i)), Val: val},
+			{Key: []byte(fmt.Sprintf("key_b_%09d", i)), Val: val},
+			{Key: []byte(fmt.Sprintf("key_c_%09d", i)), Val: val},
 		}))
 		require.NoError(t, err)
 	}

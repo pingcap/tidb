@@ -393,7 +393,7 @@ func (d *MyDecimal) ToString() (str []byte) {
 
 // FromString parses decimal from string.
 func (d *MyDecimal) FromString(str []byte) error {
-	for i := range str {
+	for i := 0; i < len(str); i++ {
 		if !isSpace(str[i]) {
 			str = str[i:]
 			break
@@ -520,7 +520,7 @@ func (d *MyDecimal) FromString(str []byte) error {
 		}
 	}
 	allZero := true
-	for i := range wordBufLen {
+	for i := 0; i < wordBufLen; i++ {
 		if d.wordBuf[i] != 0 {
 			allZero = false
 			break
@@ -565,8 +565,14 @@ func (d *MyDecimal) Shift(shift int) error {
 		return nil
 	}
 
-	digitsInt = max(newPoint-digitBegin, 0)
-	digitsFrac = max(digitEnd-newPoint, 0)
+	digitsInt = newPoint - digitBegin
+	if digitsInt < 0 {
+		digitsInt = 0
+	}
+	digitsFrac = digitEnd - newPoint
+	if digitsFrac < 0 {
+		digitsFrac = 0
+	}
 	wordsInt := digitsToWords(digitsInt)
 	wordsFrac := digitsToWords(digitsFrac)
 	newLen := wordsInt + wordsFrac
@@ -1721,7 +1727,10 @@ func doSub(from1, from2, to *MyDecimal) (cmp int, err error) {
 
 	wordsInt1, wordsFracTo, err = fixWordCntError(wordsInt1, wordsFracTo)
 	idxTo := wordsInt1 + wordsFracTo
-	to.digitsFrac = max(from1.digitsFrac, from2.digitsFrac)
+	to.digitsFrac = from1.digitsFrac
+	if to.digitsFrac < from2.digitsFrac {
+		to.digitsFrac = from2.digitsFrac
+	}
 	to.digitsInt = int8(wordsInt1 * digitsPerWord)
 	if err != nil {
 		if to.digitsFrac > int8(wordsFracTo*digitsPerWord) {
@@ -1969,7 +1978,10 @@ func DecimalMul(from1, from2, to *MyDecimal) error {
 	to.resultFrac = min(from1.resultFrac+from2.resultFrac, mysql.MaxDecimalScale)
 	wordsIntTo, wordsFracTo, err = fixWordCntError(wordsIntTo, wordsFracTo)
 	to.negative = from1.negative != from2.negative
-	to.digitsFrac = min(from1.digitsFrac+from2.digitsFrac, notFixedDec)
+	to.digitsFrac = from1.digitsFrac + from2.digitsFrac
+	if to.digitsFrac > notFixedDec {
+		to.digitsFrac = notFixedDec
+	}
 	to.digitsInt = int8(wordsIntTo * digitsPerWord)
 	if err == ErrOverflow {
 		return err
@@ -2194,7 +2206,10 @@ func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
 		}
 	}
 	i = digitsToWords(prec1)
-	len1 := max(i+digitsToWords(2*frac2+fracIncr+1)+1, 3)
+	len1 := i + digitsToWords(2*frac2+fracIncr+1) + 1
+	if len1 < 3 {
+		len1 = 3
+	}
 
 	tmp1 := make([]int32, len1)
 	copy(tmp1, from1.wordBuf[idx1:idx1+i])
@@ -2411,7 +2426,7 @@ func NewDecFromStringForTest(s string) *MyDecimal {
 // NewMaxOrMinDec returns the max or min value decimal for given precision and fraction.
 func NewMaxOrMinDec(negative bool, prec, frac int) *MyDecimal {
 	str := make([]byte, prec+2)
-	for i := range str {
+	for i := 0; i < len(str); i++ {
 		str[i] = '9'
 	}
 	if negative {

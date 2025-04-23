@@ -16,7 +16,6 @@ package core
 
 import (
 	"math/bits"
-	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -101,9 +100,9 @@ func (s *joinReorderDPSolver) solve(joinGroup []base.LogicalPlan, tracer *joinRe
 	}
 	visited := make([]bool, len(joinGroup))
 	nodeID2VisitID := make([]int, len(joinGroup))
-	joins := make([]base.LogicalPlan, 0, len(joinGroup))
+	var joins []base.LogicalPlan
 	// BFS the tree.
-	for i := range joinGroup {
+	for i := 0; i < len(joinGroup); i++ {
 		if visited[i] {
 			continue
 		}
@@ -124,7 +123,7 @@ func (s *joinReorderDPSolver) solve(joinGroup []base.LogicalPlan, tracer *joinRe
 			}
 			totalNonEqEdges[i].nodeIDMask = newMask
 			subNonEqEdges = append(subNonEqEdges, totalNonEqEdges[i])
-			totalNonEqEdges = slices.Delete(totalNonEqEdges, i, i+1)
+			totalNonEqEdges = append(totalNonEqEdges[:i], totalNonEqEdges[i+1:]...)
 		}
 		// Do DP on each sub graph.
 		join, err := s.dpGraph(visitID2NodeID, nodeID2VisitID, joinGroup, totalEqEdges, subNonEqEdges, tracer)

@@ -25,7 +25,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -124,7 +123,7 @@ var (
 // It clones the original default filter,
 // so that the original value won't be changed when the returned slice's element is changed.
 func GetDefaultFilter() []string {
-	return slices.Clone(defaultFilter)
+	return append([]string{}, defaultFilter...)
 }
 
 // DBStore is the database connection information.
@@ -1011,7 +1010,13 @@ func (m *MydumperRuntime) adjustFilePath() error {
 		m.SourceDir = u.String()
 	}
 
-	found := slices.Contains(supportedStorageTypes, u.Scheme)
+	found := false
+	for _, t := range supportedStorageTypes {
+		if u.Scheme == t {
+			found = true
+			break
+		}
+	}
 	if !found {
 		return common.ErrInvalidConfig.GenWithStack(
 			"unsupported data-source-dir url '%s', supported storage types are %s",
@@ -1310,7 +1315,7 @@ func (d Duration) MarshalText() ([]byte, error) {
 
 // MarshalJSON implements json.Marshaler.
 func (d *Duration) MarshalJSON() ([]byte, error) {
-	return fmt.Appendf(nil, `"%s"`, d.Duration), nil
+	return []byte(fmt.Sprintf(`"%s"`, d.Duration)), nil
 }
 
 // Charset defines character set

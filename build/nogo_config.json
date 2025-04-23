@@ -357,7 +357,11 @@
     },
     "only_files": {
       "pkg/util/": "util code",
-      "pkg/workloadlearning": "workloadlearning code"
+      "pkg/workloadlearning": "workloadlearning code",
+      "pkg/planner/core/generator/hash64_equals": "pkg/planner/core/generator/hash64_equals/ code",
+      "pkg/planner/core/operator/logicalop": "pkg/planner/core/operator/logicalop code",
+      "pkg/planner/cardinality": "pkg/planner/cardinality code",
+      "pkg/planner/funcdep": "pkg/planner/funcdep code"
     }
   },
   "inspect": {

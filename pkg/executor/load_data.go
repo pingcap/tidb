@@ -90,6 +90,9 @@ func (e *LoadDataExec) Open(_ context.Context) error {
 
 // Close implements the Executor interface.
 func (e *LoadDataExec) Close() error {
+	if e.loadDataWorker != nil {
+		e.loadDataWorker.Close()
+	}
 	return e.closeLocalReader(nil)
 }
 
@@ -285,6 +288,13 @@ func (e *LoadDataWorker) setResult(colAssignExprWarnings []contextutil.SQLWarn) 
 
 	stmtCtx.SetMessage(msg)
 	stmtCtx.SetWarnings(warns)
+}
+
+// Close closes the LoadDataWorker and releases resources.
+func (e *LoadDataWorker) Close() {
+	if e.controller != nil {
+		e.controller.Close()
+	}
 }
 
 func initEncodeCommitWorkers(e *LoadDataWorker) (*encodeWorker, *commitWorker, error) {
@@ -512,7 +522,7 @@ func (w *encodeWorker) parserData2TableData(
 	}
 
 	fieldMappings := w.controller.FieldMappings
-	for i := range fieldMappings {
+	for i := 0; i < len(fieldMappings); i++ {
 		if i >= len(parserData) {
 			if fieldMappings[i].Column == nil {
 				setVar(fieldMappings[i].UserVar.Name, nil)
@@ -542,7 +552,7 @@ func (w *encodeWorker) parserData2TableData(
 
 		row = append(row, parserData[i])
 	}
-	for i := range w.colAssignExprs {
+	for i := 0; i < len(w.colAssignExprs); i++ {
 		// eval expression of `SET` clause
 		d, err := w.colAssignExprs[i].Eval(w.Ctx().GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err != nil {

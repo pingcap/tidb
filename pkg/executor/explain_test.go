@@ -349,7 +349,7 @@ func TestTotalTimeCases(t *testing.T) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1 (c1 bigint, c2 int, c3 int, c4 int, primary key(c1, c2), index (c3));")
 	lineNum := 1000
-	for i := range lineNum {
+	for i := 0; i < lineNum; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t1 values(%d, %d, %d, %d);", i, i+1, i+2, i+3))
 	}
 	tk.MustExec("analyze table t1")
@@ -360,7 +360,7 @@ func TestTotalTimeCases(t *testing.T) {
 	require.True(t, len(rows) == 11)
 
 	// Line3 is tikv_task, others should be all walltime
-	for i := range 11 {
+	for i := 0; i < 11; i++ {
 		if i != 3 {
 			require.True(t, strings.HasPrefix(rows[i][5].(string), "time:"))
 		}
@@ -372,7 +372,7 @@ func TestTotalTimeCases(t *testing.T) {
 	require.True(t, len(rows) == 11)
 	// Line0-2 is walltime, Line3 is tikv_task, Line9 Line10 are special, they are total time in integration environment, while
 	// walltime in uts due to only one IndexLookUp executor is actually open, others should be all total_time.
-	for i := range 11 {
+	for i := 0; i < 11; i++ {
 		if i == 9 || i == 10 {
 			continue
 		}

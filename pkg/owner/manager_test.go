@@ -439,7 +439,7 @@ func TestWatchOwnerAfterDeleteOwnerKey(t *testing.T) {
 func checkOwner(ownerMgr owner.Manager, fbVal bool) (isOwner bool) {
 	// The longest to wait for 30 seconds to
 	// make sure that campaigning owners is completed.
-	for range 6000 {
+	for i := 0; i < 6000; i++ {
 		time.Sleep(5 * time.Millisecond)
 		isOwner = ownerMgr.IsOwner()
 		if isOwner == fbVal {
@@ -476,7 +476,7 @@ func TestImmediatelyCancel(t *testing.T) {
 	defer tInfo.Close(t)
 	ownerMgr := owner.NewOwnerManager(context.Background(), tInfo.client, "ddl", "1", "/owner/key")
 	defer ownerMgr.Close()
-	for range 10 {
+	for i := 0; i < 10; i++ {
 		err := ownerMgr.CampaignOwner()
 		require.NoError(t, err)
 		ownerMgr.CampaignCancel()

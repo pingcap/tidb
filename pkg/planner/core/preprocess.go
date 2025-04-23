@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -161,7 +160,7 @@ const (
 	// inTxnRetry is set when visiting in transaction retry.
 	inTxnRetry
 	// inCreateOrDropTable is set when visiting create/drop table/view/sequence,
-	// rename table, alter table add foreign key, and BR restore.
+	// rename table, alter table add foreign key, alter table in prepare stmt, and BR restore.
 	// TODO need a better name to clarify it's meaning
 	inCreateOrDropTable
 	// parentIsJoin is set when visiting node's parent is join.
@@ -297,10 +296,17 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.flag |= inCreateOrDropTable
 		p.checkRenameTableGrammar(node)
 	case *ast.CreateIndexStmt:
+		// Used in CREATE INDEX ...
 		p.stmtTp = TypeCreate
+		if p.flag&inPrepare != 0 {
+			p.flag |= inCreateOrDropTable
+		}
 		p.checkCreateIndexGrammar(node)
 	case *ast.AlterTableStmt:
 		p.stmtTp = TypeAlter
+		if p.flag&inPrepare != 0 {
+			p.flag |= inCreateOrDropTable
+		}
 		p.resolveAlterTableStmt(node)
 		p.checkAlterTableGrammar(node)
 	case *ast.CreateDatabaseStmt:
@@ -441,6 +447,9 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 				p.varsReadonly[node.Name] = struct{}{}
 			}
 		}
+	case *ast.Constraint:
+		// Used in ALTER TABLE or CREATE TABLE
+		p.checkConstraintGrammar(node)
 	default:
 		p.flag &= ^parentIsJoin
 	}
@@ -1156,6 +1165,56 @@ func checkColumnOptions(isTempTable bool, ops []*ast.ColumnOption) (int, error) 
 	return isPrimary, nil
 }
 
+func checkIndexOptions(isColumnar bool, indexOptions *ast.IndexOption) error {
+	if isColumnar && indexOptions == nil {
+		return dbterror.ErrUnsupportedIndexType.FastGen("COLUMNAR INDEX must specify 'USING <index_type>'")
+	}
+	if indexOptions == nil {
+		return nil
+	}
+	if isColumnar {
+		switch indexOptions.Tp {
+		case ast.IndexTypeVector, ast.IndexTypeInverted:
+			// Accepted
+		case ast.IndexTypeInvalid:
+			return dbterror.ErrUnsupportedIndexType.FastGen("COLUMNAR INDEX must specify 'USING <index_type>'")
+		default:
+			return dbterror.ErrUnsupportedIndexType.FastGen("'USING %s' is not supported for COLUMNAR INDEX", indexOptions.Tp)
+		}
+		if indexOptions.Visibility == ast.IndexVisibilityInvisible {
+			return dbterror.ErrUnsupportedIndexType.FastGen("INVISIBLE can not be used in %s INDEX", indexOptions.Tp)
+		}
+	} else {
+		switch indexOptions.Tp {
+		case ast.IndexTypeHNSW:
+			return dbterror.ErrUnsupportedIndexType.FastGen("'USING HNSW' can be only used for VECTOR INDEX")
+		case ast.IndexTypeVector, ast.IndexTypeInverted:
+			return dbterror.ErrUnsupportedIndexType.FastGen("'USING %s' can be only used for COLUMNAR INDEX", indexOptions.Tp)
+		default:
+			// Accepted
+		}
+	}
+
+	return nil
+}
+
+func checkIndexSpecs(indexOptions *ast.IndexOption, partSpecs []*ast.IndexPartSpecification) error {
+	if indexOptions == nil {
+		return nil
+	}
+	switch indexOptions.Tp {
+	case ast.IndexTypeVector:
+		if len(partSpecs) != 1 || partSpecs[0].Expr == nil {
+			return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("VECTOR INDEX must specify an expression like ((VEC_XX_DISTANCE(<COLUMN>)))")
+		}
+	case ast.IndexTypeInverted:
+		if len(partSpecs) != 1 || partSpecs[0].Column == nil {
+			return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("COLUMNAR INDEX of INVERTED type must specify one column name")
+		}
+	}
+	return nil
+}
+
 func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 	tName := stmt.Table.Name.String()
 	if util.IsInCorrectIdentifierName(tName) {
@@ -1167,6 +1226,43 @@ func (p *preprocessor) checkCreateIndexGrammar(stmt *ast.CreateIndexStmt) {
 		return
 	}
 	p.err = checkIndexInfo(stmt.IndexName, stmt.IndexPartSpecifications)
+	if p.err != nil {
+		return
+	}
+
+	// Rewrite CREATE VECTOR INDEX into CREATE COLUMNAR INDEX
+	if stmt.KeyType == ast.IndexKeyTypeVector {
+		if stmt.IndexOption.Tp != ast.IndexTypeInvalid && stmt.IndexOption.Tp != ast.IndexTypeHNSW {
+			p.err = dbterror.ErrUnsupportedIndexType.FastGen("'USING %s' is not supported for VECTOR INDEX", stmt.IndexOption.Tp)
+			return
+		}
+		stmt.KeyType = ast.IndexKeyTypeColumnar
+		stmt.IndexOption.Tp = ast.IndexTypeVector
+	}
+
+	p.err = checkIndexOptions(stmt.KeyType == ast.IndexKeyTypeColumnar, stmt.IndexOption)
+	if p.err != nil {
+		return
+	}
+	p.err = checkIndexSpecs(stmt.IndexOption, stmt.IndexPartSpecifications)
+}
+
+func (p *preprocessor) checkConstraintGrammar(stmt *ast.Constraint) {
+	// Rewrite VECTOR INDEX into COLUMNAR INDEX
+	if stmt.Tp == ast.ConstraintVector {
+		if stmt.Option.Tp != ast.IndexTypeInvalid && stmt.Option.Tp != ast.IndexTypeHNSW {
+			p.err = dbterror.ErrUnsupportedIndexType.FastGen("'USING %s' is not supported for VECTOR INDEX", stmt.Option.Tp)
+			return
+		}
+		stmt.Tp = ast.ConstraintColumnar
+		stmt.Option.Tp = ast.IndexTypeVector
+	}
+
+	p.err = checkIndexOptions(stmt.Tp == ast.ConstraintColumnar, stmt.Option)
+	if p.err != nil {
+		return
+	}
+	p.err = checkIndexSpecs(stmt.Option, stmt.Keys)
 }
 
 func (p *preprocessor) checkSelectNoopFuncs(stmt *ast.SelectStmt) {
@@ -1591,9 +1687,11 @@ func (p *preprocessor) stmtType() string {
 
 func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	if tn.Schema.L == "" {
-		if slices.Contains(p.preprocessWith.cteCanUsed, tn.Name.L) {
-			p.preprocessWith.UpdateCTEConsumerCount(tn.Name.L)
-			return
+		for _, cte := range p.preprocessWith.cteCanUsed {
+			if cte == tn.Name.L {
+				p.preprocessWith.UpdateCTEConsumerCount(tn.Name.L)
+				return
+			}
 		}
 
 		currentDB := p.sctx.GetSessionVars().CurrentDB

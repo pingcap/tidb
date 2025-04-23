@@ -48,7 +48,7 @@ func findFieldNameOriginal(names types.NameSlice, astCol *ast.ColumnName) (int, 
 
 func generateTestData(size int) (types.NameSlice, *ast.ColumnName) {
 	names := make(types.NameSlice, size)
-	for i := range size {
+	for i := 0; i < size; i++ {
 		names[i] = &types.FieldName{
 			DBName:  ast.NewCIStr("db"),
 			TblName: ast.NewCIStr("tbl"),

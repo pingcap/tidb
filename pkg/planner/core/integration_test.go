@@ -1028,7 +1028,7 @@ func TestExplainAnalyzeDML2(t *testing.T) {
 	}
 
 	for _, ca := range cases {
-		for i := range 3 {
+		for i := 0; i < 3; i++ {
 			tk.MustExec("drop table if exists t")
 			switch i {
 			case 0:

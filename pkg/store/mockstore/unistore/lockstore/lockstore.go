@@ -116,7 +116,7 @@ func NewMemStore(arenaBlockSize int) *MemStore {
 
 func (ls *MemStore) setHeadNode() {
 	n := ls.newNode(ls.getArena(), nil, nil, maxHeight)
-	for i := range maxHeight {
+	for i := 0; i < maxHeight; i++ {
 		n.setNexts(i, 0)
 	}
 	ls.head = n
@@ -320,7 +320,7 @@ func (ls *MemStore) PutWithHint(key []byte, v []byte, hint *Hint) bool {
 
 	// We always insert from the base level and up. After you add a node in base level, we cannot
 	// create a node in the level above because it would have discovered the node in the base level.
-	for i := range height {
+	for i := 0; i < height; i++ {
 		if hint.next[i] != nil {
 			x.setNexts(i, uint64(hint.next[i].addr))
 		} else {
@@ -339,7 +339,7 @@ func (ls *MemStore) PutWithHint(key []byte, v []byte, hint *Hint) bool {
 func (ls *MemStore) replace(key, v []byte, hint *Hint, old *node) {
 	x := ls.newNode(ls.getArena(), key, v, int(old.height))
 	arena := ls.getArena()
-	for i := range int(old.height) {
+	for i := 0; i < int(old.height); i++ {
 		nextAddr := atomic.LoadUint64(old.nextsAddr(i))
 		x.setNexts(i, nextAddr)
 		if nextAddr != uint64(nullArenaAddr) {

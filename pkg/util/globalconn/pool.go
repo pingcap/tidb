@@ -167,7 +167,7 @@ func (p *LockFreeCircularPool) InitExt(size uint32, fillCount uint32) {
 	fillCount = mathutil.MinUint32(p.cap-1, fillCount)
 	var i uint32
 	//nolint: intrange
-	for i = range fillCount {
+	for i = 0; i < fillCount; i++ {
 		p.slots[i] = lockFreePoolItem{value: i + 1, seq: i + 1}
 	}
 	for ; i < p.cap; i++ {

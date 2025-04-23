@@ -17,7 +17,6 @@ package checksum
 import (
 	"bytes"
 	"io"
-	"slices"
 	"strings"
 	"testing"
 
@@ -111,7 +110,7 @@ func testDeleteOneByte(t *testing.T, encrypt bool) {
 	fc := func(b []byte, offset int) []byte {
 		if offset < deletePos && offset+len(b) >= deletePos {
 			pos := deletePos - offset
-			b = slices.Delete(b, pos-1, pos)
+			b = append(b[:pos-1], b[pos:]...)
 		}
 		return b
 	}

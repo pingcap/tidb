@@ -132,7 +132,7 @@ func TestNonPreparedPlanTypeRandomly(t *testing.T) {
 	tk.MustExec(`create table t7 (a datetime, b datetime, key(a))`)
 
 	n := 30
-	for range n {
+	for i := 0; i < n; i++ {
 		tk.MustExec(fmt.Sprintf(`insert into t1 values (%v, %v)`, randNonPrepTypeVal(t, n, "int"), randNonPrepTypeVal(t, n, "int")))
 		tk.MustExec(fmt.Sprintf(`insert into t2 values (%v, %v)`, randNonPrepTypeVal(t, n, "varchar"), randNonPrepTypeVal(t, n, "varchar")))
 		tk.MustExec(fmt.Sprintf(`insert into t3 values (%v, %v)`, randNonPrepTypeVal(t, n, "double"), randNonPrepTypeVal(t, n, "double")))
@@ -143,7 +143,7 @@ func TestNonPreparedPlanTypeRandomly(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`insert into t7 values (%v, %v)`, randNonPrepTypeVal(t, n, "datetime"), randNonPrepTypeVal(t, n, "datetime")))
 	}
 
-	for range 200 {
+	for i := 0; i < 200; i++ {
 		q := fmt.Sprintf(`select * from t%v where %v`, rand.Intn(7)+1, randNonPrepFilter(t, n))
 		tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
 		r0 := tk.MustQuery(q).Sort()            // the first execution
@@ -198,7 +198,7 @@ func TestNonPreparedPlanCacheBasically(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a int, b int, c int, d int, key(b), key(c, d))`)
-	for i := range 20 {
+	for i := 0; i < 20; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%v, %v, %v, %v)", i, rand.Intn(20), rand.Intn(20), rand.Intn(20)))
 	}
 
@@ -591,7 +591,7 @@ func convertQueryToPrepExecStmt(q string) (normalQuery, prepStmt string, paramet
 	normalQuery = strings.ReplaceAll(q, "#", "")
 	normalQuery = strings.ReplaceAll(normalQuery, "?", "")
 	vs := strings.Split(q, "#")
-	for i := range vs {
+	for i := 0; i < len(vs); i++ {
 		if len(vs[i]) == 0 {
 			continue
 		}
@@ -614,8 +614,8 @@ func planCachePointGetPrepareData(tk *testkit.TestKit) {
 	tk.MustExec(fmt.Sprintf(`create table t1 (a %v, b %v, c %v, d %v, primary key(a), unique key(b), unique key(c), unique key(c))`, t(), t(), t(), t()))
 	tk.MustExec(fmt.Sprintf(`create table t2 (a %v, b %v, c %v, d %v, primary key(a, b), unique key(c, d))`, t(), t(), t(), t()))
 
-	vals := make([]string, 0, 50)
-	for i := range 50 {
+	var vals []string
+	for i := 0; i < 50; i++ {
 		vals = append(vals, fmt.Sprintf("('%v.%v', '%v.%v', '%v.%v', '%v.%v')",
 			i-20, rand.Intn(5),
 			i-20, rand.Intn(5),
@@ -655,8 +655,8 @@ func planCachePointGetQueries(isNonPrep bool) []string {
 		}
 		return fmt.Sprintf("%v %v %v", col, op, v())
 	}
-	queries := make([]string, 0, 50*12)
-	for range 50 {
+	var queries []string
+	for i := 0; i < 50; i++ {
 		queries = append(queries, fmt.Sprintf("select * from t1 where %v", f()))
 		queries = append(queries, fmt.Sprintf("select * from t1 where %v and %v", f(), f()))
 		queries = append(queries, fmt.Sprintf("select * from t1 where %v and %v and %v", f(), f(), f()))
@@ -717,8 +717,8 @@ func planCacheIntConvertQueries(isNonPrep bool) []string {
 		}
 		return strings.Join(fs, ", ")
 	}
-	queries := make([]string, 0, 50*6)
-	for range 50 {
+	var queries []string
+	for i := 0; i < 50; i++ {
 		queries = append(queries, fmt.Sprintf("select %v from t where %v", fields(), f()))
 		queries = append(queries, fmt.Sprintf("select %v from t where %v and %v", fields(), f(), f()))
 		queries = append(queries, fmt.Sprintf("select %v from t where %v and %v and %v", fields(), f(), f(), f()))
@@ -734,7 +734,7 @@ func planCacheIntConvertPrepareData(tk *testkit.TestKit) {
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(a int, b year, c double, d varchar(16), key(a), key(b), key(c))`)
 	vals := make([]string, 0, 50)
-	for range 50 {
+	for i := 0; i < 50; i++ {
 		a := fmt.Sprintf("%v", 2000+rand.Intn(20)-10)
 		if rand.Intn(10) == 0 {
 			a = "null"
@@ -800,8 +800,8 @@ func planCacheIndexMergeQueries(isNonPrep bool) []string {
 			return "*"
 		}
 	}
-	queries := make([]string, 0, 50*12)
-	for range 50 {
+	var queries []string
+	for i := 0; i < 50; i++ {
 		queries = append(queries, fmt.Sprintf("select /*+ use_index_merge(t, a, b) */ %s from t where %s and %s", fields(), f("a"), f("b")))
 		queries = append(queries, fmt.Sprintf("select /*+ use_index_merge(t, a, c) */ %s from t where %s and %s", fields(), f("a"), f("c")))
 		queries = append(queries, fmt.Sprintf("select /*+ use_index_merge(t, a, b, c) */ %s from t where %s and %s and %s", fields(), f("a"), f("b"), f("c")))
@@ -829,7 +829,7 @@ func planCacheIndexMergePrepareData(tk *testkit.TestKit) {
 		}
 		return fmt.Sprintf("%d", rand.Intn(20)-10)
 	}
-	for range 50 {
+	for i := 0; i < 50; i++ {
 		vals = append(vals, fmt.Sprintf("(%s, %s, %s, %s)", v(), v(), v(), v()))
 	}
 	tk.MustExec("insert into t values " + strings.Join(vals, ","))
@@ -1175,7 +1175,7 @@ func TestIssue43667Concurrency(t *testing.T) {
 	tk.MustExec("create table cycle (pk int key, val int)")
 	var wg sync.WaitGroup
 	concurrency := 30
-	for i := range concurrency {
+	for i := 0; i < concurrency; i++ {
 		tk.MustExec(fmt.Sprintf("insert into cycle values (%v,%v)", i, i))
 		wg.Add(1)
 		go func(id int) {
@@ -1184,7 +1184,7 @@ func TestIssue43667Concurrency(t *testing.T) {
 			tk.MustExec("use test")
 			tk.MustExec("set @@tidb_enable_non_prepared_plan_cache=1")
 			query := fmt.Sprintf("select (val) from cycle where pk = %v", id)
-			for range 5000 {
+			for j := 0; j < 5000; j++ {
 				tk.MustQuery(query).Check(testkit.Rows(fmt.Sprintf("%v", id)))
 			}
 		}(i)
@@ -1338,14 +1338,14 @@ func randValueForMVIndex(colType string) string {
 	case "json-string":
 		var array []string
 		arraySize := 1 + rand.Intn(5)
-		for range arraySize {
+		for i := 0; i < arraySize; i++ {
 			array = append(array, randValueForMVIndex("string"))
 		}
 		return "'[" + strings.Join(array, ", ") + "]'"
 	case "json-signed":
 		var array []string
 		arraySize := 1 + rand.Intn(5)
-		for range arraySize {
+		for i := 0; i < arraySize; i++ {
 			array = append(array, randValueForMVIndex("int"))
 		}
 		return "'[" + strings.Join(array, ", ") + "]'"
@@ -1355,8 +1355,8 @@ func randValueForMVIndex(colType string) string {
 }
 
 func insertValuesForMVIndex(nRows int, colTypes ...string) string {
-	stmtVals := make([]string, 0, nRows)
-	for range nRows {
+	var stmtVals []string
+	for i := 0; i < nRows; i++ {
 		var vals []string
 		for _, colType := range colTypes {
 			vals = append(vals, randValueForMVIndex(colType))
@@ -1367,7 +1367,7 @@ func insertValuesForMVIndex(nRows int, colTypes ...string) string {
 }
 
 func verifyPlanCacheForMVIndex(t *testing.T, tk *testkit.TestKit, isIndexMerge, hitCache bool, queryTemplate string, colTypes ...string) {
-	for range 5 {
+	for i := 0; i < 5; i++ {
 		var vals []string
 		for _, colType := range colTypes {
 			vals = append(vals, randValueForMVIndex(colType))

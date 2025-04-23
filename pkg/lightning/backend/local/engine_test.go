@@ -119,10 +119,10 @@ func TestIngestSSTWithClosedEngine(t *testing.T) {
 	require.NoError(t, err)
 	writable := objstorageprovider.NewFileWritable(file)
 	w := sstable.NewWriter(writable, sstable.WriterOptions{})
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		require.NoError(t, w.Add(sstable.InternalKey{
 			Trailer: uint64(sstable.InternalKeyKindSet),
-			UserKey: fmt.Appendf(nil, "key%d", i),
+			UserKey: []byte(fmt.Sprintf("key%d", i)),
 		}, nil))
 	}
 	require.NoError(t, w.Close())

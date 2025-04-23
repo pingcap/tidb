@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -309,7 +310,7 @@ func (d *Datum) GetBinaryLiteral4Cmp() BinaryLiteral {
 	if bitLen == 0 {
 		return d.b
 	}
-	for i := range bitLen {
+	for i := 0; i < bitLen; i++ {
 		// Remove the prefix 0 in the bit array.
 		if d.b[i] != 0 {
 			return d.b[i:]
@@ -1188,6 +1189,8 @@ func (d *Datum) convertToString(ctx Context, target *FieldType) (Datum, error) {
 		// https://github.com/pingcap/tidb/issues/31124.
 		// Consider converting to uint first.
 		val, err := d.GetBinaryLiteral().ToInt(ctx)
+		// The length of BIT is limited to 64, so this function will never fail / truncated.
+		intest.AssertNoError(err)
 		if err != nil {
 			s = d.GetBinaryLiteral().ToString()
 		} else {

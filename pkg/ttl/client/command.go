@@ -17,7 +17,6 @@ package client
 import (
 	"context"
 	"encoding/json"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -446,7 +445,7 @@ func (c *mockClient) WatchCommand(ctx context.Context) <-chan *CmdRequest {
 		defer c.Unlock()
 		for i, chItem := range c.commandWatchers {
 			if chItem == ch {
-				c.commandWatchers = slices.Delete(c.commandWatchers, i, i+1)
+				c.commandWatchers = append(c.commandWatchers[:i], c.commandWatchers[i+1:]...)
 				break
 			}
 		}

@@ -306,7 +306,7 @@ func TestShowTableRegion(t *testing.T) {
 	require.Len(t, rows, 24)
 	tbl = external.GetTableByName(t, tk, "test", "t")
 	require.Len(t, tbl.Meta().GetPartitionInfo().Definitions, 5)
-	for i := range 4 {
+	for i := 0; i < 4; i++ {
 		p := tbl.Meta().GetPartitionInfo().Definitions[i]
 		require.Equal(t, fmt.Sprintf("t_%d_", p.ID), rows[i*4+0][1])
 		require.Equal(t, fmt.Sprintf("t_%d_r_1000000", p.ID), rows[i*4+1][1])
@@ -326,7 +326,7 @@ func TestShowTableRegion(t *testing.T) {
 	}
 
 	// Test for show table partition regions.
-	for i := range 4 {
+	for i := 0; i < 4; i++ {
 		re = tk.MustQuery(fmt.Sprintf("show table t partition (p%v) regions", i))
 		rows = re.Rows()
 		require.Len(t, rows, 4)
@@ -373,7 +373,7 @@ func TestShowTableRegion(t *testing.T) {
 	require.Len(t, rows, 40)
 	tbl = external.GetTableByName(t, tk, "test", "t")
 	require.Len(t, tbl.Meta().GetPartitionInfo().Definitions, 5)
-	for i := range 5 {
+	for i := 0; i < 5; i++ {
 		p := tbl.Meta().GetPartitionInfo().Definitions[i]
 		require.Equal(t, fmt.Sprintf("t_%d_r", p.ID), rows[i*8+0][1])
 		require.Equal(t, fmt.Sprintf("t_%d_r_1000000", p.ID), rows[i*8+1][1])
@@ -392,7 +392,7 @@ func TestShowTableRegion(t *testing.T) {
 	require.Len(t, rows, 44)
 	tbl = external.GetTableByName(t, tk, "test", "t")
 	require.Len(t, tbl.Meta().GetPartitionInfo().Definitions, 5)
-	for i := range 4 {
+	for i := 0; i < 4; i++ {
 		p := tbl.Meta().GetPartitionInfo().Definitions[i]
 		require.Equal(t, fmt.Sprintf("t_%d_r", p.ID), rows[i*8+0][1])
 		require.Equal(t, fmt.Sprintf("t_%d_r_1000000", p.ID), rows[i*8+1][1])
@@ -424,7 +424,7 @@ func TestShowTableRegion(t *testing.T) {
 	require.True(t, terror.ErrorEqual(err, table.ErrUnknownPartition))
 
 	// Test show table partition index.
-	for i := range 4 {
+	for i := 0; i < 4; i++ {
 		re = tk.MustQuery(fmt.Sprintf("show table t partition (p%v) index idx regions", i))
 		rows = re.Rows()
 		require.Len(t, rows, 4)

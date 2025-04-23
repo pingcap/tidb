@@ -254,7 +254,7 @@ func TestJoin2(t *testing.T) {
 	tk.MustExec("set @@tidb_hash_join_concurrency=5")
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(a int)")
-	for range 100 {
+	for i := 0; i < 100; i++ {
 		tk.MustExec("insert into t value(1)")
 	}
 	result = tk.MustQuery("select /*+ TIDB_HJ(s, r) */ * from t as s join t as r on s.a = r.a limit 1;")
@@ -295,7 +295,7 @@ func TestJoinLeak(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (d int)")
 	tk.MustExec("begin")
-	for range 1002 {
+	for i := 0; i < 1002; i++ {
 		tk.MustExec("insert t values (1)")
 	}
 	tk.MustExec("commit")

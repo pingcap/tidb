@@ -319,12 +319,12 @@ func TestCacheEmptySchemaVersion(t *testing.T) {
 	ic := infoschema.NewCache(nil, 16)
 	require.NotNil(t, ic)
 	require.Equal(t, 0, len(ic.GetEmptySchemaVersions()))
-	for i := range 16 {
+	for i := 0; i < 16; i++ {
 		ic.InsertEmptySchemaVersion(int64(i))
 	}
 	emptyVersions := ic.GetEmptySchemaVersions()
 	require.Equal(t, 16, len(emptyVersions))
-	for i := range 16 {
+	for i := 0; i < 16; i++ {
 		_, ok := emptyVersions[int64(i)]
 		require.True(t, ok)
 	}

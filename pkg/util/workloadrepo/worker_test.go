@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -118,7 +119,7 @@ func setupWorker(ctx context.Context, t *testing.T, addr string, dom *domain.Dom
 	wrk := setupWorkerForTest(ctx, etcdCli, dom, id, testWorker)
 
 	t.Cleanup(func() {
-		wrk.stop()
+		wrk.setRepositoryDest(ctx, "")
 	})
 
 	return wrk
@@ -312,9 +313,20 @@ func TestAdminWorkloadRepo(t *testing.T) {
 		return len(res) >= 1
 	}, time.Minute, time.Second)
 
+	// Validate that user will out Super can not execute admin command.
+	tk.MustExec(`CREATE USER 'testcheck'@'localhost';`)
+	checkTk := testkit.NewTestKit(t, store)
+	require.NoError(t, checkTk.Session().Auth(&auth.UserIdentity{Username: "testcheck", Hostname: "localhost"}, nil, nil, nil))
+	checkTk.MustExecToErr("admin create workload snapshot")
+
+	// Add super to testcheck you and retry command.
+	tk.MustExec("grant super on *.* to 'testcheck'@'localhost'")
+	checkTk.MustExec("admin create workload snapshot")
+
 	// disable the worker and it will fail
 	tk.MustExec("set @@global.tidb_workload_repository_dest=''")
 	tk.MustExecToErr("admin create workload snapshot")
+	checkTk.MustExecToErr("admin create workload snapshot")
 }
 
 func getRows(t *testing.T, tk *testkit.TestKit, cnt int, maxSecs int, query string) [][]any {
@@ -879,8 +891,8 @@ func TestOwnerRandomDown(t *testing.T) {
 	testNum := 9
 
 	ctx, _, dom, addr := setupDomainAndContext(t)
-	workers := make([]*worker, 0, workerNum)
-	for i := range workerNum {
+	var workers []*worker
+	for i := 0; i < workerNum; i++ {
 		wrk := setupWorker(ctx, t, addr, dom, fmt.Sprintf("worker%d", i), true)
 		wrk.samplingInterval = 6000
 		workers = append(workers, wrk)
@@ -897,17 +909,20 @@ func TestOwnerRandomDown(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		var err error
+		found := false
 		for _, wrk := range workers {
 			if wrk.owner.IsOwner() {
+				found = true
 				_, err = wrk.getSnapID(ctx)
 				break
 			}
 		}
-		return err == nil
+
+		return found && err == nil
 	}, time.Minute, 100*time.Millisecond)
 
 	// let us randomly stop the owner
-	for j := range testNum {
+	for j := 0; j < testNum; j++ {
 		var err error
 		prevSnapID := uint64(0)
 		breakOwnerIdx := -1
@@ -921,11 +936,10 @@ func TestOwnerRandomDown(t *testing.T) {
 
 				if j%3 == 0 {
 					// tidb is shutdown somehow
-					wrk.stop()
-
-					require.Eventually(t, func() bool {
+					require.NoError(t, wrk.setRepositoryDest(ctx, ""))
+					eventuallyWithLock(t, wrk, func() bool {
 						return wrk.cancel == nil
-					}, time.Minute, 100*time.Millisecond)
+					})
 				} else if j%3 == 1 {
 					// immediate unexpected owner down due to bad network or crash
 					wrk.owner.CampaignCancel()
@@ -951,6 +965,8 @@ func TestOwnerRandomDown(t *testing.T) {
 		// new owner elected
 		require.Eventually(t, func() bool {
 			return slice.AnyOf(workers, func(i int) bool {
+				workers[i].Lock()
+				defer workers[i].Unlock()
 				return workers[i].cancel != nil &&
 					workers[i].owner.IsOwner() && i != oldOwnerIdx
 			})
@@ -959,6 +975,8 @@ func TestOwnerRandomDown(t *testing.T) {
 		// new snapshot taken
 		require.Eventually(t, func() bool {
 			return slice.AnyOf(workers, func(i int) bool {
+				workers[i].Lock()
+				defer workers[i].Unlock()
 				if workers[i].cancel == nil {
 					return false
 				}
@@ -969,15 +987,15 @@ func TestOwnerRandomDown(t *testing.T) {
 
 		// recover stopped owner
 		for idx, wrk := range workers {
-			if wrk.cancel == nil {
-				require.NoError(t, wrk.setRepositoryDest(ctx, "table"))
-			}
+			require.NoError(t, wrk.setRepositoryDest(ctx, "table"))
 			if idx == breakOwnerIdx {
 				require.Nil(t, wrk.owner.CampaignOwner(3))
 			}
 		}
 		require.Eventually(t, func() bool {
 			return slice.AllOf(workers, func(i int) bool {
+				workers[i].Lock()
+				defer workers[i].Unlock()
 				return workers[i].cancel != nil &&
 					workers[i].owner != nil
 			})
@@ -1017,11 +1035,11 @@ func TestRecoverSnapID(t *testing.T) {
 		return err == nil && snapID > 0
 	}, time.Minute, 100*time.Millisecond)
 
+	require.NoError(t, worker.setRepositoryDest(ctx, ""))
 	// wait for worker to stop
-	worker.stop()
-	require.Eventually(t, func() bool {
+	eventuallyWithLock(t, worker, func() bool {
 		return worker.cancel == nil
-	}, time.Second*10, time.Millisecond*100)
+	})
 
 	// setup a new etcd cluster and a new worker
 	etcd2 := setupEtcd(t)

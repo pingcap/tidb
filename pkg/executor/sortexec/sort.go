@@ -356,7 +356,7 @@ func (e *SortExec) generateResultFromDisk() error {
 	if inDiskNum == 1 {
 		inDisk := e.Parallel.spillHelper.sortedRowsInDisk[0]
 		chunkNum := inDisk.NumChunks()
-		for i := range chunkNum {
+		for i := 0; i < chunkNum; i++ {
 			chk, err := inDisk.GetChunk(i)
 			if err != nil {
 				return err
@@ -365,7 +365,7 @@ func (e *SortExec) generateResultFromDisk() error {
 			injectParallelSortRandomFail(1)
 
 			rowNum := chk.NumRows()
-			for j := range rowNum {
+			for j := 0; j < rowNum; j++ {
 				select {
 				case <-e.finishCh:
 					return nil
@@ -396,7 +396,7 @@ func (e *SortExec) generateResultFromMemory() (bool, error) {
 	var row chunk.Row
 	for {
 		resBuf = resBuf[:0]
-		for range maxChunkSize {
+		for i := 0; i < maxChunkSize; i++ {
 			// It's impossible to return error here as rows are in memory
 			row, _ = e.Parallel.merger.next()
 			if row.IsEmpty() {

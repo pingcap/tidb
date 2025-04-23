@@ -1152,7 +1152,7 @@ func (w *indexWorker) extractTaskHandles(ctx context.Context, chk *chunk.Chunk, 
 		if handles == nil {
 			handles = make([]kv.Handle, 0, chk.NumRows())
 		}
-		for i := range chk.NumRows() {
+		for i := 0; i < chk.NumRows(); i++ {
 			w.scannedKeys++
 			if checkLimit {
 				if w.scannedKeys <= w.PushedLimit.Offset {
@@ -1515,7 +1515,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 
 func getDatumRow(r *chunk.Row, fields []*types.FieldType) []types.Datum {
 	datumRow := make([]types.Datum, 0, r.Chunk().NumCols())
-	for colIdx := range r.Chunk().NumCols() {
+	for colIdx := 0; colIdx < r.Chunk().NumCols(); colIdx++ {
 		if colIdx >= len(fields) {
 			break
 		}

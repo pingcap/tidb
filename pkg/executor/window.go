@@ -127,7 +127,7 @@ func (e *WindowExec) consumeGroupRows(groupRows []chunk.Row) (err error) {
 	if remainingRowsInGroup == 0 {
 		return nil
 	}
-	for i := range e.resultChunks {
+	for i := 0; i < len(e.resultChunks); i++ {
 		remained := min(e.remainingRowsInChunk[i], remainingRowsInGroup)
 		e.remainingRowsInChunk[i] -= remained
 		remainingRowsInGroup -= remained

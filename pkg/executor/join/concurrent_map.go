@@ -36,7 +36,7 @@ type concurrentMapShared struct {
 // newConcurrentMap creates a new concurrent map.
 func newConcurrentMap() concurrentMap {
 	m := make(concurrentMap, ShardCount)
-	for i := range ShardCount {
+	for i := 0; i < ShardCount; i++ {
 		m[i] = &concurrentMapShared{items: make(map[uint64]*entry), bInMap: 0}
 	}
 	return m

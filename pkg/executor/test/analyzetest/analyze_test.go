@@ -147,7 +147,7 @@ func TestAnalyzeParameters(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
-	for i := range 20 {
+	for i := 0; i < 20; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
 	}
 	tk.MustExec("insert into t values (19), (19), (19)")
@@ -245,10 +245,10 @@ func TestExtractTopN(t *testing.T) {
 	tk.MustExec("drop table if exists test_extract_topn")
 	tk.MustExec("create table test_extract_topn(a int primary key, b int, index index_b(b))")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		tk.MustExec(fmt.Sprintf("insert into test_extract_topn values (%d, %d)", i, i))
 	}
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		tk.MustExec(fmt.Sprintf("insert into test_extract_topn values (%d, 0)", i+10))
 	}
 	tk.MustExec("analyze table test_extract_topn")
@@ -356,7 +356,7 @@ func TestDefaultValForAnalyze(t *testing.T) {
 	tk.MustExec("use test_default_val_for_analyze")
 
 	tk.MustExec("create table t (a int, key(a));")
-	for range 256 {
+	for i := 0; i < 256; i++ {
 		tk.MustExec("insert into t values (0),(0),(0),(0),(0),(0),(0),(0)")
 	}
 	for i := 1; i < 4; i++ {
@@ -376,7 +376,7 @@ func TestDefaultValForAnalyze(t *testing.T) {
 
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t (a int, key(a));")
-	for range 256 {
+	for i := 0; i < 256; i++ {
 		tk.MustExec("insert into t values (0),(0),(0),(0),(0),(0),(0),(0)")
 	}
 	for i := 1; i < 2049; i += 8 {
@@ -2923,7 +2923,7 @@ func TestAnalyzeMVIndex(t *testing.T) {
 			"char":     []string{"aaa", "cccccc", "eee", "asdf", "k!@cvd", "yuiop", "%*$%#@qwe"},
 		},
 	}
-	for i := range 3 {
+	for i := 0; i < 3; i++ {
 		jsonValue := jsonData[i]
 		jsonValueStr, err := json.Marshal(jsonValue)
 		require.NoError(t, err)

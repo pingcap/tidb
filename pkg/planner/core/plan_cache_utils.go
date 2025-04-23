@@ -22,6 +22,7 @@ import (
 	"hash"
 	"math"
 	"slices"
+	"sort"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -127,7 +128,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		return cmp.Compare(i.(*driver.ParamMarkerExpr).Offset, j.(*driver.ParamMarkerExpr).Offset)
 	})
 	paramCount := len(extractor.markers)
-	for i := range paramCount {
+	for i := 0; i < paramCount; i++ {
 		extractor.markers[i].SetOrder(i)
 	}
 
@@ -241,7 +242,9 @@ func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 	for k := range m {
 		keys = append(keys, k)
 	}
-	slices.Sort(keys)
+	sort.Slice(keys, func(i, j int) bool {
+		return keys[i] < keys[j]
+	})
 
 	for _, k := range keys {
 		v := m[k]
@@ -398,7 +401,7 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 			}
 			dirtyTableIDs = append(dirtyTableIDs, t.ID)
 		}
-		slices.Sort(dirtyTableIDs)
+		sort.Slice(dirtyTableIDs, func(i, j int) bool { return dirtyTableIDs[i] < dirtyTableIDs[j] })
 		for _, id := range dirtyTableIDs {
 			hash = codec.EncodeInt(hash, id)
 		}

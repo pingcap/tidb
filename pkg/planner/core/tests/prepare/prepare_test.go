@@ -107,7 +107,7 @@ func TestRandomFlushPlanCache(t *testing.T) {
 		execStmts = append(execStmts, execStmt)
 	}
 
-	for range 10 {
+	for i := 0; i < 10; i++ {
 		// Warm up to make sure all the plans are in the cache.
 		for _, execStmt := range execStmts {
 			tk.MustExec(execStmt)
@@ -119,7 +119,7 @@ func TestRandomFlushPlanCache(t *testing.T) {
 			tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 		}
 
-		for j := range 10 {
+		for j := 0; j < 10; j++ {
 			session1PC, session2PC := "1", "1"
 			// random to flush the plan cache
 			randNum := rand.Intn(10)
@@ -328,14 +328,14 @@ func TestPrepareCacheChangingParamType(t *testing.T) {
 	tk.MustExec(`create table t_year(a year, b year, key(a))`)
 	for _, dtype := range []string{"tinyint", "unsigned", "float", "decimal", "year"} {
 		tbl := "t_" + dtype
-		for range 10 {
+		for i := 0; i < 10; i++ {
 			tk.MustExec(fmt.Sprintf("insert into %v values (%v, %v)", tbl, randValue(nil, "", "", dtype, "valid"), randValue(nil, "", "", dtype, "valid")))
 		}
 		tk.MustExec(fmt.Sprintf("insert into %v values (null, null)", tbl))
 		tk.MustExec(fmt.Sprintf("insert into %v values (%v, null)", tbl, randValue(nil, "", "", dtype, "valid")))
 		tk.MustExec(fmt.Sprintf("insert into %v values (null, %v)", tbl, randValue(nil, "", "", dtype, "valid")))
 
-		for range 10 {
+		for round := 0; round < 10; round++ {
 			tk.MustExec(fmt.Sprintf(`prepare s1 from 'select * from %v where a=?'`, tbl))
 			tk.MustExec(fmt.Sprintf(`prepare s2 from 'select * from %v where b=?'`, tbl))
 			tk.MustExec(fmt.Sprintf(`prepare s3 from 'select * from %v where a in (?, ?, ?)'`, tbl))
@@ -344,7 +344,7 @@ func TestPrepareCacheChangingParamType(t *testing.T) {
 			tk.MustExec(fmt.Sprintf(`prepare s6 from 'select * from %v where b>?'`, tbl))
 			tk.MustExec(fmt.Sprintf(`prepare s7 from 'select * from %v where a>? and b>?'`, tbl))
 
-			for range 10 {
+			for query := 0; query < 10; query++ {
 				a1, a2, a3 := randValue(tk, tbl, "a", dtype, ""), randValue(tk, tbl, "a", dtype, ""), randValue(tk, tbl, "a", dtype, "")
 				b1, b2, b3 := randValue(tk, tbl, "b", dtype, ""), randValue(tk, tbl, "b", dtype, ""), randValue(tk, tbl, "b", dtype, "")
 				tk.MustExec(fmt.Sprintf(`set @a1=%v,@a2=%v,@a3=%v`, a1, a2, a3))
@@ -393,7 +393,7 @@ func TestPrepareCacheDeferredFunction(t *testing.T) {
 	ctx := context.TODO()
 	p := parser.New()
 	p.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
-	for i := range 2 {
+	for i := 0; i < 2; i++ {
 		stmt, err := p.ParseOneStmt(sql1, "", "")
 		require.NoError(t, err)
 		is := tk.Session().GetInfoSchema().(infoschema.InfoSchema)
@@ -1055,7 +1055,7 @@ func TestPartitionTable(t *testing.T) {
 		tk.MustExec(tc.t1Create)
 		tk.MustExec(tc.t2Create)
 		vals := make([]string, 0, 2048)
-		for range 2048 {
+		for i := 0; i < 2048; i++ {
 			vals = append(vals, tc.rowGener())
 		}
 		tk.MustExec(fmt.Sprintf("insert into t1 values %s", strings.Join(vals, ",")))
@@ -1077,7 +1077,7 @@ func TestPartitionTable(t *testing.T) {
 
 		commentString := fmt.Sprintf("/*\ntc.query=%s\ntc.t1Create=%s */", tc.query, tc.t1Create)
 		numWarns := 0
-		for i := range 100 {
+		for i := 0; i < 100; i++ {
 			val := tc.varGener()
 			t.Logf("@a=%v", val)
 			tk.MustExec(fmt.Sprintf("set @a=%v", val))
@@ -1160,7 +1160,7 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`prepare stmt%v_batchget from 'select * from %v use index(primary) where a in (?, ?, ?)'`, tbl, tbl))
 	}
 	loops := 100
-	for i := range loops {
+	for i := 0; i < loops; i++ {
 		mina, maxa := rand.Intn(40000), rand.Intn(40000)
 		pointa := mina
 		// Allow out-of-range to trigger edge cases for non-matching partition
@@ -1220,7 +1220,7 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`prepare stmt%v_pointget_idx from 'select * from %v use index(a) where a = ?'`, tbl, tbl))
 		tk.MustExec(fmt.Sprintf(`prepare stmt%v_batchget_idx from 'select * from %v use index(a) where a in (?, ?, ?)'`, tbl, tbl))
 	}
-	for i := range loops {
+	for i := 0; i < loops; i++ {
 		mina, maxa := rand.Intn(40000), rand.Intn(40000)
 		if mina > maxa {
 			mina, maxa = maxa, mina
@@ -1312,7 +1312,7 @@ func TestCachedTable(t *testing.T) {
 	}
 
 	var cacheLoaded bool
-	for range 50 {
+	for i := 0; i < 50; i++ {
 		tk.MustQuery("select * from t").Check(testkit.Rows("1 1", "2 2"))
 		if lastReadFromCache(tk) {
 			cacheLoaded = true

@@ -150,7 +150,7 @@ func getPartColumnsForHashPartition(hashExpr expression.Expression) ([]*expressi
 	colLen := make([]int, 0, len(partCols))
 	retCols := make([]*expression.Column, 0, len(partCols))
 	filled := make(map[int64]struct{})
-	for i := range partCols {
+	for i := 0; i < len(partCols); i++ {
 		// Deal with same columns.
 		if _, done := filled[partCols[i].UniqueID]; !done {
 			partCols[i].Index = len(filled)
@@ -242,7 +242,7 @@ func (s *PartitionProcessor) getUsedHashPartitions(ctx base.PlanContext,
 						// all possible hash values
 						maxUsedPartitions := 1 << col.RetType.GetFlen()
 						if maxUsedPartitions < numPartitions {
-							for i := range maxUsedPartitions {
+							for i := 0; i < maxUsedPartitions; i++ {
 								used = append(used, i)
 							}
 							continue
@@ -427,7 +427,7 @@ func (s *PartitionProcessor) convertToIntSlice(or partitionRangeOR, pi *model.Pa
 		}
 	}
 	ret := make([]int, 0, len(or))
-	for i := range or {
+	for i := 0; i < len(or); i++ {
 		for pos := or[i].start; pos < or[i].end; pos++ {
 			if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[pos].Name.L) {
 				continue
@@ -835,7 +835,7 @@ func (s *PartitionProcessor) findUsedListPartitions(ctx base.PlanContext, tbl ta
 	}
 	if _, ok := used[FullRange]; ok {
 		ret := make([]int, 0, len(pi.Definitions))
-		for i := range pi.Definitions {
+		for i := 0; i < len(pi.Definitions); i++ {
 			if len(partitionNames) > 0 && !listPruner.findByName(partitionNames, pi.Definitions[i].Name.L) {
 				continue
 			}
@@ -1028,9 +1028,17 @@ func (or partitionRangeOR) intersection(x partitionRangeOR) partitionRangeOR {
 
 // intersectionRange calculate the intersection of [start, end) and [newStart, newEnd)
 func intersectionRange(start, end, newStart, newEnd int) (s int, e int) {
-	s = max(start, newStart)
+	if start > newStart {
+		s = start
+	} else {
+		s = newStart
+	}
 
-	e = min(end, newEnd)
+	if end < newEnd {
+		e = end
+	} else {
+		e = newEnd
+	}
 	return s, e
 }
 
@@ -1358,7 +1366,7 @@ func partitionRangeForCNFExpr(sctx base.PlanContext, exprs []expression.Expressi
 	if columnsPruner, ok := pruner.(*rangeColumnsPruner); ok && len(columnsPruner.partCols) > 1 {
 		return multiColumnRangeColumnsPruner(sctx, exprs, columnsPruner, result)
 	}
-	for i := range exprs {
+	for i := 0; i < len(exprs); i++ {
 		result = partitionRangeForExpr(sctx, exprs[i], pruner, result)
 	}
 	return result

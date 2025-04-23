@@ -542,7 +542,7 @@ func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.
 
 	inLoadData := e.Ctx().GetSessionVars().StmtCtx.InLoadDataStmt
 
-	for i := range e.rowLen {
+	for i := 0; i < e.rowLen; i++ {
 		col := e.insertColumns[i].ToInfo()
 		casted, err := table.CastValue(e.Ctx(), vals[i], col, false, false)
 		if newErr := e.handleErr(e.insertColumns[i], &vals[i], int(e.rowCount), err); newErr != nil {
@@ -885,7 +885,7 @@ func (e *InsertValues) lazyAdjustAutoIncrementDatum(ctx context.Context, rows []
 				e.lastInsertID = uint64(minv)
 			}
 			// Assign autoIDs to rows.
-			for j := range cnt {
+			for j := 0; j < cnt; j++ {
 				offset := j + start
 				id := int64(uint64(minv) + uint64(j)*uint64(increment))
 				err = setDatumAutoIDAndCast(e.Ctx(), &rows[offset][idx], id, col)
@@ -1174,7 +1174,7 @@ func (e *InsertValues) handleDuplicateKey(ctx context.Context, txn kv.Transactio
 		}
 		return true, nil
 	}
-	_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn, e.Table.Meta().ID)
+	_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn)
 	if err != nil {
 		return false, err
 	}

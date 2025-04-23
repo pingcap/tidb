@@ -238,7 +238,7 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	if !req.IsFull() {
 		numToAppend := req.RequiredRows() - req.NumRows()
-		for range numToAppend {
+		for i := 0; i < numToAppend; i++ {
 			row, ok := <-e.resultChannel
 			if !ok || row.err != nil {
 				return row.err
@@ -536,7 +536,7 @@ func (e *TopNExec) GenerateTopNResultsWhenSpillOnlyOnce() error {
 	chunkNum := inDisk.NumChunks()
 	skippedRowNum := uint64(0)
 	offset := e.Limit.Offset
-	for i := range chunkNum {
+	for i := 0; i < chunkNum; i++ {
 		chk, err := inDisk.GetChunk(i)
 		if err != nil {
 			return err

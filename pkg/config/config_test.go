@@ -1010,7 +1010,7 @@ xkNuJ2BlEGkwWLiRbKy1lNBBFUXKuhh3L/EIY10WTnr3TQzeL6H1
 	// test for config `toml` and `json` tag names
 	c1 := Config{}
 	st := reflect.TypeOf(c1)
-	for i := range st.NumField() {
+	for i := 0; i < st.NumField(); i++ {
 		field := st.Field(i)
 		require.Equal(t, field.Tag.Get("json"), field.Tag.Get("toml"))
 	}

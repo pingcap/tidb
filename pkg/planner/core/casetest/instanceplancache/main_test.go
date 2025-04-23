@@ -42,7 +42,7 @@ func randomItems(items ...string) []string {
 	n := rand.Intn(len(items)-1) + 1
 	res := make([]string, 0, n)
 	used := make(map[string]bool)
-	for range n {
+	for i := 0; i < n; i++ {
 		item := randomItem(items...)
 		if used[item] {
 			continue
@@ -122,7 +122,7 @@ func prepareTableData(t string, rows int, colTypes []string) []string {
 	colValues := make([][]string, len(colTypes))
 	for i, colType := range colTypes {
 		colValues[i] = make([]string, 0, rows)
-		for range rows {
+		for j := 0; j < rows; j++ {
 			switch colType {
 			case typeInt:
 				colValues[i] = append(colValues[i], randomIntVal())
@@ -137,8 +137,8 @@ func prepareTableData(t string, rows int, colTypes []string) []string {
 			}
 		}
 	}
-	inserts := make([]string, 0, rows)
-	for i := range rows {
+	var inserts []string
+	for i := 0; i < rows; i++ {
 		vals := make([]string, 0, len(colTypes))
 		for j := range colTypes {
 			vals = append(vals, colValues[j][i])
@@ -151,11 +151,11 @@ func prepareTableData(t string, rows int, colTypes []string) []string {
 func prepareTables(n int) []string {
 	nCols := 6
 	sqls := make([]string, 0, n)
-	for i := range n {
+	for i := 0; i < n; i++ {
 		cols := make([]string, 0, nCols)
 		colNames := []string{"c0", "c1", "c2", "c3", "c4", "c5"}
 		var colTypes []string
-		for j := range nCols {
+		for j := 0; j < nCols; j++ {
 			colType := randomItem(typeInt, typeVarchar, typeFloat, typeDouble, typeDatetime)
 			colTypes = append(colTypes, colType)
 			cols = append(cols, fmt.Sprintf("c%d %v", j, colType))
@@ -184,18 +184,18 @@ func TestInstancePlanCache(t *testing.T) {
 	caseSync := new(sync.WaitGroup)
 	exitSync := new(sync.WaitGroup)
 	caseChs := make([]chan *testCase, nWorkers)
-	for i := range nWorkers {
+	for i := 0; i < nWorkers; i++ {
 		caseChs[i] = make(chan *testCase, 1)
 	}
 	exitCh := make(chan bool)
-	for i := range nWorkers {
+	for i := 0; i < nWorkers; i++ {
 		exitSync.Add(1)
 		go executeWorker(testkit.NewTestKit(t, store), caseChs[i], exitCh, caseSync, exitSync)
 	}
 
 	for _, q := range queryPattern {
 		c := prepareStmts(q, 10, 5)
-		for i := range nWorkers {
+		for i := 0; i < nWorkers; i++ {
 			caseSync.Add(1)
 			caseChs[i] <- c
 		}
@@ -216,7 +216,7 @@ func executeWorker(tk *testkit.TestKit,
 		select {
 		case c := <-caseCh:
 			tk.MustExec(c.prepStmt)
-			for i := range c.selStmts {
+			for i := 0; i < len(c.selStmts); i++ {
 				result := tk.MustQuery(c.selStmts[i]).Sort()
 				tk.MustExec(c.setStmts[i])
 				tk.MustQuery(c.execStmts[i]).Sort().Equal(result.Rows())
@@ -253,7 +253,7 @@ func prepareStmts(q string, nTables, n int) *testCase {
 			numQuestionMarkers++
 		}
 	}
-	for range n {
+	for i := 0; i < n; i++ {
 		vals := genRandomValues(numQuestionMarkers)
 		if len(vals) == 0 {
 			continue
@@ -282,7 +282,7 @@ func prepareStmts(q string, nTables, n int) *testCase {
 }
 
 func genRandomValues(numVals int) (vals []string) {
-	for range numVals {
+	for i := 0; i < numVals; i++ {
 		switch rand.Intn(4) {
 		case 0:
 			vals = append(vals, randomIntVal())
@@ -301,13 +301,13 @@ var queryPattern []string
 
 func init() {
 	// single table selection: select * from {T} where ...
-	for range 100 {
+	for i := 0; i < 100; i++ {
 		queryPattern = append(queryPattern,
 			fmt.Sprintf("select * from {T} where %s", randomFilters("", 5)))
 	}
 
 	// order & limit: select * from {T} where ... order by ... limit ...
-	for range 30 {
+	for i := 0; i < 30; i++ {
 		queryPattern = append(queryPattern,
 			fmt.Sprintf("select * from {T} where %s order by %s",
 				randomFilters("", 5), randomItem("c0", "c1", "c2", "c3")))
@@ -320,7 +320,7 @@ func init() {
 	}
 
 	// agg
-	for range 30 {
+	for i := 0; i < 30; i++ {
 		queryPattern = append(queryPattern,
 			fmt.Sprintf("select sum(c0) from {T} where %s group by %v",
 				randomFilters("", 5), randomItem("c0", "c1", "c2", "c3")))
@@ -330,7 +330,7 @@ func init() {
 	}
 
 	// join
-	for range 30 {
+	for i := 0; i < 30; i++ {
 		queryPattern = append(queryPattern,
 			fmt.Sprintf("select * from {T} t1 join {T} t2 on t1.c0=t2.c0 where %s",
 				randomFilters("t1", 5)))
@@ -346,7 +346,7 @@ func init() {
 func randomFilters(table string, nCols int) string {
 	n := rand.Intn(3) + 1
 	filters := make([]string, 0, n)
-	for range n {
+	for i := 0; i < n; i++ {
 		filters = append(filters, randomFilter(table, nCols))
 	}
 	switch rand.Intn(2) {

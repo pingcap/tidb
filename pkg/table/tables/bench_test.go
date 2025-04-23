@@ -51,7 +51,7 @@ func BenchmarkAddRecordInPipelinedDML(b *testing.B) {
 
 	// Pre-create data to be inserted
 	records := make([][]types.Datum, batchSize)
-	for j := range batchSize {
+	for j := 0; j < batchSize; j++ {
 		records[j] = types.MakeDatums(j, "test")
 	}
 
@@ -70,7 +70,7 @@ func BenchmarkAddRecordInPipelinedDML(b *testing.B) {
 		require.True(b, txn.IsPipelined())
 
 		b.StartTimer()
-		for j := range batchSize {
+		for j := 0; j < batchSize; j++ {
 			_, err := tb.AddRecord(ctx.GetTableCtx(), txn, records[j], table.DupKeyCheckLazy)
 			if err != nil {
 				b.Fatal(err)
@@ -105,13 +105,13 @@ func BenchmarkRemoveRecordInPipelinedDML(b *testing.B) {
 
 	// Pre-create and add initial records
 	records := make([][]types.Datum, batchSize)
-	for j := range batchSize {
+	for j := 0; j < batchSize; j++ {
 		records[j] = types.MakeDatums(j, "test")
 	}
 
 	// Add initial records
 	se := tk.Session()
-	for j := range batchSize {
+	for j := 0; j < batchSize; j++ {
 		tk.MustExec("INSERT INTO test.t VALUES (?, ?)", j, "test")
 	}
 
@@ -128,7 +128,7 @@ func BenchmarkRemoveRecordInPipelinedDML(b *testing.B) {
 		require.True(b, txn.IsPipelined())
 
 		b.StartTimer()
-		for j := range batchSize {
+		for j := 0; j < batchSize; j++ {
 			// Remove record
 			handle := kv.IntHandle(j)
 			err := tb.RemoveRecord(se.GetTableCtx(), txn, handle, records[j])
@@ -164,19 +164,19 @@ func BenchmarkUpdateRecordInPipelinedDML(b *testing.B) {
 
 	// Pre-create data to be inserted and then updated
 	records := make([][]types.Datum, batchSize)
-	for j := range batchSize {
+	for j := 0; j < batchSize; j++ {
 		records[j] = types.MakeDatums(j, "test")
 	}
 
 	// Pre-create new data
 	newData := make([][]types.Datum, batchSize)
-	for j := range batchSize {
+	for j := 0; j < batchSize; j++ {
 		newData[j] = types.MakeDatums(j, "updated")
 	}
 
 	// Add initial records
 	se := tk.Session()
-	for j := range batchSize {
+	for j := 0; j < batchSize; j++ {
 		tk.MustExec("INSERT INTO test.t VALUES (?, ?)", j, "test")
 	}
 
@@ -196,7 +196,7 @@ func BenchmarkUpdateRecordInPipelinedDML(b *testing.B) {
 		require.True(b, txn.IsPipelined())
 
 		b.StartTimer()
-		for j := range batchSize {
+		for j := 0; j < batchSize; j++ {
 			// Update record
 			handle := kv.IntHandle(j)
 			err := tb.UpdateRecord(se.GetTableCtx(), txn, handle, records[j], newData[j], touched, table.WithCtx(context.TODO()))

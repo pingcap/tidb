@@ -273,15 +273,15 @@ func TestAllocateContinuousRowID(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t1 (a int,b int, key I_a(a));`)
 	var wg util.WaitGroupWrapper
-	for i := range 5 {
+	for i := 0; i < 5; i++ {
 		idx := i
 		wg.Run(func() {
 			tk := testkit.NewTestKit(t, store)
 			tk.MustExec("use test")
-			for j := range 10 {
+			for j := 0; j < 10; j++ {
 				k := strconv.Itoa(idx*100 + j)
 				sql := "insert into t1(a,b) values (" + k + ", 2)"
-				for range 20 {
+				for t := 0; t < 20; t++ {
 					sql += ",(" + k + ",2)"
 				}
 				tk.MustExec(sql)
@@ -516,7 +516,7 @@ func TestGlobalTempTableParallel(t *testing.T) {
 		newTk := testkit.NewTestKit(t, store)
 		newTk.MustExec("use test")
 		newTk.MustExec("begin")
-		for range loops {
+		for i := 0; i < loops; i++ {
 			newTk.MustExec("insert temp_test value(0)")
 			newTk.MustExec("insert temp_test value(0), (0)")
 		}
@@ -525,7 +525,7 @@ func TestGlobalTempTableParallel(t *testing.T) {
 		newTk.MustExec("commit")
 	}
 
-	for range threads {
+	for i := 0; i < threads; i++ {
 		wg.Run(insertFunc)
 	}
 	wg.Wait()

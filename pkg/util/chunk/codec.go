@@ -258,7 +258,10 @@ func NewDecoder(chk *Chunk, colTypes []*types.FieldType) *Decoder {
 func (c *Decoder) Decode(chk *Chunk) {
 	requiredRows := chk.RequiredRows() - chk.NumRows()
 	// Set the requiredRows to a multiple of 8.
-	requiredRows = min((requiredRows+7)>>3<<3, c.remainedRows)
+	requiredRows = (requiredRows + 7) >> 3 << 3
+	if requiredRows > c.remainedRows {
+		requiredRows = c.remainedRows
+	}
 	for i := range chk.NumCols() {
 		c.decodeColumn(chk, i, requiredRows)
 	}
@@ -293,7 +296,7 @@ func (c *Decoder) ReuseIntermChk(chk *Chunk) {
 		if elemLen == VarElemLen {
 			// For var-length types, we need to adjust the offsets before reuse.
 			if deltaOffset := col.offsets[0]; deltaOffset != 0 {
-				for j := range col.offsets {
+				for j := 0; j < len(col.offsets); j++ {
 					col.offsets[j] -= deltaOffset
 				}
 			}

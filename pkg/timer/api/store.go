@@ -75,7 +75,7 @@ func (o *OptionalVal[T]) Clear() {
 func iterOptionalFields(v reflect.Value, excludes []unsafe.Pointer, fn func(name string, val optionalVal) bool) {
 	tp := v.Type()
 loop:
-	for i := range v.NumField() {
+	for i := 0; i < v.NumField(); i++ {
 		fieldVal := v.Field(i).Addr()
 		optVal, ok := fieldVal.Interface().(optionalVal)
 		if !ok {

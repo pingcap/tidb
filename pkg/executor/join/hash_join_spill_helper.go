@@ -239,7 +239,7 @@ func (h *hashJoinSpillHelper) isPartitionSpilled(partID int) bool {
 func (h *hashJoinSpillHelper) choosePartitionsToSpill(hashTableMemUsage []int64) ([]int, int64) {
 	partitionNum := h.hashJoinExec.partitionNumber
 	partitionsMemoryUsage := make([]int64, partitionNum)
-	for i := range int(partitionNum) {
+	for i := 0; i < int(partitionNum); i++ {
 		partitionsMemoryUsage[i] = h.hashJoinExec.hashTableContext.getPartitionMemoryUsage(i)
 		if hashTableMemUsage != nil {
 			partitionsMemoryUsage[i] += hashTableMemUsage[i]
@@ -297,7 +297,7 @@ func (h *hashJoinSpillHelper) choosePartitionsToSpill(hashTableMemUsage []int64)
 func (h *hashJoinSpillHelper) generateSpilledValidJoinKey(seg *rowTableSegment, validJoinKeys []byte) []byte {
 	rowLen := len(seg.rowStartOffset)
 	validJoinKeys = validJoinKeys[:rowLen]
-	for i := range rowLen {
+	for i := 0; i < rowLen; i++ {
 		validJoinKeys[i] = byte(0)
 	}
 	for _, pos := range seg.validJoinKeyPos {
@@ -339,7 +339,7 @@ func (h *hashJoinSpillHelper) spillSegmentsToDiskImpl(workerID int, disk *chunk.
 		h.validJoinKeysBuffer[workerID] = h.generateSpilledValidJoinKey(seg, h.validJoinKeysBuffer[workerID])
 
 		rowNum := seg.getRowNum()
-		for i := range rowNum {
+		for i := 0; i < rowNum; i++ {
 			row := seg.getRowBytes(i)
 			if h.tmpSpillBuildSideChunks[workerID].IsFull() {
 				err := disk.Add(h.tmpSpillBuildSideChunks[workerID])
@@ -437,7 +437,7 @@ func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, total
 	}
 
 	logutil.BgLogger().Info(spillInfo, zap.Int64("consumed", h.bytesConsumed.Load()), zap.Int64("quota", h.bytesLimit.Load()))
-	for i := range workerNum {
+	for i := 0; i < workerNum; i++ {
 		workerID := i
 		wg.RunWithRecover(
 			func() {
@@ -549,11 +549,11 @@ func (h *hashJoinSpillHelper) prepareForRestoring(lastRound int) error {
 	partNum := h.hashJoinExec.partitionNumber
 	concurrency := int(h.hashJoinExec.Concurrency)
 
-	for i := range int(partNum) {
+	for i := 0; i < int(partNum); i++ {
 		if h.spilledPartitions[i] {
 			buildInDisks := make([]*chunk.DataInDiskByChunks, 0)
 			probeInDisks := make([]*chunk.DataInDiskByChunks, 0)
-			for j := range concurrency {
+			for j := 0; j < concurrency; j++ {
 				if h.buildRowsInDisk[j] != nil && h.buildRowsInDisk[j][i] != nil {
 					buildInDisks = append(buildInDisks, h.buildRowsInDisk[j][i])
 					probeInDisks = append(probeInDisks, h.probeRowsInDisk[j][i])

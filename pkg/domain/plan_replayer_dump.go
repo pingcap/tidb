@@ -867,7 +867,7 @@ func resultSetToStringSlice(ctx context.Context, rs sqlexec.RecordSet, emptyAsNi
 	sRows := make([][]string, len(rows))
 	for i, row := range rows {
 		iRow := make([]string, row.Len())
-		for j := range row.Len() {
+		for j := 0; j < row.Len(); j++ {
 			if row.IsNull(j) {
 				iRow[j] = "<nil>"
 			} else {

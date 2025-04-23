@@ -41,7 +41,7 @@ func initBuildChunk(numRows int) (*chunk.Chunk, []*types.FieldType) {
 	colTypes = append(colTypes, types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).BuildP())
 
 	oldChk := chunk.NewChunkWithCapacity(colTypes, numRows)
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		str := fmt.Sprintf("%d.12345", i)
 		oldChk.AppendNull(0)
 		oldChk.AppendInt64(1, int64(i))
@@ -61,7 +61,7 @@ func initProbeChunk(numRows int) (*chunk.Chunk, []*types.FieldType) {
 	colTypes = append(colTypes, types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).BuildP())
 
 	oldChk := chunk.NewChunkWithCapacity(colTypes, numRows)
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		str := fmt.Sprintf("%d.12345", i)
 		oldChk.AppendNull(0)
 		oldChk.AppendInt64(1, int64(i))
@@ -124,7 +124,7 @@ func testHashRowContainer(t *testing.T, hashFunc func() hash.Hash64, spill bool)
 		KeyColIdx: []int{1, 2},
 	}
 	hCtx.HasNull = make([]bool, numRows)
-	for range numRows {
+	for i := 0; i < numRows; i++ {
 		hCtx.HashVals = append(hCtx.HashVals, hashFunc())
 	}
 	rowContainer := newHashRowContainer(sctx, hCtx, colTypes)
@@ -171,7 +171,7 @@ func TestConcurrentMapHashTableMemoryUsage(t *testing.T) {
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
 	// Note: Now concurrentMapHashTable doesn't support inserting in parallel.
-	for i := range iterations {
+	for i := 0; i < iterations; i++ {
 		// Add entry to map.
 		m.Put(uint64(i*ShardCount), chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(i)})
 	}

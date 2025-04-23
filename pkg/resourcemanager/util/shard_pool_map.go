@@ -35,7 +35,7 @@ type ShardPoolMap struct {
 // NewShardPoolMap creates a shard pool map
 func NewShardPoolMap() *ShardPoolMap {
 	var result ShardPoolMap
-	for i := range shard {
+	for i := 0; i < shard; i++ {
 		result.pools[i] = newPoolMap()
 	}
 	return &result
@@ -53,7 +53,7 @@ func (s *ShardPoolMap) Del(key string) {
 
 // Iter iterates the map
 func (s *ShardPoolMap) Iter(fn func(pool *PoolContainer)) {
-	for i := range shard {
+	for i := 0; i < shard; i++ {
 		s.pools[i].Iter(fn)
 	}
 }

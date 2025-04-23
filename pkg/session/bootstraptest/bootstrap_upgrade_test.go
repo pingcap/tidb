@@ -68,7 +68,7 @@ func TestUpgradeVersion83AndVersion84(t *testing.T) {
 	req := rStatsHistoryTbl.NewChunk(nil)
 	require.NoError(t, rStatsHistoryTbl.Next(ctx, req))
 	require.Equal(t, 5, req.NumRows())
-	for i := range 5 {
+	for i := 0; i < 5; i++ {
 		row := req.GetRow(i)
 		require.Equal(t, statsHistoryTblFields[i].field, strings.ToLower(row.GetString(0)))
 		require.Equal(t, statsHistoryTblFields[i].tp, strings.ToLower(row.GetString(1)))
@@ -90,7 +90,7 @@ func TestUpgradeVersion83AndVersion84(t *testing.T) {
 	req = rStatsMetaHistoryTbl.NewChunk(nil)
 	require.NoError(t, rStatsMetaHistoryTbl.Next(ctx, req))
 	require.Equal(t, 6, req.NumRows())
-	for i := range 6 {
+	for i := 0; i < 6; i++ {
 		row := req.GetRow(i)
 		require.Equal(t, statsMetaHistoryTblFields[i].field, strings.ToLower(row.GetString(0)))
 		require.Equal(t, statsMetaHistoryTblFields[i].tp, strings.ToLower(row.GetString(1)))
@@ -462,7 +462,7 @@ func TestUpgradeVersionForPausedJob(t *testing.T) {
 func checkDDLJobExecSucc(t *testing.T, se sessiontypes.Session, jobID int64) {
 	sql := fmt.Sprintf(" admin show ddl jobs 20 where job_id=%d", jobID)
 	suc := false
-	for range 20 {
+	for i := 0; i < 20; i++ {
 		rows, err := execute(context.Background(), se, sql)
 		require.NoError(t, err)
 		require.Len(t, rows, 1)
@@ -788,7 +788,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 	var rows []chunk.Row
 
 	// Make sure all DDLs are done.
-	for range 50 {
+	for i := 0; i < 50; i++ {
 		sql = "select count(1) from mysql.tidb_ddl_job"
 		rows, err = execute(context.Background(), tk.Session(), sql)
 		require.NoError(t, err)

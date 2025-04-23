@@ -60,7 +60,7 @@ func genLeftOuterSemiOrSemiJoinOrLeftOuterAntiSemiResultImpl(t *testing.T, sessC
 			filterVector, err = expression.VectorizedFilter(sessCtx.GetExprCtx().GetEvalCtx(), sessCtx.GetSessionVars().EnableVectorizedExpression, leftFilter, chunk.NewIterator4Chunk(leftChunk), filterVector)
 			require.NoError(t, err)
 		}
-		for leftIndex := range leftChunk.NumRows() {
+		for leftIndex := 0; leftIndex < leftChunk.NumRows(); leftIndex++ {
 			filterIndex := leftIndex
 			if leftChunk.Sel() != nil {
 				filterIndex = leftChunk.Sel()[leftIndex]
@@ -91,7 +91,7 @@ func genLeftOuterSemiOrSemiJoinOrLeftOuterAntiSemiResultImpl(t *testing.T, sessC
 
 			// For each row in right chunks
 			for _, rightChunk := range rightChunks {
-				for rightIndex := range rightChunk.NumRows() {
+				for rightIndex := 0; rightIndex < rightChunk.NumRows(); rightIndex++ {
 					rightRow := rightChunk.GetRow(rightIndex)
 					valid := !containsNullKey(leftRow, leftKeyIndex) && !containsNullKey(rightRow, rightKeyIndex)
 					if valid {
@@ -297,7 +297,7 @@ func testLeftOuterSemiJoinProbeAllJoinKeys(t *testing.T, isLeftOuter bool, isAnt
 	}
 
 	// single key
-	for i := range lTypes {
+	for i := 0; i < len(lTypes); i++ {
 		lKeyTypes := []*types.FieldType{lTypes[i]}
 		rKeyTypes := []*types.FieldType{rTypes[i]}
 		for _, rightAsBuild := range rightAsBuildSide {

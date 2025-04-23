@@ -33,7 +33,7 @@ func parseBinaryParams(params []param.BinaryParam, boundParams [][]byte, nullBit
 		enc = util2.NewInputDecoder(charset.CharsetUTF8)
 	}
 
-	for i := range params {
+	for i := 0; i < len(params); i++ {
 		// if params had received via ComStmtSendLongData, use them directly.
 		// ref https://dev.mysql.com/doc/internals/en/com-stmt-send-long-data.html
 		// see clientConn#handleStmtSendLongData

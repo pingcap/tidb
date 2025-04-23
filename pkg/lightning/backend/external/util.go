@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap/zapcore"
 )
@@ -367,7 +368,7 @@ func marshalWithOverride(src any, hideCond func(f reflect.StructField) bool) ([]
 	}
 	t := v.Type()
 	var fields []reflect.StructField
-	for i := range t.NumField() {
+	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
 		if !f.IsExported() {
 			continue
@@ -387,7 +388,7 @@ func marshalWithOverride(src any, hideCond func(f reflect.StructField) bool) ([]
 	newType := reflect.StructOf(fields)
 	newVal := reflect.New(newType).Elem()
 	j := 0
-	for i := range t.NumField() {
+	for i := 0; i < t.NumField(); i++ {
 		f := t.Field(i)
 		if !f.IsExported() {
 			continue
@@ -461,4 +462,69 @@ func PlanMetaPath(taskID int64, step string, idx int) string {
 // SubtaskMetaPath returns the path of the subtask meta file.
 func SubtaskMetaPath(taskID int64, subtaskID int64) string {
 	return path.Join(strconv.FormatInt(taskID, 10), strconv.FormatInt(subtaskID, 10), metaName)
+}
+
+// remove all duplicates inside sorted array in place, i.e. input elements will be changed.
+func removeDuplicates[E any](in []E, keyGetter func(*E) []byte, recordRemoved bool) ([]E, []E, int) {
+	return doRemoveDuplicates(in, keyGetter, 0, recordRemoved)
+}
+
+// remove all duplicates inside sorted array in place if the duplicate count is
+// more than 2, and keep the first two duplicates.
+// we also return the total number of duplicates as the third return value.
+func removeDuplicatesMoreThanTwo[E any](in []E, keyGetter func(*E) []byte) (out []E, removed []E, totalDup int) {
+	return doRemoveDuplicates(in, keyGetter, 2, true)
+}
+
+// remove duplicates inside the sorted slice 'in', if keptDupCnt=2, we keep the
+// first 2 duplicates, if keptDupCnt=0, we remove all duplicates.
+// removed duplicates are returned in 'removed' if recordRemoved=true.
+// we also return the total number of duplicates, either it's removed or not, as
+// the third return value.
+func doRemoveDuplicates[E any](
+	in []E,
+	keyGetter func(*E) []byte,
+	keptDupCnt int,
+	recordRemoved bool,
+) (out []E, removed []E, totalDup int) {
+	intest.Assert(keptDupCnt == 0 || keptDupCnt == 2, "keptDupCnt must be 0 or 2")
+	if len(in) <= 1 {
+		return in, []E{}, 0
+	}
+	pivotIdx, fillIdx := 0, 0
+	pivot := keyGetter(&in[pivotIdx])
+	if recordRemoved {
+		removed = make([]E, 0, 2)
+	}
+	for idx := 1; idx <= len(in); idx++ {
+		var key []byte
+		if idx < len(in) {
+			key = keyGetter(&in[idx])
+			if bytes.Compare(pivot, key) == 0 {
+				continue
+			}
+		}
+		dupCount := idx - pivotIdx
+		if dupCount >= 2 {
+			totalDup += dupCount
+			// keep the first keptDupCnt duplicates, and remove the rest
+			for startIdx := pivotIdx; startIdx < pivotIdx+keptDupCnt; startIdx++ {
+				if startIdx != fillIdx {
+					in[fillIdx] = in[startIdx]
+				}
+				fillIdx++
+			}
+			if recordRemoved {
+				removed = append(removed, in[pivotIdx+keptDupCnt:idx]...)
+			}
+		} else {
+			if pivotIdx != fillIdx {
+				in[fillIdx] = in[pivotIdx]
+			}
+			fillIdx++
+		}
+		pivotIdx = idx
+		pivot = key
+	}
+	return in[:fillIdx], removed, totalDup
 }

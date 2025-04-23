@@ -124,6 +124,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	taskMeta := importinto.TaskMeta{}
 	s.NoError(json.Unmarshal(task.Meta, &taskMeta))
 	urlEqual(s.T(), redactedSortStorageURI, taskMeta.Plan.CloudStorageURI)
+	require.True(s.T(), taskMeta.Plan.DisableTiKVImportMode)
 
 	// merge-sort data kv
 	s.tk.MustExec("truncate table t")
@@ -160,12 +161,12 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 
 func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
 	var allData []string
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		var content []byte
 		keyCnt := 1000
-		for j := range keyCnt {
+		for j := 0; j < keyCnt; j++ {
 			idx := i*keyCnt + j
-			content = append(content, fmt.Appendf(nil, "%d,test-%d\n", idx, idx)...)
+			content = append(content, []byte(fmt.Sprintf("%d,test-%d\n", idx, idx))...)
 			allData = append(allData, fmt.Sprintf("%d test-%d", idx, idx))
 		}
 		s.server.CreateObject(fakestorage.Object{
@@ -187,12 +188,12 @@ func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
 
 func (s *mockGCSSuite) TestGlobalSortUniqueKeyConflict() {
 	var allData []string
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		var content []byte
 		keyCnt := 1000
-		for j := range keyCnt {
+		for j := 0; j < keyCnt; j++ {
 			idx := i*keyCnt + j
-			content = append(content, fmt.Appendf(nil, "%d,test-%d\n", idx, idx)...)
+			content = append(content, []byte(fmt.Sprintf("%d,test-%d\n", idx, idx))...)
 		}
 		if i == 9 {
 			// add a duplicate key "test-123"

@@ -38,7 +38,7 @@ func maxMinUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType, is
 		preSetVal    types.Set
 	)
 
-	for i := range srcChk.NumRows() {
+	for i := 0; i < srcChk.NumRows(); i++ {
 		row := srcChk.GetRow(i)
 		if row.IsNull(0) {
 			continue
@@ -348,7 +348,7 @@ func TestDequePushPop(t *testing.T) {
 	})
 	times := 15
 	// pushes element from back of deque
-	for i := range times {
+	for i := 0; i < times; i++ {
 		if i != 0 {
 			front, isEnd := deque.Front()
 			require.False(t, isEnd)
@@ -363,7 +363,7 @@ func TestDequePushPop(t *testing.T) {
 	}
 
 	// pops element from back of deque
-	for i := range times {
+	for i := 0; i < times; i++ {
 		pair, isEnd := deque.Back()
 		require.False(t, isEnd)
 		require.Equal(t, pair.Item, times-i-1)

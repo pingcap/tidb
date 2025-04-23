@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"cmp"
 	"fmt"
-	"maps"
 	"math"
 	"slices"
 	"strconv"
@@ -1047,15 +1046,28 @@ type TiFlashScanContext struct {
 	maxRemoteStreamMs         uint64
 	regionsOfInstance         map[string]uint64
 
-	totalVectorIdxLoadFromS3           uint64
-	totalVectorIdxLoadFromDisk         uint64
-	totalVectorIdxLoadFromCache        uint64
-	totalVectorIdxLoadTimeMs           uint64
-	totalVectorIdxSearchTimeMs         uint64
-	totalVectorIdxSearchVisitedNodes   uint64
-	totalVectorIdxSearchDiscardedNodes uint64
-	totalVectorIdxReadVecTimeMs        uint64
-	totalVectorIdxReadOthersTimeMs     uint64
+	// vector index related
+
+	vectorIdxLoadFromS3           uint64
+	vectorIdxLoadFromDisk         uint64
+	vectorIdxLoadFromCache        uint64
+	vectorIdxLoadTimeMs           uint64
+	vectorIdxSearchTimeMs         uint64
+	vectorIdxSearchVisitedNodes   uint64
+	vectorIdxSearchDiscardedNodes uint64
+	vectorIdxReadVecTimeMs        uint64
+	vectorIdxReadOthersTimeMs     uint64
+
+	// inverted index related
+
+	invertedIdxLoadFromS3         uint32
+	invertedIdxLoadFromDisk       uint32
+	invertedIdxLoadFromCache      uint32
+	invertedIdxLoadTimeMs         uint64
+	invertedIdxSearchTimeMs       uint64
+	invertedIdxSearchSkippedPacks uint32
+	invertedIdxIndexedRows        uint64
+	invertedIdxSearchSelectedRows uint64
 }
 
 // Clone implements the deep copy of * TiFlashshScanContext
@@ -1091,28 +1103,45 @@ func (context *TiFlashScanContext) Clone() TiFlashScanContext {
 		maxRemoteStreamMs:         context.maxRemoteStreamMs,
 		regionsOfInstance:         make(map[string]uint64),
 
-		totalVectorIdxLoadFromS3:           context.totalVectorIdxLoadFromS3,
-		totalVectorIdxLoadFromDisk:         context.totalVectorIdxLoadFromDisk,
-		totalVectorIdxLoadFromCache:        context.totalVectorIdxLoadFromCache,
-		totalVectorIdxLoadTimeMs:           context.totalVectorIdxLoadTimeMs,
-		totalVectorIdxSearchTimeMs:         context.totalVectorIdxSearchTimeMs,
-		totalVectorIdxSearchVisitedNodes:   context.totalVectorIdxSearchVisitedNodes,
-		totalVectorIdxSearchDiscardedNodes: context.totalVectorIdxSearchDiscardedNodes,
-		totalVectorIdxReadVecTimeMs:        context.totalVectorIdxReadVecTimeMs,
-		totalVectorIdxReadOthersTimeMs:     context.totalVectorIdxReadOthersTimeMs,
+		vectorIdxLoadFromS3:           context.vectorIdxLoadFromS3,
+		vectorIdxLoadFromDisk:         context.vectorIdxLoadFromDisk,
+		vectorIdxLoadFromCache:        context.vectorIdxLoadFromCache,
+		vectorIdxLoadTimeMs:           context.vectorIdxLoadTimeMs,
+		vectorIdxSearchTimeMs:         context.vectorIdxSearchTimeMs,
+		vectorIdxSearchVisitedNodes:   context.vectorIdxSearchVisitedNodes,
+		vectorIdxSearchDiscardedNodes: context.vectorIdxSearchDiscardedNodes,
+		vectorIdxReadVecTimeMs:        context.vectorIdxReadVecTimeMs,
+		vectorIdxReadOthersTimeMs:     context.vectorIdxReadOthersTimeMs,
+
+		invertedIdxLoadFromS3:         context.invertedIdxLoadFromS3,
+		invertedIdxLoadFromDisk:       context.invertedIdxLoadFromDisk,
+		invertedIdxLoadFromCache:      context.invertedIdxLoadFromCache,
+		invertedIdxLoadTimeMs:         context.invertedIdxLoadTimeMs,
+		invertedIdxSearchTimeMs:       context.invertedIdxSearchTimeMs,
+		invertedIdxSearchSkippedPacks: context.invertedIdxSearchSkippedPacks,
+		invertedIdxIndexedRows:        context.invertedIdxIndexedRows,
+		invertedIdxSearchSelectedRows: context.invertedIdxSearchSelectedRows,
 	}
-	maps.Copy(newContext.regionsOfInstance, context.regionsOfInstance)
+	for k, v := range context.regionsOfInstance {
+		newContext.regionsOfInstance[k] = v
+	}
 	return newContext
 }
 
 func (context *TiFlashScanContext) String() string {
 	var output []string
-	if context.totalVectorIdxLoadFromS3+context.totalVectorIdxLoadFromDisk+context.totalVectorIdxLoadFromCache > 0 {
+	if context.vectorIdxLoadFromS3+context.vectorIdxLoadFromDisk+context.vectorIdxLoadFromCache > 0 {
 		var items []string
-		items = append(items, fmt.Sprintf("load:{total:%dms,from_s3:%d,from_disk:%d,from_cache:%d}", context.totalVectorIdxLoadTimeMs, context.totalVectorIdxLoadFromS3, context.totalVectorIdxLoadFromDisk, context.totalVectorIdxLoadFromCache))
-		items = append(items, fmt.Sprintf("search:{total:%dms,visited_nodes:%d,discarded_nodes:%d}", context.totalVectorIdxSearchTimeMs, context.totalVectorIdxSearchVisitedNodes, context.totalVectorIdxSearchDiscardedNodes))
-		items = append(items, fmt.Sprintf("read:{vec_total:%dms,others_total:%dms}", context.totalVectorIdxReadVecTimeMs, context.totalVectorIdxReadOthersTimeMs))
+		items = append(items, fmt.Sprintf("load:{total:%dms,from_s3:%d,from_disk:%d,from_cache:%d}", context.vectorIdxLoadTimeMs, context.vectorIdxLoadFromS3, context.vectorIdxLoadFromDisk, context.vectorIdxLoadFromCache))
+		items = append(items, fmt.Sprintf("search:{total:%dms,visited_nodes:%d,discarded_nodes:%d}", context.vectorIdxSearchTimeMs, context.vectorIdxSearchVisitedNodes, context.vectorIdxSearchDiscardedNodes))
+		items = append(items, fmt.Sprintf("read:{vec_total:%dms,others_total:%dms}", context.vectorIdxReadVecTimeMs, context.vectorIdxReadOthersTimeMs))
 		output = append(output, "vector_idx:{"+strings.Join(items, ",")+"}")
+	}
+	if context.invertedIdxLoadFromS3+context.invertedIdxLoadFromDisk+context.invertedIdxLoadFromCache > 0 {
+		var items []string
+		items = append(items, fmt.Sprintf("load:{total:%dms,from_s3:%d,from_disk:%d,from_cache:%d}", context.invertedIdxLoadTimeMs, context.invertedIdxLoadFromS3, context.invertedIdxLoadFromDisk, context.invertedIdxLoadFromCache))
+		items = append(items, fmt.Sprintf("search:{total:%dms,skipped_packs:%d,indexed_rows:%d,selected_rows:%d}", context.invertedIdxSearchTimeMs, context.invertedIdxSearchSkippedPacks, context.invertedIdxIndexedRows, context.invertedIdxSearchSelectedRows))
+		output = append(output, "inverted_idx:{"+strings.Join(items, ",")+"}")
 	}
 
 	regionBalanceInfo := "none"
@@ -1232,15 +1261,24 @@ func (context *TiFlashScanContext) Merge(other TiFlashScanContext) {
 	context.totalBuildInputStreamMs += other.totalBuildInputStreamMs
 	context.staleReadRegions += other.staleReadRegions
 
-	context.totalVectorIdxLoadFromS3 += other.totalVectorIdxLoadFromS3
-	context.totalVectorIdxLoadFromDisk += other.totalVectorIdxLoadFromDisk
-	context.totalVectorIdxLoadFromCache += other.totalVectorIdxLoadFromCache
-	context.totalVectorIdxLoadTimeMs += other.totalVectorIdxLoadTimeMs
-	context.totalVectorIdxSearchTimeMs += other.totalVectorIdxSearchTimeMs
-	context.totalVectorIdxSearchVisitedNodes += other.totalVectorIdxSearchVisitedNodes
-	context.totalVectorIdxSearchDiscardedNodes += other.totalVectorIdxSearchDiscardedNodes
-	context.totalVectorIdxReadVecTimeMs += other.totalVectorIdxReadVecTimeMs
-	context.totalVectorIdxReadOthersTimeMs += other.totalVectorIdxReadOthersTimeMs
+	context.vectorIdxLoadFromS3 += other.vectorIdxLoadFromS3
+	context.vectorIdxLoadFromDisk += other.vectorIdxLoadFromDisk
+	context.vectorIdxLoadFromCache += other.vectorIdxLoadFromCache
+	context.vectorIdxLoadTimeMs += other.vectorIdxLoadTimeMs
+	context.vectorIdxSearchTimeMs += other.vectorIdxSearchTimeMs
+	context.vectorIdxSearchVisitedNodes += other.vectorIdxSearchVisitedNodes
+	context.vectorIdxSearchDiscardedNodes += other.vectorIdxSearchDiscardedNodes
+	context.vectorIdxReadVecTimeMs += other.vectorIdxReadVecTimeMs
+	context.vectorIdxReadOthersTimeMs += other.vectorIdxReadOthersTimeMs
+
+	context.invertedIdxLoadFromS3 += other.invertedIdxLoadFromS3
+	context.invertedIdxLoadFromDisk += other.invertedIdxLoadFromDisk
+	context.invertedIdxLoadFromCache += other.invertedIdxLoadFromCache
+	context.invertedIdxLoadTimeMs += other.invertedIdxLoadTimeMs
+	context.invertedIdxSearchTimeMs += other.invertedIdxSearchTimeMs
+	context.invertedIdxSearchSkippedPacks += other.invertedIdxSearchSkippedPacks
+	context.invertedIdxIndexedRows += other.invertedIdxIndexedRows
+	context.invertedIdxSearchSelectedRows += other.invertedIdxSearchSelectedRows
 
 	if context.minLocalStreamMs == 0 || other.minLocalStreamMs < context.minLocalStreamMs {
 		context.minLocalStreamMs = other.minLocalStreamMs
@@ -1292,15 +1330,24 @@ func (context *TiFlashScanContext) mergeExecSummary(summary *tipb.TiFlashScanCon
 	context.totalBuildInputStreamMs += summary.GetTotalBuildInputstreamMs()
 	context.staleReadRegions += summary.GetStaleReadRegions()
 
-	context.totalVectorIdxLoadFromS3 += summary.GetTotalVectorIdxLoadFromS3()
-	context.totalVectorIdxLoadFromDisk += summary.GetTotalVectorIdxLoadFromDisk()
-	context.totalVectorIdxLoadFromCache += summary.GetTotalVectorIdxLoadFromCache()
-	context.totalVectorIdxLoadTimeMs += summary.GetTotalVectorIdxLoadTimeMs()
-	context.totalVectorIdxSearchTimeMs += summary.GetTotalVectorIdxSearchTimeMs()
-	context.totalVectorIdxSearchVisitedNodes += summary.GetTotalVectorIdxSearchVisitedNodes()
-	context.totalVectorIdxSearchDiscardedNodes += summary.GetTotalVectorIdxSearchDiscardedNodes()
-	context.totalVectorIdxReadVecTimeMs += summary.GetTotalVectorIdxReadVecTimeMs()
-	context.totalVectorIdxReadOthersTimeMs += summary.GetTotalVectorIdxReadOthersTimeMs()
+	context.vectorIdxLoadFromS3 += summary.GetVectorIdxLoadFromS3()
+	context.vectorIdxLoadFromDisk += summary.GetVectorIdxLoadFromDisk()
+	context.vectorIdxLoadFromCache += summary.GetVectorIdxLoadFromCache()
+	context.vectorIdxLoadTimeMs += summary.GetVectorIdxLoadTimeMs()
+	context.vectorIdxSearchTimeMs += summary.GetVectorIdxSearchTimeMs()
+	context.vectorIdxSearchVisitedNodes += summary.GetVectorIdxSearchVisitedNodes()
+	context.vectorIdxSearchDiscardedNodes += summary.GetVectorIdxSearchDiscardedNodes()
+	context.vectorIdxReadVecTimeMs += summary.GetVectorIdxReadVecTimeMs()
+	context.vectorIdxReadOthersTimeMs += summary.GetVectorIdxReadOthersTimeMs()
+
+	context.invertedIdxLoadFromS3 += summary.GetInvertedIdxLoadFromS3()
+	context.invertedIdxLoadFromDisk += summary.GetInvertedIdxLoadFromDisk()
+	context.invertedIdxLoadFromCache += summary.GetInvertedIdxLoadFromCache()
+	context.invertedIdxLoadTimeMs += summary.GetInvertedIdxLoadTimeMs()
+	context.invertedIdxSearchTimeMs += summary.GetInvertedIdxSearchTimeMs()
+	context.invertedIdxSearchSkippedPacks += summary.GetInvertedIdxSearchSkippedPacks()
+	context.invertedIdxIndexedRows += summary.GetInvertedIdxIndexedRows()
+	context.invertedIdxSearchSelectedRows += summary.GetInvertedIdxSearchSelectedRows()
 
 	if context.minLocalStreamMs == 0 || summary.GetMinLocalStreamMs() < context.minLocalStreamMs {
 		context.minLocalStreamMs = summary.GetMinLocalStreamMs()
@@ -1333,9 +1380,12 @@ func (context *TiFlashScanContext) Empty() bool {
 		context.dmfileLmFilterSkippedRows == 0 &&
 		context.localRegions == 0 &&
 		context.remoteRegions == 0 &&
-		context.totalVectorIdxLoadFromDisk == 0 &&
-		context.totalVectorIdxLoadFromCache == 0 &&
-		context.totalVectorIdxLoadFromS3 == 0
+		context.vectorIdxLoadFromDisk == 0 &&
+		context.vectorIdxLoadFromCache == 0 &&
+		context.vectorIdxLoadFromS3 == 0 &&
+		context.invertedIdxLoadFromDisk == 0 &&
+		context.invertedIdxLoadFromCache == 0 &&
+		context.invertedIdxLoadFromS3 == 0
 	return res
 }
 

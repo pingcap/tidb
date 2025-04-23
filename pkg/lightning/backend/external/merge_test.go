@@ -23,7 +23,7 @@ import (
 
 func TestSplitDataFiles(t *testing.T) {
 	allPaths := make([]string, 0, 110)
-	for i := range cap(allPaths) {
+	for i := 0; i < cap(allPaths); i++ {
 		allPaths = append(allPaths, fmt.Sprintf("%d", i))
 	}
 	cases := []struct {

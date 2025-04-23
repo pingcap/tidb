@@ -36,11 +36,11 @@ func TestGCIndexUsage(t *testing.T) {
 	)
 
 	tk.MustExec("use test")
-	for i := range tableCount {
+	for i := 0; i < tableCount; i++ {
 		stmt := fmt.Sprintf(
 			"CREATE TABLE t%d (", i,
 		)
-		for j := range indexCount {
+		for j := 0; j < indexCount; j++ {
 			stmt += fmt.Sprintf("id%d int, key test_id%d (id%d)", j, j, j)
 			if j != indexCount-1 {
 				stmt += ","

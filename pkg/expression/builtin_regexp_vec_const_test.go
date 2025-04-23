@@ -34,7 +34,7 @@ func genVecBuiltinRegexpBenchCaseForConstants(ctx BuildContext) (baseFunc builti
 	)
 
 	childrenFieldTypes = make([]*types.FieldType, numArgs)
-	for i := range numArgs {
+	for i := 0; i < numArgs; i++ {
 		childrenFieldTypes[i] = eType2FieldType(types.ETString)
 	}
 

@@ -202,7 +202,7 @@ func TestAddIndexFailed(t *testing.T) {
 	tk.MustExec("use test_add_index_failed")
 
 	tk.MustExec("create table t(a bigint PRIMARY KEY, b int)")
-	for i := range 1000 {
+	for i := 0; i < 1000; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values(%v, %v)", i, i))
 	}
 
@@ -244,7 +244,7 @@ func TestFailSchemaSyncer(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/ErrorMockReloadFailed", `return(true)`))
 	mockSyncer.CloseSession()
 	// wait the schemaValidator is stopped.
-	for range 50 {
+	for i := 0; i < 50; i++ {
 		if !s.dom.SchemaValidator.IsStarted() {
 			break
 		}
@@ -257,7 +257,7 @@ func TestFailSchemaSyncer(t *testing.T) {
 	require.EqualError(t, err, "[domain:8027]Information schema is out of date: schema failed to update in 1 lease, please make sure TiDB can connect to TiKV")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/ErrorMockReloadFailed"))
 	// wait the schemaValidator is started.
-	for range 50 {
+	for i := 0; i < 50; i++ {
 		if s.dom.SchemaValidator.IsStarted() {
 			break
 		}
@@ -536,7 +536,7 @@ func TestModifyColumn(t *testing.T) {
 	base := defaultBatchSize * 20
 	for i := 1; i < batchCnt; i++ {
 		n := base + i*defaultBatchSize + i
-		for j := range rand.Intn(maxBatch) {
+		for j := 0; j < rand.Intn(maxBatch); j++ {
 			n += j
 			sql := fmt.Sprintf("insert into t3 values (%d, %d, %d)", n, n, n)
 			tk.MustExec(sql)

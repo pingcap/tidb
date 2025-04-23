@@ -50,9 +50,9 @@ func TestReadAllDataBasic(t *testing.T) {
 	writer := NewEngineWriter(w)
 	kvCnt := rand.Intn(10) + 10000
 	kvs := make([]common.KvPair, kvCnt)
-	for i := range kvCnt {
+	for i := 0; i < kvCnt; i++ {
 		kvs[i] = common.KvPair{
-			Key: fmt.Appendf(nil, "key%05d", i),
+			Key: []byte(fmt.Sprintf("key%05d", i)),
 			Val: []byte("56789"),
 		}
 	}
@@ -89,9 +89,9 @@ func TestReadAllOneFile(t *testing.T) {
 
 	kvCnt := rand.Intn(10) + 10000
 	kvs := make([]common.KvPair, kvCnt)
-	for i := range kvCnt {
+	for i := 0; i < kvCnt; i++ {
 		kvs[i] = common.KvPair{
-			Key: fmt.Appendf(nil, "key%05d", i),
+			Key: []byte(fmt.Sprintf("key%05d", i)),
 			Val: []byte("56789"),
 		}
 		require.NoError(t, w.WriteRow(ctx, kvs[i].Key, kvs[i].Val))
@@ -126,8 +126,8 @@ func TestReadLargeFile(t *testing.T) {
 	require.NoError(t, w.Init(ctx, int64(5*size.MB)))
 
 	val := make([]byte, 10000)
-	for i := range 10000 {
-		key := fmt.Appendf(nil, "key%06d", i)
+	for i := 0; i < 10000; i++ {
+		key := []byte(fmt.Sprintf("key%06d", i))
 		require.NoError(t, w.WriteRow(ctx, key, val))
 	}
 	require.NoError(t, w.Close(ctx))
@@ -154,6 +154,6 @@ func TestReadLargeFile(t *testing.T) {
 	err = readAllData(ctx, memStore, datas, stats, startKey, endKey, smallBlockBufPool, largeBlockBufPool, output)
 	require.NoError(t, err)
 	output.build(ctx)
-	require.Equal(t, startKey, output.keys[0])
-	require.Equal(t, maxKey, output.keys[len(output.keys)-1])
+	require.Equal(t, startKey, output.kvs[0].key)
+	require.Equal(t, maxKey, output.kvs[len(output.kvs)-1].key)
 }

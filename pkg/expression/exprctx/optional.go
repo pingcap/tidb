@@ -39,7 +39,7 @@ func init() {
 		)
 	}
 
-	for i := range OptPropsCnt {
+	for i := 0; i < OptPropsCnt; i++ {
 		if key := optionalPropertyDescList[i].Key(); key != OptionalEvalPropKey(i) {
 			log.Fatalf(
 				"Invalid optionalPropertyDescList[%d].Key, unexpected index: %d",

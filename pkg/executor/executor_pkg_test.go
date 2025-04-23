@@ -280,7 +280,7 @@ func TestAggPartialResultMapperB(t *testing.T) {
 	for _, tc := range cases {
 		aggMap := make(aggfuncs.AggPartialResultMapper)
 		tempSlice := make([]aggfuncs.PartialResult, 10)
-		for num := range tc.rowNum {
+		for num := 0; num < tc.rowNum; num++ {
 			aggMap[strconv.Itoa(num)] = tempSlice
 		}
 

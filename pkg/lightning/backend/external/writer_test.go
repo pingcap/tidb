@@ -116,7 +116,7 @@ func TestWriter(t *testing.T) {
 
 	kvCnt := rand.Intn(10) + 10
 	kvs := make([]common.KvPair, kvCnt)
-	for i := range kvCnt {
+	for i := 0; i < kvCnt; i++ {
 		randLen := rand.Intn(10) + 1
 		kvs[i].Key = make([]byte, randLen)
 		_, err := rand.Read(kvs[i].Key)
@@ -138,7 +138,7 @@ func TestWriter(t *testing.T) {
 	bufSize := rand.Intn(100) + 1
 	kvReader, err := newKVReader(ctx, "/test/0/0", memStore, 0, bufSize)
 	require.NoError(t, err)
-	for i := range kvCnt {
+	for i := 0; i < kvCnt; i++ {
 		key, value, err := kvReader.nextKV()
 		require.NoError(t, err)
 		require.Equal(t, kvs[i].Key, key)
@@ -180,7 +180,7 @@ func TestWriterFlushMultiFileNames(t *testing.T) {
 	// 200 bytes key values.
 	kvCnt := 10
 	kvs := make([]common.KvPair, kvCnt)
-	for i := range kvCnt {
+	for i := 0; i < kvCnt; i++ {
 		kvs[i].Key = make([]byte, 10)
 		_, err := rand.Read(kvs[i].Key)
 		require.NoError(t, err)
@@ -208,7 +208,7 @@ func TestWriterFlushMultiFileNames(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, dataFiles, 4)
 	require.Len(t, statFiles, 4)
-	for i := range 4 {
+	for i := 0; i < 4; i++ {
 		require.Equal(t, dataFiles[i], fmt.Sprintf("/test/0/%d", i))
 		require.Equal(t, statFiles[i], fmt.Sprintf("/test/0_stat/%d", i))
 	}
@@ -224,7 +224,7 @@ func TestWriterDuplicateDetect(t *testing.T) {
 		SetKeyDuplicationEncoding(true).
 		Build(memStore, "/test", "0")
 	kvCount := 20
-	for i := range kvCount {
+	for i := 0; i < kvCount; i++ {
 		v := i
 		if v == kvCount/2 {
 			v-- // insert a duplicate key.
@@ -254,20 +254,18 @@ func TestWriterDuplicateDetect(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	keys := make([][]byte, 0, kvCount)
-	values := make([][]byte, 0, kvCount)
+	kvs := make([]kvPair, 0, kvCount)
 
 	kvReader, err := newKVReader(ctx, "/test2/mergeID/0", memStore, 0, 100)
 	require.NoError(t, err)
-	for range kvCount {
+	for i := 0; i < kvCount; i++ {
 		key, value, err := kvReader.nextKV()
 		require.NoError(t, err)
 		clonedKey := make([]byte, len(key))
 		copy(clonedKey, key)
 		clonedVal := make([]byte, len(value))
 		copy(clonedVal, value)
-		keys = append(keys, clonedKey)
-		values = append(values, clonedVal)
+		kvs = append(kvs, kvPair{key: clonedKey, value: clonedVal})
 	}
 	_, _, err = kvReader.nextKV()
 	require.ErrorIs(t, err, io.EOF)
@@ -282,8 +280,7 @@ func TestWriterDuplicateDetect(t *testing.T) {
 		duplicateDetection: true,
 		duplicateDB:        db,
 		dupDetectOpt:       common.DupDetectOpt{ReportErrOnDup: true},
-		keys:               keys,
-		values:             values,
+		kvs:                kvs,
 		ts:                 123,
 	}
 	pool := membuf.NewPool()
@@ -351,7 +348,7 @@ func TestWriterMultiFileStat(t *testing.T) {
 	// [key01, key02], [key03, key04], [key05, key06]
 	for i := 1; i <= 6; i++ {
 		kvs = append(kvs, common.KvPair{
-			Key: fmt.Appendf(nil, "key%02d", i),
+			Key: []byte(fmt.Sprintf("key%02d", i)),
 			Val: []byte("56789"),
 		})
 	}
@@ -381,13 +378,13 @@ func TestWriterMultiFileStat(t *testing.T) {
 		Val: []byte("56789"),
 	})
 	// [key20, key22], [key21, key23], [key22, key24]
-	for i := range 3 {
+	for i := 0; i < 3; i++ {
 		kvs = append(kvs, common.KvPair{
-			Key: fmt.Appendf(nil, "key2%d", i),
+			Key: []byte(fmt.Sprintf("key2%d", i)),
 			Val: []byte("56789"),
 		})
 		kvs = append(kvs, common.KvPair{
-			Key: fmt.Appendf(nil, "key2%d", i+2),
+			Key: []byte(fmt.Sprintf("key2%d", i+2)),
 			Val: []byte("56789"),
 		})
 	}
@@ -501,7 +498,7 @@ func TestWriterSort(t *testing.T) {
 	commonPrefix := "abcabcabcabcabcabcabcabc"
 
 	kvs := make([]common.KvPair, 1000000)
-	for i := range 1000000 {
+	for i := 0; i < 1000000; i++ {
 		kvs[i].Key = []byte(commonPrefix + strconv.Itoa(int(rand.Int31())))
 		kvs[i].Val = []byte(commonPrefix)
 	}
@@ -528,7 +525,7 @@ func TestWriterSort(t *testing.T) {
 	})
 	t.Log("quick sort", time.Since(ts).String())
 
-	for i := range 1000000 {
+	for i := 0; i < 1000000; i++ {
 		require.True(t, bytes.Compare(kvs[i].Key, kvs2[i].Key) == 0)
 	}
 }

@@ -133,7 +133,7 @@ func TestExplainForVerbose(t *testing.T) {
 		require.Len(t, rs[i], 6)
 		// "id", "estRows", "estCost", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"
 		require.Len(t, rs2[i], 10)
-		for j := range 3 {
+		for j := 0; j < 3; j++ {
 			require.Equal(t, rs2[i][j], rs[i][j])
 		}
 	}
@@ -214,13 +214,13 @@ func TestExplainForConnPlanCache(t *testing.T) {
 	var wg util.WaitGroupWrapper
 
 	wg.Run(func() {
-		for range repeats {
+		for i := 0; i < repeats; i++ {
 			tk1.MustExec(executeQuery)
 		}
 	})
 
 	wg.Run(func() {
-		for range repeats {
+		for i := 0; i < repeats; i++ {
 			tk2.Session().SetSessionManager(&testkit.MockSessionManager{
 				PS: []*util.ProcessInfo{tk1.Session().ShowProcess()},
 			})

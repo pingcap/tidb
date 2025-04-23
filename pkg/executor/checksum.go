@@ -60,7 +60,7 @@ func (e *ChecksumTableExec) Open(ctx context.Context) error {
 
 	taskCh := make(chan *checksumTask, len(tasks))
 	resultCh := make(chan *checksumResult, len(tasks))
-	for range concurrency {
+	for i := 0; i < concurrency; i++ {
 		go e.checksumWorker(taskCh, resultCh)
 	}
 
@@ -69,7 +69,7 @@ func (e *ChecksumTableExec) Open(ctx context.Context) error {
 	}
 	close(taskCh)
 
-	for range tasks {
+	for i := 0; i < len(tasks); i++ {
 		result := <-resultCh
 		if result.err != nil {
 			err = result.err

@@ -165,8 +165,8 @@ func TestSortedData(t *testing.T) {
 	keys := make([][]byte, kvNum)
 	values := make([][]byte, kvNum)
 	for i := range keys {
-		keys[i] = fmt.Appendf(nil, "key%03d", i)
-		values[i] = fmt.Appendf(nil, "val%03d", i)
+		keys[i] = []byte(fmt.Sprintf("key%03d", i))
+		values[i] = []byte(fmt.Sprintf("val%03d", i))
 	}
 
 	dataFiles, statFiles, err := MockExternalEngine(memStore, keys, values)
@@ -342,8 +342,8 @@ func TestExactlyKeyNum(t *testing.T) {
 	keys := make([][]byte, kvNum)
 	values := make([][]byte, kvNum)
 	for i := range keys {
-		keys[i] = fmt.Appendf(nil, "key%03d", i)
-		values[i] = fmt.Appendf(nil, "value%03d", i)
+		keys[i] = []byte(fmt.Sprintf("key%03d", i))
+		values[i] = []byte(fmt.Sprintf("value%03d", i))
 	}
 
 	subDir := "/mock-test"
@@ -405,7 +405,7 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 
 	eg := errgroup.Group{}
 	eg.SetLimit(30)
-	for i := range fileNum {
+	for i := 0; i < fileNum; i++ {
 		eg.Go(func() error {
 			w := NewWriterBuilder().
 				SetMemorySizeLimit(DefaultMemSizeLimit).
@@ -430,13 +430,13 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 			var maxKey []byte
 
 			memSize := uint64(0)
-			for j := range int(64 * size.GB / kvSize) {
+			for j := 0; j < int(64*size.GB/kvSize); j++ {
 
 				// copied from OneFileWriter.WriteRow
 
 				if memSize >= DefaultMemSizeLimit {
 					memSize = 0
-					w.kvStore.Close()
+					w.kvStore.finish()
 					encodedStat := w.rc.encode()
 					_, err := w.statWriter.Write(ctx, encodedStat)
 					if err != nil {
@@ -494,7 +494,7 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 	require.NoError(t, eg.Wait())
 
 	multiStat := make([]MultipleFilesStat, 0, fileNum)
-	for range fileNum {
+	for i := 0; i < fileNum; i++ {
 		multiStat = append(multiStat, <-statCh...)
 	}
 	splitter, err := NewRangeSplitter(

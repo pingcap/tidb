@@ -62,7 +62,7 @@ func newOuterJoinProbe(base baseJoinProbe, isOuterSideBuild bool, isRightSideBui
 func (j *outerJoinProbe) prepareIsNotMatchedRows() {
 	if !j.isOuterSideBuild {
 		j.isNotMatchedRows = j.isNotMatchedRows[:0]
-		for range j.chunkRows {
+		for i := 0; i < j.chunkRows; i++ {
 			j.isNotMatchedRows = append(j.isNotMatchedRows, true)
 		}
 

@@ -106,7 +106,7 @@ func getGroupKeyMemUsage(groupKey [][]byte) int64 {
 func GetGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, groupByItems []expression.Expression) ([][]byte, error) {
 	numRows := input.NumRows()
 	avlGroupKeyLen := min(len(groupKey), numRows)
-	for i := range avlGroupKeyLen {
+	for i := 0; i < avlGroupKeyLen; i++ {
 		groupKey[i] = groupKey[i][:0]
 	}
 	for i := avlGroupKeyLen; i < numRows; i++ {

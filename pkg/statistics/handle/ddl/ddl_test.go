@@ -47,7 +47,7 @@ func TestDDLAfterLoad(t *testing.T) {
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
 	recordCount := 1000
-	for i := range recordCount {
+	for i := 0; i < recordCount; i++ {
 		testKit.MustExec("insert into t values (?, ?)", i, i+1)
 	}
 	testKit.MustExec("analyze table t")
@@ -299,16 +299,28 @@ func TestDDLHistogram(t *testing.T) {
 	<-h.DDLEventCh()
 	testKit.MustExec("insert into t values(1,2),(3,4)")
 	testKit.MustExec("analyze table t")
-
-	testKit.MustExec("alter table t add column c_null int")
-	err := statstestutil.HandleNextDDLEventWithTxn(h)
-	require.NoError(t, err)
 	is := do.InfoSchema()
 	require.Nil(t, h.Update(context.Background(), is))
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
+	lastHistUpdateVersion1 := statsTbl.LastStatsHistVersion
+
+	testKit.MustExec("alter table t add column c_null int")
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+
+	// Check that the last_stats_histograms_version has been updated.
+	is = do.InfoSchema()
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo = tbl.Meta()
+	require.Nil(t, h.Update(context.Background(), is))
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	lastHistUpdateVersion2 := statsTbl.LastStatsHistVersion
+	require.Greater(t, lastHistUpdateVersion2, lastHistUpdateVersion1)
+
 	require.True(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(2, false))
 	require.False(t, statsTbl.Pseudo)
 	require.True(t, statsTbl.GetCol(tableInfo.Columns[2].ID).IsStatsInitialized())
@@ -1365,7 +1377,7 @@ func TestExchangePartition(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	var wg util.WaitGroupWrapper
-	for range 20 {
+	for i := 0; i < 20; i++ {
 		tk1 := testkit.NewTestKit(t, store)
 		wg.Run(func() {
 			tk1.MustExec("begin")

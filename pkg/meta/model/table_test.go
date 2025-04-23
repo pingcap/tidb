@@ -29,7 +29,7 @@ import (
 
 func checkOffsets(t *testing.T, tbl *TableInfo, ids ...int) {
 	require.Equal(t, len(ids), len(tbl.Columns))
-	for i := range ids {
+	for i := 0; i < len(ids); i++ {
 		expected := fmt.Sprintf("c_%d", ids[i])
 		require.Equal(t, expected, tbl.Columns[i].Name.L)
 		require.Equal(t, i, tbl.Columns[i].Offset)

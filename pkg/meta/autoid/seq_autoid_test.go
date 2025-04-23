@@ -204,7 +204,7 @@ func TestConcurrentAllocSequence(t *testing.T) {
 
 	allocSequence := func() {
 		alloc := autoid.NewSequenceAllocator(store, 2, 2, seq)
-		for range 3 {
+		for j := 0; j < 3; j++ {
 			base, end, _, err1 := alloc.AllocSeqCache()
 			if err1 != nil {
 				errCh <- err1
@@ -229,7 +229,7 @@ func TestConcurrentAllocSequence(t *testing.T) {
 			mu.Unlock()
 		}
 	}
-	for i := range count {
+	for i := 0; i < count; i++ {
 		num := i
 		wg.Run(func() {
 			time.Sleep(time.Duration(num%10) * time.Microsecond)

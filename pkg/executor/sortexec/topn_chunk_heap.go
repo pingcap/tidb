@@ -78,9 +78,9 @@ func (h *topNChunkHeap) initPtrs() {
 
 func (h *topNChunkHeap) initPtrsImpl() {
 	h.rowPtrs = make([]chunk.RowPtr, 0, h.rowChunks.Len())
-	for chkIdx := range h.rowChunks.NumChunks() {
+	for chkIdx := 0; chkIdx < h.rowChunks.NumChunks(); chkIdx++ {
 		rowChk := h.rowChunks.GetChunk(chkIdx)
-		for rowIdx := range rowChk.NumRows() {
+		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
 			h.rowPtrs = append(h.rowPtrs, chunk.RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
 		}
 	}
@@ -105,7 +105,7 @@ func (h *topNChunkHeap) update(heapMaxRow chunk.Row, newRow chunk.Row) {
 }
 
 func (h *topNChunkHeap) processChk(chk *chunk.Chunk) {
-	for i := range chk.NumRows() {
+	for i := 0; i < chk.NumRows(); i++ {
 		heapMaxRow := h.rowChunks.GetRow(h.rowPtrs[0])
 		newRow := chk.GetRow(i)
 		h.update(heapMaxRow, newRow)

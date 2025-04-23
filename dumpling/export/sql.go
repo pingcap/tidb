@@ -621,11 +621,7 @@ func GetColumnTypes(tctx *tcontext.Context, db *BaseConn, fields, database, tabl
 }
 
 // GetPrimaryKeyAndColumnTypes gets all primary columns and their types in ordinal order
-func GetPrimaryKeyAndColumnTypes(tctx *tcontext.Context, conn *BaseConn, meta TableMeta) ([]string, []string, error) {
-	var (
-		colNames, colTypes []string
-		err                error
-	)
+func GetPrimaryKeyAndColumnTypes(tctx *tcontext.Context, conn *BaseConn, meta TableMeta) (colNames, colTypes []string, err error) {
 	colNames, err = GetPrimaryKeyColumns(tctx, conn, meta.DatabaseName(), meta.TableName())
 	if err != nil {
 		return nil, nil, err

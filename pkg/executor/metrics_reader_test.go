@@ -33,7 +33,7 @@ func TestStmtLabel(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table label (c1 int primary key, c2 int, c3 int, index (c2))")
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		sql := fmt.Sprintf("insert into label values (%d, %d, %d)", i, i, i)
 		tk.MustExec(sql)
 	}

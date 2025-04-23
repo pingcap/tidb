@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"math/rand"
 	"reflect"
-	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -490,7 +489,7 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whitePathList, white
 
 	switch v1.Kind() {
 	case reflect.Array:
-		for i := range v1.Len() {
+		for i := 0; i < v1.Len(); i++ {
 			if err := checkDeepClonedCore(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), whitePathList, whiteTypeList, visited); err != nil {
 				return err
 			}
@@ -511,7 +510,7 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whitePathList, white
 		if v1.Pointer() == v2.Pointer() {
 			return errors.Errorf("same slice pointers, path %v", path)
 		}
-		for i := range v1.Len() {
+		for i := 0; i < v1.Len(); i++ {
 			if err := checkDeepClonedCore(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), whitePathList, whiteTypeList, visited); err != nil {
 				return err
 			}
@@ -530,7 +529,13 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whitePathList, white
 		}
 		if v1.Pointer() == v2.Pointer() {
 			typeName := v1.Type().String()
-			inWhiteList := slices.Contains(whiteTypeList, typeName)
+			inWhiteList := false
+			for _, whiteName := range whiteTypeList {
+				if whiteName == typeName {
+					inWhiteList = true
+					break
+				}
+			}
 			if inWhiteList {
 				return nil
 			}

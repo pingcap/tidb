@@ -74,6 +74,38 @@ type rangePropertiesCollector struct {
 	propKeysDist uint64
 }
 
+// size: the file size after adding 'data'
+func (rc *rangePropertiesCollector) onNextEncodedData(data []byte, size uint64) {
+	keyLen := binary.BigEndian.Uint64(data)
+	key := data[2*lengthBytes : 2*lengthBytes+keyLen]
+
+	if len(rc.currProp.firstKey) == 0 {
+		rc.currProp.firstKey = key
+	}
+	rc.currProp.lastKey = key
+
+	rc.currProp.size += uint64(len(data) - 2*lengthBytes)
+	rc.currProp.keys++
+
+	if rc.currProp.size >= rc.propSizeDist ||
+		rc.currProp.keys >= rc.propKeysDist {
+		newProp := *rc.currProp
+		rc.props = append(rc.props, &newProp)
+		// reset currProp, and start to update this prop.
+		rc.currProp.firstKey = nil
+		rc.currProp.offset = size
+		rc.currProp.keys = 0
+		rc.currProp.size = 0
+	}
+}
+
+func (rc *rangePropertiesCollector) onFileEnd() {
+	if rc.currProp.keys > 0 {
+		newProp := *rc.currProp
+		rc.props = append(rc.props, &newProp)
+	}
+}
+
 func (rc *rangePropertiesCollector) reset() {
 	rc.props = rc.props[:0]
 	rc.currProp = &rangeProperty{}
@@ -461,7 +493,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 
 	writeStartTime := time.Now()
 	var dataFile, statFile string
-	for i := range flushKVsRetryTimes {
+	for i := 0; i < flushKVsRetryTimes; i++ {
 		dataFile, statFile, err = w.flushSortedKVs(ctx)
 		if err == nil || ctx.Err() != nil {
 			break
@@ -536,10 +568,7 @@ func (w *Writer) flushSortedKVs(ctx context.Context) (string, string, error) {
 		}
 	}()
 	w.rc.reset()
-	kvStore, err := NewKeyValueStore(ctx, dataWriter, w.rc)
-	if err != nil {
-		return "", "", err
-	}
+	kvStore := NewKeyValueStore(ctx, dataWriter, w.rc)
 
 	for _, pair := range w.kvLocations {
 		err = kvStore.addEncodedData(w.kvBuffer.GetSlice(pair))
@@ -548,7 +577,7 @@ func (w *Writer) flushSortedKVs(ctx context.Context) (string, string, error) {
 		}
 	}
 
-	kvStore.Close()
+	kvStore.finish()
 	encodedStat := w.rc.encode()
 	statSize := len(encodedStat)
 	_, err = statWriter.Write(ctx, encodedStat)

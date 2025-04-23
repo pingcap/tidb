@@ -102,7 +102,7 @@ func (w writeDBWorker) run() {
 			batches = append(batches, batch)
 		}
 		chLen := len(w.batchCh)
-		for range chLen {
+		for i := 0; i < chLen; i++ {
 			batches = append(batches, <-w.batchCh)
 		}
 		if len(batches) > 0 {
@@ -154,7 +154,7 @@ func (w writeLockWorker) run() {
 			batches = append(batches, batch)
 		}
 		chLen := len(w.batchCh)
-		for range chLen {
+		for i := 0; i < chLen; i++ {
 			batches = append(batches, <-w.batchCh)
 		}
 		hint := new(lockstore.Hint)

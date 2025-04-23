@@ -619,7 +619,7 @@ type MPPTaskHandler struct {
 // HandleEstablishConn handles EstablishMPPConnectionRequest
 func (h *MPPTaskHandler) HandleEstablishConn(_ context.Context, req *mpp.EstablishMPPConnectionRequest) (*ExchangerTunnel, error) {
 	meta := req.ReceiverMeta
-	for range 10 {
+	for i := 0; i < 10; i++ {
 		tunnel, err := h.getAndActiveTunnel(req)
 		if err == nil {
 			return tunnel, nil

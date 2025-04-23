@@ -64,7 +64,7 @@ func newBaseSemiJoin(base baseJoinProbe, isLeftSideBuild bool) *baseSemiJoin {
 func (b *baseSemiJoin) resetProbeState() {
 	if !b.isLeftSideBuild {
 		b.isMatchedRows = b.isMatchedRows[:0]
-		for range b.chunkRows {
+		for i := 0; i < b.chunkRows; i++ {
 			b.isMatchedRows = append(b.isMatchedRows, false)
 		}
 	}
@@ -76,7 +76,7 @@ func (b *baseSemiJoin) resetProbeState() {
 			b.unFinishedProbeRowIdxQueue.ClearAndExpandIfNeed(b.chunkRows)
 		}
 
-		for i := range b.chunkRows {
+		for i := 0; i < b.chunkRows; i++ {
 			if b.matchedRowsHeaders[i] != 0 {
 				b.unFinishedProbeRowIdxQueue.Push(i)
 			}

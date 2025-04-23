@@ -111,7 +111,7 @@ func TestWriteRowsReplaceOnDup(t *testing.T) {
 
 	cols := s.tbl.Cols()
 	perms := make([]int, 0, len(s.tbl.Cols())+1)
-	for i := range cols {
+	for i := 0; i < len(cols); i++ {
 		perms = append(perms, i)
 	}
 	perms = append(perms, -1)
@@ -859,7 +859,7 @@ func encodeRowsTiDB(t *testing.T, encBuilder encode.EncodingBuilder, tbl table.T
 	}
 
 	rawRow := make([]types.Datum, 0)
-	for range 15 {
+	for i := 0; i < 15; i++ {
 		rawRow = append(rawRow, types.NewIntDatum(0))
 	}
 	encoder, err := encBuilder.NewEncoder(context.Background(), &encode.EncodingConfig{

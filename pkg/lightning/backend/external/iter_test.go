@@ -77,13 +77,12 @@ func TestMergeKVIter(t *testing.T) {
 			propKeysDist: 2,
 		}
 		rc.reset()
-		kvStore, err := NewKeyValueStore(ctx, writer, rc)
-		require.NoError(t, err)
+		kvStore := NewKeyValueStore(ctx, writer, rc)
 		for _, kv := range data[i] {
 			err = kvStore.addEncodedData(getEncodedData([]byte(kv[0]), []byte(kv[1])))
 			require.NoError(t, err)
 		}
-		kvStore.Close()
+		kvStore.finish()
 		err = writer.Close(ctx)
 		require.NoError(t, err)
 	}
@@ -130,13 +129,12 @@ func TestOneUpstream(t *testing.T) {
 			propKeysDist: 2,
 		}
 		rc.reset()
-		kvStore, err := NewKeyValueStore(ctx, writer, rc)
-		require.NoError(t, err)
+		kvStore := NewKeyValueStore(ctx, writer, rc)
 		for _, kv := range data[i] {
 			err = kvStore.addEncodedData(getEncodedData([]byte(kv[0]), []byte(kv[1])))
 			require.NoError(t, err)
 		}
-		kvStore.Close()
+		kvStore.finish()
 		err = writer.Close(ctx)
 		require.NoError(t, err)
 	}
@@ -209,13 +207,12 @@ func TestCorruptContent(t *testing.T) {
 			propKeysDist: 2,
 		}
 		rc.reset()
-		kvStore, err := NewKeyValueStore(ctx, writer, rc)
-		require.NoError(t, err)
+		kvStore := NewKeyValueStore(ctx, writer, rc)
 		for _, kv := range data[i] {
 			err = kvStore.addEncodedData(getEncodedData([]byte(kv[0]), []byte(kv[1])))
 			require.NoError(t, err)
 		}
-		kvStore.Close()
+		kvStore.finish()
 		if i == 0 {
 			_, err = writer.Write(ctx, []byte("corrupt"))
 			require.NoError(t, err)
@@ -298,7 +295,7 @@ func testMergeIterSwitchMode(t *testing.T, f func([]byte, int) []byte) {
 		Key: make([]byte, keySize),
 		Val: make([]byte, valueSize),
 	}
-	for i := range kvCount {
+	for i := 0; i < kvCount; i++ {
 		kvs[0].Key = f(kvs[0].Key, i)
 		_, err := rand.Read(kvs[0].Val[0:])
 		require.NoError(t, err)
@@ -378,13 +375,12 @@ func TestHotspot(t *testing.T) {
 			propKeysDist: 2,
 		}
 		rc.reset()
-		kvStore, err := NewKeyValueStore(ctx, writer, rc)
-		require.NoError(t, err)
+		kvStore := NewKeyValueStore(ctx, writer, rc)
 		for _, k := range keys[i] {
 			err = kvStore.addEncodedData(getEncodedData([]byte(k), value))
 			require.NoError(t, err)
 		}
-		kvStore.Close()
+		kvStore.finish()
 		err = writer.Close(ctx)
 		require.NoError(t, err)
 	}
@@ -464,7 +460,7 @@ func TestMemoryUsageWhenHotspotChange(t *testing.T) {
 	cur := 0
 	largeChunk := make([]byte, 10*1024*1024)
 	filenames := make([]string, 0, 10)
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		filename := fmt.Sprintf("/test%06d", i)
 		filenames = append(filenames, filename)
 		writer, err := store.Create(ctx, filename, nil)
@@ -474,9 +470,8 @@ func TestMemoryUsageWhenHotspotChange(t *testing.T) {
 			propKeysDist: 2,
 		}
 		rc.reset()
-		kvStore, err := NewKeyValueStore(ctx, writer, rc)
-		require.NoError(t, err)
-		for range 1000 {
+		kvStore := NewKeyValueStore(ctx, writer, rc)
+		for j := 0; j < 1000; j++ {
 			key := fmt.Sprintf("key%06d", cur)
 			val := fmt.Sprintf("value%06d", cur)
 			err = kvStore.addEncodedData(getEncodedData([]byte(key), []byte(val)))
@@ -694,7 +689,7 @@ func TestMergePropBaseIter(t *testing.T) {
 	}
 	iter, err := newMergePropBaseIter(ctx, multiStat, store)
 	require.NoError(t, err)
-	for i := range fileNum {
+	for i := 0; i < fileNum; i++ {
 		p, err := iter.next()
 		require.NoError(t, err)
 		require.EqualValues(t, i, p.firstKey[0])

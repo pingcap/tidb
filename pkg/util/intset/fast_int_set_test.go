@@ -232,7 +232,7 @@ func TestFastIntSet(t *testing.T) {
 			forEachRes := make([]bool, m)
 
 			var s FastIntSet
-			for range 1000 {
+			for i := 0; i < 1000; i++ {
 				v := rng.Intn(m)
 				if rng.Intn(2) == 0 {
 					in[v] = true

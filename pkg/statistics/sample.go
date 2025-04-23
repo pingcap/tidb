@@ -177,7 +177,7 @@ func (c *SampleCollector) collect(sc *stmtctx.StatementContext, d types.Datum) e
 			newItem := &SampleItem{}
 			d.Copy(&newItem.Value)
 			// To keep the order of the elements, we use delete and append, not direct replacement.
-			c.Samples = slices.Delete(c.Samples, idx, idx+1)
+			c.Samples = append(c.Samples[:idx], c.Samples[idx+1:]...)
 			c.Samples = append(c.Samples, newItem)
 		}
 	}

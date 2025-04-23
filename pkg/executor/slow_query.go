@@ -315,7 +315,7 @@ func (e *slowQueryRetriever) getBatchLog(ctx context.Context, reader *bufio.Read
 	var line string
 	log := make([]string, 0, num)
 	var err error
-	for range num {
+	for i := 0; i < num; i++ {
 		for {
 			if isCtxDone(ctx) {
 				return nil, ctx.Err()
@@ -415,7 +415,7 @@ func decomposeToSlowLogTasks(logs []slowLogBlock, num int) [][]string {
 
 	//In reversed scan, We should reverse the blocks.
 	last := len(logs) - 1
-	for i := range len(logs) / 2 {
+	for i := 0; i < len(logs)/2; i++ {
 		logs[i], logs[last-i] = logs[last-i], logs[i]
 	}
 
@@ -709,7 +709,7 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 					valid = e.setColumnValue(sctx, row, tz, variable.SlowLogDBStr, line, e.checker, fileLine)
 				} else {
 					fields, values := splitByColon(line)
-					for i := range fields {
+					for i := 0; i < len(fields); i++ {
 						valid := e.setColumnValue(sctx, row, tz, fields[i], values[i], e.checker, fileLine)
 						if !valid {
 							startFlag = false
@@ -1228,7 +1228,7 @@ func readLastLines(ctx context.Context, file *os.File, endCursor int64) ([]strin
 		lines = append(chars, lines...) // nozero
 
 		// find first '\n' or '\r'
-		for i := range len(chars) - 1 {
+		for i := 0; i < len(chars)-1; i++ {
 			if (chars[i] == '\n' || chars[i] == '\r') && chars[i+1] != '\n' && chars[i+1] != '\r' {
 				firstNonNewlinePos = i + 1
 				break

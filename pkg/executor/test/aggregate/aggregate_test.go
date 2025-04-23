@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -49,7 +48,7 @@ func TestHashAggRuntimeStat(t *testing.T) {
 		FinalConcurrency:   8,
 		FinalWallTime:      int64(time.Second * 10),
 	}
-	for i := range partialInfo.Concurrency {
+	for i := 0; i < partialInfo.Concurrency; i++ {
 		stats.PartialStats = append(stats.PartialStats, &aggregate.AggWorkerStat{
 			TaskNum:    5,
 			WaitTime:   int64(2 * time.Second),
@@ -57,7 +56,7 @@ func TestHashAggRuntimeStat(t *testing.T) {
 			WorkerTime: int64(i) * int64(time.Second),
 		})
 	}
-	for i := range finalInfo.Concurrency {
+	for i := 0; i < finalInfo.Concurrency; i++ {
 		stats.FinalStats = append(stats.FinalStats, &aggregate.AggWorkerStat{
 			TaskNum:    5,
 			WaitTime:   int64(2 * time.Millisecond),
@@ -78,12 +77,16 @@ func reconstructParallelGroupConcatResult(rows [][]any) []string {
 	for _, row := range rows {
 		if str, ok := row[0].(string); ok {
 			tokens := strings.Split(str, ",")
-			slices.Sort(tokens)
+			sort.Slice(tokens, func(i, j int) bool {
+				return tokens[i] < tokens[j]
+			})
 			data = append(data, strings.Join(tokens, ","))
 		}
 	}
 
-	slices.Sort(data)
+	sort.Slice(data, func(i, j int) bool {
+		return data[i] < data[j]
+	})
 
 	return data
 }
@@ -98,7 +101,7 @@ func TestParallelStreamAggGroupConcat(t *testing.T) {
 	tk.MustExec("set tidb_max_chunk_size=32;")
 
 	var insertSQL string
-	for i := range 1000 {
+	for i := 0; i < 1000; i++ {
 		if i == 0 {
 			insertSQL += fmt.Sprintf("(%d, %d)", rand.Intn(100), rand.Intn(100))
 		} else {
@@ -127,7 +130,7 @@ func TestParallelStreamAggGroupConcat(t *testing.T) {
 			require.True(t, ok)
 			obtained := reconstructParallelGroupConcatResult(tk.MustQuery(sql).Rows())
 			require.Equal(t, len(expected), len(obtained))
-			for i := range obtained {
+			for i := 0; i < len(obtained); i++ {
 				require.Equal(t, expected[i], obtained[i])
 			}
 		}
@@ -155,7 +158,7 @@ func TestIssue20658(t *testing.T) {
 	randSeed := time.Now().UnixNano()
 	r := rand.New(rand.NewSource(randSeed))
 	var insertSQL strings.Builder
-	for i := range 1000 {
+	for i := 0; i < 1000; i++ {
 		insertSQL.WriteString("(")
 		insertSQL.WriteString(strconv.Itoa(r.Intn(10)))
 		insertSQL.WriteString(",")
@@ -169,7 +172,7 @@ func TestIssue20658(t *testing.T) {
 
 	mustParseAndSort := func(rows [][]any, cmt string) []float64 {
 		ret := make([]float64, len(rows))
-		for i := range rows {
+		for i := 0; i < len(rows); i++ {
 			rowStr := rows[i][0].(string)
 			if rowStr == "<nil>" {
 				ret[i] = 0
@@ -388,7 +391,7 @@ func TestParallelHashAgg(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test.parallel_hash_agg;")
 	tk.MustExec("create table test.parallel_hash_agg(k varchar(30), v int);")
-	for range 20 {
+	for i := 0; i < 20; i++ {
 		tk.MustExec("insert into test.parallel_hash_agg (k, v) values ('aa', 1), ('AA', 1), ('aA', 1), ('Aa', 1), ('bb', 1), ('BB', 1), ('bB', 1), ('Bb', 1), ('cc', 1), ('CC', 1), ('cC', 1), ('Cc', 1), ('dd', 1), ('DD', 1), ('dD', 1), ('Dd', 1), ('ee', 1), ('EE', 1), ('eE', 1), ('Ee', 1);")
 	}
 
@@ -430,7 +433,7 @@ func TestParallelHashAgg(t *testing.T) {
 	tk.MustExec(`create table tnormal (a int, b int)`)
 
 	vals := ""
-	for range 100 {
+	for i := 0; i < 100; i++ {
 		if vals != "" {
 			vals += ", "
 		}
@@ -441,7 +444,7 @@ func TestParallelHashAgg(t *testing.T) {
 
 	for _, aggFunc := range []string{"min", "max", "sum", "count"} {
 		c1, c2 := "a", "b"
-		for range 2 {
+		for i := 0; i < 2; i++ {
 			rs := tk.MustQuery(fmt.Sprintf(`select %v, %v(%v) from tnormal group by %v`, c1, aggFunc, c2, c1)).Sort()
 
 			tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")

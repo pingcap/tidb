@@ -198,7 +198,7 @@ func (e *IndexLookUpJoin) startWorkers(ctx context.Context, initBatchSize int) {
 	innerCh := make(chan *lookUpJoinTask, concurrency)
 	e.WorkerWg.Add(1)
 	go e.newOuterWorker(resultCh, innerCh, initBatchSize).run(workerCtx, e.WorkerWg)
-	for range concurrency {
+	for i := 0; i < concurrency; i++ {
 		innerWorker := e.newInnerWorker(innerCh)
 		e.WorkerWg.Add(1)
 		go innerWorker.run(workerCtx, e.WorkerWg)
@@ -473,7 +473,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 		task.outerMatch = make([][]bool, task.outerResult.NumChunks())
 		var err error
 		exprCtx := ow.ctx.GetExprCtx()
-		for i := range numChks {
+		for i := 0; i < numChks; i++ {
 			chk := task.outerResult.GetChunk(i)
 			outerMatch := make([]bool, 0, chk.NumRows())
 			task.memTracker.Consume(int64(cap(outerMatch)))
@@ -575,10 +575,10 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*IndexJoi
 	}
 	lookUpContents := make([]*IndexJoinLookUpContent, 0, task.outerResult.Len())
 	keyBuf := make([]byte, 0, 64)
-	for chkIdx := range task.outerResult.NumChunks() {
+	for chkIdx := 0; chkIdx < task.outerResult.NumChunks(); chkIdx++ {
 		chk := task.outerResult.GetChunk(chkIdx)
 		numRows := chk.NumRows()
-		for rowIdx := range numRows {
+		for rowIdx := 0; rowIdx < numRows; rowIdx++ {
 			dLookUpKey, dHashKey, err := iw.constructDatumLookupKey(task, chkIdx, rowIdx)
 			if err != nil {
 				if terror.ErrorEqual(err, types.ErrWrongValue) {
@@ -632,15 +632,15 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*IndexJoi
 	return lookUpContents, nil
 }
 
-func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, rowIdx int) ([]types.Datum, []types.Datum, error) {
+func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, rowIdx int) (dLookupKey, dHashKey []types.Datum, err error) {
 	if task.outerMatch != nil && !task.outerMatch[chkIdx][rowIdx] {
 		return nil, nil, nil
 	}
 	outerRow := task.outerResult.GetChunk(chkIdx).GetRow(rowIdx)
 	sc := iw.ctx.GetSessionVars().StmtCtx
 	keyLen := len(iw.KeyCols)
-	dLookupKey := make([]types.Datum, 0, keyLen)
-	dHashKey := make([]types.Datum, 0, len(iw.HashCols))
+	dLookupKey = make([]types.Datum, 0, keyLen)
+	dHashKey = make([]types.Datum, 0, len(iw.HashCols))
 	for i, hashCol := range iw.outerCtx.HashCols {
 		outerValue := outerRow.GetDatum(hashCol, iw.outerCtx.RowTypes[hashCol])
 		// Join-on-condition can be promised to be equal-condition in
@@ -697,7 +697,7 @@ func (iw *innerWorker) sortAndDedupLookUpContents(lookUpContents []*IndexJoinLoo
 }
 
 func compareRow(sc *stmtctx.StatementContext, left, right []types.Datum, ctors []collate.Collator) int {
-	for idx := range left {
+	for idx := 0; idx < len(left); idx++ {
 		cmp, err := left[idx].Compare(sc.TypeCtx(), &right[idx], ctors[idx])
 		// We only compare rows with the same type, no error to return.
 		terror.Log(err)
@@ -758,9 +758,9 @@ func (iw *innerWorker) buildLookUpMap(task *lookUpJoinTask) error {
 	}
 	keyBuf := make([]byte, 0, 64)
 	valBuf := make([]byte, 8)
-	for i := range task.innerResult.NumChunks() {
+	for i := 0; i < task.innerResult.NumChunks(); i++ {
 		chk := task.innerResult.GetChunk(i)
-		for j := range chk.NumRows() {
+		for j := 0; j < chk.NumRows(); j++ {
 			innerRow := chk.GetRow(j)
 			if iw.hasNullInJoinKey(innerRow) {
 				continue
@@ -785,7 +785,12 @@ func (iw *innerWorker) buildLookUpMap(task *lookUpJoinTask) error {
 }
 
 func (iw *innerWorker) hasNullInJoinKey(row chunk.Row) bool {
-	return slices.ContainsFunc(iw.HashCols, row.IsNull)
+	for _, ordinal := range iw.HashCols {
+		if row.IsNull(ordinal) {
+			return true
+		}
+	}
+	return false
 }
 
 // Close implements the Executor interface.

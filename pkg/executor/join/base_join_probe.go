@@ -196,7 +196,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 			j.selRows = j.selRows[:logicalRows]
 		} else {
 			j.selRows = make([]int, 0, logicalRows)
-			for i := range logicalRows {
+			for i := 0; i < logicalRows; i++ {
 				j.selRows = append(j.selRows, i)
 			}
 		}
@@ -213,7 +213,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	} else {
 		j.matchedRowsHashValue = make([]uint64, logicalRows)
 	}
-	for i := range int(j.ctx.partitionNumber) {
+	for i := 0; i < int(j.ctx.partitionNumber); i++ {
 		j.hashValues[i] = j.hashValues[i][:0]
 	}
 	if j.ctx.ProbeFilter != nil {
@@ -229,7 +229,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		} else {
 			j.nullKeyVector = make([]bool, physicalRows)
 		}
-		for i := range physicalRows {
+		for i := 0; i < physicalRows; i++ {
 			j.nullKeyVector[i] = false
 		}
 	}
@@ -238,7 +238,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	} else {
 		j.serializedKeys = make([][]byte, logicalRows)
 	}
-	for i := range logicalRows {
+	for i := 0; i < logicalRows; i++ {
 		j.serializedKeys[i] = j.serializedKeys[i][:0]
 	}
 	if j.ctx.ProbeFilter != nil {
@@ -259,7 +259,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	// Not all sqls need spill, so we initialize it at runtime, or there will be too many unnecessary memory allocations
 	// spillTriggered can only be set in build stage, so it's ok to get it without lock
 	if j.ctx.spillHelper.isSpillTriggered() && len(j.spillTmpChk) == 0 {
-		for range int(j.ctx.partitionNumber) {
+		for i := 0; i < int(j.ctx.partitionNumber); i++ {
 			j.spillTmpChk = append(j.spillTmpChk, chunk.NewChunkWithCapacity(j.ctx.spillHelper.probeSpillFieldTypes, spillChunkSize))
 		}
 	}
@@ -304,7 +304,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 	}
 
 	j.currentProbeRow = 0
-	for i := range int(j.ctx.partitionNumber) {
+	for i := 0; i < int(j.ctx.partitionNumber); i++ {
 		for index := range j.hashValues[i] {
 			j.matchedRowsHeaders[j.hashValues[i][index].pos] = j.ctx.hashTableContext.lookup(i, j.hashValues[i][index].hashValue)
 		}
@@ -332,7 +332,7 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 	colNum := chk.NumCols()
 	if j.usedColIdx == nil {
 		j.usedColIdx = make([]int, 0, colNum-2)
-		for i := range colNum - 2 {
+		for i := 0; i < colNum-2; i++ {
 			j.usedColIdx = append(j.usedColIdx, i+2)
 		}
 	}
@@ -344,7 +344,7 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 		j.selRows = j.selRows[:logicalRows]
 	} else {
 		j.selRows = make([]int, 0, logicalRows)
-		for i := range logicalRows {
+		for i := 0; i < logicalRows; i++ {
 			j.selRows = append(j.selRows, i)
 		}
 	}
@@ -367,7 +367,7 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 		j.matchedRowsHashValue = make([]uint64, logicalRows)
 	}
 
-	for i := range int(j.ctx.partitionNumber) {
+	for i := 0; i < int(j.ctx.partitionNumber); i++ {
 		j.hashValues[i] = j.hashValues[i][:0]
 	}
 
@@ -377,7 +377,7 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 		j.serializedKeys = make([][]byte, logicalRows)
 	}
 
-	for i := range logicalRows {
+	for i := 0; i < logicalRows; i++ {
 		j.serializedKeys[i] = j.serializedKeys[i][:0]
 	}
 
@@ -422,7 +422,7 @@ func (j *baseJoinProbe) SpillRemainingProbeChunks() error {
 		return nil
 	}
 
-	for i := range int(j.ctx.partitionNumber) {
+	for i := 0; i < int(j.ctx.partitionNumber); i++ {
 		if j.spillTmpChk[i].NumRows() > 0 {
 			err := j.ctx.spillHelper.spillProbeChk(int(j.workID), i, j.spillTmpChk[i])
 			if err != nil {
@@ -527,7 +527,7 @@ func (j *baseJoinProbe) appendBuildRowToChunkInternal(chk *chunk.Chunk, usedCols
 		}
 		return
 	}
-	for i := range j.nextCachedBuildRowIndex {
+	for i := 0; i < j.nextCachedBuildRowIndex; i++ {
 		if j.cachedBuildRows[i].buildRowOffset == 0 {
 			j.ctx.hashTableMeta.advanceToRowData(&j.cachedBuildRows[i])
 		}
@@ -561,12 +561,12 @@ func (j *baseJoinProbe) appendBuildRowToChunkInternal(chk *chunk.Chunk, usedCols
 			currentColumn = chk.Column(indexInDstChk)
 			readNullMapThreadSafe := meta.isReadNullMapThreadSafe(columnIndex)
 			if readNullMapThreadSafe {
-				for index := range j.nextCachedBuildRowIndex {
+				for index := 0; index < j.nextCachedBuildRowIndex; index++ {
 					currentColumn.AppendNullBitmap(!meta.isColumnNull(*(*unsafe.Pointer)(unsafe.Pointer(&j.cachedBuildRows[index].buildRowStart)), columnIndex))
 					j.cachedBuildRows[index].buildRowOffset = chunk.AppendCellFromRawData(currentColumn, *(*unsafe.Pointer)(unsafe.Pointer(&j.cachedBuildRows[index].buildRowStart)), j.cachedBuildRows[index].buildRowOffset)
 				}
 			} else {
-				for index := range j.nextCachedBuildRowIndex {
+				for index := 0; index < j.nextCachedBuildRowIndex; index++ {
 					currentColumn.AppendNullBitmap(!meta.isColumnNullThreadSafe(*(*unsafe.Pointer)(unsafe.Pointer(&j.cachedBuildRows[index].buildRowStart)), columnIndex))
 					j.cachedBuildRows[index].buildRowOffset = chunk.AppendCellFromRawData(currentColumn, *(*unsafe.Pointer)(unsafe.Pointer(&j.cachedBuildRows[index].buildRowStart)), j.cachedBuildRows[index].buildRowOffset)
 				}
@@ -574,12 +574,12 @@ func (j *baseJoinProbe) appendBuildRowToChunkInternal(chk *chunk.Chunk, usedCols
 		} else {
 			// not used so don't need to insert into chk, but still need to advance rowData
 			if meta.columnsSize[columnIndex] < 0 {
-				for index := range j.nextCachedBuildRowIndex {
+				for index := 0; index < j.nextCachedBuildRowIndex; index++ {
 					size := *(*uint32)(unsafe.Add(*(*unsafe.Pointer)(unsafe.Pointer(&j.cachedBuildRows[index].buildRowStart)), j.cachedBuildRows[index].buildRowOffset))
 					j.cachedBuildRows[index].buildRowOffset += sizeOfElementSize + int(size)
 				}
 			} else {
-				for index := range j.nextCachedBuildRowIndex {
+				for index := 0; index < j.nextCachedBuildRowIndex; index++ {
 					j.cachedBuildRows[index].buildRowOffset += meta.columnsSize[columnIndex]
 				}
 			}
@@ -751,11 +751,11 @@ func NewJoinProbe(ctx *HashJoinCtxV2, workID uint, joinType logicalop.JoinType, 
 	base.matchedRowsHeaders = make([]taggedPtr, 0, chunk.InitialCapacity)
 	base.matchedRowsHashValue = make([]uint64, 0, chunk.InitialCapacity)
 	base.selRows = make([]int, 0, chunk.InitialCapacity)
-	for i := range chunk.InitialCapacity {
+	for i := 0; i < chunk.InitialCapacity; i++ {
 		base.selRows = append(base.selRows, i)
 	}
 	base.hashValues = make([][]posAndHashValue, ctx.partitionNumber)
-	for i := range int(ctx.partitionNumber) {
+	for i := 0; i < int(ctx.partitionNumber); i++ {
 		base.hashValues[i] = make([]posAndHashValue, 0, chunk.InitialCapacity)
 	}
 	base.serializedKeys = make([][]byte, 0, chunk.InitialCapacity)

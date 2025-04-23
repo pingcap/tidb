@@ -202,7 +202,7 @@ AddLoop:
 
 	num = 100
 	// add some rows
-	for i := range num {
+	for i := 0; i < num; i++ {
 		tk.MustExec("insert into t2 values (?, ?, ?, ?)", i, i, i, i)
 	}
 
@@ -275,10 +275,10 @@ func TestDropColumn(t *testing.T) {
 	ddlDone := make(chan error, num)
 
 	testddlutil.ExecMultiSQLInGoroutine(store, "test", multiDDL, ddlDone)
-	for range num {
+	for i := 0; i < num; i++ {
 		testddlutil.ExecMultiSQLInGoroutine(store, "test", []string{"insert into t2 set c1 = 1, c2 = 1, c3 = 1, c4 = 1"}, dmlDone)
 	}
-	for range num {
+	for i := 0; i < num; i++ {
 		err := <-ddlDone
 		require.NoError(t, err)
 	}
@@ -625,7 +625,7 @@ func TestModifyColumnReorgCheckpoint(t *testing.T) {
 	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1;")
 	tk.MustExec("create table t (a int primary key, b bigint);")
 	rowCnt := 10
-	for i := range rowCnt {
+	for i := 0; i < rowCnt; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i*10000, i*10000))
 	}
 	splitTableSQL := fmt.Sprintf("split table t between (0) and (%d*10000) regions %d;", rowCnt, rowCnt)

@@ -415,7 +415,7 @@ func CompareIndexAndVal(tc types.Context, rowVal types.Datum, idxVal types.Datum
 		// If it is multi-valued index, we should check the JSON contains the indexed value.
 		bj := rowVal.GetMysqlJSON()
 		count := bj.GetElemCount()
-		for elemIdx := range count {
+		for elemIdx := 0; elemIdx < count; elemIdx++ {
 			jsonDatum := types.NewJSONDatum(bj.ArrayGetElem(elemIdx))
 			cmpRes, err = jsonDatum.Compare(tc, &idxVal, collate.GetBinaryCollator())
 			if err != nil {

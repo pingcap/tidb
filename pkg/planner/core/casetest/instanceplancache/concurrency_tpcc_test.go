@@ -260,7 +260,7 @@ func TestInstancePlanCacheConcurrencyTPCC(t *testing.T) {
 
 	nTxn := 300
 	stmts := make([]*testStmt, 0, nTxn*5)
-	for range nTxn {
+	for i := 0; i < nTxn; i++ {
 		switch rand.Intn(4) {
 		case 0:
 			stmts = append(stmts, genNewOrder()...)
@@ -323,7 +323,7 @@ func prepareTPCC(tk *testkit.TestKit) {
 	}
 
 	districts := nWarehouse * districtPerWarehouse
-	for i := range districts {
+	for i := 0; i < districts; i++ {
 		warehouse := (i/districtPerWarehouse)%nWarehouse + 1
 		district := i%districtPerWarehouse + 1
 		for c := 1; c <= customerPerDistrict; c++ {

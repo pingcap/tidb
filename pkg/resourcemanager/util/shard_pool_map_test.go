@@ -26,7 +26,7 @@ import (
 func TestShardPoolMap(t *testing.T) {
 	rc := 10
 	pm := NewShardPoolMap()
-	for i := range rc {
+	for i := 0; i < rc; i++ {
 		id := strconv.FormatInt(int64(i), 10)
 		require.NoError(t, pm.Add(id, &PoolContainer{Pool: NewMockGPool(id, 10), Component: DDL}))
 	}
@@ -39,7 +39,7 @@ func TestShardPoolMap(t *testing.T) {
 	})
 	require.Equal(t, rc, int(cnt.Load()))
 
-	for i := range rc {
+	for i := 0; i < rc; i++ {
 		id := strconv.FormatInt(int64(i), 10)
 		pm.Del(id)
 	}

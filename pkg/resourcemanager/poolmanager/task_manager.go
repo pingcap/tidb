@@ -93,7 +93,7 @@ type TaskManager struct {
 // NewTaskManager create a new pool task manager.
 func NewTaskManager(c int32) TaskManager {
 	task := make([]TaskStatusContainer, shard)
-	for i := range shard {
+	for i := 0; i < shard; i++ {
 		task[i] = TaskStatusContainer{
 			stats: make(map[uint64]*Meta),
 		}

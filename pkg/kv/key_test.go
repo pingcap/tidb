@@ -381,10 +381,10 @@ var inputs = []struct {
 func memAwareIntMap(size int, handles []Handle) int {
 	var x int
 	m := NewMemAwareHandleMap[int]()
-	for j := range size {
+	for j := 0; j < size; j++ {
 		m.Set(handles[j], j)
 	}
-	for j := range size {
+	for j := 0; j < size; j++ {
 		x, _ = m.Get(handles[j])
 	}
 	return x
@@ -393,11 +393,11 @@ func memAwareIntMap(size int, handles []Handle) int {
 func nativeIntMap(size int, handles []Handle) int {
 	var x int
 	m := make(map[Handle]int)
-	for j := range size {
+	for j := 0; j < size; j++ {
 		m[handles[j]] = j
 	}
 
-	for j := range size {
+	for j := 0; j < size; j++ {
 		x = m[handles[j]]
 	}
 	return x
@@ -407,7 +407,7 @@ func BenchmarkMemAwareHandleMap(b *testing.B) {
 	sc := stmtctx.NewStmtCtx()
 	for _, s := range inputs {
 		handles := make([]Handle, s.input)
-		for i := range s.input {
+		for i := 0; i < s.input; i++ {
 			if i%2 == 0 {
 				handles[i] = IntHandle(i)
 			} else {
@@ -429,7 +429,7 @@ func BenchmarkNativeHandleMap(b *testing.B) {
 	sc := stmtctx.NewStmtCtx()
 	for _, s := range inputs {
 		handles := make([]Handle, s.input)
-		for i := range s.input {
+		for i := 0; i < s.input; i++ {
 			if i%2 == 0 {
 				handles[i] = IntHandle(i)
 			} else {

@@ -533,7 +533,7 @@ func BenchmarkInsertCacheDefaultExpr(b *testing.B) {
 	tk.MustExec("create sequence seq")
 	tk.MustExec("create table t(a int default next value for seq)")
 	sql := "insert into t values "
-	for i := range 1000 {
+	for i := 0; i < 1000; i++ {
 		if i == 0 {
 			sql += "()"
 		} else {

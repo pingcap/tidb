@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"slices"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws/awserr"
@@ -198,8 +197,10 @@ func IsContextCanceledError(err error) bool {
 	// 	awserr.New("RequestCanceled", "request context canceled", err) and the nested err is context.Canceled
 	// 	awserr.New( "MultipartUpload", "upload multipart failed", err) and the nested err is the upper one
 	if v, ok := err.(awserr.BatchedErrors); ok {
-		if slices.ContainsFunc(v.OrigErrs(), IsContextCanceledError) {
-			return true
+		for _, origErr := range v.OrigErrs() {
+			if IsContextCanceledError(origErr) {
+				return true
+			}
 		}
 	}
 	return false

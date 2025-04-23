@@ -31,7 +31,7 @@ type schemaGenerator struct {
 func generateKeys4Schema(schema *Schema) {
 	keyCount := len(schema.Columns) - 1
 	keys := make([]KeyInfo, 0, keyCount)
-	for i := range keyCount {
+	for i := 0; i < keyCount; i++ {
 		keys = append(keys, []*Column{schema.Columns[i]})
 	}
 	schema.PKOrUK = keys
@@ -40,7 +40,7 @@ func generateKeys4Schema(schema *Schema) {
 // generateSchema will generate a schema for test. Used only in this file.
 func (s *schemaGenerator) generateSchema(colCount int) *Schema {
 	cols := make([]*Column, 0, colCount)
-	for range colCount {
+	for i := 0; i < colCount; i++ {
 		s.colID++
 		cols = append(cols, &Column{
 			UniqueID: s.colID,
@@ -55,7 +55,7 @@ func TestSchemaClone(t *testing.T) {
 	generateKeys4Schema(schema)
 
 	uniKeys := make([]KeyInfo, 0, len(schema.Columns)-1)
-	for i := range len(schema.Columns) - 1 {
+	for i := 0; i < len(schema.Columns)-1; i++ {
 		uniKeys = append(uniKeys, []*Column{schema.Columns[i]})
 	}
 	schema.SetUniqueKeys(uniKeys)
@@ -122,7 +122,7 @@ func TestSchemaColumnsIndices(t *testing.T) {
 	colOutSchema := &Column{
 		UniqueID: 100,
 	}
-	for i := range len(schema.Columns) - 1 {
+	for i := 0; i < len(schema.Columns)-1; i++ {
 		colIndices := schema.ColumnsIndices([]*Column{schema.Columns[i], schema.Columns[i+1]})
 		for j, res := range colIndices {
 			require.Equal(t, i+j, res)
@@ -154,10 +154,10 @@ func TestSchemaMergeSchema(t *testing.T) {
 	require.Equal(t, rSchema.String(), MergeSchema(nil, rSchema).String())
 
 	schema := MergeSchema(lSchema, rSchema)
-	for i := range lSchema.Columns {
+	for i := 0; i < len(lSchema.Columns); i++ {
 		require.Equal(t, lSchema.Columns[i].UniqueID, schema.Columns[i].UniqueID)
 	}
-	for i := range rSchema.Columns {
+	for i := 0; i < len(rSchema.Columns); i++ {
 		require.Equal(t, rSchema.Columns[i].UniqueID, schema.Columns[i+len(lSchema.Columns)].UniqueID)
 	}
 }

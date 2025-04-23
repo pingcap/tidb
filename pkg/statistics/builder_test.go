@@ -102,7 +102,7 @@ func BenchmarkBuildHistAndTopNWithLowNDV(b *testing.B) {
 		data = append(data, &SampleItem{Value: d})
 	}
 	end := total / 2
-	for range end {
+	for i := 0; i < end; i++ {
 		total++
 		d := types.NewIntDatum(rand.Int63n(50))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
@@ -110,7 +110,7 @@ func BenchmarkBuildHistAndTopNWithLowNDV(b *testing.B) {
 		data = append(data, &SampleItem{Value: d})
 	}
 	end = cnt - total
-	for range end {
+	for i := 0; i < end; i++ {
 		d := types.NewIntDatum(rand.Int63n(100))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(b, err)

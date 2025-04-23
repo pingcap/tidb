@@ -15,8 +15,6 @@
 package context
 
 import (
-	"maps"
-
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -46,6 +44,8 @@ func (r *RangerContext) Detach(staticExprCtx exprctx.BuildContext) *RangerContex
 	newCtx := *r
 	newCtx.ExprCtx = staticExprCtx
 	newCtx.OptimizerFixControl = make(map[uint64]string, len(r.OptimizerFixControl))
-	maps.Copy(newCtx.OptimizerFixControl, r.OptimizerFixControl)
+	for k, v := range r.OptimizerFixControl {
+		newCtx.OptimizerFixControl[k] = v
+	}
 	return &newCtx
 }

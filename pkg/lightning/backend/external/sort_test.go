@@ -82,7 +82,7 @@ func TestGlobalSortLocalBasic(t *testing.T) {
 	writer := NewEngineWriter(w)
 	kvCnt := rand.Intn(10) + 10000
 	kvs := make([]common.KvPair, kvCnt)
-	for i := range kvCnt {
+	for i := 0; i < kvCnt; i++ {
 		kvs[i] = common.KvPair{
 			Key: []byte(uuid.New().String()),
 			Val: []byte("56789"),
@@ -118,7 +118,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	writer := NewEngineWriter(w)
 	kvCnt := rand.Intn(10) + 10000
 	kvs := make([]common.KvPair, kvCnt)
-	for i := range kvCnt {
+	for i := 0; i < kvCnt; i++ {
 		kvs[i] = common.KvPair{
 			Key: []byte(uuid.New().String()),
 			Val: []byte("56789"),
@@ -227,7 +227,7 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 	writer := NewEngineWriter(w)
 	kvCnt := rand.Intn(10) + 10000
 	kvs := make([]common.KvPair, kvCnt)
-	for i := range kvCnt {
+	for i := 0; i < kvCnt; i++ {
 		kvs[i] = common.KvPair{
 			Key: []byte(uuid.New().String()),
 			Val: []byte("56789"),

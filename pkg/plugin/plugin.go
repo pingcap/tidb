@@ -16,10 +16,8 @@ package plugin
 
 import (
 	"context"
-	"maps"
 	"path/filepath"
 	gplugin "plugin"
-	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -59,9 +57,11 @@ func (p *plugins) clone() *plugins {
 		dyingPlugins: make([]Plugin, len(p.dyingPlugins)),
 	}
 	for key, value := range p.plugins {
-		np.plugins[key] = slices.Clone(value)
+		np.plugins[key] = append([]Plugin(nil), value...)
 	}
-	maps.Copy(np.versions, p.versions)
+	for key, value := range p.versions {
+		np.versions[key] = value
+	}
 	copy(np.dyingPlugins, p.dyingPlugins)
 	return np
 }
@@ -144,7 +144,9 @@ func Load(ctx context.Context, cfg Config) (err error) {
 	}
 
 	// Setup component version info for plugin running env.
-	maps.Copy(tiPlugins.versions, cfg.EnvVersion)
+	for component, version := range cfg.EnvVersion {
+		tiPlugins.versions[component] = version
+	}
 
 	// Load plugin dl & manifest.
 	for _, pluginID := range cfg.Plugins {

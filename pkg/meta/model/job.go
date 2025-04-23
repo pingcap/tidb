@@ -113,6 +113,7 @@ const (
 	ActionRemovePartitioning     ActionType = 72
 	ActionAddColumnarIndex       ActionType = 73
 	ActionModifyEngineAttribute  ActionType = 74
+	ActionAlterTableMode         ActionType = 75
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -186,6 +187,7 @@ var ActionMap = map[ActionType]string{
 	ActionRemovePartitioning:            "alter table remove partitioning",
 	ActionAddColumnarIndex:              "add columnar index",
 	ActionModifyEngineAttribute:         "modify engine attribute",
+	ActionAlterTableMode:                "alter table mode",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -559,9 +561,12 @@ func (job *Job) decodeArgs(args ...any) error {
 		return errors.Trace(err)
 	}
 
-	sz := min(len(rawArgs), len(args))
+	sz := len(rawArgs)
+	if sz > len(args) {
+		sz = len(args)
+	}
 
-	for i := range sz {
+	for i := 0; i < sz; i++ {
 		if err := json.Unmarshal(rawArgs[i], args[i]); err != nil {
 			return errors.Trace(err)
 		}

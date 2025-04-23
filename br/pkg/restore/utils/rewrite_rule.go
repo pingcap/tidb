@@ -108,26 +108,29 @@ func (r *RewriteRules) Append(other RewriteRules) {
 	r.Data = append(r.Data, other.Data...)
 }
 
-func (r *RewriteRules) SetTimeRangeFilter(cfName string) error {
+func SetTimeRangeFilter(tableRules *RewriteRules,
+	fileRule *import_sstpb.RewriteRule, cfName string) error {
 	// for some sst files like db restore copy ssts, we don't need to set the time range filter
-	if !r.HasSetTs() {
+	if !tableRules.HasSetTs() {
 		return nil
 	}
 
 	var ignoreBeforeTs uint64
 	switch {
 	case strings.Contains(cfName, DefaultCFName):
-		ignoreBeforeTs = min(r.ShiftStartTs, r.StartTs)
+		// for default cf, shift start ts could be less than start ts
+		// this could happen when large kv txn happen after small kv txn.
+		// use the start ts to filter out irrelevant data for default cf is more safe
+		ignoreBeforeTs = min(tableRules.ShiftStartTs, tableRules.StartTs)
 	case strings.Contains(cfName, WriteCFName):
-		ignoreBeforeTs = r.StartTs
+		ignoreBeforeTs = tableRules.StartTs
 	default:
 		return errors.Errorf("unsupported column family type: %s", cfName)
 	}
 
-	for _, rule := range r.Data {
-		rule.IgnoreBeforeTimestamp = ignoreBeforeTs
-		rule.IgnoreAfterTimestamp = r.RestoredTs
-	}
+	// Set both timestamps since file's range needs filtering
+	fileRule.IgnoreBeforeTimestamp = ignoreBeforeTs
+	fileRule.IgnoreAfterTimestamp = tableRules.RestoredTs
 	return nil
 }
 

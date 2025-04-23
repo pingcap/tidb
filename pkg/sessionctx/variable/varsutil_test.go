@@ -99,7 +99,7 @@ func TestNewSessionVars(t *testing.T) {
 }
 
 func assertFieldsGreaterThanZero(t *testing.T, val reflect.Value) {
-	for i := range val.NumField() {
+	for i := 0; i < val.NumField(); i++ {
 		fieldVal := val.Field(i)
 		require.Greater(t, fieldVal.Int(), int64(0))
 	}

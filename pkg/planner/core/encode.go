@@ -185,7 +185,7 @@ func (pn *planEncoder) encodeCTEPlan() {
 		return
 	}
 	explainedCTEPlan := make(map[int]struct{})
-	for i := range pn.ctes {
+	for i := 0; i < len(pn.ctes); i++ {
 		x := (*CTEDefinition)(pn.ctes[i])
 		// skip if the CTE has been explained, the same CTE has same IDForStorage
 		if _, ok := explainedCTEPlan[x.CTE.IDForStorage]; ok {

@@ -391,13 +391,13 @@ func TestPrepareExecuteWithSQLHints(t *testing.T) {
 	for i, check := range hintChecks {
 		// common path
 		tk.MustExec(fmt.Sprintf("prepare stmt%d from 'select /*+ %s */ * from t'", i, check.hint))
-		for range 10 {
+		for j := 0; j < 10; j++ {
 			tk.MustQuery(fmt.Sprintf("execute stmt%d", i))
 			check.check(&tk.Session().GetSessionVars().StmtCtx.StmtHints)
 		}
 		// fast path
 		tk.MustExec(fmt.Sprintf("prepare fast%d from 'select /*+ %s */ * from t where a = 1'", i, check.hint))
-		for range 10 {
+		for j := 0; j < 10; j++ {
 			tk.MustQuery(fmt.Sprintf("execute fast%d", i))
 			check.check(&tk.Session().GetSessionVars().StmtCtx.StmtHints)
 		}

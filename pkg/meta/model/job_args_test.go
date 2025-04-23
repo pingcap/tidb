@@ -191,7 +191,7 @@ func TestBatchCreateTableArgs(t *testing.T) {
 	require.NoError(t, j2.Decode(getJobBytes(t, inArgs, JobVersion1, ActionCreateTables)))
 	args, err := GetBatchCreateTableArgs(j2)
 	require.NoError(t, err)
-	for i := range inArgs.Tables {
+	for i := 0; i < len(inArgs.Tables); i++ {
 		require.EqualValues(t, inArgs.Tables[i].TableInfo, args.Tables[i].TableInfo)
 		require.EqualValues(t, true, args.Tables[i].FKCheck)
 	}
@@ -1055,12 +1055,7 @@ func TestAddIndexArgs(t *testing.T) {
 		require.NoError(t, err)
 
 		a := args.IndexArgs[0]
-		// ColumnarIndexType is only used in JobVersion2
-		if v == JobVersion2 {
-			require.Equal(t, inArgs.IndexArgs[0].ColumnarIndexType, a.ColumnarIndexType)
-		} else {
-			require.Equal(t, ColumnarIndexTypeNA, a.ColumnarIndexType)
-		}
+		require.Equal(t, inArgs.IndexArgs[0].ColumnarIndexType, a.ColumnarIndexType)
 		require.Equal(t, inArgs.IndexArgs[0].IsColumnar, a.IsColumnar)
 		require.Equal(t, inArgs.IndexArgs[0].IndexName, a.IndexName)
 		require.Equal(t, inArgs.IndexArgs[0].IndexPartSpecifications, a.IndexPartSpecifications)

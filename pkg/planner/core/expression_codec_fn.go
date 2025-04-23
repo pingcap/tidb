@@ -399,7 +399,7 @@ func (h tidbCodecFuncHelper) decodeIndexKey(
 			return "", errors.Trace(err)
 		}
 		ds := make([]types.Datum, 0, len(colInfos))
-		for i := range colInfos {
+		for i := 0; i < len(colInfos); i++ {
 			d, err := tablecodec.DecodeColumnValue(values[i], tps[i], loc)
 			if err != nil {
 				return "", errors.Trace(err)
@@ -414,7 +414,7 @@ func (h tidbCodecFuncHelper) decodeIndexKey(
 		ret["table_id"] = tableID
 		ret["index_id"] = indexID
 		idxValMap := make(map[string]any, len(targetIndex.Columns))
-		for i := range targetIndex.Columns {
+		for i := 0; i < len(targetIndex.Columns); i++ {
 			dtStr, err := h.datumToJSONObject(&ds[i])
 			if err != nil {
 				return "", errors.Trace(err)

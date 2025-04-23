@@ -49,7 +49,7 @@ func NewPBPlanBuilder(sctx base.PlanContext, is infoschema.InfoSchema, ranges []
 // Build builds physical plan from dag protocol buffers.
 func (b *PBPlanBuilder) Build(executors []*tipb.Executor) (p base.PhysicalPlan, err error) {
 	var src base.PhysicalPlan
-	for i := range executors {
+	for i := 0; i < len(executors); i++ {
 		curr, err := b.pbToPhysicalPlan(executors[i], src)
 		if err != nil {
 			return nil, errors.Trace(err)

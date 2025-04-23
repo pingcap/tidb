@@ -34,7 +34,7 @@ func TestConcurrentMap(t *testing.T) {
 	// Using go routines insert 1000 entries into the map.
 	go func() {
 		defer wg.Done()
-		for i := range iterations / 2 {
+		for i := 0; i < iterations/2; i++ {
 			// Add entry to map.
 			m.Insert(uint64(i%mod), &entry{chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(i)}, nil})
 		}
@@ -50,7 +50,7 @@ func TestConcurrentMap(t *testing.T) {
 	wg.Wait()
 
 	// check whether i exist in the map, surely
-	for i := range iterations {
+	for i := 0; i < iterations; i++ {
 		found := false
 		for en, ok := m.Get(uint64(i % mod)); en != nil; en = en.Next {
 			require.True(t, ok)
@@ -78,7 +78,7 @@ func TestConcurrentMapMemoryUsage(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		var memDelta int64
-		for i := range iterations / 2 {
+		for i := 0; i < iterations/2; i++ {
 			// Add entry to map.
 			memDelta += m.Insert(uint64(i*ShardCount), &entry{chunk.RowPtr{ChkIdx: uint32(i), RowIdx: uint32(i)}, nil})
 		}

@@ -119,7 +119,7 @@ func TestCTEExecError(t *testing.T) {
 	tk.MustExec("create table src(first int, second int);")
 
 	insertStr := fmt.Sprintf("insert into src values (%d, %d)", rand.Intn(1000), rand.Intn(1000))
-	for range 1000 {
+	for i := 0; i < 1000; i++ {
 		insertStr += fmt.Sprintf(",(%d, %d)", rand.Intn(1000), rand.Intn(1000))
 	}
 	insertStr += ";"
@@ -129,7 +129,7 @@ func TestCTEExecError(t *testing.T) {
 	// to increase the probability of reproducing the problem.
 	tk.MustExec("set tidb_max_chunk_size = 32")
 	tk.MustExec("set tidb_projection_concurrency = 20")
-	for range 10 {
+	for i := 0; i < 10; i++ {
 		err := tk.QueryToErr("with recursive cte(iter, first, second, result) as " +
 			"(select 1, first, second, first+second from src " +
 			" union all " +
@@ -188,7 +188,7 @@ func TestCTEShareCorColumn(t *testing.T) {
 	tk.MustExec("insert into t1 values(1, '2020-10-10');")
 	tk.MustExec("create table t2(c1 int, c2 date);")
 	tk.MustExec("insert into t2 values(1, '2020-10-10');")
-	for range 100 {
+	for i := 0; i < 100; i++ {
 		tk.MustQuery("with cte1 as (select t1.c1, (select t2.c2 from t2 where t2.c2 = str_to_date(t1.c2, '%Y-%m-%d')) from t1 inner join t2 on t1.c1 = t2.c1) select /*+ hash_join_build(alias1) */ * from cte1 alias1 inner join cte1 alias2 on alias1.c1 =   alias2.c1;").Check(testkit.Rows("1 2020-10-10 1 2020-10-10"))
 		tk.MustQuery("with cte1 as (select t1.c1, (select t2.c2 from t2 where t2.c2 = str_to_date(t1.c2, '%Y-%m-%d')) from t1 inner join t2 on t1.c1 = t2.c1) select /*+ hash_join_build(alias2) */ * from cte1 alias1 inner join cte1 alias2 on alias1.c1 =   alias2.c1;").Check(testkit.Rows("1 2020-10-10 1 2020-10-10"))
 	}

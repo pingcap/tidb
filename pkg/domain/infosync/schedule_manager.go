@@ -16,7 +16,6 @@ package infosync
 
 import (
 	"context"
-	"maps"
 	"sync"
 
 	pd "github.com/tikv/pd/client/http"
@@ -43,7 +42,9 @@ func (mm *mockScheduleManager) GetScheduleConfig(context.Context) (map[string]an
 	mm.Lock()
 
 	schedules := make(map[string]any)
-	maps.Copy(schedules, mm.schedules)
+	for key, values := range mm.schedules {
+		schedules[key] = values
+	}
 
 	mm.Unlock()
 	return schedules, nil
@@ -56,7 +57,9 @@ func (mm *mockScheduleManager) SetScheduleConfig(_ context.Context, config map[s
 	if mm.schedules == nil {
 		mm.schedules = make(map[string]any)
 	}
-	maps.Copy(mm.schedules, config)
+	for key, value := range config {
+		mm.schedules[key] = value
+	}
 
 	mm.Unlock()
 	return nil

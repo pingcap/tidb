@@ -72,8 +72,8 @@ func TestEarlyClose(t *testing.T) {
 
 	N := 100
 	// Insert N rows.
-	values := make([]string, 0, N)
-	for i := range N {
+	var values []string
+	for i := 0; i < N; i++ {
 		values = append(values, fmt.Sprintf("(%d)", i))
 	}
 	tk.MustExec("insert earlyclose values " + strings.Join(values, ","))
@@ -89,7 +89,7 @@ func TestEarlyClose(t *testing.T) {
 	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), N/2)
 
 	ctx := context.Background()
-	for range N / 2 {
+	for i := 0; i < N/2; i++ {
 		rss, err := tk.Session().Execute(ctx, "select * from earlyclose order by id")
 		require.NoError(t, err)
 		rs := rss[0]
@@ -654,8 +654,8 @@ func TestIndexDoubleReadClose(t *testing.T) {
 	tk.MustExec("create table dist (id int primary key, c_idx int, c_col int, index (c_idx))")
 
 	// Insert 100 rows.
-	values := make([]string, 0, 100)
-	for i := range 100 {
+	var values []string
+	for i := 0; i < 100; i++ {
 		values = append(values, fmt.Sprintf("(%d, %d, %d)", i, i, i))
 	}
 	tk.MustExec("insert dist values " + strings.Join(values, ","))
@@ -786,7 +786,7 @@ func HelperTestAdminShowNextID(t *testing.T, store kv.Storage, str string) {
 	r = tk.MustQuery(str + " t next_row_id")
 	r.Check(testkit.Rows("test t _tidb_rowid 11 _TIDB_ROWID"))
 	// Row ID is original + step.
-	for range int(10) {
+	for i := 0; i < int(10); i++ {
 		tk.MustExec("insert into t values(10000, 1)")
 	}
 	r = tk.MustQuery(str + " t next_row_id")
@@ -880,7 +880,7 @@ func TestPrepareMaxParamCountCheck(t *testing.T) {
 func generateBatchSQL(paramCount int) (sql string, paramSlice []any) {
 	params := make([]any, 0, paramCount)
 	placeholders := make([]string, 0, paramCount)
-	for i := range paramCount {
+	for i := 0; i < paramCount; i++ {
 		params = append(params, i)
 		placeholders = append(placeholders, "(?)")
 	}
@@ -944,7 +944,7 @@ func TestBatchInsertDelete(t *testing.T) {
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
 	// for on duplicate key
-	for i := range 320 {
+	for i := 0; i < 320; i++ {
 		tk.MustExec(fmt.Sprintf("insert into batch_insert_on_duplicate values(%d, %d);", i, i))
 	}
 	r = tk.MustQuery("select count(*) from batch_insert_on_duplicate;")
@@ -1006,7 +1006,7 @@ func TestBatchInsertDelete(t *testing.T) {
 	tk.MustExec("create table com_batch_insert (c int)")
 	sql := "insert into com_batch_insert values "
 	values := make([]string, 0, 200)
-	for range 200 {
+	for i := 0; i < 200; i++ {
 		values = append(values, "(1)")
 	}
 	sql = sql + strings.Join(values, ",")
@@ -1081,7 +1081,7 @@ func TestCoprocessorPriority(t *testing.T) {
 	tk.MustExec("insert into t values (1)")
 
 	// Insert some data to make sure plan build IndexLookup for t1.
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t1 values (%d, %d)", i, i))
 	}
 
@@ -1166,13 +1166,13 @@ func TestPessimisticConflictRetryAutoID(t *testing.T) {
 	var err []error
 	wg.Add(concurrency)
 	err = make([]error, concurrency)
-	for i := range concurrency {
+	for i := 0; i < concurrency; i++ {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
 		tk.MustExec("set tidb_txn_mode = 'pessimistic'")
 		tk.MustExec("set autocommit = 1")
 		go func(idx int) {
-			for i := range 10 {
+			for i := 0; i < 10; i++ {
 				sql := fmt.Sprintf("insert into t(idx, c) values (1, %[1]d) on duplicate key update c = %[1]d", i)
 				_, e := tk.Exec(sql)
 				if e != nil {
@@ -1204,11 +1204,11 @@ func TestInsertFromSelectConflictRetryAutoID(t *testing.T) {
 	wgCount := concurrency + 1
 	wg.Add(wgCount)
 	err = make([]error, concurrency)
-	for i := range concurrency {
+	for i := 0; i < concurrency; i++ {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
 		go func(idx int) {
-			for i := range 10 {
+			for i := 0; i < 10; i++ {
 				sql := fmt.Sprintf("insert into t(idx, c) select 1 as idx, 1 as c from src on duplicate key update c = %[1]d", i)
 				_, e := tk.Exec(sql)
 				if e != nil {
@@ -1224,7 +1224,7 @@ func TestInsertFromSelectConflictRetryAutoID(t *testing.T) {
 	go func() {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
-		for range 10 {
+		for i := 0; i < 10; i++ {
 			_, e := tk.Exec("insert into src values (null);")
 			if e != nil {
 				insertErr = e

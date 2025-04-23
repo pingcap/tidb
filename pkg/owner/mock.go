@@ -195,7 +195,7 @@ func (m *mockManager) BreakCampaignLoop() {
 func mockDelOwnerKey(mockCal, ownerKey string, m *ownerManager) error {
 	checkIsOwner := func(m *ownerManager, checkTrue bool) error {
 		// 5s
-		for range 100 {
+		for i := 0; i < 100; i++ {
 			if m.IsOwner() == checkTrue {
 				break
 			}

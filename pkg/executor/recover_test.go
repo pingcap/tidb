@@ -676,12 +676,12 @@ func TestFlashbackSchemaWithManyTables(t *testing.T) {
 	require.NoError(t, gcutil.EnableGC(tk.Session()))
 
 	var wg util.WaitGroupWrapper
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		idx := i
 		wg.Run(func() {
 			tkit := testkit.NewTestKit(t, store)
 			tkit.MustExec("use many_tables")
-			for j := range 70 {
+			for j := 0; j < 70; j++ {
 				tkit.MustExec(fmt.Sprintf("create table t_%d_%d (a int)", idx, j))
 			}
 		})
@@ -740,12 +740,12 @@ func TestFlashbackClusterWithManyDBs(t *testing.T) {
 
 	var wg sync.WaitGroup
 	dbPerWorker := 10
-	for i := range 40 {
+	for i := 0; i < 40; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			tk2 := testkit.NewTestKit(t, store)
-			for j := range dbPerWorker {
+			for j := 0; j < dbPerWorker; j++ {
 				dbName := fmt.Sprintf("db_%d", i*dbPerWorker+j)
 				tk2.MustExec(fmt.Sprintf("create database %s", dbName))
 			}

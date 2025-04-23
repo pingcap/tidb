@@ -1056,7 +1056,10 @@ func (p *PhysicalSort) GetPlanCostVer1(taskType property.TaskType, option *optim
 
 // GetCost computes cost of TopN operator itself.
 func (p *PhysicalTopN) GetCost(count float64, isRoot bool) float64 {
-	heapSize := max(float64(p.Offset+p.Count), 2.0)
+	heapSize := float64(p.Offset + p.Count)
+	if heapSize < 2.0 {
+		heapSize = 2.0
+	}
 	sessVars := p.SCtx().GetSessionVars()
 	// Ignore the cost of `doCompaction` in current implementation of `TopNExec`, since it is the
 	// special side-effect of our Chunk format in TiDB layer, which may not exist in coprocessor's

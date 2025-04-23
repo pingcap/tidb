@@ -232,7 +232,7 @@ func DumpBinaryRow(buffer []byte, columns []*Info, row chunk.Row, d *ResultEncod
 	buffer = append(buffer, mysql.OKHeader)
 	nullBitmapOff := len(buffer)
 	numBytes4Null := (len(columns) + 7 + 2) / 8
-	for range numBytes4Null {
+	for i := 0; i < numBytes4Null; i++ {
 		buffer = append(buffer, 0)
 	}
 	for i := range columns {

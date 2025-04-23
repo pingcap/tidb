@@ -225,7 +225,7 @@ func TestMakeTableRegionsSplitLargeFile(t *testing.T) {
 	// test canceled context will not panic
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	for range 20 {
+	for i := 0; i < 20; i++ {
 		_, _ = MakeTableRegions(ctx, divideConfig)
 	}
 }

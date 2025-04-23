@@ -135,7 +135,7 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 }
 
 // NewCMSketchAndTopN returns a new CM sketch with TopN elements, the estimate NDV and the scale ratio.
-func NewCMSketchAndTopN(d, w int32, sample [][]byte, numTop uint32, rowCount uint64) (*CMSketch, *TopN, uint64, uint64) {
+func NewCMSketchAndTopN(d, w int32, sample [][]byte, numTop uint32, rowCount uint64) (c *CMSketch, t *TopN, estimateNDV, scaleRatio uint64) {
 	if rowCount == 0 || len(sample) == 0 {
 		return nil, nil, 0, 0
 	}
@@ -143,9 +143,9 @@ func NewCMSketchAndTopN(d, w int32, sample [][]byte, numTop uint32, rowCount uin
 	// rowCount is not a accurate value when fast analyzing
 	// In some cases, if user triggers fast analyze when rowCount is close to sampleSize, unexpected bahavior might happen.
 	rowCount = max(rowCount, uint64(len(sample)))
-	estimateNDV, scaleRatio := calculateEstimateNDV(helper, rowCount)
+	estimateNDV, scaleRatio = calculateEstimateNDV(helper, rowCount)
 	defaultVal := calculateDefaultVal(helper, estimateNDV, scaleRatio, rowCount)
-	c, t := buildCMSAndTopN(helper, d, w, scaleRatio, defaultVal)
+	c, t = buildCMSAndTopN(helper, d, w, scaleRatio, defaultVal)
 	return c, t, estimateNDV, scaleRatio
 }
 
@@ -314,7 +314,10 @@ func (c *CMSketch) queryHashValue(sctx planctx.PlanContext, h1, h2 uint64) (resu
 		}
 	}
 	slices.Sort(vals)
-	res := min(vals[(c.depth-1)/2]+(vals[c.depth/2]-vals[(c.depth-1)/2])/2, minValue+temp)
+	res := vals[(c.depth-1)/2] + (vals[c.depth/2]-vals[(c.depth-1)/2])/2
+	if res > minValue+temp {
+		res = minValue + temp
+	}
 	if res == 0 {
 		return uint64(0)
 	}
@@ -544,7 +547,7 @@ func (c *TopN) String() string {
 	builder := &strings.Builder{}
 	fmt.Fprintf(builder, "TopN{length: %v, ", len(c.TopN))
 	fmt.Fprint(builder, "[")
-	for i := range c.TopN {
+	for i := 0; i < len(c.TopN); i++ {
 		fmt.Fprintf(builder, "(%v, %v)", c.TopN[i].Encoded, c.TopN[i].Count)
 		if i+1 != len(c.TopN) {
 			fmt.Fprint(builder, ", ")
@@ -574,7 +577,7 @@ func (c *TopN) DecodedString(ctx sessionctx.Context, colTypes []byte) (string, e
 	fmt.Fprintf(builder, "TopN{length: %v, ", len(c.TopN))
 	fmt.Fprint(builder, "[")
 	var tmpDatum types.Datum
-	for i := range c.TopN {
+	for i := 0; i < len(c.TopN); i++ {
 		tmpDatum.SetBytes(c.TopN[i].Encoded)
 		valStr, err := ValueToString(ctx.GetSessionVars(), &tmpDatum, len(colTypes), colTypes)
 		if err != nil {
@@ -766,7 +769,7 @@ func (c *TopN) RemoveVal(val []byte) {
 	if pos == -1 {
 		return
 	}
-	c.TopN = slices.Delete(c.TopN, pos, pos+1)
+	c.TopN = append(c.TopN[:pos], c.TopN[pos+1:]...)
 }
 
 // MemoryUsage returns the total memory usage of a topn.

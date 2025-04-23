@@ -160,35 +160,8 @@ func OpenParquetReader(
 	}, nil
 }
 
-// readParquetFileRowCount reads the parquet file row count.
+// ReadParquetFileRowCountByFile reads the parquet file row count.
 // It is a special func to fetch parquet file row count fast.
-func readParquetFileRowCount(
-	ctx context.Context,
-	store storage.ExternalStorage,
-	r storage.ReadSeekCloser,
-	path string,
-) (int64, error) {
-	wrapper := &readerWrapper{
-		ReadSeekCloser: r,
-		store:          store,
-		ctx:            ctx,
-		path:           path,
-	}
-	var err error
-	res := new(preader.ParquetReader)
-	res.NP = 1
-	res.PFile = wrapper
-	if err = res.ReadFooter(); err != nil {
-		return 0, err
-	}
-	numRows := res.Footer.NumRows
-	if err = wrapper.Close(); err != nil {
-		return 0, err
-	}
-	return numRows, nil
-}
-
-// ReadParquetFileRowCountByFile reads the parquet file row count through fileMeta.
 func ReadParquetFileRowCountByFile(
 	ctx context.Context,
 	store storage.ExternalStorage,
@@ -198,11 +171,25 @@ func ReadParquetFileRowCountByFile(
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	numberRows, err := readParquetFileRowCount(ctx, store, r, fileMeta.Path)
-	if err != nil {
-		return 0, errors.Trace(err)
+
+	wrapper := &readerWrapper{
+		ReadSeekCloser: r,
+		store:          store,
+		ctx:            ctx,
+		path:           fileMeta.Path,
 	}
-	return numberRows, nil
+
+	//nolint: errcheck
+	defer wrapper.Close()
+
+	res := new(preader.ParquetReader)
+	res.NP = 1
+	res.PFile = wrapper
+	if err = res.ReadFooter(); err != nil {
+		return 0, err
+	}
+
+	return res.Footer.NumRows, nil
 }
 
 // NewParquetParser generates a parquet parser.
@@ -432,7 +419,7 @@ func (pp *ParquetParser) ReadRow() error {
 	} else {
 		pp.lastRow.Row = pp.lastRow.Row[:length]
 	}
-	for i := range length {
+	for i := 0; i < length; i++ {
 		pp.lastRow.Length += getDatumLen(v.Field(i))
 		if err := setDatumValue(&pp.lastRow.Row[i], v.Field(i), pp.columnMetas[i], pp.logger); err != nil {
 			return err
@@ -503,7 +490,7 @@ func setDatumByString(d *types.Datum, v string, meta *parquet.SchemaElement) {
 func binaryToDecimalStr(rawBytes []byte, scale int) string {
 	negative := rawBytes[0] > 127
 	if negative {
-		for i := range rawBytes {
+		for i := 0; i < len(rawBytes); i++ {
 			rawBytes[i] = ^rawBytes[i]
 		}
 		for i := len(rawBytes) - 1; i >= 0; i-- {

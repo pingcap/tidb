@@ -730,7 +730,7 @@ func TestAdminCleanupIndexMore(t *testing.T) {
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	for i := range 2000 {
+	for i := 0; i < 2000; i++ {
 		c1 := int64(2*i + 7)
 		c2 := int64(2*i + 8)
 		_, err = indexOpr1.Create(ctx, txn, types.MakeDatums(c1, c2), kv.IntHandle(c1), nil)
@@ -1540,7 +1540,7 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 	r := regexp.MustCompile(pattern)
 
 	// Delete an index record randomly.
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		randomRow := rand.Intn(10000) + 1
@@ -1562,7 +1562,7 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 	}
 
 	// Add an index record randomly on exists row.
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		randomRow := rand.Intn(10000) + 1
@@ -1586,7 +1586,7 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 	}
 
 	// Add an index record randomly on not exists row.
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		randomRow := rand.Intn(10000) + 10000
@@ -1610,7 +1610,7 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 	}
 
 	// Modify an index record randomly.
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		randomRow := rand.Intn(10000) + 1
@@ -1680,7 +1680,7 @@ func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 	}
 
 	// Delete an index record randomly.
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		randomRow := rand.Intn(10000) + 1
@@ -1702,7 +1702,7 @@ func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 	}
 
 	// Add an index record randomly on exists row.
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		randomRow := rand.Intn(10000) + 1
@@ -1726,7 +1726,7 @@ func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 	}
 
 	// Add an index record randomly on not exists row.
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		randomRow := rand.Intn(10000) + 10000
@@ -1750,7 +1750,7 @@ func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 	}
 
 	// Modify an index record randomly.
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		randomRow := rand.Intn(10000) + 1

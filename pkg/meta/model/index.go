@@ -16,6 +16,7 @@ package model
 
 import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 )
@@ -58,6 +59,63 @@ type VectorIndexInfo struct {
 	DistanceMetric DistanceMetric `json:"distance_metric"`
 }
 
+// InvertedIndexInfo is the information of inverted index.
+// Currently, we do not support changing the type of the column that has an inverted index.
+// But we expect to support modifying the column type which does not need to change data (e.g., INT -> BIGINT).
+// In this case, during reading, we can use ColumnID to get both the old and new column types.
+type InvertedIndexInfo struct {
+	// ColumnID is used for reading.
+	ColumnID int64 `json:"column_id"`
+
+	// IsSigned and TypeSize are used for writing.
+	IsSigned bool  `json:"is_signed"`
+	TypeSize uint8 `json:"type_size"`
+}
+
+// FieldTypeToInvertedIndexInfo converts FieldType to InvertedIndexInfo.
+func FieldTypeToInvertedIndexInfo(tp types.FieldType, columnID int64) *InvertedIndexInfo {
+	var isSigned bool
+	var typeSize uint8
+
+	switch tp.GetType() {
+	case mysql.TypeTiny:
+		typeSize = 1
+		isSigned = !mysql.HasUnsignedFlag(tp.GetFlag())
+	case mysql.TypeShort:
+		typeSize = 2
+		isSigned = !mysql.HasUnsignedFlag(tp.GetFlag())
+	case mysql.TypeInt24, mysql.TypeLong:
+		typeSize = 4
+		isSigned = !mysql.HasUnsignedFlag(tp.GetFlag())
+	case mysql.TypeLonglong:
+		typeSize = 8
+		isSigned = !mysql.HasUnsignedFlag(tp.GetFlag())
+	case mysql.TypeYear:
+		typeSize = 2
+		isSigned = false
+	case mysql.TypeEnum:
+		typeSize = 2
+		isSigned = false
+	case mysql.TypeSet:
+		typeSize = 8
+		isSigned = false
+	case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeTimestamp:
+		typeSize = 8
+		isSigned = false
+	case mysql.TypeDuration:
+		typeSize = 8
+		isSigned = true
+	default:
+		return nil
+	}
+
+	return &InvertedIndexInfo{
+		ColumnID: columnID,
+		IsSigned: isSigned,
+		TypeSize: typeSize,
+	}
+}
+
 // ColumnarIndexType is the type of columnar index.
 type ColumnarIndexType uint8
 
@@ -74,20 +132,21 @@ const (
 // It corresponds to the statement `CREATE INDEX Name ON Table (Column);`
 // See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
 type IndexInfo struct {
-	ID            int64            `json:"id"`
-	Name          ast.CIStr        `json:"idx_name"` // Index name.
-	Table         ast.CIStr        `json:"tbl_name"` // Table name.
-	Columns       []*IndexColumn   `json:"idx_cols"` // Index columns.
-	State         SchemaState      `json:"state"`
-	BackfillState BackfillState    `json:"backfill_state"`
-	Comment       string           `json:"comment"`      // Comment
-	Tp            ast.IndexType    `json:"index_type"`   // Index type: Btree, Hash, Rtree or HNSW
-	Unique        bool             `json:"is_unique"`    // Whether the index is unique.
-	Primary       bool             `json:"is_primary"`   // Whether the index is primary key.
-	Invisible     bool             `json:"is_invisible"` // Whether the index is invisible.
-	Global        bool             `json:"is_global"`    // Whether the index is global.
-	MVIndex       bool             `json:"mv_index"`     // Whether the index is multivalued index.
-	VectorInfo    *VectorIndexInfo `json:"vector_index"` // VectorInfo is the vector index information.
+	ID            int64              `json:"id"`
+	Name          ast.CIStr          `json:"idx_name"` // Index name.
+	Table         ast.CIStr          `json:"tbl_name"` // Table name.
+	Columns       []*IndexColumn     `json:"idx_cols"` // Index columns.
+	State         SchemaState        `json:"state"`
+	BackfillState BackfillState      `json:"backfill_state"`
+	Comment       string             `json:"comment"`        // Comment
+	Tp            ast.IndexType      `json:"index_type"`     // Index type: Btree, Hash, Rtree or Vector
+	Unique        bool               `json:"is_unique"`      // Whether the index is unique.
+	Primary       bool               `json:"is_primary"`     // Whether the index is primary key.
+	Invisible     bool               `json:"is_invisible"`   // Whether the index is invisible.
+	Global        bool               `json:"is_global"`      // Whether the index is global.
+	MVIndex       bool               `json:"mv_index"`       // Whether the index is multivalued index.
+	VectorInfo    *VectorIndexInfo   `json:"vector_index"`   // VectorInfo is the vector index information.
+	InvertedInfo  *InvertedIndexInfo `json:"inverted_index"` // InvertedInfo is the inverted index information.
 }
 
 // Hash64 implement HashEquals interface.
@@ -158,13 +217,16 @@ func (index *IndexInfo) IsPublic() bool {
 // IsColumnarIndex checks whether the index is a columnar index.
 // Columnar index only exists in TiFlash, no actual index data need to be written to KV layer.
 func (index *IndexInfo) IsColumnarIndex() bool {
-	return index.VectorInfo != nil
+	return index.VectorInfo != nil || index.InvertedInfo != nil
 }
 
 // GetColumnarIndexType returns the type of columnar index.
 func (index *IndexInfo) GetColumnarIndexType() ColumnarIndexType {
 	if index.VectorInfo != nil {
 		return ColumnarIndexTypeVector
+	}
+	if index.InvertedInfo != nil {
+		return ColumnarIndexTypeInverted
 	}
 	return ColumnarIndexTypeNA
 }
@@ -209,8 +271,8 @@ func FindIndexInfoByID(indices []*IndexInfo, id int64) *IndexInfo {
 
 // IndexColumn provides index column info.
 type IndexColumn struct {
-	Name   ast.CIStr `json:"name"`   // Index name
-	Offset int       `json:"offset"` // Index offset
+	Name   ast.CIStr `json:"name"`   // Index column name
+	Offset int       `json:"offset"` // Index column offset in TableInfo.Columns
 	// Length of prefix when using column prefix
 	// for indexing;
 	// UnspecifedLength if not using prefix indexing

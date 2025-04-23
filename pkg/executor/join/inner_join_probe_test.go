@@ -15,7 +15,6 @@
 package join
 
 import (
-	"slices"
 	"sort"
 	"strconv"
 	"testing"
@@ -73,7 +72,12 @@ func appendToResultChk(leftRow chunk.Row, rightRow chunk.Row, leftUsedColumns []
 }
 
 func containsNullKey(row chunk.Row, keyIndex []int) bool {
-	return slices.ContainsFunc(keyIndex, row.IsNull)
+	for _, index := range keyIndex {
+		if row.IsNull(index) {
+			return true
+		}
+	}
+	return false
 }
 
 // generate inner join result using nested loop
@@ -88,10 +92,10 @@ func genInnerJoinResult(t *testing.T, sessCtx sessionctx.Context, leftChunks []*
 	shallowRow := chunk.MutRowFromTypes(shallowRowTypes)
 	// for right out join, use left as build, for other join, always use right as build
 	for _, leftChunk := range leftChunks {
-		for leftIndex := range leftChunk.NumRows() {
+		for leftIndex := 0; leftIndex < leftChunk.NumRows(); leftIndex++ {
 			leftRow := leftChunk.GetRow(leftIndex)
 			for _, rightChunk := range rightChunks {
-				for rightIndex := range rightChunk.NumRows() {
+				for rightIndex := 0; rightIndex < rightChunk.NumRows(); rightIndex++ {
 					if resultChk.IsFull() {
 						returnChks = append(returnChks, resultChk)
 						resultChk = chunk.New(resultTypes, sessCtx.GetSessionVars().MaxChunkSize, sessCtx.GetSessionVars().MaxChunkSize)
@@ -128,7 +132,7 @@ func checkVirtualRows(t *testing.T, resultChunks []*chunk.Chunk) {
 	for _, chk := range resultChunks {
 		require.Equal(t, false, chk.IsInCompleteChunk())
 		numRows := chk.GetNumVirtualRows()
-		for i := range chk.NumCols() {
+		for i := 0; i < chk.NumCols(); i++ {
 			require.Equal(t, numRows, chk.Column(i).Rows())
 		}
 	}
@@ -182,7 +186,7 @@ func checkChunksEqual(t *testing.T, expectedChunks []*chunk.Chunk, resultChunks 
 		return cmp(resultRows[i], resultRows[j]) < 0
 	})
 
-	for i := range expectedRows {
+	for i := 0; i < len(expectedRows); i++ {
 		x := cmp(expectedRows[i], resultRows[i])
 		if x != 0 {
 			// used for debug
@@ -212,7 +216,7 @@ func copySelectedRows(src *chunk.Chunk, dst *chunk.Chunk, selected []bool) (bool
 	}
 
 	oldLen := dst.NumRows()
-	for j := range src.NumCols() {
+	for j := 0; j < src.NumCols(); j++ {
 		if j >= dst.NumCols() {
 			break
 		}
@@ -342,7 +346,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 	buildChunks := make([]*chunk.Chunk, 0, chunkNumber)
 	probeChunks := make([]*chunk.Chunk, 0, chunkNumber)
 	selected := make([]bool, 0, inputRowNumber)
-	for i := range inputRowNumber {
+	for i := 0; i < inputRowNumber; i++ {
 		if i%3 == 0 {
 			selected = append(selected, true)
 		} else {
@@ -350,12 +354,12 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 		}
 	}
 	// check if build column can be inserted to probe column directly
-	for i := range min(len(buildTypes), len(probeTypes)) {
+	for i := 0; i < min(len(buildTypes), len(probeTypes)); i++ {
 		buildLength := chunk.GetFixedLen(buildTypes[i])
 		probeLength := chunk.GetFixedLen(probeTypes[i])
 		require.Equal(t, buildLength, probeLength, "build type and probe type is not compatible")
 	}
-	for i := range chunkNumber {
+	for i := 0; i < chunkNumber; i++ {
 		if len(buildTypes) >= len(probeTypes) {
 			buildChunks = append(buildChunks, testutil.GenRandomChunks(buildTypes, inputRowNumber))
 			probeChunk := testutil.GenRandomChunks(probeTypes, inputRowNumber*2/3)
@@ -375,7 +379,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 
 	if withSel {
 		sel := make([]int, 0, inputRowNumber)
-		for i := range inputRowNumber {
+		for i := 0; i < inputRowNumber; i++ {
 			if i%9 == 0 {
 				continue
 			}
@@ -393,7 +397,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 	if !rightAsBuildSide {
 		leftChunks, rightChunks = buildChunks, probeChunks
 	}
-	for i := range chunkNumber {
+	for i := 0; i < chunkNumber; i++ {
 		err := builder.processOneChunk(buildChunks[i], hashJoinCtx.SessCtx.GetSessionVars().StmtCtx.TypeCtx(), hashJoinCtx, 0)
 		require.NoError(t, err)
 	}
@@ -401,7 +405,7 @@ func testJoinProbe(t *testing.T, withSel bool, leftKeyIndex []int, rightKeyIndex
 	checkRowLocationAlignment(t, hashJoinCtx.hashTableContext.rowTables[0])
 	hashJoinCtx.hashTableContext.mergeRowTablesToHashTable(hashJoinCtx.partitionNumber, nil)
 	// build hash table
-	for i := range partitionNumber {
+	for i := 0; i < partitionNumber; i++ {
 		hashJoinCtx.hashTableContext.build(&buildTask{partitionIdx: i, segStartIdx: 0, segEndIdx: len(hashJoinCtx.hashTableContext.hashTable.tables[i].rowData.segments)})
 	}
 	// probe
@@ -591,7 +595,7 @@ func TestInnerJoinProbeAllJoinKeys(t *testing.T) {
 	partitionNumber := 4
 
 	// single key
-	for i := range lTypes {
+	for i := 0; i < len(lTypes); i++ {
 		for _, rightAsBuild := range rightAsBuildSide {
 			lKeyTypes := []*types.FieldType{lTypes[i]}
 			rKeyTypes := []*types.FieldType{rTypes[i]}

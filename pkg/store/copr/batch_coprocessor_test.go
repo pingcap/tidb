@@ -17,7 +17,6 @@ package copr
 import (
 	"context"
 	"math/rand"
-	"slices"
 	"sort"
 	"strconv"
 	"testing"
@@ -39,22 +38,27 @@ import (
 // StoreID: [1, storeCount]
 func buildStoreTaskMap(storeCount int) map[uint64]*batchCopTask {
 	storeTasks := make(map[uint64]*batchCopTask)
-	for i := range storeCount {
+	for i := 0; i < storeCount; i++ {
 		storeTasks[uint64(i+1)] = &batchCopTask{}
 	}
 	return storeTasks
 }
 
 func buildRegionInfos(storeCount, regionCount, replicaNum int) []RegionInfo {
-	ss := make([]string, 0, regionCount)
-	for i := range regionCount {
+	var ss []string
+	for i := 0; i < regionCount; i++ {
 		s := strconv.Itoa(i)
 		ss = append(ss, s)
 	}
 	sort.Strings(ss)
 
 	storeIDExist := func(storeID uint64, storeIDs []uint64) bool {
-		return slices.Contains(storeIDs, storeID)
+		for _, i := range storeIDs {
+			if i == storeID {
+				return true
+			}
+		}
+		return false
 	}
 
 	randomStores := func(storeCount, replicaNum int) []uint64 {
@@ -159,7 +163,7 @@ func TestDeepCopyStoreTaskMap(t *testing.T) {
 // Make sure no duplicated ip:addr.
 func generateOneAddr() string {
 	var ip string
-	for i := range 4 {
+	for i := 0; i < 4; i++ {
 		if i != 0 {
 			ip += "."
 		}
@@ -188,7 +192,7 @@ func TestConsistentHash(t *testing.T) {
 	computeNodes := allAddrs[:30]
 	storageNodes := allAddrs[30:]
 	firstRoundMap := make(map[string]string)
-	for round := range 100 {
+	for round := 0; round < 100; round++ {
 		hasher := consistent.New()
 		rand.Shuffle(len(computeNodes), func(i, j int) {
 			computeNodes[i], computeNodes[j] = computeNodes[j], computeNodes[i]
@@ -212,10 +216,10 @@ func TestConsistentHash(t *testing.T) {
 
 func TestDispatchPolicyRR(t *testing.T) {
 	allAddrs := generateDifferentAddrs(100)
-	for range 100 {
+	for i := 0; i < 100; i++ {
 		regCnt := rand.Intn(10000)
 		regIDs := make([]tikv.RegionVerID, 0, regCnt)
-		for i := range regCnt {
+		for i := 0; i < regCnt; i++ {
 			regIDs = append(regIDs, tikv.NewRegionVerID(uint64(i), 0, 0))
 		}
 

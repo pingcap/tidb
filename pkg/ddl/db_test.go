@@ -319,7 +319,7 @@ func TestForbidCacheTableForSystemTable(t *testing.T) {
 		tk.MustExec("use " + db)
 		tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil)
 		rows := tk.MustQuery("show tables").Rows()
-		for i := range rows {
+		for i := 0; i < len(rows); i++ {
 			sysTables = append(sysTables, rows[i][0].(string))
 		}
 		for _, one := range sysTables {
@@ -521,7 +521,7 @@ func TestIssue60047(t *testing.T) {
 	partition p2 values less than ('90'));`)
 
 	// initialize the data.
-	for i := range 90 {
+	for i := 0; i < 90; i++ {
 		tk.MustExec("insert into t values (?, ?, ?)", i, i, i)
 	}
 
@@ -1320,7 +1320,7 @@ func TestGetAllTableInfos(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
-	for i := range 113 {
+	for i := 0; i < 113; i++ {
 		tk.MustExec(fmt.Sprintf("create database test%d", i))
 		tk.MustExec(fmt.Sprintf("use test%d", i))
 		tk.MustExec("create table t1 (a int)")

@@ -186,7 +186,7 @@ func (SQLWithRetry) perform(_ context.Context, parentLogger log.Logger, purpose 
 func Retry(purpose string, parentLogger log.Logger, action func() error) error {
 	var err error
 outside:
-	for i := range defaultMaxRetry {
+	for i := 0; i < defaultMaxRetry; i++ {
 		logger := parentLogger.With(zap.Int("retryCnt", i))
 
 		if i > 0 {
@@ -355,7 +355,7 @@ func WriteMySQLIdentifier(builder *strings.Builder, identifier string) {
 	builder.WriteByte('`')
 
 	// use a C-style loop instead of range loop to avoid UTF-8 decoding
-	for i := range len(identifier) {
+	for i := 0; i < len(identifier); i++ {
 		b := identifier[i]
 		if b == '`' {
 			builder.WriteString("``")
@@ -372,7 +372,7 @@ func InterpolateMySQLString(s string) string {
 	var builder strings.Builder
 	builder.Grow(len(s) + 2)
 	builder.WriteByte('\'')
-	for i := range len(s) {
+	for i := 0; i < len(s); i++ {
 		b := s[i]
 		if b == '\'' {
 			builder.WriteString("''")

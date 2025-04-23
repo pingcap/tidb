@@ -281,7 +281,7 @@ func (e *analyzeColumnsExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if row == nil || err != nil {
 		return errors.Trace(err)
 	}
-	for i := range row {
+	for i := 0; i < len(row); i++ {
 		req.AppendDatum(i, &row[i])
 	}
 	return nil

@@ -226,7 +226,7 @@ func (dr *delRange) doTask(sctx sessionctx.Context, r util.DelRangeTask) error {
 			defer iter.Close()
 
 			txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-			for range delBatchSize {
+			for i := 0; i < delBatchSize; i++ {
 				if !iter.Valid() {
 					break
 				}
@@ -288,7 +288,10 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 		}
 		tableIDs := args.AllDroppedTableIDs
 		for i := 0; i < len(tableIDs); i += batchInsertDeleteRangeSize {
-			batchEnd := min(len(tableIDs), i+batchInsertDeleteRangeSize)
+			batchEnd := len(tableIDs)
+			if batchEnd > i+batchInsertDeleteRangeSize {
+				batchEnd = i + batchInsertDeleteRangeSize
+			}
 			if err := doBatchDeleteTablesRange(ctx, wrapper, job.ID, tableIDs[i:batchEnd], ea, "drop schema: table IDs"); err != nil {
 				return errors.Trace(err)
 			}

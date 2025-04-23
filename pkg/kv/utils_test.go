@@ -16,7 +16,6 @@ package kv
 
 import (
 	"context"
-	"slices"
 	"strconv"
 	"testing"
 
@@ -114,8 +113,8 @@ func (s *mockMap) Set(k Key, v []byte) error {
 func (s *mockMap) Delete(k Key) error {
 	for i, key := range s.index {
 		if key.Cmp(k) == 0 {
-			s.index = slices.Delete(s.index, i, i+1)
-			s.value = slices.Delete(s.value, i, i+1)
+			s.index = append(s.index[:i], s.index[i+1:]...)
+			s.value = append(s.value[:i], s.value[i+1:]...)
 			return nil
 		}
 	}

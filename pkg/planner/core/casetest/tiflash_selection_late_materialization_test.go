@@ -32,7 +32,7 @@ func TestTiFlashLateMaterialization(t *testing.T) {
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1 (a int, b int, c int, t time, index idx(a, b, c, t))")
 	tk.MustExec("insert into t1 values(1,1,1,'08:00:00'), (2,2,2,'09:00:00'), (3,3,3,'10:00:00')")
-	for range 14 {
+	for i := 0; i < 14; i++ {
 		tk.MustExec("insert into t1(a,b,c,t) select a,b,c,t from t1;")
 	}
 	tk.MustExec("analyze table t1;")

@@ -69,7 +69,7 @@ func TestBufferPool(t *testing.T) {
 	require.Equal(t, 0, allocator.frees)
 
 	bytesBuf = pool.NewBuffer()
-	for range 6 {
+	for i := 0; i < 6; i++ {
 		bytesBuf.AllocBytes(512)
 	}
 	bytesBuf.Destroy()
@@ -129,7 +129,7 @@ func TestBufferIsolation(t *testing.T) {
 
 	_, err := rand.Read(b2)
 	require.NoError(t, err)
-	b3 := slices.Clone(b2)
+	b3 := append([]byte(nil), b2...)
 	b1 = append(b1, 0, 1, 2, 3)
 	require.Equal(t, b3, b2)
 	require.NotEqual(t, b2, b1)
@@ -319,11 +319,11 @@ func BenchmarkConcurrentAcquire(b *testing.B) {
 		wg := sync.WaitGroup{}
 		clientNum := 1000
 		wg.Add(clientNum)
-		for range clientNum {
+		for j := 0; j < clientNum; j++ {
 			go func() {
 				defer wg.Done()
 				buf := pool.NewBuffer()
-				for range 1000 {
+				for k := 0; k < 1000; k++ {
 					buf.AllocBytes(100)
 				}
 				buf.Destroy()

@@ -50,7 +50,7 @@ func (d *DeadTableLockChecker) getAliveServers(ctx context.Context) (map[string]
 	var err error
 	var resp *clientv3.GetResponse
 	allInfos := make(map[string]struct{})
-	for range defaultRetryCnt {
+	for i := 0; i < defaultRetryCnt; i++ {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()

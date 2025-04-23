@@ -279,8 +279,8 @@ func generateANDIndexMerge4NormalIndex(ds *logicalop.DataSource, normalPathCnt i
 	composedWithMvIndex := len(usedAccessMap) != 0
 
 	// 1. Collect partial paths from normal paths.
-	partialPaths := make([]*util.AccessPath, 0, normalPathCnt)
-	for i := range normalPathCnt {
+	var partialPaths []*util.AccessPath
+	for i := 0; i < normalPathCnt; i++ {
 		originalPath := ds.PossibleAccessPaths[i]
 		// No need to consider table path as a partial path.
 		if ds.PossibleAccessPaths[i].IsTablePath() {
@@ -347,7 +347,7 @@ func generateANDIndexMerge4NormalIndex(ds *logicalop.DataSource, normalPathCnt i
 		for i, cond := range path.IndexFilters {
 			// IndexFilters can be covered by partial path if it can be pushed down to TiKV.
 			if !expression.CanExprsPushDown(pushDownCtx, []expression.Expression{cond}, kv.TiKV) {
-				path.IndexFilters = slices.Delete(path.IndexFilters, i, i+1)
+				path.IndexFilters = append(path.IndexFilters[:i], path.IndexFilters[i+1:]...)
 				notCoveredConds = append(notCoveredConds, cond)
 			} else {
 				coveredConds = append(coveredConds, cond)
@@ -411,7 +411,7 @@ func generateANDIndexMerge4NormalIndex(ds *logicalop.DataSource, normalPathCnt i
 func generateMVIndexMergePartialPaths4And(ds *logicalop.DataSource, normalPathCnt int, indexMergeConds []expression.Expression, histColl *statistics.HistColl) ([]*util.AccessPath, map[string]expression.Expression, error) {
 	// step1: collect all mv index paths
 	possibleMVIndexPaths := make([]*util.AccessPath, 0, len(ds.PossibleAccessPaths))
-	for idx := range normalPathCnt {
+	for idx := 0; idx < normalPathCnt; idx++ {
 		if !isMVIndexPath(ds.PossibleAccessPaths[idx]) {
 			continue // not a MVIndex path
 		}
@@ -432,7 +432,7 @@ func generateMVIndexMergePartialPaths4And(ds *logicalop.DataSource, normalPathCn
 	}
 	// mm is a map here used for de-duplicate partial paths which is derived from **same** accessFilters, not necessary to keep them both.
 	mm := make(map[string]*record, 0)
-	for idx := range possibleMVIndexPaths {
+	for idx := 0; idx < len(possibleMVIndexPaths); idx++ {
 		idxCols, ok := PrepareIdxColsAndUnwrapArrayType(
 			ds.Table.Meta(),
 			possibleMVIndexPaths[idx].Index,
@@ -734,7 +734,7 @@ func generateANDIndexMerge4ComposedIndex(ds *logicalop.DataSource, normalPathCnt
 			TableRowIdScan(t)
 */
 func generateANDIndexMerge4MVIndex(ds *logicalop.DataSource, normalPathCnt int, filters []expression.Expression) error {
-	for idx := range normalPathCnt {
+	for idx := 0; idx < normalPathCnt; idx++ {
 		if !isMVIndexPath(ds.PossibleAccessPaths[idx]) {
 			continue // not a MVIndex path
 		}
@@ -952,7 +952,7 @@ func buildPartialPath4MVIndex(
 ) (*util.AccessPath, bool, error) {
 	partialPath := &util.AccessPath{Index: mvIndex}
 	partialPath.Ranges = ranger.FullRange()
-	for i := range idxCols {
+	for i := 0; i < len(idxCols); i++ {
 		length := mvIndex.Columns[i].Length
 		// For full length prefix index, we consider it as non prefix index.
 		// This behavior is the same as in IndexInfo2Cols(), which is used for non mv index.
@@ -1337,8 +1337,8 @@ func jsonArrayExpr2Exprs(
 		}
 		return nil, false
 	}
-	exprs := make([]expression.Expression, 0, jsonArray.GetElemCount())
-	for i := range jsonArray.GetElemCount() { // '[1, 2, 3]' -> []expr{1, 2, 3}
+	var exprs []expression.Expression
+	for i := 0; i < jsonArray.GetElemCount(); i++ { // '[1, 2, 3]' -> []expr{1, 2, 3}
 		expr, ok := jsonValue2Expr(jsonArray.ArrayGetElem(i), targetType)
 		if !ok {
 			return nil, false

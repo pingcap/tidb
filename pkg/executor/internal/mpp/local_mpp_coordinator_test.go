@@ -84,7 +84,7 @@ func TestZoneHelperTryQuickFill(t *testing.T) {
 	quickFill, sameZoneFlags = helper.tryQuickFillWithUncertainZones(sender, slots, sameZoneFlags)
 	require.True(t, quickFill)
 	require.Equal(t, slots, len(sameZoneFlags))
-	for i := range slots {
+	for i := 0; i < slots; i++ {
 		require.True(t, sameZoneFlags[i])
 	}
 
@@ -96,7 +96,7 @@ func TestZoneHelperTryQuickFill(t *testing.T) {
 	quickFill, sameZoneFlags = helper.tryQuickFillWithUncertainZones(sender, slots, sameZoneFlags)
 	require.True(t, quickFill)
 	require.Equal(t, slots, len(sameZoneFlags))
-	for i := range slots {
+	for i := 0; i < slots; i++ {
 		require.False(t, sameZoneFlags[i])
 	}
 
@@ -105,7 +105,7 @@ func TestZoneHelperTryQuickFill(t *testing.T) {
 	quickFill, sameZoneFlags = helper.tryQuickFillWithUncertainZones(sender, slots, sameZoneFlags)
 	require.True(t, quickFill)
 	require.Equal(t, slots, len(sameZoneFlags))
-	for i := range slots {
+	for i := 0; i < slots; i++ {
 		require.True(t, sameZoneFlags[i])
 	}
 

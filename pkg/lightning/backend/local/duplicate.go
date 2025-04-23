@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/distsql"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
@@ -600,7 +601,7 @@ func (m *dupeDetector) RecordIndexConflictError(ctx context.Context, stream DupK
 
 // RetrieveKeyAndValueFromErrFoundDuplicateKeys retrieves the key and value
 // from ErrFoundDuplicateKeys error.
-func RetrieveKeyAndValueFromErrFoundDuplicateKeys(err error) ([]byte, []byte, error) {
+func RetrieveKeyAndValueFromErrFoundDuplicateKeys(err error) (key, value []byte, _ error) {
 	if !common.ErrFoundDuplicateKeys.Equal(err) {
 		return nil, nil, err
 	}
@@ -786,7 +787,7 @@ func (m *dupeDetector) splitLocalDupTaskByKeys(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	ranges := splitRangeBySizeProps(common.Range{Start: task.StartKey, End: task.EndKey}, sizeProps, sizeLimit, keysLimit)
+	ranges := splitRangeBySizeProps(engineapi.Range{Start: task.StartKey, End: task.EndKey}, sizeProps, sizeLimit, keysLimit)
 	newDupTasks := make([]dupTask, 0, len(ranges))
 	for _, r := range ranges {
 		newDupTasks = append(newDupTasks, dupTask{
@@ -924,7 +925,7 @@ func (m *dupeDetector) processRemoteDupTaskOnce(
 	var metErr common.OnceError
 	wg := &sync.WaitGroup{}
 	atomicMadeProgress := atomic.NewBool(false)
-	for i := range regions {
+	for i := 0; i < len(regions); i++ {
 		if ctx.Err() != nil {
 			metErr.Set(ctx.Err())
 			break

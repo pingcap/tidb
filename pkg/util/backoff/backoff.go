@@ -53,6 +53,9 @@ func (b *Exponential) Backoff(retryCnt int) time.Duration {
 		return b.nextBackoff
 	}
 
-	b.nextBackoff = min(time.Duration(float64(b.nextBackoff)*b.multiplier), b.maxBackoff)
+	b.nextBackoff = time.Duration(float64(b.nextBackoff) * b.multiplier)
+	if b.nextBackoff > b.maxBackoff {
+		b.nextBackoff = b.maxBackoff
+	}
 	return b.nextBackoff
 }

@@ -82,7 +82,7 @@ func (d *Detector) Detect(ctx context.Context, opts *DetectOptions) (numDups int
 	var atomicNumDups atomic.Int64
 
 	g, ctx := errgroup.WithContext(ctx)
-	for range opts.Concurrency {
+	for i := 0; i < opts.Concurrency; i++ {
 		g.Go(func() error {
 			handler, err := opts.HandlerConstructor(ctx)
 			if err != nil {

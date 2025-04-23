@@ -253,7 +253,7 @@ func initTestSplitClient3Replica(keys [][]byte, hook clientHook) *testSplitClien
 		}
 		baseID := (i-1)*10 + 1
 		peers := make([]*metapb.Peer, 3)
-		for j := range 3 {
+		for j := 0; j < 3; j++ {
 			peers[j] = &metapb.Peer{
 				Id:      baseID + uint64(j),
 				StoreId: baseID + uint64(j),
@@ -303,7 +303,7 @@ func TestStoreWriteLimiter(t *testing.T) {
 	var wg sync.WaitGroup
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*2)
 	defer cancel()
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func(storeID uint64) {
 			defer wg.Done()
@@ -330,7 +330,7 @@ func TestTuneStoreWriteLimiter(t *testing.T) {
 	limiter := newStoreWriteLimiter(100)
 	testLimiter := func(ctx context.Context, maxT int) {
 		var wg sync.WaitGroup
-		for i := range 10 {
+		for i := 0; i < 10; i++ {
 			wg.Add(1)
 			go func(storeID uint64) {
 				defer wg.Done()

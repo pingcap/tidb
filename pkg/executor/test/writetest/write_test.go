@@ -301,7 +301,7 @@ func TestLatch(t *testing.T) {
 
 	fn := func() {
 		tk1.MustExec("begin")
-		for i := range 100 {
+		for i := 0; i < 100; i++ {
 			tk1.MustExec(fmt.Sprintf("insert into t values (%d)", i))
 		}
 		tk2.MustExec("begin")

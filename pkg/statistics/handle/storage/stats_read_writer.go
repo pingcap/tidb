@@ -74,7 +74,7 @@ func (s *statsReadWriter) UpdateStatsMetaVersionForGC(physicalID int64) (err err
 	}()
 
 	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		startTS, err := UpdateStatsMetaVersion(util.StatsCtx, sctx, physicalID)
+		startTS, err := UpdateStatsMetaVerAndLastHistUpdateVer(util.StatsCtx, sctx, physicalID)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -113,7 +113,7 @@ func (s *statsReadWriter) handleSlowStatsSaving(tableID int64, start time.Time) 
 	// Update stats meta to avoid other nodes missing the delta update.
 	statsVer := uint64(0)
 	err := util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		startTS, err := UpdateStatsMetaVersion(util.StatsCtx, sctx, tableID)
+		startTS, err := UpdateStatsMetaVerAndLastHistUpdateVer(util.StatsCtx, sctx, tableID)
 		failpoint.Inject("failToSaveStats", func(val failpoint.Value) {
 			if val.(bool) {
 				err = errors.New("mock update stats meta version failed")
@@ -231,14 +231,24 @@ func (s *statsReadWriter) SaveColOrIdxStatsToStorage(
 }
 
 // SaveMetaToStorage saves stats meta to the storage.
-func (s *statsReadWriter) SaveMetaToStorage(tableID, count, modifyCount int64, source string) (err error) {
+// Use the param `refreshLastHistVer` to indicate whether we need to update the last_histograms_versions in stats_meta table.
+func (s *statsReadWriter) SaveMetaToStorage(
+	source string,
+	refreshLastHistVer bool,
+	metaUpdates ...statstypes.MetaUpdate,
+) (err error) {
+	intest.Assert(len(metaUpdates) > 0, "meta updates is empty")
 	var statsVer uint64
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		statsVer, err = SaveMetaToStorage(sctx, tableID, count, modifyCount)
+		statsVer, err = SaveMetaToStorage(sctx, refreshLastHistVer, metaUpdates)
 		return err
 	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
-		s.statsHandler.RecordHistoricalStatsMeta(statsVer, source, false, tableID)
+		tableIDs := make([]int64, 0, len(metaUpdates))
+		for i := range metaUpdates {
+			tableIDs = append(tableIDs, metaUpdates[i].PhysicalID)
+		}
+		s.statsHandler.RecordHistoricalStatsMeta(statsVer, source, false, tableIDs...)
 	}
 	return
 }
@@ -563,7 +573,7 @@ func (s *statsReadWriter) LoadStatsFromJSONConcurrently(
 
 	var wg sync.WaitGroup
 	e := new(atomic.Pointer[error])
-	for range concurrencyForPartition {
+	for i := 0; i < concurrencyForPartition; i++ {
 		wg.Add(1)
 		s.statsHandler.GPool().Go(func() {
 			defer func() {
@@ -696,7 +706,11 @@ func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physical
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return s.SaveMetaToStorage(tbl.PhysicalID, tbl.RealtimeCount, tbl.ModifyCount, util.StatsMetaHistorySourceLoadStats)
+	return s.SaveMetaToStorage(util.StatsMetaHistorySourceLoadStats, true, statstypes.MetaUpdate{
+		PhysicalID:  tbl.PhysicalID,
+		Count:       tbl.RealtimeCount,
+		ModifyCount: tbl.ModifyCount,
+	})
 }
 
 // SaveColumnStatsUsageToStorage saves column statistics usage information for a table into mysql.column_stats_usage.

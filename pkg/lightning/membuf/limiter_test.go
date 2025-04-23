@@ -28,7 +28,7 @@ func TestLimiter(t *testing.T) {
 	l := NewLimiter(limit)
 	wg := sync.WaitGroup{}
 
-	for range 100 {
+	for i := 0; i < 100; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -52,7 +52,7 @@ func TestWaitUpMultipleCaller(t *testing.T) {
 
 	start := make(chan struct{}, 3)
 	finish := make(chan struct{}, 3)
-	for range 3 {
+	for i := 0; i < 3; i++ {
 		go func() {
 			start <- struct{}{}
 			l.Acquire(3)
@@ -60,12 +60,12 @@ func TestWaitUpMultipleCaller(t *testing.T) {
 		}()
 	}
 
-	for range 3 {
+	for i := 0; i < 3; i++ {
 		<-start
 	}
 	require.Len(t, finish, 0)
 	l.Release(18)
-	for range 3 {
+	for i := 0; i < 3; i++ {
 		<-finish
 	}
 	require.Equal(t, limit-3*3, l.limit)

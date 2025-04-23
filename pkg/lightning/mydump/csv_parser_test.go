@@ -846,7 +846,7 @@ func TestTooLargeRow(t *testing.T) {
 	t.Run("too long field", func(t *testing.T) {
 		var dataBuf bytes.Buffer
 		dataBuf.WriteString("a,b,c,d")
-		for range mydump.LargestEntryLimit {
+		for i := 0; i < mydump.LargestEntryLimit; i++ {
 			dataBuf.WriteByte('d')
 		}
 		require.Greater(t, dataBuf.Len(), mydump.LargestEntryLimit)
@@ -861,15 +861,15 @@ func TestTooLargeRow(t *testing.T) {
 
 	t.Run("field is short, but whole row too long", func(t *testing.T) {
 		var dataBuf bytes.Buffer
-		for i := range 16 {
+		for i := 0; i < 16; i++ {
 			if i > 0 {
 				dataBuf.WriteByte(',')
 			}
-			for range mydump.LargestEntryLimit / 16 {
+			for j := 0; j < mydump.LargestEntryLimit/16; j++ {
 				dataBuf.WriteByte('d')
 			}
 		}
-		for range mydump.LargestEntryLimit - dataBuf.Len() + 16 {
+		for i := 0; i < mydump.LargestEntryLimit-dataBuf.Len()+16; i++ {
 			dataBuf.WriteByte('d')
 		}
 		require.Greater(t, dataBuf.Len(), mydump.LargestEntryLimit)
@@ -1092,7 +1092,7 @@ func TestTrimLastSep(t *testing.T) {
 		nil,
 	)
 	require.NoError(t, err)
-	for range 4 {
+	for i := 0; i < 4; i++ {
 		require.Nil(t, parser.ReadRow())
 		require.Len(t, parser.LastRow().Row, 3)
 	}

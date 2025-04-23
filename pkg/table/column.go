@@ -217,7 +217,7 @@ func convertToIncorrectStringErr(err error, colName string) error {
 		return err
 	}
 	var res strings.Builder
-	for i := range len(invalidStrHex) {
+	for i := 0; i < len(invalidStrHex); i++ {
 		if i%2 == 0 {
 			res.WriteString("\\x")
 		}

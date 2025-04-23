@@ -210,7 +210,7 @@ func (rm *Manager) RunawayRecordFlushLoop() {
 			}()
 		case r := <-staleQuarantineRecordCh:
 			go func() {
-				for range 3 {
+				for i := 0; i < 3; i++ {
 					err := handleRemoveStaleRunawayWatch(rm.sysSessionPool, r)
 					if err == nil {
 						break

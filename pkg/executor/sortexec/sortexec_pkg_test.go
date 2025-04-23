@@ -48,7 +48,7 @@ func TestInterruptedDuringSort(t *testing.T) {
 	sz := 1024
 
 	chk := chunk.NewChunkWithCapacity(fields, sz)
-	for i := range sz {
+	for i := 0; i < sz; i++ {
 		chk.AppendInt64(0, int64(i))
 		chk.AppendInt64(1, int64(i))
 		chk.AppendInt64(2, int64(i))
@@ -59,7 +59,7 @@ func TestInterruptedDuringSort(t *testing.T) {
 	sp := newSortPartition(fields, byItemsDesc, keyColumns, keyCmpFuncs, 1 /* always can spill */)
 	defer sp.close()
 	sp.getMemTracker().AttachTo(rootTracker)
-	for range 10240 {
+	for i := 0; i < 10240; i++ {
 		canadd := sp.add(chk)
 		require.True(t, canadd)
 	}
@@ -99,7 +99,7 @@ func TestInterruptedDuringSpilling(t *testing.T) {
 	sz := 1024
 
 	chk := chunk.NewChunkWithCapacity(fields, sz)
-	for i := range sz {
+	for i := 0; i < sz; i++ {
 		chk.AppendInt64(0, int64(i))
 		chk.AppendInt64(1, int64(i))
 		chk.AppendInt64(2, int64(i))
@@ -110,7 +110,7 @@ func TestInterruptedDuringSpilling(t *testing.T) {
 	sp := newSortPartition(fields, byItemsDesc, keyColumns, keyCmpFuncs, 1 /* always can spill */)
 	defer sp.close()
 	sp.getMemTracker().AttachTo(rootTracker)
-	for range 10240 {
+	for i := 0; i < 10240; i++ {
 		canadd := sp.add(chk)
 		require.True(t, canadd)
 	}

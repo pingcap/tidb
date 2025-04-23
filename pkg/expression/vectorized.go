@@ -107,11 +107,11 @@ func genVecFromConstExpr(ctx EvalContext, expr Expression, targetType types.Eval
 			return err
 		}
 		if isNull {
-			for range n {
+			for i := 0; i < n; i++ {
 				result.AppendNull()
 			}
 		} else {
-			for range n {
+			for i := 0; i < n; i++ {
 				result.AppendJSON(v)
 			}
 		}
@@ -122,11 +122,11 @@ func genVecFromConstExpr(ctx EvalContext, expr Expression, targetType types.Eval
 			return err
 		}
 		if isNull {
-			for range n {
+			for i := 0; i < n; i++ {
 				result.AppendNull()
 			}
 		} else {
-			for range n {
+			for i := 0; i < n; i++ {
 				result.AppendVectorFloat32(v)
 			}
 		}
@@ -137,11 +137,11 @@ func genVecFromConstExpr(ctx EvalContext, expr Expression, targetType types.Eval
 			return err
 		}
 		if isNull {
-			for range n {
+			for i := 0; i < n; i++ {
 				result.AppendNull()
 			}
 		} else {
-			for range n {
+			for i := 0; i < n; i++ {
 				result.AppendString(v)
 			}
 		}

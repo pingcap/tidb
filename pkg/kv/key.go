@@ -380,7 +380,7 @@ func (ch *CommonHandle) EncodedCol(idx int) []byte {
 // Data implements the Handle interface.
 func (ch *CommonHandle) Data() ([]types.Datum, error) {
 	data := make([]types.Datum, 0, ch.NumCols())
-	for i := range ch.NumCols() {
+	for i := 0; i < ch.NumCols(); i++ {
 		encodedCol := ch.EncodedCol(i)
 		_, d, err := codec.DecodeOne(encodedCol)
 		if err != nil {

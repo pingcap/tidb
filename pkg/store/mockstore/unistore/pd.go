@@ -55,37 +55,17 @@ type pdClient struct {
 	// which needs PD server HTTP address.
 	addrs []string
 
-	keyspaceNameMap map[string]keyspacepb.KeyspaceMeta
-	keyspaceIDMap   map[uint32]keyspacepb.KeyspaceMeta
+	keyspaceMeta *keyspacepb.KeyspaceMeta
 }
 
-func makeKeyspace() (map[string]keyspacepb.KeyspaceMeta, map[uint32]keyspacepb.KeyspaceMeta) {
-	keyspaceNameMap := make(map[string]keyspacepb.KeyspaceMeta)
-	keyspaceIDMap := make(map[uint32]keyspacepb.KeyspaceMeta)
-
-	// keyspace id = 2
-	keyspaceMeta2 := keyspacepb.KeyspaceMeta{Id: 2, Name: "test_ks_name2"}
-	keyspaceNameMap[keyspaceMeta2.Name] = keyspaceMeta2
-	keyspaceIDMap[keyspaceMeta2.Id] = keyspaceMeta2
-
-	// keyspace id = 3
-	keyspaceMeta3 := keyspacepb.KeyspaceMeta{Id: 3, Name: "test_ks_name3"}
-	keyspaceNameMap[keyspaceMeta3.Name] = keyspaceMeta3
-	keyspaceIDMap[keyspaceMeta3.Id] = keyspaceMeta3
-
-	return keyspaceNameMap, keyspaceIDMap
-}
-
-func newPDClient(pd *us.MockPD, addrs []string) *pdClient {
-	keyspaceNameMap, keyspaceIDMap := makeKeyspace()
+func newPDClient(pd *us.MockPD, addrs []string, keyspaceMeta *keyspacepb.KeyspaceMeta) *pdClient {
 	return &pdClient{
 		MockPD:                pd,
 		ResourceManagerClient: infosync.NewMockResourceManagerClient(),
 		serviceSafePoints:     make(map[string]uint64),
 		globalConfig:          make(map[string]string),
 		addrs:                 addrs,
-		keyspaceNameMap:       keyspaceNameMap,
-		keyspaceIDMap:         keyspaceIDMap,
+		keyspaceMeta:          keyspaceMeta,
 	}
 }
 
@@ -116,7 +96,7 @@ func (c *pdClient) WatchGlobalConfig(ctx context.Context, configPath string, rev
 				return
 			}
 		}()
-		for range 10 {
+		for i := 0; i < 10; i++ {
 			for k, v := range c.globalConfig {
 				globalConfigWatcherCh <- []pd.GlobalConfigItem{{Name: k, Value: v}}
 			}
@@ -348,10 +328,10 @@ func (c *pdClient) GetAllKeyspaces(ctx context.Context, startID uint32, limit ui
 
 // LoadKeyspace loads and returns target keyspace's metadata.
 func (c *pdClient) LoadKeyspace(ctx context.Context, name string) (*keyspacepb.KeyspaceMeta, error) {
-	if keyspaceMeta, exists := c.keyspaceNameMap[name]; exists {
-		return &keyspaceMeta, nil
+	if c.keyspaceMeta.Name != name {
+		return nil, errors.New(pdpb.ErrorType_ENTRY_NOT_FOUND.String())
 	}
-	return nil, errors.New(pdpb.ErrorType_ENTRY_NOT_FOUND.String())
+	return c.keyspaceMeta, nil
 }
 
 // WatchKeyspaces watches keyspace meta changes.

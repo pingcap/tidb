@@ -18,7 +18,6 @@ import (
 	"cmp"
 	"fmt"
 	"math"
-	"slices"
 	"sort"
 
 	"github.com/pingcap/errors"
@@ -874,7 +873,7 @@ func (r *builder) newBuildFromPatternLike(
 		r.err = errors.Trace(err)
 		return getFullRange()
 	}
-	sortKeyWithoutTrim := slices.Clone(sortKeyPointWithoutTrim.value.GetBytes())
+	sortKeyWithoutTrim := append([]byte{}, sortKeyPointWithoutTrim.value.GetBytes()...)
 	endPoint := &point{value: types.MaxValueDatum(), excl: true}
 	for i := len(sortKeyWithoutTrim) - 1; i >= 0; i-- {
 		// Make the end point value more than the start point value,

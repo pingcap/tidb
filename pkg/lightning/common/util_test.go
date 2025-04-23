@@ -132,7 +132,7 @@ func TestSQLWithRetry(t *testing.T) {
 	aValue := new(int)
 
 	// retry defaultMaxRetry times and still failed
-	for range 3 {
+	for i := 0; i < 3; i++ {
 		mock.ExpectQuery("select a from test.t1").WillReturnError(errors.Annotate(mysql.ErrInvalidConn, "mock error"))
 	}
 	err = sqlWithRetry.QueryRow(context.Background(), "", "select a from test.t1", aValue)

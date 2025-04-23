@@ -103,7 +103,7 @@ func init() {
 	setIndexValue = make([]uint64, 64)
 	setIndexInvertValue = make([]uint64, 64)
 
-	for i := range 64 {
+	for i := 0; i < 64; i++ {
 		setIndexValue[i] = 1 << uint64(i)
 		setIndexInvertValue[i] = ^setIndexValue[i]
 	}
@@ -117,7 +117,7 @@ func ParseSetValue(elems []string, number uint64) (Set, error) {
 
 	value := number
 	var items []string
-	for i := range elems {
+	for i := 0; i < len(elems); i++ {
 		if number&setIndexValue[i] > 0 {
 			items = append(items, elems[i])
 			number &= setIndexInvertValue[i]

@@ -78,7 +78,7 @@ func TestRequiredRows(t *testing.T) {
 				fields = append(fields, lfields...)
 				result := chunk.New(fields, maxChunkSize, maxChunkSize)
 
-				for range 10 {
+				for i := 0; i < 10; i++ {
 					required := rand.Int()%maxChunkSize + 1
 					result.SetRequiredRows(required, maxChunkSize)
 					result.Reset()

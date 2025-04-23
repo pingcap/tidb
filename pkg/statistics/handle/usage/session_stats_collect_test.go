@@ -22,8 +22,8 @@ import (
 
 func TestInsertAndDelete(t *testing.T) {
 	sl := NewSessionStatsList()
-	items := make([]*SessionStatsItem, 0, 5)
-	for range 5 {
+	var items []*SessionStatsItem
+	for i := 0; i < 5; i++ {
 		items = append(items, sl.NewSessionStatsItem())
 	}
 	items[0].Delete() // delete tail

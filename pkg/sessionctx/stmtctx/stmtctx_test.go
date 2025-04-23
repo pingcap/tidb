@@ -43,7 +43,7 @@ import (
 func TestCopTasksDetails(t *testing.T) {
 	ctx := stmtctx.NewStmtCtx()
 	backoffs := []string{"tikvRPC", "pdRPC", "regionMiss"}
-	for i := range 100 {
+	for i := 0; i < 100; i++ {
 		d := &execdetails.ExecDetails{
 			DetailsNeedP90: execdetails.DetailsNeedP90{
 				CalleeAddress: fmt.Sprintf("%v", i+1),
@@ -225,7 +225,7 @@ func TestApproxRuntimeInfo(t *testing.T) {
 	var valRange = rand.Int31n(10000) + 1000
 	backoffs := []string{"tikvRPC", "pdRPC", "regionMiss"}
 	details := []*execdetails.ExecDetails{}
-	for i := range n {
+	for i := 0; i < n; i++ {
 		d := &execdetails.ExecDetails{
 			DetailsNeedP90: execdetails.DetailsNeedP90{
 				CalleeAddress: fmt.Sprintf("%v", i+1),
@@ -252,7 +252,7 @@ func TestApproxRuntimeInfo(t *testing.T) {
 	}
 
 	ctx := stmtctx.NewStmtCtx()
-	for i := range n {
+	for i := 0; i < n; i++ {
 		ctx.MergeExecDetails(details[i], nil)
 	}
 	d := ctx.CopTasksDetails()
@@ -309,7 +309,7 @@ func TestApproxRuntimeInfo(t *testing.T) {
 func TestStmtHintsClone(t *testing.T) {
 	hints := hint.StmtHints{}
 	value := reflect.ValueOf(&hints).Elem()
-	for i := range value.NumField() {
+	for i := 0; i < value.NumField(); i++ {
 		field := value.Field(i)
 		switch field.Kind() {
 		case reflect.Int, reflect.Int32, reflect.Int64:
@@ -442,11 +442,11 @@ func TestStmtCtxID(t *testing.T) {
 
 func TestIssue58600(t *testing.T) {
 	sc := stmtctx.NewStmtCtx()
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/sessionctx/stmtctx/afterAffectedRowsLocked", func(sc *stmtctx.StatementContext) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/sessionctx/stmtctx/afterFoundRowsLocked", func(sc *stmtctx.StatementContext) {
 		// no panic when call sc.Reset()
 		assert.False(t, sc.Reset())
 	})
-	sc.AffectedRows()
+	sc.FoundRows()
 }
 
 func TestErrCtx(t *testing.T) {

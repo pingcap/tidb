@@ -46,7 +46,7 @@ func (tg *taskGetter) mustGetTestTask() *cache.TTLTask {
 	require.NoError(tg.t, err)
 	rows, err := session.GetRows4Test(context.Background(), tg.tk.Session(), rs)
 	require.NoError(tg.t, err)
-	task, err := cache.RowToTTLTask(tg.tk.Session(), rows[0])
+	task, err := cache.RowToTTLTask(tg.tk.Session().GetSessionVars().Location(), rows[0])
 	require.NoError(tg.t, err)
 	return task
 }
@@ -62,7 +62,7 @@ func TestRowToTTLTask(t *testing.T) {
 	now := time.Now()
 	now = now.Round(time.Second)
 
-	sql, args, err := cache.InsertIntoTTLTask(tk.Session(), "test-job", 1, 1, nil, nil, now, now)
+	sql, args, err := cache.InsertIntoTTLTask(tk.Session().GetSessionVars().Location(), "test-job", 1, 1, nil, nil, now, now)
 	require.NoError(t, err)
 	// tk.MustExec cannot handle the NULL parameter, use the `tk.Session().ExecuteInternal` instead here.
 	_, err = tk.Session().ExecuteInternal(ctx, sql, args...)
@@ -105,7 +105,7 @@ func TestInsertIntoTTLTask(t *testing.T) {
 	now := time.Now()
 	now = now.Round(time.Second)
 
-	sql, args, err := cache.InsertIntoTTLTask(tk.Session(), "test-job", 1, 1,
+	sql, args, err := cache.InsertIntoTTLTask(tk.Session().GetSessionVars().Location(), "test-job", 1, 1,
 		rangeStart, rangeEnd, now, now)
 	require.NoError(t, err)
 	// tk.MustExec cannot handle the NULL parameter, use the `tk.Session().ExecuteInternal` instead here.

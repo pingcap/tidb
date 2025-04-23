@@ -576,7 +576,7 @@ func TestForeignKeyConcurrentInsertChildTable(t *testing.T) {
 	tk.MustExec("create table t2 (id int, a int, index(a),  foreign key fk(a) references t1(id));")
 	tk.MustExec("insert into  t1 (id, a) values (1, 11),(2, 12), (3, 13), (4, 14)")
 	var wg sync.WaitGroup
-	for range 10 {
+	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -584,7 +584,7 @@ func TestForeignKeyConcurrentInsertChildTable(t *testing.T) {
 			tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 			tk.MustExec("set @@foreign_key_checks=1")
 			tk.MustExec("use test")
-			for cnt := range 20 {
+			for cnt := 0; cnt < 20; cnt++ {
 				id := cnt%4 + 1
 				sql := fmt.Sprintf("insert into t2 (id, a) values (%v, %v)", cnt, id)
 				tk.MustExec(sql)
@@ -1171,7 +1171,7 @@ func TestForeignKeyOnDeleteCascade2(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("alter table t1 add index idx_%v (c%v) ", i, i))
 		tk.MustExec(fmt.Sprintf("alter table t1 add foreign key (c%v) references t1 (c%v) on delete cascade", i, i-1))
 	}
-	for i := range cnt {
+	for i := 0; i < cnt; i++ {
 		vals := strings.Repeat(strconv.Itoa(i)+",", 20)
 		tk.MustExec(fmt.Sprintf("insert into t1 values (%v)", vals[:len(vals)-1]))
 	}
@@ -1201,7 +1201,7 @@ func TestForeignKeyOnDeleteCascade2(t *testing.T) {
 	tk.MustExec("create table t1 (id int auto_increment key, b int);")
 	tk.MustExec("create table t2 (id int, b int, foreign key fk(id) references t1(id) on delete cascade)")
 	tk.MustExec("insert into t1 (b) values (1),(1),(1),(1),(1),(1),(1),(1);")
-	for range 12 {
+	for i := 0; i < 12; i++ {
 		tk.MustExec("insert into t1 (b) select b from t1")
 	}
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("32768"))
@@ -1567,7 +1567,7 @@ func TestForeignKeyOnDeleteSetNull2(t *testing.T) {
 	tk.MustExec("create table t1 (id int auto_increment key, b int);")
 	tk.MustExec("create table t2 (id int, b int, foreign key fk(id) references t1(id) on delete set null)")
 	tk.MustExec("insert into t1 (b) values (1),(1),(1),(1),(1),(1),(1),(1);")
-	for range 12 {
+	for i := 0; i < 12; i++ {
 		tk.MustExec("insert into t1 (b) select b from t1")
 	}
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("32768"))
@@ -1872,7 +1872,7 @@ func TestForeignKeyOnUpdateCascade2(t *testing.T) {
 	tk.MustExec("create table t1 (id int auto_increment key, b int, index(b));")
 	tk.MustExec("create table t2 (id int, b int, foreign key fk(b) references t1(b) on update cascade)")
 	tk.MustExec("insert into t1 (b) values (1),(2),(3),(4),(5),(6),(7),(8);")
-	for range 12 {
+	for i := 0; i < 12; i++ {
 		tk.MustExec("insert into t1 (b) select id from t1")
 	}
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("32768"))
@@ -2423,7 +2423,7 @@ func TestForeignKeyLargeTxnErr(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int auto_increment key, pid int, name varchar(200), index(pid));")
 	tk.MustExec("insert into t1 (name) values ('abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890');")
-	for range 8 {
+	for i := 0; i < 8; i++ {
 		tk.MustExec("insert into t1 (name) select name from t1;")
 	}
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("256"))

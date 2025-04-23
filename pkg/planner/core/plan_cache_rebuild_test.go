@@ -358,7 +358,7 @@ func planCacheUnclearCloneCheck(v1, v2 reflect.Value, path string, visited map[v
 
 	switch v1.Kind() {
 	case reflect.Array:
-		for i := range v1.Len() {
+		for i := 0; i < v1.Len(); i++ {
 			if err := planCacheUnclearCloneCheck(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), visited, whiteLists...); err != nil {
 				return err
 			}
@@ -379,7 +379,7 @@ func planCacheUnclearCloneCheck(v1, v2 reflect.Value, path string, visited map[v
 		if v1.Pointer() == v2.Pointer() {
 			return errors.Errorf("same slice pointers, path %v", path)
 		}
-		for i := range v1.Len() {
+		for i := 0; i < v1.Len(); i++ {
 			if err := planCacheUnclearCloneCheck(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), visited, whiteLists...); err != nil {
 				return err
 			}
@@ -473,7 +473,7 @@ func TestFastPointGetClone(t *testing.T) {
 	}
 
 	pointPlan := reflect.TypeOf(core.PointGetPlan{})
-	for i := range pointPlan.NumField() {
+	for i := 0; i < pointPlan.NumField(); i++ {
 		fieldName := pointPlan.Field(i).Name
 		if _, ok := fieldNoNeedToClone[fieldName]; ok {
 			continue

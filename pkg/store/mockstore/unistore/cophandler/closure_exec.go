@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"fmt"
 	"math"
-	"slices"
 	"sort"
 	"time"
 
@@ -498,7 +497,7 @@ func pbChunkToChunk(pbChk tipb.Chunk, chk *chunk.Chunk, fieldTypes []*types.Fiel
 	var err error
 	decoder := codec.NewDecoder(chk, timeutil.SystemLocation())
 	for len(rowsData) > 0 {
-		for i := range fieldTypes {
+		for i := 0; i < len(fieldTypes); i++ {
 			rowsData, err = decoder.DecodeOne(rowsData, i, fieldTypes[i])
 			if err != nil {
 				return err
@@ -882,7 +881,7 @@ func (e *indexScanProcessor) Finish() error {
 }
 
 func (isc *idxScanCtx) checkVal(curVals [][]byte) bool {
-	for i := range isc.columnLen {
+	for i := 0; i < isc.columnLen; i++ {
 		if !bytes.Equal(isc.prevVals[i], curVals[i]) {
 			return false
 		}
@@ -909,7 +908,7 @@ func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 	if e.idxScanCtx.collectNDV {
 		if len(e.idxScanCtx.prevVals[0]) == 0 || !e.idxScanCtx.checkVal(values) {
 			e.curNdv++
-			for i := range e.idxScanCtx.columnLen {
+			for i := 0; i < e.idxScanCtx.columnLen; i++ {
 				e.idxScanCtx.prevVals[i] = append(e.idxScanCtx.prevVals[i][:0], values[i]...)
 			}
 		}
@@ -940,7 +939,7 @@ func (e *closureExecutor) chunkToOldChunk(chk *chunk.Chunk) error {
 	var oldRow []types.Datum
 	sc := e.sctx.GetSessionVars().StmtCtx
 	errCtx := sc.ErrCtx()
-	for i := range chk.NumRows() {
+	for i := 0; i < chk.NumRows(); i++ {
 		oldRow = oldRow[:0]
 		if e.outputOff != nil {
 			for _, outputOff := range e.outputOff {
@@ -948,7 +947,7 @@ func (e *closureExecutor) chunkToOldChunk(chk *chunk.Chunk) error {
 				oldRow = append(oldRow, d)
 			}
 		} else {
-			for colIdx := range chk.NumCols() {
+			for colIdx := 0; colIdx < chk.NumCols(); colIdx++ {
 				d := chk.GetRow(i).GetDatum(colIdx, e.fieldTps[colIdx])
 				oldRow = append(oldRow, d)
 			}
@@ -1177,7 +1176,7 @@ func (e *hashAggProcessor) Finish() error {
 }
 
 func safeCopy(b []byte) []byte {
-	return slices.Clone(b)
+	return append([]byte{}, b...)
 }
 
 func checkLock(lock mvcc.Lock, key []byte, startTS uint64, resolved []uint64) error {
@@ -1194,7 +1193,12 @@ func checkLock(lock mvcc.Lock, key []byte, startTS uint64, resolved []uint64) er
 }
 
 func isResolved(startTS uint64, resolved []uint64) bool {
-	return slices.Contains(resolved, startTS)
+	for _, v := range resolved {
+		if startTS == v {
+			return true
+		}
+	}
+	return false
 }
 
 func exceedEndKey(current, endKey []byte) bool {

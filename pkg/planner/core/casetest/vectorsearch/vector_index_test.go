@@ -84,7 +84,7 @@ func TestTiFlashANNIndex(t *testing.T) {
 			('[2,2,2]', 2, 2, '[2,2,2]', '[2,2,2]'),
 			('[3,3,3]', 3, 3, '[3,3,3]', '[3,3,3]')
 	`)
-	for range 4 {
+	for i := 0; i < 4; i++ {
 		tk.MustExec("insert into t1(vec, a, b, c, d) select vec, a, b, c, d from t1")
 	}
 	dom := domain.GetDomain(tk.Session())
@@ -305,7 +305,8 @@ func TestANNIndexWithNonIntClusteredPk(t *testing.T) {
 	tableScan, err := castedTableReader.GetTableScan()
 	require.NoError(t, err)
 	// Check that it has the extra vector index information.
-	require.NotNil(t, tableScan.AnnIndexExtra)
+	require.Len(t, tableScan.UsedColumnarIndexes, 1)
+	require.True(t, tableScan.UsedColumnarIndexes[0].QueryInfo.IndexType == tipb.ColumnarIndexType_TypeVector)
 	require.Len(t, tableScan.Ranges, 1)
 	// Check that it's full scan.
 	require.Equal(t, "[-inf,+inf]", tableScan.Ranges[0].String())
@@ -334,7 +335,7 @@ func prepareVectorSearchWithPK(t *testing.T) *testkit.TestKit {
 			VECTOR INDEX idx_embedding ((VEC_COSINE_DISTANCE(vec)))
 		)
 	`)
-	for i := range 2000 {
+	for i := 0; i < 2000; i++ {
 		tk.MustExec(fmt.Sprintf(`
 		insert into t1 values
 			(%d, '[1,1,1]', 1, 1, '[1,1,1]', '[1,1,1]'),

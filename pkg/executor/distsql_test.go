@@ -75,8 +75,8 @@ func TestCopClientSend(t *testing.T) {
 	tk.MustExec("create table copclient (id int primary key)")
 
 	// Insert 1000 rows.
-	values := make([]string, 0, 1000)
-	for i := range 1000 {
+	var values []string
+	for i := 0; i < 1000; i++ {
 		values = append(values, fmt.Sprintf("(%d)", i))
 	}
 	tk.MustExec("insert copclient values " + strings.Join(values, ","))
@@ -168,17 +168,17 @@ func TestInconsistentIndex(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.Store = store
 
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i+10, i))
 		require.NoError(t, tk.QueryToErr("select * from t where a>=0"))
 	}
 
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		tk.MustExec(fmt.Sprintf("update t set a=%d where a=%d", i, i+10))
 		require.NoError(t, tk.QueryToErr("select * from t where a>=0"))
 	}
 
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		_, err = idxOp.Create(ctx.GetTableCtx(), txn, types.MakeDatums(i+10), kv.IntHandle(100+i), nil)
@@ -194,7 +194,7 @@ func TestInconsistentIndex(t *testing.T) {
 	}
 
 	// fix inconsistent problem to pass CI
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		err = idxOp.Delete(ctx.GetTableCtx(), txn, types.MakeDatums(i+10), kv.IntHandle(100+i))
@@ -218,7 +218,7 @@ func TestPartitionTableRandomlyIndexLookUpReader(t *testing.T) {
         partition p4 values less than (40))`)
 	tk.MustExec("create table tnormal (a int, b int, key(a))")
 	values := make([]string, 0, 128)
-	for range 128 {
+	for i := 0; i < 128; i++ {
 		values = append(values, fmt.Sprintf("(%v, %v)", rand.Intn(40), rand.Intn(40)))
 	}
 	tk.MustExec(fmt.Sprintf("insert into t values %v", strings.Join(values, ", ")))
@@ -231,7 +231,7 @@ func TestPartitionTableRandomlyIndexLookUpReader(t *testing.T) {
 		}
 		return a, b
 	}
-	for range 256 {
+	for i := 0; i < 256; i++ {
 		la, ra := randRange()
 		lb, rb := randRange()
 		cond := fmt.Sprintf("(a between %v and %v) or (b between %v and %v)", la, ra, lb, rb)
@@ -272,7 +272,7 @@ func TestPartitionTableIndexJoinIndexLookUp(t *testing.T) {
 	tk.MustExec("create table tnormal (a int, b int, key(a), key(b))")
 	nRows := 512
 	values := make([]string, 0, nRows)
-	for range nRows {
+	for i := 0; i < nRows; i++ {
 		values = append(values, fmt.Sprintf("(%v, %v)", rand.Intn(nRows), rand.Intn(nRows)))
 	}
 	tk.MustExec(fmt.Sprintf("insert into t values %v", strings.Join(values, ", ")))
@@ -285,7 +285,7 @@ func TestPartitionTableIndexJoinIndexLookUp(t *testing.T) {
 		}
 		return a, b
 	}
-	for range nRows {
+	for i := 0; i < nRows; i++ {
 		lb, rb := randRange()
 		cond := fmt.Sprintf("(t2.b between %v and %v)", lb, rb)
 		result := tk.MustQuery("select t1.* from tnormal t1, tnormal t2 use index(a) where t1.a=t2.b and " + cond).Sort().Rows()
@@ -301,7 +301,7 @@ func TestCoprocessorPagingSize(t *testing.T) {
 	tk.MustExec("create table t_paging (a int, b int, key(a), key(b))")
 	nRows := 512
 	values := make([]string, 0, nRows)
-	for range nRows {
+	for i := 0; i < nRows; i++ {
 		values = append(values, fmt.Sprintf("(%v, %v)", rand.Intn(nRows), rand.Intn(nRows)))
 	}
 	tk.MustExec(fmt.Sprintf("insert into t_paging values %v", strings.Join(values, ", ")))
@@ -524,7 +524,7 @@ func TestCoprocessorBatchByStore(t *testing.T) {
     	partition p0 values less than(10000),
     	partition p1 values less than (50000),
     	partition p2 values less than (100000))`)
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		tk.MustExec("insert into t values(?, ?, ?)", i*10000, i*10000, i%2)
 		tk.MustExec("insert into t1 values(?, ?, ?)", i*10000, i*10000, i%2)
 	}
@@ -553,7 +553,7 @@ func TestCoprocessorBatchByStore(t *testing.T) {
 		baseSQL := fmt.Sprintf("select * from %s force index(i) where id < 100000 and (%s)", table, strings.Join(ranges, " or "))
 		for _, paging := range []string{"on", "off"} {
 			tk.MustExec("set session tidb_enable_paging=?", paging)
-			for size := range 10 {
+			for size := 0; size < 10; size++ {
 				tk.MustExec("set session tidb_store_batch_size=?", size)
 				tk.MustQuery(baseSQL + " and c2 = 0").Sort().Check(evenRows)
 				tk.MustQuery(baseSQL + " and c2 = 1").Sort().Check(oddRows)

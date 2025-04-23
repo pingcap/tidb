@@ -355,7 +355,10 @@ func resetByIDBeforeFullLoad(ptr *atomic.Pointer[btree.BTreeG[*tableItem]], sche
 		return
 	}
 
-	batchSize := min(bt.Len(), 1000)
+	batchSize := 1000
+	if bt.Len() < batchSize {
+		batchSize = bt.Len()
+	}
 	items := make([]*tableItem, 0, batchSize)
 	items = append(items, pivot)
 	for {
@@ -391,7 +394,10 @@ func resetByNameBeforeFullLoad(ptr *atomic.Pointer[btree.BTreeG[*tableItem]], sc
 		return
 	}
 
-	batchSize := min(bt.Len(), 1000)
+	batchSize := 1000
+	if bt.Len() < batchSize {
+		batchSize = bt.Len()
+	}
 	items := make([]*tableItem, 0, batchSize)
 	items = append(items, pivot)
 	for {
@@ -504,7 +510,10 @@ func resetPID2TIDBeforeFullLoad(ptr *atomic.Pointer[btree.BTreeG[partitionItem]]
 		return
 	}
 
-	batchSize := min(bt.Len(), 1000)
+	batchSize := 1000
+	if bt.Len() < batchSize {
+		batchSize = bt.Len()
+	}
 	items := make([]partitionItem, 0, batchSize)
 	items = append(items, pivot)
 	for {
@@ -1155,7 +1164,7 @@ func (is *infoschemaV2) FindTableByPartitionID(partitionID int64) (table.Table, 
 
 	partInfo := tbl.Meta().GetPartitionInfo()
 	var def *model.PartitionDefinition
-	for i := range partInfo.Definitions {
+	for i := 0; i < len(partInfo.Definitions); i++ {
 		pdef := &partInfo.Definitions[i]
 		if pdef.ID == partitionID {
 			def = pdef

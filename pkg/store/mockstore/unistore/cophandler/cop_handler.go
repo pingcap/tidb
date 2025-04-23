@@ -274,7 +274,7 @@ func useDefaultEncoding(chk *chunk.Chunk, dagCtx *dagContext, dagReq *tipb.DAGRe
 	numRows := chk.NumRows()
 	sc := dagCtx.sctx.GetSessionVars().StmtCtx
 	errCtx := sc.ErrCtx()
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		datums = datums[:0]
 		if dagReq.OutputOffsets != nil {
 			for _, j := range dagReq.OutputOffsets {
@@ -299,7 +299,7 @@ func useChunkEncoding(chk *chunk.Chunk, dagReq *tipb.DAGRequest, fields []*types
 	if dagReq.OutputOffsets != nil {
 		offsets := make([]int, len(dagReq.OutputOffsets))
 		newFields := make([]*types.FieldType, len(dagReq.OutputOffsets))
-		for i := range dagReq.OutputOffsets {
+		for i := 0; i < len(dagReq.OutputOffsets); i++ {
 			offset := dagReq.OutputOffsets[i]
 			offsets[i] = int(offset)
 			newFields[i] = fields[offset]
@@ -614,7 +614,7 @@ func extractKVRanges(startKey, endKey []byte, keyRanges []*coprocessor.KeyRange,
 }
 
 func reverseKVRanges(kvRanges []kv.KeyRange) {
-	for i := range len(kvRanges) / 2 {
+	for i := 0; i < len(kvRanges)/2; i++ {
 		j := len(kvRanges) - i - 1
 		kvRanges[i], kvRanges[j] = kvRanges[j], kvRanges[i]
 	}

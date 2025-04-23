@@ -38,7 +38,7 @@ func BenchmarkExtractDatumByOffsets(b *testing.B) {
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a bigint, b int, index idx (b));")
-	for i := range 8 {
+	for i := 0; i < 8; i++ {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -78,7 +78,7 @@ func BenchmarkGenerateIndexKV(b *testing.B) {
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a bigint, b int, index idx (b));")
-	for i := range 8 {
+	for i := 0; i < 8; i++ {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))

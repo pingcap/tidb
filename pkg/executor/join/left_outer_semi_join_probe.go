@@ -59,7 +59,7 @@ func (j *leftOuterSemiJoinProbe) SetRestoredChunkForProbe(chunk *chunk.Chunk) (e
 
 func (j *leftOuterSemiJoinProbe) resetProbeState() {
 	j.isNullRows = j.isNullRows[:0]
-	for range j.chunkRows {
+	for i := 0; i < j.chunkRows; i++ {
 		j.isNullRows = append(j.isNullRows, false)
 	}
 	j.baseSemiJoin.resetProbeState()
@@ -130,7 +130,7 @@ func (j *leftOuterSemiJoinProbe) produceResult(joinedChk *chunk.Chunk, sqlKiller
 			return err
 		}
 
-		for i := range joinedChk.NumRows() {
+		for i := 0; i < joinedChk.NumRows(); i++ {
 			if j.selected[i] {
 				j.isMatchedRows[j.rowIndexInfos[i].probeRowIndex] = true
 			}

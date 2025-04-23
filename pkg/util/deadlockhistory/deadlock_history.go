@@ -16,7 +16,6 @@ package deadlockhistory
 
 import (
 	"encoding/hex"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -154,7 +153,7 @@ func (d *DeadlockHistory) Resize(newCapacity uint) {
 		} else {
 			// shrink deadlocks, keep the last len(current)-newCapacity items
 			// use append here to force golang to realloc the underlying array to save memory
-			d.deadlocks = slices.Clone(current[uint(len(current))-newCapacity:])
+			d.deadlocks = append([]*DeadlockRecord{}, current[uint(len(current))-newCapacity:]...)
 			d.size = int(newCapacity)
 		}
 	}
@@ -210,7 +209,7 @@ func (d *DeadlockHistory) getAll() []*DeadlockRecord {
 func (d *DeadlockHistory) Clear() {
 	d.Lock()
 	defer d.Unlock()
-	for i := range d.deadlocks {
+	for i := 0; i < len(d.deadlocks); i++ {
 		d.deadlocks[i] = nil
 	}
 	d.head = 0

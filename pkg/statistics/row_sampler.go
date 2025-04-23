@@ -161,7 +161,7 @@ func NewReservoirRowSampleCollector(maxSampleSize int, totalLen int) *ReservoirR
 // Then use the weighted reservoir sampling to collect the samples.
 func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
 	collector := NewRowSampleCollector(s.MaxSampleSize, s.SampleRate, len(s.ColsFieldType)+len(s.ColGroups))
-	for range len(s.ColsFieldType) + len(s.ColGroups) {
+	for i := 0; i < len(s.ColsFieldType)+len(s.ColGroups); i++ {
 		collector.Base().FMSketches = append(collector.Base().FMSketches, NewFMSketch(s.MaxFMSketchSize))
 	}
 	ctx := context.TODO()

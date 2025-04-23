@@ -706,6 +706,15 @@ type Traffic struct {
 	Dir     string
 }
 
+// DistributeTable represents a distribute table plan.
+type DistributeTable struct {
+	baseSchemaProducer
+	TableInfo      *model.TableInfo
+	PartitionNames []ast.CIStr
+	Engine         ast.CIStr
+	Rule           ast.CIStr
+}
+
 // SplitRegion represents a split regions plan.
 type SplitRegion struct {
 	baseSchemaProducer
@@ -1426,7 +1435,7 @@ func (e *Explain) prepareTaskDot(p base.PhysicalPlan, taskTp string, buffer *byt
 			copTasks = append(copTasks, copPlan.tablePlan)
 			copTasks = append(copTasks, copPlan.indexPlan)
 		case *PhysicalIndexMergeReader:
-			for i := range copPlan.partialPlans {
+			for i := 0; i < len(copPlan.partialPlans); i++ {
 				pipelines = append(pipelines, fmt.Sprintf("\"%s\" -> \"%s\"\n", copPlan.ExplainID(), copPlan.partialPlans[i].ExplainID()))
 				copTasks = append(copTasks, copPlan.partialPlans[i])
 			}

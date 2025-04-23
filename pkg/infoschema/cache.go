@@ -15,7 +15,6 @@
 package infoschema
 
 import (
-	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -380,7 +379,7 @@ func (h *InfoCache) InsertEmptySchemaVersion(version int64) {
 		for ver := range h.emptySchemaVersions {
 			versions = append(versions, ver)
 		}
-		slices.Sort(versions)
+		sort.Slice(versions, func(i, j int) bool { return versions[i] < versions[j] })
 		for _, ver := range versions {
 			delete(h.emptySchemaVersions, ver)
 			if len(h.emptySchemaVersions) <= cap(h.cache) {

@@ -188,7 +188,7 @@ func convertScientificNotation(str string) (string, error) {
 	// https://golang.org/ref/spec#Floating-point_literals
 	eIdx := -1
 	point := -1
-	for i := range len(str) {
+	for i := 0; i < len(str); i++ {
 		if str[i] == '.' {
 			point = i
 		}
@@ -392,7 +392,7 @@ func getValidIntPrefix(ctx Context, str string, isFuncCast bool) (string, error)
 
 	validLen := 0
 
-	for i := range len(str) {
+	for i := 0; i < len(str); i++ {
 		c := str[i]
 		if (c == '+' || c == '-') && i == 0 {
 			continue
@@ -456,7 +456,7 @@ var minIntStr = strconv.FormatInt(math.MinInt64, 10)
 func floatStrToIntStr(validFloat string, oriStr string) (intStr string, _ error) {
 	var dotIdx = -1
 	var eIdx = -1
-	for i := range len(validFloat) {
+	for i := 0; i < len(validFloat); i++ {
 		switch validFloat[i] {
 		case '.':
 			dotIdx = i
@@ -711,7 +711,7 @@ func getValidFloatPrefix(ctx Context, s string, isFuncCast bool) (valid string, 
 		validLen int
 		eIdx     = -1
 	)
-	for i := range len(s) {
+	for i := 0; i < len(s); i++ {
 		c := s[i]
 		if c == '+' || c == '-' {
 			if i != 0 && i != eIdx+1 { // "1e+1" is valid.

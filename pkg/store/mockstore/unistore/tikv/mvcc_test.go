@@ -1428,10 +1428,10 @@ func MustLoad(startTS, commitTS uint64, store *TestStore, pairs ...string) {
 		keys = append(keys, []byte(strs[0]))
 		vals = append(vals, []byte(strs[1]))
 	}
-	for i := range keys {
+	for i := 0; i < len(keys); i++ {
 		MustPrewritePut(keys[0], keys[i], vals[i], startTS, store)
 	}
-	for i := range keys {
+	for i := 0; i < len(keys); i++ {
 		MustCommit(keys[i], startTS, commitTS, store)
 	}
 }
@@ -1491,7 +1491,7 @@ func TestPessimisticLockForce(t *testing.T) {
 
 func TestScanSampleStep(t *testing.T) {
 	store := NewTestStore("basic_optimistic_db", "basic_optimistic_log", t)
-	for i := range 1000 {
+	for i := 0; i < 1000; i++ {
 		k := genScanSampleStepKey(i)
 		MustPrewritePut(k, k, k, 1, store)
 		MustCommit(k, 1, 2, store)
@@ -1518,7 +1518,7 @@ func TestScanSampleStep(t *testing.T) {
 }
 
 func genScanSampleStepKey(i int) []byte {
-	return fmt.Appendf(nil, "t%0.4d", i)
+	return []byte(fmt.Sprintf("t%0.4d", i))
 }
 
 func TestAsyncCommitPrewrite(t *testing.T) {
