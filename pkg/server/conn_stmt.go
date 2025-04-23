@@ -233,8 +233,7 @@ func (cc *clientConn) executePlanCacheStmt(ctx context.Context, stmt any, args [
 	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
 
 	fn := func() bool {
-		if cc.bufReadConn != nil && cc.mu.TryLock() {
-			defer cc.mu.Unlock()
+		if cc.bufReadConn != nil {
 			return cc.bufReadConn.IsAlive() != 0
 		}
 		return true

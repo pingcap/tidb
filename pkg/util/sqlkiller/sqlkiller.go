@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -39,8 +40,6 @@ const (
 	// When you add a new signal, you should also modify store/driver/error/ToTidbErr,
 	// so that errors in client can be correctly converted to tidb errors.
 )
-
-const checkConnectionAliveDur time.Duration = time.Second
 
 // SQLKiller is used to kill a query.
 type SQLKiller struct {
@@ -132,8 +131,21 @@ func (killer *SQLKiller) HandleSignal() error {
 	// Checks if the connection is alive.
 	// For performance reasons, the check interval should be at least `checkConnectionAliveDur`(1 second).
 	fn := killer.IsConnectionAlive.Load()
-	if fn != nil && !(*fn)() {
-		atomic.CompareAndSwapUint32(&killer.Signal, 0, QueryInterrupted)
+	lastCheckTime := killer.lastCheckTime.Load()
+	if fn != nil {
+		var checkConnectionAliveDur time.Duration = time.Second
+		now := time.Now()
+		if intest.InTest {
+			checkConnectionAliveDur = time.Millisecond
+		}
+		if lastCheckTime == nil {
+			killer.lastCheckTime.Store(&now)
+		} else if time.Since(*lastCheckTime) > checkConnectionAliveDur {
+			killer.lastCheckTime.Store(&now)
+			if !(*fn)() {
+				atomic.CompareAndSwapUint32(&killer.Signal, 0, QueryInterrupted)
+			}
+		}
 	}
 
 	status := atomic.LoadUint32(&killer.Signal)
@@ -151,4 +163,5 @@ func (killer *SQLKiller) Reset() {
 		logutil.BgLogger().Warn("kill finished", zap.Uint64("conn", killer.ConnID.Load()))
 	}
 	atomic.StoreUint32(&killer.Signal, 0)
+	killer.lastCheckTime.Store(nil)
 }

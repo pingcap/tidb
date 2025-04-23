@@ -2077,8 +2077,7 @@ func (cc *clientConn) handleStmt(
 				rs.Finish()
 			})
 		fn := func() bool {
-			if cc.bufReadConn != nil && cc.mu.TryLock() {
-				defer cc.mu.Unlock()
+			if cc.bufReadConn != nil {
 				return cc.bufReadConn.IsAlive() != 0
 			}
 			return true
