@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -42,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
-	"slices"
 )
 
 /***

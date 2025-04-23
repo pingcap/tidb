@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -46,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
-	"slices"
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Executor {

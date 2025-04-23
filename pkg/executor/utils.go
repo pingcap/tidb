@@ -16,6 +16,7 @@ package executor
 
 import (
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 
@@ -23,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"slices"
 )
 
 var (

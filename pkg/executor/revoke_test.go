@@ -16,6 +16,7 @@ package executor_test
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -23,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
-	"slices"
 )
 
 func TestRevokeGlobal(t *testing.T) {
