@@ -381,7 +381,7 @@ func TestOutdatedAnalyze(t *testing.T) {
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (a int, b int, index idx(a))")
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d,%d)", i, i))
 	}
 	h := dom.StatsHandle()
@@ -433,7 +433,7 @@ func TestNullCount(t *testing.T) {
 	var output [][]string
 	analyzeSuiteData := GetAnalyzeSuiteData()
 	analyzeSuiteData.LoadTestCases(t, &input, &output)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
 		})
@@ -480,7 +480,7 @@ func TestInconsistentEstimation(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c int, index ab(a,b), index ac(a,c))")
 	tk.MustExec("insert into t values (1,1,1), (1000,1000,1000)")
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustExec("insert into t values (5,5,5), (10,10,10)")
 	}
 	tk.MustExec("set @@tidb_analyze_version=1")
