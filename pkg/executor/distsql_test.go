@@ -75,7 +75,7 @@ func TestCopClientSend(t *testing.T) {
 	tk.MustExec("create table copclient (id int primary key)")
 
 	// Insert 1000 rows.
-	var values []string
+	values := make([]string, 0, 1000)
 	for i := range 1000 {
 		values = append(values, fmt.Sprintf("(%d)", i))
 	}

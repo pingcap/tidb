@@ -109,7 +109,7 @@ func TestTiDBClusterConfig(t *testing.T) {
 		server  *httptest.Server
 	}
 	const testServerCount = 3
-	var testServers []*mockServer
+	testServers := make([]*mockServer, 0, testServerCount)
 	for range testServerCount {
 		server := httptest.NewServer(router)
 		address := strings.TrimPrefix(server.URL, "http://")
