@@ -72,7 +72,7 @@ func TestEarlyClose(t *testing.T) {
 
 	N := 100
 	// Insert N rows.
-	var values []string
+	values := make([]string, 0, N)
 	for i := range N {
 		values = append(values, fmt.Sprintf("(%d)", i))
 	}
@@ -654,7 +654,7 @@ func TestIndexDoubleReadClose(t *testing.T) {
 	tk.MustExec("create table dist (id int primary key, c_idx int, c_col int, index (c_idx))")
 
 	// Insert 100 rows.
-	var values []string
+	values := make([]string, 0, 100)
 	for i := range 100 {
 		values = append(values, fmt.Sprintf("(%d, %d, %d)", i, i, i))
 	}
