@@ -211,10 +211,10 @@ func newMemArbitratorForTest(shardCount uint64, limit int64) (m *MemArbitrator) 
 }
 
 type arbitrateHelperForTest struct {
-	cancelCh    chan struct{}
-	killCB      func()
-	heapUsedCB  func() int64
-	interruptCB func()
+	cancelCh   chan struct{}
+	killCB     func()
+	heapUsedCB func() int64
+	cancelCB   func()
 }
 
 func (t *arbitrateHelperForTest) cancelSelf() {
@@ -234,9 +234,9 @@ func (t *arbitrateHelperForTest) Kill() bool {
 	return true
 }
 
-func (t *arbitrateHelperForTest) Interrupt() bool {
+func (t *arbitrateHelperForTest) Cancel() bool {
 	close(t.cancelCh)
-	t.interruptCB()
+	t.cancelCB()
 	return true
 }
 
@@ -517,7 +517,7 @@ func TestMemArbitratorSwitchMode(t *testing.T) {
 
 	genTestPoolWithHelper := func(memPriority ArbitrateMemPriority, waitAverse, preferPrivilege bool) *rootPoolEntry {
 		e := m.newPoolWithHelperForTest(memPriority, waitAverse, preferPrivilege)
-		e.ctx.Load().arbitrateHelper.(*arbitrateHelperForTest).interruptCB = func() {
+		e.ctx.Load().arbitrateHelper.(*arbitrateHelperForTest).cancelCB = func() {
 			actionCancel[e.pool.uid]++
 		}
 		return e
@@ -525,7 +525,7 @@ func TestMemArbitratorSwitchMode(t *testing.T) {
 
 	genTestCtx := func(e *rootPoolEntry, memPriority ArbitrateMemPriority, waitAverse, preferPrivilege bool) *Context {
 		c := m.newCtxWithHelperForTest(memPriority, waitAverse, preferPrivilege)
-		c.arbitrateHelper.(*arbitrateHelperForTest).interruptCB = func() {
+		c.arbitrateHelper.(*arbitrateHelperForTest).cancelCB = func() {
 			actionCancel[e.pool.uid]++
 		}
 		return c
@@ -2679,7 +2679,7 @@ func TestBench(t *testing.T) {
 							cancelEvent++
 							killed = true
 						},
-						interruptCB: func() {
+						cancelCB: func() {
 							cancelEvent++
 						},
 					},
@@ -2770,7 +2770,7 @@ func TestBench(t *testing.T) {
 							cancelEvent++
 							killed = true
 						},
-						interruptCB: func() {
+						cancelCB: func() {
 							cancelEvent++
 						},
 					},

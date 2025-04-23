@@ -101,7 +101,7 @@ func TestMemoryAllocations(t *testing.T) {
 	const numAccountOps = 200
 	var linesBetweenHeaderReminders int
 	var generateHeader func()
-	var reportAndCheck func(string, ...interface{})
+	var reportAndCheck func(string, ...any)
 	{
 		// Detailed output: report the intermediate values of the
 		// important variables at every stage of the test.
@@ -115,7 +115,7 @@ func TestMemoryAllocations(t *testing.T) {
 			}
 			fmt.Println("")
 		}
-		reportAndCheck = func(extraFmt string, extras ...interface{}) {
+		reportAndCheck = func(extraFmt string, extras ...any) {
 			t.Helper()
 			fmt.Printf("%5d %5d %5d %5d ", m.mu.allocated, m.mu.budget.used, m.reserved, pool.mu.allocated)
 			for accI := range accs {

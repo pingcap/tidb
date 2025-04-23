@@ -1568,14 +1568,14 @@ func (m *MemArbitrator) doReclaimMemByPriority(target *rootPoolEntry, remainByte
 			if ctx.fail {
 				continue
 			}
-			if now.Compare(ctx.startTime.Add(DefKillCancelCheckTimeout)) >= 0 {
-				// failed to cancel the task
-				m.actions.Warn("Failed to `INTERRUPT` root pool",
+			if deadline := ctx.startTime.Add(DefKillCancelCheckTimeout); now.Compare(deadline) >= 0 {
+				m.actions.Warn("Failed to `CANCEL` root pool due to timeout",
 					zap.Uint64("uid", uid),
 					zap.String("name", entry.pool.name),
 					zap.Int64("quota-to-reclaim", ctx.reclaim),
 					zap.String("mem-priority", entry.ctx.memPriority.String()),
 					zap.Time("start-time", ctx.startTime),
+					zap.Time("deadline", deadline),
 				)
 				ctx.fail = true
 				continue

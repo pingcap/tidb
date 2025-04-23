@@ -779,14 +779,14 @@ func (m *MemArbitrator) killTopnEntry(required int64) (newKillNum int, reclaimed
 			if ctx.fail {
 				continue
 			}
-			if now.Compare(ctx.startTime.Add(DefKillCancelCheckTimeout)) >= 0 {
-				// failed to kill the task
-				m.actions.Error("Failed to `KILL` root pool",
+			if deadline := ctx.startTime.Add(DefKillCancelCheckTimeout); now.Compare(deadline) >= 0 {
+				m.actions.Error("Failed to `KILL` root pool due to timeout",
 					zap.Uint64("uid", uid),
 					zap.String("name", entry.pool.name),
 					zap.Int64("mem-to-reclaim", ctx.reclaim),
 					zap.String("mem-priority", entry.ctx.memPriority.String()),
 					zap.Time("start-time", ctx.startTime),
+					zap.Time("deadline", deadline),
 				)
 				ctx.fail = true
 				continue
@@ -958,8 +958,8 @@ func (m *MemArbitrator) initAwaitFreePool(allocAlignSize, shardNum int64, holder
 
 type ArbitrateHelper interface {
 	Kill() bool       // kill by arbitrator only when meeting oom risk
-	Interrupt() bool  // interrupt/cancel by arbitrator
-	HeapInuse() int64 // heap memory usage
+	Cancel() bool     // cancel by arbitrator
+	HeapInuse() int64 // track heap usage
 }
 
 type Context struct { // immutable after created
@@ -988,7 +988,7 @@ func (ctx *Context) stop(stopByKill bool) {
 	if stopByKill {
 		ctx.arbitrateHelper.Kill()
 	} else {
-		ctx.arbitrateHelper.Interrupt()
+		ctx.arbitrateHelper.Cancel()
 	}
 }
 
