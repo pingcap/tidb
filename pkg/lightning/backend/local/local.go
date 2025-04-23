@@ -38,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/version"
-	tidbconfig "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
@@ -1448,9 +1448,9 @@ func (local *Backend) newRegionJobWorker(
 		afterRunJobFn:    afterExecuteJob,
 		regenerateJobsFn: local.generateJobForRange,
 	}
-	if tidbconfig.IsCloudStore() {
+	if kerneltype.IsNextGen() {
 		httpClient := &http.Client{}
-		cloudW := &cloudRegionJobWorker{
+		cloudW := &objStoreRegionJobWorker{
 			ingestCli:      ingestcli.NewClient(local.TiKVWorkerURL, local.pdCli.GetClusterID(ctx), httpClient),
 			writeBatchSize: local.KVWriteBatchSize,
 			bufPool:        local.engineMgr.getBufferPool(),
@@ -1462,7 +1462,7 @@ func (local *Backend) newRegionJobWorker(
 		return cloudW
 	}
 
-	opWorker := &opRegionJobWorker{
+	opWorker := &blkStoreRegionJobWorker{
 		checkTiKVSpace: local.ShouldCheckTiKV,
 		pdHTTPCli:      local.pdHTTPCli,
 	}

@@ -34,6 +34,11 @@ ifeq ("${ENABLE_FIPS}", "1")
 	BUILD_FLAG = -tags codes,boringcrypto
 	GOEXPERIMENT = GOEXPERIMENT=boringcrypto
 endif
+
+ifeq ("${NEXT_GEN}", "1")
+	BUILD_FLAG := $(BUILD_FLAG),nextgen
+endif
+
 GOBUILD         := $(GOEXPERIMENT) $(GO) build $(BUILD_FLAG)
 GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; $(GO) test -coverpkg="../..." -c .
 GOTEST          := $(GO) test -p $(P)
@@ -72,10 +77,6 @@ LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBBuildTS=$(shell 
 LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBGitHash=$(shell git rev-parse HEAD)"
 LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBGitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
 LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBEdition=$(TIDB_EDITION)"
-
-ifeq ("${NEXT_GEN}", "1")
-	LDFLAGS += -X "github.com/pingcap/tidb/pkg/config.storeEngineGeneration=cloud"
-endif
 
 EXTENSION_FLAG =
 ifeq ($(shell if [ -f pkg/extension/enterprise/.git ]; then echo "true"; fi),true)

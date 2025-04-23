@@ -46,23 +46,3 @@ func (t StoreType) Valid() bool {
 func StoreTypeList() []StoreType {
 	return []StoreType{StoreTypeTiKV, StoreTypeUniStore, StoreTypeMockTiKV}
 }
-
-const (
-	// in this generation, TiKV store all data in its own disk, and each KV will
-	// have 3 replica normally.
-	storeEngineGenerationOP = "op"
-	// in this generation, TiKV store all data in cloud storage, such as S3, and
-	// use cloud infrastructure to make sure high availability. TiKV will load
-	// data from cloud storage when needed.
-	storeEngineGenerationCloud = "cloud"
-)
-
-// this var will be set at compile time.
-var storeEngineGeneration = storeEngineGenerationOP
-
-// IsCloudStore returns true if the store engine is based on cloud storage.
-// currently, we use same TiDB code base for both OP and cloud store, we will use
-// this method to distinguish them and run different code path.
-func IsCloudStore() bool {
-	return storeEngineGeneration == storeEngineGenerationCloud
-}

@@ -21,6 +21,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	ingestclimock "github.com/pingcap/tidb/pkg/ingestor/ingestcli/mock"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -41,7 +43,6 @@ func TestRegionJobBaseWorker(t *testing.T) {
 				return &tikvWriteResult{}, nil
 			},
 			ingestFn: func(ctx context.Context, job *regionJob) error {
-				job.convertStageTo(ingested)
 				return nil
 			},
 			regenerateJobsFn: func(
@@ -74,13 +75,75 @@ func TestRegionJobBaseWorker(t *testing.T) {
 		close(w.jobInCh)
 		require.NoError(t, w.run(context.Background()))
 		require.Equal(t, 1, len(w.jobOutCh))
+		outJob := <-w.jobOutCh
+		require.Equal(t, ingested, outJob.stage)
+	})
+
+	t.Run("empty job", func(t *testing.T) {
+		w := newWorker()
+		w.writeFn = func(ctx context.Context, job *regionJob) (*tikvWriteResult, error) {
+			return &tikvWriteResult{emptyJob: true}, nil
+		}
+		job := &regionJob{stage: regionScanned, ingestData: mockIngestData{}}
+		w.jobInCh <- job
+		close(w.jobInCh)
+		require.NoError(t, w.run(context.Background()))
+		require.Equal(t, 1, len(w.jobOutCh))
+		outJob := <-w.jobOutCh
+		require.Equal(t, ingested, outJob.stage)
+	})
+
+	t.Run("meet non-retryable error during ingest", func(t *testing.T) {
+		w := newWorker()
+		w.ingestFn = func(ctx context.Context, job *regionJob) error {
+			return &ingestAPIError{err: common.ErrKVDiskFull}
+		}
+		job := &regionJob{stage: regionScanned, ingestData: mockIngestData{}}
+		w.jobInCh <- job
+		close(w.jobInCh)
+		require.ErrorIs(t, w.run(context.Background()), common.ErrKVDiskFull)
+		require.Equal(t, 1, len(w.jobOutCh))
+		outJob := <-w.jobOutCh
+		// the job is left in wrote stage
+		require.Equal(t, wrote, outJob.stage)
+		require.Nil(t, outJob.lastRetryableErr)
+	})
+
+	t.Run("retry job from regionScanned", func(t *testing.T) {
+		w := newWorker()
+		w.ingestFn = func(ctx context.Context, job *regionJob) error {
+			return &ingestAPIError{err: common.ErrKVIngestFailed}
+		}
+		job := &regionJob{stage: regionScanned, ingestData: mockIngestData{}}
+		w.jobInCh <- job
+		close(w.jobInCh)
+		require.NoError(t, w.run(context.Background()))
+		require.Equal(t, 1, len(w.jobOutCh))
+		outJob := <-w.jobOutCh
+		require.Equal(t, regionScanned, outJob.stage)
+		require.ErrorIs(t, outJob.lastRetryableErr, common.ErrKVIngestFailed)
+	})
+
+	t.Run("retry job from regionScanned, and region got from the ingest error", func(t *testing.T) {
+		w := newWorker()
+		w.ingestFn = func(ctx context.Context, job *regionJob) error {
+			return &ingestAPIError{err: common.ErrKVEpochNotMatch, newRegion: &split.RegionInfo{Region: &metapb.Region{Id: 123}}}
+		}
+		job := &regionJob{stage: regionScanned, ingestData: mockIngestData{}}
+		w.jobInCh <- job
+		close(w.jobInCh)
+		require.NoError(t, w.run(context.Background()))
+		require.Equal(t, 1, len(w.jobOutCh))
+		outJob := <-w.jobOutCh
+		require.Equal(t, regionScanned, outJob.stage)
+		require.ErrorIs(t, outJob.lastRetryableErr, common.ErrKVEpochNotMatch)
+		require.Equal(t, &split.RegionInfo{Region: &metapb.Region{Id: 123}}, outJob.region)
 	})
 
 	t.Run("regenerate jobs", func(t *testing.T) {
 		w := newWorker()
 		w.ingestFn = func(ctx context.Context, job *regionJob) error {
-			job.convertStageTo(needRescan)
-			return nil
+			return &ingestAPIError{err: common.ErrKVNotLeader}
 		}
 		job := &regionJob{stage: regionScanned, ingestData: mockIngestData{}}
 		w.jobInCh <- job
@@ -101,7 +164,7 @@ func TestCloudRegionJobWorker(t *testing.T) {
 	defer ctrl.Finish()
 	mockIngestCli := ingestclimock.NewMockClient(ctrl)
 
-	cloudW := &cloudRegionJobWorker{
+	cloudW := &objStoreRegionJobWorker{
 		regionJobBaseWorker: &regionJobBaseWorker{},
 		ingestCli:           mockIngestCli,
 		writeBatchSize:      8,
@@ -200,7 +263,6 @@ func TestCloudRegionJobWorker(t *testing.T) {
 		mockIngestCli.EXPECT().Ingest(gomock.Any(), gomock.Any()).Return(errors.New("mock error"))
 		err := cloudW.ingest(context.Background(), job)
 		require.ErrorContains(t, err, "mock error")
-		require.Equal(t, needRescan, job.stage)
 		require.True(t, ctrl.Satisfied())
 	})
 
@@ -214,7 +276,6 @@ func TestCloudRegionJobWorker(t *testing.T) {
 		mockIngestCli.EXPECT().Ingest(gomock.Any(), gomock.Any()).Return(nil)
 		err := cloudW.ingest(context.Background(), job)
 		require.NoError(t, err)
-		require.Equal(t, ingested, job.stage)
 		require.True(t, ctrl.Satisfied())
 	})
 }

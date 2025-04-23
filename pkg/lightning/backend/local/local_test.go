@@ -1832,9 +1832,7 @@ func getSuccessInjectedBehaviour() []injectedBehaviour {
 			},
 		},
 		{
-			ingest: injectedIngestBehaviour{
-				nextStage: ingested,
-			},
+			ingest: injectedIngestBehaviour{},
 		},
 	}
 }
@@ -1850,8 +1848,7 @@ func getNeedRescanWhenIngestBehaviour() []injectedBehaviour {
 		},
 		{
 			ingest: injectedIngestBehaviour{
-				nextStage: needRescan,
-				err:       common.ErrKVEpochNotMatch,
+				err: &ingestAPIError{err: common.ErrKVEpochNotMatch},
 			},
 		},
 	}
@@ -1909,9 +1906,7 @@ func TestDoImport(t *testing.T) {
 							},
 						},
 						{
-							ingest: injectedIngestBehaviour{
-								nextStage: ingested,
-							},
+							ingest: injectedIngestBehaviour{},
 						},
 						{
 							write: injectedWriteBehaviour{
@@ -1921,9 +1916,7 @@ func TestDoImport(t *testing.T) {
 							},
 						},
 						{
-							ingest: injectedIngestBehaviour{
-								nextStage: ingested,
-							},
+							ingest: injectedIngestBehaviour{},
 						},
 					},
 				},
