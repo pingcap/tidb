@@ -992,17 +992,13 @@ func (b *PlanBuilder) buildDual(p base.LogicalPlan, groupby []expression.Express
 			}) {
 				continue
 			}
-			name := getName(p.Children()[0].Schema(), p.Children()[0].OutputNames(), groupbyCol)
-			if name != nil {
-				schema.Append(groupbyCol)
-				outputNames = append(outputNames, name)
-				continue
-			}
-			name = getName(p.Children()[1].Schema(), p.Children()[1].OutputNames(), groupbyCol)
-			if name != nil {
-				schema.Append(groupbyCol)
-				outputNames = append(outputNames, name)
-				continue
+			for _, child := range p.Children() {
+				name := getName(child.Schema(), child.OutputNames(), groupbyCol)
+				if name != nil {
+					schema.Append(groupbyCol)
+					outputNames = append(outputNames, name)
+					continue
+				}
 			}
 		}
 	}
