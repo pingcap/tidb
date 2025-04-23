@@ -46,10 +46,10 @@ func generateBindingPlans(sPool util.DestroyableSessionPool, currentDB, sql stri
 
 		// change these related cost factors randomly to walk in the plan space and sample some plans
 		if len(relatedCostFactors) > 0 {
-			for walkStep := 0; walkStep < 100; walkStep++ {
+			for walkStep := 0; walkStep < 500; walkStep++ {
 				// each step, randomly change one cost factor
 				idx := rand.Intn(len(relatedCostFactors))
-				randomFactorValues := []float64{0.01, 0.1, 10, 100, 1000}
+				randomFactorValues := []float64{0.01, 0.1, 10, 100, 1000, 10000, 100000}
 				*relatedCostFactors[idx] = randomFactorValues[rand.Intn(len(randomFactorValues))]
 
 				// generate a new plan based on the modified cost factors
@@ -86,7 +86,7 @@ func generateBindingPlan(sctx sessionctx.Context, sql string) (*BindingPlanInfo,
 		OriginalSQL: sql, // TODO: normalize
 		BindSQL:     bindingSQL,
 		Db:          sctx.GetSessionVars().CurrentDB,
-		Source:      "generated via cost factors",
+		Source:      "new-generated",
 	}
 	if err = prepareHints(sctx, binding); err != nil {
 		return nil, err
