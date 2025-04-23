@@ -295,6 +295,12 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 				buffer.WriteString(fmt.Sprint(idx.QueryInfo.GetAnnQueryInfo().TopK))
 			}
 			buffer.WriteString(")")
+
+			if idx.QueryInfo.GetAnnQueryInfo().GetEnableDistanceProj() {
+				buffer.WriteString("->")
+				cols := p.Schema().Columns
+				buffer.WriteString(cols[len(cols)-1].String())
+			}
 		}
 	}
 
