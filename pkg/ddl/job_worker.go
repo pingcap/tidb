@@ -106,6 +106,8 @@ type jobContext struct {
 	// TODO reorg part of code couple this struct so much, remove it later.
 	oldDDLCtx     *ddlCtx
 	lockStartTime time.Time
+
+	updateRowCountCh chan rowCountChange
 }
 
 func (c *jobContext) getAutoIDRequirement() autoid.Requirement {
@@ -121,6 +123,17 @@ func (c *jobContext) notifyDone() {
 		// create table is enabled.
 		close(c.notifyCh)
 	}
+}
+
+type rowCountChange struct {
+	synced   chan struct{}
+	rowCount int64
+}
+
+func (c *jobContext) syncRowCountChange(newRowCnt int64) {
+	ch := make(chan struct{})
+	c.updateRowCountCh <- rowCountChange{ch, newRowCnt}
+	<-ch
 }
 
 type workerType byte
@@ -896,8 +909,6 @@ func (w *worker) runOneJobStep(
 			stopUpdatingJobRowCnt := make(chan struct{})
 			defer close(stopUpdatingJobRowCnt)
 			w.wg.Run(func() {
-				ticker := time.NewTicker(3 * time.Second)
-				defer ticker.Stop()
 				prevRowCnt := job.GetRowCount()
 				updateRowCount := func(rowCnt int64) {
 					latestRowCnt := rowCnt
@@ -916,14 +927,14 @@ func (w *worker) runOneJobStep(
 				for {
 					select {
 					case <-stopUpdatingJobRowCnt:
-						updateRowCount(job.GetRowCount())
 						return
-					case <-ticker.C:
-						rgCtx := jobCtx.oldDDLCtx.getReorgCtx(job.ID)
-						if rgCtx == nil {
+					case change := <-jobCtx.updateRowCountCh:
+						if change.rowCount == prevRowCnt {
+							change.synced <- struct{}{}
 							continue
 						}
-						updateRowCount(rgCtx.getRowCount())
+						updateRowCount(change.rowCount)
+						change.synced <- struct{}{}
 					}
 				}
 			})

@@ -556,7 +556,8 @@ func (s *jobScheduler) getJobRunCtx(jobID int64, traceInfo *tracing.TraceInfo) *
 			traceInfo,
 		),
 
-		oldDDLCtx: s.ddlCtx,
+		updateRowCountCh: make(chan rowCountChange),
+		oldDDLCtx:        s.ddlCtx,
 	}
 }
 

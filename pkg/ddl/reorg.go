@@ -340,6 +340,7 @@ func (rc *reorgCtx) getRowCount() int64 {
 //
 // After that, we can make sure that the worker goroutine is correctly shut down.
 func (w *worker) runReorgJob(
+	jobCtx *jobContext,
 	reorgInfo *reorgInfo,
 	tblInfo *model.TableInfo,
 	reorgFn func() error,
@@ -402,6 +403,7 @@ func (w *worker) runReorgJob(
 				return err
 			}
 			rowCount := rc.getRowCount()
+			jobCtx.syncRowCountChange(rowCount)
 			job.SetRowCount(rowCount)
 			if err != nil {
 				logutil.DDLLogger().Warn("run reorg job done", zap.Int64("handled rows", rowCount), zap.Error(err))
@@ -421,7 +423,7 @@ func (w *worker) runReorgJob(
 			return errors.Trace(err)
 		case <-updateProcessTicker.C:
 			rowCount := rc.getRowCount()
-			job.SetRowCount(rowCount)
+			jobCtx.syncRowCountChange(rowCount)
 			updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
 
 			// Update a job's warnings.
