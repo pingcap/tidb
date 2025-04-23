@@ -108,7 +108,7 @@ func (hg *Histogram) PreCalculateScalar() {
 	case types.KindMysqlDecimal, types.KindMysqlTime:
 		var lower, upper types.Datum
 		hg.Scalars = make([]scalar, l)
-		for i := 0; i < l; i++ {
+		for i := range l {
 			// It's read-only, so we don't need to allocate new datum each time.
 			hg.LowerToDatum(i, &lower)
 			hg.UpperToDatum(i, &upper)
@@ -118,7 +118,7 @@ func (hg *Histogram) PreCalculateScalar() {
 	case types.KindBytes, types.KindString:
 		var lower, upper types.Datum
 		hg.Scalars = make([]scalar, l)
-		for i := 0; i < l; i++ {
+		for i := range l {
 			// It's read-only, so we don't need to allocate new datum each time.
 			hg.LowerToDatum(i, &lower)
 			hg.UpperToDatum(i, &upper)
@@ -161,7 +161,7 @@ func commonPrefixLength(strs ...[]byte) int {
 			minLen = len(str)
 		}
 	}
-	for i := 0; i < minLen; i++ {
+	for i := range minLen {
 		a := strs[0][i]
 		for _, str := range strs {
 			if str[i] != a {
