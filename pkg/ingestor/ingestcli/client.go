@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/pkg/util"
+	"go.uber.org/atomic"
 )
 
 var _ WriteClient = &writeClient{}
@@ -39,7 +40,7 @@ type writeClient struct {
 	commitTS      uint64
 
 	eg          *util.ErrorGroupWithRecover
-	errCh       chan error
+	sendReqErr  atomic.Error
 	writer      *io.PipeWriter
 	reader      *io.PipeReader
 	sstFilePath string
@@ -65,12 +66,11 @@ func (w *writeClient) init(ctx context.Context) error {
 	pr, pw := io.Pipe()
 	url := fmt.Sprintf("%s/write_sst?cluster_id=%d&commit_ts=%d",
 		w.tikvWorkerURL, w.clusterID, w.commitTS)
-	req, err := http.NewRequestWithContext(ctx, "POST", url, pr)
+	req, err := http.NewRequestWithContext(ctx, "PUT", url, pr)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
-	w.errCh = make(chan error, 1)
 	w.startChunkedHTTPRequest(req)
 	w.reader = pr
 	w.writer = pw
@@ -83,10 +83,9 @@ type sstFileResult struct {
 
 func (w *writeClient) startChunkedHTTPRequest(req *http.Request) {
 	w.eg.Go(func() error {
-		defer close(w.errCh)
 		resp, err := w.httpClient.Do(req)
 		if err != nil {
-			w.errCh <- err
+			w.sendReqErr.Store(err)
 			return errors.Trace(err)
 		}
 		defer resp.Body.Close()
@@ -94,21 +93,21 @@ func (w *writeClient) startChunkedHTTPRequest(req *http.Request) {
 		if resp.StatusCode != http.StatusOK {
 			body, err1 := io.ReadAll(resp.Body)
 			if err1 != nil {
-				w.errCh <- err
+				w.sendReqErr.Store(err)
 				return fmt.Errorf("failed to readAll response: %s", err1.Error())
 			}
-			w.errCh <- err
+			w.sendReqErr.Store(err)
 			return fmt.Errorf("failed to send chunked request: %s", string(body))
 		}
 		data, err := io.ReadAll(resp.Body)
 		if err != nil {
-			w.errCh <- err
+			w.sendReqErr.Store(err)
 			return errors.Trace(err)
 		}
 		result := new(sstFileResult)
 		err = json.Unmarshal(data, result)
 		if err != nil {
-			w.errCh <- err
+			w.sendReqErr.Store(err)
 			return errors.Trace(err)
 		}
 		w.sstFilePath = result.SSTFile
@@ -116,20 +115,14 @@ func (w *writeClient) startChunkedHTTPRequest(req *http.Request) {
 	})
 }
 
-func (w *writeClient) checkErrBeforeWrite() error {
-	select {
-	case err := <-w.errCh:
-		return err
-	default:
-		return nil
+func (w *writeClient) cause(err error) error {
+	if reqErr := w.sendReqErr.Load(); reqErr != nil {
+		return errors.Trace(reqErr)
 	}
+	return errors.Trace(err)
 }
 
-func (w *writeClient) Write(req *WriteRequest) error {
-	err := w.checkErrBeforeWrite()
-	if err != nil {
-		return err
-	}
+func (w *writeClient) Write(req *WriteRequest) (err error) {
 	var buf bytes.Buffer
 	for _, pair := range req.Pairs {
 		keyLen := uint16(len(pair.Key))
@@ -148,7 +141,7 @@ func (w *writeClient) Write(req *WriteRequest) error {
 		}
 	}
 	if _, err := w.writer.Write(buf.Bytes()); err != nil {
-		return errors.Trace(err)
+		return w.cause(err)
 	}
 	return nil
 }
@@ -211,7 +204,10 @@ func (c *client) Ingest(ctx context.Context, in *IngestRequest) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, err1 := io.ReadAll(resp.Body)
+		if err1 != nil {
+			return fmt.Errorf("failed to readAll response: %s", err1.Error())
+		}
 		var pbErr errorpb.Error
 		if err := proto.Unmarshal(body, &pbErr); err != nil {
 			return fmt.Errorf("failed to unmarshal error(%s): %s", string(body), err)
