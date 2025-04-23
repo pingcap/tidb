@@ -1003,6 +1003,12 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 						zap.Stringer("element", reorgInfo.currElement),
 						zap.Int64("total added count", totalAddedCount),
 						zap.String("start key", hex.EncodeToString(startKey)))
+					err := reorgInfo.UpdateReorgMeta(keeper.nextKey, sessPool)
+					if err != nil {
+						logutil.DDLLogger().Warn("update reorg meta failed",
+							zap.Int64("job ID", reorgInfo.ID),
+							zap.Error(err))
+					}
 					return nil
 				}
 				cnt++
@@ -1022,7 +1028,6 @@ func (dc *ddlCtx) writePhysicalTableRecord(
 				} else {
 					totalAddedCount += int64(result.addedCount)
 				}
-				dc.getReorgCtx(reorgInfo.Job.ID).setRowCount(totalAddedCount)
 
 				keeper.updateNextKey(result.taskID, result.nextKey)
 
