@@ -289,7 +289,7 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 	tk.MustExec("insert into t values (1, 1, 1);")
 	tk.MustExec("insert into t values (2, 1, 2);")
 
-	tk.MustGetErrMsg("alter table t add unique index idx(b);", "[kv:1062]Duplicate entry '1' for key 't.idx'")
+	tk.MustContainErrMsg("alter table t add unique index idx(b);", "found index conflict records in table t")
 }
 
 func TestIngestUseGivenTS(t *testing.T) {

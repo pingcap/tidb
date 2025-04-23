@@ -17,6 +17,7 @@ package backend_test
 import (
 	"context"
 	"database/sql/driver"
+	"strconv"
 	"testing"
 	"time"
 
@@ -24,8 +25,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/mock"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -351,4 +355,31 @@ func TestNewEncoder(t *testing.T) {
 	realEncoder, err := s.encBuilder.NewEncoder(nil, options)
 	require.Equal(t, realEncoder, encoder)
 	require.NoError(t, err)
+}
+
+func TestOnefileWriterDupError(t *testing.T) {
+	ctx := context.Background()
+	memStore := storage.NewMemStorage()
+
+	writer := external.NewWriterBuilder().
+		SetPropSizeDistance(100).
+		SetPropKeysDistance(2).
+		SetOnDup(common.OnDuplicateKeyError).
+		BuildOneFile(memStore, "/test", "0")
+
+	require.NoError(t, writer.Init(ctx, 1*1024*1024))
+	kvCnt := 10
+	kvs := make([]common.KvPair, kvCnt)
+	for i := 0; i < kvCnt; i++ {
+		kvs[i].Key = []byte(strconv.Itoa(i))
+		kvs[i].Val = []byte(strconv.Itoa(i * i))
+	}
+
+	for _, item := range kvs {
+		require.NoError(t, writer.WriteRow(ctx, item.Key, item.Val))
+	}
+	// write duplicate key
+	err := writer.WriteRow(ctx, kvs[kvCnt-1].Key, kvs[kvCnt-1].Val)
+	require.Error(t, err)
+	require.True(t, common.ErrFoundDuplicateKeys.Equal(err))
 }

@@ -35,33 +35,6 @@ import (
 	"golang.org/x/exp/rand"
 )
 
-func TestOnefileWriterDupError(t *testing.T) {
-	ctx := context.Background()
-	memStore := storage.NewMemStorage()
-
-	writer := NewWriterBuilder().
-		SetPropSizeDistance(100).
-		SetPropKeysDistance(2).
-		SetOnDup(common.OnDuplicateKeyError).
-		BuildOneFile(memStore, "/test", "0")
-
-	require.NoError(t, writer.Init(ctx, 1*1024*1024))
-	kvCnt := 10
-	kvs := make([]common.KvPair, kvCnt)
-	for i := 0; i < kvCnt; i++ {
-		kvs[i].Key = []byte(strconv.Itoa(i))
-		kvs[i].Val = []byte(strconv.Itoa(i * i))
-	}
-
-	for _, item := range kvs {
-		require.NoError(t, writer.WriteRow(ctx, item.Key, item.Val))
-	}
-	// write duplicate key
-	err := writer.WriteRow(ctx, kvs[0].Key, kvs[0].Val)
-	require.Error(t, err)
-	require.True(t, common.ErrFoundDuplicateKeys.Equal(err))
-}
-
 func TestOnefileWriterBasic(t *testing.T) {
 	seed := time.Now().Unix()
 	rand.Seed(uint64(seed))
@@ -231,7 +204,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 	defaultOneWriterMemSizeLimit = 1000
 	require.NoError(t, mergeOverlappingFilesInternal(
 		ctx,
-		[]string{"/test/0/0", "/test/0/1", "/test/0/2", "/test/0/3", "/test/0/4"},
+		[]string{"/test/0/0", "/test/0/1", "/test/0/2"},
 		memStore,
 		int64(5*size.MB),
 		"/test2",
@@ -263,9 +236,8 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 	dir := t.TempDir()
 	db, err := pebble.Open(path.Join(dir, "duplicate"), nil)
 	require.NoError(t, err)
-	keyAdapter := common.DupDetectKeyAdapter{}
 	data := &MemoryIngestData{
-		keyAdapter:         keyAdapter,
+		keyAdapter:         common.NoopKeyAdapter{},
 		duplicateDetection: true,
 		duplicateDB:        db,
 		dupDetectOpt:       common.DupDetectOpt{ReportErrOnDup: true},

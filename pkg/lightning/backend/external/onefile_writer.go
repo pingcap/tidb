@@ -188,9 +188,9 @@ func (w *OneFileWriter) handleDupAndWrite(ctx context.Context, idxKey, idxVal []
 			}
 		case common.OnDuplicateKeyError:
 			return NewErrFoundConflictRecords(idxKey, idxVal, w.tbl)
-		default:
-			return w.onNextPivot(ctx, idxKey, idxVal)
 		}
+	} else {
+		return w.onNextPivot(ctx, idxKey, idxVal)
 	}
 	return nil
 }

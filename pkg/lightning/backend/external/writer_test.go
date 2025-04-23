@@ -273,9 +273,8 @@ func TestWriterDuplicateDetect(t *testing.T) {
 	dir := t.TempDir()
 	db, err := pebble.Open(path.Join(dir, "duplicate"), nil)
 	require.NoError(t, err)
-	keyAdapter := common.DupDetectKeyAdapter{}
 	data := &MemoryIngestData{
-		keyAdapter:         keyAdapter,
+		keyAdapter:         common.NoopKeyAdapter{},
 		duplicateDetection: true,
 		duplicateDB:        db,
 		dupDetectOpt:       common.DupDetectOpt{ReportErrOnDup: true},
