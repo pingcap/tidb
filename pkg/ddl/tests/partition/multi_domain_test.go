@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"slices"
 )
 
 func TestMultiSchemaReorganizePartitionIssue56819(t *testing.T) {
@@ -769,7 +770,7 @@ func checkTableAndIndexEntries(t *testing.T, tk *testkit.TestKit, originalIDs []
 	if tbl.Meta().Partition == nil {
 		require.Equal(t, 0, len(globalIndexes))
 	} else {
-		sort.Slice(globalIndexes, func(i, j int) bool { return globalIndexes[i] < globalIndexes[j] })
+		slices.Sort(globalIndexes)
 		prev := int64(0)
 		for _, idxID := range globalIndexes {
 			if prev+1 == idxID {
@@ -783,7 +784,7 @@ func checkTableAndIndexEntries(t *testing.T, tk *testkit.TestKit, originalIDs []
 	}
 
 	// Only existing non-global indexes on partitions or non-partitioned tables
-	sort.Slice(indexes, func(i, j int) bool { return indexes[i] < indexes[j] })
+	slices.Sort(indexes)
 	prev := int64(0)
 	for _, idxID := range indexes {
 		if prev+1 == idxID {
@@ -1801,9 +1802,9 @@ func runCoveringTest(t *testing.T, createSQL, alterSQL string) {
 	states := 7
 	fromStates := 3
 	IDs := make([][][][]int, states)
-	for s := 0; s < states; s++ {
+	for s := range states {
 		IDs[s] = make([][][]int, fromStates)
-		for f := 0; f < fromStates; f++ {
+		for f := range fromStates {
 			IDs[s][f] = make([][]int, 4)
 		}
 	}
