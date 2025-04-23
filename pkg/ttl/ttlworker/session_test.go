@@ -22,19 +22,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
 )
@@ -124,23 +123,27 @@ func (r *mockRows) Rows() []chunk.Row {
 }
 
 type mockSessionPool struct {
-	util.DestroyableSessionPool
+	syssession.Pool
 	t           *testing.T
 	se          *mockSession
 	lastSession *mockSession
 	inuse       atomic.Int64
 }
 
-func (p *mockSessionPool) Get() (pools.Resource, error) {
+func (p *mockSessionPool) WithSession(fn func(*syssession.Session) error) error {
 	se := *(p.se)
 	p.lastSession = &se
-	p.lastSession.pool = p
 	p.inuse.Add(1)
-	return p.lastSession, nil
-}
-
-func (p *mockSessionPool) Put(pools.Resource) {
-	p.inuse.Add(-1)
+	defer p.inuse.Add(-1)
+	s, err := syssession.NewSessionForTest(p.lastSession)
+	if err != nil {
+		return err
+	}
+	p.lastSession.inPool = false
+	defer func() {
+		p.lastSession.inPool = true
+	}()
+	return fn(s)
 }
 
 func (p *mockSessionPool) AssertNoSessionInUse() {
@@ -165,10 +168,10 @@ type mockSession struct {
 	rows               []chunk.Row
 	execErr            error
 	resetTimeZoneCalls int
+	inPool             bool
 	closed             bool
 	commitErr          error
 	killed             chan struct{}
-	pool               *mockSessionPool
 }
 
 func newMockSession(t *testing.T, tbl ...*cache.PhysicalTable) *mockSession {
@@ -194,17 +197,20 @@ func (s *mockSession) GetDomainInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 	return s.sessionInfoSchema
 }
 
-func (s *mockSession) SessionInfoSchema() infoschema.InfoSchema {
+func (s *mockSession) SessionInfoSchema() infoschemactx.MetaOnlyInfoSchema {
+	require.False(s.t, s.inPool)
 	require.False(s.t, s.closed)
 	return s.sessionInfoSchema
 }
 
 func (s *mockSession) GetSessionVars() *variable.SessionVars {
+	require.False(s.t, s.inPool)
 	require.False(s.t, s.closed)
 	return s.sessionVars
 }
 
 func (s *mockSession) ExecuteSQL(ctx context.Context, sql string, args ...any) ([]chunk.Row, error) {
+	require.False(s.t, s.inPool)
 	require.False(s.t, s.closed)
 	if strings.HasPrefix(strings.ToUpper(sql), "SELECT FROM_UNIXTIME") {
 		panic("not supported")
@@ -225,6 +231,7 @@ func (s *mockSession) ExecuteSQL(ctx context.Context, sql string, args ...any) (
 }
 
 func (s *mockSession) RunInTxn(_ context.Context, fn func() error, _ session.TxnMode) error {
+	require.False(s.t, s.inPool)
 	require.False(s.t, s.closed)
 	if err := fn(); err != nil {
 		return err
@@ -233,6 +240,7 @@ func (s *mockSession) RunInTxn(_ context.Context, fn func() error, _ session.Txn
 }
 
 func (s *mockSession) ResetWithGlobalTimeZone(_ context.Context) (err error) {
+	require.False(s.t, s.inPool)
 	require.False(s.t, s.closed)
 	s.resetTimeZoneCalls++
 	return nil
@@ -249,10 +257,8 @@ func (s *mockSession) KillStmt() {
 }
 
 func (s *mockSession) Close() {
+	require.False(s.t, s.closed)
 	s.closed = true
-	if s.pool != nil {
-		s.pool.Put(s)
-	}
 }
 
 func (s *mockSession) Now() time.Time {
@@ -262,6 +268,8 @@ func (s *mockSession) Now() time.Time {
 	}
 	return time.Now().In(tz)
 }
+
+func (s *mockSession) AvoidReuse() {}
 
 func TestExecuteSQLWithCheck(t *testing.T) {
 	ctx := context.TODO()

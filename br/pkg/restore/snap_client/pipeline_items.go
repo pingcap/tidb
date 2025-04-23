@@ -19,15 +19,18 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -54,6 +57,7 @@ type PhysicalTable struct {
 	NewPhysicalID int64
 	OldPhysicalID int64
 	RewriteRules  *restoreutils.RewriteRules
+	Files         []*backuppb.File
 }
 
 func defaultOutputTableChan() chan *CreatedTable {
@@ -295,10 +299,46 @@ func (rc *SnapClient) GoUpdateMetaAndLoadStats(
 		if statsErr != nil || !loadStats || (oldTable.Stats == nil && len(oldTable.StatsFileIndexes) == 0) {
 			// Not need to return err when failed because of update analysis-meta
 			log.Info("start update metas", zap.Stringer("table", oldTable.Info.Name), zap.Stringer("db", oldTable.DB.Name))
+			// get the the number of rows of each partition
+			if tbl.OldTable.Info.Partition != nil {
+				for _, oldDef := range tbl.OldTable.Info.Partition.Definitions {
+					files := tbl.OldTable.FilesOfPhysicals[oldDef.ID]
+					if len(files) > 0 {
+						totalKvs := uint64(0)
+						for _, file := range files {
+							totalKvs += file.TotalKvs
+						}
+						// the total kvs contains the index kvs, but the stats meta needs the count of rows
+						count := int64(totalKvs / uint64(len(oldTable.Info.Indices)+1))
+						newDefID, err := utils.GetPartitionByName(tbl.Table, oldDef.Name)
+						if err != nil {
+							log.Error("failed to get the partition by name",
+								zap.String("db name", tbl.OldTable.DB.Name.O),
+								zap.String("table name", tbl.Table.Name.O),
+								zap.String("partition name", oldDef.Name.O),
+								zap.Int64("downstream table id", tbl.Table.ID),
+								zap.Int64("upstream partition id", oldDef.ID),
+							)
+							return errors.Trace(err)
+						}
+						if statsErr = statsHandler.SaveMetaToStorage("br restore", false, statstypes.MetaUpdate{
+							PhysicalID:  newDefID,
+							Count:       count,
+							ModifyCount: 0,
+						}); statsErr != nil {
+							log.Error("update stats meta failed", zap.Int64("downstream table id", tbl.Table.ID), zap.Int64("downstream partition id", newDefID), zap.Error(statsErr))
+						}
+					}
+				}
+			}
 			// the total kvs contains the index kvs, but the stats meta needs the count of rows
 			count := int64(oldTable.TotalKvs / uint64(len(oldTable.Info.Indices)+1))
-			if statsErr = statsHandler.SaveMetaToStorage(tbl.Table.ID, count, 0, "br restore", false); statsErr != nil {
-				log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(statsErr))
+			if statsErr = statsHandler.SaveMetaToStorage("br restore", false, statstypes.MetaUpdate{
+				PhysicalID:  tbl.Table.ID,
+				Count:       count,
+				ModifyCount: 0,
+			}); statsErr != nil {
+				log.Error("update stats meta failed", zap.Int64("downstream table id", tbl.Table.ID), zap.Error(statsErr))
 			}
 		}
 		updateCh.Inc()

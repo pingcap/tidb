@@ -447,12 +447,11 @@
       {
         "SQL": "explain select id from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
         "Plan": [
-          "TopN_11 10.00 root  Column#10, offset:0, count:10",
+          "TopN_11 10.00 root  Column#11, offset:0, count:10",
           "└─TableReader_29 10.00 root  MppVersion: 3, data:ExchangeSender_28",
           "  └─ExchangeSender_28 10.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─TopN_27 10.00 mpp[tiflash]  Column#10, offset:0, count:10",
-          "      └─Projection_26 10.00 mpp[tiflash]  test.t1.id, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#10",
-          "        └─TableFullScan_25 10.00 mpp[tiflash] table:t1, index:idx_embedding(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:10)"
+          "    └─TopN_27 10.00 mpp[tiflash]  Column#11, offset:0, count:10",
+          "      └─TableFullScan_25 10.00 mpp[tiflash] table:t1, index:idx_embedding(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:10)->Column#11"
         ],
         "Warn": null
       },
@@ -484,12 +483,11 @@
       {
         "SQL": "explain select id, a, b from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
         "Plan": [
-          "TopN_11 10.00 root  Column#12, offset:0, count:10",
+          "TopN_11 10.00 root  Column#13, offset:0, count:10",
           "└─TableReader_29 10.00 root  MppVersion: 3, data:ExchangeSender_28",
           "  └─ExchangeSender_28 10.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─TopN_27 10.00 mpp[tiflash]  Column#12, offset:0, count:10",
-          "      └─Projection_26 10.00 mpp[tiflash]  test.t1.id, test.t1.a, test.t1.b, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#12",
-          "        └─TableFullScan_25 10.00 mpp[tiflash] table:t1, index:idx_embedding(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:10)"
+          "    └─TopN_27 10.00 mpp[tiflash]  Column#13, offset:0, count:10",
+          "      └─TableFullScan_25 10.00 mpp[tiflash] table:t1, index:idx_embedding(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:10)->Column#13"
         ],
         "Warn": null
       },
@@ -497,12 +495,11 @@
         "SQL": "explain select a, id, b from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
         "Plan": [
           "Projection_7 10.00 root  test.t1.a, test.t1.id, test.t1.b",
-          "└─TopN_11 10.00 root  Column#12, offset:0, count:10",
+          "└─TopN_11 10.00 root  Column#13, offset:0, count:10",
           "  └─TableReader_29 10.00 root  MppVersion: 3, data:ExchangeSender_28",
           "    └─ExchangeSender_28 10.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "      └─TopN_27 10.00 mpp[tiflash]  Column#12, offset:0, count:10",
-          "        └─Projection_26 10.00 mpp[tiflash]  test.t1.id, test.t1.a, test.t1.b, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#12",
-          "          └─TableFullScan_25 10.00 mpp[tiflash] table:t1, index:idx_embedding(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:10)"
+          "      └─TopN_27 10.00 mpp[tiflash]  Column#13, offset:0, count:10",
+          "        └─TableFullScan_25 10.00 mpp[tiflash] table:t1, index:idx_embedding(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:10)->Column#13"
         ],
         "Warn": null
       },
@@ -705,12 +702,11 @@
       {
         "SQL": "explain select id from t1 order by vec_cosine_distance(vec, '[1,1,1]') limit 10",
         "Plan": [
-          "TopN_11 10.00 root  Column#10, offset:0, count:10",
+          "TopN_11 10.00 root  Column#11, offset:0, count:10",
           "└─TableReader_29 10.00 root  MppVersion: 3, data:ExchangeSender_28",
           "  └─ExchangeSender_28 10.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─TopN_27 10.00 mpp[tiflash]  Column#10, offset:0, count:10",
-          "      └─Projection_26 10.00 mpp[tiflash]  test.t1.id, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#10",
-          "        └─TableFullScan_25 10.00 mpp[tiflash] table:t1, index:idx_embedding(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:10)"
+          "    └─TopN_27 10.00 mpp[tiflash]  Column#11, offset:0, count:10",
+          "      └─TableFullScan_25 10.00 mpp[tiflash] table:t1, index:idx_embedding(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:10)->Column#11"
         ],
         "Warn": null
       },

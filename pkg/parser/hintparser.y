@@ -316,7 +316,7 @@ TableOptimizerHintOpt:
 				QBName:   ast.NewCIStr($3),
 			}
 		} else {
-			yylex.AppendError(ErrWarnMemoryQuotaOverflow.GenWithStackByArgs(math.MaxInt64))
+			yylex.AppendError(ErrWarnMemoryQuotaOverflow.GenWithStackByArgs(math.MaxInt))
 			parser.lastErrorAsWarn()
 			$$ = nil
 		}

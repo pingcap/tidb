@@ -44,6 +44,7 @@ go_library(
         "//pkg/metrics",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
+        "//pkg/statistics/handle/types",
         "//pkg/tablecodec",
         "//pkg/util",
         "//pkg/util/codec",
@@ -89,7 +90,7 @@ go_test(
     ],
     embed = [":snap_client"],
     flaky = True,
-    shard_count = 25,
+    shard_count = 24,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/glue",

@@ -1443,6 +1443,12 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	if expBucketNumber == 0 {
 		return nil, errors.Errorf("expBucketNumber can not be zero")
 	}
+	// This only occurs when there are no histogram records in the histogram system table.
+	// It happens only to tables whose DDL events haven’t been processed yet and that have no indexes or keys,
+	// with the predicate column feature enabled.
+	if len(hists) == 0 {
+		return nil, nil
+	}
 	for _, hist := range hists {
 		totColSize += hist.TotColSize
 		totNull += hist.NullCount
@@ -1452,7 +1458,6 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			totCount += hist.Buckets[hist.Len()-1].Count
 		}
 	}
-
 	// If all the hist and the topn is empty, return a empty hist.
 	if bucketNumber+len(popedTopN) == 0 {
 		return NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, 0, totColSize), nil

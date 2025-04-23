@@ -233,20 +233,22 @@ func (s *statsReadWriter) SaveColOrIdxStatsToStorage(
 // SaveMetaToStorage saves stats meta to the storage.
 // Use the param `refreshLastHistVer` to indicate whether we need to update the last_histograms_versions in stats_meta table.
 func (s *statsReadWriter) SaveMetaToStorage(
-	tableID, count, modifyCount int64,
 	source string,
 	refreshLastHistVer bool,
+	metaUpdates ...statstypes.MetaUpdate,
 ) (err error) {
+	intest.Assert(len(metaUpdates) > 0, "meta updates is empty")
 	var statsVer uint64
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		statsVer, err = SaveMetaToStorage(sctx, tableID, count, modifyCount, refreshLastHistVer)
-		if err != nil {
-			return err
-		}
+		statsVer, err = SaveMetaToStorage(sctx, refreshLastHistVer, metaUpdates)
 		return err
 	}, util.FlagWrapTxn)
 	if err == nil && statsVer != 0 {
-		s.statsHandler.RecordHistoricalStatsMeta(statsVer, source, false, tableID)
+		tableIDs := make([]int64, 0, len(metaUpdates))
+		for i := range metaUpdates {
+			tableIDs = append(tableIDs, metaUpdates[i].PhysicalID)
+		}
+		s.statsHandler.RecordHistoricalStatsMeta(statsVer, source, false, tableIDs...)
 	}
 	return
 }
@@ -704,7 +706,11 @@ func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physical
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return s.SaveMetaToStorage(tbl.PhysicalID, tbl.RealtimeCount, tbl.ModifyCount, util.StatsMetaHistorySourceLoadStats, true)
+	return s.SaveMetaToStorage(util.StatsMetaHistorySourceLoadStats, true, statstypes.MetaUpdate{
+		PhysicalID:  tbl.PhysicalID,
+		Count:       tbl.RealtimeCount,
+		ModifyCount: tbl.ModifyCount,
+	})
 }
 
 // SaveColumnStatsUsageToStorage saves column statistics usage information for a table into mysql.column_stats_usage.
