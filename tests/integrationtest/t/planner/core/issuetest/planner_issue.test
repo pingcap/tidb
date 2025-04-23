@@ -588,3 +588,16 @@ explain format = brief select * from test_59427.t as tt use index (ib) where a =
 explain format = brief select /*+ use_index(test_59427.tt, ib) */ * from test_59427.t as tt where a = 1 and b = 1;
 drop database if exists test_59427;
 
+# TestIssue60692
+drop table if exists t1,t2,t3,t4,t5;
+create table t1(a int, b int, c int, d int, e int);
+create table t2(a int, b int, c int, d int, e int);
+create table t3(a int, b int, c int, d int, e int);
+create table t4(a int, b int, c int, d int, e int);
+create table t5(a int, b int, c int, d int, e int);
+explain format = brief select tmp4.b
+  from t1 join t2 on t1.a = t2.b
+  join t3 on t1.b = t3.b
+  left join
+    (select a, b, c, (row_number() over (partition by b order by e asc)) from t4) tmp4 on tmp4.b = t2.c and tmp4.c = t3.c
+  join t5 on t5.a = t1.e;
