@@ -282,7 +282,7 @@ func TestNormalOperationsWithAddIndexBySQL(t *testing.T) {
 		ExpectPrepare("REPLACE INTO `mock-schema`\\.`chunk_v\\d+` .+")
 	insertChunkStmt.
 		ExpectExec().
-		WithArgs("`db1`.`t2`", 0, "/tmp/path/1.sql", 0, mydump.SourceTypeSQL, 0, "", 123, []byte("null"), 12, 102400, 1, 5000, 1234567890).
+		WithArgs("`db1`.`t2`", 0, "/tmp/path/1.sql", 0, mydump.SourceTypeSQL, 0, "", 123, []byte("null"), 12, 10, 102400, 1, 5000, 1234567890).
 		WillReturnResult(sqlmock.NewResult(10, 1))
 	s.mock.ExpectCommit()
 
