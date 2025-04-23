@@ -891,7 +891,7 @@ func TestOwnerRandomDown(t *testing.T) {
 	testNum := 9
 
 	ctx, _, dom, addr := setupDomainAndContext(t)
-	var workers []*worker
+	workers := make([]*worker, 0, workerNum)
 	for i := range workerNum {
 		wrk := setupWorker(ctx, t, addr, dom, fmt.Sprintf("worker%d", i), true)
 		wrk.samplingInterval = 6000
