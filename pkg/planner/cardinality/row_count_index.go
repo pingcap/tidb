@@ -435,7 +435,7 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	skewRatio := sctx.GetSessionVars().SkewRatio
 	if skewRatio > 0 {
 		// Calculate the worst case selectivity assuming the value is skewed within the remaining values not in TopN.
-		skewEstimate = (idx.Histogram.NotNullCount() - float64(idx.TopN.TotalCount())) - (histNDV - 1)
+		skewEstimate = idx.Histogram.NotNullCount() - (histNDV - 1)
 		minTopN, _ := getTopNMinMax(idx.TopN)
 		if minTopN > 0 {
 			// The skewEstimate should not be larger than the minimum TopN value.
