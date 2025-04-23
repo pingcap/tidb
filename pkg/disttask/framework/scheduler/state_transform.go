@@ -16,6 +16,7 @@ package scheduler
 
 import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"slices"
 )
 
 // VerifyTaskStateTransform verifies whether the task state transform is valid.
@@ -61,10 +62,5 @@ func VerifyTaskStateTransform(from, to proto.TaskState) bool {
 		return true
 	}
 
-	for _, state := range rules[from] {
-		if state == to {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(rules[from], to)
 }
