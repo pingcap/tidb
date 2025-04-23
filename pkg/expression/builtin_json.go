@@ -256,6 +256,9 @@ func (b *builtinJSONSumSig) evalInt(ctx EvalContext, row chunk.Row) (res int64, 
 	for i := range val.GetElemCount() {
 		item, err := f(fakeSctx, val.ArrayGetElem(i), ft)
 		if err != nil {
+			if ErrInvalidJSONForFuncIndex.Equal(err) {
+				err = errors.Errorf("Invalid JSON value for CAST to type %s", ft.CompactStr())
+			}
 			return 0, false, err
 		}
 		sum += int64(crc32.ChecksumIEEE(fmt.Appendf(nil, "%v", item)))

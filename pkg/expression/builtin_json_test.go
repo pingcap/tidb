@@ -162,7 +162,6 @@ func TestJSONSumCrc32(t *testing.T) {
 		val, _, err := f.EvalInt(ctx, chunk.Row{})
 		require.NoError(t, err, tt.input)
 		require.EqualValues(t, checksumFunc(tt.input), val)
-
 	}
 }
 
