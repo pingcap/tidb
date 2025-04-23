@@ -432,11 +432,11 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	avgRowEstimate := idx.Histogram.NotNullCount() / histNDV
 	skewEstimate := float64(0)
 	// skewRatio determines how much of the potential skew should be considered
-	skewRatio := sctx.GetSessionVars().SkewRatio
+	skewRatio := sctx.GetSessionVars().RiskEqSkewRatio
 	if skewRatio > 0 {
 		// Calculate the worst case selectivity assuming the value is skewed within the remaining values not in TopN.
 		skewEstimate = idx.Histogram.NotNullCount() - (histNDV - 1)
-		minTopN, _ := getTopNMinMax(idx.TopN)
+		minTopN := idx.TopN.MinCount()
 		if minTopN > 0 {
 			// The skewEstimate should not be larger than the minimum TopN value.
 			skewEstimate = min(skewEstimate, float64(minTopN))
@@ -604,23 +604,4 @@ func getOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int 
 		}
 	}
 	return len(ran.LowVal)
-}
-
-func getTopNMinMax(topN *statistics.TopN) (minN, maxN uint64) {
-	if topN == nil || len(topN.TopN) == 0 {
-		return 0, 0
-	}
-
-	minN = topN.TopN[0].Count
-	maxN = minN
-
-	for _, meta := range topN.TopN {
-		if meta.Count < minN {
-			minN = meta.Count
-		}
-		if meta.Count > maxN {
-			maxN = meta.Count
-		}
-	}
-	return minN, maxN
 }

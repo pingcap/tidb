@@ -1017,8 +1017,8 @@ type SessionVars struct {
 	// CorrelationExpFactor is used to control the heuristic approach of row count estimation when CorrelationThreshold is not met.
 	CorrelationExpFactor int
 
-	// SkewRatio is used to control the ratio of skew that is applied to equal predicates not found in TopN/buckets.
-	SkewRatio float64
+	// RiskEqSkewRatio is used to control the ratio of skew that is applied to equal predicates not found in TopN/buckets.
+	RiskEqSkewRatio float64
 
 	// cpuFactor is the CPU cost of processing one expression for one row.
 	cpuFactor float64
@@ -2155,7 +2155,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		LimitPushDownThreshold:        vardef.DefOptLimitPushDownThreshold,
 		CorrelationThreshold:          vardef.DefOptCorrelationThreshold,
 		CorrelationExpFactor:          vardef.DefOptCorrelationExpFactor,
-		SkewRatio:                     vardef.DefOptSkewRatio,
+		RiskEqSkewRatio:               vardef.DefOptRiskEqSkewRatio,
 		cpuFactor:                     vardef.DefOptCPUFactor,
 		copCPUFactor:                  vardef.DefOptCopCPUFactor,
 		CopTiFlashConcurrencyFactor:   vardef.DefOptTiFlashConcurrencyFactor,

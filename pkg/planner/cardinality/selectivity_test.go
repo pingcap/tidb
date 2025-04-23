@@ -1467,7 +1467,7 @@ func TestBuiltinInEstWithoutStats(t *testing.T) {
 	}
 }
 
-func TestSkewRatio(t *testing.T) {
+func TestRiskEqSkewRatio(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 
@@ -1491,22 +1491,22 @@ func TestSkewRatio(t *testing.T) {
 	statsTbl := h.GetTableStats(tb.Meta())
 	// Search for the value "6" which will not be found in the histogram buckets, and since
 	// there are NO topN values - the value will be considered skewed based upon skew ratio.
-	testKit.MustExec("set @@session.tidb_opt_skew_ratio = 0")
+	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0")
 	count, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
 	require.NoError(t, err)
 	require.Equal(t, float64(1.8), count)
-	testKit.MustExec("set @@session.tidb_opt_skew_ratio = 0.5")
+	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0.5")
 	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
 	require.NoError(t, err)
 	// Result should be approx 3.4, but due to floating point - result can be flaky
 	require.Less(t, float64(3.3), count)
 	require.Greater(t, float64(3.5), count)
-	testKit.MustExec("set @@session.tidb_opt_skew_ratio = 1")
+	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 1")
 	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
 	require.NoError(t, err)
 	require.Equal(t, float64(5), count)
 	// reset skew ratio to 0
-	testKit.MustExec("set @@session.tidb_opt_skew_ratio = 0")
+	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0")
 	// Collect 1 topn to ensure that test will not find value in topn.
 	// With 1 value in topN - value 6 will only be considered skewed within the remaining values.
 	testKit.MustExec(`analyze table t with 1 topn`)
@@ -1516,15 +1516,15 @@ func TestSkewRatio(t *testing.T) {
 	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
 	require.NoError(t, err)
 	require.Equal(t, float64(1.25), count)
-	testKit.MustExec("set @@session.tidb_opt_skew_ratio = 0.5")
+	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0.5")
 	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
 	require.NoError(t, err)
 	// Result should be approx 1.625, but due to floating point - result can be flaky
 	require.Less(t, float64(1.6), count)
 	require.Greater(t, float64(1.7), count)
-	testKit.MustExec("set @@session.tidb_opt_skew_ratio = 1")
+	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 1")
 	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
 	require.NoError(t, err)
 	require.Equal(t, float64(2), count)
-	testKit.MustExec("set @@session.tidb_opt_skew_ratio = 0")
+	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0")
 }
