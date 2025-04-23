@@ -65,7 +65,7 @@ fi
 run_sql "DROP DATABASE ${DB}1;"
 
 rm -f $LOG
-run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB" --log-file $LOG --load-stats=false || cat $LOG
+run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB" --log-file $LOG --load-stats=false --filter "${DB}1.*" || cat $LOG
 table_count=$(run_sql "SELECT meta.count as count FROM mysql.stats_meta meta JOIN INFORMATION_SCHEMA.TABLES tables ON meta.table_id = tables.TIDB_TABLE_ID WHERE tables.TABLE_SCHEMA = '${DB}1' and modify_count = 0;" | awk '/count/{print $2}')
 if [ "${table_count}" -ne 9 ]; then
     echo "table stats meta count does not equal to 9, but $count instead"
@@ -77,6 +77,27 @@ if [ "${p0_count}" -ne 5 ]; then
     exit 1
 fi
 p1_count=$(run_sql "SELECT meta.count as count FROM mysql.stats_meta meta JOIN INFORMATION_SCHEMA.PARTITIONS parts ON meta.table_id = parts.TIDB_PARTITION_ID WHERE parts.TABLE_SCHEMA = '${DB}1' and parts.PARTITION_NAME = 'p1' and modify_count = 0;" | awk '/count/{print $2}')
+if [ "${p1_count}" -ne 4 ]; then
+    echo "partition p1 stats meta count does not equal to 4, but $p1_count instead"
+    exit 1
+fi
+
+# test auto analyze
+run_sql "DROP DATABASE ${DB}1;"
+
+rm -f $LOG
+run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB" --log-file $LOG --load-stats=false --filter "${DB}1.*" --auto-analyze || cat $LOG
+table_count=$(run_sql "SELECT meta.count as count FROM mysql.stats_meta meta JOIN INFORMATION_SCHEMA.TABLES tables ON meta.table_id = tables.TIDB_TABLE_ID WHERE tables.TABLE_SCHEMA = '${DB}1' and modify_count = count and count > 0;" | awk '/count/{print $2}')
+if [ "${table_count}" -ne 9 ]; then
+    echo "table stats meta count does not equal to 9, but $count instead"
+    exit 1
+fi
+p0_count=$(run_sql "SELECT meta.count as count FROM mysql.stats_meta meta JOIN INFORMATION_SCHEMA.PARTITIONS parts ON meta.table_id = parts.TIDB_PARTITION_ID WHERE parts.TABLE_SCHEMA = '${DB}1' and parts.PARTITION_NAME = 'p0' and modify_count = count and count > 0;" | awk '/count/{print $2}')
+if [ "${p0_count}" -ne 5 ]; then
+    echo "partition p0 stats meta count does not equal to 5, but $p0_count instead"
+    exit 1
+fi
+p1_count=$(run_sql "SELECT meta.count as count FROM mysql.stats_meta meta JOIN INFORMATION_SCHEMA.PARTITIONS parts ON meta.table_id = parts.TIDB_PARTITION_ID WHERE parts.TABLE_SCHEMA = '${DB}1' and parts.PARTITION_NAME = 'p1' and modify_count = count and count > 0;" | awk '/count/{print $2}')
 if [ "${p1_count}" -ne 4 ]; then
     echo "partition p1 stats meta count does not equal to 4, but $p1_count instead"
     exit 1
