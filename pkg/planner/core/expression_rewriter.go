@@ -1569,9 +1569,9 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	OUTER:
 		er.ctxStack[len(er.ctxStack)-1] = castFunction
 		er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
-	case *ast.JSONSumExpr:
+	case *ast.JSONSumCrc32Expr:
 		arg := er.ctxStack[len(er.ctxStack)-1]
-		jsonSumFunction, err := expression.BuildJSONSumFunctionWithCheck(er.sctx, arg, v.Tp)
+		jsonSumFunction, err := expression.BuildJSONSumCrc32FunctionWithCheck(er.sctx, arg, v.Tp)
 		if err != nil {
 			er.err = err
 			return retNode, false

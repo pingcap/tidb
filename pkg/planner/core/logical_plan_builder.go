@@ -3701,7 +3701,6 @@ func GetForceMVIndexScan(ctx context.Context) bool {
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p base.LogicalPlan, err error) {
-	ctx = WithForceMVIndexScan(ctx)
 	b.pushSelectOffset(sel.QueryBlockOffset)
 	b.pushTableHints(sel.TableHints, sel.QueryBlockOffset)
 	defer func() {
@@ -4514,7 +4513,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 
 	// If forceMVIndexScan is true, it means:
-	// 1. it's possible to build MV Index scan.
+	// 1. We should build MV Index scan.
 	// 2. We should NEVER add table scan to possible access path, otherwise
 	//    we can't guarentee index scan is choosen after cost estimation.
 	forceMVIndexScan := GetForceMVIndexScan(ctx) == true

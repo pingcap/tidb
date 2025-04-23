@@ -404,11 +404,11 @@ func DoOptimize(
 	}
 
 	// If we want to force mv index scan, we have to disable some rules, because we want execute SQL like:
-	//     select handle, CAST(mv_index_col as ARRAY) from t group by handle;
-	// if GetForceMVIndexScan(ctx) {
-	flag &= ^rule.FlagEliminateAgg
-	flag &= ^rule.FlagPushDownAgg
-	// }
+	//     select /*+ force_index(mvi) */ handle, CAST(mv_index_col as ARRAY) from t group by handle;
+	if GetForceMVIndexScan(ctx) {
+		flag &= ^rule.FlagEliminateAgg
+		flag &= ^rule.FlagPushDownAgg
+	}
 
 	_, finalPlan, cost, err := doOptimize(ctx, sctx, flag, logic)
 	return finalPlan, cost, err

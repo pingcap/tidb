@@ -410,7 +410,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		// generatedExpr is string like "cast(extractExpr as array))"
 		generatedExpr string
 
-		// jsonSumExpr is string like "json_sum(extractExpr as array)"
+		// jsonSumExpr is string like "json_sum_crc32(extractExpr as array)"
 		jsonSumExpr string
 
 		indexCols  string
@@ -422,7 +422,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		indexCols = mvIndexCRC32Sum
 
 		generatedExpr = strings.ToLower(tblCol.GeneratedExprString)
-		jsonSumExpr = strings.Replace(generatedExpr, "cast", "json_sum", 1)
+		jsonSumExpr = strings.Replace(generatedExpr, "cast", "json_sum_crc32", 1)
 		start := strings.Index(generatedExpr, "cast(")
 		end := strings.LastIndex(generatedExpr, "as")
 		extractExpr = generatedExpr[start+5 : end]
@@ -470,7 +470,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 	if useMVIndex {
 		// For mv index, we will use subquery to gather all values with the same handle.
 		// The query will be like:
-		//     table side: select handle, JSON_SUM(xxx as array) from t use index()
+		//     table side: select handle, JSON_SUM_CRC32(xxx as array) from t use index()
 		//      index side: select /*+ force_index(`idx`) */ handle, SUM(CRC32(CAST(xxx as array))) from t group by handle
 		fromTable = fmt.Sprintf("(select %s, %s as %s from %s use index()) tmp",
 			handleCols, jsonSumExpr, indexCols, tblName)
@@ -610,10 +610,12 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 
 		idxRow, err := queryToRow(indexCtx, se, indexSQL)
 		if err != nil {
+			trySaveErr(err)
 			return
 		}
 		tblRow, err := queryToRow(tableCtx, se, tableSQL)
 		if err != nil {
+			trySaveErr(err)
 			return
 		}
 
@@ -684,8 +686,9 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		}
 
 		var (
-			tableRecord *consistency.RecordData
-			indexRecord *consistency.RecordData
+			tableRecord     *consistency.RecordData
+			indexRecord     *consistency.RecordData
+			lastTableRecord *consistency.RecordData
 		)
 		for i := range min(len(tblRow), len(idxRow)) {
 			if tableRecord, err = getRecordFromRow(tblRow[i]); err != nil {
@@ -699,19 +702,26 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 			}
 
 			handleCmp := tableRecord.Handle.Compare(indexRecord.Handle)
-			switch handleCmp {
-			case 0:
-				if getCheckSum(tblRow[i]) == getCheckSum(idxRow[i]) {
-					continue
+			if handleCmp == 0 {
+				if getCheckSum(tblRow[i]) != getCheckSum(idxRow[i]) {
+					err = ir().ReportAdminCheckInconsistent(w.e.contextCtx, indexRecord.Handle, indexRecord, tableRecord)
+					trySaveErr(err)
+					return
 				}
-				err = ir().ReportAdminCheckInconsistent(w.e.contextCtx, indexRecord.Handle, indexRecord, tableRecord)
-			case 1:
-				err = ir().ReportAdminCheckInconsistent(w.e.contextCtx, indexRecord.Handle, indexRecord, nil)
-			case -1:
+				lastTableRecord = tableRecord
+			} else if handleCmp > 0 {
+				if lastTableRecord != nil && lastTableRecord.Handle.Equal(indexRecord.Handle) {
+					err = ir().ReportAdminCheckInconsistent(w.e.contextCtx, indexRecord.Handle, indexRecord, lastTableRecord)
+				} else {
+					err = ir().ReportAdminCheckInconsistent(w.e.contextCtx, indexRecord.Handle, indexRecord, nil)
+				}
+				trySaveErr(err)
+				return
+			} else {
 				err = ir().ReportAdminCheckInconsistent(w.e.contextCtx, tableRecord.Handle, nil, tableRecord)
+				trySaveErr(err)
+				return
 			}
-			trySaveErr(err)
-			return
 		}
 
 		if len(idxRow) < len(tblRow) {
@@ -722,11 +732,15 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		} else if len(tblRow) < len(idxRow) {
 			// Index side has more rows
 			if indexRecord, err = getRecordFromRow(idxRow[len(tblRow)]); err == nil {
-				err = ir().ReportAdminCheckInconsistent(w.e.contextCtx, indexRecord.Handle, indexRecord, nil)
+				if lastTableRecord != nil && lastTableRecord.Handle.Equal(indexRecord.Handle) {
+					err = ir().ReportAdminCheckInconsistent(w.e.contextCtx, indexRecord.Handle, indexRecord, lastTableRecord)
+				} else {
+					err = ir().ReportAdminCheckInconsistent(w.e.contextCtx, indexRecord.Handle, indexRecord, nil)
+				}
 			}
 		} else {
 			// Both sides have same rows, but no error detected, this shouldn't happen.
-			err = errors.Errorf("no error detected during handle comparision, but an error is detected in the previous round")
+			err = errors.Errorf("no error detected during row comparision, but an error is detected in the previous round")
 		}
 		trySaveErr(err)
 	}

@@ -741,6 +741,7 @@ import (
 	inverted              "INVERTED"
 	ioReadBandwidth       "IO_READ_BANDWIDTH"
 	ioWriteBandwidth      "IO_WRITE_BANDWIDTH"
+	jsonSumCrc32          "JSON_SUM_CRC32"
 	jsonArrayagg          "JSON_ARRAYAGG"
 	jsonObjectAgg         "JSON_OBJECTAGG"
 	leader                "LEADER"
@@ -837,7 +838,6 @@ import (
 	builtinBitOr
 	builtinBitXor
 	builtinCast
-	builtinJSONSum
 	builtinCount
 	builtinCurDate
 	builtinCurTime
@@ -8065,7 +8065,7 @@ SimpleExpr:
 			ExplicitCharSet: explicitCharset,
 		}
 	}
-|	builtinJSONSum '(' Expression "AS" CastType ArrayKwdOpt ')'
+|	jsonSumCrc32 '(' Expression "AS" CastType ArrayKwdOpt ')'
 	{
 		/* See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html#function_cast */
 		tp := $5.(*types.FieldType)
@@ -8084,10 +8084,9 @@ SimpleExpr:
 			tp.SetCollate(charset.CollationUTF8MB4)
 		}
 		parser.explicitCharset = false
-		$$ = &ast.JSONSumExpr{
+		$$ = &ast.JSONSumCrc32Expr{
 			Expr:            $3,
 			Tp:              tp,
-			FunctionType:    ast.CastFunction,
 			ExplicitCharSet: explicitCharset,
 		}
 	}

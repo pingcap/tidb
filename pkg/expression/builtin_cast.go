@@ -24,7 +24,6 @@ package expression
 
 import (
 	"fmt"
-	"hash/crc32"
 	"math"
 	"strconv"
 	"strings"
@@ -457,80 +456,6 @@ func (c *castAsDurationFunctionClass) getFunction(ctx BuildContext, args []Expre
 		return nil, errors.Errorf("cannot cast from %s to %s", argTp, "Time")
 	}
 	return sig, nil
-}
-
-type jsonSumFunctionClass struct {
-	baseFunctionClass
-
-	tp *types.FieldType
-}
-
-func (c *jsonSumFunctionClass) verifyArgs(ctx EvalContext, args []Expression) error {
-	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
-		return err
-	}
-
-	if args[0].GetType(ctx).EvalType() != types.ETJson {
-		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "cast_as_array")
-	}
-
-	return nil
-}
-
-func (c *jsonSumFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
-	if err := c.verifyArgs(ctx.GetEvalCtx(), args); err != nil {
-		return nil, err
-	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt, types.ETJson)
-	if err != nil {
-		return nil, err
-	}
-	sig = &jsonSumFunctionSig{bf}
-	return sig, nil
-}
-
-type jsonSumFunctionSig struct {
-	baseBuiltinFunc
-}
-
-func (b *jsonSumFunctionSig) Clone() builtinFunc {
-	newSig := &jsonSumFunctionSig{}
-	newSig.cloneFrom(&b.baseBuiltinFunc)
-	return newSig
-}
-
-func (b *jsonSumFunctionSig) evalInt(ctx EvalContext, row chunk.Row) (res int64, isNull bool, err error) {
-	val, isNull, err := b.args[0].EvalJSON(ctx, row)
-	if isNull || err != nil {
-		return res, isNull, err
-	}
-
-	if val.TypeCode == types.JSONTypeCodeObject {
-		return 0, false, ErrNotSupportedYet.GenWithStackByArgs("CAST-ing JSON OBJECT type to array")
-	}
-
-	ft := b.tp.ArrayType()
-	f := convertJSON2Tp(ft.EvalType())
-	if f == nil {
-		return 0, false, ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("CAST-ing data to array of %s", ft.String()))
-	}
-	var sum int64
-	if val.TypeCode != types.JSONTypeCodeArray {
-		item, err := f(fakeSctx, val, ft)
-		if err != nil {
-			return 0, false, err
-		}
-		sum += int64(crc32.ChecksumIEEE([]byte(fmt.Sprintf("%v", item))))
-	} else {
-		for i := range val.GetElemCount() {
-			item, err := f(fakeSctx, val.ArrayGetElem(i), ft)
-			if err != nil {
-				return 0, false, err
-			}
-			sum += int64(crc32.ChecksumIEEE([]byte(fmt.Sprintf("%v", item))))
-		}
-	}
-	return sum, false, nil
 }
 
 type castAsArrayFunctionClass struct {
@@ -2552,29 +2477,6 @@ func BuildCastFunction(ctx BuildContext, expr Expression, tp *types.FieldType) (
 	res, err := BuildCastFunctionWithCheck(ctx, expr, tp, false, false)
 	terror.Log(err)
 	return
-}
-
-// BuildJSONSumFunctionWithCheck builds a CAST ScalarFunction from the Expression and return error if any.
-func BuildJSONSumFunctionWithCheck(ctx BuildContext, expr Expression, tp *types.FieldType) (res Expression, err error) {
-	argType := expr.GetType(ctx.GetEvalCtx())
-	// If source argument's nullable, then target type should be nullable
-	if !mysql.HasNotNullFlag(argType.GetFlag()) {
-		tp.DelFlag(mysql.NotNullFlag)
-	}
-	expr = TryPushCastIntoControlFunctionForHybridType(ctx, expr, tp)
-
-	if tp.EvalType() != types.ETJson || !tp.IsArray() {
-		return nil, errors.Errorf("cannot apply json_sum on %s", tp.EvalType())
-	}
-
-	retTP := types.NewFieldType(mysql.TypeLong)
-	fc := &jsonSumFunctionClass{baseFunctionClass{ast.JSONSum, 1, 1}, retTP}
-	f, err := fc.getFunction(ctx, []Expression{expr})
-	return &ScalarFunction{
-		FuncName: ast.NewCIStr(ast.JSONSum),
-		RetType:  retTP,
-		Function: f,
-	}, err
 }
 
 // BuildCastFunctionWithCheck builds a CAST ScalarFunction from the Expression and return error if any.
