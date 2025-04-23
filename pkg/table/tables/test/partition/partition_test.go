@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -38,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
-	"slices"
 )
 
 func TestPartitionAddRecord(t *testing.T) {

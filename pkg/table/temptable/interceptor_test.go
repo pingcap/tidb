@@ -17,6 +17,7 @@ package temptable
 import (
 	"context"
 	"math"
+	"slices"
 	"testing"
 	"time"
 
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
-	"slices"
 )
 
 func incLastByte(key kv.Key) kv.Key {
