@@ -898,27 +898,32 @@ func (w *worker) runOneJobStep(
 			w.wg.Run(func() {
 				ticker := time.NewTicker(3 * time.Second)
 				defer ticker.Stop()
-				var prevRowCnt int64
+				prevRowCnt := job.GetRowCount()
+				updateRowCount := func(rowCnt int64) {
+					latestRowCnt := rowCnt
+					logutil.DDLLogger().Info("update row count", zap.Int64("row count", latestRowCnt))
+					if latestRowCnt == prevRowCnt {
+						return
+					}
+					err := sysTblMgr.SetJobRowCount(w.workCtx, job.ID, latestRowCnt)
+					if err != nil {
+						logutil.DDLLogger().Warn("set job row count failed",
+							zap.Int64("job_id", job.ID),
+							zap.Error(err))
+					}
+					prevRowCnt = latestRowCnt
+				}
 				for {
 					select {
 					case <-stopUpdatingJobRowCnt:
+						updateRowCount(job.GetRowCount())
 						return
 					case <-ticker.C:
 						rgCtx := jobCtx.oldDDLCtx.getReorgCtx(job.ID)
 						if rgCtx == nil {
 							continue
 						}
-						latestRowCnt := rgCtx.getRowCount()
-						if latestRowCnt == prevRowCnt {
-							continue
-						}
-						err := sysTblMgr.SetJobRowCount(w.workCtx, job.ID, latestRowCnt)
-						if err != nil {
-							logutil.DDLLogger().Warn("set job row count failed",
-								zap.Int64("job_id", job.ID),
-								zap.Error(err))
-						}
-						prevRowCnt = latestRowCnt
+						updateRowCount(rgCtx.getRowCount())
 					}
 				}
 			})
