@@ -131,9 +131,11 @@ func (f *FlushSubscriber) HandleErrors() {
 		if err != nil {
 			retry := f.canBeRetried(err)
 			log.Warn("Meet error.", zap.String("category", "log backup flush subscriber"),
-				logutil.ShortError(err), zap.Bool("can-retry?", retry), zap.Uint64("store", id))
+				logutil.ShortError(err), zap.Uint64("store", id))
 			if retry {
-				log.Info("retry connecting to store to add subscription")
+				log.Info("retry connecting to store to add subscription",
+					zap.String("category", "log backup flush subscriber"),
+					zap.Uint64("store", id))
 				sub.connect(f.masterCtx, f.dialer)
 			}
 		}

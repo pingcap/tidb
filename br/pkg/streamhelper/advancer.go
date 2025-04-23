@@ -306,7 +306,7 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context,
 		minValue = vsf.Min()
 	})
 	// use separate context. if parent context deadline exceeded, we still want to know the
-	// last region inforamtion.
+	// last region information.
 	sctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	// Always fetch the hint and update the metrics.
 	hint := c.fetchRegionHint(sctx, minValue.Key.StartKey)
