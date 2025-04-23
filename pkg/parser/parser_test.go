@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -30,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/parser/test_driver"
 	"github.com/stretchr/testify/require"
-	"slices"
 )
 
 func TestSimple(t *testing.T) {
