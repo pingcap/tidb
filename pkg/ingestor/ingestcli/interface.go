@@ -61,7 +61,7 @@ type WriteClient interface {
 type Client interface {
 	// WriteClient returns a WriteClient to write KV to storage layer.
 	// WriteClient methods share the same context passed here.
-	WriteClient(ctx context.Context) (WriteClient, error)
+	WriteClient(ctx context.Context, commitTS uint64) (WriteClient, error)
 	// Ingest ingests the SST to storage layer.
 	Ingest(ctx context.Context, in *IngestRequest) error
 }

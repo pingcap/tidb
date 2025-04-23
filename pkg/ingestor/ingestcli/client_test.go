@@ -87,7 +87,7 @@ func TestClientIngest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, 12345, server.Client(), 67890)
+	client := NewClient(server.URL, 12345, server.Client())
 	req := &IngestRequest{
 		SSTFile: "test.sst",
 		Region:  &split.RegionInfo{Region: &metapb.Region{Id: 1, RegionEpoch: &metapb.RegionEpoch{Version: 1}}},
@@ -106,7 +106,7 @@ func TestClientIngestError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, 12345, server.Client(), 67890)
+	client := NewClient(server.URL, 12345, server.Client())
 	req := &IngestRequest{
 		SSTFile: "test.sst",
 		Region:  &split.RegionInfo{Region: &metapb.Region{Id: 1, RegionEpoch: &metapb.RegionEpoch{Version: 1}}},

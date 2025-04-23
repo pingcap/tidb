@@ -168,21 +168,19 @@ type client struct {
 	tikvWorkerURL string
 	clusterID     uint64
 	httpClient    *http.Client
-	commitTS      uint64
 }
 
 // NewClient creates a new Client instance.
-func NewClient(tikvWorkerURL string, clusterID uint64, httpClient *http.Client, commitTS uint64) Client {
+func NewClient(tikvWorkerURL string, clusterID uint64, httpClient *http.Client) Client {
 	return &client{
 		tikvWorkerURL: tikvWorkerURL,
 		clusterID:     clusterID,
 		httpClient:    httpClient,
-		commitTS:      commitTS,
 	}
 }
 
-func (c *client) WriteClient(ctx context.Context) (WriteClient, error) {
-	cli := newWriteClient(c.tikvWorkerURL, c.clusterID, c.httpClient, c.commitTS)
+func (c *client) WriteClient(ctx context.Context, commitTS uint64) (WriteClient, error) {
+	cli := newWriteClient(c.tikvWorkerURL, c.clusterID, c.httpClient, commitTS)
 	err := cli.init(ctx)
 	return cli, err
 }

@@ -21,6 +21,7 @@ import (
 	"encoding/hex"
 	"math"
 	"net"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -1386,7 +1388,7 @@ func (local *Backend) doImport(
 		afterExecuteJob = balancer.releaseStoreLoad
 	}
 	for i := 0; i < local.WorkerConcurrency; i++ {
-		worker := local.newRegionJobWorker(toCh, jobFromWorkerCh, &jobWg, afterExecuteJob)
+		worker := local.newRegionJobWorker(ctx, toCh, jobFromWorkerCh, &jobWg, afterExecuteJob)
 		workGroup.Go(func() error {
 			return worker.run(workerCtx)
 		})
@@ -1434,6 +1436,7 @@ func (local *Backend) doImport(
 }
 
 func (local *Backend) newRegionJobWorker(
+	ctx context.Context,
 	toCh, jobFromWorkerCh chan *regionJob,
 	jobWg *sync.WaitGroup,
 	afterExecuteJob func([]*metapb.Peer),
@@ -1446,9 +1449,9 @@ func (local *Backend) newRegionJobWorker(
 		regenerateJobsFn: local.generateJobForRange,
 	}
 	if tidbconfig.IsCloudStore() {
+		httpClient := &http.Client{}
 		cloudW := &cloudRegionJobWorker{
-			// TODO fill the cli
-			ingestCli:      nil,
+			ingestCli:      ingestcli.NewClient(local.TiKVWorkerURL, local.pdCli.GetClusterID(ctx), httpClient),
 			writeBatchSize: local.KVWriteBatchSize,
 			bufPool:        local.engineMgr.getBufferPool(),
 		}

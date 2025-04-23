@@ -269,7 +269,7 @@ func (w *cloudRegionJobWorker) write(ctx context.Context, job *regionJob) (*tikv
 		return &tikvWriteResult{emptyJob: true}, nil
 	}
 
-	writeCli, err := w.ingestCli.WriteClient(ctx)
+	writeCli, err := w.ingestCli.WriteClient(ctx, job.ingestData.GetTS())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
