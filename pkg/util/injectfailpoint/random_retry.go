@@ -58,7 +58,7 @@ func DXFRandomErrorWithOnePerThousand() error {
 // RandomErrorForReadWithOnePerPercent returns a read error with probability 0.01. It controls the DXF's failpoint.
 func RandomErrorForReadWithOnePerPercent(n int, err error) (int, error) {
 	failpoint.Inject("DXFRandomError", func() {
-		if rand.Float64() > 0.01 {
+		if n == 0 || err != nil || rand.Float64() > 0.01 {
 			failpoint.Return(n, err)
 		}
 		failpoint.Return(rand.Intn(n), io.ErrUnexpectedEOF)
