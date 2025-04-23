@@ -235,7 +235,7 @@ func TestCMSketchCodingTopN(t *testing.T) {
 	unsignedLong := types.NewFieldType(mysql.TypeLonglong)
 	unsignedLong.AddFlag(mysql.UnsignedFlag)
 	chk := chunk.New([]*types.FieldType{types.NewFieldType(mysql.TypeBlob), unsignedLong}, 20, 20)
-	var rows []chunk.Row
+	rows := make([]chunk.Row, 0, 20)
 	for i := range 20 {
 		tString := fmt.Appendf(nil, "%20000d", i)
 		topN[i] = TopNMeta{tString, math.MaxUint64}
