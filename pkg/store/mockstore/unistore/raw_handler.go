@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/lockstore"
+	"slices"
 )
 
 type rawHandler struct {
@@ -147,5 +148,5 @@ func (h *rawHandler) appendPair(pairs []*kvrpcpb.KvPair, it *lockstore.Iterator)
 }
 
 func safeCopy(val []byte) []byte {
-	return append([]byte{}, val...)
+	return slices.Clone(val)
 }

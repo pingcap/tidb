@@ -297,7 +297,7 @@ func TestQueryWithConcurrentSmallCop(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int key, b int, c int, index idx_b(b)) partition by hash(id) partitions 10;")
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		tk.MustExec(fmt.Sprintf("insert into t1 values (%v, %v, %v)", i, i, i))
 	}
 	tk.MustExec("create table t2 (id bigint unsigned key, b int, index idx_b (b));")
@@ -330,7 +330,7 @@ func TestDMLWithLiteCopWorker(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id bigint auto_increment key, b int);")
 	tk.MustExec("insert into t1 (b) values (1),(2),(3),(4),(5),(6),(7),(8);")
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		tk.MustExec("insert into t1 (b) select b from t1;")
 	}
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("2048"))
