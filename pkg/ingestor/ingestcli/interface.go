@@ -28,13 +28,25 @@ type WriteRequest struct {
 
 // WriteResponse is the response of Write.
 type WriteResponse struct {
-	SSTFile string
+	// below is the sample content of WriteResponse for next gen
+	// we don't parse it to avoid the case that tikv-worker side change it, but we
+	// don't, so we leave it as is and pass it to Ingest API directly.
+	// {
+	//  "sst_meta" : {
+	//    "id" : 457546948877221893,
+	//    "smallest" : [ 107, 101, 121 ],
+	//    "biggest" : [ 107, 101, 121 ],
+	//    "meta-offset" : 48,
+	//    "commit-ts" : 67890
+	//  }
+	//}
+	nextGenResp []byte
 }
 
 // IngestRequest is the request to ingest SST to storage layer.
 type IngestRequest struct {
-	Region  *split.RegionInfo
-	SSTFile string
+	Region    *split.RegionInfo
+	WriteResp *WriteResponse
 }
 
 // WriteClient is the client for writing KV to storage layer.

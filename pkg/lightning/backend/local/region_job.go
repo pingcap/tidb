@@ -36,6 +36,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -135,7 +136,7 @@ type tikvWriteResult struct {
 
 	// below fields are for cloud generation store engine.
 	// the filename of the written sst file by tikv-worker.
-	sstFile string
+	nextGenWriteResp *ingestcli.WriteResponse
 }
 
 type injectedBehaviour struct {

@@ -358,16 +358,16 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 	}
 
 	return &tikvWriteResult{
-		count:      totalCount,
-		totalBytes: totalSize,
-		sstFile:    resp.SSTFile,
+		count:            totalCount,
+		totalBytes:       totalSize,
+		nextGenWriteResp: resp,
 	}, nil
 }
 
 func (w *objStoreRegionJobWorker) ingest(ctx context.Context, j *regionJob) error {
 	in := &ingestcli.IngestRequest{
-		Region:  j.region,
-		SSTFile: j.writeResult.sstFile,
+		Region:    j.region,
+		WriteResp: j.writeResult.nextGenWriteResp,
 	}
 	err := w.ingestCli.Ingest(ctx, in)
 	if err != nil {

@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -39,11 +38,11 @@ type writeClient struct {
 	httpClient    *http.Client
 	commitTS      uint64
 
-	eg          *util.ErrorGroupWithRecover
-	sendReqErr  atomic.Error
-	writer      *io.PipeWriter
-	reader      *io.PipeReader
-	sstFilePath string
+	eg         *util.ErrorGroupWithRecover
+	sendReqErr atomic.Error
+	writer     *io.PipeWriter
+	reader     *io.PipeReader
+	resp       []byte
 }
 
 // newWriteClient creates a writeClient.
@@ -104,13 +103,7 @@ func (w *writeClient) startChunkedHTTPRequest(req *http.Request) {
 			w.sendReqErr.Store(err)
 			return errors.Trace(err)
 		}
-		result := new(sstFileResult)
-		err = json.Unmarshal(data, result)
-		if err != nil {
-			w.sendReqErr.Store(err)
-			return errors.Trace(err)
-		}
-		w.sstFilePath = result.SSTFile
+		w.resp = data
 		return nil
 	})
 }
@@ -154,7 +147,7 @@ func (w *writeClient) Recv() (*WriteResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &WriteResponse{SSTFile: w.sstFilePath}, nil
+	return &WriteResponse{nextGenResp: w.resp}, nil
 }
 
 func (w *writeClient) Close() {
@@ -187,10 +180,11 @@ func (c *client) WriteClient(ctx context.Context, commitTS uint64) (WriteClient,
 
 func (c *client) Ingest(ctx context.Context, in *IngestRequest) error {
 	ri := in.Region.Region
-	url := fmt.Sprintf("%s/ingest_s3?cluster_id=%d&file_name=%s&region_id=%d&epoch_version=%d",
-		c.tikvWorkerURL, c.clusterID, in.SSTFile, ri.Id, ri.RegionEpoch.Version)
+	url := fmt.Sprintf("%s/ingest_s3?cluster_id=%d&region_id=%d&epoch_version=%d",
+		c.tikvWorkerURL, c.clusterID, ri.Id, ri.RegionEpoch.Version)
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
+	bodyRd := bytes.NewReader(in.WriteResp.nextGenResp)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bodyRd)
 	if err != nil {
 		return errors.Trace(err)
 	}
