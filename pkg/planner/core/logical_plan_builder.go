@@ -957,7 +957,7 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 				dual := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 				outputNames := p.OutputNames()
 				schema := p.Schema()
-				// If the group by column is in the schema, we need to add it to the dual plan.
+				// If the group by column is not in the schema, we need to add it to the dual plan from the children's schema.
 				for _, gbyExpr := range groupby {
 					if groupbyCol, ok := gbyExpr.(*expression.Column); ok {
 						if slices.ContainsFunc(p.Schema().Columns, func(col *expression.Column) bool {
@@ -965,7 +965,6 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 						}) {
 							continue
 						}
-						// If the group by column is not in the schema, we need to add it to the dual plan.
 						name := getName(p.Children()[0].Schema(), p.Children()[0].OutputNames(), groupbyCol)
 						if name != nil {
 							schema.Append(groupbyCol)
