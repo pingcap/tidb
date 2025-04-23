@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
+	"slices"
 )
 
 // Compiler compiles an ast.StmtNode to a physical plan.
@@ -176,13 +177,7 @@ func isPhysicalPlanNeedLowerPriority(p base.PhysicalPlan) bool {
 		return true
 	}
 
-	for _, child := range p.Children() {
-		if isPhysicalPlanNeedLowerPriority(child) {
-			return true
-		}
-	}
-
-	return false
+	return slices.ContainsFunc(p.Children(), isPhysicalPlanNeedLowerPriority)
 }
 
 // CountStmtNode records the number of statements with the same type.

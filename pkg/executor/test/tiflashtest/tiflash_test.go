@@ -240,7 +240,7 @@ func TestMppExecution(t *testing.T) {
 	// mock executor does not support use outer table as build side for outer join, so need to
 	// force the inner table as build side
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		// test if it is stable.
 		tk.MustQuery("select count(*) from t1 , t where t1.a = t.a").Check(testkit.Rows("3"))
 	}
@@ -332,7 +332,7 @@ func TestTiFlashPartitionTableShuffledHashJoin(t *testing.T) {
 		partition p0 values less than (100), partition p1 values less than (200),
 		partition p2 values less than (300), partition p3 values less than (400))`)
 	listPartitions := make([]string, 4)
-	for i := 0; i < 400; i++ {
+	for i := range 400 {
 		idx := i % 4
 		if listPartitions[idx] != "" {
 			listPartitions[idx] += ", "
@@ -352,7 +352,7 @@ func TestTiFlashPartitionTableShuffledHashJoin(t *testing.T) {
 	}
 
 	vals := make([]string, 0, 100)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(400), rand.Intn(400)))
 	}
 	for _, tbl := range []string{`thash`, `trange`, `tlist`, `tnormal`} {
@@ -377,7 +377,7 @@ func TestTiFlashPartitionTableShuffledHashJoin(t *testing.T) {
 		}
 		return l, r
 	}
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		l1, r1 := lr()
 		l2, r2 := lr()
 		cond := fmt.Sprintf("t1.b>=%v and t1.b<=%v and t2.b>=%v and t2.b<=%v", l1, r1, l2, r2)
@@ -408,7 +408,7 @@ func TestTiFlashPartitionTableReader(t *testing.T) {
 		partition p0 values less than (100), partition p1 values less than (200),
 		partition p2 values less than (300), partition p3 values less than (400))`)
 	listPartitions := make([]string, 4)
-	for i := 0; i < 400; i++ {
+	for i := range 400 {
 		idx := i % 4
 		if listPartitions[idx] != "" {
 			listPartitions[idx] += ", "
@@ -433,7 +433,7 @@ func TestTiFlashPartitionTableReader(t *testing.T) {
 	tk.MustExec("set tidb_opt_enable_late_materialization=0")
 
 	vals := make([]string, 0, 500)
-	for i := 0; i < 500; i++ {
+	for range 500 {
 		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(400), rand.Intn(400)))
 	}
 	for _, tbl := range []string{`thash`, `trange`, `tlist`, `tnormal`} {
@@ -442,7 +442,7 @@ func TestTiFlashPartitionTableReader(t *testing.T) {
 
 	tk.MustExec("SET tidb_enforce_mpp=1")
 	tk.MustExec("set @@session.tidb_isolation_read_engines='tiflash'")
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		l, r := rand.Intn(400), rand.Intn(400)
 		if l > r {
 			l, r = r, l
@@ -854,7 +854,7 @@ func TestAvgOverflow(t *testing.T) {
 	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 	tk.MustExec("insert into t values(9)")
-	for i := 0; i < 16; i++ {
+	for range 16 {
 		tk.MustExec("insert into t select * from t")
 	}
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
@@ -970,7 +970,7 @@ func TestTiFlashPartitionTableShuffledHashAggregation(t *testing.T) {
 		partition p0 values less than (100), partition p1 values less than (200),
 		partition p2 values less than (300), partition p3 values less than (400))`)
 	listPartitions := make([]string, 4)
-	for i := 0; i < 400; i++ {
+	for i := range 400 {
 		idx := i % 4
 		if listPartitions[idx] != "" {
 			listPartitions[idx] += ", "
@@ -990,7 +990,7 @@ func TestTiFlashPartitionTableShuffledHashAggregation(t *testing.T) {
 	}
 
 	vals := make([]string, 0, 100)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(400), rand.Intn(400)))
 	}
 	for _, tbl := range []string{`thash`, `trange`, `tlist`, `tnormal`} {
@@ -1012,7 +1012,7 @@ func TestTiFlashPartitionTableShuffledHashAggregation(t *testing.T) {
 		}
 		return l, r
 	}
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		l1, r1 := lr()
 		cond := fmt.Sprintf("t1.b>=%v and t1.b<=%v", l1, r1)
 		var res [][]any
@@ -1061,7 +1061,7 @@ func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
 		partition p0 values less than (100), partition p1 values less than (200),
 		partition p2 values less than (300), partition p3 values less than (400))`)
 	listPartitions := make([]string, 4)
-	for i := 0; i < 400; i++ {
+	for i := range 400 {
 		idx := i % 4
 		if listPartitions[idx] != "" {
 			listPartitions[idx] += ", "
@@ -1081,7 +1081,7 @@ func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
 	}
 
 	vals := make([]string, 0, 100)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(400), rand.Intn(400)))
 	}
 	for _, tbl := range []string{`thash`, `trange`, `tlist`, `tnormal`} {
@@ -1103,7 +1103,7 @@ func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
 		}
 		return l, r
 	}
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		l1, r1 := lr()
 		l2, r2 := lr()
 		cond := fmt.Sprintf("t1.b>=%v and t1.b<=%v and t2.b>=%v and t2.b<=%v", l1, r1, l2, r2)
@@ -1660,7 +1660,7 @@ func TestDisaggregatedTiFlashGeneratedColumn(t *testing.T) {
 			var selectionPushdownTiFlash bool
 			var aggPushdownTiFlash bool
 
-			for i := 0; i < nthPlan; i++ {
+			for i := range nthPlan {
 				s := fmt.Sprintf(sql, i)
 				rows := tk.MustQuery(s).Rows()
 				for _, row := range rows {
@@ -1705,7 +1705,7 @@ func TestDisaggregatedTiFlashGeneratedColumn(t *testing.T) {
 		for _, sql := range sqls {
 			var genTiFlashPlan bool
 			var aggPushdownTiFlash bool
-			for i := 0; i < nthPlan; i++ {
+			for i := range nthPlan {
 				s := fmt.Sprintf(sql, i)
 				rows := tk.MustQuery(s).Rows()
 				for _, row := range rows {
@@ -1846,7 +1846,7 @@ func TestUnionScan(t *testing.T) {
 	tk.MustExec("set @@session.tidb_enforce_mpp=1")
 	tk.MustExec("set @@session.tidb_allow_tiflash_cop=off")
 
-	for x := 0; x < 2; x++ {
+	for x := range 2 {
 		tk.MustExec("drop table if exists t")
 		if x == 0 {
 			// Test cache table.
@@ -2054,7 +2054,7 @@ func TestIssue50358(t *testing.T) {
 	// unistore does not support later materialization
 	tk.MustExec("set tidb_opt_enable_late_materialization=0")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		// test if it is stable.
 		tk.MustQuery("select 8 from t join t1").Check(testkit.Rows("8", "8"))
 	}

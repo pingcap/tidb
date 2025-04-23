@@ -468,7 +468,7 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 		fullColLen++
 	}
 	e.dagPB.OutputOffsets = make([]uint32, fullColLen)
-	for i := 0; i < fullColLen; i++ {
+	for i := range fullColLen {
 		e.dagPB.OutputOffsets[i] = uint32(i)
 	}
 
@@ -644,7 +644,7 @@ func buildHandleColsForExec(sctx *stmtctx.StatementContext, tblInfo *model.Table
 		return plannerutil.NewIntHandleCols(intCol)
 	}
 	tblCols := make([]*expression.Column, len(tblInfo.Columns))
-	for i := 0; i < len(tblInfo.Columns); i++ {
+	for i := range tblInfo.Columns {
 		c := tblInfo.Columns[i]
 		tblCols[i] = &expression.Column{
 			RetType: &c.FieldType,
@@ -2598,7 +2598,7 @@ func (b *executorBuilder) buildApply(v *plannercore.PhysicalApply) exec.Executor
 		innerFilters := make([]expression.CNFExprs, 0, v.Concurrency)
 		corCols := make([][]*expression.CorrelatedColumn, 0, v.Concurrency)
 		joiners := make([]join.Joiner, 0, v.Concurrency)
-		for i := 0; i < v.Concurrency; i++ {
+		for range v.Concurrency {
 			clonedInnerPlan, err := plannercore.SafeClone(v.SCtx(), innerPlan)
 			if err != nil {
 				b.err = nil
@@ -3471,13 +3471,13 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 	childrenUsedSchema := markChildrenUsedCols(colsFromChildren, v.Children()[0].Schema(), v.Children()[1].Schema())
 	e.Joiner = join.NewJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes, childrenUsedSchema, false)
 	outerKeyCols := make([]int, len(v.OuterJoinKeys))
-	for i := 0; i < len(v.OuterJoinKeys); i++ {
+	for i := range v.OuterJoinKeys {
 		outerKeyCols[i] = v.OuterJoinKeys[i].Index
 	}
 	innerKeyCols := make([]int, len(v.InnerJoinKeys))
 	innerKeyColIDs := make([]int64, len(v.InnerJoinKeys))
 	keyCollators := make([]collate.Collator, 0, len(v.InnerJoinKeys))
-	for i := 0; i < len(v.InnerJoinKeys); i++ {
+	for i := range v.InnerJoinKeys {
 		innerKeyCols[i] = v.InnerJoinKeys[i].Index
 		innerKeyColIDs[i] = v.InnerJoinKeys[i].ID
 		keyCollators = append(keyCollators, collate.GetCollator(v.InnerJoinKeys[i].RetType.GetCollate()))
@@ -3489,10 +3489,10 @@ func (b *executorBuilder) buildIndexLookUpJoin(v *plannercore.PhysicalIndexJoin)
 
 	outerHashCols, innerHashCols := make([]int, len(v.OuterHashKeys)), make([]int, len(v.InnerHashKeys))
 	hashCollators := make([]collate.Collator, 0, len(v.InnerHashKeys))
-	for i := 0; i < len(v.OuterHashKeys); i++ {
+	for i := range v.OuterHashKeys {
 		outerHashCols[i] = v.OuterHashKeys[i].Index
 	}
-	for i := 0; i < len(v.InnerHashKeys); i++ {
+	for i := range v.InnerHashKeys {
 		innerHashCols[i] = v.InnerHashKeys[i].Index
 		hashCollators = append(hashCollators, collate.GetCollator(v.InnerHashKeys[i].RetType.GetCollate()))
 	}
@@ -3546,12 +3546,12 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 		defaultValues = make([]types.Datum, len(innerTypes))
 	}
 	outerKeyCols := make([]int, len(v.OuterJoinKeys))
-	for i := 0; i < len(v.OuterJoinKeys); i++ {
+	for i := range v.OuterJoinKeys {
 		outerKeyCols[i] = v.OuterJoinKeys[i].Index
 	}
 	innerKeyCols := make([]int, len(v.InnerJoinKeys))
 	keyCollators := make([]collate.Collator, 0, len(v.InnerJoinKeys))
-	for i := 0; i < len(v.InnerJoinKeys); i++ {
+	for i := range v.InnerJoinKeys {
 		innerKeyCols[i] = v.InnerJoinKeys[i].Index
 		keyCollators = append(keyCollators, collate.GetCollator(v.InnerJoinKeys[i].RetType.GetCollate()))
 	}
@@ -3596,7 +3596,7 @@ func (b *executorBuilder) buildIndexLookUpMergeJoin(v *plannercore.PhysicalIndex
 	}
 	childrenUsedSchema := markChildrenUsedCols(colsFromChildren, v.Children()[0].Schema(), v.Children()[1].Schema())
 	joiners := make([]join.Joiner, e.Ctx().GetSessionVars().IndexLookupJoinConcurrency())
-	for i := 0; i < len(joiners); i++ {
+	for i := range joiners {
 		joiners[i] = join.NewJoiner(b.ctx, v.JoinType, v.InnerChildIdx == 0, defaultValues, v.OtherConditions, leftTypes, rightTypes, childrenUsedSchema, false)
 	}
 	e.Joiners = joiners
@@ -3615,7 +3615,7 @@ func (b *executorBuilder) buildIndexNestedLoopHashJoin(v *plannercore.PhysicalIn
 	}
 	concurrency := e.Ctx().GetSessionVars().IndexLookupJoinConcurrency()
 	idxHash.Joiners = make([]join.Joiner, concurrency)
-	for i := 0; i < concurrency; i++ {
+	for i := range concurrency {
 		idxHash.Joiners[i] = e.Joiner.Clone()
 	}
 	return idxHash
@@ -4081,7 +4081,7 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []base.PhysicalPlan)
 	if err != nil {
 		return nil, nil, err
 	}
-	for i := 0; i < schemaLen; i++ {
+	for i := range schemaLen {
 		tableReq.OutputOffsets = append(tableReq.OutputOffsets, uint32(i))
 	}
 	ts := plans[0].(*plannercore.PhysicalTableScan)
@@ -4126,7 +4126,7 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 		}
 	}
 
-	for i := 0; i < handleLen; i++ {
+	for i := range handleLen {
 		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(len(columns)+i))
 	}
 
@@ -4278,7 +4278,7 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 	isCorColInPartialFilters := make([]bool, 0, partialPlanCount)
 	isCorColInPartialAccess := make([]bool, 0, partialPlanCount)
 	hasGlobalIndex := false
-	for i := 0; i < partialPlanCount; i++ {
+	for i := range partialPlanCount {
 		var tempReq *tipb.DAGRequest
 		var err error
 
@@ -4392,7 +4392,7 @@ func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMerg
 	ret.ranges = make([][]*ranger.Range, 0, len(v.PartialPlans))
 	sctx := b.ctx.GetSessionVars().StmtCtx
 	hasGlobalIndex := false
-	for i := 0; i < len(v.PartialPlans); i++ {
+	for i := range v.PartialPlans {
 		if is, ok := v.PartialPlans[i][0].(*plannercore.PhysicalIndexScan); ok {
 			ret.ranges = append(ret.ranges, is.Ranges)
 			sctx.IndexNames = append(sctx.IndexNames, is.Table.Name.O+":"+is.Index.Name.O)
@@ -5681,7 +5681,7 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) exec.Executor {
 		var sel []int
 		if v.CTE.IsDistinct {
 			sel = make([]int, chkSize)
-			for i := 0; i < chkSize; i++ {
+			for i := range chkSize {
 				sel[i] = i
 			}
 		}

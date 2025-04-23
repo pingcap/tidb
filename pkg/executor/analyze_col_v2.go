@@ -230,7 +230,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 
 	l := len(e.analyzePB.ColReq.ColumnsInfo) + len(e.analyzePB.ColReq.ColumnGroups)
 	rootRowCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
-	for i := 0; i < l; i++ {
+	for range l {
 		rootRowCollector.Base().FMSketches = append(rootRowCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
 	}
 
@@ -251,7 +251,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	})
 	e.samplingMergeWg = &util.WaitGroupWrapper{}
 	e.samplingMergeWg.Add(samplingStatsConcurrency)
-	for i := 0; i < samplingStatsConcurrency; i++ {
+	for i := range samplingStatsConcurrency {
 		id := i
 		gp.Go(func() {
 			e.subMergeWorker(mergeResultCh, mergeTaskCh, l, id)
@@ -358,7 +358,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	e.samplingBuilderWg.Add(samplingStatsConcurrency)
 
 	// Start workers to build stats.
-	for i := 0; i < samplingStatsConcurrency; i++ {
+	for range samplingStatsConcurrency {
 		e.samplingBuilderWg.Run(func() {
 			e.subBuildWorker(buildResultChan, buildTaskChan, hists, topns, sampleCollectors, exitCh)
 		})
@@ -460,7 +460,7 @@ func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(indexInfos []*model.In
 	}
 	var subIndexWorkerWg = NewAnalyzeResultsNotifyWaitGroupWrapper(resultsCh)
 	subIndexWorkerWg.Add(statsConcurrncy)
-	for i := 0; i < statsConcurrncy; i++ {
+	for range statsConcurrncy {
 		subIndexWorkerWg.Run(func() { e.subIndexWorkerForNDV(taskCh, resultsCh) })
 	}
 	for _, task := range tasks {
@@ -620,13 +620,13 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 	})
 	failpoint.Inject("mockAnalyzeMergeWorkerSlowConsume", func(val failpoint.Value) {
 		times := val.(int)
-		for i := 0; i < times; i++ {
+		for range times {
 			e.memTracker.Consume(5 << 20)
 			time.Sleep(100 * time.Millisecond)
 		}
 	})
 	retCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
-	for i := 0; i < l; i++ {
+	for range l {
 		retCollector.Base().FMSketches = append(retCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
 	}
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()

@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
+	"slices"
 )
 
 type requiredRowsDataSource struct {
@@ -93,7 +94,7 @@ func (r *requiredRowsDataSource) Next(ctx context.Context, req *chunk.Chunk) err
 		return nil
 	}
 	required := min(req.RequiredRows(), r.totalRows-r.count)
-	for i := 0; i < required; i++ {
+	for range required {
 		req.AppendRow(r.genOneRow())
 	}
 	r.count += required
@@ -731,7 +732,7 @@ func buildMergeJoinExec(ctx sessionctx.Context, joinType logicalop.JoinType, inn
 	j := plannercore.BuildMergeJoinPlan(ctx.GetPlanCtx(), joinType, outerCols, innerCols)
 
 	j.SetChildren(&mockPlan{exec: outerSrc}, &mockPlan{exec: innerSrc})
-	cols := append(append([]*expression.Column{}, outerCols...), innerCols...)
+	cols := slices.Concat(outerCols, innerCols)
 	schema := expression.NewSchema(cols...)
 	j.SetSchema(schema)
 

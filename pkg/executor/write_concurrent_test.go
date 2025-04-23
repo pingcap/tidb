@@ -42,7 +42,7 @@ func TestBatchInsertWithOnDuplicate(t *testing.T) {
 		// prepare data for each loop.
 		func(ctx context.Context, tk *testkit.AsyncTestKit, concurrent int, currentLoop int) [][][]any {
 			var ii [][][]any
-			for i := 0; i < concurrent; i++ {
+			for range concurrent {
 				ii = append(ii, [][]any{permInt(7)})
 			}
 			return ii

@@ -322,7 +322,7 @@ func checkResults(t *testing.T, fieldTypes []*types.FieldType, actualResult []ch
 	require.Equal(t, len(expectedResult), len(actualResult))
 	cmp := generateCMPFunc(fieldTypes)
 
-	for i := 0; i < len(actualResult); i++ {
+	for i := range actualResult {
 		x := cmp(actualResult[i], expectedResult[i])
 		require.Equal(t, 0, x, "result index = "+strconv.Itoa(i))
 	}
