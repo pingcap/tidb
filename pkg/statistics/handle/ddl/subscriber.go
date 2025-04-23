@@ -418,6 +418,10 @@ func updateGlobalTableStats4DropPartition(
 	))
 }
 
+const (
+	schemaNotFound = "Not Found"
+)
+
 func updateGlobalTableStats4ExchangePartition(
 	ctx context.Context,
 	sctx sessionctx.Context,
@@ -453,7 +457,7 @@ func updateGlobalTableStats4ExchangePartition(
 
 	// Update the global stats.
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	globalTableSchemaName := "Not Found"
+	globalTableSchemaName := schemaNotFound
 	globalTableSchema, ok := infoschema.SchemaByTable(is, globalTableInfo)
 	if ok {
 		globalTableSchemaName = globalTableSchema.Name.O
@@ -569,7 +573,7 @@ func updateGlobalTableStats4TruncatePartition(
 	}
 
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	globalTableSchemaName := "Not Found"
+	globalTableSchemaName := schemaNotFound
 	globalTableSchema, ok := infoschema.SchemaByTable(is, globalTableInfo)
 	if ok {
 		globalTableSchemaName = globalTableSchema.Name.O
