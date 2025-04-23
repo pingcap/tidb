@@ -1451,7 +1451,7 @@ func (local *Backend) newRegionJobWorker(
 	if kerneltype.IsNextGen() {
 		httpClient := &http.Client{}
 		cloudW := &objStoreRegionJobWorker{
-			ingestCli:      ingestcli.NewClient(local.TiKVWorkerURL, local.pdCli.GetClusterID(ctx), httpClient),
+			ingestCli:      ingestcli.NewClient(local.TiKVWorkerURL, local.pdCli.GetClusterID(ctx), httpClient, local.splitCli),
 			writeBatchSize: local.KVWriteBatchSize,
 			bufPool:        local.engineMgr.getBufferPool(),
 		}

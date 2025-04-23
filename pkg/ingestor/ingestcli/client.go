@@ -25,6 +25,7 @@ import (
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/errorpb"
+	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/atomic"
 )
@@ -161,14 +162,16 @@ type client struct {
 	tikvWorkerURL string
 	clusterID     uint64
 	httpClient    *http.Client
+	splitCli      split.SplitClient
 }
 
 // NewClient creates a new Client instance.
-func NewClient(tikvWorkerURL string, clusterID uint64, httpClient *http.Client) Client {
+func NewClient(tikvWorkerURL string, clusterID uint64, httpClient *http.Client, splitCli split.SplitClient) Client {
 	return &client{
 		tikvWorkerURL: tikvWorkerURL,
 		clusterID:     clusterID,
 		httpClient:    httpClient,
+		splitCli:      splitCli,
 	}
 }
 
@@ -180,8 +183,12 @@ func (c *client) WriteClient(ctx context.Context, commitTS uint64) (WriteClient,
 
 func (c *client) Ingest(ctx context.Context, in *IngestRequest) error {
 	ri := in.Region.Region
-	url := fmt.Sprintf("%s/ingest_s3?cluster_id=%d&region_id=%d&epoch_version=%d",
-		c.tikvWorkerURL, c.clusterID, ri.Id, ri.RegionEpoch.Version)
+	store, err := c.splitCli.GetStore(ctx, in.Region.Leader.GetStoreId())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	url := fmt.Sprintf("http://%s/ingest_s3?cluster_id=%d&region_id=%d&epoch_version=%d",
+		store.GetStatusAddress(), c.clusterID, ri.Id, ri.RegionEpoch.Version)
 
 	bodyRd := bytes.NewReader(in.WriteResp.nextGenResp)
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bodyRd)
