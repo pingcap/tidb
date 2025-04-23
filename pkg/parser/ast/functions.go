@@ -329,6 +329,7 @@ const (
 	JSONObject        = "json_object"
 	JSONMerge         = "json_merge"
 	JSONSet           = "json_set"
+	JSONSumCrc32      = "json_sum_crc32"
 	JSONInsert        = "json_insert"
 	JSONReplace       = "json_replace"
 	JSONRemove        = "json_remove"
@@ -599,6 +600,55 @@ const (
 	CastConvertFunction
 	CastBinaryOperator
 )
+
+// JSONSumCrc32Expr is the function to calculate sum of crc32 values for array in json
+// See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html
+type JSONSumCrc32Expr struct {
+	funcNode
+	// Expr is the expression to be converted.
+	Expr ExprNode
+	// Tp is the conversion type.
+	Tp *types.FieldType
+	// ExplicitCharSet is true when charset is explicit indicated.
+	ExplicitCharSet bool
+}
+
+// Restore implements Node interface.
+func (n *JSONSumCrc32Expr) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("JSON_SUM_CRC32")
+	ctx.WritePlain("(")
+	if err := n.Expr.Restore(ctx); err != nil {
+		return errors.Annotatef(err, "An error occurred while restore JSONSumCrc32Expr.Expr")
+	}
+	ctx.WriteKeyWord(" AS ")
+	n.Tp.RestoreAsCastType(ctx, n.ExplicitCharSet)
+	ctx.WritePlain(")")
+	return nil
+}
+
+// Format the ExprNode into a Writer.
+func (n *JSONSumCrc32Expr) Format(w io.Writer) {
+	fmt.Fprint(w, "JSON_SUM_CRC32(")
+	n.Expr.Format(w)
+	fmt.Fprint(w, " AS ")
+	n.Tp.FormatAsCastType(w, n.ExplicitCharSet)
+	fmt.Fprint(w, ")")
+}
+
+// Accept implements Node Accept interface.
+func (n *JSONSumCrc32Expr) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*JSONSumCrc32Expr)
+	node, ok := n.Expr.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Expr = node.(ExprNode)
+	return v.Leave(n)
+}
 
 // FuncCastExpr is the cast function converting value to another type, e.g, cast(expr AS signed).
 // See https://dev.mysql.com/doc/refman/5.7/en/cast-functions.html
