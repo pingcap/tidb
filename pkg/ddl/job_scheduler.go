@@ -167,19 +167,14 @@ func (s *jobScheduler) start() {
 	workerFactory := func(tp workerType) func() (pools.Resource, error) {
 		return func() (pools.Resource, error) {
 			wk := newWorker(s.schCtx, tp, s.sessPool, s.delRangeMgr, s.ddlCtx)
-			sessForWorker, err := s.sessPool.Get()
-			if err != nil {
-				return nil, err
-			}
-			wk.seqAllocator = &s.seqAllocator
-			sessForWorker.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-			wk.sess = sess.NewSession(sessForWorker)
-			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, wk.String())).Inc()
 			sessForJob, err := s.sessPool.Get()
 			if err != nil {
 				return nil, err
 			}
-			wk.sessForJobUpdate = sess.NewSession(sessForJob)
+			wk.seqAllocator = &s.seqAllocator
+			sessForJob.GetSessionVars().SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+			wk.sess = sess.NewSession(sessForJob)
+			metrics.DDLCounter.WithLabelValues(fmt.Sprintf("%s_%s", metrics.CreateDDL, wk.String())).Inc()
 			return wk, nil
 		}
 	}
