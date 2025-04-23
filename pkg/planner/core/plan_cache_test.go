@@ -655,7 +655,7 @@ func planCachePointGetQueries(isNonPrep bool) []string {
 		}
 		return fmt.Sprintf("%v %v %v", col, op, v())
 	}
-	queries := make([]string, 0, 50 * 12)
+	queries := make([]string, 0, 50*12)
 	for range 50 {
 		queries = append(queries, fmt.Sprintf("select * from t1 where %v", f()))
 		queries = append(queries, fmt.Sprintf("select * from t1 where %v and %v", f(), f()))
@@ -800,7 +800,7 @@ func planCacheIndexMergeQueries(isNonPrep bool) []string {
 			return "*"
 		}
 	}
-	queries := make([]string, 0, 50 * 12)
+	queries := make([]string, 0, 50*12)
 	for range 50 {
 		queries = append(queries, fmt.Sprintf("select /*+ use_index_merge(t, a, b) */ %s from t where %s and %s", fields(), f("a"), f("b")))
 		queries = append(queries, fmt.Sprintf("select /*+ use_index_merge(t, a, c) */ %s from t where %s and %s", fields(), f("a"), f("c")))
