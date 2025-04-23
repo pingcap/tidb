@@ -16,6 +16,7 @@ package mock
 
 import (
 	"context"
+	"maps"
 	"strings"
 
 	"github.com/docker/go-units"
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	pdhttp "github.com/tikv/pd/client/http"
-	"maps"
 )
 
 // SourceFile defines a mock source file.

@@ -20,6 +20,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -37,7 +38,6 @@ import (
 	"github.com/stretchr/testify/require"
 	pqt_buf_src "github.com/xitongsys/parquet-go-source/buffer"
 	pqtwriter "github.com/xitongsys/parquet-go/writer"
-	"slices"
 )
 
 type colDef struct {
