@@ -95,7 +95,7 @@ func newNeededStatsMap() *neededStatsMap {
 }
 
 func (n *neededStatsMap) AllItems() []model.StatsLoadItem {
-	var result []model.StatsLoadItem
+	result := make([]model.StatsLoadItem, 0, shardCnt)
 	for i := range shardCnt {
 		keys := n.items[i].AllItems()
 		result = append(result, keys...)
