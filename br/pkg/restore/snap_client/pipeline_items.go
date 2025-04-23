@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -297,7 +298,11 @@ func (rc *SnapClient) GoUpdateMetaAndLoadStats(
 			log.Info("start update metas", zap.Stringer("table", oldTable.Info.Name), zap.Stringer("db", oldTable.DB.Name))
 			// the total kvs contains the index kvs, but the stats meta needs the count of rows
 			count := int64(oldTable.TotalKvs / uint64(len(oldTable.Info.Indices)+1))
-			if statsErr = statsHandler.SaveMetaToStorage(tbl.Table.ID, count, 0, "br restore", false); statsErr != nil {
+			if statsErr = statsHandler.SaveMetaToStorage("br restore", false, statstypes.MetaUpdate{
+				PhysicalID:  tbl.Table.ID,
+				Count:       count,
+				ModifyCount: 0,
+			}); statsErr != nil {
 				log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(statsErr))
 			}
 		}
