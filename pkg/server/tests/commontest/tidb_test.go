@@ -3409,6 +3409,8 @@ func TestIssue57531(t *testing.T) {
 			var conn *sql.Conn
 			var netConn net.Conn
 			conn, _ = dbt.GetDB().Conn(context.Background())
+
+			// get the TCP connection
 			conn.Raw(func(driverConn any) error {
 				v := reflect.ValueOf(driverConn)
 				if v.Kind() == reflect.Ptr {
@@ -3421,6 +3423,7 @@ func TestIssue57531(t *testing.T) {
 				return nil
 			})
 
+			// execute `select sleep(300)`
 			go func() {
 				if i == 0 {
 					conn.QueryContext(context.Background(), "select sleep(300)")
@@ -3431,6 +3434,8 @@ func TestIssue57531(t *testing.T) {
 				}
 			}()
 			time.Sleep(200 * time.Millisecond)
+
+			// have two sessions
 			len := 0
 			rs := dbt.MustQuery("show processlist")
 			for rs.Next() {
@@ -3438,11 +3443,13 @@ func TestIssue57531(t *testing.T) {
 			}
 			require.Equal(t, len, 2)
 
+			// close tcp connection
 			netConn.Close()
 		})
 
 		time.Sleep(10 * time.Millisecond)
 
+		// the `select sleep(300)` is killed
 		ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
 			len := 0
 			rs := dbt.MustQuery("show processlist")
