@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/parser/types"
+	"slices"
 )
 
 var (
@@ -174,7 +175,7 @@ func (parser *Parser) ParseSQL(sql string, params ...ParseParam) (stmt []ast.Stm
 
 	warns, errs := l.Errors()
 	if len(warns) > 0 {
-		warns = append([]error(nil), warns...)
+		warns = slices.Clone(warns)
 	} else {
 		warns = nil
 	}

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/parser/test_driver"
 	"github.com/stretchr/testify/require"
+	"slices"
 )
 
 func TestSimple(t *testing.T) {
@@ -7011,7 +7012,7 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 
 			for i, option := range col.Options {
 				if option.Tp == 0 && option.Expr == nil && !option.Stored && option.Refer == nil {
-					col.Options = append(col.Options[:i], col.Options[i+1:]...)
+					col.Options = slices.Delete(col.Options, i, i+1)
 				}
 			}
 		}
