@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"math/rand"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -2133,8 +2132,7 @@ func TestAddPartitionTooManyPartitions(t *testing.T) {
 }
 
 func waitGCDeleteRangeDone(t *testing.T, tk *testkit.TestKit, physicalID int64) bool {
-	var i int
-	for i = range waitForCleanDataRound {
+	for range waitForCleanDataRound {
 		rs, err := tk.Exec("select count(1) from mysql.gc_delete_range_done where element_id = ?", physicalID)
 		require.NoError(t, err)
 		rows, err := session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
