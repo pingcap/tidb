@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"sync/atomic"
@@ -39,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
-	"slices"
 )
 
 func TestMultiSchemaReorganizePartitionIssue56819(t *testing.T) {

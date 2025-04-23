@@ -16,11 +16,11 @@ package partition
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit"
-	"slices"
 )
 
 func TestExchangeRangeColumnsPartition(t *testing.T) {
