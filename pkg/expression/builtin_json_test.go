@@ -133,17 +133,22 @@ func TestJSONSumCrc32(t *testing.T) {
 		{
 			[]any{int64(-1), int64(2), int64(3)},
 			3101005010,
-			types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).AddFlag(mysql.UnsignedFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).SetArray(true).BuildP(),
+			types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).SetArray(true).BuildP(),
 		},
 		{
 			[]any{int64(1), int64(2), int64(3)},
 			4505025631,
-			types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).SetArray(true).BuildP(),
+			types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).AddFlag(mysql.UnsignedFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).SetArray(true).BuildP(),
 		},
 		{
-			[]any{"[1, 2, 3]"},
-			nil,
-			types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).SetArray(true).BuildP(),
+			[]any{"a", "b", "c"},
+			5925539243,
+			types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).SetFlen(10).SetArray(true).BuildP(),
+		},
+		{
+			[]any{1.1, 2.2, 3.3},
+			4453038788,
+			types.NewFieldTypeBuilder().SetType(mysql.TypeDouble).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).SetArray(true).BuildP(),
 		},
 	}
 	for _, tt := range tbl {
@@ -151,12 +156,9 @@ func TestJSONSumCrc32(t *testing.T) {
 		require.NoError(t, err, tt.input)
 
 		val, _, err := f.EvalInt(ctx, chunk.Row{})
-		if tt.expected != nil {
-			require.NoError(t, err, tt.input)
-			require.EqualValues(t, tt.expected, val)
-		} else {
-			require.Error(t, err, tt.input)
-		}
+		require.NoError(t, err, tt.input)
+		require.EqualValues(t, tt.expected, val)
+
 	}
 }
 

@@ -17,6 +17,8 @@ package expression
 import (
 	"bytes"
 	goJSON "encoding/json"
+	"fmt"
+	"hash/crc32"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -911,6 +913,52 @@ func (b *builtinJSONTypeSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 		}
 		result.AppendString(buf.GetJSON(i).Type())
 	}
+	return nil
+}
+
+func (b *builtinJSONSumSig) vectorized() bool {
+	return true
+}
+
+func (b *builtinJSONSumSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+	ft := b.tp.ArrayType()
+	f := convertJSON2Tp(ft.EvalType())
+	if f == nil {
+		return ErrNotSupportedYet.GenWithStackByArgs(fmt.Sprintf("calculating sum of %s", ft.String()))
+	}
+
+	nr := input.NumRows()
+	jsonBuf, err := b.bufAllocator.get()
+	if err != nil {
+		return err
+	}
+
+	defer b.bufAllocator.put(jsonBuf)
+	if err = b.args[0].VecEvalJSON(ctx, input, jsonBuf); err != nil {
+		return err
+	}
+
+	result.ResizeInt64(nr, false)
+	result.MergeNulls(jsonBuf)
+	i64s := result.Int64s()
+
+	for i := range nr {
+		if result.IsNull(i) {
+			continue
+		}
+
+		jsonItem := jsonBuf.GetJSON(i)
+		var sum int64
+		for j := range jsonItem.GetElemCount() {
+			item, err := f(fakeSctx, jsonItem.ArrayGetElem(j), ft)
+			if err != nil {
+				return err
+			}
+			sum += int64(crc32.ChecksumIEEE(fmt.Appendf(nil, "%v", item)))
+		}
+		i64s[i] = sum
+	}
+
 	return nil
 }
 
