@@ -414,7 +414,7 @@ func randMVIndexCond(condType int, valOpts randMVIndexValOpts, randJCol, randNCo
 
 func randArray(opts randMVIndexValOpts) string {
 	n := rand.Intn(5) // n can be 0
-	var vals []string
+	vals := make([]string, 0, n)
 	for range n {
 		vals = append(vals, randMVIndexValue(opts))
 	}

@@ -717,7 +717,7 @@ func planCacheIntConvertQueries(isNonPrep bool) []string {
 		}
 		return strings.Join(fs, ", ")
 	}
-	var queries []string
+	queries := make([]string, 0, 50*6)
 	for range 50 {
 		queries = append(queries, fmt.Sprintf("select %v from t where %v", fields(), f()))
 		queries = append(queries, fmt.Sprintf("select %v from t where %v and %v", fields(), f(), f()))
