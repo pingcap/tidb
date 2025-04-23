@@ -21,6 +21,54 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 )
 
+func TestQ1(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`
+CREATE TABLE lineitem (
+    L_ORDERKEY bigint NOT NULL,
+    L_PARTKEY bigint NOT NULL,
+    L_SUPPKEY bigint NOT NULL,
+    L_LINENUMBER bigint NOT NULL,
+    L_QUANTITY decimal(15,2) NOT NULL,
+    L_EXTENDEDPRICE decimal(15,2) NOT NULL,
+    L_DISCOUNT decimal(15,2) NOT NULL,
+    L_TAX decimal(15,2) NOT NULL,
+    L_RETURNFLAG char(1) NOT NULL,
+    L_LINESTATUS char(1) NOT NULL,
+    L_SHIPDATE date NOT NULL,
+    L_COMMITDATE date NOT NULL,
+    L_RECEIPTDATE date NOT NULL,
+    L_SHIPINSTRUCT char(25) NOT NULL,
+    L_SHIPMODE char(10) NOT NULL,
+    L_COMMENT varchar(44) NOT NULL,
+    PRIMARY KEY (L_ORDERKEY, L_LINENUMBER) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+`)
+	testkit.SetTiFlashReplica(t, dom, "test", "lineitem")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size = 0")
+	tk.MustExec("set @@session.tidb_broadcast_join_threshold_count = 0")
+	integrationSuiteData := GetTPCHSuiteData()
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Result []string
+		}
+	)
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = input[i]
+		})
+		testdata.OnRecord(func() {
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
+		})
+		tk.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
 func TestQ3(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -84,7 +132,7 @@ CREATE TABLE lineitem (
 		}
 	)
 	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i := 0; i < len(input); i++ {
+	for i := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = input[i]
 		})
@@ -187,7 +235,7 @@ CREATE TABLE orders (
 		}
 	)
 	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i := 0; i < len(input); i++ {
+	for i := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = input[i]
 		})
@@ -239,7 +287,7 @@ CREATE TABLE orders (
 		}
 	)
 	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i := 0; i < len(input); i++ {
+	for i := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = input[i]
 		})
@@ -313,7 +361,7 @@ CREATE TABLE lineitem (
 		}
 	)
 	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i := 0; i < len(input); i++ {
+	for i := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = input[i]
 		})
