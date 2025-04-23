@@ -436,11 +436,11 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 				if !ok {
 					break generateFileMapDone
 				}
-				tableID := tablecodec.DecodeTableID(file.GetStartKey())
-				if tableID == 0 {
+				physicalID := tablecodec.DecodeTableID(file.GetStartKey())
+				if physicalID == 0 {
 					log.Panic("tableID must not equal to 0", logutil.File(file))
 				}
-				fileMap[tableID] = append(fileMap[tableID], file)
+				fileMap[physicalID] = append(fileMap[physicalID], file)
 			}
 		}
 	}

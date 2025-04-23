@@ -53,8 +53,8 @@ clean() {
 }
 
 test_full_txnkv_encryption() {
-    check_range_start="hello"
-    check_range_end="world"
+    check_range_start="xhello"
+    check_range_end="xworld"
 
     rm -rf $BACKUP_FULL
 
@@ -87,27 +87,27 @@ run_test() {
     fi
 
     rm -rf $BACKUP_DIR
-    clean "hello" "world" 
+    clean "xhello" "xworld" 
 
     # generate txn kv randomly in range[start-key, end-key) in 10s
     bin/txnkv --pd $PD_ADDR \
         --ca "$TEST_DIR/certs/ca.pem" \
         --cert "$TEST_DIR/certs/br.pem" \
         --key "$TEST_DIR/certs/br.key" \
-        --mode rand-gen --start-key "hello" --end-key "world" --duration 10
+        --mode rand-gen --start-key "xhello" --end-key "xworld" --duration 10
 
-    checksum_ori=$(checksum "hello" "world")
+    checksum_ori=$(checksum "xhello" "xworld")
 
     # backup txnkv
     echo "backup start..."
     run_br --pd $PD_ADDR backup txn -s "local://$BACKUP_DIR" 
 
     # delete data in range[start-key, end-key)
-    clean "hello" "world" 
+    clean "xhello" "xworld" 
     # Ensure the data is deleted
     retry_cnt=0
     while true; do
-        checksum_new=$(checksum "hello" "world")
+        checksum_new=$(checksum "xhello" "xworld")
 
         if [ "$checksum_new" != "$checksum_empty" ]; then
             echo "failed to delete data in range after backup; retry_cnt = $retry_cnt"
@@ -132,7 +132,7 @@ run_test() {
     fi
     check_contains "restore mode mismatch"
 
-    checksum_new=$(checksum "hello" "world")
+    checksum_new=$(checksum "xhello" "xworld")
     if [ "$checksum_new" != "$checksum_empty" ]; then
         echo "not empty after restore failed"
         fail_and_exit
@@ -142,7 +142,7 @@ run_test() {
     echo "restore start..."
     run_br --pd $PD_ADDR restore txn -s "local://$BACKUP_DIR" 
 
-    checksum_new=$(checksum "hello" "world")
+    checksum_new=$(checksum "xhello" "xworld")
 
     if [ "$checksum_new" != "$checksum_ori" ];then
         echo "checksum failed after restore"
@@ -152,9 +152,9 @@ run_test() {
     test_full_txnkv_encryption
 
     # delete data in range[start-key, end-key)
-    clean "hello" "world"
+    clean "xhello" "xworld"
     # Ensure the data is deleted
-    checksum_new=$(checksum "hello" "world")
+    checksum_new=$(checksum "xhello" "xworld")
 
     if [ "$checksum_new" != "$checksum_empty" ];then
         echo "failed to delete data in range"
@@ -165,6 +165,6 @@ run_test() {
 }
 
 # delete data in range[start-key, end-key)
-clean "hello" "world" 
-checksum_empty=$(checksum "hello" "world")
+clean "xhello" "xworld" 
+checksum_empty=$(checksum "xhello" "xworld")
 run_test ""
