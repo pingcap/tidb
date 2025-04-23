@@ -430,8 +430,8 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx session
 			hists = append(hists, h)
 			topn = append(topn, t)
 		}
-		// if hists and topn are both empty, it means that the partition is empty.
-		// we can skip it to avoid sending empty data to the channel.
+		// This only happens when there are no records for the histogram and TopN in the system tables.
+		// It may be due to the DDL event not having been processed yet (resulting in no histogram), and the table being empty (resulting in no TopNs).
 		if len(hists) == 0 && len(topn) == 0 {
 			continue
 		}

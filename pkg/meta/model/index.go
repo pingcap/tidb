@@ -125,14 +125,16 @@ type FullTextParserType string
 const (
 	// FullTextParserTypeInvalid is the invalid tokenizer
 	FullTextParserTypeInvalid FullTextParserType = "INVALID"
-	// FullTextParserTypeStandard is the standard parser, for English texts
+	// FullTextParserTypeStandardV1 is the standard parser, for English texts
 	// The value matches with the supported tokenizer in Libclara.
 	FullTextParserTypeStandardV1 FullTextParserType = "STANDARD_V1"
-	// FullTextParserTypeMultilingual is a parser for multilingual texts
+	// FullTextParserTypeMultilingualV1 is a parser for multilingual texts
 	// The value matches with the supported tokenizer in Libclara.
 	FullTextParserTypeMultilingualV1 FullTextParserType = "MULTILINGUAL_V1"
 )
 
+// SQLName returns the SQL keyword name of the fulltext parser, which must not include
+// any version or internal suffix. This is what we present to users and show in error messages.
 func (t FullTextParserType) SQLName() string {
 	switch t {
 	case FullTextParserTypeStandardV1:
