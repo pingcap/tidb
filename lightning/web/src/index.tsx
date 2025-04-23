@@ -16,7 +16,7 @@ import CssBaseline from '@material-ui/core/CssBaseline';
 import { createStyles, Theme, WithStyles, withStyles } from '@material-ui/core/styles';
 import * as React from 'react';
 import { render } from 'react-dom';
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter, Redirect, Route, Switch } from 'react-router-dom';
 
 import * as api from './api';
 import InfoPage from './InfoPage';
@@ -144,7 +144,7 @@ class App extends React.Component<Props, State> {
                 />
                 <main>
                     <div className={classes.toolbar} />
-                    <Routes>
+                    <Switch>
                         <Route path='/progress'>
                             <ProgressPage
                                 taskProgress={this.state.taskProgress}
@@ -159,17 +159,15 @@ class App extends React.Component<Props, State> {
                                 onMoveToBack={this.handleMoveTaskToBack}
                             />
                         </Route>
-                        <Route
-                          path='/table'
-                          element={
-                            <TablePageAdapter
-                            tableProgress={this.state.activeTableProgress}
-                            onChangeActiveTableProgress={this.handleChangeActiveTableProgress}
-                            />
-                          }
-                        />
-                      <Route path='*' element={<Navigate to='/progress' replace />} />
-                    </Routes>
+                        <Route path='/table'>
+                            {({ location }) => <TableProgressPage
+                                tableName={decodeURIComponent(location.search.substr(3))}
+                                tableProgress={this.state.activeTableProgress}
+                                onChangeActiveTableProgress={this.handleChangeActiveTableProgress}
+                            />}
+                        </Route>
+                        <Redirect to='/progress' />
+                    </Switch>
                 </main>
             </BrowserRouter>
         );
@@ -180,17 +178,3 @@ const StyledApp = withStyles(styles)(App);
 
 render(<StyledApp />, document.getElementById('app'));
 
-function TablePageAdapter(props: {
-  tableProgress: api.TableProgress;
-  onChangeActiveTableProgress: (tableName?: string) => void;
-}) {
-  const location = useLocation();
-  const tableName = decodeURIComponent(location.search?.substring(3) || '');
-  return (
-    <TableProgressPage
-      tableName={tableName}
-      tableProgress={props.tableProgress}
-      onChangeActiveTableProgress={props.onChangeActiveTableProgress}
-    />
-  );
-}
