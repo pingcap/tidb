@@ -403,11 +403,11 @@ func (w *worker) runReorgJob(
 				return err
 			}
 			rowCount := rc.getRowCount()
-			jobCtx.syncRowCountChange(rowCount)
 			job.SetRowCount(rowCount)
 			if err != nil {
 				logutil.DDLLogger().Warn("run reorg job done", zap.Int64("handled rows", rowCount), zap.Error(err))
 			} else {
+				jobCtx.syncRowCountChange(rowCount)
 				logutil.DDLLogger().Info("run reorg job done", zap.Int64("handled rows", rowCount))
 			}
 
