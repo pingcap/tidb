@@ -259,7 +259,6 @@ func (b *builtinJSONSumSig) evalInt(ctx EvalContext, row chunk.Row) (res int64, 
 			return 0, false, err
 		}
 		sum += int64(crc32.ChecksumIEEE(fmt.Appendf(nil, "%v", item)))
-
 	}
 
 	return sum, false, err
