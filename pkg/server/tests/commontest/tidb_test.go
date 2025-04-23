@@ -3404,44 +3404,52 @@ func TestIssue57531(t *testing.T) {
 	}
 	ts := servertestkit.CreateTidbTestSuite(t)
 
-	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
-		var conn *sql.Conn
-		var netConn net.Conn
-		conn, _ = dbt.GetDB().Conn(context.Background())
-		conn.Raw(func(driverConn any) error {
-			v := reflect.ValueOf(driverConn)
-			if v.Kind() == reflect.Ptr {
-				v = v.Elem()
+	for i := range 2 {
+		ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+			var conn *sql.Conn
+			var netConn net.Conn
+			conn, _ = dbt.GetDB().Conn(context.Background())
+			conn.Raw(func(driverConn any) error {
+				v := reflect.ValueOf(driverConn)
+				if v.Kind() == reflect.Ptr {
+					v = v.Elem()
+				}
+				f := v.FieldByName("netConn")
+				if f.IsValid() && f.Type().Implements(reflect.TypeOf((*net.Conn)(nil)).Elem()) {
+					netConn = *(*net.Conn)(unsafe.Pointer(f.UnsafeAddr()))
+				}
+				return nil
+			})
+
+			go func() {
+				if i == 0 {
+					conn.QueryContext(context.Background(), "select sleep(300)")
+				} else {
+					stmt, err := conn.PrepareContext(context.Background(), "select sleep(?)")
+					require.NoError(t, err)
+					stmt.Exec(300)
+				}
+			}()
+			time.Sleep(200 * time.Millisecond)
+			len := 0
+			rs := dbt.MustQuery("show processlist")
+			for rs.Next() {
+				len++
 			}
-			f := v.FieldByName("netConn")
-			if f.IsValid() && f.Type().Implements(reflect.TypeOf((*net.Conn)(nil)).Elem()) {
-				netConn = *(*net.Conn)(unsafe.Pointer(f.UnsafeAddr()))
-			}
-			return nil
+			require.Equal(t, len, 2)
+
+			netConn.Close()
 		})
 
-		go func() {
-			conn.QueryContext(context.Background(), "select sleep(300)")
-		}()
-		time.Sleep(200 * time.Millisecond)
-		len := 0
-		rs := dbt.MustQuery("show processlist")
-		for rs.Next() {
-			len++
-		}
-		require.Equal(t, len, 2)
+		time.Sleep(10 * time.Millisecond)
 
-		netConn.Close()
-	})
-
-	time.Sleep(10 * time.Millisecond)
-
-	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
-		len := 0
-		rs := dbt.MustQuery("show processlist")
-		for rs.Next() {
-			len++
-		}
-		require.Equal(t, len, 1)
-	})
+		ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+			len := 0
+			rs := dbt.MustQuery("show processlist")
+			for rs.Next() {
+				len++
+			}
+			require.Equal(t, len, 1)
+		})
+	}
 }
