@@ -17,6 +17,7 @@ package copr
 import (
 	"context"
 	"math/rand"
+	"slices"
 	"sort"
 	"strconv"
 	"testing"
@@ -33,7 +34,6 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
-	"slices"
 )
 
 // StoreID: [1, storeCount]

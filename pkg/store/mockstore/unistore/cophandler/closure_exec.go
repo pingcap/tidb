@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"time"
 
@@ -40,7 +41,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"slices"
 )
 
 const chunkMaxRows = 1024

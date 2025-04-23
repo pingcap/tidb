@@ -20,6 +20,7 @@ import (
 	"math"
 	"net"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -65,7 +66,6 @@ import (
 	"github.com/tikv/client-go/v2/util"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
-	"slices"
 )
 
 // Maximum total sleep time(in ms) for kv/cop commands.
