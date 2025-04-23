@@ -954,34 +954,7 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 					continue
 				}
 				// If there is condition which is always false, return dual plan directly.
-				dual := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-				outputNames := p.OutputNames()
-				schema := p.Schema()
-				// If the group by column is not in the schema, we need to add it to the dual plan from the children's schema.
-				for _, gbyExpr := range groupby {
-					if groupbyCol, ok := gbyExpr.(*expression.Column); ok {
-						if slices.ContainsFunc(p.Schema().Columns, func(col *expression.Column) bool {
-							return groupbyCol.EqualColumn(col)
-						}) {
-							continue
-						}
-						name := getName(p.Children()[0].Schema(), p.Children()[0].OutputNames(), groupbyCol)
-						if name != nil {
-							schema.Append(groupbyCol)
-							outputNames = append(outputNames, name)
-							continue
-						}
-						name = getName(p.Children()[1].Schema(), p.Children()[1].OutputNames(), groupbyCol)
-						if name != nil {
-							schema.Append(groupbyCol)
-							outputNames = append(outputNames, name)
-							continue
-						}
-					}
-				}
-				dual.SetOutputNames(outputNames)
-				dual.SetSchema(schema)
-				return dual, nil
+
 			}
 			cnfExpres = append(cnfExpres, item)
 		}
@@ -1005,6 +978,37 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 	selection.Conditions = cnfExpres
 	selection.SetChildren(p)
 	return selection, nil
+}
+
+func (b *PlanBuilder) buildDual(p base.LogicalPlan, groupby []expression.Expression) base.LogicalPlan {
+	dual := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+	outputNames := p.OutputNames()
+	schema := p.Schema()
+	// If the group by column is not in the schema, we need to add it to the dual plan from the children's schema.
+	for _, gbyExpr := range groupby {
+		if groupbyCol, ok := gbyExpr.(*expression.Column); ok {
+			if slices.ContainsFunc(p.Schema().Columns, func(col *expression.Column) bool {
+				return groupbyCol.EqualColumn(col)
+			}) {
+				continue
+			}
+			name := getName(p.Children()[0].Schema(), p.Children()[0].OutputNames(), groupbyCol)
+			if name != nil {
+				schema.Append(groupbyCol)
+				outputNames = append(outputNames, name)
+				continue
+			}
+			name = getName(p.Children()[1].Schema(), p.Children()[1].OutputNames(), groupbyCol)
+			if name != nil {
+				schema.Append(groupbyCol)
+				outputNames = append(outputNames, name)
+				continue
+			}
+		}
+	}
+	dual.SetOutputNames(outputNames)
+	dual.SetSchema(schema)
+	return dual
 }
 
 func getName(schema *expression.Schema, names types.NameSlice, column *expression.Column) *types.FieldName {
