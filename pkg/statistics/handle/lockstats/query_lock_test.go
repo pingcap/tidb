@@ -139,7 +139,7 @@ func executeQueryLockedTables(exec *mock.MockRestrictedSQLExecutor, numRows int,
 	for i := range numRows {
 		c.AppendInt64(0, int64(i+1))
 	}
-	var rows []chunk.Row
+	rows := make([]chunk.Row, 0, numRows)
 	for i := range numRows {
 		rows = append(rows, c.GetRow(i))
 	}
