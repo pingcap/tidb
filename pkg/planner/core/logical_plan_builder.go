@@ -954,7 +954,7 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 					continue
 				}
 				// If there is condition which is always false, return dual plan directly.
-
+				return b.buildDual(p, groupby), nil
 			}
 			cnfExpres = append(cnfExpres, item)
 		}
