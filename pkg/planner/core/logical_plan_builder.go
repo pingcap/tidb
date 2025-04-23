@@ -953,13 +953,11 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 				if ret {
 					continue
 				}
-				if !b.ctx.GetSessionVars().InRestrictedSQL {
-					fmt.Println("wwz")
-				}
 				// If there is condition which is always false, return dual plan directly.
 				dual := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 				outputNames := p.OutputNames()
 				schema := p.Schema()
+				// If the group by column is in the schema, we need to add it to the dual plan.
 				for _, gbyExpr := range groupby {
 					if groupbyCol, ok := gbyExpr.(*expression.Column); ok {
 						if slices.ContainsFunc(p.Schema().Columns, func(col *expression.Column) bool {
