@@ -207,6 +207,8 @@ func (t IndexType) String() string {
 		return "HYPO"
 	case IndexTypeHNSW:
 		return "HNSW"
+	case IndexTypeVector:
+		return "VECTOR"
 	case IndexTypeInverted:
 		return "INVERTED"
 	default:
@@ -215,14 +217,19 @@ func (t IndexType) String() string {
 }
 
 // IndexTypes
+// Warning: 1) Also used in TiFlash 2) May come from a previous version persisted in TableInfo.
+// So you must keep it compatible when modifying it.
 const (
 	IndexTypeInvalid IndexType = iota
 	IndexTypeBtree
 	IndexTypeHash
 	IndexTypeRtree
 	IndexTypeHypo
-	IndexTypeHNSW
+	IndexTypeVector
 	IndexTypeInverted
+	// IndexTypeHNSW is only used in AST.
+	// It will be rewritten into IndexTypeVector after preprocessor phase.
+	IndexTypeHNSW
 )
 
 // ReferOptionType is the type for refer options.

@@ -1443,9 +1443,9 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	if expBucketNumber == 0 {
 		return nil, errors.Errorf("expBucketNumber can not be zero")
 	}
-	// The empty hists is danger to merge. we cannot get the table information from histograms
-	// The empty hists is very rare. The DDL event was not processed, and in the previous analyze,
-	// this column was not marked as "predict," resulting in it not being analyzed.
+	// This only occurs when there are no histogram records in the histogram system table.
+	// It happens only to tables whose DDL events haven’t been processed yet and that have no indexes or keys,
+	// with the predicate column feature enabled.
 	if len(hists) == 0 {
 		return nil, nil
 	}

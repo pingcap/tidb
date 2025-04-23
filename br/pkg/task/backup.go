@@ -119,9 +119,10 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 		"backup sst file compression algorithm, value can be one of 'lz4|zstd|snappy'")
 	flags.Int32(flagCompressionLevel, 0, "compression level used for sst file compression")
 
-	flags.Uint32(flagConcurrency, 4, "The size of a BR thread pool that executes tasks, "+
-		"One task represents one table range (or one index range) according to the backup schemas. If there is one table with one index."+
-		"there will be two tasks to back up this table. This value should increase if you need to back up lots of tables or indices.")
+	flags.Uint32(flagConcurrency, 4,
+		"Controls how many backup requests are sent out in parallel to one TiKV node. "+
+			"This doesn't directly impact performance — keeping the default is fine in most cases. "+
+			"Change TiKV's 'backup.num-threads' to adjust actual backup throughput.")
 
 	flags.Uint(flagTableConcurrency, backup.DefaultSchemaConcurrency, "The size of a BR thread pool used for backup table metas, "+
 		"including tableInfo/checksum and stats.")
