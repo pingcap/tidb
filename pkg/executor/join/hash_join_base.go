@@ -59,12 +59,12 @@ type hashJoinCtxBase struct {
 }
 
 type probeSideTupleFetcherBase struct {
-	ProbeSideExec       exec.Executor
-	probeChkResourceCh  chan *probeChkResource
-	probeResultChs      []chan *chunk.Chunk
-	requiredRows        int64
-	joinResultChannel   chan *hashjoinWorkerResult
-	canSkipScanRowTable bool
+	ProbeSideExec      exec.Executor
+	probeChkResourceCh chan *probeChkResource
+	probeResultChs     []chan *chunk.Chunk
+	requiredRows       int64
+	joinResultChannel  chan *hashjoinWorkerResult
+	buildSuccess       bool
 }
 
 func (fetcher *probeSideTupleFetcherBase) initializeForProbeBase(concurrency uint, joinResultChannel chan *hashjoinWorkerResult) {
@@ -99,27 +99,24 @@ func (fetcher *probeSideTupleFetcherBase) handleProbeSideFetcherPanic(r any) {
 type isBuildSideEmpty func() bool
 type isSpillTriggered func() bool
 
-func wait4BuildSide(isBuildEmpty isBuildSideEmpty, checkSpill isSpillTriggered, canSkipIfBuildEmpty, needScanAfterProbeDone bool, hashJoinCtx *hashJoinCtxBase) (skipProbe bool, skipScanRowTable bool) {
+func wait4BuildSide(isBuildEmpty isBuildSideEmpty, checkSpill isSpillTriggered, canSkipIfBuildEmpty, needScanAfterProbeDone bool, hashJoinCtx *hashJoinCtxBase) (skipProbe bool, buildSuccess bool) {
 	var err error
 	skipProbe = false
-	skipScanRowTable = false
-	buildFinishes := false
+	buildSuccess = false
 	select {
 	case <-hashJoinCtx.closeCh:
 		// current executor is closed, no need to probe
 		skipProbe = true
-		skipScanRowTable = true
 	case err = <-hashJoinCtx.buildFinished:
 		if err != nil {
 			// build meet error, no need to probe
 			skipProbe = true
-			skipScanRowTable = true
 		} else {
-			buildFinishes = true
+			buildSuccess = true
 		}
 	}
-	// only check build empty if build finishes
-	if buildFinishes && isBuildEmpty() && !checkSpill() && canSkipIfBuildEmpty {
+	// only check build empty if build success
+	if buildSuccess && isBuildEmpty() && !checkSpill() && canSkipIfBuildEmpty {
 		// if build side is empty, can skip probe if canSkipIfBuildEmpty is true(e.g. inner join)
 		skipProbe = true
 	}
@@ -134,7 +131,7 @@ func wait4BuildSide(isBuildEmpty isBuildSideEmpty, checkSpill isSpillTriggered, 
 			hashJoinCtx.finished.Store(true)
 		}
 	}
-	return skipProbe, skipScanRowTable
+	return skipProbe, buildSuccess
 }
 
 func (fetcher *probeSideTupleFetcherBase) getProbeSideResource(shouldLimitProbeFetchSize bool, maxChunkSize int, hashJoinCtx *hashJoinCtxBase) *probeChkResource {
@@ -192,10 +189,8 @@ func (fetcher *probeSideTupleFetcherBase) fetchProbeSideChunks(ctx context.Conte
 					probeSideResult.Reset()
 				}
 			})
-			skipProbe, skipScanRowTable := wait4BuildSide(isBuildEmpty, checkSpill, canSkipIfBuildEmpty, needScanAfterProbeDone, hashJoinCtx)
-			if skipScanRowTable {
-				fetcher.canSkipScanRowTable = true
-			}
+			skipProbe, buildSuccess := wait4BuildSide(isBuildEmpty, checkSpill, canSkipIfBuildEmpty, needScanAfterProbeDone, hashJoinCtx)
+			fetcher.buildSuccess = buildSuccess
 			if skipProbe {
 				// there is no need to probe, so just return
 				return

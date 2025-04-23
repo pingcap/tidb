@@ -792,7 +792,8 @@ func (e *HashJoinV2Exec) initializeForProbe() {
 	e.joinResultCh = make(chan *hashjoinWorkerResult, e.Concurrency+1)
 	e.ProbeSideTupleFetcher.initializeForProbeBase(e.Concurrency, e.joinResultCh)
 	e.ProbeSideTupleFetcher.canSkipProbeIfHashTableIsEmpty = e.canSkipProbeIfHashTableIsEmpty()
-	e.ProbeSideTupleFetcher.canSkipScanRowTable = false
+	// set buildSuccess to false by default, it will be set to true if build finishes successfully
+	e.ProbeSideTupleFetcher.buildSuccess = false
 
 	for i := uint(0); i < e.Concurrency; i++ {
 		e.ProbeWorkers[i].initializeForProbe(e.ProbeSideTupleFetcher.probeChkResourceCh, e.ProbeSideTupleFetcher.probeResultChs[i], e)
@@ -830,6 +831,8 @@ func (e *HashJoinV2Exec) startProbeJoinWorkers(ctx context.Context) {
 		if err != nil {
 			return
 		}
+		// in restore, there is no standalone probe fetcher goroutine, so set buildSuccess here
+		e.ProbeSideTupleFetcher.buildSuccess = true
 	}
 
 	for i := uint(0); i < e.Concurrency; i++ {
@@ -880,7 +883,8 @@ func (e *HashJoinV2Exec) waitJoinWorkers(start time.Time) {
 		}
 	}
 
-	if !e.ProbeSideTupleFetcher.canSkipScanRowTable {
+	if e.ProbeSideTupleFetcher.buildSuccess {
+		// only scan row table if build is successful
 		if e.ProbeWorkers[0] != nil && e.ProbeWorkers[0].JoinProbe.NeedScanRowTable() {
 			for i := uint(0); i < e.Concurrency; i++ {
 				var workerID = i
@@ -1053,6 +1057,8 @@ func (w *ProbeWorkerV2) getNewJoinResult() (bool, *hashjoinWorkerResult) {
 func (e *HashJoinV2Exec) reset() {
 	e.resetProbeStatus()
 	e.releaseDisk()
+	// set buildSuccess to false by default, it will be set to true if build finishes successfully
+	e.ProbeSideTupleFetcher.buildSuccess = false
 	e.resetHashTableContextForRestore()
 	e.spillHelper.setCanSpillFlag(true)
 	if e.HashJoinCtxV2.stats != nil {

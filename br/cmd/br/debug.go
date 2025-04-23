@@ -192,8 +192,10 @@ func newBackupMetaValidateCommand() *cobra.Command {
 			rangeTree := rtree.NewRangeTree()
 			for _, file := range files {
 				if out := rangeTree.InsertRange(rtree.Range{
-					StartKey: file.GetStartKey(),
-					EndKey:   file.GetEndKey(),
+					KeyRange: rtree.KeyRange{
+						StartKey: file.GetStartKey(),
+						EndKey:   file.GetEndKey(),
+					},
 				}); out != nil {
 					log.Error(
 						"file ranges overlapped",

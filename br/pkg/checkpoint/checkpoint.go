@@ -91,7 +91,7 @@ type CheckpointMessage[K KeyType, V ValueType] struct {
 // with multi-ranges in the ChecksumData.
 
 type RangeGroup[K KeyType, V ValueType] struct {
-	GroupKey K   `json:"group-key"`
+	GroupKey K   `json:"group-key,omitempty"`
 	Group    []V `json:"groups"`
 }
 
@@ -613,7 +613,7 @@ func parseCheckpointData[K KeyType, V ValueType](
 	content []byte,
 	pastDureTime *time.Duration,
 	cipher *backuppb.CipherInfo,
-	fn func(groupKey K, value V),
+	fn func(groupKey K, value V) error,
 ) error {
 	checkpointData := &CheckpointData{}
 	if err := json.Unmarshal(content, checkpointData); err != nil {
@@ -645,7 +645,9 @@ func parseCheckpointData[K KeyType, V ValueType](
 		}
 
 		for _, g := range group.Group {
-			fn(group.GroupKey, g)
+			if err := fn(group.GroupKey, g); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return nil
@@ -658,7 +660,7 @@ func walkCheckpointFile[K KeyType, V ValueType](
 	s storage.ExternalStorage,
 	cipher *backuppb.CipherInfo,
 	subDir string,
-	fn func(groupKey K, value V),
+	fn func(groupKey K, value V) error,
 ) (time.Duration, error) {
 	// records the total time cost in the past executions
 	var pastDureTime time.Duration = 0

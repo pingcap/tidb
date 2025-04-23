@@ -35,11 +35,13 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/metrics"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
@@ -101,7 +103,7 @@ func (j jobStageTp) String() string {
 // to a region. The keyRange may be changed when processing because of writing
 // partial data to TiKV or region split.
 type regionJob struct {
-	keyRange common.Range
+	keyRange engineapi.Range
 	// TODO: check the keyRange so that it's always included in region
 	region *split.RegionInfo
 	// stage should be updated only by convertStageTo
@@ -109,7 +111,7 @@ type regionJob struct {
 	// writeResult is available only in wrote and ingested stage
 	writeResult *tikvWriteResult
 
-	ingestData      common.IngestData
+	ingestData      engineapi.IngestData
 	regionSplitSize int64
 	regionSplitKeys int64
 	metrics         *metric.Common
@@ -146,7 +148,7 @@ type injectedIngestBehaviour struct {
 
 func newRegionJob(
 	region *split.RegionInfo,
-	data common.IngestData,
+	data engineapi.IngestData,
 	jobStart []byte,
 	jobEnd []byte,
 	regionSplitSize int64,
@@ -162,7 +164,7 @@ func newRegionJob(
 		zap.Binary("regionEnd", region.Region.GetEndKey()),
 		zap.Reflect("peers", region.Region.GetPeers()))
 	return &regionJob{
-		keyRange:        common.Range{Start: jobStart, End: jobEnd},
+		keyRange:        engineapi.Range{Start: jobStart, End: jobEnd},
 		region:          region,
 		stage:           regionScanned,
 		ingestData:      data,
@@ -181,8 +183,8 @@ func newRegionJob(
 // - sortedRegions can cover sortedJobRanges
 func newRegionJobs(
 	sortedRegions []*split.RegionInfo,
-	data common.IngestData,
-	sortedJobRanges []common.Range,
+	data engineapi.IngestData,
+	sortedJobRanges []engineapi.Range,
 	regionSplitSize int64,
 	regionSplitKeys int64,
 	metrics *metric.Common,
@@ -307,6 +309,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	if !common.IsRetryableError(err) {
 		return err
 	}
+	metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 	// currently only one case will restart write
 	if strings.Contains(err.Error(), "RequestTooNew") {
 		j.convertStageTo(regionScanned)
@@ -652,6 +655,7 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 			if common.IsContextCanceledError(err) {
 				return err
 			}
+			metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 			log.FromContext(ctx).Warn("meet underlying error, will retry ingest",
 				log.ShortError(err), logutil.SSTMetas(j.writeResult.sstMeta),
 				logutil.Region(j.region.Region), logutil.Leader(j.region.Leader))
@@ -659,7 +663,7 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 			continue
 		}
 		canContinue, err := j.convertStageOnIngestError(resp)
-		if common.IsContextCanceledError(err) {
+		if err != nil {
 			return err
 		}
 		if !canContinue {
@@ -671,6 +675,7 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 				logutil.Key("end", j.keyRange.End))
 			return nil
 		}
+		metrics.RetryableErrorCount.WithLabelValues(j.lastRetryableErr.Error()).Inc()
 		log.FromContext(ctx).Warn("meet error and will doIngest region again",
 			logutil.ShortError(j.lastRetryableErr),
 			j.region.ToZapFields(),
@@ -706,6 +711,16 @@ func (local *Backend) checkWriteStall(
 // doIngest send ingest commands to TiKV based on regionJob.writeResult.sstMeta.
 // When meet error, it will remove finished sstMetas before return.
 func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestResponse, error) {
+	failpoint.Inject("diskFullOnIngest", func() {
+		failpoint.Return(&sst.IngestResponse{
+			Error: &errorpb.Error{
+				Message: "propose failed: tikv disk full, cmd diskFullOpt={:?}, leader diskUsage={:?}",
+				DiskFull: &errorpb.DiskFull{
+					StoreId: []uint64{1},
+				},
+			},
+		}, nil)
+	})
 	failpoint.Inject("doIngestFailed", func() {
 		failpoint.Return(nil, errors.New("injected error"))
 	})
@@ -813,7 +828,7 @@ func (local *Backend) GetWriteSpeedLimit() int {
 }
 
 // convertStageOnIngestError will try to fix the error contained in ingest response.
-// Return (_, error) when another error occurred.
+// Return (_, error) when the Ingest API error be a non-retryable error.
 // Return (true, nil) when the job can retry ingesting immediately.
 // Return (false, nil) when the job should be put back to queue.
 func (j *regionJob) convertStageOnIngestError(
@@ -892,9 +907,7 @@ func (j *regionJob) convertStageOnIngestError(
 		j.convertStageTo(needRescan)
 		return false, nil
 	case errPb.DiskFull != nil:
-		j.lastRetryableErr = common.ErrKVIngestFailed.GenWithStack(errPb.GetMessage())
-
-		return false, errors.Errorf("non-retryable error: %s", resp.GetError().GetMessage())
+		return false, common.ErrKVDiskFull.GenWithStack(errPb.GetMessage())
 	}
 	// all others doIngest error, such as stale command, etc. we'll retry it again from writeAndIngestByRange
 	j.lastRetryableErr = common.ErrKVIngestFailed.GenWithStack(resp.GetError().GetMessage())
