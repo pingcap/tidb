@@ -137,7 +137,7 @@ func prepareTableData(t string, rows int, colTypes []string) []string {
 			}
 		}
 	}
-	var inserts []string
+	inserts := make([]string, 0, rows)
 	for i := range rows {
 		vals := make([]string, 0, len(colTypes))
 		for j := range colTypes {
