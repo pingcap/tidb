@@ -614,7 +614,7 @@ func planCachePointGetPrepareData(tk *testkit.TestKit) {
 	tk.MustExec(fmt.Sprintf(`create table t1 (a %v, b %v, c %v, d %v, primary key(a), unique key(b), unique key(c), unique key(c))`, t(), t(), t(), t()))
 	tk.MustExec(fmt.Sprintf(`create table t2 (a %v, b %v, c %v, d %v, primary key(a, b), unique key(c, d))`, t(), t(), t(), t()))
 
-	var vals []string
+	vals := make([]string, 0, 50)
 	for i := range 50 {
 		vals = append(vals, fmt.Sprintf("('%v.%v', '%v.%v', '%v.%v', '%v.%v')",
 			i-20, rand.Intn(5),
@@ -655,7 +655,7 @@ func planCachePointGetQueries(isNonPrep bool) []string {
 		}
 		return fmt.Sprintf("%v %v %v", col, op, v())
 	}
-	var queries []string
+	queries := make([]string, 0, 50 * 12)
 	for range 50 {
 		queries = append(queries, fmt.Sprintf("select * from t1 where %v", f()))
 		queries = append(queries, fmt.Sprintf("select * from t1 where %v and %v", f(), f()))
@@ -800,7 +800,7 @@ func planCacheIndexMergeQueries(isNonPrep bool) []string {
 			return "*"
 		}
 	}
-	var queries []string
+	queries := make([]string, 0, 50 * 12)
 	for range 50 {
 		queries = append(queries, fmt.Sprintf("select /*+ use_index_merge(t, a, b) */ %s from t where %s and %s", fields(), f("a"), f("b")))
 		queries = append(queries, fmt.Sprintf("select /*+ use_index_merge(t, a, c) */ %s from t where %s and %s", fields(), f("a"), f("c")))
@@ -1355,7 +1355,7 @@ func randValueForMVIndex(colType string) string {
 }
 
 func insertValuesForMVIndex(nRows int, colTypes ...string) string {
-	var stmtVals []string
+	stmtVals := make([]string, 0, nRows)
 	for range nRows {
 		var vals []string
 		for _, colType := range colTypes {
