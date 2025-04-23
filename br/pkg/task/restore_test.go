@@ -502,18 +502,18 @@ func TestTikvUsage(t *testing.T) {
 	for _, f := range files {
 		total += f.GetSize_()
 	}
-	ret := task.EstimateTikvUsage(files, replica, storeCnt)
-	require.Equal(t, total*replica/storeCnt, ret)
+	ret := task.EstimateTikvUsage(total, replica, storeCnt)
+	require.Equal(t, 15*pb*3/6, ret)
 }
 
 func TestTiflashUsage(t *testing.T) {
 	tables := []*metautil.Table{
 		{Info: &model.TableInfo{TiFlashReplica: &model.TiFlashReplicaInfo{Count: 0}},
-			Files: []*backuppb.File{{Size_: 1 * pb}}},
+			FilesOfPhysicals: map[int64][]*backuppb.File{1: {{Size_: 1 * pb}}}},
 		{Info: &model.TableInfo{TiFlashReplica: &model.TiFlashReplicaInfo{Count: 1}},
-			Files: []*backuppb.File{{Size_: 2 * pb}}},
+			FilesOfPhysicals: map[int64][]*backuppb.File{2: {{Size_: 2 * pb}}}},
 		{Info: &model.TableInfo{TiFlashReplica: &model.TiFlashReplicaInfo{Count: 2}},
-			Files: []*backuppb.File{{Size_: 3 * pb}}},
+			FilesOfPhysicals: map[int64][]*backuppb.File{3: {{Size_: 3 * pb}}}},
 	}
 
 	var storeCnt uint64 = 3
@@ -535,9 +535,67 @@ type testCase struct {
 		dbID      int64
 	}
 	dbIDToName       map[int64]string
+	snapshotDBMap    map[int64]*metautil.Database
+	snapshotTableMap map[int64]*metautil.Table
 	expectedTableIDs map[int64][]int64 // dbID -> []tableID
 	expectedDBs      []int64
 	expectedTables   []int64
+	expectedFileMap  map[int64][]*backuppb.File
+}
+
+func generateDBMap(snapshotDBMap map[int64]*metautil.Database) map[int64]*metautil.Database {
+	m := make(map[int64]*metautil.Database)
+	for id, dbinfo := range snapshotDBMap {
+		clonedTables := make([]*metautil.Table, 0, len(dbinfo.Tables))
+		dbInfo := dbinfo.Info.Clone()
+		for _, tableInfo := range dbinfo.Tables {
+			clonedTables = append(clonedTables, &metautil.Table{
+				DB:   dbInfo,
+				Info: tableInfo.Info.Clone(),
+			})
+		}
+		m[id] = &metautil.Database{
+			Info:   dbInfo,
+			Tables: clonedTables,
+		}
+	}
+	return m
+}
+
+func generateTableMap(snapshotDBMap map[int64]*metautil.Database) map[int64]*metautil.Table {
+	m := make(map[int64]*metautil.Table)
+	for _, dbinfo := range snapshotDBMap {
+		for _, tableInfo := range dbinfo.Tables {
+			m[tableInfo.Info.ID] = &metautil.Table{
+				DB:   tableInfo.DB.Clone(),
+				Info: tableInfo.Info.Clone(),
+				FilesOfPhysicals: map[int64][]*backuppb.File{
+					tableInfo.Info.ID: {{Name: tableInfo.Info.Name.O}},
+				},
+			}
+		}
+	}
+	return m
+}
+
+func generateFiles(tableMap map[int64]*metautil.Table) map[int64][]*backuppb.File {
+	m := make(map[int64][]*backuppb.File)
+	for _, tableInfo := range tableMap {
+		m[tableInfo.Info.ID] = []*backuppb.File{
+			{Name: tableInfo.Info.Name.O},
+		}
+	}
+	return m
+}
+
+func generateFilesByID(ids ...int64) map[int64][]*backuppb.File {
+	m := make(map[int64][]*backuppb.File)
+	for _, id := range ids {
+		m[id] = []*backuppb.File{
+			{Name: fmt.Sprintf("test_table_%d", id)},
+		}
+	}
+	return m
 }
 
 func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
@@ -560,12 +618,18 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 						ID:   11,
 						Name: pmodel.NewCIStr("test_table_11"),
 					},
+					FilesOfPhysicals: map[int64][]*backuppb.File{
+						11: {{Name: "test_table_11"}},
+					},
 				},
 				{
 					DB: &dbInfo1,
 					Info: &model.TableInfo{
 						ID:   12,
 						Name: pmodel.NewCIStr("test_table_12"),
+					},
+					FilesOfPhysicals: map[int64][]*backuppb.File{
+						12: {{Name: "test_table_12"}},
 					},
 				},
 			},
@@ -578,6 +642,9 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 					Info: &model.TableInfo{
 						ID:   21,
 						Name: pmodel.NewCIStr("test_table_21"),
+					},
+					FilesOfPhysicals: map[int64][]*backuppb.File{
+						21: {{Name: "test_table_21"}},
 					},
 				},
 			},
@@ -597,12 +664,15 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 				{12, "test_table_12", 1},
 				{21, "test_table_21", 2},
 			},
+			snapshotDBMap:    generateDBMap(snapshotDBMap),
+			snapshotTableMap: generateTableMap(snapshotDBMap),
 			expectedTableIDs: map[int64][]int64{
 				1: {11, 12},
 				2: {21},
 			},
-			expectedDBs:    []int64{1, 2},
-			expectedTables: []int64{11, 12, 21},
+			expectedDBs:     []int64{1, 2},
+			expectedTables:  []int64{11, 12, 21},
+			expectedFileMap: generateFilesByID(11, 12, 21),
 		},
 		{
 			name:          "Table not in filter",
@@ -619,6 +689,7 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 			expectedTableIDs: map[int64][]int64{},
 			expectedDBs:      []int64{},
 			expectedTables:   []int64{},
+			expectedFileMap:  generateFilesByID(),
 		},
 		{
 			name:          "New table created during log backup",
@@ -633,12 +704,15 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 				{21, "test_table_21", 2},
 				{13, "new_table", 1},
 			},
+			snapshotDBMap:    generateDBMap(snapshotDBMap),
+			snapshotTableMap: generateTableMap(snapshotDBMap),
 			expectedTableIDs: map[int64][]int64{
 				1: {11, 12, 13},
 				2: {21},
 			},
-			expectedDBs:    []int64{1, 2},
-			expectedTables: []int64{11, 12, 21}, // 13 not in full backup
+			expectedDBs:     []int64{1, 2},
+			expectedTables:  []int64{11, 12, 21}, // 13 not in full backup
+			expectedFileMap: generateFilesByID(11, 12, 21),
 		},
 		{
 			name:          "Table renamed into filter during log backup",
@@ -653,11 +727,14 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 				{12, "test_table_12", 1},
 				{21, "test_table_21", 2},
 			},
+			snapshotDBMap:    generateDBMap(map[int64]*metautil.Database{2: snapshotDBMap[2]}),
+			snapshotTableMap: generateTableMap(map[int64]*metautil.Database{2: snapshotDBMap[2]}),
 			expectedTableIDs: map[int64][]int64{
 				2: {11, 21},
 			},
-			expectedDBs:    []int64{1, 2}, // need original db for restore
-			expectedTables: []int64{11, 21},
+			expectedDBs:     []int64{1, 2}, // need original db for restore
+			expectedTables:  []int64{11, 21},
+			expectedFileMap: generateFilesByID(11, 21),
 		},
 		{
 			name:          "Table renamed out of filter during log backup",
@@ -672,11 +749,14 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 				{12, "test_table_12", 1},
 				{21, "test_table_21", 2},
 			},
+			snapshotDBMap:    generateDBMap(map[int64]*metautil.Database{1: snapshotDBMap[1]}),
+			snapshotTableMap: generateTableMap(map[int64]*metautil.Database{1: snapshotDBMap[1]}),
 			expectedTableIDs: map[int64][]int64{
 				1: {12},
 			},
-			expectedDBs:    []int64{1},
-			expectedTables: []int64{12},
+			expectedDBs:     []int64{1},
+			expectedTables:  []int64{12},
+			expectedFileMap: generateFilesByID(12),
 		},
 		{
 			name:          "Log backup table not in snapshot",
@@ -692,6 +772,7 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 			expectedTableIDs: map[int64][]int64{},
 			expectedDBs:      []int64{},
 			expectedTables:   []int64{},
+			expectedFileMap:  generateFilesByID(),
 		},
 		{
 			name:          "DB created during log backup",
@@ -710,8 +791,9 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 			expectedTableIDs: map[int64][]int64{
 				1: {11},
 			},
-			expectedDBs:    []int64{}, // not in full backup
-			expectedTables: []int64{}, // not in full backup
+			expectedDBs:     []int64{}, // not in full backup
+			expectedTables:  []int64{}, // not in full backup
+			expectedFileMap: generateFilesByID(),
 		},
 	}
 
@@ -723,9 +805,8 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 				localSnapshotDBMap = map[int64]*metautil.Database{}
 			}
 
-			fileMap := map[int64][]*backuppb.File{}
-			tableMap := map[int64]*metautil.Table{}
-			dbMap := map[int64]*metautil.Database{}
+			tableMap := tc.snapshotTableMap
+			dbMap := tc.snapshotDBMap
 			logBackupTableHistory := stream.NewTableHistoryManager()
 
 			for _, h := range tc.logBackupHistory {
@@ -749,7 +830,6 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 				logBackupTableHistory,
 				cfg,
 				localSnapshotDBMap,
-				fileMap,
 				tableMap,
 				dbMap,
 			)
@@ -761,12 +841,24 @@ func TestAdjustTablesToRestoreAndCreateTableTracker(t *testing.T) {
 				}
 			}
 
+			require.Len(t, dbMap, len(tc.expectedDBs))
 			for _, dbID := range tc.expectedDBs {
 				require.NotNil(t, dbMap[dbID])
 			}
 
+			require.Len(t, tableMap, len(tc.expectedTables))
 			for _, tableID := range tc.expectedTables {
 				require.NotNil(t, tableMap[tableID])
+			}
+
+			fileMap := generateFiles(tableMap)
+			require.Len(t, fileMap, len(tc.expectedFileMap))
+			for tableID, files := range tc.expectedFileMap {
+				files2, exists := fileMap[tableID]
+				require.True(t, exists)
+				require.Len(t, files, 1)
+				require.Len(t, files2, 1)
+				require.Equal(t, files[0].Name, files2[0].Name)
 			}
 		})
 	}

@@ -92,33 +92,35 @@ func newCheckSumCommand() *cobra.Command {
 					var calCRC64 uint64
 					var totalKVs uint64
 					var totalBytes uint64
-					for _, file := range tbl.Files {
-						calCRC64 ^= file.Crc64Xor
-						totalKVs += file.GetTotalKvs()
-						totalBytes += file.GetTotalBytes()
-						log.Info("file info", zap.Stringer("table", tbl.Info.Name),
-							zap.String("file", file.GetName()),
-							zap.Uint64("crc64xor", file.GetCrc64Xor()),
-							zap.Uint64("totalKvs", file.GetTotalKvs()),
-							zap.Uint64("totalBytes", file.GetTotalBytes()),
-							zap.Uint64("startVersion", file.GetStartVersion()),
-							zap.Uint64("endVersion", file.GetEndVersion()),
-							logutil.Key("startKey", file.GetStartKey()),
-							logutil.Key("endKey", file.GetEndKey()),
-						)
+					for _, files := range tbl.FilesOfPhysicals {
+						for _, file := range files {
+							calCRC64 ^= file.Crc64Xor
+							totalKVs += file.GetTotalKvs()
+							totalBytes += file.GetTotalBytes()
+							log.Info("file info", zap.Stringer("table", tbl.Info.Name),
+								zap.String("file", file.GetName()),
+								zap.Uint64("crc64xor", file.GetCrc64Xor()),
+								zap.Uint64("totalKvs", file.GetTotalKvs()),
+								zap.Uint64("totalBytes", file.GetTotalBytes()),
+								zap.Uint64("startVersion", file.GetStartVersion()),
+								zap.Uint64("endVersion", file.GetEndVersion()),
+								logutil.Key("startKey", file.GetStartKey()),
+								logutil.Key("endKey", file.GetEndKey()),
+							)
 
-						var data []byte
-						data, err = s.ReadFile(ctx, file.Name)
-						if err != nil {
-							return errors.Trace(err)
-						}
-						s := sha256.Sum256(data)
-						if !bytes.Equal(s[:], file.Sha256) {
-							return errors.Annotatef(berrors.ErrBackupChecksumMismatch, `
+							var data []byte
+							data, err = s.ReadFile(ctx, file.Name)
+							if err != nil {
+								return errors.Trace(err)
+							}
+							s := sha256.Sum256(data)
+							if !bytes.Equal(s[:], file.Sha256) {
+								return errors.Annotatef(berrors.ErrBackupChecksumMismatch, `
 backup data checksum failed: %s may be changed
 calculated sha256 is %s,
 origin sha256 is %s`,
-								file.Name, hex.EncodeToString(s[:]), hex.EncodeToString(file.Sha256))
+									file.Name, hex.EncodeToString(s[:]), hex.EncodeToString(file.Sha256))
+							}
 						}
 					}
 					if tbl.Info == nil {
@@ -184,7 +186,9 @@ func newBackupMetaValidateCommand() *cobra.Command {
 			tables := make([]*metautil.Table, 0)
 			for _, db := range dbs {
 				for _, table := range db.Tables {
-					files = append(files, table.Files...)
+					for _, fs := range table.FilesOfPhysicals {
+						files = append(files, fs...)
+					}
 				}
 				tables = append(tables, db.Tables...)
 			}
