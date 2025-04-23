@@ -37,6 +37,7 @@ import (
 	"github.com/stretchr/testify/require"
 	pqt_buf_src "github.com/xitongsys/parquet-go-source/buffer"
 	pqtwriter "github.com/xitongsys/parquet-go/writer"
+	"slices"
 )
 
 type colDef struct {
@@ -261,7 +262,7 @@ func generateParquetData(t *testing.T) []byte {
 	require.NoError(t, err)
 	pw, err := pqtwriter.NewParquetWriter(pf, new(parquetStruct), 4)
 	require.NoError(t, err)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		require.NoError(t, pw.Write(parquetStruct{
 			ID:   int64(i + 1),
 			Name: fmt.Sprintf("name_%d", i+1),
@@ -271,7 +272,7 @@ func generateParquetData(t *testing.T) []byte {
 	require.NoError(t, pf.Close())
 	bf, ok := pf.(pqt_buf_src.BufferFile)
 	require.True(t, ok)
-	return append([]byte(nil), bf.Bytes()...)
+	return slices.Clone(bf.Bytes())
 }
 
 func TestGetPreInfoReadFirstRow(t *testing.T) {
