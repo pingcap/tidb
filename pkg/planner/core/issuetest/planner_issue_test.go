@@ -259,3 +259,29 @@ func TestIssue59902(t *testing.T) {
 			"        └─Selection 1.00 cop[tikv]  not(isnull(test.t2.a))",
 			"          └─IndexRangeScan 1.00 cop[tikv] table:t2, index:idx(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"))
 }
+
+func TestABC(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec(`CREATE TABLE table_test (
+col16 json DEFAULT NULL,
+col17 json DEFAULT NULL
+);`)
+	tk.MustQuery(`SELECT 
+       s.column16 AS column16,
+       s.column17 AS column17
+FROM
+  (SELECT 
+          col16 -> '$[].optUid' AS column16,
+          JSON_UNQUOTE(JSON_EXTRACT(col17, '$[0].value')) AS column17
+   FROM
+     (SELECT 
+             col16,
+             col17
+      FROM table_test) ta24e
+   ) AS s 
+ORDER BY CONVERT(column16 USING GBK) ASC,column17 ASC
+LIMIT 0,
+      20;`)
+}
