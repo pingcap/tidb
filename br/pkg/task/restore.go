@@ -170,7 +170,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 		"(deprecated) concurrency pd-relative operations like split & scatter.")
 	flags.Uint(FlagStatsConcurrency, defaultStatsConcurrency,
 		"concurrency to restore statistic")
-	flags.Bool(FlagAutoAnalyze, false, "trigger tidb analyze priority queue to analyze table")
+	flags.Bool(FlagAutoAnalyze, true, "trigger tidb analyze priority queue to analyze table")
 	flags.Duration(FlagBatchFlushInterval, defaultBatchFlushInterval,
 		"after how long a restore batch would be auto sent.")
 	flags.Uint(FlagDdlBatchSize, defaultFlagDdlBatchSize,
