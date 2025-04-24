@@ -217,8 +217,7 @@ func checkAfterSwitchStep(t *testing.T, startTime time.Time, task *proto.Task, s
 	sort.Slice(gotSubtasks, func(i, j int) bool {
 		return gotSubtasks[i].Ordinal < gotSubtasks[j].Ordinal
 	})
-	for i := range gotSubtasks {
-		subtask := gotSubtasks[i]
+	for i, subtask := range gotSubtasks {
 		require.Equal(t, fmt.Appendf(nil, "%d", i), subtask.Meta)
 		require.Equal(t, i+1, subtask.Ordinal)
 		require.Equal(t, 11, subtask.Concurrency)
