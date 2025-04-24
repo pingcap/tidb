@@ -70,7 +70,7 @@ func NewTableKVEncoder(
 		return nil, err
 	}
 	insertRowNeedCast := make([]bool, len(baseKVEncoder.Columns))
-	for i := 0; i < len(ti.InsertColumns); i++ {
+	for i := range ti.InsertColumns {
 		insertCol := ti.InsertColumns[i].ToInfo()
 		offset := ti.InsertColumns[i].Offset
 		if offset < len(insertRowNeedCast) {
