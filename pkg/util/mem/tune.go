@@ -671,7 +671,7 @@ func (m *MemArbitrator) handleMemUnsafe() {
 		m.heapController.oomCheck.lastMemStats.startTime = now
 		m.heapController.oomCheck.start = true
 		m.heapController.oomCheck.startTime = now
-		m.execMetrics.memRisk++
+		m.execMetrics.risk.memRisk++
 
 		{
 			profile := m.recordDebugProfile()
@@ -705,7 +705,7 @@ func (m *MemArbitrator) handleMemUnsafe() {
 		freeSpeedBPS := int64(float64(heapFrees) / dur.Seconds())
 		needReclaimHeap := false
 		if hasMemOOMRisk(freeSpeedBPS, minHeapFreeSpeedBPS, now, m.heapController.oomCheck.startTime) {
-			m.execMetrics.oomRisk++
+			m.execMetrics.risk.oomRisk++
 			// dumpHeapProfile()
 			var newKillNum int
 			var reclaiming int64
@@ -817,7 +817,7 @@ func (m *MemArbitrator) killTopnEntry(required int64) (newKillNum int, reclaimed
 					reclaimed += memoryUsed
 					ctx.stop(true)
 					newKillNum++
-					m.execMetrics.oomKill[prio]++
+					m.execMetrics.risk.oomKill[prio]++
 
 					{ // warning
 						m.actions.Warn("Start to `KILL` root pool",

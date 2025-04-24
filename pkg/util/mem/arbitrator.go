@@ -702,7 +702,7 @@ type execMetrics struct {
 	cancel    execMetricsCancel
 	awaitFree awaitFreePoolExecMetrics
 	action    execMetricsAction
-	execMetricsRisk
+	risk      execMetricsRisk
 }
 
 func (m *MemArbitrator) ExecMetrics() map[string]int64 {
@@ -719,11 +719,11 @@ func (m *MemArbitrator) ExecMetrics() map[string]int64 {
 		"awaitfree-success":               m.execMetrics.awaitFree.success,
 		"awaitfree-fail":                  m.execMetrics.awaitFree.fail,
 		"awaitfree-shrink":                m.execMetrics.awaitFree.shrink,
-		"memRisk":                         m.execMetrics.memRisk,
-		"oomRisk":                         m.execMetrics.oomRisk,
-		"oomKill-prio-low":                m.execMetrics.oomKill[ArbitrateMemPriorityLow],
-		"oomKill-prio-medium":             m.execMetrics.oomKill[ArbitrateMemPriorityMedium],
-		"oomKill-prio-high":               m.execMetrics.oomKill[ArbitrateMemPriorityHigh],
+		"memRisk":                         m.execMetrics.risk.memRisk,
+		"oomRisk":                         m.execMetrics.risk.oomRisk,
+		"oomKill-prio-low":                m.execMetrics.risk.oomKill[ArbitrateMemPriorityLow],
+		"oomKill-prio-medium":             m.execMetrics.risk.oomKill[ArbitrateMemPriorityMedium],
+		"oomKill-prio-high":               m.execMetrics.risk.oomKill[ArbitrateMemPriorityHigh],
 	}
 }
 
