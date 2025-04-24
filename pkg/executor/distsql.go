@@ -713,8 +713,21 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 	tracker.AttachTo(e.memTracker)
 
 	kvRanges := [][]kv.KeyRange{e.kvRanges}
+	var rowHints []int
 	if e.partitionTableMode {
 		kvRanges = e.partitionKVRanges
+	} else if len(e.idxPlans) > 0 {
+		estRows := int(e.idxPlans[0].StatsCount())
+		if estRows < len(e.kvRanges)*10 {
+			rowPerRange := estRows / len(e.kvRanges)
+			if rowPerRange == 0 {
+				rowPerRange = 1
+			}
+			rowHints = make([]int, len(e.kvRanges))
+			for i := range rowHints {
+				rowHints[i] = rowPerRange
+			}
+		}
 	}
 	// When len(kvrange) = 1, no sorting is required,
 	// so remove byItems and non-necessary output columns
@@ -739,6 +752,10 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			PushedLimit:     e.PushedLimit,
 		}
 		var builder distsql.RequestBuilder
+		paging := e.dctx.EnablePaging
+		if len(rowHints) > 0 {
+			paging = false
+		}
 		builder.SetDAGRequest(e.dagPB).
 			SetStartTS(e.startTS).
 			SetDesc(e.desc).
@@ -747,6 +764,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			SetReadReplicaScope(e.readReplicaScope).
 			SetIsStaleness(e.isStaleness).
 			SetFromSessionVars(e.dctx).
+			SetPaging(paging).
 			SetFromInfoSchema(e.infoSchema).
 			SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &builder.Request, e.idxNetDataSize/float64(len(kvRanges)))).
 			SetMemTracker(tracker).
@@ -779,7 +797,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			slices.SortFunc(kvRange, func(i, j kv.KeyRange) int {
 				return bytes.Compare(i.StartKey, j.StartKey)
 			})
-			kvReq, err := builder.SetKeyRanges(kvRange).Build()
+			kvReq, err := builder.SetIndexScanKeyRanges(kvRange, rowHints).Build()
 			if err != nil {
 				worker.syncErr(err)
 				break
