@@ -87,7 +87,6 @@ type PipelineContext struct {
 	LogProgress         bool
 	ChecksumConcurrency uint
 	StatsConcurrency    uint
-	AutoAnalyze         bool
 
 	// pipeline item tool client
 	KvClient   kv.Client
