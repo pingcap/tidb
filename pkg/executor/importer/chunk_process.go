@@ -57,11 +57,11 @@ type rowToEncode struct {
 	resetFn   func()
 }
 
-type encodeReaderFn func(ctx context.Context) (data rowToEncode, closed bool, err error)
+type encodeReaderFn func(ctx context.Context, row []types.Datum) (data rowToEncode, closed bool, err error)
 
 // parserEncodeReader wraps a mydump.Parser as a encodeReaderFn.
 func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) encodeReaderFn {
-	return func(context.Context) (data rowToEncode, closed bool, err error) {
+	return func(context.Context, []types.Datum) (data rowToEncode, closed bool, err error) {
 		readPos, _ := parser.Pos()
 		if readPos >= endOffset {
 			closed = true
@@ -99,7 +99,7 @@ type queryChunkEncodeReader struct {
 	numRows int
 }
 
-func (r *queryChunkEncodeReader) readRow(ctx context.Context) (data rowToEncode, closed bool, err error) {
+func (r *queryChunkEncodeReader) readRow(ctx context.Context, row []types.Datum) (data rowToEncode, closed bool, err error) {
 	if r.currChk.Chk == nil || r.cursor >= r.numRows {
 		select {
 		case <-ctx.Done():
@@ -116,10 +116,20 @@ func (r *queryChunkEncodeReader) readRow(ctx context.Context) (data rowToEncode,
 		}
 	}
 
-	row := r.currChk.Chk.GetRow(r.cursor)
+	chkRow := r.currChk.Chk.GetRow(r.cursor)
+	rowLen := chkRow.Len()
+	if len(row) < rowLen {
+		row = make([]types.Datum, rowLen)
+	} else {
+		row = row[:rowLen]
+		for i := range row {
+			row[i] = types.Datum{}
+		}
+	}
+	row = chkRow.GetDatumRowWithBuffer(r.currChk.Fields, row)
 	r.cursor++
 	data = rowToEncode{
-		row:       row.GetDatumRow(r.currChk.Fields),
+		row:       row,
 		rowID:     r.currChk.RowIDOffset + int64(r.cursor),
 		endOffset: -1,
 		resetFn:   func() {},
@@ -130,12 +140,13 @@ func (r *queryChunkEncodeReader) readRow(ctx context.Context) (data rowToEncode,
 // queryRowEncodeReader wraps a queryChunkEncodeReader as a encodeReaderFn.
 func queryRowEncodeReader(chunkCh <-chan QueryChunk) encodeReaderFn {
 	reader := queryChunkEncodeReader{chunkCh: chunkCh}
-	return func(ctx context.Context) (data rowToEncode, closed bool, err error) {
-		return reader.readRow(ctx)
+	return func(ctx context.Context, row []types.Datum) (data rowToEncode, closed bool, err error) {
+		return reader.readRow(ctx, row)
 	}
 }
 
 type encodedKVGroupBatch struct {
+	count    int
 	dataKVs  []common.KvPair
 	indexKVs map[int64][]common.KvPair // indexID -> pairs
 
@@ -155,8 +166,10 @@ func (b *encodedKVGroupBatch) reset() {
 	b.memBuf = nil
 }
 
-func newEncodedKVGroupBatch(keyspace []byte) *encodedKVGroupBatch {
+func newEncodedKVGroupBatch(keyspace []byte, count int) *encodedKVGroupBatch {
 	return &encodedKVGroupBatch{
+		count:         count,
+		dataKVs:       make([]common.KvPair, 0, count),
 		indexKVs:      make(map[int64][]common.KvPair, 8),
 		groupChecksum: verify.NewKVGroupChecksumWithKeyspace(keyspace),
 	}
@@ -172,6 +185,9 @@ func (b *encodedKVGroupBatch) add(kvs *kv.Pairs) error {
 			indexID, err := tablecodec.DecodeIndexID(pair.Key)
 			if err != nil {
 				return errors.Trace(err)
+			}
+			if len(b.indexKVs[indexID]) == 0 {
+				b.indexKVs[indexID] = make([]common.KvPair, 0, b.count)
 			}
 			b.indexKVs[indexID] = append(b.indexKVs[indexID], pair)
 			b.groupChecksum.UpdateOneIndexKV(indexID, pair)
@@ -263,7 +279,16 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		p.encodeTotalDur += encodeDur
 		p.readTotalDur += readDur
 
-		kvGroupBatch := newEncodedKVGroupBatch(p.keyspace)
+		recordCount := 0
+		for _, kvs := range rowBatch {
+			for _, pair := range kvs.Pairs {
+				if tablecodec.IsRecordKey(pair.Key) {
+					recordCount++
+					break
+				}
+			}
+		}
+		kvGroupBatch := newEncodedKVGroupBatch(p.keyspace, recordCount)
 
 		for _, kvs := range rowBatch {
 			if err := kvGroupBatch.add(kvs); err != nil {
@@ -287,15 +312,17 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		return nil
 	}
 
+	var readRowCache []types.Datum
 	for {
 		readDurStart := time.Now()
-		data, closed, err := p.readFn(ctx)
+		data, closed, err := p.readFn(ctx, readRowCache)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if closed {
 			break
 		}
+		readRowCache = data.row
 		readDur += time.Since(readDurStart)
 
 		encodeDurStart := time.Now()
