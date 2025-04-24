@@ -428,7 +428,7 @@ func (hg *Histogram) ToString(idxCols int) string {
 	} else {
 		strs = append(strs, fmt.Sprintf("column:%d ndv:%d totColSize:%d", hg.ID, hg.NDV, hg.TotColSize))
 	}
-	for i := 0; i < hg.Len(); i++ {
+	for i := range hg.Len() {
 		strs = append(strs, hg.BucketToString(i, idxCols))
 	}
 	return strings.Join(strs, "\n")
@@ -767,7 +767,7 @@ func HistogramToProto(hg *Histogram) *tipb.Histogram {
 	protoHg := &tipb.Histogram{
 		Ndv: hg.NDV,
 	}
-	for i := 0; i < hg.Len(); i++ {
+	for i := range hg.Len() {
 		bkt := &tipb.Bucket{
 			Count:      hg.Buckets[i].Count,
 			LowerBound: DeepSlice(hg.GetLower(i).GetBytes()),
@@ -863,7 +863,7 @@ func MergeHistograms(sc *stmtctx.StatementContext, lh *Histogram, rh *Histogram,
 		rh.mergeBuckets(rh.Len() - 1)
 		rAvg *= 2
 	}
-	for i := 0; i < rh.Len(); i++ {
+	for i := range rh.Len() {
 		if statsVer >= Version2 {
 			lh.AppendBucketWithNDV(rh.GetLower(i), rh.GetUpper(i), rh.Buckets[i].Count+lCount-offset, rh.Buckets[i].Repeat, rh.Buckets[i].NDV)
 			continue
@@ -1151,7 +1151,7 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN
 	// Set a limit on the frequency of boundary values to avoid extract values with low frequency.
 	limit := hg.NotNullCount() / float64(hg.Len())
 	// Since our histogram are equal depth, they must occurs on the boundaries of buckets.
-	for i := 0; i < hg.Bounds.NumRows(); i++ {
+	for i := range hg.Bounds.NumRows() {
 		data := hg.Bounds.GetRow(i).GetBytes(0)
 		prefixLens, err := GetIndexPrefixLens(data, numCols)
 		if err != nil {
@@ -1231,7 +1231,7 @@ func newBucket4Meging() *bucket4Merging {
 // Notice: Count in Histogram.Buckets is prefix sum but in bucket4Merging is not.
 func (hg *Histogram) buildBucket4Merging() []*bucket4Merging {
 	buckets := make([]*bucket4Merging, 0, hg.Len())
-	for i := 0; i < hg.Len(); i++ {
+	for i := range hg.Len() {
 		b := newbucket4MergingForRecycle()
 		hg.LowerToDatum(i, b.lower)
 		hg.UpperToDatum(i, b.upper)
@@ -1413,10 +1413,7 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 	// since `mergeBucketNDV` is based on uniform and inclusion assumptions, it has the trend to under-estimate,
 	// and as the number of buckets increases, these assumptions become weak,
 	// so to mitigate this problem, a damping factor based on the number of buckets is introduced.
-	res.NDV = int64(float64(res.NDV) * math.Pow(1.15, float64(len(buckets)-1)))
-	if res.NDV > totNDV {
-		res.NDV = totNDV
-	}
+	res.NDV = min(int64(float64(res.NDV)*math.Pow(1.15, float64(len(buckets)-1))), totNDV)
 	return res, nil
 }
 
@@ -1671,7 +1668,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		leftMost.Copy(merged.lower)
 		globalBuckets = append(globalBuckets, merged)
 	}
-	for i := 0; i < len(buckets); i++ {
+	for i := range buckets {
 		releasebucket4MergingForRecycle(buckets[i])
 	}
 	// Because we merge backwards, we need to flip the slices.
