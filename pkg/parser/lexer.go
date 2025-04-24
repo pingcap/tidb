@@ -956,7 +956,7 @@ func (s *Scanner) scanDigits() string {
 // `/*!12345 ... */` comments.
 func (s *Scanner) scanVersionDigits(minv, maxv int) {
 	pos := s.r.pos()
-	for i := 0; i < maxv; i++ {
+	for i := range maxv {
 		ch := s.r.peek()
 		if isDigit(ch) {
 			s.r.inc()
@@ -1057,7 +1057,7 @@ func (r *reader) inc() {
 }
 
 func (r *reader) incN(n int) {
-	for i := 0; i < n; i++ {
+	for range n {
 		r.inc()
 	}
 }
