@@ -276,6 +276,7 @@
   },
   "gofmt": {
     "exclude_files": {
+      "pkg/parser/": "parser/*.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       ".*mock.go$": "ignore generated code",
