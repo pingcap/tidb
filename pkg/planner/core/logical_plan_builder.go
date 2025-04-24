@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"math"
 	"math/bits"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -911,7 +910,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 	return nil
 }
 
-func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, where ast.ExprNode, groupby []expression.Expression, aggMapper map[*ast.AggregateFuncExpr]int) (base.LogicalPlan, error) {
+func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, where ast.ExprNode, aggMapper map[*ast.AggregateFuncExpr]int) (base.LogicalPlan, error) {
 	b.optFlag |= rule.FlagPredicatePushDown
 	b.optFlag |= rule.FlagDeriveTopNFromWindow
 	b.optFlag |= rule.FlagPredicateSimplification
@@ -954,7 +953,15 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 					continue
 				}
 				// If there is condition which is always false, return dual plan directly.
-				return b.buildDual(p, groupby), nil
+				dual := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+				if join, ok := p.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
+					dual.SetSchema(join.FullSchema)
+					dual.SetOutputNames(join.FullNames)
+				} else {
+					dual.SetSchema(p.Schema())
+					dual.SetOutputNames(p.OutputNames())
+				}
+				return dual, nil
 			}
 			cnfExpres = append(cnfExpres, item)
 		}
@@ -978,46 +985,6 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 	selection.Conditions = cnfExpres
 	selection.SetChildren(p)
 	return selection, nil
-}
-
-func (b *PlanBuilder) buildDual(p base.LogicalPlan, groupby []expression.Expression) base.LogicalPlan {
-	dual := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-	outputNames := p.OutputNames()
-	schema := p.Schema()
-	// If the group by column is not in the schema, we need to add it to the dual plan from the children's schema.
-	for _, gbyExpr := range groupby {
-		if groupbyCol, ok := gbyExpr.(*expression.Column); ok {
-			if slices.ContainsFunc(p.Schema().Columns, func(col *expression.Column) bool {
-				return groupbyCol.EqualColumn(col)
-			}) {
-				continue
-			}
-			for _, child := range p.Children() {
-				name := getName(child.Schema(), child.OutputNames(), groupbyCol)
-				if name != nil {
-					schema.Append(groupbyCol)
-					outputNames = append(outputNames, name)
-					continue
-				}
-			}
-		}
-	}
-	dual.SetOutputNames(outputNames)
-	dual.SetSchema(schema)
-	return dual
-}
-
-func getName(schema *expression.Schema, names types.NameSlice, column *expression.Column) *types.FieldName {
-	if schema == nil {
-		return nil
-	}
-	idx := slices.IndexFunc(schema.Columns, func(col *expression.Column) bool {
-		return col.EqualColumn(column)
-	})
-	if idx < 0 {
-		return nil
-	}
-	return names[idx]
 }
 
 // buildProjectionFieldNameFromColumns builds the field name, table name and database name when field expression is a column reference.
@@ -3791,6 +3758,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 			return nil, err
 		}
 	}
+
 	p, err = b.buildTableRefs(ctx, sel.From)
 	if err != nil {
 		return nil, err
@@ -3865,7 +3833,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	defer func() { b.allNames = b.allNames[:len(b.allNames)-1] }()
 
 	if sel.Where != nil {
-		p, err = b.buildSelection(ctx, p, sel.Where, gbyCols, nil)
+		p, err = b.buildSelection(ctx, p, sel.Where, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -3955,7 +3923,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 
 	if sel.Having != nil {
 		b.curClause = havingClause
-		p, err = b.buildSelection(ctx, p, sel.Having.Expr, gbyCols, havingMap)
+		p, err = b.buildSelection(ctx, p, sel.Having.Expr, havingMap)
 		if err != nil {
 			return nil, err
 		}
@@ -5561,7 +5529,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 
 	oldSchemaLen := p.Schema().Len()
 	if update.Where != nil {
-		p, err = b.buildSelection(ctx, p, update.Where, nil, nil)
+		p, err = b.buildSelection(ctx, p, update.Where, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -5969,7 +5937,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 
 	// For explicit column usage, should use the all-public columns.
 	if ds.Where != nil {
-		p, err = b.buildSelection(ctx, p, ds.Where, nil, nil)
+		p, err = b.buildSelection(ctx, p, ds.Where, nil)
 		if err != nil {
 			return nil, err
 		}
