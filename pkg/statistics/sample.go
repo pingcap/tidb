@@ -295,7 +295,7 @@ func (c *SampleCollector) ExtractTopN(numTop uint32, sc *stmtctx.StatementContex
 	c.TopN = NewTopN(int(helper.actualNumTop))
 	// Process them decreasingly so we can handle most frequent values first and reduce the probability of hash collision
 	// by small values.
-	for i := uint32(0); i < helper.actualNumTop; i++ {
+	for i := range uint32(helper.actualNumTop) {
 		h1, h2 := murmur3.Sum128(helper.sorted[i].data)
 		realCnt := cms.queryHashValue(nil, h1, h2)
 		// Because the encode of topn is the new encode type. But analyze proto returns the old encode type for a sample datum,

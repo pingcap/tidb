@@ -335,7 +335,7 @@ func BuildHistAndTopN(
 	var corrXYSum float64
 
 	// Iterate through the samples
-	for i := int64(0); i < sampleNum; i++ {
+	for i := range int64(sampleNum) {
 		if isColumn {
 			corrXYSum += float64(i) * float64(samples[i].Ordinal)
 		}
