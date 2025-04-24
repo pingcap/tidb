@@ -52,6 +52,7 @@ go_test(
         "binding_auto_test.go",
         "binding_cache_test.go",
         "binding_operator_test.go",
+        "binding_plan_evolution_test.go",
         "main_test.go",
         "session_handle_test.go",
     ],
