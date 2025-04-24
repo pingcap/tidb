@@ -26,13 +26,13 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/stretchr/testify/require"
-	"slices"
 )
 
 func startMockServer(t *testing.T, statusCode int, content string) (*httptest.Server, string, int) {

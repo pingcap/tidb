@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"math/rand"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"testing"
@@ -29,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/stretchr/testify/require"
-	"slices"
 )
 
 func randBytes(n int) []byte {

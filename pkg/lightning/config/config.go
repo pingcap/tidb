@@ -25,6 +25,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -44,7 +45,6 @@ import (
 	router "github.com/pingcap/tidb/pkg/util/table-router"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
-	"slices"
 )
 
 // constants for config items
