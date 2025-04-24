@@ -21,7 +21,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
@@ -71,7 +70,7 @@ func TestAlterThreadRightAfterJobFinish(t *testing.T) {
 }
 
 func TestAlterJobOnDXF(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(16)`))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(16)`)
 	testutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)

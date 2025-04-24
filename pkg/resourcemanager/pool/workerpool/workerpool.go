@@ -207,6 +207,9 @@ func (p *WorkerPool[T, R]) Tune(numWorkers int32, wait bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
+	logutil.BgLogger().Info("tune worker pool",
+		zap.Int32("from", p.numWorkers), zap.Int32("to", numWorkers))
+
 	// If the pool is not started, just set the number of workers.
 	if !p.started.Load() {
 		p.numWorkers = numWorkers
@@ -238,8 +241,6 @@ func (p *WorkerPool[T, R]) Tune(numWorkers int32, wait bool) {
 			wg.Wait()
 		}
 	}
-	logutil.BgLogger().Info("tune worker pool",
-		zap.Int32("from", p.numWorkers), zap.Int32("to", numWorkers))
 	p.numWorkers = numWorkers
 }
 

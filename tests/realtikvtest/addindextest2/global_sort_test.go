@@ -67,6 +67,7 @@ func genStorageURI(t *testing.T) (host string, port uint16, uri string) {
 }
 
 func genServerWithStorage(t *testing.T) (*fakestorage.Server, string) {
+	t.Helper()
 	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
 	opt := fakestorage.Options{
 		Scheme:     "http",
@@ -414,7 +415,7 @@ func TestIngestUseGivenTS(t *testing.T) {
 }
 
 func TestAlterJobOnDXWithGlobalSort(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(16)`))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(16)`)
 	testutil.ReduceCheckInterval(t)
 
 	server, cloudStorageURI := genServerWithStorage(t)
