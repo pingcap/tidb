@@ -1616,3 +1616,11 @@ func (is *InfoSyncer) setDynamicServerInfo(ds *DynamicServerInfo) {
 	}
 	is.info.Store(newInfo)
 }
+
+func CreateFulltextIndex(ctx context.Context, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, schemaName string) error {
+	is, err := getGlobalInfoSyncer()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return is.TiCIManager.CreateFulltextIndex(ctx, tblInfo, indexInfo, schemaName)
+}
