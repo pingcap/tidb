@@ -1036,16 +1036,15 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	if s.IfNotExists {
 		onExist = OnExistIgnore
 	}
-	var sql string
-	if s.Select != nil {
-		sql, err = buildInsertSql(schema.Name.L, s.Table.Name.L, s)
-	}
-	// now WithSql(sql) is ignored
-	if err = e.CreateTableWithInfo(ctx, schema.Name, tbInfo, involvingRef, WithOnExist(onExist), WithSql(sql)); err != nil {
+	if err = e.CreateTableWithInfo(ctx, schema.Name, tbInfo, involvingRef, WithOnExist(onExist)); err != nil {
 		return err
 	}
 
-	if sql != "" {
+	if s.Select != nil {
+		sql, err := buildInsertSql(schema.Name.L, s.Table.Name.L, s)
+		if err != nil {
+			return err
+		}
 		var sctx sessionctx.Context
 		sctx, err = e.sessPool.Get()
 		if err != nil {
@@ -1059,10 +1058,6 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 			_, _ = sctx.GetSQLExecutor().ExecuteInternal(e.ctx, dropSql)
 			return errors.Trace(err)
 		}
-	}
-
-	if err != nil {
-		return err
 	}
 	return nil
 }
@@ -1195,10 +1190,6 @@ func (e *executor) createTableWithInfoJob(
 		OldViewTblID:   oldViewTblID,
 		FKCheck:        ctx.GetSessionVars().ForeignKeyChecks,
 	}
-	if cfg.Sql != "" {
-		args.Sql = cfg.Sql
-	}
-	logutil.DDLLogger().Info("create table with info job", zap.Any("args.Sql", args.Sql))
 	return NewJobWrapperWithArgs(job, args, cfg.IDAllocated), nil
 }
 
@@ -1268,7 +1259,6 @@ func (e *executor) CreateTableWithInfo(
 	cs ...CreateTableOption,
 ) (err error) {
 	c := GetCreateTableConfig(cs)
-	logutil.DDLLogger().Info("create table with info job", zap.Any("args.Sql", c.Sql))
 	jobW, err := e.createTableWithInfoJob(ctx, dbName, tbInfo, involvingRef, c)
 	if err != nil {
 		return err
