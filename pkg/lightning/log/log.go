@@ -28,6 +28,7 @@ import (
 	"go.uber.org/zap/zapcore"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"slices"
 )
 
 const (
@@ -197,10 +198,8 @@ func IsContextCanceledError(err error) bool {
 	// 	awserr.New("RequestCanceled", "request context canceled", err) and the nested err is context.Canceled
 	// 	awserr.New( "MultipartUpload", "upload multipart failed", err) and the nested err is the upper one
 	if v, ok := err.(awserr.BatchedErrors); ok {
-		for _, origErr := range v.OrigErrs() {
-			if IsContextCanceledError(origErr) {
-				return true
-			}
+		if slices.ContainsFunc(v.OrigErrs(), IsContextCanceledError) {
+			return true
 		}
 	}
 	return false
