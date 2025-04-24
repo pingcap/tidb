@@ -64,13 +64,13 @@ func (conn BufferedReadConn) IsAlive() int {
 		}
 		// nolint:errcheck
 		defer conn.SetReadDeadline(time.Time{})
-		_, err = conn.Peek(1)
+		b := make([]byte, 1)
+		b, err = conn.Peek(1)
 		if err == io.EOF {
 			return 0
-		} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		} else if ne, ok := err.(net.Error); ok && ne.Timeout() || len(b) != 0 {
 			return 1
 		}
-		return -1
 	}
 	return -1
 }

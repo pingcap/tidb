@@ -3399,9 +3399,6 @@ func TestBatchGetTypeForRowExpr(t *testing.T) {
 }
 
 func TestIssue57531(t *testing.T) {
-	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
-		t.Skip()
-	}
 	ts := servertestkit.CreateTidbTestSuite(t)
 
 	var rsCnt int
