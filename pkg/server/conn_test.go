@@ -716,7 +716,7 @@ func TestConnExecutionTimeout(t *testing.T) {
 
 	tk.MustExec("use test;")
 	tk.MustExec("CREATE TABLE testTable2 (id bigint PRIMARY KEY,  age int)")
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		str := fmt.Sprintf("insert into testTable2 values(%d, %d)", i, i%80)
 		tk.MustExec(str)
 	}
@@ -1068,7 +1068,7 @@ func TestTiFlashFallback(t *testing.T) {
 	require.NoError(t, err)
 
 	dml := "insert into t values"
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		dml += fmt.Sprintf("(%v, 0)", i)
 		if i != 49 {
 			dml += ","
@@ -1722,7 +1722,7 @@ func TestMaxAllowedPacket(t *testing.T) {
 	)
 
 	// The length of total payload is (25 + 999 = 1024).
-	bytes := append([]byte{0x00, 0x04, 0x00, 0x00}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 999)))...)
+	bytes := append([]byte{0x00, 0x04, 0x00, 0x00}, fmt.Appendf(nil, "SELECT length('%s') as len;", strings.Repeat("a", 999))...)
 	_, err := inBuffer.Write(bytes)
 	require.NoError(t, err)
 	brc := serverutil.NewBufferedReadConn(&testutil.BytesConn{Buffer: inBuffer})
@@ -1735,7 +1735,7 @@ func TestMaxAllowedPacket(t *testing.T) {
 
 	// The length of total payload is (25 + 1000 = 1025).
 	inBuffer.Reset()
-	bytes = append([]byte{0x01, 0x04, 0x00, 0x00}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 1000)))...)
+	bytes = append([]byte{0x01, 0x04, 0x00, 0x00}, fmt.Appendf(nil, "SELECT length('%s') as len;", strings.Repeat("a", 1000))...)
 	_, err = inBuffer.Write(bytes)
 	require.NoError(t, err)
 	brc = serverutil.NewBufferedReadConn(&testutil.BytesConn{Buffer: inBuffer})
@@ -1747,7 +1747,7 @@ func TestMaxAllowedPacket(t *testing.T) {
 	// The length of total payload is (25 + 488 = 513).
 	// Two separate packets would NOT exceed the limitation of maxAllowedPacket.
 	inBuffer.Reset()
-	bytes = append([]byte{0x01, 0x02, 0x00, 0x00}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 488)))...)
+	bytes = append([]byte{0x01, 0x02, 0x00, 0x00}, fmt.Appendf(nil, "SELECT length('%s') as len;", strings.Repeat("a", 488))...)
 	_, err = inBuffer.Write(bytes)
 	require.NoError(t, err)
 	brc = serverutil.NewBufferedReadConn(&testutil.BytesConn{Buffer: inBuffer})
@@ -1758,7 +1758,7 @@ func TestMaxAllowedPacket(t *testing.T) {
 	require.Equal(t, fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("a", 488)), string(readBytes))
 	require.Equal(t, uint8(1), pkt.Sequence())
 	inBuffer.Reset()
-	bytes = append([]byte{0x01, 0x02, 0x00, 0x01}, []byte(fmt.Sprintf("SELECT length('%s') as len;", strings.Repeat("b", 488)))...)
+	bytes = append([]byte{0x01, 0x02, 0x00, 0x01}, fmt.Appendf(nil, "SELECT length('%s') as len;", strings.Repeat("b", 488))...)
 	_, err = inBuffer.Write(bytes)
 	require.NoError(t, err)
 	brc = serverutil.NewBufferedReadConn(&testutil.BytesConn{Buffer: inBuffer})
@@ -2132,7 +2132,7 @@ func TestCloseConn(t *testing.T) {
 	var wg sync.WaitGroup
 	const numGoroutines = 10
 	wg.Add(numGoroutines)
-	for i := 0; i < numGoroutines; i++ {
+	for range numGoroutines {
 		go func() {
 			defer wg.Done()
 			err := closeConn(cc)
@@ -2217,7 +2217,7 @@ func TestIssue54335(t *testing.T) {
 	tk.MustExec("CREATE TABLE testTable2 (id bigint,  age int)")
 	str := fmt.Sprintf("insert into testTable2 values(%d, %d)", 1, 1)
 	tk.MustExec(str)
-	for i := 0; i < 14; i++ {
+	for range 14 {
 		tk.MustExec("insert into testTable2 select * from testTable2")
 	}
 

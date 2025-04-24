@@ -44,6 +44,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"slices"
 )
 
 // ParseNullTermString parses a null terminated string.
@@ -178,7 +179,7 @@ func AppendFormatFloat(in []byte, fVal float64, prec, bitSize int) []byte {
 		plusPos := bytes.IndexByte(valStr, '+')
 		if plusPos > 0 {
 			plusPosInOut := len(in) + plusPos
-			out = append(out[:plusPosInOut], out[plusPosInOut+1:]...)
+			out = slices.Delete(out, plusPosInOut, plusPosInOut+1)
 		}
 		// remove extra '0'
 		ePos := bytes.IndexByte(valStr, 'e')
