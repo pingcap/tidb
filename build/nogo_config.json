@@ -358,6 +358,7 @@
     "only_files": {
       "pkg/util/": "util code",
       "pkg/workloadlearning": "workloadlearning code",
+      "pkg/parser": "parser code",
       "pkg/planner/core/generator/hash64_equals": "pkg/planner/core/generator/hash64_equals/ code",
       "pkg/planner/core/operator/logicalop": "pkg/planner/core/operator/logicalop code",
       "pkg/planner/core/casetest/tpch": "pkg/planner/core/casetest/tpch code",
