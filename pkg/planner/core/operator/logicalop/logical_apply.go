@@ -15,7 +15,6 @@
 package logicalop
 
 import (
-	"maps"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -139,7 +138,10 @@ func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema
 		RowCount: leftProfile.RowCount,
 		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
 	})
-	maps.Copy(la.StatsInfo().ColNDVs, leftProfile.ColNDVs)
+	// TODO: investigate why this cannot be replaced with maps.Copy()
+	for id, c := range leftProfile.ColNDVs {
+		la.StatsInfo().ColNDVs[id] = c
+	}
 	if la.JoinType == LeftOuterSemiJoin || la.JoinType == AntiLeftOuterSemiJoin {
 		la.StatsInfo().ColNDVs[selfSchema.Columns[selfSchema.Len()-1].UniqueID] = 2.0
 	} else {
