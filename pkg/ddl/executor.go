@@ -1054,8 +1054,6 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 		logutil.DDLLogger().Info("create table with info job", zap.String("sql", sql))
 		_, err = sctx.GetSQLExecutor().ExecuteInternal(e.ctx, sql)
 		if err != nil {
-			dropSql := fmt.Sprintf("drop table if exists %s.%s", schema.Name.L, s.Table.Name.L)
-			_, _ = sctx.GetSQLExecutor().ExecuteInternal(e.ctx, dropSql)
 			return errors.Trace(err)
 		}
 	}
