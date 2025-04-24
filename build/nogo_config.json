@@ -358,6 +358,7 @@
     "only_files": {
       "lightning/": "lightning code",
       "pkg/bindinfo/": "bindinfo code",
+      "pkg/lightning/": "lightning code",
       "pkg/util/": "util code",
       "pkg/workloadlearning": "workloadlearning code",
       "pkg/planner/core/generator/hash64_equals": "pkg/planner/core/generator/hash64_equals/ code",
