@@ -91,10 +91,10 @@ func batchRW(value []byte) {
 	wg := sync.WaitGroup{}
 	base := *dataCnt / *workerCnt
 	wg.Add(*workerCnt)
-	for i := range *workerCnt {
+	for i := 0; i < *workerCnt; i++ {
 		go func(i int) {
 			defer wg.Done()
-			for j := range base {
+			for j := 0; j < base; j++ {
 				txnCounter.WithLabelValues("txn").Inc()
 				start := time.Now()
 				k := base*i + j

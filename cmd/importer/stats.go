@@ -96,10 +96,13 @@ func getValidPrefix(lower, upper string) string {
 func (h *histogram) getAvgLen(maxLen int) int {
 	l := h.Bounds.NumRows()
 	totalLen := 0
-	for i := range l {
+	for i := 0; i < l; i++ {
 		totalLen += len(h.Bounds.GetRow(i).GetString(0))
 	}
-	avg := min(totalLen/l, maxLen)
+	avg := totalLen / l
+	if avg > maxLen {
+		avg = maxLen
+	}
 	if avg == 0 {
 		avg = 1
 	}

@@ -63,10 +63,10 @@ func TestIndex(t *testing.T) {
 	base := *dataNum / workerNum
 	var wg sync.WaitGroup
 	wg.Add(workerNum)
-	for i := range workerNum {
+	for i := 0; i < workerNum; i++ {
 		go func(i int) {
 			defer wg.Done()
-			for j := range base {
+			for j := 0; j < base; j++ {
 				k := base*i + j
 				s.execInsert(
 					fmt.Sprintf("insert into test_index values (%d, %d, %f, '%s')",
@@ -127,10 +127,10 @@ func (s *ddlSuite) execIndexOperations(t *testing.T, workerNum, count int, inser
 	var wg sync.WaitGroup
 	// workerNum = 10
 	wg.Add(workerNum)
-	for range workerNum {
+	for i := 0; i < workerNum; i++ {
 		go func() {
 			defer wg.Done()
-			for range count {
+			for j := 0; j < count; j++ {
 				id := atomic.AddInt64(insertID, 1)
 				sql := fmt.Sprintf("insert into test_index values (%d, %d, %f, '%s')", id, randomInt(), randomFloat(), randomString(10))
 				s.execInsert(sql)

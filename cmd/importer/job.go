@@ -24,7 +24,7 @@ import (
 )
 
 func addJobs(jobCount int, jobChan chan struct{}) {
-	for range jobCount {
+	for i := 0; i < jobCount; i++ {
 		jobChan <- struct{}{}
 	}
 
@@ -73,7 +73,7 @@ func doJob(table *table, db *sql.DB, batch int, jobChan chan struct{}, doneChan 
 }
 
 func doWait(doneChan chan struct{}, start time.Time, jobCount int, workerCount int) {
-	for range workerCount {
+	for i := 0; i < workerCount; i++ {
 		<-doneChan
 	}
 
@@ -103,7 +103,7 @@ func doProcess(table *table, dbs []*sql.DB, jobCount int, workerCount int, batch
 			break
 		}
 	}
-	for i := range workerCount {
+	for i := 0; i < workerCount; i++ {
 		go doJob(table, dbs[i], batch, jobChan, doneChan)
 	}
 

@@ -125,10 +125,10 @@ func TestColumn(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(workerNum)
-	for i := range workerNum {
+	for i := 0; i < workerNum; i++ {
 		go func(i int) {
 			defer wg.Done()
-			for j := range base {
+			for j := 0; j < base; j++ {
 				k := base*i + j
 				s.execInsert(fmt.Sprintf("insert into test_column values (%d, %d)", k, k))
 			}
@@ -189,10 +189,10 @@ func (s *ddlSuite) execColumnOperations(t *testing.T, workerNum, count int, rowI
 	var wg sync.WaitGroup
 	// workerNum = 10
 	wg.Add(workerNum)
-	for range workerNum {
+	for i := 0; i < workerNum; i++ {
 		go func() {
 			defer wg.Done()
-			for range count {
+			for j := 0; j < count; j++ {
 				key := int(atomic.AddInt64(rowID, 2))
 				s.execInsert(fmt.Sprintf("insert into test_column (c1, c2) values (%d, %d)",
 					key-1, key-1))
