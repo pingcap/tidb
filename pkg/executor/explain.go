@@ -152,7 +152,7 @@ type OQOKnob struct {
 }
 
 func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string, err error) {
-	if e.explain.Format == types.ExplainFormatOQOKnobs {
+	if e.explain.Format == types.ExplainFormatRelevantKnobs {
 		relevantKnobs := e.Ctx().GetSessionVars().StmtCtx.RelevantKnobs
 		knobs := make([]OQOKnob, 0, len(relevantKnobs))
 		for name, val := range relevantKnobs {
