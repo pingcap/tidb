@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -29,6 +30,18 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/atomic"
 )
+
+type nextGenResp struct {
+	SstMeta nextGenSSTMeta `json:"sst_meta"`
+}
+
+type nextGenSSTMeta struct {
+	Id         int64 `json:"id"`
+	Smallest   []int `json:"smallest"`
+	Biggest    []int `json:"biggest"`
+	MetaOffset int   `json:"meta-offset"`
+	CommitTs   int   `json:"commit-ts"`
+}
 
 var _ WriteClient = &writeClient{}
 
@@ -43,7 +56,7 @@ type writeClient struct {
 	sendReqErr atomic.Error
 	writer     *io.PipeWriter
 	reader     *io.PipeReader
-	resp       []byte
+	sstMeta    *nextGenSSTMeta
 }
 
 // newWriteClient creates a writeClient.
@@ -104,7 +117,12 @@ func (w *writeClient) startChunkedHTTPRequest(req *http.Request) {
 			w.sendReqErr.Store(err)
 			return errors.Trace(err)
 		}
-		w.resp = data
+		res := &nextGenResp{}
+		if err := json.Unmarshal(data, res); err != nil {
+			w.sendReqErr.Store(err)
+			return errors.Trace(err)
+		}
+		w.sstMeta = &res.SstMeta
 		return nil
 	})
 }
@@ -148,7 +166,7 @@ func (w *writeClient) Recv() (*WriteResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &WriteResponse{nextGenResp: w.resp}, nil
+	return &WriteResponse{nextGenSSTMeta: w.sstMeta}, nil
 }
 
 func (w *writeClient) Close() {
@@ -190,7 +208,11 @@ func (c *client) Ingest(ctx context.Context, in *IngestRequest) error {
 	url := fmt.Sprintf("http://%s/ingest_s3?cluster_id=%d&region_id=%d&epoch_version=%d",
 		store.GetStatusAddress(), c.clusterID, ri.Id, ri.RegionEpoch.Version)
 
-	bodyRd := bytes.NewReader(in.WriteResp.nextGenResp)
+	data, err := json.Marshal(&in.WriteResp.nextGenSSTMeta)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	bodyRd := bytes.NewReader(data)
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bodyRd)
 	if err != nil {
 		return errors.Trace(err)
