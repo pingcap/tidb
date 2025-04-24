@@ -80,6 +80,6 @@ func TestRuleBasedPlanPerfPredictor(t *testing.T) {
 	p1.Reason, p1.Recommend = "", ""
 
 	p1.AvgLatency = 60
-	scores, explanations, _ = p.PerfPredicate([]*BindingPlanInfo{p1, p2})
+	scores, _, _ = p.PerfPredicate([]*BindingPlanInfo{p1, p2})
 	require.Equal(t, scores, []float64{0, 0}) // no recommendation
 }
