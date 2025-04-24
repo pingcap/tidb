@@ -1332,7 +1332,7 @@ func TestApplyCache(t *testing.T) {
 		flag bool
 	)
 	value := (result.Rows()[1][5]).(string)
-	for ind = range len(value) - 5 {
+	for ind = 0; ind < len(value)-5; ind++ {
 		if value[ind:ind+5] == "cache" {
 			flag = true
 			break
@@ -1349,7 +1349,7 @@ func TestApplyCache(t *testing.T) {
 	require.Contains(t, result.Rows()[1][0], "Apply")
 	flag = false
 	value = (result.Rows()[1][5]).(string)
-	for ind = range len(value) - 5 {
+	for ind = 0; ind < len(value)-5; ind++ {
 		if value[ind:ind+5] == "cache" {
 			flag = true
 			break
