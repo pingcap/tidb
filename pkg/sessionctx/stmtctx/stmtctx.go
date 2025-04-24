@@ -325,6 +325,8 @@ type StatementContext struct {
 	// If the binding is not used by the stmt, the value is empty
 	BindSQL string
 
+	RelevantKnobs map[string][2]float64 // [knob]min:max
+
 	// The several fields below are mainly for some diagnostic features, like stmt summary and slow query.
 	// We cache the values here to avoid calculating them multiple times.
 	// Note:
