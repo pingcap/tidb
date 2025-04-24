@@ -27,7 +27,7 @@ type PlanGenerator interface {
 type knobBasedPlanGenerator struct {
 }
 
-func (pg *knobBasedPlanGenerator) Generate(defaultSchema string, sql string) (plans []*BindingPlanInfo, err error) {
+func (*knobBasedPlanGenerator) Generate(string, string) (plans []*BindingPlanInfo, err error) {
 	// TODO: implement this
 	return nil, nil
 }
@@ -47,7 +47,7 @@ type PlanPerfPredictor interface {
 type ruleBasedPlanPerfPredictor struct {
 }
 
-func (ppp *ruleBasedPlanPerfPredictor) PerfPredicate(plans []*BindingPlanInfo) (scores []float64, explanations []string, err error) {
+func (*ruleBasedPlanPerfPredictor) PerfPredicate(plans []*BindingPlanInfo) (scores []float64, explanations []string, err error) {
 	scores = make([]float64, len(plans))
 	explanations = make([]string, len(plans))
 
@@ -115,7 +115,7 @@ func (ppp *ruleBasedPlanPerfPredictor) PerfPredicate(plans []*BindingPlanInfo) (
 type llmBasedPlanPerfPredictor struct {
 }
 
-func (ppp *llmBasedPlanPerfPredictor) PerfPredicate(plans []*BindingPlanInfo) (scores []float64, explanations []string, err error) {
+func (*llmBasedPlanPerfPredictor) PerfPredicate(plans []*BindingPlanInfo) (scores []float64, explanations []string, err error) {
 	scores = make([]float64, len(plans))
 	explanations = make([]string, len(plans))
 	// TODO: implement this

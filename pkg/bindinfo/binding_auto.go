@@ -97,7 +97,7 @@ func (ba *bindingAuto) ShowPlansForSQL(currentDB, sqlOrDigest, charset, collatio
 		return planCandidates, err
 	}
 	_, err = ba.fillRecommendation(planCandidates, ba.llmPredictor, "LLM")
-	return planCandidates, nil
+	return planCandidates, err
 }
 
 func (ba *bindingAuto) getHistoricalPlanInfo(currentDB, sqlOrDigest, charset, collation string) ([]*BindingPlanInfo, error) {
@@ -162,7 +162,7 @@ func (ba *bindingAuto) getHistoricalPlanInfo(currentDB, sqlOrDigest, charset, co
 	return bindingPlans, nil
 }
 
-func (ba *bindingAuto) fillRecommendation(plans []*BindingPlanInfo, predictor PlanPerfPredictor, name string) (bool, error) {
+func (*bindingAuto) fillRecommendation(plans []*BindingPlanInfo, predictor PlanPerfPredictor, name string) (bool, error) {
 	if len(plans) == 0 {
 		return false, nil
 	}
