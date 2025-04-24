@@ -95,7 +95,7 @@ func TestShowDistributionJobs(t *testing.T) {
 	job["job-id"] = float64(1)
 	job["alias"] = strings.Join([]string{"test", "test", "partition(P0,P1)"}, ".")
 	job["engine"] = "tikv"
-	job["rule"] = "leader"
+	job["rule"] = "leader-scatter"
 	now := time.Now()
 	layout := "2006-01-02T15:04:05.999999-07:00"
 	job["create"] = now.Add(-time.Minute).Format(layout)
@@ -151,23 +151,23 @@ func TestDistributeTable(t *testing.T) {
 	config := map[string]any{
 		"alias":  alias,
 		"engine": "tikv",
-		"rule":   "leader",
+		"rule":   "leader-scatter",
 	}
 	tk.MustExec("create table t1(a int)")
 	mockGetSchedulerConfig("balance-range-scheduler")
 	mockCreateSchedulerWithInput(table, partition, config)
-	tk.MustQuery(fmt.Sprintf("distribute table %s rule=leader engine=tikv", table)).Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf("distribute table %s rule=leader-scatter engine=tikv", table)).Check(testkit.Rows("1"))
 	// create new scheduler with the same inputs
 	mockCreateSchedulerWithInput(table, partition, config)
-	tk.MustQuery(fmt.Sprintf("distribute table %s rule=leader engine=tikv", table)).Check(testkit.Rows("2"))
+	tk.MustQuery(fmt.Sprintf("distribute table %s rule=leader-scatter engine=tikv", table)).Check(testkit.Rows("2"))
 
 	// test for incorrect arguments
-	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule=leader engine=tiflash", table),
-		"[planner:1210]Incorrect arguments to the rule of tiflash must be learner")
+	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule=leader-scatter engine=tiflash", table),
+		"[planner:1210]Incorrect arguments to the rule of tiflash must be learner-scatter")
 	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule=leader engine=titan", table),
 		"[planner:1210]Incorrect arguments to engine must be tikv or tiflash")
 	tk.MustGetErrMsg(fmt.Sprintf("distribute table %s rule=witness engine=tikv", table),
-		"[planner:1210]Incorrect arguments to rule must be leader, follower or learner")
+		"[planner:1210]Incorrect arguments to rule must be leader-scatter, follower-scatter or learner-scatter")
 }
 
 func TestShowTableDistributions(t *testing.T) {
@@ -193,25 +193,28 @@ func TestShowTableDistributions(t *testing.T) {
 			Return(distributions, nil)
 	}
 	distributions := &pdhttp.RegionDistributions{}
-	distributions.RegionDistributions = append(distributions.RegionDistributions, &pdhttp.RegionDistribution{
-		StoreID:               1,
-		EngineType:            "tikv",
-		RegionLeaderCount:     1,
-		RegionPeerCount:       3,
-		RegionWriteBytes:      100,
-		RegionWriteKeys:       10,
-		RegionWriteQuery:      1,
-		RegionLeaderReadBytes: 1000,
-		RegionLeaderReadKeys:  100,
-		RegionLeaderReadQuery: 10,
-		RegionPeerReadKeys:    10000,
-		RegionPeerReadBytes:   1000,
-		RegionPeerReadQuery:   100,
-	})
+	mockDistribution := func(storeID uint64) *pdhttp.RegionDistribution {
+		return &pdhttp.RegionDistribution{
+			StoreID:               storeID,
+			EngineType:            "tikv",
+			RegionLeaderCount:     1,
+			RegionPeerCount:       3,
+			RegionWriteBytes:      100,
+			RegionWriteKeys:       10,
+			RegionWriteQuery:      1,
+			RegionLeaderReadBytes: 1000,
+			RegionLeaderReadKeys:  100,
+			RegionLeaderReadQuery: 10,
+			RegionPeerReadKeys:    10000,
+			RegionPeerReadBytes:   1000,
+			RegionPeerReadQuery:   100,
+		}
+	}
+	distributions.RegionDistributions = append(distributions.RegionDistributions, mockDistribution(1), mockDistribution(2))
 	tk.MustExec("create table t1(a int)")
 	mockGetDistributions("t1", "", distributions)
-	tk.MustQuery("show table t1 distributions").Check(testkit.Rows("t1 1 tikv 1 3 100 10 1 " +
-		"1000 100 10 1000 10000 100"))
+	tk.MustQuery("show table t1 distributions").Check(testkit.Rows("t1 1 tikv 1 3 100 10 1 "+
+		"1000 100 10 1000 10000 100", "t1 2 tikv 1 3 100 10 1 1000 100 10 1000 10000 100"))
 
 	// test for partition table distributions
 	tk.MustExec("create table tp1 (id int) PARTITION BY RANGE (id) (" +
@@ -221,10 +224,12 @@ func TestShowTableDistributions(t *testing.T) {
 		")")
 	mockGetDistributions("tp1", "p0", distributions)
 	mockGetDistributions("tp1", "p1", distributions)
-	tk.MustQuery("show table tp1 partition(p0) distributions").Check(testkit.Rows("p0 1 tikv 1 3 100 10 1 " +
-		"1000 100 10 1000 10000 100"))
+	tk.MustQuery("show table tp1 partition(p0) distributions").Check(testkit.Rows("p0 1 tikv 1 3 100 10 1 "+
+		"1000 100 10 1000 10000 100", "p0 2 tikv 1 3 100 10 1 1000 100 10 1000 10000 100"))
 	tk.MustQuery("show table tp1 partition(p0,p1) distributions").Check(testkit.Rows("p0 1 tikv 1 3 100 10 1 "+
-		"1000 100 10 1000 10000 100", "p1 1 tikv 1 3 100 10 1 1000 100 10 1000 10000 100"))
+		"1000 100 10 1000 10000 100", "p0 2 tikv 1 3 100 10 1 1000 100 10 1000 10000 100",
+		"p1 1 tikv 1 3 100 10 1 1000 100 10 1000 10000 100", "p1 2 tikv 1 3 100 10 1 1000 100 10 1000 10000 100",
+	))
 }
 
 func TestCancelDistributionJob(t *testing.T) {
