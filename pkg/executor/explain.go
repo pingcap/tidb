@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/pingcap/tidb/pkg/types"
 	"os"
 	"path/filepath"
@@ -144,9 +145,24 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 	return err
 }
 
+type OQOKnob struct {
+	Var string  `json:"var"`
+	Min float64 `json:"min"`
+	Max float64 `json:"max"`
+}
+
 func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string, err error) {
 	if e.explain.Format == types.ExplainFormatOQOKnobs {
-		rows = append(rows, []string{"OQOKnobs"})
+		knobs := []OQOKnob{
+			{"tidb_opt_table_reader_cost_factor", 0, 10000},
+			{"tidb_opt_hash_agg_cost_factor", 0, 10000},
+		}
+		data, jerr := json.Marshal(knobs)
+		if jerr != nil {
+			return nil, jerr
+		}
+
+		rows = append(rows, []string{string(data)})
 		return
 	}
 
