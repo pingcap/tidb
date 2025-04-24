@@ -1271,7 +1271,8 @@ func (b *batchCopIterator) Close() error {
 
 func (b *batchCopIterator) handleTask(ctx context.Context, bo *Backoffer, task *batchCopTask) {
 	tasks := []*batchCopTask{task}
-	for idx := range tasks {
+	// Cannot change this to idx:=range tasks, since it changes the ranges within the for loop
+	for idx := 0; idx < len(tasks); idx++ {
 		ret, err := b.handleTaskOnce(ctx, bo, tasks[idx])
 		if err != nil {
 			resp := &batchCopResponse{err: errors.Trace(err), detail: new(CopRuntimeStats)}
