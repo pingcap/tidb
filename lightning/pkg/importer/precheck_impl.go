@@ -1046,8 +1046,8 @@ func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.
 		// so the last several columns either can be ignored or has a default value.
 		for i := len(row); i < colCountFromTiDB; i++ {
 			if _, ok := defaultCols[core.Columns[i].Name.L]; !ok {
-				msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` has %d columns,"+
-					"and data file has %d columns, but column %s are missing the default value,"+
+				msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s` has %d columns, "+
+					"and data file has %d columns, but column %s is missing the default value, "+
 					"please give column a default value to skip this check",
 					tableInfo.DB, tableInfo.Name, colCountFromTiDB, len(row), core.Columns[i].Name.L))
 			}
@@ -1067,7 +1067,7 @@ func (ci *schemaCheckItem) SchemaIsValid(ctx context.Context, tableInfo *mydump.
 			// tidb's column is ignored
 			// we need ensure this column has the default value.
 			if _, hasDefault := defaultCols[col.Name.L]; !hasDefault {
-				msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s`'s column %s cannot be ignored,"+
+				msgs = append(msgs, fmt.Sprintf("TiDB schema `%s`.`%s`'s column %s cannot be ignored, "+
 					"because it doesn't have a default value, please set tables.ignoreColumns properly",
 					tableInfo.DB, tableInfo.Name, col.Name.L))
 			}

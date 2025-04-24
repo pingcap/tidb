@@ -139,7 +139,7 @@ type IndexInfo struct {
 	State         SchemaState        `json:"state"`
 	BackfillState BackfillState      `json:"backfill_state"`
 	Comment       string             `json:"comment"`        // Comment
-	Tp            ast.IndexType      `json:"index_type"`     // Index type: Btree, Hash, Rtree or HNSW
+	Tp            ast.IndexType      `json:"index_type"`     // Index type: Btree, Hash, Rtree or Vector
 	Unique        bool               `json:"is_unique"`      // Whether the index is unique.
 	Primary       bool               `json:"is_primary"`     // Whether the index is primary key.
 	Invisible     bool               `json:"is_invisible"`   // Whether the index is invisible.
