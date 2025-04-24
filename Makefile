@@ -653,12 +653,12 @@ bazel_build:
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
 		//... --//build:with_nogo_flag=$(NOGO_FLAG)
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		//cmd/importer:importer //cmd/tidb-server:tidb-server //cmd/tidb-server:tidb-server-check --define gotags=codes --//build:with_nogo_flag=$(NOGO_FLAG)
+		//cmd/importer:importer //cmd/tidb-server:tidb-server //cmd/tidb-server:tidb-server-check --define gotags=$(BUILD_TAGS) --//build:with_nogo_flag=$(NOGO_FLAG)
 	cp bazel-out/k8-fastbuild/bin/cmd/tidb-server/tidb-server_/tidb-server ./bin
 	cp bazel-out/k8-fastbuild/bin/cmd/importer/importer_/importer      ./bin
 	cp bazel-out/k8-fastbuild/bin/cmd/tidb-server/tidb-server-check_/tidb-server-check ./bin
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		//cmd/tidb-server:tidb-server --stamp --workspace_status_command=./build/print-enterprise-workspace-status.sh --define gotags=codes,enterprise
+		//cmd/tidb-server:tidb-server --stamp --workspace_status_command=./build/print-enterprise-workspace-status.sh --define gotags=$(BUILD_TAGS),enterprise
 	./bazel-out/k8-fastbuild/bin/cmd/tidb-server/tidb-server_/tidb-server -V
 
 .PHONY: bazel_fail_build
