@@ -1815,7 +1815,7 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			case ast.ConstraintPrimaryKey:
 				err = e.CreatePrimaryKey(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
 			case ast.ConstraintFulltext:
-				sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt)
+				err = e.createFulltextIndex(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option, constr.IfNotExists)
 			case ast.ConstraintCheck:
 				if !vardef.EnableCheckConstraint.Load() {
 					sctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
@@ -4521,7 +4521,10 @@ func getIdentKey(ident ast.Ident) string {
 	return fmt.Sprintf("%s.%s", ident.Schema.L, ident.Name.L)
 }
 
-func getAnonymousIndexPrefix(columnarIndexType model.ColumnarIndexType) string {
+func getAnonymousIndexPrefix(columnarIndexType model.ColumnarIndexType, isFulltext bool) string {
+	if isFulltext {
+		return "fulltext_index"
+	}
 	switch columnarIndexType {
 	case model.ColumnarIndexTypeVector:
 		return "vector_index"
@@ -4616,7 +4619,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	indexColumns, _, err := buildIndexColumns(NewMetaBuildContextWithSctx(ctx), tblInfo.Columns, indexPartSpecifications, model.ColumnarIndexTypeNA)
+	indexColumns, _, err := buildIndexColumns(NewMetaBuildContextWithSctx(ctx), tblInfo.Columns, indexPartSpecifications, model.ColumnarIndexTypeNA, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4680,11 +4683,92 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 	return errors.Trace(err)
 }
 
+func checkTableTypeForFulltextIndex(tblInfo *model.TableInfo) error {
+	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
+		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Fulltext Index")
+	}
+	if tblInfo.TempTableType != model.TempTableNone {
+		return dbterror.ErrOptOnTemporaryTable.FastGenByArgs("fulltext index")
+	}
+	if tblInfo.GetPartitionInfo() != nil {
+		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported partition table")
+	}
+
+	return nil
+}
+
+// TODO: fill buildFulltextInfoWithCheck
+func buildFulltextInfoWithCheck(indexOption *ast.IndexOption, tblInfo *model.TableInfo) (*model.FulltextIndexInfo, string, error) {
+	return &model.FulltextIndexInfo{
+		ParserType: model.ParserType(indexOption.ParserName.L),
+	}, "", nil
+}
+func (e *executor) createFulltextIndex(ctx sessionctx.Context, ti ast.Ident, indexName ast.CIStr,
+	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
+	schema, t, err := e.getSchemaAndTableByIdent(ti)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	tblInfo := t.Meta()
+	if err := checkTableTypeForFulltextIndex(tblInfo); err != nil {
+		return errors.Trace(err)
+	}
+
+	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
+	indexName, _, err = checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, model.ColumnarIndexTypeNA, true, ifNotExists)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, funcExpr, err := buildFulltextInfoWithCheck(indexOption, tblInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Check before the job is put to the queue.
+	// This check is redundant, but useful. If DDL check fail before the job is put
+	// to job queue, the fail path logic is particularly fast.
+	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
+	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
+	// For same reason, decide whether index is global here.
+	_, _, err = buildIndexColumns(metaBuildCtx, tblInfo.Columns, indexPartSpecifications, model.ColumnarIndexTypeNA, true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// May be truncate comment here, when index comment too long and sql_mode is't strict.
+	sessionVars := ctx.GetSessionVars()
+	if _, err = validateCommentLength(sessionVars.StmtCtx.ErrCtx(), sessionVars.SQLMode, indexName.String(), &indexOption.Comment, dbterror.ErrTooLongTableComment); err != nil {
+		return errors.Trace(err)
+	}
+
+	job := buildAddIndexJobWithoutTypeAndArgs(ctx, schema, t)
+	job.Version = model.GetJobVerInUse()
+	job.Type = model.ActionAddFulltextIndex
+	indexPartSpecifications[0].Expr = nil
+
+	args := &model.ModifyIndexArgs{
+		IndexArgs: []*model.IndexArg{{
+			IndexName:               indexName,
+			IndexPartSpecifications: indexPartSpecifications,
+			IndexOption:             indexOption,
+			FuncExpr:                funcExpr,
+		}},
+		OpType: model.OpAddIndex,
+	}
+
+	err = e.doDDLJob2(ctx, job, args)
+	// key exists, but if_not_exists flags is true, so we ignore this error.
+	if dbterror.ErrDupKeyName.Equal(err) && ifNotExists {
+		ctx.GetSessionVars().StmtCtx.AppendNote(err)
+		return nil
+	}
+	return errors.Trace(err)
+}
 func checkIndexNameAndColumns(ctx *metabuild.Context, t table.Table, indexName ast.CIStr,
-	indexPartSpecifications []*ast.IndexPartSpecification, columnarIndexType model.ColumnarIndexType, ifNotExists bool) (ast.CIStr, []*model.ColumnInfo, error) {
+	indexPartSpecifications []*ast.IndexPartSpecification, columnarIndexType model.ColumnarIndexType, isFulltext bool, ifNotExists bool) (ast.CIStr, []*model.ColumnInfo, error) {
 	// Deal with anonymous index.
 	if len(indexName.L) == 0 {
-		colName := ast.NewCIStr(getAnonymousIndexPrefix(columnarIndexType))
+		colName := ast.NewCIStr(getAnonymousIndexPrefix(columnarIndexType, isFulltext))
 		if indexPartSpecifications[0].Column != nil {
 			colName = indexPartSpecifications[0].Column.Name
 		}
@@ -4714,7 +4798,7 @@ func checkIndexNameAndColumns(ctx *metabuild.Context, t table.Table, indexName a
 
 	// Build hidden columns if necessary.
 	var hiddenCols []*model.ColumnInfo
-	if columnarIndexType == model.ColumnarIndexTypeNA {
+	if columnarIndexType == model.ColumnarIndexTypeNA && !isFulltext {
 		hiddenCols, err = buildHiddenColumnInfoWithCheck(ctx, indexPartSpecifications, indexName, t.Meta(), t.Cols())
 		if err != nil {
 			return ast.CIStr{}, nil, err
@@ -4757,7 +4841,7 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	}
 
 	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
-	indexName, _, err = checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, columnarIndexType, ifNotExists)
+	indexName, _, err = checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, columnarIndexType, false, ifNotExists)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4775,7 +4859,7 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	_, _, err = buildIndexColumns(metaBuildCtx, tblInfo.Columns, indexPartSpecifications, columnarIndexType)
+	_, _, err = buildIndexColumns(metaBuildCtx, tblInfo.Columns, indexPartSpecifications, columnarIndexType, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4863,13 +4947,15 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
 	// not support Spatial and FullText index
 	switch keyType {
-	case ast.IndexKeyTypeFullText, ast.IndexKeyTypeSpatial:
+	case ast.IndexKeyTypeSpatial:
 		return dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT and SPATIAL index is not supported")
 	case ast.IndexKeyTypeColumnar:
 		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("not currently supported")
 		// return e.createColumnarIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists, model.ColumnarIndexTypeInverted)
 	case ast.IndexKeyTypeVector:
 		return e.createColumnarIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists, model.ColumnarIndexTypeVector)
+	case ast.IndexKeyTypeFullText:
+		return e.createFulltextIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
 	}
 	unique := keyType == ast.IndexKeyTypeUnique
 	schema, t, err := e.getSchemaAndTableByIdent(ti)
@@ -4881,7 +4967,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Index"))
 	}
 	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
-	indexName, hiddenCols, err := checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, model.ColumnarIndexTypeNA, ifNotExists)
+	indexName, hiddenCols, err := checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, model.ColumnarIndexTypeNA, false, ifNotExists)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4896,7 +4982,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	indexColumns, _, err := buildIndexColumns(metaBuildCtx, finalColumns, indexPartSpecifications, model.ColumnarIndexTypeNA)
+	indexColumns, _, err := buildIndexColumns(metaBuildCtx, finalColumns, indexPartSpecifications, model.ColumnarIndexTypeNA, false)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4914,7 +5000,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	}
 
 	if indexOption != nil && indexOption.Tp == ast.IndexTypeHypo { // for hypo-index
-		indexInfo, err := BuildIndexInfo(metaBuildCtx, tblInfo, indexName, false, unique, model.ColumnarIndexTypeNA,
+		indexInfo, err := BuildIndexInfo(metaBuildCtx, tblInfo, indexName, false, unique, false, model.ColumnarIndexTypeNA,
 			indexPartSpecifications, indexOption, model.StatePublic)
 		if err != nil {
 			return err

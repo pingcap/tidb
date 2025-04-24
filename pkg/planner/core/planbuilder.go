@@ -2057,7 +2057,7 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *resolve.TableNameW, cols *calc
 		}
 		virtualExprs := make([]expression.Expression, 0, len(tblInfo.Columns))
 		for _, idx := range tblInfo.Indices {
-			if idx.State != model.StatePublic || idx.MVIndex || idx.IsColumnarIndex() {
+			if idx.State != model.StatePublic || idx.MVIndex || idx.IsColumnarIndex() || idx.IsFulltextIndex() {
 				continue
 			}
 			for _, idxCol := range idx.Columns {
@@ -2334,6 +2334,10 @@ func getModifiedIndexesInfoForAnalyze(
 		}
 		if originIdx.IsColumnarIndex() {
 			stmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing columnar index is not supported, skip %s", originIdx.Name.L))
+			continue
+		}
+		if originIdx.IsFulltextIndex() {
+			stmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing fulltext index is not supported, skip %s", originIdx.Name.L))
 			continue
 		}
 		if allColumns {
@@ -2793,6 +2797,10 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing columnar index is not supported, skip %s", idx.Name.L))
 				continue
 			}
+			if idx.IsFulltextIndex() {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing fulltext index is not supported, skip %s", idx.Name.L))
+				continue
+			}
 			p.IdxTasks = append(p.IdxTasks, generateIndexTasks(idx, as, tnW.TableInfo, partitionNames, physicalIDs, version)...)
 		}
 		handleCols := BuildHandleColsForAnalyze(b.ctx, tnW.TableInfo, true, nil)
@@ -2873,6 +2881,10 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing columnar index is not supported, skip %s", idx.Name.L))
 			continue
 		}
+		if idx.IsFulltextIndex() {
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing fulltext index is not supported, skip %s", idx.Name.L))
+			continue
+		}
 		p.IdxTasks = append(p.IdxTasks, generateIndexTasks(idx, as, tblInfo, names, physicalIDs, version)...)
 	}
 	return p, nil
@@ -2905,6 +2917,10 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 			}
 			if idx.IsColumnarIndex() {
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing columnar index is not supported, skip %s", idx.Name.L))
+				continue
+			}
+			if idx.IsFulltextIndex() {
+				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing fulltext index is not supported, skip %s", idx.Name.L))
 				continue
 			}
 
