@@ -1,4 +1,4 @@
-package mem
+package memory
 
 import (
 	"errors"
@@ -11,7 +11,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var errArbitrateFailError = errors.New("failed to allocate resouce from arbitrator")
+var errArbitrateFailError = errors.New("failed to allocate resource from arbitrator")
 
 type DebugFieldsIterm [30]zap.Field
 type DebugFields struct {
@@ -255,7 +255,7 @@ func (m *MemArbitrator) updatePoolMediumCapacity(utimeMilli int64) {
 			cnt := uint32(0)
 			index := 0
 
-			for i := 0; i < DefServerlimitMinUnitNum; i++ {
+			for i := range DefServerlimitMinUnitNum {
 				if tar1 != nil {
 					cnt += tar1.slot[i]
 				}
@@ -463,7 +463,7 @@ func (m *MemArbitrator) executeTick(utimeMilli int64) bool { // exec batch tasks
 
 func (d *DebugFields) append(f ...zap.Field) {
 	n := min(len(f), len(d.fields)-d.n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		d.fields[d.n] = f[i]
 		d.n++
 	}
@@ -585,11 +585,11 @@ func (m *MemArbitrator) shrinkAwaitFreePool(minRemain, holderMinRemain int64, ut
 }
 
 func (m *MemArbitrator) hasNoMemRisk() bool {
-	return int64(m.heapController.heapAlloc.Load()) < m.mu.threshold.risk
+	return m.heapController.heapAlloc.Load() < m.mu.threshold.risk
 }
 
 func (m *MemArbitrator) isMemSafe() bool {
-	return int64(m.heapController.heapInuse.Load()) < m.mu.threshold.oomRisk
+	return m.heapController.heapInuse.Load() < m.mu.threshold.oomRisk
 }
 
 func (m *MemArbitrator) calcMemRisk() *RuntimeMemStateV1 {
@@ -709,7 +709,7 @@ func (m *MemArbitrator) handleMemUnsafe() {
 			// dumpHeapProfile()
 			var newKillNum int
 			var reclaiming int64
-			memToReclaim := int64(m.heapController.heapInuse.Load()) - m.mu.threshold.risk
+			memToReclaim := m.heapController.heapInuse.Load() - m.mu.threshold.risk
 			{
 				{ // warning
 					profile := m.recordDebugProfile()
@@ -903,11 +903,11 @@ func (m *MemArbitrator) initAwaitFreePool(allocAlignSize, shardNum int64, holder
 	}
 
 	p.SetOutOfCapacityAction(func(s OutOfCapacityActionArgs) error {
-		if int64(m.heapController.heapAlloc.Load()) > m.mu.threshold.risk-s.request {
+		if m.heapController.heapAlloc.Load() > m.mu.threshold.risk-s.request {
 			m.execMetrics.awaitFree.fail++
 			return errArbitrateFailError
 		}
-		if int64(m.heapController.heapInuse.Load()) > m.mu.threshold.oomRisk-s.request {
+		if m.heapController.heapInuse.Load() > m.mu.threshold.oomRisk-s.request {
 			m.execMetrics.awaitFree.fail++
 			return errArbitrateFailError
 		}

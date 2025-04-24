@@ -1,4 +1,4 @@
-package mem
+package memory
 
 import (
 	"container/list"
@@ -161,7 +161,7 @@ func shardIndexByUID(key uint64, shardsMask uint64) uint64 {
 
 func getQuotaShard(quota int64, maxQuotaShard int) int {
 	p := uint64(quota) / uint64(BaseQuotaUnit)
-	pos := bits.Len64(uint64(p))
+	pos := bits.Len64(p)
 	pos = min(pos, maxQuotaShard-1)
 	return pos
 }

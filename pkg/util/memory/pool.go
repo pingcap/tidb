@@ -1,18 +1,17 @@
-package mem
+package memory
 
 import (
 	"fmt"
 	"math"
+	"sync"
 	"sync/atomic"
-
-	"github.com/pingcap/tidb/pkg/util/syncutil"
 )
 
 var ResourcePoolID = uint64(0)
 
 type ResourcePool struct {
 	mu struct {
-		syncutil.Mutex
+		sync.Mutex
 
 		allocated int64
 

@@ -1,4 +1,4 @@
-package mem
+package memory
 
 import (
 	"container/list"
@@ -2515,7 +2515,7 @@ func TestBasicUtils(t *testing.T) {
 		const cnt = 1 << 8
 		bgId := uint64(4068484684)
 		odd := 0
-		for i := 0; i < cnt; i++ {
+		for i := range cnt {
 			n := shardIndexByUID(bgId+uint64(i)*2, cnt-1)
 			if n&1 != 0 {
 				odd++

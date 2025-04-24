@@ -8,7 +8,7 @@
 // by the Apache License, Version 2.0, included in the file
 // licenses/APL.txt.
 
-package mem
+package memory
 
 import (
 	"fmt"
@@ -429,14 +429,14 @@ func (m *entryMap) init(shardNum uint64, maxQuotaShard int, minQuotaForReclaim i
 	m.minQuotaShardIndexToCheck = getQuotaShard(minQuotaForReclaim, m.maxQuotaShardIndex)
 	for p := minArbitrateMemPriority; p < maxArbitrateMemPriority; p++ {
 		m.quotaShards[p] = make([]*entryQuotaShard, m.maxQuotaShardIndex)
-		for i := 0; i < m.maxQuotaShardIndex; i++ {
+		for i := range m.maxQuotaShardIndex {
 			m.quotaShards[p][i] = &entryQuotaShard{
 				entries: make(mapUidEntry),
 			}
 		}
 	}
 
-	for i := uint64(0); i < shardNum; i++ {
+	for i := range uint64(shardNum) {
 		m.shards[i] = &entryMapShard{
 			entries: make(mapUidEntry),
 		}
@@ -819,7 +819,7 @@ func (m *MemArbitrator) shrinkDigestProfile(utimeSec int64, limit, shrinkToLimit
 	shrinkMaxSize := DefMaxLimit
 	{
 		n := int64(0)
-		for i := 0; i < DefPoolQuotaShards; i++ {
+		for i := range DefPoolQuotaShards {
 			if n += int64(valMap[i]); n >= toShinkNum {
 				shrinkMaxSize = BaseQuotaUnit * (1 << i)
 				break
@@ -907,7 +907,7 @@ func (m *MemArbitrator) UpdateDigestProfileCache(digestID uint64, memConsumed in
 	if updateSize {
 		maxv := tar.maxVal.Load()
 		// tsAlign-1, tsAlign
-		for i := int64(0); i < maxDur; i++ {
+		for i := range int64(maxDur) {
 			d := &pf.timedMap[(maxNum+tsAlign-i)%maxNum]
 
 			if ts := d.tsAlign.Load(); ts > tsAlign-maxDur && ts <= tsAlign {
@@ -1179,7 +1179,7 @@ func (m *MemArbitrator) tryToUpdateBuffer(memConsumed, memQuotaLimit, utimeSec i
 
 	if updateSize || updateQuota {
 		// tsAlign-1, tsAlign
-		for i := int64(0); i < maxDur; i++ {
+		for i := range int64(maxDur) {
 			d := &m.buffer.timedMap[(maxNum+tsAlign-i)%maxNum]
 
 			if ts := d.ts.Load(); ts > tsAlign-maxDur && ts <= tsAlign {
@@ -1459,7 +1459,7 @@ func (m *MemArbitrator) SetLimit(x uint64) (changed bool) {
 		if limit != m.mu.limit {
 			changed = true
 			needWake = limit > m.mu.limit // update to a greater limit
-			m.mu.limit = int64(limit)
+			m.mu.limit = limit
 			m.mu.threshold.risk = int64(float64(limit) * DefCheckSafeRatio)
 			m.mu.threshold.oomRisk = int64(float64(limit) * DefCheckOOMRatio)
 			m.adjustSoftLimitWithLock()
@@ -1543,12 +1543,10 @@ func (m *MemArbitrator) allocateFromArbitrator(remainBytes int64, leastLeft int6
 		if m.mu.allocated <= m.mu.limit-leastLeft-remainBytes {
 			m.mu.allocated += remainBytes
 			reclaimedBytes += remainBytes
-			remainBytes = 0
 			ok = true
 		} else if v := m.mu.limit - leastLeft - m.mu.allocated; v > 0 {
 			m.mu.allocated += v
 			reclaimedBytes += v
-			remainBytes -= v
 		}
 		//
 		m.mu.Unlock()
@@ -2074,7 +2072,7 @@ func (m *MemArbitrator) restartEntryByContext(entry *rootPoolEntry, ctx *Context
 	} else {
 		entry.ctx.cancelCh = nil
 		entry.ctx.waitAverse = false
-		entry.ctx.memPriority = ArbitrateMemPriority(ArbitrateMemPriorityMedium)
+		entry.ctx.memPriority = ArbitrateMemPriorityMedium
 		entry.ctx.preferPrivilege = false
 	}
 
