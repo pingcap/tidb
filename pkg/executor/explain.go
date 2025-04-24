@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 	"encoding/json"
-	"github.com/pingcap/tidb/pkg/types"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -153,10 +153,18 @@ type OQOKnob struct {
 
 func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string, err error) {
 	if e.explain.Format == types.ExplainFormatOQOKnobs {
-		knobs := []OQOKnob{
-			{"tidb_opt_table_reader_cost_factor", 0, 10000},
-			{"tidb_opt_hash_agg_cost_factor", 0, 10000},
+		relevantKnobs := e.Ctx().GetSessionVars().StmtCtx.RelevantKnobs
+		knobs := make([]OQOKnob, 0, len(relevantKnobs))
+		for name, val := range relevantKnobs {
+			knobs = append(knobs, OQOKnob{
+				Var: name,
+				Min: val[0],
+				Max: val[1],
+			})
 		}
+		sort.Slice(knobs, func(i, j int) bool {
+			return knobs[i].Var < knobs[j].Var
+		})
 		data, jerr := json.Marshal(knobs)
 		if jerr != nil {
 			return nil, jerr
