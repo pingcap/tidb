@@ -917,11 +917,11 @@ func (b *builtinJSONTypeSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 	return nil
 }
 
-func (b *builtinJSONSumSig) vectorized() bool {
+func (b *builtinJSONSumCRC32Sig) vectorized() bool {
 	return true
 }
 
-func (b *builtinJSONSumSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinJSONSumCRC32Sig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	ft := b.tp.ArrayType()
 	f := convertJSON2Tp(ft.EvalType())
 	if f == nil {
@@ -949,6 +949,10 @@ func (b *builtinJSONSumSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resu
 		}
 
 		jsonItem := jsonBuf.GetJSON(i)
+		if jsonItem.TypeCode != types.JSONTypeCodeArray {
+			return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "JSON_SUM_CRC32")
+		}
+
 		var sum int64
 		for j := range jsonItem.GetElemCount() {
 			item, err := f(fakeSctx, jsonItem.ArrayGetElem(j), ft)

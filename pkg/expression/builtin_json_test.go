@@ -133,35 +133,100 @@ func TestJSONSumCrc32(t *testing.T) {
 		return sum
 	}
 
+	buildJSON := func(vals []any, path string) (Expression, Expression) {
+		v := make(map[string]any)
+		v[path] = vals
+		return datumsToConstants(types.MakeDatums(types.CreateBinaryJSON(v)))[0],
+			datumsToConstants(types.MakeDatums(fmt.Sprintf(`$.%s`, path)))[0]
+	}
+
+	buildType := func(tp byte, unsigned bool) *types.FieldType {
+		b := types.NewFieldTypeBuilder().SetType(tp).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).SetArray(true)
+		if unsigned {
+			b.AddFlag(mysql.UnsignedFlag)
+		}
+		if types.IsString(tp) {
+			b.SetFlen(16)
+		}
+		return b.BuildP()
+	}
+
 	ctx := createContext(t)
 	tbl := []struct {
-		input []any
-		tp    *types.FieldType
+		input     []any
+		path      string
+		evalError bool
+		tp        *types.FieldType
 	}{
 		{
 			[]any{int64(-1), int64(2), int64(3)},
-			types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).SetArray(true).BuildP(),
+			"",
+			false,
+			buildType(mysql.TypeLonglong, false),
 		},
 		{
 			[]any{int64(1), int64(2), int64(3)},
-			types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).AddFlag(mysql.UnsignedFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).SetArray(true).BuildP(),
+			"",
+			false,
+			buildType(mysql.TypeLonglong, true),
+		},
+		{
+			[]any{int64(-1), int64(1)},
+			"",
+			true,
+			buildType(mysql.TypeLonglong, true),
 		},
 		{
 			[]any{"a", "b", "c"},
-			types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).SetFlen(10).SetArray(true).BuildP(),
+			"",
+			false,
+			buildType(mysql.TypeVarString, false),
+		},
+		{
+			[]any{float64(1.1), int64(1), float64(3.3)},
+			"",
+			false,
+			buildType(mysql.TypeDouble, false),
+		},
+		{
+			[]any{float64(1.1), int64(1), float64(3.3)},
+			"",
+			true,
+			buildType(mysql.TypeLonglong, false),
 		},
 		{
 			[]any{1.1, 2.2, 3.3},
-			types.NewFieldTypeBuilder().SetType(mysql.TypeDouble).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).SetArray(true).BuildP(),
+			"arr",
+			false,
+			buildType(mysql.TypeDouble, false),
+		},
+		{
+			[]any{1.1, "1.1", 3.3},
+			"arr",
+			true,
+			buildType(mysql.TypeDouble, false),
 		},
 	}
+
+	var err error
 	for _, tt := range tbl {
-		f, err := BuildJSONSumCrc32FunctionWithCheck(ctx, datumsToConstants(types.MakeDatums(types.CreateBinaryJSON(tt.input)))[0], tt.tp)
+		inputExpr := datumsToConstants(types.MakeDatums(types.CreateBinaryJSON(tt.input)))[0]
+		if tt.path != "" {
+			json, extract := buildJSON(tt.input, tt.path)
+			inputExpr, err = NewFunction(ctx, ast.JSONExtract, types.NewFieldType(mysql.TypeJSON), json, extract)
+			require.NoError(t, err)
+		}
+
+		f, err := BuildJSONSumCrc32FunctionWithCheck(ctx, inputExpr, tt.tp)
 		require.NoError(t, err, tt.input)
 
 		val, _, err := f.EvalInt(ctx, chunk.Row{})
-		require.NoError(t, err, tt.input)
-		require.EqualValues(t, checksumFunc(tt.input), val)
+		if tt.evalError {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err, tt.input)
+			require.EqualValues(t, checksumFunc(tt.input), val)
+		}
 	}
 }
 

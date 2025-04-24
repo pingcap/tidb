@@ -299,6 +299,22 @@ func (g *charInt64Gener) gen() any {
 	return int64(nanosecond)
 }
 
+type jsonArrayGener struct {
+	rand *defaultRandGen
+}
+
+func newJSONArrayGener() *jsonArrayGener {
+	return &jsonArrayGener{newDefaultRandGen()}
+}
+
+func (g *jsonArrayGener) gen() any {
+	v := make([]any, 4)
+	for i := range len(v) {
+		v[i] = int64(g.rand.Int())
+	}
+	return types.CreateBinaryJSON(v)
+}
+
 // selectStringGener select one string randomly from the candidates array
 type selectStringGener struct {
 	candidates []string
@@ -1459,7 +1475,10 @@ func genVecBuiltinFuncBenchCase(ctx BuildContext, funcName string, testCase vecE
 	}
 
 	var err error
-	if funcName == ast.Cast {
+	if funcName == ast.JSONSumCrc32 {
+		fc := &jsonSumFunctionClass{baseFunctionClass{ast.JSONSumCrc32, 1, 1}, fts[0]}
+		baseFunc, err = fc.getFunction(ctx, cols)
+	} else if funcName == ast.Cast {
 		var fc functionClass
 		tp := eType2FieldType(testCase.retEvalType)
 		switch testCase.retEvalType {
