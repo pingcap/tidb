@@ -189,18 +189,16 @@ func (c *CheckpointAdvancer) GetInResolvingLock() bool {
 // collect them to the collector.
 func (c *CheckpointAdvancer) GetCheckpointInRange(ctx context.Context, start, end []byte,
 	collector *clusterCollector) error {
-	log.Debug("scanning range", logutil.Key("start", start), logutil.Key("end", end))
+	// don't log in this method as huge number of regions will make it a log spam
 	iter := IterateRegion(c.env, start, end)
 	for !iter.Done() {
 		rs, err := iter.Next(ctx)
 		if err != nil {
 			return err
 		}
-		log.Debug("scan region", zap.Int("len", len(rs)))
 		for _, r := range rs {
 			err := collector.CollectRegion(r)
 			if err != nil {
-				log.Warn("meet error during getting checkpoint", logutil.ShortError(err))
 				return err
 			}
 		}
@@ -249,6 +247,7 @@ func (c *CheckpointAdvancer) tryAdvance(ctx context.Context, length int,
 	}
 	err = eg.Wait()
 	if err != nil {
+		log.Warn("meet error during getting checkpoint", logutil.ShortError(err))
 		return err
 	}
 
