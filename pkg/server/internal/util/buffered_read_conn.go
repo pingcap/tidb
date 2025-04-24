@@ -51,7 +51,7 @@ func (conn BufferedReadConn) Peek(n int) ([]byte, error) {
 	return conn.rb.Peek(n)
 }
 
-// IsAlive use syscall to detect the connection is alive or not.
+// IsAlive detects the connection is alive or not.
 // return value < 0, means unknow
 // return value = 0, means not alive
 // return value = 1, means still alive
@@ -64,11 +64,10 @@ func (conn BufferedReadConn) IsAlive() int {
 		}
 		// nolint:errcheck
 		defer conn.SetReadDeadline(time.Time{})
-		b := make([]byte, 1)
-		b, err = conn.Peek(1)
+		_, err = conn.Peek(1)
 		if err == io.EOF {
 			return 0
-		} else if ne, ok := err.(net.Error); ok && ne.Timeout() || len(b) != 0 {
+		} else if ne, ok := err.(net.Error); ok && ne.Timeout() {
 			return 1
 		}
 	}
