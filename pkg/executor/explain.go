@@ -182,6 +182,12 @@ func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string,
 	if err = e.explain.RenderResult(); err != nil {
 		return nil, err
 	}
+
+	if len(e.explain.Rows) > 0 && len(e.explain.Rows[0]) > 0 {
+		_, planDigest := GetPlanDigest(e.Ctx().GetSessionVars().StmtCtx)
+		e.explain.Rows[0][0] += ":" + planDigest.String()
+	}
+
 	return e.explain.Rows, nil
 }
 
