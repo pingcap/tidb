@@ -61,7 +61,7 @@ func (s *FixSizeBatchBudgets) shrink(minRemain int64, utimeMilli int64) (reclaim
 				b.Unlock()
 			}
 		} else {
-			if b.Capacity.Load() > 0 && b.LastUsedTimeSec*Kilo+DefFastAllocPoolShrinkDurMilli <= utimeMilli && b.TryLock() {
+			if b.Capacity.Load() > 0 && b.LastUsedTimeSec*Kilo+DefAwaitFreePoolShrinkDurMilli <= utimeMilli && b.TryLock() {
 				if toReclaim := b.Capacity.Load(); b.Used.Load() <= 0 && toReclaim > 0 {
 					b.Capacity.Add(-toReclaim)
 					reclaimed += toReclaim
@@ -145,16 +145,16 @@ func (m *MemArbitrator) AutoRun(
 ) bool {
 	return m.autoRun(
 		actions,
-		DefFastAllocPoolAllocAlignSize,
-		DefFastAllocPoolShardNum,
-		DefFastAllocPoolholderShardNum,
+		DefAwaitFreePoolAllocAlignSize,
+		DefAwaitFreePoolShardNum,
+		DefAwaitFreePoolholderShardNum,
 		DefTaskTickDur,
 	)
 }
 
 func (m *MemArbitrator) autoRun(
 	actions MemArbitratorActions,
-	fastAllocPoolAllocAlignSize, fastAllocPoolShardNum, fastAllocPoolholderShardNum int64,
+	awaitFreePoolAllocAlignSize, awaitFreePoolShardNum, awaitFreePoolholderShardNum int64,
 	taskTickDur time.Duration,
 ) bool {
 	m.controlMu.Lock()
@@ -167,7 +167,7 @@ func (m *MemArbitrator) autoRun(
 	{ // init
 		m.actions = actions
 		m.refreshRuntimeMemStats()
-		m.initAwaitFreePool(fastAllocPoolAllocAlignSize, fastAllocPoolShardNum, fastAllocPoolholderShardNum)
+		m.initAwaitFreePool(awaitFreePoolAllocAlignSize, awaitFreePoolShardNum, awaitFreePoolholderShardNum)
 		m.SetAbleToGC()
 	}
 	return m.asyncRun(taskTickDur)
@@ -505,7 +505,7 @@ func (m *MemArbitrator) recordDebugProfile() (f DebugFields) {
 
 func (m *MemArbitrator) HandleRuntime(s *runtime.MemStats) {
 	// shrink fast alloc pool
-	m.tryShrinkFastAllocPool(DefPoolReservedQuota, MB, nowUnixMilli())
+	m.tryShrinkAwaitFreePool(DefPoolReservedQuota, MB, nowUnixMilli())
 	// update tracked mem stats
 	m.tryUpdateTrackedMemStats(nowUnixMilli())
 	// set runtime mem stats & update avoidance size
@@ -543,22 +543,22 @@ func (m *MemArbitrator) updateTrackedMemStats() {
 		}
 	}
 
-	fastAllocUsed := m.awaitFreePoolUsed()
-	totalMemUsed += fastAllocUsed
+	awaitFreeUsed := m.awaitFreePoolUsed()
+	totalMemUsed += awaitFreeUsed
 
 	m.avoidance.heapTracked.Store(totalMemUsed)
 	m.avoidance.lastUpdateUtimeMilli.Store(nowUnixMilli())
 }
 
-func (m *MemArbitrator) tryShrinkFastAllocPool(minRemain, holderMinRemain int64, utimeMilli int64) bool {
-	if m.awaitFree.lastShrinkUtimeMilli.Load()+DefFastAllocPoolShrinkDurMilli <= utimeMilli {
-		m.shrinkFastAllocPool(minRemain, holderMinRemain, utimeMilli)
+func (m *MemArbitrator) tryShrinkAwaitFreePool(minRemain, holderMinRemain int64, utimeMilli int64) bool {
+	if m.awaitFree.lastShrinkUtimeMilli.Load()+DefAwaitFreePoolShrinkDurMilli <= utimeMilli {
+		m.shrinkAwaitFreePool(minRemain, holderMinRemain, utimeMilli)
 		return true
 	}
 	return false
 }
 
-func (m *MemArbitrator) shrinkFastAllocPool(minRemain, holderMinRemain int64, utimeMilli int64) {
+func (m *MemArbitrator) shrinkAwaitFreePool(minRemain, holderMinRemain int64, utimeMilli int64) {
 	poolReleased := int64(0)
 	reclaimed := m.awaitFree.budget.shrink(minRemain, utimeMilli) +
 		m.awaitFree.holder.shrink(holderMinRemain, utimeMilli)
@@ -578,7 +578,7 @@ func (m *MemArbitrator) shrinkFastAllocPool(minRemain, holderMinRemain int64, ut
 			//
 			m.mu.Unlock()
 		}
-		atomic.AddInt64(&m.execMetrics.fastAlloc.shrink, 1)
+		atomic.AddInt64(&m.execMetrics.awaitFree.shrink, 1)
 		m.weakWake()
 	}
 	m.awaitFree.lastShrinkUtimeMilli.Store(nowUnixMilli())
@@ -879,19 +879,19 @@ func (m *MemArbitrator) recordMemState(s *RuntimeMemStateV1, reason string) erro
 	return nil
 }
 
-func (m *MemArbitrator) GetFastAllocBudgets(uid uint64) *ConcurrentBudget {
+func (m *MemArbitrator) GetAwaitFreeBudgets(uid uint64) *ConcurrentBudget {
 	index := shardIndexByUID(uid, m.awaitFree.budget.sizeMask)
 	return &m.awaitFree.budget.shards[index]
 }
 
-func (m *MemArbitrator) fastAllocHolder(uid uint64) *ConcurrentBudget {
+func (m *MemArbitrator) awaitFreeHolder(uid uint64) *ConcurrentBudget {
 	index := shardIndexByUID(uid, m.awaitFree.holder.sizeMask)
 	return &m.awaitFree.holder.shards[index]
 }
 
 func (m *MemArbitrator) initAwaitFreePool(allocAlignSize, shardNum int64, holderShardNum int64) {
 	if allocAlignSize <= 0 {
-		allocAlignSize = DefFastAllocPoolAllocAlignSize
+		allocAlignSize = DefAwaitFreePoolAllocAlignSize
 	}
 
 	p := &ResourcePool{
@@ -904,16 +904,16 @@ func (m *MemArbitrator) initAwaitFreePool(allocAlignSize, shardNum int64, holder
 
 	p.SetOutOfCapacityAction(func(s OutOfCapacityActionArgs) error {
 		if int64(m.heapController.heapAlloc.Load()) > m.mu.threshold.risk-s.request {
-			m.execMetrics.fastAlloc.fail++
+			m.execMetrics.awaitFree.fail++
 			return errArbitrateFailError
 		}
 		if int64(m.heapController.heapInuse.Load()) > m.mu.threshold.oomRisk-s.request {
-			m.execMetrics.fastAlloc.fail++
+			m.execMetrics.awaitFree.fail++
 			return errArbitrateFailError
 		}
 
 		if m.mu.allocated > m.mu.limit-m.avoidance.size.Load()-s.request {
-			m.execMetrics.fastAlloc.fail++
+			m.execMetrics.awaitFree.fail++
 			return errArbitrateFailError
 		}
 
@@ -927,7 +927,7 @@ func (m *MemArbitrator) initAwaitFreePool(allocAlignSize, shardNum int64, holder
 
 		p.forceAddCap(s.request)
 
-		m.execMetrics.fastAlloc.success++
+		m.execMetrics.awaitFree.success++
 
 		return nil
 	})
@@ -1030,9 +1030,9 @@ func (m *MemArbitrator) TaskNumByMode() (res waitingTaskNum) {
 func (m *MemArbitrator) AllocQuotaFromGlobalMemArbitrator(uid uint64, req int64, hold bool) error {
 	var b *ConcurrentBudget
 	if hold {
-		b = m.fastAllocHolder(uid)
+		b = m.awaitFreeHolder(uid)
 	} else {
-		b = m.GetFastAllocBudgets(uid)
+		b = m.GetAwaitFreeBudgets(uid)
 	}
 
 	if req >= 0 {

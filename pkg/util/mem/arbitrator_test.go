@@ -59,7 +59,7 @@ func (m *MemArbitrator) restartEntryForTest(entry *rootPoolEntry, ctx *Context) 
 	require.True(testState, m.restartEntryByContext(entry, ctx))
 }
 
-func (m *MemArbitrator) checkFastAlloc() {
+func (m *MemArbitrator) checkAwaitFree() {
 	s := int64(0)
 	for i := range m.awaitFree.budget.shards {
 		s += m.awaitFree.budget.shards[i].Capacity.Load()
@@ -273,7 +273,7 @@ func (m *MemArbitrator) checkEntryQuotaByPriority(
 	}
 }
 
-func (m *MemArbitrator) clearFastAllocForTest() {
+func (m *MemArbitrator) clearAwaitFreeForTest() {
 	t := testState
 	for i := range m.awaitFree.budget.shards {
 		b := &m.awaitFree.budget.shards[i]
@@ -281,7 +281,7 @@ func (m *MemArbitrator) clearFastAllocForTest() {
 		b.LastUsedTimeSec = 0
 	}
 	require.True(t, m.awaitFreePoolUsed() == 0)
-	m.shrinkFastAllocPool(0, 0, nowUnixMilli())
+	m.shrinkAwaitFreePool(0, 0, nowUnixMilli())
 	require.Equal(t, int64(0), m.awaitFreePoolCap())
 }
 
@@ -842,7 +842,7 @@ func TestMemArbitratorSwitchMode(t *testing.T) {
 		require.True(t, m.allocated() == requestSize*2+m.awaitFreePoolCap())
 		require.True(t, m.tasksCountForTest() == 0)
 		m.awaitFree.pool.release(m.awaitFree.pool.allocated())
-		m.clearFastAllocForTest()
+		m.clearAwaitFreeForTest()
 		m.checkEntryForTest(entry1, entry2)
 		m.checkTaskExec(pairSuccessFail{2, 0}, 0, numByAllMode{})
 		m.resetEntryForTest(entry1, entry2)
@@ -1495,16 +1495,16 @@ func TestMemArbitrator(t *testing.T) {
 				require.NoError(t, err)
 			}
 		}
-		expect := fastAllocPoolExecMetrics{budgetsNum, 0, 0}
-		require.True(t, m.execMetrics.fastAlloc == expect)
+		expect := awaitFreePoolExecMetrics{budgetsNum, 0, 0}
+		require.True(t, m.execMetrics.awaitFree == expect)
 
 		expect.fail++
 		{
 			err, _ := m.awaitFree.budget.shards[0].Reserve(m.limit())
 			require.Error(t, err)
 		}
-		m.checkFastAlloc()
-		require.True(t, m.execMetrics.fastAlloc == expect)
+		m.checkAwaitFree()
+		require.True(t, m.execMetrics.awaitFree == expect)
 
 		require.True(t, m.awaitFreePoolUsed() == hpMemUsed)
 		require.True(t, m.awaitFreePoolCap() == m.awaitFree.pool.roundSize(eleSize)*budgetsNum)
@@ -1557,7 +1557,7 @@ func TestMemArbitrator(t *testing.T) {
 			if i%2 == 0 {
 				b.Used.Store(0)
 				if i == 0 {
-					b.LastUsedTimeSec = now.Unix() - (DefFastAllocPoolShrinkDurMilli/Kilo - 1)
+					b.LastUsedTimeSec = now.Unix() - (DefAwaitFreePoolShrinkDurMilli/Kilo - 1)
 				} else {
 					b.LastUsedTimeSec = 0
 				}
@@ -1568,15 +1568,15 @@ func TestMemArbitrator(t *testing.T) {
 		m.cleanupNotifer()
 		require.False(t, m.notiferIsAwake())
 		{
-			ori := now.UnixMilli() - DefFastAllocPoolShrinkDurMilli
+			ori := now.UnixMilli() - DefAwaitFreePoolShrinkDurMilli
 			m.awaitFree.lastShrinkUtimeMilli.Store(ori)
-			require.True(t, m.tryShrinkFastAllocPool(0, 0, now.UnixMilli()))
+			require.True(t, m.tryShrinkAwaitFreePool(0, 0, now.UnixMilli()))
 			require.True(t, m.awaitFree.lastShrinkUtimeMilli.Load() != ori)
 		}
 		require.True(t, m.notiferIsAwake())
 		expect.shrink++
-		require.True(t, m.execMetrics.fastAlloc == expect)
-		m.checkFastAlloc()
+		require.True(t, m.execMetrics.awaitFree == expect)
+		m.checkAwaitFree()
 
 		for i := range m.awaitFree.budget.shards {
 			b := &m.awaitFree.budget.shards[i]
@@ -1596,7 +1596,7 @@ func TestMemArbitrator(t *testing.T) {
 		m.checkEntryForTest(e1, e2, e3)
 		m.deleteEntryForTest(e1, e2, e3)
 		m.checkEntryForTest()
-		m.clearFastAllocForTest()
+		m.clearAwaitFreeForTest()
 		m.setMemStatsForTest(0, 0, 0)
 		require.True(t, m.allocated() == 0)
 	}
@@ -2187,7 +2187,7 @@ func TestMemArbitrator(t *testing.T) {
 		}
 		m.UnixTimeSec = 0
 		require.NoError(t, m.AllocQuotaFromGlobalMemArbitrator(0, -1000, true))
-		m.shrinkFastAllocPool(0, 0, DefFastAllocPoolShrinkDurMilli)
+		m.shrinkAwaitFreePool(0, 0, DefAwaitFreePoolShrinkDurMilli)
 		require.True(t, m.avoidance.memMagnif.ratio.Load() == 5725)
 		require.True(t, m.avoidance.size.Load() == mockHeap[1]-1013) // heapinuse. no affect becuase of mode is
 		m.deleteEntryForTest(e4)

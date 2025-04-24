@@ -76,10 +76,10 @@ const DefUpdateMemMagnifiUtimeAlignStandardMode = 1
 const DefUpdateBufferTimeAlignSec = 60
 const DefRedundancy = 2
 const DefPoolReservedQuota int64 = 4 * MB
-const DefFastAllocPoolAllocAlignSize int64 = DefPoolReservedQuota + MB
-const DefFastAllocPoolShardNum int64 = 256
-const DefFastAllocPoolholderShardNum int64 = 64
-const DefFastAllocPoolShrinkDurMilli = Kilo * 5
+const DefAwaitFreePoolAllocAlignSize int64 = DefPoolReservedQuota + MB
+const DefAwaitFreePoolShardNum int64 = 256
+const DefAwaitFreePoolholderShardNum int64 = 64
+const DefAwaitFreePoolShrinkDurMilli = Kilo * 5
 const DefPoolStatusShards uint64 = 128
 const DefPoolQuotaShards int = 27 // quota >= BaseQuotaUnit * 2^(max_shards - 2) will be put into the last shard
 const prime64 uint64 = 1099511628211
@@ -241,7 +241,7 @@ type rootPoolEntry struct {
 		sync.Mutex
 		state PoolEntryState
 
-		// execStateIdle -> execStateRunning -> execStateFastAlloc
+		// execStateIdle -> execStateRunning -> execStatePrivileged -> execStateIdle
 		// execStateIdle -> execStateRunning -> execStateIdle
 		exec entryExecState
 
@@ -666,7 +666,7 @@ type MemArbitratorActions struct {
 	UpdateRuntimeMemStats, GC func()
 }
 
-type fastAllocPoolExecMetrics struct {
+type awaitFreePoolExecMetrics struct {
 	success int64
 	fail    int64
 	shrink  int64
@@ -700,7 +700,7 @@ type execMetrics struct {
 	}
 
 	cancel    execMetricsCancel
-	fastAlloc fastAllocPoolExecMetrics
+	awaitFree awaitFreePoolExecMetrics
 	action    execMetricsAction
 	execMetricsRisk
 }
@@ -716,9 +716,9 @@ func (m *MemArbitrator) ExecMetrics() map[string]int64 {
 		"action-update-runtime-mem-stats": m.execMetrics.action.updateRuntimeMemStats,
 		"action-recordmemstate-success":   m.execMetrics.action.recordMemState.success,
 		"action-recordmemstate-fail":      m.execMetrics.action.recordMemState.fail,
-		"fastAlloc-success":               m.execMetrics.fastAlloc.success,
-		"fastAlloc-fail":                  m.execMetrics.fastAlloc.fail,
-		"fastAlloc-shrink":                m.execMetrics.fastAlloc.shrink,
+		"awaitfree-success":               m.execMetrics.awaitFree.success,
+		"awaitfree-fail":                  m.execMetrics.awaitFree.fail,
+		"awaitfree-shrink":                m.execMetrics.awaitFree.shrink,
 		"memRisk":                         m.execMetrics.memRisk,
 		"oomRisk":                         m.execMetrics.oomRisk,
 		"oomKill-prio-low":                m.execMetrics.oomKill[ArbitrateMemPriorityLow],
