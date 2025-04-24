@@ -921,6 +921,9 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 	n, err = r.reader.Read(p[:maxCnt])
 	if r.prefetchSize > 0 && rand.Intn(5) == 0 && n > 0 && err == nil {
 		n, err = rand.Intn(n), io.ErrUnexpectedEOF
+		if rand.Intn(2) == 0 {
+			n = 0
+		}
 	}
 	// TODO: maybe we should use !errors.Is(err, io.EOF) here to avoid error lint, but currently, pingcap/errors
 	// doesn't implement this method yet.
@@ -949,6 +952,12 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 		}
 		retryCnt++
 		n, err = r.reader.Read(p[:maxCnt])
+		if r.prefetchSize > 0 && rand.Intn(5) == 0 && n > 0 && err == nil {
+			n, err = rand.Intn(n), io.ErrUnexpectedEOF
+			if rand.Intn(2) == 0 {
+				n = 0
+			}
+		}
 	}
 
 	r.pos += int64(n)
