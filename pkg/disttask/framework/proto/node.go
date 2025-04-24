@@ -23,3 +23,18 @@ type ManagedNode struct {
 	Role     string
 	CPUCount int
 }
+
+// NodeResource is the resource of the node.
+// exported for test.
+type NodeResource struct {
+	TotalCPU int
+	TotalMem int64
+}
+
+// NewNodeResource creates a new NodeResource.
+func NewNodeResource(totalCPU int, totalMem int64) *NodeResource {
+	return &NodeResource{
+		TotalCPU: totalCPU,
+		TotalMem: totalMem,
+	}
+}
