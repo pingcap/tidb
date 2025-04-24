@@ -68,14 +68,6 @@ func NewTableKVEncoder(
 	if err != nil {
 		return nil, err
 	}
-	insertRowNeedCast := make([]bool, len(baseKVEncoder.Columns))
-	for i := range ti.InsertColumns {
-		insertCol := ti.InsertColumns[i].ToInfo()
-		offset := ti.InsertColumns[i].Offset
-		if offset < len(insertRowNeedCast) {
-			insertRowNeedCast[offset] = !(baseKVEncoder.Columns[offset].ToInfo().FieldType.Equal(&insertCol.FieldType))
-		}
-	}
 
 	return &tableKVEncoder{
 		BaseKVEncoder:      baseKVEncoder,
