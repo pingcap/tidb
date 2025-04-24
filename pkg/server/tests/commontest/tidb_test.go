@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -65,7 +66,6 @@ import (
 	"go.opencensus.io/stats/view"
 	gorm_mysql "gorm.io/driver/mysql"
 	"gorm.io/gorm"
-	"slices"
 )
 
 func TestVectorTypeTextProtocol(t *testing.T) {

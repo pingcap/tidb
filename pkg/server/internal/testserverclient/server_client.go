@@ -28,6 +28,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -55,7 +56,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"golang.org/x/text/encoding/simplifiedchinese"
-	"slices"
 )
 
 //revive:disable:exported
