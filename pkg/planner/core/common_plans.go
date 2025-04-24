@@ -886,6 +886,8 @@ func (e *Explain) prepareSchema() error {
 		e.Format = types.ExplainFormatROW
 	}
 	switch {
+	case format == types.ExplainFormatOQOKnobs:
+		fieldNames = []string{"knobs"}
 	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && (!e.Analyze && e.RuntimeStatsColl == nil):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
 	case format == types.ExplainFormatVerbose:

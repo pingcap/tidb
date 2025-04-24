@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/types"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -144,6 +145,11 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 }
 
 func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string, err error) {
+	if e.explain.Format == types.ExplainFormatOQOKnobs {
+		rows = append(rows, []string{"OQOKnobs"})
+		return
+	}
+
 	if e.explain.Analyze {
 		if err = e.executeAnalyzeExec(ctx); err != nil {
 			return nil, err
