@@ -236,7 +236,7 @@ func EnumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 		if lowExclude {
 			startValue++
 		}
-		for i := range int64(remaining) {
+		for i := range remaining {
 			values = append(values, types.NewIntDatum(startValue+i))
 		}
 		return values
@@ -254,7 +254,7 @@ func EnumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 		if lowExclude {
 			startValue++
 		}
-		for i := range uint64(remaining) {
+		for i := range remaining {
 			values = append(values, types.NewUintDatum(startValue+i))
 		}
 		return values
@@ -272,7 +272,7 @@ func EnumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 			startValue += stepSize
 		}
 		values := make([]types.Datum, 0, remaining)
-		for i := range int64(remaining) {
+		for i := range remaining {
 			values = append(values, types.NewDurationDatum(types.Duration{Duration: time.Duration(startValue + i*stepSize), Fsp: fsp}))
 		}
 		return values
@@ -309,7 +309,7 @@ func EnumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 			}
 		}
 		values := make([]types.Datum, 0, remaining)
-		for i := range int64(remaining) {
+		for i := range remaining {
 			value, err := startValue.Add(typeCtx, types.Duration{Duration: time.Duration(i * stepSize), Fsp: fsp})
 			if err != nil {
 				return nil

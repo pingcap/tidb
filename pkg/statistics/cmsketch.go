@@ -154,7 +154,7 @@ func buildCMSAndTopN(helper *topNHelper, d, w int32, scaleRatio uint64, defaultV
 	enableTopN := helper.sampleSize/topNThreshold <= helper.sumTopN
 	if enableTopN {
 		t = NewTopN(int(helper.actualNumTop))
-		for i := range uint32(helper.actualNumTop) {
+		for i := range helper.actualNumTop {
 			data, cnt := helper.sorted[i].data, helper.sorted[i].cnt
 			t.AppendTopN(data, cnt*scaleRatio)
 		}
