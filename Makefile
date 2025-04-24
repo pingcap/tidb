@@ -159,7 +159,7 @@ test_part_dumpling: dumpling_unit_test dumpling_integration_test
 .PHONY: integrationtest
 integrationtest: server_check
 	@mkdir -p $(TEST_COVERAGE_DIR)
-	@cd tests/integrationtest && GOCOVERDIR=../../$(TEST_COVERAGE_DIR) ./run-tests.sh -s ../../bin/tidb-server
+	@cd tests/integrationtest && GOCOVERDIR=../../$(TEST_COVERAGE_DIR) ./run-tests.sh -s ../../bin/tidb-server -r all
 	@$(GO) tool covdata textfmt -i=$(TEST_COVERAGE_DIR) -o=coverage.dat
 
 .PHONY: ddltest
