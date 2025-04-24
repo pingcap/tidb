@@ -31,7 +31,7 @@ type GlobalConfigTestSuite struct {
 
 func SetUpSuite() *GlobalConfigTestSuite {
 	s := &GlobalConfigTestSuite{}
-	s.rpc, s.client, s.cluster, _ = New("", nil)
+	s.rpc, s.client, s.cluster, _ = New("", nil, nil)
 	return s
 }
 

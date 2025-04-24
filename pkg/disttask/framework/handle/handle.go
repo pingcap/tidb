@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/atomic"
@@ -226,6 +227,7 @@ func RunWithRetry(
 			return err
 		}
 		lastErr = err
+		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 		logger.Warn("met retryable error", zap.Int("retry-count", i),
 			zap.Int("max-retry", maxRetry), zap.Error(err))
 		select {

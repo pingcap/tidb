@@ -28,7 +28,9 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
@@ -92,12 +94,12 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 				count -= hg.Buckets[j-1].Count
 			}
 			var upperBound types.Datum
-			upperBound, err = hg.GetUpper(j).ConvertTo(sc.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
+			upperBound, err = convertBoundToBlob(sc.TypeCtx(), *hg.GetUpper(j))
 			if err != nil {
 				return
 			}
 			var lowerBound types.Datum
-			lowerBound, err = hg.GetLower(j).ConvertTo(sc.TypeCtx(), types.NewFieldType(mysql.TypeBlob))
+			lowerBound, err = convertBoundToBlob(sc.TypeCtx(), *hg.GetLower(j))
 			if err != nil {
 				return
 			}
@@ -379,23 +381,33 @@ func SaveColOrIdxStatsToStorage(
 	return
 }
 
-// SaveMetaToStorage will save stats_meta to storage and update last stats histograms version.
+// SaveMetaToStorage will batch save stats_meta to storage.
 func SaveMetaToStorage(
 	sctx sessionctx.Context,
-	tableID, count, modifyCount int64,
 	refreshLastHistVer bool,
-) (statsVer uint64, err error) {
+	metaUpdates []statstypes.MetaUpdate,
+) (uint64, error) {
 	version, err := util.GetStartTS(sctx)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
+	var sql string
+	values := make([]string, 0, len(metaUpdates))
 	if refreshLastHistVer {
-		_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count, last_stats_histograms_version) values (%?, %?, %?, %?, %?)", version, tableID, count, modifyCount, version)
+		for _, metaUpdate := range metaUpdates {
+			values = append(values, fmt.Sprintf("(%d, %d, %d, %d, %d)", version, metaUpdate.PhysicalID, metaUpdate.Count, metaUpdate.ModifyCount, version))
+		}
+		sql = fmt.Sprintf("insert into mysql.stats_meta (version, table_id, count, modify_count, last_stats_histograms_version) values %s "+
+			"on duplicate key update version = values(version), modify_count = values(modify_count), count = values(count), last_stats_histograms_version = values(last_stats_histograms_version)", strings.Join(values, ","))
 	} else {
-		_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
+		for _, metaUpdate := range metaUpdates {
+			values = append(values, fmt.Sprintf("(%d, %d, %d, %d)", version, metaUpdate.PhysicalID, metaUpdate.Count, metaUpdate.ModifyCount))
+		}
+		sql = fmt.Sprintf("insert into mysql.stats_meta (version, table_id, count, modify_count) values %s "+
+			"on duplicate key update version = values(version), modify_count = values(modify_count), count = values(count)", strings.Join(values, ","))
 	}
-	statsVer = version
-	return
+	_, err = util.Exec(sctx, sql)
+	return version, errors.Trace(err)
 }
 
 // InsertColStats2KV insert a record to stats_histograms with distinct_count 1
@@ -444,8 +456,7 @@ func InsertColStats2KV(
 	}
 	count := req.GetRow(0).GetInt64(0)
 	for _, colInfo := range colInfos {
-		value := types.NewDatum(colInfo.GetOriginDefaultValue())
-		value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), &colInfo.FieldType)
+		value, err := table.GetColOriginDefaultValue(sctx.GetExprCtx(), colInfo)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -534,4 +545,11 @@ func InsertTableStats2KV(
 		}
 	}
 	return startTS, nil
+}
+
+// convertBoundToBlob converts the bound to blob. The `blob` will be used to store in the `mysql.stats_buckets` table.
+// The `convertBoundFromBlob(convertBoundToBlob(a))` should be equal to `a`.
+// TODO: add a test to make sure that this assumption is correct.
+func convertBoundToBlob(ctx types.Context, d types.Datum) (types.Datum, error) {
+	return d.ConvertTo(ctx, types.NewFieldType(mysql.TypeBlob))
 }

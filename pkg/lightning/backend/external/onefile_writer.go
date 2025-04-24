@@ -95,8 +95,8 @@ func (w *OneFileWriter) Init(ctx context.Context, partSize int64) (err error) {
 	if err != nil {
 		return err
 	}
-	w.kvStore, err = NewKeyValueStore(ctx, w.dataWriter, w.rc)
-	return err
+	w.kvStore = NewKeyValueStore(ctx, w.dataWriter, w.rc)
+	return nil
 }
 
 // WriteRow implements ingest.Writer.
@@ -116,7 +116,7 @@ func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) err
 			return errors.Errorf("failed to allocate kv buffer: %d", length)
 		}
 		// 2. write statistics if one kvBuffer is used.
-		w.kvStore.Close()
+		w.kvStore.finish()
 		encodedStat := w.rc.encode()
 		_, err := w.statWriter.Write(ctx, encodedStat)
 		if err != nil {
@@ -174,7 +174,7 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 
 func (w *OneFileWriter) closeImpl(ctx context.Context) (err error) {
 	// 1. write remaining statistic.
-	w.kvStore.Close()
+	w.kvStore.finish()
 	encodedStat := w.rc.encode()
 	_, err = w.statWriter.Write(ctx, encodedStat)
 	if err != nil {

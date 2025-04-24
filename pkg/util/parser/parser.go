@@ -36,8 +36,8 @@ func GetParser() *parser.Parser {
 	return pool.Get().(*parser.Parser)
 }
 
-// DestoryParser resets the parser and puts it back to the pool
-func DestoryParser(p *parser.Parser) {
+// DestroyParser resets the parser and puts it back to the pool
+func DestroyParser(p *parser.Parser) {
 	p.Reset()
 	pool.Put(p)
 }

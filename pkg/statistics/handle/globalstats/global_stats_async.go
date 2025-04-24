@@ -430,6 +430,11 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx session
 			hists = append(hists, h)
 			topn = append(topn, t)
 		}
+		// This only happens when there are no records for the histogram and TopN in the system tables.
+		// It may be due to the DDL event not having been processed yet (resulting in no histogram), and the table being empty (resulting in no TopNs).
+		if len(hists) == 0 && len(topn) == 0 {
+			continue
+		}
 		select {
 		case a.histogramAndTopn <- mergeItem[*StatsWrapper]{
 			NewStatsWrapper(hists, topn), i,
@@ -439,6 +444,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx session
 			return nil
 		}
 	}
+
 	return nil
 }
 
@@ -524,10 +530,12 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			}
 
 			// NOTICE: after merging bucket NDVs have the trend to be underestimated, so for safe we don't use them.
-			for j := range (*globalHg).Buckets {
-				(*globalHg).Buckets[j].NDV = 0
+			if *globalHg != nil {
+				for j := range (*globalHg).Buckets {
+					(*globalHg).Buckets[j].NDV = 0
+				}
+				(*globalHg).NDV = a.globalStatsNDV[item.idx]
 			}
-			(*globalHg).NDV = a.globalStatsNDV[item.idx]
 		case <-a.ioWorkerExitWhenErrChan:
 			return nil
 		}

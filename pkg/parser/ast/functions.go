@@ -812,7 +812,7 @@ func (n *AggregateFuncExpr) Restore(ctx *format.RestoreCtx) error {
 	}
 	switch strings.ToLower(n.F) {
 	case "group_concat":
-		for i := 0; i < len(n.Args)-1; i++ {
+		for i := range len(n.Args) - 1 {
 			if i != 0 {
 				ctx.WritePlain(", ")
 			}

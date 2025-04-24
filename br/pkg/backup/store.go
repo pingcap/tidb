@@ -13,11 +13,9 @@ import (
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/errorpb"
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/storewatch"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -139,7 +137,11 @@ func doSendBackup(
 		}
 		time.Sleep(3 * time.Second)
 	})
+	reqStartKey, reqEndKey := req.StartKey, req.EndKey
 	bCli, err := client.Backup(ctx, &req)
+	// Note: derefer req here to let req.SubRanges be released as soon as possible.
+	// That's because in the backup main loop, the sub ranges is generated every about 15 seconds,
+	// which may accumulate a large number of incomplete ranges.
 	failpoint.Inject("reset-retryable-error", func(val failpoint.Value) {
 		switch val.(string) {
 		case "Unavailable":
@@ -172,8 +174,8 @@ func doSendBackup(
 		if err != nil {
 			if errors.Cause(err) == io.EOF { // nolint:errorlint
 				logutil.CL(ctx).Debug("backup streaming finish",
-					logutil.Key("backup-start-key", req.GetStartKey()),
-					logutil.Key("backup-end-key", req.GetEndKey()))
+					logutil.Key("backup-start-key", reqStartKey),
+					logutil.Key("backup-end-key", reqEndKey))
 				return nil
 			}
 			return err
@@ -280,17 +282,6 @@ func startBackup(
 		}
 		return eg.Wait()
 	}
-}
-
-func getBackupRanges(ranges []rtree.Range) []*kvrpcpb.KeyRange {
-	requestRanges := make([]*kvrpcpb.KeyRange, 0, len(ranges))
-	for _, r := range ranges {
-		requestRanges = append(requestRanges, &kvrpcpb.KeyRange{
-			StartKey: r.StartKey,
-			EndKey:   r.EndKey,
-		})
-	}
-	return requestRanges
 }
 
 func ObserveStoreChangesAsync(ctx context.Context, stateNotifier chan BackupRetryPolicy, pdCli pd.Client) {

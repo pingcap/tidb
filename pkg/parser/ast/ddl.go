@@ -883,6 +883,8 @@ const (
 	ConstraintForeignKey
 	ConstraintFulltext
 	ConstraintCheck
+	// ConstraintVector is only used in AST.
+	// It will be rewritten into ConstraintColumnar after preprocessor phase.
 	ConstraintVector
 	ConstraintColumnar
 )
@@ -1854,6 +1856,8 @@ const (
 	IndexKeyTypeUnique
 	IndexKeyTypeSpatial
 	IndexKeyTypeFullText
+	// IndexKeyTypeVector is only used in AST.
+	// It will be rewritten into IndexKeyTypeColumnar after preprocessor phase.
 	IndexKeyTypeVector
 	IndexKeyTypeColumnar
 )

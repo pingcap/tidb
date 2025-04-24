@@ -20,12 +20,14 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -56,6 +58,7 @@ type PhysicalTable struct {
 	NewPhysicalID int64
 	OldPhysicalID int64
 	RewriteRules  *restoreutils.RewriteRules
+	Files         []*backuppb.File
 }
 
 func defaultOutputTableChan() chan *CreatedTable {
@@ -87,6 +90,7 @@ type PipelineContext struct {
 	LogProgress         bool
 	ChecksumConcurrency uint
 	StatsConcurrency    uint
+	AutoAnalyze         bool
 
 	// pipeline item tool client
 	KvClient   kv.Client
@@ -337,7 +341,7 @@ func (buffer *statsMetaItemBuffer) UpdateMetasRest(ctx context.Context, statsHan
 	if len(metaUpdates) == 0 {
 		return nil
 	}
-	return statsHandler.SaveMetasToStorage(metaUpdates, false)
+	return statsHandler.SaveMetaToStorage("br restore", false, metaUpdates...)
 }
 
 func (buffer *statsMetaItemBuffer) TryUpdateMetas(ctx context.Context, statsHandler *handle.Handle, physicalID, count int64) error {
@@ -353,7 +357,7 @@ func (buffer *statsMetaItemBuffer) TryUpdateMetas(ctx context.Context, statsHand
 	if len(metaUpdates) == 0 {
 		return nil
 	}
-	return statsHandler.SaveMetasToStorage(metaUpdates, false)
+	return statsHandler.SaveMetaToStorage("br restore", false, metaUpdates...)
 }
 
 func (rc *SnapClient) registerUpdateMetaAndLoadStats(
@@ -403,10 +407,38 @@ func (rc *SnapClient) registerUpdateMetaAndLoadStats(
 		if statsErr != nil || !loadStats || (oldTable.Stats == nil && len(oldTable.StatsFileIndexes) == 0) {
 			// Not need to return err when failed because of update analysis-meta
 			log.Info("start update metas", zap.Stringer("table", oldTable.Info.Name), zap.Stringer("db", oldTable.DB.Name))
+			// get the the number of rows of each partition
+			if tbl.OldTable.Info.Partition != nil {
+				for _, oldDef := range tbl.OldTable.Info.Partition.Definitions {
+					files := tbl.OldTable.FilesOfPhysicals[oldDef.ID]
+					if len(files) > 0 {
+						totalKvs := uint64(0)
+						for _, file := range files {
+							totalKvs += file.TotalKvs
+						}
+						// the total kvs contains the index kvs, but the stats meta needs the count of rows
+						count := int64(totalKvs / uint64(len(oldTable.Info.Indices)+1))
+						newDefID, err := utils.GetPartitionByName(tbl.Table, oldDef.Name)
+						if err != nil {
+							log.Error("failed to get the partition by name",
+								zap.String("db name", tbl.OldTable.DB.Name.O),
+								zap.String("table name", tbl.Table.Name.O),
+								zap.String("partition name", oldDef.Name.O),
+								zap.Int64("downstream table id", tbl.Table.ID),
+								zap.Int64("upstream partition id", oldDef.ID),
+							)
+							return errors.Trace(err)
+						}
+						if statsErr = buffer.TryUpdateMetas(c, statsHandler, newDefID, count); statsErr != nil {
+							log.Error("update stats meta failed", zap.Int64("downstream table id", tbl.Table.ID), zap.Int64("downstream partition id", newDefID), zap.Error(statsErr))
+						}
+					}
+				}
+			}
 			// the total kvs contains the index kvs, but the stats meta needs the count of rows
 			count := int64(oldTable.TotalKvs / uint64(len(oldTable.Info.Indices)+1))
 			if statsErr = buffer.TryUpdateMetas(c, statsHandler, tbl.Table.ID, count); statsErr != nil {
-				log.Error("update stats meta failed", zap.Error(statsErr))
+				log.Error("update stats meta failed", zap.Int64("downstream table id", tbl.Table.ID), zap.Error(statsErr))
 				return statsErr
 			}
 		}

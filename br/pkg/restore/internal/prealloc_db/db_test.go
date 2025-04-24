@@ -29,7 +29,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type testAllocator int64
+
+func (t *testAllocator) GetGlobalID() (int64, error) {
+	return int64(*t), nil
+}
+
+func (t *testAllocator) AdvanceGlobalIDs(n int) (int64, error) {
+	old := int64(*t)
+	*t = testAllocator(int64(*t) + int64(n))
+	return old, nil
+}
+
 func TestRestoreAutoIncID(t *testing.T) {
+	allocator := testAllocator(0)
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
 	tk.MustExec("use test")
@@ -77,6 +90,15 @@ func TestRestoreAutoIncID(t *testing.T) {
 	err = db.CreateDatabase(context.Background(), table.DB, false, nil)
 	require.NoErrorf(t, err, "Error create empty charset db: %s %s", err, s.Mock.DSN)
 	uniqueMap := make(map[restore.UniqueTableName]bool)
+
+	preallocId := func(tables []*metautil.Table) {
+		ids := prealloctableid.New(tables)
+		ids.Alloc(&allocator)
+		db.RegisterPreallocatedIDs(ids)
+		allocator += testAllocator(len(tables))
+	}
+
+	preallocId([]*metautil.Table{&table})
 	err = db.CreateTable(context.Background(), &table, uniqueMap, false, nil)
 	require.NoErrorf(t, err, "Error create table: %s %s", err, s.Mock.DSN)
 
@@ -88,6 +110,7 @@ func TestRestoreAutoIncID(t *testing.T) {
 
 	// try again, failed due to table exists.
 	table.Info.AutoIncID = globalAutoID + 200
+	preallocId([]*metautil.Table{&table})
 	err = db.CreateTable(context.Background(), &table, uniqueMap, false, nil)
 	require.NoError(t, err)
 	// Check if AutoIncID is not altered.
@@ -98,6 +121,7 @@ func TestRestoreAutoIncID(t *testing.T) {
 	// try again, success because we use alter sql in unique map.
 	table.Info.AutoIncID = globalAutoID + 300
 	uniqueMap[restore.UniqueTableName{DB: "test", Table: "\"t\""}] = true
+	preallocId([]*metautil.Table{&table})
 	err = db.CreateTable(context.Background(), &table, uniqueMap, false, nil)
 	require.NoError(t, err)
 	// Check if AutoIncID is altered to globalAutoID + 300.
@@ -283,6 +307,7 @@ func TestPolicyMode(t *testing.T) {
 		ID:   fakepolicy2.ID,
 		Name: fakepolicy2.Name,
 	}
+
 	err = db.CreateTables(ctx, tableInfos, nil, true, policyMap)
 	require.NoError(t, err)
 	for _, checkFn := range checkTableSQLs {
@@ -331,6 +356,7 @@ func TestPolicyMode(t *testing.T) {
 }
 
 func TestCreateTablesInDb(t *testing.T) {
+	allocator := testAllocator(0)
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	info, err := s.Mock.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoErrorf(t, err, "Error get snapshot info schema: %s", err)
@@ -363,11 +389,20 @@ func TestCreateTablesInDb(t *testing.T) {
 	db, _, err := preallocdb.NewDB(gluetidb.New(), s.Mock.Storage, "STRICT")
 	require.NoError(t, err)
 
+	preallocId := func(tables []*metautil.Table) {
+		ids := prealloctableid.New(tables)
+		ids.Alloc(&allocator)
+		db.RegisterPreallocatedIDs(ids)
+		allocator += testAllocator(len(tables))
+	}
+
+	preallocId(tables)
 	err = db.CreateTables(context.Background(), tables, ddlJobMap, false, nil)
 	require.NoError(t, err)
 }
 
 func TestDDLJobMap(t *testing.T) {
+	allocator := testAllocator(0)
 	ctx := context.Background()
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
@@ -408,6 +443,20 @@ func TestDDLJobMap(t *testing.T) {
 		{DB: "test", Table: "t5"}: true,
 	}
 
+	preallocId := func(tables []*metautil.Table) {
+		ids := prealloctableid.New(tables)
+		ids.Alloc(&allocator)
+		db.RegisterPreallocatedIDs(ids)
+		allocator += testAllocator(len(tables))
+	}
+
+	preallocId([]*metautil.Table{
+		{DB: dbInfo.Clone(), Info: tableInfo1.Meta().Clone()},
+		{DB: dbInfo.Clone(), Info: tableInfo2.Meta().Clone()},
+		{DB: dbInfo.Clone(), Info: tableInfo3.Meta().Clone()},
+		{DB: dbInfo.Clone(), Info: tableInfo4.Meta().Clone()},
+		{DB: dbInfo.Clone(), Info: tableInfo5.Meta().Clone()},
+	})
 	err = db.CreateTablePostRestore(ctx, &metautil.Table{DB: dbInfo.Clone(), Info: tableInfo1.Meta().Clone()}, toBeCorrectedTables)
 	require.NoError(t, err)
 	err = db.CreateTablePostRestore(ctx, &metautil.Table{DB: dbInfo.Clone(), Info: tableInfo2.Meta().Clone()}, toBeCorrectedTables)
@@ -511,6 +560,7 @@ func TestDB_ExecDDL2(t *testing.T) {
 
 func TestCreateTableConsistent(t *testing.T) {
 	ctx := context.Background()
+	allocator := testAllocator(0)
 	s := utiltest.CreateRestoreSchemaSuite(t)
 	tk := testkit.NewTestKit(t, s.Mock.Storage)
 	tk.MustExec("use test")
@@ -534,6 +584,13 @@ func TestCreateTableConsistent(t *testing.T) {
 	dbInfo, seqInfo := getTableInfo("s")
 	tk.MustExec("drop sequence test.s;")
 
+	preallocId := func(tables []*metautil.Table) {
+		ids := prealloctableid.New(tables)
+		ids.Alloc(&allocator)
+		db.RegisterPreallocatedIDs(ids)
+		allocator += testAllocator(len(tables))
+	}
+
 	newSeqInfo := seqInfo.Clone()
 	newSeqInfo.ID += 100
 	newTables := []*metautil.Table{
@@ -542,6 +599,8 @@ func TestCreateTableConsistent(t *testing.T) {
 			Info: newSeqInfo,
 		},
 	}
+
+	preallocId(newTables)
 	err = db.CreateTables(ctx, newTables, nil, false, nil)
 	require.NoError(t, err)
 	r11 := tk.MustQuery("select nextval(s)").Rows()
@@ -552,6 +611,7 @@ func TestCreateTableConsistent(t *testing.T) {
 	newSeqInfo = seqInfo.Clone()
 	newSeqInfo.ID += 100
 	newTable := &metautil.Table{DB: dbInfo.Clone(), Info: newSeqInfo}
+	preallocId([]*metautil.Table{newTable})
 	err = db.CreateTable(ctx, newTable, nil, false, nil)
 	require.NoError(t, err)
 	r21 := tk.MustQuery("select nextval(s)").Rows()
@@ -583,6 +643,7 @@ func TestCreateTableConsistent(t *testing.T) {
 			Info: newViewInfo,
 		},
 	}
+	preallocId(newTables)
 	err = db.CreateTables(ctx, newTables, nil, false, nil)
 	require.NoError(t, err)
 	r11 = tk.MustQuery("show create table t;").Rows()
@@ -594,11 +655,13 @@ func TestCreateTableConsistent(t *testing.T) {
 	newTblInfo = tblInfo.Clone()
 	newTblInfo.ID += 200
 	newTable = &metautil.Table{DB: dbInfo.Clone(), Info: newTblInfo}
+	preallocId([]*metautil.Table{newTable})
 	err = db.CreateTable(ctx, newTable, nil, false, nil)
 	require.NoError(t, err)
 	newViewInfo = viewInfo.Clone()
 	newViewInfo.ID += 200
 	newTable = &metautil.Table{DB: dbInfo.Clone(), Info: newViewInfo}
+	preallocId([]*metautil.Table{newTable})
 	err = db.CreateTable(ctx, newTable, nil, false, nil)
 	require.NoError(t, err)
 

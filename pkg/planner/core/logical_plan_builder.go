@@ -3835,13 +3835,37 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	}
 	l := sel.LockInfo
 	if l != nil && l.LockType != ast.SelectLockNone {
-		for _, tName := range l.Tables {
+		var tableList []*ast.TableName
+		var isExplicitSetTablesNames bool
+		if len(l.Tables) == 0 && sel.From != nil {
+			// It's for stmt like `select xxx from table t, t1 where t.a = t1.a for update`
+			nodeW := resolve.NewNodeWWithCtx(sel.From, b.resolveCtx)
+			tableList = ExtractTableList(nodeW, false)
+		} else if len(l.Tables) != 0 {
+			// It's for stmt like `select xxx from table t, t1 where t.a = t1.a for update of t`
+			isExplicitSetTablesNames = true
+			tableList = l.Tables
+		}
+		for _, tName := range tableList {
 			// CTE has no *model.HintedTable, we need to skip it.
 			tNameW := b.resolveCtx.GetTableName(tName)
 			if tNameW == nil {
 				continue
 			}
-			b.ctx.GetSessionVars().StmtCtx.LockTableIDs[tNameW.TableInfo.ID] = struct{}{}
+			if isExplicitSetTablesNames {
+				// If `LockTableIDs` map is empty, it will lock all records from all tables.
+				// Besides, it will only lock the metioned in `of` part.
+				b.ctx.GetSessionVars().StmtCtx.LockTableIDs[tNameW.TableInfo.ID] = struct{}{}
+			}
+			dbName := tName.Schema.L
+			if dbName == "" {
+				dbName = b.ctx.GetSessionVars().CurrentDB
+			}
+			var authErr error
+			if user := b.ctx.GetSessionVars().User; user != nil {
+				authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT with locking clause", user.AuthUsername, user.AuthHostname, tNameW.Name.L)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv|mysql.UpdatePriv|mysql.LockTablesPriv, dbName, tNameW.Name.L, "", authErr)
 		}
 		p, err = b.buildSelectLock(p, l)
 		if err != nil {
