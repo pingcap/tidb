@@ -2343,7 +2343,7 @@ func (n *InsertStmt) Restore(ctx *format.RestoreCtx) error {
 	if len(n.PartitionNames) != 0 {
 		ctx.WriteKeyWord(" PARTITION")
 		ctx.WritePlain("(")
-		for i := 0; i < len(n.PartitionNames); i++ {
+		for i := range n.PartitionNames {
 			if i != 0 {
 				ctx.WritePlain(", ")
 			}
