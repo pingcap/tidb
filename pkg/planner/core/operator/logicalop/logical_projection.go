@@ -229,6 +229,7 @@ func (p *LogicalProjection) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *
 					}
 				}
 				if !isContains {
+					// The columns are from the children's schema.
 					if p.Children()[0].Schema().Contains(col) {
 						p.Schema().Append(col)
 						p.SetOutputNames(append(p.OutputNames(), types.EmptyName))
