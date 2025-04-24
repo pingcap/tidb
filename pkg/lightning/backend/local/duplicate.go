@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/distsql"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
@@ -64,10 +63,6 @@ const (
 	maxDupCollectAttemptTimes       = 5
 	defaultRecordConflictErrorBatch = 1024
 )
-
-func init() {
-	external.NewErrFoundConflictRecords = newErrFoundConflictRecords
-}
 
 type pendingIndexHandles struct {
 	// all 4 slices should have exactly the same length.
@@ -596,6 +591,7 @@ func (m *DupeDetector) RecordIndexConflictError(ctx context.Context, stream DupK
 
 // RetrieveKeyAndValueFromErrFoundDuplicateKeys retrieves the key and value
 // from ErrFoundDuplicateKeys error.
+// Exported for test.
 func RetrieveKeyAndValueFromErrFoundDuplicateKeys(err error) ([]byte, []byte, error) {
 	if !common.ErrFoundDuplicateKeys.Equal(err) {
 		return nil, nil, err

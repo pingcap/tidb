@@ -30,7 +30,9 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -284,12 +286,73 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 		variable.CloudStorageURI.Store("")
 	}()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/collectTaskError", "return(true)"))
 
-	tk.MustExec("create table t (a int, b int, c int);")
-	tk.MustExec("insert into t values (1, 1, 1);")
-	tk.MustExec("insert into t values (2, 1, 2);")
+	testcases := []struct {
+		createTableSQL  string
+		initDataSQL     string
+		addUniqueKeySQL string
+	}{
+		{
+			"create table t (a int, b int, c int);",
+			"insert into t values (1, 1, 1), (2, 1, 2);",
+			"alter table t add unique index idx(b);",
+		},
+		{
+			"create table t (id int, data varchar(255));",
+			"insert into t values (1, '1'), (2, '1');",
+			"alter table t add unique index i(data);",
+		},
+		{
+			"create table t (id int, data varchar(255));",
+			"insert into t values (1, '1'), (1, '1');",
+			"alter table t add unique index i(id, data);",
+		},
+		{
+			"create table t (id int, data json);",
+			`insert into t values (1, '{"code":[1,1]}'), (2, '{"code":[1,1]}');`,
+			"alter table t add unique index zips( (CAST(data->'$.code' AS UNSIGNED ARRAY)));",
+		},
+		/* TODO: uncomment this for global index
+		{
+			"create table t (id int, k int) partition by hash(id) partitions 5;",
+			"insert into t values (1, 1), (2, 1)",
+			"alter table t add unique index i(k) global",
+		},
+		*/
+	}
 
-	tk.MustContainErrMsg("alter table t add unique index idx(b);", "found index conflict records in table t")
+	for _, tc := range testcases {
+		taskexecutor.ErrorTask4Test.Store(nil)
+		tk.MustExec(tc.createTableSQL)
+		tk.MustExec(tc.initDataSQL)
+
+		// 1. read index
+		tk.MustContainErrMsg(tc.addUniqueKeySQL, "found index conflict records in table t")
+		errorTask := taskexecutor.ErrorTask4Test.Load()
+		taskexecutor.ErrorTask4Test.Store(nil)
+		require.Equal(t, proto.BackfillStepReadIndex, errorTask.Step)
+
+		// 2. merge sort
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ignoreReadIndexDupKey", "return(true)"))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()"))
+		tk.MustContainErrMsg(tc.addUniqueKeySQL, "found index conflict records in table t")
+		errorTask = taskexecutor.ErrorTask4Test.Load()
+		taskexecutor.ErrorTask4Test.Store(nil)
+		require.Equal(t, proto.BackfillStepMergeSort, errorTask.Step)
+
+		// 3. cloud import
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort"))
+		tk.MustContainErrMsg(tc.addUniqueKeySQL, "found index conflict records in table t")
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ignoreReadIndexDupKey"))
+		errorTask = taskexecutor.ErrorTask4Test.Load()
+		taskexecutor.ErrorTask4Test.Store(nil)
+		require.Equal(t, proto.BackfillStepWriteAndIngest, errorTask.Step)
+
+		tk.MustExec("drop table t")
+	}
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/collectTaskError"))
 }
 
 func TestIngestUseGivenTS(t *testing.T) {

@@ -181,7 +181,6 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 			1,
 			true,
 			common.OnDuplicateKeyIgnore,
-			nil,
 		))
 	}
 

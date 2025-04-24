@@ -213,7 +213,6 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		nil,
 		true,
 		common.OnDuplicateKeyIgnore,
-		nil,
 	))
 
 	kvs := make([]kvPair, 0, kvCount)
@@ -318,7 +317,6 @@ func TestOnefileWriterManyRows(t *testing.T) {
 		onClose,
 		true,
 		common.OnDuplicateKeyIgnore,
-		nil,
 	))
 
 	bufSize := rand.Intn(100) + 1
@@ -400,4 +398,31 @@ func TestOnefilePropOffset(t *testing.T) {
 		require.GreaterOrEqual(t, prop.offset, lastOffset)
 		lastOffset = prop.offset
 	}
+}
+
+func TestOnefileWriterDupError(t *testing.T) {
+	ctx := context.Background()
+	memStore := storage.NewMemStorage()
+
+	writer := NewWriterBuilder().
+		SetPropSizeDistance(100).
+		SetPropKeysDistance(2).
+		SetOnDup(common.OnDuplicateKeyError).
+		BuildOneFile(memStore, "/test", "0")
+
+	require.NoError(t, writer.Init(ctx, 1*1024*1024))
+	kvCnt := 10
+	kvs := make([]common.KvPair, kvCnt)
+	for i := 0; i < kvCnt; i++ {
+		kvs[i].Key = []byte(strconv.Itoa(i))
+		kvs[i].Val = []byte(strconv.Itoa(i * i))
+	}
+
+	for _, item := range kvs {
+		require.NoError(t, writer.WriteRow(ctx, item.Key, item.Val))
+	}
+	// write duplicate key
+	err := writer.WriteRow(ctx, kvs[kvCnt-1].Key, kvs[kvCnt-1].Val)
+	require.Error(t, err)
+	require.True(t, common.ErrFoundDuplicateKeys.Equal(err))
 }

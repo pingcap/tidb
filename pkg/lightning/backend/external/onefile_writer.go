@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
-	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -84,7 +83,6 @@ type OneFileWriter struct {
 	maxKey []byte
 
 	logger   *zap.Logger
-	tbl      table.Table
 	partSize int64
 }
 
@@ -187,7 +185,7 @@ func (w *OneFileWriter) handleDupAndWrite(ctx context.Context, idxKey, idxVal []
 				w.recordedDupCnt++
 			}
 		case common.OnDuplicateKeyError:
-			return NewErrFoundConflictRecords(idxKey, idxVal, w.tbl)
+			return common.ErrFoundDuplicateKeys.FastGenByArgs(idxKey, idxVal)
 		}
 	} else {
 		return w.onNextPivot(ctx, idxKey, idxVal)

@@ -375,7 +375,6 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		subtask.Concurrency,
 		false,
 		onDup,
-		nil,
 	)
 	logger.Info(
 		"merge sort finished",
