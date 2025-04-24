@@ -104,6 +104,7 @@ func newByteReader(
 		smallBuf:      make([]byte, bufSize),
 		curBufOffset:  0,
 	}
+	fmt.Println(bufSize)
 	r.curBuf = [][]byte{r.smallBuf}
 	r.logger = logutil.Logger(r.ctx)
 	return r, r.reload()
@@ -309,6 +310,7 @@ func (r *byteReader) reload() error {
 		case io.ErrUnexpectedEOF:
 			// The last batch.
 			r.curBuf[0] = r.curBuf[0][:n]
+			fmt.Println("0", n)
 		case context.Canceled:
 			return err
 		default:

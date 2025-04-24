@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math/rand"
 	"path"
 	"slices"
 	"strconv"
@@ -38,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
-	"golang.org/x/exp/rand"
 )
 
 // only used in testing for now.
@@ -101,14 +101,16 @@ func mergeOverlappingFilesImpl(ctx context.Context,
 
 func TestWriter(t *testing.T) {
 	seed := time.Now().Unix()
-	rand.Seed(uint64(seed))
+	rand.Seed(seed)
 	t.Logf("seed: %d", seed)
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
 
+	var kvAndStat [2]string
 	w := NewWriterBuilder().
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(2).
+		SetOnCloseFunc(func(s *WriterSummary) { kvAndStat = s.MultipleFilesStats[0].Filenames[0] }).
 		Build(memStore, "/test", "0")
 
 	writer := NewEngineWriter(w)
@@ -135,7 +137,7 @@ func TestWriter(t *testing.T) {
 	})
 
 	bufSize := rand.Intn(100) + 1
-	kvReader, err := NewKVReader(ctx, "/test/0/0", memStore, 0, bufSize)
+	kvReader, err := NewKVReader(ctx, kvAndStat[0], memStore, 0, bufSize)
 	require.NoError(t, err)
 	for i := 0; i < kvCnt; i++ {
 		key, value, err := kvReader.NextKV()
@@ -147,7 +149,7 @@ func TestWriter(t *testing.T) {
 	require.Equal(t, io.EOF, err)
 	require.NoError(t, kvReader.Close())
 
-	statReader, err := newStatsReader(ctx, memStore, "/test/0_stat/0", bufSize)
+	statReader, err := newStatsReader(ctx, memStore, kvAndStat[1], bufSize)
 	require.NoError(t, err)
 
 	var keyCnt uint64 = 0
@@ -165,7 +167,7 @@ func TestWriter(t *testing.T) {
 
 func TestWriterFlushMultiFileNames(t *testing.T) {
 	seed := time.Now().Unix()
-	rand.Seed(uint64(seed))
+	rand.Seed(seed)
 	t.Logf("seed: %d", seed)
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
@@ -195,18 +197,13 @@ func TestWriterFlushMultiFileNames(t *testing.T) {
 	err := writer.Close(ctx)
 	require.NoError(t, err)
 
-	var dataFiles, statFiles []string
-	err = memStore.WalkDir(ctx, &storage.WalkOption{SubDir: "/test"}, func(path string, size int64) error {
-		if strings.Contains(path, "_stat") {
-			statFiles = append(statFiles, path)
-		} else {
-			dataFiles = append(dataFiles, path)
-		}
-		return nil
-	})
+	dataFiles, statFiles, err := getKVAndStatFilesByScan(ctx, memStore, "test")
+	require.NoError(t, err)
 	require.NoError(t, err)
 	require.Len(t, dataFiles, 4)
 	require.Len(t, statFiles, 4)
+	dataFiles = removePartitionPrefix(t, dataFiles)
+	statFiles = removePartitionPrefix(t, statFiles)
 	for i := 0; i < 4; i++ {
 		require.Equal(t, dataFiles[i], fmt.Sprintf("/test/0/%d", i))
 		require.Equal(t, statFiles[i], fmt.Sprintf("/test/0_stat/%d", i))
@@ -217,10 +214,12 @@ func TestWriterDuplicateDetect(t *testing.T) {
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
 
+	var kvAndStat [2]string
 	writer := NewWriterBuilder().
 		SetPropKeysDistance(2).
 		SetMemorySizeLimit(1000).
 		SetKeyDuplicationEncoding(true).
+		SetOnCloseFunc(func(s *WriterSummary) { kvAndStat = s.MultipleFilesStats[0].Filenames[0] }).
 		Build(memStore, "/test", "0")
 	kvCount := 20
 	for i := 0; i < kvCount; i++ {
@@ -236,9 +235,10 @@ func TestWriterDuplicateDetect(t *testing.T) {
 	require.NoError(t, err)
 
 	// test MergeOverlappingFiles will not change duplicate detection functionality.
+	var summary *WriterSummary
 	err = mergeOverlappingFilesImpl(
 		ctx,
-		[]string{"/test/0/0"},
+		[]string{kvAndStat[0]},
 		memStore,
 		100,
 		"/test2",
@@ -248,14 +248,15 @@ func TestWriterDuplicateDetect(t *testing.T) {
 		8*1024,
 		1*size.MB,
 		2,
-		nil,
+		func(s *WriterSummary) { summary = s },
 		false,
 	)
 	require.NoError(t, err)
 
 	kvs := make([]kvPair, 0, kvCount)
 
-	kvReader, err := NewKVReader(ctx, "/test2/mergeID/0", memStore, 0, 100)
+	kvAndStat = summary.MultipleFilesStats[0].Filenames[0]
+	kvReader, err := NewKVReader(ctx, kvAndStat[0], memStore, 0, 100)
 	require.NoError(t, err)
 	for i := 0; i < kvCount; i++ {
 		key, value, err := kvReader.NextKV()
@@ -320,6 +321,15 @@ func TestMultiFileStatOverlap(t *testing.T) {
 
 	s3.MinKey = dbkv.Key{0}
 	require.EqualValues(t, 260, GetMaxOverlappingTotal([]MultipleFilesStat{s1, s2, s3}))
+}
+
+func removePartitionFromMultipleFilesStat(t *testing.T, in MultipleFilesStat) MultipleFilesStat {
+	out := in
+	for i := range out.Filenames {
+		namesWithoutPartition := removePartitionPrefix(t, []string{out.Filenames[i][0], out.Filenames[i][1]})
+		out.Filenames[i] = [2]string{namesWithoutPartition[0], namesWithoutPartition[1]}
+	}
+	return out
 }
 
 func TestWriterMultiFileStat(t *testing.T) {
@@ -407,7 +417,7 @@ func TestWriterMultiFileStat(t *testing.T) {
 		},
 		MaxOverlappingNum: 1,
 	}
-	require.Equal(t, expected, summary.MultipleFilesStats[0])
+	require.Equal(t, expected, removePartitionFromMultipleFilesStat(t, summary.MultipleFilesStats[0]))
 	expected = MultipleFilesStat{
 		MinKey: []byte("key11"),
 		MaxKey: []byte("key16"),
@@ -418,7 +428,7 @@ func TestWriterMultiFileStat(t *testing.T) {
 		},
 		MaxOverlappingNum: 2,
 	}
-	require.Equal(t, expected, summary.MultipleFilesStats[1])
+	require.Equal(t, expected, removePartitionFromMultipleFilesStat(t, summary.MultipleFilesStats[1]))
 	expected = MultipleFilesStat{
 		MinKey: []byte("key20"),
 		MaxKey: []byte("key24"),
@@ -429,14 +439,12 @@ func TestWriterMultiFileStat(t *testing.T) {
 		},
 		MaxOverlappingNum: 3,
 	}
-	require.Equal(t, expected, summary.MultipleFilesStats[2])
+	require.Equal(t, expected, removePartitionFromMultipleFilesStat(t, summary.MultipleFilesStats[2]))
 	require.EqualValues(t, "key01", summary.Min)
 	require.EqualValues(t, "key24", summary.Max)
 
-	allDataFiles := make([]string, 9)
-	for i := range allDataFiles {
-		allDataFiles[i] = fmt.Sprintf("/test/0/%d", i)
-	}
+	allDataFiles, _, err := getKVAndStatFilesByScan(ctx, memStore, "test")
+	require.NoError(t, err)
 
 	err = mergeOverlappingFilesImpl(
 		ctx,
@@ -465,7 +473,7 @@ func TestWriterMultiFileStat(t *testing.T) {
 		},
 		MaxOverlappingNum: 1,
 	}
-	require.Equal(t, expected, summary.MultipleFilesStats[0])
+	require.Equal(t, expected, removePartitionFromMultipleFilesStat(t, summary.MultipleFilesStats[0]))
 	expected = MultipleFilesStat{
 		MinKey: []byte("key11"),
 		MaxKey: []byte("key16"),
@@ -476,7 +484,7 @@ func TestWriterMultiFileStat(t *testing.T) {
 		},
 		MaxOverlappingNum: 1,
 	}
-	require.Equal(t, expected, summary.MultipleFilesStats[1])
+	require.Equal(t, expected, removePartitionFromMultipleFilesStat(t, summary.MultipleFilesStats[1]))
 	expected = MultipleFilesStat{
 		MinKey: []byte("key20"),
 		MaxKey: []byte("key24"),
@@ -487,7 +495,7 @@ func TestWriterMultiFileStat(t *testing.T) {
 		},
 		MaxOverlappingNum: 1,
 	}
-	require.Equal(t, expected, summary.MultipleFilesStats[2])
+	require.Equal(t, expected, removePartitionFromMultipleFilesStat(t, summary.MultipleFilesStats[2]))
 	require.EqualValues(t, "key01", summary.Min)
 	require.EqualValues(t, "key24", summary.Max)
 }
@@ -566,10 +574,12 @@ func TestFlushKVsRetry(t *testing.T) {
 	ctx := context.Background()
 	store := &writerFirstCloseFailStorage{ExternalStorage: storage.NewMemStorage(), shouldFail: true}
 
+	var kvAndStat [2]string
 	writer := NewWriterBuilder().
 		SetPropKeysDistance(4).
 		SetMemorySizeLimit(100).
 		SetBlockSize(100). // 2 KV pair will trigger flush
+		SetOnCloseFunc(func(s *WriterSummary) { kvAndStat = s.MultipleFilesStats[0].Filenames[0] }).
 		Build(store, "/test", "0")
 	err := writer.WriteRow(ctx, []byte("key1"), []byte("val1"), nil)
 	require.NoError(t, err)
@@ -577,13 +587,11 @@ func TestFlushKVsRetry(t *testing.T) {
 	require.NoError(t, err)
 	err = writer.WriteRow(ctx, []byte("key2"), []byte("val2"), nil)
 	require.NoError(t, err)
-	// manually test flushKVs
-	err = writer.flushKVs(ctx, false)
-	require.NoError(t, err)
+	require.NoError(t, writer.Close(ctx))
 
 	require.False(t, store.shouldFail)
 
-	r, err := newStatsReader(ctx, store, "/test/0_stat/0", 100)
+	r, err := newStatsReader(ctx, store, kvAndStat[1], 100)
 	require.NoError(t, err)
 	p, err := r.nextProp()
 	lastKey := []byte{}
@@ -593,4 +601,11 @@ func TestFlushKVsRetry(t *testing.T) {
 		lastKey = append(lastKey[:0], p.firstKey...)
 		p, err = r.nextProp()
 	}
+}
+
+func TestRandPartitionedPrefix(t *testing.T) {
+	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
+	prefix := "write-prefix"
+	partitioned := randPartitionedPrefix(prefix, rnd)
+	require.Equal(t, partitioned[3:], prefix)
 }

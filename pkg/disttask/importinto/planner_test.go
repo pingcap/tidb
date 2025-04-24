@@ -314,6 +314,11 @@ func TestGetSortedKVMetas(t *testing.T) {
 	require.Equal(t, []byte("i1_2_c"), allKVMetas["1"].EndKey)
 }
 
+func writeAndGetFiles(t *testing.T, writer *external.Writer, keys [][]byte, values [][]byte) (
+	dataFiles []string, statsFiles []string) {
+	return
+}
+
 func TestSplitForOneSubtask(t *testing.T) {
 	ctx := context.Background()
 	workDir := t.TempDir()
@@ -339,9 +344,11 @@ func TestSplitForOneSubtask(t *testing.T) {
 			multiFileStat = s.MultipleFilesStats
 		}).
 		Build(store, "/mock-test", "0")
-	_, _, err = external.MockExternalEngineWithWriter(
-		store, writer, "/mock-test", keys, values,
-	)
+	for i := range keys {
+		err := writer.WriteRow(ctx, keys[i], values[i], nil)
+		require.NoError(t, err)
+	}
+	require.NoError(t, writer.Close(ctx))
 	require.NoError(t, err)
 	kvMeta := &external.SortedKVMeta{
 		StartKey:           keys[0],

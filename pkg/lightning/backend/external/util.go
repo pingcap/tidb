@@ -18,13 +18,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"hash/fnv"
 	"io"
 	"path"
 	"reflect"
 	"slices"
 	"sort"
 	"strconv"
-	"strings"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
@@ -128,56 +128,57 @@ func seekPropsOffsets(
 	return offsetsPerKey, nil
 }
 
-// GetAllFileNames returns data file paths and stat file paths. Both paths are
-// sorted.
+// GetAllFileNames returns files with the same non-partitioned dir.
+// see randPartitionedPrefix for how we partition the files.
 func GetAllFileNames(
 	ctx context.Context,
 	store storage.ExternalStorage,
-	subDir string,
-) ([]string, []string, error) {
+	nonPartitionedDir string,
+) ([]string, error) {
 	var data []string
-	var stats []string
 
 	err := store.WalkDir(ctx,
-		&storage.WalkOption{SubDir: subDir},
+		&storage.WalkOption{},
 		func(path string, size int64) error {
 			// path example: /subtask/0_stat/0
 
 			// extract the parent dir
 			bs := hack.Slice(path)
-			lastIdx := bytes.LastIndexByte(bs, '/')
-			secondLastIdx := bytes.LastIndexByte(bs[:lastIdx], '/')
-			parentDir := path[secondLastIdx+1 : lastIdx]
+			firstIdx := bytes.IndexByte(bs, '/')
+			if firstIdx == -1 || !isValidPartition(bs[:firstIdx]) {
+				return nil
+			}
 
-			if strings.HasSuffix(parentDir, statSuffix) {
-				stats = append(stats, path)
-			} else {
+			secondIdx := bytes.IndexByte(bs[firstIdx+1:], '/')
+			if secondIdx == -1 {
+				return nil
+			}
+			dir := path[firstIdx+1 : firstIdx+1+secondIdx]
+
+			if dir == nonPartitionedDir {
 				data = append(data, path)
 			}
 			return nil
 		})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	// in case the external storage does not guarantee the order of walk
 	sort.Strings(data)
-	sort.Strings(stats)
-	return data, stats, nil
+	return data, nil
 }
 
-// CleanUpFiles delete all data and stat files under one subDir.
-func CleanUpFiles(ctx context.Context, store storage.ExternalStorage, subDir string) error {
+// CleanUpFiles delete all data and stat files under the same non-partitioned dir.
+// see randPartitionedPrefix for how we partition the files.
+func CleanUpFiles(ctx context.Context, store storage.ExternalStorage, nonPartitionedDir string) error {
 	failpoint.Inject("skipCleanUpFiles", func() {
 		failpoint.Return(nil)
 	})
-	dataNames, statNames, err := GetAllFileNames(ctx, store, subDir)
+	names, err := GetAllFileNames(ctx, store, nonPartitionedDir)
 	if err != nil {
 		return err
 	}
-	allFiles := make([]string, 0, len(dataNames)+len(statNames))
-	allFiles = append(allFiles, dataNames...)
-	allFiles = append(allFiles, statNames...)
-	return store.DeleteFiles(ctx, allFiles)
+	return store.DeleteFiles(ctx, names)
 }
 
 // MockExternalEngine generates an external engine with the given keys and values.
@@ -186,25 +187,14 @@ func MockExternalEngine(
 	keys [][]byte,
 	values [][]byte,
 ) (dataFiles []string, statsFiles []string, err error) {
-	subDir := "/mock-test"
+	var summary *WriterSummary
 	writer := NewWriterBuilder().
 		SetMemorySizeLimit(10*(lengthBytes*2+10)).
 		SetBlockSize(10*(lengthBytes*2+10)).
 		SetPropSizeDistance(32).
 		SetPropKeysDistance(4).
+		SetOnCloseFunc(func(s *WriterSummary) { summary = s }).
 		Build(storage, "/mock-test", "0")
-	return MockExternalEngineWithWriter(storage, writer, subDir, keys, values)
-}
-
-// MockExternalEngineWithWriter generates an external engine with the given
-// writer, keys and values.
-func MockExternalEngineWithWriter(
-	storage storage.ExternalStorage,
-	writer *Writer,
-	subDir string,
-	keys [][]byte,
-	values [][]byte,
-) (dataFiles []string, statsFiles []string, err error) {
 	ctx := context.Background()
 	for i := range keys {
 		err := writer.WriteRow(ctx, keys[i], values[i], nil)
@@ -216,7 +206,13 @@ func MockExternalEngineWithWriter(
 	if err != nil {
 		return nil, nil, err
 	}
-	return GetAllFileNames(ctx, storage, subDir)
+	for _, ms := range summary.MultipleFilesStats {
+		for _, f := range ms.Filenames {
+			dataFiles = append(dataFiles, f[0])
+			statsFiles = append(statsFiles, f[1])
+		}
+	}
+	return
 }
 
 // EndpointTp is the type of Endpoint.Key.
@@ -551,4 +547,11 @@ func PlanMetaPath(taskID int64, step string, idx int) string {
 // SubtaskMetaPath returns the path of the subtask meta file.
 func SubtaskMetaPath(taskID int64, subtaskID int64) string {
 	return path.Join(strconv.FormatInt(taskID, 10), strconv.FormatInt(subtaskID, 10), metaName)
+}
+
+func getHash(s string) int64 {
+	h := fnv.New64a()
+	// this hash function never return error
+	_, _ = h.Write([]byte(s))
+	return int64(h.Sum64())
 }

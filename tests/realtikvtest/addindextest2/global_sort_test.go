@@ -70,11 +70,10 @@ func checkFileCleaned(t *testing.T, jobID, taskID int64, sortStorageURI string) 
 	require.NoError(t, err)
 	for _, id := range []int64{jobID, taskID} {
 		prefix := strconv.Itoa(int(id))
-		dataFiles, statFiles, err := external.GetAllFileNames(context.Background(), extStore, prefix)
+		files, err := external.GetAllFileNames(context.Background(), extStore, prefix)
 		require.NoError(t, err)
 		require.Greater(t, jobID, int64(0))
-		require.Equal(t, 0, len(dataFiles))
-		require.Equal(t, 0, len(statFiles))
+		require.Equal(t, 0, len(files))
 	}
 }
 
@@ -83,7 +82,7 @@ func checkFileExist(t *testing.T, sortStorageURI string, prefix string) {
 	require.NoError(t, err)
 	extStore, err := storage.NewWithDefaultOpt(context.Background(), storeBackend)
 	require.NoError(t, err)
-	dataFiles, _, err := external.GetAllFileNames(context.Background(), extStore, prefix)
+	dataFiles, err := external.GetAllFileNames(context.Background(), extStore, prefix)
 	require.NoError(t, err)
 	require.Greater(t, len(dataFiles), 0)
 }

@@ -19,6 +19,8 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
+	"math"
+	"math/rand"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -239,6 +241,7 @@ func (b *WriterBuilder) Build(
 		membuf.WithBlockNum(0),
 		membuf.WithBlockSize(b.blockSize),
 	)
+	rnd := rand.New(rand.NewSource(getHash(filenamePrefix)))
 	ret := &Writer{
 		rc: &rangePropertiesCollector{
 			props:        make([]*rangeProperty, 0, 1024),
@@ -251,6 +254,7 @@ func (b *WriterBuilder) Build(
 		kvBuffer:       p.NewBuffer(membuf.WithBufferMemoryLimit(b.memSizeLimit)),
 		currentSeq:     0,
 		filenamePrefix: filenamePrefix,
+		rnd:            rnd,
 		keyAdapter:     keyAdapter,
 		writerID:       writerID,
 		groupOffset:    b.groupOffset,
@@ -276,6 +280,8 @@ func (b *WriterBuilder) BuildOneFile(
 	filenamePrefix := filepath.Join(prefix, writerID)
 	p := membuf.NewPool(membuf.WithBlockNum(0), membuf.WithBlockSize(b.blockSize))
 
+	rnd := rand.New(rand.NewSource(getHash(filenamePrefix)))
+
 	ret := &OneFileWriter{
 		rc: &rangePropertiesCollector{
 			props:        make([]*rangeProperty, 0, 1024),
@@ -287,6 +293,7 @@ func (b *WriterBuilder) BuildOneFile(
 		store:          store,
 		filenamePrefix: filenamePrefix,
 		writerID:       writerID,
+		rnd:            rnd,
 		kvStore:        nil,
 		onClose:        b.onClose,
 		closed:         false,
@@ -374,6 +381,7 @@ type Writer struct {
 	groupOffset    int
 	currentSeq     int
 	filenamePrefix string
+	rnd            *rand.Rand
 	keyAdapter     common.KeyAdapter
 
 	rc *rangePropertiesCollector
@@ -721,7 +729,7 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 	data, stats storage.ExternalFileWriter,
 	err error,
 ) {
-	dataPath := filepath.Join(w.filenamePrefix, strconv.Itoa(w.currentSeq))
+	dataPath := filepath.Join(w.getPartitionedPrefix(), strconv.Itoa(w.currentSeq))
 	dataWriter, err := w.store.Create(ctx, dataPath, &storage.WriterOption{
 		Concurrency: 20,
 		PartSize:    MinUploadPartSize,
@@ -729,7 +737,7 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 	if err != nil {
 		return "", "", nil, nil, err
 	}
-	statPath := filepath.Join(w.filenamePrefix+statSuffix, strconv.Itoa(w.currentSeq))
+	statPath := filepath.Join(w.getPartitionedPrefix()+statSuffix, strconv.Itoa(w.currentSeq))
 	statsWriter, err := w.store.Create(ctx, statPath, &storage.WriterOption{
 		Concurrency: 20,
 		PartSize:    MinUploadPartSize,
@@ -742,12 +750,44 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 }
 
 func (w *Writer) createDupWriter(ctx context.Context) (string, storage.ExternalFileWriter, error) {
-	path := filepath.Join(w.filenamePrefix+dupSuffix, strconv.Itoa(w.currentSeq))
+	path := filepath.Join(w.getPartitionedPrefix()+dupSuffix, strconv.Itoa(w.currentSeq))
 	writer, err := w.store.Create(ctx, path, &storage.WriterOption{
 		Concurrency: 20,
 		PartSize:    MinUploadPartSize,
 	})
 	return path, writer, err
+}
+
+func (w *Writer) getPartitionedPrefix() string {
+	return randPartitionedPrefix(w.filenamePrefix, w.rnd)
+}
+
+// when importing large mount of data, during merge-sort and ingest, it's possible
+// we need to read many files in parallel, but for Object Storage like S3, it will
+// partition all object keys by prefix and each partition have its own request
+// quota. Initially, each bucket only have one partition, and the auto-partition
+// of object storage is mostly slow, so we might be throttled for some time to wait
+// S3 server do auto-partition.
+// to mitigate this issue, we design the file prefix in a way which is easy to
+// be partitioned, and let the user file a ticket to let cloud provider partition
+// by prefix manually before import large dataset.
+//
+// the rule is: generate a random byte in range [0, 256) and encode to hex string,
+// and use it as the partitioned prefix.
+func randPartitionedPrefix(prefix string, rnd *rand.Rand) string {
+	partitionID := byte(rnd.Intn(math.MaxUint8 + 1))
+	return filepath.Join(hex.EncodeToString([]byte{partitionID}), prefix)
+}
+
+func isLowerHexChar(b byte) bool {
+	return ('0' <= b && b <= '9') || ('a' <= b && b <= 'f')
+}
+
+func isValidPartition(in []byte) bool {
+	if len(in) != 2 {
+		return false
+	}
+	return isLowerHexChar(in[0]) && isLowerHexChar(in[1])
 }
 
 // EngineWriter implements backend.EngineWriter interface.

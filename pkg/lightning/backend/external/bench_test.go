@@ -15,11 +15,13 @@
 package external
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -87,11 +89,9 @@ func writePlainFile(s *writeTestSuite) {
 }
 
 func cleanOldFiles(ctx context.Context, store storage.ExternalStorage, subDir string) {
-	dataFiles, statFiles, err := GetAllFileNames(ctx, store, subDir)
+	filenames, err := GetAllFileNames(ctx, store, subDir)
 	intest.AssertNoError(err)
-	err = store.DeleteFiles(ctx, dataFiles)
-	intest.AssertNoError(err)
-	err = store.DeleteFiles(ctx, statFiles)
+	err = store.DeleteFiles(ctx, filenames)
 	intest.AssertNoError(err)
 }
 
@@ -248,7 +248,7 @@ type readTestSuite struct {
 
 func readFileSequential(t *testing.T, s *readTestSuite) {
 	ctx := context.Background()
-	files, _, err := GetAllFileNames(ctx, s.store, "/"+s.subDir)
+	files, _, err := getKVAndStatFilesByScan(ctx, s.store, "/"+s.subDir)
 	intest.AssertNoError(err)
 
 	buf := make([]byte, s.memoryLimit)
@@ -284,9 +284,32 @@ func readFileSequential(t *testing.T, s *readTestSuite) {
 	)
 }
 
+func getKVAndStatFilesByScan(ctx context.Context,
+	store storage.ExternalStorage,
+	nonPartitionedDir string,
+) ([]string, []string, error) {
+	names, err := GetAllFileNames(ctx, store, nonPartitionedDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	var data, stats []string
+	for _, path := range names {
+		bs := []byte(path)
+		lastIdx := bytes.LastIndexByte(bs, '/')
+		secondLastIdx := bytes.LastIndexByte(bs[:lastIdx], '/')
+		parentDir := path[secondLastIdx+1 : lastIdx]
+		if strings.HasSuffix(parentDir, statSuffix) {
+			stats = append(stats, path)
+		} else {
+			data = append(data, path)
+		}
+	}
+	return data, stats, nil
+}
+
 func readFileConcurrently(t *testing.T, s *readTestSuite) {
 	ctx := context.Background()
-	files, _, err := GetAllFileNames(ctx, s.store, "/"+s.subDir)
+	files, _, err := getKVAndStatFilesByScan(ctx, s.store, "/"+s.subDir)
 	intest.AssertNoError(err)
 
 	conc := min(s.concurrency, len(files))
@@ -335,7 +358,7 @@ func readFileConcurrently(t *testing.T, s *readTestSuite) {
 
 func readMergeIter(t *testing.T, s *readTestSuite) {
 	ctx := context.Background()
-	files, _, err := GetAllFileNames(ctx, s.store, "/"+s.subDir)
+	files, _, err := getKVAndStatFilesByScan(ctx, s.store, "/"+s.subDir)
 	intest.AssertNoError(err)
 
 	if s.beforeCreateReader != nil {
@@ -483,7 +506,7 @@ type mergeTestSuite struct {
 
 func mergeStep(t *testing.T, s *mergeTestSuite) {
 	ctx := context.Background()
-	datas, _, err := GetAllFileNames(ctx, s.store, "/"+s.subDir)
+	datas, _, err := getKVAndStatFilesByScan(ctx, s.store, "/"+s.subDir)
 	intest.AssertNoError(err)
 
 	mergeOutput := "merge_output"
@@ -525,7 +548,7 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 
 func newMergeStep(t *testing.T, s *mergeTestSuite) {
 	ctx := context.Background()
-	datas, stats, err := GetAllFileNames(ctx, s.store, "/"+s.subDir)
+	datas, stats, err := getKVAndStatFilesByScan(ctx, s.store, "/"+s.subDir)
 	intest.AssertNoError(err)
 
 	mergeOutput := "merge_output"
@@ -645,7 +668,7 @@ func TestReadAllDataLargeFiles(t *testing.T) {
 	writeExternalOneFile(suite2)
 	t.Logf("minKey: %s, maxKey: %s", minKey, maxKey)
 
-	dataFiles, statFiles, err := GetAllFileNames(ctx, store, "")
+	dataFiles, statFiles, err := getKVAndStatFilesByScan(ctx, store, "")
 	intest.AssertNoError(err)
 	intest.Assert(len(dataFiles) == 2)
 
@@ -802,7 +825,7 @@ func TestReadAllData(t *testing.T) {
 
 finishCreateFiles:
 
-	dataFiles, statFiles, err := GetAllFileNames(ctx, store, "/")
+	dataFiles, statFiles, err := getKVAndStatFilesByScan(ctx, store, "/")
 	require.NoError(t, err)
 	require.Equal(t, 2091, len(dataFiles))
 
