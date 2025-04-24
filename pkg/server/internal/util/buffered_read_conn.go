@@ -64,10 +64,13 @@ func (conn BufferedReadConn) IsAlive() int {
 		}
 		// nolint:errcheck
 		defer conn.SetReadDeadline(time.Time{})
-		// From the TCP level, the return of `Peek` results
-		// does not guarantee that the data link will survive.
-		// From the MySQL protocol, the client should not send
-		// new data to the server while it is processing the SQL.
+		// At the TCP level, a successful `Peek` operation doesn't guarantee
+		// the connection remains active. However, in the MySQL protocol,
+		// clients shouldn't send new data while the server is processing SQL.
+		// Therefore, we can safely assume `Peek` won't intercept any data
+		// during this period. Even if `Peek` does capture data, it only means
+		// the liveness check might be inaccurate - this won't impact the
+		// actual connection state or its operations.
 		_, err = conn.Peek(1)
 		if err == io.EOF {
 			return 0
