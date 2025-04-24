@@ -5223,7 +5223,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		}
 
 		if v.Select != nil {
-			// PTAL: Why v.Select.Text() = "" ?
+			// v.Text() = "" ?
 			log.Info("v.Text()", zap.Any("v.Text()", v.Text()))
 			log.Info("create table with info job", zap.Any("v.Select", v.Select.Text()))
 			if err := checkCreateTableAsSelect(v); err != nil {
@@ -5455,6 +5455,11 @@ func buildColsFromPlan(v *ast.CreateTableStmt, logicalPlan base.LogicalPlan) err
 	names := logicalPlan.OutputNames()
 	log.Info("schema", zap.Any("schema", schema))
 	log.Info("names", zap.Any("names", names))
+
+	// fill select columns,used in build sql when insert into table(v.SelectColumns...)  select ...
+	for _, name := range names {
+		v.SelectColumns = append(v.SelectColumns, &name.ColName)
+	}
 	if v.Cols == nil {
 		// Order of columns is the same as the order of [cols from select stmt]
 		v.Cols = make([]*ast.ColumnDef, len(schema.Columns))

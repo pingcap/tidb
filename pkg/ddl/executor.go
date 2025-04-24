@@ -30,6 +30,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
@@ -1036,22 +1037,14 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 		onExist = OnExistIgnore
 	}
 	var sql string
-	var res strings.Builder
-
 	if s.Select != nil {
-		// logutil.DDLLogger().Info("create table with info job", zap.Any("args.SelectText", s.Select.Text()))
-
-		restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &res)
-		if err := s.Select.Restore(restoreCtx); err != nil {
-			return err
-		}
-		sql = fmt.Sprintf("insert into %s.%s  %s", schema.Name.L, s.Table.Name.L, res.String())
-		// logutil.DDLLogger().Info("create table with info job", zap.String("sql", sql))
-		// Insert values to a nonpublic table
-		// TODO: implement this
+		sql, err = buildInsertSql(schema.Name.L, s.Table.Name.L, s)
 	}
 	// now WithSql(sql) is ignored
-	err = e.CreateTableWithInfo(ctx, schema.Name, tbInfo, involvingRef, WithOnExist(onExist), WithSql(sql))
+	if err = e.CreateTableWithInfo(ctx, schema.Name, tbInfo, involvingRef, WithOnExist(onExist), WithSql(sql)); err != nil {
+		return err
+	}
+
 	if sql != "" {
 		var sctx sessionctx.Context
 		sctx, err = e.sessPool.Get()
@@ -1062,6 +1055,8 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 		logutil.DDLLogger().Info("create table with info job", zap.String("sql", sql))
 		_, err = sctx.GetSQLExecutor().ExecuteInternal(e.ctx, sql)
 		if err != nil {
+			dropSql := fmt.Sprintf("drop table if exists %s.%s", schema.Name.L, s.Table.Name.L)
+			_, _ = sctx.GetSQLExecutor().ExecuteInternal(e.ctx, dropSql)
 			return errors.Trace(err)
 		}
 	}
@@ -1070,6 +1065,40 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 		return err
 	}
 	return nil
+}
+
+func buildInsertSql(dbName, tableName string, s *ast.CreateTableStmt) (sql string, err error) {
+	var res strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &res)
+	if err := s.Select.Restore(restoreCtx); err != nil {
+		return "", err
+	}
+
+	var sqlBuilder strings.Builder
+	// Grow the capacity of the builder to reduce reallocation
+	sqlBuilder.Grow(len(dbName) + len(tableName) + res.Len())
+
+	sqlBuilder.WriteString("insert into ")
+	sqlBuilder.WriteString(dbName)
+	sqlBuilder.WriteByte('.')
+	sqlBuilder.WriteString(tableName)
+	sqlBuilder.WriteByte('(')
+
+	for i, col := range s.SelectColumns {
+		log.Info("col.O", zap.Any("col", col.O))
+		if i > 0 {
+			sqlBuilder.WriteByte(',')
+		}
+		// 使用反引号包裹列名，处理特殊列名如sum(b)
+		sqlBuilder.WriteByte('`')
+		sqlBuilder.WriteString(col.L)
+		sqlBuilder.WriteByte('`')
+	}
+
+	sqlBuilder.WriteString(") ")
+	sqlBuilder.WriteString(res.String())
+
+	return sqlBuilder.String(), nil
 }
 
 // createTableWithInfoJob returns the table creation job.
@@ -2555,7 +2584,7 @@ func (e *executor) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident,
 	}
 	err = initJobReorgMetaFromVariables(job, ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	args := &model.TablePartitionArgs{
 		PartNames: partNames,
@@ -2624,7 +2653,7 @@ func (e *executor) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, s
 	}
 	err = initJobReorgMetaFromVariables(job, ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	args := &model.TablePartitionArgs{
 		PartNames: partNames,
