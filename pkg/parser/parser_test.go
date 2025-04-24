@@ -1079,9 +1079,9 @@ AAAAAAAAAAAA5gm5Mg==
 		{"distribute table t1 partition(p0)", false, ""},
 		{"distribute table t1 partition(p0,p1)", false, ""},
 		{"distribute table t1 partition(p0,p1) engine = tikv", false, ""},
-		{"distribute table t1 rule = leader engine = tikv", true, "DISTRIBUTE TABLE `t1` RULE = `leader` ENGINE = `tikv`"},
-		{"distribute table t1 partition(p0,p1) rule = leader engine = tikv", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`, `p1`) RULE = `leader` ENGINE = `tikv`"},
-		{"distribute table t1 partition(p0) rule = learner engine = tiflash", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`) RULE = `learner` ENGINE = `tiflash`"},
+		{"distribute table t1 rule = `leader-scatter` engine = tikv", true, "DISTRIBUTE TABLE `t1` RULE = `leader-scatter` ENGINE = `tikv`"},
+		{"distribute table t1 partition(p0,p1) rule = `learner-scatter` engine = tikv", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`, `p1`) RULE = `learner-scatter` ENGINE = `tikv`"},
+		{"distribute table t1 partition(p0) rule = `peer-scatter` engine = tiflash", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`) RULE = `peer-scatter` ENGINE = `tiflash`"},
 
 		// for show distribution job(s)
 		{"show distribution jobs 1", false, ""},
