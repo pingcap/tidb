@@ -129,6 +129,7 @@ type InfoSyncer struct {
 	tiflashReplicaManager TiFlashReplicaManager
 	resourceManagerClient pd.ResourceManagerClient
 	infoCache             infoschemaMinTS
+	TiCIManager           TiCIManager
 }
 
 // ServerInfo represents the server's basic information.
@@ -186,6 +187,10 @@ type StaticServerInfo struct {
 
 	// JSONServerID is `serverID` for json marshal/unmarshal ONLY.
 	JSONServerID uint64 `json:"server_id"`
+
+	// TODO: remove TiCIIP and TiCIPort after TiCI registered in PD.
+	TiCIIP   string `json:"tici_ip"`
+	TiCIPort string `json:"tici_port"`
 }
 
 // DynamicServerInfo represents the dynamic information of the server.
@@ -275,6 +280,10 @@ func GlobalInfoSyncerInit(
 	is.initScheduleManager()
 	is.initTiFlashReplicaManager(codec)
 	is.initResourceManagerClient(pdCli)
+	err = is.initTiCIManagerCtx()
+	if err != nil {
+		return nil, err
+	}
 	setGlobalInfoSyncer(is)
 	return is, nil
 }
@@ -319,6 +328,17 @@ func (is *InfoSyncer) initPlacementManager() {
 		return
 	}
 	is.placementManager = &PDPlacementManager{is.pdHTTPCli}
+}
+
+func (is *InfoSyncer) initTiCIManagerCtx() error {
+	if is.TiCIManager == nil {
+		tiCIManager, err := NewTiCIManager(is.info.Load().TiCIIP, is.info.Load().TiCIPort)
+		if err != nil {
+
+		}
+		is.TiCIManager = tiCIManager
+	}
+	return nil
 }
 
 func (is *InfoSyncer) initResourceManagerClient(pdCli pd.Client) {
@@ -1106,6 +1126,8 @@ func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 			Lease:          cfg.Lease,
 			StartTimestamp: time.Now().Unix(),
 			ServerIDGetter: serverIDGetter,
+			TiCIIP:         cfg.TiCIHost,
+			TiCIPort:       cfg.TiCIPort,
 		},
 		DynamicServerInfo: DynamicServerInfo{
 			Labels: maps.Clone(cfg.Labels),

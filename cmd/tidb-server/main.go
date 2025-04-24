@@ -122,6 +122,8 @@ const (
 	nmRepairMode       = "repair-mode"
 	nmRepairList       = "repair-list"
 	nmTempDir          = "temp-dir"
+	nmTiCIHost         = "tici-host"
+	nmTiCIPort         = "tici-port"
 
 	nmRedact = "redact"
 
@@ -150,6 +152,8 @@ var (
 	host             *string
 	advertiseAddress *string
 	port             *string
+	ticiHost         *string
+	ticiPort         *string
 	cors             *string
 	socket           *string
 	enableBinlog     *bool
@@ -218,6 +222,8 @@ func initFlagSet() *flag.FlagSet {
 	repairMode = flagBoolean(fset, nmRepairMode, false, "enable admin repair mode")
 	repairList = fset.String(nmRepairList, "", "admin repair table list")
 	tempDir = fset.String(nmTempDir, config.DefTempDir, "tidb temporary directory")
+	ticiHost = fset.String(nmTiCIHost, "0.0.0.0", "tici server host")
+	ticiPort = fset.String(nmTiCIPort, "50051", "tici server port")
 
 	// Log
 	logLevel = fset.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
@@ -555,6 +561,12 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 	}
 	if actualFlags[nmTempDir] {
 		cfg.TempDir = *tempDir
+	}
+	if actualFlags[nmTiCIHost] {
+		cfg.TiCIHost = *ticiHost
+	}
+	if actualFlags[nmTiCIPort] {
+		cfg.TiCIPort = *ticiPort
 	}
 
 	// Log
