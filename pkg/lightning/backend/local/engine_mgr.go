@@ -82,13 +82,15 @@ func newEngineManager(config BackendConfig, storeHelper StoreHelper, logger log.
 	}
 
 	keyAdapter := common.KeyAdapter(common.NoopKeyAdapter{})
-	// TODO: use config.KeyAdapter directly
 	if config.DupeDetectEnabled {
 		duplicateDB, err = openDuplicateDB(config.LocalStoreDir)
 		if err != nil {
 			return nil, common.ErrOpenDuplicateDB.Wrap(err).GenWithStackByArgs()
 		}
 		keyAdapter = common.DupDetectKeyAdapter{}
+	}
+	if config.KeyAdapter != nil {
+		keyAdapter = config.KeyAdapter
 	}
 	alloc := manual.Allocator{}
 	if RunInTest {
