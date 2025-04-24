@@ -936,7 +936,13 @@ func TestCreateTableAsSelect(t *testing.T) {
 	tk.MustExec("update t1 set b=1;")
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 1", "2 1", "3 1"))
 	tk.MustGetErrCode("create table t8 (id int, b int, unique index(b)) as select * from t1;", errno.ErrDupEntry)
-	tk.MustGetErrCode("show create table t8;", errno.ErrNoSuchTable)
+
+	// now we insert xxx after t8 is created, so we do not drop it (violate atomicity)
+	// so we delete t8 by `drop table t8`
+	// tk.MustGetErrCode("show create table t8;", errno.ErrNoSuchTable)
+
+	tk.MustExec("drop table t8")
+
 	// Restore t1 to its original state
 	tk.MustExec("update t1 set b=id;")
 	tk.MustQuery("select * from t1;").Check(testkit.Rows("1 1", "2 2", "3 3"))
