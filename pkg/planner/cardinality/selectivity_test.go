@@ -71,7 +71,7 @@ func TestCollationColumnEstimate(t *testing.T) {
 	)
 	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
-	for i := 0; i < len(input); i++ {
+	for i := range input {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(tk.MustQuery(input[i]).Rows())
 		})
@@ -123,7 +123,7 @@ func TestOutOfRangeEstimation(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int unsigned, index idx(a))")
-	for i := 0; i < 3000; i++ {
+	for i := range 3000 {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/5+300)) // [300, 900)
 	}
 	testKit.MustExec("analyze table t with 2000 samples")
@@ -180,7 +180,7 @@ func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 	require.NoError(t, err)
 	// [300, 900)
 	// 5 rows for each value, 3000 rows in total.
-	for i := 0; i < 3000; i++ {
+	for i := range 3000 {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/5+300))
 	}
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
@@ -222,13 +222,13 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	testKit.MustExec("create table t(a int, b int, key idx(a, b))")
 	testKit.MustExec("set @@tidb_analyze_version=1")
 	testKit.MustExec("analyze table t")
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
 	}
 	h := dom.StatsHandle()
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	testKit.MustExec("analyze table t")
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i+10, i+10))
 	}
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
@@ -437,7 +437,7 @@ func TestColumnIndexNullEstimation(t *testing.T) {
 	)
 	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
 		})
@@ -471,7 +471,7 @@ func TestUniqCompEqualEst(t *testing.T) {
 	)
 	statsSuiteData := cardinality.GetCardinalitySuiteData()
 	statsSuiteData.LoadTestCases(t, &input, &output)
-	for i := 0; i < 1; i++ {
+	for i := range 1 {
 		testdata.OnRecord(func() {
 			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
 		})
@@ -693,7 +693,7 @@ func TestSmallRangeEstimation(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int, index idx(a))")
-	for i := 0; i < 400; i++ {
+	for i := range 400 {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%v), (%v), (%v)", i, i, i)) // [0, 400)
 	}
 	testKit.MustExec("analyze table t with 0 topn")
@@ -736,16 +736,16 @@ func generateIntDatum(dimension, num int) ([]types.Datum, error) {
 	length := int(math.Pow(float64(num), float64(dimension)))
 	ret := make([]types.Datum, length)
 	if dimension == 1 {
-		for i := 0; i < num; i++ {
+		for i := range num {
 			ret[i] = types.NewIntDatum(int64(i))
 		}
 	} else {
 		sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 		// In this way, we can guarantee the datum is in order.
-		for i := 0; i < length; i++ {
+		for i := range length {
 			data := make([]types.Datum, dimension)
 			j := i
-			for k := 0; k < dimension; k++ {
+			for k := range dimension {
 				data[dimension-k-1].SetInt64(int64(j % num))
 				j = j / num
 			}
@@ -763,7 +763,7 @@ func generateIntDatum(dimension, num int) ([]types.Datum, error) {
 func mockStatsHistogram(id int64, values []types.Datum, repeat int64, tp *types.FieldType) *statistics.Histogram {
 	ndv := len(values)
 	histogram := statistics.NewHistogram(id, int64(ndv), 0, 0, tp, ndv, 0)
-	for i := 0; i < ndv; i++ {
+	for i := range ndv {
 		histogram.AppendBucket(&values[i], &values[i], repeat*int64(i+1), repeat)
 	}
 	return histogram
@@ -902,12 +902,12 @@ func testTopNAssistedEstimationInner(t *testing.T, input []string, output []outp
 	// null: 3 rows
 	// "tttttt", "uuuuuu", "vvvvvv", "wwwwww", "xxxxxx", "yyyyyy", "zzzzzz": 1 rows for each value
 	// total: 40 rows
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		tk.MustExec(`insert into t value("111abc111", "111abc111", "111abc111", "111abc111", "111abc111", "111abc111")`)
 		tk.MustExec(`insert into t value("111cba111", "111cba111", "111cba111", "111cba111", "111cba111", "111cba111")`)
 		tk.MustExec(`insert into t value("111234111", "111234111", "111234111", "111234111", "111234111", "111234111")`)
 	}
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		tk.MustExec(`insert into t value(null, null, null, null, null, null)`)
 	}
 	tk.MustExec(`insert into t value("tttttt", "tttttt", "tttttt", "tttttt", "tttttt", "tttttt")`)
@@ -950,7 +950,7 @@ func TestGlobalStatsOutOfRangeEstimationAfterDelete(t *testing.T) {
 		"partition p4 values less than (1200))")
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
-	for i := 0; i < 3000; i++ {
+	for i := range 3000 {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/5+300)) // [300, 900)
 	}
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
@@ -1104,7 +1104,7 @@ func TestIndexJoinInnerRowCountUpperBound(t *testing.T) {
 
 	suiteData := cardinality.GetCardinalitySuiteData()
 	suiteData.LoadTestCases(t, &input, &output)
-	for i := 0; i < len(input); i++ {
+	for i := range input {
 		testdata.OnRecord(func() {
 			output[i].Query = input[i]
 		})
@@ -1188,7 +1188,7 @@ func TestOrderingIdxSelectivityThreshold(t *testing.T) {
 
 	integrationSuiteData := cardinality.GetCardinalitySuiteData()
 	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i := 0; i < len(input); i++ {
+	for i := range input {
 		testdata.OnRecord(func() {
 			output[i].Query = input[i]
 		})
@@ -1271,7 +1271,7 @@ func TestOrderingIdxSelectivityRatio(t *testing.T) {
 
 	integrationSuiteData := cardinality.GetCardinalitySuiteData()
 	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i := 0; i < len(input); i++ {
+	for i := range input {
 		testdata.OnRecord(func() {
 			output[i].Query = input[i]
 		})
@@ -1389,7 +1389,7 @@ func TestSubsetIdxCardinality(t *testing.T) {
 	for i := 1; i < 3; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t select a + 10 + %v, b + 1, c from t", i))
 	}
-	for j := 0; j < 3; j++ {
+	for range 3 {
 		testKit.MustExec("insert into t select a, b, c from t")
 	}
 	testKit.MustExec("insert into t select a, b + 10, c from t")
@@ -1405,7 +1405,7 @@ func TestSubsetIdxCardinality(t *testing.T) {
 	)
 	integrationSuiteData := cardinality.GetCardinalitySuiteData()
 	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i := 0; i < len(input); i++ {
+	for i := range input {
 		testdata.OnRecord(func() {
 			output[i].Query = input[i]
 		})
@@ -1465,4 +1465,66 @@ func TestBuiltinInEstWithoutStats(t *testing.T) {
 	for _, col := range tbl.Cols() {
 		require.False(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false))
 	}
+}
+
+func TestRiskEqSkewRatio(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, index idx(a))")
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tb.Meta()
+
+	// Insert enough rows to produce a single skewed value.
+	testKit.MustExec("insert into t values (1), (1), (1), (1), (2), (2), (3), (4), (5)")
+	// Do not collect topn to ensure that test will not find value in topn.
+	testKit.MustExec(`analyze table t with 0 topn`)
+	h := dom.StatsHandle()
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+
+	sctx := testKit.Session()
+	idxID := tblInfo.Indices[0].ID
+	statsTbl := h.GetTableStats(tb.Meta())
+	// Search for the value "6" which will not be found in the histogram buckets, and since
+	// there are NO topN values - the value will be considered skewed based upon skew ratio.
+	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0")
+	count, _, err := cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	require.NoError(t, err)
+	require.Equal(t, float64(1.8), count)
+	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0.5")
+	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	require.NoError(t, err)
+	// Result should be approx 3.4, but due to floating point - result can be flaky
+	require.Less(t, float64(3.3), count)
+	require.Greater(t, float64(3.5), count)
+	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 1")
+	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	require.NoError(t, err)
+	require.Equal(t, float64(5), count)
+	// reset skew ratio to 0
+	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0")
+	// Collect 1 topn to ensure that test will not find value in topn.
+	// With 1 value in topN - value 6 will only be considered skewed within the remaining values.
+	testKit.MustExec(`analyze table t with 1 topn`)
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	// Rerun tests with 1 value in the TopN
+	statsTbl = h.GetTableStats(tb.Meta())
+	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	require.NoError(t, err)
+	require.Equal(t, float64(1.25), count)
+	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0.5")
+	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	require.NoError(t, err)
+	// Result should be approx 1.625, but due to floating point - result can be flaky
+	require.Less(t, float64(1.6), count)
+	require.Greater(t, float64(1.7), count)
+	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 1")
+	count, _, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRange(6, 6))
+	require.NoError(t, err)
+	require.Equal(t, float64(2), count)
+	testKit.MustExec("set @@session.tidb_opt_risk_eq_skew_ratio = 0")
 }

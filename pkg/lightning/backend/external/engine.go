@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -159,7 +160,7 @@ type Engine struct {
 	memLimit        int
 }
 
-var _ common.Engine = (*Engine)(nil)
+var _ engineapi.Engine = (*Engine)(nil)
 
 const (
 	smallBlockSize = units.MiB
@@ -184,7 +185,7 @@ func NewExternalEngine(
 	totalKVCount int64,
 	checkHotspot bool,
 	memCapacity int64,
-) common.Engine {
+) engineapi.Engine {
 	// at most 3 batches can be loaded in memory, see writeStepMemShareCount.
 	memLimit := int(float64(memCapacity) / writeStepMemShareCount * 3)
 	logutil.BgLogger().Info("create external engine",
@@ -301,7 +302,7 @@ func getFilesReadConcurrency(
 	return result, startOffs, nil
 }
 
-func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outCh chan<- common.DataAndRanges) error {
+func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outCh chan<- engineapi.DataAndRanges) error {
 	readAndSortRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("read_and_sort")
 	readAndSortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("read_and_sort")
 	readRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("read")
@@ -380,7 +381,7 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	e.memKVsAndBuffers.memKVBuffers = nil
 	e.memKVsAndBuffers.size = 0
 
-	ranges := make([]common.Range, 0, len(jobKeys)-1)
+	ranges := make([]engineapi.Range, 0, len(jobKeys)-1)
 	prev, err2 := e.keyAdapter.Decode(nil, jobKeys[0])
 	if err2 != nil {
 		return err
@@ -390,7 +391,7 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 		if err3 != nil {
 			return err3
 		}
-		ranges = append(ranges, common.Range{
+		ranges = append(ranges, engineapi.Range{
 			Start: prev,
 			End:   cur,
 		})
@@ -402,7 +403,7 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	if err4 != nil {
 		return err4
 	}
-	ranges = append(ranges, common.Range{
+	ranges = append(ranges, engineapi.Range{
 		Start: prev,
 		End:   cur,
 	})
@@ -410,7 +411,7 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case outCh <- common.DataAndRanges{
+	case outCh <- engineapi.DataAndRanges{
 		Data:         data,
 		SortedRanges: ranges,
 	}:
@@ -424,7 +425,7 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 // MemoryIngestData.DecRef().
 func (e *Engine) LoadIngestData(
 	ctx context.Context,
-	outCh chan<- common.DataAndRanges,
+	outCh chan<- engineapi.DataAndRanges,
 ) error {
 	// try to make every worker busy for each batch
 	rangeBatchSize := e.workerConcurrency
@@ -589,7 +590,7 @@ type MemoryIngestData struct {
 	importedKVCount *atomic.Int64
 }
 
-var _ common.IngestData = (*MemoryIngestData)(nil)
+var _ engineapi.IngestData = (*MemoryIngestData)(nil)
 
 func (m *MemoryIngestData) firstAndLastKeyIndex(lowerBound, upperBound []byte) (int, int) {
 	firstKeyIdx := 0
@@ -757,7 +758,7 @@ func (m *MemoryIngestData) NewIter(
 	ctx context.Context,
 	lowerBound, upperBound []byte,
 	bufPool *membuf.Pool,
-) common.ForwardIter {
+) engineapi.ForwardIter {
 	firstKeyIdx, lastKeyIdx := m.firstAndLastKeyIndex(lowerBound, upperBound)
 	iter := &memoryDataIter{
 		kvs:         m.kvs,

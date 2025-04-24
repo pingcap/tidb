@@ -4292,38 +4292,11 @@ CreateIndexStmt:
 				indexLockAndAlgorithm = nil
 			}
 		}
-
-		keyType := $2.(ast.IndexKeyType)
-		{
-			isVectorIndex := keyType == ast.IndexKeyTypeVector
-			if isVectorIndex && indexOption.Tp == ast.IndexTypeInvalid {
-				indexOption.Tp = ast.IndexTypeHNSW
-			}
-			if (isVectorIndex && indexOption.Tp != ast.IndexTypeHNSW) || (!isVectorIndex && indexOption.Tp == ast.IndexTypeHNSW) {
-				yylex.AppendError(ErrSyntax)
-				return 1
-			}
-		}
-		{
-			isColumnarIndex := keyType == ast.IndexKeyTypeColumnar
-			if (isColumnarIndex && indexOption.Tp != ast.IndexTypeInverted) || (!isColumnarIndex && indexOption.Tp == ast.IndexTypeInverted) {
-				yylex.AppendError(ErrSyntax)
-				return 1
-			}
-		}
-		partSpecs := $10.([]*ast.IndexPartSpecification)
-		if keyType == ast.IndexKeyTypeVector {
-			if len(partSpecs) != 1 || partSpecs[0].Expr == nil {
-				yylex.AppendError(ErrSyntax)
-				return 1
-			}
-		}
-
 		$$ = &ast.CreateIndexStmt{
 			IfNotExists:             $4.(bool),
 			IndexName:               $5,
 			Table:                   $8.(*ast.TableName),
-			IndexPartSpecifications: partSpecs,
+			IndexPartSpecifications: $10.([]*ast.IndexPartSpecification),
 			IndexOption:             indexOption,
 			KeyType:                 $2.(ast.IndexKeyType),
 			LockAlg:                 indexLockAndAlgorithm,
@@ -12537,7 +12510,7 @@ Constraint:
 		$$ = cst
 	}
 
-// ConstraintVectorIndex does not put in Constraint to resolve syntax conflicts.
+// ConstraintVectorIndex is only a compatible and shortcut syntax for CREATE COLUMNAR INDEX USING VECTOR.
 ConstraintVectorIndex:
 	"VECTOR" "INDEX" IfNotExists IndexNameAndTypeOpt '(' IndexPartSpecificationList ')' IndexOptionList
 	{
@@ -12548,29 +12521,13 @@ ConstraintVectorIndex:
 			Name:         $4.([]interface{})[0].(*ast.NullString).String,
 			IsEmptyIndex: $4.([]interface{})[0].(*ast.NullString).Empty,
 		}
-
 		if $8 != nil {
 			c.Option = $8.(*ast.IndexOption)
+		} else {
+			c.Option = &ast.IndexOption{}
 		}
 		if indexType := $4.([]interface{})[1]; indexType != nil {
-			if c.Option == nil {
-				c.Option = &ast.IndexOption{}
-			}
 			c.Option.Tp = indexType.(ast.IndexType)
-		}
-		if c.Option == nil {
-			c.Option = &ast.IndexOption{Tp: ast.IndexTypeHNSW}
-		} else if c.Option.Tp == ast.IndexTypeInvalid {
-			c.Option.Tp = ast.IndexTypeHNSW
-		}
-		if c.Option.Tp != ast.IndexTypeHNSW {
-			yylex.AppendError(ErrSyntax)
-			return 1
-		}
-
-		if len(c.Keys) != 1 || c.Keys[0].Expr == nil {
-			yylex.AppendError(ErrSyntax)
-			return 1
 		}
 		$$ = c
 	}
@@ -12586,29 +12543,13 @@ ConstraintColumnarIndex:
 			Name:         $4.([]interface{})[0].(*ast.NullString).String,
 			IsEmptyIndex: $4.([]interface{})[0].(*ast.NullString).Empty,
 		}
-
 		if $8 != nil {
 			c.Option = $8.(*ast.IndexOption)
+		} else {
+			c.Option = &ast.IndexOption{}
 		}
 		if indexType := $4.([]interface{})[1]; indexType != nil {
-			if c.Option == nil {
-				c.Option = &ast.IndexOption{}
-			}
 			c.Option.Tp = indexType.(ast.IndexType)
-		}
-		if c.Option == nil {
-			c.Option = &ast.IndexOption{Tp: ast.IndexTypeInverted}
-		} else if c.Option.Tp == ast.IndexTypeInvalid {
-			c.Option.Tp = ast.IndexTypeInverted
-		}
-		if c.Option.Tp != ast.IndexTypeInverted {
-			yylex.AppendError(ErrSyntax)
-			return 1
-		}
-
-		if len(c.Keys) != 1 || c.Keys[0].Column == nil {
-			yylex.AppendError(ErrSyntax)
-			return 1
 		}
 		$$ = c
 	}

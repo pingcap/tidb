@@ -175,7 +175,7 @@ func TestTableEvalTTLExpireTime(t *testing.T) {
 	ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tblInfo, ast.NewCIStr(""))
 	require.NoError(t, err)
 
-	se := session.NewSession(tk.Session(), tk.Session(), nil)
+	se := session.NewSession(tk.Session(), func() {})
 	// the global timezone set to +02:00
 	tz1 := time.FixedZone("", 2*3600)
 	_, err = se.ExecuteSQL(context.TODO(), "SET @@global.time_zone = '+02:00'")

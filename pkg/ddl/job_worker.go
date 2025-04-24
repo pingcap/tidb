@@ -636,6 +636,7 @@ func (w *worker) transitOneJobStep(
 
 	// If error is non-retryable, we can ignore the sleep.
 	if runJobErr != nil && isRetryableJobError(runJobErr, job.ErrorCount) {
+		metrics.RetryableErrorCount.WithLabelValues(runJobErr.Error()).Inc()
 		jobCtx.logger.Info("run DDL job failed, sleeps a while then retries it.",
 			zap.Duration("waitTime", GetWaitTimeWhenErrorOccurred()), zap.Error(runJobErr))
 		// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,

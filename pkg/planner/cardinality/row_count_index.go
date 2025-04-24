@@ -428,8 +428,23 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 		increaseFactor := idx.GetIncreaseFactor(realtimeRowCount)
 		return outOfRangeFullNDV(float64(idx.Histogram.NDV), idx.TotalRowCount(), notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
 	}
-	// return the average histogram rows (which excludes topN) and NDV that excluded topN
-	return idx.Histogram.NotNullCount() / histNDV
+	// Calculate the average histogram rows (which excludes topN) and NDV that excluded topN
+	avgRowEstimate := idx.Histogram.NotNullCount() / histNDV
+	skewEstimate := float64(0)
+	// skewRatio determines how much of the potential skew should be considered
+	skewRatio := sctx.GetSessionVars().RiskEqSkewRatio
+	if skewRatio > 0 {
+		// Calculate the worst case selectivity assuming the value is skewed within the remaining values not in TopN.
+		skewEstimate = idx.Histogram.NotNullCount() - (histNDV - 1)
+		minTopN := idx.TopN.MinCount()
+		if minTopN > 0 {
+			// The skewEstimate should not be larger than the minimum TopN value.
+			skewEstimate = min(skewEstimate, float64(minTopN))
+		}
+		// Add a "ratio" of the skewEstimate to adjust the average row estimate.
+		return avgRowEstimate + max(0, (skewEstimate-avgRowEstimate)*skewRatio)
+	}
+	return avgRowEstimate
 }
 
 // expBackoffEstimation estimate the multi-col cases following the Exponential Backoff. See comment below for details.
@@ -459,7 +474,7 @@ func expBackoffEstimation(sctx planctx.PlanContext, idx *statistics.Index, coll 
 	//   2. Sort them and choose the first 4 most selective filter and the corresponding selectivity is sel_1, sel_2, sel_3, sel_4 where i < j => sel_i < sel_j.
 	//   3. The final selectivity would be sel_1 * sel_2^{1/2} * sel_3^{1/4} * sel_4^{1/8}.
 	// This calculation reduced the independence assumption and can work well better than it.
-	for i := 0; i < len(indexRange.LowVal); i++ {
+	for i := range indexRange.LowVal {
 		tmpRan[0].LowVal[0] = indexRange.LowVal[i]
 		tmpRan[0].HighVal[0] = indexRange.HighVal[i]
 		tmpRan[0].Collators[0] = indexRange.Collators[0]

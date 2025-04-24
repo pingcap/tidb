@@ -360,11 +360,12 @@ func blockingMergePartitionStats2GlobalStats(
 		}
 
 		// NOTICE: after merging bucket NDVs have the trend to be underestimated, so for safe we don't use them.
-		for j := range globalStats.Hg[i].Buckets {
-			globalStats.Hg[i].Buckets[j].NDV = 0
+		if globalStats.Hg[i] != nil {
+			for j := range globalStats.Hg[i].Buckets {
+				globalStats.Hg[i].Buckets[j].NDV = 0
+			}
+			globalStats.Hg[i].NDV = globalStatsNDV
 		}
-
-		globalStats.Hg[i].NDV = globalStatsNDV
 	}
 	return
 }
