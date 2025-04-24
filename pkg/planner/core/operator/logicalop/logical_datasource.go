@@ -17,7 +17,6 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
-	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -200,8 +199,9 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column, opt *opt
 				continue
 			}
 			prunedColumns = append(prunedColumns, ds.Schema().Columns[i])
-			ds.Schema().Columns = slices.Delete(ds.Schema().Columns, i, i+1)
-			ds.Columns = slices.Delete(ds.Columns, i, i+1)
+			// TODO: investigate why we cannot use slices.Delete for these two:
+			ds.Schema().Columns = append(ds.Schema().Columns[:i], ds.Schema().Columns[i+1:]...)
+			ds.Columns = append(ds.Columns[:i], ds.Columns[i+1:]...)
 		}
 	}
 	logicaltrace.AppendColumnPruneTraceStep(ds, prunedColumns, opt)
