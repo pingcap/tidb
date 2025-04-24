@@ -410,27 +410,7 @@ func compareLexicographically(tc types.Context, bound1, bound2 []types.Datum, co
 	case open1 == open2:
 		if low1 == low2 {
 			return 0, nil
-<<<<<<< HEAD
-		case open1 == open2:
-			if low1 == low2 {
-				return 0, nil
-			} else if low1 {
-				return 1, nil
-			} else {
-				return -1, nil
-			}
-		case open1:
-			if low1 {
-				return 1, nil
-			}
-			return -1, nil
-		case open2:
-			if low2 {
-				return -1, nil
-			}
-=======
 		} else if low1 {
->>>>>>> 8b7552988ae (planner: Fix issue #60556: Simplify Range Intersection Logic (#60675))
 			return 1, nil
 		}
 		return -1, nil
