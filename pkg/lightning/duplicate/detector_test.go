@@ -44,7 +44,7 @@ func TestDetector(t *testing.T) {
 		numAdders = 10
 	)
 
-	var keys [][]byte
+	keys := make([][]byte, 0, numKeys)
 	rng := rand.New(rand.NewSource(0))
 	for range numKeys {
 		var key [8]byte
