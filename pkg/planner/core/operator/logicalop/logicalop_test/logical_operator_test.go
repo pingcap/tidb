@@ -105,7 +105,7 @@ func TestLogicalApplyClone(t *testing.T) {
 	require.True(t, apply.EqualConditions[0].FuncName.L == "f2")
 }
 
-func TestLogicalPushDownTopN(t *testing.T) {
+func TestLogicalProjectionPushDownTopN(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
