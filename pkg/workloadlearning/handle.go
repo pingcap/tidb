@@ -24,6 +24,7 @@ package workloadlearning
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -35,11 +36,16 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
 const batchInsertSize = 1000
+
+// The default memory usage of point get and batch point get
+const defaultPointGetMemUsage = 1
 const (
 	// The category of workload-based learning
 	feedbackCategory = "Feedback"
@@ -75,36 +81,9 @@ func NewWorkloadLearningHandle(pool util.DestroyableSessionPool) *Handle {
 // 5. Save all table cost metrics[per table](scan time, table cost, etc) to table "mysql.tidb_workload_values"
 func (handle *Handle) HandleTableReadCost(infoSchema infoschema.InfoSchema) {
 	// step1: abstract middle table cost metrics from every record in statement_summary
-	middleMetrics, startTime, endTime := handle.analyzeBasedOnStatementStats()
-	if middleMetrics == nil || len(middleMetrics) == 0 {
-		return
-	}
-	// step2: group by tablename, sum(table-scan-time), sum(table-mem-usage), sum(read-frequency)
-	// step3: calculate the total scan time and total memory usage
-	tableNameToMetrics := make(map[ast.CIStr]*TableReadCostMetrics)
-	totalScanTime := 0.0
-	totalMemUsage := 0.0
-	for _, middleMetric := range middleMetrics {
-		metric, ok := tableNameToMetrics[middleMetric.TableName]
-		if !ok {
-			tableNameToMetrics[middleMetric.TableName] = middleMetric
-		} else {
-			metric.TableScanTime += middleMetric.TableScanTime * float64(middleMetric.ReadFrequency)
-			metric.TableMemUsage += middleMetric.TableMemUsage * float64(middleMetric.ReadFrequency)
-			metric.ReadFrequency += middleMetric.ReadFrequency
-		}
-		totalScanTime += middleMetric.TableScanTime
-		totalMemUsage += middleMetric.TableMemUsage
-	}
-	if totalScanTime == 0 || totalMemUsage == 0 {
-		return
-	}
-	// step4: calculate the percentage of scan time and memory usage for each table
-	for _, metric := range tableNameToMetrics {
-		metric.TableReadCost = metric.TableScanTime/totalScanTime + metric.TableMemUsage/totalMemUsage
-	}
+	tableIdToMetrics, startTime, endTime := handle.analyzeBasedOnStatementStats(infoSchema)
 	// step5: save the table cost metrics to table "mysql.tidb_workload_values"
-	handle.SaveTableReadCostMetrics(tableNameToMetrics, startTime, endTime, infoSchema)
+	handle.SaveTableReadCostMetrics(tableIdToMetrics, startTime, endTime)
 }
 
 func (*Handle) analyzeBasedOnStatementSummary() []*TableReadCostMetrics {
@@ -114,7 +93,7 @@ func (*Handle) analyzeBasedOnStatementSummary() []*TableReadCostMetrics {
 }
 
 // analyzeBasedOnStatementStats Analyze table cost metrics based on the
-func (handle *Handle) analyzeBasedOnStatementStats() ([]*TableReadCostMetrics, time.Time, time.Time) {
+func (handle *Handle) analyzeBasedOnStatementStats(infoSchema infoschema.InfoSchema) (map[int64]*TableReadCostMetrics, time.Time, time.Time) {
 	// Calculate time range for the last 7 days
 	endTime := time.Now()
 	startTime := endTime.AddDate(0, 0, -7)
@@ -139,11 +118,19 @@ func (handle *Handle) analyzeBasedOnStatementStats() ([]*TableReadCostMetrics, t
 
 	// Step2: extract metrics from ClusterTableTiDBStatementsStats
 	// TODO: use constant for table name and field name/values
-	sql := `SELECT DIGEST, DIGEST_TEXT, PLAN, EXEC_COUNT
+	// TODO: control the cpu, memory , concurrency and timeout for the query
+	// todo: make sure of the start and end time
+	sql := `select summary_latest.DIGEST, summary_latest.DIGEST_TEXT, summary_latest.BINARY_PLAN,
+            ifNULL(summary_start.EXEC_COUNT, summary_latest.EXEC_COUNT, summary_latest.EXEC_COUNT - summary_start.EXEC_COUNT) as EXEC_COUNT
+            (SELECT DIGEST, DIGEST_TEXT, BINARY_PLAN, EXEC_COUNT
 	        FROM INFORMATION_SCHEMA.CLUSTER_TIDB_STATEMENTS_STATS
 	        WHERE LOWER(STMT_TYPE) = 'Select'
-	        AND SUMMARY_END_TIME >= '%?'`
-	// Step2.1: get latest snapshot record from ClusterTableTiDBStatementsStats
+	        AND SUMMARY_END_TIME >= '%?') summary_latest left join
+            (SELECT DIGEST, DIGEST_TEXT, BINARY_PLAN, EXEC_COUNT
+	        FROM INFORMATION_SCHEMA.CLUSTER_TIDB_STATEMENTS_STATS
+	        WHERE LOWER(STMT_TYPE) = 'Select'
+	        AND SUMMARY_END_TIME >= '%?') summary_start on summary_latest.DIGEST = summary_start.DIGEST`
+	// Step2.1: get statements stats record from ClusterTableTiDBStatementsStats
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql, endTime.Format("2006-01-02 15:04:05"))
 	if err != nil {
 		logutil.ErrVerboseLogger().Warn("Failed to query CLUSTER_TIDB_STATEMENTS_STATS table",
@@ -151,11 +138,12 @@ func (handle *Handle) analyzeBasedOnStatementStats() ([]*TableReadCostMetrics, t
 			zap.Error(err))
 		return nil, startTime, startTime
 	}
+	tableIdToMetrics := make(map[int64]*TableReadCostMetrics)
 	for _, row := range rows {
 		digest := row.GetString(0)
 		sql := row.GetString(1)
-		planString := row.GetString(2)
-		endTimeExecCount := row.GetInt64(3)
+		binaryPlan := row.GetString(2)
+		readFrequency := row.GetInt64(3)
 		// forbidden the cross db query by abstract table name from digest_text
 		crossDB, err := checkCrossDB(sql)
 		if err != nil {
@@ -167,74 +155,45 @@ func (handle *Handle) analyzeBasedOnStatementStats() ([]*TableReadCostMetrics, t
 			// So now we just ignore this kind of case
 			continue
 		}
-		// Step2.2: extract scan-time, memory-usage from PLAN
-	}
-
-	// Step3: compute the frequency of each table by endTimeExecCount-startTimeExecCount
-	// Step4: compute the table cost metrics by table scan time / total scan time + table mem usage / total mem usage
-
-	// TODO: Execute the SQL and get results
-	// For now, let's define the structure we expect from parsing the plan
-	type PlanNode struct {
-		ID       string     `json:"id"`
-		EstCost  float64    `json:"estCost"`
-		TaskType string     `json:"task"`
-		Children []PlanNode `json:"children"`
-		Stats    PlanStats  `json:"stats"`
-	}
-
-	type PlanStats struct {
-		TableScan struct {
-			TimeProcessed float64 `json:"timeProcessed"`
-			MemoryUsage   float64 `json:"memoryUsage"`
-		} `json:"tableScan"`
-		TableName string `json:"tableName"`
-	}
-
-	// Process each record
-	metrics := make([]*TableReadCostMetrics, 0)
-
-	// For each row in the result:
-	// 1. Parse the PLAN field (JSON format)
-	// 2. Extract table scan information recursively
-	var processPlanNode func(node PlanNode) *TableReadCostMetrics
-	processPlanNode = func(node PlanNode) *TableReadCostMetrics {
-		if node.TaskType == "TableScan" {
-			return &TableReadCostMetrics{
-				TableName:     ast.NewCIStr(node.Stats.TableName),
-				TableScanTime: node.Stats.TableScan.TimeProcessed,
-				TableMemUsage: node.Stats.TableScan.MemoryUsage,
-				ReadFrequency: 1, // Will be multiplied by EXEC_COUNT later
-			}
+		// Step2.2: extract scan-time, memory-usage from planString
+		currentRecordMetrics, err := extractScanAndMemoryFromBinaryPlan(binaryPlan)
+		if err != nil {
+			logutil.ErrVerboseLogger().Warn("failed to abstract scan and memory from binary plan",
+				zap.String("digest", digest),
+				zap.String("sql", sql),
+				zap.Error(err))
+			continue
 		}
-
-		// Recursively process child nodes
-		for _, child := range node.Children {
-			if metric := processPlanNode(child); metric != nil {
-				return metric
-			}
-		}
-		return nil
+		// Step2.3: accumulate all metrics from each record
+		accumulateMetricsGroupByTableId(currentRecordMetrics, readFrequency, tableIdToMetrics, infoSchema, ctx)
 	}
 
-	// TODO: For each row in the actual query results:
-	// planStr := row[0]                    // PLAN field
-	// execCount := row[2].(int64)         // EXEC_COUNT field
-	// var plan PlanNode
-	// if err := json.Unmarshal([]byte(planStr), &plan); err != nil {
-	//     continue
-	// }
-	// if metric := processPlanNode(plan); metric != nil {
-	//     metric.ReadFrequency *= execCount
-	//     metrics = append(metrics, metric)
-	// }
+	// Step3: compute the table cost metrics by table scan time / total scan time + table mem usage / total mem usage
+	// Step3.1: compute total scan time and memory usage
+	// todo handle overflow
+	var totalScanTime, totalMemUsage int64
+	for _, metric := range tableIdToMetrics {
+		totalMemUsage += metric.TableMemUsage
+		totalScanTime = totalScanTime + metric.TableScanTime.Nanoseconds()
+	}
+	// Step3.2: compute table cost metrics
+	for _, metric := range tableIdToMetrics {
+		var scanTimePercentage, memoryUsagePercentage float64
+		if totalScanTime != 0 {
+			scanTimePercentage = float64(metric.TableScanTime.Nanoseconds()) / float64(totalScanTime)
+		}
+		if totalMemUsage != 0 {
+			memoryUsagePercentage = float64(metric.TableMemUsage) / float64(totalMemUsage)
+		}
+		metric.TableReadCost = scanTimePercentage + memoryUsagePercentage
+	}
 
-	return metrics, startTime, endTime
+	return tableIdToMetrics, startTime, endTime
 }
 
 // SaveTableReadCostMetrics table cost metrics, workload-based start and end time, version,
-func (handle *Handle) SaveTableReadCostMetrics(metrics map[ast.CIStr]*TableReadCostMetrics,
-	_, _ time.Time, infoSchema infoschema.InfoSchema) {
+func (handle *Handle) SaveTableReadCostMetrics(metrics map[int64]*TableReadCostMetrics,
+	_, _ time.Time) {
 	// TODO save the workload job info such as start end time into workload_jobs table
 	// step1: create a new session, context, txn for saving table cost metrics
 	se, err := handle.sysSessionPool.Get()
@@ -273,33 +232,21 @@ func (handle *Handle) SaveTableReadCostMetrics(metrics map[ast.CIStr]*TableReadC
 	i := 0
 	sql := new(strings.Builder)
 	sqlescape.MustFormatSQL(sql, "insert into mysql.tidb_workload_values (version, category, type, table_id, value) values ")
-	for _, metric := range metrics {
-		tbl, err := infoSchema.TableByName(ctx, metric.DbName, metric.TableName)
-		if err != nil {
-			logutil.BgLogger().Warn("failed to save this table cost metrics due to table id not found in info schema",
-				zap.String("db_name", metric.DbName.String()),
-				zap.String("table_name", metric.TableName.String()),
-				zap.Float64("table_scan_time", metric.TableScanTime),
-				zap.Float64("table_mem_usage", metric.TableMemUsage),
-				zap.Int64("read_frequency", metric.ReadFrequency),
-				zap.Float64("table_read_cost", metric.TableReadCost),
-				zap.Error(err))
-			continue
-		}
+	for tableId, metric := range metrics {
 		metricBytes, err := json.Marshal(metric)
 		if err != nil {
 			logutil.BgLogger().Warn("marshal table cost metrics failed",
 				zap.String("db_name", metric.DbName.String()),
 				zap.String("table_name", metric.TableName.String()),
-				zap.Float64("table_scan_time", metric.TableScanTime),
-				zap.Float64("table_mem_usage", metric.TableMemUsage),
+				zap.Duration("table_scan_time", metric.TableScanTime),
+				zap.Int64("table_mem_usage", metric.TableMemUsage),
 				zap.Int64("read_frequency", metric.ReadFrequency),
 				zap.Float64("table_read_cost", metric.TableReadCost),
 				zap.Error(err))
 			continue
 		}
 		sqlescape.MustFormatSQL(sql, "(%?, %?, %?, %?, %?)",
-			version, feedbackCategory, tableReadCost, tbl.Meta().ID, json.RawMessage(metricBytes))
+			version, feedbackCategory, tableReadCost, tableId, json.RawMessage(metricBytes))
 		// TODO check the txn record limit
 		if i%batchInsertSize == batchInsertSize-1 {
 			_, _, err := exec.ExecRestrictedSQL(ctx, nil, sql.String())
@@ -329,9 +276,11 @@ func (handle *Handle) SaveTableReadCostMetrics(metrics map[ast.CIStr]*TableReadC
 	if err != nil {
 		logutil.BgLogger().Warn("commit txn failed when saving table cost metrics", zap.Error(err))
 	}
+	// TODO: saving the workload job info such as start end time into workload_jobs table
 }
 
 func checkCrossDB(sql string) (bool, error) {
+	// TODO check duplicate alias name
 	p := parser.New()
 	// notes: this is only use for check whether query cross db, so the charset and collation doesn't matter in here.
 	stmtNodes, _, err := p.Parse(sql, "", "")
@@ -351,6 +300,288 @@ func checkCrossDB(sql string) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// extractScanAndMemoryFromBinaryPlan abstract the scan time and memory usage from one plan string
+// The input is the field BINARY_PLAN in **one row** of table mysql.CLUSTER_TIDB_STATEMENTS_STATS
+// The result should be **list** because every query maybe related to multiple tables such as: select * from t1, t2
+// Every scan operator in the plan string should be extracted to one TableReadCostMetrics without any grouping
+func extractScanAndMemoryFromBinaryPlan(binaryPlan string) ([]*TableReadCostMetrics, error) {
+	// Step1: convert binaryPlan to tipb.ExplainData
+	protoBytes, err := plancodec.Decompress(binaryPlan)
+	if err != nil {
+		return nil, err
+	}
+	explainData := &tipb.ExplainData{}
+	err = explainData.Unmarshal(protoBytes)
+	if err != nil {
+		return nil, err
+	}
+	if explainData.DiscardedDueToTooLong {
+		return nil, fmt.Errorf("plan is too long, discarded it, failed to convert to ExplainData")
+	}
+	if !explainData.WithRuntimeStats {
+		return nil, fmt.Errorf("plan is not with runtime stats, failed to convert to ExplainData")
+	}
+
+	// Step2: abstract the scan time and memory usage from explainData
+	operatorExtractMetrics := make([]*TableReadCostMetrics, 1)
+	// extract scan and memory from main part plan
+	err = extractScanAndMemoryFromExplainOperator(explainData.Main, operatorExtractMetrics)
+	if err != nil {
+		return nil, err
+	}
+	// extract scan and memory from CTES part plan
+	for _, cte := range explainData.Ctes {
+		err = extractScanAndMemoryFromExplainOperator(cte, operatorExtractMetrics)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return operatorExtractMetrics, nil
+}
+
+func accumulateMetricsGroupByTableId(currentRecordMetrics []*TableReadCostMetrics, frequency int64, previousMetrics map[int64]*TableReadCostMetrics, infoSchema infoschema.InfoSchema, ctx context.Context) {
+	// Multiply exec count for each operator cpu and memory metrics
+	// Group by table id and sum the scan time and memory usage for each operatorExtractMetrics
+	// (TODO) The alias table name is recorded in operator instead of real table name. So we cannot handle the alias table name case now.
+	for _, operatorExtractMetric := range currentRecordMetrics {
+		// Step1: find the table id for all currentRecordMetrics
+		tbl, err := infoSchema.TableByName(ctx, operatorExtractMetric.DbName, operatorExtractMetric.TableName)
+		if err != nil {
+			logutil.BgLogger().Warn("failed to find the table id by table name and db name",
+				zap.String("db_name", operatorExtractMetric.DbName.String()),
+				zap.String("table_name", operatorExtractMetric.TableName.String()),
+				zap.Error(err))
+			continue
+		}
+		tableId := tbl.Meta().ID
+
+		// Step2: Multiply the scan time and memory usage by frequency
+		operatorExtractMetric.TableScanTime = time.Duration(operatorExtractMetric.TableScanTime.Nanoseconds() * frequency)
+		operatorExtractMetric.TableMemUsage *= frequency
+		operatorExtractMetric.ReadFrequency = frequency
+
+		// Step3: Group by table id and sum with previous metrics
+		if previousMetrics[tableId] == nil {
+			previousMetrics[tableId] = operatorExtractMetric
+		} else {
+			previousMetrics[tableId].TableScanTime += operatorExtractMetric.TableScanTime
+			previousMetrics[tableId].TableMemUsage += operatorExtractMetric.TableMemUsage
+			previousMetrics[tableId].ReadFrequency += operatorExtractMetric.ReadFrequency
+		}
+	}
+}
+
+func extractScanAndMemoryFromExplainOperator(op *tipb.ExplainOperator, operatorMetrics []*TableReadCostMetrics) error {
+	// Step1: extract operator metrics
+	// Step1.1: get the operator type from op.name
+	names := strings.Split(op.Name, "_")
+	if len(names) != 2 {
+		return nil
+	}
+	operatorType := names[0]
+	switch operatorType {
+	case plancodec.TypeIndexLookUp:
+	case plancodec.TypeIndexReader:
+		// Handle the case like:
+		//  └─IndexLookUp_x | IndexReader_x
+		//    └─xxx
+		//      └─IndexRangeScan_x | IndexFullScan_x
+		// Get the time and memory in this layer and find the table name from child IndexXXXScan layer
+		scanTime, err := extractScanTimeFromExecutionInfo(op)
+		if err != nil {
+			return fmt.Errorf("failed to extract scan time from execution info, operator name: %s", op.Name)
+		}
+		memUsage := op.MemoryBytes
+		dbName, tableName := extractTableNameFromChildrenIndexScan(op)
+		if dbName == "" || tableName == "" {
+			return fmt.Errorf("failed to get table name from children index xxx operator, operator name: %s", op.Name)
+		}
+		operatorMetrics = append(operatorMetrics,
+			&TableReadCostMetrics{
+				DbName:        ast.NewCIStr(dbName),
+				TableName:     ast.NewCIStr(tableName),
+				TableScanTime: scanTime,
+				TableMemUsage: memUsage,
+			})
+	case plancodec.TypePointGet:
+	case plancodec.TypeBatchPointGet:
+		// Attention: cannot handle the multi access objects from one operator
+		dbName, tableName := extractTableNameFromAccessObject(op.AccessObjects[0])
+		if dbName == "" || tableName == "" {
+			return fmt.Errorf("failed to get table name from access object, operator name: %s, access object: %s", op.Name, op.AccessObjects[0].String())
+		}
+		scanTime, err := extractScanTimeFromExecutionInfo(op)
+		if err != nil {
+			return fmt.Errorf("failed to extract scan time from execution info, operator name: %s", op.Name)
+		}
+		memUsage := defaultPointGetMemUsage
+		operatorMetrics = append(operatorMetrics,
+			&TableReadCostMetrics{
+				DbName:        ast.NewCIStr(dbName),
+				TableName:     ast.NewCIStr(tableName),
+				TableScanTime: scanTime,
+				TableMemUsage: int64(memUsage),
+			})
+	case plancodec.TypeTableReader:
+		// Handle the case like:
+		//  └─TableReader_x
+		//    └─xxx
+		//      └─TableFullScan_x | TableRangeScan_x
+		// Get the time and memory in this layer and find the table name from child TableXXXScan layer
+		scanTime, err := extractScanTimeFromExecutionInfo(op)
+		if err != nil {
+			return fmt.Errorf("failed to extract scan time from execution info, operator name: %s", op.Name)
+		}
+		memUsage := op.MemoryBytes
+		dbName, tableName := extractTableNameFromChildrenTableScan(op)
+		if dbName == "" || tableName == "" {
+			return fmt.Errorf("failed to get table name from children table xxx operator, operator name: %s", op.Name)
+		}
+		operatorMetrics = append(operatorMetrics,
+			&TableReadCostMetrics{
+				DbName:        ast.NewCIStr(dbName),
+				TableName:     ast.NewCIStr(tableName),
+				TableScanTime: scanTime,
+				TableMemUsage: memUsage,
+			})
+	case plancodec.TypeIndexMerge:
+		// Handle the case like:
+		//  └─IndexMerge_x
+		//    └─xxx
+		//      └─IndexxxxScan
+		//      └─IndexxxxScan
+		// Get the memory in this layer and average memory to every single indexxxxscan
+		// Get time and table name from every children indexxxxscan layer
+		totalMemoryUsage := op.MemoryBytes
+		patialMetrics, err := extractPatialMetricsFromChildrenIndexMerge(op)
+		if err != nil || len(patialMetrics) == 0 {
+			return fmt.Errorf("failed to get time and table name from children operator of index merge, operator name: %s", op.Name)
+		}
+		memUsage := totalMemoryUsage / int64(len(patialMetrics))
+		for _, patialMetric := range patialMetrics {
+		}
+	default:
+		// TODO: extand the operator type
+		// todo indexmerge , indexjoin
+		// todo tiflash
+	}
+	// Step2: abstract operator children metrics
+}
+
+func extractTableNameFromAccessObject(accessObject *tipb.AccessObject) (string, string) {
+	switch ao := accessObject.AccessObject.(type) {
+	case *tipb.AccessObject_DynamicPartitionObjects:
+		if ao == nil || ao.DynamicPartitionObjects == nil {
+			return "", ""
+		}
+		aos := ao.DynamicPartitionObjects.Objects
+		if len(aos) == 0 {
+			return "", ""
+		}
+		// If it involves multiple tables, we also need to print the table name.
+		for _, access := range aos {
+			if access == nil {
+				continue
+			}
+			return access.Database, access.Table
+		}
+	case *tipb.AccessObject_ScanObject:
+		if ao == nil || ao.ScanObject == nil {
+			return "", ""
+		}
+		return ao.ScanObject.Database, ao.ScanObject.Table
+	default:
+		return "", ""
+	}
+	return "", ""
+}
+
+func extractTableNameFromChildrenTableScan(op *tipb.ExplainOperator) (string, string) {
+	if len(op.Children) == 0 {
+		return "", ""
+	}
+	for _, child := range op.Children {
+		if child.Name == plancodec.TypeTableFullScan || child.Name == plancodec.TypeTableRangeScan {
+			dbName, tableName := extractTableNameFromAccessObject(child.AccessObjects[0])
+			return dbName, tableName
+		}
+		if len(child.Children) != 0 {
+			dbName, tableName := extractTableNameFromChildrenTableScan(child)
+			if dbName != "" && tableName != "" {
+				return dbName, tableName
+			}
+		}
+	}
+	return "", ""
+}
+
+func extractTableNameFromChildrenIndexScan(op *tipb.ExplainOperator) (string, string) {
+	if len(op.Children) == 0 {
+		return "", ""
+	}
+	for _, child := range op.Children {
+		if child.Name == plancodec.TypeIndexRangeScan || child.Name == plancodec.TypeIndexFullScan {
+			dbName, tableName := extractTableNameFromAccessObject(child.AccessObjects[0])
+			return dbName, tableName
+		}
+	}
+	return "", ""
+}
+
+func extractPatialMetricsFromChildrenIndexMerge(op *tipb.ExplainOperator) ([]*TableReadCostMetrics, error) {
+	if len(op.Children) == 0 {
+		return nil, fmt.Errorf("empty child of index merge operator")
+	}
+	for _, child := range op.Children {
+		if child.Name == plancodec.TypeIndexRangeScan || child.Name == plancodec.TypeIndexFullScan {
+			dbName, tableName := extractTableNameFromAccessObject(child.AccessObjects[0])
+			return dbName, tableName
+		}
+	}
+}
+
+func extractScanTimeFromExecutionInfo(op *tipb.ExplainOperator) (time.Duration, error) {
+	var scanTime time.Duration
+	var err error
+	if len(op.RootBasicExecInfo) > 0 {
+		scanTime, err = extractScanTimeFromString(op.RootBasicExecInfo)
+	}
+	if scanTime == 0 && len(op.RootGroupExecInfo) > 0 {
+		// try groupExecInfo instead
+		scanTime, err = extractScanTimeFromString(op.RootGroupExecInfo[0])
+	}
+	if scanTime == 0 && len(op.CopExecInfo) > 0 {
+		// try copExecInfo instead
+		scanTime, err = extractScanTimeFromString(op.CopExecInfo)
+	}
+	return scanTime, err
+}
+
+func extractScanTimeFromString(input string) (time.Duration, error) {
+	start := strings.Index(input, "time:")
+	if start == -1 {
+		return 0, fmt.Errorf("'time:' not found in input string")
+	}
+	start += len("time:") // move start index after "time:"
+
+	end := strings.Index(input[start:], ",")
+	if end == -1 {
+		return 0, fmt.Errorf("',' not found after 'time:'")
+	}
+	end += start // compute the end index
+
+	// extract timeStr excluding "time:" and "," and empty str
+	timeStr := strings.TrimSpace(input[start:end])
+
+	// parse str to Duration
+	duration, err := time.ParseDuration(timeStr)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse duration: %v", err)
+	}
+	return duration, nil
 }
 
 type TableNameExtractor struct {

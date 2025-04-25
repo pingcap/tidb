@@ -41,7 +41,7 @@ func TestUpdateTableCostCache(t *testing.T) {
 		DbName:        ast.CIStr{O: "test", L: "test"},
 		TableName:     ast.CIStr{O: "test", L: "test"},
 		TableScanTime: 10.0,
-		TableMemUsage: 10.0,
+		TableMemUsage: 10,
 		ReadFrequency: 10,
 		TableReadCost: 1.0,
 	}
@@ -50,7 +50,7 @@ func TestUpdateTableCostCache(t *testing.T) {
 	}
 
 	// Save metrics to storage
-	handle.SaveTableReadCostMetrics(tableCostMetrics, time.Now(), time.Now(), dom.InfoSchema())
+	handle.SaveTableReadCostMetrics(tableCostMetrics, time.Now(), time.Now())
 
 	// Create cache worker and test UpdateTableReadCostCache
 	worker := workloadlearning.NewWLCacheWorker(dom.SysSessionPool())
