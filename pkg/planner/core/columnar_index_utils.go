@@ -25,7 +25,6 @@ func buildVectorIndexExtra(
 	distanceMetric tipb.VectorDistanceMetric,
 	topk uint32,
 	columnName string,
-	columnID int64,
 	refVec []byte,
 	column *tipb.ColumnInfo,
 ) *ColumnarIndexExtra {
@@ -35,14 +34,13 @@ func buildVectorIndexExtra(
 			IndexType: tipb.ColumnarIndexType_TypeVector,
 			Index: &tipb.ColumnarIndexInfo_AnnQueryInfo{
 				AnnQueryInfo: &tipb.ANNQueryInfo{
-					QueryType:          queryType,
-					DistanceMetric:     distanceMetric,
-					TopK:               topk,
-					ColumnName:         columnName,
-					DeprecatedColumnId: &columnID, // deprecated field, will be removed after TiFlash supports the new field.
-					IndexId:            indexInfo.ID,
-					RefVecF32:          refVec,
-					Column:             *column,
+					QueryType:      queryType,
+					DistanceMetric: distanceMetric,
+					TopK:           topk,
+					ColumnName:     columnName,
+					IndexId:        indexInfo.ID,
+					RefVecF32:      refVec,
+					Column:         *column,
 				},
 			},
 		},
