@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -423,11 +422,8 @@ func TestAddIndexRowCountUpdate(t *testing.T) {
 			rs := tk2.MustQuery("admin show ddl jobs 1;").Rows()
 			idStr := rs[0][0].(string)
 			id, err := strconv.Atoi(idStr)
-			assert.NoError(t, err)
-			assert.Equal(t, int64(id), jobID)
-			if t.Failed() {
-				return true
-			}
+			require.NoError(t, err)
+			require.Equal(t, int64(id), jobID)
 			rcStr := rs[0][7].(string)
 			rc, err := strconv.Atoi(rcStr)
 			require.NoError(t, err)
