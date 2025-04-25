@@ -129,7 +129,17 @@ func seekPropsOffsets(
 }
 
 // GetAllFileNames returns files with the same non-partitioned dir.
-// see randPartitionedPrefix for how we partition the files.
+//   - for intermediate KV/stat files we store them with a partitioned way to mitigate
+//     limitation on Cloud, see randPartitionedPrefix for how we partition the files.
+//   - for meta files, we store them directly under the non-partitioned dir.
+//
+// for example, if nonPartitionedDir is '30001', the files returned might be
+//   - 30001/6/meta.json
+//   - 30001/7/meta.json
+//   - 30001/plan/ingest/1/meta.json
+//   - 30001/plan/merge-sort/1/meta.json
+//   - e6/30001/7/617527bf-e25d-4312-8784-4a4576eb0195_stat/one-file
+//   - fa/30001/7/617527bf-e25d-4312-8784-4a4576eb0195/one-file
 func GetAllFileNames(
 	ctx context.Context,
 	store storage.ExternalStorage,
@@ -140,22 +150,29 @@ func GetAllFileNames(
 	err := store.WalkDir(ctx,
 		&storage.WalkOption{},
 		func(path string, size int64) error {
-			// path example: /subtask/0_stat/0
-
-			// extract the parent dir
+			// extract the first dir
 			bs := hack.Slice(path)
 			firstIdx := bytes.IndexByte(bs, '/')
-			if firstIdx == -1 || !isValidPartition(bs[:firstIdx]) {
+			if firstIdx == -1 {
 				return nil
 			}
 
+			firstDir := bs[:firstIdx]
+			if string(firstDir) == nonPartitionedDir {
+				data = append(data, path)
+				return nil
+			}
+
+			if !isValidPartition(firstDir) {
+				return nil
+			}
 			secondIdx := bytes.IndexByte(bs[firstIdx+1:], '/')
 			if secondIdx == -1 {
 				return nil
 			}
-			dir := path[firstIdx+1 : firstIdx+1+secondIdx]
+			secondDir := path[firstIdx+1 : firstIdx+1+secondIdx]
 
-			if dir == nonPartitionedDir {
+			if secondDir == nonPartitionedDir {
 				data = append(data, path)
 			}
 			return nil
