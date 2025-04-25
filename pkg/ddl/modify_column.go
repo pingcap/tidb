@@ -1138,7 +1138,7 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 		if err != nil {
 			return
 		}
-		err = checkIndexPrefixLength(columns, indexInfo.Columns)
+		err = checkIndexPrefixLength(columns, indexInfo.Columns, indexInfo.GetColumnarIndexType())
 		return
 	}
 
@@ -1180,8 +1180,10 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*mo
 			// if the type is still prefixable and larger than old prefix length.
 			prefixLength = ic.Length
 		}
-		if err := checkIndexColumn(col, prefixLength, false, columnarIndexType); err != nil {
-			return err
+		if columnarIndexType == model.ColumnarIndexTypeNA {
+			if err := checkIndexColumn(col, prefixLength, false); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

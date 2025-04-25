@@ -70,6 +70,8 @@ const (
 	FlagPDConcurrency = "pd-concurrency"
 	// FlagStatsConcurrency controls concurrency to restore statistic.
 	FlagStatsConcurrency = "stats-concurrency"
+	// FlagAutoAnalyze corresponds to the column `modify_count` of table `mysql.stats_meta`.
+	FlagAutoAnalyze = "auto-analyze"
 	// FlagBatchFlushInterval controls after how long the restore batch would be auto sended.
 	FlagBatchFlushInterval = "batch-flush-interval"
 	// FlagDdlBatchSize controls batch ddl size to create a batch of tables
@@ -168,6 +170,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 		"(deprecated) concurrency pd-relative operations like split & scatter.")
 	flags.Uint(FlagStatsConcurrency, defaultStatsConcurrency,
 		"concurrency to restore statistic")
+	flags.Bool(FlagAutoAnalyze, true, "trigger tidb analyze priority queue to analyze table")
 	flags.Duration(FlagBatchFlushInterval, defaultBatchFlushInterval,
 		"after how long a restore batch would be auto sent.")
 	flags.Uint(FlagDdlBatchSize, defaultFlagDdlBatchSize,
@@ -237,6 +240,7 @@ type RestoreConfig struct {
 	LoadStats          bool          `json:"load-stats" toml:"load-stats"`
 	PDConcurrency      uint          `json:"pd-concurrency" toml:"pd-concurrency"`
 	StatsConcurrency   uint          `json:"stats-concurrency" toml:"stats-concurrency"`
+	AutoAnalyze        bool          `json:"auto-analyze" toml:"auto-analyze"`
 	BatchFlushInterval time.Duration `json:"batch-flush-interval" toml:"batch-flush-interval"`
 	// DdlBatchSize use to define the size of batch ddl to create tables
 	DdlBatchSize uint `json:"ddl-batch-size" toml:"ddl-batch-size"`
@@ -400,6 +404,10 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig 
 	cfg.StatsConcurrency, err = flags.GetUint(FlagStatsConcurrency)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagStatsConcurrency)
+	}
+	cfg.AutoAnalyze, err = flags.GetBool(FlagAutoAnalyze)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagAutoAnalyze)
 	}
 	cfg.BatchFlushInterval, err = flags.GetDuration(FlagBatchFlushInterval)
 	if err != nil {
@@ -1283,6 +1291,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		LogProgress:         cfg.LogProgress,
 		ChecksumConcurrency: cfg.ChecksumConcurrency,
 		StatsConcurrency:    cfg.StatsConcurrency,
+		AutoAnalyze:         cfg.AutoAnalyze,
 
 		KvClient:   mgr.GetStorage().GetClient(),
 		ExtStorage: s,
