@@ -811,7 +811,7 @@ func TestMultiSchemaChangePollJobCount(t *testing.T) {
 	tk.MustExec("set global tidb_enable_dist_task = 0;")
 	runOneJobCounter := 0
 	pollJobCounter := 0
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onRunOneJobStep", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onRunOneJobStep", func() {
 		runOneJobCounter++
 	})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforePollDDLJob", func() {

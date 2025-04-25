@@ -814,8 +814,11 @@ func (w *worker) runOneJobStep(
 	// Mock for run ddl job panic.
 	failpoint.Inject("mockPanicInRunDDLJob", func(failpoint.Value) {})
 
-	failpoint.InjectCall("onRunOneJobStep", job)
-	jobCtx.logger.Info("run one job step", zap.String("job", job.String()))
+	failpoint.InjectCall("onRunOneJobStep")
+	if job.Type != model.ActionMultiSchemaChange {
+		jobCtx.logger.Info("run one job step", zap.String("job", job.String()))
+		failpoint.InjectCall("onRunOneJobStep")
+	}
 	timeStart := time.Now()
 	if job.RealStartTS == 0 {
 		job.RealStartTS = jobCtx.metaMut.StartTS
@@ -846,8 +849,7 @@ func (w *worker) runOneJobStep(
 		job.State = model.JobStateRunning
 
 		if jobCtx.shouldPollDDLJob() {
-			failpoint.InjectCall("beforePollDDLJob"))
-			jobCtx.logger.Info("beforePollDDLJob", zap.String("job", job.String())
+			failpoint.InjectCall("beforePollDDLJob")
 			stopCheckingJobCancelled := make(chan struct{})
 			defer close(stopCheckingJobCancelled)
 

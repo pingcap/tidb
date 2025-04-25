@@ -419,9 +419,7 @@ func TestAddIndexRowCountUpdate(t *testing.T) {
 		<-backfillDone
 		tk2 := testkit.NewTestKit(t, store)
 		tk2.MustExec("use test")
-		times := 0
 		require.Eventually(t, func() bool {
-			times++
 			rs := tk2.MustQuery("admin show ddl jobs 1;").Rows()
 			idStr := rs[0][0].(string)
 			id, err := strconv.Atoi(idStr)
@@ -434,7 +432,6 @@ func TestAddIndexRowCountUpdate(t *testing.T) {
 			rc, err := strconv.Atoi(rcStr)
 			require.NoError(t, err)
 			if rc > 0 {
-				t.Logf("job %d get row count %d, times %d", id, rc, times)
 				return true
 			}
 			return false
