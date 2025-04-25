@@ -804,6 +804,7 @@ const (
 		status varchar(64) NOT NULL,
 		extras json NULL DEFAULT NULL);`
 	// TODO: unique key on name?
+	// TODO: can we remove host? host and name are similar?
 	InsertOpenAIPlatform = `insert into mysql.llm_platform
 		(name, base_url, host, auth, source, description, status) values (
 		"openai", "https://api.openai.com/v1", "openai", "apikey",
