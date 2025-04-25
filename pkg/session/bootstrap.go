@@ -796,13 +796,13 @@ const (
 		host varchar(255) NOT NULL,
 		auth varchar(255) NOT NULL,
 		source varchar(64) NOT NULL,
-		description text DEFAULT NULL,
-		key varchar(255) DEFAULT NULL,
-		default_model varchar(255) DEFAULT NULL,
-		max_tokens bigint(20) DEFAULT NULL,
-		timeout decimal(10, 2) DEFAULT NULL,
+		description text NULL DEFAULT NULL,` +
+		"`key` varchar(255) NULL DEFAULT NULL," +
+		`default_model varchar(255) NULL DEFAULT NULL,
+		max_tokens bigint(20) NULL DEFAULT NULL,
+		timeout decimal(10, 2) NULL DEFAULT NULL,
 		status varchar(64) NOT NULL,
-		extras json DEFAULT NULL);`
+		extras json NULL DEFAULT NULL);`
 )
 
 // CreateTimers is a table to store all timers for tidb
