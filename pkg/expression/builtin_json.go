@@ -196,7 +196,7 @@ func (c *jsonSumCRC32FunctionClass) verifyArgs(ctx EvalContext, args []Expressio
 	}
 
 	if args[0].GetType(ctx).EvalType() != types.ETJson {
-		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "JSON_SUM_CRC32;")
+		return ErrInvalidTypeForJSON.GenWithStackByArgs(1, "JSON_SUM_CRC32")
 	}
 
 	return nil
