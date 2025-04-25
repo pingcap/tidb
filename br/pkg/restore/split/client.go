@@ -200,15 +200,16 @@ func (c *pdClient) scatterRegions(ctx context.Context, newRegions []*RegionInfo)
 			log.Warn("failed to batch scatter regions, rollback to sequentially scatter", logutil.ShortError(err))
 			c.scatterRegionsSequentially(
 				ctx, newRegions,
-				// backoff about 6s, or we give up scattering this region.
+				// backoff about 100s total, or we give up scattering this region.
 				&ExponentialBackoffer{
-					Attempts:    7,
+					Attempts:    50,
 					BaseBackoff: 100 * time.Millisecond,
+					MaxDelay:    2 * time.Second,
 				})
 			return nil
 		}
 		return err
-	}, &ExponentialBackoffer{Attempts: 3, BaseBackoff: 500 * time.Millisecond})
+	}, &ExponentialBackoffer{Attempts: 3, BaseBackoff: 500 * time.Millisecond, MaxDelay: 2 * time.Second})
 }
 
 func (c *pdClient) tryScatterRegions(ctx context.Context, regionInfo []*RegionInfo) error {
@@ -1008,6 +1009,7 @@ func CheckRegionEpoch(_new, _old *RegionInfo) bool {
 type ExponentialBackoffer struct {
 	Attempts    int
 	BaseBackoff time.Duration
+	MaxDelay    time.Duration
 }
 
 func (b *ExponentialBackoffer) exponentialBackoff() time.Duration {
@@ -1017,6 +1019,9 @@ func (b *ExponentialBackoffer) exponentialBackoff() time.Duration {
 		return 0
 	}
 	b.BaseBackoff *= 2
+	if b.MaxDelay > 0 && b.BaseBackoff > b.MaxDelay {
+		b.BaseBackoff = b.MaxDelay
+	}
 	return bo
 }
 
@@ -1029,12 +1034,17 @@ func PdErrorCanRetry(err error) bool {
 	//
 	// (2) shouldn't happen in a recently splitted region.
 	// (1) and (3) might happen, and should be retried.
+	//
+	// (4) operator canceled because cannot add an operator to the execute queue [PD:store-limit]
+	// (5) failed to create scatter region operator [PD:schedule:ErrCreateOperator]
 	grpcErr := status.Convert(err)
 	if grpcErr == nil {
 		return false
 	}
 	return strings.Contains(grpcErr.Message(), "is not fully replicated") ||
-		strings.Contains(grpcErr.Message(), "has no leader")
+		strings.Contains(grpcErr.Message(), "has no leader") ||
+		strings.Contains(grpcErr.Message(), "cannot add an operator to the execute queue") ||
+		strings.Contains(grpcErr.Message(), "failed to create scatter region operator")
 }
 
 // NextBackoff returns a duration to wait before retrying again.
