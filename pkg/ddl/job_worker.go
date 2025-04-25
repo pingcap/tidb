@@ -814,6 +814,7 @@ func (w *worker) runOneJobStep(
 
 	if job.Type != model.ActionMultiSchemaChange {
 		jobCtx.logger.Info("run one job step", zap.String("job", job.String()))
+		failpoint.InjectCall("onRunOneJobStep")
 	}
 	timeStart := time.Now()
 	if job.RealStartTS == 0 {
@@ -845,6 +846,7 @@ func (w *worker) runOneJobStep(
 		job.State = model.JobStateRunning
 
 		if jobCtx.shouldPollDDLJob() {
+			failpoint.InjectCall("beforePollDDLJob")
 			stopCheckingJobCancelled := make(chan struct{})
 			defer close(stopCheckingJobCancelled)
 
