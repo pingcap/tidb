@@ -3659,6 +3659,8 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateKernelOptionsTable)
 	// create mysql.tidb_workload_values
 	mustExecute(s, CreateTiDBWorkloadValuesTable)
+	// create mysql.llm_platform
+	mustExecute(s, CreateTiDBLLMPlatformTable)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
