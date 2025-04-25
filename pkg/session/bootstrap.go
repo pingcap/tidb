@@ -806,9 +806,11 @@ const (
 	// TODO: unique key on name?
 	// TODO: can we remove host? host and name are similar?
 	InsertOpenAIPlatform = `insert into mysql.llm_platform
-		(name, base_url, host, auth, source, description, status) values (
-		"openai", "https://api.openai.com/v1", "openai", "apikey",
-		"system", "openai platform", "disabled")`
+		(name, base_url, host, auth, source, status) values (
+		"openai", "https://api.openai.com/v1", "openai", "key", "system", "disabled")`
+	InsertBedrockPlatform = `insert into mysql.llm_platform
+		(name, base_url, host, auth, source, status) values (
+		"bedrock_runtime", "", "AWS", "platform", "system", "disabled")`
 )
 
 // CreateTimers is a table to store all timers for tidb
@@ -3508,6 +3510,7 @@ func upgradeToVer248(s sessiontypes.Session, ver int64) {
 	}
 	doReentrantDDL(s, CreateTiDBLLMPlatformTable, infoschema.ErrTableExists)
 	doReentrantDDL(s, InsertOpenAIPlatform)
+	doReentrantDDL(s, InsertBedrockPlatform)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
@@ -3669,6 +3672,7 @@ func doDDLWorks(s sessiontypes.Session) {
 	// create mysql.llm_platform
 	mustExecute(s, CreateTiDBLLMPlatformTable)
 	mustExecute(s, InsertOpenAIPlatform)
+	mustExecute(s, InsertBedrockPlatform)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
