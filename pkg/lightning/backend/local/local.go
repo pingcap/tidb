@@ -1389,7 +1389,7 @@ func (local *Backend) doImport(
 	}
 	clusterID := local.pdCli.GetClusterID(ctx)
 	for i := 0; i < local.WorkerConcurrency; i++ {
-		worker := local.newRegionJobWorker(ctx, clusterID, toCh, jobFromWorkerCh, &jobWg, afterExecuteJob)
+		worker := local.newRegionJobWorker(clusterID, toCh, jobFromWorkerCh, &jobWg, afterExecuteJob)
 		workGroup.Go(func() error {
 			return worker.run(workerCtx)
 		})
@@ -1437,7 +1437,6 @@ func (local *Backend) doImport(
 }
 
 func (local *Backend) newRegionJobWorker(
-	ctx context.Context,
 	clusterID uint64,
 	toCh, jobFromWorkerCh chan *regionJob,
 	jobWg *sync.WaitGroup,

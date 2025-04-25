@@ -165,8 +165,10 @@ func (w *writeClient) Recv() (*WriteResponse, error) {
 }
 
 func (w *writeClient) Close() {
-	w.writer.Close()
-	w.eg.Wait()
+	//nolint: errcheck
+	_ = w.writer.Close()
+	//nolint: errcheck
+	_ = w.eg.Wait()
 }
 
 var _ Client = &client{}
