@@ -1378,6 +1378,7 @@ func (local *Backend) doImport(
 	var (
 		toCh            = jobToWorkerCh
 		afterExecuteJob func([]*metapb.Peer)
+		clusterID       = local.pdCli.GetClusterID(ctx)
 	)
 	failpoint.Inject("skipStartWorker", func() {
 		failpoint.Goto("afterStartWorker")
@@ -1387,7 +1388,6 @@ func (local *Backend) doImport(
 		toCh = balancer.innerJobToWorkerCh
 		afterExecuteJob = balancer.releaseStoreLoad
 	}
-	clusterID := local.pdCli.GetClusterID(ctx)
 	for i := 0; i < local.WorkerConcurrency; i++ {
 		worker := local.newRegionJobWorker(clusterID, toCh, jobFromWorkerCh, &jobWg, afterExecuteJob)
 		workGroup.Go(func() error {
