@@ -96,6 +96,8 @@ type jobContext struct {
 	logger   *zap.Logger
 
 	// per job step fields, they will be changed on each call of transitOneJobStep.
+	// stepCtx is initilaized and destroyed for each job step except reorg job,
+	// which returns timeout error periodically.
 	stepCtx              context.Context
 	stepCtxCancel        context.CancelCauseFunc
 	reorgTimeoutOccurred bool
@@ -812,10 +814,8 @@ func (w *worker) runOneJobStep(
 	// Mock for run ddl job panic.
 	failpoint.Inject("mockPanicInRunDDLJob", func(failpoint.Value) {})
 
-	if job.Type != model.ActionMultiSchemaChange {
-		jobCtx.logger.Info("run one job step", zap.String("job", job.String()))
-		failpoint.InjectCall("onRunOneJobStep")
-	}
+	failpoint.InjectCall("onRunOneJobStep", job)
+	jobCtx.logger.Info("run one job step", zap.String("job", job.String()))
 	timeStart := time.Now()
 	if job.RealStartTS == 0 {
 		job.RealStartTS = jobCtx.metaMut.StartTS
@@ -846,7 +846,8 @@ func (w *worker) runOneJobStep(
 		job.State = model.JobStateRunning
 
 		if jobCtx.shouldPollDDLJob() {
-			failpoint.InjectCall("beforePollDDLJob")
+			failpoint.InjectCall("beforePollDDLJob"))
+			jobCtx.logger.Info("beforePollDDLJob", zap.String("job", job.String())
 			stopCheckingJobCancelled := make(chan struct{})
 			defer close(stopCheckingJobCancelled)
 

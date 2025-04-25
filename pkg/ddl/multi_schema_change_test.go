@@ -811,14 +811,15 @@ func TestMultiSchemaChangePollJobCount(t *testing.T) {
 	tk.MustExec("set global tidb_enable_dist_task = 0;")
 	runOneJobCounter := 0
 	pollJobCounter := 0
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onRunOneJobStep", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onRunOneJobStep", func(job *model.Job) {
 		runOneJobCounter++
 	})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforePollDDLJob", func() {
 		pollJobCounter++
 	})
 	tk.MustExec("alter table t add column b int, add column c char(10), add index idx(a);")
-	require.Equal(t, runOneJobCounter, pollJobCounter+1)
+	require.Equal(t, 27, runOneJobCounter)
+	require.Equal(t, 13, pollJobCounter)
 }
 
 type cancelOnceHook struct {

@@ -420,25 +420,25 @@ func TestAddIndexRowCountUpdate(t *testing.T) {
 		tk2 := testkit.NewTestKit(t, store)
 		tk2.MustExec("use test")
 		times := 0
-		for {
+		require.Eventually(t, func() bool {
 			times++
-			<-time.After(60 * time.Millisecond)
 			rs := tk2.MustQuery("admin show ddl jobs 1;").Rows()
 			idStr := rs[0][0].(string)
 			id, err := strconv.Atoi(idStr)
 			assert.NoError(t, err)
 			assert.Equal(t, int64(id), jobID)
 			if t.Failed() {
-				break
+				return true
 			}
 			rcStr := rs[0][7].(string)
 			rc, err := strconv.Atoi(rcStr)
 			require.NoError(t, err)
 			if rc > 0 {
 				t.Logf("job %d get row count %d, times %d", id, rc, times)
-				break
+				return true
 			}
-		}
+			return false
+		}, 2*time.Minute, 60*time.Millisecond)
 	}()
 	tk.MustExec("alter table t add index idx(c2);")
 }
