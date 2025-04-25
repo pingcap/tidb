@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
@@ -45,6 +46,9 @@ type RootTask struct {
 	// For copTask and rootTask, when we compose physical tree bottom-up, index join need some special info
 	// fetched from underlying ds which built index range or table range based on these runtime constant.
 	IndexJoinInfo *IndexJoinInfo
+
+	// warnings handler
+	context.StaticWarnHandler
 }
 
 // GetPlan returns the root task's plan.
@@ -69,12 +73,16 @@ func (t *RootTask) SetEmpty(x bool) {
 
 // Copy implements Task interface.
 func (t *RootTask) Copy() base.Task {
-	return &RootTask{
+	nt := &RootTask{
 		p: t.p,
 
 		// when copying, just copy it out.
 		IndexJoinInfo: t.IndexJoinInfo,
 	}
+	// t.CopyWarnings(nt.StaticWarnHandler.GetWarnings()) will copy t's warns to nt
+	// and return the slice if it may be extended, then set it back to nt.
+	nt.SetWarnings(t.CopyWarnings(nt.StaticWarnHandler.GetWarnings()))
+	return nt
 }
 
 // ConvertToRootTask implements Task interface.
@@ -136,6 +144,9 @@ type MppTask struct {
 	// So physical plan be like: PhysicalHashAgg -> PhysicalSelection -> TableReader -> ExchangeSender -> PhysicalTableScan(mpp tiflash)
 	rootTaskConds []expression.Expression
 	tblColHists   *statistics.HistColl
+
+	// warnings handler
+	context.StaticWarnHandler
 }
 
 // Count implements Task interface.
@@ -146,6 +157,9 @@ func (t *MppTask) Count() float64 {
 // Copy implements Task interface.
 func (t *MppTask) Copy() base.Task {
 	nt := *t
+	// t.CopyWarnings(nt.StaticWarnHandler.GetWarnings()) will copy t's warns to nt
+	// and return the slice if it may be extended, then set it back to nt.
+	nt.SetWarnings(t.CopyWarnings(nt.StaticWarnHandler.GetWarnings()))
 	return &nt
 }
 
@@ -178,7 +192,12 @@ func (t *MppTask) MemoryUsage() (sum int64) {
 }
 
 // ConvertToRootTaskImpl implements Task interface.
-func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) *RootTask {
+func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
+	defer func() {
+		if t.WarningCount() > 0 {
+			rt.CopyWarnings(t.GetWarnings())
+		}
+	}()
 	// In disaggregated-tiflash mode, need to consider generated column.
 	tryExpandVirtualColumn(t.p)
 	sender := PhysicalExchangeSender{
@@ -192,7 +211,7 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) *RootTask {
 	}.Init(ctx, t.p.QueryBlockOffset())
 	p.SetStats(t.p.StatsInfo())
 	collectPartitionInfosFromMPPPlan(p, t.p)
-	rt := &RootTask{}
+	rt = &RootTask{}
 	rt.SetPlan(p)
 
 	if len(t.rootTaskConds) > 0 {
@@ -269,6 +288,9 @@ type CopTask struct {
 	// For copTask and rootTask, when we compose physical tree bottom-up, index join need some special info
 	// fetched from underlying ds which built index range or table range based on these runtime constant.
 	IndexJoinInfo *IndexJoinInfo
+
+	// warnings handler
+	context.StaticWarnHandler
 }
 
 // Invalid implements Task interface.
@@ -287,6 +309,9 @@ func (t *CopTask) Count() float64 {
 // Copy implements Task interface.
 func (t *CopTask) Copy() base.Task {
 	nt := *t
+	// t.CopyWarnings(nt.StaticWarnHandler.GetWarnings()) will copy t's warns to nt
+	// and return the slice if it may be extended, then set it back to nt.
+	nt.SetWarnings(t.CopyWarnings(nt.StaticWarnHandler.GetWarnings()))
 	return &nt
 }
 
@@ -347,6 +372,9 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 		if t.IndexJoinInfo != nil {
 			// return indexJoinInfo upward, when copTask is converted to rootTask.
 			rt.IndexJoinInfo = t.IndexJoinInfo
+		}
+		if t.WarningCount() > 0 {
+			rt.CopyWarnings(t.GetWarnings())
 		}
 	}()
 	// copTasks are run in parallel, to make the estimated cost closer to execution time, we amortize

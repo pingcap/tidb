@@ -14,12 +14,20 @@
 
 package base
 
+import "github.com/pingcap/tidb/pkg/util/context"
+
 // Note: appending the new adding method to the last, for the convenience of easy
 // locating in other implementor from other package.
 
 // Task is a new version of `PhysicalPlanInfo`. It stores cost information for a task.
 // A task may be CopTask, RootTask, MPPTaskMeta or a ParallelTask.
 type Task interface {
+	// WarnHandler is for warnings handler, once a physical enumeration happens it will have according warnings.
+	// However, we could not append it into sCtx instantly because the final physical tree choice is not determined
+	// even a local bestTask for specific prop is for sure.
+	// when build a task bottom-up, for each copied task that rooted from a specific operator downward, it will
+	// collect all the warnings that from the operator and its children.
+	context.WarnHandler
 	// Count returns current task's row count.
 	Count() float64
 	// Copy return a shallow copy of current task with the same pointer to p.

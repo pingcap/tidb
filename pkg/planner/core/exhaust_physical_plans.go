@@ -16,6 +16,7 @@ package core
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"math"
 	"slices"
 	"strings"
@@ -37,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -2053,8 +2053,8 @@ func tryToEnumerateIndexJoin(p *logicalop.LogicalJoin, prop *property.PhysicalPr
 		stmtCtx.SetHintWarning("Some INL_MERGE_JOIN and NO_INDEX_MERGE_JOIN hints conflict, NO_INDEX_MERGE_JOIN may be ignored")
 	}
 	// previously we will think about force index join hints here, but we have to wait the inner plans to be a valid
-	// physical one/ones. Because indexJoinProp may not be admitted by its inner patterns, so we innovatively move all
-	// hint related handling to the findBestTask function when we see the entire inner physicalized plan tree. See xxx
+	// physical one/ones. Because indexJoinProp may not be admitted by its inner patterns, so we innovative-ly move all
+	// hint related handling to the findBestTask function when we see the entire inner physical-ized plan tree. See xxx
 	// for details.
 	//
 	// handleFilterIndexJoinHints is trying to avoid generating index join or index hash join when no-index-join related
@@ -2104,6 +2104,17 @@ func tryToGetIndexJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty
 	candidates = handleFilterIndexJoinHints(p, candidates)
 	// todo: if any variables banned it, why bother to generate it first?
 	return filterIndexJoinBySessionVars(p.SCtx(), candidates), false
+}
+
+func enumerationContainIndexJoin(candidates []base.PhysicalPlan) bool {
+	for _, candidate := range candidates {
+		_, _, ok := getIndexJoinSideAndMethod(candidate)
+		if ok {
+			// contain index join type
+			return ok
+		}
+	}
+	return false
 }
 
 // handleFilterIndexJoinHints is trying to avoid generating index join or index hash join when no-index-join related
