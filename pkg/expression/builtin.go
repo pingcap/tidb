@@ -978,6 +978,9 @@ var funcs = map[string]functionClass{
 	ast.VecFromText:             &vecFromTextFunctionClass{baseFunctionClass{ast.VecFromText, 1, 1}},
 	ast.VecAsText:               &vecAsTextFunctionClass{baseFunctionClass{ast.VecAsText, 1, 1}},
 
+	// fts functions
+	ast.FTSMatchWord: &ftsMatchWordFunctionClass{baseFunctionClass{ast.FTSMatchWord, 2, 2}},
+
 	// TiDB internal function.
 	ast.TiDBDecodeKey:       &tidbDecodeKeyFunctionClass{baseFunctionClass{ast.TiDBDecodeKey, 1, 1}},
 	ast.TiDBMVCCInfo:        &tidbMVCCInfoFunctionClass{baseFunctionClass: baseFunctionClass{ast.TiDBMVCCInfo, 1, 1}},
