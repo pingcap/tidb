@@ -1699,3 +1699,19 @@ func onAlterNoCacheTable(jobCtx *jobContext, job *model.Job) (ver int64, err err
 	}
 	return ver, err
 }
+
+func onRefreshMeta(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	var tbInfo *model.TableInfo
+	metaMut := jobCtx.metaMut
+	tbInfo, err = GetTableInfoAndCancelFaultJob(metaMut, job, job.SchemaID)
+	if err != nil {
+		return ver, err
+	}
+	// update schema version and table info
+	ver, err = updateVersionAndTableInfo(jobCtx, job, tbInfo, true)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
+	return ver, nil
+}

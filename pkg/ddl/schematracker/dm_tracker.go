@@ -1197,3 +1197,8 @@ func (d *SchemaTracker) BatchCreateTableWithInfo(ctx sessionctx.Context, schema 
 func (*SchemaTracker) CreatePlacementPolicyWithInfo(_ sessionctx.Context, _ *model.PolicyInfo, _ ddl.OnExist) error {
 	return nil
 }
+
+// RefreshMeta implements the DDL interface, it's no-op in DM's case.
+func (*SchemaTracker) RefreshMeta(_ sessionctx.Context, _ *model.RefreshMetaArgs) error {
+	return nil
+}

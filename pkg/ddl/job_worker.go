@@ -1021,6 +1021,8 @@ func (w *worker) runOneJobStep(
 		ver, err = onDropCheckConstraint(jobCtx, job)
 	case model.ActionAlterCheckConstraint:
 		ver, err = w.onAlterCheckConstraint(jobCtx, job)
+	case model.ActionRefreshMeta:
+		ver, err = onRefreshMeta(jobCtx, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled
