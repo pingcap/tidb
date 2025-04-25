@@ -90,6 +90,7 @@ func newFileCheckpointsDB(t *testing.T, addIndexBySQL bool) *checkpoints.FileChe
 				},
 				Chunk: mydump.Chunk{
 					Offset:       12,
+					RealOffset:   10,
 					EndOffset:    102400,
 					PrevRowIDMax: 1,
 					RowIDMax:     5000,
@@ -139,6 +140,7 @@ func newFileCheckpointsDB(t *testing.T, addIndexBySQL bool) *checkpoints.FileChe
 		Key:      checkpoints.ChunkCheckpointKey{Path: "/tmp/path/1.sql", Offset: 0},
 		Checksum: verification.MakeKVChecksum(4491, 586, 486070148917),
 		Pos:      55904,
+		RealPos:  55902,
 		RowID:    681,
 	}
 	ccm.MergeInto(cpd)
@@ -194,6 +196,7 @@ func TestGet(t *testing.T) {
 					ColumnPermutation: []int{},
 					Chunk: mydump.Chunk{
 						Offset:       55904,
+						RealOffset:   55902,
 						EndOffset:    102400,
 						PrevRowIDMax: 681,
 						RowIDMax:     5000,
