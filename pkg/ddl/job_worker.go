@@ -126,15 +126,15 @@ func (c *jobContext) initStepCtx() {
 }
 
 func (c *jobContext) cleanStepCtx() {
-	// reorgTimeoutOccurred indicates whether the current reorganization
-	// process was terminated due to a timeout condition. When set to true,
+	// reorgTimeoutOccurred indicates whether the current reorg process
+	// was temporarily exit due to a timeout condition. When set to true,
 	// it prevents premature cleanup of step context.
 	if c.reorgTimeoutOccurred {
-		c.reorgTimeoutOccurred = false
+		c.reorgTimeoutOccurred = false // reset flag
 		return
 	}
 	c.stepCtxCancel(context.Canceled)
-	c.stepCtx = nil // unset stepCtx for the next initialization
+	c.stepCtx = nil // unset stepCtx for the next step initialization
 }
 
 func (c *jobContext) getAutoIDRequirement() autoid.Requirement {
@@ -1102,8 +1102,10 @@ func updateGlobalVersionAndWaitSynced(
 	var err error
 
 	if latestSchemaVersion == 0 {
+		// If the DDL step is still in progress (e.g., during reorg timeout),
+		// skip logging to avoid generating redundant entries.
 		if jobCtx.stepCtx != nil {
-			return nil // do not print noisy log when a ddl step is not complete (like reorg timeout).
+			return nil
 		}
 		logutil.DDLLogger().Info("schema version doesn't change", zap.Int64("jobID", job.ID))
 		return nil
