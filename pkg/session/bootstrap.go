@@ -804,6 +804,10 @@ const (
 		status varchar(64) NOT NULL,
 		extras json NULL DEFAULT NULL);`
 	// TODO: unique key on name?
+	InsertOpenAIPlatform = `insert into mysql.llm_platform
+		(name, base_url, host, auth, source, description, status) values (
+		"openai", "https://api.openai.com/v1", "openai", "apikey",
+		"system", "openai platform", "disabled")`
 )
 
 // CreateTimers is a table to store all timers for tidb
@@ -3502,12 +3506,7 @@ func upgradeToVer248(s sessiontypes.Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateTiDBLLMPlatformTable, infoschema.ErrTableExists)
-
-	// OPENAI Platform support
-	openAIPlatform := `insert into mysql.llm_platform values (
-		"openai", "https://api.openai.com/v1", "openai", "apikey",
-		"system", "openai platform", null, null, null, null, "disabled", null)`
-	doReentrantDDL(s, openAIPlatform)
+	doReentrantDDL(s, InsertOpenAIPlatform)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
@@ -3668,6 +3667,7 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateTiDBWorkloadValuesTable)
 	// create mysql.llm_platform
 	mustExecute(s, CreateTiDBLLMPlatformTable)
+	mustExecute(s, InsertOpenAIPlatform)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
