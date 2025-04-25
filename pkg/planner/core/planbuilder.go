@@ -5223,9 +5223,6 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 		}
 
 		if v.Select != nil {
-			// v.Text() = "" ?
-			log.Info("v.Text()", zap.Any("v.Text()", v.Text()))
-			log.Info("create table with info job", zap.Any("v.Select", v.Select.Text()))
 			if err := checkCreateTableAsSelect(v); err != nil {
 				return nil, err
 			}

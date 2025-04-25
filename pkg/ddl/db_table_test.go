@@ -874,6 +874,7 @@ func TestCreateTableAsSelect(t *testing.T) {
 	tk.MustExec("use test")
 
 	// Create source tables
+	tk.MustExec("set @@global.tidb_schema_cache_size= 0")
 	tk.MustExec("create table t1 (id int primary key, b int);")
 	tk.MustExec("create table t_ref (id int primary key, name varchar(20));")
 	tk.MustExec("insert into t1 values (1,1),(2,2),(3,3);")

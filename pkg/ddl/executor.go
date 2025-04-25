@@ -23,6 +23,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -624,14 +625,14 @@ func (e *executor) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, 
 		return nil
 	}
 
-	tblInfo := tb.Meta()
-	if tblInfo.TempTableType != model.TempTableNone {
-		return errors.Trace(dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("placement"))
-	}
-
 	placementPolicyRef, err = checkAndNormalizePlacementPolicy(ctx, placementPolicyRef)
 	if err != nil {
 		return err
+	}
+
+	tblInfo := tb.Meta()
+	if tblInfo.TempTableType != model.TempTableNone {
+		return errors.Trace(dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("placement"))
 	}
 
 	var involvingSchemaInfo []model.InvolvingSchemaInfo
@@ -981,6 +982,13 @@ func checkGlobalIndexes(ec errctx.Context, tblInfo *model.TableInfo) error {
 }
 
 func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err error) {
+	var tempTableName string
+	var originTableName = s.Table.Name.L
+	if s.Select != nil {
+		originTableName = s.Table.Name.L
+		tempTableName = s.Table.Name.L + "_nonpublic_" + strconv.Itoa(time.Now().Nanosecond())
+		s.Table.Name = ast.NewCIStr(tempTableName)
+	}
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
@@ -1041,7 +1049,9 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	}
 
 	if s.Select != nil {
-		sql, err := buildInsertSql(schema.Name.L, s.Table.Name.L, s)
+		log.Info("e.store.Name()", zap.Any("e.store.Name()", e.store.Name()), zap.Any("kv.TiKV.Name()", kv.TiKV.Name()))
+		isTikvStore := e.store.Name() == kv.TiKV.Name()
+		insertSql, err := buildInsertSql(schema.Name.L, tempTableName, s, isTikvStore)
 		if err != nil {
 			return err
 		}
@@ -1051,8 +1061,19 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 			return errors.Trace(err)
 		}
 		defer e.sessPool.Put(sctx)
-		logutil.DDLLogger().Info("create table with info job", zap.String("sql", sql))
-		_, err = sctx.GetSQLExecutor().ExecuteInternal(e.ctx, sql)
+		logutil.DDLLogger().Info("create table with info job", zap.String("sql", insertSql))
+		_, err = sctx.GetSQLExecutor().ExecuteInternal(e.ctx, insertSql)
+		if err != nil {
+			dropSql := buildDropSql(schema.Name.L, tempTableName)
+			_, dropErr := sctx.GetSQLExecutor().ExecuteInternal(e.ctx, dropSql)
+			if dropErr != nil {
+				return errors.Trace(dropErr)
+			}
+			return errors.Trace(err)
+		}
+		renameSql := buildRenameSql(schema.Name.L, tempTableName, originTableName)
+		log.Info("renameSql", zap.Any("renameSql", renameSql))
+		_, err = sctx.GetSQLExecutor().ExecuteInternal(e.ctx, renameSql)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1060,7 +1081,50 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	return nil
 }
 
-func buildInsertSql(dbName, tableName string, s *ast.CreateTableStmt) (sql string, err error) {
+func buildDropSql(dbName, tempTableName string) string {
+	var sqlBuilder strings.Builder
+	sqlBuilder.Grow(len(dbName)*2 + len(tempTableName) + 50)
+
+	sqlBuilder.WriteString("DROP TABLE ")
+	sqlBuilder.WriteByte('`')
+	sqlBuilder.WriteString(dbName)
+	sqlBuilder.WriteByte('`')
+	sqlBuilder.WriteByte('.')
+	sqlBuilder.WriteByte('`')
+	sqlBuilder.WriteString(tempTableName)
+	sqlBuilder.WriteByte('`')
+	sqlBuilder.WriteByte(';')
+
+	return sqlBuilder.String()
+}
+
+func buildRenameSql(dbName string, tempTableName string, originTableName string) string {
+	var sqlBuilder strings.Builder
+	// Grow the capacity of the builder to reduce reallocations
+	sqlBuilder.Grow(len(dbName)*2 + len(tempTableName) + len(originTableName) + 50)
+
+	sqlBuilder.WriteString("RENAME TABLE ")
+	sqlBuilder.WriteByte('`')
+	sqlBuilder.WriteString(dbName)
+	sqlBuilder.WriteByte('`')
+	sqlBuilder.WriteByte('.')
+	sqlBuilder.WriteByte('`')
+	sqlBuilder.WriteString(tempTableName)
+	sqlBuilder.WriteByte('`')
+	sqlBuilder.WriteString(" TO ")
+	sqlBuilder.WriteByte('`')
+	sqlBuilder.WriteString(dbName)
+	sqlBuilder.WriteByte('`')
+	sqlBuilder.WriteByte('.')
+	sqlBuilder.WriteByte('`')
+	sqlBuilder.WriteString(originTableName)
+	sqlBuilder.WriteByte('`')
+	sqlBuilder.WriteByte(';')
+
+	return sqlBuilder.String()
+}
+
+func buildInsertSql(dbName, tableName string, s *ast.CreateTableStmt, isTikvStore bool) (sql string, err error) {
 	var res strings.Builder
 	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &res)
 	if err := s.Select.Restore(restoreCtx); err != nil {
@@ -1071,7 +1135,11 @@ func buildInsertSql(dbName, tableName string, s *ast.CreateTableStmt) (sql strin
 	// Grow the capacity of the builder to reduce reallocation
 	sqlBuilder.Grow(len(dbName) + len(tableName) + res.Len())
 
-	sqlBuilder.WriteString("insert into ")
+	if isTikvStore {
+		sqlBuilder.WriteString("import into ")
+	} else {
+		sqlBuilder.WriteString("insert into ")
+	}
 	sqlBuilder.WriteString(dbName)
 	sqlBuilder.WriteByte('.')
 	sqlBuilder.WriteString(tableName)
@@ -1089,6 +1157,9 @@ func buildInsertSql(dbName, tableName string, s *ast.CreateTableStmt) (sql strin
 	}
 
 	sqlBuilder.WriteString(") ")
+	if isTikvStore {
+		sqlBuilder.WriteString("from ")
+	}
 	sqlBuilder.WriteString(res.String())
 
 	return sqlBuilder.String(), nil
