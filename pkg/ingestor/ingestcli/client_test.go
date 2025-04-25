@@ -57,7 +57,7 @@ func TestWriteClientWriteChunk(t *testing.T) {
 	resp, err := client.Recv()
 	require.NoError(t, err)
 	require.NotNil(t, resp)
-	require.Equal(t, "mock_sst_file.sst", resp.SSTFile)
+	require.Equal(t, "mock_sst_file.sst", resp.nextGenSSTMeta)
 }
 
 func TestClientWriteServerError(t *testing.T) {
@@ -87,10 +87,14 @@ func TestClientIngest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, 12345, server.Client())
+	client := NewClient(server.URL, 12345, server.Client(), &storeClient{addr: server.URL})
 	req := &IngestRequest{
-		SSTFile: "test.sst",
-		Region:  &split.RegionInfo{Region: &metapb.Region{Id: 1, RegionEpoch: &metapb.RegionEpoch{Version: 1}}},
+		WriteResp: &WriteResponse{
+			nextGenSSTMeta: &nextGenSSTMeta{
+				Id: 1,
+			},
+		},
+		Region: &split.RegionInfo{Region: &metapb.Region{Id: 1, RegionEpoch: &metapb.RegionEpoch{Version: 1}}},
 	}
 	err := client.Ingest(context.Background(), req)
 	require.NoError(t, err)
@@ -106,12 +110,27 @@ func TestClientIngestError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, 12345, server.Client())
+	client := NewClient(server.URL, 12345, server.Client(), &storeClient{addr: server.URL})
 	req := &IngestRequest{
-		SSTFile: "test.sst",
-		Region:  &split.RegionInfo{Region: &metapb.Region{Id: 1, RegionEpoch: &metapb.RegionEpoch{Version: 1}}},
+		WriteResp: &WriteResponse{
+			nextGenSSTMeta: &nextGenSSTMeta{
+				Id: 1,
+			},
+		},
+		Region: &split.RegionInfo{Region: &metapb.Region{Id: 1, RegionEpoch: &metapb.RegionEpoch{Version: 1}}},
 	}
 	err := client.Ingest(context.Background(), req)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "test error")
+}
+
+type storeClient struct {
+	split.SplitClient
+	addr string
+}
+
+func (sc *storeClient) GetStore(_ context.Context, _ uint64) (*metapb.Store, error) {
+	return &metapb.Store{
+		Address: sc.addr,
+	}, nil
 }

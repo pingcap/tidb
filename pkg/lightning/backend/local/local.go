@@ -1449,6 +1449,7 @@ func (local *Backend) newRegionJobWorker(
 		regenerateJobsFn: local.generateJobForRange,
 	}
 	if kerneltype.IsNextGen() {
+		// TODO: add support for TLS.
 		httpClient := &http.Client{}
 		cloudW := &objStoreRegionJobWorker{
 			ingestCli:      ingestcli.NewClient(local.TiKVWorkerURL, local.pdCli.GetClusterID(ctx), httpClient, local.splitCli),
