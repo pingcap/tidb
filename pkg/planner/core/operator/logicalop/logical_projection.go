@@ -231,7 +231,8 @@ func (p *LogicalProjection) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *
 				}
 
 				if !isContains {
-					// The columns are from the children's schema.
+					// we find this column is not in the schema, so we need to add it from the children.
+					// because it is projected. so we need to add columns to the projection's Exprs.
 					if p.Children()[0].Schema().Contains(col) {
 						p.Exprs = append(p.Exprs, col)
 						p.SetOutputNames(append(p.OutputNames(), types.EmptyName))
