@@ -23,8 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -295,75 +293,14 @@ func TestInvertedIndex(t *testing.T) {
 	dom := domain.GetDomain(tk.Session())
 	testkit.SetTiFlashReplica(t, dom, "test", "t")
 
-	var findTableScan func(p base.Plan) *core.PhysicalTableScan
-	findTableScan = func(p base.Plan) *core.PhysicalTableScan {
-		if p == nil {
-			return nil
-		}
-		switch v := p.(type) {
-		case *core.PhysicalTableScan:
-			return v
-		case *core.PhysicalTableReader:
-			for _, child := range v.TablePlans {
-				if ts := findTableScan(child); ts != nil {
-					return ts
-				}
-			}
-			return nil
-		default:
-			physicayPlan := p.(base.PhysicalPlan)
-			for _, child := range physicayPlan.Children() {
-				if ts := findTableScan(child); ts != nil {
-					return ts
-				}
-			}
-			return nil
-		}
-	}
-
-	// force index
-	{
-		sqls := []string{
-			"select * from t force index(idx_a) where a > 0",
-			"select * from t force index(idx_b) where b < 0",
-			"select * from t force index(idx_c) where c = 0",
-			"select * from t force index(idx_d) where d != 0",
-		}
-		indexes := []string{"idx_a", "idx_b", "idx_c", "idx_d"}
-		for i, sql := range sqls {
-			tk.MustExec(sql)
-			info := tk.Session().ShowProcess()
-			require.NotNil(t, info)
-			p, ok := info.Plan.(base.Plan)
-			require.True(t, ok)
-
-			ts := findTableScan(p)
-			require.NotNil(t, ts)
-			require.Equal(t, 1, len(ts.UsedColumnarIndexes))
-			require.Equal(t, indexes[i], ts.UsedColumnarIndexes[0].IndexInfo.Name.O)
-		}
-	}
-
-	// ignore index
-	{
-		sqls := []string{
-			"select * from t ignore index(idx_a) where a = 1",
-			"select * from t ignore index(idx_b) where b = 2",
-			"select * from t ignore index(idx_c) where c = 3",
-			"select * from t ignore index(idx_d) where d < 1",
-		}
-		for _, sql := range sqls {
-			tk.MustExec(sql)
-			info := tk.Session().ShowProcess()
-			require.NotNil(t, info)
-			p, ok := info.Plan.(base.Plan)
-			require.True(t, ok)
-
-			ts := findTableScan(p)
-			require.NotNil(t, ts)
-			require.Equal(t, 0, len(ts.UsedColumnarIndexes))
-		}
-	}
+	tk.MustUseIndex("select * from t force index(idx_a) where a > 0", "idx_a")
+	tk.MustUseIndex("select * from t force index(idx_b) where b < 0", "idx_b")
+	tk.MustUseIndex("select * from t force index(idx_c) where c = 0", "idx_c")
+	tk.MustUseIndex("select * from t force index(idx_d) where d != 0", "idx_d")
+	tk.MustNoIndexUsed("select * from t ignore index(idx_a) where a = 1")
+	tk.MustNoIndexUsed("select * from t ignore index(idx_b) where b = 2")
+	tk.MustNoIndexUsed("select * from t ignore index(idx_c) where c = 3")
+	tk.MustNoIndexUsed("select * from t ignore index(idx_d) where d < 1")
 }
 
 func TestAnalyzeColumnarIndex(t *testing.T) {

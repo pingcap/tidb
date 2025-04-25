@@ -18,6 +18,7 @@ import (
 	"cmp"
 	"math"
 	"slices"
+	"strings"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -106,7 +107,7 @@ func groupByColumnsSortBySelectivity(sctx base.PlanContext, conds []expression.E
 	for _, group := range groupMap {
 		selectivity, _, err := cardinality.Selectivity(sctx, ts.tblColHists, group, nil)
 		if err != nil {
-			logutil.BgLogger().Warn("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
+			logutil.BgLogger().Debug("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
 			continue
 		}
 		if selectivity <= selectivityThreshold {
@@ -207,7 +208,7 @@ func predicatePushDownToTableScan(sctx base.PlanContext, conds []expression.Expr
 		mergedConds := append(selectedConds, exprGroup.exprs...)
 		selectivity, _, err := cardinality.Selectivity(sctx, ts.tblColHists, mergedConds, nil)
 		if err != nil {
-			logutil.BgLogger().Warn("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
+			logutil.BgLogger().Debug("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
 			continue
 		}
 		colCnt := expression.ExtractColumnSet(mergedConds...).Len()
@@ -265,19 +266,19 @@ func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan
 		switch hint.HintType {
 		case ast.HintUse:
 			for _, name := range hint.IndexNames {
-				if indexMap[name.O] != math.MaxInt {
-					indexMap[name.O]++
+				if indexMap[name.L] != math.MaxInt {
+					indexMap[name.L]++
 				}
 			}
 		case ast.HintIgnore:
 			for _, name := range hint.IndexNames {
-				if indexMap[name.O] != math.MaxInt {
-					indexMap[name.O]--
+				if indexMap[name.L] != math.MaxInt {
+					indexMap[name.L]--
 				}
 			}
 		case ast.HintForce:
 			for _, name := range hint.IndexNames {
-				indexMap[name.O] = math.MaxInt
+				indexMap[name.L] = math.MaxInt
 			}
 		default:
 			continue
@@ -287,11 +288,11 @@ func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan
 	indexedColumnNameToIndexInfoMap := make(map[string]*model.IndexInfo, len(ts.Table.Indices))
 	for _, index := range ts.Table.Indices {
 		if index.State == model.StatePublic && index.InvertedInfo != nil {
-			if len(indexHints) > 0 && indexMap[index.Name.O] <= 0 {
+			if len(indexHints) > 0 && indexMap[index.Name.L] <= 0 {
 				continue
 			}
 			// inverted index only support one column
-			indexedColumnNameToIndexInfoMap[index.Columns[0].Name.O] = index
+			indexedColumnNameToIndexInfoMap[index.Columns[0].Name.L] = index
 		}
 	}
 
@@ -305,8 +306,13 @@ func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan
 		// 2. The columns of predicate all have inverted index.
 		allHaveInvertedIndex := true
 		columns := expression.ExtractColumns(cond)
+		columnNames := make([]string, 0, len(columns))
 		for _, col := range columns {
-			if _, ok := indexedColumnNameToIndexInfoMap[col.OrigName]; !ok {
+			parts := strings.Split(col.OrigName, ".")
+			columnNames = append(columnNames, strings.ToLower(parts[len(parts)-1]))
+		}
+		for _, colName := range columnNames {
+			if _, ok := indexedColumnNameToIndexInfoMap[colName]; !ok {
 				allHaveInvertedIndex = false
 				break
 			}
@@ -324,8 +330,8 @@ func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan
 			continue
 		}
 		// all passed, add the columns to selected
-		for _, col := range columns {
-			selectedColumns[col.OrigName] = true
+		for _, colName := range columnNames {
+			selectedColumns[colName] = true
 		}
 		selectedConditions = append(selectedConditions, cond)
 	}
@@ -337,7 +343,7 @@ func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan
 	}
 
 	for colName, index := range indexedColumnNameToIndexInfoMap {
-		if _, ok := selectedColumns[colName]; !ok && indexMap[index.Name.O] == math.MaxInt {
+		if _, ok := selectedColumns[colName]; !ok && indexMap[index.Name.L] == math.MaxInt {
 			// if the index is not used, but the index hint is force use, add it to the used indexes
 			ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildInvertedIndexExtra(index))
 		}
