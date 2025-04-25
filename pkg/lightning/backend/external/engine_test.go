@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
@@ -30,7 +31,7 @@ import (
 
 func testGetFirstAndLastKey(
 	t *testing.T,
-	data common.IngestData,
+	data engineapi.IngestData,
 	lowerBound, upperBound []byte,
 	expectedFirstKey, expectedLastKey []byte,
 ) {
@@ -42,7 +43,7 @@ func testGetFirstAndLastKey(
 
 func testNewIter(
 	t *testing.T,
-	data common.IngestData,
+	data engineapi.IngestData,
 	lowerBound, upperBound []byte,
 	expectedKVs []kvPair,
 	bufPool *membuf.Pool,

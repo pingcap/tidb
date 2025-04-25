@@ -2732,7 +2732,6 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 				tipb.VectorDistanceMetric(distanceMetricPB),
 				prop.VectorProp.TopK,
 				ts.Table.Columns[candidate.path.Index.Columns[0].Offset].Name.L,
-				prop.VectorProp.Column.ID,
 				candidate.path.Index.ID,
 				prop.VectorProp.Vec.SerializeTo(nil),
 				tidbutil.ColumnToProto(prop.VectorProp.Column.ToInfo(), false, false),

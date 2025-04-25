@@ -445,6 +445,24 @@
         "Result": [
           "0"
         ]
+      },
+      {
+        "SQL": "SELECT 1 FROM t_issue_60556 FORCE INDEX (ab) where ((a>100) or (a=100 and b>0)) and ((a<100) or (a=100 and b<10))",
+        "Plan": [
+          "Projection 2.50 root  1->Column#6",
+          "└─IndexReader 2.50 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 2.50 cop[tikv] table:t_issue_60556, index:ab(a, b) range:(100 0,100 10), keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "SELECT 1 FROM t_issue_60556 FORCE INDEX (acbc) where ((ac>'100') or (ac='100' and bc>'0')) and ((ac<'100') or (ac='100' and bc<'10'))",
+        "Plan": [
+          "Projection 2.50 root  1->Column#6",
+          "└─IndexReader 2.50 root  index:IndexRangeScan",
+          "  └─IndexRangeScan 2.50 cop[tikv] table:t_issue_60556, index:acbc(ac, bc) range:(\"100\" \"0\",\"100\" \"10\"), keep order:false, stats:pseudo"
+        ],
+        "Result": null
       }
     ]
   }

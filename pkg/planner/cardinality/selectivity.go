@@ -852,10 +852,8 @@ func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 	//   (1) are safe to be evaluated here,
 	//   (2) involve only one column,
 	//   (3) and this column is not a "new collation" string column so that we're able to restore values from the stats.
-	for _, filter := range filters {
-		if expression.IsMutableEffectsExpr(filter) {
-			return false, 0, nil
-		}
+	if slices.ContainsFunc(filters, expression.IsMutableEffectsExpr) {
+		return false, 0, nil
 	}
 	if expression.ContainCorrelatedColumn(filters) {
 		return false, 0, nil

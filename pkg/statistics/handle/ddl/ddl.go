@@ -60,9 +60,9 @@ func (h *ddlHandlerImpl) HandleDDLEvent(ctx context.Context, sctx sessionctx.Con
 			errors.ErrorEqual(err, context.Canceled) ||
 				strings.Contains(err.Error(), "mock handleTaskOnce error") ||
 				strings.Contains(err.Error(), "session pool closed"),
-			fmt.Sprintf("handle ddl event failed, err: %v", err),
+			fmt.Sprintf("handle ddl event failed, err: %+v", err),
 		)
-		statslogutil.StatsLogger().Warn(
+		statslogutil.StatsErrVerboseSampleLogger().Warn(
 			"Failed to handle DDL event",
 			zap.String("event", s.String()),
 			zap.Error(err),

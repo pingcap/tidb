@@ -881,12 +881,13 @@ const (
 	ConstraintUniqKey
 	ConstraintUniqIndex
 	ConstraintForeignKey
+	// ConstraintFulltext is only used in AST.
+	// It will be rewritten into ConstraintIndex after preprocessor phase.
 	ConstraintFulltext
 	ConstraintCheck
+	// ConstraintVector is only used in AST.
+	// It will be rewritten into ConstraintColumnar after preprocessor phase.
 	ConstraintVector
-	// ConstraintColumnar is used for columnar index.
-	// Vector index is also a kind of columnar index, but vector index is added before columnar index.
-	// So we keep vector index as a separate type for compatibility.
 	ConstraintColumnar
 )
 
@@ -1856,7 +1857,11 @@ const (
 	IndexKeyTypeNone IndexKeyType = iota
 	IndexKeyTypeUnique
 	IndexKeyTypeSpatial
-	IndexKeyTypeFullText
+	// IndexKeyTypeFulltext is only used in AST.
+	// It will be rewritten into IndexKeyTypeFulltext after preprocessor phase.
+	IndexKeyTypeFulltext
+	// IndexKeyTypeVector is only used in AST.
+	// It will be rewritten into IndexKeyTypeColumnar after preprocessor phase.
 	IndexKeyTypeVector
 	IndexKeyTypeColumnar
 )
@@ -1886,7 +1891,7 @@ func (n *CreateIndexStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("UNIQUE ")
 	case IndexKeyTypeSpatial:
 		ctx.WriteKeyWord("SPATIAL ")
-	case IndexKeyTypeFullText:
+	case IndexKeyTypeFulltext:
 		ctx.WriteKeyWord("FULLTEXT ")
 	case IndexKeyTypeVector:
 		ctx.WriteKeyWord("VECTOR ")

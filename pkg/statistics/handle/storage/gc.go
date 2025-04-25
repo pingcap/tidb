@@ -211,14 +211,14 @@ func ClearOutdatedHistoryStats(sctx sessionctx.Context) error {
 	}
 	count := rows[0].GetInt64(0)
 	if count > 0 {
-		for n := int64(0); n < forCount(count, int64(1000)); n++ {
+		for range forCount(count, int64(1000)) {
 			sql = "delete from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND limit 1000 "
 			_, err = util.Exec(sctx, sql, vardef.HistoricalStatsDuration.Load().Seconds())
 			if err != nil {
 				return err
 			}
 		}
-		for n := int64(0); n < forCount(count, int64(50)); n++ {
+		for range forCount(count, int64(50)) {
 			sql = "delete from mysql.stats_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND limit 50 "
 			_, err = util.Exec(sctx, sql, vardef.HistoricalStatsDuration.Load().Seconds())
 			return err
