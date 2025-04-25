@@ -1959,7 +1959,6 @@ func constructIndexJoinInnerSideTaskWithAggCheck(p *logicalop.LogicalJoin, prop 
 				physicalTableScan, _ = dsCopTask.tablePlan.(*PhysicalTableScan)
 				if physicalTableScan == nil && len(dsCopTask.tablePlan.Children()) == 1 {
 					physicalTableScan, _ = dsCopTask.tablePlan.Children()[0].(*PhysicalTableScan)
-
 				}
 				if physicalTableScan == nil {
 					goto buildHashAgg
