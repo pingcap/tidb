@@ -212,3 +212,14 @@ func TestAddIndexOnGB18030Bin(t *testing.T) {
 	tk.MustExec("insert into t values ('a', 'b');")
 	tk.MustExec("admin check table t;")
 }
+
+func TestCommonhandle(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `t3` (`col_1` bigint DEFAULT 1,  `col_2` int NOT NULL,  `col_3` varbinary(23) DEFAULT NULL,  `col_4` timestamp NOT NULL,  `col_5` date NOT NULL DEFAULT '2018-02-16',  `col_6` text DEFAULT NULL,  `col_7` datetime DEFAULT '1971-02-24 00:00:00' ON UPDATE CURRENT_TIMESTAMP,  `col_8` float DEFAULT NULL,  primary key (`col_1`,`col_2`) clustered , KEY `idx_1` (`col_4`),  KEY `idx_2` (`col_4`,`col_5`,`col_8`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("INSERT INTO `t3` VALUES ('1','11',x'61784f4b626f6e7030514c6b','2025-03-27 00:56:13','2023-11-22','xUhXa6=s%j7h~!G','2025-03-27 01:00:18',4497.738);")
+	tk.MustExec("CREATE TABLE `t4` ( `col_1` bigint DEFAULT 1, `col_2` int NOT NULL, `col_3` varbinary(23) DEFAULT NULL, `col_4` timestamp NOT NULL, `col_5` date NOT NULL DEFAULT '2018-02-16', `col_6` text DEFAULT NULL, `col_7` datetime DEFAULT '1971-02-24 00:00:00' ON UPDATE CURRENT_TIMESTAMP, `col_8` float DEFAULT NULL, primary key (`col_1`, `col_2`) clustered , KEY `idx_1` (`col_4`), KEY `idx_2` (`col_4`,`col_5`,`col_8`) ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	tk.MustExec("INSERT INTO `t4` VALUES ('1','11',x'61784f4b626f6e7030514c6b','2025-03-27 00:56:13','2023-11-22','xUhXa6=s%j7h~!G','2025-03-27 01:00:18',4497.738);")
+	tk.MustExec("select /*+ inl_join(st_475) */ ucase( st_475.r4 ) as r0 , concat_ws(',', t3.col_6 , t3.col_3 ) as r1 , lower( t3.col_3 ) as r2 , ucase( st_475.r4 ) as r3 from t3 left join (select /*+  stream_agg() */ t4.col_4 as r0 , max(   t4.col_4 ) as r1 , t4.col_4 as r2 , count(   t4.col_4 ) as r3 , min(   t4.col_3 ) as r4 from t4 where IsNull( t4.col_3 ) group by t4.col_4) st_475 on t3.col_4 = st_475.r0 order by r0,r1,r2,r3;")
+}
