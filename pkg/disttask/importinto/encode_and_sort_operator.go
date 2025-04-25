@@ -275,19 +275,3 @@ func getKVGroupBlockSize(group string) int {
 	}
 	return external.DefaultBlockSize
 }
-
-func getAdjustedIndexBlockSize(perIndexKVMemSizePerCon uint64) int {
-	// the buf size is aligned to block size, and the target table might have many
-	// indexes, one index KV writer might take much more memory when the buf size
-	// is slightly larger than the N*block-size.
-	// such as when dataKVMemSizePerCon = 2M, block-size = 16M, the aligned size
-	// is 16M, it's 8 times larger.
-	// so we adjust the block size when the aligned size is larger than 1.1 times
-	// of perIndexKVMemSizePerCon, to avoid OOM
-	indexBlockSize := getKVGroupBlockSize("")
-	alignedSize := membuf.GetAlignedSize(perIndexKVMemSizePerCon, uint64(indexBlockSize))
-	if float64(alignedSize)/float64(perIndexKVMemSizePerCon) > 1.1 {
-		return int(perIndexKVMemSizePerCon)
-	}
-	return indexBlockSize
-}
