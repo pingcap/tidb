@@ -32,7 +32,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
@@ -985,7 +984,10 @@ func checkGlobalIndexes(ec errctx.Context, tblInfo *model.TableInfo) error {
 func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err error) {
 	var tempTableName string
 	var originTableName = s.Table.Name.L
-	log.Info("originTableName", zap.Any("originTableName", originTableName))
+
+	// if s.Select is not nil, it means the table is created from a select statement
+	// we need to create a temporary table and insert the data from the select statement
+	// and then rename the temporary table to the original table
 	if s.Select != nil {
 		originTableName = s.Table.Name.L
 		tempTableName = s.Table.Name.L + "_nonpublic_" + strconv.Itoa(time.Now().Nanosecond())
@@ -1057,50 +1059,30 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 		}
 		defer e.sessPool.Put(sctx)
 
-		// log.Info("e.store.Name()", zap.Any("e.store.Name()", e.store.Name()), zap.Any("kv.TiKV.Name()", kv.TiKV.Name()))
-		// isTikvStore := e.store.Name() == kv.TiKV.Name()
-		// insertSql, err := buildInsertSql(schema.Name.L, tempTableName, s, isTikvStore)
-		// if err != nil {
-		// 	return err
-		// }
-		// err = insertToTempTable(e, sctx, insertSql)
-		// if err != nil {
-		// 	dropSql := buildDropSql(schema.Name.L, tempTableName)
-		// 	err := dropTempTable(e, sctx, dropSql)
-		// 	if err != nil {
-		// 		return errors.Trace(err)
-		// 	}
-		// 	return errors.Trace(err)
-		// }
-
-		ctx.CommitTxn(e.ctx)
-		renameSql := buildRenameSql(schema.Name.L, tempTableName, originTableName)
-		err = renameTempTable(e, sctx, renameSql)
+		// if isTikvStore is true, use import into instead of insert into
+		isTikvStore := e.store.Name() == kv.TiKV.Name()
+		insertSql, err := buildInsertSql(schema.Name.L, tempTableName, s, isTikvStore)
 		if err != nil {
+			return err
+		}
+
+		// insert data into temporary table
+		if _, err = sctx.GetSQLExecutor().ExecuteInternal(e.ctx, insertSql); err != nil {
+			// if insert data into temporary table failed, drop the temporary table (like rollback)
+			dropSql := buildDropSql(schema.Name.L, tempTableName)
+			if _, dropErr := sctx.GetSQLExecutor().ExecuteInternal(e.ctx, dropSql); dropErr != nil {
+				return errors.Trace(dropErr)
+			}
 			return errors.Trace(err)
 		}
-		ctx.CommitTxn(e.ctx)
+
+		// rename the temporary table to the original table
+		renameSql := buildRenameSql(schema.Name.L, tempTableName, originTableName)
+		if _, err = sctx.GetSQLExecutor().ExecuteInternal(e.ctx, renameSql); err != nil {
+			return errors.Trace(err)
+		}
 	}
 	return nil
-}
-
-func insertToTempTable(e *executor, sctx sessionctx.Context, insertSql string) error {
-	logutil.DDLLogger().Info("insert to temp table", zap.String("sql", insertSql))
-	_, err := sctx.GetSQLExecutor().ExecuteInternal(e.ctx, insertSql)
-	return errors.Trace(err)
-}
-
-func dropTempTable(e *executor, sctx sessionctx.Context, dropSql string) error {
-
-	logutil.DDLLogger().Info("drop temp table", zap.String("sql", dropSql))
-	_, err := sctx.GetSQLExecutor().ExecuteInternal(e.ctx, dropSql)
-	return errors.Trace(err)
-}
-
-func renameTempTable(e *executor, sctx sessionctx.Context, renameSql string) error {
-	logutil.DDLLogger().Info("rename temp table", zap.String("sql", renameSql))
-	_, err := sctx.GetSQLExecutor().ExecuteInternal(e.ctx, renameSql)
-	return errors.Trace(err)
 }
 
 func buildDropSql(dbName, tempTableName string) string {
@@ -4647,7 +4629,6 @@ func tableExists(is infoschema.InfoSchema, ident ast.Ident, tables map[string]in
 	if (ok && tableID != tableNotExist) || (!ok && is.TableExists(ident.Schema, ident.Name)) {
 		return true
 	}
-	// log.Info("tableExists", zap.Any("is.version", is.SchemaMetaVersion()), zap.Any("ident", ident), zap.Any("tableID", tableID), zap.Any("tables", tables))
 	return false
 }
 

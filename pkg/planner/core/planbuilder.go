@@ -26,7 +26,6 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
@@ -5236,7 +5235,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 				if err = buildColsFromPlan(v, logicalPlan); err != nil {
 					return nil, err
 				}
-				// union
+			// case select union select
 			case *ast.SetOprStmt:
 				logicalPlan, err := b.buildSetOpr(ctx, selectStmt)
 				if err != nil {
@@ -5447,11 +5446,11 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 	return p, nil
 }
 
+// buildColsFromPlan builds the columns of the table from the logical plan
+// used in create table as select statement
 func buildColsFromPlan(v *ast.CreateTableStmt, logicalPlan base.LogicalPlan) error {
 	schema := logicalPlan.Schema()
 	names := logicalPlan.OutputNames()
-	log.Info("schema", zap.Any("schema", schema))
-	log.Info("names", zap.Any("names", names))
 
 	// fill select columns,used in build sql when insert into table(v.SelectColumns...)  select ...
 	for _, name := range names {
@@ -5469,7 +5468,6 @@ func buildColsFromPlan(v *ast.CreateTableStmt, logicalPlan base.LogicalPlan) err
 				Tp:      schema.Columns[i].RetType,
 				Options: []*ast.ColumnOption{},
 			}
-			log.Info("v.Cols[i]", zap.Any("v.Cols[i]", v.Cols[i]))
 		}
 	} else {
 		// Compatible with MySQL order of columns
@@ -5483,7 +5481,6 @@ func buildColsFromPlan(v *ast.CreateTableStmt, logicalPlan base.LogicalPlan) err
 		newCols := make([]*ast.ColumnDef, 0, len(schema.Columns))
 		for i, col := range v.Cols {
 			if arr, exists := colMap[col.Name.Name.L]; !exists {
-				log.Info("col.Options", zap.Any("col.Options.", col.Options))
 				// if NOT NULL is set,throw error
 				for _, opt := range col.Options {
 					if opt.Tp == ast.ColumnOptionNotNull {
@@ -5528,9 +5525,10 @@ func checkRetType(fieldType *types.FieldType) {
 	}
 
 }
+
+// checkCreateTableAsSelect checks the create table as select statement
 func checkCreateTableAsSelect(v *ast.CreateTableStmt) error {
 	// check foreign key
-	log.Info("v.ReferTable", zap.Any("v.ReferTable", v.ReferTable))
 	for _, constraint := range v.Constraints {
 		if constraint.Tp == ast.ConstraintForeignKey {
 			return plannererrors.ErrForeignKeyWithAtomicCreateSelect
