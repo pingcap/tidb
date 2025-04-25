@@ -5,9 +5,12 @@ go_library(
     srcs = [
         "base.go",
         "hash_equaler.go",
+        "task_scheduler_base.go",
+        "task_stack_base.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/cascades/base",
     visibility = ["//visibility:public"],
+    deps = ["//pkg/planner/cascades/util"],
 )
 
 go_test(

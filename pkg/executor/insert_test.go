@@ -17,13 +17,14 @@ package executor_test
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
@@ -240,6 +241,24 @@ func testInsertOnDuplicateKey(t *testing.T, tk *testkit.TestKit) {
 		"<nil>/<nil>/x/1.2",
 		"<nil>/<nil>/x/1.2"))
 
+	// Test issue 56829
+	tk.MustExec(`
+		CREATE TABLE cache (
+			cache_key varchar(512) NOT NULL,
+			updated_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			expired_at datetime GENERATED ALWAYS AS (if(expires > 0, date_add(updated_at, interval expires second), date_add(updated_at, interval 99 year))) VIRTUAL,
+			expires int(11),
+			PRIMARY KEY (cache_key) /*T![clustered_index] CLUSTERED */,
+			KEY idx_c_on_expired_at (expired_at)
+		)`)
+	tk.MustExec("INSERT INTO cache(cache_key, expires) VALUES ('2001-01-01 11:11:11', 60) ON DUPLICATE KEY UPDATE expires = expires + 1")
+	tk.MustExec("select sleep(1)")
+	tk.MustExec("INSERT INTO cache(cache_key, expires) VALUES ('2001-01-01 11:11:11', 60) ON DUPLICATE KEY UPDATE expires = expires + 1")
+	tk.MustExec("admin check table cache")
+	rs1 := tk.MustQuery("select cache_key, expired_at from cache use index() order by cache_key")
+	rs2 := tk.MustQuery("select cache_key, expired_at from cache use index(idx_c_on_expired_at) order by cache_key")
+	require.True(t, rs1.Equal(rs2.Rows()))
+
 	// reproduce insert on duplicate key update bug under new row format.
 	tk.MustExec(`drop table if exists t1`)
 	tk.MustExec(`create table t1(c1 decimal(6,4), primary key(c1))`)
@@ -407,7 +426,9 @@ func TestInsertRuntimeStat(t *testing.T) {
 	stats.BasicRuntimeStats.Record(5*time.Second, 1)
 	require.Equal(t, "prepare: 3s, check_insert: {total_time: 2s, mem_insert_time: 1s, prefetch: 1s}", stats.String())
 	require.Equal(t, stats.Clone().String(), stats.String())
-	stats.Merge(stats.Clone())
+	newStats := stats.Clone()
+	newStats.(*executor.InsertRuntimeStat).BasicRuntimeStats.Record(5*time.Second, 1)
+	stats.Merge(newStats)
 	require.Equal(t, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s}", stats.String())
 	stats.FKCheckTime = time.Second
 	require.Equal(t, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s, fk_check: 1s}", stats.String())
@@ -417,7 +438,7 @@ func TestDuplicateEntryMessage(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
-	for _, enable := range []variable.ClusteredIndexDefMode{variable.ClusteredIndexDefModeOn, variable.ClusteredIndexDefModeOff, variable.ClusteredIndexDefModeIntOnly} {
+	for _, enable := range []vardef.ClusteredIndexDefMode{vardef.ClusteredIndexDefModeOn, vardef.ClusteredIndexDefModeOff, vardef.ClusteredIndexDefModeIntOnly} {
 		tk.Session().GetSessionVars().EnableClusteredIndex = enable
 		tk.MustExec("drop table if exists t;")
 		tk.MustExec("create table t(a int, b char(10), unique key(b)) collate utf8mb4_general_ci;")
@@ -684,4 +705,19 @@ func TestInsertNullInNonStrictMode(t *testing.T) {
 	tk.MustExec("update t1 set col1 = null where id = 3")
 	tk.MustExec("insert ignore t1 VALUES (4, 4) ON DUPLICATE KEY UPDATE col1 = null")
 	tk.MustQuery("select * from t1").Check(testkit.RowsWithSep("|", "1|", "2|", "3|", "4|", "5|"))
+}
+
+func TestInsertLargeRow(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	ver := tk.MustQuery("select tidb_version()").Rows()[0][0].(string)
+	if !strings.Contains(ver, "Store: unistore") {
+		t.Skipf("Only support 'Store: unistore'\n%s", ver)
+	}
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, b longtext)")
+	tk.MustExec("set tidb_txn_entry_size_limit = 1<<23")
+	// the unistore arena blocksize is 8MB (8388608 bytes), so Unistore cannot handle larger rows than that!
+	// since a row cannot span multiple arena blocks.
+	tk.MustContainErrMsg("insert into t values (1, REPEAT('t',8388493))", "unistore lock entry too big")
 }

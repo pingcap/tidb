@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
@@ -51,9 +52,9 @@ func TestRunMain(t *testing.T) {
 
 func TestSetGlobalVars(t *testing.T) {
 	defer view.Stop()
-	require.Equal(t, "tikv,tiflash,tidb", variable.GetSysVar(variable.TiDBIsolationReadEngines).Value)
-	require.Equal(t, "1073741824", variable.GetSysVar(variable.TiDBMemQuotaQuery).Value)
-	require.NotEqual(t, "test", variable.GetSysVar(variable.Version).Value)
+	require.Equal(t, "tikv,tiflash,tidb", variable.GetSysVar(vardef.TiDBIsolationReadEngines).Value)
+	require.Equal(t, "1073741824", variable.GetSysVar(vardef.TiDBMemQuotaQuery).Value)
+	require.NotEqual(t, "test", variable.GetSysVar(vardef.Version).Value)
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.IsolationRead.Engines = []string{"tikv", "tidb"}
@@ -61,9 +62,9 @@ func TestSetGlobalVars(t *testing.T) {
 	})
 	setGlobalVars()
 
-	require.Equal(t, "tikv,tidb", variable.GetSysVar(variable.TiDBIsolationReadEngines).Value)
-	require.Equal(t, "test", variable.GetSysVar(variable.Version).Value)
-	require.Equal(t, variable.GetSysVar(variable.Version).Value, mysql.ServerVersion)
+	require.Equal(t, "tikv,tidb", variable.GetSysVar(vardef.TiDBIsolationReadEngines).Value)
+	require.Equal(t, "test", variable.GetSysVar(vardef.Version).Value)
+	require.Equal(t, variable.GetSysVar(vardef.Version).Value, mysql.ServerVersion)
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.ServerVersion = ""
@@ -71,13 +72,13 @@ func TestSetGlobalVars(t *testing.T) {
 	setGlobalVars()
 
 	// variable.Version won't change when len(conf.ServerVersion) == 0
-	require.Equal(t, "test", variable.GetSysVar(variable.Version).Value)
-	require.Equal(t, variable.GetSysVar(variable.Version).Value, mysql.ServerVersion)
+	require.Equal(t, "test", variable.GetSysVar(vardef.Version).Value)
+	require.Equal(t, variable.GetSysVar(vardef.Version).Value, mysql.ServerVersion)
 
 	cfg := config.GetGlobalConfig()
-	require.Equal(t, cfg.Socket, variable.GetSysVar(variable.Socket).Value)
+	require.Equal(t, cfg.Socket, variable.GetSysVar(vardef.Socket).Value)
 
 	if hostname, err := os.Hostname(); err == nil {
-		require.Equal(t, variable.GetSysVar(variable.Hostname).Value, hostname)
+		require.Equal(t, variable.GetSysVar(vardef.Hostname).Value, hostname)
 	}
 }

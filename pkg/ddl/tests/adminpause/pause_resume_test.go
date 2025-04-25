@@ -59,7 +59,7 @@ func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKi
 		// All hooks are running inside a READ mutex `d.mu()`, we need to lock for the variable's modification.
 		adminCommandMutex.Lock()
 		defer adminCommandMutex.Unlock()
-		if testddlutil.TestMatchCancelState(t, job, stmtCase.schemaState, stmtCase.stmt) &&
+		if testddlutil.MatchCancelState(t, job, stmtCase.schemaState, stmtCase.stmt) &&
 			stmtCase.isJobPausable &&
 			!isPaused {
 			jobID = job.ID
@@ -157,7 +157,7 @@ func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKi
 		stmtKit.MustExec(prepareStmt)
 	}
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", resumeFunc)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", resumeFunc)
 
 	Logger.Debug("pauseResumeAndCancel: statement execute", zap.String("DDL Statement", stmtCase.stmt))
 	if stmtCase.isJobPausable {
@@ -165,7 +165,7 @@ func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKi
 			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
 				cancelFunc()
 			})
-			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", pauseFunc)
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", pauseFunc)
 
 			stmtKit.MustGetErrCode(stmtCase.stmt, errno.ErrCancelledDDLJob)
 			testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs")
@@ -173,7 +173,7 @@ func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKi
 
 			verifyCancelResult(t, adminCommandKit)
 		} else {
-			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", pauseFunc)
+			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", pauseFunc)
 
 			stmtKit.MustExec(stmtCase.stmt)
 			Logger.Info("pauseResumeAndCancel: statement execution should finish successfully.")
@@ -187,7 +187,7 @@ func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKi
 		verifyPauseResult(t, adminCommandKit)
 		verifyResumeResult(t, adminCommandKit)
 	} else {
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", pauseFunc)
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", pauseFunc)
 		stmtKit.MustExec(stmtCase.stmt)
 
 		require.False(t, isPaused)
@@ -196,8 +196,8 @@ func pauseResumeAndCancel(t *testing.T, stmtKit *testkit.TestKit, adminCommandKi
 	}
 
 	// Should not affect the 'stmtCase.rollbackStmts'
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 
 	// Statement in `stmtCase` will be finished successfully all the way, need to roll it back.
 	for _, rollbackStmt := range stmtCase.rollbackStmts {
@@ -232,7 +232,7 @@ func TestPauseAndResumeIndexStmt(t *testing.T) {
 	var dom, stmtKit, adminCommandKit = prepareDomain(t)
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`)
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 
 	require.Nil(t, generateTblUser(stmtKit, 10))
 	require.Nil(t, generateTblUserWithVec(stmtKit, 10))
@@ -303,7 +303,7 @@ func TestPauseResumeCancelAndRerunIndexStmt(t *testing.T) {
 	var dom, stmtKit, adminCommandKit = prepareDomain(t)
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`)
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 
 	require.Nil(t, generateTblUser(stmtKit, 10))
 	require.Nil(t, generateTblUserWithVec(stmtKit, 10))

@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/types"
 )
 
@@ -310,13 +309,9 @@ const (
 	AesEncrypt               = "aes_encrypt"
 	Compress                 = "compress"
 	Decode                   = "decode"
-	DesDecrypt               = "des_decrypt"
-	DesEncrypt               = "des_encrypt"
 	Encode                   = "encode"
-	Encrypt                  = "encrypt"
 	MD5                      = "md5"
-	OldPassword              = "old_password"
-	PasswordFunc             = "password_func"
+	PasswordFunc             = "password"
 	RandomBytes              = "random_bytes"
 	SHA1                     = "sha1"
 	SHA                      = "sha"
@@ -366,15 +361,15 @@ const (
 	VecFromText             = "vec_from_text"
 	VecAsText               = "vec_as_text"
 
+	// FTS functions (tidb extension)
+	FTSMatchWord = "fts_match_word"
+
 	// TiDB internal function.
 	TiDBDecodeKey       = "tidb_decode_key"
 	TiDBMVCCInfo        = "tidb_mvcc_info"
 	TiDBEncodeRecordKey = "tidb_encode_record_key"
 	TiDBEncodeIndexKey  = "tidb_encode_index_key"
 	TiDBDecodeBase64Key = "tidb_decode_base64_key"
-
-	// MVCC information fetching function.
-	GetMvccInfo = "get_mvcc_info"
 
 	// Sequence function.
 	NextVal = "nextval"
@@ -393,9 +388,9 @@ const (
 type FuncCallExpr struct {
 	funcNode
 	Tp     FuncCallExprType
-	Schema model.CIStr
+	Schema CIStr
 	// FnName is the function name.
-	FnName model.CIStr
+	FnName CIStr
 	// Args is the function args.
 	Args []ExprNode
 }
@@ -820,7 +815,7 @@ func (n *AggregateFuncExpr) Restore(ctx *format.RestoreCtx) error {
 	}
 	switch strings.ToLower(n.F) {
 	case "group_concat":
-		for i := 0; i < len(n.Args)-1; i++ {
+		for i := range len(n.Args) - 1 {
 			if i != 0 {
 				ctx.WritePlain(", ")
 			}

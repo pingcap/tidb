@@ -23,9 +23,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
@@ -77,13 +77,12 @@ func TestMergeKVIter(t *testing.T) {
 			propKeysDist: 2,
 		}
 		rc.reset()
-		kvStore, err := NewKeyValueStore(ctx, writer, rc)
-		require.NoError(t, err)
+		kvStore := NewKeyValueStore(ctx, writer, rc)
 		for _, kv := range data[i] {
 			err = kvStore.addEncodedData(getEncodedData([]byte(kv[0]), []byte(kv[1])))
 			require.NoError(t, err)
 		}
-		kvStore.Close()
+		kvStore.finish()
 		err = writer.Close(ctx)
 		require.NoError(t, err)
 	}
@@ -130,13 +129,12 @@ func TestOneUpstream(t *testing.T) {
 			propKeysDist: 2,
 		}
 		rc.reset()
-		kvStore, err := NewKeyValueStore(ctx, writer, rc)
-		require.NoError(t, err)
+		kvStore := NewKeyValueStore(ctx, writer, rc)
 		for _, kv := range data[i] {
 			err = kvStore.addEncodedData(getEncodedData([]byte(kv[0]), []byte(kv[1])))
 			require.NoError(t, err)
 		}
-		kvStore.Close()
+		kvStore.finish()
 		err = writer.Close(ctx)
 		require.NoError(t, err)
 	}
@@ -209,13 +207,12 @@ func TestCorruptContent(t *testing.T) {
 			propKeysDist: 2,
 		}
 		rc.reset()
-		kvStore, err := NewKeyValueStore(ctx, writer, rc)
-		require.NoError(t, err)
+		kvStore := NewKeyValueStore(ctx, writer, rc)
 		for _, kv := range data[i] {
 			err = kvStore.addEncodedData(getEncodedData([]byte(kv[0]), []byte(kv[1])))
 			require.NoError(t, err)
 		}
-		kvStore.Close()
+		kvStore.finish()
 		if i == 0 {
 			_, err = writer.Write(ctx, []byte("corrupt"))
 			require.NoError(t, err)
@@ -378,13 +375,12 @@ func TestHotspot(t *testing.T) {
 			propKeysDist: 2,
 		}
 		rc.reset()
-		kvStore, err := NewKeyValueStore(ctx, writer, rc)
-		require.NoError(t, err)
+		kvStore := NewKeyValueStore(ctx, writer, rc)
 		for _, k := range keys[i] {
 			err = kvStore.addEncodedData(getEncodedData([]byte(k), value))
 			require.NoError(t, err)
 		}
-		kvStore.Close()
+		kvStore.finish()
 		err = writer.Close(ctx)
 		require.NoError(t, err)
 	}
@@ -474,8 +470,7 @@ func TestMemoryUsageWhenHotspotChange(t *testing.T) {
 			propKeysDist: 2,
 		}
 		rc.reset()
-		kvStore, err := NewKeyValueStore(ctx, writer, rc)
-		require.NoError(t, err)
+		kvStore := NewKeyValueStore(ctx, writer, rc)
 		for j := 0; j < 1000; j++ {
 			key := fmt.Sprintf("key%06d", cur)
 			val := fmt.Sprintf("value%06d", cur)

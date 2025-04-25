@@ -96,7 +96,7 @@ func InitLogger(cfg *Config, _ string) error {
 				"github.com/pingcap/tidb/br/",
 				"/lightning/",
 				"main.main",
-				"github.com/tikv/pd/client/http",
+				"github.com/tikv/pd/client",
 			)
 		}))
 	}

@@ -98,14 +98,6 @@ func (local *Backend) splitAndScatterRegionByRanges(
 	return nil
 }
 
-func (local *Backend) hasRegion(ctx context.Context, regionID uint64) (bool, error) {
-	regionInfo, err := local.splitCli.GetRegionByID(ctx, regionID)
-	if err != nil {
-		return false, err
-	}
-	return regionInfo != nil, nil
-}
-
 func beforeEnd(key []byte, end []byte) bool {
 	return bytes.Compare(key, end) < 0 || len(end) == 0
 }

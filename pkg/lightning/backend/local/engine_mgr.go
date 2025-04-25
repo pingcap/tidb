@@ -29,13 +29,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/manual"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
@@ -48,7 +49,7 @@ var (
 	// RunInTest indicates whether the current process is running in test.
 	RunInTest bool
 	// LastAlloc is the last ID allocator.
-	LastAlloc manual.Allocator
+	LastAlloc atomic.Pointer[manual.Allocator]
 )
 
 // StoreHelper have some api to help encode or store KV data
@@ -62,7 +63,7 @@ type engineManager struct {
 	BackendConfig
 	StoreHelper
 	engines        sync.Map // sync version of map[uuid.UUID]*Engine
-	externalEngine map[uuid.UUID]common.Engine
+	externalEngine map[uuid.UUID]engineapi.Engine
 	bufferPool     *membuf.Pool
 	duplicateDB    *pebble.DB
 	keyAdapter     common.KeyAdapter
@@ -94,7 +95,7 @@ func newEngineManager(config BackendConfig, storeHelper StoreHelper, logger log.
 	alloc := manual.Allocator{}
 	if RunInTest {
 		alloc.RefCnt = new(atomic.Int64)
-		LastAlloc = alloc
+		LastAlloc.Store(&alloc)
 	}
 	var opts = make([]membuf.Option, 0, 1)
 	if !inMemTest {
@@ -105,7 +106,7 @@ func newEngineManager(config BackendConfig, storeHelper StoreHelper, logger log.
 		BackendConfig:  config,
 		StoreHelper:    storeHelper,
 		engines:        sync.Map{},
-		externalEngine: map[uuid.UUID]common.Engine{},
+		externalEngine: map[uuid.UUID]engineapi.Engine{},
 		bufferPool:     membuf.NewPool(opts...),
 		duplicateDB:    duplicateDB,
 		keyAdapter:     keyAdapter,
@@ -330,6 +331,7 @@ func (em *engineManager) closeEngine(
 			externalCfg.TotalFileSize,
 			externalCfg.TotalKVCount,
 			externalCfg.CheckHotspot,
+			externalCfg.MemCapacity,
 		)
 		em.externalEngine[engineUUID] = externalEngine
 		return nil
@@ -525,7 +527,7 @@ func (em *engineManager) close() {
 	for _, e := range em.externalEngine {
 		_ = e.Close()
 	}
-	em.externalEngine = map[uuid.UUID]common.Engine{}
+	em.externalEngine = map[uuid.UUID]engineapi.Engine{}
 	allLocalEngines := em.lockAllEnginesUnless(importMutexStateClose, 0)
 	for _, e := range allLocalEngines {
 		_ = e.Close()
@@ -574,7 +576,7 @@ func (em *engineManager) close() {
 	}
 }
 
-func (em *engineManager) getExternalEngine(uuid uuid.UUID) (common.Engine, bool) {
+func (em *engineManager) getExternalEngine(uuid uuid.UUID) (engineapi.Engine, bool) {
 	e, ok := em.externalEngine[uuid]
 	return e, ok
 }

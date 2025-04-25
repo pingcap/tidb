@@ -18,13 +18,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	goerrors "errors"
 	"io"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -49,8 +50,7 @@ func readAllData(
 	)
 	defer func() {
 		if err != nil {
-			output.keysPerFile = nil
-			output.valuesPerFile = nil
+			output.kvsPerFile = nil
 			for _, b := range output.memKVBuffers {
 				b.Destroy()
 			}
@@ -160,18 +160,17 @@ func readOneFile(
 		}
 	}
 
-	keys := make([][]byte, 0, 1024)
-	values := make([][]byte, 0, 1024)
+	kvs := make([]kvPair, 0, 1024)
 	size := 0
 	droppedSize := 0
 
 	for {
 		k, v, err := rd.nextKV()
 		if err != nil {
-			if err == io.EOF {
+			if goerrors.Is(err, io.EOF) {
 				break
 			}
-			return err
+			return errors.Trace(err)
 		}
 		if bytes.Compare(k, startKey) < 0 {
 			droppedSize += len(k) + len(v)
@@ -182,14 +181,12 @@ func readOneFile(
 		}
 		// TODO(lance6716): we are copying every KV from rd's buffer to memBuf, can we
 		// directly read into memBuf?
-		keys = append(keys, smallBlockBuf.AddBytes(k))
-		values = append(values, smallBlockBuf.AddBytes(v))
+		kvs = append(kvs, kvPair{key: smallBlockBuf.AddBytes(k), value: smallBlockBuf.AddBytes(v)})
 		size += len(k) + len(v)
 	}
 	readAndSortDurHist.Observe(time.Since(ts).Seconds())
 	output.mu.Lock()
-	output.keysPerFile = append(output.keysPerFile, keys)
-	output.valuesPerFile = append(output.valuesPerFile, values)
+	output.kvsPerFile = append(output.kvsPerFile, kvs)
 	output.size += size
 	output.droppedSizePerFile = append(output.droppedSizePerFile, droppedSize)
 	output.mu.Unlock()

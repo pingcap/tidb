@@ -20,7 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -467,7 +467,7 @@ func (s *SchemaChangeEvent) GetDropSchemaInfo() (miniDBInfo *MiniDBInfoForSchema
 // MiniDBInfoForSchemaEvent is a mini version of DBInfo for DropSchemaEvent only.
 type MiniDBInfoForSchemaEvent struct {
 	ID     int64                          `json:"id"`
-	Name   pmodel.CIStr                   `json:"name"`
+	Name   ast.CIStr                      `json:"name"`
 	Tables []*MiniTableInfoForSchemaEvent `json:"tables,omitempty"`
 }
 
@@ -477,7 +477,7 @@ type MiniDBInfoForSchemaEvent struct {
 // So please do not use this mini version in other places.
 type MiniTableInfoForSchemaEvent struct {
 	ID         int64                              `json:"id"`
-	Name       pmodel.CIStr                       `json:"name"`
+	Name       ast.CIStr                          `json:"name"`
 	Partitions []*MiniPartitionInfoForSchemaEvent `json:"partitions,omitempty"`
 }
 
@@ -486,8 +486,8 @@ type MiniTableInfoForSchemaEvent struct {
 // DropSchemaEvent, it's more efficient to use this mini version.
 // So please do not use this mini version in other places.
 type MiniPartitionInfoForSchemaEvent struct {
-	ID   int64        `json:"id"`
-	Name pmodel.CIStr `json:"name"`
+	ID   int64     `json:"id"`
+	Name ast.CIStr `json:"name"`
 }
 
 // jsonSchemaChangeEvent is used by SchemaChangeEvent when needed to (un)marshal data,

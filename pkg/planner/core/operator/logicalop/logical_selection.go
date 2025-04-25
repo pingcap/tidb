@@ -204,13 +204,17 @@ func (p *LogicalSelection) PullUpConstantPredicates() []expression.Expression {
 // RecursiveDeriveStats inherits BaseLogicalPlan.<10th> implementation.
 
 // DeriveStats implements base.LogicalPlan.<11th> interface.
-func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
-	if p.StatsInfo() != nil {
-		return p.StatsInfo(), nil
+func (p *LogicalSelection) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
+	var reload bool
+	if len(reloads) == 1 {
+		reload = reloads[0]
+	}
+	if !reload && p.StatsInfo() != nil {
+		return p.StatsInfo(), false, nil
 	}
 	p.SetStats(childStats[0].Scale(cost.SelectionFactor))
 	p.StatsInfo().GroupNDVs = nil
-	return p.StatsInfo(), nil
+	return p.StatsInfo(), true, nil
 }
 
 // ExtractColGroups inherits BaseLogicalPlan.<12th> implementation.
@@ -308,9 +312,9 @@ func (p *LogicalSelection) CanPushDown(storeTp kv.StoreType) bool {
 		expression.CanExprsPushDown(util.GetPushDownCtx(p.SCtx()), p.Conditions, storeTp)
 }
 
-func splitSetGetVarFunc(filters []expression.Expression) ([]expression.Expression, []expression.Expression) {
-	canBePushDown := make([]expression.Expression, 0, len(filters))
-	canNotBePushDown := make([]expression.Expression, 0, len(filters))
+func splitSetGetVarFunc(filters []expression.Expression) (canBePushDown, canNotBePushDown []expression.Expression) {
+	canBePushDown = make([]expression.Expression, 0, len(filters))
+	canNotBePushDown = make([]expression.Expression, 0, len(filters))
 	for _, expr := range filters {
 		if expression.HasGetSetVarFunc(expr) {
 			canNotBePushDown = append(canNotBePushDown, expr)

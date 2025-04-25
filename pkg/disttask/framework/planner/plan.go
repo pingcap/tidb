@@ -32,6 +32,7 @@ type PlanCtx struct {
 	TaskKey    string
 	TaskType   proto.TaskType
 	ThreadCnt  int
+	MaxNodeCnt int
 
 	// PreviousSubtaskMetas is subtask metas of previous steps.
 	// We can remove this field if we find a better way to pass the result between steps.
@@ -48,6 +49,7 @@ type PlanCtx struct {
 // To integrate with current distribute framework, the flow becomes:
 // logical plan -> task meta -> physical plan -> subtaskmetas -> pipelines.
 type LogicalPlan interface {
+	GetTaskExtraParams() proto.ExtraParams
 	ToTaskMeta() ([]byte, error)
 	FromTaskMeta([]byte) error
 	ToPhysicalPlan(PlanCtx) (*PhysicalPlan, error)

@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -43,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/stretchr/testify/require"
 )
 
@@ -96,24 +96,24 @@ func TestGetPathByIndexName(t *testing.T) {
 
 	accessPath := []*util.AccessPath{
 		{IsIntHandlePath: true},
-		{Index: &model.IndexInfo{Name: pmodel.NewCIStr("idx")}},
+		{Index: &model.IndexInfo{Name: ast.NewCIStr("idx")}},
 		genTiFlashPath(tblInfo),
 	}
 
-	path := getPathByIndexName(accessPath, pmodel.NewCIStr("idx"), tblInfo)
+	path := getPathByIndexName(accessPath, ast.NewCIStr("idx"), tblInfo)
 	require.NotNil(t, path)
 	require.Equal(t, accessPath[1], path)
 
 	// "id" is a prefix of "idx"
-	path = getPathByIndexName(accessPath, pmodel.NewCIStr("id"), tblInfo)
+	path = getPathByIndexName(accessPath, ast.NewCIStr("id"), tblInfo)
 	require.NotNil(t, path)
 	require.Equal(t, accessPath[1], path)
 
-	path = getPathByIndexName(accessPath, pmodel.NewCIStr("primary"), tblInfo)
+	path = getPathByIndexName(accessPath, ast.NewCIStr("primary"), tblInfo)
 	require.NotNil(t, path)
 	require.Equal(t, accessPath[0], path)
 
-	path = getPathByIndexName(accessPath, pmodel.NewCIStr("not exists"), tblInfo)
+	path = getPathByIndexName(accessPath, ast.NewCIStr("not exists"), tblInfo)
 	require.Nil(t, path)
 
 	tblInfo = &model.TableInfo{
@@ -121,7 +121,7 @@ func TestGetPathByIndexName(t *testing.T) {
 		PKIsHandle: false,
 	}
 
-	path = getPathByIndexName(accessPath, pmodel.NewCIStr("primary"), tblInfo)
+	path = getPathByIndexName(accessPath, ast.NewCIStr("primary"), tblInfo)
 	require.Nil(t, path)
 }
 
@@ -399,6 +399,22 @@ func TestPhysicalPlanClone(t *testing.T) {
 	mergeJoin = mergeJoin.Init(ctx, stats, 0)
 	mergeJoin.SetSchema(schema)
 	require.NoError(t, checkPhysicalPlanClone(mergeJoin))
+
+	// index join
+	baseJoin := basePhysicalJoin{
+		LeftJoinKeys:    []*expression.Column{col},
+		RightJoinKeys:   nil,
+		OtherConditions: []expression.Expression{col},
+	}
+
+	indexJoin := &PhysicalIndexJoin{
+		basePhysicalJoin: baseJoin,
+		innerPlan:        indexScan,
+		Ranges:           ranger.Ranges{},
+	}
+	indexJoin = indexJoin.Init(ctx, stats, 0)
+	indexJoin.SetSchema(schema)
+	require.NoError(t, checkPhysicalPlanClone(indexJoin))
 }
 
 //go:linkname valueInterface reflect.valueInterface
@@ -686,23 +702,23 @@ func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 
 	// Create a new TableName instance.
 	tableName := &ast.TableName{
-		Schema: pmodel.NewCIStr("test"),
-		Name:   pmodel.NewCIStr("my_table"),
+		Schema: ast.NewCIStr("test"),
+		Name:   ast.NewCIStr("my_table"),
 	}
 	columns := []*model.ColumnInfo{
 		{
 			ID:        1,
-			Name:      pmodel.NewCIStr("id"),
+			Name:      ast.NewCIStr("id"),
 			FieldType: *types.NewFieldType(mysql.TypeLonglong),
 		},
 		{
 			ID:        2,
-			Name:      pmodel.NewCIStr("name"),
+			Name:      ast.NewCIStr("name"),
 			FieldType: *types.NewFieldType(mysql.TypeString),
 		},
 		{
 			ID:        3,
-			Name:      pmodel.NewCIStr("age"),
+			Name:      ast.NewCIStr("age"),
 			FieldType: *types.NewFieldType(mysql.TypeLonglong),
 		},
 	}
@@ -714,7 +730,7 @@ func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 	}
 
 	// Test case 1: AllColumns.
-	cols, _, err := pb.getFullAnalyzeColumnsInfo(tblNameW, pmodel.AllColumns, nil, nil, nil, false, false)
+	cols, _, err := pb.getFullAnalyzeColumnsInfo(tblNameW, ast.AllColumns, nil, nil, nil, false, false)
 	require.NoError(t, err)
 	require.Equal(t, columns, cols)
 
@@ -726,7 +742,7 @@ func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 	// Test case 3: ColumnList.
 	specifiedCols := []*model.ColumnInfo{columns[0], columns[2]}
 	mustAnalyzedCols.data[3] = struct{}{}
-	cols, _, err = pb.getFullAnalyzeColumnsInfo(tblNameW, pmodel.ColumnList, specifiedCols, nil, mustAnalyzedCols, false, false)
+	cols, _, err = pb.getFullAnalyzeColumnsInfo(tblNameW, ast.ColumnList, specifiedCols, nil, mustAnalyzedCols, false, false)
 	require.NoError(t, err)
 	require.Equal(t, specifiedCols, cols)
 }
@@ -740,12 +756,12 @@ func TestRequireInsertAndSelectPriv(t *testing.T) {
 
 	tables := []*ast.TableName{
 		{
-			Schema: pmodel.NewCIStr("test"),
-			Name:   pmodel.NewCIStr("t1"),
+			Schema: ast.NewCIStr("test"),
+			Name:   ast.NewCIStr("t1"),
 		},
 		{
-			Schema: pmodel.NewCIStr("test"),
-			Name:   pmodel.NewCIStr("t2"),
+			Schema: ast.NewCIStr("test"),
+			Name:   ast.NewCIStr("t2"),
 		},
 	}
 
@@ -878,6 +894,47 @@ func TestImportIntoCollAssignmentChecker(t *testing.T) {
 			}
 			require.Equal(t, expectedNeededVars, checker.neededVars, c.expr)
 		})
+	}
+}
+
+func TestTraffic(t *testing.T) {
+	tests := []struct {
+		sql   string
+		cols  int
+		privs []string
+	}{
+		{
+			sql:   "traffic capture to '/tmp' duration='1s' encryption_method='aes' compress=true",
+			privs: []string{"TRAFFIC_CAPTURE_ADMIN"},
+		},
+		{
+			sql:   "traffic replay from '/tmp' user='root' password='123456' speed=1.0 read_only=true",
+			privs: []string{"TRAFFIC_REPLAY_ADMIN"},
+		},
+		{
+			sql:   "show traffic jobs",
+			privs: []string{"TRAFFIC_CAPTURE_ADMIN", "TRAFFIC_REPLAY_ADMIN"},
+			cols:  8,
+		},
+		{
+			sql:   "cancel traffic jobs",
+			privs: []string{"TRAFFIC_CAPTURE_ADMIN", "TRAFFIC_REPLAY_ADMIN"},
+		},
+	}
+
+	parser := parser.New()
+	sctx := MockContext()
+	ctx := context.TODO()
+	for _, test := range tests {
+		builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
+		stmt, err := parser.ParseOneStmt(test.sql, "", "")
+		require.NoError(t, err, test.sql)
+		p, err := builder.Build(ctx, resolve.NewNodeW(stmt))
+		require.NoError(t, err, test.sql)
+		traffic, ok := p.(*Traffic)
+		require.True(t, ok, test.sql)
+		require.Equal(t, test.cols, len(traffic.names), test.sql)
+		require.Equal(t, test.privs, builder.visitInfo[0].dynamicPrivs, test.sql)
 	}
 }
 

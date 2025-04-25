@@ -21,12 +21,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/session/syssession"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/session"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
@@ -101,7 +101,7 @@ var errTooManyRunningTasks = errors.New("there are too many running tasks")
 // taskManager schedules and manages the ttl tasks on this instance
 type taskManager struct {
 	ctx      context.Context
-	sessPool util.SessionPool
+	sessPool syssession.Pool
 
 	id string
 
@@ -117,9 +117,14 @@ type taskManager struct {
 	notifyStateCh chan any
 }
 
-func newTaskManager(ctx context.Context, sessPool util.SessionPool, infoSchemaCache *cache.InfoSchemaCache, id string, store kv.Storage) *taskManager {
+func newTaskManager(ctx context.Context, sessPool syssession.Pool, infoSchemaCache *cache.InfoSchemaCache, id string, store kv.Storage) *taskManager {
+	ctx = logutil.WithKeyValue(ctx, "ttl-worker", "task-manager")
+	if intest.InTest {
+		// in test environment, in the same log there will be multiple ttl managers, so we need to distinguish them
+		ctx = logutil.WithKeyValue(ctx, "ttl-worker", id)
+	}
 	return &taskManager{
-		ctx:      logutil.WithKeyValue(ctx, "ttl-worker", "task-manager"),
+		ctx:      ctx,
 		sessPool: sessPool,
 
 		id: id,
@@ -138,11 +143,11 @@ func newTaskManager(ctx context.Context, sessPool util.SessionPool, infoSchemaCa
 }
 
 func (m *taskManager) resizeWorkersWithSysVar() {
-	err := m.resizeScanWorkers(int(variable.TTLScanWorkerCount.Load()))
+	err := m.resizeScanWorkers(int(vardef.TTLScanWorkerCount.Load()))
 	if err != nil {
 		logutil.Logger(m.ctx).Warn("fail to resize scan workers", zap.Error(err))
 	}
-	err = m.resizeDelWorkers(int(variable.TTLDeleteWorkerCount.Load()))
+	err = m.resizeDelWorkers(int(vardef.TTLDeleteWorkerCount.Load()))
 	if err != nil {
 		logutil.Logger(m.ctx).Warn("fail to resize delete workers", zap.Error(err))
 	}
@@ -257,7 +262,7 @@ func (m *taskManager) resizeWorkers(workers []worker, count int, factory func() 
 func (m *taskManager) handleScanFinishedTask() bool {
 	results := m.pollScanWorkerResults()
 	for _, result := range results {
-		logger := logutil.Logger(m.ctx).With(zap.Int64("tableID", result.task.tbl.ID), zap.String("jobID", result.task.JobID), zap.Int64("scanID", result.task.ScanID))
+		logger := result.task.taskLogger(logutil.Logger(m.ctx))
 		if result.err != nil {
 			logger = logger.With(zap.Error(result.err))
 		}
@@ -309,6 +314,15 @@ func (m *taskManager) rescheduleTasks(se session.Session, now time.Time) {
 		return
 	}
 
+	if len(tasks) == 0 {
+		return
+	}
+
+	err = m.infoSchemaCache.Update(se)
+	if err != nil {
+		logutil.Logger(m.ctx).Warn("fail to update infoSchemaCache", zap.Error(err))
+		return
+	}
 loop:
 	for _, t := range tasks {
 		logger := logutil.Logger(m.ctx).With(
@@ -365,7 +379,7 @@ loop:
 
 func (m *taskManager) peekWaitingScanTasks(se session.Session, now time.Time) ([]*cache.TTLTask, error) {
 	intest.Assert(se.GetSessionVars().Location().String() == now.Location().String())
-	sql, args := cache.PeekWaitingTTLTask(now.Add(-getTaskManagerHeartBeatExpireInterval()))
+	sql, args := cache.PeekWaitingTTLTask(now.Add(-2 * getTaskManagerHeartBeatInterval()))
 	rows, err := se.ExecuteSQL(m.ctx, sql, args...)
 	if err != nil {
 		return nil, errors.Wrapf(err, "execute sql: %s", sql)
@@ -373,7 +387,7 @@ func (m *taskManager) peekWaitingScanTasks(se session.Session, now time.Time) ([
 
 	tasks := make([]*cache.TTLTask, 0, len(rows))
 	for _, r := range rows {
-		task, err := cache.RowToTTLTask(se, r)
+		task, err := cache.RowToTTLTask(se.GetSessionVars().Location(), r)
 		if err != nil {
 			return nil, err
 		}
@@ -403,7 +417,7 @@ func (m *taskManager) lockScanTask(se session.Session, task *cache.TTLTask, now 
 		if err != nil {
 			return err
 		}
-		if task.OwnerID != "" && !task.OwnerHBTime.Add(getTaskManagerHeartBeatExpireInterval()).Before(now) {
+		if task.OwnerID != "" && !task.OwnerHBTime.Add(2*getTaskManagerHeartBeatInterval()).Before(now) {
 			return errors.WithStack(errAlreadyScheduled)
 		}
 
@@ -482,7 +496,7 @@ func (m *taskManager) syncTaskFromTable(se session.Session, jobID string, scanID
 	if len(rows) == 0 {
 		return nil, errors.Errorf("didn't find task with jobID: %s, scanID: %d", jobID, scanID)
 	}
-	task, err := cache.RowToTTLTask(se, rows[0])
+	task, err := cache.RowToTTLTask(se.GetSessionVars().Location(), rows[0])
 	if err != nil {
 		return nil, err
 	}
@@ -495,7 +509,7 @@ func (m *taskManager) updateHeartBeat(ctx context.Context, se session.Session, n
 	for _, task := range m.runningTasks {
 		err := m.taskHeartbeatOrResignOwner(ctx, se, now, task, false)
 		if err != nil {
-			logutil.Logger(m.ctx).Warn("fail to update task heart beat", zap.Error(err), zap.String("jobID", task.JobID), zap.Int64("scanID", task.ScanID))
+			task.taskLogger(logutil.Logger(m.ctx)).Warn("fail to update task heart beat", zap.Error(err))
 		}
 	}
 }
@@ -656,32 +670,30 @@ func (m *taskManager) checkInvalidTask(se session.Session) {
 	ownRunningTask := make([]*runningScanTask, 0, len(m.runningTasks))
 
 	for _, task := range m.runningTasks {
-		logger := logutil.Logger(m.ctx).With(zap.String("jobID", task.JobID), zap.Int64("scanID", task.ScanID))
-
 		sql, args := cache.SelectFromTTLTaskWithID(task.JobID, task.ScanID)
-
+		l := logutil.Logger(m.ctx)
 		timeoutCtx, cancel := context.WithTimeout(m.ctx, ttlInternalSQLTimeout)
 		rows, err := se.ExecuteSQL(timeoutCtx, sql, args...)
 		cancel()
 		if err != nil {
-			logger.Warn("fail to execute sql", zap.String("sql", sql), zap.Any("args", args), zap.Error(err))
+			task.taskLogger(l).Warn("fail to execute sql", zap.String("sql", sql), zap.Any("args", args), zap.Error(err))
 			task.cancel()
 			continue
 		}
 		if len(rows) == 0 {
-			logger.Warn("didn't find task")
+			task.taskLogger(l).Warn("didn't find task")
 			task.cancel()
 			continue
 		}
-		t, err := cache.RowToTTLTask(se, rows[0])
+		t, err := cache.RowToTTLTask(se.GetSessionVars().Location(), rows[0])
 		if err != nil {
-			logger.Warn("fail to get task", zap.Error(err))
+			task.taskLogger(l).Warn("fail to get task", zap.Error(err))
 			task.cancel()
 			continue
 		}
 
 		if t.OwnerID != m.id {
-			logger.Warn("task owner changed", zap.String("myOwnerID", m.id), zap.String("taskOwnerID", t.OwnerID))
+			task.taskLogger(l).Warn("task owner changed", zap.String("myOwnerID", m.id), zap.String("taskOwnerID", t.OwnerID))
 			task.cancel()
 			continue
 		}
@@ -715,24 +727,24 @@ func (m *taskManager) meetTTLRunningTask(count int, taskStatus cache.TaskStatus)
 }
 
 func getMaxRunningTasksLimit(store kv.Storage) int {
-	ttlRunningTask := variable.TTLRunningTasks.Load()
+	ttlRunningTask := vardef.TTLRunningTasks.Load()
 	if ttlRunningTask != -1 {
 		return int(ttlRunningTask)
 	}
 
 	tikvStore, ok := store.(tikv.Storage)
 	if !ok {
-		return variable.MaxConfigurableConcurrency
+		return vardef.MaxConfigurableConcurrency
 	}
 
 	regionCache := tikvStore.GetRegionCache()
 	if regionCache == nil {
-		return variable.MaxConfigurableConcurrency
+		return vardef.MaxConfigurableConcurrency
 	}
 
 	limit := len(regionCache.GetStoresByType(tikvrpc.TiKV))
-	if limit > variable.MaxConfigurableConcurrency {
-		limit = variable.MaxConfigurableConcurrency
+	if limit > vardef.MaxConfigurableConcurrency {
+		limit = vardef.MaxConfigurableConcurrency
 	}
 
 	return limit
@@ -778,19 +790,13 @@ func (t *runningScanTask) finished(logger *zap.Logger) bool {
 		return false
 	}
 
-	logger = logger.With(
-		zap.String("jobID", t.JobID),
-		zap.Int64("scanID", t.ScanID),
-		zap.String("table", t.tbl.Name.O),
-	)
-
 	totalRows := t.statistics.TotalRows.Load()
 	errRows := t.statistics.ErrorRows.Load()
 	successRows := t.statistics.SuccessRows.Load()
 	processedRows := successRows + errRows
 	if processedRows == totalRows {
 		// All rows are processed.
-		logger.Info(
+		t.taskLogger(logger).Info(
 			"will mark TTL task finished because all scanned rows are processed",
 			zap.Uint64("totalRows", totalRows),
 			zap.Uint64("successRows", successRows),
@@ -802,7 +808,7 @@ func (t *runningScanTask) finished(logger *zap.Logger) bool {
 	if processedRows > totalRows {
 		// All rows are processed but processed rows are more than total rows.
 		// We still think it is finished.
-		logger.Warn(
+		t.taskLogger(logger).Warn(
 			"will mark TTL task finished but processed rows are more than total rows",
 			zap.Uint64("totalRows", totalRows),
 			zap.Uint64("successRows", successRows),
@@ -815,7 +821,7 @@ func (t *runningScanTask) finished(logger *zap.Logger) bool {
 		// If the scan task is finished and not all rows are processed, we should wait a certain time to report the task.
 		// After a certain time, if the rows are still not processed, we need to mark the task finished anyway to make
 		// sure the TTL job does not hang.
-		logger.Info(
+		t.taskLogger(logger).Info(
 			"will mark TTL task finished because timeout for waiting all scanned rows processed after scan task done",
 			zap.Uint64("totalRows", totalRows),
 			zap.Uint64("successRows", successRows),

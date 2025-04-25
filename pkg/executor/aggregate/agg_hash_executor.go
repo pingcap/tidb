@@ -28,14 +28,16 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/channel"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"go.uber.org/zap"
 )
 
 // HashAggInput indicates the input of hash agg exec.
@@ -154,6 +156,8 @@ type HashAggExec struct {
 	spillHelper *parallelHashAggSpillHelper
 	// isChildDrained indicates whether the all data from child has been taken out.
 	isChildDrained bool
+
+	invalidMemoryUsageForTrackingTest bool
 }
 
 // Close implements the Executor Close interface.
@@ -204,6 +208,10 @@ func (e *HashAggExec) Close() error {
 		channel.Clear(e.finalOutputCh)
 		e.executed.Store(false)
 		if e.memTracker != nil {
+			if e.memTracker.BytesConsumed() < 0 {
+				logutil.BgLogger().Warn("Memory tracker's counter is invalid", zap.Int64("counter", e.memTracker.BytesConsumed()))
+				e.invalidMemoryUsageForTrackingTest = true
+			}
 			e.memTracker.ReplaceBytesUsed(0)
 		}
 		e.parallelExecValid = false
@@ -276,7 +284,7 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.dataInDisk = chunk.NewDataInDiskByChunks(exec.RetTypes(e.Children(0)))
 
 	e.tmpChkForSpill = exec.TryNewCacheChunk(e.Children(0))
-	if vars := e.Ctx().GetSessionVars(); vars.TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load() {
+	if vars := e.Ctx().GetSessionVars(); vars.TrackAggregateMemoryUsage && vardef.EnableTmpStorageOnOOM.Load() {
 		if e.diskTracker != nil {
 			e.diskTracker.Reset()
 		} else {
@@ -289,6 +297,8 @@ func (e *HashAggExec) initForUnparallelExec() {
 }
 
 func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrency int, ctx sessionctx.Context) {
+	memUsage := int64(0)
+
 	for i := 0; i < partialConcurrency; i++ {
 		partialResultsMap := make([]aggfuncs.AggPartialResultMapper, finalConcurrency)
 		for i := 0; i < finalConcurrency; i++ {
@@ -316,6 +326,8 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 			inflightChunkSync:    e.inflightChunkSync,
 		}
 
+		memUsage += e.partialWorkers[i].chk.MemoryUsage()
+
 		e.partialWorkers[i].partialResultNumInRow = e.partialWorkers[i].getPartialResultSliceLenConsiderByteAlign()
 		for j := 0; j < finalConcurrency; j++ {
 			e.partialWorkers[i].BInMaps[j] = 0
@@ -332,8 +344,11 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 			chk:        chunk.New(e.Children(0).RetFieldTypes(), 0, e.MaxChunkSize()),
 			giveBackCh: e.partialWorkers[i].inputCh,
 		}
+		memUsage += input.chk.MemoryUsage()
 		e.inputCh <- input
 	}
+
+	e.memTracker.Consume(memUsage)
 }
 
 func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
@@ -383,7 +398,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) error {
 
 	e.inflightChunkSync = &sync.WaitGroup{}
 
-	isTrackerEnabled := e.Ctx().GetSessionVars().TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load()
+	isTrackerEnabled := e.Ctx().GetSessionVars().TrackAggregateMemoryUsage && vardef.EnableTmpStorageOnOOM.Load()
 	isParallelHashAggSpillEnabled := e.Ctx().GetSessionVars().EnableParallelHashaggSpill
 
 	baseRetTypeNum := len(e.RetFieldTypes())
@@ -442,6 +457,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 		ok    bool
 		err   error
 	)
+
 	defer func() {
 		if r := recover(); r != nil {
 			recoveryHashAgg(e.finalOutputCh, r)
@@ -494,6 +510,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 		input.giveBackCh <- chk
 
 		if hasError := e.spillIfNeed(); hasError {
+			e.memTracker.Consume(-mSize)
 			return
 		}
 	}
@@ -856,4 +873,9 @@ func (e *HashAggExec) IsSpillTriggeredForTest() bool {
 		}
 	}
 	return false
+}
+
+// IsInvalidMemoryUsageTrackingForTest is for test
+func (e *HashAggExec) IsInvalidMemoryUsageTrackingForTest() bool {
+	return e.invalidMemoryUsageForTrackingTest
 }

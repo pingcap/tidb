@@ -16,6 +16,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 )
 
 type mockPDClient struct {
@@ -27,7 +28,7 @@ func (m *mockPDClient) GetClusterID(_ context.Context) uint64 {
 	return 1
 }
 
-func (m *mockPDClient) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {
+func (m *mockPDClient) GetAllStores(ctx context.Context, opts ...opt.GetStoreOption) ([]*metapb.Store, error) {
 	if m.getAllStores != nil {
 		return m.getAllStores(), nil
 	}
@@ -48,13 +49,6 @@ func TestCheckClusterVersion(t *testing.T) {
 
 	mock := mockPDClient{
 		Client: nil,
-	}
-	{
-		mock.getAllStores = func() []*metapb.Store {
-			return []*metapb.Store{{Version: `v5.4.2`}}
-		}
-		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBRPiTR)
-		require.NoError(t, err)
 	}
 
 	{

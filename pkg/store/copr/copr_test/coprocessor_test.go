@@ -19,18 +19,22 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/resourcegroup/runaway"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
@@ -197,7 +201,7 @@ type mockResourceGroupProvider struct {
 	cfg rmclient.Config
 }
 
-func (p *mockResourceGroupProvider) Get(ctx context.Context, key []byte, opts ...pd.OpOption) (*meta_storagepb.GetResponse, error) {
+func (p *mockResourceGroupProvider) Get(ctx context.Context, key []byte, opts ...opt.MetaStorageOption) (*meta_storagepb.GetResponse, error) {
 	if !bytes.Equal(pd.ControllerConfigPathPrefixBytes, key) {
 		return nil, errors.New("unsupported configPath")
 	}
@@ -286,4 +290,63 @@ func TestBuildCopIteratorWithRunawayChecker(t *testing.T) {
 	concurrency, smallTaskConcurrency := it.GetConcurrency()
 	require.Equal(t, concurrency, 1)
 	require.Equal(t, smallTaskConcurrency, 0)
+}
+
+func TestQueryWithConcurrentSmallCop(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id int key, b int, c int, index idx_b(b)) partition by hash(id) partitions 10;")
+	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t1 values (%v, %v, %v)", i, i, i))
+	}
+	tk.MustExec("create table t2 (id bigint unsigned key, b int, index idx_b (b));")
+	tk.MustExec("insert into t2 values (1,1), (18446744073709551615,2)")
+	tk.MustExec("set @@tidb_distsql_scan_concurrency=15")
+	tk.MustExec("set @@tidb_executor_concurrency=15")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop", `return(100)`))
+	// Test for https://github.com/pingcap/tidb/pull/57522#discussion_r1875515863
+	start := time.Now()
+	tk.MustQuery("select sum(c) from t1 use index (idx_b) where b < 10;")
+	require.Less(t, time.Since(start), time.Millisecond*250)
+	// Test for index reader with partition table
+	start = time.Now()
+	tk.MustQuery("select id, b from t1 use index (idx_b) where b < 10;")
+	require.Less(t, time.Since(start), time.Millisecond*150)
+	// Test for table reader with partition table.
+	start = time.Now()
+	tk.MustQuery("select * from t1 where c < 10;")
+	require.Less(t, time.Since(start), time.Millisecond*150)
+	// 	// Test for table reader with 2 parts ranges.
+	start = time.Now()
+	tk.MustQuery("select * from t2 where id >= 1 and id <= 18446744073709551615 order by id;")
+	require.Less(t, time.Since(start), time.Millisecond*150)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop"))
+}
+
+func TestDMLWithLiteCopWorker(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id bigint auto_increment key, b int);")
+	tk.MustExec("insert into t1 (b) values (1),(2),(3),(4),(5),(6),(7),(8);")
+	for i := 0; i < 8; i++ {
+		tk.MustExec("insert into t1 (b) select b from t1;")
+	}
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("2048"))
+	tk.MustQuery("split table t1 by (1025);").Check(testkit.Rows("1 1"))
+	tk.MustExec("set @@tidb_enable_paging = off")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop", `return(200)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/distsql/mockConsumeSelectRespSlow", `return(100)`))
+	start := time.Now()
+	tk.MustExec("update t1 set b=b+1 where id >= 0;")
+	require.Less(t, time.Since(start), time.Millisecond*800) // 3 * 200ms + 1 * 100ms
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/distsql/mockConsumeSelectRespSlow"))
+
+	// Test select after split table.
+	tk.MustExec("truncate table t1;")
+	tk.MustExec("insert into t1 (b) values (1),(2),(3),(4),(5),(6),(7),(8);")
+	tk.MustQuery("split table t1 by (3), (6), (9);").Check(testkit.Rows("3 1"))
+	tk.MustQuery("select b from t1 order by id").Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8"))
 }

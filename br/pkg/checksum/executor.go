@@ -14,7 +14,7 @@ import (
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -44,7 +44,7 @@ func NewExecutorBuilder(table *model.TableInfo, ts uint64) *ExecutorBuilder {
 		table: table,
 		ts:    ts,
 
-		concurrency: variable.DefDistSQLScanConcurrency,
+		concurrency: vardef.DefDistSQLScanConcurrency,
 	}
 }
 
@@ -133,10 +133,9 @@ func buildChecksumRequest(
 	for _, partDef := range partDefs {
 		var oldPartID int64
 		if oldTable != nil {
-			for _, oldPartDef := range oldTable.Info.Partition.Definitions {
-				if oldPartDef.Name == partDef.Name {
-					oldPartID = oldPartDef.ID
-				}
+			oldPartID, err = utils.GetPartitionByName(oldTable.Info, partDef.Name)
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
 		}
 		rs, err := buildRequest(newTable, partDef.ID, oldTable, oldPartID, startTS, concurrency,

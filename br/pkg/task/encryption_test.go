@@ -61,6 +61,10 @@ func TestParseAwsKmsConfig(t *testing.T) {
 						Vendor: "aws",
 						KeyId:  "key-id",
 						Region: "us-west-2",
+						AwsKms: &encryptionpb.AwsKms{
+							AccessKey:       "AKIAIOSFODNN7EXAMPLE",
+							SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+						},
 					},
 				},
 			},

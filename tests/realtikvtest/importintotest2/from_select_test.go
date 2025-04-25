@@ -155,3 +155,19 @@ func (s *mockGCSSuite) TestImportFromSelectStaleRead() {
 	s.tk.MustExec("import into dst from " + staleReadSQL)
 	s.tk.MustQuery("select * from dst").Check(testkit.Rows("1 a", "2 b"))
 }
+
+func (s *mockGCSSuite) TestCastNegativeToUnsigned() {
+	s.prepareAndUseDB("from_select")
+	s.tk.MustExec("create table dt(id int unsigned)")
+	s.ErrorContains(s.tk.ExecToErr("import into dt from select -1"), "constant -1 overflows int")
+	s.tk.MustExec("set sql_mode=''")
+	s.tk.MustExec("import into dt from select -1")
+	s.tk.MustQuery("select * from dt").Check(testkit.Rows("0"))
+}
+
+func (s *mockGCSSuite) TestDiskFullOnIngestFailFast() {
+	s.prepareAndUseDB("from_select")
+	s.tk.MustExec("create table dt(id int unsigned)")
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/lightning/backend/local/diskFullOnIngest", `return(true)`)
+	s.ErrorContains(s.tk.ExecToErr("import into dt from select 1"), "tikv disk full")
+}

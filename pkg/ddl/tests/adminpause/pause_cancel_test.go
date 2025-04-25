@@ -57,7 +57,7 @@ func pauseAndCancelStmt(t *testing.T, stmtKit *testkit.TestKit, adminCommandKit 
 			zap.String("Expected Schema State", stmtCase.schemaState.String()))
 
 		// stmtCase is read-only among the whole test suite which is not necessary to be atomic
-		if testddlutil.TestMatchCancelState(t, job, stmtCase.schemaState, stmtCase.stmt) &&
+		if testddlutil.MatchCancelState(t, job, stmtCase.schemaState, stmtCase.stmt) &&
 			stmtCase.isJobPausable && //
 			!isPaused.Load() {
 			jobID.Store(job.ID)
@@ -126,7 +126,7 @@ func pauseAndCancelStmt(t *testing.T, stmtKit *testkit.TestKit, adminCommandKit 
 		stmtKit.MustExec(prepareStmt)
 	}
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", pauseFunc)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", pauseFunc)
 
 	isPaused.Store(false)
 	isCancelled.Store(false)
@@ -146,7 +146,7 @@ func pauseAndCancelStmt(t *testing.T, stmtKit *testkit.TestKit, adminCommandKit 
 	}
 
 	// Release the hook, so that we could run the `rollbackStmts` successfully.
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRefreshJob")
 
 	for _, rollbackStmt := range stmtCase.rollbackStmts {
@@ -191,7 +191,7 @@ func TestPauseCancelAndRerunIndexStmt(t *testing.T) {
 	var dom, stmtKit, adminCommandKit = prepareDomain(t)
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`)
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 
 	require.Nil(t, generateTblUser(stmtKit, 10))
 	require.Nil(t, generateTblUserWithVec(stmtKit, 10))

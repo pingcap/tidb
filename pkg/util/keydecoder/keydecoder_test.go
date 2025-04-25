@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	_ "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/table"
@@ -36,28 +36,28 @@ func TestDecodeKey(t *testing.T) {
 	table.MockTableFromMeta = tables.MockTableFromMeta
 	tableInfo1 := &model.TableInfo{
 		ID:   1,
-		Name: pmodel.NewCIStr("table1"),
+		Name: ast.NewCIStr("table1"),
 		Indices: []*model.IndexInfo{
-			{ID: 1, Name: pmodel.NewCIStr("index1"), State: model.StatePublic},
+			{ID: 1, Name: ast.NewCIStr("index1"), State: model.StatePublic},
 		},
 	}
-	tableInfo2 := &model.TableInfo{ID: 2, Name: pmodel.NewCIStr("table2")}
+	tableInfo2 := &model.TableInfo{ID: 2, Name: ast.NewCIStr("table2")}
 	tableInfo3 := &model.TableInfo{
 		ID:   3,
-		Name: pmodel.NewCIStr("table3"),
+		Name: ast.NewCIStr("table3"),
 		Columns: []*model.ColumnInfo{
-			{ID: 10, Name: pmodel.NewCIStr("col"), State: model.StatePublic},
+			{ID: 10, Name: ast.NewCIStr("col"), State: model.StatePublic},
 		},
 		Indices: []*model.IndexInfo{
-			{ID: 4, Name: pmodel.NewCIStr("index4"), State: model.StatePublic},
+			{ID: 4, Name: ast.NewCIStr("index4"), State: model.StatePublic},
 		},
 		Partition: &model.PartitionInfo{
-			Type:   pmodel.PartitionTypeRange,
+			Type:   ast.PartitionTypeRange,
 			Expr:   "`col`",
 			Enable: true,
 			Definitions: []model.PartitionDefinition{
-				{ID: 5, Name: pmodel.NewCIStr("p0"), LessThan: []string{"10"}},
-				{ID: 6, Name: pmodel.NewCIStr("p1"), LessThan: []string{"MAXVALUE"}},
+				{ID: 5, Name: ast.NewCIStr("p0"), LessThan: []string{"10"}},
+				{ID: 6, Name: ast.NewCIStr("p1"), LessThan: []string{"MAXVALUE"}},
 			},
 		},
 	}

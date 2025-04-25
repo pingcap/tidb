@@ -15,7 +15,6 @@ go_library(
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/format",
-        "//pkg/parser/model",
         "//pkg/types",
         "//pkg/util/dbterror",
         "//pkg/util/dbterror/plannererrors",

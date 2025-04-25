@@ -17,6 +17,7 @@ package external
 import (
 	"bytes"
 	"context"
+	goerrors "errors"
 	"fmt"
 	"io"
 	"path"
@@ -27,13 +28,14 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/docker/go-units"
 	"github.com/jfcg/sorty/v2"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
@@ -144,7 +146,7 @@ func TestWriter(t *testing.T) {
 		require.Equal(t, kvs[i].Val, value)
 	}
 	_, _, err = kvReader.nextKV()
-	require.Equal(t, io.EOF, err)
+	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, kvReader.Close())
 
 	statReader, err := newStatsReader(ctx, memStore, "/test/0_stat/0", bufSize)
@@ -153,7 +155,7 @@ func TestWriter(t *testing.T) {
 	var keyCnt uint64 = 0
 	for {
 		p, err := statReader.nextProp()
-		if err == io.EOF {
+		if goerrors.Is(err, io.EOF) {
 			break
 		}
 		require.NoError(t, err)
@@ -253,8 +255,7 @@ func TestWriterDuplicateDetect(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	keys := make([][]byte, 0, kvCount)
-	values := make([][]byte, 0, kvCount)
+	kvs := make([]kvPair, 0, kvCount)
 
 	kvReader, err := newKVReader(ctx, "/test2/mergeID/0", memStore, 0, 100)
 	require.NoError(t, err)
@@ -265,11 +266,10 @@ func TestWriterDuplicateDetect(t *testing.T) {
 		copy(clonedKey, key)
 		clonedVal := make([]byte, len(value))
 		copy(clonedVal, value)
-		keys = append(keys, clonedKey)
-		values = append(values, clonedVal)
+		kvs = append(kvs, kvPair{key: clonedKey, value: clonedVal})
 	}
 	_, _, err = kvReader.nextKV()
-	require.Equal(t, io.EOF, err)
+	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, kvReader.Close())
 
 	dir := t.TempDir()
@@ -281,8 +281,7 @@ func TestWriterDuplicateDetect(t *testing.T) {
 		duplicateDetection: true,
 		duplicateDB:        db,
 		dupDetectOpt:       common.DupDetectOpt{ReportErrOnDup: true},
-		keys:               keys,
-		values:             values,
+		kvs:                kvs,
 		ts:                 123,
 	}
 	pool := membuf.NewPool()
@@ -590,10 +589,18 @@ func TestFlushKVsRetry(t *testing.T) {
 	require.NoError(t, err)
 	p, err := r.nextProp()
 	lastKey := []byte{}
-	for err != io.EOF {
+	for !goerrors.Is(err, io.EOF) {
 		require.NoError(t, err)
 		require.True(t, bytes.Compare(lastKey, p.firstKey) < 0)
 		lastKey = append(lastKey[:0], p.firstKey...)
 		p, err = r.nextProp()
 	}
+}
+
+func TestGetAdjustedIndexBlockSize(t *testing.T) {
+	require.EqualValues(t, 1*units.MiB, GetAdjustedBlockSize(1*units.MiB))
+	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(15*units.MiB))
+	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(16*units.MiB))
+	require.EqualValues(t, 17*units.MiB, GetAdjustedBlockSize(17*units.MiB))
+	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(166*units.MiB))
 }

@@ -169,7 +169,7 @@ func GenJSONTableFromStats(
 
 // TableStatsFromJSON loads statistic from JSONTable and return the Table of statistic.
 func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *statsutil.JSONTable) (*statistics.Table, error) {
-	newHistColl := *statistics.NewHistColl(physicalID, true, jsonTbl.Count, jsonTbl.ModifyCount, len(jsonTbl.Columns), len(jsonTbl.Indices))
+	newHistColl := *statistics.NewHistColl(physicalID, jsonTbl.Count, jsonTbl.ModifyCount, len(jsonTbl.Columns), len(jsonTbl.Indices))
 	tbl := &statistics.Table{
 		HistColl:              newHistColl,
 		ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(len(tableInfo.Columns), len(tableInfo.Indices)),
@@ -284,7 +284,7 @@ func JSONTableToBlocks(jsTable *statsutil.JSONTable, blockSize int) ([][]byte, e
 		blocksNum = blocksNum + 1
 	}
 	blocks := make([][]byte, blocksNum)
-	for i := 0; i < blocksNum-1; i++ {
+	for i := range blocksNum - 1 {
 		blocks[i] = gzippedData.Bytes()[blockSize*i : blockSize*(i+1)]
 	}
 	blocks[blocksNum-1] = gzippedData.Bytes()[blockSize*(blocksNum-1):]

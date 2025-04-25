@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	pd "github.com/tikv/pd/client"
@@ -86,7 +86,7 @@ func (*mockSession) CreateTables(_ context.Context, _ map[string][]*model.TableI
 }
 
 // CreateTable implements glue.Session.
-func (*mockSession) CreateTable(_ context.Context, _ pmodel.CIStr,
+func (*mockSession) CreateTable(_ context.Context, _ ast.CIStr,
 	_ *model.TableInfo, _ ...ddl.CreateTableOption) error {
 	log.Fatal("unimplemented CreateDatabase for mock session")
 	return nil
@@ -103,6 +103,11 @@ func (s *mockSession) GetGlobalVariable(name string) (string, error) {
 		return ret, nil
 	}
 	return "True", nil
+}
+
+// GetGlobalSysVar implements glue.Session.
+func (s *mockSession) GetGlobalSysVar(string) (string, error) {
+	return "", nil
 }
 
 // MockGlue only used for test

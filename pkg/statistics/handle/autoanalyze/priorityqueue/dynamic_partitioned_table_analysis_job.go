@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -271,17 +271,14 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitions(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) bool {
-	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
+	analyzePartitionBatchSize := int(vardef.AutoAnalyzePartitionBatchSize.Load())
 	needAnalyzePartitionNames := make([]any, 0, len(j.PartitionNames))
 	for _, partition := range j.PartitionNames {
 		needAnalyzePartitionNames = append(needAnalyzePartitionNames, partition)
 	}
 	for i := 0; i < len(needAnalyzePartitionNames); i += analyzePartitionBatchSize {
 		start := i
-		end := start + analyzePartitionBatchSize
-		if end >= len(needAnalyzePartitionNames) {
-			end = len(needAnalyzePartitionNames)
-		}
+		end := min(start+analyzePartitionBatchSize, len(needAnalyzePartitionNames))
 
 		sql := getPartitionSQL("analyze table %n.%n partition", "", end-start)
 		params := append([]any{j.SchemaName, j.GlobalTableName}, needAnalyzePartitionNames[start:end]...)
@@ -299,7 +296,7 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitionIndexes(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sysproctrack.Tracker,
 ) (success bool) {
-	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
+	analyzePartitionBatchSize := int(vardef.AutoAnalyzePartitionBatchSize.Load())
 	// For version 2, analyze one index will analyze all other indexes and columns.
 	// For version 1, analyze one index will only analyze the specified index.
 	analyzeVersion := sctx.GetSessionVars().AnalyzeVersion
@@ -311,10 +308,7 @@ func (j *DynamicPartitionedTableAnalysisJob) analyzePartitionIndexes(
 		}
 		for i := 0; i < len(needAnalyzePartitionNames); i += analyzePartitionBatchSize {
 			start := i
-			end := start + analyzePartitionBatchSize
-			if end >= len(needAnalyzePartitionNames) {
-				end = len(needAnalyzePartitionNames)
-			}
+			end := min(start+analyzePartitionBatchSize, len(needAnalyzePartitionNames))
 
 			sql := getPartitionSQL("analyze table %n.%n partition", " index %n", end-start)
 			params := append([]any{j.SchemaName, j.GlobalTableName}, needAnalyzePartitionNames[start:end]...)
@@ -347,7 +341,7 @@ func (j *DynamicPartitionedTableAnalysisJob) getAnalyzeType() analyzeType {
 func getPartitionSQL(prefix, suffix string, numPartitions int) string {
 	var sqlBuilder strings.Builder
 	sqlBuilder.WriteString(prefix)
-	for i := 0; i < numPartitions; i++ {
+	for i := range numPartitions {
 		if i != 0 {
 			sqlBuilder.WriteString(",")
 		}

@@ -151,7 +151,7 @@
           "Projection 12.49 root  test.t2.a2, test.t2.b2, test.t2.c2, test.t1.a1, test.t1.b1, test.t1.c1",
           "└─HashJoin 12.49 root  inner join, equal:[eq(test.t1.a1, test.t2.a2)]",
           "  ├─TableReader(Build) 9.99 root  data:Selection",
-          "  │ └─Selection 9.99 cop[tikv]  not(isnull(test.t1.a1)), or(0, eq(test.t1.b1, 5))",
+          "  │ └─Selection 9.99 cop[tikv]  eq(test.t1.b1, 5), not(isnull(test.t1.a1))",
           "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "  └─TableReader(Probe) 9990.00 root  data:Selection",
           "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a2))",
@@ -161,14 +161,7 @@
       {
         "SQL": "select * from t3 as t1 left join t3 as t2 on t1.c3 = t2.c3 where t2.b3 != NULL; -- self join",
         "Plan": [
-          "Projection 0.00 root  test.t3.a3, test.t3.b3, test.t3.c3, test.t3.a3, test.t3.b3, test.t3.c3",
-          "└─HashJoin 0.00 root  inner join, equal:[eq(test.t3.c3, test.t3.c3)]",
-          "  ├─TableReader(Build) 0.00 root  data:Selection",
-          "  │ └─Selection 0.00 cop[tikv]  ne(test.t3.b3, NULL), not(isnull(test.t3.c3))",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "  └─TableReader(Probe) 9990.00 root  data:Selection",
-          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.c3))",
-          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "TableDual 0.00 root  rows:0"
         ]
       },
       {
@@ -305,8 +298,8 @@
         "Plan": [
           "Projection 6393.60 root  Column#21, minus(test.t2.b2, 5)->Column#22",
           "└─Selection 6393.60 root  gt(minus(test.t2.b2, 5), 1)",
-          "  └─HashAgg 7992.00 root  group by:Column#26, funcs:count(Column#24)->Column#21, funcs:firstrow(Column#25)->test.t2.b2",
-          "    └─Projection 12487.50 root  test.t2.a2->Column#24, test.t2.b2->Column#25, minus(test.t2.b2, 5)->Column#26",
+          "  └─HashAgg 7992.00 root  group by:Column#27, funcs:count(Column#25)->Column#21, funcs:firstrow(Column#26)->test.t2.b2",
+          "    └─Projection 12487.50 root  test.t2.a2->Column#25, test.t2.b2->Column#26, minus(test.t2.b2, 5)->Column#27",
           "      └─HashJoin 12487.50 root  inner join, equal:[eq(test.t1.a1, test.t2.a2)]",
           "        ├─TableReader(Build) 9990.00 root  data:Selection",
           "        │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a1))",
@@ -434,13 +427,7 @@
       {
         "SQL": "select * from t3 as t1 left join t3 as t2 on t1.c3 = t2.c3 where t1.b3 != NULL -- negative case with self join",
         "Plan": [
-          "HashJoin 0.00 root  left outer join, left side:TableReader, equal:[eq(test.t3.c3, test.t3.c3)]",
-          "├─TableReader(Build) 0.00 root  data:Selection",
-          "│ └─Selection 0.00 cop[tikv]  ne(test.t3.b3, NULL)",
-          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 9990.00 root  data:Selection",
-          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.c3))",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "TableDual 0.00 root  rows:0"
         ]
       },
       {

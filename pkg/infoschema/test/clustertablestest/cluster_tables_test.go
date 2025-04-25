@@ -40,8 +40,8 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema/internal"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/server"
@@ -1230,6 +1230,65 @@ func TestUniversalBindingFromHistory(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
 }
 
+func TestStmtSummaryShowPlanForSQL(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, c int)`)
+	tk.MustExec(`insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3)`)
+	tk.MustQuery(`select * from t where a=1`)
+	tk.MustExec(`create global binding from history using plan digest '4e3159169cc63c14b139a4e7d72eae1759875c9a9581f94bb2079aae961189cb'`)
+	result := tk.MustQuery(`show plan for "select * from t where a = 1"`).Rows()[0]
+	require.Equal(t, result[0], "select * from `test` . `t` where `a` = ?")
+	require.Equal(t, result[1], "use_index(@`sel_1` `test`.`t` )")
+	require.Contains(t, result[2], "TableReader")
+	require.Equal(t, result[5], "1") // exec_count
+	require.Equal(t, result[7], "1") // avg_returned_rows
+}
+
+func TestStmtSummaryShowPlanForSQL2(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, c varchar(10), key(a), key(b))`)
+
+	tk.MustExec(`create global binding using select /*+ use_index(t, a) */ a from t where b=1`)
+	tk.MustQuery(`select a from test.t where b=1`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+
+	rs := tk.MustQuery(`show plan for "select a from test.t where b=1"`).Rows()[0]
+	require.Contains(t, rs[2], "index:a(a)")
+	require.Equal(t, rs[5], "1") // exec_count
+	tk.MustQuery(`select a from test.t where b=1`).Check(testkit.Rows())
+	rs = tk.MustQuery(`show plan for "select a from test.t where b=1"`).Rows()[0]
+	require.Equal(t, rs[5], "2") // exec_count
+
+	tk.MustExec(`create global binding using select /*+ use_index(t, b) */ a from test.t where b=1`)
+	tk.MustQuery(`select a from test.t where b=1`).Check(testkit.Rows())
+	rs = tk.MustQuery(`show plan for "select a from test.t where b=2"`).Rows()[0]
+	require.Contains(t, rs[2], "index:b(b)")
+	require.Equal(t, rs[5], "1") // exec_count
+	tk.MustQuery(`select a from test.t where b=1`).Check(testkit.Rows())
+	rs = tk.MustQuery(`show plan for "select a from test.t where b=2"`).Rows()[0]
+	require.Equal(t, rs[5], "2") // exec_count
+}
+
 func TestCreateBindingFromHistory(t *testing.T) {
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
@@ -1901,7 +1960,7 @@ func TestMDLViewIDConflict(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int);")
-	tbl, err := s.dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl, err := s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tk.MustExec("insert into t values (1)")
 
@@ -1912,7 +1971,7 @@ func TestMDLViewIDConflict(t *testing.T) {
 		bigTableName = fmt.Sprintf("t%d", i)
 		tk.MustExec(fmt.Sprintf("create table %s(a int);", bigTableName))
 
-		tbl, err := s.dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(bigTableName))
+		tbl, err := s.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(bigTableName))
 		require.NoError(t, err)
 
 		require.LessOrEqual(t, tbl.Meta().ID, bigID)

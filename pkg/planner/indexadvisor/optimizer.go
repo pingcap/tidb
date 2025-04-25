@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	model2 "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -75,7 +74,7 @@ func (opt *optimizerImpl) is() infoschema.InfoSchema {
 
 // IndexNameExist returns whether the specified index name exists in the specified table.
 func (opt *optimizerImpl) IndexNameExist(schema, table, indexName string) (bool, error) {
-	tbl, err := opt.is().TableByName(context.Background(), model2.NewCIStr(schema), model2.NewCIStr(table))
+	tbl, err := opt.is().TableByName(context.Background(), ast.NewCIStr(schema), ast.NewCIStr(table))
 	if err != nil {
 		return false, err
 	}
@@ -89,7 +88,7 @@ func (opt *optimizerImpl) IndexNameExist(schema, table, indexName string) (bool,
 
 // TableColumns returns the columns of the specified table.
 func (opt *optimizerImpl) TableColumns(schema, table string) ([]Column, error) {
-	tbl, err := opt.is().TableByName(context.Background(), model2.NewCIStr(schema), model2.NewCIStr(table))
+	tbl, err := opt.is().TableByName(context.Background(), ast.NewCIStr(schema), ast.NewCIStr(table))
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +113,7 @@ func (opt *optimizerImpl) PossibleColumns(schema, colName string) ([]Column, err
 	}
 
 	cols := make([]Column, 0)
-	tbls, err := opt.is().SchemaTableInfos(context.Background(), model2.NewCIStr(schema))
+	tbls, err := opt.is().SchemaTableInfos(context.Background(), ast.NewCIStr(schema))
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +133,7 @@ func (opt *optimizerImpl) PossibleColumns(schema, colName string) ([]Column, err
 
 // PrefixContainIndex returns whether the specified index is a prefix of an existing index.
 func (opt *optimizerImpl) PrefixContainIndex(idx Index) (bool, error) {
-	tbl, err := opt.is().TableByName(context.Background(), model2.NewCIStr(idx.SchemaName), model2.NewCIStr(idx.TableName))
+	tbl, err := opt.is().TableByName(context.Background(), ast.NewCIStr(idx.SchemaName), ast.NewCIStr(idx.TableName))
 	if err != nil {
 		return false, err
 	}
@@ -158,7 +157,7 @@ func (opt *optimizerImpl) PrefixContainIndex(idx Index) (bool, error) {
 
 // ColumnType returns the column type of the specified column.
 func (opt *optimizerImpl) ColumnType(c Column) (*types.FieldType, error) {
-	tbl, err := opt.is().TableByName(context.Background(), model2.NewCIStr(c.SchemaName), model2.NewCIStr(c.TableName))
+	tbl, err := opt.is().TableByName(context.Background(), ast.NewCIStr(c.SchemaName), ast.NewCIStr(c.TableName))
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +171,7 @@ func (opt *optimizerImpl) ColumnType(c Column) (*types.FieldType, error) {
 
 func (opt *optimizerImpl) addHypoIndex(hypoIndexes ...Index) error {
 	for _, h := range hypoIndexes {
-		tInfo, err := opt.is().TableByName(context.Background(), model2.NewCIStr(h.SchemaName), model2.NewCIStr(h.TableName))
+		tInfo, err := opt.is().TableByName(context.Background(), ast.NewCIStr(h.SchemaName), ast.NewCIStr(h.TableName))
 		if err != nil {
 			return err
 		}
@@ -190,16 +189,16 @@ func (opt *optimizerImpl) addHypoIndex(hypoIndexes ...Index) error {
 				return fmt.Errorf("column %v not found in table %v.%v", col.ColumnName, h.SchemaName, h.TableName)
 			}
 			cols = append(cols, &model.IndexColumn{
-				Name:   model2.NewCIStr(col.ColumnName),
+				Name:   ast.NewCIStr(col.ColumnName),
 				Offset: colOffset,
 				Length: types.UnspecifiedLength,
 			})
 		}
 		idxInfo := &model.IndexInfo{
-			Name:    model2.NewCIStr(h.IndexName),
+			Name:    ast.NewCIStr(h.IndexName),
 			Columns: cols,
 			State:   model.StatePublic,
-			Tp:      model2.IndexTypeHypo,
+			Tp:      ast.IndexTypeHypo,
 		}
 
 		if opt.sctx.GetSessionVars().HypoIndexes == nil {
@@ -246,7 +245,7 @@ func (opt *optimizerImpl) QueryPlanCost(sql string, hypoIndexes ...Index) (cost 
 
 // EstIndexSize return the estimated index size of the specified table and columns
 func (opt *optimizerImpl) EstIndexSize(db, table string, cols ...string) (indexSize float64, err error) {
-	tbl, err := opt.is().TableByName(context.Background(), model2.NewCIStr(db), model2.NewCIStr(table))
+	tbl, err := opt.is().TableByName(context.Background(), ast.NewCIStr(db), ast.NewCIStr(table))
 	if err != nil {
 		return 0, err
 	}

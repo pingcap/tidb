@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -168,7 +168,7 @@ func (p *PhysicalTableScan) ExplainID() fmt.Stringer {
 
 // TP overrides the TP in order to match different range.
 func (p *PhysicalTableScan) TP() string {
-	if infoschema.IsClusterTableByName(p.DBName.O, p.Table.Name.O) {
+	if infoschema.IsClusterTableByName(p.DBName.L, p.Table.Name.L) {
 		return plancodec.TypeMemTableScan
 	} else if p.isChildOfIndexLookUp {
 		return plancodec.TypeTableRowIDScan
@@ -190,7 +190,7 @@ func (p *PhysicalTableScan) ExplainNormalizedInfo() string {
 
 // OperatorInfo implements dataAccesser interface.
 func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
-	if infoschema.IsClusterTableByName(p.DBName.O, p.Table.Name.O) {
+	if infoschema.IsClusterTableByName(p.DBName.L, p.Table.Name.L) {
 		return ""
 	}
 
@@ -271,30 +271,39 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 			buffer.WriteString(runtimeFilter.ExplainInfo(false))
 		}
 	}
-	if p.AnnIndexExtra != nil && p.AnnIndexExtra.PushDownQueryInfo != nil {
-		buffer.WriteString(", annIndex:")
-		buffer.WriteString(p.AnnIndexExtra.PushDownQueryInfo.GetDistanceMetric().String())
-		buffer.WriteString("(")
-		buffer.WriteString(p.AnnIndexExtra.PushDownQueryInfo.GetColumnName())
-		buffer.WriteString("..")
-		if normalized {
-			buffer.WriteString("[?]")
-		} else {
-			v, _, err := types.ZeroCopyDeserializeVectorFloat32(p.AnnIndexExtra.PushDownQueryInfo.RefVecF32)
-			if err != nil {
+	for _, idx := range p.UsedColumnarIndexes {
+		if idx != nil && idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeVector && idx.QueryInfo != nil {
+			buffer.WriteString(", annIndex:")
+			buffer.WriteString(idx.QueryInfo.GetAnnQueryInfo().GetDistanceMetric().String())
+			buffer.WriteString("(")
+			buffer.WriteString(idx.QueryInfo.GetAnnQueryInfo().GetColumnName())
+			buffer.WriteString("..")
+			if normalized {
 				buffer.WriteString("[?]")
 			} else {
-				buffer.WriteString(v.String())
+				v, _, err := types.ZeroCopyDeserializeVectorFloat32(idx.QueryInfo.GetAnnQueryInfo().RefVecF32)
+				if err != nil {
+					buffer.WriteString("[?]")
+				} else {
+					buffer.WriteString(v.TruncatedString())
+				}
+			}
+			buffer.WriteString(", limit:")
+			if normalized {
+				buffer.WriteString("?")
+			} else {
+				buffer.WriteString(fmt.Sprint(idx.QueryInfo.GetAnnQueryInfo().TopK))
+			}
+			buffer.WriteString(")")
+
+			if idx.QueryInfo.GetAnnQueryInfo().GetEnableDistanceProj() {
+				buffer.WriteString("->")
+				cols := p.Schema().Columns
+				buffer.WriteString(cols[len(cols)-1].String())
 			}
 		}
-		buffer.WriteString(", limit:")
-		if normalized {
-			buffer.WriteString("?")
-		} else {
-			buffer.WriteString(fmt.Sprint(p.AnnIndexExtra.PushDownQueryInfo.TopK))
-		}
-		buffer.WriteString(")")
 	}
+
 	return buffer.String()
 }
 
@@ -404,7 +413,7 @@ func (p *PhysicalSelection) ExplainInfo() string {
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalSelection) ExplainNormalizedInfo() string {
-	if variable.IgnoreInlistPlanDigest.Load() {
+	if vardef.IgnoreInlistPlanDigest.Load() {
 		return string(expression.SortedExplainExpressionListIgnoreInlist(p.Conditions))
 	}
 	return string(expression.SortedExplainNormalizedExpressionList(p.Conditions))
@@ -449,7 +458,7 @@ func (p *PhysicalExpand) explainInfoV2() string {
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalProjection) ExplainNormalizedInfo() string {
-	if variable.IgnoreInlistPlanDigest.Load() {
+	if vardef.IgnoreInlistPlanDigest.Load() {
 		return string(expression.SortedExplainExpressionListIgnoreInlist(p.Exprs))
 	}
 	return string(expression.SortedExplainNormalizedExpressionList(p.Exprs))
@@ -951,7 +960,7 @@ func (p *PhysicalExchangeSender) ExplainInfo() string {
 	case tipb.ExchangeType_Hash:
 		fmt.Fprintf(buffer, "HashPartition")
 	}
-	if p.CompressionMode != kv.ExchangeCompressionModeNONE {
+	if p.CompressionMode != vardef.ExchangeCompressionModeNONE {
 		fmt.Fprintf(buffer, ", Compression: %s", p.CompressionMode.Name())
 	}
 	if p.ExchangeType == tipb.ExchangeType_Hash {

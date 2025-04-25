@@ -16,14 +16,17 @@ package handle
 
 import (
 	"context"
+	goerrors "errors"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -55,20 +58,20 @@ func GetCPUCountOfNode(ctx context.Context) (int, error) {
 }
 
 // SubmitTask submits a task.
-func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, targetScope string, taskMeta []byte) (*proto.Task, error) {
+func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, targetScope string, maxNodeCnt int, taskMeta []byte) (*proto.Task, error) {
 	taskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return nil, err
 	}
 	task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
-	if err != nil && err != storage.ErrTaskNotFound {
+	if err != nil && !goerrors.Is(err, storage.ErrTaskNotFound) {
 		return nil, err
 	}
 	if task != nil {
 		return nil, storage.ErrTaskAlreadyExists
 	}
 
-	taskID, err := taskManager.CreateTask(ctx, taskKey, taskType, concurrency, targetScope, taskMeta)
+	taskID, err := taskManager.CreateTask(ctx, taskKey, taskType, concurrency, targetScope, maxNodeCnt, proto.ExtraParams{}, taskMeta)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +80,6 @@ func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, co
 	if err != nil {
 		return nil, err
 	}
-	metrics.UpdateMetricsForAddTask(&task.TaskBase)
 
 	NotifyTaskChange()
 	return task, nil
@@ -169,7 +171,7 @@ func CancelTask(ctx context.Context, taskKey string) error {
 	}
 	task, err := taskManager.GetTaskByKey(ctx, taskKey)
 	if err != nil {
-		if err == storage.ErrTaskNotFound {
+		if goerrors.Is(err, storage.ErrTaskNotFound) {
 			logutil.BgLogger().Info("task not exist", zap.String("taskKey", taskKey))
 			return nil
 		}
@@ -225,6 +227,7 @@ func RunWithRetry(
 			return err
 		}
 		lastErr = err
+		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 		logger.Warn("met retryable error", zap.Int("retry-count", i),
 			zap.Int("max-retry", maxRetry), zap.Error(err))
 		select {
@@ -234,4 +237,22 @@ func RunWithRetry(
 		}
 	}
 	return lastErr
+}
+
+var nodeResource atomic.Pointer[proto.NodeResource]
+
+// GetNodeResource gets the node resource.
+func GetNodeResource() *proto.NodeResource {
+	return nodeResource.Load()
+}
+
+// SetNodeResource gets the node resource.
+func SetNodeResource(rc *proto.NodeResource) {
+	nodeResource.Store(rc)
+}
+
+func init() {
+	// domain will init this var at runtime, we store it here for test, as some
+	// test might not start domain.
+	nodeResource.Store(proto.NewNodeResource(8, 16*units.GiB, 100*units.GiB))
 }

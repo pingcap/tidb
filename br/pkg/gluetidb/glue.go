@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -55,6 +55,10 @@ type Glue struct {
 	startDomainMu *sync.Mutex
 }
 
+func WrapSession(se sessiontypes.Session) glue.Session {
+	return &tidbSession{se: se}
+}
+
 type tidbSession struct {
 	se sessiontypes.Session
 }
@@ -63,10 +67,6 @@ type tidbSession struct {
 func (g Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
 	existDom, _ := session.GetDomain(nil)
 	initStatsSe, err := g.createTypesSession(store)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	se, err := g.createTypesSession(store)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -80,7 +80,7 @@ func (g Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
 			return nil, err
 		}
 		// create stats handler for backup and restore.
-		err = dom.UpdateTableStatsLoop(se, initStatsSe)
+		err = dom.UpdateTableStatsLoop(initStatsSe)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -250,7 +250,7 @@ func (gs *tidbSession) CreateTables(_ context.Context,
 }
 
 // CreateTable implements glue.Session.
-func (gs *tidbSession) CreateTable(_ context.Context, dbName pmodel.CIStr,
+func (gs *tidbSession) CreateTable(_ context.Context, dbName ast.CIStr,
 	table *model.TableInfo, cs ...ddl.CreateTableOption) error {
 	return errors.Trace(executor.BRIECreateTable(gs.se, dbName, table, brComment, cs...))
 }
@@ -263,6 +263,11 @@ func (gs *tidbSession) Close() {
 // GetGlobalVariables implements glue.Session.
 func (gs *tidbSession) GetGlobalVariable(name string) (string, error) {
 	return gs.se.GetSessionVars().GlobalVarsAccessor.GetTiDBTableValue(name)
+}
+
+// GetGlobalSysVar gets the global system variable value for name.
+func (gs *tidbSession) GetGlobalSysVar(name string) (string, error) {
+	return gs.se.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(name)
 }
 
 func (gs *tidbSession) showCreatePlacementPolicy(policy *model.PolicyInfo) string {

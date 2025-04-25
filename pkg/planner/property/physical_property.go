@@ -22,8 +22,10 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
+	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -118,6 +120,19 @@ func (t MPPPartitionType) ToExchangeType() tipb.ExchangeType {
 type MPPPartitionColumn struct {
 	Col       *expression.Column
 	CollateID int32
+}
+
+// ResolveIndices resolve index for MPPPartitionColumn
+func (partitionCol *MPPPartitionColumn) ResolveIndices(schema *expression.Schema) (*MPPPartitionColumn, error) {
+	newColExpr, err := partitionCol.Col.ResolveIndices(schema)
+	if err != nil {
+		return nil, err
+	}
+	newCol, _ := newColExpr.(*expression.Column)
+	return &MPPPartitionColumn{
+		Col:       newCol,
+		CollateID: partitionCol.CollateID,
+	}, nil
 }
 
 // Clone makes a copy of MPPPartitionColumn.
@@ -250,9 +265,27 @@ type PhysicalProperty struct {
 	CTEProducerStatus cteProducerStatus
 
 	VectorProp struct {
-		*expression.VectorHelper
+		*expression.VSInfo
 		TopK uint32
 	}
+
+	IndexJoinProp *IndexJoinRuntimeProp
+}
+
+// IndexJoinRuntimeProp is the inner runtime property for index join.
+type IndexJoinRuntimeProp struct {
+	// for complete the last col range access, cuz its runtime constant.
+	OtherConditions []expression.Expression
+	// for filling the range msg info
+	OuterJoinKeys []*expression.Column
+	// for inner ds/index to detect the range, cuz its runtime constant.
+	InnerJoinKeys []*expression.Column
+	// AvgInnerRowCnt is computed from join.EqualCondCount / outerChild.RowCount.
+	// since ds only can build empty range before seeing runtime data, the so inner
+	// ds can get an accurate countAfterAccess. Once index join prop pushed to the
+	// deeper side like through join, the deeper DS's countAfterAccess should be
+	// thought twice.
+	AvgInnerRowCnt float64
 }
 
 // NewPhysicalProperty builds property from columns.
@@ -295,6 +328,59 @@ func (p *PhysicalProperty) IsSubsetOf(keys []*MPPPartitionColumn) []int {
 		}
 	}
 	return matches
+}
+
+// NeedMPPExchangeByEquivalence checks if the keys can match the needs of partition with equivalence.
+// "Equivalence" refers to the process where we utilize a hash column to obtain equivalent columns,
+// and then use these equivalent columns to compare with the MPP partition column to determine whether an exchange is
+// necessary.
+//
+// for example:
+//  1. requiredPartitionColumn: [18，13，16]
+//  2. currentPartitionColumn: 9
+//  3. FD: (1)-->(2-6,8), ()-->(7), (9)-->(10-17), (1,10)==(1,10), (18,21)-->(19,20,22-33), (9,18)==(9,18)
+//     In this case, we can see that the child supplied partition keys is subset of parent required partition cols.
+func (p *PhysicalProperty) NeedMPPExchangeByEquivalence(
+	currentPartitionColumn []*MPPPartitionColumn, fd *funcdep.FDSet) bool {
+	requiredPartitionCols := p.MPPPartitionCols
+	uniqueID2requiredPartitionCols := make(map[*MPPPartitionColumn]intset.FastIntSet, len(requiredPartitionCols))
+	// for each partition column, we calculate the equivalence alternative closure of it.
+	for _, pCol := range requiredPartitionCols {
+		uniqueID2requiredPartitionCols[pCol] = fd.ClosureOfEquivalence(intset.NewFastIntSet(int(pCol.Col.UniqueID)))
+	}
+
+	// there is a subset theorem here, if the child supplied keys is a subset of parent required mpp partition cols,
+	// the mpp partition exchanger can also be eliminated.
+SubsetLoop:
+	for _, key := range currentPartitionColumn {
+		for pCol, equivSet := range uniqueID2requiredPartitionCols {
+			if checkEquivalence(equivSet, key, pCol) {
+				// yes, child can supply the same col partition prop. continue to next child supplied key.
+				continue SubsetLoop
+			}
+		}
+		// once a child supplied keys can't find direct/in-direct equiv all parent required partition cols,
+		// we can break the subset check.
+		//
+		// it's subset case, we don't need to add exchanger.
+		// once there is a column outside the parent required partition cols, we need to add exchanger.
+		// we build a  case like:
+		// parent prop require: partition cols:   1, 2, 3
+		// the child can supply: partition cols:  1, 4, 5
+		// fd: {2,3,4} = {2,3,4}
+		// column 5 will mixture the data distribute, even if parent required columns are all satisfied by child.
+		return true
+	}
+
+	return false
+}
+
+func checkEquivalence(equivSet intset.FastIntSet, key, pCol *MPPPartitionColumn) bool {
+	// if the equiv set contain the key, it means it can supply the same col partition prop directly or in-indirectly.
+	// according to the old logic, when the child can supply the same key partition, we should check its collate-id
+	// when the new collation is enabled suggested by the collateID is negative. Or new collation is not set.
+	return equivSet.Has(int(key.Col.UniqueID)) &&
+		((key.CollateID < 0 && pCol.CollateID == key.CollateID) || key.CollateID >= 0)
 }
 
 // AllColsFromSchema checks whether all the columns needed by this physical
@@ -381,14 +467,27 @@ func (p *PhysicalProperty) HashCode() []byte {
 		for _, col := range p.MPPPartitionCols {
 			p.hashcode = append(p.hashcode, col.hashCode()...)
 		}
-		if p.VectorProp.VectorHelper != nil {
-			// We only accpect the vector information from the TopN which is directly above the DataSource.
+		if p.VectorProp.VSInfo != nil {
+			// We only accept the vector information from the TopN which is directly above the DataSource.
 			// So it's safe to not hash the vector constant.
 			p.hashcode = append(p.hashcode, p.VectorProp.Column.HashCode()...)
 			p.hashcode = codec.EncodeInt(p.hashcode, int64(p.VectorProp.FnPbCode))
 		}
 	}
 	p.hashcode = append(p.hashcode, codec.EncodeInt(nil, int64(p.CTEProducerStatus))...)
+	// encode indexJoinProp into physical prop's hashcode.
+	if p.IndexJoinProp != nil {
+		for _, expr := range p.IndexJoinProp.OtherConditions {
+			p.hashcode = append(p.hashcode, expr.HashCode()...)
+		}
+		for _, col := range p.IndexJoinProp.OuterJoinKeys {
+			p.hashcode = append(p.hashcode, col.HashCode()...)
+		}
+		for _, col := range p.IndexJoinProp.InnerJoinKeys {
+			p.hashcode = append(p.hashcode, col.HashCode()...)
+		}
+		p.hashcode = codec.EncodeFloat(p.hashcode, p.IndexJoinProp.AvgInnerRowCnt)
+	}
 	return p.hashcode
 }
 
@@ -409,6 +508,8 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 		MPPPartitionCols:      p.MPPPartitionCols,
 		RejectSort:            p.RejectSort,
 		CTEProducerStatus:     p.CTEProducerStatus,
+		// we default not to clone basic indexJoinProp by default.
+		// and only call admitIndexJoinProp to inherit the indexJoinProp for special pattern operators.
 	}
 	return prop
 }

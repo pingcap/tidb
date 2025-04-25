@@ -30,9 +30,6 @@ import (
 // TODO: The collected predicate columns will be used to decide whether to load statistics for the columns. And we need some special handling for partition table
 // when the prune mode is static. We can remove such handling when the static partition pruning is totally deprecated.
 type columnStatsUsageCollector struct {
-	// histNeeded indicates whether to collect histogram-needed columns.
-	// TODO: It's used for the special handling for partition table when the prune mode is static. We can remove such handling when the static partition pruning is totally deprecated.
-	histNeeded bool
 	// predicateCols records predicate columns.
 	// The bool value indicates whether we need a full stats for it.
 	// If its value is false, we just need the least meta info(like NDV) of the column in this SQL.
@@ -58,12 +55,14 @@ type columnStatsUsageCollector struct {
 	// tblID2PartitionIDs is used for tables with static pruning mode.
 	// Note that we've no longer suggested to use static pruning mode.
 	tblID2PartitionIDs map[int64][]int64
+
+	// operatorNum is the number of operators in the logical plan.
+	operatorNum uint64
 }
 
-func newColumnStatsUsageCollector(histNeeded bool, enabledPlanCapture bool) *columnStatsUsageCollector {
+func newColumnStatsUsageCollector(enabledPlanCapture bool) *columnStatsUsageCollector {
 	set := intset.NewFastIntSet()
 	collector := &columnStatsUsageCollector{
-		histNeeded: histNeeded,
 		// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
 		cols:               make([]*expression.Column, 0, 8),
 		visitedPhysTblIDs:  &set,
@@ -99,8 +98,8 @@ func (c *columnStatsUsageCollector) addPredicateColumn(col *expression.Column, n
 }
 
 func (c *columnStatsUsageCollector) addPredicateColumnsFromExpressions(list []expression.Expression, needFullStats bool) {
-	cols := expression.ExtractColumnsAndCorColumnsFromExpressions(c.cols[:0], list)
-	for _, col := range cols {
+	c.cols = expression.ExtractColumnsAndCorColumnsFromExpressions(c.cols[:0], list)
+	for _, col := range c.cols {
 		c.addPredicateColumn(col, needFullStats)
 	}
 }
@@ -122,10 +121,11 @@ func (c *columnStatsUsageCollector) updateColMap(col *expression.Column, related
 }
 
 func (c *columnStatsUsageCollector) updateColMapFromExpressions(col *expression.Column, list []expression.Expression) {
-	c.updateColMap(col, expression.ExtractColumnsAndCorColumnsFromExpressions(c.cols[:0], list))
+	c.cols = expression.ExtractColumnsAndCorColumnsFromExpressions(c.cols[:0], list)
+	c.updateColMap(col, c.cols)
 }
 
-func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *logicalop.DataSource) {
+func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedColGroups [][]*expression.Column, ds *logicalop.DataSource) {
 	// Skip all system tables.
 	if filter.IsSystemSchema(ds.DBName.L) {
 		return
@@ -137,12 +137,25 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *log
 		c.visitedtbls[tblID] = struct{}{}
 	}
 	c.visitedPhysTblIDs.Insert(int(tblID))
-	if tblID != ds.PhysicalTableID && c.histNeeded {
+	if tblID != ds.PhysicalTableID {
 		c.tblID2PartitionIDs[tblID] = append(c.tblID2PartitionIDs[tblID], ds.PhysicalTableID)
 	}
 	for _, col := range ds.Schema().Columns {
 		tblColID := model.TableItemID{TableID: tblID, ID: col.ID, IsIndex: false}
 		c.colMap[col.UniqueID] = map[model.TableItemID]struct{}{tblColID: {}}
+	}
+	// record the asked column group specific for each datasource table, which will be checked and converted to index needed in collectSyncIndices.
+	for _, group := range askedColGroups {
+		inTable := true
+		for _, col := range group {
+			if !ds.Schema().Contains(col) {
+				inTable = false
+			}
+		}
+		if inTable {
+			// only store the right col group in this table.
+			ds.AskedColumnGroup = append(ds.AskedColumnGroup, group)
+		}
 	}
 	// We should use `PushedDownConds` here. `AllConds` is used for partition pruning, which doesn't need stats.
 	c.addPredicateColumnsFromExpressions(ds.PushedDownConds, true)
@@ -184,18 +197,24 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForUnionAll(p *logica
 	}
 }
 
-func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
+// collectFromPlan will dive into the tree to collect base column stats usage, in this process
+// we also make the use of the dive process down to passing the parent operator's column groups
+// requirement to notify the underlying datasource to maintain the possible group ndv.
+func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expression.Column, lp base.LogicalPlan) {
+	// derive the new current op's new asked column groups accordingly.
+	curColGroups := lp.ExtractColGroups(askedColGroups)
 	for _, child := range lp.Children() {
-		c.collectFromPlan(child)
+		// passing the new asked column groups down.
+		c.collectFromPlan(curColGroups, child)
 	}
 	switch x := lp.(type) {
 	case *logicalop.DataSource:
-		c.collectPredicateColumnsForDataSource(x)
+		c.collectPredicateColumnsForDataSource(askedColGroups, x)
 	case *logicalop.LogicalIndexScan:
-		c.collectPredicateColumnsForDataSource(x.Source)
+		c.collectPredicateColumnsForDataSource(askedColGroups, x.Source)
 		c.addPredicateColumnsFromExpressions(x.AccessConds, true)
 	case *logicalop.LogicalTableScan:
-		c.collectPredicateColumnsForDataSource(x.Source)
+		c.collectPredicateColumnsForDataSource(askedColGroups, x.Source)
 		c.addPredicateColumnsFromExpressions(x.AccessConds, true)
 	case *logicalop.LogicalProjection:
 		// Schema change from children to self.
@@ -252,9 +271,9 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 		c.collectPredicateColumnsForUnionAll(&x.LogicalUnionAll)
 	case *logicalop.LogicalCTE:
 		// Visit SeedPartLogicalPlan and RecursivePartLogicalPlan first.
-		c.collectFromPlan(x.Cte.SeedPartLogicalPlan)
+		c.collectFromPlan(nil, x.Cte.SeedPartLogicalPlan)
 		if x.Cte.RecursivePartLogicalPlan != nil {
-			c.collectFromPlan(x.Cte.RecursivePartLogicalPlan)
+			c.collectFromPlan(nil, x.Cte.RecursivePartLogicalPlan)
 		}
 		// Schema change from seedPlan/recursivePlan to self.
 		columns := x.Schema().Columns
@@ -284,6 +303,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 			c.updateColMap(col, []*expression.Column{x.SeedSchema.Columns[i]})
 		}
 	}
+	c.operatorNum++
 }
 
 // CollectColumnStatsUsage collects column stats usage from logical plan.
@@ -292,16 +312,18 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
 // First return value: predicate columns
 // Second return value: the visited table IDs(For partition table, we only record its global meta ID. The meta ID of each partition will be recorded in tblID2PartitionIDs)
 // Third return value: the visited partition IDs. Used for static partition pruning.
+// Forth return value: the number of operators in the logical plan.
 // TODO: remove the third return value when the static partition pruning is totally deprecated.
-func CollectColumnStatsUsage(lp base.LogicalPlan, histNeeded bool) (
+func CollectColumnStatsUsage(lp base.LogicalPlan) (
 	map[model.TableItemID]bool,
 	*intset.FastIntSet,
 	map[int64][]int64,
+	uint64,
 ) {
-	collector := newColumnStatsUsageCollector(histNeeded, lp.SCtx().GetSessionVars().IsPlanReplayerCaptureEnabled())
-	collector.collectFromPlan(lp)
+	collector := newColumnStatsUsageCollector(lp.SCtx().GetSessionVars().IsPlanReplayerCaptureEnabled())
+	collector.collectFromPlan(nil, lp)
 	if collector.collectVisitedTable {
 		recordTableRuntimeStats(lp.SCtx(), collector.visitedtbls)
 	}
-	return collector.predicateCols, collector.visitedPhysTblIDs, collector.tblID2PartitionIDs
+	return collector.predicateCols, collector.visitedPhysTblIDs, collector.tblID2PartitionIDs, collector.operatorNum
 }

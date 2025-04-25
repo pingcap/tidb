@@ -27,13 +27,13 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -64,6 +64,23 @@ const (
 	DefaultBlockSize = 16 * units.MiB
 )
 
+// GetAdjustedBlockSize gets the block size after alignment.
+func GetAdjustedBlockSize(memSizePerWriter uint64) int {
+	// the buf size is aligned to block size, and the target table might have many
+	// writers, one writer might take much more memory when the buf size
+	// is slightly larger than the N*block-size.
+	// such as when memSizePerWriter = 2M, block-size = 16M, the aligned size
+	// is 16M, it's 8 times larger.
+	// so we adjust the block size when the aligned size is larger than 1.1 times
+	// of memSizePerWriter, to avoid OOM.
+	blockSize := DefaultBlockSize
+	alignedSize := membuf.GetAlignedSize(memSizePerWriter, uint64(blockSize))
+	if float64(alignedSize)/float64(memSizePerWriter) > 1.1 {
+		return int(memSizePerWriter)
+	}
+	return blockSize
+}
+
 // rangePropertiesCollector collects range properties for each range. The zero
 // value of rangePropertiesCollector is not ready to use, should call reset()
 // first.
@@ -72,6 +89,38 @@ type rangePropertiesCollector struct {
 	currProp     *rangeProperty
 	propSizeDist uint64
 	propKeysDist uint64
+}
+
+// size: the file size after adding 'data'
+func (rc *rangePropertiesCollector) onNextEncodedData(data []byte, size uint64) {
+	keyLen := binary.BigEndian.Uint64(data)
+	key := data[2*lengthBytes : 2*lengthBytes+keyLen]
+
+	if len(rc.currProp.firstKey) == 0 {
+		rc.currProp.firstKey = key
+	}
+	rc.currProp.lastKey = key
+
+	rc.currProp.size += uint64(len(data) - 2*lengthBytes)
+	rc.currProp.keys++
+
+	if rc.currProp.size >= rc.propSizeDist ||
+		rc.currProp.keys >= rc.propKeysDist {
+		newProp := *rc.currProp
+		rc.props = append(rc.props, &newProp)
+		// reset currProp, and start to update this prop.
+		rc.currProp.firstKey = nil
+		rc.currProp.offset = size
+		rc.currProp.keys = 0
+		rc.currProp.size = 0
+	}
+}
+
+func (rc *rangePropertiesCollector) onFileEnd() {
+	if rc.currProp.keys > 0 {
+		newProp := *rc.currProp
+		rc.props = append(rc.props, &newProp)
+	}
 }
 
 func (rc *rangePropertiesCollector) reset() {
@@ -463,7 +512,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	var dataFile, statFile string
 	for i := 0; i < flushKVsRetryTimes; i++ {
 		dataFile, statFile, err = w.flushSortedKVs(ctx)
-		if err == nil {
+		if err == nil || ctx.Err() != nil {
 			break
 		}
 		logger.Warn("flush sorted kv failed",
@@ -536,10 +585,7 @@ func (w *Writer) flushSortedKVs(ctx context.Context) (string, string, error) {
 		}
 	}()
 	w.rc.reset()
-	kvStore, err := NewKeyValueStore(ctx, dataWriter, w.rc)
-	if err != nil {
-		return "", "", err
-	}
+	kvStore := NewKeyValueStore(ctx, dataWriter, w.rc)
 
 	for _, pair := range w.kvLocations {
 		err = kvStore.addEncodedData(w.kvBuffer.GetSlice(pair))
@@ -548,7 +594,7 @@ func (w *Writer) flushSortedKVs(ctx context.Context) (string, string, error) {
 		}
 	}
 
-	kvStore.Close()
+	kvStore.finish()
 	encodedStat := w.rc.encode()
 	statSize := len(encodedStat)
 	_, err = statWriter.Write(ctx, encodedStat)

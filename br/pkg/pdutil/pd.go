@@ -23,7 +23,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
-	"github.com/tikv/pd/client/retry"
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
+	"github.com/tikv/pd/client/pkg/retry"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -154,11 +156,11 @@ func NewPdController(
 		grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(maxMsgSize)),
 	}
 	pdClient, err := pd.NewClientWithContext(
-		ctx, pdAddrs, securityOption,
-		pd.WithGRPCDialOptions(maxCallMsgSize...),
+		ctx, caller.Component("br-pd-controller"), pdAddrs, securityOption,
+		opt.WithGRPCDialOptions(maxCallMsgSize...),
 		// If the time too short, we may scatter a region many times, because
 		// the interface `ScatterRegions` may time out.
-		pd.WithCustomTimeoutOption(60*time.Second),
+		opt.WithCustomTimeoutOption(60*time.Second),
 	)
 	if err != nil {
 		log.Error("fail to create pd client", zap.Error(err))
@@ -779,4 +781,14 @@ func FetchPDVersion(ctx context.Context, pdHTTPCli pdhttp.Client) (*semver.Versi
 	}
 
 	return parseVersion(ver), nil
+}
+
+// SetFollowerHandle set the follower handle option of pd client.
+func (p *PdController) SetFollowerHandle(val bool) error {
+	err := p.pdClient.UpdateOption(opt.EnableFollowerHandle, val)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	log.Info("set follower handle", zap.Bool("enable", val))
+	return nil
 }

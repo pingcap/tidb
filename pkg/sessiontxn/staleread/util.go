@@ -53,7 +53,7 @@ func CalculateAsOfTsExpr(ctx context.Context, sctx planctx.PlanContext, tsExpr a
 	}
 
 	toTypeTimestamp := types.NewFieldType(mysql.TypeTimestamp)
-	// We need at least the millionsecond here, so set fsp to 3.
+	// We need at least the millisecond here, so set fsp to 3.
 	toTypeTimestamp.SetDecimal(3)
 	tsTimestamp, err := tsVal.ConvertTo(sctx.GetSessionVars().StmtCtx.TypeCtx(), toTypeTimestamp)
 	if err != nil {
@@ -81,7 +81,7 @@ func CalculateTsWithReadStaleness(ctx context.Context, sctx sessionctx.Context, 
 		// If the final calculated exceeds the min safe ts, we are not sure whether the ts is safe to read (note that
 		// reading with a ts larger than PD's max allocated ts + 1 is unsafe and may break linearizability).
 		// So in this case, do an extra check on it.
-		err = sessionctx.ValidateSnapshotReadTS(ctx, sctx.GetStore(), readTS)
+		err = sessionctx.ValidateSnapshotReadTS(ctx, sctx.GetStore(), readTS, true)
 		if err != nil {
 			return 0, err
 		}

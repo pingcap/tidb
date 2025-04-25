@@ -24,9 +24,6 @@ import (
 
 type semiJoinProbe struct {
 	baseSemiJoin
-
-	// Used for right side build without other condition
-	offsets []int
 }
 
 func newSemiJoinProbe(base baseJoinProbe, isLeftSideBuild bool) *semiJoinProbe {
@@ -249,38 +246,7 @@ func (s *semiJoinProbe) probeForRightSideBuildHasOtherCondition(chk, joinedChk *
 	}
 
 	if s.unFinishedProbeRowIdxQueue.IsEmpty() {
-		for remainCap > 0 && (s.currentProbeRow < s.chunkRows) {
-			rowNumToTryAppend := min(remainCap, s.chunkRows-s.currentProbeRow)
-			start := s.currentProbeRow
-			end := s.currentProbeRow + rowNumToTryAppend
-
-			for index, usedColIdx := range s.lUsed {
-				dstCol := chk.Column(index)
-				srcCol := s.currentChunk.Column(usedColIdx)
-				chunk.CopySelectedRowsWithRowIDFunc(dstCol, srcCol, s.isMatchedRows, start, end, func(i int) int {
-					return s.usedRows[i]
-				})
-			}
-
-			if len(s.lUsed) == 0 {
-				// For calculating virtual row num
-				virtualRowNum := chk.GetNumVirtualRows()
-				for i := start; i < end; i++ {
-					if s.isMatchedRows[i] {
-						virtualRowNum++
-					}
-				}
-
-				// When `len(s.lUsed) == 0`, column number in chk is 0
-				// We need to manually calculate virtual row number.
-				chk.SetNumVirtualRows(virtualRowNum)
-			} else {
-				chk.SetNumVirtualRows(chk.NumRows())
-			}
-
-			s.currentProbeRow += rowNumToTryAppend
-			remainCap = chk.RequiredRows() - chk.NumRows()
-		}
+		s.generateResultChkForRightBuildWithOtherCondition(remainCap, chk, s.isMatchedRows, true)
 	}
 	return
 }
@@ -319,24 +285,6 @@ func (s *semiJoinProbe) probeForRightSideBuildNoOtherCondition(chk *chunk.Chunk,
 
 	s.generateResultChkForRightBuildNoOtherCondition(chk)
 	return
-}
-
-func (s *semiJoinProbe) generateResultChkForRightBuildNoOtherCondition(resultChk *chunk.Chunk) {
-	if len(s.offsets) == 0 {
-		return
-	}
-
-	for index, colIndex := range s.lUsed {
-		srcCol := s.currentChunk.Column(colIndex)
-		dstCol := resultChk.Column(index)
-		chunk.CopyRows(dstCol, srcCol, s.offsets)
-	}
-
-	if len(s.lUsed) == 0 {
-		resultChk.SetNumVirtualRows(resultChk.NumRows() + len(s.offsets))
-	} else {
-		resultChk.SetNumVirtualRows(resultChk.NumRows())
-	}
 }
 
 func (s *semiJoinProbe) IsCurrentChunkProbeDone() bool {

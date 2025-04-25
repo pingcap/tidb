@@ -35,11 +35,11 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -57,10 +58,14 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
-	"github.com/tikv/pd/client/retry"
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
+	"github.com/tikv/pd/client/pkg/retry"
+	sd "github.com/tikv/pd/client/servicediscovery"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -544,7 +549,7 @@ func NewBackend(
 	ctx context.Context,
 	tls *common.TLS,
 	config BackendConfig,
-	pdSvcDiscovery pd.ServiceDiscovery,
+	pdSvcDiscovery sd.ServiceDiscovery,
 ) (b *Backend, err error) {
 	var (
 		pdCli                pd.Client
@@ -593,18 +598,18 @@ func NewBackend(
 		pdAddrs = strings.Split(config.PDAddr, ",")
 	}
 	pdCli, err = pd.NewClientWithContext(
-		ctx, pdAddrs, tls.ToPDSecurityOption(),
-		pd.WithGRPCDialOptions(maxCallMsgSize...),
+		ctx, caller.Component("lightning-local-backend"), pdAddrs, tls.ToPDSecurityOption(),
+		opt.WithGRPCDialOptions(maxCallMsgSize...),
 		// If the time too short, we may scatter a region many times, because
 		// the interface `ScatterRegions` may time out.
-		pd.WithCustomTimeoutOption(60*time.Second),
+		opt.WithCustomTimeoutOption(60*time.Second),
 	)
 	if err != nil {
 		return nil, common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
 	}
 
 	// The following copies tikv.NewTxnClient without creating yet another pdClient.
-	spkv, err = tikvclient.NewEtcdSafePointKV(strings.Split(config.PDAddr, ","), tls.TLSConfig())
+	spkv, err = tikvclient.NewEtcdSafePointKV(pdAddrs, tls.TLSConfig())
 	if err != nil {
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
@@ -692,7 +697,7 @@ func (local *Backend) TotalMemoryConsume() int64 {
 }
 
 func checkMultiIngestSupport(ctx context.Context, pdCli pd.Client, factory importClientFactory) (bool, error) {
-	stores, err := pdCli.GetAllStores(ctx, pd.WithExcludeTombstone())
+	stores, err := pdCli.GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -822,8 +827,8 @@ func (local *Backend) getImportClient(ctx context.Context, storeID uint64) (sst.
 	return local.importClientFactory.create(ctx, storeID)
 }
 
-func splitRangeBySizeProps(fullRange common.Range, sizeProps *sizeProperties, sizeLimit int64, keysLimit int64) []common.Range {
-	ranges := make([]common.Range, 0, sizeProps.totalSize/uint64(sizeLimit))
+func splitRangeBySizeProps(fullRange engineapi.Range, sizeProps *sizeProperties, sizeLimit int64, keysLimit int64) []engineapi.Range {
+	ranges := make([]engineapi.Range, 0, sizeProps.totalSize/uint64(sizeLimit))
 	curSize := uint64(0)
 	curKeys := uint64(0)
 	curKey := fullRange.Start
@@ -838,7 +843,7 @@ func splitRangeBySizeProps(fullRange common.Range, sizeProps *sizeProperties, si
 		curSize += p.Size
 		curKeys += p.Keys
 		if int64(curSize) >= sizeLimit || int64(curKeys) >= keysLimit {
-			ranges = append(ranges, common.Range{Start: curKey, End: p.Key})
+			ranges = append(ranges, engineapi.Range{Start: curKey, End: p.Key})
 			curKey = p.Key
 			curSize = 0
 			curKeys = 0
@@ -851,7 +856,7 @@ func splitRangeBySizeProps(fullRange common.Range, sizeProps *sizeProperties, si
 		if len(ranges) > 0 && curKeys == 0 {
 			ranges[len(ranges)-1].End = fullRange.End
 		} else {
-			ranges = append(ranges, common.Range{Start: curKey, End: fullRange.End})
+			ranges = append(ranges, engineapi.Range{Start: curKey, End: fullRange.End})
 		}
 	}
 	return ranges
@@ -859,7 +864,7 @@ func splitRangeBySizeProps(fullRange common.Range, sizeProps *sizeProperties, si
 
 func getRegionSplitKeys(
 	ctx context.Context,
-	engine common.Engine,
+	engine engineapi.Engine,
 	sizeLimit int64,
 	keysLimit int64,
 ) ([][]byte, error) {
@@ -891,7 +896,7 @@ func getRegionSplitKeys(
 // and scatter regions for these range and send region jobs to jobToWorkerCh.
 func (local *Backend) prepareAndSendJob(
 	ctx context.Context,
-	engine common.Engine,
+	engine engineapi.Engine,
 	regionSplitKeys [][]byte,
 	regionSplitSize, regionSplitKeyCnt int64,
 	jobToWorkerCh chan<- *regionJob,
@@ -953,14 +958,14 @@ func (local *Backend) prepareAndSendJob(
 // generateAndSendJob scans the region in ranges and send region jobs to jobToWorkerCh.
 func (local *Backend) generateAndSendJob(
 	ctx context.Context,
-	engine common.Engine,
+	engine engineapi.Engine,
 	regionSplitSize, regionSplitKeys int64,
 	jobToWorkerCh chan<- *regionJob,
 	jobWg *sync.WaitGroup,
 ) error {
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 
-	dataAndRangeCh := make(chan common.DataAndRanges)
+	dataAndRangeCh := make(chan engineapi.DataAndRanges)
 	conn := local.WorkerConcurrency
 	if _, ok := engine.(*external.Engine); ok {
 		// currently external engine will generate a large IngestData, se we lower the
@@ -1030,8 +1035,8 @@ var fakeRegionJobs map[[2]string]struct {
 // It will retry internally when scan region meet error.
 func (local *Backend) generateJobForRange(
 	ctx context.Context,
-	data common.IngestData,
-	sortedJobRanges []common.Range,
+	data engineapi.IngestData,
+	sortedJobRanges []engineapi.Range,
 	regionSplitSize, regionSplitKeys int64,
 ) ([]*regionJob, error) {
 	startOfAllRanges, endOfAllRanges := sortedJobRanges[0].Start, sortedJobRanges[len(sortedJobRanges)-1].End
@@ -1136,7 +1141,7 @@ func (local *Backend) startWorker(
 				jobs, err2 := local.generateJobForRange(
 					ctx,
 					job.ingestData,
-					[]common.Range{job.keyRange},
+					[]engineapi.Range{job.keyRange},
 					job.regionSplitSize,
 					job.regionSplitKeys,
 				)
@@ -1247,6 +1252,7 @@ func (local *Backend) executeJob(
 			if !local.isRetryableImportTiKVError(err) {
 				return err
 			}
+			metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 			// if it's retryable error, we retry from scanning region
 			log.FromContext(ctx).Warn("meet retryable error when writing to TiKV",
 				log.ShortError(err), zap.Stringer("job stage", job.stage))
@@ -1259,6 +1265,7 @@ func (local *Backend) executeJob(
 			if !local.isRetryableImportTiKVError(err) {
 				return err
 			}
+			metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 			log.FromContext(ctx).Warn("meet retryable error when ingesting",
 				log.ShortError(err), zap.Stringer("job stage", job.stage))
 			job.lastRetryableErr = err
@@ -1298,7 +1305,7 @@ func (local *Backend) ImportEngine(
 		log.FromContext(ctx).Warn("fail to get region split keys and size", zap.Error(err))
 	}
 
-	var e common.Engine
+	var e engineapi.Engine
 	if externalEngine, ok := local.engineMgr.getExternalEngine(engineUUID); ok {
 		e = externalEngine
 	} else {
@@ -1366,7 +1373,7 @@ func (local *Backend) ImportEngine(
 
 	log.FromContext(ctx).Info("start import engine",
 		zap.Stringer("uuid", engineUUID),
-		zap.Int("region ranges", len(splitKeys)),
+		zap.Int("region ranges", len(splitKeys)-1),
 		zap.Int64("count", lfLength),
 		zap.Int64("size", lfTotalSize))
 
@@ -1393,7 +1400,7 @@ var (
 
 func (local *Backend) doImport(
 	ctx context.Context,
-	engine common.Engine,
+	engine engineapi.Engine,
 	regionSplitKeys [][]byte,
 	regionSplitSize, regionSplitKeyCnt int64,
 ) error {
@@ -1596,27 +1603,32 @@ func (local *Backend) GetExternalEngineKVStatistics(engineUUID uuid.UUID) (
 	return local.engineMgr.getExternalEngineKVStatistics(engineUUID)
 }
 
-// ResetEngine reset the engine and reclaim the space.
-func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error {
-	return local.engineMgr.resetEngine(ctx, engineUUID, false)
-}
-
 // ResetEngineSkipAllocTS is like ResetEngine but the inner TS of the engine is
-// invalid. Caller must use SetTSAfterResetEngine to set a valid TS before import
+// invalid. Caller must use SetTSBeforeImportEngine to set a valid TS before import
 // the engine.
 func (local *Backend) ResetEngineSkipAllocTS(ctx context.Context, engineUUID uuid.UUID) error {
 	return local.engineMgr.resetEngine(ctx, engineUUID, true)
 }
 
-// SetTSAfterResetEngine allocates a new TS for the engine after it's reset.
+// SetTSBeforeImportEngine allocates a new TS for the engine before it is imported.
 // This is typically called after persisting the chosen TS of the engine to make
 // sure TS is not changed after task failover.
-func (local *Backend) SetTSAfterResetEngine(engineUUID uuid.UUID, ts uint64) error {
+func (local *Backend) SetTSBeforeImportEngine(ctx context.Context, engineUUID uuid.UUID, ts uint64) error {
 	e := local.engineMgr.lockEngine(engineUUID, importMutexStateClose)
 	if e == nil {
-		return errors.Errorf("engine %s not found in SetTSAfterResetEngine", engineUUID.String())
+		return errors.Errorf("engine %s not found in SetTSBeforeImportEngine", engineUUID.String())
 	}
 	defer e.unlock()
+	if ts == 0 {
+		p, l, err := local.pdCli.GetTS(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		failpoint.Inject("afterSetTSBeforeImportEngine", func(_ failpoint.Value) {
+			failpoint.Return(errors.Errorf("mock err"))
+		})
+		ts = oracle.ComposeTS(p, l)
+	}
 	e.engineMeta.TS = ts
 	return e.saveEngineMeta()
 }
@@ -1810,7 +1822,7 @@ func getSplitConfFromStore(ctx context.Context, host string, tls *common.TLS) (
 // GetRegionSplitSizeKeys return region split size, region split keys, error
 func GetRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS) (
 	regionSplitSize int64, regionSplitKeys int64, err error) {
-	stores, err := cli.GetAllStores(ctx, pd.WithExcludeTombstone())
+	stores, err := cli.GetAllStores(ctx, opt.WithExcludeTombstone())
 	if err != nil {
 		return 0, 0, err
 	}

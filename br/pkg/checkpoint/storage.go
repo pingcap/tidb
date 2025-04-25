@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -89,7 +89,7 @@ const (
 )
 
 // IsCheckpointDB checks whether the dbname is checkpoint database.
-func IsCheckpointDB(dbname pmodel.CIStr) bool {
+func IsCheckpointDB(dbname ast.CIStr) bool {
 	return dbname.O == LogRestoreCheckpointDatabaseName ||
 		dbname.O == SnapshotRestoreCheckpointDatabaseName ||
 		dbname.O == CustomSSTRestoreCheckpointDatabaseName
@@ -226,7 +226,7 @@ func selectCheckpointData[K KeyType, V ValueType](
 	ctx context.Context,
 	execCtx sqlexec.RestrictedSQLExecutor,
 	dbName string,
-	fn func(groupKey K, value V),
+	fn func(groupKey K, value V) error,
 ) (time.Duration, error) {
 	// records the total time cost in the past executions
 	var pastDureTime time.Duration = 0
@@ -333,7 +333,7 @@ func dropCheckpointTables(
 		}
 	}
 	// check if any user table is created in the checkpoint database
-	tables, err := dom.InfoSchema().SchemaTableInfos(ctx, pmodel.NewCIStr(dbName))
+	tables, err := dom.InfoSchema().SchemaTableInfos(ctx, ast.NewCIStr(dbName))
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 )
 
@@ -65,7 +65,7 @@ func newFileCheckpointsDB(t *testing.T, addIndexBySQL bool) *checkpoints.FileChe
 				"t3": {
 					Name: "t3",
 					Desired: &model.TableInfo{
-						Name: pmodel.NewCIStr("t3"),
+						Name: ast.NewCIStr("t3"),
 					},
 				},
 			},
@@ -90,6 +90,7 @@ func newFileCheckpointsDB(t *testing.T, addIndexBySQL bool) *checkpoints.FileChe
 				},
 				Chunk: mydump.Chunk{
 					Offset:       12,
+					RealOffset:   10,
 					EndOffset:    102400,
 					PrevRowIDMax: 1,
 					RowIDMax:     5000,
@@ -139,6 +140,7 @@ func newFileCheckpointsDB(t *testing.T, addIndexBySQL bool) *checkpoints.FileChe
 		Key:      checkpoints.ChunkCheckpointKey{Path: "/tmp/path/1.sql", Offset: 0},
 		Checksum: verification.MakeKVChecksum(4491, 586, 486070148917),
 		Pos:      55904,
+		RealPos:  55902,
 		RowID:    681,
 	}
 	ccm.MergeInto(cpd)
@@ -194,6 +196,7 @@ func TestGet(t *testing.T) {
 					ColumnPermutation: []int{},
 					Chunk: mydump.Chunk{
 						Offset:       55904,
+						RealOffset:   55902,
 						EndOffset:    102400,
 						PrevRowIDMax: 681,
 						RowIDMax:     5000,
@@ -223,7 +226,7 @@ func TestGet(t *testing.T) {
 			},
 		},
 		TableInfo: &model.TableInfo{
-			Name: pmodel.NewCIStr("t3"),
+			Name: ast.NewCIStr("t3"),
 		},
 	}
 

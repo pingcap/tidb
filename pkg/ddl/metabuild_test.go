@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/deeptest"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -86,12 +86,12 @@ func TestNewMetaBuildContextWithSctx(t *testing.T) {
 		{
 			field: "clusteredIndexDefMode",
 			setSctx: func(val any) {
-				sessVars.EnableClusteredIndex = val.(variable.ClusteredIndexDefMode)
+				sessVars.EnableClusteredIndex = val.(vardef.ClusteredIndexDefMode)
 			},
 			testVals: []any{
-				variable.ClusteredIndexDefModeIntOnly,
-				variable.ClusteredIndexDefModeOff,
-				variable.ClusteredIndexDefModeOn,
+				vardef.ClusteredIndexDefModeIntOnly,
+				vardef.ClusteredIndexDefModeOff,
+				vardef.ClusteredIndexDefModeOn,
 			},
 			getter: func(ctx *metabuild.Context) any {
 				return ctx.GetClusteredIndexDefMode()
@@ -102,7 +102,7 @@ func TestNewMetaBuildContextWithSctx(t *testing.T) {
 			setSctx: func(val any) {
 				sessVars.ShardRowIDBits = val.(uint64)
 			},
-			testVals: []any{uint64(variable.DefShardRowIDBits), uint64(6)},
+			testVals: []any{uint64(vardef.DefShardRowIDBits), uint64(6)},
 			getter: func(ctx *metabuild.Context) any {
 				return ctx.GetShardRowIDBits()
 			},
@@ -112,7 +112,7 @@ func TestNewMetaBuildContextWithSctx(t *testing.T) {
 			setSctx: func(val any) {
 				sessVars.PreSplitRegions = val.(uint64)
 			},
-			testVals: []any{uint64(variable.DefPreSplitRegions), uint64(123)},
+			testVals: []any{uint64(vardef.DefPreSplitRegions), uint64(123)},
 			getter: func(ctx *metabuild.Context) any {
 				return ctx.GetPreSplitRegions()
 			},

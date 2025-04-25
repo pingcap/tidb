@@ -578,3 +578,14 @@ func TestIndexAdvisorStorage(t *testing.T) {
 		"b,c \"Column [b c] appear in Equal or Range Predicate clause(s) in query: select `c` , `b` from `test` . `t` where `c` = ? and `b` = ?\"",
 		"d \"Column [d] appear in Equal or Range Predicate clause(s) in query: select `d` from `test` . `t` where `d` = ?\""))
 }
+
+func TestIndexAdvisorCreateIndexStmt(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, c int)`)
+	results := tk.MustQuery(`recommend index run for "select a from t where a=1"`).Rows()
+	require.Len(t, results, 1)
+	ddl := results[0][7].(string)
+	require.Equal(t, "CREATE INDEX idx_a ON t(a);", ddl)
+}

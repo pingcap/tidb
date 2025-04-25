@@ -531,14 +531,14 @@ insert into t2 value (1,2,date'2020-05-08');
 explain format = 'brief' SELECT /*+ INL_MERGE_JOIN(t1,t2) */ COUNT(*) FROM  t1 LEFT JOIN t2 ON t1.id = t2.order_id WHERE t1.ns = 'a' AND t1.org_id IN (1) AND t1.status IN (2,6,10) AND timestampdiff(month, t2.begin_time, date'2020-05-06') = 0;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(1)->Column#10
-└─IndexJoin	0.03	root		inner join, inner:Selection, outer key:expression__issues.t1.id, inner key:expression__issues.t2.order_id, equal cond:eq(expression__issues.t1.id, expression__issues.t2.order_id)
+└─IndexJoin	0.03	root		inner join, inner:IndexLookUp, outer key:expression__issues.t1.id, inner key:expression__issues.t2.order_id, equal cond:eq(expression__issues.t1.id, expression__issues.t2.order_id)
   ├─TableReader(Build)	0.02	root		data:Selection
   │ └─Selection	0.02	cop[tikv]		eq(cast(expression__issues.t1.org_id, double BINARY), 1), eq(expression__issues.t1.ns, "a"), in(expression__issues.t1.status, 2, 6, 10)
   │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─Selection(Probe)	0.03	root		eq(timestampdiff("MONTH", expression__issues.t2.begin_time, 2020-05-06), 0)
-    └─IndexLookUp	0.04	root		
-      ├─IndexRangeScan(Build)	0.04	cop[tikv]	table:t2, index:idx_oid(order_id)	range: decided by [eq(expression__issues.t2.order_id, expression__issues.t1.id)], keep order:false, stats:pseudo
-      └─TableRowIDScan(Probe)	0.04	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─IndexLookUp(Probe)	0.03	root		
+    ├─IndexRangeScan(Build)	0.04	cop[tikv]	table:t2, index:idx_oid(order_id)	range: decided by [eq(expression__issues.t2.order_id, expression__issues.t1.id)], keep order:false, stats:pseudo
+    └─Selection(Probe)	0.03	cop[tikv]		eq(timestampdiff("MONTH", expression__issues.t2.begin_time, 2020-05-06), 0)
+      └─TableRowIDScan	0.04	cop[tikv]	table:t2	keep order:false, stats:pseudo
 SELECT /*+ INL_MERGE_JOIN(t1,t2) */ COUNT(*) FROM  t1 LEFT JOIN t2 ON t1.id = t2.order_id WHERE t1.ns = 'a' AND t1.org_id IN (1) AND t1.status IN (2,6,10) AND timestampdiff(month, t2.begin_time, date'2020-05-06') = 0;
 COUNT(*)
 1
@@ -838,7 +838,7 @@ j
 {"test": 3}
 {"test": 0}
 {"test": "0"}
-{"test": 0}
+{"test": 0.0}
 {"test": "aaabbb"}
 {"test": 3.1415}
 {"test": []}
@@ -881,7 +881,7 @@ j
 {"test": 3}
 {"test": 0}
 {"test": "0"}
-{"test": 0}
+{"test": 0.0}
 {"test": "aaabbb"}
 {"test": 3.1415}
 {"test": []}
@@ -1378,7 +1378,7 @@ select .78$123;
 $123
 0.78
 select .78$421+1;
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near "+1;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near "+1" 
 select t. `r10` > 3 from t;
 t. `r10` > 3
 1
@@ -3236,3 +3236,19 @@ insert into test.t values('20000102030405.0078125');
 select * from test.t where date_add(a, interval 1 second) = '2000-01-02 03:04:06.007813';
 a
 20000102030405.008
+drop table if exists t0;
+create table `t0`
+(
+`vkey` integer,
+`pkey` integer,
+`c0`   integer
+);
+insert into `t0`
+values (1, 2, 3);
+select *
+from `t0`
+where (nullif(
+3 ^ 10 & (abs(-50)) ,
+round(case when (((`t0`.`c0`) >= 1) or null) then 91 else 86 end)
+)) in (select `vkey` from `t0` where false);
+vkey	pkey	c0

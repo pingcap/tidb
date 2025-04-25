@@ -22,9 +22,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/syncload"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -89,7 +89,7 @@ func TestConcurrentLoadHist(t *testing.T) {
 	testKit.MustExec("analyze table t")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
@@ -132,7 +132,7 @@ func TestConcurrentLoadHistTimeout(t *testing.T) {
 	testKit.MustExec("analyze table t")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
@@ -184,7 +184,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 	testKit.MustExec("analyze table t")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
@@ -225,7 +225,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		exitCh := make(chan struct{})
 		require.NoError(t, failpoint.Enable(fp.failPath, fp.inTerms))
 
-		task1, err1 := h.HandleOneTask(testKit.Session().(sessionctx.Context), nil, exitCh)
+		task1, err1 := h.HandleOneTask(nil, exitCh)
 		require.Error(t, err1)
 		require.NotNil(t, task1)
 		for _, resultCh := range stmtCtx1.StatsLoad.ResultCh {
@@ -252,7 +252,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		}
 
 		require.NoError(t, failpoint.Disable(fp.failPath))
-		task3, err3 := h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)
+		task3, err3 := h.HandleOneTask(task1, exitCh)
 		require.NoError(t, err3)
 		require.Nil(t, task3)
 		for _, resultCh := range stmtCtx1.StatsLoad.ResultCh {
@@ -299,7 +299,7 @@ func TestRetry(t *testing.T) {
 	testKit.MustExec("analyze table t")
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 
@@ -330,8 +330,8 @@ func TestRetry(t *testing.T) {
 		err1  error
 	)
 
-	for i := 0; i < syncload.RetryCount; i++ {
-		task1, err1 = h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)
+	for range syncload.RetryCount {
+		task1, err1 = h.HandleOneTask(task1, exitCh)
 		require.Error(t, err1)
 		require.NotNil(t, task1)
 		select {
@@ -341,7 +341,7 @@ func TestRetry(t *testing.T) {
 		default:
 		}
 	}
-	result, err1 := h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)
+	result, err1 := h.HandleOneTask(task1, exitCh)
 	require.NoError(t, err1)
 	require.Nil(t, result)
 	for _, resultCh := range stmtCtx1.StatsLoad.ResultCh {
@@ -351,8 +351,8 @@ func TestRetry(t *testing.T) {
 		require.Error(t, rs1.Val.(stmtctx.StatsLoadResult).Error)
 	}
 	task1.Retry = 0
-	for i := 0; i < syncload.RetryCount*5; i++ {
-		task1, err1 = h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)
+	for range syncload.RetryCount * 5 {
+		task1, err1 = h.HandleOneTask(task1, exitCh)
 		require.Error(t, err1)
 		require.NotNil(t, task1)
 		select {
@@ -388,7 +388,7 @@ func TestSendLoadRequestsWaitTooLong(t *testing.T) {
 	tk.MustExec("analyze table t all columns")
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	neededColumns := make([]model.StatsLoadItem, 0, len(tableInfo.Columns))
@@ -420,7 +420,7 @@ func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
 	<-h.DDLEventCh()
 	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3)")
 	tk.MustExec("analyze table t columns a, b")
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, h.InitStatsLite(context.TODO()))
 	require.NoError(t, err)
 	require.NotNil(t, tbl)
@@ -435,9 +435,10 @@ func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
 
 	// Do some DDL, one successfully handled by handleDDLEvent, the other not.
 	tk.MustExec("alter table t add column d int default 2")
-	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
-	tbl, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	require.NotNil(t, tbl)
 	tblInfo = tbl.Meta()
@@ -448,8 +449,11 @@ func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
 
 	// Try sync load.
 	tk.MustExec("select * from t where a >= 1 and b = 2 and c = 3 and d = 4")
-	statsTbl, ok = h.Get(tblInfo.ID)
-	require.True(t, ok)
+	require.Eventually(t, func() bool {
+		statsTbl, ok = h.Get(tblInfo.ID)
+		require.True(t, ok)
+		return statsTbl.ColNum() == 3
+	}, 5*time.Second, 100*time.Millisecond)
 	require.True(t, statsTbl.GetCol(tblInfo.Columns[0].ID).IsFullLoad())
 	require.True(t, statsTbl.GetCol(tblInfo.Columns[1].ID).IsFullLoad())
 	require.True(t, statsTbl.GetCol(tblInfo.Columns[3].ID).IsFullLoad())
@@ -463,8 +467,11 @@ func TestSyncLoadOnObjectWhichCanNotFoundInStorage(t *testing.T) {
 	tk.MustExec("analyze table t columns a, b, c")
 	require.NoError(t, h.InitStatsLite(context.TODO()))
 	tk.MustExec("select * from t where a >= 1 and b = 2 and c = 3 and d = 4")
-	statsTbl, ok = h.Get(tblInfo.ID)
-	require.True(t, ok)
+	require.Eventually(t, func() bool {
+		statsTbl, ok = h.Get(tblInfo.ID)
+		require.True(t, ok)
+		return statsTbl.ColNum() == 4
+	}, 5*time.Second, 100*time.Millisecond)
 	// a, b, d's status is not changed.
 	require.True(t, statsTbl.GetCol(tblInfo.Columns[0].ID).IsFullLoad())
 	require.True(t, statsTbl.GetCol(tblInfo.Columns[1].ID).IsFullLoad())

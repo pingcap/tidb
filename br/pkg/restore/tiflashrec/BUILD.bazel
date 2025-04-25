@@ -27,7 +27,7 @@ go_test(
         ":tiflashrec",
         "//pkg/infoschema",
         "//pkg/meta/model",
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "@com_github_stretchr_testify//require",
     ],
 )

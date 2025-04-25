@@ -6,32 +6,40 @@ import (
 	"bytes"
 
 	"github.com/google/btree"
+	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/redact"
-	"github.com/pkg/errors"
+	"go.uber.org/zap"
 )
 
-// Range represents a backup response.
-type Range struct {
+// KeyRange represents a origin key range.
+type KeyRange struct {
 	StartKey []byte
 	EndKey   []byte
-	Files    []*backuppb.File
 }
 
-// BytesAndKeys returns total bytes and keys in a range.
-func (rg *Range) BytesAndKeys() (bytes, keys uint64) {
-	for _, f := range rg.Files {
-		bytes += f.TotalBytes
-		keys += f.TotalKvs
-	}
-	return
+// Contains check if the range contains the given key, [start, end).
+func (rg *KeyRange) Contains(key []byte) bool {
+	start, end := rg.StartKey, rg.EndKey
+	return bytes.Compare(key, start) >= 0 &&
+		(len(end) == 0 || bytes.Compare(key, end) < 0)
+}
+
+// ContainsRange check if the range contains the region's key range.
+func (rg *KeyRange) ContainsRange(startKey, endKey []byte) bool {
+	start, end := rg.StartKey, rg.EndKey
+	return bytes.Compare(startKey, start) >= 0 &&
+		(len(end) == 0 || bytes.Compare(endKey, end) <= 0)
 }
 
 // Intersect returns intersect range in the tree.
-func (rg *Range) Intersect(
+func (rg *KeyRange) Intersect(
 	start, end []byte,
 ) (subStart, subEnd []byte, isIntersect bool) {
 	// empty mean the max end key
@@ -62,24 +70,24 @@ func (rg *Range) Intersect(
 	return
 }
 
-// Contains check if the range contains the given key, [start, end).
-func (rg *Range) Contains(key []byte) bool {
-	start, end := rg.StartKey, rg.EndKey
-	return bytes.Compare(key, start) >= 0 &&
-		(len(end) == 0 || bytes.Compare(key, end) < 0)
+// Range represents a backup response.
+type Range struct {
+	KeyRange
+	Files []*backuppb.File
 }
 
-// ContainsRange check if the range contains the region's key range.
-func (rg *Range) ContainsRange(startKey, endKey []byte) bool {
-	start, end := rg.StartKey, rg.EndKey
-	return bytes.Compare(startKey, start) >= 0 &&
-		(len(end) == 0 || bytes.Compare(endKey, end) <= 0)
+// BytesAndKeys returns total bytes and keys in a range.
+func (rg *Range) BytesAndKeys() (bytes, keys uint64) {
+	for _, f := range rg.Files {
+		bytes += f.TotalBytes
+		keys += f.TotalKvs
+	}
+	return
 }
 
 // Less impls btree.Item.
-func (rg *Range) Less(than btree.Item) bool {
+func (rg *Range) Less(ta *Range) bool {
 	// rg.StartKey < than.StartKey
-	ta := than.(*Range)
 	return bytes.Compare(rg.StartKey, ta.StartKey) < 0
 }
 
@@ -102,7 +110,7 @@ type RangeStatsTree struct {
 
 func NewRangeStatsTree() RangeStatsTree {
 	return RangeStatsTree{
-		BTreeG: btree.NewG[*RangeStats](32, (*RangeStats).Less),
+		BTreeG: btree.NewG(32, (*RangeStats).Less),
 	}
 }
 
@@ -180,18 +188,26 @@ func NeedsMerge(left, right *RangeStats, splitSizeBytes, splitKeyCount uint64) b
 	return false
 }
 
-var _ btree.Item = &Range{}
-
 // RangeTree is sorted tree for Ranges.
 // All the ranges it stored do not overlap.
 type RangeTree struct {
-	*btree.BTree
+	*btree.BTreeG[*Range]
+
+	PhysicalID int64
 }
 
 // NewRangeTree returns an empty range tree.
 func NewRangeTree() RangeTree {
 	return RangeTree{
-		BTree: btree.New(32),
+		BTreeG: btree.NewG(32, (*Range).Less),
+	}
+}
+
+// NewRangeTreeWithFreeListG returns an empty range tree with the specified free list
+func NewRangeTreeWithFreeListG(physicalID int64, f *btree.FreeListG[*Range]) RangeTree {
+	return RangeTree{
+		BTreeG:     btree.NewWithFreeListG(32, (*Range).Less, f),
+		PhysicalID: physicalID,
 	}
 }
 
@@ -199,8 +215,8 @@ func NewRangeTree() RangeTree {
 // key.
 func (rangeTree *RangeTree) Find(rg *Range) *Range {
 	var ret *Range
-	rangeTree.DescendLessOrEqual(rg, func(i btree.Item) bool {
-		ret = i.(*Range)
+	rangeTree.DescendLessOrEqual(rg, func(i *Range) bool {
+		ret = i
 		return false
 	})
 
@@ -225,8 +241,7 @@ func (rangeTree *RangeTree) getOverlaps(rg *Range) []*Range {
 	}
 
 	var overlaps []*Range
-	rangeTree.AscendGreaterOrEqual(found, func(i btree.Item) bool {
-		over := i.(*Range)
+	rangeTree.AscendGreaterOrEqual(found, func(over *Range) bool {
 		if len(rg.EndKey) > 0 && bytes.Compare(rg.EndKey, over.StartKey) <= 0 {
 			return false
 		}
@@ -237,8 +252,15 @@ func (rangeTree *RangeTree) getOverlaps(rg *Range) []*Range {
 }
 
 // Update inserts range into tree and delete overlapping ranges.
-func (rangeTree *RangeTree) Update(rg Range) {
-	overlaps := rangeTree.getOverlaps(&rg)
+func (rangeTree *RangeTree) Update(rg Range) bool {
+	return rangeTree.updateForce(&rg, true)
+}
+
+func (rangeTree *RangeTree) updateForce(rg *Range, force bool) bool {
+	overlaps := rangeTree.getOverlaps(rg)
+	if !force && len(overlaps) > 0 {
+		return false
+	}
 	// Range has backuped, overwrite overlapping range.
 	for _, item := range overlaps {
 		log.Info("delete overlapping range",
@@ -246,7 +268,8 @@ func (rangeTree *RangeTree) Update(rg Range) {
 			logutil.Key("endKey", item.EndKey))
 		rangeTree.Delete(item)
 	}
-	rangeTree.ReplaceOrInsert(&rg)
+	rangeTree.ReplaceOrInsert(rg)
+	return true
 }
 
 // Put forms a range and inserts it into tree.
@@ -254,48 +277,66 @@ func (rangeTree *RangeTree) Put(
 	startKey, endKey []byte, files []*backuppb.File,
 ) {
 	rg := Range{
-		StartKey: startKey,
-		EndKey:   endKey,
-		Files:    files,
+		KeyRange: KeyRange{
+			StartKey: startKey,
+			EndKey:   endKey,
+		},
+		Files: files,
 	}
-	rangeTree.Update(rg)
+	rangeTree.updateForce(&rg, true)
+}
+
+// PutForce forms a range and inserts it into tree without force.
+func (rangeTree *RangeTree) PutForce(
+	startKey, endKey []byte, files []*backuppb.File, force bool,
+) bool {
+	rg := Range{
+		KeyRange: KeyRange{
+			StartKey: startKey,
+			EndKey:   endKey,
+		},
+		Files: files,
+	}
+
+	return rangeTree.updateForce(&rg, force)
 }
 
 // InsertRange inserts ranges into the range tree.
 // It returns a non-nil range if there are soe overlapped ranges.
 func (rangeTree *RangeTree) InsertRange(rg Range) *Range {
-	out := rangeTree.ReplaceOrInsert(&rg)
+	out, _ := rangeTree.ReplaceOrInsert(&rg)
 	if out == nil {
 		return nil
 	}
-	return out.(*Range)
+	return out
 }
 
 // GetIncompleteRange returns missing range covered by startKey and endKey.
 func (rangeTree *RangeTree) GetIncompleteRange(
 	startKey, endKey []byte,
-) []Range {
+) []*kvrpcpb.KeyRange {
 	if len(startKey) != 0 && bytes.Equal(startKey, endKey) {
-		return []Range{}
+		return []*kvrpcpb.KeyRange{}
 	}
-	incomplete := make([]Range, 0, 64)
-	requestRange := Range{StartKey: startKey, EndKey: endKey}
+	// Don't use a large buffer, because it will cause memory issue.
+	// And the number of missing ranges is usually small.
+	incomplete := make([]*kvrpcpb.KeyRange, 0, 1)
+	requestRange := KeyRange{StartKey: startKey, EndKey: endKey}
 	lastEndKey := startKey
-	pviot := &Range{StartKey: startKey}
+	pviot := &Range{KeyRange: KeyRange{StartKey: startKey}}
 	if first := rangeTree.Find(pviot); first != nil {
 		pviot.StartKey = first.StartKey
 	}
 	pviotNotFound := true
-	rangeTree.AscendGreaterOrEqual(pviot, func(i btree.Item) bool {
+	rangeTree.AscendGreaterOrEqual(pviot, func(rg *Range) bool {
 		pviotNotFound = false
-		rg := i.(*Range)
 		if bytes.Compare(lastEndKey, rg.StartKey) < 0 {
 			start, end, isIntersect :=
 				requestRange.Intersect(lastEndKey, rg.StartKey)
 			if isIntersect {
 				// There is a gap between the last item and the current item.
 				incomplete =
-					append(incomplete, Range{StartKey: start, EndKey: end})
+					append(incomplete, &kvrpcpb.KeyRange{StartKey: start, EndKey: end})
 			}
 		}
 		lastEndKey = rg.EndKey
@@ -309,17 +350,15 @@ func (rangeTree *RangeTree) GetIncompleteRange(
 		start, end, isIntersect := requestRange.Intersect(lastEndKey, endKey)
 		if isIntersect {
 			incomplete =
-				append(incomplete, Range{StartKey: start, EndKey: end})
+				append(incomplete, &kvrpcpb.KeyRange{StartKey: start, EndKey: end})
 		}
 	}
 	return incomplete
 }
 
 type ProgressRange struct {
-	Res        RangeTree
-	Incomplete []Range
-	Origin     Range
-	GroupKey   string
+	Res    RangeTree
+	Origin KeyRange
 }
 
 // Less impls btree.Item.
@@ -332,13 +371,33 @@ func (pr *ProgressRange) Less(than *ProgressRange) bool {
 // All the progress ranges it sorted do not overlap.
 type ProgressRangeTree struct {
 	*btree.BTreeG[*ProgressRange]
+
+	checksumMap      map[int64]*metautil.ChecksumStats
+	skipChecksum     bool
+	metaWriter       *metautil.MetaWriter
+	completeCallBack func()
 }
 
 // NewProgressRangeTree returns an empty range tree.
-func NewProgressRangeTree() ProgressRangeTree {
+func NewProgressRangeTree(metaWriter *metautil.MetaWriter, skipChecksum bool) ProgressRangeTree {
 	return ProgressRangeTree{
-		BTreeG: btree.NewG[*ProgressRange](32, (*ProgressRange).Less),
+		BTreeG: btree.NewG(32, (*ProgressRange).Less),
+
+		checksumMap:      make(map[int64]*metautil.ChecksumStats),
+		skipChecksum:     skipChecksum,
+		metaWriter:       metaWriter,
+		completeCallBack: func() {},
 	}
+}
+
+// SetCallBack set the complete call back to update the progress.
+func (rangeTree *ProgressRangeTree) SetCallBack(callback func()) {
+	rangeTree.completeCallBack = callback
+}
+
+// GetChecksumMap get the checksum map from physical ID to checksum.
+func (rangeTree *ProgressRangeTree) GetChecksumMap() map[int64]*metautil.ChecksumStats {
+	return rangeTree.checksumMap
 }
 
 // find is a helper function to find an item that contains the range.
@@ -372,7 +431,7 @@ func (rangeTree *ProgressRangeTree) Insert(pr *ProgressRange) error {
 // FindContained finds if there is a progress range containing the key range [startKey, endKey).
 func (rangeTree *ProgressRangeTree) FindContained(startKey, endKey []byte) (*ProgressRange, error) {
 	startPr := &ProgressRange{
-		Origin: Range{
+		Origin: KeyRange{
 			StartKey: startKey,
 			EndKey:   endKey,
 		},
@@ -380,7 +439,9 @@ func (rangeTree *ProgressRangeTree) FindContained(startKey, endKey []byte) (*Pro
 	ret := rangeTree.find(startPr)
 
 	if ret == nil {
-		return nil, errors.Errorf("Cannot find progress range that contains the start key: %s", redact.Key(startKey))
+		log.Warn("Cannot find progress range that contains the start key, maybe the duplicated response",
+			zap.String("key", redact.Key(startKey)))
+		return nil, nil
 	}
 
 	if !ret.Origin.ContainsRange(startKey, endKey) {
@@ -392,50 +453,83 @@ func (rangeTree *ProgressRangeTree) FindContained(startKey, endKey []byte) (*Pro
 	return ret, nil
 }
 
-type incompleteRangesFetcherItem struct {
-	pr       *ProgressRange
-	complete bool
+type DeletedRange struct {
+	rg       *ProgressRange
+	checksum metautil.ChecksumStats
 }
 
-type IncompleteRangesFetcher struct {
-	items []*incompleteRangesFetcherItem
-	left  int
-}
-
-func (rangeTree *ProgressRangeTree) Iter() *IncompleteRangesFetcher {
-	items := make([]*incompleteRangesFetcherItem, 0, rangeTree.Len())
+func (rangeTree *ProgressRangeTree) GetIncompleteRanges() ([]*kvrpcpb.KeyRange, error) {
+	var (
+		// about 64 MB memory if there are 1 million ranges
+		incompleteRanges = make([]*kvrpcpb.KeyRange, 0, rangeTree.Len())
+		deletedRanges    = make([]DeletedRange, 0)
+		rangeAscendErr   error
+	)
 	rangeTree.Ascend(func(item *ProgressRange) bool {
-		items = append(items, &incompleteRangesFetcherItem{
-			pr:       item,
-			complete: false,
-		})
-		return true
-	})
-	return &IncompleteRangesFetcher{
-		items: items,
-		left:  len(items),
-	}
-}
-
-func (iter *IncompleteRangesFetcher) GetIncompleteRanges() []Range {
-	// about 64 MB memory if there are 1 million ranges
-	incompleteRanges := make([]Range, 0, len(iter.items))
-	for _, item := range iter.items {
-		if item.complete {
-			continue
-		}
-
-		incomplete := item.pr.Res.GetIncompleteRange(item.pr.Origin.StartKey, item.pr.Origin.EndKey)
+		// NOTE: maybe there is a late response whose range overlaps with an existing item, which
+		// may cause the complete range tree to become incomplete. Therefore, `item.Complete` is
+		// only for statistic.
+		incomplete := item.Res.GetIncompleteRange(item.Origin.StartKey, item.Origin.EndKey)
 		if len(incomplete) == 0 {
-			item.complete = true
-			iter.left -= 1
-			continue
+			var checksum metautil.ChecksumStats
+			checksum, rangeAscendErr = rangeTree.collectRangeFiles(item)
+			if rangeAscendErr != nil {
+				return false
+			}
+			deletedRanges = append(deletedRanges, DeletedRange{
+				rg:       item,
+				checksum: checksum,
+			})
+			rangeTree.completeCallBack()
+			return true
 		}
 		incompleteRanges = append(incompleteRanges, incomplete...)
+		return true
+	})
+	if rangeAscendErr != nil {
+		return nil, errors.Trace(rangeAscendErr)
 	}
-	return incompleteRanges
+	for _, deletedRange := range deletedRanges {
+		rangeTree.Delete(deletedRange.rg)
+		if !rangeTree.skipChecksum {
+			rangeTree.UpdateChecksum(
+				deletedRange.rg.Res.PhysicalID,
+				deletedRange.checksum.Crc64Xor,
+				deletedRange.checksum.TotalKvs,
+				deletedRange.checksum.TotalBytes,
+			)
+		}
+	}
+	return incompleteRanges, nil
 }
 
-func (iter *IncompleteRangesFetcher) Len() int {
-	return iter.left
+func (rangeTree *ProgressRangeTree) collectRangeFiles(item *ProgressRange) (metautil.ChecksumStats, error) {
+	var checksum metautil.ChecksumStats
+	if rangeTree.metaWriter == nil {
+		return checksum, nil
+	}
+	var rangeAscendErr error
+	item.Res.Ascend(func(r *Range) bool {
+		crc, kvs, bytes := utils.SummaryFiles(r.Files)
+		if err := rangeTree.metaWriter.Send(r.Files, metautil.AppendDataFile); err != nil {
+			rangeAscendErr = err
+			return false
+		}
+		checksum.Crc64Xor ^= crc
+		checksum.TotalKvs += kvs
+		checksum.TotalBytes += bytes
+		return true
+	})
+	return checksum, rangeAscendErr
+}
+
+func (rangeTree *ProgressRangeTree) UpdateChecksum(physicalID int64, crc, kvs, bytes uint64) {
+	ckm, ok := rangeTree.checksumMap[physicalID]
+	if !ok {
+		ckm = &metautil.ChecksumStats{}
+		rangeTree.checksumMap[physicalID] = ckm
+	}
+	ckm.Crc64Xor ^= crc
+	ckm.TotalKvs += kvs
+	ckm.TotalBytes += bytes
 }

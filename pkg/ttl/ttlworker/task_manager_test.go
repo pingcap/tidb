@@ -21,12 +21,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
@@ -283,18 +284,26 @@ func (s *mockTiKVStore) GetRegionCache() *tikv.RegionCache {
 }
 
 func TestGetMaxRunningTasksLimit(t *testing.T) {
-	variable.TTLRunningTasks.Store(1)
+	mockClient, _, pdClient, err := testutils.NewMockTiKV("", nil)
+	require.NoError(t, err)
+	defer func() {
+		pdClient.Close()
+		err = mockClient.Close()
+		require.NoError(t, err)
+	}()
+
+	vardef.TTLRunningTasks.Store(1)
 	require.Equal(t, 1, getMaxRunningTasksLimit(&mockTiKVStore{}))
 
-	variable.TTLRunningTasks.Store(2)
+	vardef.TTLRunningTasks.Store(2)
 	require.Equal(t, 2, getMaxRunningTasksLimit(&mockTiKVStore{}))
 
-	variable.TTLRunningTasks.Store(-1)
-	require.Equal(t, variable.MaxConfigurableConcurrency, getMaxRunningTasksLimit(nil))
-	require.Equal(t, variable.MaxConfigurableConcurrency, getMaxRunningTasksLimit(&mockKVStore{}))
-	require.Equal(t, variable.MaxConfigurableConcurrency, getMaxRunningTasksLimit(&mockTiKVStore{}))
+	vardef.TTLRunningTasks.Store(-1)
+	require.Equal(t, vardef.MaxConfigurableConcurrency, getMaxRunningTasksLimit(nil))
+	require.Equal(t, vardef.MaxConfigurableConcurrency, getMaxRunningTasksLimit(&mockKVStore{}))
+	require.Equal(t, vardef.MaxConfigurableConcurrency, getMaxRunningTasksLimit(&mockTiKVStore{}))
 
-	s := &mockTiKVStore{regionCache: tikv.NewRegionCache(nil)}
+	s := &mockTiKVStore{regionCache: tikv.NewRegionCache(pdClient)}
 	s.GetRegionCache().SetRegionCacheStore(1, "", "", tikvrpc.TiKV, 1, nil)
 	s.GetRegionCache().SetRegionCacheStore(2, "", "", tikvrpc.TiKV, 1, nil)
 	s.GetRegionCache().SetRegionCacheStore(3, "", "", tikvrpc.TiFlash, 1, nil)

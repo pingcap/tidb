@@ -15,10 +15,13 @@
 package task
 
 import (
+	"bytes"
 	"strconv"
 	"testing"
 	"unsafe"
 
+	"github.com/pingcap/tidb/pkg/planner/cascades/base"
+	"github.com/pingcap/tidb/pkg/planner/cascades/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,20 +29,20 @@ type TestTaskImpl struct {
 	a int64
 }
 
-func (t *TestTaskImpl) execute() error {
+func (t *TestTaskImpl) Execute() error {
 	return nil
 }
-func (t *TestTaskImpl) desc() string {
-	return strconv.Itoa(int(t.a))
+func (t *TestTaskImpl) Desc(w util.StrBufferWriter) {
+	w.WriteString(strconv.Itoa(int(t.a)))
 }
 
 func TestTaskStack(t *testing.T) {
 	newSS := newTaskStack()
-	// size of pointer to TaskStack{}
+	// size of pointer to Stack{}
 	require.Equal(t, int64(unsafe.Sizeof(newSS)), int64(8))
-	// size of pointer to TaskStack.[]Task, cap + len + addr
+	// size of pointer to Stack.[]Task, cap + len + addr
 	require.Equal(t, int64(unsafe.Sizeof(newSS.tasks)), int64(24))
-	// size of pointer to TaskStack's first element Task[0]
+	// size of pointer to Stack's first element Task[0]
 	newSS.Push(nil)
 	newSS.Push(&TestTaskImpl{a: 1})
 	newSS.Push(nil)
@@ -50,16 +53,23 @@ func TestTaskStack(t *testing.T) {
 }
 
 func TestTaskFunctionality(t *testing.T) {
-	taskTaskPool := StackTaskPool.Get()
-	require.Equal(t, len(taskTaskPool.(*taskStack).tasks), 0)
-	require.Equal(t, cap(taskTaskPool.(*taskStack).tasks), 4)
-	ts := taskTaskPool.(*taskStack)
+	taskTaskPool := stackPool.Get()
+	require.Equal(t, len(taskTaskPool.(*Stack).tasks), 0)
+	require.Equal(t, cap(taskTaskPool.(*Stack).tasks), 4)
+	ts := taskTaskPool.(*Stack)
 	ts.Push(&TestTaskImpl{a: 1})
 	ts.Push(&TestTaskImpl{a: 2})
 	one := ts.Pop()
-	require.Equal(t, one.desc(), "2")
+	buf := &bytes.Buffer{}
+	w := util.NewStrBuffer(buf)
+	one.Desc(w)
+	w.Flush()
+	require.Equal(t, buf.String(), "2")
 	one = ts.Pop()
-	require.Equal(t, one.desc(), "1")
+	buf.Reset()
+	one.Desc(w)
+	w.Flush()
+	require.Equal(t, buf.String(), "1")
 	// empty, pop nil.
 	one = ts.Pop()
 	require.Nil(t, one)
@@ -69,45 +79,57 @@ func TestTaskFunctionality(t *testing.T) {
 	ts.Push(&TestTaskImpl{a: 5})
 	ts.Push(&TestTaskImpl{a: 6})
 	// no clean, put it back
-	StackTaskPool.Put(taskTaskPool)
+	stackPool.Put(taskTaskPool)
 
 	// require again.
-	ts = StackTaskPool.Get().(*taskStack)
+	ts = stackPool.Get().(*Stack)
 	require.Equal(t, len(ts.tasks), 4)
 	require.Equal(t, cap(ts.tasks), 4)
 	// clean the stack
 	one = ts.Pop()
-	require.Equal(t, one.desc(), "6")
+	buf.Reset()
+	one.Desc(w)
+	w.Flush()
+	require.Equal(t, buf.String(), "6")
 	one = ts.Pop()
-	require.Equal(t, one.desc(), "5")
+	buf.Reset()
+	one.Desc(w)
+	w.Flush()
+	require.Equal(t, buf.String(), "5")
 	one = ts.Pop()
-	require.Equal(t, one.desc(), "4")
+	buf.Reset()
+	one.Desc(w)
+	w.Flush()
+	require.Equal(t, buf.String(), "4")
 	one = ts.Pop()
-	require.Equal(t, one.desc(), "3")
+	buf.Reset()
+	one.Desc(w)
+	w.Flush()
+	require.Equal(t, buf.String(), "3")
 	one = ts.Pop()
 	require.Nil(t, one)
 
 	// self destroy.
 	ts.Destroy()
-	ts = StackTaskPool.Get().(*taskStack)
+	ts = stackPool.Get().(*Stack)
 	require.Equal(t, len(ts.tasks), 0)
 	require.Equal(t, cap(ts.tasks), 4)
 }
 
 // TaskStack2 is used to store the optimizing tasks created before or during the optimizing process.
 type taskStackForBench struct {
-	tasks []*Task
+	tasks []base.Task
 }
 
 func newTaskStackForBenchWithCap(c int) *taskStackForBench {
 	return &taskStackForBench{
-		tasks: make([]*Task, 0, c),
+		tasks: make([]base.Task, 0, c),
 	}
 }
 
 // Push indicates to push one task into the stack.
-func (ts *taskStackForBench) Push(one Task) {
-	ts.tasks = append(ts.tasks, &one)
+func (ts *taskStackForBench) Push(one base.Task) {
+	ts.tasks = append(ts.tasks, one)
 }
 
 // Len indicates the length of current stack.
@@ -121,11 +143,11 @@ func (ts *taskStackForBench) Empty() bool {
 }
 
 // Pop indicates to pop one task out of the stack.
-func (ts *taskStackForBench) Pop() Task {
+func (ts *taskStackForBench) Pop() base.Task {
 	if !ts.Empty() {
 		tmp := ts.tasks[len(ts.tasks)-1]
 		ts.tasks = ts.tasks[:len(ts.tasks)-1]
-		return *tmp
+		return tmp
 	}
 	return nil
 }

@@ -17,12 +17,14 @@ package priorityqueue
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
@@ -44,6 +46,12 @@ func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionc
 
 	defer func() {
 		if err != nil {
+			intest.Assert(
+				errors.ErrorEqual(err, context.Canceled) ||
+					strings.Contains(err.Error(), "mock handleTaskOnce error") ||
+					strings.Contains(err.Error(), "session pool closed"),
+				fmt.Sprintf("handle ddl event failed, err: %+v", err),
+			)
 			actionType := event.GetType().String()
 			statslogutil.StatsLogger().Error(fmt.Sprintf("Failed to handle %s event", actionType),
 				zap.Error(err),
@@ -114,7 +122,7 @@ func (pq *AnalysisPriorityQueue) recreateAndPushJob(
 	stats *statistics.Table,
 ) error {
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
-	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
+	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[vardef.TiDBAutoAnalyzeRatio])
 	currentTs, err := statsutil.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -158,9 +166,9 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 	tableInfo, idxes := event.GetAddIndexInfo()
 
 	intest.AssertFunc(func() bool {
-		// Vector index has a separate job type. We should not see vector index here.
+		// Columnar index has a separate job type. We should not see columnar index here.
 		for _, idx := range idxes {
-			if idx.VectorInfo != nil {
+			if idx.IsColumnarIndex() {
 				return false
 			}
 		}
@@ -168,7 +176,7 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 	})
 
 	parameters := exec.GetAutoAnalyzeParameters(sctx)
-	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
+	autoAnalyzeRatio := exec.ParseAutoAnalyzeRatio(parameters[vardef.TiDBAutoAnalyzeRatio])
 	// Get current timestamp from the session context.
 	currentTs, err := statsutil.GetStartTS(sctx)
 	if err != nil {

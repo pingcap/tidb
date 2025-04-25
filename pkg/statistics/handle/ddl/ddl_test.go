@@ -21,9 +21,10 @@ import (
 
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/statistics/handle/ddl"
+	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -40,13 +41,13 @@ func TestDDLAfterLoad(t *testing.T) {
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2))")
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
 	recordCount := 1000
-	for i := 0; i < recordCount; i++ {
+	for i := range recordCount {
 		testKit.MustExec("insert into t values (?, ?)", i, i+1)
 	}
 	testKit.MustExec("analyze table t")
@@ -55,7 +56,7 @@ func TestDDLAfterLoad(t *testing.T) {
 	// add column
 	testKit.MustExec("alter table t add column c10 int")
 	is = do.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 
@@ -72,11 +73,11 @@ func TestDDLTable(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := do.StatsHandle()
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	require.Nil(t, h.Update(context.Background(), is))
 	statsTbl := h.GetTableStats(tableInfo)
@@ -84,10 +85,10 @@ func TestDDLTable(t *testing.T) {
 
 	testKit.MustExec("create table t1 (c1 int, c2 int, index idx(c1))")
 	is = do.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	require.Nil(t, h.Update(context.Background(), is))
 	statsTbl = h.GetTableStats(tableInfo)
@@ -97,10 +98,10 @@ func TestDDLTable(t *testing.T) {
 	// https://github.com/pingcap/tidb/issues/53652
 	testKit.MustExec("create table t_parent (id int primary key)")
 	is = do.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t_parent"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_parent"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	require.Nil(t, h.Update(context.Background(), is))
 	statsTbl = h.GetTableStats(tableInfo)
@@ -108,10 +109,10 @@ func TestDDLTable(t *testing.T) {
 
 	testKit.MustExec("create table t_child (id int primary key, pid int, foreign key (pid) references t_parent(id) on delete cascade on update cascade);")
 	is = do.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t_child"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t_child"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	require.Nil(t, h.Update(context.Background(), is))
 	statsTbl = h.GetTableStats(tableInfo)
@@ -161,7 +162,7 @@ func TestTruncateTable(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2))")
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	h := do.StatsHandle()
@@ -186,12 +187,12 @@ func TestTruncateTable(t *testing.T) {
 
 	// Find the truncate table partition event.
 	truncateTableEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTable)
-	err = h.HandleDDLEvent(truncateTableEvent)
+	err = statstestutil.HandleDDLEventWithTxn(h, truncateTableEvent)
 	require.NoError(t, err)
 
 	// Get new table info.
 	is = do.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	newTableInfo := tbl.Meta()
 	// Get new added table's stats meta.
@@ -231,7 +232,7 @@ func TestTruncateAPartitionedTable(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -259,12 +260,12 @@ func TestTruncateAPartitionedTable(t *testing.T) {
 	testKit.MustExec("truncate table t")
 	// Find the truncate table event.
 	truncateTableEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTable)
-	err = h.HandleDDLEvent(truncateTableEvent)
+	err = statstestutil.HandleDDLEventWithTxn(h, truncateTableEvent)
 	require.NoError(t, err)
 
 	// Get new table info.
 	is = do.InfoSchema()
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	newTableInfo := tbl.Meta()
 	// Get all new added partitions ID.
@@ -298,16 +299,28 @@ func TestDDLHistogram(t *testing.T) {
 	<-h.DDLEventCh()
 	testKit.MustExec("insert into t values(1,2),(3,4)")
 	testKit.MustExec("analyze table t")
-
-	testKit.MustExec("alter table t add column c_null int")
-	err := h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
 	is := do.InfoSchema()
 	require.Nil(t, h.Update(context.Background(), is))
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
+	lastHistUpdateVersion1 := statsTbl.LastStatsHistVersion
+
+	testKit.MustExec("alter table t add column c_null int")
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+
+	// Check that the last_stats_histograms_version has been updated.
+	is = do.InfoSchema()
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo = tbl.Meta()
+	require.Nil(t, h.Update(context.Background(), is))
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	lastHistUpdateVersion2 := statsTbl.LastStatsHistVersion
+	require.Greater(t, lastHistUpdateVersion2, lastHistUpdateVersion1)
+
 	require.True(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(2, false))
 	require.False(t, statsTbl.Pseudo)
 	require.True(t, statsTbl.GetCol(tableInfo.Columns[2].ID).IsStatsInitialized())
@@ -315,11 +328,11 @@ func TestDDLHistogram(t *testing.T) {
 	require.Equal(t, int64(0), statsTbl.GetCol(tableInfo.Columns[2].ID).Histogram.NDV)
 
 	testKit.MustExec("alter table t add column c3 int NOT NULL")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	is = do.InfoSchema()
 	require.Nil(t, h.Update(context.Background(), is))
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
@@ -335,11 +348,11 @@ func TestDDLHistogram(t *testing.T) {
 	require.Equal(t, float64(0), count)
 
 	testKit.MustExec("alter table t add column c4 datetime NOT NULL default CURRENT_TIMESTAMP")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	is = do.InfoSchema()
 	require.Nil(t, h.Update(context.Background(), is))
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
@@ -348,11 +361,11 @@ func TestDDLHistogram(t *testing.T) {
 	require.True(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(4, false))
 
 	testKit.MustExec("alter table t add column c5 varchar(15) DEFAULT '123'")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	is = do.InfoSchema()
 	require.Nil(t, h.Update(context.Background(), is))
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
@@ -362,24 +375,24 @@ func TestDDLHistogram(t *testing.T) {
 	require.Equal(t, 3.0, cardinality.AvgColSize(statsTbl.GetCol(tableInfo.Columns[5].ID), statsTbl.RealtimeCount, false))
 
 	testKit.MustExec("alter table t add column c6 varchar(15) DEFAULT '123', add column c7 varchar(15) DEFAULT '123'")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	is = do.InfoSchema()
 	require.Nil(t, h.Update(context.Background(), is))
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
 
 	testKit.MustExec("create index i on t(c2, c1)")
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl.ColAndIdxExistenceMap.HasAnalyzed(2, true))
 	testKit.MustExec("analyze table t")
-	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
@@ -402,7 +415,7 @@ func TestDDLPartition(t *testing.T) {
 		testKit.MustExec("drop table if exists t")
 		h := do.StatsHandle()
 		if i == 1 {
-			err := h.HandleDDLEvent(<-h.DDLEventCh())
+			err := statstestutil.HandleNextDDLEventWithTxn(h)
 			require.NoError(t, err)
 		}
 		createTable := `CREATE TABLE t (a int, b int, primary key(a), index idx(b))
@@ -414,10 +427,10 @@ PARTITION BY RANGE ( a ) (
 )`
 		testKit.MustExec(createTable)
 		is := do.InfoSchema()
-		tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 		require.NoError(t, err)
 		tableInfo := tbl.Meta()
-		err = h.HandleDDLEvent(<-h.DDLEventCh())
+		err = statstestutil.HandleNextDDLEventWithTxn(h)
 		require.NoError(t, err)
 		require.Nil(t, h.Update(context.Background(), is))
 		pi := tableInfo.GetPartitionInfo()
@@ -429,11 +442,11 @@ PARTITION BY RANGE ( a ) (
 		testKit.MustExec("insert into t values (1,2),(6,2),(11,2),(16,2)")
 		testKit.MustExec("analyze table t")
 		testKit.MustExec("alter table t add column c varchar(15) DEFAULT '123'")
-		err = h.HandleDDLEvent(<-h.DDLEventCh())
+		err = statstestutil.HandleNextDDLEventWithTxn(h)
 		require.NoError(t, err)
 		is = do.InfoSchema()
 		require.Nil(t, h.Update(context.Background(), is))
-		tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+		tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 		require.NoError(t, err)
 		tableInfo = tbl.Meta()
 		pi = tableInfo.GetPartitionInfo()
@@ -446,10 +459,10 @@ PARTITION BY RANGE ( a ) (
 		addPartition := "alter table t add partition (partition p4 values less than (26))"
 		testKit.MustExec(addPartition)
 		is = do.InfoSchema()
-		tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+		tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 		require.NoError(t, err)
 		tableInfo = tbl.Meta()
-		err = h.HandleDDLEvent(<-h.DDLEventCh())
+		err = statstestutil.HandleNextDDLEventWithTxn(h)
 		require.NoError(t, err)
 		require.Nil(t, h.Update(context.Background(), is))
 		pi = tableInfo.GetPartitionInfo()
@@ -484,7 +497,7 @@ func TestReorgPartitions(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -516,7 +529,7 @@ func TestReorgPartitions(t *testing.T) {
 	testKit.MustExec("alter table t reorganize partition p0, p1 into (partition p0 values less than (11))")
 	// Find the reorganize partition event.
 	reorganizePartitionEvent := findEvent(h.DDLEventCh(), model.ActionReorganizePartition)
-	err = h.HandleDDLEvent(reorganizePartitionEvent)
+	err = statstestutil.HandleDDLEventWithTxn(h, reorganizePartitionEvent)
 	require.NoError(t, err)
 	require.Nil(t, h.Update(context.Background(), is))
 
@@ -541,7 +554,7 @@ func TestIncreasePartitionCountOfHashPartitionTable(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -568,14 +581,14 @@ func TestIncreasePartitionCountOfHashPartitionTable(t *testing.T) {
 	testKit.MustExec("alter table t add partition partitions 2")
 	// Find the reorganize partition event.
 	reorganizePartitionEvent := findEvent(h.DDLEventCh(), model.ActionReorganizePartition)
-	err = h.HandleDDLEvent(reorganizePartitionEvent)
+	err = statstestutil.HandleDDLEventWithTxn(h, reorganizePartitionEvent)
 	require.NoError(t, err)
 	require.Nil(t, h.Update(context.Background(), is))
 
 	// Check new partitions are added.
 	is = do.InfoSchema()
 	tbl, err = is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
@@ -609,7 +622,7 @@ func TestDecreasePartitionCountOfHashPartitionTable(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -642,14 +655,14 @@ func TestDecreasePartitionCountOfHashPartitionTable(t *testing.T) {
 	testKit.MustExec("alter table t coalesce partition 2")
 	// Find the reorganize partition event.
 	reorganizePartitionEvent := findEvent(h.DDLEventCh(), model.ActionReorganizePartition)
-	err = h.HandleDDLEvent(reorganizePartitionEvent)
+	err = statstestutil.HandleDDLEventWithTxn(h, reorganizePartitionEvent)
 	require.NoError(t, err)
 	require.Nil(t, h.Update(context.Background(), is))
 
 	// Check new partitions are added.
 	is = do.InfoSchema()
 	tbl, err = is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
@@ -698,7 +711,7 @@ func TestTruncateAPartition(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -722,7 +735,75 @@ func TestTruncateAPartition(t *testing.T) {
 	testKit.MustExec("alter table t truncate partition p0")
 	// Find the truncate partition event.
 	truncatePartitionEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTablePartition)
-	err = h.HandleDDLEvent(truncatePartitionEvent)
+	err = statstestutil.HandleDDLEventWithTxn(h, truncatePartitionEvent)
+	require.NoError(t, err)
+	// Check global stats meta.
+	// Because we have truncated a partition, the count should be 5 - 2 = 3 and the modify count should be 2.
+	testKit.MustQuery(
+		"select count, modify_count from mysql.stats_meta where table_id = ?", tableInfo.ID,
+	).Check(
+		testkit.Rows("3 2"),
+	)
+
+	// Check the version again.
+	rows = testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id = ?", partitionID,
+	).Rows()
+	require.Len(t, rows, 1)
+	// Version gets updated after truncate the partition.
+	require.NotEqual(t, version, rows[0][0].(string))
+}
+
+func TestTruncateAPartitionAndDropTableImmediately(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec(`
+		create table t (
+			a int,
+			b int,
+			primary key(a),
+			index idx(b)
+		)
+		partition by range (a) (
+			partition p0 values less than (6),
+			partition p1 values less than (11),
+			partition p2 values less than (16),
+			partition p3 values less than (21)
+		)
+	`)
+	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
+	testKit.MustExec("analyze table t")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(context.Background(),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
+	)
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	pi := tableInfo.GetPartitionInfo()
+	for _, def := range pi.Definitions {
+		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		require.False(t, statsTbl.Pseudo)
+	}
+	err = h.Update(context.Background(), is)
+	require.NoError(t, err)
+
+	// Get partition p0's stats update version.
+	partitionID := pi.Definitions[0].ID
+	// Get it from stats_meat first.
+	rows := testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id = ?", partitionID,
+	).Rows()
+	require.Len(t, rows, 1)
+	version := rows[0][0].(string)
+
+	testKit.MustExec("alter table t truncate partition p0")
+	testKit.MustExec("drop table t")
+	// Find the truncate partition event.
+	truncatePartitionEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTablePartition)
+	err = statstestutil.HandleDDLEventWithTxn(h, truncatePartitionEvent)
 	require.NoError(t, err)
 	// Check global stats meta.
 	// Because we have truncated a partition, the count should be 5 - 2 = 3 and the modify count should be 2.
@@ -760,7 +841,7 @@ func TestTruncateAHashPartition(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -785,7 +866,7 @@ func TestTruncateAHashPartition(t *testing.T) {
 	testKit.MustExec("alter table t truncate partition p0")
 	// Find the truncate partition event.
 	truncatePartitionEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTablePartition)
-	err = h.HandleDDLEvent(truncatePartitionEvent)
+	err = statstestutil.HandleDDLEventWithTxn(h, truncatePartitionEvent)
 	require.NoError(t, err)
 	// Check global stats meta.
 	// Because we have truncated a partition, the count should be 5 - 1 = 4 and the modify count should be 1.
@@ -828,7 +909,7 @@ func TestTruncatePartitions(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -855,7 +936,7 @@ func TestTruncatePartitions(t *testing.T) {
 	testKit.MustExec("alter table t truncate partition p0, p1")
 	// Find the truncate partition event.
 	truncatePartitionEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTablePartition)
-	err = h.HandleDDLEvent(truncatePartitionEvent)
+	err = statstestutil.HandleDDLEventWithTxn(h, truncatePartitionEvent)
 	require.NoError(t, err)
 	// Check global stats meta.
 	// Because we have truncated two partitions, the count should be 5 - 2 - 1  = 2 and the modify count should be 3.
@@ -899,7 +980,7 @@ func TestDropAPartition(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -915,16 +996,6 @@ func TestDropAPartition(t *testing.T) {
 	// Find the drop partition event.
 	dropPartitionEvent := findEvent(h.DDLEventCh(), model.ActionDropTablePartition)
 
-	err = h.HandleDDLEvent(dropPartitionEvent)
-	require.NoError(t, err)
-	// Check the global stats meta.
-	// Because we have dropped a partition, the count should be 3 and the modify count should be 2.
-	testKit.MustQuery(
-		"select count, modify_count from mysql.stats_meta where table_id = ?", tableInfo.ID,
-	).Check(
-		testkit.Rows("3 2"),
-	)
-
 	// Get partition p0's stats update version.
 	partitionID := pi.Definitions[0].ID
 	// Get it from stats_meta first.
@@ -933,6 +1004,16 @@ func TestDropAPartition(t *testing.T) {
 	).Rows()
 	require.Len(t, rows, 1)
 	version := rows[0][0].(string)
+
+	err = statstestutil.HandleDDLEventWithTxn(h, dropPartitionEvent)
+	require.NoError(t, err)
+	// Check the global stats meta.
+	// Because we have dropped a partition, the count should be 3 and the modify count should be 2.
+	testKit.MustQuery(
+		"select count, modify_count from mysql.stats_meta where table_id = ?", tableInfo.ID,
+	).Check(
+		testkit.Rows("3 2"),
+	)
 
 	// Check the update version is changed.
 	rows = testKit.MustQuery(
@@ -966,7 +1047,7 @@ func TestDropPartitions(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -995,7 +1076,7 @@ func TestDropPartitions(t *testing.T) {
 	// Find the drop partition event.
 	dropPartitionEvent := findEvent(h.DDLEventCh(), model.ActionDropTablePartition)
 
-	err = h.HandleDDLEvent(dropPartitionEvent)
+	err = statstestutil.HandleDDLEventWithTxn(h, dropPartitionEvent)
 	require.NoError(t, err)
 
 	// Check the global stats meta.
@@ -1044,7 +1125,7 @@ func TestExchangeAPartition(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -1064,7 +1145,7 @@ func TestExchangeAPartition(t *testing.T) {
 	testKit.MustExec("analyze table t1")
 	is = do.InfoSchema()
 	tbl1, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"),
+		ast.NewCIStr("test"), ast.NewCIStr("t1"),
 	)
 	require.NoError(t, err)
 	tableInfo1 := tbl1.Meta()
@@ -1082,7 +1163,7 @@ func TestExchangeAPartition(t *testing.T) {
 	testKit.MustExec("alter table t exchange partition p0 with table t1")
 	// Find the exchange partition event.
 	exchangePartitionEvent := findEvent(h.DDLEventCh(), model.ActionExchangeTablePartition)
-	err = h.HandleDDLEvent(exchangePartitionEvent)
+	err = statstestutil.HandleDDLEventWithTxn(h, exchangePartitionEvent)
 	require.NoError(t, err)
 	// Check the global stats meta.
 	// Because we have exchanged a partition, the count should be 5 and the modify count should be 5(table) + 2(partition).
@@ -1100,7 +1181,7 @@ func TestExchangeAPartition(t *testing.T) {
 	testKit.MustExec("analyze table t2")
 	is = do.InfoSchema()
 	tbl2, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"),
+		ast.NewCIStr("test"), ast.NewCIStr("t2"),
 	)
 	require.NoError(t, err)
 	tableInfo2 := tbl2.Meta()
@@ -1123,7 +1204,7 @@ func TestExchangeAPartition(t *testing.T) {
 	testKit.MustExec("alter table t exchange partition p1 with table t2")
 	// Find the exchange partition event.
 	exchangePartitionEvent = findEvent(h.DDLEventCh(), model.ActionExchangeTablePartition)
-	err = h.HandleDDLEvent(exchangePartitionEvent)
+	err = statstestutil.HandleDDLEventWithTxn(h, exchangePartitionEvent)
 	require.NoError(t, err)
 	// Check the global stats meta.
 	testKit.MustQuery(
@@ -1144,7 +1225,7 @@ func TestExchangeAPartition(t *testing.T) {
 	testKit.MustExec("analyze table t3")
 	is = do.InfoSchema()
 	tbl3, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t3"),
+		ast.NewCIStr("test"), ast.NewCIStr("t3"),
 	)
 	require.NoError(t, err)
 	tableInfo3 := tbl3.Meta()
@@ -1158,7 +1239,7 @@ func TestExchangeAPartition(t *testing.T) {
 	testKit.MustExec(fmt.Sprintf("delete from mysql.stats_meta where table_id = %d", tableInfo.ID))
 	// Find the exchange partition event.
 	exchangePartitionEvent = findEvent(h.DDLEventCh(), model.ActionExchangeTablePartition)
-	err = h.HandleDDLEvent(exchangePartitionEvent)
+	err = statstestutil.HandleDDLEventWithTxn(h, exchangePartitionEvent)
 	require.NoError(t, err)
 	// Check the global stats meta.
 	testKit.MustQuery(
@@ -1166,6 +1247,86 @@ func TestExchangeAPartition(t *testing.T) {
 	).Check(
 		// Insert the global stats back.
 		testkit.Rows("0 1"),
+	)
+}
+
+func TestExchangeAPartitionAndDropTableImmediately(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	// Create a table with 4 partitions.
+	testKit.MustExec(`
+		create table t (
+			a int,
+			b int,
+			primary key(a),
+			index idx(b)
+		)
+		partition by range (a) (
+			partition p0 values less than (6),
+			partition p1 values less than (11),
+			partition p2 values less than (16),
+			partition p3 values less than (21)
+		)
+	`)
+	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
+	h.DumpStatsDeltaToKV(true)
+
+	testKit.MustExec("analyze table t")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(context.Background(),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
+	)
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	pi := tableInfo.GetPartitionInfo()
+	for _, def := range pi.Definitions {
+		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		require.False(t, statsTbl.Pseudo)
+	}
+	// Create a normal table to exchange partition.
+	testKit.MustExec("drop table if exists t1")
+	testKit.MustExec("create table t1 (a int, b int, primary key(a), index idx(b))")
+	// Insert some data which meets the condition of the partition p0.
+	testKit.MustExec("insert into t1 values (1,2),(2,2),(3,2),(4,2),(5,2)")
+	err = h.DumpStatsDeltaToKV(true)
+	require.NoError(t, err)
+
+	testKit.MustExec("analyze table t1")
+	is = do.InfoSchema()
+	tbl1, err := is.TableByName(context.Background(),
+		ast.NewCIStr("test"), ast.NewCIStr("t1"),
+	)
+	require.NoError(t, err)
+	tableInfo1 := tbl1.Meta()
+	statsTbl1 := h.GetTableStats(tableInfo1)
+	require.False(t, statsTbl1.Pseudo)
+
+	// Check the global stats meta before exchange partition.
+	testKit.MustQuery(
+		fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableInfo.ID),
+	).Check(
+		testkit.Rows("5 0"),
+	)
+
+	// Exchange partition p0 with table t1.
+	testKit.MustExec("alter table t exchange partition p0 with table t1")
+	testKit.MustExec("drop table t")
+	testKit.MustExec("drop table t1")
+	// Find the exchange partition event.
+	exchangePartitionEvent := findEvent(h.DDLEventCh(), model.ActionExchangeTablePartition)
+	err = statstestutil.HandleDDLEventWithTxn(h, exchangePartitionEvent)
+	require.NoError(t, err)
+	// Check the global stats meta.
+	// Because we have exchanged a partition, the count should be 5 and the modify count should be 5(table) + 2(partition).
+	// 5 -> Five rows are added to table 't' as 't1' is included as a new partition.
+	// 2 -> Two rows are removed from table 't' as partition 'p0' is no longer a part of it.
+	testKit.MustQuery(
+		fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableInfo.ID),
+	).Check(
+		testkit.Rows("8 7"),
 	)
 }
 
@@ -1196,7 +1357,7 @@ func TestRemovePartitioning(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -1226,13 +1387,13 @@ func TestRemovePartitioning(t *testing.T) {
 	testKit.MustExec("alter table t remove partitioning")
 	// Find the remove partitioning event.
 	removePartitioningEvent := findEvent(h.DDLEventCh(), model.ActionRemovePartitioning)
-	err = h.HandleDDLEvent(removePartitioningEvent)
+	err = statstestutil.HandleDDLEventWithTxn(h, removePartitioningEvent)
 	require.NoError(t, err)
 	// Check the global stats meta make sure the count and modify count are not changed.
 	// Get new table id after remove partitioning.
 	is = do.InfoSchema()
 	tbl, err = is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
@@ -1274,7 +1435,7 @@ func TestAddPartitioning(t *testing.T) {
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
@@ -1289,13 +1450,13 @@ func TestAddPartitioning(t *testing.T) {
 	testKit.MustExec("alter table t partition by hash(a) partitions 3")
 	// Find the add partitioning event.
 	addPartitioningEvent := findEvent(h.DDLEventCh(), model.ActionAlterTablePartitioning)
-	err = h.HandleDDLEvent(addPartitioningEvent)
+	err = statstestutil.HandleDDLEventWithTxn(h, addPartitioningEvent)
 	require.NoError(t, err)
 	// Check the global stats meta make sure the count and modify count are not changed.
 	// Get new table id after remove partitioning.
 	is = do.InfoSchema()
 	tbl, err = is.TableByName(context.Background(),
-		pmodel.NewCIStr("test"), pmodel.NewCIStr("t"),
+		ast.NewCIStr("test"), ast.NewCIStr("t"),
 	)
 	require.NoError(t, err)
 	tableInfo = tbl.Meta()
@@ -1317,7 +1478,7 @@ func TestDropSchema(t *testing.T) {
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
 	// Check the current stats meta version.
@@ -1332,7 +1493,7 @@ func TestDropSchema(t *testing.T) {
 
 	// Handle the drop schema event.
 	dropSchemaEvent := findEvent(h.DDLEventCh(), model.ActionDropSchema)
-	err = h.HandleDDLEvent(dropSchemaEvent)
+	err = statstestutil.HandleDDLEventWithTxn(h, dropSchemaEvent)
 	require.NoError(t, err)
 
 	// Check the stats meta version after drop schema.
@@ -1361,10 +1522,10 @@ func TestExchangePartition(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (c1 int)")
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	var wg util.WaitGroupWrapper
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		tk1 := testkit.NewTestKit(t, store)
 		wg.Run(func() {
 			tk1.MustExec("begin")
@@ -1378,4 +1539,45 @@ func TestExchangePartition(t *testing.T) {
 	require.False(t, isNull)
 	require.Equal(t, int64(200), count)
 	require.Equal(t, int64(200), modifyCount)
+}
+
+func TestDumpStatsDeltaBeforeHandleDDLEvent(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (c1 int)")
+	// Insert some data.
+	tk.MustExec("insert into t values (1), (2), (3)")
+	h := dom.StatsHandle()
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	// Also manually insert a histogram record.
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	_, err = tk.Exec("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values (?, 0, ?, 0, ?)", tbl.Meta().ID, 1, 1)
+	require.NoError(t, err)
+	// Find the DDL event.
+	event := findEvent(h.DDLEventCh(), model.ActionCreateTable)
+	err = statstestutil.HandleDDLEventWithTxn(h, event)
+	require.NoError(t, err)
+}
+
+func TestDumpStatsDeltaBeforeHandleAddColumnEvent(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (c1 int, c2 int, index idx(c1, c2))")
+	// Insert some data.
+	testKit.MustExec("insert into t values (1, 2), (2, 3), (3, 4)")
+	testKit.MustExec("analyze table t")
+	// Add column.
+	testKit.MustExec("alter table t add column c10 int")
+	// Insert some data.
+	testKit.MustExec("insert into t values (4, 5, 6)")
+	// Analyze table to force create the histogram meta record.
+	testKit.MustExec("analyze table t")
+	// Find the add column event.
+	event := findEvent(do.StatsHandle().DDLEventCh(), model.ActionAddColumn)
+	err := statstestutil.HandleDDLEventWithTxn(do.StatsHandle(), event)
+	require.NoError(t, err)
 }

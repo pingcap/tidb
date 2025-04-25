@@ -47,7 +47,7 @@ func TestAddIndexMergeProcess(t *testing.T) {
 
 	var checkErr error
 	var runDML, backfillDone bool
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if !runDML && job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization {
 			idx := testutil.FindIdxInfo(dom, "test", "t", "idx")
 			if idx == nil || idx.BackfillState != model.BackfillStateRunning {
@@ -64,7 +64,7 @@ func TestAddIndexMergeProcess(t *testing.T) {
 		}
 	})
 	tk.MustExec("alter table t add index idx(c1);")
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 	require.True(t, backfillDone)
 	require.True(t, runDML)
 	require.NoError(t, checkErr)
@@ -89,7 +89,7 @@ func TestAddPrimaryKeyMergeProcess(t *testing.T) {
 	var runDML, backfillDone bool
 	// only trigger reload when schema version changed
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/disableOnTickReload", "return(true)")
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaChanged", func(job *model.Job, _ int64) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaSynced", func(job *model.Job, _ int64) {
 		if !runDML && job.Type == model.ActionAddPrimaryKey && job.SchemaState == model.StateWriteReorganization {
 			idx := testutil.FindIdxInfo(dom, "test", "t", "primary")
 			if idx == nil || idx.BackfillState != model.BackfillStateRunning || job.SnapshotVer == 0 {
@@ -130,7 +130,7 @@ func TestAddIndexMergeVersionIndexValue(t *testing.T) {
 	var checkErr error
 	var runDML bool
 	var tblID, idxID int64
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if !runDML && job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteReorganization {
 			idx := testutil.FindIdxInfo(dom, "test", "t", "idx")
 			if idx == nil || idx.BackfillState != model.BackfillStateReadyToMerge {
@@ -143,7 +143,7 @@ func TestAddIndexMergeVersionIndexValue(t *testing.T) {
 		}
 	})
 	tk.MustExec("alter table t add unique index idx(c1);")
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 	require.True(t, runDML)
 	require.NoError(t, checkErr)
 	tk.MustExec("admin check table t;")
@@ -179,7 +179,7 @@ func TestAddIndexMergeIndexUntouchedValue(t *testing.T) {
 	var checkErrs []error
 	var runInsert bool
 	var runUpdate bool
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if job.Type != model.ActionAddIndex || job.SchemaState != model.StateWriteReorganization {
 			return
 		}
@@ -209,7 +209,7 @@ func TestAddIndexMergeIndexUntouchedValue(t *testing.T) {
 		}
 	})
 	tk.MustExec("alter table t add index idx(c);")
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 	require.True(t, runUpdate)
 	for _, err := range checkErrs {
 		require.NoError(t, err)
@@ -243,7 +243,7 @@ func TestCreateUniqueIndexKeyExist(t *testing.T) {
 
 	// If waitReorg timeout, the worker may enter writeReorg more than 2 times.
 	reorgTime := 0
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if t.Failed() {
 			return
 		}
@@ -305,7 +305,7 @@ func TestAddIndexMergeIndexUpdateOnDeleteOnly(t *testing.T) {
 	tk.MustExec("set @@global.tidb_txn_assertion_level = 'STRICT';")
 
 	var checkErrs []error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if job.SchemaState == model.StateDeleteOnly {
 			for _, sql := range updateSQLs {
 				_, err := tk2.Exec(sql)
@@ -316,7 +316,7 @@ func TestAddIndexMergeIndexUpdateOnDeleteOnly(t *testing.T) {
 		}
 	})
 	tk.MustExec("alter table t add index idx(b);")
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
 	for _, err := range checkErrs {
 		require.NoError(t, err)
 	}
@@ -334,7 +334,7 @@ func TestAddIndexMergeDeleteUniqueOnWriteOnly(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if t.Failed() {
 			return
 		}
@@ -386,7 +386,7 @@ func TestAddIndexMergeDoubleDelete(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if t.Failed() {
 			return
 		}
@@ -433,7 +433,7 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 
 	runPessimisticTxn := false
 	afterPessDML := make(chan struct{}, 1)
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
 		if t.Failed() {
 			return
 		}
@@ -473,7 +473,7 @@ func TestAddIndexMergeConflictWithPessimistic(t *testing.T) {
 	<-afterPessDML
 	tk2.MustExec("rollback;")
 	<-afterCommit
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunBefore")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2"))
 }
@@ -488,7 +488,7 @@ func TestAddIndexMergeInsertOnMerging(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if t.Failed() {
 			return
 		}
@@ -560,7 +560,7 @@ func TestAddIndexMergeInsertToDeletedTempIndex(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if t.Failed() {
 			return
 		}
@@ -599,7 +599,7 @@ func TestAddIndexMergeReplaceDelete(t *testing.T) {
 	// Don't skip merging temp index, otherwise MockDMLExecutionMerging will not execute.
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/skipReorgWorkForTempIndex", "return(false)")
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if t.Failed() {
 			return
 		}
@@ -635,7 +635,7 @@ func TestAddIndexMergeDeleteDifferentHandle(t *testing.T) {
 	tk1.MustExec("use test")
 
 	runDML := false
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if t.Failed() || runDML {
 			return
 		}
@@ -676,7 +676,7 @@ func TestAddIndexDecodeTempIndexCommonHandle(t *testing.T) {
 	tk1.MustExec("use test")
 
 	runDML := false
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if t.Failed() || runDML {
 			return
 		}
@@ -709,7 +709,7 @@ func TestAddIndexInsertIgnoreOnBackfill(t *testing.T) {
 	tk1.MustExec("use test")
 
 	runDML := false
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if t.Failed() || runDML {
 			return
 		}
@@ -741,7 +741,7 @@ func TestAddIndexMultipleDelete(t *testing.T) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
 		if t.Failed() {
 			return
 		}
@@ -778,7 +778,7 @@ func TestAddIndexDuplicateAndWriteConflict(t *testing.T) {
 	tk1.MustExec("use test")
 
 	var runCancel bool
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
 		if t.Failed() || runCancel {
 			return
 		}
@@ -811,7 +811,7 @@ func TestAddIndexUpdateUntouchedValues(t *testing.T) {
 	tk1.MustExec("use test")
 
 	var runDML bool
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
 		if t.Failed() || runDML {
 			return
 		}
@@ -840,7 +840,7 @@ func TestAddUniqueIndexFalsePositiveDuplicate(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(`create table t(a bigint DEFAULT '-13202', 
+	tk.MustExec(`create table t(a bigint DEFAULT '-13202',
         b varchar(221) NOT NULL DEFAULT 'dup',
         unique key exist_idx(b),
         PRIMARY KEY (a));`)
@@ -886,7 +886,7 @@ func TestAddIndexSkipReorgCheck(t *testing.T) {
 	skipTableReorg = false
 	skipTempIdxReorg = false
 	var runDML bool
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobRunAfter", func(job *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
 		if t.Failed() || runDML {
 			return
 		}
