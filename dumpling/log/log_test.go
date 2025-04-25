@@ -22,11 +22,7 @@ import (
 )
 
 func TestInitLogNoPermission(t *testing.T) {
-	// create a temp dir without permissions
-	tmpDir, err := os.MkdirTemp("", "dumpling-test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
-
+	tmpDir := t.TempDir()
 	conf := &Config{
 		Level:  "debug",
 		File:   tmpDir + "/test.log",
