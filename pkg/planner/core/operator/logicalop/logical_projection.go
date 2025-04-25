@@ -139,7 +139,6 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, op
 			return p, nil
 		}
 	}
-
 	// for implicit projected cols, once the ancestor doesn't use it, the implicit expr will be automatically pruned here.
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && !expression.ExprHasSetVarOrSleep(p.Exprs[i]) {
@@ -230,11 +229,13 @@ func (p *LogicalProjection) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *
 						hasPushDownTopN = true
 					}
 				}
+
 				if !isContains {
 					// The columns are from the children's schema.
 					if p.Children()[0].Schema().Contains(col) {
-						p.Schema().Append(col)
+						p.Exprs = append(p.Exprs, col)
 						p.SetOutputNames(append(p.OutputNames(), types.EmptyName))
+						p.Schema().Append(col)
 					}
 				}
 			}
