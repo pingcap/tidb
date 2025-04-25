@@ -48,7 +48,6 @@ var _ WriteClient = &writeClient{}
 type writeClient struct {
 	tikvWorkerURL string
 	clusterID     uint64
-	taskID        int64
 	httpClient    *http.Client
 	commitTS      uint64
 
@@ -85,13 +84,9 @@ func (w *writeClient) init(ctx context.Context) error {
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
 	w.startChunkedHTTPRequest(req)
-	w.reader = pr
+	w.reader = pr // PipeReader will be closed by the httpClient.Do automatically
 	w.writer = pw
 	return nil
-}
-
-type sstFileResult struct {
-	SSTFile string `json:"sst_file"`
 }
 
 func (w *writeClient) startChunkedHTTPRequest(req *http.Request) {

@@ -1387,8 +1387,9 @@ func (local *Backend) doImport(
 		toCh = balancer.innerJobToWorkerCh
 		afterExecuteJob = balancer.releaseStoreLoad
 	}
+	clusterID := local.pdCli.GetClusterID(ctx)
 	for i := 0; i < local.WorkerConcurrency; i++ {
-		worker := local.newRegionJobWorker(ctx, toCh, jobFromWorkerCh, &jobWg, afterExecuteJob)
+		worker := local.newRegionJobWorker(ctx, clusterID, toCh, jobFromWorkerCh, &jobWg, afterExecuteJob)
 		workGroup.Go(func() error {
 			return worker.run(workerCtx)
 		})
@@ -1437,6 +1438,7 @@ func (local *Backend) doImport(
 
 func (local *Backend) newRegionJobWorker(
 	ctx context.Context,
+	clusterID uint64,
 	toCh, jobFromWorkerCh chan *regionJob,
 	jobWg *sync.WaitGroup,
 	afterExecuteJob func([]*metapb.Peer),
@@ -1452,7 +1454,7 @@ func (local *Backend) newRegionJobWorker(
 		// TODO: add support for TLS.
 		httpClient := &http.Client{}
 		cloudW := &objStoreRegionJobWorker{
-			ingestCli:      ingestcli.NewClient(local.TiKVWorkerURL, local.pdCli.GetClusterID(ctx), httpClient, local.splitCli),
+			ingestCli:      ingestcli.NewClient(local.TiKVWorkerURL, clusterID, httpClient, local.splitCli),
 			writeBatchSize: local.KVWriteBatchSize,
 			bufPool:        local.engineMgr.getBufferPool(),
 		}
