@@ -427,10 +427,7 @@ func TestAddIndexRowCountUpdate(t *testing.T) {
 			rcStr := rs[0][7].(string)
 			rc, err := strconv.Atoi(rcStr)
 			require.NoError(t, err)
-			if rc > 0 {
-				return true
-			}
-			return false
+			return rc > 0
 		}, 2*time.Minute, 60*time.Millisecond)
 	}()
 	tk.MustExec("alter table t add index idx(c2);")
