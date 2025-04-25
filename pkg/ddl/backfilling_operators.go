@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -659,6 +658,7 @@ func NewWriteExternalStoreOperator(
 	}
 
 	totalCount := new(atomic.Int64)
+	blockSize := external.GetAdjustedBlockSize(memoryQuota)
 	pool := workerpool.NewWorkerPool(
 		"WriteExternalStoreOperator",
 		util.DDL,
@@ -670,7 +670,7 @@ func NewWriteExternalStoreOperator(
 					SetOnCloseFunc(onClose).
 					SetKeyDuplicationEncoding(hasUnique).
 					SetMemorySizeLimit(memoryQuota).
-					SetBlockSize(getAdjustedIndexBlockSize(memoryQuota)).
+					SetBlockSize(blockSize).
 					SetGroupOffset(i)
 				writerID := uuid.New().String()
 				prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
@@ -696,15 +696,6 @@ func NewWriteExternalStoreOperator(
 		logger:        logutil.Logger(ctx),
 		totalCount:    totalCount,
 	}
-}
-
-func getAdjustedIndexBlockSize(memSizePerWriter uint64) int {
-	blockSize := external.DefaultBlockSize
-	alignedSize := membuf.GetAlignedSize(memSizePerWriter, uint64(blockSize))
-	if float64(alignedSize)/float64(memSizePerWriter) > 1.1 {
-		return int(memSizePerWriter)
-	}
-	return blockSize
 }
 
 // Close implements operator.Operator interface.

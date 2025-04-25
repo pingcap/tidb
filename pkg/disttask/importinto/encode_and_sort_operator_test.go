@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -232,9 +233,9 @@ func TestGetKVGroupBlockSize(t *testing.T) {
 }
 
 func TestGetAdjustedIndexBlockSize(t *testing.T) {
-	require.EqualValues(t, 1*units.MiB, getAdjustedIndexBlockSize(1*units.MiB))
-	require.EqualValues(t, 16*units.MiB, getAdjustedIndexBlockSize(15*units.MiB))
-	require.EqualValues(t, 16*units.MiB, getAdjustedIndexBlockSize(16*units.MiB))
-	require.EqualValues(t, 17*units.MiB, getAdjustedIndexBlockSize(17*units.MiB))
-	require.EqualValues(t, 16*units.MiB, getAdjustedIndexBlockSize(166*units.MiB))
+	require.EqualValues(t, 1*units.MiB, external.GetAdjustedBlockSize(1*units.MiB))
+	require.EqualValues(t, 16*units.MiB, external.GetAdjustedBlockSize(15*units.MiB))
+	require.EqualValues(t, 16*units.MiB, external.GetAdjustedBlockSize(16*units.MiB))
+	require.EqualValues(t, 17*units.MiB, external.GetAdjustedBlockSize(17*units.MiB))
+	require.EqualValues(t, 16*units.MiB, external.GetAdjustedBlockSize(166*units.MiB))
 }
