@@ -807,7 +807,7 @@ const (
 	// TODO: can we remove host? host and name are similar?
 	InsertOpenAIPlatform = `insert into mysql.llm_platform
 		(name, base_url, host, auth, source, status) values (
-		"openai", "https://api.openai.com/v1", "openai", "key", "system", "disabled")`
+		"openai", "https://api.openai.com/v1", "openai", "apikey", "system", "disabled")`
 	InsertBedrockPlatform = `insert into mysql.llm_platform
 		(name, base_url, host, auth, source, status) values (
 		"bedrock_runtime", "", "AWS", "platform", "system", "disabled")`
