@@ -200,9 +200,9 @@ func (c *pdClient) scatterRegions(ctx context.Context, newRegions []*RegionInfo)
 			log.Warn("failed to batch scatter regions, rollback to sequentially scatter", logutil.ShortError(err))
 			c.scatterRegionsSequentially(
 				ctx, newRegions,
-				// backoff about 100s total, or we give up scattering this region.
+				// backoff about 1h total, or we give up scattering this region.
 				&ExponentialBackoffer{
-					Attempts:    50,
+					Attempts:    1800,
 					BaseBackoff: 100 * time.Millisecond,
 					MaxDelay:    2 * time.Second,
 				})
