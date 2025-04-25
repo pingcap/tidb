@@ -788,6 +788,21 @@ const (
 		value json NOT NULL,
 		index idx_version_category_type (version, category, type),
 		index idx_table_id (table_id));`
+
+	// CreateTiDBLLMPlatformTable is a table to store LLM platform information.
+	CreateTiDBLLMPlatformTable = `CREATE TABLE IF NOT EXISTS mysql.llm_platform (
+		name varchar(64) NOT NULL,
+		base_url varchar(255) NOT NULL,
+		host varchar(255) NOT NULL,
+		auth varchar(255) NOT NULL,
+		source varchar(64) NOT NULL,
+		description text DEFAULT NULL,
+		key varchar(255) DEFAULT NULL,
+		default_model varchar(255) DEFAULT NULL,
+		max_tokens bigint(20) DEFAULT NULL,
+		timeout decimal(10, 2) DEFAULT NULL,
+		status varchar(64) NOT NULL,
+		extras json DEFAULT NULL);`
 )
 
 // CreateTimers is a table to store all timers for tidb
@@ -1284,6 +1299,9 @@ const (
 	// version 247
 	// Add last_stats_histograms_version to mysql.stats_meta.
 	version247 = 247
+
+	// version 248
+	version248 = 248
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
@@ -1471,6 +1489,7 @@ var (
 		upgradeToVer245,
 		upgradeToVer246,
 		upgradeToVer247,
+		upgradeToVer248,
 	}
 )
 
@@ -3475,6 +3494,13 @@ func upgradeToVer247(s sessiontypes.Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN last_stats_histograms_version bigint unsigned DEFAULT NULL", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer248(s sessiontypes.Session, ver int64) {
+	if ver >= version248 {
+		return
+	}
+	doReentrantDDL(s, CreateTiDBLLMPlatformTable, infoschema.ErrTableExists)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
