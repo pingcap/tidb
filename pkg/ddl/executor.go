@@ -23,6 +23,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -625,14 +626,14 @@ func (e *executor) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, 
 		return nil
 	}
 
-	placementPolicyRef, err = checkAndNormalizePlacementPolicy(ctx, placementPolicyRef)
-	if err != nil {
-		return err
-	}
-
 	tblInfo := tb.Meta()
 	if tblInfo.TempTableType != model.TempTableNone {
 		return errors.Trace(dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("placement"))
+	}
+
+	placementPolicyRef, err = checkAndNormalizePlacementPolicy(ctx, placementPolicyRef)
+	if err != nil {
+		return err
 	}
 
 	var involvingSchemaInfo []model.InvolvingSchemaInfo
@@ -984,6 +985,7 @@ func checkGlobalIndexes(ec errctx.Context, tblInfo *model.TableInfo) error {
 func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err error) {
 	var tempTableName string
 	var originTableName = s.Table.Name.L
+	log.Info("originTableName", zap.Any("originTableName", originTableName))
 	if s.Select != nil {
 		originTableName = s.Table.Name.L
 		tempTableName = s.Table.Name.L + "_nonpublic_" + strconv.Itoa(time.Now().Nanosecond())
@@ -1049,36 +1051,56 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	}
 
 	if s.Select != nil {
-		log.Info("e.store.Name()", zap.Any("e.store.Name()", e.store.Name()), zap.Any("kv.TiKV.Name()", kv.TiKV.Name()))
-		isTikvStore := e.store.Name() == kv.TiKV.Name()
-		insertSql, err := buildInsertSql(schema.Name.L, tempTableName, s, isTikvStore)
-		if err != nil {
-			return err
-		}
-		var sctx sessionctx.Context
-		sctx, err = e.sessPool.Get()
+		sctx, err := e.sessPool.Get()
 		if err != nil {
 			return errors.Trace(err)
 		}
 		defer e.sessPool.Put(sctx)
-		logutil.DDLLogger().Info("create table with info job", zap.String("sql", insertSql))
-		_, err = sctx.GetSQLExecutor().ExecuteInternal(e.ctx, insertSql)
-		if err != nil {
-			dropSql := buildDropSql(schema.Name.L, tempTableName)
-			_, dropErr := sctx.GetSQLExecutor().ExecuteInternal(e.ctx, dropSql)
-			if dropErr != nil {
-				return errors.Trace(dropErr)
-			}
-			return errors.Trace(err)
-		}
+
+		// log.Info("e.store.Name()", zap.Any("e.store.Name()", e.store.Name()), zap.Any("kv.TiKV.Name()", kv.TiKV.Name()))
+		// isTikvStore := e.store.Name() == kv.TiKV.Name()
+		// insertSql, err := buildInsertSql(schema.Name.L, tempTableName, s, isTikvStore)
+		// if err != nil {
+		// 	return err
+		// }
+		// err = insertToTempTable(e, sctx, insertSql)
+		// if err != nil {
+		// 	dropSql := buildDropSql(schema.Name.L, tempTableName)
+		// 	err := dropTempTable(e, sctx, dropSql)
+		// 	if err != nil {
+		// 		return errors.Trace(err)
+		// 	}
+		// 	return errors.Trace(err)
+		// }
+
+		ctx.CommitTxn(e.ctx)
 		renameSql := buildRenameSql(schema.Name.L, tempTableName, originTableName)
-		log.Info("renameSql", zap.Any("renameSql", renameSql))
-		_, err = sctx.GetSQLExecutor().ExecuteInternal(e.ctx, renameSql)
+		err = renameTempTable(e, sctx, renameSql)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		ctx.CommitTxn(e.ctx)
 	}
 	return nil
+}
+
+func insertToTempTable(e *executor, sctx sessionctx.Context, insertSql string) error {
+	logutil.DDLLogger().Info("insert to temp table", zap.String("sql", insertSql))
+	_, err := sctx.GetSQLExecutor().ExecuteInternal(e.ctx, insertSql)
+	return errors.Trace(err)
+}
+
+func dropTempTable(e *executor, sctx sessionctx.Context, dropSql string) error {
+
+	logutil.DDLLogger().Info("drop temp table", zap.String("sql", dropSql))
+	_, err := sctx.GetSQLExecutor().ExecuteInternal(e.ctx, dropSql)
+	return errors.Trace(err)
+}
+
+func renameTempTable(e *executor, sctx sessionctx.Context, renameSql string) error {
+	logutil.DDLLogger().Info("rename temp table", zap.String("sql", renameSql))
+	_, err := sctx.GetSQLExecutor().ExecuteInternal(e.ctx, renameSql)
+	return errors.Trace(err)
 }
 
 func buildDropSql(dbName, tempTableName string) string {
@@ -1146,11 +1168,9 @@ func buildInsertSql(dbName, tableName string, s *ast.CreateTableStmt, isTikvStor
 	sqlBuilder.WriteByte('(')
 
 	for i, col := range s.SelectColumns {
-		log.Info("col.O", zap.Any("col", col.O))
 		if i > 0 {
 			sqlBuilder.WriteByte(',')
 		}
-		// 使用反引号包裹列名，处理特殊列名如sum(b)
 		sqlBuilder.WriteByte('`')
 		sqlBuilder.WriteString(col.L)
 		sqlBuilder.WriteByte('`')
@@ -4575,6 +4595,10 @@ func ExtractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 		}
 		return nil, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
 	}
+	logutil.DDLLogger().Info("ExtractTblInfos", zap.Any("is", is))
+	if is == nil {
+		debug.PrintStack()
+	}
 	if !tableExists(is, oldIdent, tables) {
 		if isAlterTable {
 			return nil, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
@@ -4623,6 +4647,7 @@ func tableExists(is infoschema.InfoSchema, ident ast.Ident, tables map[string]in
 	if (ok && tableID != tableNotExist) || (!ok && is.TableExists(ident.Schema, ident.Name)) {
 		return true
 	}
+	// log.Info("tableExists", zap.Any("is.version", is.SchemaMetaVersion()), zap.Any("ident", ident), zap.Any("tableID", tableID), zap.Any("tables", tables))
 	return false
 }
 
