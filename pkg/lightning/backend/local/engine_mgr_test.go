@@ -41,6 +41,7 @@ func getBackendConfig(t *testing.T) BackendConfig {
 		LocalStoreDir:               path.Join(t.TempDir(), "sorted-kv"),
 		DupeDetectEnabled:           false,
 		DuplicateDetectOpt:          common.DupDetectOpt{},
+		KeyAdapter:                  common.KeyAdapter(common.NoopKeyAdapter{}),
 		WorkerConcurrency:           8,
 		LocalWriterMemCacheSize:     config.DefaultLocalWriterMemCacheSize,
 		CheckpointEnabled:           false,

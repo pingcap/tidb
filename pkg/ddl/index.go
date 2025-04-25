@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	litconfig "github.com/pingcap/tidb/pkg/lightning/config"
 	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -1637,7 +1638,7 @@ func runReorgJobAndHandleErr(
 			return false, ver, nil
 		}
 		// TODO(tangenta): get duplicate column and match index.
-		err = ingest.TryConvertToKeyExistsErr(err, allIndexInfos[0], tbl.Meta())
+		err = local.ConvertToErrFoundConflictRecords(err, tbl)
 		if !isRetryableJobError(err, job.ErrorCount) {
 			logutil.DDLLogger().Warn("run add index job failed, convert job to rollback", zap.Stringer("job", job), zap.Error(err))
 			ver, err = convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), allIndexInfos, err)
@@ -2268,9 +2269,10 @@ func getLocalWriterConfig(indexCnt, writerCnt int) *backend.LocalWriterConfig {
 	return writerCfg
 }
 
-func writeChunkToLocal(
+func writeChunk(
 	ctx context.Context,
 	writers []ingest.Writer,
+	tbl table.Table,
 	indexes []table.Index,
 	copCtx copr.CopContext,
 	loc *time.Location,
@@ -2333,7 +2335,7 @@ func writeChunkToLocal(
 			if needRestoreForIndexes[i] {
 				rsData = getRestoreData(c.TableInfo, copCtx.IndexInfo(idxID), c.PrimaryKeyInfo, restoreDataBuf)
 			}
-			err = writeOneKVToLocal(ctx, writers[i], index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
+			err = writeOneKV(ctx, writers[i], tbl, index, loc, errCtx, writeStmtBufs, idxData, rsData, h)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
@@ -2355,9 +2357,10 @@ func maxIndexColumnCount(indexes []table.Index) int {
 	return maxCnt
 }
 
-func writeOneKVToLocal(
+func writeOneKV(
 	ctx context.Context,
 	writer ingest.Writer,
+	tbl table.Table,
 	index table.Index,
 	loc *time.Location,
 	errCtx errctx.Context,
@@ -2376,6 +2379,9 @@ func writeOneKVToLocal(
 		})
 		err = writer.WriteRow(ctx, key, idxVal, handle)
 		if err != nil {
+			if common.ErrFoundDuplicateKeys.Equal(err) {
+				err = local.ConvertToErrFoundConflictRecords(err, tbl)
+			}
 			return errors.Trace(err)
 		}
 		failpoint.Inject("mockLocalWriterError", func() {
@@ -2517,6 +2523,9 @@ func (w *worker) addTableIndex(
 			if err != nil {
 				return err
 			}
+			if reorgInfo.ReorgMeta.UseCloudStorage {
+				return nil
+			}
 			return checkDuplicateForUniqueIndex(ctx, t, reorgInfo, w.store)
 		}
 	}
@@ -2583,7 +2592,7 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 			ctx := tidblogutil.WithCategory(ctx, "ddl-ingest")
 			if backendCtx == nil {
 				if config.GetGlobalConfig().Store == config.StoreTypeTiKV {
-					cfg, backend, err = ingest.CreateLocalBackend(ctx, store, reorgInfo.Job, true, 0)
+					cfg, backend, err = ingest.CreateLocalBackend(ctx, store, reorgInfo.Job, true, 0, false)
 					if err != nil {
 						return errors.Trace(err)
 					}

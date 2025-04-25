@@ -17,7 +17,7 @@ package external
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -25,7 +25,6 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/docker/go-units"
 	"github.com/jfcg/sorty/v2"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
@@ -325,7 +324,7 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	sortStart := time.Now()
 	oldSortyGor := sorty.MaxGor
 	sorty.MaxGor = uint64(e.workerConcurrency * 2)
-	var dupKey atomic.Pointer[[]byte]
+	var dupKey, dupVal atomic.Pointer[[]byte]
 	sorty.Sort(len(e.memKVsAndBuffers.kvs), func(i, k, r, s int) bool {
 		cmp := bytes.Compare(e.memKVsAndBuffers.kvs[i].key, e.memKVsAndBuffers.kvs[k].key)
 		if cmp < 0 { // strict comparator like < or >
@@ -335,8 +334,10 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 			return true
 		}
 		if cmp == 0 && i != k {
-			cloned := append([]byte(nil), e.memKVsAndBuffers.kvs[i].key...)
+			cloned := slices.Clone(e.memKVsAndBuffers.kvs[i].key)
 			dupKey.Store(&cloned)
+			cloned = slices.Clone(e.memKVsAndBuffers.kvs[i].value)
+			dupVal.Store(&cloned)
 		}
 		return false
 	})
@@ -346,8 +347,8 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 	logutil.Logger(ctx).Info("sorting in loadBatchRegionData",
 		zap.Duration("cost time", time.Since(sortStart)))
 
-	if k := dupKey.Load(); k != nil {
-		return errors.Errorf("duplicate key found: %s", hex.EncodeToString(*k))
+	if k, v := dupKey.Load(), dupVal.Load(); k != nil && v != nil {
+		return common.ErrFoundDuplicateKeys.FastGenByArgs(*k, *v)
 	}
 	readAndSortSecond := time.Since(readStart).Seconds()
 	readAndSortDurHist.Observe(readAndSortSecond)

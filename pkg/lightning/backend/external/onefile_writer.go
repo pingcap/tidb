@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -156,7 +157,8 @@ func (w *OneFileWriter) handleDupAndWrite(ctx context.Context, idxKey, idxVal []
 	}
 	if slices.Compare(w.pivotKey, idxKey) == 0 {
 		w.currDupCnt++
-		if w.onDup == engineapi.OnDuplicateKeyRecord {
+		switch w.onDup {
+		case engineapi.OnDuplicateKeyRecord:
 			// record first 2 duplicate to data file, others to dup file.
 			if w.currDupCnt == 2 {
 				if err := w.doWriteRow(ctx, w.pivotKey, w.pivotValue); err != nil {
@@ -175,6 +177,8 @@ func (w *OneFileWriter) handleDupAndWrite(ctx context.Context, idxKey, idxVal []
 				}
 				w.recordedDupCnt++
 			}
+		case engineapi.OnDuplicateKeyError:
+			return common.ErrFoundDuplicateKeys.FastGenByArgs(idxKey, idxVal)
 		}
 	} else {
 		return w.onNextPivot(ctx, idxKey, idxVal)

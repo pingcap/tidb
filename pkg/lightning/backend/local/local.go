@@ -451,6 +451,8 @@ type BackendConfig struct {
 	DupeDetectEnabled  bool
 	DuplicateDetectOpt common.DupDetectOpt
 	TiKVWorkerURL      string
+	// When using global sort with DupeDetectEnabled, we can use NoopKeyAdapter instead of DupDetectKeyAdapter
+	KeyAdapter common.KeyAdapter
 	// max write speed in bytes per second to each store(burst is allowed), 0 means no limit
 	StoreWriteBWLimit int
 	// When TiKV is in normal mode, ingesting too many SSTs will cause TiKV write stall.

@@ -213,7 +213,7 @@ func (s *mockGCSSuite) TestGlobalSortUniqueKeyConflict() {
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-multi-files-uk/t.*.csv?endpoint=%s'
 		with cloud_storage_uri='%s', __max_engine_size='1', thread=8`, gcsEndpoint, sortStorageURI)
 	err := s.tk.QueryToErr(importSQL)
-	require.ErrorContains(s.T(), err, "duplicate key found")
+	require.ErrorContains(s.T(), err, "found duplicate key")
 	// this is the encoded value of "test-123". Because the table ID/ index ID may vary, we can't check the exact key
 	// TODO: decode the key to use readable value in the error message.
 	require.ErrorContains(s.T(), err, "746573742d313233")

@@ -92,6 +92,9 @@ func newEngineManager(config BackendConfig, storeHelper StoreHelper, logger log.
 		}
 		keyAdapter = common.DupDetectKeyAdapter{}
 	}
+	if config.KeyAdapter != nil {
+		keyAdapter = config.KeyAdapter
+	}
 	alloc := manual.Allocator{}
 	if RunInTest {
 		alloc.RefCnt = new(atomic.Int64)
