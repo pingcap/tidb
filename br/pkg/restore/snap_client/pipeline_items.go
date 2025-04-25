@@ -332,7 +332,7 @@ func (buffer *statsMetaItemBuffer) take() (metaUpdates []statstypes.MetaUpdate) 
 	buffer.Lock()
 	defer buffer.Unlock()
 	metaUpdates = buffer.metaUpdates
-	buffer.metaUpdates = make([]statstypes.MetaUpdate, 0, statsMetaItemBufferSize)
+	buffer.metaUpdates = nil
 	return metaUpdates
 }
 
@@ -430,7 +430,8 @@ func (rc *SnapClient) registerUpdateMetaAndLoadStats(
 							return errors.Trace(err)
 						}
 						if statsErr = buffer.TryUpdateMetas(c, statsHandler, newDefID, count); statsErr != nil {
-							log.Error("update stats meta failed", zap.Int64("downstream table id", tbl.Table.ID), zap.Int64("downstream partition id", newDefID), zap.Error(statsErr))
+							log.Error("update stats meta failed", zap.Error(statsErr))
+							return statsErr
 						}
 					}
 				}
@@ -438,7 +439,7 @@ func (rc *SnapClient) registerUpdateMetaAndLoadStats(
 			// the total kvs contains the index kvs, but the stats meta needs the count of rows
 			count := int64(oldTable.TotalKvs / uint64(len(oldTable.Info.Indices)+1))
 			if statsErr = buffer.TryUpdateMetas(c, statsHandler, tbl.Table.ID, count); statsErr != nil {
-				log.Error("update stats meta failed", zap.Int64("downstream table id", tbl.Table.ID), zap.Error(statsErr))
+				log.Error("update stats meta failed", zap.Error(statsErr))
 				return statsErr
 			}
 		}
