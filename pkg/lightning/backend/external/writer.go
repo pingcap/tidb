@@ -51,6 +51,10 @@ var (
 	// this value might not be optimal.
 	// TODO need data on AWS and other machine types
 	maxUploadWorkersPerThread = 8
+	// we use hex of 0-256 as partition prefix, it might duplicate with task ID,
+	// so we add a header to it.
+	partitionHeader     = "p"
+	partitionHeaderChar = partitionHeader[0]
 
 	// MergeSortOverlapThreshold is the threshold of overlap between sorted kv files.
 	// if the overlap ratio is greater than this threshold, we will merge the files.
@@ -776,7 +780,7 @@ func (w *Writer) getPartitionedPrefix() string {
 // and use it as the partitioned prefix.
 func randPartitionedPrefix(prefix string, rnd *rand.Rand) string {
 	partitionID := byte(rnd.Intn(math.MaxUint8 + 1))
-	return filepath.Join(hex.EncodeToString([]byte{partitionID}), prefix)
+	return filepath.Join(partitionHeader+hex.EncodeToString([]byte{partitionID}), prefix)
 }
 
 func isLowerHexChar(b byte) bool {
@@ -784,10 +788,10 @@ func isLowerHexChar(b byte) bool {
 }
 
 func isValidPartition(in []byte) bool {
-	if len(in) != 2 {
+	if len(in) != 3 || in[0] != partitionHeaderChar {
 		return false
 	}
-	return isLowerHexChar(in[0]) && isLowerHexChar(in[1])
+	return isLowerHexChar(in[1]) && isLowerHexChar(in[2])
 }
 
 // EngineWriter implements backend.EngineWriter interface.

@@ -607,5 +607,12 @@ func TestRandPartitionedPrefix(t *testing.T) {
 	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
 	prefix := "write-prefix"
 	partitioned := randPartitionedPrefix(prefix, rnd)
-	require.Equal(t, partitioned[3:], prefix)
+	require.Equal(t, partitionHeaderChar, partitioned[0])
+	require.Equal(t, partitioned[4:], prefix)
+	require.True(t, isValidPartition([]byte(partitioned[:3])))
+
+	require.False(t, isValidPartition([]byte("aa")))
+	require.False(t, isValidPartition([]byte("aaa")))
+	require.False(t, isValidPartition([]byte("paz")))
+	require.False(t, isValidPartition([]byte("pza")))
 }
