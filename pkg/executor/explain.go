@@ -154,12 +154,19 @@ type OQOKnob struct {
 func (e *ExplainExec) generateExplainInfo(ctx context.Context) (rows [][]string, err error) {
 	if e.explain.Format == types.ExplainFormatRelevantKnobs {
 		relevantKnobs := e.Ctx().GetSessionVars().StmtCtx.RelevantKnobs
+
+		statsRecord := e.Ctx().GetSessionVars().StmtCtx.GetUsedStatsInfo(true)
+		maxRowCount := int64(1)
+		for _, k := range statsRecord.Keys() {
+			maxRowCount = max(maxRowCount, statsRecord.GetUsedInfo(k).RealtimeCount)
+		}
+
 		knobs := make([]OQOKnob, 0, len(relevantKnobs))
-		for name, val := range relevantKnobs {
+		for name := range relevantKnobs {
 			knobs = append(knobs, OQOKnob{
 				Var: name,
-				Min: val[0],
-				Max: val[1],
+				Min: float64(0),
+				Max: float64(maxRowCount),
 			})
 		}
 		sort.Slice(knobs, func(i, j int) bool {
