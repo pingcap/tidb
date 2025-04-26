@@ -23,6 +23,8 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -980,6 +982,17 @@ func checkGlobalIndexes(ec errctx.Context, tblInfo *model.TableInfo) error {
 }
 
 func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (err error) {
+	var tempTableName string
+	var originTableName = s.Table.Name.L
+
+	// if s.Select is not nil, it means the table is created from a select statement
+	// we need to create a temporary table and insert the data from the select statement
+	// and then rename the temporary table to the original table
+	if s.Select != nil {
+		originTableName = s.Table.Name.L
+		tempTableName = s.Table.Name.L + "_nonpublic_" + strconv.Itoa(time.Now().Nanosecond())
+		s.Table.Name = ast.NewCIStr(tempTableName)
+	}
 	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
@@ -1035,8 +1048,123 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	if s.IfNotExists {
 		onExist = OnExistIgnore
 	}
+	if err = e.CreateTableWithInfo(ctx, schema.Name, tbInfo, involvingRef, WithOnExist(onExist)); err != nil {
+		return err
+	}
 
-	return e.CreateTableWithInfo(ctx, schema.Name, tbInfo, involvingRef, WithOnExist(onExist))
+	if s.Select != nil {
+		sctx, err := e.sessPool.Get()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer e.sessPool.Put(sctx)
+
+		// if isTikvStore is true, use import into instead of insert into
+		isTikvStore := e.store.Name() == kv.TiKV.Name()
+		insertSql, err := buildInsertSql(schema.Name.L, tempTableName, s, isTikvStore)
+		if err != nil {
+			return err
+		}
+
+		// insert data into temporary table
+		if _, err = sctx.GetSQLExecutor().ExecuteInternal(e.ctx, insertSql); err != nil {
+			// if insert data into temporary table failed, drop the temporary table (like rollback)
+			dropSql := buildDropSql(schema.Name.L, tempTableName)
+			if _, dropErr := sctx.GetSQLExecutor().ExecuteInternal(e.ctx, dropSql); dropErr != nil {
+				return errors.Trace(dropErr)
+			}
+			return errors.Trace(err)
+		}
+
+		// rename the temporary table to the original table
+		renameSql := buildRenameSql(schema.Name.L, tempTableName, originTableName)
+		if _, err = sctx.GetSQLExecutor().ExecuteInternal(e.ctx, renameSql); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+func buildDropSql(dbName, tempTableName string) string {
+	var sqlBuilder strings.Builder
+	sqlBuilder.Grow(len(dbName)*2 + len(tempTableName) + 50)
+
+	sqlBuilder.WriteString("DROP TABLE ")
+	sqlBuilder.WriteByte('`')
+	sqlBuilder.WriteString(dbName)
+	sqlBuilder.WriteByte('`')
+	sqlBuilder.WriteByte('.')
+	sqlBuilder.WriteByte('`')
+	sqlBuilder.WriteString(tempTableName)
+	sqlBuilder.WriteByte('`')
+	sqlBuilder.WriteByte(';')
+
+	return sqlBuilder.String()
+}
+
+func buildRenameSql(dbName string, tempTableName string, originTableName string) string {
+	var sqlBuilder strings.Builder
+	// Grow the capacity of the builder to reduce reallocations
+	sqlBuilder.Grow(len(dbName)*2 + len(tempTableName) + len(originTableName) + 50)
+
+	sqlBuilder.WriteString("RENAME TABLE ")
+	sqlBuilder.WriteByte('`')
+	sqlBuilder.WriteString(dbName)
+	sqlBuilder.WriteByte('`')
+	sqlBuilder.WriteByte('.')
+	sqlBuilder.WriteByte('`')
+	sqlBuilder.WriteString(tempTableName)
+	sqlBuilder.WriteByte('`')
+	sqlBuilder.WriteString(" TO ")
+	sqlBuilder.WriteByte('`')
+	sqlBuilder.WriteString(dbName)
+	sqlBuilder.WriteByte('`')
+	sqlBuilder.WriteByte('.')
+	sqlBuilder.WriteByte('`')
+	sqlBuilder.WriteString(originTableName)
+	sqlBuilder.WriteByte('`')
+	sqlBuilder.WriteByte(';')
+
+	return sqlBuilder.String()
+}
+
+func buildInsertSql(dbName, tableName string, s *ast.CreateTableStmt, isTikvStore bool) (sql string, err error) {
+	var res strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &res)
+	if err := s.Select.Restore(restoreCtx); err != nil {
+		return "", err
+	}
+
+	var sqlBuilder strings.Builder
+	// Grow the capacity of the builder to reduce reallocation
+	sqlBuilder.Grow(len(dbName) + len(tableName) + res.Len())
+
+	if isTikvStore {
+		sqlBuilder.WriteString("import into ")
+	} else {
+		sqlBuilder.WriteString("insert into ")
+	}
+	sqlBuilder.WriteString(dbName)
+	sqlBuilder.WriteByte('.')
+	sqlBuilder.WriteString(tableName)
+	sqlBuilder.WriteByte('(')
+
+	for i, col := range s.SelectColumns {
+		if i > 0 {
+			sqlBuilder.WriteByte(',')
+		}
+		sqlBuilder.WriteByte('`')
+		sqlBuilder.WriteString(col.L)
+		sqlBuilder.WriteByte('`')
+	}
+
+	sqlBuilder.WriteString(") ")
+	if isTikvStore {
+		sqlBuilder.WriteString("from ")
+	}
+	sqlBuilder.WriteString(res.String())
+
+	return sqlBuilder.String(), nil
 }
 
 // createTableWithInfoJob returns the table creation job.
@@ -1202,7 +1330,6 @@ func (e *executor) CreateTableWithInfo(
 	cs ...CreateTableOption,
 ) (err error) {
 	c := GetCreateTableConfig(cs)
-
 	jobW, err := e.createTableWithInfoJob(ctx, dbName, tbInfo, involvingRef, c)
 	if err != nil {
 		return err
@@ -2518,7 +2645,7 @@ func (e *executor) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident,
 	}
 	err = initJobReorgMetaFromVariables(job, ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	args := &model.TablePartitionArgs{
 		PartNames: partNames,
@@ -2587,7 +2714,7 @@ func (e *executor) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, s
 	}
 	err = initJobReorgMetaFromVariables(job, ctx)
 	if err != nil {
-		return errors.Trace(err)
+		return err
 	}
 	args := &model.TablePartitionArgs{
 		PartNames: partNames,
@@ -4449,6 +4576,10 @@ func ExtractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 			return nil, 0, infoschema.ErrTableExists.GenWithStackByArgs(newIdent)
 		}
 		return nil, 0, infoschema.ErrTableNotExists.GenWithStackByArgs(oldIdent.Schema, oldIdent.Name)
+	}
+	logutil.DDLLogger().Info("ExtractTblInfos", zap.Any("is", is))
+	if is == nil {
+		debug.PrintStack()
 	}
 	if !tableExists(is, oldIdent, tables) {
 		if isAlterTable {

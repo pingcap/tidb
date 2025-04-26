@@ -1768,7 +1768,6 @@ func tryGetPkHandleCol(tblInfo *model.TableInfo, allColSchema *expression.Schema
 	}
 	return nil, nil, false
 }
-
 func (b *PlanBuilder) buildPhysicalIndexLookUpReaders(ctx context.Context, dbName ast.CIStr, tbl table.Table, indices []table.Index) ([]base.Plan, []*model.IndexInfo, error) {
 	tblInfo := tbl.Meta()
 	// get index information
@@ -5221,6 +5220,34 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, v.ReferTable.Schema.L,
 				v.ReferTable.Name.L, "", authErr)
 		}
+
+		if v.Select != nil {
+			if err := checkCreateTableAsSelect(v); err != nil {
+				return nil, err
+			}
+			switch selectStmt := v.Select.(type) {
+			// simple select statement
+			case *ast.SelectStmt:
+				logicalPlan, err := b.buildSelect(ctx, selectStmt)
+				if err != nil {
+					return nil, err
+				}
+				if err = buildColsFromPlan(v, logicalPlan); err != nil {
+					return nil, err
+				}
+			// case select union select
+			case *ast.SetOprStmt:
+				logicalPlan, err := b.buildSetOpr(ctx, selectStmt)
+				if err != nil {
+					return nil, err
+				}
+				if err = buildColsFromPlan(v, logicalPlan); err != nil {
+					return nil, err
+				}
+			default:
+				return nil, errors.New("unsupported select stmt type: " + reflect.TypeOf(selectStmt).String())
+			}
+		}
 	case *ast.CreateViewStmt:
 		err := checkForUserVariables(v.Select)
 		if err != nil {
@@ -5417,6 +5444,97 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 	}
 	p := &DDL{Statement: node}
 	return p, nil
+}
+
+// buildColsFromPlan builds the columns of the table from the logical plan
+// used in create table as select statement
+func buildColsFromPlan(v *ast.CreateTableStmt, logicalPlan base.LogicalPlan) error {
+	schema := logicalPlan.Schema()
+	names := logicalPlan.OutputNames()
+
+	// fill select columns,used in build sql when insert into table(v.SelectColumns...)  select ...
+	for _, name := range names {
+		v.SelectColumns = append(v.SelectColumns, &name.ColName)
+	}
+	if v.Cols == nil {
+		// Order of columns is the same as the order of [cols from select stmt]
+		v.Cols = make([]*ast.ColumnDef, len(schema.Columns))
+		for i, name := range names {
+			checkRetType(schema.Columns[i].RetType)
+			v.Cols[i] = &ast.ColumnDef{
+				Name: &ast.ColumnName{
+					Name: name.ColName,
+				},
+				Tp:      schema.Columns[i].RetType,
+				Options: []*ast.ColumnOption{},
+			}
+		}
+	} else {
+		// Compatible with MySQL order of columns
+		// colName -> (namesIndex,ColsIndex)
+		// if IndexArr[1] != -1,it means the column is explicitly specified when creating the table, then the column is used.
+		colMap := make(map[string][2]int)
+		for i, name := range names {
+			colMap[name.ColName.L] = [2]int{i, -1}
+		}
+		// First: check col which is explicitly specified and not in the [cols from select stmt],add it to the newCols
+		newCols := make([]*ast.ColumnDef, 0, len(schema.Columns))
+		for i, col := range v.Cols {
+			if arr, exists := colMap[col.Name.Name.L]; !exists {
+				// if NOT NULL is set,throw error
+				for _, opt := range col.Options {
+					if opt.Tp == ast.ColumnOptionNotNull {
+						return table.ErrNoDefaultValue.GenWithStackByArgs(col.Name.Name.L)
+					}
+				}
+				newCols = append(newCols, col)
+			} else {
+				// The type which is explicitly specified is used as the basis
+				arr[1] = i
+				colMap[col.Name.Name.L] = arr
+			}
+		}
+		// Second: add the remaining cols to the newCols
+		for i, name := range names {
+			// If the column is explicitly specified when creating the table
+			if colMap[name.ColName.L][1] != -1 {
+				newCols = append(newCols, v.Cols[colMap[name.ColName.L][1]])
+			} else {
+				checkRetType(schema.Columns[i].RetType)
+				newCols = append(newCols, &ast.ColumnDef{
+					Name: &ast.ColumnName{
+						Name: name.ColName,
+					},
+					Tp: schema.Columns[i].RetType,
+				})
+			}
+		}
+		v.Cols = newCols
+	}
+	return nil
+}
+
+// checkRetType checks the type of the column and changes it (eg. VarString -> Varchar)
+func checkRetType(fieldType *types.FieldType) {
+	if fieldType.GetType() == mysql.TypeVarString {
+		// change VarString to Varchar
+		// charset and collate are set behind the scenes
+		fieldType.SetType(mysql.TypeVarchar)
+		fieldType.SetCharset("")
+		fieldType.SetCollate("")
+	}
+
+}
+
+// checkCreateTableAsSelect checks the create table as select statement
+func checkCreateTableAsSelect(v *ast.CreateTableStmt) error {
+	// check foreign key
+	for _, constraint := range v.Constraints {
+		if constraint.Tp == ast.ConstraintForeignKey {
+			return plannererrors.ErrForeignKeyWithAtomicCreateSelect
+		}
+	}
+	return nil
 }
 
 const (
