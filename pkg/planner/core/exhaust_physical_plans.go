@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"math"
 	"slices"
-	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -3227,9 +3226,6 @@ func getStreamAggs(lp base.LogicalPlan, prop *property.PhysicalProperty) []base.
 	childProp = admitIndexJoinProp(childProp, prop)
 	if childProp == nil {
 		return nil
-	}
-	if strings.HasPrefix(lp.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "explain format='brief' select /*+ INL_JOIN(tmp) */ * from (select /*+ stream_agg() */ a, count(b) from t group by a) tmp, t1 where tmp.a=t1.a") {
-		fmt.Println(1)
 	}
 	for _, possibleChildProperty := range la.PossibleProperties {
 		childProp.SortItems = property.SortItemsFromCols(possibleChildProperty[:len(groupByCols)], desc)

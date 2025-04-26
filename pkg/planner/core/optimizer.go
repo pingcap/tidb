@@ -1192,9 +1192,7 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 		return nil, 0, plannererrors.ErrInternal.GenWithStackByArgs(errMsg)
 	}
 	// collect the warnings from task.
-	if t.WarningCount() > 0 {
-		logic.SCtx().GetSessionVars().StmtCtx.AppendWarnings(t.TruncateWarnings(0))
-	}
+	logic.SCtx().GetSessionVars().StmtCtx.AppendWarnings(t.GetWarnings())
 
 	if err = t.Plan().ResolveIndices(); err != nil {
 		return nil, 0, err

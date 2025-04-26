@@ -15,6 +15,8 @@
 package core
 
 import (
+	"math"
+
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
@@ -35,6 +37,57 @@ var (
 	_ base.Task = &CopTask{}
 )
 
+type simpleWarnings struct {
+	warnings []*context.SQLWarn
+}
+
+// WarningCount returns the number of warnings.
+func (s *simpleWarnings) WarningCount() int {
+	return len(s.warnings)
+}
+
+// Copy implemented the simple warnings copy to avoid use the same warnings slice for different task instance.
+func (s *simpleWarnings) Copy() {
+	warnings := make([]*context.SQLWarn, 0, len(s.warnings))
+	warnings = append(warnings, s.warnings...)
+	s.warnings = warnings
+}
+
+// CopyFrom copy the warnings from src to s.
+func (s *simpleWarnings) CopyFrom(src *simpleWarnings) {
+	if src == nil {
+		return
+	}
+	s.warnings = make([]*context.SQLWarn, 0, len(src.warnings))
+	s.warnings = append(s.warnings, src.warnings...)
+}
+
+// AppendWarning appends a warning to the warnings slice.
+func (s *simpleWarnings) AppendWarning(warn error) {
+	if len(s.warnings) < math.MaxUint16 {
+		s.warnings = append(s.warnings, &context.SQLWarn{Level: context.WarnLevelWarning, Err: warn})
+	}
+}
+
+// AppendNote appends a note to the warnings slice.
+func (s *simpleWarnings) AppendNote(note error) {
+	if len(s.warnings) < math.MaxUint16 {
+		s.warnings = append(s.warnings, &context.SQLWarn{Level: context.WarnLevelNote, Err: note})
+	}
+}
+
+// GetWarnings returns the internal all stored warnings.
+func (s *simpleWarnings) GetWarnings() []context.SQLWarn {
+	// we use pointer warnings across different level's task to avoid mem cost.
+	// when best task is finished and final warnings is determined, we should
+	// convert pointer to struct to append it to session context.
+	warnings := make([]context.SQLWarn, 0, len(s.warnings))
+	for _, w := range s.warnings {
+		warnings = append(warnings, *w)
+	}
+	return warnings
+}
+
 // ************************************* RootTask Start ******************************************
 
 // RootTask is the final sink node of a plan graph. It should be a single goroutine on tidb.
@@ -47,8 +100,8 @@ type RootTask struct {
 	// fetched from underlying ds which built index range or table range based on these runtime constant.
 	IndexJoinInfo *IndexJoinInfo
 
-	// warnings handler
-	context.StaticWarnHandler
+	// warnings passed through different task copy attached with more upper operator specific warnings. (single thread safe)
+	simpleWarnings
 }
 
 // GetPlan returns the root task's plan.
@@ -79,9 +132,9 @@ func (t *RootTask) Copy() base.Task {
 		// when copying, just copy it out.
 		IndexJoinInfo: t.IndexJoinInfo,
 	}
-	// t.CopyWarnings(nt.StaticWarnHandler.GetWarnings()) will copy t's warns to nt
-	// and return the slice if it may be extended, then set it back to nt.
-	nt.SetWarnings(t.CopyWarnings(nt.StaticWarnHandler.GetWarnings()))
+	// since *t will reuse the same warnings slice, we need to copy it out.
+	// cause different task instance may have different warnings.
+	nt.simpleWarnings.Copy()
 	return nt
 }
 
@@ -145,8 +198,8 @@ type MppTask struct {
 	rootTaskConds []expression.Expression
 	tblColHists   *statistics.HistColl
 
-	// warnings handler
-	context.StaticWarnHandler
+	// warnings passed through different task copy attached with more upper operator specific warnings. (single thread safe)
+	simpleWarnings
 }
 
 // Count implements Task interface.
@@ -157,9 +210,9 @@ func (t *MppTask) Count() float64 {
 // Copy implements Task interface.
 func (t *MppTask) Copy() base.Task {
 	nt := *t
-	// t.CopyWarnings(nt.StaticWarnHandler.GetWarnings()) will copy t's warns to nt
-	// and return the slice if it may be extended, then set it back to nt.
-	nt.SetWarnings(t.CopyWarnings(nt.StaticWarnHandler.GetWarnings()))
+	// since *t will reuse the same warnings slice, we need to copy it out.
+	// cause different task instance may have different warnings.
+	nt.simpleWarnings.Copy()
 	return &nt
 }
 
@@ -195,7 +248,7 @@ func (t *MppTask) MemoryUsage() (sum int64) {
 func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 	defer func() {
 		if t.WarningCount() > 0 {
-			rt.CopyWarnings(t.GetWarnings())
+			rt.simpleWarnings.CopyFrom(&t.simpleWarnings)
 		}
 	}()
 	// In disaggregated-tiflash mode, need to consider generated column.
@@ -289,8 +342,8 @@ type CopTask struct {
 	// fetched from underlying ds which built index range or table range based on these runtime constant.
 	IndexJoinInfo *IndexJoinInfo
 
-	// warnings handler
-	context.StaticWarnHandler
+	// warnings passed through different task copy attached with more upper operator specific warnings. (single thread safe)
+	simpleWarnings
 }
 
 // Invalid implements Task interface.
@@ -309,9 +362,9 @@ func (t *CopTask) Count() float64 {
 // Copy implements Task interface.
 func (t *CopTask) Copy() base.Task {
 	nt := *t
-	// t.CopyWarnings(nt.StaticWarnHandler.GetWarnings()) will copy t's warns to nt
-	// and return the slice if it may be extended, then set it back to nt.
-	nt.SetWarnings(t.CopyWarnings(nt.StaticWarnHandler.GetWarnings()))
+	// since *t will reuse the same warnings slice, we need to copy it out.
+	// cause different task instance may have different warnings.
+	nt.simpleWarnings.Copy()
 	return &nt
 }
 
@@ -374,7 +427,7 @@ func (t *CopTask) convertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 			rt.IndexJoinInfo = t.IndexJoinInfo
 		}
 		if t.WarningCount() > 0 {
-			rt.CopyWarnings(t.GetWarnings())
+			rt.CopyFrom(&t.simpleWarnings)
 		}
 	}()
 	// copTasks are run in parallel, to make the estimated cost closer to execution time, we amortize
