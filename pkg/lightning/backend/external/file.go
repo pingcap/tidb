@@ -22,6 +22,7 @@ import (
 
 const (
 	statSuffix = "_stat"
+	dupSuffix  = "_dup"
 	// we use uint64 to store the length of key and value.
 	lengthBytes = 8
 )
