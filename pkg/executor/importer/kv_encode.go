@@ -158,15 +158,15 @@ func (en *tableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 // copied from InsertValues
 func (en *tableKVEncoder) getRow(vals []types.Datum, rowID int64) ([]types.Datum, error) {
 	rowLen := len(en.Columns)
-	if len(en.rowCache) < rowLen || len(en.hasValueCache) < rowLen {
+	if cap(en.rowCache) < rowLen || cap(en.hasValueCache) < rowLen {
 		en.rowCache = make([]types.Datum, rowLen)
 		en.hasValueCache = make([]bool, rowLen)
 	} else {
-		en.rowCache = en.rowCache[:rowLen]
-		en.hasValueCache = en.hasValueCache[:rowLen]
-		for i := range en.rowCache {
-			en.rowCache[i] = types.Datum{}
-			en.hasValueCache[i] = false
+		en.rowCache = en.rowCache[:0]
+		en.hasValueCache = en.hasValueCache[:0]
+		for i := 0; i < rowLen; i++ {
+			en.rowCache = append(en.rowCache, types.Datum{})
+			en.hasValueCache = append(en.hasValueCache, false)
 		}
 	}
 	row := en.rowCache

@@ -118,12 +118,12 @@ func (r *queryChunkEncodeReader) readRow(ctx context.Context, row []types.Datum)
 
 	chkRow := r.currChk.Chk.GetRow(r.cursor)
 	rowLen := chkRow.Len()
-	if len(row) < rowLen {
+	if cap(row) < rowLen {
 		row = make([]types.Datum, rowLen)
 	} else {
-		row = row[:rowLen]
-		for i := range row {
-			row[i] = types.Datum{}
+		row = row[:0]
+		for i := 0; i < rowLen; i++ {
+			row = append(row, types.Datum{})
 		}
 	}
 	row = chkRow.GetDatumRowWithBuffer(r.currChk.Fields, row)

@@ -230,6 +230,7 @@ func (kvcodec *tableKVEncoder) Encode(row []types.Datum,
 		if j >= 0 && j < len(row) {
 			theDatum = &row[j]
 		}
+		// TODO: consider move the cast before calling ProcessColDatum. see https://github.com/pingcap/tidb/pull/60397/files#r2058032695
 		value, err = kvcodec.ProcessColDatum(col, rowID, theDatum, true)
 		if err != nil {
 			return nil, kvcodec.LogKVConvertFailed(row, j, col.ToInfo(), err)
