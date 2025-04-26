@@ -220,5 +220,5 @@ CREATE TABLE `test` (
 );
 analyze table test all columns;
 load stats 's/issue_50080.json';
-explain format='brief' select * from test where updated_date > '2023-12-31 23:50:00' and updated_date < '2023-12-31 23:59:99';
+explain format='brief' select * from test where updated_date > '2023-12-31 23:50:00' and updated_date < '2023-12-31 23:59:59';
 explain format='brief' select * from test where updated_date > '2023-12-31 23:50:00' and updated_date < '2024-01-01 00:00:00';

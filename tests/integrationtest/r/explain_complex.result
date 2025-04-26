@@ -314,9 +314,11 @@ PRIMARY KEY (`id_tp00_cust_no_rela`) /*T![clustered_index] NONCLUSTERED */
 );
 analyze table test all columns;
 load stats 's/issue_50080.json';
-explain format='brief' select * from test where updated_date > '2023-12-31 23:50:00' and updated_date < '2023-12-31 23:59:99';
+explain format='brief' select * from test where updated_date > '2023-12-31 23:50:00' and updated_date < '2023-12-31 23:59:59';
 id	estRows	task	access object	operator info
-TableDual	0.00	root		rows:0
+IndexLookUp	2230.84	root		
+├─IndexRangeScan(Build)	2230.84	cop[tikv]	table:test, index:IX_CUST_RELA_DATE(updated_date)	range:(2023-12-31 23:50:00,2023-12-31 23:59:59), keep order:false
+└─TableRowIDScan(Probe)	2230.84	cop[tikv]	table:test	keep order:false
 explain format='brief' select * from test where updated_date > '2023-12-31 23:50:00' and updated_date < '2024-01-01 00:00:00';
 id	estRows	task	access object	operator info
 IndexLookUp	2234.56	root		
