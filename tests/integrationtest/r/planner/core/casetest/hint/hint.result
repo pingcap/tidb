@@ -1712,7 +1712,6 @@ Sort	12487.50	root		planner__core__casetest__hint__hint.t.a
 Level	Code	Message
 Warning	1815	Optimizer Hint /*+ INL_JOIN(t2) */ or /*+ TIDB_INLJ(t2) */ is inapplicable
 Warning	1815	Optimizer Hint /*+ INL_JOIN(t2) */ or /*+ TIDB_INLJ(t2) */ is inapplicable
-Warning	1815	Optimizer Hint /*+ INL_JOIN(t2) */ or /*+ TIDB_INLJ(t2) */ is inapplicable
 drop table if exists t1, t2;
 create table t1(a int, b int, c int, key a(a));
 create table t2(a int, b int, c int, key a(a));
