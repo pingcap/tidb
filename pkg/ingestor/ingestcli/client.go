@@ -101,11 +101,12 @@ func (w *writeClient) startChunkedHTTPRequest(req *http.Request) {
 		if resp.StatusCode != http.StatusOK {
 			body, err1 := io.ReadAll(resp.Body)
 			if err1 != nil {
-				w.sendReqErr.Store(err)
+				w.sendReqErr.Store(err1)
 				return fmt.Errorf("failed to readAll response: %s", err1.Error())
 			}
+			err = fmt.Errorf("failed to send chunked request: %s", string(body))
 			w.sendReqErr.Store(err)
-			return fmt.Errorf("failed to send chunked request: %s", string(body))
+			return err
 		}
 		data, err := io.ReadAll(resp.Body)
 		if err != nil {
