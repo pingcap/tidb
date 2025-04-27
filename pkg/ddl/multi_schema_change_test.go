@@ -817,9 +817,10 @@ func TestMultiSchemaChangePollJobCount(t *testing.T) {
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforePollDDLJob", func() {
 		pollJobCounter++
 	})
-	tk.MustExec("alter table t add column b int, add column c char(10), add index idx(a);")
-	require.Equal(t, 27, runOneJobCounter)
-	require.Equal(t, 13, pollJobCounter)
+	// Should not test reorg DDL because the result can be unstable.
+	tk.MustExec("alter table t add column b int,  modify column a bigint, add column c char(10);")
+	require.Equal(t, 29, runOneJobCounter)
+	require.Equal(t, 9, pollJobCounter)
 }
 
 type cancelOnceHook struct {
