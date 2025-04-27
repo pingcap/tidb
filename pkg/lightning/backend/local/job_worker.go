@@ -26,6 +26,7 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -54,7 +55,7 @@ type regionJobBaseWorker struct {
 	// if the region info is stale, we need to generate new jobs based on the old
 	// job.
 	regenerateJobsFn func(
-		ctx context.Context, data common.IngestData, sortedJobRanges []common.Range,
+		ctx context.Context, data engineapi.IngestData, sortedJobRanges []engineapi.Range,
 		regionSplitSize, regionSplitKeys int64,
 	) ([]*regionJob, error)
 }
@@ -100,7 +101,7 @@ func (w *regionJobBaseWorker) run(ctx context.Context) error {
 				newJobs, err2 := w.regenerateJobsFn(
 					ctx,
 					job.ingestData,
-					[]common.Range{job.keyRange},
+					[]engineapi.Range{job.keyRange},
 					job.regionSplitSize,
 					job.regionSplitKeys,
 				)

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	ingestclimock "github.com/pingcap/tidb/pkg/ingestor/ingestcli/mock"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -46,7 +47,7 @@ func TestRegionJobBaseWorker(t *testing.T) {
 				return nil
 			},
 			regenerateJobsFn: func(
-				ctx context.Context, data common.IngestData, sortedJobRanges []common.Range,
+				ctx context.Context, data engineapi.IngestData, sortedJobRanges []engineapi.Range,
 				regionSplitSize, regionSplitKeys int64,
 			) ([]*regionJob, error) {
 				return []*regionJob{
@@ -176,7 +177,7 @@ func TestCloudRegionJobWorker(t *testing.T) {
 
 	t.Run("empty job", func(t *testing.T) {
 		job := &regionJob{
-			keyRange:   common.Range{Start: []byte("a"), End: []byte("z")},
+			keyRange:   engineapi.Range{Start: []byte("a"), End: []byte("z")},
 			stage:      regionScanned,
 			ingestData: mockIngestData{},
 		}
@@ -188,7 +189,7 @@ func TestCloudRegionJobWorker(t *testing.T) {
 
 	t.Run("failed to create ingest client", func(t *testing.T) {
 		job := &regionJob{
-			keyRange:   common.Range{Start: []byte("a"), End: []byte("z")},
+			keyRange:   engineapi.Range{Start: []byte("a"), End: []byte("z")},
 			stage:      regionScanned,
 			ingestData: mockIngestData{{[]byte("a"), []byte("a")}},
 		}
@@ -201,7 +202,7 @@ func TestCloudRegionJobWorker(t *testing.T) {
 
 	t.Run("failed to write data", func(t *testing.T) {
 		job := &regionJob{
-			keyRange:   common.Range{Start: []byte("a"), End: []byte("z")},
+			keyRange:   engineapi.Range{Start: []byte("a"), End: []byte("z")},
 			stage:      regionScanned,
 			ingestData: mockIngestData{{[]byte("a"), []byte("a")}},
 		}
@@ -217,7 +218,7 @@ func TestCloudRegionJobWorker(t *testing.T) {
 
 	t.Run("failed to closeAndRecv", func(t *testing.T) {
 		job := &regionJob{
-			keyRange:   common.Range{Start: []byte("a"), End: []byte("z")},
+			keyRange:   engineapi.Range{Start: []byte("a"), End: []byte("z")},
 			stage:      regionScanned,
 			ingestData: mockIngestData{{[]byte("a"), []byte("a")}},
 		}
@@ -234,7 +235,7 @@ func TestCloudRegionJobWorker(t *testing.T) {
 
 	t.Run("write data success, and we have trailing pairs after iteration loop", func(t *testing.T) {
 		job := &regionJob{
-			keyRange: common.Range{Start: []byte("a"), End: []byte("z")},
+			keyRange: engineapi.Range{Start: []byte("a"), End: []byte("z")},
 			stage:    regionScanned,
 			ingestData: mockIngestData{
 				{[]byte("aa"), []byte("aaaa")},
@@ -257,7 +258,7 @@ func TestCloudRegionJobWorker(t *testing.T) {
 
 	t.Run("ingest failed", func(t *testing.T) {
 		job := &regionJob{
-			keyRange:    common.Range{Start: []byte("a"), End: []byte("z")},
+			keyRange:    engineapi.Range{Start: []byte("a"), End: []byte("z")},
 			stage:       wrote,
 			ingestData:  mockIngestData{},
 			writeResult: &tikvWriteResult{},
@@ -270,7 +271,7 @@ func TestCloudRegionJobWorker(t *testing.T) {
 
 	t.Run("ingest success", func(t *testing.T) {
 		job := &regionJob{
-			keyRange:    common.Range{Start: []byte("a"), End: []byte("z")},
+			keyRange:    engineapi.Range{Start: []byte("a"), End: []byte("z")},
 			stage:       wrote,
 			ingestData:  mockIngestData{},
 			writeResult: &tikvWriteResult{},
