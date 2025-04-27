@@ -16,9 +16,11 @@ package ingestcli
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/errorpb"
@@ -29,13 +31,16 @@ import (
 )
 
 func TestWriteClientWriteChunk(t *testing.T) {
+	sstMeta := nextGenResp{nextGenSSTMeta{Id: 1, Smallest: []int{0}, Biggest: []int{1}, MetaOffset: 1, CommitTs: 1}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
 		expected := []byte("\x03\x00key\x05\x00\x00\x00value")
 		require.Equal(t, expected, body)
 		w.WriteHeader(http.StatusOK)
-		_, err = w.Write([]byte(`{"sst_file": "mock_sst_file.sst"}`))
+		sstMetaBytes, err := json.Marshal(sstMeta)
+		require.NoError(t, err)
+		_, err = w.Write(sstMetaBytes)
 		require.NoError(t, err)
 	}))
 	defer server.Close()
@@ -57,7 +62,7 @@ func TestWriteClientWriteChunk(t *testing.T) {
 	resp, err := client.Recv()
 	require.NoError(t, err)
 	require.NotNil(t, resp)
-	require.Equal(t, "mock_sst_file.sst", resp.nextGenSSTMeta)
+	require.EqualValues(t, &sstMeta.SstMeta, resp.nextGenSSTMeta)
 }
 
 func TestClientWriteServerError(t *testing.T) {
@@ -87,7 +92,8 @@ func TestClientIngest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, 12345, server.Client(), &storeClient{addr: server.URL})
+	statusAddr := strings.TrimPrefix(server.URL, "http://")
+	client := NewClient(server.URL, 12345, server.Client(), &storeClient{addr: statusAddr})
 	req := &IngestRequest{
 		WriteResp: &WriteResponse{
 			nextGenSSTMeta: &nextGenSSTMeta{
@@ -110,7 +116,10 @@ func TestClientIngestError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(server.URL, 12345, server.Client(), &storeClient{addr: server.URL})
+	// serverURL, err := url.Parse(server.URL)
+	// require.NoError(t, err)
+	statusAddr := strings.TrimPrefix(server.URL, "http://")
+	client := NewClient(server.URL, 12345, server.Client(), &storeClient{addr: statusAddr})
 	req := &IngestRequest{
 		WriteResp: &WriteResponse{
 			nextGenSSTMeta: &nextGenSSTMeta{
@@ -131,6 +140,7 @@ type storeClient struct {
 
 func (sc *storeClient) GetStore(_ context.Context, _ uint64) (*metapb.Store, error) {
 	return &metapb.Store{
-		Address: sc.addr,
+		Address:       sc.addr,
+		StatusAddress: sc.addr,
 	}, nil
 }
