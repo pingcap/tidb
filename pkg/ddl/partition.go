@@ -5155,7 +5155,7 @@ func generatePartValuesWithTp(partVal types.Datum, tp types.FieldType) (string, 
 	case types.ETString:
 		// The `partVal` can be an invalid utf8 string if it's converted to BINARY, then the content will be lost after
 		// marshaling and storing in the schema. In this case, we use a hex literal to work around this issue.
-		if tp.GetCharset() == charset.CharsetBin {
+		if tp.GetCharset() == charset.CharsetBin && len(s) != 0 {
 			return fmt.Sprintf("_binary 0x%x", s), nil
 		}
 		return driver.WrapInSingleQuotes(s), nil

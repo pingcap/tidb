@@ -51,7 +51,7 @@ type BindingHandle interface {
 
 	BindingOperator
 
-	BindingAuto
+	BindingPlanEvolution
 
 	variable.Statistics
 }
@@ -60,7 +60,7 @@ type BindingHandle interface {
 type bindingHandle struct {
 	BindingCacheUpdater
 	BindingOperator
-	BindingAuto
+	BindingPlanEvolution
 }
 
 // NewBindingHandle creates a new BindingHandle.
@@ -68,7 +68,7 @@ func NewBindingHandle(sPool util.DestroyableSessionPool) BindingHandle {
 	cache := NewBindingCacheUpdater(sPool)
 	op := newBindingOperator(sPool, cache)
 	auto := newBindingAuto(sPool)
-	h := &bindingHandle{BindingOperator: op, BindingCacheUpdater: cache, BindingAuto: auto}
+	h := &bindingHandle{BindingOperator: op, BindingCacheUpdater: cache, BindingPlanEvolution: auto}
 	variable.RegisterStatistics(h)
 	return h
 }
