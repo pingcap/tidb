@@ -1950,7 +1950,7 @@ func constructIndexJoinInnerSideTaskWithAggCheck(p *logicalop.LogicalJoin, prop 
 			if physicalIndexScan == nil && len(dsCopTask.indexPlan.Children()) == 1 {
 				physicalIndexScan, _ = dsCopTask.indexPlan.Children()[0].(*PhysicalIndexScan)
 			}
-			// The double read case should change the table plan together,
+			// The double read case should change the table plan together if we want to build stream agg,
 			// so it need to find out the table scan
 			// Try to get the physical table scan from dsCopTask.tablePlan
 			// now, we only support the pattern tablescan and tablescan+selection
