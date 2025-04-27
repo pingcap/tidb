@@ -244,7 +244,7 @@ explain format='brief' select /*+ inl_join(st_475) */ ucase( st_475.r4 ) as r0 ,
 id	estRows	task	access object	operator info
 Sort	10000.00	root		Column#22, Column#23, Column#24, Column#25
 └─Projection	10000.00	root		ucase(Column#21)->Column#22, concat_ws(,, planner__core__indexjoin.t1.col_6, planner__core__indexjoin.t1.col_3)->Column#23, lower(planner__core__indexjoin.t1.col_3)->Column#24, ucase(Column#21)->Column#25
-  └─IndexJoin	10000.00	root		left outer join, inner:StreamAgg, left side:TableReader, outer key:planner__core__indexjoin.t1.col_4, inner key:planner__core__indexjoin.t2.col_4, equal cond:eq(planner__core__indexjoin.t1.col_4, planner__core__indexjoin.t2.col_4)
+  └─IndexJoin	10000.00	root		left outer join, inner:StreamAgg, outer key:planner__core__indexjoin.t1.col_4, inner key:planner__core__indexjoin.t2.col_4, equal cond:eq(planner__core__indexjoin.t1.col_4, planner__core__indexjoin.t2.col_4)
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
     └─StreamAgg(Probe)	10000.00	root		group by:planner__core__indexjoin.t2.col_4, funcs:min(planner__core__indexjoin.t2.col_3)->Column#21, funcs:firstrow(planner__core__indexjoin.t2.col_4)->planner__core__indexjoin.t2.col_4
@@ -257,7 +257,7 @@ explain format='brief' select /*+ inl_join(st_475) */ ucase( st_475.r4 ) as r0 ,
 id	estRows	task	access object	operator info
 Sort	10000.00	root		Column#22, Column#23, Column#24, Column#25
 └─Projection	10000.00	root		ucase(Column#21)->Column#22, concat_ws(,, planner__core__indexjoin.t1.col_6, planner__core__indexjoin.t1.col_3)->Column#23, lower(planner__core__indexjoin.t1.col_3)->Column#24, ucase(Column#21)->Column#25
-  └─IndexJoin	10000.00	root		left outer join, inner:StreamAgg, left side:TableReader, outer key:planner__core__indexjoin.t1.col_4, inner key:planner__core__indexjoin.t2.col_4, equal cond:eq(planner__core__indexjoin.t1.col_4, planner__core__indexjoin.t2.col_4)
+  └─IndexJoin	10000.00	root		left outer join, inner:StreamAgg, outer key:planner__core__indexjoin.t1.col_4, inner key:planner__core__indexjoin.t2.col_4, equal cond:eq(planner__core__indexjoin.t1.col_4, planner__core__indexjoin.t2.col_4)
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
     └─StreamAgg(Probe)	10000.00	root		group by:planner__core__indexjoin.t2.col_4, funcs:min(planner__core__indexjoin.t2.col_3)->Column#21, funcs:firstrow(planner__core__indexjoin.t2.col_4)->planner__core__indexjoin.t2.col_4
@@ -943,7 +943,7 @@ explain format='brief' select /*+ inl_join(st_475) */ ucase( st_475.r4 ) as r0 ,
 id	estRows	task	access object	operator info
 Sort	10000.00	root		Column#20, Column#21, Column#22, Column#23
 └─Projection	10000.00	root		ucase(Column#19)->Column#20, concat_ws(,, planner__core__indexjoin.t3.col_6, planner__core__indexjoin.t3.col_3)->Column#21, lower(planner__core__indexjoin.t3.col_3)->Column#22, ucase(Column#19)->Column#23
-  └─IndexJoin	10000.00	root		left outer join, inner:StreamAgg, left side:TableReader, outer key:planner__core__indexjoin.t3.col_4, inner key:planner__core__indexjoin.t4.col_4, equal cond:eq(planner__core__indexjoin.t3.col_4, planner__core__indexjoin.t4.col_4)
+  └─IndexJoin	10000.00	root		left outer join, inner:StreamAgg, outer key:planner__core__indexjoin.t3.col_4, inner key:planner__core__indexjoin.t4.col_4, equal cond:eq(planner__core__indexjoin.t3.col_4, planner__core__indexjoin.t4.col_4)
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
     └─StreamAgg(Probe)	10000.00	root		group by:planner__core__indexjoin.t4.col_4, funcs:min(planner__core__indexjoin.t4.col_3)->Column#19, funcs:firstrow(planner__core__indexjoin.t4.col_4)->planner__core__indexjoin.t4.col_4
@@ -956,7 +956,7 @@ explain format='brief' select /*+ inl_join(st_475) */ ucase( st_475.r4 ) as r0 ,
 id	estRows	task	access object	operator info
 Sort	10000.00	root		Column#20, Column#21, Column#22, Column#23
 └─Projection	10000.00	root		ucase(Column#19)->Column#20, concat_ws(,, planner__core__indexjoin.t3.col_6, planner__core__indexjoin.t3.col_3)->Column#21, lower(planner__core__indexjoin.t3.col_3)->Column#22, ucase(Column#19)->Column#23
-  └─IndexJoin	10000.00	root		left outer join, inner:StreamAgg, left side:TableReader, outer key:planner__core__indexjoin.t3.col_4, inner key:planner__core__indexjoin.t4.col_4, equal cond:eq(planner__core__indexjoin.t3.col_4, planner__core__indexjoin.t4.col_4)
+  └─IndexJoin	10000.00	root		left outer join, inner:StreamAgg, outer key:planner__core__indexjoin.t3.col_4, inner key:planner__core__indexjoin.t4.col_4, equal cond:eq(planner__core__indexjoin.t3.col_4, planner__core__indexjoin.t4.col_4)
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
     └─StreamAgg(Probe)	10000.00	root		group by:planner__core__indexjoin.t4.col_4, funcs:min(planner__core__indexjoin.t4.col_3)->Column#19, funcs:firstrow(planner__core__indexjoin.t4.col_4)->planner__core__indexjoin.t4.col_4
@@ -983,7 +983,7 @@ explain format='brief' select /*+ inl_join(st_475) */ ucase( st_475.r4 ) as r0 ,
 id	estRows	task	access object	operator info
 Sort	10000.00	root		Column#22, Column#23, Column#24, Column#25
 └─Projection	10000.00	root		ucase(Column#21)->Column#22, concat_ws(,, planner__core__indexjoin.t1.col_6, planner__core__indexjoin.t1.col_3)->Column#23, lower(planner__core__indexjoin.t1.col_3)->Column#24, ucase(Column#21)->Column#25
-  └─IndexJoin	10000.00	root		left outer join, inner:HashAgg, left side:UnionScan, outer key:planner__core__indexjoin.t1.col_4, inner key:planner__core__indexjoin.t2.col_4, equal cond:eq(planner__core__indexjoin.t1.col_4, planner__core__indexjoin.t2.col_4)
+  └─IndexJoin	10000.00	root		left outer join, inner:HashAgg, outer key:planner__core__indexjoin.t1.col_4, inner key:planner__core__indexjoin.t2.col_4, equal cond:eq(planner__core__indexjoin.t1.col_4, planner__core__indexjoin.t2.col_4)
     ├─UnionScan(Build)	10000.00	root		
     │ └─TableReader	10000.00	root		data:TableFullScan
     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
