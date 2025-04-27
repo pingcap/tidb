@@ -27,6 +27,7 @@ import (
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -52,7 +53,7 @@ func TestIsIngestRetryable(t *testing.T) {
 	}
 	job := &regionJob{
 		stage:    wrote,
-		keyRange: common.Range{Start: []byte{1}, End: []byte{3}},
+		keyRange: engineapi.Range{Start: []byte{1}, End: []byte{3}},
 		region:   region,
 		writeResult: &tikvWriteResult{
 			sstMeta: metas,
@@ -186,7 +187,7 @@ func TestRegionJobRetryer(t *testing.T) {
 	}
 
 	job := &regionJob{
-		keyRange: common.Range{
+		keyRange: engineapi.Range{
 			Start: []byte("123"),
 		},
 		waitUntil: time.Now().Add(-time.Second),
@@ -221,7 +222,7 @@ func TestRegionJobRetryer(t *testing.T) {
 	}()
 
 	job = &regionJob{
-		keyRange: common.Range{
+		keyRange: engineapi.Range{
 			Start: []byte("123"),
 		},
 		waitUntil: time.Now().Add(-time.Second),
@@ -232,7 +233,7 @@ func TestRegionJobRetryer(t *testing.T) {
 	time.Sleep(3 * time.Second)
 	// now retryer is sending to putBackCh, but putBackCh is blocked
 	job = &regionJob{
-		keyRange: common.Range{
+		keyRange: engineapi.Range{
 			Start: []byte("456"),
 		},
 		waitUntil: time.Now().Add(-time.Second),
@@ -255,7 +256,7 @@ func TestRegionJobRetryer(t *testing.T) {
 	}()
 
 	job = &regionJob{
-		keyRange: common.Range{
+		keyRange: engineapi.Range{
 			Start: []byte("123"),
 		},
 		waitUntil: time.Now().Add(-time.Second),
@@ -280,10 +281,10 @@ func TestNewRegionJobs(t *testing.T) {
 		}
 		return ret
 	}
-	buildJobRanges := func(jobRangeKeys [][]byte) []common.Range {
-		ret := make([]common.Range, 0, len(jobRangeKeys)-1)
+	buildJobRanges := func(jobRangeKeys [][]byte) []engineapi.Range {
+		ret := make([]engineapi.Range, 0, len(jobRangeKeys)-1)
 		for i := 0; i < len(jobRangeKeys)-1; i++ {
-			ret = append(ret, common.Range{
+			ret = append(ret, engineapi.Range{
 				Start: jobRangeKeys[i],
 				End:   jobRangeKeys[i+1],
 			})

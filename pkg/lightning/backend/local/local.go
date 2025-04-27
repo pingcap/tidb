@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
@@ -828,8 +829,8 @@ func (local *Backend) getImportClient(ctx context.Context, storeID uint64) (sst.
 	return local.importClientFactory.create(ctx, storeID)
 }
 
-func splitRangeBySizeProps(fullRange common.Range, sizeProps *sizeProperties, sizeLimit int64, keysLimit int64) []common.Range {
-	ranges := make([]common.Range, 0, sizeProps.totalSize/uint64(sizeLimit))
+func splitRangeBySizeProps(fullRange engineapi.Range, sizeProps *sizeProperties, sizeLimit int64, keysLimit int64) []engineapi.Range {
+	ranges := make([]engineapi.Range, 0, sizeProps.totalSize/uint64(sizeLimit))
 	curSize := uint64(0)
 	curKeys := uint64(0)
 	curKey := fullRange.Start
@@ -844,7 +845,7 @@ func splitRangeBySizeProps(fullRange common.Range, sizeProps *sizeProperties, si
 		curSize += p.Size
 		curKeys += p.Keys
 		if int64(curSize) >= sizeLimit || int64(curKeys) >= keysLimit {
-			ranges = append(ranges, common.Range{Start: curKey, End: p.Key})
+			ranges = append(ranges, engineapi.Range{Start: curKey, End: p.Key})
 			curKey = p.Key
 			curSize = 0
 			curKeys = 0
@@ -857,7 +858,7 @@ func splitRangeBySizeProps(fullRange common.Range, sizeProps *sizeProperties, si
 		if len(ranges) > 0 && curKeys == 0 {
 			ranges[len(ranges)-1].End = fullRange.End
 		} else {
-			ranges = append(ranges, common.Range{Start: curKey, End: fullRange.End})
+			ranges = append(ranges, engineapi.Range{Start: curKey, End: fullRange.End})
 		}
 	}
 	return ranges
@@ -865,7 +866,7 @@ func splitRangeBySizeProps(fullRange common.Range, sizeProps *sizeProperties, si
 
 func getRegionSplitKeys(
 	ctx context.Context,
-	engine common.Engine,
+	engine engineapi.Engine,
 	sizeLimit int64,
 	keysLimit int64,
 ) ([][]byte, error) {
@@ -897,7 +898,7 @@ func getRegionSplitKeys(
 // and scatter regions for these range and send region jobs to jobToWorkerCh.
 func (local *Backend) prepareAndSendJob(
 	ctx context.Context,
-	engine common.Engine,
+	engine engineapi.Engine,
 	regionSplitKeys [][]byte,
 	regionSplitSize, regionSplitKeyCnt int64,
 	jobToWorkerCh chan<- *regionJob,
@@ -959,14 +960,14 @@ func (local *Backend) prepareAndSendJob(
 // generateAndSendJob scans the region in ranges and send region jobs to jobToWorkerCh.
 func (local *Backend) generateAndSendJob(
 	ctx context.Context,
-	engine common.Engine,
+	engine engineapi.Engine,
 	regionSplitSize, regionSplitKeys int64,
 	jobToWorkerCh chan<- *regionJob,
 	jobWg *sync.WaitGroup,
 ) error {
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 
-	dataAndRangeCh := make(chan common.DataAndRanges)
+	dataAndRangeCh := make(chan engineapi.DataAndRanges)
 	conn := local.WorkerConcurrency
 	if _, ok := engine.(*external.Engine); ok {
 		// currently external engine will generate a large IngestData, se we lower the
@@ -1036,8 +1037,8 @@ var fakeRegionJobs map[[2]string]struct {
 // It will retry internally when scan region meet error.
 func (local *Backend) generateJobForRange(
 	ctx context.Context,
-	data common.IngestData,
-	sortedJobRanges []common.Range,
+	data engineapi.IngestData,
+	sortedJobRanges []engineapi.Range,
 	regionSplitSize, regionSplitKeys int64,
 ) ([]*regionJob, error) {
 	startOfAllRanges, endOfAllRanges := sortedJobRanges[0].Start, sortedJobRanges[len(sortedJobRanges)-1].End
@@ -1145,7 +1146,7 @@ func (local *Backend) ImportEngine(
 		log.FromContext(ctx).Warn("fail to get region split keys and size", zap.Error(err))
 	}
 
-	var e common.Engine
+	var e engineapi.Engine
 	if externalEngine, ok := local.engineMgr.getExternalEngine(engineUUID); ok {
 		e = externalEngine
 	} else {
@@ -1240,7 +1241,7 @@ var (
 
 func (local *Backend) doImport(
 	ctx context.Context,
-	engine common.Engine,
+	engine engineapi.Engine,
 	regionSplitKeys [][]byte,
 	regionSplitSize, regionSplitKeyCnt int64,
 ) error {

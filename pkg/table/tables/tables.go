@@ -706,10 +706,12 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 
 	var hasRecordID bool
 	cols := t.Cols()
-	// opt.IsUpdate is a flag for update.
+	// opt.GenerateRecordID is used for normal update.
 	// If handle ID is changed when update, update will remove the old record first, and then call `AddRecord` to add a new record.
-	// Currently, only insert can set _tidb_rowid, update can not update _tidb_rowid.
-	if len(r) > len(cols) && !opt.IsUpdate() {
+	// Currently, insert can set _tidb_rowid.
+	// Update can only update _tidb_rowid during reorganize partition, to keep the generated _tidb_rowid
+	// the same between the old/new sets of partitions, where possible.
+	if len(r) > len(cols) && !opt.GenerateRecordID() {
 		// The last value is _tidb_rowid.
 		recordID = kv.IntHandle(r[len(r)-1].GetInt64())
 		hasRecordID = true

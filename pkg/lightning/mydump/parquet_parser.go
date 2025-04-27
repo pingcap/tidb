@@ -160,35 +160,8 @@ func OpenParquetReader(
 	}, nil
 }
 
-// readParquetFileRowCount reads the parquet file row count.
+// ReadParquetFileRowCountByFile reads the parquet file row count.
 // It is a special func to fetch parquet file row count fast.
-func readParquetFileRowCount(
-	ctx context.Context,
-	store storage.ExternalStorage,
-	r storage.ReadSeekCloser,
-	path string,
-) (int64, error) {
-	wrapper := &readerWrapper{
-		ReadSeekCloser: r,
-		store:          store,
-		ctx:            ctx,
-		path:           path,
-	}
-	var err error
-	res := new(preader.ParquetReader)
-	res.NP = 1
-	res.PFile = wrapper
-	if err = res.ReadFooter(); err != nil {
-		return 0, err
-	}
-	numRows := res.Footer.NumRows
-	if err = wrapper.Close(); err != nil {
-		return 0, err
-	}
-	return numRows, nil
-}
-
-// ReadParquetFileRowCountByFile reads the parquet file row count through fileMeta.
 func ReadParquetFileRowCountByFile(
 	ctx context.Context,
 	store storage.ExternalStorage,
@@ -198,11 +171,25 @@ func ReadParquetFileRowCountByFile(
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	numberRows, err := readParquetFileRowCount(ctx, store, r, fileMeta.Path)
-	if err != nil {
-		return 0, errors.Trace(err)
+
+	wrapper := &readerWrapper{
+		ReadSeekCloser: r,
+		store:          store,
+		ctx:            ctx,
+		path:           fileMeta.Path,
 	}
-	return numberRows, nil
+
+	//nolint: errcheck
+	defer wrapper.Close()
+
+	res := new(preader.ParquetReader)
+	res.NP = 1
+	res.PFile = wrapper
+	if err = res.ReadFooter(); err != nil {
+		return 0, err
+	}
+
+	return res.Footer.NumRows, nil
 }
 
 // NewParquetParser generates a parquet parser.

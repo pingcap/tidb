@@ -107,10 +107,18 @@ func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, inde
 		if columnarIndexType == model.ColumnarIndexTypeVector && col.FieldType.GetType() != mysql.TypeTiDBVectorFloat32 {
 			return nil, false, dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs(fmt.Sprintf("only support vector type, but this is type: %s", col.FieldType.String()))
 		}
+		if columnarIndexType == model.ColumnarIndexTypeInverted && !types.IsTypeStoredAsInteger(col.FieldType.GetType()) {
+			return nil, false, dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs(fmt.Sprintf("only support integer type, but this is type: %s", col.FieldType.String()))
+		}
+		if columnarIndexType == model.ColumnarIndexTypeFulltext && !types.IsString(col.FieldType.GetType()) {
+			return nil, false, dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs(fmt.Sprintf("only support string type, but this is type: %s", col.FieldType.String()))
+		}
 
 		// return error in strict sql mode
-		if err := checkIndexColumn(col, ip.Length, ctx != nil && (!ctx.GetSQLMode().HasStrictMode() || ctx.SuppressTooLongIndexErr()), columnarIndexType); err != nil {
-			return nil, false, err
+		if columnarIndexType == model.ColumnarIndexTypeNA {
+			if err := checkIndexColumn(col, ip.Length, ctx != nil && (!ctx.GetSQLMode().HasStrictMode() || ctx.SuppressTooLongIndexErr())); err != nil {
+				return nil, false, err
+			}
 		}
 		if col.FieldType.IsArray() {
 			if mvIndex {
@@ -124,7 +132,7 @@ func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, inde
 			indexColLen == col.FieldType.GetFlen() {
 			indexColLen = types.UnspecifiedLength
 		}
-		indexColumnLength, err := getIndexColumnLength(col, indexColLen)
+		indexColumnLength, err := getIndexColumnLength(col, indexColLen, columnarIndexType)
 		if err != nil {
 			return nil, false, err
 		}
@@ -139,7 +147,7 @@ func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, inde
 				return nil, false, dbterror.ErrTooLongKey.GenWithStackByArgs(sumLength, maxIndexLength)
 			}
 			// truncate index length and produce warning message in non-restrict sql mode.
-			colLenPerUint, err := getIndexColumnLength(col, 1)
+			colLenPerUint, err := getIndexColumnLength(col, 1, columnarIndexType)
 			if err != nil {
 				return nil, false, err
 			}
@@ -178,8 +186,8 @@ func CheckPKOnGeneratedColumn(tblInfo *model.TableInfo, indexPartSpecifications 
 	return lastCol, nil
 }
 
-func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn) error {
-	idxLen, err := indexColumnsLen(columns, idxColumns)
+func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.IndexColumn, columnarIndexType model.ColumnarIndexType) error {
+	idxLen, err := indexColumnsLen(columns, idxColumns, columnarIndexType)
 	if err != nil {
 		return err
 	}
@@ -189,7 +197,7 @@ func checkIndexPrefixLength(columns []*model.ColumnInfo, idxColumns []*model.Ind
 	return nil
 }
 
-func indexColumnsLen(cols []*model.ColumnInfo, idxCols []*model.IndexColumn) (colLen int, err error) {
+func indexColumnsLen(cols []*model.ColumnInfo, idxCols []*model.IndexColumn, columnarIndexType model.ColumnarIndexType) (colLen int, err error) {
 	for _, idxCol := range idxCols {
 		col := model.FindColumnInfo(cols, idxCol.Name.L)
 		if col == nil {
@@ -197,7 +205,7 @@ func indexColumnsLen(cols []*model.ColumnInfo, idxCols []*model.IndexColumn) (co
 			return
 		}
 		var l int
-		l, err = getIndexColumnLength(col, idxCol.Length)
+		l, err = getIndexColumnLength(col, idxCol.Length, columnarIndexType)
 		if err != nil {
 			return
 		}
@@ -206,7 +214,8 @@ func indexColumnsLen(cols []*model.ColumnInfo, idxCols []*model.IndexColumn) (co
 	return
 }
 
-func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int, suppressTooLongKeyErr bool, columnarIndexType model.ColumnarIndexType) error {
+// checkIndexColumn will be run for all non-columnar indexes.
+func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int, suppressTooLongKeyErr bool) error {
 	if col.GetFlen() == 0 && (types.IsTypeChar(col.FieldType.GetType()) || types.IsTypeVarchar(col.FieldType.GetType())) {
 		if col.Hidden {
 			return errors.Trace(dbterror.ErrWrongKeyColumnFunctionalIndex.GenWithStackByArgs(col.GeneratedExprString))
@@ -222,14 +231,8 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int, suppressTooLong
 		return errors.Trace(dbterror.ErrJSONUsedAsKey.GenWithStackByArgs(col.Name.O))
 	}
 
-	// Vector column cannot index, for now.
 	if col.FieldType.GetType() == mysql.TypeTiDBVectorFloat32 {
-		if col.Hidden {
-			return errors.Errorf("Cannot create an expression index on a function that returns a VECTOR value")
-		}
-		if columnarIndexType != model.ColumnarIndexTypeVector {
-			return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported adding a non-vector index on a vector column")
-		}
+		return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("only VECTOR INDEX can be added to vector column")
 	}
 
 	// Length must be specified and non-zero for BLOB and TEXT column indexes.
@@ -280,7 +283,14 @@ func checkIndexColumn(col *model.ColumnInfo, indexColumnLen int, suppressTooLong
 }
 
 // getIndexColumnLength calculate the bytes number required in an index column.
-func getIndexColumnLength(col *model.ColumnInfo, colLen int) (int, error) {
+func getIndexColumnLength(col *model.ColumnInfo, colLen int, columnarIndexType model.ColumnarIndexType) (int, error) {
+	if columnarIndexType != model.ColumnarIndexTypeNA {
+		// Columnar index does not actually create KV index, so it has length of 0.
+		// however 0 may cause some issues in other calculations, so we use 1 here.
+		// 1 is also minimal enough anyway.
+		return 1, nil
+	}
+
 	length := types.UnspecifiedLength
 	if colLen != types.UnspecifiedLength {
 		length = colLen
@@ -289,11 +299,6 @@ func getIndexColumnLength(col *model.ColumnInfo, colLen int) (int, error) {
 	}
 
 	switch col.GetType() {
-	case mysql.TypeTiDBVectorFloat32:
-		// Vector Index does not actually create KV index, so it has length of 0.
-		// however 0 may cause some issues in other calculations, so we use 1 here.
-		// 1 is also minimal enough anyway.
-		return 1, nil
 	case mysql.TypeBit:
 		return (length + 7) >> 3, nil
 	case mysql.TypeVarchar, mysql.TypeString, mysql.TypeVarString, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeBlob, mysql.TypeLongBlob:
@@ -355,7 +360,17 @@ func BuildIndexInfo(
 		}
 		idxInfo.VectorInfo = vectorInfo
 	case model.ColumnarIndexTypeInverted:
-		// do nothing now
+		invertedInfo, err := buildInvertedInfoWithCheck(indexPartSpecifications, tblInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		idxInfo.InvertedInfo = invertedInfo
+	case model.ColumnarIndexTypeFulltext:
+		ftsInfo, err := buildFullTextInfoWithCheck(indexPartSpecifications, indexOption, tblInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		idxInfo.FullTextInfo = ftsInfo
 	}
 
 	var err error
@@ -373,8 +388,6 @@ func BuildIndexInfo(
 		if indexOption.Tp == ast.IndexTypeInvalid {
 			// Use btree as default index type.
 			idxInfo.Tp = ast.IndexTypeBtree
-		} else if columnarIndexType != model.ColumnarIndexTypeVector && indexOption.Tp == ast.IndexTypeHNSW {
-			return nil, dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs("Only support vector index with HNSW type, but it's non-vector index")
 		} else {
 			idxInfo.Tp = indexOption.Tp
 		}
@@ -442,6 +455,85 @@ func buildVectorInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 		Dimension:      uint64(colInfo.FieldType.GetFlen()),
 		DistanceMetric: distanceMetric,
 	}, exprStr, nil
+}
+
+func buildInvertedInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecification,
+	tblInfo *model.TableInfo) (*model.InvertedIndexInfo, error) {
+	if len(indexPartSpecifications) != 1 {
+		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("only support one column")
+	}
+
+	idxPart := indexPartSpecifications[0]
+	if idxPart.Column == nil {
+		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported no column")
+	}
+	colInfo := findColumnByName(idxPart.Column.Name.L, tblInfo)
+	if colInfo == nil {
+		return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(idxPart.Column.Name, tblInfo.Name)
+	}
+
+	// check duplicated columnar index on the same column
+	for _, idx := range tblInfo.Indices {
+		if idx.InvertedInfo == nil {
+			continue
+		}
+		if idxCol := idx.FindColumnByName(colInfo.Name.L); idxCol == nil {
+			continue
+		}
+		if idx.Tp == ast.IndexTypeInverted {
+			return nil, dbterror.ErrDupKeyName.GenWithStack(fmt.Sprintf("inverted columnar index %s already exist on column %s", idx.Name, colInfo.Name))
+		}
+	}
+
+	// It's used for build buildIndexColumns.
+	idxPart.Column = &ast.ColumnName{Name: colInfo.Name}
+	idxPart.Length = types.UnspecifiedLength
+
+	return model.FieldTypeToInvertedIndexInfo(colInfo.FieldType, colInfo.ID), nil
+}
+
+func buildFullTextInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption,
+	tblInfo *model.TableInfo) (*model.FullTextIndexInfo, error) {
+	if len(indexPartSpecifications) != 1 {
+		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("FULLTEXT index only support one column")
+	}
+	idxPart := indexPartSpecifications[0]
+	if idxPart.Column == nil {
+		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("FULLTEXT index only support one column")
+	}
+	if idxPart.Length != types.UnspecifiedLength {
+		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("FULLTEXT index does not support prefix length")
+	}
+	if idxPart.Desc {
+		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("FULLTEXT index does not support DESC order")
+	}
+	// The Default parser is STANDARD
+	parser := model.FullTextParserTypeStandardV1
+	if indexOption != nil && indexOption.ParserName.L != "" {
+		parser = model.GetFullTextParserTypeBySQLName(indexOption.ParserName.L)
+		if parser == model.FullTextParserTypeInvalid {
+			// Actually indexOption must be valid. It is already checked in preprocessor.
+			return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("fulltext index must specify a valid parser")
+		}
+	}
+	colInfo := findColumnByName(idxPart.Column.Name.L, tblInfo)
+	if colInfo == nil {
+		return nil, infoschema.ErrColumnNotExists.GenWithStackByArgs(idxPart.Column.Name.L, tblInfo.Name)
+	}
+	for _, idx := range tblInfo.Indices {
+		if idx.FullTextInfo == nil {
+			continue
+		}
+		if idxCol := idx.FindColumnByName(colInfo.Name.L); idxCol == nil {
+			continue
+		}
+		return nil, dbterror.ErrDupKeyName.GenWithStack(
+			fmt.Sprintf("fulltext index '%s' already exist on column %s",
+				idx.Name, colInfo.Name))
+	}
+	return &model.FullTextIndexInfo{
+		ParserType: parser,
+	}, nil
 }
 
 // AddIndexColumnFlag aligns the column flags of columns in TableInfo to IndexInfo.
@@ -543,8 +635,8 @@ func validateAlterIndexVisibility(ctx sessionctx.Context, indexName ast.CIStr, i
 			return true, nil
 		}
 	}
-	if idx.IsColumnarIndex() {
-		return false, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set vector index invisible")
+	if invisible && idx.IsColumnarIndex() {
+		return false, dbterror.ErrUnsupportedIndexType.FastGen("INVISIBLE can not be used in %s INDEX", idx.Tp)
 	}
 	return false, nil
 }
@@ -1790,10 +1882,9 @@ func checkInvisibleIndexesOnPK(tblInfo *model.TableInfo, indexInfos []*model.Ind
 	return nil
 }
 
-func checkRenameIndex(t *meta.Mutator, job *model.Job) (*model.TableInfo, ast.CIStr, ast.CIStr, error) {
-	var from, to ast.CIStr
+func checkRenameIndex(t *meta.Mutator, job *model.Job) (tblInfo *model.TableInfo, from, to ast.CIStr, err error) {
 	schemaID := job.SchemaID
-	tblInfo, err := GetTableInfoAndCancelFaultJob(t, job, schemaID)
+	tblInfo, err = GetTableInfoAndCancelFaultJob(t, job, schemaID)
 	if err != nil {
 		return nil, from, to, errors.Trace(err)
 	}
@@ -2893,7 +2984,7 @@ func (w *worker) updateDistTaskRowCount(taskKey string, jobID int64) {
 	w.getReorgCtx(jobID).setRowCount(rowCount)
 }
 
-func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysicalTableID int64) (int64, kv.Key, kv.Key, error) {
+func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysicalTableID int64) (pid int64, startKey, endKey kv.Key, err error) {
 	pi := t.Meta().GetPartitionInfo()
 	if pi == nil {
 		return 0, nil, nil, nil
@@ -2905,8 +2996,6 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 	// REORGANIZE PARTITION - (re)create indexes on partitions to be added (3)
 	// REORGANIZE PARTITION - Update new Global indexes with data from non-touched partitions (4)
 	// (i.e. pi.Definitions - pi.DroppingDefinitions)
-	var pid int64
-	var err error
 	if bytes.Equal(reorg.currElement.TypeKey, meta.IndexElementKey) {
 		// case 1, 3 or 4
 		if len(pi.AddingDefinitions) == 0 {
@@ -2972,7 +3061,6 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 		}
 	})
 
-	var startKey, endKey kv.Key
 	if reorg.mergingTmpIdx {
 		elements := reorg.elements
 		firstElemTempID := tablecodec.TempIndexPrefix | elements[0].ID

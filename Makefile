@@ -202,12 +202,24 @@ race: failpoint-enable
 	@$(CLEAN_UT_BINARY)
 
 .PHONY: server
-server:
-ifeq ($(TARGET), "")
-	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server ./cmd/tidb-server
+ifeq ($(GOCOVER), )
+    COVER_FLAG :=
 else
-	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./cmd/tidb-server
+    COVER_FLAG := -cover
 endif
+
+ifeq ($(TARGET), "")
+    SERVER_OUT := bin/tidb-server
+else
+    SERVER_OUT := $(TARGET)
+endif
+
+SERVER_BUILD_CMD := \
+	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) $(COVER_FLAG) \
+	-ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(SERVER_OUT)' ./cmd/tidb-server
+
+server:
+	$(SERVER_BUILD_CMD)
 
 .PHONY: server_debug
 server_debug:

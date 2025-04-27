@@ -24,6 +24,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/storage",
+        "//pkg/ingestor/engineapi",
         "//pkg/kv",
         "//pkg/lightning/backend",
         "//pkg/lightning/backend/encode",
@@ -78,6 +79,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//br/pkg/storage",
+        "//pkg/ingestor/engineapi",
         "//pkg/kv",
         "//pkg/lightning/backend/kv",
         "//pkg/lightning/common",

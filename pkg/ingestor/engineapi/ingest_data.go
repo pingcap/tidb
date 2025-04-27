@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package common
+package engineapi
 
 import (
 	"context"
@@ -71,11 +71,4 @@ type ForwardIter interface {
 	// values. These previously returned keys and values should not be accessed
 	// again.
 	ReleaseBuf()
-}
-
-// DataAndRanges is a pair of IngestData and list of Range. Each Range will
-// become a regionJob, and the regionJob will read data from Data field.
-type DataAndRanges struct {
-	Data         IngestData
-	SortedRanges []Range
 }

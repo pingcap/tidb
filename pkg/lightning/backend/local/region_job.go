@@ -36,12 +36,14 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/metrics"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -102,7 +104,7 @@ func (j jobStageTp) String() string {
 // to a region. The keyRange may be changed when processing because of writing
 // partial data to TiKV or region split.
 type regionJob struct {
-	keyRange common.Range
+	keyRange engineapi.Range
 	// TODO: check the keyRange so that it's always included in region
 	region *split.RegionInfo
 	// stage should be updated only by convertStageTo
@@ -110,7 +112,7 @@ type regionJob struct {
 	// writeResult is available only in wrote and ingested stage
 	writeResult *tikvWriteResult
 
-	ingestData      common.IngestData
+	ingestData      engineapi.IngestData
 	regionSplitSize int64
 	regionSplitKeys int64
 	metrics         *metric.Common
@@ -155,7 +157,7 @@ type injectedIngestBehaviour struct {
 
 func newRegionJob(
 	region *split.RegionInfo,
-	data common.IngestData,
+	data engineapi.IngestData,
 	jobStart []byte,
 	jobEnd []byte,
 	regionSplitSize int64,
@@ -171,7 +173,7 @@ func newRegionJob(
 		zap.Binary("regionEnd", region.Region.GetEndKey()),
 		zap.Reflect("peers", region.Region.GetPeers()))
 	return &regionJob{
-		keyRange:        common.Range{Start: jobStart, End: jobEnd},
+		keyRange:        engineapi.Range{Start: jobStart, End: jobEnd},
 		region:          region,
 		stage:           regionScanned,
 		ingestData:      data,
@@ -190,8 +192,8 @@ func newRegionJob(
 // - sortedRegions can cover sortedJobRanges
 func newRegionJobs(
 	sortedRegions []*split.RegionInfo,
-	data common.IngestData,
-	sortedJobRanges []common.Range,
+	data engineapi.IngestData,
+	sortedJobRanges []engineapi.Range,
 	regionSplitSize int64,
 	regionSplitKeys int64,
 	metrics *metric.Common,
@@ -618,6 +620,7 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 			if common.IsContextCanceledError(err) {
 				return err
 			}
+			metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 			log.FromContext(ctx).Warn("meet underlying error, will retry ingest",
 				log.ShortError(err), logutil.SSTMetas(j.writeResult.sstMeta),
 				logutil.Region(j.region.Region), logutil.Leader(j.region.Leader),
@@ -659,6 +662,16 @@ func (local *Backend) checkWriteStall(
 // doIngest send ingest commands to TiKV based on regionJob.writeResult.sstMeta.
 // When meet error, it will remove finished sstMetas before return.
 func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestResponse, error) {
+	failpoint.Inject("diskFullOnIngest", func() {
+		failpoint.Return(&sst.IngestResponse{
+			Error: &errorpb.Error{
+				Message: "propose failed: tikv disk full, cmd diskFullOpt={:?}, leader diskUsage={:?}",
+				DiskFull: &errorpb.DiskFull{
+					StoreId: []uint64{1},
+				},
+			},
+		}, nil)
+	})
 	failpoint.Inject("doIngestFailed", func() {
 		failpoint.Return(nil, errors.New("injected error"))
 	})

@@ -118,7 +118,7 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 		return ver, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("table is partition table"))
 	}
 	if hasColumnarIndexColumn(tblInfo, oldCol) {
-		return ver, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("vector indexes on the column"))
+		return ver, errors.Trace(dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("columnar indexes on the column"))
 	}
 
 	changingCol := args.ChangingColumn
@@ -813,7 +813,7 @@ func GetModifiableColumnJob(
 			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("table is partition table")
 		}
 		if hasColumnarIndexColumn(t.Meta(), col.ColumnInfo) {
-			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("vector indexes on the column")
+			return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("columnar indexes on the column")
 		}
 	}
 
@@ -1138,7 +1138,7 @@ func checkColumnWithIndexConstraint(tbInfo *model.TableInfo, originalCol, newCol
 		if err != nil {
 			return
 		}
-		err = checkIndexPrefixLength(columns, indexInfo.Columns)
+		err = checkIndexPrefixLength(columns, indexInfo.Columns, indexInfo.GetColumnarIndexType())
 		return
 	}
 
@@ -1180,8 +1180,10 @@ func checkIndexInModifiableColumns(columns []*model.ColumnInfo, idxColumns []*mo
 			// if the type is still prefixable and larger than old prefix length.
 			prefixLength = ic.Length
 		}
-		if err := checkIndexColumn(col, prefixLength, false, columnarIndexType); err != nil {
-			return err
+		if columnarIndexType == model.ColumnarIndexTypeNA {
+			if err := checkIndexColumn(col, prefixLength, false); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

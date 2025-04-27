@@ -67,6 +67,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -119,6 +120,7 @@ type Executor interface {
 	RenameTable(ctx sessionctx.Context, stmt *ast.RenameTableStmt) error
 	LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 	UnlockTables(ctx sessionctx.Context, lockedTables []model.TableLockTpInfo) error
+	AlterTableMode(ctx sessionctx.Context, args *model.AlterTableModeArgs) error
 	CleanupTableLock(ctx sessionctx.Context, tables []*ast.TableName) error
 	UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, available bool) error
 	RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTableStmt) error
@@ -1062,6 +1064,14 @@ func (e *executor) createTableWithInfoJob(
 		switch cfg.OnExist {
 		case OnExistIgnore:
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			// if target TableMode is ModeRestore, we check if the existing mode is consistent the new one
+			if tbInfo.Mode == model.TableModeRestore {
+				oldTableMode := oldTable.Meta().Mode
+				if oldTableMode != model.TableModeRestore {
+					return nil, infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(oldTableMode, tbInfo.Mode, tbInfo.Name)
+				}
+			}
+			// Currently, target TableMode will NEVER be ModeImport because ImportInto does not use this function
 			return nil, nil
 		case OnExistReplace:
 			// only CREATE OR REPLACE VIEW is supported at the moment.
@@ -1804,19 +1814,14 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 				err = e.CreateForeignKey(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, spec.Constraint.Refer)
 			case ast.ConstraintPrimaryKey:
 				err = e.CreatePrimaryKey(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option)
-			case ast.ConstraintFulltext:
-				sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt)
 			case ast.ConstraintCheck:
 				if !vardef.EnableCheckConstraint.Load() {
 					sctx.GetSessionVars().StmtCtx.AppendWarning(errCheckConstraintIsOff)
 				} else {
 					err = e.CreateCheckConstraint(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint)
 				}
-			case ast.ConstraintVector:
-				err = e.createColumnarIndex(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option, constr.IfNotExists, model.ColumnarIndexTypeVector)
 			case ast.ConstraintColumnar:
-				err = dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("not currently supported")
-				// 	err = e.createColumnarIndex(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option, constr.IfNotExists, model.ColumnarIndexTypeInverted)
+				err = e.createColumnarIndex(sctx, ident, ast.NewCIStr(constr.Name), spec.Constraint.Keys, constr.Option, constr.IfNotExists)
 			default:
 				// Nothing to do now.
 			}
@@ -2967,6 +2972,8 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 		source.Collate != target.Collate ||
 		source.ShardRowIDBits != target.ShardRowIDBits ||
 		source.MaxShardRowIDBits != target.MaxShardRowIDBits ||
+		source.PKIsHandle != target.PKIsHandle ||
+		source.IsCommonHandle != target.IsCommonHandle ||
 		!checkTiFlashReplicaCompatible(source.TiFlashReplica, target.TiFlashReplica) {
 		return errors.Trace(dbterror.ErrTablesDifferentMetadata)
 	}
@@ -4006,7 +4013,7 @@ func checkIndexLengthWithNewCharset(tblInfo *model.TableInfo, toCharset, toColla
 	}
 
 	for _, indexInfo := range tblInfo.Indices {
-		err := checkIndexPrefixLength(columns, indexInfo.Columns)
+		err := checkIndexPrefixLength(columns, indexInfo.Columns, indexInfo.GetColumnarIndexType())
 		if err != nil {
 			return err
 		}
@@ -4144,6 +4151,9 @@ func (e *executor) dropTableObject(
 			notExistTables = append(notExistTables, fullti.String())
 			continue
 		} else if err != nil {
+			return err
+		}
+		if err = dbutil.CheckTableModeIsNormal(tableInfo.Meta().Name, tableInfo.Meta().Mode); err != nil {
 			return err
 		}
 
@@ -4337,6 +4347,9 @@ func (e *executor) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Id
 		if tbl.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 			return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Table"))
 		}
+		if err = dbutil.CheckTableModeIsNormal(tbl.Meta().Name, tbl.Meta().Mode); err != nil {
+			return err
+		}
 	}
 
 	job := &model.Job{
@@ -4383,6 +4396,9 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 		if t, ok := is.TableByID(e.ctx, tableID); ok {
 			if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 				return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Tables"))
+			}
+			if err = dbutil.CheckTableModeIsNormal(t.Meta().Name, t.Meta().Mode); err != nil {
+				return err
 			}
 		}
 
@@ -4502,13 +4518,14 @@ func getIdentKey(ident ast.Ident) string {
 	return fmt.Sprintf("%s.%s", ident.Schema.L, ident.Name.L)
 }
 
-func getAnonymousIndexPrefix(columnarIndexType model.ColumnarIndexType) string {
-	switch columnarIndexType {
-	case model.ColumnarIndexTypeVector:
+// getAnonymousIndexPrefix returns the prefix for anonymous index name.
+// Column name of vector index IndexPartSpecifications is nil,
+// so we need a different prefix to distinguish between vector index and expression index.
+func getAnonymousIndexPrefix(isVector bool) string {
+	if isVector {
 		return "vector_index"
-	default:
-		return "expression_index"
 	}
+	return "expression_index"
 }
 
 // GetName4AnonymousIndex returns a valid name for anonymous index.
@@ -4665,7 +4682,7 @@ func checkIndexNameAndColumns(ctx *metabuild.Context, t table.Table, indexName a
 	indexPartSpecifications []*ast.IndexPartSpecification, columnarIndexType model.ColumnarIndexType, ifNotExists bool) (ast.CIStr, []*model.ColumnInfo, error) {
 	// Deal with anonymous index.
 	if len(indexName.L) == 0 {
-		colName := ast.NewCIStr(getAnonymousIndexPrefix(columnarIndexType))
+		colName := ast.NewCIStr(getAnonymousIndexPrefix(columnarIndexType == model.ColumnarIndexTypeVector))
 		if indexPartSpecifications[0].Column != nil {
 			colName = indexPartSpecifications[0].Column.Name
 		}
@@ -4710,23 +4727,23 @@ func checkIndexNameAndColumns(ctx *metabuild.Context, t table.Table, indexName a
 
 func checkTableTypeForColumnarIndex(tblInfo *model.TableInfo) error {
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
-		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Vector Index")
+		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("create columnar index")
 	}
 	if tblInfo.TempTableType != model.TempTableNone {
-		return dbterror.ErrOptOnTemporaryTable.FastGenByArgs("vector index")
+		return dbterror.ErrOptOnTemporaryTable.FastGenByArgs("columnar index")
 	}
 	if tblInfo.GetPartitionInfo() != nil {
 		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported partition table")
 	}
 	if tblInfo.TiFlashReplica == nil || tblInfo.TiFlashReplica.Count == 0 {
-		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported empty TiFlash replica, the replica is nil")
+		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("columnar replica must exist to create vector index, columnar index or fulltext index")
 	}
 
 	return nil
 }
 
 func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, indexName ast.CIStr,
-	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool, columnarIndexType model.ColumnarIndexType) error {
+	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
 	schema, t, err := e.getSchemaAndTableByIdent(ti)
 	if err != nil {
 		return errors.Trace(err)
@@ -4737,15 +4754,37 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 		return errors.Trace(err)
 	}
 
+	var columnarIndexType model.ColumnarIndexType
+	switch indexOption.Tp {
+	case ast.IndexTypeInverted:
+		columnarIndexType = model.ColumnarIndexTypeInverted
+	case ast.IndexTypeVector:
+		columnarIndexType = model.ColumnarIndexTypeVector
+	case ast.IndexTypeFulltext:
+		columnarIndexType = model.ColumnarIndexTypeFulltext
+	default:
+		return dbterror.ErrUnsupportedIndexType.GenWithStackByArgs(indexOption.Tp)
+	}
+
 	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
 	indexName, _, err = checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, columnarIndexType, ifNotExists)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	// Do some checks here to fast fail the DDL job.
 	var funcExpr string
-	if columnarIndexType == model.ColumnarIndexTypeVector {
-		_, funcExpr, err = buildVectorInfoWithCheck(indexPartSpecifications, tblInfo)
-		if err != nil {
+	switch columnarIndexType {
+	case model.ColumnarIndexTypeInverted:
+		if _, err := buildInvertedInfoWithCheck(indexPartSpecifications, tblInfo); err != nil {
+			return errors.Trace(err)
+		}
+	case model.ColumnarIndexTypeVector:
+		if _, funcExpr, err = buildVectorInfoWithCheck(indexPartSpecifications, tblInfo); err != nil {
+			return errors.Trace(err)
+		}
+	case model.ColumnarIndexTypeFulltext:
+		if _, err = buildFullTextInfoWithCheck(indexPartSpecifications, indexOption, tblInfo); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -4844,13 +4883,10 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
 	// not support Spatial and FullText index
 	switch keyType {
-	case ast.IndexKeyTypeFullText, ast.IndexKeyTypeSpatial:
-		return dbterror.ErrUnsupportedIndexType.GenWithStack("FULLTEXT and SPATIAL index is not supported")
+	case ast.IndexKeyTypeSpatial:
+		return dbterror.ErrUnsupportedIndexType.GenWithStack("SPATIAL index is not supported")
 	case ast.IndexKeyTypeColumnar:
-		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("not currently supported")
-		// return e.createColumnarIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists, model.ColumnarIndexTypeInverted)
-	case ast.IndexKeyTypeVector:
-		return e.createColumnarIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists, model.ColumnarIndexTypeVector)
+		return e.createColumnarIndex(ctx, ti, indexName, indexPartSpecifications, indexOption, ifNotExists)
 	}
 	unique := keyType == ast.IndexKeyTypeUnique
 	schema, t, err := e.getSchemaAndTableByIdent(ti)
@@ -4861,6 +4897,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 		return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Index"))
 	}
+
 	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)
 	indexName, hiddenCols, err := checkIndexNameAndColumns(metaBuildCtx, t, indexName, indexPartSpecifications, model.ColumnarIndexTypeNA, ifNotExists)
 	if err != nil {
@@ -5688,6 +5725,41 @@ func (e *executor) UnlockTables(ctx sessionctx.Context, unlockTables []model.Tab
 	if err == nil {
 		ctx.ReleaseAllTableLocks()
 	}
+	return errors.Trace(err)
+}
+
+func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTableModeArgs) error {
+	is := e.infoCache.GetLatest()
+
+	schema, ok := is.SchemaByID(args.SchemaID)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("SchemaID: %v", args.SchemaID))
+	}
+
+	table, ok := is.TableByID(e.ctx, args.TableID)
+	if !ok {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema.Name, args.TableID)
+	}
+
+	ok = validateTableMode(table.Meta().Mode, args.TableMode)
+	if !ok {
+		return infoschema.ErrInvalidTableModeSet.GenWithStackByArgs(table.Meta().Mode, args.TableMode, table.Meta().Name.O)
+	}
+	if table.Meta().Mode == args.TableMode {
+		return nil
+	}
+
+	job := &model.Job{
+		Version:        model.JobVersion2,
+		SchemaID:       args.SchemaID,
+		TableID:        args.TableID,
+		Type:           model.ActionAlterTableMode,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        sctx.GetSessionVars().SQLMode,
+	}
+	sctx.SetValue(sessionctx.QueryString, "skip")
+	err := e.doDDLJob2(sctx, job, args)
 	return errors.Trace(err)
 }
 

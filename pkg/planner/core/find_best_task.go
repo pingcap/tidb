@@ -70,7 +70,7 @@ func GetPropByOrderByItems(items []*util.ByItems) (*property.PhysicalProperty, b
 
 // GetPropByOrderByItemsContainScalarFunc will check if this sort property can be pushed or not. In order to simplify the
 // problem, we only consider the case that all expression are columns or some special scalar functions.
-func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (*property.PhysicalProperty, bool, bool) {
+func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (_ *property.PhysicalProperty, _, _ bool) {
 	propItems := make([]property.SortItem, 0, len(items))
 	onlyColumn := true
 	for _, item := range items {
@@ -92,6 +92,10 @@ func GetPropByOrderByItemsContainScalarFunc(items []*util.ByItems) (*property.Ph
 }
 
 func findBestTask4LogicalTableDual(lp base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
+	if prop.IndexJoinProp != nil {
+		// even enforce hint can not work with this.
+		return base.InvalidTask, 0, nil
+	}
 	p := lp.(*logicalop.LogicalTableDual)
 	// If the required property is not empty and the row count > 1,
 	// we cannot ensure this required property.
@@ -112,6 +116,10 @@ func findBestTask4LogicalTableDual(lp base.LogicalPlan, prop *property.PhysicalP
 }
 
 func findBestTask4LogicalShow(lp base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
+	if prop.IndexJoinProp != nil {
+		// even enforce hint can not work with this.
+		return base.InvalidTask, 0, nil
+	}
 	p := lp.(*logicalop.LogicalShow)
 	if !prop.IsSortItemEmpty() || planCounter.Empty() {
 		return base.InvalidTask, 0, nil
@@ -125,6 +133,10 @@ func findBestTask4LogicalShow(lp base.LogicalPlan, prop *property.PhysicalProper
 }
 
 func findBestTask4LogicalShowDDLJobs(lp base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (base.Task, int64, error) {
+	if prop.IndexJoinProp != nil {
+		// even enforce hint can not work with this.
+		return base.InvalidTask, 0, nil
+	}
 	p := lp.(*logicalop.LogicalShowDDLJobs)
 	if !prop.IsSortItemEmpty() || planCounter.Empty() {
 		return base.InvalidTask, 0, nil
@@ -177,7 +189,7 @@ func enumeratePhysicalPlans4Task(
 	planCounter *base.PlanCounterTp,
 	opt *optimizetrace.PhysicalOptimizeOp,
 ) (base.Task, int64, error) {
-	var bestTask base.Task = base.InvalidTask
+	var bestTask, preferTask = base.InvalidTask, base.InvalidTask
 	var curCntPlan, cntPlan int64
 	var err error
 	childTasks := make([]base.Task, 0, p.ChildLen())
@@ -249,13 +261,33 @@ func enumeratePhysicalPlans4Task(
 			break
 		}
 		appendCandidate4PhysicalOptimizeOp(opt, p, curTask.Plan(), prop)
-		// Get the most efficient one.
+
+		// Get the most efficient one only by low-cost priority among all valid plans.
 		if curIsBetter, err := compareTaskCost(curTask, bestTask, opt); err != nil {
 			return nil, 0, err
 		} else if curIsBetter {
 			bestTask = curTask
 		}
+
+		// Get the most preferred and efficient one by hint and low-cost priority.
+		// since hint applicable plan may greater than 1, like inl_join can suit for:
+		// index_join, index_hash_join, index_merge_join, we should chase the most efficient
+		// one among them.
+		// todo: extend suitLogicalJoinHint to be a normal logicalOperator's interface to handle the hint related stuff.
+		if suitLogicalJoinHint(p.Self(), curTask.Plan()) {
+			// curTask is a preferred physic plan, compare cost with previous preferred one and cache the low-cost one.
+			if curIsBetter, err := compareTaskCost(curTask, preferTask, opt); err != nil {
+				return nil, 0, err
+			} else if curIsBetter {
+				preferTask = curTask
+			}
+		}
 	}
+	// there is a valid preferred low-cost physical one, return it.
+	if !preferTask.Invalid() {
+		return preferTask, cntPlan, nil
+	}
+	// return the normal lowest-cost physical one.
 	return bestTask, cntPlan, nil
 }
 
@@ -520,6 +552,14 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 		planCounter.Dec(1)
 		return bestTask, 1, nil
 	}
+	// if prop is require an index join's probe side, check the inner pattern admission here.
+	if prop.IndexJoinProp != nil {
+		pass := admitIndexJoinInnerChildPattern(lp)
+		if !pass {
+			// even enforce hint can not work with this.
+			return base.InvalidTask, 0, nil
+		}
+	}
 
 	canAddEnforcer := prop.CanAddEnforcer
 
@@ -533,6 +573,10 @@ func findBestTask(lp base.LogicalPlan, prop *property.PhysicalProperty, planCoun
 	// prop should be read only because its cached hashcode might be not consistent
 	// when it is changed. So we clone a new one for the temporary changes.
 	newProp := prop.CloneEssentialFields()
+	// here newProp is used as another complete copy for enforcer, fill indexJoinProp manually.
+	// for childProp := prop.CloneEssentialFields(), we do not clone indexJoinProp childProp for by default.
+	// and only call admitIndexJoinProp to inherit the indexJoinProp for special pattern operators.
+	newProp.IndexJoinProp = prop.IndexJoinProp
 	var plansFitsProp, plansNeedEnforce []base.PhysicalPlan
 	var hintWorksWithProp bool
 	// Maybe the plan can satisfy the required property,
@@ -606,6 +650,10 @@ END:
 }
 
 func findBestTask4LogicalMemTable(lp base.LogicalPlan, prop *property.PhysicalProperty, planCounter *base.PlanCounterTp, opt *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
+	if prop.IndexJoinProp != nil {
+		// even enforce hint can not work with this.
+		return base.InvalidTask, 0, nil
+	}
 	p := lp.(*logicalop.LogicalMemTable)
 	if prop.MPPPartitionTp != property.AnyType {
 		return base.InvalidTask, 0, nil
@@ -1204,6 +1252,10 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		if path.StoreType != kv.TiFlash && prop.IsFlashProp() {
 			continue
 		}
+		// Use Inverted Index can not be used as access path index.
+		if path.Index != nil && path.Index.InvertedInfo != nil {
+			continue
+		}
 		if len(path.PartialAlternativeIndexPaths) > 0 {
 			// OR normal index merge path, try to determine every index partial path for this property.
 			candidate := convergeIndexMergeCandidate(ds, path, prop)
@@ -1396,6 +1448,19 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 		cntPlan = 1
 		planCounter.Dec(1)
 		return
+	}
+	// if prop is require an index join's probe side, check the inner pattern admission here.
+	if prop.IndexJoinProp != nil {
+		pass := admitIndexJoinInnerChildPattern(lp)
+		if !pass {
+			// even enforce hint can not work with this.
+			return base.InvalidTask, 0, nil
+		}
+		// when datasource leaf is in index join's inner side, build the task out with old
+		// index join build logic, we can't merge this with normal datasource's index range
+		// because normal index range is built on expression EQ/IN. while index join's inner
+		// has its special runtime constants detecting and filling logic.
+		return getBestIndexJoinInnerTaskByProp(ds, prop, opt, planCounter)
 	}
 	var cnt int64
 	var unenforcedTask base.Task
@@ -2596,6 +2661,15 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		// TiFlash fast mode(https://github.com/pingcap/tidb/pull/35851) does not keep order in TableScan
 		return base.InvalidTask, nil
 	}
+	// When the the store type is TiFlash, we will try to set the UsedColumnarIndexes.
+	// FIXME: Now it is a naive implementation, we will refine it based on selectivity and cost in the future.
+	if ts.StoreType == kv.TiFlash {
+		for _, index := range ts.Table.Indices {
+			if index.State == model.StatePublic && index.InvertedInfo != nil {
+				ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildInvertedIndexExtra(candidate.path.Index, index.InvertedInfo.ColumnID, index.ID))
+			}
+		}
+	}
 
 	// In disaggregated tiflash mode, only MPP is allowed, cop and batchCop is deprecated.
 	// So if prop.TaskTp is RootTaskType, have to use mppTask then convert to rootTask.
@@ -2621,19 +2695,16 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			distanceMetricPB := tipb.VectorDistanceMetric_value[string(distanceMetric)]
 			intest.Assert(distanceMetricPB != 0, "unexpected distance metric")
 
-			ts.AnnIndexExtra = &VectorIndexExtra{
-				IndexInfo: candidate.path.Index,
-				PushDownQueryInfo: &tipb.ANNQueryInfo{
-					QueryType:          tipb.ANNQueryType_OrderBy,
-					DistanceMetric:     tipb.VectorDistanceMetric(distanceMetricPB),
-					TopK:               prop.VectorProp.TopK,
-					ColumnName:         ts.Table.Columns[candidate.path.Index.Columns[0].Offset].Name.L,
-					DeprecatedColumnId: &prop.VectorProp.Column.ID, // deprecated field, will be removed after TiFlash supports the new field.
-					IndexId:            candidate.path.Index.ID,
-					RefVecF32:          prop.VectorProp.Vec.SerializeTo(nil),
-					Column:             *tidbutil.ColumnToProto(prop.VectorProp.Column.ToInfo(), false, false),
-				},
-			}
+			ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildVectorIndexExtra(
+				candidate.path.Index,
+				tipb.ANNQueryType_OrderBy,
+				tipb.VectorDistanceMetric(distanceMetricPB),
+				prop.VectorProp.TopK,
+				ts.Table.Columns[candidate.path.Index.Columns[0].Offset].Name.L,
+				candidate.path.Index.ID,
+				prop.VectorProp.Vec.SerializeTo(nil),
+				tidbutil.ColumnToProto(prop.VectorProp.Column.ToInfo(), false, false),
+			))
 			ts.SetStats(util.DeriveLimitStats(ts.StatsInfo(), float64(prop.VectorProp.TopK)))
 		}
 		// ********************************** future deprecated start **************************/
@@ -3067,6 +3138,10 @@ func getOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 }
 
 func findBestTask4LogicalCTE(lp base.LogicalPlan, prop *property.PhysicalProperty, counter *base.PlanCounterTp, pop *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
+	if prop.IndexJoinProp != nil {
+		// even enforce hint can not work with this.
+		return base.InvalidTask, 0, nil
+	}
 	p := lp.(*logicalop.LogicalCTE)
 	if p.ChildLen() > 0 {
 		return p.BaseLogicalPlan.FindBestTask(prop, counter, pop)
@@ -3101,6 +3176,10 @@ func findBestTask4LogicalCTE(lp base.LogicalPlan, prop *property.PhysicalPropert
 }
 
 func findBestTask4LogicalCTETable(lp base.LogicalPlan, prop *property.PhysicalProperty, _ *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
+	if prop.IndexJoinProp != nil {
+		// even enforce hint can not work with this.
+		return base.InvalidTask, 0, nil
+	}
 	p := lp.(*logicalop.LogicalCTETable)
 	if !prop.IsSortItemEmpty() {
 		return base.InvalidTask, 0, nil

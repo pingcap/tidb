@@ -954,8 +954,14 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 				}
 				// If there is condition which is always false, return dual plan directly.
 				dual := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
-				dual.SetOutputNames(p.OutputNames())
-				dual.SetSchema(p.Schema())
+				if join, ok := p.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
+					dual.SetOutputNames(join.FullNames)
+					dual.SetSchema(join.FullSchema)
+				} else {
+					dual.SetOutputNames(p.OutputNames())
+					dual.SetSchema(p.Schema())
+				}
+
 				return dual, nil
 			}
 			cnfExpres = append(cnfExpres, item)
@@ -2402,7 +2408,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 // If we found some columns that are not in select fields, we will append it to select fields and update the colMapper.
 // When we rewrite the order by / having expression, we will find column in map at first.
 func (b *PlanBuilder) resolveHavingAndOrderBy(ctx context.Context, sel *ast.SelectStmt, p base.LogicalPlan) (
-	map[*ast.AggregateFuncExpr]int, map[*ast.AggregateFuncExpr]int, error) {
+	havingAggMapper, _ map[*ast.AggregateFuncExpr]int, err error) {
 	extractor := &havingWindowAndOrderbyExprResolver{
 		p:            p,
 		selectFields: sel.Fields.Fields,
@@ -2423,7 +2429,7 @@ func (b *PlanBuilder) resolveHavingAndOrderBy(ctx context.Context, sel *ast.Sele
 		}
 		sel.Having.Expr = n.(ast.ExprNode)
 	}
-	havingAggMapper := extractor.aggMapper
+	havingAggMapper = extractor.aggMapper
 	extractor.aggMapper = make(map[*ast.AggregateFuncExpr]int)
 	// Extract agg funcs from order by clause.
 	if sel.OrderBy != nil {
@@ -2958,7 +2964,7 @@ func (b *PlanBuilder) tblInfoFromCol(from ast.ResultSetNode, name *types.FieldNa
 	return nil
 }
 
-func buildFuncDependCol(p base.LogicalPlan, cond ast.ExprNode) (*types.FieldName, *types.FieldName, error) {
+func buildFuncDependCol(p base.LogicalPlan, cond ast.ExprNode) (_, _ *types.FieldName, err error) {
 	binOpExpr, ok := cond.(*ast.BinaryOperationExpr)
 	if !ok {
 		return nil, nil, nil
@@ -3474,11 +3480,17 @@ func allColFromExprNode(p base.LogicalPlan, n ast.Node, names map[*types.FieldNa
 func (b *PlanBuilder) resolveGbyExprs(ctx context.Context, p base.LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) (base.LogicalPlan, []expression.Expression, bool, error) {
 	b.curClause = groupByClause
 	exprs := make([]expression.Expression, 0, len(gby.Items))
+	schema := p.Schema()
+	names := p.OutputNames()
+	if join, ok := p.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
+		schema = join.FullSchema
+		names = join.FullNames
+	}
 	resolver := &gbyResolver{
 		ctx:        b.ctx,
 		fields:     fields,
-		schema:     p.Schema(),
-		names:      p.OutputNames(),
+		schema:     schema,
+		names:      names,
 		skipAggMap: b.correlatedAggMapper,
 	}
 	for _, item := range gby.Items {
@@ -3835,13 +3847,37 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	}
 	l := sel.LockInfo
 	if l != nil && l.LockType != ast.SelectLockNone {
-		for _, tName := range l.Tables {
+		var tableList []*ast.TableName
+		var isExplicitSetTablesNames bool
+		if len(l.Tables) == 0 && sel.From != nil {
+			// It's for stmt like `select xxx from table t, t1 where t.a = t1.a for update`
+			nodeW := resolve.NewNodeWWithCtx(sel.From, b.resolveCtx)
+			tableList = ExtractTableList(nodeW, false)
+		} else if len(l.Tables) != 0 {
+			// It's for stmt like `select xxx from table t, t1 where t.a = t1.a for update of t`
+			isExplicitSetTablesNames = true
+			tableList = l.Tables
+		}
+		for _, tName := range tableList {
 			// CTE has no *model.HintedTable, we need to skip it.
 			tNameW := b.resolveCtx.GetTableName(tName)
 			if tNameW == nil {
 				continue
 			}
-			b.ctx.GetSessionVars().StmtCtx.LockTableIDs[tNameW.TableInfo.ID] = struct{}{}
+			if isExplicitSetTablesNames {
+				// If `LockTableIDs` map is empty, it will lock all records from all tables.
+				// Besides, it will only lock the metioned in `of` part.
+				b.ctx.GetSessionVars().StmtCtx.LockTableIDs[tNameW.TableInfo.ID] = struct{}{}
+			}
+			dbName := tName.Schema.L
+			if dbName == "" {
+				dbName = b.ctx.GetSessionVars().CurrentDB
+			}
+			var authErr error
+			if user := b.ctx.GetSessionVars().User; user != nil {
+				authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT with locking clause", user.AuthUsername, user.AuthHostname, tNameW.Name.L)
+			}
+			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv|mysql.UpdatePriv|mysql.LockTablesPriv, dbName, tNameW.Name.L, "", authErr)
 		}
 		p, err = b.buildSelectLock(p, l)
 		if err != nil {
@@ -6152,7 +6188,8 @@ func getWindowName(name string) string {
 
 // buildProjectionForWindow builds the projection for expressions in the window specification that is not an column,
 // so after the projection, window functions only needs to deal with columns.
-func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p base.LogicalPlan, spec *ast.WindowSpec, args []ast.ExprNode, aggMap map[*ast.AggregateFuncExpr]int) (base.LogicalPlan, []property.SortItem, []property.SortItem, []expression.Expression, error) {
+func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p base.LogicalPlan, spec *ast.WindowSpec, args []ast.ExprNode, aggMap map[*ast.AggregateFuncExpr]int) (
+	_ base.LogicalPlan, _, _ []property.SortItem, newArgList []expression.Expression, err error) {
 	b.optFlag |= rule.FlagEliminateProjection
 
 	var partitionItems, orderItems []*ast.ByItem
@@ -6174,7 +6211,6 @@ func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p base.Logic
 	copy(proj.OutputNames(), p.OutputNames())
 
 	propertyItems := make([]property.SortItem, 0, len(partitionItems)+len(orderItems))
-	var err error
 	p, propertyItems, err = b.buildByItemsForWindow(ctx, p, proj, partitionItems, propertyItems, aggMap)
 	if err != nil {
 		return nil, nil, nil, nil, err
@@ -6185,7 +6221,7 @@ func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p base.Logic
 		return nil, nil, nil, nil, err
 	}
 
-	newArgList := make([]expression.Expression, 0, len(args))
+	newArgList = make([]expression.Expression, 0, len(args))
 	for _, arg := range args {
 		newArg, np, err := b.rewrite(ctx, arg, p, aggMap, true)
 		if err != nil {
