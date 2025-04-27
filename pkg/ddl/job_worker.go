@@ -101,7 +101,7 @@ type jobContext struct {
 	stepCtx              context.Context
 	stepCtxCancel        context.CancelCauseFunc
 	reorgTimeoutOccurred bool
-	inMultiSchema        bool
+	inInnerRunOneJobStep bool // Only used for multi-schema change DDL job.
 
 	metaMut *meta.Mutator
 	// decoded JobArgs, we store it here to avoid decoding it multiple times and
@@ -116,7 +116,7 @@ type jobContext struct {
 func (c *jobContext) shouldPollDDLJob() bool {
 	// If we are in multi-schema change DDL and this is not the outermost
 	// runOneJobStep, we should not start a goroutine to poll the ddl job.
-	return !c.inMultiSchema
+	return !c.inInnerRunOneJobStep
 }
 
 func (c *jobContext) initStepCtx() {

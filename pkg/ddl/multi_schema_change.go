@@ -26,9 +26,9 @@ import (
 )
 
 func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
-	jobCtx.inMultiSchema = true
+	jobCtx.inInnerRunOneJobStep = true
 	defer func() {
-		jobCtx.inMultiSchema = false
+		jobCtx.inInnerRunOneJobStep = false
 	}()
 	metaMut := jobCtx.metaMut
 	if job.MultiSchemaInfo.Revertible {
