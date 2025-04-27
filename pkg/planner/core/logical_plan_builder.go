@@ -955,12 +955,13 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p base.LogicalPlan, wh
 				// If there is condition which is always false, return dual plan directly.
 				dual := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
 				if join, ok := p.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
-					dual.SetSchema(join.FullSchema)
 					dual.SetOutputNames(join.FullNames)
+					dual.SetSchema(join.FullSchema)
 				} else {
-					dual.SetSchema(p.Schema())
 					dual.SetOutputNames(p.OutputNames())
+					dual.SetSchema(p.Schema())
 				}
+
 				return dual, nil
 			}
 			cnfExpres = append(cnfExpres, item)
@@ -3479,11 +3480,17 @@ func allColFromExprNode(p base.LogicalPlan, n ast.Node, names map[*types.FieldNa
 func (b *PlanBuilder) resolveGbyExprs(ctx context.Context, p base.LogicalPlan, gby *ast.GroupByClause, fields []*ast.SelectField) (base.LogicalPlan, []expression.Expression, bool, error) {
 	b.curClause = groupByClause
 	exprs := make([]expression.Expression, 0, len(gby.Items))
+	schema := p.Schema()
+	names := p.OutputNames()
+	if join, ok := p.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
+		schema = join.FullSchema
+		names = join.FullNames
+	}
 	resolver := &gbyResolver{
 		ctx:        b.ctx,
 		fields:     fields,
-		schema:     p.Schema(),
-		names:      p.OutputNames(),
+		schema:     schema,
+		names:      names,
 		skipAggMap: b.correlatedAggMapper,
 	}
 	for _, item := range gby.Items {
