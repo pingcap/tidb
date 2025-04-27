@@ -96,8 +96,13 @@ type jobContext struct {
 	logger   *zap.Logger
 
 	// per job step fields, they will be changed on each call of transitOneJobStep.
+	// stepCtx is initilaized and destroyed for each job step except reorg job,
+	// which returns timeout error periodically.
+	stepCtx              context.Context
+	stepCtxCancel        context.CancelCauseFunc
+	reorgTimeoutOccurred bool
+	inInnerRunOneJobStep bool // Only used for multi-schema change DDL job.
 
-	stepCtx context.Context
 	metaMut *meta.Mutator
 	// decoded JobArgs, we store it here to avoid decoding it multiple times and
 	// pass some runtime info specific to some job type.
@@ -105,6 +110,32 @@ type jobContext struct {
 
 	// TODO reorg part of code couple this struct so much, remove it later.
 	oldDDLCtx *ddlCtx
+}
+
+func (c *jobContext) shouldPollDDLJob() bool {
+	// If we are in multi-schema change DDL and this is not the outermost
+	// runOneJobStep, we should not start a goroutine to poll the ddl job.
+	return !c.inInnerRunOneJobStep
+}
+
+func (c *jobContext) initStepCtx() {
+	if c.stepCtx == nil {
+		stepCtx, cancel := context.WithCancelCause(c.ctx)
+		c.stepCtx = stepCtx
+		c.stepCtxCancel = cancel
+	}
+}
+
+func (c *jobContext) cleanStepCtx() {
+	// reorgTimeoutOccurred indicates whether the current reorg process
+	// was temporarily exit due to a timeout condition. When set to true,
+	// it prevents premature cleanup of step context.
+	if c.reorgTimeoutOccurred {
+		c.reorgTimeoutOccurred = false // reset flag
+		return
+	}
+	c.stepCtxCancel(context.Canceled)
+	c.stepCtx = nil // unset stepCtx for the next step initialization
 }
 
 func (c *jobContext) getAutoIDRequirement() autoid.Requirement {
@@ -581,7 +612,11 @@ func (w *worker) transitOneJobStep(
 
 	// If running job meets error, we will save this error in job Error and retry
 	// later if the job is not cancelled.
+<<<<<<< HEAD
 	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(jobCtx, job, sysTblMgr)
+=======
+	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(jobCtx, job)
+>>>>>>> e8fb24a20d4 (ddl: update row count periodically when running reorg job (#60828))
 
 	failpoint.InjectCall("onJobRunAfter", job)
 
@@ -784,7 +819,6 @@ func (*worker) processJobPausingRequest(jobCtx *jobContext, job *model.Job) (isR
 func (w *worker) runOneJobStep(
 	jobCtx *jobContext,
 	job *model.Job,
-	sysTblMgr systable.Manager,
 ) (ver int64, updateRawArgs bool, err error) {
 	defer tidbutil.Recover(metrics.LabelDDLWorker, fmt.Sprintf("%s runOneJobStep", w),
 		func() {
@@ -794,8 +828,14 @@ func (w *worker) runOneJobStep(
 	// Mock for run ddl job panic.
 	failpoint.Inject("mockPanicInRunDDLJob", func(failpoint.Value) {})
 
+	failpoint.InjectCall("onRunOneJobStep")
 	if job.Type != model.ActionMultiSchemaChange {
+<<<<<<< HEAD
 		jobCtx.logger.Info("run DDL job", zap.String("job", job.String()))
+=======
+		jobCtx.logger.Info("run one job step", zap.String("job", job.String()))
+		failpoint.InjectCall("onRunOneJobStep")
+>>>>>>> e8fb24a20d4 (ddl: update row count periodically when running reorg job (#60828))
 	}
 	timeStart := time.Now()
 	if job.RealStartTS == 0 {
@@ -819,13 +859,6 @@ func (w *worker) runOneJobStep(
 		return ver, false, err
 	}
 
-	// when sysTblMgr is nil, clean up the job step context just for clearness.
-	// Otherwise, we are in multi-schema change DDL and this is not the outermost
-	// runOneJobStep, we should keep the job step context.
-	if sysTblMgr != nil {
-		jobCtx.stepCtx = nil
-	}
-
 	// It would be better to do the positive check, but no idea to list all valid states here now.
 	if job.IsRollingback() {
 		// when rolling back, we use worker context to process.
@@ -833,13 +866,13 @@ func (w *worker) runOneJobStep(
 	} else {
 		job.State = model.JobStateRunning
 
-		if sysTblMgr != nil {
+		if jobCtx.shouldPollDDLJob() {
+			failpoint.InjectCall("beforePollDDLJob")
 			stopCheckingJobCancelled := make(chan struct{})
 			defer close(stopCheckingJobCancelled)
 
-			var cancelStep context.CancelCauseFunc
-			jobCtx.stepCtx, cancelStep = context.WithCancelCause(jobCtx.ctx)
-			defer cancelStep(context.Canceled)
+			jobCtx.initStepCtx()
+			defer jobCtx.cleanStepCtx()
 			w.wg.Run(func() {
 				ticker := time.NewTicker(2 * time.Second)
 				defer ticker.Stop()
@@ -849,8 +882,14 @@ func (w *worker) runOneJobStep(
 					case <-stopCheckingJobCancelled:
 						return
 					case <-ticker.C:
+<<<<<<< HEAD
 						latestJob, err := sysTblMgr.GetJobByID(w.workCtx, job.ID)
 						if err == systable.ErrNotFound {
+=======
+						failpoint.InjectCall("checkJobCancelled", job)
+						latestJob, err := jobCtx.sysTblMgr.GetJobByID(w.workCtx, job.ID)
+						if goerrors.Is(err, systable.ErrNotFound) {
+>>>>>>> e8fb24a20d4 (ddl: update row count periodically when running reorg job (#60828))
 							logutil.DDLLogger().Info(
 								"job not found, might already finished",
 								zap.Int64("job_id", job.ID))
@@ -867,13 +906,13 @@ func (w *worker) runOneJobStep(
 							logutil.DDLLogger().Info("job is cancelled",
 								zap.Int64("job_id", job.ID),
 								zap.Stringer("state", latestJob.State))
-							cancelStep(dbterror.ErrCancelledDDLJob)
+							jobCtx.stepCtxCancel(dbterror.ErrCancelledDDLJob)
 							return
 						case model.JobStatePausing, model.JobStatePaused:
 							logutil.DDLLogger().Info("job is paused",
 								zap.Int64("job_id", job.ID),
 								zap.Stringer("state", latestJob.State))
-							cancelStep(dbterror.ErrPausedDDLJob.FastGenByArgs(job.ID))
+							jobCtx.stepCtxCancel(dbterror.ErrPausedDDLJob.FastGenByArgs(job.ID))
 							return
 						case model.JobStateDone, model.JobStateSynced:
 							return
@@ -1089,6 +1128,11 @@ func updateGlobalVersionAndWaitSynced(
 	var err error
 
 	if latestSchemaVersion == 0 {
+		// If the DDL step is still in progress (e.g., during reorg timeout),
+		// skip logging to avoid generating redundant entries.
+		if jobCtx.stepCtx != nil {
+			return nil
+		}
 		logutil.DDLLogger().Info("schema version doesn't change", zap.Int64("jobID", job.ID))
 		return nil
 	}
