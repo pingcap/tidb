@@ -1,3 +1,17 @@
+// Copyright 2018 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package memory
 
 import (
@@ -7,102 +21,65 @@ import (
 	"sync/atomic"
 )
 
-var ResourcePoolID = uint64(0)
+var resourcePoolID = int64(-1)
 
+// DefPoolAllocAlignSize indicates the default allocation alignment size
+const DefPoolAllocAlignSize int64 = 10 * 1024
+
+// DefMaxUnusedBlocks indicates the default maximum unused blocks*alloc-align-size of the resource pool
+const DefMaxUnusedBlocks int64 = 10
+
+// ResourcePool manages a set of resource quota
 type ResourcePool struct {
-	mu struct {
-		sync.Mutex
-
-		allocated int64
-
-		maxAllocated int64
-
-		budget Budget
-
+	actions  PoolActions
+	parentMu struct{ prevChildren, nextChildren *ResourcePool }
+	name     string
+	mu       struct {
 		headChildren *ResourcePool
-
-		numChildren int
-
+		budget       Budget
+		allocated    int64
+		maxAllocated int64
+		numChildren  int
+		sync.Mutex
 		stopped bool
 	}
-
-	parentMu struct {
-		prevChildren, nextChildren *ResourcePool
-	}
-
-	name string
-
-	uid uint64
-
-	reserved int64 // not only allocate quota from parent
-
-	limit int64
-
+	uid            uint64
+	reserved       int64 // quota from other sources
+	limit          int64
 	allocAlignSize int64
 
-	cleanAllOnReleaseBytes bool
-
-	actions PoolActions
+	maxUnusedBlocks int64
 }
 
-// type ReclaimerStatus int
-
-// const (
-// 	ReclaimerUnavailable ReclaimerStatus = iota
-// 	ReclaimerRunning
-// 	ReclaimerReady
-// )
-
-/*
-ResourceArbitrator:
-
-	if Status() is Ready:
-		if AsyncReclaim(_request_bytes, __cb):
-			if status is Running:
-				return false
-			set status to Running
-			async run in other coroutine
-			set status to Stopped
-			call __cb(TRUE if success else FALSE)
-			set status to Ready if available
-	else if Status() is Running:
-		wait util status is NOT Running
-*/
-// type Reclaimer interface {
-// 	// Status return Ready, Running, Unavailable
-// 	Status() ReclaimerStatus
-// 	// AsyncReclaim return result(BOOL), mayReclaimBytes(INT64).
-// 	// 	 `result` is true only if status is NOT Running.
-// 	//   `mayReclaimBytes`(GT than 0) is the approximate bytes to be recliamed.
-// 	// 		resource-manager will use min(`mayReclaimBytes`, resource-pool.budget) for evaluation
-// 	AsyncReclaim(int64, func(bool)) (bool, int64)
-// }
-
+// NoteActionState wraps the arguments of a note action
 type NoteActionState struct {
-	pool      *ResourcePool
-	allocated int64
+	Pool      *ResourcePool
+	Allocated int64
 }
 
+// NoteAction represents the action to be taken when the allocated size exceeds the threshold
 type NoteAction struct {
-	usedBytes int64
-	action    func(NoteActionState)
+	CB        func(NoteActionState)
+	Threshold int64
 }
 
+// OutOfCapacityActionArgs wraps the arguments for out of capacity action
 type OutOfCapacityActionArgs struct {
-	pool    *ResourcePool
-	request int64
+	Pool    *ResourcePool
+	Request int64
 }
 
+// PoolActions represents the actions to be taken when the resource pool meets certain conditions
 type PoolActions struct {
-	noteAction          NoteAction
-	outOfCapacityAction func(OutOfCapacityActionArgs) error
-	outOfLimitAction    func(*ResourcePool) error
+	OutOfCapacityActionCB func(OutOfCapacityActionArgs) error // Called when the resource pool is out of capacity
+	OutOfLimitActionCB    func(*ResourcePool) error           // Called when the resource pool is out of limit
+	NoteAction            NoteAction
 }
 
-// ResourcePoolState
+// ResourcePoolState represents the state of a resource pool
 type ResourcePoolState struct {
-	Level    int
 	Name     string
+	Level    int
 	ID       uint64
 	ParentID uint64
 	Used     int64
@@ -110,6 +87,7 @@ type ResourcePoolState struct {
 	Budget   int64
 }
 
+// Traverse the resource pool and calls the callback function
 func (p *ResourcePool) Traverse(stateCb func(ResourcePoolState) error) error {
 	return p.traverse(0, stateCb)
 }
@@ -124,7 +102,7 @@ func (p *ResourcePool) traverse(level int, stateCb func(ResourcePoolState) error
 		Level:    level,
 		Name:     p.name,
 		ID:       p.uid,
-		ParentID: p.mu.budget.pool.Uid(),
+		ParentID: p.mu.budget.pool.UID(),
 		Used:     p.mu.allocated,
 		Reserved: p.reserved,
 		Budget:   p.mu.budget.cap,
@@ -146,40 +124,52 @@ func (p *ResourcePool) traverse(level int, stateCb func(ResourcePoolState) error
 	return nil
 }
 
-var maxAllocatedButUnusedBlocks = 10
-
-var DefaultPoolAllocationSize int64 = 10 * 1024
-
-func NewResourcePool(
+// NewResourcePoolDefault creates a new resource pool
+func NewResourcePoolDefault(
 	name string,
 	allocAlignSize int64,
 ) *ResourcePool {
-	return NewResourcePoolWithLimit(
-		name, math.MaxInt64, allocAlignSize, PoolActions{})
+	return NewResourcePool(
+		newPoolUID(),
+		name,
+		math.MaxInt64,
+		allocAlignSize,
+		DefMaxUnusedBlocks,
+		PoolActions{},
+	)
 }
 
-func NewResourcePoolWithLimit(
+func newPoolUID() uint64 {
+	return uint64(atomic.AddInt64(&resourcePoolID, -1))
+}
+
+// NewResourcePool creates a new resource pool
+func NewResourcePool(
+	uid uint64,
 	name string,
 	limit int64,
 	allocAlignSize int64,
+	maxUnusedBlocks int64,
 	actions PoolActions,
 ) *ResourcePool {
 	if allocAlignSize <= 0 {
-		allocAlignSize = DefaultPoolAllocationSize
+		allocAlignSize = DefPoolAllocAlignSize
 	}
 	if limit <= 0 {
 		limit = math.MaxInt64
 	}
 	m := &ResourcePool{
-		name:           name,
-		uid:            atomic.AddUint64(&ResourcePoolID, 1),
-		limit:          limit,
-		allocAlignSize: allocAlignSize,
-		actions:        actions,
+		name:            name,
+		uid:             uid,
+		limit:           limit,
+		allocAlignSize:  allocAlignSize,
+		actions:         actions,
+		maxUnusedBlocks: 10,
 	}
 	return m
 }
 
+// SetAllocAlignSize sets the allocation alignment size and returns the original value of allocAlignSize
 func (p *ResourcePool) SetAllocAlignSize(size int64) (ori int64) {
 	p.mu.Lock()
 	ori = p.allocAlignSize
@@ -188,28 +178,34 @@ func (p *ResourcePool) SetAllocAlignSize(size int64) (ori int64) {
 	return
 }
 
+// NewResourcePoolInheritWithLimit creates a new resource pool inheriting from the parent pool
 func (p *ResourcePool) NewResourcePoolInheritWithLimit(
 	name string, limit int64,
 ) *ResourcePool {
-	return NewResourcePoolWithLimit(
+	return NewResourcePool(
+		newPoolUID(),
 		name,
 		limit,
 		p.allocAlignSize,
+		p.maxUnusedBlocks,
 		p.actions,
 	)
 }
 
+// StartNoReserved creates a new resource pool with no reserved quota
 func (p *ResourcePool) StartNoReserved(pool *ResourcePool) {
 	p.Start(pool, 0)
 }
 
-func (p *ResourcePool) Uid() uint64 {
+// UID returns the unique ID of the resource pool
+func (p *ResourcePool) UID() uint64 {
 	if p == nil {
 		return 0
 	}
 	return p.uid
 }
 
+// Start starts the resource pool with a parent pool and reserved quota
 func (p *ResourcePool) Start(parentPool *ResourcePool, reserved int64) {
 	if p.mu.allocated != 0 {
 		panic(fmt.Errorf("%s: started with %d bytes left over", p.name, p.mu.allocated))
@@ -235,14 +231,17 @@ func (p *ResourcePool) Start(parentPool *ResourcePool, reserved int64) {
 	}
 }
 
+// Name returns the name of the resource pool
 func (p *ResourcePool) Name() string {
 	return p.name
 }
 
+// Limit returns the limit of the resource pool
 func (p *ResourcePool) Limit() int64 {
 	return p.limit
 }
 
+// IsStopped checks if the resource pool is stopped
 func (p *ResourcePool) IsStopped() (res bool) {
 	p.mu.Lock()
 	res = p.mu.stopped
@@ -250,6 +249,7 @@ func (p *ResourcePool) IsStopped() (res bool) {
 	return
 }
 
+// Stop stops the resource pool and releases the budget & returns the quota released
 func (p *ResourcePool) Stop() (released int64) {
 	p.mu.Lock()
 
@@ -287,6 +287,7 @@ func (p *ResourcePool) Stop() (released int64) {
 	return released
 }
 
+// MaxAllocated returns the maximum allocated bytes
 func (p *ResourcePool) MaxAllocated() (res int64) {
 	p.mu.Lock()
 	res = p.mu.maxAllocated
@@ -294,25 +295,28 @@ func (p *ResourcePool) MaxAllocated() (res int64) {
 	return
 }
 
-func (p *ResourcePool) AllocatedBytes() (res int64) {
+// Allocated returns the allocated bytes
+func (p *ResourcePool) Allocated() (res int64) {
 	p.mu.Lock()
 	res = p.mu.allocated
 	p.mu.Unlock()
 	return
 }
 
+// ApproxAllocated returns the approximate allocated bytes
 func (p *ResourcePool) ApproxAllocated() int64 {
 	return p.allocated()
 }
 
+// Budget represents the budget of a resource pool
 type Budget struct {
-	cap  int64
-	used int64
-	pool *ResourcePool
-
-	explicitReserved int64
+	pool             *ResourcePool // source pool
+	cap              int64         // capacity of the budget
+	used             int64         // used bytes
+	explicitReserved int64         // explicit reserved size which can not be shrunk
 }
 
+// Used returns the used bytes of the budget
 func (b *Budget) Used() int64 {
 	if b == nil {
 		return 0
@@ -320,6 +324,7 @@ func (b *Budget) Used() int64 {
 	return b.used
 }
 
+// Pool returns the resource pool of the budget
 func (b *Budget) Pool() *ResourcePool {
 	if b == nil {
 		return nil
@@ -327,6 +332,7 @@ func (b *Budget) Pool() *ResourcePool {
 	return b.pool
 }
 
+// Capacity returns the capacity of the budget
 func (b *Budget) Capacity() int64 {
 	if b == nil {
 		return 0
@@ -344,34 +350,26 @@ func (b *Budget) release() (reclaimed int64) {
 	return
 }
 
+// CreateBudget creates a new budget from the resource pool
 func (p *ResourcePool) CreateBudget() Budget {
 	return Budget{pool: p}
 }
 
-func (p *ResourcePool) TransferBudget(
-	origAccount *Budget,
-) (newAccount Budget, err error) {
-	b := p.CreateBudget()
-	if err = b.Grow(origAccount.used); err != nil {
-		return newAccount, err
-	}
-	origAccount.Clear()
-	return b, nil
-}
-
-func (b *Budget) Reserve(x int64) error {
+// Reserve reserves the budget through the allocate aligned given size; update the explicit reserved size;
+func (b *Budget) Reserve(request int64) error {
 	if b == nil {
 		return nil
 	}
-	minExtra := b.pool.roundSize(x)
+	minExtra := b.pool.roundSize(request)
 	if err := b.pool.allocate(minExtra); err != nil {
 		return err
 	}
 	b.cap += minExtra
-	b.explicitReserved += x
+	b.explicitReserved += request
 	return nil
 }
 
+// Empty releases the used budget
 func (b *Budget) Empty() {
 	if b == nil {
 		return
@@ -383,6 +381,7 @@ func (b *Budget) Empty() {
 	}
 }
 
+// Clear releases the budget and resets
 func (b *Budget) Clear() {
 	if b == nil {
 		return
@@ -399,7 +398,7 @@ func (b *Budget) Clear() {
 	}
 }
 
-func (b *Budget) Resize(oldSz, newSz int64) error {
+func (b *Budget) resize(oldSz, newSz int64) error {
 	if b == nil {
 		return nil
 	}
@@ -413,6 +412,7 @@ func (b *Budget) Resize(oldSz, newSz int64) error {
 	return nil
 }
 
+// ResizeTo resizes the budget to the new size
 func (b *Budget) ResizeTo(newSz int64) error {
 	if b == nil {
 		return nil
@@ -420,24 +420,26 @@ func (b *Budget) ResizeTo(newSz int64) error {
 	if newSz == b.used {
 		return nil
 	}
-	return b.Resize(b.used, newSz)
+	return b.resize(b.used, newSz)
 }
 
-func (b *Budget) Grow(x int64) error {
+// Grow the budget by the given size
+func (b *Budget) Grow(request int64) error {
 	if b == nil {
 		return nil
 	}
-	if extra := x - b.available(); extra > 0 {
+	if extra := request - b.available(); extra > 0 {
 		minExtra := b.pool.roundSize(extra)
 		if err := b.pool.allocate(minExtra); err != nil {
 			return err
 		}
 		b.cap += minExtra
 	}
-	b.used += x
+	b.used += request
 	return nil
 }
 
+// Shrink the budget and reduce the given size
 func (b *Budget) Shrink(delta int64) {
 	if b == nil || delta == 0 {
 		return
@@ -459,12 +461,11 @@ func (b *Budget) Shrink(delta int64) {
 
 func (p *ResourcePool) doAlloc(request int64) error {
 	if p.mu.allocated > p.limit-request {
-		if p.actions.outOfLimitAction != nil {
-			if err := p.actions.outOfLimitAction(p); err != nil {
-				return err
-			}
-		} else {
+		if p.actions.OutOfLimitActionCB == nil {
 			return newBudgetExceededError("out of limit", p, request, p.mu.allocated, p.limit)
+		}
+		if err := p.actions.OutOfLimitActionCB(p); err != nil {
+			return err
 		}
 	}
 
@@ -482,17 +483,19 @@ func (p *ResourcePool) doAlloc(request int64) error {
 	return nil
 }
 
-func (p *ResourcePool) ExplicitReserveBytes(x int64) error {
+// ExplicitReserve reserves the budget explicitly
+func (p *ResourcePool) ExplicitReserve(request int64) (err error) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.mu.budget.Reserve(x)
+	err = p.mu.budget.Reserve(request)
+	p.mu.Unlock()
+	return
 }
 
-func (p *ResourcePool) allocate(x int64) error {
+func (p *ResourcePool) allocate(request int64) error {
 	{
 		p.mu.Lock()
 
-		if err := p.doAlloc(x); err != nil {
+		if err := p.doAlloc(request); err != nil {
 			p.mu.Unlock()
 			return err
 		}
@@ -500,11 +503,11 @@ func (p *ResourcePool) allocate(x int64) error {
 		p.mu.Unlock()
 	}
 
-	if p.actions.noteAction.action != nil {
-		if approxUsed := p.allocated(); approxUsed > p.actions.noteAction.usedBytes {
-			p.actions.noteAction.action(NoteActionState{
-				pool:      p,
-				allocated: approxUsed,
+	if p.actions.NoteAction.CB != nil {
+		if allocated := p.allocated(); allocated > p.actions.NoteAction.Threshold {
+			p.actions.NoteAction.CB(NoteActionState{
+				Pool:      p,
+				Allocated: allocated,
 			})
 		}
 	}
@@ -516,25 +519,29 @@ func (p *ResourcePool) allocated() int64 {
 	return atomic.LoadInt64(&p.mu.allocated)
 }
 
-func (p *ResourcePool) cap() int64 {
+func (p *ResourcePool) capacity() int64 {
 	return p.mu.budget.cap
 }
 
-func (p *ResourcePool) ApproxBudgetAvailable() int64 {
+// ApproxAvailable returns the approximate available budget
+func (p *ResourcePool) ApproxAvailable() int64 {
 	return p.mu.budget.available()
 }
 
+// ApproxCap returns the approximate capacity of the resource pool
 func (p *ResourcePool) ApproxCap() int64 {
-	return p.cap()
+	return p.capacity()
 }
 
+// Capacity returns the capacity of the resource pool
 func (p *ResourcePool) Capacity() (res int64) {
 	p.mu.Lock()
-	res = p.cap()
+	res = p.capacity()
 	p.mu.Unlock()
 	return
 }
 
+// SetLimit sets the limit of the resource pool
 func (p *ResourcePool) SetLimit(newLimit int64) {
 	p.mu.Lock()
 	p.limit = newLimit
@@ -553,18 +560,22 @@ func (p *ResourcePool) doRelease(sz int64) {
 	}
 	p.mu.allocated -= sz
 
-	p.doAdjustBudget(p.cleanAllOnReleaseBytes)
+	p.doAdjustBudget()
 }
 
+// SetOutOfCapacityAction sets the out of capacity action
+// It is called when the resource pool is out of capacity
 func (p *ResourcePool) SetOutOfCapacityAction(f func(OutOfCapacityActionArgs) error) {
 	p.mu.Lock()
-	p.actions.outOfCapacityAction = f
+	p.actions.OutOfCapacityActionCB = f
 	p.mu.Unlock()
 }
 
+// SetOutOfLimitAction sets the out of limit action
+// It is called when the resource pool is out of limit
 func (p *ResourcePool) SetOutOfLimitAction(f func(*ResourcePool) error) {
 	p.mu.Lock()
-	p.actions.outOfLimitAction = f
+	p.actions.OutOfLimitActionCB = f
 	p.mu.Unlock()
 }
 
@@ -576,24 +587,23 @@ func (p *ResourcePool) increaseBudget(request int64) error {
 			return nil
 		}
 
-		if p.actions.outOfCapacityAction != nil {
-			if err := p.actions.outOfCapacityAction(OutOfCapacityActionArgs{
-				pool:    p,
-				request: need,
+		if p.actions.OutOfCapacityActionCB != nil {
+			if err := p.actions.OutOfCapacityActionCB(OutOfCapacityActionArgs{
+				Pool:    p,
+				Request: need,
 			}); err != nil {
 				return err
 			}
 
 			p.mu.budget.used += request
 			return nil
-		} else {
-			return newBudgetExceededError("out of quota",
-				p,
-				request,
-				p.mu.budget.used,
-				p.mu.budget.cap,
-			)
 		}
+		return newBudgetExceededError("out of quota",
+			p,
+			request,
+			p.mu.budget.used,
+			p.mu.budget.cap,
+		)
 	}
 
 	return p.mu.budget.Grow(request)
@@ -607,30 +617,22 @@ func (p *ResourcePool) releaseBudget() {
 	p.mu.budget.Clear()
 }
 
-func (p *ResourcePool) SetCleanAllOnReleaseBytes() {
-	p.cleanAllOnReleaseBytes = true
-}
-
-func (p *ResourcePool) AdjustBudget(cleanAllOnReleaseBytes bool) {
+// AdjustBudget adjusts the budget of the resource pool
+func (p *ResourcePool) AdjustBudget() {
 	p.mu.Lock()
-	p.doAdjustBudget(cleanAllOnReleaseBytes)
+	p.doAdjustBudget()
 	p.mu.Unlock()
 }
 
-func (p *ResourcePool) doAdjustBudget(cleanAllOnReleaseBytes bool) {
-	var need int64
-	if !cleanAllOnReleaseBytes {
-		need = p.allocAlignSize * int64(maxAllocatedButUnusedBlocks)
-	}
-
-	neededBytes := p.mu.allocated - p.reserved
-	if neededBytes <= 0 {
-		neededBytes = 0
+func (p *ResourcePool) doAdjustBudget() {
+	needed := p.mu.allocated - p.reserved
+	if needed <= 0 {
+		needed = 0
 	} else {
-		neededBytes = p.roundSize(neededBytes)
+		needed = p.roundSize(needed)
 	}
-	if neededBytes <= p.mu.budget.used-need {
-		delta := p.mu.budget.used - neededBytes
+	if p.allocAlignSize*p.maxUnusedBlocks <= p.mu.budget.used-needed {
+		delta := p.mu.budget.used - needed
 		p.mu.budget.Shrink(delta)
 	}
 }

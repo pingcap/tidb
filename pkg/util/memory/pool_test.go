@@ -1,12 +1,16 @@
-// Copyright 2016 The tidb Authors.
+// Copyright 2018 PingCAP, Inc.
 //
-// Use of this software is governed by the Business Source License
-// included in the file licenses/BSL.txt.
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
 //
-// As of the Change Date specified in that file, in accordance with
-// the Business Source License, use of this software will be governed
-// by the Apache License, Version 2.0, included in the file
-// licenses/APL.txt.
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package memory
 
@@ -45,7 +49,7 @@ func TestMemoryAllocations(t *testing.T) {
 	var pool *ResourcePool
 	var paramHeader func()
 
-	m := NewResourcePool("test", /* name */
+	m := NewResourcePoolDefault("test", /* name */
 		0 /* pool allocation size */)
 	m.StartNoReserved(nil /* pool */)
 	accs := make([]Budget, 4)
@@ -129,11 +133,11 @@ func TestMemoryAllocations(t *testing.T) {
 	}
 
 	for _, max := range maxs {
-		pool = NewResourcePool("test", 1)
+		pool = NewResourcePoolDefault("test", 1)
 		pool.Start(nil, (max))
 
 		for _, hf := range hysteresisFactors {
-			maxAllocatedButUnusedBlocks = hf
+			pool.maxUnusedBlocks = int64(hf)
 
 			for _, pb := range preBudgets {
 				mmax := pb + max
@@ -143,7 +147,7 @@ func TestMemoryAllocations(t *testing.T) {
 
 					// We start with a fresh pool for every set of
 					// parameters.
-					m = NewResourcePool("test", pa)
+					m = NewResourcePoolDefault("test", pa)
 					m.Start(pool, (pb))
 
 					for i := 0; i < numAccountOps; i++ {
@@ -175,7 +179,7 @@ func TestMemoryAllocations(t *testing.T) {
 							osz := rnd.Int63n(accs[accI].used + 1)
 							nsz := randomSize(rnd, mmax)
 							reportAndCheck("R [%5d] %5d %5d", accI, osz, nsz)
-							err := accs[accI].Resize(osz, nsz)
+							err := accs[accI].resize(osz, nsz)
 							if err == nil {
 								reportAndCheck("R [%5d] ok", accI)
 							} else {
@@ -205,13 +209,13 @@ func TestMemoryAllocations(t *testing.T) {
 
 func TestBudget(t *testing.T) {
 
-	m := NewResourcePool("test", 1)
-	m.Start(nil, (100))
-	m.allocAlignSize = 1
-	maxAllocatedButUnusedBlocks = 1
+	p := NewResourcePoolDefault("test", 1)
+	p.Start(nil, (100))
+	p.allocAlignSize = 1
+	p.maxUnusedBlocks = 1
 
-	a1 := m.CreateBudget()
-	a2 := m.CreateBudget()
+	a1 := p.CreateBudget()
+	a2 := p.CreateBudget()
 	if err := a1.Grow(10); err != nil {
 		t.Fatalf("pool refused allocation: %v", err)
 	}
@@ -234,30 +238,30 @@ func TestBudget(t *testing.T) {
 		t.Fatalf("pool refused allocation: %v", err)
 	}
 
-	if err := a2.Resize(50, 60); err == nil {
+	if err := a2.resize(50, 60); err == nil {
 		t.Fatalf("pool accepted excessive allocation")
 	}
 
-	if err := a1.Resize(0, 5); err != nil {
+	if err := a1.resize(0, 5); err != nil {
 		t.Fatalf("pool refused allocation: %v", err)
 	}
 
-	if err := a2.Resize(a2.used, 40); err != nil {
+	if err := a2.resize(a2.used, 40); err != nil {
 		t.Fatalf("pool refused reset + allocation: %v", err)
 	}
 
 	a1.Clear()
 	a2.Clear()
 
-	if m.mu.allocated != 0 {
+	if p.mu.allocated != 0 {
 		t.Fatal("closing spans leaves bytes in pool")
 	}
 
-	if m2 := a1.Pool(); m2 != m {
-		t.Fatalf("a1.Pool() returned %v, wanted %v", m2, &m)
+	if m2 := a1.Pool(); m2 != p {
+		t.Fatalf("a1.Pool() returned %v, wanted %v", m2, &p)
 	}
 
-	m.Stop()
+	p.Stop()
 }
 
 func TestNilBudget(t *testing.T) {
@@ -269,7 +273,7 @@ func TestNilBudget(t *testing.T) {
 	ba.Empty()
 	ba.Clear()
 	ba.Clear()
-	require.Nil(t, ba.Resize(0, 10))
+	require.Nil(t, ba.resize(0, 10))
 	require.Nil(t, ba.ResizeTo(10))
 	require.Nil(t, ba.Grow(10))
 	ba.Shrink(10)
@@ -277,42 +281,42 @@ func TestNilBudget(t *testing.T) {
 
 func TestBytesPool(t *testing.T) {
 
-	m := NewResourcePool("test", 1)
-	m.Start(nil, (100))
-	maxAllocatedButUnusedBlocks = 1
+	p := NewResourcePoolDefault("test", 1)
+	p.Start(nil, (100))
+	p.maxUnusedBlocks = 1
 
-	if err := m.allocate(10); err != nil {
+	if err := p.allocate(10); err != nil {
 		t.Fatalf("pool refused small allocation: %v", err)
 	}
-	if err := m.allocate(91); err == nil {
+	if err := p.allocate(91); err == nil {
 		t.Fatalf("pool accepted excessive allocation: %v", err)
 	}
-	if err := m.allocate(90); err != nil {
+	if err := p.allocate(90); err != nil {
 		t.Fatalf("pool refused top allocation: %v", err)
 	}
-	if m.mu.allocated != 100 {
-		t.Fatalf("incorrect current allocation: got %d, expected %d", m.mu.allocated, 100)
+	if p.mu.allocated != 100 {
+		t.Fatalf("incorrect current allocation: got %d, expected %d", p.mu.allocated, 100)
 	}
 
-	m.release(90) // Should succeed without panic.
-	if m.mu.allocated != 10 {
-		t.Fatalf("incorrect current allocation: got %d, expected %d", m.mu.allocated, 10)
+	p.release(90) // Should succeed without panic.
+	if p.mu.allocated != 10 {
+		t.Fatalf("incorrect current allocation: got %d, expected %d", p.mu.allocated, 10)
 	}
-	if m.mu.maxAllocated != 100 {
-		t.Fatalf("incorrect max allocation: got %d, expected %d", m.mu.maxAllocated, 100)
+	if p.mu.maxAllocated != 100 {
+		t.Fatalf("incorrect max allocation: got %d, expected %d", p.mu.maxAllocated, 100)
 	}
-	if m.MaxAllocated() != 100 {
-		t.Fatalf("incorrect MaximumBytes(): got %d, expected %d", m.mu.maxAllocated, 100)
-	}
-
-	m.release(10) // Should succeed without panic.
-	if m.mu.allocated != 0 {
-		t.Fatalf("incorrect current allocation: got %d, expected %d", m.mu.allocated, 0)
+	if p.MaxAllocated() != 100 {
+		t.Fatalf("incorrect MaximumBytes(): got %d, expected %d", p.mu.maxAllocated, 100)
 	}
 
-	limitedPool := NewResourcePoolWithLimit(
-		"testlimit", 10, 1, PoolActions{})
-	limitedPool.StartNoReserved(m)
+	p.release(10) // Should succeed without panic.
+	if p.mu.allocated != 0 {
+		t.Fatalf("incorrect current allocation: got %d, expected %d", p.mu.allocated, 0)
+	}
+
+	limitedPool := newResourcePoolWithLimit(
+		"testlimit", 10, 1)
+	limitedPool.StartNoReserved(p)
 
 	if err := limitedPool.allocate(10); err != nil {
 		t.Fatalf("limited pool refused small allocation: %v", err)
@@ -324,13 +328,18 @@ func TestBytesPool(t *testing.T) {
 	limitedPool.release(10)
 
 	limitedPool.Stop()
-	m.Stop()
+	p.Stop()
+}
+
+func newResourcePoolWithLimit(name string, limiit, allocAlignSize int64) *ResourcePool {
+	return NewResourcePool(
+		newPoolUID(), name, limiit, allocAlignSize, DefMaxUnusedBlocks, PoolActions{})
 }
 
 func TestMemoryAllocationEdgeCases(t *testing.T) {
 	// defer leaktest.AfterTest(t)()
 
-	m := NewResourcePool("test",
+	m := NewResourcePoolDefault("test",
 		1e9 /* increment */)
 	m.Start(nil, (1e9))
 
@@ -350,7 +359,7 @@ func TestMultiSharedGauge(t *testing.T) {
 
 	minAllocation := int64(1000)
 
-	parent := NewResourcePool("root", minAllocation)
+	parent := NewResourcePoolDefault("root", minAllocation)
 	parent.Start(nil, (100000))
 
 	child := parent.NewResourcePoolInheritWithLimit("child", 20000)
@@ -359,16 +368,16 @@ func TestMultiSharedGauge(t *testing.T) {
 	acc := child.CreateBudget()
 	require.NoError(t, acc.Grow(100))
 
-	require.Equal(t, minAllocation, parent.AllocatedBytes())
+	require.Equal(t, minAllocation, parent.Allocated())
 }
 
 func TestActions(t *testing.T) {
 	{
-		root := NewResourcePool("root", 1000)
+		root := NewResourcePoolDefault("root", 1000)
 		root.Start(nil, math.MaxInt64)
-		p1 := NewResourcePool("p1", 666)
+		p1 := NewResourcePoolDefault("p1", 666)
 		p1.StartNoReserved(root)
-		require.NoError(t, p1.ExplicitReserveBytes(1002))
+		require.NoError(t, p1.ExplicitReserve(1002))
 		require.Equal(t, p1.Capacity(), root.allocAlignSize*2)
 		require.True(t, p1.mu.budget.explicitReserved == 1002)
 		pb1 := p1.CreateBudget()
@@ -384,21 +393,23 @@ func TestActions(t *testing.T) {
 	{
 		name := "root"
 		noteActionTriggerCnt := 0
-		root := NewResourcePoolWithLimit(
+		root := NewResourcePool(
+			newPoolUID(),
 			name /* name */, math.MaxInt64,
 			1, /* increment */
+			DefMaxUnusedBlocks,
 			PoolActions{
-				noteAction: NoteAction{
-					101,
-					func(s NoteActionState) {
-						require.Equal(t, s.pool.name, name)
+				NoteAction: NoteAction{
+					Threshold: 101,
+					CB: func(s NoteActionState) {
+						require.Equal(t, s.Pool.name, name)
 						noteActionTriggerCnt += 1
 					},
 				},
 			},
 		)
 		root.Start(nil /* pool */, (math.MaxInt64))
-		root.SetCleanAllOnReleaseBytes()
+		root.maxUnusedBlocks = 0
 
 		// Pre-reserve a budget of 100 bytes.
 		b := root.CreateBudget()
@@ -415,9 +426,9 @@ func TestActions(t *testing.T) {
 	{
 		name := "root"
 		outOfCapacityActionNum := 0
-		root := NewResourcePoolWithLimit(
-			name /* name */, math.MaxInt64,
-			1 /* increment */, PoolActions{},
+		root := NewResourcePoolDefault(
+			name, /* name */
+			1,    /* increment */
 		)
 		root.StartNoReserved(nil)
 
@@ -429,8 +440,8 @@ func TestActions(t *testing.T) {
 		}
 
 		root.SetOutOfCapacityAction(func(s OutOfCapacityActionArgs) error {
-			require.Equal(t, s.pool.name, name)
-			s.pool.forceAddCap(s.request)
+			require.Equal(t, s.Pool.name, name)
+			s.Pool.forceAddCap(s.Request)
 			outOfCapacityActionNum++
 			return nil
 		})
@@ -443,7 +454,7 @@ func TestActions(t *testing.T) {
 
 		require.Equal(t, outOfCapacityActionNum, 2)
 
-		root.ApproxBudgetAvailable()
+		root.ApproxAvailable()
 
 		require.Equal(t, root.mu.budget.used, b.Used())
 
@@ -458,14 +469,14 @@ func TestActions(t *testing.T) {
 		outOfLimitActionCnt := 0
 		root.SetOutOfLimitAction(func(r *ResourcePool) error {
 			outOfLimitActionCnt++
-			root.setLimit(root.cap())
+			root.setLimit(root.capacity())
 			return fmt.Errorf("")
 		})
 		root.SetLimit(1)
 		require.True(t, root.Limit() == 1)
 		require.Error(t, b.Grow(2))
 		require.Equal(t, outOfLimitActionCnt, 1)
-		err := b.Grow(root.cap() - root.allocated())
+		err := b.Grow(root.capacity() - root.allocated())
 		require.NoError(t, err)
 		require.Equal(t, outOfLimitActionCnt, 1)
 	}
@@ -484,7 +495,7 @@ func getPool(
 func getPoolEx(
 	name string, parent *ResourcePool, reservedBytes int64,
 ) *ResourcePool {
-	m := NewResourcePool(string(name), 1)
+	m := NewResourcePoolDefault(name, 1)
 	m.Start(parent, (reservedBytes))
 	return m
 }
@@ -511,9 +522,9 @@ func getPoolUsed(
 func TestBytesPoolTree(t *testing.T) {
 	// defer leaktest.AfterTest(t)()
 
-	export := func(m *ResourcePool) string {
+	export := func(p *ResourcePool) string {
 		var pools []ResourcePoolState
-		_ = m.Traverse(func(pool ResourcePoolState) error {
+		_ = p.Traverse(func(pool ResourcePoolState) error {
 			pools = append(pools, pool)
 			return nil
 		})
@@ -584,7 +595,7 @@ func TestBytesPoolNoDeadlocks(t *testing.T) {
 	const numGoroutines = 10
 	// done will be closed when the concurrent goroutines should exit.
 	done := make(chan struct{})
-	for i := 0; i < numGoroutines; i++ {
+	for i := range numGoroutines {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -649,7 +660,7 @@ func TestBytesPoolNoDeadlocks(t *testing.T) {
 
 func BenchmarkBudgetGrow(b *testing.B) {
 
-	m := NewResourcePool("test",
+	m := NewResourcePoolDefault("test",
 		1e9,
 	)
 	m.Start(nil, (1e9))

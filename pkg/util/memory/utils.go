@@ -1,3 +1,17 @@
+// Copyright 2018 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package memory
 
 import (
@@ -7,66 +21,73 @@ import (
 	"time"
 )
 
-type WrapList[V any] struct {
+const (
+	kb   int64 = 1 << 10
+	mb         = kb << 10
+	gb         = mb << 10
+	kilo       = 1000
+)
+
+type wrapList[V any] struct {
+	end  wrapListElement
 	base list.List
-	end  WrapListElement
 	num  int64
 }
 
-type WrapListElement struct {
+type wrapListElement struct {
 	base *list.Element
 }
 
-func (w *WrapListElement) valid() bool {
+func (w *wrapListElement) valid() bool {
 	return w.base != nil
 }
 
-func (w *WrapListElement) reset() {
+func (w *wrapListElement) reset() {
 	w.base = nil
 }
 
-func (l *WrapList[V]) init() {
+func (l *wrapList[V]) init() {
 	l.base.Init()
 	l.base.PushBack(nil)
-	l.end = WrapListElement{l.base.Back()}
+	l.end = wrapListElement{l.base.Back()}
 }
 
-func (l *WrapList[V]) moveToFront(e WrapListElement) {
+func (l *wrapList[V]) moveToFront(e wrapListElement) {
 	l.base.MoveToFront(e.base)
 }
 
-func (l *WrapList[V]) remove(e WrapListElement) {
+func (l *wrapList[V]) remove(e wrapListElement) {
 	e.base.Value = nil
 	l.base.MoveToBack(e.base)
 	l.num--
 }
 
-func (l *WrapList[V]) front() (res V) {
+func (l *wrapList[V]) front() (res V) {
 	if l.num == 0 {
 		return
 	}
 	return l.base.Front().Value.(V)
 }
 
-func (l *WrapList[V]) popFront() (res V) {
+func (l *wrapList[V]) popFront() (res V) {
 	if l.num == 0 {
 		return
 	}
 	e := l.base.Front()
 	res = e.Value.(V)
-	l.remove(WrapListElement{e})
+	l.remove(wrapListElement{e})
 	return
 }
 
-func (l *WrapList[V]) size() int64 {
+func (l *wrapList[V]) size() int64 {
 	return l.num
 }
 
-func (l *WrapList[V]) empty() bool {
+func (l *wrapList[V]) empty() bool {
 	return l.num == 0
 }
 
-func (l *WrapList[V]) pushBack(v V) WrapListElement {
+func (l *wrapList[V]) pushBack(v V) wrapListElement {
 	var x *list.Element
 	if l.size()+1 == int64(l.base.Len()) {
 		x = l.base.InsertBefore(v, l.end.base)
@@ -76,15 +97,16 @@ func (l *WrapList[V]) pushBack(v V) WrapListElement {
 		x.Value = v
 	}
 	l.num++
-	return WrapListElement{x}
+	return wrapListElement{x}
 }
 
-// Notifer is used for multiple producer & single consumer
+// Notifer works as the multiple producer & single consumer mode.
 type Notifer struct {
 	C     chan struct{}
 	awake int32
 }
 
+// NewNotifer creates a new Notifer instance.
 func NewNotifer() Notifer {
 	return Notifer{
 		C: make(chan struct{}, 1),
@@ -96,7 +118,7 @@ func (n *Notifer) setNotAwake() bool {
 	return atomic.SwapInt32(&n.awake, 0) != 0
 }
 
-// Wait only can be invoked by single consumer
+// Wait for signal synchronously (consumer)
 func (n *Notifer) Wait() {
 	<-n.C
 	n.setNotAwake()
@@ -107,12 +129,11 @@ func (n *Notifer) setAwake() bool {
 	return atomic.SwapInt32(&n.awake, 1) != 0
 }
 
-// Wake notify producer if necessary
+// Wake the consumer
 func (n *Notifer) Wake() {
 	n.wake()
 }
 
-// Wake notify producer if necessary
 func (n *Notifer) wake() {
 	// 1 -> 1: do nothing
 	// 0 -> 1: send signal
@@ -125,6 +146,7 @@ func (n *Notifer) isAwake() bool {
 	return atomic.LoadInt32(&n.awake) != 0
 }
 
+// WeakWake wakes the consumer if it is not awake (may loose signal under concurrent scenarios).
 func (n *Notifer) WeakWake() {
 	if n.isAwake() {
 		return
@@ -132,6 +154,7 @@ func (n *Notifer) WeakWake() {
 	n.wake()
 }
 
+// HashStr hashes a string to a uint64 value
 func HashStr(key string) uint64 {
 	hashKey := initHashKey
 	for _, c := range key {
@@ -141,7 +164,8 @@ func HashStr(key string) uint64 {
 	return hashKey
 }
 
-func shardIndexByUID(key uint64, shardsMask uint64) uint64 {
+// HashEvenNum hashes a uint64 even number to a uint64 value
+func HashEvenNum(key uint64) uint64 {
 	const step = 8
 	const stepMask uint64 = uint64(1)<<step - 1
 
@@ -156,11 +180,16 @@ func shardIndexByUID(key uint64, shardsMask uint64) uint64 {
 		hashKey ^= key
 		hashKey *= prime64
 	}
-	return hashKey & shardsMask
+
+	return hashKey
+}
+
+func shardIndexByUID(key uint64, shardsMask uint64) uint64 {
+	return HashEvenNum(key) & shardsMask
 }
 
 func getQuotaShard(quota int64, maxQuotaShard int) int {
-	p := uint64(quota) / uint64(BaseQuotaUnit)
+	p := uint64(quota) / uint64(baseQuotaUnit)
 	pos := bits.Len64(p)
 	pos = min(pos, maxQuotaShard-1)
 	return pos
@@ -195,15 +224,15 @@ func roundSize(sz int64, poolAllocationSize int64) int64 {
 }
 
 func calcRatio(x, y int64) (zMilli int64) {
-	zMilli = x * Kilo / y
+	zMilli = x * kilo / y
 	return
 }
 
 func multiRatio(x, yMilli int64) int64 {
-	return x * yMilli / Kilo
+	return x * yMilli / kilo
 }
 
 func intoRatio(x float64) (zMilli int64) {
-	zMilli = int64(x * Kilo)
+	zMilli = int64(x * kilo)
 	return
 }
