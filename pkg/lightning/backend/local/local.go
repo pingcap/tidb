@@ -1378,8 +1378,12 @@ func (local *Backend) doImport(
 	var (
 		toCh            = jobToWorkerCh
 		afterExecuteJob func([]*metapb.Peer)
-		clusterID       = local.pdCli.GetClusterID(ctx)
+		clusterID       uint64 = 0
 	)
+	if local.pdCli != nil {
+		clusterID = local.pdCli.GetClusterID(ctx)
+	}
+
 	failpoint.Inject("skipStartWorker", func() {
 		failpoint.Goto("afterStartWorker")
 	})

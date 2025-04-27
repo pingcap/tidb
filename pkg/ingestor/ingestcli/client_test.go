@@ -31,7 +31,7 @@ import (
 )
 
 func TestWriteClientWriteChunk(t *testing.T) {
-	sstMeta := nextGenResp{nextGenSSTMeta{Id: 1, Smallest: []int{0}, Biggest: []int{1}, MetaOffset: 1, CommitTs: 1}}
+	sstMeta := nextGenResp{nextGenSSTMeta{ID: 1, Smallest: []int{0}, Biggest: []int{1}, MetaOffset: 1, CommitTs: 1}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
@@ -97,7 +97,7 @@ func TestClientIngest(t *testing.T) {
 	req := &IngestRequest{
 		WriteResp: &WriteResponse{
 			nextGenSSTMeta: &nextGenSSTMeta{
-				Id: 1,
+				ID: 1,
 			},
 		},
 		Region: &split.RegionInfo{Region: &metapb.Region{Id: 1, RegionEpoch: &metapb.RegionEpoch{Version: 1}}},
@@ -123,7 +123,7 @@ func TestClientIngestError(t *testing.T) {
 	req := &IngestRequest{
 		WriteResp: &WriteResponse{
 			nextGenSSTMeta: &nextGenSSTMeta{
-				Id: 1,
+				ID: 1,
 			},
 		},
 		Region: &split.RegionInfo{Region: &metapb.Region{Id: 1, RegionEpoch: &metapb.RegionEpoch{Version: 1}}},

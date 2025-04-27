@@ -36,7 +36,7 @@ type nextGenResp struct {
 }
 
 type nextGenSSTMeta struct {
-	Id         int64 `json:"id"`
+	ID         int64 `json:"id"`
 	Smallest   []int `json:"smallest"`
 	Biggest    []int `json:"biggest"`
 	MetaOffset int   `json:"meta-offset"`
