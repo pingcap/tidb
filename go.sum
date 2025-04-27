@@ -856,10 +856,10 @@ github.com/Masterminds/semver/v3 v3.3.0 h1:B8LGeaivUe71a5qox1ICM/JLl0NqZSW5CHyL+
 github.com/Masterminds/semver/v3 v3.3.0/go.mod h1:4V+yj/TJE1HU9XfppCwVMZq3I84lprf4nC11bSS5beM=
 github.com/Masterminds/sprig/v3 v3.2.2 h1:17jRggJu518dr3QaafizSXOjKYp94wKfABxUmyxvxX8=
 github.com/Masterminds/sprig/v3 v3.2.2/go.mod h1:UoaO7Yp8KlPnJIYWTFkMaqPUYKTfGFPhxNuwnnxkKlk=
-github.com/MyonKeminta/client-go/v2 v2.0.0-20250421090431-36677b28aad7 h1:sBwAvUTW+9UFWzQZCtEmmL/jEvJkka0iyW/i50HQfCs=
-github.com/MyonKeminta/client-go/v2 v2.0.0-20250421090431-36677b28aad7/go.mod h1:CZEpCabKYsEJXncSKPcRHxEMOSeODdYoiN0k6u917Qw=
-github.com/MyonKeminta/kvproto v0.0.0-20250311094808-d79890a8c4af h1:rt65qOERyrAhujeDu6iTm1sdi9Pa10KMNYnBB3avfA0=
-github.com/MyonKeminta/kvproto v0.0.0-20250311094808-d79890a8c4af/go.mod h1:rXxWk2UnwfUhLXha1jxRWPADw9eMZGWEWCg92Tgmb/8=
+github.com/MyonKeminta/client-go/v2 v2.0.0-20250427162348-acd3cc353463 h1:LlkJKybbHDUE2DrW2pkIhJANRcB48zWFSCUOrjClcnY=
+github.com/MyonKeminta/client-go/v2 v2.0.0-20250427162348-acd3cc353463/go.mod h1:DYCQDXZg7NBo5XMdFbw4RW3LeLL++rNjpKRvq8/NfWw=
+github.com/MyonKeminta/kvproto v0.0.0-20250422131702-6653a56d7ef8 h1:lWRC7jXKjT9jlOf3isCsMHNMuvfOeQNLDl56bJ/dq+Q=
+github.com/MyonKeminta/kvproto v0.0.0-20250422131702-6653a56d7ef8/go.mod h1:rXxWk2UnwfUhLXha1jxRWPADw9eMZGWEWCg92Tgmb/8=
 github.com/MyonKeminta/pd/client v0.0.0-20250417085901-68c5cb78d5bb h1:G+VSt5U5z7G4z120abUMK7/zVi/r6TR9JGOxFY88sC0=
 github.com/MyonKeminta/pd/client v0.0.0-20250417085901-68c5cb78d5bb/go.mod h1:CFIxUay+Ru4j7F56fBCqCoThyjT6M+zKPIR6StdW8WM=
 github.com/OneOfOne/xxhash v1.2.2/go.mod h1:HSdplMjZKSmBqAxg5vPj2TmRDmfkzw+cTzAElWljhcU=

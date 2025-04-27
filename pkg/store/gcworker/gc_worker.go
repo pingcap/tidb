@@ -396,8 +396,8 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 	// TODO: Use result of AdvanceTxnSafePoint instead, which makes it unnecessary to manually check the config.
 	const cfgGCManagementType = "gc_management_type"
 	const cfgGCManagementTypeKeyspaceLevel = "keyspace_level"
-	if keyspaceMeta := w.store.GetCodec().GetKeyspaceMeta(); keyspaceMeta != nil && keyspaceMeta.Config[cfgGCManagementType] == cfgGCManagementTypeKeyspaceLevel {
-		err = w.runKeyspaceGCJob(ctx, concurrency)
+	if keyspaceMeta := w.store.GetCodec().GetKeyspaceMeta(); keyspaceMeta != nil && keyspaceMeta.Config[cfgGCManagementType] != cfgGCManagementTypeKeyspaceLevel {
+		err = w.runKeyspaceGCJobInUnifiedGCMode(ctx, concurrency)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -430,7 +430,7 @@ func (w *GCWorker) leaderTick(ctx context.Context) error {
 	return nil
 }
 
-func (w *GCWorker) runKeyspaceGCJob(ctx context.Context, concurrency gcConcurrency) error {
+func (w *GCWorker) runKeyspaceGCJobInUnifiedGCMode(ctx context.Context, concurrency gcConcurrency) error {
 	// When the worker is just started, or an old GC job has just finished,
 	// wait a while before starting a new job.
 	if time.Since(w.lastFinish) < gcWaitTime {
