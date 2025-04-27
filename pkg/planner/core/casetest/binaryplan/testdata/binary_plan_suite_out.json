@@ -71,16 +71,16 @@
             "name": "HashAgg_8",
             "children": [
               {
-                "name": "Projection_20",
+                "name": "Projection_44",
                 "children": [
                   {
-                    "name": "HashJoin_10",
+                    "name": "HashJoin_22",
                     "children": [
                       {
-                        "name": "IndexReader_15",
+                        "name": "IndexReader_27",
                         "children": [
                           {
-                            "name": "IndexFullScan_14",
+                            "name": "IndexFullScan_26",
                             "cost": 1628000,
                             "est_rows": 10000,
                             "act_rows": 2,
@@ -97,13 +97,13 @@
                         "act_rows": 2,
                         "task_type": 1,
                         "store_type": 1,
-                        "operator_info": "index:IndexFullScan_14"
+                        "operator_info": "index:IndexFullScan_26"
                       },
                       {
-                        "name": "TableReader_17",
+                        "name": "TableReader_29",
                         "children": [
                           {
-                            "name": "TableFullScan_16",
+                            "name": "TableFullScan_28",
                             "cost": 4546159.475587022,
                             "est_rows": 10000,
                             "act_rows": 4,
@@ -120,7 +120,7 @@
                         "act_rows": 4,
                         "task_type": 1,
                         "store_type": 1,
-                        "operator_info": "data:TableFullScan_16"
+                        "operator_info": "data:TableFullScan_28"
                       }
                     ],
                     "cost": 1128387.6317058015,
@@ -212,16 +212,16 @@
         "SQL": "explain analyze format = 'binary' with cte1 as (select a, b from t), cte2 as (select a, b from t2) select * from cte1 join cte2 on cte1.a = cte2.a",
         "BinaryPlan": {
           "main": {
-            "name": "HashJoin_30",
+            "name": "HashJoin_28",
             "children": [
               {
-                "name": "TableReader_37",
+                "name": "TableReader_32",
                 "children": [
                   {
-                    "name": "Selection_36",
+                    "name": "Selection_31",
                     "children": [
                       {
-                        "name": "TableFullScan_35",
+                        "name": "TableFullScan_30",
                         "cost": 4546159.475587022,
                         "est_rows": 10000,
                         "act_rows": 2,
@@ -246,16 +246,16 @@
                 "act_rows": 2,
                 "task_type": 1,
                 "store_type": 1,
-                "operator_info": "data:Selection_36"
+                "operator_info": "data:Selection_31"
               },
               {
-                "name": "TableReader_34",
+                "name": "TableReader_41",
                 "children": [
                   {
-                    "name": "Selection_33",
+                    "name": "Selection_40",
                     "children": [
                       {
-                        "name": "TableFullScan_32",
+                        "name": "TableFullScan_39",
                         "cost": 4546159.475587022,
                         "est_rows": 10000,
                         "act_rows": 4,
@@ -280,7 +280,7 @@
                 "act_rows": 4,
                 "task_type": 1,
                 "store_type": 1,
-                "operator_info": "data:Selection_33"
+                "operator_info": "data:Selection_40"
               }
             ],
             "cost": 2103314.3700782694,
