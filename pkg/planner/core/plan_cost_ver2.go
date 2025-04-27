@@ -133,7 +133,7 @@ func (p *PhysicalIndexScan) GetPlanCostVer2(taskType property.TaskType, option *
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexScanCostFactor)
-	p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptIndexScanCostFactor] = [2]float64{0, 1}
+	p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptIndexScanCostFactor] = true
 	return p.PlanCostVer2, nil
 }
 
@@ -203,19 +203,19 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 	if p.isChildOfIndexLookUp {
 		// This is a RowID table scan (child of IndexLookUp)
 		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableRowIDScanCostFactor)
-		p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptTableRowIDScanCostFactor] = [2]float64{0, 1}
+		p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptTableRowIDScanCostFactor] = true
 	} else if !hasFullRangeScan {
 		// This is a table range scan (predicate exists on the PK)
 		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableRangeScanCostFactor)
-		p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptTableRangeScanCostFactor] = [2]float64{0, 1}
+		p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptTableRangeScanCostFactor] = true
 	} else {
 		// This is a table full scan
 		if p.StoreType == kv.TiFlash {
 			p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableTiFlashScanCostFactor)
-			p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptTableTiFlashScanCostFactor] = [2]float64{0, 1}
+			p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptTableTiFlashScanCostFactor] = true
 		} else {
 			p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableFullScanCostFactor)
-			p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptTableFullScanCostFactor] = [2]float64{0, 1}
+			p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptTableFullScanCostFactor] = true
 		}
 	}
 	return p.PlanCostVer2, nil
@@ -245,7 +245,7 @@ func (p *PhysicalIndexReader) GetPlanCostVer2(taskType property.TaskType, option
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexReaderCostFactor)
-	p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptIndexReaderCostFactor] = [2]float64{0, 1}
+	p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptIndexReaderCostFactor] = true
 	return p.PlanCostVer2, nil
 }
 
@@ -283,7 +283,7 @@ func (p *PhysicalTableReader) GetPlanCostVer2(taskType property.TaskType, option
 	}
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableReaderCostFactor)
-	p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptTableReaderCostFactor] = [2]float64{0, 1}
+	p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptTableReaderCostFactor] = true
 	return p.PlanCostVer2, nil
 }
 
@@ -348,11 +348,11 @@ func (p *PhysicalIndexLookUpReader) GetPlanCostVer2(taskType property.TaskType, 
 	if p.PushedLimit != nil && tableRows <= float64(p.PushedLimit.Count) {
 		// Multiply by limit cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().LimitCostFactor)
-		p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptLimitCostFactor] = [2]float64{0, 1}
+		p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptLimitCostFactor] = true
 	}
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexLookupCostFactor)
-	p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptIndexLookupCostFactor] = [2]float64{0, 1}
+	p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptIndexLookupCostFactor] = true
 	return p.PlanCostVer2, nil
 }
 
@@ -412,12 +412,12 @@ func (p *PhysicalIndexMergeReader) GetPlanCostVer2(taskType property.TaskType, o
 		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, 0.99)
 		// Multiply by limit cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().LimitCostFactor)
-		p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptLimitCostFactor] = [2]float64{0, 1}
+		p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptLimitCostFactor] = true
 	}
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexMergeCostFactor)
-	p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptIndexMergeCostFactor] = [2]float64{0, 1}
+	p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptIndexMergeCostFactor] = true
 	return p.PlanCostVer2, nil
 }
 
@@ -473,7 +473,7 @@ func (p *PhysicalSort) GetPlanCostVer2(taskType property.TaskType, option *optim
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().SortCostFactor)
-	p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptSortCostFactor] = [2]float64{0, 1}
+	p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptSortCostFactor] = true
 	return p.PlanCostVer2, nil
 }
 
@@ -511,7 +511,7 @@ func (p *PhysicalTopN) GetPlanCostVer2(taskType property.TaskType, option *optim
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TopNCostFactor)
-	p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptTopNCostFactor] = [2]float64{0, 1}
+	p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptTopNCostFactor] = true
 	return p.PlanCostVer2, nil
 }
 
@@ -537,7 +537,7 @@ func (p *PhysicalStreamAgg) GetPlanCostVer2(taskType property.TaskType, option *
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().StreamAggCostFactor)
-	p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptStreamAggCostFactor] = [2]float64{0, 1}
+	p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptStreamAggCostFactor] = true
 	return p.PlanCostVer2, nil
 }
 
@@ -572,7 +572,7 @@ func (p *PhysicalHashAgg) GetPlanCostVer2(taskType property.TaskType, option *op
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().HashAggCostFactor)
-	p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptHashAggCostFactor] = [2]float64{0, 1}
+	p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptHashAggCostFactor] = true
 	return p.PlanCostVer2, nil
 }
 
@@ -605,7 +605,7 @@ func (p *PhysicalMergeJoin) GetPlanCostVer2(taskType property.TaskType, option *
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().MergeJoinCostFactor)
-	p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptMergeJoinCostFactor] = [2]float64{0, 1}
+	p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptMergeJoinCostFactor] = true
 	return p.PlanCostVer2, nil
 }
 
@@ -661,7 +661,7 @@ func (p *PhysicalHashJoin) GetPlanCostVer2(taskType property.TaskType, option *o
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().HashJoinCostFactor)
-	p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptHashJoinCostFactor] = [2]float64{0, 1}
+	p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptHashJoinCostFactor] = true
 	return p.PlanCostVer2, nil
 }
 
@@ -731,7 +731,7 @@ func (p *PhysicalIndexJoin) getIndexJoinCostVer2(taskType property.TaskType, opt
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexJoinCostFactor)
-	p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptIndexJoinCostFactor] = [2]float64{0, 1}
+	p.SCtx().GetSessionVars().StmtCtx.RelevantKnobs[vardef.TiDBOptIndexJoinCostFactor] = true
 	return p.PlanCostVer2, nil
 }
 
