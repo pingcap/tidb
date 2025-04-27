@@ -1378,7 +1378,7 @@ func (local *Backend) doImport(
 	var (
 		toCh            = jobToWorkerCh
 		afterExecuteJob func([]*metapb.Peer)
-		clusterID       uint64 = 0
+		clusterID       uint64
 	)
 	if local.pdCli != nil {
 		clusterID = local.pdCli.GetClusterID(ctx)
