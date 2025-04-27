@@ -214,6 +214,10 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 			}
 		}
 	}()
+	// Disable the plan cache to prevent running the code above twice.
+	if sessVars.StmtCtx.StmtHints.HasResourceGroup {
+		sessVars.StmtCtx.SetSkipPlanCache("resource_group is used in the SQL")
+	}
 
 	warns = warns[:0]
 	for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
@@ -223,6 +227,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 		}
 		sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
 	}
+	// Disable the plan cache to prevent running the code above twice.
 	if len(sessVars.StmtCtx.StmtHints.SetVars) > 0 {
 		sessVars.StmtCtx.SetSkipPlanCache("SET_VAR is used in the SQL")
 	}
@@ -283,6 +288,9 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 				sessVars.CurrentDB, byte(kv.ReplicaReadFollower))
 			sessVars.StmtCtx.StmtHints = curStmtHints
 			// update session var by hint /set_var/
+			if len(sessVars.StmtCtx.StmtHints.SetVars) > 0 {
+				sessVars.StmtCtx.SetSkipPlanCache("SET_VAR is used in the SQL")
+			}
 			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
 				oldV, err := sessVars.SetSystemVarWithOldValAsRet(name, val)
 				if err != nil {

@@ -1029,13 +1029,13 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"select * from t1 order by a",                              // order by
 		"select * from t3 where full_name = 'a b'",                 // generated column
 		"select * from t3 where a > 1 and full_name = 'a b'",
-		"select * from t1 where a in (1, 2)",                    // Partitioned
-		"select * from t2 where a in (1, 2) and b in (1, 2, 3)", // Partitioned
-		"select * from t1 where a in (1, 2) and b < 15",         // Partitioned
+		"select * from t1 where a in (1, 2)",                                 // Partitioned
+		"select * from t2 where a in (1, 2) and b in (1, 2, 3)",              // Partitioned
+		"select * from t1 where a in (1, 2) and b < 15",                      // Partitioned
+		"select /*+ use_index(t1, idx_b) */ * from t1 where a > 1 and b < 2", // hint
 	}
 
 	unsupported := []string{
-		"select /*+ use_index(t1, idx_b) */ * from t1 where a > 1 and b < 2",               // hint
 		"select a, sum(b) as c from t1 where a > 1 and b < 2 group by a having sum(b) > 1", // having
 		"select * from (select * from t1) t",                                               // sub-query
 		"select * from t1 where a in (select a from t)",                                    // uncorrelated sub-query
@@ -1049,14 +1049,13 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"select * from t where bt > 0", // bit
 		"select * from t where a > 1 and bt > 0",
 		"select data_type from INFORMATION_SCHEMA.columns where table_name = 'v'", // memTable
-		"select * from v",                // view
-		"select * from t where a = null", // null
-		"select * from t where false",    // table dual
+		"select * from v",                                                         // view
+		"select * from t where a = null",                                          // null
+		"select * from t where false",                                             // table dual
 	}
 
 	reasons := []string{
-		"skip non-prepared plan-cache: queries that have hints, having-clause, window-function are not supported",
-		"skip non-prepared plan-cache: queries that have hints, having-clause, window-function are not supported",
+		"skip non-prepared plan-cache: queries with HAVING clauses are not supported",
 		"skip non-prepared plan-cache: queries that have sub-queries are not supported",
 		"skip non-prepared plan-cache: query has some unsupported Node",
 		"skip non-prepared plan-cache: query has some unsupported Node",
