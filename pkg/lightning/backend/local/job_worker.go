@@ -282,10 +282,11 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 		return &tikvWriteResult{emptyJob: true}, nil
 	}
 
-	writeCli, err := w.ingestCli.WriteClient(ctx)
+	writeCli, err := w.ingestCli.WriteClient(ctx, job.ingestData.GetTS())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	defer writeCli.Close()
 	dataCommitTS := job.ingestData.GetTS()
 	intest.AssertFunc(func() bool {
 		timeOfTS := oracle.GetTimeFromTS(dataCommitTS)
@@ -323,7 +324,7 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 			in := &ingestcli.WriteRequest{
 				Pairs: pairs,
 			}
-			if err := writeCli.Write(ctx, in); err != nil {
+			if err := writeCli.Write(in); err != nil {
 				return nil, errors.Trace(err)
 			}
 			totalCount += int64(len(pairs))
@@ -342,7 +343,7 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 		in := &ingestcli.WriteRequest{
 			Pairs: pairs,
 		}
-		if err := writeCli.Write(ctx, in); err != nil {
+		if err := writeCli.Write(in); err != nil {
 			return nil, errors.Trace(err)
 		}
 		totalCount += int64(len(pairs))
@@ -351,22 +352,22 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 		iter.ReleaseBuf()
 	}
 
-	resp, err := writeCli.CloseAndRecv(ctx)
+	resp, err := writeCli.Recv()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	return &tikvWriteResult{
-		count:      totalCount,
-		totalBytes: totalSize,
-		sstFile:    resp.SSTFile,
+		count:            totalCount,
+		totalBytes:       totalSize,
+		nextGenWriteResp: resp,
 	}, nil
 }
 
 func (w *objStoreRegionJobWorker) ingest(ctx context.Context, j *regionJob) error {
 	in := &ingestcli.IngestRequest{
-		Region:  j.region,
-		SSTFile: j.writeResult.sstFile,
+		Region:    j.region,
+		WriteResp: j.writeResult.nextGenWriteResp,
 	}
 	err := w.ingestCli.Ingest(ctx, in)
 	if err != nil {

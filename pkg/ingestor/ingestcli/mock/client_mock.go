@@ -60,18 +60,18 @@ func (mr *MockClientMockRecorder) Ingest(arg0, arg1 any) *gomock.Call {
 }
 
 // WriteClient mocks base method.
-func (m *MockClient) WriteClient(arg0 context.Context) (ingestcli.WriteClient, error) {
+func (m *MockClient) WriteClient(arg0 context.Context, arg1 uint64) (ingestcli.WriteClient, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "WriteClient", arg0)
+	ret := m.ctrl.Call(m, "WriteClient", arg0, arg1)
 	ret0, _ := ret[0].(ingestcli.WriteClient)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // WriteClient indicates an expected call of WriteClient.
-func (mr *MockClientMockRecorder) WriteClient(arg0 any) *gomock.Call {
+func (mr *MockClientMockRecorder) WriteClient(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WriteClient", reflect.TypeOf((*MockClient)(nil).WriteClient), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WriteClient", reflect.TypeOf((*MockClient)(nil).WriteClient), arg0, arg1)
 }
 
 // MockWriteClient is a mock of WriteClient interface.
@@ -102,31 +102,43 @@ func (m *MockWriteClient) ISGOMOCK() struct{} {
 	return struct{}{}
 }
 
-// CloseAndRecv mocks base method.
-func (m *MockWriteClient) CloseAndRecv(arg0 context.Context) (*ingestcli.WriteResponse, error) {
+// Close mocks base method.
+func (m *MockWriteClient) Close() {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CloseAndRecv", arg0)
+	m.ctrl.Call(m, "Close")
+}
+
+// Close indicates an expected call of Close.
+func (mr *MockWriteClientMockRecorder) Close() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockWriteClient)(nil).Close))
+}
+
+// Recv mocks base method.
+func (m *MockWriteClient) Recv() (*ingestcli.WriteResponse, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Recv")
 	ret0, _ := ret[0].(*ingestcli.WriteResponse)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// CloseAndRecv indicates an expected call of CloseAndRecv.
-func (mr *MockWriteClientMockRecorder) CloseAndRecv(arg0 any) *gomock.Call {
+// Recv indicates an expected call of Recv.
+func (mr *MockWriteClientMockRecorder) Recv() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CloseAndRecv", reflect.TypeOf((*MockWriteClient)(nil).CloseAndRecv), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Recv", reflect.TypeOf((*MockWriteClient)(nil).Recv))
 }
 
 // Write mocks base method.
-func (m *MockWriteClient) Write(arg0 context.Context, arg1 *ingestcli.WriteRequest) error {
+func (m *MockWriteClient) Write(arg0 *ingestcli.WriteRequest) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Write", arg0, arg1)
+	ret := m.ctrl.Call(m, "Write", arg0)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Write indicates an expected call of Write.
-func (mr *MockWriteClientMockRecorder) Write(arg0, arg1 any) *gomock.Call {
+func (mr *MockWriteClientMockRecorder) Write(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Write", reflect.TypeOf((*MockWriteClient)(nil).Write), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Write", reflect.TypeOf((*MockWriteClient)(nil).Write), arg0)
 }

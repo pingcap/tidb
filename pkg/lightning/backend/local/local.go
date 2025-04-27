@@ -21,6 +21,7 @@ import (
 	"encoding/hex"
 	"math"
 	"net"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -39,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
@@ -1376,7 +1378,12 @@ func (local *Backend) doImport(
 	var (
 		toCh            = jobToWorkerCh
 		afterExecuteJob func([]*metapb.Peer)
+		clusterID       uint64
 	)
+	if local.pdCli != nil {
+		clusterID = local.pdCli.GetClusterID(ctx)
+	}
+
 	failpoint.Inject("skipStartWorker", func() {
 		failpoint.Goto("afterStartWorker")
 	})
@@ -1386,7 +1393,7 @@ func (local *Backend) doImport(
 		afterExecuteJob = balancer.releaseStoreLoad
 	}
 	for i := 0; i < local.WorkerConcurrency; i++ {
-		worker := local.newRegionJobWorker(toCh, jobFromWorkerCh, &jobWg, afterExecuteJob)
+		worker := local.newRegionJobWorker(clusterID, toCh, jobFromWorkerCh, &jobWg, afterExecuteJob)
 		workGroup.Go(func() error {
 			return worker.run(workerCtx)
 		})
@@ -1434,6 +1441,7 @@ func (local *Backend) doImport(
 }
 
 func (local *Backend) newRegionJobWorker(
+	clusterID uint64,
 	toCh, jobFromWorkerCh chan *regionJob,
 	jobWg *sync.WaitGroup,
 	afterExecuteJob func([]*metapb.Peer),
@@ -1446,9 +1454,10 @@ func (local *Backend) newRegionJobWorker(
 		regenerateJobsFn: local.generateJobForRange,
 	}
 	if kerneltype.IsNextGen() {
+		// TODO: add support for TLS.
+		httpClient := &http.Client{}
 		cloudW := &objStoreRegionJobWorker{
-			// TODO fill the cli
-			ingestCli:      nil,
+			ingestCli:      ingestcli.NewClient(local.TiKVWorkerURL, clusterID, httpClient, local.splitCli),
 			writeBatchSize: local.KVWriteBatchSize,
 			bufPool:        local.engineMgr.getBufferPool(),
 		}

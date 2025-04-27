@@ -192,7 +192,7 @@ func TestCloudRegionJobWorker(t *testing.T) {
 			stage:      regionScanned,
 			ingestData: mockIngestData{{[]byte("a"), []byte("a")}},
 		}
-		mockIngestCli.EXPECT().WriteClient(gomock.Any()).Return(nil, errors.New("mock error"))
+		mockIngestCli.EXPECT().WriteClient(gomock.Any(), gomock.Any()).Return(nil, errors.New("mock error"))
 		writeRes, err := cloudW.write(context.Background(), job)
 		require.ErrorContains(t, err, "mock error")
 		require.Nil(t, writeRes)
@@ -206,8 +206,9 @@ func TestCloudRegionJobWorker(t *testing.T) {
 			ingestData: mockIngestData{{[]byte("a"), []byte("a")}},
 		}
 		writeCli := ingestclimock.NewMockWriteClient(ctrl)
-		mockIngestCli.EXPECT().WriteClient(gomock.Any()).Return(writeCli, nil)
-		writeCli.EXPECT().Write(gomock.Any(), gomock.Any()).Return(errors.New("mock error"))
+		mockIngestCli.EXPECT().WriteClient(gomock.Any(), gomock.Any()).Return(writeCli, nil)
+		writeCli.EXPECT().Write(gomock.Any()).Return(errors.New("mock error"))
+		writeCli.EXPECT().Close()
 		writeRes, err := cloudW.write(context.Background(), job)
 		require.ErrorContains(t, err, "mock error")
 		require.Nil(t, writeRes)
@@ -221,9 +222,10 @@ func TestCloudRegionJobWorker(t *testing.T) {
 			ingestData: mockIngestData{{[]byte("a"), []byte("a")}},
 		}
 		writeCli := ingestclimock.NewMockWriteClient(ctrl)
-		mockIngestCli.EXPECT().WriteClient(gomock.Any()).Return(writeCli, nil)
-		writeCli.EXPECT().Write(gomock.Any(), gomock.Any()).Return(nil)
-		writeCli.EXPECT().CloseAndRecv(gomock.Any()).Return(nil, errors.New("mock error"))
+		mockIngestCli.EXPECT().WriteClient(gomock.Any(), gomock.Any()).Return(writeCli, nil)
+		writeCli.EXPECT().Write(gomock.Any()).Return(nil)
+		writeCli.EXPECT().Recv().Return(nil, errors.New("mock error"))
+		writeCli.EXPECT().Close()
 		resp, err := cloudW.write(context.Background(), job)
 		require.ErrorContains(t, err, "mock error")
 		require.Nil(t, resp)
@@ -241,15 +243,15 @@ func TestCloudRegionJobWorker(t *testing.T) {
 			},
 		}
 		writeCli := ingestclimock.NewMockWriteClient(ctrl)
-		mockIngestCli.EXPECT().WriteClient(gomock.Any()).Return(writeCli, nil)
-		writeCli.EXPECT().Write(gomock.Any(), gomock.Any()).Return(nil)
-		writeCli.EXPECT().Write(gomock.Any(), gomock.Any()).Return(nil)
-		writeCli.EXPECT().CloseAndRecv(gomock.Any()).Return(&ingestcli.WriteResponse{SSTFile: "the-file"}, nil)
+		mockIngestCli.EXPECT().WriteClient(gomock.Any(), gomock.Any()).Return(writeCli, nil)
+		writeCli.EXPECT().Write(gomock.Any()).Return(nil)
+		writeCli.EXPECT().Write(gomock.Any()).Return(nil)
+		writeCli.EXPECT().Recv().Return(&ingestcli.WriteResponse{}, nil)
+		writeCli.EXPECT().Close()
 		res, err := cloudW.write(context.Background(), job)
 		require.NoError(t, err)
 		require.EqualValues(t, 3, res.count)
 		require.EqualValues(t, 18, res.totalBytes)
-		require.Equal(t, "the-file", res.sstFile)
 		require.True(t, ctrl.Satisfied())
 	})
 
@@ -258,7 +260,7 @@ func TestCloudRegionJobWorker(t *testing.T) {
 			keyRange:    common.Range{Start: []byte("a"), End: []byte("z")},
 			stage:       wrote,
 			ingestData:  mockIngestData{},
-			writeResult: &tikvWriteResult{sstFile: "the-file"},
+			writeResult: &tikvWriteResult{},
 		}
 		mockIngestCli.EXPECT().Ingest(gomock.Any(), gomock.Any()).Return(errors.New("mock error"))
 		err := cloudW.ingest(context.Background(), job)
@@ -271,7 +273,7 @@ func TestCloudRegionJobWorker(t *testing.T) {
 			keyRange:    common.Range{Start: []byte("a"), End: []byte("z")},
 			stage:       wrote,
 			ingestData:  mockIngestData{},
-			writeResult: &tikvWriteResult{sstFile: "the-file"},
+			writeResult: &tikvWriteResult{},
 		}
 		mockIngestCli.EXPECT().Ingest(gomock.Any(), gomock.Any()).Return(nil)
 		err := cloudW.ingest(context.Background(), job)
