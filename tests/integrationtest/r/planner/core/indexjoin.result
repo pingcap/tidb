@@ -976,4 +976,190 @@ axOKbonp0QLk	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	axOKbonp0QLk
 select /*+ inl_join(st_475) */ ucase( st_475.r4 ) as r0 , concat_ws(',', t3.col_6 , t3.col_3 ) as r1 , lower( t3.col_3 ) as r2 , ucase( st_475.r4 ) as r3 from t3 left join (select /*+  hash_agg() */ t4.col_4 as r0 , max(   t4.col_4 ) as r1 , t4.col_4 as r2 , count(   t4.col_4 ) as r3 , min(   t4.col_3 ) as r4 from t4 group by t4.col_4) st_475 on t3.col_4 = st_475.r0 order by r0,r1,r2,r3;
 r0	r1	r2	r3
 axOKbonp0QLk	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	axOKbonp0QLk
+begin;
+insert into t1 values ('[\"a9aQipQwjHVW6WvlI3wTNzS9IShhaN2bpDypWXjPxkLKDRz13L4uVhkmCmWL5sPP\"]','SNGCs)L5',x'61784f4b626f6e7030514c6b','2022-03-27 00:56:13','2022-11-22','xUhXa6=s%j7h~!G','2025-03-27 01:00:18',4497.738);
+insert into t2 values ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','+J8V1doNCnQA',NULL,'2022-03-27 00:58:56','2022-03-27','IVdtGpX(mIhr','2042-02-27 00:00:00',8787.51);
+explain format='brief' select /*+ inl_join(st_475) */ ucase( st_475.r4 ) as r0 , concat_ws(',', t1.col_6 , t1.col_3 ) as r1 , lower( t1.col_3 ) as r2 , ucase( st_475.r4 ) as r3 from t1 left join (select /*+  stream_agg() */ t2.col_4 as r0 , max(   t2.col_4 ) as r1 , t2.col_4 as r2 , count(   t2.col_4 ) as r3 , min(   t2.col_3 ) as r4 from t2 where IsNull( t2.col_3 ) group by t2.col_4) st_475 on t1.col_4 = st_475.r0 order by r0,r1,r2,r3;
+id	estRows	task	access object	operator info
+Sort	10000.00	root		Column#22, Column#23, Column#24, Column#25
+└─Projection	10000.00	root		ucase(Column#21)->Column#22, concat_ws(,, planner__core__indexjoin.t1.col_6, planner__core__indexjoin.t1.col_3)->Column#23, lower(planner__core__indexjoin.t1.col_3)->Column#24, ucase(Column#21)->Column#25
+  └─IndexJoin	10000.00	root		left outer join, inner:HashAgg, left side:UnionScan, outer key:planner__core__indexjoin.t1.col_4, inner key:planner__core__indexjoin.t2.col_4, equal cond:eq(planner__core__indexjoin.t1.col_4, planner__core__indexjoin.t2.col_4)
+    ├─UnionScan(Build)	10000.00	root		
+    │ └─TableReader	10000.00	root		data:TableFullScan
+    │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─HashAgg(Probe)	80000.00	root		group by:planner__core__indexjoin.t2.col_4, funcs:min(planner__core__indexjoin.t2.col_3)->Column#21, funcs:firstrow(planner__core__indexjoin.t2.col_4)->planner__core__indexjoin.t2.col_4
+      └─UnionScan	10.00	root		isnull(planner__core__indexjoin.t2.col_3)
+        └─IndexLookUp	10.00	root		
+          ├─IndexRangeScan(Build)	10000.00	cop[tikv]	table:t2, index:idx_1(col_4)	range: decided by [eq(planner__core__indexjoin.t2.col_4, planner__core__indexjoin.t1.col_4)], keep order:false, stats:pseudo
+          └─Selection(Probe)	10.00	cop[tikv]		isnull(planner__core__indexjoin.t2.col_3)
+            └─TableRowIDScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+select /*+ inl_join(st_475) */ ucase( st_475.r4 ) as r0 , concat_ws(',', t1.col_6 , t1.col_3 ) as r1 , lower( t1.col_3 ) as r2 , ucase( st_475.r4 ) as r3 from t1 left join (select /*+  stream_agg() */ t2.col_4 as r0 , max(   t2.col_4 ) as r1 , t2.col_4 as r2 , count(   t2.col_4 ) as r3 , min(   t2.col_3 ) as r4 from t2 where IsNull( t2.col_3 ) group by t2.col_4) st_475 on t1.col_4 = st_475.r0 order by r0,r1,r2,r3;
+r0	r1	r2	r3
+NULL	#35a,^VW2Cc8t	^VW2Cc8t	NULL
+NULL	%,0	0	NULL
+NULL	(L&37IR@ckJ,j0jz6N#U=*y+n%Y8	j0jz6N#U=*y+n%Y8	NULL
+NULL	)fn!Ci&)5i_4-urVZoJ,pxv	pxv	NULL
+NULL	)n=u7-9D2=t!!!D,6	6	NULL
+NULL	,*	*	NULL
+NULL	,OMtcvjf=	OMtcvjf=	NULL
+NULL	,cMaXFQcQs23#S	cMaXFQcQs23#S	NULL
+NULL	-&,MKfHKu3)3vuV0oC9d)	MKfHKu3)3vuV0oC9d)	NULL
+NULL	1brNw$F+V+BI3*XKy@	1brNw$F+V+BI3*XKy@	NULL
+NULL	3!=z)VYDJk,5(-	5(-	NULL
+NULL	3Oh5ox-d6r,g_mUvCyB!5_@qYp	g_mUvCyB!5_@qYp	NULL
+NULL	5Q,		NULL
+NULL	6daPv99O@oRiL8&8Epw,BEZJA5EfI!	BEZJA5EfI!	NULL
+NULL	8)L)acMl15-Hcqdk$*,N2dMMME!y	N2dMMME!y	NULL
+NULL	9yEKuBU,		NULL
+NULL	A5xzxe*SLH@ZY8,VKh30_XfR3UNHs	VKh30_XfR3UNHs	NULL
+NULL	Ed),K6lg@(k)gZa85=	K6lg@(k)gZa85=	NULL
+NULL	Gb@Os9~jir(2nJ,J_CTu55(kDvG$LzST@b	J_CTu55(kDvG$LzST@b	NULL
+NULL	HEKj@N+#BB1N4,c48le5*in7=iiRT_o	c48le5*in7=iiRT_o	NULL
+NULL	LEPg1$(QUl49o	NULL	NULL
+NULL	LF$zv&x9dNr1B*_-9A,F&rx=A-L6G965g7p+	F&rx=A-L6G965g7p+	NULL
+NULL	Oz)VtkY#a9W@*8%Vx,SqUMebQrZKgE	SqUMebQrZKgE	NULL
+NULL	UHBG_s^p5^OjB,~9RZBm_lF=KN4^0oP	~9RZBm_lF=KN4^0oP	NULL
+NULL	V^@+90hk(&	NULL	NULL
+NULL	Wy3p-=+i2Ex,Kxy%iS	Kxy%iS	NULL
+NULL	X1M5)T+Hr$b8%i_R,rv6	rv6	NULL
+NULL	YnW,+s	+s	NULL
+NULL	Yz1tpB5,OR6ttl1MlOd*2v2uk	OR6ttl1MlOd*2v2uk	NULL
+NULL	cW)U%jA$R-Ql,-otA&M&iQz21(NB^	-otA&M&iQz21(NB^	NULL
+NULL	g!*^B!YwV,~uD(rd9_ois4pNO%M	~uD(rd9_ois4pNO%M	NULL
+NULL	h5x*,aENR5%H$x3CLPyn(hS	aENR5%H$x3CLPyn(hS	NULL
+NULL	mGfrUx%9Wjp#T7q,~HrR	~HrR	NULL
+NULL	n7+pdd1=m,v)B(nd^B_	v)B(nd^B_	NULL
+NULL	pcYO8F5-%,@G(2	@G(2	NULL
+NULL	s,w9SyfotF$o	w9SyfotF$o	NULL
+NULL	sfu%SPfzV0$GA*oTj4_,VaobzCik=aCknfqZ	VaobzCik=aCknfqZ	NULL
+NULL	t3$s@)a&)ivHiN-ff,0bpYTXANm%8	0bpYTXANm%8	NULL
+NULL	v@RJJoWBBg@rNNX&#,Qm9	Qm9	NULL
+NULL	xUhXa6=s%j7h~!G,		NULL
+NULL	xUhXa6=s%j7h~!G,#	#	NULL
+NULL	xUhXa6=s%j7h~!G,%	%	NULL
+NULL	xUhXa6=s%j7h~!G,%mEQW-#m&eL&Cj	%mEQW-#m&eL&Cj	NULL
+NULL	xUhXa6=s%j7h~!G,(83LAkA$KX3	(83LAkA$KX3	NULL
+NULL	xUhXa6=s%j7h~!G,)8I-BG+	)8I-BG+	NULL
+NULL	xUhXa6=s%j7h~!G,*3T~B	*3T~B	NULL
+NULL	xUhXa6=s%j7h~!G,*Dj2	*Dj2	NULL
+NULL	xUhXa6=s%j7h~!G,*t(%	*t(%	NULL
+NULL	xUhXa6=s%j7h~!G,7KOZW^z4@R_gawO3S3t	7KOZW^z4@R_gawO3S3t	NULL
+NULL	xUhXa6=s%j7h~!G,8P	8P	NULL
+NULL	xUhXa6=s%j7h~!G,9ZS)n	9ZS)n	NULL
+NULL	xUhXa6=s%j7h~!G,@~Jd	@~Jd	NULL
+NULL	xUhXa6=s%j7h~!G,F%@7~yD_V4AnD1y%caQ	F%@7~yD_V4AnD1y%caQ	NULL
+NULL	xUhXa6=s%j7h~!G,FJ$	FJ$	NULL
+NULL	xUhXa6=s%j7h~!G,KAi-H&	KAi-H&	NULL
+NULL	xUhXa6=s%j7h~!G,N0Tpjqaay-9qE7ud*	N0Tpjqaay-9qE7ud*	NULL
+NULL	xUhXa6=s%j7h~!G,O@)V)Wz#cs	O@)V)Wz#cs	NULL
+NULL	xUhXa6=s%j7h~!G,ODGVj59!InDlYLWk9@7	ODGVj59!InDlYLWk9@7	NULL
+NULL	xUhXa6=s%j7h~!G,Q1gMy+jClSoFh2	Q1gMy+jClSoFh2	NULL
+NULL	xUhXa6=s%j7h~!G,SiJcVWM	SiJcVWM	NULL
+NULL	xUhXa6=s%j7h~!G,Xczm(	Xczm(	NULL
+NULL	xUhXa6=s%j7h~!G,YCDBXuN3O	YCDBXuN3O	NULL
+NULL	xUhXa6=s%j7h~!G,^uW0FDPwdNe7~	^uW0FDPwdNe7~	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,axOKbonp0QLk	axOKbonp0QLk	NULL
+NULL	xUhXa6=s%j7h~!G,gcRu+75=Eb	gcRu+75=Eb	NULL
+NULL	xUhXa6=s%j7h~!G,hB	hB	NULL
+NULL	xUhXa6=s%j7h~!G,iDenWGj	iDenWGj	NULL
+NULL	xUhXa6=s%j7h~!G,jgL	jgL	NULL
+NULL	xUhXa6=s%j7h~!G,kjbF#e9)tErjm^nzaR	kjbF#e9)tErjm^nzaR	NULL
+NULL	xUhXa6=s%j7h~!G,mjRODm91X	mjRODm91X	NULL
+NULL	xUhXa6=s%j7h~!G,oJ=b*1dFQNTE)	oJ=b*1dFQNTE)	NULL
+NULL	xUhXa6=s%j7h~!G,obK+nrS7Dy2CY	obK+nrS7Dy2CY	NULL
+NULL	xUhXa6=s%j7h~!G,pl^	pl^	NULL
+NULL	xUhXa6=s%j7h~!G,tNlk1ID0=x(xT@L	tNlk1ID0=x(xT@L	NULL
+NULL	xUhXa6=s%j7h~!G,wjBVltcCK	wjBVltcCK	NULL
+NULL	xUhXa6=s%j7h~!G,yKuo#WH)4F30	yKuo#WH)4F30	NULL
+NULL	xUhXa6=s%j7h~!G,zybQlXsQiqNIXAl5p!#	zybQlXsQiqNIXAl5p!#	NULL
+rollback;
 set @@tidb_enable_inl_join_inner_multi_pattern=default;
