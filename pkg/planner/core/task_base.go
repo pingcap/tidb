@@ -47,19 +47,31 @@ func (s *simpleWarnings) WarningCount() int {
 }
 
 // Copy implemented the simple warnings copy to avoid use the same warnings slice for different task instance.
-func (s *simpleWarnings) Copy() {
-	warnings := make([]*context.SQLWarn, 0, len(s.warnings))
-	warnings = append(warnings, s.warnings...)
+func (s *simpleWarnings) Copy(src *simpleWarnings) {
+	warnings := make([]*context.SQLWarn, 0, len(src.warnings))
+	warnings = append(warnings, src.warnings...)
 	s.warnings = warnings
 }
 
 // CopyFrom copy the warnings from src to s.
-func (s *simpleWarnings) CopyFrom(src *simpleWarnings) {
+func (s *simpleWarnings) CopyFrom(src ...*simpleWarnings) {
 	if src == nil {
 		return
 	}
-	s.warnings = make([]*context.SQLWarn, 0, len(src.warnings))
-	s.warnings = append(s.warnings, src.warnings...)
+	length := 0
+	for _, one := range src {
+		if one == nil {
+			continue
+		}
+		length += one.WarningCount()
+	}
+	s.warnings = make([]*context.SQLWarn, 0, length)
+	for _, one := range src {
+		if one == nil {
+			continue
+		}
+		s.warnings = append(s.warnings, one.warnings...)
+	}
 }
 
 // AppendWarning appends a warning to the warnings slice.
@@ -134,7 +146,7 @@ func (t *RootTask) Copy() base.Task {
 	}
 	// since *t will reuse the same warnings slice, we need to copy it out.
 	// cause different task instance may have different warnings.
-	nt.simpleWarnings.Copy()
+	nt.simpleWarnings.Copy(&t.simpleWarnings)
 	return nt
 }
 
@@ -212,7 +224,7 @@ func (t *MppTask) Copy() base.Task {
 	nt := *t
 	// since *t will reuse the same warnings slice, we need to copy it out.
 	// cause different task instance may have different warnings.
-	nt.simpleWarnings.Copy()
+	nt.simpleWarnings.Copy(&t.simpleWarnings)
 	return &nt
 }
 
@@ -364,7 +376,7 @@ func (t *CopTask) Copy() base.Task {
 	nt := *t
 	// since *t will reuse the same warnings slice, we need to copy it out.
 	// cause different task instance may have different warnings.
-	nt.simpleWarnings.Copy()
+	nt.simpleWarnings.Copy(&t.simpleWarnings)
 	return &nt
 }
 

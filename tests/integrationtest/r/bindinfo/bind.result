@@ -254,13 +254,13 @@ create table t1(id int);
 create table t2(id int);
 explain SELECT * from t1,t2 where t1.id = t2.id;
 id	estRows	task	access object	operator info
-HashJoin_8	12487.50	root		inner join, equal:[eq(bindinfo__bind.t1.id, bindinfo__bind.t2.id)]
-├─TableReader_15(Build)	9990.00	root		data:Selection_14
-│ └─Selection_14	9990.00	cop[tikv]		not(isnull(bindinfo__bind.t2.id))
-│   └─TableFullScan_13	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-└─TableReader_12(Probe)	9990.00	root		data:Selection_11
-  └─Selection_11	9990.00	cop[tikv]		not(isnull(bindinfo__bind.t1.id))
-    └─TableFullScan_10	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+HashJoin_14	12487.50	root		inner join, equal:[eq(bindinfo__bind.t1.id, bindinfo__bind.t2.id)]
+├─TableReader_21(Build)	9990.00	root		data:Selection_20
+│ └─Selection_20	9990.00	cop[tikv]		not(isnull(bindinfo__bind.t2.id))
+│   └─TableFullScan_19	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader_18(Probe)	9990.00	root		data:Selection_17
+  └─Selection_17	9990.00	cop[tikv]		not(isnull(bindinfo__bind.t1.id))
+    └─TableFullScan_16	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id;
 id	estRows	task	access object	operator info
 MergeJoin_8	12487.50	root		inner join, left key:bindinfo__bind.t1.id, right key:bindinfo__bind.t2.id

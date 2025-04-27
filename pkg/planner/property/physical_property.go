@@ -286,6 +286,11 @@ type IndexJoinRuntimeProp struct {
 	// deeper side like through join, the deeper DS's countAfterAccess should be
 	// thought twice.
 	AvgInnerRowCnt float64
+	// since tableRangeScan and indexRangeScan can't be told which one is better at
+	// copTask phase because of the latter attached operators into cop and the single
+	// and double reader cost consideration. Therefore, we introduce another bool to
+	// indicate prefer tableRangeScan or indexRangeScan each at a time.
+	TableRangeScan bool
 }
 
 // NewPhysicalProperty builds property from columns.
@@ -487,6 +492,11 @@ func (p *PhysicalProperty) HashCode() []byte {
 			p.hashcode = append(p.hashcode, col.HashCode()...)
 		}
 		p.hashcode = codec.EncodeFloat(p.hashcode, p.IndexJoinProp.AvgInnerRowCnt)
+		if p.IndexJoinProp.TableRangeScan {
+			p.hashcode = codec.EncodeInt(p.hashcode, 1)
+		} else {
+			p.hashcode = codec.EncodeInt(p.hashcode, 0)
+		}
 	}
 	return p.hashcode
 }

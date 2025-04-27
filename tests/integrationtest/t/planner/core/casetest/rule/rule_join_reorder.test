@@ -87,10 +87,10 @@ explain format = 'brief' select /*+ no_merge_join(t1), no_hash_join(t1), no_inde
 explain format = 'brief' select /*+ no_merge_join(t1), no_hash_join(t1), no_index_hash_join(t1), no_index_merge_join(t2) */ * from t1, t2 where t1.a=t2.a;
 explain format = 'brief' select /*+ no_merge_join(t1), no_hash_join(t1), no_index_hash_join(t1, t2), no_index_merge_join(t2, t1) */ * from t1, t2 where t1.a=t2.a;
 explain format = 'brief' select /*+ no_merge_join(t1), no_hash_join(t1), no_index_join(t1), no_index_merge_join(t1) */ * from t1, t2 where t1.a=t2.a;
-explain format = 'brief' select /*+ no_merge_join(t1), no_hash_join(t1), no_index_join(t1), no_index_hash_join(t1) */ * from t1, t2 where t1.a=t2.a;
+explain format = 'brief' select /*+ no_merge_join(t1), no_hash_join(t1), no_index_hash_join(t1) */ * from t1, t2 where t1.a=t2.a;
 explain format = 'brief' select /*+ no_merge_join(t1), no_hash_join(t1), inl_join(t1), no_index_merge_join(t1), no_index_hash_join(t1) */ * from t1, t2 where t1.a=t2.a;
-explain format = 'brief' select /*+ inl_join(t1), no_index_join(t1) */ * from t1, t2 where t1.a=t2.a;
-explain format = 'brief' select /*+ inl_hash_join(t1), no_index_hash_join(t2) */ * from t1, t2 where t1.a=t2.a;
+explain format = 'brief' select /*+ inl_join(t1) */ * from t1, t2 where t1.a=t2.a;
+explain format = 'brief' select /*+ inl_hash_join(t1) */ * from t1, t2 where t1.a=t2.a;
 explain format = 'brief' select /*+ inl_merge_join(t1), no_index_merge_join(t1, t2) */ * from t1, t2 where t1.a=t2.a;
 explain format = 'brief' select /*+ inl_join(t1), no_index_hash_join(t1) */ * from t1, t2 where t1.a=t2.a;
 explain format = 'brief' select /*+ inl_join(t1), no_index_merge_join(t1) */ * from t1, t2 where t1.a=t2.a;
@@ -345,6 +345,7 @@ explain format = 'brief' select /*+ straight_join() */ * from (select * from t4)
 explain format = 'brief' select /*+ straight_join() */ * from t1 join t2 on t1.a=t2.a join (select * from t4) t3 on t2.b=t3.b;
 explain format = 'brief' select /*+ straight_join() */ t1.a, (select min(t2.a) from t2) from t1;
 explain format = 'brief' select /*+ straight_join() */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
+
 explain format = 'brief' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a in (select t3.a from t3 where t1.b = t3.b);
 explain format = 'brief' select /*+ leading(t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b);
 explain format = 'brief' select /*+ leading(t2, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3 where t1.b = t3.b);

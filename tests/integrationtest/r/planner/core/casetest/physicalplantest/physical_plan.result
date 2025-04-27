@@ -768,14 +768,14 @@ CTE_4	1.80	root		Recursive CTE
 create table test(a int);
 explain WITH RECURSIVE CTE (x) AS (SELECT 1 UNION ALL SELECT distinct a FROM test), CTE1 AS (SELECT x FROM CTE UNION ALL select CTE.x from CTE join CTE1 on CTE.x=CTE1.x) SELECT * FROM CTE1; -- CTE contain distinct and ref by CET1 recursive part cannot be inlined;
 id	estRows	task	access object	operator info
-CTEFullScan_60	14401.80	root	CTE:cte1	data:CTE_1
+CTEFullScan_68	14401.80	root	CTE:cte1	data:CTE_1
 CTE_1	14401.80	root		Recursive CTE
 ├─CTEFullScan_40(Seed Part)	8001.00	root	CTE:cte	data:CTE_0
-└─HashJoin_51(Recursive Part)	6400.80	root		inner join, equal:[eq(Column#11, Column#12)]
-  ├─Selection_57(Build)	6400.80	root		not(isnull(Column#12))
-  │ └─CTETable_58	8001.00	root		Scan on CTE_1
-  └─Selection_53(Probe)	6400.80	root		not(isnull(Column#11))
-    └─CTEFullScan_54	8001.00	root	CTE:cte	data:CTE_0
+└─HashJoin_57(Recursive Part)	6400.80	root		inner join, equal:[eq(Column#11, Column#12)]
+  ├─Selection_65(Build)	6400.80	root		not(isnull(Column#12))
+  │ └─CTETable_66	8001.00	root		Scan on CTE_1
+  └─Selection_59(Probe)	6400.80	root		not(isnull(Column#11))
+    └─CTEFullScan_60	8001.00	root	CTE:cte	data:CTE_0
 CTE_0	8001.00	root		Non-Recursive CTE
 └─Union_27(Seed Part)	8001.00	root		
   ├─Projection_28	1.00	root		1->Column#7
@@ -788,14 +788,14 @@ CTE_0	8001.00	root		Non-Recursive CTE
 create view test_cte(a) as WITH RECURSIVE CTE (x) AS (SELECT 1 UNION ALL SELECT distinct a FROM test) , CTE1 AS (SELECT x FROM CTE UNION ALL select CTE.x from CTE join CTE1 on CTE.x=CTE1.x) SELECT * FROM CTE1;
 explain select * from test_cte;  -- CTE (inside of view) cannot be inlined by default;
 id	estRows	task	access object	operator info
-CTEFullScan_62	14401.80	root	CTE:cte1	data:CTE_1
+CTEFullScan_70	14401.80	root	CTE:cte1	data:CTE_1
 CTE_1	14401.80	root		Recursive CTE
 ├─CTEFullScan_42(Seed Part)	8001.00	root	CTE:cte	data:CTE_0
-└─HashJoin_53(Recursive Part)	6400.80	root		inner join, equal:[eq(Column#11, Column#12)]
-  ├─Selection_59(Build)	6400.80	root		not(isnull(Column#12))
-  │ └─CTETable_60	8001.00	root		Scan on CTE_1
-  └─Selection_55(Probe)	6400.80	root		not(isnull(Column#11))
-    └─CTEFullScan_56	8001.00	root	CTE:cte	data:CTE_0
+└─HashJoin_59(Recursive Part)	6400.80	root		inner join, equal:[eq(Column#11, Column#12)]
+  ├─Selection_67(Build)	6400.80	root		not(isnull(Column#12))
+  │ └─CTETable_68	8001.00	root		Scan on CTE_1
+  └─Selection_61(Probe)	6400.80	root		not(isnull(Column#11))
+    └─CTEFullScan_62	8001.00	root	CTE:cte	data:CTE_0
 CTE_0	8001.00	root		Non-Recursive CTE
 └─Union_29(Seed Part)	8001.00	root		
   ├─Projection_30	1.00	root		1->Column#7
@@ -823,15 +823,15 @@ HashAgg_16	8000.00	root		group by:planner__core__casetest__physicalplantest__phy
     └─TableFullScan_15	10000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
 explain WITH RECURSIVE CTE (x) AS (SELECT a FROM test limit 1) , CTE1(x) AS (SELECT a FROM test UNION ALL select CTE.x from CTE join CTE1 on CTE.x=CTE1.x) SELECT * FROM CTE1;  -- CTE contain limit and ref by CET1 recursive part cannot be inlined;
 id	estRows	task	access object	operator info
-CTEFullScan_50	16400.00	root	CTE:cte1	data:CTE_1
+CTEFullScan_58	16400.00	root	CTE:cte1	data:CTE_1
 CTE_1	16400.00	root		Recursive CTE
 ├─TableReader_22(Seed Part)	10000.00	root		data:TableFullScan_21
 │ └─TableFullScan_21	10000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
-└─HashJoin_42(Recursive Part)	6400.00	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.test.a, planner__core__casetest__physicalplantest__physical_plan.test.a)]
-  ├─Selection_43(Build)	0.80	root		not(isnull(planner__core__casetest__physicalplantest__physical_plan.test.a))
-  │ └─CTEFullScan_44	1.00	root	CTE:cte	data:CTE_0
-  └─Selection_47(Probe)	8000.00	root		not(isnull(planner__core__casetest__physicalplantest__physical_plan.test.a))
-    └─CTETable_48	10000.00	root		Scan on CTE_1
+└─HashJoin_48(Recursive Part)	6400.00	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.test.a, planner__core__casetest__physicalplantest__physical_plan.test.a)]
+  ├─Selection_49(Build)	0.80	root		not(isnull(planner__core__casetest__physicalplantest__physical_plan.test.a))
+  │ └─CTEFullScan_50	1.00	root	CTE:cte	data:CTE_0
+  └─Selection_55(Probe)	8000.00	root		not(isnull(planner__core__casetest__physicalplantest__physical_plan.test.a))
+    └─CTETable_56	10000.00	root		Scan on CTE_1
 CTE_0	1.00	root		Non-Recursive CTE
 └─Limit_28(Seed Part)	1.00	root		offset:0, count:1
   └─TableReader_32	1.00	root		data:Limit_31
@@ -839,15 +839,15 @@ CTE_0	1.00	root		Non-Recursive CTE
       └─TableFullScan_30	1.00	cop[tikv]	table:test	keep order:false, stats:pseudo
 explain WITH RECURSIVE CTE (x) AS (SELECT a FROM test order by a) , CTE1(x) AS (SELECT a FROM test UNION ALL select CTE.x from CTE join CTE1 on CTE.x=CTE1.x) SELECT * FROM CTE1;  -- CTE contain order by and ref by CET1 recursive part cannot be inlined;
 id	estRows	task	access object	operator info
-CTEFullScan_43	20000.00	root	CTE:cte1	data:CTE_1
+CTEFullScan_51	20000.00	root	CTE:cte1	data:CTE_1
 CTE_1	20000.00	root		Recursive CTE
 ├─TableReader_20(Seed Part)	10000.00	root		data:TableFullScan_19
 │ └─TableFullScan_19	10000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
-└─HashJoin_35(Recursive Part)	10000.00	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.test.a, planner__core__casetest__physicalplantest__physical_plan.test.a)]
-  ├─Selection_36(Build)	8000.00	root		not(isnull(planner__core__casetest__physicalplantest__physical_plan.test.a))
-  │ └─CTEFullScan_37	10000.00	root	CTE:cte	data:CTE_0
-  └─Selection_40(Probe)	8000.00	root		not(isnull(planner__core__casetest__physicalplantest__physical_plan.test.a))
-    └─CTETable_41	10000.00	root		Scan on CTE_1
+└─HashJoin_41(Recursive Part)	10000.00	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.test.a, planner__core__casetest__physicalplantest__physical_plan.test.a)]
+  ├─Selection_42(Build)	8000.00	root		not(isnull(planner__core__casetest__physicalplantest__physical_plan.test.a))
+  │ └─CTEFullScan_43	10000.00	root	CTE:cte	data:CTE_0
+  └─Selection_48(Probe)	8000.00	root		not(isnull(planner__core__casetest__physicalplantest__physical_plan.test.a))
+    └─CTETable_49	10000.00	root		Scan on CTE_1
 CTE_0	10000.00	root		Non-Recursive CTE
 └─TableReader_25(Seed Part)	10000.00	root		data:TableFullScan_24
   └─TableFullScan_24	10000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
@@ -1837,11 +1837,11 @@ explain format = 'brief' select /*+ hash_join_build(t1) */ sum(t1.a in (select a
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:sum(Column#9)->Column#8
 └─Projection	10000.00	root		cast(Column#7, decimal(3,0) BINARY)->Column#9
-  └─MergeJoin	10000.00	root		left outer semi join, left side:TableReader, left key:planner__core__casetest__physicalplantest__physical_plan.t1.a, right key:planner__core__casetest__physicalplantest__physical_plan.t2.a
+  └─HashJoin	10000.00	root		left outer semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
-    │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+    │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
     └─TableReader(Probe)	10000.00	root		data:TableFullScan
-      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ hash_join_build(t1) */ sum(t1.a in (select a from t2)) from t1;
 sum(t1.a in (select a from t2))
 2
@@ -1853,11 +1853,11 @@ explain format = 'brief' select /*+ hash_join_probe(t1) */ sum(t1.a in (select a
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:sum(Column#9)->Column#8
 └─Projection	10000.00	root		cast(Column#7, decimal(3,0) BINARY)->Column#9
-  └─MergeJoin	10000.00	root		left outer semi join, left side:TableReader, left key:planner__core__casetest__physicalplantest__physical_plan.t1.a, right key:planner__core__casetest__physicalplantest__physical_plan.t2.a
+  └─HashJoin	10000.00	root		left outer semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
-    │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+    │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
     └─TableReader(Probe)	10000.00	root		data:TableFullScan
-      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ hash_join_probe(t1) */ sum(t1.a in (select a from t2)) from t1;
 sum(t1.a in (select a from t2))
 2
@@ -1869,11 +1869,11 @@ explain format = 'brief' select /*+ hash_join_build(t2@sel_2) */ sum(t1.a in (se
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:sum(Column#9)->Column#8
 └─Projection	10000.00	root		cast(Column#7, decimal(3,0) BINARY)->Column#9
-  └─MergeJoin	10000.00	root		left outer semi join, left side:TableReader, left key:planner__core__casetest__physicalplantest__physical_plan.t1.a, right key:planner__core__casetest__physicalplantest__physical_plan.t2.a
+  └─HashJoin	10000.00	root		left outer semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
-    │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+    │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
     └─TableReader(Probe)	10000.00	root		data:TableFullScan
-      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ hash_join_build(t2@sel_2) */ sum(t1.a in (select a from t2)) from t1;
 sum(t1.a in (select a from t2))
 2
@@ -1885,11 +1885,11 @@ explain format = 'brief' select /*+ hash_join_probe(t2@sel_2) */ sum(t1.a in (se
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:sum(Column#9)->Column#8
 └─Projection	10000.00	root		cast(Column#7, decimal(3,0) BINARY)->Column#9
-  └─MergeJoin	10000.00	root		left outer semi join, left side:TableReader, left key:planner__core__casetest__physicalplantest__physical_plan.t1.a, right key:planner__core__casetest__physicalplantest__physical_plan.t2.a
+  └─HashJoin	10000.00	root		left outer semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
-    │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+    │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
     └─TableReader(Probe)	10000.00	root		data:TableFullScan
-      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ hash_join_probe(t2@sel_2) */ sum(t1.a in (select a from t2)) from t1;
 sum(t1.a in (select a from t2))
 2
@@ -1901,11 +1901,11 @@ explain format = 'brief' select /*+ hash_join_build(t1) */ sum(t1.a not in (sele
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:sum(Column#9)->Column#8
 └─Projection	10000.00	root		cast(Column#7, decimal(3,0) BINARY)->Column#9
-  └─MergeJoin	10000.00	root		anti left outer semi join, left side:TableReader, left key:planner__core__casetest__physicalplantest__physical_plan.t1.a, right key:planner__core__casetest__physicalplantest__physical_plan.t2.a
+  └─HashJoin	10000.00	root		anti left outer semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
-    │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+    │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
     └─TableReader(Probe)	10000.00	root		data:TableFullScan
-      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ hash_join_build(t1) */ sum(t1.a not in (select a from t2)) from t1;
 sum(t1.a not in (select a from t2))
 0
@@ -1917,11 +1917,11 @@ explain format = 'brief' select /*+ hash_join_probe(t1) */ sum(t1.a not in (sele
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:sum(Column#9)->Column#8
 └─Projection	10000.00	root		cast(Column#7, decimal(3,0) BINARY)->Column#9
-  └─MergeJoin	10000.00	root		anti left outer semi join, left side:TableReader, left key:planner__core__casetest__physicalplantest__physical_plan.t1.a, right key:planner__core__casetest__physicalplantest__physical_plan.t2.a
+  └─HashJoin	10000.00	root		anti left outer semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
-    │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+    │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
     └─TableReader(Probe)	10000.00	root		data:TableFullScan
-      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ hash_join_probe(t1) */ sum(t1.a not in (select a from t2)) from t1;
 sum(t1.a not in (select a from t2))
 0
@@ -1933,11 +1933,11 @@ explain format = 'brief' select /*+ hash_join_build(t2@sel_2) */ sum(t1.a not in
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:sum(Column#9)->Column#8
 └─Projection	10000.00	root		cast(Column#7, decimal(3,0) BINARY)->Column#9
-  └─MergeJoin	10000.00	root		anti left outer semi join, left side:TableReader, left key:planner__core__casetest__physicalplantest__physical_plan.t1.a, right key:planner__core__casetest__physicalplantest__physical_plan.t2.a
+  └─HashJoin	10000.00	root		anti left outer semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
-    │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+    │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
     └─TableReader(Probe)	10000.00	root		data:TableFullScan
-      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ hash_join_build(t2@sel_2) */ sum(t1.a not in (select a from t2)) from t1;
 sum(t1.a not in (select a from t2))
 0
@@ -1949,11 +1949,11 @@ explain format = 'brief' select /*+ hash_join_probe(t2@sel_2) */ sum(t1.a not in
 id	estRows	task	access object	operator info
 HashAgg	1.00	root		funcs:sum(Column#9)->Column#8
 └─Projection	10000.00	root		cast(Column#7, decimal(3,0) BINARY)->Column#9
-  └─MergeJoin	10000.00	root		anti left outer semi join, left side:TableReader, left key:planner__core__casetest__physicalplantest__physical_plan.t1.a, right key:planner__core__casetest__physicalplantest__physical_plan.t2.a
+  └─HashJoin	10000.00	root		anti left outer semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
-    │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+    │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
     └─TableReader(Probe)	10000.00	root		data:TableFullScan
-      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+      └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ hash_join_probe(t2@sel_2) */ sum(t1.a not in (select a from t2)) from t1;
 sum(t1.a not in (select a from t2))
 0
@@ -2460,11 +2460,11 @@ show warnings;
 Level	Code	Message
 explain format = 'brief' SELECT /*+ hash_join_probe(t1), set_var(tidb_hash_join_version=legacy) */ * FROM t1 WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.a = t1.a);
 id	estRows	task	access object	operator info
-MergeJoin	8000.00	root		semi join, left side:TableReader, left key:planner__core__casetest__physicalplantest__physical_plan.t1.a, right key:planner__core__casetest__physicalplantest__physical_plan.t2.a
+HashJoin	8000.00	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
-│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
-  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 SELECT /*+ hash_join_probe(t1), set_var(tidb_hash_join_version=legacy) */ * FROM t1 WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.a = t1.a);
 a	b
 1	1
@@ -2487,11 +2487,11 @@ show warnings;
 Level	Code	Message
 explain format = 'brief' SELECT /*+ hash_join_probe(t2@sel_2), set_var(tidb_hash_join_version=legacy) */ * FROM t1 WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.a = t1.a);
 id	estRows	task	access object	operator info
-MergeJoin	8000.00	root		semi join, left side:TableReader, left key:planner__core__casetest__physicalplantest__physical_plan.t1.a, right key:planner__core__casetest__physicalplantest__physical_plan.t2.a
+HashJoin	8000.00	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
-│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
-  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 SELECT /*+ hash_join_probe(t2@sel_2), set_var(tidb_hash_join_version=legacy) */ * FROM t1 WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.a = t1.a);
 a	b
 1	1
@@ -2544,11 +2544,11 @@ show warnings;
 Level	Code	Message
 explain format = 'brief' SELECT /*+ hash_join_build(t1), set_var(tidb_hash_join_version=legacy) */ * FROM t1 WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.a = t1.a);
 id	estRows	task	access object	operator info
-MergeJoin	8000.00	root		semi join, left side:TableReader, left key:planner__core__casetest__physicalplantest__physical_plan.t1.a, right key:planner__core__casetest__physicalplantest__physical_plan.t2.a
+HashJoin	8000.00	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
-│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
-  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 SELECT /*+ hash_join_build(t1), set_var(tidb_hash_join_version=legacy) */ * FROM t1 WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.a = t1.a);
 a	b
 1	1
@@ -2571,11 +2571,11 @@ show warnings;
 Level	Code	Message
 explain format = 'brief' SELECT /*+ hash_join_build(t2@sel_2), set_var(tidb_hash_join_version=legacy) */ * FROM t1 WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.a = t1.a);
 id	estRows	task	access object	operator info
-MergeJoin	8000.00	root		semi join, left side:TableReader, left key:planner__core__casetest__physicalplantest__physical_plan.t1.a, right key:planner__core__casetest__physicalplantest__physical_plan.t2.a
+HashJoin	8000.00	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
-│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
-  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 SELECT /*+ hash_join_build(t2@sel_2), set_var(tidb_hash_join_version=legacy) */ * FROM t1 WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.a = t1.a);
 a	b
 1	1
@@ -2771,11 +2771,11 @@ show warnings;
 Level	Code	Message
 explain format = 'brief' SELECT /*+ USE_TOJA(false) hash_join_build(t1), set_var(tidb_hash_join_version=legacy) */ t1.a, t1.b FROM t1 WHERE t1.a in (SELECT t2.a FROM t2);
 id	estRows	task	access object	operator info
-MergeJoin	8000.00	root		semi join, left side:TableReader, left key:planner__core__casetest__physicalplantest__physical_plan.t1.a, right key:planner__core__casetest__physicalplantest__physical_plan.t2.a
+HashJoin	8000.00	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
-│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
-  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 SELECT /*+ USE_TOJA(false) hash_join_build(t1), set_var(tidb_hash_join_version=legacy) */ t1.a, t1.b FROM t1 WHERE t1.a in (SELECT t2.a FROM t2);
 a	b
 1	1
@@ -2798,11 +2798,11 @@ show warnings;
 Level	Code	Message
 explain format = 'brief' SELECT /*+ USE_TOJA(false) hash_join_probe(t1), set_var(tidb_hash_join_version=legacy) */ t1.a, t1.b FROM t1 WHERE t1.a in (SELECT t2.a FROM t2);
 id	estRows	task	access object	operator info
-MergeJoin	8000.00	root		semi join, left side:TableReader, left key:planner__core__casetest__physicalplantest__physical_plan.t1.a, right key:planner__core__casetest__physicalplantest__physical_plan.t2.a
+HashJoin	8000.00	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
-│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
-  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 SELECT /*+ USE_TOJA(false) hash_join_probe(t1), set_var(tidb_hash_join_version=legacy) */ t1.a, t1.b FROM t1 WHERE t1.a in (SELECT t2.a FROM t2);
 a	b
 1	1
@@ -2825,11 +2825,11 @@ show warnings;
 Level	Code	Message
 explain format = 'brief' SELECT /*+ USE_TOJA(false) hash_join_build(t2@sel_2), set_var(tidb_hash_join_version=legacy) */ t1.a, t1.b FROM t1 WHERE t1.a in (SELECT t2.a FROM t2);
 id	estRows	task	access object	operator info
-MergeJoin	8000.00	root		semi join, left side:TableReader, left key:planner__core__casetest__physicalplantest__physical_plan.t1.a, right key:planner__core__casetest__physicalplantest__physical_plan.t2.a
+HashJoin	8000.00	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
-│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
-  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 SELECT /*+ USE_TOJA(false) hash_join_build(t2@sel_2), set_var(tidb_hash_join_version=legacy) */ t1.a, t1.b FROM t1 WHERE t1.a in (SELECT t2.a FROM t2);
 a	b
 1	1
@@ -2852,11 +2852,11 @@ show warnings;
 Level	Code	Message
 explain format = 'brief' SELECT /*+ USE_TOJA(false) hash_join_probe(t2@sel_2), set_var(tidb_hash_join_version=legacy) */ t1.a, t1.b FROM t1 WHERE t1.a in (SELECT t2.a FROM t2);
 id	estRows	task	access object	operator info
-MergeJoin	8000.00	root		semi join, left side:TableReader, left key:planner__core__casetest__physicalplantest__physical_plan.t1.a, right key:planner__core__casetest__physicalplantest__physical_plan.t2.a
+HashJoin	8000.00	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
 ├─TableReader(Build)	10000.00	root		data:TableFullScan
-│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+│ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
-  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+  └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 SELECT /*+ USE_TOJA(false) hash_join_probe(t2@sel_2), set_var(tidb_hash_join_version=legacy) */ t1.a, t1.b FROM t1 WHERE t1.a in (SELECT t2.a FROM t2);
 a	b
 1	1
@@ -3417,8 +3417,8 @@ HashJoin	250.00	root		left outer join, left side:IndexLookUp, equal:[eq(planner_
 │ ├─Selection(Build)	250.00	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
 │ │ └─IndexRangeScan	250.00	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
 │ └─TableRowIDScan(Probe)	250.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
-└─HashAgg(Probe)	6387.21	root		group by:Column#36, funcs:sum(Column#35)->Column#18, funcs:firstrow(Column#36)->planner__core__casetest__physicalplantest__physical_plan.tb.id
-  └─Projection	7984.01	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#35, planner__core__casetest__physicalplantest__physical_plan.tb.id->Column#36
+└─HashAgg(Probe)	6387.21	root		group by:Column#33, funcs:sum(Column#32)->Column#18, funcs:firstrow(Column#33)->planner__core__casetest__physicalplantest__physical_plan.tb.id
+  └─Projection	7984.01	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#32, planner__core__casetest__physicalplantest__physical_plan.tb.id->Column#33
     └─HashJoin	7984.01	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.tb.name, planner__core__casetest__physicalplantest__physical_plan.tc.name)]
       ├─TableReader(Build)	7992.00	root		data:Selection
       │ └─Selection	7992.00	cop[tikv]		like(cast(planner__core__casetest__physicalplantest__physical_plan.tc.code, var_string(20)), "999%", 92), not(isnull(planner__core__casetest__physicalplantest__physical_plan.tc.name))
@@ -3439,8 +3439,8 @@ Projection	250.00	root		planner__core__casetest__physicalplantest__physical_plan
   │ │ └─IndexRangeScan	250.00	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
   │ └─TableRowIDScan(Probe)	250.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	250.00	root		
-    └─StreamAgg	250.00	root		funcs:sum(Column#31)->Column#18
-      └─Projection	1998.00	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#31
+    └─StreamAgg	250.00	root		funcs:sum(Column#28)->Column#18
+      └─Projection	1998.00	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#28
         └─IndexHashJoin	1998.00	root		semi join, inner:IndexLookUp, left side:IndexLookUp, outer key:planner__core__casetest__physicalplantest__physical_plan.tb.name, inner key:planner__core__casetest__physicalplantest__physical_plan.tc.name, equal cond:eq(planner__core__casetest__physicalplantest__physical_plan.tb.name, planner__core__casetest__physicalplantest__physical_plan.tc.name)
           ├─IndexLookUp(Build)	2497.50	root		
           │ ├─IndexRangeScan(Build)	2500.00	cop[tikv]	table:tb, index:idx_tb_id(id)	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.ta.id, planner__core__casetest__physicalplantest__physical_plan.tb.id)], keep order:false, stats:pseudo

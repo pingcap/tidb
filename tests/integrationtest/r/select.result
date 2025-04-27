@@ -682,20 +682,20 @@ id
 EXPLAIN SELECT * FROM t1 STRAIGHT_JOIN t2 USING(id);
 id	estRows	task	access object	operator info
 MergeJoin_6	12500.00	root		inner join, left key:select.t1.id, right key:select.t2.id
-├─TableReader_30(Build)	10000.00	root		data:TableFullScan_29
-│ └─TableFullScan_29	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
-└─TableReader_28(Probe)	10000.00	root		data:TableFullScan_27
-  └─TableFullScan_27	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+├─TableReader_24(Build)	10000.00	root		data:TableFullScan_23
+│ └─TableFullScan_23	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+└─TableReader_22(Probe)	10000.00	root		data:TableFullScan_21
+  └─TableFullScan_21	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
 SELECT * FROM t2 STRAIGHT_JOIN t1 USING(id);
 id
 2
 EXPLAIN SELECT * FROM t2 STRAIGHT_JOIN t1 USING(id);
 id	estRows	task	access object	operator info
 MergeJoin_6	12500.00	root		inner join, left key:select.t2.id, right key:select.t1.id
-├─TableReader_30(Build)	10000.00	root		data:TableFullScan_29
-│ └─TableFullScan_29	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
-└─TableReader_28(Probe)	10000.00	root		data:TableFullScan_27
-  └─TableFullScan_27	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
+├─TableReader_24(Build)	10000.00	root		data:TableFullScan_23
+│ └─TableFullScan_23	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
+└─TableReader_22(Probe)	10000.00	root		data:TableFullScan_21
+  └─TableFullScan_21	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
 SELECT * FROM t1 STRAIGHT_JOIN t2 USING(id) STRAIGHT_JOIN t4 USING(id);
 id	v
 2	second

@@ -250,8 +250,8 @@ func enumeratePhysicalPlans4Task(
 		// since hint applicable plan may greater than 1, like inl_join can suit for:
 		// index_join, index_hash_join, index_merge_join, we should chase the most efficient
 		// one among them.
-		// todo: extend suitLogicalJoinHint to be a normal logicalOperator's interface to handle the hint related stuff.
-		hintApplicable := suitLogicalJoinHint(p.Self(), curTask.Plan())
+		// todo: extend applyLogicalJoinHint to be a normal logicalOperator's interface to handle the hint related stuff.
+		hintApplicable := applyLogicalJoinHint(p.Self(), curTask.Plan())
 
 		// Enforce curTask property
 		if addEnforcer {
@@ -295,7 +295,7 @@ func enumeratePhysicalPlans4Task(
 	}
 	// if there is no valid preferred low-cost physical one, return the normal low one.
 	// if the hint is specified without any valid plan, we should also record the warnings.
-	if warn := recordIndexJoinHintWarnings(p.Self(), prop); warn != nil {
+	if warn := recordIndexJoinHintWarnings(p.Self(), prop, addEnforcer); warn != nil {
 		bestTask.AppendWarning(warn)
 	}
 	// return the normal lowest-cost physical one.
@@ -1487,6 +1487,10 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 			// even enforce hint can not work with this.
 			return base.InvalidTask, 0, nil
 		}
+		defer func() {
+			ds.StoreTask(prop, t)
+			err = validateTableSamplePlan(ds, t, err)
+		}()
 		// when datasource leaf is in index join's inner side, build the task out with old
 		// index join build logic, we can't merge this with normal datasource's index range
 		// because normal index range is built on expression EQ/IN. while index join's inner

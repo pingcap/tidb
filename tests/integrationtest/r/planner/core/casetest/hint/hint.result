@@ -1524,15 +1524,15 @@ select /*+ qb_name(qb, v4) use_index(t4@qb, idx_a) */ a from v4 where a < 10
 ), d2 as (select /*+ qb_name(qb2, v4) use_index(t4@qb2, idx_b) */ a from v4 where b < 10)
 select * from (select * from d1) as t0 join (select * from d2) as t1;
 id	estRows	task	access object	operator info
-HashJoin_42	6944.44	root		CARTESIAN inner join
-├─IndexLookUp_51(Build)	83.33	root		
-│ ├─IndexRangeScan_48(Build)	250.00	cop[tikv]	table:t4, index:idx_b(b)	range:(3,10), keep order:false, stats:pseudo
-│ └─Selection_50(Probe)	83.33	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.a, 2)
-│   └─TableRowIDScan_49	250.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
-└─IndexLookUp_47(Probe)	83.33	root		
-  ├─IndexRangeScan_44(Build)	250.00	cop[tikv]	table:t4, index:idx_a(a)	range:(2,8), keep order:false, stats:pseudo
-  └─Selection_46(Probe)	83.33	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.b, 3)
-    └─TableRowIDScan_45	250.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+HashJoin_54	6944.44	root		CARTESIAN inner join
+├─IndexLookUp_63(Build)	83.33	root		
+│ ├─IndexRangeScan_60(Build)	250.00	cop[tikv]	table:t4, index:idx_b(b)	range:(3,10), keep order:false, stats:pseudo
+│ └─Selection_62(Probe)	83.33	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.a, 2)
+│   └─TableRowIDScan_61	250.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+└─IndexLookUp_59(Probe)	83.33	root		
+  ├─IndexRangeScan_56(Build)	250.00	cop[tikv]	table:t4, index:idx_a(a)	range:(2,8), keep order:false, stats:pseudo
+  └─Selection_58(Probe)	83.33	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.b, 3)
+    └─TableRowIDScan_57	250.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
 explain with d1 as (
 select a from (
 select a from (
@@ -1542,14 +1542,14 @@ select a from v4 where a < 10
 ), d2 as (select a from v4 where b < 10)
 select /*+ qb_name(qb, v4@sel_4) use_index(t4@qb, idx_a)   qb_name(qb2, v4@sel_5) use_index(t4@qb, idx_b) */ * from (select * from d1) as t0 join (select * from d2) as t1;
 id	estRows	task	access object	operator info
-HashJoin_42	6944.44	root		CARTESIAN inner join
-├─TableReader_54(Build)	83.33	root		data:Selection_53
-│ └─Selection_53	83.33	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.a, 2), gt(planner__core__casetest__hint__hint.t4.b, 3), lt(planner__core__casetest__hint__hint.t4.b, 10)
-│   └─TableFullScan_52	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
-└─IndexLookUp_47(Probe)	83.33	root		
-  ├─IndexRangeScan_44(Build)	250.00	cop[tikv]	table:t4, index:idx_a(a)	range:(2,8), keep order:false, stats:pseudo
-  └─Selection_46(Probe)	83.33	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.b, 3)
-    └─TableRowIDScan_45	250.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+HashJoin_54	6944.44	root		CARTESIAN inner join
+├─TableReader_66(Build)	83.33	root		data:Selection_65
+│ └─Selection_65	83.33	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.a, 2), gt(planner__core__casetest__hint__hint.t4.b, 3), lt(planner__core__casetest__hint__hint.t4.b, 10)
+│   └─TableFullScan_64	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+└─IndexLookUp_59(Probe)	83.33	root		
+  ├─IndexRangeScan_56(Build)	250.00	cop[tikv]	table:t4, index:idx_a(a)	range:(2,8), keep order:false, stats:pseudo
+  └─Selection_58(Probe)	83.33	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.b, 3)
+    └─TableRowIDScan_57	250.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
 explain with d1 as (
 select a from (
 select a from (
@@ -1559,14 +1559,14 @@ select /*+ qb_name(qb, v5) use_index(t4@qb, idx_a) */ a from v4 where a < 10
 ), d2 as (select /*+ qb_name(qb2, v4) use_index(t4@qb2, idx_b) */ a from v4 where b < 10)
 select * from (select * from d1) as t0 join (select * from d2) as t1;
 id	estRows	task	access object	operator info
-HashJoin_42	6944.44	root		CARTESIAN inner join
-├─IndexLookUp_58(Build)	83.33	root		
-│ ├─IndexRangeScan_55(Build)	250.00	cop[tikv]	table:t4, index:idx_b(b)	range:(3,10), keep order:false, stats:pseudo
-│ └─Selection_57(Probe)	83.33	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.a, 2)
-│   └─TableRowIDScan_56	250.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
-└─TableReader_46(Probe)	83.33	root		data:Selection_45
-  └─Selection_45	83.33	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.a, 2), gt(planner__core__casetest__hint__hint.t4.b, 3), lt(planner__core__casetest__hint__hint.t4.a, 10), lt(planner__core__casetest__hint__hint.t4.a, 8), lt(planner__core__casetest__hint__hint.t4.a, 9)
-    └─TableFullScan_44	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+HashJoin_54	6944.44	root		CARTESIAN inner join
+├─IndexLookUp_70(Build)	83.33	root		
+│ ├─IndexRangeScan_67(Build)	250.00	cop[tikv]	table:t4, index:idx_b(b)	range:(3,10), keep order:false, stats:pseudo
+│ └─Selection_69(Probe)	83.33	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.a, 2)
+│   └─TableRowIDScan_68	250.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+└─TableReader_58(Probe)	83.33	root		data:Selection_57
+  └─Selection_57	83.33	cop[tikv]		gt(planner__core__casetest__hint__hint.t4.a, 2), gt(planner__core__casetest__hint__hint.t4.b, 3), lt(planner__core__casetest__hint__hint.t4.a, 10), lt(planner__core__casetest__hint__hint.t4.a, 8), lt(planner__core__casetest__hint__hint.t4.a, 9)
+    └─TableFullScan_56	10000.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	The qb_name hint qb is unused, please check whether the table list in the qb_name hint qb is correct
 drop table if exists t;
@@ -1685,9 +1685,9 @@ id	estRows	task	access object	operator info
 Sort	9990.00	root		planner__core__casetest__hint__hint.t.b
 └─Projection	9990.00	root		planner__core__casetest__hint__hint.t.a, planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t.c, planner__core__casetest__hint__hint.t.b, Column#7
   └─HashJoin	9990.00	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t.b)]
-    ├─HashAgg(Build)	7992.00	root		group by:planner__core__casetest__hint__hint.t.b, funcs:max(Column#14)->Column#7, funcs:firstrow(planner__core__casetest__hint__hint.t.b)->planner__core__casetest__hint__hint.t.b
+    ├─HashAgg(Build)	7992.00	root		group by:planner__core__casetest__hint__hint.t.b, funcs:max(Column#16)->Column#7, funcs:firstrow(planner__core__casetest__hint__hint.t.b)->planner__core__casetest__hint__hint.t.b
     │ └─IndexReader	7992.00	root		index:HashAgg
-    │   └─HashAgg	7992.00	cop[tikv]		group by:planner__core__casetest__hint__hint.t.b, funcs:max(planner__core__casetest__hint__hint.t.a)->Column#14
+    │   └─HashAgg	7992.00	cop[tikv]		group by:planner__core__casetest__hint__hint.t.b, funcs:max(planner__core__casetest__hint__hint.t.a)->Column#16
     │     └─IndexFullScan	9990.00	cop[tikv]	table:t2, index:b(b)	keep order:false, stats:pseudo
     └─TableReader(Probe)	9990.00	root		data:Selection
       └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.b))
@@ -1710,7 +1710,6 @@ Sort	12487.50	root		planner__core__casetest__hint__hint.t.a
     └─TableReader(Probe)	10000.00	root		data:TableFullScan
       └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
-Warning	1815	Optimizer Hint /*+ INL_JOIN(t2) */ or /*+ TIDB_INLJ(t2) */ is inapplicable
 Warning	1815	Optimizer Hint /*+ INL_JOIN(t2) */ or /*+ TIDB_INLJ(t2) */ is inapplicable
 drop table if exists t1, t2;
 create table t1(a int, b int, c int, key a(a));
