@@ -208,7 +208,6 @@ func TestMemoryAllocations(t *testing.T) {
 }
 
 func TestBudget(t *testing.T) {
-
 	p := NewResourcePoolDefault("test", 1)
 	p.Start(nil, (100))
 	p.allocAlignSize = 1
@@ -265,7 +264,6 @@ func TestBudget(t *testing.T) {
 }
 
 func TestNilBudget(t *testing.T) {
-
 	var ba *Budget
 	_ = ba.Used()
 	_ = ba.Pool()
@@ -280,7 +278,6 @@ func TestNilBudget(t *testing.T) {
 }
 
 func TestBytesPool(t *testing.T) {
-
 	p := NewResourcePoolDefault("test", 1)
 	p.Start(nil, (100))
 	p.maxUnusedBlocks = 1
@@ -356,7 +353,6 @@ func TestMemoryAllocationEdgeCases(t *testing.T) {
 }
 
 func TestMultiSharedGauge(t *testing.T) {
-
 	minAllocation := int64(1000)
 
 	parent := NewResourcePoolDefault("root", minAllocation)
@@ -659,7 +655,6 @@ func TestBytesPoolNoDeadlocks(t *testing.T) {
 }
 
 func BenchmarkBudgetGrow(b *testing.B) {
-
 	m := NewResourcePoolDefault("test",
 		1e9,
 	)
@@ -673,7 +668,6 @@ func BenchmarkBudgetGrow(b *testing.B) {
 
 func BenchmarkTraverseTree(b *testing.B) {
 	makePoolTree := func(numLevels int, numChildrenPerPool int) (root *ResourcePool, cleanup func()) {
-
 		allPools := make([][]*ResourcePool, numLevels)
 		allPools[0] = []*ResourcePool{getPool("root", nil /* parent */)}
 		for level := 1; level < numLevels; level++ {

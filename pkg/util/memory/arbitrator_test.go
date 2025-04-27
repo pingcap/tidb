@@ -499,11 +499,9 @@ func BenchmarkWrapList(b *testing.B) {
 		if (i % 200) >= 100 {
 			data.popFront()
 			popCnt++
-
 		} else {
 			data.pushBack(1234)
 			pushCnt++
-
 		}
 	}
 	require.Equal(b, data.size(), int64(pushCnt-popCnt))
@@ -1129,7 +1127,6 @@ func TestMemArbitrator(t *testing.T) {
 	}
 
 	{ // Standard mode
-
 		require.Equal(t, m.Allocated(), int64(0)) // alloced size
 
 		require.Equal(t, m.limit(), DefMaxLimit) // limit size
@@ -1159,7 +1156,6 @@ func TestMemArbitrator(t *testing.T) {
 		uid1 := pool1.UID()
 		pb1 := pool1.CreateBudget()
 		{ // no out-of-memory-action
-
 			require.Equal(t, pool1.limit, int64(math.MaxInt64))
 			require.Equal(t, pool1.mu.budget.Used(), int64(0))
 			require.Equal(t, pool1.mu.budget.Capacity(), int64(0))
@@ -2536,10 +2532,10 @@ func TestBasicUtils(t *testing.T) {
 
 	{
 		const cnt = 1 << 8
-		bgId := uint64(4068484684)
+		bgID := uint64(4068484684)
 		odd := 0
 		for i := range cnt {
-			n := shardIndexByUID(bgId+uint64(i)*2, cnt-1)
+			n := shardIndexByUID(bgID+uint64(i)*2, cnt-1)
 			if n&1 != 0 {
 				odd++
 			}
@@ -2679,7 +2675,6 @@ func TestBench(t *testing.T) {
 		ch1 := make(chan struct{})
 		var wg sync.WaitGroup
 		for i := 0; i < N; i += 1 {
-
 			wg.Add(1)
 			go func() {
 				<-ch1
@@ -2757,7 +2752,6 @@ func TestBench(t *testing.T) {
 		ch1 := make(chan struct{})
 		var wg sync.WaitGroup
 		for i := 0; i < N; i += 1 {
-
 			wg.Add(1)
 			go func() {
 				<-ch1
