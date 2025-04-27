@@ -16,9 +16,6 @@ package core
 
 import (
 	"fmt"
-	"math"
-	"slices"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
@@ -44,6 +41,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+	"math"
+	"slices"
 )
 
 func exhaustPhysicalPlans4LogicalUnionScan(lp base.LogicalPlan, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
@@ -1205,6 +1204,10 @@ func buildDataSource2IndexScanByIndexJoinProp(
 	} else {
 		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
 	}
+	// since there is a possibility that inner task can't be built, we just return base.InvalidTask.
+	if innerTask == nil {
+		return base.InvalidTask
+	}
 	// prepare the index path chosen information and wrap them as IndexJoinInfo and fill back to CopTask.
 	// here we don't need to construct physical index join here anymore, because we will encapsulate it bottom-up.
 	// chosenPath and lastColManager of indexJoinResult should be returned to the caller (seen by index join to keep
@@ -1270,6 +1273,9 @@ func buildDataSource2TableScanByIndexJoinProp(
 		} else {
 			innerTask = constructDS2TableScanTask(ds, localRanges, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt)
 		}
+	}
+	if innerTask == nil {
+		return base.InvalidTask
 	}
 	// prepare the index path chosen information and wrap them as IndexJoinInfo and fill back to CopTask.
 	// here we don't need to construct physical index join here anymore, because we will encapsulate it bottom-up.
@@ -2775,6 +2781,18 @@ func exhaustPhysicalPlans4LogicalJoin(lp base.LogicalPlan, prop *property.Physic
 		if p.SCtx().GetSessionVars().EnhanceIndexJoinBuildV2 {
 			indexJoins := tryToEnumerateIndexJoin(p, prop)
 			joins = append(joins, indexJoins...)
+
+			failpoint.Inject("MockOnlyEnableIndexHashJoinV2", func(val failpoint.Value) {
+				if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL {
+					indexHashJoin := make([]base.PhysicalPlan, 0, len(indexJoins))
+					for _, one := range indexJoins {
+						if _, ok := one.(*PhysicalIndexHashJoin); ok {
+							indexHashJoin = append(indexHashJoin, one)
+						}
+					}
+					failpoint.Return(indexHashJoin, true, nil)
+				}
+			})
 		} else {
 			indexJoins, forced := tryToGetIndexJoin(p, prop)
 			if forced {
