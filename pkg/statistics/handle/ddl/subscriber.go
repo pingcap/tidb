@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/history"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
@@ -304,9 +305,9 @@ func (h subscriber) recordHistoricalStatsMeta(
 	return history.RecordHistoricalStatsMeta(
 		ctx,
 		sctx,
-		id,
 		startTS,
 		util.StatsMetaHistorySourceSchemaChange,
+		id,
 	)
 }
 
@@ -315,7 +316,7 @@ func (h subscriber) delayedDeleteStats4PhysicalID(
 	sctx sessionctx.Context,
 	id int64,
 ) error {
-	startTS, err2 := storage.UpdateStatsMetaVersionForGC(ctx, sctx, id)
+	startTS, err2 := storage.UpdateStatsMetaVerAndLastHistUpdateVer(ctx, sctx, id)
 	if err2 != nil {
 		return errors.Trace(err2)
 	}
@@ -362,7 +363,7 @@ func getCurrentPruneMode(
 ) (variable.PartitionPruneMode, error) {
 	pruneMode, err := sctx.GetSessionVars().
 		GlobalVarsAccessor.
-		GetGlobalSysVar(variable.TiDBPartitionPruneMode)
+		GetGlobalSysVar(vardef.TiDBPartitionPruneMode)
 	return variable.PartitionPruneMode(pruneMode), errors.Trace(err)
 }
 
@@ -371,7 +372,7 @@ func getEnableHistoricalStats(
 ) (bool, error) {
 	val, err := sctx.GetSessionVars().
 		GlobalVarsAccessor.
-		GetGlobalSysVar(variable.TiDBEnableHistoricalStats)
+		GetGlobalSysVar(vardef.TiDBEnableHistoricalStats)
 	return variable.TiDBOptOn(val), errors.Trace(err)
 }
 
@@ -413,11 +414,13 @@ func updateGlobalTableStats4DropPartition(
 		ctx,
 		sctx,
 		startTS,
-		variable.TableDelta{Count: count, Delta: delta},
-		globalTableInfo.ID,
-		isLocked,
+		storage.NewDeltaUpdate(globalTableInfo.ID, variable.TableDelta{Count: count, Delta: delta}, isLocked),
 	))
 }
+
+const (
+	schemaNotFound = "Not Found"
+)
 
 func updateGlobalTableStats4ExchangePartition(
 	ctx context.Context,
@@ -454,9 +457,12 @@ func updateGlobalTableStats4ExchangePartition(
 
 	// Update the global stats.
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	globalTableSchemaName := schemaNotFound
 	globalTableSchema, ok := infoschema.SchemaByTable(is, globalTableInfo)
-	if !ok {
-		return errors.Errorf("schema not found for table %s", globalTableInfo.Name.O)
+	if ok {
+		globalTableSchemaName = globalTableSchema.Name.O
+	} else {
+		logutil.StatsSampleLogger().Info("Schema not found for table, it may have been dropped", zap.Int64("tableID", globalTableInfo.ID))
 	}
 	if err = updateStatsWithCountDeltaAndModifyCountDelta(
 		ctx,
@@ -464,7 +470,7 @@ func updateGlobalTableStats4ExchangePartition(
 		globalTableInfo.ID, countDelta, modifyCountDelta,
 	); err != nil {
 		fields := exchangePartitionLogFields(
-			globalTableSchema.Name.O,
+			globalTableSchemaName,
 			globalTableInfo,
 			originalPartInfo.Definitions[0],
 			originalTableInfo,
@@ -484,7 +490,7 @@ func updateGlobalTableStats4ExchangePartition(
 	logutil.StatsLogger().Info(
 		"Update global stats after exchange partition",
 		exchangePartitionLogFields(
-			globalTableSchema.Name.O,
+			globalTableSchemaName,
 			globalTableInfo,
 			originalPartInfo.Definitions[0],
 			originalTableInfo,
@@ -567,9 +573,12 @@ func updateGlobalTableStats4TruncatePartition(
 	}
 
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	globalTableSchemaName := schemaNotFound
 	globalTableSchema, ok := infoschema.SchemaByTable(is, globalTableInfo)
-	if !ok {
-		return errors.Errorf("schema not found for table %s", globalTableInfo.Name.O)
+	if ok {
+		globalTableSchemaName = globalTableSchema.Name.O
+	} else {
+		logutil.StatsSampleLogger().Info("Schema not found for table, it may have been dropped", zap.Int64("tableID", globalTableInfo.ID))
 	}
 	lockedTables, err := lockstats.QueryLockedTables(ctx, sctx)
 	if err != nil {
@@ -597,13 +606,11 @@ func updateGlobalTableStats4TruncatePartition(
 		ctx,
 		sctx,
 		startTS,
-		variable.TableDelta{Count: count, Delta: delta},
-		globalTableInfo.ID,
-		isLocked,
+		storage.NewDeltaUpdate(globalTableInfo.ID, variable.TableDelta{Count: count, Delta: delta}, isLocked),
 	)
 	if err != nil {
 		fields := truncatePartitionsLogFields(
-			globalTableSchema,
+			globalTableSchemaName,
 			globalTableInfo,
 			partitionIDs,
 			partitionNames,
@@ -621,7 +628,7 @@ func updateGlobalTableStats4TruncatePartition(
 
 	logutil.StatsLogger().Info("Update global stats after truncate partition",
 		truncatePartitionsLogFields(
-			globalTableSchema,
+			globalTableSchemaName,
 			globalTableInfo,
 			partitionIDs,
 			partitionNames,
@@ -635,7 +642,7 @@ func updateGlobalTableStats4TruncatePartition(
 }
 
 func truncatePartitionsLogFields(
-	globalTableSchema *model.DBInfo,
+	globalTableSchemaName string,
 	globalTableInfo *model.TableInfo,
 	partitionIDs []int64,
 	partitionNames []string,
@@ -645,7 +652,7 @@ func truncatePartitionsLogFields(
 	isLocked bool,
 ) []zap.Field {
 	return []zap.Field{
-		zap.String("schema", globalTableSchema.Name.O),
+		zap.String("schema", globalTableSchemaName),
 		zap.Int64("tableID", globalTableInfo.ID),
 		zap.String("tableName", globalTableInfo.Name.O),
 		zap.Int64s("partitionIDs", partitionIDs),

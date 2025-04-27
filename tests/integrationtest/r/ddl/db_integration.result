@@ -372,21 +372,6 @@ alter table t add unique index idx_ac(a, c);
 alter table t add unique index idx_b(b);
 Error 8264 (HY000): Global Index is needed for index 'idx_b', since the unique index is not including all partitioning columns, and GLOBAL is not given as IndexOption
 drop table if exists t;
-drop table if exists t_ft;
-create table t_ft (a text, fulltext key (a));
-show warnings;
-Level	Code	Message
-Warning	1214	The used table type doesn't support FULLTEXT indexes
-alter table t_ft add fulltext key (a);
-show warnings;
-Level	Code	Message
-Warning	1214	The used table type doesn't support FULLTEXT indexes
-show create table t_ft;
-Table	Create Table
-t_ft	CREATE TABLE `t_ft` (
-  `a` text DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-drop table if exists t_ft;
 drop table if exists t;
 create table t (a int default b'1');
 show create table t;
@@ -805,7 +790,7 @@ alter table t1 alter index a invisible;
 Error 3522 (HY000): A primary key index cannot be invisible
 create table t2(a int, primary key(a));
 alter table t2 alter index PRIMARY invisible;
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 34 near "PRIMARY invisible;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 34 near "PRIMARY invisible" 
 create table t3(a int NOT NULL, b int);
 alter table t3 add index idx((a+b));
 select distinct index_name, is_visible from information_schema.statistics where table_schema = 'ddl__db_integration' and table_name = 't3' order by index_name;

@@ -25,13 +25,16 @@ type leftOuterSemiJoinProbe struct {
 
 	// isNullRows marks whether the left side row matched result is null
 	isNullRows []bool
+	// isAnti marks whether the join is anti semi join
+	isAnti bool
 }
 
 var _ ProbeV2 = &leftOuterSemiJoinProbe{}
 
-func newLeftOuterSemiJoinProbe(base baseJoinProbe) *leftOuterSemiJoinProbe {
+func newLeftOuterSemiJoinProbe(base baseJoinProbe, isAnti bool) *leftOuterSemiJoinProbe {
 	probe := &leftOuterSemiJoinProbe{
 		baseSemiJoin: *newBaseSemiJoin(base, false),
+		isAnti:       isAnti,
 	}
 	return probe
 }
@@ -193,18 +196,34 @@ func (j *leftOuterSemiJoinProbe) buildResult(chk *chunk.Chunk, startProbeRow int
 		}
 	}
 
-	for i := startProbeRow; i < j.currentProbeRow; i++ {
-		if selected != nil && !selected[i] {
-			continue
+	if j.isAnti {
+		for i := startProbeRow; i < j.currentProbeRow; i++ {
+			if selected != nil && !selected[i] {
+				continue
+			}
+			if j.isMatchedRows[i] {
+				chk.AppendInt64(len(j.lUsed), 0)
+			} else if j.isNullRows[i] {
+				chk.AppendNull(len(j.lUsed))
+			} else {
+				chk.AppendInt64(len(j.lUsed), 1)
+			}
 		}
-		if j.isMatchedRows[i] {
-			chk.AppendInt64(len(j.lUsed), 1)
-		} else if j.isNullRows[i] {
-			chk.AppendNull(len(j.lUsed))
-		} else {
-			chk.AppendInt64(len(j.lUsed), 0)
+	} else {
+		for i := startProbeRow; i < j.currentProbeRow; i++ {
+			if selected != nil && !selected[i] {
+				continue
+			}
+			if j.isMatchedRows[i] {
+				chk.AppendInt64(len(j.lUsed), 1)
+			} else if j.isNullRows[i] {
+				chk.AppendNull(len(j.lUsed))
+			} else {
+				chk.AppendInt64(len(j.lUsed), 0)
+			}
 		}
 	}
+
 	chk.SetNumVirtualRows(chk.NumRows())
 }
 

@@ -19,11 +19,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"go.uber.org/zap"
 )
@@ -94,20 +93,12 @@ func convertAddIdxJob2RollbackJob(
 	job.State = model.JobStateRollingback
 	// TODO(tangenta): get duplicate column and match index.
 	err = completeErr(err, allIndexInfos[0])
-	if ingest.LitBackCtxMgr != nil {
-		ingest.LitBackCtxMgr.Unregister(job.ID)
-	}
 	return ver, errors.Trace(err)
 }
 
 // convertNotReorgAddIdxJob2RollbackJob converts the add index job that are not started workers to rollingbackJob,
 // to rollback add index operations. job.SnapshotVer == 0 indicates the workers are not started.
 func convertNotReorgAddIdxJob2RollbackJob(jobCtx *jobContext, job *model.Job, occuredErr error) (ver int64, err error) {
-	defer func() {
-		if ingest.LitBackCtxMgr != nil {
-			ingest.LitBackCtxMgr.Unregister(job.ID)
-		}
-	}()
 	schemaID := job.SchemaID
 	tblInfo, err := GetTableInfoAndCancelFaultJob(jobCtx.metaMut, job, schemaID)
 	if err != nil {
@@ -257,11 +248,11 @@ func rollingbackDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, err er
 	}
 }
 
-func rollingbackAddVectorIndex(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+func rollingbackAddColumanrIndex(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	if job.SchemaState == model.StateWriteReorganization {
 		// Add vector index workers are started. need to ask them to exit.
 		jobCtx.logger.Info("run the cancelling DDL job", zap.String("job", job.String()))
-		ver, err = w.onCreateVectorIndex(jobCtx, job)
+		ver, err = w.onCreateColumnarIndex(jobCtx, job)
 	} else {
 		// add index's reorg workers are not running, remove the indexInfo in tableInfo.
 		ver, err = convertNotReorgAddIdxJob2RollbackJob(jobCtx, job, dbterror.ErrCancelledDDLJob)
@@ -609,8 +600,8 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 		ver, err = rollingbackAddIndex(jobCtx, job)
 	case model.ActionAddPrimaryKey:
 		ver, err = rollingbackAddIndex(jobCtx, job)
-	case model.ActionAddVectorIndex:
-		ver, err = rollingbackAddVectorIndex(w, jobCtx, job)
+	case model.ActionAddColumnarIndex:
+		ver, err = rollingbackAddColumanrIndex(w, jobCtx, job)
 	case model.ActionAddTablePartition:
 		ver, err = rollingbackAddTablePartition(jobCtx, job)
 	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
@@ -680,7 +671,7 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 			if err1 := loadDDLVars(w); err1 != nil {
 				logger.Error("load DDL global variable failed", zap.Error(err1))
 			}
-			errorCount := variable.GetDDLErrorCountLimit()
+			errorCount := vardef.GetDDLErrorCountLimit()
 			if job.ErrorCount > errorCount {
 				logger.Warn("rollback DDL job error count exceed the limit, cancelled it now", zap.Int64("errorCountLimit", errorCount))
 				job.Error = toTError(errors.Errorf("rollback DDL job error count exceed the limit %d, cancelled it now", errorCount))

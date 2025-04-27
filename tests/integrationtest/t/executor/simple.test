@@ -514,18 +514,46 @@ select plugin from mysql.user where user = 'native_plugin_user';
 show create user default_sha2_role;
 select plugin from mysql.user where user = 'default_sha2_role';
 
+# default_sha2_user and native_plugin_user should encode the password with different way.
+drop user default_sha2_user;
+drop user native_plugin_user;
+create user default_sha2_user identified by '1234';
+create user native_plugin_user identified with 'mysql_native_password' by '1234';
+select count(distinct authentication_string) from mysql.user where user = 'default_sha2_user' or user = 'native_plugin_user';
+
 alter user default_sha2_user identified with 'tidb_sm3_password';
 show create user default_sha2_user;
 select plugin from mysql.user where user = 'default_sha2_user';
+drop user default_sha2_user;
 
-alter user default_sha2_user identified with 'authentication_ldap_simple';
-show create user default_sha2_user;
+create user default_sha2_user identified by '1234';
+set password for default_sha2_user = '12345';
+alter user default_sha2_user identified by '123456';
 select plugin from mysql.user where user = 'default_sha2_user';
-
-alter user default_sha2_user identified with 'authentication_ldap_sasl';
-show create user default_sha2_user;
+alter user default_sha2_user identified with 'mysql_native_password' by '123456';
 select plugin from mysql.user where user = 'default_sha2_user';
+alter user default_sha2_user identified with 'caching_sha2_password';
+# the authentication_string should be empty
+select plugin, length(authentication_string) from mysql.user where user = 'default_sha2_user';
 
+# test GRANT create default user
+
+set sql_mode = '';
+select @@sql_mode;
+select user, host, plugin from mysql.user where user = 'non_exist_user';
+grant select on test.* to non_exist_user;
+select user, host, plugin from mysql.user where user = 'non_exist_user';
+set @@sql_mode = default;
+
+# test SHOW CREATE USER
+
+alter user non_exist_user identified with 'mysql_native_password';
+show create user non_exist_user;
+update mysql.user set plugin = '' where user = 'non_exist_user';
+flush privileges;
+show create user non_exist_user;
+
+drop user non_exist_user;
 drop user default_sm3_user;
 drop user default_sha2_user;
 drop user native_plugin_user;

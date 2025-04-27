@@ -526,204 +526,187 @@ TopN	10.00	root		list_partition_pruning.thash.a, offset:0, count:10
     └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:thash, partition:p3	keep order:false, stats:pseudo
 explain format='brief' select a from t use index (ia) where a > 10 and c = 10 order by a limit 10;
 id	estRows	task	access object	operator info
-Projection	3.33	root		list_partition_pruning.t.a
-└─Limit	3.33	root		offset:0, count:10
-  └─Projection	3.33	root		list_partition_pruning.t.a, list_partition_pruning.t.c
-    └─IndexLookUp	3.33	root		
-      ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:t, index:ia(a)	range:(10,+inf], keep order:true, stats:pseudo
-      └─Selection(Probe)	3.33	cop[tikv]		eq(list_partition_pruning.t.c, 10)
-        └─TableRowIDScan	3333.33	cop[tikv]	table:t	keep order:false, stats:pseudo
+Limit	3.33	root		offset:0, count:10
+└─Projection	3.33	root		list_partition_pruning.t.a, list_partition_pruning.t.c
+  └─IndexLookUp	3.33	root		
+    ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:t, index:ia(a)	range:(10,+inf], keep order:true, stats:pseudo
+    └─Selection(Probe)	3.33	cop[tikv]		eq(list_partition_pruning.t.c, 10)
+      └─TableRowIDScan	3333.33	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='brief' select a from trange use index (ia) where a > 10 and c = 10 order by a limit 10;
 id	estRows	task	access object	operator info
 TopN	10.00	root		list_partition_pruning.trange.a, offset:0, count:10
 └─PartitionUnion	10.00	root		
-  ├─Projection	3.33	root		list_partition_pruning.trange.a
-  │ └─Limit	3.33	root		offset:0, count:10
-  │   └─Projection	3.33	root		list_partition_pruning.trange.a, list_partition_pruning.trange.c
-  │     └─IndexLookUp	3.33	root		
-  │       ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:trange, partition:p1, index:ia(a)	range:(10,+inf], keep order:true, stats:pseudo
-  │       └─Selection(Probe)	3.33	cop[tikv]		eq(list_partition_pruning.trange.c, 10)
-  │         └─TableRowIDScan	3333.33	cop[tikv]	table:trange, partition:p1	keep order:false, stats:pseudo
-  ├─Projection	3.33	root		list_partition_pruning.trange.a
-  │ └─Limit	3.33	root		offset:0, count:10
-  │   └─Projection	3.33	root		list_partition_pruning.trange.a, list_partition_pruning.trange.c
-  │     └─IndexLookUp	3.33	root		
-  │       ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:trange, partition:p2, index:ia(a)	range:(10,+inf], keep order:true, stats:pseudo
-  │       └─Selection(Probe)	3.33	cop[tikv]		eq(list_partition_pruning.trange.c, 10)
-  │         └─TableRowIDScan	3333.33	cop[tikv]	table:trange, partition:p2	keep order:false, stats:pseudo
-  └─Projection	3.33	root		list_partition_pruning.trange.a
-    └─Limit	3.33	root		offset:0, count:10
-      └─Projection	3.33	root		list_partition_pruning.trange.a, list_partition_pruning.trange.c
-        └─IndexLookUp	3.33	root		
-          ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:trange, partition:p3, index:ia(a)	range:(10,+inf], keep order:true, stats:pseudo
-          └─Selection(Probe)	3.33	cop[tikv]		eq(list_partition_pruning.trange.c, 10)
-            └─TableRowIDScan	3333.33	cop[tikv]	table:trange, partition:p3	keep order:false, stats:pseudo
+  ├─Limit	3.33	root		offset:0, count:10
+  │ └─Projection	3.33	root		list_partition_pruning.trange.a, list_partition_pruning.trange.c
+  │   └─IndexLookUp	3.33	root		
+  │     ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:trange, partition:p1, index:ia(a)	range:(10,+inf], keep order:true, stats:pseudo
+  │     └─Selection(Probe)	3.33	cop[tikv]		eq(list_partition_pruning.trange.c, 10)
+  │       └─TableRowIDScan	3333.33	cop[tikv]	table:trange, partition:p1	keep order:false, stats:pseudo
+  ├─Limit	3.33	root		offset:0, count:10
+  │ └─Projection	3.33	root		list_partition_pruning.trange.a, list_partition_pruning.trange.c
+  │   └─IndexLookUp	3.33	root		
+  │     ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:trange, partition:p2, index:ia(a)	range:(10,+inf], keep order:true, stats:pseudo
+  │     └─Selection(Probe)	3.33	cop[tikv]		eq(list_partition_pruning.trange.c, 10)
+  │       └─TableRowIDScan	3333.33	cop[tikv]	table:trange, partition:p2	keep order:false, stats:pseudo
+  └─Limit	3.33	root		offset:0, count:10
+    └─Projection	3.33	root		list_partition_pruning.trange.a, list_partition_pruning.trange.c
+      └─IndexLookUp	3.33	root		
+        ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:trange, partition:p3, index:ia(a)	range:(10,+inf], keep order:true, stats:pseudo
+        └─Selection(Probe)	3.33	cop[tikv]		eq(list_partition_pruning.trange.c, 10)
+          └─TableRowIDScan	3333.33	cop[tikv]	table:trange, partition:p3	keep order:false, stats:pseudo
 explain format='brief' select a from tlist use index (ia) where a > 10 and c = 10 order by a limit 10;
 id	estRows	task	access object	operator info
 TopN	6.67	root		list_partition_pruning.tlist.a, offset:0, count:10
 └─PartitionUnion	6.67	root		
-  ├─Projection	3.33	root		list_partition_pruning.tlist.a
-  │ └─Limit	3.33	root		offset:0, count:10
-  │   └─Projection	3.33	root		list_partition_pruning.tlist.a, list_partition_pruning.tlist.c
-  │     └─IndexLookUp	3.33	root		
-  │       ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:tlist, partition:p0, index:ia(a)	range:(10,+inf], keep order:true, stats:pseudo
-  │       └─Selection(Probe)	3.33	cop[tikv]		eq(list_partition_pruning.tlist.c, 10)
-  │         └─TableRowIDScan	3333.33	cop[tikv]	table:tlist, partition:p0	keep order:false, stats:pseudo
-  └─Projection	3.33	root		list_partition_pruning.tlist.a
-    └─Limit	3.33	root		offset:0, count:10
-      └─Projection	3.33	root		list_partition_pruning.tlist.a, list_partition_pruning.tlist.c
-        └─IndexLookUp	3.33	root		
-          ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:tlist, partition:p1, index:ia(a)	range:(10,+inf], keep order:true, stats:pseudo
-          └─Selection(Probe)	3.33	cop[tikv]		eq(list_partition_pruning.tlist.c, 10)
-            └─TableRowIDScan	3333.33	cop[tikv]	table:tlist, partition:p1	keep order:false, stats:pseudo
+  ├─Limit	3.33	root		offset:0, count:10
+  │ └─Projection	3.33	root		list_partition_pruning.tlist.a, list_partition_pruning.tlist.c
+  │   └─IndexLookUp	3.33	root		
+  │     ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:tlist, partition:p0, index:ia(a)	range:(10,+inf], keep order:true, stats:pseudo
+  │     └─Selection(Probe)	3.33	cop[tikv]		eq(list_partition_pruning.tlist.c, 10)
+  │       └─TableRowIDScan	3333.33	cop[tikv]	table:tlist, partition:p0	keep order:false, stats:pseudo
+  └─Limit	3.33	root		offset:0, count:10
+    └─Projection	3.33	root		list_partition_pruning.tlist.a, list_partition_pruning.tlist.c
+      └─IndexLookUp	3.33	root		
+        ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:tlist, partition:p1, index:ia(a)	range:(10,+inf], keep order:true, stats:pseudo
+        └─Selection(Probe)	3.33	cop[tikv]		eq(list_partition_pruning.tlist.c, 10)
+          └─TableRowIDScan	3333.33	cop[tikv]	table:tlist, partition:p1	keep order:false, stats:pseudo
 explain format='brief' select a from thash use index (ia) where a > 10 and c = 10 order by a limit 10;
 id	estRows	task	access object	operator info
 TopN	10.00	root		list_partition_pruning.thash.a, offset:0, count:10
 └─PartitionUnion	13.33	root		
-  ├─Projection	3.33	root		list_partition_pruning.thash.a
-  │ └─Limit	3.33	root		offset:0, count:10
-  │   └─Projection	3.33	root		list_partition_pruning.thash.a, list_partition_pruning.thash.c
-  │     └─IndexLookUp	3.33	root		
-  │       ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:thash, partition:p0, index:ia(a)	range:(10,+inf], keep order:true, stats:pseudo
-  │       └─Selection(Probe)	3.33	cop[tikv]		eq(list_partition_pruning.thash.c, 10)
-  │         └─TableRowIDScan	3333.33	cop[tikv]	table:thash, partition:p0	keep order:false, stats:pseudo
-  ├─Projection	3.33	root		list_partition_pruning.thash.a
-  │ └─Limit	3.33	root		offset:0, count:10
-  │   └─Projection	3.33	root		list_partition_pruning.thash.a, list_partition_pruning.thash.c
-  │     └─IndexLookUp	3.33	root		
-  │       ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:thash, partition:p1, index:ia(a)	range:(10,+inf], keep order:true, stats:pseudo
-  │       └─Selection(Probe)	3.33	cop[tikv]		eq(list_partition_pruning.thash.c, 10)
-  │         └─TableRowIDScan	3333.33	cop[tikv]	table:thash, partition:p1	keep order:false, stats:pseudo
-  ├─Projection	3.33	root		list_partition_pruning.thash.a
-  │ └─Limit	3.33	root		offset:0, count:10
-  │   └─Projection	3.33	root		list_partition_pruning.thash.a, list_partition_pruning.thash.c
-  │     └─IndexLookUp	3.33	root		
-  │       ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:thash, partition:p2, index:ia(a)	range:(10,+inf], keep order:true, stats:pseudo
-  │       └─Selection(Probe)	3.33	cop[tikv]		eq(list_partition_pruning.thash.c, 10)
-  │         └─TableRowIDScan	3333.33	cop[tikv]	table:thash, partition:p2	keep order:false, stats:pseudo
-  └─Projection	3.33	root		list_partition_pruning.thash.a
-    └─Limit	3.33	root		offset:0, count:10
-      └─Projection	3.33	root		list_partition_pruning.thash.a, list_partition_pruning.thash.c
-        └─IndexLookUp	3.33	root		
-          ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:thash, partition:p3, index:ia(a)	range:(10,+inf], keep order:true, stats:pseudo
-          └─Selection(Probe)	3.33	cop[tikv]		eq(list_partition_pruning.thash.c, 10)
-            └─TableRowIDScan	3333.33	cop[tikv]	table:thash, partition:p3	keep order:false, stats:pseudo
+  ├─Limit	3.33	root		offset:0, count:10
+  │ └─Projection	3.33	root		list_partition_pruning.thash.a, list_partition_pruning.thash.c
+  │   └─IndexLookUp	3.33	root		
+  │     ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:thash, partition:p0, index:ia(a)	range:(10,+inf], keep order:true, stats:pseudo
+  │     └─Selection(Probe)	3.33	cop[tikv]		eq(list_partition_pruning.thash.c, 10)
+  │       └─TableRowIDScan	3333.33	cop[tikv]	table:thash, partition:p0	keep order:false, stats:pseudo
+  ├─Limit	3.33	root		offset:0, count:10
+  │ └─Projection	3.33	root		list_partition_pruning.thash.a, list_partition_pruning.thash.c
+  │   └─IndexLookUp	3.33	root		
+  │     ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:thash, partition:p1, index:ia(a)	range:(10,+inf], keep order:true, stats:pseudo
+  │     └─Selection(Probe)	3.33	cop[tikv]		eq(list_partition_pruning.thash.c, 10)
+  │       └─TableRowIDScan	3333.33	cop[tikv]	table:thash, partition:p1	keep order:false, stats:pseudo
+  ├─Limit	3.33	root		offset:0, count:10
+  │ └─Projection	3.33	root		list_partition_pruning.thash.a, list_partition_pruning.thash.c
+  │   └─IndexLookUp	3.33	root		
+  │     ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:thash, partition:p2, index:ia(a)	range:(10,+inf], keep order:true, stats:pseudo
+  │     └─Selection(Probe)	3.33	cop[tikv]		eq(list_partition_pruning.thash.c, 10)
+  │       └─TableRowIDScan	3333.33	cop[tikv]	table:thash, partition:p2	keep order:false, stats:pseudo
+  └─Limit	3.33	root		offset:0, count:10
+    └─Projection	3.33	root		list_partition_pruning.thash.a, list_partition_pruning.thash.c
+      └─IndexLookUp	3.33	root		
+        ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:thash, partition:p3, index:ia(a)	range:(10,+inf], keep order:true, stats:pseudo
+        └─Selection(Probe)	3.33	cop[tikv]		eq(list_partition_pruning.thash.c, 10)
+          └─TableRowIDScan	3333.33	cop[tikv]	table:thash, partition:p3	keep order:false, stats:pseudo
 explain format='brief' select a from t use index () where b > 10 order by b limit 10;
 id	estRows	task	access object	operator info
-Projection	10.00	root		list_partition_pruning.t.a
-└─Limit	10.00	root		offset:0, count:10
-  └─TableReader	10.00	root		data:Limit
-    └─Limit	10.00	cop[tikv]		offset:0, count:10
-      └─TableRangeScan	10.00	cop[tikv]	table:t	range:(10,+inf], keep order:true, stats:pseudo
+Limit	10.00	root		offset:0, count:10
+└─TableReader	10.00	root		data:Limit
+  └─Limit	10.00	cop[tikv]		offset:0, count:10
+    └─TableRangeScan	10.00	cop[tikv]	table:t	range:(10,+inf], keep order:true, stats:pseudo
 explain format='brief' select a from trange use index () where b > 10 order by b limit 10;
 id	estRows	task	access object	operator info
-Projection	10.00	root		list_partition_pruning.trange.a
-└─TopN	10.00	root		list_partition_pruning.trange.b, offset:0, count:10
-  └─PartitionUnion	30.00	root		
-    ├─Limit	10.00	root		offset:0, count:10
-    │ └─TableReader	10.00	root		data:Limit
-    │   └─Limit	10.00	cop[tikv]		offset:0, count:10
-    │     └─TableRangeScan	10.00	cop[tikv]	table:trange, partition:p1	range:(10,+inf], keep order:true, stats:pseudo
-    ├─Limit	10.00	root		offset:0, count:10
-    │ └─TableReader	10.00	root		data:Limit
-    │   └─Limit	10.00	cop[tikv]		offset:0, count:10
-    │     └─TableRangeScan	10.00	cop[tikv]	table:trange, partition:p2	range:(10,+inf], keep order:true, stats:pseudo
-    └─Limit	10.00	root		offset:0, count:10
-      └─TableReader	10.00	root		data:Limit
-        └─Limit	10.00	cop[tikv]		offset:0, count:10
-          └─TableRangeScan	10.00	cop[tikv]	table:trange, partition:p3	range:(10,+inf], keep order:true, stats:pseudo
+TopN	10.00	root		list_partition_pruning.trange.b, offset:0, count:10
+└─PartitionUnion	30.00	root		
+  ├─Limit	10.00	root		offset:0, count:10
+  │ └─TableReader	10.00	root		data:Limit
+  │   └─Limit	10.00	cop[tikv]		offset:0, count:10
+  │     └─TableRangeScan	10.00	cop[tikv]	table:trange, partition:p1	range:(10,+inf], keep order:true, stats:pseudo
+  ├─Limit	10.00	root		offset:0, count:10
+  │ └─TableReader	10.00	root		data:Limit
+  │   └─Limit	10.00	cop[tikv]		offset:0, count:10
+  │     └─TableRangeScan	10.00	cop[tikv]	table:trange, partition:p2	range:(10,+inf], keep order:true, stats:pseudo
+  └─Limit	10.00	root		offset:0, count:10
+    └─TableReader	10.00	root		data:Limit
+      └─Limit	10.00	cop[tikv]		offset:0, count:10
+        └─TableRangeScan	10.00	cop[tikv]	table:trange, partition:p3	range:(10,+inf], keep order:true, stats:pseudo
 explain format='brief' select a from tlist use index () where b > 10 order by b limit 10;
 id	estRows	task	access object	operator info
 TableDual	0.00	root		rows:0
 explain format='brief' select a from thash use index () where b > 10 order by b limit 10;
 id	estRows	task	access object	operator info
-Projection	10.00	root		list_partition_pruning.thash.a
-└─TopN	10.00	root		list_partition_pruning.thash.b, offset:0, count:10
-  └─PartitionUnion	40.00	root		
-    ├─Limit	10.00	root		offset:0, count:10
-    │ └─TableReader	10.00	root		data:Limit
-    │   └─Limit	10.00	cop[tikv]		offset:0, count:10
-    │     └─TableRangeScan	10.00	cop[tikv]	table:thash, partition:p0	range:(10,+inf], keep order:true, stats:pseudo
-    ├─Limit	10.00	root		offset:0, count:10
-    │ └─TableReader	10.00	root		data:Limit
-    │   └─Limit	10.00	cop[tikv]		offset:0, count:10
-    │     └─TableRangeScan	10.00	cop[tikv]	table:thash, partition:p1	range:(10,+inf], keep order:true, stats:pseudo
-    ├─Limit	10.00	root		offset:0, count:10
-    │ └─TableReader	10.00	root		data:Limit
-    │   └─Limit	10.00	cop[tikv]		offset:0, count:10
-    │     └─TableRangeScan	10.00	cop[tikv]	table:thash, partition:p2	range:(10,+inf], keep order:true, stats:pseudo
-    └─Limit	10.00	root		offset:0, count:10
-      └─TableReader	10.00	root		data:Limit
-        └─Limit	10.00	cop[tikv]		offset:0, count:10
-          └─TableRangeScan	10.00	cop[tikv]	table:thash, partition:p3	range:(10,+inf], keep order:true, stats:pseudo
+TopN	10.00	root		list_partition_pruning.thash.b, offset:0, count:10
+└─PartitionUnion	40.00	root		
+  ├─Limit	10.00	root		offset:0, count:10
+  │ └─TableReader	10.00	root		data:Limit
+  │   └─Limit	10.00	cop[tikv]		offset:0, count:10
+  │     └─TableRangeScan	10.00	cop[tikv]	table:thash, partition:p0	range:(10,+inf], keep order:true, stats:pseudo
+  ├─Limit	10.00	root		offset:0, count:10
+  │ └─TableReader	10.00	root		data:Limit
+  │   └─Limit	10.00	cop[tikv]		offset:0, count:10
+  │     └─TableRangeScan	10.00	cop[tikv]	table:thash, partition:p1	range:(10,+inf], keep order:true, stats:pseudo
+  ├─Limit	10.00	root		offset:0, count:10
+  │ └─TableReader	10.00	root		data:Limit
+  │   └─Limit	10.00	cop[tikv]		offset:0, count:10
+  │     └─TableRangeScan	10.00	cop[tikv]	table:thash, partition:p2	range:(10,+inf], keep order:true, stats:pseudo
+  └─Limit	10.00	root		offset:0, count:10
+    └─TableReader	10.00	root		data:Limit
+      └─Limit	10.00	cop[tikv]		offset:0, count:10
+        └─TableRangeScan	10.00	cop[tikv]	table:thash, partition:p3	range:(10,+inf], keep order:true, stats:pseudo
 explain format='brief' select a from t use index () where a > 10 order by b limit 10;
 id	estRows	task	access object	operator info
-Projection	10.00	root		list_partition_pruning.t.a
-└─Limit	10.00	root		offset:0, count:10
-  └─TableReader	10.00	root		data:Limit
-    └─Limit	10.00	cop[tikv]		offset:0, count:10
-      └─Selection	10.00	cop[tikv]		gt(list_partition_pruning.t.a, 10)
-        └─TableFullScan	30.00	cop[tikv]	table:t	keep order:true, stats:pseudo
+Limit	10.00	root		offset:0, count:10
+└─TableReader	10.00	root		data:Limit
+  └─Limit	10.00	cop[tikv]		offset:0, count:10
+    └─Selection	10.00	cop[tikv]		gt(list_partition_pruning.t.a, 10)
+      └─TableFullScan	30.00	cop[tikv]	table:t	keep order:true, stats:pseudo
 explain format='brief' select a from trange use index () where a > 10 order by b limit 10;
 id	estRows	task	access object	operator info
-Projection	10.00	root		list_partition_pruning.trange.a
-└─TopN	10.00	root		list_partition_pruning.trange.b, offset:0, count:10
-  └─PartitionUnion	30.00	root		
-    ├─Limit	10.00	root		offset:0, count:10
-    │ └─TableReader	10.00	root		data:Limit
-    │   └─Limit	10.00	cop[tikv]		offset:0, count:10
-    │     └─Selection	10.00	cop[tikv]		gt(list_partition_pruning.trange.a, 10)
-    │       └─TableFullScan	30.00	cop[tikv]	table:trange, partition:p1	keep order:true, stats:pseudo
-    ├─Limit	10.00	root		offset:0, count:10
-    │ └─TableReader	10.00	root		data:Limit
-    │   └─Limit	10.00	cop[tikv]		offset:0, count:10
-    │     └─Selection	10.00	cop[tikv]		gt(list_partition_pruning.trange.a, 10)
-    │       └─TableFullScan	30.00	cop[tikv]	table:trange, partition:p2	keep order:true, stats:pseudo
-    └─Limit	10.00	root		offset:0, count:10
-      └─TableReader	10.00	root		data:Limit
-        └─Limit	10.00	cop[tikv]		offset:0, count:10
-          └─Selection	10.00	cop[tikv]		gt(list_partition_pruning.trange.a, 10)
-            └─TableFullScan	30.00	cop[tikv]	table:trange, partition:p3	keep order:true, stats:pseudo
+TopN	10.00	root		list_partition_pruning.trange.b, offset:0, count:10
+└─PartitionUnion	30.00	root		
+  ├─Limit	10.00	root		offset:0, count:10
+  │ └─TableReader	10.00	root		data:Limit
+  │   └─Limit	10.00	cop[tikv]		offset:0, count:10
+  │     └─Selection	10.00	cop[tikv]		gt(list_partition_pruning.trange.a, 10)
+  │       └─TableFullScan	30.00	cop[tikv]	table:trange, partition:p1	keep order:true, stats:pseudo
+  ├─Limit	10.00	root		offset:0, count:10
+  │ └─TableReader	10.00	root		data:Limit
+  │   └─Limit	10.00	cop[tikv]		offset:0, count:10
+  │     └─Selection	10.00	cop[tikv]		gt(list_partition_pruning.trange.a, 10)
+  │       └─TableFullScan	30.00	cop[tikv]	table:trange, partition:p2	keep order:true, stats:pseudo
+  └─Limit	10.00	root		offset:0, count:10
+    └─TableReader	10.00	root		data:Limit
+      └─Limit	10.00	cop[tikv]		offset:0, count:10
+        └─Selection	10.00	cop[tikv]		gt(list_partition_pruning.trange.a, 10)
+          └─TableFullScan	30.00	cop[tikv]	table:trange, partition:p3	keep order:true, stats:pseudo
 explain format='brief' select a from tlist use index () where a > 10 order by b limit 10;
 id	estRows	task	access object	operator info
-Projection	10.00	root		list_partition_pruning.tlist.a
-└─TopN	10.00	root		list_partition_pruning.tlist.b, offset:0, count:10
-  └─PartitionUnion	20.00	root		
-    ├─Limit	10.00	root		offset:0, count:10
-    │ └─TableReader	10.00	root		data:Limit
-    │   └─Limit	10.00	cop[tikv]		offset:0, count:10
-    │     └─Selection	10.00	cop[tikv]		gt(list_partition_pruning.tlist.a, 10)
-    │       └─TableFullScan	30.00	cop[tikv]	table:tlist, partition:p0	keep order:true, stats:pseudo
-    └─Limit	10.00	root		offset:0, count:10
-      └─TableReader	10.00	root		data:Limit
-        └─Limit	10.00	cop[tikv]		offset:0, count:10
-          └─Selection	10.00	cop[tikv]		gt(list_partition_pruning.tlist.a, 10)
-            └─TableFullScan	30.00	cop[tikv]	table:tlist, partition:p1	keep order:true, stats:pseudo
+TopN	10.00	root		list_partition_pruning.tlist.b, offset:0, count:10
+└─PartitionUnion	20.00	root		
+  ├─Limit	10.00	root		offset:0, count:10
+  │ └─TableReader	10.00	root		data:Limit
+  │   └─Limit	10.00	cop[tikv]		offset:0, count:10
+  │     └─Selection	10.00	cop[tikv]		gt(list_partition_pruning.tlist.a, 10)
+  │       └─TableFullScan	30.00	cop[tikv]	table:tlist, partition:p0	keep order:true, stats:pseudo
+  └─Limit	10.00	root		offset:0, count:10
+    └─TableReader	10.00	root		data:Limit
+      └─Limit	10.00	cop[tikv]		offset:0, count:10
+        └─Selection	10.00	cop[tikv]		gt(list_partition_pruning.tlist.a, 10)
+          └─TableFullScan	30.00	cop[tikv]	table:tlist, partition:p1	keep order:true, stats:pseudo
 explain format='brief' select a from thash use index () where a > 10 order by b limit 10;
 id	estRows	task	access object	operator info
-Projection	10.00	root		list_partition_pruning.thash.a
-└─TopN	10.00	root		list_partition_pruning.thash.b, offset:0, count:10
-  └─PartitionUnion	40.00	root		
-    ├─Limit	10.00	root		offset:0, count:10
-    │ └─TableReader	10.00	root		data:Limit
-    │   └─Limit	10.00	cop[tikv]		offset:0, count:10
-    │     └─Selection	10.00	cop[tikv]		gt(list_partition_pruning.thash.a, 10)
-    │       └─TableFullScan	30.00	cop[tikv]	table:thash, partition:p0	keep order:true, stats:pseudo
-    ├─Limit	10.00	root		offset:0, count:10
-    │ └─TableReader	10.00	root		data:Limit
-    │   └─Limit	10.00	cop[tikv]		offset:0, count:10
-    │     └─Selection	10.00	cop[tikv]		gt(list_partition_pruning.thash.a, 10)
-    │       └─TableFullScan	30.00	cop[tikv]	table:thash, partition:p1	keep order:true, stats:pseudo
-    ├─Limit	10.00	root		offset:0, count:10
-    │ └─TableReader	10.00	root		data:Limit
-    │   └─Limit	10.00	cop[tikv]		offset:0, count:10
-    │     └─Selection	10.00	cop[tikv]		gt(list_partition_pruning.thash.a, 10)
-    │       └─TableFullScan	30.00	cop[tikv]	table:thash, partition:p2	keep order:true, stats:pseudo
-    └─Limit	10.00	root		offset:0, count:10
-      └─TableReader	10.00	root		data:Limit
-        └─Limit	10.00	cop[tikv]		offset:0, count:10
-          └─Selection	10.00	cop[tikv]		gt(list_partition_pruning.thash.a, 10)
-            └─TableFullScan	30.00	cop[tikv]	table:thash, partition:p3	keep order:true, stats:pseudo
+TopN	10.00	root		list_partition_pruning.thash.b, offset:0, count:10
+└─PartitionUnion	40.00	root		
+  ├─Limit	10.00	root		offset:0, count:10
+  │ └─TableReader	10.00	root		data:Limit
+  │   └─Limit	10.00	cop[tikv]		offset:0, count:10
+  │     └─Selection	10.00	cop[tikv]		gt(list_partition_pruning.thash.a, 10)
+  │       └─TableFullScan	30.00	cop[tikv]	table:thash, partition:p0	keep order:true, stats:pseudo
+  ├─Limit	10.00	root		offset:0, count:10
+  │ └─TableReader	10.00	root		data:Limit
+  │   └─Limit	10.00	cop[tikv]		offset:0, count:10
+  │     └─Selection	10.00	cop[tikv]		gt(list_partition_pruning.thash.a, 10)
+  │       └─TableFullScan	30.00	cop[tikv]	table:thash, partition:p1	keep order:true, stats:pseudo
+  ├─Limit	10.00	root		offset:0, count:10
+  │ └─TableReader	10.00	root		data:Limit
+  │   └─Limit	10.00	cop[tikv]		offset:0, count:10
+  │     └─Selection	10.00	cop[tikv]		gt(list_partition_pruning.thash.a, 10)
+  │       └─TableFullScan	30.00	cop[tikv]	table:thash, partition:p2	keep order:true, stats:pseudo
+  └─Limit	10.00	root		offset:0, count:10
+    └─TableReader	10.00	root		data:Limit
+      └─Limit	10.00	cop[tikv]		offset:0, count:10
+        └─Selection	10.00	cop[tikv]		gt(list_partition_pruning.thash.a, 10)
+          └─TableFullScan	30.00	cop[tikv]	table:thash, partition:p3	keep order:true, stats:pseudo
 drop table if exists t;
 create table t(col varchar(32) COLLATE utf8mb4_general_ci DEFAULT NULL) PARTITION BY KEY (`col`) PARTITIONS 7;
 explain format = brief select * from t where col = 'linpin';

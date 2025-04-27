@@ -55,7 +55,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -66,6 +65,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/mock/gomock"
 )
 
@@ -1250,6 +1250,10 @@ func (m *mockPDClient) GetLeaderAddr() string {
 	return m.leaderAddr
 }
 
+func (m *mockPDClient) WithCallerComponent(_ caller.Component) pd.Client {
+	return m
+}
+
 func (s *tableRestoreSuite) TestCheckClusterRegion() {
 	type testCase struct {
 		stores         pdhttp.StoresInfo
@@ -1545,7 +1549,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 		// we expect the check failed.
 		{
 			nil,
-			"TiDB schema `db1`.`table1` has 2 columns,and data file has 1 columns, but column colb are missing(.*)",
+			"TiDB schema `db1`.`table1` has 2 columns, and data file has 1 columns, but column colb is missing(.*)",
 			1,
 			false,
 			map[string]*checkpoints.TidbDBInfo{
@@ -1560,12 +1564,12 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 								Columns: []*model.ColumnInfo{
 									{
 										// colA has the default value
-										Name:          pmodel.NewCIStr("colA"),
+										Name:          ast.NewCIStr("colA"),
 										DefaultIsExpr: true,
 									},
 									{
 										// colB doesn't have the default value
-										Name:      pmodel.NewCIStr("colB"),
+										Name:      ast.NewCIStr("colB"),
 										FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 									},
 								},
@@ -1609,7 +1613,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 								Columns: []*model.ColumnInfo{
 									{
 										// colB has the default value
-										Name:          pmodel.NewCIStr("colB"),
+										Name:          ast.NewCIStr("colB"),
 										DefaultIsExpr: true,
 									},
 								},
@@ -1660,7 +1664,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 								Columns: []*model.ColumnInfo{
 									{
 										// colB has the default value
-										Name:          pmodel.NewCIStr("colB"),
+										Name:          ast.NewCIStr("colB"),
 										DefaultIsExpr: true,
 									},
 								},
@@ -1712,12 +1716,12 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 								Columns: []*model.ColumnInfo{
 									{
 										// colB has the default value
-										Name:          pmodel.NewCIStr("colB"),
+										Name:          ast.NewCIStr("colB"),
 										DefaultIsExpr: true,
 									},
 									{
 										// colC doesn't have the default value
-										Name:      pmodel.NewCIStr("colC"),
+										Name:      ast.NewCIStr("colC"),
 										FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 									},
 								},
@@ -1768,12 +1772,12 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 								Columns: []*model.ColumnInfo{
 									{
 										// colB doesn't have the default value
-										Name:      pmodel.NewCIStr("colB"),
+										Name:      ast.NewCIStr("colB"),
 										FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 									},
 									{
 										// colC has the default value
-										Name:          pmodel.NewCIStr("colC"),
+										Name:          ast.NewCIStr("colC"),
 										DefaultIsExpr: true,
 									},
 								},
@@ -1858,7 +1862,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 								Columns: []*model.ColumnInfo{
 									{
 										// colB has the default value
-										Name:          pmodel.NewCIStr("colB"),
+										Name:          ast.NewCIStr("colB"),
 										DefaultIsExpr: true,
 									},
 								},
@@ -1917,10 +1921,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 							Core: &model.TableInfo{
 								Columns: []*model.ColumnInfo{
 									{
-										Name: pmodel.NewCIStr("colA"),
+										Name: ast.NewCIStr("colA"),
 									},
 									{
-										Name: pmodel.NewCIStr("colB"),
+										Name: ast.NewCIStr("colB"),
 									},
 								},
 							},
@@ -1976,10 +1980,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 							Core: &model.TableInfo{
 								Columns: []*model.ColumnInfo{
 									{
-										Name: pmodel.NewCIStr("colA"),
+										Name: ast.NewCIStr("colA"),
 									},
 									{
-										Name: pmodel.NewCIStr("colB"),
+										Name: ast.NewCIStr("colB"),
 									},
 								},
 							},
@@ -2024,10 +2028,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 							Core: &model.TableInfo{
 								Columns: []*model.ColumnInfo{
 									{
-										Name: pmodel.NewCIStr("colA"),
+										Name: ast.NewCIStr("colA"),
 									},
 									{
-										Name: pmodel.NewCIStr("colB"),
+										Name: ast.NewCIStr("colB"),
 									},
 								},
 							},
@@ -2072,10 +2076,10 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 							Core: &model.TableInfo{
 								Columns: []*model.ColumnInfo{
 									{
-										Name: pmodel.NewCIStr("colA"),
+										Name: ast.NewCIStr("colA"),
 									},
 									{
-										Name: pmodel.NewCIStr("colB"),
+										Name: ast.NewCIStr("colB"),
 									},
 								},
 							},
@@ -2137,14 +2141,14 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 							Core: &model.TableInfo{
 								Columns: []*model.ColumnInfo{
 									{
-										Name: pmodel.NewCIStr("colA"),
+										Name: ast.NewCIStr("colA"),
 									},
 									{
-										Name:          pmodel.NewCIStr("colB"),
+										Name:          ast.NewCIStr("colB"),
 										DefaultIsExpr: true,
 									},
 									{
-										Name: pmodel.NewCIStr("colC"),
+										Name: ast.NewCIStr("colC"),
 									},
 								},
 							},
@@ -2189,14 +2193,14 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 			Mydumper: config.MydumperRuntime{
 				ReadBlockSize: config.ReadBlockSize,
 				CSV: config.CSVConfig{
-					Separator:         ",",
-					Delimiter:         `"`,
-					Header:            ca.hasHeader,
-					HeaderSchemaMatch: true,
-					NotNull:           false,
-					Null:              []string{`\N`},
-					EscapedBy:         `\`,
-					TrimLastSep:       false,
+					FieldsTerminatedBy: ",",
+					FieldsEnclosedBy:   `"`,
+					Header:             ca.hasHeader,
+					HeaderSchemaMatch:  true,
+					NotNull:            false,
+					FieldNullDefinedBy: []string{`\N`},
+					FieldsEscapedBy:    `\`,
+					TrimLastEmptyField: false,
 				},
 				IgnoreColumns: ca.ignoreColumns,
 			},
@@ -2225,14 +2229,14 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 			DataCharacterSet:       "gb18030",
 			DataInvalidCharReplace: string(utf8.RuneError),
 			CSV: config.CSVConfig{
-				Separator:         "，",
-				Delimiter:         `"`,
-				Header:            true,
-				HeaderSchemaMatch: true,
-				NotNull:           false,
-				Null:              []string{`\N`},
-				EscapedBy:         `\`,
-				TrimLastSep:       false,
+				FieldsTerminatedBy: "，",
+				FieldsEnclosedBy:   `"`,
+				Header:             true,
+				HeaderSchemaMatch:  true,
+				NotNull:            false,
+				FieldNullDefinedBy: []string{`\N`},
+				FieldsEscapedBy:    `\`,
+				TrimLastEmptyField: false,
 			},
 			IgnoreColumns: nil,
 		},
@@ -2260,11 +2264,11 @@ func (s *tableRestoreSuite) TestGBKEncodedSchemaIsValid() {
 					Core: &model.TableInfo{
 						Columns: []*model.ColumnInfo{
 							{
-								Name:      pmodel.NewCIStr("colA"),
+								Name:      ast.NewCIStr("colA"),
 								FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 							},
 							{
-								Name:      pmodel.NewCIStr("colB"),
+								Name:      ast.NewCIStr("colB"),
 								FieldType: types.NewFieldTypeBuilder().SetType(0).SetFlag(1).Build(),
 							},
 						},

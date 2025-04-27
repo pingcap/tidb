@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -180,7 +181,7 @@ type DDL interface {
 	// Stats returns the DDL statistics.
 	Stats(vars *variable.SessionVars) (map[string]any, error)
 	// GetScope gets the status variables scope.
-	GetScope(status string) variable.ScopeFlag
+	GetScope(status string) vardef.ScopeFlag
 	// Stop stops DDL worker.
 	Stop() error
 	// RegisterStatsHandle registers statistics handle and its corresponding event channel for ddl.
@@ -392,40 +393,50 @@ func newSchemaVersionManager(store kv.Storage) *schemaVersionManager {
 	}
 }
 
-func (sv *schemaVersionManager) setSchemaVersion(job *model.Job) (schemaVersion int64, err error) {
-	err = sv.lockSchemaVersion(job.ID)
+func (sv *schemaVersionManager) setSchemaVersion(jobCtx *jobContext, job *model.Job) (schemaVersion int64, err error) {
+	err = sv.lockSchemaVersion(jobCtx, job.ID)
 	if err != nil {
 		return schemaVersion, errors.Trace(err)
 	}
 	// TODO we can merge this txn into job transaction to avoid schema version
 	//  without differ.
+	start := time.Now()
 	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), sv.store, true, func(_ context.Context, txn kv.Transaction) error {
 		var err error
 		m := meta.NewMutator(txn)
 		schemaVersion, err = m.GenSchemaVersion()
 		return err
 	})
+	defer func() {
+		metrics.DDLIncrSchemaVerOpHist.Observe(time.Since(start).Seconds())
+	}()
 	return schemaVersion, err
 }
 
 // lockSchemaVersion gets the lock to prevent the schema version from being updated.
-func (sv *schemaVersionManager) lockSchemaVersion(jobID int64) error {
+func (sv *schemaVersionManager) lockSchemaVersion(jobCtx *jobContext, jobID int64) error {
 	ownerID := sv.lockOwner.Load()
 	// There may exist one job update schema version many times in multiple-schema-change, so we do not lock here again
 	// if they are the same job.
 	if ownerID != jobID {
+		start := time.Now()
 		sv.schemaVersionMu.Lock()
+		defer func() {
+			metrics.DDLLockSchemaVerOpHist.Observe(time.Since(start).Seconds())
+		}()
+		jobCtx.lockStartTime = time.Now()
 		sv.lockOwner.Store(jobID)
 	}
 	return nil
 }
 
 // unlockSchemaVersion releases the lock.
-func (sv *schemaVersionManager) unlockSchemaVersion(jobID int64) {
+func (sv *schemaVersionManager) unlockSchemaVersion(jobCtx *jobContext, jobID int64) {
 	ownerID := sv.lockOwner.Load()
 	if ownerID == jobID {
 		sv.lockOwner.Store(0)
 		sv.schemaVersionMu.Unlock()
+		metrics.DDLLockVerDurationHist.Observe(time.Since(jobCtx.lockStartTime).Seconds())
 	}
 }
 
@@ -594,7 +605,19 @@ func asyncNotifyEvent(jobCtx *jobContext, e *notifier.SchemaChangeEvent, job *mo
 	if intest.InTest {
 		ch := jobCtx.oldDDLCtx.ddlEventCh
 		if ch != nil {
-			ch <- e
+		forLoop:
+			// Try sending the event to the channel with a backoff strategy to avoid blocking indefinitely.
+			// Since most unit tests don't consume events, we make a few attempts and then give up rather
+			// than blocking the DDL job forever on a full channel.
+			for i := 0; i < 10; i++ {
+				select {
+				case ch <- e:
+					break forLoop
+				default:
+					time.Sleep(time.Microsecond * 10)
+				}
+			}
+			logutil.DDLLogger().Warn("fail to notify DDL event", zap.Stringer("event", e))
 		}
 	}
 
@@ -689,8 +712,8 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 	}
 
 	taskexecutor.RegisterTaskType(proto.Backfill,
-		func(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
-			return newBackfillDistExecutor(ctx, id, task, taskTable, d)
+		func(ctx context.Context, task *proto.Task, param taskexecutor.Param) taskexecutor.TaskExecutor {
+			return newBackfillDistExecutor(ctx, task, param, d)
 		},
 	)
 
@@ -1108,7 +1131,7 @@ func (d *ddl) cleanDeadTableLock(unlockTables []model.TableLockTpInfo, se model.
 
 // SwitchMDL enables MDL or disable MDL.
 func (d *ddl) SwitchMDL(enable bool) error {
-	isEnableBefore := variable.EnableMDL.Load()
+	isEnableBefore := vardef.EnableMDL.Load()
 	if isEnableBefore == enable {
 		return nil
 	}
@@ -1132,7 +1155,7 @@ func (d *ddl) SwitchMDL(enable bool) error {
 		return errors.New("please wait for all jobs done")
 	}
 
-	variable.EnableMDL.Store(enable)
+	vardef.EnableMDL.Store(enable)
 	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), d.store, true, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
 		oldEnable, _, err := m.GetMetadataLock()
@@ -1156,7 +1179,7 @@ func (d *ddl) SwitchMDL(enable bool) error {
 // It should be called before any DDL that could break data consistency.
 // This provides a safe window for async commit and 1PC to commit with an old schema.
 func delayForAsyncCommit() {
-	if variable.EnableMDL.Load() {
+	if vardef.EnableMDL.Load() {
 		// If metadata lock is enabled. The transaction of DDL must begin after
 		// pre-write of the async commit transaction, then the commit ts of DDL
 		// must be greater than the async commit transaction. In this case, the
@@ -1283,8 +1306,7 @@ func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 	return info, nil
 }
 
-func get2JobsFromTable(sess *sess.Session) (*model.Job, *model.Job, error) {
-	var generalJob, reorgJob *model.Job
+func get2JobsFromTable(sess *sess.Session) (generalJob, reorgJob *model.Job, err error) {
 	ctx := context.Background()
 	jobs, err := getJobsBySQL(ctx, sess, JobTable, "not reorg order by job_id limit 1")
 	if err != nil {

@@ -57,7 +57,7 @@ func (r *recordSet) Fields() []*resolve.ResultField {
 
 func (r *recordSet) setFields(tps ...uint8) {
 	r.fields = make([]*resolve.ResultField, len(tps))
-	for i := 0; i < len(tps); i++ {
+	for i := range tps {
 		rf := new(resolve.ResultField)
 		rf.Column = new(model.ColumnInfo)
 		rf.Column.FieldType = *types.NewFieldType(tps[i])
@@ -81,10 +81,8 @@ func (r *recordSet) getNext() []types.Datum {
 func (r *recordSet) Next(_ context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	row := r.getNext()
-	if row != nil {
-		for i := 0; i < len(row); i++ {
-			req.AppendDatum(i, &row[i])
-		}
+	for i := range row {
+		req.AppendDatum(i, &row[i])
 	}
 	return nil
 }
@@ -226,7 +224,7 @@ func SubTestColumnRange() func(*testing.T) {
 			StatsLoadedStatus: NewStatsFullLoadStatus(),
 		}
 		tbl := &Table{
-			HistColl: *NewHistCollWithColsAndIdxs(0, false, int64(col.TotalRowCount()), 0, make(map[int64]*Column), make(map[int64]*Index)),
+			HistColl: *NewHistCollWithColsAndIdxs(0, int64(col.TotalRowCount()), 0, make(map[int64]*Column), make(map[int64]*Index)),
 		}
 		ran := []*ranger.Range{{
 			LowVal:    []types.Datum{{}},
@@ -295,7 +293,7 @@ func SubTestIntColumnRanges() func(*testing.T) {
 		require.Equal(t, int64(100000), rowCount)
 		col := &Column{Histogram: *hg, Info: &model.ColumnInfo{}, StatsLoadedStatus: NewStatsFullLoadStatus()}
 		tbl := &Table{
-			HistColl: *NewHistCollWithColsAndIdxs(0, false, int64(col.TotalRowCount()), 0, make(map[int64]*Column), make(map[int64]*Index)),
+			HistColl: *NewHistCollWithColsAndIdxs(0, int64(col.TotalRowCount()), 0, make(map[int64]*Column), make(map[int64]*Index)),
 		}
 		ran := []*ranger.Range{{
 			LowVal:    []types.Datum{types.NewIntDatum(math.MinInt64)},
@@ -388,58 +386,58 @@ func SubTestIndexRanges() func(*testing.T) {
 		idxInfo := &model.IndexInfo{Columns: []*model.IndexColumn{{Offset: 0}}}
 		idx := &Index{Histogram: *hg, CMSketch: cms, Info: idxInfo}
 		tbl := &Table{
-			HistColl: *NewHistCollWithColsAndIdxs(0, false, int64(idx.TotalRowCount()), 0, nil, make(map[int64]*Index)),
+			HistColl: *NewHistCollWithColsAndIdxs(0, int64(idx.TotalRowCount()), 0, nil, make(map[int64]*Index)),
 		}
 		ran := []*ranger.Range{{
 			LowVal:    []types.Datum{types.MinNotNullDatum()},
 			HighVal:   []types.Datum{types.MaxValueDatum()},
 			Collators: collate.GetBinaryCollatorSlice(1),
 		}}
-		count, err := GetRowCountByIndexRanges(ctx, &tbl.HistColl, 0, ran)
+		count, _, err := GetRowCountByIndexRanges(ctx, &tbl.HistColl, 0, ran)
 		require.NoError(t, err)
 		require.Equal(t, 99900, int(count))
 		ran[0].LowVal[0] = types.NewIntDatum(1000)
 		ran[0].HighVal[0] = types.NewIntDatum(2000)
-		count, err = GetRowCountByIndexRanges(ctx, &tbl.HistColl, 0, ran)
+		count, _, err = GetRowCountByIndexRanges(ctx, &tbl.HistColl, 0, ran)
 		require.NoError(t, err)
 		require.Equal(t, 2500, int(count))
 		ran[0].LowVal[0] = types.NewIntDatum(1001)
 		ran[0].HighVal[0] = types.NewIntDatum(1999)
-		count, err = GetRowCountByIndexRanges(ctx, &tbl.HistColl, 0, ran)
+		count, _, err = GetRowCountByIndexRanges(ctx, &tbl.HistColl, 0, ran)
 		require.NoError(t, err)
 		require.Equal(t, 2500, int(count))
 		ran[0].LowVal[0] = types.NewIntDatum(1000)
 		ran[0].HighVal[0] = types.NewIntDatum(1000)
-		count, err = GetRowCountByIndexRanges(ctx, &tbl.HistColl, 0, ran)
+		count, _, err = GetRowCountByIndexRanges(ctx, &tbl.HistColl, 0, ran)
 		require.NoError(t, err)
 		require.Equal(t, 100, int(count))
 
 		tbl.SetIdx(0, &Index{Info: &model.IndexInfo{Columns: []*model.IndexColumn{{Offset: 0}}, Unique: true}})
 		ran[0].LowVal[0] = types.NewIntDatum(1000)
 		ran[0].HighVal[0] = types.NewIntDatum(1000)
-		count, err = GetRowCountByIndexRanges(ctx, &tbl.HistColl, 0, ran)
+		count, _, err = GetRowCountByIndexRanges(ctx, &tbl.HistColl, 0, ran)
 		require.NoError(t, err)
 		require.Equal(t, 1, int(count))
 
 		tbl.SetIdx(0, idx)
 		ran[0].LowVal[0] = types.MinNotNullDatum()
 		ran[0].HighVal[0] = types.MaxValueDatum()
-		count, err = GetRowCountByIndexRanges(ctx, &tbl.HistColl, 0, ran)
+		count, _, err = GetRowCountByIndexRanges(ctx, &tbl.HistColl, 0, ran)
 		require.NoError(t, err)
 		require.Equal(t, 100000, int(count))
 		ran[0].LowVal[0] = types.NewIntDatum(1000)
 		ran[0].HighVal[0] = types.NewIntDatum(2000)
-		count, err = GetRowCountByIndexRanges(ctx, &tbl.HistColl, 0, ran)
+		count, _, err = GetRowCountByIndexRanges(ctx, &tbl.HistColl, 0, ran)
 		require.NoError(t, err)
 		require.Equal(t, 1000, int(count))
 		ran[0].LowVal[0] = types.NewIntDatum(1001)
 		ran[0].HighVal[0] = types.NewIntDatum(1990)
-		count, err = GetRowCountByIndexRanges(ctx, &tbl.HistColl, 0, ran)
+		count, _, err = GetRowCountByIndexRanges(ctx, &tbl.HistColl, 0, ran)
 		require.NoError(t, err)
 		require.Equal(t, 989, int(count))
 		ran[0].LowVal[0] = types.NewIntDatum(1000)
 		ran[0].HighVal[0] = types.NewIntDatum(1000)
-		count, err = GetRowCountByIndexRanges(ctx, &tbl.HistColl, 0, ran)
+		count, _, err = GetRowCountByIndexRanges(ctx, &tbl.HistColl, 0, ran)
 		require.NoError(t, err)
 		require.Equal(t, 1, int(count))
 	}
@@ -637,16 +635,15 @@ func SubTestHistogramProtoConversion() func(*testing.T) {
 }
 
 func TestPruneTopN(t *testing.T) {
-	var topnIn, topnOut []TopNMeta
 	var totalNDV, nullCnt, sampleRows, totalRows int64
 
 	// case 1
-	topnIn = []TopNMeta{{[]byte{1}, 100_000}}
+	topnIn := []TopNMeta{{[]byte{1}, 100_000}}
 	totalNDV = 2
 	nullCnt = 0
 	sampleRows = 100_010
 	totalRows = 500_050
-	topnOut = pruneTopNItem(topnIn, totalNDV, nullCnt, sampleRows, totalRows)
+	topnOut := pruneTopNItem(topnIn, totalNDV, nullCnt, sampleRows, totalRows)
 	require.Equal(t, topnIn, topnOut)
 
 	// case 2
@@ -665,7 +662,7 @@ func TestPruneTopN(t *testing.T) {
 
 	// case 3
 	topnIn = nil
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		topnIn = append(topnIn, TopNMeta{[]byte{byte(i)}, 10_000})
 	}
 	totalNDV = 100
@@ -689,7 +686,7 @@ func TestPruneTopN(t *testing.T) {
 
 	// case 5 - test pruning of value=1
 	topnIn = nil
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		topnIn = append(topnIn, TopNMeta{[]byte{byte(i)}, 90})
 	}
 	topnPruned := topnIn

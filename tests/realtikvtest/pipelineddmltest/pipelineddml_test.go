@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
@@ -35,6 +35,8 @@ func TestVariable(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+
+	// Original test cases...
 	require.Equal(t, tk.Session().GetSessionVars().BulkDMLEnabled, false)
 	tk.MustExec("set session tidb_dml_type = bulk")
 	require.Equal(t, tk.Session().GetSessionVars().BulkDMLEnabled, true)
@@ -42,6 +44,96 @@ func TestVariable(t *testing.T) {
 	require.Equal(t, tk.Session().GetSessionVars().BulkDMLEnabled, false)
 	// not supported yet.
 	tk.MustExecToErr("set session tidb_dml_type = bulk(10)")
+
+	// Basic policy tests
+	tk.MustExec("set tidb_pipelined_dml_resource_policy = 'STANDARD'")
+	tk.MustQuery("select @@tidb_pipelined_dml_resource_policy").Check(testkit.Rows("STANDARD"))
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, 128)
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedResolveLockConcurrency, 8)
+	tk.MustExec("set @@tidb_pipelined_dml_resource_policy = 'conserVative'")
+	tk.MustQuery("select @@tidb_pipelined_dml_resource_policy").Check(testkit.Rows("conserVative"))
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, 2)
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedResolveLockConcurrency, 2)
+	tk.MustExec("set @@tidb_pipelined_dml_resource_policy = 'Standard'")
+	tk.MustQuery("select @@tidb_pipelined_dml_resource_policy").Check(testkit.Rows("Standard"))
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, 128)
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedResolveLockConcurrency, 8)
+
+	// Test custom configuration with valid values
+	tk.MustExec("set @@tidb_pipelined_dml_resource_policy = 'custom{concurrency=64}'")
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, 64)
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedResolveLockConcurrency, 8)
+
+	tk.MustExec("set @@tidb_pipelined_dml_resource_policy = 'custom{write_throttle_ratio=0.5}'")
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedWriteThrottleRatio, 0.5)
+
+	// Test multiple parameters
+	tk.MustExec("set @@tidb_pipelined_dml_resource_policy = 'custom{concurrency=32,write_throttle_ratio=0.3}'")
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, 32)
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedWriteThrottleRatio, 0.3)
+
+	// Test different separators
+	tk.MustExec("set @@tidb_pipelined_dml_resource_policy = 'custom{concurrency:64,write_throttle_ratio:0.4}'")
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, 64)
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedWriteThrottleRatio, 0.4)
+
+	// Test whitespace handling
+	tk.MustExec("set @@tidb_pipelined_dml_resource_policy = '  custom  {  concurrency  =  64  ,  write_throttle_ratio  =  0.4  }  '")
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, 64)
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedWriteThrottleRatio, 0.4)
+
+	// Test case insensitivity
+	tk.MustExec("set @@tidb_pipelined_dml_resource_policy = 'CUSTOM{CONCURRENCY=64,WRITE_THROTTLE_RATIO=0.4}'")
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, 64)
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedWriteThrottleRatio, 0.4)
+
+	// Test boundary values
+	tk.MustExec("set @@tidb_pipelined_dml_resource_policy = 'custom{concurrency=1}'")
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, 1)
+	tk.MustExec("set @@tidb_pipelined_dml_resource_policy = 'custom{write_throttle_ratio=0.999}'")
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedWriteThrottleRatio, 0.999)
+
+	// Test error cases and state consistency
+	origFlushConcurrency := tk.Session().GetSessionVars().PipelinedFlushConcurrency
+	origResolveConcurrency := tk.Session().GetSessionVars().PipelinedResolveLockConcurrency
+	origThrottleRatio := tk.Session().GetSessionVars().PipelinedWriteThrottleRatio
+
+	// Invalid format
+	tk.MustExecToErr("set @@tidb_pipelined_dml_resource_policy = 'custom'", ".*")
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, origFlushConcurrency)
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedResolveLockConcurrency, origResolveConcurrency)
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedWriteThrottleRatio, origThrottleRatio)
+
+	// Empty content
+	tk.MustExecToErr("set @@tidb_pipelined_dml_resource_policy = 'custom{}'", ".*")
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, origFlushConcurrency)
+
+	// Invalid parameter name
+	tk.MustExecToErr("set @@tidb_pipelined_dml_resource_policy = 'custom{unknown=1}'", ".*")
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, origFlushConcurrency)
+
+	// Out of range values
+	tk.MustExecToErr("set @@tidb_pipelined_dml_resource_policy = 'custom{concurrency=8193}'", ".*")
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, origFlushConcurrency)
+	tk.MustExecToErr("set @@tidb_pipelined_dml_resource_policy = 'custom{write_throttle_ratio=1.1}'", ".*")
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedWriteThrottleRatio, origThrottleRatio)
+
+	// Malformed values
+	tk.MustExecToErr("set @@tidb_pipelined_dml_resource_policy = 'custom{concurrency=abc}'", ".*")
+	require.Equal(t, tk.Session().GetSessionVars().PipelinedFlushConcurrency, origFlushConcurrency)
+
+	// Test global scope
+	tk.MustExec("set global tidb_pipelined_dml_resource_policy = 'custom{concurrency=64,write_throttle_ratio=0.4}'")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustQuery("select @@global.tidb_pipelined_dml_resource_policy").Check(testkit.Rows("custom{concurrency=64,write_throttle_ratio=0.4}"))
+
+	// Test hint
+	tk.MustExec("create table t(id int)")
+	tk.MustExec("insert into t values (1)")
+	tk.MustExec("set @@tidb_dml_type=bulk")
+	tk.MustExec("delete /*+ SET_VAR(tidb_pipelined_dml_resource_policy=\"custom{resolve_concurrency=333}\") */ from t")
+	tk.MustQuery("select @@tidb_last_txn_info").CheckContain("\"pipelined\":true")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
 }
 
 // We limit this feature only for cases meet all the following conditions:
@@ -126,15 +218,36 @@ func TestPipelinedDMLPositive(t *testing.T) {
 	// enable by hint
 	// Hint works for DELETE and UPDATE, but not for INSERT if the hint is in its select clause.
 	tk.MustExec("set @@tidb_dml_type = standard")
-	err = panicToErr(
-		func() error {
-			_, err := tk.Exec("delete /*+ SET_VAR(tidb_dml_type=bulk) */ from t")
-			// "insert into t select /*+ SET_VAR(tidb_dml_type=bulk) */ * from t" won't work
-			return err
-		},
-	)
-	require.Error(t, err)
-	require.True(t, strings.Contains(err.Error(), "pipelined memdb is enabled"), err.Error())
+	dmls := [][2]string{
+		{"update t set b = b + 1", "update /*+ SET_VAR(tidb_dml_type=bulk) */ t set b = b + 1"},
+		{"insert into t select * from t", "insert /*+ SET_VAR(tidb_dml_type=bulk) */ into t select * from t"},
+		{"delete from t", "delete /*+ SET_VAR(tidb_dml_type=bulk) */ from t"},
+	}
+	for _, dmlPair := range dmls {
+		err := panicToErr(
+			func() error {
+				_, err := tk.Exec(dmlPair[1])
+				return err
+			},
+		)
+		require.Error(t, err)
+		require.True(t, strings.Contains(err.Error(), "pipelined memdb is enabled"), err.Error())
+	}
+
+	// test global binding
+	for _, dmlPair := range dmls {
+		tk.MustExec("create global binding for " + dmlPair[0] + " using " + dmlPair[1])
+	}
+	for _, dmlPair := range dmls {
+		err := panicToErr(
+			func() error {
+				_, err := tk.Exec(dmlPair[0])
+				return err
+			},
+		)
+		require.Error(t, err, dmlPair[0])
+		require.True(t, strings.Contains(err.Error(), "pipelined memdb is enabled"), err.Error())
+	}
 }
 
 func TestPipelinedDMLNegative(t *testing.T) {
@@ -182,12 +295,12 @@ func TestPipelinedDMLNegative(t *testing.T) {
 	// for deprecated batch-dml
 	tk.Session().GetSessionVars().BatchDelete = true
 	tk.Session().GetSessionVars().DMLBatchSize = 1
-	variable.EnableBatchDML.Store(true)
+	vardef.EnableBatchDML.Store(true)
 	tk.MustExec("insert into t values(7, 7)")
 	tk.MustQuery("show warnings").CheckContain("Pipelined DML can not be used with the deprecated Batch DML. Fallback to standard mode")
 	tk.Session().GetSessionVars().BatchDelete = false
 	tk.Session().GetSessionVars().DMLBatchSize = 0
-	variable.EnableBatchDML.Store(false)
+	vardef.EnableBatchDML.Store(false)
 
 	// for explain and explain analyze
 	tk.MustExec("explain insert into t values(8, 8)")
@@ -222,7 +335,7 @@ func prepareData(tk *testkit.TestKit) {
 	tk.MustExec("create table t (a int primary key, b int)")
 	tk.MustExec("create table _t like t")
 	results := make([]string, 0, 100)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 		results = append(results, fmt.Sprintf("%d %d", i, i))
 	}
@@ -428,7 +541,7 @@ func TestPipelinedDMLInsertOnDuplicateKeyUpdateInTxn(t *testing.T) {
 	tk.MustExec("create table t1 (a int, b int, c varchar(128), unique index idx(b))")
 	cnt := 2000
 	values := bytes.NewBuffer(make([]byte, 0, 10240))
-	for i := 0; i < cnt; i++ {
+	for i := range cnt {
 		if i > 0 {
 			values.WriteString(", ")
 		}
@@ -676,7 +789,7 @@ func TestConflictError(t *testing.T) {
 	tk.MustExec("create table _t1(a int primary key, b int)")
 	var insert strings.Builder
 	insert.WriteString("insert into t1 values")
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		if i > 0 {
 			insert.WriteString(",")
 		}

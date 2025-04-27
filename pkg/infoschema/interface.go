@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/table"
 )
 
@@ -28,9 +28,19 @@ import (
 // InfoSchema is read-only, and the returned value is a copy.
 type InfoSchema interface {
 	context.MetaOnlyInfoSchema
-	TableByName(ctx stdctx.Context, schema, table pmodel.CIStr) (table.Table, error)
+	TableByName(ctx stdctx.Context, schema, table ast.CIStr) (table.Table, error)
 	TableByID(ctx stdctx.Context, id int64) (table.Table, bool)
-	SchemaNameByTableID(tableID int64) (pmodel.CIStr, bool)
+	// TableItemByID returns a lightweight table meta specified by the given ID,
+	// without loading the whole info from storage.
+	// So it's all in memory operation. No need to worry about network or disk cost.
+	TableItemByID(id int64) (TableItem, bool)
+	// TableIDByPartitionID is a pure memory operation, returns the table ID by the partition ID.
+	// It's all in memory operation. No need to worry about network or disk cost.
+	TableIDByPartitionID(partitionID int64) (tableID int64, ok bool)
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
+	// TableItemByPartitionID returns a lightweight table meta specified by the partition ID,
+	// without loading the whole info from storage.
+	// So it's all in memory operation. No need to worry about network or disk cost.
+	TableItemByPartitionID(partitionID int64) (TableItem, bool)
 	base() *infoSchema
 }

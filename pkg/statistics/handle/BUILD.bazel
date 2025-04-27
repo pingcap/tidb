@@ -18,7 +18,7 @@ go_library(
         "//pkg/parser/terror",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/vardef",
         "//pkg/statistics",
         "//pkg/statistics/handle/autoanalyze",
         "//pkg/statistics/handle/cache",

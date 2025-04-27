@@ -34,6 +34,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
 )
 
@@ -200,7 +201,7 @@ type mockResourceGroupProvider struct {
 	cfg rmclient.Config
 }
 
-func (p *mockResourceGroupProvider) Get(ctx context.Context, key []byte, opts ...pd.OpOption) (*meta_storagepb.GetResponse, error) {
+func (p *mockResourceGroupProvider) Get(ctx context.Context, key []byte, opts ...opt.MetaStorageOption) (*meta_storagepb.GetResponse, error) {
 	if !bytes.Equal(pd.ControllerConfigPathPrefixBytes, key) {
 		return nil, errors.New("unsupported configPath")
 	}
@@ -296,7 +297,7 @@ func TestQueryWithConcurrentSmallCop(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int key, b int, c int, index idx_b(b)) partition by hash(id) partitions 10;")
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		tk.MustExec(fmt.Sprintf("insert into t1 values (%v, %v, %v)", i, i, i))
 	}
 	tk.MustExec("create table t2 (id bigint unsigned key, b int, index idx_b (b));")
@@ -321,4 +322,31 @@ func TestQueryWithConcurrentSmallCop(t *testing.T) {
 	tk.MustQuery("select * from t2 where id >= 1 and id <= 18446744073709551615 order by id;")
 	require.Less(t, time.Since(start), time.Millisecond*150)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop"))
+}
+
+func TestDMLWithLiteCopWorker(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (id bigint auto_increment key, b int);")
+	tk.MustExec("insert into t1 (b) values (1),(2),(3),(4),(5),(6),(7),(8);")
+	for range 8 {
+		tk.MustExec("insert into t1 (b) select b from t1;")
+	}
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("2048"))
+	tk.MustQuery("split table t1 by (1025);").Check(testkit.Rows("1 1"))
+	tk.MustExec("set @@tidb_enable_paging = off")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop", `return(200)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/distsql/mockConsumeSelectRespSlow", `return(100)`))
+	start := time.Now()
+	tk.MustExec("update t1 set b=b+1 where id >= 0;")
+	require.Less(t, time.Since(start), time.Millisecond*800) // 3 * 200ms + 1 * 100ms
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCSlowCop"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/distsql/mockConsumeSelectRespSlow"))
+
+	// Test select after split table.
+	tk.MustExec("truncate table t1;")
+	tk.MustExec("insert into t1 (b) values (1),(2),(3),(4),(5),(6),(7),(8);")
+	tk.MustQuery("split table t1 by (3), (6), (9);").Check(testkit.Rows("3 1"))
+	tk.MustQuery("select b from t1 order by id").Check(testkit.Rows("1", "2", "3", "4", "5", "6", "7", "8"))
 }

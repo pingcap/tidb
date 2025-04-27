@@ -36,7 +36,7 @@ import (
 type LogicalProjection struct {
 	LogicalSchemaProducer `hash64-equals:"true"`
 
-	Exprs []expression.Expression `hash64-equals:"true"`
+	Exprs []expression.Expression `hash64-equals:"true" shallow-ref:"true"`
 
 	// CalculateNoDelay indicates this Projection is the root Plan and should be
 	// calculated without delay and will not return any result to client.
@@ -94,11 +94,9 @@ func (p *LogicalProjection) HashCode() []byte {
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
 func (p *LogicalProjection) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) (ret []expression.Expression, retPlan base.LogicalPlan) {
-	for _, expr := range p.Exprs {
-		if expression.HasAssignSetVarFunc(expr) {
-			_, child := p.BaseLogicalPlan.PredicatePushDown(nil, opt)
-			return predicates, child
-		}
+	if slices.ContainsFunc(p.Exprs, expression.HasAssignSetVarFunc) {
+		_, child := p.BaseLogicalPlan.PredicatePushDown(nil, opt)
+		return predicates, child
 	}
 	canBePushed, canNotBePushed := breakDownPredicates(p, predicates)
 	remained, child := p.BaseLogicalPlan.PredicatePushDown(canBePushed, opt)
@@ -145,8 +143,8 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, op
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && !expression.ExprHasSetVarOrSleep(p.Exprs[i]) {
 			prunedColumns = append(prunedColumns, p.Schema().Columns[i])
-			p.Schema().Columns = append(p.Schema().Columns[:i], p.Schema().Columns[i+1:]...)
-			p.Exprs = append(p.Exprs[:i], p.Exprs[i+1:]...)
+			p.Schema().Columns = slices.Delete(p.Schema().Columns, i, i+1)
+			p.Exprs = slices.Delete(p.Exprs, i, i+1)
 		}
 	}
 	logicaltrace.AppendColumnPruneTraceStep(p, prunedColumns, opt)
@@ -192,10 +190,8 @@ func (p *LogicalProjection) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *
 	if topNLogicalPlan != nil {
 		topN = topNLogicalPlan.(*LogicalTopN)
 	}
-	for _, expr := range p.Exprs {
-		if expression.HasAssignSetVarFunc(expr) {
-			return p.BaseLogicalPlan.PushDownTopN(topN, opt)
-		}
+	if slices.ContainsFunc(p.Exprs, expression.HasAssignSetVarFunc) {
+		return p.BaseLogicalPlan.PushDownTopN(topN, opt)
 	}
 	if topN != nil {
 		exprCtx := p.SCtx().GetExprCtx()
@@ -216,7 +212,7 @@ func (p *LogicalProjection) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *
 		for i := len(topN.ByItems) - 1; i >= 0; i-- {
 			switch topN.ByItems[i].Expr.(type) {
 			case *expression.Constant, *expression.CorrelatedColumn:
-				topN.ByItems = append(topN.ByItems[:i], topN.ByItems[i+1:]...)
+				topN.ByItems = slices.Delete(topN.ByItems, i, i+1)
 			}
 		}
 
@@ -283,12 +279,16 @@ func (p *LogicalProjection) PullUpConstantPredicates() []expression.Expression {
 // RecursiveDeriveStats inherits BaseLogicalPlan.<10th> implementation.
 
 // DeriveStats implement base.LogicalPlan.<11th> interface.
-func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, colGroups [][]*expression.Column) (*property.StatsInfo, error) {
+func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSchema *expression.Schema, childSchema []*expression.Schema, reloads []bool) (*property.StatsInfo, bool, error) {
 	childProfile := childStats[0]
-	if p.StatsInfo() != nil {
+	var reload bool
+	if len(reloads) == 1 {
+		reload = reloads[0]
+	}
+	if !reload && p.StatsInfo() != nil {
 		// Reload GroupNDVs since colGroups may have changed.
-		p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childProfile, selfSchema)
-		return p.StatsInfo(), nil
+		p.StatsInfo().GroupNDVs = p.getGroupNDVs(childProfile, selfSchema)
+		return p.StatsInfo(), false, nil
 	}
 	p.SetStats(&property.StatsInfo{
 		RowCount: childProfile.RowCount,
@@ -298,8 +298,8 @@ func (p *LogicalProjection) DeriveStats(childStats []*property.StatsInfo, selfSc
 		cols := expression.ExtractColumns(expr)
 		p.StatsInfo().ColNDVs[selfSchema.Columns[i].UniqueID], _ = cardinality.EstimateColsNDVWithMatchedLen(cols, childSchema[0], childProfile)
 	}
-	p.StatsInfo().GroupNDVs = p.getGroupNDVs(colGroups, childProfile, selfSchema)
-	return p.StatsInfo(), nil
+	p.StatsInfo().GroupNDVs = p.getGroupNDVs(childProfile, selfSchema)
+	return p.StatsInfo(), true, nil
 }
 
 // ExtractColGroups implements base.LogicalPlan.<12th> interface.
@@ -403,6 +403,10 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 	for idx, expr := range p.Exprs {
 		switch x := expr.(type) {
 		case *expression.Column:
+			//  column projected as a new column again.
+			if int(x.UniqueID) != outputColsUniqueIDsArray[idx] {
+				fds.AddEquivalence(intset.NewFastIntSet(int(x.UniqueID)), intset.NewFastIntSet(outputColsUniqueIDsArray[idx]))
+			}
 			continue
 		case *expression.CorrelatedColumn:
 			// t1(a,b,c), t2(m,n)
@@ -457,7 +461,7 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 				// the dependent columns in scalar function should be also considered as output columns as well.
 				outputColsUniqueIDs.Insert(int(one.UniqueID))
 			}
-			notnull := util.IsNullRejected(p.SCtx(), p.Schema(), x)
+			notnull := util.IsNullRejected(p.SCtx(), p.Schema(), x, true)
 			if notnull || determinants.SubsetOf(fds.NotNullCols) {
 				notnullColsUniqueIDs.Insert(scalarUniqueID)
 			}
@@ -535,8 +539,8 @@ func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (
 	return newProp, true
 }
 
-func (p *LogicalProjection) getGroupNDVs(colGroups [][]*expression.Column, childProfile *property.StatsInfo, selfSchema *expression.Schema) []property.GroupNDV {
-	if len(colGroups) == 0 || len(childProfile.GroupNDVs) == 0 {
+func (p *LogicalProjection) getGroupNDVs(childProfile *property.StatsInfo, selfSchema *expression.Schema) []property.GroupNDV {
+	if len(childProfile.GroupNDVs) == 0 {
 		return nil
 	}
 	exprCol2ProjCol := make(map[int64]int64)
@@ -594,9 +598,9 @@ func (p *LogicalProjection) AppendExpr(expr expression.Expression) *expression.C
 }
 
 // breakDownPredicates breaks down predicates into two sets: canBePushed and cannotBePushed. It also maps columns to projection schema.
-func breakDownPredicates(p *LogicalProjection, predicates []expression.Expression) ([]expression.Expression, []expression.Expression) {
-	canBePushed := make([]expression.Expression, 0, len(predicates))
-	canNotBePushed := make([]expression.Expression, 0, len(predicates))
+func breakDownPredicates(p *LogicalProjection, predicates []expression.Expression) (canBePushed, canNotBePushed []expression.Expression) {
+	canBePushed = make([]expression.Expression, 0, len(predicates))
+	canNotBePushed = make([]expression.Expression, 0, len(predicates))
 	exprCtx := p.SCtx().GetExprCtx()
 	for _, cond := range predicates {
 		substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(exprCtx, cond, p.Schema(), p.Exprs, true)

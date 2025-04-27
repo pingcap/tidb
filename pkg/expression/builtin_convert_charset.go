@@ -17,15 +17,13 @@ package expression
 import (
 	"bytes"
 	"fmt"
-	"strings"
-	"unicode"
 
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -50,6 +48,8 @@ const InternalFuncToBinary = "to_binary"
 
 // InternalFuncFromBinary accepts a string and returns another string decode in a given charset.
 const InternalFuncFromBinary = "from_binary"
+
+const maxBytesToShow = 6
 
 type tidbToBinaryFunctionClass struct {
 	baseFunctionClass
@@ -186,7 +186,7 @@ func (b *builtinInternalFromBinarySig) evalString(ctx EvalContext, row chunk.Row
 	valBytes := hack.Slice(val)
 	ret, err := enc.Transform(nil, valBytes, charset.OpDecode)
 	if err != nil {
-		strHex := formatInvalidChars(valBytes)
+		strHex := util.FmtNonASCIIPrintableCharToHex(val, maxBytesToShow, false)
 		err = errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.GetCharset())
 
 		if b.cannotConvertStringAsWarning {
@@ -229,7 +229,7 @@ func (b *builtinInternalFromBinarySig) vecEvalString(ctx EvalContext, input *chu
 		str := buf.GetBytes(i)
 		val, err := enc.Transform(encodedBuf, str, charset.OpDecode)
 		if err != nil {
-			strHex := formatInvalidChars(str)
+			strHex := util.FmtNonASCIIPrintableCharToHex(string(hack.String(str)), maxBytesToShow, false)
 			err = errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.GetCharset())
 
 			if b.cannotConvertStringAsWarning {
@@ -259,7 +259,7 @@ func BuildToBinaryFunction(ctx BuildContext, expr Expression) (res Expression) {
 		return expr
 	}
 	res = &ScalarFunction{
-		FuncName: model.NewCIStr(InternalFuncToBinary),
+		FuncName: ast.NewCIStr(InternalFuncToBinary),
 		RetType:  f.getRetTp(),
 		Function: f,
 	}
@@ -274,7 +274,7 @@ func BuildFromBinaryFunction(ctx BuildContext, expr Expression, tp *types.FieldT
 		return expr
 	}
 	res = &ScalarFunction{
-		FuncName: model.NewCIStr(InternalFuncFromBinary),
+		FuncName: ast.NewCIStr(InternalFuncFromBinary),
 		RetType:  tp,
 		Function: f,
 	}
@@ -373,21 +373,4 @@ func isLegacyCharset(chs string) bool {
 		return true
 	}
 	return false
-}
-
-func formatInvalidChars(src []byte) string {
-	var sb strings.Builder
-	const maxBytesToShow = 5
-	for i := 0; i < len(src); i++ {
-		if i > maxBytesToShow {
-			sb.WriteString("...")
-			break
-		}
-		if src[i] > unicode.MaxASCII {
-			sb.WriteString(fmt.Sprintf("\\x%X", src[i]))
-		} else {
-			sb.Write([]byte{src[i]})
-		}
-	}
-	return sb.String()
 }

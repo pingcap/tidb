@@ -474,7 +474,7 @@ func TestRemoveTaskAndFlush(t *testing.T) {
 	}, 10*time.Second, 100*time.Millisecond)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription-handler-loop"))
 	require.Eventually(t, func() bool {
-		return !adv.HasSubscribion()
+		return !adv.HasSubscriptions()
 	}, 10*time.Second, 100*time.Millisecond)
 }
 
@@ -918,6 +918,9 @@ func TestOwnershipLost(t *testing.T) {
 	c.flushAll()
 	failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription.listenOver.aboutToSend", "pause")
 	failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/FlushSubscriber.Clear.timeoutMs", "return(500)")
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/FlushSubscriber.Clear.timeoutMs"))
+	}()
 	wg := new(sync.WaitGroup)
 	wg.Add(adv.TEST_registerCallbackForSubscriptions(wg.Done))
 	cancel()
@@ -939,6 +942,9 @@ func TestSubscriptionPanic(t *testing.T) {
 
 	require.NoError(t, adv.OnTick(ctx))
 	failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription.listenOver.aboutToSend", "5*panic")
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/subscription.listenOver.aboutToSend"))
+	}()
 	ckpt := c.advanceCheckpoints()
 	c.flushAll()
 	cnt := 0
@@ -1007,7 +1013,8 @@ func TestRedactBackend(t *testing.T) {
 	}
 
 	redacted := redact.TaskInfoRedacted{Info: info}
-	require.Equal(t, "storage:<s3:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" access_key:\"[REDACTED]\" secret_access_key:\"[REDACTED]\" > > name:\"test\" ", redacted.String())
+	require.Equal(t, redacted.String(), "storage:<s3:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" access_key:\"[REDACTED]\" secret_access_key:\"[REDACTED]\" sse_kms_key_id:\"[REDACTED]\" > > name:\"test\" ")
+	require.Equal(t, info.String(), "storage:<s3:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" access_key:\"12abCD!@#[]{}?/\\\\\" secret_access_key:\"12abCD!@#[]{}?/\\\\\" > > name:\"test\" ")
 
 	info.Storage = &backup.StorageBackend{
 		Backend: &backup.StorageBackend_Gcs{
@@ -1020,7 +1027,8 @@ func TestRedactBackend(t *testing.T) {
 		},
 	}
 	redacted = redact.TaskInfoRedacted{Info: info}
-	require.Equal(t, "storage:<gcs:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" CredentialsBlob:\"[REDACTED]\" > > name:\"test\" ", redacted.String())
+	require.Equal(t, redacted.String(), "storage:<gcs:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" credentials_blob:\"[REDACTED]\" > > name:\"test\" ")
+	require.Equal(t, info.String(), "storage:<gcs:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" credentials_blob:\"12abCD!@#[]{}?/\\\\\" > > name:\"test\" ")
 
 	info.Storage = &backup.StorageBackend{
 		Backend: &backup.StorageBackend_AzureBlobStorage{
@@ -1038,5 +1046,6 @@ func TestRedactBackend(t *testing.T) {
 		},
 	}
 	redacted = redact.TaskInfoRedacted{Info: info}
-	require.Equal(t, "storage:<azure_blob_storage:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" shared_key:\"[REDACTED]\" access_sig:\"[REDACTED]\" encryption_key:<[REDACTED]> > > name:\"test\" ", redacted.String())
+	require.Equal(t, redacted.String(), "storage:<azure_blob_storage:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" shared_key:\"[REDACTED]\" access_sig:\"[REDACTED]\" encryption_key:<encryption_key:\"[REDACTED]\" > > > name:\"test\" ")
+	require.Equal(t, info.String(), "storage:<azure_blob_storage:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" shared_key:\"12abCD!@#[]{}?/\\\\\" access_sig:\"12abCD!@#[]{}?/\\\\\" encryption_key:<encryption_key:\"12abCD!@#[]{}?/\\\\\" encryption_key_sha256:\"12abCD!@#[]{}?/\\\\\" > > > name:\"test\" ")
 }

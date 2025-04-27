@@ -24,7 +24,7 @@ go_test(
     ],
     embed = [":funcdep"],
     flaky = True,
-    shard_count = 10,
+    shard_count = 11,
     deps = [
         "//pkg/domain",
         "//pkg/infoschema",

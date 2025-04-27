@@ -7,6 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/domain/metrics",
         "//pkg/executor/metrics",
         "//pkg/infoschema/metrics",
@@ -27,5 +28,7 @@ go_library(
         "@com_github_pingcap_kvproto//pkg/keyspacepb",
         "@com_github_tikv_client_go_v2//config",
         "@com_github_tikv_pd_client//:client",
+        "@com_github_tikv_pd_client//opt",
+        "@com_github_tikv_pd_client//pkg/caller",
     ],
 )

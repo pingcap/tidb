@@ -22,13 +22,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/session/syssession"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
@@ -48,25 +49,42 @@ var globalDelRateLimiter = newDelRateLimiter()
 
 type defaultDelRateLimiter struct {
 	sync.Mutex
+	// limiter limits the rate of delete operation.
+	// limit.Limit() has a range [1.0, +rate.Inf].
+	// When the value of system variable `tidb_ttl_delete_rate_limit` is `0`, `limit.Limit()` returns `rate.Inf`.
 	limiter *rate.Limiter
-	limit   atomic.Int64
+	// limit is the rate limit of the limiter that is the same value of system variable `tidb_ttl_delete_rate_limit`.
+	// When it is 0, it means unlimited and `limiter.Limit()` will return `rate.Inf`.
+	limit atomic.Int64
 }
 
 func newDelRateLimiter() delRateLimiter {
 	limiter := &defaultDelRateLimiter{}
-	limiter.limiter = rate.NewLimiter(0, 1)
+	limiter.limiter = rate.NewLimiter(rate.Inf, 1)
 	limiter.limit.Store(0)
 	return limiter
 }
 
+type beforeWaitLimiterForTestType struct{}
+
+var beforeWaitLimiterForTest = &beforeWaitLimiterForTestType{}
+
 func (l *defaultDelRateLimiter) WaitDelToken(ctx context.Context) error {
 	limit := l.limit.Load()
-	if variable.TTLDeleteRateLimit.Load() != limit {
+	if vardef.TTLDeleteRateLimit.Load() != limit {
 		limit = l.reset()
 	}
 
-	if limit == 0 {
+	intest.Assert(limit >= 0)
+	if limit <= 0 {
 		return ctx.Err()
+	}
+
+	if intest.InTest {
+		intest.Assert(l.limiter.Limit() > 0)
+		if fn, ok := ctx.Value(beforeWaitLimiterForTest).(func()); ok {
+			fn()
+		}
 	}
 
 	return l.limiter.Wait(ctx)
@@ -75,10 +93,16 @@ func (l *defaultDelRateLimiter) WaitDelToken(ctx context.Context) error {
 func (l *defaultDelRateLimiter) reset() (newLimit int64) {
 	l.Lock()
 	defer l.Unlock()
-	newLimit = variable.TTLDeleteRateLimit.Load()
+	newLimit = vardef.TTLDeleteRateLimit.Load()
 	if newLimit != l.limit.Load() {
 		l.limit.Store(newLimit)
-		l.limiter.SetLimit(rate.Limit(newLimit))
+		rateLimit := rate.Inf
+		if newLimit > 0 {
+			// When `TTLDeleteRateLimit > 0`, use the setting as the rate limit.
+			// Otherwise, use `rate.Inf` to make it unlimited.
+			rateLimit = rate.Limit(newLimit)
+		}
+		l.limiter.SetLimit(rateLimit)
 	}
 	return
 }
@@ -115,7 +139,7 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 
 	se := newTableSession(rawSe, t.tbl, t.expire)
 	for len(leftRows) > 0 && ctx.Err() == nil {
-		maxBatch := variable.TTLDeleteBatchSize.Load()
+		maxBatch := vardef.TTLDeleteBatchSize.Load()
 		var delBatch [][]types.Datum
 		if int64(len(leftRows)) < maxBatch {
 			delBatch = leftRows
@@ -299,11 +323,11 @@ func (b *ttlDelRetryBuffer) recordRetryItem(task *ttlDeleteTask, retryRows [][]t
 type ttlDeleteWorker struct {
 	baseWorker
 	delCh       <-chan *ttlDeleteTask
-	sessionPool util.SessionPool
+	sessionPool syssession.Pool
 	retryBuffer *ttlDelRetryBuffer
 }
 
-func newDeleteWorker(delCh <-chan *ttlDeleteTask, sessPool util.SessionPool) *ttlDeleteWorker {
+func newDeleteWorker(delCh <-chan *ttlDeleteTask, sessPool syssession.Pool) *ttlDeleteWorker {
 	w := &ttlDeleteWorker{
 		delCh:       delCh,
 		sessionPool: sessPool,
@@ -321,14 +345,13 @@ func (w *ttlDeleteWorker) loop() error {
 	}()
 
 	tracer.EnterPhase(metrics.PhaseOther)
-	se, err := getSession(w.sessionPool)
-	if err != nil {
-		return err
-	}
-	defer se.Close()
+	return withSession(w.sessionPool, func(s session.Session) error {
+		ctx := metrics.CtxWithPhaseTracer(w.baseWorker.ctx, tracer)
+		return w.loopWithSession(ctx, tracer, s)
+	})
+}
 
-	ctx := metrics.CtxWithPhaseTracer(w.baseWorker.ctx, tracer)
-
+func (w *ttlDeleteWorker) loopWithSession(ctx context.Context, tracer *metrics.PhaseTracer, se session.Session) error {
 	doRetry := func(item *ttlDelRetryItem) [][]types.Datum {
 		return item.task.doDelete(
 			logutil.WithFields(

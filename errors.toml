@@ -56,6 +56,11 @@ error = '''
 invalid restore range
 '''
 
+["BR:Common:ErrMigrationNotFound"]
+error = '''
+no migration found
+'''
+
 ["BR:Common:ErrMigrationVersionNotSupported"]
 error = '''
 the migration version isn't supported
@@ -464,6 +469,11 @@ region not found
 ["Lightning:KV:ServerIsBusy"]
 error = '''
 server is busy
+'''
+
+["Lightning:KV:StoreDiskFull"]
+error = '''
+store disk full
 '''
 
 ["Lightning:Loader:ErrInvalidSchemaFile"]
@@ -1336,6 +1346,11 @@ error = '''
 Check constraint '%s' uses column '%s', hence column cannot be dropped or renamed.
 '''
 
+["ddl:3981"]
+error = '''
+Storage engine does not support ENGINE_ATTRIBUTE.
+'''
+
 ["ddl:4135"]
 error = '''
 Sequence '%-.64s.%-.64s' has run out
@@ -1579,6 +1594,16 @@ Global Index is needed for index '%-.192s', since the unique index is not includ
 ["ddl:8265"]
 error = '''
 Auto analyze is not effective for index '%-.192s', need analyze manually
+'''
+
+["ddl:8270"]
+error = '''
+Invalid engine attribute format: %s
+'''
+
+["ddl:8271"]
+error = '''
+Invalid storage class: %s
 '''
 
 ["ddl:9014"]
@@ -2386,6 +2411,11 @@ error = '''
 The target table %-.100s of the %s is not updatable
 '''
 
+["planner:1305"]
+error = '''
+%s %s does not exist
+'''
+
 ["planner:1345"]
 error = '''
 EXPLAIN/SHOW can not be issued; lacking privileges for underlying table
@@ -2926,6 +2956,16 @@ error = '''
 Cannot set resource group for a role
 '''
 
+["schema:8258"]
+error = '''
+Table %s is in mode %s
+'''
+
+["schema:8259"]
+error = '''
+Invalid mode set from (or by default) %s to %s for table %s
+'''
+
 ["server:1040"]
 error = '''
 Too many connections
@@ -2954,6 +2994,11 @@ Got a packet bigger than 'max_allowed_packet' bytes
 ["server:1184"]
 error = '''
 Aborted connection %d to db: '%-.192s' user: '%-.48s' host: '%-.255s' (%-.64s)
+'''
+
+["server:1203"]
+error = '''
+User %-.64s has exceeded the 'max_user_connections' resource
 '''
 
 ["server:1251"]

@@ -128,10 +128,7 @@ func TestSelectResultRuntimeStats(t *testing.T) {
 	// Test for idempotence.
 	require.Equal(t, expect, stats.String())
 
-	s1.reqStat.RPCStats[tikvrpc.CmdCop] = &tikv.RPCRuntimeStats{
-		Count:   1,
-		Consume: int64(time.Second),
-	}
+	s1.reqStat.RecordRPCRuntimeStats(tikvrpc.CmdCop, time.Second)
 	s1.reqStat.RecordRPCErrorStats("server_is_busy")
 	s1.reqStat.RecordRPCErrorStats("server_is_busy")
 	stmtStats.RegisterStats(2, s1.Clone())

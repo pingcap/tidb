@@ -20,7 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -32,7 +32,6 @@ func TestConcurrentlyInitStatsWithMemoryLimit(t *testing.T) {
 	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.LiteInitStats = false
-		conf.Performance.ConcurrentlyInitStats = true
 	})
 	handle.IsFullCacheFunc = func(cache types.StatsCache, total uint64) bool {
 		return true
@@ -45,7 +44,6 @@ func TestConcurrentlyInitStatsWithoutMemoryLimit(t *testing.T) {
 	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.LiteInitStats = false
-		conf.Performance.ConcurrentlyInitStats = true
 	})
 	handle.IsFullCacheFunc = func(cache types.StatsCache, total uint64) bool {
 		return false
@@ -72,7 +70,7 @@ func testConcurrentlyInitStats(t *testing.T) {
 	require.Equal(t, h.MemConsumed(), int64(0))
 	require.NoError(t, h.InitStats(context.Background(), is))
 	for i := 1; i < 10; i++ {
-		tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(fmt.Sprintf("t%v", i)))
+		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(fmt.Sprintf("t%v", i)))
 		require.NoError(t, err)
 		stats, ok := h.StatsCache.Get(tbl.Meta().ID)
 		require.True(t, ok)
@@ -91,7 +89,7 @@ func testConcurrentlyInitStats(t *testing.T) {
 		tk.MustQuery(fmt.Sprintf("explain select * from t%v where c >= 1", i)).CheckNotContain("pseudo")
 	}
 	for i := 1; i < 10; i++ {
-		tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(fmt.Sprintf("t%v", i)))
+		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(fmt.Sprintf("t%v", i)))
 		require.NoError(t, err)
 		stats, ok := h.StatsCache.Get(tbl.Meta().ID)
 		require.True(t, ok)
@@ -100,7 +98,7 @@ func testConcurrentlyInitStats(t *testing.T) {
 			require.False(t, col.IsAllEvicted())
 		}
 	}
-	require.Equal(t, int64(126), handle.GetMaxTidRecordForTest())
+	require.Equal(t, int64(128), handle.GetMaxTidRecordForTest())
 }
 
 func TestDropTableBeforeConcurrentlyInitStats(t *testing.T) {
@@ -108,7 +106,6 @@ func TestDropTableBeforeConcurrentlyInitStats(t *testing.T) {
 	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.LiteInitStats = false
-		conf.Performance.ConcurrentlyInitStats = true
 	})
 	testDropTableBeforeInitStats(t)
 }
@@ -118,7 +115,6 @@ func TestDropTableBeforeNonLiteInitStats(t *testing.T) {
 	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.LiteInitStats = false
-		conf.Performance.ConcurrentlyInitStats = false
 	})
 	testDropTableBeforeInitStats(t)
 }

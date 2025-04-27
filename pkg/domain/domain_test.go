@@ -33,8 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/types"
@@ -42,6 +42,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
 	"go.etcd.io/etcd/tests/v3/integration"
 )
 
@@ -136,7 +137,7 @@ func TestInfo(t *testing.T) {
 	require.True(t, syncerStarted)
 
 	stmt := &ast.CreateDatabaseStmt{
-		Name: model.NewCIStr("aaa"),
+		Name: ast.NewCIStr("aaa"),
 		// Make sure loading schema is normal.
 		Options: []*ast.DatabaseOption{
 			{
@@ -181,7 +182,7 @@ func TestStatWorkRecoverFromPanic(t *testing.T) {
 	metrics.PanicCounter.Reset()
 	// Since the stats lease is 0 now, so create a new ticker will panic.
 	// Test that they can recover from panic correctly.
-	dom.updateStatsWorker(mock.NewContext())
+	dom.gcStatsWorker()
 	dom.autoAnalyzeWorker()
 	counter := metrics.PanicCounter.WithLabelValues(metrics.LabelDomain)
 	pb := &dto.Metric{}
@@ -261,7 +262,7 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 	}()
 	dom.sysVarCache.Lock()
 	dom.sysVarCache.global = map[string]string{
-		variable.TiDBReplicaRead: "closest-adaptive",
+		vardef.TiDBReplicaRead: "closest-adaptive",
 	}
 	dom.sysVarCache.Unlock()
 
@@ -273,15 +274,23 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 
 	mockedAllServerInfos := map[string]*infosync.ServerInfo{
 		"s1": {
-			ID: "s1",
-			Labels: map[string]string{
-				"zone": "zone1",
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID: "s1",
+			},
+			DynamicServerInfo: infosync.DynamicServerInfo{
+				Labels: map[string]string{
+					"zone": "zone1",
+				},
 			},
 		},
 		"s2": {
-			ID: "s2",
-			Labels: map[string]string{
-				"zone": "zone2",
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID: "s2",
+			},
+			DynamicServerInfo: infosync.DynamicServerInfo{
+				Labels: map[string]string{
+					"zone": "zone2",
+				},
 			},
 		},
 	}
@@ -347,33 +356,53 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 	// partial matches
 	mockedAllServerInfos = map[string]*infosync.ServerInfo{
 		"s1": {
-			ID: "s1",
-			Labels: map[string]string{
-				"zone": "zone1",
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID: "s1",
+			},
+			DynamicServerInfo: infosync.DynamicServerInfo{
+				Labels: map[string]string{
+					"zone": "zone1",
+				},
 			},
 		},
 		"s2": {
-			ID: "s2",
-			Labels: map[string]string{
-				"zone": "zone2",
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID: "s2",
+			},
+			DynamicServerInfo: infosync.DynamicServerInfo{
+				Labels: map[string]string{
+					"zone": "zone2",
+				},
 			},
 		},
 		"s22": {
-			ID: "s22",
-			Labels: map[string]string{
-				"zone": "zone2",
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID: "s22",
+			},
+			DynamicServerInfo: infosync.DynamicServerInfo{
+				Labels: map[string]string{
+					"zone": "zone2",
+				},
 			},
 		},
 		"s3": {
-			ID: "s3",
-			Labels: map[string]string{
-				"zone": "zone3",
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID: "s3",
+			},
+			DynamicServerInfo: infosync.DynamicServerInfo{
+				Labels: map[string]string{
+					"zone": "zone3",
+				},
 			},
 		},
 		"s4": {
-			ID: "s4",
-			Labels: map[string]string{
-				"zone": "zone4",
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID: "s4",
+			},
+			DynamicServerInfo: infosync.DynamicServerInfo{
+				Labels: map[string]string{
+					"zone": "zone4",
+				},
 			},
 		},
 	}
@@ -423,7 +452,7 @@ type mockInfoPdClient struct {
 	err    error
 }
 
-func (c *mockInfoPdClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*metapb.Store, error) {
+func (c *mockInfoPdClient) GetAllStores(context.Context, ...opt.GetStoreOption) ([]*metapb.Store, error) {
 	return c.stores, c.err
 }
 

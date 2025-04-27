@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	domain_metrics "github.com/pingcap/tidb/pkg/domain/metrics"
 	executor_metrics "github.com/pingcap/tidb/pkg/executor/metrics"
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
@@ -40,13 +41,23 @@ import (
 	topsqlreporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
 	tikvconfig "github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 )
+
+var componentName = caller.Component("tidb-metrics-util")
 
 // RegisterMetrics register metrics with const label 'keyspace_id' if keyspaceName set.
 func RegisterMetrics() error {
 	cfg := config.GetGlobalConfig()
 	if keyspace.IsKeyspaceNameEmpty(cfg.KeyspaceName) || cfg.Store != config.StoreTypeTiKV {
-		return registerMetrics(nil) // register metrics without label 'keyspace_id'.
+		registerMetrics(nil) // register metrics without label 'keyspace_id'.
+		return nil
+	}
+
+	if kerneltype.IsNextGen() {
+		registerMetricsForNextGen(cfg.KeyspaceName)
+		return nil
 	}
 
 	pdAddrs, _, _, err := tikvconfig.ParsePath("tikv://" + cfg.Path)
@@ -55,11 +66,11 @@ func RegisterMetrics() error {
 	}
 
 	timeoutSec := time.Duration(cfg.PDClient.PDServerTimeout) * time.Second
-	pdCli, err := pd.NewClient(pdAddrs, pd.SecurityOption{
+	pdCli, err := pd.NewClient(componentName, pdAddrs, pd.SecurityOption{
 		CAPath:   cfg.Security.ClusterSSLCA,
 		CertPath: cfg.Security.ClusterSSLCert,
 		KeyPath:  cfg.Security.ClusterSSLKey,
-	}, pd.WithCustomTimeoutOption(timeoutSec))
+	}, opt.WithCustomTimeoutOption(timeoutSec))
 	if err != nil {
 		return err
 	}
@@ -70,18 +81,25 @@ func RegisterMetrics() error {
 		return err
 	}
 
-	return registerMetrics(keyspaceMeta)
+	registerMetrics(keyspaceMeta)
+	return nil
 }
 
 // RegisterMetricsForBR register metrics with const label keyspace_id for BR.
 func RegisterMetricsForBR(pdAddrs []string, keyspaceName string) error {
 	if keyspace.IsKeyspaceNameEmpty(keyspaceName) {
-		return registerMetrics(nil) // register metrics without label 'keyspace_id'.
+		registerMetrics(nil) // register metrics without label 'keyspace_id'.
+		return nil
+	}
+
+	if kerneltype.IsNextGen() {
+		registerMetricsForNextGen(keyspaceName)
+		return nil
 	}
 
 	timeoutSec := 10 * time.Second
-	pdCli, err := pd.NewClient(pdAddrs, pd.SecurityOption{},
-		pd.WithCustomTimeoutOption(timeoutSec))
+	pdCli, err := pd.NewClient(componentName, pdAddrs, pd.SecurityOption{},
+		opt.WithCustomTimeoutOption(timeoutSec))
 	if err != nil {
 		return err
 	}
@@ -92,14 +110,11 @@ func RegisterMetricsForBR(pdAddrs []string, keyspaceName string) error {
 		return err
 	}
 
-	return registerMetrics(keyspaceMeta)
+	registerMetrics(keyspaceMeta)
+	return nil
 }
 
-func registerMetrics(keyspaceMeta *keyspacepb.KeyspaceMeta) error {
-	if keyspaceMeta != nil {
-		metrics.SetConstLabels("keyspace_id", fmt.Sprint(keyspaceMeta.GetId()))
-	}
-
+func initMetrics() {
 	metrics.InitMetrics()
 	metrics.RegisterMetrics()
 
@@ -119,7 +134,21 @@ func registerMetrics(keyspaceMeta *keyspacepb.KeyspaceMeta) error {
 	if config.GetGlobalConfig().Store == config.StoreTypeUniStore {
 		unimetrics.RegisterMetrics()
 	}
-	return nil
+}
+
+// registerMetricsForNextGen registers metrics for next gen. Currently we assume keyspace_name equals keyspace_id, and is globally unique.
+func registerMetricsForNextGen(keyspaceName string) {
+	if !keyspace.IsKeyspaceNameEmpty(keyspaceName) {
+		metrics.SetConstLabels("keyspace_id", keyspaceName)
+	}
+	initMetrics()
+}
+
+func registerMetrics(keyspaceMeta *keyspacepb.KeyspaceMeta) {
+	if keyspaceMeta != nil {
+		metrics.SetConstLabels("keyspace_id", fmt.Sprint(keyspaceMeta.GetId()))
+	}
+	initMetrics()
 }
 
 func getKeyspaceMeta(pdCli pd.Client, keyspaceName string) (*keyspacepb.KeyspaceMeta, error) {

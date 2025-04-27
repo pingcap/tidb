@@ -699,7 +699,7 @@ select cast(-9223372036854775807 as signed) + cast(9223372036854775806 as unsign
 -- error 1690
 select cast(9223372036854775806 as unsigned) + cast(-9223372036854775807 as signed);
 select 1 / '2007' div 1;
-set sql_mode=default
+set sql_mode=default;
 
 # TestFuncREPEAT
 DROP TABLE IF EXISTS table_string;
@@ -719,7 +719,11 @@ DROP TABLE IF EXISTS t;
 CREATE TABLE t(a BINARY(10), b CHAR(10));
 INSERT INTO t SELECT "中文", "abc";
 SELECT LPAD(a, 11, "a"), LPAD(b, 2, "xx") FROM t;
+SELECT LPAD("abc", 5, "");
+SELECT LPAD(a, 11, ""), LPAD(b, 5, "") FROM t;
 SELECT RPAD(a, 11, "a"), RPAD(b, 2, "xx") FROM t;
+SELECT RPAD("abc", 5, "");
+SELECT RPAD(a, 11, ""), RPAD(b, 5, "") FROM t;
 
 # TestStringBuiltin
 drop table if exists t;

@@ -135,7 +135,7 @@ local ConfigPanel = tableNewPanel.new(
   )
 ).addTarget(
   prometheus.target(
-    'max by (resource_group, type) (resource_manager_server_group_config{type="ru_capacity"}) < bool 0',
+    'max by (resource_group, type) (resource_manager_server_group_config{type="ru_capacity"})',
     legendFormat="{{resource_group}}",
     instant=true,
   )
@@ -184,18 +184,21 @@ local ConfigPanel = tableNewPanel.new(
       id: "mappings",
       value: [
         {
-          options: {
-            "0": {
-              index: 1,
-              text: "false",
-            },
-            "1": {
-              index: 0,
-              text: "true",
-            },
-          },
-          type: "value",
+          "from": "0",
+          "text": "Off",
+          "to": "2147483647",
+          "type": 2
         },
+        {
+          "text": "Moderated",
+          "type": 1,
+          "value": "-2"
+        },
+        {
+          "text": "Unlimited",
+          "type": 1,
+          "value": "-1"
+        }
       ],
     },
   ],
@@ -227,7 +230,7 @@ local RUPanel = graphPanel.new(
 );
 
 local RUMaxPanel = graphPanel.new(
-  title="RU Max (Max Cost During 20s Period)",
+  title="RU Max(Max Cost During 20s Period)",
   datasource=myDS,
   legend_rightSide=true,
   legend_current=true,
@@ -823,7 +826,7 @@ local priorityTaskRow = row.new(collapse=true, title="Priority Task Control");
 
 // The CPU time used of each priority
 local PriorityTaskCPUPanel = graphPanel.new(
-  title="CPU Time by Priority",
+  title="CPU Time By Priority",
   datasource=myDS,
   legend_rightSide=true,
   legend_current=true,
@@ -841,7 +844,7 @@ local PriorityTaskCPUPanel = graphPanel.new(
 
 // The CPU Limiter Quota of each priority
 local PriorityTaskQuotaLimitPanel = graphPanel.new(
-  title="CPU Quota Limit by Priority",
+  title="CPU Quota Limit By Priority",
   datasource=myDS,
   legend_rightSide=true,
   legend_current=true,
@@ -859,7 +862,7 @@ local PriorityTaskQuotaLimitPanel = graphPanel.new(
 
 // Task QPS that triggers wait
 local PriorityTaskWaitQPSPanel = graphPanel.new(
-  title="Tasks Wait QPS by Priority",
+  title="Tasks Wait QPS By Priority",
   datasource=myDS,
   legend_rightSide=true,
   legend_current=true,

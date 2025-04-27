@@ -15,68 +15,25 @@
 package proto
 
 import (
+	"cmp"
+	"fmt"
 	"time"
 )
 
-// task state machine
-//
-// Note: if a task fails during running, it will end with `reverted` state.
-// The `failed` state is used to mean the framework cannot run the task, such as
-// invalid task type, scheduler init error(fatal), etc.
-//
-// normal execution state transition:
-//
-//	┌──────┐
-//	│failed│
-//	└──────┘
-//	   ▲
-//	┌──┴────┐     ┌───────┐     ┌────────┐
-//	│pending├────►│running├────►│succeed │
-//	└──┬────┘     └──┬┬───┘     └────────┘
-//	   │             ││         ┌─────────┐     ┌────────┐
-//	   │             │└────────►│reverting├────►│reverted│
-//	   │             ▼          └─────────┘     └────────┘
-//	   │          ┌──────────┐    ▲
-//	   └─────────►│cancelling├────┘
-//	              └──────────┘
-//
-// pause/resume state transition:
-// as we don't know the state of the task before `paused`, so the state after
-// `resuming` is always `running`.
-//
-//	┌───────┐
-//	│pending├──┐
-//	└───────┘  │     ┌───────┐       ┌──────┐
-//	           ├────►│pausing├──────►│paused│
-//	┌───────┐  │     └───────┘       └───┬──┘
-//	│running├──┘                         │
-//	└───▲───┘        ┌────────┐          │
-//	    └────────────┤resuming│◄─────────┘
-//	                 └────────┘
-//
-// modifying state transition:
-//
-//	┌───────┐
-//	│pending├──┐
-//	└───────┘  │
-//	┌───────┐  │     ┌─────────┐
-//	│running├──┼────►│modifying├────► original state
-//	└───────┘  │     └─────────┘
-//	┌───────┐  │
-//	│paused ├──┘
-//	└───────┘
+// see doc.go for more details.
 const (
-	TaskStatePending    TaskState = "pending"
-	TaskStateRunning    TaskState = "running"
-	TaskStateSucceed    TaskState = "succeed"
-	TaskStateFailed     TaskState = "failed"
-	TaskStateReverting  TaskState = "reverting"
-	TaskStateReverted   TaskState = "reverted"
-	TaskStateCancelling TaskState = "cancelling"
-	TaskStatePausing    TaskState = "pausing"
-	TaskStatePaused     TaskState = "paused"
-	TaskStateResuming   TaskState = "resuming"
-	TaskStateModifying  TaskState = "modifying"
+	TaskStatePending            TaskState = "pending"
+	TaskStateRunning            TaskState = "running"
+	TaskStateSucceed            TaskState = "succeed"
+	TaskStateFailed             TaskState = "failed"
+	TaskStateReverting          TaskState = "reverting"
+	TaskStateAwaitingResolution TaskState = "awaiting-resolution"
+	TaskStateReverted           TaskState = "reverted"
+	TaskStateCancelling         TaskState = "cancelling"
+	TaskStatePausing            TaskState = "pausing"
+	TaskStatePaused             TaskState = "paused"
+	TaskStateResuming           TaskState = "resuming"
+	TaskStateModifying          TaskState = "modifying"
 )
 
 type (
@@ -110,6 +67,15 @@ const (
 // TODO: remove this limit later.
 var MaxConcurrentTask = 16
 
+// ExtraParams is the extra params of task.
+// Note: only store params that's not used for filter or sort in this struct.
+type ExtraParams struct {
+	// ManualRecovery indicates whether the task can be recovered manually.
+	// if enabled, the task will enter 'awaiting-resolution' state when it failed,
+	// then the user can recover the task manually or fail it if it's not recoverable.
+	ManualRecovery bool `json:"manual_recovery"`
+}
+
 // TaskBase contains the basic information of a task.
 // we define this to avoid load task meta which might be very large into memory.
 type TaskBase struct {
@@ -128,8 +94,10 @@ type TaskBase struct {
 	// contain the tidb_service_scope=TargetScope label.
 	// To be compatible with previous version, if it's "" or "background", the task try run on nodes of "background" scope,
 	// if there is no such nodes, will try nodes of "" scope.
-	TargetScope string
-	CreateTime  time.Time
+	TargetScope  string
+	CreateTime   time.Time
+	MaxNodeCount int
+	ExtraParams
 }
 
 // IsDone checks if the task is done.
@@ -146,35 +114,22 @@ func (t *TaskBase) CompareTask(other *Task) int {
 // Compare compares two tasks by task rank.
 // returns < 0 represents rank of t is higher than 'other'.
 func (t *TaskBase) Compare(other *TaskBase) int {
-	if t.Priority != other.Priority {
-		return t.Priority - other.Priority
+	if r := cmp.Compare(t.Priority, other.Priority); r != 0 {
+		return r
 	}
-	if t.CreateTime != other.CreateTime {
-		if t.CreateTime.Before(other.CreateTime) {
-			return -1
-		}
-		return 1
+	if r := t.CreateTime.Compare(other.CreateTime); r != 0 {
+		return r
 	}
-	return int(t.ID - other.ID)
+	return cmp.Compare(t.ID, other.ID)
 }
 
-// Task represents the task of distributed framework.
-// A task is abstracted as multiple steps that runs in sequence, each step contains
-// multiple sub-tasks that runs in parallel, such as:
-//
-//	task
-//	├── step1
-//	│   ├── subtask1
-//	│   ├── subtask2
-//	│   └── subtask3
-//	└── step2
-//	    ├── subtask1
-//	    ├── subtask2
-//	    └── subtask3
-//
-// tasks are run in the order of rank, and the rank is defined by:
-//
-//	priority asc, create_time asc, id asc.
+// String implements fmt.Stringer interface.
+func (t *TaskBase) String() string {
+	return fmt.Sprintf("{id: %d, key: %s, type: %s, state: %s, step: %s, priority: %d, concurrency: %d, target scope: %s, create time: %s}",
+		t.ID, t.Key, t.Type, t.State, Step2Str(t.Type, t.Step), t.Priority, t.Concurrency, t.TargetScope, t.CreateTime.Format(time.RFC3339Nano))
+}
+
+// Task represents the task of distributed framework, see doc.go for more details.
 type Task struct {
 	TaskBase
 	// SchedulerID is not used now.

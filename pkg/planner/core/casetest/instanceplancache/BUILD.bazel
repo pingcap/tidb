@@ -2,7 +2,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "instanceplancache_test",
-    timeout = "moderate",
+    timeout = "long",
     srcs = [
         "builtin_func_test.go",
         "concurrency_test.go",
@@ -13,7 +13,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 40,
+    shard_count = 42,
     deps = [
         "//pkg/domain",
         "//pkg/parser/auth",

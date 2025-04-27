@@ -19,12 +19,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 )
 
 var (
 	_ DMLNode = &DeleteStmt{}
+	_ DMLNode = &DistributeTableStmt{}
 	_ DMLNode = &InsertStmt{}
 	_ DMLNode = &SetOprStmt{}
 	_ DMLNode = &UpdateStmt{}
@@ -274,11 +274,11 @@ func (n *Join) Accept(v Visitor) (Node, bool) {
 type TableName struct {
 	node
 
-	Schema model.CIStr
-	Name   model.CIStr
+	Schema CIStr
+	Name   CIStr
 
 	IndexHints     []*IndexHint
-	PartitionNames []model.CIStr
+	PartitionNames []CIStr
 	TableSample    *TableSample
 	// AS OF is used to see the data as it was at a specific point in time.
 	AsOf *AsOfClause
@@ -380,7 +380,7 @@ const (
 
 // IndexHint represents a hint for optimizer to use/ignore/force for join/order by/group by.
 type IndexHint struct {
-	IndexNames []model.CIStr
+	IndexNames []CIStr
 	HintType   IndexHintType
 	HintScope  IndexHintScope
 }
@@ -532,7 +532,7 @@ type TableSource struct {
 	Source ResultSetNode
 
 	// AsName is the alias name of the table source.
-	AsName model.CIStr
+	AsName CIStr
 }
 
 func (*TableSource) resultSet() {}
@@ -659,8 +659,8 @@ func (n SelectLockType) String() string {
 type WildCardField struct {
 	node
 
-	Table  model.CIStr
-	Schema model.CIStr
+	Table  CIStr
+	Schema CIStr
 }
 
 // Restore implements Node interface.
@@ -700,7 +700,7 @@ type SelectField struct {
 	// Expr is not nil, WildCard will be nil.
 	Expr ExprNode
 	// AsName is alias name for Expr.
-	AsName model.CIStr
+	AsName CIStr
 	// Auxiliary stands for if this field is auxiliary.
 	// When we add a Field into SelectField list which is used for having/orderby clause but the field is not in select clause,
 	// we should set its Auxiliary to true. Then the TrimExec will trim the field.
@@ -1084,9 +1084,9 @@ func (s *SelectStmtKind) String() string {
 type CommonTableExpression struct {
 	node
 
-	Name        model.CIStr
+	Name        CIStr
 	Query       *SubqueryExpr
-	ColNameList []model.CIStr
+	ColNameList []CIStr
 	IsRecursive bool
 
 	// Record how many consumers the current cte has
@@ -2303,7 +2303,7 @@ type InsertStmt struct {
 	Select      ResultSetNode
 	// TableHints represents the table level Optimizer Hint for join type.
 	TableHints     []*TableOptimizerHint
-	PartitionNames []model.CIStr
+	PartitionNames []CIStr
 }
 
 // Restore implements Node interface.
@@ -2343,7 +2343,7 @@ func (n *InsertStmt) Restore(ctx *format.RestoreCtx) error {
 	if len(n.PartitionNames) != 0 {
 		ctx.WriteKeyWord(" PARTITION")
 		ctx.WritePlain("(")
-		for i := 0; i < len(n.PartitionNames); i++ {
+		for i := range n.PartitionNames {
 			if i != 0 {
 				ctx.WritePlain(", ")
 			}
@@ -3051,6 +3051,9 @@ const (
 	ShowCreateProcedure
 	ShowBinlogStatus
 	ShowReplicaStatus
+	ShowDistributions
+	ShowPlanForSQL
+	ShowDistributionJobs
 )
 
 const (
@@ -3076,9 +3079,9 @@ type ShowStmt struct {
 	Table  *TableName // Used for showing columns.
 	// Procedure's naming method is consistent with the table name
 	Procedure         *TableName
-	Partition         model.CIStr // Used for showing partition.
+	Partition         CIStr       // Used for showing partition.
 	Column            *ColumnName // Used for `desc table column`.
-	IndexName         model.CIStr
+	IndexName         CIStr
 	ResourceGroupName string // used for showing resource group
 	Flag              int    // Some flag parsed from sql, such as FULL.
 	Full              bool
@@ -3100,6 +3103,9 @@ type ShowStmt struct {
 	ShowProfileLimit *Limit // Used for `SHOW PROFILE` syntax
 
 	ImportJobID *int64 // Used for `SHOW IMPORT JOB <ID>` syntax
+	SQLOrDigest string // Used for `SHOW PLAN FOR ...` syntax
+
+	DistributionJobID *int64 // Used for `SHOW DISTRIBUTION JOB <ID>` syntax
 }
 
 // Restore implements Node interface.
@@ -3318,6 +3324,14 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("IMPORT JOBS")
 			restoreShowLikeOrWhereOpt()
 		}
+	case ShowDistributionJobs:
+		if n.DistributionJobID != nil {
+			ctx.WriteKeyWord("DISTRIBUTION JOB ")
+			ctx.WritePlainf("%d", *n.DistributionJobID)
+		} else {
+			ctx.WriteKeyWord("DISTRIBUTION JOBS")
+			restoreShowLikeOrWhereOpt()
+		}
 	// ShowTargetFilterable
 	default:
 		switch n.Tp {
@@ -3395,6 +3409,16 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("BINDING_CACHE STATUS")
 		case ShowAnalyzeStatus:
 			ctx.WriteKeyWord("ANALYZE STATUS")
+		case ShowDistributions:
+			ctx.WriteKeyWord("TABLE ")
+			if err := n.Table.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore ShowStmt.Table")
+			}
+			ctx.WriteKeyWord(" DISTRIBUTIONS")
+			if err := restoreShowLikeOrWhereOpt(); err != nil {
+				return err
+			}
+			return nil
 		case ShowRegions:
 			ctx.WriteKeyWord("TABLE ")
 			if err := n.Table.Restore(ctx); err != nil {
@@ -3430,6 +3454,9 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("SESSION_STATES")
 		case ShowReplicaStatus:
 			ctx.WriteKeyWord("REPLICA STATUS")
+		case ShowPlanForSQL:
+			ctx.WriteKeyWord("PLAN FOR ")
+			ctx.WriteString(n.SQLOrDigest)
 		default:
 			return errors.New("Unknown ShowStmt type")
 		}
@@ -3520,10 +3547,10 @@ func (n *ShowStmt) NeedLimitRSRow() bool {
 type WindowSpec struct {
 	node
 
-	Name model.CIStr
+	Name CIStr
 	// Ref is the reference window of this specification. For example, in `w2 as (w1 order by a)`,
 	// the definition of `w2` references `w1`.
-	Ref model.CIStr
+	Ref CIStr
 
 	PartitionBy *PartitionByClause
 	OrderBy     *OrderByClause
@@ -3827,12 +3854,68 @@ func (n *FrameBound) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+type DistributeTableStmt struct {
+	dmlNode
+	Table          *TableName
+	PartitionNames []CIStr
+	Rule           CIStr
+	Engine         CIStr
+}
+
+// Restore implements Node interface.
+func (n *DistributeTableStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("DISTRIBUTE ")
+	ctx.WriteKeyWord("TABLE ")
+
+	if err := n.Table.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore SplitIndexRegionStmt.Table")
+	}
+	if len(n.PartitionNames) > 0 {
+		ctx.WriteKeyWord(" PARTITION")
+		ctx.WritePlain("(")
+		for i, v := range n.PartitionNames {
+			if i != 0 {
+				ctx.WritePlain(", ")
+			}
+			ctx.WriteName(v.String())
+		}
+		ctx.WritePlain(")")
+	}
+
+	if len(n.Rule.L) > 0 {
+		ctx.WriteKeyWord(" RULE = ")
+		ctx.WriteName(n.Rule.String())
+	}
+
+	if len(n.Engine.L) > 0 {
+		ctx.WriteKeyWord(" ENGINE = ")
+		ctx.WriteName(n.Engine.String())
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *DistributeTableStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+
+	n = newNode.(*DistributeTableStmt)
+	node, ok := n.Table.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Table = node.(*TableName)
+	return v.Leave(n)
+}
+
 type SplitRegionStmt struct {
 	dmlNode
 
 	Table          *TableName
-	IndexName      model.CIStr
-	PartitionNames []model.CIStr
+	IndexName      CIStr
+	PartitionNames []CIStr
 
 	SplitSyntaxOpt *SplitSyntaxOption
 

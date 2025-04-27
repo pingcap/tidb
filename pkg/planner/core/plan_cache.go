@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
@@ -64,7 +64,11 @@ func SetParameterValuesIntoSCtx(sctx base.PlanContext, isNonPrep bool, markers [
 	vars := sctx.GetSessionVars()
 	vars.PlanCacheParams.Reset()
 	for i, usingParam := range params {
-		val, err := usingParam.Eval(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+		var (
+			val types.Datum
+			err error
+		)
+		val, err = usingParam.Eval(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
 		if err != nil {
 			return err
 		}
@@ -273,7 +277,7 @@ func instancePlanCacheEnabled(ctx context.Context) bool {
 	if intest.InTest && ctx.Value(PlanCacheKeyEnableInstancePlanCache{}) != nil {
 		return true
 	}
-	enableInstancePlanCache := variable.EnableInstancePlanCache.Load()
+	enableInstancePlanCache := vardef.EnableInstancePlanCache.Load()
 	return enableInstancePlanCache
 }
 

@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	. "github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -474,7 +474,7 @@ func TestRecommendIndex(t *testing.T) {
 			"RECOMMEND INDEX RUN FOR 'select * from t where a=1' WITH A = 1"},
 		{"recommend index run for 'select * from t where a=1' with A = 1, B = 2", true,
 			"RECOMMEND INDEX RUN FOR 'select * from t where a=1' WITH A = 1, B = 2"},
-		{"recommend index show", true, "RECOMMEND INDEX SHOW"},
+		{"recommend index show option", true, "RECOMMEND INDEX SHOW OPTION"},
 		{"recommend index apply 1", true, "RECOMMEND INDEX APPLY 1"},
 		{"recommend index ignore 1", true, "RECOMMEND INDEX IGNORE 1"},
 		{"recommend index set A = 1", true, "RECOMMEND INDEX SET A = 1"},
@@ -498,6 +498,7 @@ func TestAdminStmt(t *testing.T) {
 		{"admin show ddl job queries limit 3 offset 2", true, "ADMIN SHOW DDL JOB QUERIES LIMIT 2, 3"},
 		{"admin show ddl job queries limit 22 offset 0", true, "ADMIN SHOW DDL JOB QUERIES LIMIT 0, 22"},
 		{"admin show t1 next_row_id", true, "ADMIN SHOW `t1` NEXT_ROW_ID"},
+		{"admin create workload snapshot;", true, "ADMIN CREATE WORKLOAD SNAPSHOT"},
 		{"admin check table t1, t2;", true, "ADMIN CHECK TABLE `t1`, `t2`"},
 		{"admin check index tableName idxName;", true, "ADMIN CHECK INDEX `tableName` idxName"},
 		{"admin check index tableName idxName (1, 2), (4, 5);", true, "ADMIN CHECK INDEX `tableName` idxName (1,2), (4,5)"},
@@ -1067,6 +1068,28 @@ AAAAAAAAAAAA5gm5Mg==
 		{"show table t1 partition (p0,p1) index idx1 regions where a=2", true, "SHOW TABLE `t1` PARTITION(`p0`, `p1`) INDEX `idx1` REGIONS WHERE `a`=2"},
 		{"show table t1 partition index idx1", false, ""},
 
+		// for show table partition distributions.
+		{"show table t1 distributions", true, "SHOW TABLE `t1` DISTRIBUTIONS"},
+		{"show table t1 distributions where a=1", true, "SHOW TABLE `t1` DISTRIBUTIONS WHERE `a`=1"},
+		{"show table t1 partition (p0,p1) distributions", true, "SHOW TABLE `t1` PARTITION(`p0`, `p1`) DISTRIBUTIONS"},
+		{"show table t1 partition (p0,p1) distributions where a=1", true, "SHOW TABLE `t1` PARTITION(`p0`, `p1`) DISTRIBUTIONS WHERE `a`=1"},
+
+		// for distribute table
+		{"distribute table t1", false, ""},
+		{"distribute table t1 partition(p0)", false, ""},
+		{"distribute table t1 partition(p0,p1)", false, ""},
+		{"distribute table t1 partition(p0,p1) engine = tikv", false, ""},
+		{"distribute table t1 rule = leader engine = tikv", true, "DISTRIBUTE TABLE `t1` RULE = `leader` ENGINE = `tikv`"},
+		{"distribute table t1 partition(p0,p1) rule = leader engine = tikv", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`, `p1`) RULE = `leader` ENGINE = `tikv`"},
+		{"distribute table t1 partition(p0) rule = learner engine = tiflash", true, "DISTRIBUTE TABLE `t1` PARTITION(`p0`) RULE = `learner` ENGINE = `tiflash`"},
+
+		// for show distribution job(s)
+		{"show distribution jobs 1", false, ""},
+		{"show distribution jobs", true, "SHOW DISTRIBUTION JOBS"},
+		{"show distribution jobs where id > 0", true, "SHOW DISTRIBUTION JOBS WHERE `id`>0"},
+		{"show distribution job 1 where id > 0", false, ""},
+		{"show distribution job 1", true, "SHOW DISTRIBUTION JOB 1"},
+
 		// for show table next_row_id.
 		{"show table t1.t1 next_row_id", true, "SHOW TABLE `t1`.`t1` NEXT_ROW_ID"},
 		{"show table t1 next_row_id", true, "SHOW TABLE `t1` NEXT_ROW_ID"},
@@ -1179,6 +1202,8 @@ AAAAAAAAAAAA5gm5Mg==
 		{"query watch add SQL SIMILAR to 'select 1'", false, ""},
 		{"query watch add SQL TEXT SIMILAR 'select 1'", false, ""},
 		{"query watch remove 1", true, "QUERY WATCH REMOVE 1"},
+		{"query watch remove resource group rg1", true, "QUERY WATCH REMOVE RESOURCE GROUP `rg1`"},
+		{"query watch remove resource group @rg", true, "QUERY WATCH REMOVE RESOURCE GROUP @`rg`"},
 		{"query watch remove", false, ""},
 
 		// for issue 34325, "replace into" with hints
@@ -1693,7 +1718,6 @@ func TestBuiltin(t *testing.T) {
 		{`SELECT tidb_decode_key('abc');`, true, "SELECT TIDB_DECODE_KEY(_UTF8MB4'abc')"},
 		{`SELECT tidb_decode_base64_key('abc');`, true, "SELECT TIDB_DECODE_BASE64_KEY(_UTF8MB4'abc')"},
 		{`SELECT tidb_decode_sql_digests('[]');`, true, "SELECT TIDB_DECODE_SQL_DIGESTS(_UTF8MB4'[]')"},
-		{`SELECT get_mvcc_info('hex', '0xabc');`, true, "SELECT GET_MVCC_INFO(_UTF8MB4'hex', _UTF8MB4'0xabc')"},
 
 		// for time fsp
 		{"CREATE TABLE t( c1 TIME(2), c2 DATETIME(2), c3 TIMESTAMP(2) );", true, "CREATE TABLE `t` (`c1` TIME(2),`c2` DATETIME(2),`c3` TIMESTAMP(2))"},
@@ -2255,7 +2279,7 @@ func TestBuiltin(t *testing.T) {
 		{`SELECT ENCRYPT('hello'), ENCRYPT('hello', @salt);`, true, "SELECT ENCRYPT(_UTF8MB4'hello'),ENCRYPT(_UTF8MB4'hello', @`salt`)"},
 		{`SELECT MD5('testing');`, true, "SELECT MD5(_UTF8MB4'testing')"},
 		{`SELECT OLD_PASSWORD(@str);`, true, "SELECT OLD_PASSWORD(@`str`)"},
-		{`SELECT PASSWORD(@str);`, true, "SELECT PASSWORD_FUNC(@`str`)"},
+		{`SELECT PASSWORD(@str);`, true, "SELECT PASSWORD(@`str`)"},
 		{`SELECT RANDOM_BYTES(@len);`, true, "SELECT RANDOM_BYTES(@`len`)"},
 		{`SELECT SHA1('abc');`, true, "SELECT SHA1(_UTF8MB4'abc')"},
 		{`SELECT SHA('abc');`, true, "SELECT SHA(_UTF8MB4'abc')"},
@@ -2512,14 +2536,14 @@ func TestDDL(t *testing.T) {
 		{"CREATE TABLE foo (name CHAR(50) CHARACTER SET utf8 BINARY)", true, "CREATE TABLE `foo` (`name` CHAR(50) BINARY CHARACTER SET UTF8)"},
 		{"CREATE TABLE foo (name CHAR(50) CHARACTER SET utf8 BINARY CHARACTER set utf8)", false, ""},
 		{"CREATE TABLE foo (name CHAR(50) BINARY CHARACTER SET utf8 COLLATE utf8_bin)", true, "CREATE TABLE `foo` (`name` CHAR(50) BINARY CHARACTER SET UTF8 COLLATE utf8_bin)"},
-		{"CREATE TABLE foo (name CHAR(50) CHARACTER SET utf8 COLLATE utf8_bin COLLATE ascii_bin)", true, "CREATE TABLE `foo` (`name` CHAR(50) CHARACTER SET UTF8 COLLATE utf8_bin COLLATE ascii_bin)"},
-		{"CREATE TABLE foo (name CHAR(50) COLLATE ascii_bin COLLATE latin1_bin)", true, "CREATE TABLE `foo` (`name` CHAR(50) COLLATE ascii_bin COLLATE latin1_bin)"},
-		{"CREATE TABLE foo (name CHAR(50) COLLATE ascii_bin PRIMARY KEY COLLATE latin1_bin)", true, "CREATE TABLE `foo` (`name` CHAR(50) COLLATE ascii_bin PRIMARY KEY COLLATE latin1_bin)"},
+		{"CREATE TABLE foo (name CHAR(50) CHARACTER SET utf8 COLLATE utf8_bin COLLATE ascii_bin)", false, ""},
+		{"CREATE TABLE foo (name CHAR(50) COLLATE ascii_bin COLLATE latin1_bin)", false, ""},
+		{"CREATE TABLE foo (name CHAR(50) COLLATE ascii_bin PRIMARY KEY COLLATE latin1_bin)", false, ""},
 		{"CREATE TABLE foo (a.b, b);", false, ""},
 		{"CREATE TABLE foo (a, b.c);", false, ""},
 		{"CREATE TABLE (name CHAR(50) BINARY)", false, ""},
-		{"CREATE TABLE foo (name CHAR(50) COLLATE ascii_bin PRIMARY KEY COLLATE latin1_bin, INDEX (name ASC))", true, "CREATE TABLE `foo` (`name` CHAR(50) COLLATE ascii_bin PRIMARY KEY COLLATE latin1_bin,INDEX(`name`))"},
-		{"CREATE TABLE foo (name CHAR(50) COLLATE ascii_bin PRIMARY KEY COLLATE latin1_bin, INDEX (name DESC))", true, "CREATE TABLE `foo` (`name` CHAR(50) COLLATE ascii_bin PRIMARY KEY COLLATE latin1_bin,INDEX(`name` DESC))"},
+		{"CREATE TABLE foo (name CHAR(50) COLLATE ascii_bin PRIMARY KEY COLLATE latin1_bin, INDEX (name ASC))", false, ""},
+		{"CREATE TABLE foo (name CHAR(50) COLLATE ascii_bin PRIMARY KEY COLLATE latin1_bin, INDEX (name DESC))", false, ""},
 		// test enable or disable cached table
 		{"ALTER TABLE tmp CACHE", true, "ALTER TABLE `tmp` CACHE"},
 		{"ALTER TABLE tmp NOCACHE", true, "ALTER TABLE `tmp` NOCACHE"},
@@ -2991,6 +3015,12 @@ func TestDDL(t *testing.T) {
 		{"create table t (j json default (json_object('foo', 5, 'bar', 'barfoo')))", true, "CREATE TABLE `t` (`j` JSON DEFAULT (JSON_OBJECT(_UTF8MB4'foo', 5, _UTF8MB4'bar', _UTF8MB4'barfoo')))"},
 		{"create table t (j json default (json_array(1,2,3)))", true, "CREATE TABLE `t` (`j` JSON DEFAULT (JSON_ARRAY(1, 2, 3)))"},
 		{"create table t (j json default (json_quote('foobar')))", true, "CREATE TABLE `t` (`j` JSON DEFAULT (JSON_QUOTE(_UTF8MB4'foobar')))"},
+		{"create table t (c char(33) default (nonexistingfunc('foobar')))", true, "CREATE TABLE `t` (`c` CHAR(33) DEFAULT (NONEXISTINGFUNC(_UTF8MB4'foobar')))"},
+		{"create table t (c char(33) default 'foobar')", true, "CREATE TABLE `t` (`c` CHAR(33) DEFAULT _UTF8MB4'foobar')"},
+		{"create table t (c char(33) default ('foobar'))", true, "CREATE TABLE `t` (`c` CHAR(33) DEFAULT _UTF8MB4'foobar')"},
+		{"create table t (i int default (0))", true, "CREATE TABLE `t` (`i` INT DEFAULT 0)"},
+		{"create table t (i int default (-1))", true, "CREATE TABLE `t` (`i` INT DEFAULT -1)"},
+		{"create table t (i int default (+1))", true, "CREATE TABLE `t` (`i` INT DEFAULT +1)"},
 
 		// For table option `ENCRYPTION`
 		{"create table t (a int) encryption = 'n';", true, "CREATE TABLE `t` (`a` INT) ENCRYPTION = 'n'"},
@@ -3210,11 +3240,21 @@ func TestDDL(t *testing.T) {
 		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a, b))) USING HNSW COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX((VEC_COSINE_DISTANCE(`a`, `b`))) USING HNSW COMMENT 'a'"},
 		{"ALTER TABLE t ADD VECTOR INDEX ((lower(a))) USING HNSW COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX((LOWER(`a`))) USING HNSW COMMENT 'a'"},
 		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a), a)) USING HNSW COMMENT 'a'", false, ""},
-		{"ALTER TABLE t ADD VECTOR INDEX (a, (VEC_COSINE_DISTANCE(a))) USING HNSW COMMENT 'a'", false, ""},
-		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a))) USING HYPO COMMENT 'a'", false, ""},
-		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a))) COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX((VEC_COSINE_DISTANCE(`a`))) USING HNSW COMMENT 'a'"},
+		{"ALTER TABLE t ADD VECTOR INDEX (a, (VEC_COSINE_DISTANCE(a))) USING HNSW COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX(`a`, (VEC_COSINE_DISTANCE(`a`))) USING HNSW COMMENT 'a'"},
+		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a))) USING HYPO COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX((VEC_COSINE_DISTANCE(`a`))) USING HYPO COMMENT 'a'"},
+		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a))) COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX((VEC_COSINE_DISTANCE(`a`))) COMMENT 'a'"},
 		{"ALTER TABLE t ADD VECTOR INDEX ((VEC_COSINE_DISTANCE(a))) USING HNSW COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX((VEC_COSINE_DISTANCE(`a`))) USING HNSW COMMENT 'a'"},
 		{"ALTER TABLE t ADD VECTOR INDEX IF NOT EXISTS ((VEC_COSINE_DISTANCE(a))) USING HNSW COMMENT 'a'", true, "ALTER TABLE `t` ADD VECTOR INDEX IF NOT EXISTS((VEC_COSINE_DISTANCE(`a`))) USING HNSW COMMENT 'a'"},
+		{"ALTER TABLE t ADD COLUMNAR (a) USING INVERTED COMMENT 'a'", false, ""},
+		{"ALTER TABLE t ADD COLUMNAR ((a - 1)) USING INVERTED COMMENT 'a'", false, ""},
+		{"ALTER TABLE t ADD COLUMNAR (a) USING HASH COMMENT 'a'", false, ""},
+		{"ALTER TABLE t ADD COLUMNAR (a, b) USING INVERTED COMMENT 'a'", false, ""},
+		{"ALTER TABLE t ADD COLUMNAR KEY (a, b) USING INVERTED COMMENT 'a'", false, ""},
+		{"ALTER TABLE t ADD COLUMNAR INDEX (a, b) USING INVERTED COMMENT 'a'", true, "ALTER TABLE `t` ADD COLUMNAR INDEX(`a`, `b`) USING INVERTED COMMENT 'a'"},
+		{"ALTER TABLE t ADD COLUMNAR INDEX (a) USING INVERTED COMMENT 'a'", true, "ALTER TABLE `t` ADD COLUMNAR INDEX(`a`) USING INVERTED COMMENT 'a'"},
+		{"ALTER TABLE t ADD COLUMNAR INDEX (a) USING HYPO COMMENT 'a'", true, "ALTER TABLE `t` ADD COLUMNAR INDEX(`a`) USING HYPO COMMENT 'a'"},
+		{"ALTER TABLE t ADD COLUMNAR INDEX ((a - 1)) USING HYPO COMMENT 'a'", true, "ALTER TABLE `t` ADD COLUMNAR INDEX((`a`-1)) USING HYPO COMMENT 'a'"},
+		{"ALTER TABLE t ADD COLUMNAR INDEX IF NOT EXISTS (a) USING INVERTED COMMENT 'a'", true, "ALTER TABLE `t` ADD COLUMNAR INDEX IF NOT EXISTS(`a`) USING INVERTED COMMENT 'a'"},
 		{"ALTER TABLE t ADD CONSTRAINT fk_t2_id FOREIGN KEY (t2_id) REFERENCES t(id)", true, "ALTER TABLE `t` ADD CONSTRAINT `fk_t2_id` FOREIGN KEY (`t2_id`) REFERENCES `t`(`id`)"},
 		{"ALTER TABLE t ADD CONSTRAINT fk_t2_id FOREIGN KEY IF NOT EXISTS (t2_id) REFERENCES t(id)", true, "ALTER TABLE `t` ADD CONSTRAINT `fk_t2_id` FOREIGN KEY IF NOT EXISTS (`t2_id`) REFERENCES `t`(`id`)"},
 		{"ALTER TABLE t ADD CONSTRAINT c_1 CHECK (1+1) NOT ENFORCED, ADD UNIQUE (a)", true, "ALTER TABLE `t` ADD CONSTRAINT `c_1` CHECK(1+1) NOT ENFORCED, ADD UNIQUE(`a`)"},
@@ -3387,23 +3427,22 @@ func TestDDL(t *testing.T) {
 		{"CREATE INDEX idx ON t ( a ) USING HASH INVISIBLE", true, "CREATE INDEX `idx` ON `t` (`a`) USING HASH INVISIBLE"},
 
 		// For create vector index statement
-		{"CREATE VECTOR INDEX idx ON t (a) USING HNSW ", false, ""},
-		{"CREATE VECTOR INDEX idx ON t (a, b) USING HNSW ", false, ""},
-		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a)))", true, "CREATE VECTOR INDEX `idx` ON `t` ((VEC_COSINE_DISTANCE(`a`))) USING HNSW"},
-		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a))) TYPE BTREE", false, ""},
+		{"CREATE VECTOR INDEX idx ON t (a) USING HNSW ", true, "CREATE VECTOR INDEX `idx` ON `t` (`a`) USING HNSW"},
+		{"CREATE VECTOR INDEX idx ON t (a, b) USING HNSW ", true, "CREATE VECTOR INDEX `idx` ON `t` (`a`, `b`) USING HNSW"},
+		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a)))", true, "CREATE VECTOR INDEX `idx` ON `t` ((VEC_COSINE_DISTANCE(`a`)))"},
+		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a))) TYPE BTREE", true, "CREATE VECTOR INDEX `idx` ON `t` ((VEC_COSINE_DISTANCE(`a`))) USING BTREE"},
 		{"CREATE VECTOR INDEX idx ON t USING HNSW ((VEC_COSINE_DISTANCE(a)))", false, ""},
 		{"CREATE VECTOR idx ON t ((VEC_COSINE_DISTANCE(a))) USING HNSW", false, ""},
-		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a)), a) USING HNSW", false, ""},
-		{"CREATE VECTOR INDEX idx ON t (a, (VEC_COSINE_DISTANCE(a))) USING HNSW", false, ""},
-		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a)), a) USING HNSW", false, ""},
+		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a)), a) USING HNSW", true, "CREATE VECTOR INDEX `idx` ON `t` ((VEC_COSINE_DISTANCE(`a`)), `a`) USING HNSW"},
+		{"CREATE VECTOR INDEX idx ON t (a, (VEC_COSINE_DISTANCE(a))) USING HNSW", true, "CREATE VECTOR INDEX `idx` ON `t` (`a`, (VEC_COSINE_DISTANCE(`a`))) USING HNSW"},
 		{"CREATE VECTOR KEY idx ON t ((VEC_COSINE_DISTANCE(a))) USING HNSW", false, ""},
 		{"CREATE VECTOR INDEX idx ON t ((VEC_COSINE_DISTANCE(a))) USING HNSW", true, "CREATE VECTOR INDEX `idx` ON `t` ((VEC_COSINE_DISTANCE(`a`))) USING HNSW"},
 		{"CREATE VECTOR INDEX IF NOT EXISTS idx ON t ((VEC_COSINE_DISTANCE(a))) USING HNSW", true, "CREATE VECTOR INDEX IF NOT EXISTS `idx` ON `t` ((VEC_COSINE_DISTANCE(`a`))) USING HNSW"},
 		{"CREATE VECTOR INDEX IF NOT EXISTS idx ON t ((VEC_COSINE_DISTANCE(a))) TYPE HNSW", true, "CREATE VECTOR INDEX IF NOT EXISTS `idx` ON `t` ((VEC_COSINE_DISTANCE(`a`))) USING HNSW"},
 		{"CREATE VECTOR INDEX ident TYPE HNSW ON d_n.t_n ((VEC_COSINE_DISTANCE(a)))", true, "CREATE VECTOR INDEX `ident` ON `d_n`.`t_n` ((VEC_COSINE_DISTANCE(`a`))) USING HNSW"},
 		{"CREATE VECTOR INDEX idx USING HNSW ON t ((VEC_COSINE_DISTANCE(a)))", true, "CREATE VECTOR INDEX `idx` ON `t` ((VEC_COSINE_DISTANCE(`a`))) USING HNSW"},
-		{"CREATE VECTOR INDEX ident ON d_n.t_n ( ident , ident ASC ) TYPE HNSW", false, ""},
-		{"CREATE UNIQUE INDEX ident USING HNSW ON d_n.t_n ( ident , ident ASC )", false, ""},
+		{"CREATE VECTOR INDEX ident ON d_n.t_n ( ident , ident ASC ) TYPE HNSW", true, "CREATE VECTOR INDEX `ident` ON `d_n`.`t_n` (`ident`, `ident`) USING HNSW"},
+		{"CREATE UNIQUE INDEX ident USING HNSW ON d_n.t_n ( ident , ident ASC )", true, "CREATE UNIQUE INDEX `ident` ON `d_n`.`t_n` (`ident`, `ident`) USING HNSW"},
 
 		// For create index with algorithm
 		{"CREATE INDEX idx ON t ( a ) ALGORITHM = DEFAULT", true, "CREATE INDEX `idx` ON `t` (`a`)"},
@@ -3861,12 +3900,12 @@ func TestDDL(t *testing.T) {
 		{"alter table t add primary key (`a`, `b`) nonclustered", true, "ALTER TABLE `t` ADD PRIMARY KEY(`a`, `b`) NONCLUSTERED"},
 
 		// for create table with vector index
-		{"create table t(a int, b vector(3), vector index(b) USING HNSW);", false, ""},
-		{"create table t(a int, b vector(3), vector index(a, b) USING HNSW);", false, ""},
-		{"create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))));", true, "CREATE TABLE `t` (`a` INT,`b` VECTOR(3),VECTOR INDEX((VEC_COSINE_DISTANCE(`b`))) USING HNSW)"},
-		{"create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HASH);", false, ""},
-		{"create table t(a int, b vector(3), vector index(a, (VEC_COSINE_DISTANCE(b))) USING HNSW);", false, ""},
-		{"create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b)), a) USING HNSW);", false, ""},
+		{"create table t(a int, b vector(3), vector index(b) USING HNSW);", true, "CREATE TABLE `t` (`a` INT,`b` VECTOR(3),VECTOR INDEX(`b`) USING HNSW)"},
+		{"create table t(a int, b vector(3), vector index(a, b) USING HNSW);", true, "CREATE TABLE `t` (`a` INT,`b` VECTOR(3),VECTOR INDEX(`a`, `b`) USING HNSW)"},
+		{"create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))));", true, "CREATE TABLE `t` (`a` INT,`b` VECTOR(3),VECTOR INDEX((VEC_COSINE_DISTANCE(`b`))))"},
+		{"create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b))) USING HASH);", true, "CREATE TABLE `t` (`a` INT,`b` VECTOR(3),VECTOR INDEX((VEC_COSINE_DISTANCE(`b`))) USING HASH)"},
+		{"create table t(a int, b vector(3), vector index(a, (VEC_COSINE_DISTANCE(b))) USING HNSW);", true, "CREATE TABLE `t` (`a` INT,`b` VECTOR(3),VECTOR INDEX(`a`, (VEC_COSINE_DISTANCE(`b`))) USING HNSW)"},
+		{"create table t(a int, b vector(3), vector index((VEC_COSINE_DISTANCE(b)), a) USING HNSW);", true, "CREATE TABLE `t` (`a` INT,`b` VECTOR(3),VECTOR INDEX((VEC_COSINE_DISTANCE(`b`)), `a`) USING HNSW)"},
 		{"create table t(a int, b vector(3), vector index(VEC_COSINE_DISTANCE(b)) USING HNSW);", false, ""},
 		{"create table t(a int, b vector(3), vector key((VEC_COSINE_DISTANCE(b))) TYPE HNSW);", false, ""},
 		{"create table t(a int, b vector(3), vector index((b+1)) USING HNSW);", true, "CREATE TABLE `t` (`a` INT,`b` VECTOR(3),VECTOR INDEX((`b`+1)) USING HNSW)"},
@@ -3928,15 +3967,35 @@ func TestDDL(t *testing.T) {
 		{"create resource group x ru_per_sec=unlimited", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED"},
 		{"create resource group x ru_per_sec='check'", false, ""},
 		{"create resource group x followers=0", false, ""},
-		{"create resource group x ru_per_sec=1000, burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BURSTABLE = TRUE"},
-		{"create resource group x burstable, ru_per_sec=2000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = TRUE, RU_PER_SEC = 2000"},
-		{"create resource group x ru_per_sec=3000 burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 3000, BURSTABLE = TRUE"},
-		{"create resource group x burstable ru_per_sec=4000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = TRUE, RU_PER_SEC = 4000"},
-		{"create resource group x burstable=false ru_per_sec=4000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = FALSE, RU_PER_SEC = 4000"},
-		{"create resource group x burstable = true ru_per_sec=4000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = TRUE, RU_PER_SEC = 4000"},
-		{"create resource group x ru_per_sec=20, priority=LOW, burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 20, PRIORITY = LOW, BURSTABLE = TRUE"},
-		{"create resource group default ru_per_sec=20, priority=LOW, burstable", true, "CREATE RESOURCE GROUP `default` RU_PER_SEC = 20, PRIORITY = LOW, BURSTABLE = TRUE"},
-		{"create resource group default ru_per_sec=UNLIMITED, priority=LOW, burstable", true, "CREATE RESOURCE GROUP `default` RU_PER_SEC = UNLIMITED, PRIORITY = LOW, BURSTABLE = TRUE"},
+		{"create resource group x burstable=true", false, ""},
+		{"create resource group x burstable=false", false, ""},
+		{"create resource group x burstable=disable", false, ""},
+		{"create resource group x ru_per_sec=1000, burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BURSTABLE = MODERATED"},
+		{"create resource group x burstable, ru_per_sec=2000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = MODERATED, RU_PER_SEC = 2000"},
+		{"create resource group x ru_per_sec=3000 burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 3000, BURSTABLE = MODERATED"},
+		{"create resource group x burstable ru_per_sec=4000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = MODERATED, RU_PER_SEC = 4000"},
+		{"create resource group x BURSTABLE = UNLIMITED ru_per_sec=4000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = UNLIMITED, RU_PER_SEC = 4000"},
+		{"create resource group x BURSTABLE = MODERATED ru_per_sec=4000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = MODERATED, RU_PER_SEC = 4000"},
+		{"create resource group x BURSTABLE = OFF ru_per_sec=4000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = OFF, RU_PER_SEC = 4000"},
+		{"create resource group x ru_per_sec=20, priority=LOW, burstable", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 20, PRIORITY = LOW, BURSTABLE = MODERATED"},
+		{"create resource group default ru_per_sec=20, priority=LOW, burstable", true, "CREATE RESOURCE GROUP `default` RU_PER_SEC = 20, PRIORITY = LOW, BURSTABLE = MODERATED"},
+		{"create resource group default ru_per_sec=UNLIMITED, priority=LOW, burstable", true, "CREATE RESOURCE GROUP `default` RU_PER_SEC = UNLIMITED, PRIORITY = LOW, BURSTABLE = MODERATED"},
+		{"create resource group x ru_per_sec=1000", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000"},
+		{"create resource group x ru_per_sec=1000 burstable=unlimited", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BURSTABLE = UNLIMITED"},
+		{"create resource group x ru_per_sec=1000 burstable=off", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BURSTABLE = OFF"},
+		{"create resource group x ru_per_sec=1000 burstable=moderated", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BURSTABLE = MODERATED"},
+		{"create resource group x burstable=unlimited, ru_per_sec=2000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = UNLIMITED, RU_PER_SEC = 2000"},
+		{"create resource group x burstable=off, ru_per_sec=2000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = OFF, RU_PER_SEC = 2000"},
+		{"create resource group x burstable=moderated, ru_per_sec=2000", true, "CREATE RESOURCE GROUP `x` BURSTABLE = MODERATED, RU_PER_SEC = 2000"},
+		{"create resource group x ru_per_sec=1000 ,burstable=unlimited", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BURSTABLE = UNLIMITED"},
+		{"create resource group x ru_per_sec=1000 ,burstable=off", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BURSTABLE = OFF"},
+		{"create resource group x ru_per_sec=1000 ,burstable=moderated", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, BURSTABLE = MODERATED"},
+		{"create resource group x ru_per_sec=1000 , priority=LOW,burstable=unlimited", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, PRIORITY = LOW, BURSTABLE = UNLIMITED"},
+		{"create resource group x ru_per_sec=1000 , priority=LOW,burstable=off", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, PRIORITY = LOW, BURSTABLE = OFF"},
+		{"create resource group x ru_per_sec=1000 , priority=LOW,burstable=moderated", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, PRIORITY = LOW, BURSTABLE = MODERATED"},
+		{"create resource group x ru_per_sec=UNLIMITED , priority=LOW,burstable=unlimited", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, PRIORITY = LOW, BURSTABLE = UNLIMITED"},
+		{"create resource group x ru_per_sec=UNLIMITED , priority=LOW,burstable=off", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, PRIORITY = LOW, BURSTABLE = OFF"},
+		{"create resource group x ru_per_sec=UNLIMITED , priority=LOW,burstable=moderated", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, PRIORITY = LOW, BURSTABLE = MODERATED"},
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED '10s' ACTION DRYRUN)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10s' ACTION = DRYRUN)"},
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT=(EXEC_ELAPSED '10m' ACTION COOLDOWN)", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (EXEC_ELAPSED = '10m' ACTION = COOLDOWN)"},
 		{"create resource group x ru_per_sec=1000 QUERY_LIMIT=(ACTION KILL EXEC_ELAPSED='10m')", true, "CREATE RESOURCE GROUP `x` RU_PER_SEC = 1000, QUERY_LIMIT = (ACTION = KILL EXEC_ELAPSED = '10m')"},
@@ -3983,23 +4042,51 @@ func TestDDL(t *testing.T) {
 
 		{"alter resource group x cpu ='8c'", false, ""},
 		{"alter resource group x region ='us, 3'", false, ""},
+		{"alter resource group x burstable=true", false, ""},
+		{"alter resource group x burstable=false", false, ""},
+		{"alter resource group x burstable=disable", false, ""},
 		{"alter resource group default priority = high", true, "ALTER RESOURCE GROUP `default` PRIORITY = HIGH"},
 		{"alter resource group x cpu='8c', io_read_bandwidth='2GB/s', io_write_bandwidth='200MB/s'", false, ""},
 		{"alter resource group x ru_per_sec=1000", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 1000"},
-		{"alter resource group x ru_per_sec=2000, BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 2000, BURSTABLE = TRUE"},
+		{"alter resource group x ru_per_sec=2000, BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 2000, BURSTABLE = MODERATED"},
 		{"alter resource group x ru_per_sec=UNLIMITED", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED"},
-		{"alter resource group x ru_per_sec=UNLIMITED, BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, BURSTABLE = TRUE"},
-		{"alter resource group x ru_per_sec=unlimited, BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, BURSTABLE = TRUE"},
+		{"alter resource group x ru_per_sec=UNLIMITED, BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, BURSTABLE = MODERATED"},
+		{"alter resource group x ru_per_sec=unlimited, BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, BURSTABLE = MODERATED"},
 		{"alter resource group x ru_per_sec='check', BURSTABLE", false, ""},
-		{"alter resource group x BURSTABLE, ru_per_sec=3000", true, "ALTER RESOURCE GROUP `x` BURSTABLE = TRUE, RU_PER_SEC = 3000"},
-		{"alter resource group x BURSTABLE ru_per_sec=4000", true, "ALTER RESOURCE GROUP `x` BURSTABLE = TRUE, RU_PER_SEC = 4000"},
+		{"alter resource group x BURSTABLE, ru_per_sec=3000", true, "ALTER RESOURCE GROUP `x` BURSTABLE = MODERATED, RU_PER_SEC = 3000"},
+		{"alter resource group x BURSTABLE ru_per_sec=4000", true, "ALTER RESOURCE GROUP `x` BURSTABLE = MODERATED, RU_PER_SEC = 4000"},
+		{"alter resource group x ru_per_sec=2000, BURSTABLE=unlimited", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 2000, BURSTABLE = UNLIMITED"},
+		{"alter resource group x ru_per_sec=2000, BURSTABLE=moderated", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 2000, BURSTABLE = MODERATED"},
+		{"alter resource group x ru_per_sec=2000, BURSTABLE=off", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 2000, BURSTABLE = OFF"},
+		{"alter resource group x ru_per_sec=UNLIMITED", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED"},
+		{"alter resource group x ru_per_sec=UNLIMITED, BURSTABLE=unlimited", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, BURSTABLE = UNLIMITED"},
+		{"alter resource group x ru_per_sec=UNLIMITED, BURSTABLE=moderated", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, BURSTABLE = MODERATED"},
+		{"alter resource group x ru_per_sec=unlimited, BURSTABLE=off", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = UNLIMITED, BURSTABLE = OFF"},
+		{"alter resource group x ru_per_sec='check', BURSTABLE", false, ""},
+		{"alter resource group x ru_per_sec=2000, BURSTABLE=yes", false, ""},
+		{"alter resource group x BURSTABLE=unlimited, ru_per_sec=3000", true, "ALTER RESOURCE GROUP `x` BURSTABLE = UNLIMITED, RU_PER_SEC = 3000"},
+		{"alter resource group x BURSTABLE=moderated, ru_per_sec=3000", true, "ALTER RESOURCE GROUP `x` BURSTABLE = MODERATED, RU_PER_SEC = 3000"},
+		{"alter resource group x BURSTABLE=off, ru_per_sec=3000", true, "ALTER RESOURCE GROUP `x` BURSTABLE = OFF, RU_PER_SEC = 3000"},
+		{"alter resource group x BURSTABLE=unlimited ru_per_sec=4000", true, "ALTER RESOURCE GROUP `x` BURSTABLE = UNLIMITED, RU_PER_SEC = 4000"},
+		{"alter resource group x BURSTABLE=moderated ru_per_sec=4000", true, "ALTER RESOURCE GROUP `x` BURSTABLE = MODERATED, RU_PER_SEC = 4000"},
+		{"alter resource group x BURSTABLE=off ru_per_sec=4000", true, "ALTER RESOURCE GROUP `x` BURSTABLE = OFF, RU_PER_SEC = 4000"},
 		// This case is expected in parser test but not in actual ddl job.
 		// Todo: support patch setting(not cover all).
-		{"alter resource group x BURSTABLE", true, "ALTER RESOURCE GROUP `x` BURSTABLE = TRUE"},
-		{"alter resource group x ru_per_sec=200000 BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 200000, BURSTABLE = TRUE"},
+		{"alter resource group x BURSTABLE", true, "ALTER RESOURCE GROUP `x` BURSTABLE = MODERATED"},
+		{"alter resource group x ru_per_sec=200000 BURSTABLE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 200000, BURSTABLE = MODERATED"},
 		{"alter resource group x followers=0", false, ""},
 		{"alter resource group x ru_per_sec=20 priority=MID BURSTABLE", false, ""},
-		{"alter resource group x ru_per_sec=20 priority=HIGH BURSTABLE=FALSE", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 20, PRIORITY = HIGH, BURSTABLE = FALSE"},
+		{"alter resource group x BURSTABLE=unlimited", true, "ALTER RESOURCE GROUP `x` BURSTABLE = UNLIMITED"},
+		{"alter resource group x BURSTABLE=moderated", true, "ALTER RESOURCE GROUP `x` BURSTABLE = MODERATED"},
+		{"alter resource group x BURSTABLE=off", true, "ALTER RESOURCE GROUP `x` BURSTABLE = OFF"},
+		{"alter resource group x ru_per_sec=200000 BURSTABLE=unlimited", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 200000, BURSTABLE = UNLIMITED"},
+		{"alter resource group x ru_per_sec=200000 BURSTABLE=moderated", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 200000, BURSTABLE = MODERATED"},
+		{"alter resource group x ru_per_sec=200000 BURSTABLE=off", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 200000, BURSTABLE = OFF"},
+		{"alter resource group x followers=0", false, ""},
+		{"alter resource group x ru_per_sec=20 priority=MID", false, ""},
+		{"alter resource group x ru_per_sec=20 priority=HIGH BURSTABLE=unlimited", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 20, PRIORITY = HIGH, BURSTABLE = UNLIMITED"},
+		{"alter resource group x ru_per_sec=20 priority=HIGH BURSTABLE=moderated", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 20, PRIORITY = HIGH, BURSTABLE = MODERATED"},
+		{"alter resource group x ru_per_sec=20 priority=HIGH BURSTABLE=off", true, "ALTER RESOURCE GROUP `x` RU_PER_SEC = 20, PRIORITY = HIGH, BURSTABLE = OFF"},
 
 		{"alter resource group x QUERY_LIMIT=NULL", true, "ALTER RESOURCE GROUP `x` QUERY_LIMIT = NULL"},
 		{"alter resource group x QUERY_LIMIT=()", true, "ALTER RESOURCE GROUP `x` QUERY_LIMIT = NULL"},
@@ -4018,10 +4105,18 @@ func TestDDL(t *testing.T) {
 		{"alter resource group x background=()", true, "ALTER RESOURCE GROUP `x` BACKGROUND = NULL"},
 		{"alter resource group x background NULL", true, "ALTER RESOURCE GROUP `x` BACKGROUND = NULL"},
 		{"alter resource group default priority=low background = ( task_types \"ttl\" )", true, "ALTER RESOURCE GROUP `default` PRIORITY = LOW, BACKGROUND = (TASK_TYPES = 'ttl')"},
-		{"alter resource group default burstable background ( task_types = 'a,b,c' )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = TRUE, BACKGROUND = (TASK_TYPES = 'a,b,c')"},
-		{"alter resource group default burstable background ( utilization_limit = 20 )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = TRUE, BACKGROUND = (UTILIZATION_LIMIT = 20)"},
-		{"alter resource group default burstable background ( task_types = 'a,b,c', utilization_limit = 20 )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = TRUE, BACKGROUND = (TASK_TYPES = 'a,b,c', UTILIZATION_LIMIT = 20)"},
-		{"alter resource group default burstable background ( utilization_limit = 'abc' )", false, ""},
+		{"alter resource group default burstable=unlimited background ( task_types = 'a,b,c' )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = UNLIMITED, BACKGROUND = (TASK_TYPES = 'a,b,c')"},
+		{"alter resource group default burstable=moderated background ( task_types = 'a,b,c' )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = MODERATED, BACKGROUND = (TASK_TYPES = 'a,b,c')"},
+		{"alter resource group default burstable=off background ( task_types = 'a,b,c' )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = OFF, BACKGROUND = (TASK_TYPES = 'a,b,c')"},
+		{"alter resource group default burstable=unlimited background ( utilization_limit = 20 )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = UNLIMITED, BACKGROUND = (UTILIZATION_LIMIT = 20)"},
+		{"alter resource group default burstable=moderated background ( utilization_limit = 20 )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = MODERATED, BACKGROUND = (UTILIZATION_LIMIT = 20)"},
+		{"alter resource group default burstable=off background ( utilization_limit = 20 )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = OFF, BACKGROUND = (UTILIZATION_LIMIT = 20)"},
+		{"alter resource group default burstable=unlimited background ( task_types = 'a,b,c', utilization_limit = 20 )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = UNLIMITED, BACKGROUND = (TASK_TYPES = 'a,b,c', UTILIZATION_LIMIT = 20)"},
+		{"alter resource group default burstable=moderated background ( task_types = 'a,b,c', utilization_limit = 20 )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = MODERATED, BACKGROUND = (TASK_TYPES = 'a,b,c', UTILIZATION_LIMIT = 20)"},
+		{"alter resource group default burstable=off background ( task_types = 'a,b,c', utilization_limit = 20 )", true, "ALTER RESOURCE GROUP `default` BURSTABLE = OFF, BACKGROUND = (TASK_TYPES = 'a,b,c', UTILIZATION_LIMIT = 20)"},
+		{"alter resource group default burstable=unlimited background ( utilization_limit = 'abc' )", false, ""},
+		{"alter resource group default burstable=moderated background ( utilization_limit = 'abc' )", false, ""},
+		{"alter resource group default burstable=off background ( utilization_limit = 'abc' )", false, ""},
 
 		{"drop resource group x;", true, "DROP RESOURCE GROUP `x`"},
 		{"drop resource group DEFAULT;", true, "DROP RESOURCE GROUP `DEFAULT`"},
@@ -4579,12 +4674,12 @@ func TestOptimizerHints(t *testing.T) {
 	hints = selectStmt.TableHints
 	require.Len(t, hints, 2)
 	require.Equal(t, "read_from_storage", hints[0].HintName.L)
-	require.Equal(t, "tiflash", hints[0].HintData.(model.CIStr).L)
+	require.Equal(t, "tiflash", hints[0].HintData.(ast.CIStr).L)
 	require.Len(t, hints[0].Tables, 2)
 	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
 	require.Equal(t, "t2", hints[0].Tables[1].TableName.L)
 	require.Equal(t, "read_from_storage", hints[1].HintName.L)
-	require.Equal(t, "tikv", hints[1].HintData.(model.CIStr).L)
+	require.Equal(t, "tikv", hints[1].HintData.(ast.CIStr).L)
 	require.Len(t, hints[1].Tables, 1)
 	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
 
@@ -4657,9 +4752,9 @@ func TestOptimizerHints(t *testing.T) {
 	hints = selectStmt.TableHints
 	require.Len(t, hints, 2)
 	require.Equal(t, "query_type", hints[0].HintName.L)
-	require.Equal(t, "olap", hints[0].HintData.(model.CIStr).L)
+	require.Equal(t, "olap", hints[0].HintData.(ast.CIStr).L)
 	require.Equal(t, "query_type", hints[1].HintName.L)
-	require.Equal(t, "oltp", hints[1].HintData.(model.CIStr).L)
+	require.Equal(t, "oltp", hints[1].HintData.(ast.CIStr).L)
 
 	// Test MEMORY_QUOTA
 	stmt, _, err = p.Parse("select /*+ MEMORY_QUOTA(1 MB), memory_quota(1 GB) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
@@ -5730,6 +5825,9 @@ func TestBinding(t *testing.T) {
 		{"CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST 'sss'", true, "CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST 'sss'"},
 		{"set binding enabled for sql digest '1'", true, "SET BINDING ENABLED FOR SQL DIGEST '1'"},
 		{"set binding disabled for sql digest '1'", true, "SET BINDING DISABLED FOR SQL DIGEST '1'"},
+		// Show plan for a specified SQL.
+		{"show plan for 'select a from t'", true, "SHOW PLAN FOR 'select a from t'"},
+		{"show plan for '23adc8e6f62'", true, "SHOW PLAN FOR '23adc8e6f62'"},
 	}
 	RunTest(t, table, false)
 
@@ -5822,10 +5920,10 @@ func TestView(t *testing.T) {
 	require.NoError(t, err)
 	v, ok := sms[0].(*ast.CreateViewStmt)
 	require.True(t, ok)
-	require.Equal(t, model.AlgorithmUndefined, v.Algorithm)
+	require.Equal(t, ast.AlgorithmUndefined, v.Algorithm)
 	require.Equal(t, "select * from t", v.Select.Text())
-	require.Equal(t, model.SecurityDefiner, v.Security)
-	require.Equal(t, model.CheckOptionCascaded, v.CheckOption)
+	require.Equal(t, ast.SecurityDefiner, v.Security)
+	require.Equal(t, ast.CheckOptionCascaded, v.CheckOption)
 
 	src := `CREATE OR REPLACE ALGORITHM = UNDEFINED DEFINER = root@localhost
                   SQL SECURITY DEFINER
@@ -5838,15 +5936,15 @@ func TestView(t *testing.T) {
 	v, ok = st.(*ast.CreateViewStmt)
 	require.True(t, ok)
 	require.True(t, v.OrReplace)
-	require.Equal(t, model.AlgorithmUndefined, v.Algorithm)
+	require.Equal(t, ast.AlgorithmUndefined, v.Algorithm)
 	require.Equal(t, "root", v.Definer.Username)
 	require.Equal(t, "localhost", v.Definer.Hostname)
-	require.Equal(t, model.NewCIStr("a"), v.Cols[0])
-	require.Equal(t, model.NewCIStr("b"), v.Cols[1])
-	require.Equal(t, model.NewCIStr("c"), v.Cols[2])
+	require.Equal(t, ast.NewCIStr("a"), v.Cols[0])
+	require.Equal(t, ast.NewCIStr("b"), v.Cols[1])
+	require.Equal(t, ast.NewCIStr("c"), v.Cols[2])
 	require.Equal(t, "select c,d,e from t", v.Select.Text())
-	require.Equal(t, model.SecurityDefiner, v.Security)
-	require.Equal(t, model.CheckOptionCascaded, v.CheckOption)
+	require.Equal(t, ast.SecurityDefiner, v.Security)
+	require.Equal(t, ast.CheckOptionCascaded, v.CheckOption)
 
 	src = `
 CREATE VIEW v1 AS SELECT * FROM t;
@@ -6459,8 +6557,8 @@ func TestTablePartitionNameList(t *testing.T) {
 		tableName, ok := source.Source.(*ast.TableName)
 		require.True(t, ok)
 		require.Len(t, tableName.PartitionNames, 2)
-		require.Equal(t, model.CIStr{O: "p0", L: "p0"}, tableName.PartitionNames[0])
-		require.Equal(t, model.CIStr{O: "p1", L: "p1"}, tableName.PartitionNames[1])
+		require.Equal(t, ast.CIStr{O: "p0", L: "p0"}, tableName.PartitionNames[0])
+		require.Equal(t, ast.CIStr{O: "p1", L: "p1"}, tableName.PartitionNames[1])
 	}
 }
 
@@ -6914,7 +7012,7 @@ func (checker *nodeTextCleaner) Enter(in ast.Node) (out ast.Node, skipChildren b
 
 			for i, option := range col.Options {
 				if option.Tp == 0 && option.Expr == nil && !option.Stored && option.Refer == nil {
-					col.Options = append(col.Options[:i], col.Options[i+1:]...)
+					col.Options = slices.Delete(col.Options, i, i+1)
 				}
 			}
 		}
@@ -7062,11 +7160,11 @@ func TestStatisticsOps(t *testing.T) {
 	require.True(t, v.IfNotExists)
 	require.Equal(t, "stats1", v.StatsName)
 	require.Equal(t, ast.StatsTypeCardinality, v.StatsType)
-	require.Equal(t, model.CIStr{O: "t", L: "t"}, v.Table.Name)
+	require.Equal(t, ast.CIStr{O: "t", L: "t"}, v.Table.Name)
 	require.Len(t, v.Columns, 3)
-	require.Equal(t, model.CIStr{O: "a", L: "a"}, v.Columns[0].Name)
-	require.Equal(t, model.CIStr{O: "b", L: "b"}, v.Columns[1].Name)
-	require.Equal(t, model.CIStr{O: "c", L: "c"}, v.Columns[2].Name)
+	require.Equal(t, ast.CIStr{O: "a", L: "a"}, v.Columns[0].Name)
+	require.Equal(t, ast.CIStr{O: "b", L: "b"}, v.Columns[1].Name)
+	require.Equal(t, ast.CIStr{O: "c", L: "c"}, v.Columns[2].Name)
 }
 
 func TestHighNotPrecedenceMode(t *testing.T) {
@@ -7250,6 +7348,7 @@ func TestWithoutCharsetFlags(t *testing.T) {
 func TestRestoreBinOpWithBrackets(t *testing.T) {
 	cases := []testCase{
 		{"select mod(a+b, 4)+1", true, "SELECT (((`a` + `b`) % 4) + 1)"},
+		{"SELECT MOD(10, 2 BETWEEN 0 and 5)", true, "SELECT (10 % (2 BETWEEN 0 AND 5))"}, // issue #59000
 		{"select mod( year(a) - abs(weekday(a) + dayofweek(a)), 4) + 1", true, "SELECT (((year(`a`) - abs((weekday(`a`) + dayofweek(`a`)))) % 4) + 1)"},
 	}
 
@@ -7477,6 +7576,54 @@ func TestGBKEncoding(t *testing.T) {
 		{"select '\x65\x5c'", true},
 	} {
 		_, _, err = p.ParseSQL(test.sql, gbkOpt)
+		if test.err {
+			require.Error(t, err, test.sql)
+		} else {
+			require.NoError(t, err, test.sql)
+		}
+	}
+}
+
+func TestGB18030Encoding(t *testing.T) {
+	p := parser.New()
+	gb18030Encoding, _ := charset.Lookup("gb18030")
+	encoder := gb18030Encoding.NewEncoder()
+	sql, err := encoder.String("create table 测试表 (测试列 varchar(255) default 'GB18030测试用例');")
+	require.NoError(t, err)
+
+	stmt, _, err := p.ParseSQL(sql)
+	require.NoError(t, err)
+	checker := &gbkEncodingChecker{}
+	_, _ = stmt[0].Accept(checker)
+	require.NotEqual(t, "测试表", checker.tblName)
+	require.NotEqual(t, "测试列", checker.colName)
+
+	gb18030Opt := parser.CharsetClient("gb18030")
+	stmt, _, err = p.ParseSQL(sql, gb18030Opt)
+	require.NoError(t, err)
+	_, _ = stmt[0].Accept(checker)
+	require.Equal(t, "测试表", checker.tblName)
+	require.Equal(t, "测试列", checker.colName)
+	require.Equal(t, "GB18030测试用例", checker.expr)
+
+	_, _, err = p.ParseSQL("select _gbk '\xc6\x5c' from dual;")
+	require.Error(t, err)
+
+	for _, test := range []struct {
+		sql string
+		err bool
+	}{
+		{"select '\xc6\x5c' from `\xab\x60`;", false},
+		{`prepare p1 from "insert into t values ('中文');";`, false},
+		{"select '啊';", false},
+		{"create table t1(s set('a一','b二','c三'));", false},
+		{"insert into t3 values('一a');", false},
+		{"select '\xa5\x5c'", false},
+		{"select '''\xa5\x5c'", false},
+		{"select ```\xa5\x5c`", false},
+		{"select '\x65\x5c'", true},
+	} {
+		_, _, err = p.ParseSQL(test.sql, gb18030Opt)
 		if test.err {
 			require.Error(t, err, test.sql)
 		} else {

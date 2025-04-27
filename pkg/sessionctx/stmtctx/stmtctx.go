@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -131,6 +132,75 @@ func (r *ReservedRowIDAlloc) Exhausted() bool {
 	return r.base >= r.max
 }
 
+type stmtCtxMu struct {
+	sync.Mutex
+
+	foundRows uint64
+
+	/*
+		following variables are ported from 'COPY_INFO' struct of MySQL server source,
+		they are used to count rows for INSERT/REPLACE/UPDATE queries:
+		  If a row is inserted then the copied variable is incremented.
+		  If a row is updated by the INSERT ... ON DUPLICATE KEY UPDATE and the
+		     new data differs from the old one then the copied and the updated
+		     variables are incremented.
+		  The touched variable is incremented if a row was touched by the update part
+		     of the INSERT ... ON DUPLICATE KEY UPDATE no matter whether the row
+		     was actually changed or not.
+
+		see https://github.com/mysql/mysql-server/blob/d2029238d6d9f648077664e4cdd611e231a6dc14/sql/sql_data_change.h#L60 for more details
+	*/
+	records uint64
+	deleted uint64
+	updated uint64
+	copied  uint64
+	touched uint64
+
+	message string
+}
+
+func (mu *stmtCtxMu) reset() *stmtCtxMu {
+	if mu == nil {
+		return &stmtCtxMu{}
+	}
+	mu.copied = 0
+	mu.deleted = 0
+	mu.foundRows = 0
+	mu.message = ""
+	mu.records = 0
+	mu.touched = 0
+	mu.updated = 0
+	return mu
+}
+
+type staleTSOProvider struct {
+	sync.Mutex
+	value *uint64
+	eval  func() (uint64, error)
+}
+
+func (s *staleTSOProvider) reset() *staleTSOProvider {
+	if s == nil {
+		return &staleTSOProvider{}
+	}
+	s.value = nil
+	s.eval = nil
+	return s
+}
+
+type stmtCache struct {
+	mu   sync.Mutex
+	data map[StmtCacheKey]any
+}
+
+func (s *stmtCache) reset() *stmtCache {
+	if s == nil {
+		return &stmtCache{}
+	}
+	s.data = nil
+	return s
+}
+
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {
@@ -202,33 +272,10 @@ type StatementContext struct {
 	InRestrictedSQL bool
 	ViewDepth       int32
 	// mu struct holds variables that change during execution.
-	mu struct {
-		sync.Mutex
+	mu *stmtCtxMu
+	// affectedRows is lifted from mu for performance reason.
+	affectedRows atomic.Uint64
 
-		affectedRows uint64
-		foundRows    uint64
-
-		/*
-			following variables are ported from 'COPY_INFO' struct of MySQL server source,
-			they are used to count rows for INSERT/REPLACE/UPDATE queries:
-			  If a row is inserted then the copied variable is incremented.
-			  If a row is updated by the INSERT ... ON DUPLICATE KEY UPDATE and the
-			     new data differs from the old one then the copied and the updated
-			     variables are incremented.
-			  The touched variable is incremented if a row was touched by the update part
-			     of the INSERT ... ON DUPLICATE KEY UPDATE no matter whether the row
-			     was actually changed or not.
-
-			see https://github.com/mysql/mysql-server/blob/d2029238d6d9f648077664e4cdd611e231a6dc14/sql/sql_data_change.h#L60 for more details
-		*/
-		records uint64
-		deleted uint64
-		updated uint64
-		copied  uint64
-		touched uint64
-
-		message string
-	}
 	WarnHandler contextutil.WarnHandlerExt
 	// ExtraWarnHandler record the extra warnings and are only used by the slow log only now.
 	// If a warning is expected to be output only under some conditions (like in EXPLAIN or EXPLAIN VERBOSE) but it's
@@ -245,6 +292,8 @@ type StatementContext struct {
 	PrevLastInsertID uint64
 	// LastInsertID is the auto-generated ID in the current statement.
 	LastInsertID uint64
+	// LastInsertIDSet is true if the LastInsertId was set
+	LastInsertIDSet bool
 	// InsertID is the given insert ID of an auto_increment column.
 	InsertID uint64
 
@@ -296,23 +345,17 @@ type StatementContext struct {
 	// plan should be a plannercore.Plan if it's not nil
 	plan any
 
-	Tables                []TableEntry
-	lockWaitStartTime     int64 // LockWaitStartTime stores the pessimistic lock wait start time
-	PessimisticLockWaited int32
-	LockKeysDuration      int64
-	LockKeysCount         int32
-	LockTableIDs          map[int64]struct{} // table IDs need to be locked, empty for lock all tables
-	TblInfo2UnionScan     map[*model.TableInfo]bool
-	TaskID                uint64 // unique ID for an execution of a statement
-	TaskMapBakTS          uint64 // counter for
+	Tables            []TableEntry
+	lockWaitStartTime int64              // LockWaitStartTime stores the pessimistic lock wait start time
+	LockTableIDs      map[int64]struct{} // table IDs need to be locked, empty for lock all tables
+	TblInfo2UnionScan map[*model.TableInfo]bool
+	TaskID            uint64 // unique ID for an execution of a statement
+	TaskMapBakTS      uint64 // counter for
 
 	// stmtCache is used to store some statement-related values.
 	// add mutex to protect stmtCache concurrent access
 	// https://github.com/pingcap/tidb/issues/36159
-	stmtCache struct {
-		mu   sync.Mutex
-		data map[StmtCacheKey]any
-	}
+	stmtCache *stmtCache
 
 	// Map to store all CTE storages of current SQL.
 	// Will clean up at the end of the execution.
@@ -421,11 +464,7 @@ type StatementContext struct {
 	// Check if TiFlash read engine is removed due to strict sql mode.
 	TiFlashEngineRemovedDueToStrictSQLMode bool
 	// StaleTSOProvider is used to provide stale timestamp oracle for read-only transactions.
-	StaleTSOProvider struct {
-		sync.Mutex
-		value *uint64
-		eval  func() (uint64, error)
-	}
+	StaleTSOProvider *staleTSOProvider
 
 	// MDLRelatedTableIDs is used to store the table IDs that are related to the current MDL lock.
 	MDLRelatedTableIDs map[int64]struct{}
@@ -434,6 +473,9 @@ type StatementContext struct {
 	// and the `for share` execution is enabled by `tidb_enable_noop_functions`, no locks should be
 	// acquired in this case.
 	ForShareLockEnabledByNoop bool
+
+	// OperatorNum is used to record the number of operators in the current logical plan.
+	OperatorNum uint64
 }
 
 // DefaultStmtErrLevels is the default error levels for statement
@@ -451,7 +493,10 @@ func NewStmtCtx() *StatementContext {
 func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	intest.AssertNotNil(tz)
 	sc := &StatementContext{
-		ctxID: contextutil.GenContextID(),
+		ctxID:            contextutil.GenContextID(),
+		mu:               &stmtCtxMu{},
+		stmtCache:        &stmtCache{},
+		StaleTSOProvider: &staleTSOProvider{},
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
@@ -463,7 +508,26 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 }
 
 // Reset resets a statement context
-func (sc *StatementContext) Reset() {
+func (sc *StatementContext) Reset() bool {
+	// make sure no other goroutines still get locks.
+	if sc.mu != nil {
+		if !sc.mu.TryLock() {
+			return false
+		}
+		defer sc.mu.Unlock()
+	}
+	if sc.stmtCache != nil {
+		if !sc.stmtCache.mu.TryLock() {
+			return false
+		}
+		defer sc.stmtCache.mu.Unlock()
+	}
+	if sc.StaleTSOProvider != nil {
+		if !sc.StaleTSOProvider.TryLock() {
+			return false
+		}
+		defer sc.StaleTSOProvider.Unlock()
+	}
 	*sc = StatementContext{
 		ctxID:               contextutil.GenContextID(),
 		CTEStorageMap:       sc.CTEStorageMap,
@@ -474,7 +538,14 @@ func (sc *StatementContext) Reset() {
 		WarnHandler:         sc.WarnHandler,
 		ExtraWarnHandler:    sc.ExtraWarnHandler,
 		IndexUsageCollector: sc.IndexUsageCollector,
+		mu:                  sc.mu,
+		stmtCache:           sc.stmtCache,
+		StaleTSOProvider:    sc.StaleTSOProvider,
 	}
+	sc.mu = sc.mu.reset()
+	sc.affectedRows.Store(0)
+	sc.stmtCache = sc.stmtCache.reset()
+	sc.StaleTSOProvider = sc.StaleTSOProvider.reset()
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
 	sc.PlanCacheTracker = contextutil.NewPlanCacheTracker(sc)
@@ -489,6 +560,7 @@ func (sc *StatementContext) Reset() {
 	} else {
 		sc.ExtraWarnHandler = contextutil.NewStaticWarnHandler(0)
 	}
+	return true
 }
 
 // CtxID returns the context id of the statement
@@ -796,29 +868,24 @@ func (sc *StatementContext) AddAffectedRows(rows uint64) {
 		// For compatibility with MySQL, not add the affected row cause by the foreign key trigger.
 		return
 	}
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	sc.mu.affectedRows += rows
+	sc.affectedRows.Add(rows)
 }
 
 // SetAffectedRows sets affected rows.
 func (sc *StatementContext) SetAffectedRows(rows uint64) {
-	sc.mu.Lock()
-	sc.mu.affectedRows = rows
-	sc.mu.Unlock()
+	sc.affectedRows.Store(rows)
 }
 
 // AffectedRows gets affected rows.
 func (sc *StatementContext) AffectedRows() uint64 {
-	sc.mu.Lock()
-	defer sc.mu.Unlock()
-	return sc.mu.affectedRows
+	return sc.affectedRows.Load()
 }
 
 // FoundRows gets found rows.
 func (sc *StatementContext) FoundRows() uint64 {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
+	failpoint.InjectCall("afterFoundRowsLocked", sc)
 	return sc.mu.foundRows
 }
 
@@ -995,7 +1062,7 @@ func (sc *StatementContext) AppendExtraError(warn error) {
 func (sc *StatementContext) resetMuForRetry() {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
-	sc.mu.affectedRows = 0
+	sc.affectedRows.Store(0)
 	sc.mu.foundRows = 0
 	sc.mu.records = 0
 	sc.mu.deleted = 0
@@ -1012,7 +1079,6 @@ func (sc *StatementContext) ResetForRetry() {
 	sc.TableIDs = sc.TableIDs[:0]
 	sc.IndexNames = sc.IndexNames[:0]
 	sc.TaskID = AllocateTaskID()
-	sc.SyncExecDetails.Reset()
 	sc.WarnHandler.TruncateWarnings(0)
 	sc.ExtraWarnHandler.TruncateWarnings(0)
 
@@ -1026,7 +1092,6 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	details = sc.SyncExecDetails.GetExecDetails()
-	details.LockKeysDuration = time.Duration(atomic.LoadInt64(&sc.LockKeysDuration))
 	return details
 }
 
@@ -1086,6 +1151,11 @@ func (sc *StatementContext) InitFromPBFlagAndTz(flags uint64, tz *time.Location)
 		WithTruncateAsWarning((flags & model.FlagTruncateAsWarning) > 0).
 		WithIgnoreZeroInDate((flags & model.FlagIgnoreZeroInDate) > 0).
 		WithAllowNegativeToUnsigned(!sc.InInsertStmt))
+}
+
+// PessimisticLockStarted returns if the statement pessimistic lock wait start time is set
+func (sc *StatementContext) PessimisticLockStarted() bool {
+	return atomic.LoadInt64(&sc.lockWaitStartTime) > 0
 }
 
 // GetLockWaitStartTime returns the statement pessimistic lock wait start time

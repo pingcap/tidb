@@ -19,7 +19,6 @@ import (
 	"cmp"
 	"container/list"
 	"fmt"
-	"maps"
 	"math"
 	"slices"
 	"strconv"
@@ -30,7 +29,6 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
@@ -40,33 +38,38 @@ import (
 	atomic2 "go.uber.org/atomic"
 )
 
-// stmtSummaryByDigestKey defines key for stmtSummaryByDigestMap.summaryMap.
-type stmtSummaryByDigestKey struct {
-	// Same statements may appear in different schema, but they refer to different tables.
-	schemaName string
-	digest     string
-	// The digest of the previous statement.
-	prevDigest string
-	// The digest of the plan of this SQL.
-	planDigest string
-	// `resourceGroupName` is the resource group's name of this statement is bind to.
-	resourceGroupName string
+// StmtDigestKeyPool is the pool for StmtDigestKey.
+var StmtDigestKeyPool = sync.Pool{
+	New: func() any {
+		return &StmtDigestKey{}
+	},
+}
+
+// StmtDigestKey defines key for stmtSummaryByDigestMap.summaryMap.
+type StmtDigestKey struct {
 	// `hash` is the hash value of this object.
 	hash []byte
+}
+
+// Init initialize the hash key.
+func (key *StmtDigestKey) Init(schemaName, digest, prevDigest, planDigest, resourceGroupName string) {
+	length := len(schemaName) + len(digest) + len(prevDigest) + len(planDigest) + len(resourceGroupName)
+	if cap(key.hash) < length {
+		key.hash = make([]byte, 0, length)
+	} else {
+		key.hash = key.hash[:0]
+	}
+	key.hash = append(key.hash, hack.Slice(digest)...)
+	key.hash = append(key.hash, hack.Slice(schemaName)...)
+	key.hash = append(key.hash, hack.Slice(prevDigest)...)
+	key.hash = append(key.hash, hack.Slice(planDigest)...)
+	key.hash = append(key.hash, hack.Slice(resourceGroupName)...)
 }
 
 // Hash implements SimpleLRUCache.Key.
 // Only when current SQL is `commit` do we record `prevSQL`. Otherwise, `prevSQL` is empty.
 // `prevSQL` is included in the key To distinguish different transactions.
-func (key *stmtSummaryByDigestKey) Hash() []byte {
-	if len(key.hash) == 0 {
-		key.hash = make([]byte, 0, len(key.schemaName)+len(key.digest)+len(key.prevDigest)+len(key.planDigest)+len(key.resourceGroupName))
-		key.hash = append(key.hash, hack.Slice(key.digest)...)
-		key.hash = append(key.hash, hack.Slice(key.schemaName)...)
-		key.hash = append(key.hash, hack.Slice(key.prevDigest)...)
-		key.hash = append(key.hash, hack.Slice(key.planDigest)...)
-		key.hash = append(key.hash, hack.Slice(key.resourceGroupName)...)
-	}
+func (key *StmtDigestKey) Hash() []byte {
 	return key.hash
 }
 
@@ -230,9 +233,11 @@ type stmtSummaryStats struct {
 	// request-units
 	resourceGroupName string
 	StmtRUSummary
+	StmtNetworkTrafficSummary
 
 	planCacheUnqualifiedCount int64
 	lastPlanCacheUnqualified  string // the reason why this query is unqualified for the plan cache
+
 }
 
 // StmtExecInfo records execution information of each statement.
@@ -250,7 +255,7 @@ type StmtExecInfo struct {
 	ParseLatency   time.Duration
 	CompileLatency time.Duration
 	StmtCtx        *stmtctx.StatementContext
-	CopTasks       *execdetails.CopTasksDetails
+	CopTasks       *execdetails.CopTasksSummary
 	ExecDetail     execdetails.ExecDetails
 	MemMax         int64
 	DiskMax        int64
@@ -263,7 +268,7 @@ type StmtExecInfo struct {
 	ExecRetryTime  time.Duration
 	execdetails.StmtExecDetails
 	ResultRows        int64
-	TiKVExecDetails   util.ExecDetails
+	TiKVExecDetails   *util.ExecDetails
 	Prepared          bool
 	KeyspaceName      string
 	KeyspaceID        uint32
@@ -308,7 +313,7 @@ func newStmtSummaryByDigestMap() *stmtSummaryByDigestMap {
 	}
 	newSsMap.summaryMap.SetOnEvict(func(k kvcache.Key, v kvcache.Value) {
 		historySize := newSsMap.historySize()
-		newSsMap.other.AddEvicted(k.(*stmtSummaryByDigestKey), v.(*stmtSummaryByDigest), historySize)
+		newSsMap.other.AddEvicted(k.(*StmtDigestKey), v.(*stmtSummaryByDigest), historySize)
 	})
 	return newSsMap
 }
@@ -335,51 +340,53 @@ func (ssMap *stmtSummaryByDigestMap) AddStatement(sei *StmtExecInfo) {
 		historySize = ssMap.historySize()
 	}
 
-	key := &stmtSummaryByDigestKey{
-		schemaName:        sei.SchemaName,
-		digest:            sei.Digest,
-		prevDigest:        sei.PrevSQLDigest,
-		planDigest:        sei.PlanDigest,
-		resourceGroupName: sei.ResourceGroupName,
+	key := StmtDigestKeyPool.Get().(*StmtDigestKey)
+	// Init hash value in advance, to reduce the time holding the lock.
+	key.Init(sei.SchemaName, sei.Digest, sei.PrevSQLDigest, sei.PlanDigest, sei.ResourceGroupName)
+
+	var exist bool
+
+	// Using a global lock here instead of fine-grained locks because:
+	// 1. The critical sections are very short, making lock overhead potentially higher
+	// than the protected code execution time.
+	// 2. Previous implementation with layered locks reveals significant contention and
+	// poorer performance in benchmarks.
+	// A single coarse-grained lock reduces overall contention and may provide better
+	// performance in this specific case.
+	ssMap.Lock()
+	defer ssMap.Unlock()
+
+	// Check again. Statements could be added before disabling the flag and after Clear().
+	if !ssMap.Enabled() {
+		return
 	}
-	// Calculate hash value in advance, to reduce the time holding the lock.
-	key.Hash()
+	if sei.IsInternal && !ssMap.EnabledInternal() {
+		return
+	}
 
-	// Enclose the block in a function to ensure the lock will always be released.
-	summary, beginTime := func() (*stmtSummaryByDigest, int64) {
-		ssMap.Lock()
-		defer ssMap.Unlock()
+	if ssMap.beginTimeForCurInterval+intervalSeconds <= now {
+		// `beginTimeForCurInterval` is a multiple of intervalSeconds, so that when the interval is a multiple
+		// of 60 (or 600, 1800, 3600, etc), begin time shows 'XX:XX:00', not 'XX:XX:01'~'XX:XX:59'.
+		ssMap.beginTimeForCurInterval = now / intervalSeconds * intervalSeconds
+	}
 
-		// Check again. Statements could be added before disabling the flag and after Clear().
-		if !ssMap.Enabled() {
-			return nil, 0
-		}
-		if sei.IsInternal && !ssMap.EnabledInternal() {
-			return nil, 0
-		}
-
-		if ssMap.beginTimeForCurInterval+intervalSeconds <= now {
-			// `beginTimeForCurInterval` is a multiple of intervalSeconds, so that when the interval is a multiple
-			// of 60 (or 600, 1800, 3600, etc), begin time shows 'XX:XX:00', not 'XX:XX:01'~'XX:XX:59'.
-			ssMap.beginTimeForCurInterval = now / intervalSeconds * intervalSeconds
-		}
-
-		beginTime := ssMap.beginTimeForCurInterval
-		value, ok := ssMap.summaryMap.Get(key)
-		var summary *stmtSummaryByDigest
-		if !ok {
-			// Lazy initialize it to release ssMap.mutex ASAP.
-			summary = new(stmtSummaryByDigest)
-			ssMap.summaryMap.Put(key, summary)
-		} else {
-			summary = value.(*stmtSummaryByDigest)
-		}
-		summary.isInternal = summary.isInternal && sei.IsInternal
-		return summary, beginTime
-	}()
-	// Lock a single entry, not the whole cache.
+	beginTime := ssMap.beginTimeForCurInterval
+	var value kvcache.Value
+	value, exist = ssMap.summaryMap.Get(key)
+	var summary *stmtSummaryByDigest
+	if !exist {
+		// Lazy initialize it to release ssMap.mutex ASAP.
+		summary = new(stmtSummaryByDigest)
+		ssMap.summaryMap.Put(key, summary)
+	} else {
+		summary = value.(*stmtSummaryByDigest)
+	}
+	summary.isInternal = summary.isInternal && sei.IsInternal
 	if summary != nil {
 		summary.add(sei, beginTime, intervalSeconds, historySize)
+	}
+	if exist {
+		StmtDigestKeyPool.Put(key)
 	}
 }
 
@@ -423,59 +430,6 @@ func (ssMap *stmtSummaryByDigestMap) clearHistory() {
 		ssbd.history = newHistory
 		ssbd.Unlock()
 	}
-}
-
-// BindableStmt is a wrapper struct for a statement that is extracted from statements_summary and can be
-// created binding on.
-type BindableStmt struct {
-	Schema    string
-	Query     string
-	PlanHint  string
-	Charset   string
-	Collation string
-	Users     map[string]struct{} // which users have processed this stmt
-}
-
-// GetMoreThanCntBindableStmt gets users' select/update/delete SQLs that occurred more than the specified count.
-func (ssMap *stmtSummaryByDigestMap) GetMoreThanCntBindableStmt(cnt int64) []*BindableStmt {
-	ssMap.Lock()
-	values := ssMap.summaryMap.Values()
-	ssMap.Unlock()
-
-	stmts := make([]*BindableStmt, 0, len(values))
-	for _, value := range values {
-		ssbd := value.(*stmtSummaryByDigest)
-		func() {
-			ssbd.Lock()
-			defer ssbd.Unlock()
-			if ssbd.initialized && (ssbd.stmtType == "Select" || ssbd.stmtType == "Delete" || ssbd.stmtType == "Update" || ssbd.stmtType == "Insert" || ssbd.stmtType == "Replace") {
-				if ssbd.history.Len() > 0 {
-					ssElement := ssbd.history.Back().Value.(*stmtSummaryByDigestElement)
-					ssElement.Lock()
-
-					// Empty auth users means that it is an internal queries.
-					if len(ssElement.authUsers) > 0 && (int64(ssbd.history.Len()) > cnt || ssElement.execCount > cnt) {
-						stmt := &BindableStmt{
-							Schema:    ssbd.schemaName,
-							Query:     ssElement.sampleSQL,
-							PlanHint:  ssElement.planHint,
-							Charset:   ssElement.charset,
-							Collation: ssElement.collation,
-							Users:     maps.Clone(ssElement.authUsers),
-						}
-						// If it is SQL command prepare / execute, the ssElement.sampleSQL is `execute ...`, we should get the original select query.
-						// If it is binary protocol prepare / execute, ssbd.normalizedSQL should be same as ssElement.sampleSQL.
-						if ssElement.prepared {
-							stmt.Query = ssbd.normalizedSQL
-						}
-						stmts = append(stmts, stmt)
-					}
-					ssElement.Unlock()
-				}
-			}
-		}()
-	}
-	return stmts
 }
 
 // SetEnabled enables or disables statement summary
@@ -571,33 +525,6 @@ func (ssMap *stmtSummaryByDigestMap) maxSQLLength() int {
 	return int(ssMap.optMaxSQLLength.Load())
 }
 
-// GetBindableStmtFromCluster gets users' select/update/delete SQL.
-func GetBindableStmtFromCluster(rows []chunk.Row) *BindableStmt {
-	for _, row := range rows {
-		user := row.GetString(3)
-		stmtType := row.GetString(0)
-		if user != "" && (stmtType == "Select" || stmtType == "Delete" || stmtType == "Update" || stmtType == "Insert" || stmtType == "Replace") {
-			// Empty auth users means that it is an internal queries.
-			stmt := &BindableStmt{
-				Schema:    row.GetString(1), //schemaName
-				Query:     row.GetString(5), //sampleSQL
-				PlanHint:  row.GetString(8), //planHint
-				Charset:   row.GetString(6), //charset
-				Collation: row.GetString(7), //collation
-			}
-			// If it is SQL command prepare / execute, we should remove the arguments
-			// If it is binary protocol prepare / execute, ssbd.normalizedSQL should be same as ssElement.sampleSQL.
-			if row.GetInt64(4) == 1 {
-				if idx := strings.LastIndex(stmt.Query, "[arguments:"); idx != -1 {
-					stmt.Query = stmt.Query[:idx]
-				}
-			}
-			return stmt
-		}
-	}
-	return nil
-}
-
 // newStmtSummaryByDigest creates a stmtSummaryByDigest from StmtExecInfo.
 func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, _ int64, _ int64, _ int) {
 	// Use "," to separate table names to support FIND_IN_SET.
@@ -635,6 +562,8 @@ func (ssbd *stmtSummaryByDigest) init(sei *StmtExecInfo, _ int64, _ int64, _ int
 
 func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, intervalSeconds int64, historySize int) {
 	// Enclose this block in a function to ensure the lock will always be released.
+	warningCount := int(sei.StmtCtx.WarningCount())
+	affectedRows := sei.StmtCtx.AffectedRows()
 	ssElement, isElementNew := func() (*stmtSummaryByDigestElement, bool) {
 		ssbd.Lock()
 		defer ssbd.Unlock()
@@ -642,7 +571,7 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, interva
 		if !ssbd.initialized {
 			ssbd.init(sei, beginTime, intervalSeconds, historySize)
 		}
-		ssbd.cumulative.add(sei)
+		ssbd.cumulative.add(sei, warningCount, affectedRows)
 
 		var ssElement *stmtSummaryByDigestElement
 		isElementNew := true
@@ -658,7 +587,7 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, interva
 		}
 		if isElementNew {
 			// If the element is new created, `ssElement.add(sei)` should be done inside the lock of `ssbd`.
-			ssElement = newStmtSummaryByDigestElement(sei, beginTime, intervalSeconds)
+			ssElement = newStmtSummaryByDigestElement(sei, beginTime, intervalSeconds, warningCount, affectedRows)
 			if ssElement == nil {
 				return nil, isElementNew
 			}
@@ -676,7 +605,7 @@ func (ssbd *stmtSummaryByDigest) add(sei *StmtExecInfo, beginTime int64, interva
 
 	// Lock a single entry, not the whole `ssbd`.
 	if !isElementNew {
-		ssElement.add(sei, intervalSeconds)
+		ssElement.add(sei, intervalSeconds, warningCount, affectedRows)
 	}
 }
 
@@ -742,12 +671,12 @@ func newStmtSummaryStats(sei *StmtExecInfo) *stmtSummaryStats {
 	}
 }
 
-func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64) *stmtSummaryByDigestElement {
+func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalSeconds int64, warningCount int, affectedRows uint64) *stmtSummaryByDigestElement {
 	ssElement := &stmtSummaryByDigestElement{
 		beginTime:        beginTime,
 		stmtSummaryStats: *newStmtSummaryStats(sei),
 	}
-	ssElement.add(sei, intervalSeconds)
+	ssElement.add(sei, intervalSeconds, warningCount, affectedRows)
 	return ssElement
 }
 
@@ -769,7 +698,7 @@ func (ssElement *stmtSummaryByDigestElement) onExpire(intervalSeconds int64) {
 	}
 }
 
-func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo) {
+func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo, warningCount int, affectedRows uint64) {
 	// add user to auth users set
 	if len(sei.User) > 0 {
 		ssStats.authUsers[sei.User] = struct{}{}
@@ -779,7 +708,7 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo) {
 	if !sei.Succeed {
 		ssStats.sumErrors++
 	}
-	ssStats.sumWarnings += int(sei.StmtCtx.WarningCount())
+	ssStats.sumWarnings += warningCount
 
 	// latency
 	ssStats.sumLatency += sei.TotalLatency
@@ -937,7 +866,7 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo) {
 	}
 
 	// other
-	ssStats.sumAffectedRows += sei.StmtCtx.AffectedRows()
+	ssStats.sumAffectedRows += affectedRows
 	ssStats.sumMem += sei.MemMax
 	if sei.MemMax > ssStats.maxMem {
 		ssStats.maxMem = sei.MemMax
@@ -974,17 +903,20 @@ func (ssStats *stmtSummaryStats) add(sei *StmtExecInfo) {
 	ssStats.sumTidbCPU += sei.CPUUsages.TidbCPUTime
 	ssStats.sumTikvCPU += sei.CPUUsages.TikvCPUTime
 
+	// network traffic
+	ssStats.StmtNetworkTrafficSummary.Add(sei.TiKVExecDetails)
+
 	// request-units
 	ssStats.StmtRUSummary.Add(sei.RUDetail)
 }
 
-func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeconds int64) {
+func (ssElement *stmtSummaryByDigestElement) add(sei *StmtExecInfo, intervalSeconds int64, warningCount int, affectedRows uint64) {
 	ssElement.Lock()
 	defer ssElement.Unlock()
 
 	// refreshInterval may change anytime, update endTime ASAP.
 	ssElement.endTime = ssElement.beginTime + intervalSeconds
-	ssElement.stmtSummaryStats.add(sei)
+	ssElement.stmtSummaryStats.add(sei, warningCount, affectedRows)
 }
 
 // Truncate SQL to maxSQLLength.
@@ -1104,5 +1036,46 @@ func (s *StmtRUSummary) Merge(other *StmtRUSummary) {
 	}
 	if s.MaxRUWaitDuration < other.MaxRUWaitDuration {
 		s.MaxRUWaitDuration = other.MaxRUWaitDuration
+	}
+}
+
+// StmtNetworkTrafficSummary is the network traffic summary for each type of statements.
+type StmtNetworkTrafficSummary struct {
+	UnpackedBytesSentTiKVTotal            int64 `json:"unpacked_bytes_send_tikv_total"`
+	UnpackedBytesReceivedTiKVTotal        int64 `json:"unpacked_bytes_received_tikv_total"`
+	UnpackedBytesSentTiKVCrossZone        int64 `json:"unpacked_bytes_send_tikv_cross_zone"`
+	UnpackedBytesReceivedTiKVCrossZone    int64 `json:"unpacked_bytes_received_tikv_cross_zone"`
+	UnpackedBytesSentTiFlashTotal         int64 `json:"unpacked_bytes_send_tiflash_total"`
+	UnpackedBytesReceivedTiFlashTotal     int64 `json:"unpacked_bytes_received_tiflash_total"`
+	UnpackedBytesSentTiFlashCrossZone     int64 `json:"unpacked_bytes_send_tiflash_cross_zone"`
+	UnpackedBytesReceivedTiFlashCrossZone int64 `json:"unpacked_bytes_received_tiflash_cross_zone"`
+}
+
+// Merge merges the value of 2 network traffic summary records.
+func (s *StmtNetworkTrafficSummary) Merge(other *StmtNetworkTrafficSummary) {
+	if other == nil {
+		return
+	}
+	s.UnpackedBytesSentTiKVTotal += other.UnpackedBytesSentTiKVTotal
+	s.UnpackedBytesReceivedTiKVTotal += other.UnpackedBytesReceivedTiKVTotal
+	s.UnpackedBytesSentTiKVCrossZone += other.UnpackedBytesSentTiKVCrossZone
+	s.UnpackedBytesReceivedTiKVCrossZone += other.UnpackedBytesReceivedTiKVCrossZone
+	s.UnpackedBytesSentTiFlashTotal += other.UnpackedBytesSentTiFlashTotal
+	s.UnpackedBytesReceivedTiFlashTotal += other.UnpackedBytesReceivedTiFlashTotal
+	s.UnpackedBytesSentTiFlashCrossZone += other.UnpackedBytesSentTiFlashCrossZone
+	s.UnpackedBytesReceivedTiFlashCrossZone += other.UnpackedBytesReceivedTiFlashCrossZone
+}
+
+// Add add a new sample value to the ru summary record.
+func (s *StmtNetworkTrafficSummary) Add(info *util.ExecDetails) {
+	if info != nil {
+		s.UnpackedBytesSentTiKVTotal += info.UnpackedBytesSentKVTotal
+		s.UnpackedBytesReceivedTiKVTotal += info.UnpackedBytesReceivedKVTotal
+		s.UnpackedBytesSentTiKVCrossZone += info.UnpackedBytesSentKVCrossZone
+		s.UnpackedBytesReceivedTiKVCrossZone += info.UnpackedBytesReceivedKVCrossZone
+		s.UnpackedBytesSentTiFlashTotal += info.UnpackedBytesSentMPPTotal
+		s.UnpackedBytesReceivedTiFlashTotal += info.UnpackedBytesReceivedMPPTotal
+		s.UnpackedBytesSentTiFlashCrossZone += info.UnpackedBytesSentMPPCrossZone
+		s.UnpackedBytesReceivedTiFlashCrossZone += info.UnpackedBytesReceivedMPPCrossZone
 	}
 }

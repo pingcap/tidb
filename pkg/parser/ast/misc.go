@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 )
 
@@ -441,6 +440,8 @@ const (
 	TrafficOptionReadOnly
 )
 
+var _ SensitiveStmtNode = (*TrafficStmt)(nil)
+
 // TrafficStmt is traffic operation statement.
 type TrafficStmt struct {
 	stmtNode
@@ -512,6 +513,34 @@ func (n *TrafficStmt) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+// SecureText implements SensitiveStatement interface.
+func (n *TrafficStmt) SecureText() string {
+	trafficStmt := n
+	opts := n.Options
+	switch n.OpType {
+	case TrafficOpReplay:
+		opts = make([]*TrafficOption, 0, len(n.Options))
+		for _, opt := range n.Options {
+			if opt.OptionType == TrafficOptionPassword {
+				newOpt := *opt
+				newOpt.StrValue = "xxxxxx"
+				opt = &newOpt
+			}
+			opts = append(opts, opt)
+		}
+		fallthrough
+	case TrafficOpCapture:
+		trafficStmt = &TrafficStmt{
+			OpType:  n.OpType,
+			Options: opts,
+			Dir:     RedactURL(n.Dir),
+		}
+	}
+	var sb strings.Builder
+	_ = trafficStmt.Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb))
+	return sb.String()
+}
+
 // Accept implements Node Accept interface.
 func (n *TrafficStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
@@ -540,7 +569,7 @@ type CompactTableStmt struct {
 	stmtNode
 
 	Table          *TableName
-	PartitionNames []model.CIStr
+	PartitionNames []CIStr
 	ReplicaKind    CompactReplicaKind
 }
 
@@ -667,8 +696,8 @@ type ExecuteStmt struct {
 
 	Name       string
 	UsingVars  []ExprNode
-	BinaryArgs interface{}
-	PrepStmt   interface{} // the corresponding prepared statement
+	BinaryArgs any
+	PrepStmt   any // the corresponding prepared statement
 	IdxInMulti int
 
 	// FromGeneralStmt indicates whether this execute-stmt is converted from a general query.
@@ -1523,61 +1552,6 @@ func (n *UserSpec) SecurityString() string {
 	return n.User.String()
 }
 
-// EncodedPassword returns the encoded password (which is the real data mysql.user).
-// The boolean value indicates input's password format is legal or not.
-func (n *UserSpec) EncodedPassword() (string, bool) {
-	if n.AuthOpt == nil {
-		return "", true
-	}
-
-	opt := n.AuthOpt
-	if opt.ByAuthString {
-		switch opt.AuthPlugin {
-		case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
-			return auth.NewHashPassword(opt.AuthString, opt.AuthPlugin), true
-		case mysql.AuthSocket:
-			return "", true
-		default:
-			return auth.EncodePassword(opt.AuthString), true
-		}
-	}
-
-	// store the LDAP dn directly in the password field
-	switch opt.AuthPlugin {
-	case mysql.AuthLDAPSimple, mysql.AuthLDAPSASL:
-		// TODO: validate the HashString to be a `dn` for LDAP
-		// It seems fine to not validate here, and LDAP server will give an error when the client'll try to login this user.
-		// The percona server implementation doesn't have a validation for this HashString.
-		// However, returning an error for obvious wrong format is more friendly.
-		return opt.HashString, true
-	}
-
-	// In case we have 'IDENTIFIED WITH <plugin>' but no 'BY <password>' to set an empty password.
-	if opt.HashString == "" {
-		return opt.HashString, true
-	}
-
-	// Not a legal password string.
-	switch opt.AuthPlugin {
-	case mysql.AuthCachingSha2Password:
-		if len(opt.HashString) != mysql.SHAPWDHashLen {
-			return "", false
-		}
-	case mysql.AuthTiDBSM3Password:
-		if len(opt.HashString) != mysql.SM3PWDHashLen {
-			return "", false
-		}
-	case "", mysql.AuthNativePassword:
-		if len(opt.HashString) != (mysql.PWDHashLen+1) || !strings.HasPrefix(opt.HashString, "*") {
-			return "", false
-		}
-	case mysql.AuthSocket:
-	default:
-		return "", false
-	}
-	return opt.HashString, true
-}
-
 type AuthTokenOrTLSOption struct {
 	Type  AuthTokenOrTLSOptionType
 	Value string
@@ -2009,7 +1983,7 @@ func (n *AlterInstanceStmt) Accept(v Visitor) (Node, bool) {
 // AlterRangeStmt modifies range configuration.
 type AlterRangeStmt struct {
 	stmtNode
-	RangeName       model.CIStr
+	RangeName       CIStr
 	PlacementOption *PlacementOption
 }
 
@@ -2148,7 +2122,7 @@ func (n *RecommendIndexStmt) Restore(ctx *format.RestoreCtx) error {
 			}
 		}
 	case "show":
-		ctx.WriteKeyWord(" SHOW")
+		ctx.WriteKeyWord(" SHOW OPTION")
 	case "apply":
 		ctx.WriteKeyWord(" APPLY ")
 		ctx.WriteKeyWord(fmt.Sprintf("%d", n.ID))
@@ -2577,6 +2551,7 @@ const (
 	AdminShowBDRRole
 	AdminUnsetBDRRole
 	AdminAlterDDLJob
+	AdminWorkloadRepoCreate
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
@@ -2877,6 +2852,8 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 				return errors.Annotatef(err, "An error occurred while restore AdminStmt.AlterJobOptions[%d]", i)
 			}
 		}
+	case AdminWorkloadRepoCreate:
+		ctx.WriteKeyWord("CREATE WORKLOAD SNAPSHOT")
 	default:
 		return errors.New("Unsupported AdminStmt type")
 	}
@@ -2912,8 +2889,8 @@ func (n *AdminStmt) Accept(v Visitor) (Node, bool) {
 
 // RoleOrPriv is a temporary structure to be further processed into auth.RoleIdentity or PrivElem
 type RoleOrPriv struct {
-	Symbols string      // hold undecided symbols
-	Node    interface{} // hold auth.RoleIdentity or PrivElem that can be sure when parsing
+	Symbols string // hold undecided symbols
+	Node    any    // hold auth.RoleIdentity or PrivElem that can be sure when parsing
 }
 
 func (n *RoleOrPriv) ToRole() (*auth.RoleIdentity, error) {
@@ -3885,8 +3862,8 @@ func (n *ImportIntoActionStmt) Restore(ctx *format.RestoreCtx) error {
 
 // Ident is the table identifier composed of schema name and table name.
 type Ident struct {
-	Schema model.CIStr
-	Name   model.CIStr
+	Schema CIStr
+	Name   CIStr
 }
 
 // String implements fmt.Stringer interface.
@@ -3917,7 +3894,7 @@ type TableOptimizerHint struct {
 	// HintName is the name or alias of the table(s) which the hint will affect.
 	// Table hints has no schema info
 	// It allows only table name or alias (if table has an alias)
-	HintName model.CIStr
+	HintName CIStr
 	// HintData is the payload of the hint. The actual type of this field
 	// is defined differently as according `HintName`. Define as following:
 	//
@@ -3933,11 +3910,11 @@ type TableOptimizerHint struct {
 	// - READ_FROM_STORAGE   => CIStr
 	// - USE_TOJA            => bool
 	// - NTH_PLAN            => int64
-	HintData interface{}
+	HintData any
 	// QBName is the default effective query block of this hint.
-	QBName  model.CIStr
+	QBName  CIStr
 	Tables  []HintTable
-	Indexes []model.CIStr
+	Indexes []CIStr
 }
 
 // HintTimeRange is the payload of `TIME_RANGE` hint
@@ -3954,10 +3931,10 @@ type HintSetVar struct {
 
 // HintTable is table in the hint. It may have query block info.
 type HintTable struct {
-	DBName        model.CIStr
-	TableName     model.CIStr
-	QBName        model.CIStr
-	PartitionList []model.CIStr
+	DBName        CIStr
+	TableName     CIStr
+	QBName        CIStr
+	PartitionList []CIStr
 }
 
 func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
@@ -4051,11 +4028,11 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 			ctx.WritePlain("FALSE")
 		}
 	case "query_type":
-		ctx.WriteKeyWord(n.HintData.(model.CIStr).String())
+		ctx.WriteKeyWord(n.HintData.(CIStr).String())
 	case "memory_quota":
 		ctx.WritePlainf("%d MB", n.HintData.(int64)/1024/1024)
 	case "read_from_storage":
-		ctx.WriteKeyWord(n.HintData.(model.CIStr).String())
+		ctx.WriteKeyWord(n.HintData.(CIStr).String())
 		for i, table := range n.Tables {
 			if i == 0 {
 				ctx.WritePlain("[")
@@ -4103,18 +4080,18 @@ type BinaryLiteral interface {
 }
 
 // NewDecimal creates a types.Decimal value, it's provided by parser driver.
-var NewDecimal func(string) (interface{}, error)
+var NewDecimal func(string) (any, error)
 
 // NewHexLiteral creates a types.HexLiteral value, it's provided by parser driver.
-var NewHexLiteral func(string) (interface{}, error)
+var NewHexLiteral func(string) (any, error)
 
 // NewBitLiteral creates a types.BitLiteral value, it's provided by parser driver.
-var NewBitLiteral func(string) (interface{}, error)
+var NewBitLiteral func(string) (any, error)
 
 // SetResourceGroupStmt is a statement to set the resource group name for current session.
 type SetResourceGroupStmt struct {
 	stmtNode
-	Name model.CIStr
+	Name CIStr
 }
 
 func (n *SetResourceGroupStmt) Restore(ctx *format.RestoreCtx) error {
@@ -4267,12 +4244,25 @@ func (n *DynamicCalibrateResourceOption) Accept(v Visitor) (Node, bool) {
 // DropQueryWatchStmt is a statement to drop a runaway watch item.
 type DropQueryWatchStmt struct {
 	stmtNode
-	IntValue int64
+	IntValue      int64
+	GroupNameStr  CIStr
+	GroupNameExpr ExprNode
 }
 
 func (n *DropQueryWatchStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("QUERY WATCH REMOVE ")
-	ctx.WritePlainf("%d", n.IntValue)
+	switch {
+	case n.GroupNameStr.String() != "":
+		ctx.WriteKeyWord("RESOURCE GROUP ")
+		ctx.WriteName(n.GroupNameStr.String())
+	case n.GroupNameExpr != nil:
+		ctx.WriteKeyWord("RESOURCE GROUP ")
+		if err := n.GroupNameExpr.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore expr: [%v]", n.GroupNameExpr)
+		}
+	default:
+		ctx.WritePlainf("%d", n.IntValue)
+	}
 	return nil
 }
 
@@ -4385,7 +4375,7 @@ func CheckQueryWatchAppend(ops []*QueryWatchOption, newOp *QueryWatchOption) boo
 
 // QueryWatchResourceGroupOption is used for parsing the query watch resource group name.
 type QueryWatchResourceGroupOption struct {
-	GroupNameStr  model.CIStr
+	GroupNameStr  CIStr
 	GroupNameExpr ExprNode
 }
 
@@ -4404,7 +4394,7 @@ func (n *QueryWatchResourceGroupOption) restore(ctx *format.RestoreCtx) error {
 // QueryWatchTextOption is used for parsing the query watch text option.
 type QueryWatchTextOption struct {
 	node
-	Type          model.RunawayWatchType
+	Type          RunawayWatchType
 	PatternExpr   ExprNode
 	TypeSpecified bool
 }
@@ -4417,9 +4407,9 @@ func (n *QueryWatchTextOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(" TO ")
 	} else {
 		switch n.Type {
-		case model.WatchSimilar:
+		case WatchSimilar:
 			ctx.WriteKeyWord("SQL DIGEST ")
-		case model.WatchPlan:
+		case WatchPlan:
 			ctx.WriteKeyWord("PLAN DIGEST ")
 		}
 	}

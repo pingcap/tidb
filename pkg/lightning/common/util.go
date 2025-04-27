@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
@@ -626,16 +627,25 @@ func IsDupKeyError(err error) bool {
 
 // GetBackoffWeightFromDB gets the backoff weight from database.
 func GetBackoffWeightFromDB(ctx context.Context, db *sql.DB) (int, error) {
-	val, err := getSessionVariable(ctx, db, variable.TiDBBackOffWeight)
+	val, err := getSessionVariable(ctx, db, vardef.TiDBBackOffWeight)
 	if err != nil {
 		return 0, err
 	}
 	return strconv.Atoi(val)
 }
 
+// GetPDEnableFollowerHandleRegion gets the pd_enable_follower_handle_region from database.
+func GetPDEnableFollowerHandleRegion(ctx context.Context, db *sql.DB) (bool, error) {
+	val, err := getSessionVariable(ctx, db, vardef.PDEnableFollowerHandleRegion)
+	if err != nil {
+		return false, err
+	}
+	return variable.TiDBOptOn(val), nil
+}
+
 // GetExplicitRequestSourceTypeFromDB gets the explicit request source type from database.
 func GetExplicitRequestSourceTypeFromDB(ctx context.Context, db *sql.DB) (string, error) {
-	return getSessionVariable(ctx, db, variable.TiDBExplicitRequestSourceType)
+	return getSessionVariable(ctx, db, vardef.TiDBExplicitRequestSourceType)
 }
 
 // copy from dbutil to avoid import cycle

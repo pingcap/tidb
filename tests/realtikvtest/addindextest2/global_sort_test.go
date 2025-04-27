@@ -16,6 +16,7 @@ package addindextest
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -27,16 +28,18 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/tests/realtikvtest"
+	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -59,17 +62,57 @@ func genStorageURI(t *testing.T) (host string, port uint16, uri string) {
 		fmt.Sprintf("gs://sorted/addindex?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
 }
 
-func checkFileCleaned(t *testing.T, jobID int64, sortStorageURI string) {
+func checkFileCleaned(t *testing.T, jobID, taskID int64, sortStorageURI string) {
 	storeBackend, err := storage.ParseBackend(sortStorageURI, nil)
 	require.NoError(t, err)
 	extStore, err := storage.NewWithDefaultOpt(context.Background(), storeBackend)
 	require.NoError(t, err)
-	prefix := strconv.Itoa(int(jobID))
-	dataFiles, statFiles, err := external.GetAllFileNames(context.Background(), extStore, prefix)
+	for _, id := range []int64{jobID, taskID} {
+		prefix := strconv.Itoa(int(id))
+		dataFiles, statFiles, err := external.GetAllFileNames(context.Background(), extStore, prefix)
+		require.NoError(t, err)
+		require.Greater(t, jobID, int64(0))
+		require.Equal(t, 0, len(dataFiles))
+		require.Equal(t, 0, len(statFiles))
+	}
+}
+
+func checkFileExist(t *testing.T, sortStorageURI string, prefix string) {
+	storeBackend, err := storage.ParseBackend(sortStorageURI, nil)
 	require.NoError(t, err)
-	require.Greater(t, jobID, int64(0))
-	require.Equal(t, 0, len(dataFiles))
-	require.Equal(t, 0, len(statFiles))
+	extStore, err := storage.NewWithDefaultOpt(context.Background(), storeBackend)
+	require.NoError(t, err)
+	dataFiles, _, err := external.GetAllFileNames(context.Background(), extStore, prefix)
+	require.NoError(t, err)
+	require.Greater(t, len(dataFiles), 0)
+}
+
+func checkDataAndShowJobs(t *testing.T, tk *testkit.TestKit, count int) {
+	tk.MustExec("admin check table t;")
+	rs := tk.MustQuery("admin show ddl jobs 1;").Rows()
+	require.Len(t, rs, 1)
+	require.Contains(t, rs[0][12], "ingest")
+	require.Contains(t, rs[0][12], "cloud")
+	require.Equal(t, rs[0][7], strconv.Itoa(count))
+}
+
+func checkExternalFields(t *testing.T, tk *testkit.TestKit) {
+	// fetch subtask meta from tk, and check fields with `external:"true"` tag
+	rs := tk.MustQuery("select meta from mysql.tidb_background_subtask").Rows()
+	for _, r := range rs {
+		var subtaskMeta ddl.BackfillSubTaskMeta
+		require.NoError(t, json.Unmarshal([]byte(r[0].(string)), &subtaskMeta))
+		testutils.AssertExternalField(t, &subtaskMeta)
+	}
+}
+
+func getTaskID(t *testing.T, tk *testkit.TestKit) int64 {
+	rs := tk.MustQuery("select id from mysql.tidb_global_task").Rows()
+	require.Len(t, rs, 1)
+	// convert string to int64
+	id, err := strconv.ParseInt(rs[0][0].(string), 10, 64)
+	require.NoError(t, err)
+	return id
 }
 
 func TestGlobalSortBasic(t *testing.T) {
@@ -98,14 +141,14 @@ func TestGlobalSortBasic(t *testing.T) {
 	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
 	defer func() {
 		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
-		variable.CloudStorageURI.Store("")
+		vardef.CloudStorageURI.Store("")
 	}()
 
 	tk.MustExec("create table t (a int, b int, c int);")
 	var sb strings.Builder
 	sb.WriteString("insert into t values ")
 	size := 100
-	for i := 0; i < size; i++ {
+	for i := range size {
 		sb.WriteString(fmt.Sprintf("(%d, %d, %d)", i, i, i))
 		if i != size-1 {
 			sb.WriteString(",")
@@ -120,20 +163,31 @@ func TestGlobalSortBasic(t *testing.T) {
 	})
 
 	tk.MustExec("alter table t add index idx(a);")
-	tk.MustExec("admin check table t;")
+	checkDataAndShowJobs(t, tk, size)
+	checkExternalFields(t, tk)
+	taskID := getTaskID(t, tk)
+	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/ingest")
 	<-ch
-	checkFileCleaned(t, jobID, cloudStorageURI)
+	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()")
 	tk.MustExec("alter table t add index idx1(a);")
-	tk.MustExec("admin check table t;")
+	checkDataAndShowJobs(t, tk, size)
+	checkExternalFields(t, tk)
+	taskID = getTaskID(t, tk)
+	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/ingest")
+	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/merge-sort")
 	<-ch
-	checkFileCleaned(t, jobID, cloudStorageURI)
+	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
 
 	tk.MustExec("alter table t add unique index idx2(a);")
-	tk.MustExec("admin check table t;")
+	checkDataAndShowJobs(t, tk, size)
+	checkExternalFields(t, tk)
+	taskID = getTaskID(t, tk)
+	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/ingest")
+	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/merge-sort")
 	<-ch
-	checkFileCleaned(t, jobID, cloudStorageURI)
+	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
 }
 
 func TestGlobalSortMultiSchemaChange(t *testing.T) {
@@ -161,7 +215,7 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 	tk.MustExec("create table t_int_handle (a bigint primary key, b varchar(255));")
 	tk.MustExec("create table t_common_handle (a int, b bigint, c varchar(255), primary key (a, c) clustered);")
 	tk.MustExec(`create table t_partition (a bigint primary key, b int, c char(10)) partition by hash(a) partitions 2;`)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		tk.MustExec(fmt.Sprintf("insert into t_rowid values (%d, %d, '%d');", i, i, i))
 		tk.MustExec(fmt.Sprintf("insert into t_int_handle values (%d, '%d');", i, i))
 		tk.MustExec(fmt.Sprintf("insert into t_common_handle values (%d, %d, '%d');", i, i, i))
@@ -272,7 +326,7 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
 	defer func() {
 		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
-		variable.CloudStorageURI.Store("")
+		vardef.CloudStorageURI.Store("")
 	}()
 
 	tk.MustExec("create table t (a int, b int, c int);")
@@ -280,6 +334,48 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 	tk.MustExec("insert into t values (2, 1, 2);")
 
 	tk.MustGetErrMsg("alter table t add unique index idx(b);", "[kv:1062]Duplicate entry '1' for key 't.idx'")
+}
+
+// When meeting a retryable error, the subtask/job should be idempotent.
+func TestGlobalSortAddIndexRecoverFromRetryableError(t *testing.T) {
+	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
+	opt := fakestorage.Options{
+		Scheme:     "http",
+		Host:       gcsHost,
+		Port:       gcsPort,
+		PublicHost: gcsHost,
+	}
+	server, err := fakestorage.NewServerWithOptions(opt)
+	require.NoError(t, err)
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
+	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
+	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()")
+	defer func() {
+		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
+		tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
+	}()
+	failpoints := []string{
+		"github.com/pingcap/tidb/pkg/ddl/mockCheckDuplicateForUniqueIndexError",
+		"github.com/pingcap/tidb/pkg/ddl/mockCloudImportRunSubtaskError",
+		"github.com/pingcap/tidb/pkg/ddl/mockMergeSortRunSubtaskError",
+	}
+
+	for _, fp := range failpoints {
+		tk.MustExec("drop table if exists t;")
+		tk.MustExec("create table t (a int);")
+		tk.MustExec("insert into t values (1), (2), (3);")
+		require.NoError(t, failpoint.Enable(fp, "1*return"))
+		tk.MustExec("alter table t add unique index idx(a);")
+		require.NoError(t, failpoint.Disable(fp))
+	}
 }
 
 func TestIngestUseGivenTS(t *testing.T) {

@@ -35,8 +35,8 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -79,9 +79,12 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 	tk.MustExec("create table timeschema(d date, dt datetime(3), ts timestamp(3), t time(4), y year(4))")
 	tk.MustExec("create table strschema(c char(3), c2 varchar(3), b blob(3), t text(3))")
 	tk.MustExec("create table floatschema(a float, b double(7, 3))")
+	tk.MustExec("create table numericprecisionschema(a tinyint, b smallint, c mediumint, d mediumint unsigned, e int, f bigint, g bigint unsigned)")
 
 	tk.MustQuery("select CHARACTER_MAXIMUM_LENGTH,CHARACTER_OCTET_LENGTH,NUMERIC_PRECISION,NUMERIC_SCALE,DATETIME_PRECISION from information_schema.COLUMNS where table_name='numschema'").
-		Check(testkit.Rows("<nil> <nil> 2 0 <nil>", "<nil> <nil> 4 2 <nil>", "<nil> <nil> 4 3 <nil>")) // FIXME: for mysql first one will be "<nil> <nil> 10 0 <nil>"
+		Check(testkit.Rows("<nil> <nil> 10 0 <nil>", "<nil> <nil> 4 2 <nil>", "<nil> <nil> 4 3 <nil>"))
+	tk.MustQuery("select column_name, NUMERIC_PRECISION from information_schema.COLUMNS where table_name='numericprecisionschema'").
+		Check(testkit.Rows("a 3", "b 5", "c 7", "d 8", "e 10", "f 19", "g 20")) // `d` in MySQL is 7, but it's bug for MySQL, https://bugs.mysql.com/bug.php?id=69042.
 	tk.MustQuery("select CHARACTER_MAXIMUM_LENGTH,CHARACTER_OCTET_LENGTH,NUMERIC_PRECISION,NUMERIC_SCALE,DATETIME_PRECISION from information_schema.COLUMNS where table_name='timeschema'").
 		Check(testkit.Rows("<nil> <nil> <nil> <nil> <nil>", "<nil> <nil> <nil> <nil> 3", "<nil> <nil> <nil> <nil> 3", "<nil> <nil> <nil> <nil> 4", "<nil> <nil> <nil> <nil> <nil>"))
 	tk.MustQuery("select CHARACTER_MAXIMUM_LENGTH,CHARACTER_OCTET_LENGTH,NUMERIC_PRECISION,NUMERIC_SCALE,DATETIME_PRECISION from information_schema.COLUMNS where table_name='strschema'").
@@ -343,7 +346,7 @@ func TestTableRowIDShardingInfo(t *testing.T) {
 	testFunc := func(dbName string, expectInfo any) {
 		tableInfo := model.TableInfo{}
 
-		info := infoschema.GetShardingInfo(pmodel.NewCIStr(dbName), &tableInfo)
+		info := infoschema.GetShardingInfo(ast.NewCIStr(dbName), &tableInfo)
 		require.Equal(t, expectInfo, info)
 	}
 
@@ -436,6 +439,14 @@ func TestSlowQuery(t *testing.T) {
 			"0",
 			"0",
 			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
+			"0",
 			"10",
 			"",
 			"",
@@ -517,6 +528,14 @@ func TestSlowQuery(t *testing.T) {
 			"86.635049185",
 			"0.015486658",
 			"100.054",
+			"30000",
+			"3000",
+			"10000",
+			"1000",
+			"500000",
+			"500005",
+			"300000",
+			"300005",
 			"0",
 			"0",
 			"",
@@ -614,11 +633,11 @@ func TestReloadDropDatabase(t *testing.T) {
 	tk.MustExec("create table t2 (a int)")
 	tk.MustExec("create table t3 (a int)")
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	t2, err := is.TableByName(context.Background(), pmodel.NewCIStr("test_dbs"), pmodel.NewCIStr("t2"))
+	t2, err := is.TableByName(context.Background(), ast.NewCIStr("test_dbs"), ast.NewCIStr("t2"))
 	require.NoError(t, err)
 	tk.MustExec("drop database test_dbs")
 	is = domain.GetDomain(tk.Session()).InfoSchema()
-	_, err = is.TableByName(context.Background(), pmodel.NewCIStr("test_dbs"), pmodel.NewCIStr("t2"))
+	_, err = is.TableByName(context.Background(), ast.NewCIStr("test_dbs"), ast.NewCIStr("t2"))
 	require.True(t, terror.ErrorEqual(infoschema.ErrTableNotExists, err))
 	_, ok := is.TableByID(context.Background(), t2.Meta().ID)
 	require.False(t, ok)
@@ -636,11 +655,11 @@ func TestSystemSchemaID(t *testing.T) {
 func checkSystemSchemaTableID(t *testing.T, dom *domain.Domain, dbName string, dbID, start, end int64, uniqueIDMap map[int64]string) {
 	is := dom.InfoSchema()
 	require.NotNil(t, is)
-	db, ok := is.SchemaByName(pmodel.NewCIStr(dbName))
+	db, ok := is.SchemaByName(ast.NewCIStr(dbName))
 	require.True(t, ok)
 	require.Equal(t, dbID, db.ID)
 	// Test for information_schema table id.
-	tables, err := is.SchemaTableInfos(context.Background(), pmodel.NewCIStr(dbName))
+	tables, err := is.SchemaTableInfos(context.Background(), ast.NewCIStr(dbName))
 	require.NoError(t, err)
 	require.Greater(t, len(tables), 0)
 	for _, tbl := range tables {
@@ -673,7 +692,7 @@ func TestSelectHiddenColumn(t *testing.T) {
 	tk.MustExec("USE test_hidden;")
 	tk.MustExec("CREATE TABLE hidden (a int , b int, c int);")
 	tk.MustQuery("select count(*) from INFORMATION_SCHEMA.COLUMNS where table_name = 'hidden'").Check(testkit.Rows("3"))
-	tb, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test_hidden"), pmodel.NewCIStr("hidden"))
+	tb, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test_hidden"), ast.NewCIStr("hidden"))
 	require.NoError(t, err)
 	tbInfo := tb.Meta()
 	colInfo := tbInfo.Columns
@@ -1085,7 +1104,7 @@ func TestStmtSummaryEvictedPointGet(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_refresh_interval=%v;", interval))
 	tk.MustExec("create database point_get;")
 	tk.MustExec("use point_get;")
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		tk.MustExec(fmt.Sprintf("create table if not exists th%v ("+
 			"p bigint key,"+
 			"q int);", i))
@@ -1302,7 +1321,7 @@ func TestMemoryUsageAndOpsHistory(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t values(1)")
-	for i := 0; i < 9; i++ {
+	for range 9 {
 		tk.MustExec("insert into t select * from t;")
 	}
 

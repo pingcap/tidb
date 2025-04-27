@@ -31,9 +31,12 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/opt"
+	"github.com/tikv/pd/client/pkg/caller"
 )
 
 func TestLogicalPlan(t *testing.T) {
@@ -41,8 +44,8 @@ func TestLogicalPlan(t *testing.T) {
 		JobID:             1,
 		Plan:              importer.Plan{},
 		Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
-		EligibleInstances: []*infosync.ServerInfo{{ID: "1"}},
-		ChunkMap:          map[int32][]Chunk{1: {{Path: "gs://test-load/1.csv"}}},
+		EligibleInstances: []*infosync.ServerInfo{{StaticServerInfo: infosync.StaticServerInfo{ID: "1"}}},
+		ChunkMap:          map[int32][]importer.Chunk{1: {{Path: "gs://test-load/1.csv"}}},
 	}
 	bs, err := logicalPlan.ToTaskMeta()
 	require.NoError(t, err)
@@ -58,12 +61,12 @@ func TestToPhysicalPlan(t *testing.T) {
 		Plan: importer.Plan{
 			DBName: "db",
 			TableInfo: &model.TableInfo{
-				Name: pmodel.NewCIStr("tb"),
+				Name: ast.NewCIStr("tb"),
 			},
 		},
 		Stmt:              `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
-		EligibleInstances: []*infosync.ServerInfo{{ID: "1"}},
-		ChunkMap:          map[int32][]Chunk{chunkID: {{Path: "gs://test-load/1.csv"}}},
+		EligibleInstances: []*infosync.ServerInfo{{StaticServerInfo: infosync.StaticServerInfo{ID: "1"}}},
+		ChunkMap:          map[int32][]importer.Chunk{chunkID: {{Path: "gs://test-load/1.csv"}}},
 	}
 	planCtx := planner.PlanCtx{
 		NextTaskStep: proto.ImportStepImport,
@@ -75,9 +78,11 @@ func TestToPhysicalPlan(t *testing.T) {
 			{
 				ID: 0,
 				Pipeline: &ImportSpec{
-					ID:     chunkID,
-					Plan:   logicalPlan.Plan,
-					Chunks: logicalPlan.ChunkMap[chunkID],
+					ImportStepMeta: &ImportStepMeta{
+						ID:     chunkID,
+						Chunks: logicalPlan.ChunkMap[chunkID],
+					},
+					Plan: logicalPlan.Plan,
 				},
 				Output: planner.OutputSpec{
 					Links: []planner.LinkSpec{
@@ -123,6 +128,14 @@ func TestToPhysicalPlan(t *testing.T) {
 	bs, err = json.Marshal(subtaskMeta2)
 	require.NoError(t, err)
 	require.Equal(t, [][]byte{bs}, subtaskMetas2)
+
+	planCtx = planner.PlanCtx{
+		NextTaskStep: proto.ImportStepImport,
+		GlobalSort:   true,
+	}
+	_, err = logicalPlan.ToPhysicalPlan(planCtx)
+	// error when build controller plan
+	require.ErrorContains(t, err, "table tb can't be in none state")
 }
 
 func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
@@ -184,7 +197,21 @@ func TestGenerateMergeSortSpecs(t *testing.T) {
 			proto.ImportStepEncodeAndSort: encodeStepMetaBytes,
 		},
 	}
-	specs, err := generateMergeSortSpecs(planCtx, &LogicalPlan{})
+	p := &LogicalPlan{
+		Plan: importer.Plan{
+			DBName: "db",
+			TableInfo: &model.TableInfo{
+				Name:  ast.NewCIStr("tb"),
+				State: model.StatePublic,
+			},
+			LineFieldsInfo: core.LineFieldsInfo{
+				FieldsTerminatedBy: "\t",
+				LinesTerminatedBy:  "\n",
+			},
+		},
+		Stmt: `IMPORT INTO db.tb FROM 'gs://test-load/*.csv?endpoint=xxx'`,
+	}
+	specs, err := generateMergeSortSpecs(planCtx, p)
 	require.NoError(t, err)
 	require.Len(t, specs, 2)
 	require.Len(t, specs[0].(*MergeSortSpec).DataFiles, 2)
@@ -197,7 +224,8 @@ func TestGenerateMergeSortSpecs(t *testing.T) {
 
 	// force merge sort for all kv groups
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort"))
-	specs, err = generateMergeSortSpecs(planCtx, &LogicalPlan{Plan: importer.Plan{ForceMergeStep: true}})
+	p.Plan.ForceMergeStep = true
+	specs, err = generateMergeSortSpecs(planCtx, p)
 	require.NoError(t, err)
 	require.Len(t, specs, 4)
 	data0, data1 := specs[0].(*MergeSortSpec), specs[1].(*MergeSortSpec)
@@ -251,7 +279,7 @@ func genMergeStepMetas(t *testing.T, cnt int) [][]byte {
 
 func TestGetSortedKVMetas(t *testing.T) {
 	encodeStepMetaBytes := genEncodeStepMetas(t, 3)
-	kvMetas, err := getSortedKVMetasOfEncodeStep(encodeStepMetaBytes)
+	kvMetas, err := getSortedKVMetasOfEncodeStep(context.Background(), encodeStepMetaBytes, nil)
 	require.NoError(t, err)
 	require.Len(t, kvMetas, 2)
 	require.Contains(t, kvMetas, "data")
@@ -263,7 +291,7 @@ func TestGetSortedKVMetas(t *testing.T) {
 	require.Equal(t, []byte("i1_2_c"), kvMetas["1"].EndKey)
 
 	mergeStepMetas := genMergeStepMetas(t, 3)
-	kvMetas2, err := getSortedKVMetasOfMergeStep(mergeStepMetas)
+	kvMetas2, err := getSortedKVMetasOfMergeStep(context.Background(), mergeStepMetas, nil)
 	require.NoError(t, err)
 	require.Len(t, kvMetas2, 1)
 	require.Equal(t, []byte("x_0_a"), kvMetas2["data"].StartKey)
@@ -279,7 +307,7 @@ func TestGetSortedKVMetas(t *testing.T) {
 			proto.ImportStepEncodeAndSort: encodeStepMetaBytes,
 			proto.ImportStepMergeSort:     mergeStepMetas,
 		},
-	}, &LogicalPlan{})
+	}, &LogicalPlan{}, nil)
 	require.NoError(t, err)
 	require.Len(t, allKVMetas, 2)
 	require.Equal(t, []byte("x_0_a"), allKVMetas["data"].StartKey)
@@ -327,7 +355,7 @@ func TestSplitForOneSubtask(t *testing.T) {
 	t.Cleanup(func() {
 		importer.NewClientWithContext = bak
 	})
-	importer.NewClientWithContext = func(_ context.Context, _ []string, _ pd.SecurityOption, _ ...pd.ClientOption) (pd.Client, error) {
+	importer.NewClientWithContext = func(_ context.Context, _ caller.Component, _ []string, _ pd.SecurityOption, _ ...opt.ClientOption) (pd.Client, error) {
 		return nil, errors.New("mock error")
 	}
 

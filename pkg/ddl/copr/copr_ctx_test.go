@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -35,7 +35,7 @@ func TestNewCopContextSingleIndex(t *testing.T) {
 		mockColInfos = append(mockColInfos, &model.ColumnInfo{
 			ID:        int64(i),
 			Offset:    i,
-			Name:      pmodel.NewCIStr(fmt.Sprintf("c%d", i)),
+			Name:      ast.NewCIStr(fmt.Sprintf("c%d", i)),
 			FieldType: *types.NewFieldType(1),
 			State:     model.StatePublic,
 		})
@@ -69,18 +69,18 @@ func TestNewCopContextSingleIndex(t *testing.T) {
 		var idxCols []*model.IndexColumn
 		for _, cn := range tt.cols {
 			idxCols = append(idxCols, &model.IndexColumn{
-				Name:   pmodel.NewCIStr(cn),
+				Name:   ast.NewCIStr(cn),
 				Offset: findColByName(cn).Offset,
 			})
 		}
 		mockIdxInfo := &model.IndexInfo{
 			ID:      int64(i),
-			Name:    pmodel.NewCIStr(fmt.Sprintf("i%d", i)),
+			Name:    ast.NewCIStr(fmt.Sprintf("i%d", i)),
 			Columns: idxCols,
 			State:   model.StatePublic,
 		}
 		mockTableInfo := &model.TableInfo{
-			Name:           pmodel.NewCIStr("t"),
+			Name:           ast.NewCIStr("t"),
 			Columns:        mockColInfos,
 			Indices:        []*model.IndexInfo{mockIdxInfo},
 			PKIsHandle:     tt.pkType == pkTypePKHandle,
@@ -93,11 +93,11 @@ func TestNewCopContextSingleIndex(t *testing.T) {
 			mockTableInfo.Indices = append(mockTableInfo.Indices, &model.IndexInfo{
 				Columns: []*model.IndexColumn{
 					{
-						Name:   pmodel.NewCIStr("c2"),
+						Name:   ast.NewCIStr("c2"),
 						Offset: 2,
 					},
 					{
-						Name:   pmodel.NewCIStr("c4"),
+						Name:   ast.NewCIStr("c4"),
 						Offset: 4,
 					},
 				},

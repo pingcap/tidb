@@ -22,12 +22,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
 )
 
 // FKCheck indicates the foreign key constraint checker.
@@ -37,7 +38,7 @@ type FKCheck struct {
 	ReferredFK *model.ReferredFKInfo
 	Tbl        table.Table
 	Idx        table.Index
-	Cols       []pmodel.CIStr
+	Cols       []ast.CIStr
 
 	IdxIsPrimaryKey bool
 	IdxIsExclusive  bool
@@ -123,9 +124,9 @@ func (f *FKCascade) AccessObject() base.AccessObject {
 func (f *FKCascade) OperatorInfo(bool) string {
 	switch f.Tp {
 	case FKCascadeOnDelete:
-		return fmt.Sprintf("foreign_key:%s, on_delete:%s", f.FK.Name, pmodel.ReferOptionType(f.FK.OnDelete).String())
+		return fmt.Sprintf("foreign_key:%s, on_delete:%s", f.FK.Name, ast.ReferOptionType(f.FK.OnDelete).String())
 	case FKCascadeOnUpdate:
-		return fmt.Sprintf("foreign_key:%s, on_update:%s", f.FK.Name, pmodel.ReferOptionType(f.FK.OnUpdate).String())
+		return fmt.Sprintf("foreign_key:%s, on_update:%s", f.FK.Name, ast.ReferOptionType(f.FK.OnUpdate).String())
 	}
 	return ""
 }
@@ -384,19 +385,22 @@ func buildOnDeleteOrUpdateFKTrigger(ctx base.PlanContext, is infoschema.InfoSche
 	if fk == nil || fk.Version < 1 {
 		return nil, nil, nil
 	}
-	var fkReferOption pmodel.ReferOptionType
+	if err := dbutil.CheckTableModeIsNormal(childTable.Meta().Name, childTable.Meta().Mode); err != nil {
+		return nil, nil, err
+	}
+	var fkReferOption ast.ReferOptionType
 	if fk.State != model.StatePublic {
-		fkReferOption = pmodel.ReferOptionRestrict
+		fkReferOption = ast.ReferOptionRestrict
 	} else {
 		switch tp {
 		case FKCascadeOnDelete:
-			fkReferOption = pmodel.ReferOptionType(fk.OnDelete)
+			fkReferOption = ast.ReferOptionType(fk.OnDelete)
 		case FKCascadeOnUpdate:
-			fkReferOption = pmodel.ReferOptionType(fk.OnUpdate)
+			fkReferOption = ast.ReferOptionType(fk.OnUpdate)
 		}
 	}
 	switch fkReferOption {
-	case pmodel.ReferOptionCascade, pmodel.ReferOptionSetNull:
+	case ast.ReferOptionCascade, ast.ReferOptionSetNull:
 		fkCascade, err := buildFKCascade(ctx, tp, referredFK, childTable, fk)
 		return nil, fkCascade, err
 	default:
@@ -405,7 +409,7 @@ func buildOnDeleteOrUpdateFKTrigger(ctx base.PlanContext, is infoschema.InfoSche
 	}
 }
 
-func isMapContainAnyCols(colsMap map[string]struct{}, cols ...pmodel.CIStr) bool {
+func isMapContainAnyCols(colsMap map[string]struct{}, cols ...ast.CIStr) bool {
 	for _, col := range cols {
 		_, exist := colsMap[col.L]
 		if exist {
@@ -440,7 +444,7 @@ func buildFKCheckForReferredFK(ctx base.PlanContext, childTable table.Table, fk 
 	return fkCheck, nil
 }
 
-func buildFKCheck(ctx base.PlanContext, tbl table.Table, cols []pmodel.CIStr, failedErr error) (*FKCheck, error) {
+func buildFKCheck(ctx base.PlanContext, tbl table.Table, cols []ast.CIStr, failedErr error) (*FKCheck, error) {
 	tblInfo := tbl.Meta()
 	if tblInfo.PKIsHandle && len(cols) == 1 {
 		refColInfo := model.FindColumnInfo(tblInfo.Columns, cols[0].L)

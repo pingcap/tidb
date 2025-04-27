@@ -38,7 +38,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -201,7 +201,7 @@ func (e *ImportIntoExec) fillJobInfo(ctx context.Context, jobID int64, req *chun
 	}); err != nil {
 		return err
 	}
-	FillOneImportJobInfo(info, req, unknownImportedRowCount)
+	FillOneImportJobInfo(req, info, unknownImportedRowCount)
 	return nil
 }
 
@@ -212,16 +212,16 @@ func (e *ImportIntoExec) submitTask(ctx context.Context) (int64, *proto.TaskBase
 		return 0, nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(plannercore.ImportIntoDataSource, err.Error())
 	}
 	logutil.Logger(ctx).Info("get job importer", zap.Stringer("param", e.controller.Parameters),
-		zap.Bool("dist-task-enabled", variable.EnableDistTask.Load()))
+		zap.Bool("dist-task-enabled", vardef.EnableDistTask.Load()))
 	if importFromServer {
-		ecp, err2 := e.controller.PopulateChunks(ctx)
+		chunkMap, err2 := e.controller.PopulateChunks(ctx)
 		if err2 != nil {
 			return 0, nil, err2
 		}
-		return importinto.SubmitStandaloneTask(ctx, e.controller.Plan, e.stmt, ecp)
+		return importinto.SubmitStandaloneTask(ctx, e.controller.Plan, e.stmt, chunkMap)
 	}
 	// if tidb_enable_dist_task=true, we import distributively, otherwise we import on current node.
-	if variable.EnableDistTask.Load() {
+	if vardef.EnableDistTask.Load() {
 		return importinto.SubmitTask(ctx, e.controller.Plan, e.stmt)
 	}
 	return importinto.SubmitStandaloneTask(ctx, e.controller.Plan, e.stmt, nil)
@@ -276,8 +276,8 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 			logutil.Logger(ctx).Error("close importer failed", zap.Error(err))
 		}
 	}()
-	selectedRowCh := make(chan importer.QueryRow)
-	ti.SetSelectedRowCh(selectedRowCh)
+	selectedChunkCh := make(chan importer.QueryChunk, 1)
+	ti.SetSelectedChunkCh(selectedChunkCh)
 
 	var importResult *importer.JobImportResult
 	eg, egCtx := errgroup.WithContext(ctx)
@@ -287,13 +287,14 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 		return err
 	})
 	eg.Go(func() error {
-		defer close(selectedRowCh)
+		defer close(selectedChunkCh)
 		fields := exec.RetTypes(e.selectExec)
 		var idAllocator int64
+		chkSize := e.selectExec.InitCap()
+		maxChkSize := e.selectExec.MaxChunkSize()
 		for {
 			// rows will be consumed concurrently, we cannot use chunk pool in session ctx.
-			chk := exec.NewFirstChunk(e.selectExec)
-			iter := chunk.NewIterator4Chunk(chk)
+			chk := chunk.New(e.selectExec.RetFieldTypes(), chkSize, maxChkSize)
 			err := exec.Next(egCtx, e.selectExec, chk)
 			if err != nil {
 				return err
@@ -301,16 +302,19 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 			if chk.NumRows() == 0 {
 				break
 			}
-			for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
-				idAllocator++
-				select {
-				case selectedRowCh <- importer.QueryRow{
-					ID:   idAllocator,
-					Data: innerChunkRow.GetDatumRow(fields),
-				}:
-				case <-egCtx.Done():
-					return egCtx.Err()
-				}
+			select {
+			case selectedChunkCh <- importer.QueryChunk{
+				Fields:      fields,
+				Chk:         chk,
+				RowIDOffset: idAllocator,
+			}:
+				idAllocator += int64(chk.NumRows())
+			case <-egCtx.Done():
+				return egCtx.Err()
+			}
+			if chkSize < maxChkSize {
+				chkSize = chkSize * 2
+				chkSize = min(chkSize, maxChkSize)
 			}
 		}
 		return nil
@@ -328,6 +332,14 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	// TODO: change it after spec is ready.
 	stmtCtx.SetMessage(fmt.Sprintf("Records: %d, ID: %s", importResult.Affected, importID))
 	return nil
+}
+
+// Close implements the Executor interface.
+func (e *ImportIntoExec) Close() error {
+	if e.controller != nil {
+		e.controller.Close()
+	}
+	return e.BaseExecutor.Close()
 }
 
 // ImportIntoActionExec represents a import into action executor.

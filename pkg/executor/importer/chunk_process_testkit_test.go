@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -49,7 +49,7 @@ import (
 func getCSVParser(ctx context.Context, t *testing.T, fileName string) mydump.Parser {
 	file, err := os.Open(fileName)
 	require.NoError(t, err)
-	csvParser, err := mydump.NewCSVParser(ctx, &config.CSVConfig{Separator: `,`, Delimiter: `"`},
+	csvParser, err := mydump.NewCSVParser(ctx, &config.CSVConfig{FieldsTerminatedBy: `,`, FieldsEnclosedBy: `"`},
 		file, importer.LoadDataReadBlockSize, nil, false, nil)
 	require.NoError(t, err)
 	return csvParser
@@ -67,7 +67,7 @@ func TestFileChunkProcess(t *testing.T) {
 	tk.MustExec(stmt)
 	do, err := session.GetDomain(store)
 	require.NoError(t, err)
-	table, err := do.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	table, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 
 	fieldMappings := make([]*importer.FieldMapping, 0, len(table.VisibleCols()))

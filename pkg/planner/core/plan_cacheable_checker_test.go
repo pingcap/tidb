@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -123,7 +122,7 @@ func TestCacheable(t *testing.T) {
 	tk.MustExec("create table t1(a int, b int) partition by range(a) ( partition p0 values less than (6), partition p1 values less than (11) )")
 	tk.MustExec("create table t2(a int, b int) partition by hash(a) partitions 11")
 	tk.MustExec("create table t3(a int, b int)")
-	tbl := &ast.TableName{Schema: model.NewCIStr("test"), Name: model.NewCIStr("t3")}
+	tbl := &ast.TableName{Schema: ast.NewCIStr("test"), Name: ast.NewCIStr("t3")}
 	is := tk.Session().GetInfoSchema().(infoschema.InfoSchema)
 	// test non-SelectStmt/-InsertStmt/-DeleteStmt/-UpdateStmt/-SetOprStmt
 	var stmt ast.Node = &ast.ShowStmt{}
@@ -155,11 +154,11 @@ func TestCacheable(t *testing.T) {
 	require.True(t, core.Cacheable(stmt, is))
 
 	for funcName := range expression.UnCacheableFunctions {
-		whereExpr.FnName = model.NewCIStr(funcName)
+		whereExpr.FnName = ast.NewCIStr(funcName)
 		require.False(t, core.Cacheable(stmt, is))
 	}
 
-	whereExpr.FnName = model.NewCIStr(ast.Rand)
+	whereExpr.FnName = ast.NewCIStr(ast.Rand)
 	require.True(t, core.Cacheable(stmt, is))
 
 	stmt = &ast.DeleteStmt{
@@ -198,7 +197,7 @@ func TestCacheable(t *testing.T) {
 	require.True(t, c)
 
 	stmt.(*ast.DeleteStmt).TableHints = append(stmt.(*ast.DeleteStmt).TableHints, &ast.TableOptimizerHint{
-		HintName: model.NewCIStr(hint.HintIgnorePlanCache),
+		HintName: ast.NewCIStr(hint.HintIgnorePlanCache),
 	})
 	require.False(t, core.Cacheable(stmt, is))
 
@@ -211,11 +210,11 @@ func TestCacheable(t *testing.T) {
 	require.True(t, core.Cacheable(stmt, is))
 
 	for funcName := range expression.UnCacheableFunctions {
-		whereExpr.FnName = model.NewCIStr(funcName)
+		whereExpr.FnName = ast.NewCIStr(funcName)
 		require.False(t, core.Cacheable(stmt, is))
 	}
 
-	whereExpr.FnName = model.NewCIStr(ast.Rand)
+	whereExpr.FnName = ast.NewCIStr(ast.Rand)
 	require.True(t, core.Cacheable(stmt, is))
 
 	stmt = &ast.UpdateStmt{
@@ -254,7 +253,7 @@ func TestCacheable(t *testing.T) {
 	require.True(t, c)
 
 	stmt.(*ast.UpdateStmt).TableHints = append(stmt.(*ast.UpdateStmt).TableHints, &ast.TableOptimizerHint{
-		HintName: model.NewCIStr(hint.HintIgnorePlanCache),
+		HintName: ast.NewCIStr(hint.HintIgnorePlanCache),
 	})
 	require.False(t, core.Cacheable(stmt, is))
 
@@ -266,11 +265,11 @@ func TestCacheable(t *testing.T) {
 	require.True(t, core.Cacheable(stmt, is))
 
 	for funcName := range expression.UnCacheableFunctions {
-		whereExpr.FnName = model.NewCIStr(funcName)
+		whereExpr.FnName = ast.NewCIStr(funcName)
 		require.False(t, core.Cacheable(stmt, is))
 	}
 
-	whereExpr.FnName = model.NewCIStr(ast.Rand)
+	whereExpr.FnName = ast.NewCIStr(ast.Rand)
 	require.True(t, core.Cacheable(stmt, is))
 
 	stmt = &ast.SelectStmt{
@@ -319,7 +318,7 @@ func TestCacheable(t *testing.T) {
 	require.True(t, core.Cacheable(stmt, is))
 
 	stmt.(*ast.SelectStmt).TableHints = append(stmt.(*ast.SelectStmt).TableHints, &ast.TableOptimizerHint{
-		HintName: model.NewCIStr(hint.HintIgnorePlanCache),
+		HintName: ast.NewCIStr(hint.HintIgnorePlanCache),
 	})
 	require.False(t, core.Cacheable(stmt, is))
 
@@ -328,8 +327,8 @@ func TestCacheable(t *testing.T) {
 
 	// Partition table can not be cached.
 	join := &ast.Join{
-		Left:  &ast.TableName{Schema: model.NewCIStr("test"), Name: model.NewCIStr("t1")},
-		Right: &ast.TableName{Schema: model.NewCIStr("test"), Name: model.NewCIStr("t2")},
+		Left:  &ast.TableName{Schema: ast.NewCIStr("test"), Name: ast.NewCIStr("t1")},
+		Right: &ast.TableName{Schema: ast.NewCIStr("test"), Name: ast.NewCIStr("t2")},
 	}
 	stmt = &ast.SelectStmt{
 		From: &ast.TableRefsClause{
@@ -339,7 +338,7 @@ func TestCacheable(t *testing.T) {
 	require.False(t, core.Cacheable(stmt, is))
 
 	join = &ast.Join{
-		Left: &ast.TableName{Schema: model.NewCIStr("test"), Name: model.NewCIStr("t3")},
+		Left: &ast.TableName{Schema: ast.NewCIStr("test"), Name: ast.NewCIStr("t3")},
 	}
 	stmt = &ast.SelectStmt{
 		From: &ast.TableRefsClause{
@@ -419,18 +418,8 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		"select /*+ use_index(t1, idx_b) */ * from t where a > 1 and b < 2", // hint
 		"select /*+ use_index(t, idx_b) */ * from t1 where a > 1 and b < 2", // hint & partitioned
 
-		"select * from (select * from test.t) t",        // sub-query
-		"select * from (select * from test.t1) t",       // sub-query & partitioned
-		"insert into test.t values(1, 1, 1, 1)",         // insert
-		"insert into test.t1 values(1, 1)",              // insert & partitioned
-		"insert into t(a, b) select a, b from test.t",   // insert into select
-		"insert into t1(a, b) select a, b from test.t1", // insert into select & partitioned
-		"update test.t set a = 1 where b = 2",           // update
-		"update test.t1 set a = 1 where b = 2",          // update & partitioned
-		"delete from test.t where b = 1",                // delete
-		"delete from test.t1 where b = 1",               // delete & partitioned
-		"select * from test.t for update",               // lock
-		"select * from test.t1 for update",              // lock & partitioned
+		"select * from (select * from test.t) t",  // sub-query
+		"select * from (select * from test.t1) t", // sub-query & partitioned
 
 		// uncorrelated sub-query
 		"select * from test.t where a in (select a from t)",
@@ -442,6 +431,19 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		"select * from test.t1 where a in (select a from test.t where a > t1.a)",
 	}
 
+	supportedDML := []string{
+		"select * from test.t for update",               // lock
+		"select * from test.t1 for update",              // lock & partitioned
+		"insert into test.t values(1, 1, 1, 1)",         // insert
+		"insert into test.t1 values(1, 1)",              // insert & partitioned
+		"insert into t(a, b) select a, b from test.t",   // insert into select
+		"insert into t1(a, b) select a, b from test.t1", // insert into select & partitioned
+		"update test.t set a = 1 where b = 2",           // update
+		"update test.t1 set a = 1 where b = 2",          // update & partitioned
+		"delete from test.t where b = 1",                // delete
+		"delete from test.t1 where b = 1",               // delete & partitioned
+	}
+
 	sctx := tk.Session()
 	for i, q := range unsupported {
 		stmt, err := p.ParseOneStmt(q, charset, collation)
@@ -451,6 +453,13 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 	}
 
 	for _, q := range supported {
+		stmt, err := p.ParseOneStmt(q, charset, collation)
+		require.NoError(t, err)
+		ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx.GetPlanCtx(), stmt, is)
+		require.True(t, ok)
+	}
+
+	for _, q := range supportedDML {
 		stmt, err := p.ParseOneStmt(q, charset, collation)
 		require.NoError(t, err)
 		ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx.GetPlanCtx(), stmt, is)

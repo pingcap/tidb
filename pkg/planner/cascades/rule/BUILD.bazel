@@ -25,7 +25,7 @@ go_test(
     flaky = True,
     shard_count = 8,
     deps = [
-        "//pkg/parser/model",
+        "//pkg/parser/ast",
         "//pkg/planner/cascades/memo",
         "//pkg/planner/cascades/pattern",
         "//pkg/planner/cascades/util",

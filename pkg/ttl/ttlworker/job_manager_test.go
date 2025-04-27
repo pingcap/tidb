@@ -23,13 +23,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -147,15 +146,15 @@ var updateStatusSQL = "SELECT LOW_PRIORITY table_id,parent_table_id,table_statis
 // TTLJob exports the ttlJob for test
 type TTLJob = ttlJob
 
-// GetSessionForTest is used for test
-func GetSessionForTest(pool util.SessionPool) (session.Session, error) {
-	return getSession(pool)
+// WithSessionForTest is used for test
+func WithSessionForTest(pool syssession.Pool, fn func(session.Session) error) error {
+	return withSession(pool, fn)
 }
 
 // LockJob is an exported version of lockNewJob for test
 func (m *JobManager) LockJob(ctx context.Context, se session.Session, table *cache.PhysicalTable, now time.Time, createJobID string, checkInterval bool) (*TTLJob, error) {
 	if createJobID == "" {
-		return m.lockHBTimeoutJob(ctx, se, table, now)
+		return m.lockHBTimeoutJob(ctx, se, table.ID, table.TableInfo.ID, now)
 	}
 	return m.lockNewJob(ctx, se, table, now, createJobID, checkInterval)
 }
@@ -205,9 +204,29 @@ func (m *JobManager) UpdateHeartBeatForJob(ctx context.Context, se session.Sessi
 	return m.updateHeartBeatForJob(ctx, se, now, job)
 }
 
+// SetLastReportDelayMetricsTime sets the lastReportDelayMetricsTime for test
+func (m *JobManager) SetLastReportDelayMetricsTime(t time.Time) {
+	m.lastReportDelayMetricsTime = t
+}
+
+// GetLastReportDelayMetricsTime returns the lastReportDelayMetricsTime for test
+func (m *JobManager) GetLastReportDelayMetricsTime() time.Time {
+	return m.lastReportDelayMetricsTime
+}
+
 // ReportMetrics is an exported version of reportMetrics
 func (m *JobManager) ReportMetrics(se session.Session) {
 	m.reportMetrics(se)
+}
+
+// ID returns the id of JobManager
+func (m *JobManager) ID() string {
+	return m.id
+}
+
+// CheckNotOwnJob is an exported version of checkNotOwnJob
+func (m *JobManager) CheckNotOwnJob() {
+	m.checkNotOwnJob()
 }
 
 // CheckFinishedJob is an exported version of checkFinishedJob
@@ -270,8 +289,8 @@ func TestReadyForLockHBTimeoutJobTables(t *testing.T) {
 			tables := m.readyForLockHBTimeoutJobTables(se.Now())
 			if c.shouldSchedule {
 				assert.Len(t, tables, 1)
-				assert.Equal(t, tbl.ID, tables[0].ID)
-				assert.Equal(t, tbl.ID, tables[0].TableInfo.ID)
+				assert.Equal(t, tbl.ID, tables[0].TableID)
+				assert.Equal(t, tbl.ID, tables[0].ParentTableID)
 			} else {
 				assert.Len(t, tables, 0)
 			}
@@ -383,7 +402,7 @@ func TestLockTable(t *testing.T) {
 	oldJobExpireTime := now.Add(-time.Hour)
 	oldJobStartTime := now.Add(-30 * time.Minute)
 
-	testPhysicalTable := &cache.PhysicalTable{ID: 1, Schema: pmodel.NewCIStr("test"), TableInfo: &model.TableInfo{ID: 1, Name: pmodel.NewCIStr("t1"), TTLInfo: &model.TTLInfo{ColumnName: pmodel.NewCIStr("test"), IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitMinute), JobInterval: "1h"}}}
+	testPhysicalTable := &cache.PhysicalTable{ID: 1, Schema: ast.NewCIStr("test"), TableInfo: &model.TableInfo{ID: 1, Name: ast.NewCIStr("t1"), TTLInfo: &model.TTLInfo{ColumnName: ast.NewCIStr("test"), IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitMinute), JobInterval: "1h"}}}
 
 	type executeInfo struct {
 		sql  string
@@ -437,7 +456,7 @@ func TestLockTable(t *testing.T) {
 				nil, nil,
 			},
 			{
-				getExecuteInfoWithErr(cache.InsertIntoTTLTask(newMockSession(t), "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
 				nil, nil,
 			},
 			{
@@ -459,7 +478,7 @@ func TestLockTable(t *testing.T) {
 				nil, nil,
 			},
 			{
-				getExecuteInfoWithErr(cache.InsertIntoTTLTask(newMockSession(t), "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
 				nil, nil,
 			},
 			{
@@ -495,7 +514,7 @@ func TestLockTable(t *testing.T) {
 				nil, nil,
 			},
 			{
-				getExecuteInfoWithErr(cache.InsertIntoTTLTask(newMockSession(t), "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
 				nil, nil,
 			},
 			{
@@ -525,7 +544,7 @@ func TestLockTable(t *testing.T) {
 				nil, nil,
 			},
 			{
-				getExecuteInfoWithErr(cache.InsertIntoTTLTask(newMockSession(t), "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
 				nil, nil,
 			},
 			{
@@ -623,7 +642,7 @@ func TestLockTable(t *testing.T) {
 			if c.isCreate {
 				job, err = m.lockNewJob(context.Background(), se, c.table, now, "new-job-id", c.checkInterval)
 			} else {
-				job, err = m.lockHBTimeoutJob(context.Background(), se, c.table, now)
+				job, err = m.lockHBTimeoutJob(context.Background(), se, c.table.ID, c.table.TableInfo.ID, now)
 			}
 			require.Equal(t, len(c.sqls), sqlCounter)
 			if c.hasError {
@@ -634,8 +653,8 @@ func TestLockTable(t *testing.T) {
 				assert.NotNil(t, job)
 				assert.Equal(t, "test-id", job.ownerID)
 				assert.Equal(t, cache.JobStatusRunning, job.status)
-				assert.NotNil(t, job.tbl)
-				assert.Same(t, c.table, job.tbl)
+				assert.NotEmpty(t, job.tableID)
+				assert.Equal(t, c.table.ID, job.tableID)
 				if c.isCreate {
 					assert.Equal(t, "new-job-id", job.id)
 					assert.Equal(t, now, job.createTime)
@@ -660,7 +679,7 @@ func TestLocalJobs(t *testing.T) {
 	m := NewJobManager("test-id", nil, nil, nil, nil)
 	m.sessPool = newMockSessionPool(t, tbl1, tbl2)
 
-	m.runningJobs = []*ttlJob{{tbl: tbl1, id: "1"}, {tbl: tbl2, id: "2"}}
+	m.runningJobs = []*ttlJob{{tableID: tbl1.ID, id: "1"}, {tableID: tbl2.ID, id: "2"}}
 	m.tableStatusCache.Tables = map[int64]*cache.TableStatus{
 		tbl1.ID: {
 			CurrentJobOwnerID: m.id,
@@ -694,4 +713,11 @@ func TestSplitCnt(t *testing.T) {
 			require.Equal(t, int(i), getScanSplitCnt(s))
 		}
 	}
+}
+
+// SetTimeFormat sets the time format used by the test.
+// Some tests require a greater precision than the default time format. We don't change it globally to avoid potential compatibility issues.
+// Therefore, the format for most tests are also not changed, to make sure the tests can represent the real-world scenarios.
+func SetTimeFormat(format string) {
+	timeFormat = format
 }

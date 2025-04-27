@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
@@ -123,7 +122,7 @@ func findPositionRelativeColumn(cols []*table.Column, pos *ast.ColumnPosition) (
 
 // findDependedColumnNames returns a set of string, which indicates
 // the names of the columns that are depended by colDef.
-func findDependedColumnNames(schemaName pmodel.CIStr, tableName pmodel.CIStr, colDef *ast.ColumnDef) (generated bool, colsMap map[string]struct{}, err error) {
+func findDependedColumnNames(schemaName ast.CIStr, tableName ast.CIStr, colDef *ast.ColumnDef) (generated bool, colsMap map[string]struct{}, err error) {
 	colsMap = make(map[string]struct{})
 	for _, option := range colDef.Options {
 		if option.Tp == ast.ColumnOptionGenerated {
@@ -152,7 +151,7 @@ func FindColumnNamesInExpr(expr ast.ExprNode) []*ast.ColumnName {
 }
 
 // hasDependentByGeneratedColumn checks whether there are other columns depend on this column or not.
-func hasDependentByGeneratedColumn(tblInfo *model.TableInfo, colName pmodel.CIStr) (bool, string, bool) {
+func hasDependentByGeneratedColumn(tblInfo *model.TableInfo, colName ast.CIStr) (bool, string, bool) {
 	for _, col := range tblInfo.Columns {
 		for dep := range col.Dependences {
 			if dep == colName.L {
@@ -198,7 +197,7 @@ func (c *generatedColumnChecker) Leave(inNode ast.Node) (node ast.Node, ok bool)
 //  3. check if the modified expr contains non-deterministic functions
 //  4. check whether new column refers to any auto-increment columns.
 //  5. check if the new column is indexed or stored
-func checkModifyGeneratedColumn(sctx sessionctx.Context, schemaName pmodel.CIStr, tbl table.Table, oldCol, newCol *table.Column, newColDef *ast.ColumnDef, pos *ast.ColumnPosition) error {
+func checkModifyGeneratedColumn(sctx sessionctx.Context, schemaName ast.CIStr, tbl table.Table, oldCol, newCol *table.Column, newColDef *ast.ColumnDef, pos *ast.ColumnPosition) error {
 	// rule 1.
 	oldColIsStored := !oldCol.IsGenerated() || oldCol.GeneratedStored
 	newColIsStored := !newCol.IsGenerated() || newCol.GeneratedStored

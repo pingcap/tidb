@@ -306,6 +306,9 @@ func GetWritableIndexByName(idxName string, t table.Table) table.Index {
 		if !IsIndexWritable(idx) {
 			continue
 		}
+		if idx.Meta().IsColumnarIndex() {
+			continue
+		}
 		if idxName == idx.Meta().Name.L {
 			return idx
 		}
@@ -533,21 +536,7 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 	memBuffer.Release(sh)
 
 	if s, ok := sctx.GetStatisticsSupport(); ok {
-		colSizeBuffer := mutateBuffers.GetColSizeDeltaBufferWithCap(len(t.Cols()))
-		for id, col := range t.Cols() {
-			size, err := codec.EstimateValueSize(tc, newData[id])
-			if err != nil {
-				continue
-			}
-			newLen := size - 1
-			size, err = codec.EstimateValueSize(tc, oldData[id])
-			if err != nil {
-				continue
-			}
-			oldLen := size - 1
-			colSizeBuffer.AddColSizeDelta(col.ID, int64(newLen-oldLen))
-		}
-		s.UpdatePhysicalTableDelta(t.physicalTableID, 0, 1, colSizeBuffer)
+		s.UpdatePhysicalTableDelta(t.physicalTableID, 0, 1)
 	}
 	return nil
 }
@@ -559,6 +548,9 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 ) error {
 	for _, idx := range t.DeletableIndices() {
 		if t.meta.IsCommonHandle && idx.Meta().Primary {
+			continue
+		}
+		if idx.Meta().IsColumnarIndex() {
 			continue
 		}
 		for _, ic := range idx.Meta().Columns {
@@ -578,6 +570,9 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 	createIdxOpt := opt.GetCreateIdxOpt()
 	for _, idx := range t.Indices() {
 		if !IsIndexWritable(idx) {
+			continue
+		}
+		if idx.Meta().IsColumnarIndex() {
 			continue
 		}
 		if t.meta.IsCommonHandle && idx.Meta().Primary {
@@ -711,10 +706,12 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 
 	var hasRecordID bool
 	cols := t.Cols()
-	// opt.IsUpdate is a flag for update.
+	// opt.GenerateRecordID is used for normal update.
 	// If handle ID is changed when update, update will remove the old record first, and then call `AddRecord` to add a new record.
-	// Currently, only insert can set _tidb_rowid, update can not update _tidb_rowid.
-	if len(r) > len(cols) && !opt.IsUpdate() {
+	// Currently, insert can set _tidb_rowid.
+	// Update can only update _tidb_rowid during reorganize partition, to keep the generated _tidb_rowid
+	// the same between the old/new sets of partitions, where possible.
+	if len(r) > len(cols) && !opt.GenerateRecordID() {
 		// The last value is _tidb_rowid.
 		recordID = kv.IntHandle(r[len(r)-1].GetInt64())
 		hasRecordID = true
@@ -908,15 +905,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 	memBuffer.Release(sh)
 
 	if s, ok := sctx.GetStatisticsSupport(); ok {
-		colSizeBuffer := sctx.GetMutateBuffers().GetColSizeDeltaBufferWithCap(len(t.Cols()))
-		for id, col := range t.Cols() {
-			size, err := codec.EstimateValueSize(tc, r[id])
-			if err != nil {
-				continue
-			}
-			colSizeBuffer.AddColSizeDelta(col.ID, int64(size-1))
-		}
-		s.UpdatePhysicalTableDelta(t.physicalTableID, 1, 1, colSizeBuffer)
+		s.UpdatePhysicalTableDelta(t.physicalTableID, 1, 1)
 	}
 	return recordID, nil
 }
@@ -946,6 +935,9 @@ func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r
 	skipCheck := opt.DupKeyCheck() == table.DupKeyCheckSkip
 	for _, v := range t.Indices() {
 		if !IsIndexWritable(v) {
+			continue
+		}
+		if v.Meta().IsColumnarIndex() {
 			continue
 		}
 		if t.meta.IsCommonHandle && v.Meta().Primary {
@@ -1169,33 +1161,8 @@ func (t *TableCommon) removeRecord(ctx table.MutateContext, txn kv.Transaction, 
 	memBuffer.Release(sh)
 
 	if s, ok := ctx.GetStatisticsSupport(); ok {
-		// a reusable buffer to save malloc
-		// Note: The buffer should not be referenced or modified outside this function.
-		// It can only act as a temporary buffer for the current function call.
-		colSizeBuffer := ctx.GetMutateBuffers().GetColSizeDeltaBufferWithCap(len(t.Cols()))
-		pruned, notPruned := 0, 0
-		columnSizeOpt := opt.GetColumnSizeOpt()
-		var size int
-		for id, col := range t.Cols() {
-			columnOffset := id
-			if columnSizeOpt != nil {
-				if !columnSizeOpt.NotPruned.Test(uint(id)) {
-					size = int(columnSizeOpt.AvgSizes[pruned])
-					pruned++
-					colSizeBuffer.AddColSizeDelta(col.ID, -int64(size-1))
-					continue
-				}
-				columnOffset = columnSizeOpt.PublicColsLayout[notPruned]
-				notPruned++
-			}
-			size, err = codec.EstimateValueSize(tc, r[columnOffset])
-			if err != nil {
-				continue
-			}
-			colSizeBuffer.AddColSizeDelta(col.ID, -int64(size-1))
-		}
 		s.UpdatePhysicalTableDelta(
-			t.physicalTableID, -1, 1, colSizeBuffer,
+			t.physicalTableID, -1, 1,
 		)
 	}
 	return err
@@ -1230,6 +1197,9 @@ func (t *TableCommon) removeRowData(ctx table.MutateContext, txn kv.Transaction,
 func (t *TableCommon) removeRowIndices(ctx table.MutateContext, txn kv.Transaction, h kv.Handle, rec []types.Datum, opt *table.RemoveRecordOpt) (err error) {
 	for _, v := range t.DeletableIndices() {
 		if v.Meta().Primary && (t.Meta().IsCommonHandle || t.Meta().PKIsHandle) {
+			continue
+		}
+		if v.Meta().IsColumnarIndex() {
 			continue
 		}
 		var vals []types.Datum
@@ -1415,7 +1385,7 @@ func AllocHandleIDs(ctx context.Context, mctx table.MutateContext, t table.Table
 	meta := t.Meta()
 	base, maxID, err := t.Allocators(mctx).Get(autoid.RowIDAllocType).Alloc(ctx, n, 1, 1)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, errors.Trace(err)
 	}
 	if meta.ShardRowIDBits > 0 {
 		shardFmt := autoid.NewShardIDFormat(types.NewFieldType(mysql.TypeLonglong), meta.ShardRowIDBits, autoid.RowIDBitLength)

@@ -70,7 +70,7 @@ done
 
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/restore/snap_client/full-restore-validate-checksum=return(true)"
 restore_fail=0
-run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB" --checksum=true || restore_fail=1
+run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB" || restore_fail=1
 export GO_FAILPOINTS=""
 if [ $restore_fail -ne 1 ]; then
     echo 'expect restore to fail on checksum mismatch but succeed'
@@ -79,5 +79,5 @@ fi
 run_sql "DROP DATABASE IF EXISTS $DB;"
 
 # sanity check restore can succeed
-run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB" --checksum=true
+run_br --pd $PD_ADDR restore full -s "local://$TEST_DIR/$DB"
 echo 'file corruption tests passed'

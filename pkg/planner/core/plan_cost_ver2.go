@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -131,6 +131,8 @@ func (p *PhysicalIndexScan) GetPlanCostVer2(taskType property.TaskType, option *
 
 	p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
 	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexScanCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -159,32 +161,58 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType, option *
 	scanFactor := getTaskScanFactorVer2(p, p.StoreType, taskType)
 	p.PlanCostVer2 = scanCostVer2(option, rows, rowSize, scanFactor)
 
+	var unsignedIntHandle bool
+	if p.Table.PKIsHandle {
+		if pkColInfo := p.Table.GetPkColInfo(); pkColInfo != nil {
+			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+		}
+	}
+	hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
+
 	// Apply TiFlash startup cost to prefer TiKV for small table scans
 	if p.StoreType == kv.TiFlash {
 		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, TiFlashStartupRowPenalty, rowSize, scanFactor))
-	} else if !p.isChildOfIndexLookUp {
+	} else if !p.isChildOfIndexLookUp && hasFullRangeScan {
 		newRowCount := getTableScanPenalty(p, rows)
 		if newRowCount > 0 {
 			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, scanCostVer2(option, newRowCount, rowSize, scanFactor))
 		}
 	}
 
-	if p.AnnIndexExtra != nil {
-		if p.AnnIndexExtra.PushDownQueryInfo == nil {
+	for _, idx := range p.UsedColumnarIndexes {
+		if idx == nil || idx.QueryInfo == nil {
+			continue
+		}
+		if idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeVector && idx.QueryInfo == nil {
 			p.PlanCostVer2 = costusage.NewCostVer2(option, defaultVer2Factors.ANNIndexNoTopK, defaultVer2Factors.ANNIndexNoTopK.Value, func() string {
 				return fmt.Sprintf("ann-index-no-topk(%v)", defaultVer2Factors.ANNIndexNoTopK)
 			})
-		} else {
+		} else if idx.QueryInfo.IndexType == tipb.ColumnarIndexType_TypeVector {
 			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, costusage.NewCostVer2(option, defaultVer2Factors.ANNIndexStart, rows*defaultVer2Factors.ANNIndexStart.Value, func() string {
 				return fmt.Sprintf("ann-index-start(%v*%v)", rows, defaultVer2Factors.ANNIndexStart)
 			}))
-			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, costusage.NewCostVer2(option, defaultVer2Factors.ANNIndexScanRow, float64(p.AnnIndexExtra.PushDownQueryInfo.TopK)*defaultVer2Factors.ANNIndexScanRow.Value, func() string {
-				return fmt.Sprintf("ann-index-topk(%v*%v)", p.AnnIndexExtra.PushDownQueryInfo.TopK, defaultVer2Factors.ANNIndexScanRow)
+			p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, costusage.NewCostVer2(option, defaultVer2Factors.ANNIndexScanRow, float64(idx.QueryInfo.GetAnnQueryInfo().TopK)*defaultVer2Factors.ANNIndexScanRow.Value, func() string {
+				return fmt.Sprintf("ann-index-topk(%v*%v)", idx.QueryInfo.GetAnnQueryInfo().TopK, defaultVer2Factors.ANNIndexScanRow)
 			}))
 		}
 	}
 
 	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	if p.isChildOfIndexLookUp {
+		// This is a RowID table scan (child of IndexLookUp)
+		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableRowIDScanCostFactor)
+	} else if !hasFullRangeScan {
+		// This is a table range scan (predicate exists on the PK)
+		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableRangeScanCostFactor)
+	} else {
+		// This is a table full scan
+		if p.StoreType == kv.TiFlash {
+			p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableTiFlashScanCostFactor)
+		} else {
+			p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableFullScanCostFactor)
+		}
+	}
 	return p.PlanCostVer2, nil
 }
 
@@ -210,6 +238,8 @@ func (p *PhysicalIndexReader) GetPlanCostVer2(taskType property.TaskType, option
 
 	p.PlanCostVer2 = costusage.DivCostVer2(costusage.SumCostVer2(childCost, netCost), concurrency)
 	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexReaderCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -245,6 +275,8 @@ func (p *PhysicalTableReader) GetPlanCostVer2(taskType property.TaskType, option
 		!hasCostFlag(option.CostFlag, costusage.CostFlagRecalculate) { // show the real cost in explain-statements
 		p.PlanCostVer2 = costusage.DivCostVer2(p.PlanCostVer2, 1000000000)
 	}
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TableReaderCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -262,7 +294,7 @@ func (p *PhysicalIndexLookUpReader) GetPlanCostVer2(taskType property.TaskType, 
 	}
 
 	indexRows := getCardinality(p.indexPlan, option.CostFlag)
-	tableRows := getCardinality(p.indexPlan, option.CostFlag)
+	tableRows := getCardinality(p.tablePlan, option.CostFlag)
 	indexRowSize := cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.indexPlan), p.indexPlan.Schema().Columns, true, false)
 	tableRowSize := cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.tablePlan), p.tablePlan.Schema().Columns, false, false)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
@@ -306,6 +338,12 @@ func (p *PhysicalIndexLookUpReader) GetPlanCostVer2(taskType property.TaskType, 
 	}
 
 	p.PlanCostInit = true
+	if p.PushedLimit != nil && tableRows <= float64(p.PushedLimit.Count) {
+		// Multiply by limit cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().LimitCostFactor)
+	}
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexLookupCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -363,8 +401,12 @@ func (p *PhysicalIndexMergeReader) GetPlanCostVer2(taskType property.TaskType, o
 	// todo: refine the cost computation out from cost model.
 	if p.PushedLimit != nil {
 		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, 0.99)
+		// Multiply by limit cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+		p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().LimitCostFactor)
 	}
 	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexMergeCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -387,7 +429,7 @@ func (p *PhysicalSort) GetPlanCostVer2(taskType property.TaskType, option *optim
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
 	diskFactor := defaultVer2Factors.TiDBDisk
-	oomUseTmpStorage := variable.EnableTmpStorageOnOOM.Load()
+	oomUseTmpStorage := vardef.EnableTmpStorageOnOOM.Load()
 	memQuota := p.SCtx().GetSessionVars().MemTracker.GetBytesLimit()
 	spill := taskType == property.RootTaskType && // only TiDB can spill
 		oomUseTmpStorage && // spill is enabled
@@ -418,6 +460,8 @@ func (p *PhysicalSort) GetPlanCostVer2(taskType property.TaskType, option *optim
 
 	p.PlanCostVer2 = costusage.SumCostVer2(childCost, sortCPUCost, sortMemCost, sortDiskCost)
 	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().SortCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -453,6 +497,8 @@ func (p *PhysicalTopN) GetPlanCostVer2(taskType property.TaskType, option *optim
 
 	p.PlanCostVer2 = costusage.SumCostVer2(childCost, topNCPUCost, topNMemCost)
 	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().TopNCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -476,6 +522,8 @@ func (p *PhysicalStreamAgg) GetPlanCostVer2(taskType property.TaskType, option *
 
 	p.PlanCostVer2 = costusage.SumCostVer2(childCost, aggCost, groupCost)
 	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().StreamAggCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -508,6 +556,8 @@ func (p *PhysicalHashAgg) GetPlanCostVer2(taskType property.TaskType, option *op
 
 	p.PlanCostVer2 = costusage.SumCostVer2(startCost, childCost, costusage.DivCostVer2(costusage.SumCostVer2(aggCost, groupCost, hashBuildCost, hashProbeCost), concurrency))
 	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().HashAggCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -538,6 +588,8 @@ func (p *PhysicalMergeJoin) GetPlanCostVer2(taskType property.TaskType, option *
 
 	p.PlanCostVer2 = costusage.SumCostVer2(leftChildCost, rightChildCost, filterCost, groupCost)
 	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().MergeJoinCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -591,6 +643,8 @@ func (p *PhysicalHashJoin) GetPlanCostVer2(taskType property.TaskType, option *o
 			costusage.DivCostVer2(costusage.SumCostVer2(probeFilterCost, probeHashCost), tidbConcurrency))
 	}
 	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().HashJoinCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -658,6 +712,8 @@ func (p *PhysicalIndexJoin) getIndexJoinCostVer2(taskType property.TaskType, opt
 
 	p.PlanCostVer2 = costusage.SumCostVer2(startCost, buildChildCost, buildFilterCost, buildTaskCost, costusage.DivCostVer2(costusage.SumCostVer2(doubleReadCost, probeCost, probeFilterCost, hashTableCost), probeConcurrency))
 	p.PlanCostInit = true
+	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
+	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexJoinCostFactor)
 	return p.PlanCostVer2, nil
 }
 
@@ -919,17 +975,6 @@ func getTableScanPenalty(p *PhysicalTableScan, rows float64) (rowPenalty float64
 	if len(p.rangeInfo) > 0 {
 		return float64(0)
 	}
-	var unsignedIntHandle bool
-	if p.Table.PKIsHandle {
-		if pkColInfo := p.Table.GetPkColInfo(); pkColInfo != nil {
-			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
-		}
-	}
-	hasFullRangeScan := ranger.HasFullRange(p.Ranges, unsignedIntHandle)
-	if !hasFullRangeScan {
-		return float64(0)
-	}
-
 	sessionVars := p.SCtx().GetSessionVars()
 	allowPreferRangeScan := sessionVars.GetAllowPreferRangeScan()
 	tblColHists := p.tblColHists
@@ -956,7 +1001,7 @@ func getTableScanPenalty(p *PhysicalTableScan, rows float64) (rowPenalty float64
 	// penalty is applied to a full table scan (not range scan). This may also penalize a
 	// full table scan where USE/FORCE was applied to the primary key.
 	hasIndexForce := sessionVars.StmtCtx.GetIndexForce()
-	shouldApplyPenalty := hasFullRangeScan && (hasIndexForce || preferRangeScanCondition)
+	shouldApplyPenalty := hasIndexForce || preferRangeScanCondition
 	if shouldApplyPenalty {
 		// MySQL will increase the cost of table scan if FORCE index is used. TiDB takes this one
 		// step further - because we don't differentiate USE/FORCE - the added penalty applies to
