@@ -2288,11 +2288,11 @@ TableDual	0.00	root		rows:0
 drop table t;
 explain select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2;
 id	estRows	task	access object	operator info
-HashJoin_11	1.00	root		CARTESIAN left outer join, left side:Projection_13
-├─Projection_15(Build)	1.00	root		2->Column#2
-│ └─TableDual_16	1.00	root		rows:1
-└─Projection_13(Probe)	1.00	root		1->Column#1
-  └─TableDual_14	1.00	root		rows:1
+HashJoin_14	1.00	root		CARTESIAN left outer join, left side:Projection_16
+├─Projection_18(Build)	1.00	root		2->Column#2
+│ └─TableDual_19	1.00	root		rows:1
+└─Projection_16(Probe)	1.00	root		1->Column#1
+  └─TableDual_17	1.00	root		rows:1
 select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2;
 1	2
 1	2
@@ -2902,12 +2902,12 @@ create table t2 (a float default null, b tinyint(4) DEFAULT NULL, key b (b));
 insert into t2 values (null, 1);
 explain select /*+ TIDB_INLJ(t2@sel_2) */ t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 where t1.b=t2.b);
 id	estRows	task	access object	operator info
-IndexJoin_9	8000.00	root		anti semi join, inner:IndexLookUp_18, left side:TableReader_15, outer key:planner__core__integration.t1.b, inner key:planner__core__integration.t2.b, equal cond:eq(planner__core__integration.t1.b, planner__core__integration.t2.b), other cond:eq(planner__core__integration.t1.a, planner__core__integration.t2.a)
-├─TableReader_15(Build)	10000.00	root		data:TableFullScan_14
-│ └─TableFullScan_14	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─IndexLookUp_18(Probe)	12500.00	root		
-  ├─IndexRangeScan_16(Build)	12500.00	cop[tikv]	table:t2, index:b(b)	range: decided by [eq(planner__core__integration.t2.b, planner__core__integration.t1.b)], keep order:false, stats:pseudo
-  └─TableRowIDScan_17(Probe)	12500.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+IndexJoin_10	8000.00	root		anti semi join, inner:IndexLookUp_21, left side:TableReader_18, outer key:planner__core__integration.t1.b, inner key:planner__core__integration.t2.b, equal cond:eq(planner__core__integration.t1.b, planner__core__integration.t2.b), other cond:eq(planner__core__integration.t1.a, planner__core__integration.t2.a)
+├─TableReader_18(Build)	10000.00	root		data:TableFullScan_17
+│ └─TableFullScan_17	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─IndexLookUp_21(Probe)	12500.00	root		
+  ├─IndexRangeScan_19(Build)	12500.00	cop[tikv]	table:t2, index:b(b)	range: decided by [eq(planner__core__integration.t2.b, planner__core__integration.t1.b)], keep order:false, stats:pseudo
+  └─TableRowIDScan_20(Probe)	12500.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
 select /*+ TIDB_INLJ(t2@sel_2) */ t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 where t1.b=t2.b);
 a	b
 drop table if exists t;
@@ -3156,6 +3156,8 @@ SELECT/*+ INL_JOIN(t1, t2), nth_plan(1) */ t2.* FROM IDT_MC21814 t1 LEFT JOIN ID
 COL1	COL2
 SELECT/*+ INL_JOIN(t1, t2), nth_plan(2) */ t2.* FROM IDT_MC21814 t1 LEFT JOIN IDT_MC21814 t2 ON t1.col1 = t2.col1 WHERE t2.col2 BETWEEN 2593 AND 1971 AND t1.col1 IN (2155, 1901, 1967);
 COL1	COL2
+Level	Code	Message
+Warning	1815	Optimizer Hint /*+ INL_JOIN(t1, t2) */ or /*+ TIDB_INLJ(t1, t2) */ is inapplicable
 drop table if exists t;
 create table t (a int);
 insert into t values (1);

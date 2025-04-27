@@ -165,40 +165,40 @@ StreamAgg_8	100.00	311523.51	root		group by:Column#10, funcs:sum(Column#7)->Colu
       └─TableFullScan_11	100.00	250038.77	cop[tikv]	table:t	keep order:false
 explain format='verbose' select /*+ hash_join_build(t1) */ * from t t1, t t2 where t1.b=t2.b and t1.a<10;
 id	estRows	estCost	task	access object	operator info
-HashJoin_15	10.00	63972.68	root		inner join, equal:[eq(planner__core__plan_cost_ver2.t.b, planner__core__plan_cost_ver2.t.b)]
-├─TableReader_18(Build)	10.00	4672.88	root		data:Selection_17
-│ └─Selection_17	10.00	2772.08	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
-│   └─TableRangeScan_16	10.00	2273.08	cop[tikv]	table:t1	range:[-inf,10), keep order:false
-└─TableReader_25(Probe)	100.00	46728.80	root		data:Selection_24
-  └─Selection_24	100.00	27720.80	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
-    └─TableFullScan_23	100.00	22730.80	cop[tikv]	table:t2	keep order:false
+HashJoin_21	10.00	63972.68	root		inner join, equal:[eq(planner__core__plan_cost_ver2.t.b, planner__core__plan_cost_ver2.t.b)]
+├─TableReader_24(Build)	10.00	4672.88	root		data:Selection_23
+│ └─Selection_23	10.00	2772.08	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
+│   └─TableRangeScan_22	10.00	2273.08	cop[tikv]	table:t1	range:[-inf,10), keep order:false
+└─TableReader_31(Probe)	100.00	46728.80	root		data:Selection_30
+  └─Selection_30	100.00	27720.80	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
+    └─TableFullScan_29	100.00	22730.80	cop[tikv]	table:t2	keep order:false
 explain format='verbose' select /*+ hash_join_build(t2) */ * from t t1, t t2 where t1.b=t2.b and t1.a<10;
 id	estRows	estCost	task	access object	operator info
-HashJoin_15	10.00	64836.68	root		inner join, equal:[eq(planner__core__plan_cost_ver2.t.b, planner__core__plan_cost_ver2.t.b)]
-├─TableReader_25(Build)	100.00	46728.80	root		data:Selection_24
-│ └─Selection_24	100.00	27720.80	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
-│   └─TableFullScan_23	100.00	22730.80	cop[tikv]	table:t2	keep order:false
-└─TableReader_18(Probe)	10.00	4672.88	root		data:Selection_17
-  └─Selection_17	10.00	2772.08	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
-    └─TableRangeScan_16	10.00	2273.08	cop[tikv]	table:t1	range:[-inf,10), keep order:false
+HashJoin_21	10.00	64836.68	root		inner join, equal:[eq(planner__core__plan_cost_ver2.t.b, planner__core__plan_cost_ver2.t.b)]
+├─TableReader_31(Build)	100.00	46728.80	root		data:Selection_30
+│ └─Selection_30	100.00	27720.80	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
+│   └─TableFullScan_29	100.00	22730.80	cop[tikv]	table:t2	keep order:false
+└─TableReader_24(Probe)	10.00	4672.88	root		data:Selection_23
+  └─Selection_23	10.00	2772.08	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
+    └─TableRangeScan_22	10.00	2273.08	cop[tikv]	table:t1	range:[-inf,10), keep order:false
 explain format='verbose' select /*+ hash_join_build(t1) */ * from t t1, t t2 where t1.b=t2.b;
 id	estRows	estCost	task	access object	operator info
-HashJoin_15	100.00	115874.59	root		inner join, equal:[eq(planner__core__plan_cost_ver2.t.b, planner__core__plan_cost_ver2.t.b)]
-├─TableReader_18(Build)	100.00	46728.80	root		data:Selection_17
-│ └─Selection_17	100.00	27720.80	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
-│   └─TableFullScan_16	100.00	22730.80	cop[tikv]	table:t1	keep order:false
-└─TableReader_24(Probe)	100.00	46728.80	root		data:Selection_23
-  └─Selection_23	100.00	27720.80	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
-    └─TableFullScan_22	100.00	22730.80	cop[tikv]	table:t2	keep order:false
+HashJoin_21	100.00	115874.59	root		inner join, equal:[eq(planner__core__plan_cost_ver2.t.b, planner__core__plan_cost_ver2.t.b)]
+├─TableReader_24(Build)	100.00	46728.80	root		data:Selection_23
+│ └─Selection_23	100.00	27720.80	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
+│   └─TableFullScan_22	100.00	22730.80	cop[tikv]	table:t1	keep order:false
+└─TableReader_30(Probe)	100.00	46728.80	root		data:Selection_29
+  └─Selection_29	100.00	27720.80	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
+    └─TableFullScan_28	100.00	22730.80	cop[tikv]	table:t2	keep order:false
 explain format='verbose' select /*+ hash_join_build(t1) */ * from t t1, t t2 where t1.a=t2.a and t1.b=t2.b;
 id	estRows	estCost	task	access object	operator info
-HashJoin_15	100.00	125854.59	root		inner join, equal:[eq(planner__core__plan_cost_ver2.t.a, planner__core__plan_cost_ver2.t.a) eq(planner__core__plan_cost_ver2.t.b, planner__core__plan_cost_ver2.t.b)]
-├─TableReader_18(Build)	100.00	46728.80	root		data:Selection_17
-│ └─Selection_17	100.00	27720.80	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
-│   └─TableFullScan_16	100.00	22730.80	cop[tikv]	table:t1	keep order:false
-└─TableReader_24(Probe)	100.00	46728.80	root		data:Selection_23
-  └─Selection_23	100.00	27720.80	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
-    └─TableFullScan_22	100.00	22730.80	cop[tikv]	table:t2	keep order:false
+HashJoin_21	100.00	125854.59	root		inner join, equal:[eq(planner__core__plan_cost_ver2.t.a, planner__core__plan_cost_ver2.t.a) eq(planner__core__plan_cost_ver2.t.b, planner__core__plan_cost_ver2.t.b)]
+├─TableReader_24(Build)	100.00	46728.80	root		data:Selection_23
+│ └─Selection_23	100.00	27720.80	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
+│   └─TableFullScan_22	100.00	22730.80	cop[tikv]	table:t1	keep order:false
+└─TableReader_30(Probe)	100.00	46728.80	root		data:Selection_29
+  └─Selection_29	100.00	27720.80	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t.b))
+    └─TableFullScan_28	100.00	22730.80	cop[tikv]	table:t2	keep order:false
 set @@tidb_distsql_scan_concurrency=DEFAULT;
 set @@tidb_executor_concurrency=DEFAULT;
 set @@tidb_opt_tiflash_concurrency_factor=DEFAULT;
@@ -212,30 +212,30 @@ select @@tidb_index_join_double_read_penalty_cost_rate;
 0
 explain format='verbose' select /*+ tidb_inlj(t1, t2) */ * from t1, t2 where t1.a=t2.a;
 id	estRows	estCost	task	access object	operator info
-IndexJoin_9	12487.50	5277413.38	root		inner join, inner:IndexReader_25, outer key:planner__core__plan_cost_ver2.t1.a, inner key:planner__core__plan_cost_ver2.t2.a, equal cond:eq(planner__core__plan_cost_ver2.t1.a, planner__core__plan_cost_ver2.t2.a)
-├─IndexReader_22(Build)	9990.00	150622.56	root		index:IndexFullScan_21
-│ └─IndexFullScan_21	9990.00	1626372.00	cop[tikv]	table:t1, index:a(a)	keep order:false, stats:pseudo
-└─IndexReader_25(Probe)	12487.50	23.02	root		index:Selection_24
-  └─Selection_24	12487.50	266.14	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t2.a))
-    └─IndexRangeScan_23	12500.00	203.70	cop[tikv]	table:t2, index:a(a)	range: decided by [eq(planner__core__plan_cost_ver2.t2.a, planner__core__plan_cost_ver2.t1.a)], keep order:false, stats:pseudo
+IndexJoin_10	12487.50	5277413.38	root		inner join, inner:IndexReader_31, outer key:planner__core__plan_cost_ver2.t1.a, inner key:planner__core__plan_cost_ver2.t2.a, equal cond:eq(planner__core__plan_cost_ver2.t1.a, planner__core__plan_cost_ver2.t2.a)
+├─IndexReader_28(Build)	9990.00	150622.56	root		index:IndexFullScan_27
+│ └─IndexFullScan_27	9990.00	1626372.00	cop[tikv]	table:t1, index:a(a)	keep order:false, stats:pseudo
+└─IndexReader_31(Probe)	12487.50	23.02	root		index:Selection_30
+  └─Selection_30	12487.50	266.14	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t2.a))
+    └─IndexRangeScan_29	12500.00	203.70	cop[tikv]	table:t2, index:a(a)	range: decided by [eq(planner__core__plan_cost_ver2.t2.a, planner__core__plan_cost_ver2.t1.a)], keep order:false, stats:pseudo
 set tidb_index_join_double_read_penalty_cost_rate=0.5;
 explain format='verbose' select /*+ tidb_inlj(t1, t2) */ * from t1, t2 where t1.a=t2.a;
 id	estRows	estCost	task	access object	operator info
-IndexJoin_9	12487.50	250791653.38	root		inner join, inner:IndexReader_25, outer key:planner__core__plan_cost_ver2.t1.a, inner key:planner__core__plan_cost_ver2.t2.a, equal cond:eq(planner__core__plan_cost_ver2.t1.a, planner__core__plan_cost_ver2.t2.a)
-├─IndexReader_22(Build)	9990.00	150622.56	root		index:IndexFullScan_21
-│ └─IndexFullScan_21	9990.00	1626372.00	cop[tikv]	table:t1, index:a(a)	keep order:false, stats:pseudo
-└─IndexReader_25(Probe)	12487.50	23.02	root		index:Selection_24
-  └─Selection_24	12487.50	266.14	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t2.a))
-    └─IndexRangeScan_23	12500.00	203.70	cop[tikv]	table:t2, index:a(a)	range: decided by [eq(planner__core__plan_cost_ver2.t2.a, planner__core__plan_cost_ver2.t1.a)], keep order:false, stats:pseudo
+IndexJoin_10	12487.50	250791653.38	root		inner join, inner:IndexReader_31, outer key:planner__core__plan_cost_ver2.t1.a, inner key:planner__core__plan_cost_ver2.t2.a, equal cond:eq(planner__core__plan_cost_ver2.t1.a, planner__core__plan_cost_ver2.t2.a)
+├─IndexReader_28(Build)	9990.00	150622.56	root		index:IndexFullScan_27
+│ └─IndexFullScan_27	9990.00	1626372.00	cop[tikv]	table:t1, index:a(a)	keep order:false, stats:pseudo
+└─IndexReader_31(Probe)	12487.50	23.02	root		index:Selection_30
+  └─Selection_30	12487.50	266.14	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t2.a))
+    └─IndexRangeScan_29	12500.00	203.70	cop[tikv]	table:t2, index:a(a)	range: decided by [eq(planner__core__plan_cost_ver2.t2.a, planner__core__plan_cost_ver2.t1.a)], keep order:false, stats:pseudo
 set tidb_index_join_double_read_penalty_cost_rate=1;
 explain format='verbose' select /*+ tidb_inlj(t1, t2) */ * from t1, t2 where t1.a=t2.a;
 id	estRows	estCost	task	access object	operator info
-IndexJoin_9	12487.50	496305893.38	root		inner join, inner:IndexReader_25, outer key:planner__core__plan_cost_ver2.t1.a, inner key:planner__core__plan_cost_ver2.t2.a, equal cond:eq(planner__core__plan_cost_ver2.t1.a, planner__core__plan_cost_ver2.t2.a)
-├─IndexReader_22(Build)	9990.00	150622.56	root		index:IndexFullScan_21
-│ └─IndexFullScan_21	9990.00	1626372.00	cop[tikv]	table:t1, index:a(a)	keep order:false, stats:pseudo
-└─IndexReader_25(Probe)	12487.50	23.02	root		index:Selection_24
-  └─Selection_24	12487.50	266.14	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t2.a))
-    └─IndexRangeScan_23	12500.00	203.70	cop[tikv]	table:t2, index:a(a)	range: decided by [eq(planner__core__plan_cost_ver2.t2.a, planner__core__plan_cost_ver2.t1.a)], keep order:false, stats:pseudo
+IndexJoin_10	12487.50	496305893.38	root		inner join, inner:IndexReader_31, outer key:planner__core__plan_cost_ver2.t1.a, inner key:planner__core__plan_cost_ver2.t2.a, equal cond:eq(planner__core__plan_cost_ver2.t1.a, planner__core__plan_cost_ver2.t2.a)
+├─IndexReader_28(Build)	9990.00	150622.56	root		index:IndexFullScan_27
+│ └─IndexFullScan_27	9990.00	1626372.00	cop[tikv]	table:t1, index:a(a)	keep order:false, stats:pseudo
+└─IndexReader_31(Probe)	12487.50	23.02	root		index:Selection_30
+  └─Selection_30	12487.50	266.14	cop[tikv]		not(isnull(planner__core__plan_cost_ver2.t2.a))
+    └─IndexRangeScan_29	12500.00	203.70	cop[tikv]	table:t2, index:a(a)	range: decided by [eq(planner__core__plan_cost_ver2.t2.a, planner__core__plan_cost_ver2.t1.a)], keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, b int, c int, d int, index ia(a), index ibc(b,c));
 set @@tidb_cost_model_version=1;

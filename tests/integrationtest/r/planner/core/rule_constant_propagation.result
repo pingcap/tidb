@@ -3,159 +3,159 @@ create table t (id int, name varchar(10));
 create table s (id int, name varchar(10));
 explain select * from t, (select * from s where s.id>1) tmp where t.id=tmp.id; -- inner join;
 id	estRows	task	access object	operator info
-HashJoin_11	4166.67	root		inner join, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
-├─TableReader_18(Build)	3333.33	root		data:Selection_17
-│ └─Selection_17	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), not(isnull(planner__core__rule_constant_propagation.s.id))
-│   └─TableFullScan_16	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
-└─TableReader_15(Probe)	3333.33	root		data:Selection_14
-  └─Selection_14	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.t.id, 1), not(isnull(planner__core__rule_constant_propagation.t.id))
-    └─TableFullScan_13	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+HashJoin_23	4166.67	root		inner join, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
+├─TableReader_30(Build)	3333.33	root		data:Selection_29
+│ └─Selection_29	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), not(isnull(planner__core__rule_constant_propagation.s.id))
+│   └─TableFullScan_28	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
+└─TableReader_27(Probe)	3333.33	root		data:Selection_26
+  └─Selection_26	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.t.id, 1), not(isnull(planner__core__rule_constant_propagation.t.id))
+    └─TableFullScan_25	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select * from t, (select * from s where s.id>1) tmp where t.name=tmp.name; -- can't, without id equal predicate;
 id	estRows	task	access object	operator info
 Projection_12	4162.50	root		planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.t.name, planner__core__rule_constant_propagation.s.id, planner__core__rule_constant_propagation.s.name
-└─HashJoin_14	4162.50	root		inner join, equal:[eq(planner__core__rule_constant_propagation.s.name, planner__core__rule_constant_propagation.t.name)]
-  ├─TableReader_17(Build)	3330.00	root		data:Selection_16
-  │ └─Selection_16	3330.00	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), not(isnull(planner__core__rule_constant_propagation.s.name))
-  │   └─TableFullScan_15	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
-  └─TableReader_20(Probe)	9990.00	root		data:Selection_19
-    └─Selection_19	9990.00	cop[tikv]		not(isnull(planner__core__rule_constant_propagation.t.name))
-      └─TableFullScan_18	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─HashJoin_26	4162.50	root		inner join, equal:[eq(planner__core__rule_constant_propagation.s.name, planner__core__rule_constant_propagation.t.name)]
+  ├─TableReader_29(Build)	3330.00	root		data:Selection_28
+  │ └─Selection_28	3330.00	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), not(isnull(planner__core__rule_constant_propagation.s.name))
+  │   └─TableFullScan_27	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
+  └─TableReader_32(Probe)	9990.00	root		data:Selection_31
+    └─Selection_31	9990.00	cop[tikv]		not(isnull(planner__core__rule_constant_propagation.t.name))
+      └─TableFullScan_30	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select * from t, (select name from s where s.id>1) tmp where t.name=tmp.name; -- can't, projection without id column;
 id	estRows	task	access object	operator info
 Projection_12	4162.50	root		planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.t.name, planner__core__rule_constant_propagation.s.name
-└─HashJoin_14	4162.50	root		inner join, equal:[eq(planner__core__rule_constant_propagation.s.name, planner__core__rule_constant_propagation.t.name)]
-  ├─TableReader_17(Build)	3330.00	root		data:Selection_16
-  │ └─Selection_16	3330.00	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), not(isnull(planner__core__rule_constant_propagation.s.name))
-  │   └─TableFullScan_15	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
-  └─TableReader_20(Probe)	9990.00	root		data:Selection_19
-    └─Selection_19	9990.00	cop[tikv]		not(isnull(planner__core__rule_constant_propagation.t.name))
-      └─TableFullScan_18	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─HashJoin_26	4162.50	root		inner join, equal:[eq(planner__core__rule_constant_propagation.s.name, planner__core__rule_constant_propagation.t.name)]
+  ├─TableReader_29(Build)	3330.00	root		data:Selection_28
+  │ └─Selection_28	3330.00	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), not(isnull(planner__core__rule_constant_propagation.s.name))
+  │   └─TableFullScan_27	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
+  └─TableReader_32(Probe)	9990.00	root		data:Selection_31
+    └─Selection_31	9990.00	cop[tikv]		not(isnull(planner__core__rule_constant_propagation.t.name))
+      └─TableFullScan_30	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select * from t, (select id as id1, name as name1 from s where s.id>1) tmp where t.id=tmp.id1; -- projection above of s.id>1;
 id	estRows	task	access object	operator info
-HashJoin_11	4166.67	root		inner join, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
-├─TableReader_18(Build)	3333.33	root		data:Selection_17
-│ └─Selection_17	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), not(isnull(planner__core__rule_constant_propagation.s.id))
-│   └─TableFullScan_16	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
-└─TableReader_15(Probe)	3333.33	root		data:Selection_14
-  └─Selection_14	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.t.id, 1), not(isnull(planner__core__rule_constant_propagation.t.id))
-    └─TableFullScan_13	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+HashJoin_23	4166.67	root		inner join, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
+├─TableReader_30(Build)	3333.33	root		data:Selection_29
+│ └─Selection_29	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), not(isnull(planner__core__rule_constant_propagation.s.id))
+│   └─TableFullScan_28	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
+└─TableReader_27(Probe)	3333.33	root		data:Selection_26
+  └─Selection_26	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.t.id, 1), not(isnull(planner__core__rule_constant_propagation.t.id))
+    └─TableFullScan_25	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select * from t, (select id +1 as id1 from s where s.id>1) tmp where t.id=tmp.id1; -- can't optimize, projection has column function;
 id	estRows	task	access object	operator info
 Projection_11	3333.33	root		planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.t.name, Column#7
-└─HashJoin_13	3333.33	root		inner join, equal:[eq(Column#7, planner__core__rule_constant_propagation.t.id)]
-  ├─Projection_14(Build)	2666.67	root		plus(planner__core__rule_constant_propagation.s.id, 1)->Column#7
-  │ └─TableReader_17	2666.67	root		data:Selection_16
-  │   └─Selection_16	2666.67	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), not(isnull(plus(planner__core__rule_constant_propagation.s.id, 1)))
-  │     └─TableFullScan_15	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
-  └─TableReader_20(Probe)	9990.00	root		data:Selection_19
-    └─Selection_19	9990.00	cop[tikv]		not(isnull(planner__core__rule_constant_propagation.t.id))
-      └─TableFullScan_18	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─HashJoin_25	3333.33	root		inner join, equal:[eq(Column#7, planner__core__rule_constant_propagation.t.id)]
+  ├─Projection_26(Build)	2666.67	root		plus(planner__core__rule_constant_propagation.s.id, 1)->Column#7
+  │ └─TableReader_29	2666.67	root		data:Selection_28
+  │   └─Selection_28	2666.67	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), not(isnull(plus(planner__core__rule_constant_propagation.s.id, 1)))
+  │     └─TableFullScan_27	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
+  └─TableReader_34(Probe)	9990.00	root		data:Selection_33
+    └─Selection_33	9990.00	cop[tikv]		not(isnull(planner__core__rule_constant_propagation.t.id))
+      └─TableFullScan_32	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t, s;
 create table t (id int, name varchar(10));
 create table s (id int, name varchar(10));
 explain select * from (select * from t where t.id >1) tmp1, (select * from s where s.id <4) tmp2 where tmp1.id=tmp2.id; -- inner join, both children can be optimized;
 id	estRows	task	access object	operator info
-HashJoin_13	312.50	root		inner join, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
-├─TableReader_20(Build)	250.00	root		data:Selection_19
-│ └─Selection_19	250.00	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), lt(planner__core__rule_constant_propagation.s.id, 4), not(isnull(planner__core__rule_constant_propagation.s.id))
-│   └─TableFullScan_18	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
-└─TableReader_17(Probe)	250.00	root		data:Selection_16
-  └─Selection_16	250.00	cop[tikv]		gt(planner__core__rule_constant_propagation.t.id, 1), lt(planner__core__rule_constant_propagation.t.id, 4), not(isnull(planner__core__rule_constant_propagation.t.id))
-    └─TableFullScan_15	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+HashJoin_25	312.50	root		inner join, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
+├─TableReader_32(Build)	250.00	root		data:Selection_31
+│ └─Selection_31	250.00	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), lt(planner__core__rule_constant_propagation.s.id, 4), not(isnull(planner__core__rule_constant_propagation.s.id))
+│   └─TableFullScan_30	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
+└─TableReader_29(Probe)	250.00	root		data:Selection_28
+  └─Selection_28	250.00	cop[tikv]		gt(planner__core__rule_constant_propagation.t.id, 1), lt(planner__core__rule_constant_propagation.t.id, 4), not(isnull(planner__core__rule_constant_propagation.t.id))
+    └─TableFullScan_27	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select * from (select * from t where t.id>1) tmp, s where tmp.id=s.id; -- inner join, child 0;
 id	estRows	task	access object	operator info
-HashJoin_11	4166.67	root		inner join, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
-├─TableReader_18(Build)	3333.33	root		data:Selection_17
-│ └─Selection_17	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), not(isnull(planner__core__rule_constant_propagation.s.id))
-│   └─TableFullScan_16	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
-└─TableReader_15(Probe)	3333.33	root		data:Selection_14
-  └─Selection_14	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.t.id, 1), not(isnull(planner__core__rule_constant_propagation.t.id))
-    └─TableFullScan_13	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+HashJoin_23	4166.67	root		inner join, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
+├─TableReader_30(Build)	3333.33	root		data:Selection_29
+│ └─Selection_29	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), not(isnull(planner__core__rule_constant_propagation.s.id))
+│   └─TableFullScan_28	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
+└─TableReader_27(Probe)	3333.33	root		data:Selection_26
+  └─Selection_26	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.t.id, 1), not(isnull(planner__core__rule_constant_propagation.t.id))
+    └─TableFullScan_25	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select * from (select * from t where t.id>1) tmp left join s on tmp.id=s.id; -- left join, only left child can be optimized;
 id	estRows	task	access object	operator info
-HashJoin_10	4166.67	root		left outer join, left side:TableReader_14, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
-├─TableReader_17(Build)	3333.33	root		data:Selection_16
-│ └─Selection_16	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), not(isnull(planner__core__rule_constant_propagation.s.id))
-│   └─TableFullScan_15	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
-└─TableReader_14(Probe)	3333.33	root		data:Selection_13
-  └─Selection_13	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.t.id, 1)
-    └─TableFullScan_12	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+HashJoin_16	4166.67	root		left outer join, left side:TableReader_20, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
+├─TableReader_23(Build)	3333.33	root		data:Selection_22
+│ └─Selection_22	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), not(isnull(planner__core__rule_constant_propagation.s.id))
+│   └─TableFullScan_21	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
+└─TableReader_20(Probe)	3333.33	root		data:Selection_19
+  └─Selection_19	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.t.id, 1)
+    └─TableFullScan_18	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select * from t left join (select * from s where s.id>1) tmp on t.id=tmp.id; -- can't, left join;
 id	estRows	task	access object	operator info
-HashJoin_9	10000.00	root		left outer join, left side:TableReader_12, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
-├─TableReader_15(Build)	3333.33	root		data:Selection_14
-│ └─Selection_14	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), not(isnull(planner__core__rule_constant_propagation.s.id))
-│   └─TableFullScan_13	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
-└─TableReader_12(Probe)	10000.00	root		data:TableFullScan_11
-  └─TableFullScan_11	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+HashJoin_15	10000.00	root		left outer join, left side:TableReader_18, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
+├─TableReader_21(Build)	3333.33	root		data:Selection_20
+│ └─Selection_20	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), not(isnull(planner__core__rule_constant_propagation.s.id))
+│   └─TableFullScan_19	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
+└─TableReader_18(Probe)	10000.00	root		data:TableFullScan_17
+  └─TableFullScan_17	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select * from t right join (select * from s where s.id>1) tmp on t.id=tmp.id; -- right join, only right child can be optimized;
 id	estRows	task	access object	operator info
-HashJoin_10	4166.67	root		right outer join, left side:TableReader_14, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
-├─TableReader_17(Build)	3333.33	root		data:Selection_16
-│ └─Selection_16	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1)
-│   └─TableFullScan_15	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
-└─TableReader_14(Probe)	3333.33	root		data:Selection_13
-  └─Selection_13	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.t.id, 1), not(isnull(planner__core__rule_constant_propagation.t.id))
-    └─TableFullScan_12	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+HashJoin_16	4166.67	root		right outer join, left side:TableReader_20, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
+├─TableReader_23(Build)	3333.33	root		data:Selection_22
+│ └─Selection_22	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1)
+│   └─TableFullScan_21	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
+└─TableReader_20(Probe)	3333.33	root		data:Selection_19
+  └─Selection_19	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.t.id, 1), not(isnull(planner__core__rule_constant_propagation.t.id))
+    └─TableFullScan_18	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select * from (select * from t where t.id>1) tmp  right join s on tmp.id=s.id; -- can't, right join;
 id	estRows	task	access object	operator info
-HashJoin_10	10000.00	root		right outer join, left side:TableReader_13, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
-├─TableReader_13(Build)	3333.33	root		data:Selection_12
-│ └─Selection_12	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.t.id, 1), not(isnull(planner__core__rule_constant_propagation.t.id))
-│   └─TableFullScan_11	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-└─TableReader_15(Probe)	10000.00	root		data:TableFullScan_14
-  └─TableFullScan_14	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
+HashJoin_16	10000.00	root		right outer join, left side:TableReader_19, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
+├─TableReader_19(Build)	3333.33	root		data:Selection_18
+│ └─Selection_18	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.t.id, 1), not(isnull(planner__core__rule_constant_propagation.t.id))
+│   └─TableFullScan_17	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableReader_21(Probe)	10000.00	root		data:TableFullScan_20
+  └─TableFullScan_20	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
 drop table if exists t, s;
 create table t (id int, name varchar(10));
 create table s (id int, name varchar(10));
 explain select * from t, (select id as id1 from s where s.id>1) tmp where t.id=tmp.id1; -- constant propagation can through the projection node;
 id	estRows	task	access object	operator info
-HashJoin_11	4166.67	root		inner join, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
-├─TableReader_18(Build)	3333.33	root		data:Selection_17
-│ └─Selection_17	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), not(isnull(planner__core__rule_constant_propagation.s.id))
-│   └─TableFullScan_16	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
-└─TableReader_15(Probe)	3333.33	root		data:Selection_14
-  └─Selection_14	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.t.id, 1), not(isnull(planner__core__rule_constant_propagation.t.id))
-    └─TableFullScan_13	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+HashJoin_23	4166.67	root		inner join, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
+├─TableReader_30(Build)	3333.33	root		data:Selection_29
+│ └─Selection_29	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), not(isnull(planner__core__rule_constant_propagation.s.id))
+│   └─TableFullScan_28	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
+└─TableReader_27(Probe)	3333.33	root		data:Selection_26
+  └─Selection_26	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.t.id, 1), not(isnull(planner__core__rule_constant_propagation.t.id))
+    └─TableFullScan_25	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select * from t, (select id, count(name) from s where s.id>1 group by id) tmp where t.id=tmp.id; -- can't, constant propagation can't through the aggregation node;
 id	estRows	task	access object	operator info
 Projection_11	3333.33	root		planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.t.name, planner__core__rule_constant_propagation.s.id, Column#7
 └─Projection_12	3333.33	root		planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.t.name, Column#7, planner__core__rule_constant_propagation.s.id
-  └─HashJoin_14	3333.33	root		inner join, equal:[eq(planner__core__rule_constant_propagation.s.id, planner__core__rule_constant_propagation.t.id)]
-    ├─HashAgg_20(Build)	2666.67	root		group by:planner__core__rule_constant_propagation.s.id, funcs:count(Column#8)->Column#7, funcs:firstrow(planner__core__rule_constant_propagation.s.id)->planner__core__rule_constant_propagation.s.id
-    │ └─TableReader_21	2666.67	root		data:HashAgg_15
-    │   └─HashAgg_15	2666.67	cop[tikv]		group by:planner__core__rule_constant_propagation.s.id, funcs:count(planner__core__rule_constant_propagation.s.name)->Column#8
-    │     └─Selection_19	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), not(isnull(planner__core__rule_constant_propagation.s.id))
-    │       └─TableFullScan_18	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
-    └─TableReader_27(Probe)	9990.00	root		data:Selection_26
-      └─Selection_26	9990.00	cop[tikv]		not(isnull(planner__core__rule_constant_propagation.t.id))
-        └─TableFullScan_25	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─HashJoin_26	3333.33	root		inner join, equal:[eq(planner__core__rule_constant_propagation.s.id, planner__core__rule_constant_propagation.t.id)]
+    ├─HashAgg_32(Build)	2666.67	root		group by:planner__core__rule_constant_propagation.s.id, funcs:count(Column#8)->Column#7, funcs:firstrow(planner__core__rule_constant_propagation.s.id)->planner__core__rule_constant_propagation.s.id
+    │ └─TableReader_33	2666.67	root		data:HashAgg_27
+    │   └─HashAgg_27	2666.67	cop[tikv]		group by:planner__core__rule_constant_propagation.s.id, funcs:count(planner__core__rule_constant_propagation.s.name)->Column#8
+    │     └─Selection_31	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), not(isnull(planner__core__rule_constant_propagation.s.id))
+    │       └─TableFullScan_30	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
+    └─TableReader_45(Probe)	9990.00	root		data:Selection_44
+      └─Selection_44	9990.00	cop[tikv]		not(isnull(planner__core__rule_constant_propagation.t.id))
+        └─TableFullScan_43	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain select * from t, (select id from s where s.id>1 order by id limit 2) tmp where t.id=tmp.id; -- can't, constant propagation can't through the sort node;
 id	estRows	task	access object	operator info
 Projection_15	2.00	root		planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.t.name, planner__core__rule_constant_propagation.s.id
-└─HashJoin_17	2.00	root		inner join, equal:[eq(planner__core__rule_constant_propagation.s.id, planner__core__rule_constant_propagation.t.id)]
-  ├─Selection_18(Build)	1.60	root		not(isnull(planner__core__rule_constant_propagation.s.id))
-  │ └─TopN_19	2.00	root		planner__core__rule_constant_propagation.s.id, offset:0, count:2
-  │   └─TableReader_27	2.00	root		data:TopN_26
-  │     └─TopN_26	2.00	cop[tikv]		planner__core__rule_constant_propagation.s.id, offset:0, count:2
-  │       └─Selection_25	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1)
-  │         └─TableFullScan_24	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
-  └─TableReader_30(Probe)	9990.00	root		data:Selection_29
-    └─Selection_29	9990.00	cop[tikv]		not(isnull(planner__core__rule_constant_propagation.t.id))
-      └─TableFullScan_28	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─HashJoin_29	2.00	root		inner join, equal:[eq(planner__core__rule_constant_propagation.s.id, planner__core__rule_constant_propagation.t.id)]
+  ├─Selection_30(Build)	1.60	root		not(isnull(planner__core__rule_constant_propagation.s.id))
+  │ └─TopN_31	2.00	root		planner__core__rule_constant_propagation.s.id, offset:0, count:2
+  │   └─TableReader_39	2.00	root		data:TopN_38
+  │     └─TopN_38	2.00	cop[tikv]		planner__core__rule_constant_propagation.s.id, offset:0, count:2
+  │       └─Selection_37	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1)
+  │         └─TableFullScan_36	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
+  └─TableReader_44(Probe)	9990.00	root		data:Selection_43
+    └─Selection_43	9990.00	cop[tikv]		not(isnull(planner__core__rule_constant_propagation.t.id))
+      └─TableFullScan_42	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t, s;
 create table t (id int, name varchar(10));
 create table s (id int, name varchar(10));
 explain Update t, (select * from s where s.id>1) tmp set t.name=tmp.name where t.id=tmp.id;
 id	estRows	task	access object	operator info
 Update_8	N/A	root		N/A
-└─HashJoin_12	4166.67	root		inner join, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
-  ├─TableReader_20(Build)	3333.33	root		data:Selection_19
-  │ └─Selection_19	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), not(isnull(planner__core__rule_constant_propagation.s.id))
-  │   └─TableFullScan_18	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
-  └─TableReader_16(Probe)	3333.33	root		data:Selection_15
-    └─Selection_15	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.t.id, 1), not(isnull(planner__core__rule_constant_propagation.t.id))
-      └─TableFullScan_14	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─HashJoin_24	4166.67	root		inner join, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
+  ├─TableReader_34(Build)	3333.33	root		data:Selection_33
+  │ └─Selection_33	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), not(isnull(planner__core__rule_constant_propagation.s.id))
+  │   └─TableFullScan_32	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
+  └─TableReader_28(Probe)	3333.33	root		data:Selection_27
+    └─Selection_27	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.t.id, 1), not(isnull(planner__core__rule_constant_propagation.t.id))
+      └─TableFullScan_26	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t, s;
 create table t (id int, name varchar(10));
 create table s (id int, name varchar(10));
@@ -164,18 +164,18 @@ id	estRows	task	access object	operator info
 HashAgg_24	5325.33	root		group by:Column#14, Column#15, funcs:firstrow(Column#14)->Column#14, funcs:firstrow(Column#15)->Column#15
 └─Union_25	8320.83	root		
   ├─Projection_26	4166.67	root		plus(planner__core__rule_constant_propagation.t.id, 1)->Column#14, planner__core__rule_constant_propagation.t.name->Column#15
-  │ └─HashJoin_27	4166.67	root		inner join, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
-  │   ├─TableReader_34(Build)	3333.33	root		data:Selection_33
-  │   │ └─Selection_33	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), not(isnull(planner__core__rule_constant_propagation.s.id))
-  │   │   └─TableFullScan_32	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
-  │   └─TableReader_31(Probe)	3333.33	root		data:Selection_30
-  │     └─Selection_30	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.t.id, 1), not(isnull(planner__core__rule_constant_propagation.t.id))
-  │       └─TableFullScan_29	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-  └─Projection_35	4154.17	root		cast(planner__core__rule_constant_propagation.t.id, bigint BINARY)->Column#14, planner__core__rule_constant_propagation.t.name->Column#15
-    └─HashJoin_36	4154.17	root		left outer join, left side:TableReader_40, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
-      ├─TableReader_43(Build)	3323.33	root		data:Selection_42
-      │ └─Selection_42	3323.33	cop[tikv]		lt(planner__core__rule_constant_propagation.s.id, 3), not(isnull(planner__core__rule_constant_propagation.s.id))
-      │   └─TableFullScan_41	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
-      └─TableReader_40(Probe)	3323.33	root		data:Selection_39
-        └─Selection_39	3323.33	cop[tikv]		lt(planner__core__rule_constant_propagation.t.id, 3)
-          └─TableFullScan_38	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  │ └─HashJoin_39	4166.67	root		inner join, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
+  │   ├─TableReader_46(Build)	3333.33	root		data:Selection_45
+  │   │ └─Selection_45	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.s.id, 1), not(isnull(planner__core__rule_constant_propagation.s.id))
+  │   │   └─TableFullScan_44	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
+  │   └─TableReader_43(Probe)	3333.33	root		data:Selection_42
+  │     └─Selection_42	3333.33	cop[tikv]		gt(planner__core__rule_constant_propagation.t.id, 1), not(isnull(planner__core__rule_constant_propagation.t.id))
+  │       └─TableFullScan_41	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─Projection_47	4154.17	root		cast(planner__core__rule_constant_propagation.t.id, bigint BINARY)->Column#14, planner__core__rule_constant_propagation.t.name->Column#15
+    └─HashJoin_54	4154.17	root		left outer join, left side:TableReader_58, equal:[eq(planner__core__rule_constant_propagation.t.id, planner__core__rule_constant_propagation.s.id)]
+      ├─TableReader_61(Build)	3323.33	root		data:Selection_60
+      │ └─Selection_60	3323.33	cop[tikv]		lt(planner__core__rule_constant_propagation.s.id, 3), not(isnull(planner__core__rule_constant_propagation.s.id))
+      │   └─TableFullScan_59	10000.00	cop[tikv]	table:s	keep order:false, stats:pseudo
+      └─TableReader_58(Probe)	3323.33	root		data:Selection_57
+        └─Selection_57	3323.33	cop[tikv]		lt(planner__core__rule_constant_propagation.t.id, 3)
+          └─TableFullScan_56	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo

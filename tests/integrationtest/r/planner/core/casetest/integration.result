@@ -1420,79 +1420,79 @@ set @@tidb_skip_missing_partition_stats = off;
 set @@tidb_opt_fix_control = "";
 explain select /*+ TIDB_INLJ(t2_part@sel_2), set_var(tidb_hash_join_version=legacy) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
 id	estRows	task	access object	operator info
-HashJoin_19	2658.67	root		anti semi join, left side:TableReader_22, equal:[eq(planner__core__casetest__integration.t1.a, planner__core__casetest__integration.t2_part.a)]
-├─PartitionUnion_23(Build)	13293.33	root		
-│ ├─TableReader_31	3323.33	root		data:Projection_25
-│ │ └─Projection_25	3323.33	cop[tikv]		planner__core__casetest__integration.t2_part.a
-│ │   └─Selection_30	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
-│ │     └─TableFullScan_29	10000.00	cop[tikv]	table:t2_part, partition:p0	keep order:false, stats:pseudo
-│ ├─TableReader_39	3323.33	root		data:Projection_33
-│ │ └─Projection_33	3323.33	cop[tikv]		planner__core__casetest__integration.t2_part.a
-│ │   └─Selection_38	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
-│ │     └─TableFullScan_37	10000.00	cop[tikv]	table:t2_part, partition:p1	keep order:false, stats:pseudo
-│ ├─TableReader_47	3323.33	root		data:Projection_41
-│ │ └─Projection_41	3323.33	cop[tikv]		planner__core__casetest__integration.t2_part.a
-│ │   └─Selection_46	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
-│ │     └─TableFullScan_45	10000.00	cop[tikv]	table:t2_part, partition:p2	keep order:false, stats:pseudo
-│ └─TableReader_55	3323.33	root		data:Projection_49
-│   └─Projection_49	3323.33	cop[tikv]		planner__core__casetest__integration.t2_part.a
-│     └─Selection_54	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
-│       └─TableFullScan_53	10000.00	cop[tikv]	table:t2_part, partition:p3	keep order:false, stats:pseudo
-└─TableReader_22(Probe)	3323.33	root		data:Selection_21
-  └─Selection_21	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t1.b, 10)
-    └─TableFullScan_20	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+HashJoin_25	2658.67	root		anti semi join, left side:TableReader_28, equal:[eq(planner__core__casetest__integration.t1.a, planner__core__casetest__integration.t2_part.a)]
+├─PartitionUnion_29(Build)	13293.33	root		
+│ ├─TableReader_37	3323.33	root		data:Projection_31
+│ │ └─Projection_31	3323.33	cop[tikv]		planner__core__casetest__integration.t2_part.a
+│ │   └─Selection_36	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
+│ │     └─TableFullScan_35	10000.00	cop[tikv]	table:t2_part, partition:p0	keep order:false, stats:pseudo
+│ ├─TableReader_45	3323.33	root		data:Projection_39
+│ │ └─Projection_39	3323.33	cop[tikv]		planner__core__casetest__integration.t2_part.a
+│ │   └─Selection_44	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
+│ │     └─TableFullScan_43	10000.00	cop[tikv]	table:t2_part, partition:p1	keep order:false, stats:pseudo
+│ ├─TableReader_53	3323.33	root		data:Projection_47
+│ │ └─Projection_47	3323.33	cop[tikv]		planner__core__casetest__integration.t2_part.a
+│ │   └─Selection_52	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
+│ │     └─TableFullScan_51	10000.00	cop[tikv]	table:t2_part, partition:p2	keep order:false, stats:pseudo
+│ └─TableReader_61	3323.33	root		data:Projection_55
+│   └─Projection_55	3323.33	cop[tikv]		planner__core__casetest__integration.t2_part.a
+│     └─Selection_60	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
+│       └─TableFullScan_59	10000.00	cop[tikv]	table:t2_part, partition:p3	keep order:false, stats:pseudo
+└─TableReader_28(Probe)	3323.33	root		data:Selection_27
+  └─Selection_27	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t1.b, 10)
+    └─TableFullScan_26	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1105	disable dynamic pruning due to t2_part has no global stats
 Warning	1815	Optimizer Hint /*+ INL_JOIN(t2_part) */ or /*+ TIDB_INLJ(t2_part) */ is inapplicable
 explain select /*+ TIDB_INLJ(t2_part@sel_2), set_var(tidb_hash_join_version=optimized) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
 id	estRows	task	access object	operator info
-HashJoin_19	2658.67	root		anti semi join, left side:TableReader_23, equal:[eq(planner__core__casetest__integration.t1.a, planner__core__casetest__integration.t2_part.a)]
-├─PartitionUnion_24(Build)	13293.33	root		
-│ ├─TableReader_32	3323.33	root		data:Projection_26
-│ │ └─Projection_26	3323.33	cop[tikv]		planner__core__casetest__integration.t2_part.a
-│ │   └─Selection_31	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
-│ │     └─TableFullScan_30	10000.00	cop[tikv]	table:t2_part, partition:p0	keep order:false, stats:pseudo
-│ ├─TableReader_40	3323.33	root		data:Projection_34
-│ │ └─Projection_34	3323.33	cop[tikv]		planner__core__casetest__integration.t2_part.a
-│ │   └─Selection_39	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
-│ │     └─TableFullScan_38	10000.00	cop[tikv]	table:t2_part, partition:p1	keep order:false, stats:pseudo
-│ ├─TableReader_48	3323.33	root		data:Projection_42
-│ │ └─Projection_42	3323.33	cop[tikv]		planner__core__casetest__integration.t2_part.a
-│ │   └─Selection_47	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
-│ │     └─TableFullScan_46	10000.00	cop[tikv]	table:t2_part, partition:p2	keep order:false, stats:pseudo
-│ └─TableReader_56	3323.33	root		data:Projection_50
-│   └─Projection_50	3323.33	cop[tikv]		planner__core__casetest__integration.t2_part.a
-│     └─Selection_55	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
-│       └─TableFullScan_54	10000.00	cop[tikv]	table:t2_part, partition:p3	keep order:false, stats:pseudo
-└─TableReader_23(Probe)	3323.33	root		data:Selection_22
-  └─Selection_22	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t1.b, 10)
-    └─TableFullScan_21	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+HashJoin_25	2658.67	root		anti semi join, left side:TableReader_29, equal:[eq(planner__core__casetest__integration.t1.a, planner__core__casetest__integration.t2_part.a)]
+├─PartitionUnion_30(Build)	13293.33	root		
+│ ├─TableReader_38	3323.33	root		data:Projection_32
+│ │ └─Projection_32	3323.33	cop[tikv]		planner__core__casetest__integration.t2_part.a
+│ │   └─Selection_37	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
+│ │     └─TableFullScan_36	10000.00	cop[tikv]	table:t2_part, partition:p0	keep order:false, stats:pseudo
+│ ├─TableReader_46	3323.33	root		data:Projection_40
+│ │ └─Projection_40	3323.33	cop[tikv]		planner__core__casetest__integration.t2_part.a
+│ │   └─Selection_45	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
+│ │     └─TableFullScan_44	10000.00	cop[tikv]	table:t2_part, partition:p1	keep order:false, stats:pseudo
+│ ├─TableReader_54	3323.33	root		data:Projection_48
+│ │ └─Projection_48	3323.33	cop[tikv]		planner__core__casetest__integration.t2_part.a
+│ │   └─Selection_53	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
+│ │     └─TableFullScan_52	10000.00	cop[tikv]	table:t2_part, partition:p2	keep order:false, stats:pseudo
+│ └─TableReader_62	3323.33	root		data:Projection_56
+│   └─Projection_56	3323.33	cop[tikv]		planner__core__casetest__integration.t2_part.a
+│     └─Selection_61	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
+│       └─TableFullScan_60	10000.00	cop[tikv]	table:t2_part, partition:p3	keep order:false, stats:pseudo
+└─TableReader_29(Probe)	3323.33	root		data:Selection_28
+  └─Selection_28	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t1.b, 10)
+    └─TableFullScan_27	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1105	disable dynamic pruning due to t2_part has no global stats
 Warning	1815	Optimizer Hint /*+ INL_JOIN(t2_part) */ or /*+ TIDB_INLJ(t2_part) */ is inapplicable
 set @@tidb_opt_fix_control = "44262:ON";
 explain select /*+ TIDB_INLJ(t2_part@sel_2) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
 id	estRows	task	access object	operator info
-IndexJoin_13	2658.67	root		anti semi join, inner:IndexLookUp_12, left side:TableReader_18, outer key:planner__core__casetest__integration.t1.a, inner key:planner__core__casetest__integration.t2_part.a, equal cond:eq(planner__core__casetest__integration.t1.a, planner__core__casetest__integration.t2_part.a)
-├─TableReader_18(Build)	3323.33	root		data:Selection_17
-│ └─Selection_17	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t1.b, 10)
-│   └─TableFullScan_16	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─IndexLookUp_12(Probe)	4154.17	root	partition:all	
-  ├─IndexRangeScan_9(Build)	12500.00	cop[tikv]	table:t2_part, index:a(a)	range: decided by [eq(planner__core__casetest__integration.t2_part.a, planner__core__casetest__integration.t1.a)], keep order:false, stats:pseudo
-  └─Selection_11(Probe)	4154.17	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
-    └─TableRowIDScan_10	12500.00	cop[tikv]	table:t2_part	keep order:false, stats:pseudo
+IndexJoin_10	2658.67	root		anti semi join, inner:IndexLookUp_23, left side:TableReader_19, outer key:planner__core__casetest__integration.t1.a, inner key:planner__core__casetest__integration.t2_part.a, equal cond:eq(planner__core__casetest__integration.t1.a, planner__core__casetest__integration.t2_part.a)
+├─TableReader_19(Build)	3323.33	root		data:Selection_18
+│ └─Selection_18	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t1.b, 10)
+│   └─TableFullScan_17	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─IndexLookUp_23(Probe)	4154.17	root	partition:all	
+  ├─IndexRangeScan_20(Build)	12500.00	cop[tikv]	table:t2_part, index:a(a)	range: decided by [eq(planner__core__casetest__integration.t2_part.a, planner__core__casetest__integration.t1.a)], keep order:false, stats:pseudo
+  └─Selection_22(Probe)	4154.17	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
+    └─TableRowIDScan_21	12500.00	cop[tikv]	table:t2_part	keep order:false, stats:pseudo
 set @@tidb_opt_fix_control = "";
 set @@tidb_skip_missing_partition_stats = on;
 explain select /*+ TIDB_INLJ(t2_part@sel_2) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
 id	estRows	task	access object	operator info
-IndexJoin_13	2658.67	root		anti semi join, inner:IndexLookUp_12, left side:TableReader_18, outer key:planner__core__casetest__integration.t1.a, inner key:planner__core__casetest__integration.t2_part.a, equal cond:eq(planner__core__casetest__integration.t1.a, planner__core__casetest__integration.t2_part.a)
-├─TableReader_18(Build)	3323.33	root		data:Selection_17
-│ └─Selection_17	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t1.b, 10)
-│   └─TableFullScan_16	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-└─IndexLookUp_12(Probe)	4154.17	root	partition:all	
-  ├─IndexRangeScan_9(Build)	12500.00	cop[tikv]	table:t2_part, index:a(a)	range: decided by [eq(planner__core__casetest__integration.t2_part.a, planner__core__casetest__integration.t1.a)], keep order:false, stats:pseudo
-  └─Selection_11(Probe)	4154.17	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
-    └─TableRowIDScan_10	12500.00	cop[tikv]	table:t2_part	keep order:false, stats:pseudo
+IndexJoin_10	2658.67	root		anti semi join, inner:IndexLookUp_23, left side:TableReader_19, outer key:planner__core__casetest__integration.t1.a, inner key:planner__core__casetest__integration.t2_part.a, equal cond:eq(planner__core__casetest__integration.t1.a, planner__core__casetest__integration.t2_part.a)
+├─TableReader_19(Build)	3323.33	root		data:Selection_18
+│ └─Selection_18	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t1.b, 10)
+│   └─TableFullScan_17	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─IndexLookUp_23(Probe)	4154.17	root	partition:all	
+  ├─IndexRangeScan_20(Build)	12500.00	cop[tikv]	table:t2_part, index:a(a)	range: decided by [eq(planner__core__casetest__integration.t2_part.a, planner__core__casetest__integration.t1.a)], keep order:false, stats:pseudo
+  └─Selection_22(Probe)	4154.17	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
+    └─TableRowIDScan_21	12500.00	cop[tikv]	table:t2_part	keep order:false, stats:pseudo
 set @@tidb_skip_missing_partition_stats = default;
 drop table if exists t;
 create table t(a int(11) not null, b int) partition by range (a) (partition p0 values less than (4), partition p1 values less than(10), partition p2 values less than maxvalue);

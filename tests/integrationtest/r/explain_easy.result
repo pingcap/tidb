@@ -65,9 +65,9 @@ explain format = 'brief' select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 gr
 id	estRows	task	access object	operator info
 Projection	9990.00	root		Column#7
 └─HashJoin	9990.00	root		inner join, equal:[eq(explain_easy.t1.c1, explain_easy.t2.c2)]
-  ├─HashAgg(Build)	7992.00	root		group by:explain_easy.t2.c2, funcs:count(Column#9)->Column#8, funcs:firstrow(explain_easy.t2.c2)->explain_easy.t2.c2
+  ├─HashAgg(Build)	7992.00	root		group by:explain_easy.t2.c2, funcs:count(Column#10)->Column#8, funcs:firstrow(explain_easy.t2.c2)->explain_easy.t2.c2
   │ └─TableReader	7992.00	root		data:HashAgg
-  │   └─HashAgg	7992.00	cop[tikv]		group by:explain_easy.t2.c2, funcs:count(explain_easy.t2.c2)->Column#9
+  │   └─HashAgg	7992.00	cop[tikv]		group by:explain_easy.t2.c2, funcs:count(explain_easy.t2.c2)->Column#10
   │     └─Selection	9990.00	cop[tikv]		not(isnull(explain_easy.t2.c2))
   │       └─TableFullScan	10000.00	cop[tikv]	table:b	keep order:false, stats:pseudo
   └─TableReader(Probe)	10000.00	root		data:TableFullScan
@@ -266,52 +266,52 @@ subgraph cluster10{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
-"StreamAgg_10" -> "Projection_21"
-"Projection_21" -> "HashJoin_20"
-"HashJoin_20" -> "TableReader_13"
-"HashJoin_20" -> "IndexReader_19"
-}
-subgraph cluster12{
-node [style=filled, color=lightgrey]
-color=black
-label = "cop"
-"TableFullScan_12"
+"StreamAgg_10" -> "Projection_33"
+"Projection_33" -> "HashJoin_32"
+"HashJoin_32" -> "TableReader_19"
+"HashJoin_32" -> "IndexReader_25"
 }
 subgraph cluster18{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"IndexFullScan_18"
+"TableFullScan_18"
 }
-"TableReader_13" -> "TableFullScan_12"
-"IndexReader_19" -> "IndexFullScan_18"
+subgraph cluster24{
+node [style=filled, color=lightgrey]
+color=black
+label = "cop"
+"IndexFullScan_24"
+}
+"TableReader_19" -> "TableFullScan_18"
+"IndexReader_25" -> "IndexFullScan_24"
 }
 
 explain format="dot" select 1 in (select c2 from t2) from t1;
 dot contents
 
-digraph HashJoin_8 {
-subgraph cluster8{
+digraph HashJoin_14 {
+subgraph cluster14{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
-"HashJoin_8" -> "TableReader_10"
-"HashJoin_8" -> "TableReader_14"
+"HashJoin_14" -> "TableReader_16"
+"HashJoin_14" -> "TableReader_20"
 }
-subgraph cluster9{
+subgraph cluster15{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"TableFullScan_9"
+"TableFullScan_15"
 }
-subgraph cluster13{
+subgraph cluster19{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"TableFullScan_13"
+"TableFullScan_19"
 }
-"TableReader_10" -> "TableFullScan_9"
-"TableReader_14" -> "TableFullScan_13"
+"TableReader_16" -> "TableFullScan_15"
+"TableReader_20" -> "TableFullScan_19"
 }
 
 drop table if exists t1, t2, t3, t4;
