@@ -54,6 +54,7 @@ type Collector interface {
 // 1. some sql statements has no plan, like `COMMIT`
 // 2. when a sql statement is being compiled, there's no plan yet
 type SQLCPUTimeRecord struct {
+	KeySpaceID uint32
 	SQLDigest  []byte
 	PlanDigest []byte
 	CPUTimeMs  uint32
