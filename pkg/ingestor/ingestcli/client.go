@@ -101,22 +101,25 @@ func (w *writeClient) startChunkedHTTPRequest(req *http.Request) {
 		if resp.StatusCode != http.StatusOK {
 			body, err1 := io.ReadAll(resp.Body)
 			if err1 != nil {
+				err1 = errors.Annotate(err1, "failed to readAll response")
 				w.sendReqErr.Store(err1)
-				return fmt.Errorf("failed to readAll response: %s", err1.Error())
+				return err1
 			}
-			err = fmt.Errorf("failed to send chunked request: %s", string(body))
+			err = errors.Errorf("failed to send chunked request: %s", string(body))
 			w.sendReqErr.Store(err)
 			return err
 		}
 		data, err := io.ReadAll(resp.Body)
 		if err != nil {
+			err = errors.Trace(err)
 			w.sendReqErr.Store(err)
-			return errors.Trace(err)
+			return err
 		}
 		res := &nextGenResp{}
-		if err := json.Unmarshal(data, res); err != nil {
+		if err = json.Unmarshal(data, res); err != nil {
+			err = errors.Trace(err)
 			w.sendReqErr.Store(err)
-			return errors.Trace(err)
+			return err
 		}
 		w.sstMeta = &res.SstMeta
 		return nil
@@ -156,7 +159,7 @@ func (w *writeClient) Write(req *WriteRequest) (err error) {
 
 func (w *writeClient) Recv() (*WriteResponse, error) {
 	if err := w.writer.Close(); err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	err := w.eg.Wait()
 	if err != nil {
@@ -206,7 +209,8 @@ func (c *client) Ingest(ctx context.Context, in *IngestRequest) error {
 	url := fmt.Sprintf("http://%s/ingest_s3?cluster_id=%d&region_id=%d&epoch_version=%d",
 		store.GetStatusAddress(), c.clusterID, ri.Id, ri.RegionEpoch.Version)
 
-	data, err := json.Marshal(&in.WriteResp.nextGenSSTMeta)
+	sstMeta := in.WriteResp.nextGenSSTMeta
+	data, err := json.Marshal(sstMeta)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -225,12 +229,14 @@ func (c *client) Ingest(ctx context.Context, in *IngestRequest) error {
 	if resp.StatusCode != http.StatusOK {
 		body, err1 := io.ReadAll(resp.Body)
 		if err1 != nil {
-			return fmt.Errorf("failed to readAll response: %s", err1.Error())
+			return errors.Errorf("failed to readAll response: %s", err1.Error())
 		}
 		var pbErr errorpb.Error
 		if err := proto.Unmarshal(body, &pbErr); err != nil {
-			return fmt.Errorf("failed to unmarshal error(%s): %s", string(body), err)
+			return errors.Errorf("failed to unmarshal error(%s): %s", string(body), err)
 		}
+		// we annotate the SST ID to help diagnose.
+		pbErr.Message = fmt.Sprintf("%s(ingest SST ID %d)", pbErr.Message, sstMeta.ID)
 		return &PBError{Err: &pbErr}
 	}
 	return nil
