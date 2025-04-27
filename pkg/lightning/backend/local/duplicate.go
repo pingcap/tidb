@@ -591,6 +591,7 @@ func (m *DupeDetector) RecordIndexConflictError(ctx context.Context, stream DupK
 
 // RetrieveKeyAndValueFromErrFoundDuplicateKeys retrieves the key and value
 // from ErrFoundDuplicateKeys error.
+// Exported for test.
 func RetrieveKeyAndValueFromErrFoundDuplicateKeys(err error) ([]byte, []byte, error) {
 	if !common.ErrFoundDuplicateKeys.Equal(err) {
 		return nil, nil, err
@@ -613,6 +614,9 @@ func RetrieveKeyAndValueFromErrFoundDuplicateKeys(err error) ([]byte, []byte, er
 // newErrFoundConflictRecords generate an error ErrFoundDataConflictRecords / ErrFoundIndexConflictRecords
 // according to key and value.
 func newErrFoundConflictRecords(key []byte, value []byte, tbl table.Table) error {
+	if tbl == nil {
+		return common.ErrFoundDuplicateKeys.FastGenByArgs(key, value)
+	}
 	sessionOpts := encode.SessionOptions{
 		SQLMode: mysql.ModeStrictAllTables,
 	}

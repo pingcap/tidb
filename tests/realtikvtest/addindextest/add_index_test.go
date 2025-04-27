@@ -156,7 +156,7 @@ func TestAddUKWithSmallIntHandles(t *testing.T) {
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=1;`)
 	tk.MustExec("create table t (a bigint, b int, primary key (a) clustered)")
 	tk.MustExec("insert into t values (-9223372036854775808, 1),(-9223372036854775807, 1)")
-	tk.MustContainErrMsg("alter table t add unique index uk(b)", "Duplicate entry '1' for key 't.uk'")
+	tk.MustContainErrMsg("alter table t add unique index uk(b)", "found index conflict records in table t, index name is 't.uk', unique key is '[1]'")
 }
 
 func alwaysRemoveFirstJobID(ids []int64) ([]int64, error) {
@@ -186,7 +186,7 @@ func TestLitBackendCtxMgr(t *testing.T) {
 
 	jobID := int64(102)
 	discovery := store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
-	backendCtx, err := mgr.Register(ctx, jobID, false, nil, discovery, "TestLitBackendCtxMgr", 0)
+	backendCtx, err := mgr.Register(ctx, jobID, false, nil, discovery, "TestLitBackendCtxMgr", 0, false)
 	require.NoError(t, err)
 	require.NotNil(t, backendCtx)
 

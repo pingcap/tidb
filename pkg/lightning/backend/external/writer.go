@@ -232,9 +232,6 @@ func (b *WriterBuilder) Build(
 ) *Writer {
 	filenamePrefix := filepath.Join(prefix, writerID)
 	keyAdapter := common.KeyAdapter(common.NoopKeyAdapter{})
-	if b.keyDupeEncoding {
-		keyAdapter = common.DupDetectKeyAdapter{}
-	}
 	p := membuf.NewPool(
 		membuf.WithBlockNum(0),
 		membuf.WithBlockSize(b.blockSize),
@@ -501,11 +498,16 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		zap.Int("sequence-number", w.currentSeq),
 	)
 	sortStart := time.Now()
-	var dupFound bool
+	var (
+		dupFound         bool
+		dupKey, dupValue []byte
+	)
 	slices.SortFunc(w.kvLocations, func(i, j membuf.SliceLocation) int {
 		res := bytes.Compare(w.getKeyByLoc(&i), w.getKeyByLoc(&j))
-		if res == 0 {
+		if res == 0 && len(dupKey) == 0 {
 			dupFound = true
+			dupKey = w.getKeyByLoc(&i)
+			dupValue = w.getValueByLoc(&i)
 		}
 		return res
 	})
@@ -530,8 +532,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			w.kvLocations, _, dupCnt = removeDuplicates(w.kvLocations, w.getKeyByLoc, false)
 			w.kvSize = w.calculateKVSize()
 		case common.OnDuplicateKeyError:
-			// not implemented yet, same as ignore.
-			// add-index might need this one later.
+			return common.ErrFoundDuplicateKeys.FastGenByArgs(dupKey, dupValue)
 		}
 	}
 
@@ -706,6 +707,12 @@ func (w *Writer) getKeyByLoc(loc *membuf.SliceLocation) []byte {
 	block := w.kvBuffer.GetSlice(loc)
 	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
 	return block[2*lengthBytes : 2*lengthBytes+keyLen]
+}
+
+func (w *Writer) getValueByLoc(loc *membuf.SliceLocation) []byte {
+	block := w.kvBuffer.GetSlice(loc)
+	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
+	return block[2*lengthBytes+keyLen:]
 }
 
 func (w *Writer) calculateKVSize() int64 {

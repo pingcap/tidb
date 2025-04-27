@@ -2292,15 +2292,15 @@ func (r *recordScanRegionsHook) AfterScanRegions(infos []*split.RegionInfo, err 
 }
 
 func TestExternalEngine(t *testing.T) {
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipStartWorker", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/injectVariables", "return()")
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/external/LoadIngestDataBatchSize", "return(2)")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter", "return()"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipStartWorker", "return()"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/local/injectVariables", "return()"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/lightning/backend/external/LoadIngestDataBatchSize", "return(2)"))
 	t.Cleanup(func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipStartWorker")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/injectVariables")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/external/LoadIngestDataBatchSize")
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipSplitAndScatter"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/skipStartWorker"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/local/injectVariables"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/lightning/backend/external/LoadIngestDataBatchSize"))
 	})
 	ctx := context.Background()
 	dir := t.TempDir()

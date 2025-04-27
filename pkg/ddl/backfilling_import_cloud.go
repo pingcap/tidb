@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -72,8 +73,8 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 		return err
 	}
 
-	local := m.bc.GetLocalBackend()
-	if local == nil {
+	localBackend := m.bc.GetLocalBackend()
+	if localBackend == nil {
 		return errors.Errorf("local backend not found")
 	}
 	_, engineUUID := backend.MakeUUID(m.ptbl.Meta().Name.L, m.index.ID)
@@ -88,7 +89,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if jobKeys == nil {
 		jobKeys = sm.RangeSplitKeys
 	}
-	err = local.CloseEngine(ctx, &backend.EngineConfig{
+	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
 			StorageURI:    m.cloudStoreURI,
 			DataFiles:     sm.DataFiles,
@@ -107,9 +108,9 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if err != nil {
 		return err
 	}
-	err = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err = localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	if common.ErrFoundDuplicateKeys.Equal(err) {
-		err = convertToKeyExistsErr(err, m.index, m.ptbl.Meta())
+		err = local.ConvertToErrFoundConflictRecords(err, m.ptbl)
 	}
 	return err
 }

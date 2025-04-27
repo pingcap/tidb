@@ -108,12 +108,12 @@ func TestOnefileWriterStat(t *testing.T) {
 	// 3. read stat file and check result.
 	for _, kvCnt := range kvCntArr {
 		for _, distance := range distanceCntArr {
-			checkOneFileWriterStatWithDistance(t, kvCnt, distance, DefaultMemSizeLimit, "test"+strconv.Itoa(int(distance)))
+			checkOneFileWriterStatWithDistance(t, kvCnt, distance, "test"+strconv.Itoa(int(distance)))
 		}
 	}
 }
 
-func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance uint64, memSizeLimit uint64, prefix string) {
+func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance uint64, prefix string) {
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
 	writer := NewWriterBuilder().
@@ -204,7 +204,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 	defaultOneWriterMemSizeLimit = 1000
 	require.NoError(t, mergeOverlappingFilesInternal(
 		ctx,
-		[]string{"/test/0/0", "/test/0/1", "/test/0/2", "/test/0/3", "/test/0/4"},
+		[]string{"/test/0/0", "/test/0/1", "/test/0/2"},
 		memStore,
 		int64(5*size.MB),
 		"/test2",
@@ -235,9 +235,8 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 	dir := t.TempDir()
 	db, err := pebble.Open(path.Join(dir, "duplicate"), nil)
 	require.NoError(t, err)
-	keyAdapter := common.DupDetectKeyAdapter{}
 	data := &MemoryIngestData{
-		keyAdapter:         keyAdapter,
+		keyAdapter:         common.NoopKeyAdapter{},
 		duplicateDetection: true,
 		duplicateDB:        db,
 		dupDetectOpt:       common.DupDetectOpt{ReportErrOnDup: true},
@@ -399,4 +398,31 @@ func TestOnefilePropOffset(t *testing.T) {
 		require.GreaterOrEqual(t, prop.offset, lastOffset)
 		lastOffset = prop.offset
 	}
+}
+
+func TestOnefileWriterDupError(t *testing.T) {
+	ctx := context.Background()
+	memStore := storage.NewMemStorage()
+
+	writer := NewWriterBuilder().
+		SetPropSizeDistance(100).
+		SetPropKeysDistance(2).
+		SetOnDup(common.OnDuplicateKeyError).
+		BuildOneFile(memStore, "/test", "0")
+
+	require.NoError(t, writer.Init(ctx, 1*1024*1024))
+	kvCnt := 10
+	kvs := make([]common.KvPair, kvCnt)
+	for i := 0; i < kvCnt; i++ {
+		kvs[i].Key = []byte(strconv.Itoa(i))
+		kvs[i].Val = []byte(strconv.Itoa(i * i))
+	}
+
+	for _, item := range kvs {
+		require.NoError(t, writer.WriteRow(ctx, item.Key, item.Val))
+	}
+	// write duplicate key
+	err := writer.WriteRow(ctx, kvs[kvCnt-1].Key, kvs[kvCnt-1].Val)
+	require.Error(t, err)
+	require.True(t, common.ErrFoundDuplicateKeys.Equal(err))
 }

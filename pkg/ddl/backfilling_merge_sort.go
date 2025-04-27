@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -89,7 +90,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	memSizePerCon := res.Mem.Capacity() / int64(subtask.Concurrency)
 	partSize := max(external.MinUploadPartSize, memSizePerCon*int64(external.MaxMergingFilesPerThread)/10000)
 
-	return external.MergeOverlappingFiles(
+	err = external.MergeOverlappingFiles(
 		ctx,
 		sm.DataFiles,
 		store,
@@ -99,8 +100,13 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		onClose,
 		subtask.Concurrency,
 		true,
-		common.OnDuplicateKeyIgnore,
+		common.OnDuplicateKeyError,
 	)
+	if common.ErrFoundDuplicateKeys.Equal(err) {
+		err = local.ConvertToErrFoundConflictRecords(err, m.ptbl)
+	}
+
+	return err
 }
 
 func (*mergeSortExecutor) Cleanup(ctx context.Context) error {

@@ -18,6 +18,7 @@ import (
 	"context"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -269,12 +270,18 @@ func createIndexOneCol(ctx *SuiteContext, tableID int, colID int) (err error) {
 	}
 	if err != nil {
 		if ctx.isUnique || ctx.isPK {
-			require.Contains(ctx.t, err.Error(), "Duplicate entry")
+			errorContainsDupKey(ctx.t, err)
 		} else {
 			require.NoError(ctx.t, err)
 		}
 	}
 	return err
+}
+
+func errorContainsDupKey(t *testing.T, err error) {
+	s := err.Error()
+	contains := strings.Contains(s, "Duplicate entry") || strings.Contains(s, "found index conflict records")
+	require.True(t, contains, s)
 }
 
 func createIndexTwoCols(ctx *SuiteContext, tableID int, indexID int, colID1 int, colID2 int) (err error) {
@@ -378,7 +385,7 @@ func TestOneColFrame(ctx *SuiteContext, colIDs [][]int, f func(*SuiteContext, in
 			err := f(ctx, tableID, tableName, i)
 			if err != nil {
 				if ctx.isUnique || ctx.isPK {
-					require.Contains(ctx.t, err.Error(), "Duplicate entry")
+					errorContainsDupKey(ctx.t, err)
 				} else {
 					logutil.BgLogger().Error("add index failed", zap.String("category", "add index test"), zap.Error(err))
 					require.NoError(ctx.t, err)
@@ -488,7 +495,7 @@ func AddIndexUnique(ctx *SuiteContext, tableID int, tableName string, indexID in
 	} else {
 		err = createIndexOneCol(ctx, tableID, indexID)
 		if err != nil {
-			require.Contains(ctx.t, err.Error(), "1062")
+			errorContainsDupKey(ctx.t, err)
 			logutil.BgLogger().Error("add index failed", zap.String("category", "add index test"),
 				zap.Error(err), zap.String("table name", tableName), zap.Int("index ID", indexID))
 		}

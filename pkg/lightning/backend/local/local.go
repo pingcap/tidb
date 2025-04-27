@@ -407,6 +407,8 @@ type BackendConfig struct {
 	ShouldCheckTiKV    bool
 	DupeDetectEnabled  bool
 	DuplicateDetectOpt common.DupDetectOpt
+	// When using global sort with DupeDetectEnabled, we can use NoopKeyAdapter instead of DupDetectKeyAdapter
+	KeyAdapter common.KeyAdapter
 	// max write speed in bytes per second to each store(burst is allowed), 0 means no limit
 	StoreWriteBWLimit int
 	// When TiKV is in normal mode, ingesting too many SSTs will cause TiKV write stall.
@@ -432,7 +434,18 @@ type BackendConfig struct {
 }
 
 // NewBackendConfig creates a new BackendConfig.
-func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resourceGroupName, taskType string, raftKV2SwitchModeDuration time.Duration) BackendConfig {
+func NewBackendConfig(
+	cfg *config.Config,
+	maxOpenFiles int,
+	keyspaceName, resourceGroupName, taskType string,
+	raftKV2SwitchModeDuration time.Duration,
+	globalSort bool,
+) BackendConfig {
+	dupeDetectEnabled := cfg.Conflict.Strategy != config.NoneOnDup
+	keyAdapter := common.KeyAdapter(common.NoopKeyAdapter{})
+	if dupeDetectEnabled && !globalSort {
+		keyAdapter = common.DupDetectKeyAdapter{}
+	}
 	return BackendConfig{
 		PDAddr:                      cfg.TiDB.PdAddr,
 		LocalStoreDir:               cfg.TikvImporter.SortedKVDir,
@@ -447,8 +460,9 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resour
 		MemTableSize:                int(cfg.TikvImporter.EngineMemCacheSize),
 		LocalWriterMemCacheSize:     int64(cfg.TikvImporter.LocalWriterMemCacheSize),
 		ShouldCheckTiKV:             cfg.App.CheckRequirements,
-		DupeDetectEnabled:           cfg.Conflict.Strategy != config.NoneOnDup,
+		DupeDetectEnabled:           dupeDetectEnabled,
 		DuplicateDetectOpt:          common.DupDetectOpt{ReportErrOnDup: cfg.Conflict.Strategy == config.ErrorOnDup},
+		KeyAdapter:                  keyAdapter,
 		StoreWriteBWLimit:           int(cfg.TikvImporter.StoreWriteBWLimit),
 		ShouldCheckWriteStall:       cfg.Cron.SwitchMode.Duration == 0,
 		MaxOpenFiles:                maxOpenFiles,

@@ -164,7 +164,8 @@ func (w *OneFileWriter) handleDupAndWrite(ctx context.Context, idxKey, idxVal []
 	}
 	if slices.Compare(w.pivotKey, idxKey) == 0 {
 		w.currDupCnt++
-		if w.onDup == common.OnDuplicateKeyRecord {
+		switch w.onDup {
+		case common.OnDuplicateKeyRecord:
 			// record first 2 duplicate to data file, others to dup file.
 			if w.currDupCnt == 2 {
 				if err := w.doWriteRow(ctx, w.pivotKey, w.pivotValue); err != nil {
@@ -183,6 +184,8 @@ func (w *OneFileWriter) handleDupAndWrite(ctx context.Context, idxKey, idxVal []
 				}
 				w.recordedDupCnt++
 			}
+		case common.OnDuplicateKeyError:
+			return common.ErrFoundDuplicateKeys.FastGenByArgs(idxKey, idxVal)
 		}
 	} else {
 		return w.onNextPivot(ctx, idxKey, idxVal)

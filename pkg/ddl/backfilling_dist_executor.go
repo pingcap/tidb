@@ -183,10 +183,11 @@ func (s *backfillDistExecutor) getBackendCtx() (ingest.BackendCtx, error) {
 	discovery := ddlObj.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
 
 	var adjustedWorkerConcurrency int
-	if len(s.taskMeta.CloudStorageURI) > 0 {
+	useGlobalSort := len(s.taskMeta.CloudStorageURI) > 0
+	if useGlobalSort {
 		adjustedWorkerConcurrency = s.task.Concurrency
 	}
-	return ingest.LitBackCtxMgr.Register(s.BaseTaskExecutor.Ctx(), job.ID, unique, ddlObj.etcdCli, discovery, job.ReorgMeta.ResourceGroupName, adjustedWorkerConcurrency)
+	return ingest.LitBackCtxMgr.Register(s.BaseTaskExecutor.Ctx(), job.ID, unique, ddlObj.etcdCli, discovery, job.ReorgMeta.ResourceGroupName, adjustedWorkerConcurrency, useGlobalSort)
 }
 
 func decodeIndexUniqueness(job *model.Job) (bool, error) {

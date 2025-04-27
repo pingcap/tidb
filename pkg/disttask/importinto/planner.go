@@ -84,7 +84,7 @@ func (p *LogicalPlan) FromTaskMeta(bs []byte) error {
 }
 
 func (p *LogicalPlan) writeExternalPlanMeta(planCtx planner.PlanCtx, specs []planner.PipelineSpec) error {
-	if !planCtx.GlobalSort {
+	if !planCtx.GlobalSort || len(specs) == 0 {
 		return nil
 	}
 	store, err := importer.GetSortStore(planCtx.Ctx, p.Plan.CloudStorageURI)

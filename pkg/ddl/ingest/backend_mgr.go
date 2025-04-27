@@ -53,6 +53,7 @@ type BackendCtxMgr interface {
 		pdSvcDiscovery pd.ServiceDiscovery,
 		resourceGroupName string,
 		adjustedWorkerConcurrency int,
+		globalSort bool,
 	) (BackendCtx, error)
 	Unregister(jobID int64)
 	// Load returns the registered BackendCtx with the given jobID.
@@ -125,6 +126,7 @@ func (m *litBackendCtxMgr) Register(
 	pdSvcDiscovery pd.ServiceDiscovery,
 	resourceGroupName string,
 	adjustedWorkerConcurrency int,
+	globalSort bool,
 ) (BackendCtx, error) {
 	bc, exist := m.Load(jobID)
 	if exist {
@@ -148,7 +150,7 @@ func (m *litBackendCtxMgr) Register(
 	// folder, which may cause cleanupSortPath wrongly delete the sort folder if only
 	// checking the existence of the entry in backends.
 	m.backends.mu.Lock()
-	bd, err := createLocalBackend(ctx, cfg, pdSvcDiscovery, adjustedWorkerConcurrency)
+	bd, err := createLocalBackend(ctx, cfg, pdSvcDiscovery, adjustedWorkerConcurrency, globalSort)
 	if err != nil {
 		m.backends.mu.Unlock()
 		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Int64("job ID", jobID), zap.Error(err))
@@ -241,6 +243,7 @@ func createLocalBackend(
 	cfg *litConfig,
 	pdSvcDiscovery pd.ServiceDiscovery,
 	adjustedWorkerConcurrency int,
+	globalSort bool,
 ) (*local.Backend, error) {
 	tls, err := cfg.lightning.ToTLS()
 	if err != nil {
@@ -254,7 +257,7 @@ func createLocalBackend(
 	// We disable the switch TiKV mode feature for now,
 	// because the impact is not fully tested.
 	var raftKV2SwitchModeDuration time.Duration
-	backendConfig := local.NewBackendConfig(cfg.lightning, int(litRLimit), cfg.keyspaceName, cfg.resourceGroup, kvutil.ExplicitTypeDDL, raftKV2SwitchModeDuration)
+	backendConfig := local.NewBackendConfig(cfg.lightning, int(litRLimit), cfg.keyspaceName, cfg.resourceGroup, kvutil.ExplicitTypeDDL, raftKV2SwitchModeDuration, globalSort)
 	if adjustedWorkerConcurrency > 0 {
 		backendConfig.WorkerConcurrency = adjustedWorkerConcurrency
 	}
