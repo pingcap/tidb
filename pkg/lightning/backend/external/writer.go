@@ -449,6 +449,7 @@ func (w *Writer) WriteRow(ctx context.Context, key, val []byte, handle tidbkv.Ha
 	copy(dataBuf[2*lengthBytes+encodedKeyLen:], val)
 
 	w.kvLocations = append(w.kvLocations, loc)
+	// TODO: maybe we can unify the size calculation during write to store.
 	w.kvSize += int64(encodedKeyLen + len(val))
 	w.batchSize += uint64(length)
 	return nil
@@ -540,10 +541,10 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			// we don't have a global view, so need to keep duplicates with duplicate
 			// count <= 2, so later we can find them.
 			w.kvLocations, dupLocs, dupCnt = removeDuplicatesMoreThanTwo(w.kvLocations, w.getKeyByLoc)
-			w.kvSize = w.calculateKVSize()
+			w.kvSize = w.reCalculateKVSize()
 		case engineapi.OnDuplicateKeyRemove:
 			w.kvLocations, _, dupCnt = removeDuplicates(w.kvLocations, w.getKeyByLoc, false)
-			w.kvSize = w.calculateKVSize()
+			w.kvSize = w.reCalculateKVSize()
 		case engineapi.OnDuplicateKeyError:
 			// not implemented yet, same as ignore.
 			// add-index might need this one later.
@@ -555,7 +556,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	// due to current semantic of OnDuplicateKeyRecord, if len(w.kvLocations) = 0,
 	// len(dupLocs) is also 0
 	if len(w.kvLocations) > 0 {
-		for i := 0; i < flushKVsRetryTimes; i++ {
+		for i := range flushKVsRetryTimes {
 			dataFile, statFile, dupFile, err = w.flushSortedKVs(ctx, dupLocs)
 			if err == nil || ctx.Err() != nil {
 				break
@@ -739,7 +740,7 @@ func (w *Writer) getKeyByLoc(loc *membuf.SliceLocation) []byte {
 	return block[2*lengthBytes : 2*lengthBytes+keyLen]
 }
 
-func (w *Writer) calculateKVSize() int64 {
+func (w *Writer) reCalculateKVSize() int64 {
 	s := int64(0)
 	for _, loc := range w.kvLocations {
 		s += int64(loc.Length) - 2*lengthBytes
