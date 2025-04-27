@@ -275,11 +275,10 @@ func (b *WriterBuilder) Build(
 		onClose:        b.onClose,
 		onDup:          b.onDup,
 		closed:         false,
-		multiFileStats: make([]MultipleFilesStat, 1),
+		multiFileStats: make([]MultipleFilesStat, 0),
 		fileMinKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
 		fileMaxKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
 	}
-	ret.multiFileStats[0].Filenames = make([][2]string, 0, multiFileStatNum)
 
 	return ret
 }
@@ -473,8 +472,6 @@ func (w *Writer) Close(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	// remove the trailing empty MultipleFilesStat
-	w.multiFileStats = w.multiFileStats[:len(w.multiFileStats)-1]
 
 	logutil.Logger(ctx).Info("close writer",
 		zap.String("writerID", w.writerID),
@@ -555,18 +552,22 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 
 	writeStartTime := time.Now()
 	var dataFile, statFile, dupFile string
-	for i := 0; i < flushKVsRetryTimes; i++ {
-		dataFile, statFile, dupFile, err = w.flushSortedKVs(ctx, dupLocs)
-		if err == nil || ctx.Err() != nil {
-			break
+	// due to current semantic of OnDuplicateKeyRecord, if len(w.kvLocations) = 0,
+	// len(dupLocs) is also 0
+	if len(w.kvLocations) > 0 {
+		for i := 0; i < flushKVsRetryTimes; i++ {
+			dataFile, statFile, dupFile, err = w.flushSortedKVs(ctx, dupLocs)
+			if err == nil || ctx.Err() != nil {
+				break
+			}
+			logger.Warn("flush sorted kv failed",
+				zap.Error(err),
+				zap.Int("retry-count", i),
+			)
 		}
-		logger.Warn("flush sorted kv failed",
-			zap.Error(err),
-			zap.Int("retry-count", i),
-		)
-	}
-	if err != nil {
-		return err
+		if err != nil {
+			return err
+		}
 	}
 	writeDuration := time.Since(writeStartTime)
 	logger.Info("flush kv",
@@ -585,26 +586,16 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort_and_write").Observe(float64(w.batchSize) / 1024.0 / 1024.0 / totalDuration.Seconds())
 
 	// maintain 500-batch statistics
-	l := len(w.multiFileStats)
 	if len(w.kvLocations) > 0 {
 		w.totalCnt += uint64(len(w.kvLocations))
 
 		minKey, maxKey := w.getKeyByLoc(&w.kvLocations[0]), w.getKeyByLoc(&w.kvLocations[len(w.kvLocations)-1])
 		w.recordMinMax(minKey, maxKey, uint64(w.kvSize))
 
-		w.multiFileStats[l-1].Filenames = append(w.multiFileStats[l-1].Filenames,
-			[2]string{dataFile, statFile},
-		)
-		w.fileMinKeys = append(w.fileMinKeys, tidbkv.Key(minKey).Clone())
-		w.fileMaxKeys = append(w.fileMaxKeys, tidbkv.Key(maxKey).Clone())
+		w.addNewKVFile2MultiFileStats(dataFile, statFile, minKey, maxKey)
 	}
-	if fromClose || len(w.multiFileStats[l-1].Filenames) == multiFileStatNum {
-		w.multiFileStats[l-1].build(w.fileMinKeys, w.fileMaxKeys)
-		w.multiFileStats = append(w.multiFileStats, MultipleFilesStat{
-			Filenames: make([][2]string, 0, multiFileStatNum),
-		})
-		w.fileMinKeys = w.fileMinKeys[:0]
-		w.fileMaxKeys = w.fileMaxKeys[:0]
+	if fromClose && len(w.multiFileStats) > 0 {
+		w.multiFileStats[len(w.multiFileStats)-1].build(w.fileMinKeys, w.fileMaxKeys)
 	}
 
 	// maintain dup statistics
@@ -621,6 +612,28 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	w.batchSize = 0
 	w.currentSeq++
 	return nil
+}
+
+func (w *Writer) addNewKVFile2MultiFileStats(dataFile, statFile string, minKey, maxKey []byte) {
+	l := len(w.multiFileStats)
+	if l == 0 || len(w.multiFileStats[l-1].Filenames) == multiFileStatNum {
+		if l > 0 {
+			w.multiFileStats[l-1].build(w.fileMinKeys, w.fileMaxKeys)
+		}
+		w.multiFileStats = append(w.multiFileStats, MultipleFilesStat{
+			Filenames: make([][2]string, 0, multiFileStatNum),
+		})
+		w.fileMinKeys = w.fileMinKeys[:0]
+		w.fileMaxKeys = w.fileMaxKeys[:0]
+
+		l = len(w.multiFileStats)
+	}
+
+	w.multiFileStats[l-1].Filenames = append(w.multiFileStats[l-1].Filenames,
+		[2]string{dataFile, statFile},
+	)
+	w.fileMinKeys = append(w.fileMinKeys, tidbkv.Key(minKey).Clone())
+	w.fileMaxKeys = append(w.fileMaxKeys, tidbkv.Key(maxKey).Clone())
 }
 
 func (w *Writer) flushSortedKVs(ctx context.Context, dupLocs []membuf.SliceLocation) (string, string, string, error) {
