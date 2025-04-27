@@ -1660,7 +1660,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	keyspaceName = keyspace.GetKeyspaceNameBySettings()
 	if !keyspace.IsKeyspaceNameEmpty(keyspaceName) {
 		if kerneltype.IsNextGen() {
-			keyspaceIDU64, _ := strconv.ParseUint(keyspaceName, 10, 32)
+			keyspaceIDU64, _ := strconv.ParseUint(keyspaceName, 10, 32) //nolint:errcheck
 			keyspaceID = uint32(keyspaceIDU64)
 		} else {
 			keyspaceID = uint32(a.Ctx.GetStore().GetCodec().GetKeyspaceID())
