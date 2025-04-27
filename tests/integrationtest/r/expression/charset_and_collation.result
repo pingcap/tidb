@@ -814,7 +814,6 @@ b	b
 a	A
 Level	Code	Message
 Warning	1815	Optimizer Hint /*+ INL_HASH_JOIN(t2) */ is inapplicable
-Warning	1815	Optimizer Hint /*+ INL_HASH_JOIN(t2) */ is inapplicable
 select /*+ inl_merge_join(t1) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b;
 b	b
 a	A
