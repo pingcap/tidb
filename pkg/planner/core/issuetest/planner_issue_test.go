@@ -251,11 +251,11 @@ func TestIssue59902(t *testing.T) {
 	tk.MustQuery("explain format='brief' select t1.b,(select count(*) from t2 where t2.a=t1.a) as a from t1 where t1.a=1;").
 		Check(testkit.Rows(
 			"Projection 1.00 root  test.t1.b, ifnull(Column#9, 0)->Column#9",
-			"└─IndexJoin 1.00 root  left outer join, inner:HashAgg, left side:Point_Get, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+			"└─IndexJoin 1.00 root  left outer join, inner:StreamAgg, left side:Point_Get, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
 			"  ├─Point_Get(Build) 1.00 root table:t1 handle:1",
-			"  └─HashAgg(Probe) 1.00 root  group by:test.t2.a, funcs:count(Column#10)->Column#9, funcs:firstrow(test.t2.a)->test.t2.a",
-			"    └─IndexReader 1.00 root  index:HashAgg",
-			"      └─HashAgg 1.00 cop[tikv]  group by:test.t2.a, funcs:count(1)->Column#10",
+			"  └─StreamAgg(Probe) 1.00 root  group by:test.t2.a, funcs:count(Column#18)->Column#9, funcs:firstrow(test.t2.a)->test.t2.a",
+			"    └─IndexReader 1.00 root  index:StreamAgg",
+			"      └─StreamAgg 1.00 cop[tikv]  group by:test.t2.a, funcs:count(1)->Column#18",
 			"        └─Selection 1.00 cop[tikv]  not(isnull(test.t2.a))",
-			"          └─IndexRangeScan 1.00 cop[tikv] table:t2, index:idx(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"))
+			"          └─IndexRangeScan 1.00 cop[tikv] table:t2, index:idx(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:true, stats:pseudo"))
 }
