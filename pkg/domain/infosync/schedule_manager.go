@@ -16,10 +16,10 @@ package infosync
 
 import (
 	"context"
+	"maps"
 	"sync"
 
 	pd "github.com/tikv/pd/client/http"
-	"maps"
 )
 
 // ScheduleManager manages schedule configs
