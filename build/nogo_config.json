@@ -356,7 +356,6 @@
       "/cgo/": "no need to vet cgo code"
     },
     "only_files": {
-      "br": "br code",
       "cmd": "cmd code",
       "pkg/bindinfo/": "bindinfo code",
       "pkg/infoschema/": "infoschema code",
