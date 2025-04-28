@@ -358,6 +358,7 @@
     "only_files": {
       "//cmd/": "cmd code",
       "pkg/bindinfo/": "bindinfo code",
+      "pkg/config/": "config code",
       "pkg/distsql/": "distsql code",
       "pkg/domain/": "domain code",
       "pkg/extension/": "extension code",
