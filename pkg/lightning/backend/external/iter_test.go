@@ -305,7 +305,7 @@ func testMergeIterSwitchMode(t *testing.T, f func([]byte, int) []byte) {
 	err := writer.Close(context.Background())
 	require.NoError(t, err)
 
-	dataNames, _, err := GetAllFileNames(context.Background(), st, "")
+	dataNames, _, err := getKVAndStatFilesByScan(context.Background(), st, "testprefix")
 	require.NoError(t, err)
 
 	offsets := make([]uint64, len(dataNames))

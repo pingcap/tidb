@@ -70,22 +70,28 @@ func checkFileCleaned(t *testing.T, jobID, taskID int64, sortStorageURI string) 
 	require.NoError(t, err)
 	for _, id := range []int64{jobID, taskID} {
 		prefix := strconv.Itoa(int(id))
-		dataFiles, statFiles, err := external.GetAllFileNames(context.Background(), extStore, prefix)
+		files, err := external.GetAllFileNames(context.Background(), extStore, prefix)
 		require.NoError(t, err)
 		require.Greater(t, jobID, int64(0))
-		require.Equal(t, 0, len(dataFiles))
-		require.Equal(t, 0, len(statFiles))
+		require.Equal(t, 0, len(files))
 	}
 }
 
-func checkFileExist(t *testing.T, sortStorageURI string, prefix string) {
+// check the file under dir or partitioned dir have files with keyword
+func checkFileExist(t *testing.T, sortStorageURI string, dir, keyword string) {
 	storeBackend, err := storage.ParseBackend(sortStorageURI, nil)
 	require.NoError(t, err)
 	extStore, err := storage.NewWithDefaultOpt(context.Background(), storeBackend)
 	require.NoError(t, err)
-	dataFiles, _, err := external.GetAllFileNames(context.Background(), extStore, prefix)
+	dataFiles, err := external.GetAllFileNames(context.Background(), extStore, dir)
 	require.NoError(t, err)
-	require.Greater(t, len(dataFiles), 0)
+	filteredFiles := make([]string, 0)
+	for _, f := range dataFiles {
+		if strings.Contains(f, keyword) {
+			filteredFiles = append(filteredFiles, f)
+		}
+	}
+	require.Greater(t, len(filteredFiles), 0)
 }
 
 func checkExternalFields(t *testing.T, tk *testkit.TestKit) {
@@ -171,8 +177,8 @@ func TestGlobalSortBasic(t *testing.T) {
 	tk.MustExec("admin check table t;")
 	checkExternalFields(t, tk)
 	taskID := getTaskID(t, tk)
-	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/ingest")
-	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/merge-sort")
+	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID)), "/plan/ingest")
+	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID)), "/plan/merge-sort")
 
 	dom.DDL().SetHook(origin)
 
