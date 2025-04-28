@@ -171,7 +171,7 @@ func (d *diskRootImpl) PreCheckUsage() error {
 			zap.String("sort path", d.path),
 			zap.String("usage", d.usageInfo()))
 		if runtime.GOOS == "darwin" {
-			// darwin‘s disk is too expensive and we only use it in the development environment. so we ignore the error.
+			// darwin's disk is too expensive and we only use it in the development environment. so we ignore the error.
 			return nil
 		}
 		msg := fmt.Sprintf("no enough space in %s", d.path)
