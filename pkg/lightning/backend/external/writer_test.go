@@ -28,8 +28,10 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/docker/go-units"
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -594,4 +596,155 @@ func TestFlushKVsRetry(t *testing.T) {
 		lastKey = append(lastKey[:0], p.firstKey...)
 		p, err = r.nextProp()
 	}
+}
+
+func TestGetAdjustedIndexBlockSize(t *testing.T) {
+	require.EqualValues(t, 1*units.MiB, GetAdjustedBlockSize(1*units.MiB))
+	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(15*units.MiB))
+	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(16*units.MiB))
+	require.EqualValues(t, 17*units.MiB, GetAdjustedBlockSize(17*units.MiB))
+	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(166*units.MiB))
+}
+
+func readKVFile(t *testing.T, store *writerFirstCloseFailStorage, filename string) []kvPair {
+	t.Helper()
+	reader, err := newKVReader(context.Background(), filename, store, 0, units.KiB)
+	require.NoError(t, err)
+	kvs := make([]kvPair, 0)
+	for {
+		key, value, err := reader.nextKV()
+		if goerrors.Is(err, io.EOF) {
+			break
+		}
+		require.NoError(t, err)
+		kvs = append(kvs, kvPair{key: slices.Clone(key), value: slices.Clone(value)})
+	}
+	return kvs
+}
+
+func TestWriterOnDupRecord(t *testing.T) {
+	ctx := context.Background()
+	store := &writerFirstCloseFailStorage{ExternalStorage: storage.NewMemStorage(), shouldFail: true}
+	var summary *WriterSummary
+
+	t.Run("all duplicated, flush once", func(t *testing.T) {
+		writer := NewWriterBuilder().SetPropKeysDistance(4).SetMemorySizeLimit(240).SetBlockSize(240).
+			SetOnCloseFunc(func(s *WriterSummary) { summary = s }).SetOnDup(engineapi.OnDuplicateKeyRecord).
+			Build(store, "/test", "0")
+		for range 5 {
+			require.NoError(t, writer.WriteRow(ctx, []byte("1111"), []byte("vvvv"), nil))
+		}
+		require.NoError(t, writer.Close(ctx))
+		require.EqualValues(t, []byte("1111"), summary.Min)
+		require.EqualValues(t, []byte("1111"), summary.Max)
+		require.EqualValues(t, 2, summary.TotalCnt)
+		require.EqualValues(t, 16, summary.TotalSize)
+		require.EqualValues(t, 3, summary.ConflictInfo.Count)
+		require.Len(t, summary.ConflictInfo.Files, 1)
+		kvs := readKVFile(t, store, summary.ConflictInfo.Files[0])
+		require.Len(t, kvs, 3)
+		for _, p := range kvs {
+			require.Equal(t, []byte("1111"), p.key)
+			require.Equal(t, []byte("vvvv"), p.value)
+		}
+	})
+
+	t.Run("with different duplicated kv, flush twice", func(t *testing.T) {
+		// each KV will take 24 bytes, so we flush every 10 KVs
+		writer := NewWriterBuilder().SetPropKeysDistance(4).SetMemorySizeLimit(240).SetBlockSize(240).
+			SetOnCloseFunc(func(s *WriterSummary) { summary = s }).SetOnDup(engineapi.OnDuplicateKeyRecord).
+			Build(store, "/test", "0")
+		for _, p := range []struct {
+			pair *kvPair
+			cnt  int
+		}{
+			{pair: &kvPair{key: []byte("5555"), value: []byte("vvvv")}, cnt: 2},
+			{pair: &kvPair{key: []byte("2222"), value: []byte("vvvv")}, cnt: 3},
+			{pair: &kvPair{key: []byte("1111"), value: []byte("vvvv")}, cnt: 5},
+			{pair: &kvPair{key: []byte("6666"), value: []byte("vvvv")}, cnt: 1},
+			{pair: &kvPair{key: []byte("7777"), value: []byte("vvvv")}, cnt: 1},
+			{pair: &kvPair{key: []byte("4444"), value: []byte("vvvv")}, cnt: 4},
+			{pair: &kvPair{key: []byte("3333"), value: []byte("vvvv")}, cnt: 4},
+		} {
+			for i := 0; i < p.cnt; i++ {
+				require.NoError(t, writer.WriteRow(ctx, p.pair.key, p.pair.value, nil))
+			}
+		}
+		require.NoError(t, writer.Close(ctx))
+		require.EqualValues(t, []byte("1111"), summary.Min)
+		require.EqualValues(t, []byte("7777"), summary.Max)
+		require.EqualValues(t, 12, summary.TotalCnt)
+		require.EqualValues(t, 96, summary.TotalSize)
+		require.EqualValues(t, 8, summary.ConflictInfo.Count)
+		require.Len(t, summary.ConflictInfo.Files, 2)
+		kvs := readKVFile(t, store, summary.ConflictInfo.Files[0])
+		require.EqualValues(t, []kvPair{
+			{key: []byte("1111"), value: []byte("vvvv")},
+			{key: []byte("1111"), value: []byte("vvvv")},
+			{key: []byte("1111"), value: []byte("vvvv")},
+			{key: []byte("2222"), value: []byte("vvvv")},
+		}, kvs)
+		kvs = readKVFile(t, store, summary.ConflictInfo.Files[1])
+		require.EqualValues(t, []kvPair{
+			{key: []byte("3333"), value: []byte("vvvv")},
+			{key: []byte("3333"), value: []byte("vvvv")},
+			{key: []byte("4444"), value: []byte("vvvv")},
+			{key: []byte("4444"), value: []byte("vvvv")},
+		}, kvs)
+	})
+}
+
+func TestWriterOnDupRemove(t *testing.T) {
+	ctx := context.Background()
+	store := &writerFirstCloseFailStorage{ExternalStorage: storage.NewMemStorage(), shouldFail: true}
+	var summary *WriterSummary
+
+	t.Run("all duplicated, flush once", func(t *testing.T) {
+		writer := NewWriterBuilder().SetPropKeysDistance(4).SetMemorySizeLimit(240).SetBlockSize(240).
+			SetOnCloseFunc(func(s *WriterSummary) { summary = s }).SetOnDup(engineapi.OnDuplicateKeyRemove).
+			Build(store, "/test", "0")
+		for range 5 {
+			require.NoError(t, writer.WriteRow(ctx, []byte("1111"), []byte("vvvv"), nil))
+		}
+		require.NoError(t, writer.Close(ctx))
+		require.EqualValues(t, dbkv.Key(nil), summary.Min)
+		require.EqualValues(t, dbkv.Key(nil), summary.Max)
+		require.EqualValues(t, 0, summary.TotalCnt)
+		require.EqualValues(t, 0, summary.TotalSize)
+		require.Empty(t, summary.MultipleFilesStats)
+		require.EqualValues(t, 0, summary.ConflictInfo.Count)
+		require.Empty(t, summary.ConflictInfo.Files)
+	})
+
+	t.Run("with different duplicated kv, flush twice", func(t *testing.T) {
+		// each KV will take 24 bytes, so we flush every 10 KVs
+		writer := NewWriterBuilder().SetPropKeysDistance(4).SetMemorySizeLimit(240).SetBlockSize(240).
+			SetOnCloseFunc(func(s *WriterSummary) { summary = s }).SetOnDup(engineapi.OnDuplicateKeyRemove).
+			Build(store, "/test", "0")
+		for _, p := range []struct {
+			pair *kvPair
+			cnt  int
+		}{
+			{pair: &kvPair{key: []byte("5555"), value: []byte("vvvv")}, cnt: 2},
+			{pair: &kvPair{key: []byte("2222"), value: []byte("vvvv")}, cnt: 3},
+			{pair: &kvPair{key: []byte("1111"), value: []byte("vvvv")}, cnt: 5},
+			{pair: &kvPair{key: []byte("6666"), value: []byte("vvvv")}, cnt: 1},
+			{pair: &kvPair{key: []byte("7777"), value: []byte("vvvv")}, cnt: 1},
+			{pair: &kvPair{key: []byte("4444"), value: []byte("vvvv")}, cnt: 4},
+			{pair: &kvPair{key: []byte("3333"), value: []byte("vvvv")}, cnt: 4},
+		} {
+			for i := 0; i < p.cnt; i++ {
+				require.NoError(t, writer.WriteRow(ctx, p.pair.key, p.pair.value, nil))
+			}
+		}
+		require.NoError(t, writer.Close(ctx))
+		require.EqualValues(t, []byte("6666"), summary.Min)
+		require.EqualValues(t, []byte("7777"), summary.Max)
+		require.EqualValues(t, 2, summary.TotalCnt)
+		require.EqualValues(t, 16, summary.TotalSize)
+		require.Len(t, summary.MultipleFilesStats, 1)
+		require.Len(t, summary.MultipleFilesStats[0].Filenames, 1)
+		require.EqualValues(t, 0, summary.ConflictInfo.Count)
+		require.Empty(t, summary.ConflictInfo.Files)
+	})
 }

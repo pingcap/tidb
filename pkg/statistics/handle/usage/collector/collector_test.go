@@ -32,7 +32,7 @@ func TestSessionSendDelta(t *testing.T) {
 	g.StartWorker()
 	s := g.SpawnSession()
 	expect := 0
-	for i := 0; i < 256; i++ {
+	for range 256 {
 		if s.SendDelta(1) {
 			expect += 1
 		}
@@ -53,11 +53,11 @@ func TestSessionParallelSendDelta(t *testing.T) {
 	g.StartWorker()
 	sessionCount := 256
 	var wg sync.WaitGroup
-	for i := 0; i < sessionCount; i++ {
+	for range sessionCount {
 		s := g.SpawnSession()
 		wg.Add(1)
 		go func() {
-			for i := 0; i < 256; i++ {
+			for range 256 {
 				if s.SendDelta(1) {
 					expect.Add(1)
 				}
@@ -82,11 +82,11 @@ func TestSessionParallelSendDeltaSync(t *testing.T) {
 	sessionCount := 256
 	var wg sync.WaitGroup
 
-	for i := 0; i < sessionCount; i++ {
+	for range sessionCount {
 		wg.Add(1)
 		s := g.SpawnSession()
 		go func() {
-			for i := 0; i < 256; i++ {
+			for range 256 {
 				s.SendDeltaSync(1)
 			}
 			wg.Done()

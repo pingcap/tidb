@@ -243,8 +243,13 @@ func (b *PlanBuilder) rewriteWithPreprocess(
 func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p base.LogicalPlan) (rewriter *expressionRewriter) {
 	defer func() {
 		if p != nil {
-			rewriter.schema = p.Schema()
-			rewriter.names = p.OutputNames()
+			if join, ok := p.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
+				rewriter.schema = join.FullSchema
+				rewriter.names = join.FullNames
+			} else {
+				rewriter.schema = p.Schema()
+				rewriter.names = p.OutputNames()
+			}
 		}
 	}()
 

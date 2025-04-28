@@ -23,6 +23,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -57,6 +58,7 @@ type OneFileWriter struct {
 
 	onClose OnCloseFunc
 	closed  bool
+	onDup   engineapi.OnDuplicateKey
 
 	minKey []byte
 	maxKey []byte

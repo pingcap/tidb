@@ -17,6 +17,7 @@ package statistics
 import (
 	"cmp"
 	"fmt"
+	stdmaps "maps"
 	"slices"
 	"strings"
 
@@ -628,9 +629,7 @@ func (t *Table) Copy() *Table {
 			Stats:             make(map[string]*ExtendedStatsItem),
 			LastUpdateVersion: t.ExtendedStats.LastUpdateVersion,
 		}
-		for name, item := range t.ExtendedStats.Stats {
-			newExtStatsColl.Stats[name] = item
-		}
+		stdmaps.Copy(newExtStatsColl.Stats, t.ExtendedStats.Stats)
 		nt.ExtendedStats = newExtStatsColl
 	}
 	if t.ColAndIdxExistenceMap != nil {
