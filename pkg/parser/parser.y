@@ -16691,9 +16691,14 @@ CalibrateResourceWorkloadOption:
 	}
 
 AlterLLMStmt:
-	"ALTER" "LLM" "PLATFORM"
+	"ALTER" "LLM" "PLATFORM" identifier identifier identifier
 	{
-		$$ = &ast.AlterLLMStmt{}
+		$$ = &ast.AlterLLMStmt{
+			Platform: true,
+			Name:     $4,
+			Key:      $5,
+			Value:    $6,
+		}
 	}
 
 /********************************************************************

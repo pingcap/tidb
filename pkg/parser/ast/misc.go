@@ -4275,6 +4275,21 @@ func (n *DropQueryWatchStmt) Accept(v Visitor) (Node, bool) {
 
 type AlterLLMStmt struct {
 	stmtNode
+	Platform bool
+	Name     string
+	Key      string
+	Value    string
+}
+
+func (n *AlterLLMStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("ALTER LLM")
+	if n.Platform {
+		ctx.WriteKeyWord(" PLATFORM")
+	}
+	ctx.WriteName(n.Name)
+	ctx.WriteName(n.Key)
+	ctx.WriteName(n.Value)
+	return nil
 }
 
 // AddQueryWatchStmt is a statement to add a runaway watch item.
