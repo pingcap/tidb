@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -349,7 +350,7 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, jobKeys [][]byte, outC
 			return true
 		}
 		if cmp == 0 && i != k {
-			cloned := append([]byte(nil), e.memKVsAndBuffers.kvs[i].key...)
+			cloned := slices.Clone(e.memKVsAndBuffers.kvs[i].key)
 			dupKey.Store(&cloned)
 		}
 		return false
