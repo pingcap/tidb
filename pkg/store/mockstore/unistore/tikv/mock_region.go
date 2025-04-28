@@ -513,6 +513,7 @@ func (rm *MockRegionManager) splitKeys(keys [][]byte) ([]*regionCtx, error) {
 
 		var i int
 		// Cannot be: i = range keys, probably the scope of i is different then
+		// nolint: intrange
 		for i = 0; i < len(keys); i++ {
 			if len(region.EndKey) > 0 && bytes.Compare(keys[i], region.EndKey) >= 0 {
 				break
