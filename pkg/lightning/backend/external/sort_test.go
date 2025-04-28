@@ -134,7 +134,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	require.NoError(t, err)
 
 	// 2. merge step
-	datas, stats, err := GetAllFileNames(ctx, memStore, "")
+	datas, stats, err := getKVAndStatFilesByScan(ctx, memStore, "test")
 	require.NoError(t, err)
 
 	dataGroup, _ := splitDataAndStatFiles(datas, stats)
