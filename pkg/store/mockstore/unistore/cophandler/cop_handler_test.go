@@ -104,7 +104,7 @@ func prepareTestTableData(keyNumber int, tableID int64) (*data, error) {
 	}
 	colInfos := make([]*tipb.ColumnInfo, 3)
 	colTypeMap := map[int64]*types.FieldType{}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		colInfos[i] = &tipb.ColumnInfo{
 			ColumnId:  colIds[i],
 			Tp:        int32(colTypes[i].GetType()),
@@ -115,7 +115,7 @@ func prepareTestTableData(keyNumber int, tableID int64) (*data, error) {
 	rows := map[int64][]types.Datum{}
 	encodedTestKVDatas := make([]*encodedTestKVData, keyNumber)
 	encoder := &rowcodec.Encoder{Enable: true}
-	for i := 0; i < keyNumber; i++ {
+	for i := range keyNumber {
 		datum := types.MakeDatums(i, "abc", 10.0)
 		rows[int64(i)] = datum
 		rowEncodedData, err := tablecodec.EncodeRow(stmtCtx.TimeZone(), datum, colIds, nil, nil, nil, encoder)
@@ -157,7 +157,7 @@ func convertToPrefixNext(key []byte) []byte {
 		}
 		key[i] = 0
 	}
-	for i := 0; i < len(key); i++ {
+	for i := range key {
 		key[i] = 255
 	}
 	return append(key, 0)
@@ -169,7 +169,7 @@ func isPrefixNext(key []byte, expected []byte) bool {
 	if len(key) != len(expected) {
 		return false
 	}
-	for i := 0; i < len(key); i++ {
+	for i := range key {
 		if key[i] != expected[i] {
 			return false
 		}

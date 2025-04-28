@@ -47,7 +47,7 @@ func TestDDLAfterLoad(t *testing.T) {
 	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
 	recordCount := 1000
-	for i := 0; i < recordCount; i++ {
+	for i := range recordCount {
 		testKit.MustExec("insert into t values (?, ?)", i, i+1)
 	}
 	testKit.MustExec("analyze table t")
@@ -1525,7 +1525,7 @@ func TestExchangePartition(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	var wg util.WaitGroupWrapper
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		tk1 := testkit.NewTestKit(t, store)
 		wg.Run(func() {
 			tk1.MustExec("begin")
