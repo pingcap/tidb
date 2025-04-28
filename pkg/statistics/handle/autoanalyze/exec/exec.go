@@ -60,7 +60,7 @@ func AutoAnalyze(
 		if err1 != nil {
 			escaped = ""
 		}
-		statslogutil.StatsErrVerboseLogger().Error(
+		statslogutil.StatsErrVerboseSampleLogger().Error(
 			"auto analyze failed",
 			zap.String("sql", escaped),
 			zap.Duration("cost_time", dur),

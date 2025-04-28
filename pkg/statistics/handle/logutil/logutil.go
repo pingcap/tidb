@@ -27,12 +27,6 @@ func StatsLogger() *zap.Logger {
 	return logutil.BgLogger().With(zap.String("category", "stats"))
 }
 
-// StatsErrVerboseLogger returns a logger that always output error verbose regardless
-// of the log config.
-func StatsErrVerboseLogger() *zap.Logger {
-	return logutil.ErrVerboseLogger().With(zap.String("category", "stats"))
-}
-
 var (
 	sampleLoggerFactory = logutil.SampleLoggerFactory(5*time.Minute, 1, zap.String(logutil.LogFieldCategory, "stats"))
 	// sampleErrVerboseLoggerFactory creates a logger for error messages with a higher
