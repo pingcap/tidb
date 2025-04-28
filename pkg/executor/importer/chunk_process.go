@@ -123,7 +123,7 @@ func (r *queryChunkEncodeReader) readRow(ctx context.Context, row []types.Datum)
 	} else {
 		row = row[:0]
 		for i := 0; i < rowLen; i++ {
-			row = append(row, types.Datum{})
+			row = append(row, types.Datum{}) // nozero
 		}
 	}
 	row = chkRow.GetDatumRowWithBuffer(r.currChk.Fields, row)
