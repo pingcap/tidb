@@ -1110,6 +1110,9 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 			continue
 		}
 		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
+		if i == 8 && !logic.SCtx().GetSessionVars().InRestrictedSQL {
+			fmt.Println("wwz")
+		}
 		var planChanged bool
 		logic, planChanged, err = rule.Optimize(ctx, logic, opt)
 		if err != nil {

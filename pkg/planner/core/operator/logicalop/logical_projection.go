@@ -15,6 +15,7 @@
 package logicalop
 
 import (
+	"fmt"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -189,6 +190,9 @@ func (p *LogicalProjection) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *
 	var topN *LogicalTopN
 	if topNLogicalPlan != nil {
 		topN = topNLogicalPlan.(*LogicalTopN)
+	}
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
 	}
 	if slices.ContainsFunc(p.Exprs, expression.HasAssignSetVarFunc) {
 		return p.BaseLogicalPlan.PushDownTopN(topN, opt)
