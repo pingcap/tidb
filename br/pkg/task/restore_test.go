@@ -65,7 +65,7 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 	pdClient := split.NewFakePDClient(mockStores, false, nil)
 
 	tables := make([]*metautil.Table, 4)
-	for i := 0; i < len(tables); i++ {
+	for i := range tables {
 		tiflashReplica := &model.TiFlashReplicaInfo{
 			Count: uint64(i),
 		}
@@ -85,7 +85,7 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 	ctx := context.Background()
 	require.Nil(t, task.PreCheckTableTiFlashReplica(ctx, pdClient, tables, nil))
 
-	for i := 0; i < len(tables); i++ {
+	for i := range tables {
 		if i == 0 || i > 2 {
 			require.Nil(t, tables[i].Info.TiFlashReplica)
 		} else {
@@ -96,7 +96,7 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 	}
 
 	require.Nil(t, task.PreCheckTableTiFlashReplica(ctx, pdClient, tables, tiflashrec.New()))
-	for i := 0; i < len(tables); i++ {
+	for i := range tables {
 		require.Nil(t, tables[i].Info.TiFlashReplica)
 	}
 }

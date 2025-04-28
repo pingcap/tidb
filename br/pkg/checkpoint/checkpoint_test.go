@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
@@ -615,11 +616,9 @@ func testCheckpointLogRestoreRunner(
 			if !exists {
 				continue
 			}
-			for _, foff := range foffs {
-				if f.foff == foff {
-					respCount += 1
-					return nil
-				}
+			if slices.Contains(foffs, f.foff) {
+				respCount += 1
+				return nil
 			}
 		}
 		require.FailNow(t, "not found in the original data")
