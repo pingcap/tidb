@@ -45,7 +45,6 @@ type RangerContext struct {
 func (r *RangerContext) Detach(staticExprCtx exprctx.BuildContext) *RangerContext {
 	newCtx := *r
 	newCtx.ExprCtx = staticExprCtx
-	newCtx.OptimizerFixControl = make(map[uint64]string, len(r.OptimizerFixControl))
-	maps.Copy(newCtx.OptimizerFixControl, r.OptimizerFixControl)
+	newCtx.OptimizerFixControl = maps.Clone(r.OptimizerFixControl)
 	return &newCtx
 }
