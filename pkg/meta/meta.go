@@ -1004,7 +1004,7 @@ func splitRangeInt64Max(n int64) [][]string {
 	// 9999999999999999999 is the max number than maxInt64 in string format.
 	batch := 9999999999999999999 / uint64(n)
 
-	for k := int64(0); k < n; k++ {
+	for k := range n {
 		start := batch * uint64(k)
 		end := batch * uint64(k+1)
 

@@ -359,6 +359,7 @@
       "//cmd/": "cmd code",
       "pkg/bindinfo/": "bindinfo code",
       "pkg/infoschema/": "infoschema code",
+      "pkg/meta/": "meta code",
       "pkg/owner/": "owner code",
       "pkg/util/": "util code",
       "pkg/workloadlearning": "workloadlearning code",
