@@ -15,9 +15,18 @@
 package metrics
 
 import (
+	"strconv"
 	"strings"
+	"sync"
 
+	"github.com/pingcap/tidb/pkg/lightning/metric"
+	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/prometheus/client_golang/prometheus"
+)
+
+var (
+	mu            sync.Mutex
+	registeredJob map[int64]*metric.Common
 )
 
 // Metrics for the DDL package.
@@ -85,6 +94,10 @@ var (
 	DDLRunningJobCount    *prometheus.GaugeVec
 	AddIndexScanRate      *prometheus.HistogramVec
 )
+
+func init() {
+	registeredJob = make(map[int64]*metric.Common, 64)
+}
 
 // InitDDLMetrics initializes defines DDL metrics.
 func InitDDLMetrics() {
@@ -263,4 +276,31 @@ func GetBackfillTotalByLabel(label, schemaName, tableName, optionalColOrIdxName 
 // GetBackfillProgressByLabel returns the Gauge showing the percentage progress for the given type label.
 func GetBackfillProgressByLabel(label, schemaName, tableName, optionalColOrIdxName string) prometheus.Gauge {
 	return BackfillProgressGauge.WithLabelValues(generateReorgLabel(label, schemaName, tableName, optionalColOrIdxName))
+}
+
+// RegisteredLightningCommonMetricsForDDL returns the registered common metrics.
+func RegisteredLightningCommonMetricsForDDL(jobID int64) *metric.Common {
+	mu.Lock()
+	defer func() {
+		mu.Unlock()
+	}()
+	if m, ok := registeredJob[jobID]; ok {
+		return m
+	}
+	metrics := metric.NewCommon(promutil.NewDefaultFactory(), "tidb", "ddl", prometheus.Labels{
+		"job_id": strconv.FormatInt(jobID, 10),
+	})
+	metrics.RegisterTo(prometheus.DefaultRegisterer)
+	registeredJob[jobID] = metrics
+	return metrics
+}
+
+// UnregisteredLightningCommonMetricsForDDL unregisters the registered common metrics.
+func UnregisteredLightningCommonMetricsForDDL(jobID int64, metrics *metric.Common) {
+	mu.Lock()
+	defer func() {
+		mu.Unlock()
+	}()
+	metrics.UnregisterFrom(prometheus.DefaultRegisterer)
+	delete(registeredJob, jobID)
 }

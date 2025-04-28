@@ -28,7 +28,9 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
+	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -44,6 +46,7 @@ type cloudImportExecutor struct {
 	backendCtx      ingest.BackendCtx
 	backend         *local.Backend
 	taskConcurrency int
+	m               *lightningmetric.Common
 }
 
 func newCloudImportExecutor(
@@ -64,30 +67,32 @@ func newCloudImportExecutor(
 	}, nil
 }
 
-func (m *cloudImportExecutor) Init(ctx context.Context) error {
+func (c *cloudImportExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor init subtask exec env")
-	cfg, bd, err := ingest.CreateLocalBackend(ctx, m.store, m.job, false, m.taskConcurrency)
+	c.m = metrics.RegisteredLightningCommonMetricsForDDL(c.job.ID)
+	ctx = lightningmetric.WithCommonMetric(ctx, c.m)
+	cfg, bd, err := ingest.CreateLocalBackend(ctx, c.store, c.job, false, c.taskConcurrency)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	bCtx, err := ingest.NewBackendCtxBuilder(ctx, m.store, m.job).Build(cfg, bd)
+	bCtx, err := ingest.NewBackendCtxBuilder(ctx, c.store, c.job).Build(cfg, bd)
 	if err != nil {
 		bd.Close()
 		return err
 	}
-	m.backend = bd
-	m.backendCtx = bCtx
+	c.backend = bd
+	c.backendCtx = bCtx
 	return nil
 }
 
-func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
+func (c *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("cloud import executor run subtask")
 
-	sm, err := decodeBackfillSubTaskMeta(ctx, m.cloudStoreURI, subtask.Meta)
+	sm, err := decodeBackfillSubTaskMeta(ctx, c.cloudStoreURI, subtask.Meta)
 	if err != nil {
 		return err
 	}
-	local := m.backendCtx.GetLocalBackend()
+	local := c.backendCtx.GetLocalBackend()
 	if local == nil {
 		return errors.Errorf("local backend not found")
 	}
@@ -98,7 +103,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	)
 	switch len(sm.EleIDs) {
 	case 1:
-		for _, idx := range m.indexes {
+		for _, idx := range c.indexes {
 			if idx.ID == sm.EleIDs[0] {
 				currentIdx = idx
 				idxID = idx.ID
@@ -107,15 +112,15 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 		}
 	case 0:
 		// maybe this subtask is generated from an old version TiDB
-		if len(m.indexes) == 1 {
-			currentIdx = m.indexes[0]
+		if len(c.indexes) == 1 {
+			currentIdx = c.indexes[0]
 		}
-		idxID = m.indexes[0].ID
+		idxID = c.indexes[0].ID
 	default:
 		return errors.Errorf("unexpected EleIDs count %v", sm.EleIDs)
 	}
 
-	_, engineUUID := backend.MakeUUID(m.ptbl.Meta().Name.L, idxID)
+	_, engineUUID := backend.MakeUUID(c.ptbl.Meta().Name.L, idxID)
 
 	all := external.SortedKVMeta{}
 	for _, g := range sm.MetaGroups {
@@ -129,7 +134,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	}
 	err = local.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
-			StorageURI:    m.cloudStoreURI,
+			StorageURI:    c.cloudStoreURI,
 			DataFiles:     sm.DataFiles,
 			StatFiles:     sm.StatFiles,
 			StartKey:      all.StartKey,
@@ -139,7 +144,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			TotalFileSize: int64(all.TotalKVSize),
 			TotalKVCount:  0,
 			CheckHotspot:  true,
-			MemCapacity:   m.GetResource().Mem.Capacity(),
+			MemCapacity:   c.GetResource().Mem.Capacity(),
 		},
 		TS: sm.TS,
 	}, engineUUID)
@@ -155,7 +160,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	}
 
 	if currentIdx != nil {
-		return ingest.TryConvertToKeyExistsErr(err, currentIdx, m.ptbl.Meta())
+		return ingest.TryConvertToKeyExistsErr(err, currentIdx, c.ptbl.Meta())
 	}
 
 	// cannot fill the index name for subtask generated from an old version TiDB
@@ -169,11 +174,12 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	return kv.ErrKeyExists
 }
 
-func (m *cloudImportExecutor) Cleanup(ctx context.Context) error {
+func (c *cloudImportExecutor) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor clean up subtask env")
-	if m.backendCtx != nil {
-		m.backendCtx.Close()
+	if c.backendCtx != nil {
+		c.backendCtx.Close()
 	}
-	m.backend.Close()
+	c.backend.Close()
+	metrics.UnregisteredLightningCommonMetricsForDDL(c.job.ID, c.m)
 	return nil
 }
