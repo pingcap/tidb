@@ -150,9 +150,6 @@ func (w *OneFileWriter) Init(ctx context.Context, partSize int64) (err error) {
 
 // WriteRow implements ingest.Writer.
 func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) error {
-	if w.minKey == nil {
-		w.minKey = slices.Clone(idxKey)
-	}
 	if w.onDup != common.OnDuplicateKeyIgnore {
 		// must be Record or Remove right now
 		return w.handleDupAndWrite(ctx, idxKey, idxVal)
@@ -215,6 +212,9 @@ func (w *OneFileWriter) handlePivotOnClose(ctx context.Context) error {
 }
 
 func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) error {
+	if w.minKey == nil {
+		w.minKey = slices.Clone(idxKey)
+	}
 	// 1. encode data and write to kvStore.
 	keyLen := len(idxKey)
 	length := len(idxKey) + len(idxVal) + lengthBytes*2
