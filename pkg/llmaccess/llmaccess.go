@@ -56,7 +56,8 @@ func (llm *llmAccessorImpl) AlterPlatform(platform, key, val string) error {
 	default:
 		return fmt.Errorf("unsupported key: %s", key)
 	}
-	updateStmt := fmt.Sprintf("update mysql.llm_platform set %s = ? where name = ?", key)
+	//updateStmt := fmt.Sprintf("update mysql.llm_platform set `%s` = %? where `name` = %?", key)
+	updateStmt := "update mysql.llm_platform set `"  + key + "` = %? where `name` = %?"
 	return callWithSCtx(llm.sPool, true, func(sctx sessionctx.Context) error {
 		_, err := exec(sctx, updateStmt, val, platform)
 		return err
