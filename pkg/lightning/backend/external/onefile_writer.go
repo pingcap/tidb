@@ -79,28 +79,35 @@ type OneFileWriter struct {
 	partSize int64
 }
 
-// initWriter inits the underlying dataFile/statFile path, dataWriter/statWriter for OneFileWriter.
-func (w *OneFileWriter) initWriter(ctx context.Context, partSize int64) (
-	err error,
-) {
-	w.dataFile = filepath.Join(w.filenamePrefix, "one-file")
-	w.dataWriter, err = w.store.Create(ctx, w.dataFile, &storage.WriterOption{
+// lazyInitWriter inits the underlying dataFile/statFile path, dataWriter/statWriter
+// for OneFileWriter lazily, as when OnDup=remove, the target file might be empty.
+func (w *OneFileWriter) lazyInitWriter(ctx context.Context) (err error) {
+	if w.dataWriter != nil {
+		return nil
+	}
+
+	dataFile := filepath.Join(w.filenamePrefix, "one-file")
+	dataWriter, err := w.store.Create(ctx, w.dataFile, &storage.WriterOption{
 		Concurrency: maxUploadWorkersPerThread,
-		PartSize:    partSize})
+		PartSize:    w.partSize})
 	if err != nil {
 		return err
 	}
-	w.statFile = filepath.Join(w.filenamePrefix+statSuffix, "one-file")
-	w.statWriter, err = w.store.Create(ctx, w.statFile, &storage.WriterOption{
+	statFile := filepath.Join(w.filenamePrefix+statSuffix, "one-file")
+	statWriter, err := w.store.Create(ctx, w.statFile, &storage.WriterOption{
 		Concurrency: maxUploadWorkersPerThread,
 		PartSize:    MinUploadPartSize})
 	if err != nil {
 		w.logger.Info("create stat writer failed", zap.Error(err))
-		_ = w.dataWriter.Close(ctx)
+		_ = dataWriter.Close(ctx)
 		return err
 	}
 	w.logger.Info("one file writer", zap.String("data-file", w.dataFile),
 		zap.String("stat-file", w.statFile), zap.Stringer("on-dup", w.onDup))
+
+	w.dataFile, w.dataWriter = dataFile, dataWriter
+	w.statFile, w.statWriter = statFile, statWriter
+	w.kvStore = NewKeyValueStore(ctx, w.dataWriter, w.rc)
 	return nil
 }
 
@@ -130,11 +137,6 @@ func (w *OneFileWriter) lazyInitDupFile(ctx context.Context) error {
 // Init inits the OneFileWriter and its underlying KeyValueStore.
 func (w *OneFileWriter) Init(ctx context.Context, partSize int64) (err error) {
 	w.logger = logutil.Logger(ctx)
-	err = w.initWriter(ctx, partSize)
-	if err != nil {
-		return err
-	}
-	w.kvStore = NewKeyValueStore(ctx, w.dataWriter, w.rc)
 	w.partSize = partSize
 	return nil
 }
@@ -206,6 +208,9 @@ func (w *OneFileWriter) handlePivotOnClose(ctx context.Context) error {
 }
 
 func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) error {
+	if err := w.lazyInitWriter(ctx); err != nil {
+		return err
+	}
 	// 1. encode data and write to kvStore.
 	keyLen := len(idxKey)
 	length := len(idxKey) + len(idxVal) + lengthBytes*2
@@ -248,8 +253,7 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	w.logger.Info("close one file writer",
-		zap.String("writerID", w.writerID))
+	w.logger.Info("close one file writer", zap.String("writerID", w.writerID))
 
 	var minKey, maxKey []byte
 	mStats := make([]MultipleFilesStat, 0, 1)
@@ -258,8 +262,7 @@ func (w *OneFileWriter) Close(ctx context.Context) error {
 		minKey = w.minKey
 		maxKey = slices.Clone(w.maxKey)
 		var stat MultipleFilesStat
-		stat.Filenames = append(stat.Filenames,
-			[2]string{w.dataFile, w.statFile})
+		stat.Filenames = append(stat.Filenames, [2]string{w.dataFile, w.statFile})
 		stat.build([]tidbkv.Key{w.minKey}, []tidbkv.Key{maxKey})
 		mStats = append(mStats, stat)
 	}
@@ -288,27 +291,29 @@ func (w *OneFileWriter) closeImpl(ctx context.Context) (err error) {
 	if err = w.handlePivotOnClose(ctx); err != nil {
 		return
 	}
-	// 1. write remaining statistic.
-	w.kvStore.finish()
-	encodedStat := w.rc.encode()
-	_, err = w.statWriter.Write(ctx, encodedStat)
-	if err != nil {
-		return err
-	}
-	w.rc.reset()
-	// 2. close data writer.
-	err1 := w.dataWriter.Close(ctx)
-	if err1 != nil {
-		err = err1
-		w.logger.Error("Close data writer failed", zap.Error(err))
-		return
-	}
-	// 3. close stat writer.
-	err2 := w.statWriter.Close(ctx)
-	if err2 != nil {
-		err = err2
-		w.logger.Error("Close stat writer failed", zap.Error(err))
-		return
+	if w.dataWriter != nil {
+		// 1. write remaining statistic.
+		w.kvStore.finish()
+		encodedStat := w.rc.encode()
+		_, err = w.statWriter.Write(ctx, encodedStat)
+		if err != nil {
+			return err
+		}
+		w.rc.reset()
+		// 2. close data writer.
+		err1 := w.dataWriter.Close(ctx)
+		if err1 != nil {
+			err = err1
+			w.logger.Error("Close data writer failed", zap.Error(err))
+			return
+		}
+		// 3. close stat writer.
+		err2 := w.statWriter.Close(ctx)
+		if err2 != nil {
+			err = err2
+			w.logger.Error("Close stat writer failed", zap.Error(err))
+			return
+		}
 	}
 	if w.dupWriter != nil {
 		w.dupKVStore.finish()
