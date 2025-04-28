@@ -358,17 +358,27 @@
     "only_files": {
       "//cmd/": "cmd code",
       "pkg/bindinfo/": "bindinfo code",
+      "pkg/extension/": "extension code",
       "pkg/infoschema/": "infoschema code",
+      "pkg/kv/": "kv code",
       "pkg/owner/": "owner code",
-      "pkg/util/": "util code",
-      "pkg/workloadlearning": "workloadlearning code",
       "pkg/planner/core/generator/hash64_equals": "pkg/planner/core/generator/hash64_equals/ code",
       "pkg/planner/core/operator/logicalop": "pkg/planner/core/operator/logicalop code",
       "pkg/planner/core/casetest/tpch": "pkg/planner/core/casetest/tpch code",
       "pkg/planner/cardinality": "pkg/planner/cardinality code",
       "pkg/planner/funcdep": "pkg/planner/funcdep code",
+      "pkg/plugin/": "plugin code",
+      "pkg/privileges/": "privileges code",
+      "pkg/resourcegroup/": "resourcegroup code",
       "pkg/server/": "server code",
-      "pkg/statistics": "pkg/statistics code"
+      "pkg/statistics": "pkg/statistics code",
+      "pkg/structure/": "structure code",
+      "pkg/testkit/": "testkit code",
+      "pkg/timer/": "timer code",
+      "pkg/ttl/": "ttl code",
+      "pkg/types/": "types code",
+      "pkg/util/": "util code",
+      "pkg/workloadlearning": "workloadlearning code"
     }
   },
   "inspect": {
