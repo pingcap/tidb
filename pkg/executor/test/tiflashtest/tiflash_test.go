@@ -1364,15 +1364,15 @@ func TestIssue41014(t *testing.T) {
 
 	tk.MustQuery("explain select count(distinct tai1.aid) as cb from tai1 inner join tai2 on tai1.rid = tai2.rid where lower(prilan)  LIKE LOWER('%python%');").Check(
 		testkit.Rows("HashAgg_11 1.00 root  funcs:count(distinct test.tai1.aid)->Column#8",
-			"└─HashJoin_15 9990.00 root  inner join, equal:[eq(test.tai2.rid, test.tai1.rid)]",
-			"  ├─Selection_20(Build) 8000.00 root  like(lower(test.tai2.prilan), \"%python%\", 92)",
-			"  │ └─Projection_19 10000.00 root  test.tai2.rid, lower(test.tai2.prilan)",
-			"  │   └─TableReader_18 9990.00 root  data:Selection_17",
-			"  │     └─Selection_17 9990.00 cop[tikv]  not(isnull(test.tai2.rid))",
-			"  │       └─TableFullScan_16 10000.00 cop[tikv] table:tai2 keep order:false, stats:pseudo",
-			"  └─TableReader_23(Probe) 9990.00 root  data:Selection_22",
-			"    └─Selection_22 9990.00 cop[tikv]  not(isnull(test.tai1.rid))",
-			"      └─TableFullScan_21 10000.00 cop[tikv] table:tai1 keep order:false, stats:pseudo"))
+			"└─HashJoin_27 9990.00 root  inner join, equal:[eq(test.tai2.rid, test.tai1.rid)]",
+			"  ├─Selection_32(Build) 8000.00 root  like(lower(test.tai2.prilan), \"%python%\", 92)",
+			"  │ └─Projection_31 10000.00 root  test.tai2.rid, lower(test.tai2.prilan)",
+			"  │   └─TableReader_30 9990.00 root  data:Selection_29",
+			"  │     └─Selection_29 9990.00 cop[tikv]  not(isnull(test.tai2.rid))",
+			"  │       └─TableFullScan_28 10000.00 cop[tikv] table:tai2 keep order:false, stats:pseudo",
+			"  └─TableReader_35(Probe) 9990.00 root  data:Selection_34",
+			"    └─Selection_34 9990.00 cop[tikv]  not(isnull(test.tai1.rid))",
+			"      └─TableFullScan_33 10000.00 cop[tikv] table:tai1 keep order:false, stats:pseudo"))
 	tk.MustQuery("select count(distinct tai1.aid) as cb from tai1 inner join tai2 on tai1.rid = tai2.rid where lower(prilan)  LIKE LOWER('%python%');").Check(
 		testkit.Rows("0"))
 }
