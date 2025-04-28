@@ -21,8 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
@@ -72,7 +71,7 @@ func TestAlterThreadRightAfterJobFinish(t *testing.T) {
 }
 
 func TestAlterJobOnDXF(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(16)`))
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(16)`)
 	testutil.ReduceCheckInterval(t)
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
@@ -94,9 +93,9 @@ func TestAlterJobOnDXF(t *testing.T) {
 	var pipeClosed bool
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterPipeLineClose", func(pipe *operator.AsyncPipeline) {
 		pipeClosed = true
-		reader, writer := pipe.GetLocalIngestModeReaderAndWriter()
-		require.EqualValues(t, 4, reader.(*ddl.TableScanOperator).GetWorkerPoolSize())
-		require.EqualValues(t, 6, writer.(*ddl.IndexIngestOperator).GetWorkerPoolSize())
+		reader, writer := pipe.GetReaderAndWriter()
+		require.EqualValues(t, 4, reader.GetWorkerPoolSize())
+		require.EqualValues(t, 6, writer.GetWorkerPoolSize())
 	})
 	var finishedSubtasks int
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", func(be *local.Backend) {
@@ -104,7 +103,7 @@ func TestAlterJobOnDXF(t *testing.T) {
 		require.EqualValues(t, 1024, be.GetWriteSpeedLimit())
 	})
 	var modified atomic.Bool
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterDetectAndHandleParamModify", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterDetectAndHandleParamModify", func(_ proto.Step) {
 		modified.Store(true)
 	})
 	var once sync.Once

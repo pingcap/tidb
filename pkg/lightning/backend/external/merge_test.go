@@ -15,9 +15,13 @@
 package external
 
 import (
+	"context"
 	"fmt"
 	"testing"
+	"time"
 
+	"github.com/pingcap/tidb/pkg/disttask/operator"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -122,4 +126,31 @@ func TestSplitDataFiles(t *testing.T) {
 		allPaths[38:47], allPaths[47:56], allPaths[56:65], allPaths[65:74],
 		allPaths[74:83], allPaths[83:92], allPaths[92:101],
 	}, splitDataFiles(allPaths[:101], 8))
+}
+
+func TestMergeOperator(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/lightning/backend/external/mergeOverlappingFilesInternal", "return(true)")
+
+	op := NewMergeOperator(
+		context.Background(),
+		nil,
+		0,
+		"",
+		0,
+		nil,
+		1,
+		false,
+	)
+
+	source := operator.NewSimpleDataChannel(make(chan *mergeMinimalTask))
+	op.SetSource(source)
+	require.NoError(t, op.Open())
+
+	// cancel on error
+	source.Channel() <- &mergeMinimalTask{}
+	require.Eventually(t, func() bool {
+		return op.hasError()
+	}, 3*time.Second, 300*time.Millisecond)
+	<-op.ctx.Done()
+	require.Error(t, op.Close())
 }

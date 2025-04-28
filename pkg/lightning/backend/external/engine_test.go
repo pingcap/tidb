@@ -16,7 +16,6 @@ package external
 
 import (
 	"context"
-	"fmt"
 	"path"
 	"testing"
 
@@ -213,32 +212,6 @@ func TestSplit(t *testing.T) {
 		got := split(c.input, c.conc)
 		require.Equal(t, c.expected, got)
 	}
-}
-
-func TestGetAdjustedConcurrency(t *testing.T) {
-	genFiles := func(n int) []string {
-		files := make([]string, 0, n)
-		for i := 0; i < n; i++ {
-			files = append(files, fmt.Sprintf("file%d", i))
-		}
-		return files
-	}
-	e := &Engine{
-		checkHotspot:      true,
-		workerConcurrency: 32,
-		dataFiles:         genFiles(100),
-	}
-	require.Equal(t, 8, e.getAdjustedConcurrency())
-	e.dataFiles = genFiles(8000)
-	require.Equal(t, 1, e.getAdjustedConcurrency())
-
-	e.checkHotspot = false
-	e.dataFiles = genFiles(10)
-	require.Equal(t, 32, e.getAdjustedConcurrency())
-	e.dataFiles = genFiles(100)
-	require.Equal(t, 10, e.getAdjustedConcurrency())
-	e.dataFiles = genFiles(10000)
-	require.Equal(t, 1, e.getAdjustedConcurrency())
 }
 
 func TestTryDecodeEndKey(t *testing.T) {
