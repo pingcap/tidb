@@ -87,14 +87,14 @@ func (w *OneFileWriter) lazyInitWriter(ctx context.Context) (err error) {
 	}
 
 	dataFile := filepath.Join(w.filenamePrefix, "one-file")
-	dataWriter, err := w.store.Create(ctx, w.dataFile, &storage.WriterOption{
+	dataWriter, err := w.store.Create(ctx, dataFile, &storage.WriterOption{
 		Concurrency: maxUploadWorkersPerThread,
 		PartSize:    w.partSize})
 	if err != nil {
 		return err
 	}
 	statFile := filepath.Join(w.filenamePrefix+statSuffix, "one-file")
-	statWriter, err := w.store.Create(ctx, w.statFile, &storage.WriterOption{
+	statWriter, err := w.store.Create(ctx, statFile, &storage.WriterOption{
 		Concurrency: maxUploadWorkersPerThread,
 		PartSize:    MinUploadPartSize})
 	if err != nil {
@@ -102,8 +102,8 @@ func (w *OneFileWriter) lazyInitWriter(ctx context.Context) (err error) {
 		_ = dataWriter.Close(ctx)
 		return err
 	}
-	w.logger.Info("one file writer", zap.String("data-file", w.dataFile),
-		zap.String("stat-file", w.statFile), zap.Stringer("on-dup", w.onDup))
+	w.logger.Info("one file writer", zap.String("data-file", dataFile),
+		zap.String("stat-file", statFile), zap.Stringer("on-dup", w.onDup))
 
 	w.dataFile, w.dataWriter = dataFile, dataWriter
 	w.statFile, w.statWriter = statFile, statWriter
@@ -134,18 +134,14 @@ func (w *OneFileWriter) lazyInitDupFile(ctx context.Context) error {
 	return nil
 }
 
-// Init inits the OneFileWriter and its underlying KeyValueStore.
-func (w *OneFileWriter) Init(ctx context.Context, partSize int64) (err error) {
+// InitPartSizeAndLogger inits the OneFileWriter and its underlying KeyValueStore.
+func (w *OneFileWriter) InitPartSizeAndLogger(ctx context.Context, partSize int64) {
 	w.logger = logutil.Logger(ctx)
 	w.partSize = partSize
-	return nil
 }
 
 // WriteRow implements ingest.Writer.
 func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) error {
-	if w.minKey == nil {
-		w.minKey = slices.Clone(idxKey)
-	}
 	if w.onDup != engineapi.OnDuplicateKeyIgnore {
 		// must be Record or Remove right now
 		return w.handleDupAndWrite(ctx, idxKey, idxVal)
@@ -208,6 +204,9 @@ func (w *OneFileWriter) handlePivotOnClose(ctx context.Context) error {
 }
 
 func (w *OneFileWriter) doWriteRow(ctx context.Context, idxKey, idxVal []byte) error {
+	if w.minKey == nil {
+		w.minKey = slices.Clone(idxKey)
+	}
 	if err := w.lazyInitWriter(ctx); err != nil {
 		return err
 	}
