@@ -1274,7 +1274,7 @@ func TestAddVectorIndexSimple(t *testing.T) {
 	// for TiFlash replica
 	tk.MustExec("create table t (a int, b vector, c vector(3), d vector(4));")
 	tk.MustContainErrMsg("alter table t add vector index idx((VEC_COSINE_DISTANCE(b))) USING HNSW COMMENT 'b comment';",
-		"unsupported empty TiFlash replica, the replica is nil")
+		"columnar replica must exist")
 	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
 	tk.MustContainErrMsg("alter table t add key idx(a) USING HNSW;", "[ddl:8200]'USING HNSW' can be only used for VECTOR INDEX")
 	// for a wrong column
@@ -1458,7 +1458,7 @@ func TestAddColumnarIndexSimple(t *testing.T) {
 	// for TiFlash replica
 	tk.MustExec("create table t (a int, b vector(4), c int, d char(4));")
 	tk.MustContainErrMsg("alter table t add columnar index idx(a) USING INVERTED COMMENT 'b comment';",
-		"unsupported empty TiFlash replica, the replica is nil")
+		"columnar replica must exist")
 	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
 	tk.MustContainErrMsg("alter table t add key idx(d) USING INVERTED;", "[ddl:8200]'USING INVERTED' can be only used for COLUMNAR INDEX")
 	// for a wrong column

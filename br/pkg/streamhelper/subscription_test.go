@@ -57,7 +57,7 @@ func TestSubBasic(t *testing.T) {
 		cp = c.advanceCheckpoints()
 		c.flushAll()
 	}
-	sub.HandleErrors(ctx)
+	sub.HandleErrors()
 	req.NoError(sub.PendingErrors())
 	waitPendingEvents(t, sub)
 	sub.Drop()
@@ -87,7 +87,7 @@ func TestNormalError(t *testing.T) {
 	req.NoError(sub.UpdateStoreTopology(ctx))
 	c.onGetClient = nil
 	req.Error(sub.PendingErrors())
-	sub.HandleErrors(ctx)
+	sub.HandleErrors()
 	req.NoError(sub.PendingErrors())
 	var cp uint64
 	for i := 0; i < 10; i++ {
@@ -112,12 +112,12 @@ func TestHasFailureStores(t *testing.T) {
 	installSubscribeSupportForRandomN(c, 3)
 	sub := streamhelper.NewSubscriber(c, c)
 	req.NoError(sub.UpdateStoreTopology(ctx))
-	sub.HandleErrors(ctx)
+	sub.HandleErrors()
 	req.Error(sub.PendingErrors())
 
 	installSubscribeSupport(c)
 	req.NoError(sub.UpdateStoreTopology(ctx))
-	sub.HandleErrors(ctx)
+	sub.HandleErrors()
 	req.NoError(sub.PendingErrors())
 }
 
@@ -136,7 +136,7 @@ func TestStoreOffline(t *testing.T) {
 	req.Error(sub.PendingErrors())
 
 	c.onGetClient = nil
-	sub.HandleErrors(ctx)
+	sub.HandleErrors()
 	req.NoError(sub.PendingErrors())
 }
 
@@ -155,7 +155,7 @@ func TestStoreRemoved(t *testing.T) {
 		cp = c.advanceCheckpoints()
 		c.flushAll()
 	}
-	sub.HandleErrors(ctx)
+	sub.HandleErrors()
 	req.NoError(sub.PendingErrors())
 	for _, s := range c.stores {
 		c.removeStore(s.id)
@@ -166,7 +166,7 @@ func TestStoreRemoved(t *testing.T) {
 		cp = c.advanceCheckpoints()
 		c.flushAll()
 	}
-	sub.HandleErrors(ctx)
+	sub.HandleErrors()
 	req.NoError(sub.PendingErrors())
 
 	waitPendingEvents(t, sub)
@@ -263,6 +263,6 @@ func TestEncounterError(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return sub.PendingErrors() != nil
 	}, 3*time.Second, 100*time.Millisecond)
-	sub.HandleErrors(context.Background())
+	sub.HandleErrors()
 	require.NoError(t, sub.PendingErrors())
 }

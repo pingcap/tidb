@@ -658,6 +658,7 @@ func NewWriteExternalStoreOperator(
 	}
 
 	totalCount := new(atomic.Int64)
+	blockSize := external.GetAdjustedBlockSize(memoryQuota)
 	pool := workerpool.NewWorkerPool(
 		"WriteExternalStoreOperator",
 		util.DDL,
@@ -669,6 +670,7 @@ func NewWriteExternalStoreOperator(
 					SetOnCloseFunc(onClose).
 					SetKeyDuplicationEncoding(hasUnique).
 					SetMemorySizeLimit(memoryQuota).
+					SetBlockSize(blockSize).
 					SetGroupOffset(i)
 				writerID := uuid.New().String()
 				prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
