@@ -516,7 +516,7 @@ func (e *Engine) GetRegionSplitKeys() ([][]byte, error) {
 // When duplicate detection feature is enabled, the **end key** comes from
 // DupDetectKeyAdapter.Encode or Key.Next(). We try to decode it and check the
 // error.
-func (e Engine) tryDecodeEndKey(key []byte) (decoded []byte, err error) {
+func (e *Engine) tryDecodeEndKey(key []byte) (decoded []byte, err error) {
 	decoded, err = e.keyAdapter.Decode(nil, key)
 	if err == nil {
 		return

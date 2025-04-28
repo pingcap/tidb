@@ -3894,6 +3894,8 @@ ConstraintElem:
 		}
 		if $7 != nil {
 			c.Option = $7.(*ast.IndexOption)
+		} else {
+			c.Option = &ast.IndexOption{}
 		}
 		$$ = c
 	}
@@ -4379,7 +4381,7 @@ IndexKeyTypeOpt:
 	}
 |	"FULLTEXT"
 	{
-		$$ = ast.IndexKeyTypeFullText
+		$$ = ast.IndexKeyTypeFulltext
 	}
 |	"VECTOR"
 	{
@@ -6666,8 +6668,6 @@ IndexOption:
 		$$ = &ast.IndexOption{
 			ParserName: ast.NewCIStr($3),
 		}
-		yylex.AppendError(yylex.Errorf("The WITH PARASER clause is parsed but ignored by all storage engines."))
-		parser.lastErrorAsWarn()
 	}
 |	"COMMENT" stringLit
 	{

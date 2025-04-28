@@ -89,6 +89,7 @@ type PipelineContext struct {
 	LogProgress         bool
 	ChecksumConcurrency uint
 	StatsConcurrency    uint
+	AutoAnalyze         bool
 
 	// pipeline item tool client
 	KvClient   kv.Client
@@ -123,7 +124,7 @@ func (rc *SnapClient) RestorePipeline(ctx context.Context, plCtx PipelineContext
 	}
 
 	// pipeline update meta and load stats
-	postHandleCh = rc.GoUpdateMetaAndLoadStats(ctx, plCtx.ExtStorage, postHandleCh, errCh, updateCh, plCtx.StatsConcurrency, plCtx.LoadStats)
+	postHandleCh = rc.GoUpdateMetaAndLoadStats(ctx, plCtx.ExtStorage, postHandleCh, errCh, updateCh, plCtx.StatsConcurrency, plCtx.AutoAnalyze, plCtx.LoadStats)
 
 	// pipeline wait Tiflash synced
 	if plCtx.WaitTiflashReady {
@@ -256,6 +257,7 @@ func (rc *SnapClient) GoUpdateMetaAndLoadStats(
 	errCh chan<- error,
 	updateCh glue.Progress,
 	statsConcurrency uint,
+	autoAnalyze bool,
 	loadStats bool,
 ) chan *CreatedTable {
 	log.Info("Start to update meta then load stats")
@@ -310,6 +312,10 @@ func (rc *SnapClient) GoUpdateMetaAndLoadStats(
 						}
 						// the total kvs contains the index kvs, but the stats meta needs the count of rows
 						count := int64(totalKvs / uint64(len(oldTable.Info.Indices)+1))
+						modifyCount := int64(0)
+						if autoAnalyze {
+							modifyCount = count
+						}
 						newDefID, err := utils.GetPartitionByName(tbl.Table, oldDef.Name)
 						if err != nil {
 							log.Error("failed to get the partition by name",
@@ -324,7 +330,7 @@ func (rc *SnapClient) GoUpdateMetaAndLoadStats(
 						if statsErr = statsHandler.SaveMetaToStorage("br restore", false, statstypes.MetaUpdate{
 							PhysicalID:  newDefID,
 							Count:       count,
-							ModifyCount: 0,
+							ModifyCount: modifyCount,
 						}); statsErr != nil {
 							log.Error("update stats meta failed", zap.Int64("downstream table id", tbl.Table.ID), zap.Int64("downstream partition id", newDefID), zap.Error(statsErr))
 						}
@@ -333,10 +339,14 @@ func (rc *SnapClient) GoUpdateMetaAndLoadStats(
 			}
 			// the total kvs contains the index kvs, but the stats meta needs the count of rows
 			count := int64(oldTable.TotalKvs / uint64(len(oldTable.Info.Indices)+1))
+			modifyCount := int64(0)
+			if autoAnalyze {
+				modifyCount = count
+			}
 			if statsErr = statsHandler.SaveMetaToStorage("br restore", false, statstypes.MetaUpdate{
 				PhysicalID:  tbl.Table.ID,
 				Count:       count,
-				ModifyCount: 0,
+				ModifyCount: modifyCount,
 			}); statsErr != nil {
 				log.Error("update stats meta failed", zap.Int64("downstream table id", tbl.Table.ID), zap.Error(statsErr))
 			}
