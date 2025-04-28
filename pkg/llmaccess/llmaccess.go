@@ -18,30 +18,65 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util"
 )
-
-// LLMPlatform is the platform of LLM.
-type LLMPlatform int
 
 const (
-	// OpenAI is the OpenAI platform.
-	OpenAI LLMPlatform = iota
+	OpenAI = "OpenAI"
 )
 
+type LLMAccessor interface {
+	// ChatCompletion calls the specified LLM to complete the chat based on input prompt.
+	ChatCompletion(model, prompt string) (response string, err error)
+
+	AlterPlatform(platform, key, val string) error
+}
+
+type llmAccessorImpl struct {
+	sPool util.DestroyableSessionPool
+}
+
+func (llm *llmAccessorImpl) AlterPlatform(platform, key, val string) error {
+	platform, err := formatPlatform(platform)
+	if err != nil {
+		return err
+	}
+	switch strings.ToUpper(key) {
+	case "KEY", "TIMEOUT", "ENABLED", "DISABLED":
+	default:
+		return fmt.Errorf("unsupported key: %s", key)
+	}
+	updateStmt := fmt.Sprintf("update mysql.llm_platform set %s = ? where name = ?", key)
+	return callWithSCtx(llm.sPool, true, func(sctx sessionctx.Context) error {
+		_, err := exec(sctx, updateStmt, val, platform)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
 // ChatCompletion calls the specified LLM to complete the chat based on input prompt.
-func ChatCompletion(platform LLMPlatform, model, prompt string) (response string, err error) {
+func (llm *llmAccessorImpl) ChatCompletion(platform, model, prompt string) (response string, err error) {
+	platform, err = formatPlatform(platform)
+	if err != nil {
+		return "", err
+	}
+
 	switch platform {
 	case OpenAI:
-		return chatCompletionOpenAI(model, prompt, "")
+		return llm.chatCompletionOpenAI(model, prompt, "")
 	default:
 		return "", fmt.Errorf("unsupported platform: %d", platform)
 	}
 }
 
-func chatCompletionOpenAI(model, prompt, key string) (response string, err error) {
+func (*llmAccessorImpl) chatCompletionOpenAI(model, prompt, key string) (response string, err error) {
 	if key == "" {
 		key, _ = os.LookupEnv("OPENAI_API_KEY")
 	}
@@ -58,4 +93,12 @@ func chatCompletionOpenAI(model, prompt, key string) (response string, err error
 		return "", err
 	}
 	return chatCompletion.Choices[0].Message.Content, nil
+}
+
+func formatPlatform(platform string) (string, error) {
+	switch strings.ToUpper(platform) {
+	case "OPENAI":
+		return OpenAI, nil
+	}
+	return "", fmt.Errorf("unsupported platform: %s", platform)
 }
