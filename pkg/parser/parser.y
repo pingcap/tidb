@@ -978,7 +978,6 @@ import (
 	AlterPolicyStmt            "Alter Placement Policy statement"
 	AlterResourceGroupStmt     "Alter Resource Group statement"
 	AlterSequenceStmt          "Alter sequence statement"
-	AlterLLMStmt               "Alter LLM platform or model statement"
 	AnalyzeTableStmt           "Analyze table statement"
 	BeginTransactionStmt       "BEGIN TRANSACTION statement"
 	BinlogStmt                 "Binlog base64 statement"
@@ -1037,6 +1036,7 @@ import (
 	LoadDataStmt               "Load data statement"
 	LoadStatsStmt              "Load statistic statement"
 	LockStatsStmt              "Lock statistic statement"
+	LLMDDLStmt                 "LLM DDL statement"
 	UnlockStatsStmt            "Unlock statistic statement"
 	LockTablesStmt             "Lock tables statement"
 	NonTransactionalDMLStmt    "Non-transactional DML statement"
@@ -12324,7 +12324,6 @@ Statement:
 |	AlterSequenceStmt
 |	AlterPolicyStmt
 |	AlterResourceGroupStmt
-|	AlterLLMStmt
 |	AnalyzeTableStmt
 |	BeginTransactionStmt
 |	BinlogStmt
@@ -12378,6 +12377,7 @@ Statement:
 |	LoadDataStmt
 |	LoadStatsStmt
 |	LockStatsStmt
+|	LLMDDLStmt
 |	UnlockStatsStmt
 |	PlanReplayerStmt
 |	PreparedStmt
@@ -16691,7 +16691,7 @@ CalibrateResourceWorkloadOption:
 		$$ = ast.TPCH10
 	}
 
-AlterLLMStmt:
+LLMDDLStmt:
 	"ALTER" "LLM" "PLATFORM" identifier identifier identifier
 	{
 		$$ = &ast.AlterLLMStmt{

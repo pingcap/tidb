@@ -4273,16 +4273,18 @@ func (n *DropQueryWatchStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-type AlterLLMStmt struct {
+type LLMDDLStmt struct {
 	stmtNode
-	Platform bool
-	Name     string
-	Key      string
-	Value    string
+	Operation string
+	Platform  bool
+	Name      string
+	Key       string
+	Value     string
 }
 
-func (n *AlterLLMStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("ALTER LLM")
+func (n *LLMDDLStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord(n.Operation)
+	ctx.WriteKeyWord(" LLM")
 	if n.Platform {
 		ctx.WriteKeyWord(" PLATFORM ")
 	}
@@ -4294,12 +4296,12 @@ func (n *AlterLLMStmt) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-func (n *AlterLLMStmt) Accept(v Visitor) (Node, bool) {
+func (n *LLMDDLStmt) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNode)
 	}
-	n = newNode.(*AlterLLMStmt)
+	n = newNode.(*LLMDDLStmt)
 	return v.Leave(n)
 }
 
