@@ -356,13 +356,18 @@
       "/cgo/": "no need to vet cgo code"
     },
     "only_files": {
+      "pkg/bindinfo/": "bindinfo code",
+      "pkg/infoschema/": "infoschema code",
+      "pkg/owner/": "owner code",
       "pkg/util/": "util code",
       "pkg/workloadlearning": "workloadlearning code",
       "pkg/planner/core/generator/hash64_equals": "pkg/planner/core/generator/hash64_equals/ code",
       "pkg/planner/core/operator/logicalop": "pkg/planner/core/operator/logicalop code",
       "pkg/planner/core/casetest/tpch": "pkg/planner/core/casetest/tpch code",
       "pkg/planner/cardinality": "pkg/planner/cardinality code",
-      "pkg/planner/funcdep": "pkg/planner/funcdep code"
+      "pkg/planner/funcdep": "pkg/planner/funcdep code",
+      "pkg/server/": "server code",
+      "pkg/statistics": "pkg/statistics code"
     }
   },
   "inspect": {

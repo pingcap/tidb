@@ -49,10 +49,7 @@ func saveTopNToStorage(sctx sessionctx.Context, tableID int64, isIndex int, hist
 		return nil
 	}
 	for i := 0; i < len(topN.TopN); {
-		end := i + batchInsertSize
-		if end > len(topN.TopN) {
-			end = len(topN.TopN)
-		}
+		end := min(i+batchInsertSize, len(topN.TopN))
 		sql := new(strings.Builder)
 		sql.WriteString("insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values ")
 		for j := i; j < end; j++ {
@@ -81,10 +78,7 @@ func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, h
 	}
 	sc := sctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(hg.Buckets); {
-		end := i + batchInsertSize
-		if end > len(hg.Buckets) {
-			end = len(hg.Buckets)
-		}
+		end := min(i+batchInsertSize, len(hg.Buckets))
 		sql := new(strings.Builder)
 		sql.WriteString("insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, count, repeats, lower_bound, upper_bound, ndv) values ")
 		for j := i; j < end; j++ {
@@ -196,10 +190,7 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 		}
 	} else {
 		// 1-3. There's already an existing records for this table, and we are handling a normal v2 analyze.
-		modifyCnt := curModifyCnt - results.BaseModifyCnt
-		if modifyCnt < 0 {
-			modifyCnt = 0
-		}
+		modifyCnt := max(curModifyCnt-results.BaseModifyCnt, 0)
 		statslogutil.StatsLogger().Info("incrementally update modifyCount",
 			zap.Int64("tableID", tableID),
 			zap.Int64("curModifyCnt", curModifyCnt),
@@ -207,10 +198,7 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 			zap.Int64("modifyCount", modifyCnt))
 		var cnt int64
 		if analyzeSnapshot {
-			cnt = curCnt + results.Count - results.BaseCount
-			if cnt < 0 {
-				cnt = 0
-			}
+			cnt = max(curCnt+results.Count-results.BaseCount, 0)
 			statslogutil.StatsLogger().Info("incrementally update count",
 				zap.Int64("tableID", tableID),
 				zap.Int64("curCnt", curCnt),
@@ -218,10 +206,7 @@ func SaveAnalyzeResultToStorage(sctx sessionctx.Context,
 				zap.Int64("results.BaseCount", results.BaseCount),
 				zap.Int64("count", cnt))
 		} else {
-			cnt = results.Count
-			if cnt < 0 {
-				cnt = 0
-			}
+			cnt = max(results.Count, 0)
 			statslogutil.StatsLogger().Info("directly update count",
 				zap.Int64("tableID", tableID),
 				zap.Int64("results.Count", results.Count),
