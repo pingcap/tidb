@@ -3036,3 +3036,16 @@ func (e *SimpleExec) executeAlterRange(s *ast.AlterRangeStmt) error {
 
 	return infosync.PutRuleBundlesWithDefaultRetry(context.Background(), []*placement.Bundle{bundle})
 }
+
+type LLMDDLExec struct {
+	LLMDDLPlan *core.LLMDDLPlan
+	exec.BaseExecutor
+}
+
+var _ exec.Executor = &LLMDDLExec{}
+
+// Next implements the Executor Next interface.
+func (e *LLMDDLExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	return nil
+}

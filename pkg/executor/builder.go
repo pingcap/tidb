@@ -323,7 +323,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildExpand(v)
 	case *plannercore.RecommendIndexPlan:
 		return b.buildRecommendIndex(v)
-	case *plannercore.AlterLLMPlan:
+	case *plannercore.LLMDDLPlan:
 
 	case *plannercore.WorkloadRepoCreate:
 		return b.buildWorkloadRepoCreate(v)
@@ -335,6 +335,14 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		b.err = exeerrors.ErrUnknownPlan.GenWithStack("Unknown Plan %T", p)
 		return nil
 	}
+}
+
+func (b *executorBuilder) buildLLMDDL(v *plannercore.LLMDDLPlan) exec.Executor {
+	e := &LLMDDLExec{
+		LLMDDLPlan:   v,
+		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+	}
+	return e
 }
 
 func (b *executorBuilder) buildCancelDDLJobs(v *plannercore.CancelDDLJobs) exec.Executor {

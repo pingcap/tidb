@@ -272,7 +272,7 @@ type SetConfig struct {
 	Value    expression.Expression
 }
 
-type AlterLLMPlan struct {
+type LLMDDLPlan struct {
 	baseSchemaProducer
 
 	Platform bool
