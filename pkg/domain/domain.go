@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/llmaccess"
 	"math"
 	"math/rand"
 	"sort"
@@ -155,6 +156,7 @@ type Domain struct {
 	infoCache       *infoschema.InfoCache
 	privHandle      *privileges.Handle
 	bindHandle      atomic.Value
+	llmAccessor     atomic.Value
 	statsHandle     atomic.Pointer[handle.Handle]
 	statsLease      time.Duration
 	ddl             ddl.DDL
@@ -2197,6 +2199,10 @@ func (do *Domain) WatchTiFlashComputeNodeChange() error {
 // PrivilegeHandle returns the MySQLPrivilege.
 func (do *Domain) PrivilegeHandle() *privileges.Handle {
 	return do.privHandle
+}
+
+func (do *Domain) InitLLMAccessor() {
+	do.llmAccessor.Store(llmaccess.NewLLMAccessor(do.sysSessionPool))
 }
 
 // BindingHandle returns domain's bindHandle.

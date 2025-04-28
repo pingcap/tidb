@@ -33,13 +33,17 @@ const (
 
 type LLMAccessor interface {
 	// ChatCompletion calls the specified LLM to complete the chat based on input prompt.
-	ChatCompletion(model, prompt string) (response string, err error)
+	ChatCompletion(platform, model, prompt string) (response string, err error)
 
 	AlterPlatform(platform, key, val string) error
 }
 
 type llmAccessorImpl struct {
 	sPool util.DestroyableSessionPool
+}
+
+func NewLLMAccessor(sPool util.DestroyableSessionPool) LLMAccessor {
+	return &llmAccessorImpl{sPool: sPool}
 }
 
 func (llm *llmAccessorImpl) AlterPlatform(platform, key, val string) error {
