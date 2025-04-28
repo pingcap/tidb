@@ -3766,28 +3766,28 @@
       {
         "SQL": "explain select * from t WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;",
         "Plan": [
-          "HashJoin_14 10000.00 root  CARTESIAN inner join",
-          "├─StreamAgg_19(Build) 1.00 root  funcs:count(1)->Column#12",
-          "│ └─Limit_22 1.00 root  offset:0, count:1",
-          "│   └─HashAgg_23 1.00 root  group by:1, funcs:firstrow(1)->Column#13",
-          "│     └─TableDual_24 1.00 root  rows:1",
-          "└─TableReader_17(Probe) 10000.00 root  data:TableFullScan_16",
-          "  └─TableFullScan_16 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "HashJoin_26 10000.00 root  CARTESIAN inner join",
+          "├─StreamAgg_35(Build) 1.00 root  funcs:count(1)->Column#12",
+          "│ └─Limit_38 1.00 root  offset:0, count:1",
+          "│   └─HashAgg_39 1.00 root  group by:1, funcs:firstrow(1)->Column#13",
+          "│     └─TableDual_40 1.00 root  rows:1",
+          "└─TableReader_29(Probe) 10000.00 root  data:TableFullScan_28",
+          "  └─TableFullScan_28 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warning": null
       },
       {
         "SQL": "explain select * from t WHERE TRUE = ALL ( SELECT TRUE from t GROUP BY 1 LIMIT 1 ) is null is not null;",
         "Plan": [
-          "HashJoin_14 10000.00 root  CARTESIAN inner join",
-          "├─StreamAgg_19(Build) 1.00 root  funcs:count(1)->Column#15",
-          "│ └─Limit_22 1.00 root  offset:0, count:1",
-          "│   └─HashAgg_27 1.00 root  group by:Column#17, funcs:firstrow(Column#18)->Column#16",
-          "│     └─TableReader_28 1.00 root  data:HashAgg_23",
-          "│       └─HashAgg_23 1.00 cop[tikv]  group by:1, funcs:firstrow(1)->Column#18",
-          "│         └─TableFullScan_26 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
-          "└─TableReader_17(Probe) 10000.00 root  data:TableFullScan_16",
-          "  └─TableFullScan_16 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "HashJoin_26 10000.00 root  CARTESIAN inner join",
+          "├─StreamAgg_35(Build) 1.00 root  funcs:count(1)->Column#15",
+          "│ └─Limit_38 1.00 root  offset:0, count:1",
+          "│   └─HashAgg_43 1.00 root  group by:Column#17, funcs:firstrow(Column#18)->Column#16",
+          "│     └─TableReader_44 1.00 root  data:HashAgg_39",
+          "│       └─HashAgg_39 1.00 cop[tikv]  group by:1, funcs:firstrow(1)->Column#18",
+          "│         └─TableFullScan_42 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "└─TableReader_29(Probe) 10000.00 root  data:TableFullScan_28",
+          "  └─TableFullScan_28 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warning": null
       }
