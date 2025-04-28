@@ -378,7 +378,8 @@
       "pkg/ttl/": "ttl code",
       "pkg/types/": "types code",
       "pkg/util/": "util code",
-      "pkg/workloadlearning": "workloadlearning code"
+      "pkg/workloadlearning": "workloadlearning code",
+      "//tools/": "tools code"
     }
   },
   "inspect": {
