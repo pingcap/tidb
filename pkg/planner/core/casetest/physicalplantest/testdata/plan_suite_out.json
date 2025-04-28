@@ -1708,14 +1708,14 @@
       {
         "SQL": "select /*+ inl_join(t2@sel_2) */ * from t1 where exists ( select /*+ semi_join_rewrite() */ * from t2 where t1.a = t2.a);",
         "Plan": [
-          "IndexJoin 9990.00 root  inner join, inner:HashAgg, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "IndexJoin 9990.00 root  inner join, inner:StreamAgg, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "└─HashAgg(Probe) 9990.00 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
-          "  └─IndexReader 9990.00 root  index:HashAgg",
-          "    └─HashAgg 9990.00 cop[tikv]  group by:test.t2.a, ",
+          "└─StreamAgg(Probe) 9990.00 root  group by:test.t2.a, funcs:firstrow(test.t2.a)->test.t2.a",
+          "  └─IndexReader 9990.00 root  index:StreamAgg",
+          "    └─StreamAgg 9990.00 cop[tikv]  group by:test.t2.a, ",
           "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
-          "        └─IndexRangeScan 10000.00 cop[tikv] table:t2, index:ia(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"
+          "        └─IndexRangeScan 10000.00 cop[tikv] table:t2, index:ia(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:true, stats:pseudo"
         ],
         "Warn": null
       },
