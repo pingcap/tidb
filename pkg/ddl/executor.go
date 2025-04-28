@@ -7066,13 +7066,9 @@ func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
 // table will failure.
 func (e *executor) RefreshMeta(sctx sessionctx.Context, args *model.RefreshMetaArgs) error {
 	is := e.infoCache.GetLatest()
-	schema, ok := is.SchemaByID(args.SchemaID)
+	_, ok := is.SchemaByID(args.SchemaID)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(fmt.Sprintf("SchemaID: %v", args.SchemaID))
-	}
-	_, ok = is.TableByID(e.ctx, args.TableID)
-	if !ok {
-		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema.Name, args.TableID)
 	}
 
 	job := &model.Job{

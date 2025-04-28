@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -835,4 +836,33 @@ func TestIssue59238(t *testing.T) {
 	tk.MustExec("create table t1 (a int, b int, index idx(b))")
 	tk.MustExec("alter table t exchange partition p1 with table t1")
 	require.True(t, tk.MustQuery("select distinct create_time from information_schema.partitions where table_name = 't'").Equal(testkit.Rows(rs)))
+}
+
+func TestRefreshMeta(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+	de := domain.DDLExecutor()
+	tk := testkit.NewTestKit(t, store)
+	sctx := testkit.NewTestKit(t, store).Session()
+
+	// get t1 table info
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(id int)")
+	dbInfo, ok := domain.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+	require.True(t, ok)
+	t1TableInfo := getClonedTableInfoFromDomain(t, "test", "t1", domain)
+	// update t1 table info's name to t2 by txn and
+	t1TableInfo.Name = ast.NewCIStr("t2")
+	updateTableMeta(t, store, dbInfo.ID, t1TableInfo)
+	t2TableInfo := testutil.GetTableInfoByTxn(t, store, dbInfo.ID, t1TableInfo.ID)
+	require.Equal(t, t1TableInfo, t2TableInfo)
+	// validate infoschema doesn't conatain t2 table info
+	_, err := domain.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
+	require.ErrorContains(t, err, "Table 'test.t2' doesn't exist")
+	// refresh meta, validate infoschema store table t2 and schema version increase 1
+	oldSchemaVer := getSchemaVer(t, sctx)
+	testutil.RefreshMeta(sctx, t, store, de, dbInfo.ID, t1TableInfo.ID)
+	newSchemaVer := getSchemaVer(t, sctx)
+	require.Equal(t, oldSchemaVer+1, newSchemaVer)
+	_, err = domain.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
+	require.NoError(t, err)
 }

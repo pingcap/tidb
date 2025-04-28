@@ -16,6 +16,7 @@ package ddl_test
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 
@@ -24,9 +25,12 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -299,4 +303,66 @@ func TestTableModeConcurrent(t *testing.T) {
 	require.Equal(t, 1, successCount3)
 	require.NotNil(t, failedErr3)
 	checkErrorCode(t, failedErr3, errno.ErrInvalidTableModeSet)
+}
+
+// TestTableModeWithRefreshMeta tests update table meta by txn(exchange partition),
+// after RefreshMeta can modify TableMode.
+func TestTableModeWithRefreshMeta(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+	de := domain.DDLExecutor()
+	tk := testkit.NewTestKit(t, store)
+	sctx := testkit.NewTestKit(t, store).Session()
+
+	tk.MustExec("use test")
+	tk.MustExec("create table nt(id int, c1 int)")
+	tk.MustExec("create table pt(id int, c1 int) partition by range (c1) (partition p10 values less than (10))")
+	tk.MustExec("insert into nt values(3, 3), (4, 4), (5, 5)")
+	tk.MustExec("insert into pt values(1, 1), (2, 2)")
+
+	dbInfo, ok := domain.InfoSchema().SchemaByName(ast.NewCIStr("test"))
+	require.True(t, ok)
+	require.NotNil(t, dbInfo)
+	ntInfo, ptInfo := getClonedTableInfoFromDomain(t, "test", "nt", domain), getClonedTableInfoFromDomain(t, "test", "pt", domain)
+	// exchange non-partition table ID with partition ID
+	partID := ptInfo.Partition.Definitions[0].ID
+	exchangeTablePartitionID(t, &store, dbInfo.ID, ntInfo, ptInfo, "p10")
+	ntInfo = testutil.GetTableInfoByTxn(t, store, dbInfo.ID, ntInfo.ID)
+	require.Equal(t, partID, ntInfo.ID)
+	// set table mode failure before refresh meta
+	err := testutil.SetTableMode(sctx, t, store, de, dbInfo, ntInfo, model.TableModeImport)
+	require.ErrorContains(t, err, "doesn't exist")
+	testutil.RefreshMeta(sctx, t, store, de, dbInfo.ID, ntInfo.ID)
+	// set table mode success after refresh meta
+	err = testutil.SetTableMode(sctx, t, store, de, dbInfo, ntInfo, model.TableModeImport)
+	require.NoError(t, err)
+	tk.MustGetErrCode("select * from nt", errno.ErrProtectedTableMode)
+	err = testutil.SetTableMode(sctx, t, store, de, dbInfo, ntInfo, model.TableModeNormal)
+	require.NoError(t, err)
+	tk.MustExec("select * from nt")
+}
+
+func exchangeTablePartitionID(t *testing.T, store *kv.Storage, dbID int64, ntInfo, ptInfo *model.TableInfo, partName string) {
+	_, partDef, err := getPartitionDef(ptInfo, partName)
+	require.NoError(t, err)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err = kv.RunInNewTxn(ctx, *store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMutator(txn)
+		err := m.DropTableOrView(dbID, ntInfo.ID)
+		require.NoError(t, err)
+		ntInfo.ID = partDef.ID
+		err = m.CreateTableOrView(dbID, ntInfo)
+		require.NoError(t, err)
+		return nil
+	})
+	require.NoError(t, err)
+}
+
+func getPartitionDef(tblInfo *model.TableInfo, partName string) (index int, def *model.PartitionDefinition, _ error) {
+	defs := tblInfo.Partition.Definitions
+	for i := 0; i < len(defs); i++ {
+		if strings.EqualFold(defs[i].Name.L, strings.ToLower(partName)) {
+			return i, &(defs[i]), nil
+		}
+	}
+	return index, nil, table.ErrUnknownPartition.GenWithStackByArgs(partName, tblInfo.Name.O)
 }

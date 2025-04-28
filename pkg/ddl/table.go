@@ -1701,16 +1701,22 @@ func onAlterNoCacheTable(jobCtx *jobContext, job *model.Job) (ver int64, err err
 }
 
 func onRefreshMeta(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	_, err = model.GetRefreshMetaArgs(job)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return 0, errors.Trace(err)
+	}
+	// update schema version
+	ver, err = updateSchemaVersion(jobCtx, job)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
 	var tbInfo *model.TableInfo
 	metaMut := jobCtx.metaMut
 	tbInfo, err = GetTableInfoAndCancelFaultJob(metaMut, job, job.SchemaID)
 	if err != nil {
 		return ver, err
-	}
-	// update schema version and table info
-	ver, err = updateVersionAndTableInfo(jobCtx, job, tbInfo, true)
-	if err != nil {
-		return ver, errors.Trace(err)
 	}
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 	return ver, nil
