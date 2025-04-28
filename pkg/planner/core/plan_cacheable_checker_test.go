@@ -39,8 +39,8 @@ func TestFixControl44823(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(`create table t (a int)`)
-	var va []string
-	for i := 0; i < 201; i++ {
+	va := make([]string, 0, 201)
+	for i := range 201 {
 		tk.MustExec(fmt.Sprintf(`set @a%v = %v`, i, i))
 		va = append(va, fmt.Sprintf("@a%v", i))
 	}
@@ -68,7 +68,7 @@ func TestFixControl44823(t *testing.T) {
 
 	// non prepared plan cache
 	values := make([]string, 0, 201)
-	for i := 0; i < 201; i++ {
+	for i := range 201 {
 		values = append(values, fmt.Sprintf("%v", i))
 	}
 	query := fmt.Sprintf("select * from t where a in (%v)", strings.Join(values, ","))
