@@ -272,6 +272,15 @@ type SetConfig struct {
 	Value    expression.Expression
 }
 
+type AlterLLMPlan struct {
+	baseSchemaProducer
+
+	Platform bool
+	Name     string
+	Key      string
+	Value    string
+}
+
 // RecommendIndexPlan represents a plan for recommend index stmt.
 type RecommendIndexPlan struct {
 	baseSchemaProducer

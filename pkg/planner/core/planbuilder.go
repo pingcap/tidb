@@ -579,6 +579,8 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 		return b.buildCompactTable(x)
 	case *ast.RecommendIndexStmt:
 		return b.buildRecommendIndex(x)
+	case *ast.AlterLLMStmt:
+		return b.buildAlterLLM(x)
 	}
 	return nil, plannererrors.ErrUnsupportedType.GenWithStack("Unsupported type %T", node.Node)
 }
@@ -6002,6 +6004,16 @@ func (b *PlanBuilder) buildCompactTable(node *ast.CompactTableStmt) (base.Plan, 
 		ReplicaKind:    node.ReplicaKind,
 		TableInfo:      tblInfo,
 		PartitionNames: node.PartitionNames,
+	}
+	return p, nil
+}
+
+func (*PlanBuilder) buildAlterLLM(v *ast.AlterLLMStmt) (base.Plan, error) {
+	p := &AlterLLMPlan{
+		Platform: v.Platform,
+		Name:     v.Name,
+		Key:      v.Key,
+		Value:    v.Value,
 	}
 	return p, nil
 }
