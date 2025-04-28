@@ -74,7 +74,7 @@ func execRows(sctx sessionctx.Context, sql string, args ...any) (rows []chunk.Ro
 		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql, args...)
 }
 
-// bindingLogger with category "sql-bind" is used to log statistic related messages.
-func bindingLogger() *zap.Logger {
+// llmLogger with category "sql-bind" is used to log statistic related messages.
+func llmLogger() *zap.Logger {
 	return logutil.BgLogger().With(zap.String("category", "sql-bind"))
 }
