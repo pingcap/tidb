@@ -211,7 +211,7 @@ func newBackupMetaValidateCommand() *cobra.Command {
 
 			tableIDAllocator := mockid.NewIDAllocator()
 			// Advance table ID allocator to the offset.
-			for range tableIDOffset {
+			for offset := uint64(0); offset < tableIDOffset; offset++ {
 				_, _ = tableIDAllocator.Alloc() // Ignore error
 			}
 			rewriteRules := &restoreutils.RewriteRules{
