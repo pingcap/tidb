@@ -4273,6 +4273,10 @@ func (n *DropQueryWatchStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+type AlterLLMStmt struct {
+	stmtNode
+}
+
 // AddQueryWatchStmt is a statement to add a runaway watch item.
 type AddQueryWatchStmt struct {
 	stmtNode

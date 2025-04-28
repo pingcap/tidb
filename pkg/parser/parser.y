@@ -193,6 +193,7 @@ import (
 	limit             "LIMIT"
 	linear            "LINEAR"
 	lines             "LINES"
+	llm               "LLM"
 	load              "LOAD"
 	localTime         "LOCALTIME"
 	localTs           "LOCALTIMESTAMP"
@@ -230,6 +231,7 @@ import (
 	over              "OVER"
 	partition         "PARTITION"
 	percentRank       "PERCENT_RANK"
+	platform          "PLATFORM"
 	precisionType     "PRECISION"
 	primary           "PRIMARY"
 	procedure         "PROCEDURE"
@@ -976,6 +978,7 @@ import (
 	AlterPolicyStmt            "Alter Placement Policy statement"
 	AlterResourceGroupStmt     "Alter Resource Group statement"
 	AlterSequenceStmt          "Alter sequence statement"
+	AlterLLMStmt               "Alter LLM platform or model statement"
 	AnalyzeTableStmt           "Analyze table statement"
 	BeginTransactionStmt       "BEGIN TRANSACTION statement"
 	BinlogStmt                 "Binlog base64 statement"
@@ -16685,6 +16688,12 @@ CalibrateResourceWorkloadOption:
 |	"WORKLOAD" "TPCH_10"
 	{
 		$$ = ast.TPCH10
+	}
+
+AlterLLMStmt:
+	"ALTER" "LLM" "PLATFORM"
+	{
+		$$ = &ast.AlterLLMStmt{}
 	}
 
 /********************************************************************
