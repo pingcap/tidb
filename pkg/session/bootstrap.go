@@ -791,6 +791,7 @@ const (
 
 	// CreateTiDBLLMPlatformTable is a table to store LLM platform information.
 	CreateTiDBLLMPlatformTable = `CREATE TABLE IF NOT EXISTS mysql.llm_platform (
+		id int NOT NULL AUTO_INCREMENT PRIMARY KEY,
 		name varchar(64) NOT NULL,
 		base_url varchar(255) NOT NULL,
 		host varchar(255) NOT NULL,
