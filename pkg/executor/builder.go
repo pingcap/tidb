@@ -324,7 +324,7 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 	case *plannercore.RecommendIndexPlan:
 		return b.buildRecommendIndex(v)
 	case *plannercore.LLMDDLPlan:
-
+		return b.buildLLMDDL(v)
 	case *plannercore.WorkloadRepoCreate:
 		return b.buildWorkloadRepoCreate(v)
 	default:
@@ -5851,10 +5851,6 @@ func (b *executorBuilder) buildCompactTable(v *plannercore.CompactTable) exec.Ex
 
 func (b *executorBuilder) buildAdminShowBDRRole(v *plannercore.AdminShowBDRRole) exec.Executor {
 	return &AdminShowBDRRoleExec{BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID())}
-}
-
-func (b *executorBuilder) buildAlterLLM(v *plannercore.AlterLLMPlan) exec.Executor {
-
 }
 
 func (b *executorBuilder) buildRecommendIndex(v *plannercore.RecommendIndexPlan) exec.Executor {
