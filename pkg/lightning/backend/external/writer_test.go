@@ -646,6 +646,18 @@ func doTestWriterOnDupRecord(t *testing.T, testingOneFile bool, getWriter func(s
 		return getWriter(store, builder)
 	}
 
+	t.Run("write nothing", func(t *testing.T) {
+		builder := NewWriterBuilder().SetPropKeysDistance(4).SetMemorySizeLimit(240).SetBlockSize(240)
+		writer := doGetWriter(store, builder)
+		require.NoError(t, writer.Close(ctx))
+		require.Empty(t, summary.Min)
+		require.Empty(t, summary.Max)
+		require.Zero(t, summary.TotalCnt)
+		require.Zero(t, summary.TotalSize)
+		require.Zero(t, summary.ConflictInfo.Count)
+		require.Empty(t, summary.ConflictInfo.Files)
+	})
+
 	t.Run("all duplicated", func(t *testing.T) {
 		builder := NewWriterBuilder().SetPropKeysDistance(4).SetMemorySizeLimit(240).SetBlockSize(240)
 		writer := doGetWriter(store, builder)
@@ -780,6 +792,18 @@ func doTestWriterOnDupRemove(t *testing.T, testingOneFile bool, getWriter func(s
 		builder = builder.SetOnCloseFunc(func(s *WriterSummary) { summary = s }).SetOnDup(engineapi.OnDuplicateKeyRemove)
 		return getWriter(store, builder)
 	}
+
+	t.Run("write nothing", func(t *testing.T) {
+		builder := NewWriterBuilder().SetPropKeysDistance(4).SetMemorySizeLimit(240).SetBlockSize(240)
+		writer := doGetWriter(store, builder)
+		require.NoError(t, writer.Close(ctx))
+		require.Empty(t, summary.Min)
+		require.Empty(t, summary.Max)
+		require.Zero(t, summary.TotalCnt)
+		require.Zero(t, summary.TotalSize)
+		require.Zero(t, summary.ConflictInfo.Count)
+		require.Empty(t, summary.ConflictInfo.Files)
+	})
 
 	t.Run("all duplicated", func(t *testing.T) {
 		builder := NewWriterBuilder().SetPropKeysDistance(4).SetMemorySizeLimit(240).SetBlockSize(240)
