@@ -7853,6 +7853,14 @@ func TestCompatTypes(t *testing.T) {
 	RunTest(t, table, false)
 }
 
+func TestAlterLLM(t *testing.T) {
+	table := []testCase{
+		{"ALTER LLM PLATFORM openai k1 v1", true, "ALTER LLM PLATFORM openai k1 v1"},
+	}
+
+	RunTest(t, table, false)
+}
+
 func TestVector(t *testing.T) {
 	table := []testCase{
 		{"CREATE TABLE t (a VECTOR)", true, "CREATE TABLE `t` (`a` VECTOR)"},

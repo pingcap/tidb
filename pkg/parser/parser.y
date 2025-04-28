@@ -12324,6 +12324,7 @@ Statement:
 |	AlterSequenceStmt
 |	AlterPolicyStmt
 |	AlterResourceGroupStmt
+|	AlterLLMStmt
 |	AnalyzeTableStmt
 |	BeginTransactionStmt
 |	BinlogStmt
