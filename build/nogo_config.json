@@ -368,6 +368,7 @@
       "pkg/planner/funcdep": "pkg/planner/funcdep code",
       "pkg/server/": "server code",
       "pkg/statistics": "pkg/statistics code"
+      "pkg/util": "pkg/util code"
     }
   },
   "inspect": {
