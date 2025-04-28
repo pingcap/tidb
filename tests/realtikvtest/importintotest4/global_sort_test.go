@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -44,6 +45,30 @@ func urlEqual(t *testing.T, expected, actual string) {
 	require.Equal(t, urlExpected.Query(), urlGot.Query())
 	urlExpected.RawQuery, urlGot.RawQuery = "", ""
 	require.Equal(t, urlExpected.String(), urlGot.String())
+}
+
+func checkExternalFields(t *testing.T, tk *testkit.TestKit) {
+	// fetch subtask meta from tk, and check fields with `external:"true"` tag
+	rs := tk.MustQuery("select meta, step from mysql.tidb_background_subtask_history").Rows()
+	for _, r := range rs {
+		// convert string to int64
+		step, err := strconv.Atoi(r[1].(string))
+		require.NoError(t, err)
+		switch proto.Step(step) {
+		case proto.ImportStepEncodeAndSort:
+			var subtaskMeta importinto.ImportStepMeta
+			require.NoError(t, json.Unmarshal([]byte(r[0].(string)), &subtaskMeta))
+			testutils.AssertExternalField(t, &subtaskMeta)
+		case proto.ImportStepMergeSort:
+			var subtaskMeta importinto.MergeSortStepMeta
+			require.NoError(t, json.Unmarshal([]byte(r[0].(string)), &subtaskMeta))
+			testutils.AssertExternalField(t, &subtaskMeta)
+		case proto.ImportStepWriteAndIngest:
+			var subtaskMeta importinto.WriteIngestStepMeta
+			require.NoError(t, json.Unmarshal([]byte(r[0].(string)), &subtaskMeta))
+			testutils.AssertExternalField(t, &subtaskMeta)
+		}
+	}
 }
 
 func (s *mockGCSSuite) TestGlobalSortBasic() {
@@ -99,6 +124,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	taskMeta := importinto.TaskMeta{}
 	s.NoError(json.Unmarshal(task.Meta, &taskMeta))
 	urlEqual(s.T(), redactedSortStorageURI, taskMeta.Plan.CloudStorageURI)
+	require.True(s.T(), taskMeta.Plan.DisableTiKVImportMode)
 
 	// merge-sort data kv
 	s.tk.MustExec("truncate table t")
@@ -128,16 +154,19 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	_, files, err = s.server.ListObjectsWithOptions("sorted", fakestorage.ListOptions{Prefix: "import"})
 	s.NoError(err)
 	s.Len(files, 0)
+
+	// check subtask external field
+	checkExternalFields(s.T(), s.tk)
 }
 
 func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
 	var allData []string
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		var content []byte
 		keyCnt := 1000
-		for j := 0; j < keyCnt; j++ {
+		for j := range keyCnt {
 			idx := i*keyCnt + j
-			content = append(content, []byte(fmt.Sprintf("%d,test-%d\n", idx, idx))...)
+			content = append(content, fmt.Appendf(nil, "%d,test-%d\n", idx, idx)...)
 			allData = append(allData, fmt.Sprintf("%d test-%d", idx, idx))
 		}
 		s.server.CreateObject(fakestorage.Object{
@@ -159,12 +188,12 @@ func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
 
 func (s *mockGCSSuite) TestGlobalSortUniqueKeyConflict() {
 	var allData []string
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		var content []byte
 		keyCnt := 1000
-		for j := 0; j < keyCnt; j++ {
+		for j := range keyCnt {
 			idx := i*keyCnt + j
-			content = append(content, []byte(fmt.Sprintf("%d,test-%d\n", idx, idx))...)
+			content = append(content, fmt.Appendf(nil, "%d,test-%d\n", idx, idx)...)
 		}
 		if i == 9 {
 			// add a duplicate key "test-123"

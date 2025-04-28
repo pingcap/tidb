@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
@@ -91,10 +92,10 @@ type engineMeta struct {
 
 type syncedRanges struct {
 	sync.Mutex
-	ranges []common.Range
+	ranges []engineapi.Range
 }
 
-func (r *syncedRanges) add(g common.Range) {
+func (r *syncedRanges) add(g engineapi.Range) {
 	r.Lock()
 	r.ranges = append(r.ranges, g)
 	r.Unlock()
@@ -158,7 +159,7 @@ type Engine struct {
 	logger log.Logger
 }
 
-var _ common.Engine = (*Engine)(nil)
+var _ engineapi.Engine = (*Engine)(nil)
 
 func (e *Engine) setError(err error) {
 	if err != nil {
@@ -330,7 +331,7 @@ func (e *Engine) getRegionSplitKeys(regionSplitSize, regionSplitKeyCnt int64) ([
 	}
 
 	ranges := splitRangeBySizeProps(
-		common.Range{Start: startKey, End: endKey},
+		engineapi.Range{Start: startKey, End: endKey},
 		sizeProps,
 		regionSplitSize,
 		regionSplitKeyCnt,
@@ -1029,11 +1030,11 @@ func (e *Engine) newKVIter(ctx context.Context, opts *pebble.IterOptions, buf *m
 	)
 }
 
-var _ common.IngestData = (*Engine)(nil)
+var _ engineapi.IngestData = (*Engine)(nil)
 
 // GetFirstAndLastKey reads the first and last key in range [lowerBound, upperBound)
 // in the engine. Empty upperBound means unbounded.
-func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []byte, error) {
+func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) (firstKey, lastKey []byte, err error) {
 	if len(upperBound) == 0 {
 		// we use empty slice for unbounded upper bound, but it means max value in pebble
 		// so reset to nil
@@ -1058,12 +1059,12 @@ func (e *Engine) GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []by
 	if !hasKey {
 		return nil, nil, nil
 	}
-	firstKey := append([]byte{}, iter.Key()...)
+	firstKey = append([]byte{}, iter.Key()...)
 	iter.Last()
 	if iter.Error() != nil {
 		return nil, nil, errors.Annotate(iter.Error(), "failed to seek to the last key")
 	}
-	lastKey := append([]byte{}, iter.Key()...)
+	lastKey = append([]byte{}, iter.Key()...)
 	return firstKey, lastKey, nil
 }
 
@@ -1072,7 +1073,7 @@ func (e *Engine) NewIter(
 	ctx context.Context,
 	lowerBound, upperBound []byte,
 	bufPool *membuf.Pool,
-) common.ForwardIter {
+) engineapi.ForwardIter {
 	return e.newKVIter(
 		ctx,
 		&pebble.IterOptions{LowerBound: lowerBound, UpperBound: upperBound},
@@ -1101,7 +1102,7 @@ func (e *Engine) Finish(totalBytes, totalCount int64) {
 // IngestData interface.
 func (e *Engine) LoadIngestData(
 	ctx context.Context,
-	outCh chan<- common.DataAndRanges,
+	outCh chan<- engineapi.DataAndRanges,
 ) (err error) {
 	jobRangeKeys := e.regionSplitKeysCache
 	// when the region is large, we need to split to smaller job ranges to increase
@@ -1122,9 +1123,9 @@ func (e *Engine) LoadIngestData(
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case outCh <- common.DataAndRanges{
+		case outCh <- engineapi.DataAndRanges{
 			Data:         e,
-			SortedRanges: []common.Range{{Start: prev, End: cur}},
+			SortedRanges: []engineapi.Range{{Start: prev, End: cur}},
 		}:
 		}
 		prev = cur
@@ -1423,6 +1424,16 @@ func newSSTWriter(path string, blockSize int) (*sstable.Writer, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	// Logic to ensure the default block size is set to 16KB.
+	// If a smaller block size is used (e.g., 4KB, the default for Pebble),
+	// a single large SST file may generate a disproportionately large index block,
+	// potentially causing a memory spike and leading to an Out of Memory (OOM) scenario.
+	// If the user specifies a smaller block size, respect their choice.
+	if blockSize <= 0 {
+		blockSize = config.DefaultBlockSize
+	}
+
 	writable := objstorageprovider.NewFileWritable(f)
 	writer := sstable.NewWriter(writable, sstable.WriterOptions{
 		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
@@ -1526,7 +1537,7 @@ func (h *sstIterHeap) Pop() any {
 }
 
 // Next implements common.Iterator.
-func (h *sstIterHeap) Next() ([]byte, []byte, error) {
+func (h *sstIterHeap) Next() (key, val []byte, err error) {
 	for {
 		if len(h.iters) == 0 {
 			return nil, nil, nil

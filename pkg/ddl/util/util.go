@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -52,6 +53,8 @@ const (
 	loadGlobalVarsSQL            = `SELECT HIGH_PRIORITY variable_name, variable_value from mysql.global_variables where variable_name in (` // + nameList + ")"
 	// KeyOpDefaultTimeout is the default timeout for each key operation.
 	KeyOpDefaultTimeout = 2 * time.Second
+	// KeyOpDefaultRetryCnt is the default retry times for each key operation.
+	KeyOpDefaultRetryCnt = 5
 	// KeyOpRetryInterval is the interval between two key operations.
 	KeyOpRetryInterval = 30 * time.Millisecond
 	// DDLAllSchemaVersions is the path on etcd that is used to store all servers current schema versions.
@@ -76,7 +79,7 @@ type DelRangeTask struct {
 }
 
 // Range returns the range [start, end) to delete.
-func (t DelRangeTask) Range() (kv.Key, kv.Key) {
+func (t DelRangeTask) Range() (start kv.Key, end kv.Key) {
 	return t.StartKey, t.EndKey
 }
 
@@ -283,6 +286,7 @@ func DeleteKeyFromEtcd(key string, etcdCli *clientv3.Client, retryCnt int, timeo
 		if err == nil {
 			return nil
 		}
+		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 		logutil.DDLLogger().Warn("etcd-cli delete key failed", zap.String("key", key), zap.Error(err), zap.Int("retryCnt", i))
 	}
 	return errors.Trace(err)
@@ -299,6 +303,7 @@ func DeleteKeysWithPrefixFromEtcd(prefix string, etcdCli *clientv3.Client, retry
 		if err == nil {
 			return nil
 		}
+		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 		logutil.DDLLogger().Warn(
 			"etcd-cli delete prefix failed",
 			zap.String("prefix", prefix),
@@ -351,6 +356,7 @@ func PutKVToEtcdMono(ctx context.Context, etcdCli *clientv3.Client, retryCnt int
 			err = errors.New("performing compare-and-swap during PutKVToEtcd failed")
 		}
 
+		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 		logutil.DDLLogger().Warn("etcd-cli put kv failed", zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
 		time.Sleep(KeyOpRetryInterval)
 	}
@@ -375,6 +381,7 @@ func PutKVToEtcd(ctx context.Context, etcdCli *clientv3.Client, retryCnt int, ke
 		if err == nil {
 			return nil
 		}
+		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 		logutil.DDLLogger().Warn("etcd-cli put kv failed", zap.String("key", key), zap.String("value", val), zap.Error(err), zap.Int("retryCnt", i))
 		time.Sleep(KeyOpRetryInterval)
 	}

@@ -114,7 +114,7 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 		}()
 	}
 	s.dataKVMemSizePerCon, s.perIndexKVMemSizePerCon = getWriterMemorySizeLimit(s.GetResource(), s.tableImporter.Plan)
-	s.indexBlockSize = getAdjustedIndexBlockSize(s.perIndexKVMemSizePerCon)
+	s.indexBlockSize = external.GetAdjustedBlockSize(s.perIndexKVMemSizePerCon)
 	s.logger.Info("KV writer memory buf info",
 		zap.String("data-buf-limit", units.BytesSize(float64(s.dataKVMemSizePerCon))),
 		zap.String("per-index-buf-limit", units.BytesSize(float64(s.perIndexKVMemSizePerCon))),
@@ -133,6 +133,13 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	err = json.Unmarshal(bs, &subtaskMeta)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	// read import step meta from external storage when using global sort.
+	if subtaskMeta.ExternalPath != "" {
+		if err := subtaskMeta.ReadJSONFromExternalStorage(ctx, s.tableImporter.GlobalSortStore, &subtaskMeta); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	var dataEngine, indexEngine *backend.OpenedEngine
@@ -262,8 +269,16 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 	}
 	subtaskMeta.SortedDataMeta = sharedVars.SortedDataMeta
 	subtaskMeta.SortedIndexMetas = sharedVars.SortedIndexMetas
+	// if using global sort, write the external meta to external storage.
+	if s.tableImporter.IsGlobalSort() {
+		subtaskMeta.ExternalPath = external.SubtaskMetaPath(s.taskID, subtask.ID)
+		if err := subtaskMeta.WriteJSONToExternalStorage(ctx, s.tableImporter.GlobalSortStore, subtaskMeta); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	s.sharedVars.Delete(subtaskMeta.ID)
-	newMeta, err := json.Marshal(subtaskMeta)
+	newMeta, err := subtaskMeta.Marshal()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -321,6 +336,12 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// read merge sort step meta from external storage when using global sort.
+	if sm.ExternalPath != "" {
+		if err := sm.ReadJSONFromExternalStorage(ctx, m.controller.GlobalSortStore, sm); err != nil {
+			return errors.Trace(err)
+		}
+	}
 	logger := m.logger.With(zap.Int64("subtask-id", subtask.ID), zap.String("kv-group", sm.KVGroup))
 	task := log.BeginTask(logger, "run subtask")
 	defer func() {
@@ -361,22 +382,36 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return m.onFinished(subtask)
+	return m.onFinished(ctx, subtask)
 }
 
-func (m *mergeSortStepExecutor) onFinished(subtask *proto.Subtask) error {
+func (m *mergeSortStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
 	var subtaskMeta MergeSortStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)
 	}
 	subtaskMeta.SortedKVMeta = *m.subtaskSortedKVMeta
+	subtaskMeta.ExternalPath = external.SubtaskMetaPath(m.taskID, subtask.ID)
+	if err := subtaskMeta.WriteJSONToExternalStorage(ctx, m.controller.GlobalSortStore, subtaskMeta); err != nil {
+		return errors.Trace(err)
+	}
+
 	m.subtaskSortedKVMeta = nil
-	newMeta, err := json.Marshal(subtaskMeta)
+	newMeta, err := subtaskMeta.Marshal()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	subtask.Meta = newMeta
 	return nil
+}
+
+// Cleanup implements the StepExecutor.Cleanup interface.
+func (m *mergeSortStepExecutor) Cleanup(ctx context.Context) (err error) {
+	m.logger.Info("cleanup subtask env")
+	if m.controller != nil {
+		m.controller.Close()
+	}
+	return m.BaseStepExecutor.Cleanup(ctx)
 }
 
 type writeAndIngestStepExecutor struct {
@@ -407,6 +442,13 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 		return errors.Trace(err)
 	}
 
+	// read write and ingest step meta from external storage when using global sort.
+	if sm.ExternalPath != "" {
+		if err := sm.ReadJSONFromExternalStorage(ctx, e.tableImporter.GlobalSortStore, sm); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	logger := e.logger.With(zap.Int64("subtask-id", subtask.ID),
 		zap.String("kv-group", sm.KVGroup))
 	task := log.BeginTask(logger, "run subtask")
@@ -416,7 +458,6 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 
 	_, engineUUID := backend.MakeUUID("", subtask.ID)
 	localBackend := e.tableImporter.Backend()
-	localBackend.WorkerConcurrency = int(e.GetResource().CPU.Capacity()) * 2
 	// compatible with old version task meta
 	jobKeys := sm.RangeJobKeys
 	if jobKeys == nil {
@@ -434,6 +475,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 			TotalFileSize: int64(sm.TotalKVSize),
 			TotalKVCount:  0,
 			CheckHotspot:  false,
+			MemCapacity:   e.GetResource().Mem.Capacity(),
 		},
 		TS: sm.TS,
 	}, engineUUID)
@@ -470,7 +512,7 @@ func (e *writeAndIngestStepExecutor) onFinished(ctx context.Context, subtask *pr
 		e.logger.Warn("failed to cleanup engine", zap.Error(err))
 	}
 
-	newMeta, err := json.Marshal(subtaskMeta)
+	newMeta, err := subtaskMeta.Marshal()
 	if err != nil {
 		return errors.Trace(err)
 	}

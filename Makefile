@@ -202,12 +202,24 @@ race: failpoint-enable
 	@$(CLEAN_UT_BINARY)
 
 .PHONY: server
-server:
-ifeq ($(TARGET), "")
-	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server ./cmd/tidb-server
+ifeq ($(GOCOVER), )
+    COVER_FLAG :=
 else
-	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./cmd/tidb-server
+    COVER_FLAG := -cover
 endif
+
+ifeq ($(TARGET), "")
+    SERVER_OUT := bin/tidb-server
+else
+    SERVER_OUT := $(TARGET)
+endif
+
+SERVER_BUILD_CMD := \
+	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) $(COVER_FLAG) \
+	-ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(SERVER_OUT)' ./cmd/tidb-server
+
+server:
+	$(SERVER_BUILD_CMD)
 
 .PHONY: server_debug
 server_debug:
@@ -452,7 +464,7 @@ br_unit_test: export ARGS=$$($(BR_PACKAGES))
 br_unit_test:
 	@make failpoint-enable
 	@export TZ='Asia/Shanghai';
-	$(GOTEST) $(RACE_FLAG) -ldflags '$(LDFLAGS)' $(ARGS) -coverprofile=coverage.txt || ( make failpoint-disable && exit 1 )
+	$(GOTEST) --tags=deadlock,intest $(RACE_FLAG) -ldflags '$(LDFLAGS)' $(ARGS) -coverprofile=coverage.txt || ( make failpoint-disable && exit 1 )
 	@make failpoint-disable
 
 .PHONY: br_unit_test_in_verify_ci
@@ -461,7 +473,7 @@ br_unit_test_in_verify_ci: tools/bin/gotestsum
 	@make failpoint-enable
 	@export TZ='Asia/Shanghai';
 	@mkdir -p $(TEST_COVERAGE_DIR)
-	CGO_ENABLED=1 tools/bin/gotestsum --junitfile "$(TEST_COVERAGE_DIR)/br-junit-report.xml" -- $(RACE_FLAG) -ldflags '$(LDFLAGS)' \
+	CGO_ENABLED=1 tools/bin/gotestsum --junitfile "$(TEST_COVERAGE_DIR)/br-junit-report.xml" -- --tags=deadlock,intest $(RACE_FLAG) -ldflags '$(LDFLAGS)' \
 	$(ARGS) -coverprofile="$(TEST_COVERAGE_DIR)/br_cov.unit_test.out" || ( make failpoint-disable && exit 1 )
 	@make failpoint-disable
 

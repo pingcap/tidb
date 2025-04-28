@@ -30,7 +30,7 @@ aliases:
   sig-approvers-executor-import: # approvers for importer part of executor pkg.
     - D3Hunter
     - gmhdbjd
-    - lance6716
+    - Benjamin2037
   sig-approvers-expression: # approvers for expression pkg
     - windtalker
     - XuHuaiyu
@@ -39,11 +39,9 @@ aliases:
     - Benjamin2037
     - D3Hunter
     - gmhdbjd
-    - lance6716
   sig-approvers-domain: # approvers for domain pkg
     - D3Hunter
     - gmhdbjd
-    - lance6716
     - tangenta
     - wjhuang2016
   sig-approvers-ddl: # approvers for ddl pkg
@@ -52,18 +50,15 @@ aliases:
     - wjhuang2016
     - D3Hunter
     - gmhdbjd
-    - lance6716
   sig-approvers-disttask: # approvers for disttask pkg
     - Benjamin2037
     - D3Hunter
     - gmhdbjd
-    - lance6716
     - tangenta
     - wjhuang2016
   sig-approvers-dumpling: # approvers for dumpling module
     - Benjamin2037
     - gmhdbjd
-    - lance6716
     - tangenta
   sig-approvers-infoschema: # approvers for infoschema pkg
     - wjhuang2016
@@ -77,7 +72,6 @@ aliases:
     - tangenta
     - wjhuang2016
     - D3Hunter
-    - lance6716
   sig-approvers-owner: # approvers for `owner` pkg
     - Benjamin2037
     - tangenta
@@ -92,7 +86,6 @@ aliases:
     - Benjamin2037
     - D3Hunter
     - gmhdbjd
-    - lance6716
     - tangenta
     - wjhuang2016
   sig-approvers-table: # approvers for table packages.
@@ -103,13 +96,11 @@ aliases:
     - wjhuang2016
   sig-approvers-lock: # approvers for lock pkg
     - Benjamin2037
-    - lance6716
     - tangenta
     - wjhuang2016
   sig-approvers-tidb-binlog: # approvers for tidb-binlog module
     - Benjamin2037
     - gmhdbjd
-    - lance6716
   sig-approvers-planner: # approvers for planner module
     - AilinKid
     - Rustin170506
@@ -121,3 +112,5 @@ aliases:
     - winoros
     - terry1purcell
     - ghazalfamilyusa
+    - henrybw
+    - wddevries

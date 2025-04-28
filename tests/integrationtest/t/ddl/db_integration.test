@@ -396,15 +396,6 @@ alter table t add unique index idx_ac(a, c);
 alter table t add unique index idx_b(b);
 drop table if exists t;
 
-# TestFulltextIndexIgnore
-drop table if exists t_ft;
-create table t_ft (a text, fulltext key (a));
-show warnings;
-alter table t_ft add fulltext key (a);
-show warnings;
-show create table t_ft;
-drop table if exists t_ft;
-
 # TestDefaultValueIsString
 drop table if exists t;
 create table t (a int default b'1');

@@ -20,6 +20,7 @@ import (
 	"math"
 	"net"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -631,7 +632,7 @@ func buildTiDBMemCopTasks(ranges *KeyRanges, req *kv.Request) ([]*copTask, error
 }
 
 func reverseTasks(tasks []*copTask) {
-	for i := 0; i < len(tasks)/2; i++ {
+	for i := range len(tasks) / 2 {
 		j := len(tasks) - i - 1
 		tasks[i], tasks[j] = tasks[j], tasks[i]
 	}
@@ -893,7 +894,7 @@ func (it *copIterator) open(ctx context.Context, tryCopLiteWorker *atomic2.Uint3
 		smallTaskCh = make(chan *copTask, 1)
 	}
 	// Start it.concurrency number of workers to handle cop requests.
-	for i := 0; i < it.concurrency+it.smallTaskConcurrency; i++ {
+	for i := range it.concurrency + it.smallTaskConcurrency {
 		ch := taskCh
 		if i >= it.concurrency && smallTaskCh != nil {
 			ch = smallTaskCh
@@ -1411,7 +1412,6 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	} else if worker.req.IsStaleness {
 		req.EnableStaleWithMixedReplicaRead()
 	}
-	staleRead := req.GetStaleRead()
 	ops := make([]tikv.StoreSelectorOption, 0, 2)
 	if len(worker.req.MatchStoreLabels) > 0 {
 		ops = append(ops, tikv.WithMatchLabels(worker.req.MatchStoreLabels))
@@ -1445,15 +1445,8 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		worker.logTimeCopTask(costTime, task, bo, copResp)
 	}
 
-	storeID := strconv.FormatUint(req.Context.GetPeer().GetStoreId(), 10)
-	isInternal := util.IsRequestSourceInternal(&task.requestSource)
-	scope := metrics.LblGeneral
-	if isInternal {
-		scope = metrics.LblInternal
-	}
-	metrics.TiKVCoprocessorHistogram.WithLabelValues(storeID, strconv.FormatBool(staleRead), scope).Observe(costTime.Seconds())
 	if copResp != nil {
-		tidbmetrics.DistSQLCoprRespBodySize.WithLabelValues(storeAddr).Observe(float64(len(copResp.Data)))
+		tidbmetrics.DistSQLCoprRespBodySize.WithLabelValues(storeAddr).Observe(float64(len(copResp.Data) / 1024))
 	}
 
 	var result *copTaskResult
@@ -1928,8 +1921,8 @@ func (worker *copIteratorWorker) handleCopCache(task *copTask, resp *copResponse
 				}
 				// When paging protocol is used, the response key range is part of the cache data.
 				if r := resp.pbResp.GetRange(); r != nil {
-					newCacheValue.PageStart = append([]byte{}, r.GetStart()...)
-					newCacheValue.PageEnd = append([]byte{}, r.GetEnd()...)
+					newCacheValue.PageStart = slices.Clone(r.GetStart())
+					newCacheValue.PageEnd = slices.Clone(r.GetEnd())
 				}
 				worker.store.coprCache.Set(cacheKey, &newCacheValue)
 			}
@@ -1998,6 +1991,9 @@ func (worker *copIteratorWorker) collectCopRuntimeStats(copStats *CopRuntimeStat
 }
 
 func (worker *copIteratorWorker) collectKVClientRuntimeStats(copStats *CopRuntimeStats, bo *Backoffer, rpcCtx *tikv.RPCContext) {
+	if rpcCtx != nil {
+		copStats.CalleeAddress = rpcCtx.Addr
+	}
 	if worker.kvclient.Stats == nil {
 		return
 	}
@@ -2014,9 +2010,6 @@ func (worker *copIteratorWorker) collectKVClientRuntimeStats(copStats *CopRuntim
 			copStats.BackoffTimes[backoff] = backoffTimes[backoff]
 			copStats.BackoffSleep[backoff] = time.Duration(bo.GetBackoffSleepMS()[backoff]) * time.Millisecond
 		}
-	}
-	if rpcCtx != nil {
-		copStats.CalleeAddress = rpcCtx.Addr
 	}
 }
 

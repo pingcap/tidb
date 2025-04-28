@@ -21,6 +21,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -320,7 +321,7 @@ func (rc *SnapClient) AllocTableIDs(ctx context.Context, tables []*metautil.Tabl
 // storage.
 func (rc *SnapClient) InitCheckpoint(
 	ctx context.Context,
-	g glue.Glue, store kv.Storage,
+	snapshotCheckpointMetaManager checkpoint.SnapshotMetaManagerT,
 	config *pdutil.ClusterConfig,
 	logRestoredTS uint64,
 	checkpointFirstRun bool,
@@ -329,9 +330,8 @@ func (rc *SnapClient) InitCheckpoint(
 	checkpointSetWithTableID = make(map[int64]map[string]struct{})
 
 	if !checkpointFirstRun {
-		execCtx := rc.db.Session().GetSessionCtx().GetRestrictedSQLExecutor()
 		// load the checkpoint since this is not the first time to restore
-		meta, err := checkpoint.LoadCheckpointMetadataForSnapshotRestore(ctx, execCtx)
+		meta, err := snapshotCheckpointMetaManager.LoadCheckpointMetadata(ctx)
 		if err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
@@ -341,16 +341,16 @@ func (rc *SnapClient) InitCheckpoint(
 			return checkpointSetWithTableID, nil, errors.Errorf(
 				"The upstream cluster id[%d] of the current snapshot restore does not match that[%d] recorded in checkpoint. "+
 					"Perhaps you should specify the last full backup storage instead, "+
-					"or just clean the checkpoint database[%s] if the cluster has been cleaned up.",
-				rc.backupMeta.ClusterId, meta.UpstreamClusterID, checkpoint.SnapshotRestoreCheckpointDatabaseName)
+					"or just clean the checkpoint %s if the cluster has been cleaned up.",
+				rc.backupMeta.ClusterId, meta.UpstreamClusterID, snapshotCheckpointMetaManager)
 		}
 
 		if meta.RestoredTS != rc.backupMeta.EndVersion {
 			return checkpointSetWithTableID, nil, errors.Errorf(
 				"The current snapshot restore want to restore cluster to the BackupTS[%d], which is different from that[%d] recorded in checkpoint. "+
 					"Perhaps you should specify the last full backup storage instead, "+
-					"or just clean the checkpoint database[%s] if the cluster has been cleaned up.",
-				rc.backupMeta.EndVersion, meta.RestoredTS, checkpoint.SnapshotRestoreCheckpointDatabaseName,
+					"or just clean the checkpoint %s if the cluster has been cleaned up.",
+				rc.backupMeta.EndVersion, meta.RestoredTS, snapshotCheckpointMetaManager,
 			)
 		}
 
@@ -363,7 +363,7 @@ func (rc *SnapClient) InitCheckpoint(
 				"The current PITR want to restore cluster to the log restored ts[%d], which is different from that[%d] recorded in checkpoint. "+
 					"Perhaps you shoud specify the log restored ts instead, "+
 					"or just clean the checkpoint database[%s] if the cluster has been cleaned up.",
-				logRestoredTS, meta.LogRestoredTS, checkpoint.LogRestoreCheckpointDatabaseName,
+				logRestoredTS, meta.LogRestoredTS, snapshotCheckpointMetaManager,
 			)
 		}
 
@@ -375,19 +375,20 @@ func (rc *SnapClient) InitCheckpoint(
 		}
 
 		// t1 is the latest time the checkpoint ranges persisted to the external storage.
-		t1, err := checkpoint.LoadCheckpointDataForSstRestore(ctx, execCtx, checkpoint.SnapshotRestoreCheckpointDatabaseName, func(tableID int64, v checkpoint.RestoreValueType) {
+		t1, err := snapshotCheckpointMetaManager.LoadCheckpointData(ctx, func(tableID int64, v checkpoint.RestoreValueType) error {
 			checkpointSet, exists := checkpointSetWithTableID[tableID]
 			if !exists {
 				checkpointSet = make(map[string]struct{})
 				checkpointSetWithTableID[tableID] = checkpointSet
 			}
 			checkpointSet[v.RangeKey] = struct{}{}
+			return nil
 		})
 		if err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
 		// t2 is the latest time the checkpoint checksum persisted to the external storage.
-		checkpointChecksum, t2, err := checkpoint.LoadCheckpointChecksumForRestore(ctx, execCtx)
+		checkpointChecksum, t2, err := snapshotCheckpointMetaManager.LoadCheckpointChecksum(ctx)
 		if err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
@@ -412,16 +413,12 @@ func (rc *SnapClient) InitCheckpoint(
 		if config != nil {
 			meta.SchedulersConfig = &pdutil.ClusterConfig{Schedulers: config.Schedulers, ScheduleCfg: config.ScheduleCfg}
 		}
-		if err := checkpoint.SaveCheckpointMetadataForSstRestore(ctx, rc.db.Session(), checkpoint.SnapshotRestoreCheckpointDatabaseName, meta); err != nil {
+		if err := snapshotCheckpointMetaManager.SaveCheckpointMetadata(ctx, meta); err != nil {
 			return checkpointSetWithTableID, nil, errors.Trace(err)
 		}
 	}
 
-	se, err := g.CreateSession(store)
-	if err != nil {
-		return checkpointSetWithTableID, nil, errors.Trace(err)
-	}
-	rc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, se, checkpoint.SnapshotRestoreCheckpointDatabaseName)
+	rc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, snapshotCheckpointMetaManager)
 	if err != nil {
 		return checkpointSetWithTableID, nil, errors.Trace(err)
 	}
@@ -930,23 +927,49 @@ func (rc *SnapClient) createTables(
 	return cts, nil
 }
 
+// SortTablesBySchemaID sorts tables by their schema ID to ensure tables in the same schema
+// are processed together. It returns a new slice with sorted tables.
+func SortTablesBySchemaID(tables []*metautil.Table) []*metautil.Table {
+	if len(tables) <= 1 {
+		return tables
+	}
+
+	orderedTables := make([]*metautil.Table, len(tables))
+	copy(orderedTables, tables)
+
+	sort.SliceStable(orderedTables, func(i, j int) bool {
+		// first sort by schema ID
+		if orderedTables[i].DB.ID != orderedTables[j].DB.ID {
+			return orderedTables[i].DB.ID < orderedTables[j].DB.ID
+		}
+		// if schema IDs are equal, sort by table ID
+		return orderedTables[i].Info.ID < orderedTables[j].Info.ID
+	})
+
+	return orderedTables
+}
+
 func (rc *SnapClient) createTablesBatch(ctx context.Context, tables []*metautil.Table, newTS uint64) ([]*CreatedTable, error) {
 	eg, ectx := errgroup.WithContext(ctx)
 	rater := logutil.TraceRateOver(metrics.RestoreTableCreatedCount)
 	workers := tidbutil.NewWorkerPool(uint(len(rc.dbPool)), "Create Tables Worker")
-	numOfTables := len(tables)
+
+	// sort tables by schema ID to ensure tables in the same schema are processed together
+	orderedTables := SortTablesBySchemaID(tables)
+
+	numOfTables := len(orderedTables)
 	createdTables := struct {
 		sync.Mutex
 		tables []*CreatedTable
 	}{
-		tables: make([]*CreatedTable, 0, len(tables)),
+		tables: make([]*CreatedTable, 0, numOfTables),
 	}
 
 	for lastSent := 0; lastSent < numOfTables; lastSent += int(rc.batchDdlSize) {
-		end := min(lastSent+int(rc.batchDdlSize), len(tables))
+		end := min(lastSent+int(rc.batchDdlSize), numOfTables)
 		log.Info("create tables", zap.Int("table start", lastSent), zap.Int("table end", end))
 
-		tableSlice := tables[lastSent:end]
+		tableSlice := orderedTables[lastSent:end]
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
 			db := rc.dbPool[id%uint64(len(rc.dbPool))]
 			cts, err := rc.createTables(ectx, db, tableSlice, newTS) // ddl job for [lastSent:i)
@@ -1132,7 +1155,7 @@ func (rc *SnapClient) execAndValidateChecksum(
 		zap.String("table", tbl.OldTable.Info.Name.O),
 	)
 
-	expectedChecksumStats := metautil.CalculateChecksumStatsOnFiles(tbl.OldTable.Files)
+	expectedChecksumStats := tbl.OldTable.CalculateChecksumStatsOnFiles()
 	if !expectedChecksumStats.ChecksumExists() {
 		logger.Warn("table has no checksum, skipping checksum")
 		return nil

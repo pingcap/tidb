@@ -63,7 +63,7 @@ func TestTiFlashANNIndex(t *testing.T) {
 		tiflash.Unlock()
 	}()
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -128,7 +128,7 @@ func TestANNIndexNormalizedPlan(t *testing.T) {
 		tiflash.Unlock()
 	}()
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 
 	getNormalizedPlan := func() ([]string, string) {
 		info := tk.Session().ShowProcess()
@@ -230,7 +230,7 @@ func TestANNInexWithSimpleCBO(t *testing.T) {
 		tiflash.Unlock()
 	}()
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -263,7 +263,7 @@ func TestANNIndexWithNonIntClusteredPk(t *testing.T) {
 		tiflash.Unlock()
 	}()
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckVectorIndexProcess", `return(1)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
@@ -305,7 +305,8 @@ func TestANNIndexWithNonIntClusteredPk(t *testing.T) {
 	tableScan, err := castedTableReader.GetTableScan()
 	require.NoError(t, err)
 	// Check that it has the extra vector index information.
-	require.NotNil(t, tableScan.AnnIndexExtra)
+	require.Len(t, tableScan.UsedColumnarIndexes, 1)
+	require.True(t, tableScan.UsedColumnarIndexes[0].QueryInfo.IndexType == tipb.ColumnarIndexType_TypeVector)
 	require.Len(t, tableScan.Ranges, 1)
 	// Check that it's full scan.
 	require.Equal(t, "[-inf,+inf]", tableScan.Ranges[0].String())

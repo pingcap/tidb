@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -756,7 +757,7 @@ func TestInternalSessionTxnStartTS(t *testing.T) {
 
 	count := 10
 	stmts := make([]ast.StmtNode, count)
-	for i := 0; i < count; i++ {
+	for i := range count {
 		stmt, err := session.ParseWithParams4Test(context.Background(), se, "select * from mysql.user limit 1")
 		require.NoError(t, err)
 		stmts[i] = stmt
@@ -764,7 +765,7 @@ func TestInternalSessionTxnStartTS(t *testing.T) {
 	// Test an issue that sysSessionPool doesn't call session's Close, cause
 	// asyncGetTSWorker goroutine leak.
 	var wg util.WaitGroupWrapper
-	for i := 0; i < count; i++ {
+	for i := range count {
 		s := stmts[i]
 		wg.Run(func() {
 			_, _, err := session.ExecRestrictedStmt4Test(context.Background(), se, s)
@@ -1158,7 +1159,7 @@ func TestTopSQLCatchRunningSQL(t *testing.T) {
 	dbt.MustExec("use topsql;")
 	dbt.MustExec("create table t (a int, b int);")
 
-	for i := 0; i < 5000; i++ {
+	for i := range 5000 {
 		dbt.MustExec(fmt.Sprintf("insert into t values (%v, %v)", i, i))
 	}
 
@@ -1611,7 +1612,7 @@ func TestTopSQLStatementStats(t *testing.T) {
 			require.NoError(t, err)
 			dbt := testkit.NewDBTestKit(t, db)
 			dbt.MustExec("use stmtstats;")
-			for n := 0; n < ExecCountPerSQL; n++ {
+			for n := range ExecCountPerSQL {
 				sqlStr := fmt.Sprintf(ca, n)
 				if strings.HasPrefix(strings.ToLower(sqlStr), "select") {
 					mustQuery(t, dbt, sqlStr)
@@ -1703,7 +1704,7 @@ func TestTopSQLStatementStats(t *testing.T) {
 			dbt.MustExec("use stmtstats;")
 			// prepare stmt
 			dbt.MustExec(ca.prepare)
-			for n := 0; n < ExecCountPerSQL; n++ {
+			for n := range ExecCountPerSQL {
 				setSQLs := ca.setSQLsGen(n)
 				for _, setSQL := range setSQLs {
 					dbt.MustExec(setSQL)
@@ -1784,7 +1785,7 @@ func TestTopSQLStatementStats(t *testing.T) {
 			// prepare stmt
 			stmt, err := db.Prepare(ca.prepare)
 			require.NoError(t, err)
-			for n := 0; n < ExecCountPerSQL; n++ {
+			for n := range ExecCountPerSQL {
 				args := ca.argsGen(n)
 				if strings.HasPrefix(strings.ToLower(ca.prepare), "select") {
 					row, err := stmt.Query(args...)
@@ -1973,7 +1974,7 @@ func TestTopSQLStatementStats2(t *testing.T) {
 		dbt.MustExec("use stmtstats;")
 		require.NoError(t, err)
 
-		for n := 0; n < ExecCountPerSQL; n++ {
+		for range ExecCountPerSQL {
 			execFn(db)
 		}
 		err = db.Close()
@@ -2038,7 +2039,7 @@ func TestTopSQLStatementStats2(t *testing.T) {
 		}
 	}
 	executeCaseFn(execFn)
-	sqlStrs := append([]string{}, cases5...)
+	sqlStrs := slices.Clone(cases5)
 	sqlStrs = append(sqlStrs, cases7[0])
 	sqlStrs = append(sqlStrs, cases8...)
 	for _, sqlStr := range sqlStrs {
@@ -3351,5 +3352,48 @@ func TestAuthSocket(t *testing.T) {
 	ts.RunTests(t, socketAuthConf("u2"), func(dbt *testkit.DBTestKit) {
 		rows := dbt.MustQuery("select current_user();")
 		ts.CheckRows(t, rows, "u2@%")
+	})
+}
+
+func TestBatchGetTypeForRowExpr(t *testing.T) {
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	// single columns
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("use test;")
+		dbt.MustExec("create table t1 (id varchar(255) collate utf8mb4_general_ci, primary key (id));")
+		dbt.MustExec("insert into t1 values ('a'), ('c');")
+
+		conn, err := dbt.GetDB().Conn(context.Background())
+		require.NoError(t, err)
+		defer func() {
+			require.NoError(t, conn.Close())
+		}()
+		_, err = conn.ExecContext(context.Background(), "set @@session.collation_connection = 'utf8mb4_general_ci'")
+		require.NoError(t, err)
+		stmt, err := conn.PrepareContext(context.Background(), "select * from t1 where id in (?, ?)")
+		require.NoError(t, err)
+		rows, err := stmt.Query("A", "C")
+		require.NoError(t, err)
+		ts.CheckRows(t, rows, "a\nc")
+	})
+
+	// multiple columns
+	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("use test;")
+		dbt.MustExec("create table t2 (id1 varchar(255) collate utf8mb4_general_ci, id2 varchar(255) collate utf8mb4_general_ci, primary key (id1, id2));")
+		dbt.MustExec("insert into t2 values ('a', 'b'), ('c', 'd');")
+
+		conn, err := dbt.GetDB().Conn(context.Background())
+		require.NoError(t, err)
+		defer func() {
+			require.NoError(t, conn.Close())
+		}()
+		conn.ExecContext(context.Background(), "set @@session.collation_connection = 'utf8mb4_general_ci'")
+		stmt, err := conn.PrepareContext(context.Background(), "select * from t2 where (id1, id2) in ((?, ?), (?, ?))")
+		require.NoError(t, err)
+		rows, err := stmt.Query("A", "B", "C", "D")
+		require.NoError(t, err)
+		ts.CheckRows(t, rows, "a b\nc d")
 	})
 }

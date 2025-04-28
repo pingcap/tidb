@@ -471,6 +471,11 @@ error = '''
 server is busy
 '''
 
+["Lightning:KV:StoreDiskFull"]
+error = '''
+store disk full
+'''
+
 ["Lightning:Loader:ErrInvalidSchemaFile"]
 error = '''
 invalid schema file
@@ -2406,6 +2411,11 @@ error = '''
 The target table %-.100s of the %s is not updatable
 '''
 
+["planner:1305"]
+error = '''
+%s %s does not exist
+'''
+
 ["planner:1345"]
 error = '''
 EXPLAIN/SHOW can not be issued; lacking privileges for underlying table
@@ -2944,6 +2954,16 @@ Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_contr
 ["schema:8257"]
 error = '''
 Cannot set resource group for a role
+'''
+
+["schema:8258"]
+error = '''
+Table %s is in mode %s
+'''
+
+["schema:8259"]
+error = '''
+Invalid mode set from (or by default) %s to %s for table %s
 '''
 
 ["server:1040"]

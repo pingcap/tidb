@@ -23,7 +23,6 @@ go_library(
         "//br/pkg/backup",
         "//br/pkg/backup/prepare_snap",
         "//br/pkg/checkpoint",
-        "//br/pkg/checksum",
         "//br/pkg/common",
         "//br/pkg/config",
         "//br/pkg/conn",
@@ -159,6 +158,7 @@ go_test(
         "@com_github_tikv_pd_client//:client",
         "@com_github_tikv_pd_client//http",
         "@com_github_tikv_pd_client//opt",
+        "@com_github_tikv_pd_client//pkg/caller",
         "@org_golang_google_grpc//keepalive",
     ],
 )

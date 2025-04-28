@@ -29,10 +29,12 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/slice"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/server/v3/embed"
@@ -60,21 +62,7 @@ func setupWorkerForTest(ctx context.Context, etcdCli *clientv3.Client, dom *doma
 	return wrk
 }
 
-func setupDomainAndContext(t *testing.T) (context.Context, kv.Storage, *domain.Domain, string) {
-	ctx := context.Background()
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
-	var cancel context.CancelFunc = nil
-	if ddl, ok := t.Deadline(); ok {
-		ctx, cancel = context.WithDeadline(ctx, ddl)
-	}
-	t.Cleanup(func() {
-		if cancel != nil {
-			cancel()
-		}
-	})
-
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
+func setupEtcd(t *testing.T) string {
 	cfg := embed.NewConfig()
 	cfg.Dir = t.TempDir()
 
@@ -98,7 +86,25 @@ func setupDomainAndContext(t *testing.T) (context.Context, kv.Storage, *domain.D
 		require.False(t, true, "server took too long to start")
 	}
 
-	return ctx, store, dom, embedEtcd.Clients[0].Addr().String()
+	return embedEtcd.Clients[0].Addr().String()
+}
+
+func setupDomainAndContext(t *testing.T) (context.Context, kv.Storage, *domain.Domain, string) {
+	ctx := context.Background()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	var cancel context.CancelFunc = nil
+	if ddl, ok := t.Deadline(); ok {
+		ctx, cancel = context.WithDeadline(ctx, ddl)
+	}
+	t.Cleanup(func() {
+		if cancel != nil {
+			cancel()
+		}
+	})
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	etcdAddr := setupEtcd(t)
+	return ctx, store, dom, etcdAddr
 }
 
 func setupWorker(ctx context.Context, t *testing.T, addr string, dom *domain.Domain, id string, testWorker bool) *worker {
@@ -113,7 +119,7 @@ func setupWorker(ctx context.Context, t *testing.T, addr string, dom *domain.Dom
 	wrk := setupWorkerForTest(ctx, etcdCli, dom, id, testWorker)
 
 	t.Cleanup(func() {
-		wrk.stop()
+		wrk.setRepositoryDest(ctx, "")
 	})
 
 	return wrk
@@ -124,7 +130,7 @@ func eventuallyWithLock(t *testing.T, wrk *worker, fn func() bool) {
 		wrk.Lock()
 		defer wrk.Unlock()
 		return fn()
-	}, time.Minute, time.Second)
+	}, time.Minute, time.Millisecond*100)
 }
 
 func trueWithLock(t *testing.T, wrk *worker, fn func() bool) {
@@ -184,7 +190,7 @@ func TestRaceToCreateTablesWorker(t *testing.T) {
 }
 
 func getMultipleWorkerCount(tk *testkit.TestKit, worker string) int {
-	res := tk.MustQuery("select count(*) from workload_schema.hist_memory_usage group by instance_id having instance_id = '" + worker + "'").Rows()
+	res := tk.MustQuery("select * from workload_schema.hist_memory_usage where instance_id = '" + worker + "'").Rows()
 	return len(res)
 }
 
@@ -198,58 +204,69 @@ func TestMultipleWorker(t *testing.T) {
 	wrk2.changeSamplingInterval(ctx, "1")
 
 	// start worker 1
-	now := time.Now()
+	now := time.Now() // This time must be before we started worker1.
 	require.NoError(t, wrk1.setRepositoryDest(ctx, "table"))
 	waitForTables(ctx, t, wrk1, now)
-	require.True(t, wrk1.owner.IsOwner())
-
 	require.Eventually(t, func() bool {
 		return getMultipleWorkerCount(tk, "worker1") >= 1
-	}, time.Minute, time.Second)
+	}, time.Minute, time.Millisecond*100)
+	// worker1 should be the owner.
+	require.True(t, wrk1.owner.IsOwner())
 
 	// start worker 2
 	require.NoError(t, wrk2.setRepositoryDest(ctx, "table"))
-	eventuallyWithLock(t, wrk2, func() bool { return wrk2.owner != nil })
-	require.True(t, !wrk2.owner.IsOwner())
-
 	require.Eventually(t, func() bool {
 		return getMultipleWorkerCount(tk, "worker2") >= 1
-	}, time.Minute, time.Second)
+	}, time.Minute, time.Millisecond*100)
+	// worker1 should still be the owner.
+	require.True(t, wrk1.owner.IsOwner())
+	require.False(t, wrk2.owner.IsOwner())
 
-	// stop worker 1, worker 2 should become owner
+	// stop worker1
 	require.NoError(t, wrk1.setRepositoryDest(ctx, ""))
+	// wait for worker1 to stop
+	eventuallyWithLock(t, wrk1, func() bool {
+		return wrk1.cancel == nil
+	})
+	// worker2 should become owner
 	require.Eventually(t, func() bool {
 		return wrk2.owner.IsOwner()
-	}, time.Minute, time.Second)
+	}, time.Minute, time.Millisecond*100)
 
 	// start worker 1 again
-	require.NoError(t, wrk1.setRepositoryDest(ctx, "table"))
-	eventuallyWithLock(t, wrk1, func() bool { return wrk1.owner != nil })
-	require.True(t, !wrk1.owner.IsOwner())
-
-	// get counts from tables for both workers
 	cnt1 := getMultipleWorkerCount(tk, "worker1")
-	cnt2 := getMultipleWorkerCount(tk, "worker2")
-
+	require.NoError(t, wrk1.setRepositoryDest(ctx, "table"))
+	// wait for worker1 to start writing rows again
 	require.Eventually(t, func() bool {
 		cnt := getMultipleWorkerCount(tk, "worker1")
-		return cnt >= cnt1
-	}, time.Minute, time.Second)
+		return cnt > cnt1
+	}, time.Minute, time.Millisecond*100)
+	// worker2 should still be the owner.
+	require.False(t, wrk1.owner.IsOwner())
+	require.True(t, wrk2.owner.IsOwner())
 
-	// stop worker 2, worker 1 should become owner
+	// stop worker 2
 	require.NoError(t, wrk2.setRepositoryDest(ctx, ""))
+	// wait for worker2 to stop
+	eventuallyWithLock(t, wrk2, func() bool {
+		return wrk2.cancel == nil
+	})
+	// worker 1 should become owner
 	require.Eventually(t, func() bool {
 		return wrk1.owner.IsOwner()
-	}, time.Minute, time.Second)
-	// start worker 2 again
-	require.NoError(t, wrk2.setRepositoryDest(ctx, "table"))
-	eventuallyWithLock(t, wrk2, func() bool { return wrk2.owner != nil })
-	require.True(t, !wrk2.owner.IsOwner())
+	}, time.Minute, time.Millisecond*100)
 
+	// start worker 2 again
+	cnt2 := getMultipleWorkerCount(tk, "worker2")
+	require.NoError(t, wrk2.setRepositoryDest(ctx, "table"))
+	// wait for worker2 to start writing rows again
 	require.Eventually(t, func() bool {
 		cnt := getMultipleWorkerCount(tk, "worker2")
-		return cnt >= cnt2
-	}, time.Minute, time.Second)
+		return cnt > cnt2
+	}, time.Minute, time.Millisecond*100)
+	// worker1 should still be the owner
+	require.True(t, wrk1.owner.IsOwner())
+	require.False(t, wrk2.owner.IsOwner())
 }
 
 func TestGlobalWorker(t *testing.T) {
@@ -296,9 +313,20 @@ func TestAdminWorkloadRepo(t *testing.T) {
 		return len(res) >= 1
 	}, time.Minute, time.Second)
 
+	// Validate that user will out Super can not execute admin command.
+	tk.MustExec(`CREATE USER 'testcheck'@'localhost';`)
+	checkTk := testkit.NewTestKit(t, store)
+	require.NoError(t, checkTk.Session().Auth(&auth.UserIdentity{Username: "testcheck", Hostname: "localhost"}, nil, nil, nil))
+	checkTk.MustExecToErr("admin create workload snapshot")
+
+	// Add super to testcheck you and retry command.
+	tk.MustExec("grant super on *.* to 'testcheck'@'localhost'")
+	checkTk.MustExec("admin create workload snapshot")
+
 	// disable the worker and it will fail
 	tk.MustExec("set @@global.tidb_workload_repository_dest=''")
 	tk.MustExecToErr("admin create workload snapshot")
+	checkTk.MustExecToErr("admin create workload snapshot")
 }
 
 func getRows(t *testing.T, tk *testkit.TestKit, cnt int, maxSecs int, query string) [][]any {
@@ -856,4 +884,181 @@ func TestCalcNextTick(t *testing.T) {
 	require.True(t, calcNextTick(time.Date(2024, 12, 7, 0, 0, 0, 0, loc)) == time.Hour*2)
 	require.True(t, calcNextTick(time.Date(2024, 12, 7, 2, 0, 0, 1, loc)) == time.Hour*24-time.Nanosecond)
 	require.True(t, calcNextTick(time.Date(2024, 12, 7, 1, 59, 59, 999999999, loc)) == time.Nanosecond)
+}
+
+func TestOwnerRandomDown(t *testing.T) {
+	workerNum := 3
+	testNum := 9
+
+	ctx, _, dom, addr := setupDomainAndContext(t)
+	var workers []*worker
+	for i := 0; i < workerNum; i++ {
+		wrk := setupWorker(ctx, t, addr, dom, fmt.Sprintf("worker%d", i), true)
+		wrk.samplingInterval = 6000
+		workers = append(workers, wrk)
+	}
+
+	now := time.Now()
+	for _, wrk := range workers {
+		require.NoError(t, wrk.setRepositoryDest(ctx, "table"))
+	}
+
+	require.Eventually(t, func() bool {
+		return workers[0].checkTablesExists(ctx, now)
+	}, time.Minute, 100*time.Millisecond)
+
+	require.Eventually(t, func() bool {
+		var err error
+		found := false
+		for _, wrk := range workers {
+			if wrk.owner.IsOwner() {
+				found = true
+				_, err = wrk.getSnapID(ctx)
+				break
+			}
+		}
+
+		return found && err == nil
+	}, time.Minute, 100*time.Millisecond)
+
+	// let us randomly stop the owner
+	for j := 0; j < testNum; j++ {
+		var err error
+		prevSnapID := uint64(0)
+		breakOwnerIdx := -1
+		oldOwnerIdx := -1
+
+		// stop the current owner
+		for idx, wrk := range workers {
+			if wrk.owner.IsOwner() {
+				prevSnapID, err = wrk.getSnapID(ctx)
+				require.Nil(t, err)
+
+				if j%3 == 0 {
+					// tidb is shutdown somehow
+					require.NoError(t, wrk.setRepositoryDest(ctx, ""))
+					eventuallyWithLock(t, wrk, func() bool {
+						return wrk.cancel == nil
+					})
+				} else if j%3 == 1 {
+					// immediate unexpected owner down due to bad network or crash
+					wrk.owner.CampaignCancel()
+					require.False(t, wrk.owner.IsOwner())
+					breakOwnerIdx = idx
+				} else {
+					// normal owner switch triggered somehow
+					wrk.owner.ResignOwner(ctx)
+					require.Eventually(t, func() bool {
+						return !wrk.owner.IsOwner()
+					}, 15*time.Second, 100*time.Millisecond)
+					// it is very unlikely, but let us just fail if that happened
+					if wrk.owner.IsOwner() {
+						require.FailNow(t, "fail to resign owner to other nodes")
+					}
+				}
+
+				oldOwnerIdx = idx
+				break
+			}
+		}
+
+		// new owner elected
+		require.Eventually(t, func() bool {
+			return slice.AnyOf(workers, func(i int) bool {
+				workers[i].Lock()
+				defer workers[i].Unlock()
+				return workers[i].cancel != nil &&
+					workers[i].owner.IsOwner() && i != oldOwnerIdx
+			})
+		}, time.Minute, 100*time.Millisecond)
+
+		// new snapshot taken
+		require.Eventually(t, func() bool {
+			return slice.AnyOf(workers, func(i int) bool {
+				workers[i].Lock()
+				defer workers[i].Unlock()
+				if workers[i].cancel == nil {
+					return false
+				}
+				newSnapID, err := workers[i].getSnapID(ctx)
+				return err == nil && newSnapID > prevSnapID
+			})
+		}, time.Minute, 100*time.Millisecond)
+
+		// recover stopped owner
+		for idx, wrk := range workers {
+			require.NoError(t, wrk.setRepositoryDest(ctx, "table"))
+			if idx == breakOwnerIdx {
+				require.Nil(t, wrk.owner.CampaignOwner(3))
+			}
+		}
+		require.Eventually(t, func() bool {
+			return slice.AllOf(workers, func(i int) bool {
+				workers[i].Lock()
+				defer workers[i].Unlock()
+				return workers[i].cancel != nil &&
+					workers[i].owner != nil
+			})
+		}, time.Minute, 100*time.Millisecond)
+	}
+}
+
+func TestRecoverSnapID(t *testing.T) {
+	ctx, store, dom, addr := setupDomainAndContext(t)
+	worker := setupWorker(ctx, t, addr, dom, "worker1", true)
+	worker.snapshotInterval = 600
+	worker.samplingInterval = 600
+
+	require.NoError(t, worker.setRepositoryDest(ctx, "table"))
+	now := time.Now()
+
+	require.Eventually(t, func() bool {
+		return worker.checkTablesExists(ctx, now)
+	}, time.Minute, 100*time.Millisecond)
+
+	// it is zero
+	newSnapID, err := queryMaxSnapID(ctx, worker.getSessionWithRetry().(sessionctx.Context))
+	require.Nil(t, err)
+	require.Equal(t, uint64(0), newSnapID)
+
+	// start the worker
+	tk := testkit.NewTestKit(t, store)
+	worker.changeSnapshotInterval(context.TODO(), "1")
+	prevSnapID := uint64(0)
+	require.Eventually(t, func() bool {
+		res := tk.MustQuery("select max(snap_id) from workload_schema.hist_snapshots").Rows()
+		if len(res) == 0 || len(res[0]) == 0 {
+			return false
+		}
+		snapID, err := strconv.ParseUint(res[0][0].(string), 10, 64)
+		prevSnapID = snapID
+		return err == nil && snapID > 0
+	}, time.Minute, 100*time.Millisecond)
+
+	require.NoError(t, worker.setRepositoryDest(ctx, ""))
+	// wait for worker to stop
+	eventuallyWithLock(t, worker, func() bool {
+		return worker.cancel == nil
+	})
+
+	// setup a new etcd cluster and a new worker
+	etcd2 := setupEtcd(t)
+	worker2 := setupWorker(ctx, t, etcd2, dom, "worker2", true)
+	// new cluster, so not found
+	snapIDStr, err := worker2.etcdGet(ctx, snapIDKey)
+	require.Nil(t, err)
+	require.Equal(t, "", snapIDStr)
+	_, err = worker2.getSnapID(ctx)
+	require.EqualError(t, errKeyNotFound, err.Error())
+	// it is equal to the previous maximum snap id
+	newSnapID, err = queryMaxSnapID(ctx, worker2.getSessionWithRetry().(sessionctx.Context))
+	require.Nil(t, err)
+	require.Equal(t, newSnapID, prevSnapID)
+
+	// start the new worker and snapID is recovered
+	require.NoError(t, worker2.setRepositoryDest(ctx, "table"))
+	require.Eventually(t, func() bool {
+		newSnapID, err = worker2.getSnapID(ctx)
+		return err == nil && newSnapID >= prevSnapID
+	}, time.Minute, 100*time.Millisecond)
 }

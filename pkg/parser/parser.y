@@ -364,6 +364,7 @@ import (
 	clustered             "CLUSTERED"
 	coalesce              "COALESCE"
 	collation             "COLLATION"
+	columnar              "COLUMNAR"
 	columns               "COLUMNS"
 	columnFormat          "COLUMN_FORMAT"
 	comment               "COMMENT"
@@ -589,6 +590,7 @@ import (
 	rowCount              "ROW_COUNT"
 	rowFormat             "ROW_FORMAT"
 	rtree                 "RTREE"
+	rule                  "RULE"
 	san                   "SAN"
 	savepoint             "SAVEPOINT"
 	second                "SECOND"
@@ -736,6 +738,7 @@ import (
 	inplace               "INPLACE"
 	instant               "INSTANT"
 	internal              "INTERNAL"
+	inverted              "INVERTED"
 	ioReadBandwidth       "IO_READ_BANDWIDTH"
 	ioWriteBandwidth      "IO_WRITE_BANDWIDTH"
 	jsonArrayagg          "JSON_ARRAYAGG"
@@ -812,6 +815,7 @@ import (
 	trim                  "TRIM"
 	trueCardCost          "TRUE_CARD_COST"
 	unlimited             "UNLIMITED"
+	moderated             "MODERATED"
 	untilTS               "UNTIL_TS"
 	utilizationLimit      "UTILIZATION_LIMIT"
 	variance              "VARIANCE"
@@ -863,6 +867,9 @@ import (
 	ddl                        "DDL"
 	dependency                 "DEPENDENCY"
 	depth                      "DEPTH"
+	distribute                 "DISTRIBUTE"
+	distribution               "DISTRIBUTION"
+	distributions              "DISTRIBUTIONS"
 	dry                        "DRY"
 	histogramsInFlight         "HISTOGRAMS_IN_FLIGHT"
 	job                        "JOB"
@@ -1007,6 +1014,7 @@ import (
 	DeleteFromStmt             "DELETE FROM statement"
 	DeleteWithoutUsingStmt     "Normal DELETE statement"
 	DeleteWithUsingStmt        "DELETE USING statement"
+	DistributeTableStmt        "Distribute table statement"
 	EmptyStmt                  "empty statement"
 	ExecuteStmt                "Execute statement"
 	ExplainStmt                "EXPLAIN statement"
@@ -1147,7 +1155,8 @@ import (
 	ConstraintElem                         "table constraint element"
 	ConstraintKeywordOpt                   "Constraint Keyword or empty"
 	ConstraintVectorIndex                  "vector index"
-	ConstraintWithVectorIndex              "table constraint with vector index"
+	ConstraintColumnarIndex                "columnar index"
+	ConstraintWithColumnarIndex            "table constraint with columnar index"
 	CreateSequenceOptionListOpt            "create sequence list opt"
 	CreateTableOptionListOpt               "create table option list opt"
 	CreateTableSelectOpt                   "Select/Union statement in CREATE TABLE ... SELECT"
@@ -1655,6 +1664,7 @@ import (
 %precedence function
 %precedence constraint
 %precedence vectorType
+%precedence columnar
 
 /* A dummy token to force the priority of TableRef production in a join. */
 %left tableRefPriority
@@ -1927,7 +1937,7 @@ DirectResourceGroupOption:
 	}
 |	"RU_PER_SEC" EqOpt "UNLIMITED"
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRURate, BoolValue: true}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceRURate, Burstable: ast.BurstableUnlimited}
 	}
 |	"PRIORITY" EqOpt ResourceGroupPriorityOption
 	{
@@ -1935,11 +1945,19 @@ DirectResourceGroupOption:
 	}
 |	"BURSTABLE"
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: true}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstable, Burstable: ast.BurstableModerated}
 	}
-|	"BURSTABLE" EqOpt Boolean
+|	"BURSTABLE" EqOpt "MODERATED"
 	{
-		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstableOpiton, BoolValue: $3.(bool)}
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstable, Burstable: ast.BurstableModerated}
+	}
+|	"BURSTABLE" EqOpt "UNLIMITED"
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstable, Burstable: ast.BurstableUnlimited}
+	}
+|	"BURSTABLE" EqOpt "OFF"
+	{
+		$$ = &ast.ResourceGroupOption{Tp: ast.ResourceBurstable, Burstable: ast.BurstableDisable}
 	}
 |	"QUERY_LIMIT" EqOpt '(' ResourceGroupRunawayOptionList ')'
 	{
@@ -2268,15 +2286,7 @@ AlterTableSpec:
 			NewConstraints: constraints,
 		}
 	}
-|	"ADD" Constraint
-	{
-		constraint := $2.(*ast.Constraint)
-		$$ = &ast.AlterTableSpec{
-			Tp:         ast.AlterTableAddConstraint,
-			Constraint: constraint,
-		}
-	}
-|	"ADD" ConstraintVectorIndex
+|	"ADD" ConstraintWithColumnarIndex
 	{
 		constraint := $2.(*ast.Constraint)
 		$$ = &ast.AlterTableSpec{
@@ -3170,6 +3180,25 @@ FlashbackDatabaseStmt:
 
 /*******************************************************************
  *
+ *  Distribute Table Statement
+ *
+ *  Example:
+ *      DISTRIBUTE TABLE table_name Partitions(p0,p1) Engine = tikv Rule=leader;
+ *
+ *******************************************************************/
+DistributeTableStmt:
+	"DISTRIBUTE" "TABLE" TableName PartitionNameListOpt "RULE" EqOrAssignmentEq Identifier "ENGINE" EqOrAssignmentEq Identifier
+	{
+		$$ = &ast.DistributeTableStmt{
+			Table:          $3.(*ast.TableName),
+			PartitionNames: $4.([]ast.CIStr),
+			Rule:           ast.NewCIStr($7),
+			Engine:         ast.NewCIStr($10),
+		}
+	}
+
+/*******************************************************************
+ *
  *  Split index region statement
  *
  *  Example:
@@ -3865,6 +3894,8 @@ ConstraintElem:
 		}
 		if $7 != nil {
 			c.Option = $7.(*ast.IndexOption)
+		} else {
+			c.Option = &ast.IndexOption{}
 		}
 		$$ = c
 	}
@@ -4040,6 +4071,10 @@ DefaultValueExpr:
 |	SignedLiteral
 |	NextValueForSequenceParentheses
 |	BuiltinFunction
+|	'(' SignedLiteral ')'
+	{
+		$$ = $2
+	}
 
 BuiltinFunction:
 	'(' BuiltinFunction ')'
@@ -4259,29 +4294,11 @@ CreateIndexStmt:
 				indexLockAndAlgorithm = nil
 			}
 		}
-
-		keyType := $2.(ast.IndexKeyType)
-		isVectorIndex := keyType == ast.IndexKeyTypeVector
-		if isVectorIndex && indexOption.Tp == ast.IndexTypeInvalid {
-			indexOption.Tp = ast.IndexTypeHNSW
-		}
-		if (isVectorIndex && indexOption.Tp != ast.IndexTypeHNSW) || (!isVectorIndex && indexOption.Tp == ast.IndexTypeHNSW) {
-			yylex.AppendError(ErrSyntax)
-			return 1
-		}
-		partSpecs := $10.([]*ast.IndexPartSpecification)
-		if keyType == ast.IndexKeyTypeVector {
-			if len(partSpecs) != 1 || partSpecs[0].Expr == nil {
-				yylex.AppendError(ErrSyntax)
-				return 1
-			}
-		}
-
 		$$ = &ast.CreateIndexStmt{
 			IfNotExists:             $4.(bool),
 			IndexName:               $5,
 			Table:                   $8.(*ast.TableName),
-			IndexPartSpecifications: partSpecs,
+			IndexPartSpecifications: $10.([]*ast.IndexPartSpecification),
 			IndexOption:             indexOption,
 			KeyType:                 $2.(ast.IndexKeyType),
 			LockAlg:                 indexLockAndAlgorithm,
@@ -4364,11 +4381,15 @@ IndexKeyTypeOpt:
 	}
 |	"FULLTEXT"
 	{
-		$$ = ast.IndexKeyTypeFullText
+		$$ = ast.IndexKeyTypeFulltext
 	}
 |	"VECTOR"
 	{
 		$$ = ast.IndexKeyTypeVector
+	}
+|	"COLUMNAR"
+	{
+		$$ = ast.IndexKeyTypeColumnar
 	}
 
 /**************************************AlterDatabaseStmt***************************************
@@ -6647,8 +6668,6 @@ IndexOption:
 		$$ = &ast.IndexOption{
 			ParserName: ast.NewCIStr($3),
 		}
-		yylex.AppendError(yylex.Errorf("The WITH PARASER clause is parsed but ignored by all storage engines."))
-		parser.lastErrorAsWarn()
 	}
 |	"COMMENT" stringLit
 	{
@@ -6765,6 +6784,10 @@ IndexTypeName:
 	{
 		$$ = ast.IndexTypeHNSW
 	}
+|	"INVERTED"
+	{
+		$$ = ast.IndexTypeInverted
+	}
 
 IndexInvisible:
 	"VISIBLE"
@@ -6879,6 +6902,7 @@ UnReservedKeyword:
 |	"ROLE"
 |	"ROLLBACK"
 |	"ROLLUP"
+|	"RULE"
 |	"SESSION"
 |	"SIGNED"
 |	"SHARD_ROW_ID_BITS"
@@ -7156,6 +7180,7 @@ UnReservedKeyword:
 |	"OLTP_READ_ONLY"
 |	"OLTP_WRITE_ONLY"
 |	"VECTOR"
+|	"COLUMNAR"
 |	"TPCH_10"
 |	"WITH_SYS_TABLE"
 |	"WAIT_TIFLASH_READY"
@@ -7180,6 +7205,9 @@ TiDBKeyword:
 |	"DDL"
 |	"DEPENDENCY"
 |	"DEPTH"
+|	"DISTRIBUTE"
+|	"DISTRIBUTION"
+|	"DISTRIBUTIONS"
 |	"JOBS"
 |	"JOB"
 |	"NODE_ID"
@@ -7237,6 +7265,7 @@ NotKeywordToken:
 |	"INPLACE"
 |	"INSTANT"
 |	"INTERNAL"
+|	"INVERTED"
 |	"LOG"
 |	"MIN"
 |	"MAX"
@@ -7337,6 +7366,7 @@ NotKeywordToken:
 |	"BACKGROUND"
 |	"TASK_TYPES"
 |	"UNLIMITED"
+|	"MODERATED"
 |	"UTILIZATION_LIMIT"
 
 /************************************************************************************
@@ -11719,12 +11749,29 @@ ShowStmt:
 			ImportJobID: &v,
 		}
 	}
+|	"SHOW" "DISTRIBUTION" "JOB" Int64Num
+	{
+		v := $4.(int64)
+		$$ = &ast.ShowStmt{Tp: ast.ShowDistributionJobs, DistributionJobID: &v}
+	}
 |	"SHOW" "CREATE" "PROCEDURE" TableName
 	{
 		$$ = &ast.ShowStmt{
 			Tp:        ast.ShowCreateProcedure,
 			Procedure: $4.(*ast.TableName),
 		}
+	}
+|	"SHOW" "TABLE" TableName PartitionNameListOpt "DISTRIBUTIONS" WhereClauseOptional
+	{
+		stmt := &ast.ShowStmt{
+			Tp:    ast.ShowDistributions,
+			Table: $3.(*ast.TableName),
+		}
+		stmt.Table.PartitionNames = $4.([]ast.CIStr)
+		if $6 != nil {
+			stmt.Where = $6.(ast.ExprNode)
+		}
+		$$ = stmt
 	}
 
 ShowPlacementTarget:
@@ -12057,6 +12104,14 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowImportJobs}
 	}
+|	"PLAN" "FOR" stringLit
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowPlanForSQL, SQLOrDigest: $3}
+	}
+|	"DISTRIBUTION" "JOBS"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowDistributionJobs}
+	}
 
 ShowLikeOrWhereOpt:
 	{
@@ -12289,6 +12344,7 @@ Statement:
 |	AddQueryWatchStmt
 |	CreateSequenceStmt
 |	CreateStatisticsStmt
+|	DistributeTableStmt
 |	DoStmt
 |	DropDatabaseStmt
 |	DropIndexStmt
@@ -12454,7 +12510,7 @@ Constraint:
 		$$ = cst
 	}
 
-// ConstraintVectorIndex does not put in Constraint to resolve syntax conflicts.
+// ConstraintVectorIndex is only a compatible and shortcut syntax for CREATE COLUMNAR INDEX USING VECTOR.
 ConstraintVectorIndex:
 	"VECTOR" "INDEX" IfNotExists IndexNameAndTypeOpt '(' IndexPartSpecificationList ')' IndexOptionList
 	{
@@ -12465,44 +12521,43 @@ ConstraintVectorIndex:
 			Name:         $4.([]interface{})[0].(*ast.NullString).String,
 			IsEmptyIndex: $4.([]interface{})[0].(*ast.NullString).Empty,
 		}
-
 		if $8 != nil {
 			c.Option = $8.(*ast.IndexOption)
+		} else {
+			c.Option = &ast.IndexOption{}
 		}
 		if indexType := $4.([]interface{})[1]; indexType != nil {
-			if c.Option == nil {
-				c.Option = &ast.IndexOption{}
-			}
 			c.Option.Tp = indexType.(ast.IndexType)
-		}
-		if c.Option == nil {
-			c.Option = &ast.IndexOption{Tp: ast.IndexTypeHNSW}
-		} else if c.Option.Tp == ast.IndexTypeInvalid {
-			c.Option.Tp = ast.IndexTypeHNSW
-		}
-		if c.Option.Tp != ast.IndexTypeHNSW {
-			yylex.AppendError(ErrSyntax)
-			return 1
-		}
-
-		if len(c.Keys) != 1 || c.Keys[0].Expr == nil {
-			yylex.AppendError(ErrSyntax)
-			return 1
 		}
 		$$ = c
 	}
 
-ConstraintWithVectorIndex:
-	ConstraintKeywordOpt ConstraintElem
+// ConstraintColumnarIndex does not put in Constraint to resolve syntax conflicts.
+ConstraintColumnarIndex:
+	"COLUMNAR" "INDEX" IfNotExists IndexNameAndTypeOpt '(' IndexPartSpecificationList ')' IndexOptionList
 	{
-		cst := $2.(*ast.Constraint)
-		if $1 != nil {
-			cst.Name = $1.(string)
-			cst.IsEmptyIndex = len(cst.Name) == 0
+		c := &ast.Constraint{
+			IfNotExists:  $3.(bool),
+			Tp:           ast.ConstraintColumnar,
+			Keys:         $6.([]*ast.IndexPartSpecification),
+			Name:         $4.([]interface{})[0].(*ast.NullString).String,
+			IsEmptyIndex: $4.([]interface{})[0].(*ast.NullString).Empty,
 		}
-		$$ = cst
+		if $8 != nil {
+			c.Option = $8.(*ast.IndexOption)
+		} else {
+			c.Option = &ast.IndexOption{}
+		}
+		if indexType := $4.([]interface{})[1]; indexType != nil {
+			c.Option.Tp = indexType.(ast.IndexType)
+		}
+		$$ = c
 	}
+
+ConstraintWithColumnarIndex:
+	Constraint
 |	ConstraintVectorIndex
+|	ConstraintColumnarIndex
 	{
 		$$ = $1.(*ast.Constraint)
 	}
@@ -12513,7 +12568,7 @@ CheckConstraintKeyword:
 
 TableElement:
 	ColumnDef
-|	ConstraintWithVectorIndex
+|	ConstraintWithColumnarIndex
 
 TableElementList:
 	TableElement
@@ -13801,7 +13856,7 @@ ConnectionOptions:
 		for _, option := range $2.([]*ast.ResourceOption) {
 			switch option.Type {
 			case ast.MaxUserConnections:
-				// do nothing.
+			// do nothing.
 			default:
 				needWarning = true
 			}
@@ -16731,6 +16786,18 @@ DropQueryWatchStmt:
 	{
 		$$ = &ast.DropQueryWatchStmt{
 			IntValue: $4.(int64),
+		}
+	}
+|	"QUERY" "WATCH" "REMOVE" "RESOURCE" "GROUP" ResourceGroupName
+	{
+		$$ = &ast.DropQueryWatchStmt{
+			GroupNameStr: ast.NewCIStr($6),
+		}
+	}
+|	"QUERY" "WATCH" "REMOVE" "RESOURCE" "GROUP" UserVariable
+	{
+		$$ = &ast.DropQueryWatchStmt{
+			GroupNameExpr: $6.(ast.ExprNode),
 		}
 	}
 %%

@@ -59,6 +59,7 @@ func TestIsRetryableError(t *testing.T) {
 	require.True(t, IsRetryableError(ErrKVReadIndexNotReady.GenWithStack("test")))
 	require.True(t, IsRetryableError(ErrKVIngestFailed.GenWithStack("test")))
 	require.True(t, IsRetryableError(ErrKVRaftProposalDropped.GenWithStack("test")))
+	require.False(t, IsRetryableError(ErrKVDiskFull.GenWithStack("test")))
 
 	// tidb error
 	require.True(t, IsRetryableError(drivererr.ErrRegionUnavailable))

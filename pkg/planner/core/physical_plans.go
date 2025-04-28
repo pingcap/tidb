@@ -21,6 +21,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -44,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -962,18 +964,19 @@ type PhysicalTableScan struct {
 	runtimeFilterList []*RuntimeFilter `plan-cache-clone:"must-nil"` // plan with runtime filter is not cached
 	maxWaitTimeMs     int
 
-	AnnIndexExtra *VectorIndexExtra `plan-cache-clone:"must-nil"` // MPP plan should not be cached.
+	// UsedColumnarIndexes is used to store the used columnar index for the table scan.
+	UsedColumnarIndexes []*ColumnarIndexExtra `plan-cache-clone:"must-nil"` // MPP plan should not be cached.
 }
 
-// VectorIndexExtra is the extra information for vector index.
-type VectorIndexExtra struct {
-	// Note: Even if IndexInfo is not nil, it doesn't mean the VectorSearch push down
-	// will happen because optimizer will explore all available vector indexes and fill them
+// ColumnarIndexExtra is the extra information for columnar index.
+type ColumnarIndexExtra struct {
+	// Note: Even if IndexInfo is not nil, it doesn't mean the index will be used
+	// because optimizer will explore all available vector indexes and fill them
 	// in IndexInfo, and later invalid plans are filtered out according to a topper executor.
 	IndexInfo *model.IndexInfo
 
-	// Not nil if there is an VectorSearch push down.
-	PushDownQueryInfo *tipb.ANNQueryInfo
+	// Not nil if there is an ColumnarIndex used.
+	QueryInfo *tipb.ColumnarIndexInfo
 }
 
 // Clone implements op.PhysicalPlan interface.
@@ -1000,6 +1003,11 @@ func (ts *PhysicalTableScan) Clone(newCtx base.PlanContext) (base.PhysicalPlan, 
 	for _, rf := range ts.runtimeFilterList {
 		clonedRF := rf.Clone()
 		clonedScan.runtimeFilterList = append(clonedScan.runtimeFilterList, clonedRF)
+	}
+	clonedScan.UsedColumnarIndexes = make([]*ColumnarIndexExtra, 0, len(ts.UsedColumnarIndexes))
+	for _, colIdx := range ts.UsedColumnarIndexes {
+		colIdxClone := *colIdx
+		clonedScan.UsedColumnarIndexes = append(clonedScan.UsedColumnarIndexes, &colIdxClone)
 	}
 	return clonedScan, nil
 }
@@ -1502,6 +1510,38 @@ func (p *PhysicalHashJoin) CanUseHashJoinV2() bool {
 	return canUseHashJoinV2(p.JoinType, p.LeftJoinKeys, p.IsNullEQ, p.LeftNAJoinKeys)
 }
 
+// CanTiFlashUseHashJoinV2 returns if current join is supported by hash join v2 in TiFlash
+func (p *PhysicalHashJoin) CanTiFlashUseHashJoinV2(sctx base.PlanContext) bool {
+	vars := sctx.GetSessionVars()
+	if !joinversion.IsOptimizedVersion(vars.TiFlashHashJoinVersion) {
+		return false
+	}
+	// spill is not supported yet
+	if vars.TiFlashMaxBytesBeforeExternalJoin > 0 || (vars.TiFlashMaxQueryMemoryPerNode > 0 && vars.TiFlashQuerySpillRatio > 0) {
+		return false
+	}
+	switch p.JoinType {
+	case logicalop.InnerJoin:
+		// null aware join is not supported yet
+		if len(p.LeftNAJoinKeys) > 0 {
+			return false
+		}
+		// cross join is not supported
+		if len(p.LeftJoinKeys) == 0 {
+			return false
+		}
+		// NullEQ is not supported yet
+		for _, value := range p.IsNullEQ {
+			if value {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
 // Clone implements op.PhysicalPlan interface.
 func (p *PhysicalHashJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
 	cloned := new(PhysicalHashJoin)
@@ -1601,6 +1641,7 @@ func NewPhysicalHashJoin(p *logicalop.LogicalJoin, innerIdx int, useOuterToBuild
 }
 
 // PhysicalIndexJoin represents the plan of index look up join.
+// NOTICE: When adding any member variables, remember to modify the Clone method.
 type PhysicalIndexJoin struct {
 	basePhysicalJoin
 
@@ -1624,6 +1665,32 @@ type PhysicalIndexJoin struct {
 	// InnerHashKeys indicates the inner keys used to build hash table during
 	// execution. InnerJoinKeys is the prefix of InnerHashKeys.
 	InnerHashKeys []*expression.Column
+	// EqualConditions stores the equal conditions for logical join's original EqualConditions.
+	EqualConditions []*expression.ScalarFunction `plan-cache-clone:"shallow"`
+}
+
+// Clone implements op.PhysicalPlan interface.
+func (p *PhysicalIndexJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
+	cloned := new(PhysicalIndexJoin)
+	cloned.SetSCtx(newCtx)
+	base, err := p.basePhysicalJoin.cloneWithSelf(newCtx, cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalJoin = *base
+	cloned.innerPlan, err = p.innerPlan.Clone(newCtx)
+	if err != nil {
+		return nil, err
+	}
+	cloned.Ranges = p.Ranges.CloneForPlanCache() // this clone is deep copy
+	cloned.KeyOff2IdxOff = make([]int, len(p.KeyOff2IdxOff))
+	copy(cloned.KeyOff2IdxOff, p.KeyOff2IdxOff)
+	cloned.IdxColLens = make([]int, len(p.IdxColLens))
+	copy(cloned.IdxColLens, p.IdxColLens)
+	cloned.CompareFilters = p.CompareFilters.cloneForPlanCache()
+	cloned.OuterHashKeys = util.CloneCols(p.OuterHashKeys)
+	cloned.InnerHashKeys = util.CloneCols(p.InnerHashKeys)
+	return cloned, nil
 }
 
 // MemoryUsage return the memory usage of PhysicalIndexJoin
@@ -1684,6 +1751,26 @@ type PhysicalIndexHashJoin struct {
 	// KeepOuterOrder indicates whether keeping the output result order as the
 	// outer side.
 	KeepOuterOrder bool
+}
+
+// Clone implements op.PhysicalPlan interface.
+func (p *PhysicalIndexHashJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
+	cloned := new(PhysicalIndexHashJoin)
+	cloned.SetSCtx(newCtx)
+	base, err := p.basePhysicalJoin.cloneWithSelf(newCtx, cloned)
+	if err != nil {
+		return nil, err
+	}
+	cloned.basePhysicalJoin = *base
+	physicalIndexJoin, err := p.PhysicalIndexJoin.Clone(newCtx)
+	if err != nil {
+		return nil, err
+	}
+	indexJoin, ok := physicalIndexJoin.(*PhysicalIndexJoin)
+	intest.Assert(ok)
+	cloned.PhysicalIndexJoin = *indexJoin
+	cloned.KeepOuterOrder = p.KeepOuterOrder
+	return cloned, nil
 }
 
 // MemoryUsage return the memory usage of PhysicalIndexHashJoin
@@ -1803,7 +1890,7 @@ func (p *PhysicalExpand) Clone(newCtx base.PlanContext) (base.PhysicalPlan, erro
 	for _, one := range p.GroupingSets {
 		clonedGroupingSets = append(clonedGroupingSets, one.Clone())
 	}
-	np.GroupingSets = p.GroupingSets
+	np.GroupingSets = clonedGroupingSets
 	return np, nil
 }
 

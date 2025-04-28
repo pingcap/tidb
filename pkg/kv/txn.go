@@ -226,6 +226,7 @@ func SetTxnResourceGroup(txn Transaction, name string) {
 		validateRNameInterceptor := func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
 			return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 				var rgName *string
+				tikvrpc.AttachContext(req, req.Context)
 				switch r := req.Req.(type) {
 				case *kvrpcpb.PrewriteRequest:
 					rgName = &r.Context.ResourceControlContext.ResourceGroupName

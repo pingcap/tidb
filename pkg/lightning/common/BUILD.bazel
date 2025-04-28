@@ -6,9 +6,7 @@ go_library(
         "common.go",
         "conn.go",
         "dupdetect.go",
-        "engine.go",
         "errors.go",
-        "ingest_data.go",
         "key_adapter.go",
         "once_error.go",
         "pause.go",
@@ -27,7 +25,6 @@ go_library(
         "//br/pkg/logutil",
         "//pkg/errno",
         "//pkg/lightning/log",
-        "//pkg/lightning/membuf",
         "//pkg/meta/autoid",
         "//pkg/meta/model",
         "//pkg/parser/mysql",
@@ -86,7 +83,13 @@ go_library(
         "@io_bazel_rules_go//go/platform:openbsd": [
             "@org_golang_x_sys//unix",
         ],
+        "@io_bazel_rules_go//go/platform:osx": [
+            "@org_golang_x_sys//unix",
+        ],
         "@io_bazel_rules_go//go/platform:plan9": [
+            "@org_golang_x_sys//unix",
+        ],
+        "@io_bazel_rules_go//go/platform:qnx": [
             "@org_golang_x_sys//unix",
         ],
         "@io_bazel_rules_go//go/platform:solaris": [

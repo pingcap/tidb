@@ -44,7 +44,7 @@ func isInCorrectIdentifierName(name string) bool {
 var isUserVarCharTable [256]bool
 
 func init() {
-	for i := 0; i < 256; i++ {
+	for i := range 256 {
 		ch := byte(i)
 		isUserVarCharTable[i] = isLetter(ch) || isDigit(ch) || ch == '_' || ch == '$' || ch == '.' || isIdentExtend(ch)
 	}
@@ -81,7 +81,7 @@ func initTokenString(str string, tok int) {
 }
 
 func initTokenFunc(str string, fn func(s *Scanner) (int, Pos, string)) {
-	for i := 0; i < len(str); i++ {
+	for i := range len(str) {
 		c := str[i]
 		if ruleTable.childs[c] == nil {
 			ruleTable.childs[c] = &trieNode{}
@@ -257,6 +257,7 @@ var tokenMap = map[string]int{
 	"COLUMN_FORMAT":            columnFormat,
 	"COLUMN_STATS_USAGE":       columnStatsUsage,
 	"COLUMN":                   column,
+	"COLUMNAR":                 columnar,
 	"COLUMNS":                  columns,
 	"COMMENT":                  comment,
 	"COMMIT":                   commit,
@@ -342,6 +343,9 @@ var tokenMap = map[string]int{
 	"DISK":                     disk,
 	"DISTINCT":                 distinct,
 	"DISTINCTROW":              distinct,
+	"DISTRIBUTE":               distribute,
+	"DISTRIBUTION":             distribution,
+	"DISTRIBUTIONS":            distributions,
 	"DIV":                      div,
 	"DO":                       do,
 	"DOT":                      dotType,
@@ -466,6 +470,7 @@ var tokenMap = map[string]int{
 	"INTERSECT":                intersect,
 	"INTERVAL":                 interval,
 	"INTO":                     into,
+	"INVERTED":                 inverted,
 	"INVISIBLE":                invisible,
 	"INVOKER":                  invoker,
 	"ITERATE":                  iterate,
@@ -676,6 +681,7 @@ var tokenMap = map[string]int{
 	"REPLICAS":                 replicas,
 	"REPLICATION":              replication,
 	"RU":                       ru,
+	"RULE":                     rule,
 	"REQUIRE":                  require,
 	"REQUIRED":                 required,
 	"RESET":                    reset,
@@ -875,6 +881,7 @@ var tokenMap = map[string]int{
 	"UNKNOWN":                  unknown,
 	"UNLOCK":                   unlock,
 	"UNLIMITED":                unlimited,
+	"MODERATED":                moderated,
 	"UNSET":                    unset,
 	"UNSIGNED":                 unsigned,
 	"UNTIL":                    until,
@@ -1123,7 +1130,7 @@ func (s *Scanner) isTokenIdentifier(lit string, offset int) int {
 	buf.Grow(len(lit))
 	data := buf.Bytes()[:len(lit)]
 
-	for i := 0; i < len(lit); i++ {
+	for i := range len(lit) {
 		c := lit[i]
 		if c >= 'a' && c <= 'z' {
 			data[i] = c + 'A' - 'a'

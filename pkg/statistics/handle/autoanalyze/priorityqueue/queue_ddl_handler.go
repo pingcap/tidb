@@ -17,6 +17,7 @@ package priorityqueue
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -45,6 +46,12 @@ func (pq *AnalysisPriorityQueue) HandleDDLEvent(_ context.Context, sctx sessionc
 
 	defer func() {
 		if err != nil {
+			intest.Assert(
+				errors.ErrorEqual(err, context.Canceled) ||
+					strings.Contains(err.Error(), "mock handleTaskOnce error") ||
+					strings.Contains(err.Error(), "session pool closed"),
+				fmt.Sprintf("handle ddl event failed, err: %+v", err),
+			)
 			actionType := event.GetType().String()
 			statslogutil.StatsLogger().Error(fmt.Sprintf("Failed to handle %s event", actionType),
 				zap.Error(err),
@@ -161,7 +168,7 @@ func (pq *AnalysisPriorityQueue) handleAddIndexEvent(
 	intest.AssertFunc(func() bool {
 		// Columnar index has a separate job type. We should not see columnar index here.
 		for _, idx := range idxes {
-			if idx.IsTiFlashLocalIndex() {
+			if idx.IsColumnarIndex() {
 				return false
 			}
 		}

@@ -159,7 +159,7 @@ func TestBackfillOperators(t *testing.T) {
 		}
 		pTbl := tbl.(table.PhysicalTable)
 		index := tables.NewIndex(pTbl.GetPhysicalID(), tbl.Meta(), idxInfo)
-		cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false)
+		cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, 0)
 		require.NoError(t, err)
 		defer bd.Close()
 		bcCtx, err := ingest.NewBackendCtxBuilder(ctx, store, realJob).Build(cfg, bd)
@@ -209,7 +209,7 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 	ctx := context.Background()
 	opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
 	defer cancel()
-	cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false)
+	cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, 0)
 	require.NoError(t, err)
 	defer bd.Close()
 	bcCtx, err := ingest.NewBackendCtxBuilder(ctx, store, realJob).Build(cfg, bd)
@@ -249,7 +249,7 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 	regionCnt := 10
 	tbl, idxInfo, startKey, endKey, _ := prepare(t, tk, dom, regionCnt)
 	sessPool := newSessPoolForTest(t, store)
-	cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false)
+	cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, 0)
 	require.NoError(t, err)
 	defer bd.Close()
 	bcCtx, err := ingest.NewBackendCtxBuilder(context.Background(), store, realJob).Build(cfg, bd)
@@ -343,7 +343,7 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 				require.NoError(t, opCtx.OperatorErr())
 			} else {
 				require.Error(t, opCtx.OperatorErr())
-				require.Equal(t, tc.operatorErrMsg, opCtx.OperatorErr().Error())
+				require.ErrorContains(t, opCtx.OperatorErr(), tc.operatorErrMsg)
 			}
 		})
 	}
@@ -357,7 +357,7 @@ func prepare(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, regionCnt in
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
 
 	tk.MustExec("create table t(a int primary key, b int, index idx(b));")
-	for i := 0; i < regionCnt; i++ {
+	for i := range regionCnt {
 		tk.MustExec("insert into t values (?, ?)", i*10000, i)
 	}
 	maxRowID := regionCnt * 10000
@@ -436,7 +436,7 @@ func TestTuneWorkerPoolSize(t *testing.T) {
 		opCtx, cancel := ddl.NewDistTaskOperatorCtx(ctx, 1, 1)
 		pTbl := tbl.(table.PhysicalTable)
 		index := tables.NewIndex(pTbl.GetPhysicalID(), tbl.Meta(), idxInfo)
-		cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false)
+		cfg, bd, err := ingest.CreateLocalBackend(context.Background(), store, realJob, false, 0)
 		require.NoError(t, err)
 		defer bd.Close()
 		bcCtx, err := ingest.NewBackendCtxBuilder(context.Background(), store, realJob).Build(cfg, bd)

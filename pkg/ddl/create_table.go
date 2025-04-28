@@ -533,7 +533,7 @@ func checkGeneratedColumn(ctx *metabuild.Context, schemaName ast.CIStr, tableNam
 func checkColumnarIndexIfNeedTiFlashReplica(store kv.Storage, dbName ast.CIStr, tblInfo *model.TableInfo) error {
 	var hasColumnarIndex bool
 	for _, idx := range tblInfo.Indices {
-		if idx.IsTiFlashLocalIndex() {
+		if idx.IsColumnarIndex() {
 			hasColumnarIndex = true
 			break
 		}
@@ -1000,7 +1000,7 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint) {
 		var colName string
 		for _, keyPart := range constr.Keys {
 			if keyPart.Expr != nil {
-				colName = getAnonymousIndexPrefix(constr.Tp == ast.ConstraintVector)
+				colName = getAnonymousIndexPrefix(constr.Option != nil && constr.Option.Tp == ast.IndexTypeVector)
 			}
 		}
 		if colName == "" {
@@ -1233,7 +1233,7 @@ func BuildTableInfo(
 	foreignKeyID := tbInfo.MaxForeignKeyID
 	for _, constr := range constraints {
 		var hiddenCols []*model.ColumnInfo
-		if constr.Tp != ast.ConstraintVector {
+		if constr.Tp != ast.ConstraintColumnar {
 			// Build hidden columns if necessary.
 			hiddenCols, err = buildHiddenColumnInfoWithCheck(ctx, constr.Keys, ast.NewCIStr(constr.Name), tbInfo, tblColumns)
 			if err != nil {
@@ -1301,14 +1301,10 @@ func BuildTableInfo(
 			}
 		}
 
-		if constr.Tp == ast.ConstraintFulltext {
-			ctx.AppendWarning(dbterror.ErrTableCantHandleFt.FastGenByArgs())
-			continue
-		}
-
 		var (
-			indexName               = constr.Name
-			primary, unique, vector bool
+			indexName         = constr.Name
+			primary, unique   bool
+			columnarIndexType = model.ColumnarIndexTypeNA
 		)
 
 		// Check if the index is primary, unique or vector.
@@ -1319,11 +1315,17 @@ func BuildTableInfo(
 			indexName = mysql.PrimaryKeyName
 		case ast.ConstraintUniq, ast.ConstraintUniqKey, ast.ConstraintUniqIndex:
 			unique = true
-		case ast.ConstraintVector:
-			if constr.Option.Visibility == ast.IndexVisibilityInvisible {
-				return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("set vector index invisible")
+		case ast.ConstraintColumnar:
+			switch constr.Option.Tp {
+			case ast.IndexTypeVector:
+				columnarIndexType = model.ColumnarIndexTypeVector
+			case ast.IndexTypeInverted:
+				columnarIndexType = model.ColumnarIndexTypeInverted
+			case ast.IndexTypeFulltext:
+				columnarIndexType = model.ColumnarIndexTypeFulltext
+			default:
+				return nil, dbterror.ErrUnsupportedIndexType.GenWithStackByArgs(constr.Option.Tp)
 			}
-			vector = true
 		}
 
 		// check constraint
@@ -1396,7 +1398,7 @@ func BuildTableInfo(
 			ast.NewCIStr(indexName),
 			primary,
 			unique,
-			vector,
+			columnarIndexType,
 			constr.Keys,
 			constr.Option,
 			model.StatePublic,
@@ -1561,7 +1563,7 @@ func addIndexForForeignKey(ctx *metabuild.Context, tbInfo *model.TableInfo) erro
 				Length: types.UnspecifiedLength,
 			})
 		}
-		idxInfo, err := BuildIndexInfo(ctx, tbInfo, idxName, false, false, false, keys, nil, model.StatePublic)
+		idxInfo, err := BuildIndexInfo(ctx, tbInfo, idxName, false, false, model.ColumnarIndexTypeNA, keys, nil, model.StatePublic)
 		if err != nil {
 			return errors.Trace(err)
 		}

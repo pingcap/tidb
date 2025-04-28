@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -62,7 +63,7 @@ type engineManager struct {
 	BackendConfig
 	StoreHelper
 	engines        sync.Map // sync version of map[uuid.UUID]*Engine
-	externalEngine map[uuid.UUID]common.Engine
+	externalEngine map[uuid.UUID]engineapi.Engine
 	bufferPool     *membuf.Pool
 	duplicateDB    *pebble.DB
 	keyAdapter     common.KeyAdapter
@@ -105,7 +106,7 @@ func newEngineManager(config BackendConfig, storeHelper StoreHelper, logger log.
 		BackendConfig:  config,
 		StoreHelper:    storeHelper,
 		engines:        sync.Map{},
-		externalEngine: map[uuid.UUID]common.Engine{},
+		externalEngine: map[uuid.UUID]engineapi.Engine{},
 		bufferPool:     membuf.NewPool(opts...),
 		duplicateDB:    duplicateDB,
 		keyAdapter:     keyAdapter,
@@ -330,6 +331,7 @@ func (em *engineManager) closeEngine(
 			externalCfg.TotalFileSize,
 			externalCfg.TotalKVCount,
 			externalCfg.CheckHotspot,
+			externalCfg.MemCapacity,
 		)
 		em.externalEngine[engineUUID] = externalEngine
 		return nil
@@ -525,7 +527,7 @@ func (em *engineManager) close() {
 	for _, e := range em.externalEngine {
 		_ = e.Close()
 	}
-	em.externalEngine = map[uuid.UUID]common.Engine{}
+	em.externalEngine = map[uuid.UUID]engineapi.Engine{}
 	allLocalEngines := em.lockAllEnginesUnless(importMutexStateClose, 0)
 	for _, e := range allLocalEngines {
 		_ = e.Close()
@@ -574,7 +576,7 @@ func (em *engineManager) close() {
 	}
 }
 
-func (em *engineManager) getExternalEngine(uuid uuid.UUID) (common.Engine, bool) {
+func (em *engineManager) getExternalEngine(uuid uuid.UUID) (engineapi.Engine, bool) {
 	e, ok := em.externalEngine[uuid]
 	return e, ok
 }

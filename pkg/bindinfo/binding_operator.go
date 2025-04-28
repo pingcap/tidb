@@ -93,7 +93,17 @@ func (op *bindingOperator) CreateBinding(sctx sessionctx.Context, bindings []*Bi
 			binding.CreateTime = now
 			binding.UpdateTime = now
 
+			// TODO: update the sql_mode or sctx.types.Flag to let execution engine returns errors like dataTooLong,
+			// overflow directly.
+
 			// Insert the Bindings to the storage.
+			var sqlDigest, planDigest any // null by default
+			if binding.SQLDigest != "" {
+				sqlDigest = binding.SQLDigest
+			}
+			if binding.PlanDigest != "" {
+				planDigest = binding.PlanDigest
+			}
 			_, err = exec(
 				sctx,
 				`INSERT INTO mysql.bind_info VALUES (%?,%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
@@ -106,8 +116,8 @@ func (op *bindingOperator) CreateBinding(sctx sessionctx.Context, bindings []*Bi
 				binding.Charset,
 				binding.Collation,
 				binding.Source,
-				binding.SQLDigest,
-				binding.PlanDigest,
+				sqlDigest,
+				planDigest,
 			)
 			failpoint.Inject("CreateGlobalBindingNthFail", func(val failpoint.Value) {
 				n := val.(int)
@@ -117,6 +127,14 @@ func (op *bindingOperator) CreateBinding(sctx sessionctx.Context, bindings []*Bi
 			})
 			if err != nil {
 				return err
+			}
+
+			warnings, _, err := execRows(sctx, "show warnings")
+			if err != nil {
+				return err
+			}
+			if len(warnings) != 0 {
+				return errors.New(warnings[0].GetString(2))
 			}
 		}
 		return nil

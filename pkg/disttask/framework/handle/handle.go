@@ -19,12 +19,14 @@ import (
 	goerrors "errors"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -78,7 +80,6 @@ func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, co
 	if err != nil {
 		return nil, err
 	}
-	metrics.UpdateMetricsForAddTask(&task.TaskBase)
 
 	NotifyTaskChange()
 	return task, nil
@@ -226,6 +227,7 @@ func RunWithRetry(
 			return err
 		}
 		lastErr = err
+		metrics.RetryableErrorCount.WithLabelValues(err.Error()).Inc()
 		logger.Warn("met retryable error", zap.Int("retry-count", i),
 			zap.Int("max-retry", maxRetry), zap.Error(err))
 		select {
@@ -235,4 +237,22 @@ func RunWithRetry(
 		}
 	}
 	return lastErr
+}
+
+var nodeResource atomic.Pointer[proto.NodeResource]
+
+// GetNodeResource gets the node resource.
+func GetNodeResource() *proto.NodeResource {
+	return nodeResource.Load()
+}
+
+// SetNodeResource gets the node resource.
+func SetNodeResource(rc *proto.NodeResource) {
+	nodeResource.Store(rc)
+}
+
+func init() {
+	// domain will init this var at runtime, we store it here for test, as some
+	// test might not start domain.
+	nodeResource.Store(proto.NewNodeResource(8, 16*units.GiB, 100*units.GiB))
 }

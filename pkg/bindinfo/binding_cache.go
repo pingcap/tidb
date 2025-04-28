@@ -16,6 +16,7 @@ package bindinfo
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -60,7 +61,7 @@ func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad bool) (err error) 
 		timeCondition = ""
 	} else {
 		lastUpdateTime = u.lastUpdateTime.Load().(types.Time)
-		timeCondition = fmt.Sprintf("WHERE update_time>'%s'", lastUpdateTime.String())
+		timeCondition = fmt.Sprintf("USE INDEX (time_index) WHERE update_time>'%s'", lastUpdateTime.String())
 	}
 	condition := fmt.Sprintf(`%s ORDER BY update_time, create_time`, timeCondition)
 	bindings, err := readBindingsFromStorage(u.sPool, condition)
@@ -165,7 +166,7 @@ func (b *digestBiMapImpl) Del(sqlDigest string) {
 	for i := range digestList { // remove sqlDigest from this list
 		if digestList[i] == sqlDigest {
 			// Deleting binding is a low-frequently operation, so the O(n) performance is enough.
-			digestList = append(digestList[:i], digestList[i+1:]...)
+			digestList = slices.Delete(digestList, i, i+1)
 			break
 		}
 	}

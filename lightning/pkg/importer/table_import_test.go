@@ -65,6 +65,7 @@ import (
 	"github.com/stretchr/testify/suite"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/mock/gomock"
 )
 
@@ -1249,6 +1250,10 @@ func (m *mockPDClient) GetLeaderAddr() string {
 	return m.leaderAddr
 }
 
+func (m *mockPDClient) WithCallerComponent(_ caller.Component) pd.Client {
+	return m
+}
+
 func (s *tableRestoreSuite) TestCheckClusterRegion() {
 	type testCase struct {
 		stores         pdhttp.StoresInfo
@@ -1544,7 +1549,7 @@ func (s *tableRestoreSuite) TestSchemaIsValid() {
 		// we expect the check failed.
 		{
 			nil,
-			"TiDB schema `db1`.`table1` has 2 columns,and data file has 1 columns, but column colb are missing(.*)",
+			"TiDB schema `db1`.`table1` has 2 columns, and data file has 1 columns, but column colb is missing(.*)",
 			1,
 			false,
 			map[string]*checkpoints.TidbDBInfo{

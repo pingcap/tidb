@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/util"
@@ -105,8 +104,6 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 		return 0, nil, err
 	}
 
-	metrics.UpdateMetricsForAddTask(task)
-
 	logutil.BgLogger().Info("job submitted to task queue",
 		zap.Int64("job-id", jobID),
 		zap.Int64("task-id", task.ID),
@@ -117,50 +114,64 @@ func doSubmitTask(ctx context.Context, plan *importer.Plan, stmt string, instanc
 	return jobID, task, nil
 }
 
-// GetTaskImportedRows gets the number of imported rows of a job.
-// Note: for finished job, we can get the number of imported rows from task meta.
-func GetTaskImportedRows(ctx context.Context, jobID int64) (uint64, error) {
+// RuntimeInfo is the runtime information of the task for corresponding job.
+type RuntimeInfo struct {
+	Status     proto.TaskState
+	ImportRows uint64
+	ErrorMsg   string
+}
+
+// GetRuntimeInfoForJob get the corresponding DXF task runtime info for the job.
+func GetRuntimeInfoForJob(ctx context.Context, jobID int64) (*RuntimeInfo, error) {
 	taskManager, err := storage.GetTaskManager()
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	taskKey := TaskKey(jobID)
 	task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	taskMeta := TaskMeta{}
 	if err = json.Unmarshal(task.Meta, &taskMeta); err != nil {
-		return 0, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 	var importedRows uint64
 	if taskMeta.Plan.CloudStorageURI == "" {
 		subtasks, err := taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepImport)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		for _, subtask := range subtasks {
 			var subtaskMeta ImportStepMeta
 			if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
-				return 0, errors.Trace(err2)
+				return nil, errors.Trace(err2)
 			}
 			importedRows += subtaskMeta.Result.LoadedRowCnt
 		}
 	} else {
 		subtasks, err := taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepWriteAndIngest)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		for _, subtask := range subtasks {
 			var subtaskMeta WriteIngestStepMeta
 			if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
-				return 0, errors.Trace(err2)
+				return nil, errors.Trace(err2)
 			}
 			importedRows += subtaskMeta.Result.LoadedRowCnt
 		}
 	}
-	return importedRows, nil
+	var errMsg string
+	if task.Error != nil {
+		errMsg = task.Error.Error()
+	}
+	return &RuntimeInfo{
+		Status:     task.State,
+		ImportRows: importedRows,
+		ErrorMsg:   errMsg,
+	}, nil
 }
 
 // TaskKey returns the task key for a job.
