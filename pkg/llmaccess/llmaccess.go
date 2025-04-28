@@ -35,7 +35,7 @@ type LLMAccessor interface {
 	// ChatCompletion calls the specified LLM to complete the chat based on input prompt.
 	ChatCompletion(platform, model, prompt string) (response string, err error)
 
-	AlterPlatform(platform, key, val string) error
+	AlterPlatform(sctx sessionctx.Context, platform, key, val string) error
 }
 
 type llmAccessorImpl struct {
@@ -46,7 +46,7 @@ func NewLLMAccessor(sPool util.DestroyableSessionPool) LLMAccessor {
 	return &llmAccessorImpl{sPool: sPool}
 }
 
-func (llm *llmAccessorImpl) AlterPlatform(platform, key, val string) error {
+func (llm *llmAccessorImpl) AlterPlatform(sctx sessionctx.Context, platform, key, val string) error {
 	platform, err := formatPlatform(platform)
 	if err != nil {
 		return err
@@ -58,8 +58,9 @@ func (llm *llmAccessorImpl) AlterPlatform(platform, key, val string) error {
 	}
 	//updateStmt := fmt.Sprintf("update mysql.llm_platform set `%s` = %? where `name` = %?", key)
 	updateStmt := "update mysql.llm_platform set `" + key + "` = %? where `name` = %?"
-	return callWithSCtx(llm.sPool, true, func(sctx sessionctx.Context) error {
-		_, err := exec(sctx, updateStmt, val, platform)
+	return callWithSCtx(llm.sPool, true, func(tmpCtx sessionctx.Context) error {
+		_, err := exec(tmpCtx, updateStmt, val, platform)
+		sctx.GetSessionVars().StmtCtx.SetAffectedRows(tmpCtx.GetSessionVars().StmtCtx.AffectedRows())
 		return err
 	})
 }
