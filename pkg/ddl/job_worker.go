@@ -89,6 +89,7 @@ type jobContext struct {
 	store             kv.Storage
 	schemaVerSyncer   schemaver.Syncer
 	eventPublishStore notifier.Store
+	sysTblMgr         systable.Manager
 
 	// per job fields, they are not changed in the life cycle of this context.
 
@@ -612,11 +613,7 @@ func (w *worker) transitOneJobStep(
 
 	// If running job meets error, we will save this error in job Error and retry
 	// later if the job is not cancelled.
-<<<<<<< HEAD
-	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(jobCtx, job, sysTblMgr)
-=======
 	schemaVer, updateRawArgs, runJobErr := w.runOneJobStep(jobCtx, job)
->>>>>>> e8fb24a20d4 (ddl: update row count periodically when running reorg job (#60828))
 
 	failpoint.InjectCall("onJobRunAfter", job)
 
@@ -830,12 +827,7 @@ func (w *worker) runOneJobStep(
 
 	failpoint.InjectCall("onRunOneJobStep")
 	if job.Type != model.ActionMultiSchemaChange {
-<<<<<<< HEAD
 		jobCtx.logger.Info("run DDL job", zap.String("job", job.String()))
-=======
-		jobCtx.logger.Info("run one job step", zap.String("job", job.String()))
-		failpoint.InjectCall("onRunOneJobStep")
->>>>>>> e8fb24a20d4 (ddl: update row count periodically when running reorg job (#60828))
 	}
 	timeStart := time.Now()
 	if job.RealStartTS == 0 {
@@ -882,14 +874,8 @@ func (w *worker) runOneJobStep(
 					case <-stopCheckingJobCancelled:
 						return
 					case <-ticker.C:
-<<<<<<< HEAD
-						latestJob, err := sysTblMgr.GetJobByID(w.workCtx, job.ID)
-						if err == systable.ErrNotFound {
-=======
-						failpoint.InjectCall("checkJobCancelled", job)
 						latestJob, err := jobCtx.sysTblMgr.GetJobByID(w.workCtx, job.ID)
-						if goerrors.Is(err, systable.ErrNotFound) {
->>>>>>> e8fb24a20d4 (ddl: update row count periodically when running reorg job (#60828))
+						if err == systable.ErrNotFound {
 							logutil.DDLLogger().Info(
 								"job not found, might already finished",
 								zap.Int64("job_id", job.ID))
