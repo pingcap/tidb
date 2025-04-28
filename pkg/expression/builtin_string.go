@@ -3311,7 +3311,7 @@ func (c *exportSetFunctionClass) getFunction(ctx BuildContext, args []Expression
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_export-set
 func exportSet(bits int64, on, off, separator string, numberOfBits int64) string {
 	result := ""
-	for i := uint64(0); i < uint64(numberOfBits); i++ {
+	for i := range numberOfBits {
 		if (bits & (1 << i)) > 0 {
 			result += on
 		} else {
