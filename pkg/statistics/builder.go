@@ -454,7 +454,6 @@ func BuildHistAndTopN(
 	}
 
 	// Step2: exclude topn from samples
-	var minTopN uint64
 	if numTopN != 0 {
 		for i := int64(0); i < int64(len(samples)); i++ {
 			sampleBytes, err := getComparedBytes(samples[i].Value)
@@ -467,12 +466,6 @@ func BuildHistAndTopN(
 				firstTimeSample types.Datum
 			)
 			for j := range topNList {
-				// Track the lowest count value in the TopN list
-				if minTopN == 0 {
-					minTopN = topNList[j].Count
-				} else {
-					minTopN = min(minTopN, topNList[j].Count)
-				}
 				if bytes.Equal(sampleBytes, topNList[j].Encoded) {
 					// This should never happen, but we met this panic before, so we add this check here.
 					// See: https://github.com/pingcap/tidb/issues/35948
@@ -511,6 +504,7 @@ func BuildHistAndTopN(
 
 	topn := &TopN{TopN: topNList}
 	topn.Scale(sampleFactor)
+	minTopN := topn.MinCount()
 
 	if uint64(count) <= topn.TotalCount() || int(hg.NDV) <= len(topn.TopN) {
 		// If we've collected everything  - don't create any buckets
