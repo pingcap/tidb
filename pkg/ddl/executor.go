@@ -1027,6 +1027,11 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	if err = checkTableInfoValidWithStmt(metaBuildCtx, tbInfo, s); err != nil {
 		return err
 	}
+	if tbInfo.TiFlashReplica != nil {
+		if err = checkTiFlashReplicaCount(ctx, tbInfo.TiFlashReplica.Count); err != nil {
+			return err
+		}
+	}
 	if err = checkTableForeignKeysValid(ctx, is, schema.Name.L, tbInfo); err != nil {
 		return err
 	}

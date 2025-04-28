@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"strings"
@@ -171,7 +172,11 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 	if len(tbInfo.ForeignKeys) > 0 {
 		return w.createTableWithForeignKeys(jobCtx, job, args)
 	}
-
+	if tbInfo.TiFlashReplica != nil {
+		if err = checkTiFlashReplicaCount(w.sess.Context, tbInfo.TiFlashReplica.Count); err != nil {
+			return ver, errors.Trace(err)
+		}
+	}
 	tbInfo, err = createTable(jobCtx, job, args)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -849,6 +854,21 @@ func extractAutoRandomBitsFromColDef(colDef *ast.ColumnDef) (shardBits, rangeBit
 	return 0, 0, nil
 }
 
+type engineAttributes struct {
+	TiFlashReplicaCount  uint64 `json:"tiflash-replica"`
+	ColumnarReplicaCount uint64 `json:"columnar-replica"` // alias of `TiFlashReplicaCount`
+}
+
+func (ea *engineAttributes) getTiFlashReplicaCount() uint64 {
+	if ea.TiFlashReplicaCount > 0 {
+		return ea.TiFlashReplicaCount
+	}
+	if ea.ColumnarReplicaCount > 0 {
+		return ea.ColumnarReplicaCount
+	}
+	return 0
+}
+
 // handleTableOptions updates tableInfo according to table options.
 func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) error {
 	var ttlOptionsHandled bool
@@ -912,7 +932,17 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 			tbInfo.TTLInfo = ttlInfo
 			ttlOptionsHandled = true
 		case ast.TableOptionEngineAttribute:
-			return errors.Trace(dbterror.ErrUnsupportedEngineAttribute)
+			decoder := json.NewDecoder(strings.NewReader(op.StrValue))
+			decoder.DisallowUnknownFields()
+			var engineAttributes engineAttributes
+			if err := decoder.Decode(&engineAttributes); err != nil {
+				return errors.Trace(dbterror.ErrEngineAttributeInvalidFormat.GenWithStackByArgs(op.StrValue))
+			}
+			if engineAttributes.getTiFlashReplicaCount() > 0 {
+				tbInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+					Count: engineAttributes.getTiFlashReplicaCount(),
+				}
+			}
 		}
 	}
 	shardingBits := shardingBits(tbInfo)

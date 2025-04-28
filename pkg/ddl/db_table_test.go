@@ -344,6 +344,38 @@ func TestCreateTableWithInfo(t *testing.T) {
 	require.Greater(t, idGenNum, id)
 }
 
+func TestCreateTableWithEngineAttribute(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`)
+	defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount")
+
+	store := testkit.CreateMockStoreWithSchemaLease(t, 200*time.Millisecond)
+	tk := testkit.NewTestKit(t, store)
+	rpcserver, _ := setUpRPCService(t, "127.0.0.1:0", domain.GetDomain(tk.Session()), nil)
+	defer rpcserver.Stop()
+
+	tk.MustExec("use test;")
+	tk.MustExecToErr("CREATE TABLE t (id INT PRIMARY KEY, value VARCHAR(16383)) ENGINE_ATTRIBUTE = '{\"key\": \"value}';")           // invalid json
+	tk.MustExecToErr("CREATE TABLE t (id INT PRIMARY KEY, value VARCHAR(16383)) ENGINE_ATTRIBUTE = '{\"key\": \"value\"}';")         // invalid key
+	tk.MustExecToErr("CREATE TABLE t (id INT PRIMARY KEY, value VARCHAR(16383)) ENGINE_ATTRIBUTE = '{\"tiflash-replica\": \"2\"}';") // invalid value
+	tk.MustExecToErr("CREATE TABLE t (id INT PRIMARY KEY, value VARCHAR(16383)) ENGINE_ATTRIBUTE = '{\"tiflash-replica\": 13}';")    // invalid value
+
+	tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY, value VARCHAR(16383)) ENGINE_ATTRIBUTE = '{\"tiflash-replica\": 2}';") // valid
+	tk.MustQuery("SELECT REPLICA_COUNT from information_schema.tiflash_replica where table_schema='test' and table_name='t'").Check(testkit.Rows("2"))
+	tk.MustExec("DROP TABLE t;")
+
+	tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY, value VARCHAR(16383)) ENGINE_ATTRIBUTE = '{\"columnar-replica\": 2}';") // valid
+	tk.MustQuery("SELECT REPLICA_COUNT from information_schema.tiflash_replica where table_schema='test' and table_name='t'").Check(testkit.Rows("2"))
+	tk.MustExec("DROP TABLE t;")
+
+	tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY, value VARCHAR(16383)) ENGINE_ATTRIBUTE = '{\"tiflash-replica\": 1}';") // valid
+	tk.MustQuery("SELECT REPLICA_COUNT from information_schema.tiflash_replica where table_schema='test' and table_name='t'").Check(testkit.Rows("1"))
+	tk.MustExec("DROP TABLE t;")
+
+	tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY, value VARCHAR(16383)) ENGINE_ATTRIBUTE = '{\"columnar-replica\": 1}';") // valid
+	tk.MustQuery("SELECT REPLICA_COUNT from information_schema.tiflash_replica where table_schema='test' and table_name='t'").Check(testkit.Rows("1"))
+	tk.MustExec("DROP TABLE t;")
+}
+
 func TestBatchCreateTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
