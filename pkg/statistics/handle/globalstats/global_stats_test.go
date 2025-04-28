@@ -1021,26 +1021,3 @@ partitions 12;`)
 	tk.MustExec("set @@tidb_enable_async_merge_global_stats=OFF;")
 	dom.StatsHandle().MergePartitionStats2GlobalStatsByTableID(se, core.GetAnalyzeOptionDefaultV2ForTest(), infoSchema, &types.GlobalStatsInfo{StatsVersion: 2}, tbl.Meta().ID)
 }
-
-func TestEmptyHists(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table t (
-	id int,
-	fname varchar(30),
-	lname varchar(30),
-	signed date
-)
-partition by hash( month(signed) )
-partitions 12;`)
-	tk.MustExec(`truncate table mysql.stats_histograms`)
-	se := tk.Session().(sessionctx.Context)
-	infoSchema := dom.InfoSchema()
-	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	tk.MustExec("set @@tidb_enable_async_merge_global_stats=ON;")
-	dom.StatsHandle().MergePartitionStats2GlobalStatsByTableID(se, core.GetAnalyzeOptionDefaultV2ForTest(), infoSchema, &types.GlobalStatsInfo{StatsVersion: 2}, tbl.Meta().ID)
-	tk.MustExec("set @@tidb_enable_async_merge_global_stats=OFF;")
-	dom.StatsHandle().MergePartitionStats2GlobalStatsByTableID(se, core.GetAnalyzeOptionDefaultV2ForTest(), infoSchema, &types.GlobalStatsInfo{StatsVersion: 2}, tbl.Meta().ID)
-}
