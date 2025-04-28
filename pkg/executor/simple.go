@@ -3047,5 +3047,7 @@ var _ exec.Executor = &LLMDDLExec{}
 // Next implements the Executor Next interface.
 func (e *LLMDDLExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
-	return nil
+	llmAccessor := domain.GetDomain(e.Ctx()).LLMAccessor()
+
+	return llmAccessor.AlterPlatform(e.LLMDDLPlan.Name, e.LLMDDLPlan.Key, e.LLMDDLPlan.Value)
 }

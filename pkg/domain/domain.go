@@ -2205,6 +2205,14 @@ func (do *Domain) InitLLMAccessor() {
 	do.llmAccessor.Store(llmaccess.NewLLMAccessor(do.sysSessionPool))
 }
 
+func (do *Domain) LLMAccessor() llmaccess.LLMAccessor {
+	v := do.llmAccessor.Load()
+	if v == nil {
+		return nil
+	}
+	return v.(llmaccess.LLMAccessor)
+}
+
 // BindingHandle returns domain's bindHandle.
 func (do *Domain) BindingHandle() bindinfo.BindingHandle {
 	v := do.bindHandle.Load()
