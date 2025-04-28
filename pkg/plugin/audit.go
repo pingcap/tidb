@@ -41,6 +41,7 @@ const (
 func GeneralEventFromString(s string) (GeneralEvent, error) {
 	upperStr := strings.ToUpper(s)
 	for i := range GeneralEventCount {
+		// nolint: unconvert
 		event := GeneralEvent(i)
 		if event.String() == upperStr {
 			return event, nil
