@@ -4284,11 +4284,13 @@ type AlterLLMStmt struct {
 func (n *AlterLLMStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("ALTER LLM")
 	if n.Platform {
-		ctx.WriteKeyWord(" PLATFORM")
+		ctx.WriteKeyWord(" PLATFORM ")
 	}
-	ctx.WriteName(n.Name)
-	ctx.WriteName(n.Key)
-	ctx.WriteName(n.Value)
+	ctx.WritePlain(n.Name)
+	ctx.WritePlain(" ")
+	ctx.WritePlain(n.Key)
+	ctx.WritePlain(" ")
+	ctx.WritePlain(n.Value)
 	return nil
 }
 
