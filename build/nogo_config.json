@@ -367,8 +367,15 @@
       "pkg/planner/cardinality": "pkg/planner/cardinality code",
       "pkg/planner/funcdep": "pkg/planner/funcdep code",
       "pkg/plugin/": "plugin code",
+      "pkg/privileges/": "privileges code",
+      "pkg/resourcegroup/": "resourcegroup code",
       "pkg/server/": "server code",
       "pkg/statistics": "pkg/statistics code",
+      "pkg/structure/": "structure code",
+      "pkg/testkit/": "testkit code",
+      "pkg/timer/": "timer code",
+      "pkg/ttl/": "ttl code",
+      "pkg/types/": "types code",
       "pkg/util/": "util code",
       "pkg/workloadlearning": "workloadlearning code"
     }
