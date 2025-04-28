@@ -4292,6 +4292,15 @@ func (n *AlterLLMStmt) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+func (n *AlterLLMStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*AlterLLMStmt)
+	return v.Leave(n)
+}
+
 // AddQueryWatchStmt is a statement to add a runaway watch item.
 type AddQueryWatchStmt struct {
 	stmtNode
