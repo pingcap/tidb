@@ -24,6 +24,7 @@ import (
 	"github.com/openai/openai-go/option"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
+	"go.uber.org/zap"
 )
 
 const (
@@ -90,6 +91,9 @@ func (*llmAccessorImpl) chatCompletionOpenAI(model, prompt, key string) (respons
 		Model: openai.F(model),
 	})
 	if err != nil {
+		llmLogger().Error("failed to call OpenAI",
+			zap.String("platform", OpenAI), zap.String("model", model),
+			zap.String("prompt", prompt), zap.Error(err))
 		return "", err
 	}
 	return chatCompletion.Choices[0].Message.Content, nil
