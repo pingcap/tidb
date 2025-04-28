@@ -374,6 +374,7 @@
       "pkg/plugin/": "plugin code",
       "pkg/privileges/": "privileges code",
       "pkg/resourcegroup/": "resourcegroup code",
+      "pkg/resourcemanager/": "resourcemanager code",
       "pkg/server/": "server code",
       "pkg/statistics": "pkg/statistics code",
       "pkg/structure/": "structure code",
