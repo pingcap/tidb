@@ -28,7 +28,7 @@ import (
 )
 
 const (
-	OpenAI = "OpenAI"
+	OpenAI = "openai"
 )
 
 type LLMAccessor interface {
@@ -57,7 +57,7 @@ func (llm *llmAccessorImpl) AlterPlatform(platform, key, val string) error {
 		return fmt.Errorf("unsupported key: %s", key)
 	}
 	//updateStmt := fmt.Sprintf("update mysql.llm_platform set `%s` = %? where `name` = %?", key)
-	updateStmt := "update mysql.llm_platform set `"  + key + "` = %? where `name` = %?"
+	updateStmt := "update mysql.llm_platform set `" + key + "` = %? where `name` = %?"
 	return callWithSCtx(llm.sPool, true, func(sctx sessionctx.Context) error {
 		_, err := exec(sctx, updateStmt, val, platform)
 		return err
@@ -102,8 +102,8 @@ func (*llmAccessorImpl) chatCompletionOpenAI(model, prompt, key string) (respons
 }
 
 func formatPlatform(platform string) (string, error) {
-	switch strings.ToUpper(platform) {
-	case "OPENAI":
+	switch strings.ToLower(platform) {
+	case OpenAI:
 		return OpenAI, nil
 	}
 	return "", fmt.Errorf("unsupported platform: %s", platform)
