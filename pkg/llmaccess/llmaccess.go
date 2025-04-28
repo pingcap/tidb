@@ -55,10 +55,7 @@ func (llm *llmAccessorImpl) AlterPlatform(platform, key, val string) error {
 	updateStmt := fmt.Sprintf("update mysql.llm_platform set %s = ? where name = ?", key)
 	return callWithSCtx(llm.sPool, true, func(sctx sessionctx.Context) error {
 		_, err := exec(sctx, updateStmt, val, platform)
-		if err != nil {
-			return err
-		}
-		return nil
+		return err
 	})
 }
 
