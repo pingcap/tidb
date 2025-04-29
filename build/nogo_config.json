@@ -372,6 +372,7 @@
       "pkg/planner/cardinality": "pkg/planner/cardinality code",
       "pkg/planner/funcdep": "pkg/planner/funcdep code",
       "pkg/server/": "server code",
+      "pkg/store/": "store code",
       "pkg/statistics": "pkg/statistics code"
     }
   },
