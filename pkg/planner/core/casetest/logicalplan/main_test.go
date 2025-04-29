@@ -1,4 +1,4 @@
-// Copyright 2023 PingCAP, Inc.
+// Copyright 2025 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,16 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package storage
+package logicalplan
 
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
-	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
 
@@ -32,33 +28,9 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
+		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
+		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
 	goleak.VerifyTestMain(m, opts...)
-}
-
-func TestSplitSubtasks(t *testing.T) {
-	tm := &TaskManager{}
-	subtasks := make([]*proto.Subtask, 0, 10)
-	metaBytes := make([]byte, 100)
-	for i := range 10 {
-		subtasks = append(subtasks, &proto.Subtask{SubtaskBase: proto.SubtaskBase{ID: int64(i)}, Meta: metaBytes})
-	}
-	bak := kv.TxnTotalSizeLimit.Load()
-	t.Cleanup(func() {
-		kv.TxnTotalSizeLimit.Store(bak)
-	})
-
-	kv.TxnTotalSizeLimit.Store(config.SuperLargeTxnSize)
-	splitSubtasks := tm.splitSubtasks(subtasks)
-	require.Len(t, splitSubtasks, 1)
-	require.Equal(t, subtasks, splitSubtasks[0])
-
-	maxSubtaskBatchSize = 300
-	splitSubtasks = tm.splitSubtasks(subtasks)
-	require.Len(t, splitSubtasks, 4)
-	require.Equal(t, subtasks[:3], splitSubtasks[0])
-	require.Equal(t, subtasks[3:6], splitSubtasks[1])
-	require.Equal(t, subtasks[6:9], splitSubtasks[2])
-	require.Equal(t, subtasks[9:], splitSubtasks[3])
 }
