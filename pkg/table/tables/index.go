@@ -539,24 +539,41 @@ func (c *index) Exist(ec errctx.Context, loc *time.Location, txn kv.Transaction,
 		if err != nil {
 			return false, nil, err
 		}
-		if tablecodec.IsTempIndexKey(key) {
-			// This function is only used in ADMIN CHECK, which never checks non-public indexes.
-			// We can remove the support for temp index until there is a requirement.
-			return false, nil, errors.Errorf("index.Exist() is not supported for temp indexes")
+
+		// If index current is in creating status and using ingest mode, we need first
+		// check key exist status in temp index.
+		key, tempKey, _ := GenTempIdxKeyByState(c.idxInfo, key)
+		if len(tempKey) > 0 {
+			key = tempKey
 		}
 
-		val, err := getKeyInTxn(context.Background(), txn, key)
-		if err != nil || len(val) == 0 {
-			return false, nil, err
-		}
 		if distinct {
-			decHd, err := tablecodec.DecodeHandleInIndexValue(val)
+			dupHandle, err := FetchDuplicatedHandle(context.Background(), key, txn)
 			if err != nil {
 				return false, nil, err
 			}
-			if decHd != nil && !decHd.Equal(h) {
+			if dupHandle != nil && !dupHandle.Equal(h) {
+				return false, nil, nil
+			}
+			continue
+		}
+
+		val, err := getKeyInTxn(context.Background(), txn, key)
+		if err != nil {
+			return false, nil, err
+		}
+		if len(tempKey) > 0 {
+			tempVal, err := tablecodec.DecodeTempIndexValue(val)
+			if err != nil {
 				return false, nil, err
 			}
+			if tempVal.IsEmpty() || tempVal.Current().Delete {
+				return false, nil, nil
+			}
+			continue
+		}
+		if len(val) == 0 {
+			return false, nil, nil
 		}
 		continue
 	}
