@@ -511,17 +511,17 @@ func (rm *MockRegionManager) splitKeys(keys [][]byte) ([]*regionCtx, error) {
 		}
 		region := item.(*btreeItem).region.Meta()
 
-		var splits [][]byte
+		splits := keys[:]
 		for i := range keys {
 			if len(region.EndKey) > 0 && bytes.Compare(keys[i], region.EndKey) >= 0 {
 				splits = keys[:i]
-				keys = keys[i:]
 				break
 			}
 		}
 		if len(splits) == 0 {
 			return true
 		}
+		keys = keys[len(splits):]
 
 		startKey := region.StartKey
 		if bytes.Equal(startKey, splits[0]) {
