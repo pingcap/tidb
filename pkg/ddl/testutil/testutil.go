@@ -188,13 +188,13 @@ func SetTableMode(
 	return err
 }
 
+// GetTableInfoByTxn get table info by transaction.
 func GetTableInfoByTxn(t *testing.T, store kv.Storage, dbID int64, tableID int64) *model.TableInfo {
 	var (
 		tableInfo *model.TableInfo
 		err       error
 	)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
 		m := meta.NewMutator(txn)
 		_, err = m.GetDatabase(dbID)
 		require.NoError(t, err)
@@ -210,7 +210,6 @@ func GetTableInfoByTxn(t *testing.T, store kv.Storage, dbID int64, tableID int64
 func RefreshMeta(
 	ctx sessionctx.Context,
 	t *testing.T,
-	store kv.Storage,
 	de ddl.Executor,
 	dbID, tableID int64,
 ) {

@@ -860,7 +860,7 @@ func TestRefreshMeta(t *testing.T) {
 	require.ErrorContains(t, err, "Table 'test.t2' doesn't exist")
 	// refresh meta, validate infoschema store table t2 and schema version increase 1
 	oldSchemaVer := getSchemaVer(t, sctx)
-	testutil.RefreshMeta(sctx, t, store, de, dbInfo.ID, t1TableInfo.ID)
+	testutil.RefreshMeta(sctx, t, de, dbInfo.ID, t1TableInfo.ID)
 	newSchemaVer := getSchemaVer(t, sctx)
 	require.Equal(t, oldSchemaVer+1, newSchemaVer)
 	_, err = domain.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
