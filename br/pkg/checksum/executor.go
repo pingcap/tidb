@@ -133,10 +133,9 @@ func buildChecksumRequest(
 	for _, partDef := range partDefs {
 		var oldPartID int64
 		if oldTable != nil {
-			for _, oldPartDef := range oldTable.Info.Partition.Definitions {
-				if oldPartDef.Name == partDef.Name {
-					oldPartID = oldPartDef.ID
-				}
+			oldPartID, err = utils.GetPartitionByName(oldTable.Info, partDef.Name)
+			if err != nil {
+				return nil, errors.Trace(err)
 			}
 		}
 		rs, err := buildRequest(newTable, partDef.ID, oldTable, oldPartID, startTS, concurrency,

@@ -141,6 +141,7 @@ go_test(
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/cdcutil",
+        "//pkg/util/chunk",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/dbterror/plannererrors",
         "//pkg/util/etcd",

@@ -196,7 +196,7 @@ func (m *ownerManager) ForceToBeOwner(context.Context) error {
 	//      before the restarted node force owner, another node might try to be
 	//      the new owner too, it's still possible to trigger the issue. so we
 	//      sleep a while to wait the cluster have a new owner and start watching.
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		// we need to sleep in every retry, as other TiDB nodes will start campaign
 		// immediately after we delete their key.
 		time.Sleep(WaitTimeOnForceOwner)
@@ -461,7 +461,7 @@ func (m *ownerManager) GetOwnerID(ctx context.Context) (string, error) {
 func getOwnerInfo(ctx context.Context, etcdCli *clientv3.Client, ownerPath string) (ownerKey string, ownerID []byte, op OpType, currRevision, _ int64, err error) {
 	var resp *clientv3.GetResponse
 	logger := logutil.BgLogger().With(zap.String("key", ownerPath))
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if err = ctx.Err(); err != nil {
 			return "", nil, op, 0, 0, errors.Trace(err)
 		}
