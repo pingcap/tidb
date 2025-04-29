@@ -196,7 +196,7 @@ func (e *TrafficShowExec) Open(ctx context.Context) error {
 			logutil.Logger(ctx).Error("unmarshal traffic job failed", zap.String("addr", addr), zap.String("jobs", resp), zap.Error(err))
 			return err
 		}
-		for i := range len(jobs) {
+		for i := range jobs {
 			if (jobs[i].Type == "capture" && !hasCapturePriv) || (jobs[i].Type == "replay" && !hasReplayPriv) {
 				continue
 			}
