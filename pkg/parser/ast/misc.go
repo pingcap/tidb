@@ -4275,11 +4275,10 @@ func (n *DropQueryWatchStmt) Accept(v Visitor) (Node, bool) {
 
 type LLMDDLStmt struct {
 	stmtNode
-	Operation string
-	Platform  bool
-	Name      string
-	Key       string
-	Value     string
+	Operation  string
+	Platform   bool
+	Name       string
+	OptionList []string
 }
 
 func (n *LLMDDLStmt) Restore(ctx *format.RestoreCtx) error {
@@ -4288,18 +4287,11 @@ func (n *LLMDDLStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.Platform {
 		ctx.WriteKeyWord(" PLATFORM ")
 	}
-
 	ctx.WritePlain(n.Name)
-	ctx.WritePlain(" ")
-	if n.Value == "ENABLED" || n.Value == "DISABLED" {
-		ctx.WriteKeyWord(n.Value)
-		return nil
-	}
 
-	ctx.WritePlain(n.Key)
-	if n.Value != "" {
+	for _, option := range n.OptionList {
 		ctx.WritePlain(" ")
-		ctx.WritePlain(n.Value)
+		ctx.WritePlain(option)
 	}
 	return nil
 }

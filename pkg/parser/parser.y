@@ -1249,6 +1249,7 @@ import (
 	LockClause                             "Alter table lock clause"
 	LogTypeOpt                             "Optional log type used in FLUSH statements"
 	LowPriorityOpt                         "LOAD DATA low priority option"
+	LLMDDLOptionList                       "LLM DDL option list"
 	MaxValPartOpt                          "MAXVALUE partition option"
 	NullPartOpt                            "NULL Partition option"
 	NumLiteral                             "Num/Int/Float/Decimal Literal"
@@ -16696,32 +16697,39 @@ LLMDDLStmt:
 	"ALTER" "LLM" "PLATFORM" identifier "DISABLED"
 	{
 		$$ = &ast.LLMDDLStmt{
-			Operation: "ALTER",
-			Platform:  true,
-			Name:      $4,
-			Key:       "status",
-			Value:     "DISABLED",
+			Operation:  "ALTER",
+			Platform:   true,
+			Name:       $4,
+			OptionList: []string{"DISABLED"},
 		}
 	}
 |	"ALTER" "LLM" "PLATFORM" identifier "ENABLED"
 	{
 		$$ = &ast.LLMDDLStmt{
-			Operation: "ALTER",
-			Platform:  true,
-			Name:      $4,
-			Key:       "status",
-			Value:     "ENABLED",
+			Operation:  "ALTER",
+			Platform:   true,
+			Name:       $4,
+			OptionList: []string{"ENABLED"},
 		}
 	}
-|	"ALTER" "LLM" "PLATFORM" identifier identifier identifier
+|	"ALTER" "LLM" "PLATFORM" identifier LLMDDLOptionList
 	{
 		$$ = &ast.LLMDDLStmt{
-			Operation: "ALTER",
-			Platform:  true,
-			Name:      $4,
-			Key:       $5,
-			Value:     $6,
+			Operation:  "ALTER",
+			Platform:   true,
+			Name:       $4,
+			OptionList: $5.([]string),
 		}
+	}
+
+LLMDDLOptionList:
+	identifier identifier
+	{
+		$$ = []string{$1, $2}
+	}
+|	LLMDDLOptionList identifier identifier
+	{
+		$$ = append($1.([]string), $2, $3)
 	}
 
 /********************************************************************
