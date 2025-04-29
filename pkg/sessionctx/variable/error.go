@@ -38,6 +38,7 @@ var (
 	errGlobalVariable              = dbterror.ClassVariable.NewStd(mysql.ErrGlobalVariable)
 	errLocalVariable               = dbterror.ClassVariable.NewStd(mysql.ErrLocalVariable)
 	errValueNotSupportedWhen       = dbterror.ClassVariable.NewStdErr(mysql.ErrNotSupportedYet, pmysql.Message("%s = OFF is not supported when %s = ON", nil))
+	errNotSupportedInNextGen       = dbterror.ClassVariable.NewStdErr(mysql.ErrNotSupportedYet, pmysql.Message("%s is not supported in the next generation of TiDB", nil))
 	ErrNotValidPassword            = dbterror.ClassExecutor.NewStd(mysql.ErrNotValidPassword)
 	// ErrFunctionsNoopImpl is an error to say the behavior is protected by the tidb_enable_noop_functions sysvar.
 	// This is copied from expression.ErrFunctionsNoopImpl to prevent circular dependencies.

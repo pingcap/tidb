@@ -177,7 +177,7 @@ func (c *SampleCollector) collect(sc *stmtctx.StatementContext, d types.Datum) e
 			newItem := &SampleItem{}
 			d.Copy(&newItem.Value)
 			// To keep the order of the elements, we use delete and append, not direct replacement.
-			c.Samples = append(c.Samples[:idx], c.Samples[idx+1:]...)
+			c.Samples = slices.Delete(c.Samples, idx, idx+1)
 			c.Samples = append(c.Samples, newItem)
 		}
 	}
@@ -295,7 +295,7 @@ func (c *SampleCollector) ExtractTopN(numTop uint32, sc *stmtctx.StatementContex
 	c.TopN = NewTopN(int(helper.actualNumTop))
 	// Process them decreasingly so we can handle most frequent values first and reduce the probability of hash collision
 	// by small values.
-	for i := uint32(0); i < helper.actualNumTop; i++ {
+	for i := range helper.actualNumTop {
 		h1, h2 := murmur3.Sum128(helper.sorted[i].data)
 		realCnt := cms.queryHashValue(nil, h1, h2)
 		// Because the encode of topn is the new encode type. But analyze proto returns the old encode type for a sample datum,

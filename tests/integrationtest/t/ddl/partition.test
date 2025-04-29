@@ -206,3 +206,19 @@ SHOW CREATE TABLE t;
 ALTER TABLE t FIRST PARTITION LESS THAN ('2024-01-01 00:02:00');
 ALTER TABLE t LAST PARTITION LESS THAN ('2024-01-01 00:12:00');
 SHOW CREATE TABLE t;
+
+# exchange partition between nonclustered table and clustered table, #60805
+drop table if exists ta, tb;
+create table ta (pk int not null, ex int not null, primary key (pk, ex) nonclustered) partition by range(pk) (PARTITION p1 values less than (10));
+create table tb (pk int not null, ex int not null, primary key (pk, ex) clustered);
+--error 1736
+alter table ta exchange partition p1 with table tb;
+
+# TestIssue60838
+drop table if exists t;
+create table t(a varbinary(255)) partition by list columns (a) (partition p0 values in (''));
+show create table t;
+drop table t;
+create table t(a varbinary(255)) partition by range columns (a) (partition p0 values less than (''));
+show create table t;
+

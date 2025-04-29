@@ -201,7 +201,7 @@ func (s *ddlSuite) startServers() (err error) {
 	s.m.Lock()
 	defer s.m.Unlock()
 
-	for i := 0; i < len(s.procs); i++ {
+	for i := range s.procs {
 		if s.procs[i] != nil {
 			continue
 		}
@@ -242,7 +242,7 @@ func (s *ddlSuite) stopServers() error {
 	s.m.Lock()
 	defer s.m.Unlock()
 
-	for i := 0; i < len(s.procs); i++ {
+	for i := range s.procs {
 		if proc := s.procs[i]; proc != nil {
 			if proc.db != nil {
 				if err := proc.db.Close(); err != nil {
@@ -263,7 +263,7 @@ func (s *ddlSuite) stopServers() error {
 var logFilePrefix = "tidb_log_file_"
 
 func createLogFiles(t *testing.T, length int) {
-	for i := 0; i < length; i++ {
+	for i := range length {
 		fp, err := os.Create(fmt.Sprintf("%s%d", logFilePrefix, i))
 		if err != nil {
 			require.NoError(t, err)
@@ -300,7 +300,7 @@ func (s *ddlSuite) startServer(i int, fp *os.File) (*server, error) {
 	addr := fmt.Sprintf("%s:%d", *tidbIP, *startPort+i)
 	sleepTime := time.Millisecond * 250
 	startTime := time.Now()
-	for i := 0; i < s.retryCount; i++ {
+	for i := range s.retryCount {
 		db, err = sql.Open("mysql", fmt.Sprintf("root@(%s)/test_ddl", addr))
 		if err != nil {
 			log.Warn("open addr failed", zap.String("addr", addr), zap.Int("retry count", i), zap.Error(err))
@@ -466,7 +466,7 @@ func (s *ddlSuite) getServer() *server {
 	s.m.Lock()
 	defer s.m.Unlock()
 
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		i := rand.Intn(*serverNum)
 
 		if s.procs[i] != nil {
@@ -619,11 +619,11 @@ func TestSimple(t *testing.T) {
 
 				var wg sync.WaitGroup
 				wg.Add(workerNum)
-				for i := 0; i < workerNum; i++ {
+				for i := range workerNum {
 					go func(i int) {
 						defer wg.Done()
 
-						for j := 0; j < batch; j++ {
+						for j := range batch {
 							k := batch*i + j
 							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
 						}
@@ -640,11 +640,11 @@ func TestSimple(t *testing.T) {
 				defaultValue := int64(-1)
 
 				wg.Add(workerNum)
-				for i := 0; i < workerNum; i++ {
+				for range workerNum {
 					go func() {
 						defer wg.Done()
 
-						for j := 0; j < batch; j++ {
+						for range batch {
 							key := atomic.AddInt64(&rowID, 1)
 							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, key, key))
 							key = int64(randomNum(rowCount))
@@ -705,11 +705,11 @@ func TestSimple(t *testing.T) {
 
 				var wg sync.WaitGroup
 				wg.Add(workerNum)
-				for i := 0; i < workerNum; i++ {
+				for i := range workerNum {
 					go func(i int) {
 						defer wg.Done()
 
-						for j := 0; j < batch; j++ {
+						for j := range batch {
 							k := batch*i + j
 							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
 						}
@@ -723,11 +723,11 @@ func TestSimple(t *testing.T) {
 				start = time.Now()
 
 				wg.Add(workerNum)
-				for i := 0; i < workerNum; i++ {
+				for range workerNum {
 					go func() {
 						defer wg.Done()
 
-						for j := 0; j < batch; j++ {
+						for range batch {
 							s.mustExec(fmt.Sprintf("update %s set c2 = c2 + 1 where c1 = 0", tblName))
 						}
 					}()
@@ -784,11 +784,11 @@ func TestSimpleInsert(t *testing.T) {
 
 				var wg sync.WaitGroup
 				wg.Add(workerNum)
-				for i := 0; i < workerNum; i++ {
+				for i := range workerNum {
 					go func(i int) {
 						defer wg.Done()
 
-						for j := 0; j < batch; j++ {
+						for j := range batch {
 							k := batch*i + j
 							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
 						}
@@ -837,11 +837,11 @@ func TestSimpleInsert(t *testing.T) {
 
 				var wg sync.WaitGroup
 				wg.Add(workerNum)
-				for i := 0; i < workerNum; i++ {
+				for range workerNum {
 					go func() {
 						defer wg.Done()
 
-						for j := 0; j < batch; j++ {
+						for range batch {
 							k := randomNum(rowCount)
 							_, _ = s.exec(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
 							mu.Lock()
@@ -900,11 +900,11 @@ func TestSimpleUpdate(t *testing.T) {
 
 				var wg sync.WaitGroup
 				wg.Add(workerNum)
-				for i := 0; i < workerNum; i++ {
+				for i := range workerNum {
 					go func(i int) {
 						defer wg.Done()
 
-						for j := 0; j < batch; j++ {
+						for j := range batch {
 							k := batch*i + j
 							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
 							v := randomNum(rowCount)
@@ -959,11 +959,11 @@ func TestSimpleUpdate(t *testing.T) {
 
 				var wg sync.WaitGroup
 				wg.Add(workerNum)
-				for i := 0; i < workerNum; i++ {
+				for i := range workerNum {
 					go func(i int) {
 						defer wg.Done()
 
-						for j := 0; j < batch; j++ {
+						for j := range batch {
 							k := batch*i + j
 							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
 							mu.Lock()
@@ -981,11 +981,11 @@ func TestSimpleUpdate(t *testing.T) {
 
 				defaultValue := int64(-1)
 				wg.Add(workerNum)
-				for i := 0; i < workerNum; i++ {
+				for range workerNum {
 					go func() {
 						defer wg.Done()
 
-						for j := 0; j < batch; j++ {
+						for range batch {
 							k := randomNum(rowCount)
 							s.mustExec(fmt.Sprintf("update %s set c2 = %d where c1 = %d", tblName, defaultValue, k))
 							mu.Lock()
@@ -1045,11 +1045,11 @@ func TestSimpleDelete(t *testing.T) {
 
 				var wg sync.WaitGroup
 				wg.Add(workerNum)
-				for i := 0; i < workerNum; i++ {
+				for i := range workerNum {
 					go func(i int) {
 						defer wg.Done()
 
-						for j := 0; j < batch; j++ {
+						for j := range batch {
 							k := batch*i + j
 							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
 							s.mustExec(fmt.Sprintf("delete from %s where c1 = %d", tblName, k))
@@ -1098,11 +1098,11 @@ func TestSimpleDelete(t *testing.T) {
 
 				var wg sync.WaitGroup
 				wg.Add(workerNum)
-				for i := 0; i < workerNum; i++ {
+				for i := range workerNum {
 					go func(i int) {
 						defer wg.Done()
 
-						for j := 0; j < batch; j++ {
+						for j := range batch {
 							k := batch*i + j
 							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
 							mu.Lock()
@@ -1119,11 +1119,11 @@ func TestSimpleDelete(t *testing.T) {
 				start = time.Now()
 
 				wg.Add(workerNum)
-				for i := 0; i < workerNum; i++ {
+				for i := range workerNum {
 					go func(i int) {
 						defer wg.Done()
 
-						for j := 0; j < batch; j++ {
+						for range batch {
 							k := randomNum(rowCount)
 							s.mustExec(fmt.Sprintf("delete from %s where c1 = %d", tblName, k))
 							mu.Lock()
