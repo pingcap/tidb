@@ -154,7 +154,7 @@ func buildCMSAndTopN(helper *topNHelper, d, w int32, scaleRatio uint64, defaultV
 	enableTopN := helper.sampleSize/topNThreshold <= helper.sumTopN
 	if enableTopN {
 		t = NewTopN(int(helper.actualNumTop))
-		for i := uint32(0); i < helper.actualNumTop; i++ {
+		for i := range helper.actualNumTop {
 			data, cnt := helper.sorted[i].data, helper.sorted[i].cnt
 			t.AppendTopN(data, cnt*scaleRatio)
 		}
@@ -314,10 +314,7 @@ func (c *CMSketch) queryHashValue(sctx planctx.PlanContext, h1, h2 uint64) (resu
 		}
 	}
 	slices.Sort(vals)
-	res := vals[(c.depth-1)/2] + (vals[c.depth/2]-vals[(c.depth-1)/2])/2
-	if res > minValue+temp {
-		res = minValue + temp
-	}
+	res := min(vals[(c.depth-1)/2]+(vals[c.depth/2]-vals[(c.depth-1)/2])/2, minValue+temp)
 	if res == 0 {
 		return uint64(0)
 	}
@@ -547,7 +544,7 @@ func (c *TopN) String() string {
 	builder := &strings.Builder{}
 	fmt.Fprintf(builder, "TopN{length: %v, ", len(c.TopN))
 	fmt.Fprint(builder, "[")
-	for i := 0; i < len(c.TopN); i++ {
+	for i := range c.TopN {
 		fmt.Fprintf(builder, "(%v, %v)", c.TopN[i].Encoded, c.TopN[i].Count)
 		if i+1 != len(c.TopN) {
 			fmt.Fprint(builder, ", ")
@@ -577,7 +574,7 @@ func (c *TopN) DecodedString(ctx sessionctx.Context, colTypes []byte) (string, e
 	fmt.Fprintf(builder, "TopN{length: %v, ", len(c.TopN))
 	fmt.Fprint(builder, "[")
 	var tmpDatum types.Datum
-	for i := 0; i < len(c.TopN); i++ {
+	for i := range c.TopN {
 		tmpDatum.SetBytes(c.TopN[i].Encoded)
 		valStr, err := ValueToString(ctx.GetSessionVars(), &tmpDatum, len(colTypes), colTypes)
 		if err != nil {
@@ -769,7 +766,7 @@ func (c *TopN) RemoveVal(val []byte) {
 	if pos == -1 {
 		return
 	}
-	c.TopN = append(c.TopN[:pos], c.TopN[pos+1:]...)
+	c.TopN = slices.Delete(c.TopN, pos, pos+1)
 }
 
 // MemoryUsage returns the total memory usage of a topn.

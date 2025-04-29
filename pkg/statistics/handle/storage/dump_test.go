@@ -233,7 +233,7 @@ func TestLoadPartitionStats(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, key(a)) partition by hash(a) partitions 8")
 	vals := make([]string, 0, 5000)
-	for i := 0; i < 5000; i++ {
+	for i := range 5000 {
 		vals = append(vals, fmt.Sprintf("(%v)", i))
 	}
 	tk.MustExec("insert into t values " + strings.Join(vals, ","))
@@ -325,7 +325,7 @@ func TestLoadPartitionStatsErrPanic(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, key(a)) partition by hash(a) partitions 8")
 	vals := make([]string, 0, 5000)
-	for i := 0; i < 5000; i++ {
+	for i := range 5000 {
 		vals = append(vals, fmt.Sprintf("(%v)", i))
 	}
 	tk.MustExec("insert into t values " + strings.Join(vals, ","))
@@ -431,8 +431,8 @@ func TestDumpCMSketchWithTopN(t *testing.T) {
 
 	// Insert 30 fake data
 	fakeData := make([][]byte, 0, 30)
-	for i := 0; i < 30; i++ {
-		fakeData = append(fakeData, []byte(fmt.Sprintf("%01024d", i)))
+	for i := range 30 {
+		fakeData = append(fakeData, fmt.Appendf(nil, "%01024d", i))
 	}
 	cms, _, _, _ := statistics.NewCMSketchAndTopN(5, 2048, fakeData, 20, 100)
 
