@@ -15,15 +15,14 @@
 package metrics
 
 import (
+	"maps"
 	"strconv"
 	"strings"
 	"sync"
-	"testing"
 
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/stretchr/testify/require"
 )
 
 var (
@@ -303,15 +302,11 @@ func UnregisteredLightningCommonMetricsForDDL(jobID int64, metrics *metric.Commo
 	delete(registeredJob, jobID)
 }
 
-// CheckDDLMetricsLeakageForTest ensure the metrics are unregistered after adding index
-func CheckDDLMetricsLeakageForTest(t *testing.T) {
+// GetRegisteredJob is used for test
+func GetRegisteredJob() map[int64]*metric.Common {
 	mu.Lock()
 	defer mu.Unlock()
-	if len(registeredJob) > 0 {
-		keys := make([]string, 0, len(registeredJob))
-		for k := range registeredJob {
-			keys = append(keys, strconv.FormatInt(k, 10))
-		}
-		require.FailNow(t, "registeredJob map is not empty, contains job id: "+strings.Join(keys, ","))
-	}
+	ret := make(map[int64]*metric.Common, len(registeredJob))
+	maps.Copy(ret, registeredJob)
+	return ret
 }
