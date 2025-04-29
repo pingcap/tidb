@@ -1110,9 +1110,6 @@ func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (
 			continue
 		}
 		opt.AppendBeforeRuleOptimize(i, rule.Name(), logic.BuildPlanTrace)
-		if i == 8 && !logic.SCtx().GetSessionVars().InRestrictedSQL {
-			fmt.Println("wwz")
-		}
 		var planChanged bool
 		logic, planChanged, err = rule.Optimize(ctx, logic, opt)
 		if err != nil {
@@ -1193,9 +1190,6 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 			errMsg += ": cop and batchCop are not allowed in disaggregated tiflash mode, you should turn on tidb_allow_mpp switch"
 		}
 		return nil, 0, plannererrors.ErrInternal.GenWithStackByArgs(errMsg)
-	}
-	if !logic.SCtx().GetSessionVars().InRestrictedSQL {
-		fmt.Println("wwz")
 	}
 	if err = t.Plan().ResolveIndices(); err != nil {
 		return nil, 0, err
