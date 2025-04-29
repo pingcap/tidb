@@ -182,3 +182,15 @@ func getIndexInfoAndID(eleIDs []int64, indexes []*model.IndexInfo) (currentIdx *
 	}
 	return
 }
+
+// TaskMetaModified changes the max write speed for ingest
+func (*cloudImportExecutor) TaskMetaModified(_ context.Context, _ []byte) error {
+	// Will be added in the future PR
+	return nil
+}
+
+// ResourceModified change the concurrency for ingest
+func (*cloudImportExecutor) ResourceModified(_ context.Context, _ *proto.StepResource) error {
+	// Will be added in the future PR
+	return nil
+}

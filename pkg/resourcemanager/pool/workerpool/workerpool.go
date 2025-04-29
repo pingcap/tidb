@@ -17,6 +17,7 @@ package workerpool
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
@@ -60,6 +61,7 @@ type WorkerPool[T TaskMayPanic, R any] struct {
 	wg            tidbutil.WaitGroupWrapper
 	createWorker  func() Worker[T, R]
 	lastTuneTs    atomicutil.Time
+	started       atomic.Bool
 	mu            syncutil.RWMutex
 }
 
@@ -124,9 +126,13 @@ func (p *WorkerPool[T, R]) Start(ctx context.Context) {
 
 	p.ctx, p.cancel = context.WithCancel(ctx)
 
-	for i := 0; i < int(p.numWorkers); i++ {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	for range p.numWorkers {
 		p.runAWorker()
 	}
+	p.started.Store(true)
 }
 
 func (p *WorkerPool[T, R]) handleTaskWithRecover(w Worker[T, R], task T) {
@@ -200,17 +206,27 @@ func (p *WorkerPool[T, R]) Tune(numWorkers int32, wait bool) {
 	p.lastTuneTs.Store(time.Now())
 	p.mu.Lock()
 	defer p.mu.Unlock()
+
+	logutil.BgLogger().Info("tune worker pool",
+		zap.Int32("from", p.numWorkers), zap.Int32("to", numWorkers))
+
+	// If the pool is not started, just set the number of workers.
+	if !p.started.Load() {
+		p.numWorkers = numWorkers
+		return
+	}
+
 	diff := numWorkers - p.numWorkers
 	if diff > 0 {
 		// Add workers
-		for i := 0; i < int(diff); i++ {
+		for range diff {
 			p.runAWorker()
 		}
 	} else if diff < 0 {
 		// Remove workers
 		var wg sync.WaitGroup
 	outer:
-		for i := 0; i < int(-diff); i++ {
+		for range int(-diff) {
 			wg.Add(1)
 			select {
 			case p.quitChan <- tuneConfig{wg: &wg}:

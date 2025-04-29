@@ -170,7 +170,7 @@ func (e *AlterDDLJobExec) processAlterDDLJobConfig(
 		}
 		if !job.IsAlterable() {
 			return fmt.Errorf("unsupported DDL operation: %s. "+
-				"Supported DDL operations are: ADD INDEX (without global sort), MODIFY COLUMN, and ALTER TABLE REORGANIZE PARTITION", job.Type.String())
+				"Supported DDL operations are: ADD INDEX, MODIFY COLUMN, and ALTER TABLE REORGANIZE PARTITION", job.Type.String())
 		}
 		if err = e.updateReorgMeta(job, model.AdminCommandByEndUser); err != nil {
 			continue
