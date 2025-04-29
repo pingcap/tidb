@@ -4277,6 +4277,7 @@ type LLMDDLStmt struct {
 	stmtNode
 	Operation  string
 	Platform   bool
+	Model      bool
 	Name       string
 	OptionList []string
 }

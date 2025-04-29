@@ -16721,6 +16721,32 @@ LLMDDLStmt:
 			OptionList: $5.([]string),
 		}
 	}
+|	"CREATE" "LLM" "MODEL" identifier LLMDDLOptionList
+	{
+		$$ = &ast.LLMDDLStmt{
+			Operation:  "CREATE",
+			Model:      true,
+			Name:       $4,
+			OptionList: $5.([]string),
+		}
+	}
+|	"ALTER" "LLM" "MODEL" identifier LLMDDLOptionList
+	{
+		$$ = &ast.LLMDDLStmt{
+			Operation:  "ALTER",
+			Model:      true,
+			Name:       $4,
+			OptionList: $5.([]string),
+		}
+	}
+|	"DROP" "LLM" "MODEL" identifier
+	{
+		$$ = &ast.LLMDDLStmt{
+			Operation: "DROP",
+			Model:     true,
+			Name:      $4,
+		}
+	}
 
 LLMDDLOptionList:
 	identifier identifier
