@@ -16692,7 +16692,7 @@ CalibrateResourceWorkloadOption:
 	}
 
 LLMDDLStmt:
-	"ALTER" "LLM" "PLATFORM" identifier "PLATFORM"
+	"ALTER" "LLM" "PLATFORM" identifier "DISABLED"
 	{
 		$$ = &ast.LLMDDLStmt{
 			Operation: "ALTER",
