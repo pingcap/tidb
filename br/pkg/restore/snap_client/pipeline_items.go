@@ -141,7 +141,7 @@ type pipelineFunction struct {
 	concurrency uint
 
 	processFn func(context.Context, *CreatedTable) error
-	deferFn   func(context.Context) error
+	endFn     func(context.Context) error
 }
 
 type PipelineConcurrentBuilder struct {
@@ -152,13 +152,13 @@ func (builder *PipelineConcurrentBuilder) RegisterPipelineTask(
 	taskLabel string,
 	concurrency uint,
 	processFn func(context.Context, *CreatedTable) error,
-	deferFn func(context.Context) error,
+	endFn func(context.Context) error,
 ) {
 	builder.pipelineFunctions = append(builder.pipelineFunctions, pipelineFunction{
 		taskLabel:   taskLabel,
 		concurrency: concurrency,
 		processFn:   processFn,
-		deferFn:     deferFn,
+		endFn:       endFn,
 	})
 }
 
@@ -174,7 +174,7 @@ func (builder *PipelineConcurrentBuilder) StartPipelineTask(ctx context.Context,
 
 	// the middle pipeline tasks
 	for _, f := range builder.pipelineFunctions {
-		postHandleCh = handler.concurrentHandleTablesCh(postHandleCh, f.concurrency, f.taskLabel, f.processFn, f.deferFn)
+		postHandleCh = handler.concurrentHandleTablesCh(postHandleCh, f.concurrency, f.taskLabel, f.processFn, f.endFn)
 	}
 
 	// the last pipeline task
@@ -229,7 +229,7 @@ func (handler *PipelineConcurrentHandler) concurrentHandleTablesCh(
 	concurrency uint,
 	taskLabel string,
 	processFun func(context.Context, *CreatedTable) error,
-	deferFun func(context.Context) error,
+	endFun func(context.Context) error,
 ) (outCh chan *CreatedTable) {
 	outCh = defaultOutputTableChan()
 	handler.eg.Go(func() (pipelineErr error) {
@@ -242,18 +242,25 @@ func (handler *PipelineConcurrentHandler) concurrentHandleTablesCh(
 				pipelineErr = errors.Trace(err)
 				return
 			}
-			if err := deferFun(handler.pipelineTaskCtx); err != nil {
+			if handler.pipelineTaskCtx.Err() != nil {
+				pipelineErr = handler.pipelineTaskCtx.Err()
+				return
+			}
+			if err := endFun(handler.pipelineTaskCtx); err != nil {
 				log.Error("pipeline defer execution is failed", zap.String("task", taskLabel), zap.Error(err))
 				pipelineErr = errors.Trace(err)
 				return
 			}
+			// Note: No need to close `outCh` if an error occurs because the `handler.pipelineTaskCtx` will be cancelled
+			// and all the pipelines will be returned in time.
 			close(outCh)
 		}()
 
 		for {
 			select {
-			// parent context is cancelled, no need to return the error
-			case <-handler.pipelineTaskCtx.Done():
+			// ectx will be cancelled if all the pipelines stop (handler.pipelineTaskCtx is cancelled by another pipeline error)
+			// or this pipeline stops (ectx is cancelled by this pipeline error)
+			case <-ectx.Done():
 				return
 			case tbl, ok := <-inCh:
 				if !ok {
