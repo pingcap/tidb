@@ -434,7 +434,7 @@ func (rc *SnapClient) WaitForFinishCheckpoint(ctx context.Context, flush bool) {
 // makeDBPool makes a session pool with specficated size by sessionFactory.
 func makeDBPool(size uint, dbFactory func() (*tidallocdb.DB, error)) ([]*tidallocdb.DB, error) {
 	dbPool := make([]*tidallocdb.DB, 0, size)
-	for i := uint(0); i < size; i++ {
+	for range size {
 		db, e := dbFactory()
 		if e != nil {
 			return dbPool, e
