@@ -4287,6 +4287,8 @@ func (n *LLMDDLStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord(" LLM")
 	if n.Platform {
 		ctx.WriteKeyWord(" PLATFORM ")
+	} else if n.Model {
+		ctx.WriteKeyWord(" MODEL ")
 	}
 	ctx.WritePlain(n.Name)
 
