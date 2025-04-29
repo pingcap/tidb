@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"sync"
@@ -858,7 +859,7 @@ Loop:
 		return cmp < 0 || (cmp == 0 && sentReq[i].addr < sentReq[j].addr)
 	})
 
-	sortedRanges := append([]util.DelRangeTask{}, expectedRanges...)
+	sortedRanges := slices.Clone(expectedRanges)
 	sort.Slice(sortedRanges, func(i, j int) bool {
 		return bytes.Compare(sortedRanges[i].StartKey, sortedRanges[j].StartKey) < 0
 	})
@@ -981,7 +982,7 @@ Loop:
 		return cmp < 0 || (cmp == 0 && sentReq[i].addr < sentReq[j].addr)
 	})
 
-	sortedRanges := append([]util.DelRangeTask{}, expectedRanges...)
+	sortedRanges := slices.Clone(expectedRanges)
 	sort.Slice(sortedRanges, func(i, j int) bool {
 		return bytes.Compare(sortedRanges[i].StartKey, sortedRanges[j].StartKey) < 0
 	})
@@ -1356,7 +1357,7 @@ func TestSetServiceSafePoint(t *testing.T) {
 
 	// Test the case when there are many safePoints.
 	safePoint += 100
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		svcName := fmt.Sprintf("svc%d", i)
 		s.mustUpdateServiceGCSafePoint(t, svcName, safePoint+uint64(i)*10, safePoint-100)
 	}
@@ -1427,7 +1428,7 @@ func TestStartWithRunGCJobFailures(t *testing.T) {
 	s.gcWorker.Start()
 	defer s.gcWorker.Close()
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		select {
 		case <-time.After(100 * time.Millisecond):
 			require.FailNow(t, "gc worker failed to handle errors")

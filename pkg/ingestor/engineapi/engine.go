@@ -88,7 +88,8 @@ type OnDuplicateKey int
 
 const (
 	// OnDuplicateKeyIgnore means ignore the duplicate key.
-	// this is the old behavior as add-index check dup by using DupDetectKeyAdapter.
+	// this is the current behavior, we will keep it before we fully switch to
+	// below 3 options.
 	OnDuplicateKeyIgnore OnDuplicateKey = iota
 	// OnDuplicateKeyRecord means record the duplicate keys to external store.
 	// depends on the step, we might only record when number of duplicates are larger

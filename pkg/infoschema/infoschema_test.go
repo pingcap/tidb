@@ -1311,7 +1311,7 @@ func TestApplyDiff(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if i == 0 {
 			// enable infoschema v2.
 			vardef.SchemaCacheSize.Store(1000000)
