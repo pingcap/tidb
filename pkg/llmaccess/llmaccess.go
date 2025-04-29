@@ -52,7 +52,7 @@ func (llm *llmAccessorImpl) AlterPlatform(sctx sessionctx.Context, platform, key
 		return err
 	}
 	switch strings.ToUpper(key) {
-	case "KEY", "TIMEOUT", "STATUS":
+	case "KEY", "STATUS":
 	default:
 		return fmt.Errorf("unsupported key: %s", key)
 	}
