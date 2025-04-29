@@ -260,7 +260,7 @@ const EmptyColumnInfoSize = int64(unsafe.Sizeof(ColumnInfo{}))
 func FindColumnInfo(cols []*ColumnInfo, name string) *ColumnInfo {
 	name = strings.ToLower(name)
 	for _, col := range cols {
-		if col.Name.L == name {
+		if col.Name.L.Value() == name {
 			return col
 		}
 	}

@@ -243,7 +243,7 @@ func (ctx *EvalContext) CopyWarnings(dst []contextutil.SQLWarn) []contextutil.SQ
 
 // CurrentDB returns the current database name
 func (ctx *EvalContext) CurrentDB() string {
-	return ctx.sctx.GetSessionVars().CurrentDB
+	return ctx.sctx.GetSessionVars().CurrentDB.Value()
 }
 
 // CurrentTime returns the current time

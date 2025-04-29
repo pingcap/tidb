@@ -487,7 +487,7 @@ func (n *TableNameExpr) Restore(ctx *format.RestoreCtx) error {
 
 // Format the ExprNode into a Writer.
 func (n *TableNameExpr) Format(w io.Writer) {
-	dbName, tbName := n.Name.Schema.L, n.Name.Name.L
+	dbName, tbName := n.Name.Schema.L.Value(), n.Name.Name.L.Value()
 	if dbName == "" {
 		fmt.Fprintf(w, "`%s`", tbName)
 	} else {
@@ -520,15 +520,15 @@ type ColumnName struct {
 
 // Restore implements Node interface.
 func (n *ColumnName) Restore(ctx *format.RestoreCtx) error {
-	if n.Schema.O != "" && !ctx.IsCTETableName(n.Table.L) && !ctx.Flags.HasWithoutSchemaNameFlag() {
-		ctx.WriteName(n.Schema.O)
+	if n.Schema.O.Value() != "" && !ctx.IsCTETableName(n.Table.L.Value()) && !ctx.Flags.HasWithoutSchemaNameFlag() {
+		ctx.WriteName(n.Schema.O.Value())
 		ctx.WritePlain(".")
 	}
-	if n.Table.O != "" && !ctx.Flags.HasWithoutTableNameFlag() {
-		ctx.WriteName(n.Table.O)
+	if n.Table.O.Value() != "" && !ctx.Flags.HasWithoutTableNameFlag() {
+		ctx.WriteName(n.Table.O.Value())
 		ctx.WritePlain(".")
 	}
-	ctx.WriteName(n.Name.O)
+	ctx.WriteName(n.Name.O.Value())
 	return nil
 }
 
@@ -544,35 +544,35 @@ func (n *ColumnName) Accept(v Visitor) (Node, bool) {
 
 // String implements Stringer interface.
 func (n *ColumnName) String() string {
-	result := n.Name.L
-	if n.Table.L != "" {
-		result = n.Table.L + "." + result
+	result := n.Name.L.Value()
+	if n.Table.L.Value() != "" {
+		result = n.Table.L.Value() + "." + result
 	}
-	if n.Schema.L != "" {
-		result = n.Schema.L + "." + result
+	if n.Schema.L.Value() != "" {
+		result = n.Schema.L.Value() + "." + result
 	}
 	return result
 }
 
 // OrigColName returns the full original column name.
 func (n *ColumnName) OrigColName() (ret string) {
-	ret = n.Name.O
-	if n.Table.O == "" {
+	ret = n.Name.O.Value()
+	if n.Table.O.Value() == "" {
 		return
 	}
-	ret = n.Table.O + "." + ret
-	if n.Schema.O == "" {
+	ret = n.Table.O.Value() + "." + ret
+	if n.Schema.O.Value() == "" {
 		return
 	}
-	ret = n.Schema.O + "." + ret
+	ret = n.Schema.O.Value() + "." + ret
 	return
 }
 
 // Match means that if a match b, e.g. t.a can match test.t.a but test.t.a can't match t.a.
 // Because column a want column from database test exactly.
 func (n *ColumnName) Match(b *ColumnName) bool {
-	if n.Schema.L == "" || n.Schema.L == b.Schema.L {
-		if n.Table.L == "" || n.Table.L == b.Table.L {
+	if n.Schema.L.Value() == "" || n.Schema.L.Value() == b.Schema.L.Value() {
+		if n.Table.L.Value() == "" || n.Table.L == b.Table.L {
 			return n.Name.L == b.Name.L
 		}
 	}

@@ -348,7 +348,7 @@ func (t *TableInfo) Cols() []*ColumnInfo {
 // FindIndexByName finds index by name.
 func (t *TableInfo) FindIndexByName(idxName string) *IndexInfo {
 	for _, idx := range t.Indices {
-		if idx.Name.L == idxName {
+		if idx.Name.L.Value() == idxName {
 			return idx
 		}
 	}
@@ -378,7 +378,7 @@ func (t *TableInfo) FindIndexByID(id int64) *IndexInfo {
 // FindPublicColumnByName finds the public column by name.
 func (t *TableInfo) FindPublicColumnByName(colNameL string) *ColumnInfo {
 	for _, col := range t.Cols() {
-		if col.Name.L == colNameL {
+		if col.Name.L.Value() == colNameL {
 			return col
 		}
 	}
@@ -458,7 +458,7 @@ func (t *TableInfo) GetPrimaryKey() *IndexInfo {
 			allColNotNull := true
 			skip := false
 			for _, idxCol := range key.Columns {
-				col := FindColumnInfo(t.Cols(), idxCol.Name.L)
+				col := FindColumnInfo(t.Cols(), idxCol.Name.L.Value())
 				// This index has a column in DeleteOnly state,
 				// or it is expression index (it defined on a hidden column),
 				// it can not be implicit PK, go to next index iterator
@@ -518,7 +518,7 @@ func (t *TableInfo) IsBaseTable() bool {
 func (t *TableInfo) FindConstraintInfoByName(constrName string) *ConstraintInfo {
 	lowConstrName := strings.ToLower(constrName)
 	for _, chk := range t.Constraints {
-		if chk.Name.L == lowConstrName {
+		if chk.Name.L.Value() == lowConstrName {
 			return chk
 		}
 	}
@@ -529,7 +529,7 @@ func (t *TableInfo) FindConstraintInfoByName(constrName string) *ConstraintInfo 
 func (t *TableInfo) FindIndexNameByID(id int64) string {
 	indexInfo := FindIndexInfoByID(t.Indices, id)
 	if indexInfo != nil {
-		return indexInfo.Name.L
+		return indexInfo.Name.L.Value()
 	}
 	return ""
 }
@@ -538,7 +538,7 @@ func (t *TableInfo) FindIndexNameByID(id int64) string {
 func (t *TableInfo) FindColumnNameByID(id int64) string {
 	colInfo := FindColumnInfoByID(t.Columns, id)
 	if colInfo != nil {
-		return colInfo.Name.L
+		return colInfo.Name.L.Value()
 	}
 	return ""
 }
@@ -559,7 +559,7 @@ func (t *TableInfo) GetColumnByID(id int64) *ColumnInfo {
 // FindFKInfoByName finds FKInfo in fks by lowercase name.
 func FindFKInfoByName(fks []*FKInfo, name string) *FKInfo {
 	for _, fk := range fks {
-		if fk.Name.L == name {
+		if fk.Name.L.Value() == name {
 			return fk
 		}
 	}
@@ -856,7 +856,7 @@ func (pi *PartitionInfo) GetNameByID(id int64) string {
 	// see https://github.com/pingcap/parser/pull/1072 for the benchmark.
 	for i := range definitions {
 		if id == definitions[i].ID {
-			return definitions[i].Name.O
+			return definitions[i].Name.O.Value()
 		}
 	}
 	return ""
@@ -924,7 +924,7 @@ func (pi *PartitionInfo) FindPartitionDefinitionByName(partitionDefinitionName s
 	lowConstrName := strings.ToLower(partitionDefinitionName)
 	definitions := pi.Definitions
 	for i := range definitions {
-		if definitions[i].Name.L == lowConstrName {
+		if definitions[i].Name.L.Value() == lowConstrName {
 			return i
 		}
 	}
@@ -935,7 +935,7 @@ func (pi *PartitionInfo) FindPartitionDefinitionByName(partitionDefinitionName s
 func (pi *PartitionInfo) GetPartitionIDByName(partitionDefinitionName string) int64 {
 	lowConstrName := strings.ToLower(partitionDefinitionName)
 	for _, definition := range pi.Definitions {
-		if definition.Name.L == lowConstrName {
+		if definition.Name.L.Value() == lowConstrName {
 			return definition.ID
 		}
 	}
@@ -1216,25 +1216,25 @@ func (fk *FKInfo) String(db, tb string) string {
 	buf := bytes.Buffer{}
 	buf.WriteString("`" + db + "`.`")
 	buf.WriteString(tb + "`, CONSTRAINT `")
-	buf.WriteString(fk.Name.O + "` FOREIGN KEY (")
+	buf.WriteString(fk.Name.O.Value() + "` FOREIGN KEY (")
 	for i, col := range fk.Cols {
 		if i > 0 {
 			buf.WriteString(", ")
 		}
-		buf.WriteString("`" + col.O + "`")
+		buf.WriteString("`" + col.O.Value() + "`")
 	}
 	buf.WriteString(") REFERENCES `")
-	if fk.RefSchema.L != db {
-		buf.WriteString(fk.RefSchema.L)
+	if fk.RefSchema.L.Value() != db {
+		buf.WriteString(fk.RefSchema.L.Value())
 		buf.WriteString("`.`")
 	}
-	buf.WriteString(fk.RefTable.L)
+	buf.WriteString(fk.RefTable.L.Value())
 	buf.WriteString("` (")
 	for i, col := range fk.RefCols {
 		if i > 0 {
 			buf.WriteString(", ")
 		}
-		buf.WriteString("`" + col.O + "`")
+		buf.WriteString("`" + col.O.Value() + "`")
 	}
 	buf.WriteString(")")
 	if onDelete := ast.ReferOptionType(fk.OnDelete); onDelete != ast.ReferOptionNoOption {
