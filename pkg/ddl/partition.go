@@ -1439,7 +1439,7 @@ func buildHashPartitionDefinitions(defs []*ast.PartitionDefinition, tbInfo *mode
 
 	definitions := make([]model.PartitionDefinition, numParts)
 	oldParts := uint64(len(tbInfo.Partition.Definitions))
-	for i := uint64(0); i < numParts; i++ {
+	for i := range numParts {
 		if i < oldParts {
 			// Use the existing definitions
 			def := tbInfo.Partition.Definitions[i]
