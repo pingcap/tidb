@@ -698,7 +698,7 @@ func TestReadAllData(t *testing.T) {
 			fileName := fmt.Sprintf("/test%d", fileIdx)
 			writer := NewWriterBuilder().BuildOneFile(store, fileName, "writerID")
 			writer.InitPartSizeAndLogger(ctx, 5*1024*1024)
-			key := fmt.Appendf(nil, "key0%d", fileIdx))
+			key := fmt.Appendf(nil, "key0%d", fileIdx)
 			err := writer.WriteRow(ctx, key, val)
 			require.NoError(t, err)
 
