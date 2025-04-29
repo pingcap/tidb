@@ -845,6 +845,7 @@ func extractRegionFromErr(job *regionJob, currentRegions []*metapb.Region) *spli
 		return nil
 	}
 
+	intest.Assert(len(job.writeResult.sstMeta) > 0)
 	var currentRegion *metapb.Region
 	for _, r := range currentRegions {
 		// nextgen doesn't have job.writeResult.sstMeta, be careful when modify it
