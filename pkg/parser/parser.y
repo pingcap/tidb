@@ -16702,6 +16702,15 @@ LLMDDLStmt:
 			Value:     $6,
 		}
 	}
+|	"ALTER" "LLM" "PLATFORM" identifier identifier
+	{
+		$$ = &ast.LLMDDLStmt{
+			Operation: "ALTER",
+			Platform:  true,
+			Name:      $4,
+			Key:       $5,
+		}
+	}
 
 /********************************************************************
  *
