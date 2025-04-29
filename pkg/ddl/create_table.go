@@ -1298,11 +1298,6 @@ func BuildTableInfo(
 			}
 		}
 
-		if constr.Tp == ast.ConstraintFulltext {
-			ctx.AppendWarning(dbterror.ErrTableCantHandleFt.FastGenByArgs())
-			continue
-		}
-
 		var (
 			indexName         = constr.Name
 			primary, unique   bool
@@ -1323,6 +1318,8 @@ func BuildTableInfo(
 				columnarIndexType = model.ColumnarIndexTypeVector
 			case ast.IndexTypeInverted:
 				columnarIndexType = model.ColumnarIndexTypeInverted
+			case ast.IndexTypeFulltext:
+				columnarIndexType = model.ColumnarIndexTypeFulltext
 			default:
 				return nil, dbterror.ErrUnsupportedIndexType.GenWithStackByArgs(constr.Option.Tp)
 			}

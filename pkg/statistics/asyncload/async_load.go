@@ -86,7 +86,7 @@ func getIdx(tbl model.TableItemID) int64 {
 
 func newNeededStatsMap() *neededStatsMap {
 	result := neededStatsMap{}
-	for i := 0; i < shardCnt; i++ {
+	for i := range shardCnt {
 		result.items[i] = neededStatsInternalMap{
 			items: make(map[model.TableItemID]bool),
 		}
@@ -95,8 +95,8 @@ func newNeededStatsMap() *neededStatsMap {
 }
 
 func (n *neededStatsMap) AllItems() []model.StatsLoadItem {
-	var result []model.StatsLoadItem
-	for i := 0; i < shardCnt; i++ {
+	result := make([]model.StatsLoadItem, 0, shardCnt)
+	for i := range shardCnt {
 		keys := n.items[i].AllItems()
 		result = append(result, keys...)
 	}
@@ -113,7 +113,7 @@ func (n *neededStatsMap) Delete(col model.TableItemID) {
 
 func (n *neededStatsMap) Length() int {
 	var result int
-	for i := 0; i < shardCnt; i++ {
+	for i := range shardCnt {
 		result += n.items[i].Length()
 	}
 	return result
