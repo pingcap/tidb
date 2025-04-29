@@ -522,6 +522,7 @@ const (
 	ColumnOptionColumnFormat
 	ColumnOptionStorage
 	ColumnOptionAutoRandom
+	ColumnOptionSecondaryEngineAttribute
 )
 
 var (
@@ -556,8 +557,9 @@ type ColumnOption struct {
 	// Enforced is only for Check, default is true.
 	Enforced bool
 	// Name is only used for Check Constraint name.
-	ConstraintName string
-	PrimaryKeyTp   PrimaryKeyType
+	ConstraintName      string
+	PrimaryKeyTp        PrimaryKeyType
+	SecondaryEngineAttr string
 }
 
 // Restore implements Node interface.
@@ -676,6 +678,10 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 			}
 			return nil
 		})
+	case ColumnOptionSecondaryEngineAttribute:
+		ctx.WriteKeyWord("SECONDARY_ENGINE_ATTRIBUTE")
+		ctx.WritePlain(" = ")
+		ctx.WriteString(n.StrValue)
 	default:
 		return errors.New("An error occurred while splicing ColumnOption")
 	}

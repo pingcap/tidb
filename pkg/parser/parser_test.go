@@ -7895,14 +7895,21 @@ func TestSecondaryEngineAttribute(t *testing.T) {
 				"PARTITION `p0` VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"partition_value\"}')",
 		},
 
-		// Valid: SECONDARY_ENGINE_ATTRIBUTE for tablespaces
+		// Valid Column-level SECONDARY_ENGINE_ATTRIBUTE
+		{
+			"CREATE TABLE t (id INT SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value\"}')",
+			true,
+			"CREATE TABLE `t` (`id` INT SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value\"}')",
+		},
+
+		// Valid: Tablespaces SECONDARY_ENGINE_ATTRIBUTE
 		{
 			"CREATE TABLE t (id INT) TABLESPACE ts1 SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value\"}'",
 			true,
 			"CREATE TABLE `t` (`id` INT) TABLESPACE = `ts1` SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value\"}'",
 		},
 
-		// Valid: SECONDARY_ENGINE_ATTRIBUTE for index options
+		// Valid: Index SECONDARY_ENGINE_ATTRIBUTE
 		{
 			"CREATE TABLE t (id INT,INDEX idx (id) INVISIBLE SECONDARY_ENGINE_ATTRIBUTE='{\"key1\":\"value1\"}')",
 			true,
@@ -7924,14 +7931,21 @@ func TestSecondaryEngineAttribute(t *testing.T) {
 			"",
 		},
 
-		// Missing value for SECONDARY_ENGINE_ATTRIBUTE for tablespaces
+		// Missing value for SECONDARY_ENGINE_ATTRIBUTE at Column-level
+		{
+			"CREATE TABLE t (id INT SECONDARY_ENGINE_ATTRIBUTE=)",
+			false,
+			"",
+		},
+
+		// Missing value for SECONDARY_ENGINE_ATTRIBUTE at Tablespaces-level
 		{
 			"CREATE TABLE t (id INT) TABLESPACE ts1 SECONDARY_ENGINE_ATTRIBUTE=",
 			false,
 			"",
 		},
 
-		// Missing value for SECONDARY_ENGINE_ATTRIBUTE in index options
+		// Missing value for SECONDARY_ENGINE_ATTRIBUTE at Index-level
 		{
 			"CREATE TABLE t (id INT, INDEX idx (id) SECONDARY_ENGINE_ATTRIBUTE=)",
 			false,
@@ -7953,14 +7967,21 @@ func TestSecondaryEngineAttribute(t *testing.T) {
 			"",
 		},
 
-		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE for tablespaces
+		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE at Column-level
+		{
+			"CREATE TABLE t (id INT SECONDARY_ENGINE_ATTRIBUTE)",
+			false,
+			"",
+		},
+
+		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE for Tablespaces-level
 		{
 			"CREATE TABLE t (id INT) TABLESPACE ts1 SECONDARY_ENGINE_ATTRIBUTE",
 			false,
 			"",
 		},
 
-		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE in index options
+		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE in Index-level
 		{
 			"CREATE TABLE t (id INT, INDEX idx (id) SECONDARY_ENGINE_ATTRIBUTE)",
 			false,

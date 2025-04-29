@@ -3773,6 +3773,13 @@ ColumnOption:
 	{
 		$$ = &ast.ColumnOption{Tp: ast.ColumnOptionAutoRandom, AutoRandOpt: $2.(ast.AutoRandomOption)}
 	}
+|	"SECONDARY_ENGINE_ATTRIBUTE" EqOpt stringLit
+	{
+		$$ = &ast.ColumnOption{
+			Tp:       ast.ColumnOptionSecondaryEngineAttribute,
+			StrValue: $3,
+		}
+	}
 
 AutoRandomOpt:
 	{
