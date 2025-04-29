@@ -123,7 +123,7 @@ func TestClientIngestError(t *testing.T) {
 	req := &IngestRequest{
 		WriteResp: &WriteResponse{
 			nextGenSSTMeta: &nextGenSSTMeta{
-				ID: 1,
+				ID: 123456,
 			},
 		},
 		Region: &split.RegionInfo{Region: &metapb.Region{Id: 1, RegionEpoch: &metapb.RegionEpoch{Version: 1}}},
@@ -131,6 +131,7 @@ func TestClientIngestError(t *testing.T) {
 	err := client.Ingest(context.Background(), req)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "test error")
+	require.Contains(t, err.Error(), "ingest SST ID 123456")
 }
 
 type storeClient struct {

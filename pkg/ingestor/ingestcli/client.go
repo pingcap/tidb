@@ -51,7 +51,7 @@ type writeClient struct {
 	httpClient    *http.Client
 	commitTS      uint64
 
-	eg         *util.ErrorGroupWithRecover
+	wg         util.WaitGroupWrapper
 	sendReqErr atomic.Error
 	writer     *io.PipeWriter
 	reader     *io.PipeReader
@@ -70,7 +70,6 @@ func newWriteClient(
 		clusterID:     clusterID,
 		commitTS:      commitTS,
 		httpClient:    httpClient,
-		eg:            util.NewErrorGroupWithRecover(),
 	}
 }
 
@@ -90,39 +89,34 @@ func (w *writeClient) init(ctx context.Context) error {
 }
 
 func (w *writeClient) startChunkedHTTPRequest(req *http.Request) {
-	w.eg.Go(func() error {
+	w.wg.RunWithLog(func() {
 		resp, err := w.httpClient.Do(req)
 		if err != nil {
-			w.sendReqErr.Store(err)
-			return errors.Trace(err)
+			w.sendReqErr.Store(errors.Trace(err))
+			return
 		}
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusOK {
 			body, err1 := io.ReadAll(resp.Body)
 			if err1 != nil {
-				err1 = errors.Annotate(err1, "failed to readAll response")
-				w.sendReqErr.Store(err1)
-				return err1
+				w.sendReqErr.Store(errors.Annotate(err1, "failed to readAll response"))
+			} else {
+				w.sendReqErr.Store(errors.Errorf("failed to send chunked request: %s", string(body)))
 			}
-			err = errors.Errorf("failed to send chunked request: %s", string(body))
-			w.sendReqErr.Store(err)
-			return err
+			return
 		}
 		data, err := io.ReadAll(resp.Body)
 		if err != nil {
-			err = errors.Trace(err)
-			w.sendReqErr.Store(err)
-			return err
+			w.sendReqErr.Store(errors.Trace(err))
+			return
 		}
 		res := &nextGenResp{}
 		if err = json.Unmarshal(data, res); err != nil {
-			err = errors.Trace(err)
-			w.sendReqErr.Store(err)
-			return err
+			w.sendReqErr.Store(errors.Trace(err))
+			return
 		}
 		w.sstMeta = &res.SstMeta
-		return nil
 	})
 }
 
@@ -161,18 +155,14 @@ func (w *writeClient) Recv() (*WriteResponse, error) {
 	if err := w.writer.Close(); err != nil {
 		return nil, errors.Trace(err)
 	}
-	err := w.eg.Wait()
-	if err != nil {
-		return nil, err
-	}
+	w.wg.Wait()
 	return &WriteResponse{nextGenSSTMeta: w.sstMeta}, nil
 }
 
 func (w *writeClient) Close() {
 	//nolint: errcheck
 	_ = w.writer.Close()
-	//nolint: errcheck
-	_ = w.eg.Wait()
+	w.wg.Wait()
 }
 
 var _ Client = &client{}
