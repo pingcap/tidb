@@ -16697,7 +16697,7 @@ CalibrateResourceWorkloadOption:
 	}
 
 LLMDDLStmt:
-	"ALTER" "LLM" "PLATFORM" identifier "DISABLED"
+	"ALTER" "LLM" "PLATFORM" Identifier "DISABLED"
 	{
 		$$ = &ast.LLMDDLStmt{
 			Operation:  "ALTER",
@@ -16706,7 +16706,7 @@ LLMDDLStmt:
 			OptionList: []string{"DISABLED"},
 		}
 	}
-|	"ALTER" "LLM" "PLATFORM" identifier "ENABLED"
+|	"ALTER" "LLM" "PLATFORM" Identifier "ENABLED"
 	{
 		$$ = &ast.LLMDDLStmt{
 			Operation:  "ALTER",
@@ -16715,7 +16715,7 @@ LLMDDLStmt:
 			OptionList: []string{"ENABLED"},
 		}
 	}
-|	"ALTER" "LLM" "PLATFORM" identifier LLMDDLOptionList
+|	"ALTER" "LLM" "PLATFORM" Identifier LLMDDLOptionList
 	{
 		$$ = &ast.LLMDDLStmt{
 			Operation:  "ALTER",
@@ -16724,7 +16724,7 @@ LLMDDLStmt:
 			OptionList: $5.([]string),
 		}
 	}
-|	"CREATE" "LLM" "MODEL" identifier LLMDDLOptionList
+|	"CREATE" "LLM" "MODEL" Identifier LLMDDLOptionList
 	{
 		$$ = &ast.LLMDDLStmt{
 			Operation:  "CREATE",
@@ -16733,7 +16733,7 @@ LLMDDLStmt:
 			OptionList: $5.([]string),
 		}
 	}
-|	"ALTER" "LLM" "MODEL" identifier LLMDDLOptionList
+|	"ALTER" "LLM" "MODEL" Identifier LLMDDLOptionList
 	{
 		$$ = &ast.LLMDDLStmt{
 			Operation:  "ALTER",
@@ -16742,7 +16742,7 @@ LLMDDLStmt:
 			OptionList: $5.([]string),
 		}
 	}
-|	"DROP" "LLM" "MODEL" identifier
+|	"DROP" "LLM" "MODEL" Identifier
 	{
 		$$ = &ast.LLMDDLStmt{
 			Operation: "DROP",
@@ -16752,11 +16752,11 @@ LLMDDLStmt:
 	}
 
 LLMDDLOptionList:
-	identifier identifier
+	Identifier Identifier
 	{
 		$$ = []string{$1, $2}
 	}
-|	LLMDDLOptionList identifier identifier
+|	LLMDDLOptionList Identifier Identifier
 	{
 		$$ = append($1.([]string), $2, $3)
 	}
