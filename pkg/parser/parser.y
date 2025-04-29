@@ -16692,17 +16692,7 @@ CalibrateResourceWorkloadOption:
 	}
 
 LLMDDLStmt:
-	"ALTER" "LLM" "PLATFORM" identifier identifier identifier
-	{
-		$$ = &ast.LLMDDLStmt{
-			Operation: "ALTER",
-			Platform:  true,
-			Name:      $4,
-			Key:       $5,
-			Value:     $6,
-		}
-	}
-|	"ALTER" "LLM" "PLATFORM" identifier "PLATFORM"
+"ALTER" "LLM" "PLATFORM" identifier "PLATFORM"
 	{
 		$$ = &ast.LLMDDLStmt{
 			Operation: "ALTER",
@@ -16710,6 +16700,16 @@ LLMDDLStmt:
 			Name:      $4,
 			Key:       "status",
 			Value:     "DISABLED"
+		}
+	}
+|	"ALTER" "LLM" "PLATFORM" identifier identifier identifier
+	{
+		$$ = &ast.LLMDDLStmt{
+			Operation: "ALTER",
+			Platform:  true,
+			Name:      $4,
+			Key:       $5,
+			Value:     $6,
 		}
 	}
 
