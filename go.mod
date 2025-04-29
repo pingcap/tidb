@@ -110,6 +110,7 @@ require (
 	github.com/stretchr/testify v1.10.0
 	github.com/tdakkota/asciicheck v0.4.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
+	github.com/tici/proto/indexer v0.0.0-00010101000000-000000000000
 	github.com/tikv/client-go/v2 v2.0.8-0.20250327030528-1906b778d741
 	github.com/tikv/pd/client v0.0.0-20250327162546-07c19b1f2f9f
 	github.com/timakin/bodyclose v0.0.0-20241017074812-ed6a65f985e3
@@ -142,7 +143,7 @@ require (
 	golang.org/x/time v0.11.0
 	golang.org/x/tools v0.31.0
 	google.golang.org/api v0.169.0
-	google.golang.org/grpc v1.72.0
+	google.golang.org/grpc v1.63.2
 	gopkg.in/yaml.v2 v2.4.0
 	gorm.io/driver/mysql v1.5.7
 	gorm.io/gorm v1.25.11
@@ -289,7 +290,6 @@ require (
 	github.com/spf13/cast v1.5.0 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a
-	github.com/tici/proto/indexer v0.0.0-00010101000000-000000000000
 	github.com/tklauser/go-sysconf v0.3.12 // indirect
 	github.com/tklauser/numcpus v0.6.1 // indirect
 	github.com/tmc/grpc-websocket-proxy v0.0.0-20220101234140-673ab2c3ae75 // indirect
@@ -314,7 +314,7 @@ require (
 	golang.org/x/mod v0.24.0 // indirect
 	golang.org/x/xerrors v0.0.0-20231012003039-104605ab7028 // indirect
 	google.golang.org/genproto v0.0.0-20240227224415-6ceb2ff114de // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20250218202821-56aae31c358a // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20240304212257-790db918fca8 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250218202821-56aae31c358a // indirect
 	google.golang.org/protobuf v1.36.6
 	gopkg.in/inf.v0 v0.9.1 // indirect

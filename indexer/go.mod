@@ -3,7 +3,7 @@ module github.com/tici/proto/indexer
 go 1.23.8
 
 require (
-	google.golang.org/grpc v1.72.0
+	google.golang.org/grpc v1.63.2
 	google.golang.org/protobuf v1.36.6
 )
 
