@@ -939,6 +939,9 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo) err
 				return errors.Trace(dbterror.ErrEngineAttributeInvalidFormat.GenWithStackByArgs(op.StrValue))
 			}
 			if engineAttributes.getTiFlashReplicaCount() > 0 {
+				if tbInfo.TempTableType != model.TempTableNone {
+					return errors.Trace(dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("add TiFlash replica"))
+				}
 				tbInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 					Count: engineAttributes.getTiFlashReplicaCount(),
 				}

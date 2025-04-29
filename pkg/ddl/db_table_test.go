@@ -354,25 +354,51 @@ func TestCreateTableWithEngineAttribute(t *testing.T) {
 	defer rpcserver.Stop()
 
 	tk.MustExec("use test;")
-	tk.MustExecToErr("CREATE TABLE t (id INT PRIMARY KEY, value VARCHAR(16383)) ENGINE_ATTRIBUTE = '{\"key\": \"value}';")           // invalid json
-	tk.MustExecToErr("CREATE TABLE t (id INT PRIMARY KEY, value VARCHAR(16383)) ENGINE_ATTRIBUTE = '{\"key\": \"value\"}';")         // invalid key
-	tk.MustExecToErr("CREATE TABLE t (id INT PRIMARY KEY, value VARCHAR(16383)) ENGINE_ATTRIBUTE = '{\"tiflash-replica\": \"2\"}';") // invalid value
-	tk.MustExecToErr("CREATE TABLE t (id INT PRIMARY KEY, value VARCHAR(16383)) ENGINE_ATTRIBUTE = '{\"tiflash-replica\": 13}';")    // invalid value
+	tk.MustExecToErr("CREATE TABLE t (id INT PRIMARY KEY, value VARCHAR(16383)) ENGINE_ATTRIBUTE = '{\"key\": \"value}';")                                              // invalid json
+	tk.MustExecToErr("CREATE TABLE t (id INT PRIMARY KEY, value VARCHAR(16383)) ENGINE_ATTRIBUTE = '{\"key\": \"value\"}';")                                            // invalid key
+	tk.MustExecToErr("CREATE TABLE t (id INT PRIMARY KEY, value VARCHAR(16383)) ENGINE_ATTRIBUTE = '{\"tiflash-replica\": \"2\"}';")                                    // invalid value
+	tk.MustExecToErr("CREATE TABLE t (id INT PRIMARY KEY, value VARCHAR(16383)) ENGINE_ATTRIBUTE = '{\"tiflash-replica\": 13}';")                                       // invalid value
+	tk.MustExecToErr("CREATE TEMPORARY TABLE t (id INT PRIMARY KEY, value VARCHAR(16383)) ENGINE_ATTRIBUTE = '{\"tiflash-replica\": 2}';")                              // not support temporary table
+	tk.MustExecToErr("CREATE GLOBAL TEMPORARY TABLE t (id INT PRIMARY KEY, value VARCHAR(16383)) ON COMMIT DELETE ROWS ENGINE_ATTRIBUTE = '{\"tiflash-replica\": 2}';") // not support temporary table
 
 	tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY, value VARCHAR(16383)) ENGINE_ATTRIBUTE = '{\"tiflash-replica\": 2}';") // valid
 	tk.MustQuery("SELECT REPLICA_COUNT from information_schema.tiflash_replica where table_schema='test' and table_name='t'").Check(testkit.Rows("2"))
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `id` int(11) NOT NULL,\n" +
+			"  `value` varchar(16383) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 2}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("DROP TABLE t;")
 
 	tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY, value VARCHAR(16383)) ENGINE_ATTRIBUTE = '{\"columnar-replica\": 2}';") // valid
 	tk.MustQuery("SELECT REPLICA_COUNT from information_schema.tiflash_replica where table_schema='test' and table_name='t'").Check(testkit.Rows("2"))
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `id` int(11) NOT NULL,\n" +
+			"  `value` varchar(16383) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 2}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("DROP TABLE t;")
 
 	tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY, value VARCHAR(16383)) ENGINE_ATTRIBUTE = '{\"tiflash-replica\": 1}';") // valid
 	tk.MustQuery("SELECT REPLICA_COUNT from information_schema.tiflash_replica where table_schema='test' and table_name='t'").Check(testkit.Rows("1"))
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `id` int(11) NOT NULL,\n" +
+			"  `value` varchar(16383) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 1}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("DROP TABLE t;")
 
 	tk.MustExec("CREATE TABLE t (id INT PRIMARY KEY, value VARCHAR(16383)) ENGINE_ATTRIBUTE = '{\"columnar-replica\": 1}';") // valid
 	tk.MustQuery("SELECT REPLICA_COUNT from information_schema.tiflash_replica where table_schema='test' and table_name='t'").Check(testkit.Rows("1"))
+	tk.MustQuery("SHOW CREATE TABLE t").Check(testkit.Rows(
+		"t CREATE TABLE `t` (\n" +
+			"  `id` int(11) NOT NULL,\n" +
+			"  `value` varchar(16383) DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB ENGINE_ATTRIBUTE=`{\"columnar-replica\": 1}` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	tk.MustExec("DROP TABLE t;")
 }
 
