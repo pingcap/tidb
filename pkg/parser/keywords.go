@@ -160,6 +160,7 @@ var Keywords = []KeywordsType{
 	{"MINUTE_MICROSECOND", true, "reserved"},
 	{"MINUTE_SECOND", true, "reserved"},
 	{"MOD", true, "reserved"},
+	{"MODEL", true, "reserved"},
 	{"NATURAL", true, "reserved"},
 	{"NOT", true, "reserved"},
 	{"NO_WRITE_TO_BINLOG", true, "reserved"},

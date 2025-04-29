@@ -211,6 +211,7 @@ import (
 	minuteMicrosecond "MINUTE_MICROSECOND"
 	minuteSecond      "MINUTE_SECOND"
 	mod               "MOD"
+	model             "MODEL"
 	natural           "NATURAL"
 	not               "NOT"
 	noWriteToBinLog   "NO_WRITE_TO_BINLOG"
