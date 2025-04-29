@@ -22,6 +22,7 @@ import (
 	"io"
 	"path"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -606,7 +607,7 @@ func TestGetAdjustedIndexBlockSize(t *testing.T) {
 	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(166*units.MiB))
 }
 
-func readKVFile(t *testing.T, store *writerFirstCloseFailStorage, filename string) []kvPair {
+func readKVFile(t *testing.T, store storage.ExternalStorage, filename string) []kvPair {
 	t.Helper()
 	reader, err := newKVReader(context.Background(), filename, store, 0, units.KiB)
 	require.NoError(t, err)
@@ -622,15 +623,44 @@ func readKVFile(t *testing.T, store *writerFirstCloseFailStorage, filename strin
 	return kvs
 }
 
-func TestWriterOnDupRecord(t *testing.T) {
-	ctx := context.Background()
-	store := &writerFirstCloseFailStorage{ExternalStorage: storage.NewMemStorage(), shouldFail: true}
-	var summary *WriterSummary
+type testWriter interface {
+	WriteRow(ctx context.Context, key, val []byte, handle dbkv.Handle) error
+	Close(ctx context.Context) error
+}
 
-	t.Run("all duplicated, flush once", func(t *testing.T) {
-		writer := NewWriterBuilder().SetPropKeysDistance(4).SetMemorySizeLimit(240).SetBlockSize(240).
-			SetOnCloseFunc(func(s *WriterSummary) { summary = s }).SetOnDup(engineapi.OnDuplicateKeyRecord).
-			Build(store, "/test", "0")
+func TestWriterOnDup(t *testing.T) {
+	getWriterFn := func(store storage.ExternalStorage, b *WriterBuilder) testWriter {
+		return b.Build(store, "/test", "0")
+	}
+	doTestWriterOnDupRecord(t, false, getWriterFn)
+	doTestWriterOnDupRemove(t, false, getWriterFn)
+}
+
+func doTestWriterOnDupRecord(t *testing.T, testingOneFile bool, getWriter func(store storage.ExternalStorage, b *WriterBuilder) testWriter) {
+	t.Helper()
+	ctx := context.Background()
+	store := storage.NewMemStorage()
+	var summary *WriterSummary
+	doGetWriter := func(store storage.ExternalStorage, builder *WriterBuilder) testWriter {
+		builder = builder.SetOnCloseFunc(func(s *WriterSummary) { summary = s }).SetOnDup(engineapi.OnDuplicateKeyRecord)
+		return getWriter(store, builder)
+	}
+
+	t.Run("write nothing", func(t *testing.T) {
+		builder := NewWriterBuilder().SetPropKeysDistance(4).SetMemorySizeLimit(240).SetBlockSize(240)
+		writer := doGetWriter(store, builder)
+		require.NoError(t, writer.Close(ctx))
+		require.Empty(t, summary.Min)
+		require.Empty(t, summary.Max)
+		require.Zero(t, summary.TotalCnt)
+		require.Zero(t, summary.TotalSize)
+		require.Zero(t, summary.ConflictInfo.Count)
+		require.Empty(t, summary.ConflictInfo.Files)
+	})
+
+	t.Run("all duplicated", func(t *testing.T) {
+		builder := NewWriterBuilder().SetPropKeysDistance(4).SetMemorySizeLimit(240).SetBlockSize(240)
+		writer := doGetWriter(store, builder)
 		for range 5 {
 			require.NoError(t, writer.WriteRow(ctx, []byte("1111"), []byte("vvvv"), nil))
 		}
@@ -649,12 +679,50 @@ func TestWriterOnDupRecord(t *testing.T) {
 		}
 	})
 
-	t.Run("with different duplicated kv, flush twice", func(t *testing.T) {
+	t.Run("with different duplicated kv, first kv not duplicated", func(t *testing.T) {
 		// each KV will take 24 bytes, so we flush every 10 KVs
-		writer := NewWriterBuilder().SetPropKeysDistance(4).SetMemorySizeLimit(240).SetBlockSize(240).
-			SetOnCloseFunc(func(s *WriterSummary) { summary = s }).SetOnDup(engineapi.OnDuplicateKeyRecord).
-			Build(store, "/test", "0")
-		for _, p := range []struct {
+		builder := NewWriterBuilder().SetPropKeysDistance(4).SetMemorySizeLimit(240).SetBlockSize(240)
+		writer := doGetWriter(store, builder)
+		input := []struct {
+			pair *kvPair
+			cnt  int
+		}{
+			{pair: &kvPair{key: []byte("2222"), value: []byte("vvvv")}, cnt: 1},
+			{pair: &kvPair{key: []byte("1111"), value: []byte("vvvv")}, cnt: 1},
+			{pair: &kvPair{key: []byte("6666"), value: []byte("vvvv")}, cnt: 3},
+			{pair: &kvPair{key: []byte("7777"), value: []byte("vvvv")}, cnt: 5},
+		}
+		if testingOneFile {
+			sort.Slice(input, func(i, j int) bool {
+				return bytes.Compare(input[i].pair.key, input[j].pair.key) < 0
+			})
+		}
+		for _, p := range input {
+			for i := 0; i < p.cnt; i++ {
+				require.NoError(t, writer.WriteRow(ctx, p.pair.key, p.pair.value, nil))
+			}
+		}
+		require.NoError(t, writer.Close(ctx))
+		require.EqualValues(t, []byte("1111"), summary.Min)
+		require.EqualValues(t, []byte("7777"), summary.Max)
+		require.EqualValues(t, 6, summary.TotalCnt)
+		require.EqualValues(t, 48, summary.TotalSize)
+		require.EqualValues(t, 4, summary.ConflictInfo.Count)
+		require.Len(t, summary.ConflictInfo.Files, 1)
+		kvs := readKVFile(t, store, summary.ConflictInfo.Files[0])
+		require.EqualValues(t, []kvPair{
+			{key: []byte("6666"), value: []byte("vvvv")},
+			{key: []byte("7777"), value: []byte("vvvv")},
+			{key: []byte("7777"), value: []byte("vvvv")},
+			{key: []byte("7777"), value: []byte("vvvv")},
+		}, kvs)
+	})
+
+	t.Run("with different duplicated kv, first kv duplicated", func(t *testing.T) {
+		// each KV will take 24 bytes, so we flush every 10 KVs
+		builder := NewWriterBuilder().SetPropKeysDistance(4).SetMemorySizeLimit(240).SetBlockSize(240)
+		writer := doGetWriter(store, builder)
+		input := []struct {
 			pair *kvPair
 			cnt  int
 		}{
@@ -665,7 +733,13 @@ func TestWriterOnDupRecord(t *testing.T) {
 			{pair: &kvPair{key: []byte("7777"), value: []byte("vvvv")}, cnt: 1},
 			{pair: &kvPair{key: []byte("4444"), value: []byte("vvvv")}, cnt: 4},
 			{pair: &kvPair{key: []byte("3333"), value: []byte("vvvv")}, cnt: 4},
-		} {
+		}
+		if testingOneFile {
+			sort.Slice(input, func(i, j int) bool {
+				return bytes.Compare(input[i].pair.key, input[j].pair.key) < 0
+			})
+		}
+		for _, p := range input {
 			for i := 0; i < p.cnt; i++ {
 				require.NoError(t, writer.WriteRow(ctx, p.pair.key, p.pair.value, nil))
 			}
@@ -676,33 +750,64 @@ func TestWriterOnDupRecord(t *testing.T) {
 		require.EqualValues(t, 12, summary.TotalCnt)
 		require.EqualValues(t, 96, summary.TotalSize)
 		require.EqualValues(t, 8, summary.ConflictInfo.Count)
-		require.Len(t, summary.ConflictInfo.Files, 2)
-		kvs := readKVFile(t, store, summary.ConflictInfo.Files[0])
-		require.EqualValues(t, []kvPair{
-			{key: []byte("1111"), value: []byte("vvvv")},
-			{key: []byte("1111"), value: []byte("vvvv")},
-			{key: []byte("1111"), value: []byte("vvvv")},
-			{key: []byte("2222"), value: []byte("vvvv")},
-		}, kvs)
-		kvs = readKVFile(t, store, summary.ConflictInfo.Files[1])
-		require.EqualValues(t, []kvPair{
-			{key: []byte("3333"), value: []byte("vvvv")},
-			{key: []byte("3333"), value: []byte("vvvv")},
-			{key: []byte("4444"), value: []byte("vvvv")},
-			{key: []byte("4444"), value: []byte("vvvv")},
-		}, kvs)
+		if testingOneFile {
+			require.Len(t, summary.ConflictInfo.Files, 1)
+			kvs := readKVFile(t, store, summary.ConflictInfo.Files[0])
+			require.EqualValues(t, []kvPair{
+				{key: []byte("1111"), value: []byte("vvvv")},
+				{key: []byte("1111"), value: []byte("vvvv")},
+				{key: []byte("1111"), value: []byte("vvvv")},
+				{key: []byte("2222"), value: []byte("vvvv")},
+				{key: []byte("3333"), value: []byte("vvvv")},
+				{key: []byte("3333"), value: []byte("vvvv")},
+				{key: []byte("4444"), value: []byte("vvvv")},
+				{key: []byte("4444"), value: []byte("vvvv")},
+			}, kvs)
+		} else {
+			require.Len(t, summary.ConflictInfo.Files, 2)
+			kvs := readKVFile(t, store, summary.ConflictInfo.Files[0])
+			require.EqualValues(t, []kvPair{
+				{key: []byte("1111"), value: []byte("vvvv")},
+				{key: []byte("1111"), value: []byte("vvvv")},
+				{key: []byte("1111"), value: []byte("vvvv")},
+				{key: []byte("2222"), value: []byte("vvvv")},
+			}, kvs)
+			kvs = readKVFile(t, store, summary.ConflictInfo.Files[1])
+			require.EqualValues(t, []kvPair{
+				{key: []byte("3333"), value: []byte("vvvv")},
+				{key: []byte("3333"), value: []byte("vvvv")},
+				{key: []byte("4444"), value: []byte("vvvv")},
+				{key: []byte("4444"), value: []byte("vvvv")},
+			}, kvs)
+		}
 	})
 }
 
-func TestWriterOnDupRemove(t *testing.T) {
+func doTestWriterOnDupRemove(t *testing.T, testingOneFile bool, getWriter func(storage.ExternalStorage, *WriterBuilder) testWriter) {
+	t.Helper()
 	ctx := context.Background()
-	store := &writerFirstCloseFailStorage{ExternalStorage: storage.NewMemStorage(), shouldFail: true}
+	store := storage.NewMemStorage()
 	var summary *WriterSummary
+	doGetWriter := func(store storage.ExternalStorage, builder *WriterBuilder) testWriter {
+		builder = builder.SetOnCloseFunc(func(s *WriterSummary) { summary = s }).SetOnDup(engineapi.OnDuplicateKeyRemove)
+		return getWriter(store, builder)
+	}
 
-	t.Run("all duplicated, flush once", func(t *testing.T) {
-		writer := NewWriterBuilder().SetPropKeysDistance(4).SetMemorySizeLimit(240).SetBlockSize(240).
-			SetOnCloseFunc(func(s *WriterSummary) { summary = s }).SetOnDup(engineapi.OnDuplicateKeyRemove).
-			Build(store, "/test", "0")
+	t.Run("write nothing", func(t *testing.T) {
+		builder := NewWriterBuilder().SetPropKeysDistance(4).SetMemorySizeLimit(240).SetBlockSize(240)
+		writer := doGetWriter(store, builder)
+		require.NoError(t, writer.Close(ctx))
+		require.Empty(t, summary.Min)
+		require.Empty(t, summary.Max)
+		require.Zero(t, summary.TotalCnt)
+		require.Zero(t, summary.TotalSize)
+		require.Zero(t, summary.ConflictInfo.Count)
+		require.Empty(t, summary.ConflictInfo.Files)
+	})
+
+	t.Run("all duplicated", func(t *testing.T) {
+		builder := NewWriterBuilder().SetPropKeysDistance(4).SetMemorySizeLimit(240).SetBlockSize(240)
+		writer := doGetWriter(store, builder)
 		for range 5 {
 			require.NoError(t, writer.WriteRow(ctx, []byte("1111"), []byte("vvvv"), nil))
 		}
@@ -716,12 +821,43 @@ func TestWriterOnDupRemove(t *testing.T) {
 		require.Empty(t, summary.ConflictInfo.Files)
 	})
 
-	t.Run("with different duplicated kv, flush twice", func(t *testing.T) {
+	t.Run("with different duplicated kv, first kv not duplicated", func(t *testing.T) {
 		// each KV will take 24 bytes, so we flush every 10 KVs
-		writer := NewWriterBuilder().SetPropKeysDistance(4).SetMemorySizeLimit(240).SetBlockSize(240).
-			SetOnCloseFunc(func(s *WriterSummary) { summary = s }).SetOnDup(engineapi.OnDuplicateKeyRemove).
-			Build(store, "/test", "0")
-		for _, p := range []struct {
+		builder := NewWriterBuilder().SetPropKeysDistance(4).SetMemorySizeLimit(240).SetBlockSize(240)
+		writer := doGetWriter(store, builder)
+		input := []struct {
+			pair *kvPair
+			cnt  int
+		}{
+			{pair: &kvPair{key: []byte("2222"), value: []byte("vvvv")}, cnt: 1},
+			{pair: &kvPair{key: []byte("1111"), value: []byte("vvvv")}, cnt: 1},
+			{pair: &kvPair{key: []byte("6666"), value: []byte("vvvv")}, cnt: 3},
+			{pair: &kvPair{key: []byte("7777"), value: []byte("vvvv")}, cnt: 5},
+		}
+		if testingOneFile {
+			sort.Slice(input, func(i, j int) bool {
+				return bytes.Compare(input[i].pair.key, input[j].pair.key) < 0
+			})
+		}
+		for _, p := range input {
+			for i := 0; i < p.cnt; i++ {
+				require.NoError(t, writer.WriteRow(ctx, p.pair.key, p.pair.value, nil))
+			}
+		}
+		require.NoError(t, writer.Close(ctx))
+		require.EqualValues(t, []byte("1111"), summary.Min)
+		require.EqualValues(t, []byte("2222"), summary.Max)
+		require.EqualValues(t, 2, summary.TotalCnt)
+		require.EqualValues(t, 16, summary.TotalSize)
+		require.EqualValues(t, 0, summary.ConflictInfo.Count)
+		require.Empty(t, summary.ConflictInfo.Files)
+	})
+
+	t.Run("with different duplicated kv, first kv duplicated", func(t *testing.T) {
+		// each KV will take 24 bytes, so we flush every 10 KVs
+		builder := NewWriterBuilder().SetPropKeysDistance(4).SetMemorySizeLimit(240).SetBlockSize(240)
+		writer := doGetWriter(store, builder)
+		input := []struct {
 			pair *kvPair
 			cnt  int
 		}{
@@ -732,7 +868,13 @@ func TestWriterOnDupRemove(t *testing.T) {
 			{pair: &kvPair{key: []byte("7777"), value: []byte("vvvv")}, cnt: 1},
 			{pair: &kvPair{key: []byte("4444"), value: []byte("vvvv")}, cnt: 4},
 			{pair: &kvPair{key: []byte("3333"), value: []byte("vvvv")}, cnt: 4},
-		} {
+		}
+		if testingOneFile {
+			sort.Slice(input, func(i, j int) bool {
+				return bytes.Compare(input[i].pair.key, input[j].pair.key) < 0
+			})
+		}
+		for _, p := range input {
 			for i := 0; i < p.cnt; i++ {
 				require.NoError(t, writer.WriteRow(ctx, p.pair.key, p.pair.value, nil))
 			}

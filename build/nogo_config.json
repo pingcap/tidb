@@ -356,9 +356,11 @@
       "/cgo/": "no need to vet cgo code"
     },
     "only_files": {
+      "pkg/autoid_service/": "autoid_service code",
       "//cmd/": "cmd code",
       "lightning/": "lightning code",
       "pkg/bindinfo/": "bindinfo code",
+      "pkg/disttask": "disttask code",
       "pkg/lightning/": "lightning code",
       "pkg/infoschema/": "infoschema code",
       "pkg/owner/": "owner code",
