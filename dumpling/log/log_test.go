@@ -42,6 +42,7 @@ func TestInitLogNoPermission(t *testing.T) {
 		err = l.Sync()
 		require.NoError(t, err)
 		require.FileExists(t, tmpDir+"/test.log")
+		return
 	}
 	require.ErrorContains(t, err, "permission denied")
 }
