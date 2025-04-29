@@ -219,11 +219,11 @@ func (c *client) Ingest(ctx context.Context, in *IngestRequest) error {
 	if resp.StatusCode != http.StatusOK {
 		body, err1 := io.ReadAll(resp.Body)
 		if err1 != nil {
-			return errors.Errorf("failed to readAll response: %s", err1.Error())
+			return errors.Annotate(err1, "failed to readAll response")
 		}
 		var pbErr errorpb.Error
 		if err := proto.Unmarshal(body, &pbErr); err != nil {
-			return errors.Errorf("failed to unmarshal error(%s): %s", string(body), err)
+			return errors.Annotatef(err, "failed to unmarshal error(%s)", string(body))
 		}
 		// we annotate the SST ID to help diagnose.
 		pbErr.Message = fmt.Sprintf("%s(ingest SST ID %d)", pbErr.Message, sstMeta.ID)
