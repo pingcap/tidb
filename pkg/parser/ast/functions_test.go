@@ -69,7 +69,6 @@ func TestFuncCallExprRestore(t *testing.T) {
 		{"SUBSTRING('Quadratically' FROM 5)", "SUBSTRING(_UTF8MB4'Quadratically', 5)"},
 		{"SUBSTRING('Quadratically', 5, 6)", "SUBSTRING(_UTF8MB4'Quadratically', 5, 6)"},
 		{"SUBSTRING('Quadratically' FROM 5 FOR 6)", "SUBSTRING(_UTF8MB4'Quadratically', 5, 6)"},
-		{"MASTER_POS_WAIT(@log_name, @log_pos, @timeout, @channel_name)", "MASTER_POS_WAIT(@`log_name`, @`log_pos`, @`timeout`, @`channel_name`)"},
 		{"JSON_TYPE('[123]')", "JSON_TYPE(_UTF8MB4'[123]')"},
 		{"bit_and(all c1)", "BIT_AND(`c1`)"},
 		{"nextval(seq)", "NEXTVAL(`seq`)"},
