@@ -529,9 +529,8 @@ func (n *FuncCallExpr) customRestore(ctx *format.RestoreCtx) (bool, error) {
 			}
 			ctx.WritePlain(")")
 			return true, nil
-		} else {
-			return true, errors.WithStack(errors.Errorf("Incorrect parameter count in the call to native function 'json_memberof'"))
 		}
+		return true, errors.WithStack(errors.Errorf("Incorrect parameter count in the call to native function 'json_memberof'"))
 	}
 	return false, nil
 }
