@@ -297,10 +297,10 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
 		`Projection_9 10.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
-		`└─HashJoin_11 10.00 root  CARTESIAN inner join`,
-		`  ├─Point_Get_12(Build) 1.00 root table:t2, index:idx_a(a) `, // use idx_a
-		`  └─TableReader_14(Probe) 10.00 root  data:TableRangeScan_13`,
-		`    └─TableRangeScan_13 10.00 cop[tikv] table:t1 range:[1,1], keep order:false, stats:pseudo`))
+		`└─HashJoin_23 10.00 root  CARTESIAN inner join`,
+		`  ├─Point_Get_24(Build) 1.00 root table:t2, index:idx_a(a) `, // use idx_a
+		`  └─TableReader_26(Probe) 10.00 root  data:TableRangeScan_25`,
+		`    └─TableRangeScan_25 10.00 cop[tikv] table:t1 range:[1,1], keep order:false, stats:pseudo`))
 
 	tk.MustExec("set @a=2")
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
@@ -311,10 +311,10 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
 		`Projection_9 10.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
-		`└─HashJoin_11 10.00 root  CARTESIAN inner join`,
-		`  ├─Point_Get_12(Build) 1.00 root table:t2, index:idx_a(a) `,
-		`  └─TableReader_14(Probe) 10.00 root  data:TableRangeScan_13`,
-		`    └─TableRangeScan_13 10.00 cop[tikv] table:t1 range:[2,2], keep order:false, stats:pseudo`))
+		`└─HashJoin_23 10.00 root  CARTESIAN inner join`,
+		`  ├─Point_Get_24(Build) 1.00 root table:t2, index:idx_a(a) `,
+		`  └─TableReader_26(Probe) 10.00 root  data:TableRangeScan_25`,
+		`    └─TableRangeScan_25 10.00 cop[tikv] table:t1 range:[2,2], keep order:false, stats:pseudo`))
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
 		"2 4 2 2",
 	))
