@@ -29,6 +29,26 @@ var (
 
 	// RestoreTableCreatedCount counts how many tables created.
 	RestoreTableCreatedCount prometheus.Counter
+
+	// MetaKVBatchFiles counts how many meta KV files restored in the batch
+	MetaKVBatchFiles *prometheus.HistogramVec
+	// MetaKVBatchFilteredKeys counts how many meta KV entries filtered from the batch
+	MetaKVBatchFilteredKeys *prometheus.HistogramVec
+	// MetaKVBatchKeys counts how many meta KV entries restored in the batch
+	MetaKVBatchKeys *prometheus.HistogramVec
+	// MetaKVBatchSize records the total size of the meta KV entries restored in the batch
+	MetaKVBatchSize *prometheus.HistogramVec
+
+	// KVApplyBatchDuration records the duration to apply the batch of KV files
+	KVApplyBatchDuration prometheus.Histogram
+	// KVApplyBatchFiles counts how many KV files restored in the batch
+	KVApplyBatchFiles prometheus.Histogram
+	// KVApplyBatchRegions counts how many regions restored in the batch of KV files
+	KVApplyBatchRegions prometheus.Histogram
+	// KVApplyBatchSize records the total size of the KV files restored in the batch
+	KVApplyBatchSize prometheus.Histogram
+	// KVApplyRegionFiles counts how many KV files restored for a region
+	KVApplyRegionFiles prometheus.Histogram
 )
 
 // InitBRMetrics initializes all metrics in BR.
@@ -67,4 +87,78 @@ func InitBRMetrics() {
 		Help:    "The time cost for uploading SST metadata for point-in-time recovery",
 		Buckets: prometheus.ExponentialBuckets(0.01, 2, 14),
 	})
+
+	MetaKVBatchFiles = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "br",
+			Name:      "meta_kv_batch_files",
+			Help:      "The number of meta KV files in the batch",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 11), // 1 ~ 1024
+		}, []string{"cf"})
+	MetaKVBatchFilteredKeys = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "br",
+			Name:      "meta_kv_batch_filtered_keys",
+			Help:      "The number of filtered meta KV entries from the batch",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 16), // 1 ~ 32Ki
+		}, []string{"cf"})
+	MetaKVBatchKeys = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "br",
+			Name:      "meta_kv_batch_keys",
+			Help:      "The number of meta KV entries in the batch",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 16), // 1 ~ 32Ki
+		}, []string{"cf"})
+	MetaKVBatchSize = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "br",
+			Name:      "meta_kv_batch_size",
+			Help:      "The total size of meta KV entries in the batch",
+			Buckets:   prometheus.ExponentialBuckets(256, 2, 19), // 256 ~ 64Mi
+		}, []string{"cf"})
+
+	KVApplyBatchDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "br",
+			Name:      "kv_apply_batch_duration_seconds",
+			Help:      "The duration to apply the batch of KV files",
+			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 25), // 1ms ~ 2hrs
+		})
+	KVApplyBatchFiles = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "br",
+			Name:      "kv_apply_batch_files",
+			Help:      "The number of KV files in the batch",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 11), // 1 ~ 1024
+		})
+	KVApplyBatchRegions = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "br",
+			Name:      "kv_apply_batch_regions",
+			Help:      "The number of regions in the range of entries in the batch of KV files",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 11), // 1 ~ 1024
+		})
+	KVApplyBatchSize = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "br",
+			Name:      "kv_apply_batch_size",
+			Help:      "The number of KV files in the batch",
+			Buckets:   prometheus.ExponentialBuckets(1024, 2, 21), // 1KiB ~ 1GiB
+		})
+	KVApplyRegionFiles = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "br",
+			Name:      "kv_apply_region_files",
+			Help:      "The number of KV files restored for a region",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 11), // 1 ~ 1024
+		})
 }
