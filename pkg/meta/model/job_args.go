@@ -1800,7 +1800,7 @@ func (a *RefreshMetaArgs) decodeV1(job *Job) error {
 	return errors.Trace(job.decodeArgs(a))
 }
 
-// GetAlterTableModeArgs get the AlterTableModeArgs argument.
+// GetRefreshMetaArgs get the AlterTableModeArgs argument.
 func GetRefreshMetaArgs(job *Job) (*RefreshMetaArgs, error) {
 	return getOrDecodeArgs[*RefreshMetaArgs](&RefreshMetaArgs{}, job)
 }
