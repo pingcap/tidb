@@ -3045,9 +3045,9 @@ type LLMDDLExec struct {
 var _ exec.Executor = &LLMDDLExec{}
 
 // Next implements the Executor Next interface.
-func (e *LLMDDLExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *LLMDDLExec) Next(_ context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	llmAccessor := domain.GetDomain(e.Ctx()).LLMAccessor()
 
-	return llmAccessor.AlterPlatform(e.LLMDDLPlan.Name, e.LLMDDLPlan.Key, e.LLMDDLPlan.Value)
+	return llmAccessor.AlterPlatform(e.Ctx(), e.LLMDDLPlan.Name, e.LLMDDLPlan.Key, e.LLMDDLPlan.Value)
 }
