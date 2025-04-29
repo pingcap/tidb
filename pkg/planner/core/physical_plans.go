@@ -1678,7 +1678,9 @@ func (p *PhysicalIndexJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 		return nil, err
 	}
 	cloned.basePhysicalJoin = *base
-	cloned.innerPlan, err = p.innerPlan.Clone(newCtx)
+	if p.innerPlan != nil {
+		cloned.innerPlan, err = p.innerPlan.Clone(newCtx)
+	}
 	if err != nil {
 		return nil, err
 	}
