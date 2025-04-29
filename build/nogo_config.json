@@ -356,6 +356,7 @@
       "/cgo/": "no need to vet cgo code"
     },
     "only_files": {
+      "pkg/autoid_service/": "autoid_service code",
       "//cmd/": "cmd code",
       "pkg/bindinfo/": "bindinfo code",
       "pkg/extension/": "extension code",
@@ -372,6 +373,7 @@
       "pkg/resourcegroup/": "resourcegroup code",
       "pkg/server/": "server code",
       "pkg/statistics": "pkg/statistics code",
+      "pkg/store/": "store code",
       "pkg/structure/": "structure code",
       "pkg/testkit/": "testkit code",
       "pkg/timer/": "timer code",

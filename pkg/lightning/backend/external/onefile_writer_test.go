@@ -51,7 +51,7 @@ func TestOnefileWriterBasic(t *testing.T) {
 		SetPropKeysDistance(2).
 		BuildOneFile(memStore, "/test", "0")
 
-	require.NoError(t, writer.Init(ctx, 5*1024*1024))
+	writer.InitPartSizeAndLogger(ctx, 5*1024*1024)
 
 	kvCnt := 100
 	kvs := make([]common.KvPair, kvCnt)
@@ -122,7 +122,7 @@ func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance ui
 		SetPropKeysDistance(keysDistance).
 		BuildOneFile(memStore, "/"+prefix, "0")
 
-	require.NoError(t, writer.Init(ctx, 5*1024*1024))
+	writer.InitPartSizeAndLogger(ctx, 5*1024*1024)
 	kvs := make([]common.KvPair, 0, kvCnt)
 	for i := 0; i < kvCnt; i++ {
 		kvs = append(kvs, common.KvPair{
@@ -267,7 +267,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 		SetMemorySizeLimit(1000).
 		BuildOneFile(memStore, "/test", "0")
 
-	require.NoError(t, writer.Init(ctx, 5*1024*1024))
+	writer.InitPartSizeAndLogger(ctx, 5*1024*1024)
 
 	kvCnt := 100000
 	expectedTotalSize := 0
@@ -366,7 +366,7 @@ func TestOnefilePropOffset(t *testing.T) {
 		SetMemorySizeLimit(uint64(memSizeLimit)).
 		BuildOneFile(memStore, "/test", "0")
 
-	require.NoError(t, writer.Init(ctx, 5*1024*1024))
+	writer.InitPartSizeAndLogger(ctx, 5*1024*1024)
 
 	kvCnt := 10000
 	kvs := make([]common.KvPair, kvCnt)
@@ -398,4 +398,22 @@ func TestOnefilePropOffset(t *testing.T) {
 		require.GreaterOrEqual(t, prop.offset, lastOffset)
 		lastOffset = prop.offset
 	}
+}
+
+type testOneFileWriter struct {
+	*OneFileWriter
+}
+
+func (w *testOneFileWriter) WriteRow(ctx context.Context, key, val []byte, _ dbkv.Handle) error {
+	return w.OneFileWriter.WriteRow(ctx, key, val)
+}
+
+func TestOnefileWriterOnDup(t *testing.T) {
+	getWriterFn := func(store storage.ExternalStorage, b *WriterBuilder) testWriter {
+		writer := b.BuildOneFile(store, "/onefile", "0")
+		writer.InitPartSizeAndLogger(context.Background(), 1024)
+		return &testOneFileWriter{OneFileWriter: writer}
+	}
+	doTestWriterOnDupRecord(t, true, getWriterFn)
+	doTestWriterOnDupRemove(t, true, getWriterFn)
 }
