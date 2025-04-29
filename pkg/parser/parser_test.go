@@ -7855,9 +7855,9 @@ func TestCompatTypes(t *testing.T) {
 
 func TestAlterLLM(t *testing.T) {
 	table := []testCase{
-		//{"ALTER LLM PLATFORM openai k1 v1", true, "ALTER LLM PLATFORM openai k1 v1"},
-		//{"ALTER LLM PLATFORM OPENAI k1 v1", true, "ALTER LLM PLATFORM OPENAI k1 v1"},
-		{"ALTER LLM PLATFORM OPENAI enabled ", true, "ALTER LLM PLATFORM OPENAI enabled "},
+		{"ALTER LLM PLATFORM openai k1 v1", true, "ALTER LLM PLATFORM openai k1 v1"},
+		{"ALTER LLM PLATFORM OPENAI k1 v1", true, "ALTER LLM PLATFORM OPENAI k1 v1"},
+		{"ALTER LLM PLATFORM OPENAI xx", true, "ALTER LLM PLATFORM OPENAI xx"},
 	}
 
 	RunTest(t, table, false)

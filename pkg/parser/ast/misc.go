@@ -4291,8 +4291,10 @@ func (n *LLMDDLStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WritePlain(n.Name)
 	ctx.WritePlain(" ")
 	ctx.WritePlain(n.Key)
-	ctx.WritePlain(" ")
-	ctx.WritePlain(n.Value)
+	if n.Value != "" {
+		ctx.WritePlain(" ")
+		ctx.WritePlain(n.Value)
+	}
 	return nil
 }
 
