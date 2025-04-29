@@ -291,7 +291,7 @@ func TestIssue53834(t *testing.T) {
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a varchar(1024))`)
 	tk.MustExec(`insert into t values (space(1024))`)
-	for i := 0; i < 12; i++ {
+	for range 12 {
 		tk.MustExec(`insert into t select * from t`)
 	}
 	oomAction := tk.MustQuery(`select @@tidb_mem_oom_action`).Rows()[0][0].(string)

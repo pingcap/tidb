@@ -2436,7 +2436,7 @@ func (w *worker) cleanGlobalIndexEntriesFromDroppedPartitions(jobCtx *jobContext
 		// and then run the reorg next time.
 		return false, errors.Trace(err)
 	}
-	err = w.runReorgJob(reorgInfo, tbl.Meta(), func() (dropIndexErr error) {
+	err = w.runReorgJob(jobCtx, reorgInfo, tbl.Meta(), func() (dropIndexErr error) {
 		defer tidbutil.Recover(metrics.LabelDDL, "onDropTablePartition",
 			func() {
 				dropIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("drop partition panic")
@@ -3715,7 +3715,7 @@ func doPartitionReorgWork(w *worker, jobCtx *jobContext, job *model.Job, tbl tab
 		return false, ver, errors.Trace(err)
 	}
 	reorgInfo, err := getReorgInfoFromPartitions(jobCtx.oldDDLCtx.jobContext(job.ID, job.ReorgMeta), jobCtx, rh, job, dbInfo, partTbl, physTblIDs, elements)
-	err = w.runReorgJob(reorgInfo, reorgTbl.Meta(), func() (reorgErr error) {
+	err = w.runReorgJob(jobCtx, reorgInfo, reorgTbl.Meta(), func() (reorgErr error) {
 		defer tidbutil.Recover(metrics.LabelDDL, "doPartitionReorgWork",
 			func() {
 				reorgErr = dbterror.ErrCancelledDDLJob.GenWithStack("reorganize partition for table `%v` panic", tbl.Meta().Name)
@@ -5155,7 +5155,7 @@ func generatePartValuesWithTp(partVal types.Datum, tp types.FieldType) (string, 
 	case types.ETString:
 		// The `partVal` can be an invalid utf8 string if it's converted to BINARY, then the content will be lost after
 		// marshaling and storing in the schema. In this case, we use a hex literal to work around this issue.
-		if tp.GetCharset() == charset.CharsetBin {
+		if tp.GetCharset() == charset.CharsetBin && len(s) != 0 {
 			return fmt.Sprintf("_binary 0x%x", s), nil
 		}
 		return driver.WrapInSingleQuotes(s), nil

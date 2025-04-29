@@ -44,7 +44,7 @@ func isInCorrectIdentifierName(name string) bool {
 var isUserVarCharTable [256]bool
 
 func init() {
-	for i := 0; i < 256; i++ {
+	for i := range 256 {
 		ch := byte(i)
 		isUserVarCharTable[i] = isLetter(ch) || isDigit(ch) || ch == '_' || ch == '$' || ch == '.' || isIdentExtend(ch)
 	}
@@ -81,7 +81,7 @@ func initTokenString(str string, tok int) {
 }
 
 func initTokenFunc(str string, fn func(s *Scanner) (int, Pos, string)) {
-	for i := 0; i < len(str); i++ {
+	for i := range len(str) {
 		c := str[i]
 		if ruleTable.childs[c] == nil {
 			ruleTable.childs[c] = &trieNode{}
@@ -1130,7 +1130,7 @@ func (s *Scanner) isTokenIdentifier(lit string, offset int) int {
 	buf.Grow(len(lit))
 	data := buf.Bytes()[:len(lit)]
 
-	for i := 0; i < len(lit); i++ {
+	for i := range len(lit) {
 		c := lit[i]
 		if c >= 'a' && c <= 'z' {
 			data[i] = c + 'A' - 'a'

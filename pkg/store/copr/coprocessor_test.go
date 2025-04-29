@@ -567,7 +567,7 @@ func buildCopRanges(keys ...string) *KeyRanges {
 func taskEqual(t *testing.T, task *copTask, regionID, bucketsVer uint64, keys ...string) {
 	require.Equal(t, task.region.GetID(), regionID)
 	require.Equal(t, task.bucketsVer, bucketsVer)
-	for i := 0; i < task.ranges.Len(); i++ {
+	for i := range task.ranges.Len() {
 		r := task.ranges.At(i)
 		require.Equal(t, string(r.StartKey), keys[2*i])
 		require.Equal(t, string(r.EndKey), keys[2*i+1])
@@ -575,7 +575,7 @@ func taskEqual(t *testing.T, task *copTask, regionID, bucketsVer uint64, keys ..
 }
 
 func rangeEqual(t *testing.T, ranges []kv.KeyRange, keys ...string) {
-	for i := 0; i < len(ranges); i++ {
+	for i := range ranges {
 		r := ranges[i]
 		require.Equal(t, string(r.StartKey), keys[2*i])
 		require.Equal(t, string(r.EndKey), keys[2*i+1])
@@ -869,7 +869,7 @@ func TestBuildCopTasksWithRowCountHint(t *testing.T) {
 func TestSmallTaskConcurrencyLimit(t *testing.T) {
 	smallTaskCount := 1000
 	tasks := make([]*copTask, 0, smallTaskCount)
-	for i := 0; i < smallTaskCount; i++ {
+	for range smallTaskCount {
 		tasks = append(tasks, &copTask{
 			RowCountHint: 1,
 		})

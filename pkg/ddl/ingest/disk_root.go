@@ -17,6 +17,7 @@ package ingest
 import (
 	"fmt"
 	"os"
+	"runtime"
 	"sync"
 	"sync/atomic"
 
@@ -169,6 +170,10 @@ func (d *diskRootImpl) PreCheckUsage() error {
 		logutil.DDLIngestLogger().Warn("available disk space is less than 10%, cannot use ingest mode",
 			zap.String("sort path", d.path),
 			zap.String("usage", d.usageInfo()))
+		if runtime.GOOS == "darwin" {
+			// darwin's disk is too expensive and we only use it in the development environment. so we ignore the error.
+			return nil
+		}
 		msg := fmt.Sprintf("no enough space in %s", d.path)
 		return dbterror.ErrIngestCheckEnvFailed.FastGenByArgs(msg)
 	}
