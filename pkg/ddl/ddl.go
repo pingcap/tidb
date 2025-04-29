@@ -1406,7 +1406,7 @@ func processJobs(
 
 	ns := sess.NewSession(sessCtx)
 	// We should process (and try) all the jobs in one Transaction.
-	for tryN := uint(0); tryN < 3; tryN++ {
+	for range 3 {
 		jobErrs = make([]error, len(ids))
 		// Need to figure out which one could not be paused
 		jobMap := make(map[int64]int, len(ids))

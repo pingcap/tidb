@@ -514,7 +514,7 @@ func assignGIDsForJobs(jobWs []*JobWrapper, ids []int64) {
 // generate ID and call function runs in the same transaction.
 func genGIDAndCallWithRetry(ctx context.Context, ddlSe *sess.Session, count int, fn func(ids []int64) error) error {
 	var resErr error
-	for i := uint(0); i < kv.MaxRetryCnt; i++ {
+	for i := range kv.MaxRetryCnt {
 		resErr = func() (err error) {
 			if err := ddlSe.Begin(ctx); err != nil {
 				return errors.Trace(err)
