@@ -309,7 +309,7 @@ func Call(fn func() error) {
 	}
 }
 
-// Call executes a function, checks the returned err and avoids the throw of panic.
+// CallWithRecover executes a function, checks the returned err and avoids the throw of panic.
 func CallWithRecover(fn func() error) {
 	defer func() {
 		if r := recover(); r != nil {
