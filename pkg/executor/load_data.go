@@ -721,7 +721,7 @@ func (e *LoadDataWorker) TestLoadLocal(parser mydump.Parser) error {
 		return err
 	}
 
-	for i := uint64(0); i < e.controller.IgnoreLines; i++ {
+	for range e.controller.IgnoreLines {
 		//nolint: errcheck
 		_ = parser.ReadRow()
 	}
