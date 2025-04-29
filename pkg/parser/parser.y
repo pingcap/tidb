@@ -16692,17 +16692,7 @@ CalibrateResourceWorkloadOption:
 	}
 
 LLMDDLStmt:
-	"ALTER" "LLM" "PLATFORM" identifier identifier identifier
-	{
-		$$ = &ast.LLMDDLStmt{
-			Operation: "ALTER",
-			Platform:  true,
-			Name:      $4,
-			Key:       $5,
-			Value:     $6,
-		}
-	}
-|	"ALTER" "LLM" "PLATFORM" identifier identifier
+	"ALTER" "LLM" "PLATFORM" identifier identifier
 	{
 		$$ = &ast.LLMDDLStmt{
 			Operation: "ALTER",
