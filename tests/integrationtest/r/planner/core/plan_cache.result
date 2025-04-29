@@ -1637,10 +1637,10 @@ select @@last_plan_from_cache;
 0
 explain format = 'row' select * from t limit 1;
 id	estRows	task	access object	operator info
-Limit_7	1.00	root		offset:0, count:1
-└─IndexReader_12	1.00	root		index:Limit_11
-  └─Limit_11	1.00	cop[tikv]		offset:0, count:1
-    └─IndexFullScan_10	1.00	cop[tikv]	table:t, index:a(a)	keep order:false, stats:pseudo
+Limit_8	1.00	root		offset:0, count:1
+└─IndexReader_13	1.00	root		index:Limit_12
+  └─Limit_12	1.00	cop[tikv]		offset:0, count:1
+    └─IndexFullScan_11	1.00	cop[tikv]	table:t, index:a(a)	keep order:false, stats:pseudo
 explain format = 'brief' select * from t limit 1;
 id	estRows	task	access object	operator info
 Limit	1.00	root		offset:0, count:1
@@ -1650,45 +1650,45 @@ Limit	1.00	root		offset:0, count:1
 explain format = 'dot' select * from t limit 1;
 dot contents
 
-digraph Limit_7 {
-subgraph cluster7{
+digraph Limit_8 {
+subgraph cluster8{
 node [style=filled, color=lightgrey]
 color=black
 label = "root"
-"Limit_7" -> "IndexReader_12"
+"Limit_8" -> "IndexReader_13"
 }
-subgraph cluster11{
+subgraph cluster12{
 node [style=filled, color=lightgrey]
 color=black
 label = "cop"
-"Limit_11" -> "IndexFullScan_10"
+"Limit_12" -> "IndexFullScan_11"
 }
-"IndexReader_12" -> "Limit_11"
+"IndexReader_13" -> "Limit_12"
 }
 
 explain format = 'tidb_json' select * from t limit 1;
 TiDB_JSON
 [
     {
-        "id": "Limit_7",
+        "id": "Limit_8",
         "estRows": "1.00",
         "taskType": "root",
         "operatorInfo": "offset:0, count:1",
         "subOperators": [
             {
-                "id": "IndexReader_12",
+                "id": "IndexReader_13",
                 "estRows": "1.00",
                 "taskType": "root",
-                "operatorInfo": "index:Limit_11",
+                "operatorInfo": "index:Limit_12",
                 "subOperators": [
                     {
-                        "id": "Limit_11",
+                        "id": "Limit_12",
                         "estRows": "1.00",
                         "taskType": "cop[tikv]",
                         "operatorInfo": "offset:0, count:1",
                         "subOperators": [
                             {
-                                "id": "IndexFullScan_10",
+                                "id": "IndexFullScan_11",
                                 "estRows": "1.00",
                                 "taskType": "cop[tikv]",
                                 "accessObject": "table:t, index:a(a)",
@@ -1704,16 +1704,16 @@ TiDB_JSON
 
 explain format = 'verbose' select * from t limit 1;
 id	estRows	estCost	task	access object	operator info
-Limit_7	1.00	12.97	root		offset:0, count:1
-└─IndexReader_12	1.00	12.97	root		index:Limit_11
-  └─Limit_11	1.00	162.80	cop[tikv]		offset:0, count:1
-    └─IndexFullScan_10	1.00	162.80	cop[tikv]	table:t, index:a(a)	keep order:false, stats:pseudo
+Limit_8	1.00	12.97	root		offset:0, count:1
+└─IndexReader_13	1.00	12.97	root		index:Limit_12
+  └─Limit_12	1.00	162.80	cop[tikv]		offset:0, count:1
+    └─IndexFullScan_11	1.00	162.80	cop[tikv]	table:t, index:a(a)	keep order:false, stats:pseudo
 explain format = 'cost_trace' select * from t limit 1;
 id	estRows	estCost	costFormula	task	access object	operator info
-Limit_7	1.00	12.97	((((((scan(1*logrowsize(16)*tikv_scan_factor(40.7)))*1.00)) + (net(1*rowsize(8)*tidb_kv_net_factor(3.96))))/15.00)*1.00)	root		offset:0, count:1
-└─IndexReader_12	1.00	12.97	(((((scan(1*logrowsize(16)*tikv_scan_factor(40.7)))*1.00)) + (net(1*rowsize(8)*tidb_kv_net_factor(3.96))))/15.00)*1.00	root		index:Limit_11
-  └─Limit_11	1.00	162.80	((scan(1*logrowsize(16)*tikv_scan_factor(40.7)))*1.00)	cop[tikv]		offset:0, count:1
-    └─IndexFullScan_10	1.00	162.80	(scan(1*logrowsize(16)*tikv_scan_factor(40.7)))*1.00	cop[tikv]	table:t, index:a(a)	keep order:false, stats:pseudo
+Limit_8	1.00	12.97	((((((scan(1*logrowsize(16)*tikv_scan_factor(40.7)))*1.00)) + (net(1*rowsize(8)*tidb_kv_net_factor(3.96))))/15.00)*1.00)	root		offset:0, count:1
+└─IndexReader_13	1.00	12.97	(((((scan(1*logrowsize(16)*tikv_scan_factor(40.7)))*1.00)) + (net(1*rowsize(8)*tidb_kv_net_factor(3.96))))/15.00)*1.00	root		index:Limit_12
+  └─Limit_12	1.00	162.80	((scan(1*logrowsize(16)*tikv_scan_factor(40.7)))*1.00)	cop[tikv]		offset:0, count:1
+    └─IndexFullScan_11	1.00	162.80	(scan(1*logrowsize(16)*tikv_scan_factor(40.7)))*1.00	cop[tikv]	table:t, index:a(a)	keep order:false, stats:pseudo
 set tidb_enable_non_prepared_plan_cache=DEFAULT;
 drop table if exists t, t1, t2;
 CREATE TABLE `t1` (`c_int` int(11) NOT NULL,  `c_str` varchar(40) CHARACTER SET utf8 COLLATE utf8_bin DEFAULT NULL,  `c_datetime` datetime DEFAULT NULL,  `c_timestamp` timestamp NULL DEFAULT NULL,  `c_double` double DEFAULT NULL,  `c_decimal` decimal(12,6) DEFAULT NULL,  `c_enum` enum('blue','green','red','yellow','white','orange','purple') NOT NULL,  PRIMARY KEY (`c_int`,`c_enum`) /*T![clustered_index] CLUSTERED */,  KEY `c_decimal` (`c_decimal`),  UNIQUE KEY `c_datetime` (`c_datetime`),  UNIQUE KEY `c_timestamp` (`c_timestamp`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;

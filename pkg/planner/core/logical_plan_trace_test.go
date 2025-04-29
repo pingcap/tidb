@@ -156,11 +156,11 @@ func TestSingleRuleTraceStep(t *testing.T) {
 					assertReason: "TopN_7 is Limit originally",
 				},
 				{
-					assertAction: "TopN_8 is added and pushed into Join_3's left table",
+					assertAction: "TopN_9 is added and pushed into Join_3's left table",
 					assertReason: "Join_3's joinType is left outer join, and all ByItems[test.t.a] contained in left table",
 				},
 				{
-					assertAction: "TopN_8 is added as DataSource_1's parent",
+					assertAction: "TopN_9 is added as DataSource_1's parent",
 					assertReason: "TopN is pushed down",
 				},
 				{
@@ -183,7 +183,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 					assertReason: "TopN_5 is Limit originally",
 				},
 				{
-					assertAction: "TopN_5 is added as DataSource_1's parent",
+					assertAction: "TopN_6 is added as DataSource_1's parent",
 					assertReason: "TopN is pushed down",
 				},
 			},

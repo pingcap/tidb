@@ -130,11 +130,12 @@ ORDER BY CONVERT(column16 USING GBK) ASC,column17 ASC
 LIMIT 0,
       20;`
 	tk.MustQuery(sql).Check(testkit.Rows(
-		"TopN 20.00 root  Column#4, Column#5, offset:0, count:20",
-		"└─TableReader 20.00 root  data:TopN",
-		"  └─TopN 20.00 cop[tikv]  Column#4, Column#5, offset:0, count:20",
-		"    └─Projection 10000.00 cop[tikv]  json_extract(test.table_test.col16, $[].optUid)->Column#4, json_unquote(cast(json_extract(test.table_test.col17, $[0].value), var_string(16777216)))->Column#5",
-		"      └─TableFullScan 10000.00 cop[tikv] table:table_test keep order:false, stats:pseudo"))
+		"Projection 20.00 root  Column#4, Column#5",
+		"└─TopN 20.00 root  Column#6, Column#5, offset:0, count:20",
+		"  └─Projection 10000.00 root  Column#4, Column#5, convert(cast(Column#4, var_string(16777216)), gbk)->Column#6",
+		"    └─TableReader 10000.00 root  data:Projection",
+		"      └─Projection 10000.00 cop[tikv]  json_extract(test.table_test.col16, $[].optUid)->Column#4, json_unquote(cast(json_extract(test.table_test.col17, $[0].value), var_string(16777216)))->Column#5",
+		"        └─TableFullScan 10000.00 cop[tikv] table:table_test keep order:false, stats:pseudo"))
 	tk.MustExec(`INSERT INTO mysql.opt_rule_blacklist VALUES("topn_push_down");`)
 	tk.MustExec(`admin reload opt_rule_blacklist;`)
 	tk.MustQuery(sql).Check(testkit.Rows(

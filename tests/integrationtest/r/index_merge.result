@@ -468,13 +468,13 @@ create table t1(c1 int, c2 int, c3 int, key(c1), key(c2));
 insert into t1 values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);
 explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10 order by 1 limit 1 offset 2;
 id	estRows	task	access object	operator info
-TopN_9	1.00	root		index_merge.t1.c1, offset:2, count:1
-└─IndexMerge_18	3.00	root		type: union
-  ├─IndexRangeScan_13(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-  ├─IndexRangeScan_14(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-  └─TopN_17(Probe)	3.00	cop[tikv]		index_merge.t1.c1, offset:0, count:3
-    └─Selection_16	1841.86	cop[tikv]		lt(index_merge.t1.c3, 10)
-      └─TableRowIDScan_15	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+TopN_10	1.00	root		index_merge.t1.c1, offset:2, count:1
+└─IndexMerge_19	3.00	root		type: union
+  ├─IndexRangeScan_14(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+  ├─IndexRangeScan_15(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+  └─TopN_18(Probe)	3.00	cop[tikv]		index_merge.t1.c1, offset:0, count:3
+    └─Selection_17	1841.86	cop[tikv]		lt(index_merge.t1.c3, 10)
+      └─TableRowIDScan_16	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10 order by 1 limit 1 offset 2;
 c1	c2	c3
 3	3	3

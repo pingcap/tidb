@@ -823,20 +823,20 @@ HashAgg_16	8000.00	root		group by:planner__core__casetest__physicalplantest__phy
     └─TableFullScan_15	10000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
 explain WITH RECURSIVE CTE (x) AS (SELECT a FROM test limit 1) , CTE1(x) AS (SELECT a FROM test UNION ALL select CTE.x from CTE join CTE1 on CTE.x=CTE1.x) SELECT * FROM CTE1;  -- CTE contain limit and ref by CET1 recursive part cannot be inlined;
 id	estRows	task	access object	operator info
-CTEFullScan_42	16400.00	root	CTE:cte1	data:CTE_1
+CTEFullScan_43	16400.00	root	CTE:cte1	data:CTE_1
 CTE_1	16400.00	root		Recursive CTE
 ├─TableReader_22(Seed Part)	10000.00	root		data:TableFullScan_21
 │ └─TableFullScan_21	10000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
-└─HashJoin_36(Recursive Part)	6400.00	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.test.a, planner__core__casetest__physicalplantest__physical_plan.test.a)]
-  ├─Selection_37(Build)	0.80	root		not(isnull(planner__core__casetest__physicalplantest__physical_plan.test.a))
-  │ └─CTEFullScan_38	1.00	root	CTE:cte	data:CTE_0
-  └─Selection_39(Probe)	8000.00	root		not(isnull(planner__core__casetest__physicalplantest__physical_plan.test.a))
-    └─CTETable_40	10000.00	root		Scan on CTE_1
+└─HashJoin_37(Recursive Part)	6400.00	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.test.a, planner__core__casetest__physicalplantest__physical_plan.test.a)]
+  ├─Selection_38(Build)	0.80	root		not(isnull(planner__core__casetest__physicalplantest__physical_plan.test.a))
+  │ └─CTEFullScan_39	1.00	root	CTE:cte	data:CTE_0
+  └─Selection_40(Probe)	8000.00	root		not(isnull(planner__core__casetest__physicalplantest__physical_plan.test.a))
+    └─CTETable_41	10000.00	root		Scan on CTE_1
 CTE_0	1.00	root		Non-Recursive CTE
-└─Limit_28(Seed Part)	1.00	root		offset:0, count:1
-  └─TableReader_32	1.00	root		data:Limit_31
-    └─Limit_31	1.00	cop[tikv]		offset:0, count:1
-      └─TableFullScan_30	1.00	cop[tikv]	table:test	keep order:false, stats:pseudo
+└─Limit_29(Seed Part)	1.00	root		offset:0, count:1
+  └─TableReader_33	1.00	root		data:Limit_32
+    └─Limit_32	1.00	cop[tikv]		offset:0, count:1
+      └─TableFullScan_31	1.00	cop[tikv]	table:test	keep order:false, stats:pseudo
 explain WITH RECURSIVE CTE (x) AS (SELECT a FROM test order by a) , CTE1(x) AS (SELECT a FROM test UNION ALL select CTE.x from CTE join CTE1 on CTE.x=CTE1.x) SELECT * FROM CTE1;  -- CTE contain order by and ref by CET1 recursive part cannot be inlined;
 id	estRows	task	access object	operator info
 CTEFullScan_35	20000.00	root	CTE:cte1	data:CTE_1
@@ -3997,12 +3997,12 @@ Warning	1105	Scalar function 'json_overlaps'(signature: Unspecified, return type
 set tidb_cost_model_version=DEFAULT;
 explain select /*+ USE_INDEX_MERGE(t3, aid_c1, aid_c2) */ * from t3 where (aid = 1 and c1='aaa') or (aid = 1 and c2='bbb') limit 1;
 id	estRows	task	access object	operator info
-IndexMerge_20	1.00	root		type: union, limit embedded(offset:0, count:1)
-├─Limit_18(Build)	0.01	cop[tikv]		offset:0, count:1
-│ └─IndexRangeScan_11	0.01	cop[tikv]	table:t3, index:aid_c1(aid, c1)	range:[1 "aaa",1 "aaa"], keep order:false, stats:pseudo
+IndexMerge_21	1.00	root		type: union, limit embedded(offset:0, count:1)
 ├─Limit_19(Build)	0.01	cop[tikv]		offset:0, count:1
-│ └─IndexRangeScan_12	0.01	cop[tikv]	table:t3, index:aid_c2(aid, c2)	range:[1 "bbb",1 "bbb"], keep order:false, stats:pseudo
-└─TableRowIDScan_13(Probe)	1.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+│ └─IndexRangeScan_12	0.01	cop[tikv]	table:t3, index:aid_c1(aid, c1)	range:[1 "aaa",1 "aaa"], keep order:false, stats:pseudo
+├─Limit_20(Build)	0.01	cop[tikv]		offset:0, count:1
+│ └─IndexRangeScan_13	0.01	cop[tikv]	table:t3, index:aid_c2(aid, c2)	range:[1 "bbb",1 "bbb"], keep order:false, stats:pseudo
+└─TableRowIDScan_14(Probe)	1.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 CREATE TABLE `tbl_43` (
