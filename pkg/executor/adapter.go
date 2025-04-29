@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -562,12 +563,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			return nil, err
 		}
 		if len(switchGroupName) > 0 {
-			group, err := rm.ResourceGroupCtl.GetResourceGroup(switchGroupName)
-			if err != nil || group == nil {
-				logutil.BgLogger().Debug("invalid switch resource group", zap.String("switch-group-name", switchGroupName), zap.Error(err))
-			} else {
-				stmtCtx.ResourceGroupName = switchGroupName
-			}
+			stmtCtx.ResourceGroupName = switchGroupName
 		}
 	}
 	ctx = a.observeStmtBeginForTopSQL(ctx)
@@ -1663,7 +1659,12 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	)
 	keyspaceName = keyspace.GetKeyspaceNameBySettings()
 	if !keyspace.IsKeyspaceNameEmpty(keyspaceName) {
-		keyspaceID = uint32(a.Ctx.GetStore().GetCodec().GetKeyspaceID())
+		if kerneltype.IsNextGen() {
+			keyspaceIDU64, _ := strconv.ParseUint(keyspaceName, 10, 32) //nolint:errcheck
+			keyspaceID = uint32(keyspaceIDU64)
+		} else {
+			keyspaceID = uint32(a.Ctx.GetStore().GetCodec().GetKeyspaceID())
+		}
 	}
 	if txnTS == 0 {
 		// TODO: txnTS maybe ambiguous, consider logging stale-read-ts with a new field in the slow log.
@@ -2164,6 +2165,12 @@ func (a *ExecStmt) updatePrevStmt() {
 }
 
 func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Context {
+	if !topsqlstate.TopSQLEnabled() && IsFastPlan(a.Plan) {
+		// To reduce the performance impact on fast plan.
+		// Drop them does not cause notable accuracy issue in TopSQL.
+		return ctx
+	}
+
 	vars := a.Ctx.GetSessionVars()
 	sc := vars.StmtCtx
 	normalizedSQL, sqlDigest := sc.SQLDigest()
@@ -2177,11 +2184,6 @@ func (a *ExecStmt) observeStmtBeginForTopSQL(ctx context.Context) context.Contex
 	}
 	stats := a.Ctx.GetStmtStats()
 	if !topsqlstate.TopSQLEnabled() {
-		// To reduce the performance impact on fast plan.
-		// Drop them does not cause notable accuracy issue in TopSQL.
-		if IsFastPlan(a.Plan) {
-			return ctx
-		}
 		// Always attach the SQL and plan info uses to catch the running SQL when Top SQL is enabled in execution.
 		if stats != nil {
 			stats.OnExecutionBegin(sqlDigestByte, planDigestByte)

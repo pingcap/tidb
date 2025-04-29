@@ -24,6 +24,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/storage",
+        "//pkg/ingestor/engineapi",
         "//pkg/kv",
         "//pkg/lightning/backend",
         "//pkg/lightning/backend/encode",
@@ -45,6 +46,7 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
         "@org_golang_x_sync//errgroup",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
@@ -77,6 +79,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//br/pkg/storage",
+        "//pkg/ingestor/engineapi",
         "//pkg/kv",
         "//pkg/lightning/backend/kv",
         "//pkg/lightning/common",

@@ -1,0 +1,36 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "ingestcli",
+    srcs = [
+        "client.go",
+        "interface.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/ingestor/ingestcli",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/restore/split",
+        "//pkg/util",
+        "@com_github_gogo_protobuf//proto",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/errorpb",
+        "@com_github_pingcap_kvproto//pkg/import_sstpb",
+        "@org_uber_go_atomic//:atomic",
+    ],
+)
+
+go_test(
+    name = "ingestcli_test",
+    timeout = "short",
+    srcs = ["client_test.go"],
+    embed = [":ingestcli"],
+    flaky = True,
+    shard_count = 4,
+    deps = [
+        "//br/pkg/restore/split",
+        "@com_github_pingcap_kvproto//pkg/errorpb",
+        "@com_github_pingcap_kvproto//pkg/import_sstpb",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_stretchr_testify//require",
+    ],
+)

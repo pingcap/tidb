@@ -688,8 +688,8 @@ func (s *mockGCSSuite) TestMaxWriteSpeed() {
 
 	lineCount := 1000
 	data := make([]byte, 0, 1<<13)
-	for i := 0; i < lineCount; i++ {
-		data = append(data, []byte(fmt.Sprintf("%d,%d\n", i, i))...)
+	for i := range lineCount {
+		data = append(data, fmt.Appendf(nil, "%d,%d\n", i, i)...)
 	}
 
 	s.server.CreateObject(fakestorage.Object{
@@ -1160,8 +1160,8 @@ func (s *mockGCSSuite) TestDiskQuota() {
 
 	lineCount := 10000
 	data := make([]byte, 0, 1<<13)
-	for i := 0; i < lineCount; i++ {
-		data = append(data, []byte(fmt.Sprintf("%d,%d\n", i, i))...)
+	for i := range lineCount {
+		data = append(data, fmt.Appendf(nil, "%d,%d\n", i, i)...)
 	}
 
 	s.server.CreateObject(fakestorage.Object{
@@ -1196,8 +1196,8 @@ func (s *mockGCSSuite) TestAnalyze() {
 	s.tk.MustExec("create table load_data.analyze_table(a int, b int, c int, index idx_ac(a,c), index idx_b(b))")
 	lineCount := 2000
 	data := make([]byte, 0, 1<<13)
-	for i := 0; i < lineCount; i++ {
-		data = append(data, []byte(fmt.Sprintf("1,%d,1\n", i))...)
+	for i := range lineCount {
+		data = append(data, fmt.Appendf(nil, "1,%d,1\n", i)...)
 	}
 	s.server.CreateObject(fakestorage.Object{
 		ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "test-load", Name: "analyze-1.tsv"},

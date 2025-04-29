@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -144,6 +145,9 @@ func (*EmptyRowCntListener) Written(_ int) {}
 // SetTotal implements RowCountListener.
 func (*EmptyRowCntListener) SetTotal(_ int) {}
 
+// MockDMLExecutionBeforeScan is only used for test.
+var MockDMLExecutionBeforeScan func()
+
 // NewAddIndexIngestPipeline creates a pipeline for adding index in ingest mode.
 func NewAddIndexIngestPipeline(
 	ctx *OperatorCtx,
@@ -172,15 +176,16 @@ func NewAddIndexIngestPipeline(
 	}
 	srcChkPool := createChunkPool(copCtx, reorgMeta)
 	readerCnt, writerCnt := expectedIngestWorkerCnt(concurrency, avgRowSize)
-	rm := reorgMeta
-	if rm.UseCloudStorage {
-		// param cannot be modified at runtime for global sort right now.
-		rm = nil
-	}
+
+	failpoint.Inject("mockDMLExecutionBeforeScan", func(_ failpoint.Value) {
+		if MockDMLExecutionBeforeScan != nil {
+			MockDMLExecutionBeforeScan()
+		}
+	})
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, backendCtx)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt,
-		reorgMeta.GetBatchSize(), rm, backendCtx)
+		reorgMeta.GetBatchSize(), reorgMeta, backendCtx)
 	ingestOp := NewIndexIngestOperator(ctx, copCtx, sessPool,
 		tbl, indexes, engines, srcChkPool, writerCnt, reorgMeta)
 	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, rowCntListener)
@@ -216,6 +221,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	concurrency int,
 	resource *proto.StepResource,
 	rowCntListener RowCountListener,
+	tikvCodec tikv.Codec,
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
 	for _, idxInfo := range idxInfos {
@@ -246,11 +252,11 @@ func NewWriteIndexToExternalStoragePipeline(
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey, nil)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt,
-		reorgMeta.GetBatchSize(), nil, nil)
+		reorgMeta.GetBatchSize(), reorgMeta, nil)
 	writeOp := NewWriteExternalStoreOperator(
 		ctx, copCtx, sessPool, jobID, subtaskID,
 		tbl, indexes, extStore, srcChkPool, writerCnt,
-		onClose, memSizePerIndex, reorgMeta,
+		onClose, memSizePerIndex, reorgMeta, tikvCodec,
 	)
 	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, rowCntListener)
 
@@ -637,6 +643,7 @@ func NewWriteExternalStoreOperator(
 	onClose external.OnCloseFunc,
 	memoryQuota uint64,
 	reorgMeta *model.DDLReorgMeta,
+	tikvCodec tikv.Codec,
 ) *WriteExternalStoreOperator {
 	// due to multi-schema-change, we may merge processing multiple indexes into one
 	// local backend.
@@ -649,6 +656,7 @@ func NewWriteExternalStoreOperator(
 	}
 
 	totalCount := new(atomic.Int64)
+	blockSize := external.GetAdjustedBlockSize(memoryQuota)
 	pool := workerpool.NewWorkerPool(
 		"WriteExternalStoreOperator",
 		util.DDL,
@@ -660,6 +668,8 @@ func NewWriteExternalStoreOperator(
 					SetOnCloseFunc(onClose).
 					SetKeyDuplicationEncoding(hasUnique).
 					SetMemorySizeLimit(memoryQuota).
+					SetTiKVCodec(tikvCodec).
+					SetBlockSize(blockSize).
 					SetGroupOffset(i)
 				writerID := uuid.New().String()
 				prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
