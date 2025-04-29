@@ -2441,7 +2441,7 @@ func (w *worker) cleanGlobalIndexEntriesFromDroppedPartitions(jobCtx *jobContext
 		// and then run the reorg next time.
 		return false, errors.Trace(err)
 	}
-	err = w.runReorgJob(reorgInfo, tbl.Meta(), func() (dropIndexErr error) {
+	err = w.runReorgJob(jobCtx, reorgInfo, tbl.Meta(), func() (dropIndexErr error) {
 		defer tidbutil.Recover(metrics.LabelDDL, "onDropTablePartition",
 			func() {
 				dropIndexErr = dbterror.ErrCancelledDDLJob.GenWithStack("drop partition panic")
@@ -3733,7 +3733,7 @@ func doPartitionReorgWork(w *worker, jobCtx *jobContext, job *model.Job, tbl tab
 		return false, ver, errors.Trace(err)
 	}
 	reorgInfo, err := getReorgInfoFromPartitions(jobCtx.oldDDLCtx.jobContext(job.ID, job.ReorgMeta), jobCtx, rh, job, dbInfo, partTbl, physTblIDs, elements)
-	err = w.runReorgJob(reorgInfo, reorgTbl.Meta(), func() (reorgErr error) {
+	err = w.runReorgJob(jobCtx, reorgInfo, reorgTbl.Meta(), func() (reorgErr error) {
 		defer tidbutil.Recover(metrics.LabelDDL, "doPartitionReorgWork",
 			func() {
 				reorgErr = dbterror.ErrCancelledDDLJob.GenWithStack("reorganize partition for table `%v` panic", tbl.Meta().Name)
