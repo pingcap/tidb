@@ -39,6 +39,7 @@ func TestInitLogNoPermission(t *testing.T) {
 	l, _, err := InitAppLogger(conf)
 	if err == nil && os.Geteuid() == 0 {
 		// current user is root, so we can write to the file
+		l.Info("test")
 		err = l.Sync()
 		require.NoError(t, err)
 		require.FileExists(t, tmpDir+"/test.log")
