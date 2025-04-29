@@ -562,12 +562,6 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 	if actualFlags[nmTempDir] {
 		cfg.TempDir = *tempDir
 	}
-	if actualFlags[nmTiCIHost] {
-		cfg.TiCIHost = *ticiHost
-	}
-	if actualFlags[nmTiCIPort] {
-		cfg.TiCIPort = *ticiPort
-	}
 
 	// Log
 	if actualFlags[nmLogLevel] {
