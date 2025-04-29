@@ -595,7 +595,7 @@ import (
 	second                     "SECOND"
 	secondary                  "SECONDARY"
 	secondaryEngine            "SECONDARY_ENGINE"
-	secondary_engine_attribute "SECONDARY_ENGINE_ATTRIBUTE"
+	secondaryEngineAttribute "SECONDARY_ENGINE_ATTRIBUTE"
 	secondaryLoad              "SECONDARY_LOAD"
 	secondaryUnload            "SECONDARY_UNLOAD"
 	security                   "SECURITY"
