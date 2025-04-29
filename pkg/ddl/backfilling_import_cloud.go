@@ -67,32 +67,32 @@ func newCloudImportExecutor(
 	}, nil
 }
 
-func (c *cloudImportExecutor) Init(ctx context.Context) error {
+func (e *cloudImportExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor init subtask exec env")
-	c.m = metrics.RegisteredLightningCommonMetricsForDDL(c.job.ID)
-	ctx = lightningmetric.WithCommonMetric(ctx, c.m)
-	cfg, bd, err := ingest.CreateLocalBackend(ctx, c.store, c.job, false, c.taskConcurrency)
+	e.m = metrics.RegisteredLightningCommonMetricsForDDL(e.job.ID)
+	ctx = lightningmetric.WithCommonMetric(ctx, e.m)
+	cfg, bd, err := ingest.CreateLocalBackend(ctx, e.store, e.job, false, e.taskConcurrency)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	bCtx, err := ingest.NewBackendCtxBuilder(ctx, c.store, c.job).Build(cfg, bd)
+	bCtx, err := ingest.NewBackendCtxBuilder(ctx, e.store, e.job).Build(cfg, bd)
 	if err != nil {
 		bd.Close()
 		return err
 	}
-	c.backend = bd
-	c.backendCtx = bCtx
+	e.backend = bd
+	e.backendCtx = bCtx
 	return nil
 }
 
-func (c *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
+func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("cloud import executor run subtask")
 
-	sm, err := decodeBackfillSubTaskMeta(ctx, c.cloudStoreURI, subtask.Meta)
+	sm, err := decodeBackfillSubTaskMeta(ctx, e.cloudStoreURI, subtask.Meta)
 	if err != nil {
 		return err
 	}
-	local := c.backendCtx.GetLocalBackend()
+	local := e.backendCtx.GetLocalBackend()
 	if local == nil {
 		return errors.Errorf("local backend not found")
 	}
@@ -103,7 +103,7 @@ func (c *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	)
 	switch len(sm.EleIDs) {
 	case 1:
-		for _, idx := range c.indexes {
+		for _, idx := range e.indexes {
 			if idx.ID == sm.EleIDs[0] {
 				currentIdx = idx
 				idxID = idx.ID
@@ -112,15 +112,15 @@ func (c *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 		}
 	case 0:
 		// maybe this subtask is generated from an old version TiDB
-		if len(c.indexes) == 1 {
-			currentIdx = c.indexes[0]
+		if len(e.indexes) == 1 {
+			currentIdx = e.indexes[0]
 		}
-		idxID = c.indexes[0].ID
+		idxID = e.indexes[0].ID
 	default:
 		return errors.Errorf("unexpected EleIDs count %v", sm.EleIDs)
 	}
 
-	_, engineUUID := backend.MakeUUID(c.ptbl.Meta().Name.L, idxID)
+	_, engineUUID := backend.MakeUUID(e.ptbl.Meta().Name.L, idxID)
 
 	all := external.SortedKVMeta{}
 	for _, g := range sm.MetaGroups {
@@ -134,7 +134,7 @@ func (c *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	}
 	err = local.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
-			StorageURI:    c.cloudStoreURI,
+			StorageURI:    e.cloudStoreURI,
 			DataFiles:     sm.DataFiles,
 			StatFiles:     sm.StatFiles,
 			StartKey:      all.StartKey,
@@ -144,7 +144,7 @@ func (c *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			TotalFileSize: int64(all.TotalKVSize),
 			TotalKVCount:  0,
 			CheckHotspot:  true,
-			MemCapacity:   c.GetResource().Mem.Capacity(),
+			MemCapacity:   e.GetResource().Mem.Capacity(),
 		},
 		TS: sm.TS,
 	}, engineUUID)
@@ -160,7 +160,7 @@ func (c *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	}
 
 	if currentIdx != nil {
-		return ingest.TryConvertToKeyExistsErr(err, currentIdx, c.ptbl.Meta())
+		return ingest.TryConvertToKeyExistsErr(err, currentIdx, e.ptbl.Meta())
 	}
 
 	// cannot fill the index name for subtask generated from an old version TiDB
@@ -174,12 +174,12 @@ func (c *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	return kv.ErrKeyExists
 }
 
-func (c *cloudImportExecutor) Cleanup(ctx context.Context) error {
+func (e *cloudImportExecutor) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor clean up subtask env")
-	if c.backendCtx != nil {
-		c.backendCtx.Close()
+	if e.backendCtx != nil {
+		e.backendCtx.Close()
 	}
-	c.backend.Close()
-	metrics.UnregisteredLightningCommonMetricsForDDL(c.job.ID, c.m)
+	e.backend.Close()
+	metrics.UnregisteredLightningCommonMetricsForDDL(e.job.ID, e.m)
 	return nil
 }
