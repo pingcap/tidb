@@ -3049,5 +3049,9 @@ func (e *LLMDDLExec) Next(_ context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	llmAccessor := domain.GetDomain(e.Ctx()).LLMAccessor()
 
-	return llmAccessor.AlterPlatform(e.Ctx(), e.LLMDDLPlan.Name, e.LLMDDLPlan.Key, e.LLMDDLPlan.Value)
+	if e.LLMDDLPlan.Platform {
+		return llmAccessor.AlterPlatform(e.Ctx(), e.LLMDDLPlan.Name, e.LLMDDLPlan.Options)
+	}
+
+	return nil
 }

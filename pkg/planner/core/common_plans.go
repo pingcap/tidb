@@ -276,9 +276,9 @@ type LLMDDLPlan struct {
 	baseSchemaProducer
 
 	Platform bool
+	Model    bool
 	Name     string
-	Key      string
-	Value    string
+	Options  []string
 }
 
 // RecommendIndexPlan represents a plan for recommend index stmt.

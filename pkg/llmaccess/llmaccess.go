@@ -35,7 +35,7 @@ type LLMAccessor interface {
 	// ChatCompletion calls the specified LLM to complete the chat based on input prompt.
 	ChatCompletion(platform, model, prompt string) (response string, err error)
 
-	AlterPlatform(sctx sessionctx.Context, platform, key, val string) error
+	AlterPlatform(sctx sessionctx.Context, platform string, options []string) error
 }
 
 type llmAccessorImpl struct {
@@ -46,11 +46,16 @@ func NewLLMAccessor(sPool util.DestroyableSessionPool) LLMAccessor {
 	return &llmAccessorImpl{sPool: sPool}
 }
 
-func (llm *llmAccessorImpl) AlterPlatform(sctx sessionctx.Context, platform, key, val string) error {
+func (llm *llmAccessorImpl) AlterPlatform(sctx sessionctx.Context, platform string, options []string) error {
 	platform, err := formatPlatform(platform)
 	if err != nil {
 		return err
 	}
+
+	if len(options) == 1 {
+
+	}
+
 	switch strings.ToUpper(key) {
 	case "KEY", "STATUS", "MAX_TOKENS", "TIMEOUT", "EXTRAS":
 	default:

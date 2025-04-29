@@ -6010,10 +6010,10 @@ func (b *PlanBuilder) buildCompactTable(node *ast.CompactTableStmt) (base.Plan, 
 
 func (*PlanBuilder) buildAlterLLM(v *ast.LLMDDLStmt) (base.Plan, error) {
 	p := &LLMDDLPlan{
+		Model:    v.Model,
 		Platform: v.Platform,
 		Name:     v.Name,
-		Key:      v.Key,
-		Value:    v.Value,
+		Options:  v.OptionList,
 	}
 	return p, nil
 }

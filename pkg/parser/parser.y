@@ -16703,7 +16703,7 @@ LLMDDLStmt:
 			Operation:  "ALTER",
 			Platform:   true,
 			Name:       $4,
-			OptionList: []string{"DISABLED"},
+			OptionList: []string{"status", "DISABLED"},
 		}
 	}
 |	"ALTER" "LLM" "PLATFORM" Identifier "ENABLED"
@@ -16712,7 +16712,7 @@ LLMDDLStmt:
 			Operation:  "ALTER",
 			Platform:   true,
 			Name:       $4,
-			OptionList: []string{"ENABLED"},
+			OptionList: []string{"status", "ENABLED"},
 		}
 	}
 |	"ALTER" "LLM" "PLATFORM" Identifier LLMDDLOptionList
