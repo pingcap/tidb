@@ -33,7 +33,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
 	"go.uber.org/multierr"
@@ -242,7 +242,7 @@ func FlattenValues[K comparable, V any](m map[K][]V) []V {
 }
 
 // GetPartitionByName gets the partition ID from the given tableInfo if its name matches
-func GetPartitionByName(tableInfo *model.TableInfo, name ast.CIStr) (int64, error) {
+func GetPartitionByName(tableInfo *model.TableInfo, name pmodel.CIStr) (int64, error) {
 	if tableInfo.Partition == nil {
 		return 0, errors.Errorf("the table %s[id=%d] does not have parition", tableInfo.Name.O, tableInfo.ID)
 	}
