@@ -129,10 +129,13 @@ FROM
 ORDER BY CONVERT(column16 USING GBK) ASC,column17 ASC
 LIMIT 0,
       20;`).Check(testkit.Rows(
-		"Projection 20.00 root  Column#4, Column#5, test.table_test.col17",
-		"└─TopN 20.00 root  Column#6, Column#7, offset:0, count:20",
-		"  └─Projection 10000.00 root  Column#4, Column#5, test.table_test.col17, convert(cast(Column#4, var_string(16777216)), gbk)->Column#6, json_unquote(cast(json_extract(test.table_test.col17, $[0].value), var_string(16777216)))->Column#7",
-		"    └─Projection 10000.00 root  json_extract(test.table_test.col16, $[].optUid)->Column#4, json_unquote(cast(json_extract(test.table_test.col17, $[0].value), var_string(16777216)))->Column#5, test.table_test.col17",
-		"      └─TableReader 10000.00 root  data:TableFullScan",
-		"        └─TableFullScan 10000.00 cop[tikv] table:table_test keep order:false, stats:pseudo"))
+		"Limit 20.00 root  offset:0, count:20",
+		"└─Projection 20.00 root  Column#4, Column#5",
+		"  └─Sort 20.00 root  Column#6, Column#5",
+		"    └─Projection 20.00 root  Column#4, Column#5, convert(cast(Column#4, var_string(16777216)), gbk)->Column#6",
+		"      └─Projection 20.00 root  json_extract(test.table_test.col16, $[].optUid)->Column#4, json_unquote(cast(json_extract(test.table_test.col17, $[0].value), var_string(16777216)))->Column#5",
+		"        └─Limit 20.00 root  offset:0, count:20",
+		"          └─TableReader 20.00 root  data:Limit",
+		"            └─Limit 20.00 cop[tikv]  offset:0, count:20",
+		"              └─TableFullScan 20.00 cop[tikv] table:table_test keep order:false, stats:pseudo"))
 }

@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
@@ -28,6 +29,9 @@ type PushDownTopNOptimizer struct {
 // Optimize implements the base.LogicalOptRule.<0th> interface.
 func (*PushDownTopNOptimizer) Optimize(_ context.Context, p base.LogicalPlan, opt *optimizetrace.LogicalOptimizeOp) (base.LogicalPlan, bool, error) {
 	planChanged := false
+	if !p.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	return p.PushDownTopN(nil, opt), planChanged, nil
 }
 

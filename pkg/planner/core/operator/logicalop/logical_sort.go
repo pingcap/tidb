@@ -94,9 +94,13 @@ func (ls *LogicalSort) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optim
 	if topN == nil {
 		return ls.BaseLogicalPlan.PushDownTopN(nil, opt)
 	} else if topN.IsLimit() {
-		topN.ByItems = ls.ByItems
+		copy(ls.ByItems, topN.ByItems)
 		appendSortPassByItemsTraceStep(ls, topN, opt)
-		return ls.Children()[0].PushDownTopN(topN, opt)
+		child := ls.Children()[0].PushDownTopN(topN, opt)
+		if child == ls.Children()[0] {
+			return ls
+		}
+		return child
 	}
 	// If a TopN is pushed down, this sort is useless.
 	return ls.Children()[0].PushDownTopN(topN, opt)

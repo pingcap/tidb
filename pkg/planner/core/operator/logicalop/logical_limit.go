@@ -115,6 +115,9 @@ func (p *LogicalLimit) PushDownTopN(topNLogicalPlan base.LogicalPlan, opt *optim
 	if topN != nil {
 		return topN.AttachChild(child, opt)
 	}
+	if child == p.Children()[0] {
+		return p
+	}
 	return child
 }
 

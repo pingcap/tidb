@@ -1194,7 +1194,9 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 		}
 		return nil, 0, plannererrors.ErrInternal.GenWithStackByArgs(errMsg)
 	}
-
+	if !logic.SCtx().GetSessionVars().InRestrictedSQL {
+		fmt.Println("wwz")
+	}
 	if err = t.Plan().ResolveIndices(); err != nil {
 		return nil, 0, err
 	}
