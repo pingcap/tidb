@@ -46,14 +46,14 @@ func (s jsonByteSlice) MarshalJSON() ([]byte, error) {
 		return []byte("null"), nil
 	}
 	var b strings.Builder
-	b.Write([]byte("["))
+	b.WriteString("[")
 	for i, v := range s {
 		if i > 0 {
 			b.WriteByte(',')
 		}
 		b.WriteString(strconv.Itoa(int(v)))
 	}
-	b.Write([]byte("]"))
+	b.WriteString("]")
 	return []byte(b.String()), nil
 }
 
