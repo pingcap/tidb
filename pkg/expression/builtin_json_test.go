@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
@@ -118,6 +119,43 @@ func TestJSONUnquote(t *testing.T) {
 		} else {
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "The document root must not be followed by other values")
+		}
+	}
+}
+
+func TestJSONSumCrc32(t *testing.T) {
+	ctx := createContext(t)
+	tbl := []struct {
+		input    any
+		expected any
+		tp       *types.FieldType
+	}{
+		{
+			[]any{int64(-1), int64(2), int64(3)},
+			3101005010,
+			types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).AddFlag(mysql.UnsignedFlag).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).SetArray(true).BuildP(),
+		},
+		{
+			[]any{int64(1), int64(2), int64(3)},
+			4505025631,
+			types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).SetArray(true).BuildP(),
+		},
+		{
+			[]any{"[1, 2, 3]"},
+			nil,
+			types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).SetArray(true).BuildP(),
+		},
+	}
+	for _, tt := range tbl {
+		f, err := BuildJSONSumCrc32FunctionWithCheck(ctx, datumsToConstants(types.MakeDatums(types.CreateBinaryJSON(tt.input)))[0], tt.tp)
+		require.NoError(t, err, tt.input)
+
+		val, _, err := f.EvalInt(ctx, chunk.Row{})
+		if tt.expected != nil {
+			require.NoError(t, err, tt.input)
+			require.EqualValues(t, tt.expected, val)
+		} else {
+			require.Error(t, err, tt.input)
 		}
 	}
 }

@@ -489,6 +489,7 @@ var tokenMap = map[string]int{
 	"JOB":                      job,
 	"JOBS":                     jobs,
 	"JOIN":                     join,
+	"JSON_SUM_CRC32":           jsonSumCrc32,
 	"JSON_ARRAYAGG":            jsonArrayagg,
 	"JSON_OBJECTAGG":           jsonObjectAgg,
 	"JSON":                     jsonType,

@@ -2140,3 +2140,76 @@ func TestAdminCheckGeneratedColumns(t *testing.T) {
 		require.Error(t, err)
 	}
 }
+
+func TestAdminCheckMVIndex(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+
+	executor.CheckTableFastBucketSize.Store(4)
+	executor.LookupCheckThreshold = 1
+
+	type testCase struct {
+		tableSQL    string
+		insertValue string
+	}
+
+	testSQLs := []testCase{
+		{"CREATE TABLE t(i INT, j JSON, INDEX mvi((CAST(j AS UNSIGNED ARRAY))))", `"[%d]"`},
+		{"CREATE TABLE t(i INT, j JSON, UNIQUE INDEX mvi((CAST(j AS UNSIGNED ARRAY))))", `"[%d]"`},
+		{"CREATE TABLE t(i INT PRIMARY KEY, j JSON, INDEX mvi((CAST(j AS UNSIGNED ARRAY))))", `"[%d]"`},
+		{"CREATE TABLE t(i INT PRIMARY KEY, j JSON, UNIQUE INDEX mvi((CAST(j AS UNSIGNED ARRAY))))", `"[%d]"`},
+
+		{"CREATE TABLE t(i INT, j JSON, INDEX mvi((CAST(j->'$.path' AS UNSIGNED ARRAY))))", `'{"path": [%d]}'`},
+		{"CREATE TABLE t(i INT, j JSON, UNIQUE INDEX mvi((CAST(j->'$.path' AS UNSIGNED ARRAY))))", `'{"path": [%d]}'`},
+		{"CREATE TABLE t(i INT PRIMARY KEY, j JSON, INDEX mvi((CAST(j->'$.path' AS UNSIGNED ARRAY))))", `'{"path": [%d]}'`},
+		{"CREATE TABLE t(i INT PRIMARY KEY, j JSON, UNIQUE INDEX mvi((CAST(j->'$.path' AS UNSIGNED ARRAY))))", `'{"path": [%d]}'`},
+	}
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	for _, sql := range testSQLs {
+		tk.MustExec("DROP TABLE IF EXISTS t")
+		tk.MustExec(sql.tableSQL)
+
+		for i := range 16 {
+			tk.MustExec(fmt.Sprintf("INSERT INTO t(i, j) VALUES (%d, %s)", i+1, fmt.Sprintf(sql.insertValue, i+1)))
+		}
+
+		tk.MustExec("ADMIN CHECK TABLE t")
+
+		// Make some corrupted index. Build the index information.
+		sctx := mock.NewContext()
+		sctx.Store = store
+		ctx := sctx.GetTableCtx()
+		is := domain.InfoSchema()
+		dbName := ast.NewCIStr("test")
+		tblName := ast.NewCIStr("t")
+		tbl, err := is.TableByName(context.Background(), dbName, tblName)
+		require.NoError(t, err)
+		tblInfo := tbl.Meta()
+		idxInfo := tblInfo.Indices[0]
+		tk.Session().GetSessionVars().IndexLookupSize = 3
+		tk.Session().GetSessionVars().MaxChunkSize = 3
+
+		// Simulate inconsistent index column
+		indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(0), kv.IntHandle(1), nil)
+		require.NoError(t, err)
+		err = txn.Commit(context.Background())
+		require.NoError(t, err)
+
+		for _, fastCheck := range []bool{false, true} {
+			tk.MustExec(fmt.Sprintf("set tidb_enable_fast_table_check = %v", fastCheck))
+			err = tk.ExecToErr("admin check table t")
+			require.Error(t, err)
+
+			// The output of error message is different whether fast check is enabled,
+			// and we just check error message for fast check.
+			if fastCheck {
+				require.EqualError(t, err, "[admin:8223]data inconsistency in table: t, index: mvi, handle: 1, index-values:\"handle: 1, values: [KindMysqlJSON [0, 1]]\" != record-values:\"handle: 1, values: [KindMysqlJSON [1]]\"")
+			}
+		}
+	}
+}
