@@ -36,6 +36,9 @@ func TestInitLogNoPermission(t *testing.T) {
 	err = os.Chmod(tmpDir, 0)
 	require.NoError(t, err)
 
+	if os.Geteuid() == 0 {
+		t.Skip("skipping test as root user")
+	}
 	_, _, err = InitAppLogger(conf)
 	require.ErrorContains(t, err, "permission denied")
 }
