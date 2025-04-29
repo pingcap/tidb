@@ -356,6 +356,8 @@
       "/cgo/": "no need to vet cgo code"
     },
     "only_files": {
+      "//br/": "br code",
+      "pkg/br/": "br code",
       "pkg/util/": "util code",
       "pkg/workloadlearning": "workloadlearning code",
       "pkg/planner/core/generator/hash64_equals": "pkg/planner/core/generator/hash64_equals/ code",
