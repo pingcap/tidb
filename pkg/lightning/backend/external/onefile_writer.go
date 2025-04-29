@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -64,7 +65,7 @@ type OneFileWriter struct {
 	pivotKey   []byte
 	pivotValue []byte
 	// number of key that duplicate with pivotKey, include pivotKey itself, so it
-	// always >= 1 after init.
+	// always >= 1 after pivotKey is set.
 	currDupCnt int
 	// below fields are only used when onDup is OnDuplicateKeyRecord.
 	recordedDupCnt int
@@ -327,6 +328,7 @@ func (w *OneFileWriter) closeImpl(ctx context.Context) (err error) {
 
 // caller should make sure the buf is large enough to hold the encoded data.
 func encodeToBuf(buf, key, value []byte) {
+	intest.Assert(len(buf) == lengthBytes*2+len(key)+len(value))
 	keyLen := len(key)
 	binary.BigEndian.AppendUint64(buf[:0], uint64(keyLen))
 	binary.BigEndian.AppendUint64(buf[lengthBytes:lengthBytes], uint64(len(value)))
