@@ -24,7 +24,11 @@
       {
         "Start": 800,
         "End": 900,
+<<<<<<< HEAD
         "Count": 735.504166655054
+=======
+        "Count": 782.754166655054
+>>>>>>> 36e39785ab1 (Planner: Single col out of range use original type (#55600))
       },
       {
         "Start": 900,
@@ -79,7 +83,11 @@
       {
         "Start": 800,
         "End": 1000,
+<<<<<<< HEAD
         "Count": 1193.696869573942
+=======
+        "Count": 1240.946869573942
+>>>>>>> 36e39785ab1 (Planner: Single col out of range use original type (#55600))
       },
       {
         "Start": 900,
@@ -104,7 +112,11 @@
       {
         "Start": 200,
         "End": 400,
+<<<<<<< HEAD
         "Count": 1237.5288209899081
+=======
+        "Count": 1182.0288209899081
+>>>>>>> 36e39785ab1 (Planner: Single col out of range use original type (#55600))
       },
       {
         "Start": 200,
@@ -3884,18 +3896,36 @@
                       {
                         "github.com/pingcap/tidb/pkg/statistics.(*Histogram).OutOfRangeRowCount": [
                           {
-                            "lDatum": "KindBytes \\x01",
+                            "lDatum": "KindMinNotNull <nil>",
                             "modifyCount": 100,
+<<<<<<< HEAD
                             "rDatum": "KindBytes \\x03\\x7f\\xff\\xff\\xff\\xff\\xff\\xfa$"
+=======
+                            "rDatum": "KindInt64 -1500",
+                            "realtimeRowCount": 3080
+>>>>>>> 36e39785ab1 (Planner: Single col out of range use original type (#55600))
                           },
                           {
                             "commonPrefix": 0,
-                            "lScalar": 72057594037927940,
-                            "rScalar": 252201579132747780,
+                            "lScalar": -1.7976931348623157e+308,
+                            "rScalar": -1500,
                             "unsigned": false
                           },
                           {
+<<<<<<< HEAD
                             "Result": 0
+=======
+                            "boundL": -2997,
+                            "boundR": 2997,
+                            "histL": -999,
+                            "histR": 999,
+                            "lPercent": 0.5613744375005636,
+                            "rPercent": 0,
+                            "rowCount": 555.760693125558
+                          },
+                          {
+                            "Result": 100
+>>>>>>> 36e39785ab1 (Planner: Single col out of range use original type (#55600))
                           }
                         ]
                       },
