@@ -286,8 +286,12 @@ func (e *HashAggExec) Close() error {
 		}
 		channel.Clear(e.finalOutputCh)
 		e.executed = false
-		if e.memTracker != nil && e.memTracker.BytesConsumed() > 0 {
-			e.memTracker.ReplaceBytesUsed(0)
+		if e.memTracker != nil {
+			if e.memTracker.BytesConsumed() >= 0 {
+				e.memTracker.ReplaceBytesUsed(0)
+			} else {
+				logutil.BgLogger().Warn("Memory tracking is inaccurate", zap.Int64(e.memTracker.BytesConsumed()))
+			}
 		}
 	}
 	return e.baseExecutor.Close()
