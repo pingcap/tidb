@@ -1191,6 +1191,7 @@ func physicalOptimize(logic base.LogicalPlan, planCounter *base.PlanCounterTp) (
 		}
 		return nil, 0, plannererrors.ErrInternal.GenWithStackByArgs(errMsg)
 	}
+
 	if err = t.Plan().ResolveIndices(); err != nil {
 		return nil, 0, err
 	}
