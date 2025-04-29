@@ -223,7 +223,7 @@ func (htc *hashTableContext) tryToSpill(rowTables []*rowTable, spillHelper *hash
 
 func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber uint, spillHelper *hashJoinSpillHelper) (int, error) {
 	rowTables := make([]*rowTable, partitionNumber)
-	for i := range int(partitionNumber) {
+	for i := range partitionNumber {
 		rowTables[i] = newRowTable()
 	}
 
@@ -251,7 +251,7 @@ func (htc *hashTableContext) mergeRowTablesToHashTable(partitionNumber uint, spi
 	}
 
 	taggedBits := uint8(maxTaggedBits)
-	for i := range int(partitionNumber) {
+	for i := range partitionNumber {
 		for _, seg := range rowTables[i].segments {
 			taggedBits = min(taggedBits, seg.taggedBits)
 		}
@@ -795,7 +795,7 @@ func (e *HashJoinV2Exec) initializeForProbe() {
 	// set buildSuccess to false by default, it will be set to true if build finishes successfully
 	e.ProbeSideTupleFetcher.buildSuccess = false
 
-	for i := uint(0); i < e.Concurrency; i++ {
+	for i := range e.Concurrency {
 		e.ProbeWorkers[i].initializeForProbe(e.ProbeSideTupleFetcher.probeChkResourceCh, e.ProbeSideTupleFetcher.probeResultChs[i], e)
 		e.ProbeWorkers[i].JoinProbe.ResetProbeCollision()
 	}
@@ -835,7 +835,7 @@ func (e *HashJoinV2Exec) startProbeJoinWorkers(ctx context.Context) {
 		e.ProbeSideTupleFetcher.buildSuccess = true
 	}
 
-	for i := uint(0); i < e.Concurrency; i++ {
+	for i := range e.Concurrency {
 		workerID := i
 		e.workerWg.RunWithRecover(func() {
 			defer trace.StartRegion(ctx, "HashJoinWorker").End()
@@ -886,7 +886,7 @@ func (e *HashJoinV2Exec) waitJoinWorkers(start time.Time) {
 	if e.ProbeSideTupleFetcher.buildSuccess {
 		// only scan row table if build is successful
 		if e.ProbeWorkers[0] != nil && e.ProbeWorkers[0].JoinProbe.NeedScanRowTable() {
-			for i := uint(0); i < e.Concurrency; i++ {
+			for i := range e.Concurrency {
 				var workerID = i
 				e.workerWg.RunWithRecover(func() {
 					e.ProbeWorkers[workerID].scanRowTableAfterProbeDone()
@@ -1436,7 +1436,7 @@ func handleErr(err error, errCh chan error, doneCh chan struct{}) {
 
 func (e *HashJoinV2Exec) splitAndAppendToRowTable(srcChkCh chan *chunk.Chunk, waitForController chan struct{}, fetcherAndWorkerSyncer *sync.WaitGroup, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) {
 	wg.Add(int(e.Concurrency))
-	for i := uint(0); i < e.Concurrency; i++ {
+	for i := range e.Concurrency {
 		workIndex := i
 		e.workerWg.RunWithRecover(
 			func() {
@@ -1474,7 +1474,7 @@ func (e *HashJoinV2Exec) createBuildTasks(totalSegmentCnt int, wg *sync.WaitGrou
 }
 
 func (e *HashJoinV2Exec) buildHashTable(buildTaskCh chan *buildTask, wg *sync.WaitGroup, errCh chan error, doneCh chan struct{}) {
-	for i := uint(0); i < e.Concurrency; i++ {
+	for i := range e.Concurrency {
 		wg.Add(1)
 		workID := i
 		e.workerWg.RunWithRecover(
