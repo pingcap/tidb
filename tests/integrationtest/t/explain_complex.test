@@ -195,3 +195,30 @@ explain select Tab_A.name AAA,Tab_B.name BBB,Tab_A.amt Aamt, Tab_C.amt Bamt,IFNU
 select Tab_A.name AAA,Tab_B.name BBB,Tab_A.amt Aamt, Tab_C.amt Bamt,IFNULL(Tab_C.amt, 0) FROM Tab_A left join Tab_B on Tab_A.bid=Tab_B.id left join Tab_C on Tab_A.cid=Tab_C.id and Tab_A.type='01' where Tab_A.num=112;
 
 set @@sql_mode=default;
+
+# https://github.com/pingcap/tidb/issues/50080
+use test;
+drop table if exists test;
+CREATE TABLE `test` (
+  `ecif_party_no` varchar(20) DEFAULT NULL,
+  `busi_cust_no` varchar(20) DEFAULT NULL,
+  `busi_series_cd` varchar(2) DEFAULT NULL,
+  `org_belong` varchar(15) DEFAULT NULL,
+  `party_no` varchar(20) DEFAULT NULL,
+  `rela_status_cd` varchar(2) DEFAULT NULL,
+  `rela_status_desc` varchar(20) DEFAULT NULL,
+  `created_by` varchar(100) DEFAULT 'ecifdata',
+  `created_date` datetime DEFAULT CURRENT_TIMESTAMP,
+  `updated_by` varchar(100) DEFAULT 'ecifdata',
+  `updated_date` datetime DEFAULT CURRENT_TIMESTAMP,
+  `id_tp00_cust_no_rela` varchar(40) NOT NULL DEFAULT uuid(),
+  KEY `IX_CUST_RELA_DATE` (`updated_date`),
+  KEY `IX_TPCNR_BCN` (`busi_cust_no`),
+  KEY `IX_TPCNR_EPN` (`ecif_party_no`),
+  KEY `IX_TPCNR_PAN` (`party_no`),
+  PRIMARY KEY (`id_tp00_cust_no_rela`) /*T![clustered_index] NONCLUSTERED */
+);
+analyze table test all columns;
+load stats 's/issue_50080.json';
+explain format='brief' select * from test where updated_date > '2023-12-31 23:50:00' and updated_date < '2023-12-31 23:59:59';
+explain format='brief' select * from test where updated_date > '2023-12-31 23:50:00' and updated_date < '2024-01-01 00:00:00';
