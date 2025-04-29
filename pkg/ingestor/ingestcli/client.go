@@ -22,25 +22,56 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 )
+
+type jsonByteSlice []byte
+
+// MarshalJSON implements the json.Marshaler interface.
+// nextgen TiKV is using Vector<u8> to store the keys, when marshalling to json,
+// it's a json array, while in golang, it will be a base64 encoded string.
+func (s jsonByteSlice) MarshalJSON() ([]byte, error) {
+	if s == nil {
+		return []byte("null"), nil
+	}
+	var b strings.Builder
+	b.Write([]byte("["))
+	for i, v := range s {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(strconv.Itoa(int(v)))
+	}
+	b.Write([]byte("]"))
+	return []byte(b.String()), nil
+}
 
 type nextGenResp struct {
 	SstMeta nextGenSSTMeta `json:"sst_meta"`
 }
 
 type nextGenSSTMeta struct {
-	ID         int64 `json:"id"`
-	Smallest   []int `json:"smallest"`
-	Biggest    []int `json:"biggest"`
-	MetaOffset int   `json:"meta-offset"`
-	CommitTs   int   `json:"commit-ts"`
+	ID         int64         `json:"id"`
+	Smallest   jsonByteSlice `json:"smallest"`
+	Biggest    jsonByteSlice `json:"biggest"`
+	MetaOffset int           `json:"meta-offset"`
+	CommitTs   int           `json:"commit-ts"`
+}
+
+func (m *nextGenSSTMeta) String() string {
+	return fmt.Sprintf("{ID: %d, Smallest: %s, Biggest: %s, CommitTs: %d}",
+		m.ID, redact.Key(m.Smallest), redact.Key(m.Biggest), m.CommitTs)
 }
 
 var _ WriteClient = &writeClient{}
@@ -200,6 +231,7 @@ func (c *client) Ingest(ctx context.Context, in *IngestRequest) error {
 		store.GetStatusAddress(), c.clusterID, ri.Id, ri.RegionEpoch.Version)
 
 	sstMeta := in.WriteResp.nextGenSSTMeta
+	logutil.BgLogger().Debug("calling ingest", in.Region.ToZapFields(), zap.Stringer("sstMeta", sstMeta))
 	data, err := json.Marshal(sstMeta)
 	if err != nil {
 		return errors.Trace(err)

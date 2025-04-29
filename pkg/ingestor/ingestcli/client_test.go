@@ -30,8 +30,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestJsonByteSlice(t *testing.T) {
+	slice := jsonByteSlice("\x03\x02\x00\x02")
+	data, err := json.Marshal(slice)
+	require.NoError(t, err)
+	require.Equal(t, `[3,2,0,2]`, string(data))
+}
+
 func TestWriteClientWriteChunk(t *testing.T) {
-	sstMeta := nextGenResp{nextGenSSTMeta{ID: 1, Smallest: []int{0}, Biggest: []int{1}, MetaOffset: 1, CommitTs: 1}}
+	sstMeta := nextGenResp{nextGenSSTMeta{ID: 1, Smallest: []byte{0}, Biggest: []byte{1}, MetaOffset: 1, CommitTs: 1}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
