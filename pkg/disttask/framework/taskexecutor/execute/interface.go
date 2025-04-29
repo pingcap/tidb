@@ -66,6 +66,12 @@ type StepExecutor interface {
 // SubtaskSummary contains the summary of a subtask.
 type SubtaskSummary struct {
 	RowCount int64
+
+	TotalRowCount int64
+
+	ProcessedBytes int64
+
+	TotalBytes int64
 }
 
 // StepExecFrameworkInfo is an interface that should be embedded into the

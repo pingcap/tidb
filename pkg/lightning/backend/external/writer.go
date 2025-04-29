@@ -162,6 +162,13 @@ type OnCloseFunc func(summary *WriterSummary)
 // dummyOnCloseFunc is a dummy OnCloseFunc.
 func dummyOnCloseFunc(*WriterSummary) {}
 
+// OnFlushFunc is the callback function when the writer flushes kvs
+// It's used to calculate task progress.
+type OnFlushFunc func(written int)
+
+// dummyOnFlushFunc is a dummy OnWriteFileFunc.
+func dummyOnFlushFunc(int) {}
+
 // WriterBuilder builds a new Writer.
 type WriterBuilder struct {
 	groupOffset     int
@@ -170,6 +177,7 @@ type WriterBuilder struct {
 	propSizeDist    uint64
 	propKeysDist    uint64
 	onClose         OnCloseFunc
+	onFlush         OnFlushFunc
 	keyDupeEncoding bool
 	tikvCodec       tikv.Codec
 	onDup           engineapi.OnDuplicateKey
@@ -183,6 +191,7 @@ func NewWriterBuilder() *WriterBuilder {
 		propSizeDist: defaultPropSizeDist,
 		propKeysDist: defaultPropKeysDist,
 		onClose:      dummyOnCloseFunc,
+		onFlush:      dummyOnFlushFunc,
 	}
 }
 
@@ -213,6 +222,15 @@ func (b *WriterBuilder) SetOnCloseFunc(onClose OnCloseFunc) *WriterBuilder {
 		onClose = dummyOnCloseFunc
 	}
 	b.onClose = onClose
+	return b
+}
+
+// SetOnFlushFunc sets the callback function when a writer is closed.
+func (b *WriterBuilder) SetOnFlushFunc(onFlush OnFlushFunc) *WriterBuilder {
+	if onFlush == nil {
+		onFlush = dummyOnFlushFunc
+	}
+	b.onFlush = onFlush
 	return b
 }
 
@@ -281,6 +299,7 @@ func (b *WriterBuilder) Build(
 		writerID:       writerID,
 		groupOffset:    b.groupOffset,
 		onClose:        b.onClose,
+		onWrite:        b.onFlush,
 		onDup:          b.onDup,
 		closed:         false,
 		multiFileStats: make([]MultipleFilesStat, 0),
@@ -411,6 +430,7 @@ type Writer struct {
 	kvSize      int64
 
 	onClose OnCloseFunc
+	onWrite OnFlushFunc
 	onDup   engineapi.OnDuplicateKey
 	closed  bool
 
@@ -620,6 +640,8 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			Files: []string{dupFile},
 		})
 	}
+
+	w.onWrite(len(w.kvLocations))
 
 	w.kvLocations = w.kvLocations[:0]
 	w.kvSize = 0

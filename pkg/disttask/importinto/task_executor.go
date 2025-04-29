@@ -63,6 +63,8 @@ type importStepExecutor struct {
 	perIndexKVMemSizePerCon uint64
 	indexBlockSize          int
 
+	subtaskID int32
+
 	importCtx    context.Context
 	importCancel context.CancelFunc
 	wg           sync.WaitGroup
@@ -169,6 +171,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		SortedIndexMetas: make(map[int64]*external.SortedKVMeta),
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
+	s.subtaskID = subtaskMeta.ID
 
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
 	op := newEncodeAndSortOperator(ctx, s, sharedVars, subtask.ID, int(s.GetResource().CPU.Capacity()))
@@ -205,8 +208,18 @@ outer:
 	return s.onFinished(ctx, subtask)
 }
 
-func (*importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
-	return nil
+func (s *importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
+	rows := int64(0)
+
+	v, ok := s.sharedVars.Load(s.subtaskID)
+	if ok {
+		sv, _ := v.(*SharedVars)
+		rows = sv.writtenRows.Load()
+	}
+
+	return &execute.SubtaskSummary{
+		RowCount: rows,
+	}
 }
 
 func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {
@@ -306,6 +319,7 @@ type mergeSortStepExecutor struct {
 	// 	max(max-merged-files * max-file-size / max-part-num(10000), min-part-size)
 	dataKVPartSize  int64
 	indexKVPartSize int64
+	writtenRows     atomic.Int64
 }
 
 var _ execute.StepExecutor = &mergeSortStepExecutor{}
@@ -331,6 +345,7 @@ func (m *mergeSortStepExecutor) Init(ctx context.Context) error {
 }
 
 func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
+	m.writtenRows.Store(0)
 	sm := &MergeSortStepMeta{}
 	err = json.Unmarshal(subtask.Meta, sm)
 	if err != nil {
@@ -355,6 +370,9 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		defer mu.Unlock()
 		m.subtaskSortedKVMeta.MergeSummary(summary)
 	}
+	onWritten := func(written int) {
+		m.writtenRows.Add(int64(written))
+	}
 
 	prefix := subtaskPrefix(m.taskID, subtask.ID)
 
@@ -370,8 +388,10 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		prefix,
 		getKVGroupBlockSize(sm.KVGroup),
 		onClose,
+		onWritten,
 		int(m.GetResource().CPU.Capacity()),
-		false)
+		false,
+	)
 	logger.Info(
 		"merge sort finished",
 		zap.Uint64("total-kv-size", m.subtaskSortedKVMeta.TotalKVSize),
@@ -412,6 +432,12 @@ func (m *mergeSortStepExecutor) Cleanup(ctx context.Context) (err error) {
 		m.controller.Close()
 	}
 	return m.BaseStepExecutor.Cleanup(ctx)
+}
+
+func (m *mergeSortStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
+	return &execute.SubtaskSummary{
+		RowCount: m.writtenRows.Load(),
+	}
 }
 
 type writeAndIngestStepExecutor struct {

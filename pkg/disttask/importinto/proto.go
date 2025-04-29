@@ -128,8 +128,9 @@ type SharedVars struct {
 	DataEngine    *backend.OpenedEngine
 	IndexEngine   *backend.OpenedEngine
 
-	mu       sync.Mutex
-	Checksum *verification.KVGroupChecksum
+	mu          sync.Mutex
+	Checksum    *verification.KVGroupChecksum
+	writtenRows atomic.Int64
 
 	SortedDataMeta *external.SortedKVMeta
 	// SortedIndexMetas is a map from index id to its sorted kv meta.
