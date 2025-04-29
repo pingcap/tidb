@@ -3317,7 +3317,7 @@ func exportSet(bits int64, on, off, separator string, numberOfBits int64) string
 		} else {
 			result += off
 		}
-		if i < uint64(numberOfBits)-1 {
+		if i <= numberOfBits {
 			result += separator
 		}
 	}
