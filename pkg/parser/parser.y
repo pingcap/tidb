@@ -16702,6 +16702,16 @@ LLMDDLStmt:
 			Value:     "DISABLED",
 		}
 	}
+|	"ALTER" "LLM" "PLATFORM" identifier "ENABLED"
+	{
+		$$ = &ast.LLMDDLStmt{
+			Operation: "ALTER",
+			Platform:  true,
+			Name:      $4,
+			Key:       "status",
+			Value:     "ENABLED",
+		}
+	}
 |	"ALTER" "LLM" "PLATFORM" identifier identifier identifier
 	{
 		$$ = &ast.LLMDDLStmt{

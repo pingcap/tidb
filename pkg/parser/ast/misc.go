@@ -4289,13 +4289,13 @@ func (n *LLMDDLStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(" PLATFORM ")
 	}
 
+	ctx.WritePlain(n.Name)
+	ctx.WritePlain(" ")
 	if n.Value == "ENABLED" || n.Value == "DISABLED" {
 		ctx.WriteKeyWord(n.Value)
 		return nil
 	}
 
-	ctx.WritePlain(n.Name)
-	ctx.WritePlain(" ")
 	ctx.WritePlain(n.Key)
 	if n.Value != "" {
 		ctx.WritePlain(" ")
