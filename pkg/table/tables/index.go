@@ -552,7 +552,7 @@ func (c *index) Exist(ec errctx.Context, loc *time.Location, txn kv.Transaction,
 			if err != nil {
 				return false, nil, err
 			}
-			if dupHandle != nil && !dupHandle.Equal(h) {
+			if dupHandle == nil || !dupHandle.Equal(h) {
 				return false, nil, nil
 			}
 			continue
