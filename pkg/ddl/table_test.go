@@ -850,7 +850,7 @@ func TestRefreshMeta(t *testing.T) {
 	dbInfo, ok := domain.InfoSchema().SchemaByName(ast.NewCIStr("test"))
 	require.True(t, ok)
 	t1TableInfo := getClonedTableInfoFromDomain(t, "test", "t1", domain)
-	// update t1 table info's name to t2 by txn and
+	// update t1 table name to t2 by txn
 	t1TableInfo.Name = ast.NewCIStr("t2")
 	updateTableMeta(t, store, dbInfo.ID, t1TableInfo)
 	t2TableInfo := testutil.GetTableInfoByTxn(t, store, dbInfo.ID, t1TableInfo.ID)

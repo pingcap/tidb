@@ -323,9 +323,9 @@ func TestTableModeWithRefreshMeta(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, dbInfo)
 	ntInfo, ptInfo := getClonedTableInfoFromDomain(t, "test", "nt", domain), getClonedTableInfoFromDomain(t, "test", "pt", domain)
-	// exchange non-partition table ID with partition ID
+	// change non-partition table ID to partition ID
 	partID := ptInfo.Partition.Definitions[0].ID
-	exchangeTablePartitionID(t, &store, dbInfo.ID, ntInfo, ptInfo, "p10")
+	updateTableIDWithPartitionID(t, &store, dbInfo.ID, ntInfo, ptInfo, "p10")
 	ntInfo = testutil.GetTableInfoByTxn(t, store, dbInfo.ID, ntInfo.ID)
 	require.Equal(t, partID, ntInfo.ID)
 	// set table mode failure before refresh meta
@@ -341,7 +341,8 @@ func TestTableModeWithRefreshMeta(t *testing.T) {
 	tk.MustExec("select * from nt")
 }
 
-func exchangeTablePartitionID(t *testing.T, store *kv.Storage, dbID int64, ntInfo, ptInfo *model.TableInfo, partName string) {
+// updateTableIDWithPartitionID update table ID to partition ID and recreate table.
+func updateTableIDWithPartitionID(t *testing.T, store *kv.Storage, dbID int64, ntInfo, ptInfo *model.TableInfo, partName string) {
 	_, partDef, err := getPartitionDef(ptInfo, partName)
 	require.NoError(t, err)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
