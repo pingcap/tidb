@@ -357,6 +357,7 @@
     },
     "only_files": {
       "pkg/bindinfo/": "bindinfo code",
+      "pkg/executor/": "util code",
       "pkg/util/": "util code",
       "pkg/workloadlearning": "workloadlearning code",
       "pkg/planner/core/generator/hash64_equals": "pkg/planner/core/generator/hash64_equals/ code",
