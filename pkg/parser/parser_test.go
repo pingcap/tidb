@@ -7895,6 +7895,20 @@ func TestSecondaryEngineAttribute(t *testing.T) {
 				"PARTITION `p0` VALUES LESS THAN (10) SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"partition_value\"}')",
 		},
 
+		// Valid: SECONDARY_ENGINE_ATTRIBUTE for tablespaces
+		{
+			"CREATE TABLE t (id INT) TABLESPACE ts1 SECONDARY_ENGINE_ATTRIBUTE='{\"key\":\"value\"}'",
+			true,
+			"CREATE TABLE `t` (`id` INT) TABLESPACE = `ts1` SECONDARY_ENGINE_ATTRIBUTE = '{\"key\":\"value\"}'",
+		},
+
+		// Valid: SECONDARY_ENGINE_ATTRIBUTE for index options
+		{
+			"CREATE TABLE t (id INT,INDEX idx (id) INVISIBLE SECONDARY_ENGINE_ATTRIBUTE='{\"key1\":\"value1\"}')",
+			true,
+			"CREATE TABLE `t` (`id` INT,INDEX `idx`(`id`) INVISIBLE SECONDARY_ENGINE_ATTRIBUTE = '{\"key1\":\"value1\"}')",
+		},
+
 		// Missing value for SECONDARY_ENGINE_ATTRIBUTE at Partition-level
 		{
 			"CREATE TABLE t (id INT) PARTITION BY RANGE (id) (" +
@@ -7910,6 +7924,20 @@ func TestSecondaryEngineAttribute(t *testing.T) {
 			"",
 		},
 
+		// Missing value for SECONDARY_ENGINE_ATTRIBUTE for tablespaces
+		{
+			"CREATE TABLE t (id INT) TABLESPACE ts1 SECONDARY_ENGINE_ATTRIBUTE=",
+			false,
+			"",
+		},
+
+		// Missing value for SECONDARY_ENGINE_ATTRIBUTE in index options
+		{
+			"CREATE TABLE t (id INT, INDEX idx (id) SECONDARY_ENGINE_ATTRIBUTE=)",
+			false,
+			"",
+		},
+
 		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE at Partition-level
 		{
 			"CREATE TABLE t (id INT) PARTITION BY RANGE (id) (" +
@@ -7921,6 +7949,20 @@ func TestSecondaryEngineAttribute(t *testing.T) {
 		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE at Table-level
 		{
 			"CREATE TABLE t (id INT) SECONDARY_ENGINE_ATTRIBUTE",
+			false,
+			"",
+		},
+
+		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE for tablespaces
+		{
+			"CREATE TABLE t (id INT) TABLESPACE ts1 SECONDARY_ENGINE_ATTRIBUTE",
+			false,
+			"",
+		},
+
+		// Invalid syntax for SECONDARY_ENGINE_ATTRIBUTE in index options
+		{
+			"CREATE TABLE t (id INT, INDEX idx (id) SECONDARY_ENGINE_ATTRIBUTE)",
 			false,
 			"",
 		},

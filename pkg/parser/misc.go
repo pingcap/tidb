@@ -370,7 +370,7 @@ var tokenMap = map[string]int{
 	"ENGINE":                     engine,
 	"ENGINES":                    engines,
 	"ENGINE_ATTRIBUTE":           engine_attribute,
-	"SECONDARY_ENGINE_ATTRIBUTE": secondary_engine_attribute,
+	"SECONDARY_ENGINE_ATTRIBUTE": secondaryEngineAttribute,
 	"ENUM":                       enum,
 	"ERROR":                      errorKwd,
 	"ERRORS":                     identSQLErrors,

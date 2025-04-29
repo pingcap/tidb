@@ -730,14 +730,16 @@ const (
 type IndexOption struct {
 	node
 
-	KeyBlockSize uint64
-	Tp           IndexType
-	Comment      string
-	ParserName   CIStr
-	Visibility   IndexVisibility
-	PrimaryKeyTp PrimaryKeyType
-	Global       bool
-	SplitOpt     *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
+	KeyBlockSize        uint64
+	Tp                  IndexType
+	Comment             string
+	ParserName          CIStr
+	Visibility          IndexVisibility
+	PrimaryKeyTp        PrimaryKeyType
+	Global              bool
+	SplitOpt            *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
+	IndexOptionComment  string
+	SecondaryEngineAttr string
 }
 
 // IsEmpty is true if only default options are given
@@ -848,6 +850,17 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 			return err
 		}
 	}
+
+	if n.SecondaryEngineAttr != "" {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		ctx.WriteKeyWord("SECONDARY_ENGINE_ATTRIBUTE")
+		ctx.WritePlain(" = ")
+		ctx.WriteString(n.SecondaryEngineAttr)
+		hasPrevOption = true
+	}
+
 	return nil
 }
 
