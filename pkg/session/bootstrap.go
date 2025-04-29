@@ -791,7 +791,6 @@ const (
 
 	// CreateTiDBLLMPlatformTable is a table to store LLM platform information.
 	CreateTiDBLLMPlatformTable = `CREATE TABLE IF NOT EXISTS mysql.llm_platform (
-		id int NOT NULL AUTO_INCREMENT PRIMARY KEY,
 		name varchar(64) NOT NULL,
 		base_url varchar(255) NOT NULL,
 		host varchar(255) NOT NULL,
@@ -803,7 +802,8 @@ const (
 		max_tokens bigint(20) NULL DEFAULT NULL,
 		timeout decimal(10, 2) NULL DEFAULT NULL,
 		status varchar(64) NOT NULL,
-		extras json NULL DEFAULT NULL);`
+		extras json NULL DEFAULT NULL,
+		unique key(name));`
 	// TODO: unique key on name?
 	// TODO: can we remove host? host and name are similar?
 	InsertOpenAIPlatform = `insert into mysql.llm_platform
