@@ -7857,7 +7857,7 @@ func TestAlterLLM(t *testing.T) {
 	table := []testCase{
 		{"ALTER LLM PLATFORM openai k1 v1", true, "ALTER LLM PLATFORM openai k1 v1"},
 		{"ALTER LLM PLATFORM OPENAI k1 v1", true, "ALTER LLM PLATFORM OPENAI k1 v1"},
-		{"ALTER LLM PLATFORM OPENAI xx", true, "ALTER LLM PLATFORM OPENAI xx"},
+		{"ALTER LLM PLATFORM OPENAI PLATFORM", true, "x"},
 	}
 
 	RunTest(t, table, false)

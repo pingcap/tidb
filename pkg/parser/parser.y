@@ -16702,13 +16702,14 @@ LLMDDLStmt:
 			Value:     $6,
 		}
 	}
-|	"ALTER" "LLM" "PLATFORM" identifier identifier
+|	"ALTER" "LLM" "PLATFORM" identifier "PLATFORM"
 	{
 		$$ = &ast.LLMDDLStmt{
 			Operation: "ALTER",
 			Platform:  true,
 			Name:      $4,
-			Key:       $5,
+			Key:       "status",
+			Value:     "DISABLED"
 		}
 	}
 
