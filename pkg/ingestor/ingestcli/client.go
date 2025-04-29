@@ -156,7 +156,7 @@ func (w *writeClient) Recv() (*WriteResponse, error) {
 		return nil, errors.Trace(err)
 	}
 	w.wg.Wait()
-	return &WriteResponse{nextGenSSTMeta: w.sstMeta}, nil
+	return &WriteResponse{nextGenSSTMeta: w.sstMeta}, w.cause(nil)
 }
 
 func (w *writeClient) Close() {

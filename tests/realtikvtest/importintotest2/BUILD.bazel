@@ -11,6 +11,7 @@ go_test(
     flaky = True,
     race = "on",
     deps = [
+        "//pkg/config/kerneltype",
         "//pkg/disttask/framework/testutil",
         "//pkg/domain",
         "//pkg/executor/importer",
