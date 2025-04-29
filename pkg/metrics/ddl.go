@@ -18,10 +18,12 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"testing"
 
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/stretchr/testify/require"
 )
 
 var (
@@ -299,4 +301,17 @@ func UnregisteredLightningCommonMetricsForDDL(jobID int64, metrics *metric.Commo
 	defer mu.Unlock()
 	metrics.UnregisterFrom(prometheus.DefaultRegisterer)
 	delete(registeredJob, jobID)
+}
+
+// CheckDDLMetricsLeakageForTest ensure the metrics are unregistered after adding index
+func CheckDDLMetricsLeakageForTest(t *testing.T) {
+	mu.Lock()
+	defer mu.Unlock()
+	if len(registeredJob) > 0 {
+		keys := make([]string, 0, len(registeredJob))
+		for k := range registeredJob {
+			keys = append(keys, strconv.FormatInt(k, 10))
+		}
+		require.FailNow(t, "registeredJob map is not empty, contains job id: "+strings.Join(keys, ","))
+	}
 }

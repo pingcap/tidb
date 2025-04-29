@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -94,6 +95,17 @@ func checkDataAndShowJobs(t *testing.T, tk *testkit.TestKit, count int) {
 	require.Contains(t, rs[0][12], "ingest")
 	require.Contains(t, rs[0][12], "cloud")
 	require.Equal(t, rs[0][7], strconv.Itoa(count))
+}
+
+func checkDDLMetricsLeakage(t *testing.T, tk *testkit.TestKit) {
+	state := ""
+	for state != "synced" {
+		rs := tk.MustQuery("admin show ddl jobs 1;").Rows()
+		require.GreaterOrEqual(t, len(rs), 1)
+		state = rs[0][11].(string)
+		time.Sleep(300 * time.Millisecond)
+	}
+	metrics.CheckDDLMetricsLeakageForTest(t)
 }
 
 func checkExternalFields(t *testing.T, tk *testkit.TestKit) {
@@ -169,6 +181,7 @@ func TestGlobalSortBasic(t *testing.T) {
 	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/ingest")
 	<-ch
 	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
+	checkDDLMetricsLeakage(t, tk)
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()")
 	tk.MustExec("alter table t add index idx1(a);")
@@ -179,6 +192,7 @@ func TestGlobalSortBasic(t *testing.T) {
 	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/merge-sort")
 	<-ch
 	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
+	checkDDLMetricsLeakage(t, tk)
 
 	tk.MustExec("alter table t add unique index idx2(a);")
 	checkDataAndShowJobs(t, tk, size)
@@ -188,6 +202,7 @@ func TestGlobalSortBasic(t *testing.T) {
 	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID))+"/plan/merge-sort")
 	<-ch
 	checkFileCleaned(t, jobID, taskID, cloudStorageURI)
+	checkDDLMetricsLeakage(t, tk)
 }
 
 func TestGlobalSortMultiSchemaChange(t *testing.T) {
@@ -247,6 +262,9 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 			tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + tc.cloudStorageURI + "';")
 			for _, tn := range tableNames {
 				tk.MustExec("alter table " + tn + " add index idx_1(a), add index idx_2(b, a);")
+				if tc.enableFastReorg == "1" {
+					checkDDLMetricsLeakage(t, tk)
+				}
 				tk.MustExec("admin check table " + tn + ";")
 				tk.MustExec("alter table " + tn + " drop index idx_1, drop index idx_2;")
 			}
@@ -289,12 +307,19 @@ func TestAddIndexIngestShowReorgTp(t *testing.T) {
 
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("alter table t add index idx(a);")
+	checkDDLMetricsLeakage(t, tk)
 	tk.MustQuery("select * from t use index(idx);").Check(testkit.Rows())
+	tk.MustExec("alter table t drop index idx;")
+
+	tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
+	tk.MustExec("alter table t add index idx(a);")
+	checkDDLMetricsLeakage(t, tk)
 	tk.MustExec("alter table t drop index idx;")
 
 	tk.MustExec("insert into t values (1), (2), (3);")
 	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 	tk.MustExec("alter table t add index idx(a);")
+	checkDDLMetricsLeakage(t, tk)
 
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	require.Len(t, rows, 1)
@@ -374,6 +399,7 @@ func TestGlobalSortAddIndexRecoverFromRetryableError(t *testing.T) {
 		tk.MustExec("insert into t values (1), (2), (3);")
 		require.NoError(t, failpoint.Enable(fp, "1*return"))
 		tk.MustExec("alter table t add unique index idx(a);")
+		checkDDLMetricsLeakage(t, tk)
 		require.NoError(t, failpoint.Disable(fp))
 	}
 }
@@ -428,6 +454,7 @@ func TestIngestUseGivenTS(t *testing.T) {
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("insert into t values (1), (2), (3);")
 	tk.MustExec("alter table t add index idx(a);")
+	checkDDLMetricsLeakage(t, tk)
 
 	err = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockTSForGlobalSort")
 	require.NoError(t, err)
