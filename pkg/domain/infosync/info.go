@@ -1126,8 +1126,9 @@ func getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 			Lease:          cfg.Lease,
 			StartTimestamp: time.Now().Unix(),
 			ServerIDGetter: serverIDGetter,
-			TiCIIP:         cfg.TiCIHost,
-			TiCIPort:       cfg.TiCIPort,
+			// TODO: remove TiCI info after TiCI register in PD.
+			TiCIIP:   "0.0.0.0",
+			TiCIPort: "",
 		},
 		DynamicServerInfo: DynamicServerInfo{
 			Labels: maps.Clone(cfg.Labels),
