@@ -253,7 +253,7 @@ func (e *HashAggExec) Close() error {
 		e.childResult = nil
 		e.groupSet, _ = set.NewStringSetWithMemoryUsage()
 		e.partialResultMap = nil
-		if e.memTracker != nil {
+		if e.memTracker != nil && e.memTracker.BytesConsumed() > 0 {
 			e.memTracker.ReplaceBytesUsed(0)
 		}
 		if e.listInDisk != nil {
@@ -286,7 +286,7 @@ func (e *HashAggExec) Close() error {
 		}
 		channel.Clear(e.finalOutputCh)
 		e.executed = false
-		if e.memTracker != nil {
+		if e.memTracker != nil && e.memTracker.BytesConsumed() > 0 {
 			e.memTracker.ReplaceBytesUsed(0)
 		}
 	}

@@ -171,7 +171,7 @@ func (e *HashJoinExec) Close() error {
 			channel.Clear(e.probeWorkers[i].joinChkResourceCh)
 		}
 		e.probeSideTupleFetcher.probeChkResourceCh = nil
-		terror.Call(e.rowContainer.Close)
+		terror.CallWithRecover(e.rowContainer.Close)
 		e.hashJoinCtx.sessCtx.GetSessionVars().MemTracker.UnbindActionFromHardLimit(e.rowContainer.ActionSpill())
 		e.waiterWg.Wait()
 	}
