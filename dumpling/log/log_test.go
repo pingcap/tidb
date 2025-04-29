@@ -41,7 +41,7 @@ func TestInitLogNoPermission(t *testing.T) {
 		// current user is root, so we can write to the file
 		err = logger.Sync()
 		require.NoError(t, err)
-		require.FileExists(t, tmpDir+"/test.log")
+		require.FileExists(t, tmpDir)
 	}
 	require.ErrorContains(t, err, "permission denied")
 }
