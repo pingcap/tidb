@@ -77,6 +77,7 @@ func (rc *SnapClient) CreateTablesTest(
 	newTS uint64,
 ) (*restoreutils.RewriteRules, []*model.TableInfo, error) {
 	rc.dom = dom
+	rc.AllocTableIDs(context.TODO(), tables)
 	rewriteRules := &restoreutils.RewriteRules{
 		Data: make([]*import_sstpb.RewriteRule, 0),
 	}
