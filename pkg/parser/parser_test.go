@@ -7855,14 +7855,18 @@ func TestCompatTypes(t *testing.T) {
 
 func TestAlterLLM(t *testing.T) {
 	table := []testCase{
-		{"ALTER LLM PLATFORM openai k1 v1", true, "ALTER LLM PLATFORM openai k1 v1"},
-		{"ALTER LLM PLATFORM OPENAI k1 v1", true, "ALTER LLM PLATFORM OPENAI k1 v1"},
-		{"ALTER LLM PLATFORM OPENAI k1 v1 k2 v2", true, "ALTER LLM PLATFORM OPENAI k1 v1 k2 v2"},
-		{"ALTER LLM PLATFORM OPENAI status DISABLED", true, "ALTER LLM PLATFORM OPENAI status DISABLED"},
-		{"ALTER LLM PLATFORM OPENAI status ENABLED", true, "ALTER LLM PLATFORM OPENAI status ENABLED"},
-		{"CREATE LLM MODEL xx PLATFORM v1", true, "CREATE LLM MODEL xx PLATFORM v1"},
-		{"CREATE LLM MODEL xx PLATFORM openai MODEL gpt3", true, "CREATE LLM MODEL xx PLATFORM openai MODEL gpt3"},
-		{"ALTER LLM MODEL test1 MODEL gpt4 REGION us", true, "ALTER LLM MODEL test1 MODEL gpt4 REGION us"},
+		{`alter llm platform openai k "v"`, true, `ALTER LLM PLATFORM openai k _UTF8MB4'v'`},
+		{`alter llm platform openai k1 "v1" k2 "v2"`, true, `ALTER LLM PLATFORM openai k1 _UTF8MB4'v1' k2 _UTF8MB4'v2'`},
+		{`alter llm platform openai n 1`, true, `ALTER LLM PLATFORM openai n 1`},
+		{`alter llm platform openai k "v" n 1`, true, `ALTER LLM PLATFORM openai k _UTF8MB4'v' n 1`},
+		{`create llm model test platform openai model 'gpt-3'`, true, "CREATE LLM MODEL test platform `openai` model _UTF8MB4'gpt-3'"},
+		{`create llm model test platform openai model 'gpt-3' region "us"`, true, "CREATE LLM MODEL test platform `openai` model _UTF8MB4'gpt-3' region _UTF8MB4'us'"},
+		{`create llm model test platform openai model 'gpt-3' region "us" max_token 233`, true,
+			"CREATE LLM MODEL test platform `openai` model _UTF8MB4'gpt-3' region _UTF8MB4'us' max_token 233"},
+		{`alter llm model test platform openai model 'gpt-3'`, true, "ALTER LLM MODEL test platform `openai` model _UTF8MB4'gpt-3'"},
+		{`alter llm model test platform openai model 'gpt-3' region "us"`, true, "ALTER LLM MODEL test platform `openai` model _UTF8MB4'gpt-3' region _UTF8MB4'us'"},
+		{`alter llm model test platform openai model 'gpt-3' region "us" max_token 233`, true,
+			"ALTER LLM MODEL test platform `openai` model _UTF8MB4'gpt-3' region _UTF8MB4'us' max_token 233"},
 		{"DROP LLM MODEL test1", true, "DROP LLM MODEL test1"},
 	}
 
