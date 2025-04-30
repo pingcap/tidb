@@ -3066,6 +3066,8 @@ func (e *LLMDDLExec) Next(_ context.Context, req *chunk.Chunk) error {
 				e.LLMDDLPlan.Name,
 				e.LLMDDLPlan.OptionNames,
 				e.LLMDDLPlan.OptionValues)
+		case "drop":
+			return llmAccessor.DropModel(e.Ctx(), e.LLMDDLPlan.Name)
 		default:
 			return errors.New("unsupported operation")
 		}

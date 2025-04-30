@@ -40,6 +40,8 @@ type LLMAccessor interface {
 	AlterModel(sctx sessionctx.Context, name string, options []string, values []any) error
 
 	CreateModel(sctx sessionctx.Context, name string, options []string, values []any) error
+
+	DropModel(sctx sessionctx.Context, name string) error
 }
 
 type llmAccessorImpl struct {
@@ -98,6 +100,15 @@ func (llm *llmAccessorImpl) AlterModel(sctx sessionctx.Context, name string, opt
 	return callWithSCtx(llm.sPool, true, func(tmpCtx sessionctx.Context) error {
 		args := append(values, name)
 		_, err := exec(tmpCtx, updateStmt, args...)
+		sctx.GetSessionVars().StmtCtx.SetAffectedRows(tmpCtx.GetSessionVars().StmtCtx.AffectedRows())
+		return err
+	})
+}
+
+func (llm *llmAccessorImpl) DropModel(sctx sessionctx.Context, name string) error {
+	deleteStmt := "delete from mysql.llm_model where `name` = %?"
+	return callWithSCtx(llm.sPool, true, func(tmpCtx sessionctx.Context) error {
+		_, err := exec(tmpCtx, deleteStmt, name)
 		sctx.GetSessionVars().StmtCtx.SetAffectedRows(tmpCtx.GetSessionVars().StmtCtx.AffectedRows())
 		return err
 	})
