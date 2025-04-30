@@ -502,9 +502,7 @@ func (c *hashRowContainer) Len() uint64 {
 }
 
 func (c *hashRowContainer) Close() error {
-	failpoint.Inject("issue60923", func() {
-		panic("panic for test")
-	})
+	failpoint.Inject("issue60923", nil)
 
 	defer c.memTracker.Detach()
 	c.chkBuf = nil
