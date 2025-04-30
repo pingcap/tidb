@@ -180,6 +180,10 @@ func TestGetSessionWithFault(t *testing.T) {
 	}()
 
 	_, dom := testkit.CreateMockStoreAndDomain(t)
+	// stop TTLJobManager to avoid unnecessary job schedule and make test stable
+	dom.TTLJobManager().Stop()
+	require.NoError(t, dom.TTLJobManager().WaitStopped(context.Background(), time.Minute))
+
 	pool := newFaultSessionPool(t, dom.AdvancedSysSessionPool())
 
 	var sysSe *syssession.Session

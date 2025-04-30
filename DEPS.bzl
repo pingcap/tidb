@@ -10729,13 +10729,13 @@ def go_deps():
         name = "org_uber_go_mock",
         build_file_proto_mode = "disable_global",
         importpath = "go.uber.org/mock",
-        sha256 = "fd3da37575ae8ebf65c4520c03193da156f01454725338e7084c0863ce884a73",
-        strip_prefix = "go.uber.org/mock@v0.5.1",
+        sha256 = "eb2f59d1ebba968e1c8c8835b326d8ae0e672ee921fe14eb38c85ecb16bd2d32",
+        strip_prefix = "go.uber.org/mock@v0.5.2",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/go.uber.org/mock/org_uber_go_mock-v0.5.1.zip",
-            "http://ats.apps.svc/gomod/go.uber.org/mock/org_uber_go_mock-v0.5.1.zip",
-            "https://cache.hawkingrei.com/gomod/go.uber.org/mock/org_uber_go_mock-v0.5.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/go.uber.org/mock/org_uber_go_mock-v0.5.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/go.uber.org/mock/org_uber_go_mock-v0.5.2.zip",
+            "http://ats.apps.svc/gomod/go.uber.org/mock/org_uber_go_mock-v0.5.2.zip",
+            "https://cache.hawkingrei.com/gomod/go.uber.org/mock/org_uber_go_mock-v0.5.2.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/go.uber.org/mock/org_uber_go_mock-v0.5.2.zip",
         ],
     )
     go_repository(
