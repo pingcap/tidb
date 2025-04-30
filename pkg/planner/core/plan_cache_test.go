@@ -852,16 +852,22 @@ func testRandomPlanCacheCases(t *testing.T,
 	tk := testkit.NewTestKit(t, store)
 	prepFunc(tk)
 
-	// prepared plan cache
+	// non prepared plan cache
 	for _, q := range queryFunc(true) {
 		tk.MustExec("set tidb_enable_non_prepared_plan_cache=0")
 		result1 := tk.MustQuery(q).Sort()
 		tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+		// this first execution caches the plan
 		result2 := tk.MustQuery(q).Sort()
+		require.True(t, result1.Equal(result2.Rows()))
+
+		// this second execution uses the caches
+		result2 = tk.MustQuery(q).Sort()
 		require.True(t, result1.Equal(result2.Rows()))
 	}
 
-	// non prepared plan cache
+	// prepared plan cache
 	for _, q := range queryFunc(false) {
 		q, prepStmt, parameters := convertQueryToPrepExecStmt(q)
 		result1 := tk.MustQuery(q).Sort()
@@ -877,7 +883,13 @@ func testRandomPlanCacheCases(t *testing.T,
 		} else {
 			execStmt = fmt.Sprintf("execute st using %s", strings.Join(xs, ", "))
 		}
+
+		// first execution caches plan
 		result2 := tk.MustQuery(execStmt).Sort()
+		require.True(t, result1.Equal(result2.Rows()))
+
+		// second execution uses cache
+		result2 = tk.MustQuery(execStmt).Sort()
 		require.True(t, result1.Equal(result2.Rows()))
 	}
 }
@@ -1693,4 +1705,23 @@ func TestIssue54652(t *testing.T) {
 	tk.MustExec(`execute st using @pk`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // can't reuse since it's in txn now.
 	tk.MustExec(`commit`)
+}
+
+func TestNonPreparedPlanSupportsHints(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (pk int, a int, primary key(pk))`)
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1;`)
+
+	tk.MustExec(`select * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`select * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`select  /*+ max_execution_time(2000) */ * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustExec(`select  /*+ max_execution_time(2000) */ * from t where pk >= 1`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
