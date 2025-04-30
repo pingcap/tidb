@@ -6035,6 +6035,12 @@ func (b *PlanBuilder) buildAlterLLM(ctx context.Context, v *ast.LLMDDLStmt) (bas
 			val, isNil, err = constVal.EvalString(evalCtx, chunk.Row{})
 		case types.ETInt:
 			val, isNil, err = constVal.EvalInt(evalCtx, chunk.Row{})
+		case types.ETDecimal:
+			var d *types.MyDecimal
+			d, isNil, err = constVal.EvalDecimal(evalCtx, chunk.Row{})
+			if !isNil && err == nil && d != nil {
+				val, err = d.ToFloat64()
+			}
 		default:
 			return nil, fmt.Errorf("invalid value of %s", opt.Name)
 		}
