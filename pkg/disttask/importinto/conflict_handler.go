@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	tikverr "github.com/tikv/client-go/v2/error"
@@ -49,9 +50,11 @@ const (
 
 type conflictKVHandler interface {
 	init() error
-	handle(ctx context.Context, key, val []byte) error
+	run(context.Context, chan *external.KVPair) error
 	close() error
 }
+
+var _ conflictKVHandler = (*baseConflictKVHandler)(nil)
 
 type baseConflictKVHandler struct {
 	tableImporter       *importer.TableImporter
@@ -63,6 +66,8 @@ type baseConflictKVHandler struct {
 	encoder         *importer.TableKVEncoder
 	lastRefreshTime time.Time
 	snapshot        tidbkv.Snapshot
+
+	handleFn func(context.Context, *external.KVPair) error
 }
 
 func (h *baseConflictKVHandler) init() error {
@@ -77,7 +82,12 @@ func (h *baseConflictKVHandler) init() error {
 	return nil
 }
 
-func (*baseConflictKVHandler) handle(_ context.Context, _, _ []byte) error {
+func (h *baseConflictKVHandler) run(ctx context.Context, pairCh chan *external.KVPair) error {
+	for kvPair := range pairCh {
+		if err := h.handleFn(ctx, kvPair); err != nil {
+			return errors.Trace(err)
+		}
+	}
 	return nil
 }
 
@@ -198,12 +208,12 @@ type conflictDataKVHandler struct {
 	*baseConflictKVHandler
 }
 
-func (h *conflictDataKVHandler) handle(ctx context.Context, key, val []byte) error {
-	handle, err := tablecodec.DecodeRowKey(key)
+func (h *conflictDataKVHandler) handle(ctx context.Context, kv *external.KVPair) error {
+	handle, err := tablecodec.DecodeRowKey(kv.Key)
 	if err != nil {
 		return err
 	}
-	return h.encodeAndHandleRow(ctx, h.encoder, handle, val)
+	return h.encodeAndHandleRow(ctx, h.encoder, handle, kv.Value)
 }
 
 type conflictIndexKVHandler struct {
@@ -234,13 +244,13 @@ func (h *conflictIndexKVHandler) init() error {
 	return nil
 }
 
-func (h *conflictIndexKVHandler) handle(ctx context.Context, key, val []byte) error {
-	tableID := tablecodec.DecodeTableID(key)
+func (h *conflictIndexKVHandler) handle(ctx context.Context, kv *external.KVPair) error {
+	tableID := tablecodec.DecodeTableID(kv.Key)
 	if tableID == 0 {
 		// should not happen
-		return errors.Errorf("invalid table ID in key %v", redact.Key(key))
+		return errors.Errorf("invalid table ID in key %v", redact.Key(kv.Key))
 	}
-	handle, err := tablecodec.DecodeIndexHandle(key, val, len(h.targetIdx.Columns))
+	handle, err := tablecodec.DecodeIndexHandle(kv.Key, kv.Value, len(h.targetIdx.Columns))
 	if err != nil {
 		return err
 	}
@@ -249,7 +259,7 @@ func (h *conflictIndexKVHandler) handle(ctx context.Context, key, val []byte) er
 	if err = h.refreshSnapshotAsNeeded(); err != nil {
 		return errors.Trace(err)
 	}
-	val, err = h.snapshot.Get(ctx, rowKey)
+	val, err := h.snapshot.Get(ctx, rowKey)
 	// either the data KV is deleted by handing conflicts in other KV group or the
 	// data KV itself is conflicted and not ingested.
 	if err != nil {
@@ -264,8 +274,15 @@ func (h *conflictIndexKVHandler) handle(ctx context.Context, key, val []byte) er
 	return h.encodeAndHandleRow(ctx, h.encoder, handle, val)
 }
 
-func handleKVGroupConflicts(ctx context.Context, logger *zap.Logger, handler conflictKVHandler,
-	store storage.ExternalStorage, kvGroup string, ci *common.ConflictInfo) (err error) {
+func handleKVGroupConflicts(
+	ctx context.Context,
+	logger *zap.Logger,
+	concurrency int,
+	newHandlerFn func(string) conflictKVHandler,
+	store storage.ExternalStorage,
+	kvGroup string,
+	ci *common.ConflictInfo,
+) (err error) {
 	task := log.BeginTask(logger.With(
 		zap.String("kvGroup", kvGroup),
 		zap.Uint64("duplicates", ci.Count),
@@ -276,28 +293,36 @@ func handleKVGroupConflicts(ctx context.Context, logger *zap.Logger, handler con
 		task.End(zapcore.ErrorLevel, err)
 	}()
 
-	if err = handler.init(); err != nil {
-		return errors.Trace(err)
-	}
-	//nolint: errcheck
-	defer handler.close()
-
-	for _, file := range ci.Files {
-		if err = handleConflictFile(ctx, handler, store, file); err != nil {
-			return errors.Trace(err)
+	pairCh := make(chan *external.KVPair)
+	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
+	eg.Go(func() error {
+		for _, file := range ci.Files {
+			if err = readOneFile(egCtx, store, file, pairCh); err != nil {
+				return errors.Trace(err)
+			}
 		}
+		return nil
+	})
+	for i := 0; i < concurrency; i++ {
+		handler := newHandlerFn(kvGroup)
+		eg.Go(func() error {
+			if err = handler.init(); err != nil {
+				return errors.Trace(err)
+			}
+			defer handler.close()
+			return handler.run(egCtx, pairCh)
+		})
 	}
-	return nil
+	return eg.Wait()
 }
 
-func handleConflictFile(ctx context.Context, handler conflictKVHandler, store storage.ExternalStorage, file string) (err error) {
+func readOneFile(ctx context.Context, store storage.ExternalStorage, file string, outCh chan *external.KVPair) error {
 	reader, err := external.NewKVReader(ctx, file, store, 0, 3*external.DefaultReadBufferSize)
 	if err != nil {
 		return err
 	}
 	//nolint: errcheck
 	defer reader.Close()
-
 	for {
 		key, val, err := reader.NextKV()
 		if err != nil {
@@ -306,8 +331,10 @@ func handleConflictFile(ctx context.Context, handler conflictKVHandler, store st
 			}
 			return err
 		}
-		if err = handler.handle(ctx, key, val); err != nil {
-			return err
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case outCh <- &external.KVPair{Key: key, Value: val}:
 		}
 	}
 	return nil

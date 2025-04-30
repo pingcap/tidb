@@ -67,23 +67,27 @@ func (e *conflictResolutionStepExecutor) RunSubtask(ctx context.Context, subtask
 		}
 	}
 	for kvGroup, ci := range stepMeta.Infos.ConflictInfos {
-		baseHandler := &baseConflictKVHandler{
-			tableImporter: e.tableImporter,
-			store:         e.store,
-			logger:        e.logger,
-			kvGroup:       kvGroup,
-		}
-		var handler conflictKVHandler = &conflictDataKVHandler{baseConflictKVHandler: baseHandler}
-		if kvGroup != dataKVGroup {
-			handler = &conflictIndexKVHandler{baseConflictKVHandler: baseHandler}
-		}
-		err = handleKVGroupConflicts(ctx, e.logger, handler, e.tableImporter.GlobalSortStore, kvGroup, ci)
+		err = handleKVGroupConflicts(ctx, e.logger, subtask.Concurrency, e.getHandler, e.tableImporter.GlobalSortStore, kvGroup, ci)
 		failpoint.InjectCall("afterResolveOneKVGroup", &err)
 		if err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func (e *conflictResolutionStepExecutor) getHandler(kvGroup string) conflictKVHandler {
+	baseHandler := &baseConflictKVHandler{
+		tableImporter: e.tableImporter,
+		store:         e.store,
+		logger:        e.logger,
+		kvGroup:       kvGroup,
+	}
+	var handler conflictKVHandler = &conflictDataKVHandler{baseConflictKVHandler: baseHandler}
+	if kvGroup != dataKVGroup {
+		handler = &conflictIndexKVHandler{baseConflictKVHandler: baseHandler}
+	}
+	return handler
 }
 
 func (e *conflictResolutionStepExecutor) Cleanup(_ context.Context) (err error) {

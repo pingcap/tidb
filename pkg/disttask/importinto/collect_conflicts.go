@@ -119,21 +119,7 @@ func (e *collectConflictsStepExecutor) RunSubtask(ctx context.Context, subtask *
 	}
 
 	for kvGroup, ci := range stepMeta.Infos.ConflictInfos {
-		baseHandler := &baseConflictKVHandler{
-			tableImporter:       e.tableImporter,
-			store:               e.store,
-			logger:              e.logger,
-			kvGroup:             kvGroup,
-			handleConflictRowFn: e.recordConflictRow,
-		}
-		var handler conflictKVHandler = &conflictDataKVHandler{baseConflictKVHandler: baseHandler}
-		if kvGroup != dataKVGroup {
-			handler = &conflictIndexKVHandler{
-				baseConflictKVHandler: baseHandler,
-				isRowHandledFn:        e.isRowHandledFn,
-			}
-		}
-		err = handleKVGroupConflicts(ctx, e.logger, handler, e.tableImporter.GlobalSortStore, kvGroup, ci)
+		err = handleKVGroupConflicts(ctx, e.logger, subtask.Concurrency, e.getHandler, e.tableImporter.GlobalSortStore, kvGroup, ci)
 		failpoint.InjectCall("afterCollectOneKVGroup", &err)
 		if err != nil {
 			_ = e.conflictRowWriter.Close(ctx)
@@ -164,6 +150,24 @@ func (e *collectConflictsStepExecutor) OnFinished(_ context.Context, subtask *pr
 	}
 	subtask.Meta = newMeta
 	return nil
+}
+
+func (e *collectConflictsStepExecutor) getHandler(kvGroup string) conflictKVHandler {
+	baseHandler := &baseConflictKVHandler{
+		tableImporter:       e.tableImporter,
+		store:               e.store,
+		logger:              e.logger,
+		kvGroup:             kvGroup,
+		handleConflictRowFn: e.recordConflictRow,
+	}
+	var handler conflictKVHandler = &conflictDataKVHandler{baseConflictKVHandler: baseHandler}
+	if kvGroup != dataKVGroup {
+		handler = &conflictIndexKVHandler{
+			baseConflictKVHandler: baseHandler,
+			isRowHandledFn:        e.isRowHandledFn,
+		}
+	}
+	return handler
 }
 
 // right now we only have 1 subtask, but later we might have multiple subtasks
