@@ -36,6 +36,8 @@ type LLMAccessor interface {
 	ChatCompletion(platform, model, prompt string) (response string, err error)
 
 	AlterPlatform(sctx sessionctx.Context, platform string, options []string, values []any) error
+
+	CreateModel(sctx sessionctx.Context, name string, options []string, values []any) error
 }
 
 type llmAccessorImpl struct {
@@ -44,6 +46,18 @@ type llmAccessorImpl struct {
 
 func NewLLMAccessor(sPool util.DestroyableSessionPool) LLMAccessor {
 	return &llmAccessorImpl{sPool: sPool}
+}
+
+func (llm *llmAccessorImpl) CreateModel(sctx sessionctx.Context, name string, options []string, values []any) error {
+	columnNames := append(options, "name")
+	columnValues := append(values, name)
+	createStmt := "insert into mysql.llm_model (" + strings.Join(columnNames, ",") +
+		") values (" + strings.Repeat("%?", len(columnValues)) + ")"
+	return callWithSCtx(llm.sPool, true, func(tmpCtx sessionctx.Context) error {
+		_, err := exec(tmpCtx, createStmt, columnValues...)
+		sctx.GetSessionVars().StmtCtx.SetAffectedRows(tmpCtx.GetSessionVars().StmtCtx.AffectedRows())
+		return err
+	})
 }
 
 func (llm *llmAccessorImpl) AlterPlatform(sctx sessionctx.Context, platform string, options []string, values []any) error {
