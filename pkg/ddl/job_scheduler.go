@@ -648,7 +648,7 @@ func (s *jobScheduler) cleanMDLInfo(job *model.Job, ownerID string) {
 	// TODO we need clean it when version of JobStateRollbackDone is synced also.
 	if job.State == model.JobStateSynced && s.etcdCli != nil {
 		path := fmt.Sprintf("%s/%d/", util.DDLAllSchemaVersionsByJob, job.ID)
-		_, err = s.etcdCli.Delete(s.schCtx, path, clientv3.WithPrefix())
+		err = util.DeleteKeysWithPrefixFromEtcd(path, s.etcdCli, util.KeyOpDefaultRetryCnt, util.KeyOpDefaultTimeout)
 		if err != nil {
 			logutil.DDLLogger().Warn("delete versions failed", zap.Int64("job ID", job.ID), zap.Error(err))
 		}

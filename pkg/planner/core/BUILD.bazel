@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "access_object.go",
         "collect_column_stats_usage.go",
+        "columnar_index_utils.go",
         "common_plans.go",
         "core_init.go",
         "debugtrace.go",

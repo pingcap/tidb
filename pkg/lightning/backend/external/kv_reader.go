@@ -33,6 +33,11 @@ var (
 	defaultReadBufferSize = 64 * units.KiB
 )
 
+// kvReader reads a file in sorted KV format.
+// the format is as follows:
+//   - <kv-pair-block><kv-pair-block>....
+//   - each <kv-pair-block> is <key-len><value-len><key><value>
+//   - <key-len> and <value-len> are uint64 in big-endian
 type kvReader struct {
 	byteReader *byteReader
 }
@@ -59,6 +64,9 @@ func newKVReader(
 	}, nil
 }
 
+// nextKV reads the next key-value pair from the reader.
+// the returned key and value will be reused in later calls, so if the caller want
+// to save the KV for later use, it should copy the key and value.
 func (r *kvReader) nextKV() (key, val []byte, err error) {
 	lenBytes, err := r.byteReader.readNBytes(8)
 	if err != nil {
