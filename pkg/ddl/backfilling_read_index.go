@@ -63,7 +63,7 @@ type readIndexStepExecutor struct {
 	// pipeline of current running subtask, it's nil when no subtask is running.
 	currPipe atomic.Pointer[operator.AsyncPipeline]
 
-	m *lightningmetric.Common
+	metric *lightningmetric.Common
 }
 
 type readIndexSummary struct {
@@ -97,8 +97,8 @@ func (r *readIndexStepExecutor) Init(ctx context.Context) error {
 	cfg := config.GetGlobalConfig()
 	if cfg.Store == config.StoreTypeTiKV {
 		if !r.isGlobalSort() {
-			r.m = metrics.RegisterLightningCommonMetricsForDDL(r.job.ID)
-			ctx = lightningmetric.WithCommonMetric(ctx, r.m)
+			r.metric = metrics.RegisterLightningCommonMetricsForDDL(r.job.ID)
+			ctx = lightningmetric.WithCommonMetric(ctx, r.metric)
 		}
 		cfg, bd, err := ingest.CreateLocalBackend(ctx, r.d.store, r.job, false, 0)
 		if err != nil {
@@ -184,7 +184,7 @@ func (r *readIndexStepExecutor) Cleanup(ctx context.Context) error {
 		r.backend.Close()
 	}
 	if !r.isGlobalSort() {
-		metrics.UnregisterLightningCommonMetricsForDDL(r.job.ID, r.m)
+		metrics.UnregisterLightningCommonMetricsForDDL(r.job.ID, r.metric)
 	}
 	return nil
 }

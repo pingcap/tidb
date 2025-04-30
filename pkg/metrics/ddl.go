@@ -26,8 +26,8 @@ import (
 )
 
 var (
-	mu            sync.Mutex
-	registeredJob map[int64]*metric.Common
+	mu                   sync.Mutex
+	registeredJobMetrics map[int64]*metric.Common
 )
 
 // Metrics for the DDL package.
@@ -97,7 +97,7 @@ var (
 )
 
 func init() {
-	registeredJob = make(map[int64]*metric.Common, 64)
+	registeredJobMetrics = make(map[int64]*metric.Common, 64)
 }
 
 // InitDDLMetrics initializes defines DDL metrics.
@@ -283,14 +283,14 @@ func GetBackfillProgressByLabel(label, schemaName, tableName, optionalColOrIdxNa
 func RegisterLightningCommonMetricsForDDL(jobID int64) *metric.Common {
 	mu.Lock()
 	defer mu.Unlock()
-	if m, ok := registeredJob[jobID]; ok {
+	if m, ok := registeredJobMetrics[jobID]; ok {
 		return m
 	}
-	metrics := metric.NewCommon(promutil.NewDefaultFactory(), "tidb", "ddl", prometheus.Labels{
+	metrics := metric.NewCommon(promutil.NewDefaultFactory(), TiDB, "ddl", prometheus.Labels{
 		"job_id": strconv.FormatInt(jobID, 10),
 	})
 	metrics.RegisterTo(prometheus.DefaultRegisterer)
-	registeredJob[jobID] = metrics
+	registeredJobMetrics[jobID] = metrics
 	return metrics
 }
 
@@ -299,14 +299,14 @@ func UnregisterLightningCommonMetricsForDDL(jobID int64, metrics *metric.Common)
 	mu.Lock()
 	defer mu.Unlock()
 	metrics.UnregisterFrom(prometheus.DefaultRegisterer)
-	delete(registeredJob, jobID)
+	delete(registeredJobMetrics, jobID)
 }
 
 // GetRegisteredJob is used for test
 func GetRegisteredJob() map[int64]*metric.Common {
 	mu.Lock()
 	defer mu.Unlock()
-	ret := make(map[int64]*metric.Common, len(registeredJob))
-	maps.Copy(ret, registeredJob)
+	ret := make(map[int64]*metric.Common, len(registeredJobMetrics))
+	maps.Copy(ret, registeredJobMetrics)
 	return ret
 }

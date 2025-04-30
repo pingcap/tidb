@@ -46,7 +46,7 @@ type cloudImportExecutor struct {
 	backendCtx      ingest.BackendCtx
 	backend         *local.Backend
 	taskConcurrency int
-	m               *lightningmetric.Common
+	metric          *lightningmetric.Common
 }
 
 func newCloudImportExecutor(
@@ -69,8 +69,8 @@ func newCloudImportExecutor(
 
 func (e *cloudImportExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor init subtask exec env")
-	e.m = metrics.RegisterLightningCommonMetricsForDDL(e.job.ID)
-	ctx = lightningmetric.WithCommonMetric(ctx, e.m)
+	e.metric = metrics.RegisterLightningCommonMetricsForDDL(e.job.ID)
+	ctx = lightningmetric.WithCommonMetric(ctx, e.metric)
 	cfg, bd, err := ingest.CreateLocalBackend(ctx, e.store, e.job, false, e.taskConcurrency)
 	if err != nil {
 		return errors.Trace(err)
@@ -180,6 +180,6 @@ func (e *cloudImportExecutor) Cleanup(ctx context.Context) error {
 		e.backendCtx.Close()
 	}
 	e.backend.Close()
-	metrics.UnregisterLightningCommonMetricsForDDL(e.job.ID, e.m)
+	metrics.UnregisterLightningCommonMetricsForDDL(e.job.ID, e.metric)
 	return nil
 }

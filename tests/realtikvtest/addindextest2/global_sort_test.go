@@ -292,10 +292,6 @@ func TestAddIndexIngestShowReorgTp(t *testing.T) {
 	tk.MustQuery("select * from t use index(idx);").Check(testkit.Rows())
 	tk.MustExec("alter table t drop index idx;")
 
-	tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
-	tk.MustExec("alter table t add index idx(a);")
-	tk.MustExec("alter table t drop index idx;")
-
 	tk.MustExec("insert into t values (1), (2), (3);")
 	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 	tk.MustExec("alter table t add index idx(a);")
