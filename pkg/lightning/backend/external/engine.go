@@ -196,7 +196,7 @@ func NewExternalEngine(
 	memCapacity int64,
 	onDup engineapi.OnDuplicateKey,
 	filePrefix string,
-) engineapi.Engine {
+) *Engine {
 	// at most 3 batches can be loaded in memory, see writeStepMemShareCount.
 	memLimit := int(float64(memCapacity) / writeStepMemShareCount * 3)
 	logutil.BgLogger().Info("create external engine",
