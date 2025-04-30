@@ -275,10 +275,11 @@ type SetConfig struct {
 type LLMDDLPlan struct {
 	baseSchemaProducer
 
-	Platform bool
-	Model    bool
-	Name     string
-	Options  []string
+	Platform     bool
+	Model        bool
+	Name         string
+	OptionNames  []string
+	OptionValues []expression.Expression
 }
 
 // RecommendIndexPlan represents a plan for recommend index stmt.

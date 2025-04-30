@@ -580,7 +580,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node *resolve.NodeW) (base.Plan
 	case *ast.RecommendIndexStmt:
 		return b.buildRecommendIndex(x)
 	case *ast.LLMDDLStmt:
-		return b.buildAlterLLM(x)
+		return b.buildAlterLLM(ctx, x)
 	}
 	return nil, plannererrors.ErrUnsupportedType.GenWithStack("Unsupported type %T", node.Node)
 }
@@ -6008,12 +6008,20 @@ func (b *PlanBuilder) buildCompactTable(node *ast.CompactTableStmt) (base.Plan, 
 	return p, nil
 }
 
-func (*PlanBuilder) buildAlterLLM(v *ast.LLMDDLStmt) (base.Plan, error) {
+func (b *PlanBuilder) buildAlterLLM(ctx context.Context, v *ast.LLMDDLStmt) (base.Plan, error) {
 	p := &LLMDDLPlan{
 		Model:    v.Model,
 		Platform: v.Platform,
 		Name:     v.Name,
-		Options:  v.OptionList,
+	}
+	for _, opt := range v.OptionList {
+		mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
+		p.OptionNames = append(p.OptionNames, opt.Name)
+		expr, _, err := b.rewrite(ctx, opt.Value, mockTablePlan, nil, true)
+		if err != nil {
+			return nil, err
+		}
+		p.OptionValues = append(p.OptionValues, expr)
 	}
 	return p, nil
 }
