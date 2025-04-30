@@ -790,7 +790,7 @@ const (
 		index idx_table_id (table_id));`
 
 	// CreateTiDBLLMPlatformTable is a table to store LLM platform information.
-	CreateTiDBLLMPlatformTable = `CREATE TABLE IF NOT EXISTS mysql.llm_platform (
+	CreateTiDBLLMPlatformTable = `create table if not exists mysql.llm_platform (
 		name varchar(64) NOT NULL,
 		base_url varchar(255) NOT NULL,
 		host varchar(255) NOT NULL,
@@ -812,6 +812,17 @@ const (
 	InsertBedrockPlatform = `insert into mysql.llm_platform
 		(name, base_url, host, auth, source, status) values (
 		"bedrock_runtime", "", "AWS", "platform", "system", "DISABLED")`
+	CreateTiDBLLMModelTable = `create table if not exists mysql.llm_model (
+		user varchar(255) not null,
+		name varchar(64) not null,
+		platform varchar(255) not null,
+		api_version varchar(64) default null,
+		model varchar(255) not null,
+		region varchar(255) default null,
+		max_tokens bigint default null,
+		status varchar(64) not null,
+		extras json default null,
+		comment text default null)`
 )
 
 // CreateTimers is a table to store all timers for tidb
@@ -3512,6 +3523,7 @@ func upgradeToVer248(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, CreateTiDBLLMPlatformTable, infoschema.ErrTableExists)
 	doReentrantDDL(s, InsertOpenAIPlatform)
 	doReentrantDDL(s, InsertBedrockPlatform)
+	doReentrantDDL(s, CreateTiDBLLMModelTable)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
@@ -3674,6 +3686,7 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateTiDBLLMPlatformTable)
 	mustExecute(s, InsertOpenAIPlatform)
 	mustExecute(s, InsertBedrockPlatform)
+	mustExecute(s, CreateTiDBLLMModelTable)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
