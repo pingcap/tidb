@@ -16697,25 +16697,7 @@ CalibrateResourceWorkloadOption:
 	}
 
 LLMDDLStmt:
-	"ALTER" "LLM" "PLATFORM" Identifier "DISABLED"
-	{
-		$$ = &ast.LLMDDLStmt{
-			Operation:  "ALTER",
-			Platform:   true,
-			Name:       $4,
-			OptionList: []string{"status", "DISABLED"},
-		}
-	}
-|	"ALTER" "LLM" "PLATFORM" Identifier "ENABLED"
-	{
-		$$ = &ast.LLMDDLStmt{
-			Operation:  "ALTER",
-			Platform:   true,
-			Name:       $4,
-			OptionList: []string{"status", "ENABLED"},
-		}
-	}
-|	"ALTER" "LLM" "PLATFORM" Identifier LLMDDLOptionList
+	"ALTER" "LLM" "PLATFORM" Identifier LLMDDLOptionList
 	{
 		$$ = &ast.LLMDDLStmt{
 			Operation:  "ALTER",
