@@ -277,6 +277,7 @@ type LLMDDLPlan struct {
 
 	Platform     bool
 	Model        bool
+	Operation    string
 	Name         string
 	OptionNames  []string
 	OptionValues []any

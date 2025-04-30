@@ -37,6 +37,8 @@ type LLMAccessor interface {
 
 	AlterPlatform(sctx sessionctx.Context, platform string, options []string, values []any) error
 
+	AlterModel(sctx sessionctx.Context, name string, options []string, values []any) error
+
 	CreateModel(sctx sessionctx.Context, name string, options []string, values []any) error
 }
 
@@ -58,6 +60,39 @@ func (llm *llmAccessorImpl) CreateModel(sctx sessionctx.Context, name string, op
 		sctx.GetSessionVars().StmtCtx.SetAffectedRows(tmpCtx.GetSessionVars().StmtCtx.AffectedRows())
 		return err
 	})
+}
+
+func (ll *llmAccessorImpl) AlterModel(sctx sessionctx.Context, name string, options []string, values []any) error {
+	columnSet := make([]string, 0, len(options))
+	for i := range options {
+		columnSet = append(columnSet, "`"+options[i]+"` = %?")
+	}
+	updateStmt := "update mysql.llm_model set " + strings.Join(columnSet, ", ") + " where `name` = %?"
+	return callWithSCtx(ll.sPool, true, func(tmpCtx sessionctx.Context) error {
+		args := append(values, name)
+		_, err := exec(tmpCtx, updateStmt, args...)
+		sctx.GetSessionVars().StmtCtx.SetAffectedRows(tmpCtx.GetSessionVars().StmtCtx.AffectedRows())
+		return err
+	})
+}
+
+func (ll *llmAccessorImpl) validateModelOptions(options []string, values []any) error {
+	for i := range options {
+		v := values[i]
+		switch strings.ToUpper(options[i]) {
+		case "PLATFORM", "API_VERSION", "MODEL", "REGION", "EXTRAS":
+			if !isStr(v) {
+				return fmt.Errorf("invalid value for %s: %v", options[i], v)
+			}
+		case "MAX_TOKENS":
+			if !isInt(v) {
+				return fmt.Errorf("invalid value for %s: %v", options[i], v)
+			}
+		default:
+			return fmt.Errorf("unsupported option: %s", options[i])
+		}
+	}
+	return nil
 }
 
 func (llm *llmAccessorImpl) AlterPlatform(sctx sessionctx.Context, platform string, options []string, values []any) error {
@@ -87,20 +122,19 @@ func (llm *llmAccessorImpl) validatePlatformOptions(options []string, values []a
 		v := values[i]
 		switch strings.ToUpper(options[i]) {
 		case "KEY":
-			if _, ok := v.(string); !ok {
+			if !isStr(v) {
 				return fmt.Errorf("invalid value for %s: %v", options[i], v)
 			}
 		case "STATUS":
-			str, ok := v.(string)
-			if !ok {
+			if !isStr(v) {
 				return fmt.Errorf("invalid value for %s: %v", options[i], v)
 			}
-			str = strings.ToUpper(str)
+			str := strings.ToUpper(v.(string))
 			if str != "ENABLED" && str != "DISABLED" {
 				return fmt.Errorf("invalid value for %s: %v", options[i], v)
 			}
 		case "MAX_TOKENS":
-			if _, ok := v.(int64); !ok {
+			if !isInt(v) {
 				return fmt.Errorf("invalid value for %s: %v", options[i], v)
 			}
 		default:
@@ -153,4 +187,24 @@ func formatPlatform(platform string) (string, error) {
 		return OpenAI, nil
 	}
 	return "", fmt.Errorf("unsupported platform: %s", platform)
+}
+
+func isStr(v any) bool {
+	_, ok := v.(string)
+	return ok
+}
+
+func isInt(v any) bool {
+	_, ok1 := v.(int)
+	_, ok2 := v.(int8)
+	_, ok3 := v.(int16)
+	_, ok4 := v.(int32)
+	_, ok5 := v.(int64)
+	return ok1 || ok2 || ok3 || ok4 || ok5
+}
+
+func isFloat(v any) bool {
+	_, ok1 := v.(float64)
+	_, ok2 := v.(float32)
+	return ok1 || ok2
 }

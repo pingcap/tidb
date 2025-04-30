@@ -3054,6 +3054,21 @@ func (e *LLMDDLExec) Next(_ context.Context, req *chunk.Chunk) error {
 			e.LLMDDLPlan.Name,
 			e.LLMDDLPlan.OptionNames,
 			e.LLMDDLPlan.OptionValues)
+	} else {
+		switch strings.ToLower(e.LLMDDLPlan.Operation) {
+		case "create":
+			return llmAccessor.CreateModel(e.Ctx(),
+				e.LLMDDLPlan.Name,
+				e.LLMDDLPlan.OptionNames,
+				e.LLMDDLPlan.OptionValues)
+		case "alter":
+			return llmAccessor.AlterModel(e.Ctx(),
+				e.LLMDDLPlan.Name,
+				e.LLMDDLPlan.OptionNames,
+				e.LLMDDLPlan.OptionValues)
+		default:
+			return errors.New("unsupported operation")
+		}
 	}
 
 	return nil

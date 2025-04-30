@@ -6010,9 +6010,10 @@ func (b *PlanBuilder) buildCompactTable(node *ast.CompactTableStmt) (base.Plan, 
 
 func (b *PlanBuilder) buildAlterLLM(ctx context.Context, v *ast.LLMDDLStmt) (base.Plan, error) {
 	p := &LLMDDLPlan{
-		Model:    v.Model,
-		Platform: v.Platform,
-		Name:     v.Name,
+		Model:     v.Model,
+		Platform:  v.Platform,
+		Name:      v.Name,
+		Operation: v.Operation,
 	}
 	for _, opt := range v.OptionList {
 		mockTablePlan := logicalop.LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())
