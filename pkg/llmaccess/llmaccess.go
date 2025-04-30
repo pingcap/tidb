@@ -64,6 +64,9 @@ func (llm *llmAccessorImpl) CreateModel(sctx sessionctx.Context, name string, op
 			return fmt.Errorf("missing required option %s", opt)
 		}
 	}
+	if err := llm.validateModelOptions(options, values); err != nil {
+		return err
+	}
 
 	var userName string
 	if sctx.GetSessionVars().User != nil { // might be nil if in test
@@ -83,13 +86,16 @@ func (llm *llmAccessorImpl) CreateModel(sctx sessionctx.Context, name string, op
 	})
 }
 
-func (ll *llmAccessorImpl) AlterModel(sctx sessionctx.Context, name string, options []string, values []any) error {
+func (llm *llmAccessorImpl) AlterModel(sctx sessionctx.Context, name string, options []string, values []any) error {
+	if err := llm.validateModelOptions(options, values); err != nil {
+		return err
+	}
 	columnSet := make([]string, 0, len(options))
 	for i := range options {
 		columnSet = append(columnSet, "`"+options[i]+"` = %?")
 	}
 	updateStmt := "update mysql.llm_model set " + strings.Join(columnSet, ", ") + " where `name` = %?"
-	return callWithSCtx(ll.sPool, true, func(tmpCtx sessionctx.Context) error {
+	return callWithSCtx(llm.sPool, true, func(tmpCtx sessionctx.Context) error {
 		args := append(values, name)
 		_, err := exec(tmpCtx, updateStmt, args...)
 		sctx.GetSessionVars().StmtCtx.SetAffectedRows(tmpCtx.GetSessionVars().StmtCtx.AffectedRows())
@@ -97,12 +103,20 @@ func (ll *llmAccessorImpl) AlterModel(sctx sessionctx.Context, name string, opti
 	})
 }
 
-func (ll *llmAccessorImpl) validateModelOptions(options []string, values []any) error {
+func (llm *llmAccessorImpl) validateModelOptions(options []string, values []any) error {
 	for i := range options {
 		v := values[i]
 		switch strings.ToUpper(options[i]) {
 		case "PLATFORM", "API_VERSION", "MODEL", "REGION", "EXTRAS":
 			if !isStr(v) {
+				return fmt.Errorf("invalid value for %s: %v", options[i], v)
+			}
+		case "STATUS":
+			if !isStr(v) {
+				return fmt.Errorf("invalid value for %s: %v", options[i], v)
+			}
+			str := strings.ToUpper(v.(string))
+			if str != "ENABLED" && str != "DISABLED" {
 				return fmt.Errorf("invalid value for %s: %v", options[i], v)
 			}
 		case "MAX_TOKENS":
