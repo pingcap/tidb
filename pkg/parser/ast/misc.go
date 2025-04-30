@@ -4299,7 +4299,11 @@ func (n *LLMDDLStmt) Restore(ctx *format.RestoreCtx) error {
 
 	for _, option := range n.OptionList {
 		ctx.WritePlain(" ")
-		ctx.WritePlain(option)
+		ctx.WritePlain(option.Name)
+		ctx.WritePlain(" ")
+		if err := option.Value.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while splicing LLMDDLOption: [%v]", option)
+		}
 	}
 	return nil
 }
@@ -4310,6 +4314,13 @@ func (n *LLMDDLStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*LLMDDLStmt)
+	for _, option := range n.OptionList {
+		node, ok := option.Value.Accept(v)
+		if !ok {
+			return n, false
+		}
+		option.Value = node.(ExprNode)
+	}
 	return v.Leave(n)
 }
 
