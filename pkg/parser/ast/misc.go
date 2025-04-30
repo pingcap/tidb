@@ -4273,13 +4273,18 @@ func (n *DropQueryWatchStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+type LLMDDLOption struct {
+	Name  string
+	Value ExprNode
+}
+
 type LLMDDLStmt struct {
 	stmtNode
 	Operation  string
 	Platform   bool
 	Model      bool
 	Name       string
-	OptionList []string
+	OptionList []LLMDDLOption
 }
 
 func (n *LLMDDLStmt) Restore(ctx *format.RestoreCtx) error {

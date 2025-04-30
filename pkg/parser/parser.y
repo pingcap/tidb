@@ -16703,7 +16703,7 @@ LLMDDLStmt:
 			Operation:  "ALTER",
 			Platform:   true,
 			Name:       $4,
-			OptionList: $5.([]string),
+			OptionList: $5.([]LLMDDLOption),
 		}
 	}
 |	"CREATE" "LLM" "MODEL" Identifier LLMDDLOptionList
@@ -16712,7 +16712,7 @@ LLMDDLStmt:
 			Operation:  "CREATE",
 			Model:      true,
 			Name:       $4,
-			OptionList: $5.([]string),
+			OptionList: $5.([]LLMDDLOption),
 		}
 	}
 |	"ALTER" "LLM" "MODEL" Identifier LLMDDLOptionList
@@ -16721,7 +16721,7 @@ LLMDDLStmt:
 			Operation:  "ALTER",
 			Model:      true,
 			Name:       $4,
-			OptionList: $5.([]string),
+			OptionList: $5.([]LLMDDLOption),
 		}
 	}
 |	"DROP" "LLM" "MODEL" Identifier
@@ -16734,13 +16734,13 @@ LLMDDLStmt:
 	}
 
 LLMDDLOptionList:
-	Identifier Identifier
+	Identifier Expression
 	{
-		$$ = []string{$1, $2}
+		$$ = []LLMDDLOption{{$1, $2}}
 	}
-|	LLMDDLOptionList Identifier Identifier
+|	LLMDDLOptionList Identifier Expression
 	{
-		$$ = append($1.([]string), $2, $3)
+		$$ = append($1.([]LLMDDLOption), {$2, $3})
 	}
 
 /********************************************************************
