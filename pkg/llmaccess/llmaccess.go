@@ -51,6 +51,20 @@ func NewLLMAccessor(sPool util.DestroyableSessionPool) LLMAccessor {
 }
 
 func (llm *llmAccessorImpl) CreateModel(sctx sessionctx.Context, name string, options []string, values []any) error {
+	requiredOptions := []string{"PLATFORM", "MODEL", "STATUS"}
+	for _, opt := range requiredOptions {
+		ok := false
+		for i := range options {
+			if strings.ToUpper(opt) == strings.ToUpper(options[i]) {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return fmt.Errorf("missing required option %s", opt)
+		}
+	}
+
 	columnNames := append(options, "name")
 	columnValues := append(values, name)
 	createStmt := "insert into mysql.llm_model (" + strings.Join(columnNames, ",") +
