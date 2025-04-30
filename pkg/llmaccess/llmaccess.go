@@ -65,8 +65,24 @@ func (llm *llmAccessorImpl) AlterPlatform(sctx sessionctx.Context, platform stri
 	if err != nil {
 		return err
 	}
+	if err := llm.validatePlatformOptions(options, values); err != nil {
+		return err
+	}
 
-	kv := make([]string, 0, len(options))
+	columnSet := make([]string, 0, len(options))
+	for i := range options {
+		columnSet = append(columnSet, "`"+options[i]+"` = %?")
+	}
+	updateStmt := "update mysql.llm_platform set " + strings.Join(columnSet, ", ") + " where `name` = %?"
+	return callWithSCtx(llm.sPool, true, func(tmpCtx sessionctx.Context) error {
+		args := append(values, platform)
+		_, err := exec(tmpCtx, updateStmt, args...)
+		sctx.GetSessionVars().StmtCtx.SetAffectedRows(tmpCtx.GetSessionVars().StmtCtx.AffectedRows())
+		return err
+	})
+}
+
+func (llm *llmAccessorImpl) validatePlatformOptions(options []string, values []any) error {
 	for i := range options {
 		v := values[i]
 		switch strings.ToUpper(options[i]) {
@@ -90,17 +106,8 @@ func (llm *llmAccessorImpl) AlterPlatform(sctx sessionctx.Context, platform stri
 		default:
 			return fmt.Errorf("unsupported option: %s", options[i])
 		}
-		kv = append(kv, "`"+options[i]+"` = %?")
-		options[i] = "`" + options[i] + "`"
 	}
-
-	updateStmt := "update mysql.llm_platform set " + strings.Join(kv, ", ") + " where `name` = %?"
-	return callWithSCtx(llm.sPool, true, func(tmpCtx sessionctx.Context) error {
-		args := append(values, platform)
-		_, err := exec(tmpCtx, updateStmt, args...)
-		sctx.GetSessionVars().StmtCtx.SetAffectedRows(tmpCtx.GetSessionVars().StmtCtx.AffectedRows())
-		return err
-	})
+	return nil
 }
 
 // ChatCompletion calls the specified LLM to complete the chat based on input prompt.
